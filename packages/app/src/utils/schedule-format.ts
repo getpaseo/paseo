@@ -1,5 +1,6 @@
 import type { ScheduleCadence, ScheduleSummary } from "@getpaseo/protocol/schedule/types";
 import { validateCronExpression } from "@getpaseo/protocol/schedule/cron-expression";
+import { i18n } from "@/i18n/i18next";
 
 export type IntervalUnit = "minutes" | "hours" | "days";
 type CronCadence = Extract<ScheduleCadence, { type: "cron" }>;
@@ -14,15 +15,21 @@ const UNIT_MS: Record<IntervalUnit, number> = {
   days: MS_PER_DAY,
 };
 
-const DAY_NAMES = [
-  "Sunday",
-  "Monday",
-  "Tuesday",
-  "Wednesday",
-  "Thursday",
-  "Friday",
-  "Saturday",
+const DAY_KEYS = [
+  "sunday",
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
 ] as const;
+
+const SINGULAR_UNIT_KEY: Record<IntervalUnit, "minute" | "hour" | "day"> = {
+  minutes: "minute",
+  hours: "hour",
+  days: "day",
+};
 
 export function isNewAgentSchedule(schedule: ScheduleSummary): boolean {
   return schedule.target.type === "new-agent";
@@ -43,11 +50,7 @@ export function resolveScheduleTitle(schedule: ScheduleSummary): string {
     .split("\n")
     .map((line) => line.trim())
     .find((line) => line.length > 0);
-  return firstPromptLine || "Untitled schedule";
-}
-
-function pluralize(value: number, noun: string): string {
-  return value === 1 ? `1 ${noun}` : `${value} ${noun}s`;
+  return firstPromptLine || i18n.t("schedules.format.untitled");
 }
 
 export function everyMsToParts(ms: number): { value: number; unit: IntervalUnit } {
@@ -68,15 +71,13 @@ export function partsToEveryMs(value: number, unit: IntervalUnit): number {
   return normalized * UNIT_MS[unit];
 }
 
-const UNIT_NOUN: Record<IntervalUnit, string> = {
-  minutes: "minute",
-  hours: "hour",
-  days: "day",
-};
-
 function formatEvery(everyMs: number): string {
   const { value, unit } = everyMsToParts(everyMs);
-  return `Every ${pluralize(value, UNIT_NOUN[unit])}`;
+  const unitKey = value === 1 ? SINGULAR_UNIT_KEY[unit] : unit;
+  return i18n.t("schedules.format.every", {
+    count: value,
+    unit: i18n.t(`schedules.format.units.${unitKey}`),
+  });
 }
 
 export function formatCadence(cadence: ScheduleCadence): string {
@@ -107,7 +108,7 @@ export function describeCron(cadence: CronCadence): string | null {
   const isWildcardDom = dayOfMonth === "*";
 
   if (minute === "*" && hour === "*" && isWildcardMonth && isWildcardDom && dayOfWeek === "*") {
-    return "Every minute";
+    return i18n.t("schedules.format.cron.everyMinute");
   }
 
   if (!isLiteralMinute || !isWildcardMonth || !isWildcardDom) {
@@ -119,7 +120,9 @@ export function describeCron(cadence: CronCadence): string | null {
     if (dayOfWeek !== "*") {
       return null;
     }
-    return minuteNum === 0 ? "Every hour" : `Every hour at :${pad2(minuteNum)}`;
+    return minuteNum === 0
+      ? i18n.t("schedules.format.cron.everyHour")
+      : i18n.t("schedules.format.cron.everyHourAt", { minute: pad2(minuteNum) });
   }
 
   if (!/^\d+$/.test(hour)) {
@@ -127,23 +130,40 @@ export function describeCron(cadence: CronCadence): string | null {
   }
   const time = `${pad2(Number.parseInt(hour, 10))}:${pad2(minuteNum)}`;
   const timezone = cadence.timezone ?? "UTC";
-  const dayLabel = describeCronDay(dayOfWeek);
-  return dayLabel ? `${dayLabel} at ${time} ${timezone}` : null;
+  const day = describeCronDay(dayOfWeek);
+  if (!day) {
+    return null;
+  }
+  if (day === "daily") {
+    return i18n.t("schedules.format.cron.dailyAt", { time, timezone });
+  }
+  if (day === "weekdays") {
+    return i18n.t("schedules.format.cron.weekdaysAt", { time, timezone });
+  }
+  if (day === "weekends") {
+    return i18n.t("schedules.format.cron.weekendsAt", { time, timezone });
+  }
+  return i18n.t("schedules.format.cron.dayAt", {
+    day: i18n.t(`schedules.format.days.${day}`),
+    time,
+    timezone,
+  });
 }
 
-function describeCronDay(dayOfWeek: string): string | null {
+function describeCronDay(
+  dayOfWeek: string,
+): "daily" | "weekdays" | "weekends" | (typeof DAY_KEYS)[number] | null {
   if (dayOfWeek === "*") {
-    return "Daily";
+    return "daily";
   }
   if (dayOfWeek === "1-5") {
-    return "Weekdays";
+    return "weekdays";
   }
   if (dayOfWeek === "0,6" || dayOfWeek === "6,0") {
-    return "Weekends";
+    return "weekends";
   }
   if (/^\d$/.test(dayOfWeek)) {
-    const day = DAY_NAMES[Number.parseInt(dayOfWeek, 10)];
-    return day ? `${day}s` : null;
+    return DAY_KEYS[Number.parseInt(dayOfWeek, 10)] ?? null;
   }
   return null;
 }
@@ -177,16 +197,22 @@ export function formatNextRun(iso: string | null): string {
 
   const diffMs = target - Date.now();
   if (diffMs <= 0) {
-    return "soon";
+    return i18n.t("schedules.format.nextRun.soon");
   }
   if (diffMs < MS_PER_MINUTE) {
-    return "soon";
+    return i18n.t("schedules.format.nextRun.soon");
   }
   if (diffMs < MS_PER_HOUR) {
-    return `in ${Math.round(diffMs / MS_PER_MINUTE)}m`;
+    return i18n.t("schedules.format.nextRun.inMinutes", {
+      count: Math.round(diffMs / MS_PER_MINUTE),
+    });
   }
   if (diffMs < MS_PER_DAY) {
-    return `in ${Math.round(diffMs / MS_PER_HOUR)}h`;
+    return i18n.t("schedules.format.nextRun.inHours", {
+      count: Math.round(diffMs / MS_PER_HOUR),
+    });
   }
-  return `in ${Math.round(diffMs / MS_PER_DAY)}d`;
+  return i18n.t("schedules.format.nextRun.inDays", {
+    count: Math.round(diffMs / MS_PER_DAY),
+  });
 }

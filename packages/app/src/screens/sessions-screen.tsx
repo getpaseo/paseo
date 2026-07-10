@@ -57,7 +57,7 @@ function SessionsScreenContent() {
   }, [agents]);
 
   const emptyText =
-    selectedHost === ALL_HOSTS_OPTION_ID ? t("sessions.empty") : "No sessions for this host";
+    selectedHost === ALL_HOSTS_OPTION_ID ? t("sessions.empty") : t("sessions.empty");
   const showHostFilter = hosts.length > 1;
   const showLoadError = isError && sortedAgents.length === 0;
 
@@ -97,9 +97,9 @@ function SessionsScreenContent() {
       ) : null}
       {!isInitialLoad && showLoadError ? (
         <View style={styles.emptyContainer}>
-          <Text style={styles.emptyText}>Unable to load sessions</Text>
+          <Text style={styles.emptyText}>{t("sessions.errors.load")}</Text>
           <Button variant="ghost" onPress={handleRefresh}>
-            Try again
+            {t("common.actions.retry")}
           </Button>
         </View>
       ) : null}
@@ -107,7 +107,7 @@ function SessionsScreenContent() {
         <View style={styles.emptyContainer}>
           <Text style={styles.emptyText}>{emptyText}</Text>
           <Button variant="ghost" leftIcon={ChevronLeft} onPress={handleBack}>
-            Back
+            {t("common.actions.back")}
           </Button>
         </View>
       ) : null}

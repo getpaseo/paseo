@@ -3,6 +3,7 @@ import { Pressable, View } from "react-native";
 import type { GestureResponderEvent } from "react-native";
 import { Plus, Server, Settings } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { useTranslation } from "react-i18next";
 import { HostStatusDot } from "@/components/host-status-dot";
 import { Combobox, ComboboxItem, type ComboboxProps } from "@/components/ui/combobox";
 import { useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
@@ -45,9 +46,9 @@ function formatConnectionEndpoint(endpoint: string): string {
 
 // Socket/pipe transports have no host:port — their endpoint is a filesystem
 // path, so they read as "Local". TCP and relay show the address being used.
-function formatActiveConnectionLabel(connection: ActiveConnection): string {
+function formatActiveConnectionLabel(connection: ActiveConnection, localLabel: string): string {
   if (connection.type === "directSocket" || connection.type === "directPipe") {
-    return "Local";
+    return localLabel;
   }
   return formatConnectionEndpoint(connection.endpoint);
 }
@@ -74,10 +75,11 @@ export function HostPickerOption({
   testID,
 }: HostPickerOptionProps): ReactElement {
   const { theme } = useUnistyles();
+  const { t } = useTranslation();
   const activeConnection = useHostRuntimeSnapshot(serverId)?.activeConnection ?? null;
   const connectionLabel =
     showActiveConnection && activeConnection
-      ? formatActiveConnectionLabel(activeConnection)
+      ? formatActiveConnectionLabel(activeConnection, t("settings.hostPicker.local"))
       : undefined;
   const leadingSlot = useMemo(() => <HostStatusDotSlot serverId={serverId} />, [serverId]);
   const handleSettingsPress = useCallback(
@@ -94,7 +96,7 @@ export function HostPickerOption({
         onPress={handleSettingsPress}
         hitSlop={8}
         accessibilityRole="button"
-        accessibilityLabel={`Open ${label} settings`}
+        accessibilityLabel={t("sidebar.host.openSettings", { hostName: label })}
       >
         <Settings size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
       </Pressable>
@@ -103,6 +105,7 @@ export function HostPickerOption({
     handleSettingsPress,
     label,
     onOpenHostSettings,
+    t,
     theme.colors.foregroundMuted,
     theme.iconSize.sm,
   ]);
@@ -121,12 +124,6 @@ export function HostPickerOption({
   );
 }
 
-const SYSTEM_HOST_PICKER_OPTION_LABELS: Record<"add" | "all" | "enableBuiltInDaemon", string> = {
-  add: "Add host",
-  all: "All hosts",
-  enableBuiltInDaemon: "Enable built-in daemon",
-};
-
 function SystemHostPickerOption({
   active,
   selected,
@@ -141,8 +138,16 @@ function SystemHostPickerOption({
   testID?: string;
 }): ReactElement {
   const { theme } = useUnistyles();
+  const { t } = useTranslation();
   const Icon = kind === "add" ? Plus : Server;
-  const label = SYSTEM_HOST_PICKER_OPTION_LABELS[kind];
+  let label: string;
+  if (kind === "add") {
+    label = t("settings.addHost");
+  } else if (kind === "all") {
+    label = t("sidebar.displayPreferences.allHosts");
+  } else {
+    label = t("settings.enableBuiltInDaemon");
+  }
   const leadingSlot = useMemo(
     () => <Icon size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />,
     [Icon, theme.colors.foregroundMuted, theme.iconSize.sm],
@@ -205,6 +210,7 @@ export function HostPicker({
   hostOptionTestID,
   children,
 }: HostPickerProps): ReactElement {
+  const { t } = useTranslation();
   const localServerId = useLocalDaemonServerId();
   const orderedHosts = useMemo(
     () => orderHostsLocalFirst(hosts, localServerId),
@@ -213,15 +219,20 @@ export function HostPicker({
 
   const options = useMemo(() => {
     const hostOptions = orderedHosts.map((host) => ({ id: host.serverId, label: host.label }));
-    if (includeAllHost) hostOptions.unshift({ id: ALL_HOSTS_OPTION_ID, label: "All hosts" });
-    if (includeAddHost) hostOptions.push({ id: ADD_HOST_OPTION_ID, label: "Add host" });
+    if (includeAllHost) {
+      hostOptions.unshift({
+        id: ALL_HOSTS_OPTION_ID,
+        label: t("sidebar.displayPreferences.allHosts"),
+      });
+    }
+    if (includeAddHost) hostOptions.push({ id: ADD_HOST_OPTION_ID, label: t("settings.addHost") });
     if (includeEnableBuiltInDaemon)
       hostOptions.push({
         id: ENABLE_BUILT_IN_DAEMON_OPTION_ID,
-        label: "Enable built-in daemon",
+        label: t("settings.enableBuiltInDaemon"),
       });
     return hostOptions;
-  }, [orderedHosts, includeAllHost, includeAddHost, includeEnableBuiltInDaemon]);
+  }, [includeAddHost, includeAllHost, includeEnableBuiltInDaemon, orderedHosts, t]);
 
   const isSearchable = searchable === true && orderedHosts.length > SEARCHABLE_THRESHOLD;
 
@@ -305,8 +316,8 @@ export function HostPicker({
         onSelect={handleSelect}
         renderOption={renderOption}
         searchable={isSearchable}
-        searchPlaceholder="Search hosts"
-        title={title ?? "Host"}
+        searchPlaceholder={t("sidebar.host.searchPlaceholder")}
+        title={title ?? t("pairing.direct.fields.host")}
         open={open}
         onOpenChange={onOpenChange}
         anchorRef={anchorRef}

@@ -334,6 +334,7 @@ function SidebarHostPicker({
   onAddHost: () => void;
   onOpenHostSettings: (serverId: string) => void;
 }) {
+  const { t } = useTranslation();
   const hosts = useHosts();
   const triggerRef = useRef<View | null>(null);
   const [isOpen, setIsOpen] = useState(false);
@@ -369,7 +370,7 @@ function SidebarHostPicker({
         buttonRef={triggerRef}
         onPress={handleOpen}
         testID="sidebar-hosts-trigger"
-        accessibilityLabel="Hosts"
+        accessibilityLabel={t("sidebar.host.switchTitle")}
         icon={Server}
         iconSize={theme.iconSize.sm}
         theme={theme}
@@ -825,6 +826,7 @@ function DesktopSidebar({
 }
 
 function WorkspacesSectionHeader() {
+  const { t } = useTranslation();
   const { theme } = useUnistyles();
   const setCommandCenterOpen = useKeyboardShortcutsStore((state) => state.setCommandCenterOpen);
   const commandCenterKeys = useShortcutKeys("toggle-command-center");
@@ -839,13 +841,13 @@ function WorkspacesSectionHeader() {
 
   return (
     <View style={styles.workspacesSectionHeader}>
-      <Text style={styles.workspacesSectionTitle}>Workspaces</Text>
+      <Text style={styles.workspacesSectionTitle}>{t("sidebar.sections.workspaces")}</Text>
       <View style={styles.workspacesSectionActions}>
         <Tooltip delayDuration={300}>
           <TooltipTrigger asChild>
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="Open command center"
+              accessibilityLabel={t("sidebar.actions.openCommandCenter")}
               testID="sidebar-command-center-search"
               style={searchButtonStyle}
               onPress={handleSearchPress}
@@ -861,7 +863,10 @@ function WorkspacesSectionHeader() {
             </Pressable>
           </TooltipTrigger>
           <TooltipContent side="bottom" align="center" offset={8}>
-            <HeaderIconTooltipContent label="Search" shortcutKeys={commandCenterKeys} />
+            <HeaderIconTooltipContent
+              label={t("common.actions.search")}
+              shortcutKeys={commandCenterKeys}
+            />
           </TooltipContent>
         </Tooltip>
         <Tooltip delayDuration={300}>
@@ -871,7 +876,7 @@ function WorkspacesSectionHeader() {
             </View>
           </TooltipTrigger>
           <TooltipContent side="bottom" align="center" offset={8}>
-            <HeaderIconTooltipContent label="Display preferences" />
+            <HeaderIconTooltipContent label={t("sidebar.actions.displayPreferences")} />
           </TooltipContent>
         </Tooltip>
       </View>

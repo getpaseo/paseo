@@ -1,5 +1,6 @@
 import type { ScheduleSummary } from "@getpaseo/protocol/schedule/types";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { i18n } from "@/i18n/i18next";
 import {
   describeCron,
   everyMsToParts,
@@ -44,8 +45,9 @@ function createSchedule(input: {
   };
 }
 
-afterEach(() => {
+afterEach(async () => {
   vi.useRealTimers();
+  await i18n.changeLanguage("en");
 });
 
 describe("schedule title helpers", () => {
@@ -80,6 +82,19 @@ describe("interval formatting", () => {
     expect(partsToEveryMs(2, "hours")).toBe(2 * 60 * 60_000);
     expect(partsToEveryMs(0, "minutes")).toBe(60_000);
     expect(formatCadence({ type: "every", everyMs: 2 * 60 * 60_000 })).toBe("Every 2 hours");
+  });
+});
+
+describe("schedule formatting localization", () => {
+  it("uses the selected app language for cadence and next-run labels", async () => {
+    await i18n.changeLanguage("zh-CN");
+
+    expect(formatCadence({ type: "every", everyMs: 2 * 60 * 60_000 })).toBe("每2小时");
+    expect(describeCron({ type: "cron", expression: "0 9 * * 1-5" })).toBe("工作日 09:00（UTC）");
+
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+    expect(formatNextRun("2026-01-01T00:30:00.000Z")).toBe("30分钟后");
   });
 });
 

@@ -64,13 +64,14 @@ import type { TodoEntry, UserMessageImageAttachment } from "@/types/stream";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
 import { buildToolCallPresentation } from "@/tool-calls/presentation";
+import { getToolCallDisplayNameKey } from "@/tool-calls/display-name-localization";
 import { resolveToolCallIcon } from "@/utils/tool-call-icon";
 import { getMarkdownListMarker, getMarkdownListSpacing } from "@/utils/markdown-list";
 import { markdownNodeContainsType } from "@/utils/markdown-ast";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
 import { splitMarkdownBlocks } from "@/utils/split-markdown-blocks";
-import { formatDuration, formatMessageTimestamp } from "@/utils/time";
+import { formatDurationWithUnits, formatMessageTimestamp } from "@/utils/time";
 import { writeMarkdownToRichClipboard } from "@/utils/rich-clipboard";
 import { getDefaultMarkdownClipboardEnvironment } from "@/utils/rich-clipboard-default-environment";
 import {
@@ -613,6 +614,7 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
   forkBoundaryMessageId,
   onFork,
 }: AssistantTurnFooterProps) {
+  const { t } = useTranslation();
   const [hovered, setHovered] = useState(false);
   const [pressedReveal, setPressedReveal] = useState(false);
   const revealTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -626,10 +628,20 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
     };
   }, []);
 
-  const durationLabel = useMemo(
-    () => (durationMs !== undefined ? `Worked for ${formatDuration(durationMs)}` : ""),
-    [durationMs],
+  const durationUnits = useMemo(
+    () => ({
+      second: t("message.turnTime.units.second"),
+      minute: t("message.turnTime.units.minute"),
+      hour: t("message.turnTime.units.hour"),
+    }),
+    [t],
   );
+  const durationLabel = useMemo(() => {
+    if (durationMs === undefined) return "";
+    return t("message.turnTime.workedFor", {
+      duration: formatDurationWithUnits(durationMs, durationUnits),
+    });
+  }, [durationMs, durationUnits, t]);
   const timestampLabel = useMemo(
     () => (completedAt ? formatMessageTimestamp(completedAt) : ""),
     [completedAt],
@@ -672,7 +684,11 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
           onHoverIn={handleHoverIn}
           onHoverOut={handleHoverOut}
           accessibilityRole={canSwap ? "button" : undefined}
-          accessibilityLabel={canSwap ? `${durationLabel}, ended ${timestampLabel}` : durationLabel}
+          accessibilityLabel={
+            canSwap
+              ? `${durationLabel}, ${t("message.turnTime.ended", { time: timestampLabel })}`
+              : durationLabel
+          }
         >
           <View style={assistantTurnFooterStylesheet.labelWrapper}>
             {/* Sizer reserves space for whichever label is longer so the
@@ -705,6 +721,7 @@ export const LiveElapsed = memo(function LiveElapsed({
   style,
   testID,
 }: LiveElapsedProps) {
+  const { t } = useTranslation();
   const startedAtMs = startedAt.getTime();
   const [elapsedMs, setElapsedMs] = useState(() => Math.max(0, Date.now() - startedAtMs));
 
@@ -718,7 +735,11 @@ export const LiveElapsed = memo(function LiveElapsed({
 
   return (
     <Text style={style} testID={testID}>
-      {formatDuration(elapsedMs)}
+      {formatDurationWithUnits(elapsedMs, {
+        second: t("message.turnTime.units.second"),
+        minute: t("message.turnTime.units.minute"),
+        hour: t("message.turnTime.units.hour"),
+      })}
     </Text>
   );
 });
@@ -3059,6 +3080,7 @@ export const ToolCall = memo(function ToolCall({
   defaultExpanded,
   forceInline = false,
 }: ToolCallProps) {
+  const { t } = useTranslation();
   const { openToolCall } = useToolCallSheet();
   const [isExpanded, setIsExpanded] = useState(defaultExpanded ?? false);
 
@@ -3092,6 +3114,14 @@ export const ToolCall = memo(function ToolCall({
       }),
     [toolName, status, error, effectiveDetail, metadata, cwd],
   );
+  const localizedDisplayName = useMemo(() => {
+    const key = getToolCallDisplayNameKey({
+      toolName,
+      detail: effectiveDetail ?? { type: "unknown", input: null, output: null },
+      displayName: presentation.displayName,
+    });
+    return key ? t(key) : presentation.displayName;
+  }, [effectiveDetail, presentation.displayName, t, toolName]);
   const handleOpenFile = useMemo(() => {
     const openFilePath = presentation.openFilePath;
     if (!openFilePath || !onOpenFilePath) {
@@ -3103,7 +3133,7 @@ export const ToolCall = memo(function ToolCall({
   const handleToggle = useCallback(() => {
     if (!shouldRenderInline) {
       openToolCall({
-        displayName: presentation.displayName,
+        displayName: localizedDisplayName,
         summary: presentation.summary,
         detail: effectiveDetail,
         errorText: presentation.errorText,
@@ -3116,7 +3146,7 @@ export const ToolCall = memo(function ToolCall({
   }, [
     shouldRenderInline,
     openToolCall,
-    presentation.displayName,
+    localizedDisplayName,
     presentation.summary,
     presentation.errorText,
     presentation.icon,
@@ -3177,7 +3207,7 @@ export const ToolCall = memo(function ToolCall({
   return (
     <ExpandableBadge
       testID="tool-call-badge"
-      label={presentation.displayName}
+      label={localizedDisplayName}
       secondaryLabel={presentation.summary}
       icon={presentation.icon}
       isExpanded={shouldRenderInline && isExpanded}

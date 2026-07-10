@@ -102,6 +102,21 @@ function findUntranslatedConnectionErrors(): string[] {
   });
 }
 
+function findUnknownStaticTranslationKeys(): string[] {
+  const knownKeys = new Set(flattenKeys(en));
+  const staticTranslationCall = /\b(?:t|i18n\.t)\(\s*["'`]([^"'`]+)["'`]/g;
+
+  return collectSourceFiles(appSourceRoot).flatMap((path) => {
+    const contents = readFileSync(path, "utf8");
+    return [...contents.matchAll(staticTranslationCall)].flatMap((match) => {
+      const key = match[1];
+      return key && !key.includes("${") && !knownKeys.has(key)
+        ? [`${relative(appSourceRoot, path)}: ${key}`]
+        : [];
+    });
+  });
+}
+
 describe("translation resources", () => {
   it("keeps all supported language keys in sync with English", () => {
     const englishKeys = flattenKeys(en).sort();
@@ -112,6 +127,10 @@ describe("translation resources", () => {
     expect(flattenKeys(ptBR).sort()).toEqual(englishKeys);
     expect(flattenKeys(ru).sort()).toEqual(englishKeys);
     expect(flattenKeys(zhCN).sort()).toEqual(englishKeys);
+  });
+
+  it("does not reference missing static translation keys", () => {
+    expect(findUnknownStaticTranslationKeys()).toEqual([]);
   });
 
   it("keeps non-English supported languages translated beyond fallback labels", () => {

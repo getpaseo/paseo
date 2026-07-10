@@ -1,5 +1,16 @@
-import { describe, it, expect } from "vitest";
-import { formatDuration, formatMessageTimestamp } from "./time";
+import { afterEach, describe, it, expect, vi } from "vitest";
+import { i18n } from "@/i18n/i18next";
+import {
+  formatDuration,
+  formatDurationWithUnits,
+  formatMessageTimestamp,
+  formatTimeAgo,
+} from "./time";
+
+afterEach(async () => {
+  vi.useRealTimers();
+  await i18n.changeLanguage("en");
+});
 
 describe("formatDuration", () => {
   it("renders sub-minute durations as whole seconds", () => {
@@ -25,6 +36,26 @@ describe("formatDuration", () => {
   it("guards against negative and NaN", () => {
     expect(formatDuration(-1)).toBe("0s");
     expect(formatDuration(Number.NaN)).toBe("0s");
+  });
+});
+
+describe("formatDurationWithUnits", () => {
+  const chineseUnits = { second: " 秒", minute: " 分", hour: " 小时" };
+
+  it("renders localized seconds, minutes, and hours", () => {
+    expect(formatDurationWithUnits(0, chineseUnits)).toBe("0 秒");
+    expect(formatDurationWithUnits(75_230, chineseUnits)).toBe("1 分 15 秒");
+    expect(formatDurationWithUnits(3_900_000, chineseUnits)).toBe("1 小时 5 分");
+  });
+});
+
+describe("formatTimeAgo", () => {
+  it("uses the selected app language for relative timestamps", async () => {
+    await i18n.changeLanguage("zh-CN");
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:05:00.000Z"));
+
+    expect(formatTimeAgo(new Date("2026-01-01T00:00:00.000Z"))).toBe("5分钟前");
   });
 });
 

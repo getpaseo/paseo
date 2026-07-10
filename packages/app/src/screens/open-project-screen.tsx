@@ -55,13 +55,13 @@ export function OpenProjectScreen() {
 
   const handleOpenImportSession = useCallback(() => {
     chooseHost({
-      title: "Import from host",
+      title: t("openProject.tiles.importSession.title"),
       onChooseHost: (serverId) => {
         setImportServerId(serverId);
         setIsImportSheetOpen(true);
       },
     });
-  }, [chooseHost]);
+  }, [chooseHost, t]);
   const handleCloseImportSession = useCallback(() => setIsImportSheetOpen(false), []);
 
   const handleImported = useCallback(
@@ -79,12 +79,12 @@ export function OpenProjectScreen() {
 
   const handleOpenProviders = useCallback(() => {
     chooseHost({
-      title: "Choose host",
+      title: t("settings.hostPicker.switchHost"),
       onChooseHost: (serverId) => {
         router.push(buildSettingsHostSectionRoute(serverId, "providers"));
       },
     });
-  }, [chooseHost, router]);
+  }, [chooseHost, router, t]);
 
   return (
     <View style={styles.container}>

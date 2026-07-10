@@ -2,6 +2,7 @@ import { useCallback, useMemo, useRef, useState, type ReactElement } from "react
 import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
 import { ChevronDown, Server } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { useTranslation } from "react-i18next";
 import type { HostProfile } from "@/types/host-connection";
 import type { Theme } from "@/styles/theme";
 import {
@@ -33,6 +34,7 @@ export function HostFilter({
   onSelectHost,
   triggerTestID,
 }: HostFilterProps): ReactElement {
+  const { t } = useTranslation();
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const filterAnchorRef = useRef<View>(null);
 
@@ -62,7 +64,7 @@ export function HostFilter({
       anchorRef={filterAnchorRef}
       includeAllHost
       searchable={false}
-      title="Filter by host"
+      title={t("sidebar.host.filterByHost")}
       desktopPlacement="bottom-start"
     >
       <View ref={filterAnchorRef} collapsable={false} style={styles.filterTriggerWrap}>
@@ -71,7 +73,7 @@ export function HostFilter({
           style={filterTriggerStyle}
           testID={triggerTestID}
           accessibilityRole="button"
-          accessibilityLabel={`Filter: ${selectedHostLabel}`}
+          accessibilityLabel={t("sidebar.host.filter", { hostName: selectedHostLabel })}
         >
           {selectedHost === ALL_HOSTS_OPTION_ID ? (
             <ThemedServer size={14} uniProps={mutedColorMapping} />

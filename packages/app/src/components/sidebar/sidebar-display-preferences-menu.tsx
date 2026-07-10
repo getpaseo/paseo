@@ -1,4 +1,5 @@
 import { useCallback, useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { Text, View, type PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { Settings2 } from "lucide-react-native";
@@ -19,22 +20,13 @@ import { useSidebarViewStore, type SidebarGroupMode } from "@/stores/sidebar-vie
 const ThemedSettings2 = withUnistyles(Settings2);
 const filterColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
-const GROUP_MODE_ITEMS: Array<{ value: SidebarGroupMode; label: string }> = [
-  { value: "project", label: "Project" },
-  { value: "status", label: "Status" },
-];
-
-const WORKSPACE_TITLE_SOURCE_ITEMS: Array<{ value: WorkspaceTitleSource; label: string }> = [
-  { value: "title", label: "Title" },
-  { value: "branch", label: "Branch name" },
-];
-
 interface DisplayPreferenceOption<Value extends string> {
   value: Value;
   label: string;
 }
 
 export function SidebarDisplayPreferencesMenu() {
+  const { t } = useTranslation();
   const groupMode = useSidebarViewStore((state) => state.groupMode);
   const hostFilters = useSidebarViewStore((state) => state.hostFilters);
   const setGroupMode = useSidebarViewStore((state) => state.setGroupMode);
@@ -70,22 +62,36 @@ export function SidebarDisplayPreferencesMenu() {
 
   const showHostFilter = hosts.length > 1;
   const allHostsSelected = hostFilters.length === 0;
+  const groupModeItems = useMemo<Array<DisplayPreferenceOption<SidebarGroupMode>>>(
+    () => [
+      { value: "project", label: t("sidebar.displayPreferences.project") },
+      { value: "status", label: t("sidebar.displayPreferences.status") },
+    ],
+    [t],
+  );
+  const workspaceTitleSourceItems = useMemo<Array<DisplayPreferenceOption<WorkspaceTitleSource>>>(
+    () => [
+      { value: "title", label: t("sidebar.displayPreferences.title") },
+      { value: "branch", label: t("sidebar.displayPreferences.branchName") },
+    ],
+    [t],
+  );
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
         style={triggerStyle}
         accessibilityRole={platformIsWeb ? undefined : "button"}
-        accessibilityLabel="Display preferences"
+        accessibilityLabel={t("sidebar.actions.displayPreferences")}
         testID="sidebar-display-preferences-menu"
       >
         <ThemedSettings2 size={14} uniProps={filterColorMapping} />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" width={220} testID="sidebar-display-preferences-content">
         <View style={styles.menuHeader}>
-          <Text style={styles.menuHeaderLabel}>Group by</Text>
+          <Text style={styles.menuHeaderLabel}>{t("sidebar.displayPreferences.groupBy")}</Text>
         </View>
-        {GROUP_MODE_ITEMS.map((item) => (
+        {groupModeItems.map((item) => (
           <DisplayPreferenceMenuItem
             key={item.value}
             item={item}
@@ -98,7 +104,7 @@ export function SidebarDisplayPreferencesMenu() {
           <>
             <DropdownMenuSeparator />
             <View style={styles.menuHeader}>
-              <Text style={styles.menuHeaderLabel}>Filter</Text>
+              <Text style={styles.menuHeaderLabel}>{t("sidebar.displayPreferences.filter")}</Text>
             </View>
             <DropdownMenuItem
               testID="sidebar-host-filter-all"
@@ -106,7 +112,7 @@ export function SidebarDisplayPreferencesMenu() {
               closeOnSelect={false}
               onSelect={clearHostFilters}
             >
-              All hosts
+              {t("sidebar.displayPreferences.allHosts")}
             </DropdownMenuItem>
             {hosts.map((host) => (
               <HostFilterItem
@@ -121,9 +127,11 @@ export function SidebarDisplayPreferencesMenu() {
         ) : null}
         <DropdownMenuSeparator />
         <View style={styles.menuHeader}>
-          <Text style={styles.menuHeaderLabel}>Workspace title</Text>
+          <Text style={styles.menuHeaderLabel}>
+            {t("sidebar.displayPreferences.workspaceTitle")}
+          </Text>
         </View>
-        {WORKSPACE_TITLE_SOURCE_ITEMS.map((item) => (
+        {workspaceTitleSourceItems.map((item) => (
           <DisplayPreferenceMenuItem
             key={item.value}
             item={item}

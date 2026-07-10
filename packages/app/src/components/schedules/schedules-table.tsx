@@ -1,6 +1,7 @@
 import { useCallback, useState, type ReactElement } from "react";
 import { View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
+import { useTranslation } from "react-i18next";
 import { ScheduleRow, type ScheduleRowPending } from "@/components/schedules/schedule-row";
 import { useScheduleMutations } from "@/hooks/use-schedule-mutations";
 import type { AggregatedSchedule } from "@/hooks/use-schedules";
@@ -71,6 +72,7 @@ function SchedulesTableRow({
   isFirst: boolean;
   onEditSchedule: (schedule: AggregatedSchedule) => void;
 }): ReactElement {
+  const { t } = useTranslation();
   const { schedule } = row;
   const { id, serverId } = schedule;
   const mutations = useScheduleMutations({ serverId });
@@ -114,9 +116,11 @@ function SchedulesTableRow({
   const handleDelete = useCallback(() => {
     void (async () => {
       const confirmed = await confirmDialog({
-        title: "Delete schedule",
-        message: `Delete "${resolveScheduleTitle(schedule)}"? This cannot be undone.`,
-        confirmLabel: "Delete",
+        title: t("schedules.confirmations.deleteTitle"),
+        message: t("schedules.confirmations.deleteMessage", {
+          title: resolveScheduleTitle(schedule),
+        }),
+        confirmLabel: t("schedules.confirmations.deleteConfirm"),
         destructive: true,
       });
       if (!confirmed) {
@@ -124,7 +128,7 @@ function SchedulesTableRow({
       }
       await runAction("delete", () => mutations.deleteSchedule(id));
     })();
-  }, [runAction, mutations, id, schedule]);
+  }, [id, mutations, runAction, schedule, t]);
 
   return (
     <ScheduleRow

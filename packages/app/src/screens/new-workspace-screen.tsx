@@ -269,6 +269,7 @@ function ProjectPickerTrigger({
   iconColor: string;
   iconSize: number;
 }) {
+  const { t } = useTranslation();
   const placeholderLabel = projectIconPlaceholderLabelFromDisplayName(label);
   const placeholderInitial = placeholderLabel.charAt(0).toUpperCase() || "?";
   return (
@@ -281,7 +282,7 @@ function ProjectPickerTrigger({
           disabled={disabled}
           style={badgePressableStyle}
           accessibilityRole="button"
-          accessibilityLabel="Workspace project"
+          accessibilityLabel={t("newWorkspace.projectPicker.accessibilityLabel")}
         >
           <View style={styles.badgeIconBox}>
             {projectKey ? (
@@ -303,7 +304,7 @@ function ProjectPickerTrigger({
         </ComboboxTrigger>
       </TooltipTrigger>
       <TooltipContent side="top" align="center" offset={8}>
-        <Text style={styles.tooltipText}>Choose project</Text>
+        <Text style={styles.tooltipText}>{t("newWorkspace.projectPicker.chooseProject")}</Text>
       </TooltipContent>
     </Tooltip>
   );
@@ -664,6 +665,7 @@ function IsolationPickerTrigger({
   iconColor: string;
   iconSize: number;
 }) {
+  const { t } = useTranslation();
   return (
     <ComboboxTrigger
       ref={pickerAnchorRef}
@@ -672,7 +674,7 @@ function IsolationPickerTrigger({
       disabled={disabled}
       style={badgePressableStyle}
       accessibilityRole="button"
-      accessibilityLabel="Workspace isolation"
+      accessibilityLabel={t("newWorkspace.projectPicker.isolationAccessibilityLabel")}
     >
       <View style={styles.badgeIconBox}>
         {isolation === "worktree" ? (
@@ -1391,7 +1393,8 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
   const { isCompact, isPending, project, host, isolation, base } = input;
 
   const selectedHostLabel =
-    host.allHosts.find((h) => h.serverId === host.selectedServerId)?.label ?? "Host";
+    host.allHosts.find((h) => h.serverId === host.selectedServerId)?.label ??
+    t("pairing.direct.fields.host");
   const showHostControl = host.allHosts.length > 1;
   const isolationTriggerLabel = isolationLabel(t, isolation.effectiveIsolation);
 
@@ -1427,13 +1430,13 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
         value={project.selectedOptionId}
         onSelect={project.onSelect}
         searchable
-        searchPlaceholder="Search projects"
-        title="Project"
+        searchPlaceholder={t("newWorkspace.projectPicker.searchProjects")}
+        title={t("newWorkspace.fields.project")}
         open={project.openState}
         onOpenChange={project.onOpenChange}
         desktopPlacement="bottom-start"
         anchorRef={project.anchorRef}
-        emptyText="No projects available."
+        emptyText={t("newWorkspace.projectPicker.noProjectsAvailable")}
         renderOption={project.renderOption}
       />
     </View>
@@ -1449,7 +1452,7 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
         onOpenChange={host.onOpenChange}
         anchorRef={host.anchorRef}
         searchable={false}
-        title="Host"
+        title={t("pairing.direct.fields.host")}
         desktopPlacement="bottom-start"
         hostOptionTestID={newWorkspaceHostOptionTestID}
       >
@@ -1681,7 +1684,7 @@ export function NewWorkspaceScreen({
     queryKey: ["checkout-status", selectedServerId, selectedSourceDirectory],
     queryFn: async () => {
       if (!selectedSourceDirectory) {
-        throw new Error("Choose a project");
+        throw new Error(t("newWorkspace.errors.chooseProject"));
       }
       const connectedClient = withConnectedClient();
       return connectedClient.getCheckoutStatus(selectedSourceDirectory);
@@ -1709,7 +1712,7 @@ export function NewWorkspaceScreen({
     ],
     queryFn: async () => {
       if (!selectedSourceDirectory) {
-        throw new Error("Choose a project");
+        throw new Error(t("newWorkspace.errors.chooseProject"));
       }
       const connectedClient = withConnectedClient();
       return connectedClient.getBranchSuggestions({
@@ -1905,10 +1908,10 @@ export function NewWorkspaceScreen({
       attachments: AgentAttachment[];
     }): CreatePaseoWorktreeInput => {
       if (!selectedProject) {
-        throw new Error("Choose a project");
+        throw new Error(t("newWorkspace.errors.chooseProject"));
       }
       if (!selectedSourceDirectory) {
-        throw new Error("Choose a host for this project");
+        throw new Error(t("newWorkspace.errors.chooseHostForProject"));
       }
       const checkoutRequest = resolveCheckoutRequest(selectedItem, currentBranch);
       const firstAgentContext = buildFirstAgentContext(input);
@@ -1921,7 +1924,7 @@ export function NewWorkspaceScreen({
         ...checkoutRequest,
       };
     },
-    [currentBranch, selectedItem, selectedProject, selectedSourceDirectory],
+    [currentBranch, selectedItem, selectedProject, selectedSourceDirectory, t],
   );
 
   const ensureWorkspace = useCallback(
@@ -1935,10 +1938,10 @@ export function NewWorkspaceScreen({
         return createdWorkspace;
       }
       if (!selectedProject) {
-        throw new Error("Choose a project");
+        throw new Error(t("newWorkspace.errors.chooseProject"));
       }
       if (!selectedSourceDirectory) {
-        throw new Error("Choose a host for this project");
+        throw new Error(t("newWorkspace.errors.chooseHostForProject"));
       }
       const normalizedWorkspace = supportsWorkspaceMultiplicity
         ? await createMultiplicityWorkspace({

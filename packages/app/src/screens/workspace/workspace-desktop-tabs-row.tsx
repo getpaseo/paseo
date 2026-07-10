@@ -263,14 +263,14 @@ function WorkspaceTabRowExtras({
             <DropdownMenuTrigger
               testID="workspace-new-tab-menu-trigger"
               accessibilityRole="button"
-              accessibilityLabel={t("workspace.tabs.actions.moreActions")}
+              accessibilityLabel={t("workspace.git.actions.moreActions")}
               style={newTabActionButtonStyle}
             >
               <ThemedChevronDown size={14} uniProps={mutedColorMapping} />
             </DropdownMenuTrigger>
           </TooltipTrigger>
           <TooltipContent side="bottom" align="center" offset={8}>
-            <Text style={styles.newTabTooltipText}>{t("workspace.tabs.actions.moreActions")}</Text>
+            <Text style={styles.newTabTooltipText}>{t("workspace.git.actions.moreActions")}</Text>
           </TooltipContent>
         </Tooltip>
         <DropdownMenuContent side="bottom" align="end" offset={4} minWidth={200}>

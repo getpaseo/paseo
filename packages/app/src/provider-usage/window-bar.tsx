@@ -1,7 +1,8 @@
 import { useMemo } from "react";
 import { Text, View, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
-import { clampPct, formatPct, formatResetLabel } from "./format";
+import { useTranslation } from "react-i18next";
+import { clampPct, formatPct, formatResetLabel, formatRunsOutLabel } from "./format";
 import { deriveTone } from "./tone";
 import type { ProviderUsageTone, ProviderUsageWindow } from "./types";
 
@@ -25,6 +26,7 @@ function fillToneStyle(tone: ProviderUsageTone) {
 }
 
 export function ProviderUsageWindowBar({ window }: { window: ProviderUsageWindow }) {
+  const { t } = useTranslation();
   const usedPct = resolveUsedPct(window);
   const tone = window.tone ?? deriveTone(usedPct);
 
@@ -36,8 +38,8 @@ export function ProviderUsageWindowBar({ window }: { window: ProviderUsageWindow
 
   const isAtRisk = window.runsOutAt != null && window.shortfallPct != null;
   const trailing = isAtRisk
-    ? `runs out ${formatResetLabel(window.runsOutAt)?.replace("resets ", "") ?? ""}`.trim()
-    : formatResetLabel(window.resetsAt);
+    ? formatRunsOutLabel(window.runsOutAt, t)
+    : formatResetLabel(window.resetsAt, t);
 
   return (
     <View style={styles.container}>

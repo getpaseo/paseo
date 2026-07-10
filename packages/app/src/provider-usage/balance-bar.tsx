@@ -1,6 +1,8 @@
 import { useMemo } from "react";
 import { Text, View, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
+import type { TFunction } from "i18next";
+import { useTranslation } from "react-i18next";
 import { clampPct, formatAmount, formatResetLabel } from "./format";
 import type { ProviderUsageBalance, ProviderUsageTone } from "./types";
 
@@ -9,7 +11,7 @@ interface ResolvedBalance {
   usedPct: number | null;
 }
 
-function resolveBalance(balance: ProviderUsageBalance): ResolvedBalance {
+function resolveBalance(balance: ProviderUsageBalance, t: TFunction): ResolvedBalance {
   const { used, remaining, limit, unit } = balance;
   if (limit != null && limit > 0) {
     const usedAmount = used ?? (remaining != null ? limit - remaining : null);
@@ -18,7 +20,10 @@ function resolveBalance(balance: ProviderUsageBalance): ResolvedBalance {
     return { amountText: `${usedText} / ${formatAmount(limit, unit)}`, usedPct };
   }
   if (remaining != null) {
-    return { amountText: `${formatAmount(remaining, unit)} left`, usedPct: null };
+    return {
+      amountText: t("providerUsage.remaining", { amount: formatAmount(remaining, unit) }),
+      usedPct: null,
+    };
   }
   if (used != null) {
     return { amountText: formatAmount(used, unit), usedPct: null };
@@ -40,9 +45,10 @@ function fillToneStyle(tone: ProviderUsageTone) {
 }
 
 export function ProviderUsageBalanceBar({ balance }: { balance: ProviderUsageBalance }) {
-  const { amountText, usedPct } = resolveBalance(balance);
+  const { t } = useTranslation();
+  const { amountText, usedPct } = resolveBalance(balance, t);
   const tone = balance.tone ?? "default";
-  const resetLabel = formatResetLabel(balance.resetsAt);
+  const resetLabel = formatResetLabel(balance.resetsAt, t);
 
   const fillStyle = useMemo<StyleProp<ViewStyle>>(
     () => [styles.fill, fillToneStyle(tone), { width: `${clampPct(usedPct ?? 0)}%` }],
