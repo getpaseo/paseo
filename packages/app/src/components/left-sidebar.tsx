@@ -713,29 +713,25 @@ function DesktopSidebar({
   const sidebarWidth = usePanelStore((state) => state.sidebarWidth);
   const setSidebarWidth = usePanelStore((state) => state.setSidebarWidth);
   const { width: viewportWidth } = useWindowDimensions();
+  const visibleSidebarWidth = resolveDesktopSidebarWidth({
+    requestedWidth: sidebarWidth,
+    viewportWidth,
+  });
 
-  const startWidthRef = useRef(sidebarWidth);
-  const resizeWidth = useSharedValue(sidebarWidth);
+  const startWidthRef = useRef(visibleSidebarWidth);
+  const resizeWidth = useSharedValue(visibleSidebarWidth);
 
   useEffect(() => {
-    resizeWidth.value = sidebarWidth;
-  }, [sidebarWidth, resizeWidth]);
-
-  useEffect(() => {
-    const clampedWidth = resolveDesktopSidebarWidth({
-      requestedWidth: sidebarWidth,
-      viewportWidth,
-    });
-    if (sidebarWidth !== clampedWidth) setSidebarWidth(clampedWidth);
-  }, [setSidebarWidth, sidebarWidth, viewportWidth]);
+    resizeWidth.value = visibleSidebarWidth;
+  }, [resizeWidth, visibleSidebarWidth]);
 
   const resizeGesture = useMemo(
     () =>
       Gesture.Pan()
         .hitSlop({ left: 8, right: 8, top: 0, bottom: 0 })
         .onStart(() => {
-          startWidthRef.current = sidebarWidth;
-          resizeWidth.value = sidebarWidth;
+          startWidthRef.current = visibleSidebarWidth;
+          resizeWidth.value = visibleSidebarWidth;
         })
         .onUpdate((event) => {
           // Dragging right (positive translationX) increases width
@@ -748,7 +744,7 @@ function DesktopSidebar({
         .onEnd(() => {
           runOnJS(setSidebarWidth)(resizeWidth.value);
         }),
-    [sidebarWidth, resizeWidth, setSidebarWidth, viewportWidth],
+    [resizeWidth, setSidebarWidth, viewportWidth, visibleSidebarWidth],
   );
 
   const resizeAnimatedStyle = useAnimatedStyle(() => ({

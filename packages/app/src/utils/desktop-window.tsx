@@ -95,8 +95,14 @@ export function WindowChromeProvider({ children }: { children: ReactNode }) {
     let retryCount = 0;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
 
-    function scheduleRetry() {
-      if (!active || dispose || retryTimer || retryCount >= 40) return;
+    function scheduleRetry(warnOnExhaustion = false) {
+      if (!active || dispose || retryTimer) return;
+      if (retryCount >= 40) {
+        if (warnOnExhaustion) {
+          console.warn("[DesktopWindow] Chrome bridge unavailable; window controls may overlap UI");
+        }
+        return;
+      }
       retryCount += 1;
       retryTimer = setTimeout(() => {
         retryTimer = undefined;
@@ -107,15 +113,15 @@ export function WindowChromeProvider({ children }: { children: ReactNode }) {
     function connect() {
       if (!active || dispose || connecting) return;
       if (!getIsElectronRuntime()) return scheduleRetry();
-      const window = getDesktopWindow();
+      const desktopWindow = getDesktopWindow();
       if (
-        !window ||
-        typeof window.isFullscreen !== "function" ||
-        typeof window.onResized !== "function"
+        !desktopWindow ||
+        typeof desktopWindow.isFullscreen !== "function" ||
+        typeof desktopWindow.onResized !== "function"
       )
-        return scheduleRetry();
-      const readFullscreen = window.isFullscreen;
-      const subscribeToResized = window.onResized;
+        return scheduleRetry(true);
+      const readFullscreen = desktopWindow.isFullscreen;
+      const subscribeToResized = desktopWindow.onResized;
       connecting = true;
       void (async () => {
         async function syncFullscreen() {

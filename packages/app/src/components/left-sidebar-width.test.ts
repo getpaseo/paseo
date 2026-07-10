@@ -10,5 +10,7 @@ describe("desktop sidebar width", () => {
     const atBreakpoint = resolveDesktopSidebarWidth({ requestedWidth: 600, viewportWidth: 720 });
     expect(atBreakpoint).toBe(320);
     expect(720 - atBreakpoint).toBe(400);
+
+    expect(resolveDesktopSidebarWidth({ requestedWidth: 600, viewportWidth: 1440 })).toBe(600);
   });
 });
