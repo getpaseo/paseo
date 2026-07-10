@@ -1,7 +1,7 @@
 export interface BrowserShortcutPrefix {
   alt: boolean;
   code: string;
-  codeFallback?: boolean;
+  codeFallback?: true;
   control: boolean;
   key?: string;
   meta: boolean;
@@ -44,7 +44,7 @@ function parsePrefix(value: unknown): BrowserShortcutPrefix | null {
     typeof value.shift !== "boolean" ||
     (value.key !== undefined && typeof value.key !== "string") ||
     (value.shiftedKey !== undefined && typeof value.shiftedKey !== "string") ||
-    (value.codeFallback !== undefined && typeof value.codeFallback !== "boolean") ||
+    (value.codeFallback !== undefined && value.codeFallback !== true) ||
     (value.repeat !== undefined && value.repeat !== false)
   ) {
     return null;
@@ -52,7 +52,7 @@ function parsePrefix(value: unknown): BrowserShortcutPrefix | null {
   return {
     alt: value.alt,
     code: value.code,
-    ...(typeof value.codeFallback === "boolean" ? { codeFallback: value.codeFallback } : {}),
+    ...(value.codeFallback === true ? { codeFallback: true } : {}),
     control: value.control,
     ...(typeof value.key === "string" ? { key: value.key.toLowerCase() } : {}),
     meta: value.meta,
@@ -83,7 +83,7 @@ export function parseBrowserShortcutInput(value: unknown): BrowserShortcutInput 
   }
   if (
     typeof value.browserId !== "string" ||
-    value.browserId.trim().length === 0 ||
+    value.browserId.length === 0 ||
     typeof value.key !== "string" ||
     typeof value.code !== "string" ||
     typeof value.alt !== "boolean" ||
@@ -95,7 +95,7 @@ export function parseBrowserShortcutInput(value: unknown): BrowserShortcutInput 
   }
   return {
     alt: value.alt,
-    browserId: value.browserId.trim(),
+    browserId: value.browserId,
     code: value.code,
     control: value.control,
     key: value.key,

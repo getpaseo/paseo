@@ -146,6 +146,20 @@ describe("parseBrowserShortcutInput", () => {
     });
   });
 
+  it("keeps browser identities exact", () => {
+    expect(
+      parseBrowserShortcutInput({
+        browserId: " browser-1 ",
+        key: "t",
+        code: "KeyT",
+        meta: false,
+        control: true,
+        shift: false,
+        alt: false,
+      }),
+    ).toMatchObject({ browserId: " browser-1 " });
+  });
+
   it.each([
     {
       name: "a missing browser identity",

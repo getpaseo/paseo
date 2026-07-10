@@ -1,5 +1,9 @@
 import { describe, expect, test } from "vitest";
-import { classifyBrowserReservedShortcut, parseBrowserKeyboardPolicy } from "./policy.js";
+import {
+  classifyBrowserReservedShortcut,
+  parseBrowserKeyboardPolicy,
+  parseBrowserShortcutInput,
+} from "./policy.js";
 
 describe("browser keyboard policy", () => {
   test("classifies shell-owned browser shortcuts for the current platform modifier", () => {
@@ -70,5 +74,36 @@ describe("browser keyboard policy", () => {
       ],
     });
     expect(parseBrowserKeyboardPolicy({ prefixes: [{ code: "KeyB", control: true }] })).toBeNull();
+  });
+
+  test("rejects a false code fallback instead of treating it as absent", () => {
+    expect(
+      parseBrowserKeyboardPolicy({
+        prefixes: [
+          {
+            alt: false,
+            code: "KeyB",
+            codeFallback: false,
+            control: true,
+            meta: false,
+            shift: false,
+          },
+        ],
+      }),
+    ).toBeNull();
+  });
+
+  test("keeps browser identities exact", () => {
+    expect(
+      parseBrowserShortcutInput({
+        alt: false,
+        browserId: " browser-1 ",
+        code: "KeyB",
+        control: true,
+        key: "b",
+        meta: false,
+        shift: false,
+      }),
+    ).toMatchObject({ browserId: " browser-1 " });
   });
 });
