@@ -1,3 +1,6 @@
+import { randomUUID } from "node:crypto";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { homedir } from "node:os";
 import path from "node:path";
 import type { SeedDaemonClient } from "./seed-client";
 
@@ -7,19 +10,24 @@ export interface ProjectPickerFixture {
   fuzzyQuery: string;
 }
 
-export function getProjectPickerFixture(): ProjectPickerFixture {
-  const projectPath = process.env.E2E_PROJECT_PICKER_SEARCH_PATH;
-  if (!projectPath) {
-    throw new Error("E2E_PROJECT_PICKER_SEARCH_PATH not set by global setup");
-  }
-  const fuzzyQuery = process.env.E2E_PROJECT_PICKER_SEARCH_QUERY;
-  if (!fuzzyQuery) {
-    throw new Error("E2E_PROJECT_PICKER_SEARCH_QUERY not set by global setup");
-  }
+interface ProjectPickerFixtureResource {
+  fixture: ProjectPickerFixture;
+  removeDirectory: () => Promise<void>;
+}
+
+export async function createProjectPickerFixture(): Promise<ProjectPickerFixtureResource> {
+  const root = await mkdtemp(path.join(homedir(), "paseo-e2e-project-picker-"));
+  const nonce = randomUUID().replaceAll("-", "").slice(0, 8);
+  const projectPath = path.join(root, "client", "team", `paseo-desktop-fuzzy-target-${nonce}`);
+  await mkdir(projectPath, { recursive: true });
+
   return {
-    projectPath,
-    projectName: path.basename(projectPath),
-    fuzzyQuery,
+    fixture: {
+      projectPath,
+      projectName: path.basename(projectPath),
+      fuzzyQuery: `psodfzt${nonce}`,
+    },
+    removeDirectory: () => rm(root, { recursive: true, force: true }),
   };
 }
 

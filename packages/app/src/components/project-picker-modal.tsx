@@ -157,7 +157,7 @@ export function ProjectPickerModal() {
     queryKey: ["project-picker-directory-suggestions", serverId, debouncedQuery],
     queryFn: async () => {
       if (!client) {
-        return { query: debouncedQuery, paths: [], rootPath: null };
+        return { query: debouncedQuery, paths: [] };
       }
       const result = await client.getDirectorySuggestions({
         query: debouncedQuery,
@@ -170,10 +170,6 @@ export function ProjectPickerModal() {
         paths:
           result.entries?.flatMap((entry) => (entry.kind === "directory" ? [entry.path] : [])) ??
           [],
-        // COMPAT(directorySuggestionsRootPath): added in v0.1.105. Old daemons
-        // omit it, so rooted recommendations stay hidden while their scoped
-        // RPC results remain usable. Drop this fallback after 2027-01-09.
-        rootPath: result.rootPath ?? null,
       };
     },
     enabled: Boolean(client) && isConnected && open,
@@ -188,7 +184,6 @@ export function ProjectPickerModal() {
       recommendedPaths,
       serverPaths: currentSuggestions?.paths ?? [],
       query,
-      rootPath: currentSuggestions?.rootPath ?? null,
     });
   }, [directorySuggestionsQuery.data, query, recommendedPaths]);
   const hasQuery = query.trim().length > 0;

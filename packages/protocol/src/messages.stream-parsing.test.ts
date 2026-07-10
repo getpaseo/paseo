@@ -341,29 +341,11 @@ describe("shared messages stream parsing", () => {
       payload: {
         directories: ["/Users/test/projects/paseo"],
         entries: [{ path: "/Users/test/projects/paseo", kind: "directory" }],
-        rootPath: "/Users/test",
         error: null,
         requestId: "req-dir-1",
       },
     });
     expect(responseParsed.success).toBe(true);
-    if (responseParsed.success) {
-      expect(responseParsed.data.payload.rootPath).toBe("/Users/test");
-    }
-
-    const oldResponseParsed = SessionOutboundMessageSchema.safeParse({
-      type: "directory_suggestions_response",
-      payload: {
-        directories: [],
-        entries: [],
-        error: null,
-        requestId: "req-dir-old",
-      },
-    });
-    expect(oldResponseParsed.success).toBe(true);
-    if (oldResponseParsed.success) {
-      expect(oldResponseParsed.data.payload.rootPath).toBeUndefined();
-    }
   });
 
   it("rejects websocket envelope for removed agent_stream_snapshot message type", () => {

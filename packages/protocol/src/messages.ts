@@ -3751,7 +3751,6 @@ export const DirectorySuggestionsResponseSchema = z.object({
       )
       .optional()
       .default([]),
-    rootPath: z.string().optional(),
     error: z.string().nullable(),
     requestId: z.string(),
   }),

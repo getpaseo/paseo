@@ -3026,7 +3026,6 @@ test("requests directory suggestions via RPC", async () => {
         payload: {
           directories: ["/Users/test/projects/paseo"],
           entries: [{ path: "README.md", kind: "file" }],
-          rootPath: "/Users/test",
           error: null,
           requestId: "req-directories",
         },
@@ -3037,7 +3036,6 @@ test("requests directory suggestions via RPC", async () => {
   await expect(promise).resolves.toEqual({
     directories: ["/Users/test/projects/paseo"],
     entries: [{ path: "README.md", kind: "file" }],
-    rootPath: "/Users/test",
     error: null,
     requestId: "req-directories",
   });

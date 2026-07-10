@@ -2,7 +2,7 @@ import { test as base, expect, type Page } from "@playwright/test";
 import { getE2EDaemonPort } from "./helpers/daemon-port";
 import { buildCreateAgentPreferences, buildSeededHost } from "./helpers/daemon-registry";
 import {
-  getProjectPickerFixture,
+  createProjectPickerFixture,
   removeProjectPickerFixture,
   type ProjectPickerFixture,
 } from "./helpers/project-picker-fixture";
@@ -117,20 +117,27 @@ const test = base.extend<{
     { auto: true },
   ],
   projectPickerFixture: async ({}, provide) => {
-    const fixture = getProjectPickerFixture();
+    const resource = await createProjectPickerFixture();
+    const { fixture } = resource;
     let projectId: string | null = null;
-    await provide({
-      ...fixture,
-      rememberProjectId: (openedProjectId) => {
-        projectId = openedProjectId;
-      },
-    });
-
-    const client = await connectSeedClient();
     try {
-      await removeProjectPickerFixture(client, fixture, projectId);
+      await provide({
+        ...fixture,
+        rememberProjectId: (openedProjectId) => {
+          projectId = openedProjectId;
+        },
+      });
     } finally {
-      await client.close();
+      try {
+        const client = await connectSeedClient();
+        try {
+          await removeProjectPickerFixture(client, fixture, projectId);
+        } finally {
+          await client.close();
+        }
+      } finally {
+        await resource.removeDirectory();
+      }
     }
   },
   withWorkspace: async ({ page }, provide) => {

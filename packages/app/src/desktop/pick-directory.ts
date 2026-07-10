@@ -1,7 +1,7 @@
 import { getDesktopHost, type DesktopDialogBridge } from "./host";
 
-export async function pickDirectoryWithDesktopDialog(
-  dialog: DesktopDialogBridge | null,
+export async function pickDirectory(
+  dialog: DesktopDialogBridge | null = getDesktopHost()?.dialog ?? null,
 ): Promise<string | null> {
   const open = dialog?.open;
   if (typeof open !== "function") {
@@ -20,8 +20,4 @@ export async function pickDirectoryWithDesktopDialog(
   }
 
   throw new Error("Unexpected directory picker response.");
-}
-
-export async function pickDirectory(): Promise<string | null> {
-  return pickDirectoryWithDesktopDialog(getDesktopHost()?.dialog ?? null);
 }

@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { DesktopDialogBridge, DesktopDialogOpenOptions } from "./host";
-import { pickDirectoryWithDesktopDialog } from "./pick-directory";
+import { pickDirectory } from "./pick-directory";
 
-describe("pickDirectoryWithDesktopDialog", () => {
+describe("pickDirectory", () => {
   it("opens a single-directory picker and returns the selection", async () => {
     const recordedOptions: DesktopDialogOpenOptions[] = [];
     const dialog: DesktopDialogBridge = {
@@ -14,7 +14,7 @@ describe("pickDirectoryWithDesktopDialog", () => {
       },
     };
 
-    await expect(pickDirectoryWithDesktopDialog(dialog)).resolves.toBe("/repo/project");
+    await expect(pickDirectory(dialog)).resolves.toBe("/repo/project");
     expect(recordedOptions).toEqual([
       {
         directory: true,
@@ -28,6 +28,6 @@ describe("pickDirectoryWithDesktopDialog", () => {
       open: async () => null,
     };
 
-    await expect(pickDirectoryWithDesktopDialog(dialog)).resolves.toBeNull();
+    await expect(pickDirectory(dialog)).resolves.toBeNull();
   });
 });
