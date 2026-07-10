@@ -3136,6 +3136,7 @@ test("archiving the last workspace emits a remove carrying the now-empty project
       projectId: project.projectId,
       projectDisplayName: "repo",
       projectCustomName: null,
+      projectPinnedAt: null,
       projectRootPath: REPO_CWD,
       projectKind: "git",
     },

@@ -1518,6 +1518,8 @@ export class Session {
         return this.handleUpdateAgentRequest(msg.agentId, msg.name, msg.labels, msg.requestId);
       case "project.rename.request":
         return this.handleProjectRenameRequest(msg.projectId, msg.customName, msg.requestId);
+      case "project.pin.set.request":
+        return this.handleProjectPinSetRequest(msg.projectId, msg.pinned, msg.requestId);
       case "send_agent_message_request":
         return this.handleSendAgentMessageRequest(msg);
       case "wait_for_finish_request":
@@ -1673,6 +1675,8 @@ export class Session {
         return this.handleWorkspaceClearAttentionRequest(msg);
       case "workspace.title.set.request":
         return this.handleWorkspaceTitleSetRequest(msg.workspaceId, msg.title, msg.requestId);
+      case "workspace.pin.set.request":
+        return this.handleWorkspacePinSetRequest(msg.workspaceId, msg.pinned, msg.requestId);
       case "file_explorer_request":
         return this.workspaceFilesSession.handleFileExplorerRequest(msg);
       case "project_icon_request":
@@ -2191,6 +2195,84 @@ export class Session {
     }
   }
 
+  private async handleProjectPinSetRequest(
+    projectId: string,
+    pinned: boolean,
+    requestId: string,
+  ): Promise<void> {
+    this.sessionLogger.info({ projectId, pinned, requestId }, "session: project.pin.set.request");
+
+    try {
+      const existing = await this.projectRegistry.get(projectId);
+      if (!existing) {
+        this.emit({
+          type: "project.pin.set.response",
+          payload: {
+            requestId,
+            projectId,
+            accepted: false,
+            pinnedAt: null,
+            error: "Project not found",
+          },
+        });
+        return;
+      }
+
+      const nextPinnedAt = pinned ? new Date().toISOString() : null;
+
+      await this.projectRegistry.upsert({
+        ...existing,
+        pinnedAt: nextPinnedAt,
+        updatedAt: new Date().toISOString(),
+      });
+
+      this.emit({
+        type: "project.pin.set.response",
+        payload: {
+          requestId,
+          projectId,
+          accepted: true,
+          pinnedAt: nextPinnedAt,
+          error: null,
+        },
+      });
+
+      const workspaces = await this.workspaceRegistry.list();
+      const affectedWorkspaceIds = workspaces
+        .filter((workspace) => workspace.projectId === projectId)
+        .map((workspace) => workspace.workspaceId);
+      if (affectedWorkspaceIds.length > 0) {
+        await this.emitWorkspaceUpdatesForWorkspaceIds(affectedWorkspaceIds, {
+          skipReconcile: true,
+        });
+      }
+    } catch (error) {
+      this.sessionLogger.error(
+        { err: error, projectId, requestId },
+        "session: project.pin.set.request error",
+      );
+      this.emit({
+        type: "activity_log",
+        payload: {
+          id: uuidv4(),
+          timestamp: new Date(),
+          type: "error",
+          content: `Failed to pin project: ${getErrorMessage(error)}`,
+        },
+      });
+      this.emit({
+        type: "project.pin.set.response",
+        payload: {
+          requestId,
+          projectId,
+          accepted: false,
+          pinnedAt: null,
+          error: getErrorMessageOr(error, "Failed to pin project"),
+        },
+      });
+    }
+  }
+
   private async handleProjectRemoveRequest(
     request: Extract<SessionInboundMessage, { type: "project.remove.request" }>,
   ): Promise<void> {
@@ -2353,6 +2435,81 @@ export class Session {
           accepted: false,
           title: null,
           error: getErrorMessageOr(error, "Failed to set workspace title"),
+        },
+      });
+    }
+  }
+
+  private async handleWorkspacePinSetRequest(
+    workspaceId: string,
+    pinned: boolean,
+    requestId: string,
+  ): Promise<void> {
+    this.sessionLogger.info(
+      { workspaceId, pinned, requestId },
+      "session: workspace.pin.set.request",
+    );
+
+    try {
+      const existing = await this.workspaceRegistry.get(workspaceId);
+      if (!existing) {
+        this.emit({
+          type: "workspace.pin.set.response",
+          payload: {
+            requestId,
+            workspaceId,
+            accepted: false,
+            pinnedAt: null,
+            error: "Workspace not found",
+          },
+        });
+        return;
+      }
+
+      const nextPinnedAt = pinned ? new Date().toISOString() : null;
+
+      await this.workspaceRegistry.upsert({
+        ...existing,
+        pinnedAt: nextPinnedAt,
+        updatedAt: new Date().toISOString(),
+      });
+
+      this.emit({
+        type: "workspace.pin.set.response",
+        payload: {
+          requestId,
+          workspaceId,
+          accepted: true,
+          pinnedAt: nextPinnedAt,
+          error: null,
+        },
+      });
+
+      await this.emitWorkspaceUpdatesForWorkspaceIds([workspaceId], {
+        skipReconcile: true,
+      });
+    } catch (error) {
+      this.sessionLogger.error(
+        { err: error, workspaceId, requestId },
+        "session: workspace.pin.set.request error",
+      );
+      this.emit({
+        type: "activity_log",
+        payload: {
+          id: uuidv4(),
+          timestamp: new Date(),
+          type: "error",
+          content: `Failed to pin workspace: ${getErrorMessage(error)}`,
+        },
+      });
+      this.emit({
+        type: "workspace.pin.set.response",
+        payload: {
+          requestId,
+          workspaceId,
+          accepted: false,
+          pinnedAt: null,
+          error: getErrorMessageOr(error, "Failed to pin workspace"),
         },
       });
     }
@@ -3567,12 +3724,14 @@ export class Session {
         ? resolveProjectDisplayName(resolvedProjectRecord)
         : workspace.projectId,
       projectCustomName: resolvedProjectRecord?.customName ?? null,
+      projectPinnedAt: resolvedProjectRecord?.pinnedAt ?? null,
       projectRootPath: resolvedProjectRecord?.rootPath ?? workspace.cwd,
       workspaceDirectory: workspace.cwd,
       projectKind: (resolvedProjectRecord?.kind ?? "directory") === "git" ? "git" : "non_git",
       workspaceKind: workspace.kind,
       name: resolveWorkspaceDisplayName(workspace),
       title: workspace.title,
+      pinnedAt: workspace.pinnedAt,
       archivingAt: null,
       status: "done",
       statusEnteredAt: null,
@@ -3648,6 +3807,7 @@ export class Session {
         ? resolveProjectDisplayName(projectRecord)
         : result.workspace.projectId,
       projectCustomName: projectRecord?.customName ?? null,
+      projectPinnedAt: projectRecord?.pinnedAt ?? null,
       projectRootPath: projectRecord?.rootPath ?? result.repoRoot,
       workspaceDirectory: result.workspace.cwd,
       projectKind: "git",
@@ -3657,6 +3817,7 @@ export class Session {
         derivedDisplayName: result.worktree.branchName || result.workspace.displayName,
       }),
       title: result.workspace.title,
+      pinnedAt: result.workspace.pinnedAt,
       archivingAt: null,
       status: "done",
       statusEnteredAt: result.workspace.createdAt,
@@ -3805,6 +3966,7 @@ export class Session {
       projectId: project.projectId,
       projectDisplayName: resolveProjectDisplayName(project),
       projectCustomName: project.customName ?? null,
+      projectPinnedAt: project.pinnedAt ?? null,
       projectRootPath: project.rootPath,
       projectKind: project.kind,
     };

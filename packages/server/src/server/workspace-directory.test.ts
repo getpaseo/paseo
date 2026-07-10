@@ -523,6 +523,7 @@ describe("WorkspaceDirectory empty projects", () => {
       createdAt: NOW,
       updatedAt: NOW,
       archivedAt: null,
+      pinnedAt: null,
       ...input,
     } satisfies PersistedProjectRecord;
   }
@@ -544,6 +545,7 @@ describe("WorkspaceDirectory empty projects", () => {
         projectId: "empty",
         projectDisplayName: "Renamed",
         projectCustomName: "Renamed",
+        projectPinnedAt: null,
         projectRootPath: "/workspace/empty",
         projectKind: "non_git",
       },

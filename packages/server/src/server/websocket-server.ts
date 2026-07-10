@@ -1261,6 +1261,8 @@ export class VoiceAssistantWebSocketServer {
         agentForkContext: true,
         // COMPAT(providerSubagents): added in v0.1.107, remove gate after 2027-01-12.
         providerSubagents: true,
+        // COMPAT(workspacePinning): added in v0.1.103, remove gate after 2027-01-01.
+        workspacePinning: true,
       },
     };
   }

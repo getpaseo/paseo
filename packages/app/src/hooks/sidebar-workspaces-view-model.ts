@@ -37,6 +37,7 @@ export interface SidebarWorkspaceEntry extends SidebarStatusWorkspacePlacement {
   // Raw user-set title (null when the name is derived from branch/directory).
   // Prefills the rename input and signals whether a reset is available.
   title: string | null;
+  pinnedAt?: string | null;
   // Checkout branch (null when not a git checkout or detached HEAD).
   currentBranch: string | null;
   archivingAt: string | null;
@@ -157,6 +158,7 @@ export function createSidebarWorkspaceEntry(input: {
     workspaceKind: input.workspace.workspaceKind,
     name: input.workspace.name,
     title: input.workspace.title ?? null,
+    pinnedAt: input.workspace.pinnedAt,
     currentBranch: normalizeCurrentBranch(input.workspace.gitRuntime?.currentBranch),
     statusBucket: effectiveStatus.status,
     statusEnteredAt: effectiveStatus.enteredAt,
