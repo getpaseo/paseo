@@ -337,16 +337,25 @@ export const ru: TranslationResources = {
   workspace: {
     route: {
       loading: "Загрузка рабочей области",
-      restoring: "Восстановление рабочей области",
-      restoreFailed:
-        "Не удалось восстановить эту рабочую область — каталог мог быть перемещён или удалён",
       connecting: "Подключение",
       hostOffline: "{{hostName}}не в сети",
       cannotReachHost: "Невозможно связаться с{{hostName}}",
       hostStatus: "Статус Host:{{status}}",
-      missing: "Workspace не найден",
       needsHostUpgrade: "Обновите хост, чтобы восстановить эту рабочую область",
       manageHost: "Управление хостом",
+      recovery: {
+        archivedTitle: "Рабочая область в архиве",
+        restoreDescription:
+          "{{workspaceName}} была архивирована, а её worktree удалён. Восстановите ветку {{branch}}, чтобы открыть её снова.",
+        unarchiveDescription:
+          "{{workspaceName}} находится в архиве. Разархивируйте её, чтобы открыть снова.",
+        restoreAction: "Восстановить",
+        unarchiveAction: "Разархивировать",
+        restoringTitle: "Восстановление рабочей области",
+        restoringAction: "Восстановление...",
+        unavailableTitle: "Рабочая область недоступна",
+        checkFailedTitle: "Не удалось проверить рабочую область",
+      },
     },
     hoverCard: {
       scriptsAccessibility: "Скрипты Workspace",

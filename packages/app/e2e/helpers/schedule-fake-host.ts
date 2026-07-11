@@ -156,7 +156,7 @@ export async function installFakeScheduleHost(input: {
               workspaceMultiplicity: true,
               projectAdd: true,
               projectRemove: true,
-              worktreeRestore: true,
+              workspaceRecovery: true,
             },
           }),
         );

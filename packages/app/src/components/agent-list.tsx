@@ -394,8 +394,6 @@ export function AgentList({
         serverId,
         agentId,
         workspaceId: agent.workspaceId,
-        restoreWorkspace: { agentArchived: Boolean(agent.archivedAt) },
-        pin: false,
       });
     },
     [isActionSheetVisible, onAgentSelect],

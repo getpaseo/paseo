@@ -335,15 +335,24 @@ export const zhCN: TranslationResources = {
   workspace: {
     route: {
       loading: "正在加载 workspace",
-      restoring: "正在恢复 workspace",
-      restoreFailed: "无法恢复此 workspace — 目录可能已被移动或删除",
       connecting: "正在连接",
       hostOffline: "{{hostName}} 已离线",
       cannotReachHost: "无法连接 {{hostName}}",
       hostStatus: "Host 状态：{{status}}",
-      missing: "Workspace 未找到",
       needsHostUpgrade: "更新你的 Host 以恢复此 workspace",
       manageHost: "管理 Host",
+      recovery: {
+        archivedTitle: "Workspace 已归档",
+        restoreDescription:
+          "{{workspaceName}} 已归档，其 worktree 已移除。恢复分支 {{branch}} 以重新打开。",
+        unarchiveDescription: "{{workspaceName}} 已归档。取消归档以重新打开。",
+        restoreAction: "恢复",
+        unarchiveAction: "取消归档",
+        restoringTitle: "正在恢复 workspace",
+        restoringAction: "正在恢复...",
+        unavailableTitle: "Workspace 不可用",
+        checkFailedTitle: "无法检查 workspace",
+      },
     },
     hoverCard: {
       scriptsAccessibility: "Workspace scripts",

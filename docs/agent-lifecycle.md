@@ -54,8 +54,9 @@ Cascade is what keeps subagent fleets from outliving their orchestrator.
 
 Workspace archive is a separate lifecycle. Archiving or removing a worktree can close a surviving
 agent record without setting the agent's `archivedAt`, while its `workspaceId` still points at the
-archived workspace. History restore must therefore follow explicit restore intent for that missing
-workspace identity; it must not infer workspace lifecycle from `agent.archivedAt`.
+archived workspace. History navigation must not infer workspace lifecycle from `agent.archivedAt`
+or mutate either lifecycle. The workspace route asks the daemon for authoritative recovery state;
+only the route's explicit Unarchive or Restore action changes the archived workspace.
 
 ## Tabs vs archive
 

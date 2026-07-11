@@ -32,13 +32,13 @@ import type {
   AgentSessionConfig,
   AgentStreamEvent,
 } from "./agent/agent-sdk-types.js";
-import { createWorktree, UnknownBranchError } from "../utils/worktree.js";
+import { createWorktree } from "../utils/worktree.js";
 import {
   readPaseoWorktreeMetadata,
   writePaseoWorktreeFirstAgentBranchAutoNameMetadata,
   writePaseoWorktreeMetadata,
 } from "../utils/worktree-metadata.js";
-import { WorktreeRequestError, toWorktreeRequestError } from "./worktree-errors.js";
+import { WorktreeRequestError } from "./worktree-errors.js";
 import type { WorkspaceGitRuntimeSnapshot } from "./workspace-git-service.js";
 import type { GeneratedWorkspaceName } from "./worktree-branch-name-generator.js";
 import { WorkspaceAutoName } from "./workspace-auto-name.js";
@@ -128,10 +128,7 @@ interface SessionTestAccess {
   agentUpdates: AgentUpdatesService;
   workspaceUpdatesSubscription: unknown;
   interruptAgentIfRunning(agentId: string): unknown;
-  recreateOwningWorktreeForRestore(
-    workspace: PersistedWorkspaceRecord,
-    branch: string,
-  ): Promise<void>;
+  recreateArchivedWorktree(workspace: PersistedWorkspaceRecord): Promise<void>;
   reconcileActiveWorkspaceRecords(...args: unknown[]): Promise<Set<string>>;
   reconcileWorkspaceRecord(workspaceId: string): Promise<{
     changed: boolean;
@@ -4422,7 +4419,7 @@ test("open_project_request recreates a missing project record when unarchiving i
   expect(response?.payload.workspace?.projectDisplayName).toBe("repo");
 });
 
-test("refresh_agent_request unarchives the owning workspace when its directory exists", async () => {
+test("refresh_agent_request leaves workspace archival independent when its directory exists", async () => {
   const emitted: SessionOutboundMessage[] = [];
   const session = createSessionForWorkspaceTests({
     onMessage: (message) => {
@@ -4514,13 +4511,13 @@ test("refresh_agent_request unarchives the owning workspace when its directory e
     requestId: "req-refresh-unarchive",
   });
 
-  expect(workspaces.get(workspaceId)?.archivedAt).toBeNull();
-  expect(projects.get(cwd)?.archivedAt).toBeNull();
-  expect(unarchivedWorkspaceIds).toContainEqual([workspaceId]);
+  expect(workspaces.get(workspaceId)?.archivedAt).toBe("2026-03-10T00:00:00.000Z");
+  expect(projects.get(cwd)?.archivedAt).toBe("2026-03-10T00:00:00.000Z");
+  expect(unarchivedWorkspaceIds).toEqual([]);
   expect(findByType(emitted, "rpc_error")).toBeUndefined();
 });
 
-test("refresh_agent_request leaves the owning workspace archived when its directory is missing", async () => {
+test("refresh_agent_request leaves workspace archival independent when its directory is missing", async () => {
   const emitted: SessionOutboundMessage[] = [];
   const session = createSessionForWorkspaceTests({
     onMessage: (message) => {
@@ -4609,7 +4606,7 @@ test("refresh_agent_request leaves the owning workspace archived when its direct
   expect(projects.get(cwd)?.archivedAt).toBe("2026-03-10T00:00:00.000Z");
 });
 
-test("refresh_agent_request recreates a deleted worktree directory and unarchives the same workspace", async () => {
+test("refresh_agent_request does not recreate or unarchive a deleted worktree", async () => {
   const emitted: SessionOutboundMessage[] = [];
   const session = createSessionForWorkspaceTests({
     onMessage: (message) => {
@@ -4675,13 +4672,6 @@ test("refresh_agent_request recreates a deleted worktree directory and unarchive
   session.agentStorage.get = async (id: string) => (id === agentId ? storedAgent : null);
   session.agentStorage.upsert = async () => {};
 
-  const recreateCalls: string[] = [];
-  session.recreateOwningWorktreeForRestore = async (
-    workspace: PersistedWorkspaceRecord,
-  ): Promise<void> => {
-    recreateCalls.push(workspace.workspaceId);
-  };
-
   const managed = makeManagedAgent({
     id: agentId,
     cwd,
@@ -4709,14 +4699,13 @@ test("refresh_agent_request recreates a deleted worktree directory and unarchive
     requestId: "req-refresh-recreate-worktree",
   });
 
-  expect(recreateCalls).toEqual([workspaceId]);
-  expect(workspaces.get(workspaceId)?.archivedAt).toBeNull();
+  expect(workspaces.get(workspaceId)?.archivedAt).toBe("2026-03-10T00:00:00.000Z");
   expect(workspaces.get(workspaceId)?.workspaceId).toBe(workspaceId);
-  expect(unarchivedWorkspaceIds).toContainEqual([workspaceId]);
+  expect(unarchivedWorkspaceIds).toEqual([]);
   expect(findByType(emitted, "rpc_error")).toBeUndefined();
 });
 
-test("refresh_agent_request leaves the worktree archived and surfaces a typed error when recreation fails", async () => {
+test("refresh_agent_request does not inspect an archived worktree branch", async () => {
   const emitted: SessionOutboundMessage[] = [];
   const session = createSessionForWorkspaceTests({
     onMessage: (message) => {
@@ -4782,10 +4771,6 @@ test("refresh_agent_request leaves the worktree archived and surfaces a typed er
   session.agentStorage.get = async (id: string) => (id === agentId ? storedAgent : null);
   session.agentStorage.upsert = async () => {};
 
-  session.recreateOwningWorktreeForRestore = async (): Promise<void> => {
-    throw toWorktreeRequestError(new UnknownBranchError({ branchName: "feature/gone", cwd }));
-  };
-
   const managed = makeManagedAgent({
     id: agentId,
     cwd,
@@ -4807,9 +4792,7 @@ test("refresh_agent_request leaves the worktree archived and surfaces a typed er
   });
 
   expect(workspaces.get(workspaceId)?.archivedAt).toBe("2026-03-10T00:00:00.000Z");
-  const rpcError = findByType(emitted, "rpc_error");
-  expect(rpcError).toBeDefined();
-  expect((rpcError?.payload as { code?: string } | undefined)?.code).toBe("unknown_branch");
+  expect(findByType(emitted, "rpc_error")).toBeUndefined();
 });
 
 function createRecreateWorktreeRepo(): { tempDir: string; repoDir: string } {
@@ -4828,7 +4811,7 @@ function createRecreateWorktreeRepo(): { tempDir: string; repoDir: string } {
   return { tempDir, repoDir };
 }
 
-test("refresh_agent_request recreates a real deleted worktree against a temp git repo and unarchives the same workspace", async () => {
+test("refresh_agent_request leaves a real deleted worktree for explicit workspace recovery", async () => {
   const { tempDir, repoDir } = createRecreateWorktreeRepo();
   const branch = "feature/keep";
   execFileSync("git", ["branch", branch], { cwd: repoDir, stdio: "pipe" });
@@ -4937,22 +4920,15 @@ test("refresh_agent_request recreates a real deleted worktree against a temp git
   });
 
   expect(findByType(emitted, "rpc_error")).toBeUndefined();
-  expect(existsSync(worktreePath)).toBe(true);
-  const headBranch = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
-    cwd: worktreePath,
-    stdio: "pipe",
-  })
-    .toString()
-    .trim();
-  expect(headBranch).toBe(branch);
+  expect(existsSync(worktreePath)).toBe(false);
   expect(workspaces.get(workspaceId)?.workspaceId).toBe(workspaceId);
   expect(workspaces.get(workspaceId)?.cwd).toBe(worktreePath);
-  expect(workspaces.get(workspaceId)?.archivedAt).toBeNull();
+  expect(workspaces.get(workspaceId)?.archivedAt).toBe("2026-03-10T00:00:00.000Z");
 
   rmSync(tempDir, { recursive: true, force: true });
 });
 
-test("recreateOwningWorktreeForRestore throws a typed WorktreeRequestError and leaves the workspace archived when the project root is missing", async () => {
+test("recreateArchivedWorktree throws a typed WorktreeRequestError when the project root is missing", async () => {
   const { tempDir, repoDir } = createRecreateWorktreeRepo();
   const branch = "feature/keep";
   execFileSync("git", ["branch", branch], { cwd: repoDir, stdio: "pipe" });
@@ -5005,9 +4981,9 @@ test("recreateOwningWorktreeForRestore throws a typed WorktreeRequestError and l
   session.filesystem.isDirectory = async (target: string) =>
     existsSync(target) && statSync(target).isDirectory();
 
-  await expect(
-    session.recreateOwningWorktreeForRestore(workspaceRecord, branch),
-  ).rejects.toBeInstanceOf(WorktreeRequestError);
+  await expect(session.recreateArchivedWorktree(workspaceRecord)).rejects.toBeInstanceOf(
+    WorktreeRequestError,
+  );
   // Guard fires before createWorktree, so archivedAt is untouched.
   expect(workspaces.get(workspaceId)?.archivedAt).toBe("2026-03-10T00:00:00.000Z");
 

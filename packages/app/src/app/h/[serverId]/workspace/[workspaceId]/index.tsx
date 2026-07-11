@@ -108,6 +108,11 @@ function HostWorkspaceRouteContent() {
     ? (decodeWorkspaceIdFromPathSegment(workspaceValue) ?? "")
     : "";
   const openValue = getParamValue(globalParams.open);
+  const hasHydratedWorkspaces = useHasHydratedWorkspaces(serverId);
+  const workspaceExists = useWorkspaceExists(serverId, workspaceId);
+  const isOpenIntentWaitingForWorkspace = Boolean(
+    openValue && hasHydratedWorkspaces && !workspaceExists,
+  );
   useEffect(() => {
     if (!serverId || !workspaceId) {
       return;
@@ -123,6 +128,9 @@ function HostWorkspaceRouteContent() {
       return;
     }
     if (!hasHydratedWorkspaceLayoutStore) {
+      return;
+    }
+    if (isOpenIntentWaitingForWorkspace) {
       return;
     }
 
@@ -160,6 +168,7 @@ function HostWorkspaceRouteContent() {
     setIntentConsumed(true);
   }, [
     hasHydratedWorkspaceLayoutStore,
+    isOpenIntentWaitingForWorkspace,
     navigation,
     openValue,
     rootNavigationState?.key,
@@ -167,7 +176,11 @@ function HostWorkspaceRouteContent() {
     workspaceId,
   ]);
 
-  if (openValue && (!intentConsumed || !hasHydratedWorkspaceLayoutStore)) {
+  if (
+    openValue &&
+    !isOpenIntentWaitingForWorkspace &&
+    (!intentConsumed || !hasHydratedWorkspaceLayoutStore)
+  ) {
     return null;
   }
 

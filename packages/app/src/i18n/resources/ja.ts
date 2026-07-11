@@ -338,16 +338,25 @@ export const ja: TranslationResources = {
   workspace: {
     route: {
       loading: "ワークスペースを読み込み中",
-      restoring: "ワークスペースを復元中",
-      restoreFailed:
-        "このワークスペースを復元できませんでした。ディレクトリが移動または削除された可能性があります。",
       connecting: "接続中",
       hostOffline: "{{hostName}}はオフラインです",
       cannotReachHost: "{{hostName}}に到達できません",
       hostStatus: "ホストの状態: {{status}}",
-      missing: "ワークスペースが見つかりません",
       needsHostUpgrade: "このワークスペースを復元するにはホストを更新してください",
       manageHost: "ホストを管理",
+      recovery: {
+        archivedTitle: "ワークスペースはアーカイブ済みです",
+        restoreDescription:
+          "{{workspaceName}} はアーカイブされ、worktree が削除されました。ブランチ {{branch}} を復元して再度開きます。",
+        unarchiveDescription:
+          "{{workspaceName}} はアーカイブされています。再度開くにはアーカイブを解除してください。",
+        restoreAction: "復元",
+        unarchiveAction: "アーカイブを解除",
+        restoringTitle: "ワークスペースを復元中",
+        restoringAction: "復元中...",
+        unavailableTitle: "ワークスペースを利用できません",
+        checkFailedTitle: "ワークスペースを確認できませんでした",
+      },
     },
     hoverCard: {
       scriptsAccessibility: "ワークスペーススクリプト",

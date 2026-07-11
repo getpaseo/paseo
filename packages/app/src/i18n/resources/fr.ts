@@ -338,16 +338,24 @@ export const fr: TranslationResources = {
   workspace: {
     route: {
       loading: "Chargement de l'espace de travail",
-      restoring: "Restauration de l'espace de travail",
-      restoreFailed:
-        "Impossible de restaurer cet espace de travail — le répertoire a peut-être été déplacé ou supprimé",
       connecting: "De liaison",
       hostOffline: "{{hostName}}est hors ligne",
       cannotReachHost: "Impossible d'atteindre{{hostName}}",
       hostStatus: "StatutHost:{{status}}",
-      missing: "Workspaceintrouvable",
       needsHostUpgrade: "Mettez à jour votre hôte pour restaurer cet espace de travail",
       manageHost: "Gérer l'hôte",
+      recovery: {
+        archivedTitle: "Espace de travail archivé",
+        restoreDescription:
+          "{{workspaceName}} a été archivé et son worktree supprimé. Restaurez la branche {{branch}} pour le rouvrir.",
+        unarchiveDescription: "{{workspaceName}} est archivé. Désarchivez-le pour le rouvrir.",
+        restoreAction: "Restaurer",
+        unarchiveAction: "Désarchiver",
+        restoringTitle: "Restauration de l'espace de travail",
+        restoringAction: "Restauration...",
+        unavailableTitle: "Espace de travail indisponible",
+        checkFailedTitle: "Impossible de vérifier l'espace de travail",
+      },
     },
     hoverCard: {
       scriptsAccessibility: "ScriptsWorkspace",
