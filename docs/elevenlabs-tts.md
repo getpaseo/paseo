@@ -36,14 +36,14 @@ for symmetry with the OpenAI `TTS_VOICE` naming.
       "apiKey": "...",
       "voiceId": "21m00Tcm4TlvDq8ikWAM",
       "modelId": "eleven_multilingual_v2",
-      "baseUrl": "https://api.elevenlabs.io"
-    }
+      "baseUrl": "https://api.elevenlabs.io",
+    },
   },
   "features": {
     "voiceMode": {
-      "tts": { "provider": "elevenlabs" }
-    }
-  }
+      "tts": { "provider": "elevenlabs" },
+    },
+  },
 }
 ```
 
@@ -54,11 +54,11 @@ the TTS slot.
 
 ## Defaults
 
-| Field           | Default                       | Notes                                    |
-| --------------- | ----------------------------- | ---------------------------------------- |
-| `baseUrl`       | `https://api.elevenlabs.io`   | Override only for proxies or self-hosted. |
-| `modelId`       | `eleven_multilingual_v2`      | Best general-purpose multilingual model.  |
-| `output_format` | `mp3_44100_128`               | Sent as the `output_format` query param. |
+| Field           | Default                     | Notes                                     |
+| --------------- | --------------------------- | ----------------------------------------- |
+| `baseUrl`       | `https://api.elevenlabs.io` | Override only for proxies or self-hosted. |
+| `modelId`       | `eleven_multilingual_v2`    | Best general-purpose multilingual model.  |
+| `output_format` | `mp3_44100_128`             | Sent as the `output_format` query param.  |
 
 The provider returns the synthesized audio tagged as `format: "mp3"`,
 which the client maps to `audio/mpeg`. Both the web and native audio
@@ -81,12 +81,12 @@ engines decode MP3 natively, so no extra client work is required.
 
 ## Capability caveats
 
-| Slot                       | Result with `elevenlabs`                              |
-| -------------------------- | ----------------------------------------------------- |
-| `voiceMode.tts`            | ✅ ElevenLabs voices.                                  |
-| `voiceMode.stt`            | ⚠️ Logged warning, feature unavailable.               |
-| `voiceMode.turnDetection`  | ⚠️ Logged warning, feature unavailable.               |
-| `dictation.stt`            | ⚠️ Logged warning, feature unavailable.               |
+| Slot                      | Result with `elevenlabs`                |
+| ------------------------- | --------------------------------------- |
+| `voiceMode.tts`           | ✅ ElevenLabs voices.                   |
+| `voiceMode.stt`           | ⚠️ Logged warning, feature unavailable. |
+| `voiceMode.turnDetection` | ⚠️ Logged warning, feature unavailable. |
+| `dictation.stt`           | ⚠️ Logged warning, feature unavailable. |
 
 `validateElevenLabsCredentialRequirements` emits a single
 `logger.warn` per invalid slot at startup so misconfigurations are
