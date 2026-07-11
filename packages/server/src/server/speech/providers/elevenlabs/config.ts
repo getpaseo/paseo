@@ -29,9 +29,7 @@ export function resolveElevenLabsSpeechConfig(params: {
   persisted: PersistedConfig;
 }): ElevenLabsSpeechProviderConfig | undefined {
   const { env, persisted } = params;
-  const providerConfig = persisted.providers?.elevenlabs as
-    | { apiKey?: string; baseUrl?: string; voiceId?: string; modelId?: string }
-    | undefined;
+  const providerConfig = persisted.providers?.elevenlabs;
 
   const apiKey = firstDefined<string>([providerConfig?.apiKey, env.ELEVENLABS_API_KEY]);
   if (!apiKey) {

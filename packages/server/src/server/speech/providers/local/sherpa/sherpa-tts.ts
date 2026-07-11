@@ -35,6 +35,7 @@ interface SherpaOfflineTtsNative {
 }
 
 export class SherpaOnnxTTS implements TextToSpeechProvider {
+  public readonly id = "local" as const;
   private readonly tts: SherpaOfflineTtsNative;
   private readonly speakerId: number;
   private readonly speed: number;

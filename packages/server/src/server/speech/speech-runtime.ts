@@ -316,15 +316,9 @@ function describeRequestedProviders(providers: RequestedSpeechProviders): {
   };
 }
 
-function resolveVoiceTtsLabel(
-  ttsService: TextToSpeechProvider | null,
-  localVoiceTtsProvider: TextToSpeechProvider | null,
-  elevenLabsTtsProvider: TextToSpeechProvider | null,
-): "unavailable" | "local" | "openai" | "elevenlabs" {
+function resolveVoiceTtsLabel(ttsService: TextToSpeechProvider | null): string {
   if (!ttsService) return "unavailable";
-  if (ttsService === localVoiceTtsProvider) return "local";
-  if (ttsService === elevenLabsTtsProvider) return "elevenlabs";
-  return "openai";
+  return ttsService.id ?? "openai";
 }
 
 function resolveEffectiveProviderIds(params: {
@@ -332,8 +326,6 @@ function resolveEffectiveProviderIds(params: {
   sttService: SpeechToTextProvider | null;
   ttsService: TextToSpeechProvider | null;
   dictationSttService: SpeechToTextProvider | null;
-  localVoiceTtsProvider: TextToSpeechProvider | null;
-  elevenLabsTtsProvider: TextToSpeechProvider | null;
 }): {
   dictationStt: string;
   voiceTurnDetection: string;
@@ -344,11 +336,7 @@ function resolveEffectiveProviderIds(params: {
     dictationStt: params.dictationSttService?.id ?? "unavailable",
     voiceTurnDetection: params.turnDetectionService?.id ?? "unavailable",
     voiceStt: params.sttService?.id ?? "unavailable",
-    voiceTts: resolveVoiceTtsLabel(
-      params.ttsService,
-      params.localVoiceTtsProvider,
-      params.elevenLabsTtsProvider,
-    ),
+    voiceTts: resolveVoiceTtsLabel(params.ttsService),
   };
 }
 
@@ -410,8 +398,6 @@ export function createSpeechService(params: {
     defaultModelIds: LocalSpeechModelId[];
   } | null = null;
   let localCleanup = () => {};
-  let localVoiceTtsProvider: TextToSpeechProvider | null = null;
-  let elevenLabsTtsProvider: TextToSpeechProvider | null = null;
 
   let missingLocalModelIds: LocalSpeechModelId[] = [];
   let backgroundDownloadInProgress = false;
@@ -552,12 +538,7 @@ export function createSpeechService(params: {
     sttService = nextElevenLabsSpeech.sttService;
     ttsService = nextElevenLabsSpeech.ttsService;
     dictationSttService = nextElevenLabsSpeech.dictationSttService;
-    elevenLabsTtsProvider =
-      nextElevenLabsSpeech.ttsService && providers.voiceTts.provider === "elevenlabs"
-        ? nextElevenLabsSpeech.ttsService
-        : null;
     localModelConfig = nextLocalSpeech.localModelConfig;
-    localVoiceTtsProvider = nextLocalSpeech.localVoiceTtsProvider;
     localCleanup = nextLocalSpeech.cleanup;
     previousLocalCleanup();
 
@@ -568,8 +549,6 @@ export function createSpeechService(params: {
       sttService,
       ttsService,
       dictationSttService,
-      localVoiceTtsProvider,
-      elevenLabsTtsProvider,
     });
     const unavailableFeatures = [
       providers.dictationStt.enabled !== false && !dictationSttService ? "dictation.stt" : null,

@@ -16,6 +16,7 @@ export interface ElevenLabsTtsConfig {
   voiceId: string;
   modelId?: string;
   outputFormat?: string;
+  fetchImpl?: typeof fetch;
 }
 
 interface ElevenLabsErrorPayload {
@@ -67,10 +68,12 @@ async function parseElevenLabsError(response: Response): Promise<string> {
 export class ElevenLabsTTS implements TextToSpeechProvider {
   public readonly id = "elevenlabs" as const;
   private readonly config: ElevenLabsTtsConfig;
+  private readonly fetchImpl: typeof fetch;
   private readonly logger: pino.Logger;
 
   constructor(ttsConfig: ElevenLabsTtsConfig, parentLogger: pino.Logger) {
     this.config = ttsConfig;
+    this.fetchImpl = ttsConfig.fetchImpl ?? globalThis.fetch;
     this.logger = parentLogger.child({
       module: "agent",
       provider: "elevenlabs",
@@ -84,10 +87,6 @@ export class ElevenLabsTTS implements TextToSpeechProvider {
       },
       "TTS (ElevenLabs) initialized",
     );
-  }
-
-  public getConfig(): ElevenLabsTtsConfig {
-    return this.config;
   }
 
   public async synthesizeSpeech(text: string): Promise<SpeechStreamResult> {
@@ -110,7 +109,7 @@ export class ElevenLabsTTS implements TextToSpeechProvider {
 
     let response: Response;
     try {
-      response = await fetch(url, {
+      response = await this.fetchImpl(url, {
         method: "POST",
         headers: {
           "xi-api-key": this.config.apiKey,

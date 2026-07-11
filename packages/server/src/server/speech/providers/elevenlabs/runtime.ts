@@ -75,9 +75,6 @@ function createElevenLabsTts(
   elevenlabsConfig: ElevenLabsSpeechProviderConfig,
   logger: Logger,
 ): TextToSpeechProvider {
-  if (!elevenlabsConfig.tts) {
-    throw new Error("ElevenLabs TTS configuration missing");
-  }
   return new ElevenLabsTTS(elevenlabsConfig.tts, logger);
 }
 
