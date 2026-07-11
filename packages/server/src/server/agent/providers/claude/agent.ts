@@ -33,6 +33,7 @@ import {
   findClaudeModel,
   getClaudeModelsWithSettings,
   normalizeClaudeRuntimeModelId,
+  resolveClaudeConfigDir,
 } from "./models.js";
 import { CLAUDE_ULTRACODE_THINKING_OPTION_ID } from "./model-manifest.js";
 import { parsePartialJsonObject } from "./partial-json.js";
@@ -47,7 +48,12 @@ import {
 import { appendOrReplaceGrowingAssistantMessage, runProviderTurn } from "../provider-runner.js";
 import { renderPromptAttachmentAsText } from "../../prompt-attachments.js";
 import { claudeQuery, type ClaudeOptions, type ClaudeQueryFactory } from "./query.js";
-import { realClaudeRewindSdk, revertClaudeConversation, revertClaudeFiles } from "./rewind.js";
+import {
+  realClaudeRewindSdk,
+  revertClaudeConversation,
+  revertClaudeFiles,
+  type ClaudeRewindSdk,
+} from "./rewind.js";
 import { normalizeProviderReplayTimestamp } from "../../provider-history-timestamps.js";
 import { claudeProjectDirSync } from "./project-dir.js";
 import { SETTING_APPLIES_NEXT_TURN_NOTICE } from "../../provider-notices.js";
@@ -65,6 +71,7 @@ import {
   type AgentClient,
   type AgentCreateSessionOptions,
   type AgentFeature,
+  type AgentForkOptions,
   type AgentLaunchContext,
   type AgentMetadata,
   type AgentMode,
@@ -277,6 +284,7 @@ const CLAUDE_CAPABILITIES: AgentCapabilityFlags = {
   supportsRewindConversation: true,
   supportsRewindFiles: true,
   supportsRewindBoth: true,
+  supportsFork: true,
 };
 
 const DEFAULT_MODES: AgentMode[] = [
@@ -359,6 +367,10 @@ interface ClaudeAgentClientOptions {
   queryFactory?: ClaudeQueryFactory;
   resolveBinary?: () => Promise<string>;
   configDir?: string;
+  /** Injectable Claude rewind SDK (native session fork). Defaults to the real SDK. */
+  rewindSdk?: ClaudeRewindSdk;
+  /** Injectable reader for the persisted session JSONL (whole-conversation fork). */
+  readSessionFile?: (filePath: string) => Promise<string>;
 }
 
 interface ClaudeAgentSessionOptions {
@@ -1413,6 +1425,8 @@ export class ClaudeAgentClient implements AgentClient {
   private readonly queryFactory?: ClaudeQueryFactory;
   private readonly resolveBinary: () => Promise<string>;
   private readonly configDir?: string;
+  private readonly rewindSdk: ClaudeRewindSdk;
+  private readonly readSessionFile: (filePath: string) => Promise<string>;
 
   constructor(options: ClaudeAgentClientOptions) {
     this.defaults = options.defaults;
@@ -1421,6 +1435,9 @@ export class ClaudeAgentClient implements AgentClient {
     this.queryFactory = options.queryFactory;
     this.resolveBinary = options.resolveBinary ?? (() => resolveClaudeBinary(this.runtimeSettings));
     this.configDir = options.configDir;
+    this.rewindSdk = options.rewindSdk ?? realClaudeRewindSdk;
+    this.readSessionFile =
+      options.readSessionFile ?? ((filePath) => promises.readFile(filePath, "utf8"));
   }
 
   async createSession(
@@ -1544,6 +1561,90 @@ export class ClaudeAgentClient implements AgentClient {
         diagnostic: formatProviderDiagnosticError("Claude Code", error),
       };
     }
+  }
+
+  /**
+   * Fork a persisted Claude session into a new, independent session (parallel
+   * branch). Uses the Claude SDK's native `forkSession` which operates on the
+   * persisted JSONL on disk — no live process needed.
+   *
+   * When `options.upToMessageId` is omitted (whole-conversation fork), the last
+   * user or assistant message uuid is resolved from the persisted session file
+   * because the SDK requires an explicit message id.
+   */
+  async forkSession(
+    handle: AgentPersistenceHandle,
+    options: AgentForkOptions,
+    overrides?: Partial<AgentSessionConfig>,
+    launchContext?: AgentLaunchContext,
+  ): Promise<AgentSession> {
+    const sessionId = handle.sessionId;
+    const upToMessageId = options.upToMessageId ?? (await this.resolveLastMessageId(handle));
+
+    const fork = await this.rewindSdk.forkSession(sessionId, { upToMessageId });
+
+    const forkedHandle: AgentPersistenceHandle = {
+      ...handle,
+      sessionId: fork.sessionId,
+      nativeHandle: fork.sessionId,
+    };
+    return this.resumeSession(forkedHandle, overrides, launchContext);
+  }
+
+  /**
+   * Resolve the last user or assistant message uuid from the persisted JSONL
+   * session file. This is needed when the caller requests a whole-conversation
+   * fork without specifying a target message id.
+   */
+  private async resolveLastMessageId(handle: AgentPersistenceHandle): Promise<string> {
+    const metadata = coerceSessionMetadata(handle.metadata);
+    const cwd = metadata.cwd;
+    if (!cwd) {
+      throw new Error(
+        "Cannot fork Claude session: working directory (cwd) not found in handle metadata",
+      );
+    }
+
+    const configDir = resolveClaudeConfigDir(this.configDir);
+    const sessionFile = path.join(
+      claudeProjectDirSync(cwd, { configDir }),
+      `${handle.sessionId}.jsonl`,
+    );
+
+    let content: string;
+    try {
+      content = await this.readSessionFile(sessionFile);
+    } catch {
+      throw new Error(`Cannot fork Claude session: session file not found at ${sessionFile}`);
+    }
+
+    let lastUuid: string | null = null;
+    for (const line of content.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      try {
+        const entry: unknown = JSON.parse(trimmed);
+        if (entry && typeof entry === "object" && !Array.isArray(entry)) {
+          const record = entry as Record<string, unknown>;
+          if (
+            (record.type === "user" || record.type === "assistant") &&
+            typeof record.uuid === "string" &&
+            record.uuid.length > 0
+          ) {
+            lastUuid = record.uuid;
+          }
+        }
+      } catch {
+        // skip malformed lines
+      }
+    }
+
+    if (!lastUuid) {
+      throw new Error(
+        "Cannot fork Claude session: no user or assistant message found in session history",
+      );
+    }
+    return lastUuid;
   }
 
   private assertConfig(config: AgentSessionConfig): ClaudeAgentConfig {

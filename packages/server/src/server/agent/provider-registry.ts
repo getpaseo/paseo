@@ -34,6 +34,7 @@ import { CopilotACPAgentClient } from "./providers/copilot-acp-agent.js";
 import { CursorACPAgentClient } from "./providers/cursor-acp-agent.js";
 import { GenericACPAgentClient } from "./providers/generic-acp-agent.js";
 import { KiroACPAgentClient } from "./providers/kiro-acp-agent.js";
+import { TraeACPAgentClient } from "./providers/trae-acp-agent.js";
 import { OpenCodeAgentClient } from "./providers/opencode-agent.js";
 import { PiRpcAgentClient } from "./providers/pi/agent.js";
 import { TraeACPAgentClient } from "./providers/trae-acp-agent.js";
@@ -399,6 +400,7 @@ function wrapClientProvider(
   const listImportableSessions = inner.listImportableSessions?.bind(inner);
   const importSession = inner.importSession?.bind(inner);
   const listFeatures = inner.listFeatures?.bind(inner);
+  const forkSession = inner.forkSession?.bind(inner);
 
   return {
     provider,
@@ -431,6 +433,26 @@ function wrapClientProvider(
           launchContext,
         ),
       ),
+    forkSession: forkSession
+      ? async (handle, options, overrides, launchContext) =>
+          wrapSessionProvider(
+            provider,
+            await forkSession(
+              {
+                ...handle,
+                provider: inner.provider,
+              },
+              options,
+              overrides
+                ? {
+                    ...overrides,
+                    provider: inner.provider,
+                  }
+                : undefined,
+              launchContext,
+            ),
+          )
+      : undefined,
     fetchCatalog: async (options) => {
       const catalog = await inner.fetchCatalog(options);
       return {

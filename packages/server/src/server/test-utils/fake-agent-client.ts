@@ -7,6 +7,7 @@ import type {
   AgentCapabilityFlags,
   AgentClient,
   AgentFeature,
+  AgentForkOptions,
   AgentLaunchContext,
   AgentMode,
   AgentModelDefinition,
@@ -34,6 +35,7 @@ const TEST_CAPABILITIES: AgentCapabilityFlags = {
   supportsRewindConversation: false,
   supportsRewindFiles: false,
   supportsRewindBoth: false,
+  supportsFork: true,
 };
 
 const TEST_FEATURE_ID = "test_feature";
@@ -1154,8 +1156,13 @@ class FakeAgentSession implements AgentSession {
 }
 
 class FakeAgentClient implements AgentClient {
-  readonly capabilities = TEST_CAPABILITIES;
-  constructor(public readonly provider: string) {}
+  readonly capabilities: AgentCapabilityFlags;
+  constructor(
+    public readonly provider: string,
+    capabilitiesOverride?: Partial<AgentCapabilityFlags>,
+  ) {
+    this.capabilities = { ...TEST_CAPABILITIES, ...capabilitiesOverride };
+  }
 
   async createSession(
     config: AgentSessionConfig,
@@ -1182,6 +1189,31 @@ class FakeAgentClient implements AgentClient {
       this.provider,
       cfg,
       handle.sessionId,
+      typeof marker === "string" ? marker : null,
+    );
+  }
+
+  async forkSession(
+    handle: AgentPersistenceHandle,
+    _options: AgentForkOptions,
+    overrides?: Partial<AgentSessionConfig>,
+    _launchContext?: AgentLaunchContext,
+  ): Promise<AgentSession> {
+    const cfg: AgentSessionConfig = {
+      provider: this.provider,
+      cwd: overrides?.cwd ?? process.cwd(),
+      ...overrides,
+    };
+    const marker =
+      (handle.metadata as Record<string, unknown> | undefined)?.marker ??
+      (handle.metadata as Record<string, unknown> | undefined)?.conversationId ??
+      null;
+    // A real fork mints a NEW provider session id so the original is never
+    // mutated. Pass no sessionId so FakeAgentSession generates a fresh one.
+    return new FakeAgentSession(
+      this.provider,
+      cfg,
+      undefined,
       typeof marker === "string" ? marker : null,
     );
   }
@@ -1222,10 +1254,14 @@ class FakeAgentClient implements AgentClient {
   }
 }
 
-export function createTestAgentClients(): Record<string, AgentClient> {
+export function createTestAgentClients(overrides?: {
+  claude?: Partial<AgentCapabilityFlags>;
+  codex?: Partial<AgentCapabilityFlags>;
+  opencode?: Partial<AgentCapabilityFlags>;
+}): Record<string, AgentClient> {
   return {
-    claude: new FakeAgentClient("claude"),
-    codex: new FakeAgentClient("codex"),
-    opencode: new FakeAgentClient("opencode"),
+    claude: new FakeAgentClient("claude", overrides?.claude),
+    codex: new FakeAgentClient("codex", overrides?.codex),
+    opencode: new FakeAgentClient("opencode", overrides?.opencode),
   };
 }

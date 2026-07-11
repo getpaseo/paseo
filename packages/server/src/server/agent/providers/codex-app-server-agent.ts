@@ -5,6 +5,7 @@ import {
   type AgentClient,
   type AgentCreateSessionOptions,
   type AgentFeature,
+  type AgentForkOptions,
   type AgentLaunchContext,
   type AgentMode,
   type AgentModelDefinition,
@@ -197,6 +198,7 @@ const CODEX_APP_SERVER_CAPABILITIES: AgentCapabilityFlags = {
   supportsRewindConversation: true,
   supportsRewindFiles: false,
   supportsRewindBoth: false,
+  supportsFork: true,
 };
 
 const CODEX_MODES: AgentMode[] = [
@@ -241,6 +243,11 @@ interface CodexAppServerAgentDeps {
     logger: Logger,
     getTraceContext: () => CodexAppServerTraceContext,
   ) => CodexAppServerClientLike;
+  /** Test seam: override how the app-server child process is spawned. */
+  _spawnAppServer?: (
+    launchEnv?: Record<string, string>,
+    options?: { goalsEnabled?: boolean; agentId?: string },
+  ) => Promise<ChildProcessWithoutNullStreams>;
 }
 
 interface CodexModePreset {
@@ -5898,6 +5905,9 @@ export class CodexAppServerAgentClient implements AgentClient {
     launchEnv?: Record<string, string>,
     options?: { goalsEnabled?: boolean; agentId?: string },
   ): Promise<ChildProcessWithoutNullStreams> {
+    if (this.deps._spawnAppServer) {
+      return this.deps._spawnAppServer(launchEnv, options);
+    }
     const launchPrefix = await resolveCodexLaunchPrefix(this.runtimeSettings);
     const args = [...launchPrefix.args, "app-server"];
     if (options?.goalsEnabled) {
@@ -5983,6 +5993,103 @@ export class CodexAppServerAgentClient implements AgentClient {
     );
     await session.connect();
     return session;
+  }
+
+  /**
+   * Fork a persisted Codex thread into a new independent thread (whole-
+   * conversation copy). The original thread is never mutated.
+   */
+  async forkSession(
+    handle: AgentPersistenceHandle,
+    options: AgentForkOptions,
+    overrides?: Partial<AgentSessionConfig>,
+    launchContext?: AgentLaunchContext,
+  ): Promise<AgentSession> {
+    const sourceThreadId = handle.sessionId ?? handle.nativeHandle;
+    if (!sourceThreadId) {
+      throw new Error("Cannot fork Codex session: no thread id available");
+    }
+
+    const metadata = (handle.metadata ?? {}) as Record<string, unknown>;
+    const cwd = (typeof metadata.cwd === "string" ? metadata.cwd : null) ?? overrides?.cwd ?? null;
+    const model =
+      (typeof metadata.model === "string" ? metadata.model : null) ?? overrides?.model ?? null;
+    const serviceTier: string | null = null;
+
+    // Spawn a transient app-server client for the fork RPC (same pattern as
+    // listImportableSessions). The forked thread will be loaded by resumeSession
+    // via a separate long-lived connection.
+    const child = await this.spawnAppServer();
+    const client =
+      this.deps._createCodexClient?.(child, this.logger, () => ({})) ??
+      new CodexAppServerClient(child, this.logger);
+
+    let newThreadId: string;
+    try {
+      await client.request("initialize", buildCodexAppServerInitializeParams());
+      client.notify("initialized", {});
+
+      const forked = await forkCodexThread(client, {
+        threadId: sourceThreadId,
+        cwd,
+        model,
+        serviceTier,
+        excludeTurns: false,
+        persistExtendedHistory: true,
+      });
+      newThreadId = forked.thread.id;
+
+      // Per-message fork: truncate the copy so it ends at the requested turn
+      // (mirrors the rewind path — fork copies the whole thread, then rollback
+      // removes the turns after the boundary). Whole-conversation fork (no
+      // upToTurnIndex) keeps the full copy. Done on the forked thread only, so
+      // the source is never mutated.
+      //
+      // The boundary is located by TURN INDEX, not by matching upToMessageId
+      // against thread/read's items: Codex's `thread/read` RPC never returns
+      // the streaming `resp_..._msg` ids that `upToMessageId` uses — its items
+      // carry their own, unrelated position-based ids (e.g. "item-7") on every
+      // thread, forked or not. `upToTurnIndex` (the 0-based assistant-turn
+      // index, computed by the caller from the same timeline upToMessageId came
+      // from) sidesteps that id mismatch entirely.
+      if (options.upToTurnIndex !== undefined) {
+        const numTurns = await this.resolveCodexForkRollbackTurnsFromIndex(
+          client,
+          newThreadId,
+          options.upToTurnIndex,
+        );
+        this.logger.info(
+          { threadId: newThreadId, upToTurnIndex: options.upToTurnIndex, numTurns },
+          "codex.fork.rollback",
+        );
+        if (numTurns > 0) {
+          await rollbackCodexThread(client, { threadId: newThreadId, numTurns });
+        }
+      }
+    } finally {
+      await client.dispose();
+    }
+
+    const forkedHandle: AgentPersistenceHandle = {
+      ...handle,
+      sessionId: newThreadId,
+      nativeHandle: newThreadId,
+    };
+    return this.resumeSession(forkedHandle, overrides, launchContext);
+  }
+
+  /**
+   * Number of trailing turns to roll back on `threadId` so it ends at turn
+   * `boundaryTurnIndex` (0-based, inclusive).
+   */
+  private async resolveCodexForkRollbackTurnsFromIndex(
+    client: CodexAppServerClientLike,
+    threadId: string,
+    boundaryTurnIndex: number,
+  ): Promise<number> {
+    const response = await requestCodexThreadHistory((id) => readCodexThread(client, id), threadId);
+    const turnCount = response.thread.turns.length;
+    return Math.max(0, turnCount - (boundaryTurnIndex + 1));
   }
 
   async listImportableSessions(

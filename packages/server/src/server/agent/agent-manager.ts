@@ -20,6 +20,7 @@ import {
   type AgentClient,
   type AgentCreateSessionOptions,
   type AgentFeature,
+  type AgentForkOptions,
   type AgentLaunchContext,
   type AgentSlashCommand,
   type AgentMode,
@@ -521,6 +522,55 @@ function getFirstUserMessageTextFromRows(rows: readonly AgentTimelineRow[]): str
   return null;
 }
 
+/**
+ * Truncate the seeded fork timeline so it ends at the chosen boundary message
+ * (a per-message fork). Keeps rows up to and including the row whose
+ * user/assistant message id matches `boundaryMessageId`; everything after is
+ * dropped so the forked tab's displayed history matches the truncated provider
+ * session. If the boundary isn't found, the full timeline is kept (the provider
+ * session wasn't truncated either).
+ */
+function truncateForkRowsAtBoundary(
+  rows: readonly AgentTimelineRow[],
+  boundaryMessageId: string,
+): AgentTimelineRow[] {
+  const index = rows.findIndex((row) => {
+    const item = row.item;
+    return (
+      (item.type === "assistant_message" || item.type === "user_message") &&
+      item.messageId === boundaryMessageId
+    );
+  });
+  if (index < 0) {
+    return [...rows];
+  }
+  return rows.slice(0, index + 1);
+}
+
+/**
+ * Number of assistant-turn boundaries (assistant_message rows) within `rows`.
+ * Used to translate a boundary message id into a 0-based turn index so
+ * providers whose own session-history API doesn't share the timeline's id
+ * scheme can locate the truncation point by position (see
+ * `AgentForkOptions.upToTurnIndex`).
+ */
+function countAssistantTurns(rows: readonly AgentTimelineRow[]): number {
+  return rows.filter((row) => row.item.type === "assistant_message").length;
+}
+
+/** Lineage labels stamped onto a forked agent. */
+function buildForkLabels(
+  sourceAgentId: string,
+  messageId: string | undefined,
+  extra: Record<string, string> | undefined,
+): Record<string, string> {
+  const labels: Record<string, string> = { ...extra, forkedFromAgentId: sourceAgentId };
+  if (messageId) {
+    labels.forkedFromMessageId = messageId;
+  }
+  return labels;
+}
+
 export class AgentManager {
   private readonly clients = new Map<AgentProvider, AgentClient>();
   private readonly providerEnabled = new Map<AgentProvider, boolean>();
@@ -992,6 +1042,104 @@ export class AgentManager {
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
     const session = await client.resumeSession(handle, providerLaunchConfig, launchContext);
     return this.registerSession(session, storedConfig, resolvedAgentId, options);
+  }
+
+  /**
+   * Fork an existing agent's session into a new, independent parallel session.
+   * Only providers that implement a REAL provider-native fork
+   * (`capabilities.supportsFork` + `forkSession`, e.g. Kiro duplicates its
+   * on-disk session record) are supported — there is intentionally no cosmetic
+   * "snapshot" fallback, because a fork that merely replays prior messages
+   * without real provider context is misleading. Unsupported providers throw.
+   *
+   * The fork preserves the full conversation context (the forked provider
+   * session carries it), is seeded with the full source timeline, and never
+   * mutates the source — so the original and the fork run in parallel.
+   */
+  async forkAgent(
+    sourceAgentId: string,
+    options?: {
+      messageId?: string;
+      labels?: Record<string, string>;
+      workspaceId?: string;
+      agentId?: string;
+    },
+  ): Promise<ManagedAgent> {
+    const source = this.requireAgent(sourceAgentId);
+    const handle = source.persistence;
+    if (!handle) {
+      throw new Error(`Agent ${sourceAgentId} has no persisted session to fork`);
+    }
+    const client = this.requireClient(handle.provider);
+    if (!client.capabilities.supportsFork || !client.forkSession) {
+      throw new Error(`Provider '${handle.provider}' does not support forking sessions`);
+    }
+    const available = await client.isAvailable();
+    if (!available) {
+      throw new Error(
+        `Provider '${handle.provider}' is not available. Please ensure the CLI is installed.`,
+      );
+    }
+
+    const newAgentId = validateAgentId(options?.agentId ?? this.idFactory(), "forkAgent");
+    const metadata = (handle.metadata ?? {}) as Partial<AgentSessionConfig>;
+    const mergedConfig = {
+      ...metadata,
+      provider: handle.provider,
+      cwd: source.cwd,
+    } as AgentSessionConfig;
+    const { storedConfig, launchConfig } = await this.prepareSessionConfig(
+      mergedConfig,
+      newAgentId,
+    );
+    const launchContext = await this.buildLaunchContext(newAgentId, client);
+    const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
+
+    // Seed the new agent's displayed timeline from the source. For a
+    // whole-conversation fork that's the full timeline; for a per-message fork
+    // (messageId set) truncate it at the boundary so the forked tab's history
+    // matches the truncated provider session.
+    const allForkRows = await this.getTimelineRows(sourceAgentId);
+    const forkRows = options?.messageId
+      ? truncateForkRowsAtBoundary(allForkRows, options.messageId)
+      : allForkRows;
+    const forkOptions: AgentForkOptions = options?.messageId
+      ? {
+          upToMessageId: options.messageId,
+          upToTurnIndex: countAssistantTurns(forkRows) - 1,
+        }
+      : {};
+    const session = await client.forkSession(
+      handle,
+      forkOptions,
+      providerLaunchConfig,
+      launchContext,
+    );
+
+    const registered = await this.registerSession(session, storedConfig, newAgentId, {
+      labels: buildForkLabels(sourceAgentId, options?.messageId, options?.labels),
+      workspaceId: options?.workspaceId ?? source.workspaceId,
+      timelineRows: forkRows,
+      timelineNextSeq: forkRows.length + 1,
+      historyPrimed: true,
+      // Derive the fork's title from the seeded source timeline (its first user
+      // message), mirroring the import path — otherwise the forked tab shows a
+      // blank title until the first new turn.
+      initialTitle: resolveImportedAgentTitle(mergedConfig, forkRows),
+    });
+
+    this.logger.info(
+      {
+        sourceAgentId,
+        newAgentId,
+        provider: handle.provider,
+        messageId: options?.messageId ?? null,
+        seededRows: forkRows.length,
+      },
+      "agent.fork.complete",
+    );
+
+    return registered;
   }
 
   async importProviderSession(input: {

@@ -177,6 +177,11 @@ export interface AgentCapabilityFlags {
   supportsRewindConversation?: boolean;
   supportsRewindFiles?: boolean;
   supportsRewindBoth?: boolean;
+  /**
+   * Provider can fork a persisted session into a new, independent session
+   * (parallel branch) without mutating the original.
+   */
+  supportsFork?: boolean;
 }
 
 export interface AgentPersistenceHandle {
@@ -185,6 +190,25 @@ export interface AgentPersistenceHandle {
   /** Provider specific handle (Codex thread id, Claude resume token, etc). */
   nativeHandle?: string;
   metadata?: AgentMetadata;
+}
+
+export interface AgentForkOptions {
+  /**
+   * Fork the conversation so the new session contains history up to and
+   * including this user message id, then branches independently. When omitted,
+   * the fork copies the full session at its current state.
+   */
+  upToMessageId?: string;
+  /**
+   * 0-based index of the assistant turn containing `upToMessageId`, counted
+   * over the source agent's own displayed timeline (turn N = the Nth
+   * user/assistant exchange). Provided alongside `upToMessageId` so providers
+   * whose own session-history API uses a different, non-corresponding item id
+   * scheme (e.g. Codex's `thread/read`, which never returns the streaming
+   * `resp_..._msg` ids `upToMessageId` uses) can still locate the correct
+   * truncation point by position instead of by id match.
+   */
+  upToTurnIndex?: number;
 }
 
 export type AgentPromptContentBlock =
@@ -672,6 +696,18 @@ export interface AgentClient {
   ): Promise<AgentSession>;
   resumeSession(
     handle: AgentPersistenceHandle,
+    overrides?: Partial<AgentSessionConfig>,
+    launchContext?: AgentLaunchContext,
+  ): Promise<AgentSession>;
+  /**
+   * Fork a persisted session into a new, independent session (a parallel
+   * branch). The returned session must describe a NEW persistence handle
+   * (distinct sessionId) so the original is never mutated. Only implemented by
+   * providers advertising `capabilities.supportsFork`.
+   */
+  forkSession?(
+    handle: AgentPersistenceHandle,
+    options: AgentForkOptions,
     overrides?: Partial<AgentSessionConfig>,
     launchContext?: AgentLaunchContext,
   ): Promise<AgentSession>;

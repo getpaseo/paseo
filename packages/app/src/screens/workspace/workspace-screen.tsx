@@ -19,6 +19,7 @@ import { DiffStat } from "@/components/diff-stat";
 import {
   CopyX,
   ArrowLeftToLine,
+  GitBranch,
   ArrowRightToLine,
   ChevronDown,
   Copy,
@@ -111,6 +112,7 @@ import { getDesktopHost } from "@/desktop/host";
 import { buildProviderCommand } from "@/utils/provider-command-templates";
 import { generateDraftId } from "@/stores/draft-keys";
 import { resolveWorkspaceRouteId } from "@/utils/workspace-identity";
+import { navigateToAgent } from "@/utils/navigate-to-agent";
 import {
   WorkspaceTabPresentationResolver,
   WorkspaceTabIcon,
@@ -238,6 +240,7 @@ const ThemedChevronDown = withUnistyles(ChevronDown);
 const ThemedCopy = withUnistyles(Copy);
 const ThemedRotateCw = withUnistyles(RotateCw);
 const ThemedArrowLeftToLine = withUnistyles(ArrowLeftToLine);
+const ThemedGitBranch = withUnistyles(GitBranch);
 const ThemedArrowRightToLine = withUnistyles(ArrowRightToLine);
 const ThemedCopyX = withUnistyles(CopyX);
 const ThemedPencil = withUnistyles(Pencil);
@@ -390,6 +393,7 @@ interface MobileWorkspaceTabSwitcherProps {
   onSelectSwitcherTab: (key: string) => void;
   onCopyResumeCommand: (agentId: string) => Promise<void> | void;
   onCopyAgentId: (agentId: string) => Promise<void> | void;
+  onForkAgent: (agentId: string) => Promise<void> | void;
   onCopyFilePath: (path: string) => Promise<void> | void;
   onReloadAgent: (agentId: string) => Promise<void> | void;
   onRenameTab: (tab: WorkspaceTabDescriptor) => void;
@@ -532,6 +536,8 @@ function MobileTabDropdownMenuItem({
     switch (entry.icon) {
       case "copy":
         return <ThemedCopy size={16} uniProps={mutedColorMapping} />;
+      case "git-branch":
+        return <ThemedGitBranch size={16} uniProps={mutedColorMapping} />;
       case "rotate-cw":
         return <ThemedRotateCw size={16} uniProps={mutedColorMapping} />;
       case "arrow-left-to-line":
@@ -578,6 +584,7 @@ function MobileWorkspaceTabOption({
   onPress,
   onCopyResumeCommand,
   onCopyAgentId,
+  onForkAgent,
   onCopyFilePath,
   onReloadAgent,
   onRenameTab,
@@ -596,6 +603,7 @@ function MobileWorkspaceTabOption({
   onPress: () => void;
   onCopyResumeCommand: (agentId: string) => Promise<void> | void;
   onCopyAgentId: (agentId: string) => Promise<void> | void;
+  onForkAgent: (agentId: string) => Promise<void> | void;
   onCopyFilePath: (path: string) => Promise<void> | void;
   onReloadAgent: (agentId: string) => Promise<void> | void;
   onRenameTab: (tab: WorkspaceTabDescriptor) => void;
@@ -609,6 +617,7 @@ function MobileWorkspaceTabOption({
     () => ({
       copyResumeCommand: t("workspace.tabs.menu.copyResumeCommand"),
       copyAgentId: t("workspace.tabs.menu.copyAgentId"),
+      forkAgent: t("workspace.tabs.menu.forkAgent"),
       copyFilePath: t("workspace.tabs.menu.copyFilePath"),
       rename: t("workspace.tabs.menu.rename"),
       closeAbove: t("workspace.tabs.menu.closeAbove"),
@@ -622,6 +631,12 @@ function MobileWorkspaceTabOption({
     }),
     [t],
   );
+  const canForkAgent = useSessionStore((state) =>
+    tab.target.kind === "agent"
+      ? (state.sessions[normalizedServerId]?.agents?.get(tab.target.agentId)?.capabilities
+          ?.supportsFork ?? false)
+      : false,
+  );
   const menuTestIDBase = `workspace-tab-menu-${buildDeterministicWorkspaceTabId(tab.target)}`;
   const menuEntries = buildWorkspaceTabMenuEntries({
     surface: "mobile",
@@ -631,6 +646,8 @@ function MobileWorkspaceTabOption({
     menuTestIDBase,
     onCopyResumeCommand,
     onCopyAgentId,
+    onForkAgent,
+    canForkAgent,
     onCopyFilePath,
     onReloadAgent,
     onRenameTab,
@@ -698,6 +715,7 @@ const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitcher({
   onSelectSwitcherTab,
   onCopyResumeCommand,
   onCopyAgentId,
+  onForkAgent,
   onCopyFilePath,
   onReloadAgent,
   onRenameTab,
@@ -754,6 +772,7 @@ const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitcher({
           onPress={onPress}
           onCopyResumeCommand={onCopyResumeCommand}
           onCopyAgentId={onCopyAgentId}
+          onForkAgent={onForkAgent}
           onCopyFilePath={onCopyFilePath}
           onReloadAgent={onReloadAgent}
           onRenameTab={onRenameTab}
@@ -772,6 +791,7 @@ const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitcher({
       normalizedWorkspaceId,
       onCopyResumeCommand,
       onCopyAgentId,
+      onForkAgent,
       onCopyFilePath,
       onReloadAgent,
       onRenameTab,
@@ -2611,6 +2631,41 @@ function WorkspaceScreenContent({
     [toast, t],
   );
 
+  const handleForkAgent = useCallback(
+    async (agentId: string) => {
+      if (!agentId) return;
+      if (!client) {
+        toast.error(t("common.errors.daemonClientUnavailable"));
+        return;
+      }
+      // Forking duplicates the whole provider session and can take a moment;
+      // show a persistent in-progress toast so it doesn't feel like a freeze,
+      // then replace it with a success/failure toast when it settles.
+      toast.show(t("fork.pending"), { durationMs: null });
+      try {
+        // Forks the whole conversation into a new, independent parallel agent;
+        // the daemon broadcasts the new agent so it appears in the workspace.
+        const result = await client.forkAgent(agentId);
+        toast.show(t("fork.success"), { variant: "success" });
+        // Jump to the fork immediately — otherwise the user (and any follow-up
+        // question meant to probe the new branch) stays on the original tab,
+        // which is confusing and silently exercises the wrong session.
+        if (result.newAgentId) {
+          const sourceAgent =
+            useSessionStore.getState().sessions[normalizedServerId]?.agents?.get(agentId) ?? null;
+          navigateToAgent({
+            serverId: normalizedServerId,
+            agentId: result.newAgentId,
+            workspaceId: sourceAgent?.workspaceId,
+          });
+        }
+      } catch {
+        toast.error(t("fork.errors.failed"));
+      }
+    },
+    [client, toast, t, normalizedServerId],
+  );
+
   const handleCopyFilePath = useCallback(
     async (path: string) => {
       if (!path) return;
@@ -3448,6 +3503,7 @@ function WorkspaceScreenContent({
         onCloseTab={handleCloseTabById}
         onCopyResumeCommand={handleCopyResumeCommand}
         onCopyAgentId={handleCopyAgentId}
+        onForkAgent={handleForkAgent}
         onCopyFilePath={handleCopyFilePath}
         onReloadAgent={handleReloadAgent}
         onRenameTab={handleRenameTab}
@@ -3483,6 +3539,7 @@ function WorkspaceScreenContent({
     handleCloseTabById,
     handleCopyResumeCommand,
     handleCopyAgentId,
+    handleForkAgent,
     handleCopyFilePath,
     handleReloadAgent,
     handleRenameTab,
@@ -3564,6 +3621,7 @@ function WorkspaceScreenContent({
           onSelectSwitcherTab={handleSelectSwitcherTab}
           onCopyResumeCommand={handleCopyResumeCommand}
           onCopyAgentId={handleCopyAgentId}
+          onForkAgent={handleForkAgent}
           onCopyFilePath={handleCopyFilePath}
           onReloadAgent={handleReloadAgent}
           onRenameTab={handleRenameTab}
@@ -3586,6 +3644,7 @@ function WorkspaceScreenContent({
           onCloseTab={handleCloseTabById}
           onCopyResumeCommand={handleCopyResumeCommand}
           onCopyAgentId={handleCopyAgentId}
+          onForkAgent={handleForkAgent}
           onCopyFilePath={handleCopyFilePath}
           onReloadAgent={handleReloadAgent}
           onRenameTab={handleRenameTab}
