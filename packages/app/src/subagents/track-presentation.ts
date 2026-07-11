@@ -1,6 +1,12 @@
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { deriveSidebarStateBucket } from "@/utils/sidebar-agent-state";
 import type { SubagentRow } from "./select";
+import { providerSubagentLifecycleStatus } from "./provider-store";
+
+function presentationStatus(row: SubagentRow) {
+  if (row.kind === "paseo") return row.status;
+  return providerSubagentLifecycleStatus(row.status);
+}
 
 export interface SubagentRowPresentationData {
   key: string;
@@ -13,14 +19,15 @@ export interface SubagentRowPresentationData {
 
 export function buildSubagentRowPresentationData(row: SubagentRow): SubagentRowPresentationData {
   const label = resolveRowLabel(row.title);
+  const status = presentationStatus(row);
   return {
-    key: `subagent_${row.id}`,
+    key: `${row.kind}_subagent_${row.id}`,
     kind: "agent",
     label: label ?? "",
     subtitle: "",
     titleState: label ? "ready" : "loading",
     statusBucket: deriveSidebarStateBucket({
-      status: row.status,
+      status,
       requiresAttention: false,
     }),
   };

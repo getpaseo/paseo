@@ -307,6 +307,26 @@ describe("ClaudeAgentSession sub-agent sidechain updates", () => {
     );
 
     expect(projectedTaskCalls).toHaveLength(1);
+
+    const providerEvents = events.flatMap((event) =>
+      event.type === "provider_subagent" ? [event.event] : [],
+    );
+    expect(providerEvents).toContainEqual({
+      type: "timeline",
+      id: "task-call-1",
+      item: expect.objectContaining({
+        type: "tool_call",
+        callId: "sub-read-1",
+        status: "running",
+      }),
+    });
+    expect(providerEvents.at(-1)).toMatchObject({
+      type: "upsert",
+      id: "task-call-1",
+      title: "Explore",
+      description: "Inspect repository structure",
+      status: "completed",
+    });
   });
 
   test("keeps sidechain assistant text out of the parent transcript", async () => {

@@ -1,9 +1,13 @@
+import { useEffect, useMemo } from "react";
 import { usePendingArchiveAgentIds } from "@/hooks/use-archive-agent";
 import equal from "fast-deep-equal";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import { useSessionStore, type Agent } from "@/stores/session-store";
+import { useProviderSubagentStore } from "./provider-store";
+import type { ProviderSubagentDescriptorPayload } from "@getpaseo/protocol/messages";
 
-export interface SubagentRow {
+export interface PaseoSubagentRow {
+  kind: "paseo";
   id: Agent["id"];
   provider: Agent["provider"];
   title: Agent["title"];
@@ -11,6 +15,19 @@ export interface SubagentRow {
   requiresAttention: Agent["requiresAttention"];
   createdAt: Agent["createdAt"];
 }
+
+export interface ProviderSubagentRow {
+  kind: "provider";
+  id: string;
+  parentAgentId: string;
+  provider: ProviderSubagentDescriptorPayload["provider"];
+  title: string | null;
+  status: ProviderSubagentDescriptorPayload["status"];
+  requiresAttention: boolean;
+  createdAt: Date;
+}
+
+export type SubagentRow = PaseoSubagentRow | ProviderSubagentRow;
 
 type SessionStoreSnapshot = ReturnType<typeof useSessionStore.getState>;
 
@@ -23,6 +40,7 @@ const EMPTY_SUBAGENT_ROWS: SubagentRow[] = [];
 
 function toSubagentRow(agent: Agent): SubagentRow {
   return {
+    kind: "paseo",
     id: agent.id,
     provider: agent.provider,
     title: agent.title,
@@ -64,9 +82,56 @@ export function selectSubagentsForParent(
 
 export function useSubagentsForParent(params: SelectSubagentsParams): SubagentRow[] {
   const pendingArchiveIds = usePendingArchiveAgentIds(params.serverId);
-  return useStoreWithEqualityFn(
+  const paseoRows = useStoreWithEqualityFn(
     useSessionStore,
     (state) => selectSubagentsForParent(state, params, pendingArchiveIds),
     equal,
   );
+  const providerRows = useStoreWithEqualityFn(
+    useProviderSubagentStore,
+    (state) => {
+      const rows: ProviderSubagentRow[] = [];
+      const prefix = `${params.serverId}\0${params.parentAgentId}\0`;
+      for (const [key, subagent] of state.descriptors) {
+        if (!key.startsWith(prefix)) continue;
+        rows.push({
+          kind: "provider",
+          id: subagent.id,
+          parentAgentId: subagent.parentAgentId,
+          provider: subagent.provider,
+          title: subagent.title ?? subagent.description,
+          status: subagent.status,
+          requiresAttention: subagent.status === "failed",
+          createdAt: new Date(subagent.createdAt),
+        });
+      }
+      rows.sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime());
+      return rows;
+    },
+    equal,
+  );
+  const client = useSessionStore((state) => state.sessions[params.serverId]?.client ?? null);
+  const supported = useSessionStore(
+    (state) => state.sessions[params.serverId]?.serverInfo?.features?.providerSubagents === true,
+  );
+
+  useEffect(() => {
+    if (!client || !supported) return;
+    void client
+      .listProviderSubagents(params.parentAgentId)
+      .then((payload) => {
+        useProviderSubagentStore
+          .getState()
+          .replaceList(params.serverId, params.parentAgentId, payload.subagents);
+        return undefined;
+      })
+      .catch(() => undefined);
+  }, [client, params.parentAgentId, params.serverId, supported]);
+
+  return useMemo(() => {
+    if (providerRows.length === 0) return paseoRows;
+    const rows = [...paseoRows, ...providerRows];
+    rows.sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime());
+    return rows;
+  }, [paseoRows, providerRows]);
 }

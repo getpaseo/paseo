@@ -2072,11 +2072,14 @@ function appendOpenCodeChildSessionDetected(
 
   knownChildSessionIds.add(child.id);
   events.push({
-    type: "provider_child_session_detected",
+    type: "provider_subagent",
     provider: "opencode",
-    childSessionId: child.id,
-    parentSessionId: child.parentSessionId,
-    ...(child.title ? { title: child.title } : {}),
+    event: {
+      type: "upsert",
+      id: child.id,
+      title: child.title ?? "OpenCode subagent",
+      status: "running",
+    },
   });
   return true;
 }
@@ -2235,9 +2238,9 @@ function appendOpenCodeSessionDeleted(
   state.knownChildSessionIds?.delete(sessionId);
   state.subAgentCallIdByChildSessionId?.delete(sessionId);
   events.push({
-    type: "provider_session_deleted",
+    type: "provider_subagent",
     provider: "opencode",
-    sessionId,
+    event: { type: "remove", id: sessionId },
   });
 }
 
@@ -2679,6 +2682,23 @@ function unwrapOpenCodeGlobalEvent(event: unknown): OpenCodeEvent | null {
   return null;
 }
 
+function getOpenCodeEventSessionId(event: OpenCodeEvent): string | null {
+  const properties = readOpenCodeRecord(event.properties);
+  const info = readOpenCodeRecord(properties?.info);
+  const part = readOpenCodeRecord(properties?.part);
+  return (
+    readNonEmptyString(properties?.sessionID) ??
+    readNonEmptyString(properties?.sessionId) ??
+    readNonEmptyString(info?.sessionID) ??
+    readNonEmptyString(info?.sessionId) ??
+    readNonEmptyString(part?.sessionID) ??
+    readNonEmptyString(part?.sessionId) ??
+    (event.type === "session.created" || event.type === "session.updated"
+      ? readNonEmptyString(info?.id)
+      : null)
+  );
+}
+
 function isOpenCodeUserMessageEvent(event: OpenCodeEvent, sessionId: string): boolean {
   return (
     event.type === "message.updated" &&
@@ -2699,9 +2719,7 @@ function isOpenCodeTerminalEvent(event: OpenCodeEvent, sessionId: string): boole
 }
 
 function isOpenCodeProviderInternalEvent(event: AgentStreamEvent): boolean {
-  return (
-    event.type === "provider_child_session_detected" || event.type === "provider_session_deleted"
-  );
+  return event.type === "provider_subagent";
 }
 
 function readOpenCodeChildSessionInfo(value: unknown): OpenCodeChildSessionInfo | null {
@@ -2806,6 +2824,7 @@ class OpenCodeAgentSession implements AgentSession {
   private subAgentsByCallId = new Map<string, OpenCodeSubAgentActivityState>();
   private subAgentCallIdByChildSessionId = new Map<string, string>();
   private knownChildSessionIds = new Set<string>();
+  private readonly childTranslationStates = new Map<string, OpenCodeEventTranslationState>();
   private childHydrationPromise: Promise<void> | null = null;
   private selectedModelContextWindowMaxTokens: number | undefined;
   private releaseServer: (() => void) | null;
@@ -3226,14 +3245,14 @@ class OpenCodeAgentSession implements AgentSession {
   }
 
   private recordProviderInternalEvent(event: AgentStreamEvent): void {
-    if (event.type === "provider_child_session_detected") {
-      if (this.serverUrl) {
-        registerOpenCodeChildSessionServerUrl(event.childSessionId, this.serverUrl);
-      }
+    if (event.type !== "provider_subagent") {
       return;
     }
-    if (event.type === "provider_session_deleted") {
-      unregisterOpenCodeChildSessionServerUrl(event.sessionId);
+    if (event.event.type === "upsert" && this.serverUrl) {
+      registerOpenCodeChildSessionServerUrl(event.event.id, this.serverUrl);
+    } else if (event.event.type === "remove") {
+      unregisterOpenCodeChildSessionServerUrl(event.event.id);
+      this.childTranslationStates.delete(event.event.id);
     }
   }
 
@@ -3370,6 +3389,7 @@ class OpenCodeAgentSession implements AgentSession {
       return;
     }
     const translated = await this.translateEvent(event);
+    this.appendProviderSubagentEvents(event, translated);
     const foregroundEvents: AgentStreamEvent[] = [];
     for (const translatedEvent of translated) {
       if (isOpenCodeProviderInternalEvent(translatedEvent)) {
@@ -3904,6 +3924,81 @@ class OpenCodeAgentSession implements AgentSession {
         }
       },
     };
+  }
+
+  private getChildTranslationState(sessionId: string): OpenCodeEventTranslationState {
+    const existing = this.childTranslationStates.get(sessionId);
+    if (existing) {
+      return existing;
+    }
+    const state: OpenCodeEventTranslationState = {
+      sessionId,
+      cwd: this.config.cwd,
+      messageRoles: new Map(),
+      accumulatedUsage: {},
+      streamedPartKeys: new Set(),
+      emittedStructuredMessageIds: new Set(),
+      compactionSummaryMessageIds: new Set(),
+      emittedCompactionPartIds: new Set(),
+      suppressAssistantMessagesUntilIdle: { active: false },
+      partTypes: new Map(),
+      subAgentsByCallId: new Map(),
+      subAgentCallIdByChildSessionId: new Map(),
+      knownChildSessionIds: new Set(),
+      modelContextWindowsByModelKey: this.modelContextWindowsByModelKey,
+    };
+    this.childTranslationStates.set(sessionId, state);
+    return state;
+  }
+
+  private appendProviderSubagentEvents(event: OpenCodeEvent, translated: AgentStreamEvent[]): void {
+    const childSessionId = getOpenCodeEventSessionId(event);
+    const isKnownChild = childSessionId && this.knownChildSessionIds.has(childSessionId);
+    if (!childSessionId || childSessionId === this.sessionId || !isKnownChild) {
+      return;
+    }
+    translated.push(...this.translateProviderSubagentEvent(childSessionId, event));
+  }
+
+  private translateProviderSubagentEvent(
+    sessionId: string,
+    event: OpenCodeEvent,
+  ): AgentStreamEvent[] {
+    const translated = translateOpenCodeEvent(event, this.getChildTranslationState(sessionId));
+    const events: AgentStreamEvent[] = [];
+    for (const childEvent of translated) {
+      if (childEvent.type === "timeline") {
+        events.push({
+          type: "provider_subagent",
+          provider: "opencode",
+          event: {
+            type: "timeline",
+            id: sessionId,
+            item: childEvent.item,
+            timestamp: childEvent.timestamp,
+          },
+        });
+      } else if (childEvent.type === "turn_completed") {
+        events.push({
+          type: "provider_subagent",
+          provider: "opencode",
+          event: { type: "upsert", id: sessionId, status: "completed" },
+        });
+      } else if (childEvent.type === "turn_failed") {
+        events.push({
+          type: "provider_subagent",
+          provider: "opencode",
+          event: { type: "upsert", id: sessionId, status: "failed" },
+        });
+      } else if (childEvent.type === "turn_canceled") {
+        events.push({
+          type: "provider_subagent",
+          provider: "opencode",
+          event: { type: "upsert", id: sessionId, status: "canceled" },
+        });
+      }
+    }
+    return events;
   }
 
   private async translateEvent(event: OpenCodeEvent): Promise<AgentStreamEvent[]> {

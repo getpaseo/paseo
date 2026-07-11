@@ -125,11 +125,14 @@ export class ProviderSubagentStore {
     return this.timelines.fetch(storeKey(parentAgentId, subagentId), options);
   }
 
-  deleteParent(parentAgentId: string): void {
+  deleteParent(parentAgentId: string): ProviderSubagentStoreEvent[] {
+    const events: ProviderSubagentStoreEvent[] = [];
     for (const subagent of this.list(parentAgentId)) {
       const key = storeKey(parentAgentId, subagent.id);
       this.descriptors.delete(key);
       this.timelines.delete(key);
+      events.push({ type: "remove", parentAgentId, subagentId: subagent.id });
     }
+    return events;
   }
 }

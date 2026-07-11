@@ -2225,7 +2225,7 @@ describe("OpenCode persisted sessions", () => {
   });
 });
 
-describe("OpenCode eager child session adoption contract", () => {
+describe("OpenCode provider subagent contract", () => {
   async function createAdoptedChildSession(): Promise<{
     readonly runtime: TestOpenCodeHarness;
     readonly parent: Awaited<ReturnType<OpenCodeAgentClient["createSession"]>>;
@@ -2318,11 +2318,14 @@ describe("OpenCode eager child session adoption contract", () => {
     await parent.close();
 
     expect(events).toContainEqual({
-      type: "provider_child_session_detected",
+      type: "provider_subagent",
       provider: "opencode",
-      childSessionId: "ses_child_registry",
-      parentSessionId: "ses_parent_registry",
-      title: "Live child",
+      event: {
+        type: "upsert",
+        id: "ses_child_registry",
+        title: "Live child",
+        status: "running",
+      },
     });
     expect(runtime.acquisitions).toEqual([
       { kind: "dedicated", env: { PASEO_AGENT_ID: "parent-agent" }, releaseCount: 1 },
@@ -2425,7 +2428,7 @@ describe("OpenCode eager child session adoption contract", () => {
     );
   });
 
-  test("emits provider_child_session_detected for a child created while the parent has no active turn", async () => {
+  test("emits a provider subagent for a child created while the parent has no active turn", async () => {
     const releaseChildEvent = createTestDeferred<void>();
     const childConsumed = createTestDeferred<void>();
     const fakeClient = {
@@ -2443,6 +2446,33 @@ describe("OpenCode eager child session adoption contract", () => {
                   title: "Plugin child",
                 },
               },
+            };
+            yield {
+              type: "message.updated",
+              properties: {
+                info: {
+                  id: "msg_child_background",
+                  sessionID: "ses_child_background",
+                  role: "assistant",
+                },
+              },
+            };
+            yield {
+              type: "message.part.updated",
+              properties: {
+                part: {
+                  id: "part_child_background",
+                  sessionID: "ses_child_background",
+                  messageID: "msg_child_background",
+                  type: "text",
+                  text: "Background findings.",
+                  time: { start: 1, end: 2 },
+                },
+              },
+            };
+            yield {
+              type: "session.idle",
+              properties: { sessionID: "ses_child_background" },
             };
             childConsumed.resolve();
           })(),
@@ -2467,11 +2497,28 @@ describe("OpenCode eager child session adoption contract", () => {
     await session.close();
 
     expect(events).toContainEqual({
-      type: "provider_child_session_detected",
+      type: "provider_subagent",
       provider: "opencode",
-      childSessionId: "ses_child_background",
-      parentSessionId: "ses_parent",
-      title: "Plugin child",
+      event: {
+        type: "upsert",
+        id: "ses_child_background",
+        title: "Plugin child",
+        status: "running",
+      },
+    });
+    expect(events).toContainEqual({
+      type: "provider_subagent",
+      provider: "opencode",
+      event: {
+        type: "timeline",
+        id: "ses_child_background",
+        item: { type: "assistant_message", text: "Background findings." },
+      },
+    });
+    expect(events.at(-1)).toEqual({
+      type: "provider_subagent",
+      provider: "opencode",
+      event: { type: "upsert", id: "ses_child_background", status: "completed" },
     });
   });
 
@@ -2494,11 +2541,14 @@ describe("OpenCode eager child session adoption contract", () => {
 
     expect(events).toEqual([
       {
-        type: "provider_child_session_detected",
+        type: "provider_subagent",
         provider: "opencode",
-        childSessionId: "ses_child_plugin",
-        parentSessionId: "ses_parent",
-        title: "Background plugin child",
+        event: {
+          type: "upsert",
+          id: "ses_child_plugin",
+          title: "Background plugin child",
+          status: "running",
+        },
       },
     ]);
   });
@@ -2517,9 +2567,9 @@ describe("OpenCode eager child session adoption contract", () => {
 
     expect(events).toEqual([
       {
-        type: "provider_session_deleted",
+        type: "provider_subagent",
         provider: "opencode",
-        sessionId: "ses_child_deleted",
+        event: { type: "remove", id: "ses_child_deleted" },
       },
     ]);
   });
@@ -2560,25 +2610,24 @@ describe("OpenCode eager child session adoption contract", () => {
     ]);
     expect(events).toEqual([
       {
-        type: "provider_child_session_detected",
+        type: "provider_subagent",
         provider: "opencode",
-        childSessionId: "ses_child_a",
-        parentSessionId: "ses_parent",
-        title: "Child A",
+        event: { type: "upsert", id: "ses_child_a", title: "Child A", status: "running" },
       },
       {
-        type: "provider_child_session_detected",
+        type: "provider_subagent",
         provider: "opencode",
-        childSessionId: "ses_child_b",
-        parentSessionId: "ses_parent",
-        title: "Child B",
+        event: { type: "upsert", id: "ses_child_b", title: "Child B", status: "running" },
       },
       {
-        type: "provider_child_session_detected",
+        type: "provider_subagent",
         provider: "opencode",
-        childSessionId: "ses_grandchild_a",
-        parentSessionId: "ses_child_a",
-        title: "Grandchild A",
+        event: {
+          type: "upsert",
+          id: "ses_grandchild_a",
+          title: "Grandchild A",
+          status: "running",
+        },
       },
     ]);
   });

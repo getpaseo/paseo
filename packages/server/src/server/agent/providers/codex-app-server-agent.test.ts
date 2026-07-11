@@ -1599,6 +1599,31 @@ describe("Codex app-server provider", () => {
         actions: [],
       },
     });
+
+    const providerEvents = events.flatMap((event) =>
+      event.type === "provider_subagent" ? [event.event] : [],
+    );
+    expect(providerEvents).toContainEqual(
+      expect.objectContaining({
+        type: "upsert",
+        id: "child-thread-1",
+        description: "Report findings.",
+      }),
+    );
+    expect(providerEvents).toContainEqual({
+      type: "timeline",
+      id: "child-thread-1",
+      item: {
+        type: "assistant_message",
+        messageId: "child-message-1",
+        text: "Found the path.",
+      },
+    });
+    expect(providerEvents.at(-1)).toMatchObject({
+      type: "upsert",
+      id: "child-thread-1",
+      status: "completed",
+    });
   });
 
   test("keeps the parent running when a MultiAgentV2 sub-agent finishes", async () => {

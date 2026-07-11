@@ -194,6 +194,7 @@ describe("selectSubagentsForParent", () => {
 
     expect(rows).toEqual([
       {
+        kind: "paseo",
         id: "child",
         provider: "claude",
         title: "Review child",
@@ -205,6 +206,7 @@ describe("selectSubagentsForParent", () => {
     expect(Object.keys(rows[0] ?? {}).sort()).toEqual([
       "createdAt",
       "id",
+      "kind",
       "provider",
       "requiresAttention",
       "status",
