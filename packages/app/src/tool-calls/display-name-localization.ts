@@ -22,6 +22,7 @@ interface ToolCallDisplayNameInput {
   toolName: string;
   detail: ToolCallDetail;
   displayName: string;
+  summary?: string;
 }
 
 const DETAIL_KEYS: Partial<Record<ToolCallDetail["type"], ToolCallDisplayNameKey>> = {
@@ -73,15 +74,29 @@ const KNOWN_NAME_KEYS: Record<string, ToolCallDisplayNameKey> = {
   update_agent: "toolCallDetails.names.updateAgent",
 };
 
-function normalizedCandidates(toolName: string, displayName: string): string[] {
+function normalizedToolCandidates(toolName: string): string[] {
   const lowerToolName = toolName.trim().toLowerCase();
   const paseoLeaf = lowerToolName.match(/(?:^|__|\.)paseo(?:__|\.)([a-z0-9_]+)$/)?.[1];
-  return [displayName.trim().toLowerCase(), lowerToolName, ...(paseoLeaf ? [paseoLeaf] : [])];
+  return [lowerToolName, ...(paseoLeaf ? [paseoLeaf] : [])];
 }
 
 export function getToolCallDisplayNameKey(
   input: ToolCallDisplayNameInput,
 ): ToolCallDisplayNameKey | null {
+  if (input.summary?.trim().replace(/:$/, "").toLowerCase() === "web search") {
+    return "toolCallDetails.names.webSearch";
+  }
+
+  if (input.detail.type === "search" && input.detail.toolName) {
+    const nestedSearchKey = KNOWN_NAME_KEYS[input.detail.toolName.trim().toLowerCase()];
+    if (nestedSearchKey) return nestedSearchKey;
+  }
+
+  for (const candidate of normalizedToolCandidates(input.toolName)) {
+    const key = KNOWN_NAME_KEYS[candidate];
+    if (key) return key;
+  }
+
   const detailKey = DETAIL_KEYS[input.detail.type];
   if (detailKey) {
     return detailKey;
@@ -91,9 +106,18 @@ export function getToolCallDisplayNameKey(
     return "toolCallDetails.names.task";
   }
 
-  for (const candidate of normalizedCandidates(input.toolName, input.displayName)) {
-    const key = KNOWN_NAME_KEYS[candidate];
-    if (key) return key;
+  return KNOWN_NAME_KEYS[input.displayName.trim().toLowerCase()] ?? null;
+}
+
+export function getToolCallLocalizedSummary(
+  displayNameKey: ToolCallDisplayNameKey | null,
+  summary: string | undefined,
+): string | undefined {
+  if (
+    displayNameKey === "toolCallDetails.names.webSearch" &&
+    summary?.trim().replace(/:$/, "").toLowerCase() === "web search"
+  ) {
+    return undefined;
   }
-  return null;
+  return summary;
 }

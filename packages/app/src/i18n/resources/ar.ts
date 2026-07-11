@@ -47,6 +47,11 @@ export const ar: TranslationResources = {
       idle: "عاطل",
     },
   },
+  communityLinks: {
+    star: "GitHub Star",
+    sponsor: "Sponsor",
+    community: "Community",
+  },
   shell: {
     menu: {
       toggleSidebar: "تبديل الشريط الجانبي",
@@ -445,6 +450,9 @@ export const ar: TranslationResources = {
       devices: {
         label: "حجم الجهاز",
         responsive: "متجاوب",
+        laptop: "Laptop",
+        desktop1080: "Desktop 1080p",
+        desktop1440: "Desktop 1440p",
       },
       errors: {
         failedToLoad: "فشل تحميل الصفحة",
@@ -753,6 +761,20 @@ export const ar: TranslationResources = {
         failedOpen: "فشل في فتح مساحة العمل",
       },
       pr: {
+        pane: {
+          checks: "Checks",
+          noChecks: "No checks",
+          activity: "Activity",
+          addAllToChat: "Add all to chat",
+          noActivity: "No activity yet",
+          adding: "Adding...",
+          addToChat: "Add to chat",
+          commentActions: "Comment actions",
+          openOnGitHub: "Open on GitHub",
+          resolved: "Resolved",
+          outdated: "Outdated",
+          threadActions: "Thread actions",
+        },
         actions: {
           viewPullRequest: "عرض",
         },
@@ -776,6 +798,11 @@ export const ar: TranslationResources = {
           reviewed: "تمت المراجعة",
         },
         time: {
+          minutesAgo: "{{count}}m ago",
+          hoursAgo: "{{count}}h ago",
+          daysAgo: "{{count}}d ago",
+          monthsAgo: "{{count}}mo ago",
+          yearsAgo: "{{count}}y ago",
           justNow: "الآن",
         },
         errors: {
@@ -1042,6 +1069,7 @@ export const ar: TranslationResources = {
     runsOutIn: "runs out in {{time}}",
     remaining: "{{amount}} left",
     duration: { minutes: "{{count}}m", hours: "{{count}}h", days: "{{count}}d" },
+    labels: { session: "Session", weekly: "Weekly", credits: "Credits" },
   },
   newWorkspace: {
     title: "مساحة عمل جديدة",

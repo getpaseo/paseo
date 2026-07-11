@@ -1,18 +1,37 @@
 import type { HostRuntimeConnectionStatus } from "@/runtime/host-runtime";
 import { assertUnreachable } from "./exhaustive";
 
-export function formatConnectionStatus(status: HostRuntimeConnectionStatus): string {
+export interface ConnectionStatusLabels {
+  online: string;
+  connecting: string;
+  offline: string;
+  error: string;
+  idle: string;
+}
+
+const ENGLISH_CONNECTION_STATUS_LABELS: ConnectionStatusLabels = {
+  online: "Online",
+  connecting: "Connecting",
+  offline: "Offline",
+  error: "Error",
+  idle: "Idle",
+};
+
+export function formatConnectionStatus(
+  status: HostRuntimeConnectionStatus,
+  labels: ConnectionStatusLabels = ENGLISH_CONNECTION_STATUS_LABELS,
+): string {
   switch (status) {
     case "online":
-      return "Online";
+      return labels.online;
     case "connecting":
-      return "Connecting";
+      return labels.connecting;
     case "offline":
-      return "Offline";
+      return labels.offline;
     case "error":
-      return "Error";
+      return labels.error;
     case "idle":
-      return "Idle";
+      return labels.idle;
     default:
       return assertUnreachable(status);
   }

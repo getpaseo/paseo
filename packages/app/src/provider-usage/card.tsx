@@ -10,6 +10,7 @@ import { ProviderUsageBalanceBar } from "./balance-bar";
 import { formatAgo } from "./format";
 import type { ProviderUsage } from "./types";
 import { ProviderUsageWindowBar } from "./window-bar";
+import { localizeProviderUsageLabel } from "./label-localization";
 
 interface ProviderUsageIconProps {
   iconKey: string;
@@ -54,6 +55,11 @@ export function ProviderUsageCard({
   const footer = footerText(usage, t);
   const balances = usage.balances ?? [];
   const details = usage.details ?? [];
+  const usageLabels = {
+    session: t("providerUsage.labels.session"),
+    weekly: t("providerUsage.labels.weekly"),
+    credits: t("providerUsage.labels.credits"),
+  };
 
   const containerStyle = useMemo(
     () => [styles.container, compact ? styles.containerCompact : styles.containerPadded],
@@ -107,7 +113,7 @@ export function ProviderUsageCard({
           {details.map((detail) => (
             <View key={detail.id} style={styles.detailRow}>
               <Text style={styles.detailLabel} numberOfLines={1}>
-                {detail.label}
+                {localizeProviderUsageLabel(detail.label, usageLabels)}
               </Text>
               <Text style={styles.detailValue} numberOfLines={1}>
                 {detail.value}

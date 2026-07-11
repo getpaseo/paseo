@@ -45,6 +45,11 @@ export const en = {
       idle: "Idle",
     },
   },
+  communityLinks: {
+    star: "GitHub Star",
+    sponsor: "Sponsor",
+    community: "Community",
+  },
   shell: {
     menu: {
       toggleSidebar: "Toggle sidebar",
@@ -445,6 +450,9 @@ export const en = {
       devices: {
         label: "Device size",
         responsive: "Responsive",
+        laptop: "Laptop",
+        desktop1080: "Desktop 1080p",
+        desktop1440: "Desktop 1440p",
       },
       errors: {
         failedToLoad: "Failed to load page",
@@ -760,6 +768,20 @@ export const en = {
         failedOpen: "Failed to open workspace",
       },
       pr: {
+        pane: {
+          checks: "Checks",
+          noChecks: "No checks",
+          activity: "Activity",
+          addAllToChat: "Add all to chat",
+          noActivity: "No activity yet",
+          adding: "Adding...",
+          addToChat: "Add to chat",
+          commentActions: "Comment actions",
+          openOnGitHub: "Open on GitHub",
+          resolved: "Resolved",
+          outdated: "Outdated",
+          threadActions: "Thread actions",
+        },
         actions: {
           viewPullRequest: "View",
         },
@@ -784,6 +806,11 @@ export const en = {
         },
         time: {
           justNow: "just now",
+          minutesAgo: "{{count}}m ago",
+          hoursAgo: "{{count}}h ago",
+          daysAgo: "{{count}}d ago",
+          monthsAgo: "{{count}}mo ago",
+          yearsAgo: "{{count}}y ago",
         },
         errors: {
           statusLoadFailed: "Unable to load pull request status",
@@ -1049,6 +1076,7 @@ export const en = {
     runsOutIn: "runs out in {{time}}",
     remaining: "{{amount}} left",
     duration: { minutes: "{{count}}m", hours: "{{count}}h", days: "{{count}}d" },
+    labels: { session: "Session", weekly: "Weekly", credits: "Credits" },
   },
   newWorkspace: {
     title: "New workspace",

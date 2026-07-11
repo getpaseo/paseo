@@ -14,6 +14,7 @@ import { buildTerminalsQueryKey } from "@/screens/workspace/terminals/state";
 import { usePanelStore } from "@/stores/panel-store";
 import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaceDirectory, useWorkspaceFields } from "@/stores/session-store-hooks";
+import { localizeDefaultTerminalName } from "@/utils/terminal-display-name";
 
 type ListTerminalsPayload = ListTerminalsResponse["payload"];
 
@@ -63,10 +64,12 @@ function useTerminalPanelDescriptor(
   const terminal =
     terminalsQuery.data?.terminals.find((entry) => entry.id === target.terminalId) ?? null;
 
+  const terminalLabel = t("workspace.tabs.fallback.terminal");
+  const rawTerminalName = trimNonEmpty(terminal?.title ?? terminal?.name ?? null);
   return {
-    label:
-      trimNonEmpty(terminal?.title ?? terminal?.name ?? null) ??
-      t("workspace.tabs.fallback.terminal"),
+    label: rawTerminalName
+      ? localizeDefaultTerminalName(rawTerminalName, terminalLabel)
+      : terminalLabel,
     subtitle: t("workspace.tabs.fallback.terminal"),
     titleState: "ready",
     icon: Terminal,
@@ -75,6 +78,7 @@ function useTerminalPanelDescriptor(
 }
 
 function TerminalPanel() {
+  const { t } = useTranslation();
   const { serverId, workspaceId, target, openFileInWorkspace } = usePaneContext();
   const { isWorkspaceFocused, isPaneFocused } = usePaneFocus();
   const workspaceFields = useWorkspaceFields(serverId, workspaceId, (w) => ({
@@ -102,7 +106,7 @@ function TerminalPanel() {
   if (!workspaceDirectory) {
     return (
       <View style={CENTERED_PADDED_STYLE}>
-        <Text>Workspace directory not found.</Text>
+        <Text>{t("panels.file.directoryMissing")}</Text>
       </View>
     );
   }

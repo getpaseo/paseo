@@ -47,6 +47,11 @@ export const es: TranslationResources = {
       idle: "Inactivo",
     },
   },
+  communityLinks: {
+    star: "GitHub Star",
+    sponsor: "Sponsor",
+    community: "Community",
+  },
   shell: {
     menu: {
       toggleSidebar: "Alternar barra lateral",
@@ -449,6 +454,9 @@ export const es: TranslationResources = {
       devices: {
         label: "Tamaño del dispositivo",
         responsive: "Adaptable",
+        laptop: "Laptop",
+        desktop1080: "Desktop 1080p",
+        desktop1440: "Desktop 1440p",
       },
       errors: {
         failedToLoad: "No se pudo cargar la página",
@@ -780,6 +788,20 @@ export const es: TranslationResources = {
         failedOpen: "No se pudo abrir el espacio de trabajo",
       },
       pr: {
+        pane: {
+          checks: "Checks",
+          noChecks: "No checks",
+          activity: "Activity",
+          addAllToChat: "Add all to chat",
+          noActivity: "No activity yet",
+          adding: "Adding...",
+          addToChat: "Add to chat",
+          commentActions: "Comment actions",
+          openOnGitHub: "Open on GitHub",
+          resolved: "Resolved",
+          outdated: "Outdated",
+          threadActions: "Thread actions",
+        },
         actions: {
           viewPullRequest: "Ver",
         },
@@ -803,6 +825,11 @@ export const es: TranslationResources = {
           reviewed: "Revisado",
         },
         time: {
+          minutesAgo: "{{count}}m ago",
+          hoursAgo: "{{count}}h ago",
+          daysAgo: "{{count}}d ago",
+          monthsAgo: "{{count}}mo ago",
+          yearsAgo: "{{count}}y ago",
           justNow: "En este momento",
         },
         errors: {
@@ -1069,6 +1096,7 @@ export const es: TranslationResources = {
     runsOutIn: "runs out in {{time}}",
     remaining: "{{amount}} left",
     duration: { minutes: "{{count}}m", hours: "{{count}}h", days: "{{count}}d" },
+    labels: { session: "Session", weekly: "Weekly", credits: "Credits" },
   },
   newWorkspace: {
     title: "Nuevo espacio de trabajo",

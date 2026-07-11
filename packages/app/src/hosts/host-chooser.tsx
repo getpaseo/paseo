@@ -12,6 +12,7 @@ import { router } from "expo-router";
 import { Server } from "lucide-react-native";
 import { create } from "zustand";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { useTranslation } from "react-i18next";
 import { HostStatusDotSlot } from "@/components/hosts/host-picker";
 import { isNative } from "@/constants/platform";
 import { useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
@@ -136,6 +137,7 @@ function HostChooserRow({
 }
 
 export function HostChooserModal() {
+  const { t } = useTranslation();
   const { theme } = useUnistyles();
   const hosts = useHosts();
   const request = useHostChooserStore((state) => state.request);
@@ -240,7 +242,7 @@ export function HostChooserModal() {
               ref={inputRef}
               value={query}
               onChangeText={handleQueryChange}
-              placeholder="Search hosts..."
+              placeholder={t("sidebar.host.searchPlaceholder")}
               placeholderTextColor={theme.colors.foregroundMuted}
               style={styles.input}
               autoCapitalize="none"
@@ -254,7 +256,9 @@ export function HostChooserModal() {
             keyboardShouldPersistTaps="always"
             showsVerticalScrollIndicator={false}
           >
-            {options.length === 0 ? <Text style={styles.emptyText}>No matching hosts</Text> : null}
+            {options.length === 0 ? (
+              <Text style={styles.emptyText}>{t("common.empty.noOptionsMatchSearch")}</Text>
+            ) : null}
             {options.map((host, index) => (
               <HostChooserRow
                 key={host.serverId}

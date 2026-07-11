@@ -5,6 +5,7 @@ import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { clampPct, formatAmount, formatResetLabel } from "./format";
 import type { ProviderUsageBalance, ProviderUsageTone } from "./types";
+import { localizeProviderUsageLabel } from "./label-localization";
 
 interface ResolvedBalance {
   amountText: string;
@@ -46,6 +47,11 @@ function fillToneStyle(tone: ProviderUsageTone) {
 
 export function ProviderUsageBalanceBar({ balance }: { balance: ProviderUsageBalance }) {
   const { t } = useTranslation();
+  const label = localizeProviderUsageLabel(balance.label, {
+    session: t("providerUsage.labels.session"),
+    weekly: t("providerUsage.labels.weekly"),
+    credits: t("providerUsage.labels.credits"),
+  });
   const { amountText, usedPct } = resolveBalance(balance, t);
   const tone = balance.tone ?? "default";
   const resetLabel = formatResetLabel(balance.resetsAt, t);
@@ -59,7 +65,7 @@ export function ProviderUsageBalanceBar({ balance }: { balance: ProviderUsageBal
     <View style={styles.container}>
       <View style={styles.labelRow}>
         <Text style={styles.label} numberOfLines={1}>
-          {balance.label}
+          {label}
         </Text>
         <Text style={styles.value}>
           {amountText}

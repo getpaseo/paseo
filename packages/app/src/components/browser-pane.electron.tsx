@@ -101,7 +101,7 @@ type DeviceSizeId =
 
 interface DeviceSizePreset {
   id: DeviceSizeId;
-  /** Display name (not translated — device names are proper nouns). */
+  /** Display name. Product names remain proper nouns; generic device categories are localized. */
   name: string;
   /** Fixed CSS width, or null for "fill the available area". */
   width: number | null;
@@ -131,8 +131,15 @@ const DEVICE_SIZE_PRESETS: readonly DeviceSizePreset[] = [
 
 const RESPONSIVE_DEVICE_LABEL_KEY = "workspace.browser.devices.responsive";
 
-function formatDevicePresetLabel(preset: DeviceSizePreset, responsiveLabel: string): string {
-  const name = preset.id === "responsive" ? responsiveLabel : preset.name;
+function getDevicePresetName(preset: DeviceSizePreset, t: ReturnType<typeof useTranslation>["t"]) {
+  if (preset.id === "responsive") return t(RESPONSIVE_DEVICE_LABEL_KEY);
+  if (preset.id === "laptop") return t("workspace.browser.devices.laptop");
+  if (preset.id === "desktop-1080") return t("workspace.browser.devices.desktop1080");
+  if (preset.id === "desktop-1440") return t("workspace.browser.devices.desktop1440");
+  return preset.name;
+}
+
+function formatDevicePresetLabel(preset: DeviceSizePreset, name: string): string {
   if (preset.width && preset.height) {
     return `${name} · ${preset.width}×${preset.height}`;
   }
@@ -581,7 +588,7 @@ function DeviceSizeMenu({
             key={preset.id}
             preset={preset}
             selected={preset.id === selectedId}
-            label={formatDevicePresetLabel(preset, t(RESPONSIVE_DEVICE_LABEL_KEY))}
+            label={formatDevicePresetLabel(preset, getDevicePresetName(preset, t))}
             onSelect={onSelect}
           />
         ))}

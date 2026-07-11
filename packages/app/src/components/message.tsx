@@ -64,7 +64,10 @@ import type { TodoEntry, UserMessageImageAttachment } from "@/types/stream";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
 import { buildToolCallPresentation } from "@/tool-calls/presentation";
-import { getToolCallDisplayNameKey } from "@/tool-calls/display-name-localization";
+import {
+  getToolCallDisplayNameKey,
+  getToolCallLocalizedSummary,
+} from "@/tool-calls/display-name-localization";
 import { resolveToolCallIcon } from "@/utils/tool-call-icon";
 import { getMarkdownListMarker, getMarkdownListSpacing } from "@/utils/markdown-list";
 import { markdownNodeContainsType } from "@/utils/markdown-ast";
@@ -3114,14 +3117,18 @@ export const ToolCall = memo(function ToolCall({
       }),
     [toolName, status, error, effectiveDetail, metadata, cwd],
   );
-  const localizedDisplayName = useMemo(() => {
-    const key = getToolCallDisplayNameKey({
-      toolName,
-      detail: effectiveDetail ?? { type: "unknown", input: null, output: null },
-      displayName: presentation.displayName,
-    });
-    return key ? t(key) : presentation.displayName;
-  }, [effectiveDetail, presentation.displayName, t, toolName]);
+  const displayNameKey = useMemo(
+    () =>
+      getToolCallDisplayNameKey({
+        toolName,
+        detail: effectiveDetail ?? { type: "unknown", input: null, output: null },
+        displayName: presentation.displayName,
+        summary: presentation.summary,
+      }),
+    [effectiveDetail, presentation.displayName, presentation.summary, toolName],
+  );
+  const localizedDisplayName = displayNameKey ? t(displayNameKey) : presentation.displayName;
+  const localizedSummary = getToolCallLocalizedSummary(displayNameKey, presentation.summary);
   const handleOpenFile = useMemo(() => {
     const openFilePath = presentation.openFilePath;
     if (!openFilePath || !onOpenFilePath) {
@@ -3134,7 +3141,7 @@ export const ToolCall = memo(function ToolCall({
     if (!shouldRenderInline) {
       openToolCall({
         displayName: localizedDisplayName,
-        summary: presentation.summary,
+        summary: localizedSummary,
         detail: effectiveDetail,
         errorText: presentation.errorText,
         icon: presentation.icon,
@@ -3147,7 +3154,7 @@ export const ToolCall = memo(function ToolCall({
     shouldRenderInline,
     openToolCall,
     localizedDisplayName,
-    presentation.summary,
+    localizedSummary,
     presentation.errorText,
     presentation.icon,
     presentation.isLoadingDetails,
@@ -3208,7 +3215,7 @@ export const ToolCall = memo(function ToolCall({
     <ExpandableBadge
       testID="tool-call-badge"
       label={localizedDisplayName}
-      secondaryLabel={presentation.summary}
+      secondaryLabel={localizedSummary}
       icon={presentation.icon}
       isExpanded={shouldRenderInline && isExpanded}
       onToggle={presentation.canOpenDetails ? handleToggle : undefined}

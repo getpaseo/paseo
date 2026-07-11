@@ -165,7 +165,13 @@ function HostStatusBadges({ serverId }: { serverId: string }) {
 
   const connectionStatus = snapshot?.connectionStatus ?? "connecting";
   const activeConnection = snapshot?.activeConnection ?? null;
-  const statusLabel = formatConnectionStatus(connectionStatus);
+  const statusLabel = formatConnectionStatus(connectionStatus, {
+    online: t("common.connectionStatus.online"),
+    connecting: t("common.connectionStatus.connecting"),
+    offline: t("common.connectionStatus.offline"),
+    error: t("common.connectionStatus.error"),
+    idle: t("common.connectionStatus.idle"),
+  });
   const statusTone = getConnectionStatusTone(connectionStatus);
   let statusColor: string;
   if (statusTone === "success") {

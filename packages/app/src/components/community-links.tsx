@@ -6,11 +6,13 @@ import { Button } from "@/components/ui/button";
 import { GitHubIcon } from "@/components/icons/github-icon";
 import { DiscordIcon } from "@/components/icons/discord-icon";
 import { openExternalUrl } from "@/utils/open-external-url";
+import { useTranslation } from "react-i18next";
 
 const renderGitHubIcon = (color: string) => <GitHubIcon color={color} size={14} />;
 const renderDiscordIcon = (color: string) => <DiscordIcon color={color} size={14} />;
 
 export function CommunityLinks() {
+  const { t } = useTranslation();
   const handleOpenGitHub = useCallback(() => {
     void openExternalUrl("https://github.com/getpaseo/paseo");
   }, []);
@@ -32,7 +34,7 @@ export function CommunityLinks() {
         onPress={handleOpenGitHub}
         testID="community-links-github-star"
       >
-        Star
+        {t("communityLinks.star")}
       </Button>
       <Button
         variant="ghost"
@@ -41,7 +43,7 @@ export function CommunityLinks() {
         onPress={handleOpenSponsor}
         testID="community-links-sponsor"
       >
-        Sponsor
+        {t("communityLinks.sponsor")}
       </Button>
       <Button
         variant="ghost"
@@ -50,7 +52,7 @@ export function CommunityLinks() {
         onPress={handleOpenDiscord}
         testID="community-links-discord"
       >
-        Community
+        {t("communityLinks.community")}
       </Button>
     </View>
   );

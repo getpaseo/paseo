@@ -47,6 +47,11 @@ export const ja: TranslationResources = {
       idle: "アイドル",
     },
   },
+  communityLinks: {
+    star: "GitHub Star",
+    sponsor: "Sponsor",
+    community: "Community",
+  },
   shell: {
     menu: {
       toggleSidebar: "サイドバーを切り替え",
@@ -449,6 +454,9 @@ export const ja: TranslationResources = {
       devices: {
         label: "デバイスサイズ",
         responsive: "レスポンシブ",
+        laptop: "Laptop",
+        desktop1080: "Desktop 1080p",
+        desktop1440: "Desktop 1440p",
       },
       errors: {
         failedToLoad: "ページの読み込みに失敗しました",
@@ -765,6 +773,20 @@ export const ja: TranslationResources = {
         failedOpen: "ワークスペースを開けませんでした",
       },
       pr: {
+        pane: {
+          checks: "Checks",
+          noChecks: "No checks",
+          activity: "Activity",
+          addAllToChat: "Add all to chat",
+          noActivity: "No activity yet",
+          adding: "Adding...",
+          addToChat: "Add to chat",
+          commentActions: "Comment actions",
+          openOnGitHub: "Open on GitHub",
+          resolved: "Resolved",
+          outdated: "Outdated",
+          threadActions: "Thread actions",
+        },
         actions: {
           viewPullRequest: "表示",
         },
@@ -788,6 +810,11 @@ export const ja: TranslationResources = {
           reviewed: "レビュー済み",
         },
         time: {
+          minutesAgo: "{{count}}m ago",
+          hoursAgo: "{{count}}h ago",
+          daysAgo: "{{count}}d ago",
+          monthsAgo: "{{count}}mo ago",
+          yearsAgo: "{{count}}y ago",
           justNow: "たった今",
         },
         errors: {
@@ -1054,6 +1081,7 @@ export const ja: TranslationResources = {
     runsOutIn: "runs out in {{time}}",
     remaining: "{{amount}} left",
     duration: { minutes: "{{count}}m", hours: "{{count}}h", days: "{{count}}d" },
+    labels: { session: "Session", weekly: "Weekly", credits: "Credits" },
   },
   newWorkspace: {
     title: "新しいワークスペース",

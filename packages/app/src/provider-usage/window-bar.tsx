@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import { clampPct, formatPct, formatResetLabel, formatRunsOutLabel } from "./format";
 import { deriveTone } from "./tone";
 import type { ProviderUsageTone, ProviderUsageWindow } from "./types";
+import { localizeProviderUsageLabel } from "./label-localization";
 
 function resolveUsedPct(window: ProviderUsageWindow): number | null {
   if (window.usedPct != null) return window.usedPct;
@@ -27,6 +28,11 @@ function fillToneStyle(tone: ProviderUsageTone) {
 
 export function ProviderUsageWindowBar({ window }: { window: ProviderUsageWindow }) {
   const { t } = useTranslation();
+  const label = localizeProviderUsageLabel(window.label, {
+    session: t("providerUsage.labels.session"),
+    weekly: t("providerUsage.labels.weekly"),
+    credits: t("providerUsage.labels.credits"),
+  });
   const usedPct = resolveUsedPct(window);
   const tone = window.tone ?? deriveTone(usedPct);
 
@@ -45,7 +51,7 @@ export function ProviderUsageWindowBar({ window }: { window: ProviderUsageWindow
     <View style={styles.container}>
       <View style={styles.labelRow}>
         <Text style={styles.label} numberOfLines={1}>
-          {window.label}
+          {label}
         </Text>
         <Text style={styles.value}>
           {usedPct != null ? formatPct(usedPct) : "—"}

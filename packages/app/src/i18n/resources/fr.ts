@@ -48,6 +48,11 @@ export const fr: TranslationResources = {
       idle: "Inactif",
     },
   },
+  communityLinks: {
+    star: "GitHub Star",
+    sponsor: "Sponsor",
+    community: "Community",
+  },
   shell: {
     menu: {
       toggleSidebar: "Basculer la barre latérale",
@@ -449,6 +454,9 @@ export const fr: TranslationResources = {
       devices: {
         label: "Taille de l'appareil",
         responsive: "Adaptatif",
+        laptop: "Laptop",
+        desktop1080: "Desktop 1080p",
+        desktop1440: "Desktop 1440p",
       },
       errors: {
         failedToLoad: "Échec du chargement de la page",
@@ -779,6 +787,20 @@ export const fr: TranslationResources = {
         failedOpen: "Échec de l'ouverture de l'espace de travail",
       },
       pr: {
+        pane: {
+          checks: "Checks",
+          noChecks: "No checks",
+          activity: "Activity",
+          addAllToChat: "Add all to chat",
+          noActivity: "No activity yet",
+          adding: "Adding...",
+          addToChat: "Add to chat",
+          commentActions: "Comment actions",
+          openOnGitHub: "Open on GitHub",
+          resolved: "Resolved",
+          outdated: "Outdated",
+          threadActions: "Thread actions",
+        },
         actions: {
           viewPullRequest: "Voir",
         },
@@ -802,6 +824,11 @@ export const fr: TranslationResources = {
           reviewed: "Révisé",
         },
         time: {
+          minutesAgo: "{{count}}m ago",
+          hoursAgo: "{{count}}h ago",
+          daysAgo: "{{count}}d ago",
+          monthsAgo: "{{count}}mo ago",
+          yearsAgo: "{{count}}y ago",
           justNow: "tout à l' heure",
         },
         errors: {
@@ -1068,6 +1095,7 @@ export const fr: TranslationResources = {
     runsOutIn: "runs out in {{time}}",
     remaining: "{{amount}} left",
     duration: { minutes: "{{count}}m", hours: "{{count}}h", days: "{{count}}d" },
+    labels: { session: "Session", weekly: "Weekly", credits: "Credits" },
   },
   newWorkspace: {
     title: "Nouvel espace de travail",

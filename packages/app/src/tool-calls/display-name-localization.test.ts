@@ -1,10 +1,13 @@
 import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
 import { describe, expect, it } from "vitest";
 
-import { getToolCallDisplayNameKey } from "./display-name-localization";
+import {
+  getToolCallDisplayNameKey,
+  getToolCallLocalizedSummary,
+} from "./display-name-localization";
 
-function keyFor(toolName: string, detail: ToolCallDetail, displayName: string) {
-  return getToolCallDisplayNameKey({ toolName, detail, displayName });
+function keyFor(toolName: string, detail: ToolCallDetail, displayName: string, summary?: string) {
+  return getToolCallDisplayNameKey({ toolName, detail, displayName, summary });
 }
 
 describe("tool-call display-name localization", () => {
@@ -25,6 +28,42 @@ describe("tool-call display-name localization", () => {
     expect(keyFor("web_search", unknown, "Web Search")).toBe("toolCallDetails.names.webSearch");
     expect(keyFor("thinking", unknown, "Thinking")).toBe("toolCallDetails.names.thinking");
     expect(keyFor("terminal", unknown, "Terminal")).toBe("toolCallDetails.names.terminal");
+  });
+
+  it("prefers the specific web-search tool name over the generic search detail type", () => {
+    expect(keyFor("web_search", { type: "search", query: "Paseo localization" }, "Search")).toBe(
+      "toolCallDetails.names.webSearch",
+    );
+  });
+
+  it("uses the nested search tool name when the outer tool is generic", () => {
+    expect(
+      keyFor(
+        "search",
+        { type: "search", toolName: "web_search", query: "Paseo localization" },
+        "Search",
+      ),
+    ).toBe("toolCallDetails.names.webSearch");
+  });
+
+  it("recognizes the real historical web-search summary shape", () => {
+    expect(
+      keyFor(
+        "search",
+        { type: "search", query: "Codex ChatGPT extension" },
+        "Search",
+        "Web search:",
+      ),
+    ).toBe("toolCallDetails.names.webSearch");
+  });
+
+  it("removes a redundant raw Web search summary after localization", () => {
+    expect(getToolCallLocalizedSummary("toolCallDetails.names.webSearch", "Web search:")).toBe(
+      undefined,
+    );
+    expect(
+      getToolCallLocalizedSummary("toolCallDetails.names.webSearch", "Paseo localization"),
+    ).toBe("Paseo localization");
   });
 
   it("preserves unknown third-party MCP tool names", () => {

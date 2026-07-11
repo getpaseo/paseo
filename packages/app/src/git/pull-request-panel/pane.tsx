@@ -29,6 +29,7 @@ import {
 } from "lucide-react-native";
 import type { PressableStateCallbackType } from "react-native";
 import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { Button } from "@/components/ui/button";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
@@ -67,7 +68,6 @@ import {
   canAddPullRequestActivityToChat,
   canAddPullRequestCheckLogsToChat,
 } from "./context-attachment";
-import { getActivityVerb, getStateLabel } from "./data";
 import type { CheckStatus, PrPaneActivity, PrPaneCheck, PrPaneData, PrState } from "./data";
 import {
   buildPrTimeline,
@@ -100,6 +100,39 @@ const successColorMapping = (theme: Theme) => ({ color: theme.colors.statusSucce
 const dangerColorMapping = (theme: Theme) => ({ color: theme.colors.statusDanger });
 const warningColorMapping = (theme: Theme) => ({ color: theme.colors.statusWarning });
 const mergedColorMapping = (theme: Theme) => ({ color: theme.colors.statusMerged });
+
+function localizedStateLabel(state: PrState, t: TFunction): string {
+  return t(`workspace.git.pr.states.${state}`);
+}
+
+function localizedActivityVerb(activity: PrPaneActivity, t: TFunction): string {
+  if (activity.kind === "comment") return t("workspace.git.pr.activity.commented");
+  if (activity.reviewState === "approved") return t("workspace.git.pr.activity.approved");
+  if (activity.reviewState === "changes_requested") {
+    return t("workspace.git.pr.activity.requestedChanges");
+  }
+  return t("workspace.git.pr.activity.reviewed");
+}
+
+function localizedActivityAge(age: string, t: TFunction): string {
+  if (age === "just now") return t("workspace.git.pr.time.justNow");
+  const match = age.match(/^(\d+)(m|h|d|mo|y) ago$/);
+  if (!match) return age;
+  const count = Number(match[1]);
+  const key = {
+    m: "workspace.git.pr.time.minutesAgo",
+    h: "workspace.git.pr.time.hoursAgo",
+    d: "workspace.git.pr.time.daysAgo",
+    mo: "workspace.git.pr.time.monthsAgo",
+    y: "workspace.git.pr.time.yearsAgo",
+  }[match[2]] as
+    | "workspace.git.pr.time.minutesAgo"
+    | "workspace.git.pr.time.hoursAgo"
+    | "workspace.git.pr.time.daysAgo"
+    | "workspace.git.pr.time.monthsAgo"
+    | "workspace.git.pr.time.yearsAgo";
+  return t(key, { count });
+}
 
 type IconColorMapping = typeof foregroundColorMapping;
 
@@ -483,7 +516,7 @@ export function PullRequestPane({
               <View style={styles.metaLine}>
                 <StateIcon size={14} uniProps={statePresentation.iconColor} />
                 <Text style={stateLabelStyle(data.state)} testID="pr-pane-state">
-                  {getStateLabel(data.state)}
+                  {localizedStateLabel(data.state, t)}
                 </Text>
                 {data.repoOwner && data.repoName ? (
                   <Text style={styles.repoRef} numberOfLines={1}>
@@ -499,7 +532,7 @@ export function PullRequestPane({
         </Pressable>
 
         <Section
-          title="Checks"
+          title={t("workspace.git.pr.pane.checks")}
           open={checksOpen}
           onToggle={handleToggleChecks}
           summary={
@@ -526,7 +559,7 @@ export function PullRequestPane({
           }
         >
           {data.checks.length === 0 ? (
-            <Text style={styles.emptyText}>No checks</Text>
+            <Text style={styles.emptyText}>{t("workspace.git.pr.pane.noChecks")}</Text>
           ) : (
             data.checks.map((check) => {
               const checkKey = getCheckIdentity(check);
@@ -546,7 +579,7 @@ export function PullRequestPane({
         <View style={styles.divider} />
 
         <Section
-          title="Activity"
+          title={t("workspace.git.pr.pane.activity")}
           open={activityOpen}
           onToggle={handleToggleActivity}
           summary={
@@ -566,13 +599,13 @@ export function PullRequestPane({
                 onPress={handleAddAllToChat}
                 disabled={activityLoading}
               >
-                Add all to chat
+                {t("workspace.git.pr.pane.addAllToChat")}
               </Button>
             </View>
           ) : null}
           {activityLoading ? <PrActivitySkeleton /> : null}
           {!activityLoading && visibleEntries.length === 0 ? (
-            <Text style={styles.emptyText}>No activity yet</Text>
+            <Text style={styles.emptyText}>{t("workspace.git.pr.pane.noActivity")}</Text>
           ) : null}
           {!activityLoading
             ? visibleEntries.map(({ entry, collapsed }) => (
@@ -664,6 +697,7 @@ function CheckRow({
   isAddingLogsToChat: boolean;
   onAddLogsToChat: (check: PrPaneCheck) => void;
 }) {
+  const { t } = useTranslation();
   const handlePress = useCallback(() => {
     void openExternalUrl(check.url);
   }, [check.url]);
@@ -695,7 +729,9 @@ function CheckRow({
             onPress={handleAddLogsToChat}
             style={styles.checkAddButton}
           >
-            {isAddingLogsToChat ? "Adding..." : "Add to chat"}
+            {isAddingLogsToChat
+              ? t("workspace.git.pr.pane.adding")
+              : t("workspace.git.pr.pane.addToChat")}
           </Button>
         ) : null}
         {check.duration && <Text style={styles.checkDuration}>{check.duration}</Text>}
@@ -767,6 +803,7 @@ function ActivityKebab({
   onMenuOpenChange: (open: boolean) => void;
   onAddToChat: (activity: PrPaneActivity) => void;
 }) {
+  const { t } = useTranslation();
   const handleAddToChat = useCallback(() => onAddToChat(activity), [activity, onAddToChat]);
   const handleCopy = useCallback(() => {
     void writeMarkdownToRichClipboard(activity.body, getDefaultMarkdownClipboardEnvironment());
@@ -781,23 +818,23 @@ function ActivityKebab({
         <DropdownMenuTrigger
           hitSlop={8}
           style={kebabTriggerStyle}
-          accessibilityLabel="Comment actions"
+          accessibilityLabel={t("workspace.git.pr.pane.commentActions")}
         >
           {renderKebabTriggerIcon}
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" width={200}>
           {attachEnabled && canAddPullRequestActivityToChat(activity) ? (
             <DropdownMenuItem leading={ADD_TO_CHAT_MENU_ICON} onSelect={handleAddToChat}>
-              Add to chat
+              {t("workspace.git.pr.pane.addToChat")}
             </DropdownMenuItem>
           ) : null}
           {activity.body.trim() !== "" ? (
             <DropdownMenuItem leading={COPY_MENU_ICON} onSelect={handleCopy}>
-              Copy
+              {t("common.actions.copy")}
             </DropdownMenuItem>
           ) : null}
           <DropdownMenuItem leading={OPEN_MENU_ICON} onSelect={handleOpen}>
-            Open on GitHub
+            {t("workspace.git.pr.pane.openOnGitHub")}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
@@ -839,7 +876,8 @@ function ActivityAvatar({ activity, size }: { activity: PrPaneActivity; size: nu
 }
 
 function ActivityVerb({ activity }: { activity: PrPaneActivity }) {
-  const verb = getActivityVerb(activity).toLowerCase();
+  const { t } = useTranslation();
+  const verb = localizedActivityVerb(activity, t);
   if (activity.kind === "review" && activity.reviewState === "approved") {
     return (
       <View style={styles.verbGroup}>
@@ -868,6 +906,7 @@ function ActivityHeader({
   avatarSize: number;
   children?: React.ReactNode;
 }) {
+  const { t } = useTranslation();
   return (
     <>
       <ActivityAvatar activity={activity} size={avatarSize} />
@@ -876,7 +915,7 @@ function ActivityHeader({
       </Text>
       <ActivityVerb activity={activity} />
       <View style={styles.headerTrailing}>
-        <Text style={styles.ageText}>{activity.age}</Text>
+        <Text style={styles.ageText}>{localizedActivityAge(activity.age, t)}</Text>
         {children}
       </View>
     </>
@@ -1108,6 +1147,7 @@ function ThreadBlock({
   onAddThreadToChat: (thread: PrThreadEntry) => void;
   onToggleCollapsed: (entryId: string, collapsed: boolean) => void;
 }) {
+  const { t } = useTranslation();
   const { actionsVisible, handlePointerEnter, handlePointerLeave, setMenuOpen } =
     useRevealOnHover();
   const handleHeaderPress = useCallback(() => {
@@ -1129,8 +1169,12 @@ function ThreadBlock({
         <Text style={styles.threadPath} numberOfLines={1}>
           {formatPullRequestThreadPath(thread.location)}
         </Text>
-        {thread.location.isResolved ? <StatusBadge label="Resolved" variant="success" /> : null}
-        {thread.location.isOutdated ? <StatusBadge label="Outdated" /> : null}
+        {thread.location.isResolved ? (
+          <StatusBadge label={t("workspace.git.pr.pane.resolved")} variant="success" />
+        ) : null}
+        {thread.location.isOutdated ? (
+          <StatusBadge label={t("workspace.git.pr.pane.outdated")} />
+        ) : null}
         <View style={styles.headerTrailing}>
           {collapsed ? (
             <View style={styles.threadCount}>
@@ -1146,13 +1190,13 @@ function ThreadBlock({
               <DropdownMenuTrigger
                 hitSlop={8}
                 style={kebabTriggerStyle}
-                accessibilityLabel="Thread actions"
+                accessibilityLabel={t("workspace.git.pr.pane.threadActions")}
               >
                 {renderKebabTriggerIcon}
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" width={200}>
                 <DropdownMenuItem leading={OPEN_MENU_ICON} onSelect={handleOpenThread}>
-                  Open on GitHub
+                  {t("workspace.git.pr.pane.openOnGitHub")}
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>

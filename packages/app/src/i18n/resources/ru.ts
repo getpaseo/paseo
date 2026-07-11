@@ -47,6 +47,11 @@ export const ru: TranslationResources = {
       idle: "Праздный",
     },
   },
+  communityLinks: {
+    star: "GitHub Star",
+    sponsor: "Sponsor",
+    community: "Community",
+  },
   shell: {
     menu: {
       toggleSidebar: "Переключить боковую панель",
@@ -449,6 +454,9 @@ export const ru: TranslationResources = {
       devices: {
         label: "Размер устройства",
         responsive: "Адаптивный",
+        laptop: "Laptop",
+        desktop1080: "Desktop 1080p",
+        desktop1440: "Desktop 1440p",
       },
       errors: {
         failedToLoad: "Не удалось загрузить страницу",
@@ -772,6 +780,20 @@ export const ru: TranslationResources = {
         failedOpen: "Не удалось открыть рабочую область",
       },
       pr: {
+        pane: {
+          checks: "Checks",
+          noChecks: "No checks",
+          activity: "Activity",
+          addAllToChat: "Add all to chat",
+          noActivity: "No activity yet",
+          adding: "Adding...",
+          addToChat: "Add to chat",
+          commentActions: "Comment actions",
+          openOnGitHub: "Open on GitHub",
+          resolved: "Resolved",
+          outdated: "Outdated",
+          threadActions: "Thread actions",
+        },
         actions: {
           viewPullRequest: "Открыть",
         },
@@ -795,6 +817,11 @@ export const ru: TranslationResources = {
           reviewed: "Рассмотрено",
         },
         time: {
+          minutesAgo: "{{count}}m ago",
+          hoursAgo: "{{count}}h ago",
+          daysAgo: "{{count}}d ago",
+          monthsAgo: "{{count}}mo ago",
+          yearsAgo: "{{count}}y ago",
           justNow: "прямо сейчас",
         },
         errors: {
@@ -1061,6 +1088,7 @@ export const ru: TranslationResources = {
     runsOutIn: "runs out in {{time}}",
     remaining: "{{amount}} left",
     duration: { minutes: "{{count}}m", hours: "{{count}}h", days: "{{count}}d" },
+    labels: { session: "Session", weekly: "Weekly", credits: "Credits" },
   },
   newWorkspace: {
     title: "Новое рабочее пространство",

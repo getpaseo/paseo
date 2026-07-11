@@ -415,7 +415,7 @@ describe("ImportSessionSheet", () => {
     });
 
     await screen.findByText("Implement the importer sheet");
-    screen.getByText("2h ago");
+    screen.getByText(/2 (?:h|hr\.) ago/);
     screen.getByText("Make the rows readable and provider opaque");
   });
 

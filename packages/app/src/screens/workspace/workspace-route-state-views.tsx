@@ -122,7 +122,13 @@ function WorkspaceUnreachable({
           {state.connectionStatus === "connecting" || state.connectionStatus === "idle"
             ? state.hostName
             : t("workspace.route.hostStatus", {
-                status: formatConnectionStatus(state.connectionStatus),
+                status: formatConnectionStatus(state.connectionStatus, {
+                  online: t("common.connectionStatus.online"),
+                  connecting: t("common.connectionStatus.connecting"),
+                  offline: t("common.connectionStatus.offline"),
+                  error: t("common.connectionStatus.error"),
+                  idle: t("common.connectionStatus.idle"),
+                }),
               })}
         </Text>
         {state.lastError ? (

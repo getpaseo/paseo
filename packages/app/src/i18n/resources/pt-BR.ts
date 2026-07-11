@@ -47,6 +47,11 @@ export const ptBR: TranslationResources = {
       idle: "Ocioso",
     },
   },
+  communityLinks: {
+    star: "GitHub Star",
+    sponsor: "Sponsor",
+    community: "Community",
+  },
   shell: {
     menu: {
       toggleSidebar: "Alternar barra lateral",
@@ -449,6 +454,9 @@ export const ptBR: TranslationResources = {
       devices: {
         label: "Tamanho do dispositivo",
         responsive: "Responsivo",
+        laptop: "Laptop",
+        desktop1080: "Desktop 1080p",
+        desktop1440: "Desktop 1440p",
       },
       errors: {
         failedToLoad: "Falha ao carregar página",
@@ -771,6 +779,20 @@ export const ptBR: TranslationResources = {
         failedOpen: "Falha ao abrir workspace",
       },
       pr: {
+        pane: {
+          checks: "Checks",
+          noChecks: "No checks",
+          activity: "Activity",
+          addAllToChat: "Add all to chat",
+          noActivity: "No activity yet",
+          adding: "Adding...",
+          addToChat: "Add to chat",
+          commentActions: "Comment actions",
+          openOnGitHub: "Open on GitHub",
+          resolved: "Resolved",
+          outdated: "Outdated",
+          threadActions: "Thread actions",
+        },
         actions: {
           viewPullRequest: "Ver",
         },
@@ -794,6 +816,11 @@ export const ptBR: TranslationResources = {
           reviewed: "Revisado",
         },
         time: {
+          minutesAgo: "{{count}}m ago",
+          hoursAgo: "{{count}}h ago",
+          daysAgo: "{{count}}d ago",
+          monthsAgo: "{{count}}mo ago",
+          yearsAgo: "{{count}}y ago",
           justNow: "agora mesmo",
         },
         errors: {
@@ -1060,6 +1087,7 @@ export const ptBR: TranslationResources = {
     runsOutIn: "runs out in {{time}}",
     remaining: "{{amount}} left",
     duration: { minutes: "{{count}}m", hours: "{{count}}h", days: "{{count}}d" },
+    labels: { session: "Session", weekly: "Weekly", credits: "Credits" },
   },
   newWorkspace: {
     title: "Novo workspace",
