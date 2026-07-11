@@ -1,65 +1,101 @@
-import { useLayoutEffect, useMemo } from "react";
+import { useLayoutEffect, useMemo, useState } from "react";
 import { View } from "react-native";
 import Animated, {
-  cancelAnimation,
-  Easing,
+  makeMutable,
   type SharedValue,
   useAnimatedStyle,
+  useReducedMotion,
   useSharedValue,
-  withRepeat,
-  withTiming,
 } from "react-native-reanimated";
+import { scheduleOnUI } from "react-native-worklets";
 import { useRetainedPanelActive } from "@/components/retained-panel";
+import {
+  SYNCED_LOADER_DOT_COUNT,
+  getSyncedLoaderDotOpacity,
+  getSyncedLoaderStep,
+} from "@/components/synced-loader-state";
 
-const SYNCED_LOADER_DURATION_MS = 950;
-const SYNCED_LOADER_EPOCH_MS = 0;
-const DOT_SEQUENCE = [0, 1, 3, 5, 4, 2] as const;
-const DOT_COUNT = DOT_SEQUENCE.length;
 const GRID_COLUMNS = 2;
-const SNAKE_SEGMENT_OFFSETS = [0, -1, -2, -3, -4] as const;
-const SNAKE_OPACITIES = [1, 0.78, 0.56, 0.34, 0] as const;
-const DOT_KEYS = Array.from({ length: DOT_COUNT }, (_, i) => `dot-${i}`);
+const DOT_KEYS = Array.from({ length: SYNCED_LOADER_DOT_COUNT }, (_, i) => `dot-${i}`);
+const sharedStep = makeMutable(0);
+const activeLoaderCount = makeMutable(0);
+const clockRunning = makeMutable(false);
+let nextStepListenerId = 1;
 
-function startSyncedStepLoop(progress: SharedValue<number>): void {
-  const elapsedMs = (Date.now() - SYNCED_LOADER_EPOCH_MS) % SYNCED_LOADER_DURATION_MS;
-  progress.value = (elapsedMs / SYNCED_LOADER_DURATION_MS) * DOT_COUNT;
-  progress.value = withTiming(
-    DOT_COUNT,
-    {
-      duration: Math.max(1, Math.round(SYNCED_LOADER_DURATION_MS - elapsedMs)),
-      easing: Easing.linear,
-    },
-    (finished) => {
-      if (!finished) {
-        return;
-      }
-      progress.value = 0;
-      progress.value = withRepeat(
-        withTiming(DOT_COUNT, {
-          duration: SYNCED_LOADER_DURATION_MS,
-          easing: Easing.linear,
-        }),
-        -1,
-        false,
-      );
-    },
-  );
+function advanceSharedStep(): void {
+  "worklet";
+  if (activeLoaderCount.value === 0) {
+    clockRunning.value = false;
+    return;
+  }
+
+  const nextStep = getSyncedLoaderStep(Date.now());
+  if (sharedStep.value !== nextStep) {
+    sharedStep.value = nextStep;
+  }
+  requestAnimationFrame(advanceSharedStep);
+}
+
+function registerStepListener(
+  step: SharedValue<number>,
+  registered: SharedValue<boolean>,
+  listenerId: number,
+): void {
+  "worklet";
+  if (registered.value) {
+    return;
+  }
+
+  registered.value = true;
+  step.value = getSyncedLoaderStep(Date.now());
+  sharedStep.addListener(listenerId, (nextStep) => {
+    step.value = nextStep;
+  });
+  activeLoaderCount.value += 1;
+
+  if (!clockRunning.value) {
+    clockRunning.value = true;
+    sharedStep.value = step.value;
+    requestAnimationFrame(advanceSharedStep);
+  }
+}
+
+function unregisterStepListener(registered: SharedValue<boolean>, listenerId: number): void {
+  "worklet";
+  if (!registered.value) {
+    return;
+  }
+
+  registered.value = false;
+  sharedStep.removeListener(listenerId);
+  activeLoaderCount.value -= 1;
+}
+
+function useSyncedLoaderStep(active: boolean, reduceMotion: boolean): SharedValue<number> {
+  // The local value lets retained loaders detach from the app-wide clock without
+  // unmounting their animated views or leaving hidden style worklets subscribed.
+  const step = useSharedValue(reduceMotion ? 0 : getSyncedLoaderStep(Date.now()));
+  const registered = useSharedValue(false);
+  const [listenerId] = useState(() => nextStepListenerId++);
+
+  useLayoutEffect(() => {
+    if (!active || reduceMotion) {
+      return;
+    }
+
+    scheduleOnUI(registerStepListener, step, registered, listenerId);
+    return () => {
+      scheduleOnUI(unregisterStepListener, registered, listenerId);
+    };
+  }, [active, listenerId, reduceMotion, registered, step]);
+
+  return step;
 }
 
 export function SyncedLoader({ size = 10, color }: { size?: number; color: string }) {
   const active = useRetainedPanelActive();
-  const stepProgress = useSharedValue(0);
-
-  useLayoutEffect(() => {
-    cancelAnimation(stepProgress);
-    if (!active) {
-      return;
-    }
-    startSyncedStepLoop(stepProgress);
-    return () => {
-      cancelAnimation(stepProgress);
-    };
-  }, [active, stepProgress]);
+  const reduceMotion = useReducedMotion();
+  const step = useSyncedLoaderStep(active, reduceMotion);
 
   const gap = Math.max(1, Math.round(size * 0.12));
   const dotSize = Math.max(2, Math.floor((size - gap * 2) / 3));
@@ -84,18 +120,17 @@ export function SyncedLoader({ size = 10, color }: { size?: number; color: strin
   return (
     <View style={containerStyle}>
       <View style={gridStyle}>
-        {Array.from({ length: DOT_COUNT }).map((_, dotIndex) => {
+        {Array.from({ length: SYNCED_LOADER_DOT_COUNT }).map((_, dotIndex) => {
           const rowIndex = Math.floor(dotIndex / GRID_COLUMNS);
           const columnIndex = dotIndex % GRID_COLUMNS;
-          const sequenceIndex = DOT_SEQUENCE.indexOf(dotIndex as (typeof DOT_SEQUENCE)[number]);
 
           return (
             <SpinnerDot
               key={DOT_KEYS[dotIndex]}
               color={color}
               dotSize={dotSize}
-              sequenceIndex={sequenceIndex}
-              progress={stepProgress}
+              dotIndex={dotIndex}
+              step={step}
               left={columnIndex * (dotSize + gap)}
               top={rowIndex * (dotSize + gap)}
             />
@@ -109,35 +144,21 @@ export function SyncedLoader({ size = 10, color }: { size?: number; color: strin
 function SpinnerDot({
   color,
   dotSize,
-  sequenceIndex,
-  progress,
+  dotIndex,
+  step,
   left,
   top,
 }: {
   color: string;
   dotSize: number;
-  sequenceIndex: number;
-  progress: SharedValue<number>;
+  dotIndex: number;
+  step: SharedValue<number>;
   left: number;
   top: number;
 }) {
-  const animatedStyle = useAnimatedStyle(() => {
-    const headIndex = Math.floor(progress.value) % DOT_COUNT;
-    let opacity = 0;
-
-    for (let segmentIndex = 0; segmentIndex < SNAKE_SEGMENT_OFFSETS.length; segmentIndex += 1) {
-      const activeSequenceIndex =
-        (headIndex + SNAKE_SEGMENT_OFFSETS[segmentIndex] + DOT_COUNT) % DOT_COUNT;
-      if (sequenceIndex === activeSequenceIndex) {
-        opacity = SNAKE_OPACITIES[segmentIndex] ?? 0;
-        break;
-      }
-    }
-
-    return {
-      opacity,
-    };
-  });
+  const animatedStyle = useAnimatedStyle(() => ({
+    opacity: getSyncedLoaderDotOpacity(step.value, dotIndex),
+  }));
 
   const dotStyle = useMemo(
     () => [
