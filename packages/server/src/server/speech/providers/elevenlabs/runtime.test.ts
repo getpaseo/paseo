@@ -3,13 +3,13 @@ import { describe, expect, test } from "vitest";
 
 import type { TextToSpeechProvider } from "../../speech-provider.js";
 import type { RequestedSpeechProviders } from "../../speech-types.js";
+import type { ElevenLabsSpeechProviderConfig } from "./config.js";
 import {
   getElevenLabsSpeechAvailability,
   initializeElevenLabsSpeechServices,
   validateElevenLabsCredentialRequirements,
 } from "./runtime.js";
 import { ElevenLabsTTS } from "./tts.js";
-import type { ElevenLabsSpeechProviderConfig } from "./config.js";
 
 const ALL_PROVIDING: RequestedSpeechProviders = {
   dictationStt: { provider: "openai", explicit: true },
@@ -18,32 +18,22 @@ const ALL_PROVIDING: RequestedSpeechProviders = {
   voiceTts: { provider: "elevenlabs", explicit: true },
 };
 
+const VALID_CONFIG: ElevenLabsSpeechProviderConfig = {
+  apiKey: "k",
+  voiceId: "voice-1",
+};
+
 describe("ElevenLabs speech provider", () => {
   test("availability is true only when apiKey and voiceId are present", () => {
-    expect(
-      getElevenLabsSpeechAvailability({
-        apiKey: "k",
-        tts: { apiKey: "k", voiceId: "v" },
-      }),
-    ).toEqual({ tts: true });
-    expect(
-      getElevenLabsSpeechAvailability({
-        apiKey: "k",
-        tts: { apiKey: "k", voiceId: "" },
-      }),
-    ).toEqual({ tts: false });
+    expect(getElevenLabsSpeechAvailability(VALID_CONFIG)).toEqual({ tts: true });
+    expect(getElevenLabsSpeechAvailability({ apiKey: "k", voiceId: "" })).toEqual({ tts: false });
     expect(getElevenLabsSpeechAvailability(undefined)).toEqual({ tts: false });
   });
 
   test("creates ElevenLabsTTS when voiceTts is elevenlabs and credentials are present", () => {
-    const config: ElevenLabsSpeechProviderConfig = {
-      apiKey: "k",
-      tts: { apiKey: "k", voiceId: "voice-1" },
-    };
-
     const services = initializeElevenLabsSpeechServices({
       providers: ALL_PROVIDING,
-      elevenlabsConfig: config,
+      elevenlabsConfig: VALID_CONFIG,
       existing: {
         turnDetectionService: null,
         sttService: null,
@@ -65,10 +55,7 @@ describe("ElevenLabs speech provider", () => {
 
     const services = initializeElevenLabsSpeechServices({
       providers,
-      elevenlabsConfig: {
-        apiKey: "k",
-        tts: { apiKey: "k", voiceId: "v" },
-      },
+      elevenlabsConfig: VALID_CONFIG,
       existing: {
         turnDetectionService: null,
         sttService: null,
@@ -86,10 +73,7 @@ describe("ElevenLabs speech provider", () => {
     expect(() =>
       validateElevenLabsCredentialRequirements({
         providers: ALL_PROVIDING,
-        elevenlabsConfig: {
-          apiKey: "k",
-          tts: { apiKey: "k", voiceId: "v" },
-        },
+        elevenlabsConfig: VALID_CONFIG,
         logger,
       }),
     ).not.toThrow();

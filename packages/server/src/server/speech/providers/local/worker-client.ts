@@ -596,6 +596,8 @@ export class LocalSpeechWorkerClient {
 }
 
 export class WorkerBackedTextToSpeechProvider implements TextToSpeechProvider {
+  public readonly id = "local" as const;
+
   constructor(private readonly client: LocalSpeechWorkerClient) {}
 
   synthesizeSpeech(text: string): Promise<SpeechStreamResult> {

@@ -318,7 +318,7 @@ function describeRequestedProviders(providers: RequestedSpeechProviders): {
 
 function resolveVoiceTtsLabel(ttsService: TextToSpeechProvider | null): string {
   if (!ttsService) return "unavailable";
-  return ttsService.id ?? "openai";
+  return ttsService.id;
 }
 
 function resolveEffectiveProviderIds(params: {

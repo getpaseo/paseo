@@ -21,7 +21,7 @@ export function getElevenLabsSpeechAvailability(
   elevenlabsConfig: ElevenLabsSpeechProviderConfig | undefined,
 ): ElevenLabsSpeechAvailability {
   return {
-    tts: Boolean(elevenlabsConfig?.apiKey && elevenlabsConfig.tts?.voiceId),
+    tts: Boolean(elevenlabsConfig?.apiKey && elevenlabsConfig.voiceId),
   };
 }
 
@@ -31,7 +31,7 @@ export function validateElevenLabsCredentialRequirements(params: {
   logger: Logger;
 }): void {
   const { providers, logger, elevenlabsConfig } = params;
-  const hasTts = Boolean(elevenlabsConfig?.apiKey && elevenlabsConfig.tts?.voiceId);
+  const hasTts = Boolean(elevenlabsConfig?.apiKey && elevenlabsConfig.voiceId);
 
   const missingFor: string[] = [];
   if (providers.voiceStt.enabled !== false && providers.voiceStt.provider === "elevenlabs") {
@@ -71,13 +71,6 @@ export function validateElevenLabsCredentialRequirements(params: {
   }
 }
 
-function createElevenLabsTts(
-  elevenlabsConfig: ElevenLabsSpeechProviderConfig,
-  logger: Logger,
-): TextToSpeechProvider {
-  return new ElevenLabsTTS(elevenlabsConfig.tts, logger);
-}
-
 export function initializeElevenLabsSpeechServices(params: {
   providers: RequestedSpeechProviders;
   elevenlabsConfig: ElevenLabsSpeechProviderConfig | undefined;
@@ -85,7 +78,7 @@ export function initializeElevenLabsSpeechServices(params: {
   logger: Logger;
 }): ExistingSpeechServices {
   const { providers, elevenlabsConfig, existing, logger } = params;
-  const hasTts = Boolean(elevenlabsConfig?.apiKey && elevenlabsConfig.tts?.voiceId);
+  const hasTts = Boolean(elevenlabsConfig?.apiKey && elevenlabsConfig.voiceId);
   const needsTts =
     !existing.ttsService &&
     providers.voiceTts.enabled !== false &&
@@ -96,7 +89,7 @@ export function initializeElevenLabsSpeechServices(params: {
     return {
       turnDetectionService: existing.turnDetectionService,
       sttService: existing.sttService,
-      ttsService: createElevenLabsTts(elevenlabsConfig, logger),
+      ttsService: new ElevenLabsTTS(elevenlabsConfig, logger),
       dictationSttService: existing.dictationSttService,
     };
   }

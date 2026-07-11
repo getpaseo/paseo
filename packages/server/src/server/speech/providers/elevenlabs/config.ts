@@ -1,11 +1,7 @@
 import type { PersistedConfig } from "../../../persisted-config.js";
 import type { ElevenLabsTtsConfig } from "./tts.js";
 
-export interface ElevenLabsSpeechProviderConfig {
-  apiKey: string;
-  baseUrl?: string;
-  tts: ElevenLabsTtsConfig;
-}
+export type ElevenLabsSpeechProviderConfig = ElevenLabsTtsConfig;
 
 function optionalTrimmedString(value: unknown): string | undefined {
   if (typeof value !== "string") {
@@ -36,7 +32,6 @@ export function resolveElevenLabsSpeechConfig(params: {
     return undefined;
   }
 
-  const baseUrl = firstDefined<string>([providerConfig?.baseUrl, env.ELEVENLABS_BASE_URL]);
   const voiceId = firstDefined<string>([
     optionalTrimmedString(providerConfig?.voiceId),
     optionalTrimmedString(env.ELEVENLABS_VOICE_ID),
@@ -46,21 +41,16 @@ export function resolveElevenLabsSpeechConfig(params: {
     return undefined;
   }
 
+  const baseUrl = firstDefined<string>([providerConfig?.baseUrl, env.ELEVENLABS_BASE_URL]);
   const modelId = firstDefined<string>([
     optionalTrimmedString(providerConfig?.modelId),
     optionalTrimmedString(env.ELEVENLABS_TTS_MODEL),
   ]);
 
-  const tts: ElevenLabsTtsConfig = {
+  return {
     apiKey,
     ...(baseUrl ? { baseUrl } : {}),
     voiceId,
     ...(modelId ? { modelId } : {}),
-  };
-
-  return {
-    apiKey,
-    ...(baseUrl ? { baseUrl } : {}),
-    tts,
   };
 }
