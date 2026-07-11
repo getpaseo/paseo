@@ -905,12 +905,8 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             })}
           </MessageOuterSpacingProvider>
           {!isNearBottom && (
-            <Animated.View
-              style={stylesheet.scrollToBottomContainer}
-              entering={scrollIndicatorFadeIn}
-              exiting={scrollIndicatorFadeOut}
-            >
-              <View style={stylesheet.scrollToBottomInner}>
+            <View style={stylesheet.scrollToBottomContainer} pointerEvents="box-none">
+              <Animated.View entering={scrollIndicatorFadeIn} exiting={scrollIndicatorFadeOut}>
                 <Pressable
                   style={stylesheet.scrollToBottomButton}
                   onPress={scrollToBottom}
@@ -920,8 +916,8 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
                 >
                   <ChevronDown size={24} color={stylesheet.scrollToBottomIcon.color} />
                 </Pressable>
-              </View>
-            </Animated.View>
+              </Animated.View>
+            </View>
           )}
         </View>
       </ToolCallSheetProvider>
@@ -1392,13 +1388,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     bottom: 16,
     left: 0,
     right: 0,
-    alignItems: "center",
-    pointerEvents: "box-none",
-  },
-  scrollToBottomInner: {
-    width: "100%",
-    maxWidth: MAX_CONTENT_WIDTH,
-    alignSelf: "center",
     alignItems: "center",
   },
   scrollToBottomButton: {

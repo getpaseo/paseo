@@ -124,6 +124,57 @@ export async function scrollChatAwayFromBottom(
   return readScrollMetrics(page);
 }
 
+export async function clickToolCallBesideScrollToBottomButton(page: Page): Promise<{
+  outsideButton: boolean;
+  toolCallReceivesPointer: boolean;
+  withinButtonBand: boolean;
+}> {
+  await scrollChatAwayFromBottom(page, {
+    deltaY: -900,
+    minDistanceFromBottom: 300,
+  });
+
+  const scrollToBottomButton = page.getByRole("button", { name: "Scroll to bottom" });
+  await expect(scrollToBottomButton).toBeVisible();
+
+  const hitArea = await page.evaluate(() => {
+    const button = document.querySelector('[data-testid="scroll-to-bottom-button"]');
+    if (!(button instanceof HTMLElement)) {
+      throw new Error("Expected visible scroll-to-bottom button");
+    }
+    const buttonBounds = button.getBoundingClientRect();
+    const toolCall = Array.from(
+      document.querySelectorAll<HTMLElement>('[data-testid="tool-call-badge"] [role="button"]'),
+    ).find((element) => {
+      const bounds = element.getBoundingClientRect();
+      const centerY = bounds.top + bounds.height / 2;
+      return bounds.width > 0 && centerY >= buttonBounds.top && centerY <= buttonBounds.bottom;
+    });
+    if (!toolCall) {
+      throw new Error("Expected a tool call beside the scroll-to-bottom button");
+    }
+
+    const toolCallBounds = toolCall.getBoundingClientRect();
+    const clickPoint = {
+      x: toolCallBounds.left + 24,
+      y: toolCallBounds.top + toolCallBounds.height / 2,
+    };
+    const hit = document.elementFromPoint(clickPoint.x, clickPoint.y);
+    return {
+      clickPoint,
+      outsideButton: clickPoint.x < buttonBounds.left || clickPoint.x > buttonBounds.right,
+      toolCallReceivesPointer: hit !== null && toolCall.contains(hit),
+      withinButtonBand: clickPoint.y >= buttonBounds.top && clickPoint.y <= buttonBounds.bottom,
+    };
+  });
+  await page.mouse.click(hitArea.clickPoint.x, hitArea.clickPoint.y);
+  return {
+    outsideButton: hitArea.outsideButton,
+    toolCallReceivesPointer: hitArea.toolCallReceivesPointer,
+    withinButtonBand: hitArea.withinButtonBand,
+  };
+}
+
 export async function expectScrollStaysFixed(
   page: Page,
   baseline: ScrollMetrics,

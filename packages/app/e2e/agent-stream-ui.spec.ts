@@ -8,6 +8,7 @@ import {
 } from "./helpers/agent-stream";
 import {
   expectScrollStaysFixed,
+  clickToolCallBesideScrollToBottomButton,
   readScrollMetrics,
   scrollAgentChatToBottom,
   scrollChatAwayFromBottom,
@@ -203,6 +204,37 @@ test.describe("Agent stream UI", () => {
     timelineGate.release();
     await timelineGate.waitForForwardedResponse();
     await expectScrollStaysFixed(page, baseline);
+  });
+
+  test("keeps tool calls clickable beside the scroll-to-bottom button", async ({ page }) => {
+    test.setTimeout(60_000);
+    const agent = await seedMockAgentWorkspace({
+      repoPrefix: "stream-scroll-button-hit-area-",
+      title: "Scroll button hit area",
+      model: "ten-second-stream",
+      initialPrompt: "Stream enough content to exercise the scroll button hit area.",
+    });
+    try {
+      await agent.client.waitForFinish(agent.agentId, 30_000);
+      await openAgentRoute(page, {
+        workspaceId: agent.workspaceId,
+        agentId: agent.agentId,
+      });
+      await waitForScrollableChat(page, {
+        minScrollableDistance: SCROLL_AWAY_MIN_SCROLLABLE_DISTANCE,
+        timeout: 30_000,
+      });
+
+      const hitArea = await clickToolCallBesideScrollToBottomButton(page);
+
+      expect(hitArea).toEqual({
+        outsideButton: true,
+        toolCallReceivesPointer: true,
+        withinButtonBand: true,
+      });
+    } finally {
+      await agent.cleanup();
+    }
   });
 
   test("working-indicator transitions to copy-button when stream ends", async ({ page }) => {
