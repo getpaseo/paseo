@@ -14,17 +14,21 @@ export type { NavigateToAgentInput } from "./resolve";
 const RESTORE_TIMEOUT_MS = 30000;
 
 interface PendingWorkspaceRestore {
-  agentId: string;
+  target: HistoryWorkspaceRestore;
   unsubscribe: () => void;
+}
+
+interface HistoryWorkspaceRestore {
+  serverId: string;
+  agentId: string;
+  workspaceId: string;
+  agentArchived: boolean;
 }
 
 const pendingWorkspaceRestores = new Map<string, PendingWorkspaceRestore>();
 
-function restoreWhenWorkspacesHydrate(
-  serverId: string,
-  agentId: string,
-  workspaceId: string,
-): void {
+function restoreWhenWorkspacesHydrate(target: HistoryWorkspaceRestore): void {
+  const { serverId, workspaceId } = target;
   const key = buildWorkspaceTabPersistenceKey({ serverId, workspaceId });
   if (!key) {
     return;
@@ -32,12 +36,12 @@ function restoreWhenWorkspacesHydrate(
 
   const pending = pendingWorkspaceRestores.get(key);
   if (pending) {
-    pending.agentId = agentId;
+    pending.target = target;
     return;
   }
 
   const restore: PendingWorkspaceRestore = {
-    agentId,
+    target,
     unsubscribe: () => {},
   };
   restore.unsubscribe = useSessionStore.subscribe((state) => {
@@ -49,13 +53,14 @@ function restoreWhenWorkspacesHydrate(
     restore.unsubscribe();
     pendingWorkspaceRestores.delete(key);
     if (session) {
-      restoreArchivedWorkspace(serverId, restore.agentId, workspaceId);
+      restoreArchivedWorkspace(restore.target);
     }
   });
   pendingWorkspaceRestores.set(key, restore);
 }
 
-function restoreArchivedWorkspace(serverId: string, agentId: string, workspaceId: string): void {
+function restoreArchivedWorkspace(target: HistoryWorkspaceRestore): void {
+  const { serverId, agentId, workspaceId, agentArchived } = target;
   const snapshot = getHostRuntimeStore().getSnapshot(serverId);
   const client = snapshot?.client ?? null;
   if (!client || !isHostRuntimeConnected(snapshot)) {
@@ -74,7 +79,7 @@ function restoreArchivedWorkspace(serverId: string, agentId: string, workspaceId
   // its existing loading state, then decide whether restoration is needed once the
   // daemon's workspace snapshot has landed.
   if (!session.hasHydratedWorkspaces) {
-    restoreWhenWorkspacesHydrate(serverId, agentId, workspaceId);
+    restoreWhenWorkspacesHydrate(target);
     return;
   }
 
@@ -82,8 +87,7 @@ function restoreArchivedWorkspace(serverId: string, agentId: string, workspaceId
   // must restore even when its agent survived unarchived; an archived agent must
   // still reopen when its workspace survived.
   if (session.workspaces.has(workspaceId)) {
-    const agent = session.agents.get(agentId) ?? session.agentDetails.get(agentId);
-    if (agent?.archivedAt) {
+    if (agentArchived) {
       client.refreshAgent(agentId).catch((error) => {
         console.error("[HistoryRestore] Failed to reopen archived agent", {
           serverId,
@@ -130,8 +134,6 @@ export function navigateToAgent(input: NavigateToAgentInput): string {
       router.navigate(route as Href);
     },
     navigateToWorkspace,
-    restoreArchivedWorkspace: ({ serverId, agentId, workspaceId }) => {
-      restoreArchivedWorkspace(serverId, agentId, workspaceId);
-    },
+    restoreArchivedWorkspace,
   });
 }

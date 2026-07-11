@@ -11,7 +11,9 @@ export interface NavigateToAgentInput {
   // History can point at an agent whose owning workspace has been archived even
   // when the agent itself was not. Other navigation paths must not refresh an
   // agent just because their workspace descriptor is temporarily unavailable.
-  restoreWorkspace?: boolean;
+  restoreWorkspace?: {
+    agentArchived: boolean;
+  };
   pin?: boolean;
 }
 
@@ -27,6 +29,7 @@ export interface NavigateToAgentDeps {
     serverId: string;
     agentId: string;
     workspaceId: string;
+    agentArchived: boolean;
   }) => void;
 }
 
@@ -45,11 +48,12 @@ export function resolveNavigateToAgent(
     return route;
   }
 
-  if (input.restoreWorkspace === true) {
+  if (input.restoreWorkspace) {
     deps.restoreArchivedWorkspace({
       serverId: input.serverId,
       agentId: input.agentId,
       workspaceId,
+      agentArchived: input.restoreWorkspace.agentArchived,
     });
   }
 

@@ -20,6 +20,7 @@ interface RecordedRestore {
   serverId: string;
   agentId: string;
   workspaceId: string;
+  agentArchived: boolean;
 }
 
 function createFakeNavigators(target: AgentNavTarget): {
@@ -83,14 +84,19 @@ describe("resolveNavigateToAgent", () => {
       {
         serverId: SERVER_ID,
         agentId: AGENT_ID,
-        restoreWorkspace: true,
+        restoreWorkspace: { agentArchived: true },
         pin: true,
       },
       deps,
     );
 
     expect(restores).toEqual([
-      { serverId: SERVER_ID, agentId: AGENT_ID, workspaceId: WORKSPACE_ID },
+      {
+        serverId: SERVER_ID,
+        agentId: AGENT_ID,
+        workspaceId: WORKSPACE_ID,
+        agentArchived: true,
+      },
     ]);
     expect(tabNavigations).toHaveLength(1);
   });
