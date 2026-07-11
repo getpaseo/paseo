@@ -1,5 +1,6 @@
 import type pino from "pino";
 import { Readable } from "node:stream";
+import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 
 import type { SpeechStreamResult, TextToSpeechProvider } from "../../speech-provider.js";
 
@@ -22,23 +23,6 @@ export interface ElevenLabsTtsConfig {
 interface ElevenLabsErrorPayload {
   detail?: { message?: string; status?: string } | string;
   message?: string;
-}
-
-function webStreamToReadable(stream: ReadableStream<Uint8Array>): Readable {
-  const reader = stream.getReader();
-  return Readable.from(
-    (async function* () {
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) {
-          return;
-        }
-        if (value) {
-          yield value;
-        }
-      }
-    })(),
-  );
 }
 
 async function parseElevenLabsError(response: Response): Promise<string> {
@@ -133,7 +117,7 @@ export class ElevenLabsTTS implements TextToSpeechProvider {
       throw new Error(`TTS synthesis failed: ${message}`);
     }
 
-    const stream = webStreamToReadable(response.body as ReadableStream<Uint8Array>);
+    const stream = Readable.fromWeb(response.body as unknown as NodeReadableStream<Uint8Array>);
     this.logger.debug({ duration: Date.now() - startTime }, "Speech synthesis stream ready");
 
     return {
