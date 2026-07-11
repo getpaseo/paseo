@@ -20,7 +20,7 @@ vi.mock("@/runtime/host-runtime", () => ({
   isHostRuntimeConnected: () => connected,
 }));
 
-import { useSessionStore, type Agent } from "@/stores/session-store";
+import { useSessionStore, type Agent, type WorkspaceDescriptor } from "@/stores/session-store";
 import { navigateToAgent } from "./index";
 
 const SERVER_ID = "remote-server";
@@ -81,6 +81,25 @@ function seedArchivedAgent(options?: { worktreeRestore?: boolean }): void {
     next.set(AGENT_ID, agent(new Date("2026-01-02T00:00:00.000Z")));
     return next;
   });
+  store.setHasHydratedWorkspaces(SERVER_ID, true);
+}
+
+function workspace(): WorkspaceDescriptor {
+  return {
+    id: WORKSPACE_ID,
+    projectId: "project-1",
+    projectDisplayName: "Project 1",
+    projectRootPath: MISSING_WORKTREE_CWD,
+    workspaceDirectory: MISSING_WORKTREE_CWD,
+    projectKind: "git",
+    workspaceKind: "local_checkout",
+    name: "main",
+    status: "done",
+    statusEnteredAt: null,
+    archivingAt: null,
+    diffStat: null,
+    scripts: [],
+  };
 }
 
 describe("restoreArchivedWorkspace via navigateToAgent", () => {
@@ -162,6 +181,50 @@ describe("restoreArchivedWorkspace via navigateToAgent", () => {
     expect(status()).toBeNull();
   });
 
+  it("waits for workspace hydration before deciding a running History workspace is missing", () => {
+    const store = useSessionStore.getState();
+    store.setHasHydratedWorkspaces(SERVER_ID, false);
+    store.setAgents(SERVER_ID, (prev) => {
+      const next = new Map(prev);
+      next.set(AGENT_ID, { ...agent(null), status: "running" });
+      return next;
+    });
+    refreshAgent.mockImplementation(() => new Promise(() => {}));
+
+    openFromHistory();
+
+    expect(refreshAgent).not.toHaveBeenCalled();
+    expect(status()).toBeNull();
+
+    store.mergeWorkspaces(SERVER_ID, [workspace()]);
+    store.setHasHydratedWorkspaces(SERVER_ID, true);
+
+    expect(refreshAgent).not.toHaveBeenCalled();
+    expect(status()).toBeNull();
+  });
+
+  it("restores a missing History workspace after workspace hydration settles", () => {
+    const store = useSessionStore.getState();
+    store.setHasHydratedWorkspaces(SERVER_ID, false);
+    store.setAgents(SERVER_ID, (prev) => {
+      const next = new Map(prev);
+      next.set(AGENT_ID, { ...agent(null), status: "closed" });
+      return next;
+    });
+    refreshAgent.mockImplementation(() => new Promise(() => {}));
+
+    openFromHistory();
+
+    expect(refreshAgent).not.toHaveBeenCalled();
+    expect(status()).toBeNull();
+
+    store.setHasHydratedWorkspaces(SERVER_ID, true);
+
+    expect(refreshAgent).toHaveBeenCalledTimes(1);
+    expect(refreshAgent).toHaveBeenCalledWith(AGENT_ID);
+    expect(status()).toBe("restoring");
+  });
+
   it("does not fire while disconnected", () => {
     connected = false;
     refreshAgent.mockImplementation(() => new Promise(() => {}));
@@ -208,23 +271,7 @@ describe("restoreArchivedWorkspace via navigateToAgent", () => {
 
   it("is a no-op when the workspace descriptor is already present", () => {
     refreshAgent.mockImplementation(() => new Promise(() => {}));
-    useSessionStore.getState().mergeWorkspaces(SERVER_ID, [
-      {
-        id: WORKSPACE_ID,
-        projectId: "project-1",
-        projectDisplayName: "Project 1",
-        projectRootPath: MISSING_WORKTREE_CWD,
-        workspaceDirectory: MISSING_WORKTREE_CWD,
-        projectKind: "git",
-        workspaceKind: "local_checkout",
-        name: "main",
-        status: "done",
-        statusEnteredAt: null,
-        archivingAt: null,
-        diffStat: null,
-        scripts: [],
-      },
-    ]);
+    useSessionStore.getState().mergeWorkspaces(SERVER_ID, [workspace()]);
 
     openFromHistory();
 
