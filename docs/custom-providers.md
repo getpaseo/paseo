@@ -458,9 +458,9 @@ Paseo tools such as subagent creation come from the shared internal tool catalog
 ```
 
 ACP agents normally receive access to Paseo's filesystem and terminal through
-the client capabilities advertised during initialization. For an agent running
-in a container or remote environment, disable those capabilities to keep file
-and command execution in the agent environment:
+the client capabilities advertised during initialization. For a compliant agent
+running in a container or remote environment, disable those capabilities so it
+keeps file and command execution in the agent environment:
 
 ```json
 {
@@ -625,19 +625,19 @@ When an `additionalModels` entry has the same `id` as a discovered model, it upd
 
 Every entry under `agents.providers` accepts these fields:
 
-| Field              | Type                      | Required          | Description                                                               |
-| ------------------ | ------------------------- | ----------------- | ------------------------------------------------------------------------- |
-| `extends`          | `string`                  | Yes (custom only) | Built-in provider ID to inherit from, or `"acp"`                          |
-| `label`            | `string`                  | Yes (custom only) | Display name in the UI                                                    |
-| `description`      | `string`                  | No                | Short description shown in the UI                                         |
-| `command`          | `string[]`                | Yes (ACP only)    | Command to spawn the agent process                                        |
-| `env`              | `Record<string, string>`  | No                | Environment variables to set for the agent process                        |
-| `params`           | `Record<string, unknown>` | No                | Provider-specific options such as MCP support and ACP client capabilities |
-| `models`           | `ProviderProfileModel[]`  | No                | Static model list (overrides runtime discovery)                           |
-| `additionalModels` | `ProviderProfileModel[]`  | No                | Static model additions (merged with runtime discovery or `models`)        |
-| `disallowedTools`  | `string[]`                | No                | Tool names to disable for this provider (e.g. `["WebSearch"]`)            |
-| `enabled`          | `boolean`                 | No                | Set to `false` to hide the provider (default: `true`)                     |
-| `order`            | `number`                  | No                | Sort order in the provider list                                           |
+| Field              | Type                      | Required          | Description                                                        |
+| ------------------ | ------------------------- | ----------------- | ------------------------------------------------------------------ |
+| `extends`          | `string`                  | Yes (custom only) | Built-in provider ID to inherit from, or `"acp"`                   |
+| `label`            | `string`                  | Yes (custom only) | Display name in the UI                                             |
+| `description`      | `string`                  | No                | Short description shown in the UI                                  |
+| `command`          | `string[]`                | Yes (ACP only)    | Command to spawn the agent process                                 |
+| `env`              | `Record<string, string>`  | No                | Environment variables to set for the agent process                 |
+| `params`           | `Record<string, unknown>` | No                | Provider-specific options such as `supportsMcpServers: false`      |
+| `models`           | `ProviderProfileModel[]`  | No                | Static model list (overrides runtime discovery)                    |
+| `additionalModels` | `ProviderProfileModel[]`  | No                | Static model additions (merged with runtime discovery or `models`) |
+| `disallowedTools`  | `string[]`                | No                | Tool names to disable for this provider (e.g. `["WebSearch"]`)     |
+| `enabled`          | `boolean`                 | No                | Set to `false` to hide the provider (default: `true`)              |
+| `order`            | `number`                  | No                | Sort order in the provider list                                    |
 
 ### Model definition
 
