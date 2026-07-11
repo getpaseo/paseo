@@ -653,7 +653,7 @@ describe("Codex app-server provider", () => {
         title: "Codex App Server Daemon",
         version: "0.0.0",
       },
-      capabilities: { experimentalApi: true },
+      capabilities: { experimentalApi: true, mcpServerOpenaiFormElicitation: true },
     });
     appServer.assertNoErrors();
     await session.close();
@@ -3845,7 +3845,7 @@ describe("Codex importable sessions", () => {
             title: "Codex App Server Daemon",
             version: "0.0.0",
           },
-          capabilities: { experimentalApi: true },
+          capabilities: { experimentalApi: true, mcpServerOpenaiFormElicitation: true },
         },
       },
       { method: "thread/list", params: { limit: 50, cwd: "/workspace/project-a" } },

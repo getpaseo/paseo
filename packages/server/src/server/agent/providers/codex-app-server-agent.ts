@@ -2997,12 +2997,13 @@ export function buildCodexAppServerEnv(
 
 function buildCodexAppServerInitializeParams(): {
   clientInfo: { name: string; title: string; version: string };
-  capabilities: { experimentalApi: true };
+  capabilities: { experimentalApi: true; mcpServerOpenaiFormElicitation: true };
 } {
   return {
     clientInfo: CODEX_NON_ORIGINATING_APP_SERVER_CLIENT_INFO,
     capabilities: {
       experimentalApi: true,
+      mcpServerOpenaiFormElicitation: true,
     },
   };
 }
