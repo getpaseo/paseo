@@ -211,7 +211,8 @@ function canArchiveWorkspace(
 ): boolean {
   return (
     workspace !== null &&
-    (workspace.workspaceKind !== "worktree" || (risk.isDirty != null && risk.aheadOfOrigin != null))
+    (workspace.workspaceKind !== "worktree" ||
+      (risk.isDirty !== undefined && risk.aheadOfOrigin !== undefined))
   );
 }
 
