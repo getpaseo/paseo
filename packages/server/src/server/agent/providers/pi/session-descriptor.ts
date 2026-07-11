@@ -13,6 +13,7 @@ const PI_CONFIG_DIR_NAME = ".pi";
 const PI_AGENT_DIR_ENV = "PI_CODING_AGENT_DIR";
 const PI_SESSION_DIR_ENV = "PI_CODING_AGENT_SESSION_DIR";
 const HEAD_BYTES = 64 * 1024;
+const OMP_CONFIG_DIR_NAME = ".omp";
 const TAIL_BYTES = 256 * 1024;
 const FULL_SCAN_LINE_LIMIT = 2_000;
 
@@ -201,9 +202,9 @@ async function readPiImportableSession(
 }
 
 async function readPiSessionDescriptor(filePath: string): Promise<PiSessionDescriptor | null> {
-  const firstLine = await readFirstLine(filePath);
-  if (!firstLine) return null;
-  const header = parseSessionHeader(firstLine);
+  const headerLine = await findSessionHeaderLine(filePath);
+  if (!headerLine) return null;
+  const header = parseSessionHeader(headerLine);
   if (!header) return null;
 
   const tail = await readTail(filePath).catch(() => "");
@@ -226,14 +227,7 @@ async function readPiSessionDescriptor(filePath: string): Promise<PiSessionDescr
   };
 }
 
-function toPiImportSessionConfig(descriptor: PiSessionDescriptor): PiImportSessionConfig {
-  return {
-    ...(descriptor.model ? { model: descriptor.model } : {}),
-    ...(descriptor.thinkingOptionId ? { thinkingOptionId: descriptor.thinkingOptionId } : {}),
-  };
-}
-
-async function readFirstLine(filePath: string): Promise<string | null> {
+async function findSessionHeaderLine(filePath: string): Promise<string | null> {
   const handle = await open(filePath, "r").catch(() => null);
   if (!handle) return null;
   try {
@@ -241,11 +235,26 @@ async function readFirstLine(filePath: string): Promise<string | null> {
     const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
     if (bytesRead <= 0) return null;
     const chunk = buffer.subarray(0, bytesRead).toString("utf8");
-    const newlineIndex = chunk.indexOf("\n");
-    return (newlineIndex === -1 ? chunk : chunk.slice(0, newlineIndex)).trim();
+    const lines = chunk.split(/\r?\n/u);
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const parsed = parseJsonRecord(trimmed);
+      if (parsed?.type === "session") {
+        return trimmed;
+      }
+    }
+    return null;
   } finally {
     await handle.close().catch(() => undefined);
   }
+}
+
+function toPiImportSessionConfig(descriptor: PiSessionDescriptor): PiImportSessionConfig {
+  return {
+    ...(descriptor.model ? { model: descriptor.model } : {}),
+    ...(descriptor.thinkingOptionId ? { thinkingOptionId: descriptor.thinkingOptionId } : {}),
+  };
 }
 
 async function readTail(filePath: string): Promise<string> {

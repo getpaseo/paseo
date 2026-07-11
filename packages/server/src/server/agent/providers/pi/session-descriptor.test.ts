@@ -170,3 +170,35 @@ test("Pi import config preserves thinking before a later model in large sessions
     thinkingOptionId: "low",
   });
 });
+test("parses OMP session files that start with a title line before the session header", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "paseo-omp-session-title-"));
+  const cwd = path.join(root, "repo");
+  const sessionFile = await writeSession(root, [
+    { type: "title", v: 1, title: "OMP test session", source: "auto" },
+    { type: "session", version: 3, id: "omp-test-1", timestamp: "2026-07-11T00:00:00.000Z", cwd },
+    {
+      type: "model_change",
+      id: "m1",
+      timestamp: "2026-07-11T00:00:01.000Z",
+      provider: "openrouter",
+      modelId: "deepseek/deepseek-v4",
+    },
+    {
+      type: "message",
+      id: "msg-1",
+      timestamp: "2026-07-11T00:00:02.000Z",
+      message: { role: "user", content: "hello from OMP" },
+    },
+  ]);
+
+  const [descriptor] = await listPiImportableSessions({ sessionDir: path.join(root, "sessions") });
+  const importConfig = await readPiImportSessionConfig(sessionFile);
+
+  expect(descriptor).toMatchObject({
+    providerHandleId: sessionFile,
+    cwd,
+    firstPromptPreview: "hello from OMP",
+    lastPromptPreview: "hello from OMP",
+  });
+  expect(importConfig).toEqual({ model: "openrouter/deepseek/deepseek-v4" });
+});
