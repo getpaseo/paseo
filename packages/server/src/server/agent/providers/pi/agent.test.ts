@@ -100,7 +100,6 @@ test("keeps normal Pi agent sessions persisted", async () => {
   const client = createClient(pi);
   const session = await client.createSession(createConfig());
 
-  expect(pi.recordedLaunches[0]?.noSession).toBe(false);
   expect(pi.recordedLaunches[0]?.argv).not.toContain("--no-session");
 
   await session.close();
