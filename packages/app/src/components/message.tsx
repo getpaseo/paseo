@@ -692,6 +692,7 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
 
 interface LiveElapsedProps {
   startedAt: Date;
+  active?: boolean;
   style?: StyleProp<TextStyle>;
   testID?: string;
 }
@@ -702,23 +703,28 @@ interface LiveElapsedProps {
  */
 export const LiveElapsed = memo(function LiveElapsed({
   startedAt,
+  active = true,
   style,
   testID,
 }: LiveElapsedProps) {
   const startedAtMs = startedAt.getTime();
   const [elapsedMs, setElapsedMs] = useState(() => Math.max(0, Date.now() - startedAtMs));
+  const visibleElapsedMs = active ? Math.max(0, Date.now() - startedAtMs) : elapsedMs;
 
   useEffect(() => {
+    if (!active) {
+      return;
+    }
     setElapsedMs(Math.max(0, Date.now() - startedAtMs));
     const handle = setInterval(() => {
       setElapsedMs(Math.max(0, Date.now() - startedAtMs));
     }, 1000);
     return () => clearInterval(handle);
-  }, [startedAtMs]);
+  }, [active, startedAtMs]);
 
   return (
     <Text style={style} testID={testID}>
-      {formatDuration(elapsedMs)}
+      {formatDuration(visibleElapsedMs)}
     </Text>
   );
 });
