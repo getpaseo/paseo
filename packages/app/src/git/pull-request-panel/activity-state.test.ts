@@ -18,6 +18,7 @@ function activity(id: string, overrides: Partial<PrPaneActivity> = {}): PrPaneAc
     avatarColor: "#0ea5e9",
     body: "Looks good.",
     age: "3d ago",
+    createdAtMs: 0,
     url: `https://github.com/getpaseo/paseo/pull/42#${id}`,
     ...overrides,
   };
@@ -30,7 +31,12 @@ function singleEntry(id: string, resolved = false, outdated = false): PrTimeline
     activity: activity(id, {
       location:
         resolved || outdated
-          ? { path: "a.ts", line: 1, isResolved: resolved, isOutdated: outdated }
+          ? {
+              path: "a.ts",
+              line: 1,
+              isResolved: resolved,
+              isOutdated: outdated,
+            }
           : undefined,
     }),
   };
@@ -40,7 +46,12 @@ function threadEntry(id: string, resolved = false, outdated = false): PrTimeline
   return {
     kind: "thread",
     id: `thread:${id}`,
-    location: { path: "a.ts", line: 1, isResolved: resolved, isOutdated: outdated },
+    location: {
+      path: "a.ts",
+      line: 1,
+      isResolved: resolved,
+      isOutdated: outdated,
+    },
     comments: [activity(id)],
   };
 }
@@ -78,7 +89,10 @@ describe("pull request activity state", () => {
       threadEntry("thread-outdated", false, true),
     ];
 
-    const visible = getVisibleEntries(getActivityState(), { prNumber: 42, entries });
+    const visible = getVisibleEntries(getActivityState(), {
+      prNumber: 42,
+      entries,
+    });
 
     expect(visible.map((v) => ({ id: v.entry.id, collapsed: v.collapsed }))).toEqual([
       { id: "normal", collapsed: false },
@@ -121,7 +135,10 @@ describe("pull request activity state", () => {
       ]),
     ];
 
-    const collapsedIds = getCollapsedEntryIds(getActivityState(), { prNumber: 42, entries });
+    const collapsedIds = getCollapsedEntryIds(getActivityState(), {
+      prNumber: 42,
+      entries,
+    });
 
     expect([...collapsedIds].sort()).toEqual(["thread:thread-outdated", "thread:thread-resolved"]);
   });
@@ -133,7 +150,10 @@ describe("pull request activity state", () => {
       activityId: "thread:thread-resolved",
     });
 
-    const collapsedIds = getCollapsedEntryIds(expanded, { prNumber: 42, entries });
+    const collapsedIds = getCollapsedEntryIds(expanded, {
+      prNumber: 42,
+      entries,
+    });
 
     expect(collapsedIds.has("thread:thread-resolved")).toBe(false);
   });

@@ -11,6 +11,7 @@ function activity(location: PrPaneActivity["location"]): PrPaneActivity {
     avatarColor: "#0ea5e9",
     body: "Looks good.",
     age: "3d ago",
+    createdAtMs: 0,
     url: "https://github.com/getpaseo/paseo/pull/42#discussion_r1",
     location,
   };

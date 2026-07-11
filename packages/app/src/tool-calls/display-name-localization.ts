@@ -1,22 +1,25 @@
 import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
 
-export type ToolCallDisplayNameKey =
-  | "toolCallDetails.names.shell"
-  | "toolCallDetails.names.read"
-  | "toolCallDetails.names.edit"
-  | "toolCallDetails.names.write"
-  | "toolCallDetails.names.search"
-  | "toolCallDetails.names.fetch"
-  | "toolCallDetails.names.webSearch"
-  | "toolCallDetails.names.worktreeSetup"
-  | "toolCallDetails.names.task"
-  | "toolCallDetails.names.plan"
-  | "toolCallDetails.names.thinking"
-  | "toolCallDetails.names.terminal"
-  | "toolCallDetails.names.createAgent"
-  | "toolCallDetails.names.listAgents"
-  | "toolCallDetails.names.getAgentStatus"
-  | "toolCallDetails.names.updateAgent";
+export const TOOL_CALL_DISPLAY_NAME_KEYS = [
+  "toolCallDetails.names.shell",
+  "toolCallDetails.names.read",
+  "toolCallDetails.names.edit",
+  "toolCallDetails.names.write",
+  "toolCallDetails.names.search",
+  "toolCallDetails.names.fetch",
+  "toolCallDetails.names.webSearch",
+  "toolCallDetails.names.worktreeSetup",
+  "toolCallDetails.names.task",
+  "toolCallDetails.names.plan",
+  "toolCallDetails.names.thinking",
+  "toolCallDetails.names.terminal",
+  "toolCallDetails.names.createAgent",
+  "toolCallDetails.names.listAgents",
+  "toolCallDetails.names.getAgentStatus",
+  "toolCallDetails.names.updateAgent",
+] as const;
+
+export type ToolCallDisplayNameKey = (typeof TOOL_CALL_DISPLAY_NAME_KEYS)[number];
 
 interface ToolCallDisplayNameInput {
   toolName: string;

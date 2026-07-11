@@ -1,6 +1,8 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
+import { TOOL_CALL_DISPLAY_NAME_KEYS } from "@/tool-calls/display-name-localization";
+import { SCHEDULE_FORMAT_DYNAMIC_KEYS } from "@/utils/schedule-format";
 import { ar } from "./resources/ar";
 import { en } from "./resources/en";
 import { es } from "./resources/es";
@@ -131,6 +133,15 @@ describe("translation resources", () => {
 
   it("does not reference missing static translation keys", () => {
     expect(findUnknownStaticTranslationKeys()).toEqual([]);
+  });
+
+  it("does not reference missing dynamic translation keys", () => {
+    const knownKeys = new Set(flattenKeys(en));
+    expect(
+      [...SCHEDULE_FORMAT_DYNAMIC_KEYS, ...TOOL_CALL_DISPLAY_NAME_KEYS].filter(
+        (key) => !knownKeys.has(key),
+      ),
+    ).toEqual([]);
   });
 
   it("keeps non-English supported languages translated beyond fallback labels", () => {

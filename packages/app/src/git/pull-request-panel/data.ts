@@ -15,7 +15,10 @@ export interface PullRequestProviderMetadata {
   url?: string | null;
 }
 
-const GITHUB_PROVIDER: PullRequestProviderMetadata = { id: "github", label: "GitHub" };
+const GITHUB_PROVIDER: PullRequestProviderMetadata = {
+  id: "github",
+  label: "GitHub",
+};
 
 export interface PrPaneCheck {
   provider: PullRequestProvider;
@@ -41,6 +44,7 @@ export interface PrPaneActivity {
   reviewState?: ReviewState;
   body: string;
   age: string;
+  createdAtMs: number;
   url: string;
   /** For inline review comments: the review this comment was submitted with. */
   reviewId?: string;
@@ -124,30 +128,14 @@ export function deriveAvatarColor(login: string): string {
 export function formatAge(createdAtMs: number, nowMs = Date.now()): string {
   const elapsedMs = Math.max(0, nowMs - createdAtMs);
   const elapsedSeconds = Math.floor(elapsedMs / 1000);
-
-  if (elapsedSeconds < 60) {
-    return "just now";
-  }
-
+  if (elapsedSeconds < 60) return "just now";
   const elapsedMinutes = Math.floor(elapsedSeconds / 60);
-  if (elapsedMinutes < 60) {
-    return `${elapsedMinutes}m ago`;
-  }
-
+  if (elapsedMinutes < 60) return `${elapsedMinutes}m ago`;
   const elapsedHours = Math.floor(elapsedMinutes / 60);
-  if (elapsedHours < 24) {
-    return `${elapsedHours}h ago`;
-  }
-
+  if (elapsedHours < 24) return `${elapsedHours}h ago`;
   const elapsedDays = Math.floor(elapsedHours / 24);
-  if (elapsedDays < 30) {
-    return `${elapsedDays}d ago`;
-  }
-
-  if (elapsedDays < 365) {
-    return `${Math.floor(elapsedDays / 30)}mo ago`;
-  }
-
+  if (elapsedDays < 30) return `${elapsedDays}d ago`;
+  if (elapsedDays < 365) return `${Math.floor(elapsedDays / 30)}mo ago`;
   return `${Math.floor(elapsedDays / 365)}y ago`;
 }
 
@@ -220,6 +208,7 @@ function mapActivity(item: PullRequestTimelineItem, nowMs: number): PrPaneActivi
         avatarUrl: item.avatarUrl,
         body: item.body,
         age: formatAge(item.createdAt, nowMs),
+        createdAtMs: item.createdAt,
         url: item.url,
         reviewId: item.reviewId,
         location: item.location,
@@ -243,6 +232,7 @@ function mapActivity(item: PullRequestTimelineItem, nowMs: number): PrPaneActivi
       reviewState: item.reviewState,
       body: item.body,
       age: formatAge(item.createdAt, nowMs),
+      createdAtMs: item.createdAt,
       url: item.url,
     },
   ];

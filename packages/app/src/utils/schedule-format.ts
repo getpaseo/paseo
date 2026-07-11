@@ -31,6 +31,30 @@ const SINGULAR_UNIT_KEY: Record<IntervalUnit, "minute" | "hour" | "day"> = {
   days: "day",
 };
 
+const UNIT_LABEL_KEYS = {
+  minute: "schedules.format.units.minute",
+  minutes: "schedules.format.units.minutes",
+  hour: "schedules.format.units.hour",
+  hours: "schedules.format.units.hours",
+  day: "schedules.format.units.day",
+  days: "schedules.format.units.days",
+} as const;
+
+const DAY_LABEL_KEYS = {
+  sunday: "schedules.format.days.sunday",
+  monday: "schedules.format.days.monday",
+  tuesday: "schedules.format.days.tuesday",
+  wednesday: "schedules.format.days.wednesday",
+  thursday: "schedules.format.days.thursday",
+  friday: "schedules.format.days.friday",
+  saturday: "schedules.format.days.saturday",
+} as const;
+
+export const SCHEDULE_FORMAT_DYNAMIC_KEYS = [
+  ...Object.values(UNIT_LABEL_KEYS),
+  ...Object.values(DAY_LABEL_KEYS),
+] as const;
+
 export function isNewAgentSchedule(schedule: ScheduleSummary): boolean {
   return schedule.target.type === "new-agent";
 }
@@ -53,7 +77,10 @@ export function resolveScheduleTitle(schedule: ScheduleSummary): string {
   return firstPromptLine || i18n.t("schedules.format.untitled");
 }
 
-export function everyMsToParts(ms: number): { value: number; unit: IntervalUnit } {
+export function everyMsToParts(ms: number): {
+  value: number;
+  unit: IntervalUnit;
+} {
   if (!Number.isFinite(ms) || ms <= 0) {
     return { value: 1, unit: "hours" };
   }
@@ -63,7 +90,10 @@ export function everyMsToParts(ms: number): { value: number; unit: IntervalUnit 
   if (ms % MS_PER_HOUR === 0) {
     return { value: ms / MS_PER_HOUR, unit: "hours" };
   }
-  return { value: Math.max(1, Math.round(ms / MS_PER_MINUTE)), unit: "minutes" };
+  return {
+    value: Math.max(1, Math.round(ms / MS_PER_MINUTE)),
+    unit: "minutes",
+  };
 }
 
 export function partsToEveryMs(value: number, unit: IntervalUnit): number {
@@ -76,7 +106,7 @@ function formatEvery(everyMs: number): string {
   const unitKey = value === 1 ? SINGULAR_UNIT_KEY[unit] : unit;
   return i18n.t("schedules.format.every", {
     count: value,
-    unit: i18n.t(`schedules.format.units.${unitKey}`),
+    unit: i18n.t(UNIT_LABEL_KEYS[unitKey]),
   });
 }
 
@@ -122,7 +152,9 @@ export function describeCron(cadence: CronCadence): string | null {
     }
     return minuteNum === 0
       ? i18n.t("schedules.format.cron.everyHour")
-      : i18n.t("schedules.format.cron.everyHourAt", { minute: pad2(minuteNum) });
+      : i18n.t("schedules.format.cron.everyHourAt", {
+          minute: pad2(minuteNum),
+        });
   }
 
   if (!/^\d+$/.test(hour)) {
@@ -144,7 +176,7 @@ export function describeCron(cadence: CronCadence): string | null {
     return i18n.t("schedules.format.cron.weekendsAt", { time, timezone });
   }
   return i18n.t("schedules.format.cron.dayAt", {
-    day: i18n.t(`schedules.format.days.${day}`),
+    day: i18n.t(DAY_LABEL_KEYS[day]),
     time,
     timezone,
   });

@@ -29,6 +29,7 @@ function comment(overrides: Partial<PrPaneActivity> = {}): PrPaneActivity {
     avatarColor: "#0ea5e9",
     body: "Looks good.",
     age: "3d ago",
+    createdAtMs: 0,
     url: "https://github.com/getpaseo/paseo/pull/42#issuecomment-1",
     ...overrides,
   };
@@ -44,6 +45,7 @@ function review(overrides: Partial<PrPaneActivity> = {}): PrPaneActivity {
     reviewState: "commented",
     body: "Please simplify this.",
     age: "2d ago",
+    createdAtMs: 0,
     url: "https://github.com/getpaseo/paseo/pull/42#pullrequestreview-1",
     ...overrides,
   };
@@ -96,7 +98,12 @@ describe("pull request context attachments", () => {
   });
 
   it("formats a review with state as a workspace context attachment", () => {
-    expect(buildPullRequestReviewContextAttachment({ ...baseInput, activity: review() })).toEqual({
+    expect(
+      buildPullRequestReviewContextAttachment({
+        ...baseInput,
+        activity: review(),
+      }),
+    ).toEqual({
       kind: "github.pull_request_review",
       id: "42:review-1",
       title: "reviewer",
@@ -160,7 +167,11 @@ describe("pull request context attachments", () => {
           conclusion: "failure",
           url: "https://github.com/getpaseo/paseo/actions/runs/456/job/789",
           detailsUrl: "https://github.com/getpaseo/paseo/actions/runs/456/job/789",
-          output: { title: "Tests failed", summary: "1 failure", text: "Assertion failed" },
+          output: {
+            title: "Tests failed",
+            summary: "1 failure",
+            text: "Assertion failed",
+          },
           annotations: [
             {
               path: "packages/server/src/index.ts",
@@ -269,21 +280,36 @@ describe("buildPullRequestThreadContextAttachment", () => {
     return {
       kind: "thread",
       id: "thread:PRRT_1",
-      location: { path: "src/a.ts", line: 12, threadId: "PRRT_1", isResolved: false },
+      location: {
+        path: "src/a.ts",
+        line: 12,
+        threadId: "PRRT_1",
+        isResolved: false,
+      },
       comments: [
         comment({
           id: "t1",
           body: "This is frozen after initial registration.",
           url: "https://github.com/getpaseo/paseo/pull/42#discussion_r1",
         }),
-        comment({ id: "t2", author: "mo", age: "1d ago", body: "Good catch, fixing." }),
+        comment({
+          id: "t2",
+          author: "mo",
+          age: "1d ago",
+          body: "Good catch, fixing.",
+        }),
       ],
       ...overrides,
     };
   }
 
   it("bundles the whole thread conversation into one attachment", () => {
-    expect(buildPullRequestThreadContextAttachment({ ...baseInput, thread: thread() })).toEqual({
+    expect(
+      buildPullRequestThreadContextAttachment({
+        ...baseInput,
+        thread: thread(),
+      }),
+    ).toEqual({
       kind: "github.pull_request_comment",
       id: "42:thread:PRRT_1",
       title: "src/a.ts:12",

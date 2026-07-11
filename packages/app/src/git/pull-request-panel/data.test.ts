@@ -109,7 +109,11 @@ describe("mapPrPaneData", () => {
     const data = mapPrPaneData(
       status({
         checks: [
-          { name: "typecheck", status: "success", url: "https://example.com/checks/1" },
+          {
+            name: "typecheck",
+            status: "success",
+            url: "https://example.com/checks/1",
+          },
           { name: "legacy status", status: "pending", url: null },
         ],
       }),
@@ -140,7 +144,11 @@ describe("mapPrPaneData", () => {
           { name: "failure", status: "failure", url: "https://example.com/2" },
           { name: "pending", status: "pending", url: "https://example.com/3" },
           { name: "skipped", status: "skipped", url: "https://example.com/4" },
-          { name: "cancelled", status: "cancelled", url: "https://example.com/5" },
+          {
+            name: "cancelled",
+            status: "cancelled",
+            url: "https://example.com/5",
+          },
         ],
       }),
       baseTimeline,
@@ -155,10 +163,30 @@ describe("mapPrPaneData", () => {
         duration: "1m",
         url: "https://example.com/1",
       },
-      { provider: "github", name: "failure", status: "failure", url: "https://example.com/2" },
-      { provider: "github", name: "pending", status: "pending", url: "https://example.com/3" },
-      { provider: "github", name: "skipped", status: "skipped", url: "https://example.com/4" },
-      { provider: "github", name: "cancelled", status: "skipped", url: "https://example.com/5" },
+      {
+        provider: "github",
+        name: "failure",
+        status: "failure",
+        url: "https://example.com/2",
+      },
+      {
+        provider: "github",
+        name: "pending",
+        status: "pending",
+        url: "https://example.com/3",
+      },
+      {
+        provider: "github",
+        name: "skipped",
+        status: "skipped",
+        url: "https://example.com/4",
+      },
+      {
+        provider: "github",
+        name: "cancelled",
+        status: "skipped",
+        url: "https://example.com/5",
+      },
     ]);
   });
 
@@ -218,6 +246,10 @@ describe("mapPrPaneData", () => {
 
     expect(data?.activity.map((item) => item.kind)).toEqual(["review", "comment"]);
     expect(data?.activity.map((item) => item.author)).toEqual(["alice", "bob"]);
+    expect(data?.activity.map((item) => item.createdAtMs)).toEqual([
+      Date.UTC(2026, 0, 1, 10, 0, 0),
+      Date.UTC(2026, 0, 1, 11, 0, 0),
+    ]);
   });
 
   it("maps timeline author avatar URLs and inline comment location metadata", () => {
@@ -259,6 +291,7 @@ describe("mapPrPaneData", () => {
         avatarUrl: "https://avatars.githubusercontent.com/u/3?v=4",
         body: "This should include line context.",
         age: "1h ago",
+        createdAtMs: Date.UTC(2026, 0, 1, 11, 0, 0),
         url: "https://github.com/getpaseo/paseo/pull/42#discussion_r1",
         location: {
           path: "packages/app/src/git/pull-request-panel/data.ts",
@@ -311,7 +344,12 @@ describe("mapPrPaneData", () => {
 
     expect(data?.activity).toMatchObject([
       { kind: "review", author: "bob", reviewState: "approved", body: "" },
-      { kind: "review", author: "cam", reviewState: "changes_requested", body: "" },
+      {
+        kind: "review",
+        author: "cam",
+        reviewState: "changes_requested",
+        body: "",
+      },
     ]);
   });
 
@@ -353,7 +391,12 @@ describe("mapPrPaneData", () => {
 
     expect(data?.activity).toMatchObject([
       { kind: "review", author: "bob", reviewState: "approved", body: "" },
-      { kind: "review", author: "cam", reviewState: "approved", body: "Looks good." },
+      {
+        kind: "review",
+        author: "cam",
+        reviewState: "approved",
+        body: "Looks good.",
+      },
     ]);
   });
 
@@ -372,13 +415,17 @@ describe("mapPrPaneData", () => {
     );
     expect(
       mapPrPaneData(
-        status({ reviewDecision: undefined as CheckoutPrStatus["reviewDecision"] }),
+        status({
+          reviewDecision: undefined as CheckoutPrStatus["reviewDecision"],
+        }),
         baseTimeline,
       )?.reviewDecision,
     ).toBe("pending");
     expect(
       mapPrPaneData(
-        status({ reviewDecision: "surprising" as CheckoutPrStatus["reviewDecision"] }),
+        status({
+          reviewDecision: "surprising" as CheckoutPrStatus["reviewDecision"],
+        }),
         baseTimeline,
       )?.reviewDecision,
     ).toBe("pending");
@@ -411,6 +458,18 @@ describe("mapPrPaneData", () => {
   });
 });
 
+describe("formatAge", () => {
+  it("emits compact English labels for context attachments", () => {
+    const now = Date.UTC(2026, 0, 1, 12, 0, 0);
+    expect(formatAge(now - 20_000, now)).toBe("just now");
+    expect(formatAge(now - 5 * 60_000, now)).toBe("5m ago");
+    expect(formatAge(now - 2 * 60 * 60_000, now)).toBe("2h ago");
+    expect(formatAge(now - 3 * 24 * 60 * 60_000, now)).toBe("3d ago");
+    expect(formatAge(now - 90 * 24 * 60 * 60_000, now)).toBe("3mo ago");
+    expect(formatAge(now - 365 * 24 * 60 * 60_000, now)).toBe("1y ago");
+  });
+});
+
 describe("deriveAvatarColor", () => {
   it("returns a deterministic color from the PR pane avatar palette", () => {
     const palette = [
@@ -427,19 +486,6 @@ describe("deriveAvatarColor", () => {
     expect(deriveAvatarColor("alice")).toBe(deriveAvatarColor("alice"));
     expect(palette).toContain(deriveAvatarColor("alice"));
     expect(palette).toContain(deriveAvatarColor("Alice"));
-  });
-});
-
-describe("formatAge", () => {
-  it("emits PR pane age labels", () => {
-    const now = Date.UTC(2026, 0, 1, 12, 0, 0);
-
-    expect(formatAge(now - 20_000, now)).toBe("just now");
-    expect(formatAge(now - 5 * 60_000, now)).toBe("5m ago");
-    expect(formatAge(now - 2 * 60 * 60_000, now)).toBe("2h ago");
-    expect(formatAge(now - 3 * 24 * 60 * 60_000, now)).toBe("3d ago");
-    expect(formatAge(now - 90 * 24 * 60 * 60_000, now)).toBe("3mo ago");
-    expect(formatAge(now - 365 * 24 * 60 * 60_000, now)).toBe("1y ago");
   });
 });
 

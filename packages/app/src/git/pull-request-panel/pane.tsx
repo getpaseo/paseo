@@ -31,6 +31,7 @@ import type { PressableStateCallbackType } from "react-native";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { openExternalUrl } from "@/utils/open-external-url";
+import { formatTimeAgo } from "@/utils/time";
 import { Button } from "@/components/ui/button";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { StatusBadge } from "@/components/ui/status-badge";
@@ -94,12 +95,24 @@ const ThemedMoreHorizontal = withUnistyles(MoreHorizontal);
 const ThemedRotateCw = withUnistyles(RotateCw);
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 
-const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
-const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
-const successColorMapping = (theme: Theme) => ({ color: theme.colors.statusSuccess });
-const dangerColorMapping = (theme: Theme) => ({ color: theme.colors.statusDanger });
-const warningColorMapping = (theme: Theme) => ({ color: theme.colors.statusWarning });
-const mergedColorMapping = (theme: Theme) => ({ color: theme.colors.statusMerged });
+const foregroundColorMapping = (theme: Theme) => ({
+  color: theme.colors.foreground,
+});
+const foregroundMutedColorMapping = (theme: Theme) => ({
+  color: theme.colors.foregroundMuted,
+});
+const successColorMapping = (theme: Theme) => ({
+  color: theme.colors.statusSuccess,
+});
+const dangerColorMapping = (theme: Theme) => ({
+  color: theme.colors.statusDanger,
+});
+const warningColorMapping = (theme: Theme) => ({
+  color: theme.colors.statusWarning,
+});
+const mergedColorMapping = (theme: Theme) => ({
+  color: theme.colors.statusMerged,
+});
 
 function localizedStateLabel(state: PrState, t: TFunction): string {
   return t(`workspace.git.pr.states.${state}`);
@@ -114,26 +127,6 @@ function localizedActivityVerb(activity: PrPaneActivity, t: TFunction): string {
   return t("workspace.git.pr.activity.reviewed");
 }
 
-function localizedActivityAge(age: string, t: TFunction): string {
-  if (age === "just now") return t("workspace.git.pr.time.justNow");
-  const match = age.match(/^(\d+)(m|h|d|mo|y) ago$/);
-  if (!match) return age;
-  const count = Number(match[1]);
-  const key = {
-    m: "workspace.git.pr.time.minutesAgo",
-    h: "workspace.git.pr.time.hoursAgo",
-    d: "workspace.git.pr.time.daysAgo",
-    mo: "workspace.git.pr.time.monthsAgo",
-    y: "workspace.git.pr.time.yearsAgo",
-  }[match[2]] as
-    | "workspace.git.pr.time.minutesAgo"
-    | "workspace.git.pr.time.hoursAgo"
-    | "workspace.git.pr.time.daysAgo"
-    | "workspace.git.pr.time.monthsAgo"
-    | "workspace.git.pr.time.yearsAgo";
-  return t(key, { count });
-}
-
 type IconColorMapping = typeof foregroundColorMapping;
 
 interface PrStatePresentation {
@@ -143,7 +136,10 @@ interface PrStatePresentation {
 
 const PR_STATE_PRESENTATION: Record<PrState, PrStatePresentation> = {
   open: { Icon: ThemedGitPullRequest, iconColor: successColorMapping },
-  draft: { Icon: ThemedGitPullRequestDraft, iconColor: foregroundMutedColorMapping },
+  draft: {
+    Icon: ThemedGitPullRequestDraft,
+    iconColor: foregroundMutedColorMapping,
+  },
   merged: { Icon: ThemedGitMerge, iconColor: mergedColorMapping },
   closed: { Icon: ThemedGitPullRequestClosed, iconColor: dangerColorMapping },
 };
@@ -302,7 +298,11 @@ export function PullRequestPane({
     [activityState, data.number, timelineEntries],
   );
   const collapsedEntryIds = useMemo(
-    () => getCollapsedEntryIds(activityState, { prNumber: data.number, entries: timelineEntries }),
+    () =>
+      getCollapsedEntryIds(activityState, {
+        prNumber: data.number,
+        entries: timelineEntries,
+      }),
     [activityState, data.number, timelineEntries],
   );
   const attachEnabled = workspaceAttachmentScopeKey !== undefined;
@@ -420,7 +420,11 @@ export function PullRequestPane({
         }
         const attachment = buildPullRequestCheckContextAttachment({
           provider: data.provider,
-          pullRequest: { number: data.number, title: data.title, url: data.url },
+          pullRequest: {
+            number: data.number,
+            title: data.title,
+            url: data.url,
+          },
           check,
           githubDetails: details,
         });
@@ -787,7 +791,12 @@ function useRevealOnHover() {
   const handlePointerEnter = useCallback(() => setIsHovered(true), []);
   const handlePointerLeave = useCallback(() => setIsHovered(false), []);
   const actionsVisible = isHovered || menuOpen || isNative || isCompact;
-  return { actionsVisible, handlePointerEnter, handlePointerLeave, setMenuOpen };
+  return {
+    actionsVisible,
+    handlePointerEnter,
+    handlePointerLeave,
+    setMenuOpen,
+  };
 }
 
 function ActivityKebab({
@@ -906,7 +915,6 @@ function ActivityHeader({
   avatarSize: number;
   children?: React.ReactNode;
 }) {
-  const { t } = useTranslation();
   return (
     <>
       <ActivityAvatar activity={activity} size={avatarSize} />
@@ -915,7 +923,7 @@ function ActivityHeader({
       </Text>
       <ActivityVerb activity={activity} />
       <View style={styles.headerTrailing}>
-        <Text style={styles.ageText}>{localizedActivityAge(activity.age, t)}</Text>
+        <Text style={styles.ageText}>{formatTimeAgo(new Date(activity.createdAtMs))}</Text>
         {children}
       </View>
     </>
