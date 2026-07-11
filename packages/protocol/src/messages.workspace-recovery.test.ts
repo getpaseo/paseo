@@ -83,4 +83,28 @@ describe("workspace recovery protocol", () => {
       }).features?.workspaceRecovery,
     ).toBe(true);
   });
+
+  test("accepts unavailable reasons added by newer daemons", () => {
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "workspace.recovery.inspect.response",
+        payload: {
+          requestId: "inspect-future",
+          state: {
+            kind: "unavailable",
+            workspaceId: "workspace-1",
+            reason: "future_recovery_constraint",
+            message: "This host cannot recover the workspace yet.",
+          },
+        },
+      }),
+    ).toMatchObject({
+      payload: {
+        state: {
+          kind: "unavailable",
+          reason: "future_recovery_constraint",
+        },
+      },
+    });
+  });
 });

@@ -1494,14 +1494,7 @@ export const WorkspaceRecoveryStateSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("unavailable"),
     workspaceId: z.string(),
-    reason: z.enum([
-      "workspace_not_found",
-      "workspace_not_archived",
-      "project_not_found",
-      "project_directory_missing",
-      "workspace_directory_missing",
-      "worktree_branch_missing",
-    ]),
+    reason: z.string(),
     message: z.string(),
   }),
 ]);

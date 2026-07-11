@@ -130,6 +130,18 @@ test.describe("Worktree restore", () => {
     await expect(page.getByRole("button", { name: "Unarchive" })).toHaveCount(0);
     expect(await fetchAgentArchivedAt(client, agent.id)).toBeNull();
     expect(existsSync(worktree.workspaceDirectory)).toBe(true);
+
+    await openSessions(page);
+    await expectSessionRowNotArchived(page, agent.title);
+    await page.getByTestId(`agent-row-${serverId}-${agent.id}`).click();
+
+    await expect(
+      page.getByTestId(`workspace-tab-agent_${agent.id}`).filter({ visible: true }).first(),
+    ).toBeVisible({ timeout: 30_000 });
+    await expect(
+      page.getByTestId(`workspace-deck-entry-${serverId}:${worktree.workspaceId}`),
+    ).toHaveCount(1);
+    expect(await fetchAgentArchivedAt(client, agent.id)).toBeNull();
   });
 
   test("opening a recoverable archived workspace shows an explicit Restore action without mutating it", async ({

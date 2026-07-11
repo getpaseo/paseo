@@ -1,7 +1,7 @@
 import { router, type Href } from "expo-router";
+import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import { useSessionStore } from "@/stores/session-store";
 import { resolveNavigateToAgent, type NavigateToAgentInput } from "./resolve";
-import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 
 export type { NavigateToAgentInput } from "./resolve";
 

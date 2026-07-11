@@ -55,13 +55,8 @@ export function useWorkspaceRecovery(input: {
         throw new Error("The host disconnected before the workspace could be recovered.");
       }
       await waitForRecoveryLoadingPresentation();
-      const [result] = await Promise.allSettled([
-        client.restoreWorkspace(input.workspaceId),
-        waitForMinimumRecoveryLoadingTime(),
-      ]);
-      if (result.status === "rejected") {
-        throw result.reason;
-      }
+      await waitForMinimumRecoveryLoadingTime();
+      await client.restoreWorkspace(input.workspaceId);
     },
   });
 
