@@ -61,18 +61,14 @@ export function SyncedLoader({ size = 10, color }: { size?: number; color: strin
     };
   }, [active, stepProgress]);
 
-  const animatedStyle = useAnimatedStyle(() => ({
-    opacity: 1,
-  }));
-
   const gap = Math.max(1, Math.round(size * 0.12));
   const dotSize = Math.max(2, Math.floor((size - gap * 2) / 3));
   const gridWidth = dotSize * 2 + gap;
   const gridHeight = dotSize * 3 + gap * 2;
 
   const gridStyle = useMemo(
-    () => [animatedStyle, { width: gridWidth, height: gridHeight }],
-    [animatedStyle, gridWidth, gridHeight],
+    () => ({ width: gridWidth, height: gridHeight }),
+    [gridHeight, gridWidth],
   );
   const containerStyle = useMemo(
     () =>
@@ -87,7 +83,7 @@ export function SyncedLoader({ size = 10, color }: { size?: number; color: strin
 
   return (
     <View style={containerStyle}>
-      <Animated.View style={gridStyle}>
+      <View style={gridStyle}>
         {Array.from({ length: DOT_COUNT }).map((_, dotIndex) => {
           const rowIndex = Math.floor(dotIndex / GRID_COLUMNS);
           const columnIndex = dotIndex % GRID_COLUMNS;
@@ -105,7 +101,7 @@ export function SyncedLoader({ size = 10, color }: { size?: number; color: strin
             />
           );
         })}
-      </Animated.View>
+      </View>
     </View>
   );
 }
