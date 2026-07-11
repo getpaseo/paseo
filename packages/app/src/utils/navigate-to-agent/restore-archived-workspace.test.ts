@@ -269,9 +269,26 @@ describe("restoreArchivedWorkspace via navigateToAgent", () => {
     expect(status()).toBe("needs-host-upgrade");
   });
 
-  it("is a no-op when the workspace descriptor is already present", () => {
+  it("reopens an archived History agent when its workspace descriptor is already present", () => {
     refreshAgent.mockImplementation(() => new Promise(() => {}));
     useSessionStore.getState().mergeWorkspaces(SERVER_ID, [workspace()]);
+
+    openFromHistory();
+
+    expect(refreshAgent).toHaveBeenCalledTimes(1);
+    expect(refreshAgent).toHaveBeenCalledWith(AGENT_ID);
+    expect(status()).toBeNull();
+  });
+
+  it("is a no-op when a non-archived workspace descriptor is already present", () => {
+    const store = useSessionStore.getState();
+    store.setAgents(SERVER_ID, (prev) => {
+      const next = new Map(prev);
+      next.set(AGENT_ID, agent(null));
+      return next;
+    });
+    refreshAgent.mockImplementation(() => new Promise(() => {}));
+    store.mergeWorkspaces(SERVER_ID, [workspace()]);
 
     openFromHistory();
 

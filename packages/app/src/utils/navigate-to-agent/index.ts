@@ -64,10 +64,7 @@ function restoreArchivedWorkspace(serverId: string, agentId: string, workspaceId
 
   const store = useSessionStore.getState();
   const session = store.sessions[serverId];
-  // History carries restore intent explicitly. Workspace lifecycle is separate
-  // from agent lifecycle, so a closed non-archived agent can legitimately own an
-  // archived workspace. A present workspace or in-flight restore stays a no-op.
-  if (!session || session.workspaces.has(workspaceId)) {
+  if (!session) {
     return;
   }
   if (session.restoringWorkspaces.get(workspaceId) === "restoring") {
@@ -78,6 +75,23 @@ function restoreArchivedWorkspace(serverId: string, agentId: string, workspaceId
   // daemon's workspace snapshot has landed.
   if (!session.hasHydratedWorkspaces) {
     restoreWhenWorkspacesHydrate(serverId, agentId, workspaceId);
+    return;
+  }
+
+  // Workspace and agent archive lifecycles are independent. A missing workspace
+  // must restore even when its agent survived unarchived; an archived agent must
+  // still reopen when its workspace survived.
+  if (session.workspaces.has(workspaceId)) {
+    const agent = session.agents.get(agentId) ?? session.agentDetails.get(agentId);
+    if (agent?.archivedAt) {
+      client.refreshAgent(agentId).catch((error) => {
+        console.error("[HistoryRestore] Failed to reopen archived agent", {
+          serverId,
+          agentId,
+          error,
+        });
+      });
+    }
     return;
   }
 
