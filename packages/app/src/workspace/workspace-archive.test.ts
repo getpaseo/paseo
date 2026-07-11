@@ -144,23 +144,6 @@ describe("archiveWorkspaceOptimistically", () => {
       }),
     ).toBe(false);
   });
-
-  it("runs the after-hide hook after local state is hidden", async () => {
-    const archived = workspace();
-    useSessionStore.getState().mergeWorkspaces(SERVER_ID, [archived]);
-    const client = createClient(vi.fn(async () => archivePayload({ workspaceId: archived.id })));
-    const afterHide = vi.fn(() => {
-      expect(storedWorkspace(archived.id)).toBeUndefined();
-    });
-
-    await archiveWorkspaceOptimistically({
-      client,
-      workspace: target(),
-      afterHide,
-    });
-
-    expect(afterHide).toHaveBeenCalledOnce();
-  });
 });
 
 describe("archiveWorkspacesOptimistically", () => {

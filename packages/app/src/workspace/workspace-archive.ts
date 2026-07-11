@@ -81,10 +81,8 @@ async function archiveWorkspaceOrThrow(input: {
 export async function archiveWorkspaceOptimistically(input: {
   client: WorkspaceArchiveClient;
   workspace: WorkspaceArchiveTarget;
-  afterHide?: () => void;
 }): Promise<void> {
   const snapshot = hideWorkspaceOptimistically(input.workspace);
-  input.afterHide?.();
 
   try {
     await archiveWorkspaceOrThrow({
