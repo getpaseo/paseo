@@ -4012,9 +4012,11 @@ export class Session {
 
   private async restoreWorkspaceAndEmit(workspaceId: string): Promise<void> {
     await this.workspaceRecovery.restore(workspaceId);
-    await this.emitWorkspaceUpdatesForWorkspaceIds([workspaceId], {
-      skipReconcile: true,
-    });
+    const workspace = await this.workspaceRegistry.get(workspaceId);
+    if (!workspace) {
+      throw new Error(`Recovered workspace record not found: ${workspaceId}`);
+    }
+    await this.workspaceGitObserver.warmGitData(workspace);
   }
 
   private async restoreOwningWorkspaceForLegacyAgentRefresh(agentId: string): Promise<void> {

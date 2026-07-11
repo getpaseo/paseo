@@ -1,9 +1,16 @@
 import { randomUUID } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { rename } from "node:fs/promises";
 import type { Page } from "@playwright/test";
+import { buildHostWorkspaceRoute } from "@/utils/host-routes";
 import { expect, test } from "./fixtures";
 import { gotoAppShell } from "./helpers/app";
+import {
+  expectWorkspaceBranch,
+  openChangesPanel,
+  switchBranchFromChangesPanel,
+} from "./helpers/branch-switcher";
 import {
   createIdleAgent,
   expectSessionRowNotArchived,
@@ -74,6 +81,19 @@ test.describe("Worktree restore", () => {
     await openSessions(page);
     await expectSessionRowNotArchived(page, seeded.agent.title);
     await page.getByTestId(`agent-row-${getServerId()}-${seeded.agent.id}`).click();
+    await expect(page.getByText("Workspace archived", { exact: true })).toBeVisible({
+      timeout: 30_000,
+    });
+    await expect(page.getByTestId("workspace-recovery-action")).toHaveText("Restore");
+    return seeded;
+  }
+
+  async function openArchivedAgentBeforeWorkspaceHydration(page: Page, prefix: string) {
+    const seeded = await createArchivedMissingWorktree(prefix);
+    const workspaceRoute = buildHostWorkspaceRoute(getServerId(), seeded.worktree.workspaceId);
+    const openAgent = encodeURIComponent(`agent:${seeded.agent.id}`);
+
+    await page.goto(`${workspaceRoute}?open=${openAgent}`);
     await expect(page.getByText("Workspace archived", { exact: true })).toBeVisible({
       timeout: 30_000,
     });
@@ -156,7 +176,10 @@ test.describe("Worktree restore", () => {
   });
 
   test("explicit Restore shows loading and opens the recreated workspace", async ({ page }) => {
-    const { agent, worktree } = await openArchivedWorkspaceFromHistory(page, "restore-success");
+    const { agent, worktree } = await openArchivedAgentBeforeWorkspaceHydration(
+      page,
+      "restore-success",
+    );
 
     await page.getByTestId("workspace-recovery-action").click();
 
@@ -173,6 +196,22 @@ test.describe("Worktree restore", () => {
     ).toBeVisible({ timeout: 30_000 });
     await expect(page.getByTestId("workspace-recovery-action")).toHaveCount(0);
     expect(await fetchAgentArchivedAt(client, agent.id)).toBeNull();
+
+    const switchedBranch = `restored-live-${randomUUID().slice(0, 8)}`;
+    execFileSync("git", ["branch", switchedBranch], {
+      cwd: tempRepo.path,
+      stdio: "pipe",
+    });
+    await openChangesPanel(page);
+    await expectWorkspaceBranch(page, worktree.workspaceName);
+    await switchBranchFromChangesPanel(page, {
+      from: worktree.workspaceName,
+      to: switchedBranch,
+    });
+    await expectWorkspaceBranch(page, switchedBranch);
+    await expect(
+      page.getByTestId("workspace-header-title").filter({ visible: true }).first(),
+    ).toHaveText(switchedBranch, { timeout: 30_000 });
   });
 
   test("restore failure stays visible and permits a successful retry", async ({ page }) => {

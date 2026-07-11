@@ -111,7 +111,7 @@ function HostWorkspaceRouteContent() {
   const hasHydratedWorkspaces = useHasHydratedWorkspaces(serverId);
   const workspaceExists = useWorkspaceExists(serverId, workspaceId);
   const isOpenIntentWaitingForWorkspace = Boolean(
-    openValue && hasHydratedWorkspaces && !workspaceExists,
+    openValue && (!hasHydratedWorkspaces || !workspaceExists),
   );
   useEffect(() => {
     if (!serverId || !workspaceId) {
