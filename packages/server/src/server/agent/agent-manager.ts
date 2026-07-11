@@ -66,6 +66,11 @@ import { isSystemInjectedEnvelope } from "./agent-prompt.js";
 import { stripInternalPaseoMcpServer, withRuntimePaseoMcpServer } from "./runtime-mcp-config.js";
 import { resolveCreateAgentTitles } from "./create-agent-title.js";
 import type { PaseoToolCatalogFactory } from "./tools/types.js";
+import {
+  ProviderSubagentStore,
+  type ProviderSubagentDescriptor,
+  type ProviderSubagentStoreEvent,
+} from "./provider-subagents/store.js";
 
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
 const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
@@ -145,6 +150,7 @@ export type {
 
 export type AgentManagerEvent =
   | { type: "agent_state"; agent: ManagedAgent }
+  | { type: "provider_subagent"; event: ProviderSubagentStoreEvent }
   | {
       type: "agent_stream";
       agentId: string;
@@ -534,6 +540,7 @@ export class AgentManager {
   private readonly providerEnabled = new Map<AgentProvider, boolean>();
   private readonly agents = new Map<string, LiveManagedAgent>();
   private readonly timelineStore = new InMemoryAgentTimelineStore();
+  private readonly providerSubagents = new ProviderSubagentStore();
   private readonly agentsAwaitingInitialSnapshotPersist = new Set<string>();
   private readonly sessionEventTails = new Map<string, Promise<void>>();
   private readonly foregroundRuns = new ForegroundRunState();
@@ -934,6 +941,28 @@ export class AgentManager {
   fetchTimeline(id: string, options?: AgentTimelineFetchOptions): AgentTimelineFetchResult {
     this.requireAgent(id);
     return this.timelineStore.fetch(id, options);
+  }
+
+  listProviderSubagents(parentAgentId: string): ProviderSubagentDescriptor[] {
+    this.requireAgent(parentAgentId);
+    return this.providerSubagents.list(parentAgentId);
+  }
+
+  getProviderSubagent(
+    parentAgentId: string,
+    subagentId: string,
+  ): ProviderSubagentDescriptor | null {
+    this.requireAgent(parentAgentId);
+    return this.providerSubagents.get(parentAgentId, subagentId);
+  }
+
+  fetchProviderSubagentTimeline(
+    parentAgentId: string,
+    subagentId: string,
+    options?: AgentTimelineFetchOptions,
+  ): AgentTimelineFetchResult {
+    this.requireAgent(parentAgentId);
+    return this.providerSubagents.fetchTimeline(parentAgentId, subagentId, options);
   }
 
   createAgent(
@@ -2837,6 +2866,11 @@ export class AgentManager {
     agent: ActiveManagedAgent,
     event: AgentStreamEvent,
   ): Promise<void> {
+    if (event.type === "provider_subagent") {
+      const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
+      this.dispatch({ type: "provider_subagent", event: update });
+      return;
+    }
     const turnId = getAgentStreamEventTurnId(event);
     const matchingWaiters = this.foregroundRuns.getMatchingWaiters(agent, turnId);
     this.logger.trace(
@@ -3790,6 +3824,16 @@ export class AgentManager {
         subscriber.agentId &&
         event.type === "agent_state" &&
         subscriber.agentId !== event.agent.id
+      ) {
+        continue;
+      }
+      if (
+        subscriber.agentId &&
+        event.type === "provider_subagent" &&
+        subscriber.agentId !==
+          (event.event.type === "upsert"
+            ? event.event.subagent.parentAgentId
+            : event.event.parentAgentId)
       ) {
         continue;
       }

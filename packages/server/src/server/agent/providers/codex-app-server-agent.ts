@@ -3061,6 +3061,7 @@ interface CodexSubAgentCallState {
   pendingFileChangeOutputDeltas: Map<string, string[]>;
   childItemOrder: string[];
   childItems: Map<string, AgentTimelineItem>;
+  childThreadIds: Set<string>;
 }
 
 export class CodexAppServerAgentSession implements AgentSession {
@@ -4724,6 +4725,7 @@ export class CodexAppServerAgentSession implements AgentSession {
         pendingFileChangeOutputDeltas: new Map<string, string[]>(),
         childItemOrder: [],
         childItems: new Map<string, AgentTimelineItem>(),
+        childThreadIds: new Set<string>(),
       } satisfies CodexSubAgentCallState);
 
     state.toolCall = {
@@ -4754,6 +4756,8 @@ export class CodexAppServerAgentSession implements AgentSession {
     );
     for (const receiverThreadId of childThreadIds) {
       this.subAgentCallIdByChildThreadId.set(receiverThreadId, timelineItem.callId);
+      state.childThreadIds.add(receiverThreadId);
+      this.emitProviderSubagentUpsert(receiverThreadId, state, timelineItem.status);
     }
     return childThreadIds;
   }
@@ -4867,6 +4871,9 @@ export class CodexAppServerAgentSession implements AgentSession {
         ? curateAgentActivity(childTimeline, { labelAssistantMessages: true })
         : "";
     const resolvedStatus = status ?? state.toolCall.status;
+    for (const childThreadId of state.childThreadIds) {
+      this.emitProviderSubagentUpsert(childThreadId, state, resolvedStatus);
+    }
     const baseToolCall = {
       ...state.toolCall,
       detail: {
@@ -4893,6 +4900,69 @@ export class CodexAppServerAgentSession implements AgentSession {
       return;
     }
     this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: nextToolCall });
+  }
+
+  private emitProviderSubagentUpsert(
+    childThreadId: string,
+    state: CodexSubAgentCallState,
+    status: ToolCallTimelineItem["status"],
+  ): void {
+    const detail = state.toolCall.detail;
+    if (detail.type !== "sub_agent") {
+      return;
+    }
+    let providerStatus: "running" | "completed" | "failed" | "canceled" = "running";
+    if (status === "completed") {
+      providerStatus = "completed";
+    } else if (status === "failed") {
+      providerStatus = "failed";
+    } else if (status === "canceled") {
+      providerStatus = "canceled";
+    }
+    this.emitEvent({
+      type: "provider_subagent",
+      provider: CODEX_PROVIDER,
+      event: {
+        type: "upsert",
+        id: childThreadId,
+        title: detail.subAgentType ?? "Codex subagent",
+        description: detail.description ?? null,
+        status: providerStatus,
+        toolCallId: state.callId,
+      },
+    });
+  }
+
+  private emitProviderSubagentTimeline(childThreadId: string, item: AgentTimelineItem): void {
+    this.emitEvent({
+      type: "provider_subagent",
+      provider: CODEX_PROVIDER,
+      event: { type: "timeline", id: childThreadId, item },
+    });
+  }
+
+  private emitCompletedProviderSubagentItem(
+    parsed: Extract<ParsedCodexNotification, { kind: "item_completed" }>,
+    timelineItem: AgentTimelineItem,
+  ): void {
+    const itemId = parsed.item.id;
+    const hadStreamedAssistant =
+      timelineItem.type === "assistant_message" &&
+      Boolean(itemId && this.pendingAgentMessages.has(itemId));
+    const hadStreamedReasoning =
+      timelineItem.type === "reasoning" && Boolean(itemId && this.pendingReasoning.has(itemId));
+    if (parsed.threadId && !hadStreamedAssistant && !hadStreamedReasoning) {
+      this.emitProviderSubagentTimeline(parsed.threadId, timelineItem);
+    }
+  }
+
+  private emitStartedProviderSubagentItem(
+    threadId: string | null,
+    timelineItem: AgentTimelineItem,
+  ): void {
+    if (threadId) {
+      this.emitProviderSubagentTimeline(threadId, timelineItem);
+    }
   }
 
   private handleSubAgentChildItemCompleted(
@@ -4949,6 +5019,13 @@ export class CodexAppServerAgentSession implements AgentSession {
       this.pendingAgentMessages.set(parsed.itemId, text);
       const subAgentCallId = this.getSubAgentCallIdForThread(parsed.threadId);
       if (subAgentCallId) {
+        if (parsed.threadId) {
+          this.emitProviderSubagentTimeline(parsed.threadId, {
+            type: "assistant_message",
+            messageId: parsed.itemId,
+            text: parsed.delta,
+          });
+        }
         this.upsertSubAgentChildItem(subAgentCallId, parsed.itemId, {
           type: "assistant_message",
           messageId: parsed.itemId,
@@ -4981,6 +5058,12 @@ export class CodexAppServerAgentSession implements AgentSession {
       this.pendingReasoning.set(parsed.itemId, prev);
       const subAgentCallId = this.getSubAgentCallIdForThread(parsed.threadId);
       if (subAgentCallId) {
+        if (parsed.threadId) {
+          this.emitProviderSubagentTimeline(parsed.threadId, {
+            type: "reasoning",
+            text: parsed.delta,
+          });
+        }
         this.upsertSubAgentChildItem(subAgentCallId, parsed.itemId, {
           type: "reasoning",
           text: prev.join(""),
@@ -5373,6 +5456,7 @@ export class CodexAppServerAgentSession implements AgentSession {
           })
         : [];
     if (childSubAgentCallId) {
+      this.emitCompletedProviderSubagentItem(parsed, timelineItem);
       this.handleSubAgentChildItemCompleted(childSubAgentCallId, parsed.item.id, timelineItem);
       this.replayPendingSubAgentNotifications(registeredChildThreadIds);
       return;
@@ -5537,6 +5621,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       parentCallId: childSubAgentCallId,
     });
     if (childSubAgentCallId) {
+      this.emitStartedProviderSubagentItem(parsed.threadId, timelineItem);
       if (parsed.item.id) {
         this.upsertSubAgentChildItem(childSubAgentCallId, parsed.item.id, timelineItem);
       }
@@ -5580,6 +5665,9 @@ export class CodexAppServerAgentSession implements AgentSession {
     }
     const childSubAgentCallId = this.getSubAgentCallIdForThread(parsed.threadId);
     if (childSubAgentCallId) {
+      if (parsed.threadId) {
+        this.emitProviderSubagentTimeline(parsed.threadId, timelineItem);
+      }
       if (itemId) {
         this.upsertSubAgentChildItem(childSubAgentCallId, itemId, timelineItem);
       }

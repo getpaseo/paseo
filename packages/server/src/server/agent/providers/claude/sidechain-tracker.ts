@@ -69,10 +69,20 @@ export class ClaudeSidechainTracker {
 
     const contextUpdated = this.updateSubAgentContextFromTaskInput(state, parentToolUseId);
     const actionCandidates = this.extractSubAgentActionCandidates(message);
+    const childTimelineItems: AgentTimelineItem[] = [];
     let actionUpdated = false;
     for (const action of actionCandidates) {
       if (this.appendSubAgentAction(state, action)) {
         actionUpdated = true;
+        const toolCall = mapClaudeRunningToolCall({
+          name: action.toolName,
+          callId: action.key,
+          input: action.input,
+          output: null,
+        });
+        if (toolCall) {
+          childTimelineItems.push(toolCall);
+        }
       }
     }
 
@@ -104,6 +114,25 @@ export class ClaudeSidechainTracker {
 
     return [
       {
+        type: "provider_subagent",
+        provider: "claude",
+        event: {
+          type: "upsert",
+          id: parentToolUseId,
+          title: state.subAgentType ?? "Claude subagent",
+          description: state.description ?? null,
+          status: "running",
+          toolCallId: parentToolUseId,
+        },
+      },
+      ...childTimelineItems.map(
+        (item): AgentStreamEvent => ({
+          type: "provider_subagent",
+          provider: "claude",
+          event: { type: "timeline", id: parentToolUseId, item },
+        }),
+      ),
+      {
         type: "timeline",
         item: {
           ...toolCall,
@@ -112,6 +141,26 @@ export class ClaudeSidechainTracker {
         provider: "claude",
       },
     ];
+  }
+
+  finishAll(status: "completed" | "failed" | "canceled"): AgentStreamEvent[] {
+    const events: AgentStreamEvent[] = [];
+    for (const [id, state] of this.activeSidechains) {
+      events.push({
+        type: "provider_subagent",
+        provider: "claude",
+        event: {
+          type: "upsert",
+          id,
+          title: state.subAgentType ?? "Claude subagent",
+          description: state.description ?? null,
+          status,
+          toolCallId: id,
+        },
+      });
+    }
+    this.activeSidechains.clear();
+    return events;
   }
 
   delete(toolUseId: string): void {

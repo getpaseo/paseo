@@ -426,6 +426,11 @@ export type AgentStreamEvent =
       provider: AgentProvider;
       reason: "finished" | "error" | "permission";
       timestamp: string;
+    }
+  | {
+      type: "provider_subagent";
+      provider: AgentProvider;
+      event: import("./provider-subagents/store.js").ProviderSubagentInputEvent;
     };
 
 export function getAgentStreamEventTurnId(event: AgentStreamEvent): string | undefined {

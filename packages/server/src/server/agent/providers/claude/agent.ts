@@ -3830,6 +3830,7 @@ class ClaudeAgentSession implements AgentSession {
   ): void {
     const usage = this.convertUsage(message, message.modelUsage);
     if (message.subtype === "success") {
+      events.push(...this.sidechainTracker.finishAll("completed"));
       // Built-in slash commands (e.g. /voice, /usage, "Unknown command: …")
       // run client-side in the Claude CLI with no model turn — output_tokens
       // is 0 and the user-visible text is carried in `result`. Surface it only
@@ -3855,6 +3856,7 @@ class ClaudeAgentSession implements AgentSession {
       "errors" in message && Array.isArray(message.errors) && message.errors.length > 0
         ? message.errors.join("\n")
         : "Claude run failed";
+    events.push(...this.sidechainTracker.finishAll("failed"));
     events.push(this.buildTurnFailedEvent(errorMessage));
   }
 
@@ -4465,7 +4467,6 @@ class ClaudeAgentSession implements AgentSession {
 
     if (typeof block.tool_use_id === "string") {
       this.toolUseCache.delete(block.tool_use_id);
-      this.sidechainTracker.delete(block.tool_use_id);
     }
   }
 
