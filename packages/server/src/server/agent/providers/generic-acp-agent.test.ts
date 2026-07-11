@@ -82,4 +82,31 @@ describe("GenericACPAgentClient", () => {
       },
     });
   });
+
+  test("passes provider-specific ACP client capabilities to the base client", () => {
+    const _client = new GenericACPAgentClient({
+      logger: createTestLogger(),
+      command: ["container-agent", "acp"],
+      providerParams: {
+        clientCapabilities: {
+          fs: {
+            readTextFile: false,
+            writeTextFile: false,
+          },
+          terminal: false,
+        },
+      },
+    });
+    void _client;
+
+    expect(mockState.superConstructorOptions.at(-1)).toMatchObject({
+      clientCapabilities: {
+        fs: {
+          readTextFile: false,
+          writeTextFile: false,
+        },
+        terminal: false,
+      },
+    });
+  });
 });

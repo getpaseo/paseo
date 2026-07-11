@@ -239,14 +239,19 @@ const BASE_ACP_CLIENT_CAPABILITIES: ACPClientCapabilities = {
 
 export type ACPClientCapabilityMeta = Record<string, unknown>;
 
-export function buildACPClientCapabilities(meta?: ACPClientCapabilityMeta): ACPClientCapabilities {
-  if (!meta || Object.keys(meta).length === 0) {
-    return BASE_ACP_CLIENT_CAPABILITIES;
-  }
-  return {
+export function buildACPClientCapabilities(
+  meta?: ACPClientCapabilityMeta,
+  override?: ACPClientCapabilities,
+): ACPClientCapabilities {
+  const capabilities: ACPClientCapabilities = {
     ...BASE_ACP_CLIENT_CAPABILITIES,
-    _meta: meta,
+    ...override,
+    fs: {
+      ...BASE_ACP_CLIENT_CAPABILITIES.fs,
+      ...override?.fs,
+    },
   };
+  return meta && Object.keys(meta).length > 0 ? { ...capabilities, _meta: meta } : capabilities;
 }
 
 // Suppress interactive auth side-effects (e.g. Gemini CLI opening a Google
@@ -371,6 +376,7 @@ interface ACPAgentClientOptions {
   sessionResponseTransformer?: (response: SessionStateResponse) => SessionStateResponse;
   configOptionsTransformer?: (configOptions: SessionConfigOption[]) => SessionConfigOption[];
   configFeatureOptions?: ACPConfigFeatureOption[];
+  clientCapabilities?: ACPClientCapabilities;
   clientCapabilityMeta?: ACPClientCapabilityMeta;
   modeIdTransformer?: (modeId: string) => string | null;
   toolSnapshotTransformer?: (snapshot: ACPToolSnapshot) => ACPToolSnapshot;
@@ -400,6 +406,7 @@ interface ACPAgentSessionOptions {
   sessionResponseTransformer?: (response: SessionStateResponse) => SessionStateResponse;
   configOptionsTransformer?: (configOptions: SessionConfigOption[]) => SessionConfigOption[];
   configFeatureOptions?: ACPConfigFeatureOption[];
+  clientCapabilities?: ACPClientCapabilities;
   clientCapabilityMeta?: ACPClientCapabilityMeta;
   modeIdTransformer?: (modeId: string) => string | null;
   toolSnapshotTransformer?: (snapshot: ACPToolSnapshot) => ACPToolSnapshot;
@@ -708,6 +715,7 @@ export class ACPAgentClient implements AgentClient {
     configOptions: SessionConfigOption[],
   ) => SessionConfigOption[];
   private readonly configFeatureOptions: ACPConfigFeatureOption[];
+  private readonly clientCapabilities?: ACPClientCapabilities;
   private readonly clientCapabilityMeta?: ACPClientCapabilityMeta;
   private readonly modeIdTransformer?: (modeId: string) => string | null;
   private readonly toolSnapshotTransformer?: (snapshot: ACPToolSnapshot) => ACPToolSnapshot;
@@ -742,6 +750,7 @@ export class ACPAgentClient implements AgentClient {
     this.sessionResponseTransformer = options.sessionResponseTransformer;
     this.configOptionsTransformer = options.configOptionsTransformer;
     this.configFeatureOptions = options.configFeatureOptions ?? [];
+    this.clientCapabilities = options.clientCapabilities;
     this.clientCapabilityMeta = options.clientCapabilityMeta;
     this.modeIdTransformer = options.modeIdTransformer;
     this.toolSnapshotTransformer = options.toolSnapshotTransformer;
@@ -770,6 +779,7 @@ export class ACPAgentClient implements AgentClient {
         sessionResponseTransformer: this.sessionResponseTransformer,
         configOptionsTransformer: this.configOptionsTransformer,
         configFeatureOptions: this.configFeatureOptions,
+        clientCapabilities: this.clientCapabilities,
         clientCapabilityMeta: this.clientCapabilityMeta,
         modeIdTransformer: this.modeIdTransformer,
         toolSnapshotTransformer: this.toolSnapshotTransformer,
@@ -819,6 +829,7 @@ export class ACPAgentClient implements AgentClient {
       sessionResponseTransformer: this.sessionResponseTransformer,
       configOptionsTransformer: this.configOptionsTransformer,
       configFeatureOptions: this.configFeatureOptions,
+      clientCapabilities: this.clientCapabilities,
       clientCapabilityMeta: this.clientCapabilityMeta,
       modeIdTransformer: this.modeIdTransformer,
       toolSnapshotTransformer: this.toolSnapshotTransformer,
@@ -1057,7 +1068,10 @@ export class ACPAgentClient implements AgentClient {
         Promise.race([
           transport.connection.initialize({
             protocolVersion: PROTOCOL_VERSION,
-            clientCapabilities: buildACPClientCapabilities(this.clientCapabilityMeta),
+            clientCapabilities: buildACPClientCapabilities(
+              this.clientCapabilityMeta,
+              this.clientCapabilities,
+            ),
             clientInfo: { name: "Paseo", version: "dev" },
           }),
           transport.spawnError,
@@ -1269,6 +1283,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     configOptions: SessionConfigOption[],
   ) => SessionConfigOption[];
   private readonly configFeatureOptions: ACPConfigFeatureOption[];
+  private readonly clientCapabilities?: ACPClientCapabilities;
   private readonly clientCapabilityMeta?: ACPClientCapabilityMeta;
   private readonly modeIdTransformer?: (modeId: string) => string | null;
   private readonly toolSnapshotTransformer?: (snapshot: ACPToolSnapshot) => ACPToolSnapshot;
@@ -1334,6 +1349,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.sessionResponseTransformer = options.sessionResponseTransformer;
     this.configOptionsTransformer = options.configOptionsTransformer;
     this.configFeatureOptions = options.configFeatureOptions ?? [];
+    this.clientCapabilities = options.clientCapabilities;
     this.clientCapabilityMeta = options.clientCapabilityMeta;
     this.modeIdTransformer = options.modeIdTransformer;
     this.toolSnapshotTransformer = options.toolSnapshotTransformer;
@@ -2320,7 +2336,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     const initialize = await this.runACPRequest(() =>
       connection.initialize({
         protocolVersion: PROTOCOL_VERSION,
-        clientCapabilities: buildACPClientCapabilities(this.clientCapabilityMeta),
+        clientCapabilities: buildACPClientCapabilities(
+          this.clientCapabilityMeta,
+          this.clientCapabilities,
+        ),
         clientInfo: { name: "Paseo", version: "dev" },
       }),
     );

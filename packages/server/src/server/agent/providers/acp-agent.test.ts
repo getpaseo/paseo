@@ -20,6 +20,7 @@ import {
   ACPAgentSession,
   type SpawnedACPProcess,
   type SessionStateResponse,
+  buildACPClientCapabilities,
   createLoggedNdJsonStream,
   deriveModelDefinitionsFromACP,
   deriveModesFromACP,
@@ -49,6 +50,39 @@ import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { buildStringCommandShellInvocation } from "../../../utils/string-command-shell.js";
 import { asInternals } from "../../test-utils/class-mocks.js";
 import * as spawnUtils from "../../../utils/spawn.js";
+
+describe("buildACPClientCapabilities", () => {
+  test("preserves the default client filesystem and terminal capabilities", () => {
+    expect(buildACPClientCapabilities()).toEqual({
+      fs: {
+        readTextFile: true,
+        writeTextFile: true,
+      },
+      terminal: true,
+    });
+  });
+
+  test("applies provider capability overrides without dropping metadata", () => {
+    expect(
+      buildACPClientCapabilities(
+        { source: "provider" },
+        {
+          fs: {
+            readTextFile: false,
+          },
+          terminal: false,
+        },
+      ),
+    ).toEqual({
+      fs: {
+        readTextFile: false,
+        writeTextFile: true,
+      },
+      terminal: false,
+      _meta: { source: "provider" },
+    });
+  });
+});
 
 interface ACPSessionInternals {
   sessionId: string | null;
