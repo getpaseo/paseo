@@ -110,8 +110,9 @@ function HostWorkspaceRouteContent() {
   const openValue = getParamValue(globalParams.open);
   const hasHydratedWorkspaces = useHasHydratedWorkspaces(serverId);
   const workspaceExists = useWorkspaceExists(serverId, workspaceId);
+  const isAgentOpenIntent = parseWorkspaceOpenIntent(openValue)?.kind === "agent";
   const isOpenIntentWaitingForWorkspace = Boolean(
-    openValue && (!hasHydratedWorkspaces || !workspaceExists),
+    isAgentOpenIntent && (!hasHydratedWorkspaces || !workspaceExists),
   );
   useEffect(() => {
     if (!serverId || !workspaceId) {
