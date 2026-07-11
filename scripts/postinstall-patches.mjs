@@ -6,6 +6,10 @@ import { join } from "node:path";
 // when the patched dependency is actually present.
 const patchedPackages = [
   {
+    nodeModulesPath: "node_modules/react-native-markdown-display",
+    patchPrefix: "react-native-markdown-display+",
+  },
+  {
     nodeModulesPath: "node_modules/react-native-draggable-flatlist",
     patchPrefix: "react-native-draggable-flatlist+",
   },

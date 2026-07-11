@@ -1,4 +1,5 @@
 import path from "node:path";
+import { existsSync } from "node:fs";
 import { test, expect, type Page } from "./fixtures";
 import { gotoAppShell } from "./helpers/app";
 import { expectOpenedProject } from "./helpers/project-picker-ui";
@@ -11,7 +12,7 @@ function workspaceRowTestId(workspaceId: string): string {
   return `sidebar-workspace-row-${getServerId()}:${workspaceId}`;
 }
 
-async function hideWorkspaceFromSidebar(page: Page, workspaceId: string): Promise<void> {
+async function archiveWorkspaceFromSidebar(page: Page, workspaceId: string): Promise<void> {
   const serverId = getServerId();
   const row = page.getByTestId(workspaceRowTestId(workspaceId));
   await expect(row).toBeVisible({ timeout: 30_000 });
@@ -20,10 +21,6 @@ async function hideWorkspaceFromSidebar(page: Page, workspaceId: string): Promis
   const kebab = page.getByTestId(`sidebar-workspace-kebab-${serverId}:${workspaceId}`);
   await expect(kebab).toBeVisible({ timeout: 10_000 });
   await kebab.click();
-
-  // Hiding a checkout from the sidebar raises a browser confirm; accept it so the
-  // user-confirmed archive proceeds deterministically.
-  page.once("dialog", (dialog) => void dialog.accept());
 
   const archiveItem = page.getByTestId(`sidebar-workspace-menu-archive-${serverId}:${workspaceId}`);
   await expect(archiveItem).toBeVisible({ timeout: 10_000 });
@@ -159,17 +156,21 @@ test.describe("Project with no workspaces persists", () => {
       await gotoAppShell(page);
       await waitForSidebarHydration(page);
       await expect(projectRow).toBeVisible({ timeout: 30_000 });
-      await expect(page.getByTestId(workspaceRowTestId(workspace.workspaceId))).toBeVisible({
+      const workspaceRow = page.getByTestId(workspaceRowTestId(workspace.workspaceId));
+      await expect(workspaceRow).toBeVisible({
         timeout: 30_000,
       });
+      await workspaceRow.click();
+      await expect(page.getByTestId("changes-primary-cta")).toHaveCount(0);
 
-      await hideWorkspaceFromSidebar(page, workspace.workspaceId);
+      await archiveWorkspaceFromSidebar(page, workspace.workspaceId);
 
       // The workspace row goes away, but its project parent stays and exposes a
       // child row for creating the next workspace.
       await expect(page.getByTestId(workspaceRowTestId(workspace.workspaceId))).toHaveCount(0, {
         timeout: 30_000,
       });
+      expect(existsSync(workspace.repoPath)).toBe(true);
       await expect(projectRow).toBeVisible({ timeout: 30_000 });
       await expect(newWorkspaceRow).toBeVisible({ timeout: 30_000 });
       await expect(newWorkspaceRow).toContainText("New workspace");

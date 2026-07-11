@@ -36,8 +36,12 @@ import { useOpenProjectPicker } from "@/hooks/use-open-project-picker";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { canCreateWorktreeForProjectKind } from "@/projects/host-projects";
 import { useHostFeature } from "@/runtime/host-features";
-import { type SidebarProjectEntry } from "@/hooks/use-sidebar-workspaces-list";
+import {
+  type SidebarProjectEntry,
+  type SidebarWorkspaceEntry,
+} from "@/hooks/use-sidebar-workspaces-list";
 import { useSidebarModel } from "@/components/sidebar/sidebar-model";
+import { RetainedPanelActivity } from "@/components/retained-panel";
 import type { StatusGroup } from "@/hooks/sidebar-status-view-model";
 import { type SidebarGroupMode } from "@/stores/sidebar-view-store";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
@@ -75,6 +79,7 @@ interface SidebarSharedProps {
   theme: SidebarTheme;
   statusGroups: StatusGroup[];
   projects: SidebarProjectEntry[];
+  workspaceEntriesByKey: ReadonlyMap<string, SidebarWorkspaceEntry>;
   projectNamesByKey: Map<string, string>;
   isInitialLoad: boolean;
   isRevalidating: boolean;
@@ -132,6 +137,7 @@ export const LeftSidebar = memo(function LeftSidebar() {
 
   const {
     projects,
+    workspaceEntriesByKey,
     projectNamesByKey,
     isInitialLoad,
     isRevalidating,
@@ -235,6 +241,7 @@ export const LeftSidebar = memo(function LeftSidebar() {
     theme,
     statusGroups,
     projects,
+    workspaceEntriesByKey,
     projectNamesByKey,
     isInitialLoad,
     isRevalidating,
@@ -250,35 +257,39 @@ export const LeftSidebar = memo(function LeftSidebar() {
 
   if (isCompactLayout) {
     return (
-      <MobileSidebar
-        {...sharedProps}
-        insetsTop={insets.top}
-        insetsBottom={insets.bottom}
-        closeSidebar={showMobileAgent}
-        handleOpenProject={handleOpenProjectMobile}
-        handleHome={handleHomeMobile}
-        handleSettings={handleSettingsMobile}
-        handleAddHost={handleAddHostMobile}
-        handleOpenHostSettings={handleOpenHostSettingsMobile}
-        handleViewMoreNavigate={handleViewMoreNavigate}
-        handleViewSchedulesNavigate={handleViewSchedulesNavigate}
-      />
+      <RetainedPanelActivity active={isOpen}>
+        <MobileSidebar
+          {...sharedProps}
+          insetsTop={insets.top}
+          insetsBottom={insets.bottom}
+          closeSidebar={showMobileAgent}
+          handleOpenProject={handleOpenProjectMobile}
+          handleHome={handleHomeMobile}
+          handleSettings={handleSettingsMobile}
+          handleAddHost={handleAddHostMobile}
+          handleOpenHostSettings={handleOpenHostSettingsMobile}
+          handleViewMoreNavigate={handleViewMoreNavigate}
+          handleViewSchedulesNavigate={handleViewSchedulesNavigate}
+        />
+      </RetainedPanelActivity>
     );
   }
 
   return (
-    <DesktopSidebar
-      {...sharedProps}
-      insetsTop={insets.top}
-      isOpen={isOpen}
-      handleOpenProject={handleOpenProjectDesktop}
-      handleHome={handleHomeDesktop}
-      handleSettings={handleSettingsDesktop}
-      handleAddHost={handleAddHostDesktop}
-      handleOpenHostSettings={handleOpenHostSettingsDesktop}
-      handleViewMore={handleViewMoreNavigate}
-      handleViewSchedules={handleViewSchedulesNavigate}
-    />
+    <RetainedPanelActivity active={isOpen}>
+      <DesktopSidebar
+        {...sharedProps}
+        insetsTop={insets.top}
+        isOpen={isOpen}
+        handleOpenProject={handleOpenProjectDesktop}
+        handleHome={handleHomeDesktop}
+        handleSettings={handleSettingsDesktop}
+        handleAddHost={handleAddHostDesktop}
+        handleOpenHostSettings={handleOpenHostSettingsDesktop}
+        handleViewMore={handleViewMoreNavigate}
+        handleViewSchedules={handleViewSchedulesNavigate}
+      />
+    </RetainedPanelActivity>
   );
 });
 
@@ -533,6 +544,7 @@ function MobileSidebar({
   theme,
   statusGroups,
   projects,
+  workspaceEntriesByKey,
   projectNamesByKey,
   isInitialLoad,
   isRevalidating,
@@ -644,6 +656,7 @@ function MobileSidebar({
             groupMode={groupMode}
             statusGroups={statusGroups}
             projects={projects}
+            workspaceEntriesByKey={workspaceEntriesByKey}
             projectNamesByKey={projectNamesByKey}
             isRefreshing={isManualRefresh && isRevalidating}
             onRefresh={handleRefresh}
@@ -671,6 +684,7 @@ function DesktopSidebar({
   theme,
   statusGroups,
   projects,
+  workspaceEntriesByKey,
   projectNamesByKey,
   isInitialLoad,
   isRevalidating,
@@ -796,6 +810,7 @@ function DesktopSidebar({
             groupMode={groupMode}
             statusGroups={statusGroups}
             projects={projects}
+            workspaceEntriesByKey={workspaceEntriesByKey}
             projectNamesByKey={projectNamesByKey}
             isRefreshing={isManualRefresh && isRevalidating}
             onRefresh={handleRefresh}

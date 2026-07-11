@@ -44,7 +44,7 @@ export type KeyboardActionId =
   | "workspace.terminal.new"
   | "workspace.new"
   | "worktree.new"
-  | "worktree.archive"
+  | "workspace.archive"
   | "view.toggle.focus"
   | "theme.cycle"
   | "message-input.action";

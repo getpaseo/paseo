@@ -1203,7 +1203,10 @@ export const useSessionStore = create<SessionStore>()(
               [serverId]: {
                 ...session,
                 agents: nextAgents,
-                workspaceAgentActivity: buildWorkspaceAgentActivityIndex(nextAgents),
+                workspaceAgentActivity: buildWorkspaceAgentActivityIndex(
+                  nextAgents,
+                  session.workspaceAgentActivity,
+                ),
               },
             },
           };

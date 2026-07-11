@@ -38,6 +38,7 @@ import { FileExplorerPane } from "./file-explorer-pane";
 import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
 import { useWindowControlsPadding } from "@/utils/desktop-window";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
+import { RetainedPanelActivity } from "@/components/retained-panel";
 import { isWeb } from "@/constants/platform";
 import { buildWorkspaceAttachmentScopeKey } from "@/attachments/workspace-attachments-store";
 
@@ -121,24 +122,26 @@ export function CompactExplorerSidebar({
   );
 
   return (
-    <MobilePanelOverlay
-      panel="file-explorer"
-      closeGesture={closeGesture}
-      panelStyle={mobileSidebarStyle}
-    >
-      <ExplorerSidebarContent
-        activeTab={explorerTab}
-        onTabPress={handleTabPress}
-        onClose={handleHeaderClose}
-        serverId={serverId}
-        workspaceId={workspaceId}
-        workspaceRoot={workspaceRoot}
-        isGit={isGit}
-        isMobile
-        isOpen={isOpen}
-        onOpenFile={onOpenFile}
-      />
-    </MobilePanelOverlay>
+    <RetainedPanelActivity active={isOpen}>
+      <MobilePanelOverlay
+        panel="file-explorer"
+        closeGesture={closeGesture}
+        panelStyle={mobileSidebarStyle}
+      >
+        <ExplorerSidebarContent
+          activeTab={explorerTab}
+          onTabPress={handleTabPress}
+          onClose={handleHeaderClose}
+          serverId={serverId}
+          workspaceId={workspaceId}
+          workspaceRoot={workspaceRoot}
+          isGit={isGit}
+          isMobile
+          isOpen={isOpen}
+          onOpenFile={onOpenFile}
+        />
+      </MobilePanelOverlay>
+    </RetainedPanelActivity>
   );
 }
 

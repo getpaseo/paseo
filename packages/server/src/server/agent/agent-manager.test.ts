@@ -1,6 +1,6 @@
 import { expect, test, vi } from "vitest";
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -8,6 +8,7 @@ import { randomUUID } from "node:crypto";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import {
   AgentManager,
+  AgentManagerShuttingDownError,
   commandMayHaveChangedExternalState,
   type AgentManagerEvent,
   type ManagedAgent,
@@ -136,6 +137,117 @@ class TestAgentClient implements AgentClient {
       cwd: config?.cwd ?? process.cwd(),
       daemonAppendSystemPrompt: config?.daemonAppendSystemPrompt,
     });
+  }
+}
+
+class HeldAgentCreationClient extends TestAgentClient {
+  private readonly creationStarted = deferred<void>();
+  private readonly creationAllowed = deferred<void>();
+  createdSessionClosed = false;
+
+  override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+    const recordSessionClosed = () => {
+      this.createdSessionClosed = true;
+    };
+    const session = new (class extends TestAgentSession {
+      override async close(): Promise<void> {
+        recordSessionClosed();
+      }
+    })(config);
+    this.creationStarted.resolve();
+    await this.creationAllowed.promise;
+    return session;
+  }
+
+  waitForCreationToStart(): Promise<void> {
+    return this.creationStarted.promise;
+  }
+
+  finishCreating(): void {
+    this.creationAllowed.resolve();
+  }
+}
+
+class HeldAgentCreationAndCloseClient extends TestAgentClient {
+  private readonly creationStarted = deferred<void>();
+  private readonly creationAllowed = deferred<void>();
+  private readonly closeStarted = deferred<void>();
+  private readonly closeAllowed = deferred<void>();
+
+  override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+    this.creationStarted.resolve();
+    await this.creationAllowed.promise;
+    const signalCloseStarted = () => this.closeStarted.resolve();
+    const waitForClose = () => this.closeAllowed.promise;
+    return new (class extends TestAgentSession {
+      override async close(): Promise<void> {
+        signalCloseStarted();
+        await waitForClose();
+      }
+    })(config);
+  }
+
+  waitForCreationToStart(): Promise<void> {
+    return this.creationStarted.promise;
+  }
+
+  finishCreating(): void {
+    this.creationAllowed.resolve();
+  }
+
+  waitForCloseToStart(): Promise<void> {
+    return this.closeStarted.promise;
+  }
+
+  finishClosing(): void {
+    this.closeAllowed.resolve();
+  }
+}
+
+class HeldReloadCloseClient extends TestAgentClient {
+  private readonly closeStarted = deferred<void>();
+  private readonly closeAllowed = deferred<void>();
+  originalSessionClosed = false;
+  replacementSessionClosed = false;
+
+  override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+    const signalCloseStarted = () => this.closeStarted.resolve();
+    const waitForClose = () => this.closeAllowed.promise;
+    const recordOriginalClosed = () => {
+      this.originalSessionClosed = true;
+    };
+    return new (class extends TestAgentSession {
+      override async close(): Promise<void> {
+        signalCloseStarted();
+        await waitForClose();
+        recordOriginalClosed();
+      }
+    })(config);
+  }
+
+  override async resumeSession(
+    _handle: AgentPersistenceHandle,
+    config?: Partial<AgentSessionConfig>,
+  ): Promise<AgentSession> {
+    const recordReplacementClosed = () => {
+      this.replacementSessionClosed = true;
+    };
+    return new (class extends TestAgentSession {
+      override async close(): Promise<void> {
+        recordReplacementClosed();
+      }
+    })({
+      provider: "codex",
+      cwd: config?.cwd ?? process.cwd(),
+    });
+  }
+
+  waitForCloseToStart(): Promise<void> {
+    return this.closeStarted.promise;
+  }
+
+  finishClosing(): void {
+    this.closeAllowed.resolve();
   }
 }
 
@@ -288,6 +400,52 @@ class TestAgentSession implements AgentSession {
   }
 
   async close(): Promise<void> {}
+}
+
+class HeldRuntimeInfoSession extends TestAgentSession {
+  private readonly runtimeInfoRequested = deferred<void>();
+  private readonly runtimeInfoAllowed = deferred<void>();
+
+  override async getRuntimeInfo() {
+    this.runtimeInfoRequested.resolve();
+    await this.runtimeInfoAllowed.promise;
+    return await super.getRuntimeInfo();
+  }
+
+  waitForRuntimeInfo(): Promise<void> {
+    return this.runtimeInfoRequested.promise;
+  }
+
+  finishRuntimeInfo(): void {
+    this.runtimeInfoAllowed.resolve();
+  }
+}
+
+class HeldRuntimeInfoClient extends TestAgentClient {
+  private readonly sessionCreated = deferred<HeldRuntimeInfoSession>();
+  private session: HeldRuntimeInfoSession | null = null;
+
+  override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+    this.session = new HeldRuntimeInfoSession(config);
+    this.sessionCreated.resolve(this.session);
+    return this.session;
+  }
+
+  async waitForRuntimeInfo(): Promise<void> {
+    const session = await this.sessionCreated.promise;
+    await session.waitForRuntimeInfo();
+  }
+
+  finishRuntimeInfo(): void {
+    this.requireSession().finishRuntimeInfo();
+  }
+
+  private requireSession(): HeldRuntimeInfoSession {
+    if (!this.session) {
+      throw new Error("Expected a created session");
+    }
+    return this.session;
+  }
 }
 
 class StreamingAssistantSession implements AgentSession {
@@ -448,6 +606,211 @@ function fakeCodexEmitting(args: FakeCodexEmitterArgs): AgentClient {
 }
 
 const logger = createTestLogger();
+
+test("does not register a session that finishes starting after shutdown begins", async () => {
+  const client = new HeldAgentCreationClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000100",
+  });
+
+  const creation = manager.createAgent(
+    {
+      provider: "codex",
+      cwd: process.cwd(),
+    },
+    undefined,
+    { workspaceId: undefined },
+  );
+  await client.waitForCreationToStart();
+
+  manager.prepareForShutdown();
+  client.finishCreating();
+
+  await expect(creation).rejects.toThrow("Agent manager is shutting down");
+  expect({ agents: manager.listAgents(), sessionClosed: client.createdSessionClosed }).toEqual({
+    agents: [],
+    sessionClosed: true,
+  });
+});
+
+test("flush waits for rejected session cleanup that starts after shutdown", async () => {
+  const client = new HeldAgentCreationAndCloseClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000098",
+  });
+
+  const creation = manager
+    .createAgent(
+      {
+        provider: "codex",
+        cwd: process.cwd(),
+      },
+      undefined,
+      { workspaceId: undefined },
+    )
+    .catch((error: unknown) => error);
+  await client.waitForCreationToStart();
+
+  manager.prepareForShutdown();
+  let flushResolved = false;
+  const flushing = manager.flushForShutdown().then(() => {
+    flushResolved = true;
+    return undefined;
+  });
+  client.finishCreating();
+  await client.waitForCloseToStart();
+
+  try {
+    expect(flushResolved).toBe(false);
+  } finally {
+    client.finishClosing();
+  }
+
+  expect(await creation).toBeInstanceOf(AgentManagerShuttingDownError);
+  await flushing;
+  expect(manager.listAgents()).toEqual([]);
+});
+
+test("does not persist an initializing session after shutdown closes it", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-shutdown-register-test-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const client = new HeldRuntimeInfoClient();
+  const agentId = "00000000-0000-4000-8000-000000000099";
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    idFactory: () => agentId,
+  });
+
+  try {
+    const creation = manager.createAgent(
+      {
+        provider: "codex",
+        cwd: workdir,
+      },
+      undefined,
+      { workspaceId: undefined },
+    );
+    await client.waitForRuntimeInfo();
+
+    manager.prepareForShutdown();
+    const closing = manager.closeAgent(agentId);
+    client.finishRuntimeInfo();
+
+    await expect(creation).rejects.toBeInstanceOf(AgentManagerShuttingDownError);
+    await closing;
+    await storage.flush();
+    expect({ agents: manager.listAgents(), record: await storage.get(agentId) }).toMatchObject({
+      agents: [],
+      record: { lastStatus: "closed" },
+    });
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("reload leaves a closed durable snapshot when shutdown starts during the swap", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-shutdown-reload-test-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const client = new HeldReloadCloseClient();
+  const agentId = "00000000-0000-4000-8000-000000000097";
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    idFactory: () => agentId,
+  });
+
+  try {
+    await manager.createAgent(
+      {
+        provider: "codex",
+        cwd: workdir,
+      },
+      undefined,
+      { workspaceId: undefined },
+    );
+    const reload = manager.reloadAgentSession(agentId).catch((error: unknown) => error);
+    await client.waitForCloseToStart();
+
+    manager.prepareForShutdown();
+    const closing = Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
+    client.finishClosing();
+
+    await closing;
+    expect(await reload).toBeInstanceOf(AgentManagerShuttingDownError);
+    await manager.flush();
+    await storage.flush();
+    expect({
+      agents: manager.listAgents(),
+      record: await storage.get(agentId),
+      replacementSessionClosed: client.replacementSessionClosed,
+    }).toMatchObject({
+      agents: [],
+      record: { lastStatus: "closed" },
+      replacementSessionClosed: true,
+    });
+  } finally {
+    client.finishClosing();
+    await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("reload closes both sessions when the closed snapshot cannot be persisted", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-persist-failure-test-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const client = new HeldReloadCloseClient();
+  const agentId = "00000000-0000-4000-8000-000000000096";
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    idFactory: () => agentId,
+  });
+
+  try {
+    await manager.createAgent(
+      {
+        provider: "codex",
+        cwd: workdir,
+      },
+      undefined,
+      { workspaceId: undefined },
+    );
+    await storage.flush();
+    rmSync(storagePath, { recursive: true, force: true });
+    writeFileSync(storagePath, "blocks the storage directory");
+
+    const reload = manager.reloadAgentSession(agentId).catch((error: unknown) => error);
+    await client.waitForCloseToStart();
+    client.finishClosing();
+
+    expect(await reload).toBeInstanceOf(Error);
+    await manager.flushForShutdown();
+    expect({
+      agents: manager.listAgents(),
+      originalSessionClosed: client.originalSessionClosed,
+      replacementSessionClosed: client.replacementSessionClosed,
+    }).toEqual({
+      agents: [],
+      originalSessionClosed: true,
+      replacementSessionClosed: true,
+    });
+  } finally {
+    client.finishClosing();
+    await manager.flushForShutdown().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
 
 test("normalizeConfig injects the provider default model when omitted", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));

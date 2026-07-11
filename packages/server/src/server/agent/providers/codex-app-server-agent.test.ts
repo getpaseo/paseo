@@ -554,6 +554,80 @@ describe("Codex app-server provider", () => {
     await session.close();
   });
 
+  test("surfaces an MCP elicitation and returns Codex's required approval action", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+
+    await session.connect();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    const permissionRequested = waitForNextPermission(session);
+    appServer.requestMcpElicitation({
+      threadId: "thread-1",
+      turnId: "turn-1",
+      serverName: "browser",
+      message: "Allow the browser to open this page?",
+      requestedSchema: {
+        type: "object",
+        properties: {},
+      },
+    });
+
+    const permission = await permissionRequested;
+    expect(permission.request).toEqual({
+      id: expect.any(String),
+      provider: "codex",
+      name: "CodexMcpElicitation",
+      kind: "tool",
+      title: "MCP approval: browser",
+      description: "Allow the browser to open this page?",
+      input: {
+        mode: "openai/form",
+        requestedSchema: {
+          type: "object",
+          properties: {},
+        },
+        url: null,
+      },
+      metadata: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        serverName: "browser",
+        elicitationId: null,
+      },
+    });
+    await session.respondToPermission(permission.request.id, { behavior: "allow" });
+
+    await expect(appServer.waitForMcpElicitationDecision()).resolves.toEqual({
+      action: "accept",
+      content: {},
+      _meta: null,
+    });
+    appServer.resolvesMcpElicitation();
+
+    await vi.waitFor(() => {
+      expect(events).toContainEqual({
+        type: "permission_resolved",
+        provider: "codex",
+        requestId: permission.request.id,
+        resolution: { behavior: "allow" },
+      });
+    });
+    expect(events).not.toContainEqual({
+      type: "permission_resolved",
+      provider: "codex",
+      requestId: permission.request.id,
+      resolution: { behavior: "deny", interrupt: true },
+    });
+    await session.close();
+  });
+
   test("initializes Codex app-server without making Paseo the request originator", async () => {
     let initializeParams: unknown;
     const appServer = createFakeCodexAppServer({
@@ -579,7 +653,7 @@ describe("Codex app-server provider", () => {
         title: "Codex App Server Daemon",
         version: "0.0.0",
       },
-      capabilities: { experimentalApi: true },
+      capabilities: { experimentalApi: true, mcpServerOpenaiFormElicitation: true },
     });
     appServer.assertNoErrors();
     await session.close();
@@ -3771,7 +3845,7 @@ describe("Codex importable sessions", () => {
             title: "Codex App Server Daemon",
             version: "0.0.0",
           },
-          capabilities: { experimentalApi: true },
+          capabilities: { experimentalApi: true, mcpServerOpenaiFormElicitation: true },
         },
       },
       { method: "thread/list", params: { limit: 50, cwd: "/workspace/project-a" } },

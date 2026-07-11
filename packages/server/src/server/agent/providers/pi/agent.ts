@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve as resolvePath } from "node:path";
 import type { Logger } from "pino";
 import { z } from "zod";
 
@@ -497,14 +497,63 @@ function toPiMcpConfig(config: McpServerConfig): PiMcpServerConfig {
   };
 }
 
-function createPiMcpConfigFile(servers: Record<string, McpServerConfig>): PiMcpConfigFile {
-  const dir = mkdtempSync(join(tmpdir(), "paseo-pi-mcp-"));
-  const filePath = join(dir, "mcp.json");
-  const mcpServers: Record<string, PiMcpServerConfig> = {};
+function resolvePiAgentDir(env: Record<string, string> | undefined): string {
+  // Match pi-mcp-adapter's agent-directory resolution so we preserve the config it replaces.
+  const configured = env?.PI_CODING_AGENT_DIR?.trim() || process.env.PI_CODING_AGENT_DIR?.trim();
+  if (!configured) {
+    return join(homedir(), ".pi", "agent");
+  }
+  if (configured === "~") {
+    return homedir();
+  }
+  if (configured.startsWith("~/")) {
+    return resolvePath(homedir(), configured.slice(2));
+  }
+  return resolvePath(configured);
+}
+
+function createPiMcpConfigFile(
+  servers: Record<string, McpServerConfig>,
+  env: Record<string, string> | undefined,
+): PiMcpConfigFile {
+  // pi-mcp-adapter treats --mcp-config as a replacement for its Pi global layer, not an
+  // additional layer. Rebuild that layer here; the adapter still loads shared and project files.
+  const globalConfigPath = join(resolvePiAgentDir(env), "mcp.json");
+  let globalConfig: unknown = {};
+  if (existsSync(globalConfigPath)) {
+    const contents = readFileSync(globalConfigPath, "utf8");
+    try {
+      globalConfig = JSON.parse(contents) as unknown;
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        throw new Error(`Failed to parse Pi MCP config: ${globalConfigPath}`, { cause: error });
+      }
+      throw error;
+    }
+  }
+  if (!isRecord(globalConfig)) {
+    throw new Error(`Pi MCP config must contain a JSON object: ${globalConfigPath}`);
+  }
+  let configuredServers: Record<string, unknown> = {};
+  if (isRecord(globalConfig.mcpServers)) {
+    configuredServers = globalConfig.mcpServers;
+  } else if (isRecord(globalConfig["mcp-servers"])) {
+    configuredServers = globalConfig["mcp-servers"];
+  }
+  const mcpServers: Record<string, unknown> = { ...configuredServers };
   for (const [name, serverConfig] of Object.entries(servers)) {
     mcpServers[name] = toPiMcpConfig(serverConfig);
   }
-  writeFileSync(filePath, `${JSON.stringify({ mcpServers }, null, 2)}\n`, "utf8");
+
+  const dir = mkdtempSync(join(tmpdir(), "paseo-pi-mcp-"));
+  const filePath = join(dir, "mcp.json");
+  const mergedConfig: Record<string, unknown> = { ...globalConfig, mcpServers };
+  // Emit one canonical server key so a stale alias cannot shadow the injected definitions.
+  delete mergedConfig["mcp-servers"];
+  writeFileSync(filePath, `${JSON.stringify(mergedConfig, null, 2)}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+  });
   return {
     path: filePath,
     cleanup: () => rmSync(dir, { recursive: true, force: true }),
@@ -1911,7 +1960,10 @@ export class PiRpcAgentClient implements AgentClient {
     config: AgentSessionConfig,
     launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
-    const mcpConfig = await this.prepareMcpConfig(config.cwd, config.mcpServers);
+    const mcpConfig = await this.prepareMcpConfig(config.cwd, config.mcpServers, {
+      ...this.runtimeSettings?.env,
+      ...launchContext?.env,
+    });
     const paseoExtension = createPiPaseoExtensionFile();
     let runtimeSession: PiRuntimeSession;
     try {
@@ -1953,7 +2005,7 @@ export class PiRpcAgentClient implements AgentClient {
   async resumeSession(
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
-    _launchContext?: AgentLaunchContext,
+    launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
     const sessionFile = handle.nativeHandle;
     if (!sessionFile) {
@@ -1963,12 +2015,20 @@ export class PiRpcAgentClient implements AgentClient {
     const persistenceMetadata = parsePersistenceMetadata(handle.metadata);
     const resumeConfig = buildResumeConfig(persistenceMetadata, overrides);
 
-    const mcpConfig = await this.prepareMcpConfig(resumeConfig.cwd, resumeConfig.config.mcpServers);
+    const mcpConfig = await this.prepareMcpConfig(
+      resumeConfig.cwd,
+      resumeConfig.config.mcpServers,
+      {
+        ...this.runtimeSettings?.env,
+        ...launchContext?.env,
+      },
+    );
     const paseoExtension = createPiPaseoExtensionFile();
     let runtimeSession: PiRuntimeSession;
     try {
       runtimeSession = await this.runtime.startSession({
         cwd: resumeConfig.cwd,
+        env: launchContext?.env,
         session: sessionFile,
         model: resumeConfig.model,
         thinkingOptionId: normalizePiThinkingOption(resumeConfig.thinkingOptionId) ?? undefined,
@@ -2079,18 +2139,19 @@ export class PiRpcAgentClient implements AgentClient {
   private async prepareMcpConfig(
     cwd: string,
     servers: Record<string, McpServerConfig> | undefined,
+    env: Record<string, string> | undefined,
   ): Promise<PiMcpConfigFile | null> {
     if (!servers || Object.keys(servers).length === 0) {
       return null;
     }
-    if (!(await this.detectMcpAdapter(cwd))) {
+    if (!(await this.detectMcpAdapter(cwd, env))) {
       return null;
     }
-    return createPiMcpConfigFile(servers);
+    return createPiMcpConfigFile(servers, env);
   }
 
-  private async detectMcpAdapter(cwd: string): Promise<boolean> {
-    const runtimeSession = await this.runtime.startSession({ cwd }).catch((error) => {
+  private async detectMcpAdapter(cwd: string, env?: Record<string, string>): Promise<boolean> {
+    const runtimeSession = await this.runtime.startSession({ cwd, env }).catch((error) => {
       this.logger.debug({ err: error, cwd }, "Pi MCP adapter probe failed to start");
       return null;
     });

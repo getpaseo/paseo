@@ -84,7 +84,7 @@ import {
 } from "@/runtime/host-runtime";
 import { getDaemonStartService } from "@/runtime/daemon-start-service";
 import { applyAppearance } from "@/screens/settings/appearance/apply-appearance";
-import { usePanelStore } from "@/stores/panel-store";
+import { selectIsAgentListOpen, usePanelStore } from "@/stores/panel-store";
 import { THEME_TO_UNISTYLES, type ThemeName } from "@/styles/theme";
 import type { HostProfile } from "@/types/host-connection";
 import { toggleDesktopSidebarsWithCheckoutIntent } from "@/utils/desktop-sidebar-toggle";
@@ -451,9 +451,16 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
   useActiveWorktreeNewAction();
   useGlobalNewWorkspaceAction();
 
+  const sidebarChrome = (
+    <SidebarChrome
+      showSidebar={chromeEnabled && (isCompactLayout || !isFocusModeEnabled)}
+      keyboardShortcutsEnabled={keyboardShortcutsEnabled}
+    />
+  );
+
   const workspaceChrome = (
     <View style={rowStyle}>
-      {!isCompactLayout && chromeEnabled && !isFocusModeEnabled && <LeftSidebar />}
+      {!isCompactLayout ? sidebarChrome : null}
       {isCompactLayout && chromeEnabled ? (
         <CompactExplorerSidebarHost enabled={chromeEnabled}>
           <View style={flexStyle}>{children}</View>
@@ -468,7 +475,7 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
     <View style={layoutStyles.surfaceFill}>
       {workspaceChrome}
       <FloatingPanelPortalHost />
-      {isCompactLayout && chromeEnabled && <LeftSidebar />}
+      {isCompactLayout ? sidebarChrome : null}
       <DownloadToast />
       <RosettaCalloutSource />
       <UpdateCalloutSource />
@@ -477,7 +484,6 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
       <HostChooserModal />
       <ProjectPickerModal />
       <ProviderSettingsHost />
-      <WorkspaceShortcutTargetsSubscriber enabled={keyboardShortcutsEnabled} />
       <WorkspaceSetupDialog />
       <KeyboardShortcutsDialog />
       <QuittingOverlay />
@@ -490,7 +496,26 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
     surface
   );
 
-  return <SidebarModelProvider>{content}</SidebarModelProvider>;
+  return content;
+}
+
+function SidebarChrome({
+  showSidebar,
+  keyboardShortcutsEnabled,
+}: {
+  showSidebar: boolean;
+  keyboardShortcutsEnabled: boolean;
+}) {
+  const isCompactLayout = useIsCompactFormFactor();
+  const isOpen = usePanelStore((state) =>
+    selectIsAgentListOpen(state, { isCompact: isCompactLayout }),
+  );
+  return (
+    <SidebarModelProvider active={showSidebar && isOpen}>
+      {showSidebar ? <LeftSidebar /> : null}
+      <WorkspaceShortcutTargetsSubscriber enabled={keyboardShortcutsEnabled} />
+    </SidebarModelProvider>
+  );
 }
 
 function MobileGestureWrapper({
@@ -504,7 +529,9 @@ function MobileGestureWrapper({
 
   return (
     <GestureDetector gesture={openGesture} touchAction={MOBILE_WEB_GESTURE_TOUCH_ACTION}>
-      {children}
+      <View collapsable={false} style={layoutStyles.surfaceFill}>
+        {children}
+      </View>
     </GestureDetector>
   );
 }

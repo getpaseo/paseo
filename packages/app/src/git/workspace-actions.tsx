@@ -13,7 +13,7 @@ import { GitActionsSplitButton } from "@/git/actions-split-button";
 import { useGitActions } from "@/git/use-actions";
 import type { Theme } from "@/styles/theme";
 
-interface WorkspaceGitActionsProps {
+interface WorkspaceActionsProps {
   serverId: string;
   cwd: string;
   hideLabels?: boolean;
@@ -47,16 +47,12 @@ const ICONS = {
   archive: <ThemedArchive size={16} uniProps={mutedColorMapping} />,
 };
 
-export function WorkspaceGitActions({ serverId, cwd, hideLabels }: WorkspaceGitActionsProps) {
-  const { gitActions, isGit } = useGitActions({
+export function WorkspaceActions({ serverId, cwd, hideLabels }: WorkspaceActionsProps) {
+  const { gitActions } = useGitActions({
     serverId,
     cwd,
     icons: ICONS,
   });
-
-  if (!isGit) {
-    return null;
-  }
 
   return <GitActionsSplitButton gitActions={gitActions} hideLabels={hideLabels} />;
 }

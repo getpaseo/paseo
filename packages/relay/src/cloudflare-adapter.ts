@@ -17,6 +17,7 @@
  * ```
  */
 
+import { createCutoverProxy } from "./cutover-proxy.js";
 import type { ConnectionRole, RelaySessionAttachment } from "./types.js";
 
 type RelayProtocolVersion = "1" | "2";
@@ -97,6 +98,7 @@ function getGlobalWebSocketPair(): (new () => WebSocketPair) | undefined {
 
 interface Env {
   RELAY: DurableObjectNamespace;
+  PASEO_RELAY_UPSTREAM?: string;
 }
 
 interface DurableObjectNamespace {
@@ -572,6 +574,10 @@ export class RelayDurableObject {
  */
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    if (env.PASEO_RELAY_UPSTREAM) {
+      return createCutoverProxy(env.PASEO_RELAY_UPSTREAM).fetch(request);
+    }
+
     const url = new URL(request.url);
 
     // Health check

@@ -623,7 +623,7 @@ export const ptBR: TranslationResources = {
           success: "Atualizado",
         },
         archive: {
-          label: "Arquivar worktree",
+          label: "Arquivar workspace",
           pending: "Arquivando...",
           success: "Arquivado",
         },
@@ -675,8 +675,6 @@ export const ptBR: TranslationResources = {
             "Atualizar não está disponível enquanto há alterações locais. Faça commit ou stash primeiro",
           updateCurrent:
             "Atualizar não está disponível porque esta branch já está atualizada com {{baseRef}}",
-          archiveNotWorktree:
-            "Arquivar não está disponível aqui porque este workspace não foi criado como um worktree do Paseo",
           mergePrNoGithub:
             "Merge da PR não está disponível agora porque o GitHub não está conectado",
           mergePrMissing: "Merge da PR não está disponível porque ainda não há uma pull request",
@@ -703,11 +701,9 @@ export const ptBR: TranslationResources = {
           baseRefUnavailable: "Ref base indisponível",
           failedMerge: "Falha ao fazer merge",
           failedMergeFromBase: "Falha ao fazer merge da base",
-          worktreePathUnavailable: "Caminho do worktree indisponível",
-          failedArchive: "Falha ao arquivar worktree",
         },
         archiveWarning: {
-          title: 'Arquivar "{{worktreeName}}"?',
+          title: 'Arquivar "{{workspaceName}}"?',
           confirm: "Arquivar",
           cancel: "Cancelar",
           uncommittedChanges: "Alterações sem commit",
@@ -857,7 +853,7 @@ export const ptBR: TranslationResources = {
         copyBranchName: "Copiar nome da branch",
         rename: "Renomear workspace",
         archive: "Arquivar",
-        archiveWorktree: "Arquivar worktree",
+        archiveWorkspace: "Arquivar workspace",
         hideFromSidebar: "Ocultar da barra lateral",
         archiving: "Arquivando...",
         hiding: "Ocultando...",
@@ -880,7 +876,7 @@ export const ptBR: TranslationResources = {
         branchNameCopied: "Nome da branch copiado",
         hostDisconnected: "Host não está conectado",
         hideFailed: "Falha ao ocultar workspace",
-        archiveFailed: "Falha ao arquivar worktree",
+        archiveFailed: "Falha ao arquivar workspace",
       },
     },
   },
@@ -1631,7 +1627,7 @@ export const ptBR: TranslationResources = {
         openProject: "Abrir projeto",
         newWorkspace: "Novo workspace",
         newWorktree: "Novo worktree",
-        archiveWorktree: "Arquivar worktree",
+        archiveWorkspace: "Arquivar workspace",
         newTab: "Nova aba",
         closeCurrentTab: "Fechar aba atual",
         jumpToWorkspace: "Ir para workspace",
