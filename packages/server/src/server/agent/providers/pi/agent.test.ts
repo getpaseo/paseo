@@ -82,6 +82,30 @@ test("forwards launch-context env to the Pi process launch", async () => {
   await session.close();
 });
 
+test("starts internal Pi agents without persisting a native session", async () => {
+  const pi = new FakePi();
+  const client = createClient(pi);
+  const session = await client.createSession(createConfig({ internal: true }));
+
+  expect(pi.recordedLaunches[0]).toMatchObject({
+    noSession: true,
+    argv: expect.arrayContaining(["--no-session"]),
+  });
+
+  await session.close();
+});
+
+test("keeps normal Pi agent sessions persisted", async () => {
+  const pi = new FakePi();
+  const client = createClient(pi);
+  const session = await client.createSession(createConfig());
+
+  expect(pi.recordedLaunches[0]?.noSession).toBe(false);
+  expect(pi.recordedLaunches[0]?.argv).not.toContain("--no-session");
+
+  await session.close();
+});
+
 class SessionEvents {
   private readonly events: AgentStreamEvent[] = [];
   private readonly waiters: Array<{
