@@ -71,6 +71,10 @@ export function resolveAndValidateCreateAgentMode(
     return input.targetUnattendedMode;
   }
 
+  if (availableModes?.length === 0) {
+    return undefined;
+  }
+
   throw new Error(
     `cannot inherit mode '${formatCreateConfigParentMode(parent)}' from ${formatCreateConfigParentSource(parent)} for new agent (provider '${targetProvider}'). Pass an explicit mode. Available modes for '${targetProvider}': ${listModes(availableModes)}`,
   );
