@@ -1455,7 +1455,6 @@ function WorkspaceRowWithMenu({
   const archiveController = useWorkspaceArchive({
     serverId: workspace.serverId,
     workspaceId: workspace.workspaceId,
-    workspaceDirectory: workspace.workspaceDirectory,
     workspaceKind: workspace.workspaceKind,
     name: workspace.name,
     ...toWorktreeArchiveRisk(workspace),

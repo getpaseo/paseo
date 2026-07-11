@@ -26,7 +26,6 @@ function purgeArchivedWorkspaceState(input: { serverId: string; workspaceId: str
 export interface ArchiveWorkspaceInput {
   serverId: string;
   workspaceId: string;
-  workspaceDirectory: string | null | undefined;
   workspaceKind: WorkspaceDescriptor["workspaceKind"];
   name: string;
   isDirty?: boolean | null;
@@ -45,7 +44,6 @@ export function useWorkspaceArchive(input: ArchiveWorkspaceInput): WorkspaceArch
   const {
     serverId,
     workspaceId,
-    workspaceDirectory,
     workspaceKind,
     name,
     isDirty,
@@ -66,14 +64,13 @@ export function useWorkspaceArchive(input: ArchiveWorkspaceInput): WorkspaceArch
     }
     onSetHiding?.(true);
     try {
+      onArchiveStarted();
       await archiveWorkspaceOptimistically({
         client,
         workspace: {
           serverId,
           workspaceId,
-          workspaceDirectory,
         },
-        afterHide: onArchiveStarted,
       });
       purgeArchivedWorkspaceState({ serverId, workspaceId });
     } catch (error) {
@@ -83,7 +80,7 @@ export function useWorkspaceArchive(input: ArchiveWorkspaceInput): WorkspaceArch
     } finally {
       onSetHiding?.(false);
     }
-  }, [onArchiveStarted, onSetHiding, serverId, t, toast, workspaceDirectory, workspaceId]);
+  }, [onArchiveStarted, onSetHiding, serverId, t, toast, workspaceId]);
 
   const archive = useCallback(() => {
     void (async () => {

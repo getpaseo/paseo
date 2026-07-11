@@ -183,10 +183,7 @@ describe("archiveWorkspacesOptimistically", () => {
 
     const failures = await archiveWorkspacesOptimistically({
       getClient: () => client,
-      workspaces: [
-        target({ workspaceId: first.id, workspaceDirectory: first.workspaceDirectory }),
-        target({ workspaceId: second.id, workspaceDirectory: second.workspaceDirectory }),
-      ],
+      workspaces: [target({ workspaceId: first.id }), target({ workspaceId: second.id })],
     });
 
     expect(failures).toHaveLength(1);
@@ -219,12 +216,10 @@ describe("archiveWorkspacesOptimistically", () => {
         target({
           serverId: SERVER_ID,
           workspaceId: first.id,
-          workspaceDirectory: first.workspaceDirectory,
         }),
         target({
           serverId: SECOND_SERVER_ID,
           workspaceId: second.id,
-          workspaceDirectory: second.workspaceDirectory,
         }),
       ],
     });
