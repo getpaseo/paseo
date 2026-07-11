@@ -1027,7 +1027,7 @@ const DiffFileHeader = memo(function DiffFileHeader({
   );
 });
 
-function DiffFileBody({
+export function DiffFileBody({
   file,
   layout,
   wrapLines,
@@ -2481,9 +2481,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, enabled }: GitDiffPane
 
       <View style={styles.diffContainer}>{bodyContent}</View>
 
-      {isDesktopWeb ? (
-        <CommitsSection serverId={serverId} cwd={cwd} onCommitPress={handleCommitPress} />
-      ) : null}
+      <CommitsSection serverId={serverId} cwd={cwd} onCommitPress={handleCommitPress} />
     </View>
   );
 }

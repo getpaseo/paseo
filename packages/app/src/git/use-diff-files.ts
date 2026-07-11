@@ -1,6 +1,6 @@
-import { useQueries } from "@tanstack/react-query";
 import { useMemo } from "react";
 import type { ParsedDiffFile } from "@getpaseo/protocol/messages";
+import { useFetchQueries } from "@/data/query";
 import type { DiffTarget } from "@/git/diff-target";
 import { checkoutCommitFileDiffQueryKey } from "@/git/query-keys";
 import { useCheckoutCommitsQuery } from "@/git/use-commits-query";
@@ -9,7 +9,7 @@ import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-
 
 // A commit's file diff is immutable for a given sha+path, so it can stay cached
 // for the lifetime of the view without refetching. Matches use-commit-file-diff.
-const COMMIT_FILE_DIFF_STALE_TIME = Number.POSITIVE_INFINITY;
+const COMMIT_FILE_DIFF_STALE_TIME = 5 * 60_000;
 
 /**
  * Context every diff target needs to resolve against a host: which daemon
@@ -88,8 +88,8 @@ export function useDiffFiles(target: DiffTarget, ctx: DiffFilesContext): DiffFil
     Boolean(commitSha) &&
     Boolean(client) &&
     isConnected;
-  const fileDiffResults = useQueries({
-    queries: commitFiles.map((file) => ({
+  const fileDiffResults = useFetchQueries(
+    commitFiles.map((file) => ({
       queryKey: checkoutCommitFileDiffQueryKey(serverId, cwd, commitSha, file.path),
       queryFn: async (): Promise<{ file: ParsedDiffFile | null }> => {
         if (!client) {
@@ -98,9 +98,10 @@ export function useDiffFiles(target: DiffTarget, ctx: DiffFilesContext): DiffFil
         return client.getCommitFileDiff(cwd, commitSha, file.path);
       },
       enabled: fileDiffsEnabled,
-      staleTime: COMMIT_FILE_DIFF_STALE_TIME,
+      staleTimeMs: COMMIT_FILE_DIFF_STALE_TIME,
+      dataShape: "value" as const,
     })),
-  });
+  );
 
   const commitResult = useMemo<DiffFilesResult>(() => {
     const files: ParsedDiffFile[] = [];

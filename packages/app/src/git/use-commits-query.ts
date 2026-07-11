@@ -1,5 +1,5 @@
-import { useQuery } from "@tanstack/react-query";
 import type { CheckoutCommit } from "@getpaseo/protocol/messages";
+import { useFetchQuery } from "@/data/query";
 import { checkoutCommitsQueryKey } from "@/git/query-keys";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { useSessionStore } from "@/stores/session-store";
@@ -38,7 +38,7 @@ export function useCheckoutCommitsQuery({
   const queryEnabled =
     enabled && capabilityPresent && Boolean(cwd) && Boolean(client) && isConnected;
 
-  const query = useQuery<{ baseRef: string | null; commits: CheckoutCommit[] }>({
+  const query = useFetchQuery<{ baseRef: string | null; commits: CheckoutCommit[] }>({
     queryKey: checkoutCommitsQueryKey(serverId, cwd),
     queryFn: async () => {
       if (!client) {
@@ -47,7 +47,8 @@ export function useCheckoutCommitsQuery({
       return client.listCheckoutCommits(cwd);
     },
     enabled: queryEnabled,
-    staleTime: CHECKOUT_COMMITS_STALE_TIME,
+    staleTimeMs: CHECKOUT_COMMITS_STALE_TIME,
+    dataShape: "list",
   });
 
   return {

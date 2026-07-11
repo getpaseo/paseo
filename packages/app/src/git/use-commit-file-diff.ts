@@ -1,12 +1,12 @@
-import { useQuery } from "@tanstack/react-query";
 import type { ParsedDiffFile } from "@getpaseo/protocol/messages";
+import { useFetchQuery } from "@/data/query";
 import { checkoutCommitFileDiffQueryKey } from "@/git/query-keys";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { useSessionStore } from "@/stores/session-store";
 
 // A commit's file diff is immutable for a given sha+path, so it can stay cached
 // for the lifetime of the view without refetching.
-const COMMIT_FILE_DIFF_STALE_TIME = Number.POSITIVE_INFINITY;
+const COMMIT_FILE_DIFF_STALE_TIME = 5 * 60_000;
 
 interface UseCommitFileDiffOptions {
   serverId: string;
@@ -47,7 +47,7 @@ export function useCommitFileDiff({
     Boolean(client) &&
     isConnected;
 
-  const query = useQuery<{ file: ParsedDiffFile | null }>({
+  const query = useFetchQuery<{ file: ParsedDiffFile | null }>({
     queryKey: checkoutCommitFileDiffQueryKey(serverId, cwd, sha, path),
     queryFn: async () => {
       if (!client) {
@@ -56,7 +56,8 @@ export function useCommitFileDiff({
       return client.getCommitFileDiff(cwd, sha, path);
     },
     enabled: queryEnabled,
-    staleTime: COMMIT_FILE_DIFF_STALE_TIME,
+    staleTimeMs: COMMIT_FILE_DIFF_STALE_TIME,
+    dataShape: "value",
   });
 
   return {

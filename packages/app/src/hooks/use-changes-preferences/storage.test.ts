@@ -31,8 +31,7 @@ describe("loadChangesPreferencesFromStorage", () => {
       viewMode: "flat",
       wrapLines: true,
       hideWhitespace: false,
-      fileView: "list",
-      commitsCollapsed: true,
+      commitsCollapsed: false,
     });
     expect(storage.entries.get(CHANGES_PREFERENCES_STORAGE_KEY)).toBe(JSON.stringify(result));
   });
@@ -55,43 +54,16 @@ describe("loadChangesPreferencesFromStorage", () => {
       viewMode: "tree",
       hideWhitespace: true,
       wrapLines: false,
-      fileView: "list",
-      commitsCollapsed: true,
+      commitsCollapsed: false,
     });
     expect(storage.entries.get(CHANGES_PREFERENCES_STORAGE_KEY)).toBe(persisted);
     expect(storage.entries.size).toBe(1);
   });
 });
 
-describe("changes preferences fileView", () => {
-  it("defaults fileView to list", () => {
-    expect(DEFAULT_CHANGES_PREFERENCES.fileView).toBe("list");
-  });
-
-  it("round-trips fileView: tree", async () => {
-    const storage = createInMemoryKeyValueStorage({
-      [CHANGES_PREFERENCES_STORAGE_KEY]: JSON.stringify({ fileView: "tree" }),
-    });
-
-    const prefs = await loadChangesPreferencesFromStorage(storage);
-
-    expect(prefs.fileView).toBe("tree");
-  });
-
-  it("falls back to list for invalid fileView", async () => {
-    const storage = createInMemoryKeyValueStorage({
-      [CHANGES_PREFERENCES_STORAGE_KEY]: JSON.stringify({ fileView: "bogus" }),
-    });
-
-    const prefs = await loadChangesPreferencesFromStorage(storage);
-
-    expect(prefs.fileView).toBe("list");
-  });
-});
-
 describe("changes preferences commitsCollapsed", () => {
-  it("defaults commitsCollapsed to true", () => {
-    expect(DEFAULT_CHANGES_PREFERENCES.commitsCollapsed).toBe(true);
+  it("shows commits by default", () => {
+    expect(DEFAULT_CHANGES_PREFERENCES.commitsCollapsed).toBe(false);
   });
 
   it("round-trips commitsCollapsed: false", async () => {
@@ -104,14 +76,14 @@ describe("changes preferences commitsCollapsed", () => {
     expect(prefs.commitsCollapsed).toBe(false);
   });
 
-  it("falls back to true for invalid commitsCollapsed", async () => {
+  it("falls back to visible for invalid commitsCollapsed", async () => {
     const storage = createInMemoryKeyValueStorage({
       [CHANGES_PREFERENCES_STORAGE_KEY]: JSON.stringify({ commitsCollapsed: "nope" }),
     });
 
     const prefs = await loadChangesPreferencesFromStorage(storage);
 
-    expect(prefs.commitsCollapsed).toBe(true);
+    expect(prefs.commitsCollapsed).toBe(false);
   });
 });
 

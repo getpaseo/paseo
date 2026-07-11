@@ -31,7 +31,6 @@ import {
   removeTabFromTree,
   type SplitNode,
   type SplitPane,
-  stripEphemeralTabsFromLayout,
 } from "@/stores/workspace-layout-store";
 
 const SERVER_ID = "server-1";
@@ -198,57 +197,6 @@ describe("workspace-layout-store helpers", () => {
     });
 
     expect(getFocusedBrowserId({ root, focusedPaneId: "main" })).toBeNull();
-  });
-
-  it("strips commit diff tabs from a layout while keeping working diff and file tabs", () => {
-    const root = createPane({
-      id: "main",
-      tabIds: ["file_a", "diff_working", "diff_commit"],
-      focusedTabId: "diff_commit",
-      targetsByTabId: {
-        file_a: { kind: "file", path: "/repo/worktree/a.ts" },
-        diff_working: {
-          kind: "diff",
-          diffTarget: { kind: "working", mode: "uncommitted" },
-        },
-        diff_commit: { kind: "diff", diffTarget: { kind: "commit", sha: "abc123" } },
-      },
-    });
-
-    const stripped = stripEphemeralTabsFromLayout({ root, focusedPaneId: "main" });
-    const pane = findPaneById(stripped.root, "main");
-
-    // The ephemeral commit diff tab is gone; the working diff and file tabs remain.
-    expect(collectAllTabs(stripped.root).map((tab) => tab.tabId)).toEqual([
-      "file_a",
-      "diff_working",
-    ]);
-    // focusedTabId pointed at the removed commit tab, so it repoints to a survivor.
-    expect(pane?.focusedTabId).toBe("diff_working");
-  });
-
-  it("leaves a layout untouched when it has no commit diff tabs", () => {
-    const root = createPane({
-      id: "main",
-      tabIds: ["file_a", "diff_working"],
-      focusedTabId: "file_a",
-      targetsByTabId: {
-        file_a: { kind: "file", path: "/repo/worktree/a.ts" },
-        diff_working: {
-          kind: "diff",
-          diffTarget: { kind: "working", mode: "uncommitted" },
-        },
-      },
-    });
-
-    const stripped = stripEphemeralTabsFromLayout({ root, focusedPaneId: "main" });
-    const pane = findPaneById(stripped.root, "main");
-
-    expect(collectAllTabs(stripped.root).map((tab) => tab.tabId)).toEqual([
-      "file_a",
-      "diff_working",
-    ]);
-    expect(pane?.focusedTabId).toBe("file_a");
   });
 });
 
@@ -432,40 +380,6 @@ describe("workspace-layout-store actions", () => {
           path: "/repo/worktree/a.ts",
           lineStart: 10,
           lineEnd: 12,
-        },
-        createdAt: expect.any(Number),
-      },
-    ]);
-  });
-
-  it("reuses the working diff tab and refreshes focusPath when re-opened for a new file", () => {
-    const workspaceKey = createWorkspaceKey();
-    const store = workspaceLayoutStore.getState();
-
-    const firstTabId = store.openTabFocused(workspaceKey, {
-      kind: "diff",
-      diffTarget: { kind: "working", mode: "uncommitted" },
-      focusPath: "src/a.ts",
-    });
-    const secondTabId = store.openTabFocused(workspaceKey, {
-      kind: "diff",
-      diffTarget: { kind: "working", mode: "uncommitted" },
-      focusPath: "src/b.ts",
-    });
-    const layout = workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
-
-    // focusPath is excluded from tab identity, so both opens resolve to the SAME
-    // single working diff tab — but the stored focusPath must update to the new
-    // file so the diff panel scrolls there.
-    expect(firstTabId).toBe("diff_working:uncommitted:");
-    expect(secondTabId).toBe(firstTabId);
-    expect(collectAllTabs(layout.root)).toEqual([
-      {
-        tabId: "diff_working:uncommitted:",
-        target: {
-          kind: "diff",
-          diffTarget: { kind: "working", mode: "uncommitted" },
-          focusPath: "src/b.ts",
         },
         createdAt: expect.any(Number),
       },

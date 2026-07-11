@@ -905,7 +905,6 @@ export const ReviewAttachmentSchema = z.object({
   baseRef: z.string().nullable().optional(),
   // Per-commit reviews reuse mode "base" and carry the reviewed commit's SHA so the
   // agent knows the exact commit context. Optional + additive: old peers ignore it.
-  commitSha: z.string().optional(),
   comments: z.array(ReviewAttachmentCommentSchema),
 });
 

@@ -10,7 +10,6 @@ const changesPreferencesSchema = z.object({
   viewMode: z.enum(["flat", "tree"]).optional(),
   wrapLines: z.boolean().optional(),
   hideWhitespace: z.boolean().optional(),
-  fileView: z.enum(["list", "tree"]).optional(),
   commitsCollapsed: z.boolean().optional(),
 });
 
@@ -19,7 +18,6 @@ export interface ChangesPreferences {
   viewMode: "flat" | "tree";
   wrapLines: boolean;
   hideWhitespace: boolean;
-  fileView: "list" | "tree";
   commitsCollapsed: boolean;
 }
 
@@ -28,8 +26,7 @@ export const DEFAULT_CHANGES_PREFERENCES: ChangesPreferences = {
   viewMode: "flat",
   wrapLines: false,
   hideWhitespace: false,
-  fileView: "list",
-  commitsCollapsed: true,
+  commitsCollapsed: false,
 };
 
 export interface KeyValueStorage {

@@ -6,6 +6,7 @@ import {
   type FlatListProps,
   type LayoutChangeEvent,
   Text,
+  type TextStyle,
   View,
 } from "react-native";
 import { SvgXml } from "react-native-svg";
@@ -17,7 +18,7 @@ import { DiffStat } from "@/components/diff-stat";
 import { getFileIconSvg } from "@/components/material-file-icons";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
-import { DiffFileBody } from "@/git/diff-file-body";
+import { DiffFileBody } from "@/git/diff-pane";
 import type { DiffTarget } from "@/git/diff-target";
 import { useDiffFiles } from "@/git/use-diff-files";
 import { useChangesPreferences } from "@/hooks/use-changes-preferences";
@@ -138,7 +139,7 @@ function DiffPanelBody({
   const codeFontSize = settings.codeFontSize;
   const diffBodyLineHeight = Math.round(codeFontSize * 1.5);
   const typographyKey = [settings.monoFontFamily, codeFontSize, diffBodyLineHeight].join(":");
-  const textMetricsStyle = useMemo(() => {
+  const textMetricsStyle = useMemo<TextStyle>(() => {
     const monoFontFamily = settings.monoFontFamily.trim();
     return {
       fontSize: codeFontSize,
@@ -146,8 +147,10 @@ function DiffPanelBody({
       ...(monoFontFamily ? { fontFamily: monoFontFamily } : null),
     };
   }, [settings.monoFontFamily, codeFontSize, diffBodyLineHeight]);
-
-  const sections = useMemo(() => buildDiffPanelSections(files), [files]);
+  const sections = useMemo(
+    () => buildDiffPanelSections(files, new Set(files.map((file) => file.path))),
+    [files],
+  );
 
   // Measured heights drive both getItemLayout (so FlatList virtualization +
   // scroll-to-file are accurate) and the offset computation for focusPath.

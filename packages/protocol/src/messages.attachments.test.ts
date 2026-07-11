@@ -140,69 +140,6 @@ describe("shared messages attachments", () => {
     ]);
   });
 
-  it("keeps the optional commitSha on per-commit review attachments", () => {
-    const parsed = SendAgentMessageRequestSchema.parse({
-      type: "send_agent_message_request",
-      requestId: "req-commit-review",
-      agentId: "agent-1",
-      text: "Review this commit",
-      attachments: [
-        {
-          type: "review",
-          mimeType: "application/paseo-review",
-          cwd: "/tmp/repo",
-          mode: "base",
-          baseRef: "abc123^",
-          commitSha: "abc123",
-          comments: [],
-        },
-      ],
-    });
-
-    expect(parsed.attachments).toEqual([
-      {
-        type: "review",
-        mimeType: "application/paseo-review",
-        cwd: "/tmp/repo",
-        mode: "base",
-        baseRef: "abc123^",
-        commitSha: "abc123",
-        comments: [],
-      },
-    ]);
-  });
-
-  it("parses review attachments without commitSha for back-compat", () => {
-    const parsed = SendAgentMessageRequestSchema.parse({
-      type: "send_agent_message_request",
-      requestId: "req-no-commit-review",
-      agentId: "agent-1",
-      text: "Review",
-      attachments: [
-        {
-          type: "review",
-          mimeType: "application/paseo-review",
-          cwd: "/tmp/repo",
-          mode: "base",
-          baseRef: "main",
-          comments: [],
-        },
-      ],
-    });
-
-    expect(parsed.attachments).toEqual([
-      {
-        type: "review",
-        mimeType: "application/paseo-review",
-        cwd: "/tmp/repo",
-        mode: "base",
-        baseRef: "main",
-        comments: [],
-      },
-    ]);
-    expect(parsed.attachments[0]).not.toHaveProperty("commitSha");
-  });
-
   it("drops malformed review attachments while keeping valid attachments", () => {
     const parsed = SendAgentMessageRequestSchema.parse({
       type: "send_agent_message_request",
