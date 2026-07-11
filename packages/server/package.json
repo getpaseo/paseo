@@ -60,6 +60,7 @@
     "test:e2e:all": "vitest run e2e.test.ts --maxWorkers=1",
     "test:e2e:real": "npm run test:integration:real",
     "test:e2e:local": "npm run test:integration:local",
+    "test:e2e:relay:live": "cross-env RUN_LIVE_RELAY_E2E=1 vitest run src/server/daemon-e2e/live-relay.real.e2e.test.ts --maxWorkers=1",
     "test:e2e:ui": "vitest --ui e2e.test.ts"
   },
   "dependencies": {
