@@ -1,8 +1,6 @@
 import type { PersistedConfig } from "../../../persisted-config.js";
 import type { ElevenLabsTtsConfig } from "./tts.js";
 
-export type ElevenLabsSpeechProviderConfig = ElevenLabsTtsConfig;
-
 function optionalTrimmedString(value: unknown): string | undefined {
   if (typeof value !== "string") {
     return undefined;
@@ -23,7 +21,7 @@ function firstDefined<T>(values: Array<T | undefined>): T | undefined {
 export function resolveElevenLabsSpeechConfig(params: {
   env: NodeJS.ProcessEnv;
   persisted: PersistedConfig;
-}): ElevenLabsSpeechProviderConfig | undefined {
+}): ElevenLabsTtsConfig | undefined {
   const { env, persisted } = params;
   const providerConfig = persisted.providers?.elevenlabs;
 

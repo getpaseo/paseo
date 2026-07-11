@@ -3,8 +3,7 @@ import type { Logger } from "pino";
 import type { SpeechToTextProvider, TextToSpeechProvider } from "../../speech-provider.js";
 import type { RequestedSpeechProviders } from "../../speech-types.js";
 import type { TurnDetectionProvider } from "../../turn-detection-provider.js";
-import type { ElevenLabsSpeechProviderConfig } from "./config.js";
-import { ElevenLabsTTS } from "./tts.js";
+import { ElevenLabsTTS, type ElevenLabsTtsConfig } from "./tts.js";
 
 export interface ElevenLabsSpeechAvailability {
   tts: boolean;
@@ -18,7 +17,7 @@ interface ExistingSpeechServices {
 }
 
 export function getElevenLabsSpeechAvailability(
-  elevenlabsConfig: ElevenLabsSpeechProviderConfig | undefined,
+  elevenlabsConfig: ElevenLabsTtsConfig | undefined,
 ): ElevenLabsSpeechAvailability {
   return {
     tts: Boolean(elevenlabsConfig?.apiKey && elevenlabsConfig.voiceId),
@@ -27,7 +26,7 @@ export function getElevenLabsSpeechAvailability(
 
 export function validateElevenLabsCredentialRequirements(params: {
   providers: RequestedSpeechProviders;
-  elevenlabsConfig: ElevenLabsSpeechProviderConfig | undefined;
+  elevenlabsConfig: ElevenLabsTtsConfig | undefined;
   logger: Logger;
 }): void {
   const { providers, logger, elevenlabsConfig } = params;
@@ -73,7 +72,7 @@ export function validateElevenLabsCredentialRequirements(params: {
 
 export function initializeElevenLabsSpeechServices(params: {
   providers: RequestedSpeechProviders;
-  elevenlabsConfig: ElevenLabsSpeechProviderConfig | undefined;
+  elevenlabsConfig: ElevenLabsTtsConfig | undefined;
   existing: ExistingSpeechServices;
   logger: Logger;
 }): ExistingSpeechServices {

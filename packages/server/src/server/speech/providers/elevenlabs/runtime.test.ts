@@ -3,13 +3,12 @@ import { describe, expect, test } from "vitest";
 
 import type { TextToSpeechProvider } from "../../speech-provider.js";
 import type { RequestedSpeechProviders } from "../../speech-types.js";
-import type { ElevenLabsSpeechProviderConfig } from "./config.js";
 import {
   getElevenLabsSpeechAvailability,
   initializeElevenLabsSpeechServices,
   validateElevenLabsCredentialRequirements,
 } from "./runtime.js";
-import { ElevenLabsTTS } from "./tts.js";
+import { ElevenLabsTTS, type ElevenLabsTtsConfig } from "./tts.js";
 
 const ALL_PROVIDING: RequestedSpeechProviders = {
   dictationStt: { provider: "openai", explicit: true },
@@ -18,7 +17,7 @@ const ALL_PROVIDING: RequestedSpeechProviders = {
   voiceTts: { provider: "elevenlabs", explicit: true },
 };
 
-const VALID_CONFIG: ElevenLabsSpeechProviderConfig = {
+const VALID_CONFIG: ElevenLabsTtsConfig = {
   apiKey: "k",
   voiceId: "voice-1",
 };
