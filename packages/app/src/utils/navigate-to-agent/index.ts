@@ -87,7 +87,9 @@ function restoreArchivedWorkspace(target: HistoryWorkspaceRestore): void {
   // must restore even when its agent survived unarchived; an archived agent must
   // still reopen when its workspace survived.
   if (session.workspaces.has(workspaceId)) {
-    if (agentArchived) {
+    const liveAgent = session.agents.get(agentId) ?? session.agentDetails.get(agentId);
+    const shouldReopenAgent = agentArchived && (!liveAgent || Boolean(liveAgent.archivedAt));
+    if (shouldReopenAgent) {
       client.refreshAgent(agentId).catch((error) => {
         console.error("[HistoryRestore] Failed to reopen archived agent", {
           serverId,

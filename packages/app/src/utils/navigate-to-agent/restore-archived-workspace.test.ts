@@ -297,6 +297,22 @@ describe("restoreArchivedWorkspace via navigateToAgent", () => {
     expect(status()).toBeNull();
   });
 
+  it("does not reopen an active agent from a stale archived History row", () => {
+    const store = useSessionStore.getState();
+    store.setAgents(SERVER_ID, (prev) => {
+      const next = new Map(prev);
+      next.set(AGENT_ID, agent(null));
+      return next;
+    });
+    store.mergeWorkspaces(SERVER_ID, [workspace()]);
+    refreshAgent.mockImplementation(() => new Promise(() => {}));
+
+    openFromHistory();
+
+    expect(refreshAgent).not.toHaveBeenCalled();
+    expect(status()).toBeNull();
+  });
+
   it("is a no-op when a non-archived workspace descriptor is already present", () => {
     const store = useSessionStore.getState();
     store.setAgents(SERVER_ID, (prev) => {
