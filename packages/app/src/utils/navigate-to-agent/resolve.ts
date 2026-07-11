@@ -21,16 +21,18 @@ export interface AgentNavTarget {
   agentWorkspaceId: string | null | undefined;
 }
 
+export interface HistoryRestoreTarget {
+  serverId: string;
+  agentId: string;
+  workspaceId: string | null;
+  agentArchived: boolean;
+}
+
 export interface NavigateToAgentDeps {
   readAgentNavTarget: (input: { serverId: string; agentId: string }) => AgentNavTarget;
   navigateToHostAgent: (route: string) => void;
   navigateToWorkspace: (input: NavigateToWorkspaceInput) => string;
-  restoreArchivedWorkspace: (input: {
-    serverId: string;
-    agentId: string;
-    workspaceId: string;
-    agentArchived: boolean;
-  }) => void;
+  restoreHistoryEntry: (input: HistoryRestoreTarget) => void;
 }
 
 export function resolveNavigateToAgent(
@@ -42,19 +44,19 @@ export function resolveNavigateToAgent(
     deps.readAgentNavTarget({ serverId: input.serverId, agentId: input.agentId }).agentWorkspaceId;
   const workspaceId = normalizeWorkspaceOpaqueId(agentWorkspaceId);
 
-  if (!workspaceId) {
-    const route = buildHostAgentDetailRoute(input.serverId, input.agentId);
-    deps.navigateToHostAgent(route);
-    return route;
-  }
-
   if (input.restoreWorkspace) {
-    deps.restoreArchivedWorkspace({
+    deps.restoreHistoryEntry({
       serverId: input.serverId,
       agentId: input.agentId,
       workspaceId,
       agentArchived: input.restoreWorkspace.agentArchived,
     });
+  }
+
+  if (!workspaceId) {
+    const route = buildHostAgentDetailRoute(input.serverId, input.agentId);
+    deps.navigateToHostAgent(route);
+    return route;
   }
 
   return deps.navigateToWorkspace({

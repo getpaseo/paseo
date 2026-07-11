@@ -19,7 +19,7 @@ interface RecordedTabNav extends NavigateToWorkspaceInput {}
 interface RecordedRestore {
   serverId: string;
   agentId: string;
-  workspaceId: string;
+  workspaceId: string | null;
   agentArchived: boolean;
 }
 
@@ -45,7 +45,7 @@ function createFakeNavigators(target: AgentNavTarget): {
         tabNavigations.push(input);
         return `/h/${input.serverId}/workspace/${input.workspaceId}`;
       },
-      restoreArchivedWorkspace: (input) => {
+      restoreHistoryEntry: (input) => {
         restores.push(input);
       },
     },
@@ -145,6 +145,31 @@ describe("resolveNavigateToAgent", () => {
 
     expect(restores).toEqual([]);
     expect(hostNavigations).toHaveLength(1);
+  });
+
+  it("reopens an archived History agent even when it has no workspaceId", () => {
+    const { deps, restores, hostNavigations } = createFakeNavigators({
+      agentWorkspaceId: null,
+    });
+
+    resolveNavigateToAgent(
+      {
+        serverId: SERVER_ID,
+        agentId: AGENT_ID,
+        restoreWorkspace: { agentArchived: true },
+      },
+      deps,
+    );
+
+    expect(restores).toEqual([
+      {
+        serverId: SERVER_ID,
+        agentId: AGENT_ID,
+        workspaceId: null,
+        agentArchived: true,
+      },
+    ]);
+    expect(hostNavigations).toEqual([{ route: "/h/server-1/agent/agent-1" }]);
   });
 
   it("falls back to the host agent route when the agent has no workspaceId", () => {

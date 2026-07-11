@@ -25,14 +25,15 @@ import { navigateToAgent } from "./index";
 
 const SERVER_ID = "remote-server";
 const AGENT_ID = "00000000-0000-4000-8000-000000000001";
+const SECOND_AGENT_ID = "00000000-0000-4000-8000-000000000002";
 const WORKSPACE_ID = "wks_history_restore";
 const MISSING_WORKTREE_CWD = "/home/tester/.paseo/worktrees/missing-history-worktree";
 
-function agent(archivedAt: Date | null): Agent {
+function agent(archivedAt: Date | null, id = AGENT_ID): Agent {
   const createdAt = new Date("2026-01-01T00:00:00.000Z");
   return {
     serverId: SERVER_ID,
-    id: AGENT_ID,
+    id,
     provider: "codex",
     status: "idle",
     createdAt,
@@ -117,9 +118,13 @@ describe("restoreArchivedWorkspace via navigateToAgent", () => {
   });
 
   function openFromHistory(entry = { agentArchived: true }): void {
+    openHistoryAgent(AGENT_ID, entry);
+  }
+
+  function openHistoryAgent(agentId: string, entry = { agentArchived: true }): void {
     const input = {
       serverId: SERVER_ID,
-      agentId: AGENT_ID,
+      agentId,
       workspaceId: WORKSPACE_ID,
       restoreWorkspace: entry,
     };
@@ -150,6 +155,25 @@ describe("restoreArchivedWorkspace via navigateToAgent", () => {
     expect(refreshAgent).toHaveBeenCalledTimes(1);
   });
 
+  it("reopens the selected archived agent after another agent restores its workspace", () => {
+    const store = useSessionStore.getState();
+    store.setAgents(SERVER_ID, (prev) => {
+      const next = new Map(prev);
+      next.set(SECOND_AGENT_ID, agent(new Date("2026-01-02T00:00:00.000Z"), SECOND_AGENT_ID));
+      return next;
+    });
+    refreshAgent.mockImplementation(() => new Promise(() => {}));
+
+    openFromHistory();
+    openHistoryAgent(SECOND_AGENT_ID);
+
+    expect(refreshAgent.mock.calls).toEqual([[AGENT_ID]]);
+
+    store.mergeWorkspaces(SERVER_ID, [workspace()]);
+
+    expect(refreshAgent.mock.calls).toEqual([[AGENT_ID], [SECOND_AGENT_ID]]);
+  });
+
   it("restores a History-opened closed agent whose archived workspace is missing", () => {
     const store = useSessionStore.getState();
     store.setAgents(SERVER_ID, (prev) => {
@@ -164,6 +188,26 @@ describe("restoreArchivedWorkspace via navigateToAgent", () => {
     expect(refreshAgent).toHaveBeenCalledTimes(1);
     expect(refreshAgent).toHaveBeenCalledWith(AGENT_ID);
     expect(status()).toBe("restoring");
+  });
+
+  it("reopens an archived History agent without a workspace identity", () => {
+    const store = useSessionStore.getState();
+    store.setAgents(SERVER_ID, (prev) => {
+      const next = new Map(prev);
+      next.delete(AGENT_ID);
+      return next;
+    });
+    refreshAgent.mockImplementation(() => new Promise(() => {}));
+
+    navigateToAgent({
+      serverId: SERVER_ID,
+      agentId: AGENT_ID,
+      restoreWorkspace: { agentArchived: true },
+    });
+
+    expect(refreshAgent).toHaveBeenCalledTimes(1);
+    expect(refreshAgent).toHaveBeenCalledWith(AGENT_ID);
+    expect(status()).toBeNull();
   });
 
   it("does not restore during ordinary active-workspace navigation", () => {
