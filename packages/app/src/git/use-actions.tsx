@@ -180,7 +180,7 @@ function useWorkspaceScreenArchiveController({
 }: UseWorkspaceScreenArchiveControllerInput) {
   const sessionWorkspaces = useSessionStore((state) => state.sessions[serverId]?.workspaces);
   const [isHidingWorkspace, setIsHidingWorkspace] = useState(false);
-  const archiveWorkspaceRecord = useMemo(() => {
+  const workspaceDescriptor = useMemo(() => {
     const activeWorkspaceKey = activeWorkspaceSelection
       ? resolveWorkspaceMapKeyByIdentity({
           workspaces: sessionWorkspaces,
@@ -203,13 +203,13 @@ function useWorkspaceScreenArchiveController({
 
   const controller = useWorkspaceArchive({
     serverId,
-    workspaceId: archiveWorkspaceRecord?.id ?? "",
-    workspaceDirectory: archiveWorkspaceRecord?.workspaceDirectory ?? workspaceDirectory,
-    workspaceKind: archiveWorkspaceRecord?.workspaceKind ?? "directory",
-    name: archiveWorkspaceRecord?.name ?? branchLabel,
+    workspaceId: workspaceDescriptor?.id ?? "",
+    workspaceDirectory: workspaceDescriptor?.workspaceDirectory ?? workspaceDirectory,
+    workspaceKind: workspaceDescriptor?.workspaceKind ?? "directory",
+    name: workspaceDescriptor?.name ?? branchLabel,
     isDirty: gitStatus?.isDirty,
     aheadOfOrigin: gitStatus?.aheadOfOrigin,
-    diffStat: archiveWorkspaceRecord?.diffStat ?? null,
+    diffStat: workspaceDescriptor?.diffStat ?? null,
     warningLabels: getWorktreeArchiveWarningLabels(t),
     onSetHiding: setIsHidingWorkspace,
     onArchiveStarted: () => {
@@ -226,8 +226,8 @@ function useWorkspaceScreenArchiveController({
 
   return {
     ...controller,
-    isArchiving: archiveWorkspaceRecord?.archivingAt != null || isHidingWorkspace,
-    hasWorkspace: archiveWorkspaceRecord !== null,
+    isArchiving: workspaceDescriptor?.archivingAt != null || isHidingWorkspace,
+    hasWorkspace: workspaceDescriptor !== null,
   };
 }
 
