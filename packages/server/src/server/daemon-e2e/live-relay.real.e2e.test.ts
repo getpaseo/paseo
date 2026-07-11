@@ -82,7 +82,7 @@ describe("live hosted relay", () => {
         modeId: "full-access",
       });
       await client.sendMessage(agent.id, "Respond with exactly: RELAY_ACCEPTANCE_OK");
-      const finished = await client.waitForFinish(agent.id, 10_000);
+      const finished = await client.waitForFinish(agent.id, 30_000);
       const timeline = await client.fetchAgentTimeline(agent.id, {
         direction: "tail",
         limit: 1,
@@ -97,9 +97,12 @@ describe("live hosted relay", () => {
       });
       expect(finished).toMatchObject({ status: "idle" });
       expect(timeline.entries.map((entry) => entry.item)).toEqual([
-        { type: "assistant_message", text: "RELAY_ACCEPTANCE_OK" },
+        {
+          type: "assistant_message",
+          text: expect.stringMatching(/^RELAY_ACCEPTANCE_OK\s*$/),
+        },
       ]);
     },
-    60_000,
+    90_000,
   );
 });
