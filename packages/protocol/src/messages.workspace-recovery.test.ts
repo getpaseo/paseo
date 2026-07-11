@@ -107,4 +107,29 @@ describe("workspace recovery protocol", () => {
       },
     });
   });
+
+  test("accepts recovery actions added by newer daemons", () => {
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "workspace.recovery.inspect.response",
+        payload: {
+          requestId: "inspect-future-action",
+          state: {
+            kind: "recoverable",
+            workspaceId: "workspace-1",
+            workspaceName: "Feature branch",
+            action: "repair_from_snapshot",
+            branch: "feature",
+          },
+        },
+      }),
+    ).toMatchObject({
+      payload: {
+        state: {
+          kind: "recoverable",
+          action: "repair_from_snapshot",
+        },
+      },
+    });
+  });
 });

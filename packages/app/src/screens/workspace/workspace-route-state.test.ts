@@ -128,6 +128,19 @@ describe("resolveWorkspaceRouteState", () => {
       hostName: "Laptop",
       message: "The workspace directory cannot be recreated.",
     });
+
+    expect(
+      resolve({
+        recovery: {
+          kind: "unsupportedAction",
+          action: "repair_from_snapshot",
+        },
+      }),
+    ).toEqual({
+      kind: "recoveryUnavailable",
+      hostName: "Laptop",
+      message: "Update Paseo to recover this workspace.",
+    });
   });
 
   it("keeps loading visible when the descriptor arrives, then uses it as the success transition", () => {

@@ -240,6 +240,7 @@ import { CreateAgentLifecycleDispatch } from "./agent/create-agent-lifecycle-dis
 // the entire session message if they encounter an unknown provider.
 const LEGACY_PROVIDER_IDS = new Set(["claude", "codex", "opencode"]);
 const MIN_VERSION_ALL_PROVIDERS = "0.1.45";
+const MIN_VERSION_EXPLICIT_WORKSPACE_RECOVERY = "0.1.105";
 function errorToFriendlyMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (typeof error === "string") return error;
@@ -317,6 +318,12 @@ function isAppVersionAtLeast(appVersion: string | null, minVersion: string): boo
 
 function clientSupportsAllProviders(appVersion: string | null): boolean {
   return isAppVersionAtLeast(appVersion, MIN_VERSION_ALL_PROVIDERS);
+}
+
+function clientUsesLegacyWorkspaceRestore(appVersion: string | null): boolean {
+  return (
+    appVersion !== null && !isAppVersionAtLeast(appVersion, MIN_VERSION_EXPLICIT_WORKSPACE_RECOVERY)
+  );
 }
 
 type DeleteFencedAgentStorage = AgentStorage & {
@@ -2443,10 +2450,7 @@ export class Session {
     request: Extract<SessionInboundMessage, { type: "workspace.recovery.restore.request" }>,
   ): Promise<void> {
     try {
-      await this.workspaceRecovery.restore(request.workspaceId);
-      await this.emitWorkspaceUpdatesForWorkspaceIds([request.workspaceId], {
-        skipReconcile: true,
-      });
+      await this.restoreWorkspaceAndEmit(request.workspaceId);
       this.emit({
         type: "workspace.recovery.restore.response",
         payload: {
@@ -2836,6 +2840,7 @@ export class Session {
     this.sessionLogger.info({ agentId }, `Refreshing agent ${agentId} from persistence`);
 
     try {
+      await this.restoreOwningWorkspaceForLegacyAgentRefresh(agentId);
       await unarchiveAgentState(this.agentStorage, this.agentManager, agentId);
       let snapshot: ManagedAgent;
       const existing = this.agentManager.getAgent(agentId);
@@ -4003,6 +4008,30 @@ export class Session {
         message: `Recreated worktree diverged from ${workspace.cwd}: ${result.worktreePath}`,
       });
     }
+  }
+
+  private async restoreWorkspaceAndEmit(workspaceId: string): Promise<void> {
+    await this.workspaceRecovery.restore(workspaceId);
+    await this.emitWorkspaceUpdatesForWorkspaceIds([workspaceId], {
+      skipReconcile: true,
+    });
+  }
+
+  private async restoreOwningWorkspaceForLegacyAgentRefresh(agentId: string): Promise<void> {
+    // COMPAT(worktreeRestore): clients older than v0.1.105 used refresh_agent_request
+    // as their explicit recovery RPC. Remove after 2027-01-11.
+    if (!clientUsesLegacyWorkspaceRestore(this.appVersion)) {
+      return;
+    }
+    const record = await this.agentStorage.get(agentId);
+    if (!record?.workspaceId) {
+      return;
+    }
+    const recovery = await this.workspaceRecovery.inspect(record.workspaceId);
+    if (recovery.kind !== "recoverable") {
+      return;
+    }
+    await this.restoreWorkspaceAndEmit(record.workspaceId);
   }
 
   private async createPaseoWorktree(

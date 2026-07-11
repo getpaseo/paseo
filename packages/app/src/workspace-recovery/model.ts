@@ -1,15 +1,27 @@
 import type { WorkspaceRecoveryState as AuthoritativeWorkspaceRecoveryState } from "@getpaseo/protocol/messages";
 
+type AuthoritativeRecoverableWorkspace = Extract<
+  AuthoritativeWorkspaceRecoveryState,
+  { kind: "recoverable" }
+>;
+
+export type SupportedWorkspaceRecoveryAction = "unarchive" | "restore";
+
+type SupportedRecoverableWorkspace = Omit<AuthoritativeRecoverableWorkspace, "action"> & {
+  action: SupportedWorkspaceRecoveryAction;
+};
+
 export type WorkspaceRecoveryModel =
   | { kind: "idle" }
   | { kind: "checking" }
   | { kind: "needsHostUpgrade" }
   | {
       kind: "recoverable";
-      recovery: Extract<AuthoritativeWorkspaceRecoveryState, { kind: "recoverable" }>;
+      recovery: SupportedRecoverableWorkspace;
       phase: "ready" | "restoring" | "failed";
       error: string | null;
     }
+  | { kind: "unsupportedAction"; action: string }
   | {
       kind: "unavailable";
       recovery: Extract<AuthoritativeWorkspaceRecoveryState, { kind: "unavailable" }>;
@@ -35,6 +47,18 @@ function resolveRecoveryPhase(input: {
   return "ready";
 }
 
+function getSupportedRecovery(
+  recovery: AuthoritativeWorkspaceRecoveryState | undefined,
+): SupportedRecoverableWorkspace | null {
+  if (recovery?.kind !== "recoverable") {
+    return null;
+  }
+  if (recovery.action !== "restore" && recovery.action !== "unarchive") {
+    return null;
+  }
+  return { ...recovery, action: recovery.action };
+}
+
 export function resolveWorkspaceRecoveryModel(input: {
   enabled: boolean;
   connected: boolean;
@@ -48,10 +72,11 @@ export function resolveWorkspaceRecoveryModel(input: {
   };
   restore: { pending: boolean; error: string | null };
 }): WorkspaceRecoveryModel {
-  if (input.restore.pending && input.inspection.data?.kind === "recoverable") {
+  const supportedRecovery = getSupportedRecovery(input.inspection.data);
+  if (input.restore.pending && supportedRecovery) {
     return {
       kind: "recoverable",
-      recovery: input.inspection.data,
+      recovery: supportedRecovery,
       phase: "restoring",
       error: null,
     };
@@ -74,10 +99,13 @@ export function resolveWorkspaceRecoveryModel(input: {
   if (input.inspection.data?.kind === "unavailable") {
     return { kind: "unavailable", recovery: input.inspection.data };
   }
-  if (input.inspection.data?.kind === "recoverable") {
+  if (input.inspection.data?.kind === "recoverable" && !supportedRecovery) {
+    return { kind: "unsupportedAction", action: input.inspection.data.action };
+  }
+  if (supportedRecovery) {
     return {
       kind: "recoverable",
-      recovery: input.inspection.data,
+      recovery: supportedRecovery,
       phase: resolveRecoveryPhase(input.restore),
       error: input.restore.error,
     };

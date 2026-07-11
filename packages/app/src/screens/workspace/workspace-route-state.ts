@@ -76,6 +76,12 @@ export function resolveWorkspaceRouteState(input: {
         hostName: input.hostName,
         message: input.recovery.recovery.message,
       };
+    case "unsupportedAction":
+      return {
+        kind: "recoveryUnavailable",
+        hostName: input.hostName,
+        message: "Update Paseo to recover this workspace.",
+      };
     case "inspectionFailed":
       return {
         kind: "recoveryInspectionFailed",
