@@ -23,9 +23,10 @@ vi.mock("@/runtime/host-runtime", () => ({
 import { useSessionStore, type Agent } from "@/stores/session-store";
 import { navigateToAgent } from "./index";
 
-const SERVER_ID = "server-1";
-const AGENT_ID = "agent-1";
-const WORKSPACE_ID = "workspace-1";
+const SERVER_ID = "remote-server";
+const AGENT_ID = "00000000-0000-4000-8000-000000000001";
+const WORKSPACE_ID = "wks_history_restore";
+const MISSING_WORKTREE_CWD = "/home/tester/.paseo/worktrees/missing-history-worktree";
 
 function agent(archivedAt: Date | null): Agent {
   const createdAt = new Date("2026-01-01T00:00:00.000Z");
@@ -51,7 +52,7 @@ function agent(archivedAt: Date | null): Agent {
     pendingPermissions: [],
     persistence: null,
     title: null,
-    cwd: "/repo",
+    cwd: MISSING_WORKTREE_CWD,
     workspaceId: WORKSPACE_ID,
     model: null,
     archivedAt,
@@ -96,14 +97,24 @@ describe("restoreArchivedWorkspace via navigateToAgent", () => {
     useSessionStore.getState().clearSession(SERVER_ID);
   });
 
-  function trigger(): void {
+  function openFromHistory(): void {
+    const input = {
+      serverId: SERVER_ID,
+      agentId: AGENT_ID,
+      workspaceId: WORKSPACE_ID,
+      restoreWorkspace: true,
+    };
+    navigateToAgent(input);
+  }
+
+  function navigateNormally(): void {
     navigateToAgent({ serverId: SERVER_ID, agentId: AGENT_ID });
   }
 
   it("calls refreshAgent once and marks the workspace restoring", () => {
     refreshAgent.mockImplementation(() => new Promise(() => {}));
 
-    trigger();
+    openFromHistory();
 
     expect(refreshAgent).toHaveBeenCalledTimes(1);
     expect(refreshAgent).toHaveBeenCalledWith(AGENT_ID);
@@ -113,23 +124,39 @@ describe("restoreArchivedWorkspace via navigateToAgent", () => {
   it("does not re-fire while a restore for the same workspace is in flight", () => {
     refreshAgent.mockImplementation(() => new Promise(() => {}));
 
-    trigger();
-    trigger();
-    trigger();
+    openFromHistory();
+    openFromHistory();
+    openFromHistory();
 
     expect(refreshAgent).toHaveBeenCalledTimes(1);
   });
 
-  it("does not fire for a non-archived agent", () => {
+  it("restores a History-opened closed agent whose archived workspace is missing", () => {
     const store = useSessionStore.getState();
     store.setAgents(SERVER_ID, (prev) => {
       const next = new Map(prev);
-      next.set(AGENT_ID, agent(null));
+      next.set(AGENT_ID, { ...agent(null), status: "closed" });
       return next;
     });
     refreshAgent.mockImplementation(() => new Promise(() => {}));
 
-    trigger();
+    openFromHistory();
+
+    expect(refreshAgent).toHaveBeenCalledTimes(1);
+    expect(refreshAgent).toHaveBeenCalledWith(AGENT_ID);
+    expect(status()).toBe("restoring");
+  });
+
+  it("does not restore during ordinary active-workspace navigation", () => {
+    const store = useSessionStore.getState();
+    store.setAgents(SERVER_ID, (prev) => {
+      const next = new Map(prev);
+      next.set(AGENT_ID, { ...agent(null), status: "closed" });
+      return next;
+    });
+    refreshAgent.mockImplementation(() => new Promise(() => {}));
+
+    navigateNormally();
 
     expect(refreshAgent).not.toHaveBeenCalled();
     expect(status()).toBeNull();
@@ -139,7 +166,7 @@ describe("restoreArchivedWorkspace via navigateToAgent", () => {
     connected = false;
     refreshAgent.mockImplementation(() => new Promise(() => {}));
 
-    trigger();
+    openFromHistory();
 
     expect(refreshAgent).not.toHaveBeenCalled();
     expect(status()).toBeNull();
@@ -148,7 +175,7 @@ describe("restoreArchivedWorkspace via navigateToAgent", () => {
   it("flips to failed when refreshAgent rejects", async () => {
     refreshAgent.mockImplementation(() => Promise.reject(new Error("dir gone")));
 
-    trigger();
+    openFromHistory();
     expect(status()).toBe("restoring");
 
     await vi.runAllTicks();
@@ -160,7 +187,7 @@ describe("restoreArchivedWorkspace via navigateToAgent", () => {
   it("flips to failed via the timeout when refreshAgent resolves without a workspace update", async () => {
     refreshAgent.mockImplementation(() => Promise.resolve({}));
 
-    trigger();
+    openFromHistory();
     await Promise.resolve();
     expect(status()).toBe("restoring");
 
@@ -173,7 +200,7 @@ describe("restoreArchivedWorkspace via navigateToAgent", () => {
     seedArchivedAgent({ worktreeRestore: false });
     refreshAgent.mockImplementation(() => new Promise(() => {}));
 
-    trigger();
+    openFromHistory();
 
     expect(refreshAgent).not.toHaveBeenCalled();
     expect(status()).toBe("needs-host-upgrade");
@@ -186,8 +213,8 @@ describe("restoreArchivedWorkspace via navigateToAgent", () => {
         id: WORKSPACE_ID,
         projectId: "project-1",
         projectDisplayName: "Project 1",
-        projectRootPath: "/repo",
-        workspaceDirectory: "/repo",
+        projectRootPath: MISSING_WORKTREE_CWD,
+        workspaceDirectory: MISSING_WORKTREE_CWD,
         projectKind: "git",
         workspaceKind: "local_checkout",
         name: "main",
@@ -199,7 +226,7 @@ describe("restoreArchivedWorkspace via navigateToAgent", () => {
       },
     ]);
 
-    trigger();
+    openFromHistory();
 
     expect(refreshAgent).not.toHaveBeenCalled();
   });

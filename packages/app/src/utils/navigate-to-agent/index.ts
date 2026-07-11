@@ -21,13 +21,9 @@ function restoreArchivedWorkspace(serverId: string, agentId: string, workspaceId
 
   const store = useSessionStore.getState();
   const session = store.sessions[serverId];
-  // Self-gate: only an archived agent whose workspace is absent needs restoring.
-  // A still-present workspace or an in-flight restore is a no-op; fire-once is
-  // derived from store state.
-  const agent = session?.agents.get(agentId) ?? session?.agentDetails.get(agentId);
-  if (!agent?.archivedAt) {
-    return;
-  }
+  // History carries restore intent explicitly. Workspace lifecycle is separate
+  // from agent lifecycle, so a closed non-archived agent can legitimately own an
+  // archived workspace. A present workspace or in-flight restore stays a no-op.
   if (session?.workspaces.has(workspaceId)) {
     return;
   }

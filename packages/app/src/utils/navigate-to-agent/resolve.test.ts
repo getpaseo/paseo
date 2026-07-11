@@ -74,16 +74,35 @@ describe("resolveNavigateToAgent", () => {
     ]);
   });
 
-  it("delegates a restore attempt whenever a workspaceId resolves", () => {
+  it("delegates a restore attempt when History carries explicit restore intent", () => {
     const { deps, restores, tabNavigations } = createFakeNavigators({
       agentWorkspaceId: WORKSPACE_ID,
     });
 
-    resolveNavigateToAgent({ serverId: SERVER_ID, agentId: AGENT_ID, pin: true }, deps);
+    resolveNavigateToAgent(
+      {
+        serverId: SERVER_ID,
+        agentId: AGENT_ID,
+        restoreWorkspace: true,
+        pin: true,
+      },
+      deps,
+    );
 
     expect(restores).toEqual([
       { serverId: SERVER_ID, agentId: AGENT_ID, workspaceId: WORKSPACE_ID },
     ]);
+    expect(tabNavigations).toHaveLength(1);
+  });
+
+  it("does not delegate restore during ordinary workspace navigation", () => {
+    const { deps, restores, tabNavigations } = createFakeNavigators({
+      agentWorkspaceId: WORKSPACE_ID,
+    });
+
+    resolveNavigateToAgent({ serverId: SERVER_ID, agentId: AGENT_ID }, deps);
+
+    expect(restores).toEqual([]);
     expect(tabNavigations).toHaveLength(1);
   });
 
