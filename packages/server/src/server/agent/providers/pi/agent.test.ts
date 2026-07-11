@@ -66,6 +66,12 @@ async function createSession(pi = new FakePi()): Promise<{
   return { pi, session, events };
 }
 
+async function waitForImmediate(): Promise<void> {
+  await new Promise<void>((resolve) => {
+    setImmediate(resolve);
+  });
+}
+
 test("forwards launch-context env to the Pi process launch", async () => {
   const pi = new FakePi();
   const client = createClient(pi);
@@ -124,6 +130,13 @@ class SessionEvents {
     });
   }
 
+  turnCompletions(): Array<Extract<AgentStreamEvent, { type: "turn_completed" }>> {
+    return this.events.filter(
+      (event): event is Extract<AgentStreamEvent, { type: "turn_completed" }> =>
+        event.type === "turn_completed",
+    );
+  }
+
   nextTurnCompletion(): Promise<Extract<AgentStreamEvent, { type: "turn_completed" }>> {
     return this.nextEvent(
       (event): event is Extract<AgentStreamEvent, { type: "turn_completed" }> =>
@@ -176,6 +189,99 @@ class SessionEvents {
 }
 
 describe("PiRpcAgentSession", () => {
+  test("completes slash prompts handled by Pi without starting an agent turn", async () => {
+    const { pi, session, events } = await createSession();
+
+    const { turnId } = await session.startTurn("/local-command on");
+    pi.latestSession().emit({
+      type: "extension_ui_request",
+      id: "notify-1",
+      method: "notify",
+      message: "Local command completed.",
+      notifyType: "info",
+    });
+
+    await expect(events.nextTurnCompletion()).resolves.toMatchObject({ turnId });
+    expect(events.timelineAndCompletionEvents()).toContainEqual({
+      type: "timeline",
+      item: { type: "assistant_message", text: "Local command completed." },
+    });
+    const nextTurn = await session.startTurn("hello after local command");
+
+    pi.latestSession().finishTurn({ role: "assistant", content: [] });
+    await waitForImmediate();
+    expect(events.turnCompletions().map((event) => event.turnId)).toEqual([
+      turnId,
+      nextTurn.turnId,
+    ]);
+  });
+
+  test("does not complete a slash prompt when Pi has started streaming", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+    fakeSession.state = {
+      ...fakeSession.state,
+      isStreaming: true,
+    };
+
+    const { turnId } = await session.startTurn("/command-that-sends-user-message");
+    await waitForImmediate();
+    await waitForImmediate();
+
+    expect(events.turnCompletions()).toEqual([]);
+
+    fakeSession.state = {
+      ...fakeSession.state,
+      isStreaming: false,
+    };
+    fakeSession.finishTurn({ role: "assistant", content: [] });
+
+    await expect(events.nextTurnCompletion()).resolves.toMatchObject({ turnId });
+  });
+
+  test("does not complete a slash prompt when Pi emits agent lifecycle before the barrier", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    const { turnId } = await session.startTurn("/prompt-template arg");
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "notify-before-start",
+      method: "notify",
+      message: "Preparing prompt template.",
+      notifyType: "info",
+    });
+    fakeSession.emit({ type: "agent_start" });
+    await waitForImmediate();
+    await waitForImmediate();
+
+    expect(events.turnCompletions()).toEqual([]);
+    expect(events.timelineItems()).toEqual([]);
+
+    fakeSession.finishTurn({ role: "assistant", content: [] });
+
+    await expect(events.nextTurnCompletion()).resolves.toMatchObject({ turnId });
+  });
+
+  test("fails slash prompts when the no-turn state barrier fails", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+    fakeSession.getStateError = new Error("get_state timed out");
+
+    const { turnId } = await session.startTurn("/local-command on");
+
+    await expect(events.nextTurnFailure()).resolves.toMatchObject({
+      turnId,
+      error: "get_state timed out",
+    });
+
+    fakeSession.getStateError = null;
+    const nextTurn = await session.startTurn("hello after barrier failure");
+    fakeSession.finishTurn({ role: "assistant", content: [] });
+
+    await expect(events.nextTurnCompletion()).resolves.toMatchObject({ turnId: nextTurn.turnId });
+  });
+
   test("bridges Pi RPC select extension UI requests through question permissions", async () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();

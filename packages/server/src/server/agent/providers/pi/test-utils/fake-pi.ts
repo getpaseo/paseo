@@ -72,6 +72,7 @@ export class FakePiSession implements PiRuntimeSession {
   };
   commands: PiRpcSlashCommand[] = [];
   compactError: Error | null = null;
+  getStateError: Error | null = null;
   emitCompactEnd = true;
   state: PiSessionState;
 
@@ -131,6 +132,9 @@ export class FakePiSession implements PiRuntimeSession {
   }
 
   async getState(): Promise<PiSessionState> {
+    if (this.getStateError) {
+      throw this.getStateError;
+    }
     return this.state;
   }
 

@@ -1064,6 +1064,8 @@ export class PiRpcAgentSession implements AgentSession {
   private activeAskUserDialog: ActiveAskUserDialog | null = null;
   private pendingCombinedAskUserResponse: PendingCombinedAskUserResponse | null = null;
   private activeTurnId: string | null = null;
+  private activeTurnStarted = false;
+  private readonly pendingNoTurnNotifications: Array<{ turnId: string; message: string }> = [];
   private lastKnownThinkingOptionId: string | null;
   currentLeafOverrideId: string | null | undefined;
   private readonly capturedUserEntries: PiCapturedEntry[] = [];
@@ -1123,26 +1125,40 @@ export class PiRpcAgentSession implements AgentSession {
     const payload = convertPromptInput(prompt, { model: this.state.model });
     const turnId = randomUUID();
     this.activeTurnId = turnId;
+    this.activeTurnStarted = false;
+    this.pendingNoTurnNotifications.splice(0, this.pendingNoTurnNotifications.length);
+    const shouldProbeForNoTurnPrompt = this.parseSlashCommandInput(payload.text) !== null;
 
-    void this.runtimeSession.prompt(payload.text, payload.images).catch((error) => {
-      const failedTurnId = this.activeTurnId ?? turnId;
-      this.activeTurnId = null;
-      if (isPiRequestAbortError(error)) {
+    void (async () => {
+      try {
+        await this.runtimeSession.prompt(payload.text, payload.images);
+        if (shouldProbeForNoTurnPrompt) {
+          await this.completePromptIfHandledWithoutTurn(turnId);
+        }
+      } catch (error) {
+        const failedTurnId = this.activeTurnId ?? turnId;
+        if (this.activeTurnId === turnId) {
+          this.activeTurnId = null;
+          this.activeTurnStarted = false;
+          this.pendingNoTurnNotifications.splice(0, this.pendingNoTurnNotifications.length);
+        }
+        if (isPiRequestAbortError(error)) {
+          this.emit({
+            type: "turn_canceled",
+            provider: PI_PROVIDER,
+            turnId: failedTurnId,
+            reason: toDiagnosticErrorMessage(error),
+          });
+          return;
+        }
         this.emit({
-          type: "turn_canceled",
+          type: "turn_failed",
           provider: PI_PROVIDER,
           turnId: failedTurnId,
-          reason: toDiagnosticErrorMessage(error),
+          error: toDiagnosticErrorMessage(error),
         });
-        return;
       }
-      this.emit({
-        type: "turn_failed",
-        provider: PI_PROVIDER,
-        turnId: failedTurnId,
-        error: toDiagnosticErrorMessage(error),
-      });
-    });
+    })();
 
     return { turnId };
   }
@@ -1360,6 +1376,60 @@ export class PiRpcAgentSession implements AgentSession {
 
   private currentTurnIdForEvent(): string | undefined {
     return this.activeTurnId ?? undefined;
+  }
+
+  private async completePromptIfHandledWithoutTurn(turnId: string): Promise<void> {
+    // Pi RPC `prompt` acknowledges inputs that were accepted, queued, or fully handled.
+    // Extension slash commands such as `/plan on` can complete locally without emitting
+    // `agent_start`/`turn_start`/`agent_end`. Yield once so AgentManager can install its
+    // waiter for this turn, then use `get_state` as an ordered RPC barrier: if no lifecycle
+    // event has arrived and Pi is not streaming, this prompt did not start an agent turn.
+    await new Promise<void>((resolve) => {
+      setImmediate(resolve);
+    });
+
+    let runtimeState: PiSessionState;
+    try {
+      runtimeState = await this.runtimeSession.getState();
+    } catch (error) {
+      if (this.activeTurnId === turnId && !this.activeTurnStarted) {
+        throw error;
+      }
+      return;
+    }
+    this.state = runtimeState;
+
+    if (this.activeTurnId !== turnId || this.activeTurnStarted || runtimeState.isStreaming) {
+      return;
+    }
+
+    this.emitPendingNoTurnNotifications(turnId);
+    this.completeTurn(turnId, []);
+  }
+
+  private emitPendingNoTurnNotifications(turnId: string): void {
+    const notifications = this.pendingNoTurnNotifications.filter(
+      (notification) => notification.turnId === turnId,
+    );
+    this.pendingNoTurnNotifications.splice(0, this.pendingNoTurnNotifications.length);
+    for (const notification of notifications) {
+      this.emit({
+        type: "timeline",
+        provider: PI_PROVIDER,
+        turnId,
+        item: {
+          type: "assistant_message",
+          text: notification.message,
+        },
+      });
+    }
+  }
+
+  private recordNoTurnNotification(message: string): void {
+    if (!this.activeTurnId || this.activeTurnStarted) {
+      return;
+    }
+    this.pendingNoTurnNotifications.push({ turnId: this.activeTurnId, message });
   }
 
   private parseSlashCommandInput(text: string): PiSlashCommandInvocation | null {
@@ -1604,6 +1674,7 @@ export class PiRpcAgentSession implements AgentSession {
       if (this.handleEntryCaptureMarker(message) || this.handleCommandResultMarker(message)) {
         return;
       }
+      this.recordNoTurnNotification(message);
     }
 
     if (this.respondToCombinedAskUserFollowUp(event)) {
@@ -1677,6 +1748,8 @@ export class PiRpcAgentSession implements AgentSession {
     }
     const turnId = this.activeTurnId;
     this.activeTurnId = null;
+    this.activeTurnStarted = false;
+    this.pendingNoTurnNotifications.splice(0, this.pendingNoTurnNotifications.length);
     this.emit({
       type: "turn_failed",
       provider: PI_PROVIDER,
@@ -1690,6 +1763,8 @@ export class PiRpcAgentSession implements AgentSession {
 
     switch (event.type) {
       case "agent_start":
+        this.activeTurnStarted = true;
+        this.pendingNoTurnNotifications.splice(0, this.pendingNoTurnNotifications.length);
         this.emit({
           type: "thread_started",
           provider: PI_PROVIDER,
@@ -1697,6 +1772,8 @@ export class PiRpcAgentSession implements AgentSession {
         });
         return;
       case "turn_start":
+        this.activeTurnStarted = true;
+        this.pendingNoTurnNotifications.splice(0, this.pendingNoTurnNotifications.length);
         this.emit({
           type: "turn_started",
           provider: PI_PROVIDER,
@@ -1899,6 +1976,8 @@ export class PiRpcAgentSession implements AgentSession {
 
   private completeTurn(turnId: string | undefined, messages: PiAgentMessage[]): void {
     this.activeTurnId = null;
+    this.activeTurnStarted = false;
+    this.pendingNoTurnNotifications.splice(0, this.pendingNoTurnNotifications.length);
     const errorMessage = latestPiErrorMessage(messages);
     if (typeof errorMessage === "string" && errorMessage.length > 0) {
       this.emit({
