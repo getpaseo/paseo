@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, test } from "vitest";
+import pino from "pino";
 
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon, type TestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 import { generateLocalPairingOffer } from "../pairing-offer.js";
+import { CodexAppServerAgentClient } from "../agent/providers/codex-app-server-agent.js";
 import { buildRelayWebSocketUrl } from "@getpaseo/protocol/daemon-endpoints";
 import {
   parseConnectionOfferFromUrl,
@@ -64,11 +66,14 @@ describe("live hosted relay", () => {
   liveTest(
     "carries a complete DaemonClient agent workflow through the hosted relay",
     async () => {
+      const logger = pino({ level: "silent" });
       daemon = await createTestPaseoDaemon({
         listen: "127.0.0.1",
         relayEnabled: true,
         relayEndpoint,
         relayUseTls: true,
+        agentClients: { codex: new CodexAppServerAgentClient(logger) },
+        logger,
       });
       const offer = await pairingOfferFor(daemon);
       client = clientFor(offer);
@@ -82,12 +87,16 @@ describe("live hosted relay", () => {
         modeId: "full-access",
       });
       await client.sendMessage(agent.id, "Respond with exactly: RELAY_ACCEPTANCE_OK");
-      const finished = await client.waitForFinish(agent.id, 30_000);
+      const finished = await client.waitForFinish(agent.id, 120_000);
       const timeline = await client.fetchAgentTimeline(agent.id, {
         direction: "tail",
-        limit: 1,
+        limit: 20,
         projection: "canonical",
       });
+      const assistantText = timeline.entries
+        .filter((entry) => entry.item.type === "assistant_message")
+        .map((entry) => entry.item.text)
+        .join("");
 
       expect(initialAgents.entries).toEqual([]);
       expect(agent).toMatchObject({
@@ -96,13 +105,8 @@ describe("live hosted relay", () => {
         status: "idle",
       });
       expect(finished).toMatchObject({ status: "idle" });
-      expect(timeline.entries.map((entry) => entry.item)).toEqual([
-        {
-          type: "assistant_message",
-          text: expect.stringMatching(/^RELAY_ACCEPTANCE_OK\s*$/),
-        },
-      ]);
+      expect(assistantText).toMatch(/^RELAY_ACCEPTANCE_OK\s*$/);
     },
-    90_000,
+    180_000,
   );
 });
