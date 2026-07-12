@@ -124,7 +124,11 @@ describe("translateOpenCodeEvent", () => {
       {
         type: "timeline",
         provider: "opencode",
-        item: { type: "assistant_message", text: "hey! what can I help with?" },
+        item: {
+          type: "assistant_message",
+          text: "hey! what can I help with?",
+          messageId: "message-1",
+        },
       },
     ]);
   });
@@ -167,7 +171,7 @@ describe("translateOpenCodeEvent", () => {
       {
         type: "timeline",
         provider: "opencode",
-        item: { type: "assistant_message", text: "final text" },
+        item: { type: "assistant_message", text: "final text", messageId: "message-2" },
       },
     ]);
   });
@@ -269,12 +273,12 @@ describe("translateOpenCodeEvent", () => {
       {
         type: "timeline",
         provider: "opencode",
-        item: { type: "assistant_message", text: "hey! " },
+        item: { type: "assistant_message", text: "hey! ", messageId: "msg-d1" },
       },
       {
         type: "timeline",
         provider: "opencode",
-        item: { type: "assistant_message", text: "what's up?" },
+        item: { type: "assistant_message", text: "what's up?", messageId: "msg-d1" },
       },
     ]);
   });
@@ -1073,7 +1077,7 @@ describe("translateOpenCodeEvent", () => {
       {
         type: "timeline",
         provider: "opencode",
-        item: { type: "assistant_message", text: "hello there" },
+        item: { type: "assistant_message", text: "hello there", messageId: "msg-dd1" },
       },
     ]);
   });
@@ -1274,7 +1278,11 @@ describe("translateOpenCodeEvent", () => {
       {
         type: "timeline",
         provider: "opencode",
-        item: { type: "assistant_message", text: '{"summary":"hello"}' },
+        item: {
+          type: "assistant_message",
+          text: '{"summary":"hello"}',
+          messageId: "message-structured-1",
+        },
       },
     ]);
     expect(second).toEqual([]);
