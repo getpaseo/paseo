@@ -83,4 +83,24 @@ describe("ProviderSubagentStore", () => {
       detail: { type: "shell", output: "x".repeat(64 * 1024) },
     });
   });
+
+  test("pages provider history on projected item boundaries", () => {
+    const subagents = new ProviderSubagentStore();
+    for (let index = 0; index < 101; index += 1) {
+      subagents.apply("parent-a", "opencode", {
+        type: "timeline",
+        id: "child-1",
+        item: { type: "assistant_message", text: String(index) },
+      });
+    }
+
+    const page = subagents.fetchTimeline("parent-a", "child-1", {
+      direction: "tail",
+      limit: 1,
+    });
+    expect(page.rows).toHaveLength(101);
+    expect(page.rows[0]?.seq).toBe(1);
+    expect(page.rows.at(-1)?.seq).toBe(101);
+    expect(page.hasOlder).toBe(false);
+  });
 });

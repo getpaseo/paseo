@@ -303,4 +303,60 @@ describe("provider subagent client store", () => {
       expect.objectContaining({ kind: "assistant_message", text: "Current output." }),
     ]);
   });
+
+  test("replaces cached rows with an authoritative tail page after a reconnect gap", () => {
+    const store = useProviderSubagentStore.getState();
+    store.replaceTimeline(SERVER_ID, {
+      requestId: "old-tail",
+      parentAgentId: PARENT_ID,
+      subagentId: SUBAGENT_ID,
+      provider: "codex",
+      direction: "tail",
+      epoch: "epoch-1",
+      reset: false,
+      staleCursor: false,
+      gap: false,
+      window: { minSeq: 1, maxSeq: 500, nextSeq: 501 },
+      hasOlder: true,
+      hasNewer: false,
+      rows: [
+        {
+          seq: 100,
+          timestamp: "2026-07-12T10:00:00.000Z",
+          item: { type: "assistant_message", text: "Old cached output." },
+        },
+      ],
+      error: null,
+    });
+    store.replaceTimeline(SERVER_ID, {
+      requestId: "reconnect-tail",
+      parentAgentId: PARENT_ID,
+      subagentId: SUBAGENT_ID,
+      provider: "codex",
+      direction: "tail",
+      epoch: "epoch-1",
+      reset: false,
+      staleCursor: false,
+      gap: false,
+      window: { minSeq: 1, maxSeq: 500, nextSeq: 501 },
+      hasOlder: true,
+      hasNewer: false,
+      rows: [
+        {
+          seq: 401,
+          timestamp: "2026-07-12T10:00:01.000Z",
+          item: { type: "assistant_message", text: "Current tail output." },
+        },
+      ],
+      error: null,
+    });
+
+    const timeline = useProviderSubagentStore
+      .getState()
+      .timelines.get(providerSubagentKey(SERVER_ID, PARENT_ID, SUBAGENT_ID));
+    expect([...timeline!.rows.keys()]).toEqual([401]);
+    expect(timeline?.head).toEqual([
+      expect.objectContaining({ kind: "assistant_message", text: "Current tail output." }),
+    ]);
+  });
 });

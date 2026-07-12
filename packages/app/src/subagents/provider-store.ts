@@ -159,6 +159,37 @@ function buildTimelineState(
   };
 }
 
+function buildTimelineResponseRows(
+  existing: ProviderSubagentTimelineState | undefined,
+  payload: Extract<
+    SessionOutboundMessage,
+    { type: "agent.provider_subagents.timeline.get.response" }
+  >["payload"],
+  provider: ProviderSubagentDescriptorPayload["provider"],
+): ProviderSubagentTimelineState["rows"] {
+  const rows = new Map<number, ProviderSubagentTimelineRow>();
+  for (const row of payload.rows) {
+    rows.set(row.seq, { provider, item: row.item, timestamp: row.timestamp });
+  }
+  if (payload.reset || existing?.epoch !== payload.epoch) {
+    return rows;
+  }
+  if (payload.direction !== "tail") {
+    return new Map([...existing.rows, ...rows]);
+  }
+
+  let nextSeq = payload.rows.length
+    ? Math.max(...payload.rows.map((row) => row.seq)) + 1
+    : payload.window.maxSeq + 1;
+  for (const [seq, row] of [...existing.rows].sort(([left], [right]) => left - right)) {
+    if (seq < nextSeq) continue;
+    if (seq !== nextSeq) break;
+    rows.set(seq, row);
+    nextSeq += 1;
+  }
+  return rows;
+}
+
 export const useProviderSubagentStore = create<ProviderSubagentState>((set) => ({
   descriptors: new Map(),
   timelines: new Map(),
@@ -263,12 +294,7 @@ export const useProviderSubagentStore = create<ProviderSubagentState>((set) => (
     set((state) => {
       const key = providerSubagentKey(serverId, payload.parentAgentId, payload.subagentId);
       const existing = state.timelines.get(key);
-      const rows = new Map(
-        !payload.reset && existing?.epoch === payload.epoch ? existing.rows : [],
-      );
-      for (const row of payload.rows) {
-        rows.set(row.seq, { provider, item: row.item, timestamp: row.timestamp });
-      }
+      const rows = buildTimelineResponseRows(existing, payload, provider);
       const descriptor = state.descriptors.get(key);
       const timelines = new Map(state.timelines);
       timelines.set(key, buildTimelineState(rows, payload.epoch, descriptor, payload.hasOlder));
