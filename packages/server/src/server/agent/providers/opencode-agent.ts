@@ -2427,6 +2427,15 @@ function appendOpenCodeTextPart(
   events: AgentStreamEvent[],
 ): void {
   if (messageRole === "user") {
+    if (!part.time?.end || !part.text || state.emittedUserMessageIds?.has(part.messageID)) {
+      return;
+    }
+    state.emittedUserMessageIds?.add(part.messageID);
+    events.push({
+      type: "timeline",
+      provider: "opencode",
+      item: { type: "user_message", text: part.text, messageId: part.messageID },
+    });
     return;
   }
   if (!part.time?.end) {
@@ -4041,6 +4050,7 @@ class OpenCodeAgentSession implements AgentSession {
       sessionId,
       cwd: this.config.cwd,
       messageRoles: new Map(),
+      emittedUserMessageIds: new Set(),
       accumulatedUsage: {},
       streamedPartKeys: new Set(),
       emittedStructuredMessageIds: new Set(),

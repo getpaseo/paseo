@@ -3092,6 +3092,68 @@ describe("OpenCode provider subagent contract", () => {
     await session.close();
   });
 
+  test("preserves a live provider child user prompt", async () => {
+    const runtime = new TestOpenCodeHarness();
+    const openCodeClient = new TestOpenCodeClient();
+    openCodeClient.sessionCreateResponse = { data: { id: "ses_parent_child_prompt" } };
+    runtime.enqueueClient(openCodeClient);
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const session = await client.createSession({ provider: "opencode", cwd: "/workspace/repo" });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    openCodeClient.emitEvent({
+      type: "session.created",
+      properties: {
+        info: {
+          id: "ses_child_prompt",
+          parentID: "ses_parent_child_prompt",
+          title: "Prompt child",
+        },
+      },
+    });
+    openCodeClient.emitEvent({
+      type: "message.updated",
+      properties: {
+        info: { id: "msg_child_prompt", sessionID: "ses_child_prompt", role: "user" },
+      },
+    });
+    openCodeClient.emitEvent({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "prt_child_prompt",
+          sessionID: "ses_child_prompt",
+          messageID: "msg_child_prompt",
+          type: "text",
+          text: "Inspect the auth flow.",
+          time: { start: 1, end: 2 },
+        },
+      },
+    });
+
+    await vi.waitFor(() =>
+      expect(events).toContainEqual({
+        type: "provider_subagent",
+        provider: "opencode",
+        event: {
+          type: "timeline",
+          id: "ses_child_prompt",
+          item: {
+            type: "user_message",
+            text: "Inspect the auth flow.",
+            messageId: "msg_child_prompt",
+          },
+          timestamp: undefined,
+        },
+      }),
+    );
+    await session.close();
+  });
+
   test("does not rehydrate children for repeated events from an unrelated session", async () => {
     const runtime = new TestOpenCodeHarness();
     const openCodeClient = new TestOpenCodeClient();
