@@ -2023,7 +2023,7 @@ function WorkspaceScreenContent({
         layout: workspaceLayout,
         tabs: uiTabs,
         routeFocused: isRouteFocused,
-        focusedPaneOnly: isMobile || isFocusModeEnabled,
+        focusedPaneOnly: isMobile || isFocusModeEnabled || !supportsDesktopPaneSplits(),
       }),
     [isFocusModeEnabled, isMobile, isRouteFocused, uiTabs, workspaceLayout],
   );

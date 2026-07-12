@@ -908,7 +908,11 @@ function ChatAgentContent({
       return;
     }
     if (agentState.id && hasAppliedAuthoritativeHistory) {
-      if (missingAgentState.kind === "resolving" || missingAgentState.kind === "not_found") {
+      if (
+        missingAgentState.kind === "resolving" ||
+        missingAgentState.kind === "not_found" ||
+        missingAgentState.kind === "error"
+      ) {
         setMissingAgentState(reconcileMissingAgentStateWithPresentAgent);
       }
       return;

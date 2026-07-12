@@ -33,22 +33,23 @@ export function reconcileAgentDirectory(input: {
     }
     statuses.set(delta.agent.id, acceptedAgent.status);
     const previousProject = previousEntry?.project;
+    const acceptedProject =
+      acceptedAgent === delta.agent ? (delta.project ?? previousProject) : previousProject;
     entries.set(delta.agent.id, {
       agent: acceptedAgent,
-      project: delta.project ??
-        previousProject ?? {
-          projectKey: delta.agent.cwd,
-          projectName: /[^/]+$/.exec(delta.agent.cwd)?.[0] ?? delta.agent.cwd,
-          checkout: {
-            cwd: delta.agent.cwd,
-            isGit: false,
-            currentBranch: null,
-            remoteUrl: null,
-            worktreeRoot: null,
-            isPaseoOwnedWorktree: false,
-            mainRepoRoot: null,
-          },
+      project: acceptedProject ?? {
+        projectKey: delta.agent.cwd,
+        projectName: /[^/]+$/.exec(delta.agent.cwd)?.[0] ?? delta.agent.cwd,
+        checkout: {
+          cwd: delta.agent.cwd,
+          isGit: false,
+          currentBranch: null,
+          remoteUrl: null,
+          worktreeRoot: null,
+          isPaseoOwnedWorktree: false,
+          mainRepoRoot: null,
         },
+      },
     });
   }
 

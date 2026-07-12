@@ -113,6 +113,11 @@ describe("agent directory reconciliation", () => {
   });
 
   it("keeps newer page metadata when a stale buffered upsert arrives", () => {
+    const snapshotEntry = entry("agent", "running");
+    const staleProject = {
+      ...snapshotEntry.project,
+      projectName: "stale project",
+    };
     const result = reconcileAgentDirectory({
       previous: new Map([["agent", replica("agent", "running")]]),
       snapshot: [
@@ -133,7 +138,7 @@ describe("agent directory reconciliation", () => {
             title: "stale live",
             updatedAt: "2026-07-12T11:00:00.000Z",
           },
-          project: entry("agent", "idle").project,
+          project: staleProject,
         },
       ],
     });
@@ -141,8 +146,9 @@ describe("agent directory reconciliation", () => {
     expect({
       title: result.entries[0]?.agent.title,
       status: result.entries[0]?.agent.status,
+      projectName: result.entries[0]?.project.projectName,
       stopped: result.stoppedRunningAgentIds,
-    }).toEqual({ title: "newer page", status: "running", stopped: [] });
+    }).toEqual({ title: "newer page", status: "running", projectName: "repo", stopped: [] });
   });
 
   it("accepts usage from a stale buffered upsert without regressing metadata", () => {

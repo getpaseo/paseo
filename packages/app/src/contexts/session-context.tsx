@@ -412,7 +412,11 @@ function finalizeTimelineApplication(input: {
   }
   if (result.clearInitializing) {
     markAgentHistorySynchronized(serverId, agentId);
-    getHostRuntimeStore().drainQueuedAgentMessage(serverId, agentId);
+    const session = useSessionStore.getState().sessions[serverId];
+    const agent = session?.agents.get(agentId) ?? session?.agentDetails.get(agentId);
+    if (agent && agent.status !== "running") {
+      getHostRuntimeStore().drainQueuedAgentMessage(serverId, agentId);
+    }
   }
 }
 
