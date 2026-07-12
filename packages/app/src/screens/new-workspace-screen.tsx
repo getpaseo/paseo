@@ -5,7 +5,7 @@ import type { TFunction } from "i18next";
 import { Pressable, Text, View } from "react-native";
 import type { PressableStateCallbackType } from "react-native";
 import ReanimatedAnimated from "react-native-reanimated";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { createNameId } from "mnemonic-id";
 import { useQuery } from "@tanstack/react-query";
@@ -74,6 +74,7 @@ import {
   type HostProjectListItem,
 } from "@/projects/host-projects";
 import { useProjectIconDataByProjectKey } from "@/projects/project-icons";
+import { ICON_SIZE, type Theme } from "@/styles/theme";
 import type { ComposerAttachment, UserComposerAttachment } from "@/attachments/types";
 import { useDraftWorkspaceAttachmentScopeKey } from "@/attachments/workspace-attachments-store";
 import type { MessagePayload } from "@/composer/types";
@@ -98,7 +99,11 @@ import {
 } from "./new-workspace-initial-context";
 import { useNewWorkspaceProjectPicker } from "./new-workspace/project-picker";
 
-const ADD_PROJECT_OPTION_ID = "new-workspace-add-project";
+const ThemedFolderPlus = withUnistyles(FolderPlus);
+const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
+const addProjectIcon = (
+  <ThemedFolderPlus size={ICON_SIZE.sm} uniProps={foregroundMutedColorMapping} />
+);
 
 function resolveCheckoutRequest(
   selectedItem: PickerItem | null,
@@ -586,29 +591,6 @@ function NewWorkspaceProjectPickerOption({
   isPending: boolean;
   supportsWorkspaceMultiplicity: boolean;
 }) {
-  const { theme } = useUnistyles();
-  const openProjectKeys = useShortcutKeys("new-agent");
-  const addProjectLeadingSlot = useMemo(
-    () => <FolderPlus size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />,
-    [theme.colors.foregroundMuted, theme.iconSize.sm],
-  );
-  const addProjectTrailingSlot = useMemo(
-    () => (openProjectKeys ? <Shortcut chord={openProjectKeys} /> : null),
-    [openProjectKeys],
-  );
-  if (option.id === ADD_PROJECT_OPTION_ID) {
-    return (
-      <ComboboxItem
-        testID="new-workspace-project-picker-add-project"
-        label={option.label}
-        active={active}
-        onPress={onPress}
-        leadingSlot={addProjectLeadingSlot}
-        trailingSlot={addProjectTrailingSlot}
-      />
-    );
-  }
-
   const project = projectByOptionId.get(option.id);
   if (!project) return <View key={option.id} />;
   const sourceDirectory =
@@ -628,6 +610,25 @@ function NewWorkspaceProjectPickerOption({
         (!supportsWorkspaceMultiplicity && !project.hosts.some((host) => host.canCreateWorktree))
       }
       onPress={onPress}
+    />
+  );
+}
+
+function AddProjectPickerAction({ onPress }: { onPress: () => void }) {
+  const { t } = useTranslation();
+  const openProjectKeys = useShortcutKeys("new-agent");
+  const shortcut = useMemo(
+    () => (openProjectKeys ? <Shortcut chord={openProjectKeys} /> : null),
+    [openProjectKeys],
+  );
+
+  return (
+    <ComboboxItem
+      testID="new-workspace-project-picker-add-project"
+      label={t("sidebar.actions.addProject")}
+      onPress={onPress}
+      leadingSlot={addProjectIcon}
+      trailingSlot={shortcut}
     />
   );
 }
@@ -1393,6 +1394,7 @@ interface NewWorkspaceFormStackInput {
     iconDataByProjectKey: Map<string, string | null>;
     selectedOptionId: string;
     onSelect: (id: string) => void;
+    onAddProject: () => void;
     renderOption: RefPickerRenderOption;
   };
   host: FormPickerControl & {
@@ -1430,6 +1432,10 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
     host.allHosts.find((h) => h.serverId === host.selectedServerId)?.label ?? "Host";
   const showHostControl = host.allHosts.length > 1;
   const isolationTriggerLabel = isolationLabel(t, isolation.effectiveIsolation);
+  const addProjectAction = useMemo(
+    () => <AddProjectPickerAction onPress={project.onAddProject} />,
+    [project.onAddProject],
+  );
 
   const badgePressableStyle = useCallback(
     ({ pressed, hovered }: PressableStateCallbackType & { hovered?: boolean }) => [
@@ -1471,6 +1477,7 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
         anchorRef={project.anchorRef}
         emptyText="No projects available."
         renderOption={project.renderOption}
+        footer={addProjectAction}
       />
     </View>
   );
@@ -1660,14 +1667,6 @@ export function NewWorkspaceScreen({
     lastActiveProject,
     allowAllProjects: supportsWorkspaceMultiplicity,
   });
-  const projectPickerOptionsWithAdd = useMemo<ComboboxOptionType[]>(
-    () => [
-      ...projectPickerOptions,
-      { id: ADD_PROJECT_OPTION_ID, label: t("sidebar.actions.addProject") },
-    ],
-    [projectPickerOptions, t],
-  );
-
   const projectIconTargets = useMemo(
     () =>
       projects.flatMap((project) => {
@@ -1831,11 +1830,6 @@ export function NewWorkspaceScreen({
 
   const handleSelectProjectOption = useCallback(
     (id: string) => {
-      if (id === ADD_PROJECT_OPTION_ID) {
-        setProjectPickerOpen(false);
-        openAddProjectPicker(selectedServerId);
-        return;
-      }
       // selectProjectOption enforces selectability (worktree-only when
       // multiplicity is off, any project when it's on); don't re-gate here on
       // canCreateWorktree or non-git projects become unselectable.
@@ -1843,8 +1837,13 @@ export function NewWorkspaceScreen({
       setProjectPickerOpen(false);
       setManualPickerSelection(null);
     },
-    [openAddProjectPicker, selectProjectOption, selectedServerId],
+    [selectProjectOption],
   );
+
+  const handleAddProject = useCallback(() => {
+    setProjectPickerOpen(false);
+    openAddProjectPicker(selectedServerId);
+  }, [openAddProjectPicker, selectedServerId]);
 
   const checkoutHintPrAttachment = useMemo(
     () =>
@@ -2142,12 +2141,13 @@ export function NewWorkspaceScreen({
     project: {
       anchorRef: projectPickerAnchorRef,
       open: openProjectPicker,
-      options: projectPickerOptionsWithAdd,
+      options: projectPickerOptions,
       triggerLabel: projectTriggerLabel,
       selectedProject,
       iconDataByProjectKey: projectIconDataByProjectKey,
       selectedOptionId: selectedProjectOptionId,
       onSelect: handleSelectProjectOption,
+      onAddProject: handleAddProject,
       openState: projectPickerOpen,
       onOpenChange: handleProjectPickerOpenChange,
       renderOption: renderProjectOption,
