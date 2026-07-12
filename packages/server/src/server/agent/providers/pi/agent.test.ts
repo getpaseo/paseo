@@ -427,9 +427,18 @@ describe("PiRpcAgentSession", () => {
 
     await session.startTurn("hello");
     fakeSession.emit({
+      type: "message_start",
+      message: { role: "assistant", content: [], responseId: "response-1" },
+    });
+    fakeSession.emit({
       type: "message_update",
-      message: { role: "assistant", content: [] },
-      assistantMessageEvent: { type: "text_delta", delta: "hello" },
+      message: { role: "assistant", content: [], responseId: "response-1" },
+      assistantMessageEvent: { type: "text_delta", delta: "hel" },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      message: { role: "assistant", content: [], responseId: "response-1" },
+      assistantMessageEvent: { type: "text_delta", delta: "lo" },
     });
     fakeSession.emit({
       type: "message_update",
@@ -454,7 +463,8 @@ describe("PiRpcAgentSession", () => {
     await events.nextTurnCompletion();
 
     expect(events.timelineItems()).toEqual([
-      { type: "assistant_message", text: "hello" },
+      { type: "assistant_message", text: "hel", messageId: "response-1" },
+      { type: "assistant_message", text: "lo", messageId: "response-1" },
       { type: "reasoning", text: "thinking" },
       {
         type: "tool_call",
@@ -473,6 +483,39 @@ describe("PiRpcAgentSession", () => {
         error: null,
       },
     ]);
+  });
+
+  test("keeps one generated message id across chunks when Pi omits a response id", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("hello");
+    fakeSession.emit({
+      type: "message_start",
+      message: { role: "assistant", content: [] },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      message: { role: "assistant", content: [] },
+      assistantMessageEvent: { type: "text_delta", delta: "hel" },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      message: { role: "assistant", content: [] },
+      assistantMessageEvent: { type: "text_delta", delta: "lo" },
+    });
+
+    const [firstChunk, secondChunk] = events.timelineItems();
+    expect(firstChunk).toMatchObject({
+      type: "assistant_message",
+      text: "hel",
+      messageId: expect.any(String),
+    });
+    expect(secondChunk).toEqual({
+      type: "assistant_message",
+      text: "lo",
+      messageId: firstChunk?.type === "assistant_message" ? firstChunk.messageId : null,
+    });
   });
 
   test("emits live user messages with captured Pi tree entry ids", async () => {

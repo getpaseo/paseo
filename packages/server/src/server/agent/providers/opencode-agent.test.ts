@@ -215,12 +215,13 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
 
     expect(turn.turnCompleted).toBe(true);
     expect(turn.turnFailed).toBe(false);
-    expect(turn.assistantMessages.length).toBeGreaterThan(0);
-    for (const msg of turn.assistantMessages) {
-      expect(msg.text.length).toBeGreaterThan(0);
-    }
-    const fullResponse = turn.assistantMessages.map((m) => m.text).join("");
-    expect(fullResponse).toBe("Hello from OpenCode");
+    expect(turn.assistantMessages).toEqual([
+      {
+        type: "assistant_message",
+        text: "Hello from OpenCode",
+        messageId: "msg_assistant",
+      },
+    ]);
     expect(openCodeClient.calls.sessionPromptAsync).toEqual([
       expect.objectContaining({
         sessionID: "session-1",
@@ -233,6 +234,74 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
     await session.close();
     rmSync(cwd, { recursive: true, force: true });
   }, 120_000);
+
+  test("completed and structured assistant messages preserve OpenCode message IDs", async () => {
+    const cwd = tmpCwd();
+    const runtime = new TestOpenCodeHarness();
+    const openCodeClient = new TestOpenCodeClient();
+    openCodeClient.sessionPromptAsyncEvents = [
+      {
+        type: "message.updated",
+        properties: {
+          info: {
+            id: "msg_structured",
+            sessionID: "session-1",
+            role: "assistant",
+            structured: "structured reply",
+            time: { completed: 1 },
+          },
+        },
+      },
+      {
+        type: "message.updated",
+        properties: {
+          info: {
+            id: "msg_completed",
+            sessionID: "session-1",
+            role: "assistant",
+          },
+        },
+      },
+      {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "prt_completed",
+            sessionID: "session-1",
+            messageID: "msg_completed",
+            type: "text",
+            text: "completed reply",
+            time: { start: 1, end: 2 },
+          },
+        },
+      },
+      { type: "session.idle", properties: { sessionID: "session-1" } },
+    ];
+    runtime.enqueueClient(openCodeClient);
+    const client = new OpenCodeAgentClient(logger, undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const session = await client.createSession(buildConfig(cwd));
+
+    const turn = await collectTurnEvents(streamSession(session, "Reply twice"));
+
+    expect(turn.assistantMessages).toEqual([
+      {
+        type: "assistant_message",
+        text: "structured reply",
+        messageId: "msg_structured",
+      },
+      {
+        type: "assistant_message",
+        text: "completed reply",
+        messageId: "msg_completed",
+      },
+    ]);
+
+    await session.close();
+    rmSync(cwd, { recursive: true, force: true });
+  });
 
   test("manual compact hides the generated summary text", async () => {
     const cwd = tmpCwd();
@@ -1470,7 +1539,11 @@ describe("OpenCode adapter startTurn error handling", () => {
         type: "timeline",
         provider: "opencode",
         timestamp: "2026-05-14T12:41:23.612Z",
-        item: { type: "assistant_message", text: "probe ok" },
+        item: {
+          type: "assistant_message",
+          text: "probe ok",
+          messageId: "msg_assistant",
+        },
       },
     ]);
   });
@@ -1522,7 +1595,11 @@ describe("OpenCode adapter startTurn error handling", () => {
       {
         type: "timeline",
         provider: "opencode",
-        item: { type: "assistant_message", text: "no clocks here" },
+        item: {
+          type: "assistant_message",
+          text: "no clocks here",
+          messageId: "msg_assistant",
+        },
       },
     ]);
   });

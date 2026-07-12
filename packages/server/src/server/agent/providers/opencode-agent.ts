@@ -989,12 +989,16 @@ function buildOpenCodeReplayTimelineEvent(params: {
 
 function buildOpenCodeReplayPartTimelineEvent(params: {
   part: OpenCodePart;
-  message: { structured?: unknown; time?: { created?: number; completed?: number } | undefined };
+  message: {
+    id: string;
+    structured?: unknown;
+    time?: { created?: number; completed?: number } | undefined;
+  };
 }): Extract<AgentStreamEvent, { type: "timeline" }> | null {
   const { part, message } = params;
   if (part.type === "text" && part.text) {
     return buildOpenCodeReplayTimelineEvent({
-      item: { type: "assistant_message", text: part.text },
+      item: { type: "assistant_message", text: part.text, messageId: message.id },
       message,
       part,
     });
@@ -1183,7 +1187,7 @@ function buildOpenCodeReplayTimelineEvents(
     if (text) {
       events.push(
         buildOpenCodeReplayTimelineEvent({
-          item: { type: "assistant_message", text },
+          item: { type: "assistant_message", text, messageId: info.id },
           message: info,
         }),
       );
@@ -2329,7 +2333,7 @@ function appendOpenCodeMessageUpdated(
   events.push({
     type: "timeline",
     provider: "opencode",
-    item: { type: "assistant_message", text },
+    item: { type: "assistant_message", text, messageId: info.id },
   });
 }
 
@@ -2457,7 +2461,7 @@ function appendOpenCodeTextPart(
     events.push({
       type: "timeline",
       provider: "opencode",
-      item: { type: "assistant_message", text: part.text },
+      item: { type: "assistant_message", text: part.text, messageId: part.messageID },
     });
   }
 }
@@ -2523,7 +2527,10 @@ function appendOpenCodeMessagePartDelta(
   if (messageRole === "user") {
     return;
   }
-  if (messageID && state.suppressAssistantMessagesUntilIdle?.active === true) {
+  if (!messageID) {
+    return;
+  }
+  if (state.suppressAssistantMessagesUntilIdle?.active === true) {
     state.compactionSummaryMessageIds.add(messageID);
     return;
   }
@@ -2533,7 +2540,11 @@ function appendOpenCodeMessagePartDelta(
   events.push({
     type: "timeline",
     provider: "opencode",
-    item: { type: "assistant_message", text: delta },
+    item: {
+      type: "assistant_message",
+      text: delta,
+      messageId: messageID,
+    },
   });
 }
 
