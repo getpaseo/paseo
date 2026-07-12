@@ -1821,6 +1821,7 @@ export class PiRpcAgentSession implements AgentSession {
       return;
     }
     if (event.assistantMessageEvent.type === "text_delta") {
+      // Pi-compatible runtimes may emit updates without a preceding message_start.
       this.activeAssistantMessageId ??= event.message.responseId || randomUUID();
       this.emit({
         type: "timeline",

@@ -485,15 +485,11 @@ describe("PiRpcAgentSession", () => {
     ]);
   });
 
-  test("keeps one generated message id across chunks when Pi omits a response id", async () => {
+  test("keeps one generated message id when Pi omits message start and response id", async () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();
 
     await session.startTurn("hello");
-    fakeSession.emit({
-      type: "message_start",
-      message: { role: "assistant", content: [] },
-    });
     fakeSession.emit({
       type: "message_update",
       message: { role: "assistant", content: [] },
@@ -511,10 +507,11 @@ describe("PiRpcAgentSession", () => {
       text: "hel",
       messageId: expect.any(String),
     });
+    const firstMessageId = (firstChunk as { messageId: string }).messageId;
     expect(secondChunk).toEqual({
       type: "assistant_message",
       text: "lo",
-      messageId: firstChunk?.type === "assistant_message" ? firstChunk.messageId : null,
+      messageId: firstMessageId,
     });
   });
 
