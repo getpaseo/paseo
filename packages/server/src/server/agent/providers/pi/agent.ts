@@ -1234,7 +1234,12 @@ export class PiRpcAgentSession implements AgentSession {
   }
 
   async interrupt(): Promise<void> {
+    const turnId = this.activeTurnId;
     await this.runtimeSession.abort();
+    if (turnId && this.activeTurnId === turnId) {
+      this.activeTurnId = null;
+      this.emit({ type: "turn_canceled", provider: PI_PROVIDER, reason: "interrupted", turnId });
+    }
   }
 
   async revertConversation(input: { messageId: string }): Promise<void> {
