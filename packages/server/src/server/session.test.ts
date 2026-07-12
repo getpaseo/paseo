@@ -4592,6 +4592,8 @@ test("unions viewed timelines across socket sources and removes detached sources
   session.updateClientCapabilities({ selective_agent_timeline: true });
   const firstSocket = {};
   const secondSocket = {};
+  session.updateClientCapabilities({ selective_agent_timeline: true }, firstSocket);
+  session.updateClientCapabilities({ selective_agent_timeline: true }, secondSocket);
 
   await session.handleMessage(
     {
@@ -4634,6 +4636,22 @@ test("unions viewed timelines across socket sources and removes detached sources
     },
   });
   expect(messages.filter((message) => message.type === "agent_stream")).toHaveLength(2);
+
+  const legacySocket = {};
+  session.updateClientCapabilities(null, legacySocket);
+  messages.length = 0;
+  forward({
+    type: "agent_stream",
+    agentId: "agent-not-viewed",
+    event: {
+      type: "timeline",
+      provider: "mock",
+      item: { type: "assistant_message", messageId: "message-legacy", text: "legacy" },
+    },
+  });
+  expect(messages.some((message) => message.type === "agent_stream")).toBe(true);
+
+  session.clearAgentTimelineSubscription(legacySocket);
 
   session.clearAgentTimelineSubscription(firstSocket);
   messages.length = 0;
