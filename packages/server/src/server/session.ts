@@ -583,6 +583,7 @@ export class Session {
   private readonly daemonConfigStore: DaemonConfigStore;
   private readonly pushTokenStore: PushTokenStore;
   private unsubscribeAgentEvents: (() => void) | null = null;
+  private viewedTimelineAgentIds = new Set<string>();
   private unsubscribeTerminalWorkspaceContributionEvents: (() => void) | null = null;
   private readonly agentUpdates: AgentUpdatesService;
   private workspaceUpdatesSubscription: WorkspaceUpdatesSubscriptionState | null = null;
@@ -965,6 +966,9 @@ export class Session {
 
   updateClientCapabilities(capabilities: Record<string, unknown> | null): void {
     this.clientCapabilities = parseClientCapabilities(capabilities);
+    if (this.supports(CLIENT_CAPS.selectiveAgentTimeline)) {
+      this.viewedTimelineAgentIds.clear();
+    }
   }
 
   supports(capability: ClientCapability): boolean {
@@ -977,6 +981,16 @@ export class Session {
 
   async emitWorkspaceUpdateForWorkspaceId(workspaceId: string): Promise<void> {
     await this.emitWorkspaceUpdatesForWorkspaceIds([workspaceId], { skipReconcile: true });
+  }
+
+  private async emitCreatedWorkspaceUpdate(workspace: WorkspaceDescriptorPayload): Promise<void> {
+    if (this.workspaceUpdatesSubscription) {
+      await this.emitWorkspaceUpdateForWorkspaceId(workspace.id);
+      return;
+    }
+    // COMPAT(workspaceCreateCausalUpdate): added in v0.1.106, remove after 2027-01-12.
+    // Older clients create before subscribing and require the causal update beside the response.
+    this.emit({ type: "workspace_update", payload: { kind: "upsert", workspace } });
   }
 
   async archiveWorkspaceRecordForExternalMutation(workspaceId: string): Promise<void> {
@@ -1271,10 +1285,31 @@ export class Session {
           "agent.session.forward_stream",
         );
 
-        this.emit({
-          type: "agent_stream",
-          payload: this.buildAgentStreamPayload(event, serializedEvent),
-        });
+        if (
+          this.supports(CLIENT_CAPS.selectiveAgentTimeline) &&
+          serializedEvent.type === "attention_required"
+        ) {
+          this.emit({
+            type: "agent_attention_required",
+            payload: {
+              agentId: event.agentId,
+              reason: serializedEvent.reason,
+              timestamp: serializedEvent.timestamp,
+              shouldNotify: serializedEvent.shouldNotify,
+              ...(serializedEvent.notification
+                ? { notification: serializedEvent.notification }
+                : {}),
+            },
+          });
+        } else if (
+          !this.supports(CLIENT_CAPS.selectiveAgentTimeline) ||
+          this.viewedTimelineAgentIds.has(event.agentId)
+        ) {
+          this.emit({
+            type: "agent_stream",
+            payload: this.buildAgentStreamPayload(event, serializedEvent),
+          });
+        }
 
         if (event.event.type === "permission_requested") {
           this.emit({
@@ -1524,6 +1559,17 @@ export class Session {
         return this.handleProviderSubagentListRequest(msg);
       case "agent.provider_subagents.timeline.get.request":
         return this.handleProviderSubagentTimelineRequest(msg);
+      case "agent.timeline.set_subscription.request": {
+        const agentIds = [...new Set(msg.agentIds)].sort();
+        if (this.supports(CLIENT_CAPS.selectiveAgentTimeline)) {
+          this.viewedTimelineAgentIds = new Set(agentIds);
+        }
+        this.emit({
+          type: "agent.timeline.set_subscription.response",
+          payload: { agentIds, requestId: msg.requestId },
+        });
+        return undefined;
+      }
       case "agent.fork_context.request":
         return this.handleAgentForkContextRequest(msg);
       default:
@@ -4259,6 +4305,9 @@ export class Session {
       this.workspaceGitObserver.recordDescriptorState(workspaceId, nextWorkspace);
 
       if (!nextWorkspace) {
+        if (workspace && !subscription.lastEmittedByWorkspaceId.has(workspaceId)) {
+          continue;
+        }
         subscription.lastEmittedByWorkspaceId.delete(workspaceId);
         this.bufferOrEmitWorkspaceUpdate(
           subscription,
@@ -4661,7 +4710,7 @@ export class Session {
         error: null,
       },
     });
-    await this.emitWorkspaceUpdateForWorkspaceId(workspace.workspaceId);
+    await this.emitCreatedWorkspaceUpdate(descriptor);
     void this.workspaceGitService
       .getSnapshot(workspace.cwd, { force: true, includeForge: true, reason: "open_project" })
       .catch((error) => {
@@ -4746,10 +4795,7 @@ export class Session {
         error: null,
       },
     });
-    this.emit({
-      type: "workspace_update",
-      payload: { kind: "upsert", workspace: descriptor },
-    });
+    await this.emitCreatedWorkspaceUpdate(descriptor);
   }
 
   private async resolveWorktreeSourceCwd(input: {

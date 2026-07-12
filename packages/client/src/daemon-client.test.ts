@@ -76,7 +76,7 @@ function createMockTransport() {
   return {
     transport,
     sent,
-    triggerOpen: (options?: { preserveSent?: boolean }) => {
+    triggerOpen: (options?: { preserveSent?: boolean; features?: Record<string, boolean> }) => {
       onOpen();
       if (!options?.preserveSent) {
         // Ignore HELLO handshake payloads in assertions.
@@ -92,6 +92,7 @@ function createMockTransport() {
               serverId: `srv_test_${serverInfoOrdinal++}`,
               hostname: null,
               version: null,
+              ...(options?.features ? { features: options.features } : {}),
             },
           },
         }),
@@ -217,6 +218,95 @@ test("advertises consumer-provided browser automation capabilities", async () =>
     supportedCommands: [...BROWSER_AUTOMATION_COMMAND_NAMES],
     hostKind: "desktop app",
   });
+});
+
+test("sets the complete viewed timeline subscription only when the daemon supports it", async () => {
+  const supportedTransport = createMockTransport();
+  const supportedClient = new DaemonClient({
+    url: "ws://test",
+    clientId: "timeline_supported",
+    transportFactory: () => supportedTransport.transport,
+    reconnect: { enabled: false },
+  });
+  const legacyTransport = createMockTransport();
+  const legacyClient = new DaemonClient({
+    url: "ws://test",
+    clientId: "timeline_legacy",
+    transportFactory: () => legacyTransport.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(supportedClient, legacyClient);
+
+  const supportedConnect = supportedClient.connect();
+  supportedTransport.triggerOpen({ features: { selectiveAgentTimeline: true } });
+  await supportedConnect;
+  const legacyConnect = legacyClient.connect();
+  legacyTransport.triggerOpen();
+  await legacyConnect;
+
+  expect(supportedClient.getLastServerInfoMessage()?.features).toEqual({
+    selectiveAgentTimeline: true,
+  });
+
+  const setPromise = supportedClient.setAgentTimelineSubscription(["agent-b", "agent-a"]);
+  await Promise.resolve();
+  const request = parseSentFrame(supportedTransport.sent[0]);
+  supportedTransport.triggerMessage(
+    wrapSessionMessage({
+      type: "agent.timeline.set_subscription.response",
+      payload: {
+        requestId: request.requestId,
+        agentIds: ["agent-a", "agent-b"],
+      },
+    }),
+  );
+  await setPromise;
+  await legacyClient.setAgentTimelineSubscription(["agent-a"]);
+
+  expect({ request, legacyFrames: legacyTransport.sent }).toEqual({
+    request: {
+      type: "agent.timeline.set_subscription.request",
+      requestId: expect.any(String),
+      agentIds: ["agent-a", "agent-b"],
+    },
+    legacyFrames: [],
+  });
+});
+
+test("normalizes legacy and dedicated agent attention notifications", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "attention_normalization",
+    transportFactory: () => mock.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connect = client.connect();
+  mock.triggerOpen();
+  await connect;
+  const notifications: unknown[] = [];
+  client.onAgentAttentionRequired((notification) => notifications.push(notification));
+  const payload = {
+    agentId: "agent-a",
+    reason: "finished",
+    timestamp: "2026-07-12T00:00:00.000Z",
+    shouldNotify: true,
+  } as const;
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "agent_stream",
+      payload: {
+        agentId: payload.agentId,
+        timestamp: payload.timestamp,
+        event: { type: "attention_required", provider: "codex", ...payload },
+      },
+    }),
+  );
+  mock.triggerMessage(wrapSessionMessage({ type: "agent_attention_required", payload }));
+
+  expect(notifications).toEqual([payload, payload]);
 });
 
 const noopLogger: Logger = {
@@ -557,6 +647,7 @@ test("advertises client capabilities in hello", async () => {
       custom_mode_icons: true,
       provider_subagents: true,
       reasoning_merge_enum: true,
+      selective_agent_timeline: true,
       terminal_reflowable_snapshot: true,
       browser_host: {
         supportedCommands: ["list_tabs"],

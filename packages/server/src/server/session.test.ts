@@ -4554,6 +4554,28 @@ describe("chat/schedule/loop dispatch routing (behavior preservation)", () => {
   });
 });
 
+test("replaces a capable session's complete viewed timeline set", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const session = createSessionForTest({ messages });
+  session.updateClientCapabilities({ selective_agent_timeline: true });
+
+  await session.handleMessage({
+    type: "agent.timeline.set_subscription.request",
+    agentIds: ["agent-b", "agent-a", "agent-a"],
+    requestId: "timeline-subscription-1",
+  });
+
+  expect(messages).toEqual([
+    {
+      type: "agent.timeline.set_subscription.response",
+      payload: {
+        agentIds: ["agent-a", "agent-b"],
+        requestId: "timeline-subscription-1",
+      },
+    },
+  ]);
+});
+
 describe("agent config setters", () => {
   test("set_agent_mode_request: success emits accepted response carrying the notice", async () => {
     const messages: SessionOutboundMessage[] = [];

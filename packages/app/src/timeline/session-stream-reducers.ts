@@ -1160,7 +1160,7 @@ export interface CreateSessionAgentStreamReducerQueueInput {
     state: (prev: Map<string, TimelineCursor>) => Map<string, TimelineCursor>,
   ) => void;
   setAgents: (serverId: string, state: (prev: Map<string, Agent>) => Map<string, Agent>) => void;
-  requestCanonicalCatchUp: (agentId: string, cursor: { epoch: string; endSeq: number }) => void;
+  recoverTimelineGap: (agentId: string, cursor: { epoch: string; endSeq: number }) => void;
 }
 
 function scheduleAgentStreamReducerFlush(callback: () => void): number {
@@ -1174,13 +1174,8 @@ function cancelAgentStreamReducerFlush(id: number) {
 export function createSessionAgentStreamReducerQueue(
   input: CreateSessionAgentStreamReducerQueueInput,
 ): AgentStreamReducerQueue {
-  const {
-    serverId,
-    setAgentStreamState,
-    setAgentTimelineCursor,
-    setAgents,
-    requestCanonicalCatchUp,
-  } = input;
+  const { serverId, setAgentStreamState, setAgentTimelineCursor, setAgents, recoverTimelineGap } =
+    input;
 
   return createAgentStreamReducerQueue({
     getSnapshot: (agentId) => {
@@ -1258,7 +1253,7 @@ export function createSessionAgentStreamReducerQueue(
     handleSideEffects: (agentId, sideEffects) => {
       for (const effect of sideEffects) {
         if (effect.type === "catch_up") {
-          requestCanonicalCatchUp(agentId, effect.cursor);
+          recoverTimelineGap(agentId, effect.cursor);
         }
       }
     },

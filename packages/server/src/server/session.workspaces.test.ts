@@ -7827,4 +7827,75 @@ test("workspace.create.response persists the first prompt as the initial title",
   expect(workspaceId).toBeDefined();
   const persisted = await session.workspaceRegistry.get(workspaceId as string);
   expect(persisted?.title).toBe("Add retries to the payments flow");
+  expect(filterByType(emitted, "workspace_update")).toHaveLength(1);
+});
+
+test("workspace create emits through a matching workspace subscription", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const workspaces = new Map<string, ReturnType<typeof createPersistedWorkspaceRecord>>();
+  const session = createSessionForWorkspaceTests({
+    onMessage: (message) => emitted.push(message),
+    workspaceRegistry: {
+      initialize: async () => {},
+      existsOnDisk: async () => true,
+      list: async () => Array.from(workspaces.values()),
+      get: async (workspaceId) => workspaces.get(workspaceId) ?? null,
+      upsert: async (workspace) => {
+        workspaces.set(workspace.workspaceId, workspace);
+      },
+      archive: async () => {},
+      remove: async () => {},
+    },
+  });
+  session.listAgentPayloads = async () => [];
+
+  await session.handleMessage({
+    type: "fetch_workspaces_request",
+    requestId: "req-subscribe-create-match",
+    filter: { query: "repo" },
+    subscribe: { subscriptionId: "sub-create-match" },
+  });
+  emitted.length = 0;
+  await session.handleMessage({
+    type: "workspace.create.request",
+    requestId: "req-create-match",
+    source: { kind: "directory", path: REPO_CWD },
+  });
+
+  expect(filterByType(emitted, "workspace_update")).toHaveLength(1);
+});
+
+test("workspace create stays out of a non-matching workspace subscription", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const workspaces = new Map<string, ReturnType<typeof createPersistedWorkspaceRecord>>();
+  const session = createSessionForWorkspaceTests({
+    onMessage: (message) => emitted.push(message),
+    workspaceRegistry: {
+      initialize: async () => {},
+      existsOnDisk: async () => true,
+      list: async () => Array.from(workspaces.values()),
+      get: async (workspaceId) => workspaces.get(workspaceId) ?? null,
+      upsert: async (workspace) => {
+        workspaces.set(workspace.workspaceId, workspace);
+      },
+      archive: async () => {},
+      remove: async () => {},
+    },
+  });
+  session.listAgentPayloads = async () => [];
+
+  await session.handleMessage({
+    type: "fetch_workspaces_request",
+    requestId: "req-subscribe-create-filtered",
+    filter: { query: "definitely-not-this-workspace" },
+    subscribe: { subscriptionId: "sub-create-filtered" },
+  });
+  emitted.length = 0;
+  await session.handleMessage({
+    type: "workspace.create.request",
+    requestId: "req-create-filtered",
+    source: { kind: "directory", path: REPO_CWD },
+  });
+
+  expect(filterByType(emitted, "workspace_update")).toEqual([]);
 });

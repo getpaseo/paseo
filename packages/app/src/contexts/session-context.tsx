@@ -6,7 +6,10 @@ import { useTranslation } from "react-i18next";
 import { useClientActivity } from "@/hooks/use-client-activity";
 import { usePushTokenRegistration } from "@/hooks/use-push-token-registration";
 import { clearArchiveAgentPending } from "@/hooks/use-archive-agent";
-import { refreshAgentInitializationTimeout } from "@/hooks/use-agent-initialization";
+import {
+  createSetAgentInitializing,
+  refreshAgentInitializationTimeout,
+} from "@/hooks/use-agent-initialization";
 import { prefetchProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { generateMessageId, type StreamItem } from "@/types/stream";
 import {
@@ -16,12 +19,8 @@ import {
   type TimelineReducerSideEffect,
 } from "@/timeline/session-stream-reducers";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
-import {
-  isTimelineCatchUpComplete,
-  planResumeTimelineSync,
-  planTimelineCatchUpAfter,
-  planTimelineCatchUpFollowUp,
-} from "@/timeline/timeline-sync-plan";
+import { isTimelineCatchUpComplete } from "@/timeline/timeline-sync-plan";
+import { createViewedTimelineSync, type ViewedTimelineSync } from "@/timeline/viewed-timeline-sync";
 import type { AgentAttachment, SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { parseServerInfoStatusPayload } from "@getpaseo/protocol/messages";
 import {
@@ -29,7 +28,6 @@ import {
   type AgentAttentionNotificationPayload,
   type NotificationPermissionRequest,
 } from "@getpaseo/protocol/agent-attention-notification";
-import type { AgentLifecycleStatus } from "@getpaseo/protocol/agent-lifecycle";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { AgentSessionConfig } from "@getpaseo/protocol/agent-types";
 import type { GitSetupOptions } from "@getpaseo/protocol/messages";
@@ -54,25 +52,20 @@ import { getIsAppActivelyVisible } from "@/utils/app-visibility";
 import {
   getInitKey,
   getInitDeferred,
+  createInitDeferred,
   resolveInitDeferred,
   rejectInitDeferred,
 } from "@/utils/agent-initialization";
 import { encodeImages } from "@/utils/encode-images";
 import { derivePendingPermissionKey, normalizeAgentSnapshot } from "@/utils/agent-snapshots";
-import { resolveProjectPlacement } from "@/utils/project-placement";
 import { buildDraftStoreKey } from "@/stores/draft-keys";
 import type { AttachmentMetadata } from "@/attachments/types";
-import {
-  resolveComposerAttachmentSubmitFormat,
-  splitComposerAttachmentsForSubmit,
-} from "@/composer/attachments/submit";
-import { reconcilePreviousAgentStatuses } from "@/contexts/session-status-tracking";
 import { patchWorkspaceScripts } from "@/contexts/session-workspace-scripts";
 import {
   clearWorkspaceArchivePending,
   shouldSuppressWorkspaceForLocalArchive,
 } from "@/contexts/session-workspace-upserts";
-import { isNative } from "@/constants/platform";
+import { reconcileWorkspaceDirectory } from "@/contexts/workspace-directory-reconciliation";
 import { useToast } from "@/contexts/toast-context";
 import { toErrorMessage } from "@/utils/error-messages";
 import { showProviderNoticeToast } from "@/utils/provider-notice-toast";
@@ -97,7 +90,6 @@ export type {
 } from "@/stores/session-store";
 
 const HISTORY_STALE_AFTER_MS = 60_000;
-const AUTHORITATIVE_REVALIDATION_DEBOUNCE_MS = 300;
 
 function hasAgentUsageChanged(
   incomingUsage: Agent["lastUsage"] | undefined,
@@ -127,15 +119,29 @@ interface BufferedAudioChunk {
 interface WorkspaceHydrationSnapshot {
   workspaces: Map<string, WorkspaceDescriptor>;
   emptyProjects: Map<string, EmptyProjectDescriptor>;
+  deltas: readonly WorkspaceUpdatePayload[];
 }
+
+interface WorkspaceHydrationTransaction {
+  id: symbol;
+  client: DaemonClient;
+  workspaces: Map<string, WorkspaceDescriptor>;
+  deltas: WorkspaceUpdatePayload[];
+}
+
+type WorkspaceUpdatePayload = Extract<
+  SessionOutboundMessage,
+  { type: "workspace_update" }
+>["payload"];
 
 async function fetchWorkspaceHydrationSnapshot(input: {
   client: DaemonClient;
   serverId: string;
   subscribe: boolean;
   isCancelled?: () => boolean;
+  transaction: WorkspaceHydrationTransaction;
+  isCurrent: () => boolean;
 }): Promise<WorkspaceHydrationSnapshot | null> {
-  const workspaces = new Map<string, WorkspaceDescriptor>();
   const emptyProjects = new Map<string, EmptyProjectDescriptor>();
   let cursor: string | null = null;
   let includeSubscribe = input.subscribe;
@@ -146,7 +152,7 @@ async function fetchWorkspaceHydrationSnapshot(input: {
       ...(includeSubscribe ? { subscribe: {} } : {}),
       page: cursor ? { limit: 200, cursor } : { limit: 200 },
     });
-    if (input.isCancelled?.()) {
+    if (input.isCancelled?.() || !input.isCurrent()) {
       return null;
     }
 
@@ -155,7 +161,7 @@ async function fetchWorkspaceHydrationSnapshot(input: {
       if (shouldSuppressWorkspaceForLocalArchive({ serverId: input.serverId, workspace })) {
         continue;
       }
-      workspaces.set(workspace.id, workspace);
+      input.transaction.workspaces.set(workspace.id, workspace);
     }
 
     // Project parents with no active workspaces only ride on the first page.
@@ -171,7 +177,11 @@ async function fetchWorkspaceHydrationSnapshot(input: {
     includeSubscribe = false;
   }
 
-  return { workspaces, emptyProjects };
+  return {
+    workspaces: new Map(input.transaction.workspaces),
+    emptyProjects,
+    deltas: [...input.transaction.deltas],
+  };
 }
 
 function decodeBase64Chunk(base64: string): Uint8Array {
@@ -240,53 +250,10 @@ const getLatestPermissionRequest = (
   return null;
 };
 
-type AgentUpdatePayload = Extract<SessionOutboundMessage, { type: "agent_update" }>["payload"];
 type WorkspaceSetupProgressPayload = Extract<
   SessionOutboundMessage,
   { type: "workspace_setup_progress" }
 >["payload"];
-
-const getAgentIdFromUpdate = (update: AgentUpdatePayload): string =>
-  update.kind === "remove" ? update.agentId : update.agent.id;
-
-// ---------------------------------------------------------------------------
-// Module-level pending agent updates buffer (scoped by serverId)
-// ---------------------------------------------------------------------------
-const pendingAgentUpdates = new Map<string, AgentUpdatePayload>();
-
-function pendingKey(serverId: string, agentId: string): string {
-  return `${serverId}:${agentId}`;
-}
-
-export function bufferPendingAgentUpdate(
-  serverId: string,
-  agentId: string,
-  update: AgentUpdatePayload,
-): void {
-  pendingAgentUpdates.set(pendingKey(serverId, agentId), update);
-}
-
-export function flushPendingAgentUpdate(
-  serverId: string,
-  agentId: string,
-): AgentUpdatePayload | undefined {
-  const key = pendingKey(serverId, agentId);
-  const update = pendingAgentUpdates.get(key);
-  pendingAgentUpdates.delete(key);
-  return update;
-}
-
-export function deletePendingAgentUpdate(serverId: string, agentId: string): void {
-  pendingAgentUpdates.delete(pendingKey(serverId, agentId));
-}
-
-export function clearPendingAgentUpdates(serverId: string): void {
-  for (const key of Array.from(pendingAgentUpdates.keys())) {
-    if (key.startsWith(`${serverId}:`)) {
-      pendingAgentUpdates.delete(key);
-    }
-  }
-}
 
 type SessionStoreActions = ReturnType<typeof useSessionStore.getState>;
 type SetInitializingAgents = SessionStoreActions["setInitializingAgents"];
@@ -401,20 +368,12 @@ function applyTimelineStreamPatches(input: {
 function executeTimelineSideEffects(input: {
   sideEffects: TimelineReducerSideEffect[];
   agentId: string;
-  serverId: string;
-  requestCanonicalCatchUp: (agentId: string, cursor: { epoch: string; endSeq: number }) => void;
-  applyAgentUpdatePayload: (payload: AgentUpdatePayload) => void;
+  recoverTimelineGap: (agentId: string, cursor: { epoch: string; endSeq: number }) => void;
 }): void {
-  const { sideEffects, agentId, serverId, requestCanonicalCatchUp, applyAgentUpdatePayload } =
-    input;
+  const { sideEffects, agentId, recoverTimelineGap } = input;
   for (const effect of sideEffects) {
     if (effect.type === "catch_up") {
-      requestCanonicalCatchUp(agentId, effect.cursor);
-    } else if (effect.type === "flush_pending_updates") {
-      const deferredUpdate = flushPendingAgentUpdate(serverId, agentId);
-      if (deferredUpdate) {
-        applyAgentUpdatePayload(deferredUpdate);
-      }
+      recoverTimelineGap(agentId, effect.cursor);
     }
   }
 }
@@ -553,9 +512,9 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   const flushAgentLastActivity = useSessionStore((state) => state.flushAgentLastActivity);
   const setPendingPermissions = useSessionStore((state) => state.setPendingPermissions);
   const clearDraftInput = useDraftStore((state) => state.clearDraftInput);
-  const setQueuedMessages = useSessionStore((state) => state.setQueuedMessages);
   const updateSessionClient = useSessionStore((state) => state.updateSessionClient);
   const updateSessionServerInfo = useSessionStore((state) => state.updateSessionServerInfo);
+  const setViewedTimelineSync = useSessionStore((state) => state.setViewedTimelineSync);
   const upsertWorkspaceSetupProgress = useWorkspaceSetupStore((state) => state.upsertProgress);
   const removeWorkspaceSetup = useWorkspaceSetupStore((state) => state.removeWorkspace);
   const clearWorkspaceSetupServer = useWorkspaceSetupStore((state) => state.clearServer);
@@ -567,32 +526,45 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   const focusedTerminalId = useSessionStore(
     (state) => state.sessions[serverId]?.focusedTerminalId ?? null,
   );
-  const sessionAgents = useSessionStore((state) => state.sessions[serverId]?.agents);
-
-  const previousAgentStatusRef = useRef<Map<string, AgentLifecycleStatus>>(new Map());
-  const sendAgentMessageRef = useRef<
-    | ((
-        agentId: string,
-        message: string,
-        images?: AttachmentMetadata[],
-        attachments?: AgentAttachment[],
-      ) => Promise<void>)
-    | null
-  >(null);
   const _sessionStateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const attentionNotifiedRef = useRef<Map<string, number>>(new Map());
   const appStateRef = useRef(AppState.currentState);
-  const revalidationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const revalidationInFlightRef = useRef<Promise<void> | null>(null);
-  const revalidationQueuedRef = useRef(false);
-  const timelineCatchUpInFlightRef = useRef<Set<string>>(new Set());
-  const wasConnectedRef = useRef(isConnected);
+  const viewedTimelineSyncRef = useRef<ViewedTimelineSync | null>(null);
   const audioOutputBuffersRef = useRef<Map<string, BufferedAudioChunk[]>>(new Map());
   const activeAudioGroupsRef = useRef<Set<string>>(new Set());
+  const workspaceHydrationRef = useRef<WorkspaceHydrationTransaction | null>(null);
+
+  const applyWorkspaceUpdatePayload = useCallback(
+    (payload: WorkspaceUpdatePayload) => {
+      if (payload.kind === "remove") {
+        clearWorkspaceArchivePending({ serverId, workspaceId: payload.id });
+        removeWorkspaceSetup({ serverId, workspaceId: payload.id });
+        removeWorkspace(serverId, payload.id);
+        if (payload.emptyProject) {
+          addEmptyProject(serverId, normalizeEmptyProjectDescriptor(payload.emptyProject));
+        }
+        if (payload.removedProjectId) removeEmptyProject(serverId, payload.removedProjectId);
+        return;
+      }
+      const workspace = normalizeWorkspaceDescriptor(payload.workspace);
+      if (!shouldSuppressWorkspaceForLocalArchive({ serverId, workspace })) {
+        mergeWorkspaces(serverId, [workspace]);
+      }
+    },
+    [
+      addEmptyProject,
+      mergeWorkspaces,
+      removeEmptyProject,
+      removeWorkspace,
+      removeWorkspaceSetup,
+      serverId,
+    ],
+  );
 
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (nextState) => {
       appStateRef.current = nextState;
+      viewedTimelineSyncRef.current?.setActive(getIsAppActivelyVisible(nextState));
     });
 
     return () => {
@@ -600,26 +572,35 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     };
   }, []);
 
-  useEffect(() => {
-    previousAgentStatusRef.current = reconcilePreviousAgentStatuses(
-      previousAgentStatusRef.current,
-      sessionAgents,
-    );
-  }, [sessionAgents]);
-
   const hydrateWorkspaces = useCallback(
     async (options?: { subscribe?: boolean; isCancelled?: () => boolean }) => {
       if (!client || !isConnected) {
         return;
       }
 
-      const snapshot = await fetchWorkspaceHydrationSnapshot({
+      const transaction: WorkspaceHydrationTransaction = {
+        id: Symbol("workspace hydration"),
         client,
-        serverId,
-        subscribe: options?.subscribe ?? false,
-        isCancelled: options?.isCancelled,
-      });
+        workspaces: new Map(),
+        deltas: [],
+      };
+      workspaceHydrationRef.current = transaction;
+      let snapshot: WorkspaceHydrationSnapshot | null;
+      try {
+        snapshot = await fetchWorkspaceHydrationSnapshot({
+          client,
+          serverId,
+          subscribe: options?.subscribe ?? false,
+          isCancelled: options?.isCancelled,
+          transaction,
+          isCurrent: () => workspaceHydrationRef.current?.id === transaction.id,
+        });
+      } catch (error) {
+        if (workspaceHydrationRef.current === transaction) workspaceHydrationRef.current = null;
+        throw error;
+      }
       if (!snapshot || options?.isCancelled?.()) {
+        if (workspaceHydrationRef.current === transaction) workspaceHydrationRef.current = null;
         return;
       }
 
@@ -631,14 +612,28 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         isCancelled: options?.isCancelled,
       });
       if (didBackfillLegacy) {
+        if (workspaceHydrationRef.current === transaction) workspaceHydrationRef.current = null;
         return;
       }
 
-      setWorkspaces(serverId, snapshot.workspaces);
+      setWorkspaces(
+        serverId,
+        reconcileWorkspaceDirectory({ snapshot: snapshot.workspaces, deltas: snapshot.deltas }),
+      );
       setEmptyProjects(serverId, snapshot.emptyProjects.values());
       setHasHydratedWorkspaces(serverId, true);
+      for (const delta of snapshot.deltas) applyWorkspaceUpdatePayload(delta);
+      if (workspaceHydrationRef.current === transaction) workspaceHydrationRef.current = null;
     },
-    [client, isConnected, serverId, setEmptyProjects, setHasHydratedWorkspaces, setWorkspaces],
+    [
+      applyWorkspaceUpdatePayload,
+      client,
+      isConnected,
+      serverId,
+      setEmptyProjects,
+      setHasHydratedWorkspaces,
+      setWorkspaces,
+    ],
   );
 
   const applyAuthoritativeAgentSnapshot = useCallback(
@@ -723,168 +718,25 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         }
         return next;
       });
-
-      const prevStatus = previousAgentStatusRef.current.get(agent.id);
-      if (prevStatus === "running" && agent.status !== "running") {
-        const session = useSessionStore.getState().sessions[serverId];
-        const queue = session?.queuedMessages.get(agent.id);
-        if (queue && queue.length > 0) {
-          const [next, ...rest] = queue;
-          if (sendAgentMessageRef.current) {
-            const supportsForgeSearch =
-              useSessionStore.getState().sessions[serverId]?.serverInfo?.features?.forgeSearch ===
-              true;
-            const wirePayload = splitComposerAttachmentsForSubmit(next.attachments, {
-              format: resolveComposerAttachmentSubmitFormat({
-                supportsForgeAttachments: supportsForgeSearch,
-              }),
-            });
-            void sendAgentMessageRef.current(
-              agent.id,
-              next.text,
-              wirePayload.images,
-              wirePayload.attachments,
-            );
-          }
-          setQueuedMessages(serverId, (prev) => {
-            const updated = new Map(prev);
-            updated.set(agent.id, rest);
-            return updated;
-          });
-        }
-      }
-
-      previousAgentStatusRef.current.set(agent.id, agent.status);
     },
-    [
-      queryClient,
-      serverId,
-      setAgentLastActivity,
-      setAgents,
-      setPendingPermissions,
-      setQueuedMessages,
-    ],
+    [queryClient, serverId, setAgentLastActivity, setAgents, setPendingPermissions],
   );
 
-  const runAuthoritativeRevalidation = useCallback(async () => {
-    await Promise.all([
-      getHostRuntimeStore().refreshAgentDirectory({ serverId }),
-      hydrateWorkspaces(),
-    ]);
-  }, [hydrateWorkspaces, serverId]);
-
-  const flushAuthoritativeRevalidation = useCallback(() => {
-    if (!client || !isConnected) {
-      return;
-    }
-    if (revalidationInFlightRef.current) {
-      revalidationQueuedRef.current = true;
-      return;
-    }
-
-    const run = runAuthoritativeRevalidation()
-      .catch((error) => {
-        console.error("[Session] authoritative revalidation failed", {
-          serverId,
-          error,
-        });
-      })
-      .finally(() => {
-        if (revalidationInFlightRef.current === run) {
-          revalidationInFlightRef.current = null;
-        }
-        if (!revalidationQueuedRef.current) {
-          return;
-        }
-        revalidationQueuedRef.current = false;
-        if (revalidationTimerRef.current) {
-          clearTimeout(revalidationTimerRef.current);
-        }
-        revalidationTimerRef.current = setTimeout(() => {
-          revalidationTimerRef.current = null;
-          flushAuthoritativeRevalidation();
-        }, AUTHORITATIVE_REVALIDATION_DEBOUNCE_MS);
-      });
-
-    revalidationInFlightRef.current = run;
-  }, [client, isConnected, runAuthoritativeRevalidation, serverId]);
-
-  const scheduleAuthoritativeRevalidation = useCallback(() => {
-    if (!client || !isConnected) {
-      return;
-    }
-
-    revalidationQueuedRef.current = true;
-    if (revalidationTimerRef.current) {
-      return;
-    }
-    revalidationTimerRef.current = setTimeout(() => {
-      revalidationTimerRef.current = null;
-      if (!revalidationQueuedRef.current) {
-        return;
-      }
-      revalidationQueuedRef.current = false;
-      flushAuthoritativeRevalidation();
-    }, AUTHORITATIVE_REVALIDATION_DEBOUNCE_MS);
-  }, [client, flushAuthoritativeRevalidation, isConnected]);
-
-  const requestCanonicalCatchUp = useCallback(
+  const recoverTimelineGap = useCallback(
     (agentId: string, cursor: { epoch: string; endSeq: number }) => {
-      const request = planTimelineCatchUpAfter({ epoch: cursor.epoch, seq: cursor.endSeq });
-      const key = `${agentId}:${request.cursor.epoch}:${request.cursor.seq}`;
-      const inFlight = timelineCatchUpInFlightRef.current;
-      if (inFlight.has(key)) {
-        return;
-      }
-      inFlight.add(key);
-      void client
-        .fetchAgentTimeline(agentId, request)
-        .catch((error) => {
-          console.warn("[Session] failed to fetch canonical catch-up timeline", agentId, error);
-        })
-        .finally(() => {
-          inFlight.delete(key);
-        });
+      viewedTimelineSyncRef.current?.recoverGap(agentId, cursor);
     },
-    [client],
+    [],
   );
 
   const handleAppResumed = useCallback(
     (awayMs: number) => {
-      scheduleAuthoritativeRevalidation();
-
-      if (isNative) {
-        const session = useSessionStore.getState().sessions[serverId];
-        const agentId = session?.focusedAgentId;
-        if (agentId) {
-          const plan = planResumeTimelineSync({
-            cursor: session?.agentTimelineCursor.get(agentId),
-          });
-          if (plan.direction === "after") {
-            requestCanonicalCatchUp(agentId, {
-              epoch: plan.cursor.epoch,
-              endSeq: plan.cursor.seq,
-            });
-          } else {
-            void client.fetchAgentTimeline(agentId, plan).catch((error) => {
-              console.warn("[Session] failed to fetch tail timeline on resume", agentId, error);
-            });
-          }
-        }
-      }
-
       if (awayMs < HISTORY_STALE_AFTER_MS) {
         return;
       }
       bumpHistorySyncGeneration(serverId);
     },
-    [
-      bumpHistorySyncGeneration,
-      client,
-      requestCanonicalCatchUp,
-      scheduleAuthoritativeRevalidation,
-      serverId,
-    ],
+    [bumpHistorySyncGeneration, serverId],
   );
 
   // Client activity tracking (heartbeat, push token registration)
@@ -944,11 +796,13 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
 
   // Initialize session in store
   useEffect(() => {
-    initializeSession(serverId, client);
+    const generation = getHostRuntimeStore().getSnapshot(serverId)?.clientGeneration ?? 0;
+    initializeSession(serverId, client, generation);
   }, [serverId, client, initializeSession]);
 
   useEffect(() => {
-    updateSessionClient(serverId, client);
+    const generation = getHostRuntimeStore().getSnapshot(serverId)?.clientGeneration ?? 0;
+    updateSessionClient(serverId, client, generation);
   }, [serverId, client, updateSessionClient]);
 
   useEffect(() => {
@@ -1024,7 +878,6 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   useEffect(() => {
     if (!isConnected) {
       flushAgentLastActivity();
-      clearPendingAgentUpdates(serverId);
       setInitializingAgents(serverId, new Map());
     }
   }, [flushAgentLastActivity, serverId, isConnected, setInitializingAgents]);
@@ -1050,85 +903,6 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       cancelled = true;
     };
   }, [client, hydrateWorkspaces, isConnected]);
-
-  const applyAgentUpdatePayload = useCallback(
-    (update: AgentUpdatePayload) => {
-      if (update.kind === "remove") {
-        const agentId = update.agentId;
-        previousAgentStatusRef.current.delete(agentId);
-        deletePendingAgentUpdate(serverId, agentId);
-        clearArchiveAgentPending({ queryClient, serverId, agentId });
-
-        setAgents(serverId, (prev) => {
-          if (!prev.has(agentId)) {
-            return prev;
-          }
-          const next = new Map(prev);
-          next.delete(agentId);
-          return next;
-        });
-
-        setPendingPermissions(serverId, (prev) => {
-          if (prev.size === 0) {
-            return prev;
-          }
-          let changed = false;
-          const next = new Map(prev);
-          for (const [key, pending] of Array.from(next.entries())) {
-            if (pending.agentId === agentId) {
-              next.delete(key);
-              changed = true;
-            }
-          }
-          return changed ? next : prev;
-        });
-
-        setQueuedMessages(serverId, (prev) => {
-          if (!prev.has(agentId)) {
-            return prev;
-          }
-          const next = new Map(prev);
-          next.delete(agentId);
-          return next;
-        });
-
-        setAgentTimelineCursor(serverId, (prev) => {
-          if (!prev.has(agentId)) {
-            return prev;
-          }
-          const next = new Map(prev);
-          next.delete(agentId);
-          return next;
-        });
-        setAgentAuthoritativeHistoryApplied(serverId, agentId, false);
-        return;
-      }
-
-      const normalized = normalizeAgentSnapshot(update.agent, serverId);
-      const agent = applyLegacyDaemonWorkspaceOwnership({
-        serverId,
-        agent: {
-          ...normalized,
-          projectPlacement: resolveProjectPlacement({
-            projectPlacement: update.project,
-            cwd: normalized.cwd,
-          }),
-        },
-      });
-
-      applyAuthoritativeAgentSnapshot(agent);
-    },
-    [
-      applyAuthoritativeAgentSnapshot,
-      queryClient,
-      serverId,
-      setAgentAuthoritativeHistoryApplied,
-      setAgents,
-      setAgentTimelineCursor,
-      setPendingPermissions,
-      setQueuedMessages,
-    ],
-  );
 
   const applyWorkspaceSetupProgress = useCallback(
     (payload: WorkspaceSetupProgressPayload) => {
@@ -1222,33 +996,8 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       executeTimelineSideEffects({
         sideEffects: result.sideEffects,
         agentId,
-        serverId,
-        requestCanonicalCatchUp,
-        applyAgentUpdatePayload,
+        recoverTimelineGap,
       });
-
-      const followUp = planTimelineCatchUpFollowUp({
-        direction: payload.direction,
-        hasNewer: payload.hasNewer,
-        endCursor: payload.endCursor,
-        error: payload.error,
-      });
-      if (followUp?.direction === "after") {
-        refreshAgentInitializationTimeout({
-          key: initKey,
-          agentId,
-          setAgentInitializing: (id, initializing) => {
-            if (initializing) {
-              return;
-            }
-            clearAgentInitializingFlag(setInitializingAgents, serverId, id);
-          },
-        });
-        requestCanonicalCatchUp(agentId, {
-          epoch: followUp.cursor.epoch,
-          endSeq: followUp.cursor.seq,
-        });
-      }
 
       finalizeTimelineApplication({
         result,
@@ -1263,10 +1012,9 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     },
     [
       applyAuthoritativeAgentSnapshot,
-      applyAgentUpdatePayload,
       clearAgentStreamHead,
       markAgentHistorySynchronized,
-      requestCanonicalCatchUp,
+      recoverTimelineGap,
       serverId,
       setAgentAuthoritativeHistoryApplied,
       setAgentStreamHead,
@@ -1278,54 +1026,67 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   );
 
   useEffect(() => {
-    if (isConnected) {
-      return;
-    }
-    clearPendingAgentUpdates(serverId);
-  }, [isConnected, serverId]);
+    const setAgentInitializing = createSetAgentInitializing(serverId, setInitializingAgents);
+    const sync = createViewedTimelineSync({
+      setSubscription: (agentIds) => client.setAgentTimelineSubscription(agentIds),
+      readCursor: (agentId) =>
+        useSessionStore.getState().sessions[serverId]?.agentTimelineCursor.get(agentId),
+      fetchPage: async (agentId, request) => {
+        const session = useSessionStore.getState().sessions[serverId];
+        const initKey = getInitKey(serverId, agentId);
+        if (
+          session?.agentAuthoritativeHistoryApplied.get(agentId) !== true &&
+          !getInitDeferred(initKey)
+        ) {
+          createInitDeferred(initKey, request.direction ?? "tail");
+          refreshAgentInitializationTimeout({
+            key: initKey,
+            agentId,
+            setAgentInitializing,
+          });
+          setAgentInitializing(agentId, true);
+        }
+        try {
+          return await client.fetchAgentTimeline(agentId, request);
+        } catch (error) {
+          setAgentInitializing(agentId, false);
+          rejectInitDeferred(initKey, error instanceof Error ? error : new Error(String(error)));
+          throw error;
+        }
+      },
+      reportError: (error) => {
+        console.warn("[Session] viewed timeline synchronization failed", { serverId, error });
+      },
+      scheduleRetry: (retry) => {
+        const timeout = setTimeout(retry, 1_000);
+        return () => clearTimeout(timeout);
+      },
+    });
+    viewedTimelineSyncRef.current = sync;
+    setViewedTimelineSync(serverId, sync);
+    sync.setActive(getIsAppActivelyVisible(appStateRef.current));
 
-  useEffect(() => {
-    const wasConnected = wasConnectedRef.current;
-    wasConnectedRef.current = isConnected;
-    if (!wasConnected && isConnected) {
-      scheduleAuthoritativeRevalidation();
-    }
-  }, [isConnected, scheduleAuthoritativeRevalidation]);
-
-  useEffect(() => {
     return () => {
-      if (revalidationTimerRef.current) {
-        clearTimeout(revalidationTimerRef.current);
+      if (viewedTimelineSyncRef.current === sync) {
+        viewedTimelineSyncRef.current = null;
       }
+      setViewedTimelineSync(serverId, null);
+      sync.dispose();
     };
-  }, []);
+  }, [client, serverId, setInitializingAgents, setViewedTimelineSync]);
+
+  useEffect(() => {
+    viewedTimelineSyncRef.current?.setConnected(isConnected);
+  }, [isConnected]);
 
   // Daemon message handlers - directly update Zustand store
   useEffect(() => {
-    const unsubAgentUpdate = client.on("agent_update", (message) => {
-      if (message.type !== "agent_update") return;
-      const update = message.payload;
-      const agentId = getAgentIdFromUpdate(update);
-      const initKey = getInitKey(serverId, agentId);
-      const session = useSessionStore.getState().sessions[serverId];
-      const isSyncingHistory =
-        session?.initializingAgents.get(agentId) === true && Boolean(getInitDeferred(initKey));
-
-      if (isSyncingHistory) {
-        bufferPendingAgentUpdate(serverId, agentId, update);
-        return;
-      }
-
-      deletePendingAgentUpdate(serverId, agentId);
-      applyAgentUpdatePayload(update);
-    });
-
     const agentStreamReducerQueue = createSessionAgentStreamReducerQueue({
       serverId,
       setAgentStreamState,
       setAgentTimelineCursor,
       setAgents,
-      requestCanonicalCatchUp,
+      recoverTimelineGap,
     });
 
     const unsubAgentStream = client.on("agent_stream", (message) => {
@@ -1342,18 +1103,6 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         voiceRuntime?.onTurnEvent(serverId, agentId, event.type);
       }
 
-      // Attention notification stays in React (not extractable to pure reducer)
-      if (event.type === "attention_required") {
-        if (event.shouldNotify) {
-          notifyAgentAttention({
-            agentId,
-            reason: event.reason,
-            timestamp: event.timestamp,
-            notification: event.notification,
-          });
-        }
-      }
-
       agentStreamReducerQueue.enqueue(agentId, {
         event: streamEvent,
         seq,
@@ -1364,6 +1113,12 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       // NOTE: We don't update lastActivityAt on every stream event to prevent
       // cascading rerenders. The agent_update handler updates agent.lastActivityAt
       // on status changes, which is sufficient for sorting and display purposes.
+    });
+
+    const unsubAgentAttention = client.onAgentAttentionRequired((notification) => {
+      if (notification.shouldNotify) {
+        notifyAgentAttention(notification);
+      }
     });
 
     const unsubAgentTimeline = client.on("fetch_agent_timeline_response", (message) => {
@@ -1379,26 +1134,12 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
 
     const unsubWorkspaceUpdate = client.on("workspace_update", (message) => {
       if (message.type !== "workspace_update") return;
-      if (message.payload.kind === "remove") {
-        clearWorkspaceArchivePending({
-          serverId,
-          workspaceId: message.payload.id,
-        });
-        removeWorkspaceSetup({ serverId, workspaceId: message.payload.id });
-        removeWorkspace(serverId, message.payload.id);
-        if (message.payload.emptyProject) {
-          addEmptyProject(serverId, normalizeEmptyProjectDescriptor(message.payload.emptyProject));
-        }
-        if (message.payload.removedProjectId) {
-          removeEmptyProject(serverId, message.payload.removedProjectId);
-        }
+      const hydration = workspaceHydrationRef.current;
+      if (hydration) {
+        hydration.deltas.push(message.payload);
         return;
       }
-      const workspace = normalizeWorkspaceDescriptor(message.payload.workspace);
-      if (shouldSuppressWorkspaceForLocalArchive({ serverId, workspace })) {
-        return;
-      }
-      mergeWorkspaces(serverId, [workspace]);
+      applyWorkspaceUpdatePayload(message.payload);
     });
 
     const unsubScriptStatusUpdate = client.on("script_status_update", (message) => {
@@ -1667,7 +1408,6 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         return;
       }
       const { agentId } = message.payload;
-      deletePendingAgentUpdate(serverId, agentId);
       clearArchiveAgentPending({ queryClient, serverId, agentId });
 
       setAgents(serverId, (prev) => {
@@ -1780,10 +1520,10 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     });
 
     return () => {
-      unsubAgentUpdate();
       unsubAgentStream();
       unsubAgentTimeline();
       unsubProviderSubagentUpdate();
+      unsubAgentAttention();
       unsubWorkspaceUpdate();
       unsubScriptStatusUpdate();
       unsubCheckoutStatusUpdate();
@@ -1827,8 +1567,8 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     setHasHydratedAgents,
     clearDraftInput,
     notifyAgentAttention,
-    requestCanonicalCatchUp,
-    applyAgentUpdatePayload,
+    recoverTimelineGap,
+    applyWorkspaceUpdatePayload,
     applyWorkspaceSetupProgress,
     applyTimelineResponse,
     updateSessionServerInfo,
@@ -1836,67 +1576,6 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     voiceRuntime,
     voiceAudioEngine,
   ]);
-
-  const sendAgentMessage = useCallback(
-    async (
-      agentId: string,
-      message: string,
-      images?: AttachmentMetadata[],
-      attachments?: AgentAttachment[],
-    ) => {
-      const messageId = generateMessageId();
-      const userMessage: StreamItem = {
-        kind: "user_message",
-        id: messageId,
-        text: message,
-        timestamp: new Date(),
-        optimistic: true,
-        ...(images && images.length > 0 ? { images } : {}),
-        ...(attachments && attachments.length > 0 ? { attachments } : {}),
-      };
-
-      // Append to head if streaming (keeps the user message with the current
-      // turn so late text_deltas still find the existing assistant_message).
-      // Otherwise append to tail.
-      const currentHead = useSessionStore
-        .getState()
-        .sessions[serverId]?.agentStreamHead?.get(agentId);
-      if (currentHead && currentHead.length > 0) {
-        setAgentStreamHead(serverId, (prev) => {
-          const head = prev.get(agentId) || [];
-          const updated = new Map(prev);
-          updated.set(agentId, [...head, userMessage]);
-          return updated;
-        });
-      } else {
-        setAgentStreamTail(serverId, (prev) => {
-          const currentStream = prev.get(agentId) || [];
-          const updated = new Map(prev);
-          updated.set(agentId, [...currentStream, userMessage]);
-          return updated;
-        });
-      }
-
-      const imagesData = await encodeImages(images);
-      if (!client) {
-        console.warn("[Session] sendAgentMessage skipped: daemon unavailable");
-        return;
-      }
-      void client
-        .sendAgentMessage(agentId, message, {
-          messageId,
-          ...(imagesData && imagesData.length > 0 ? { images: imagesData } : {}),
-          ...(attachments && attachments.length > 0 ? { attachments } : {}),
-        })
-        .catch((error) => {
-          console.error("[Session] Failed to send agent message:", error);
-        });
-    },
-    [serverId, client, setAgentStreamTail, setAgentStreamHead],
-  );
-
-  // Keep the ref updated so the agent_update handler can call it
-  sendAgentMessageRef.current = sendAgentMessage;
 
   const _cancelAgentRun = useCallback(
     (agentId: string) => {
