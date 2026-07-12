@@ -2466,7 +2466,11 @@ describe("OpenCode provider subagent contract", () => {
     expect(events).toContainEqual(
       expect.objectContaining({
         type: "timeline",
-        item: { type: "assistant_message", text: "child says hi" },
+        item: {
+          type: "assistant_message",
+          text: "child says hi",
+          messageId: "msg_assistant",
+        },
       }),
     );
   });
@@ -2809,7 +2813,11 @@ describe("OpenCode provider subagent contract", () => {
       event: {
         type: "timeline",
         id: "ses_child_background",
-        item: { type: "assistant_message", text: "Background findings." },
+        item: {
+          type: "assistant_message",
+          text: "Background findings.",
+          messageId: "msg_child_background",
+        },
       },
     });
     expect(events.at(-1)).toEqual({
@@ -2998,6 +3006,7 @@ describe("OpenCode provider subagent contract", () => {
           item: {
             type: "assistant_message",
             text: "Persisted child result.",
+            messageId: "msg_child_history",
           },
           timestamp: "1970-01-01T00:00:02.000Z",
         },
@@ -3075,6 +3084,7 @@ describe("OpenCode provider subagent contract", () => {
             item: {
               type: "assistant_message",
               text: "Hydration did not lose this.",
+              messageId: "msg_child_hydrating",
             },
           }),
         }),
