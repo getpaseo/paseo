@@ -1,5 +1,5 @@
 import { test, expect, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, writeFileSync, rmSync, existsSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { tmpdir, homedir } from "node:os";
 import path from "node:path";
@@ -831,6 +831,7 @@ test("update_agent persists unloaded title and labels across auto-unarchive", as
 
 test("returns home-scoped directory suggestions", async () => {
   const insideHomeDir = mkdtempSync(path.join(homedir(), "paseo-dir-suggestion-"));
+  const rootBrowseDir = mkdtempSync(path.join(homedir(), "000-paseo-root-browse-"));
   const outsideHomeDir = mkdtempSync(path.join(tmpdir(), "paseo-dir-suggestion-outside-"));
 
   try {
@@ -842,6 +843,17 @@ test("returns home-scoped directory suggestions", async () => {
     expect(insideResult.error).toBeNull();
     expect(insideResult.directories).toContain(insideHomeDir);
 
+    const rootBrowseResult = await ctx.client.getDirectorySuggestions({
+      query: "~",
+      limit: 100,
+    });
+    expect(rootBrowseResult.error).toBeNull();
+    expect(rootBrowseResult.directories).toContain(rootBrowseDir);
+
+    const blankResult = await ctx.client.getDirectorySuggestions({ query: "", limit: 100 });
+    expect(blankResult.error).toBeNull();
+    expect(blankResult.entries).toEqual([]);
+
     const outsideQuery = path.basename(outsideHomeDir);
     const outsideResult = await ctx.client.getDirectorySuggestions({
       query: outsideQuery,
@@ -851,7 +863,32 @@ test("returns home-scoped directory suggestions", async () => {
     expect(outsideResult.directories).not.toContain(outsideHomeDir);
   } finally {
     rmSync(insideHomeDir, { recursive: true, force: true });
+    rmSync(rootBrowseDir, { recursive: true, force: true });
     rmSync(outsideHomeDir, { recursive: true, force: true });
+  }
+}, 30000);
+
+test("returns typed relative suggestions within a requested directory", async () => {
+  const cwd = mkdtempSync(path.join(tmpdir(), "paseo-workspace-suggestion-"));
+  const target = path.join(cwd, "src", "components", "message-renderer.tsx");
+
+  try {
+    mkdirSync(path.dirname(target), { recursive: true });
+    writeFileSync(target, "");
+
+    const result = await ctx.client.getDirectorySuggestions({
+      cwd,
+      query: "msgrndr",
+      includeFiles: true,
+      includeDirectories: false,
+      limit: 20,
+    });
+
+    expect(result.error).toBeNull();
+    expect(result.directories).toEqual([]);
+    expect(result.entries).toEqual([{ path: "src/components/message-renderer.tsx", kind: "file" }]);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
   }
 }, 30000);
 

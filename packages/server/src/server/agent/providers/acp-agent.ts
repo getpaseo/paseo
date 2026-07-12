@@ -229,13 +229,25 @@ export const DEFAULT_ACP_CAPABILITIES: AgentCapabilityFlags = {
   supportsRewindBoth: false,
 };
 
-const ACP_CLIENT_CAPABILITIES: ACPClientCapabilities = {
+const BASE_ACP_CLIENT_CAPABILITIES: ACPClientCapabilities = {
   fs: {
     readTextFile: true,
     writeTextFile: true,
   },
   terminal: true,
 };
+
+export type ACPClientCapabilityMeta = Record<string, unknown>;
+
+export function buildACPClientCapabilities(meta?: ACPClientCapabilityMeta): ACPClientCapabilities {
+  if (!meta || Object.keys(meta).length === 0) {
+    return BASE_ACP_CLIENT_CAPABILITIES;
+  }
+  return {
+    ...BASE_ACP_CLIENT_CAPABILITIES,
+    _meta: meta,
+  };
+}
 
 // Suppress interactive auth side-effects (e.g. Gemini CLI opening a Google
 // sign-in URL in the browser) when probing an ACP agent for models/modes.
@@ -359,6 +371,7 @@ interface ACPAgentClientOptions {
   sessionResponseTransformer?: (response: SessionStateResponse) => SessionStateResponse;
   configOptionsTransformer?: (configOptions: SessionConfigOption[]) => SessionConfigOption[];
   configFeatureOptions?: ACPConfigFeatureOption[];
+  clientCapabilityMeta?: ACPClientCapabilityMeta;
   modeIdTransformer?: (modeId: string) => string | null;
   toolSnapshotTransformer?: (snapshot: ACPToolSnapshot) => ACPToolSnapshot;
   providerModeWriter?: (
@@ -387,6 +400,7 @@ interface ACPAgentSessionOptions {
   sessionResponseTransformer?: (response: SessionStateResponse) => SessionStateResponse;
   configOptionsTransformer?: (configOptions: SessionConfigOption[]) => SessionConfigOption[];
   configFeatureOptions?: ACPConfigFeatureOption[];
+  clientCapabilityMeta?: ACPClientCapabilityMeta;
   modeIdTransformer?: (modeId: string) => string | null;
   toolSnapshotTransformer?: (snapshot: ACPToolSnapshot) => ACPToolSnapshot;
   providerModeWriter?: (
@@ -486,7 +500,7 @@ interface ConfigOptionSelector {
 export interface ACPConfigFeatureOption {
   id: string;
   configId: string;
-  category: string;
+  category?: string;
   label: string;
   description?: string;
   tooltip?: string;
@@ -694,6 +708,7 @@ export class ACPAgentClient implements AgentClient {
     configOptions: SessionConfigOption[],
   ) => SessionConfigOption[];
   private readonly configFeatureOptions: ACPConfigFeatureOption[];
+  private readonly clientCapabilityMeta?: ACPClientCapabilityMeta;
   private readonly modeIdTransformer?: (modeId: string) => string | null;
   private readonly toolSnapshotTransformer?: (snapshot: ACPToolSnapshot) => ACPToolSnapshot;
   private readonly providerModeWriter?: (
@@ -727,6 +742,7 @@ export class ACPAgentClient implements AgentClient {
     this.sessionResponseTransformer = options.sessionResponseTransformer;
     this.configOptionsTransformer = options.configOptionsTransformer;
     this.configFeatureOptions = options.configFeatureOptions ?? [];
+    this.clientCapabilityMeta = options.clientCapabilityMeta;
     this.modeIdTransformer = options.modeIdTransformer;
     this.toolSnapshotTransformer = options.toolSnapshotTransformer;
     this.providerModeWriter = options.providerModeWriter;
@@ -754,6 +770,7 @@ export class ACPAgentClient implements AgentClient {
         sessionResponseTransformer: this.sessionResponseTransformer,
         configOptionsTransformer: this.configOptionsTransformer,
         configFeatureOptions: this.configFeatureOptions,
+        clientCapabilityMeta: this.clientCapabilityMeta,
         modeIdTransformer: this.modeIdTransformer,
         toolSnapshotTransformer: this.toolSnapshotTransformer,
         providerModeWriter: this.providerModeWriter,
@@ -802,6 +819,7 @@ export class ACPAgentClient implements AgentClient {
       sessionResponseTransformer: this.sessionResponseTransformer,
       configOptionsTransformer: this.configOptionsTransformer,
       configFeatureOptions: this.configFeatureOptions,
+      clientCapabilityMeta: this.clientCapabilityMeta,
       modeIdTransformer: this.modeIdTransformer,
       toolSnapshotTransformer: this.toolSnapshotTransformer,
       providerModeWriter: this.providerModeWriter,
@@ -1039,7 +1057,7 @@ export class ACPAgentClient implements AgentClient {
         Promise.race([
           transport.connection.initialize({
             protocolVersion: PROTOCOL_VERSION,
-            clientCapabilities: ACP_CLIENT_CAPABILITIES,
+            clientCapabilities: buildACPClientCapabilities(this.clientCapabilityMeta),
             clientInfo: { name: "Paseo", version: "dev" },
           }),
           transport.spawnError,
@@ -1251,6 +1269,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     configOptions: SessionConfigOption[],
   ) => SessionConfigOption[];
   private readonly configFeatureOptions: ACPConfigFeatureOption[];
+  private readonly clientCapabilityMeta?: ACPClientCapabilityMeta;
   private readonly modeIdTransformer?: (modeId: string) => string | null;
   private readonly toolSnapshotTransformer?: (snapshot: ACPToolSnapshot) => ACPToolSnapshot;
   private readonly providerModeWriter?: (
@@ -1315,6 +1334,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.sessionResponseTransformer = options.sessionResponseTransformer;
     this.configOptionsTransformer = options.configOptionsTransformer;
     this.configFeatureOptions = options.configFeatureOptions ?? [];
+    this.clientCapabilityMeta = options.clientCapabilityMeta;
     this.modeIdTransformer = options.modeIdTransformer;
     this.toolSnapshotTransformer = options.toolSnapshotTransformer;
     this.providerModeWriter = options.providerModeWriter;
@@ -1890,16 +1910,19 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }: {
     response: { configOptions: SessionConfigOption[] };
     configId: string;
-    category: string;
+    category?: string;
     requestedValue: string;
     label: string;
   }): string {
     this.configOptions = this.transformConfigOptions(response.configOptions);
-    const responseOption = findSelectConfigOption({
-      configOptions: this.configOptions,
-      category,
-      id: configId,
-    });
+    const responseOption =
+      category === undefined
+        ? findSelectConfigOptionById({ configOptions: this.configOptions, id: configId })
+        : findSelectConfigOption({
+            configOptions: this.configOptions,
+            category,
+            id: configId,
+          });
     if (responseOption?.currentValue != null) {
       return responseOption.currentValue;
     }
@@ -2297,7 +2320,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     const initialize = await this.runACPRequest(() =>
       connection.initialize({
         protocolVersion: PROTOCOL_VERSION,
-        clientCapabilities: ACP_CLIENT_CAPABILITIES,
+        clientCapabilities: buildACPClientCapabilities(this.clientCapabilityMeta),
         clientInfo: { name: "Paseo", version: "dev" },
       }),
     );
@@ -2743,6 +2766,19 @@ function findSelectConfigOption({
   return option ?? null;
 }
 
+function findSelectConfigOptionById({
+  configOptions,
+  id,
+}: {
+  configOptions: SessionConfigOption[] | null | undefined;
+  id: string;
+}): SelectConfigOption | null {
+  const option = configOptions?.find(
+    (entry): entry is SelectConfigOption => entry.type === "select" && entry.id === id,
+  );
+  return option ?? null;
+}
+
 function findSelectConfigFeatureOption(
   configOptions: SessionConfigOption[] | null | undefined,
   featureOption: ACPConfigFeatureOption,
@@ -2751,7 +2787,7 @@ function findSelectConfigFeatureOption(
     (entry): entry is SelectConfigOption =>
       entry.type === "select" &&
       entry.id === featureOption.configId &&
-      entry.category === featureOption.category,
+      (featureOption.category === undefined || entry.category === featureOption.category),
   );
   return option ?? null;
 }

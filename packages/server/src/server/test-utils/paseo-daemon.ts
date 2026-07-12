@@ -23,6 +23,8 @@ interface TestPaseoDaemonOptions {
   isDev?: boolean;
   relayEnabled?: boolean;
   relayEndpoint?: string;
+  relayUseTls?: boolean;
+  relayPublicUseTls?: boolean;
   agentClients?: Partial<Record<AgentProvider, AgentClient>>;
   providerOverrides?: PaseoDaemonConfig["providerOverrides"];
   paseoHomeRoot?: string;
@@ -166,6 +168,8 @@ async function prepareTestDaemonConfig(
     agentStoragePath: path.join(paseoHome, "agents"),
     relayEnabled: options.relayEnabled ?? false,
     relayEndpoint: options.relayEndpoint ?? "relay.paseo.sh:443",
+    relayUseTls: options.relayUseTls,
+    relayPublicUseTls: options.relayPublicUseTls,
     appBaseUrl: "https://app.paseo.sh",
     auth: options.auth,
     pushNotificationSender: options.pushNotificationSender,

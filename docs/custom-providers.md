@@ -171,7 +171,7 @@ For pay-as-you-go, use `ANTHROPIC_API_KEY` with a standard Model Studio key (`sk
 | `qwen3-coder-next` | Optimized for coding        |
 | `kimi-k2.5`        | Vision capable              |
 | `glm-5`            | Zhipu GLM                   |
-| `MiniMax-M2.5`     | MiniMax                     |
+| `MiniMax-M3`       | MiniMax                     |
 
 **Additional models (pay-as-you-go):**
 `qwen3-max`, `qwen3.5-flash`, `qwen3-coder-plus`, `qwen3-coder-flash`, `qwen3-vl-plus`, `qwen3-vl-flash`

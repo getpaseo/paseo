@@ -1,10 +1,22 @@
 import { describe, expect, test, vi } from "vitest";
 
 import type { SpawnedACPProcess, SessionStateResponse } from "./acp-agent.js";
-import { CursorACPAgentClient } from "./cursor-acp-agent.js";
+import { CURSOR_FAST_FEATURE_OPTION, CursorACPAgentClient } from "./cursor-acp-agent.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 
 describe("CursorACPAgentClient model discovery", () => {
+  function fastConfigOption(currentValue: "false" | "true") {
+    return {
+      id: "fast",
+      name: "Fast",
+      type: "select" as const,
+      currentValue,
+      options: [
+        { value: "false", name: "Off" },
+        { value: "true", name: "Fast" },
+      ],
+    };
+  }
   class TestCursorACPAgentClient extends CursorACPAgentClient {
     constructor(response: SessionStateResponse) {
       super({
@@ -76,5 +88,80 @@ describe("CursorACPAgentClient model discovery", () => {
       models: [],
       modes: [],
     });
+  });
+
+  test("keeps modern Cursor models as plain ACP ids", async () => {
+    const client = new TestCursorACPAgentClient({
+      sessionId: "session-1",
+      models: {
+        currentModelId: "composer-2.5",
+        availableModels: [
+          {
+            modelId: "composer-2.5",
+            name: "Composer 2.5",
+            description: null,
+          },
+        ],
+      },
+      configOptions: [fastConfigOption("false")],
+    });
+
+    await expect(
+      client.fetchCatalog({ scope: "workspace", cwd: "/tmp/cursor", force: false }),
+    ).resolves.toEqual({
+      models: [
+        {
+          provider: "acp",
+          id: "composer-2.5",
+          label: "Composer 2.5",
+          description: undefined,
+          isDefault: true,
+          thinkingOptions: undefined,
+          defaultThinkingOptionId: undefined,
+        },
+      ],
+      modes: [],
+    });
+  });
+
+  test("exposes Cursor fast mode through provider features", async () => {
+    const client = new TestCursorACPAgentClient({
+      sessionId: "session-1",
+      models: null,
+      configOptions: [fastConfigOption("false")],
+    });
+
+    await expect(
+      client.listFeatures({
+        provider: "acp",
+        cwd: "/tmp/cursor",
+      }),
+    ).resolves.toEqual([
+      {
+        type: "select",
+        id: CURSOR_FAST_FEATURE_OPTION.id,
+        label: "Fast",
+        description: "Cursor fast mode",
+        tooltip: "Select Cursor fast mode",
+        icon: "zap",
+        value: "false",
+        options: [
+          {
+            id: "false",
+            label: "Off",
+            isDefault: true,
+            description: undefined,
+            metadata: undefined,
+          },
+          {
+            id: "true",
+            label: "Fast",
+            isDefault: false,
+            description: undefined,
+            metadata: undefined,
+          },
+        ],
+      },
+    ]);
   });
 });

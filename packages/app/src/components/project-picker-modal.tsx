@@ -21,6 +21,7 @@ import { useProjectPickerStore } from "@/stores/project-picker-store";
 import { useRecommendedProjectPaths } from "@/stores/session-store-hooks";
 import { shortenPath } from "@/utils/shorten-path";
 import { isNative } from "@/constants/platform";
+import { ProjectPickerBrowseButton } from "./project-picker-browse-button";
 import { buildProjectPickerOptions, type ProjectPickerOption } from "./project-picker-options";
 
 interface PathRowProps {
@@ -155,31 +156,36 @@ export function ProjectPickerModal() {
   const directorySuggestionsQuery = useQuery({
     queryKey: ["project-picker-directory-suggestions", serverId, debouncedQuery],
     queryFn: async () => {
-      if (!client) return [];
+      if (!client) {
+        return { query: debouncedQuery, paths: [] };
+      }
       const result = await client.getDirectorySuggestions({
         query: debouncedQuery,
         includeDirectories: true,
         includeFiles: false,
         limit: 30,
       });
-      return (
-        result.entries?.flatMap((entry) => (entry.kind === "directory" ? [entry.path] : [])) ?? []
-      );
+      return {
+        query: debouncedQuery,
+        paths:
+          result.entries?.flatMap((entry) => (entry.kind === "directory" ? [entry.path] : [])) ??
+          [],
+      };
     },
     enabled: Boolean(client) && isConnected && open,
     staleTime: 15_000,
     retry: false,
   });
 
-  const options = useMemo(
-    () =>
-      buildProjectPickerOptions({
-        recommendedPaths,
-        serverPaths: directorySuggestionsQuery.data ?? [],
-        query,
-      }),
-    [directorySuggestionsQuery.data, query, recommendedPaths],
-  );
+  const options = useMemo(() => {
+    const currentSuggestions =
+      directorySuggestionsQuery.data?.query === query ? directorySuggestionsQuery.data : null;
+    return buildProjectPickerOptions({
+      recommendedPaths,
+      serverPaths: currentSuggestions?.paths ?? [],
+      query,
+    });
+  }, [directorySuggestionsQuery.data, query, recommendedPaths]);
   const hasQuery = query.trim().length > 0;
   const isSearching =
     hasQuery &&
@@ -213,6 +219,8 @@ export function ProjectPickerModal() {
         }
 
         setOpenErrorReason(getOpenProjectFailureReason(result));
+      } catch {
+        setOpenErrorReason("open_failed");
       } finally {
         setIsSubmitting(false);
       }
@@ -230,6 +238,10 @@ export function ProjectPickerModal() {
     setQuery(text);
     setActiveIndex(0);
     setOpenErrorReason(null);
+  }, []);
+
+  const handleBrowseError = useCallback(() => {
+    setOpenErrorReason("open_failed");
   }, []);
 
   useEffect(() => {
@@ -262,17 +274,11 @@ export function ProjectPickerModal() {
 
     function handler(event: KeyboardEvent) {
       const key = event.key;
-      if (key !== "ArrowDown" && key !== "ArrowUp" && key !== "Enter" && key !== "Escape") return;
+      if (key !== "ArrowDown" && key !== "ArrowUp" && key !== "Escape") return;
 
       if (key === "Escape") {
         event.preventDefault();
         close();
-        return;
-      }
-
-      if (key === "Enter") {
-        event.preventDefault();
-        submitActiveOption();
         return;
       }
 
@@ -291,7 +297,7 @@ export function ProjectPickerModal() {
 
     window.addEventListener("keydown", handler, true);
     return () => window.removeEventListener("keydown", handler, true);
-  }, [close, open, options.length, submitActiveOption]);
+  }, [close, open, options.length]);
 
   const panelStyle = useMemo(
     () => [
@@ -330,6 +336,7 @@ export function ProjectPickerModal() {
         <View style={panelStyle}>
           <View style={headerStyle}>
             <TextInput
+              testID="project-picker-input"
               ref={inputRef}
               value={query}
               onChangeText={handleChangeQuery}
@@ -342,6 +349,12 @@ export function ProjectPickerModal() {
               editable={!isSubmitting}
               returnKeyType="go"
               onSubmitEditing={submitActiveOption}
+            />
+            <ProjectPickerBrowseButton
+              serverId={serverId}
+              disabled={isSubmitting}
+              onSelect={handleSelectPath}
+              onError={handleBrowseError}
             />
           </View>
 
@@ -383,11 +396,15 @@ const styles = StyleSheet.create((theme) => ({
     ...theme.shadow.lg,
   },
   header: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[3],
     paddingHorizontal: theme.spacing[4],
     paddingVertical: theme.spacing[3],
     borderBottomWidth: 1,
   },
   input: {
+    flex: 1,
     fontSize: theme.fontSize.lg,
     paddingVertical: theme.spacing[1],
     outlineStyle: "none",

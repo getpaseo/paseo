@@ -1,9 +1,8 @@
 import type {
   SidebarProjectEntry,
-  SidebarStatusWorkspacePlacement,
   SidebarWorkspacePlacement,
 } from "@/hooks/use-sidebar-workspaces-list";
-import { buildStatusGroups } from "@/hooks/sidebar-status-view-model";
+import type { StatusGroup } from "@/hooks/sidebar-status-view-model";
 
 export interface SidebarShortcutWorkspaceTarget {
   serverId: string;
@@ -53,17 +52,15 @@ export function buildSidebarShortcutModel(input: {
 }
 
 export function buildStatusSidebarShortcutModel(input: {
-  workspaces: SidebarStatusWorkspacePlacement[];
-  projectNamesByKey: Map<string, string>;
+  groups: readonly StatusGroup[];
   collapsedStatusGroupKeys?: ReadonlySet<string>;
   shortcutLimit?: number;
 }): SidebarShortcutModel {
   const maxShortcuts = Math.max(0, Math.floor(input.shortcutLimit ?? 9));
-  const groups = buildStatusGroups(input.workspaces, input.projectNamesByKey);
   const shortcutTargets: SidebarShortcutWorkspaceTarget[] = [];
   const shortcutIndexByWorkspaceKey = new Map<string, number>();
 
-  for (const group of groups) {
+  for (const group of input.groups) {
     if (input.collapsedStatusGroupKeys?.has(group.bucket)) {
       continue;
     }

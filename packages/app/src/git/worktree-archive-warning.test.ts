@@ -6,11 +6,11 @@ import {
   toWorktreeArchiveRisk,
 } from "@/git/worktree-archive-warning";
 
-describe("worktree archive warning", () => {
+describe("workspace archive warning for worktree backing", () => {
   it("does not require a confirmation for clean and pushed worktrees", () => {
     expect(
       buildWorktreeArchiveConfirmationMessage({
-        worktreeName: "feature",
+        workspaceName: "feature",
         isDirty: false,
         aheadOfOrigin: 0,
         diffStat: null,
@@ -51,7 +51,7 @@ describe("worktree archive warning", () => {
   it("includes every archive risk in the confirmation copy", () => {
     expect(
       buildWorktreeArchiveConfirmationMessage({
-        worktreeName: "risky-feature",
+        workspaceName: "risky-feature",
         isDirty: true,
         aheadOfOrigin: 1,
         diffStat: { additions: 1, deletions: 3 },

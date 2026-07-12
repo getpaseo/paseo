@@ -218,7 +218,7 @@ The bespoke pills in `packages/app/src/screens/settings/host-page.tsx:97-116`, `
 - Raw DOM APIs without an `isWeb` guard.
 - Spacing values outside the scale. `padding: 20` and `gap: 10` are wrong.
 - Color changes for disabled state. Opacity only.
-- Destructive actions without `confirmDialog`. Restart, remove, and future destructive actions are confirmed. Worktree archive is confirmed only when git runtime reports uncommitted changes or unpushed commits; clean pushed worktrees archive immediately.
+- Destructive actions without `confirmDialog`. Restart, remove, and future destructive actions are confirmed. Archive workspace is confirmed only when its worktree backing reports uncommitted changes or unpushed commits; otherwise it archives immediately.
 - Bespoke status pills. `<StatusBadge>` is the pill primitive.
 - Raw `Modal` for a focused task. `<AdaptiveModalSheet>` is the modal primitive.
 - Importing `ActivityIndicator` directly. `<LoadingSpinner>` is the loading primitive.

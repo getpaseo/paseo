@@ -180,10 +180,10 @@ class PiCliRuntimeSession implements PiRuntimeSession {
   }
 
   async getSessionStats(): Promise<PiSessionStats> {
-    // COMPAT(piGetStateFallback): added in v0.1.X — older Oh My Pi binaries
+    // COMPAT(piGetStateFallback): added in v0.1.105 — older Oh My Pi binaries
     // lack the `get_session_stats` RPC command; fall back to extracting
-    // context window usage from `get_state`. Drop this gate when the floor
-    // daemon supports get_session_stats (added ~v0.1.97).
+    // context window usage from `get_state`. Remove after 2027-01-10 once the
+    // supported Oh My Pi floor includes `get_session_stats`.
     let stats: PiSessionStats | undefined;
     try {
       stats = (await this.request({ type: "get_session_stats" })) as PiSessionStats;

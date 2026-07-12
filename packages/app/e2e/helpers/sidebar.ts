@@ -39,10 +39,9 @@ export async function clickArchiveWorkspaceMenuItem(
   await archiveItem.click();
 }
 
-export async function archiveWorktreeFromSidebar(page: Page, workspaceId: string): Promise<void> {
-  // A clean worktree archives with no prompt; if the host reports unsynced work the app
-  // raises a browser confirm. Accept it so the user-confirmed archive stays deterministic
-  // either way.
+export async function archiveWorkspaceFromSidebar(page: Page, workspaceId: string): Promise<void> {
+  // A clean workspace archives with no prompt. Managed worktree backing may raise
+  // a browser confirm for unsynced work, so accept it when present.
   page.once("dialog", (dialog) => void dialog.accept());
   await clickArchiveWorkspaceMenuItem(page, workspaceId);
 }

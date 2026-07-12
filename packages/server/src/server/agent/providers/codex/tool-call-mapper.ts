@@ -193,6 +193,16 @@ const CodexCollabAgentToolCallItemSchema = z
   })
   .passthrough();
 
+const CodexSubAgentActivityItemSchema = z
+  .object({
+    type: z.literal("subAgentActivity"),
+    id: z.string().min(1),
+    kind: z.enum(["started", "interacted", "interrupted"]),
+    agentThreadId: z.string().min(1),
+    agentPath: z.string(),
+  })
+  .passthrough();
+
 const CodexToolThreadItemSchema = z.discriminatedUnion("type", [
   CodexCommandExecutionItemSchema,
   CodexFileChangeItemSchema,
@@ -206,6 +216,7 @@ const CodexThreadItemSchema = z.discriminatedUnion("type", [
   CodexMcpToolCallItemSchema,
   CodexWebSearchItemSchema,
   CodexCollabAgentToolCallItemSchema,
+  CodexSubAgentActivityItemSchema,
 ]);
 
 function maybeUnwrapShellWrapperCommand(command: string): string {
@@ -977,6 +988,25 @@ function mapCollabAgentToolCallItem(
   };
 }
 
+function mapSubAgentActivityItem(
+  item: z.infer<typeof CodexSubAgentActivityItemSchema>,
+): ToolCallTimelineItem {
+  return {
+    type: "tool_call",
+    callId: item.id,
+    name: "Sub-agent",
+    status: item.kind === "interrupted" ? "canceled" : "running",
+    error: null,
+    detail: {
+      type: "sub_agent",
+      subAgentType: "Sub-agent",
+      description: item.agentPath,
+      log: "",
+      actions: [],
+    },
+  };
+}
+
 function mapThreadItemToNormalizedEnvelope(
   item: z.infer<typeof CodexToolThreadItemSchema>,
   options?: CodexMapperOptions,
@@ -1011,6 +1041,9 @@ export function mapCodexToolCallFromThreadItem(
   }
   if (parsed.data.type === "collabAgentToolCall") {
     return mapCollabAgentToolCallItem(parsed.data);
+  }
+  if (parsed.data.type === "subAgentActivity") {
+    return mapSubAgentActivityItem(parsed.data);
   }
   const envelope = mapThreadItemToNormalizedEnvelope(parsed.data, options);
   if (!envelope) {

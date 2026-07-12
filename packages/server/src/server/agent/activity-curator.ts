@@ -165,6 +165,9 @@ function curateProjectedActivityEntries(
       case "tool_call": {
         flushBuffers(entries, buffers, options);
         entries.push(formatToolCallEntry(item, options));
+        if (item.detail.type === "sub_agent" && item.detail.log.trim()) {
+          entries.push(activityEntry(item.detail.log.trim()));
+        }
         break;
       }
       case "todo":
