@@ -2499,6 +2499,81 @@ describe("OpenCode provider subagent contract", () => {
     await parent.close();
   });
 
+  test("forwards provider child questions through the parent session", async () => {
+    const runtime = new TestOpenCodeHarness();
+    const parentClient = new TestOpenCodeClient();
+    parentClient.sessionCreateResponse = { data: { id: "ses_parent_question" } };
+    runtime.enqueueClient(parentClient);
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const parent = await client.createSession({ provider: "opencode", cwd: "/workspace/repo" });
+    const events: AgentStreamEvent[] = [];
+    parent.subscribe((event) => events.push(event));
+
+    parentClient.emitEvent({
+      type: "session.created",
+      properties: {
+        info: {
+          id: "ses_provider_child_question",
+          parentID: "ses_parent_question",
+          title: "Question child",
+        },
+      },
+    });
+    await vi.waitFor(() =>
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "provider_subagent",
+          event: expect.objectContaining({ id: "ses_provider_child_question" }),
+        }),
+      ),
+    );
+
+    parentClient.emitEvent({
+      type: "question.asked",
+      properties: {
+        id: "question_provider_child",
+        sessionID: "ses_provider_child_question",
+        questions: [
+          {
+            question: "Which path?",
+            header: "Path",
+            options: [{ label: "A", description: "Choose A" }],
+          },
+        ],
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(parent.getPendingPermissions()).toEqual([
+        expect.objectContaining({
+          id: "question_provider_child",
+          kind: "question",
+          input: expect.objectContaining({
+            questions: [expect.objectContaining({ question: "Which path?" })],
+          }),
+        }),
+      ]);
+    });
+    expect(
+      events.filter(
+        (event) =>
+          event.type === "permission_requested" && event.request.id === "question_provider_child",
+      ),
+    ).toHaveLength(1);
+
+    await parent.respondToPermission("question_provider_child", {
+      behavior: "allow",
+      updatedInput: { answers: { Path: "A" } },
+    });
+    expect(parentClient.calls.questionReply).toContainEqual(
+      expect.objectContaining({ requestID: "question_provider_child", answers: [["A"]] }),
+    );
+    await parent.close();
+  });
+
   test("emits a provider subagent for a child created while the parent has no active turn", async () => {
     const releaseChildEvent = createTestDeferred<void>();
     const childConsumed = createTestDeferred<void>();

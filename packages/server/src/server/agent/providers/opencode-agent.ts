@@ -4066,6 +4066,11 @@ class OpenCodeAgentSession implements AgentSession {
           provider: "opencode",
           event: { type: "upsert", id: sessionId, status: "canceled" },
         });
+      } else if (
+        childEvent.type === "permission_requested" &&
+        childEvent.request.kind === "question"
+      ) {
+        events.push(childEvent);
       }
     }
     return events;
