@@ -54,11 +54,14 @@ async function selectAgent(page: Page, title: string) {
   await page.getByRole("button", { name: title, exact: true }).click();
 }
 
+async function enableMoveTabShortcut(page: Page) {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "platform", { get: () => "MacIntel" });
+  });
+}
+
 async function moveActiveTabRight(page: Page) {
-  const modifier = await page.evaluate(() =>
-    navigator.platform.toLowerCase().includes("mac") ? "Meta" : "Control",
-  );
-  await page.keyboard.press(`${modifier}+Alt+Shift+ArrowRight`);
+  await page.keyboard.press("Meta+Alt+Shift+ArrowRight");
 }
 
 async function commitMessage(scenario: ViewedTimelineScenario, agentId: string, prompt: string) {
@@ -93,6 +96,7 @@ test.describe("Viewed agent timelines", () => {
   test("two visible split chats both stay current", async ({ page }) => {
     const scenario = await seedViewedTimelineScenario();
     try {
+      await enableMoveTabShortcut(page);
       await openAgent(page, scenario, scenario.firstAgentId);
       await page.getByRole("button", { name: "Split pane right" }).click();
       await selectAgent(page, "Second viewed chat");
