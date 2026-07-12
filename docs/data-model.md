@@ -430,7 +430,6 @@ Array of project records.
 | `createdAt`   | `string` (ISO 8601)         |                                                                                  |
 | `updatedAt`   | `string` (ISO 8601)         |                                                                                  |
 | `archivedAt`  | `string \| null` (ISO 8601) | Soft-delete timestamp; required nullable                                         |
-| `pinnedAt`    | `string \| null` (ISO 8601) | Pinned-to-top-of-sidebar timestamp; null means "not pinned"                      |
 
 Active git projects are unique by normalized `rootPath`. Startup reconciliation repairs older bad
 states by moving workspaces from duplicate path-keyed projects onto the canonical project,

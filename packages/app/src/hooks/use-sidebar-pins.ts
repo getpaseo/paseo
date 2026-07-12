@@ -1,17 +1,11 @@
-import equal from "fast-deep-equal";
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
+import { shallow } from "zustand/shallow";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import type {
   SidebarProjectEntry,
   SidebarWorkspacePlacement,
 } from "@/hooks/use-sidebar-workspaces-list";
 import { useSessionStore } from "@/stores/session-store";
-
-type SessionStoreState = ReturnType<typeof useSessionStore.getState>;
-
-// A synthetic project key reserved for the row of individually-pinned chats. It never
-// collides with a real project key and is never collapsible.
-export const PINNED_CHATS_PSEUDO_PROJECT_KEY = "__paseo_pinned_chats__";
 
 export interface PinnedSidebarKeys {
   pinnedWorkspaceKeys: string[];
@@ -27,16 +21,16 @@ export interface PinnedSidebarGroups {
   unpinnedProjects: SidebarProjectEntry[];
 }
 
-export function selectPinnedSidebarKeys(
-  state: SessionStoreState,
+function buildPinnedSidebarKeys(
   projects: SidebarProjectEntry[],
+  workspaceMaps: ReadonlyMap<string, ReadonlyMap<string, { pinnedAt?: string | null }>>,
 ): PinnedSidebarKeys {
   const pinnedWorkspaceKeys: string[] = [];
   const pinnedAtByKey: Record<string, string> = {};
 
   for (const project of projects) {
     for (const placement of project.workspaces) {
-      const workspace = state.sessions[placement.serverId]?.workspaces.get(placement.workspaceId);
+      const workspace = workspaceMaps.get(placement.serverId)?.get(placement.workspaceId);
       if (workspace?.pinnedAt) {
         pinnedWorkspaceKeys.push(placement.workspaceKey);
         pinnedAtByKey[placement.workspaceKey] = workspace.pinnedAt;
@@ -46,12 +40,60 @@ export function selectPinnedSidebarKeys(
   return { pinnedWorkspaceKeys, pinnedAtByKey };
 }
 
+function arePinnedSidebarKeysEqual(left: PinnedSidebarKeys, right: PinnedSidebarKeys): boolean {
+  if (left.pinnedWorkspaceKeys.length !== right.pinnedWorkspaceKeys.length) {
+    return false;
+  }
+  for (let index = 0; index < left.pinnedWorkspaceKeys.length; index += 1) {
+    const workspaceKey = left.pinnedWorkspaceKeys[index];
+    if (
+      workspaceKey !== right.pinnedWorkspaceKeys[index] ||
+      (workspaceKey && left.pinnedAtByKey[workspaceKey] !== right.pinnedAtByKey[workspaceKey])
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
 export function usePinnedSidebarKeys(projects: SidebarProjectEntry[]): PinnedSidebarKeys {
-  return useStoreWithEqualityFn(
-    useSessionStore,
-    (state) => selectPinnedSidebarKeys(state, projects),
-    equal,
+  const previousKeysRef = useRef<PinnedSidebarKeys>({
+    pinnedWorkspaceKeys: [],
+    pinnedAtByKey: {},
+  });
+  const serverIds = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          projects.flatMap((project) => project.workspaces.map((workspace) => workspace.serverId)),
+        ),
+      ),
+    [projects],
   );
+  const workspaceMaps = useStoreWithEqualityFn(
+    useSessionStore,
+    (state) => serverIds.map((serverId) => state.sessions[serverId]?.workspaces ?? null),
+    shallow,
+  );
+  return useMemo(() => {
+    const workspaceMapByServerId = new Map<
+      string,
+      ReadonlyMap<string, { pinnedAt?: string | null }>
+    >();
+    for (let index = 0; index < serverIds.length; index += 1) {
+      const serverId = serverIds[index];
+      const workspaceMap = workspaceMaps[index];
+      if (serverId && workspaceMap) {
+        workspaceMapByServerId.set(serverId, workspaceMap);
+      }
+    }
+    const nextKeys = buildPinnedSidebarKeys(projects, workspaceMapByServerId);
+    if (arePinnedSidebarKeysEqual(previousKeysRef.current, nextKeys)) {
+      return previousKeysRef.current;
+    }
+    previousKeysRef.current = nextKeys;
+    return nextKeys;
+  }, [projects, serverIds, workspaceMaps]);
 }
 
 // Splits the sidebar into a dedicated Pinned section (chats) and the regular list below.
@@ -97,34 +139,4 @@ export function splitPinnedSidebarGroups(input: {
   );
 
   return { pinnedChats, unpinnedProjects };
-}
-
-// Flattens the pinned groups into a project list matching the sidebar's visual order
-// (pinned chats first, then the rest) so keyboard shortcut numbers line up with what the
-// user sees. When the Pinned section is collapsed its chats are hidden, so they must not
-// consume shortcut numbers — only the unpinned list below is visible.
-export function buildPinAwareShortcutProjects(
-  groups: PinnedSidebarGroups,
-  options?: { pinnedCollapsed?: boolean },
-): SidebarProjectEntry[] {
-  if (options?.pinnedCollapsed || groups.pinnedChats.length === 0) {
-    return groups.unpinnedProjects;
-  }
-  const first = groups.pinnedChats[0];
-  return [
-    {
-      projectKey: PINNED_CHATS_PSEUDO_PROJECT_KEY,
-      projectName: "",
-      projectKind: first?.projectKind ?? "directory",
-      iconWorkingDir: "",
-      hosts: [],
-      workspaces: groups.pinnedChats,
-    },
-    ...groups.unpinnedProjects,
-  ];
-}
-
-export function usePinnedSidebarGroups(projects: SidebarProjectEntry[]): PinnedSidebarGroups {
-  const keys = usePinnedSidebarKeys(projects);
-  return useMemo(() => splitPinnedSidebarGroups({ projects, keys }), [projects, keys]);
 }

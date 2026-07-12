@@ -3,11 +3,7 @@ import type {
   SidebarProjectEntry,
   SidebarWorkspacePlacement,
 } from "@/hooks/sidebar-workspaces-view-model";
-import {
-  buildPinAwareShortcutProjects,
-  PINNED_CHATS_PSEUDO_PROJECT_KEY,
-  splitPinnedSidebarGroups,
-} from "@/hooks/use-sidebar-pins";
+import { splitPinnedSidebarGroups } from "@/hooks/use-sidebar-pins";
 
 function placement(workspaceKey: string): SidebarWorkspacePlacement {
   return {
@@ -69,24 +65,23 @@ describe("splitPinnedSidebarGroups", () => {
     expect(result.pinnedChats.map((w) => w.workspaceKey)).toEqual(["w1"]);
     expect(result.unpinnedProjects[0]?.workspaces.map((w) => w.workspaceKey)).toEqual(["w2"]);
   });
-});
 
-describe("buildPinAwareShortcutProjects", () => {
-  const groups = {
-    pinnedChats: [placement("pinned-chat")],
-    unpinnedProjects: [project("unpinned-proj", [placement("uc")])],
-  };
+  it("orders pinned chats by most-recently-pinned first", () => {
+    const projects = [project("p1", [placement("older"), placement("newer")])];
+    const result = splitPinnedSidebarGroups({
+      projects,
+      keys: {
+        pinnedWorkspaceKeys: ["older", "newer"],
+        pinnedAtByKey: {
+          older: "2026-01-01T00:00:00Z",
+          newer: "2026-02-01T00:00:00Z",
+        },
+      },
+    });
 
-  it("floats pinned chats to the front when Pinned is expanded", () => {
-    const ordered = buildPinAwareShortcutProjects(groups);
-    expect(ordered.map((p) => p.projectKey)).toEqual([
-      PINNED_CHATS_PSEUDO_PROJECT_KEY,
-      "unpinned-proj",
+    expect(result.pinnedChats.map((workspace) => workspace.workspaceKey)).toEqual([
+      "newer",
+      "older",
     ]);
-  });
-
-  it("excludes hidden pinned rows from numbering when Pinned is collapsed", () => {
-    const ordered = buildPinAwareShortcutProjects(groups, { pinnedCollapsed: true });
-    expect(ordered.map((p) => p.projectKey)).toEqual(["unpinned-proj"]);
   });
 });

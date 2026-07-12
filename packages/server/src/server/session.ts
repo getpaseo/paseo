@@ -2295,8 +2295,15 @@ export class Session {
     );
 
     try {
-      const existing = await this.workspaceRegistry.get(workspaceId);
-      if (!existing) {
+      const trimmed = title?.trim() ?? "";
+      const nextTitle = trimmed.length === 0 ? null : trimmed;
+      const updatedAt = new Date().toISOString();
+      const updated = await this.workspaceRegistry.update(workspaceId, (existing) => ({
+        ...existing,
+        title: nextTitle,
+        updatedAt,
+      }));
+      if (!updated) {
         this.emit({
           type: "workspace.title.set.response",
           payload: {
@@ -2309,15 +2316,6 @@ export class Session {
         });
         return;
       }
-
-      const trimmed = title?.trim() ?? "";
-      const nextTitle = trimmed.length === 0 ? null : trimmed;
-
-      await this.workspaceRegistry.upsert({
-        ...existing,
-        title: nextTitle,
-        updatedAt: new Date().toISOString(),
-      });
 
       this.emit({
         type: "workspace.title.set.response",
@@ -2375,17 +2373,17 @@ export class Session {
     };
 
     try {
-      const existing = await this.workspaceRegistry.get(workspaceId);
-      if (!existing) {
+      const nextPinnedAt = pinned ? new Date().toISOString() : null;
+      const updatedAt = new Date().toISOString();
+      const updated = await this.workspaceRegistry.update(workspaceId, (existing) => ({
+        ...existing,
+        pinnedAt: nextPinnedAt,
+        updatedAt,
+      }));
+      if (!updated) {
         emitResponse(false, null, "Workspace not found");
         return;
       }
-      const nextPinnedAt = pinned ? new Date().toISOString() : null;
-      await this.workspaceRegistry.upsert({
-        ...existing,
-        pinnedAt: nextPinnedAt,
-        updatedAt: new Date().toISOString(),
-      });
       emitResponse(true, nextPinnedAt, null);
       await this.emitWorkspaceUpdatesForWorkspaceIds([workspaceId], { skipReconcile: true });
     } catch (error) {

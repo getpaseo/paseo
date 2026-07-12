@@ -5,26 +5,25 @@ import {
   type SidebarWorkspacesListResult,
 } from "@/hooks/use-sidebar-workspaces-list";
 import { useSidebarWorkspaceEntries } from "@/hooks/use-sidebar-workspace-entries";
-import { buildStatusGroups, type StatusGroup } from "@/hooks/sidebar-status-view-model";
-import { buildPinAwareShortcutProjects, usePinnedSidebarGroups } from "@/hooks/use-sidebar-pins";
+import type { StatusGroup } from "@/hooks/sidebar-status-view-model";
+import { usePinnedSidebarKeys, type PinnedSidebarGroups } from "@/hooks/use-sidebar-pins";
 import { useSidebarCollapsedSectionsStore } from "@/stores/sidebar-collapsed-sections-store";
 import { useSidebarViewStore, type SidebarGroupMode } from "@/stores/sidebar-view-store";
-import {
-  buildSidebarShortcutModel,
-  buildStatusSidebarShortcutModel,
-  type SidebarShortcutModel,
-} from "@/utils/sidebar-shortcuts";
+import type { SidebarShortcutModel } from "@/utils/sidebar-shortcuts";
+import { buildSidebarProjection } from "./sidebar-projection";
 
 interface SidebarModel extends SidebarWorkspacesListResult {
   workspaceEntriesByKey: ReadonlyMap<string, SidebarWorkspaceEntry>;
   groupMode: SidebarGroupMode;
   statusGroups: StatusGroup[];
+  pinnedGroups: PinnedSidebarGroups;
   collapsedProjectKeys: ReadonlySet<string>;
   toggleProjectCollapsed: (projectKey: string) => void;
   shortcutModel: SidebarShortcutModel;
 }
 
 const SidebarModelContext = createContext<SidebarModel | null>(null);
+const EMPTY_WORKSPACE_ENTRIES = new Map<string, SidebarWorkspaceEntry>();
 
 export function SidebarModelProvider({
   active,
@@ -50,45 +49,49 @@ export function SidebarModelProvider({
     list.workspacePlacements,
     active !== false || isStatusMode,
   );
-  const statusGroups = useMemo(
+  const projectionWorkspaceEntriesByKey = isStatusMode
+    ? workspaceEntriesByKey
+    : EMPTY_WORKSPACE_ENTRIES;
+  const pinnedKeys = usePinnedSidebarKeys(list.projects);
+  const projection = useMemo(
     () =>
-      isStatusMode
-        ? buildStatusGroups(Array.from(workspaceEntriesByKey.values()), list.projectNamesByKey)
-        : [],
-    [isStatusMode, list.projectNamesByKey, workspaceEntriesByKey],
-  );
-  // Pinned chats float to the top of the sidebar, so shortcut numbers must follow that
-  // same visual order — number the pin-aware projection, not the raw project list.
-  const pinnedGroups = usePinnedSidebarGroups(list.projects);
-  const orderedProjects = useMemo(
-    () => buildPinAwareShortcutProjects(pinnedGroups, { pinnedCollapsed }),
-    [pinnedGroups, pinnedCollapsed],
-  );
-  const shortcutModel = useMemo(() => {
-    if (isStatusMode) {
-      return buildStatusSidebarShortcutModel({
-        groups: statusGroups,
+      buildSidebarProjection({
+        projects: list.projects,
+        pinnedKeys,
+        workspaceEntriesByKey: projectionWorkspaceEntriesByKey,
+        projectNamesByKey: list.projectNamesByKey,
+        groupMode,
+        pinnedCollapsed,
+        collapsedProjectKeys,
         collapsedStatusGroupKeys,
-      });
-    }
-    return buildSidebarShortcutModel({ projects: orderedProjects, collapsedProjectKeys });
-  }, [collapsedProjectKeys, collapsedStatusGroupKeys, isStatusMode, orderedProjects, statusGroups]);
+      }),
+    [
+      collapsedProjectKeys,
+      collapsedStatusGroupKeys,
+      groupMode,
+      list.projectNamesByKey,
+      list.projects,
+      pinnedCollapsed,
+      pinnedKeys,
+      projectionWorkspaceEntriesByKey,
+    ],
+  );
   const value = useMemo(
     () => ({
       ...list,
       workspaceEntriesByKey,
       groupMode,
-      statusGroups,
+      statusGroups: projection.statusGroups,
+      pinnedGroups: projection.pinnedGroups,
       collapsedProjectKeys,
       toggleProjectCollapsed,
-      shortcutModel,
+      shortcutModel: projection.shortcutModel,
     }),
     [
       collapsedProjectKeys,
       groupMode,
       list,
-      shortcutModel,
-      statusGroups,
+      projection,
       toggleProjectCollapsed,
       workspaceEntriesByKey,
     ],
