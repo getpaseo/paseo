@@ -39,6 +39,7 @@ import {
   expectSidebarWorkspaceSelected,
   expectWorkspaceHeader,
   switchWorkspaceViaSidebar,
+  waitForNoProjectsInSidebar,
   waitForSidebarHydration,
   waitForWorkspaceInSidebar,
 } from "./helpers/workspace-ui";
@@ -207,6 +208,30 @@ test.describe("New workspace flow", () => {
     createdWorktreeDirectories.clear();
     localWorkspaceIds.clear();
     await client?.close().catch(() => undefined);
+  });
+
+  test("an empty host can add its first project from the project selector", async ({ page }) => {
+    const workspaces = await client.fetchWorkspaces();
+    const projectIds = new Set(workspaces.entries.map((workspace) => workspace.projectId));
+    for (const projectId of projectIds) {
+      await client.removeProject(projectId);
+    }
+
+    await gotoAppShell(page);
+    await waitForNoProjectsInSidebar(page);
+    await openGlobalNewWorkspaceComposer(page);
+
+    const projectTrigger = page.getByTestId("new-workspace-project-picker-trigger");
+    await expect(projectTrigger).toContainText("Choose project");
+    await projectTrigger.click();
+
+    const addProject = page.getByTestId("new-workspace-project-picker-add-project");
+    await expect(addProject).toBeVisible();
+    await expect(addProject).toContainText("Add project");
+    await expect(addProject).toContainText(/(?:⌘|Ctrl\+)O/);
+    await addProject.click();
+
+    await expect(page.getByTestId("project-picker-input")).toBeVisible();
   });
 
   test("sidebar workspace navigation updates URL and header", async ({ page }) => {

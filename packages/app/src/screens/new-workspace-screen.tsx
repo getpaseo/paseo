@@ -9,7 +9,15 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { createNameId } from "mnemonic-id";
 import { useQuery } from "@tanstack/react-query";
-import { Check, ChevronDown, Folder, GitBranch, GitPullRequest, X } from "lucide-react-native";
+import {
+  Check,
+  ChevronDown,
+  Folder,
+  FolderPlus,
+  GitBranch,
+  GitPullRequest,
+  X,
+} from "lucide-react-native";
 import { Composer } from "@/composer";
 import { FileDropZone } from "@/components/file-drop/file-drop-zone";
 import { DraftAgentModeControl } from "@/composer/agent-controls/mode-control";
@@ -20,6 +28,7 @@ import { ProjectIconView } from "@/components/project-icon-view";
 import { Combobox, ComboboxItem } from "@/components/ui/combobox";
 import type { ComboboxOption as ComboboxOptionType, ComboboxProps } from "@/components/ui/combobox";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
+import { Shortcut } from "@/components/ui/shortcut";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 import { SidebarMenuToggle } from "@/components/headers/menu-header";
@@ -43,6 +52,7 @@ import { normalizeWorkspaceDescriptor, useSessionStore } from "@/stores/session-
 import { useWorkspace } from "@/stores/session-store-hooks";
 import { generateDraftId } from "@/stores/draft-keys";
 import { useDraftStore } from "@/stores/draft-store";
+import { useProjectPickerStore } from "@/stores/project-picker-store";
 import { isActiveCreateFlowForDraft, useCreateFlowStore } from "@/stores/create-flow-store";
 import {
   useWorkspaceDraftSubmissionStore,
@@ -50,6 +60,7 @@ import {
 } from "@/stores/workspace-draft-submission-store";
 import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
 import { useFormPreferences } from "@/hooks/use-form-preferences";
+import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import type { CreateAgentInitialValues } from "@/hooks/use-agent-form-state";
 import { generateMessageId } from "@/types/stream";
 import { toErrorMessage } from "@/utils/error-messages";
@@ -86,6 +97,8 @@ import {
   resolveNewWorkspaceInitialServerId,
 } from "./new-workspace-initial-context";
 import { useNewWorkspaceProjectPicker } from "./new-workspace/project-picker";
+
+const ADD_PROJECT_OPTION_ID = "new-workspace-add-project";
 
 function resolveCheckoutRequest(
   selectedItem: PickerItem | null,
@@ -573,6 +586,29 @@ function NewWorkspaceProjectPickerOption({
   isPending: boolean;
   supportsWorkspaceMultiplicity: boolean;
 }) {
+  const { theme } = useUnistyles();
+  const openProjectKeys = useShortcutKeys("new-agent");
+  const addProjectLeadingSlot = useMemo(
+    () => <FolderPlus size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />,
+    [theme.colors.foregroundMuted, theme.iconSize.sm],
+  );
+  const addProjectTrailingSlot = useMemo(
+    () => (openProjectKeys ? <Shortcut chord={openProjectKeys} /> : null),
+    [openProjectKeys],
+  );
+  if (option.id === ADD_PROJECT_OPTION_ID) {
+    return (
+      <ComboboxItem
+        testID="new-workspace-project-picker-add-project"
+        label={option.label}
+        active={active}
+        onPress={onPress}
+        leadingSlot={addProjectLeadingSlot}
+        trailingSlot={addProjectTrailingSlot}
+      />
+    );
+  }
+
   const project = projectByOptionId.get(option.id);
   if (!project) return <View key={option.id} />;
   const sourceDirectory =
@@ -1410,7 +1446,7 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
       <ProjectPickerTrigger
         pickerAnchorRef={project.anchorRef}
         onPress={project.open}
-        disabled={isPending || project.options.length === 0}
+        disabled={isPending}
         badgePressableStyle={badgePressableStyle}
         label={project.triggerLabel}
         projectKey={project.selectedProject?.projectKey ?? null}
@@ -1589,6 +1625,7 @@ export function NewWorkspaceScreen({
   const [manualPickerSelection, setManualPickerSelection] = useState<PickerSelection | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
+  const openAddProjectPicker = useProjectPickerStore((state) => state.open);
   const [isolationPickerOpen, setIsolationPickerOpen] = useState(false);
   const [pickerSearchQuery, setPickerSearchQuery] = useState("");
   const [debouncedPickerSearchQuery, setDebouncedPickerSearchQuery] = useState("");
@@ -1623,6 +1660,13 @@ export function NewWorkspaceScreen({
     lastActiveProject,
     allowAllProjects: supportsWorkspaceMultiplicity,
   });
+  const projectPickerOptionsWithAdd = useMemo<ComboboxOptionType[]>(
+    () => [
+      ...projectPickerOptions,
+      { id: ADD_PROJECT_OPTION_ID, label: t("sidebar.actions.addProject") },
+    ],
+    [projectPickerOptions, t],
+  );
 
   const projectIconTargets = useMemo(
     () =>
@@ -1787,6 +1831,11 @@ export function NewWorkspaceScreen({
 
   const handleSelectProjectOption = useCallback(
     (id: string) => {
+      if (id === ADD_PROJECT_OPTION_ID) {
+        setProjectPickerOpen(false);
+        openAddProjectPicker(selectedServerId);
+        return;
+      }
       // selectProjectOption enforces selectability (worktree-only when
       // multiplicity is off, any project when it's on); don't re-gate here on
       // canCreateWorktree or non-git projects become unselectable.
@@ -1794,7 +1843,7 @@ export function NewWorkspaceScreen({
       setProjectPickerOpen(false);
       setManualPickerSelection(null);
     },
-    [selectProjectOption],
+    [openAddProjectPicker, selectProjectOption, selectedServerId],
   );
 
   const checkoutHintPrAttachment = useMemo(
@@ -2093,7 +2142,7 @@ export function NewWorkspaceScreen({
     project: {
       anchorRef: projectPickerAnchorRef,
       open: openProjectPicker,
-      options: projectPickerOptions,
+      options: projectPickerOptionsWithAdd,
       triggerLabel: projectTriggerLabel,
       selectedProject,
       iconDataByProjectKey: projectIconDataByProjectKey,
