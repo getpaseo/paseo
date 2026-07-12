@@ -5200,6 +5200,15 @@ test("subscribe hides provider subagents of internal parents from global subscri
       }),
     }),
   );
+  expect(() => manager.listProviderSubagents(internalAgentId)).toThrow(
+    `Unknown agent '${internalAgentId}'`,
+  );
+  expect(() => manager.getProviderSubagent(internalAgentId, "hidden-child")).toThrow(
+    `Unknown agent '${internalAgentId}'`,
+  );
+  expect(() => manager.fetchProviderSubagentTimeline(internalAgentId, "hidden-child")).toThrow(
+    `Unknown agent '${internalAgentId}'`,
+  );
 });
 
 test("subscribe emits state events for internal agents when subscribed by agentId", async () => {

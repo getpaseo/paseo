@@ -128,4 +128,40 @@ describe("provider subagent client store", () => {
         .timelines.has(providerSubagentKey(SERVER_ID, PARENT_ID, SUBAGENT_ID)),
     ).toBe(false);
   });
+
+  test("applies terminal list status to a timeline received before its descriptor", () => {
+    const store = useProviderSubagentStore.getState();
+    store.applyUpdate(SERVER_ID, {
+      kind: "timeline",
+      parentAgentId: PARENT_ID,
+      subagentId: SUBAGENT_ID,
+      provider: "codex",
+      epoch: "epoch-1",
+      seq: 1,
+      timestamp: "2026-07-12T10:00:01.000Z",
+      item: { type: "assistant_message", text: "Restored output." },
+    });
+    const key = providerSubagentKey(SERVER_ID, PARENT_ID, SUBAGENT_ID);
+    expect(useProviderSubagentStore.getState().timelines.get(key)?.head).not.toEqual([]);
+
+    store.replaceList(SERVER_ID, PARENT_ID, [
+      {
+        id: SUBAGENT_ID,
+        parentAgentId: PARENT_ID,
+        provider: "codex",
+        title: "Restored child",
+        description: null,
+        status: "completed",
+        createdAt: "2026-07-12T10:00:00.000Z",
+        updatedAt: "2026-07-12T10:00:02.000Z",
+        toolCallId: "call-1",
+      },
+    ]);
+
+    const timeline = useProviderSubagentStore.getState().timelines.get(key);
+    expect(timeline?.head).toEqual([]);
+    expect(timeline?.tail).toEqual([
+      expect.objectContaining({ kind: "assistant_message", text: "Restored output." }),
+    ]);
+  });
 });

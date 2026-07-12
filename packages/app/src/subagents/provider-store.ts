@@ -171,6 +171,14 @@ export const useProviderSubagentStore = create<ProviderSubagentState>((set) => (
       const timelines = new Map(
         [...state.timelines].filter(([key]) => !key.startsWith(prefix) || retainedKeys.has(key)),
       );
+      for (const subagent of subagents) {
+        const key = providerSubagentKey(serverId, parentAgentId, subagent.id);
+        const current = timelines.get(key);
+        const previous = state.descriptors.get(key);
+        if (current && previous?.status !== subagent.status) {
+          timelines.set(key, buildTimelineState(current.rows, current.epoch, subagent));
+        }
+      }
       return { descriptors, timelines };
     });
   },

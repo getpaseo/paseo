@@ -30,6 +30,7 @@ export interface ProviderSubagentRow {
 export type SubagentRow = PaseoSubagentRow | ProviderSubagentRow;
 
 type SessionStoreSnapshot = ReturnType<typeof useSessionStore.getState>;
+type ProviderSubagentStoreSnapshot = ReturnType<typeof useProviderSubagentStore.getState>;
 
 interface SelectSubagentsParams {
   serverId: string;
@@ -37,6 +38,7 @@ interface SelectSubagentsParams {
 }
 
 const EMPTY_SUBAGENT_ROWS: SubagentRow[] = [];
+const EMPTY_PROVIDER_SUBAGENT_ROWS: ProviderSubagentRow[] = [];
 
 function toSubagentRow(agent: Agent): SubagentRow {
   return {
@@ -80,6 +82,31 @@ export function selectSubagentsForParent(
   return rows;
 }
 
+export function selectProviderSubagentsForParent(
+  state: ProviderSubagentStoreSnapshot,
+  params: SelectSubagentsParams,
+  supported: boolean,
+): ProviderSubagentRow[] {
+  if (!supported) return EMPTY_PROVIDER_SUBAGENT_ROWS;
+  const rows: ProviderSubagentRow[] = [];
+  const prefix = `${params.serverId}\0${params.parentAgentId}\0`;
+  for (const [key, subagent] of state.descriptors) {
+    if (!key.startsWith(prefix)) continue;
+    rows.push({
+      kind: "provider",
+      id: subagent.id,
+      parentAgentId: subagent.parentAgentId,
+      provider: subagent.provider,
+      title: subagent.title ?? subagent.description,
+      status: subagent.status,
+      requiresAttention: subagent.status === "failed",
+      createdAt: new Date(subagent.createdAt),
+    });
+  }
+  rows.sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime());
+  return rows;
+}
+
 export function useSubagentsForParent(params: SelectSubagentsParams): SubagentRow[] {
   const pendingArchiveIds = usePendingArchiveAgentIds(params.serverId);
   const paseoRows = useStoreWithEqualityFn(
@@ -87,33 +114,15 @@ export function useSubagentsForParent(params: SelectSubagentsParams): SubagentRo
     (state) => selectSubagentsForParent(state, params, pendingArchiveIds),
     equal,
   );
-  const providerRows = useStoreWithEqualityFn(
-    useProviderSubagentStore,
-    (state) => {
-      const rows: ProviderSubagentRow[] = [];
-      const prefix = `${params.serverId}\0${params.parentAgentId}\0`;
-      for (const [key, subagent] of state.descriptors) {
-        if (!key.startsWith(prefix)) continue;
-        rows.push({
-          kind: "provider",
-          id: subagent.id,
-          parentAgentId: subagent.parentAgentId,
-          provider: subagent.provider,
-          title: subagent.title ?? subagent.description,
-          status: subagent.status,
-          requiresAttention: subagent.status === "failed",
-          createdAt: new Date(subagent.createdAt),
-        });
-      }
-      rows.sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime());
-      return rows;
-    },
-    equal,
-  );
-  const client = useSessionStore((state) => state.sessions[params.serverId]?.client ?? null);
   const supported = useSessionStore(
     (state) => state.sessions[params.serverId]?.serverInfo?.features?.providerSubagents === true,
   );
+  const providerRows = useStoreWithEqualityFn(
+    useProviderSubagentStore,
+    (state) => selectProviderSubagentsForParent(state, params, supported),
+    equal,
+  );
+  const client = useSessionStore((state) => state.sessions[params.serverId]?.client ?? null);
 
   useEffect(() => {
     if (!client || !supported) return;

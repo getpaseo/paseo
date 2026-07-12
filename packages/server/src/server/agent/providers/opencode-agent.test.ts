@@ -2485,6 +2485,12 @@ describe("OpenCode provider subagent contract", () => {
         }),
       );
     });
+    expect(
+      events.filter(
+        (event) =>
+          event.type === "permission_requested" && event.request.id === "perm_provider_child",
+      ),
+    ).toHaveLength(1);
 
     await parent.respondToPermission("perm_provider_child", { behavior: "allow" });
     expect(parentClient.calls.permissionReply).toContainEqual(

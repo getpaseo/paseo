@@ -4010,8 +4010,6 @@ class OpenCodeAgentSession implements AgentSession {
         });
       } else if (childEvent.type === "turn_started") {
         markRunning();
-      } else if (childEvent.type === "permission_requested") {
-        events.push(childEvent);
       } else if (childEvent.type === "turn_completed") {
         events.push({
           type: "provider_subagent",
