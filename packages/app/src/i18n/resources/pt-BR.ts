@@ -800,6 +800,7 @@ export const ptBR: TranslationResources = {
     actions: {
       addProject: "Adicionar projeto",
       newWorkspace: "Novo workspace",
+      hosts: "Hosts",
       home: "Início",
       settings: "Configurações",
       closeSidebar: "Fechar barra lateral",

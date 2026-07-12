@@ -101,9 +101,9 @@ interface SidebarSharedProps {
 interface SidebarLabels {
   addProject: string;
   newWorkspace: string;
+  hosts: string;
   home: string;
   settings: string;
-  switchHost: string;
   searchHosts: string;
   sessions: string;
   schedules: string;
@@ -226,9 +226,9 @@ export const LeftSidebar = memo(function LeftSidebar() {
     (): SidebarLabels => ({
       addProject: t("sidebar.actions.addProject"),
       newWorkspace: t("sidebar.actions.newWorkspace"),
+      hosts: t("sidebar.actions.hosts"),
       home: t("sidebar.actions.home"),
       settings: t("sidebar.actions.settings"),
-      switchHost: t("sidebar.host.switchTitle"),
       searchHosts: t("sidebar.host.searchPlaceholder"),
       sessions: t("sidebar.sections.sessions"),
       schedules: t("sidebar.sections.schedules"),
@@ -347,10 +347,12 @@ function FooterIconButton({
 
 function SidebarHostPicker({
   theme,
+  label,
   onAddHost,
   onOpenHostSettings,
 }: {
   theme: SidebarTheme;
+  label: string;
   onAddHost: () => void;
   onOpenHostSettings: (serverId: string) => void;
 }) {
@@ -389,7 +391,7 @@ function SidebarHostPicker({
         buttonRef={triggerRef}
         onPress={handleOpen}
         testID="sidebar-hosts-trigger"
-        label="Hosts"
+        label={label}
         icon={Server}
         iconSize={theme.iconSize.sm}
         theme={theme}
@@ -483,9 +485,9 @@ function SidebarFooter({
   handleSettings: () => void;
   labels: {
     addProject: string;
+    hosts: string;
     home: string;
     settings: string;
-    switchHost: string;
     searchHosts: string;
   };
   handleAddHost: () => void;
@@ -499,6 +501,7 @@ function SidebarFooter({
       <View style={styles.footerIconRow}>
         <SidebarHostPicker
           theme={theme}
+          label={labels.hosts}
           onAddHost={handleAddHost}
           onOpenHostSettings={handleOpenHostSettings}
         />
