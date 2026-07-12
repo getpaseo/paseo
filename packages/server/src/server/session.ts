@@ -2193,60 +2193,6 @@ export class Session {
     }
   }
 
-  private async handlePinSetRequest(config: {
-    pinned: boolean;
-    noun: "project" | "workspace";
-    logLabel: string;
-    logContext: Record<string, unknown>;
-    apply: (
-      nextPinnedAt: string | null,
-    ) => Promise<"not_found" | { affectedWorkspaceIds: string[] }>;
-    emitResponse: (result: {
-      accepted: boolean;
-      pinnedAt: string | null;
-      error: string | null;
-    }) => void;
-  }): Promise<void> {
-    this.sessionLogger.info(config.logContext, `session: ${config.logLabel}`);
-
-    try {
-      const nextPinnedAt = config.pinned ? new Date().toISOString() : null;
-      const applied = await config.apply(nextPinnedAt);
-      if (applied === "not_found") {
-        const Noun = `${config.noun[0].toUpperCase()}${config.noun.slice(1)}`;
-        config.emitResponse({ accepted: false, pinnedAt: null, error: `${Noun} not found` });
-        return;
-      }
-
-      config.emitResponse({ accepted: true, pinnedAt: nextPinnedAt, error: null });
-
-      if (applied.affectedWorkspaceIds.length > 0) {
-        await this.emitWorkspaceUpdatesForWorkspaceIds(applied.affectedWorkspaceIds, {
-          skipReconcile: true,
-        });
-      }
-    } catch (error) {
-      this.sessionLogger.error(
-        { ...config.logContext, err: error },
-        `session: ${config.logLabel} error`,
-      );
-      this.emit({
-        type: "activity_log",
-        payload: {
-          id: uuidv4(),
-          timestamp: new Date(),
-          type: "error",
-          content: `Failed to pin ${config.noun}: ${getErrorMessage(error)}`,
-        },
-      });
-      config.emitResponse({
-        accepted: false,
-        pinnedAt: null,
-        error: getErrorMessageOr(error, `Failed to pin ${config.noun}`),
-      });
-    }
-  }
-
   private async handleProjectRemoveRequest(
     request: Extract<SessionInboundMessage, { type: "project.remove.request" }>,
   ): Promise<void> {
@@ -2419,30 +2365,45 @@ export class Session {
     pinned: boolean,
     requestId: string,
   ): Promise<void> {
-    await this.handlePinSetRequest({
-      pinned,
-      noun: "workspace",
-      logLabel: "workspace.pin.set.request",
-      logContext: { workspaceId, pinned, requestId },
-      apply: async (nextPinnedAt) => {
-        const existing = await this.workspaceRegistry.get(workspaceId);
-        if (!existing) {
-          return "not_found";
-        }
-        await this.workspaceRegistry.upsert({
-          ...existing,
-          pinnedAt: nextPinnedAt,
-          updatedAt: new Date().toISOString(),
-        });
-        return { affectedWorkspaceIds: [workspaceId] };
-      },
-      emitResponse: ({ accepted, pinnedAt, error }) => {
-        this.emit({
-          type: "workspace.pin.set.response",
-          payload: { requestId, workspaceId, accepted, pinnedAt, error },
-        });
-      },
-    });
+    const logContext = { workspaceId, pinned, requestId };
+    this.sessionLogger.info(logContext, "session: workspace.pin.set.request");
+    const emitResponse = (accepted: boolean, pinnedAt: string | null, error: string | null) => {
+      this.emit({
+        type: "workspace.pin.set.response",
+        payload: { requestId, workspaceId, accepted, pinnedAt, error },
+      });
+    };
+
+    try {
+      const existing = await this.workspaceRegistry.get(workspaceId);
+      if (!existing) {
+        emitResponse(false, null, "Workspace not found");
+        return;
+      }
+      const nextPinnedAt = pinned ? new Date().toISOString() : null;
+      await this.workspaceRegistry.upsert({
+        ...existing,
+        pinnedAt: nextPinnedAt,
+        updatedAt: new Date().toISOString(),
+      });
+      emitResponse(true, nextPinnedAt, null);
+      await this.emitWorkspaceUpdatesForWorkspaceIds([workspaceId], { skipReconcile: true });
+    } catch (error) {
+      this.sessionLogger.error(
+        { ...logContext, err: error },
+        "session: workspace.pin.set.request error",
+      );
+      this.emit({
+        type: "activity_log",
+        payload: {
+          id: uuidv4(),
+          timestamp: new Date(),
+          type: "error",
+          content: `Failed to pin workspace: ${getErrorMessage(error)}`,
+        },
+      });
+      emitResponse(false, null, getErrorMessageOr(error, "Failed to pin workspace"));
+    }
   }
 
   /**
