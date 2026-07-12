@@ -164,6 +164,34 @@ describe("OpenCodeServerManager generations", () => {
     expect(runtime.terminatedPorts).toEqual([4474]);
   });
 
+  test("acquireExisting keeps a retired dedicated server alive until every reference releases", async () => {
+    const { manager, runtime } = createTestManager([4475]);
+
+    const dedicatedAcquisition = await manager.acquireDedicated({ PASEO_AGENT_ID: "parent" });
+    const existingAcquisition = manager.acquireExisting(dedicatedAcquisition.server.url);
+
+    expect(existingAcquisition?.server.url).toBe("http://127.0.0.1:4475");
+
+    dedicatedAcquisition.release();
+    expect(runtime.terminatedPorts).toEqual([]);
+
+    existingAcquisition?.release();
+    expect(runtime.terminatedPorts).toEqual([4475]);
+  });
+
+  test("acquireExisting returns null for unknown or dead server urls", async () => {
+    const { manager, runtime } = createTestManager([4476]);
+
+    const acquisition = await manager.acquireDedicated({ PASEO_AGENT_ID: "parent" });
+    const url = acquisition.server.url;
+
+    expect(manager.acquireExisting("http://127.0.0.1:9999")).toBe(null);
+
+    acquisition.release();
+    expect(runtime.terminatedPorts).toEqual([4476]);
+    expect(manager.acquireExisting(url)).toBe(null);
+  });
+
   test("repeated rotations leave zero unreferenced retired servers", async () => {
     const { manager, runtime } = createTestManager([4501, 4502, 4503]);
 

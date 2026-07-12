@@ -1064,6 +1064,7 @@ export class PiRpcAgentSession implements AgentSession {
   private activeAskUserDialog: ActiveAskUserDialog | null = null;
   private pendingCombinedAskUserResponse: PendingCombinedAskUserResponse | null = null;
   private activeTurnId: string | null = null;
+  private activeAssistantMessageId: string | null = null;
   private lastKnownThinkingOptionId: string | null;
   currentLeafOverrideId: string | null | undefined;
   private readonly capturedUserEntries: PiCapturedEntry[] = [];
@@ -1123,15 +1124,18 @@ export class PiRpcAgentSession implements AgentSession {
     const payload = convertPromptInput(prompt, { model: this.state.model });
     const turnId = randomUUID();
     this.activeTurnId = turnId;
+    this.activeAssistantMessageId = null;
 
     void this.runtimeSession.prompt(payload.text, payload.images).catch((error) => {
-      const failedTurnId = this.activeTurnId ?? turnId;
+      if (this.activeTurnId !== turnId) {
+        return;
+      }
       this.activeTurnId = null;
       if (isPiRequestAbortError(error)) {
         this.emit({
           type: "turn_canceled",
           provider: PI_PROVIDER,
-          turnId: failedTurnId,
+          turnId,
           reason: toDiagnosticErrorMessage(error),
         });
         return;
@@ -1139,7 +1143,7 @@ export class PiRpcAgentSession implements AgentSession {
       this.emit({
         type: "turn_failed",
         provider: PI_PROVIDER,
-        turnId: failedTurnId,
+        turnId,
         error: toDiagnosticErrorMessage(error),
       });
     });
@@ -1234,7 +1238,12 @@ export class PiRpcAgentSession implements AgentSession {
   }
 
   async interrupt(): Promise<void> {
+    const turnId = this.activeTurnId;
     await this.runtimeSession.abort();
+    if (turnId && this.activeTurnId === turnId) {
+      this.activeTurnId = null;
+      this.emit({ type: "turn_canceled", provider: PI_PROVIDER, reason: "interrupted", turnId });
+    }
   }
 
   async revertConversation(input: { messageId: string }): Promise<void> {
@@ -1704,6 +1713,7 @@ export class PiRpcAgentSession implements AgentSession {
         });
         return;
       case "message_start":
+        this.handleMessageStart(event);
         return;
       case "message_end":
         this.handleMessageEnd(event, turnId);
@@ -1811,6 +1821,8 @@ export class PiRpcAgentSession implements AgentSession {
       return;
     }
     if (event.assistantMessageEvent.type === "text_delta") {
+      // Pi-compatible runtimes may emit updates without a preceding message_start.
+      this.activeAssistantMessageId ??= event.message.responseId || randomUUID();
       this.emit({
         type: "timeline",
         provider: PI_PROVIDER,
@@ -1818,6 +1830,7 @@ export class PiRpcAgentSession implements AgentSession {
         item: {
           type: "assistant_message",
           text: event.assistantMessageEvent.delta ?? "",
+          messageId: this.activeAssistantMessageId,
         },
       });
       return;
@@ -1835,10 +1848,20 @@ export class PiRpcAgentSession implements AgentSession {
     }
   }
 
+  private handleMessageStart(event: Extract<PiAgentSessionEvent, { type: "message_start" }>): void {
+    if (event.message.role === "assistant") {
+      this.activeAssistantMessageId = event.message.responseId || null;
+    }
+  }
+
   private handleMessageEnd(
     event: Extract<PiAgentSessionEvent, { type: "message_end" }>,
     turnId: string | undefined,
   ): void {
+    if (event.message.role === "assistant") {
+      this.activeAssistantMessageId = null;
+      return;
+    }
     if (event.message.role === "custom") {
       const text = getUserMessageText(event.message.content);
       if (text) {
@@ -1899,6 +1922,7 @@ export class PiRpcAgentSession implements AgentSession {
 
   private completeTurn(turnId: string | undefined, messages: PiAgentMessage[]): void {
     this.activeTurnId = null;
+    this.activeAssistantMessageId = null;
     const errorMessage = latestPiErrorMessage(messages);
     if (typeof errorMessage === "string" && errorMessage.length > 0) {
       this.emit({

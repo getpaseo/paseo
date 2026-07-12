@@ -21,6 +21,13 @@ export function normalizeWorkspaceTabTarget(
     const agentId = trimNonEmpty(value.agentId);
     return agentId ? { kind: "agent", agentId } : null;
   }
+  if (value.kind === "provider_subagent") {
+    const parentAgentId = trimNonEmpty(value.parentAgentId);
+    const subagentId = trimNonEmpty(value.subagentId);
+    return parentAgentId && subagentId
+      ? { kind: "provider_subagent", parentAgentId, subagentId }
+      : null;
+  }
   if (value.kind === "terminal") {
     const terminalId = trimNonEmpty(value.terminalId);
     return terminalId ? { kind: "terminal", terminalId } : null;
@@ -76,6 +83,9 @@ export function workspaceTabTargetsEqual(
   if (left.kind === "agent" && right.kind === "agent") {
     return left.agentId === right.agentId;
   }
+  if (left.kind === "provider_subagent" && right.kind === "provider_subagent") {
+    return left.parentAgentId === right.parentAgentId && left.subagentId === right.subagentId;
+  }
   if (left.kind === "terminal" && right.kind === "terminal") {
     return left.terminalId === right.terminalId;
   }
@@ -130,6 +140,9 @@ export function buildDeterministicWorkspaceTabId(target: WorkspaceTabTarget): st
   }
   if (target.kind === "agent") {
     return `agent_${target.agentId}`;
+  }
+  if (target.kind === "provider_subagent") {
+    return `provider_subagent_${target.parentAgentId.length}_${target.parentAgentId}_${target.subagentId.length}_${target.subagentId}`;
   }
   if (target.kind === "terminal") {
     return `terminal_${target.terminalId}`;

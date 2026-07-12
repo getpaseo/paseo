@@ -9,6 +9,13 @@ import { buildVersionProbeCommand, GenericACPAgentClient } from "./generic-acp-a
 
 const TEST_ACP_TIMEOUT_MS = 1_000;
 
+function parseInitializeTrace(content: string): Array<{ clientCapabilities: unknown }> {
+  return content
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as { clientCapabilities: unknown });
+}
+
 describe("GenericACPAgentClient diagnostics", () => {
   test("probes npx-backed agent packages instead of npx itself", () => {
     expect(buildVersionProbeCommand(["npx", "-y", "@google/gemini-cli@0.41.1", "--acp"])).toEqual({
@@ -92,6 +99,53 @@ describe("GenericACPAgentClient diagnostics", () => {
     });
   });
 
+  test("sends configured client capabilities in catalog and live session initialization", async () => {
+    await withFakeACPAgent("success", async (scriptPath, mode, testDir) => {
+      const initializeTracePath = path.join(testDir, "initialize.jsonl");
+      const client = new GenericACPAgentClient({
+        logger: createTestLogger(),
+        command: [process.execPath, scriptPath, mode, "", initializeTracePath],
+        providerParams: {
+          clientCapabilities: {
+            fs: {
+              readTextFile: true,
+              writeTextFile: true,
+            },
+            terminal: true,
+          },
+        },
+      });
+
+      await client.fetchCatalog({ cwd: testDir, force: true, timeoutMs: TEST_ACP_TIMEOUT_MS });
+      const session = await client.createSession({ provider: "acp", cwd: testDir });
+      await session.close();
+
+      const initializeRequests = parseInitializeTrace(await readFile(initializeTracePath, "utf8"));
+
+      expect(initializeRequests).toHaveLength(2);
+      expect(initializeRequests).toEqual([
+        {
+          clientCapabilities: {
+            fs: {
+              readTextFile: true,
+              writeTextFile: true,
+            },
+            terminal: true,
+          },
+        },
+        {
+          clientCapabilities: {
+            fs: {
+              readTextFile: true,
+              writeTextFile: true,
+            },
+            terminal: true,
+          },
+        },
+      ]);
+    });
+  });
+
   test("reports a missing launcher without dropping the rest of the diagnostic", async () => {
     await withTempDir("paseo-missing-acp-agent-", async (testDir) => {
       const missingCommand = path.join(testDir, "missing-acp-agent");
@@ -167,6 +221,7 @@ const readline = require("node:readline");
 
 const mode = process.argv[2];
 const pidPath = process.argv[3];
+const initializeTracePath = process.argv[4];
 if (pidPath) {
   fs.writeFileSync(pidPath, String(process.pid));
 }
@@ -179,6 +234,12 @@ function send(id, result) {
 rl.on("line", (line) => {
   const message = JSON.parse(line);
   if (message.method === "initialize") {
+    if (initializeTracePath) {
+      fs.appendFileSync(
+        initializeTracePath,
+        JSON.stringify({ clientCapabilities: message.params?.clientCapabilities }) + "\\n",
+      );
+    }
     send(message.id, {
       protocolVersion: message.params?.protocolVersion ?? 1,
       agentCapabilities: {},

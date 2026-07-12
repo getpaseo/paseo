@@ -377,6 +377,9 @@ function getFallbackTabOptionDescription(
   if (tab.target.kind === "browser") {
     return labels.browser;
   }
+  if (tab.target.kind === "provider_subagent") {
+    return labels.agent;
+  }
   return tab.target.path;
 }
 

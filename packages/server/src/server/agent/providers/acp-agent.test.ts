@@ -20,6 +20,7 @@ import {
   ACPAgentSession,
   type SpawnedACPProcess,
   type SessionStateResponse,
+  buildACPClientCapabilities,
   createLoggedNdJsonStream,
   deriveModelDefinitionsFromACP,
   deriveModesFromACP,
@@ -49,6 +50,39 @@ import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { buildStringCommandShellInvocation } from "../../../utils/string-command-shell.js";
 import { asInternals } from "../../test-utils/class-mocks.js";
 import * as spawnUtils from "../../../utils/spawn.js";
+
+describe("buildACPClientCapabilities", () => {
+  test("keeps filesystem and terminal execution with the agent by default", () => {
+    expect(buildACPClientCapabilities()).toEqual({
+      fs: {
+        readTextFile: false,
+        writeTextFile: false,
+      },
+      terminal: false,
+    });
+  });
+
+  test("applies provider capability overrides without dropping metadata", () => {
+    expect(
+      buildACPClientCapabilities(
+        { source: "provider" },
+        {
+          fs: {
+            readTextFile: true,
+          },
+          terminal: true,
+        },
+      ),
+    ).toEqual({
+      fs: {
+        readTextFile: true,
+        writeTextFile: false,
+      },
+      terminal: true,
+      _meta: { source: "provider" },
+    });
+  });
+});
 
 interface ACPSessionInternals {
   sessionId: string | null;
@@ -2056,11 +2090,16 @@ describe("ACPAgentSession", () => {
 
   test("emits assistant and reasoning chunks as deltas while user chunks stay accumulated", async () => {
     const session = createSession();
-    const events: Array<{ type: string; item?: { type: string; text?: string } }> = [];
+    const events: Array<{
+      type: string;
+      item?: { type: string; text?: string; messageId?: string };
+    }> = [];
     asInternals<ACPSessionInternals>(session).sessionId = "session-1";
 
     session.subscribe((event) => {
-      events.push(event as { type: string; item?: { type: string; text?: string } });
+      events.push(
+        event as { type: string; item?: { type: string; text?: string; messageId?: string } },
+      );
     });
 
     await session.sessionUpdate({
@@ -2118,13 +2157,55 @@ describe("ACPAgentSession", () => {
       .filter(Boolean);
 
     expect(timeline).toEqual([
-      { type: "assistant_message", text: "Hey!" },
-      { type: "assistant_message", text: " How are you?" },
+      { type: "assistant_message", text: "Hey!", messageId: "assistant-1" },
+      { type: "assistant_message", text: " How are you?", messageId: "assistant-1" },
       { type: "reasoning", text: "Thinking" },
       { type: "reasoning", text: " more" },
       { type: "user_message", text: "hel", messageId: "user-1" },
       { type: "user_message", text: "hello", messageId: "user-1" },
     ]);
+  });
+
+  test("assigns one fallback ID per contiguous assistant message", async () => {
+    const session = createSession();
+    const assistantMessages: Array<{ text: string; messageId?: string }> = [];
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+
+    session.subscribe((event) => {
+      if (event.type === "timeline" && event.item.type === "assistant_message") {
+        assistantMessages.push(event.item);
+      }
+    });
+
+    for (const text of ["First", " message"]) {
+      await session.sessionUpdate({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text },
+        } as SessionUpdate,
+      });
+    }
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "agent_thought_chunk",
+        content: { type: "text", text: "Next response" },
+      } as SessionUpdate,
+    });
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "Second message" },
+      } as SessionUpdate,
+    });
+
+    expect(assistantMessages).toHaveLength(3);
+    expect(assistantMessages[0].messageId).toEqual(expect.any(String));
+    expect(assistantMessages[1].messageId).toBe(assistantMessages[0].messageId);
+    expect(assistantMessages[2].messageId).toEqual(expect.any(String));
+    expect(assistantMessages[2].messageId).not.toBe(assistantMessages[0].messageId);
   });
 
   test("startTurn returns before the ACP prompt settles and completes later via subscribers", async () => {
@@ -2691,6 +2772,103 @@ describe("ACP session/load invariant — cwd and mcpServers always passed", () =
       cwd: "/tmp/paseo-acp-test",
       mcpServers: [],
     });
+  });
+
+  test("preserves assistant message IDs from loadSession replay", async () => {
+    let session!: ACPAgentSession;
+    const loadSession = async () => {
+      await session.sessionUpdate({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          messageId: "assistant-replay-1",
+          content: { type: "text", text: "Welcome back" },
+        } as SessionUpdate,
+      });
+      return {
+        sessionId: "session-1",
+        modes: null,
+        models: null,
+        configOptions: [],
+      };
+    };
+    ({ session } = makeTestSession({
+      capabilities: { loadSession: true },
+      handle: { sessionId: "session-1", provider: "claude-acp" },
+      loadSession,
+    }));
+
+    await session.initializeResumedSession();
+
+    const history: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) {
+      history.push(event);
+    }
+    expect(history).toEqual([
+      {
+        type: "timeline",
+        provider: "claude-acp",
+        item: {
+          type: "assistant_message",
+          text: "Welcome back",
+          messageId: "assistant-replay-1",
+        },
+      },
+    ]);
+  });
+
+  test("assigns stable fallback IDs to ID-less assistant messages during loadSession replay", async () => {
+    let session!: ACPAgentSession;
+    const loadSession = async () => {
+      for (const text of ["Loaded", " response"]) {
+        await session.sessionUpdate({
+          sessionId: "session-1",
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text },
+          } as SessionUpdate,
+        });
+      }
+      await session.sessionUpdate({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "user_message_chunk",
+          content: { type: "text", text: "Follow up" },
+        } as SessionUpdate,
+      });
+      await session.sessionUpdate({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "Loaded second response" },
+        } as SessionUpdate,
+      });
+      return {
+        sessionId: "session-1",
+        modes: null,
+        models: null,
+        configOptions: [],
+      };
+    };
+    ({ session } = makeTestSession({
+      capabilities: { loadSession: true },
+      handle: { sessionId: "session-1", provider: "claude-acp" },
+      loadSession,
+    }));
+
+    await session.initializeResumedSession();
+
+    const assistantMessages: Array<{ text: string; messageId?: string }> = [];
+    for await (const event of session.streamHistory()) {
+      if (event.type === "timeline" && event.item.type === "assistant_message") {
+        assistantMessages.push(event.item);
+      }
+    }
+    expect(assistantMessages).toHaveLength(3);
+    expect(assistantMessages[0].messageId).toEqual(expect.any(String));
+    expect(assistantMessages[1].messageId).toBe(assistantMessages[0].messageId);
+    expect(assistantMessages[2].messageId).toEqual(expect.any(String));
+    expect(assistantMessages[2].messageId).not.toBe(assistantMessages[0].messageId);
   });
 
   test("loadSession is always called with mcpServers even when supportsMcpServers is false", async () => {

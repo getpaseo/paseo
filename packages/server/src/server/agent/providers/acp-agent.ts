@@ -231,22 +231,27 @@ export const DEFAULT_ACP_CAPABILITIES: AgentCapabilityFlags = {
 
 const BASE_ACP_CLIENT_CAPABILITIES: ACPClientCapabilities = {
   fs: {
-    readTextFile: true,
-    writeTextFile: true,
+    readTextFile: false,
+    writeTextFile: false,
   },
-  terminal: true,
+  terminal: false,
 };
 
 export type ACPClientCapabilityMeta = Record<string, unknown>;
 
-export function buildACPClientCapabilities(meta?: ACPClientCapabilityMeta): ACPClientCapabilities {
-  if (!meta || Object.keys(meta).length === 0) {
-    return BASE_ACP_CLIENT_CAPABILITIES;
-  }
-  return {
+export function buildACPClientCapabilities(
+  meta?: ACPClientCapabilityMeta,
+  override?: ACPClientCapabilities,
+): ACPClientCapabilities {
+  const capabilities: ACPClientCapabilities = {
     ...BASE_ACP_CLIENT_CAPABILITIES,
-    _meta: meta,
+    ...override,
+    fs: {
+      ...BASE_ACP_CLIENT_CAPABILITIES.fs,
+      ...override?.fs,
+    },
   };
+  return meta && Object.keys(meta).length > 0 ? { ...capabilities, _meta: meta } : capabilities;
 }
 
 // Suppress interactive auth side-effects (e.g. Gemini CLI opening a Google
@@ -371,6 +376,7 @@ interface ACPAgentClientOptions {
   sessionResponseTransformer?: (response: SessionStateResponse) => SessionStateResponse;
   configOptionsTransformer?: (configOptions: SessionConfigOption[]) => SessionConfigOption[];
   configFeatureOptions?: ACPConfigFeatureOption[];
+  clientCapabilities?: ACPClientCapabilities;
   clientCapabilityMeta?: ACPClientCapabilityMeta;
   modeIdTransformer?: (modeId: string) => string | null;
   toolSnapshotTransformer?: (snapshot: ACPToolSnapshot) => ACPToolSnapshot;
@@ -400,6 +406,7 @@ interface ACPAgentSessionOptions {
   sessionResponseTransformer?: (response: SessionStateResponse) => SessionStateResponse;
   configOptionsTransformer?: (configOptions: SessionConfigOption[]) => SessionConfigOption[];
   configFeatureOptions?: ACPConfigFeatureOption[];
+  clientCapabilities?: ACPClientCapabilities;
   clientCapabilityMeta?: ACPClientCapabilityMeta;
   modeIdTransformer?: (modeId: string) => string | null;
   toolSnapshotTransformer?: (snapshot: ACPToolSnapshot) => ACPToolSnapshot;
@@ -708,6 +715,7 @@ export class ACPAgentClient implements AgentClient {
     configOptions: SessionConfigOption[],
   ) => SessionConfigOption[];
   private readonly configFeatureOptions: ACPConfigFeatureOption[];
+  private readonly clientCapabilities?: ACPClientCapabilities;
   private readonly clientCapabilityMeta?: ACPClientCapabilityMeta;
   private readonly modeIdTransformer?: (modeId: string) => string | null;
   private readonly toolSnapshotTransformer?: (snapshot: ACPToolSnapshot) => ACPToolSnapshot;
@@ -742,6 +750,7 @@ export class ACPAgentClient implements AgentClient {
     this.sessionResponseTransformer = options.sessionResponseTransformer;
     this.configOptionsTransformer = options.configOptionsTransformer;
     this.configFeatureOptions = options.configFeatureOptions ?? [];
+    this.clientCapabilities = options.clientCapabilities;
     this.clientCapabilityMeta = options.clientCapabilityMeta;
     this.modeIdTransformer = options.modeIdTransformer;
     this.toolSnapshotTransformer = options.toolSnapshotTransformer;
@@ -770,6 +779,7 @@ export class ACPAgentClient implements AgentClient {
         sessionResponseTransformer: this.sessionResponseTransformer,
         configOptionsTransformer: this.configOptionsTransformer,
         configFeatureOptions: this.configFeatureOptions,
+        clientCapabilities: this.clientCapabilities,
         clientCapabilityMeta: this.clientCapabilityMeta,
         modeIdTransformer: this.modeIdTransformer,
         toolSnapshotTransformer: this.toolSnapshotTransformer,
@@ -819,6 +829,7 @@ export class ACPAgentClient implements AgentClient {
       sessionResponseTransformer: this.sessionResponseTransformer,
       configOptionsTransformer: this.configOptionsTransformer,
       configFeatureOptions: this.configFeatureOptions,
+      clientCapabilities: this.clientCapabilities,
       clientCapabilityMeta: this.clientCapabilityMeta,
       modeIdTransformer: this.modeIdTransformer,
       toolSnapshotTransformer: this.toolSnapshotTransformer,
@@ -1057,7 +1068,10 @@ export class ACPAgentClient implements AgentClient {
         Promise.race([
           transport.connection.initialize({
             protocolVersion: PROTOCOL_VERSION,
-            clientCapabilities: buildACPClientCapabilities(this.clientCapabilityMeta),
+            clientCapabilities: buildACPClientCapabilities(
+              this.clientCapabilityMeta,
+              this.clientCapabilities,
+            ),
             clientInfo: { name: "Paseo", version: "dev" },
           }),
           transport.spawnError,
@@ -1269,6 +1283,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     configOptions: SessionConfigOption[],
   ) => SessionConfigOption[];
   private readonly configFeatureOptions: ACPConfigFeatureOption[];
+  private readonly clientCapabilities?: ACPClientCapabilities;
   private readonly clientCapabilityMeta?: ACPClientCapabilityMeta;
   private readonly modeIdTransformer?: (modeId: string) => string | null;
   private readonly toolSnapshotTransformer?: (snapshot: ACPToolSnapshot) => ACPToolSnapshot;
@@ -1316,6 +1331,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
   private currentTurnUsage: AgentUsage | undefined;
   private activeForegroundTurnId: string | null = null;
+  private fallbackAssistantMessageId: string | null = null;
   private closed = false;
   private historyPending = false;
   private replayingHistory = false;
@@ -1334,6 +1350,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.sessionResponseTransformer = options.sessionResponseTransformer;
     this.configOptionsTransformer = options.configOptionsTransformer;
     this.configFeatureOptions = options.configFeatureOptions ?? [];
+    this.clientCapabilities = options.clientCapabilities;
     this.clientCapabilityMeta = options.clientCapabilityMeta;
     this.modeIdTransformer = options.modeIdTransformer;
     this.toolSnapshotTransformer = options.toolSnapshotTransformer;
@@ -1459,6 +1476,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     const turnId = randomUUID();
     const messageId = options?.messageId ?? randomUUID();
     this.activeForegroundTurnId = turnId;
+    this.fallbackAssistantMessageId = null;
     this.activeSubmittedUserMessage = null;
     this.emitBootstrapThreadEvent();
     this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
@@ -2320,7 +2338,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     const initialize = await this.runACPRequest(() =>
       connection.initialize({
         protocolVersion: PROTOCOL_VERSION,
-        clientCapabilities: buildACPClientCapabilities(this.clientCapabilityMeta),
+        clientCapabilities: buildACPClientCapabilities(
+          this.clientCapabilityMeta,
+          this.clientCapabilities,
+        ),
         clientInfo: { name: "Paseo", version: "dev" },
       }),
     );
@@ -2424,6 +2445,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private translateSessionUpdate(update: SessionUpdate): AgentStreamEvent[] {
     switch (update.sessionUpdate) {
       case "user_message_chunk": {
+        this.fallbackAssistantMessageId = null;
         const item = this.createMessageTimelineItem("user_message", update);
         if (!item) {
           return [];
@@ -2441,10 +2463,12 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         return item ? [this.wrapTimeline(item)] : [];
       }
       case "agent_thought_chunk": {
+        this.fallbackAssistantMessageId = null;
         const item = this.createMessageTimelineItem("reasoning", update);
         return item ? [this.wrapTimeline(item)] : [];
       }
       case "tool_call":
+        this.fallbackAssistantMessageId = null;
         return this.handleToolCallUpdate(update.toolCallId, update, undefined);
       case "tool_call_update":
         return this.handleToolCallUpdate(
@@ -2453,6 +2477,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
           this.toolCalls.get(update.toolCallId),
         );
       case "plan":
+        this.fallbackAssistantMessageId = null;
         return [this.wrapTimeline(mapPlanToTimeline(update))];
       case "current_mode_update":
         this.handleCurrentModeUpdate(update);
@@ -2507,7 +2532,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     >,
   ):
     | { type: "user_message"; text: string; messageId?: string }
-    | { type: "assistant_message"; text: string }
+    | { type: "assistant_message"; text: string; messageId: string }
     | { type: "reasoning"; text: string }
     | null {
     const chunkText = contentBlockToText(update.content);
@@ -2523,9 +2548,22 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       return { type: "user_message", text: state.text, messageId: update.messageId ?? undefined };
     }
     if (type === "assistant_message") {
-      return { type: "assistant_message", text: chunkText };
+      return {
+        type: "assistant_message",
+        text: chunkText,
+        messageId: this.resolveAssistantMessageId(update.messageId),
+      };
     }
     return { type: "reasoning", text: chunkText };
+  }
+
+  private resolveAssistantMessageId(messageId: string | null | undefined): string {
+    if (messageId) {
+      this.fallbackAssistantMessageId = null;
+      return messageId;
+    }
+    this.fallbackAssistantMessageId ??= randomUUID();
+    return this.fallbackAssistantMessageId;
   }
 
   private messageAssemblyKey(
@@ -2682,6 +2720,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     event: Extract<AgentStreamEvent, { type: "turn_completed" | "turn_failed" | "turn_canceled" }>,
   ): void {
     this.activeForegroundTurnId = null;
+    this.fallbackAssistantMessageId = null;
     if (this.activeSubmittedUserMessage?.turnId === event.turnId) {
       this.activeSubmittedUserMessage = null;
     }

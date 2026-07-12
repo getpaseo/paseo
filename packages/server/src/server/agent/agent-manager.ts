@@ -58,6 +58,7 @@ import {
   AGENT_STREAM_COALESCE_DEFAULT_WINDOW_MS,
   AgentStreamCoalescer,
 } from "./agent-stream-coalescer.js";
+import { limitAgentTimelineItemContent } from "./agent-timeline-content.js";
 import { ForegroundRunState, type ForegroundTurnWaiter } from "./foreground-run-state.js";
 import { getAgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
 import { invokeRewindCapability, type RewindMode } from "./rewind/rewind.js";
@@ -65,6 +66,11 @@ import { isSystemInjectedEnvelope } from "./agent-prompt.js";
 import { stripInternalPaseoMcpServer, withRuntimePaseoMcpServer } from "./runtime-mcp-config.js";
 import { resolveCreateAgentTitles } from "./create-agent-title.js";
 import type { PaseoToolCatalogFactory } from "./tools/types.js";
+import {
+  ProviderSubagentStore,
+  type ProviderSubagentDescriptor,
+  type ProviderSubagentStoreEvent,
+} from "./provider-subagents/store.js";
 
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
 const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
@@ -144,6 +150,7 @@ export type {
 
 export type AgentManagerEvent =
   | { type: "agent_state"; agent: ManagedAgent }
+  | { type: "provider_subagent"; event: ProviderSubagentStoreEvent }
   | {
       type: "agent_stream";
       agentId: string;
@@ -493,7 +500,7 @@ function buildImportedTimelineRows(entries: readonly ImportedTimelineEntry[]): A
     rows.push({
       seq: rows.length + 1,
       timestamp: entry.timestamp ?? new Date().toISOString(),
-      item: entry.item,
+      item: limitAgentTimelineItemContent(entry.item),
     });
   }
   return rows;
@@ -533,6 +540,7 @@ export class AgentManager {
   private readonly providerEnabled = new Map<AgentProvider, boolean>();
   private readonly agents = new Map<string, LiveManagedAgent>();
   private readonly timelineStore = new InMemoryAgentTimelineStore();
+  private readonly providerSubagents = new ProviderSubagentStore();
   private readonly agentsAwaitingInitialSnapshotPersist = new Set<string>();
   private readonly sessionEventTails = new Map<string, Promise<void>>();
   private readonly foregroundRuns = new ForegroundRunState();
@@ -935,6 +943,28 @@ export class AgentManager {
     return this.timelineStore.fetch(id, options);
   }
 
+  listProviderSubagents(parentAgentId: string): ProviderSubagentDescriptor[] {
+    this.requirePublicAgent(parentAgentId);
+    return this.providerSubagents.list(parentAgentId);
+  }
+
+  getProviderSubagent(
+    parentAgentId: string,
+    subagentId: string,
+  ): ProviderSubagentDescriptor | null {
+    this.requirePublicAgent(parentAgentId);
+    return this.providerSubagents.get(parentAgentId, subagentId);
+  }
+
+  fetchProviderSubagentTimeline(
+    parentAgentId: string,
+    subagentId: string,
+    options?: AgentTimelineFetchOptions,
+  ): AgentTimelineFetchResult {
+    this.requirePublicAgent(parentAgentId);
+    return this.providerSubagents.fetchTimeline(parentAgentId, subagentId, options);
+  }
+
   createAgent(
     config: AgentSessionConfig,
     agentId: string | undefined,
@@ -1085,7 +1115,7 @@ export class AgentManager {
       const initialTitle = resolveImportedAgentTitle(importedConfig, timelineRows);
 
       handedToRegistration = true;
-      return this.registerSession(imported.session, importedConfig, resolvedAgentId, {
+      const agent = await this.registerSession(imported.session, importedConfig, resolvedAgentId, {
         labels: input.labels,
         workspaceId: input.workspaceId,
         timelineRows,
@@ -1095,6 +1125,11 @@ export class AgentManager {
         initialTitle,
         publishWhenReady: true,
       });
+      for (const event of imported.providerSubagentEvents ?? []) {
+        const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
+        this.dispatch({ type: "provider_subagent", event: update });
+      }
+      return agent;
     } finally {
       if (!handedToRegistration) {
         await this.closeUnregisteredSession(imported.session);
@@ -1167,6 +1202,9 @@ export class AgentManager {
         // provider history into an empty timeline.
         await this.deleteCommittedTimeline(agentId);
         this.timelineStore.delete(agentId);
+        for (const event of this.providerSubagents.deleteParent(agentId)) {
+          this.dispatch({ type: "provider_subagent", event });
+        }
       }
 
       // Preserve existing labels and timeline during reload.
@@ -1260,6 +1298,9 @@ export class AgentManager {
     const closedAgent = this.prepareAgentForClosure(agent, "agent closed");
     await agent.session.close();
     this.timelineStore.delete(agentId);
+    for (const event of this.providerSubagents.deleteParent(agentId)) {
+      this.dispatch({ type: "provider_subagent", event });
+    }
     await this.persistSnapshot(closedAgent);
     this.emitClosedAgent(closedAgent, { persist: false });
     this.logger.trace(
@@ -1752,6 +1793,7 @@ export class AgentManager {
 
   async appendTimelineItem(agentId: string, item: AgentTimelineItem): Promise<void> {
     const agent = this.requireAgent(agentId);
+    item = limitAgentTimelineItemContent(item);
     this.touchUpdatedAt(agent);
     const row = this.recordTimeline(agentId, item);
     this.dispatchStream(
@@ -2835,6 +2877,11 @@ export class AgentManager {
     agent: ActiveManagedAgent,
     event: AgentStreamEvent,
   ): Promise<void> {
+    if (event.type === "provider_subagent") {
+      const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
+      this.dispatch({ type: "provider_subagent", event: update });
+      return;
+    }
     const turnId = getAgentStreamEventTurnId(event);
     const matchingWaiters = this.foregroundRuns.getMatchingWaiters(agent, turnId);
     this.logger.trace(
@@ -2973,44 +3020,79 @@ export class AgentManager {
     }
 
     if (options?.force) {
-      const historyEvents: Extract<AgentStreamEvent, { type: "timeline" }>[] = [];
-      for await (const event of agent.session.streamHistory()) {
-        if (event.type === "timeline") {
-          if (event.item.type === "user_message" && isSystemInjectedEnvelope(event.item.text)) {
-            continue;
-          }
-          historyEvents.push(event);
-        }
-      }
-
-      this.agentStreamCoalescer.flushAndDiscard(agent.id);
-      await this.deleteCommittedTimeline(agent.id);
-      this.timelineStore.delete(agent.id);
-      this.timelineStore.initialize(agent.id, { timestamp: new Date().toISOString() });
-      agent.historyPrimed = true;
-
-      for (const event of historyEvents) {
-        const row = this.recordTimeline(
-          agent.id,
-          event.item,
-          event.timestamp ? { timestamp: event.timestamp } : undefined,
-        );
-        if (options?.broadcast) {
-          this.dispatchStream(agent.id, event, {
-            seq: row.seq,
-            epoch: this.timelineStore.getEpoch(agent.id),
-            timestamp: row.timestamp,
-          });
-        }
-      }
-      this.touchUpdatedAt(agent);
-      this.emitState(agent);
+      await this.forceHydrateTimelineFromLegacyProviderHistory(agent, options.broadcast === true);
       return;
     }
 
+    await this.primeTimelineFromLegacyProviderHistory(agent, options?.broadcast === true);
+  }
+
+  private async forceHydrateTimelineFromLegacyProviderHistory(
+    agent: ActiveManagedAgent,
+    broadcast: boolean,
+  ): Promise<void> {
+    const historyEvents: Extract<AgentStreamEvent, { type: "timeline" }>[] = [];
+    const providerSubagentEvents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[] = [];
+    for await (const event of agent.session.streamHistory()) {
+      if (event.type === "timeline") {
+        if (event.item.type === "user_message" && isSystemInjectedEnvelope(event.item.text)) {
+          continue;
+        }
+        historyEvents.push(event);
+      } else if (event.type === "provider_subagent") {
+        providerSubagentEvents.push(event);
+      }
+    }
+
+    this.agentStreamCoalescer.flushAndDiscard(agent.id);
+    await this.deleteCommittedTimeline(agent.id);
+    this.timelineStore.delete(agent.id);
+    this.timelineStore.initialize(agent.id, { timestamp: new Date().toISOString() });
+    agent.historyPrimed = true;
+
+    for (const event of this.providerSubagents.deleteParent(agent.id)) {
+      if (broadcast) {
+        this.dispatch({ type: "provider_subagent", event });
+      }
+    }
+    for (const event of providerSubagentEvents) {
+      const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
+      if (broadcast) {
+        this.dispatch({ type: "provider_subagent", event: update });
+      }
+    }
+    for (const event of historyEvents) {
+      const row = this.recordTimeline(
+        agent.id,
+        event.item,
+        event.timestamp ? { timestamp: event.timestamp } : undefined,
+      );
+      if (broadcast) {
+        this.dispatchStream(agent.id, event, {
+          seq: row.seq,
+          epoch: this.timelineStore.getEpoch(agent.id),
+          timestamp: row.timestamp,
+        });
+      }
+    }
+    this.touchUpdatedAt(agent);
+    this.emitState(agent);
+  }
+
+  private async primeTimelineFromLegacyProviderHistory(
+    agent: ActiveManagedAgent,
+    broadcast: boolean,
+  ): Promise<void> {
     agent.historyPrimed = true;
     try {
       for await (const event of agent.session.streamHistory()) {
+        if (event.type === "provider_subagent") {
+          const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
+          if (broadcast) {
+            this.dispatch({ type: "provider_subagent", event: update });
+          }
+          continue;
+        }
         if (event.type !== "timeline") {
           continue;
         }
@@ -3057,6 +3139,12 @@ export class AgentManager {
     event: AgentStreamEvent,
     options?: HandleStreamEventOptions,
   ): Promise<boolean> {
+    if (event.type === "timeline") {
+      event = {
+        ...event,
+        item: limitAgentTimelineItemContent(event.item),
+      };
+    }
     const eventTurnId = getAgentStreamEventTurnId(event);
     const isForegroundEvent = Boolean(eventTurnId && agent.activeForegroundTurnId === eventTurnId);
     this.traceHandleStreamEventStart(agent, event, eventTurnId, isForegroundEvent);
@@ -3553,6 +3641,7 @@ export class AgentManager {
     item: AgentTimelineItem,
     options?: { timestamp?: string },
   ): AgentTimelineRow {
+    item = limitAgentTimelineItemContent(item);
     const row = this.timelineStore.append(agentId, item, options);
     this.enqueueDurableTimelineAppend(agentId, row);
     return row;
@@ -3742,6 +3831,12 @@ export class AgentManager {
     event: AgentStreamEvent,
     metadata?: { seq?: number; epoch?: string; timestamp?: string },
   ): void {
+    if (event.type === "timeline") {
+      event = {
+        ...event,
+        item: limitAgentTimelineItemContent(event.item),
+      };
+    }
     const agent = this.agents.get(agentId);
     this.logger.trace(
       {
@@ -3773,20 +3868,33 @@ export class AgentManager {
       ) {
         continue;
       }
+      if (
+        subscriber.agentId &&
+        event.type === "provider_subagent" &&
+        subscriber.agentId !==
+          (event.event.type === "upsert"
+            ? event.event.subagent.parentAgentId
+            : event.event.parentAgentId)
+      ) {
+        continue;
+      }
       // Skip internal agents for global subscribers (those without a specific agentId)
-      if (!subscriber.agentId) {
-        if (event.type === "agent_state" && event.agent.internal) {
-          continue;
-        }
-        if (event.type === "agent_stream") {
-          const agent = this.agents.get(event.agentId);
-          if (agent?.internal) {
-            continue;
-          }
-        }
+      if (!subscriber.agentId && this.eventBelongsToInternalAgent(event)) {
+        continue;
       }
       subscriber.callback(event);
     }
+  }
+
+  private eventBelongsToInternalAgent(event: AgentManagerEvent): boolean {
+    if (event.type === "agent_state") return event.agent.internal === true;
+    if (event.type === "agent_stream") return this.agents.get(event.agentId)?.internal === true;
+    if (event.type !== "provider_subagent") return false;
+    const parentAgentId =
+      event.event.type === "upsert"
+        ? event.event.subagent.parentAgentId
+        : event.event.parentAgentId;
+    return this.agents.get(parentAgentId)?.internal === true;
   }
 
   private async normalizeConfig(
@@ -4008,6 +4116,14 @@ export class AgentManager {
     const agent = this.requireAgent(id);
     if (agent.session === null) {
       throw new Error(`Agent '${agent.id}' has no managed session`);
+    }
+    return agent;
+  }
+
+  private requirePublicAgent(id: string): LiveManagedAgent {
+    const agent = this.requireAgent(id);
+    if (agent.internal) {
+      throw new Error(`Unknown agent '${agent.id}'`);
     }
     return agent;
   }

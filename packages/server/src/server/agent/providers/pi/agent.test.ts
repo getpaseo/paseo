@@ -138,6 +138,13 @@ class SessionEvents {
     );
   }
 
+  nextTurnCancellation(): Promise<Extract<AgentStreamEvent, { type: "turn_canceled" }>> {
+    return this.nextEvent(
+      (event): event is Extract<AgentStreamEvent, { type: "turn_canceled" }> =>
+        event.type === "turn_canceled",
+    );
+  }
+
   nextPermissionRequest(): Promise<Extract<AgentStreamEvent, { type: "permission_requested" }>> {
     return this.nextEvent(
       (event): event is Extract<AgentStreamEvent, { type: "permission_requested" }> =>
@@ -420,9 +427,18 @@ describe("PiRpcAgentSession", () => {
 
     await session.startTurn("hello");
     fakeSession.emit({
+      type: "message_start",
+      message: { role: "assistant", content: [], responseId: "response-1" },
+    });
+    fakeSession.emit({
       type: "message_update",
-      message: { role: "assistant", content: [] },
-      assistantMessageEvent: { type: "text_delta", delta: "hello" },
+      message: { role: "assistant", content: [], responseId: "response-1" },
+      assistantMessageEvent: { type: "text_delta", delta: "hel" },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      message: { role: "assistant", content: [], responseId: "response-1" },
+      assistantMessageEvent: { type: "text_delta", delta: "lo" },
     });
     fakeSession.emit({
       type: "message_update",
@@ -447,7 +463,8 @@ describe("PiRpcAgentSession", () => {
     await events.nextTurnCompletion();
 
     expect(events.timelineItems()).toEqual([
-      { type: "assistant_message", text: "hello" },
+      { type: "assistant_message", text: "hel", messageId: "response-1" },
+      { type: "assistant_message", text: "lo", messageId: "response-1" },
       { type: "reasoning", text: "thinking" },
       {
         type: "tool_call",
@@ -464,6 +481,60 @@ describe("PiRpcAgentSession", () => {
         status: "completed",
         detail: { type: "shell", command: "echo hi", output: "hi\n", exitCode: 0 },
         error: null,
+      },
+    ]);
+  });
+
+  test("keeps one generated message id when Pi omits message start and response id", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("hello");
+    fakeSession.emit({
+      type: "message_update",
+      message: { role: "assistant", content: [] },
+      assistantMessageEvent: { type: "text_delta", delta: "hel" },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      message: { role: "assistant", content: [] },
+      assistantMessageEvent: { type: "text_delta", delta: "lo" },
+    });
+
+    const [firstChunk, secondChunk] = events.timelineItems();
+    expect(firstChunk).toMatchObject({
+      type: "assistant_message",
+      text: "hel",
+      messageId: expect.any(String),
+    });
+    const firstMessageId = (firstChunk as { messageId: string }).messageId;
+    expect(secondChunk).toEqual({
+      type: "assistant_message",
+      text: "lo",
+      messageId: firstMessageId,
+    });
+  });
+
+  test("uses a response id that first appears on the assistant update", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("hello");
+    fakeSession.emit({
+      type: "message_start",
+      message: { role: "assistant", content: [] },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      message: { role: "assistant", content: [], responseId: "late-response-id" },
+      assistantMessageEvent: { type: "text_delta", delta: "hello" },
+    });
+
+    expect(events.timelineItems()).toEqual([
+      {
+        type: "assistant_message",
+        text: "hello",
+        messageId: "late-response-id",
       },
     ]);
   });
@@ -506,6 +577,38 @@ describe("PiRpcAgentSession", () => {
       },
       { type: "turn_completed" },
     ]);
+  });
+
+  test("canceling a silent Pi extension command leaves the session usable", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    fakeSession.holdNextPrompt();
+    const firstTurn = await session.startTurn("/silent-search");
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "notify-1",
+      method: "notify",
+      message: "Search finished",
+    });
+    await session.interrupt();
+    const cancellation = await events.nextTurnCancellation();
+    await session.startTurn("next request");
+    await fakeSession.failHeldPrompt(new Error("Canceled prompt timed out"));
+
+    expect(cancellation).toEqual({
+      type: "turn_canceled",
+      provider: "pi",
+      reason: "interrupted",
+      turnId: firstTurn.turnId,
+    });
+    expect(fakeSession.prompts).toEqual([
+      { message: "/silent-search", imageCount: 0 },
+      { message: "next request", imageCount: 0 },
+    ]);
+    await expect(session.startTurn("overlapping request")).rejects.toThrow(
+      "A Pi turn is already active",
+    );
   });
 
   test("adds Pi assistant context to generic provider finish errors", async () => {

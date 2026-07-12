@@ -154,6 +154,10 @@ export async function launchAgent(input: {
   provider: RewindFlowProvider;
   cwd: string;
   mode: "full-access";
+  providerConfig?: {
+    model?: string;
+    extra?: { codex?: { features?: { multi_agent_v2?: boolean } } };
+  };
 }): Promise<AgentHandle> {
   execFileSync("git", ["init", "-b", "main"], { cwd: input.cwd, stdio: "ignore" });
   execFileSync("git", ["config", "user.email", "paseo-test@example.com"], {
@@ -180,6 +184,7 @@ export async function launchAgent(input: {
   }
   const agent = await client.createAgent({
     ...fullAccessConfig(input.provider),
+    ...input.providerConfig,
     cwd: input.cwd,
     workspaceId: createdWorkspace.workspace.id,
     title: `rewind-flow-${input.provider}-${randomUUID()}`,

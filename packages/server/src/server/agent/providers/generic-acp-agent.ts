@@ -20,6 +20,17 @@ import {
 export const GenericACPProviderParamsSchema = z
   .object({
     supportsMcpServers: z.boolean().optional(),
+    clientCapabilities: z
+      .object({
+        fs: z
+          .object({
+            readTextFile: z.boolean().optional(),
+            writeTextFile: z.boolean().optional(),
+          })
+          .optional(),
+        terminal: z.boolean().optional(),
+      })
+      .optional(),
   })
   .passthrough();
 
@@ -47,6 +58,7 @@ export class GenericACPAgentClient extends ACPAgentClient {
   private readonly diagnosticPhaseTimeoutMs?: number;
 
   constructor(options: GenericACPAgentClientOptions) {
+    const providerParams = parseGenericACPProviderParams(options.providerParams);
     super({
       provider: "acp",
       logger: options.logger,
@@ -54,9 +66,10 @@ export class GenericACPAgentClient extends ACPAgentClient {
         env: options.env,
       },
       defaultCommand: options.command,
-      capabilities: buildGenericACPCapabilities(options),
+      capabilities: buildGenericACPCapabilities(providerParams),
       waitForInitialCommands: options.waitForInitialCommands,
       initialCommandsWaitTimeoutMs: options.initialCommandsWaitTimeoutMs,
+      clientCapabilities: providerParams.clientCapabilities,
       clientCapabilityMeta: options.clientCapabilityMeta,
       configFeatureOptions: options.configFeatureOptions,
       extensionCommandsParser: options.extensionCommandsParser,
@@ -145,8 +158,7 @@ export class GenericACPAgentClient extends ACPAgentClient {
   }
 }
 
-function buildGenericACPCapabilities(options: GenericACPAgentClientOptions): AgentCapabilityFlags {
-  const params = parseGenericACPProviderParams(options.providerParams);
+function buildGenericACPCapabilities(params: GenericACPProviderParams): AgentCapabilityFlags {
   return {
     ...DEFAULT_ACP_CAPABILITIES,
     supportsMcpServers: params.supportsMcpServers ?? DEFAULT_ACP_CAPABILITIES.supportsMcpServers,

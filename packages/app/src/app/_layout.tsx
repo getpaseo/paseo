@@ -52,6 +52,7 @@ import {
   type StartupBlocker,
 } from "@/navigation/host-runtime-bootstrap";
 import { registerWorkspaceRouteNavigationRef } from "@/navigation/workspace-route-navigation";
+import { ThemedStack } from "@/navigation/themed-stack";
 import { shouldUseDesktopDaemon } from "@/desktop/daemon/desktop-daemon";
 import { listenToDesktopEvent } from "@/desktop/electron/events";
 import { updateDesktopWindowControls } from "@/desktop/electron/window";
@@ -784,21 +785,15 @@ function FaviconStatusSync() {
   return null;
 }
 
+const ROOT_STACK_SCREEN_OPTIONS = {
+  headerShown: false,
+  animation: "none" as const,
+};
+
 function RootStack() {
   const storeReady = useStoreReady();
-  const { theme } = useUnistyles();
-  const stackScreenOptions = useMemo(
-    () => ({
-      headerShown: false,
-      animation: "none" as const,
-      contentStyle: {
-        backgroundColor: theme.colors.surface0,
-      },
-    }),
-    [theme.colors.surface0],
-  );
   return (
-    <Stack screenOptions={stackScreenOptions}>
+    <ThemedStack screenOptions={ROOT_STACK_SCREEN_OPTIONS}>
       <Stack.Screen name="index" />
       <Stack.Protected guard={storeReady}>
         <Stack.Screen name="welcome" />
@@ -815,7 +810,7 @@ function RootStack() {
       <Stack.Screen name="h/[serverId]" />
       <Stack.Screen name="settings/hosts/[serverId]/index" />
       <Stack.Screen name="settings/hosts/[serverId]/[hostSection]" />
-    </Stack>
+    </ThemedStack>
   );
 }
 

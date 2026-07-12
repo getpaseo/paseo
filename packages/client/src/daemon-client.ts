@@ -490,6 +490,22 @@ export interface FetchAgentTimelineOptions {
   timeout?: number;
 }
 
+export type ProviderSubagentListPayload = Extract<
+  SessionOutboundMessage,
+  { type: "agent.provider_subagents.list.response" }
+>["payload"];
+export type ProviderSubagentTimelinePayload = Extract<
+  SessionOutboundMessage,
+  { type: "agent.provider_subagents.timeline.get.response" }
+>["payload"];
+export interface FetchProviderSubagentTimelineOptions {
+  direction?: ProviderSubagentTimelinePayload["direction"];
+  cursor?: FetchAgentTimelineCursor;
+  limit?: number;
+  requestId?: string;
+  timeout?: number;
+}
+
 // COMPAT(daemon-client-object-options): added in v0.1.102; remove after
 // 2026-12-29 once SDK callers have migrated to object parameters.
 function normalizeFetchAgentOptions(
@@ -2429,6 +2445,65 @@ export class DaemonClient {
     return payload;
   }
 
+  async listProviderSubagents(
+    parentAgentId: string,
+    options: { requestId?: string; timeout?: number } = {},
+  ): Promise<ProviderSubagentListPayload> {
+    const requestId = this.createRequestId(options.requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "agent.provider_subagents.list.request",
+      parentAgentId,
+      requestId,
+    });
+    const payload = await this.sendRequest({
+      requestId,
+      message,
+      timeout: options.timeout,
+      options: { skipQueue: true },
+      select: (response) =>
+        response.type === "agent.provider_subagents.list.response" &&
+        response.payload.requestId === requestId
+          ? response.payload
+          : null,
+    });
+    if (payload.error) {
+      throw new Error(payload.error);
+    }
+    return payload;
+  }
+
+  async fetchProviderSubagentTimeline(
+    parentAgentId: string,
+    subagentId: string,
+    options: FetchProviderSubagentTimelineOptions = {},
+  ): Promise<ProviderSubagentTimelinePayload> {
+    const requestId = this.createRequestId(options.requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "agent.provider_subagents.timeline.get.request",
+      parentAgentId,
+      subagentId,
+      requestId,
+      ...(options.direction ? { direction: options.direction } : {}),
+      ...(options.cursor ? { cursor: options.cursor } : {}),
+      ...(typeof options.limit === "number" ? { limit: options.limit } : {}),
+    });
+    const payload = await this.sendRequest({
+      requestId,
+      message,
+      timeout: options.timeout,
+      options: { skipQueue: true },
+      select: (response) =>
+        response.type === "agent.provider_subagents.timeline.get.response" &&
+        response.payload.requestId === requestId
+          ? response.payload
+          : null,
+    });
+    if (payload.error) {
+      throw new Error(payload.error);
+    }
+    return payload;
+  }
+
   async buildAgentForkContext(
     agentId: string,
     options: AgentForkContextOptions = {},
@@ -4200,7 +4275,13 @@ export class DaemonClient {
     cwd: string,
     name?: string,
     requestId?: string,
-    options?: { agentId?: string; command?: string; args?: string[]; workspaceId?: string },
+    options?: {
+      agentId?: string;
+      command?: string;
+      args?: string[];
+      workspaceId?: string;
+      size?: { rows: number; cols: number };
+    },
   ): Promise<CreateTerminalPayload> {
     const resolvedRequestId = this.createRequestId(requestId);
     const message = SessionInboundMessageSchema.parse({
@@ -4211,6 +4292,7 @@ export class DaemonClient {
       command: options?.command,
       args: options?.args,
       ...(options?.workspaceId !== undefined ? { workspaceId: options.workspaceId } : {}),
+      ...(options?.size !== undefined ? { size: options.size } : {}),
       requestId: resolvedRequestId,
     });
     return this.sendCorrelatedRequest({
@@ -4672,6 +4754,7 @@ export class DaemonClient {
             [CLIENT_CAPS.customModeIcons]: true,
             [CLIENT_CAPS.reasoningMergeEnum]: true,
             [CLIENT_CAPS.terminalReflowableSnapshot]: true,
+            [CLIENT_CAPS.providerSubagents]: true,
             ...this.config.capabilities,
           },
           ...(this.config.appVersion ? { appVersion: this.config.appVersion } : {}),

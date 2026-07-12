@@ -15,6 +15,7 @@ let lastQuery: ReturnType<typeof buildSdkQueryMock> | null = null;
 const LIVE_REPLY_MARKER = "LIVE_ONLY_REPLY_MARKER";
 const HISTORY_USER_MARKER = "HISTORY_ONLY_USER_MARKER";
 const HISTORY_ASSISTANT_MARKER = "HISTORY_ONLY_ASSISTANT_MARKER";
+const HISTORY_SIDECHAIN_MARKER = "HISTORY_ONLY_SIDECHAIN_MARKER";
 
 function buildSdkQueryMock() {
   const events = [
@@ -126,6 +127,52 @@ describe("ClaudeAgentSession history replay regression", () => {
             content: HISTORY_ASSISTANT_MARKER,
           },
         }),
+        JSON.stringify({
+          type: "assistant",
+          uuid: "history-task-call-message",
+          sessionId: "history-session",
+          cwd,
+          message: {
+            role: "assistant",
+            content: [
+              {
+                type: "tool_use",
+                id: "history-task-call",
+                name: "Agent",
+                input: { description: "Inspect persisted history" },
+              },
+            ],
+          },
+        }),
+        JSON.stringify({
+          type: "assistant",
+          isSidechain: true,
+          agentId: "history-child",
+          uuid: "history-child-message",
+          timestamp: "2026-07-12T10:00:01.000Z",
+          sessionId: "history-session",
+          cwd,
+          message: {
+            id: "history-child-message",
+            role: "assistant",
+            content: [{ type: "text", text: HISTORY_SIDECHAIN_MARKER }],
+          },
+        }),
+        JSON.stringify({
+          type: "user",
+          sessionId: "history-session",
+          cwd,
+          message: {
+            role: "user",
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: "history-task-call",
+                content: "done\nagentId: history-child",
+              },
+            ],
+          },
+        }),
       ].join("\n"),
       "utf8",
     );
@@ -217,6 +264,54 @@ describe("ClaudeAgentSession history replay regression", () => {
     const timelineText = collectTimelineText(historyEvents);
     expect(timelineText).toContain(HISTORY_USER_MARKER);
     expect(timelineText).toContain(HISTORY_ASSISTANT_MARKER);
+  });
+
+  test("replays persisted sidechains as provider subagent timelines", async () => {
+    const client = new ClaudeAgentClient({
+      logger: createTestLogger(),
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.resumeSession(
+      {
+        provider: "claude",
+        sessionId: "history-session",
+        nativeHandle: "history-session",
+        metadata: { provider: "claude", cwd },
+      },
+      { cwd },
+    );
+    const historyEvents: AgentStreamEvent[] = [];
+
+    try {
+      for await (const event of session.streamHistory()) historyEvents.push(event);
+    } finally {
+      await session.close();
+    }
+
+    expect(historyEvents).toContainEqual({
+      type: "provider_subagent",
+      provider: "claude",
+      event: {
+        type: "timeline",
+        id: "history-task-call",
+        item: {
+          type: "assistant_message",
+          text: HISTORY_SIDECHAIN_MARKER,
+          messageId: "history-child-message",
+        },
+        timestamp: "2026-07-12T10:00:01.000Z",
+      },
+    });
+    expect(historyEvents).toContainEqual({
+      type: "provider_subagent",
+      provider: "claude",
+      event: expect.objectContaining({
+        type: "upsert",
+        id: "history-task-call",
+        status: "completed",
+      }),
+    });
   });
 
   test("listCommands includes rewind command", async () => {

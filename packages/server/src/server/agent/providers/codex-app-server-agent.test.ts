@@ -1567,7 +1567,7 @@ describe("Codex app-server provider", () => {
     asInternals(session).handleNotification("item/agentMessage/delta", {
       threadId: "child-thread-1",
       itemId: "child-message-1",
-      delta: "Found the path.",
+      delta: "Found",
     });
     asInternals(session).handleNotification("item/completed", {
       threadId: "child-thread-1",
@@ -1599,6 +1599,128 @@ describe("Codex app-server provider", () => {
         actions: [],
       },
     });
+
+    const providerEvents = events.flatMap((event) =>
+      event.type === "provider_subagent" ? [event.event] : [],
+    );
+    expect(providerEvents).toContainEqual(
+      expect.objectContaining({
+        type: "upsert",
+        id: "child-thread-1",
+        description: "Report findings.",
+      }),
+    );
+    expect(providerEvents).toContainEqual({
+      type: "timeline",
+      id: "child-thread-1",
+      item: {
+        type: "assistant_message",
+        messageId: "child-message-1",
+        text: "Found",
+      },
+    });
+    expect(providerEvents).toContainEqual({
+      type: "timeline",
+      id: "child-thread-1",
+      item: {
+        type: "assistant_message",
+        messageId: "child-message-1",
+        text: " the path.",
+      },
+    });
+    expect(providerEvents.at(-1)).toMatchObject({
+      type: "upsert",
+      id: "child-thread-1",
+      status: "completed",
+    });
+  });
+
+  test("renders child MCP image results in the provider subagent timeline", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "test-thread",
+      item: {
+        type: "subAgentActivity",
+        id: "spawn-image-child",
+        kind: "started",
+        agentThreadId: "image-child-thread",
+        agentPath: "/root/image-child",
+      },
+    });
+
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "image-child-thread",
+      item: {
+        id: "child-mcp-image",
+        type: "mcpToolCall",
+        status: "completed",
+        server: "paseo",
+        tool: "browser_screenshot",
+        arguments: {},
+        result: {
+          content: [{ type: "image", data: ONE_BY_ONE_PNG_BASE64, mimeType: "image/png" }],
+        },
+      },
+    });
+
+    const childItems = events.flatMap((event) =>
+      event.type === "provider_subagent" &&
+      event.event.type === "timeline" &&
+      event.event.id === "image-child-thread"
+        ? [event.event.item]
+        : [],
+    );
+    expect(childItems).toHaveLength(2);
+    expect(childItems[0]).toMatchObject({ type: "tool_call", callId: "child-mcp-image" });
+    expect(childItems[1]).toMatchObject({ type: "assistant_message" });
+    if (childItems[1]?.type !== "assistant_message") {
+      throw new Error("Expected child image markdown");
+    }
+    const source = markdownImageSource(childItems[1].text);
+    expect(existsSync(source)).toBe(true);
+    rmSync(source, { force: true });
+  });
+
+  test("renders a child user message once across lifecycle notifications", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "test-thread",
+      item: {
+        type: "subAgentActivity",
+        id: "spawn-user-child",
+        kind: "started",
+        agentThreadId: "user-child-thread",
+        agentPath: "/root/user-child",
+      },
+    });
+    const childUserMessage = {
+      type: "userMessage",
+      id: "child-user-message",
+      content: [{ type: "text", text: "Inspect this path." }],
+    };
+
+    asInternals(session).handleNotification("item/started", {
+      threadId: "user-child-thread",
+      item: childUserMessage,
+    });
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "user-child-thread",
+      item: childUserMessage,
+    });
+
+    expect(
+      events.filter(
+        (event) =>
+          event.type === "provider_subagent" &&
+          event.event.type === "timeline" &&
+          event.event.id === "user-child-thread" &&
+          event.event.item.type === "user_message",
+      ),
+    ).toHaveLength(1);
   });
 
   test("keeps the parent running when a MultiAgentV2 sub-agent finishes", async () => {
@@ -2095,6 +2217,20 @@ describe("Codex app-server provider", () => {
           event.item.callId === "child-command",
       ),
     ).toBe(false);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "provider_subagent",
+        event: {
+          type: "timeline",
+          id: "legacy-envelope-child",
+          item: expect.objectContaining({
+            type: "tool_call",
+            callId: "child-command",
+            status: "running",
+          }),
+        },
+      }),
+    );
     expect(events.filter((event) => event.type === "turn_completed")).toHaveLength(0);
     expect(events.at(-1)).toMatchObject({
       type: "timeline",
@@ -2343,9 +2479,27 @@ describe("Codex app-server provider", () => {
   test("loads mixed legacy and MultiAgentV2 sub-agent history", async () => {
     const session = createSession();
     session.client = {
-      request: vi.fn(async (method: string) => {
+      request: vi.fn(async (method: string, params: unknown) => {
         if (method !== "thread/read") {
           return {};
+        }
+        const threadId = (params as { threadId?: string }).threadId;
+        if (threadId !== "test-thread") {
+          return {
+            thread: {
+              turns: [
+                {
+                  items: [
+                    {
+                      type: "agentMessage",
+                      id: `message-${threadId}`,
+                      text: `History from ${threadId}`,
+                    },
+                  ],
+                },
+              ],
+            },
+          };
         }
         return {
           thread: {
@@ -2382,6 +2536,38 @@ describe("Codex app-server provider", () => {
     for await (const event of session.streamHistory()) {
       history.push(event);
     }
+    expect(
+      history.flatMap((event) =>
+        event.type === "provider_subagent" && event.event.type === "upsert" ? [event.event] : [],
+      ),
+    ).toMatchObject([
+      { type: "upsert", id: "legacy-child-thread", status: "completed" },
+      { type: "upsert", id: "v2-child-thread", status: "completed" },
+    ]);
+    expect(
+      history.flatMap((event) =>
+        event.type === "provider_subagent" && event.event.type === "timeline" ? [event.event] : [],
+      ),
+    ).toEqual([
+      {
+        type: "timeline",
+        id: "legacy-child-thread",
+        item: {
+          type: "assistant_message",
+          messageId: "message-legacy-child-thread",
+          text: "History from legacy-child-thread",
+        },
+      },
+      {
+        type: "timeline",
+        id: "v2-child-thread",
+        item: {
+          type: "assistant_message",
+          messageId: "message-v2-child-thread",
+          text: "History from v2-child-thread",
+        },
+      },
+    ]);
     expect(
       history
         .filter((event) => event.type === "timeline" && event.item.type === "tool_call")
@@ -2447,9 +2633,12 @@ describe("Codex app-server provider", () => {
   test("coalesces persisted MultiAgentV2 activity for one child into one terminal card", async () => {
     const session = createSession();
     session.client = {
-      request: vi.fn(async (method: string) => {
+      request: vi.fn(async (method: string, params: unknown) => {
         if (method !== "thread/read") {
           return {};
+        }
+        if ((params as { threadId?: string }).threadId !== "test-thread") {
+          return { thread: { turns: [] } };
         }
         return {
           thread: {
@@ -2495,6 +2684,15 @@ describe("Codex app-server provider", () => {
       history.push(event);
     }
     expect(history).toEqual([
+      {
+        type: "provider_subagent",
+        provider: "codex",
+        event: expect.objectContaining({
+          type: "upsert",
+          id: "history-child-thread",
+          status: "canceled",
+        }),
+      },
       {
         type: "timeline",
         provider: "codex",
