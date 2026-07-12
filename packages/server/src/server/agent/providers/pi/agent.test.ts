@@ -519,6 +519,7 @@ describe("PiRpcAgentSession", () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();
 
+    fakeSession.holdNextPrompt();
     const firstTurn = await session.startTurn("/silent-search");
     fakeSession.emit({
       type: "extension_ui_request",
@@ -529,6 +530,7 @@ describe("PiRpcAgentSession", () => {
     await session.interrupt();
     const cancellation = await events.nextTurnCancellation();
     await session.startTurn("next request");
+    await fakeSession.failHeldPrompt(new Error("Canceled prompt timed out"));
 
     expect(cancellation).toEqual({
       type: "turn_canceled",
@@ -540,6 +542,9 @@ describe("PiRpcAgentSession", () => {
       { message: "/silent-search", imageCount: 0 },
       { message: "next request", imageCount: 0 },
     ]);
+    await expect(session.startTurn("overlapping request")).rejects.toThrow(
+      "A Pi turn is already active",
+    );
   });
 
   test("adds Pi assistant context to generic provider finish errors", async () => {

@@ -1125,13 +1125,15 @@ export class PiRpcAgentSession implements AgentSession {
     this.activeTurnId = turnId;
 
     void this.runtimeSession.prompt(payload.text, payload.images).catch((error) => {
-      const failedTurnId = this.activeTurnId ?? turnId;
+      if (this.activeTurnId !== turnId) {
+        return;
+      }
       this.activeTurnId = null;
       if (isPiRequestAbortError(error)) {
         this.emit({
           type: "turn_canceled",
           provider: PI_PROVIDER,
-          turnId: failedTurnId,
+          turnId,
           reason: toDiagnosticErrorMessage(error),
         });
         return;
@@ -1139,7 +1141,7 @@ export class PiRpcAgentSession implements AgentSession {
       this.emit({
         type: "turn_failed",
         provider: PI_PROVIDER,
-        turnId: failedTurnId,
+        turnId,
         error: toDiagnosticErrorMessage(error),
       });
     });
