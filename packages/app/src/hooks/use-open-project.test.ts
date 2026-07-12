@@ -69,6 +69,7 @@ describe("openProjectDirectly", () => {
           projectDisplayName: "project",
           projectCustomName: null,
           projectKind: "git",
+          projectPinnedAt: null,
           projectRootPath: PROJECT_PATH,
         },
       },

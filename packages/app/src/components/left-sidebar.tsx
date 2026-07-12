@@ -43,7 +43,7 @@ import {
 import { useSidebarModel } from "@/components/sidebar/sidebar-model";
 import { RetainedPanelActivity } from "@/components/retained-panel";
 import type { StatusGroup } from "@/hooks/sidebar-status-view-model";
-import { type SidebarGroupMode } from "@/stores/sidebar-view-store";
+import { type SidebarGroupMode, useSidebarViewStore } from "@/stores/sidebar-view-store";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { useHosts } from "@/runtime/host-runtime";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
@@ -561,6 +561,7 @@ function MobileSidebar({
   handleViewSchedulesNavigate,
 }: MobileSidebarProps) {
   const pathname = usePathname();
+  const hasActiveHostFilter = useSidebarViewStore((state) => state.hostFilters.length > 0);
   const isSessionsActive = pathname.includes("/sessions");
   const isSchedulesActive = pathname.includes("/schedules");
   const { gesture: closeGesture, gestureRef: closeGestureRef } = useCloseAgentListGesture();
@@ -638,7 +639,7 @@ function MobileSidebar({
           )}
         </Pressable>
 
-        {isInitialLoad ? (
+        {isInitialLoad && !hasActiveHostFilter ? (
           <SidebarAgentListSkeleton />
         ) : (
           <SidebarWorkspaceList
@@ -700,6 +701,7 @@ function DesktopSidebar({
   handleViewSchedules,
 }: DesktopSidebarProps) {
   const pathname = usePathname();
+  const hasActiveHostFilter = useSidebarViewStore((state) => state.hostFilters.length > 0);
   const isSessionsActive = pathname.includes("/sessions");
   const isSchedulesActive = pathname.includes("/schedules");
   const padding = useWindowControlsPadding("sidebar");
@@ -792,7 +794,7 @@ function DesktopSidebar({
           </View>
         </View>
 
-        {isInitialLoad ? (
+        {isInitialLoad && !hasActiveHostFilter ? (
           <SidebarAgentListSkeleton />
         ) : (
           <SidebarWorkspaceList
