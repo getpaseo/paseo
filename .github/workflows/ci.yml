@@ -239,8 +239,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
-    name: playwright (shard ${{ matrix.shard }}/4)
+        include:
+          - { label: "shard 1/4", shard: 1, desktop: false }
+          - { label: "shard 2/4", shard: 2, desktop: false }
+          - { label: "shard 3/4", shard: 3, desktop: false }
+          - { label: "shard 4/4", shard: 4, desktop: false }
+          - { label: "desktop overlay", shard: "desktop", desktop: true }
+    name: playwright (${{ matrix.label }})
     runs-on: ubuntu-latest
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
@@ -276,12 +281,18 @@ jobs:
         run: npm run build:server
 
       - name: Install agent CLIs for provider tests
+        if: ${{ !matrix.desktop }}
         run: npm install -g @anthropic-ai/claude-code @openai/codex@0.105.0 opencode-ai
 
       - name: Run Playwright E2E tests
+        if: ${{ !matrix.desktop }}
         run: npm run test:e2e --workspace=@getpaseo/app -- --shard=${{ matrix.shard }}/4
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+      - name: Run desktop-overlay Playwright tests
+        if: ${{ matrix.desktop }}
+        run: npm run test:e2e:desktop --workspace=@getpaseo/app
 
       - name: Upload test artifacts
         uses: actions/upload-artifact@v4

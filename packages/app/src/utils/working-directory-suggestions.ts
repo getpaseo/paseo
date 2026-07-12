@@ -1,3 +1,5 @@
+import { scoreMatch } from "./score-match";
+
 export interface BuildWorkingDirectorySuggestionsInput {
   recommendedPaths: string[];
   serverPaths: string[];
@@ -7,40 +9,27 @@ export interface BuildWorkingDirectorySuggestionsInput {
 export function buildWorkingDirectorySuggestions(
   input: BuildWorkingDirectorySuggestionsInput,
 ): string[] {
-  const rawQuery = input.query.trim();
+  const query = input.query.trim();
   const recommended = uniquePaths(input.recommendedPaths);
-  if (!rawQuery) {
+  if (!query) {
     return recommended;
   }
 
-  const normalizedQuery = normalizeQuery(rawQuery);
-  const shouldFilterByQuery = normalizedQuery.length > 0;
+  const matchingRecommended = recommended.filter((path) =>
+    recommendedPathMatchesQuery(path, query),
+  );
 
-  const recommendedMatches = shouldFilterByQuery
-    ? recommended.filter((entry) => pathMatchesQuery(entry, normalizedQuery))
-    : recommended;
-  const seen = new Set(recommendedMatches);
-  const ordered = [...recommendedMatches];
-
-  for (const entry of uniquePaths(input.serverPaths)) {
-    if (shouldFilterByQuery && !pathMatchesQuery(entry, normalizedQuery)) {
-      continue;
-    }
-    if (seen.has(entry)) {
-      continue;
-    }
-    ordered.push(entry);
-    seen.add(entry);
-  }
-
-  return ordered;
+  // The request owner correlates these results with the current query. The
+  // daemon owns filesystem query parsing, filtering, and ranking; doing it
+  // again here creates a second search implementation that can disagree.
+  return uniquePaths([...matchingRecommended, ...input.serverPaths]);
 }
 
 function uniquePaths(paths: string[]): string[] {
   const seen = new Set<string>();
   const ordered: string[] = [];
-  for (const pathEntry of paths) {
-    const trimmed = pathEntry.trim();
+  for (const path of paths) {
+    const trimmed = path.trim();
     if (!trimmed || seen.has(trimmed)) {
       continue;
     }
@@ -50,23 +39,20 @@ function uniquePaths(paths: string[]): string[] {
   return ordered;
 }
 
-function normalizeQuery(query: string): string {
-  let normalized = query.trim();
-  if (!normalized) {
-    return "";
-  }
-  if (normalized.startsWith("~")) {
-    normalized = normalized.slice(1);
-  }
-  normalized = normalized.replace(/^\/+/, "").toLowerCase();
-  return normalized;
-}
-
-function pathMatchesQuery(candidatePath: string, query: string): boolean {
-  const lowerPath = candidatePath.toLowerCase();
-  if (lowerPath.includes(query)) {
+function recommendedPathMatchesQuery(path: string, query: string): boolean {
+  const candidate = normalizePath(path);
+  const normalizedQuery = normalizePath(query);
+  if (["~", "~/"].includes(normalizedQuery)) {
     return true;
   }
-  const segments = lowerPath.split("/");
-  return (segments[segments.length - 1] ?? "").includes(query);
+  if (normalizedQuery.includes("/") || normalizedQuery.startsWith("~")) {
+    return false;
+  }
+
+  const basename = candidate.split("/").at(-1) ?? "";
+  return candidate.includes(normalizedQuery) || scoreMatch(normalizedQuery, basename) !== null;
+}
+
+function normalizePath(value: string): string {
+  return value.trim().replace(/\\/g, "/").toLowerCase();
 }

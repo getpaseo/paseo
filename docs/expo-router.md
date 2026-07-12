@@ -96,6 +96,18 @@ Keep workspace identity and retention outside native-stack `getId` and
 Navigation `getId`, and `getId` has broken Android native-stack/Fabric by
 reordering an already-mounted workspace screen.
 
+Use `ThemedStack` from `packages/app/src/navigation/themed-stack.tsx` for every
+Expo Router stack. React Navigation otherwise paints each native stack screen
+with its light default background. A screen-level wrapper can hide that surface
+while settled, but Android may expose it for one frame when navigation crosses
+from a nested stack to its parent stack. This is especially visible when an
+app-wide route such as `/new` opens from a dark workspace.
+
+Do not read the active theme with `useUnistyles()` in a layout to build
+`screenOptions`. `ThemedStack` keeps that third-party prop theme-reactive through
+a small `withUnistyles` boundary without subscribing the route tree itself to
+every Unistyles runtime update.
+
 ## Regression Shape
 
 Pure helper tests are useful but not enough. The failure mode here is native

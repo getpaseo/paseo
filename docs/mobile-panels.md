@@ -70,6 +70,9 @@ definition, no longer eligible to begin.
 
 - Callers request semantic targets through `panel-store`; they never write shared values.
 - Gesture behavior comes from the four explicit hooks in `mobile-panels/gestures.ts`.
+- Keep `SidebarModelProvider` outside `MobileGestureWrapper`. The provider shares sidebar derivation
+  across consumers, while Gesture Handler requires the wrapper's direct child to be a native `View`
+  so its injected `collapsable={false}` reaches Android/Fabric.
 - Mobile sidebars render through `MobilePanelOverlay`; do not duplicate overlay lifecycle or motion
   styles in sidebar components.
 - Animated panel nodes use React Native static styles plus inline theme values. Do not attach
@@ -77,6 +80,22 @@ definition, no longer eligible to begin.
   has caused native crashes.
 - The plain React wrapper owns `display: none` after settlement. This prevents a stale Fabric animated
   prop commit from resurrecting a closed overlay.
+- Hidden tabs and workspaces use `RetainedPanel`. It owns a non-collapsible native root, visibility,
+  pointer events, and the active signal consumed by `useRetainedPanelActive`.
+- Panels whose gesture wrapper already owns visibility use `RetainedPanelActivity` to provide the
+  same active signal without adding another layout root. Persistent animations, timers, polling, and
+  shared clocks must subscribe to that signal and stop when their final visible consumer leaves.
+- Synchronized step animations use one wall-clock-aligned source. Register a local shared value only
+  while its retained panel is active so hidden animated styles remain mounted without receiving clock
+  updates. Do not give every instance its own loop or leave hidden styles subscribed to the source.
+- Retention order and render order are separate concerns. LRU metadata may change on every switch;
+  keyed retained roots must keep a stable sibling order. Moving large retained roots triggered Fabric
+  Differ failures (`addViewAt` / `removeViewAt` view reuse) on Android.
+- The newly active panel must be included in the same render that changes selection. Adding it from an
+  effect creates a committed frame where every retained panel is hidden, which is a real blank screen.
+- Do not suspend retained native subtrees with `Suspense`/`react-freeze`. Suspension changes native
+  ownership and can detach descendants. Keep the tree mounted, stabilize its subscriptions/selectors,
+  and use the retained-panel active signal to stop timers, polling, and other genuine background work.
 
 ## Tests
 

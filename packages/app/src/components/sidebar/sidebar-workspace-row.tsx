@@ -11,14 +11,13 @@ import { DiffStat } from "@/components/diff-stat";
 import { AdaptiveRenameModal } from "@/components/rename-modal";
 import { useToast } from "@/contexts/toast-context";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
-import { useCheckoutGitActionsStore } from "@/git/actions-store";
 import { toWorktreeArchiveRisk } from "@/git/worktree-archive-warning";
 import { useWorkspaceArchive } from "@/workspace/use-workspace-archive";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import { useClearWorkspaceAttention } from "@/hooks/use-clear-workspace-attention";
 import { redirectIfArchivingActiveWorkspace } from "@/utils/sidebar-workspace-archive-redirect";
-import { requireWorkspaceDirectory, resolveWorkspaceDirectory } from "@/utils/workspace-directory";
+import { requireWorkspaceDirectory } from "@/utils/workspace-directory";
 import { isNative as platformIsNative } from "@/constants/platform";
 import { useLongPressDragInteraction } from "@/components/sidebar/use-long-press-drag-interaction";
 import { SidebarWorkspaceMenu } from "@/components/sidebar/sidebar-workspace-menu";
@@ -66,20 +65,7 @@ export function SidebarWorkspaceRow({
   const toast = useToast();
   const [isHidingWorkspace, setIsHidingWorkspace] = useState(false);
   const [isRenameOpen, setIsRenameOpen] = useState(false);
-  const workspaceDirectory = resolveWorkspaceDirectory({
-    workspaceDirectory: workspace.workspaceDirectory,
-  });
-  const worktreeArchiveStatus = useCheckoutGitActionsStore((state) =>
-    workspaceDirectory
-      ? state.getStatus({
-          serverId: workspace.serverId,
-          cwd: workspaceDirectory,
-          actionId: "archive-worktree",
-        })
-      : "idle",
-  );
-  const isWorktree = workspace.workspaceKind === "worktree";
-  const isArchiving = isWorktree ? workspace.archivingAt !== null : isHidingWorkspace;
+  const isArchiving = workspace.archivingAt !== null || isHidingWorkspace;
 
   const redirectAfterArchive = useCallback(() => {
     redirectIfArchivingActiveWorkspace({
@@ -94,7 +80,6 @@ export function SidebarWorkspaceRow({
   const archiveController = useWorkspaceArchive({
     serverId: workspace.serverId,
     workspaceId: workspace.workspaceId,
-    workspaceDirectory: workspace.workspaceDirectory,
     workspaceKind: workspace.workspaceKind,
     name: workspace.name,
     ...toWorktreeArchiveRisk(workspace),
@@ -161,7 +146,7 @@ export function SidebarWorkspaceRow({
     [renameMutation],
   );
 
-  const archiveShortcutKeys = useShortcutKeys("archive-worktree");
+  const archiveShortcutKeys = useShortcutKeys("archive-workspace");
   const { hasClearableAttention, clearAttention } = useClearWorkspaceAttention({
     serverId: workspace.serverId,
     workspaceId: workspace.workspaceId,
@@ -173,8 +158,8 @@ export function SidebarWorkspaceRow({
   }, [clearAttention, toast]);
 
   useKeyboardActionHandler({
-    handlerId: `worktree-archive-${workspace.workspaceKey}`,
-    actions: ["worktree.archive"],
+    handlerId: `workspace-archive-${workspace.workspaceKey}`,
+    actions: ["workspace.archive"],
     enabled: selected && !isArchiving,
     priority: 0,
     handle: () => {
@@ -182,13 +167,6 @@ export function SidebarWorkspaceRow({
       return true;
     },
   });
-
-  let archiveStatus: "idle" | "pending" | "success" = "idle";
-  if (isWorktree) {
-    archiveStatus = worktreeArchiveStatus;
-  } else if (isHidingWorkspace) {
-    archiveStatus = "pending";
-  }
 
   return (
     <>
@@ -205,7 +183,7 @@ export function SidebarWorkspaceRow({
         isDragging={isDragging}
         dragHandleProps={dragHandleProps}
         archiveLabel={t("sidebar.workspace.actions.archive")}
-        archiveStatus={archiveStatus}
+        archiveStatus={isArchiving ? "pending" : "idle"}
         archivePendingLabel={t("sidebar.workspace.actions.archiving")}
         onArchive={handleArchive}
         onCopyBranchName={canCopyBranchName ? handleCopyBranchName : undefined}

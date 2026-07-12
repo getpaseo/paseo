@@ -1197,6 +1197,7 @@ describe("OpenCode adapter startTurn error handling", () => {
   test("keeps a turn active while OpenCode is retrying", async () => {
     vi.useFakeTimers();
     const eventsGate = createTestDeferred<void>();
+    let eventStreamSignal: AbortSignal | undefined;
     const retryStream: AsyncIterable<unknown> = {
       [Symbol.asyncIterator]: () => {
         let emitted = false;
@@ -1222,14 +1223,27 @@ describe("OpenCode adapter startTurn error handling", () => {
                 },
               };
             }
-            return new Promise(() => {});
+            return new Promise<IteratorResult<unknown>>((resolve) => {
+              if (eventStreamSignal?.aborted) {
+                resolve({ done: true, value: undefined });
+                return;
+              }
+              eventStreamSignal?.addEventListener(
+                "abort",
+                () => resolve({ done: true, value: undefined }),
+                { once: true },
+              );
+            });
           },
         };
       },
     };
     const fakeClient = {
       global: {
-        event: vi.fn().mockResolvedValue({ stream: retryStream }),
+        event: vi.fn().mockImplementation(async ({ signal }: { signal: AbortSignal }) => {
+          eventStreamSignal = signal;
+          return { stream: retryStream };
+        }),
       },
       session: {
         abort: vi.fn().mockResolvedValue({ error: null }),
@@ -1317,6 +1331,52 @@ describe("OpenCode adapter startTurn error handling", () => {
     await session.close();
 
     expect(fakeClient.session.delete).not.toHaveBeenCalled();
+  });
+
+  test("waits for the OpenCode event stream to finish after close aborts it", async () => {
+    const streamAborted = createTestDeferred<void>();
+    const finishStreamCleanup = createTestDeferred<void>();
+    const fakeClient = {
+      global: {
+        event: vi.fn().mockImplementation(async ({ signal }: { signal: AbortSignal }) => ({
+          stream: {
+            [Symbol.asyncIterator]: () => ({
+              next: async () => {
+                if (!signal.aborted) {
+                  await waitForAbort(signal);
+                }
+                streamAborted.resolve();
+                await finishStreamCleanup.promise;
+                return { done: true, value: undefined };
+              },
+            }),
+          },
+        })),
+      },
+      session: {
+        abort: vi.fn().mockResolvedValue({ error: null }),
+        update: vi.fn().mockResolvedValue({ error: null }),
+      },
+    } as never;
+    const session = new __openCodeInternals.OpenCodeAgentSession(
+      { provider: "opencode", cwd: "/tmp/test" },
+      fakeClient,
+      "ses_unit_test",
+      createTestLogger(),
+    );
+    let closeSettled = false;
+
+    const closePromise = session.close().then(() => {
+      closeSettled = true;
+      return undefined;
+    });
+    await streamAborted.promise;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(closeSettled).toBe(false);
+
+    finishStreamCleanup.resolve();
+    await closePromise;
   });
 
   test("streamHistory preserves OpenCode replay timestamps from message and part times", async () => {
@@ -2176,6 +2236,15 @@ function createTestDeferred<T>(): {
     reject = rej;
   });
   return { promise, resolve, reject };
+}
+
+function waitForAbort(signal: AbortSignal): Promise<void> {
+  if (signal.aborted) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    signal.addEventListener("abort", () => resolve(), { once: true });
+  });
 }
 
 function abortableOpenCodeStream(signal: AbortSignal): AsyncIterable<OpenCodeEvent> {

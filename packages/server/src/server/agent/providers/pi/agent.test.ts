@@ -12,7 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import pino from "pino";
-import { describe, expect, test } from "vitest";
+import { describe, expect, onTestFinished, test } from "vitest";
 
 import type { AgentSession, AgentSessionConfig, AgentStreamEvent } from "../../agent-sdk-types.js";
 import { PiRpcAgentClient, PiRpcAgentSession, transformPiModels } from "./agent.js";
@@ -550,12 +550,14 @@ describe("PiRpcAgentSession", () => {
         },
       },
       {},
+      { env: { RESUME_PROBE: "expected" } },
     );
 
     expect(pi.recordedLaunches).toHaveLength(1);
     const actualLaunch = pi.recordedLaunches[0]!;
     expect(actualLaunch).toMatchObject({
       cwd: "/workspace/project",
+      env: { RESUME_PROBE: "expected" },
       session: "/tmp/native-pi-session",
     });
     expect(actualLaunch.extensionPaths).toHaveLength(1);
@@ -1221,7 +1223,21 @@ describe("PiRpcAgentClient", () => {
     expect(pi.latestSession().treeNavigationRequests).toEqual(["entry-1"]);
   });
 
-  test("injects MCP servers through pi-mcp-adapter when the extension is loaded", async () => {
+  test("injects MCP servers without replacing the Pi global MCP config", async () => {
+    const agentDir = mkdtempSync(path.join(tmpdir(), "paseo-pi-agent-"));
+    onTestFinished(() => rmSync(agentDir, { recursive: true, force: true }));
+    writeFileSync(
+      path.join(agentDir, "mcp.json"),
+      JSON.stringify({
+        settings: { toolPrefix: "none", disableProxyTool: true },
+        "mcp-servers": {
+          "brave-search": {
+            url: "https://example.com/mcp/brave",
+            directTools: ["brave_llm_context"],
+          },
+        },
+      }),
+    );
     const pi = new FakePi();
     pi.queueCommands([
       {
@@ -1248,6 +1264,7 @@ describe("PiRpcAgentClient", () => {
           },
         },
       }),
+      { env: { PI_CODING_AGENT_DIR: agentDir } },
     );
 
     expect(pi.recordedLaunches).toHaveLength(2);
@@ -1276,7 +1293,12 @@ describe("PiRpcAgentClient", () => {
       mcpServers: Record<string, unknown>;
     };
     expect(injectedConfig).toEqual({
+      settings: { toolPrefix: "none", disableProxyTool: true },
       mcpServers: {
+        "brave-search": {
+          url: "https://example.com/mcp/brave",
+          directTools: ["brave_llm_context"],
+        },
         paseo: {
           url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-1",
           auth: false,
@@ -1292,6 +1314,27 @@ describe("PiRpcAgentClient", () => {
 
     await session.close();
     expect(existsSync(configPath!)).toBe(false);
+  });
+
+  test("reports the path of a malformed Pi global MCP config", async () => {
+    const agentDir = mkdtempSync(path.join(tmpdir(), "paseo-pi-agent-"));
+    onTestFinished(() => rmSync(agentDir, { recursive: true, force: true }));
+    const configPath = path.join(agentDir, "mcp.json");
+    writeFileSync(configPath, "{ invalid");
+    const pi = new FakePi();
+    pi.queueCommands([{ name: "mcp", source: "extension" }]);
+    const client = createClient(pi);
+
+    await expect(
+      client.createSession(
+        createConfig({
+          mcpServers: {
+            paseo: { type: "http", url: "http://127.0.0.1:6767/mcp/agents" },
+          },
+        }),
+        { env: { PI_CODING_AGENT_DIR: agentDir } },
+      ),
+    ).rejects.toThrow(`Failed to parse Pi MCP config: ${configPath}`);
   });
 
   test("does not pass MCP config when pi-mcp-adapter is not loaded", async () => {

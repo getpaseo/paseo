@@ -1,16 +1,30 @@
 import { test as base, expect, type Page } from "@playwright/test";
 import { getE2EDaemonPort } from "./helpers/daemon-port";
 import { buildCreateAgentPreferences, buildSeededHost } from "./helpers/daemon-registry";
+import {
+  createProjectPickerFixture,
+  removeProjectPickerFixture,
+  type ProjectPickerFixture,
+} from "./helpers/project-picker-fixture";
+import { connectSeedClient } from "./helpers/seed-client";
 import { createWithWorkspace, type WithWorkspace } from "./helpers/with-workspace";
 
 const EXTRA_HOSTS_KEY = "@paseo:e2e-extra-hosts";
+
+interface TrackedProjectPickerFixture extends ProjectPickerFixture {
+  rememberProjectId: (projectId: string) => void;
+}
 
 // Test setup is wired through an `auto: true` fixture rather than `test.beforeEach`.
 // `test.beforeEach` declared at the top level of a non-test fixture file is unreliable
 // across spec-file boundaries — Playwright sometimes skips it for the first test of a
 // subsequent spec when multiple specs run in the same worker. Auto fixtures run
 // reliably for every test that uses this `test` object.
-const test = base.extend<{ paseoE2ESetup: void; withWorkspace: WithWorkspace }>({
+const test = base.extend<{
+  paseoE2ESetup: void;
+  projectPickerFixture: TrackedProjectPickerFixture;
+  withWorkspace: WithWorkspace;
+}>({
   baseURL: async ({}, provide) => {
     const metroPort = process.env.E2E_METRO_PORT;
     if (!metroPort) {
@@ -102,6 +116,30 @@ const test = base.extend<{ paseoE2ESetup: void; withWorkspace: WithWorkspace }>(
     },
     { auto: true },
   ],
+  projectPickerFixture: async ({}, provide) => {
+    const resource = await createProjectPickerFixture();
+    const { fixture } = resource;
+    let projectId: string | null = null;
+    try {
+      await provide({
+        ...fixture,
+        rememberProjectId: (openedProjectId) => {
+          projectId = openedProjectId;
+        },
+      });
+    } finally {
+      try {
+        const client = await connectSeedClient();
+        try {
+          await removeProjectPickerFixture(client, fixture, projectId);
+        } finally {
+          await client.close();
+        }
+      } finally {
+        await resource.removeDirectory();
+      }
+    }
+  },
   withWorkspace: async ({ page }, provide) => {
     const handle = createWithWorkspace(page);
     await provide(handle.withWorkspace);

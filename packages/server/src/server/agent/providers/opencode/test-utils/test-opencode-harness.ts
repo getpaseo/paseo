@@ -156,7 +156,10 @@ export class TestOpenCodeClient {
       global: {
         event: async (options: unknown) => {
           this.calls.globalEvent.push(options);
-          return { stream: this.eventStream };
+          const signal = (options as { signal?: AbortSignal }).signal;
+          return {
+            stream: signal ? stopEventStreamOnAbort(this.eventStream, signal) : this.eventStream,
+          };
         },
       },
       mcp: {
@@ -245,6 +248,38 @@ export class TestOpenCodeClient {
       },
     } as unknown as OpencodeClient;
   }
+}
+
+function stopEventStreamOnAbort(
+  stream: AsyncIterable<unknown>,
+  signal: AbortSignal,
+): AsyncIterable<unknown> {
+  return {
+    [Symbol.asyncIterator]: () => {
+      const iterator = stream[Symbol.asyncIterator]();
+      return {
+        next: () => {
+          if (signal.aborted) {
+            return Promise.resolve({ done: true, value: undefined });
+          }
+          return new Promise<IteratorResult<unknown>>((resolve, reject) => {
+            const onAbort = () => resolve({ done: true, value: undefined });
+            signal.addEventListener("abort", onAbort, { once: true });
+            void iterator.next().then(
+              (result) => {
+                signal.removeEventListener("abort", onAbort);
+                return resolve(result);
+              },
+              (error) => {
+                signal.removeEventListener("abort", onAbort);
+                return reject(error);
+              },
+            );
+          });
+        },
+      };
+    },
+  };
 }
 
 export function createEventStream(events: unknown[]): AsyncGenerator<unknown> {

@@ -144,23 +144,6 @@ describe("archiveWorkspaceOptimistically", () => {
       }),
     ).toBe(false);
   });
-
-  it("runs the after-hide hook after local state is hidden", async () => {
-    const archived = workspace();
-    useSessionStore.getState().mergeWorkspaces(SERVER_ID, [archived]);
-    const client = createClient(vi.fn(async () => archivePayload({ workspaceId: archived.id })));
-    const afterHide = vi.fn(() => {
-      expect(storedWorkspace(archived.id)).toBeUndefined();
-    });
-
-    await archiveWorkspaceOptimistically({
-      client,
-      workspace: target(),
-      afterHide,
-    });
-
-    expect(afterHide).toHaveBeenCalledOnce();
-  });
 });
 
 describe("archiveWorkspacesOptimistically", () => {
@@ -183,10 +166,7 @@ describe("archiveWorkspacesOptimistically", () => {
 
     const failures = await archiveWorkspacesOptimistically({
       getClient: () => client,
-      workspaces: [
-        target({ workspaceId: first.id, workspaceDirectory: first.workspaceDirectory }),
-        target({ workspaceId: second.id, workspaceDirectory: second.workspaceDirectory }),
-      ],
+      workspaces: [target({ workspaceId: first.id }), target({ workspaceId: second.id })],
     });
 
     expect(failures).toHaveLength(1);
@@ -219,12 +199,10 @@ describe("archiveWorkspacesOptimistically", () => {
         target({
           serverId: SERVER_ID,
           workspaceId: first.id,
-          workspaceDirectory: first.workspaceDirectory,
         }),
         target({
           serverId: SECOND_SERVER_ID,
           workspaceId: second.id,
-          workspaceDirectory: second.workspaceDirectory,
         }),
       ],
     });

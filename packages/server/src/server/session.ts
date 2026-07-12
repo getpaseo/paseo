@@ -174,7 +174,7 @@ import {
   type AgentUpdatesService,
 } from "./session/agent-updates/agent-updates-service.js";
 import { expandTilde } from "../utils/path.js";
-import { searchHomeDirectories, searchWorkspaceEntries } from "../utils/directory-suggestions.js";
+import { searchDirectoryEntries } from "../utils/directory-suggestions.js";
 import type { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import type { Resolvable } from "./speech/provider-resolver.js";
 import type { SpeechReadinessSnapshot } from "./speech/speech-runtime.js";
@@ -223,6 +223,14 @@ import { CreateAgentLifecycleDispatch } from "./agent/create-agent-lifecycle-dis
 // the entire session message if they encounter an unknown provider.
 const LEGACY_PROVIDER_IDS = new Set(["claude", "codex", "opencode"]);
 const MIN_VERSION_ALL_PROVIDERS = "0.1.45";
+const WORKSPACE_SEARCH_HIDDEN_DIRECTORIES = [
+  ".agents",
+  ".claude",
+  ".codex",
+  ".github",
+  ".paseo",
+  ".vscode",
+];
 
 function errorToFriendlyMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
@@ -3049,22 +3057,23 @@ export class Session {
 
     try {
       const workspaceCwd = cwd?.trim();
-      const entries = workspaceCwd
-        ? await searchWorkspaceEntries({
-            cwd: expandTilde(workspaceCwd),
-            query,
-            limit,
-            includeFiles,
-            includeDirectories,
-            matchMode,
-          })
-        : (
-            await searchHomeDirectories({
-              homeDir: process.env.HOME ?? homedir(),
-              query,
-              limit,
-            })
-          ).map((path) => ({ path, kind: "directory" as const }));
+      const searchesWorkspace = Boolean(workspaceCwd);
+      const entries = await searchDirectoryEntries({
+        root: workspaceCwd ? expandTilde(workspaceCwd) : (process.env.HOME ?? homedir()),
+        query,
+        pathFormat: searchesWorkspace ? "relative" : "absolute",
+        pathQueryPolicy: searchesWorkspace ? "slashes" : "rooted",
+        blankQueryBehavior: searchesWorkspace ? "children" : "none",
+        rootAliases: searchesWorkspace ? [] : ["~"],
+        traversableHiddenDirectoryNames: searchesWorkspace
+          ? WORKSPACE_SEARCH_HIDDEN_DIRECTORIES
+          : [],
+        confidentResultScanThreshold: searchesWorkspace ? undefined : 5_000,
+        includeFiles,
+        includeDirectories,
+        matchMode,
+        limit,
+      });
       const directories = entries
         .filter((entry) => entry.kind === "directory")
         .map((entry) => entry.path);

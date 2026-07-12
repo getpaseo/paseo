@@ -386,7 +386,7 @@ describe("translation resources", () => {
   });
 
   it("includes picker, file pane, and tool detail keys for the Batch 4L migration", () => {
-    expect(en.projectPicker.placeholder).toBe("Type a directory path...");
+    expect(en.projectPicker.placeholder).toBe("Type to search...");
     expect(en.projectPicker.opening).toBe("Opening project...");
     expect(en.projectPicker.searching).toBe("Searching...");
     expect(en.projectPicker.empty).toBe("Start typing a path");

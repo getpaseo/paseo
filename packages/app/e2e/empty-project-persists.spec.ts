@@ -1,6 +1,8 @@
 import path from "node:path";
+import { existsSync } from "node:fs";
 import { test, expect, type Page } from "./fixtures";
 import { gotoAppShell } from "./helpers/app";
+import { expectOpenedProject } from "./helpers/project-picker-ui";
 import { connectSeedClient, seedWorkspace } from "./helpers/seed-client";
 import { getServerId } from "./helpers/server-id";
 import { createTempGitRepo } from "./helpers/workspace";
@@ -10,7 +12,7 @@ function workspaceRowTestId(workspaceId: string): string {
   return `sidebar-workspace-row-${getServerId()}:${workspaceId}`;
 }
 
-async function hideWorkspaceFromSidebar(page: Page, workspaceId: string): Promise<void> {
+async function archiveWorkspaceFromSidebar(page: Page, workspaceId: string): Promise<void> {
   const serverId = getServerId();
   const row = page.getByTestId(workspaceRowTestId(workspaceId));
   await expect(row).toBeVisible({ timeout: 30_000 });
@@ -19,10 +21,6 @@ async function hideWorkspaceFromSidebar(page: Page, workspaceId: string): Promis
   const kebab = page.getByTestId(`sidebar-workspace-kebab-${serverId}:${workspaceId}`);
   await expect(kebab).toBeVisible({ timeout: 10_000 });
   await kebab.click();
-
-  // Hiding a checkout from the sidebar raises a browser confirm; accept it so the
-  // user-confirmed archive proceeds deterministically.
-  page.once("dialog", (dialog) => void dialog.accept());
 
   const archiveItem = page.getByTestId(`sidebar-workspace-menu-archive-${serverId}:${workspaceId}`);
   await expect(archiveItem).toBeVisible({ timeout: 10_000 });
@@ -50,7 +48,7 @@ async function removeProjectFromSidebar(page: Page, projectId: string): Promise<
 async function addProjectFromPicker(page: Page, projectPath: string): Promise<string> {
   await page.getByTestId("sidebar-add-project").click();
 
-  const input = page.getByPlaceholder("Type a directory path...");
+  const input = page.getByTestId("project-picker-input");
   await expect(input).toBeVisible({ timeout: 30_000 });
   await input.fill(projectPath);
   await page.keyboard.press("Enter");
@@ -74,6 +72,26 @@ async function waitForSidebarProjectListReady(page: Page): Promise<void> {
 }
 
 test.describe("Project picker search", () => {
+  test("opens a project from a fuzzy directory-name search", async ({
+    page,
+    projectPickerFixture,
+  }) => {
+    await gotoAppShell(page);
+    await waitForSidebarProjectListReady(page);
+    await page.getByTestId("sidebar-add-project").click();
+
+    const input = page.getByTestId("project-picker-input");
+    await expect(input).toBeVisible({ timeout: 30_000 });
+    await input.fill(projectPickerFixture.fuzzyQuery);
+
+    const suggestion = page.getByText(projectPickerFixture.projectName, { exact: false }).first();
+    await expect(suggestion).toBeVisible({ timeout: 30_000 });
+    await suggestion.click();
+
+    const projectId = await expectOpenedProject(page, projectPickerFixture.projectName);
+    projectPickerFixture.rememberProjectId(projectId);
+  });
+
   test("shows a loading state after typing while directory suggestions are pending", async ({
     page,
   }) => {
@@ -81,7 +99,7 @@ test.describe("Project picker search", () => {
     await waitForSidebarProjectListReady(page);
     await page.getByTestId("sidebar-add-project").click();
 
-    const input = page.getByPlaceholder("Type a directory path...");
+    const input = page.getByTestId("project-picker-input");
     await expect(input).toBeVisible({ timeout: 30_000 });
     await input.fill("paseo-loading-state-no-match");
 
@@ -138,17 +156,21 @@ test.describe("Project with no workspaces persists", () => {
       await gotoAppShell(page);
       await waitForSidebarHydration(page);
       await expect(projectRow).toBeVisible({ timeout: 30_000 });
-      await expect(page.getByTestId(workspaceRowTestId(workspace.workspaceId))).toBeVisible({
+      const workspaceRow = page.getByTestId(workspaceRowTestId(workspace.workspaceId));
+      await expect(workspaceRow).toBeVisible({
         timeout: 30_000,
       });
+      await workspaceRow.click();
+      await expect(page.getByTestId("changes-primary-cta")).toHaveCount(0);
 
-      await hideWorkspaceFromSidebar(page, workspace.workspaceId);
+      await archiveWorkspaceFromSidebar(page, workspace.workspaceId);
 
       // The workspace row goes away, but its project parent stays and exposes a
       // child row for creating the next workspace.
       await expect(page.getByTestId(workspaceRowTestId(workspace.workspaceId))).toHaveCount(0, {
         timeout: 30_000,
       });
+      expect(existsSync(workspace.repoPath)).toBe(true);
       await expect(projectRow).toBeVisible({ timeout: 30_000 });
       await expect(newWorkspaceRow).toBeVisible({ timeout: 30_000 });
       await expect(newWorkspaceRow).toContainText("New workspace");

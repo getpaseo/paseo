@@ -2789,6 +2789,7 @@ class OpenCodeAgentSession implements AgentSession {
   private releaseServer: (() => void) | null;
   private eventStreamAbortController: AbortController | null = null;
   private eventStreamReady: Deferred<void> | null = null;
+  private eventStreamTask: Promise<void> | null = null;
   private suppressTerminalUntilNextUserMessage = false;
   private closed = false;
   private readonly persistSession: boolean;
@@ -3160,11 +3161,24 @@ class OpenCodeAgentSession implements AgentSession {
     const eventStreamReady = createDeferred<void>();
     this.eventStreamAbortController = eventStreamAbortController;
     this.eventStreamReady = eventStreamReady;
-    void this.consumeEventStream(eventStreamAbortController, eventStreamReady).finally(() => {
+    const eventStreamTask = this.consumeEventStream(
+      eventStreamAbortController,
+      eventStreamReady,
+    ).finally(() => {
       if (this.eventStreamAbortController === eventStreamAbortController) {
         this.eventStreamAbortController = null;
         this.eventStreamReady = null;
       }
+      if (this.eventStreamTask === eventStreamTask) {
+        this.eventStreamTask = null;
+      }
+    });
+    this.eventStreamTask = eventStreamTask;
+    void eventStreamTask.catch((error) => {
+      this.logger.warn(
+        { err: error, sessionId: this.sessionId },
+        "OpenCode event stream task failed",
+      );
     });
 
     return eventStreamReady.promise;
@@ -3561,9 +3575,19 @@ class OpenCodeAgentSession implements AgentSession {
       // unhandled rejection in whichever test the daemon hops to next.
       this.closed = true;
       this.abortController?.abort();
+      const eventStreamTask = this.eventStreamTask;
       this.eventStreamAbortController?.abort();
+      if (eventStreamTask) {
+        await eventStreamTask.catch((error) => {
+          this.logger.debug(
+            { err: error, sessionId: this.sessionId },
+            "OpenCode event stream failed during close",
+          );
+        });
+      }
       this.eventStreamAbortController = null;
       this.eventStreamReady = null;
+      this.eventStreamTask = null;
       this.subscribers.clear();
       await reconcileOpenCodeSessionClose({
         client: this.client,
