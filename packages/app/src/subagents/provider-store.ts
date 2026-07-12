@@ -3,6 +3,7 @@ import type {
   ProviderSubagentDescriptorPayload,
   SessionOutboundMessage,
 } from "@getpaseo/protocol/messages";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { create } from "zustand";
 import { applyStreamEvent } from "@/types/stream";
 import type { StreamItem } from "@/types/stream";
@@ -65,6 +66,37 @@ export function providerSubagentLifecycleStatus(
   if (status === "running") return "running";
   if (status === "failed") return "error";
   return "idle";
+}
+
+type ProviderSubagentListClient = Pick<DaemonClient, "listProviderSubagents">;
+
+const pendingListRequests = new WeakMap<ProviderSubagentListClient, Map<string, Promise<void>>>();
+
+export function refreshProviderSubagents(
+  client: ProviderSubagentListClient,
+  serverId: string,
+  parentAgentId: string,
+): Promise<void> {
+  const requestKey = `${serverId}\0${parentAgentId}`;
+  let clientRequests = pendingListRequests.get(client);
+  if (!clientRequests) {
+    clientRequests = new Map();
+    pendingListRequests.set(client, clientRequests);
+  }
+  const pending = clientRequests.get(requestKey);
+  if (pending) return pending;
+
+  const request = client
+    .listProviderSubagents(parentAgentId)
+    .then((payload) => {
+      useProviderSubagentStore.getState().replaceList(serverId, parentAgentId, payload.subagents);
+      return undefined;
+    })
+    .finally(() => {
+      clientRequests?.delete(requestKey);
+    });
+  clientRequests.set(requestKey, request);
+  return request;
 }
 
 function parentPrefix(serverId: string, parentAgentId: string): string {
@@ -135,7 +167,11 @@ export const useProviderSubagentStore = create<ProviderSubagentState>((set) => (
       for (const subagent of subagents) {
         descriptors.set(providerSubagentKey(serverId, parentAgentId, subagent.id), subagent);
       }
-      return { descriptors };
+      const retainedKeys = new Set(descriptors.keys());
+      const timelines = new Map(
+        [...state.timelines].filter(([key]) => !key.startsWith(prefix) || retainedKeys.has(key)),
+      );
+      return { descriptors, timelines };
     });
   },
   applyUpdate(serverId, payload) {
@@ -176,8 +212,19 @@ export const useProviderSubagentStore = create<ProviderSubagentState>((set) => (
         item: payload.item,
         timestamp: payload.timestamp,
       });
+      const next = applyStreamEvent({
+        tail: current.tail,
+        head: current.head,
+        event: { type: "timeline", provider: payload.provider, item: payload.item },
+        timestamp: new Date(payload.timestamp),
+      });
       const timelines = new Map(state.timelines);
-      timelines.set(key, buildTimelineState(rows, payload.epoch, state.descriptors.get(key)));
+      timelines.set(key, {
+        ...next,
+        epoch: payload.epoch,
+        lastSeq: payload.seq,
+        rows,
+      });
       return { timelines };
     });
   },

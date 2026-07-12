@@ -2408,6 +2408,12 @@ describe("Codex app-server provider", () => {
       history.push(event);
     }
     expect(
+      history.filter((event) => event.type === "provider_subagent").map((event) => event.event),
+    ).toMatchObject([
+      { type: "upsert", id: "legacy-child-thread", status: "completed" },
+      { type: "upsert", id: "v2-child-thread", status: "completed" },
+    ]);
+    expect(
       history
         .filter((event) => event.type === "timeline" && event.item.type === "tool_call")
         .map((event) => event.item),
@@ -2520,6 +2526,15 @@ describe("Codex app-server provider", () => {
       history.push(event);
     }
     expect(history).toEqual([
+      {
+        type: "provider_subagent",
+        provider: "codex",
+        event: expect.objectContaining({
+          type: "upsert",
+          id: "history-child-thread",
+          status: "canceled",
+        }),
+      },
       {
         type: "timeline",
         provider: "codex",

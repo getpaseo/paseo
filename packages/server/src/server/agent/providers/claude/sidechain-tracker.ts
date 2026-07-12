@@ -69,7 +69,7 @@ export class ClaudeSidechainTracker {
 
     const contextUpdated = this.updateSubAgentContextFromTaskInput(state, parentToolUseId);
     const actionCandidates = this.extractSubAgentActionCandidates(message);
-    const childTimelineItems: AgentTimelineItem[] = [];
+    const childTimelineItems = this.extractSubAgentTimelineItems(message);
     let actionUpdated = false;
     for (const action of actionCandidates) {
       if (this.appendSubAgentAction(state, action)) {
@@ -86,7 +86,7 @@ export class ClaudeSidechainTracker {
       }
     }
 
-    if (!contextUpdated && !actionUpdated) {
+    if (!contextUpdated && !actionUpdated && childTimelineItems.length === 0) {
       return [];
     }
 
@@ -163,12 +163,57 @@ export class ClaudeSidechainTracker {
     return events;
   }
 
+  finish(id: string, status: "completed" | "failed" | "canceled"): AgentStreamEvent[] {
+    const state = this.activeSidechains.get(id);
+    if (!state) return [];
+    this.activeSidechains.delete(id);
+    return [
+      {
+        type: "provider_subagent",
+        provider: "claude",
+        event: {
+          type: "upsert",
+          id,
+          title: state.subAgentType ?? "Claude subagent",
+          description: state.description ?? null,
+          status,
+          toolCallId: id,
+        },
+      },
+    ];
+  }
+
   delete(toolUseId: string): void {
     this.activeSidechains.delete(toolUseId);
   }
 
   clear(): void {
     this.activeSidechains.clear();
+  }
+
+  private extractSubAgentTimelineItems(message: SDKMessage): AgentTimelineItem[] {
+    if (message.type !== "assistant" || !Array.isArray(message.message?.content)) {
+      return [];
+    }
+    const messageId = readTrimmedString(message.message.id);
+    const items: AgentTimelineItem[] = [];
+    for (const block of message.message.content) {
+      if (!isClaudeContentChunk(block)) continue;
+      if (block.type === "text") {
+        const text = readTrimmedString(block.text);
+        if (text) {
+          items.push({
+            type: "assistant_message",
+            text,
+            ...(messageId ? { messageId } : {}),
+          });
+        }
+      } else if (block.type === "thinking") {
+        const text = readTrimmedString(block.thinking);
+        if (text) items.push({ type: "reasoning", text });
+      }
+    }
+    return items;
   }
 
   private updateSubAgentContextFromTaskInput(

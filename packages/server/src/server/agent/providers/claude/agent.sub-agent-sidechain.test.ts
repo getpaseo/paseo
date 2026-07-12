@@ -320,6 +320,15 @@ describe("ClaudeAgentSession sub-agent sidechain updates", () => {
         status: "running",
       }),
     });
+    expect(providerEvents).toContainEqual({
+      type: "timeline",
+      id: "task-call-1",
+      item: {
+        type: "assistant_message",
+        messageId: "subagent-message-1",
+        text: "Sub-agent narration belongs inside the Task row, not the parent transcript.",
+      },
+    });
     expect(providerEvents.at(-1)).toMatchObject({
       type: "upsert",
       id: "task-call-1",
@@ -367,6 +376,46 @@ describe("ClaudeAgentSession sub-agent sidechain updates", () => {
       type: "sub_agent",
       log: expect.stringContaining("[Read] README.md"),
     });
+  });
+
+  test("keeps a failed Task subagent failed when the parent turn succeeds", async () => {
+    const failedEvents = buildTailScenarioEvents(1);
+    const taskResult = failedEvents.find(
+      (event) =>
+        typeof event === "object" &&
+        event !== null &&
+        "type" in event &&
+        event.type === "assistant",
+    ) as { message: Record<string, unknown> } | undefined;
+    if (!taskResult) throw new Error("expected Task result fixture");
+    taskResult.message = {
+      ...taskResult.message,
+      content: [
+        {
+          type: "tool_result",
+          tool_use_id: "task-tail-1",
+          tool_name: "Task",
+          content: "failed",
+          is_error: true,
+        },
+      ],
+    };
+    queryFactory.mockImplementation(() => buildQueryMock(failedEvents));
+    const session = await new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    }).createSession({ provider: "claude", cwd: process.cwd() });
+
+    const events = await collectUntilTerminal(streamSession(session, "delegate work"));
+    await session.close();
+
+    expect(
+      events
+        .filter((event) => event.type === "provider_subagent")
+        .map((event) => event.event)
+        .at(-1),
+    ).toMatchObject({ type: "upsert", id: "task-tail-1", status: "failed" });
   });
 
   test("tails sub-agent actions instead of dropping latest entries at cap", async () => {

@@ -555,6 +555,7 @@ test("advertises client capabilities in hello", async () => {
     protocolVersion: 1,
     capabilities: {
       custom_mode_icons: true,
+      provider_subagents: true,
       reasoning_merge_enum: true,
       terminal_reflowable_snapshot: true,
       browser_host: {

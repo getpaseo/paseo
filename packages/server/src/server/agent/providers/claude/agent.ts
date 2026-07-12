@@ -3610,6 +3610,7 @@ class ClaudeAgentSession implements AgentSession {
         break;
       case "user":
         this.appendUserMessageEvents(message, events);
+        this.appendSidechainResultEvents(message, events);
         break;
       case "assistant": {
         const timelineItems = this.mapBlocksToTimeline(message.message.content, {
@@ -3619,6 +3620,7 @@ class ClaudeAgentSession implements AgentSession {
         for (const item of timelineItems) {
           events.push({ type: "timeline", item, provider: "claude" });
         }
+        this.appendSidechainResultEvents(message, events);
         break;
       }
       case "stream_event":
@@ -3632,6 +3634,18 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     return events;
+  }
+
+  private appendSidechainResultEvents(message: SDKMessage, events: AgentStreamEvent[]): void {
+    const content = toObjectRecord(toObjectRecord(message)?.message)?.content;
+    if (!Array.isArray(content)) return;
+    for (const block of content) {
+      const chunk = toObjectRecord(block);
+      if (chunk?.type !== "tool_result" || typeof chunk.tool_use_id !== "string") continue;
+      events.push(
+        ...this.sidechainTracker.finish(chunk.tool_use_id, chunk.is_error ? "failed" : "completed"),
+      );
+    }
   }
 
   private emitSubmittedUserMessage(

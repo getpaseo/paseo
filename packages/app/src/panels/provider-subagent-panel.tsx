@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from "react";
-import { View } from "react-native";
+import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import invariant from "tiny-invariant";
 import { useShallow } from "zustand/react/shallow";
@@ -12,8 +12,10 @@ import { useSessionStore } from "@/stores/session-store";
 import {
   providerSubagentKey,
   providerSubagentLifecycleStatus,
+  refreshProviderSubagents,
   useProviderSubagentStore,
 } from "@/subagents/provider-store";
+import { useTranslation } from "react-i18next";
 import type { PendingPermission } from "@/types/shared";
 import type { StreamItem } from "@/types/stream";
 import { deriveSidebarStateBucket } from "@/utils/sidebar-agent-state";
@@ -58,6 +60,7 @@ function useProviderSubagentDescriptor(
 }
 
 function ProviderSubagentPanel() {
+  const { t } = useTranslation();
   const { serverId, target, openFileInWorkspace } = usePaneContext();
   invariant(target.kind === "provider_subagent", "ProviderSubagentPanel requires provider target");
   const key = providerSubagentKey(serverId, target.parentAgentId, target.subagentId);
@@ -75,25 +78,25 @@ function ProviderSubagentPanel() {
       null,
   );
   const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
+  const serverInfo = useSessionStore((state) => state.sessions[serverId]?.serverInfo ?? null);
+  // COMPAT(providerSubagents): added in v0.2.11, remove after 2027-01-12.
+  const supported = serverInfo?.features?.providerSubagents === true;
 
   useEffect(() => {
-    if (!client) return;
-    void (async () => {
-      const [listResult, timelineResult] = await Promise.allSettled([
-        client.listProviderSubagents(target.parentAgentId),
-        client.fetchProviderSubagentTimeline(target.parentAgentId, target.subagentId, {
-          limit: 200,
-        }),
-      ]);
-      const store = useProviderSubagentStore.getState();
-      if (listResult.status === "fulfilled") {
-        store.replaceList(serverId, target.parentAgentId, listResult.value.subagents);
-      }
-      if (timelineResult.status === "fulfilled") {
-        store.replaceTimeline(serverId, timelineResult.value);
-      }
-    })();
-  }, [client, serverId, target.parentAgentId, target.subagentId]);
+    if (!client || !supported || descriptor) return;
+    void refreshProviderSubagents(client, serverId, target.parentAgentId).catch(() => undefined);
+  }, [client, descriptor, serverId, supported, target.parentAgentId]);
+
+  useEffect(() => {
+    if (!client || !supported) return;
+    void client
+      .fetchProviderSubagentTimeline(target.parentAgentId, target.subagentId, { limit: 0 })
+      .then((payload) => {
+        useProviderSubagentStore.getState().replaceTimeline(serverId, payload);
+        return undefined;
+      })
+      .catch(() => undefined);
+  }, [client, serverId, supported, target.parentAgentId, target.subagentId]);
 
   const streamContext = useMemo<AgentScreenAgent>(
     () => ({
@@ -107,6 +110,14 @@ function ProviderSubagentPanel() {
     }),
     [descriptor, parent, serverId, streamId],
   );
+
+  if (serverInfo && !supported) {
+    return (
+      <View style={styles.unsupported} testID="provider-subagent-panel-unsupported">
+        <Text style={styles.unsupportedText}>{t("message.actions.forkUnavailable")}</Text>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container} testID="provider-subagent-panel">
@@ -125,8 +136,10 @@ function ProviderSubagentPanel() {
   );
 }
 
-const styles = StyleSheet.create(() => ({
+const styles = StyleSheet.create((theme) => ({
   container: { flex: 1 },
+  unsupported: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24 },
+  unsupportedText: { color: theme.colors.foregroundMuted, textAlign: "center" },
 }));
 
 export const providerSubagentPanelRegistration: PanelRegistration<"provider_subagent"> = {

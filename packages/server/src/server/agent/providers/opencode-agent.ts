@@ -2057,6 +2057,7 @@ function appendOpenCodeChildSessionDetected(
   child: OpenCodeChildSessionInfo,
   state: OpenCodeEventTranslationState,
   events: AgentStreamEvent[],
+  status: "running" | "completed" = "running",
 ): boolean {
   if (
     child.id === state.sessionId ||
@@ -2078,7 +2079,7 @@ function appendOpenCodeChildSessionDetected(
       type: "upsert",
       id: child.id,
       title: child.title ?? "OpenCode subagent",
-      status: "running",
+      status,
     },
   });
   return true;
@@ -3232,7 +3233,12 @@ class OpenCodeAgentSession implements AgentSession {
       );
       for (const child of children) {
         const events: AgentStreamEvent[] = [];
-        appendOpenCodeChildSessionDetected(child, this.createTranslationState(), events);
+        appendOpenCodeChildSessionDetected(
+          child,
+          this.createTranslationState(),
+          events,
+          "completed",
+        );
         for (const event of events) {
           this.recordProviderInternalEvent(event);
           this.notifySubscribers(event, null);
@@ -3966,8 +3972,19 @@ class OpenCodeAgentSession implements AgentSession {
   ): AgentStreamEvent[] {
     const translated = translateOpenCodeEvent(event, this.getChildTranslationState(sessionId));
     const events: AgentStreamEvent[] = [];
+    let markedRunning = false;
+    const markRunning = () => {
+      if (markedRunning) return;
+      markedRunning = true;
+      events.push({
+        type: "provider_subagent",
+        provider: "opencode",
+        event: { type: "upsert", id: sessionId, status: "running" },
+      });
+    };
     for (const childEvent of translated) {
       if (childEvent.type === "timeline") {
+        markRunning();
         events.push({
           type: "provider_subagent",
           provider: "opencode",
@@ -3978,6 +3995,8 @@ class OpenCodeAgentSession implements AgentSession {
             timestamp: childEvent.timestamp,
           },
         });
+      } else if (childEvent.type === "turn_started") {
+        markRunning();
       } else if (childEvent.type === "turn_completed") {
         events.push({
           type: "provider_subagent",

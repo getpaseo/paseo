@@ -84,4 +84,26 @@ describe("provider subagent client store", () => {
       }),
     ]);
   });
+
+  test("removes timelines for children no longer returned by the provider", () => {
+    const store = useProviderSubagentStore.getState();
+    store.applyUpdate(SERVER_ID, {
+      kind: "timeline",
+      parentAgentId: PARENT_ID,
+      subagentId: SUBAGENT_ID,
+      provider: "codex",
+      epoch: "epoch-1",
+      seq: 1,
+      timestamp: "2026-07-12T10:00:01.000Z",
+      item: { type: "assistant_message", text: "Removed child output." },
+    });
+
+    store.replaceList(SERVER_ID, PARENT_ID, []);
+
+    expect(
+      useProviderSubagentStore
+        .getState()
+        .timelines.has(providerSubagentKey(SERVER_ID, PARENT_ID, SUBAGENT_ID)),
+    ).toBe(false);
+  });
 });

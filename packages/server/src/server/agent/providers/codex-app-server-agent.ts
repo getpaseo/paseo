@@ -3082,6 +3082,8 @@ export class CodexAppServerAgentSession implements AgentSession {
   private planModeEnabled = false;
   private historyPending = false;
   private persistedHistory: PersistedTimelineEntry[] = [];
+  private loadingPersistedHistory = false;
+  private persistedProviderSubagentEvents: AgentStreamEvent[] = [];
   private pendingPermissions = new Map<string, AgentPermissionRequest>();
   private mcpElicitationPermissionIds = new Map<number, string>();
   private pendingPermissionHandlers = new Map<
@@ -3455,12 +3457,18 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.subAgentCallsByCallId.clear();
     this.subAgentCallIdByChildThreadId.clear();
     this.pendingSubAgentNotificationsByThreadId.clear();
-    for (const route of subAgentRoutes) {
-      this.registerSubAgentToolCall({
-        timelineItem: route.toolCall,
-        rawItem: { agentThreadId: route.childThreadId },
-        parentCallId: null,
-      });
+    this.persistedProviderSubagentEvents = [];
+    this.loadingPersistedHistory = true;
+    try {
+      for (const route of subAgentRoutes) {
+        this.registerSubAgentToolCall({
+          timelineItem: route.toolCall,
+          rawItem: { agentThreadId: route.childThreadId },
+          parentCallId: null,
+        });
+      }
+    } finally {
+      this.loadingPersistedHistory = false;
     }
     this.resetCodexUserMessageTurns();
     for (const entry of timeline) {
@@ -3819,12 +3827,20 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
-    if (!this.historyPending || this.persistedHistory.length === 0) {
+    if (
+      (!this.historyPending || this.persistedHistory.length === 0) &&
+      this.persistedProviderSubagentEvents.length === 0
+    ) {
       return;
     }
     const history = this.persistedHistory;
+    const providerSubagents = this.persistedProviderSubagentEvents;
     this.persistedHistory = [];
+    this.persistedProviderSubagentEvents = [];
     this.historyPending = false;
+    for (const event of providerSubagents) {
+      yield event;
+    }
     for (const entry of history) {
       yield {
         type: "timeline",
@@ -4455,6 +4471,10 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   private emitEvent(event: AgentStreamEvent): void {
+    if (this.loadingPersistedHistory && event.type === "provider_subagent") {
+      this.persistedProviderSubagentEvents.push(event);
+      return;
+    }
     this.notifySubscribers(event);
   }
 

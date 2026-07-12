@@ -2612,12 +2612,12 @@ describe("OpenCode provider subagent contract", () => {
       {
         type: "provider_subagent",
         provider: "opencode",
-        event: { type: "upsert", id: "ses_child_a", title: "Child A", status: "running" },
+        event: { type: "upsert", id: "ses_child_a", title: "Child A", status: "completed" },
       },
       {
         type: "provider_subagent",
         provider: "opencode",
-        event: { type: "upsert", id: "ses_child_b", title: "Child B", status: "running" },
+        event: { type: "upsert", id: "ses_child_b", title: "Child B", status: "completed" },
       },
       {
         type: "provider_subagent",
@@ -2626,7 +2626,7 @@ describe("OpenCode provider subagent contract", () => {
           type: "upsert",
           id: "ses_grandchild_a",
           title: "Grandchild A",
-          status: "running",
+          status: "completed",
         },
       },
     ]);
