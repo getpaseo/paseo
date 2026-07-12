@@ -3108,6 +3108,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   private emittedExecCommandCompletedCallIds = new Set<string>();
   private emittedItemStartedIds = new Set<string>();
   private emittedItemCompletedIds = new Set<string>();
+  private emittedProviderSubagentUserMessageKeys = new Set<string>();
   private subAgentCallsByCallId = new Map<string, CodexSubAgentCallState>();
   private subAgentCallIdByChildThreadId = new Map<string, string>();
   private pendingSubAgentNotificationsByThreadId = new Map<string, ParsedCodexNotification[]>();
@@ -5003,6 +5004,18 @@ export class CodexAppServerAgentSession implements AgentSession {
     }
   }
 
+  private emitProviderSubagentTimelineItems(
+    threadId: string | null,
+    timelineItems: readonly AgentTimelineItem[],
+  ): void {
+    if (!threadId) {
+      return;
+    }
+    for (const timelineItem of timelineItems) {
+      this.emitProviderSubagentTimeline(threadId, timelineItem);
+    }
+  }
+
   private handleSubAgentChildItemCompleted(
     callId: string,
     itemId: string | undefined,
@@ -5201,6 +5214,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.latestPlanResult = null;
     this.emittedItemStartedIds.clear();
     this.emittedItemCompletedIds.clear();
+    this.emittedProviderSubagentUserMessageKeys.clear();
     this.emittedExecCommandStartedCallIds.clear();
     this.emittedExecCommandCompletedCallIds.clear();
     this.pendingAgentMessages.clear();
@@ -5493,9 +5507,11 @@ export class CodexAppServerAgentSession implements AgentSession {
             parentCallId: childSubAgentCallId,
           })
         : [];
+    const imageItems = mcpToolResultImagesToTimeline(parsed.item);
     if (childSubAgentCallId) {
       this.emitCompletedProviderSubagentItem(parsed, timelineItem);
       this.handleSubAgentChildItemCompleted(childSubAgentCallId, parsed.item.id, timelineItem);
+      this.emitProviderSubagentTimelineItems(parsed.threadId, imageItems);
       this.replayPendingSubAgentNotifications(registeredChildThreadIds);
       return;
     }
@@ -5530,7 +5546,6 @@ export class CodexAppServerAgentSession implements AgentSession {
       }
       this.warnOnIncompleteEditToolCall(timelineItem, "item_completed", parsed.item);
     }
-    const imageItems = mcpToolResultImagesToTimeline(parsed.item);
     this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: timelineItem });
     if (timelineItem.type === "assistant_message") {
       this.pendingAssistantMessageBoundary = true;
@@ -5702,6 +5717,15 @@ export class CodexAppServerAgentSession implements AgentSession {
     }
     const childSubAgentCallId = this.getSubAgentCallIdForThread(parsed.threadId);
     if (childSubAgentCallId) {
+      const childMessageId = itemId ?? timelineItem.messageId;
+      if (!childMessageId) {
+        return;
+      }
+      const childMessageKey = `${parsed.threadId ?? childSubAgentCallId}:${childMessageId}`;
+      if (this.emittedProviderSubagentUserMessageKeys.has(childMessageKey)) {
+        return;
+      }
+      this.emittedProviderSubagentUserMessageKeys.add(childMessageKey);
       if (parsed.threadId) {
         this.emitProviderSubagentTimeline(parsed.threadId, timelineItem);
       }

@@ -3015,49 +3015,68 @@ export class AgentManager {
     }
 
     if (options?.force) {
-      const historyEvents: Extract<AgentStreamEvent, { type: "timeline" }>[] = [];
-      for await (const event of agent.session.streamHistory()) {
-        if (event.type === "timeline") {
-          if (event.item.type === "user_message" && isSystemInjectedEnvelope(event.item.text)) {
-            continue;
-          }
-          historyEvents.push(event);
-        }
-      }
-
-      this.agentStreamCoalescer.flushAndDiscard(agent.id);
-      await this.deleteCommittedTimeline(agent.id);
-      this.timelineStore.delete(agent.id);
-      this.timelineStore.initialize(agent.id, { timestamp: new Date().toISOString() });
-      agent.historyPrimed = true;
-
-      for (const event of historyEvents) {
-        const item = limitAgentTimelineItemContent(event.item);
-        const row = this.recordTimeline(
-          agent.id,
-          item,
-          event.timestamp ? { timestamp: event.timestamp } : undefined,
-        );
-        if (options?.broadcast) {
-          this.dispatchStream(
-            agent.id,
-            { ...event, item },
-            {
-              seq: row.seq,
-              epoch: this.timelineStore.getEpoch(agent.id),
-              timestamp: row.timestamp,
-            },
-          );
-        }
-      }
-      this.touchUpdatedAt(agent);
-      this.emitState(agent);
+      await this.forceHydrateTimelineFromLegacyProviderHistory(agent, options.broadcast === true);
       return;
     }
 
+    await this.primeTimelineFromLegacyProviderHistory(agent);
+  }
+
+  private async forceHydrateTimelineFromLegacyProviderHistory(
+    agent: ActiveManagedAgent,
+    broadcast: boolean,
+  ): Promise<void> {
+    const historyEvents: Extract<AgentStreamEvent, { type: "timeline" }>[] = [];
+    const providerSubagentEvents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[] = [];
+    for await (const event of agent.session.streamHistory()) {
+      if (event.type === "timeline") {
+        if (event.item.type === "user_message" && isSystemInjectedEnvelope(event.item.text)) {
+          continue;
+        }
+        historyEvents.push(event);
+      } else if (event.type === "provider_subagent") {
+        providerSubagentEvents.push(event);
+      }
+    }
+
+    this.agentStreamCoalescer.flushAndDiscard(agent.id);
+    await this.deleteCommittedTimeline(agent.id);
+    this.timelineStore.delete(agent.id);
+    this.timelineStore.initialize(agent.id, { timestamp: new Date().toISOString() });
+    agent.historyPrimed = true;
+
+    for (const event of providerSubagentEvents) {
+      const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
+      if (broadcast) {
+        this.dispatch({ type: "provider_subagent", event: update });
+      }
+    }
+    for (const event of historyEvents) {
+      const row = this.recordTimeline(
+        agent.id,
+        event.item,
+        event.timestamp ? { timestamp: event.timestamp } : undefined,
+      );
+      if (broadcast) {
+        this.dispatchStream(agent.id, event, {
+          seq: row.seq,
+          epoch: this.timelineStore.getEpoch(agent.id),
+          timestamp: row.timestamp,
+        });
+      }
+    }
+    this.touchUpdatedAt(agent);
+    this.emitState(agent);
+  }
+
+  private async primeTimelineFromLegacyProviderHistory(agent: ActiveManagedAgent): Promise<void> {
     agent.historyPrimed = true;
     try {
       for await (const event of agent.session.streamHistory()) {
+        if (event.type === "provider_subagent") {
+          this.providerSubagents.apply(agent.id, event.provider, event.event);
+          continue;
+        }
         if (event.type !== "timeline") {
           continue;
         }

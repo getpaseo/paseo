@@ -2594,6 +2594,50 @@ test("reloadAgentSession clears provider children before rehydrating from disk",
   expect(manager.listProviderSubagents(snapshot.id)).toEqual([]);
 });
 
+test("hydrateTimelineFromProvider restores provider children from session history", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-provider-child-history-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  class ProviderChildHistorySession extends TestAgentSession {
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      yield {
+        type: "provider_subagent",
+        provider: "codex",
+        event: {
+          type: "upsert",
+          id: "restored-child",
+          title: "Restored child",
+          status: "completed",
+        },
+      };
+    }
+  }
+  class ProviderChildHistoryClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new ProviderChildHistorySession(config);
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new ProviderChildHistoryClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000117",
+  });
+  const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+
+  await manager.hydrateTimelineFromProvider(snapshot.id);
+
+  expect(manager.listProviderSubagents(snapshot.id)).toEqual([
+    expect.objectContaining({
+      id: "restored-child",
+      parentAgentId: snapshot.id,
+      title: "Restored child",
+      status: "completed",
+    }),
+  ]);
+});
+
 test("reloadAgentSession preserves current title when config title is unset", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-title-"));
   const storagePath = join(workdir, "agents");

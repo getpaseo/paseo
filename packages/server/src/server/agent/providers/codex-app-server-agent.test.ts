@@ -1635,6 +1635,94 @@ describe("Codex app-server provider", () => {
     });
   });
 
+  test("renders child MCP image results in the provider subagent timeline", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "test-thread",
+      item: {
+        type: "subAgentActivity",
+        id: "spawn-image-child",
+        kind: "started",
+        agentThreadId: "image-child-thread",
+        agentPath: "/root/image-child",
+      },
+    });
+
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "image-child-thread",
+      item: {
+        id: "child-mcp-image",
+        type: "mcpToolCall",
+        status: "completed",
+        server: "paseo",
+        tool: "browser_screenshot",
+        arguments: {},
+        result: {
+          content: [{ type: "image", data: ONE_BY_ONE_PNG_BASE64, mimeType: "image/png" }],
+        },
+      },
+    });
+
+    const childItems = events.flatMap((event) =>
+      event.type === "provider_subagent" &&
+      event.event.type === "timeline" &&
+      event.event.id === "image-child-thread"
+        ? [event.event.item]
+        : [],
+    );
+    expect(childItems).toHaveLength(2);
+    expect(childItems[0]).toMatchObject({ type: "tool_call", callId: "child-mcp-image" });
+    expect(childItems[1]).toMatchObject({ type: "assistant_message" });
+    if (childItems[1]?.type !== "assistant_message") {
+      throw new Error("Expected child image markdown");
+    }
+    const source = markdownImageSource(childItems[1].text);
+    expect(existsSync(source)).toBe(true);
+    rmSync(source, { force: true });
+  });
+
+  test("renders a child user message once across lifecycle notifications", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "test-thread",
+      item: {
+        type: "subAgentActivity",
+        id: "spawn-user-child",
+        kind: "started",
+        agentThreadId: "user-child-thread",
+        agentPath: "/root/user-child",
+      },
+    });
+    const childUserMessage = {
+      type: "userMessage",
+      id: "child-user-message",
+      content: [{ type: "text", text: "Inspect this path." }],
+    };
+
+    asInternals(session).handleNotification("item/started", {
+      threadId: "user-child-thread",
+      item: childUserMessage,
+    });
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "user-child-thread",
+      item: childUserMessage,
+    });
+
+    expect(
+      events.filter(
+        (event) =>
+          event.type === "provider_subagent" &&
+          event.event.type === "timeline" &&
+          event.event.id === "user-child-thread" &&
+          event.event.item.type === "user_message",
+      ),
+    ).toHaveLength(1);
+  });
+
   test("keeps the parent running when a MultiAgentV2 sub-agent finishes", async () => {
     const appServer = createFakeCodexAppServer();
     const session = new CodexAppServerAgentSession(

@@ -4026,6 +4026,16 @@ class OpenCodeAgentSession implements AgentSession {
   }
 
   private async translateEvent(event: OpenCodeEvent): Promise<AgentStreamEvent[]> {
+    const eventSessionId = getOpenCodeEventSessionId(event);
+    if (
+      event.type !== "session.created" &&
+      eventSessionId &&
+      eventSessionId !== this.sessionId &&
+      !this.knownChildSessionIds.has(eventSessionId)
+    ) {
+      this.startChildSessionHydration();
+      await this.childHydrationPromise?.catch(() => undefined);
+    }
     const translated = translateOpenCodeEvent(event, this.createTranslationState());
     this.appendProviderSubagentEvents(event, translated);
 

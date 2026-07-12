@@ -2696,6 +2696,80 @@ describe("OpenCode provider subagent contract", () => {
     ]);
   });
 
+  test("preserves child events that arrive while existing children hydrate", async () => {
+    const hydration = createTestDeferred<{
+      data: Array<{ id: string; parentID: string; title: string }>;
+    }>();
+    const runtime = new TestOpenCodeHarness();
+    const openCodeClient = new TestOpenCodeClient();
+    openCodeClient.sessionCreateResponse = { data: { id: "ses_parent_hydrating" } };
+    let childListRequest = 0;
+    openCodeClient.sessionChildrenImplementation = async () => {
+      childListRequest += 1;
+      return childListRequest === 1 ? await hydration.promise : { data: [] };
+    };
+    runtime.enqueueClient(openCodeClient);
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const session = await client.createSession({ provider: "opencode", cwd: "/workspace/repo" });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    await vi.waitFor(() => expect(openCodeClient.calls.sessionChildren).toHaveLength(1));
+
+    openCodeClient.emitEvent({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "msg_child_hydrating",
+          sessionID: "ses_child_hydrating",
+          role: "assistant",
+        },
+      },
+    });
+    openCodeClient.emitEvent({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "prt_child_hydrating",
+          sessionID: "ses_child_hydrating",
+          messageID: "msg_child_hydrating",
+          type: "text",
+          text: "Hydration did not lose this.",
+          time: { start: 1, end: 2 },
+        },
+      },
+    });
+    hydration.resolve({
+      data: [
+        {
+          id: "ses_child_hydrating",
+          parentID: "ses_parent_hydrating",
+          title: "Hydrating child",
+        },
+      ],
+    });
+
+    await vi.waitFor(() =>
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "provider_subagent",
+          provider: "opencode",
+          event: expect.objectContaining({
+            type: "timeline",
+            id: "ses_child_hydrating",
+            item: {
+              type: "assistant_message",
+              text: "Hydration did not lose this.",
+            },
+          }),
+        }),
+      ),
+    );
+    await session.close();
+  });
+
   test("closes without waiting for child hydration", async () => {
     const hydration = createTestDeferred<{ data: [] }>();
     const runtime = new TestOpenCodeHarness();
