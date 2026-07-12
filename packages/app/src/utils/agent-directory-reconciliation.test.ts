@@ -183,4 +183,32 @@ describe("agent directory reconciliation", () => {
       usage: { inputTokens: 20, outputTokens: 8 },
     });
   });
+
+  it("preserves usage when a stale buffered upsert omits it", () => {
+    const result = reconcileAgentDirectory({
+      previous: new Map(),
+      snapshot: [
+        {
+          ...entry("agent", "idle"),
+          agent: {
+            ...snapshot("agent", "idle"),
+            updatedAt: "2026-07-12T12:00:00.000Z",
+            lastUsage: { inputTokens: 10, outputTokens: 5 },
+          },
+        },
+      ],
+      deltas: [
+        {
+          kind: "upsert",
+          agent: {
+            ...snapshot("agent", "running"),
+            updatedAt: "2026-07-12T11:00:00.000Z",
+          },
+          project: entry("agent", "idle").project,
+        },
+      ],
+    });
+
+    expect(result.entries[0]?.agent.lastUsage).toEqual({ inputTokens: 10, outputTokens: 5 });
+  });
 });

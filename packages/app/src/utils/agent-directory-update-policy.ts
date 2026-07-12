@@ -15,6 +15,7 @@ export function acceptAgentDirectoryUpdate<T extends AgentUpdateValue>(
   incoming: T,
 ): T {
   if (!current || timestamp(incoming.updatedAt) >= timestamp(current.updatedAt)) return incoming;
+  if (incoming.lastUsage === undefined) return current;
   if (equal(incoming.lastUsage, current.lastUsage)) return current;
   return { ...current, lastUsage: incoming.lastUsage };
 }
