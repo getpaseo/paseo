@@ -51,13 +51,13 @@ describe("codex tool-call mapper", () => {
     });
   });
 
-  it("unwraps shell wrapper strings for commandExecution", () => {
+  it("unwraps /usr/bin zsh wrapper strings for commandExecution", () => {
     const item = expectMapped(
       mapCodexToolCallFromThreadItem({
         type: "commandExecution",
         id: "codex-call-wrapper-string",
         status: "running",
-        command: '/bin/zsh -lc "echo hello"',
+        command: '/usr/bin/zsh -lc "echo hello"',
         cwd: "/tmp/repo",
       }),
     );

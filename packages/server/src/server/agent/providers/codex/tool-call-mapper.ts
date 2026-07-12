@@ -221,7 +221,9 @@ const CodexThreadItemSchema = z.discriminatedUnion("type", [
 
 function maybeUnwrapShellWrapperCommand(command: string): string {
   const trimmed = command.trim();
-  const unixWrapperMatch = trimmed.match(/^(?:\/bin\/)?(?:zsh|bash|sh)\s+-(?:lc|c)\s+([\s\S]+)$/);
+  const unixWrapperMatch = trimmed.match(
+    /^(?:(?:\/[^/\s]+)*\/)?(?:zsh|bash|sh)\s+-(?:lc|c)\s+([\s\S]+)$/,
+  );
   if (unixWrapperMatch) {
     const candidate = unixWrapperMatch[1]?.trim() ?? "";
     if (!candidate) {
