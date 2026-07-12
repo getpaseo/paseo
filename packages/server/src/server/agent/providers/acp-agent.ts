@@ -231,10 +231,10 @@ export const DEFAULT_ACP_CAPABILITIES: AgentCapabilityFlags = {
 
 const BASE_ACP_CLIENT_CAPABILITIES: ACPClientCapabilities = {
   fs: {
-    readTextFile: true,
-    writeTextFile: true,
+    readTextFile: false,
+    writeTextFile: false,
   },
-  terminal: true,
+  terminal: false,
 };
 
 export type ACPClientCapabilityMeta = Record<string, unknown>;

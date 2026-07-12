@@ -108,10 +108,10 @@ describe("GenericACPAgentClient diagnostics", () => {
         providerParams: {
           clientCapabilities: {
             fs: {
-              readTextFile: false,
-              writeTextFile: false,
+              readTextFile: true,
+              writeTextFile: true,
             },
-            terminal: false,
+            terminal: true,
           },
         },
       });
@@ -127,19 +127,19 @@ describe("GenericACPAgentClient diagnostics", () => {
         {
           clientCapabilities: {
             fs: {
-              readTextFile: false,
-              writeTextFile: false,
+              readTextFile: true,
+              writeTextFile: true,
             },
-            terminal: false,
+            terminal: true,
           },
         },
         {
           clientCapabilities: {
             fs: {
-              readTextFile: false,
-              writeTextFile: false,
+              readTextFile: true,
+              writeTextFile: true,
             },
-            terminal: false,
+            terminal: true,
           },
         },
       ]);

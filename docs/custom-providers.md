@@ -457,26 +457,25 @@ Paseo tools such as subagent creation come from the shared internal tool catalog
 }
 ```
 
-ACP agents normally receive access to Paseo's filesystem and terminal through
-the client capabilities advertised during initialization. For a compliant agent
-running in a container or remote environment, disable those capabilities so it
-keeps file and command execution in the agent environment:
+ACP agents execute filesystem and terminal operations in their own environment
+by default. To let a compliant agent delegate those operations to Paseo instead,
+enable the corresponding client capabilities:
 
 ```json
 {
   "agents": {
     "providers": {
-      "container-agent": {
+      "local-agent": {
         "extends": "acp",
-        "label": "Container Agent",
-        "command": ["container-agent", "acp"],
+        "label": "Local Agent",
+        "command": ["local-agent", "acp"],
         "params": {
           "clientCapabilities": {
             "fs": {
-              "readTextFile": false,
-              "writeTextFile": false
+              "readTextFile": true,
+              "writeTextFile": true
             },
-            "terminal": false
+            "terminal": true
           }
         }
       }
@@ -485,9 +484,9 @@ keeps file and command execution in the agent environment:
 }
 ```
 
-The defaults remain enabled for compatibility with local ACP agents. Configure
-both environments with equivalent absolute workspace paths before enabling
-client filesystem or terminal delegation across a process boundary.
+Only enable capabilities Paseo should execute. When the agent and Paseo run in
+different environments, configure equivalent absolute workspace paths before
+delegating filesystem or terminal operations to Paseo.
 
 ### Generic ACP diagnostics
 

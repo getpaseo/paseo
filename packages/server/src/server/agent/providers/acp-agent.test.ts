@@ -52,13 +52,13 @@ import { asInternals } from "../../test-utils/class-mocks.js";
 import * as spawnUtils from "../../../utils/spawn.js";
 
 describe("buildACPClientCapabilities", () => {
-  test("preserves the default client filesystem and terminal capabilities", () => {
+  test("keeps filesystem and terminal execution with the agent by default", () => {
     expect(buildACPClientCapabilities()).toEqual({
       fs: {
-        readTextFile: true,
-        writeTextFile: true,
+        readTextFile: false,
+        writeTextFile: false,
       },
-      terminal: true,
+      terminal: false,
     });
   });
 
@@ -68,17 +68,17 @@ describe("buildACPClientCapabilities", () => {
         { source: "provider" },
         {
           fs: {
-            readTextFile: false,
+            readTextFile: true,
           },
-          terminal: false,
+          terminal: true,
         },
       ),
     ).toEqual({
       fs: {
-        readTextFile: false,
-        writeTextFile: true,
+        readTextFile: true,
+        writeTextFile: false,
       },
-      terminal: false,
+      terminal: true,
       _meta: { source: "provider" },
     });
   });
