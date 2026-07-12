@@ -7,6 +7,7 @@ import {
   appendOptimisticUserMessageToStream,
   buildOptimisticUserMessage,
   clearOptimisticUserMessages,
+  handoffCreatedAgentUserMessageToStream,
   hydrateStreamState,
   mergeToolCallDetail,
   reduceStreamUpdate,
@@ -1284,27 +1285,65 @@ describe("turn lifecycle events", () => {
       message: optimistic,
       placement: "active-head",
     });
-    const skipped = appendOptimisticUserMessageToStream({
-      tail: [
-        {
-          kind: "user_message",
-          id: "canonical-user",
-          text: "already canonical",
-          timestamp: new Date("2025-01-01T15:03:21Z"),
-        },
-      ],
-      head: [],
-      message: optimistic,
-      placement: "tail",
-      skipIfUserMessageExists: true,
-    });
-
     assert.deepStrictEqual(first.tail, []);
     assert.deepStrictEqual(first.head, [headItem, optimistic]);
     assert.strictEqual(second.changedHead, false);
     assert.strictEqual(second.head, first.head);
-    assert.strictEqual(skipped.changedTail, false);
-    assert.strictEqual(skipped.tail.length, 1);
+  });
+
+  it("hands rich optimistic content to an authoritative create message without duplicating it", () => {
+    const timestamp = new Date("2025-01-01T15:03:20Z");
+    const optimistic = buildOptimisticUserMessage({
+      id: "client-user",
+      text: "",
+      timestamp,
+      images: [
+        {
+          id: "image-1",
+          mimeType: "image/png",
+          storageType: "web-indexeddb",
+          storageKey: "image-1",
+          createdAt: timestamp.getTime(),
+        },
+      ],
+      attachments: [
+        {
+          type: "text",
+          mimeType: "text/plain",
+          text: "Previous conversation",
+          title: "Chat history",
+          contextKind: "chat_history",
+        },
+      ],
+    });
+    const canonical: StreamItem = {
+      kind: "user_message",
+      id: "provider-user",
+      text: "server-rendered attachment text",
+      timestamp: new Date("2025-01-01T15:03:21Z"),
+    };
+
+    const handedOff = handoffCreatedAgentUserMessageToStream({
+      tail: [canonical],
+      head: [],
+      message: optimistic,
+    });
+    const repeated = handoffCreatedAgentUserMessageToStream({
+      tail: handedOff.tail,
+      head: handedOff.head,
+      message: optimistic,
+    });
+
+    assert.deepStrictEqual(handedOff.tail, [
+      {
+        ...optimistic,
+        id: "provider-user",
+      },
+    ]);
+    assert.deepStrictEqual(handedOff.head, []);
+    assert.strictEqual(repeated.changedTail, false);
+    assert.strictEqual(repeated.changedHead, false);
+    assert.deepStrictEqual(repeated.tail, handedOff.tail);
   });
 
   it("reconciles an optimistic user message that was pending in the streaming head", () => {

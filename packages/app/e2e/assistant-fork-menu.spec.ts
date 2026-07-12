@@ -1,7 +1,7 @@
 import { expect, test as base, type Page } from "./fixtures";
 import { scrollAgentChatToBottom } from "./helpers/agent-bottom-anchor";
 import { awaitAssistantMessage } from "./helpers/agent-stream";
-import { expectComposerVisible } from "./helpers/composer";
+import { expectComposerVisible, submitMessage } from "./helpers/composer";
 import { getE2EDaemonPort } from "./helpers/daemon-port";
 import {
   openAgentRoute,
@@ -11,6 +11,7 @@ import {
 } from "./helpers/mock-agent";
 import { getServerId } from "./helpers/server-id";
 import { seedSavedSettingsHosts } from "./helpers/settings";
+import { submitNewWorkspaceEmpty } from "./helpers/new-workspace";
 
 const test = base.extend<{
   seedForkWorkspace: (options: MockAgentOptions) => Promise<MockAgentWorkspace>;
@@ -75,6 +76,33 @@ test.describe("Assistant fork menu", () => {
     await expectChatHistoryPill(page);
   });
 
+  test("keeps the fork attachment after submitting an existing-workspace draft tab", async ({
+    page,
+    seedForkWorkspace,
+  }) => {
+    const session = await seedForkWorkspace({
+      repoPrefix: "assistant-fork-tab-submit-",
+      title: "Assistant fork tab submit",
+      initialPrompt: "emit 1 coalesced agent stream updates for assistant fork tab submit.",
+      model: "ten-second-stream",
+    });
+
+    await openAgentRoute(page, session);
+    await expectComposerVisible(page);
+    await awaitAssistantMessage(page);
+    await session.client.waitForFinish(session.agentId, 45_000);
+
+    await openAssistantForkMenu(page);
+    await page.getByTestId("assistant-fork-menu-new-tab").click();
+    await expectChatHistoryPill(page);
+
+    await submitMessage(page, "");
+
+    const userMessage = page.getByTestId("user-message").filter({ hasText: "Chat history" }).last();
+    await expect(userMessage).toBeVisible({ timeout: 30_000 });
+    await expect(userMessage).not.toContainText("Source agent:");
+  });
+
   test("forks an assistant turn into New Workspace and keeps the attachment across host changes", async ({
     page,
     seedForkWorkspace,
@@ -117,5 +145,32 @@ test.describe("Assistant fork menu", () => {
       .getByTestId("new-workspace-host-picker-option-secondary-assistant-fork-host")
       .click();
     await expectChatHistoryPill(page);
+  });
+
+  test("keeps the fork attachment after the new agent receives its user message", async ({
+    page,
+    seedForkWorkspace,
+  }) => {
+    const session = await seedForkWorkspace({
+      repoPrefix: "assistant-fork-submit-",
+      title: "Assistant fork submit",
+      initialPrompt: "emit 1 coalesced agent stream updates for assistant fork submit.",
+      model: "ten-second-stream",
+    });
+
+    await openAgentRoute(page, session);
+    await expectComposerVisible(page);
+    await awaitAssistantMessage(page);
+    await session.client.waitForFinish(session.agentId, 45_000);
+
+    await openAssistantForkMenu(page);
+    await page.getByTestId("assistant-fork-menu-new-workspace").click();
+    await expectChatHistoryPill(page);
+
+    await submitNewWorkspaceEmpty(page);
+
+    const userMessage = page.getByTestId("user-message").filter({ hasText: "Chat history" }).last();
+    await expect(userMessage).toBeVisible({ timeout: 30_000 });
+    await expect(userMessage).not.toContainText("Source agent:");
   });
 });

@@ -123,8 +123,8 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
   const updatePendingAgentId = useCreateFlowStore((state) => state.updateAgentId);
   const markPendingCreateLifecycle = useCreateFlowStore((state) => state.markLifecycle);
   const clearPendingCreateAttempt = useCreateFlowStore((state) => state.clear);
-  const appendOptimisticUserMessageToAgentStream = useSessionStore(
-    (state) => state.appendOptimisticUserMessageToAgentStream,
+  const handoffCreatedAgentUserMessage = useSessionStore(
+    (state) => state.handoffCreatedAgentUserMessage,
   );
 
   const formErrorMessage = machine.tag === "draft" ? machine.errorMessage : "";
@@ -189,7 +189,7 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
 
         if (createResult.agentId) {
           updatePendingAgentId({ draftId, agentId: createResult.agentId });
-          appendOptimisticUserMessageToAgentStream(
+          handoffCreatedAgentUserMessage(
             pendingServerId,
             createResult.agentId,
             buildOptimisticUserMessage({
@@ -199,7 +199,6 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
               images: attempt.images,
               attachments: attempt.attachments,
             }),
-            { placement: "tail", skipIfUserMessageExists: true },
           );
           markPendingCreateLifecycle({ draftId, lifecycle: "sent" });
         }
@@ -216,7 +215,7 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
       }
     },
     [
-      appendOptimisticUserMessageToAgentStream,
+      handoffCreatedAgentUserMessage,
       clearPendingCreateAttempt,
       createRequest,
       draftId,
