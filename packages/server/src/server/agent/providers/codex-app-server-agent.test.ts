@@ -1567,7 +1567,7 @@ describe("Codex app-server provider", () => {
     asInternals(session).handleNotification("item/agentMessage/delta", {
       threadId: "child-thread-1",
       itemId: "child-message-1",
-      delta: "Found the path.",
+      delta: "Found",
     });
     asInternals(session).handleNotification("item/completed", {
       threadId: "child-thread-1",
@@ -1616,7 +1616,16 @@ describe("Codex app-server provider", () => {
       item: {
         type: "assistant_message",
         messageId: "child-message-1",
-        text: "Found the path.",
+        text: "Found",
+      },
+    });
+    expect(providerEvents).toContainEqual({
+      type: "timeline",
+      id: "child-thread-1",
+      item: {
+        type: "assistant_message",
+        messageId: "child-message-1",
+        text: " the path.",
       },
     });
     expect(providerEvents.at(-1)).toMatchObject({
@@ -2120,6 +2129,20 @@ describe("Codex app-server provider", () => {
           event.item.callId === "child-command",
       ),
     ).toBe(false);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "provider_subagent",
+        event: {
+          type: "timeline",
+          id: "legacy-envelope-child",
+          item: expect.objectContaining({
+            type: "tool_call",
+            callId: "child-command",
+            status: "running",
+          }),
+        },
+      }),
+    );
     expect(events.filter((event) => event.type === "turn_completed")).toHaveLength(0);
     expect(events.at(-1)).toMatchObject({
       type: "timeline",

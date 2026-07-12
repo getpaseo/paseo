@@ -5047,6 +5047,58 @@ test("subscribe does not emit state events for internal agents to global subscri
   expect(receivedEvents.filter((id) => id === generatedAgentIds[1]).length).toBe(0);
 });
 
+test("subscribe hides provider subagents of internal parents from global subscribers", async () => {
+  const internalAgentId = "00000000-0000-4000-8000-000000000117";
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-internal-provider-child-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const sessionHolder: { current: TestAgentSession | null } = { current: null };
+  class InternalProviderChildClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      sessionHolder.current = new TestAgentSession(config);
+      return sessionHolder.current;
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new InternalProviderChildClient() },
+    registry: storage,
+    logger,
+    idFactory: () => internalAgentId,
+  });
+  const globalEvents: AgentManagerEvent[] = [];
+  const scopedEvents: AgentManagerEvent[] = [];
+  manager.subscribe((event) => globalEvents.push(event), { replayState: false });
+  await manager.createAgent(
+    { provider: "codex", cwd: workdir, title: "Internal Agent", internal: true },
+    undefined,
+    { workspaceId: undefined },
+  );
+  manager.subscribe((event) => scopedEvents.push(event), {
+    agentId: internalAgentId,
+    replayState: false,
+  });
+
+  sessionHolder.current?.pushEvent({
+    type: "provider_subagent",
+    provider: "codex",
+    event: { type: "upsert", id: "hidden-child", title: "Hidden child", status: "running" },
+  });
+  await manager.flush();
+
+  expect(globalEvents.filter((event) => event.type === "provider_subagent")).toEqual([]);
+  expect(scopedEvents).toContainEqual(
+    expect.objectContaining({
+      type: "provider_subagent",
+      event: expect.objectContaining({
+        type: "upsert",
+        subagent: expect.objectContaining({
+          id: "hidden-child",
+          parentAgentId: internalAgentId,
+        }),
+      }),
+    }),
+  );
+});
+
 test("subscribe emits state events for internal agents when subscribed by agentId", async () => {
   const internalAgentId = "00000000-0000-4000-8000-000000000110";
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));

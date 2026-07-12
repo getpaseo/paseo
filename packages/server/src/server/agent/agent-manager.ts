@@ -3844,19 +3844,22 @@ export class AgentManager {
         continue;
       }
       // Skip internal agents for global subscribers (those without a specific agentId)
-      if (!subscriber.agentId) {
-        if (event.type === "agent_state" && event.agent.internal) {
-          continue;
-        }
-        if (event.type === "agent_stream") {
-          const agent = this.agents.get(event.agentId);
-          if (agent?.internal) {
-            continue;
-          }
-        }
+      if (!subscriber.agentId && this.eventBelongsToInternalAgent(event)) {
+        continue;
       }
       subscriber.callback(event);
     }
+  }
+
+  private eventBelongsToInternalAgent(event: AgentManagerEvent): boolean {
+    if (event.type === "agent_state") return event.agent.internal === true;
+    if (event.type === "agent_stream") return this.agents.get(event.agentId)?.internal === true;
+    if (event.type !== "provider_subagent") return false;
+    const parentAgentId =
+      event.event.type === "upsert"
+        ? event.event.subagent.parentAgentId
+        : event.event.parentAgentId;
+    return this.agents.get(parentAgentId)?.internal === true;
   }
 
   private async normalizeConfig(

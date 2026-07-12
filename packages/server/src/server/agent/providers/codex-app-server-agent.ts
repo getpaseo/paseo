@@ -4859,12 +4859,20 @@ export class CodexAppServerAgentSession implements AgentSession {
   private emitCodexToolTimelineItem(
     timelineItem: ToolCallTimelineItem,
     subAgentCallId: string | null,
+    childThreadId?: string | null,
   ): void {
     if (!subAgentCallId) {
       this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: timelineItem });
       return;
     }
     this.upsertSubAgentChildItem(subAgentCallId, timelineItem.callId, timelineItem);
+    const state = this.subAgentCallsByCallId.get(subAgentCallId);
+    if (state) {
+      const targetThreadIds = childThreadId ? [childThreadId] : state.childThreadIds;
+      for (const targetThreadId of targetThreadIds) {
+        this.emitProviderSubagentTimeline(targetThreadId, timelineItem);
+      }
+    }
     this.emitSubAgentActivityUpdate(
       subAgentCallId,
       timelineItem.status === "running" ? "running" : undefined,
@@ -4966,14 +4974,24 @@ export class CodexAppServerAgentSession implements AgentSession {
     timelineItem: AgentTimelineItem,
   ): void {
     const itemId = parsed.item.id;
-    const hadStreamedAssistant =
-      timelineItem.type === "assistant_message" &&
-      Boolean(itemId && this.pendingAgentMessages.has(itemId));
-    const hadStreamedReasoning =
-      timelineItem.type === "reasoning" && Boolean(itemId && this.pendingReasoning.has(itemId));
-    if (parsed.threadId && !hadStreamedAssistant && !hadStreamedReasoning) {
-      this.emitProviderSubagentTimeline(parsed.threadId, timelineItem);
+    if (!parsed.threadId) return;
+    if (timelineItem.type === "assistant_message" && itemId) {
+      const streamedText = this.pendingAgentMessages.get(itemId);
+      if (streamedText !== undefined) {
+        const suffix = this.buildMissingFinalTextSuffix(timelineItem, streamedText);
+        if (suffix) this.emitProviderSubagentTimeline(parsed.threadId, suffix);
+        return;
+      }
     }
+    if (timelineItem.type === "reasoning" && itemId) {
+      const streamedText = this.pendingReasoning.get(itemId)?.join("");
+      if (streamedText !== undefined) {
+        const suffix = this.buildMissingFinalTextSuffix(timelineItem, streamedText);
+        if (suffix) this.emitProviderSubagentTimeline(parsed.threadId, suffix);
+        return;
+      }
+    }
+    this.emitProviderSubagentTimeline(parsed.threadId, timelineItem);
   }
 
   private emitStartedProviderSubagentItem(
@@ -5327,7 +5345,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       running: true,
     });
     if (timelineItem) {
-      this.emitCodexToolTimelineItem(timelineItem, subAgentCallId);
+      this.emitCodexToolTimelineItem(timelineItem, subAgentCallId, parsed.threadId);
     }
   }
 
@@ -5360,7 +5378,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       if (!subAgentCallId) {
         this.emittedExecCommandCompletedCallIds.add(timelineItem.callId);
       }
-      this.emitCodexToolTimelineItem(timelineItem, subAgentCallId);
+      this.emitCodexToolTimelineItem(timelineItem, subAgentCallId, parsed.threadId);
     }
   }
 
@@ -5409,7 +5427,7 @@ export class CodexAppServerAgentSession implements AgentSession {
         callId: parsed.callId,
         changes: parsed.changes,
       });
-      this.emitCodexToolTimelineItem(timelineItem, subAgentCallId);
+      this.emitCodexToolTimelineItem(timelineItem, subAgentCallId, parsed.threadId);
     }
   }
 
@@ -5439,7 +5457,7 @@ export class CodexAppServerAgentSession implements AgentSession {
         changes: parsed.changes,
         stdout: parsed.stdout,
       });
-      this.emitCodexToolTimelineItem(timelineItem, subAgentCallId);
+      this.emitCodexToolTimelineItem(timelineItem, subAgentCallId, parsed.threadId);
     }
   }
 
@@ -5556,26 +5574,24 @@ export class CodexAppServerAgentSession implements AgentSession {
     timelineItem: Extract<AgentTimelineItem, { type: "assistant_message" | "reasoning" }>,
     streamedText: string,
   ): void {
-    if (!timelineItem.text.startsWith(streamedText)) {
-      this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: timelineItem });
-      return;
-    }
+    const item = this.buildMissingFinalTextSuffix(timelineItem, streamedText);
+    if (item) this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item });
+  }
+
+  private buildMissingFinalTextSuffix(
+    timelineItem: Extract<AgentTimelineItem, { type: "assistant_message" | "reasoning" }>,
+    streamedText: string,
+  ): AgentTimelineItem | null {
+    if (!timelineItem.text.startsWith(streamedText)) return timelineItem;
     const suffix = timelineItem.text.slice(streamedText.length);
-    if (!suffix) {
-      return;
-    }
-    this.emitEvent({
-      type: "timeline",
-      provider: CODEX_PROVIDER,
-      item:
-        timelineItem.type === "assistant_message"
-          ? {
-              type: timelineItem.type,
-              text: suffix,
-              ...(timelineItem.messageId ? { messageId: timelineItem.messageId } : {}),
-            }
-          : { type: timelineItem.type, text: suffix },
-    });
+    if (!suffix) return null;
+    return timelineItem.type === "assistant_message"
+      ? {
+          type: timelineItem.type,
+          text: suffix,
+          ...(timelineItem.messageId ? { messageId: timelineItem.messageId } : {}),
+        }
+      : { type: timelineItem.type, text: suffix };
   }
 
   private applyBufferedDeltaTextToTimelineItem(
@@ -5588,14 +5604,15 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (timelineItem.type === "assistant_message") {
       const buffered = this.pendingAgentMessages.get(itemId);
       if (buffered && buffered.length > 0) {
-        timelineItem.text = buffered;
+        if (!timelineItem.text.startsWith(buffered)) timelineItem.text = buffered;
       }
       return;
     }
     if (timelineItem.type === "reasoning") {
       const buffered = this.pendingReasoning.get(itemId);
       if (buffered && buffered.length > 0) {
-        timelineItem.text = buffered.join("");
+        const streamedText = buffered.join("");
+        if (!timelineItem.text.startsWith(streamedText)) timelineItem.text = streamedText;
       }
     }
   }

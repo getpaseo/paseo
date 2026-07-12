@@ -183,10 +183,11 @@ export const useProviderSubagentStore = create<ProviderSubagentState>((set) => (
           payload.subagent.id,
         );
         const descriptors = new Map(state.descriptors);
+        const previous = descriptors.get(key);
         descriptors.set(key, payload.subagent);
         let timelines = state.timelines;
         const current = state.timelines.get(key);
-        if (current) {
+        if (current && previous?.status !== payload.subagent.status) {
           timelines = new Map(state.timelines);
           timelines.set(key, buildTimelineState(current.rows, current.epoch, payload.subagent));
         }

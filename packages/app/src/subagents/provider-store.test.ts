@@ -58,6 +58,28 @@ describe("provider subagent client store", () => {
       ],
       error: null,
     });
+    const liveTimeline = useProviderSubagentStore
+      .getState()
+      .timelines.get(providerSubagentKey(SERVER_ID, PARENT_ID, SUBAGENT_ID));
+    subagents.applyUpdate(SERVER_ID, {
+      kind: "upsert",
+      subagent: {
+        id: SUBAGENT_ID,
+        parentAgentId: PARENT_ID,
+        provider: "codex",
+        title: "Explore",
+        description: "Inspect the repository",
+        status: "running",
+        createdAt: "2026-07-12T10:00:00.000Z",
+        updatedAt: "2026-07-12T10:00:01.500Z",
+        toolCallId: "call-1",
+      },
+    });
+    expect(
+      useProviderSubagentStore
+        .getState()
+        .timelines.get(providerSubagentKey(SERVER_ID, PARENT_ID, SUBAGENT_ID)),
+    ).toBe(liveTimeline);
     subagents.applyUpdate(SERVER_ID, {
       kind: "upsert",
       subagent: {
