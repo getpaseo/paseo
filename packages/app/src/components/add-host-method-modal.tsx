@@ -4,7 +4,8 @@ import { Pressable, Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { QrCode, Link2, ClipboardPaste } from "lucide-react-native";
 import { AdaptiveModalSheet, type SheetHeader } from "./adaptive-modal-sheet";
-import { isFdroidBuild, isNative } from "@/constants/platform";
+import { isFdroidBuild } from "@/constants/build-profile";
+import { isNative } from "@/constants/platform";
 
 const styles = StyleSheet.create((theme) => ({
   option: {
