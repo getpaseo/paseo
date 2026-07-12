@@ -200,4 +200,61 @@ describe("provider subagent client store", () => {
       expect.objectContaining({ kind: "assistant_message", text: "Late restored output." }),
     ]);
   });
+
+  test("merges bounded older pages and tracks whether more history remains", () => {
+    const store = useProviderSubagentStore.getState();
+    store.replaceTimeline(SERVER_ID, {
+      requestId: "tail-page",
+      parentAgentId: PARENT_ID,
+      subagentId: SUBAGENT_ID,
+      provider: "codex",
+      direction: "tail",
+      epoch: "epoch-1",
+      reset: false,
+      staleCursor: false,
+      gap: false,
+      window: { minSeq: 2, maxSeq: 2, nextSeq: 3 },
+      hasOlder: true,
+      hasNewer: false,
+      rows: [
+        {
+          seq: 2,
+          timestamp: "2026-07-12T10:00:02.000Z",
+          item: { type: "assistant_message", text: "Recent output." },
+        },
+      ],
+      error: null,
+    });
+    store.replaceTimeline(SERVER_ID, {
+      requestId: "older-page",
+      parentAgentId: PARENT_ID,
+      subagentId: SUBAGENT_ID,
+      provider: "codex",
+      direction: "before",
+      epoch: "epoch-1",
+      reset: false,
+      staleCursor: false,
+      gap: false,
+      window: { minSeq: 1, maxSeq: 2, nextSeq: 3 },
+      hasOlder: false,
+      hasNewer: true,
+      rows: [
+        {
+          seq: 1,
+          timestamp: "2026-07-12T10:00:01.000Z",
+          item: { type: "assistant_message", text: "Older output." },
+        },
+      ],
+      error: null,
+    });
+
+    const timeline = useProviderSubagentStore
+      .getState()
+      .timelines.get(providerSubagentKey(SERVER_ID, PARENT_ID, SUBAGENT_ID));
+    expect(timeline?.hasOlder).toBe(false);
+    expect([...timeline!.rows.keys()]).toEqual([2, 1]);
+    expect(timeline?.head).toEqual([
+      expect.objectContaining({ kind: "assistant_message", text: "Older output.Recent output." }),
+    ]);
+  });
 });

@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import invariant from "tiny-invariant";
@@ -19,6 +19,7 @@ import { useTranslation } from "react-i18next";
 import type { PendingPermission } from "@/types/shared";
 import type { StreamItem } from "@/types/stream";
 import { deriveSidebarStateBucket } from "@/utils/sidebar-agent-state";
+import { TIMELINE_FETCH_PAGE_SIZE } from "@/timeline/timeline-fetch-policy";
 
 const EMPTY_PERMISSIONS = new Map<string, PendingPermission>();
 const EMPTY_STREAM_ITEMS: StreamItem[] = [];
@@ -81,6 +82,7 @@ function ProviderSubagentPanel() {
   const serverInfo = useSessionStore((state) => state.sessions[serverId]?.serverInfo ?? null);
   // COMPAT(providerSubagents): added in v0.2.11, remove after 2027-01-12.
   const supported = serverInfo?.features?.providerSubagents === true;
+  const [isLoadingOlder, setIsLoadingOlder] = useState(false);
 
   useEffect(() => {
     if (!client || !supported) return;
@@ -90,13 +92,43 @@ function ProviderSubagentPanel() {
   useEffect(() => {
     if (!client || !supported) return;
     void client
-      .fetchProviderSubagentTimeline(target.parentAgentId, target.subagentId, { limit: 0 })
+      .fetchProviderSubagentTimeline(target.parentAgentId, target.subagentId, {
+        direction: "tail",
+        limit: TIMELINE_FETCH_PAGE_SIZE,
+      })
       .then((payload) => {
         useProviderSubagentStore.getState().replaceTimeline(serverId, payload);
         return undefined;
       })
       .catch(() => undefined);
   }, [client, serverId, supported, target.parentAgentId, target.subagentId]);
+
+  const loadOlder = useCallback(() => {
+    if (!client || !supported || isLoadingOlder || !timeline?.hasOlder || !timeline.epoch) return;
+    const firstSeq = timeline.rows.size ? Math.min(...timeline.rows.keys()) : null;
+    if (firstSeq === null) return;
+    setIsLoadingOlder(true);
+    void client
+      .fetchProviderSubagentTimeline(target.parentAgentId, target.subagentId, {
+        direction: "before",
+        cursor: { epoch: timeline.epoch, seq: firstSeq },
+        limit: TIMELINE_FETCH_PAGE_SIZE,
+      })
+      .then((payload) => {
+        useProviderSubagentStore.getState().replaceTimeline(serverId, payload);
+        return undefined;
+      })
+      .catch(() => undefined)
+      .finally(() => setIsLoadingOlder(false));
+  }, [
+    client,
+    isLoadingOlder,
+    serverId,
+    supported,
+    target.parentAgentId,
+    target.subagentId,
+    timeline,
+  ]);
 
   const streamContext = useMemo<AgentScreenAgent>(
     () => ({
@@ -109,6 +141,14 @@ function ProviderSubagentPanel() {
       projectPlacement: parent?.projectPlacement,
     }),
     [descriptor, parent, serverId, streamId],
+  );
+  const historyPagination = useMemo(
+    () => ({
+      hasOlder: timeline?.hasOlder === true,
+      isLoadingOlder,
+      onLoadOlder: loadOlder,
+    }),
+    [isLoadingOlder, loadOlder, timeline?.hasOlder],
   );
 
   if (serverInfo && !supported) {
@@ -131,6 +171,7 @@ function ProviderSubagentPanel() {
         isAuthoritativeHistoryReady
         onOpenWorkspaceFile={openFileInWorkspace}
         readOnly
+        historyPagination={historyPagination}
       />
     </View>
   );

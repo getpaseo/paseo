@@ -237,6 +237,11 @@ export interface AgentStreamViewProps {
   toast?: ToastApi | null;
   onOpenWorkspaceFile?: (request: WorkspaceFileOpenRequest) => void;
   readOnly?: boolean;
+  historyPagination?: {
+    hasOlder: boolean;
+    isLoadingOlder: boolean;
+    onLoadOlder: () => void;
+  };
 }
 
 const AGENT_CAPABILITY_FLAG_KEYS: (keyof AgentCapabilityFlags)[] = [
@@ -317,6 +322,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       toast,
       onOpenWorkspaceFile,
       readOnly = false,
+      historyPagination,
     },
     ref,
   ) {
@@ -360,11 +366,18 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       workspaceId: context.workspaceId,
       workspaceRoot,
     });
-    const { isLoadingOlder, hasOlder, loadOlder } = useLoadOlderAgentHistory({
+    const agentHistoryPagination = useLoadOlderAgentHistory({
       serverId: resolvedServerId,
       agentId,
       toast,
     });
+    const { isLoadingOlder, hasOlder, loadOlder } = historyPagination
+      ? {
+          isLoadingOlder: historyPagination.isLoadingOlder,
+          hasOlder: historyPagination.hasOlder,
+          loadOlder: historyPagination.onLoadOlder,
+        }
+      : agentHistoryPagination;
     // Keep entry/exit animations off on Android due to RN dispatchDraw crashes
     // tracked in react-native-reanimated#8422.
     const shouldDisableEntryExitAnimations = Platform.OS === "android";
