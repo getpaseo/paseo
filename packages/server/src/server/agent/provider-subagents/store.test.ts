@@ -59,4 +59,28 @@ describe("ProviderSubagentStore", () => {
     expect(subagents.list("parent-a")).toEqual([]);
     expect(subagents.list("parent-b")).toHaveLength(1);
   });
+
+  test("limits oversized provider child tool output before storage", () => {
+    const subagents = new ProviderSubagentStore();
+    const output = "x".repeat(70 * 1024);
+    const update = subagents.apply("parent-a", "opencode", {
+      type: "timeline",
+      id: "child-1",
+      item: {
+        type: "tool_call",
+        callId: "call-1",
+        name: "shell",
+        status: "completed",
+        error: null,
+        detail: { type: "shell", command: "print", output },
+      },
+    });
+
+    expect(update.type).toBe("timeline");
+    const [row] = subagents.fetchTimeline("parent-a", "child-1").rows;
+    expect(row?.item).toMatchObject({
+      type: "tool_call",
+      detail: { type: "shell", output: "x".repeat(64 * 1024) },
+    });
+  });
 });

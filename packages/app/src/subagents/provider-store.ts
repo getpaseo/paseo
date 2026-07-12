@@ -220,9 +220,12 @@ export const useProviderSubagentStore = create<ProviderSubagentState>((set) => (
         return { descriptors, timelines };
       }
       const key = providerSubagentKey(serverId, payload.parentAgentId, payload.subagentId);
-      const existing = state.timelines.get(key) ?? EMPTY_TIMELINE;
-      const current = existing.epoch === payload.epoch ? existing : EMPTY_TIMELINE;
-      if (current.epoch === payload.epoch && payload.seq <= current.lastSeq) {
+      const existing = state.timelines.get(key);
+      if (existing?.epoch && existing.epoch !== payload.epoch) {
+        return state;
+      }
+      const current = existing ?? EMPTY_TIMELINE;
+      if (payload.seq <= current.lastSeq) {
         return state;
       }
       const rows = new Map(current.rows);

@@ -1,4 +1,5 @@
 import type { AgentProvider, AgentTimelineItem } from "../agent-sdk-types.js";
+import { limitAgentTimelineItemContent } from "../agent-timeline-content.js";
 import { InMemoryAgentTimelineStore } from "../agent-timeline-store.js";
 import type {
   AgentTimelineFetchOptions,
@@ -76,7 +77,9 @@ export class ProviderSubagentStore {
       if (!this.timelines.has(key)) {
         this.timelines.initialize(key);
       }
-      const row = this.timelines.append(key, event.item, { timestamp: event.timestamp });
+      const row = this.timelines.append(key, limitAgentTimelineItemContent(event.item), {
+        timestamp: event.timestamp,
+      });
       return {
         type: "timeline",
         parentAgentId,

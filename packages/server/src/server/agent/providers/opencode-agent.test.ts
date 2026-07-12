@@ -2458,6 +2458,7 @@ describe("OpenCode provider subagent contract", () => {
           id: "ses_provider_child_permission",
           parentID: "ses_parent_permission",
           title: "Permission child",
+          directory: "/workspace/child",
         },
       },
     });
@@ -2504,8 +2505,66 @@ describe("OpenCode provider subagent contract", () => {
 
     await parent.respondToPermission("perm_provider_child", { behavior: "allow" });
     expect(parentClient.calls.permissionReply).toContainEqual(
-      expect.objectContaining({ requestID: "perm_provider_child", reply: "once" }),
+      expect.objectContaining({
+        requestID: "perm_provider_child",
+        directory: "/workspace/child",
+        reply: "once",
+      }),
     );
+    await parent.close();
+  });
+
+  test("auto-approves provider child permissions in the child directory", async () => {
+    const runtime = new TestOpenCodeHarness();
+    const parentClient = new TestOpenCodeClient();
+    parentClient.sessionCreateResponse = { data: { id: "ses_parent_auto_permission" } };
+    runtime.enqueueClient(parentClient);
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const parent = await client.createSession({
+      provider: "opencode",
+      cwd: "/workspace/repo",
+      featureValues: { auto_accept: true },
+    });
+    parent.subscribe(() => undefined);
+
+    parentClient.emitEvent({
+      type: "session.created",
+      properties: {
+        info: {
+          id: "ses_provider_child_auto_permission",
+          parentID: "ses_parent_auto_permission",
+          title: "Auto permission child",
+          directory: "/workspace/auto-child",
+        },
+      },
+    });
+    await vi.waitFor(() =>
+      expect(parentClient.calls.sessionChildren.length).toBeGreaterThanOrEqual(1),
+    );
+    parentClient.emitEvent({
+      type: "permission.asked",
+      properties: {
+        id: "perm_provider_child_auto",
+        sessionID: "ses_provider_child_auto_permission",
+        permission: "bash",
+        patterns: ["npm test"],
+        metadata: { command: "npm test" },
+      },
+    });
+
+    await vi.waitFor(() =>
+      expect(parentClient.calls.permissionReply).toContainEqual(
+        expect.objectContaining({
+          requestID: "perm_provider_child_auto",
+          directory: "/workspace/auto-child",
+          reply: "once",
+        }),
+      ),
+    );
+    expect(parent.getPendingPermissions()).toEqual([]);
     await parent.close();
   });
 
@@ -2529,6 +2588,7 @@ describe("OpenCode provider subagent contract", () => {
           id: "ses_provider_child_question",
           parentID: "ses_parent_question",
           title: "Question child",
+          directory: "/workspace/question-child",
         },
       },
     });
@@ -2579,7 +2639,11 @@ describe("OpenCode provider subagent contract", () => {
       updatedInput: { answers: { Path: "A" } },
     });
     expect(parentClient.calls.questionReply).toContainEqual(
-      expect.objectContaining({ requestID: "question_provider_child", answers: [["A"]] }),
+      expect.objectContaining({
+        requestID: "question_provider_child",
+        directory: "/workspace/question-child",
+        answers: [["A"]],
+      }),
     );
     await parent.close();
   });

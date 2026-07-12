@@ -257,4 +257,50 @@ describe("provider subagent client store", () => {
       expect.objectContaining({ kind: "assistant_message", text: "Older output.Recent output." }),
     ]);
   });
+
+  test("ignores delayed live updates from a stale timeline epoch", () => {
+    const store = useProviderSubagentStore.getState();
+    store.replaceTimeline(SERVER_ID, {
+      requestId: "current-page",
+      parentAgentId: PARENT_ID,
+      subagentId: SUBAGENT_ID,
+      provider: "codex",
+      direction: "tail",
+      epoch: "epoch-current",
+      reset: true,
+      staleCursor: false,
+      gap: false,
+      window: { minSeq: 2, maxSeq: 2, nextSeq: 3 },
+      hasOlder: false,
+      hasNewer: false,
+      rows: [
+        {
+          seq: 2,
+          timestamp: "2026-07-12T10:00:02.000Z",
+          item: { type: "assistant_message", text: "Current output." },
+        },
+      ],
+      error: null,
+    });
+
+    store.applyUpdate(SERVER_ID, {
+      kind: "timeline",
+      parentAgentId: PARENT_ID,
+      subagentId: SUBAGENT_ID,
+      provider: "codex",
+      epoch: "epoch-stale",
+      seq: 3,
+      timestamp: "2026-07-12T10:00:03.000Z",
+      item: { type: "assistant_message", text: "Stale output." },
+    });
+
+    const timeline = useProviderSubagentStore
+      .getState()
+      .timelines.get(providerSubagentKey(SERVER_ID, PARENT_ID, SUBAGENT_ID));
+    expect(timeline?.epoch).toBe("epoch-current");
+    expect([...timeline!.rows.keys()]).toEqual([2]);
+    expect(timeline?.head).toEqual([
+      expect.objectContaining({ kind: "assistant_message", text: "Current output." }),
+    ]);
+  });
 });

@@ -2857,6 +2857,8 @@ class OpenCodeAgentSession implements AgentSession {
   private subAgentCallIdByChildSessionId = new Map<string, string>();
   private knownChildSessionIds = new Set<string>();
   private readonly childTranslationStates = new Map<string, OpenCodeEventTranslationState>();
+  private readonly childSessionCwds = new Map<string, string>();
+  private readonly pendingPermissionDirectories = new Map<string, string>();
   private childHydrationPromise: Promise<void> | null = null;
   private childHydrationCompleted = false;
   private readonly unrelatedSessionIds = new Set<string>();
@@ -3342,12 +3344,16 @@ class OpenCodeAgentSession implements AgentSession {
     }
     if (event.event.type === "upsert") {
       this.unrelatedSessionIds.delete(event.event.id);
+      if (event.event.cwd) {
+        this.childSessionCwds.set(event.event.id, event.event.cwd);
+      }
       if (this.serverUrl) {
         registerOpenCodeChildSessionServerUrl(event.event.id, this.serverUrl);
       }
     } else if (event.event.type === "remove") {
       unregisterOpenCodeChildSessionServerUrl(event.event.id);
       this.childTranslationStates.delete(event.event.id);
+      this.childSessionCwds.delete(event.event.id);
     }
   }
 
@@ -3770,11 +3776,12 @@ class OpenCodeAgentSession implements AgentSession {
       throw new Error(`No pending permission request with id '${requestId}'`);
     }
 
+    const directory = this.pendingPermissionDirectories.get(requestId) ?? this.config.cwd;
     if (pending.kind === "question") {
       if (response.behavior === "deny") {
         await this.client.question.reject({
           requestID: requestId,
-          directory: this.config.cwd,
+          directory,
         });
       } else {
         const answersRecord = readOpenCodeRecord(response.updatedInput?.answers);
@@ -3793,24 +3800,26 @@ class OpenCodeAgentSession implements AgentSession {
 
         await this.client.question.reply({
           requestID: requestId,
-          directory: this.config.cwd,
+          directory,
           answers,
         });
       }
 
       this.pendingPermissions.delete(requestId);
+      this.pendingPermissionDirectories.delete(requestId);
       return;
     }
 
     const reply = resolveOpenCodePermissionReply(response);
     await this.client.permission.reply({
       requestID: requestId,
-      directory: this.config.cwd,
+      directory,
       reply,
       message: response.behavior === "deny" ? response.message : undefined,
     });
 
     this.pendingPermissions.delete(requestId);
+    this.pendingPermissionDirectories.delete(requestId);
   }
 
   describePersistence(): AgentPersistenceHandle | null {
@@ -4152,11 +4161,18 @@ class OpenCodeAgentSession implements AgentSession {
     for (const translatedEvent of translated) {
       this.recordProviderInternalEvent(translatedEvent);
       if (translatedEvent.type === "permission_requested") {
-        const autoApproved = await this.tryAutoApproveToolPermission(translatedEvent.request);
+        const directory =
+          (eventSessionId ? this.childSessionCwds.get(eventSessionId) : undefined) ??
+          this.config.cwd;
+        const autoApproved = await this.tryAutoApproveToolPermission(
+          translatedEvent.request,
+          directory,
+        );
         if (autoApproved) {
           continue;
         }
         this.pendingPermissions.set(translatedEvent.request.id, translatedEvent.request);
+        this.pendingPermissionDirectories.set(translatedEvent.request.id, directory);
       }
       if (translatedEvent.type === "turn_completed") {
         if (hasNormalizedOpenCodeUsage(this.accumulatedUsage)) {
@@ -4172,7 +4188,10 @@ class OpenCodeAgentSession implements AgentSession {
     return events;
   }
 
-  private async tryAutoApproveToolPermission(request: AgentPermissionRequest): Promise<boolean> {
+  private async tryAutoApproveToolPermission(
+    request: AgentPermissionRequest,
+    directory: string,
+  ): Promise<boolean> {
     if (!this.autoAcceptEnabled || request.kind !== "tool") {
       return false;
     }
@@ -4180,7 +4199,7 @@ class OpenCodeAgentSession implements AgentSession {
     try {
       await this.client.permission.reply({
         requestID: request.id,
-        directory: this.config.cwd,
+        directory,
         reply: "once",
       });
       return true;
