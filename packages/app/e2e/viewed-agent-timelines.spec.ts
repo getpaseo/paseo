@@ -55,7 +55,10 @@ async function selectAgent(page: Page, title: string) {
 }
 
 async function moveActiveTabRight(page: Page) {
-  await page.keyboard.press("Meta+Alt+Shift+ArrowRight");
+  const modifier = await page.evaluate(() =>
+    navigator.platform.toLowerCase().includes("mac") ? "Meta" : "Control",
+  );
+  await page.keyboard.press(`${modifier}+Alt+Shift+ArrowRight`);
 }
 
 async function commitMessage(scenario: ViewedTimelineScenario, agentId: string, prompt: string) {
