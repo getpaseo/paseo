@@ -771,6 +771,39 @@ function buildOpenCodeModelContextWindowLookup(
   return lookup;
 }
 
+function buildOpenCodeModelProviderLookup(
+  providers:
+    | {
+        connected?: string[];
+        all?: Array<{
+          id: string;
+          source?: string;
+          models?: Record<string, unknown>;
+        }>;
+      }
+    | null
+    | undefined,
+): Map<string, string> {
+  const lookup = new Map<string, string>();
+  if (!providers) {
+    return lookup;
+  }
+
+  const connectedProviderIds = new Set(providers.connected ?? []);
+  for (const provider of providers.all ?? []) {
+    if (!connectedProviderIds.has(provider.id) && provider.source !== "api") {
+      continue;
+    }
+    for (const modelId of Object.keys(provider.models ?? {})) {
+      if (!lookup.has(modelId)) {
+        lookup.set(modelId, provider.id);
+      }
+    }
+  }
+
+  return lookup;
+}
+
 function resolveOpenCodeModelLookupKeyFromAssistantMessage(
   info: OpenCodeAssistantMessage,
 ): string | undefined {
@@ -1199,6 +1232,7 @@ export const __openCodeInternals = {
   buildOpenCodeModelContextWindowLookup,
   buildOpenCodeModelDefinition,
   buildOpenCodeModelLookupKey,
+  buildOpenCodeModelProviderLookup,
   extractOpenCodeModelContextWindow,
   hasNormalizedOpenCodeUsage,
   mergeOpenCodeStepFinishUsage,
@@ -1239,6 +1273,7 @@ export class OpenCodeAgentClient implements AgentClient {
   private readonly logger: Logger;
   private readonly runtimeSettings?: ProviderRuntimeSettings;
   private readonly modelContextWindows = new Map<string, number>();
+  private readonly modelProviderByModelId = new Map<string, string>();
 
   constructor(
     logger: Logger,
@@ -1288,7 +1323,7 @@ export class OpenCodeAgentClient implements AgentClient {
         throw new Error("OpenCode session creation returned no data");
       }
 
-      await this.populateModelContextWindowCache(client, openCodeConfig.cwd);
+      await this.populateModelMetadataCache(client, openCodeConfig.cwd);
 
       return new OpenCodeAgentSession(
         openCodeConfig,
@@ -1299,6 +1334,7 @@ export class OpenCodeAgentClient implements AgentClient {
         acquisition.release,
         options?.persistSession,
         launchContext?.agentId,
+        new Map(this.modelProviderByModelId),
       );
     } catch (error) {
       acquisition.release();
@@ -1332,7 +1368,7 @@ export class OpenCodeAgentClient implements AgentClient {
     });
 
     try {
-      await this.populateModelContextWindowCache(client, openCodeConfig.cwd);
+      await this.populateModelMetadataCache(client, openCodeConfig.cwd);
 
       return new OpenCodeAgentSession(
         openCodeConfig,
@@ -1343,6 +1379,7 @@ export class OpenCodeAgentClient implements AgentClient {
         acquisition.release,
         undefined,
         launchContext?.agentId,
+        new Map(this.modelProviderByModelId),
       );
     } catch (error) {
       acquisition.release();
@@ -1566,6 +1603,12 @@ export class OpenCodeAgentClient implements AgentClient {
       }
     }
 
+    const providerLookup = buildOpenCodeModelProviderLookup(providers);
+    this.modelProviderByModelId.clear();
+    for (const [modelId, providerId] of providerLookup.entries()) {
+      this.modelProviderByModelId.set(modelId, providerId);
+    }
+
     return models;
   }
 
@@ -1595,19 +1638,22 @@ export class OpenCodeAgentClient implements AgentClient {
     return normalizeOpenCodeConfig({ ...config, provider: "opencode" });
   }
 
-  private async populateModelContextWindowCache(
-    client: OpencodeClient,
-    cwd: string,
-  ): Promise<void> {
+  private async populateModelMetadataCache(client: OpencodeClient, cwd: string): Promise<void> {
     const response = await openCodeMetadataLimit(() => client.provider.list({ directory: cwd }));
     if (response.error || !response.data) {
       return;
     }
 
-    const lookup = buildOpenCodeModelContextWindowLookup(response.data);
+    const contextWindowLookup = buildOpenCodeModelContextWindowLookup(response.data);
     this.modelContextWindows.clear();
-    for (const [modelLookupKey, contextWindowMaxTokens] of lookup.entries()) {
+    for (const [modelLookupKey, contextWindowMaxTokens] of contextWindowLookup.entries()) {
       this.modelContextWindows.set(modelLookupKey, contextWindowMaxTokens);
+    }
+
+    const providerLookup = buildOpenCodeModelProviderLookup(response.data);
+    this.modelProviderByModelId.clear();
+    for (const [modelId, providerId] of providerLookup.entries()) {
+      this.modelProviderByModelId.set(modelId, providerId);
     }
   }
 }
@@ -2755,6 +2801,7 @@ class OpenCodeAgentSession implements AgentSession {
   private readonly sessionId: string;
   private readonly logger: Logger;
   private readonly modelContextWindowsByModelKey: ReadonlyMap<string, number>;
+  private readonly modelProviderByModelId: ReadonlyMap<string, string>;
   private currentMode: string = "default";
   private autoAcceptEnabled = false;
   private pendingPermissions = new Map<string, AgentPermissionRequest>();
@@ -2803,12 +2850,14 @@ class OpenCodeAgentSession implements AgentSession {
     releaseServer?: () => void,
     persistSession = true,
     private readonly agentId?: string,
+    modelProviderByModelId: ReadonlyMap<string, string> = new Map(),
   ) {
     this.config = config;
     this.client = client;
     this.sessionId = sessionId;
     this.logger = logger.child({ agentId: this.agentId });
     this.modelContextWindowsByModelKey = modelContextWindowsByModelKey;
+    this.modelProviderByModelId = modelProviderByModelId;
     this.currentMode = normalizeOpenCodeModeId(config.modeId);
     this.autoAcceptEnabled = isOpenCodeAutoAcceptEnabled(config);
     this.releaseServer = releaseServer ?? null;
@@ -3024,7 +3073,7 @@ class OpenCodeAgentSession implements AgentSession {
           directory: this.config.cwd,
           command: slashCommand.commandName,
           arguments: slashCommand.args ?? "",
-          ...(this.config.model ? { model: this.config.model } : {}),
+          ...(model ? { model: `${model.providerID}/${model.modelID}` } : {}),
           ...(effectiveMode ? { agent: effectiveMode } : {}),
           ...(effectiveVariant ? { variant: effectiveVariant } : {}),
         })
@@ -3671,7 +3720,15 @@ class OpenCodeAgentSession implements AgentSession {
     if (parts.length >= 2) {
       return { providerID: parts[0], modelID: parts.slice(1).join("/") };
     }
-    return { providerID: "opencode", modelID: model };
+    const resolvedProviderId = this.modelProviderByModelId.get(model);
+    if (resolvedProviderId) {
+      return { providerID: resolvedProviderId, modelID: model };
+    }
+    this.logger.warn(
+      { model },
+      "OpenCode model has no provider prefix and is not in the server catalog; omitting model so the server can use its default",
+    );
+    return undefined;
   }
 
   private async ensureMcpServersConfigured(): Promise<void> {
