@@ -2004,6 +2004,16 @@ export const CreateTerminalRequestSchema = z.object({
   agentId: z.string().optional(),
   command: z.string().optional(),
   args: z.array(z.string()).optional(),
+  // COMPAT(createTerminalSize): added in v0.1.107, drop the optional gate when floor >= v0.1.107.
+  // The client seeds the PTY with its measured viewport size so a new terminal isn't born at the
+  // 80x24 default and then visibly reflowed. Old daemons ignore this field and start at 80x24;
+  // the client's first resize corrects it as before.
+  size: z
+    .object({
+      rows: z.number().int().positive(),
+      cols: z.number().int().positive(),
+    })
+    .optional(),
   requestId: z.string(),
 });
 
