@@ -554,6 +554,10 @@ function createDefaultDeps(): HostRuntimeControllerDeps {
         },
       }
     : undefined;
+  const appCapabilities = {
+    [CLIENT_CAPS.selectiveAgentTimeline]: true,
+    ...browserAutomationCapabilities,
+  };
 
   return {
     createClient: ({ host, connection, clientId, runtimeGeneration }) => {
@@ -564,7 +568,7 @@ function createDefaultDeps(): HostRuntimeControllerDeps {
         clientType: "mobile" as const,
         appVersion: resolveAppVersion() ?? undefined,
         runtimeGeneration,
-        ...(browserAutomationCapabilities ? { capabilities: browserAutomationCapabilities } : {}),
+        capabilities: appCapabilities,
       };
       if (connection.type === "directSocket" || connection.type === "directPipe") {
         return new DaemonClient({
@@ -602,7 +606,7 @@ function createDefaultDeps(): HostRuntimeControllerDeps {
       connectToDaemon(connection, {
         ...(host.serverId ? { serverId: host.serverId } : {}),
         ...(timeoutMs !== undefined ? { timeoutMs } : {}),
-        ...(browserAutomationCapabilities ? { capabilities: browserAutomationCapabilities } : {}),
+        capabilities: appCapabilities,
       }),
     getClientId: () => getOrCreateClientId(),
     mountClientHandlers: ({ client, host }) => {
@@ -2327,6 +2331,7 @@ export class HostRuntimeStore {
     this.applyAgentDirectoryCommitSideEffects({
       serverId: input.serverId,
       previous,
+      committedEntries: reconciled.entries,
       directory: {
         entries: stampedSnapshot,
         deltas: transaction.deltas,
@@ -2379,6 +2384,7 @@ export class HostRuntimeStore {
     this.applyAgentDirectoryCommitSideEffects({
       serverId: input.serverId,
       previous,
+      committedEntries: reconciled.entries,
       directory,
       stoppedRunningAgentIds: reconciled.stoppedRunningAgentIds,
     });
@@ -2390,10 +2396,11 @@ export class HostRuntimeStore {
   private applyAgentDirectoryCommitSideEffects(input: {
     serverId: string;
     previous: ReadonlyMap<string, Agent>;
+    committedEntries: FetchAgentsEntry[];
     directory: AgentDirectoryFetchResult;
     stoppedRunningAgentIds: string[];
   }): void {
-    const snapshotAgentIds = new Set(input.directory.entries.map((entry) => entry.agent.id));
+    const snapshotAgentIds = new Set(input.committedEntries.map((entry) => entry.agent.id));
     for (const agentId of input.previous.keys()) {
       if (!snapshotAgentIds.has(agentId)) {
         applyAgentDirectoryDelta({ serverId: input.serverId, delta: { kind: "remove", agentId } });

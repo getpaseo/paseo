@@ -1761,6 +1761,12 @@ describe("HostRuntimeStore", () => {
       updatedAt: "2026-07-12T10:00:00.000Z",
       title: "snapshot",
     });
+    const recoveredAgent = makeFetchAgentsEntry({
+      id: "agent-recovered",
+      cwd: "/repo",
+      updatedAt: "2026-07-12T10:00:00.000Z",
+      title: "before refresh",
+    });
     fakeClient.fetchAgentsResponses.push(
       makeFetchAgentsPayload({
         entries: [pageOneAgent],
@@ -1781,9 +1787,16 @@ describe("HostRuntimeStore", () => {
         getClientId: async () => "cid_paged_delta",
       },
     });
-    useSessionStore
-      .getState()
-      .initializeSession(host.serverId, fakeClient as unknown as DaemonClient, 1);
+    const sessionStore = useSessionStore.getState();
+    sessionStore.initializeSession(host.serverId, fakeClient as unknown as DaemonClient, 1);
+    sessionStore.setAgents(
+      host.serverId,
+      new Map([[recoveredAgent.agent.id, replicaAgent(recoveredAgent.agent, host.serverId)]]),
+    );
+    sessionStore.setAgentTimelineCursor(
+      host.serverId,
+      new Map([[recoveredAgent.agent.id, { epoch: "epoch", startSeq: 10, endSeq: 20 }]]),
+    );
     store.syncHosts([host]);
     await fakeClient.waitForFetches(2);
 
@@ -1791,6 +1804,11 @@ describe("HostRuntimeStore", () => {
       kind: "upsert",
       agent: { ...pageOneAgent.agent, title: "live" },
       project: pageOneAgent.project,
+    });
+    fakeClient.agentUpdate({
+      kind: "upsert",
+      agent: { ...recoveredAgent.agent, title: "recovered by delta" },
+      project: recoveredAgent.project,
     });
     finishPageTwo(
       makeFetchAgentsPayload({
@@ -1812,7 +1830,13 @@ describe("HostRuntimeStore", () => {
     ).toEqual([
       ["agent-a", "live"],
       ["agent-b", null],
+      ["agent-recovered", "recovered by delta"],
     ]);
+    expect(
+      useSessionStore
+        .getState()
+        .sessions[host.serverId]?.agentTimelineCursor.get(recoveredAgent.agent.id),
+    ).toEqual({ epoch: "epoch", startSeq: 10, endSeq: 20 });
 
     const agentB = makeFetchAgentsEntry({
       id: "agent-b",

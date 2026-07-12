@@ -186,6 +186,7 @@ test("does not infer browser automation capabilities from Electron runtime", asy
     })
     .parse(JSON.parse(assertStr(mock.sent[0])));
   expect(hello.capabilities[CLIENT_CAPS.browserHost]).toBeUndefined();
+  expect(hello.capabilities[CLIENT_CAPS.selectiveAgentTimeline]).toBeUndefined();
 });
 
 test("advertises consumer-provided browser automation capabilities", async () => {
@@ -647,7 +648,6 @@ test("advertises client capabilities in hello", async () => {
       custom_mode_icons: true,
       provider_subagents: true,
       reasoning_merge_enum: true,
-      selective_agent_timeline: true,
       terminal_reflowable_snapshot: true,
       browser_host: {
         supportedCommands: ["list_tabs"],

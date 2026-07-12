@@ -584,6 +584,8 @@ export class Session {
   private readonly pushTokenStore: PushTokenStore;
   private unsubscribeAgentEvents: (() => void) | null = null;
   private viewedTimelineAgentIds = new Set<string>();
+  private readonly viewedTimelineAgentIdsBySource = new Map<object, Set<string>>();
+  private readonly defaultTimelineSubscriptionSource = {};
   private unsubscribeTerminalWorkspaceContributionEvents: (() => void) | null = null;
   private readonly agentUpdates: AgentUpdatesService;
   private workspaceUpdatesSubscription: WorkspaceUpdatesSubscriptionState | null = null;
@@ -966,9 +968,30 @@ export class Session {
 
   updateClientCapabilities(capabilities: Record<string, unknown> | null): void {
     this.clientCapabilities = parseClientCapabilities(capabilities);
-    if (this.supports(CLIENT_CAPS.selectiveAgentTimeline)) {
+    if (!this.supports(CLIENT_CAPS.selectiveAgentTimeline)) {
+      this.viewedTimelineAgentIdsBySource.clear();
       this.viewedTimelineAgentIds.clear();
     }
+  }
+
+  clearAgentTimelineSubscription(source: object): void {
+    if (!this.viewedTimelineAgentIdsBySource.delete(source)) return;
+    this.rebuildViewedTimelineAgentIds();
+  }
+
+  private replaceAgentTimelineSubscription(source: object | undefined, agentIds: string[]): void {
+    const subscriptionSource = source ?? this.defaultTimelineSubscriptionSource;
+    if (agentIds.length === 0) this.viewedTimelineAgentIdsBySource.delete(subscriptionSource);
+    else this.viewedTimelineAgentIdsBySource.set(subscriptionSource, new Set(agentIds));
+    this.rebuildViewedTimelineAgentIds();
+  }
+
+  private rebuildViewedTimelineAgentIds(): void {
+    const viewedAgentIds = new Set<string>();
+    for (const agentIds of this.viewedTimelineAgentIdsBySource.values()) {
+      for (const agentId of agentIds) viewedAgentIds.add(agentId);
+    }
+    this.viewedTimelineAgentIds = viewedAgentIds;
   }
 
   supports(capability: ClientCapability): boolean {
@@ -1412,7 +1435,7 @@ export class Session {
   /**
    * Main entry point for processing session messages
    */
-  public async handleMessage(msg: SessionInboundMessage): Promise<void> {
+  public async handleMessage(msg: SessionInboundMessage, source?: object): Promise<void> {
     this.inflightRequests++;
     if (this.inflightRequests > this.peakInflightRequests) {
       this.peakInflightRequests = this.inflightRequests;
@@ -1426,7 +1449,7 @@ export class Session {
         "agent.session.inbound",
       );
       try {
-        await this.dispatchInboundMessage(msg);
+        await this.dispatchInboundMessage(msg, source);
       } catch (error) {
         const err = error instanceof Error ? error : new Error(String(error));
         this.sessionLogger.error({ err }, "Error handling message");
@@ -1464,12 +1487,12 @@ export class Session {
     }
   }
 
-  private async dispatchInboundMessage(msg: SessionInboundMessage): Promise<void> {
+  private async dispatchInboundMessage(msg: SessionInboundMessage, source?: object): Promise<void> {
     const promise =
       this.dispatchVoiceAndControlMessage(msg) ??
       this.dispatchAgentRewindMessage(msg) ??
       this.dispatchAgentRelationshipMessage(msg) ??
-      this.dispatchAgentTimelineMessage(msg) ??
+      this.dispatchAgentTimelineMessage(msg, source) ??
       this.dispatchAgentLifecycleMessage(msg) ??
       this.dispatchAgentConfigMessage(msg) ??
       this.dispatchCheckoutMessage(msg) ??
@@ -1551,7 +1574,10 @@ export class Session {
     }
   }
 
-  private dispatchAgentTimelineMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+  private dispatchAgentTimelineMessage(
+    msg: SessionInboundMessage,
+    source?: object,
+  ): Promise<void> | undefined {
     switch (msg.type) {
       case "fetch_agent_timeline_request":
         return this.handleFetchAgentTimelineRequest(msg);
@@ -1562,7 +1588,7 @@ export class Session {
       case "agent.timeline.set_subscription.request": {
         const agentIds = [...new Set(msg.agentIds)].sort();
         if (this.supports(CLIENT_CAPS.selectiveAgentTimeline)) {
-          this.viewedTimelineAgentIds = new Set(agentIds);
+          this.replaceAgentTimelineSubscription(source, agentIds);
         }
         this.emit({
           type: "agent.timeline.set_subscription.response",

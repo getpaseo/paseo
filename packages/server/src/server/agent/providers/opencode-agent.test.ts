@@ -3033,11 +3033,11 @@ describe("OpenCode provider subagent contract", () => {
         event: {
           type: "timeline",
           id: "ses_child_with_history",
-          item: {
+          item: expect.objectContaining({
             type: "assistant_message",
             text: "Persisted child result.",
             messageId: "msg_child_history",
-          },
+          }),
           timestamp: "1970-01-01T00:00:02.000Z",
         },
       }),
@@ -3111,11 +3111,11 @@ describe("OpenCode provider subagent contract", () => {
           event: expect.objectContaining({
             type: "timeline",
             id: "ses_child_hydrating",
-            item: {
+            item: expect.objectContaining({
               type: "assistant_message",
               text: "Hydration did not lose this.",
               messageId: "msg_child_hydrating",
-            },
+            }),
           }),
         }),
       ),

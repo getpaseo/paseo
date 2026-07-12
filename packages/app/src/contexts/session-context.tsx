@@ -4,6 +4,7 @@ import { AppState } from "react-native";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useClientActivity } from "@/hooks/use-client-activity";
+import { useAppVisible } from "@/hooks/use-app-visible";
 import { usePushTokenRegistration } from "@/hooks/use-push-token-registration";
 import { clearArchiveAgentPending } from "@/hooks/use-archive-agent";
 import {
@@ -533,6 +534,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   const audioOutputBuffersRef = useRef<Map<string, BufferedAudioChunk[]>>(new Map());
   const activeAudioGroupsRef = useRef<Set<string>>(new Set());
   const workspaceHydrationRef = useRef<WorkspaceHydrationTransaction | null>(null);
+  const isAppVisible = useAppVisible();
 
   const applyWorkspaceUpdatePayload = useCallback(
     (payload: WorkspaceUpdatePayload) => {
@@ -564,13 +566,16 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (nextState) => {
       appStateRef.current = nextState;
-      viewedTimelineSyncRef.current?.setActive(getIsAppActivelyVisible(nextState));
     });
 
     return () => {
       subscription.remove();
     };
   }, []);
+
+  useEffect(() => {
+    viewedTimelineSyncRef.current?.setActive(isAppVisible);
+  }, [isAppVisible]);
 
   const hydrateWorkspaces = useCallback(
     async (options?: { subscribe?: boolean; isCancelled?: () => boolean }) => {
@@ -618,7 +623,11 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
 
       setWorkspaces(
         serverId,
-        reconcileWorkspaceDirectory({ snapshot: snapshot.workspaces, deltas: snapshot.deltas }),
+        reconcileWorkspaceDirectory({
+          serverId,
+          snapshot: snapshot.workspaces,
+          deltas: snapshot.deltas,
+        }),
       );
       setEmptyProjects(serverId, snapshot.emptyProjects.values());
       setHasHydratedWorkspaces(serverId, true);

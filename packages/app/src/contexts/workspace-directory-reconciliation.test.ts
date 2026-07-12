@@ -1,7 +1,13 @@
 import { expect, it } from "vitest";
 import type { WorkspaceDescriptorPayload } from "@getpaseo/protocol/messages";
 import { normalizeWorkspaceDescriptor } from "@/stores/session-store";
+import {
+  clearWorkspaceArchivePending,
+  markWorkspaceArchivePending,
+} from "./session-workspace-upserts";
 import { reconcileWorkspaceDirectory } from "./workspace-directory-reconciliation";
+
+const SERVER_ID = "workspace-directory-reconciliation";
 
 function workspace(id: string, title: string): WorkspaceDescriptorPayload {
   return {
@@ -25,6 +31,7 @@ function workspace(id: string, title: string): WorkspaceDescriptorPayload {
 
 it("keeps workspace upserts and removals received during later pages", () => {
   const result = reconcileWorkspaceDirectory({
+    serverId: SERVER_ID,
     snapshot: new Map([
       ["updated", normalizeWorkspaceDescriptor(workspace("updated", "snapshot"))],
       ["removed", normalizeWorkspaceDescriptor(workspace("removed", "snapshot"))],
@@ -38,4 +45,19 @@ it("keeps workspace upserts and removals received during later pages", () => {
   expect(Array.from(result.values()).map(({ id, title }) => [id, title])).toEqual([
     ["updated", "live"],
   ]);
+});
+
+it("does not restore a locally archiving workspace from a buffered upsert", () => {
+  markWorkspaceArchivePending({ serverId: SERVER_ID, workspaceId: "archiving" });
+  try {
+    const result = reconcileWorkspaceDirectory({
+      serverId: SERVER_ID,
+      snapshot: new Map(),
+      deltas: [{ kind: "upsert", workspace: workspace("archiving", "live") }],
+    });
+
+    expect(result.has("archiving")).toBe(false);
+  } finally {
+    clearWorkspaceArchivePending({ serverId: SERVER_ID, workspaceId: "archiving" });
+  }
 });
