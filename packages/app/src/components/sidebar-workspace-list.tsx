@@ -2690,6 +2690,7 @@ function ProjectModeList({
         <MemoWorkspaceRowItem
           key={workspace.workspaceKey}
           workspace={workspace}
+          workspaceEntry={workspaceEntriesByKey.get(workspace.workspaceKey) ?? null}
           subtitle={hostLabel ? `${workspace.projectName} · ${hostLabel}` : workspace.projectName}
           shortcutNumber={shortcutIndexByWorkspaceKey.get(workspace.workspaceKey) ?? null}
           showShortcutBadge={showShortcutBadges}
@@ -2710,6 +2711,7 @@ function ProjectModeList({
       shortcutIndexByWorkspaceKey,
       showHostLabels,
       showShortcutBadges,
+      workspaceEntriesByKey,
     ],
   );
 
