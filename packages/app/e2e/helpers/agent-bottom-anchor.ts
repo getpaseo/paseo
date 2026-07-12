@@ -137,36 +137,59 @@ export async function clickToolCallBesideScrollToBottomButton(page: Page): Promi
   const scrollToBottomButton = page.getByRole("button", { name: "Scroll to bottom" });
   await expect(scrollToBottomButton).toBeVisible();
 
-  const hitArea = await page.evaluate(() => {
-    const button = document.querySelector('[data-testid="scroll-to-bottom-button"]');
-    if (!(button instanceof HTMLElement)) {
-      throw new Error("Expected visible scroll-to-bottom button");
-    }
-    const buttonBounds = button.getBoundingClientRect();
-    const toolCall = Array.from(
-      document.querySelectorAll<HTMLElement>('[data-testid="tool-call-badge"] [role="button"]'),
-    ).find((element) => {
-      const bounds = element.getBoundingClientRect();
-      const centerY = bounds.top + bounds.height / 2;
-      return bounds.width > 0 && centerY >= buttonBounds.top && centerY <= buttonBounds.bottom;
-    });
-    if (!toolCall) {
-      throw new Error("Expected a tool call beside the scroll-to-bottom button");
-    }
+  const buttonBounds = await scrollToBottomButton.boundingBox();
+  expect(buttonBounds, "Expected visible scroll-to-bottom button bounds").not.toBeNull();
+  const visibleButtonBounds = buttonBounds!;
 
-    const toolCallBounds = toolCall.getBoundingClientRect();
-    const clickPoint = {
-      x: toolCallBounds.left + 24,
-      y: toolCallBounds.top + toolCallBounds.height / 2,
-    };
-    const hit = document.elementFromPoint(clickPoint.x, clickPoint.y);
-    return {
-      clickPoint,
-      outsideButton: clickPoint.x < buttonBounds.left || clickPoint.x > buttonBounds.right,
-      toolCallReceivesPointer: hit !== null && toolCall.contains(hit),
-      withinButtonBand: clickPoint.y >= buttonBounds.top && clickPoint.y <= buttonBounds.bottom,
-    };
+  const toolCalls = page.locator('[data-testid="tool-call-badge"] [role="button"]');
+  const toolCallBounds = await Promise.all(
+    Array.from({ length: await toolCalls.count() }, async (_, index) => ({
+      index,
+      bounds: await toolCalls.nth(index).boundingBox(),
+    })),
+  );
+  const candidate = toolCallBounds.find(({ bounds }) => {
+    if (!bounds) {
+      return false;
+    }
+    const centerY = bounds.y + bounds.height / 2;
+    return (
+      bounds.width > 0 &&
+      centerY >= visibleButtonBounds.y &&
+      centerY <= visibleButtonBounds.y + visibleButtonBounds.height
+    );
   });
+  expect(
+    candidate,
+    `No tool-call badge visible within the scroll-button band: ${JSON.stringify({
+      buttonBounds,
+      scrollMetrics: await readScrollMetrics(page),
+      toolCallBounds,
+    })}`,
+  ).toBeDefined();
+  const visibleToolCall = candidate!;
+  const visibleToolCallBounds = visibleToolCall.bounds!;
+
+  const clickPoint = {
+    x: visibleToolCallBounds.x + 24,
+    y: visibleToolCallBounds.y + visibleToolCallBounds.height / 2,
+  };
+  const toolCallReceivesPointer = await toolCalls
+    .nth(visibleToolCall.index)
+    .evaluate((toolCall, point) => {
+      const hit = document.elementFromPoint(point.x, point.y);
+      return hit !== null && toolCall.contains(hit);
+    }, clickPoint);
+  const hitArea = {
+    clickPoint,
+    outsideButton:
+      clickPoint.x < visibleButtonBounds.x ||
+      clickPoint.x > visibleButtonBounds.x + visibleButtonBounds.width,
+    toolCallReceivesPointer,
+    withinButtonBand:
+      clickPoint.y >= visibleButtonBounds.y &&
+      clickPoint.y <= visibleButtonBounds.y + visibleButtonBounds.height,
+  };
   await page.mouse.click(hitArea.clickPoint.x, hitArea.clickPoint.y);
   return {
     outsideButton: hitArea.outsideButton,
