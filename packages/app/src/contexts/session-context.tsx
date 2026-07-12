@@ -412,6 +412,7 @@ function finalizeTimelineApplication(input: {
   }
   if (result.clearInitializing) {
     markAgentHistorySynchronized(serverId, agentId);
+    getHostRuntimeStore().drainQueuedAgentMessage(serverId, agentId);
   }
 }
 
@@ -1040,14 +1041,17 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       setSubscription: (agentIds) => client.setAgentTimelineSubscription(agentIds),
       readCursor: (agentId) =>
         useSessionStore.getState().sessions[serverId]?.agentTimelineCursor.get(agentId),
+      hasAuthoritativeHistory: (agentId) =>
+        useSessionStore
+          .getState()
+          .sessions[serverId]?.agentAuthoritativeHistoryApplied.get(agentId) === true,
       fetchPage: async (agentId, request) => {
         const session = useSessionStore.getState().sessions[serverId];
         const initKey = getInitKey(serverId, agentId);
-        if (
-          session?.agentAuthoritativeHistoryApplied.get(agentId) !== true &&
-          !getInitDeferred(initKey)
-        ) {
-          createInitDeferred(initKey, request.direction ?? "tail");
+        if (session?.agentAuthoritativeHistoryApplied.get(agentId) !== true) {
+          if (!getInitDeferred(initKey)) {
+            createInitDeferred(initKey, request.direction ?? "tail");
+          }
           refreshAgentInitializationTimeout({
             key: initKey,
             agentId,
@@ -1056,7 +1060,11 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
           setAgentInitializing(agentId, true);
         }
         try {
-          return await client.fetchAgentTimeline(agentId, request);
+          const page = await client.fetchAgentTimeline(agentId, request);
+          if (getInitDeferred(initKey)) {
+            refreshAgentInitializationTimeout({ key: initKey, agentId, setAgentInitializing });
+          }
+          return page;
         } catch (error) {
           setAgentInitializing(agentId, false);
           rejectInitDeferred(initKey, error instanceof Error ? error : new Error(String(error)));

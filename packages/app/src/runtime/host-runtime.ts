@@ -2122,11 +2122,13 @@ export class HostRuntimeStore {
     }
   }
 
-  private drainQueuedAgentMessage(serverId: string, agentId: string): void {
+  drainQueuedAgentMessage(serverId: string, agentId: string): void {
     const store = useSessionStore.getState();
     const session = store.sessions[serverId];
     const queue = session?.queuedMessages.get(agentId);
-    if (!session?.client || !queue?.length) return;
+    if (!session?.client || !queue?.length || session.initializingAgents.get(agentId) === true) {
+      return;
+    }
     const [next, ...rest] = queue;
     const wirePayload = splitComposerAttachmentsForSubmit(next.attachments);
     store.setQueuedMessages(serverId, (current) => {

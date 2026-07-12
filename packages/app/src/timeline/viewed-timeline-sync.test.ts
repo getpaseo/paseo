@@ -45,6 +45,7 @@ class TimelineWorld {
       return result.promise;
     },
     readCursor: (agentId) => this.cursors.get(agentId),
+    hasAuthoritativeHistory: (agentId) => this.authoritativeHistory.has(agentId),
     fetchPage: async (agentId, request) => {
       const result = deferred<{
         hasNewer: boolean;
@@ -87,11 +88,17 @@ class TimelineWorld {
     resolve(fetch: TimelineFetch): void;
   }> = [];
   private readonly cursors = new Map<string, { epoch: string; startSeq: number; endSeq: number }>();
+  private readonly authoritativeHistory = new Set<string>();
   private readonly errorWaiters: Array<(message: string) => void> = [];
   private readonly retries: Array<() => void> = [];
   private readonly retryWaiters: Array<(retry: () => void) => void> = [];
 
   setCursor(agentId: string, endSeq: number): void {
+    this.cursors.set(agentId, { epoch: `epoch-${agentId}`, startSeq: 1, endSeq });
+    this.authoritativeHistory.add(agentId);
+  }
+
+  setLiveCursor(agentId: string, endSeq: number): void {
     this.cursors.set(agentId, { epoch: `epoch-${agentId}`, startSeq: 1, endSeq });
   }
 
@@ -144,6 +151,19 @@ class TimelineWorld {
     }
   }
 }
+
+test("uses a tail fetch when a live cursor is not authoritative", async () => {
+  const world = new TimelineWorld();
+  world.setLiveCursor("agent-a", 9);
+  world.sync.setConnected(true);
+  world.sync.replaceVisibleAgentIds("workspace", ["agent-a"]);
+  const membership = await world.nextMembership();
+  membership.succeed();
+
+  const fetch = await world.nextFetch("agent-a");
+  expect(fetch.request).toEqual({ direction: "tail", limit: 100, projection: "projected" });
+  fetch.respond({ hasNewer: false });
+});
 
 test("unchanged visible-set publication does not cancel paged catch-up", async () => {
   const world = new TimelineWorld();

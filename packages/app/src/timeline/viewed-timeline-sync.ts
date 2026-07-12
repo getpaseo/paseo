@@ -1,5 +1,6 @@
 import type { AgentTimelineCursorState } from "@/stores/session-store";
 import {
+  planInitialAgentTimelineSync,
   planResumeTimelineSync,
   planTimelineCatchUpAfter,
   type ProjectedTimelineForwardFetchPlan,
@@ -13,6 +14,7 @@ interface TimelinePageResult {
 interface ViewedTimelineSyncPorts {
   setSubscription(agentIds: string[]): Promise<void>;
   readCursor(agentId: string): AgentTimelineCursorState | undefined;
+  hasAuthoritativeHistory(agentId: string): boolean;
   fetchPage(
     agentId: string,
     request: ProjectedTimelineForwardFetchPlan,
@@ -144,7 +146,12 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
     catchUpGenerations.set(agentId, generation);
     catchUps.set(agentId, { generation, status: "running" });
     pendingGaps.delete(agentId);
-    const nextRequest = request ?? planResumeTimelineSync({ cursor: ports.readCursor(agentId) });
+    const cursor = ports.readCursor(agentId);
+    const nextRequest =
+      request ??
+      (ports.hasAuthoritativeHistory(agentId)
+        ? planResumeTimelineSync({ cursor })
+        : planInitialAgentTimelineSync({ cursor, hasAuthoritativeHistory: false }));
     void fetchUntilCurrent(agentId, generation, nextRequest);
   };
 
