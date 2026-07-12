@@ -1,8 +1,51 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const pkg = require("./package.json");
+const withFdroidAutolinking = require("./plugins/with-fdroid-autolinking");
 const appVariant = process.env.APP_VARIANT ?? "production";
 const isFdroidBuild = process.env.PASEO_FDROID_BUILD === "1";
+
+const buildProfile = isFdroidBuild
+  ? {
+      androidPermissions: [
+        "RECORD_AUDIO",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+      ],
+      cameraPlugins: [],
+      fdroidPlugins: [withFdroidAutolinking],
+      notificationPlugins: [],
+      updates: { enabled: false },
+    }
+  : {
+      androidPermissions: [
+        "RECORD_AUDIO",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "CAMERA",
+        "android.permission.CAMERA",
+      ],
+      cameraPlugins: [
+        [
+          "expo-camera",
+          {
+            cameraPermission:
+              "Allow $(PRODUCT_NAME) to access your camera to scan pairing QR codes.",
+          },
+        ],
+      ],
+      fdroidPlugins: [],
+      notificationPlugins: [
+        [
+          "expo-notifications",
+          {
+            icon: "./assets/images/notification-icon.png",
+            color: "#20744A",
+          },
+        ],
+      ],
+      updates: {},
+    };
 
 function getNativeBuildVersionCode(version) {
   const match = /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/.exec(version);
@@ -87,6 +130,7 @@ export default {
     },
     updates: {
       url: "https://u.expo.dev/0e7f65ce-0367-46c8-a238-2b65963d235a",
+      ...buildProfile.updates,
     },
     ios: {
       supportsTablet: true,
@@ -110,13 +154,7 @@ export default {
       softwareKeyboardLayoutMode: "resize",
       // Allow HTTP connections for local network hosts (required for release builds)
       usesCleartextTraffic: true,
-      permissions: [
-        "RECORD_AUDIO",
-        "android.permission.RECORD_AUDIO",
-        "android.permission.MODIFY_AUDIO_SETTINGS",
-        "CAMERA",
-        "android.permission.CAMERA",
-      ],
+      permissions: buildProfile.androidPermissions,
       package: variant.packageId,
       versionCode: nativeBuildVersionCode,
       ...(variant.googleServicesFile ? { googleServicesFile: variant.googleServicesFile } : {}),
@@ -127,22 +165,10 @@ export default {
     },
     autolinking: {
       searchPaths: ["../../node_modules", "./node_modules"],
-      ...(isFdroidBuild
-        ? {
-            android: {
-              buildFromSource: [".*"],
-            },
-          }
-        : {}),
     },
     plugins: [
       "expo-router",
-      [
-        "expo-camera",
-        {
-          cameraPermission: "Allow $(PRODUCT_NAME) to access your camera to scan pairing QR codes.",
-        },
-      ],
+      ...buildProfile.cameraPlugins,
       [
         "expo-splash-screen",
         {
@@ -155,13 +181,7 @@ export default {
           },
         },
       ],
-      [
-        "expo-notifications",
-        {
-          icon: "./assets/images/notification-icon.png",
-          color: "#20744A",
-        },
-      ],
+      ...buildProfile.notificationPlugins,
       "expo-audio",
       [
         "expo-gradle-jvmargs",
@@ -181,6 +201,7 @@ export default {
           },
         },
       ],
+      ...buildProfile.fdroidPlugins,
     ],
     experiments: {
       typedRoutes: true,
@@ -188,6 +209,7 @@ export default {
       autolinkingModuleResolution: true,
     },
     extra: {
+      fdroidBuild: isFdroidBuild,
       router: {},
       eas: {
         projectId: "0e7f65ce-0367-46c8-a238-2b65963d235a",

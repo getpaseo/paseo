@@ -7,6 +7,11 @@ const projectRoot = __dirname;
 const appNodeModulesRoot = path.resolve(projectRoot, "node_modules");
 const appSrcRoot = path.resolve(projectRoot, "src");
 const relaySrcRoot = path.resolve(projectRoot, "../relay/src");
+const isFdroidBuild = process.env.PASEO_FDROID_BUILD === "1";
+const fdroidModuleOverrides = {
+  "expo-camera": path.resolve(appSrcRoot, "fdroid/expo-camera.tsx"),
+  "expo-notifications": path.resolve(appSrcRoot, "fdroid/expo-notifications.ts"),
+};
 const customWebPlatform = (process.env.PASEO_WEB_PLATFORM ?? "")
   .trim()
   .replace(/^\./, "")
@@ -72,6 +77,10 @@ function resolveWithCustomWebOverlay(context, moduleName, platform) {
 }
 
 config.resolver.resolveRequest = (context, moduleName, platform) => {
+  if (isFdroidBuild && platform === "android" && fdroidModuleOverrides[moduleName]) {
+    return resolveWithCustomWebOverlay(context, fdroidModuleOverrides[moduleName], platform);
+  }
+
   const origin = context.originModulePath;
   if (origin && origin.startsWith(relaySrcRoot) && moduleName.endsWith(".js")) {
     const tsModuleName = moduleName.replace(/\.js$/, ".ts");

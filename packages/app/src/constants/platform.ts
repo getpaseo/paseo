@@ -1,3 +1,4 @@
+import Constants from "expo-constants";
 import { Platform } from "react-native";
 import { isElectronRuntime, isElectronRuntimeMac } from "@/desktop/host";
 
@@ -27,6 +28,9 @@ export const isNative = Platform.OS !== "web";
 
 /** Development build/runtime — true in Metro dev bundles, false in production. */
 export const isDev = Boolean((globalThis as { __DEV__?: boolean }).__DEV__);
+
+/** F-Droid build without proprietary camera, notification, or OTA dependencies. */
+export const isFdroidBuild = Constants.expoConfig?.extra?.fdroidBuild === true;
 
 // ---------------------------------------------------------------------------
 // Electron detection (cached — only caches `true`, keeps checking if false
