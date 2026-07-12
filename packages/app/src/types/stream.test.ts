@@ -1336,14 +1336,35 @@ describe("turn lifecycle events", () => {
 
     assert.deepStrictEqual(handedOff.tail, [
       {
-        ...optimistic,
+        kind: "user_message",
         id: "provider-user",
+        text: optimistic.text,
+        timestamp: optimistic.timestamp,
+        images: optimistic.images,
+        attachments: optimistic.attachments,
       },
     ]);
     assert.deepStrictEqual(handedOff.head, []);
-    assert.strictEqual(repeated.changedTail, false);
-    assert.strictEqual(repeated.changedHead, false);
     assert.deepStrictEqual(repeated.tail, handedOff.tail);
+    assert.deepStrictEqual(repeated.head, handedOff.head);
+
+    const afterNextUser = reduceStreamUpdate(
+      handedOff.tail,
+      {
+        type: "timeline",
+        provider: "claude",
+        item: {
+          type: "user_message",
+          text: "Next prompt",
+          messageId: "provider-next-user",
+        },
+      },
+      new Date("2025-01-01T15:04:00Z"),
+    );
+    assert.deepStrictEqual(
+      afterNextUser.filter((item) => item.kind === "user_message").map((item) => item.id),
+      ["provider-user", "provider-next-user"],
+    );
   });
 
   it("reconciles an optimistic user message that was pending in the streaming head", () => {

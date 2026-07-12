@@ -322,10 +322,12 @@ export function handoffCreatedAgentUserMessageToStream(params: {
     return { tail, head, changedTail: false, changedHead: false };
   }
 
-  const handedOffMessage: UserMessageItem = {
-    ...message,
+  const handedOffMessage = buildUserMessageItem({
     id: userMessage.id,
-  };
+    text: message.text,
+    timestamp: message.timestamp,
+    optimistic: message,
+  });
   if (userIndex < tail.length) {
     const nextTail = [...tail];
     nextTail[userIndex] = handedOffMessage;
