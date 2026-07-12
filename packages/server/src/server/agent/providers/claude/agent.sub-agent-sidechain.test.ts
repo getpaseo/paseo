@@ -212,6 +212,21 @@ describe("ClaudeAgentSession sub-agent sidechain updates", () => {
           elapsed_time_seconds: 1,
         },
         {
+          type: "user",
+          parent_tool_use_id: "task-call-1",
+          message: {
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: "sub-read-1",
+                tool_name: "Read",
+                content: "README contents",
+                is_error: false,
+              },
+            ],
+          },
+        },
+        {
           type: "assistant",
           parent_tool_use_id: "task-call-1",
           message: {
@@ -318,6 +333,15 @@ describe("ClaudeAgentSession sub-agent sidechain updates", () => {
         type: "tool_call",
         callId: "sub-read-1",
         status: "running",
+      }),
+    });
+    expect(providerEvents).toContainEqual({
+      type: "timeline",
+      id: "task-call-1",
+      item: expect.objectContaining({
+        type: "tool_call",
+        callId: "sub-read-1",
+        status: "completed",
       }),
     });
     expect(providerEvents).toContainEqual({

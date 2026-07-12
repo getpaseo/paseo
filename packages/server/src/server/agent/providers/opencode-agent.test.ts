@@ -2428,6 +2428,71 @@ describe("OpenCode provider subagent contract", () => {
     );
   });
 
+  test("forwards provider child permissions through the parent session", async () => {
+    const runtime = new TestOpenCodeHarness();
+    const parentClient = new TestOpenCodeClient();
+    parentClient.sessionCreateResponse = { data: { id: "ses_parent_permission" } };
+    runtime.enqueueClient(parentClient);
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const parent = await client.createSession({ provider: "opencode", cwd: "/workspace/repo" });
+    const events: AgentStreamEvent[] = [];
+    parent.subscribe((event) => events.push(event));
+
+    parentClient.emitEvent({
+      type: "session.created",
+      properties: {
+        info: {
+          id: "ses_provider_child_permission",
+          parentID: "ses_parent_permission",
+          title: "Permission child",
+        },
+      },
+    });
+    await vi.waitFor(() => {
+      expect(events).toContainEqual({
+        type: "provider_subagent",
+        provider: "opencode",
+        event: expect.objectContaining({
+          type: "upsert",
+          id: "ses_provider_child_permission",
+        }),
+      });
+    });
+
+    parentClient.emitEvent({
+      type: "permission.asked",
+      properties: {
+        id: "perm_provider_child",
+        sessionID: "ses_provider_child_permission",
+        permission: "bash",
+        patterns: ["npm test"],
+        metadata: { command: "npm test", cwd: "/workspace/repo" },
+      },
+    });
+    await vi.waitFor(() => {
+      expect(parent.getPendingPermissions()).toEqual([
+        expect.objectContaining({ id: "perm_provider_child" }),
+      ]);
+    });
+    await vi.waitFor(() => {
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "permission_requested",
+          request: expect.objectContaining({ id: "perm_provider_child" }),
+        }),
+      );
+    });
+
+    await parent.respondToPermission("perm_provider_child", { behavior: "allow" });
+    expect(parentClient.calls.permissionReply).toContainEqual(
+      expect.objectContaining({ requestID: "perm_provider_child", reply: "once" }),
+    );
+    await parent.close();
+  });
+
   test("emits a provider subagent for a child created while the parent has no active turn", async () => {
     const releaseChildEvent = createTestDeferred<void>();
     const childConsumed = createTestDeferred<void>();
@@ -2598,8 +2663,7 @@ describe("OpenCode provider subagent contract", () => {
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
 
-    await Promise.resolve();
-    await Promise.resolve();
+    await vi.waitFor(() => expect(openCodeClient.calls.sessionChildren).toHaveLength(4));
     await session.close();
 
     expect(openCodeClient.calls.sessionChildren).toEqual([
@@ -2630,6 +2694,27 @@ describe("OpenCode provider subagent contract", () => {
         },
       },
     ]);
+  });
+
+  test("closes without waiting for child hydration", async () => {
+    const hydration = createTestDeferred<{ data: [] }>();
+    const runtime = new TestOpenCodeHarness();
+    const openCodeClient = new TestOpenCodeClient();
+    openCodeClient.sessionCreateResponse = { data: { id: "ses_parent_close" } };
+    openCodeClient.sessionChildrenImplementation = async () => await hydration.promise;
+    runtime.enqueueClient(openCodeClient);
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const session = await client.createSession({ provider: "opencode", cwd: "/workspace/repo" });
+    session.subscribe(() => undefined);
+    await vi.waitFor(() => expect(openCodeClient.calls.sessionChildren).toHaveLength(1));
+
+    await session.close();
+
+    expect(runtime.acquisitions[0]?.releaseCount).toBe(1);
+    hydration.resolve({ data: [] });
   });
 
   test("does not fold child tool parts into the parent sub_agent action log", () => {

@@ -3231,6 +3231,7 @@ class OpenCodeAgentSession implements AgentSession {
         parentSessionId,
         this.config.cwd,
       );
+      if (this.closed) return;
       for (const child of children) {
         const events: AgentStreamEvent[] = [];
         appendOpenCodeChildSessionDetected(
@@ -3395,7 +3396,6 @@ class OpenCodeAgentSession implements AgentSession {
       return;
     }
     const translated = await this.translateEvent(event);
-    this.appendProviderSubagentEvents(event, translated);
     const foregroundEvents: AgentStreamEvent[] = [];
     for (const translatedEvent of translated) {
       if (isOpenCodeProviderInternalEvent(translatedEvent)) {
@@ -3408,6 +3408,7 @@ class OpenCodeAgentSession implements AgentSession {
       turnId = this.startExternalDrivenTurn();
     }
     if (!turnId) {
+      this.emitBackgroundPermissionRequests(foregroundEvents);
       this.traceOpenCode("provider.opencode.event.skip", {
         n: eventCount,
         reason: "no_active_turn",
@@ -3453,6 +3454,14 @@ class OpenCodeAgentSession implements AgentSession {
         return;
       }
       this.notifySubscribers(e, turnId);
+    }
+  }
+
+  private emitBackgroundPermissionRequests(events: readonly AgentStreamEvent[]): void {
+    for (const event of events) {
+      if (event.type === "permission_requested") {
+        this.notifySubscribers(event, null);
+      }
     }
   }
 
@@ -3731,12 +3740,6 @@ class OpenCodeAgentSession implements AgentSession {
 
   async close(): Promise<void> {
     try {
-      await this.childHydrationPromise?.catch((error) => {
-        this.logger.warn(
-          { err: error, sessionId: this.sessionId },
-          "OpenCode child hydration failed",
-        );
-      });
       // Flip closed before clearing subscribers so any event the SDK delivers
       // after the abort (between here and subscribers.clear) is swallowed by
       // notifySubscribers instead of bubbling through provider-runner as an
@@ -3997,6 +4000,8 @@ class OpenCodeAgentSession implements AgentSession {
         });
       } else if (childEvent.type === "turn_started") {
         markRunning();
+      } else if (childEvent.type === "permission_requested") {
+        events.push(childEvent);
       } else if (childEvent.type === "turn_completed") {
         events.push({
           type: "provider_subagent",
@@ -4022,6 +4027,7 @@ class OpenCodeAgentSession implements AgentSession {
 
   private async translateEvent(event: OpenCodeEvent): Promise<AgentStreamEvent[]> {
     const translated = translateOpenCodeEvent(event, this.createTranslationState());
+    this.appendProviderSubagentEvents(event, translated);
 
     const events: AgentStreamEvent[] = [];
     if (typeof this.accumulatedUsage.totalCostUsd === "number") {

@@ -115,6 +115,7 @@ export class TestOpenCodeClient {
   sessionCreateResponse: OpenCodeResponse = { data: { id: "session-1" } };
   sessionDeleteResponse: OpenCodeResponse = {};
   sessionChildrenResponses: OpenCodeResponse[] = [];
+  sessionChildrenImplementation: ((parameters: unknown) => Promise<OpenCodeResponse>) | null = null;
   sessionGetResponse: OpenCodeResponse = {
     data: { id: "session-1", directory: "/workspace/repo", title: null },
   };
@@ -230,6 +231,9 @@ export class TestOpenCodeClient {
         },
         children: async (parameters: unknown) => {
           this.calls.sessionChildren.push(parameters);
+          if (this.sessionChildrenImplementation) {
+            return await this.sessionChildrenImplementation(parameters);
+          }
           return this.sessionChildrenResponses.shift() ?? { data: [] };
         },
         get: async (parameters: unknown) => {

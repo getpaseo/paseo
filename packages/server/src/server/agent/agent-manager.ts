@@ -1197,6 +1197,9 @@ export class AgentManager {
         // provider history into an empty timeline.
         await this.deleteCommittedTimeline(agentId);
         this.timelineStore.delete(agentId);
+        for (const event of this.providerSubagents.deleteParent(agentId)) {
+          this.dispatch({ type: "provider_subagent", event });
+        }
       }
 
       // Preserve existing labels and timeline during reload.

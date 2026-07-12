@@ -83,9 +83,9 @@ function ProviderSubagentPanel() {
   const supported = serverInfo?.features?.providerSubagents === true;
 
   useEffect(() => {
-    if (!client || !supported || descriptor) return;
+    if (!client || !supported) return;
     void refreshProviderSubagents(client, serverId, target.parentAgentId).catch(() => undefined);
-  }, [client, descriptor, serverId, supported, target.parentAgentId]);
+  }, [client, serverId, supported, target.parentAgentId]);
 
   useEffect(() => {
     if (!client || !supported) return;
