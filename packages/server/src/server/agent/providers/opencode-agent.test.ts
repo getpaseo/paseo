@@ -81,6 +81,16 @@ async function collectTurnEvents(iterator: AsyncGenerator<AgentStreamEvent>): Pr
   return result;
 }
 
+function providerAssistantMessages(events: AgentStreamEvent[], text: string): AgentStreamEvent[] {
+  return events.filter(
+    (event) =>
+      event.type === "provider_subagent" &&
+      event.event.type === "timeline" &&
+      event.event.item.type === "assistant_message" &&
+      event.event.item.text === text,
+  );
+}
+
 function assistantTurnEvents({
   sessionId = "session-1",
   text = "Hello from OpenCode",
@@ -2788,7 +2798,7 @@ describe("OpenCode provider subagent contract", () => {
             id: "ses_child_with_history",
             parentID: "ses_parent_with_history",
             title: "Historical child",
-            directory: "/workspace/repo",
+            directory: "/workspace/child",
           },
         ],
       },
@@ -2826,6 +2836,17 @@ describe("OpenCode provider subagent contract", () => {
     session.subscribe((event) => events.push(event));
 
     await vi.waitFor(() => expect(openCodeClient.calls.sessionChildren).toHaveLength(2));
+    expect(events).toContainEqual({
+      type: "provider_subagent",
+      provider: "opencode",
+      event: {
+        type: "upsert",
+        id: "ses_child_with_history",
+        title: "Historical child",
+        status: "completed",
+        cwd: "/workspace/child",
+      },
+    });
     await vi.waitFor(() =>
       expect(events).toContainEqual({
         type: "provider_subagent",
@@ -2842,7 +2863,7 @@ describe("OpenCode provider subagent contract", () => {
       }),
     );
     expect(openCodeClient.calls.sessionMessages).toEqual([
-      { sessionID: "ses_child_with_history", directory: "/workspace/repo" },
+      { sessionID: "ses_child_with_history", directory: "/workspace/child" },
     ]);
     await session.close();
   });
@@ -2917,6 +2938,92 @@ describe("OpenCode provider subagent contract", () => {
           }),
         }),
       ),
+    );
+    await session.close();
+  });
+
+  test("does not duplicate persisted child output when the matching live event was buffered", async () => {
+    const hydration = createTestDeferred<{
+      data: Array<{ id: string; parentID: string; title: string }>;
+    }>();
+    const runtime = new TestOpenCodeHarness();
+    const openCodeClient = new TestOpenCodeClient();
+    openCodeClient.sessionCreateResponse = { data: { id: "ses_parent_dedupe" } };
+    let childListRequest = 0;
+    openCodeClient.sessionChildrenImplementation = async () => {
+      childListRequest += 1;
+      return childListRequest === 1 ? await hydration.promise : { data: [] };
+    };
+    const message = {
+      id: "msg_child_dedupe",
+      sessionID: "ses_child_dedupe",
+      role: "assistant" as const,
+      time: { created: 1, completed: 2 },
+    };
+    const part = {
+      id: "prt_child_dedupe",
+      sessionID: "ses_child_dedupe",
+      messageID: "msg_child_dedupe",
+      type: "text" as const,
+      text: "Only once.",
+      time: { start: 1, end: 2 },
+    };
+    openCodeClient.sessionMessagesResponse = { data: [{ info: message, parts: [part] }] };
+    runtime.enqueueClient(openCodeClient);
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const session = await client.createSession({ provider: "opencode", cwd: "/workspace/repo" });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    await vi.waitFor(() => expect(openCodeClient.calls.sessionChildren).toHaveLength(1));
+
+    openCodeClient.emitEvent({ type: "message.updated", properties: { info: message } });
+    openCodeClient.emitEvent({ type: "message.part.updated", properties: { part } });
+    hydration.resolve({
+      data: [
+        {
+          id: "ses_child_dedupe",
+          parentID: "ses_parent_dedupe",
+          title: "Dedupe child",
+        },
+      ],
+    });
+
+    await vi.waitFor(() => expect(providerAssistantMessages(events, "Only once.")).toHaveLength(1));
+    await session.close();
+  });
+
+  test("marks a hydrated child running when OpenCode reports it busy", async () => {
+    const runtime = new TestOpenCodeHarness();
+    const openCodeClient = new TestOpenCodeClient();
+    openCodeClient.sessionCreateResponse = { data: { id: "ses_parent_busy" } };
+    openCodeClient.sessionChildrenResponses = [
+      { data: [{ id: "ses_child_busy", parentID: "ses_parent_busy", title: "Busy child" }] },
+      { data: [] },
+    ];
+    runtime.enqueueClient(openCodeClient);
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const session = await client.createSession({ provider: "opencode", cwd: "/workspace/repo" });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    await vi.waitFor(() => expect(openCodeClient.calls.sessionChildren).toHaveLength(2));
+
+    openCodeClient.emitEvent({
+      type: "session.status",
+      properties: { sessionID: "ses_child_busy", status: { type: "busy" } },
+    });
+
+    await vi.waitFor(() =>
+      expect(events).toContainEqual({
+        type: "provider_subagent",
+        provider: "opencode",
+        event: { type: "upsert", id: "ses_child_busy", status: "running" },
+      }),
     );
     await session.close();
   });

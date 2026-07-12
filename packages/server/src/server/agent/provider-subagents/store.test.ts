@@ -9,6 +9,7 @@ describe("ProviderSubagentStore", () => {
       type: "upsert",
       id: "child-1",
       title: "Explore",
+      cwd: "/workspace/child",
       status: "running",
       timestamp: "2026-07-12T10:00:00.000Z",
     });
@@ -38,6 +39,7 @@ describe("ProviderSubagentStore", () => {
         parentAgentId: "parent-a",
         provider: "codex",
         title: "Explore",
+        cwd: "/workspace/child",
         status: "completed",
         createdAt: "2026-07-12T10:00:00.000Z",
         updatedAt: "2026-07-12T10:00:02.000Z",

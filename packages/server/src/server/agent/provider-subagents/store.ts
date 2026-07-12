@@ -18,6 +18,7 @@ export interface ProviderSubagentDescriptor {
   createdAt: string;
   updatedAt: string;
   toolCallId: string | null;
+  cwd: string | null;
 }
 
 export type ProviderSubagentInputEvent =
@@ -28,6 +29,7 @@ export type ProviderSubagentInputEvent =
       description?: string | null;
       status: ProviderSubagentStatus;
       toolCallId?: string | null;
+      cwd?: string | null;
       timestamp?: string;
     }
   | {
@@ -102,6 +104,7 @@ export class ProviderSubagentStore {
       updatedAt: timestamp,
       toolCallId:
         event.toolCallId === undefined ? (previous?.toolCallId ?? null) : event.toolCallId,
+      cwd: event.cwd === undefined ? (previous?.cwd ?? null) : event.cwd,
     };
     this.descriptors.set(key, subagent);
     return { type: "upsert", subagent };

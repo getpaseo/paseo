@@ -136,7 +136,7 @@ function ProviderSubagentPanel() {
       id: streamId,
       provider: descriptor?.provider ?? parent?.provider,
       status: descriptor ? providerSubagentLifecycleStatus(descriptor.status) : "initializing",
-      cwd: parent?.cwd ?? "",
+      cwd: descriptor?.cwd ?? parent?.cwd ?? "",
       workspaceId: parent?.workspaceId,
       projectPlacement: parent?.projectPlacement,
     }),

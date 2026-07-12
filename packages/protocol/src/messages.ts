@@ -2988,6 +2988,7 @@ export const ProviderSubagentDescriptorPayloadSchema = z.object({
   createdAt: z.string(),
   updatedAt: z.string(),
   toolCallId: z.string().nullable(),
+  cwd: z.string().nullable().optional(),
 });
 
 export type ProviderSubagentDescriptorPayload = z.infer<

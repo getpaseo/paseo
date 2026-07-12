@@ -35,4 +35,42 @@ describe("provider subagent protocol", () => {
       },
     });
   });
+
+  test("accepts a provider child working directory while remaining compatible when absent", () => {
+    const descriptor = {
+      id: "child-1",
+      parentAgentId: "parent-1",
+      provider: "opencode",
+      title: "Explore",
+      description: null,
+      status: "running",
+      createdAt: "2026-07-12T10:00:00.000Z",
+      updatedAt: "2026-07-12T10:00:00.000Z",
+      toolCallId: null,
+    };
+
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "agent.provider_subagents.list.response",
+        payload: {
+          requestId: "request-1",
+          parentAgentId: "parent-1",
+          subagents: [{ ...descriptor, cwd: "/workspace/child" }],
+          error: null,
+        },
+      }),
+    ).toMatchObject({ payload: { subagents: [{ cwd: "/workspace/child" }] } });
+
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "agent.provider_subagents.list.response",
+        payload: {
+          requestId: "request-2",
+          parentAgentId: "parent-1",
+          subagents: [descriptor],
+          error: null,
+        },
+      }),
+    ).toMatchObject({ payload: { subagents: [{ id: "child-1" }] } });
+  });
 });

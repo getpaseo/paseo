@@ -557,6 +557,19 @@ function resolvePartDedupeKey(
   return null;
 }
 
+function matchesHydratedFingerprint(
+  fingerprints: Map<string, string> | undefined,
+  id: string,
+  value: unknown,
+): boolean {
+  const hydratedFingerprint = fingerprints?.get(id);
+  if (!hydratedFingerprint) {
+    return false;
+  }
+  fingerprints?.delete(id);
+  return hydratedFingerprint === JSON.stringify(value);
+}
+
 function normalizeOpenCodeModeId(modeId: string | null | undefined): string {
   const trimmed = typeof modeId === "string" ? modeId.trim() : "";
   if (!trimmed || trimmed === "default") {
@@ -1660,6 +1673,8 @@ export interface OpenCodeEventTranslationState {
   emittedStructuredMessageIds: Set<string>;
   compactionSummaryMessageIds: Set<string>;
   emittedCompactionPartIds: Set<string>;
+  hydratedMessageFingerprints?: Map<string, string>;
+  hydratedPartFingerprints?: Map<string, string>;
   suppressAssistantMessagesUntilIdle?: { active: boolean };
   /** Tracks the type of each part by ID, learned from message.part.updated events. */
   partTypes: Map<string, string>;
@@ -2082,6 +2097,7 @@ function appendOpenCodeChildSessionDetected(
       id: child.id,
       title: child.title ?? "OpenCode subagent",
       status,
+      ...(child.directory ? { cwd: child.directory } : {}),
     },
   });
   return true;
@@ -2219,6 +2235,9 @@ function appendOpenCodeSessionCreatedOrUpdated(
         ...(readNonEmptyString(info?.title)
           ? { title: readNonEmptyString(info?.title) ?? undefined }
           : {}),
+        ...(readNonEmptyString(info?.directory)
+          ? { directory: readNonEmptyString(info?.directory) ?? undefined }
+          : {}),
       },
       state,
       events,
@@ -2257,6 +2276,9 @@ function appendOpenCodeMessageUpdated(
     return;
   }
   state.messageRoles.set(info.id, info.role);
+  if (matchesHydratedFingerprint(state.hydratedMessageFingerprints, info.id, info)) {
+    return;
+  }
   if (info.role === "user") {
     appendOpenCodeUserMessageUpdated(info, state, events);
     return;
@@ -2321,6 +2343,9 @@ function appendOpenCodeMessagePartUpdated(
     return;
   }
   if (part.sessionID !== state.sessionId) {
+    return;
+  }
+  if (matchesHydratedFingerprint(state.hydratedPartFingerprints, part.id, part)) {
     return;
   }
   const messageRole = state.messageRoles.get(part.messageID);
@@ -3278,7 +3303,13 @@ class OpenCodeAgentSession implements AgentSession {
       directory: child.directory ?? this.config.cwd,
       ...(child.revert ? { revert: child.revert } : {}),
     } as OpenCodePersistedSession);
+    const translationState = this.getChildTranslationState(child.id);
+    let latestReplayedMessage: OpenCodeSessionMessage | null = null;
     for (const message of messages) {
+      if (message.info.role === "assistant" && message.info.time?.completed === undefined) {
+        continue;
+      }
+      latestReplayedMessage = message;
       for (const timelineEvent of buildOpenCodeReplayTimelineEvents(message)) {
         const event: AgentStreamEvent = {
           type: "provider_subagent",
@@ -3292,6 +3323,15 @@ class OpenCodeAgentSession implements AgentSession {
         };
         this.recordProviderInternalEvent(event);
         this.notifySubscribers(event, null);
+      }
+    }
+    if (latestReplayedMessage) {
+      translationState.hydratedMessageFingerprints?.set(
+        latestReplayedMessage.info.id,
+        JSON.stringify(latestReplayedMessage.info),
+      );
+      for (const part of latestReplayedMessage.parts) {
+        translationState.hydratedPartFingerprints?.set(part.id, JSON.stringify(part));
       }
     }
   }
@@ -3997,6 +4037,8 @@ class OpenCodeAgentSession implements AgentSession {
       emittedStructuredMessageIds: new Set(),
       compactionSummaryMessageIds: new Set(),
       emittedCompactionPartIds: new Set(),
+      hydratedMessageFingerprints: new Map(),
+      hydratedPartFingerprints: new Map(),
       suppressAssistantMessagesUntilIdle: { active: false },
       partTypes: new Map(),
       subAgentsByCallId: new Map(),
@@ -4033,6 +4075,9 @@ class OpenCodeAgentSession implements AgentSession {
         event: { type: "upsert", id: sessionId, status: "running" },
       });
     };
+    if (event.type === "session.status" && event.properties.status.type === "busy") {
+      markRunning();
+    }
     for (const childEvent of translated) {
       if (childEvent.type === "timeline") {
         markRunning();
