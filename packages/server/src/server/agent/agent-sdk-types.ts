@@ -546,6 +546,7 @@ export interface ImportedProviderSession {
   config: AgentSessionConfig;
   persistence: AgentPersistenceHandle;
   timeline: ImportedTimelineEntry[];
+  providerSubagentEvents?: Extract<AgentStreamEvent, { type: "provider_subagent" }>[];
 }
 
 export interface AgentSessionConfig {

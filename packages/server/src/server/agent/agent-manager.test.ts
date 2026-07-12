@@ -2331,6 +2331,27 @@ test("importProviderSession imports the selected session without listing and pub
             timestamp: "2026-01-02T00:00:02.000Z",
           },
         ],
+        providerSubagentEvents: [
+          {
+            type: "provider_subagent" as const,
+            provider: "codex" as const,
+            event: {
+              type: "upsert" as const,
+              id: "thread-child",
+              title: "Imported child",
+              status: "completed" as const,
+            },
+          },
+          {
+            type: "provider_subagent" as const,
+            provider: "codex" as const,
+            event: {
+              type: "timeline" as const,
+              id: "thread-child",
+              item: { type: "assistant_message" as const, text: "Child result" },
+            },
+          },
+        ],
       };
     }
   }
@@ -2373,7 +2394,13 @@ test("importProviderSession imports the selected session without listing and pub
       },
     },
   ]);
-  expect(events).toHaveLength(1);
+  expect(manager.listProviderSubagents(imported.id)).toEqual([
+    expect.objectContaining({ id: "thread-child", title: "Imported child", status: "completed" }),
+  ]);
+  expect(manager.fetchProviderSubagentTimeline(imported.id, "thread-child").rows).toEqual([
+    expect.objectContaining({ item: { type: "assistant_message", text: "Child result" } }),
+  ]);
+  expect(events).toHaveLength(3);
   expect(events[0]).toMatchObject({
     type: "agent_state",
     agent: {

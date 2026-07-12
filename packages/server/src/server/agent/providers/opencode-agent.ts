@@ -1701,6 +1701,8 @@ interface OpenCodeChildSessionInfo {
   id: string;
   parentSessionId: string;
   title?: string;
+  directory?: string;
+  revert?: OpenCodePersistedSession["revert"];
 }
 
 interface OpenCodeSubAgentActivityState {
@@ -2735,10 +2737,14 @@ function readOpenCodeChildSessionInfo(value: unknown): OpenCodeChildSessionInfo 
     return null;
   }
   const title = readNonEmptyString(record.title);
+  const directory = readNonEmptyString(record.directory);
+  const revert = readOpenCodeRecord(record.revert) as OpenCodePersistedSession["revert"] | null;
   return {
     id,
     parentSessionId,
     ...(title ? { title } : {}),
+    ...(directory ? { directory } : {}),
+    ...(revert ? { revert } : {}),
   };
 }
 
@@ -3240,20 +3246,52 @@ class OpenCodeAgentSession implements AgentSession {
       );
       if (this.closed) return;
       for (const child of children) {
-        const events: AgentStreamEvent[] = [];
+        const detectionEvents: AgentStreamEvent[] = [];
         appendOpenCodeChildSessionDetected(
           child,
           this.createTranslationState(),
-          events,
+          detectionEvents,
           "completed",
         );
-        for (const event of events) {
+        for (const event of detectionEvents) {
           this.recordProviderInternalEvent(event);
           this.notifySubscribers(event, null);
+        }
+        try {
+          await this.hydrateChildSessionTimeline(child);
+        } catch (error) {
+          this.logger.warn(
+            { err: error, sessionId: child.id },
+            "OpenCode child timeline hydration failed",
+          );
         }
         if (visited.size + queue.length < OPENCODE_CHILD_SESSION_HYDRATION_LIMIT) {
           queue.push(child.id);
         }
+      }
+    }
+  }
+
+  private async hydrateChildSessionTimeline(child: OpenCodeChildSessionInfo): Promise<void> {
+    const messages = await readOpenCodeSessionMessagesFromSdk(this.client, {
+      id: child.id,
+      directory: child.directory ?? this.config.cwd,
+      ...(child.revert ? { revert: child.revert } : {}),
+    } as OpenCodePersistedSession);
+    for (const message of messages) {
+      for (const timelineEvent of buildOpenCodeReplayTimelineEvents(message)) {
+        const event: AgentStreamEvent = {
+          type: "provider_subagent",
+          provider: "opencode",
+          event: {
+            type: "timeline",
+            id: child.id,
+            item: timelineEvent.item,
+            ...(timelineEvent.timestamp ? { timestamp: timelineEvent.timestamp } : {}),
+          },
+        };
+        this.recordProviderInternalEvent(event);
+        this.notifySubscribers(event, null);
       }
     }
   }

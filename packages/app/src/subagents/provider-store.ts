@@ -221,12 +221,16 @@ export const useProviderSubagentStore = create<ProviderSubagentState>((set) => (
         item: payload.item,
         timestamp: payload.timestamp,
       });
-      const next = applyStreamEvent({
-        tail: current.tail,
-        head: current.head,
-        event: { type: "timeline", provider: payload.provider, item: payload.item },
-        timestamp: new Date(payload.timestamp),
-      });
+      const descriptor = state.descriptors.get(key);
+      const next =
+        descriptor && descriptor.status !== "running"
+          ? buildTimelineState(rows, payload.epoch, descriptor)
+          : applyStreamEvent({
+              tail: current.tail,
+              head: current.head,
+              event: { type: "timeline", provider: payload.provider, item: payload.item },
+              timestamp: new Date(payload.timestamp),
+            });
       const timelines = new Map(state.timelines);
       timelines.set(key, {
         ...next,

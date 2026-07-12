@@ -1115,7 +1115,7 @@ export class AgentManager {
       const initialTitle = resolveImportedAgentTitle(importedConfig, timelineRows);
 
       handedToRegistration = true;
-      return this.registerSession(imported.session, importedConfig, resolvedAgentId, {
+      const agent = await this.registerSession(imported.session, importedConfig, resolvedAgentId, {
         labels: input.labels,
         workspaceId: input.workspaceId,
         timelineRows,
@@ -1125,6 +1125,11 @@ export class AgentManager {
         initialTitle,
         publishWhenReady: true,
       });
+      for (const event of imported.providerSubagentEvents ?? []) {
+        const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
+        this.dispatch({ type: "provider_subagent", event: update });
+      }
+      return agent;
     } finally {
       if (!handedToRegistration) {
         await this.closeUnregisteredSession(imported.session);

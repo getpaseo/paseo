@@ -2702,6 +2702,76 @@ describe("OpenCode provider subagent contract", () => {
     ]);
   });
 
+  test("hydrates persisted child messages into the provider subagent timeline", async () => {
+    const runtime = new TestOpenCodeHarness();
+    const openCodeClient = new TestOpenCodeClient();
+    openCodeClient.sessionCreateResponse = { data: { id: "ses_parent_with_history" } };
+    openCodeClient.sessionChildrenResponses = [
+      {
+        data: [
+          {
+            id: "ses_child_with_history",
+            parentID: "ses_parent_with_history",
+            title: "Historical child",
+            directory: "/workspace/repo",
+          },
+        ],
+      },
+      { data: [] },
+    ];
+    openCodeClient.sessionMessagesResponse = {
+      data: [
+        {
+          info: {
+            id: "msg_child_history",
+            sessionID: "ses_child_with_history",
+            role: "assistant",
+            time: { created: 2, completed: 2.1 },
+          },
+          parts: [
+            {
+              id: "prt_child_history",
+              sessionID: "ses_child_with_history",
+              messageID: "msg_child_history",
+              type: "text",
+              text: "Persisted child result.",
+              time: { start: 2, end: 2.1 },
+            },
+          ],
+        },
+      ],
+    };
+    runtime.enqueueClient(openCodeClient);
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const session = await client.createSession({ provider: "opencode", cwd: "/workspace/repo" });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    await vi.waitFor(() => expect(openCodeClient.calls.sessionChildren).toHaveLength(2));
+    await vi.waitFor(() =>
+      expect(events).toContainEqual({
+        type: "provider_subagent",
+        provider: "opencode",
+        event: {
+          type: "timeline",
+          id: "ses_child_with_history",
+          item: {
+            type: "assistant_message",
+            text: "Persisted child result.",
+          },
+          timestamp: "1970-01-01T00:00:02.000Z",
+        },
+      }),
+    );
+    expect(openCodeClient.calls.sessionMessages).toEqual([
+      { sessionID: "ses_child_with_history", directory: "/workspace/repo" },
+    ]);
+    await session.close();
+  });
+
   test("preserves child events that arrive while existing children hydrate", async () => {
     const hydration = createTestDeferred<{
       data: Array<{ id: string; parentID: string; title: string }>;

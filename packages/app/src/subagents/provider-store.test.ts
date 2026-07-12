@@ -164,4 +164,40 @@ describe("provider subagent client store", () => {
       expect.objectContaining({ kind: "assistant_message", text: "Restored output." }),
     ]);
   });
+
+  test("keeps late timeline rows terminal after the descriptor completes", () => {
+    const store = useProviderSubagentStore.getState();
+    store.applyUpdate(SERVER_ID, {
+      kind: "upsert",
+      subagent: {
+        id: SUBAGENT_ID,
+        parentAgentId: PARENT_ID,
+        provider: "codex",
+        title: "Restored child",
+        description: null,
+        status: "completed",
+        createdAt: "2026-07-12T10:00:00.000Z",
+        updatedAt: "2026-07-12T10:00:02.000Z",
+        toolCallId: "call-1",
+      },
+    });
+    store.applyUpdate(SERVER_ID, {
+      kind: "timeline",
+      parentAgentId: PARENT_ID,
+      subagentId: SUBAGENT_ID,
+      provider: "codex",
+      epoch: "epoch-1",
+      seq: 1,
+      timestamp: "2026-07-12T10:00:01.000Z",
+      item: { type: "assistant_message", text: "Late restored output." },
+    });
+
+    const timeline = useProviderSubagentStore
+      .getState()
+      .timelines.get(providerSubagentKey(SERVER_ID, PARENT_ID, SUBAGENT_ID));
+    expect(timeline?.head).toEqual([]);
+    expect(timeline?.tail).toEqual([
+      expect.objectContaining({ kind: "assistant_message", text: "Late restored output." }),
+    ]);
+  });
 });
