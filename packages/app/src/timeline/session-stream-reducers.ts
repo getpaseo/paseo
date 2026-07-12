@@ -306,16 +306,16 @@ function collectLocallyPresentedUserMessages(items: StreamItem[]): Array<{
 
 function mergeCanonicalUserWithLocalPresentation(
   canonical: UserMessageItem,
-  optimistic: UserMessageItem,
+  local: UserMessageItem,
 ): UserMessageItem {
   return {
     kind: "user_message",
     id: canonical.id,
-    text: optimistic.text,
-    timestamp: optimistic.timestamp,
-    ...(optimistic.images && optimistic.images.length > 0 ? { images: optimistic.images } : {}),
-    ...(optimistic.attachments && optimistic.attachments.length > 0
-      ? { attachments: optimistic.attachments }
+    text: local.text,
+    timestamp: local.timestamp,
+    ...(local.images && local.images.length > 0 ? { images: local.images } : {}),
+    ...(local.attachments && local.attachments.length > 0
+      ? { attachments: local.attachments }
       : {}),
   };
 }
