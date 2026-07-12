@@ -2289,6 +2289,14 @@ export class HostRuntimeStore {
       });
     } catch (error) {
       if (!(error instanceof AgentDirectoryRefreshSupersededError)) {
+        if (
+          this.agentDirectoryTransactions.get(input.serverId)?.id === transaction.id &&
+          hasMatchingSession()
+        ) {
+          for (const delta of transaction.deltas) {
+            this.applyAgentDirectoryDelta(input.serverId, delta);
+          }
+        }
         controller.markAgentDirectorySyncError(toErrorMessage(error));
       }
       throw error;

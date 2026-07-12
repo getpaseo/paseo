@@ -1017,6 +1017,13 @@ export class Session {
     return this.clientCapabilities.has(capability);
   }
 
+  supportsForSource(capability: ClientCapability, source: object): boolean {
+    if (capability === CLIENT_CAPS.selectiveAgentTimeline) {
+      return this.selectiveTimelineCapabilityBySource.get(source) ?? this.supports(capability);
+    }
+    return this.supports(capability);
+  }
+
   async syncWorkspaceGitObserverForWorkspace(workspace: PersistedWorkspaceRecord): Promise<void> {
     await this.workspaceGitObserver.syncObserverForWorkspace(workspace);
   }

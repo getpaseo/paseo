@@ -2025,7 +2025,7 @@ export class VoiceAssistantWebSocketServer {
         notification,
       };
       const message = wrapSessionMessage(
-        connection?.session.supports(CLIENT_CAPS.selectiveAgentTimeline)
+        connection?.session.supportsForSource(CLIENT_CAPS.selectiveAgentTimeline, ws)
           ? {
               type: "agent_attention_required",
               payload: attentionPayload,
