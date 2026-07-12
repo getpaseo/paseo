@@ -2995,14 +2995,6 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[1],
   },
-  kebabButton: {
-    padding: 2,
-    borderRadius: 4,
-    marginLeft: 2,
-  },
-  kebabButtonHovered: {
-    backgroundColor: theme.colors.surface2,
-  },
   statusDotNeedsInput: {
     backgroundColor: theme.colors.palette.amber[500],
     borderColor: theme.colors.surface0,
