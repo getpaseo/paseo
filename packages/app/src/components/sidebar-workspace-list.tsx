@@ -57,7 +57,6 @@ import { getHostRuntimeStore, useHosts } from "@/runtime/host-runtime";
 import { usePinnedSidebarGroups } from "@/hooks/use-sidebar-pins";
 import { useSidebarCollapsedSectionsStore } from "@/stores/sidebar-collapsed-sections-store";
 import { useHostFeature, useHostFeatureMap } from "@/runtime/host-features";
-import { useSessionStore } from "@/stores/session-store";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useProjectIconDataByProjectKey } from "@/projects/project-icons";
 import {
@@ -123,7 +122,6 @@ import {
   getCurrentProjectRemoveReadiness,
   removeProjectFromHosts,
 } from "@/projects/project-remove";
-import { getCurrentProjectPinReadiness, setProjectPinnedOnHosts } from "@/projects/project-pin";
 import {
   isWeb as platformIsWeb,
   isNative as platformIsNative,
@@ -268,8 +266,6 @@ interface ProjectHeaderRowProps {
   menuController: ReturnType<typeof useContextMenu> | null;
   onRemoveProject?: () => void;
   removeProjectStatus?: "idle" | "pending";
-  isProjectPinned?: boolean;
-  onTogglePinProject?: () => void;
   dragHandleProps?: DraggableListDragHandleProps;
 }
 
@@ -496,8 +492,6 @@ function ProjectRowTrailingActions({
   onBeginWorkspaceSetup,
   onRemoveProject,
   removeProjectStatus,
-  isProjectPinned,
-  onTogglePinProject,
 }: {
   project: SidebarProjectEntry;
   displayName: string;
@@ -508,8 +502,6 @@ function ProjectRowTrailingActions({
   onBeginWorkspaceSetup: () => void;
   onRemoveProject?: () => void;
   removeProjectStatus: "idle" | "pending" | "success";
-  isProjectPinned?: boolean;
-  onTogglePinProject?: () => void;
 }) {
   const actionsVisible = isHovered || platformIsNative || isMobileBreakpoint;
   return (
@@ -533,8 +525,6 @@ function ProjectRowTrailingActions({
             projectPath={project.iconWorkingDir}
             onRemoveProject={onRemoveProject}
             removeProjectStatus={removeProjectStatus}
-            isPinned={isProjectPinned}
-            onTogglePin={onTogglePinProject}
           />
         </View>
       ) : null}
@@ -544,8 +534,6 @@ function ProjectRowTrailingActions({
 
 const trash2LeadingIcon = <ThemedTrash2 size={14} uniProps={foregroundMutedColorMapping} />;
 const settingsLeadingIcon = <ThemedSettings size={14} uniProps={foregroundMutedColorMapping} />;
-const pinLeadingIcon = <ThemedPin size={14} uniProps={foregroundMutedColorMapping} />;
-const unpinLeadingIcon = <ThemedPinOff size={14} uniProps={foregroundMutedColorMapping} />;
 const openInNewWindowLeadingIcon = (
   <ThemedExternalLink size={14} uniProps={foregroundMutedColorMapping} />
 );
@@ -564,15 +552,11 @@ function ProjectKebabMenu({
   projectPath,
   onRemoveProject,
   removeProjectStatus,
-  isPinned,
-  onTogglePin,
 }: {
   projectKey: string;
   projectPath: string;
   onRemoveProject: () => void;
   removeProjectStatus: "idle" | "pending" | "success";
-  isPinned?: boolean;
-  onTogglePin?: () => void;
 }) {
   const { t } = useTranslation();
   const toast = useToast();
@@ -623,15 +607,6 @@ function ProjectKebabMenu({
             onSelect={handleOpenInNewWindow}
           >
             {t("sidebar.project.actions.openNewWindow")}
-          </DropdownMenuItem>
-        ) : null}
-        {onTogglePin ? (
-          <DropdownMenuItem
-            testID={`sidebar-project-menu-pin-${projectKey}`}
-            leading={isPinned ? unpinLeadingIcon : pinLeadingIcon}
-            onSelect={onTogglePin}
-          >
-            {isPinned ? t("sidebar.project.actions.unpin") : t("sidebar.project.actions.pin")}
           </DropdownMenuItem>
         ) : null}
         <DropdownMenuItem
@@ -1308,8 +1283,6 @@ function ProjectHeaderRow({
   menuController,
   onRemoveProject,
   removeProjectStatus = "idle",
-  isProjectPinned = false,
-  onTogglePinProject,
   dragHandleProps,
 }: ProjectHeaderRowProps) {
   const [isHovered, setIsHovered] = useState(false);
@@ -1390,8 +1363,6 @@ function ProjectHeaderRow({
         onBeginWorkspaceSetup={handleBeginWorkspaceSetup}
         onRemoveProject={onRemoveProject}
         removeProjectStatus={removeProjectStatus}
-        isProjectPinned={isProjectPinned}
-        onTogglePinProject={onTogglePinProject}
       />
       {showShortcutBadge && shortcutNumber !== null ? (
         <View style={styles.projectShortcutBadgeOverlay} pointerEvents="none">
@@ -1582,7 +1553,6 @@ function WorkspaceRowWithMenu({
   dragHandleProps,
   canCopyBranchName,
   isCreating = false,
-  suppressPin = false,
 }: {
   workspace: SidebarWorkspaceEntry;
   subtitle?: string | null;
@@ -1595,9 +1565,6 @@ function WorkspaceRowWithMenu({
   dragHandleProps?: DraggableListDragHandleProps;
   canCopyBranchName: boolean;
   isCreating?: boolean;
-  // The parent project is pinned, so its chats are already hoisted to the top; a
-  // per-chat pin would be a redundant, no-op control. Hide it on these rows.
-  suppressPin?: boolean;
 }) {
   const { t } = useTranslation();
   const toast = useToast();
@@ -1703,8 +1670,7 @@ function WorkspaceRowWithMenu({
     pinMutation.mutate(workspace.pinnedAt == null);
   }, [pinMutation, workspace.pinnedAt]);
 
-  const supportsWorkspacePinning = useHostFeature(workspace.serverId, "workspacePinning");
-  const canPin = supportsWorkspacePinning && !suppressPin;
+  const canPin = useHostFeature(workspace.serverId, "workspacePinning");
 
   const archiveShortcutKeys = useShortcutKeys("archive-workspace");
   const { hasClearableAttention, clearAttention } = useClearWorkspaceAttention({
@@ -1794,7 +1760,6 @@ interface WorkspaceRowItemProps {
   drag?: () => void;
   isDragging?: boolean;
   dragHandleProps?: DraggableListDragHandleProps;
-  suppressPin?: boolean;
 }
 
 function WorkspaceRowItem({
@@ -1811,7 +1776,6 @@ function WorkspaceRowItem({
   drag,
   isDragging = false,
   dragHandleProps,
-  suppressPin = false,
 }: WorkspaceRowItemProps) {
   const handlePress = useCallback(() => {
     if (!workspace.serverId) {
@@ -1839,7 +1803,6 @@ function WorkspaceRowItem({
       drag={drag ?? noop}
       isDragging={isDragging}
       dragHandleProps={dragHandleProps}
-      suppressPin={suppressPin}
     />
   );
 }
@@ -1872,7 +1835,6 @@ function areWorkspaceRowItemPropsEqual(
     previous.drag === next.drag &&
     previous.isDragging === next.isDragging &&
     previous.dragHandleProps === next.dragHandleProps &&
-    previous.suppressPin === next.suppressPin &&
     previousSelected === nextSelected
   );
 }
@@ -1891,7 +1853,6 @@ function WorkspaceRow({
   canCopyBranchName,
   isCreating = false,
   selected,
-  suppressPin = false,
 }: {
   workspaceEntry: SidebarWorkspaceEntry | null;
   subtitle?: string | null;
@@ -1904,7 +1865,6 @@ function WorkspaceRow({
   canCopyBranchName: boolean;
   isCreating?: boolean;
   selected: boolean;
-  suppressPin?: boolean;
 }) {
   if (!workspaceEntry) {
     return null;
@@ -1923,7 +1883,6 @@ function WorkspaceRow({
       dragHandleProps={dragHandleProps}
       canCopyBranchName={canCopyBranchName}
       isCreating={isCreating}
-      suppressPin={suppressPin}
     />
   );
 }
@@ -1991,14 +1950,6 @@ function ProjectBlock({
     enabled: selectionEnabled,
   });
 
-  const isProjectPinned = useSessionStore((state) =>
-    project.workspaces.some((workspace) =>
-      Boolean(
-        state.sessions[workspace.serverId]?.workspaces.get(workspace.workspaceId)?.projectPinnedAt,
-      ),
-    ),
-  );
-
   const renderWorkspaceRow = useCallback(
     (
       item: SidebarWorkspacePlacement,
@@ -2025,7 +1976,6 @@ function ProjectBlock({
           drag={input?.drag}
           isDragging={input?.isDragging}
           dragHandleProps={input?.dragHandleProps}
-          suppressPin={isProjectPinned}
         />
       );
     },
@@ -2040,7 +1990,6 @@ function ProjectBlock({
       shortcutIndexByWorkspaceKey,
       showShortcutBadges,
       workspaceEntriesByKey,
-      isProjectPinned,
     ],
   );
 
@@ -2125,45 +2074,6 @@ function ProjectBlock({
     })();
   }, [isRemovingProject, displayName, t, toast, project.projectKey, project.hosts]);
 
-  const [isTogglingPin, setIsTogglingPin] = useState(false);
-
-  const handleTogglePinProject = useCallback(() => {
-    if (isTogglingPin) {
-      return;
-    }
-    setIsTogglingPin(true);
-    const readiness = getCurrentProjectPinReadiness({
-      projectKey: project.projectKey,
-      hosts: project.hosts,
-    });
-    if (readiness.kind === "needs_host_update") {
-      toast.error(t("sidebar.project.toasts.updateHostToPin"));
-      setIsTogglingPin(false);
-      return;
-    }
-
-    void setProjectPinnedOnHosts({
-      projectKey: project.projectKey,
-      pinned: !isProjectPinned,
-      targets: readiness.targets,
-      getClient: (serverId) => getHostRuntimeStore().getClient(serverId),
-    })
-      .then((outcome) => {
-        if (outcome.kind === "host_disconnected") {
-          toast.error(t("sidebar.project.toasts.hostDisconnected"));
-        } else if (outcome.kind === "failed") {
-          toast.error(t("sidebar.project.toasts.pinFailed"));
-        }
-        return null;
-      })
-      .catch((error) => {
-        toast.error(error instanceof Error ? error.message : t("sidebar.project.toasts.pinFailed"));
-      })
-      .finally(() => {
-        setIsTogglingPin(false);
-      });
-  }, [isTogglingPin, isProjectPinned, t, toast, project.projectKey, project.hosts]);
-
   const handleToggleCollapsed = useCallback(() => {
     onToggleCollapsed(project.projectKey);
   }, [onToggleCollapsed, project.projectKey]);
@@ -2220,11 +2130,6 @@ function ProjectBlock({
         menuController={null}
         onRemoveProject={handleRemoveProject}
         removeProjectStatus={isRemovingProject ? "pending" : "idle"}
-        isProjectPinned={isProjectPinned}
-        // Project pin state is derived from workspace descriptors, and an empty project
-        // has none — the server would set pinnedAt but emit no descriptor update, so the
-        // pin would silently never surface. Offer it only once the project has a chat.
-        onTogglePinProject={project.workspaces.length > 0 ? handleTogglePinProject : undefined}
         dragHandleProps={dragHandleProps}
       />
 
@@ -2472,7 +2377,7 @@ function ProjectModeList({
   );
   const selectionEnabled = isWorkspaceRoute;
   const activeWorkspaceSelection = useActiveWorkspaceSelection();
-  const { pinnedChats, pinnedProjects, unpinnedProjects } = usePinnedSidebarGroups(projects);
+  const { pinnedChats, unpinnedProjects } = usePinnedSidebarGroups(projects);
   const projectIconTargets = useMemo(
     () =>
       projects.flatMap((project) => {
@@ -2717,21 +2622,12 @@ function ProjectModeList({
     ],
   );
 
-  const hasPinned = pinnedChats.length > 0 || pinnedProjects.length > 0;
-
   const content = (
     <>
-      {hasPinned ? (
+      {pinnedChats.length > 0 ? (
         <View style={styles.pinnedSection} testID="sidebar-pinned-section">
           <PinnedSectionHeader collapsed={pinnedCollapsed} onToggle={togglePinnedCollapsed} />
-          {pinnedCollapsed ? null : (
-            <>
-              {pinnedChats.map(renderPinnedChat)}
-              {pinnedProjects.map((project) =>
-                renderProjectBlock(project, { drag: noop, isDragging: false }),
-              )}
-            </>
-          )}
+          {pinnedCollapsed ? null : pinnedChats.map(renderPinnedChat)}
         </View>
       ) : null}
       {unpinnedProjects.length > 0 || hasActiveHostFilter ? listHeaderComponent : null}

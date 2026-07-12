@@ -6,6 +6,7 @@ import {
 } from "@/hooks/use-sidebar-workspaces-list";
 import { useSidebarWorkspaceEntries } from "@/hooks/use-sidebar-workspace-entries";
 import { buildStatusGroups, type StatusGroup } from "@/hooks/sidebar-status-view-model";
+import { buildPinAwareShortcutProjects, usePinnedSidebarGroups } from "@/hooks/use-sidebar-pins";
 import { useSidebarCollapsedSectionsStore } from "@/stores/sidebar-collapsed-sections-store";
 import { useSidebarViewStore, type SidebarGroupMode } from "@/stores/sidebar-view-store";
 import {
@@ -40,6 +41,7 @@ export function SidebarModelProvider({
   const collapsedStatusGroupKeys = useSidebarCollapsedSectionsStore(
     (state) => state.collapsedStatusGroupKeys,
   );
+  const pinnedCollapsed = useSidebarCollapsedSectionsStore((state) => state.collapsedPinned);
   const toggleProjectCollapsed = useSidebarCollapsedSectionsStore(
     (state) => state.toggleProjectCollapsed,
   );
@@ -55,6 +57,13 @@ export function SidebarModelProvider({
         : [],
     [isStatusMode, list.projectNamesByKey, workspaceEntriesByKey],
   );
+  // Pinned chats float to the top of the sidebar, so shortcut numbers must follow that
+  // same visual order — number the pin-aware projection, not the raw project list.
+  const pinnedGroups = usePinnedSidebarGroups(list.projects);
+  const orderedProjects = useMemo(
+    () => buildPinAwareShortcutProjects(pinnedGroups, { pinnedCollapsed }),
+    [pinnedGroups, pinnedCollapsed],
+  );
   const shortcutModel = useMemo(() => {
     if (isStatusMode) {
       return buildStatusSidebarShortcutModel({
@@ -62,8 +71,8 @@ export function SidebarModelProvider({
         collapsedStatusGroupKeys,
       });
     }
-    return buildSidebarShortcutModel({ projects: list.projects, collapsedProjectKeys });
-  }, [collapsedProjectKeys, collapsedStatusGroupKeys, isStatusMode, list.projects, statusGroups]);
+    return buildSidebarShortcutModel({ projects: orderedProjects, collapsedProjectKeys });
+  }, [collapsedProjectKeys, collapsedStatusGroupKeys, isStatusMode, orderedProjects, statusGroups]);
   const value = useMemo(
     () => ({
       ...list,

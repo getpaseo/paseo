@@ -833,8 +833,6 @@ export const es: TranslationResources = {
         openSettings: "Abrir la configuración del proyecto",
         openNewWindow: "Open in new window",
         openNewWindowFailed: "Couldn't open a new window",
-        pin: "Anclar arriba",
-        unpin: "Desanclar",
         remove: "Eliminar proyecto",
         removing: "Eliminando...",
       },
@@ -849,8 +847,6 @@ export const es: TranslationResources = {
         hostDisconnected: "Hostno está conectado",
         removeFailed: "No se pudieron eliminar algunos espacios de trabajo",
         updateHostToRemove: "Actualiza el host para eliminar proyectos.",
-        pinFailed: "No se pudieron anclar algunos espacios de trabajo",
-        updateHostToPin: "Actualiza el host para anclar proyectos.",
       },
       empty: {
         title: "Aún no hay proyectos",

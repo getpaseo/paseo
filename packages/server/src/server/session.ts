@@ -1518,8 +1518,6 @@ export class Session {
         return this.handleUpdateAgentRequest(msg.agentId, msg.name, msg.labels, msg.requestId);
       case "project.rename.request":
         return this.handleProjectRenameRequest(msg.projectId, msg.customName, msg.requestId);
-      case "project.pin.set.request":
-        return this.handleProjectPinSetRequest(msg.projectId, msg.pinned, msg.requestId);
       case "send_agent_message_request":
         return this.handleSendAgentMessageRequest(msg);
       case "wait_for_finish_request":
@@ -2247,42 +2245,6 @@ export class Session {
         error: getErrorMessageOr(error, `Failed to pin ${config.noun}`),
       });
     }
-  }
-
-  private async handleProjectPinSetRequest(
-    projectId: string,
-    pinned: boolean,
-    requestId: string,
-  ): Promise<void> {
-    await this.handlePinSetRequest({
-      pinned,
-      noun: "project",
-      logLabel: "project.pin.set.request",
-      logContext: { projectId, pinned, requestId },
-      apply: async (nextPinnedAt) => {
-        const existing = await this.projectRegistry.get(projectId);
-        if (!existing) {
-          return "not_found";
-        }
-        await this.projectRegistry.upsert({
-          ...existing,
-          pinnedAt: nextPinnedAt,
-          updatedAt: new Date().toISOString(),
-        });
-        const workspaces = await this.workspaceRegistry.list();
-        return {
-          affectedWorkspaceIds: workspaces
-            .filter((workspace) => workspace.projectId === projectId)
-            .map((workspace) => workspace.workspaceId),
-        };
-      },
-      emitResponse: ({ accepted, pinnedAt, error }) => {
-        this.emit({
-          type: "project.pin.set.response",
-          payload: { requestId, projectId, accepted, pinnedAt, error },
-        });
-      },
-    });
   }
 
   private async handleProjectRemoveRequest(
@@ -3692,7 +3654,6 @@ export class Session {
         ? resolveProjectDisplayName(resolvedProjectRecord)
         : workspace.projectId,
       projectCustomName: resolvedProjectRecord?.customName ?? null,
-      projectPinnedAt: resolvedProjectRecord?.pinnedAt ?? null,
       projectRootPath: resolvedProjectRecord?.rootPath ?? workspace.cwd,
       workspaceDirectory: workspace.cwd,
       projectKind: (resolvedProjectRecord?.kind ?? "directory") === "git" ? "git" : "non_git",
@@ -3775,7 +3736,6 @@ export class Session {
         ? resolveProjectDisplayName(projectRecord)
         : result.workspace.projectId,
       projectCustomName: projectRecord?.customName ?? null,
-      projectPinnedAt: projectRecord?.pinnedAt ?? null,
       projectRootPath: projectRecord?.rootPath ?? result.repoRoot,
       workspaceDirectory: result.workspace.cwd,
       projectKind: "git",
@@ -3934,7 +3894,6 @@ export class Session {
       projectId: project.projectId,
       projectDisplayName: resolveProjectDisplayName(project),
       projectCustomName: project.customName ?? null,
-      projectPinnedAt: project.pinnedAt ?? null,
       projectRootPath: project.rootPath,
       projectKind: project.kind,
     };

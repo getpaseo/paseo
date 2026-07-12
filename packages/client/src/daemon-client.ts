@@ -2274,26 +2274,6 @@ export class DaemonClient {
     return { customName: payload.customName };
   }
 
-  async setProjectPinned(
-    projectId: string,
-    pinned: boolean,
-    requestId?: string,
-  ): Promise<{ pinnedAt: string | null }> {
-    const payload = await this.sendCorrelatedSessionRequest({
-      requestId,
-      message: {
-        type: "project.pin.set.request",
-        projectId,
-        pinned,
-      },
-      responseType: "project.pin.set.response",
-    });
-    if (!payload.accepted) {
-      throw new Error(payload.error ?? "setProjectPinned rejected");
-    }
-    return { pinnedAt: payload.pinnedAt };
-  }
-
   async removeProject(
     projectId: string,
     requestId?: string,

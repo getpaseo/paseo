@@ -800,8 +800,6 @@ export const zhCN: TranslationResources = {
         openSettings: "打开 project 设置",
         openNewWindow: "在新窗口中打开",
         openNewWindowFailed: "无法打开新窗口",
-        pin: "置顶",
-        unpin: "取消置顶",
         remove: "移除 project",
         removing: "正在移除...",
       },
@@ -815,8 +813,6 @@ export const zhCN: TranslationResources = {
         hostDisconnected: "Host 未连接",
         removeFailed: "部分 workspace 移除失败",
         updateHostToRemove: "更新 host 以移除 projects。",
-        pinFailed: "部分 workspace 置顶失败",
-        updateHostToPin: "更新 host 以置顶 projects。",
       },
       empty: {
         title: "还没有 projects",

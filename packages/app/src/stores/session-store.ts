@@ -129,7 +129,6 @@ export interface WorkspaceDescriptor {
   projectId: string;
   projectDisplayName: string;
   projectCustomName?: string | null;
-  projectPinnedAt?: string | null;
   projectRootPath: string;
   workspaceDirectory: string;
   projectKind: WorkspaceDescriptorPayload["projectKind"];
@@ -160,7 +159,6 @@ export function normalizeWorkspaceDescriptor(
     projectId: payload.projectId,
     projectDisplayName: payload.projectDisplayName,
     projectCustomName: payload.projectCustomName ?? null,
-    projectPinnedAt: payload.projectPinnedAt ?? null,
     projectRootPath: payload.projectRootPath,
     // Canonicalize the workspace directory once, at the store boundary, so every
     // consumer can read workspace.workspaceDirectory directly. Empty means "no
@@ -186,7 +184,6 @@ export interface EmptyProjectDescriptor {
   projectId: string;
   projectDisplayName: string;
   projectCustomName: string | null;
-  projectPinnedAt?: string | null;
   projectRootPath: string;
   projectKind: WorkspaceDescriptorPayload["projectKind"];
 }
@@ -198,7 +195,6 @@ export function normalizeEmptyProjectDescriptor(
     projectId: payload.projectId,
     projectDisplayName: payload.projectDisplayName,
     projectCustomName: payload.projectCustomName ?? null,
-    projectPinnedAt: payload.projectPinnedAt ?? null,
     projectRootPath: payload.projectRootPath,
     projectKind: payload.projectKind,
   };

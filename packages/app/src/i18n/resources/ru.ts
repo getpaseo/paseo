@@ -825,8 +825,6 @@ export const ru: TranslationResources = {
         openSettings: "Открыть настройки проекта",
         openNewWindow: "Open in new window",
         openNewWindowFailed: "Couldn't open a new window",
-        pin: "Закрепить вверху",
-        unpin: "Открепить",
         remove: "Удалить проект",
         removing: "Удаление...",
       },
@@ -841,8 +839,6 @@ export const ru: TranslationResources = {
         hostDisconnected: "Host не подключен",
         removeFailed: "Не удалось удалить некоторые рабочие области.",
         updateHostToRemove: "Обновите host, чтобы удалять проекты.",
-        pinFailed: "Не удалось закрепить некоторые рабочие области.",
-        updateHostToPin: "Обновите host, чтобы закреплять проекты.",
       },
       empty: {
         title: "Пока нет проектов",

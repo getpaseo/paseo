@@ -806,8 +806,6 @@ export const ar: TranslationResources = {
         openSettings: "افتح إعدادات المشروع",
         openNewWindow: "Open in new window",
         openNewWindowFailed: "Couldn't open a new window",
-        pin: "تثبيت في الأعلى",
-        unpin: "إلغاء التثبيت",
         remove: "إزالة المشروع",
         removing: "جارٍ الإزالة...",
       },
@@ -822,8 +820,6 @@ export const ar: TranslationResources = {
         hostDisconnected: "Host غير متصل",
         removeFailed: "فشل في إزالة بعض مساحات العمل",
         updateHostToRemove: "قم بتحديث Host لإزالة المشاريع.",
-        pinFailed: "فشل في تثبيت بعض مساحات العمل",
-        updateHostToPin: "قم بتحديث Host لتثبيت المشاريع.",
       },
       empty: {
         title: "لا توجد مشاريع حتى الآن",

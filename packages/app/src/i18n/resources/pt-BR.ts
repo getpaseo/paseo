@@ -824,8 +824,6 @@ export const ptBR: TranslationResources = {
         openSettings: "Abrir configurações do projeto",
         openNewWindow: "Abrir em nova janela",
         openNewWindowFailed: "Não foi possível abrir uma nova janela",
-        pin: "Fixar no topo",
-        unpin: "Desafixar",
         remove: "Remover projeto",
         removing: "Removendo...",
       },
@@ -840,8 +838,6 @@ export const ptBR: TranslationResources = {
         hostDisconnected: "Host não está conectado",
         removeFailed: "Falha ao remover alguns workspaces",
         updateHostToRemove: "Atualize o host para remover projetos.",
-        pinFailed: "Falha ao fixar alguns workspaces",
-        updateHostToPin: "Atualize o host para fixar projetos.",
       },
       empty: {
         title: "Nenhum projeto ainda",

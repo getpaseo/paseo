@@ -832,8 +832,6 @@ export const fr: TranslationResources = {
         openSettings: "Ouvrir les paramètres du projet",
         openNewWindow: "Open in new window",
         openNewWindowFailed: "Couldn't open a new window",
-        pin: "Épingler en haut",
-        unpin: "Désépingler",
         remove: "Supprimer le projet",
         removing: "Suppression...",
       },
@@ -848,8 +846,6 @@ export const fr: TranslationResources = {
         hostDisconnected: "Hostn'est pas connecté",
         removeFailed: "Échec de la suppression de certains espaces de travail",
         updateHostToRemove: "Mettez à jour le host pour supprimer des projets.",
-        pinFailed: "Échec de l'épinglage de certains espaces de travail",
-        updateHostToPin: "Mettez à jour le host pour épingler des projets.",
       },
       empty: {
         title: "Aucun projet pour l'instant",

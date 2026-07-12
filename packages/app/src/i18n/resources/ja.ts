@@ -818,8 +818,6 @@ export const ja: TranslationResources = {
         openSettings: "プロジェクト設定を開く",
         openNewWindow: "新しいウィンドウで開く",
         openNewWindowFailed: "新しいウィンドウを開けませんでした",
-        pin: "上部に固定",
-        unpin: "固定解除",
         remove: "プロジェクトを削除",
         removing: "削除中...",
       },
@@ -834,8 +832,6 @@ export const ja: TranslationResources = {
         hostDisconnected: "ホストが接続されていません",
         removeFailed: "一部のワークスペースの削除に失敗しました",
         updateHostToRemove: "プロジェクトを削除するにはホストを更新してください。",
-        pinFailed: "一部のワークスペースの固定に失敗しました",
-        updateHostToPin: "プロジェクトを固定するにはホストを更新してください。",
       },
       empty: {
         title: "プロジェクトがまだありません",

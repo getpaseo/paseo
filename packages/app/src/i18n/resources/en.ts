@@ -813,8 +813,6 @@ export const en = {
         openSettings: "Open project settings",
         openNewWindow: "Open in new window",
         openNewWindowFailed: "Couldn't open a new window",
-        pin: "Pin to top",
-        unpin: "Unpin",
         remove: "Remove project",
         removing: "Removing...",
       },
@@ -829,8 +827,6 @@ export const en = {
         hostDisconnected: "Host is not connected",
         removeFailed: "Failed to remove some workspaces",
         updateHostToRemove: "Update the host to remove projects.",
-        pinFailed: "Failed to pin some workspaces",
-        updateHostToPin: "Update the host to pin projects.",
       },
       empty: {
         title: "No projects yet",

@@ -41,7 +41,6 @@ describe("splitPinnedSidebarGroups", () => {
       projects,
       keys: {
         pinnedWorkspaceKeys: ["w1"],
-        pinnedProjectKeys: [],
         pinnedAtByKey: { w1: "2026-01-01T00:00:00Z" },
       },
     });
@@ -53,7 +52,7 @@ describe("splitPinnedSidebarGroups", () => {
     const projects = [project("p1", [])];
     const result = splitPinnedSidebarGroups({
       projects,
-      keys: { pinnedWorkspaceKeys: [], pinnedProjectKeys: [], pinnedAtByKey: {} },
+      keys: { pinnedWorkspaceKeys: [], pinnedAtByKey: {} },
     });
     expect(result.unpinnedProjects).toHaveLength(1);
   });
@@ -64,7 +63,6 @@ describe("splitPinnedSidebarGroups", () => {
       projects,
       keys: {
         pinnedWorkspaceKeys: ["w1"],
-        pinnedProjectKeys: [],
         pinnedAtByKey: { w1: "2026-01-01T00:00:00Z" },
       },
     });
@@ -76,15 +74,13 @@ describe("splitPinnedSidebarGroups", () => {
 describe("buildPinAwareShortcutProjects", () => {
   const groups = {
     pinnedChats: [placement("pinned-chat")],
-    pinnedProjects: [project("pinned-proj", [placement("pc")])],
     unpinnedProjects: [project("unpinned-proj", [placement("uc")])],
   };
 
-  it("floats pinned chats and projects to the front when Pinned is expanded", () => {
+  it("floats pinned chats to the front when Pinned is expanded", () => {
     const ordered = buildPinAwareShortcutProjects(groups);
     expect(ordered.map((p) => p.projectKey)).toEqual([
       PINNED_CHATS_PSEUDO_PROJECT_KEY,
-      "pinned-proj",
       "unpinned-proj",
     ]);
   });

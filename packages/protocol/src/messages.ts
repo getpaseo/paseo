@@ -823,13 +823,6 @@ export const ProjectRemoveRequestSchema = z.object({
   requestId: z.string(),
 });
 
-export const ProjectPinSetRequestSchema = z.object({
-  type: z.literal("project.pin.set.request"),
-  projectId: z.string(),
-  pinned: z.boolean(),
-  requestId: z.string(),
-});
-
 export const WorkspaceTitleSetRequestSchema = z.object({
   type: z.literal("workspace.title.set.request"),
   workspaceId: z.string(),
@@ -1449,19 +1442,6 @@ export const ProjectRemoveResponsePayloadSchema = z.object({
 export const ProjectRemoveResponseSchema = z.object({
   type: z.literal("project.remove.response"),
   payload: ProjectRemoveResponsePayloadSchema,
-});
-
-export const ProjectPinSetResponsePayloadSchema = z.object({
-  requestId: z.string(),
-  projectId: z.string(),
-  accepted: z.boolean(),
-  pinnedAt: z.string().nullable(),
-  error: z.string().nullable(),
-});
-
-export const ProjectPinSetResponseSchema = z.object({
-  type: z.literal("project.pin.set.response"),
-  payload: ProjectPinSetResponsePayloadSchema,
 });
 
 export const WorkspaceTitleSetResponsePayloadSchema = z.object({
@@ -2113,7 +2093,6 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   UpdateAgentRequestMessageSchema,
   ProjectRenameRequestSchema,
   ProjectRemoveRequestSchema,
-  ProjectPinSetRequestSchema,
   WorkspaceTitleSetRequestSchema,
   WorkspacePinSetRequestSchema,
   SetVoiceModeMessageSchema,
@@ -2697,7 +2676,6 @@ export const WorkspaceDescriptorPayloadSchema = z
     // value (customName) and projectCustomName mirrors the raw override so the
     // settings UI can prefill its input and offer a "reset" action.
     projectCustomName: z.string().nullable().optional(),
-    projectPinnedAt: z.string().nullable().optional(),
     projectRootPath: z.string(),
     workspaceDirectory: z.string().optional(),
     projectKind: z.enum(["git", "non_git", "directory"]),
@@ -2829,7 +2807,6 @@ export const WorkspaceProjectDescriptorPayloadSchema = z.object({
   projectId: z.string(),
   projectDisplayName: z.string(),
   projectCustomName: z.string().nullable().optional(),
-  projectPinnedAt: z.string().nullable().optional(),
   projectRootPath: z.string(),
   projectKind: z.enum(["git", "non_git", "directory"]),
 });
@@ -4382,7 +4359,6 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   UpdateAgentResponseMessageSchema,
   ProjectRenameResponseSchema,
   ProjectRemoveResponseSchema,
-  ProjectPinSetResponseSchema,
   WorkspaceTitleSetResponseSchema,
   WorkspacePinSetResponseSchema,
   WaitForFinishResponseMessageSchema,
@@ -4537,8 +4513,6 @@ export type AgentRewindResponseMessage = z.infer<typeof AgentRewindResponseMessa
 export type UpdateAgentResponseMessage = z.infer<typeof UpdateAgentResponseMessageSchema>;
 export type ProjectRenameResponse = z.infer<typeof ProjectRenameResponseSchema>;
 export type ProjectRemoveResponse = z.infer<typeof ProjectRemoveResponseSchema>;
-export type ProjectPinSetResponse = z.infer<typeof ProjectPinSetResponseSchema>;
-export type ProjectPinSetResponsePayload = z.infer<typeof ProjectPinSetResponsePayloadSchema>;
 export type WorkspaceTitleSetResponse = z.infer<typeof WorkspaceTitleSetResponseSchema>;
 export type WorkspaceTitleSetResponsePayload = z.infer<
   typeof WorkspaceTitleSetResponsePayloadSchema
@@ -4676,7 +4650,6 @@ export type DeleteAgentRequestMessage = z.infer<typeof DeleteAgentRequestMessage
 export type UpdateAgentRequestMessage = z.infer<typeof UpdateAgentRequestMessageSchema>;
 export type ProjectRenameRequest = z.infer<typeof ProjectRenameRequestSchema>;
 export type ProjectRemoveRequest = z.infer<typeof ProjectRemoveRequestSchema>;
-export type ProjectPinSetRequest = z.infer<typeof ProjectPinSetRequestSchema>;
 export type WorkspaceTitleSetRequest = z.infer<typeof WorkspaceTitleSetRequestSchema>;
 export type WorkspacePinSetRequest = z.infer<typeof WorkspacePinSetRequestSchema>;
 export type SetAgentModeRequestMessage = z.infer<typeof SetAgentModeRequestMessageSchema>;
