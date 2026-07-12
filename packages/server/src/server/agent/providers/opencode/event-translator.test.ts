@@ -283,6 +283,35 @@ describe("translateOpenCodeEvent", () => {
     ]);
   });
 
+  it("uses the part id when an assistant delta omits its message id", () => {
+    const state = createState();
+
+    const events = translateOpenCodeEvent(
+      {
+        type: "message.part.delta",
+        properties: {
+          sessionID: "session-1",
+          partID: "part-without-message",
+          field: "text",
+          delta: "still visible",
+        },
+      },
+      state,
+    );
+
+    expect(events).toEqual([
+      {
+        type: "timeline",
+        provider: "opencode",
+        item: {
+          type: "assistant_message",
+          text: "still visible",
+          messageId: "part-without-message",
+        },
+      },
+    ]);
+  });
+
   it("humanizes permission requests and includes shell detail when command metadata exists", () => {
     const state = createState();
 

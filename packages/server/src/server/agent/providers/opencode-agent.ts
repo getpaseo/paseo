@@ -2527,7 +2527,8 @@ function appendOpenCodeMessagePartDelta(
   if (messageRole === "user") {
     return;
   }
-  if (!messageID) {
+  const assistantMessageId = messageID || partID;
+  if (!assistantMessageId) {
     return;
   }
   if (state.suppressAssistantMessagesUntilIdle?.active === true) {
@@ -2543,7 +2544,7 @@ function appendOpenCodeMessagePartDelta(
     item: {
       type: "assistant_message",
       text: delta,
-      messageId: messageID,
+      messageId: assistantMessageId,
     },
   });
 }

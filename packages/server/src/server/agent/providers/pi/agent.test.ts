@@ -515,6 +515,30 @@ describe("PiRpcAgentSession", () => {
     });
   });
 
+  test("uses a response id that first appears on the assistant update", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("hello");
+    fakeSession.emit({
+      type: "message_start",
+      message: { role: "assistant", content: [] },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      message: { role: "assistant", content: [], responseId: "late-response-id" },
+      assistantMessageEvent: { type: "text_delta", delta: "hello" },
+    });
+
+    expect(events.timelineItems()).toEqual([
+      {
+        type: "assistant_message",
+        text: "hello",
+        messageId: "late-response-id",
+      },
+    ]);
+  });
+
   test("emits live user messages with captured Pi tree entry ids", async () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();

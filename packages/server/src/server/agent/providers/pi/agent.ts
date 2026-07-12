@@ -1850,7 +1850,7 @@ export class PiRpcAgentSession implements AgentSession {
 
   private handleMessageStart(event: Extract<PiAgentSessionEvent, { type: "message_start" }>): void {
     if (event.message.role === "assistant") {
-      this.activeAssistantMessageId = event.message.responseId || randomUUID();
+      this.activeAssistantMessageId = event.message.responseId || null;
     }
   }
 
