@@ -312,6 +312,27 @@ describe("translateOpenCodeEvent", () => {
     ]);
   });
 
+  it("suppresses part-id-only assistant deltas by their resolved identity", () => {
+    const state = createState();
+    state.suppressAssistantMessagesUntilIdle = { active: true };
+
+    const events = translateOpenCodeEvent(
+      {
+        type: "message.part.delta",
+        properties: {
+          sessionID: "session-1",
+          partID: "compaction-part",
+          field: "text",
+          delta: "hidden summary",
+        },
+      },
+      state,
+    );
+
+    expect(events).toEqual([]);
+    expect(state.compactionSummaryMessageIds).toEqual(new Set(["compaction-part"]));
+  });
+
   it("humanizes permission requests and includes shell detail when command metadata exists", () => {
     const state = createState();
 

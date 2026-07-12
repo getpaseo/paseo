@@ -2532,7 +2532,7 @@ function appendOpenCodeMessagePartDelta(
     return;
   }
   if (state.suppressAssistantMessagesUntilIdle?.active === true) {
-    state.compactionSummaryMessageIds.add(messageID);
+    state.compactionSummaryMessageIds.add(assistantMessageId);
     return;
   }
   if (partID) {
