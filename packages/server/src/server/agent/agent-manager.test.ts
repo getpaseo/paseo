@@ -2594,7 +2594,7 @@ test("reloadAgentSession clears provider children before rehydrating from disk",
   expect(manager.listProviderSubagents(snapshot.id)).toEqual([]);
 });
 
-test("hydrateTimelineFromProvider restores provider children from session history", async () => {
+test("hydrateTimelineFromProvider restores and broadcasts provider children from session history", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-provider-child-history-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);
   class ProviderChildHistorySession extends TestAgentSession {
@@ -2625,8 +2625,13 @@ test("hydrateTimelineFromProvider restores provider children from session histor
   const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
     workspaceId: undefined,
   });
+  const events: AgentManagerEvent[] = [];
+  manager.subscribe((event) => events.push(event), {
+    agentId: snapshot.id,
+    replayState: false,
+  });
 
-  await manager.hydrateTimelineFromProvider(snapshot.id);
+  await manager.hydrateTimelineFromProvider(snapshot.id, { broadcast: true });
 
   expect(manager.listProviderSubagents(snapshot.id)).toEqual([
     expect.objectContaining({
@@ -2636,6 +2641,60 @@ test("hydrateTimelineFromProvider restores provider children from session histor
       status: "completed",
     }),
   ]);
+  expect(events).toContainEqual({
+    type: "provider_subagent",
+    event: {
+      type: "upsert",
+      subagent: expect.objectContaining({
+        id: "restored-child",
+        parentAgentId: snapshot.id,
+      }),
+    },
+  });
+});
+
+test("force provider hydration removes children absent from current history", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-provider-child-force-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  let session: TestAgentSession | null = null;
+  class ProviderChildForceClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      session = new TestAgentSession(config);
+      return session;
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new ProviderChildForceClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000118",
+  });
+  const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  session?.pushEvent({
+    type: "provider_subagent",
+    provider: "codex",
+    event: { type: "upsert", id: "removed-by-rewind", status: "completed" },
+  });
+  await vi.waitFor(() => expect(manager.listProviderSubagents(snapshot.id)).toHaveLength(1));
+  const events: AgentManagerEvent[] = [];
+  manager.subscribe((event) => events.push(event), {
+    agentId: snapshot.id,
+    replayState: false,
+  });
+
+  await manager.hydrateTimelineFromProvider(snapshot.id, { force: true, broadcast: true });
+
+  expect(manager.listProviderSubagents(snapshot.id)).toEqual([]);
+  expect(events).toContainEqual({
+    type: "provider_subagent",
+    event: {
+      type: "remove",
+      parentAgentId: snapshot.id,
+      subagentId: "removed-by-rewind",
+    },
+  });
 });
 
 test("reloadAgentSession preserves current title when config title is unset", async () => {

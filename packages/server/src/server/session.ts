@@ -2749,7 +2749,7 @@ export class Session {
           extractTimestamps(record),
         );
       }
-      await this.agentManager.hydrateTimelineFromProvider(agentId);
+      await this.agentManager.hydrateTimelineFromProvider(agentId, { broadcast: true });
       await this.agentUpdates.forwardLiveAgent(snapshot);
       const timelineSize = this.agentManager.getTimeline(agentId).length;
       if (requestId) {

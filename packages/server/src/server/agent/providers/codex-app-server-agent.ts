@@ -3461,13 +3461,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.persistedProviderSubagentEvents = [];
     this.loadingPersistedHistory = true;
     try {
-      for (const route of subAgentRoutes) {
-        this.registerSubAgentToolCall({
-          timelineItem: route.toolCall,
-          rawItem: { agentThreadId: route.childThreadId },
-          parentCallId: null,
-        });
-      }
+      await this.loadPersistedSubAgentHistories(client, subAgentRoutes);
     } finally {
       this.loadingPersistedHistory = false;
     }
@@ -3479,6 +3473,44 @@ export class CodexAppServerAgentSession implements AgentSession {
     }
     this.persistedHistory = timeline;
     this.historyPending = timeline.length > 0;
+  }
+
+  private async loadPersistedSubAgentHistories(
+    client: CodexAppServerClientLike,
+    rootRoutes: readonly PersistedSubAgentRoute[],
+  ): Promise<void> {
+    const queue = rootRoutes.map((route) => ({ route, parentCallId: null as string | null }));
+    const visitedThreadIds = new Set<string>();
+    while (queue.length > 0 && visitedThreadIds.size < 100) {
+      const next = queue.shift();
+      if (!next || visitedThreadIds.has(next.route.childThreadId)) {
+        continue;
+      }
+      visitedThreadIds.add(next.route.childThreadId);
+      this.registerSubAgentToolCall({
+        timelineItem: next.route.toolCall,
+        rawItem: { agentThreadId: next.route.childThreadId },
+        parentCallId: next.parentCallId,
+      });
+      try {
+        const childHistory = await loadCodexThreadHistoryTimeline({
+          threadId: next.route.childThreadId,
+          cwd: this.config.cwd ?? null,
+          requestThread: (childThreadId) => readCodexThread(client, childThreadId),
+        });
+        for (const entry of childHistory.timeline) {
+          this.emitProviderSubagentTimeline(next.route.childThreadId, entry.item, entry.timestamp);
+        }
+        for (const route of childHistory.subAgentRoutes) {
+          queue.push({ route, parentCallId: next.route.toolCall.callId });
+        }
+      } catch (error) {
+        this.logger.trace(
+          { err: error, childThreadId: next.route.childThreadId },
+          "Failed to load persisted Codex child history",
+        );
+      }
+    }
   }
 
   private async ensureThreadLoaded(): Promise<void> {
@@ -4962,11 +4994,20 @@ export class CodexAppServerAgentSession implements AgentSession {
     });
   }
 
-  private emitProviderSubagentTimeline(childThreadId: string, item: AgentTimelineItem): void {
+  private emitProviderSubagentTimeline(
+    childThreadId: string,
+    item: AgentTimelineItem,
+    timestamp?: string,
+  ): void {
     this.emitEvent({
       type: "provider_subagent",
       provider: CODEX_PROVIDER,
-      event: { type: "timeline", id: childThreadId, item },
+      event: {
+        type: "timeline",
+        id: childThreadId,
+        item,
+        ...(timestamp ? { timestamp } : {}),
+      },
     });
   }
 

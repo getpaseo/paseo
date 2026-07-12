@@ -2827,6 +2827,8 @@ class OpenCodeAgentSession implements AgentSession {
   private knownChildSessionIds = new Set<string>();
   private readonly childTranslationStates = new Map<string, OpenCodeEventTranslationState>();
   private childHydrationPromise: Promise<void> | null = null;
+  private childHydrationCompleted = false;
+  private readonly unrelatedSessionIds = new Set<string>();
   private selectedModelContextWindowMaxTokens: number | undefined;
   private releaseServer: (() => void) | null;
   private eventStreamAbortController: AbortController | null = null;
@@ -3203,11 +3205,16 @@ class OpenCodeAgentSession implements AgentSession {
     if (this.childHydrationPromise) {
       return;
     }
-    const hydration = this.hydrateChildSessions().finally(() => {
-      if (this.childHydrationPromise === hydration) {
-        this.childHydrationPromise = null;
-      }
-    });
+    const hydration = this.hydrateChildSessions()
+      .then(() => {
+        this.childHydrationCompleted = true;
+        return undefined;
+      })
+      .finally(() => {
+        if (this.childHydrationPromise === hydration) {
+          this.childHydrationPromise = null;
+        }
+      });
     this.childHydrationPromise = hydration;
     void hydration.catch((error) => {
       this.logger.warn(
@@ -3255,8 +3262,11 @@ class OpenCodeAgentSession implements AgentSession {
     if (event.type !== "provider_subagent") {
       return;
     }
-    if (event.event.type === "upsert" && this.serverUrl) {
-      registerOpenCodeChildSessionServerUrl(event.event.id, this.serverUrl);
+    if (event.event.type === "upsert") {
+      this.unrelatedSessionIds.delete(event.event.id);
+      if (this.serverUrl) {
+        registerOpenCodeChildSessionServerUrl(event.event.id, this.serverUrl);
+      }
     } else if (event.event.type === "remove") {
       unregisterOpenCodeChildSessionServerUrl(event.event.id);
       this.childTranslationStates.delete(event.event.id);
@@ -4031,10 +4041,16 @@ class OpenCodeAgentSession implements AgentSession {
       event.type !== "session.created" &&
       eventSessionId &&
       eventSessionId !== this.sessionId &&
-      !this.knownChildSessionIds.has(eventSessionId)
+      !this.knownChildSessionIds.has(eventSessionId) &&
+      !this.unrelatedSessionIds.has(eventSessionId)
     ) {
-      this.startChildSessionHydration();
-      await this.childHydrationPromise?.catch(() => undefined);
+      if (!this.childHydrationCompleted) {
+        this.startChildSessionHydration();
+        await this.childHydrationPromise?.catch(() => undefined);
+      }
+      if (!this.knownChildSessionIds.has(eventSessionId)) {
+        this.unrelatedSessionIds.add(eventSessionId);
+      }
     }
     const translated = translateOpenCodeEvent(event, this.createTranslationState());
     this.appendProviderSubagentEvents(event, translated);

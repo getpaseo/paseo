@@ -2479,9 +2479,27 @@ describe("Codex app-server provider", () => {
   test("loads mixed legacy and MultiAgentV2 sub-agent history", async () => {
     const session = createSession();
     session.client = {
-      request: vi.fn(async (method: string) => {
+      request: vi.fn(async (method: string, params: unknown) => {
         if (method !== "thread/read") {
           return {};
+        }
+        const threadId = (params as { threadId?: string }).threadId;
+        if (threadId !== "test-thread") {
+          return {
+            thread: {
+              turns: [
+                {
+                  items: [
+                    {
+                      type: "agentMessage",
+                      id: `message-${threadId}`,
+                      text: `History from ${threadId}`,
+                    },
+                  ],
+                },
+              ],
+            },
+          };
         }
         return {
           thread: {
@@ -2519,10 +2537,36 @@ describe("Codex app-server provider", () => {
       history.push(event);
     }
     expect(
-      history.filter((event) => event.type === "provider_subagent").map((event) => event.event),
+      history.flatMap((event) =>
+        event.type === "provider_subagent" && event.event.type === "upsert" ? [event.event] : [],
+      ),
     ).toMatchObject([
       { type: "upsert", id: "legacy-child-thread", status: "completed" },
       { type: "upsert", id: "v2-child-thread", status: "completed" },
+    ]);
+    expect(
+      history.flatMap((event) =>
+        event.type === "provider_subagent" && event.event.type === "timeline" ? [event.event] : [],
+      ),
+    ).toEqual([
+      {
+        type: "timeline",
+        id: "legacy-child-thread",
+        item: {
+          type: "assistant_message",
+          messageId: "message-legacy-child-thread",
+          text: "History from legacy-child-thread",
+        },
+      },
+      {
+        type: "timeline",
+        id: "v2-child-thread",
+        item: {
+          type: "assistant_message",
+          messageId: "message-v2-child-thread",
+          text: "History from v2-child-thread",
+        },
+      },
     ]);
     expect(
       history
@@ -2589,9 +2633,12 @@ describe("Codex app-server provider", () => {
   test("coalesces persisted MultiAgentV2 activity for one child into one terminal card", async () => {
     const session = createSession();
     session.client = {
-      request: vi.fn(async (method: string) => {
+      request: vi.fn(async (method: string, params: unknown) => {
         if (method !== "thread/read") {
           return {};
+        }
+        if ((params as { threadId?: string }).threadId !== "test-thread") {
+          return { thread: { turns: [] } };
         }
         return {
           thread: {

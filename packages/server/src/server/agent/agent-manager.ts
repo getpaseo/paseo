@@ -3019,7 +3019,7 @@ export class AgentManager {
       return;
     }
 
-    await this.primeTimelineFromLegacyProviderHistory(agent);
+    await this.primeTimelineFromLegacyProviderHistory(agent, options?.broadcast === true);
   }
 
   private async forceHydrateTimelineFromLegacyProviderHistory(
@@ -3045,6 +3045,11 @@ export class AgentManager {
     this.timelineStore.initialize(agent.id, { timestamp: new Date().toISOString() });
     agent.historyPrimed = true;
 
+    for (const event of this.providerSubagents.deleteParent(agent.id)) {
+      if (broadcast) {
+        this.dispatch({ type: "provider_subagent", event });
+      }
+    }
     for (const event of providerSubagentEvents) {
       const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
       if (broadcast) {
@@ -3069,12 +3074,18 @@ export class AgentManager {
     this.emitState(agent);
   }
 
-  private async primeTimelineFromLegacyProviderHistory(agent: ActiveManagedAgent): Promise<void> {
+  private async primeTimelineFromLegacyProviderHistory(
+    agent: ActiveManagedAgent,
+    broadcast: boolean,
+  ): Promise<void> {
     agent.historyPrimed = true;
     try {
       for await (const event of agent.session.streamHistory()) {
         if (event.type === "provider_subagent") {
-          this.providerSubagents.apply(agent.id, event.provider, event.event);
+          const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
+          if (broadcast) {
+            this.dispatch({ type: "provider_subagent", event: update });
+          }
           continue;
         }
         if (event.type !== "timeline") {

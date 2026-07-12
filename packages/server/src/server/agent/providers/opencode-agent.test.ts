@@ -2770,6 +2770,39 @@ describe("OpenCode provider subagent contract", () => {
     await session.close();
   });
 
+  test("does not rehydrate children for repeated events from an unrelated session", async () => {
+    const runtime = new TestOpenCodeHarness();
+    const openCodeClient = new TestOpenCodeClient();
+    openCodeClient.sessionCreateResponse = { data: { id: "ses_parent_isolated" } };
+    runtime.enqueueClient(openCodeClient);
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const session = await client.createSession({ provider: "opencode", cwd: "/workspace/repo" });
+    session.subscribe(() => undefined);
+    await vi.waitFor(() => expect(openCodeClient.calls.sessionChildren).toHaveLength(1));
+    await Promise.resolve();
+
+    for (const messageId of ["sibling-message-1", "sibling-message-2"]) {
+      openCodeClient.emitEvent({
+        type: "message.updated",
+        properties: {
+          info: {
+            id: messageId,
+            sessionID: "ses_unrelated_sibling",
+            role: "assistant",
+          },
+        },
+      });
+    }
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(openCodeClient.calls.sessionChildren).toHaveLength(1);
+    await session.close();
+  });
+
   test("closes without waiting for child hydration", async () => {
     const hydration = createTestDeferred<{ data: [] }>();
     const runtime = new TestOpenCodeHarness();
