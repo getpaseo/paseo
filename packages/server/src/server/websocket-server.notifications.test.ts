@@ -174,6 +174,7 @@ function createSessionWithActivity(
   return {
     getClientActivity: vi.fn(() => activity),
     supports: () => false,
+    supportsForSource: () => false,
   };
 }
 
