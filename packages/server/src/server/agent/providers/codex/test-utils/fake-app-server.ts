@@ -19,6 +19,19 @@ interface FakeLegacyCommand {
   command: string;
   output: string;
 }
+interface FakeSilentCommand {
+  threadId: string;
+  callId: string;
+  command: string;
+  cwd: string;
+}
+interface FakeTerminalInput {
+  threadId: string;
+  turnId: string;
+  itemId: string;
+  processId: string;
+  text: string;
+}
 interface FakeLegacyPatch {
   threadId: string;
   callId: string;
@@ -51,6 +64,8 @@ export interface FakeCodexAppServer {
   runsLegacyCommand(params: FakeLegacyCommand): void;
   appliesLegacyPatch(params: FakeLegacyPatch): void;
   completesCommand(params: FakeLegacyCommand): void;
+  completesSilentCommand(params: FakeSilentCommand): void;
+  typesIntoTerminal(params: FakeTerminalInput): void;
   says(params: { threadId: string; itemId?: string; text: string; chunks?: string[] }): void;
   requestCommandApproval(params: {
     itemId: string;
@@ -366,6 +381,26 @@ export function createFakeCodexAppServer(
         exitCode: 0,
       });
     },
+    completesSilentCommand(params) {
+      completeItem(params.threadId, {
+        type: "commandExecution",
+        id: params.callId,
+        status: "completed",
+        command: params.command,
+        cwd: params.cwd,
+        aggregatedOutput: null,
+        exitCode: 0,
+      });
+    },
+    typesIntoTerminal(params) {
+      writeNotification("item/commandExecution/terminalInteraction", {
+        threadId: params.threadId,
+        turnId: params.turnId,
+        itemId: params.itemId,
+        processId: params.processId,
+        stdin: params.text,
+      });
+    },
     says(params) {
       if (params.itemId) {
         for (const chunk of params.chunks ?? [params.text]) {
@@ -468,6 +503,25 @@ export function waitForNextPermission(
     }, 1000);
     const unsubscribe = session.subscribe((event) => {
       if (event.type !== "permission_requested") {
+        return;
+      }
+      clearTimeout(timeout);
+      unsubscribe();
+      resolve(event);
+    });
+  });
+}
+
+type TimelineEvent = Extract<AgentStreamEvent, { type: "timeline" }>;
+
+export function waitForNextTimelineItem(session: AgentSession): Promise<TimelineEvent> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      unsubscribe();
+      reject(new Error("Timed out waiting for timeline item"));
+    }, 1000);
+    const unsubscribe = session.subscribe((event) => {
+      if (event.type !== "timeline") {
         return;
       }
       clearTimeout(timeout);

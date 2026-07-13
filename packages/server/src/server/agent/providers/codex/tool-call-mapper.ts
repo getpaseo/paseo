@@ -141,7 +141,7 @@ const CodexCommandExecutionItemSchema = z
     error: z.unknown().optional(),
     command: CodexCommandValueSchema.optional(),
     cwd: z.string().optional(),
-    aggregatedOutput: z.string().optional(),
+    aggregatedOutput: z.string().nullable().optional(),
     exitCode: z.number().nullable().optional(),
   })
   .passthrough();
@@ -694,7 +694,7 @@ function mapCommandExecutionItem(
   item: z.infer<typeof CodexCommandExecutionItemSchema>,
 ): CodexNormalizedToolCallEnvelope {
   const command = normalizeCommandExecutionCommand(item.command);
-  const parsedOutput = extractCodexShellOutput(item.aggregatedOutput);
+  const parsedOutput = extractCodexShellOutput(item.aggregatedOutput ?? undefined);
   const input = toNullableObject({
     ...(command !== undefined ? { command } : {}),
     ...(item.cwd !== undefined ? { cwd: item.cwd } : {}),

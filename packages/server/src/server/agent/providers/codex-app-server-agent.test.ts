@@ -31,6 +31,7 @@ import {
   createFakeCodexAppServer,
   type FakeCodexAppServer,
   waitForNextPermission,
+  waitForNextTimelineItem,
 } from "./codex/test-utils/fake-app-server.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { asInternals as castInternals, createStub } from "../../test-utils/class-mocks.js";
@@ -552,6 +553,96 @@ describe("Codex app-server provider", () => {
     });
     appServer.assertNoErrors();
     await session.close();
+  });
+
+  test("shows a successful shell command that produces no output", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+
+    try {
+      await session.connect();
+      const nextTimelineItem = waitForNextTimelineItem(session);
+
+      appServer.completesSilentCommand({
+        threadId: "thread-1",
+        callId: "silent-merge",
+        command: "gh pr merge 2030 --squash",
+        cwd: "/workspace/project",
+      });
+      appServer.says({ threadId: "thread-1", text: "Merged." });
+
+      await expect(nextTimelineItem).resolves.toEqual({
+        type: "timeline",
+        provider: "codex",
+        item: {
+          type: "tool_call",
+          callId: "silent-merge",
+          name: "shell",
+          status: "completed",
+          error: null,
+          detail: {
+            type: "shell",
+            command: "gh pr merge 2030 --squash",
+            cwd: "/workspace/project",
+            exitCode: 0,
+          },
+        },
+      });
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("shows the exact bytes Codex writes into an existing terminal", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+
+    try {
+      await session.connect();
+      const nextTimelineItem = waitForNextTimelineItem(session);
+
+      appServer.typesIntoTerminal({
+        threadId: "thread-1",
+        turnId: "turn-1",
+        itemId: "interactive-shell",
+        processId: "4242",
+        text: "gh pr merge 2030 --squash\n",
+      });
+
+      await expect(nextTimelineItem).resolves.toEqual({
+        type: "timeline",
+        provider: "codex",
+        item: {
+          type: "tool_call",
+          callId: "terminal-session-4242",
+          name: "terminal",
+          status: "completed",
+          error: null,
+          detail: {
+            type: "plain_text",
+            text: "gh pr merge 2030 --squash\n",
+            icon: "square_terminal",
+          },
+          metadata: {
+            processId: "4242",
+          },
+        },
+      });
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
   });
 
   test("surfaces an MCP elicitation and returns Codex's required approval action", async () => {

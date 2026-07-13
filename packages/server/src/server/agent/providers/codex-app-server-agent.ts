@@ -1517,6 +1517,7 @@ function mapCodexTerminalInteractionToToolCall(params: {
   processId?: string | null;
   fallbackCallId?: string | null;
   command?: string | null;
+  stdin?: string | null;
 }): ToolCallTimelineItem {
   const processId = nonEmptyString(params.processId ?? undefined);
   const callId = processId
@@ -1532,6 +1533,7 @@ function mapCodexTerminalInteractionToToolCall(params: {
     detail: {
       type: "plain_text",
       ...(label ? { label } : {}),
+      ...(params.stdin !== null && params.stdin !== undefined ? { text: params.stdin } : {}),
       icon: "square_terminal",
     },
     ...(processId ? { metadata: { processId } } : {}),
@@ -5454,6 +5456,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       processId: parsed.processId,
       fallbackCallId: parsed.callId,
       command,
+      stdin: parsed.stdin,
     });
     this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: timelineItem });
   }
