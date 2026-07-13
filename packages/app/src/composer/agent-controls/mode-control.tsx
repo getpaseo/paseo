@@ -12,7 +12,16 @@ import { Text, View, type PressableStateCallbackType } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useShallow } from "zustand/shallow";
 import { useStoreWithEqualityFn } from "zustand/traditional";
-import { Bot, ShieldAlert, ShieldCheck, ShieldOff, ShieldQuestionMark } from "lucide-react-native";
+import {
+  Bot,
+  Shield,
+  ShieldAlert,
+  ShieldCheck,
+  ShieldEllipsis,
+  ShieldOff,
+  ShieldPlus,
+  ShieldQuestionMark,
+} from "lucide-react-native";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
 import { type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
@@ -48,9 +57,12 @@ interface ModeIconProps {
 
 const MODE_ICONS: Record<string, ComponentType<ModeIconProps>> = {
   Bot,
+  Shield,
   ShieldCheck,
   ShieldAlert,
+  ShieldEllipsis,
   ShieldOff,
+  ShieldPlus,
   ShieldQuestionMark,
 };
 

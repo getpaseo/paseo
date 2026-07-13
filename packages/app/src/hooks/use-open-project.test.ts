@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { getOpenProjectFailureReason, openProjectDirectly } from "@/hooks/open-project";
-import type { EmptyProjectDescriptor as ProjectWithoutWorkspacesDescriptor } from "@/stores/session-store";
+import {
+  getOpenProjectFailureReason,
+  openGithubRepoDirectly,
+  openProjectDirectly,
+} from "@/hooks/open-project";
+import type {
+  EmptyProjectDescriptor as ProjectWithoutWorkspacesDescriptor,
+  WorkspaceDescriptor,
+} from "@/stores/session-store";
 
 const SERVER_ID = "server-1";
 const PROJECT_PATH = "/repo/project";
@@ -14,9 +21,33 @@ function buildProjectPayload() {
   };
 }
 
+function buildWorkspacePayload() {
+  return {
+    id: "1",
+    projectId: "1",
+    projectDisplayName: "project",
+    projectRootPath: PROJECT_PATH,
+    workspaceDirectory: PROJECT_PATH,
+    projectKind: "git" as const,
+    workspaceKind: "checkout" as const,
+    name: "project",
+    archivingAt: null,
+    status: "done" as const,
+    statusEnteredAt: null,
+    activityAt: null,
+    diffStat: null,
+    scripts: [],
+  };
+}
+
 interface RecordedProject {
   serverId: string;
   project: ProjectWithoutWorkspacesDescriptor;
+}
+
+interface RecordedMerge {
+  serverId: string;
+  workspaces: WorkspaceDescriptor[];
 }
 
 interface RecordedHydrated {
@@ -24,17 +55,75 @@ interface RecordedHydrated {
   hydrated: boolean;
 }
 
+interface RecordedOpenDraftTab {
+  workspaceKey: string;
+}
+
+interface RecordedNavigate {
+  serverId: string;
+  workspaceId: string;
+}
+
+interface RecordedClone {
+  repo: string;
+  targetDirectory: string;
+  cloneProtocol?: "https" | "ssh";
+}
+
 function createFakeSession() {
   const projects: RecordedProject[] = [];
+  const merges: RecordedMerge[] = [];
   const hydrated: RecordedHydrated[] = [];
   return {
     projects,
+    merges,
     hydrated,
     addEmptyProject: (serverId: string, project: ProjectWithoutWorkspacesDescriptor) => {
       projects.push({ serverId, project });
     },
+    mergeWorkspaces: (serverId: string, workspaces: Iterable<WorkspaceDescriptor>) => {
+      merges.push({ serverId, workspaces: Array.from(workspaces) });
+    },
     setHasHydratedWorkspaces: (serverId: string, value: boolean) => {
       hydrated.push({ serverId, hydrated: value });
+    },
+  };
+}
+
+function createFakeWorkspaceLayout() {
+  const openedTabs: RecordedOpenDraftTab[] = [];
+  return {
+    openedTabs,
+    openDraftTab: (workspaceKey: string) => {
+      openedTabs.push({ workspaceKey });
+      return "tab-1";
+    },
+  };
+}
+
+function createFakeNavigator() {
+  const navigations: RecordedNavigate[] = [];
+  return {
+    navigations,
+    navigateToWorkspace: (serverId: string, workspaceId: string) => {
+      navigations.push({ serverId, workspaceId });
+    },
+  };
+}
+
+function createFakeGithubCloneClient(workspace: ReturnType<typeof buildWorkspacePayload>) {
+  const clones: RecordedClone[] = [];
+  return {
+    clones,
+    cloneGithubWorkspace: async (input: RecordedClone) => {
+      clones.push(input);
+      return {
+        requestId: "request-3",
+        repo: "owner/project",
+        checkoutPath: PROJECT_PATH,
+        error: null,
+        workspace,
+      };
     },
   };
 }
@@ -73,6 +162,7 @@ describe("openProjectDirectly", () => {
         },
       },
     ]);
+    expect(session.merges).toEqual([]);
     expect(session.hydrated).toEqual([{ serverId: SERVER_ID, hydrated: true }]);
   });
 
@@ -130,6 +220,75 @@ describe("openProjectDirectly", () => {
     });
     expect(session.projects).toEqual([]);
     expect(session.hydrated).toEqual([]);
+  });
+});
+
+describe("openGithubRepoDirectly", () => {
+  it("opens a cloned GitHub workspace and seeds a draft tab", async () => {
+    const session = createFakeSession();
+    const layout = createFakeWorkspaceLayout();
+    const navigator = createFakeNavigator();
+    const workspacePayload = buildWorkspacePayload();
+    const github = createFakeGithubCloneClient(workspacePayload);
+
+    const result = await openGithubRepoDirectly({
+      serverId: SERVER_ID,
+      repo: "owner/project",
+      targetDirectory: "~/workspace",
+      cloneProtocol: "https",
+      isConnected: true,
+      client: github,
+      mergeWorkspaces: session.mergeWorkspaces,
+      setHasHydratedWorkspaces: session.setHasHydratedWorkspaces,
+      openDraftTab: layout.openDraftTab,
+      navigateToWorkspace: navigator.navigateToWorkspace,
+    });
+
+    expect(result).toBe(true);
+    expect(github.clones).toEqual([
+      {
+        repo: "owner/project",
+        targetDirectory: "~/workspace",
+        cloneProtocol: "https",
+      },
+    ]);
+    expect(session.merges).toHaveLength(1);
+    expect(session.merges[0]?.serverId).toBe(SERVER_ID);
+    expect(session.merges[0]?.workspaces[0]).toMatchObject({
+      id: "1",
+      projectId: "1",
+      projectRootPath: PROJECT_PATH,
+      workspaceDirectory: PROJECT_PATH,
+    });
+    expect(session.hydrated).toEqual([{ serverId: SERVER_ID, hydrated: true }]);
+    expect(layout.openedTabs).toEqual([{ workspaceKey: `${SERVER_ID}:1` }]);
+    expect(navigator.navigations).toEqual([{ serverId: SERVER_ID, workspaceId: "1" }]);
+  });
+
+  it("rejects a workspace without an identity before changing app state", async () => {
+    const session = createFakeSession();
+    const layout = createFakeWorkspaceLayout();
+    const navigator = createFakeNavigator();
+    const github = createFakeGithubCloneClient({ ...buildWorkspacePayload(), id: " " });
+
+    const result = await openGithubRepoDirectly({
+      serverId: SERVER_ID,
+      repo: "owner/project",
+      targetDirectory: "~/workspace",
+      cloneProtocol: "https",
+      isConnected: true,
+      client: github,
+      mergeWorkspaces: session.mergeWorkspaces,
+      setHasHydratedWorkspaces: session.setHasHydratedWorkspaces,
+      openDraftTab: layout.openDraftTab,
+      navigateToWorkspace: navigator.navigateToWorkspace,
+    });
+
+    expect(result).toBe(false);
+    expect(session.merges).toEqual([]);
+    expect(session.hydrated).toEqual([]);
+    expect(layout.openedTabs).toEqual([]);
+    expect(navigator.navigations).toEqual([]);
   });
 });
 

@@ -56,6 +56,8 @@ import type {
   ProjectIconResponse,
   ProjectAddResponse,
   OpenProjectResponseMessage,
+  WorkspaceGithubCloneProtocol,
+  WorkspaceGithubCloneResponse,
   ArchiveWorkspaceResponseMessage,
   WorkspaceSetupStatusResponseMessage,
   ListCommandsResponse,
@@ -147,6 +149,8 @@ const perfNow: () => number =
   typeof performance !== "undefined" && typeof performance.now === "function"
     ? () => performance.now()
     : () => Date.now();
+
+const WORKSPACE_GITHUB_CLONE_TIMEOUT_MS = 5 * 60 * 1000;
 
 interface ImportAgentInputBase {
   cwd?: string;
@@ -758,6 +762,7 @@ export interface RenameTerminalInput {
 }
 type OpenProjectPayload = OpenProjectResponseMessage["payload"];
 type ProjectAddPayload = ProjectAddResponse["payload"];
+type WorkspaceGithubClonePayload = WorkspaceGithubCloneResponse["payload"];
 type ArchiveWorkspacePayload = ArchiveWorkspaceResponseMessage["payload"];
 type WorkspaceSetupStatusPayload = WorkspaceSetupStatusResponseMessage["payload"];
 
@@ -1985,6 +1990,23 @@ export class DaemonClient {
         cwd,
       },
       responseType: "project.add.response",
+    });
+  }
+
+  async cloneGithubWorkspace(
+    input: { repo: string; targetDirectory: string; cloneProtocol?: WorkspaceGithubCloneProtocol },
+    requestId?: string,
+  ): Promise<WorkspaceGithubClonePayload> {
+    const message = {
+      type: "workspace.github.clone.request",
+      repo: input.repo,
+      targetDirectory: input.targetDirectory,
+      ...(input.cloneProtocol ? { cloneProtocol: input.cloneProtocol } : {}),
+    } as const;
+    return this.sendNamespacedCorrelatedSessionRequest<"workspace.github.clone.response">({
+      requestId,
+      message,
+      timeout: WORKSPACE_GITHUB_CLONE_TIMEOUT_MS,
     });
   }
 
