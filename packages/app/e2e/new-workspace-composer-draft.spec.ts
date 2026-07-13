@@ -1,10 +1,13 @@
-import { expect, test } from "./fixtures";
+import { test } from "./fixtures";
 import { gotoAppShell } from "./helpers/app";
 import { getE2EDaemonPort } from "./helpers/daemon-port";
 import {
+  expectNewWorkspaceDraft,
   expectNewWorkspaceProjectSelected,
+  fillNewWorkspaceDraft,
   openGlobalNewWorkspaceComposer,
   openNewWorkspaceComposer,
+  selectNewWorkspaceHost,
   selectNewWorkspaceProject,
 } from "./helpers/new-workspace";
 import { seedWorkspace, type SeededWorkspace } from "./helpers/seed-client";
@@ -36,15 +39,14 @@ test.describe("New workspace composer draft", () => {
       });
       await expectNewWorkspaceProjectSelected(page, firstProject.projectDisplayName);
 
-      const composer = page.getByRole("textbox", { name: "Message agent..." });
-      await composer.fill(DRAFT);
+      await fillNewWorkspaceDraft(page, DRAFT);
 
       await selectNewWorkspaceProject(page, {
         projectKey: secondProject.projectId,
         projectDisplayName: secondProject.projectDisplayName,
       });
 
-      await expect(composer).toHaveValue(DRAFT);
+      await expectNewWorkspaceDraft(page, DRAFT);
     } finally {
       await secondProject.cleanup();
       await firstProject.cleanup();
@@ -75,13 +77,10 @@ test.describe("New workspace composer draft", () => {
       await waitForSidebarHydration(page);
       await openGlobalNewWorkspaceComposer(page);
 
-      const composer = page.getByRole("textbox", { name: "Message agent..." });
-      await composer.fill(DRAFT);
+      await fillNewWorkspaceDraft(page, DRAFT);
+      await selectNewWorkspaceHost(page, "Secondary host");
 
-      await page.getByTestId("host-picker-trigger").click();
-      await page.getByTestId(`new-workspace-host-picker-option-${secondaryServerId}`).click();
-
-      await expect(composer).toHaveValue(DRAFT);
+      await expectNewWorkspaceDraft(page, DRAFT);
     } finally {
       await project.cleanup();
     }
