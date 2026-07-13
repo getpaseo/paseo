@@ -34,6 +34,7 @@ import { Session, type SessionLifecycleIntent, type SessionRuntimeMetrics } from
 import type { AgentProvider } from "./agent/agent-sdk-types.js";
 import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "./workspace-git-service.js";
+import type { WorkspaceAutoName } from "./workspace-auto-name.js";
 import { buildWorkspaceGitMetadataFromSnapshot } from "./workspace-git-metadata.js";
 import { PushTokenStore } from "./push/token-store.js";
 import { createPushNotificationSender, type PushNotificationSender } from "./push/notifications.js";
@@ -71,6 +72,10 @@ import {
 } from "./lifecycle-reasons.js";
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
 import type { BrowserAutomationExecuteResponse } from "@getpaseo/protocol/browser-automation/rpc-schemas";
+import {
+  BrowserAutomationHostCapabilitySchema,
+  type BrowserAutomationHostCapability,
+} from "@getpaseo/protocol/browser-automation/capabilities";
 import type { BrowserToolsBroker } from "./browser-tools/broker.js";
 
 const WS_CLOSE_DAEMON_AUTH_FAILED = 4401;
@@ -225,6 +230,7 @@ function createNoopWorkspaceRegistry(): WorkspaceRegistry {
     existsOnDisk: async () => true,
     list: async () => [],
     get: async () => null,
+    update: async () => null,
     upsert: async () => {},
     archive: async () => {},
     remove: async () => {},
@@ -307,10 +313,13 @@ function bufferFromWsData(data: Buffer | ArrayBuffer | Buffer[] | string): Buffe
   return Buffer.from(data);
 }
 
-function hasDesktopBrowserAutomationCapability(
+function getBrowserHostCapability(
   capabilities: Record<string, unknown> | null,
-): boolean {
-  return capabilities?.[CLIENT_CAPS.desktopBrowserAutomation] === true;
+): BrowserAutomationHostCapability | null {
+  const parsed = BrowserAutomationHostCapabilitySchema.safeParse(
+    capabilities?.[CLIENT_CAPS.browserHost],
+  );
+  return parsed.success ? parsed.data : null;
 }
 
 interface WebSocketLike {
@@ -333,6 +342,7 @@ interface SessionConnection {
 }
 
 interface BrowserToolsRegistration {
+  capabilitySignature: string;
   unregister: () => void;
 }
 
@@ -342,6 +352,7 @@ const HELLO_TIMEOUT_MS = 15_000;
 const WS_CLOSE_HELLO_TIMEOUT = 4001;
 const WS_CLOSE_INVALID_HELLO = 4002;
 const WS_CLOSE_INCOMPATIBLE_PROTOCOL = 4003;
+const WS_CLOSE_SERVER_SHUTDOWN = 1001;
 const WS_PROTOCOL_VERSION = 1;
 const WS_RUNTIME_METRICS_FLUSH_MS = 30_000;
 
@@ -416,6 +427,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly checkoutDiffManager: CheckoutDiffManager;
   private readonly github: GitHubService;
   private readonly workspaceGitService: WorkspaceGitService;
+  private readonly workspaceAutoName: WorkspaceAutoName;
   private readonly downloadTokenStore: DownloadTokenStore;
   private readonly paseoHome: string;
   private readonly worktreesRoot: string | undefined;
@@ -453,6 +465,7 @@ export class VoiceAssistantWebSocketServer {
   private unsubscribeTerminalActivity: (() => void) | null = null;
   private readonly browserToolsBroker: BrowserToolsBroker | null;
   private readonly browserToolsRegistrations = new Map<string, BrowserToolsRegistration>();
+  private acceptingConnections = true;
 
   constructor(
     server: HTTPServer,
@@ -465,6 +478,7 @@ export class VoiceAssistantWebSocketServer {
     daemonConfigStore: DaemonConfigStore,
     mcpBaseUrl: string | null,
     wsConfig: WebSocketServerConfig,
+    workspaceAutoName: WorkspaceAutoName,
     auth?: DaemonAuthConfig,
     speech?: SpeechService | null,
     terminalManager?: TerminalManager | null,
@@ -532,6 +546,7 @@ export class VoiceAssistantWebSocketServer {
     this.checkoutDiffManager = requiredServices.checkoutDiffManager;
     this.github = github ?? createGitHubService();
     this.workspaceGitService = workspaceGitService ?? createFallbackWorkspaceGitService();
+    this.workspaceAutoName = workspaceAutoName;
     this.downloadTokenStore = downloadTokenStore;
     this.paseoHome = paseoHome;
     this.worktreesRoot = daemonRuntimeConfig?.worktreesRoot;
@@ -696,6 +711,11 @@ export class VoiceAssistantWebSocketServer {
     hostnames: HostnamesConfig | undefined,
     callback: (res: boolean, code?: number, message?: string) => void,
   ): void {
+    if (!this.acceptingConnections) {
+      callback(false, 503, "Server shutting down");
+      return;
+    }
+
     const requestMetadata = extractSocketRequestMetadata(req);
     const origin = requestMetadata.origin;
     const requestHost = requestMetadata.host ?? null;
@@ -787,7 +807,12 @@ export class VoiceAssistantWebSocketServer {
     await this.attachSocket(ws, undefined, metadata);
   }
 
+  public prepareForShutdown(): void {
+    this.acceptingConnections = false;
+  }
+
   public async close(): Promise<void> {
+    this.prepareForShutdown();
     this.unsubscribeSpeechReadiness?.();
     this.unsubscribeSpeechReadiness = null;
     this.unsubscribeDaemonConfigChange?.();
@@ -909,6 +934,15 @@ export class VoiceAssistantWebSocketServer {
     request?: unknown,
     metadata?: ExternalSocketMetadata,
   ): Promise<void> {
+    if (!this.acceptingConnections) {
+      try {
+        ws.close(WS_CLOSE_SERVER_SHUTDOWN, "Server shutting down");
+      } catch {
+        // ignore close errors
+      }
+      return;
+    }
+
     const requestMetadata = extractSocketRequestMetadata(request);
     const identity = createWebSocketConnectionIdentity(requestMetadata, metadata);
     this.socketIdentities.set(ws, identity);
@@ -1011,6 +1045,7 @@ export class VoiceAssistantWebSocketServer {
       checkoutDiffManager: this.checkoutDiffManager,
       github: this.github,
       workspaceGitService: this.workspaceGitService,
+      workspaceAutoName: this.workspaceAutoName,
       daemonConfigStore: this.daemonConfigStore,
       mcpBaseUrl: this.mcpBaseUrl,
       stt: () => this.speech?.resolveStt() ?? null,
@@ -1225,6 +1260,12 @@ export class VoiceAssistantWebSocketServer {
         daemonSelfUpdate: true,
         // COMPAT(agentForkContext): added in v0.1.102, remove gate after 2026-12-28.
         agentForkContext: true,
+        // COMPAT(providerSubagents): added in v0.1.107, remove gate after 2027-01-12.
+        providerSubagents: true,
+        // COMPAT(workspacePinning): added in v0.1.107, remove gate after 2027-01-12.
+        workspacePinning: true,
+        // COMPAT(workspaceGithubClone): added in v0.1.108, remove gate after 2027-01-13.
+        workspaceGithubClone: true,
       },
     };
   }
@@ -1412,22 +1453,31 @@ export class VoiceAssistantWebSocketServer {
     if (!this.browserToolsBroker) {
       return;
     }
-    if (!hasDesktopBrowserAutomationCapability(connection.clientCapabilities)) {
+    const browserHostCapability = getBrowserHostCapability(connection.clientCapabilities);
+    if (!browserHostCapability) {
       this.unregisterBrowserToolsClient(connection.clientId);
       return;
     }
+    const capabilitySignature = JSON.stringify(browserHostCapability);
     const existing = this.browserToolsRegistrations.get(connection.clientId);
-    if (existing) {
+    if (existing?.capabilitySignature === capabilitySignature) {
       return;
+    }
+    if (existing) {
+      this.browserToolsRegistrations.delete(connection.clientId);
+      existing.unregister();
     }
 
     const unregister = this.browserToolsBroker.registerClient({
       id: connection.clientId,
+      hostKind: browserHostCapability.hostKind,
+      supportedCommands: browserHostCapability.supportedCommands,
       sendBrowserAutomationRequest: (request) => {
         this.sendToConnection(connection, wrapSessionMessage(request));
       },
     });
     this.browserToolsRegistrations.set(connection.clientId, {
+      capabilitySignature,
       unregister,
     });
   }
@@ -1587,6 +1637,10 @@ export class VoiceAssistantWebSocketServer {
     ws: WebSocketLike,
     data: Buffer | ArrayBuffer | Buffer[] | string,
   ): void {
+    if (!this.acceptingConnections) {
+      return;
+    }
+
     const activeConnection = this.sessions.get(ws);
     const pendingConnection = this.pendingConnections.get(ws);
     const log =

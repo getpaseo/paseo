@@ -21,12 +21,6 @@ export interface AttachmentMetadata {
   createdAt: number;
 }
 
-/**
- * The kind of review feedback the user is attaching to a selected browser
- * element, sent to the agent alongside the element context.
- */
-export type BrowserAnnotationIntent = "fix" | "change" | "question" | "approve";
-
 export interface BrowserElementAttachment {
   url: string;
   selector: string;
@@ -50,8 +44,6 @@ export interface BrowserElementAttachment {
   children: string[];
   /** Free-text review note the user wrote about this element, if any. */
   comment?: string;
-  /** What the user wants the agent to do with this element, if annotated. */
-  intent?: BrowserAnnotationIntent;
   /**
    * Cropped screenshot of the selected element, sent to the agent as an image
    * alongside the textual element context. Persisted via the attachment store;
@@ -91,11 +83,17 @@ export interface ChatHistoryContextAttachment {
   };
 }
 
+export const NEW_WORKSPACE_PICKER_ATTACHMENT_OWNER = "new-workspace-picker";
+
 export type UserComposerAttachment =
   | { kind: "image"; metadata: AttachmentMetadata }
   | { kind: "file"; attachment: UploadedFileAttachment }
   | { kind: "github_issue"; item: GitHubSearchItem }
-  | { kind: "github_pr"; item: GitHubSearchItem };
+  | {
+      kind: "github_pr";
+      item: GitHubSearchItem;
+      owner?: typeof NEW_WORKSPACE_PICKER_ATTACHMENT_OWNER;
+    };
 
 export type WorkspaceComposerAttachment =
   | {

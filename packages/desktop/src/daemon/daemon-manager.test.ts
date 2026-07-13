@@ -19,6 +19,8 @@ const mocks = vi.hoisted(() => ({
   spawnProcess: vi.fn(),
   logInfo: vi.fn(),
   logError: vi.fn(),
+  appLogPath: "/tmp/paseo-desktop-daemon-manager-test-main.log",
+  getElectronLogFile: vi.fn(),
 }));
 
 vi.mock("electron", () => ({
@@ -32,7 +34,15 @@ vi.mock("electron", () => ({
 }));
 
 vi.mock("electron-log/main", () => ({
-  default: { info: mocks.logInfo, error: mocks.logError },
+  default: {
+    info: mocks.logInfo,
+    error: mocks.logError,
+    transports: {
+      file: {
+        getFile: mocks.getElectronLogFile,
+      },
+    },
+  },
 }));
 
 vi.mock("@getpaseo/server", () => ({
@@ -105,11 +115,15 @@ describe("daemon-manager commands", () => {
     mocks.spawnProcess.mockReset();
     mocks.logInfo.mockReset();
     mocks.logError.mockReset();
+    mocks.getElectronLogFile.mockReset();
+    mocks.getElectronLogFile.mockReturnValue({ path: mocks.appLogPath });
     rmSync(mocks.paseoHome, { recursive: true, force: true });
+    rmSync(mocks.appLogPath, { force: true });
   });
 
   afterEach(() => {
     rmSync(mocks.paseoHome, { recursive: true, force: true });
+    rmSync(mocks.appLogPath, { force: true });
   });
 
   it("refuses start and restart while built-in daemon management is disabled", async () => {
@@ -434,5 +448,20 @@ describe("daemon-manager commands", () => {
         envOverlay: expect.objectContaining({ PASEO_WEB_UI_ENABLED: "false" }),
       }),
     );
+  });
+
+  it("returns the Electron main-process log tail from electron-log", () => {
+    writeFileSync(
+      mocks.appLogPath,
+      Array.from({ length: 105 }, (_value, index) => `main log line ${index + 1}`).join("\n"),
+    );
+    const handlers = createDaemonCommandHandlers();
+
+    expect(handlers.desktop_app_logs()).toEqual({
+      logPath: mocks.appLogPath,
+      contents: Array.from({ length: 100 }, (_value, index) => `main log line ${index + 6}`).join(
+        "\n",
+      ),
+    });
   });
 });

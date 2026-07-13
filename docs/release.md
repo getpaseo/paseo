@@ -50,7 +50,9 @@ npm run release:patch
 
 This bumps the version across all workspaces, runs checks, publishes to npm, and pushes the branch + tag. The tag push triggers `Desktop Release`, `Android APK Release`, `Docker`, and `Release Notes Sync` on GitHub Actions. EAS picks up the same tag via the EAS GitHub app and starts the iOS + Android store builds in parallel (see "Mobile builds (EAS)" below) — there is no `release-mobile.yml` in this repo.
 
-The Docker workflow builds images on pull requests and on `main` as non-publishing checks. Stable `vX.Y.Z` tag pushes publish `ghcr.io/getpaseo/paseo:X.Y.Z` and `ghcr.io/getpaseo/paseo:latest`; beta `vX.Y.Z-beta.N` tag pushes publish only `ghcr.io/getpaseo/paseo:X.Y.Z-beta.N` and never move `latest`. Beta Docker images build from the checked-out source tree so the beta flow can intentionally skip npm publishing.
+The Docker workflow builds images from the checked-out source tree on pull requests and on `main` as non-publishing checks. Stable `vX.Y.Z` tag pushes publish `ghcr.io/getpaseo/paseo:X.Y.Z` and `ghcr.io/getpaseo/paseo:latest`; beta `vX.Y.Z-beta.N` tag pushes publish only `ghcr.io/getpaseo/paseo:X.Y.Z-beta.N` and never move `latest`.
+
+Relay deployment is manual-only while `relay.paseo.sh` bridges traffic to the Fly deployment. Releases and pushes to `main` do not deploy the Cloudflare relay worker. Deploy it explicitly with `gh workflow run deploy-relay.yml` only when the production bridge should change.
 
 **Releases are always patch.** "Release paseo", "release stable", "ship stable", and similar always mean a patch bump from the previous stable. Never bump minor or major to trigger a build, ever — minor and major bumps are reserved for genuinely larger product cuts and require an explicit user instruction with the word "minor" or "major". If you find yourself reaching for `release:minor` to retrigger a failed build, you are doing the wrong thing — push a retry tag instead (see "Fixing a failed release build" below).
 
@@ -186,6 +188,8 @@ iOS and Android store builds are not in `.github/workflows`. They are triggered 
 - **iOS (TestFlight + App Store)** — EAS builds with profile `production`, uploads to TestFlight, and a Fastlane lane submits the build for App Store review.
 - **Android APK (GitHub Release asset)** — separate, via `.github/workflows/android-apk-release.yml`. This is the only Android-related workflow that lives in this repo.
 
+EAS uses the local app version source. `packages/app/app.config.js` derives Android `versionCode` and iOS `buildNumber` from the package version as `major * 1_000_000 + minor * 1_000 + patch`, ignoring prerelease metadata. Rebuilding the same tag produces the same native build number; if a store has already accepted a binary and you need a different binary, cut a new patch instead of relying on EAS remote auto-increment.
+
 There is no `release-mobile.yml` in this repo. Earlier versions of these docs referenced one — that workflow was removed and the EAS GitHub app handles tag triggering directly.
 
 ### Watching mobile builds from the terminal
@@ -281,8 +285,7 @@ and EAS mobile release builds. Use the Docker workflow dispatch instead:
 gh workflow run docker.yml \
   --ref main \
   -f paseo_version=X.Y.Z-beta.N \
-  -f publish=true \
-  -f source_build=auto
+  -f publish=true
 ```
 
 This replaces `ghcr.io/getpaseo/paseo:X.Y.Z-beta.N` in place without touching

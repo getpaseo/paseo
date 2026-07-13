@@ -26,7 +26,7 @@ import type {
 import { projectIconPlaceholderLabelFromDisplayName } from "@/utils/project-display-name";
 import { requireWorkspaceDirectory } from "@/utils/workspace-directory";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
-import { navigateToPreparedWorkspaceTab } from "@/utils/workspace-navigation";
+import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import type { MessagePayload } from "@/composer/types";
 
 function toProjectIconDataUri(icon: { mimeType: string; data: string } | null): string | null {
@@ -218,7 +218,7 @@ export function WorkspaceSetupDialog() {
         return;
       }
 
-      navigateToPreparedWorkspaceTab({
+      navigateToWorkspace({
         serverId: pendingWorkspaceSetup.serverId,
         workspaceId,
         target,

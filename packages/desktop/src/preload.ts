@@ -76,6 +76,8 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
   browser: {
     registerWorkspaceBrowser: (input: { browserId: string; workspaceId: string }) =>
       ipcRenderer.invoke("paseo:browser:register-workspace-browser", input),
+    unregisterWorkspaceBrowser: (browserId: string) =>
+      ipcRenderer.invoke("paseo:browser:unregister-workspace-browser", browserId),
     setWorkspaceActiveBrowser: (input: { workspaceId: string; browserId: string | null }) =>
       ipcRenderer.invoke("paseo:browser:set-workspace-active-browser", input),
     openDevTools: (browserId: string) =>

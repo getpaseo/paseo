@@ -5,10 +5,10 @@ import { type SeededWorkspace } from "./seed-client";
 
 const REGISTRY_KEY = "@paseo:daemon-registry";
 const SEED_NONCE_KEY = "@paseo:e2e-seed-nonce";
-const DISABLE_DEFAULT_SEED_ONCE_KEY = "@paseo:e2e-disable-default-seed-once";
-const FAKE_HOST_MODEL_ID = "fake-host-model";
-const FAKE_HOST_MODEL_LABEL = "Fake host model";
-const FAKE_HOST_PROJECT_DISPLAY_NAME = "Fake host project";
+const EXTRA_HOSTS_KEY = "@paseo:e2e-extra-hosts";
+export const FAKE_HOST_MODEL_ID = "fake-host-model";
+export const FAKE_HOST_MODEL_LABEL = "Fake host model";
+export const FAKE_HOST_PROJECT_DISPLAY_NAME = "Fake host project";
 
 type WebSocketMessage = string | Buffer;
 type SessionRequest = Record<string, unknown> & { type?: string; requestId?: string };
@@ -18,6 +18,31 @@ export interface FakeScheduleHostWorkspace {
   projectId: string;
   projectDisplayName: string;
   workspace: Record<string, unknown>;
+}
+
+interface FakeScheduleSummary {
+  id: string;
+  name: string | null;
+  prompt: string;
+  cadence: { type: "cron"; expression: string };
+  target: {
+    type: "new-agent";
+    config: {
+      provider: "mock";
+      cwd: string;
+      model: string;
+      modeId: string;
+      title?: string;
+    };
+  };
+  status: "active";
+  createdAt: string;
+  updatedAt: string;
+  nextRunAt: string | null;
+  lastRunAt: string | null;
+  pausedAt: string | null;
+  expiresAt: string | null;
+  maxRuns: number | null;
 }
 
 function parseJson(message: WebSocketMessage): unknown {
@@ -114,6 +139,7 @@ export async function installFakeScheduleHost(input: {
   port: string;
   serverId: string;
   workspace: Record<string, unknown>;
+  schedules?: FakeScheduleSummary[];
 }): Promise<void> {
   await input.page.routeWebSocket(wsRoutePatternForPort(input.port), (ws) => {
     ws.onMessage((message) => {
@@ -201,7 +227,7 @@ export async function installFakeScheduleHost(input: {
           ws.send(
             buildSessionMessage("schedule/list/response", {
               requestId,
-              schedules: [],
+              schedules: input.schedules ?? [],
               error: null,
             }),
           );
@@ -232,15 +258,24 @@ export async function addFakeScheduleHostAndReload(input: {
       }
       const raw = localStorage.getItem(keys.registry);
       const registry: Array<{ serverId: string }> = raw ? JSON.parse(raw) : [];
-      localStorage.setItem(keys.registry, JSON.stringify([...registry, seededHost]));
-      localStorage.setItem(keys.disableSeedOnce, nonce);
+      const nextRegistry = registry.filter((entry) => entry.serverId !== seededHost.serverId);
+      nextRegistry.push(seededHost);
+      localStorage.setItem(keys.registry, JSON.stringify(nextRegistry));
+
+      const rawExtraHosts = localStorage.getItem(keys.extraHosts);
+      const extraHosts: Array<{ serverId: string }> = rawExtraHosts
+        ? JSON.parse(rawExtraHosts)
+        : [];
+      const nextExtraHosts = extraHosts.filter((entry) => entry.serverId !== seededHost.serverId);
+      nextExtraHosts.push(seededHost);
+      localStorage.setItem(keys.extraHosts, JSON.stringify(nextExtraHosts));
     },
     {
       seededHost: host,
       keys: {
         registry: REGISTRY_KEY,
         nonce: SEED_NONCE_KEY,
-        disableSeedOnce: DISABLE_DEFAULT_SEED_ONCE_KEY,
+        extraHosts: EXTRA_HOSTS_KEY,
       },
     },
   );

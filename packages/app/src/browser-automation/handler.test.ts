@@ -75,6 +75,8 @@ class FakeBrowserBridge {
   public readonly executedRequests: BrowserAutomationExecuteRequest[] = [];
   public readonly registeredWorkspaceBrowsers: Array<{ browserId: string; workspaceId: string }> =
     [];
+  public readonly unregisteredWorkspaceBrowsers: string[] = [];
+  public readonly clearedPartitions: string[] = [];
   public readonly activeWorkspaceBrowsers: Array<{
     browserId: string | null;
     workspaceId: string;
@@ -97,6 +99,14 @@ class FakeBrowserBridge {
     workspaceId: string;
   }): Promise<void> => {
     this.registeredWorkspaceBrowsers.push(input);
+  };
+
+  public unregisterWorkspaceBrowser = async (browserId: string): Promise<void> => {
+    this.unregisteredWorkspaceBrowsers.push(browserId);
+  };
+
+  public clearPartition = async (browserId: string): Promise<void> => {
+    this.clearedPartitions.push(browserId);
   };
 
   public setWorkspaceActiveBrowser = async (input: {
@@ -171,6 +181,35 @@ function browserNewTabRequest(): BrowserAutomationExecuteRequest {
     command: {
       command: "new_tab",
       args: { url: "https://example.com" },
+    },
+  };
+}
+
+function browserResizeRequest(
+  browserId: string,
+  input: { workspaceId?: string } = {},
+): BrowserAutomationExecuteRequest {
+  return {
+    type: "browser.automation.execute.request",
+    requestId: "req-resize",
+    agentId: "agent-1",
+    workspaceId: input.workspaceId ?? "wks_workspace_a",
+    command: {
+      command: "resize",
+      args: { browserId, width: 1024, height: 768 },
+    },
+  };
+}
+
+function browserCloseTabRequest(browserId: string): BrowserAutomationExecuteRequest {
+  return {
+    type: "browser.automation.execute.request",
+    requestId: "req-close-tab",
+    agentId: "agent-1",
+    workspaceId: "wks_workspace_a",
+    command: {
+      command: "close_tab",
+      args: { browserId },
     },
   };
 }
@@ -250,7 +289,7 @@ describe("mountBrowserAutomationHandler", () => {
     useWorkspaceLayoutStore.setState({ layoutByWorkspace: {} });
   });
 
-  test("browser_new_tab creates and focuses a workspace browser tab", async () => {
+  test("browser_new_tab creates a workspace browser tab without stealing focus", async () => {
     const browser = new BrowserAutomationHandlerHarness();
     const workspaceKey = buildWorkspaceTabPersistenceKey({
       serverId: "server-1",
@@ -278,16 +317,14 @@ describe("mountBrowserAutomationHandler", () => {
     expect(layout?.root).toEqual(
       expect.objectContaining({
         kind: "pane",
-        pane: expect.objectContaining({ focusedTabId: openedTabs[0]?.tabId }),
+        pane: expect.objectContaining({ focusedTabId: previousFocusedTabId }),
       }),
     );
     expect(openedTabs[0]?.tabId).not.toBe(previousFocusedTabId);
     expect(browser.browser.registeredWorkspaceBrowsers).toEqual([
       { browserId: result.browserId, workspaceId: "wks_workspace_a" },
     ]);
-    expect(browser.browser.activeWorkspaceBrowsers).toEqual([
-      { browserId: result.browserId, workspaceId: "wks_workspace_a" },
-    ]);
+    expect(browser.browser.activeWorkspaceBrowsers).toEqual([]);
     expect(browser.resident.ensuredWebviews).toEqual([
       { browserId: result.browserId, url: "https://example.com" },
     ]);
@@ -357,6 +394,106 @@ describe("mountBrowserAutomationHandler", () => {
     ]);
   });
 
+  test("browser_resize updates resident webview dimensions", async () => {
+    const browser = new BrowserAutomationHandlerHarness();
+    browser.mount({ serverId: "server-1" });
+
+    browser.receive(browserNewTabRequest());
+    await flushAsyncWork();
+    const result = newTabResultFrom(browser.client.payloadAt(0));
+
+    browser.receive(browserResizeRequest(result.browserId));
+    await flushAsyncWork();
+
+    expect(browser.client.payloadAt(1)).toEqual({
+      requestId: "req-resize",
+      ok: true,
+      result: {
+        command: "resize",
+        browserId: result.browserId,
+        width: 1024,
+        height: 768,
+      },
+    });
+    expect(browser.browser.executedRequests).toHaveLength(1);
+  });
+
+  test("browser_resize returns not found for a tab outside the request workspace", async () => {
+    const browser = new BrowserAutomationHandlerHarness();
+    browser.mount({ serverId: "server-1" });
+
+    browser.receive(browserNewTabRequest());
+    await flushAsyncWork();
+    const result = newTabResultFrom(browser.client.payloadAt(0));
+
+    browser.receive(browserResizeRequest(result.browserId, { workspaceId: "wks_workspace_b" }));
+    await flushAsyncWork();
+
+    expect(browser.client.payloadAt(1)).toEqual({
+      requestId: "req-resize",
+      ok: false,
+      error: {
+        code: "browser_tab_not_found",
+        message: `No browser tab found for ID: ${result.browserId}`,
+        retryable: false,
+      },
+    });
+  });
+
+  test("browser_close_tab removes the workspace tab, browser record, resident webview, registry entry, and partition", async () => {
+    const browser = new BrowserAutomationHandlerHarness();
+    const workspaceKey = buildWorkspaceTabPersistenceKey({
+      serverId: "server-1",
+      workspaceId: "wks_workspace_a",
+    });
+    if (!workspaceKey) {
+      throw new Error("Expected workspace key");
+    }
+    browser.mount({ serverId: "server-1" });
+
+    browser.receive(browserNewTabRequest());
+    await flushAsyncWork();
+    const result = newTabResultFrom(browser.client.payloadAt(0));
+
+    browser.receive(browserCloseTabRequest(result.browserId));
+    await flushAsyncWork();
+
+    expect(browser.client.payloadAt(1)).toEqual({
+      requestId: "req-close-tab",
+      ok: true,
+      result: { command: "close_tab", browserId: result.browserId },
+    });
+    expect(workspaceBrowserTabs(workspaceKey, result.browserId)).toEqual([]);
+    expect(useBrowserStore.getState().browsersById[result.browserId]).toBeUndefined();
+    expect(browser.browser.unregisteredWorkspaceBrowsers).toEqual([result.browserId]);
+    expect(browser.browser.clearedPartitions).toEqual([result.browserId]);
+    expect(currentBrowserTabs()).toEqual([]);
+  });
+
+  test("browser_close_tab returns not found after the tab is gone", async () => {
+    const browser = new BrowserAutomationHandlerHarness();
+    browser.mount({ serverId: "server-1" });
+
+    browser.receive(browserNewTabRequest());
+    await flushAsyncWork();
+    const result = newTabResultFrom(browser.client.payloadAt(0));
+
+    browser.receive(browserCloseTabRequest(result.browserId));
+    await flushAsyncWork();
+    browser.receive(browserCloseTabRequest(result.browserId));
+    await flushAsyncWork();
+
+    expect(browser.client.payloadAt(2)).toEqual({
+      requestId: "req-close-tab",
+      ok: false,
+      error: {
+        code: "browser_tab_not_found",
+        message: `No browser tab found for ID: ${result.browserId}`,
+        retryable: false,
+      },
+    });
+  });
+
   test("non-new-tab requests send the desktop bridge response", async () => {
     const browser = new BrowserAutomationHandlerHarness();
     browser.browser.response = {
@@ -398,7 +535,7 @@ describe("mountBrowserAutomationHandler", () => {
           ok: false,
           error: {
             code: "browser_unsupported",
-            message: "Desktop browser automation is not available in this app runtime.",
+            message: "Browser automation is not available in this app runtime.",
             retryable: false,
           },
         },
@@ -452,7 +589,7 @@ describe("mountBrowserAutomationHandler", () => {
           ok: false,
           error: {
             code: "browser_unsupported",
-            message: "Desktop browser automation is not implemented by this desktop build yet.",
+            message: "Browser automation is not implemented by this app build yet.",
             retryable: false,
           },
         },

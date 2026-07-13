@@ -21,6 +21,7 @@ import {
   resolvePendingModifierDataInput,
 } from "@/utils/terminal-keys";
 import { getWorkspaceTerminalSession } from "@/terminal/runtime/workspace-terminal-session";
+import { rememberTerminalViewportSize } from "@/terminal/runtime/terminal-size-cache";
 import {
   TerminalStreamController,
   type TerminalStreamControllerStatus,
@@ -180,7 +181,7 @@ export function TerminalPane({
     return trimmed.length > 0 ? trimmed : undefined;
   }, [settings.monoFontFamily]);
   const isMobile = useIsCompactFormFactor();
-  const mobileView = usePanelStore((state) => state.mobileView);
+  const mobileView = usePanelStore((state) => state.mobilePanel.target);
   const showMobileAgentList = usePanelStore((state) => state.showMobileAgentList);
   const swipeGesturesEnabled = isMobile && mobileView === "agent";
   const { shift: keyboardShift, style: keyboardPaddingStyle } = useKeyboardShiftStyle({
@@ -635,6 +636,9 @@ export function TerminalPane({
       const normalizedCols = Math.floor(cols);
       const nextSize = { rows: normalizedRows, cols: normalizedCols };
       measuredTerminalSizeRef.current = nextSize;
+      // Seed future terminals in this workspace with the current pane size so they are born at
+      // the right size instead of the daemon's 80x24 default (see terminal-size-cache).
+      rememberTerminalViewportSize({ serverId, cwd, size: nextSize });
       if (!input.shouldClaim || !client || !terminalId || !isWorkspaceFocused || !isAppVisible) {
         return;
       }

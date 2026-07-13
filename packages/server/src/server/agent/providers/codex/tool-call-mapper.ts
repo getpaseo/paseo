@@ -76,6 +76,16 @@ interface CodexResolvedToolCall {
   cwd: string | null;
 }
 
+export interface CodexMcpToolResultImage {
+  data: string;
+  mimeType: string;
+}
+
+interface CodexMcpToolResultImagesSplit {
+  images: CodexMcpToolResultImage[];
+  output: unknown;
+}
+
 function toToolCallTimelineItem(envelope: CodexResolvedToolCall): ToolCallTimelineItem {
   const name = envelope.toolKind === "speak" ? ("speak" as const) : envelope.name;
   const parsedDetail = deriveCodexToolDetail({
@@ -131,7 +141,7 @@ const CodexCommandExecutionItemSchema = z
     error: z.unknown().optional(),
     command: CodexCommandValueSchema.optional(),
     cwd: z.string().optional(),
-    aggregatedOutput: z.string().optional(),
+    aggregatedOutput: z.string().nullable().optional(),
     exitCode: z.number().nullable().optional(),
   })
   .passthrough();
@@ -183,6 +193,16 @@ const CodexCollabAgentToolCallItemSchema = z
   })
   .passthrough();
 
+const CodexSubAgentActivityItemSchema = z
+  .object({
+    type: z.literal("subAgentActivity"),
+    id: z.string().min(1),
+    kind: z.enum(["started", "interacted", "interrupted"]),
+    agentThreadId: z.string().min(1),
+    agentPath: z.string(),
+  })
+  .passthrough();
+
 const CodexToolThreadItemSchema = z.discriminatedUnion("type", [
   CodexCommandExecutionItemSchema,
   CodexFileChangeItemSchema,
@@ -196,11 +216,14 @@ const CodexThreadItemSchema = z.discriminatedUnion("type", [
   CodexMcpToolCallItemSchema,
   CodexWebSearchItemSchema,
   CodexCollabAgentToolCallItemSchema,
+  CodexSubAgentActivityItemSchema,
 ]);
 
 function maybeUnwrapShellWrapperCommand(command: string): string {
   const trimmed = command.trim();
-  const unixWrapperMatch = trimmed.match(/^(?:\/bin\/)?(?:zsh|bash|sh)\s+-(?:lc|c)\s+([\s\S]+)$/);
+  const unixWrapperMatch = trimmed.match(
+    /^(?:(?:\/[^/\s]+)*\/)?(?:zsh|bash|sh)\s+-(?:lc|c)\s+([\s\S]+)$/,
+  );
   if (unixWrapperMatch) {
     const candidate = unixWrapperMatch[1]?.trim() ?? "";
     if (!candidate) {
@@ -596,6 +619,50 @@ function buildMcpToolName(server: string | undefined, tool: string): string {
   return trimmedTool;
 }
 
+function readMcpImageContent(block: unknown): CodexMcpToolResultImage | null {
+  if (!isRecord(block)) {
+    return null;
+  }
+  if (block.type !== "image") {
+    return null;
+  }
+  if (typeof block.data !== "string" || typeof block.mimeType !== "string") {
+    return null;
+  }
+  return {
+    data: block.data,
+    mimeType: block.mimeType,
+  };
+}
+
+export function splitCodexMcpToolResultImages(result: unknown): CodexMcpToolResultImagesSplit {
+  if (!isRecord(result) || !Array.isArray(result.content)) {
+    return { images: [], output: result };
+  }
+
+  const images: CodexMcpToolResultImage[] = [];
+  const content = result.content.map((block) => {
+    const image = readMcpImageContent(block);
+    if (!image) {
+      return block;
+    }
+    images.push(image);
+    return { type: "text", text: "[image]" };
+  });
+
+  if (images.length === 0) {
+    return { images, output: result };
+  }
+
+  return {
+    images,
+    output: {
+      ...result,
+      content,
+    },
+  };
+}
+
 function toNullableObject(value: Record<string, unknown>): Record<string, unknown> | null {
   return Object.keys(value).length > 0 ? value : null;
 }
@@ -627,7 +694,7 @@ function mapCommandExecutionItem(
   item: z.infer<typeof CodexCommandExecutionItemSchema>,
 ): CodexNormalizedToolCallEnvelope {
   const command = normalizeCommandExecutionCommand(item.command);
-  const parsedOutput = extractCodexShellOutput(item.aggregatedOutput);
+  const parsedOutput = extractCodexShellOutput(item.aggregatedOutput ?? undefined);
   const input = toNullableObject({
     ...(command !== undefined ? { command } : {}),
     ...(item.cwd !== undefined ? { cwd: item.cwd } : {}),
@@ -855,7 +922,7 @@ function mapMcpToolCallItem(
   }
   const name = buildMcpToolName(item.server, tool);
   const input = item.arguments ?? null;
-  const output = item.result ?? null;
+  const { output } = splitCodexMcpToolResultImages(item.result ?? null);
   const error = item.error ?? null;
   const status = normalizeToolCallStatus(item.status, error, output);
 
@@ -923,6 +990,25 @@ function mapCollabAgentToolCallItem(
   };
 }
 
+function mapSubAgentActivityItem(
+  item: z.infer<typeof CodexSubAgentActivityItemSchema>,
+): ToolCallTimelineItem {
+  return {
+    type: "tool_call",
+    callId: item.id,
+    name: "Sub-agent",
+    status: item.kind === "interrupted" ? "canceled" : "running",
+    error: null,
+    detail: {
+      type: "sub_agent",
+      subAgentType: "Sub-agent",
+      description: item.agentPath,
+      log: "",
+      actions: [],
+    },
+  };
+}
+
 function mapThreadItemToNormalizedEnvelope(
   item: z.infer<typeof CodexToolThreadItemSchema>,
   options?: CodexMapperOptions,
@@ -957,6 +1043,9 @@ export function mapCodexToolCallFromThreadItem(
   }
   if (parsed.data.type === "collabAgentToolCall") {
     return mapCollabAgentToolCallItem(parsed.data);
+  }
+  if (parsed.data.type === "subAgentActivity") {
+    return mapSubAgentActivityItem(parsed.data);
   }
   const envelope = mapThreadItemToNormalizedEnvelope(parsed.data, options);
   if (!envelope) {

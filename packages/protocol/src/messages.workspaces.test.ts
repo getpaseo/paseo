@@ -286,6 +286,67 @@ describe("workspace message schemas", () => {
     expect(parsed.type).toBe("open_project_request");
   });
 
+  test("parses workspace GitHub clone request and response repo paths", () => {
+    const request = SessionInboundMessageSchema.parse({
+      type: "workspace.github.clone.request",
+      repo: "a/b",
+      cloneProtocol: "https",
+      targetDirectory: "~/workspace",
+      requestId: "req-clone",
+    });
+    const response = SessionOutboundMessageSchema.parse({
+      type: "workspace.github.clone.response",
+      payload: {
+        requestId: "req-clone",
+        repo: "a/b",
+        checkoutPath: "/tmp/b",
+        workspace: null,
+        error: null,
+      },
+    });
+
+    expect(request.type).toBe("workspace.github.clone.request");
+    if (request.type !== "workspace.github.clone.request") {
+      throw new Error("expected workspace.github.clone.request");
+    }
+    expect(request.cloneProtocol).toBe("https");
+    expect(response.type).toBe("workspace.github.clone.response");
+  });
+
+  test("rejects invalid workspace GitHub clone protocols", () => {
+    const request = SessionInboundMessageSchema.safeParse({
+      type: "workspace.github.clone.request",
+      repo: "a/b",
+      cloneProtocol: "ftp",
+      targetDirectory: "~/workspace",
+      requestId: "req-clone",
+    });
+
+    expect(request.success).toBe(false);
+  });
+
+  test("rejects workspace GitHub clone repo paths shorter than owner slash repo", () => {
+    const request = SessionInboundMessageSchema.safeParse({
+      type: "workspace.github.clone.request",
+      repo: "ab",
+      targetDirectory: "~/workspace",
+      requestId: "req-clone",
+    });
+    const response = SessionOutboundMessageSchema.safeParse({
+      type: "workspace.github.clone.response",
+      payload: {
+        requestId: "req-clone",
+        repo: "ab",
+        checkoutPath: null,
+        workspace: null,
+        error: "failed",
+      },
+    });
+
+    expect(request.success).toBe(false);
+    expect(response.success).toBe(false);
+  });
+
   test("parses legacy editor RPC messages for compatibility", () => {
     const listRequest = SessionInboundMessageSchema.parse({
       type: "list_available_editors_request",

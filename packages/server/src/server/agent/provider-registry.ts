@@ -36,6 +36,7 @@ import { GenericACPAgentClient } from "./providers/generic-acp-agent.js";
 import { KiroACPAgentClient } from "./providers/kiro-acp-agent.js";
 import { OpenCodeAgentClient } from "./providers/opencode-agent.js";
 import { PiRpcAgentClient } from "./providers/pi/agent.js";
+import { TraeACPAgentClient } from "./providers/trae-acp-agent.js";
 import { MockLoadTestAgentClient } from "./providers/mock-load-test-agent.js";
 import { MockSlowProviderClient } from "./providers/mock-slow-provider.js";
 import {
@@ -397,6 +398,7 @@ function wrapClientProvider(
 ): AgentClient {
   const listImportableSessions = inner.listImportableSessions?.bind(inner);
   const importSession = inner.importSession?.bind(inner);
+  const listFeatures = inner.listFeatures?.bind(inner);
 
   return {
     provider,
@@ -440,6 +442,9 @@ function wrapClientProvider(
     },
     resolveCreateConfig: inner.resolveCreateConfig?.bind(inner),
     isCreateConfigUnattended: inner.isCreateConfigUnattended?.bind(inner),
+    listFeatures: listFeatures
+      ? async (config) => await listFeatures({ ...config, provider: inner.provider })
+      : undefined,
     listImportableSessions: listImportableSessions
       ? async (options) => await listImportableSessions(options)
       : undefined,
@@ -659,6 +664,9 @@ function addDerivedProviders(
           }
           if (providerId === "kiro") {
             return new KiroACPAgentClient(acpOptions);
+          }
+          if (providerId === "traecli") {
+            return new TraeACPAgentClient(acpOptions);
           }
           return new GenericACPAgentClient(acpOptions);
         },

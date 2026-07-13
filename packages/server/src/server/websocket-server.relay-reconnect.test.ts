@@ -9,6 +9,7 @@ import type { FileBackedChatService } from "./chat/chat-service.js";
 import type { LoopService } from "./loop-service.js";
 import type { ScheduleService } from "./schedule/service.js";
 import type { CheckoutDiffManager } from "./checkout-diff-manager.js";
+import type { WorkspaceAutoName } from "./workspace-auto-name.js";
 import { asInternals, createStub } from "./test-utils/class-mocks.js";
 import { createProviderSnapshotManagerStub } from "./test-utils/session-stubs.js";
 import {
@@ -215,6 +216,13 @@ function createLogger() {
   return logger;
 }
 
+function createWorkspaceAutoNameStub(): WorkspaceAutoName {
+  return createStub<WorkspaceAutoName>({
+    scheduleForWorktree: () => {},
+    scheduleForDirectory: () => {},
+  });
+}
+
 function createServer(options?: {
   speechReadiness?: SpeechReadinessSnapshot | null;
   logger?: ReturnType<typeof createLogger>;
@@ -246,6 +254,7 @@ function createServer(options?: {
     createStub<DaemonConfigStore>(daemonConfigStore),
     null,
     { allowedOrigins: new Set() },
+    createWorkspaceAutoNameStub(),
     undefined,
     speechReadiness
       ? {
@@ -445,6 +454,21 @@ function holdNextSessionMessage(session: (typeof sessionMock.instances)[number])
   };
 }
 
+function holdSessionCleanup(session: (typeof sessionMock.instances)[number]): {
+  finish: () => void;
+} {
+  let finish = () => {};
+  session.cleanup.mockImplementationOnce(
+    () =>
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  return {
+    finish: () => finish(),
+  };
+}
+
 describe("relay external socket reconnect behavior", () => {
   beforeEach(() => {
     sessionMock.instances.length = 0;
@@ -506,6 +530,36 @@ describe("relay external socket reconnect behavior", () => {
     });
 
     await server.close();
+  });
+
+  test("rejects sockets attached after shutdown begins", async () => {
+    const server = createServer();
+    const existingSocket = new MockSocket();
+    await attachRelayAndHello({
+      server,
+      socket: existingSocket,
+      clientId: "existing-client",
+    });
+
+    const heldCleanup = holdSessionCleanup(sessionMock.instances[0]);
+    const closePromise = server.close();
+
+    const lateSocket = new MockSocket();
+    try {
+      await server.attachExternalSocket(lateSocket, { transport: "relay" });
+      lateSocket.emit("message", JSON.stringify(createHelloMessage("late-client")));
+
+      expect({
+        readyState: lateSocket.readyState,
+        sessionCount: sessionMock.instances.length,
+      }).toEqual({
+        readyState: 3,
+        sessionCount: 1,
+      });
+    } finally {
+      heldCleanup.finish();
+      await closePromise;
+    }
   });
 
   test("closes pending connection when hello timeout elapses", async () => {

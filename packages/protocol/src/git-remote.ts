@@ -24,6 +24,19 @@ export function parseGitHubRemoteUrl(remoteUrl: string): GitHubRemoteIdentity | 
   return parseGitHubRemoteIdentity(location.path);
 }
 
+/**
+ * Whether `repo` is already a complete git remote (a URL or scp-like address)
+ * rather than `owner/repo` shorthand that still needs a clone protocol picked.
+ *
+ * Clients (app + CLI) and the daemon must agree on this classification: the
+ * daemon treats `parseGitRemoteLocation(repo) !== null` as "complete remote"
+ * and everything else as shorthand, so reuse the same parser here instead of a
+ * separate regex that would drift (e.g. accepting `git://` the parser rejects).
+ */
+export function isCompleteGitRemote(repo: string): boolean {
+  return parseGitRemoteLocation(repo) !== null;
+}
+
 export function parseGitRemoteLocation(remoteUrl: string): GitRemoteLocation | null {
   const trimmed = remoteUrl.trim();
   if (!trimmed) return null;

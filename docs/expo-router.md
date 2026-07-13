@@ -48,8 +48,13 @@ dynamic params exist before any nested workspace leaf is selected.
 ## App-Wide Route Hops
 
 When app-wide routes such as `/new`, `/settings`, or `/sessions` navigate back
-into a host workspace, express only the destination with `navigateToWorkspace()`.
-Do not make the caller branch on its current route.
+into a host workspace, use `navigateToWorkspace()`. Do not make the caller
+branch on its current route.
+
+Pass only `serverId` and `workspaceId` for normal attention-aware navigation.
+When the action names a specific tab, pass it as `target`; that explicit choice
+is authoritative. Callers should not choose between separate route and tab
+navigation APIs.
 
 The root stack owns `h/[serverId]`; the host stack owns
 `workspace/[workspaceId]/index`. Repeated global-route hops must `POP_TO` the
@@ -96,6 +101,18 @@ Keep workspace identity and retention outside native-stack `getId` and
 Navigation `getId`, and `getId` has broken Android native-stack/Fabric by
 reordering an already-mounted workspace screen.
 
+Use `ThemedStack` from `packages/app/src/navigation/themed-stack.tsx` for every
+Expo Router stack. React Navigation otherwise paints each native stack screen
+with its light default background. A screen-level wrapper can hide that surface
+while settled, but Android may expose it for one frame when navigation crosses
+from a nested stack to its parent stack. This is especially visible when an
+app-wide route such as `/new` opens from a dark workspace.
+
+Do not read the active theme with `useUnistyles()` in a layout to build
+`screenOptions`. `ThemedStack` keeps that third-party prop theme-reactive through
+a small `withUnistyles` boundary without subscribing the route tree itself to
+every Unistyles runtime update.
+
 ## Regression Shape
 
 Pure helper tests are useful but not enough. The failure mode here is native
@@ -121,7 +138,8 @@ Before landing route changes:
 
 - [ ] Did you change `packages/app/src/app`? Re-read this file.
 - [ ] Did you touch remembered workspace restore? Keep root on `/h/[serverId]`.
-- [ ] Did any route return to a workspace? Use `navigateToWorkspace()`.
+- [ ] Did a route return to a workspace? Use `navigateToWorkspace()` and pass a
+      `target` when the action names a specific tab.
 - [ ] Did you add a route? Register it in the layout that directly owns it.
 - [ ] Did `useLocalSearchParams()` lose a required param? Fix the route tree.
 - [ ] Did native show a blank screen without a crash? Suspect route ownership

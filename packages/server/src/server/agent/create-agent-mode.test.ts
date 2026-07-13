@@ -96,6 +96,32 @@ describe("resolveAndValidateCreateAgentMode", () => {
     );
   });
 
+  it("uses the provider default when the cross-provider target has no modes", () => {
+    const resolved = resolveAndValidateCreateAgentMode({
+      requestedMode: undefined,
+      targetProvider: "pi",
+      parent: agentParent("codex", "auto"),
+      unattended: false,
+      availableModes: [],
+      targetUnattendedMode: undefined,
+    });
+
+    expect(resolved).toBeUndefined();
+  });
+
+  it("uses the provider default when an unattended parent targets a provider with no modes", () => {
+    const resolved = resolveAndValidateCreateAgentMode({
+      requestedMode: undefined,
+      targetProvider: "pi",
+      parent: agentParent("claude", "bypassPermissions", true),
+      unattended: false,
+      availableModes: [],
+      targetUnattendedMode: undefined,
+    });
+
+    expect(resolved).toBeUndefined();
+  });
+
   it("passes through an explicit mode when the target provider's modes are unknown", () => {
     const resolved = resolveAndValidateCreateAgentMode({
       requestedMode: "default",

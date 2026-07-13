@@ -629,20 +629,37 @@ test("provider actions delegate to existing provider RPCs and local snapshot upd
   });
 
   const snapshotUpdates: string[] = [];
+  const snapshotModelDefaults: Array<string | undefined> = [];
   const unsubscribe = client.providers.subscribe((update) => {
     snapshotUpdates.push(update.generatedAt);
+    snapshotModelDefaults.push(update.entries[0]?.models?.[0]?.defaultThinkingOptionId);
   });
   ws.message(
     sessionMessage({
       type: "providers_snapshot_update",
       payload: {
         cwd: "/repo/sdk",
-        entries: [{ provider: "codex", status: "ready", enabled: true }],
+        entries: [
+          {
+            provider: "codex",
+            status: "ready",
+            enabled: true,
+            models: [
+              {
+                provider: "codex",
+                id: "gpt-5.5",
+                label: "GPT-5.5",
+                thinkingOptions: [{ id: "high", label: "High", isDefault: true }],
+              },
+            ],
+          },
+        ],
         generatedAt: "2026-05-16T01:00:00.000Z",
       },
     }),
   );
   expect(snapshotUpdates).toEqual(["2026-05-16T01:00:00.000Z"]);
+  expect(snapshotModelDefaults).toEqual(["high"]);
 
   unsubscribe();
   await client.close();

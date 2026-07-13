@@ -77,11 +77,7 @@ function hasPendingArchiveForProject(input: {
     }
   }
 
-  const workspaceDirectory = getHostProjectSourceDirectory(input.project, input.selectedServerId);
-  return isWorkspaceArchivePending({
-    serverId: input.selectedServerId,
-    workspaceDirectory,
-  });
+  return false;
 }
 
 export function useNewWorkspaceProjectPicker({

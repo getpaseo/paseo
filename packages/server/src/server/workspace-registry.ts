@@ -56,6 +56,11 @@ const PersistedWorkspaceRecordSchema = z.object({
   createdAt: z.string(),
   updatedAt: z.string(),
   archivedAt: z.string().nullable(),
+  pinnedAt: z
+    .string()
+    .nullable()
+    .optional()
+    .transform((value) => value ?? null),
 });
 
 export type PersistedProjectRecord = z.infer<typeof PersistedProjectRecordSchema>;
@@ -76,6 +81,10 @@ export interface WorkspaceRegistry {
   existsOnDisk(): Promise<boolean>;
   list(): Promise<PersistedWorkspaceRecord[]>;
   get(workspaceId: string): Promise<PersistedWorkspaceRecord | null>;
+  update(
+    workspaceId: string,
+    updater: (record: PersistedWorkspaceRecord) => PersistedWorkspaceRecord,
+  ): Promise<PersistedWorkspaceRecord | null>;
   upsert(record: PersistedWorkspaceRecord): Promise<void>;
   archive(workspaceId: string, archivedAt: string): Promise<void>;
   remove(workspaceId: string): Promise<void>;
@@ -136,6 +145,18 @@ class FileBackedRegistry<TRecord extends RegistryRecord> {
     const parsed = this.schema.parse(record);
     this.cache.set(this.getId(parsed), parsed);
     await this.enqueuePersist();
+  }
+
+  async update(id: string, updater: (record: TRecord) => TRecord): Promise<TRecord | null> {
+    await this.load();
+    const existing = this.cache.get(id);
+    if (!existing) {
+      return null;
+    }
+    const next = this.schema.parse(updater(existing));
+    this.cache.set(id, next);
+    await this.enqueuePersist();
+    return next;
   }
 
   async archive(id: string, archivedAt: string): Promise<void> {
@@ -257,6 +278,7 @@ export function createPersistedWorkspaceRecord(input: {
   createdAt: string;
   updatedAt: string;
   archivedAt?: string | null;
+  pinnedAt?: string | null;
 }): PersistedWorkspaceRecord {
   return PersistedWorkspaceRecordSchema.parse({
     ...input,
@@ -264,6 +286,7 @@ export function createPersistedWorkspaceRecord(input: {
     branch: input.branch ?? null,
     baseBranch: input.baseBranch ?? null,
     archivedAt: input.archivedAt ?? null,
+    pinnedAt: input.pinnedAt ?? null,
   });
 }
 

@@ -2,7 +2,7 @@ import { router, type Href } from "expo-router";
 import { useSessionStore } from "@/stores/session-store";
 import { getHostRuntimeStore, isHostRuntimeConnected } from "@/runtime/host-runtime";
 import { resolveNavigateToAgent, type NavigateToAgentInput } from "./resolve";
-import { navigateToPreparedWorkspaceTab } from "@/utils/workspace-navigation";
+import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 
 export type { NavigateToAgentInput } from "./resolve";
 
@@ -69,7 +69,7 @@ export function navigateToAgent(input: NavigateToAgentInput): string {
     navigateToHostAgent: (route) => {
       router.navigate(route as Href);
     },
-    navigateToPreparedWorkspaceTab,
+    navigateToWorkspace,
     restoreArchivedWorkspace: ({ serverId, agentId, workspaceId }) => {
       restoreArchivedWorkspace(serverId, agentId, workspaceId);
     },

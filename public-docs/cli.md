@@ -91,6 +91,16 @@ paseo wait <id> --timeout 60   # 60 second timeout
 
 Useful in scripts or when one agent needs to wait for another.
 
+## Schedules
+
+Run an agent on an interval or a cron. See [Schedules from the CLI](/docs/schedules-cli) for the full reference.
+
+```bash
+paseo schedule create --every 30m --cwd ~/dev/my-app "Continue the refactor and leave a note."
+paseo schedule ls
+paseo schedule pause <id>
+```
+
 ## Permissions
 
 Agents may request permission for certain actions. Manage these from the CLI:

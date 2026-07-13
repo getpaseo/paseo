@@ -39,6 +39,7 @@ import {
 } from "@/desktop/daemon/desktop-daemon-transport";
 import { getDesktopHost } from "@/desktop/host";
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
+import { BROWSER_AUTOMATION_COMMAND_NAMES } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import { replaceFetchedAgentDirectory } from "@/utils/agent-directory-sync";
 import { useSessionStore } from "@/stores/session-store";
 import {
@@ -46,8 +47,13 @@ import {
   shouldUseLegacyDaemonWorkspaceDirectory,
 } from "@/workspace/legacy-daemon-workspaces";
 import { invalidateCheckoutGitQueriesForServer } from "@/git/query-keys";
-import { queryClient } from "@/query/query-client";
+import { queryClient } from "@/data/query-client";
+import {
+  invalidateServerDataQueriesAfterReconnect,
+  mountServerDataPushRouter,
+} from "@/data/push-router";
 import { mountBrowserAutomationDaemonClientHandler } from "@/browser-automation/handler";
+import { schedulesQueryBaseKey } from "@/schedules/aggregated-schedules";
 
 export type HostRuntimeConnectionStatus = "idle" | "connecting" | "online" | "offline" | "error";
 export type HostRegistryStatus = "loading" | "ready";
@@ -522,10 +528,15 @@ function probeIntervalForConnection(
 }
 
 function createDefaultDeps(): HostRuntimeControllerDeps {
-  const desktopBrowserAutomationAvailable =
+  const browserHostAvailable =
     typeof getDesktopHost()?.browser?.executeAutomationCommand === "function";
-  const browserAutomationCapabilities = desktopBrowserAutomationAvailable
-    ? { [CLIENT_CAPS.desktopBrowserAutomation]: true }
+  const browserAutomationCapabilities = browserHostAvailable
+    ? {
+        [CLIENT_CAPS.browserHost]: {
+          supportedCommands: [...BROWSER_AUTOMATION_COMMAND_NAMES],
+          hostKind: "desktop app",
+        },
+      }
     : undefined;
 
   return {
@@ -579,10 +590,21 @@ function createDefaultDeps(): HostRuntimeControllerDeps {
       }),
     getClientId: () => getOrCreateClientId(),
     mountClientHandlers: ({ client, host }) => {
+      const unmountServerData = mountServerDataPushRouter({
+        client,
+        queryClient,
+        serverId: host.serverId,
+      });
       if (!browserAutomationCapabilities) {
-        return () => {};
+        return unmountServerData;
       }
-      return mountBrowserAutomationDaemonClientHandler(client, { serverId: host.serverId });
+      const unmountBrowserAutomation = mountBrowserAutomationDaemonClientHandler(client, {
+        serverId: host.serverId,
+      });
+      return () => {
+        unmountBrowserAutomation();
+        unmountServerData();
+      };
     },
   };
 }
@@ -1968,6 +1990,8 @@ export class HostRuntimeStore {
       // good (the daemon dedupes by snapshot fingerprint). Mark the caches stale so active
       // queries refetch now and evicted ones on their next mount.
       void invalidateCheckoutGitQueriesForServer(queryClient, serverId);
+      invalidateServerDataQueriesAfterReconnect({ queryClient, serverId });
+      void queryClient.invalidateQueries({ queryKey: schedulesQueryBaseKey });
     }
 
     // Runtime owns directory bootstrap policy, including reconnect and delayed

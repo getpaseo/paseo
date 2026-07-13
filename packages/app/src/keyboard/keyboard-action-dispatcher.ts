@@ -30,6 +30,8 @@ export type KeyboardActionId =
   | "workspace.new"
   | "worktree.new"
   | "worktree.archive"
+  | "workspace.archive"
+  | "workspace.pin"
   | "file.find";
 
 export type KeyboardActionDefinition =
@@ -62,6 +64,8 @@ export type KeyboardActionDefinition =
   | { id: "workspace.new"; scope: KeyboardActionScope }
   | { id: "worktree.new"; scope: KeyboardActionScope }
   | { id: "worktree.archive"; scope: KeyboardActionScope }
+  | { id: "workspace.archive"; scope: KeyboardActionScope }
+  | { id: "workspace.pin"; scope: KeyboardActionScope }
   | { id: "file.find"; scope: KeyboardActionScope };
 
 export interface KeyboardActionHandler {

@@ -28,6 +28,7 @@ const foregroundMutedColorMapping = (theme: Theme) => ({
 export interface SubagentsTrackProps {
   rows: SubagentRow[];
   onOpenSubagent: (id: string) => void;
+  onOpenProviderSubagent: (parentAgentId: string, subagentId: string) => void;
   onArchiveSubagent: (id: string) => void;
   onDetachSubagent?: (id: string) => void;
 }
@@ -44,6 +45,7 @@ function buildRowPresentation(row: SubagentRow): WorkspaceTabPresentation {
 export function SubagentsTrack({
   rows,
   onOpenSubagent,
+  onOpenProviderSubagent,
   onArchiveSubagent,
   onDetachSubagent,
 }: SubagentsTrackProps): ReactElement | null {
@@ -105,6 +107,7 @@ export function SubagentsTrack({
                   key={row.id}
                   row={row}
                   onOpenSubagent={onOpenSubagent}
+                  onOpenProviderSubagent={onOpenProviderSubagent}
                   onArchiveSubagent={onArchiveSubagent}
                   onDetachSubagent={onDetachSubagent}
                 />
@@ -120,6 +123,7 @@ export function SubagentsTrack({
 interface SubagentsTrackRowProps {
   row: SubagentRow;
   onOpenSubagent: (id: string) => void;
+  onOpenProviderSubagent: (parentAgentId: string, subagentId: string) => void;
   onArchiveSubagent: (id: string) => void;
   onDetachSubagent?: (id: string) => void;
 }
@@ -127,6 +131,7 @@ interface SubagentsTrackRowProps {
 function SubagentsTrackRow({
   row,
   onOpenSubagent,
+  onOpenProviderSubagent,
   onArchiveSubagent,
   onDetachSubagent,
 }: SubagentsTrackRowProps): ReactElement {
@@ -137,8 +142,12 @@ function SubagentsTrackRow({
   const displayLabel =
     presentation.titleState === "loading" ? t("common.states.loading") : presentation.label;
   const handlePress = useCallback(() => {
-    onOpenSubagent(row.id);
-  }, [onOpenSubagent, row.id]);
+    if (row.kind === "provider") {
+      onOpenProviderSubagent(row.parentAgentId, row.id);
+    } else {
+      onOpenSubagent(row.id);
+    }
+  }, [onOpenProviderSubagent, onOpenSubagent, row]);
   const handleArchivePress = useCallback(() => {
     onArchiveSubagent(row.id);
   }, [onArchiveSubagent, row.id]);
@@ -167,13 +176,15 @@ function SubagentsTrackRow({
             <Text style={styles.rowLabel} numberOfLines={1}>
               {displayLabel}
             </Text>
-            <SubagentRowActions
-              rowId={row.id}
-              displayLabel={displayLabel}
-              visible={actionsVisible}
-              onDetachPress={onDetachSubagent ? handleDetachPress : undefined}
-              onArchivePress={handleArchivePress}
-            />
+            {row.kind === "paseo" ? (
+              <SubagentRowActions
+                rowId={row.id}
+                displayLabel={displayLabel}
+                visible={actionsVisible}
+                onDetachPress={onDetachSubagent ? handleDetachPress : undefined}
+                onArchivePress={handleArchivePress}
+              />
+            ) : null}
           </View>
         )}
       </Pressable>

@@ -82,6 +82,7 @@ describe("app diagnostics report", () => {
     const host = makeHost();
     const redacted = redactAppDiagnosticReport(
       [
+        "Desktop app log tail",
         "secret.example.test:6767",
         "relay.secret.test:443",
         "daemon-public-key-secret",

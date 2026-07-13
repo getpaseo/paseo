@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { WorkspaceDescriptor } from "@/stores/session-store";
 import { useTranslation } from "react-i18next";
+import { useReplicaQuery } from "@/data/query";
+import { workspaceTerminalsPushRoute } from "@/data/push-router";
+import { estimateTerminalViewportSize } from "@/terminal/runtime/terminal-size-cache";
 import {
   buildTerminalsQueryKey,
   canCreateWorkspaceTerminal,
@@ -11,7 +14,6 @@ import {
   collectStandaloneTerminalIds,
   reconcilePendingScriptTerminals,
   removeTerminalFromPayload,
-  TERMINALS_QUERY_STALE_TIME,
   type ListTerminalsPayload,
   upsertCreatedTerminalPayload,
 } from "@/screens/workspace/terminals/state";
@@ -77,19 +79,29 @@ export function useWorkspaceTerminals(input: UseWorkspaceTerminalsInput) {
       buildTerminalsQueryKey(normalizedServerId, workspaceDirectory, normalizedWorkspaceId || null),
     [normalizedServerId, normalizedWorkspaceId, workspaceDirectory],
   );
+  const paneWorkspaceId = normalizedWorkspaceId || undefined;
 
-  const query = useQuery({
+  const query = useReplicaQuery({
     queryKey,
     enabled: canCreateNow,
+    pushEvent: "terminals_changed",
+    meta: workspaceTerminalsPushRoute({
+      enabled: canCreateNow,
+      serverId: normalizedServerId,
+      cwd: workspaceDirectory ?? "",
+      ...(paneWorkspaceId ? { workspaceId: paneWorkspaceId } : {}),
+    }),
     queryFn: async () => {
       if (!client || !workspaceDirectory) {
         throw new Error(t("workspace.terminal.hostDisconnected"));
       }
-      return await client.listTerminals(workspaceDirectory, undefined, {
-        workspaceId: normalizedWorkspaceId || undefined,
-      });
+      if (paneWorkspaceId) {
+        return await client.listTerminals(workspaceDirectory, undefined, {
+          workspaceId: paneWorkspaceId,
+        });
+      }
+      return await client.listTerminals(workspaceDirectory, undefined, {});
     },
-    staleTime: TERMINALS_QUERY_STALE_TIME,
   });
   const terminals = useMemo(() => query.data?.terminals ?? [], [query.data]);
   const liveTerminalIds = useMemo(() => terminals.map((terminal) => terminal.id), [terminals]);
@@ -124,14 +136,20 @@ export function useWorkspaceTerminals(input: UseWorkspaceTerminalsInput) {
       if (!client || !workspaceDirectory) {
         throw new Error(t("workspace.terminal.hostDisconnected"));
       }
+      // Seed the new PTY with the workspace's measured pane size so it isn't born at 80x24.
+      const estimatedSize =
+        estimateTerminalViewportSize({ serverId: normalizedServerId, cwd: workspaceDirectory }) ??
+        undefined;
       const payload = _input?.profile
         ? await client.createTerminal(workspaceDirectory, _input.profile.name, undefined, {
             command: _input.profile.command,
             args: _input.profile.args,
             workspaceId: normalizedWorkspaceId || undefined,
+            size: estimatedSize,
           })
         : await client.createTerminal(workspaceDirectory, undefined, undefined, {
             workspaceId: normalizedWorkspaceId || undefined,
+            size: estimatedSize,
           });
       // The daemon reports a failed spawn (e.g. a profile command that isn't
       // installed) via payload.error with a null terminal. Surface it instead
@@ -177,54 +195,6 @@ export function useWorkspaceTerminals(input: UseWorkspaceTerminalsInput) {
       return payload;
     },
   });
-
-  useEffect(() => {
-    if (!isRouteFocused || !client || !isConnected || !workspaceDirectory) {
-      return;
-    }
-
-    const paneWorkspaceId = normalizedWorkspaceId || undefined;
-
-    const unsubscribeChanged = client.on("terminals_changed", (message) => {
-      // The terminal subscription is keyed by cwd at the protocol level, so this
-      // gate only routes the event to the pane watching that cwd; it is not an
-      // ownership decision.
-      if (message.payload.cwd !== workspaceDirectory) {
-        return;
-      }
-
-      // Two workspaces can share a cwd, so the push can carry terminals from a
-      // sibling workspace. A terminal belongs to a workspace only by its
-      // workspaceId, so keep only the ones whose workspaceId matches this pane.
-      const matchingTerminals = message.payload.terminals.filter(
-        (terminal) => terminal.workspaceId === paneWorkspaceId,
-      );
-
-      queryClient.setQueryData<ListTerminalsPayload>(queryKey, (current) => ({
-        cwd: message.payload.cwd,
-        terminals: matchingTerminals,
-        requestId: current?.requestId ?? `terminals-changed-${Date.now()}`,
-      }));
-    });
-
-    client.subscribeTerminals({
-      cwd: workspaceDirectory,
-      workspaceId: paneWorkspaceId,
-    });
-
-    return () => {
-      unsubscribeChanged();
-      client.unsubscribeTerminals({ cwd: workspaceDirectory, workspaceId: paneWorkspaceId });
-    };
-  }, [
-    client,
-    isConnected,
-    isRouteFocused,
-    normalizedWorkspaceId,
-    queryClient,
-    queryKey,
-    workspaceDirectory,
-  ]);
 
   useEffect(() => {
     if (!pendingCreateInput) {

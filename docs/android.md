@@ -13,6 +13,18 @@ EAS profiles: `development`, `production`, and `production-apk` in `packages/app
 
 `development` uses Android `debug`.
 
+## Version codes
+
+`packages/app/app.config.js` derives Android `versionCode` from the package version with:
+
+```text
+major * 1_000_000 + minor * 1_000 + patch
+```
+
+Prerelease metadata is ignored, so `0.1.102-beta.1` and `0.1.102` both produce `1102`. The same value is used as the iOS `buildNumber` because `packages/app/eas.json` uses EAS's local app version source. Do not re-enable EAS remote version counters or Android `autoIncrement`; F-Droid and other source-based builders need the native build number to be visible in the repo.
+
+The formula reserves three digits each for minor and patch. If either reaches `1000`, change the formula before cutting that release.
+
 ## Local build + install
 
 From repo root:
@@ -37,6 +49,21 @@ npx cross-env APP_VARIANT=production expo run:android --variant=release
 # Clear generated Android project
 rm -rf android
 ```
+
+## F-Droid / source-only Android builds
+
+F-Droid builds should set `PASEO_FDROID_BUILD=1` when running Expo prebuild:
+
+```bash
+cd packages/app
+PASEO_FDROID_BUILD=1 APP_VARIANT=production npx expo prebuild --platform android --clean --non-interactive
+cd android
+PASEO_FDROID_BUILD=1 ./gradlew assembleRelease --no-daemon --max-workers=1 -Dorg.gradle.parallel=false
+```
+
+The flag must be present for both prebuild and Gradle because Gradle starts Metro for the release bundle. Keep the source build serial and daemon-free as shown above: compiling every Expo module can exhaust memory when Gradle workers run in parallel. The profile enables source-built Expo modules, excludes the proprietary camera, Firebase notification, and Expo development-client native modules, disables EAS updates and Gradle dependency metadata, and substitutes JavaScript stubs for camera and notifications. The resulting app supports direct and pasted-link pairing but not QR scanning or push notifications.
+
+Keep the excluded npm packages installed. Normal builds use them, while the F-Droid profile removes only their Android native modules and config plugins. Paseo always applies `expo-gradle-jvmargs` with `-Xmx4096m` and `-XX:MaxMetaspaceSize=1024m` so local Expo prebuilds have enough Gradle heap whether they use precompiled AARs or source-built Expo modules.
 
 ### React version lockstep
 

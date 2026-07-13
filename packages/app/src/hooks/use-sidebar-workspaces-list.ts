@@ -1,10 +1,7 @@
 import { useCallback, useEffect, useMemo } from "react";
-import equal from "fast-deep-equal";
 import { shallow } from "zustand/shallow";
 import { useStoreWithEqualityFn } from "zustand/traditional";
-import { useCreateFlowStore } from "@/stores/create-flow-store";
 import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
-import { selectWorkspace, workspaceEqualityFns } from "@/stores/session-store-hooks/selectors";
 import { useHostProjects } from "@/projects/host-projects";
 import { fetchAllWorkspaceDescriptors } from "@/projects/workspace-fetching";
 import { getHostRuntimeStore, useHostRegistryLoaded, useHosts } from "@/runtime/host-runtime";
@@ -14,7 +11,6 @@ import { shouldSuppressWorkspaceForLocalArchive } from "@/contexts/session-works
 import {
   buildSidebarWorkspacePlacementModel,
   computeSidebarOrderUpdates,
-  createSidebarWorkspaceEntry,
   deriveSidebarLoadingState,
   type SidebarProjectEntry,
   type SidebarWorkspaceEntry,
@@ -26,10 +22,9 @@ export {
   applyStoredOrdering,
   buildSidebarProjectsFromHostProjects,
   buildSidebarProjectsFromStructure,
-  buildSidebarStatusWorkspacePlacements,
+  createSidebarWorkspaceEntry,
   buildSidebarWorkspacePlacementModel,
   computeSidebarOrderUpdates,
-  createSidebarWorkspaceEntry,
   deriveSidebarLoadingState,
   shouldShowSidebarHostLabels,
   type SidebarLoadingState,
@@ -41,37 +36,6 @@ export {
   type SidebarStateBucket,
   type SidebarWorkspaceEntry,
 } from "./sidebar-workspaces-view-model";
-
-export function useSidebarWorkspaceEntry(
-  serverId: string | null,
-  workspaceId: string | null,
-): SidebarWorkspaceEntry | null {
-  // Deep-compare so that adding/removing unrelated pending creates doesn't re-render this row.
-  const pendingCreateAttempts = useStoreWithEqualityFn(
-    useCreateFlowStore,
-    (state) => state.pendingByDraftId,
-    workspaceEqualityFns.deep,
-  );
-
-  // Single subscription: reads workspace + agents together, computes the full entry, and
-  // deep-compares the output. Agents-Map identity churn (setAgents replaces the Map on every
-  // status transition) never causes a React re-render unless the derived entry actually changes.
-  return useStoreWithEqualityFn(
-    useSessionStore,
-    (state) => {
-      const workspace = selectWorkspace(state, serverId, workspaceId);
-      if (!workspace) return null;
-      const agents = serverId ? state.sessions[serverId]?.agents : undefined;
-      return createSidebarWorkspaceEntry({
-        serverId: serverId ?? "",
-        workspace,
-        pendingCreateAttempts,
-        agents,
-      });
-    },
-    equal,
-  );
-}
 
 const EMPTY_ORDER: string[] = [];
 const EMPTY_PROJECTS: SidebarProjectEntry[] = [];

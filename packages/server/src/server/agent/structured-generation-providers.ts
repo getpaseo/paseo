@@ -25,7 +25,7 @@ export const DEFAULT_STRUCTURED_GENERATION_PROVIDERS: readonly StructuredGenerat
   [
     { modelSubstring: "haiku" },
     { modelSubstring: "gpt-5.4-mini", thinkingOptionId: "low" },
-    { modelSubstring: "minimax-m2.5" },
+    { modelSubstring: "minimax-m3" },
     { modelSubstring: "nemotron-3-super" },
   ] as const;
 

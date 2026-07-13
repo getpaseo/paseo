@@ -422,22 +422,17 @@ export const en = {
         enterUrl: "Enter URL",
         openDevTools: "Open browser dev tools",
         cancelSelector: "Cancel element selector",
-        selectElement: "Select element",
-        grabElement: "Copy element to clipboard",
-        grabElementLabel: "element",
-        grabFailed: "Couldn't copy element",
+        annotateElement: "Annotate element",
+        screenshotElement: "Screenshot element",
+        screenshotCopied: "Copied screenshot to clipboard",
+        elementCopied: "Copied element to clipboard",
+        screenshotFailed: "Couldn't copy screenshot",
       },
       annotate: {
-        title: "Send feedback to agent",
-        placeholder: "Describe what should change…",
+        title: "Annotate element",
+        placeholder: "Message to the agent about this element…",
         submit: "Attach",
         cancel: "Cancel",
-        intents: {
-          fix: "Fix",
-          change: "Change",
-          question: "Question",
-          approve: "Approve",
-        },
       },
       devices: {
         label: "Device size",
@@ -623,7 +618,7 @@ export const en = {
           success: "Updated",
         },
         archive: {
-          label: "Archive worktree",
+          label: "Archive workspace",
           pending: "Archiving...",
           success: "Archived",
         },
@@ -672,8 +667,6 @@ export const en = {
             "Update isn't available while you have local changes so commit or stash them first",
           updateCurrent:
             "Update isn't available because this branch is already up to date with {{baseRef}}",
-          archiveNotWorktree:
-            "Archive isn't available here because this workspace was not created as a Paseo worktree",
           mergePrNoGithub: "Merge PR isn't available right now because GitHub isn't connected",
           mergePrMissing: "Merge PR isn't available because there isn't a pull request yet",
           mergePrDraft: "Merge PR isn't available because the pull request is still a draft",
@@ -697,11 +690,9 @@ export const en = {
           baseRefUnavailable: "Base ref unavailable",
           failedMerge: "Failed to merge",
           failedMergeFromBase: "Failed to merge from base",
-          worktreePathUnavailable: "Worktree path unavailable",
-          failedArchive: "Failed to archive worktree",
         },
         archiveWarning: {
-          title: 'Archive "{{worktreeName}}"?',
+          title: 'Archive "{{workspaceName}}"?',
           confirm: "Archive",
           cancel: "Cancel",
           uncommittedChanges: "Uncommitted changes",
@@ -719,11 +710,19 @@ export const en = {
         tooLarge: "Diff too large to display",
         unified: "Unified diff",
         split: "Side-by-side diff",
+        switchToUnified: "Switch to unified diff",
+        switchToSplit: "Switch to side-by-side diff",
+        showTreeView: "Show folder tree",
+        showFlatView: "Show flat file list",
+        options: "Diff options",
         hideWhitespace: "Hide whitespace",
+        showWhitespace: "Show whitespace",
         scrollLongLines: "Scroll long lines",
         wrapLongLines: "Wrap long lines",
         collapseAll: "Collapse all files",
         expandAll: "Expand all files",
+        collapseAllFolders: "Collapse all folders",
+        expandAllFolders: "Expand all folders",
         refreshing: "Refreshing",
         refresh: "Refresh",
         refreshState: "Refresh git and GitHub state",
@@ -782,6 +781,9 @@ export const en = {
     },
   },
   sidebar: {
+    pinned: {
+      title: "Pinned",
+    },
     host: {
       noHost: "No host",
       switchTitle: "Switch host",
@@ -790,6 +792,7 @@ export const en = {
     actions: {
       addProject: "Add project",
       newWorkspace: "New workspace",
+      hosts: "Hosts",
       home: "Home",
       settings: "Settings",
       closeSidebar: "Close sidebar",
@@ -842,8 +845,10 @@ export const en = {
         copyPath: "Copy path",
         copyBranchName: "Copy branch name",
         rename: "Rename workspace",
+        pin: "Pin to top",
+        unpin: "Unpin",
         archive: "Archive",
-        archiveWorktree: "Archive worktree",
+        archiveWorkspace: "Archive workspace",
         hideFromSidebar: "Hide from sidebar",
         archiving: "Archiving...",
         hiding: "Hiding...",
@@ -866,7 +871,7 @@ export const en = {
         branchNameCopied: "Branch name copied",
         hostDisconnected: "Host is not connected",
         hideFailed: "Failed to hide workspace",
-        archiveFailed: "Failed to archive worktree",
+        archiveFailed: "Failed to archive workspace",
       },
     },
   },
@@ -1060,6 +1065,12 @@ export const en = {
       },
     },
   },
+  rootError: {
+    kicker: "Something went wrong",
+    title: "Paseo ran into a problem.",
+    body: "Try again to reload the app. If this keeps happening, include the details below when you report it.",
+    details: "Details",
+  },
   startup: {
     errorTitle: "Something went wrong",
     errorDescription:
@@ -1091,7 +1102,8 @@ export const en = {
     },
   },
   projectPicker: {
-    placeholder: "Type a directory path...",
+    placeholder: "Type to search...",
+    browse: "Browse…",
     opening: "Opening project...",
     searching: "Searching...",
     empty: "Start typing a path",
@@ -1427,6 +1439,7 @@ export const en = {
     },
     backToWorkspace: "Back",
     addHost: "Add host",
+    enableBuiltInDaemon: "Enable built-in daemon",
     projects: "Projects",
     projectList: {
       hostLoadFailed: "Couldn't load projects from host {{hostName}}: {{message}}",
@@ -1435,7 +1448,6 @@ export const en = {
     groupInfo: "About {{title}}",
     sections: {
       general: "General",
-      daemon: "Daemon",
       appearance: "Appearance",
       shortcuts: "Shortcuts",
       integrations: "Integrations",
@@ -1450,7 +1462,7 @@ export const en = {
       providers: "Providers",
       usage: "Usage",
       terminals: "Terminals",
-      host: "Host",
+      host: "Overview",
     },
     general: {
       title: "General",
@@ -1478,6 +1490,10 @@ export const en = {
         label: "Terminal scrollback",
         description: "Lines kept in the built-in terminal buffer",
         accessibilityLabel: "Terminal scrollback lines",
+      },
+      autoExpandReasoning: {
+        label: "Always expand reasoning",
+        description: "Show agent thinking and chain-of-thought blocks fully expanded by default",
       },
       language: {
         label: "Language",
@@ -1560,6 +1576,9 @@ export const en = {
           auto: "System",
         },
       },
+      detailLevel: {
+        title: "Detail level",
+      },
       fonts: {
         title: "Fonts",
         systemDefault: "System default",
@@ -1605,7 +1624,7 @@ export const en = {
         openProject: "Open project",
         newWorkspace: "New workspace",
         newWorktree: "New worktree",
-        archiveWorktree: "Archive worktree",
+        archiveWorkspace: "Archive workspace",
         newTab: "New tab",
         closeCurrentTab: "Close current tab",
         jumpToWorkspace: "Jump to workspace",

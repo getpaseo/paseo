@@ -12,21 +12,22 @@ import { Pressable, Text, TextInput, View, type StyleProp, type ViewStyle } from
 import {
   ArrowLeft,
   ArrowRight,
+  Camera,
   ChevronDown,
-  Copy,
   Maximize,
   Monitor,
   MousePointer2,
-  PencilRuler,
   RotateCw,
   Smartphone,
   Tablet,
+  Wrench,
   X,
   type LucideIcon,
 } from "lucide-react-native";
 import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import * as Clipboard from "expo-clipboard";
+import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/contexts/toast-context";
 import {
@@ -40,11 +41,7 @@ import {
   useWorkspaceAttachments,
   useWorkspaceAttachmentsStore,
 } from "@/attachments/workspace-attachments-store";
-import type {
-  AttachmentMetadata,
-  BrowserAnnotationIntent,
-  BrowserElementAttachment,
-} from "@/attachments/types";
+import type { AttachmentMetadata, BrowserElementAttachment } from "@/attachments/types";
 import { persistAttachmentFromDataUrl } from "@/attachments/service";
 import { WORKSPACE_SECONDARY_HEADER_HEIGHT } from "@/constants/layout";
 import {
@@ -52,7 +49,6 @@ import {
   isElectronRuntime,
   type DesktopBrowserShortcutEvent,
 } from "@/desktop/host";
-import { isDev } from "@/constants/platform";
 import { useBrowserStore, normalizeWorkspaceBrowserUrl } from "@/stores/browser-store";
 import {
   prepareBrowserWebview,
@@ -79,24 +75,13 @@ type WebTextInput = TextInput & {
   getNativeRef?: () => unknown;
 };
 
-type BrowserElementSelection = Omit<
-  BrowserElementAttachment,
-  "formatted" | "comment" | "intent"
-> & {
+type BrowserElementSelection = Omit<BrowserElementAttachment, "formatted" | "comment"> & {
   attributes?: Record<string, string>;
 };
 
 interface BrowserElementAnnotation {
   comment: string;
-  intent: BrowserAnnotationIntent;
 }
-
-const BROWSER_ANNOTATION_INTENTS: readonly BrowserAnnotationIntent[] = [
-  "fix",
-  "change",
-  "question",
-  "approve",
-];
 
 type DeviceSizeId =
   | "responsive"
@@ -223,10 +208,6 @@ function formatElementAttachment(
   const html = truncateText(selection.outerHTML.trim(), 800);
   const parts: string[] = [];
 
-  if (annotation) {
-    parts.push(`intent: ${annotation.intent}`);
-  }
-
   if (selection.reactSource?.fileName) {
     const loc = [
       selection.reactSource.fileName,
@@ -289,7 +270,6 @@ function buildBrowserElementAttachment(
     parentChain: selection.parentChain,
     children: selection.children,
     ...(comment ? { comment } : {}),
-    ...(annotation ? { intent: annotation.intent } : {}),
     ...(screenshot ? { screenshot } : {}),
     formatted: formatElementAttachment(selection, annotation),
   };
@@ -641,10 +621,11 @@ export function BrowserPane({
   const pendingNavigationUrlRef = useRef<string | null>(null);
   const domReadyRef = useRef(false);
   const annotationMarkersRef = useRef<BrowserAnnotationMarker[]>([]);
-  const [selectorActive, setSelectorActive] = useState(false);
+  const [selectorMode, setSelectorMode] = useState<"annotate" | "screenshot" | null>(null);
+  const selectorActive = selectorMode !== null;
   // Which action the active selector performs on click: open the annotation card
-  // ("annotate") or copy the element to the clipboard ("grab").
-  const selectorModeRef = useRef<"annotate" | "grab">("annotate");
+  // ("annotate") or copy a screenshot of the element to the clipboard ("screenshot").
+  const selectorModeRef = useRef<"annotate" | "screenshot">("annotate");
   const toast = useToast();
   const toastRef = useRef(toast);
   toastRef.current = toast;
@@ -1074,7 +1055,7 @@ export function BrowserPane({
     [],
   );
 
-  const grabElementToClipboard = useCallback(
+  const screenshotElementToClipboard = useCallback(
     async (selection: BrowserElementSelection) => {
       const text = formatElementAttachment(selection);
       const copyElement = getDesktopHost()?.browser?.copyElement;
@@ -1087,9 +1068,13 @@ export function BrowserPane({
           const dataUrl = await captureElement(browserIdRef.current, { x, y, width, height });
           imageDataUrl = dataUrl ?? undefined;
         } catch (error) {
-          console.warn("[browser-pane] capture element for grab failed", error);
+          console.warn("[browser-pane] capture element for screenshot failed", error);
         }
       }
+
+      const copiedMessage = imageDataUrl
+        ? t("workspace.browser.controls.screenshotCopied")
+        : t("workspace.browser.controls.elementCopied");
 
       // Copy via the main process; the renderer's navigator.clipboard rejects
       // with NotAllowedError because focus is inside the guest <webview>.
@@ -1097,9 +1082,9 @@ export function BrowserPane({
         try {
           const ok = await copyElement({ text, imageDataUrl });
           if (ok) {
-            toastRef.current?.copied(t("workspace.browser.controls.grabElementLabel"));
+            toastRef.current?.show(copiedMessage, { variant: "success" });
           } else {
-            toastRef.current?.error(t("workspace.browser.controls.grabFailed"));
+            toastRef.current?.error(t("workspace.browser.controls.screenshotFailed"));
           }
           return;
         } catch (error) {
@@ -1110,10 +1095,12 @@ export function BrowserPane({
       // Fallback to expo-clipboard (text only) when the bridge is unavailable.
       try {
         await Clipboard.setStringAsync(text);
-        toastRef.current?.copied(t("workspace.browser.controls.grabElementLabel"));
+        toastRef.current?.show(t("workspace.browser.controls.elementCopied"), {
+          variant: "success",
+        });
       } catch (error) {
         console.warn("[browser-pane] clipboard fallback failed", error);
-        toastRef.current?.error(t("workspace.browser.controls.grabFailed"));
+        toastRef.current?.error(t("workspace.browser.controls.screenshotFailed"));
       }
     },
     [t],
@@ -1121,8 +1108,8 @@ export function BrowserPane({
 
   const handleSelectorResult = useCallback(
     (selection: BrowserElementSelection) => {
-      if (selectorModeRef.current === "grab") {
-        void grabElementToClipboard(selection);
+      if (selectorModeRef.current === "screenshot") {
+        void screenshotElementToClipboard(selection);
         return;
       }
       pendingScreenshotRef.current = undefined;
@@ -1132,7 +1119,7 @@ export function BrowserPane({
         return undefined;
       });
     },
-    [captureElementScreenshot, grabElementToClipboard],
+    [captureElementScreenshot, screenshotElementToClipboard],
   );
 
   const submitAnnotation = useCallback(
@@ -1155,15 +1142,15 @@ export function BrowserPane({
   }, []);
 
   const startElementSelector = useCallback(
-    (mode: "annotate" | "grab") => {
+    (mode: "annotate" | "screenshot") => {
       const webview = webviewRef.current;
       if (!webview || !domReadyRef.current) return;
-      // Annotate needs a workspace scope to attach to; grab only copies.
+      // Annotate needs a workspace scope to attach to; screenshot only copies.
       if (mode === "annotate" && !workspaceAttachmentScopeKey) return;
       selectorModeRef.current = mode;
       pendingScreenshotRef.current = undefined;
       setPendingSelection(null);
-      setSelectorActive(true);
+      setSelectorMode(mode);
 
       const js = `
       (function() {
@@ -1389,11 +1376,11 @@ export function BrowserPane({
             const poll = startSelectorResultPolling({
               webview,
               onSelection: handleSelectorResult,
-              onDone: () => setSelectorActive(false),
+              onDone: () => setSelectorMode(null),
             });
             window.setTimeout(() => {
               window.clearInterval(poll);
-              setSelectorActive(false);
+              setSelectorMode(null);
               if (webviewRef.current !== webview || !domReadyRef.current) {
                 return;
               }
@@ -1402,10 +1389,10 @@ export function BrowserPane({
             return undefined;
           })
           .catch(() => {
-            setSelectorActive(false);
+            setSelectorMode(null);
           });
       } catch {
-        setSelectorActive(false);
+        setSelectorMode(null);
       }
     },
     [handleSelectorResult, workspaceAttachmentScopeKey],
@@ -1413,7 +1400,7 @@ export function BrowserPane({
 
   const cancelElementSelector = useCallback(() => {
     const webview = webviewRef.current;
-    setSelectorActive(false);
+    setSelectorMode(null);
     if (webview && domReadyRef.current) {
       try {
         clearWebviewSelector(webview);
@@ -1470,12 +1457,12 @@ export function BrowserPane({
     startElementSelector("annotate");
   }, [cancelElementSelector, selectorActive, startElementSelector]);
 
-  const handleToggleGrab = useCallback(() => {
+  const handleToggleScreenshot = useCallback(() => {
     if (selectorActive) {
       cancelElementSelector();
       return;
     }
-    startElementSelector("grab");
+    startElementSelector("screenshot");
   }, [cancelElementSelector, selectorActive, startElementSelector]);
 
   const handleOpenDevTools = useCallback(() => {
@@ -1521,13 +1508,21 @@ export function BrowserPane({
     ],
     [browser?.canGoForward],
   );
-  const selectorIconButtonStyle = useCallback(
+  const annotateIconButtonStyle = useCallback(
     ({ hovered, pressed }: { hovered?: boolean; pressed?: boolean }) => [
       styles.iconButton,
-      selectorActive && styles.selectorActiveButton,
+      selectorMode === "annotate" && styles.selectorActiveButton,
       (hovered || pressed) && styles.iconButtonHovered,
     ],
-    [selectorActive],
+    [selectorMode],
+  );
+  const screenshotIconButtonStyle = useCallback(
+    ({ hovered, pressed }: { hovered?: boolean; pressed?: boolean }) => [
+      styles.iconButton,
+      selectorMode === "screenshot" && styles.selectorActiveButton,
+      (hovered || pressed) && styles.iconButtonHovered,
+    ],
+    [selectorMode],
   );
 
   const devicePreset = useMemo(
@@ -1633,36 +1628,46 @@ export function BrowserPane({
             onSelect={setDeviceSizeId}
             triggerStyle={baseIconButtonStyle}
           />
-          {isDev ? (
-            <ToolbarButton
-              label={t("workspace.browser.controls.openDevTools")}
-              onPress={handleOpenDevTools}
-              style={baseIconButtonStyle}
-            >
-              <PencilRuler size={16} color={theme.colors.foregroundMuted} />
-            </ToolbarButton>
-          ) : null}
+          <ToolbarButton
+            label={t("workspace.browser.controls.openDevTools")}
+            onPress={handleOpenDevTools}
+            style={baseIconButtonStyle}
+          >
+            <Wrench size={16} color={theme.colors.foregroundMuted} />
+          </ToolbarButton>
           <ToolbarButton
             label={
-              selectorActive
+              selectorMode === "annotate"
                 ? t("workspace.browser.controls.cancelSelector")
-                : t("workspace.browser.controls.selectElement")
+                : t("workspace.browser.controls.annotateElement")
             }
-            active={selectorActive}
+            active={selectorMode === "annotate"}
             onPress={handleToggleElementSelector}
-            style={selectorIconButtonStyle}
+            style={annotateIconButtonStyle}
           >
             <MousePointer2
               size={16}
-              color={selectorActive ? theme.colors.accent : theme.colors.foregroundMuted}
+              color={
+                selectorMode === "annotate" ? theme.colors.accent : theme.colors.foregroundMuted
+              }
             />
           </ToolbarButton>
           <ToolbarButton
-            label={t("workspace.browser.controls.grabElement")}
-            onPress={handleToggleGrab}
-            style={baseIconButtonStyle}
+            label={
+              selectorMode === "screenshot"
+                ? t("workspace.browser.controls.cancelSelector")
+                : t("workspace.browser.controls.screenshotElement")
+            }
+            active={selectorMode === "screenshot"}
+            onPress={handleToggleScreenshot}
+            style={screenshotIconButtonStyle}
           >
-            <Copy size={16} color={theme.colors.foregroundMuted} />
+            <Camera
+              size={16}
+              color={
+                selectorMode === "screenshot" ? theme.colors.accent : theme.colors.foregroundMuted
+              }
+            />
           </ToolbarButton>
         </View>
       </View>
@@ -1690,45 +1695,6 @@ export function BrowserPane({
   );
 }
 
-const INTENT_LABEL_KEYS: Record<BrowserAnnotationIntent, string> = {
-  fix: "workspace.browser.annotate.intents.fix",
-  change: "workspace.browser.annotate.intents.change",
-  question: "workspace.browser.annotate.intents.question",
-  approve: "workspace.browser.annotate.intents.approve",
-};
-
-function IntentChip({
-  active,
-  intent,
-  label,
-  onSelect,
-}: {
-  active: boolean;
-  intent: BrowserAnnotationIntent;
-  label: string;
-  onSelect: (intent: BrowserAnnotationIntent) => void;
-}) {
-  const handlePress = useCallback(() => {
-    onSelect(intent);
-  }, [intent, onSelect]);
-  const chipStyle = useMemo(() => [styles.intentChip, active && styles.intentChipActive], [active]);
-  const textStyle = useMemo(
-    () => [styles.intentChipText, active && styles.intentChipTextActive],
-    [active],
-  );
-  const accessibilityState = useMemo(() => ({ selected: active }), [active]);
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityState={accessibilityState}
-      onPress={handlePress}
-      style={chipStyle}
-    >
-      <Text style={textStyle}>{label}</Text>
-    </Pressable>
-  );
-}
-
 function BrowserElementAnnotationCard({
   selection,
   onSubmit,
@@ -1740,14 +1706,11 @@ function BrowserElementAnnotationCard({
 }) {
   const { t } = useTranslation();
   const [comment, setComment] = useState("");
-  const [intent, setIntent] = useState<BrowserAnnotationIntent>("fix");
   const commentRef = useRef(comment);
   commentRef.current = comment;
-  const intentRef = useRef(intent);
-  intentRef.current = intent;
 
   const handleSubmit = useCallback(() => {
-    onSubmit({ comment: commentRef.current, intent: intentRef.current });
+    onSubmit({ comment: commentRef.current });
   }, [onSubmit]);
 
   useEffect(() => {
@@ -1792,17 +1755,6 @@ function BrowserElementAnnotationCard({
         <Text numberOfLines={1} style={styles.annotationElement}>
           {elementLabel}
         </Text>
-        <View style={styles.annotationIntents}>
-          {BROWSER_ANNOTATION_INTENTS.map((option) => (
-            <IntentChip
-              key={option}
-              active={option === intent}
-              intent={option}
-              label={t(INTENT_LABEL_KEYS[option])}
-              onSelect={setIntent}
-            />
-          ))}
-        </View>
         <ThemedAnnotationInput
           accessibilityLabel={t("workspace.browser.annotate.placeholder")}
           autoFocus
@@ -1814,24 +1766,12 @@ function BrowserElementAnnotationCard({
           value={comment}
         />
         <View style={styles.annotationActions}>
-          <Pressable
-            accessibilityRole="button"
-            onPress={onCancel}
-            style={styles.annotationSecondaryButton}
-          >
-            <Text style={styles.annotationSecondaryText}>
-              {t("workspace.browser.annotate.cancel")}
-            </Text>
-          </Pressable>
-          <Pressable
-            accessibilityRole="button"
-            onPress={handleSubmit}
-            style={styles.annotationPrimaryButton}
-          >
-            <Text style={styles.annotationPrimaryText}>
-              {t("workspace.browser.annotate.submit")}
-            </Text>
-          </Pressable>
+          <Button variant="ghost" size="sm" onPress={onCancel}>
+            {t("workspace.browser.annotate.cancel")}
+          </Button>
+          <Button variant="default" size="sm" onPress={handleSubmit}>
+            {t("workspace.browser.annotate.submit")}
+          </Button>
         </View>
       </View>
     </View>
@@ -1986,31 +1926,7 @@ const styles = StyleSheet.create((theme) => ({
   annotationElement: {
     fontSize: theme.fontSize.xs,
     color: theme.colors.foregroundMuted,
-  },
-  annotationIntents: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: theme.spacing[1],
-  },
-  intentChip: {
-    paddingHorizontal: theme.spacing[2],
-    paddingVertical: theme.spacing[1],
-    borderRadius: theme.borderRadius.md,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.surface1,
-  },
-  intentChipActive: {
-    borderColor: theme.colors.accent,
-    backgroundColor: `${String(theme.colors.accent)}20`,
-  },
-  intentChipText: {
-    fontSize: theme.fontSize.xs,
-    fontWeight: "500",
-    color: theme.colors.foregroundMuted,
-  },
-  intentChipTextActive: {
-    color: theme.colors.accent,
+    marginBottom: theme.spacing[2],
   },
   annotationInput: {
     minHeight: 64,
@@ -2028,27 +1944,6 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     justifyContent: "flex-end",
     gap: theme.spacing[2],
-  },
-  annotationSecondaryButton: {
-    paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[2],
-    borderRadius: theme.borderRadius.md,
-  },
-  annotationSecondaryText: {
-    fontSize: theme.fontSize.sm,
-    fontWeight: "500",
-    color: theme.colors.foregroundMuted,
-  },
-  annotationPrimaryButton: {
-    paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[2],
-    borderRadius: theme.borderRadius.md,
-    backgroundColor: theme.colors.accent,
-  },
-  annotationPrimaryText: {
-    fontSize: theme.fontSize.sm,
-    fontWeight: "600",
-    color: theme.colors.accentForeground ?? "#ffffff",
   },
   unavailableState: {
     flex: 1,

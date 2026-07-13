@@ -16,6 +16,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Switch } from "@/components/ui/switch";
 import { SettingsSection } from "@/screens/settings/settings-section";
 import {
   MAX_CODE_FONT_SIZE,
@@ -185,6 +186,28 @@ function ThemeRow({ value, onChange }: ThemeRowProps) {
           ))}
         </DropdownMenuContent>
       </DropdownMenu>
+    </View>
+  );
+}
+
+interface AutoExpandReasoningRowProps {
+  value: boolean;
+  onChange: (value: boolean) => void;
+}
+
+function AutoExpandReasoningRow({ value, onChange }: AutoExpandReasoningRowProps) {
+  const { t } = useTranslation();
+  return (
+    <View style={settingsStyles.row}>
+      <View style={settingsStyles.rowContent}>
+        <Text style={settingsStyles.rowTitle}>
+          {t("settings.general.autoExpandReasoning.label")}
+        </Text>
+        <Text style={settingsStyles.rowHint}>
+          {t("settings.general.autoExpandReasoning.description")}
+        </Text>
+      </View>
+      <Switch value={value} onValueChange={onChange} />
     </View>
   );
 }
@@ -397,6 +420,13 @@ export function AppearanceSection() {
     [updateSettings],
   );
 
+  const handleAutoExpandReasoningChange = useCallback(
+    (autoExpandReasoning: boolean) => {
+      void updateSettings({ autoExpandReasoning });
+    },
+    [updateSettings],
+  );
+
   const commitUiFontFamily = useCallback(
     (value: string) => {
       const sanitized = sanitizeFontFamily(value);
@@ -475,6 +505,14 @@ export function AppearanceSection() {
       <SettingsSection title={t("settings.appearance.theme.title")}>
         <View style={settingsStyles.card}>
           <ThemeRow value={settings.theme} onChange={handleThemeChange} />
+        </View>
+      </SettingsSection>
+      <SettingsSection title={t("settings.appearance.detailLevel.title")}>
+        <View style={settingsStyles.card}>
+          <AutoExpandReasoningRow
+            value={settings.autoExpandReasoning}
+            onChange={handleAutoExpandReasoningChange}
+          />
         </View>
       </SettingsSection>
       <SettingsSection title={t("settings.appearance.fonts.title")}>

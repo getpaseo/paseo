@@ -173,10 +173,32 @@ The supervisor rotates `daemon.log`. Persisted `log.file.rotate` settings in
 `PASEO_LOG_ROTATE_SIZE` and `PASEO_LOG_ROTATE_COUNT` env vars override the
 defaults. The default rotation is `10m` x `3` files everywhere.
 
+### Agent Tool Catalog Measurement
+
+Measure the MCP `tools/list` payload that Paseo injects into agents with:
+
+```bash
+npm run measure:agent-tools --workspace=@getpaseo/server
+```
+
+The command reports compact JSON bytes, estimated tokens, field totals, largest
+tools, and the browser-tools delta. It defaults to the agent-scoped catalog; use
+`-- --scope=top-level` for the unaffiliated `/mcp/agents` shape and `-- --json`
+for machine-readable output.
+
 ## paseo.json service scripts
 
 `worktree.setup` and `worktree.teardown` accept either a multiline shell script or an array
 of commands. Both run sequentially.
+
+Lifecycle commands run in the worktree through a stable script shell: `bash`
+resolved from `PATH` on macOS/Linux, and PowerShell with `-NoProfile` on
+Windows. They inherit the daemon environment plus Paseo's lifecycle variables;
+login and interactive shell startup files are not loaded, and Bash's `BASH_ENV`
+hook is unset. Daemon-run loop verify checks and ACP single-string terminal
+commands use the same non-login Bash behavior on macOS/Linux, but preserve their
+existing `cmd.exe /c` string semantics on Windows. Service scripts are separate:
+they launch in a terminal and receive the service environment described below.
 
 ```json
 {
@@ -281,6 +303,8 @@ npm run build:app-deps     # highlight -> protocol -> client -> expo-two-way-aud
 
 Use `npm run build:server` whenever you have changed any daemon/server-facing package and need clean cross-package types or runtime behavior.
 
+The app Metro config disables Watchman and uses Metro's node crawler for exports. Keep that invariant unless you have verified production app exports on machines with and without Watchman installed; distro Watchman builds can differ in capabilities and change Metro's crawl behavior.
+
 For tighter loops, you can rebuild a single workspace:
 
 - Changed `packages/protocol/src/*` or `packages/client/src/*`: `npm run build:client`.
@@ -314,6 +338,7 @@ npm run cli -- ls -a -g --json       # Same, as JSON
 npm run cli -- inspect <id>          # Show detailed agent info
 npm run cli -- logs <id>             # View agent timeline
 npm run cli -- daemon status         # Check daemon status
+npm run cli -- clone owner/repo --dir ~/workspace # Clone GitHub repo and register workspace
 ```
 
 Use `--host <host:port>` to point the CLI at a different daemon:

@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { UserComposerAttachment } from "@/attachments/types";
 import type { GitHubSearchItem } from "@getpaseo/protocol/messages";
-import { findCheckoutHintPrAttachment, syncPickerPrAttachment } from "./new-workspace-picker-state";
+import {
+  clearPickerPrAttachmentForTargetChange,
+  findCheckoutHintPrAttachment,
+  syncPickerPrAttachment,
+} from "./new-workspace-picker-state";
 
 function makePrItem(number: number, title: string, headRefName = "feature/x"): GitHubSearchItem {
   return {
@@ -19,8 +23,9 @@ function makePrItem(number: number, title: string, headRefName = "feature/x"): G
 
 function prAttachment(
   item: GitHubSearchItem,
+  owner?: "new-workspace-picker",
 ): Extract<UserComposerAttachment, { kind: "github_pr" }> {
-  return { kind: "github_pr", item };
+  return { kind: "github_pr", item, ...(owner ? { owner } : {}) };
 }
 
 function issueAttachment(number: number): UserComposerAttachment {
@@ -43,57 +48,88 @@ describe("syncPickerPrAttachment", () => {
     const pr = makePrItem(202, "Refactor picker");
     const result = syncPickerPrAttachment({
       attachments: [],
-      previousPickerPrNumber: null,
       item: { kind: "github-pr", item: pr },
     });
-    expect(result.attachedPrNumber).toBe(202);
-    expect(result.attachments).toEqual([prAttachment(pr)]);
+    expect(result).toEqual([prAttachment(pr, "new-workspace-picker")]);
   });
 
   it("selects a branch without modifying attachments when no previous picker PR", () => {
     const issue = issueAttachment(44);
     const result = syncPickerPrAttachment({
       attachments: [issue],
-      previousPickerPrNumber: null,
       item: { kind: "branch", name: "dev" },
     });
-    expect(result.attachedPrNumber).toBeNull();
-    expect(result.attachments).toEqual([issue]);
+    expect(result).toEqual([issue]);
   });
 
   it("replaces the previous picker PR when a different PR is selected", () => {
     const prA = makePrItem(202, "Refactor picker", "feature/picker");
     const prB = makePrItem(303, "Polish chip", "feature/chip");
     const result = syncPickerPrAttachment({
-      attachments: [prAttachment(prA)],
-      previousPickerPrNumber: 202,
+      attachments: [prAttachment(prA, "new-workspace-picker")],
       item: { kind: "github-pr", item: prB },
     });
-    expect(result.attachedPrNumber).toBe(303);
-    expect(result.attachments).toEqual([prAttachment(prB)]);
+    expect(result).toEqual([prAttachment(prB, "new-workspace-picker")]);
   });
 
   it("removes the previous picker PR and adds no new attachment when a branch is selected", () => {
     const pr = makePrItem(202, "Refactor picker");
     const issue = issueAttachment(44);
     const result = syncPickerPrAttachment({
-      attachments: [issue, prAttachment(pr)],
-      previousPickerPrNumber: 202,
+      attachments: [issue, prAttachment(pr, "new-workspace-picker")],
       item: { kind: "branch", name: "dev" },
     });
-    expect(result.attachedPrNumber).toBeNull();
-    expect(result.attachments).toEqual([issue]);
+    expect(result).toEqual([issue]);
   });
 
   it("does not duplicate a PR that was already manually attached by the user", () => {
     const pr = makePrItem(202, "Refactor picker");
     const result = syncPickerPrAttachment({
       attachments: [prAttachment(pr)],
-      previousPickerPrNumber: null,
       item: { kind: "github-pr", item: pr },
     });
-    expect(result.attachedPrNumber).toBeNull();
-    expect(result.attachments).toHaveLength(1);
+    expect(result).toEqual([prAttachment(pr)]);
+  });
+
+  it("clears a persisted picker selection without removing user-added attachments", () => {
+    const pickerPr = prAttachment(makePrItem(202, "Picker PR"), "new-workspace-picker");
+    const manuallyAttachedPr = prAttachment(makePrItem(303, "Manual PR"));
+    const issue = issueAttachment(44);
+
+    const result = syncPickerPrAttachment({
+      attachments: [issue, pickerPr, manuallyAttachedPr],
+      item: null,
+    });
+
+    expect(result).toEqual([issue, manuallyAttachedPr]);
+  });
+});
+
+describe("clearPickerPrAttachmentForTargetChange", () => {
+  it("keeps the picker selection when the target is reselected", () => {
+    const pickerPr = prAttachment(makePrItem(202, "Picker PR"), "new-workspace-picker");
+    const attachments = [pickerPr];
+
+    expect(
+      clearPickerPrAttachmentForTargetChange({
+        attachments,
+        currentTargetId: "server-a",
+        nextTargetId: "server-a",
+      }),
+    ).toBe(attachments);
+  });
+
+  it("clears only the picker-owned PR when the target changes", () => {
+    const pickerPr = prAttachment(makePrItem(202, "Picker PR"), "new-workspace-picker");
+    const manualPr = prAttachment(makePrItem(303, "Manual PR"));
+
+    expect(
+      clearPickerPrAttachmentForTargetChange({
+        attachments: [pickerPr, manualPr],
+        currentTargetId: "server-a",
+        nextTargetId: "server-b",
+      }),
+    ).toEqual([manualPr]);
   });
 });
 

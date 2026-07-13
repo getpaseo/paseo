@@ -24,7 +24,7 @@ export async function selectProjectWorkspacesToArchive(
   for (const workspace of workspaces) {
     if (workspace.workspaceKind === "worktree") {
       const shouldArchive = await confirmWorktreeArchive({
-        worktreeName: workspace.name,
+        workspaceName: workspace.name,
         ...toWorktreeArchiveRisk(workspace),
       });
       if (!shouldArchive) {

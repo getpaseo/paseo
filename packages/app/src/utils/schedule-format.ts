@@ -2,6 +2,7 @@ import type { ScheduleCadence, ScheduleSummary } from "@getpaseo/protocol/schedu
 import { validateCronExpression } from "@getpaseo/protocol/schedule/cron-expression";
 
 export type IntervalUnit = "minutes" | "hours" | "days";
+type CronCadence = Extract<ScheduleCadence, { type: "cron" }>;
 
 const MS_PER_MINUTE = 60_000;
 const MS_PER_HOUR = MS_PER_MINUTE * 60;
@@ -82,7 +83,7 @@ export function formatCadence(cadence: ScheduleCadence): string {
   if (cadence.type === "every") {
     return formatEvery(cadence.everyMs);
   }
-  return describeCron(cadence.expression) ?? cadence.expression;
+  return describeCron(cadence) ?? cadence.expression;
 }
 
 /**
@@ -90,8 +91,8 @@ export function formatCadence(cadence: ScheduleCadence): string {
  * expression is valid but not one of the recognized patterns (callers fall
  * back to showing the raw expression).
  */
-export function describeCron(expr: string): string | null {
-  const trimmed = expr.trim();
+export function describeCron(cadence: CronCadence): string | null {
+  const trimmed = cadence.expression.trim();
   if (validateCron(trimmed) !== null) {
     return null;
   }
@@ -104,6 +105,10 @@ export function describeCron(expr: string): string | null {
   const isLiteralMinute = /^\d+$/.test(minute);
   const isWildcardMonth = month === "*";
   const isWildcardDom = dayOfMonth === "*";
+
+  if (minute === "*" && hour === "*" && isWildcardMonth && isWildcardDom && dayOfWeek === "*") {
+    return "Every minute";
+  }
 
   if (!isLiteralMinute || !isWildcardMonth || !isWildcardDom) {
     return null;
@@ -121,21 +126,24 @@ export function describeCron(expr: string): string | null {
     return null;
   }
   const time = `${pad2(Number.parseInt(hour, 10))}:${pad2(minuteNum)}`;
+  const timezone = cadence.timezone ?? "UTC";
+  const dayLabel = describeCronDay(dayOfWeek);
+  return dayLabel ? `${dayLabel} at ${time} ${timezone}` : null;
+}
 
+function describeCronDay(dayOfWeek: string): string | null {
   if (dayOfWeek === "*") {
-    return `Daily at ${time} UTC`;
+    return "Daily";
   }
   if (dayOfWeek === "1-5") {
-    return `Weekdays at ${time} UTC`;
+    return "Weekdays";
   }
   if (dayOfWeek === "0,6" || dayOfWeek === "6,0") {
-    return `Weekends at ${time} UTC`;
+    return "Weekends";
   }
   if (/^\d$/.test(dayOfWeek)) {
     const day = DAY_NAMES[Number.parseInt(dayOfWeek, 10)];
-    if (day) {
-      return `${day}s at ${time} UTC`;
-    }
+    return day ? `${day}s` : null;
   }
   return null;
 }

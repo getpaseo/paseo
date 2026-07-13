@@ -426,22 +426,17 @@ export const ja: TranslationResources = {
         enterUrl: "URLを入力",
         openDevTools: "ブラウザ開発ツールを開く",
         cancelSelector: "要素セレクターをキャンセル",
-        selectElement: "要素を選択",
-        grabElement: "要素をクリップボードにコピー",
-        grabElementLabel: "要素",
-        grabFailed: "要素をコピーできませんでした",
+        annotateElement: "要素に注釈を付ける",
+        screenshotElement: "要素のスクリーンショット",
+        screenshotCopied: "スクリーンショットをクリップボードにコピーしました",
+        elementCopied: "要素をクリップボードにコピーしました",
+        screenshotFailed: "スクリーンショットをコピーできませんでした",
       },
       annotate: {
-        title: "エージェントにフィードバックを送信",
-        placeholder: "変更すべき内容を記述…",
+        title: "要素に注釈を付ける",
+        placeholder: "この要素についてエージェントへのメッセージ…",
         submit: "添付",
         cancel: "キャンセル",
-        intents: {
-          fix: "修正",
-          change: "変更",
-          question: "質問",
-          approve: "承認",
-        },
       },
       devices: {
         label: "デバイスサイズ",
@@ -628,7 +623,7 @@ export const ja: TranslationResources = {
           success: "更新しました",
         },
         archive: {
-          label: "ワークツリーをアーカイブ",
+          label: "ワークスペースをアーカイブ",
           pending: "アーカイブ中...",
           success: "アーカイブしました",
         },
@@ -675,8 +670,6 @@ export const ja: TranslationResources = {
           updateDirty:
             "ローカルに変更があるため更新は利用できません。先にコミットまたはスタッシュしてください",
           updateCurrent: "このブランチはすでに{{baseRef}}と最新の状態のため、更新は利用できません",
-          archiveNotWorktree:
-            "このワークスペースはPaseoワークツリーとして作成されていないため、アーカイブはここでは利用できません",
           mergePrNoGithub: "GitHubが接続されていないため、PRのマージは現在利用できません",
           mergePrMissing: "プルリクエストがまだないため、PRのマージは利用できません",
           mergePrDraft: "プルリクエストがまだドラフトのため、PRのマージは利用できません",
@@ -702,11 +695,9 @@ export const ja: TranslationResources = {
           baseRefUnavailable: "ベースRefが利用できません",
           failedMerge: "マージに失敗しました",
           failedMergeFromBase: "ベースからのマージに失敗しました",
-          worktreePathUnavailable: "ワークツリーパスが利用できません",
-          failedArchive: "ワークツリーのアーカイブに失敗しました",
         },
         archiveWarning: {
-          title: '"{{worktreeName}}"をアーカイブしますか？',
+          title: '"{{workspaceName}}"をアーカイブしますか？',
           confirm: "アーカイブ",
           cancel: "キャンセル",
           uncommittedChanges: "未コミットの変更",
@@ -724,11 +715,19 @@ export const ja: TranslationResources = {
         tooLarge: "差分が大きすぎて表示できません",
         unified: "ユニファイド差分",
         split: "左右比較",
+        switchToUnified: "ユニファイド差分に切り替え",
+        switchToSplit: "左右比較差分に切り替え",
+        showTreeView: "フォルダツリーを表示",
+        showFlatView: "フラットなファイル一覧を表示",
+        options: "差分オプション",
         hideWhitespace: "空白を非表示",
+        showWhitespace: "空白を表示",
         scrollLongLines: "長い行をスクロール",
         wrapLongLines: "長い行を折り返す",
         collapseAll: "すべて折りたたむ",
         expandAll: "すべて展開",
+        collapseAllFolders: "すべてのフォルダを折りたたむ",
+        expandAllFolders: "すべてのフォルダを展開",
         refreshing: "更新中",
         refresh: "更新",
         refreshState: "gitとGitHubの状態を更新",
@@ -787,6 +786,9 @@ export const ja: TranslationResources = {
     },
   },
   sidebar: {
+    pinned: {
+      title: "固定済み",
+    },
     host: {
       noHost: "ホストなし",
       switchTitle: "ホストを切り替え",
@@ -795,6 +797,7 @@ export const ja: TranslationResources = {
     actions: {
       addProject: "プロジェクトを追加",
       newWorkspace: "新しいワークスペース",
+      hosts: "ホスト",
       home: "ホーム",
       settings: "設定",
       closeSidebar: "サイドバーを閉じる",
@@ -847,8 +850,10 @@ export const ja: TranslationResources = {
         copyPath: "パスをコピー",
         copyBranchName: "ブランチ名をコピー",
         rename: "ワークスペースの名前を変更",
+        pin: "上部に固定",
+        unpin: "固定解除",
         archive: "アーカイブ",
-        archiveWorktree: "ワークツリーをアーカイブ",
+        archiveWorkspace: "ワークスペースをアーカイブ",
         hideFromSidebar: "サイドバーから非表示",
         archiving: "アーカイブ中...",
         hiding: "非表示にしています...",
@@ -871,7 +876,7 @@ export const ja: TranslationResources = {
         branchNameCopied: "ブランチ名をコピーしました",
         hostDisconnected: "ホストが接続されていません",
         hideFailed: "ワークスペースの非表示に失敗しました",
-        archiveFailed: "ワークツリーのアーカイブに失敗しました",
+        archiveFailed: "ワークスペースのアーカイブに失敗しました",
       },
     },
   },
@@ -1067,6 +1072,12 @@ export const ja: TranslationResources = {
       },
     },
   },
+  rootError: {
+    kicker: "問題が発生しました",
+    title: "Paseo で問題が発生しました。",
+    body: "アプリを再読み込みするにはもう一度お試しください。繰り返し発生する場合は、以下の詳細を添えて報告してください。",
+    details: "詳細",
+  },
   startup: {
     errorTitle: "問題が発生しました",
     errorDescription:
@@ -1098,7 +1109,8 @@ export const ja: TranslationResources = {
     },
   },
   projectPicker: {
-    placeholder: "ディレクトリパスを入力...",
+    placeholder: "入力して検索...",
+    browse: "参照…",
     opening: "プロジェクトを開いています...",
     searching: "検索中...",
     empty: "パスを入力してください",
@@ -1436,6 +1448,7 @@ export const ja: TranslationResources = {
     },
     backToWorkspace: "戻る",
     addHost: "ホストを追加",
+    enableBuiltInDaemon: "組み込みデーモンを有効にする",
     projects: "プロジェクト",
     projectList: {
       hostLoadFailed: "ホスト{{hostName}}からプロジェクトを読み込めませんでした: {{message}}",
@@ -1444,7 +1457,6 @@ export const ja: TranslationResources = {
     groupInfo: "{{title}}について",
     sections: {
       general: "一般",
-      daemon: "デーモン",
       appearance: "外観",
       shortcuts: "ショートカット",
       integrations: "連携",
@@ -1459,7 +1471,7 @@ export const ja: TranslationResources = {
       providers: "プロバイダー",
       usage: "使用状況",
       terminals: "ターミナル",
-      host: "ホスト",
+      host: "概要",
     },
     general: {
       title: "一般",
@@ -1487,6 +1499,10 @@ export const ja: TranslationResources = {
         label: "ターミナルスクロールバック",
         description: "組み込みターミナルバッファに保持する行数",
         accessibilityLabel: "ターミナルスクロールバック行数",
+      },
+      autoExpandReasoning: {
+        label: "常に思考プロセスを展開",
+        description: "デフォルトでAIのエージェント思考・推論ブロックを完全に展開して表示します",
       },
       language: {
         label: "言語",
@@ -1569,6 +1585,9 @@ export const ja: TranslationResources = {
           auto: "システム",
         },
       },
+      detailLevel: {
+        title: "詳細レベル",
+      },
       fonts: {
         title: "フォント",
         systemDefault: "システムデフォルト",
@@ -1615,7 +1634,7 @@ export const ja: TranslationResources = {
         openProject: "プロジェクトを開く",
         newWorkspace: "新しいワークスペース",
         newWorktree: "新しいワークツリー",
-        archiveWorktree: "ワークツリーをアーカイブ",
+        archiveWorkspace: "ワークスペースをアーカイブ",
         newTab: "新しいタブ",
         closeCurrentTab: "現在のタブを閉じる",
         jumpToWorkspace: "ワークスペースにジャンプ",

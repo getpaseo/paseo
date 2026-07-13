@@ -68,6 +68,10 @@ class BrowserToolHarness {
     return this.get(name).handler(parsed, {});
   }
 
+  public toolNames(): string[] {
+    return Array.from(this.tools.keys());
+  }
+
   private get(name: string): RegisteredTool {
     const tool = this.tools.get(name);
     if (!tool) {
@@ -129,7 +133,10 @@ function snapshotPayload(): Extract<BrowserToolsResponsePayload, { ok: true }> {
       workspaceId: "wks_workspace_a",
       url: "https://example.com",
       title: "Example",
-      elements: [],
+      format: "aria-yaml",
+      snapshot: '- document "Example"\n  - button "Save" [ref=@e1]',
+      truncated: false,
+      stats: { nodeCount: 2, refCount: 1, textLength: 50 },
     },
   };
 }
@@ -151,22 +158,46 @@ function screenshotPayload(): Extract<BrowserToolsResponsePayload, { ok: true }>
 
 const routedToolCases = [
   {
-    name: "set background",
-    toolName: "browser_set_background",
-    input: { browserId: BROWSER_ID, color: "red" },
-    command: { command: "set_background", args: { browserId: BROWSER_ID, color: "red" } },
-    payload: {
-      requestId: "req-set-background",
-      ok: true,
-      result: { command: "set_background", browserId: BROWSER_ID, color: "red" },
-    },
-    content: [{ type: "text", text: "Set browser page background to red." }],
-  },
-  {
     name: "click",
     toolName: "browser_click",
     input: { browserId: BROWSER_ID, ref: "@e2" },
-    command: { command: "click", args: { browserId: BROWSER_ID, ref: "@e2" } },
+    command: {
+      command: "click",
+      args: {
+        browserId: BROWSER_ID,
+        ref: "@e2",
+        button: "left",
+        doubleClick: false,
+        modifiers: [],
+      },
+    },
+    payload: {
+      requestId: "req-click",
+      ok: true,
+      result: { command: "click", browserId: BROWSER_ID, ref: "@e2" },
+    },
+    content: [{ type: "text", text: "Clicked browser element @e2." }],
+  },
+  {
+    name: "click options",
+    toolName: "browser_click",
+    input: {
+      browserId: BROWSER_ID,
+      ref: "@e2",
+      button: "right",
+      doubleClick: true,
+      modifiers: ["Control", "Shift"],
+    },
+    command: {
+      command: "click",
+      args: {
+        browserId: BROWSER_ID,
+        ref: "@e2",
+        button: "right",
+        doubleClick: true,
+        modifiers: ["Control", "Shift"],
+      },
+    },
     payload: {
       requestId: "req-click",
       ok: true,
@@ -226,12 +257,19 @@ const routedToolCases = [
     name: "screenshot",
     toolName: "browser_screenshot",
     input: { browserId: BROWSER_ID },
-    command: { command: "screenshot", args: { browserId: BROWSER_ID } },
+    command: { command: "screenshot", args: { browserId: BROWSER_ID, fullPage: false } },
     payload: screenshotPayload(),
     content: [
       { type: "text", text: "Captured browser screenshot (800x600)." },
       { type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" },
     ],
+    structuredResult: {
+      command: "screenshot",
+      browserId: BROWSER_ID,
+      mimeType: "image/png",
+      width: 800,
+      height: 600,
+    },
   },
   {
     name: "logs",
@@ -258,64 +296,15 @@ const routedToolCases = [
     content: [{ type: "text", text: "Read 1 console log and 1 network entry." }],
   },
   {
-    name: "storage",
-    toolName: "browser_storage",
-    input: { browserId: BROWSER_ID },
-    command: { command: "storage", args: { browserId: BROWSER_ID } },
-    payload: {
-      requestId: "req-storage",
-      ok: true,
-      result: {
-        command: "storage",
-        browserId: BROWSER_ID,
-        url: "https://example.com",
-        cookies: [{ name: "theme", value: "dark" }],
-        localStorage: [{ key: "token", value: "abc" }],
-        sessionStorage: [{ key: "tab", value: "1" }],
-      },
-    },
-    content: [
-      { type: "text", text: "Read 1 cookie, 1 localStorage entry, and 1 sessionStorage entry." },
-    ],
-  },
-  {
-    name: "environment",
-    toolName: "browser_environment",
-    input: {
-      browserId: BROWSER_ID,
-      viewport: { width: 390, height: 844, deviceScaleFactor: 3 },
-      geolocation: { latitude: 37.7749, longitude: -122.4194, accuracy: 5 },
-    },
-    command: {
-      command: "environment",
-      args: {
-        browserId: BROWSER_ID,
-        viewport: { width: 390, height: 844, deviceScaleFactor: 3 },
-        geolocation: { latitude: 37.7749, longitude: -122.4194, accuracy: 5 },
-      },
-    },
-    payload: {
-      requestId: "req-environment",
-      ok: true,
-      result: {
-        command: "environment",
-        browserId: BROWSER_ID,
-        viewport: { width: 390, height: 844, deviceScaleFactor: 3 },
-        geolocation: { latitude: 37.7749, longitude: -122.4194, accuracy: 5 },
-      },
-    },
-    content: [{ type: "text", text: "Browser environment viewport is 390x844." }],
-  },
-  {
     name: "full page screenshot",
-    toolName: "browser_full_page_screenshot",
-    input: { browserId: BROWSER_ID },
-    command: { command: "full_page_screenshot", args: { browserId: BROWSER_ID } },
+    toolName: "browser_screenshot",
+    input: { browserId: BROWSER_ID, fullPage: true },
+    command: { command: "screenshot", args: { browserId: BROWSER_ID, fullPage: true } },
     payload: {
       requestId: "req-full-page",
       ok: true,
       result: {
-        command: "full_page_screenshot",
+        command: "screenshot",
         browserId: BROWSER_ID,
         mimeType: "image/png",
         dataBase64: "iVBORw0KGgo=",
@@ -324,55 +313,16 @@ const routedToolCases = [
       },
     },
     content: [
-      { type: "text", text: "Captured full-page browser screenshot (390x1200)." },
+      { type: "text", text: "Captured browser screenshot (390x1200)." },
       { type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" },
     ],
-  },
-  {
-    name: "pdf",
-    toolName: "browser_pdf",
-    input: { browserId: BROWSER_ID, landscape: true },
-    command: {
-      command: "pdf",
-      args: { browserId: BROWSER_ID, landscape: true, printBackground: true },
+    structuredResult: {
+      command: "screenshot",
+      browserId: BROWSER_ID,
+      mimeType: "image/png",
+      width: 390,
+      height: 1200,
     },
-    payload: {
-      requestId: "req-pdf",
-      ok: true,
-      result: {
-        command: "pdf",
-        browserId: BROWSER_ID,
-        mimeType: "application/pdf",
-        dataBase64: "JVBERg==",
-      },
-    },
-    content: [{ type: "text", text: "Exported browser page PDF." }],
-  },
-  {
-    name: "download",
-    toolName: "browser_download",
-    input: { browserId: BROWSER_ID, url: "https://example.com/file.txt", fileName: "file.txt" },
-    command: {
-      command: "download",
-      args: {
-        browserId: BROWSER_ID,
-        url: "https://example.com/file.txt",
-        fileName: "file.txt",
-      },
-    },
-    payload: {
-      requestId: "req-download",
-      ok: true,
-      result: {
-        command: "download",
-        browserId: BROWSER_ID,
-        url: "https://example.com/file.txt",
-        filePath: "/tmp/file.txt",
-        totalBytes: 5,
-        state: "completed",
-      },
-    },
-    content: [{ type: "text", text: "Downloaded browser file to /tmp/file.txt." }],
   },
   {
     name: "upload",
@@ -393,42 +343,6 @@ const routedToolCases = [
       },
     },
     content: [{ type: "text", text: "Uploaded 1 file to browser element @e1." }],
-  },
-  {
-    name: "focus",
-    toolName: "browser_focus",
-    input: { browserId: BROWSER_ID, ref: "@e1" },
-    command: { command: "focus", args: { browserId: BROWSER_ID, ref: "@e1" } },
-    payload: {
-      requestId: "req-focus",
-      ok: true,
-      result: { command: "focus", browserId: BROWSER_ID, ref: "@e1" },
-    },
-    content: [{ type: "text", text: "Focused browser element @e1." }],
-  },
-  {
-    name: "clear",
-    toolName: "browser_clear",
-    input: { browserId: BROWSER_ID, ref: "@e1" },
-    command: { command: "clear", args: { browserId: BROWSER_ID, ref: "@e1" } },
-    payload: {
-      requestId: "req-clear",
-      ok: true,
-      result: { command: "clear", browserId: BROWSER_ID, ref: "@e1" },
-    },
-    content: [{ type: "text", text: "Cleared browser element @e1." }],
-  },
-  {
-    name: "check",
-    toolName: "browser_check",
-    input: { browserId: BROWSER_ID, ref: "@e2", checked: false },
-    command: { command: "check", args: { browserId: BROWSER_ID, ref: "@e2", checked: false } },
-    payload: {
-      requestId: "req-check",
-      ok: true,
-      result: { command: "check", browserId: BROWSER_ID, ref: "@e2", checked: false },
-    },
-    content: [{ type: "text", text: "Unchecked browser element @e2." }],
   },
   {
     name: "select",
@@ -469,6 +383,85 @@ const routedToolCases = [
     },
     content: [{ type: "text", text: "Dragged browser element @e4 to @e5." }],
   },
+  {
+    name: "evaluate",
+    toolName: "browser_evaluate",
+    input: { browserId: BROWSER_ID, function: "(element) => element.textContent", ref: "@e1" },
+    command: {
+      command: "evaluate",
+      args: { browserId: BROWSER_ID, function: "(element) => element.textContent", ref: "@e1" },
+    },
+    payload: {
+      requestId: "req-evaluate",
+      ok: true,
+      result: {
+        command: "evaluate",
+        browserId: BROWSER_ID,
+        resultJson: '"Save"',
+        truncated: false,
+      },
+    },
+    content: [{ type: "text", text: 'Browser evaluate returned:\n"Save"' }],
+  },
+  {
+    name: "scroll",
+    toolName: "browser_scroll",
+    input: { browserId: BROWSER_ID, ref: "@e1", deltaX: 0, deltaY: 400 },
+    command: {
+      command: "scroll",
+      args: { browserId: BROWSER_ID, ref: "@e1", deltaX: 0, deltaY: 400 },
+    },
+    payload: {
+      requestId: "req-scroll",
+      ok: true,
+      result: {
+        command: "scroll",
+        browserId: BROWSER_ID,
+        ref: "@e1",
+        deltaX: 0,
+        deltaY: 400,
+      },
+    },
+    content: [{ type: "text", text: "Scrolled browser element @e1 by 0, 400." }],
+  },
+  {
+    name: "resize",
+    toolName: "browser_resize",
+    input: { browserId: BROWSER_ID, width: 1024, height: 768 },
+    command: {
+      command: "resize",
+      args: { browserId: BROWSER_ID, width: 1024, height: 768 },
+    },
+    payload: {
+      requestId: "req-resize",
+      ok: true,
+      result: {
+        command: "resize",
+        browserId: BROWSER_ID,
+        width: 1024,
+        height: 768,
+      },
+    },
+    content: [{ type: "text", text: "Resized browser viewport to 1024x768." }],
+  },
+  {
+    name: "close_tab",
+    toolName: "browser_close_tab",
+    input: { browserId: BROWSER_ID },
+    command: {
+      command: "close_tab",
+      args: { browserId: BROWSER_ID },
+    },
+    payload: {
+      requestId: "req-close-tab",
+      ok: true,
+      result: {
+        command: "close_tab",
+        browserId: BROWSER_ID,
+      },
+    },
+    content: [{ type: "text", text: `Closed browser tab ${BROWSER_ID}.` }],
+  },
 ] satisfies Array<{
   name: string;
   toolName: string;
@@ -480,29 +473,8 @@ const routedToolCases = [
 
 const brokerErrorCases = [
   {
-    name: "disabled browser tools",
-    toolName: "browser_list_tabs",
-    input: {},
-    payload: {
-      requestId: "req-disabled",
-      ok: false,
-      error: {
-        code: "browser_disabled",
-        message: "Browser tools are disabled. Enable daemon.browserTools.enabled to use them.",
-        retryable: false,
-      },
-    },
-    content: [
-      {
-        type: "text",
-        text: "Browser tools are disabled. Enable desktop browser tools on the host, then try again.",
-      },
-    ],
-    context: { agentId: "agent-1", cwd: "/repo", workspaceId: "wks_workspace_a" },
-  },
-  {
     name: "typed timeout errors",
-    toolName: "browser_page_info",
+    toolName: "browser_snapshot",
     input: { browserId: BROWSER_ID },
     payload: {
       requestId: "req-timeout",
@@ -516,7 +488,7 @@ const brokerErrorCases = [
     content: [
       {
         type: "text",
-        text: "The browser did not respond before the timeout. Try again or check the desktop app.",
+        text: "The browser did not respond before the timeout. Try again or check the browser host.",
       },
     ],
     context: {
@@ -535,14 +507,14 @@ const brokerErrorCases = [
       ok: false,
       error: {
         code: "screenshot_no_frame",
-        message: "The browser tab has no painted frame. Focus the tab in the app, then try again.",
-        retryable: false,
+        message: "The tab has not painted yet. Retry the screenshot.",
+        retryable: true,
       },
     },
     content: [
       {
         type: "text",
-        text: "The browser tab has no painted frame. Focus the tab in the app, then try again.",
+        text: "The tab has not painted yet. Retry the screenshot.",
       },
     ],
     context: {
@@ -562,6 +534,35 @@ const brokerErrorCases = [
 }>;
 
 describe("registerBrowserTools", () => {
+  test("registers the kept browser automation tools only", () => {
+    const harness = new BrowserToolHarness();
+
+    expect(harness.toolNames()).toEqual([
+      "browser_list_tabs",
+      "browser_new_tab",
+      "browser_snapshot",
+      "browser_click",
+      "browser_fill",
+      "browser_wait",
+      "browser_type",
+      "browser_keypress",
+      "browser_navigate",
+      "browser_back",
+      "browser_forward",
+      "browser_reload",
+      "browser_screenshot",
+      "browser_upload",
+      "browser_hover",
+      "browser_select",
+      "browser_drag",
+      "browser_logs",
+      "browser_evaluate",
+      "browser_scroll",
+      "browser_resize",
+      "browser_close_tab",
+    ]);
+  });
+
   test("list tabs sends workspace in the request envelope", async () => {
     const harness = new BrowserToolHarness();
 
@@ -613,12 +614,6 @@ describe("registerBrowserTools", () => {
       expected: { browserId: BROWSER_ID, url: "http://localhost:3000" },
     },
     {
-      name: "download accepts an IP host without a scheme as http",
-      toolName: "browser_download",
-      input: { browserId: BROWSER_ID, url: "127.0.0.1:8081/admin" },
-      expected: { browserId: BROWSER_ID, url: "http://127.0.0.1:8081/admin" },
-    },
-    {
       name: "new tab accepts a domain path without a scheme as http",
       toolName: "browser_new_tab",
       input: { url: "example.com/x" },
@@ -661,11 +656,6 @@ describe("registerBrowserTools", () => {
       name: "navigate rejects file URLs",
       toolName: "browser_navigate",
       input: { browserId: BROWSER_ID, url: "file:///tmp/index.html" },
-    },
-    {
-      name: "download rejects file URLs",
-      toolName: "browser_download",
-      input: { browserId: BROWSER_ID, url: "file:///tmp/archive.zip" },
     },
     {
       name: "new tab rejects file URLs",
@@ -779,7 +769,10 @@ describe("registerBrowserTools", () => {
         workspaceId: "wks_workspace_a",
         url: "https://example.com",
         title: "Example",
-        elements: [],
+        format: "aria-yaml",
+        snapshot: '- document "Example"\n  - button "Save" [ref=@e1]',
+        truncated: false,
+        stats: { nodeCount: 2, refCount: 1, textLength: 50 },
       },
       context: {
         agentId: "agent-1",
@@ -792,7 +785,7 @@ describe("registerBrowserTools", () => {
 
   test.each(routedToolCases)(
     "$name routes browser id in command args and workspace id in the envelope",
-    async ({ toolName, input, command, payload, content }) => {
+    async ({ toolName, input, command, payload, content, structuredResult }) => {
       const harness = new BrowserToolHarness();
       harness.broker.setResponse(payload);
 
@@ -809,7 +802,7 @@ describe("registerBrowserTools", () => {
       expect(response.content).toEqual(content);
       expect(response.structuredContent).toEqual({
         ok: payload.ok,
-        result: payload.result,
+        result: structuredResult ?? payload.result,
         context: {
           agentId: "agent-1",
           cwd: "/repo",
@@ -836,6 +829,89 @@ describe("registerBrowserTools", () => {
       });
     },
   );
+
+  test("success responses include handled dialog metadata and a text note", async () => {
+    const harness = new BrowserToolHarness();
+    const payload: Extract<BrowserToolsResponsePayload, { ok: true }> = {
+      requestId: "req-click",
+      ok: true,
+      result: { command: "click", browserId: BROWSER_ID, ref: "@e1" },
+      dialogs: [
+        {
+          type: "confirm",
+          message: "Delete item?",
+          action: "dismissed",
+          timestamp: 123,
+        },
+      ],
+    };
+    harness.broker.setResponse(payload);
+
+    const response = await harness.execute("browser_click", { browserId: BROWSER_ID, ref: "@e1" });
+
+    expect(response.content).toEqual([
+      {
+        type: "text",
+        text: 'Clicked browser element @e1.\nHandled browser dialog: dismissed confirm "Delete item?".',
+      },
+    ]);
+    expect(response.structuredContent).toEqual({
+      ok: true,
+      result: payload.result,
+      dialogs: payload.dialogs,
+      context: {
+        agentId: "agent-1",
+        cwd: "/repo",
+        workspaceId: "wks_workspace_a",
+        browserId: BROWSER_ID,
+      },
+    });
+  });
+
+  test("failure responses include handled dialog metadata and a text note", async () => {
+    const harness = new BrowserToolHarness();
+    const payload: Extract<BrowserToolsResponsePayload, { ok: false }> = {
+      requestId: "req-wait",
+      ok: false,
+      error: {
+        code: "browser_timeout",
+        message: "Timed out waiting for browser URL: /next",
+        retryable: true,
+      },
+      dialogs: [
+        {
+          type: "beforeunload",
+          message: "Leave site?",
+          action: "dismissed",
+          timestamp: 124,
+        },
+      ],
+    };
+    harness.broker.setResponse(payload);
+
+    const response = await harness.execute("browser_wait", {
+      browserId: BROWSER_ID,
+      url: "/next",
+    });
+
+    expect(response.content).toEqual([
+      {
+        type: "text",
+        text: 'The browser did not respond before the timeout. Try again or check the browser host.\nHandled browser dialog: dismissed beforeunload "Leave site?".',
+      },
+    ]);
+    expect(response.structuredContent).toEqual({
+      ok: false,
+      error: payload.error,
+      dialogs: payload.dialogs,
+      context: {
+        agentId: "agent-1",
+        cwd: "/repo",
+        workspaceId: "wks_workspace_a",
+        browserId: BROWSER_ID,
+      },
+    });
+  });
 
   test("wait rejects calls without a condition", () => {
     const harness = new BrowserToolHarness();
@@ -905,38 +981,16 @@ describe("registerBrowserTools", () => {
 
   test("tab tools keep empty context when there is no caller agent", async () => {
     const harness = new BrowserToolHarness(null, null);
-    harness.broker.setResponse({
-      requestId: "req-page-info",
-      ok: true,
-      result: {
-        command: "page_info",
-        tab: {
-          browserId: BROWSER_ID,
-          url: "https://example.com",
-          title: "Example",
-          isActive: false,
-          isLoading: false,
-        },
-      },
-    });
+    harness.broker.setResponse(snapshotPayload());
 
-    const response = await harness.execute("browser_page_info", { browserId: BROWSER_ID });
+    const response = await harness.execute("browser_snapshot", { browserId: BROWSER_ID });
 
     expect(harness.broker.calls).toEqual([
-      { command: { command: "page_info", args: { browserId: BROWSER_ID } } },
+      { command: { command: "snapshot", args: { browserId: BROWSER_ID } } },
     ]);
     expect(response.structuredContent).toEqual({
       ok: true,
-      result: {
-        command: "page_info",
-        tab: {
-          browserId: BROWSER_ID,
-          url: "https://example.com",
-          title: "Example",
-          isActive: false,
-          isLoading: false,
-        },
-      },
+      result: snapshotPayload().result,
       context: { browserId: BROWSER_ID },
     });
   });

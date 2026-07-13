@@ -1,14 +1,20 @@
-import { mkdirSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
-import type { WebContents } from "electron";
+import type { Rectangle } from "electron";
 import { ipcMain } from "electron";
 import { BrowserAutomationExecuteRequestSchema } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import type {
   BrowserAutomationConsoleLogEntry,
-  BrowserAutomationCookieEntry,
+  BrowserAutomationDialogEvent,
 } from "@getpaseo/protocol/browser-automation/rpc-schemas";
-import type { TabContents, BrowserRegistry } from "./service.js";
+import type { TabContents, BrowserRegistry, TabImage } from "./service.js";
+import { CdpSessionQueue } from "./cdp-session-queue.js";
+import {
+  dialogAcceptValue,
+  handledDialogEvent,
+  MAX_DIALOGS_PER_COMMAND,
+  promptShimDrainScript,
+  promptShimInstallScript,
+  promptShimRestoreScript,
+} from "./dialog-handling.js";
 import { executeAutomationCommand } from "./service.js";
 import {
   listRegisteredPaseoBrowserIds,
@@ -20,14 +26,60 @@ import {
 
 const MAX_CONSOLE_MESSAGES_PER_TAB = 200;
 const consoleMessagesByContentsId = new Map<number, BrowserAutomationConsoleLogEntry[]>();
+const cdpQueuesByContentsId = new Map<number, CdpSessionQueue>();
+const dialogMonitorsByContentsId = new Map<number, DialogMonitor>();
 const observedContentsIds = new Set<number>();
 
 interface IpcHandlerRegistry {
   handle(channel: string, listener: (event: unknown, ...args: unknown[]) => unknown): void;
 }
 
-function adaptWebContents(contents: WebContents): TabContents {
+interface WebContentsDebugger {
+  isAttached(): boolean;
+  attach(protocolVersion?: string): void;
+  sendCommand(command: string, params?: Record<string, unknown>): Promise<unknown>;
+  on?(
+    event: "message",
+    listener: (event: unknown, method: string, params?: Record<string, unknown>) => void,
+  ): void;
+}
+
+interface ConsoleMessageEmitter {
+  on(
+    event: "console-message",
+    listener: (
+      event: unknown,
+      level: unknown,
+      message: unknown,
+      line: unknown,
+      sourceId: unknown,
+    ) => void,
+  ): void;
+  once(event: "destroyed", listener: () => void): void;
+}
+
+interface BrowserAutomationWebContents extends ConsoleMessageEmitter {
+  readonly id: number;
+  readonly debugger: WebContentsDebugger;
+  getURL(): string;
+  getTitle(): string;
+  canGoBack(): boolean;
+  canGoForward(): boolean;
+  isLoading(): boolean;
+  isDestroyed(): boolean;
+  executeJavaScript(code: string): Promise<unknown>;
+  loadURL(url: string): Promise<void>;
+  goBack(): void;
+  goForward(): void;
+  reload(): void;
+  capturePage(rect?: Rectangle, options?: { stayHidden?: boolean }): Promise<TabImage>;
+  invalidate(): void;
+}
+
+export function adaptWebContents(contents: BrowserAutomationWebContents): TabContents {
   observeConsoleMessages(contents);
+  const cdpQueue = getCdpQueue(contents.id);
+  const dialogMonitor = getDialogMonitor(contents, cdpQueue);
   return {
     id: contents.id,
     getURL: () => contents.getURL(),
@@ -41,70 +93,31 @@ function adaptWebContents(contents: WebContents): TabContents {
     goBack: () => contents.goBack(),
     goForward: () => contents.goForward(),
     reload: () => contents.reload(),
-    capturePage: (options) => contents.capturePage(undefined, options),
+    capturePage: (captureOptions) => contents.capturePage(undefined, captureOptions),
     invalidate: () => contents.invalidate(),
-    isBackgroundThrottlingAllowed: () => contents.getBackgroundThrottling(),
-    setBackgroundThrottling: (allowed) => contents.setBackgroundThrottling(allowed),
     getConsoleMessages: () => consoleMessagesByContentsId.get(contents.id) ?? [],
-    getCookies: async (url: string) =>
-      (await contents.session.cookies.get({ url })).map(normalizeCookie),
-    sendDebugCommand: async (command: string, params?: Record<string, unknown>) => {
-      if (!contents.debugger.isAttached()) {
-        contents.debugger.attach("1.3");
-      }
-      return contents.debugger.sendCommand(command, params ?? {});
-    },
-    printToPDF: async (options?: Record<string, unknown>) => contents.printToPDF(options ?? {}),
-    downloadURL: (input) => downloadWithContents(contents, input),
+    captureDialogs: (task) => dialogMonitor.capture(task),
+    sendDebugCommand: (command: string, params?: Record<string, unknown>) =>
+      cdpQueue.run(async () => {
+        if (!contents.debugger.isAttached()) {
+          contents.debugger.attach("1.3");
+        }
+        return contents.debugger.sendCommand(command, params ?? {});
+      }),
   };
 }
 
-function downloadWithContents(
-  contents: WebContents,
-  input: { url: string; fileName?: string },
-): Promise<{ filePath: string; totalBytes?: number; state: string }> {
-  const downloadDir = join(tmpdir(), "paseo-browser-downloads");
-  mkdirSync(downloadDir, { recursive: true });
-  const filePath = join(downloadDir, sanitizeDownloadFileName(input));
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      contents.session.off("will-download", onDownload);
-      reject(new Error(`Timed out waiting for browser download: ${input.url}`));
-    }, 30_000);
-    function onDownload(_event: Electron.Event, item: Electron.DownloadItem): void {
-      if (item.getURL() !== input.url) {
-        return;
-      }
-      clearTimeout(timeout);
-      contents.session.off("will-download", onDownload);
-      item.setSavePath(filePath);
-      item.once("done", (_doneEvent, state) => {
-        resolve({ filePath, totalBytes: item.getTotalBytes(), state });
-      });
-    }
-    contents.session.on("will-download", onDownload);
-    contents.downloadURL(input.url);
-  });
+function getCdpQueue(contentsId: number): CdpSessionQueue {
+  const existing = cdpQueuesByContentsId.get(contentsId);
+  if (existing) {
+    return existing;
+  }
+  const queue = new CdpSessionQueue();
+  cdpQueuesByContentsId.set(contentsId, queue);
+  return queue;
 }
 
-export function sanitizeDownloadFileName(input: { url: string; fileName?: string }): string {
-  const requestedName = input.fileName ?? basename(new URL(input.url).pathname);
-  return basename(requestedName) || "download";
-}
-
-function normalizeCookie(cookie: Electron.Cookie): BrowserAutomationCookieEntry {
-  return {
-    name: cookie.name,
-    value: cookie.value,
-    ...(cookie.domain ? { domain: cookie.domain } : {}),
-    ...(cookie.path ? { path: cookie.path } : {}),
-    secure: cookie.secure,
-    httpOnly: cookie.httpOnly,
-    ...(typeof cookie.expirationDate === "number" ? { expirationDate: cookie.expirationDate } : {}),
-  };
-}
-
-function observeConsoleMessages(contents: WebContents): void {
+function observeConsoleMessages(contents: BrowserAutomationWebContents): void {
   if (observedContentsIds.has(contents.id)) {
     return;
   }
@@ -118,6 +131,192 @@ function observeConsoleMessages(contents: WebContents): void {
   contents.once("destroyed", () => {
     observedContentsIds.delete(contents.id);
     consoleMessagesByContentsId.delete(contents.id);
+    cdpQueuesByContentsId.delete(contents.id);
+    dialogMonitorsByContentsId.delete(contents.id);
+  });
+}
+
+function getDialogMonitor(
+  contents: BrowserAutomationWebContents,
+  cdpQueue: CdpSessionQueue,
+): DialogMonitor {
+  const existing = dialogMonitorsByContentsId.get(contents.id);
+  if (existing) {
+    return existing;
+  }
+  const monitor = new DialogMonitor(contents, cdpQueue);
+  dialogMonitorsByContentsId.set(contents.id, monitor);
+  return monitor;
+}
+
+class DialogMonitor {
+  private enabled = false;
+  private listenerRegistered = false;
+  private readonly activeCollectors: DialogCollector[] = [];
+
+  public constructor(
+    private readonly contents: BrowserAutomationWebContents,
+    private readonly cdpQueue: CdpSessionQueue,
+  ) {}
+
+  public async capture<T>(
+    task: () => Promise<T>,
+  ): Promise<{ result: T; dialogs: BrowserAutomationDialogEvent[] }> {
+    const collector: DialogCollector = { dialogs: [] };
+    try {
+      await this.enable();
+      await this.installPromptShim();
+    } catch (error) {
+      console.warn("[browser-automation] Dialog capture unavailable; running command without it", {
+        contentsId: this.contents.id,
+        error,
+      });
+      return { result: await task(), dialogs: [] };
+    }
+    this.activeCollectors.push(collector);
+    try {
+      const result = await task();
+      this.recordPromptShimDialogs(await this.drainPromptShim());
+      return { result, dialogs: collector.dialogs };
+    } finally {
+      const index = this.activeCollectors.indexOf(collector);
+      if (index >= 0) {
+        this.activeCollectors.splice(index, 1);
+      }
+      if (this.activeCollectors.length === 0) {
+        await this.restorePromptShim();
+      }
+    }
+  }
+
+  private async enable(): Promise<void> {
+    if (this.enabled) {
+      return;
+    }
+    if (!this.contents.debugger.on) {
+      return;
+    }
+    if (!this.listenerRegistered) {
+      this.listenerRegistered = true;
+      this.contents.debugger.on("message", (_event, method, params) => {
+        if (method !== "Page.javascriptDialogOpening") {
+          return;
+        }
+        if (this.activeCollectors.length === 0) {
+          return;
+        }
+        void this.handleOpening(params ?? {});
+      });
+    }
+    await this.sendDebugCommand("Page.enable");
+    this.enabled = true;
+  }
+
+  private async handleOpening(params: Record<string, unknown>): Promise<void> {
+    const event = handledDialogEvent(params);
+    for (const collector of this.activeCollectors) {
+      this.recordDialogs(collector, [event]);
+    }
+    await this.sendDialogResponseCommand("Page.handleJavaScriptDialog", {
+      accept: dialogAcceptValue(event.type),
+    });
+  }
+
+  private async installPromptShim(): Promise<void> {
+    await this.sendDebugCommand("Runtime.evaluate", {
+      expression: promptShimInstallScript(),
+      returnByValue: true,
+    });
+  }
+
+  private async drainPromptShim(): Promise<BrowserAutomationDialogEvent[]> {
+    try {
+      const result = (await this.sendDebugCommand("Runtime.evaluate", {
+        expression: promptShimDrainScript(),
+        returnByValue: true,
+      })) as { result?: { value?: unknown } };
+      return parsePromptShimDialogs(result.result?.value);
+    } catch {
+      return [];
+    }
+  }
+
+  private async restorePromptShim(): Promise<void> {
+    try {
+      await this.sendDebugCommand("Runtime.evaluate", {
+        expression: promptShimRestoreScript(),
+        returnByValue: true,
+      });
+    } catch {
+      // Navigation can destroy the execution context before cleanup runs; the next page has no shim.
+    }
+  }
+
+  private recordDialogs(collector: DialogCollector, dialogs: BrowserAutomationDialogEvent[]): void {
+    for (const dialog of dialogs) {
+      if (collector.dialogs.length >= MAX_DIALOGS_PER_COMMAND) {
+        return;
+      }
+      collector.dialogs.push(dialog);
+    }
+  }
+
+  private recordPromptShimDialogs(dialogs: BrowserAutomationDialogEvent[]): void {
+    for (const collector of this.activeCollectors) {
+      this.recordDialogs(collector, dialogs);
+    }
+  }
+
+  private async sendDebugCommand(
+    command: string,
+    params?: Record<string, unknown>,
+  ): Promise<unknown> {
+    return this.cdpQueue.run(async () => {
+      if (!this.contents.debugger.isAttached()) {
+        this.contents.debugger.attach("1.3");
+      }
+      return this.contents.debugger.sendCommand(command, params ?? {});
+    });
+  }
+
+  private async sendDialogResponseCommand(
+    command: string,
+    params?: Record<string, unknown>,
+  ): Promise<unknown> {
+    // Dialogs can block the CDP command that opened them, so the unblocker must not wait behind
+    // the per-tab command queue.
+    if (!this.contents.debugger.isAttached()) {
+      this.contents.debugger.attach("1.3");
+    }
+    return this.contents.debugger.sendCommand(command, params ?? {});
+  }
+}
+
+interface DialogCollector {
+  dialogs: BrowserAutomationDialogEvent[];
+}
+
+function parsePromptShimDialogs(value: unknown): BrowserAutomationDialogEvent[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.flatMap((entry): BrowserAutomationDialogEvent[] => {
+    if (!entry || typeof entry !== "object") {
+      return [];
+    }
+    const record = entry as Record<string, unknown>;
+    if (record.type !== "prompt" || record.action !== "dismissed") {
+      return [];
+    }
+    return [
+      {
+        type: "prompt",
+        message: typeof record.message === "string" ? record.message : "",
+        ...(typeof record.defaultValue === "string" ? { defaultValue: record.defaultValue } : {}),
+        action: "dismissed",
+        timestamp: typeof record.timestamp === "number" ? record.timestamp : Date.now(),
+      },
+    ];
   });
 }
 

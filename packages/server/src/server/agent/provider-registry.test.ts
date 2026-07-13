@@ -3,8 +3,10 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import type {
   AgentClient,
+  AgentFeature,
   AgentModelDefinition,
   AgentMode,
+  AgentSessionConfig,
   ProviderCatalog,
 } from "./agent-sdk-types.js";
 
@@ -25,6 +27,11 @@ const mockState = vi.hoisted(() => {
         env?: Record<string, string>;
         providerParams?: unknown;
       }>,
+      trae: [] as Array<{
+        command: string[];
+        env?: Record<string, string>;
+        providerParams?: unknown;
+      }>,
       pi: [] as ConstructorEntry[],
       genericAcp: [] as Array<{
         command: string[];
@@ -36,16 +43,19 @@ const mockState = vi.hoisted(() => {
     },
     isCommandAvailable: vi.fn(async (_command: string) => false),
     runtimeModels: new Map<string, AgentModelDefinition[]>(),
+    cursorListFeaturesConfigs: [] as AgentSessionConfig[],
     reset() {
       this.constructorArgs.claude = [];
       this.constructorArgs.codex = [];
       this.constructorArgs.copilot = [];
       this.constructorArgs.cursor = [];
+      this.constructorArgs.trae = [];
       this.constructorArgs.pi = [];
       this.constructorArgs.genericAcp = [];
       this.isCommandAvailable.mockReset();
       this.isCommandAvailable.mockImplementation(async (_command: string) => false);
       this.runtimeModels.clear();
+      this.cursorListFeaturesConfigs = [];
     },
   };
 });
@@ -372,6 +382,72 @@ vi.mock("./providers/cursor-acp-agent.js", () => ({
     async isAvailable(): Promise<boolean> {
       return true;
     }
+
+    async listFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {
+      mockState.cursorListFeaturesConfigs.push(config);
+      return [
+        {
+          type: "select",
+          id: "fast",
+          label: "Fast",
+          value: "false",
+          options: [{ id: "false", label: "Off" }],
+        },
+      ];
+    }
+  },
+}));
+
+vi.mock("./providers/trae-acp-agent.js", () => ({
+  TraeACPAgentClient: class TraeACPAgentClient {
+    readonly capabilities = {
+      supportsStreaming: true,
+      supportsSessionPersistence: true,
+      supportsDynamicModes: true,
+      supportsMcpServers: true,
+      supportsReasoningStream: true,
+      supportsToolInvocations: true,
+    };
+    readonly provider = "acp";
+    readonly runtimeSettings?: unknown;
+
+    constructor(options: {
+      command: string[];
+      env?: Record<string, string>;
+      providerParams?: unknown;
+    }) {
+      this.runtimeSettings = {
+        command: {
+          mode: "replace",
+          argv: options.command,
+        },
+        env: options.env,
+      };
+      mockState.constructorArgs.trae.push({
+        command: options.command,
+        env: options.env,
+        providerParams: options.providerParams,
+      });
+    }
+
+    async createSession(): Promise<never> {
+      throw new Error("not implemented");
+    }
+
+    async resumeSession(): Promise<never> {
+      throw new Error("not implemented");
+    }
+
+    async fetchCatalog(): Promise<ProviderCatalog> {
+      return {
+        models: mockState.runtimeModels.get(this.provider) ?? [],
+        modes: [],
+      };
+    }
+
+    async isAvailable(): Promise<boolean> {
+      return true;
+    }
   },
 }));
 
@@ -632,6 +708,68 @@ test("cursor provider extending acp uses CursorACPAgentClient", () => {
       env: {
         CURSOR_AGENT_LOG: "debug",
       },
+      providerParams: undefined,
+    },
+  ]);
+  expect(mockState.constructorArgs.genericAcp).toEqual([]);
+});
+
+test("wrapped cursor client lists ACP features through the inner provider", async () => {
+  const registry = buildProviderRegistry(logger, {
+    providerOverrides: {
+      cursor: {
+        extends: "acp",
+        label: "Cursor",
+        command: ["cursor-agent", "acp"],
+      },
+    },
+  });
+
+  const client = registry.cursor.createClient(logger);
+
+  await expect(
+    client.listFeatures?.({
+      provider: "cursor",
+      cwd: "/tmp/cursor",
+    }),
+  ).resolves.toEqual([
+    {
+      type: "select",
+      id: "fast",
+      label: "Fast",
+      value: "false",
+      options: [{ id: "false", label: "Off" }],
+    },
+  ]);
+  expect(mockState.cursorListFeaturesConfigs).toEqual([
+    {
+      provider: "acp",
+      cwd: "/tmp/cursor",
+    },
+  ]);
+});
+
+test("traecli provider extending acp uses TraeACPAgentClient", () => {
+  const registry = buildProviderRegistry(logger, {
+    providerOverrides: {
+      traecli: {
+        extends: "acp",
+        label: "TRAE CLI",
+        command: ["traecli", "acp", "serve"],
+      },
+    },
+  });
+
+  expect(registry.traecli.createClient(logger).provider).toBe("traecli");
+  expect(mockState.constructorArgs.trae).toEqual([
+    {
+      command: ["traecli", "acp", "serve"],
+      env: undefined,
+      providerParams: undefined,
+    },
+    {
+      command: ["traecli", "acp", "serve"],
+      env: undefined,
       providerParams: undefined,
     },
   ]);

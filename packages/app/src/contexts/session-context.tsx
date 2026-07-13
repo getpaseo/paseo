@@ -78,6 +78,7 @@ import {
   applyLegacyDaemonWorkspaceOwnership,
   backfillLegacyDaemonWorkspaceDirectoryIfEmpty,
 } from "@/workspace/legacy-daemon-workspaces";
+import { useProviderSubagentStore } from "@/subagents/provider-store";
 
 // Re-export types from session-store and draft-store for backward compatibility
 export type { DraftInput } from "@/stores/draft-store";
@@ -1349,6 +1350,11 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       applyTimelineResponse(message.payload);
     });
 
+    const unsubProviderSubagentUpdate = client.on("agent.provider_subagents.update", (message) => {
+      if (message.type !== "agent.provider_subagents.update") return;
+      useProviderSubagentStore.getState().applyUpdate(serverId, message.payload);
+    });
+
     const unsubWorkspaceUpdate = client.on("workspace_update", (message) => {
       if (message.type !== "workspace_update") return;
       if (message.payload.kind === "remove") {
@@ -1750,6 +1756,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       unsubAgentUpdate();
       unsubAgentStream();
       unsubAgentTimeline();
+      unsubProviderSubagentUpdate();
       unsubWorkspaceUpdate();
       unsubScriptStatusUpdate();
       unsubCheckoutStatusUpdate();

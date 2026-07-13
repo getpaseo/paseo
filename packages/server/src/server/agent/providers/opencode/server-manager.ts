@@ -29,6 +29,7 @@ export interface OpenCodeServerManagerLike {
   acquireCurrent(): Promise<OpenCodeServerAcquisition>;
   acquireNew(): Promise<OpenCodeServerAcquisition>;
   acquireDedicated(env: Record<string, string>): Promise<OpenCodeServerAcquisition>;
+  acquireExisting(url: string): OpenCodeServerAcquisition | null;
   shutdown(): Promise<void>;
 }
 
@@ -162,6 +163,27 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       acquisition.release();
       throw error;
     }
+  }
+
+  acquireExisting(url: string): OpenCodeServerAcquisition | null {
+    const server = this.findLiveServerByUrl(url);
+    return server ? this.acquireServer(server) : null;
+  }
+
+  private findLiveServerByUrl(url: string): OpenCodeServerGeneration | null {
+    const servers = [
+      ...(this.currentServer ? [this.currentServer] : []),
+      ...Array.from(this.retiredServers),
+    ];
+    return servers.find((server) => server.url === url && this.isServerLive(server)) ?? null;
+  }
+
+  private isServerLive(server: OpenCodeServerGeneration): boolean {
+    return (
+      !server.process.killed &&
+      server.process.exitCode === null &&
+      server.process.signalCode === null
+    );
   }
 
   private acquireServer(server: OpenCodeServerGeneration): OpenCodeServerAcquisition {

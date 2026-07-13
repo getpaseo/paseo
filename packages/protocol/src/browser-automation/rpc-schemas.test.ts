@@ -15,7 +15,39 @@ const commandParseCases = [
   {
     name: "click",
     command: { command: "click", args: { browserId: BROWSER_ID, ref: "@e1" } },
-    expected: { command: "click", args: { browserId: BROWSER_ID, ref: "@e1" } },
+    expected: {
+      command: "click",
+      args: {
+        browserId: BROWSER_ID,
+        ref: "@e1",
+        button: "left",
+        doubleClick: false,
+        modifiers: [],
+      },
+    },
+  },
+  {
+    name: "click options",
+    command: {
+      command: "click",
+      args: {
+        browserId: BROWSER_ID,
+        ref: "@e1",
+        button: "right",
+        doubleClick: true,
+        modifiers: ["Meta", "Shift"],
+      },
+    },
+    expected: {
+      command: "click",
+      args: {
+        browserId: BROWSER_ID,
+        ref: "@e1",
+        button: "right",
+        doubleClick: true,
+        modifiers: ["Meta", "Shift"],
+      },
+    },
   },
   {
     name: "fill",
@@ -73,28 +105,12 @@ const commandParseCases = [
   {
     name: "screenshot",
     command: { command: "screenshot", args: { browserId: BROWSER_ID } },
-    expected: { command: "screenshot", args: { browserId: BROWSER_ID } },
+    expected: { command: "screenshot", args: { browserId: BROWSER_ID, fullPage: false } },
   },
   {
     name: "full page screenshot",
-    command: { command: "full_page_screenshot", args: { browserId: BROWSER_ID } },
-    expected: { command: "full_page_screenshot", args: { browserId: BROWSER_ID } },
-  },
-  {
-    name: "pdf",
-    command: { command: "pdf", args: { browserId: BROWSER_ID } },
-    expected: { command: "pdf", args: { browserId: BROWSER_ID, printBackground: true } },
-  },
-  {
-    name: "download",
-    command: {
-      command: "download",
-      args: { browserId: BROWSER_ID, url: "https://example.com/file.txt" },
-    },
-    expected: {
-      command: "download",
-      args: { browserId: BROWSER_ID, url: "https://example.com/file.txt" },
-    },
+    command: { command: "screenshot", args: { browserId: BROWSER_ID, fullPage: true } },
+    expected: { command: "screenshot", args: { browserId: BROWSER_ID, fullPage: true } },
   },
   {
     name: "upload",
@@ -106,21 +122,6 @@ const commandParseCases = [
       command: "upload",
       args: { browserId: BROWSER_ID, ref: "@e1", filePaths: ["/tmp/file.txt"] },
     },
-  },
-  {
-    name: "focus",
-    command: { command: "focus", args: { browserId: BROWSER_ID, ref: "@e1" } },
-    expected: { command: "focus", args: { browserId: BROWSER_ID, ref: "@e1" } },
-  },
-  {
-    name: "clear",
-    command: { command: "clear", args: { browserId: BROWSER_ID, ref: "@e1" } },
-    expected: { command: "clear", args: { browserId: BROWSER_ID, ref: "@e1" } },
-  },
-  {
-    name: "check",
-    command: { command: "check", args: { browserId: BROWSER_ID, ref: "@e2" } },
-    expected: { command: "check", args: { browserId: BROWSER_ID, ref: "@e2", checked: true } },
   },
   {
     name: "select",
@@ -155,60 +156,74 @@ const commandParseCases = [
     expected: { command: "logs", args: { browserId: BROWSER_ID, maxEntries: 50 } },
   },
   {
-    name: "storage",
-    command: { command: "storage", args: { browserId: BROWSER_ID } },
-    expected: { command: "storage", args: { browserId: BROWSER_ID } },
-  },
-  {
-    name: "environment",
+    name: "evaluate",
     command: {
-      command: "environment",
-      args: {
-        browserId: BROWSER_ID,
-        viewport: { width: 390, height: 844, deviceScaleFactor: 3 },
-        geolocation: { latitude: 37.7749, longitude: -122.4194, accuracy: 5 },
-      },
+      command: "evaluate",
+      args: { browserId: BROWSER_ID, function: "() => document.title" },
     },
     expected: {
-      command: "environment",
-      args: {
-        browserId: BROWSER_ID,
-        viewport: { width: 390, height: 844, deviceScaleFactor: 3 },
-        geolocation: { latitude: 37.7749, longitude: -122.4194, accuracy: 5 },
-      },
+      command: "evaluate",
+      args: { browserId: BROWSER_ID, function: "() => document.title" },
     },
   },
   {
-    name: "set background",
-    command: { command: "set_background", args: { browserId: BROWSER_ID, color: "red" } },
-    expected: { command: "set_background", args: { browserId: BROWSER_ID, color: "red" } },
+    name: "evaluate with ref",
+    command: {
+      command: "evaluate",
+      args: { browserId: BROWSER_ID, function: "(element) => element.textContent", ref: "@e1" },
+    },
+    expected: {
+      command: "evaluate",
+      args: { browserId: BROWSER_ID, function: "(element) => element.textContent", ref: "@e1" },
+    },
+  },
+  {
+    name: "scroll",
+    command: {
+      command: "scroll",
+      args: { browserId: BROWSER_ID, deltaX: 0, deltaY: 400 },
+    },
+    expected: {
+      command: "scroll",
+      args: { browserId: BROWSER_ID, deltaX: 0, deltaY: 400 },
+    },
+  },
+  {
+    name: "scroll with ref",
+    command: {
+      command: "scroll",
+      args: { browserId: BROWSER_ID, ref: "@e1", deltaX: 10, deltaY: -20 },
+    },
+    expected: {
+      command: "scroll",
+      args: { browserId: BROWSER_ID, ref: "@e1", deltaX: 10, deltaY: -20 },
+    },
+  },
+  {
+    name: "resize",
+    command: {
+      command: "resize",
+      args: { browserId: BROWSER_ID, width: 1024, height: 768 },
+    },
+    expected: {
+      command: "resize",
+      args: { browserId: BROWSER_ID, width: 1024, height: 768 },
+    },
+  },
+  {
+    name: "close_tab",
+    command: {
+      command: "close_tab",
+      args: { browserId: BROWSER_ID },
+    },
+    expected: {
+      command: "close_tab",
+      args: { browserId: BROWSER_ID },
+    },
   },
 ] as const;
 
 const resultParseCases = [
-  {
-    name: "page info",
-    result: {
-      command: "page_info",
-      tab: {
-        browserId: BROWSER_ID,
-        workspaceId: "workspace-1",
-        url: "https://example.com",
-        title: "Example",
-      },
-    },
-    expected: {
-      command: "page_info",
-      tab: {
-        browserId: BROWSER_ID,
-        workspaceId: "workspace-1",
-        url: "https://example.com",
-        title: "Example",
-        isActive: false,
-        isLoading: false,
-      },
-    },
-  },
   {
     name: "snapshot",
     result: {
@@ -217,16 +232,10 @@ const resultParseCases = [
       workspaceId: "workspace-1",
       url: "https://example.com/form",
       title: "Fixture",
-      elements: [
-        {
-          ref: "@e1",
-          role: "textbox",
-          tagName: "input",
-          text: "Name",
-          selector: "#name",
-          attributes: { id: "name", type: "text" },
-        },
-      ],
+      format: "aria-yaml",
+      snapshot: '- document "Fixture"\n  - textbox "Name" [ref=@e1]',
+      truncated: false,
+      stats: { nodeCount: 2, refCount: 1, textLength: 52, iframeCount: 0, maxDepth: 1 },
     },
     expected: {
       command: "snapshot",
@@ -234,16 +243,10 @@ const resultParseCases = [
       workspaceId: "workspace-1",
       url: "https://example.com/form",
       title: "Fixture",
-      elements: [
-        {
-          ref: "@e1",
-          role: "textbox",
-          tagName: "input",
-          text: "Name",
-          selector: "#name",
-          attributes: { id: "name", type: "text" },
-        },
-      ],
+      format: "aria-yaml",
+      snapshot: '- document "Fixture"\n  - textbox "Name" [ref=@e1]',
+      truncated: false,
+      stats: { nodeCount: 2, refCount: 1, textLength: 52, iframeCount: 0, maxDepth: 1 },
     },
   },
   {
@@ -313,7 +316,7 @@ const resultParseCases = [
   {
     name: "full page screenshot",
     result: {
-      command: "full_page_screenshot",
+      command: "screenshot",
       browserId: BROWSER_ID,
       mimeType: "image/png",
       dataBase64: "iVBORw0KGgo=",
@@ -321,46 +324,12 @@ const resultParseCases = [
       height: 1200,
     },
     expected: {
-      command: "full_page_screenshot",
+      command: "screenshot",
       browserId: BROWSER_ID,
       mimeType: "image/png",
       dataBase64: "iVBORw0KGgo=",
       width: 390,
       height: 1200,
-    },
-  },
-  {
-    name: "pdf",
-    result: {
-      command: "pdf",
-      browserId: BROWSER_ID,
-      mimeType: "application/pdf",
-      dataBase64: "JVBERg==",
-    },
-    expected: {
-      command: "pdf",
-      browserId: BROWSER_ID,
-      mimeType: "application/pdf",
-      dataBase64: "JVBERg==",
-    },
-  },
-  {
-    name: "download",
-    result: {
-      command: "download",
-      browserId: BROWSER_ID,
-      url: "https://example.com/file.txt",
-      filePath: "/tmp/file.txt",
-      totalBytes: 5,
-      state: "completed",
-    },
-    expected: {
-      command: "download",
-      browserId: BROWSER_ID,
-      url: "https://example.com/file.txt",
-      filePath: "/tmp/file.txt",
-      totalBytes: 5,
-      state: "completed",
     },
   },
   {
@@ -377,21 +346,6 @@ const resultParseCases = [
       ref: "@e1",
       filePaths: ["/tmp/file.txt"],
     },
-  },
-  {
-    name: "focus",
-    result: { command: "focus", browserId: BROWSER_ID, ref: "@e1" },
-    expected: { command: "focus", browserId: BROWSER_ID, ref: "@e1" },
-  },
-  {
-    name: "clear",
-    result: { command: "clear", browserId: BROWSER_ID, ref: "@e1" },
-    expected: { command: "clear", browserId: BROWSER_ID, ref: "@e1" },
-  },
-  {
-    name: "check",
-    result: { command: "check", browserId: BROWSER_ID, ref: "@e2", checked: false },
-    expected: { command: "check", browserId: BROWSER_ID, ref: "@e2", checked: false },
   },
   {
     name: "select",
@@ -438,43 +392,66 @@ const resultParseCases = [
     },
   },
   {
-    name: "storage",
+    name: "evaluate",
     result: {
-      command: "storage",
+      command: "evaluate",
       browserId: BROWSER_ID,
-      url: "https://example.com",
-      cookies: [{ name: "theme", value: "dark", domain: "example.com", httpOnly: true }],
-      localStorage: [{ key: "token", value: "abc" }],
-      sessionStorage: [{ key: "tab", value: "1" }],
+      resultJson: '{"title":"Fixture"}',
+      truncated: false,
     },
     expected: {
-      command: "storage",
+      command: "evaluate",
       browserId: BROWSER_ID,
-      url: "https://example.com",
-      cookies: [{ name: "theme", value: "dark", domain: "example.com", httpOnly: true }],
-      localStorage: [{ key: "token", value: "abc" }],
-      sessionStorage: [{ key: "tab", value: "1" }],
+      resultJson: '{"title":"Fixture"}',
+      truncated: false,
     },
   },
   {
-    name: "environment",
+    name: "scroll",
     result: {
-      command: "environment",
+      command: "scroll",
       browserId: BROWSER_ID,
-      viewport: { width: 390, height: 844, deviceScaleFactor: 3 },
-      geolocation: { latitude: 37.7749, longitude: -122.4194, accuracy: 5 },
+      ref: "@e1",
+      deltaX: 10,
+      deltaY: 400,
+      x: 40,
+      y: 30,
     },
     expected: {
-      command: "environment",
+      command: "scroll",
       browserId: BROWSER_ID,
-      viewport: { width: 390, height: 844, deviceScaleFactor: 3 },
-      geolocation: { latitude: 37.7749, longitude: -122.4194, accuracy: 5 },
+      ref: "@e1",
+      deltaX: 10,
+      deltaY: 400,
+      x: 40,
+      y: 30,
     },
   },
   {
-    name: "set background",
-    result: { command: "set_background", browserId: BROWSER_ID, color: "red" },
-    expected: { command: "set_background", browserId: BROWSER_ID, color: "red" },
+    name: "resize",
+    result: {
+      command: "resize",
+      browserId: BROWSER_ID,
+      width: 1024,
+      height: 768,
+    },
+    expected: {
+      command: "resize",
+      browserId: BROWSER_ID,
+      width: 1024,
+      height: 768,
+    },
+  },
+  {
+    name: "close_tab",
+    result: {
+      command: "close_tab",
+      browserId: BROWSER_ID,
+    },
+    expected: {
+      command: "close_tab",
+      browserId: BROWSER_ID,
+    },
   },
 ] as const;
 
@@ -526,9 +503,9 @@ describe("browser automation execute RPC schemas", () => {
   test("tab commands reject hallucinated browser ids", () => {
     const parsed = BrowserAutomationExecuteRequestSchema.safeParse({
       type: "browser.automation.execute.request",
-      requestId: "req-page-info",
+      requestId: "req-snapshot",
       workspaceId: "workspace-1",
-      command: { command: "page_info", args: { browserId: "default" } },
+      command: { command: "snapshot", args: { browserId: "default" } },
     });
 
     expect(parsed).toMatchObject({
@@ -540,13 +517,13 @@ describe("browser automation execute RPC schemas", () => {
   test("tab commands parse browser ids produced by the fallback generator", () => {
     const parsed = BrowserAutomationExecuteRequestSchema.parse({
       type: "browser.automation.execute.request",
-      requestId: "req-page-info",
+      requestId: "req-snapshot",
       workspaceId: "workspace-1",
-      command: { command: "page_info", args: { browserId: FALLBACK_BROWSER_ID } },
+      command: { command: "snapshot", args: { browserId: FALLBACK_BROWSER_ID } },
     });
 
     expect(parsed.command).toEqual({
-      command: "page_info",
+      command: "snapshot",
       args: { browserId: FALLBACK_BROWSER_ID },
     });
   });
@@ -658,22 +635,6 @@ describe("browser automation execute RPC schemas", () => {
     });
   });
 
-  test("download rejects non-http URLs at the protocol boundary", () => {
-    const parsed = BrowserAutomationExecuteRequestSchema.safeParse({
-      type: "browser.automation.execute.request",
-      requestId: "req-download",
-      command: {
-        command: "download",
-        args: { browserId: BROWSER_ID, url: "file:///tmp/secret.txt" },
-      },
-    });
-
-    expect(parsed).toMatchObject({
-      success: false,
-      error: { issues: [expect.objectContaining({ message: "URL must use http or https" })] },
-    });
-  });
-
   test("new tab responses declare the generated browser id shape", () => {
     const parsed = BrowserAutomationExecuteResponseSchema.parse({
       type: "browser.automation.execute.response",
@@ -705,16 +666,18 @@ describe("browser automation execute RPC schemas", () => {
     const parsed = BrowserAutomationExecuteResponseSchema.safeParse({
       type: "browser.automation.execute.response",
       payload: {
-        requestId: "req-page-info",
+        requestId: "req-snapshot",
         ok: true,
         result: {
-          command: "page_info",
-          tab: {
-            browserId: "default",
-            workspaceId: "workspace-1",
-            url: "https://example.com",
-            title: "Example",
-          },
+          command: "snapshot",
+          browserId: "default",
+          workspaceId: "workspace-1",
+          url: "https://example.com",
+          title: "Example",
+          format: "aria-yaml",
+          snapshot: "- document",
+          truncated: false,
+          stats: { nodeCount: 1, refCount: 0, textLength: 10 },
         },
       },
     });
@@ -745,6 +708,53 @@ describe("browser automation execute RPC schemas", () => {
     },
   );
 
+  test("success responses can report handled dialogs", () => {
+    const parsed = BrowserAutomationExecuteResponseSchema.parse({
+      type: "browser.automation.execute.response",
+      payload: {
+        requestId: "req-click",
+        ok: true,
+        result: { command: "click", browserId: BROWSER_ID, ref: "@e1" },
+        dialogs: [
+          {
+            type: "alert",
+            message: "Saved",
+            action: "accepted",
+            timestamp: 123,
+          },
+          {
+            type: "prompt",
+            message: "Name?",
+            defaultValue: "Maya",
+            action: "dismissed",
+            timestamp: 124,
+          },
+        ],
+      },
+    });
+
+    expect(parsed.payload).toEqual({
+      requestId: "req-click",
+      ok: true,
+      result: { command: "click", browserId: BROWSER_ID, ref: "@e1" },
+      dialogs: [
+        {
+          type: "alert",
+          message: "Saved",
+          action: "accepted",
+          timestamp: 123,
+        },
+        {
+          type: "prompt",
+          message: "Name?",
+          defaultValue: "Maya",
+          action: "dismissed",
+          timestamp: 124,
+        },
+      ],
+    });
+  });
+
   test("error responses keep stable codes, messages, and retry defaults", () => {
     const parsed = BrowserAutomationExecuteResponseSchema.parse({
       type: "browser.automation.execute.response",
@@ -752,8 +762,8 @@ describe("browser automation execute RPC schemas", () => {
         requestId: "req-error",
         ok: false,
         error: {
-          code: "browser_no_desktop",
-          message: "No desktop browser automation client is connected.",
+          code: "browser_no_host",
+          message: "No browser automation host is connected.",
         },
       },
     });
@@ -762,10 +772,50 @@ describe("browser automation execute RPC schemas", () => {
       requestId: "req-error",
       ok: false,
       error: {
-        code: "browser_no_desktop",
-        message: "No desktop browser automation client is connected.",
+        code: "browser_no_host",
+        message: "No browser automation host is connected.",
         retryable: false,
       },
+    });
+  });
+
+  test("failure responses can report handled dialogs", () => {
+    const parsed = BrowserAutomationExecuteResponseSchema.parse({
+      type: "browser.automation.execute.response",
+      payload: {
+        requestId: "req-navigate",
+        ok: false,
+        error: {
+          code: "browser_timeout",
+          message: "Timed out waiting for browser URL: /next",
+        },
+        dialogs: [
+          {
+            type: "beforeunload",
+            message: "Leave site?",
+            action: "dismissed",
+            timestamp: 200,
+          },
+        ],
+      },
+    });
+
+    expect(parsed.payload).toEqual({
+      requestId: "req-navigate",
+      ok: false,
+      error: {
+        code: "browser_timeout",
+        message: "Timed out waiting for browser URL: /next",
+        retryable: false,
+      },
+      dialogs: [
+        {
+          type: "beforeunload",
+          message: "Leave site?",
+          action: "dismissed",
+          timestamp: 200,
+        },
+      ],
     });
   });
 });

@@ -136,7 +136,7 @@ async function readProjectConfigFile(project: ProjectsSettingsProject): Promise<
 async function addProjectFromSidebar(page: Page, projectPath: string): Promise<string> {
   await page.getByTestId("sidebar-add-project").click();
 
-  const input = page.getByPlaceholder("Type a directory path...");
+  const input = page.getByTestId("project-picker-input");
   await expect(input).toBeVisible({ timeout: 30_000 });
   await input.fill(projectPath);
   await page.keyboard.press("Enter");

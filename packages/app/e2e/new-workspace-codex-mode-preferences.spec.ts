@@ -7,6 +7,7 @@ import {
   selectNewWorkspaceProject,
   submitNewWorkspacePrompt,
 } from "./helpers/new-workspace";
+import { expectNoTruncation } from "./helpers/no-truncation";
 import { escapeRegex } from "./helpers/regex";
 import { seedWorkspace } from "./helpers/seed-client";
 import { getServerId } from "./helpers/server-id";
@@ -91,6 +92,10 @@ async function selectMode(page: Page, label: string): Promise<void> {
   await expect(modeControl).toBeVisible({ timeout: 30_000 });
   await modeControl.click();
 
+  const popup = page.getByTestId("combobox-desktop-container").last();
+  await expect(popup).toBeVisible({ timeout: 10_000 });
+  await expectNoTruncation(popup);
+
   const searchInput = page.getByRole("textbox", { name: /search mode/i });
   await expect(searchInput).toBeVisible({ timeout: 10_000 });
   await searchInput.fill(label);
@@ -103,6 +108,19 @@ async function selectMode(page: Page, label: string): Promise<void> {
   await expect(option).toBeVisible({ timeout: 10_000 });
   await option.click({ force: true });
   await expect(searchInput).not.toBeVisible({ timeout: 5_000 });
+}
+
+async function expectThinkingOptionsFit(page: Page): Promise<void> {
+  const thinkingControl = page.getByTestId("agent-thinking-selector").first();
+  await expect(thinkingControl).toBeVisible({ timeout: 30_000 });
+  await thinkingControl.click();
+
+  const popup = page.getByTestId("combobox-desktop-container").last();
+  await expect(popup).toBeVisible({ timeout: 10_000 });
+  await expectNoTruncation(popup);
+
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("combobox-desktop-container")).toHaveCount(0, { timeout: 5_000 });
 }
 
 async function recordAndBlockCreateAgentRequests(page: Page): Promise<{
@@ -158,6 +176,7 @@ test.describe("New workspace Codex mode preferences", () => {
       await expect(page.getByTestId("mode-control").first()).toContainText("Default permissions", {
         timeout: 30_000,
       });
+      await expectThinkingOptionsFit(page);
       await selectMode(page, "Full access");
       await expect(page.getByTestId("mode-control").first()).toContainText("Full access");
 

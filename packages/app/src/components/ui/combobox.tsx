@@ -61,10 +61,14 @@ import {
 } from "@/components/adaptive-modal-sheet";
 import { FloatingSurface } from "@/components/ui/floating";
 import { useDismissKeyboardOnOpen } from "@/components/ui/keyboard-dismiss";
+import { buildDesktopFrameStyle } from "./combobox-frame-style";
+
+export { buildDesktopFrameStyle } from "./combobox-frame-style";
 
 const IS_WEB = isWeb;
 
 export type ComboboxOption = ComboboxOptionModel;
+export type ComboboxDesktopPlacement = "top-start" | "bottom-start";
 
 export interface ComboboxProps {
   options: ComboboxOption[];
@@ -99,7 +103,7 @@ export interface ComboboxProps {
   presentation?: "push" | "replace";
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
-  desktopPlacement?: "top-start" | "bottom-start";
+  desktopPlacement?: ComboboxDesktopPlacement;
   /**
    * Prevents an initial frame at 0,0 by hiding desktop content until floating
    * coordinates resolve. This intentionally disables fade enter/exit animation
@@ -112,6 +116,8 @@ export interface ComboboxProps {
   desktopFixedHeight?: number;
   /** Content rendered above the scroll area on desktop (sticky header). */
   stickyHeader?: ReactNode;
+  /** Content rendered below the scroll area. */
+  footer?: ReactNode;
   /** When true, selecting an option does not close the picker (multi-select mode). */
   keepOpenOnSelect?: boolean;
   anchorRef: React.RefObject<View | null>;
@@ -381,7 +387,7 @@ function OptionsList({
 interface DesktopPositionInput {
   isDesktopAboveSearch: boolean;
   isMobile: boolean;
-  desktopPlacement: "top-start" | "bottom-start";
+  desktopPlacement: ComboboxDesktopPlacement;
   referenceTop: number | null;
   referenceLeft: number | null;
   referenceAtOrigin: boolean;
@@ -656,7 +662,7 @@ interface DesktopResetSetters {
 function useDesktopPositionReset(
   isOpen: boolean,
   isMobile: boolean,
-  desktopPlacement: "top-start" | "bottom-start",
+  desktopPlacement: ComboboxDesktopPlacement,
   update: () => unknown,
   setters: DesktopResetSetters,
 ) {
@@ -850,46 +856,6 @@ function buildFloatingMiddleware(input: FloatingMiddlewareInput) {
   ];
 }
 
-interface DesktopContainerStyleInput {
-  desktopMinWidth: number | undefined;
-  referenceWidth: number | null;
-  desktopFixedHeight: number | undefined;
-  desktopPositionStyle: DesktopPositionResult["desktopPositionStyle"];
-  shouldHideDesktopContent: boolean;
-  availableHeight: number | undefined;
-}
-
-function buildDesktopFrameStyle(input: DesktopContainerStyleInput): StyleProp<ViewStyle> {
-  const {
-    desktopMinWidth,
-    referenceWidth,
-    desktopFixedHeight,
-    desktopPositionStyle,
-    shouldHideDesktopContent,
-    availableHeight,
-  } = input;
-  const fixedHeightStyle =
-    desktopFixedHeight != null
-      ? { minHeight: desktopFixedHeight, maxHeight: desktopFixedHeight }
-      : null;
-  const hiddenStyle = shouldHideDesktopContent ? { opacity: 0 } : null;
-  const availableHeightStyle =
-    typeof availableHeight === "number"
-      ? { maxHeight: Math.min(availableHeight, desktopFixedHeight ?? 400) }
-      : null;
-  return [
-    {
-      position: "absolute" as const,
-      minWidth: desktopMinWidth ?? referenceWidth ?? 200,
-      maxWidth: Math.max(400, desktopMinWidth ?? 0),
-    },
-    fixedHeightStyle,
-    desktopPositionStyle,
-    hiddenStyle,
-    availableHeightStyle,
-  ];
-}
-
 function isDesktopKey(key: string): key is DesktopKey {
   return key === "ArrowDown" || key === "ArrowUp" || key === "Enter" || key === "Escape";
 }
@@ -964,6 +930,7 @@ interface MobileBodyProps {
   header: SheetHeader | undefined;
   onClose: () => void;
   stickyHeader: ReactNode;
+  footer: ReactNode;
   searchable: boolean;
   hasChildren: boolean;
   mobileChildrenScrollEnabled: boolean;
@@ -1062,6 +1029,7 @@ function MobileComboboxBody(props: MobileBodyProps): ReactElement {
           {body}
         </BottomSheetScrollView>
       )}
+      {props.footer ? <View style={styles.footer}>{props.footer}</View> : null}
     </IsolatedBottomSheetModal>
   );
 }
@@ -1075,6 +1043,7 @@ interface DesktopBodyProps {
   handleDesktopContentLayout: (event: LayoutChangeEvent) => void;
   header: SheetHeader | undefined;
   stickyHeader: ReactNode;
+  footer: ReactNode;
   searchable: boolean;
   searchPlaceholder: string;
   searchQuery: string;
@@ -1228,6 +1197,7 @@ function DesktopComboboxBody(props: DesktopBodyProps): ReactElement {
               renderOption={props.renderOption}
             />
           )}
+          {props.footer ? <View style={styles.footer}>{props.footer}</View> : null}
         </FloatingSurface>
       </View>
     </Modal>
@@ -1255,11 +1225,12 @@ export function Combobox({
   presentation,
   open,
   onOpenChange,
-  desktopPlacement = "top-start",
+  desktopPlacement = "bottom-start",
   desktopPreventInitialFlash = true,
   desktopMinWidth,
   desktopFixedHeight,
   stickyHeader,
+  footer,
   keepOpenOnSelect = false,
   anchorRef,
   children,
@@ -1540,6 +1511,7 @@ export function Combobox({
         header={header}
         onClose={handleClose}
         stickyHeader={stickyHeader}
+        footer={footer}
         searchable={searchable}
         hasChildren={hasChildren}
         mobileChildrenScrollEnabled={mobileChildrenScrollEnabled}
@@ -1573,6 +1545,7 @@ export function Combobox({
       handleDesktopContentLayout={handleDesktopContentLayout}
       header={header}
       stickyHeader={stickyHeader}
+      footer={footer}
       searchable={searchable}
       searchPlaceholder={effectiveSearchPlaceholder}
       searchQuery={searchQuery}
@@ -1685,6 +1658,10 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.spacing[2],
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
+  },
+  footer: {
+    borderTopWidth: 1,
+    borderTopColor: theme.colors.border,
   },
   bottomSheetHeader: {
     paddingHorizontal: theme.spacing[6],

@@ -33,7 +33,7 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm ci
+        run: node scripts/npm-retry.mjs ci
 
       - name: Check formatting
         run: npx oxfmt --check .
@@ -51,7 +51,7 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm ci
+        run: node scripts/npm-retry.mjs ci
 
       - name: Lint lockfile
         run: npx --yes lockfile-lint --path package-lock.json --type npm --allowed-hosts npm --validate-https --validate-integrity
@@ -75,8 +75,7 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm ci
-
+        run: node scripts/npm-retry.mjs ci
       - name: Build server stack
         run: npm run build:server
 
@@ -112,10 +111,9 @@ jobs:
         run: git fetch --no-tags origin main:refs/remotes/origin/main
 
       - name: Install dependencies
-        run: npm ci
-
+        run: node scripts/npm-retry.mjs ci
       - name: Install agent CLIs for provider tests
-        run: npm install -g @anthropic-ai/claude-code opencode-ai
+        run: node scripts/npm-retry.mjs install -g @anthropic-ai/claude-code opencode-ai
 
       - name: Build server dependencies
         run: npm run build:server-deps
@@ -141,36 +139,8 @@ jobs:
           node-version: "22"
           cache: "npm"
 
-      - name: Install dependencies with Electron retry
-        if: runner.os != 'Windows'
-        run: |
-          for attempt in 1 2 3; do
-            if npm ci; then
-              exit 0
-            else
-              exit_code=$?
-            fi
-            if [ "$attempt" -eq 3 ]; then
-              exit $exit_code
-            fi
-            sleep $((attempt * 20))
-          done
-
-      - name: Install dependencies with Electron retry
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          for ($attempt = 1; $attempt -le 3; $attempt++) {
-            npm ci
-            if ($LASTEXITCODE -eq 0) {
-              exit 0
-            }
-            if ($attempt -eq 3) {
-              exit $LASTEXITCODE
-            }
-            Start-Sleep -Seconds (20 * $attempt)
-          }
-
+      - name: Install dependencies with retry
+        run: node scripts/npm-retry.mjs ci
       - name: Build server stack
         run: npm run build:server
 
@@ -190,19 +160,7 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies with retry
-        run: |
-          for attempt in 1 2 3; do
-            if npm ci; then
-              exit 0
-            else
-              exit_code=$?
-            fi
-            if [ "$attempt" -eq 3 ]; then
-              exit $exit_code
-            fi
-            sleep $((attempt * 20))
-          done
-
+        run: node scripts/npm-retry.mjs ci
       - name: Install Playwright browsers
         timeout-minutes: 10
         run: npx playwright install chromium
@@ -226,8 +184,7 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm ci
-
+        run: node scripts/npm-retry.mjs ci
       - name: Build client dependencies
         run: npm run build:client
 
@@ -244,8 +201,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
-    name: playwright (shard ${{ matrix.shard }}/4)
+        include:
+          - { label: "shard 1/4", shard: 1, desktop: false }
+          - { label: "shard 2/4", shard: 2, desktop: false }
+          - { label: "shard 3/4", shard: 3, desktop: false }
+          - { label: "shard 4/4", shard: 4, desktop: false }
+          - { label: "desktop overlay", shard: "desktop", desktop: true }
+    name: playwright (${{ matrix.label }})
     runs-on: ubuntu-latest
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
@@ -258,19 +220,7 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies with retry
-        run: |
-          for attempt in 1 2 3; do
-            if npm ci; then
-              exit 0
-            else
-              exit_code=$?
-            fi
-            if [ "$attempt" -eq 3 ]; then
-              exit $exit_code
-            fi
-            sleep $((attempt * 20))
-          done
-
+        run: node scripts/npm-retry.mjs ci
       - name: Install Playwright browsers
         timeout-minutes: 10
         run: npx playwright install chromium
@@ -282,12 +232,18 @@ jobs:
         run: npm run build:server
 
       - name: Install agent CLIs for provider tests
-        run: npm install -g @anthropic-ai/claude-code @openai/codex@0.105.0 opencode-ai
+        if: ${{ !matrix.desktop }}
+        run: node scripts/npm-retry.mjs install -g @anthropic-ai/claude-code @openai/codex@0.105.0 opencode-ai
 
       - name: Run Playwright E2E tests
+        if: ${{ !matrix.desktop }}
         run: npm run test:e2e --workspace=@getpaseo/app -- --shard=${{ matrix.shard }}/4
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+      - name: Run desktop-overlay Playwright tests
+        if: ${{ matrix.desktop }}
+        run: npm run test:e2e:desktop --workspace=@getpaseo/app
 
       - name: Upload test artifacts
         uses: actions/upload-artifact@v4
@@ -312,7 +268,7 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm ci
+        run: node scripts/npm-retry.mjs ci
 
       - name: Build relay
         run: npm run build:relay
@@ -338,10 +294,10 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm ci
+        run: node scripts/npm-retry.mjs ci
 
       - name: Install agent CLIs for provider tests
-        run: npm install -g @anthropic-ai/claude-code @openai/codex@0.105.0 opencode-ai
+        run: node scripts/npm-retry.mjs install -g @anthropic-ai/claude-code @openai/codex@0.105.0 opencode-ai
 
       - name: Run CLI tests
         run: npm run test --workspace=@getpaseo/cli

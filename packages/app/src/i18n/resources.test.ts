@@ -370,6 +370,7 @@ describe("translation resources", () => {
     expect(en.sidebar.host.switchTitle).toBe("Switch host");
     expect(en.sidebar.host.searchPlaceholder).toBe("Search hosts...");
     expect(en.sidebar.actions.addProject).toBe("Add project");
+    expect(en.sidebar.actions.hosts).toBe("Hosts");
     expect(en.sidebar.actions.home).toBe("Home");
     expect(en.sidebar.actions.settings).toBe("Settings");
     expect(en.sidebar.actions.closeSidebar).toBe("Close sidebar");
@@ -386,7 +387,7 @@ describe("translation resources", () => {
   });
 
   it("includes picker, file pane, and tool detail keys for the Batch 4L migration", () => {
-    expect(en.projectPicker.placeholder).toBe("Type a directory path...");
+    expect(en.projectPicker.placeholder).toBe("Type to search...");
     expect(en.projectPicker.opening).toBe("Opening project...");
     expect(en.projectPicker.searching).toBe("Searching...");
     expect(en.projectPicker.empty).toBe("Start typing a path");

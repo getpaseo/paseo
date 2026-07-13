@@ -171,7 +171,7 @@ For pay-as-you-go, use `ANTHROPIC_API_KEY` with a standard Model Studio key (`sk
 | `qwen3-coder-next` | Optimized for coding        |
 | `kimi-k2.5`        | Vision capable              |
 | `glm-5`            | Zhipu GLM                   |
-| `MiniMax-M2.5`     | MiniMax                     |
+| `MiniMax-M3`       | MiniMax                     |
 
 **Additional models (pay-as-you-go):**
 `qwen3-max`, `qwen3.5-flash`, `qwen3-coder-plus`, `qwen3-coder-flash`, `qwen3-vl-plus`, `qwen3-vl-flash`
@@ -456,6 +456,37 @@ Paseo tools such as subagent creation come from the shared internal tool catalog
   }
 }
 ```
+
+ACP agents execute filesystem and terminal operations in their own environment
+by default. To let a compliant agent delegate those operations to Paseo instead,
+enable the corresponding client capabilities:
+
+```json
+{
+  "agents": {
+    "providers": {
+      "local-agent": {
+        "extends": "acp",
+        "label": "Local Agent",
+        "command": ["local-agent", "acp"],
+        "params": {
+          "clientCapabilities": {
+            "fs": {
+              "readTextFile": true,
+              "writeTextFile": true
+            },
+            "terminal": true
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+Only enable capabilities Paseo should execute. When the agent and Paseo run in
+different environments, configure equivalent absolute workspace paths before
+delegating filesystem or terminal operations to Paseo.
 
 ### Generic ACP diagnostics
 

@@ -13,8 +13,8 @@ import {
   DaemonUpdateResponseSchema,
   SessionInboundMessageSchema,
   type ServerInfoStatusPayload,
-  WSOutboundMessageSchema,
 } from "@getpaseo/protocol/messages";
+import { validateWSOutboundMessage } from "@getpaseo/protocol/validation/ws-outbound";
 import type {
   AgentStreamEventPayload,
   AgentSnapshotPayload,
@@ -56,6 +56,8 @@ import type {
   ProjectIconResponse,
   ProjectAddResponse,
   OpenProjectResponseMessage,
+  WorkspaceGithubCloneProtocol,
+  WorkspaceGithubCloneResponse,
   ArchiveWorkspaceResponseMessage,
   WorkspaceSetupStatusResponseMessage,
   ListCommandsResponse,
@@ -118,6 +120,11 @@ import {
   type WebSocketFactory,
 } from "./daemon-client-transport.js";
 import { DaemonClientRuntimeMetrics } from "./daemon-client-runtime-metrics.js";
+import {
+  normalizeListProviderModelsPayload,
+  normalizeProviderSnapshotUpdateMessage,
+  normalizeProvidersSnapshotPayload,
+} from "./compat/normalize-provider-models.js";
 import { TerminalStreamRouter, type TerminalStreamEvent } from "./terminal-stream-router.js";
 import type {
   BrowserAutomationExecuteRequest,
@@ -142,6 +149,8 @@ const perfNow: () => number =
   typeof performance !== "undefined" && typeof performance.now === "function"
     ? () => performance.now()
     : () => Date.now();
+
+const WORKSPACE_GITHUB_CLONE_TIMEOUT_MS = 5 * 60 * 1000;
 
 interface ImportAgentInputBase {
   cwd?: string;
@@ -252,7 +261,7 @@ export interface DaemonClientConfig {
   };
   runtimeMetricsIntervalMs?: number;
   runtimeMetricsWindowMs?: number;
-  capabilities?: Partial<Record<ClientCapability, boolean>>;
+  capabilities?: Partial<Record<ClientCapability, unknown>>;
 }
 
 export interface SendMessageOptions {
@@ -370,6 +379,7 @@ type WriteProjectConfigPayload = Extract<
   SessionOutboundMessage,
   { type: "write_project_config_response" }
 >["payload"];
+
 type ListCommandsPayload = ListCommandsResponse["payload"];
 type ListCommandsDraftConfig = Pick<
   AgentSessionConfig,
@@ -480,6 +490,22 @@ export interface FetchAgentTimelineOptions {
   cursor?: FetchAgentTimelineCursor;
   limit?: number;
   projection?: FetchAgentTimelineProjection;
+  requestId?: string;
+  timeout?: number;
+}
+
+export type ProviderSubagentListPayload = Extract<
+  SessionOutboundMessage,
+  { type: "agent.provider_subagents.list.response" }
+>["payload"];
+export type ProviderSubagentTimelinePayload = Extract<
+  SessionOutboundMessage,
+  { type: "agent.provider_subagents.timeline.get.response" }
+>["payload"];
+export interface FetchProviderSubagentTimelineOptions {
+  direction?: ProviderSubagentTimelinePayload["direction"];
+  cursor?: FetchAgentTimelineCursor;
+  limit?: number;
   requestId?: string;
   timeout?: number;
 }
@@ -675,6 +701,8 @@ export interface CreateScheduleOptions {
           modeId?: string;
           model?: string;
           thinkingOptionId?: string;
+          archiveOnFinish?: boolean;
+          isolation?: "local" | "worktree";
           title?: string | null;
           approvalPolicy?: string;
           sandboxMode?: string;
@@ -698,6 +726,9 @@ export interface UpdateScheduleNewAgentConfig {
   provider?: string;
   model?: string | null;
   modeId?: string | null;
+  thinkingOptionId?: string | null;
+  archiveOnFinish?: boolean;
+  isolation?: "local" | "worktree";
   cwd?: string;
 }
 export interface UpdateScheduleOptions {
@@ -731,6 +762,7 @@ export interface RenameTerminalInput {
 }
 type OpenProjectPayload = OpenProjectResponseMessage["payload"];
 type ProjectAddPayload = ProjectAddResponse["payload"];
+type WorkspaceGithubClonePayload = WorkspaceGithubCloneResponse["payload"];
 type ArchiveWorkspacePayload = ArchiveWorkspaceResponseMessage["payload"];
 type WorkspaceSetupStatusPayload = WorkspaceSetupStatusResponseMessage["payload"];
 
@@ -1961,6 +1993,23 @@ export class DaemonClient {
     });
   }
 
+  async cloneGithubWorkspace(
+    input: { repo: string; targetDirectory: string; cloneProtocol?: WorkspaceGithubCloneProtocol },
+    requestId?: string,
+  ): Promise<WorkspaceGithubClonePayload> {
+    const message = {
+      type: "workspace.github.clone.request",
+      repo: input.repo,
+      targetDirectory: input.targetDirectory,
+      ...(input.cloneProtocol ? { cloneProtocol: input.cloneProtocol } : {}),
+    } as const;
+    return this.sendNamespacedCorrelatedSessionRequest<"workspace.github.clone.response">({
+      requestId,
+      message,
+      timeout: WORKSPACE_GITHUB_CLONE_TIMEOUT_MS,
+    });
+  }
+
   async startWorkspaceScript(
     workspaceId: string,
     scriptName: string,
@@ -2284,6 +2333,26 @@ export class DaemonClient {
     return { title: payload.title };
   }
 
+  async setWorkspacePinned(
+    workspaceId: string,
+    pinned: boolean,
+    requestId?: string,
+  ): Promise<{ pinnedAt: string | null }> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "workspace.pin.set.request",
+        workspaceId,
+        pinned,
+      },
+      responseType: "workspace.pin.set.response",
+    });
+    if (!payload.accepted) {
+      throw new Error(payload.error ?? "setWorkspacePinned rejected");
+    }
+    return { pinnedAt: payload.pinnedAt };
+  }
+
   async resumeAgent(
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
@@ -2415,6 +2484,65 @@ export class DaemonClient {
       throw new Error(payload.error);
     }
 
+    return payload;
+  }
+
+  async listProviderSubagents(
+    parentAgentId: string,
+    options: { requestId?: string; timeout?: number } = {},
+  ): Promise<ProviderSubagentListPayload> {
+    const requestId = this.createRequestId(options.requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "agent.provider_subagents.list.request",
+      parentAgentId,
+      requestId,
+    });
+    const payload = await this.sendRequest({
+      requestId,
+      message,
+      timeout: options.timeout,
+      options: { skipQueue: true },
+      select: (response) =>
+        response.type === "agent.provider_subagents.list.response" &&
+        response.payload.requestId === requestId
+          ? response.payload
+          : null,
+    });
+    if (payload.error) {
+      throw new Error(payload.error);
+    }
+    return payload;
+  }
+
+  async fetchProviderSubagentTimeline(
+    parentAgentId: string,
+    subagentId: string,
+    options: FetchProviderSubagentTimelineOptions = {},
+  ): Promise<ProviderSubagentTimelinePayload> {
+    const requestId = this.createRequestId(options.requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "agent.provider_subagents.timeline.get.request",
+      parentAgentId,
+      subagentId,
+      requestId,
+      ...(options.direction ? { direction: options.direction } : {}),
+      ...(options.cursor ? { cursor: options.cursor } : {}),
+      ...(typeof options.limit === "number" ? { limit: options.limit } : {}),
+    });
+    const payload = await this.sendRequest({
+      requestId,
+      message,
+      timeout: options.timeout,
+      options: { skipQueue: true },
+      select: (response) =>
+        response.type === "agent.provider_subagents.timeline.get.response" &&
+        response.payload.requestId === requestId
+          ? response.payload
+          : null,
+    });
+    if (payload.error) {
+      throw new Error(payload.error);
+    }
     return payload;
   }
 
@@ -3728,7 +3856,7 @@ export class DaemonClient {
     provider: AgentProvider,
     options?: { cwd?: string; requestId?: string },
   ): Promise<ListProviderModelsPayload> {
-    return this.sendCorrelatedSessionRequest({
+    const payload = await this.sendCorrelatedSessionRequest({
       requestId: options?.requestId,
       message: {
         type: "list_provider_models_request",
@@ -3739,6 +3867,7 @@ export class DaemonClient {
       // Provider SDK cold starts (especially model discovery) can exceed 60s.
       timeout: 90000,
     });
+    return normalizeListProviderModelsPayload(payload);
   }
 
   async listProviderModes(
@@ -3788,7 +3917,7 @@ export class DaemonClient {
     cwd?: string;
     requestId?: string;
   }): Promise<GetProvidersSnapshotPayload> {
-    return this.sendCorrelatedSessionRequest({
+    const payload = await this.sendCorrelatedSessionRequest({
       requestId: options?.requestId,
       message: {
         type: "get_providers_snapshot_request",
@@ -3796,6 +3925,7 @@ export class DaemonClient {
       },
       responseType: "get_providers_snapshot_response",
     });
+    return normalizeProvidersSnapshotPayload(payload);
   }
 
   async getDaemonConfig(
@@ -4187,7 +4317,13 @@ export class DaemonClient {
     cwd: string,
     name?: string,
     requestId?: string,
-    options?: { agentId?: string; command?: string; args?: string[]; workspaceId?: string },
+    options?: {
+      agentId?: string;
+      command?: string;
+      args?: string[];
+      workspaceId?: string;
+      size?: { rows: number; cols: number };
+    },
   ): Promise<CreateTerminalPayload> {
     const resolvedRequestId = this.createRequestId(requestId);
     const message = SessionInboundMessageSchema.parse({
@@ -4198,6 +4334,7 @@ export class DaemonClient {
       command: options?.command,
       args: options?.args,
       ...(options?.workspaceId !== undefined ? { workspaceId: options.workspaceId } : {}),
+      ...(options?.size !== undefined ? { size: options.size } : {}),
       requestId: resolvedRequestId,
     });
     return this.sendCorrelatedRequest({
@@ -4659,6 +4796,7 @@ export class DaemonClient {
             [CLIENT_CAPS.customModeIcons]: true,
             [CLIENT_CAPS.reasoningMergeEnum]: true,
             [CLIENT_CAPS.terminalReflowableSnapshot]: true,
+            [CLIENT_CAPS.providerSubagents]: true,
             ...this.config.capabilities,
           },
           ...(this.config.appVersion ? { appVersion: this.config.appVersion } : {}),
@@ -4754,7 +4892,7 @@ export class DaemonClient {
       return;
     }
 
-    const parsed = WSOutboundMessageSchema.safeParse(parsedJson);
+    const parsed = validateWSOutboundMessage(parsedJson);
     if (!parsed.success) {
       const msgType =
         parsedJson != null &&
@@ -5017,8 +5155,10 @@ export class DaemonClient {
   }
 
   private handleSessionMessage(msg: SessionOutboundMessage): void {
-    if (msg.type === "status") {
-      const serverInfo = parseServerInfoStatusPayload(msg.payload);
+    const consumerMessage = normalizeProviderSnapshotUpdateMessage(msg);
+
+    if (consumerMessage.type === "status") {
+      const serverInfo = parseServerInfoStatusPayload(consumerMessage.payload);
       if (serverInfo) {
         this.lastServerInfoMessage = serverInfo;
         if (this.connectionState.status === "connecting") {
@@ -5034,39 +5174,39 @@ export class DaemonClient {
       }
     }
 
-    if (msg.type === "terminal_stream_exit") {
-      this.terminalStreams.removeTerminal(msg.payload.terminalId);
+    if (consumerMessage.type === "terminal_stream_exit") {
+      this.terminalStreams.removeTerminal(consumerMessage.payload.terminalId);
     }
 
     if (this.rawMessageListeners.size > 0) {
       for (const handler of this.rawMessageListeners) {
         try {
-          handler(msg);
+          handler(consumerMessage);
         } catch {
           // no-op
         }
       }
     }
 
-    const handlers = this.messageHandlers.get(msg.type);
+    const handlers = this.messageHandlers.get(consumerMessage.type);
     if (handlers) {
       for (const handler of handlers) {
         try {
-          handler(msg);
+          handler(consumerMessage);
         } catch {
           // no-op
         }
       }
     }
 
-    const event = this.toEvent(msg);
+    const event = this.toEvent(consumerMessage);
     if (event) {
       for (const handler of this.eventListeners) {
         handler(event);
       }
     }
 
-    this.resolveWaiters(msg);
+    this.resolveWaiters(consumerMessage);
   }
 
   private resolveWaiters(msg: SessionOutboundMessage): void {

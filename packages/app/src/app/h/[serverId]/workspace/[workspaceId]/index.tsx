@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useNavigation } from "@react-navigation/native";
 import { StyleSheet, View } from "react-native";
 import { useGlobalSearchParams, useLocalSearchParams, useRootNavigationState } from "expo-router";
 import { HostRouteBootstrapBoundary } from "@/components/host-route-bootstrap-boundary";
+import { RetainedPanel } from "@/components/retained-panel";
 import {
   type ActiveWorkspaceSelection,
   useActiveWorkspaceSelection,
@@ -15,6 +16,7 @@ import {
   areWorkspaceSelectionListsEqual,
   areWorkspaceSelectionsEqual,
   getWorkspaceSelectionKey,
+  orderWorkspaceSelectionsForStableRender,
   pruneMountedWorkspaceSelections,
   shouldKeepWorkspaceDeckEntryMounted,
   WORKSPACE_DECK_MAX_MOUNTED_WORKSPACES,
@@ -185,22 +187,25 @@ function WorkspaceDeck() {
     );
   }, []);
 
-  useEffect(() => {
-    if (!activeSelection) {
-      return;
-    }
-    setMountedSelections((current) => {
-      const next = pruneMountedWorkspaceSelections({
-        currentSelections: current,
+  const nextMountedSelections = useMemo(
+    () =>
+      pruneMountedWorkspaceSelections({
+        currentSelections: mountedSelections,
         activeSelection,
         maxMountedWorkspaces: WORKSPACE_DECK_MAX_MOUNTED_WORKSPACES,
-      });
-      if (areWorkspaceSelectionListsEqual(current, next)) {
-        return current;
-      }
-      return next;
-    });
-  }, [activeSelection]);
+      }),
+    [activeSelection, mountedSelections],
+  );
+  const renderedSelections = useMemo(
+    () => orderWorkspaceSelectionsForStableRender(nextMountedSelections),
+    [nextMountedSelections],
+  );
+
+  useLayoutEffect(() => {
+    if (!areWorkspaceSelectionListsEqual(mountedSelections, nextMountedSelections)) {
+      setMountedSelections(nextMountedSelections);
+    }
+  }, [mountedSelections, nextMountedSelections]);
 
   if (!activeSelection) {
     return null;
@@ -208,7 +213,7 @@ function WorkspaceDeck() {
 
   return (
     <View style={styles.deck}>
-      {mountedSelections.map((selection) => {
+      {renderedSelections.map((selection) => {
         return (
           <WorkspaceDeckEntry
             key={getWorkspaceSelectionKey(selection)}
@@ -251,8 +256,8 @@ function WorkspaceDeckEntry({
   }
 
   return (
-    <View
-      style={isActive ? styles.activeDeckEntry : styles.inactiveDeckEntry}
+    <RetainedPanel
+      active={isActive}
       testID={`workspace-deck-entry-${selection.serverId}:${selection.workspaceId}`}
     >
       <WorkspaceScreen
@@ -260,19 +265,12 @@ function WorkspaceDeckEntry({
         workspaceId={selection.workspaceId}
         isRouteFocused={isActive}
       />
-    </View>
+    </RetainedPanel>
   );
 }
 
 const styles = StyleSheet.create({
   deck: {
-    flex: 1,
-  },
-  activeDeckEntry: {
-    flex: 1,
-  },
-  inactiveDeckEntry: {
-    display: "none",
     flex: 1,
   },
 });

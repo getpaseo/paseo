@@ -1,13 +1,16 @@
 import { describe, expect, it } from "vitest";
-import type { SubagentRow } from "./select";
+import type { PaseoSubagentRow, SubagentRow } from "./select";
 import {
   buildSubagentRowPresentationData,
   formatHeaderLabel,
   resolveRowLabel,
 } from "./track-presentation";
 
-function row(overrides: Partial<SubagentRow> & Pick<SubagentRow, "id">): SubagentRow {
+function row(
+  overrides: Partial<PaseoSubagentRow> & Pick<PaseoSubagentRow, "id">,
+): PaseoSubagentRow {
   return {
+    kind: "paseo",
     id: overrides.id,
     provider: overrides.provider ?? "codex",
     title: overrides.title ?? `Agent ${overrides.id}`,
@@ -91,7 +94,9 @@ describe("resolveRowLabel", () => {
 
 describe("buildSubagentRowPresentationData", () => {
   it("namespaces the key with a subagent prefix", () => {
-    expect(buildSubagentRowPresentationData(row({ id: "child-a" })).key).toBe("subagent_child-a");
+    expect(buildSubagentRowPresentationData(row({ id: "child-a" })).key).toBe(
+      "paseo_subagent_child-a",
+    );
   });
 
   it("marks the row ready when the title resolves to a real label", () => {
