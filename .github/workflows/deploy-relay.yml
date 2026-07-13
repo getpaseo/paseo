@@ -18,7 +18,7 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm ci --workspace=@getpaseo/relay --include-workspace-root
+        run: node scripts/npm-retry.mjs ci --workspace=@getpaseo/relay --include-workspace-root
 
       - name: Typecheck
         run: npm run typecheck --workspace=@getpaseo/relay
