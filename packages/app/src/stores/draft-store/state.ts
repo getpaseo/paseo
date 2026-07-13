@@ -1,7 +1,7 @@
 import type { AttachmentMetadata, UserComposerAttachment } from "@/attachments/types";
 import { GitHubSearchItemSchema } from "@getpaseo/protocol/messages";
 
-export const DRAFT_STORE_VERSION = 4;
+export const DRAFT_STORE_VERSION = 5;
 export const FINALIZED_DRAFT_TTL_MS = 5 * 60 * 1000;
 
 export interface LegacyDraftImage {

@@ -1,10 +1,19 @@
 import { describe, expect, it } from "vitest";
 import type { ComposerAttachment } from "@/attachments/types";
 import { migratePersistedState, type MigrateLegacyImages } from "./migration";
-import { isAttachmentMetadata } from "./state";
+import { isAttachmentMetadata, type DraftRecord } from "./state";
 
 const passThroughMigrateLegacyImages: MigrateLegacyImages = async (images) =>
   images.filter(isAttachmentMetadata);
+
+function activeDraft(text: string, updatedAt: number): DraftRecord {
+  return {
+    input: { text, attachments: [] },
+    lifecycle: "active",
+    updatedAt,
+    version: 1,
+  };
+}
 
 function workspaceReviewAttachment(): Extract<ComposerAttachment, { kind: "review" }> {
   return {
@@ -47,6 +56,36 @@ function workspaceReviewAttachment(): Extract<ComposerAttachment, { kind: "revie
 }
 
 describe("draft-store migration", () => {
+  it("promotes the newest legacy New Workspace draft into the singleton surface", async () => {
+    const forkDraft = activeDraft("fork context", 1700000000003);
+    const agentDraft = activeDraft("agent prompt", 1700000000004);
+
+    const migrated = await migratePersistedState(
+      {
+        drafts: {
+          "new-workspace:server-a:/project/older": activeDraft(
+            "older new workspace prompt",
+            1700000000001,
+          ),
+          "new-workspace:server-b:/project/newer": activeDraft(
+            "newer new workspace prompt",
+            1700000000002,
+          ),
+          "new-workspace:draft:fork-1": forkDraft,
+          "agent:server-a:agent-1": agentDraft,
+        },
+        createModalDraft: null,
+      },
+      { migrateLegacyImages: passThroughMigrateLegacyImages, nowMs: 1700000000005 },
+    );
+
+    expect(migrated.drafts).toEqual({
+      "new-workspace": activeDraft("newer new workspace prompt", 1700000000002),
+      "new-workspace:draft:fork-1": forkDraft,
+      "agent:server-a:agent-1": agentDraft,
+    });
+  });
+
   it("normalizes legacy image metadata into image attachments and strips persisted preview URLs", async () => {
     const migrated = await migratePersistedState(
       {
