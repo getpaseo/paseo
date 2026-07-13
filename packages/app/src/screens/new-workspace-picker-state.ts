@@ -7,7 +7,7 @@ import type { PickerItem } from "./new-workspace-picker-item";
 export function syncPickerPrAttachment(input: {
   attachments: UserComposerAttachment[];
   previousPickerPrNumber: number | null;
-  item: PickerItem;
+  item: PickerItem | null;
 }): { attachments: UserComposerAttachment[]; attachedPrNumber: number | null } {
   let nextAttachments = input.attachments;
   let attachedPrNumber: number | null = null;
@@ -19,7 +19,7 @@ export function syncPickerPrAttachment(input: {
     );
   }
 
-  if (input.item.kind === "github-pr") {
+  if (input.item?.kind === "github-pr") {
     const selectedPr = input.item.item;
     const hasExistingPrAttachment = nextAttachments.some(
       (attachment) =>

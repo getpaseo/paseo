@@ -182,6 +182,10 @@ interface PickerSelection {
   attachedPrNumber: number | null;
 }
 
+function getPickerPrNumber(selection: PickerSelection | null): number | null {
+  return selection?.attachedPrNumber ?? null;
+}
+
 const BRANCH_OPTION_PREFIX = "branch:";
 const PR_OPTION_PREFIX = "github-pr:";
 const PROJECT_ICON_FALLBACK_FONT_SIZE = 10;
@@ -1812,6 +1816,16 @@ export function NewWorkspaceScreen({
     [itemById, selectPickerItem],
   );
 
+  const clearManualPickerSelection = useCallback(() => {
+    const next = syncPickerPrAttachment({
+      attachments: chatDraft.attachments,
+      previousPickerPrNumber: getPickerPrNumber(manualPickerSelection),
+      item: null,
+    });
+    chatDraft.setAttachments(next.attachments);
+    setManualPickerSelection(null);
+  }, [chatDraft, manualPickerSelection]);
+
   const handleSelectProjectOption = useCallback(
     (id: string) => {
       // selectProjectOption enforces selectability (worktree-only when
@@ -1819,9 +1833,17 @@ export function NewWorkspaceScreen({
       // canCreateWorktree or non-git projects become unselectable.
       selectProjectOption(id);
       setProjectPickerOpen(false);
-      setManualPickerSelection(null);
+      clearManualPickerSelection();
     },
-    [selectProjectOption],
+    [clearManualPickerSelection, selectProjectOption],
+  );
+
+  const handleSelectWorkspaceHost = useCallback(
+    (id: string) => {
+      handleSelectHost(id);
+      clearManualPickerSelection();
+    },
+    [clearManualPickerSelection, handleSelectHost],
   );
 
   const handleAddProject = useCallback(() => {
@@ -2139,7 +2161,7 @@ export function NewWorkspaceScreen({
     host: {
       allHosts,
       selectedServerId,
-      onSelect: handleSelectHost,
+      onSelect: handleSelectWorkspaceHost,
       openState: hostPickerOpen,
       onOpenChange: handleHostPickerOpenChange,
       anchorRef: hostPickerAnchorRef,

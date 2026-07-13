@@ -95,6 +95,23 @@ describe("syncPickerPrAttachment", () => {
     expect(result.attachedPrNumber).toBeNull();
     expect(result.attachments).toHaveLength(1);
   });
+
+  it("clears the picker selection without removing user-added attachments", () => {
+    const pickerPr = prAttachment(makePrItem(202, "Picker PR"));
+    const manuallyAttachedPr = prAttachment(makePrItem(303, "Manual PR"));
+    const issue = issueAttachment(44);
+
+    const result = syncPickerPrAttachment({
+      attachments: [issue, pickerPr, manuallyAttachedPr],
+      previousPickerPrNumber: 202,
+      item: null,
+    });
+
+    expect(result).toEqual({
+      attachments: [issue, manuallyAttachedPr],
+      attachedPrNumber: null,
+    });
+  });
 });
 
 describe("findCheckoutHintPrAttachment", () => {
