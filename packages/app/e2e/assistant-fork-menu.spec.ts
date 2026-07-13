@@ -80,9 +80,13 @@ test.describe("Assistant fork menu", () => {
     await openAssistantForkMenu(page);
     await page.getByTestId("assistant-fork-menu-new-tab").click();
 
-    const draftTab = page.locator('[data-testid^="workspace-tab-draft_"]').last();
-    await expect(draftTab).toBeVisible({ timeout: 30_000 });
-    await expect(draftTab).toHaveAttribute("aria-selected", "true");
+    const selectedTab = page
+      .getByTestId("workspace-tabs-row")
+      .getByRole("button")
+      .and(page.locator('[aria-selected="true"]'));
+    await expect(selectedTab).toHaveAttribute("data-testid", /^workspace-tab-draft_/, {
+      timeout: 30_000,
+    });
     await expect(agentTab).toHaveAttribute("aria-selected", "false");
     await expectChatHistoryPill(page);
   });
