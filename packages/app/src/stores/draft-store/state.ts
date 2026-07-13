@@ -1,4 +1,8 @@
-import type { AttachmentMetadata, UserComposerAttachment } from "@/attachments/types";
+import {
+  NEW_WORKSPACE_PICKER_ATTACHMENT_OWNER,
+  type AttachmentMetadata,
+  type UserComposerAttachment,
+} from "@/attachments/types";
 import { GitHubSearchItemSchema } from "@getpaseo/protocol/messages";
 
 export const DRAFT_STORE_VERSION = 5;
@@ -82,6 +86,13 @@ export function isUserComposerAttachment(value: unknown): value is UserComposerA
   if (record.kind !== "github_issue" && record.kind !== "github_pr") {
     return false;
   }
+  if (
+    record.kind === "github_pr" &&
+    record.owner !== undefined &&
+    record.owner !== NEW_WORKSPACE_PICKER_ATTACHMENT_OWNER
+  ) {
+    return false;
+  }
   return GitHubSearchItemSchema.safeParse(record.item).success;
 }
 
@@ -92,6 +103,15 @@ export function normalizeComposerAttachment(
     return {
       kind: "image",
       metadata: normalizeAttachmentMetadata(attachment.metadata),
+    };
+  }
+  if (attachment.kind === "github_pr") {
+    return {
+      kind: "github_pr",
+      item: attachment.item,
+      ...(attachment.owner === NEW_WORKSPACE_PICKER_ATTACHMENT_OWNER
+        ? { owner: attachment.owner }
+        : {}),
     };
   }
   return attachment;

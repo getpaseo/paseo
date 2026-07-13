@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyClearDraftRecord, pruneFinalizedDraftRecords } from "./state";
+import { applyClearDraftRecord, pruneFinalizedDraftRecords, toDraftInputIfReady } from "./state";
 
 describe("draft-store lifecycle", () => {
   it("prunes finalized tombstones after TTL", () => {
@@ -66,6 +66,38 @@ describe("draft-store lifecycle", () => {
       lifecycle: "sent",
       updatedAt: 2,
       version: 2,
+    });
+  });
+});
+
+describe("draft-store normalization", () => {
+  it("preserves New Workspace picker ownership when hydrating a draft", () => {
+    const pickerAttachment = {
+      kind: "github_pr" as const,
+      owner: "new-workspace-picker" as const,
+      item: {
+        kind: "pr" as const,
+        number: 202,
+        title: "Persist picker ownership",
+        url: "https://example.com/pull/202",
+        state: "open" as const,
+        body: null,
+        labels: [],
+        baseRefName: "main",
+        headRefName: "feature/picker-ownership",
+      },
+    };
+
+    expect(
+      toDraftInputIfReady({
+        input: { text: "Keep this prompt", attachments: [pickerAttachment] },
+        lifecycle: "active",
+        updatedAt: 1,
+        version: 1,
+      }),
+    ).toEqual({
+      text: "Keep this prompt",
+      attachments: [pickerAttachment],
     });
   });
 });

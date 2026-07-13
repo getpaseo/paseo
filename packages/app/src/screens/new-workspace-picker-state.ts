@@ -1,23 +1,29 @@
-import type { UserComposerAttachment } from "@/attachments/types";
+import {
+  NEW_WORKSPACE_PICKER_ATTACHMENT_OWNER,
+  type UserComposerAttachment,
+} from "@/attachments/types";
 import type { PickerItem } from "./new-workspace-picker-item";
 
-// The picker "owns" at most one PR attachment at a time. When the user selects
-// a different item the previously-owned PR is removed before the new one is added.
-// User-added attachments for other PRs/issues are left untouched.
+function isPickerOwnedPrAttachment(attachment: UserComposerAttachment): attachment is Extract<
+  UserComposerAttachment,
+  { kind: "github_pr" }
+> & {
+  owner: typeof NEW_WORKSPACE_PICKER_ATTACHMENT_OWNER;
+} {
+  return (
+    attachment.kind === "github_pr" && attachment.owner === NEW_WORKSPACE_PICKER_ATTACHMENT_OWNER
+  );
+}
+
+// Ownership lives on the attachment because drafts outlive this component.
+// The picker owns at most one PR; user-added PRs and issues remain untouched.
 export function syncPickerPrAttachment(input: {
   attachments: UserComposerAttachment[];
-  previousPickerPrNumber: number | null;
   item: PickerItem | null;
-}): { attachments: UserComposerAttachment[]; attachedPrNumber: number | null } {
-  let nextAttachments = input.attachments;
-  let attachedPrNumber: number | null = null;
-
-  if (input.previousPickerPrNumber !== null) {
-    nextAttachments = nextAttachments.filter(
-      (attachment) =>
-        attachment.kind !== "github_pr" || attachment.item.number !== input.previousPickerPrNumber,
-    );
-  }
+}): UserComposerAttachment[] {
+  const nextAttachments = input.attachments.filter(
+    (attachment) => !isPickerOwnedPrAttachment(attachment),
+  );
 
   if (input.item?.kind === "github-pr") {
     const selectedPr = input.item.item;
@@ -26,12 +32,18 @@ export function syncPickerPrAttachment(input: {
         attachment.kind === "github_pr" && attachment.item.number === selectedPr.number,
     );
     if (!hasExistingPrAttachment) {
-      nextAttachments = [...nextAttachments, { kind: "github_pr", item: selectedPr }];
-      attachedPrNumber = selectedPr.number;
+      return [
+        ...nextAttachments,
+        {
+          kind: "github_pr",
+          item: selectedPr,
+          owner: NEW_WORKSPACE_PICKER_ATTACHMENT_OWNER,
+        },
+      ];
     }
   }
 
-  return { attachments: nextAttachments, attachedPrNumber };
+  return nextAttachments;
 }
 
 export function findCheckoutHintPrAttachment(input: {

@@ -179,11 +179,6 @@ interface PickerOptionData {
 
 interface PickerSelection {
   item: PickerItem;
-  attachedPrNumber: number | null;
-}
-
-function getPickerPrNumber(selection: PickerSelection | null): number | null {
-  return selection?.attachedPrNumber ?? null;
 }
 
 const BRANCH_OPTION_PREFIX = "branch:";
@@ -1789,22 +1784,16 @@ export function NewWorkspaceScreen({
   }, [selectedItem]);
   const selectPickerItem = useCallback(
     (item: PickerItem) => {
-      const next = syncPickerPrAttachment({
+      const nextAttachments = syncPickerPrAttachment({
         attachments: chatDraft.attachments,
-        previousPickerPrNumber: manualPickerSelection?.attachedPrNumber ?? null,
         item,
       });
 
-      setManualPickerSelection({
-        item,
-        attachedPrNumber: next.attachedPrNumber,
-      });
-      if (next.attachments !== chatDraft.attachments) {
-        chatDraft.setAttachments(next.attachments);
-      }
+      setManualPickerSelection({ item });
+      chatDraft.setAttachments(nextAttachments);
       setPickerOpen(false);
     },
-    [chatDraft, manualPickerSelection?.attachedPrNumber],
+    [chatDraft],
   );
 
   const handleSelectOption = useCallback(
@@ -1817,14 +1806,13 @@ export function NewWorkspaceScreen({
   );
 
   const clearManualPickerSelection = useCallback(() => {
-    const next = syncPickerPrAttachment({
+    const nextAttachments = syncPickerPrAttachment({
       attachments: chatDraft.attachments,
-      previousPickerPrNumber: getPickerPrNumber(manualPickerSelection),
       item: null,
     });
-    chatDraft.setAttachments(next.attachments);
+    chatDraft.setAttachments(nextAttachments);
     setManualPickerSelection(null);
-  }, [chatDraft, manualPickerSelection]);
+  }, [chatDraft]);
 
   const handleSelectProjectOption = useCallback(
     (id: string) => {
