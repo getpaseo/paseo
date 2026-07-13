@@ -15,7 +15,15 @@ import { searchDirectoryEntries } from "./directory-suggestions.js";
 
 const isWindows = isPlatform("win32");
 const filesystemRootDirectoryName = isWindows ? "Windows" : "usr";
-const workspaceHiddenDirectories = [".agents", ".claude", ".codex", ".github", ".paseo", ".vscode"];
+const workspaceHiddenDirectories = [
+  ".agents",
+  ".claude",
+  ".codex",
+  ".github",
+  ".opencode",
+  ".paseo",
+  ".vscode",
+];
 
 async function searchAbsoluteDirectoryPaths(options: {
   homeDir: string;

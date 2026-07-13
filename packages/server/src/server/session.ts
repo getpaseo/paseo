@@ -229,6 +229,7 @@ const WORKSPACE_SEARCH_HIDDEN_DIRECTORIES = [
   ".claude",
   ".codex",
   ".github",
+  ".opencode",
   ".paseo",
   ".vscode",
 ];
