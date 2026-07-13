@@ -1,4 +1,3 @@
-import { useCallback } from "react";
 import { AppDiagnosticSheet } from "@/components/app-diagnostic-sheet";
 import { isElectronRuntime } from "@/desktop/host";
 import { useAppDiagnosticStore } from "@/diagnostics/store";
@@ -8,14 +7,10 @@ export function AppDiagnosticHost() {
   const visible = useAppDiagnosticStore((state) => state.visible);
   const close = useAppDiagnosticStore((state) => state.close);
 
-  const handleClose = useCallback(() => {
-    close();
-  }, [close]);
-
   return (
     <AppDiagnosticSheet
       visible={visible}
-      onClose={handleClose}
+      onClose={close}
       appVersion={resolveAppVersion()}
       isDesktopApp={isElectronRuntime()}
     />

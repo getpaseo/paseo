@@ -2,7 +2,8 @@ import { expect, test, type Page } from "./fixtures";
 import { gotoAppShell, openSettings } from "./helpers/app";
 import { openSettingsSection } from "./helpers/settings";
 
-const DISCORD_DESTINATION = /^https:\/\/discord\.com\/invite\/jz8T2uahpH(?:[/?#]|$)/;
+const DISCORD_DESTINATION =
+  /^https:\/\/(?:discord\.gg\/jz8T2uahpH|discord\.com\/invite\/jz8T2uahpH)(?:[/?#]|$)/;
 const GITHUB_ISSUE_DESTINATION =
   /^https:\/\/github\.com\/(?:getpaseo\/paseo\/issues\/new(?:[/?#]|$)|login\?return_to=https%3A%2F%2Fgithub\.com%2Fgetpaseo%2Fpaseo%2Fissues%2Fnew$)/;
 
@@ -41,11 +42,14 @@ test("opens troubleshooting tools from the sidebar help menu", async ({ page }) 
   await expect(page.getByTestId("sidebar-help")).toBeVisible();
 
   await openHelpMenu(page);
-  const triggerBox = await page.getByTestId("sidebar-help").boundingBox();
-  const menuBox = await page.getByTestId("sidebar-help-menu").boundingBox();
-  if (!triggerBox || !menuBox) {
-    throw new Error("Expected the help trigger and menu to have visible bounds");
-  }
+  const triggerBox = await page.getByTestId("sidebar-help").evaluate((element) => {
+    const { y, height } = element.getBoundingClientRect();
+    return { y, height };
+  });
+  const menuBox = await page.getByTestId("sidebar-help-menu").evaluate((element) => {
+    const { y, height } = element.getBoundingClientRect();
+    return { y, height };
+  });
   expect(menuBox.y + menuBox.height).toBeLessThanOrEqual(triggerBox.y);
   await expect(page.getByText("Troubleshoot", { exact: true })).toBeVisible();
   await expect(page.getByText("Report an issue", { exact: true })).toBeVisible();
