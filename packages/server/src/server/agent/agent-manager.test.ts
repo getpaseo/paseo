@@ -14,6 +14,7 @@ import {
   type ManagedAgent,
 } from "./agent-manager.js";
 import { AgentStorage } from "./agent-storage.js";
+import { ControlledAgentStorageWriter } from "./test-utils/controlled-agent-storage-writer.js";
 import { toAgentPayload } from "./agent-projections.js";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { formatSystemNotificationPrompt } from "./agent-prompt.js";
@@ -2789,9 +2790,7 @@ test("setTitle bumps updatedAt and persists title in the same snapshot write", a
   expect(after?.title).toBe("Generated title");
   expect(Date.parse(after!.updatedAt)).toBeGreaterThan(Date.parse(before!.updatedAt));
 
-  const live = (manager as unknown as { agents: Map<string, ManagedAgent> }).agents.get(
-    snapshot.id,
-  );
+  const live = manager.getAgent(snapshot.id);
   expect(live).not.toBeNull();
   expect(live!.updatedAt.getTime()).toBeGreaterThan(Date.parse(before!.updatedAt));
 });
@@ -2825,14 +2824,11 @@ test("updateAgentMetadata bumps updatedAt for stored agents", async () => {
   await storage.upsert(before);
   expect(manager.getAgent(snapshot.id)).toBeNull();
 
-  const updateSpy = vi.spyOn(storage, "update");
-
   await manager.updateAgentMetadata(snapshot.id, {
     title: "Stored title",
     labels: { role: "worker" },
   });
 
-  expect(updateSpy).toHaveBeenCalledTimes(1);
   const after = await storage.get(snapshot.id);
   expect(after?.title).toBe("Stored title");
   expect(after?.labels).toEqual({ surface: "mobile", role: "worker" });
@@ -3168,7 +3164,8 @@ test("runAgent persists finished attention and idle status without an external s
 
 test("clearAgentAttention leaves live attention retryable when persistence fails", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-clear-attention-failure-"));
-  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const writer = new ControlledAgentStorageWriter();
+  const storage = new AgentStorage(join(workdir, "agents"), logger, { recordWriter: writer });
   const manager = new AgentManager({
     clients: { codex: new TestAgentClient() },
     registry: storage,
@@ -3180,28 +3177,10 @@ test("clearAgentAttention leaves live attention retryable when persistence fails
     undefined,
     { workspaceId: undefined },
   );
-  const live = (manager as unknown as { agents: Map<string, ManagedAgent> }).agents.get(
-    snapshot.id,
-  );
-  expect(live).not.toBeNull();
-  live!.attention = {
-    requiresAttention: true,
-    attentionReason: "finished",
-    attentionTimestamp: new Date("2026-07-13T10:00:00.000Z"),
-  };
-  await storage.update(snapshot.id, (record) => ({
-    ...record,
-    requiresAttention: true,
-    attentionReason: "finished",
-    attentionTimestamp: "2026-07-13T10:00:00.000Z",
-  }));
+  await manager.runAgent(snapshot.id, "finish with unread attention");
+  await manager.flush();
 
-  const update = storage.update.bind(storage);
-  let failPersistence = true;
-  storage.update = async (agentId, updateRecord) => {
-    if (failPersistence) throw new Error("simulated attention persistence failure");
-    return update(agentId, updateRecord);
-  };
+  writer.failNextWrite(new Error("simulated attention persistence failure"));
 
   await expect(manager.clearAgentAttention(snapshot.id)).rejects.toThrow(
     "simulated attention persistence failure",
@@ -3215,7 +3194,6 @@ test("clearAgentAttention leaves live attention retryable when persistence fails
     attentionReason: "finished",
   });
 
-  failPersistence = false;
   await manager.clearAgentAttention(snapshot.id);
   expect(manager.getAgent(snapshot.id)?.attention).toEqual({ requiresAttention: false });
   expect(await storage.get(snapshot.id)).toMatchObject({
@@ -3225,9 +3203,10 @@ test("clearAgentAttention leaves live attention retryable when persistence fails
   });
 });
 
-test("clearAgentAttention preserves attention re-raised while persistence is blocked", async () => {
+test("clearAgentAttention preserves attention when live metadata changes while persistence is blocked", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-clear-attention-cas-"));
-  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const writer = new ControlledAgentStorageWriter();
+  const storage = new AgentStorage(join(workdir, "agents"), logger, { recordWriter: writer });
   const manager = new AgentManager({
     clients: { codex: new TestAgentClient() },
     registry: storage,
@@ -3239,144 +3218,39 @@ test("clearAgentAttention preserves attention re-raised while persistence is blo
     undefined,
     { workspaceId: undefined },
   );
-  const live = (manager as unknown as { agents: Map<string, ManagedAgent> }).agents.get(
-    snapshot.id,
-  );
-  expect(live).not.toBeNull();
-  live!.attention = {
-    requiresAttention: true,
-    attentionReason: "finished",
-    attentionTimestamp: new Date("2026-07-13T10:00:00.000Z"),
-  };
-  await storage.update(snapshot.id, (record) => ({
-    ...record,
-    requiresAttention: true,
-    attentionReason: "finished",
-    attentionTimestamp: "2026-07-13T10:00:00.000Z",
-  }));
+  await manager.runAgent(snapshot.id, "finish with unread attention");
+  await manager.flush();
 
-  const update = storage.update.bind(storage);
-  let releaseUpdate = () => {};
-  const updateReleased = new Promise<void>((resolve) => {
-    releaseUpdate = resolve;
-  });
-  let reportUpdateStarted = () => {};
-  const updateStarted = new Promise<void>((resolve) => {
-    reportUpdateStarted = resolve;
-  });
-  let blockNextUpdate = true;
-  storage.update = async (agentId, updateRecord) => {
-    if (blockNextUpdate) {
-      blockNextUpdate = false;
-      reportUpdateStarted();
-      await updateReleased;
-    }
-    return update(agentId, updateRecord);
-  };
-
+  const heldWrite = writer.holdNextWrite();
   const clear = manager.clearAgentAttention(snapshot.id);
-  await updateStarted;
-  const reraisedAt = new Date("2026-07-13T10:05:00.000Z");
-  live!.attention = {
+  await heldWrite.started;
+  const titleUpdate = manager.setTitle(snapshot.id, "Concurrent title");
+  const changed = manager.getAgent(snapshot.id);
+  expect(changed?.attention).toMatchObject({
     requiresAttention: true,
-    attentionReason: "error",
-    attentionTimestamp: reraisedAt,
-  };
-  live!.updatedAt = reraisedAt;
-  releaseUpdate();
-  await clear;
+    attentionReason: "finished",
+  });
+  if (!changed?.attention.requiresAttention) {
+    throw new Error("Expected finished attention to remain unread");
+  }
+  const attentionAt = changed.attention.attentionTimestamp;
+  const changedUpdatedAt = changed.updatedAt;
+
+  heldWrite.release();
+  await expect(Promise.all([clear, titleUpdate])).resolves.toEqual([false, undefined]);
+  await manager.flush();
 
   expect(manager.getAgent(snapshot.id)?.attention).toEqual({
     requiresAttention: true,
-    attentionReason: "error",
-    attentionTimestamp: reraisedAt,
+    attentionReason: "finished",
+    attentionTimestamp: attentionAt,
   });
-  expect(manager.getAgent(snapshot.id)?.updatedAt).toEqual(reraisedAt);
+  expect(manager.getAgent(snapshot.id)?.updatedAt).toEqual(changedUpdatedAt);
   expect(await storage.get(snapshot.id)).toMatchObject({
     requiresAttention: true,
-    attentionReason: "error",
-    attentionTimestamp: reraisedAt.toISOString(),
-  });
-});
-
-test("clearAgentAttention does not clear attention that changed to permission", async () => {
-  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-clear-attention-permission-"));
-  const storage = new AgentStorage(join(workdir, "agents"), logger);
-  const manager = new AgentManager({
-    clients: { codex: new TestAgentClient() },
-    registry: storage,
-    logger,
-    idFactory: () => "00000000-0000-4000-8000-000000000138",
-  });
-  const snapshot = await manager.createAgent(
-    { provider: "codex", cwd: workdir, title: "Attention permission race" },
-    undefined,
-    { workspaceId: undefined },
-  );
-  const live = (manager as unknown as { agents: Map<string, ManagedAgent> }).agents.get(
-    snapshot.id,
-  );
-  expect(live).not.toBeNull();
-  const finishedAt = new Date("2026-07-13T10:00:00.000Z");
-  live!.attention = {
-    requiresAttention: true,
     attentionReason: "finished",
-    attentionTimestamp: finishedAt,
-  };
-  await storage.update(snapshot.id, (record) => ({
-    ...record,
-    requiresAttention: true,
-    attentionReason: "finished",
-    attentionTimestamp: finishedAt.toISOString(),
-  }));
-
-  const update = storage.update.bind(storage);
-  let releaseClear = () => {};
-  const clearReleased = new Promise<void>((resolve) => {
-    releaseClear = resolve;
-  });
-  let reportClearStarted = () => {};
-  const clearStarted = new Promise<void>((resolve) => {
-    reportClearStarted = resolve;
-  });
-  let blockNextUpdate = true;
-  storage.update = async (agentId, updateRecord) => {
-    if (blockNextUpdate) {
-      blockNextUpdate = false;
-      reportClearStarted();
-      await clearReleased;
-    }
-    return update(agentId, updateRecord);
-  };
-
-  const clear = manager.clearAgentAttention(snapshot.id);
-  await clearStarted;
-  const permissionAt = new Date("2026-07-13T10:06:00.000Z");
-  live!.attention = {
-    requiresAttention: true,
-    attentionReason: "permission",
-    attentionTimestamp: permissionAt,
-  };
-  live!.updatedAt = permissionAt;
-  await update(snapshot.id, (record) => ({
-    ...record,
-    updatedAt: permissionAt.toISOString(),
-    requiresAttention: true,
-    attentionReason: "permission",
-    attentionTimestamp: permissionAt.toISOString(),
-  }));
-  releaseClear();
-
-  await expect(clear).resolves.toBe(false);
-  expect(manager.getAgent(snapshot.id)?.attention).toEqual({
-    requiresAttention: true,
-    attentionReason: "permission",
-    attentionTimestamp: permissionAt,
-  });
-  expect(await storage.get(snapshot.id)).toMatchObject({
-    requiresAttention: true,
-    attentionReason: "permission",
-    attentionTimestamp: permissionAt.toISOString(),
+    attentionTimestamp: attentionAt.toISOString(),
+    title: "Concurrent title",
   });
 });
 

@@ -65,7 +65,7 @@ function formatSectionLabel(
   t: TFunction,
   section: Exclude<HistorySection, { kind: "none" }>,
 ): string {
-  if (section.kind === "pinned") return "Pinned";
+  if (section.kind === "pinned") return t("agentList.sections.pinned");
   if (section.kind === "project") return section.title;
   return formatDateSectionLabel(t, section.dateKey);
 }
@@ -349,7 +349,9 @@ function SessionRow({
             size="xs"
             leftIcon={MoreVertical}
             onPress={handleOpenActions}
-            accessibilityLabel={`Actions for ${agent.title || "session"}`}
+            accessibilityLabel={t("agentList.actions.menuAccessibility", {
+              title: agent.title || t("agentList.actions.fallbackSession"),
+            })}
             testID={`history-agent-actions-${agent.serverId}-${agent.id}`}
           />
         ) : (
@@ -393,14 +395,16 @@ export function AgentList({
   const isActionDaemonUnavailable = Boolean(actionAgent?.serverId && !actionClient);
   const actionSheetHeader = useMemo(
     () => ({
-      title: "Session actions",
+      title: t("agentList.actions.sheetTitle"),
       subtitle: actionAgent?.title || t("agentList.fallbackTitle"),
     }),
     [actionAgent?.title, t],
   );
-  let actionPinLabel = "Update host to pin sessions";
+  let actionPinLabel = t("agentList.actions.updateHostToPin");
   if (actionSupportsPinning) {
-    actionPinLabel = actionAgent?.pinnedAt ? "Unpin session" : "Pin session";
+    actionPinLabel = actionAgent?.pinnedAt
+      ? t("agentList.actions.unpin")
+      : t("agentList.actions.pin");
   }
 
   const invalidateAgentHistory = useCallback(
@@ -471,11 +475,13 @@ export function AgentList({
         .setAgentPinned(agent.id, !agent.pinnedAt)
         .then(() => invalidateAgentHistory(agent.serverId))
         .catch((error) => {
-          toast.error(error instanceof Error ? error.message : "Failed to update session pin");
+          toast.error(
+            error instanceof Error ? error.message : t("agentList.actions.updatePinFailed"),
+          );
         })
         .finally(() => setPendingActionKey((current) => (current === actionKey ? null : current)));
     },
-    [invalidateAgentHistory, toast],
+    [invalidateAgentHistory, t, toast],
   );
 
   const handleRequestArchive = useCallback((agent: AggregatedAgent) => {
@@ -614,7 +620,7 @@ export function AgentList({
               onPress={handleArchiveAgent}
               testID="agent-action-archive"
             >
-              Archive session
+              {t("agentList.actions.archive")}
             </Button>
           ) : null}
           <Button variant="ghost" onPress={handleCloseActionSheet} testID="agent-action-cancel">

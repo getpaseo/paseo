@@ -1419,9 +1419,8 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     });
 
     const unsubWorkspaceCollectionCatalogUpdate = client.on(
-      "workspace_collection_catalog_update",
+      "workspace.collection.catalog.update",
       (message) => {
-        if (message.type !== "workspace.collection.catalog.update") return;
         setWorkspaceCollections(
           serverId,
           message.payload.collections.map(normalizeWorkspaceCollection),

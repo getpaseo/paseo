@@ -196,6 +196,7 @@ function createSessionForWorkspaceGitWatchTests(options?: {
       get: async () => null,
     }),
     projectRegistry: createStub<SessionOptions["projectRegistry"]>({
+      subscribeChanges: () => () => {},
       initialize: async () => {},
       existsOnDisk: async () => true,
       list: async () => Array.from(projects.values()),
@@ -213,6 +214,7 @@ function createSessionForWorkspaceGitWatchTests(options?: {
       },
     }),
     workspaceRegistry: createStub<SessionOptions["workspaceRegistry"]>({
+      subscribeOrganizationChanges: () => () => {},
       initialize: async () => {},
       existsOnDisk: async () => true,
       list: async () => Array.from(workspaces.values()),

@@ -55,6 +55,7 @@ interface OrganizeSidebarWorkspacesInput {
   hiddenProjectKeys?: ReadonlySet<string>;
   hiddenWorkspaceKeys: ReadonlySet<string>;
   collections: readonly SidebarWorkspaceCollectionSource[];
+  collectionLabels: { none: string; unknown: string };
   preferences: SidebarOrganizationPreferences;
   now?: Date;
 }
@@ -140,6 +141,7 @@ function sortRows(
 function buildCollectionGroups(input: {
   rows: readonly SidebarWorkspaceEntry[];
   collectionSources: readonly SidebarWorkspaceCollectionSource[];
+  collectionLabels: { none: string; unknown: string };
   compareRows: (left: SidebarWorkspaceEntry, right: SidebarWorkspaceEntry) => number;
 }): SidebarWorkspaceCollection[] {
   const collectionsByKey = new Map<string, WorkspaceCollection>();
@@ -171,7 +173,9 @@ function buildCollectionGroups(input: {
       key,
       serverId: collectionId ? workspace.serverId : null,
       collectionId,
-      label: collection?.name ?? (collectionId ? "Unknown label" : "No label"),
+      label:
+        collection?.name ??
+        (collectionId ? input.collectionLabels.unknown : input.collectionLabels.none),
       rows: [workspace],
     });
   }
@@ -222,23 +226,30 @@ function filterProjectWorkspaces(input: {
   return visibleProjects;
 }
 
-function projectDate(
-  project: SidebarProjectEntry,
+function projectDatesByKey(
   entriesByKey: ReadonlyMap<string, SidebarWorkspaceEntry>,
   field: "createdAt" | "activityAt",
-): Date | null {
-  let timestamp: number | null = null;
+): ReadonlyMap<string, Date> {
+  const timestamps = new Map<string, number>();
   for (const workspace of entriesByKey.values()) {
-    if (workspace.projectKey !== project.projectKey) continue;
     const value = workspace[field] ?? null;
     if (!value) continue;
+    const timestamp = timestamps.get(workspace.projectKey);
     if (field === "createdAt") {
-      timestamp = timestamp === null ? value.getTime() : Math.min(timestamp, value.getTime());
+      timestamps.set(
+        workspace.projectKey,
+        timestamp === undefined ? value.getTime() : Math.min(timestamp, value.getTime()),
+      );
     } else {
-      timestamp = timestamp === null ? value.getTime() : Math.max(timestamp, value.getTime());
+      timestamps.set(
+        workspace.projectKey,
+        timestamp === undefined ? value.getTime() : Math.max(timestamp, value.getTime()),
+      );
     }
   }
-  return timestamp === null ? null : new Date(timestamp);
+  return new Map(
+    Array.from(timestamps, ([projectKey, timestamp]) => [projectKey, new Date(timestamp)]),
+  );
 }
 
 function projectComparator(input: {
@@ -251,10 +262,11 @@ function projectComparator(input: {
   if (input.sortMode === "alphabetical") return compareNames;
   if (input.sortMode === "created" || input.sortMode === "recency") {
     const field = input.sortMode === "created" ? "createdAt" : "activityAt";
+    const datesByProjectKey = projectDatesByKey(input.entriesByKey, field);
     return (left, right) =>
       compareOptionalDatesDescending(
-        projectDate(left, input.entriesByKey, field),
-        projectDate(right, input.entriesByKey, field),
+        datesByProjectKey.get(left.projectKey) ?? null,
+        datesByProjectKey.get(right.projectKey) ?? null,
       ) || compareNames(left, right);
   }
   return () => 0;
@@ -393,6 +405,7 @@ export function organizeSidebarWorkspaces(
       : buildCollectionGroups({
           rows: regularRows,
           collectionSources: input.collections,
+          collectionLabels: input.collectionLabels,
           compareRows,
         });
 

@@ -1,6 +1,6 @@
 import { afterEach, expect, expectTypeOf, test, vi } from "vitest";
 import { z } from "zod";
-import { DaemonClient, type DaemonTransport, type Logger } from "./daemon-client";
+import { DaemonClient, type DaemonEvent, type DaemonTransport, type Logger } from "./daemon-client";
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
 import { BROWSER_AUTOMATION_COMMAND_NAMES } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import {
@@ -2461,7 +2461,9 @@ test("sends workspace organization and agent pin RPCs", async () => {
   await expect(remove).resolves.toEqual({ unassignedWorkspaceIds: ["ws-1"] });
 
   const events: Array<{ type: string; payload?: unknown }> = [];
-  client.on("workspace_collection_catalog_update", (event) => events.push(event));
+  const normalizedEvents: DaemonEvent[] = [];
+  client.on("workspace.collection.catalog.update", (event) => events.push(event));
+  client.on((event) => normalizedEvents.push(event));
   mock.triggerMessage(
     wrapSessionMessage({
       type: "workspace.collection.catalog.update",
@@ -2470,6 +2472,10 @@ test("sends workspace organization and agent pin RPCs", async () => {
   );
   expect(events).toContainEqual({
     type: "workspace.collection.catalog.update",
+    payload: { collections: [] },
+  });
+  expect(normalizedEvents).toContainEqual({
+    type: "workspace_collection_catalog_update",
     payload: { collections: [] },
   });
 });

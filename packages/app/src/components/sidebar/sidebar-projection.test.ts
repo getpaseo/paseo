@@ -51,10 +51,7 @@ function makeProject(workspaces: SidebarWorkspacePlacement[]): SidebarProjectEnt
   };
 }
 
-function projectionInput(options?: {
-  groupMode?: "project" | "status";
-  pinnedCollapsed?: boolean;
-}) {
+function projectionInput(options?: { groupMode?: "project" | "status" }) {
   const pinned = makeWorkspace("pinned", "running");
   const unpinned = makeWorkspace("unpinned", "needs_input");
   return {
@@ -71,14 +68,11 @@ function projectionInput(options?: {
     ]),
     projectNamesByKey: new Map([["project", "Project"]]),
     groupMode: options?.groupMode ?? ("project" as const),
-    pinnedCollapsed: options?.pinnedCollapsed ?? false,
-    collapsedProjectKeys: new Set<string>(),
-    collapsedStatusGroupKeys: new Set<string>(),
   };
 }
 
 describe("buildSidebarProjection", () => {
-  it("uses one pin-aware projection for project rows and shortcut order", () => {
+  it("removes pinned workspaces from their project rows", () => {
     const projection = buildSidebarProjection(projectionInput());
 
     expect(projection.pinnedGroups.pinnedChats.map((entry) => entry.workspaceId)).toEqual([
@@ -86,10 +80,6 @@ describe("buildSidebarProjection", () => {
     ]);
     const remainingProject = projection.pinnedGroups.unpinnedProjects[0];
     expect(remainingProject?.workspaces.map((entry) => entry.workspaceId)).toEqual(["unpinned"]);
-    expect(projection.shortcutModel.shortcutTargets).toEqual([
-      { serverId: "srv", workspaceId: "pinned" },
-      { serverId: "srv", workspaceId: "unpinned" },
-    ]);
   });
 
   it("keeps pinned chats above status groups and removes them from those groups", () => {
@@ -98,20 +88,6 @@ describe("buildSidebarProjection", () => {
     expect(projection.statusGroups.map((group) => group.bucket)).toEqual(["needs_input"]);
     expect(projection.statusGroups[0]?.rows.map((entry) => entry.workspaceId)).toEqual([
       "unpinned",
-    ]);
-    expect(projection.shortcutModel.shortcutTargets).toEqual([
-      { serverId: "srv", workspaceId: "pinned" },
-      { serverId: "srv", workspaceId: "unpinned" },
-    ]);
-  });
-
-  it("does not number pinned chats while the pinned section is collapsed", () => {
-    const projection = buildSidebarProjection(
-      projectionInput({ groupMode: "status", pinnedCollapsed: true }),
-    );
-
-    expect(projection.shortcutModel.shortcutTargets).toEqual([
-      { serverId: "srv", workspaceId: "unpinned" },
     ]);
   });
 });

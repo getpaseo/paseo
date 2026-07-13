@@ -41,6 +41,7 @@ import {
 } from "@/stores/session-store";
 import { useSidebarWorkspaceVisibilityStore } from "@/stores/sidebar-workspace-visibility-store";
 import type { ToggleSidebarWorkspacePin } from "@/hooks/use-sidebar-workspace-pin";
+import { i18n } from "@/i18n/i18next";
 
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const foregroundMutedColorMapping = (theme: Theme) => ({
@@ -173,7 +174,9 @@ export function SidebarWorkspaceMenu({
       }));
     },
     onError: (error) =>
-      toast.error(error instanceof Error ? error.message : "Failed to move workspace"),
+      toast.error(
+        error instanceof Error ? error.message : t("sidebar.organization.errors.moveFailed"),
+      ),
   });
   const createCollectionMutation = useMutation({
     mutationFn: async (name: string) => {
@@ -206,13 +209,17 @@ export function SidebarWorkspaceMenu({
       if (moveError) {
         toast.error(
           moveError instanceof Error
-            ? `Collection created, but the workspace was not moved: ${moveError.message}`
-            : "Collection created, but the workspace was not moved",
+            ? t("sidebar.organization.errors.createdMoveFailedWithError", {
+                error: moveError.message,
+              })
+            : t("sidebar.organization.errors.createdMoveFailed"),
         );
       }
     },
     onError: (error) =>
-      toast.error(error instanceof Error ? error.message : "Failed to create collection"),
+      toast.error(
+        error instanceof Error ? error.message : t("sidebar.organization.errors.createFailed"),
+      ),
   });
   const handleAssignCollection = useCallback(
     (collectionId: string | null) => assignCollectionMutation.mutate(collectionId),
@@ -275,20 +282,25 @@ export function SidebarWorkspaceMenu({
             leading={isHidden ? unhideLeadingIcon : hideLeadingIcon}
             onSelect={handleToggleHidden}
           >
-            {isHidden ? "Unhide workspace" : "Hide from sidebar"}
+            {isHidden
+              ? t("sidebar.workspace.actions.unhide")
+              : t("sidebar.workspace.actions.hideFromSidebar")}
           </DropdownMenuItem>
           {supportsOrganization ? (
             <>
               <DropdownMenuSeparator />
-              <DropdownMenuLabel>Workspace label</DropdownMenuLabel>
+              <DropdownMenuLabel>
+                {t("sidebar.organization.labels.workspaceLabel")}
+              </DropdownMenuLabel>
               <DropdownMenuItem
                 testID={`sidebar-workspace-menu-collection-none-${workspace.workspaceKey}`}
                 leading={folderLeadingIcon}
                 selected={!workspace.collectionId}
+                selectionRole="radio"
                 status={assignCollectionMutation.isPending ? "pending" : "idle"}
                 onSelect={handleClearCollection}
               >
-                No label
+                {t("sidebar.organization.workspaceLabel.none")}
               </DropdownMenuItem>
               {collections.map((collection) => (
                 <CollectionAssignmentItem
@@ -305,7 +317,7 @@ export function SidebarWorkspaceMenu({
                 leading={newFolderLeadingIcon}
                 onSelect={handleOpenCreateCollection}
               >
-                New workspace label…
+                {t("sidebar.organization.actions.newWorkspaceLabel")}
               </DropdownMenuItem>
               <DropdownMenuSeparator />
             </>
@@ -343,7 +355,7 @@ export function SidebarWorkspaceMenu({
               leading={markAsReadLeadingIcon}
               onSelect={onMarkAsRead}
             >
-              Mark as read
+              {t("sidebar.workspace.actions.markAsRead")}
             </DropdownMenuItem>
           ) : null}
           <DropdownMenuItem
@@ -360,10 +372,10 @@ export function SidebarWorkspaceMenu({
       </DropdownMenu>
       <AdaptiveRenameModal
         visible={isCreateCollectionOpen}
-        title="New workspace label"
+        title={t("sidebar.organization.workspaceLabel.modalTitle")}
         initialValue=""
-        placeholder="Label name"
-        submitLabel="Create"
+        placeholder={t("sidebar.organization.workspaceLabel.placeholder")}
+        submitLabel={t("sidebar.organization.actions.create")}
         onClose={handleCloseCreateCollection}
         onSubmit={handleCreateCollection}
         testID={`sidebar-workspace-create-collection-${workspace.workspaceKey}`}
@@ -393,6 +405,7 @@ function CollectionAssignmentItem({
       testID={`sidebar-workspace-menu-collection-${workspaceKey}-${collectionId}`}
       leading={folderLeadingIcon}
       selected={selected}
+      selectionRole="radio"
       status={pending ? "pending" : "idle"}
       onSelect={handleSelect}
     >
@@ -403,7 +416,7 @@ function CollectionAssignmentItem({
 
 function requireOrganizationClient(serverId: string) {
   const client = getHostRuntimeStore().getClient(serverId);
-  if (!client) throw new Error("Host disconnected");
+  if (!client) throw new Error(i18n.t("sidebar.workspace.toasts.hostDisconnected"));
   return client;
 }
 

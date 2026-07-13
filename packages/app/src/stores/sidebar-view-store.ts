@@ -179,83 +179,87 @@ export function createSidebarViewStorage(
   };
 }
 
-export const useSidebarViewStore = create<SidebarViewStoreState>()(
-  persist(
-    (set) => ({
-      groupMode: "project",
-      sortMode: "custom",
-      visibilityFilter: "visible",
-      lastActivityFilter: "all",
-      statusFilters: [],
-      projectFilters: [],
-      hostFilters: [],
-      setGroupMode: (mode) => set({ groupMode: mode }),
-      setSortMode: (mode) => set({ sortMode: mode }),
-      setVisibilityFilter: (filter) => set({ visibilityFilter: filter }),
-      setLastActivityFilter: (filter) => set({ lastActivityFilter: filter }),
-      toggleStatusFilter: (status) =>
-        set((state) => ({
-          statusFilters: state.statusFilters.includes(status)
-            ? state.statusFilters.filter((value) => value !== status)
-            : [...state.statusFilters, status],
-        })),
-      clearStatusFilters: () => set({ statusFilters: [] }),
-      toggleProjectFilter: (projectKey) =>
-        set((state) => ({
-          projectFilters: state.projectFilters.includes(projectKey)
-            ? state.projectFilters.filter((value) => value !== projectKey)
-            : [...state.projectFilters, projectKey],
-        })),
-      clearProjectFilters: () => set({ projectFilters: [] }),
-      toggleHostFilter: (serverId) =>
-        set((state) => ({
-          hostFilters: state.hostFilters.includes(serverId)
-            ? state.hostFilters.filter((id) => id !== serverId)
-            : [...state.hostFilters, serverId],
-        })),
-      clearHostFilters: () => set({ hostFilters: [] }),
-      reconcileHostFilters: (serverIds) =>
-        set((state) => {
-          if (state.hostFilters.length === 0) {
-            return state;
-          }
-          const allowed = new Set(serverIds);
-          const next = state.hostFilters.filter((id) => allowed.has(id));
-          if (next.length === state.hostFilters.length) {
-            return state;
-          }
-          return { hostFilters: next };
-        }),
-      reconcileProjectFilters: (projectKeys) =>
-        set((state) => {
-          if (state.projectFilters.length === 0) return state;
-          const allowed = new Set(projectKeys);
-          const next = state.projectFilters.filter((key) => allowed.has(key));
-          return next.length === state.projectFilters.length ? state : { projectFilters: next };
-        }),
-      clearFilters: () =>
-        set({
-          visibilityFilter: "visible",
-          lastActivityFilter: "all",
-          statusFilters: [],
-          projectFilters: [],
-          hostFilters: [],
-        }),
-    }),
-    {
-      name: SIDEBAR_VIEW_STORAGE_KEY,
-      version: SIDEBAR_VIEW_STORE_VERSION,
-      storage: createJSONStorage(createSidebarViewStorage),
-      partialize: (state) => ({
-        groupMode: state.groupMode,
-        sortMode: state.sortMode,
-        visibilityFilter: state.visibilityFilter,
-        lastActivityFilter: state.lastActivityFilter,
-        statusFilters: state.statusFilters,
-        projectFilters: state.projectFilters,
-        hostFilters: state.hostFilters,
+export function createSidebarViewStore(storage: StateStorage = AsyncStorage) {
+  return create<SidebarViewStoreState>()(
+    persist(
+      (set) => ({
+        groupMode: "project",
+        sortMode: "custom",
+        visibilityFilter: "visible",
+        lastActivityFilter: "all",
+        statusFilters: [],
+        projectFilters: [],
+        hostFilters: [],
+        setGroupMode: (mode) => set({ groupMode: mode }),
+        setSortMode: (mode) => set({ sortMode: mode }),
+        setVisibilityFilter: (filter) => set({ visibilityFilter: filter }),
+        setLastActivityFilter: (filter) => set({ lastActivityFilter: filter }),
+        toggleStatusFilter: (status) =>
+          set((state) => ({
+            statusFilters: state.statusFilters.includes(status)
+              ? state.statusFilters.filter((value) => value !== status)
+              : [...state.statusFilters, status],
+          })),
+        clearStatusFilters: () => set({ statusFilters: [] }),
+        toggleProjectFilter: (projectKey) =>
+          set((state) => ({
+            projectFilters: state.projectFilters.includes(projectKey)
+              ? state.projectFilters.filter((value) => value !== projectKey)
+              : [...state.projectFilters, projectKey],
+          })),
+        clearProjectFilters: () => set({ projectFilters: [] }),
+        toggleHostFilter: (serverId) =>
+          set((state) => ({
+            hostFilters: state.hostFilters.includes(serverId)
+              ? state.hostFilters.filter((id) => id !== serverId)
+              : [...state.hostFilters, serverId],
+          })),
+        clearHostFilters: () => set({ hostFilters: [] }),
+        reconcileHostFilters: (serverIds) =>
+          set((state) => {
+            if (state.hostFilters.length === 0) {
+              return state;
+            }
+            const allowed = new Set(serverIds);
+            const next = state.hostFilters.filter((id) => allowed.has(id));
+            if (next.length === state.hostFilters.length) {
+              return state;
+            }
+            return { hostFilters: next };
+          }),
+        reconcileProjectFilters: (projectKeys) =>
+          set((state) => {
+            if (state.projectFilters.length === 0) return state;
+            const allowed = new Set(projectKeys);
+            const next = state.projectFilters.filter((key) => allowed.has(key));
+            return next.length === state.projectFilters.length ? state : { projectFilters: next };
+          }),
+        clearFilters: () =>
+          set({
+            visibilityFilter: "visible",
+            lastActivityFilter: "all",
+            statusFilters: [],
+            projectFilters: [],
+            hostFilters: [],
+          }),
       }),
-      migrate: migrateSidebarViewState,
-    },
-  ),
-);
+      {
+        name: SIDEBAR_VIEW_STORAGE_KEY,
+        version: SIDEBAR_VIEW_STORE_VERSION,
+        storage: createJSONStorage(() => createSidebarViewStorage(storage)),
+        partialize: (state) => ({
+          groupMode: state.groupMode,
+          sortMode: state.sortMode,
+          visibilityFilter: state.visibilityFilter,
+          lastActivityFilter: state.lastActivityFilter,
+          statusFilters: state.statusFilters,
+          projectFilters: state.projectFilters,
+          hostFilters: state.hostFilters,
+        }),
+        migrate: migrateSidebarViewState,
+      },
+    ),
+  );
+}
+
+export const useSidebarViewStore = createSidebarViewStore();

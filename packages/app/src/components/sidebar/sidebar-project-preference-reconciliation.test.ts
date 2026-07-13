@@ -1,15 +1,16 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { useSidebarViewStore } from "@/stores/sidebar-view-store";
-import { useSidebarWorkspaceVisibilityStore } from "@/stores/sidebar-workspace-visibility-store";
+import { beforeEach, describe, expect, it } from "vitest";
+import type { StateStorage } from "zustand/middleware";
+import { createSidebarViewStore } from "@/stores/sidebar-view-store";
+import { createSidebarWorkspaceVisibilityStore } from "@/stores/sidebar-workspace-visibility-store";
 import { resolveProjectPreferenceReconciliationKeys } from "./sidebar-project-preference-reconciliation";
 
-vi.mock("@react-native-async-storage/async-storage", () => ({
-  default: {
-    getItem: vi.fn().mockResolvedValue(null),
-    setItem: vi.fn().mockResolvedValue(undefined),
-    removeItem: vi.fn().mockResolvedValue(undefined),
-  },
-}));
+const storage: StateStorage = {
+  getItem: () => null,
+  setItem: () => undefined,
+  removeItem: () => undefined,
+};
+const sidebarViewStore = createSidebarViewStore(storage);
+const visibilityStore = createSidebarWorkspaceVisibilityStore(storage);
 
 const allHostProjects = [
   { projectKey: "project-a", serverId: "host-a" },
@@ -18,8 +19,8 @@ const allHostProjects = [
 
 describe("project preference reconciliation", () => {
   beforeEach(() => {
-    useSidebarViewStore.setState({ projectFilters: [] });
-    useSidebarWorkspaceVisibilityStore.setState({ hiddenProjectKeys: [] });
+    sidebarViewStore.setState({ projectFilters: [] });
+    visibilityStore.setState({ hiddenProjectKeys: [] });
   });
 
   it("waits until every registered host has hydrated", () => {
@@ -34,8 +35,8 @@ describe("project preference reconciliation", () => {
   });
 
   it("preserves host-B filter and hidden preferences while switching host filters", () => {
-    useSidebarViewStore.getState().toggleProjectFilter("project-b");
-    useSidebarWorkspaceVisibilityStore.getState().setProjectHidden("project-b", true);
+    sidebarViewStore.getState().toggleProjectFilter("project-b");
+    visibilityStore.getState().setProjectHidden("project-b", true);
     const allProjectKeys = resolveProjectPreferenceReconciliationKeys({
       hostRegistryLoaded: true,
       allServerIds: ["host-a", "host-b"],
@@ -49,11 +50,11 @@ describe("project preference reconciliation", () => {
         (project) => project.serverId === selectedHost,
       );
       expect(visibleProjects).toHaveLength(1);
-      useSidebarViewStore.getState().reconcileProjectFilters(allProjectKeys ?? []);
-      useSidebarWorkspaceVisibilityStore.getState().reconcileProjectKeys(allProjectKeys ?? []);
+      sidebarViewStore.getState().reconcileProjectFilters(allProjectKeys ?? []);
+      visibilityStore.getState().reconcileProjectKeys(allProjectKeys ?? []);
     }
 
-    expect(useSidebarViewStore.getState().projectFilters).toEqual(["project-b"]);
-    expect(useSidebarWorkspaceVisibilityStore.getState().hiddenProjectKeys).toEqual(["project-b"]);
+    expect(sidebarViewStore.getState().projectFilters).toEqual(["project-b"]);
+    expect(visibilityStore.getState().hiddenProjectKeys).toEqual(["project-b"]);
   });
 });

@@ -2585,6 +2585,7 @@ export class Session {
       });
     };
 
+    let nextPinnedAt: string | null;
     try {
       const existing = await this.workspaceRegistry.get(workspaceId);
       if (!existing) {
@@ -2595,16 +2596,8 @@ export class Session {
       // A fresh timestamp on every pin request preserves the upstream RPC's
       // ordering semantics while the registry's focused mutation keeps the
       // write atomic and does not turn pinning into workspace activity.
-      const nextPinnedAt = pinned ? new Date().toISOString() : null;
+      nextPinnedAt = pinned ? new Date().toISOString() : null;
       await this.workspaceRegistry.setPinnedAt(workspaceId, nextPinnedAt);
-      emitResponse(true, nextPinnedAt, null);
-
-      // File-backed registries fan organization changes out to every session.
-      // Custom/legacy registries without that channel still need the requesting
-      // session's filtered, bootstrap-safe workspace update.
-      if (!this.workspaceRegistry.subscribeOrganizationChanges) {
-        await this.emitWorkspaceUpdatesForWorkspaceIds([workspaceId], { skipReconcile: true });
-      }
     } catch (error) {
       this.sessionLogger.error(
         { ...logContext, err: error },
@@ -2620,6 +2613,33 @@ export class Session {
         },
       });
       emitResponse(false, null, getErrorMessageOr(error, "Failed to pin workspace"));
+      return;
+    }
+
+    emitResponse(true, nextPinnedAt, null);
+
+    // File-backed registries fan organization changes out to every session.
+    // Custom/legacy registries without that channel still need the requesting
+    // session's filtered, bootstrap-safe workspace update. A post-commit
+    // broadcast failure must not contradict the already-persisted response.
+    if (!this.workspaceRegistry.subscribeOrganizationChanges) {
+      try {
+        await this.emitWorkspaceUpdatesForWorkspaceIds([workspaceId], { skipReconcile: true });
+      } catch (error) {
+        this.sessionLogger.error(
+          { ...logContext, err: error },
+          "session: workspace.pin.set.update emission error",
+        );
+        this.emit({
+          type: "activity_log",
+          payload: {
+            id: uuidv4(),
+            timestamp: new Date(),
+            type: "error",
+            content: `Workspace pin was saved but its update could not be emitted: ${getErrorMessage(error)}`,
+          },
+        });
+      }
     }
   }
 
@@ -2742,11 +2762,54 @@ export class Session {
         const members = (await this.workspaceRegistry.list()).filter(
           (workspace) => workspace.collectionId === collectionId,
         );
-        for (const workspace of members) {
-          await this.workspaceRegistry.setCollectionId(workspace.workspaceId, null);
-          unassignedWorkspaceIds.push(workspace.workspaceId);
+        const attemptedWorkspaceIds: string[] = [];
+        try {
+          for (const workspace of members) {
+            attemptedWorkspaceIds.push(workspace.workspaceId);
+            await this.workspaceRegistry.setCollectionId(workspace.workspaceId, null);
+          }
+          await this.workspaceCollectionRegistry.remove(collectionId);
+        } catch (error) {
+          const rollbackErrors: unknown[] = [];
+          let catalogRestored = false;
+          let catalogRestoreError: unknown = null;
+          try {
+            if (!(await this.workspaceCollectionRegistry.get(collectionId))) {
+              await this.workspaceCollectionRegistry.upsert(existing);
+            }
+          } catch (rollbackError) {
+            catalogRestoreError = rollbackError;
+          }
+          try {
+            catalogRestored = (await this.workspaceCollectionRegistry.get(collectionId)) !== null;
+          } catch (rollbackError) {
+            catalogRestoreError ??= rollbackError;
+          }
+          if (!catalogRestored) {
+            rollbackErrors.push(
+              catalogRestoreError ?? new Error("Collection catalog row is missing"),
+            );
+          } else {
+            for (const workspaceId of attemptedWorkspaceIds.toReversed()) {
+              try {
+                await this.workspaceRegistry.setCollectionId(workspaceId, collectionId);
+              } catch (rollbackError) {
+                rollbackErrors.push(rollbackError);
+              }
+            }
+          }
+          if (rollbackErrors.length > 0) {
+            const rollbackDetails = rollbackErrors
+              .map((rollbackError) => getErrorMessageOr(rollbackError, "Unknown rollback failure"))
+              .join("; ");
+            throw new Error(
+              `Failed to delete collection and roll back organization state: ${rollbackDetails}`,
+              { cause: error },
+            );
+          }
+          throw error;
         }
-        await this.workspaceCollectionRegistry.remove(collectionId);
+        unassignedWorkspaceIds.push(...members.map((workspace) => workspace.workspaceId));
       });
       this.emit({
         type: "workspace.collection.delete.response",

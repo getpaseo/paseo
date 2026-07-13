@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useState, type ReactElement } from "react";
-import { Text, View, type PressableStateCallbackType } from "react-native";
+import { View, type PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { ChevronLeft, ChevronRight, Settings2 } from "lucide-react-native";
+import { Settings2 } from "lucide-react-native";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import type { Theme } from "@/styles/theme";
 import {
   DropdownMenu,
@@ -10,6 +12,15 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  displayPreferenceOptionLabel,
+  DisplayPreferencePageLinks,
+  DisplayPreferenceSubmenu,
+  MultiSelectPreferenceItems,
+  SingleSelectPreferenceItems,
+  type DisplayPreferencePage,
+  type DisplayPreferenceOption,
+} from "@/components/display-preference-menu-items";
 import { HostStatusDot } from "@/components/host-status-dot";
 import { AdaptiveRenameModal } from "@/components/rename-modal";
 import { useSidebarModel } from "@/components/sidebar/sidebar-model";
@@ -29,10 +40,7 @@ import { useSidebarProjectPreferencesStore } from "@/stores/sidebar-project-pref
 import { normalizeWorkspaceCollection, useSessionStore } from "@/stores/session-store";
 
 const ThemedSettings2 = withUnistyles(Settings2);
-const ThemedChevronLeft = withUnistyles(ChevronLeft);
-const ThemedChevronRight = withUnistyles(ChevronRight);
 const filterColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
-const backLeading = <ThemedChevronLeft size={14} uniProps={filterColorMapping} />;
 
 type MenuPage =
   | "root"
@@ -44,71 +52,27 @@ type MenuPage =
   | "group"
   | "sort"
   | "workspace-title";
+type SubmenuPage = Exclude<MenuPage, "root">;
 
-interface DisplayPreferenceOption<Value extends string> {
-  value: Value;
+interface SidebarSubmenuDescriptor {
   label: string;
-  disabled?: boolean;
+  content: ReactElement;
 }
-
-const STATUS_ITEMS: Array<DisplayPreferenceOption<SidebarStatusFilter>> = [
-  { value: "needs_input", label: "Needs input" },
-  { value: "running", label: "Working" },
-  { value: "attention", label: "Ready to review" },
-  { value: "failed", label: "Failed" },
-  { value: "done", label: "Done" },
-];
-const VISIBILITY_ITEMS: Array<DisplayPreferenceOption<SidebarVisibilityFilter>> = [
-  { value: "visible", label: "Visible" },
-  { value: "hidden", label: "Hidden" },
-  { value: "all", label: "All" },
-];
-const ACTIVITY_ITEMS: Array<DisplayPreferenceOption<SidebarLastActivityFilter>> = [
-  { value: "all", label: "Any time" },
-  { value: "today", label: "Today" },
-  { value: "seven_days", label: "Past 7 days" },
-  { value: "thirty_days", label: "Past 30 days" },
-];
-const GROUP_MODE_ITEMS: Array<DisplayPreferenceOption<SidebarGroupMode>> = [
-  { value: "project", label: "Project" },
-  { value: "project_collection", label: "Project group" },
-  { value: "status", label: "Status" },
-  { value: "collection", label: "Workspace label" },
-  { value: "none", label: "None" },
-];
-const SORT_MODE_ITEMS: Array<DisplayPreferenceOption<SidebarSortMode>> = [
-  { value: "custom", label: "Custom order" },
-  { value: "alphabetical", label: "Alphabetically" },
-  { value: "created", label: "Created time" },
-  { value: "recency", label: "Recency" },
-];
-const WORKSPACE_TITLE_SOURCE_ITEMS: Array<DisplayPreferenceOption<WorkspaceTitleSource>> = [
-  { value: "title", label: "Title" },
-  { value: "branch", label: "Branch name" },
-];
 
 function selectedListLabel(
   selected: readonly string[],
   labels: ReadonlyMap<string, string>,
+  t: TFunction,
 ): string {
-  if (selected.length === 0) return "All";
-  if (selected.length === 1) return labels.get(selected[0] ?? "") ?? "1 selected";
-  return `${selected.length} selected`;
+  if (selected.length === 0) return t("sidebar.organization.selection.all");
+  if (selected.length === 1) {
+    return labels.get(selected[0] ?? "") ?? t("sidebar.organization.selection.oneSelected");
+  }
+  return t("sidebar.organization.selection.selectedCount", { count: selected.length });
 }
 
-function MenuValue({ value }: { value: string }): ReactElement {
-  return (
-    <View style={styles.menuValue}>
-      <Text numberOfLines={1} style={styles.menuValueText}>
-        {value}
-      </Text>
-      <ThemedChevronRight size={14} uniProps={filterColorMapping} />
-    </View>
-  );
-}
-
-// oxlint-disable-next-line complexity
 export function SidebarDisplayPreferencesMenu() {
+  const { t } = useTranslation();
   const [page, setPage] = useState<MenuPage>("root");
   const [isCreateProjectCollectionOpen, setIsCreateProjectCollectionOpen] = useState(false);
   const [isCreateWorkspaceCollectionOpen, setIsCreateWorkspaceCollectionOpen] = useState(false);
@@ -147,9 +111,12 @@ export function SidebarDisplayPreferencesMenu() {
   const hasUnsupportedOrganizationHost = selectedServerIds.some(
     (serverId) => organizationAvailability.get(serverId) === "unsupported",
   );
+  const hasUnavailableOrganizationHost = selectedServerIds.some(
+    (serverId) => organizationAvailability.get(serverId) !== "supported",
+  );
   const workspaceCollectionServerId =
     selectedServerIds.length === 1 &&
-    organizationAvailability.get(selectedServerIds[0] ?? "") !== "unsupported"
+    organizationAvailability.get(selectedServerIds[0] ?? "") === "supported"
       ? (selectedServerIds[0] ?? null)
       : null;
   const { projectNamesByKey } = useSidebarModel();
@@ -157,6 +124,73 @@ export function SidebarDisplayPreferencesMenu() {
     settings: { workspaceTitleSource },
     updateSettings,
   } = useAppSettings();
+
+  const statusItems = useMemo<DisplayPreferenceOption<SidebarStatusFilter>[]>(
+    () => [
+      { value: "needs_input", label: t("sidebar.organization.status.needsInput") },
+      { value: "running", label: t("sidebar.organization.status.working") },
+      { value: "attention", label: t("sidebar.organization.status.readyToReview") },
+      { value: "failed", label: t("sidebar.organization.status.failed") },
+      { value: "done", label: t("sidebar.organization.status.done") },
+    ],
+    [t],
+  );
+  const visibilityItems = useMemo<DisplayPreferenceOption<SidebarVisibilityFilter>[]>(
+    () => [
+      { value: "visible", label: t("sidebar.organization.visibility.visible") },
+      { value: "hidden", label: t("sidebar.organization.visibility.hidden") },
+      { value: "all", label: t("sidebar.organization.selection.all") },
+    ],
+    [t],
+  );
+  const activityItems = useMemo<DisplayPreferenceOption<SidebarLastActivityFilter>[]>(
+    () => [
+      { value: "all", label: t("sidebar.organization.activity.anyTime") },
+      { value: "today", label: t("sidebar.organization.activity.today") },
+      { value: "seven_days", label: t("sidebar.organization.activity.pastSevenDays") },
+      { value: "thirty_days", label: t("sidebar.organization.activity.pastThirtyDays") },
+    ],
+    [t],
+  );
+  const baseGroupModeItems = useMemo<DisplayPreferenceOption<SidebarGroupMode>[]>(
+    () => [
+      { value: "project", label: t("sidebar.organization.group.project") },
+      { value: "project_collection", label: t("sidebar.organization.group.projectGroup") },
+      { value: "status", label: t("sidebar.organization.group.status") },
+      { value: "collection", label: t("sidebar.organization.group.workspaceLabel") },
+      { value: "none", label: t("sidebar.organization.group.none") },
+    ],
+    [t],
+  );
+  const baseSortModeItems = useMemo<DisplayPreferenceOption<SidebarSortMode>[]>(
+    () => [
+      { value: "custom", label: t("sidebar.organization.sort.customOrder") },
+      { value: "alphabetical", label: t("sidebar.organization.sort.alphabetical") },
+      { value: "created", label: t("sidebar.organization.sort.createdTime") },
+      { value: "recency", label: t("sidebar.organization.sort.recency") },
+    ],
+    [t],
+  );
+  const workspaceTitleSourceItems = useMemo<DisplayPreferenceOption<WorkspaceTitleSource>[]>(
+    () => [
+      { value: "title", label: t("sidebar.organization.workspaceTitle.title") },
+      { value: "branch", label: t("sidebar.organization.workspaceTitle.branchName") },
+    ],
+    [t],
+  );
+  const pageLabels = useMemo<Record<Exclude<MenuPage, "root">, string>>(
+    () => ({
+      status: t("sidebar.organization.labels.status"),
+      visibility: t("sidebar.organization.labels.visibility"),
+      project: t("sidebar.organization.labels.project"),
+      host: t("sidebar.organization.labels.host"),
+      activity: t("sidebar.organization.labels.lastActivity"),
+      group: t("sidebar.organization.labels.groupBy"),
+      sort: t("sidebar.organization.labels.sortBy"),
+      "workspace-title": t("sidebar.organization.labels.workspaceTitle"),
+    }),
+    [t],
+  );
 
   const projectItems = useMemo(
     () =>
@@ -174,33 +208,33 @@ export function SidebarDisplayPreferencesMenu() {
     [hosts],
   );
   const statusLabels = useMemo(
-    () => new Map(STATUS_ITEMS.map((item) => [item.value, item.label])),
-    [],
+    () => new Map(statusItems.map((item) => [item.value, item.label])),
+    [statusItems],
   );
   const groupModeItems = useMemo(
     () =>
-      GROUP_MODE_ITEMS.map((item) => ({
+      baseGroupModeItems.map((item) => ({
         ...item,
         label:
-          item.value === "collection" && hasUnsupportedOrganizationHost
-            ? `${item.label} · Update host`
+          item.value === "collection" && hasUnavailableOrganizationHost
+            ? t("sidebar.organization.updateHost", { label: item.label })
             : item.label,
-        disabled: item.value === "collection" && hasUnsupportedOrganizationHost,
+        disabled: item.value === "collection" && hasUnavailableOrganizationHost,
       })),
-    [hasUnsupportedOrganizationHost],
+    [baseGroupModeItems, hasUnavailableOrganizationHost, t],
   );
   const sortModeItems = useMemo(
     () =>
-      SORT_MODE_ITEMS.map((item) => ({
+      baseSortModeItems.map((item) => ({
         ...item,
         label:
-          (item.value === "created" || item.value === "recency") && hasUnsupportedOrganizationHost
-            ? `${item.label} · Update host`
+          (item.value === "created" || item.value === "recency") && hasUnavailableOrganizationHost
+            ? t("sidebar.organization.updateHost", { label: item.label })
             : item.label,
         disabled:
-          (item.value === "created" || item.value === "recency") && hasUnsupportedOrganizationHost,
+          (item.value === "created" || item.value === "recency") && hasUnavailableOrganizationHost,
       })),
-    [hasUnsupportedOrganizationHost],
+    [baseSortModeItems, hasUnavailableOrganizationHost, t],
   );
   const isFiltered =
     statusFilters.length > 0 ||
@@ -208,6 +242,94 @@ export function SidebarDisplayPreferencesMenu() {
     hostFilters.length > 0 ||
     visibilityFilter !== "visible" ||
     lastActivityFilter !== "all";
+  const filterPages = useMemo<DisplayPreferencePage<SubmenuPage>[]>(
+    () => [
+      {
+        page: "status",
+        label: pageLabels.status,
+        value: selectedListLabel(statusFilters, statusLabels, t),
+      },
+      {
+        page: "visibility",
+        label: pageLabels.visibility,
+        value: displayPreferenceOptionLabel(
+          visibilityItems,
+          visibilityFilter,
+          t("sidebar.organization.visibility.visible"),
+        ),
+      },
+      {
+        page: "project",
+        label: pageLabels.project,
+        value: selectedListLabel(projectFilters, projectLabels, t),
+      },
+      {
+        page: "host",
+        label: pageLabels.host,
+        value: selectedListLabel(hostFilters, hostLabels, t),
+      },
+      {
+        page: "activity",
+        label: pageLabels.activity,
+        value: displayPreferenceOptionLabel(
+          activityItems,
+          lastActivityFilter,
+          t("sidebar.organization.activity.anyTime"),
+        ),
+      },
+    ],
+    [
+      activityItems,
+      hostFilters,
+      hostLabels,
+      lastActivityFilter,
+      pageLabels,
+      projectFilters,
+      projectLabels,
+      statusFilters,
+      statusLabels,
+      t,
+      visibilityFilter,
+      visibilityItems,
+    ],
+  );
+  const organizationPages = useMemo<DisplayPreferencePage<SubmenuPage>[]>(
+    () => [
+      {
+        page: "group",
+        label: pageLabels.group,
+        value: displayPreferenceOptionLabel(
+          baseGroupModeItems,
+          groupMode,
+          t("sidebar.organization.group.project"),
+        ),
+      },
+      {
+        page: "sort",
+        label: pageLabels.sort,
+        value: displayPreferenceOptionLabel(
+          baseSortModeItems,
+          sortMode,
+          t("sidebar.organization.sort.customOrder"),
+        ),
+      },
+    ],
+    [baseGroupModeItems, baseSortModeItems, groupMode, pageLabels, sortMode, t],
+  );
+  const workspaceTitlePages = useMemo<DisplayPreferencePage<SubmenuPage>[]>(
+    () => [
+      {
+        page: "workspace-title",
+        label: pageLabels["workspace-title"],
+        value: displayPreferenceOptionLabel(
+          workspaceTitleSourceItems,
+          workspaceTitleSource,
+          t("sidebar.organization.workspaceTitle.title"),
+        ),
+      },
+    ],
+    [pageLabels, t, workspaceTitleSource, workspaceTitleSourceItems],
+  );
 
   useEffect(() => {
     if (!hasUnsupportedOrganizationHost) return;
@@ -249,10 +371,10 @@ export function SidebarDisplayPreferencesMenu() {
   const handleCreateWorkspaceCollection = useCallback(
     async (name: string) => {
       if (!workspaceCollectionServerId) {
-        throw new Error("Select one host before creating a workspace label");
+        throw new Error(t("sidebar.organization.errors.selectOneHost"));
       }
       const client = getHostRuntimeStore().getClient(workspaceCollectionServerId);
-      if (!client) throw new Error("Host disconnected");
+      if (!client) throw new Error(t("sidebar.workspace.toasts.hostDisconnected"));
       const collection = await client.createWorkspaceCollection(name.trim());
       const existing =
         useSessionStore.getState().sessions[workspaceCollectionServerId]?.workspaceCollections;
@@ -264,7 +386,7 @@ export function SidebarDisplayPreferencesMenu() {
         ]);
       setIsCreateWorkspaceCollectionOpen(false);
     },
-    [workspaceCollectionServerId],
+    [t, workspaceCollectionServerId],
   );
   const handleOpenCreateWorkspaceCollection = useCallback(
     () => setIsCreateWorkspaceCollectionOpen(true),
@@ -274,97 +396,157 @@ export function SidebarDisplayPreferencesMenu() {
     () => setIsCreateWorkspaceCollectionOpen(false),
     [],
   );
+  const submenuPages: Record<SubmenuPage, SidebarSubmenuDescriptor> = {
+    status: {
+      label: pageLabels.status,
+      content: (
+        <MultiSelectPreferenceItems
+          allLabel={t("sidebar.organization.selection.all")}
+          items={statusItems}
+          selected={statusFilters}
+          onToggle={toggleStatusFilter}
+          onClear={clearStatusFilters}
+          testIDPrefix="sidebar-status-filter"
+        />
+      ),
+    },
+    visibility: {
+      label: pageLabels.visibility,
+      content: (
+        <SingleSelectPreferenceItems
+          items={visibilityItems}
+          selected={visibilityFilter}
+          closeOnSelect={false}
+          onSelect={setVisibilityFilter}
+          testIDPrefix="sidebar-visibility-filter"
+        />
+      ),
+    },
+    project: {
+      label: pageLabels.project,
+      content: (
+        <MultiSelectPreferenceItems
+          allLabel={t("sidebar.organization.selection.all")}
+          items={projectItems}
+          selected={projectFilters}
+          onToggle={toggleProjectFilter}
+          onClear={clearProjectFilters}
+          testIDPrefix="sidebar-project-filter"
+        />
+      ),
+    },
+    host: {
+      label: pageLabels.host,
+      content: (
+        <HostPage
+          hosts={hosts}
+          selected={hostFilters}
+          onToggle={toggleHostFilter}
+          onClear={clearHostFilters}
+        />
+      ),
+    },
+    activity: {
+      label: pageLabels.activity,
+      content: (
+        <SingleSelectPreferenceItems
+          items={activityItems}
+          selected={lastActivityFilter}
+          closeOnSelect={false}
+          onSelect={setLastActivityFilter}
+          testIDPrefix="sidebar-activity-filter"
+        />
+      ),
+    },
+    group: {
+      label: pageLabels.group,
+      content: (
+        <SingleSelectPreferenceItems
+          items={groupModeItems}
+          selected={groupMode}
+          closeOnSelect={false}
+          onSelect={setGroupMode}
+          testIDPrefix="sidebar-grouping"
+        />
+      ),
+    },
+    sort: {
+      label: pageLabels.sort,
+      content: (
+        <SingleSelectPreferenceItems
+          items={sortModeItems}
+          selected={sortMode}
+          closeOnSelect={false}
+          onSelect={setSortMode}
+          testIDPrefix="sidebar-sort"
+        />
+      ),
+    },
+    "workspace-title": {
+      label: pageLabels["workspace-title"],
+      content: (
+        <SingleSelectPreferenceItems
+          items={workspaceTitleSourceItems}
+          selected={workspaceTitleSource}
+          closeOnSelect={false}
+          onSelect={handleWorkspaceTitleSourceSelect}
+          testIDPrefix="sidebar-workspace-title-source"
+        />
+      ),
+    },
+  };
 
   return (
     <>
       <DropdownMenu onOpenChange={handleOpenChange}>
         <DropdownMenuTrigger
           style={triggerStyle}
+          hitSlop={platformIsWeb ? undefined : 8}
           accessibilityRole={platformIsWeb ? undefined : "button"}
-          accessibilityLabel="Display preferences"
+          accessibilityLabel={t("sidebar.organization.trigger")}
           testID="sidebar-display-preferences-menu"
         >
           <ThemedSettings2 size={14} uniProps={filterColorMapping} />
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" width={276} testID="sidebar-display-preferences-content">
+        <DropdownMenuContent
+          align="end"
+          width={276}
+          maxHeight={480}
+          scrollable
+          testID="sidebar-display-preferences-content"
+        >
           {page === "root" ? (
             <>
-              <PageLink
-                label="Status"
-                value={selectedListLabel(statusFilters, statusLabels)}
-                page="status"
-                onOpen={openPage}
-              />
-              <PageLink
-                label="Visibility"
-                value={
-                  VISIBILITY_ITEMS.find((item) => item.value === visibilityFilter)?.label ??
-                  "Visible"
-                }
-                page="visibility"
-                onOpen={openPage}
-              />
-              <PageLink
-                label="Project"
-                value={selectedListLabel(projectFilters, projectLabels)}
-                page="project"
-                onOpen={openPage}
-              />
-              <PageLink
-                label="Host"
-                value={selectedListLabel(hostFilters, hostLabels)}
-                page="host"
-                onOpen={openPage}
-              />
-              <PageLink
-                label="Last activity"
-                value={
-                  ACTIVITY_ITEMS.find((item) => item.value === lastActivityFilter)?.label ??
-                  "Any time"
-                }
-                page="activity"
+              <DisplayPreferencePageLinks
+                pages={filterPages}
+                testIDPrefix="sidebar-organization-page"
                 onOpen={openPage}
               />
               <DropdownMenuItem
                 testID="sidebar-new-project-collection"
                 onSelect={handleOpenCreateProjectCollection}
               >
-                New project group…
+                {t("sidebar.organization.actions.newProjectGroup")}
               </DropdownMenuItem>
               <DropdownMenuItem
-                disabled={!workspaceCollectionServerId}
+                disabled={workspaceCollectionServerId === null}
                 testID="sidebar-new-workspace-collection"
                 onSelect={handleOpenCreateWorkspaceCollection}
               >
                 {workspaceCollectionServerId
-                  ? "New workspace label…"
-                  : "New workspace label… · Select one host"}
+                  ? t("sidebar.organization.actions.newWorkspaceLabel")
+                  : t("sidebar.organization.actions.newWorkspaceLabelSelectHost")}
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-              <PageLink
-                label="Group by"
-                value={
-                  GROUP_MODE_ITEMS.find((item) => item.value === groupMode)?.label ?? "Project"
-                }
-                page="group"
-                onOpen={openPage}
-              />
-              <PageLink
-                label="Sort by"
-                value={
-                  SORT_MODE_ITEMS.find((item) => item.value === sortMode)?.label ?? "Custom order"
-                }
-                page="sort"
+              <DisplayPreferencePageLinks
+                pages={organizationPages}
+                testIDPrefix="sidebar-organization-page"
                 onOpen={openPage}
               />
               <DropdownMenuSeparator />
-              <PageLink
-                label="Workspace title"
-                value={
-                  WORKSPACE_TITLE_SOURCE_ITEMS.find((item) => item.value === workspaceTitleSource)
-                    ?.label ?? "Title"
-                }
-                page="workspace-title"
+              <DisplayPreferencePageLinks
+                pages={workspaceTitlePages}
+                testIDPrefix="sidebar-organization-page"
                 onOpen={openPage}
               />
               <DropdownMenuSeparator />
@@ -373,227 +555,37 @@ export function SidebarDisplayPreferencesMenu() {
                 onSelect={clearFilters}
                 testID="sidebar-clear-filters"
               >
-                Clear filters
+                {t("sidebar.organization.actions.clearFilters")}
               </DropdownMenuItem>
             </>
           ) : (
-            <>
-              <DropdownMenuItem leading={backLeading} closeOnSelect={false} onSelect={handleBack}>
-                {PAGE_LABELS[page]}
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              {page === "status" ? (
-                <MultiSelectPage
-                  items={STATUS_ITEMS}
-                  selected={statusFilters}
-                  onToggle={toggleStatusFilter}
-                  onClear={clearStatusFilters}
-                  testIDPrefix="sidebar-status-filter"
-                />
-              ) : null}
-              {page === "visibility" ? (
-                <SingleSelectPage
-                  items={VISIBILITY_ITEMS}
-                  selected={visibilityFilter}
-                  onSelect={setVisibilityFilter}
-                  testIDPrefix="sidebar-visibility-filter"
-                />
-              ) : null}
-              {page === "project" ? (
-                <MultiSelectPage
-                  items={projectItems}
-                  selected={projectFilters}
-                  onToggle={toggleProjectFilter}
-                  onClear={clearProjectFilters}
-                  testIDPrefix="sidebar-project-filter"
-                />
-              ) : null}
-              {page === "host" ? (
-                <HostPage
-                  hosts={hosts}
-                  selected={hostFilters}
-                  onToggle={toggleHostFilter}
-                  onClear={clearHostFilters}
-                />
-              ) : null}
-              {page === "activity" ? (
-                <SingleSelectPage
-                  items={ACTIVITY_ITEMS}
-                  selected={lastActivityFilter}
-                  onSelect={setLastActivityFilter}
-                  testIDPrefix="sidebar-activity-filter"
-                />
-              ) : null}
-              {page === "group" ? (
-                <SingleSelectPage
-                  items={groupModeItems}
-                  selected={groupMode}
-                  onSelect={setGroupMode}
-                  testIDPrefix="sidebar-grouping"
-                />
-              ) : null}
-              {page === "sort" ? (
-                <SingleSelectPage
-                  items={sortModeItems}
-                  selected={sortMode}
-                  onSelect={setSortMode}
-                  testIDPrefix="sidebar-sort"
-                />
-              ) : null}
-              {page === "workspace-title" ? (
-                <SingleSelectPage
-                  items={WORKSPACE_TITLE_SOURCE_ITEMS}
-                  selected={workspaceTitleSource}
-                  onSelect={handleWorkspaceTitleSourceSelect}
-                  testIDPrefix="sidebar-workspace-title-source"
-                />
-              ) : null}
-            </>
+            <DisplayPreferenceSubmenu title={submenuPages[page].label} onBack={handleBack}>
+              {submenuPages[page].content}
+            </DisplayPreferenceSubmenu>
           )}
         </DropdownMenuContent>
       </DropdownMenu>
       <AdaptiveRenameModal
         visible={isCreateProjectCollectionOpen}
-        title="New project group"
+        title={t("sidebar.organization.projectGroup.modalTitle")}
         initialValue=""
-        placeholder="Group name"
-        submitLabel="Create"
+        placeholder={t("sidebar.organization.projectGroup.placeholder")}
+        submitLabel={t("sidebar.organization.actions.create")}
         onClose={handleCloseCreateProjectCollection}
         onSubmit={handleCreateProjectCollection}
         testID="sidebar-create-project-collection"
       />
       <AdaptiveRenameModal
         visible={isCreateWorkspaceCollectionOpen}
-        title="New workspace label"
+        title={t("sidebar.organization.workspaceLabel.modalTitle")}
         initialValue=""
-        placeholder="Label name"
-        submitLabel="Create"
+        placeholder={t("sidebar.organization.workspaceLabel.placeholder")}
+        submitLabel={t("sidebar.organization.actions.create")}
         onClose={handleCloseCreateWorkspaceCollection}
         onSubmit={handleCreateWorkspaceCollection}
         testID="sidebar-create-workspace-collection"
       />
     </>
-  );
-}
-
-const PAGE_LABELS: Record<Exclude<MenuPage, "root">, string> = {
-  status: "Status",
-  visibility: "Visibility",
-  project: "Project",
-  host: "Host",
-  activity: "Last activity",
-  group: "Group by",
-  sort: "Sort by",
-  "workspace-title": "Workspace title",
-};
-
-function PageLink({
-  label,
-  value,
-  page,
-  onOpen,
-}: {
-  label: string;
-  value: string;
-  page: MenuPage;
-  onOpen: (page: MenuPage) => void;
-}) {
-  const handleSelect = useCallback(() => onOpen(page), [onOpen, page]);
-  const trailing = useMemo(() => <MenuValue value={value} />, [value]);
-  return (
-    <DropdownMenuItem closeOnSelect={false} trailing={trailing} onSelect={handleSelect}>
-      {label}
-    </DropdownMenuItem>
-  );
-}
-
-function SingleSelectPage<Value extends string>({
-  items,
-  selected,
-  onSelect,
-  testIDPrefix,
-}: {
-  items: Array<DisplayPreferenceOption<Value>>;
-  selected: Value;
-  onSelect: (value: Value) => void;
-  testIDPrefix: string;
-}) {
-  return items.map((item) => (
-    <DisplayPreferenceMenuItem
-      key={item.value}
-      item={item}
-      isSelected={selected === item.value}
-      disabled={item.disabled}
-      closeOnSelect={false}
-      testIDPrefix={testIDPrefix}
-      onSelect={onSelect}
-    />
-  ));
-}
-
-function MultiSelectPage<Value extends string>({
-  items,
-  selected,
-  onToggle,
-  onClear,
-  testIDPrefix,
-}: {
-  items: Array<DisplayPreferenceOption<Value>>;
-  selected: readonly Value[];
-  onToggle: (value: Value) => void;
-  onClear: () => void;
-  testIDPrefix: string;
-}) {
-  return (
-    <>
-      <DropdownMenuItem
-        selected={selected.length === 0}
-        closeOnSelect={false}
-        testID={`${testIDPrefix}-all`}
-        onSelect={onClear}
-      >
-        All
-      </DropdownMenuItem>
-      {items.map((item) => (
-        <DisplayPreferenceMenuItem
-          key={item.value}
-          item={item}
-          isSelected={selected.includes(item.value)}
-          closeOnSelect={false}
-          testIDPrefix={testIDPrefix}
-          onSelect={onToggle}
-        />
-      ))}
-    </>
-  );
-}
-
-function DisplayPreferenceMenuItem<Value extends string>({
-  item,
-  isSelected,
-  disabled,
-  closeOnSelect,
-  testIDPrefix,
-  onSelect,
-}: {
-  item: DisplayPreferenceOption<Value>;
-  isSelected: boolean;
-  disabled?: boolean;
-  closeOnSelect: boolean;
-  testIDPrefix: string;
-  onSelect: (value: Value) => void;
-}) {
-  const handleSelect = useCallback(() => onSelect(item.value), [item.value, onSelect]);
-  return (
-    <DropdownMenuItem
-      testID={`${testIDPrefix}-${item.value}`}
-      selected={isSelected}
-      disabled={disabled}
-      closeOnSelect={closeOnSelect}
-      onSelect={handleSelect}
-    >
-      {item.label}
-    </DropdownMenuItem>
   );
 }
 
@@ -608,15 +600,17 @@ function HostPage({
   onToggle: (serverId: string) => void;
   onClear: () => void;
 }) {
+  const { t } = useTranslation();
   return (
     <>
       <DropdownMenuItem
         testID="sidebar-host-filter-all"
         selected={selected.length === 0}
+        selectionRole="checkbox"
         closeOnSelect={false}
         onSelect={onClear}
       >
-        All
+        {t("sidebar.organization.selection.all")}
       </DropdownMenuItem>
       {hosts.map((host) => (
         <HostFilterItem
@@ -655,6 +649,7 @@ function HostFilterItem({
     <DropdownMenuItem
       testID={`sidebar-host-filter-${serverId}`}
       selected={selected}
+      selectionRole="checkbox"
       closeOnSelect={false}
       leading={leading}
       onSelect={handleSelect}
@@ -673,16 +668,4 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.md,
   },
   triggerHovered: { backgroundColor: theme.colors.surfaceSidebarHover },
-  menuValue: {
-    maxWidth: 156,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "flex-end",
-    gap: theme.spacing[1],
-  },
-  menuValueText: {
-    flexShrink: 1,
-    fontSize: theme.fontSize.sm,
-    color: theme.colors.foregroundMuted,
-  },
 }));

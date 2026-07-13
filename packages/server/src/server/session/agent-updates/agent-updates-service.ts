@@ -130,7 +130,7 @@ function matchesAgentUpdatedAfter(
   if (!filter?.updatedAfter) return true;
   const updatedAfter = Date.parse(filter.updatedAfter);
   const updatedAt = Date.parse(agent.updatedAt);
-  return !Number.isNaN(updatedAfter) && !Number.isNaN(updatedAt) && updatedAt > updatedAfter;
+  return !Number.isNaN(updatedAfter) && !Number.isNaN(updatedAt) && updatedAt >= updatedAfter;
 }
 
 /**

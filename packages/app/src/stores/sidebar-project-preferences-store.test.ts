@@ -1,20 +1,20 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
+import type { StateStorage } from "zustand/middleware";
 import {
+  createSidebarProjectPreferencesStore,
   migrateSidebarProjectPreferencesState,
-  useSidebarProjectPreferencesStore,
 } from "./sidebar-project-preferences-store";
 
-vi.mock("@react-native-async-storage/async-storage", () => ({
-  default: {
-    getItem: vi.fn().mockResolvedValue(null),
-    setItem: vi.fn().mockResolvedValue(undefined),
-    removeItem: vi.fn().mockResolvedValue(undefined),
-  },
-}));
+const storage: StateStorage = {
+  getItem: () => null,
+  setItem: () => undefined,
+  removeItem: () => undefined,
+};
+const store = createSidebarProjectPreferencesStore(storage);
 
 describe("sidebar project preferences", () => {
   beforeEach(() => {
-    useSidebarProjectPreferencesStore.setState({
+    store.setState({
       pinnedProjectKeys: [],
       collections: [],
       collectionIdByProjectKey: {},
@@ -50,31 +50,29 @@ describe("sidebar project preferences", () => {
   });
 
   it("toggles project pins without disturbing the remaining order", () => {
-    const store = useSidebarProjectPreferencesStore.getState();
+    const preferences = store.getState();
 
-    store.toggleProjectPinned("project-a");
-    store.toggleProjectPinned("project-b");
-    store.toggleProjectPinned("project-a");
+    preferences.toggleProjectPinned("project-a");
+    preferences.toggleProjectPinned("project-b");
+    preferences.toggleProjectPinned("project-a");
 
-    expect(useSidebarProjectPreferencesStore.getState().pinnedProjectKeys).toEqual(["project-b"]);
+    expect(store.getState().pinnedProjectKeys).toEqual(["project-b"]);
   });
 
   it("creates, assigns, renames, and deletes project collections", () => {
-    const store = useSidebarProjectPreferencesStore.getState();
-    const collectionId = store.createCollection(" Client work ");
+    const preferences = store.getState();
+    const collectionId = preferences.createCollection(" Client work ");
 
-    useSidebarProjectPreferencesStore
-      .getState()
-      .assignProjectToCollection("project-a", collectionId);
-    useSidebarProjectPreferencesStore.getState().renameCollection(collectionId, "Active clients");
+    store.getState().assignProjectToCollection("project-a", collectionId);
+    store.getState().renameCollection(collectionId, "Active clients");
 
-    expect(useSidebarProjectPreferencesStore.getState()).toMatchObject({
+    expect(store.getState()).toMatchObject({
       collections: [{ id: collectionId, name: "Active clients" }],
       collectionIdByProjectKey: { "project-a": collectionId },
     });
 
-    useSidebarProjectPreferencesStore.getState().deleteCollection(collectionId);
-    expect(useSidebarProjectPreferencesStore.getState()).toMatchObject({
+    store.getState().deleteCollection(collectionId);
+    expect(store.getState()).toMatchObject({
       collections: [],
       collectionIdByProjectKey: {},
     });

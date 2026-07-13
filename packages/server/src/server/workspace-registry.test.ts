@@ -1,6 +1,6 @@
 import os from "node:os";
 import path from "node:path";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 
 import { beforeEach, afterEach, describe, expect, test } from "vitest";
 
@@ -194,6 +194,27 @@ describe("workspace registries", () => {
     expect(await reloadedCollections.list()).toEqual([]);
   });
 
+  test("isolates collection change listener failures from committed mutations", async () => {
+    const collection = {
+      id: "wsc-listener-failure",
+      name: "Listener failure",
+      createdAt: "2026-07-13T08:00:00.000Z",
+      updatedAt: "2026-07-13T08:00:00.000Z",
+    };
+    await collectionRegistry.upsert(collection);
+    let subsequentListenerCalled = false;
+    collectionRegistry.subscribeChanges(() => {
+      throw new Error("injected listener failure");
+    });
+    collectionRegistry.subscribeChanges(() => {
+      subsequentListenerCalled = true;
+    });
+
+    await expect(collectionRegistry.remove(collection.id)).resolves.toBeUndefined();
+    expect(subsequentListenerCalled).toBe(true);
+    expect(await collectionRegistry.list()).toEqual([]);
+  });
+
   test("serializes concurrent workspace pin and collection mutations", async () => {
     const workspaceId = "ws-concurrent-organization";
     await workspaceRegistry.upsert(
@@ -219,6 +240,45 @@ describe("workspace registries", () => {
     ).get(workspaceId);
     expect(persisted).toMatchObject({
       pinnedAt: "2026-07-13T09:00:00.000Z",
+      collectionId: "collection-focus",
+    });
+  });
+
+  test("does not retain a workspace mutation when persistence fails", async () => {
+    const workspaceId = "ws-failed-persistence";
+    const filePath = path.join(tmpDir, "projects", "workspaces.json");
+    await workspaceRegistry.upsert(
+      createPersistedWorkspaceRecord({
+        workspaceId,
+        projectId: "project-1",
+        cwd: "/tmp/failed-persistence",
+        kind: "local_checkout",
+        displayName: "main",
+        createdAt: "2026-07-13T08:00:00.000Z",
+        updatedAt: "2026-07-13T08:30:00.000Z",
+      }),
+    );
+    const persistedBeforeFailure = readFileSync(filePath, "utf8");
+
+    rmSync(filePath);
+    mkdirSync(filePath);
+    const failedMutation = workspaceRegistry.setPinnedAt(workspaceId, "2026-07-13T09:00:00.000Z");
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(await workspaceRegistry.get(workspaceId)).toMatchObject({ pinnedAt: null });
+    await expect(failedMutation).rejects.toThrow();
+    expect(await workspaceRegistry.get(workspaceId)).toMatchObject({
+      pinnedAt: null,
+      collectionId: null,
+    });
+
+    rmSync(filePath, { recursive: true });
+    writeFileSync(filePath, persistedBeforeFailure);
+    await workspaceRegistry.setCollectionId(workspaceId, "collection-focus");
+
+    const reloaded = await new FileBackedWorkspaceRegistry(filePath, logger).get(workspaceId);
+    expect(reloaded).toMatchObject({
+      pinnedAt: null,
       collectionId: "collection-focus",
     });
   });

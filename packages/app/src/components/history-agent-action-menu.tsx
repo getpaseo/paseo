@@ -2,6 +2,7 @@ import { useCallback, useMemo } from "react";
 import { type PressableStateCallbackType } from "react-native";
 import { Archive, MoreVertical, Pin, PinOff } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { useTranslation } from "react-i18next";
 import type { AggregatedAgent } from "@/hooks/use-aggregated-agents";
 import type { Theme } from "@/styles/theme";
 import { useHostFeature } from "@/runtime/host-features";
@@ -33,13 +34,16 @@ export function HistoryAgentActionMenu({
   onTogglePin: (agent: AggregatedAgent) => void;
   onArchive: (agent: AggregatedAgent) => void;
 }) {
+  const { t } = useTranslation();
   const supportsPinning = useHostFeature(agent.serverId, "agentPinning");
   const isPinned = Boolean(agent.pinnedAt);
   const handleTogglePin = useCallback(() => onTogglePin(agent), [agent, onTogglePin]);
   const handleArchive = useCallback(() => onArchive(agent), [agent, onArchive]);
   const selectedPinIcon = useMemo(() => (isPinned ? pinOffIcon : pinIcon), [isPinned]);
-  let pinLabel = "Update host to pin sessions";
-  if (supportsPinning) pinLabel = isPinned ? "Unpin session" : "Pin session";
+  let pinLabel = t("agentList.actions.updateHostToPin");
+  if (supportsPinning) {
+    pinLabel = isPinned ? t("agentList.actions.unpin") : t("agentList.actions.pin");
+  }
   const triggerStyle = useCallback(
     ({ hovered = false, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.trigger,
@@ -54,7 +58,9 @@ export function HistoryAgentActionMenu({
       <DropdownMenuTrigger
         style={triggerStyle}
         accessibilityRole="button"
-        accessibilityLabel={`Actions for ${agent.title || "session"}`}
+        accessibilityLabel={t("agentList.actions.menuAccessibility", {
+          title: agent.title || t("agentList.actions.fallbackSession"),
+        })}
         testID={`history-agent-actions-${agent.serverId}-${agent.id}`}
       >
         <ThemedMoreVertical size={16} uniProps={mutedColorMapping} />
@@ -64,7 +70,9 @@ export function HistoryAgentActionMenu({
           leading={selectedPinIcon}
           disabled={!supportsPinning || pending}
           status={pending ? "pending" : "idle"}
-          pendingLabel={isPinned ? "Unpinning..." : "Pinning..."}
+          pendingLabel={
+            isPinned ? t("agentList.actions.unpinning") : t("agentList.actions.pinning")
+          }
           onSelect={handleTogglePin}
         >
           {pinLabel}
@@ -73,7 +81,7 @@ export function HistoryAgentActionMenu({
           <>
             <DropdownMenuSeparator />
             <DropdownMenuItem leading={archiveIcon} disabled={pending} onSelect={handleArchive}>
-              Archive session
+              {t("agentList.actions.archive")}
             </DropdownMenuItem>
           </>
         ) : null}

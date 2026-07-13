@@ -6,6 +6,8 @@ import {
   selectUngroupedSidebarProjects,
 } from "./sidebar-workspace-organization";
 
+const COLLECTION_LABELS = { none: "No label", unknown: "Unknown label" };
+
 function workspace(input: {
   id: string;
   name: string;
@@ -91,6 +93,7 @@ function organize(input: {
         ],
       },
     ],
+    collectionLabels: COLLECTION_LABELS,
     preferences: {
       sortMode: input.sortMode ?? "custom",
       visibilityFilter: input.visibilityFilter ?? "visible",
@@ -313,6 +316,7 @@ describe("organizeSidebarWorkspaces", () => {
       pinnedProjectKeys: new Set(["project-filtered"]),
       hiddenWorkspaceKeys: new Set(),
       collections: [],
+      collectionLabels: COLLECTION_LABELS,
       preferences: {
         sortMode: "alphabetical",
         visibilityFilter: "visible",
@@ -427,6 +431,7 @@ describe("organizeSidebarWorkspaces", () => {
       entriesByKey: new Map([[running.workspaceKey, running]]),
       hiddenWorkspaceKeys: new Set<string>(),
       collections: [],
+      collectionLabels: COLLECTION_LABELS,
       preferences: {
         sortMode: "custom" as const,
         visibilityFilter: "visible" as const,

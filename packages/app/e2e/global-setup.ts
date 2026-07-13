@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcess, execSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import net from "node:net";
@@ -12,7 +13,8 @@ import { createNodeWebSocketFactory, type NodeWebSocketFactory } from "./helpers
 import { forkPaseoHomeMetadata, resolvePaseoHomePath } from "./helpers/paseo-home-fork";
 import { withDisabledE2ESpeechEnv } from "./helpers/speech-env";
 
-const wranglerCliPath = path.resolve(__dirname, "../node_modules/wrangler/bin/wrangler.js");
+const appRequire = createRequire(path.resolve(__dirname, "../package.json"));
+const wranglerCliPath = appRequire.resolve("wrangler");
 
 interface WaitForServerOptions {
   host?: string;
@@ -132,6 +134,9 @@ function parseRelayStartupFailure(line: string): string | null {
 
 async function stopProcess(child: ChildProcess | null): Promise<void> {
   if (!child) {
+    return;
+  }
+  if (child.pid === undefined) {
     return;
   }
   if (child.exitCode !== null || child.signalCode !== null) {
@@ -613,21 +618,26 @@ function startMetro(input: {
   buffer: ReturnType<typeof createLineBuffer>;
 }): ChildProcess {
   const appDir = path.resolve(__dirname, "..");
-  const child = spawn("npx", ["expo", "start", "--web", "--port", String(input.metroPort)], {
-    cwd: appDir,
-    env: {
-      ...process.env,
-      BROWSER: "none",
-      ...(process.env.E2E_DESKTOP_RUNTIME === "1"
-        ? {
-            PASEO_WEB_PLATFORM: "electron",
-            EXPO_PUBLIC_LOCAL_DAEMON: `127.0.0.1:${input.daemonPort}`,
-          }
-        : {}),
+  const expoCli = appRequire.resolve("expo/bin/cli");
+  const child = spawn(
+    process.execPath,
+    [expoCli, "start", "--web", "--port", String(input.metroPort)],
+    {
+      cwd: appDir,
+      env: {
+        ...process.env,
+        BROWSER: "none",
+        ...(process.env.E2E_DESKTOP_RUNTIME === "1"
+          ? {
+              PASEO_WEB_PLATFORM: "electron",
+              EXPO_PUBLIC_LOCAL_DAEMON: `127.0.0.1:${input.daemonPort}`,
+            }
+          : {}),
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: false,
     },
-    stdio: ["ignore", "pipe", "pipe"],
-    detached: false,
-  });
+  );
 
   child.stdout?.on("data", (data: Buffer) => {
     const lines = data
@@ -666,7 +676,7 @@ interface DaemonSpawnArgs {
 
 function startDaemon(args: DaemonSpawnArgs): ChildProcess {
   const serverDir = path.resolve(__dirname, "../../..", "packages/server");
-  const tsxBin = execSync("which tsx").toString().trim();
+  const tsxCli = createRequire(path.join(serverDir, "package.json")).resolve("tsx/cli");
   const env = withDisabledE2ESpeechEnv({
     ...process.env,
     PATH: `${args.fakeEditorBinDir}${path.delimiter}${process.env.PATH ?? ""}`,
@@ -680,7 +690,7 @@ function startDaemon(args: DaemonSpawnArgs): ChildProcess {
     NODE_ENV: "development",
   });
 
-  const child = spawn(tsxBin, ["scripts/supervisor-entrypoint.ts", "--dev"], {
+  const child = spawn(process.execPath, [tsxCli, "scripts/supervisor-entrypoint.ts", "--dev"], {
     cwd: serverDir,
     env,
     stdio: ["ignore", "pipe", "pipe"],

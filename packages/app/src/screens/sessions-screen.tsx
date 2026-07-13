@@ -118,7 +118,7 @@ function SessionsScreenContent() {
     projectFilters.length > 0 ||
     hostFilters.length > 0 ||
     lastActivity !== "any";
-  const emptyText = hasFilters ? "No sessions match these filters" : t("sessions.empty");
+  const emptyText = hasFilters ? t("sessions.organization.emptyFiltered") : t("sessions.empty");
   const showLoadError = isError && agents.length === 0;
 
   const handleBack = useCallback(() => {
@@ -130,7 +130,7 @@ function SessionsScreenContent() {
       hasMore ? (
         <View style={styles.footer}>
           <Button variant="ghost" onPress={loadMore} disabled={isLoadingMore}>
-            {isLoadingMore ? "Loading..." : t("sessions.actions.loadMore")}
+            {isLoadingMore ? t("common.loading") : t("sessions.actions.loadMore")}
           </Button>
         </View>
       ) : null,
@@ -151,9 +151,9 @@ function SessionsScreenContent() {
       ) : null}
       {!isInitialLoad && showLoadError ? (
         <View style={styles.emptyContainer}>
-          <Text style={styles.emptyText}>Unable to load sessions</Text>
+          <Text style={styles.emptyText}>{t("sessions.errors.loadFailed")}</Text>
           <Button variant="ghost" onPress={handleRefresh}>
-            Try again
+            {t("common.actions.retry")}
           </Button>
         </View>
       ) : null}

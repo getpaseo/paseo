@@ -1,6 +1,7 @@
 import { useMemo, type ReactElement } from "react";
 import { View, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
+import { useTranslation } from "react-i18next";
 
 const LABEL_COLOR_COUNT = 6;
 
@@ -19,6 +20,7 @@ export function SidebarWorkspaceLabelDot({
   labelKey: string;
   label: string;
 }): ReactElement {
+  const { t } = useTranslation();
   const colorStyle = useMemo<ViewStyle>(() => {
     switch (workspaceLabelColorIndex(labelKey)) {
       case 0:
@@ -40,7 +42,7 @@ export function SidebarWorkspaceLabelDot({
   return (
     <View
       accessible
-      accessibilityLabel={`Workspace label: ${label}`}
+      accessibilityLabel={t("sidebar.organization.workspaceLabel.accessibility", { label })}
       style={dotStyle}
       testID={`workspace-label-dot-${labelKey}`}
     />

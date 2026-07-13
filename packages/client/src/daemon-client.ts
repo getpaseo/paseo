@@ -1376,37 +1376,17 @@ export class DaemonClient {
     type: TType,
     handler: (message: Extract<SessionOutboundMessage, { type: TType }>) => void,
   ): () => void;
-  on(
-    type: "workspace_collection_catalog_update",
-    handler: (
-      message: Extract<SessionOutboundMessage, { type: "workspace.collection.catalog.update" }>,
-    ) => void,
-  ): () => void;
   on(handler: DaemonEventHandler): () => void;
   on(
-    arg1:
-      | SessionOutboundMessage["type"]
-      | "workspace_collection_catalog_update"
-      | DaemonEventHandler,
-    arg2?:
-      | ((message: SessionOutboundMessage) => void)
-      | ((
-          message: Extract<SessionOutboundMessage, { type: "workspace.collection.catalog.update" }>,
-        ) => void),
+    arg1: SessionOutboundMessage["type"] | DaemonEventHandler,
+    arg2?: (message: SessionOutboundMessage) => void,
   ): () => void {
     if (typeof arg1 === "function") {
       return this.subscribe(arg1);
     }
 
-    if (arg1 === "workspace_collection_catalog_update") {
-      const handler = arg2 as (
-        message: Extract<SessionOutboundMessage, { type: "workspace.collection.catalog.update" }>,
-      ) => void;
-      return this.on("workspace.collection.catalog.update", handler);
-    }
-
     const type = arg1;
-    const handler = arg2 as (message: SessionOutboundMessage) => void;
+    const handler = arg2!;
 
     if (!this.messageHandlers.has(type)) {
       this.messageHandlers.set(type, new Set());

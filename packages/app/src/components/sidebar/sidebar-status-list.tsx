@@ -32,6 +32,7 @@ import type { ShortcutKey } from "@/utils/format-shortcut";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import { useClearWorkspaceAttention } from "@/hooks/use-clear-workspace-attention";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import {
   SidebarWorkspaceRowFrame,
   SidebarWorkspaceRowContent,
@@ -426,17 +427,22 @@ function StatusWorkspaceRowWithMenu({
         workspaceDirectory: workspace.workspaceDirectory,
       });
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Workspace path not available");
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : t("sidebar.workspace.toasts.workspacePathUnavailable"),
+      );
       return;
     }
     void Clipboard.setStringAsync(copyTargetDirectory);
-    toast.copied("Path copied");
-  }, [toast, workspace.workspaceDirectory, workspace.workspaceId]);
+    toast.copied(t("sidebar.workspace.toasts.pathCopied"));
+  }, [t, toast, workspace.workspaceDirectory, workspace.workspaceId]);
 
   const handleCopyBranchName = useCallback(() => {
-    void Clipboard.setStringAsync(workspace.name);
-    toast.copied("Branch name copied");
-  }, [toast, workspace.name]);
+    if (!workspace.currentBranch) return;
+    void Clipboard.setStringAsync(workspace.currentBranch);
+    toast.copied(t("sidebar.workspace.toasts.branchNameCopied"));
+  }, [t, toast, workspace.currentBranch]);
 
   const renameMutation = useMutation({
     mutationFn: async (title: string) => {
@@ -571,9 +577,10 @@ function StatusWorkspaceRowInner({
   onTogglePin?: () => void;
   reserveIdleStatusIndicatorSpace?: boolean;
 }) {
-  const isTouchPlatform = platformIsNative;
+  const isCompact = useIsCompactFormFactor();
+  const showActionsWithoutHover = platformIsNative || isCompact;
 
-  const isDesktop = !isTouchPlatform;
+  const isDesktop = !platformIsNative;
   const showScriptsIcon = isDesktop && workspace.hasRunningScripts;
   const hasRunningService = workspace.scripts.some(
     (s) => s.lifecycle === "running" && (s.type ?? "service") === "service",
@@ -589,7 +596,7 @@ function StatusWorkspaceRowInner({
     <SidebarWorkspaceRowFrame workspace={workspace}>
       {({ isHovered, hoverHandlers }) => {
         const showShortcut = showShortcutBadge && shortcutNumber !== null;
-        const showKebab = Boolean(onArchive && (isHovered || isTouchPlatform));
+        const showKebab = Boolean(onArchive && (isHovered || showActionsWithoutHover));
         const showKebabInSlot = showKebab && !showShortcut;
         const shouldRenderActionSlot = Boolean(onArchive || workspace.diffStat);
         const workspaceRowStyle = getStatusWorkspaceRowStyle({ selected, isHovered });

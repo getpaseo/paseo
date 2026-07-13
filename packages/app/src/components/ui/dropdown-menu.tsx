@@ -719,6 +719,18 @@ function resolveDropdownItemLabel(input: {
   return children;
 }
 
+function getDropdownItemAccessibilityState(
+  selectionRole: "radio" | "checkbox" | undefined,
+  selected: boolean | undefined,
+  disabled: boolean | undefined,
+) {
+  return selectionRole ? { disabled, checked: Boolean(selected) } : { disabled, selected };
+}
+
+function getDropdownItemAccessibilityRole(selectionRole: "radio" | "checkbox" | undefined) {
+  return selectionRole ?? "menuitem";
+}
+
 export function DropdownMenuItem({
   children,
   description,
@@ -727,6 +739,7 @@ export function DropdownMenuItem({
   muted = false,
   destructive,
   selected,
+  selectionRole,
   showSelectedCheck = false,
   selectedVariant = "default",
   leading,
@@ -745,6 +758,7 @@ export function DropdownMenuItem({
   muted?: boolean;
   destructive?: boolean;
   selected?: boolean;
+  selectionRole?: "radio" | "checkbox";
   showSelectedCheck?: boolean;
   selectedVariant?: "default" | "accent";
   leading?: ReactElement | null;
@@ -768,6 +782,11 @@ export function DropdownMenuItem({
   const isPending = status === "pending" || loading;
   const isSuccess = status === "success";
   const isDisabled = disabled || isPending || isSuccess;
+  const accessibilityState = useMemo(
+    () => getDropdownItemAccessibilityState(selectionRole, selected, isDisabled),
+    [isDisabled, selected, selectionRole],
+  );
+  const accessibilityRole = getDropdownItemAccessibilityRole(selectionRole);
 
   const leadingContent = resolveDropdownItemLeadingContent({
     isPending,
@@ -841,7 +860,8 @@ export function DropdownMenuItem({
   const content = (
     <Pressable
       testID={testID}
-      accessibilityRole="button"
+      accessibilityRole={accessibilityRole}
+      accessibilityState={accessibilityState}
       disabled={isDisabled}
       onPress={handleItemPress}
       style={itemPressableStyle}

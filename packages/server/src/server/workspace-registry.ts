@@ -206,8 +206,7 @@ class FileBackedRegistry<TRecord extends RegistryRecord> {
   private readonly getId: (record: TRecord) => string;
   private loaded = false;
   private readonly cache = new Map<string, TRecord>();
-  private persistQueue: Promise<void> = Promise.resolve();
-  private readonly mutationQueues = new Map<string, Promise<void>>();
+  private mutationQueue: Promise<void> = Promise.resolve();
   private loadPromise: Promise<void> | null = null;
 
   constructor(options: {
@@ -299,38 +298,36 @@ class FileBackedRegistry<TRecord extends RegistryRecord> {
     mutate: (existing: TRecord | null) => TRecord | null,
   ): Promise<TRecord | null> {
     await this.load();
-    const previous = this.mutationQueues.get(id) ?? Promise.resolve();
+    const previous = this.mutationQueue;
     let release: () => void = () => {};
-    const current = new Promise<void>((resolve) => {
+    this.mutationQueue = new Promise<void>((resolve) => {
       release = resolve;
     });
-    this.mutationQueues.set(id, current);
-    await previous.catch(() => undefined);
+    await previous;
     try {
       const existing = this.cache.get(id) ?? null;
       const next = mutate(existing);
       if (next === existing) {
         return existing ? this.schema.parse(existing) : null;
       }
-      if (next === null) {
-        if (!this.cache.delete(id)) {
-          return null;
-        }
-      } else {
-        const parsed = this.schema.parse(next);
-        this.cache.set(id, parsed);
-        await this.enqueuePersist();
-        this.onRecordChanged(id);
-        return this.schema.parse(parsed);
+      const parsed = next ? this.schema.parse(next) : null;
+      const nextCache = new Map(this.cache);
+      if (parsed) {
+        nextCache.set(id, parsed);
+      } else if (!nextCache.delete(id)) {
+        return null;
       }
-      await this.enqueuePersist();
+
+      await this.persist(nextCache.values());
+      if (parsed) {
+        this.cache.set(id, parsed);
+      } else {
+        this.cache.delete(id);
+      }
       this.onRecordChanged(id);
-      return null;
+      return parsed ? this.schema.parse(parsed) : null;
     } finally {
       release();
-      if (this.mutationQueues.get(id) === current) {
-        this.mutationQueues.delete(id);
-      }
     }
   }
 
@@ -352,6 +349,10 @@ class FileBackedRegistry<TRecord extends RegistryRecord> {
   }
 
   protected onRecordChanged(_id: string): void {}
+
+  protected reportChangeListenerError(error: unknown): void {
+    this.logger.error({ err: error }, "Registry change listener failed");
+  }
 
   private async load(): Promise<void> {
     if (this.loaded) {
@@ -381,15 +382,8 @@ class FileBackedRegistry<TRecord extends RegistryRecord> {
     this.loaded = true;
   }
 
-  private async persist(): Promise<void> {
-    const records = Array.from(this.cache.values());
-    await writeJsonFileAtomic(this.filePath, records);
-  }
-
-  private async enqueuePersist(): Promise<void> {
-    const nextPersist = this.persistQueue.then(() => this.persist());
-    this.persistQueue = nextPersist.catch(() => {});
-    await nextPersist;
+  private async persist(records: Iterable<TRecord>): Promise<void> {
+    await writeJsonFileAtomic(this.filePath, Array.from(records));
   }
 }
 
@@ -450,7 +444,11 @@ export class FileBackedProjectRegistry
 
   protected override onRecordChanged(projectId: string): void {
     for (const listener of this.changeListeners) {
-      listener(projectId);
+      try {
+        listener(projectId);
+      } catch (error) {
+        this.reportChangeListenerError(error);
+      }
     }
   }
 }
@@ -540,7 +538,11 @@ export class FileBackedWorkspaceRegistry
 
   private emitOrganizationChange(workspaceId: string): void {
     for (const listener of this.organizationListeners) {
-      listener(workspaceId);
+      try {
+        listener(workspaceId);
+      } catch (error) {
+        this.reportChangeListenerError(error);
+      }
     }
   }
 }
@@ -577,7 +579,13 @@ export class FileBackedWorkspaceCollectionRegistry
   }
 
   private emitChange(): void {
-    for (const listener of this.changeListeners) listener();
+    for (const listener of this.changeListeners) {
+      try {
+        listener();
+      } catch (error) {
+        this.reportChangeListenerError(error);
+      }
+    }
   }
 }
 

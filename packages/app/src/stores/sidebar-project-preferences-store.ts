@@ -1,6 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
+import { createJSONStorage, persist, type StateStorage } from "zustand/middleware";
 
 interface SidebarProjectPreferencesState {
   pinnedProjectKeys: string[];
@@ -91,79 +91,83 @@ function newCollectionId(): string {
   return `project-collection-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-export const useSidebarProjectPreferencesStore = create<SidebarProjectPreferencesState>()(
-  persist(
-    (set) => ({
-      pinnedProjectKeys: [],
-      collections: [],
-      collectionIdByProjectKey: {},
-      toggleProjectPinned: (projectKey) => {
-        const key = projectKey.trim();
-        if (!key) return;
-        set((state) => ({
-          pinnedProjectKeys: state.pinnedProjectKeys.includes(key)
-            ? state.pinnedProjectKeys.filter((existing) => existing !== key)
-            : [...state.pinnedProjectKeys, key],
-        }));
-      },
-      createCollection: (name) => {
-        const trimmedName = name.trim();
-        if (!trimmedName) throw new Error("Project group name is required");
-        const id = newCollectionId();
-        set((state) => ({
-          collections: [
-            ...state.collections,
-            { id, name: trimmedName, createdAt: new Date().toISOString() },
-          ],
-        }));
-        return id;
-      },
-      renameCollection: (collectionId, name) => {
-        const trimmedName = name.trim();
-        if (!trimmedName) throw new Error("Project group name is required");
-        set((state) => ({
-          collections: state.collections.map((collection) =>
-            collection.id === collectionId ? { ...collection, name: trimmedName } : collection,
-          ),
-        }));
-      },
-      deleteCollection: (collectionId) => {
-        set((state) => ({
-          collections: state.collections.filter((collection) => collection.id !== collectionId),
-          collectionIdByProjectKey: Object.fromEntries(
-            Object.entries(state.collectionIdByProjectKey).filter(
-              ([, assignedCollectionId]) => assignedCollectionId !== collectionId,
+export function createSidebarProjectPreferencesStore(storage: StateStorage = AsyncStorage) {
+  return create<SidebarProjectPreferencesState>()(
+    persist(
+      (set) => ({
+        pinnedProjectKeys: [],
+        collections: [],
+        collectionIdByProjectKey: {},
+        toggleProjectPinned: (projectKey) => {
+          const key = projectKey.trim();
+          if (!key) return;
+          set((state) => ({
+            pinnedProjectKeys: state.pinnedProjectKeys.includes(key)
+              ? state.pinnedProjectKeys.filter((existing) => existing !== key)
+              : [...state.pinnedProjectKeys, key],
+          }));
+        },
+        createCollection: (name) => {
+          const trimmedName = name.trim();
+          if (!trimmedName) throw new Error("Project group name is required");
+          const id = newCollectionId();
+          set((state) => ({
+            collections: [
+              ...state.collections,
+              { id, name: trimmedName, createdAt: new Date().toISOString() },
+            ],
+          }));
+          return id;
+        },
+        renameCollection: (collectionId, name) => {
+          const trimmedName = name.trim();
+          if (!trimmedName) throw new Error("Project group name is required");
+          set((state) => ({
+            collections: state.collections.map((collection) =>
+              collection.id === collectionId ? { ...collection, name: trimmedName } : collection,
             ),
-          ),
-        }));
-      },
-      assignProjectToCollection: (projectKey, collectionId) => {
-        const key = projectKey.trim();
-        if (!key) return;
-        set((state) => {
-          const next = { ...state.collectionIdByProjectKey };
-          if (
-            collectionId &&
-            state.collections.some((collection) => collection.id === collectionId)
-          ) {
-            next[key] = collectionId;
-          } else {
-            delete next[key];
-          }
-          return { collectionIdByProjectKey: next };
-        });
-      },
-    }),
-    {
-      name: "sidebar-project-preferences",
-      version: 2,
-      storage: createJSONStorage(() => AsyncStorage),
-      partialize: (state) => ({
-        pinnedProjectKeys: state.pinnedProjectKeys,
-        collections: state.collections,
-        collectionIdByProjectKey: state.collectionIdByProjectKey,
+          }));
+        },
+        deleteCollection: (collectionId) => {
+          set((state) => ({
+            collections: state.collections.filter((collection) => collection.id !== collectionId),
+            collectionIdByProjectKey: Object.fromEntries(
+              Object.entries(state.collectionIdByProjectKey).filter(
+                ([, assignedCollectionId]) => assignedCollectionId !== collectionId,
+              ),
+            ),
+          }));
+        },
+        assignProjectToCollection: (projectKey, collectionId) => {
+          const key = projectKey.trim();
+          if (!key) return;
+          set((state) => {
+            const next = { ...state.collectionIdByProjectKey };
+            if (
+              collectionId &&
+              state.collections.some((collection) => collection.id === collectionId)
+            ) {
+              next[key] = collectionId;
+            } else {
+              delete next[key];
+            }
+            return { collectionIdByProjectKey: next };
+          });
+        },
       }),
-      migrate: migrateSidebarProjectPreferencesState,
-    },
-  ),
-);
+      {
+        name: "sidebar-project-preferences",
+        version: 2,
+        storage: createJSONStorage(() => storage),
+        partialize: (state) => ({
+          pinnedProjectKeys: state.pinnedProjectKeys,
+          collections: state.collections,
+          collectionIdByProjectKey: state.collectionIdByProjectKey,
+        }),
+        migrate: migrateSidebarProjectPreferencesState,
+      },
+    ),
+  );
+}
+
+export const useSidebarProjectPreferencesStore = createSidebarProjectPreferencesStore();

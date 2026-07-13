@@ -6,6 +6,7 @@ import { getHostRuntimeStore, isHostRuntimeConnected, useHosts } from "@/runtime
 import { useHostFeatureMap } from "@/runtime/host-features";
 import type { HistorySortMode } from "@/stores/history-view-store";
 import {
+  DEFAULT_AGENT_HISTORY_QUERY,
   dedupeAndSortHistoryAgents,
   filterHistoryAgents,
   type HistoryServerQuery,
@@ -25,14 +26,6 @@ export {
   type AgentHistoryHost,
   type AgentHistoryPage,
 } from "./agent-history-fetch";
-
-const DEFAULT_AGENT_HISTORY_QUERY: HistoryServerQuery = {
-  filter: { archiveState: "all", includeArchived: true },
-  sort: [
-    { key: "pinned", direction: "desc" },
-    { key: "updated_at", direction: "desc" },
-  ],
-};
 
 export interface AgentHistoryResult {
   agents: AggregatedAgent[];

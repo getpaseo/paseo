@@ -64,7 +64,7 @@ export function useLongPressDragInteraction(input: {
     // clicks and cannot start the web drag because drag() is intentionally a no-op.
     if (platformIsWeb) return;
 
-    const DRAG_ARM_DELAY_MS = 140;
+    const DRAG_ARM_DELAY_MS = 180;
     const DRAG_ARM_STATIONARY_SLOP_PX = 4;
     const CONTEXT_MENU_DELAY_MS = 450;
     const CONTEXT_MENU_STATIONARY_SLOP_PX = 6;

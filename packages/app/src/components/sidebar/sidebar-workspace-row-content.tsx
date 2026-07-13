@@ -1,4 +1,5 @@
 import { memo, useCallback, useMemo, useState, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import {
   ActivityIndicator,
   Pressable,
@@ -116,6 +117,7 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   reserveIdleStatusIndicatorSpace?: boolean;
   children?: ReactNode;
 }) {
+  const { t } = useTranslation();
   const {
     settings: { workspaceTitleSource },
   } = useAppSettings();
@@ -151,7 +153,9 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
               {workspace.collectionId ? (
                 <SidebarWorkspaceLabelDot
                   labelKey={`${workspace.serverId}:${workspace.collectionId}`}
-                  label={workspace.collectionLabel ?? "Unknown label"}
+                  label={
+                    workspace.collectionLabel ?? t("sidebar.organization.workspaceLabel.unknown")
+                  }
                 />
               ) : null}
               {children}

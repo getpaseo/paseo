@@ -1,6 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
+import { createJSONStorage, persist, type StateStorage } from "zustand/middleware";
 
 interface SidebarWorkspaceVisibilityState {
   hiddenWorkspaceKeys: string[];
@@ -101,72 +101,76 @@ export function migrateSidebarWorkspaceVisibilityState(
   };
 }
 
-export const useSidebarWorkspaceVisibilityStore = create<SidebarWorkspaceVisibilityState>()(
-  persist(
-    (set) => ({
-      hiddenWorkspaceKeys: [],
-      hiddenProjectKeys: [],
-      hiddenSectionCollapsed: true,
-      collapsedCollectionKeys: [],
-      setWorkspaceHidden: (workspaceKey, hidden) =>
-        set((state) => {
-          const hiddenWorkspaceKeys = updateHiddenWorkspaceKeys({
-            keys: state.hiddenWorkspaceKeys,
-            workspaceKey,
-            hidden,
-          });
-          return hiddenWorkspaceKeys.length === state.hiddenWorkspaceKeys.length &&
-            hiddenWorkspaceKeys.every((key, index) => key === state.hiddenWorkspaceKeys[index])
-            ? state
-            : { hiddenWorkspaceKeys };
-        }),
-      setProjectHidden: (projectKey, hidden) =>
-        set((state) => {
-          const hiddenProjectKeys = updateHiddenProjectKeys({
-            keys: state.hiddenProjectKeys,
-            projectKey,
-            hidden,
-          });
-          return hiddenProjectKeys.length === state.hiddenProjectKeys.length &&
-            hiddenProjectKeys.every((key, index) => key === state.hiddenProjectKeys[index])
-            ? state
-            : { hiddenProjectKeys };
-        }),
-      unhideAll: () => set({ hiddenWorkspaceKeys: [], hiddenProjectKeys: [] }),
-      toggleHiddenSectionCollapsed: () =>
-        set((state) => ({ hiddenSectionCollapsed: !state.hiddenSectionCollapsed })),
-      toggleCollectionCollapsed: (collectionKey) =>
-        set((state) => ({
-          collapsedCollectionKeys: state.collapsedCollectionKeys.includes(collectionKey)
-            ? state.collapsedCollectionKeys.filter((key) => key !== collectionKey)
-            : [...state.collapsedCollectionKeys, collectionKey],
-        })),
-      reconcileWorkspaceKeys: (workspaceKeys) =>
-        set((state) => {
-          const next = reconcileHiddenWorkspaceKeys(state.hiddenWorkspaceKeys, workspaceKeys);
-          return next.length === state.hiddenWorkspaceKeys.length
-            ? state
-            : { hiddenWorkspaceKeys: next };
-        }),
-      reconcileProjectKeys: (projectKeys) =>
-        set((state) => {
-          const next = reconcileHiddenProjectKeys(state.hiddenProjectKeys, projectKeys);
-          return next.length === state.hiddenProjectKeys.length
-            ? state
-            : { hiddenProjectKeys: next };
-        }),
-    }),
-    {
-      name: "sidebar-hidden-workspaces",
-      storage: createJSONStorage(() => AsyncStorage),
-      partialize: (state) => ({
-        hiddenWorkspaceKeys: state.hiddenWorkspaceKeys,
-        hiddenProjectKeys: state.hiddenProjectKeys,
-        hiddenSectionCollapsed: state.hiddenSectionCollapsed,
-        collapsedCollectionKeys: state.collapsedCollectionKeys,
+export function createSidebarWorkspaceVisibilityStore(storage: StateStorage = AsyncStorage) {
+  return create<SidebarWorkspaceVisibilityState>()(
+    persist(
+      (set) => ({
+        hiddenWorkspaceKeys: [],
+        hiddenProjectKeys: [],
+        hiddenSectionCollapsed: true,
+        collapsedCollectionKeys: [],
+        setWorkspaceHidden: (workspaceKey, hidden) =>
+          set((state) => {
+            const hiddenWorkspaceKeys = updateHiddenWorkspaceKeys({
+              keys: state.hiddenWorkspaceKeys,
+              workspaceKey,
+              hidden,
+            });
+            return hiddenWorkspaceKeys.length === state.hiddenWorkspaceKeys.length &&
+              hiddenWorkspaceKeys.every((key, index) => key === state.hiddenWorkspaceKeys[index])
+              ? state
+              : { hiddenWorkspaceKeys };
+          }),
+        setProjectHidden: (projectKey, hidden) =>
+          set((state) => {
+            const hiddenProjectKeys = updateHiddenProjectKeys({
+              keys: state.hiddenProjectKeys,
+              projectKey,
+              hidden,
+            });
+            return hiddenProjectKeys.length === state.hiddenProjectKeys.length &&
+              hiddenProjectKeys.every((key, index) => key === state.hiddenProjectKeys[index])
+              ? state
+              : { hiddenProjectKeys };
+          }),
+        unhideAll: () => set({ hiddenWorkspaceKeys: [], hiddenProjectKeys: [] }),
+        toggleHiddenSectionCollapsed: () =>
+          set((state) => ({ hiddenSectionCollapsed: !state.hiddenSectionCollapsed })),
+        toggleCollectionCollapsed: (collectionKey) =>
+          set((state) => ({
+            collapsedCollectionKeys: state.collapsedCollectionKeys.includes(collectionKey)
+              ? state.collapsedCollectionKeys.filter((key) => key !== collectionKey)
+              : [...state.collapsedCollectionKeys, collectionKey],
+          })),
+        reconcileWorkspaceKeys: (workspaceKeys) =>
+          set((state) => {
+            const next = reconcileHiddenWorkspaceKeys(state.hiddenWorkspaceKeys, workspaceKeys);
+            return next.length === state.hiddenWorkspaceKeys.length
+              ? state
+              : { hiddenWorkspaceKeys: next };
+          }),
+        reconcileProjectKeys: (projectKeys) =>
+          set((state) => {
+            const next = reconcileHiddenProjectKeys(state.hiddenProjectKeys, projectKeys);
+            return next.length === state.hiddenProjectKeys.length
+              ? state
+              : { hiddenProjectKeys: next };
+          }),
       }),
-      version: 2,
-      migrate: migrateSidebarWorkspaceVisibilityState,
-    },
-  ),
-);
+      {
+        name: "sidebar-hidden-workspaces",
+        storage: createJSONStorage(() => storage),
+        partialize: (state) => ({
+          hiddenWorkspaceKeys: state.hiddenWorkspaceKeys,
+          hiddenProjectKeys: state.hiddenProjectKeys,
+          hiddenSectionCollapsed: state.hiddenSectionCollapsed,
+          collapsedCollectionKeys: state.collapsedCollectionKeys,
+        }),
+        version: 2,
+        migrate: migrateSidebarWorkspaceVisibilityState,
+      },
+    ),
+  );
+}
+
+export const useSidebarWorkspaceVisibilityStore = createSidebarWorkspaceVisibilityStore();

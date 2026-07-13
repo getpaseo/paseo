@@ -1,4 +1,5 @@
 import { memo, useCallback, useMemo, type ReactElement } from "react";
+import { useTranslation } from "react-i18next";
 import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
 import { ChevronDown, ChevronRight, MoreVertical, Pencil, Trash2 } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -16,8 +17,9 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { isWeb } from "@/constants/platform";
+import { isNative, isWeb } from "@/constants/platform";
 import { SidebarWorkspaceLabelDot } from "@/components/sidebar/sidebar-workspace-label-dot";
+import type { ToggleSidebarWorkspacePin } from "@/hooks/use-sidebar-workspace-pin";
 
 const ThemedChevronDown = withUnistyles(ChevronDown);
 const ThemedChevronRight = withUnistyles(ChevronRight);
@@ -49,6 +51,8 @@ interface SidebarWorkspaceSectionsProps {
   projectNamesByKey: ReadonlyMap<string, string>;
   hostLabelByServerId: ReadonlyMap<string, string>;
   showHostLabels: boolean;
+  supportsPinningByServerId: ReadonlyMap<string, boolean>;
+  onToggleWorkspacePin: ToggleSidebarWorkspacePin;
   onWorkspacePress?: () => void;
   showHeaders?: boolean;
 }
@@ -60,6 +64,8 @@ export function SidebarWorkspaceSections({
   projectNamesByKey,
   hostLabelByServerId,
   showHostLabels,
+  supportsPinningByServerId,
+  onToggleWorkspacePin,
   onWorkspacePress,
   showHeaders = true,
 }: SidebarWorkspaceSectionsProps): ReactElement {
@@ -83,6 +89,8 @@ export function SidebarWorkspaceSections({
                       ? (hostLabelByServerId.get(workspace.serverId) ?? workspace.serverId)
                       : null
                   }
+                  canPin={supportsPinningByServerId.get(workspace.serverId) === true}
+                  onToggleWorkspacePin={onToggleWorkspacePin}
                   onWorkspacePress={onWorkspacePress}
                 />
               ))}
@@ -95,10 +103,12 @@ export function SidebarWorkspaceSections({
 }
 
 function SectionHeader({ section }: { section: SidebarWorkspaceSectionModel }): ReactElement {
+  const { t } = useTranslation();
   const headerStyle = useCallback(
     ({ hovered = false, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.headerPressable,
       section.compactHeader && styles.headerPressableCompact,
+      isNative && styles.nativeHeaderAction,
       (hovered || pressed) && styles.headerPressableActive,
     ],
     [section.compactHeader],
@@ -132,28 +142,35 @@ function SectionHeader({ section }: { section: SidebarWorkspaceSectionModel }): 
         <Text style={styles.count}>{section.rows.length}</Text>
       </Pressable>
       {section.onClear ? (
-        <Button variant="ghost" size="xs" onPress={section.onClear}>
-          Unhide all
+        <Button
+          variant="ghost"
+          size="xs"
+          style={isNative ? styles.nativeHeaderAction : undefined}
+          onPress={section.onClear}
+        >
+          {t("sidebar.organization.hiddenProjects.unhideAll")}
         </Button>
       ) : null}
       {section.onRename || section.onDelete ? (
         <DropdownMenu>
           <DropdownMenuTrigger
             accessibilityRole={isWeb ? undefined : "button"}
-            accessibilityLabel={`${section.label} actions`}
-            style={styles.menuTrigger}
+            accessibilityLabel={t("sidebar.organization.workspaceLabel.actionsAccessibility", {
+              name: section.label,
+            })}
+            style={isNative ? styles.nativeMenuTrigger : styles.menuTrigger}
           >
             <ThemedMoreVertical size={14} uniProps={foregroundMutedColorMapping} />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" width={220}>
             {section.onRename ? (
               <DropdownMenuItem leading={renameLeading} onSelect={section.onRename}>
-                Rename workspace label
+                {t("sidebar.organization.workspaceLabel.renameTitle")}
               </DropdownMenuItem>
             ) : null}
             {section.onDelete ? (
               <DropdownMenuItem destructive leading={deleteLeading} onSelect={section.onDelete}>
-                Delete workspace label
+                {t("sidebar.organization.workspaceLabel.delete")}
               </DropdownMenuItem>
             ) : null}
           </DropdownMenuContent>
@@ -170,6 +187,8 @@ const OrganizationWorkspaceRow = memo(function OrganizationWorkspaceRow({
   projectName,
   showProjectSubtitle,
   hostLabel,
+  canPin,
+  onToggleWorkspacePin,
   onWorkspacePress,
 }: {
   workspace: SidebarWorkspaceEntry;
@@ -178,6 +197,8 @@ const OrganizationWorkspaceRow = memo(function OrganizationWorkspaceRow({
   projectName: string;
   showProjectSubtitle: boolean;
   hostLabel: string | null;
+  canPin: boolean;
+  onToggleWorkspacePin: ToggleSidebarWorkspacePin;
   onWorkspacePress?: () => void;
 }): ReactElement {
   const activeWorkspaceSelection = useActiveWorkspaceSelection();
@@ -200,6 +221,8 @@ const OrganizationWorkspaceRow = memo(function OrganizationWorkspaceRow({
       shortcutNumber={shortcutNumber}
       showShortcutBadge={showShortcutBadge}
       canCopyBranchName={workspace.currentBranch !== null}
+      canPin={canPin}
+      onToggleWorkspacePin={onToggleWorkspacePin}
       subtitle={subtitle}
       onPress={handlePress}
     />
@@ -251,5 +274,16 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "center",
     borderRadius: theme.borderRadius.md,
+  },
+  nativeMenuTrigger: {
+    width: 44,
+    height: 44,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: theme.borderRadius.md,
+  },
+  nativeHeaderAction: {
+    minHeight: 44,
+    minWidth: 44,
   },
 }));

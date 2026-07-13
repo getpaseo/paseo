@@ -23,6 +23,7 @@ import type { TerminalManager } from "../terminal/terminal-manager.js";
 import { createTerminalManager } from "../terminal/terminal-manager.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import { AgentStorage, type StoredAgentRecord } from "./agent/agent-storage.js";
+import { ControlledAgentStorageWriter } from "./agent/test-utils/controlled-agent-storage-writer.js";
 import type {
   AgentClient,
   AgentCreateSessionOptions,
@@ -944,6 +945,143 @@ test("workspace organization RPCs persist pins and collection lifecycle", async 
   } finally {
     await session.cleanup();
     await legacySession.cleanup();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+async function createCollectionDeletionFixture(suffix: string) {
+  const home = mkdtempSync(path.join(tmpdir(), `paseo-collection-delete-${suffix}-`));
+  const logger = createTestLogger();
+  const workspaceRegistry = new FileBackedWorkspaceRegistry(
+    path.join(home, "projects", "workspaces.json"),
+    logger,
+  );
+  const collectionRegistry = new FileBackedWorkspaceCollectionRegistry(
+    path.join(home, "projects", "workspace-collections.json"),
+    logger,
+  );
+  const collection = {
+    id: `wsc-${suffix}`,
+    name: "Rollback",
+    createdAt: "2026-07-13T08:00:00.000Z",
+    updatedAt: "2026-07-13T08:00:00.000Z",
+  };
+  const createWorkspace = (workspaceId: string) =>
+    createPersistedWorkspaceRecord({
+      workspaceId,
+      projectId: "project-rollback",
+      cwd: path.join(home, workspaceId),
+      kind: "directory",
+      displayName: workspaceId,
+      createdAt: collection.createdAt,
+      updatedAt: collection.updatedAt,
+      collectionId: collection.id,
+    });
+  await Promise.all([workspaceRegistry.initialize(), collectionRegistry.initialize()]);
+  await workspaceRegistry.upsert(createWorkspace("ws-rollback-a"));
+  await workspaceRegistry.upsert(createWorkspace("ws-rollback-b"));
+  await collectionRegistry.upsert(collection);
+  return { collection, collectionRegistry, home, workspaceRegistry };
+}
+
+test("collection deletion rolls back every member when one unassignment fails", async () => {
+  const { collection, collectionRegistry, home, workspaceRegistry } =
+    await createCollectionDeletionFixture("clear-rollback");
+
+  let clearAttempts = 0;
+  const failingWorkspaceRegistry: SessionOptions["workspaceRegistry"] = {
+    initialize: () => workspaceRegistry.initialize(),
+    existsOnDisk: () => workspaceRegistry.existsOnDisk(),
+    list: () => workspaceRegistry.list(),
+    get: (workspaceId) => workspaceRegistry.get(workspaceId),
+    update: (workspaceId, updater) => workspaceRegistry.update(workspaceId, updater),
+    upsert: (record) => workspaceRegistry.upsert(record),
+    archive: (workspaceId, archivedAt) => workspaceRegistry.archive(workspaceId, archivedAt),
+    remove: (workspaceId) => workspaceRegistry.remove(workspaceId),
+    setPinnedAt: (workspaceId, pinnedAt) => workspaceRegistry.setPinnedAt(workspaceId, pinnedAt),
+    setCollectionId: async (workspaceId, collectionId) => {
+      if (collectionId === null && ++clearAttempts === 2) {
+        throw new Error("injected second-member failure");
+      }
+      return workspaceRegistry.setCollectionId(workspaceId, collectionId);
+    },
+  };
+  const messages: SessionOutboundMessage[] = [];
+  const session = createSessionForWorkspaceTests({
+    onMessage: (message) => messages.push(message),
+    paseoHome: home,
+    workspaceRegistry: failingWorkspaceRegistry,
+    workspaceCollectionRegistry: collectionRegistry,
+  });
+
+  try {
+    await session.handleMessage({
+      type: "workspace.collection.delete.request",
+      collectionId: collection.id,
+      requestId: "delete-with-failure",
+    });
+
+    expect(findByType(messages, "workspace.collection.delete.response")?.payload).toMatchObject({
+      accepted: false,
+      unassignedWorkspaceIds: [],
+      error: "injected second-member failure",
+    });
+    expect(
+      (await workspaceRegistry.list()).map((workspace) => [
+        workspace.workspaceId,
+        workspace.collectionId,
+      ]),
+    ).toEqual([
+      ["ws-rollback-a", collection.id],
+      ["ws-rollback-b", collection.id],
+    ]);
+    expect(await collectionRegistry.list()).toEqual([collection]);
+  } finally {
+    await session.cleanup();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("collection deletion restores the catalog when removal commits before rejecting", async () => {
+  const { collection, collectionRegistry, home, workspaceRegistry } =
+    await createCollectionDeletionFixture("catalog-rollback");
+  const committedThenRejectedRegistry: WorkspaceCollectionRegistry = {
+    initialize: () => collectionRegistry.initialize(),
+    list: () => collectionRegistry.list(),
+    get: (collectionId) => collectionRegistry.get(collectionId),
+    upsert: (record) => collectionRegistry.upsert(record),
+    remove: async (collectionId) => {
+      await collectionRegistry.remove(collectionId);
+      throw new Error("injected post-commit failure");
+    },
+  };
+  const messages: SessionOutboundMessage[] = [];
+  const session = createSessionForWorkspaceTests({
+    onMessage: (message) => messages.push(message),
+    paseoHome: home,
+    workspaceRegistry,
+    workspaceCollectionRegistry: committedThenRejectedRegistry,
+  });
+
+  try {
+    await session.handleMessage({
+      type: "workspace.collection.delete.request",
+      collectionId: collection.id,
+      requestId: "delete-after-commit-failure",
+    });
+
+    expect(findByType(messages, "workspace.collection.delete.response")?.payload).toMatchObject({
+      accepted: false,
+      unassignedWorkspaceIds: [],
+      error: "injected post-commit failure",
+    });
+    expect(await collectionRegistry.list()).toEqual([collection]);
+    expect((await workspaceRegistry.list()).map((workspace) => workspace.collectionId)).toEqual([
+      collection.id,
+      collection.id,
+    ]);
+  } finally {
+    await session.cleanup();
     rmSync(home, { recursive: true, force: true });
   }
 });
@@ -2256,20 +2394,27 @@ test("workspace clear attention clears stored-only agents and responds", async (
     requiresAttention: true,
     attentionReason: "finished",
   });
-  const session = createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) });
+  const agentStorage = asAgentStorage({
+    get: async (agentId: string) => (agentId === storedRecord.id ? storedRecord : null),
+    update: async (
+      agentId: string,
+      updateRecord: (existing: StoredAgentRecord) => StoredAgentRecord,
+    ) => {
+      if (agentId !== storedRecord.id) throw new Error("Agent not found");
+      storedRecord = updateRecord(storedRecord);
+      return storedRecord;
+    },
+  });
+  const session = createSessionForWorkspaceTests({
+    agentStorage,
+    onMessage: (message) => emitted.push(message),
+  });
 
   session.workspaceRegistry.list = async () => [workspace];
   session.workspaceRegistry.get = async (id: string) =>
     id === workspace.workspaceId ? workspace : null;
   session.projectRegistry.list = async () => [project];
   session.projectRegistry.get = async (id: string) => (id === project.projectId ? project : null);
-  session.agentStorage.get = async (agentId: string) =>
-    agentId === storedRecord.id ? storedRecord : null;
-  session.agentStorage.update = async (agentId, updateRecord) => {
-    if (agentId !== storedRecord.id) throw new Error("Agent not found");
-    storedRecord = updateRecord(storedRecord);
-    return storedRecord;
-  };
   session.listAgentPayloads = async () => [
     makeAgent({
       id: storedRecord.id,
@@ -2317,7 +2462,10 @@ test("workspace clear attention preserves a concurrent stored-agent pin update",
     path.join(home, "projects", "workspaces.json"),
     logger,
   );
-  const agentStorage = new AgentStorage(path.join(home, "agents"), logger);
+  const writer = new ControlledAgentStorageWriter();
+  const agentStorage = new AgentStorage(path.join(home, "agents"), logger, {
+    recordWriter: writer,
+  });
   await Promise.all([
     projectRegistry.initialize(),
     workspaceRegistry.initialize(),
@@ -2355,24 +2503,6 @@ test("workspace clear attention preserves a concurrent stored-agent pin update",
     workspaceId: "workspace-attention-race",
   });
 
-  const originalUpdate = agentStorage.update.bind(agentStorage);
-  let releaseAttentionUpdate = () => {};
-  const attentionUpdateReleased = new Promise<void>((resolve) => {
-    releaseAttentionUpdate = resolve;
-  });
-  let reportAttentionUpdateStarted = () => {};
-  const attentionUpdateStarted = new Promise<void>((resolve) => {
-    reportAttentionUpdateStarted = resolve;
-  });
-  let blockNextUpdate = true;
-  agentStorage.update = async (agentId, updateRecord) => {
-    if (blockNextUpdate) {
-      blockNextUpdate = false;
-      reportAttentionUpdateStarted();
-      await attentionUpdateReleased;
-    }
-    return originalUpdate(agentId, updateRecord);
-  };
   const session = createSessionForWorkspaceTests({
     paseoHome: home,
     projectRegistry,
@@ -2392,17 +2522,18 @@ test("workspace clear attention preserves a concurrent stored-agent pin update",
     }),
   ];
 
+  const heldWrite = writer.holdNextWrite();
   try {
     const clearAttention = session.handleMessage({
       type: "workspace.clear_attention.request",
       workspaceId: "workspace-attention-race",
       requestId: "clear-attention-race",
     });
-    await attentionUpdateStarted;
+    await heldWrite.started;
     const pinnedAt = "2026-07-13T10:05:00.000Z";
-    await agentStorage.setPinnedAt("agent-attention-race", pinnedAt);
-    releaseAttentionUpdate();
-    await clearAttention;
+    const pinUpdate = agentStorage.setPinnedAt("agent-attention-race", pinnedAt);
+    heldWrite.release();
+    await Promise.all([clearAttention, pinUpdate]);
 
     expect(await agentStorage.get("agent-attention-race")).toMatchObject({
       pinnedAt,
@@ -2411,7 +2542,7 @@ test("workspace clear attention preserves a concurrent stored-agent pin update",
       attentionTimestamp: null,
     });
   } finally {
-    releaseAttentionUpdate();
+    heldWrite.release();
     await session.cleanup();
     rmSync(home, { recursive: true, force: true });
   }
@@ -2434,6 +2565,73 @@ test("workspace clear attention responds with an error instead of timing out", a
     clearedAgentIds: [],
     success: false,
     error: "Workspace not found: missing-workspace",
+  });
+});
+
+test("workspace clear attention preserves stored permission attention", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: "workspace-permission-attention",
+    projectId: "project-permission-attention",
+    cwd: REPO_CWD,
+    kind: "directory",
+    displayName: "permission-attention",
+    createdAt: "2026-07-13T10:00:00.000Z",
+    updatedAt: "2026-07-13T10:00:00.000Z",
+  });
+  const permissionAt = "2026-07-13T10:06:00.000Z";
+  const storedRecord = makeStoredAgent({
+    id: "agent-permission-attention",
+    cwd: REPO_CWD,
+    updatedAt: permissionAt,
+    requiresAttention: true,
+    attentionReason: "permission",
+  });
+  let updateCalls = 0;
+  const agentStorage = asAgentStorage({
+    get: async (agentId: string) => (agentId === storedRecord.id ? storedRecord : null),
+    update: async () => {
+      updateCalls += 1;
+      return storedRecord;
+    },
+  });
+  const session = createSessionForWorkspaceTests({
+    agentStorage,
+    onMessage: (message) => emitted.push(message),
+  });
+  session.workspaceRegistry.get = async (workspaceId: string) =>
+    workspaceId === workspace.workspaceId ? workspace : null;
+  session.listAgentPayloads = async () => [
+    makeAgent({
+      id: storedRecord.id,
+      cwd: storedRecord.cwd,
+      workspaceId: workspace.workspaceId,
+      status: "closed",
+      updatedAt: storedRecord.updatedAt,
+      requiresAttention: true,
+      attentionReason: "permission",
+      attentionTimestamp: permissionAt,
+    }),
+  ];
+
+  await session.handleMessage({
+    type: "workspace.clear_attention.request",
+    workspaceId: workspace.workspaceId,
+    requestId: "permission-attention",
+  });
+
+  expect(updateCalls).toBe(0);
+  expect(storedRecord).toMatchObject({
+    requiresAttention: true,
+    attentionReason: "permission",
+    attentionTimestamp: permissionAt,
+  });
+  expect(findByType(emitted, "workspace.clear_attention.response").payload).toMatchObject({
+    requestId: "permission-attention",
+    workspaceId: workspace.workspaceId,
+    clearedAgentIds: [],
+    success: true,
+    error: null,
   });
 });
 
@@ -2481,7 +2679,23 @@ test("workspace clear attention can clear multiple workspaces in one request", a
       }),
     ]),
   );
-  const session = createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) });
+  const agentStorage = asAgentStorage({
+    get: async (agentId: string) => storedRecords.get(agentId) ?? null,
+    update: async (
+      agentId: string,
+      updateRecord: (existing: StoredAgentRecord) => StoredAgentRecord,
+    ) => {
+      const record = storedRecords.get(agentId);
+      if (!record) throw new Error("Agent not found");
+      const updated = updateRecord(record);
+      storedRecords.set(agentId, updated);
+      return updated;
+    },
+  });
+  const session = createSessionForWorkspaceTests({
+    agentStorage,
+    onMessage: (message) => emitted.push(message),
+  });
 
   session.workspaceRegistry.list = async () => workspaces;
   session.workspaceRegistry.get = async (id: string) =>
@@ -2489,14 +2703,6 @@ test("workspace clear attention can clear multiple workspaces in one request", a
   session.projectRegistry.list = async () => projects;
   session.projectRegistry.get = async (id: string) =>
     projects.find((project) => project.projectId === id) ?? null;
-  session.agentStorage.get = async (agentId: string) => storedRecords.get(agentId) ?? null;
-  session.agentStorage.update = async (agentId, updateRecord) => {
-    const record = storedRecords.get(agentId);
-    if (!record) throw new Error("Agent not found");
-    const updated = updateRecord(record);
-    storedRecords.set(agentId, updated);
-    return updated;
-  };
   session.listAgentPayloads = async () =>
     Array.from(storedRecords.values()).map((record) => {
       const owner = workspaces.find((workspace) => workspace.cwd === record.cwd);
@@ -7855,6 +8061,52 @@ test("workspace.pin.set.request stores the pin timestamp and emits an updated de
       pinnedAt: response?.payload.pinnedAt,
     },
   });
+});
+
+test("workspace.pin.set.request reports persisted success once when legacy update emission fails", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const session = asTestSession(
+    createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) }),
+  );
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: "ws-pin-emission-failure",
+    projectId: "proj-1",
+    cwd: REPO_CWD,
+    kind: "local_checkout",
+    displayName: "main",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  const workspaces = new Map([[workspace.workspaceId, workspace]]);
+  session.workspaceRegistry.get = async (id: string) => workspaces.get(id) ?? null;
+  session.workspaceRegistry.setPinnedAt = async (id, pinnedAt) => {
+    const existing = workspaces.get(id);
+    if (!existing) throw new Error("Workspace not found");
+    const updated = { ...existing, pinnedAt };
+    workspaces.set(id, updated);
+    return updated;
+  };
+  session.emitWorkspaceUpdatesForWorkspaceIds = async () => {
+    throw new Error("descriptor emission failed");
+  };
+
+  await session.handleMessage({
+    type: "workspace.pin.set.request",
+    workspaceId: workspace.workspaceId,
+    pinned: true,
+    requestId: "req-pin-emission-failure",
+  });
+
+  const responses = filterByType(emitted, "workspace.pin.set.response");
+  expect(responses).toHaveLength(1);
+  expect(responses[0]?.payload).toMatchObject({
+    requestId: "req-pin-emission-failure",
+    workspaceId: workspace.workspaceId,
+    accepted: true,
+    pinnedAt: expect.any(String),
+    error: null,
+  });
+  expect(workspaces.get(workspace.workspaceId)?.pinnedAt).toBe(responses[0]?.payload.pinnedAt);
 });
 
 test("workspace.title.set.request with whitespace-only title clears the title", async () => {

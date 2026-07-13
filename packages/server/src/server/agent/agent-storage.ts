@@ -83,6 +83,18 @@ export function parseStoredAgentRecord(value: unknown): StoredAgentRecord {
   return STORED_AGENT_SCHEMA.parse(value);
 }
 
+export interface AgentStorageRecordWriter {
+  write(filePath: string, record: StoredAgentRecord): Promise<void>;
+}
+
+const defaultRecordWriter: AgentStorageRecordWriter = {
+  write: writeJsonFileAtomic,
+};
+
+export interface AgentStorageOptions {
+  recordWriter?: AgentStorageRecordWriter;
+}
+
 export class AgentStorage {
   private cache: Map<string, StoredAgentRecord> = new Map();
   private pathById: Map<string, string> = new Map();
@@ -93,11 +105,13 @@ export class AgentStorage {
   private baseDir: string;
   private loadPromise: Promise<StoredAgentRecord[]> | null = null;
   private logger: Logger;
+  private readonly recordWriter: AgentStorageRecordWriter;
   private readonly pinListeners = new Set<(agentId: string) => void>();
 
-  constructor(baseDir: string, logger: Logger) {
+  constructor(baseDir: string, logger: Logger, options: AgentStorageOptions = {}) {
     this.baseDir = baseDir;
     this.logger = logger.child({ module: "agent", component: "agent-storage" });
+    this.recordWriter = options.recordWriter ?? defaultRecordWriter;
   }
 
   async initialize(): Promise<void> {
@@ -190,7 +204,7 @@ export class AgentStorage {
     const nextPath = this.buildRecordPath(record);
     const previousPath = this.pathById.get(agentId);
 
-    await writeJsonFileAtomic(nextPath, record);
+    await this.recordWriter.write(nextPath, record);
     this.addIndexedPath(agentId, nextPath);
 
     if (previousPath && previousPath !== nextPath) {

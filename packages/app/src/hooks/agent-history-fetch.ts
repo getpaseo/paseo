@@ -1,21 +1,17 @@
 import type {
   DaemonClient,
-  FetchAgentHistoryOptions,
   FetchAgentHistoryPageInfo,
 } from "@getpaseo/client/internal/daemon-client";
 import type { AggregatedAgent } from "@/hooks/use-aggregated-agents";
 import type { HistorySortMode } from "@/stores/history-view-store";
 import { buildAgentDirectoryState } from "@/utils/agent-directory-sync";
-import { compareHistoryAgents, type HistoryServerQuery } from "./history-view-model";
+import {
+  compareHistoryAgents,
+  DEFAULT_AGENT_HISTORY_QUERY,
+  type HistoryServerQuery,
+} from "./history-view-model";
 
 const AGENT_HISTORY_PAGE_LIMIT = 200;
-const DEFAULT_AGENT_HISTORY_QUERY: HistoryServerQuery = {
-  filter: { archiveState: "all", includeArchived: true },
-  sort: [
-    { key: "pinned", direction: "desc" },
-    { key: "updated_at", direction: "desc" },
-  ],
-};
 const AGENT_HISTORY_ALL_HOSTS_FAILED_MESSAGE = "No connected hosts could load agent history";
 
 export interface AgentHistoryPage {
@@ -52,8 +48,8 @@ export async function fetchAgentHistoryPage(input: {
       ? query.sort.filter((entry) => entry.key !== "pinned")
       : query.sort;
   const payload = await input.client.fetchAgentHistory({
-    filter: query.filter as NonNullable<FetchAgentHistoryOptions["filter"]>,
-    sort: sort as NonNullable<FetchAgentHistoryOptions["sort"]>,
+    filter: query.filter,
+    sort,
     page: input.cursor
       ? { limit: AGENT_HISTORY_PAGE_LIMIT, cursor: input.cursor }
       : { limit: AGENT_HISTORY_PAGE_LIMIT },

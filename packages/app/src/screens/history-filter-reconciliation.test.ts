@@ -1,18 +1,18 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { useHistoryViewStore } from "@/stores/history-view-store";
+import { beforeEach, describe, expect, it } from "vitest";
+import type { StateStorage } from "zustand/middleware";
+import { createHistoryViewStore } from "@/stores/history-view-store";
 import { resolveHistoryFilterReconciliation } from "./history-filter-reconciliation";
 
-vi.mock("@react-native-async-storage/async-storage", () => ({
-  default: {
-    getItem: vi.fn().mockResolvedValue(null),
-    setItem: vi.fn().mockResolvedValue(undefined),
-    removeItem: vi.fn().mockResolvedValue(undefined),
-  },
-}));
+const storage: StateStorage = {
+  getItem: () => null,
+  setItem: () => undefined,
+  removeItem: () => undefined,
+};
+const store = createHistoryViewStore(storage);
 
 describe("History filter reconciliation", () => {
   beforeEach(() => {
-    useHistoryViewStore.setState({
+    store.setState({
       hostFilters: ["host-b"],
       projectFilters: ["project-b"],
     });
@@ -27,8 +27,8 @@ describe("History filter reconciliation", () => {
       allHostProjects: [],
     });
     expect(coldStart).toBeNull();
-    expect(useHistoryViewStore.getState().hostFilters).toEqual(["host-b"]);
-    expect(useHistoryViewStore.getState().projectFilters).toEqual(["project-b"]);
+    expect(store.getState().hostFilters).toEqual(["host-b"]);
+    expect(store.getState().projectFilters).toEqual(["project-b"]);
 
     const partialHydration = resolveHistoryFilterReconciliation({
       preferencesHydrated: true,
@@ -41,9 +41,9 @@ describe("History filter reconciliation", () => {
       hostKeys: ["host-a", "host-b"],
       projectKeys: null,
     });
-    useHistoryViewStore.getState().reconcileHostFilters(partialHydration?.hostKeys ?? []);
-    expect(useHistoryViewStore.getState().hostFilters).toEqual(["host-b"]);
-    expect(useHistoryViewStore.getState().projectFilters).toEqual(["project-b"]);
+    store.getState().reconcileHostFilters(partialHydration?.hostKeys ?? []);
+    expect(store.getState().hostFilters).toEqual(["host-b"]);
+    expect(store.getState().projectFilters).toEqual(["project-b"]);
 
     const completeHydration = resolveHistoryFilterReconciliation({
       preferencesHydrated: true,
@@ -57,8 +57,8 @@ describe("History filter reconciliation", () => {
       projectKeys: ["project-a", "project-b"],
     });
     if (completeHydration?.projectKeys) {
-      useHistoryViewStore.getState().reconcileProjectFilters(completeHydration.projectKeys);
+      store.getState().reconcileProjectFilters(completeHydration.projectKeys);
     }
-    expect(useHistoryViewStore.getState().projectFilters).toEqual(["project-b"]);
+    expect(store.getState().projectFilters).toEqual(["project-b"]);
   });
 });

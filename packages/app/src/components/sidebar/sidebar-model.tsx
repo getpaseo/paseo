@@ -6,6 +6,7 @@ import React, {
   useState,
   type ReactNode,
 } from "react";
+import { useTranslation } from "react-i18next";
 import { useShallow } from "zustand/shallow";
 import {
   useSidebarWorkspacesList,
@@ -65,6 +66,7 @@ export function SidebarModelProvider({
   active?: boolean;
   children: ReactNode;
 }) {
+  const { t } = useTranslation();
   const list = useSidebarWorkspacesList();
   const groupMode = useSidebarViewStore((state) => state.groupMode);
   const sortMode = useSidebarViewStore((state) => state.sortMode);
@@ -206,6 +208,10 @@ export function SidebarModelProvider({
         hiddenProjectKeys: new Set(hiddenProjectKeys),
         hiddenWorkspaceKeys: new Set(hiddenWorkspaceKeys),
         collections: collectionSources,
+        collectionLabels: {
+          none: t("sidebar.organization.workspaceLabel.none"),
+          unknown: t("sidebar.organization.workspaceLabel.unknown"),
+        },
         preferences: {
           sortMode,
           visibilityFilter,
@@ -224,6 +230,7 @@ export function SidebarModelProvider({
       projectFilters,
       sortMode,
       statusFilters,
+      t,
       visibilityFilter,
       workspaceEntriesByKey,
     ],
@@ -265,16 +272,10 @@ export function SidebarModelProvider({
         workspaceEntriesByKey: projectionWorkspaceEntriesByKey,
         projectNamesByKey: list.projectNamesByKey,
         groupMode,
-        pinnedCollapsed,
-        collapsedProjectKeys,
-        collapsedStatusGroupKeys,
       }),
     [
-      collapsedProjectKeys,
-      collapsedStatusGroupKeys,
       groupMode,
       list.projectNamesByKey,
-      pinnedCollapsed,
       pinnedKeys,
       projectionWorkspaceEntriesByKey,
       visibleProjectionProjects,

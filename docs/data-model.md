@@ -476,8 +476,10 @@ than treating it as valid.
 
 Array of host-scoped workspace labels. A collection assignment is stored on the workspace record as
 `collectionId`; deleting a collection first clears every assignment and then removes the catalog row.
-Assignment and deletion are serialized by the daemon, and startup reconciliation clears dangling IDs
-left by an interrupted or older daemon.
+Assignment and deletion are serialized by the daemon. If a clear or catalog write fails, the daemon first
+restores the catalog row and then rolls back assignments already cleared by that request before reporting
+failure. Any rollback failure is surfaced explicitly. Startup reconciliation clears dangling IDs left by
+an interrupted or older daemon.
 
 | Field       | Type                | Description                      |
 | ----------- | ------------------- | -------------------------------- |

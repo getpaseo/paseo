@@ -237,6 +237,22 @@ describe("matchesAgentUpdatesFilter", () => {
       matchesAgentUpdatesFilter({ agent, project: otherProject, filter: { projectKeys: ["  "] } }),
     ).toBe(true);
   });
+
+  test("updatedAfter includes an agent updated exactly at the cutoff", () => {
+    const cutoff = "2026-03-01T12:00:00.000Z";
+    const atCutoff = makeAgentPayload({ id: "at-cutoff", updatedAt: cutoff });
+    const beforeCutoff = makeAgentPayload({
+      id: "before-cutoff",
+      updatedAt: "2026-03-01T11:59:59.999Z",
+    });
+
+    expect(
+      matchesAgentUpdatesFilter({ agent: atCutoff, project, filter: { updatedAfter: cutoff } }),
+    ).toBe(true);
+    expect(
+      matchesAgentUpdatesFilter({ agent: beforeCutoff, project, filter: { updatedAfter: cutoff } }),
+    ).toBe(false);
+  });
 });
 
 describe("forwardLiveAgent", () => {

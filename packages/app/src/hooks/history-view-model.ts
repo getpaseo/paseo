@@ -1,4 +1,5 @@
 import type { AggregatedAgent } from "@/hooks/use-aggregated-agents";
+import type { FetchAgentHistoryOptions } from "@getpaseo/client/internal/daemon-client";
 import {
   compareAgentHistoryText,
   normalizeAgentHistoryTitle,
@@ -28,22 +29,17 @@ export type HistorySection =
     }
   | { key: "all"; kind: "none"; agents: AggregatedAgent[] };
 
-export interface HistoryServerFilter {
-  archiveState: HistoryStatusFilter;
-  includeArchived: boolean;
-  projectKeys?: string[];
-  updatedAfter?: string;
-}
+export type HistoryServerQuery = Required<Pick<FetchAgentHistoryOptions, "filter" | "sort">>;
+export type HistoryServerFilter = HistoryServerQuery["filter"];
+export type HistoryServerSort = HistoryServerQuery["sort"];
 
-export type HistoryServerSort = Array<{
-  key: "pinned" | "created_at" | "updated_at" | "title";
-  direction: "asc" | "desc";
-}>;
-
-export interface HistoryServerQuery {
-  filter: HistoryServerFilter;
-  sort: HistoryServerSort;
-}
+export const DEFAULT_AGENT_HISTORY_QUERY: HistoryServerQuery = {
+  filter: { archiveState: "all", includeArchived: true },
+  sort: [
+    { key: "pinned", direction: "desc" },
+    { key: "updated_at", direction: "desc" },
+  ],
+};
 
 const DATE_SECTION_ORDER = [
   "today",

@@ -1,4 +1,4 @@
-import { describe, expect, test, beforeEach, afterEach, vi } from "vitest";
+import { describe, expect, test, beforeEach, afterEach } from "vitest";
 import os from "node:os";
 import path from "node:path";
 import { mkdtempSync, readdirSync, rmSync } from "node:fs";
@@ -6,6 +6,7 @@ import { promises as fs } from "node:fs";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { AgentStorage } from "./agent-storage.js";
+import { ControlledAgentStorageWriter } from "./test-utils/controlled-agent-storage-writer.js";
 import { buildConfigOverrides, buildSessionConfig } from "../persistence-hooks.js";
 import type { ManagedAgent } from "./agent-manager.js";
 import type {
@@ -279,32 +280,24 @@ describe("AgentStorage", () => {
 
   test("flush waits for a queued record mutation", async () => {
     const agentId = "agent-flush-queued-mutation";
-    await storage.applySnapshot(createManagedAgent({ id: agentId }));
+    const writer = new ControlledAgentStorageWriter();
+    const controlledStorage = new AgentStorage(storagePath, logger, { recordWriter: writer });
+    await controlledStorage.applySnapshot(createManagedAgent({ id: agentId }));
 
-    let releasePendingWrite: (() => void) | null = null;
-    const pendingWrite = new Promise<void>((resolve) => {
-      releasePendingWrite = resolve;
-    });
-    const storageInternals = storage as unknown as {
-      pendingWrites: Map<string, Promise<void>>;
-    };
-    storageInternals.pendingWrites.set(agentId, pendingWrite);
-
-    const pinPromise = storage.setPinnedAt(agentId, "2026-07-13T09:00:00.000Z");
-    await vi.waitFor(() => {
-      expect(storageInternals.pendingWrites.get(agentId)).not.toBe(pendingWrite);
-    });
+    const heldWrite = writer.holdNextWrite();
+    const pinPromise = controlledStorage.setPinnedAt(agentId, "2026-07-13T09:00:00.000Z");
+    await heldWrite.started;
     let flushed = false;
-    const flushPromise = storage.flush().then(() => {
+    const flushPromise = controlledStorage.flush().then(() => {
       flushed = true;
       return undefined;
     });
     await Promise.resolve();
     expect(flushed).toBe(false);
 
-    releasePendingWrite?.();
+    heldWrite.release();
     await Promise.all([pinPromise, flushPromise]);
-    expect((await storage.get(agentId))?.pinnedAt).toBe("2026-07-13T09:00:00.000Z");
+    expect((await controlledStorage.get(agentId))?.pinnedAt).toBe("2026-07-13T09:00:00.000Z");
   });
 
   test("applySnapshot stores and reloads featureValues when present", async () => {
