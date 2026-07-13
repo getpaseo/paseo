@@ -1,5 +1,23 @@
 import type { AttachmentMetadata } from "@/attachments/types";
 import { getAttachmentStore } from "@/attachments/store";
+import {
+  encodeAttachmentsToBudget,
+  type EncodedAttachment,
+  type ImageCompressor,
+} from "@/attachments/image-compression";
+
+let compressorOverride: ImageCompressor | null = null;
+
+/** Test-only hook to inject a deterministic image compressor. */
+export function __setImageCompressorForTests(compressor: ImageCompressor | null): void {
+  compressorOverride = compressor;
+}
+
+const lazyImageCompressor: ImageCompressor = async (input) => {
+  if (compressorOverride) return compressorOverride(input);
+  const mod = await import("@/attachments/image-compressor");
+  return mod.compressImage(input);
+};
 
 export async function persistAttachmentFromBlob(input: {
   blob: Blob;
@@ -63,34 +81,26 @@ export async function persistAttachmentFromFileUri(input: {
 
 export async function encodeAttachmentsForSend(
   attachments: readonly AttachmentMetadata[] | undefined,
-): Promise<Array<{ data: string; mimeType: string }> | undefined> {
+): Promise<EncodedAttachment[] | undefined> {
   if (!attachments || attachments.length === 0) {
     return undefined;
   }
 
   const store = await getAttachmentStore();
-  const encoded = await Promise.all(
-    attachments.map(async (attachment) => {
-      try {
-        const data = await store.encodeBase64({ attachment });
-        return {
-          data,
-          mimeType: attachment.mimeType,
-        };
-      } catch (error) {
-        console.error("[attachments] Failed to encode attachment for send", {
-          id: attachment.id,
-          error,
-        });
-        return null;
-      }
-    }),
+  const byId = new Map(attachments.map((attachment) => [attachment.id, attachment]));
+  const encoded = await encodeAttachmentsToBudget(
+    attachments.map((attachment) => ({ id: attachment.id, mimeType: attachment.mimeType })),
+    {
+      encodeBase64: (id) => store.encodeBase64({ attachment: byId.get(id)! }),
+      resolvePreviewUrl: (id) => store.resolvePreviewUrl({ attachment: byId.get(id)! }),
+      releasePreviewUrl: store.releasePreviewUrl
+        ? (id, url) => store.releasePreviewUrl!({ attachment: byId.get(id)!, url })
+        : undefined,
+      compress: lazyImageCompressor,
+    },
   );
 
-  const valid = encoded.filter(
-    (entry): entry is { data: string; mimeType: string } => entry !== null,
-  );
-  return valid.length > 0 ? valid : undefined;
+  return encoded.length > 0 ? encoded : undefined;
 }
 
 export async function resolveAttachmentPreviewUrl(attachment: AttachmentMetadata): Promise<string> {

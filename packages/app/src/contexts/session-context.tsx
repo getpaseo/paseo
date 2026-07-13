@@ -62,6 +62,7 @@ import { derivePendingPermissionKey, normalizeAgentSnapshot } from "@/utils/agen
 import { resolveProjectPlacement } from "@/utils/project-placement";
 import { buildDraftStoreKey } from "@/stores/draft-keys";
 import type { AttachmentMetadata } from "@/attachments/types";
+import type { EncodedAttachment } from "@/attachments/image-compression";
 import { splitComposerAttachmentsForSubmit } from "@/composer/attachments/submit";
 import { reconcilePreviousAgentStatuses } from "@/contexts/session-status-tracking";
 import { patchWorkspaceScripts } from "@/contexts/session-workspace-scripts";
@@ -1817,6 +1818,17 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       attachments?: AgentAttachment[],
     ) => {
       const messageId = generateMessageId();
+
+      // Encode/compress attachments before the optimistic append so an oversized
+      // attachment fails cleanly (no ghost message, no 1009 transport kill).
+      let imagesData: EncodedAttachment[] | undefined;
+      try {
+        imagesData = await encodeImages(images);
+      } catch (error) {
+        console.error("[Session] Failed to encode attachments for send:", error);
+        return;
+      }
+
       const userMessage: StreamItem = {
         kind: "user_message",
         id: messageId,
@@ -1849,7 +1861,6 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         });
       }
 
-      const imagesData = await encodeImages(images);
       if (!client) {
         console.warn("[Session] sendAgentMessage skipped: daemon unavailable");
         return;
