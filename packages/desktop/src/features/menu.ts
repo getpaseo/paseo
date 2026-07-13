@@ -208,4 +208,16 @@ export function setupApplicationMenu(options: ApplicationMenuOptions): void {
     capturingShortcut = capturing === true;
     rebuildApplicationMenu();
   });
+
+  // If the renderer reloads mid-capture (e.g. Cmd+R) the renderer-side effect
+  // never gets to send `false`, so reset the flag from the main process when a
+  // main window finishes loading. Workspace browser webviews are not
+  // BrowserWindows, so they don't trigger this.
+  app.on("browser-window-created", (_event, win) => {
+    win.webContents.on("did-finish-load", () => {
+      if (!capturingShortcut) return;
+      capturingShortcut = false;
+      rebuildApplicationMenu();
+    });
+  });
 }

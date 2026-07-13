@@ -247,9 +247,9 @@ export function KeyboardShortcutsSection() {
   // Suppress desktop zoom accelerators while capturing so combos like Cmd+- are
   // recorded instead of zooming the window. No-op outside Electron.
   useEffect(() => {
-    if (isNative) return;
+    if (isNative || !capturing) return;
     const menu = getDesktopHost()?.menu;
-    void menu?.setCapturingShortcut?.(capturing);
+    void menu?.setCapturingShortcut?.(true);
     return () => {
       void menu?.setCapturingShortcut?.(false);
     };
