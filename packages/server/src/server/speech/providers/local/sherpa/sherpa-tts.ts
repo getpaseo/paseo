@@ -6,7 +6,7 @@ import type { SpeechStreamResult, TextToSpeechProvider } from "../../../speech-p
 import { chunkBuffer, float32ToPcm16le } from "../../../audio.js";
 import { loadSherpaOnnxNode } from "./sherpa-onnx-node-loader.js";
 
-export type SherpaTtsPreset = "kokoro-en-v0_19";
+export type SherpaTtsPreset = "kokoro-en-v0_19" | "kokoro-multi-lang-v1_0";
 
 export interface SherpaTtsConfig {
   preset: SherpaTtsPreset;
@@ -60,6 +60,11 @@ export class SherpaOnnxTTS implements TextToSpeechProvider {
     assertFileExists(tokensPath, "TTS tokens");
     assertFileExists(dataDir, "TTS espeak-ng dataDir");
 
+    // Detect lexicon files for multilingual Kokoro models (e.g. kokoro-multi-lang-v1_0).
+    const lexiconFiles = ["lexicon-us-en.txt", "lexicon-zh.txt"]
+      .map((f) => `${config.modelDir}/${f}`)
+      .filter((p) => existsSync(p));
+
     const modelConfig = {
       kokoro: {
         model: modelPath,
@@ -67,6 +72,7 @@ export class SherpaOnnxTTS implements TextToSpeechProvider {
         tokens: tokensPath,
         dataDir,
         lengthScale: config.lengthScale ?? 1.0,
+        ...(lexiconFiles.length > 0 ? { lexicon: lexiconFiles.join(",") } : {}),
       },
     };
 

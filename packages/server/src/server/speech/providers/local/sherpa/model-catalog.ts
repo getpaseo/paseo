@@ -2,6 +2,8 @@ import { z } from "zod";
 
 export type SherpaOnnxModelKind = "stt-offline" | "tts";
 
+export type SttModelType = "nemo_transducer" | "sense_voice" | "paraformer";
+
 type DefaultModelRole = "stt" | "tts";
 
 interface SherpaOnnxCatalogEntry {
@@ -11,26 +13,53 @@ interface SherpaOnnxCatalogEntry {
   requiredFiles: string[];
   description: string;
   defaultFor?: DefaultModelRole;
+  sttModelType?: SttModelType;
+  supportedLanguages?: string[];
 }
 
 export const SHERPA_ONNX_MODEL_CATALOG = {
   "parakeet-tdt-0.6b-v2-int8": {
     kind: "stt-offline",
+    sttModelType: "nemo_transducer",
     archiveUrl:
       "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2",
     extractedDir: "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8",
     requiredFiles: ["encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt"],
     description: "NVIDIA Parakeet TDT v2 (offline NeMo transducer, English).",
     defaultFor: "stt",
+    supportedLanguages: ["en"],
   },
   "parakeet-tdt-0.6b-v3-int8": {
     kind: "stt-offline",
+    sttModelType: "nemo_transducer",
     archiveUrl:
       "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2",
     extractedDir: "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8",
     requiredFiles: ["encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt"],
     description:
       "NVIDIA Parakeet TDT v3 (offline NeMo transducer, 25 European languages, auto-detected).",
+    supportedLanguages: ["en", "de", "fr", "es", "it", "pt", "nl", "pl", "ru", "uk", "cs", "sk", "ro", "hu", "bg", "hr", "sr", "sl", "lt", "lv", "et", "fi", "sv", "da", "no"],
+  },
+  "sense-voice-zh-en-ja-ko-yue-int8": {
+    kind: "stt-offline",
+    sttModelType: "sense_voice",
+    archiveUrl:
+      "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2",
+    extractedDir: "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17",
+    requiredFiles: ["model.int8.onnx", "tokens.txt"],
+    description: "SenseVoice (offline, Chinese/English/Japanese/Korean/Cantonese, auto-detected).",
+    supportedLanguages: ["zh", "en", "ja", "ko", "yue"],
+  },
+  "paraformer-zh-2024-03-09-int8": {
+    kind: "stt-offline",
+    sttModelType: "paraformer",
+    archiveUrl:
+      "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-paraformer-zh-2024-03-09.tar.bz2",
+    extractedDir: "sherpa-onnx-paraformer-zh-2024-03-09",
+    requiredFiles: ["model.int8.onnx", "tokens.txt"],
+    description:
+      "Paraformer Chinese+English (offline, higher accuracy for Mandarin and dialects).",
+    supportedLanguages: ["zh", "en"],
   },
   "kokoro-en-v0_19": {
     kind: "tts",
@@ -40,6 +69,23 @@ export const SHERPA_ONNX_MODEL_CATALOG = {
     requiredFiles: ["model.onnx", "voices.bin", "tokens.txt", "espeak-ng-data"],
     description: "Kokoro TTS (higher quality; larger).",
     defaultFor: "tts",
+    supportedLanguages: ["en"],
+  },
+  "kokoro-multi-lang-v1_0": {
+    kind: "tts",
+    archiveUrl:
+      "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-multi-lang-v1_0.tar.bz2",
+    extractedDir: "kokoro-multi-lang-v1_0",
+    requiredFiles: [
+      "model.onnx",
+      "voices.bin",
+      "tokens.txt",
+      "espeak-ng-data",
+      "lexicon-us-en.txt",
+      "lexicon-zh.txt",
+    ],
+    description: "Kokoro TTS (multilingual Chinese + English).",
+    supportedLanguages: ["zh", "en"],
   },
 } as const satisfies Record<string, SherpaOnnxCatalogEntry>;
 
@@ -117,4 +163,32 @@ export function getSherpaOnnxModelSpec(id: SherpaOnnxModelId): SherpaOnnxModelSp
     id,
     ...spec,
   };
+}
+
+export function resolveDefaultSttModelForLanguage(language: string): LocalSttModelId {
+  // If the global default model supports this language, keep it.
+  const defaultSpec = SHERPA_ONNX_MODEL_CATALOG[DEFAULT_LOCAL_STT_MODEL];
+  if ((defaultSpec.supportedLanguages as readonly string[] | undefined)?.includes(language)) {
+    return DEFAULT_LOCAL_STT_MODEL;
+  }
+  // Otherwise, find the first STT model that supports the language.
+  const match = LOCAL_STT_MODEL_IDS.find((id) => {
+    const entry = SHERPA_ONNX_MODEL_CATALOG[id];
+    return (entry.supportedLanguages as readonly string[] | undefined)?.includes(language);
+  });
+  return match ?? DEFAULT_LOCAL_STT_MODEL;
+}
+
+export function resolveDefaultTtsModelForLanguage(language: string): LocalTtsModelId {
+  // If the global default model supports this language, keep it.
+  const defaultSpec = SHERPA_ONNX_MODEL_CATALOG[DEFAULT_LOCAL_TTS_MODEL];
+  if ((defaultSpec.supportedLanguages as readonly string[] | undefined)?.includes(language)) {
+    return DEFAULT_LOCAL_TTS_MODEL;
+  }
+  // Otherwise, find the first TTS model that supports the language.
+  const match = LOCAL_TTS_MODEL_IDS.find((id) => {
+    const entry = SHERPA_ONNX_MODEL_CATALOG[id];
+    return (entry.supportedLanguages as readonly string[] | undefined)?.includes(language);
+  });
+  return match ?? DEFAULT_LOCAL_TTS_MODEL;
 }
