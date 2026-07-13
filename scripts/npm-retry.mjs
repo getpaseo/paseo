@@ -31,7 +31,7 @@ export async function runWithRetry(
   let exitCode = 1;
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    exitCode = run(args);
+    exitCode = await run(args);
     if (exitCode === 0) {
       return 0;
     }
