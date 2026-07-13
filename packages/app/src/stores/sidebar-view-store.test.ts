@@ -39,6 +39,11 @@ describe("sidebar view store", () => {
   beforeEach(() => {
     useSidebarViewStore.setState({
       groupMode: "project",
+      sortMode: "custom",
+      visibilityFilter: "visible",
+      lastActivityFilter: "all",
+      statusFilters: [],
+      projectFilters: [],
       hostFilters: [],
     });
   });
@@ -89,6 +94,11 @@ describe("sidebar view store", () => {
       }),
     ).toEqual({
       groupMode: "status",
+      sortMode: "custom",
+      visibilityFilter: "visible",
+      lastActivityFilter: "all",
+      statusFilters: [],
+      projectFilters: [],
       hostFilters: [],
     });
   });
@@ -101,6 +111,11 @@ describe("sidebar view store", () => {
       }),
     ).toEqual({
       groupMode: "status",
+      sortMode: "custom",
+      visibilityFilter: "visible",
+      lastActivityFilter: "all",
+      statusFilters: [],
+      projectFilters: [],
       hostFilters: ["host-a"],
     });
   });
@@ -113,7 +128,45 @@ describe("sidebar view store", () => {
       }),
     ).toEqual({
       groupMode: "status",
+      sortMode: "custom",
+      visibilityFilter: "visible",
+      lastActivityFilter: "all",
+      statusFilters: [],
+      projectFilters: [],
       hostFilters: ["host-a", "host-b"],
+    });
+  });
+
+  it("normalizes restored project filters", () => {
+    expect(
+      migrateSidebarViewState({
+        groupMode: "project",
+        projectFilters: [" project-a ", "project-a", "", 42],
+      }).projectFilters,
+    ).toEqual(["project-a"]);
+  });
+
+  it("keeps grouping and sorting when clearing filters", () => {
+    useSidebarViewStore.setState({
+      groupMode: "collection",
+      sortMode: "recency",
+      visibilityFilter: "all",
+      lastActivityFilter: "seven_days",
+      statusFilters: ["running"],
+      projectFilters: ["project-a"],
+      hostFilters: ["host-a"],
+    });
+
+    useSidebarViewStore.getState().clearFilters();
+
+    expect(useSidebarViewStore.getState()).toMatchObject({
+      groupMode: "collection",
+      sortMode: "recency",
+      visibilityFilter: "visible",
+      lastActivityFilter: "all",
+      statusFilters: [],
+      projectFilters: [],
+      hostFilters: [],
     });
   });
 

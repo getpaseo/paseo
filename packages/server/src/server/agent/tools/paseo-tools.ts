@@ -65,7 +65,7 @@ import {
 } from "../lifecycle-command.js";
 import type { GitHubService } from "../../../services/github-service.js";
 import type { WorkspaceGitService } from "../../workspace-git-service.js";
-import type { WorkspaceRegistry } from "../../workspace-registry.js";
+import { setWorkspaceRegistryTitle, type WorkspaceRegistry } from "../../workspace-registry.js";
 import { WorktreeRequestError } from "../../worktree-errors.js";
 import {
   archiveCommand,
@@ -100,7 +100,7 @@ export interface PaseoToolHostDependencies {
   listActiveWorkspaces?: ArchiveDependencies["listActiveWorkspaces"];
   archiveWorkspaceRecord?: ArchiveDependencies["archiveWorkspaceRecord"];
   emitWorkspaceUpdatesForWorkspaceIds?: ArchiveDependencies["emitWorkspaceUpdatesForWorkspaceIds"];
-  workspaceRegistry?: Pick<WorkspaceRegistry, "get" | "upsert">;
+  workspaceRegistry?: Pick<WorkspaceRegistry, "get" | "setTitle" | "upsert">;
   markWorkspaceArchiving?: ArchiveDependencies["markWorkspaceArchiving"];
   clearWorkspaceArchiving?: ArchiveDependencies["clearWorkspaceArchiving"];
   createPaseoWorktree?: CreatePaseoWorktreeWorkflowFn;
@@ -1764,11 +1764,12 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         throw new Error(`Workspace ${workspaceId} is archived`);
       }
 
-      await options.workspaceRegistry.upsert({
-        ...existing,
+      await setWorkspaceRegistryTitle(
+        options.workspaceRegistry,
+        workspaceId,
         title,
-        updatedAt: new Date().toISOString(),
-      });
+        new Date().toISOString(),
+      );
       await options.emitWorkspaceUpdatesForWorkspaceIds([workspaceId]);
 
       return {

@@ -27,6 +27,11 @@ Projects are grouped in the sidebar, detected automatically from your filesystem
 
 Each project opens as a workspace. For git projects, the default workspace is the main checkout. Users can create additional workspaces, which are isolated copies (git worktrees) where agents work without affecting main.
 
+Sidebar organization has two persistence scopes. Workspace pins and workspace labels are shared
+daemon metadata, so connected clients see the same organization. Project pins, project groups,
+project hiding, workspace hiding, sorting, grouping, and filters are intentionally client-local view
+preferences. They can differ by device without changing another client's layout.
+
 ### Inside a workspace
 
 A workspace is a flexible canvas:

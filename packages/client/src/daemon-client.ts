@@ -202,6 +202,13 @@ export type DaemonEvent =
       payload: Extract<SessionOutboundMessage, { type: "workspace_update" }>["payload"];
     }
   | {
+      type: "workspace_collection_catalog_update";
+      payload: Extract<
+        SessionOutboundMessage,
+        { type: "workspace.collection.catalog.update" }
+      >["payload"];
+    }
+  | {
       type: "workspace_setup_progress";
       workspaceId: string;
       payload: Extract<SessionOutboundMessage, { type: "workspace_setup_progress" }>["payload"];
@@ -1369,17 +1376,37 @@ export class DaemonClient {
     type: TType,
     handler: (message: Extract<SessionOutboundMessage, { type: TType }>) => void,
   ): () => void;
+  on(
+    type: "workspace_collection_catalog_update",
+    handler: (
+      message: Extract<SessionOutboundMessage, { type: "workspace.collection.catalog.update" }>,
+    ) => void,
+  ): () => void;
   on(handler: DaemonEventHandler): () => void;
   on(
-    arg1: SessionOutboundMessage["type"] | DaemonEventHandler,
-    arg2?: (message: SessionOutboundMessage) => void,
+    arg1:
+      | SessionOutboundMessage["type"]
+      | "workspace_collection_catalog_update"
+      | DaemonEventHandler,
+    arg2?:
+      | ((message: SessionOutboundMessage) => void)
+      | ((
+          message: Extract<SessionOutboundMessage, { type: "workspace.collection.catalog.update" }>,
+        ) => void),
   ): () => void {
     if (typeof arg1 === "function") {
       return this.subscribe(arg1);
     }
 
+    if (arg1 === "workspace_collection_catalog_update") {
+      const handler = arg2 as (
+        message: Extract<SessionOutboundMessage, { type: "workspace.collection.catalog.update" }>,
+      ) => void;
+      return this.on("workspace.collection.catalog.update", handler);
+    }
+
     const type = arg1;
-    const handler = arg2!;
+    const handler = arg2 as (message: SessionOutboundMessage) => void;
 
     if (!this.messageHandlers.has(type)) {
       this.messageHandlers.set(type, new Set());
@@ -2338,19 +2365,103 @@ export class DaemonClient {
     pinned: boolean,
     requestId?: string,
   ): Promise<{ pinnedAt: string | null }> {
-    const payload = await this.sendCorrelatedSessionRequest({
-      requestId,
-      message: {
-        type: "workspace.pin.set.request",
-        workspaceId,
-        pinned,
+    const payload = await this.sendNamespacedCorrelatedSessionRequest<"workspace.pin.set.response">(
+      {
+        requestId,
+        message: { type: "workspace.pin.set.request", workspaceId, pinned },
       },
-      responseType: "workspace.pin.set.response",
-    });
-    if (!payload.accepted) {
-      throw new Error(payload.error ?? "setWorkspacePinned rejected");
-    }
+    );
+    if (!payload.accepted) throw new Error(payload.error ?? "setWorkspacePinned rejected");
     return { pinnedAt: payload.pinnedAt };
+  }
+
+  async setAgentPinned(
+    agentId: string,
+    pinned: boolean,
+    requestId?: string,
+  ): Promise<{ pinnedAt: string | null }> {
+    const payload = await this.sendNamespacedCorrelatedSessionRequest<"agent.pin.set.response">({
+      requestId,
+      message: { type: "agent.pin.set.request", agentId, pinned },
+    });
+    if (!payload.accepted) throw new Error(payload.error ?? "setAgentPinned rejected");
+    return { pinnedAt: payload.pinnedAt };
+  }
+
+  async createWorkspaceCollection(
+    name: string,
+    requestId?: string,
+  ): Promise<
+    NonNullable<
+      Extract<
+        SessionOutboundMessage,
+        { type: "workspace.collection.create.response" }
+      >["payload"]["collection"]
+    >
+  > {
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"workspace.collection.create.response">({
+        requestId,
+        message: { type: "workspace.collection.create.request", name },
+      });
+    if (!payload.accepted || !payload.collection) {
+      throw new Error(payload.error ?? "createWorkspaceCollection rejected");
+    }
+    return payload.collection;
+  }
+
+  async renameWorkspaceCollection(
+    collectionId: string,
+    name: string,
+    requestId?: string,
+  ): Promise<
+    NonNullable<
+      Extract<
+        SessionOutboundMessage,
+        { type: "workspace.collection.rename.response" }
+      >["payload"]["collection"]
+    >
+  > {
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"workspace.collection.rename.response">({
+        requestId,
+        message: { type: "workspace.collection.rename.request", collectionId, name },
+      });
+    if (!payload.accepted || !payload.collection) {
+      throw new Error(payload.error ?? "renameWorkspaceCollection rejected");
+    }
+    return payload.collection;
+  }
+
+  async deleteWorkspaceCollection(
+    collectionId: string,
+    requestId?: string,
+  ): Promise<{ unassignedWorkspaceIds: string[] }> {
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"workspace.collection.delete.response">({
+        requestId,
+        message: { type: "workspace.collection.delete.request", collectionId },
+      });
+    if (!payload.accepted) {
+      throw new Error(payload.error ?? "deleteWorkspaceCollection rejected");
+    }
+    return { unassignedWorkspaceIds: payload.unassignedWorkspaceIds };
+  }
+
+  async assignWorkspaceCollection(
+    workspaceId: string,
+    collectionId: string | null,
+    requestId?: string,
+  ): Promise<{ collectionId: string | null }> {
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"workspace.collection.assign.response">({
+        requestId,
+        message: { type: "workspace.collection.assign.request", workspaceId, collectionId },
+      });
+    if (!payload.accepted) {
+      throw new Error(payload.error ?? "assignWorkspaceCollection rejected");
+    }
+    return { collectionId: payload.collectionId };
   }
 
   async resumeAgent(
@@ -4797,6 +4908,7 @@ export class DaemonClient {
             [CLIENT_CAPS.reasoningMergeEnum]: true,
             [CLIENT_CAPS.terminalReflowableSnapshot]: true,
             [CLIENT_CAPS.providerSubagents]: true,
+            [CLIENT_CAPS.workspaceCollectionUpdates]: true,
             ...this.config.capabilities,
           },
           ...(this.config.appVersion ? { appVersion: this.config.appVersion } : {}),
@@ -5244,6 +5356,11 @@ export class DaemonClient {
         return {
           type: "workspace_update",
           workspaceId: msg.payload.kind === "upsert" ? msg.payload.workspace.id : msg.payload.id,
+          payload: msg.payload,
+        };
+      case "workspace.collection.catalog.update":
+        return {
+          type: "workspace_collection_catalog_update",
           payload: msg.payload,
         };
       case "workspace_setup_progress":

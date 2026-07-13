@@ -113,7 +113,12 @@ import type { PaseoToolRuntimeContext } from "./agent/tools/types.js";
 import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import { bootstrapWorkspaceRegistries } from "./workspace-registry-bootstrap.js";
 import { WorkspaceReconciliationService } from "./workspace-reconciliation-service.js";
-import { FileBackedProjectRegistry, FileBackedWorkspaceRegistry } from "./workspace-registry.js";
+import { reconcileDanglingWorkspaceCollectionAssignments } from "./workspace-collection-reconciliation.js";
+import {
+  FileBackedProjectRegistry,
+  FileBackedWorkspaceCollectionRegistry,
+  FileBackedWorkspaceRegistry,
+} from "./workspace-registry.js";
 import { FileBackedChatService } from "./chat/chat-service.js";
 import { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import { LoopService } from "./loop-service.js";
@@ -729,6 +734,11 @@ export async function createPaseoDaemon(
     path.join(config.paseoHome, "projects", "workspaces.json"),
     logger,
   );
+  const workspaceCollectionRegistry = new FileBackedWorkspaceCollectionRegistry(
+    path.join(config.paseoHome, "projects", "workspace-collections.json"),
+    logger,
+  );
+  await workspaceCollectionRegistry.initialize();
   const chatService = new FileBackedChatService({
     paseoHome: config.paseoHome,
     logger,
@@ -778,6 +788,11 @@ export async function createPaseoDaemon(
     projectRegistry,
     workspaceRegistry,
     workspaceGitService,
+    logger,
+  });
+  await reconcileDanglingWorkspaceCollectionAssignments({
+    workspaceRegistry,
+    workspaceCollectionRegistry,
     logger,
   });
   logger.info({ elapsed: elapsed() }, "Workspace registries bootstrapped");
@@ -1381,6 +1396,7 @@ export async function createPaseoDaemon(
               },
               serviceProxyPublicBaseUrl,
               browserToolsBroker,
+              workspaceCollectionRegistry,
             );
 
             if (relayEnabled) {

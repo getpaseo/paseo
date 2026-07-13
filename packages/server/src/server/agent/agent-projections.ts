@@ -234,6 +234,7 @@ export function buildStoredAgentPayload(
     attentionReason: record.attentionReason ?? null,
     attentionTimestamp: record.attentionTimestamp ?? null,
     archivedAt: record.archivedAt ?? null,
+    pinnedAt: record.pinnedAt ?? null,
     labels: normalizeLabels(record.labels),
     ...(providerAvailable ? {} : { providerUnavailable: true }),
   };
@@ -254,6 +255,7 @@ export function toAgentListItemPayload(agent: AgentSnapshotPayload): AgentListIt
     updatedAt: agent.updatedAt,
     lastUserMessageAt: agent.lastUserMessageAt,
     archivedAt: agent.archivedAt ?? null,
+    pinnedAt: agent.pinnedAt ?? null,
     requiresAttention: agent.requiresAttention ?? false,
     attentionReason: agent.attentionReason ?? null,
     attentionTimestamp: agent.attentionTimestamp ?? null,

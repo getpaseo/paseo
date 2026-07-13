@@ -71,6 +71,7 @@ interface StatusWorkspaceListProps {
   supportsPinningByServerId: ReadonlyMap<string, boolean>;
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
   listHeaderComponent?: ReactNode;
+  listFooterComponent?: ReactNode;
 }
 
 export function SidebarStatusWorkspaceList({
@@ -85,6 +86,7 @@ export function SidebarStatusWorkspaceList({
   supportsPinningByServerId,
   onToggleWorkspacePin,
   listHeaderComponent,
+  listFooterComponent,
 }: StatusWorkspaceListProps) {
   const collapsedStatusGroupKeys = useSidebarCollapsedSectionsStore(
     (state) => state.collapsedStatusGroupKeys,
@@ -135,6 +137,7 @@ export function SidebarStatusWorkspaceList({
         supportsPinningByServerId={supportsPinningByServerId}
         onToggleWorkspacePin={onToggleWorkspacePin}
       />
+      {listFooterComponent}
     </>
   );
 
@@ -681,7 +684,7 @@ function StatusWorkspaceActionSlot({
       <SidebarWorkspaceTrailingActionOverlay visible={showKebab}>
         {showKebab && onArchive ? (
           <SidebarWorkspaceMenu
-            workspaceKey={workspace.workspaceKey}
+            workspace={workspace}
             onCopyPath={onCopyPath}
             onCopyBranchName={onCopyBranchName}
             onRename={onRename}

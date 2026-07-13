@@ -9,6 +9,7 @@ import {
   createPersistedProjectRecord,
   createPersistedWorkspaceRecord,
   FileBackedProjectRegistry,
+  FileBackedWorkspaceCollectionRegistry,
   FileBackedWorkspaceRegistry,
   resolveWorkspaceDisplayName,
   resolveWorkspaceName,
@@ -47,6 +48,7 @@ describe("workspace registries", () => {
   let tmpDir: string;
   let projectRegistry: FileBackedProjectRegistry;
   let workspaceRegistry: FileBackedWorkspaceRegistry;
+  let collectionRegistry: FileBackedWorkspaceCollectionRegistry;
   const logger = createTestLogger();
 
   beforeEach(() => {
@@ -57,6 +59,10 @@ describe("workspace registries", () => {
     );
     workspaceRegistry = new FileBackedWorkspaceRegistry(
       path.join(tmpDir, "projects", "workspaces.json"),
+      logger,
+    );
+    collectionRegistry = new FileBackedWorkspaceCollectionRegistry(
+      path.join(tmpDir, "projects", "workspace-collections.json"),
       logger,
     );
   });
@@ -97,6 +103,303 @@ describe("workspace registries", () => {
     await projectRegistry.remove("remote:github.com/acme/repo");
     expect(await projectRegistry.get("remote:github.com/acme/repo")).toBeNull();
     expect(await projectRegistry.list()).toEqual([]);
+  });
+
+  test("emits one project change after each persisted mutation and ignores no-ops", async () => {
+    const projectId = "project-subscriptions";
+    const changes: string[] = [];
+    const unsubscribe = projectRegistry.subscribeChanges((changedProjectId) => {
+      changes.push(changedProjectId);
+    });
+    const created = createPersistedProjectRecord({
+      projectId,
+      rootPath: "/tmp/project-subscriptions",
+      kind: "git",
+      displayName: "project-subscriptions",
+      createdAt: "2026-07-13T08:00:00.000Z",
+      updatedAt: "2026-07-13T08:00:00.000Z",
+    });
+
+    await projectRegistry.upsert(created);
+    const detachedRead = await projectRegistry.get(projectId);
+    expect(detachedRead).not.toBeNull();
+    detachedRead!.displayName = "mutated outside registry";
+    expect((await projectRegistry.get(projectId))?.displayName).toBe("project-subscriptions");
+
+    await projectRegistry.upsert({
+      ...created,
+      displayName: "project-refreshed",
+      updatedAt: "2026-07-13T08:30:00.000Z",
+    });
+    await projectRegistry.setCustomName(projectId, "User name", "2026-07-13T09:00:00.000Z");
+    await projectRegistry.setCustomName(projectId, "Ignored name", "2026-07-13T09:30:00.000Z", {
+      expectedCurrentNames: [null],
+    });
+    await projectRegistry.archive(projectId, "2026-07-13T10:00:00.000Z");
+    await projectRegistry.unarchive(projectId, "2026-07-13T10:30:00.000Z");
+    await projectRegistry.remove(projectId);
+    await projectRegistry.remove(projectId);
+
+    expect(changes).toEqual(Array.from({ length: 6 }, () => projectId));
+
+    unsubscribe();
+    await projectRegistry.upsert(created);
+    expect(changes).toHaveLength(6);
+  });
+
+  test("persists workspace pin and collection organization without changing activity dates", async () => {
+    await workspaceRegistry.initialize();
+    await collectionRegistry.initialize();
+    const createdAt = "2026-07-13T08:00:00.000Z";
+    const updatedAt = "2026-07-13T08:30:00.000Z";
+    await workspaceRegistry.upsert(
+      createPersistedWorkspaceRecord({
+        workspaceId: "ws-organized",
+        projectId: "project-1",
+        cwd: "/tmp/repo",
+        kind: "local_checkout",
+        displayName: "main",
+        createdAt,
+        updatedAt,
+      }),
+    );
+    const collection = {
+      id: "wsc-focus",
+      name: "Focus",
+      createdAt,
+      updatedAt,
+    };
+    await collectionRegistry.upsert(collection);
+    await workspaceRegistry.setPinnedAt("ws-organized", "2026-07-13T09:00:00.000Z");
+    await workspaceRegistry.setCollectionId("ws-organized", collection.id);
+
+    const reloadedWorkspaces = new FileBackedWorkspaceRegistry(
+      path.join(tmpDir, "projects", "workspaces.json"),
+      logger,
+    );
+    const reloadedCollections = new FileBackedWorkspaceCollectionRegistry(
+      path.join(tmpDir, "projects", "workspace-collections.json"),
+      logger,
+    );
+    const persisted = await reloadedWorkspaces.get("ws-organized");
+    expect(persisted).toMatchObject({
+      pinnedAt: "2026-07-13T09:00:00.000Z",
+      collectionId: "wsc-focus",
+      createdAt,
+      updatedAt,
+    });
+    expect(await reloadedCollections.list()).toEqual([collection]);
+
+    await reloadedCollections.remove(collection.id);
+    expect(await reloadedCollections.list()).toEqual([]);
+  });
+
+  test("serializes concurrent workspace pin and collection mutations", async () => {
+    const workspaceId = "ws-concurrent-organization";
+    await workspaceRegistry.upsert(
+      createPersistedWorkspaceRecord({
+        workspaceId,
+        projectId: "project-1",
+        cwd: "/tmp/concurrent-organization",
+        kind: "local_checkout",
+        displayName: "main",
+        createdAt: "2026-07-13T08:00:00.000Z",
+        updatedAt: "2026-07-13T08:30:00.000Z",
+      }),
+    );
+
+    await Promise.all([
+      workspaceRegistry.setPinnedAt(workspaceId, "2026-07-13T09:00:00.000Z"),
+      workspaceRegistry.setCollectionId(workspaceId, "collection-focus"),
+    ]);
+
+    const persisted = await new FileBackedWorkspaceRegistry(
+      path.join(tmpDir, "projects", "workspaces.json"),
+      logger,
+    ).get(workspaceId);
+    expect(persisted).toMatchObject({
+      pinnedAt: "2026-07-13T09:00:00.000Z",
+      collectionId: "collection-focus",
+    });
+  });
+
+  test("serializes concurrent workspace pin and archive mutations", async () => {
+    const workspaceId = "ws-concurrent-archive";
+    await workspaceRegistry.upsert(
+      createPersistedWorkspaceRecord({
+        workspaceId,
+        projectId: "project-1",
+        cwd: "/tmp/concurrent-archive",
+        kind: "local_checkout",
+        displayName: "main",
+        createdAt: "2026-07-13T08:00:00.000Z",
+        updatedAt: "2026-07-13T08:30:00.000Z",
+      }),
+    );
+
+    await Promise.all([
+      workspaceRegistry.setPinnedAt(workspaceId, "2026-07-13T09:00:00.000Z"),
+      workspaceRegistry.archive(workspaceId, "2026-07-13T09:30:00.000Z"),
+    ]);
+
+    const persisted = await new FileBackedWorkspaceRegistry(
+      path.join(tmpDir, "projects", "workspaces.json"),
+      logger,
+    ).get(workspaceId);
+    expect(persisted).toMatchObject({
+      pinnedAt: "2026-07-13T09:00:00.000Z",
+      archivedAt: "2026-07-13T09:30:00.000Z",
+    });
+  });
+
+  test("does not let a stale workspace metadata upsert undo an archive", async () => {
+    const workspaceId = "ws-stale-archive";
+    await workspaceRegistry.upsert(
+      createPersistedWorkspaceRecord({
+        workspaceId,
+        projectId: "project-1",
+        cwd: "/tmp/stale-archive",
+        kind: "local_checkout",
+        displayName: "main",
+        createdAt: "2026-07-13T08:00:00.000Z",
+        updatedAt: "2026-07-13T08:30:00.000Z",
+      }),
+    );
+    const staleMetadata = await workspaceRegistry.get(workspaceId);
+    expect(staleMetadata).not.toBeNull();
+
+    await workspaceRegistry.archive(workspaceId, "2026-07-13T09:00:00.000Z");
+    await workspaceRegistry.upsert({
+      ...staleMetadata!,
+      displayName: "feature/refreshed",
+      updatedAt: "2026-07-13T09:30:00.000Z",
+    });
+
+    expect(await workspaceRegistry.get(workspaceId)).toMatchObject({
+      displayName: "feature/refreshed",
+      archivedAt: "2026-07-13T09:00:00.000Z",
+    });
+  });
+
+  test("does not let a stale workspace metadata upsert undo a title change", async () => {
+    const workspaceId = "ws-stale-title";
+    await workspaceRegistry.upsert(
+      createPersistedWorkspaceRecord({
+        workspaceId,
+        projectId: "project-1",
+        cwd: "/tmp/stale-title",
+        kind: "local_checkout",
+        displayName: "main",
+        title: "Old title",
+        createdAt: "2026-07-13T08:00:00.000Z",
+        updatedAt: "2026-07-13T08:30:00.000Z",
+      }),
+    );
+    const staleMetadata = await workspaceRegistry.get(workspaceId);
+    expect(staleMetadata).not.toBeNull();
+
+    await workspaceRegistry.setTitle(workspaceId, "User title", "2026-07-13T09:00:00.000Z");
+    await workspaceRegistry.setTitle(workspaceId, "Generated title", "2026-07-13T09:15:00.000Z", {
+      expectedCurrentTitles: [null, "Prompt title"],
+    });
+    await workspaceRegistry.upsert({
+      ...staleMetadata!,
+      branch: "feature/refreshed",
+      updatedAt: "2026-07-13T09:30:00.000Z",
+    });
+
+    expect(await workspaceRegistry.get(workspaceId)).toMatchObject({
+      title: "User title",
+      branch: "feature/refreshed",
+    });
+  });
+
+  test("does not let a stale project metadata upsert undo an archive", async () => {
+    const projectId = "project-stale-archive";
+    await projectRegistry.upsert(
+      createPersistedProjectRecord({
+        projectId,
+        rootPath: "/tmp/project-stale-archive",
+        kind: "git",
+        displayName: "project-stale-archive",
+        createdAt: "2026-07-13T08:00:00.000Z",
+        updatedAt: "2026-07-13T08:30:00.000Z",
+      }),
+    );
+    const staleMetadata = await projectRegistry.get(projectId);
+    expect(staleMetadata).not.toBeNull();
+
+    await projectRegistry.archive(projectId, "2026-07-13T09:00:00.000Z");
+    await projectRegistry.upsert({
+      ...staleMetadata!,
+      displayName: "project-refreshed",
+      updatedAt: "2026-07-13T09:30:00.000Z",
+    });
+
+    expect(await projectRegistry.get(projectId)).toMatchObject({
+      displayName: "project-refreshed",
+      archivedAt: "2026-07-13T09:00:00.000Z",
+    });
+  });
+
+  test("does not let a stale project metadata upsert undo a custom name change", async () => {
+    const projectId = "project-stale-name";
+    await projectRegistry.upsert(
+      createPersistedProjectRecord({
+        projectId,
+        rootPath: "/tmp/project-stale-name",
+        kind: "git",
+        displayName: "project-stale-name",
+        customName: "Old name",
+        createdAt: "2026-07-13T08:00:00.000Z",
+        updatedAt: "2026-07-13T08:30:00.000Z",
+      }),
+    );
+    const staleMetadata = await projectRegistry.get(projectId);
+    expect(staleMetadata).not.toBeNull();
+
+    await projectRegistry.setCustomName(projectId, "User name", "2026-07-13T09:00:00.000Z");
+    await projectRegistry.upsert({
+      ...staleMetadata!,
+      displayName: "project-refreshed",
+      updatedAt: "2026-07-13T09:30:00.000Z",
+    });
+
+    expect(await projectRegistry.get(projectId)).toMatchObject({
+      customName: "User name",
+      displayName: "project-refreshed",
+    });
+  });
+
+  test("loads once when the first record mutations start concurrently", async () => {
+    const createWorkspace = (workspaceId: string) =>
+      createPersistedWorkspaceRecord({
+        workspaceId,
+        projectId: "project-1",
+        cwd: `/tmp/${workspaceId}`,
+        kind: "local_checkout",
+        displayName: workspaceId,
+        createdAt: "2026-07-13T08:00:00.000Z",
+        updatedAt: "2026-07-13T08:30:00.000Z",
+      });
+    const uninitialized = new FileBackedWorkspaceRegistry(
+      path.join(tmpDir, "projects", "concurrent-load.json"),
+      logger,
+    );
+
+    await Promise.all([
+      uninitialized.upsert(createWorkspace("ws-first-load-a")),
+      uninitialized.upsert(createWorkspace("ws-first-load-b")),
+    ]);
+
+    const reloaded = new FileBackedWorkspaceRegistry(
+      path.join(tmpDir, "projects", "concurrent-load.json"),
+      logger,
+    );
+    expect((await reloaded.list()).map((record) => record.workspaceId).sort()).toEqual([
+      "ws-first-load-a",
+      "ws-first-load-b",
+    ]);
   });
 
   test("PIN: two checkouts of the same git remote collapse into a single project record", async () => {

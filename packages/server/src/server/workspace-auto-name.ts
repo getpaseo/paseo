@@ -11,7 +11,11 @@ import {
 } from "./paseo-worktree-service.js";
 import type { GitMutationService } from "./session/git-mutation/git-mutation-service.js";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
-import type { PersistedWorkspaceRecord, WorkspaceRegistry } from "./workspace-registry.js";
+import {
+  type PersistedWorkspaceRecord,
+  setWorkspaceRegistryTitle,
+  type WorkspaceRegistry,
+} from "./workspace-registry.js";
 import {
   generateBranchNameFromFirstAgentContext,
   type GeneratedWorkspaceName,
@@ -24,7 +28,7 @@ type CurrentSelection = GenerateBranchNameFromFirstAgentContextOptions["currentS
 
 interface WorkspaceAutoNameOptions {
   agentManager: AgentManager;
-  workspaceRegistry: Pick<WorkspaceRegistry, "get" | "upsert">;
+  workspaceRegistry: Pick<WorkspaceRegistry, "get" | "setTitle" | "upsert">;
   workspaceGitService: WorkspaceGitService;
   providerSnapshotManager: ProviderSnapshotManager;
   readDaemonConfig: () => StructuredGenerationDaemonConfig;
@@ -41,7 +45,7 @@ interface ScheduleContext {
 
 export class WorkspaceAutoName {
   private readonly agentManager: AgentManager;
-  private readonly workspaceRegistry: Pick<WorkspaceRegistry, "get" | "upsert">;
+  private readonly workspaceRegistry: Pick<WorkspaceRegistry, "get" | "setTitle" | "upsert">;
   private readonly workspaceGitService: WorkspaceGitService;
   private readonly providerSnapshotManager: ProviderSnapshotManager;
   private readonly readDaemonConfig: () => StructuredGenerationDaemonConfig;
@@ -183,15 +187,16 @@ export class WorkspaceAutoName {
     if (!current) {
       return;
     }
-    let title = current.title;
-    if (!title || (input.promptTitle && title === input.promptTitle)) {
-      title = input.title;
+    const updatedAt = new Date().toISOString();
+    if (input.branch) {
+      await this.workspaceRegistry.upsert({
+        ...current,
+        branch: input.branch,
+        updatedAt,
+      });
     }
-    await this.workspaceRegistry.upsert({
-      ...current,
-      title,
-      ...(input.branch ? { branch: input.branch } : {}),
-      updatedAt: new Date().toISOString(),
+    await setWorkspaceRegistryTitle(this.workspaceRegistry, workspaceId, input.title, updatedAt, {
+      expectedCurrentTitles: input.promptTitle ? [null, input.promptTitle] : [null],
     });
   }
 

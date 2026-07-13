@@ -1,11 +1,17 @@
 import { beforeAll, describe, expect, it } from "vitest";
+import { QueryClient } from "@tanstack/react-query";
 import type {
   DaemonClient,
   FetchAgentHistoryEntry,
   FetchAgentHistoryOptions,
 } from "@getpaseo/client/internal/daemon-client";
-import type { AgentHistoryClient, AgentHistoryHost } from "./use-agent-history";
-import { allAgentHistoryQueryKey } from "./agent-history-query-key";
+import type { AgentHistoryClient, AgentHistoryHost } from "./agent-history-fetch";
+import {
+  agentHistoryQueryKey,
+  allAgentHistoryQueryKey,
+  invalidateAgentHistoryQueries,
+  invalidateAgentHistoryQueriesIfPinChanged,
+} from "./agent-history-query-key";
 
 (
   globalThis as unknown as {
@@ -13,13 +19,13 @@ import { allAgentHistoryQueryKey } from "./agent-history-query-key";
   }
 ).__DEV__ = false;
 
-type UseAgentHistoryModule = typeof import("./use-agent-history");
+type AgentHistoryFetchModule = typeof import("./agent-history-fetch");
 
-let fetchAgentHistoryBatch: UseAgentHistoryModule["fetchAgentHistoryBatch"];
-let fetchAgentHistoryPage: UseAgentHistoryModule["fetchAgentHistoryPage"];
+let fetchAgentHistoryBatch: AgentHistoryFetchModule["fetchAgentHistoryBatch"];
+let fetchAgentHistoryPage: AgentHistoryFetchModule["fetchAgentHistoryPage"];
 
 beforeAll(async () => {
-  const module = await import("./use-agent-history");
+  const module = await import("./agent-history-fetch");
   fetchAgentHistoryBatch = module.fetchAgentHistoryBatch;
   fetchAgentHistoryPage = module.fetchAgentHistoryPage;
 });
@@ -134,13 +140,66 @@ function historyEntry(input: {
 }
 
 describe("fetchAgentHistoryPage", () => {
+  it("invalidates both single-host and aggregated History queries after a live pin update", async () => {
+    const queryClient = new QueryClient();
+    const singleHostKey = agentHistoryQueryKey("server-a", {
+      filter: { archiveState: "all", includeArchived: true },
+      sort: [{ key: "pinned", direction: "desc" }],
+    });
+    const allHostsKey = allAgentHistoryQueryKey(["server-a", "server-b"]);
+    queryClient.setQueryData(singleHostKey, { pages: [] });
+    queryClient.setQueryData(allHostsKey, { pages: [] });
+
+    await invalidateAgentHistoryQueries(queryClient, "server-a");
+
+    expect(queryClient.getQueryState(singleHostKey)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(allHostsKey)?.isInvalidated).toBe(true);
+  });
+
+  it("invalidates History when an unseen archived agent is unpinned", async () => {
+    const queryClient = new QueryClient();
+    const singleHostKey = agentHistoryQueryKey("server-a", {
+      filter: { archiveState: "archived", includeArchived: true },
+      sort: [{ key: "pinned", direction: "desc" }],
+    });
+    const allHostsKey = allAgentHistoryQueryKey(["server-a", "server-b"]);
+    queryClient.setQueryData(singleHostKey, { pages: [] });
+    queryClient.setQueryData(allHostsKey, { pages: [] });
+
+    await invalidateAgentHistoryQueriesIfPinChanged(queryClient, "server-a", undefined, null);
+
+    expect(queryClient.getQueryState(singleHostKey)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(allHostsKey)?.isInvalidated).toBe(true);
+  });
+
   it("builds the all-host query key independent of host order", () => {
     expect(allAgentHistoryQueryKey(["server-b", "server-a"])).toEqual(
       allAgentHistoryQueryKey(["server-a", "server-b"]),
     );
   });
 
-  it("requests the first page with the default limit and updated_at descending sort", async () => {
+  it("isolates cursors for different server-side filters and sorts", () => {
+    const recency = {
+      filter: { archiveState: "all" as const, includeArchived: true },
+      sort: [
+        { key: "pinned" as const, direction: "desc" as const },
+        { key: "updated_at" as const, direction: "desc" as const },
+      ],
+    };
+    const archived = {
+      filter: { archiveState: "archived" as const, includeArchived: true },
+      sort: recency.sort,
+    };
+
+    expect(agentHistoryQueryKey("server-a", recency)).not.toEqual(
+      agentHistoryQueryKey("server-a", archived),
+    );
+    expect(allAgentHistoryQueryKey(["server-a"], recency)).not.toEqual(
+      allAgentHistoryQueryKey(["server-a"], archived),
+    );
+  });
+
+  it("requests the first page with all statuses and compound pinned recency sort", async () => {
     const client = createClient([
       historyPayload({
         entries: [
@@ -160,7 +219,11 @@ describe("fetchAgentHistoryPage", () => {
 
     expect(client.calls).toEqual([
       {
-        sort: [{ key: "updated_at", direction: "desc" }],
+        filter: { archiveState: "all", includeArchived: true },
+        sort: [
+          { key: "pinned", direction: "desc" },
+          { key: "updated_at", direction: "desc" },
+        ],
         page: { limit: 200 },
       } satisfies FetchAgentHistoryOptions,
     ]);
@@ -189,9 +252,40 @@ describe("fetchAgentHistoryPage", () => {
     await fetchAgentHistoryPage({ client, serverId: "server-1", cursor: "cursor-2" });
 
     expect(client.calls.at(-1)).toEqual({
-      sort: [{ key: "updated_at", direction: "desc" }],
+      filter: { archiveState: "all", includeArchived: true },
+      sort: [
+        { key: "pinned", direction: "desc" },
+        { key: "updated_at", direction: "desc" },
+      ],
       page: { limit: 200, cursor: "cursor-2" },
     } satisfies FetchAgentHistoryOptions);
+  });
+
+  it("omits the pinned sort key for a host without the pinning capability", async () => {
+    const client = createClient([
+      historyPayload({
+        entries: [
+          historyEntry({
+            id: "legacy-host-history",
+            cwd: "/repo",
+            updatedAt: "2026-04-01T10:00:00.000Z",
+          }),
+        ],
+      }),
+    ]);
+
+    await fetchAgentHistoryPage({
+      client,
+      serverId: "legacy-server",
+      cursor: null,
+      supportsPinning: false,
+    });
+
+    expect(client.calls[0]).toEqual({
+      filter: { archiveState: "all", includeArchived: true },
+      sort: [{ key: "updated_at", direction: "desc" }],
+      page: { limit: 200 },
+    });
   });
 
   it("maps daemon history entries into aggregated agents tagged with the requested server", async () => {
@@ -318,10 +412,71 @@ describe("fetchAgentHistoryPage", () => {
     expect(serverAClient.calls).toEqual([]);
     expect(serverBClient.calls).toEqual([
       {
-        sort: [{ key: "updated_at", direction: "desc" }],
+        filter: { archiveState: "all", includeArchived: true },
+        sort: [
+          { key: "pinned", direction: "desc" },
+          { key: "updated_at", direction: "desc" },
+        ],
         page: { limit: 200, cursor: "cursor-b" },
       } satisfies FetchAgentHistoryOptions,
     ]);
+  });
+
+  it("passes normalized filters and merges hosts using the selected comparator", async () => {
+    const serverAClient = createClient([
+      historyPayload({
+        entries: [
+          historyEntry({
+            id: "zulu",
+            cwd: "/repo/a",
+            updatedAt: "2026-04-02T10:00:00.000Z",
+            title: "Zulu",
+          }),
+        ],
+      }),
+    ]);
+    const serverBClient = createClient([
+      historyPayload({
+        entries: [
+          historyEntry({
+            id: "alpha",
+            cwd: "/repo/b",
+            updatedAt: "2026-04-01T10:00:00.000Z",
+            title: "Alpha",
+          }),
+        ],
+      }),
+    ]);
+    const query = {
+      filter: {
+        archiveState: "active" as const,
+        includeArchived: false,
+        projectKeys: ["project-a"],
+        updatedAfter: "2026-04-01T00:00:00.000Z",
+      },
+      sort: [
+        { key: "pinned" as const, direction: "desc" as const },
+        { key: "title" as const, direction: "asc" as const },
+      ],
+    };
+
+    const page = await fetchAgentHistoryBatch({
+      hosts: [
+        { serverId: "server-a", serverLabel: "MacBook", client: serverAClient },
+        { serverId: "server-b", serverLabel: "Linux box", client: serverBClient },
+      ],
+      cursorByServerId: null,
+      query,
+      sortMode: "alphabetical",
+    });
+
+    expect(page.agents.map((item) => item.id)).toEqual(["alpha", "zulu"]);
+    expect(serverAClient.calls[0]).toEqual({
+      filter: query.filter,
+      sort: query.sort,
+      page: { limit: 200 },
+    });
+    expect(serverBClient.calls[0]).toEqual(serverAClient.calls[0]);
   });
 
   it("keeps fulfilled host history when another host fails", async () => {

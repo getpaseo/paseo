@@ -107,6 +107,32 @@ function matchesAgentStructuralFilter(
   return true;
 }
 
+function matchesAgentArchiveFilter(
+  agent: AgentSnapshotPayload,
+  filter: AgentUpdatesFilter | undefined,
+): boolean {
+  switch (filter?.archiveState) {
+    case "active":
+      return !agent.archivedAt;
+    case "archived":
+      return Boolean(agent.archivedAt);
+    case "all":
+      return true;
+    default:
+      return (filter?.includeArchived ?? false) || !agent.archivedAt;
+  }
+}
+
+function matchesAgentUpdatedAfter(
+  agent: AgentSnapshotPayload,
+  filter: AgentUpdatesFilter | undefined,
+): boolean {
+  if (!filter?.updatedAfter) return true;
+  const updatedAfter = Date.parse(filter.updatedAfter);
+  const updatedAt = Date.parse(agent.updatedAt);
+  return !Number.isNaN(updatedAfter) && !Number.isNaN(updatedAt) && updatedAt > updatedAfter;
+}
+
 /**
  * Pure predicate shared by the live subscription stream and the snapshot listing
  * pager: does an agent (with its resolved project placement) satisfy a
@@ -128,10 +154,8 @@ export function matchesAgentUpdatesFilter(input: {
     }
   }
 
-  const includeArchived = filter?.includeArchived ?? false;
-  if (!includeArchived && agent.archivedAt) {
-    return false;
-  }
+  if (!matchesAgentArchiveFilter(agent, filter)) return false;
+  if (!matchesAgentUpdatedAfter(agent, filter)) return false;
 
   if (filter && !agentThinkingOptionMatchesFilter(agent, filter)) {
     return false;
@@ -195,7 +219,7 @@ export function createAgentUpdatesService(deps: AgentUpdatesServiceDeps): AgentU
         const snapshotUpdatedAt = options?.snapshotUpdatedAtByAgentId?.get(payload.agent.id);
         if (typeof snapshotUpdatedAt === "number") {
           const updateUpdatedAt = Date.parse(payload.agent.updatedAt);
-          if (!Number.isNaN(updateUpdatedAt) && updateUpdatedAt <= snapshotUpdatedAt) {
+          if (!Number.isNaN(updateUpdatedAt) && updateUpdatedAt < snapshotUpdatedAt) {
             continue;
           }
         }

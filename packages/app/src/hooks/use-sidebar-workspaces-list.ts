@@ -7,6 +7,7 @@ import { fetchAllWorkspaceDescriptors } from "@/projects/workspace-fetching";
 import { getHostRuntimeStore, useHostRegistryLoaded, useHosts } from "@/runtime/host-runtime";
 import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
 import { useSidebarViewStore } from "@/stores/sidebar-view-store";
+import { useSidebarWorkspaceVisibilityStore } from "@/stores/sidebar-workspace-visibility-store";
 import { shouldSuppressWorkspaceForLocalArchive } from "@/contexts/session-workspace-upserts";
 import {
   buildSidebarWorkspacePlacementModel,
@@ -64,6 +65,9 @@ export function useSidebarWorkspacesList(options?: {
   const storeHostFilters = useSidebarViewStore((state) => state.hostFilters);
   const hostFilters = options?.hostFilters ?? storeHostFilters;
   const reconcileHostFilters = useSidebarViewStore((state) => state.reconcileHostFilters);
+  const reconcileHiddenWorkspaceKeys = useSidebarWorkspaceVisibilityStore(
+    (state) => state.reconcileWorkspaceKeys,
+  );
   const isActive = options?.enabled !== false;
 
   const serverIds = useMemo(() => {
@@ -94,6 +98,22 @@ export function useSidebarWorkspacesList(options?: {
     (state) => serverIds.filter((id) => state.sessions[id]?.hasHydratedWorkspaces ?? false),
     shallow,
   );
+  const allHydratedServerIds = useStoreWithEqualityFn(
+    useSessionStore,
+    (state) => allServerIds.filter((id) => state.sessions[id]?.hasHydratedWorkspaces ?? false),
+    shallow,
+  );
+  const allWorkspaceKeys = useStoreWithEqualityFn(
+    useSessionStore,
+    (state) =>
+      allServerIds.flatMap((serverId) =>
+        Array.from(
+          state.sessions[serverId]?.workspaces.values() ?? [],
+          (workspace) => `${serverId}:${workspace.id}`,
+        ),
+      ),
+    shallow,
+  );
 
   const hostProjects = useHostProjects(serverIds);
 
@@ -110,6 +130,20 @@ export function useSidebarWorkspacesList(options?: {
     sidebarModel.workspaces.length > 0 ? sidebarModel.workspaces : EMPTY_WORKSPACES;
   const projectNamesByKey =
     sidebarModel.projectNamesByKey.size > 0 ? sidebarModel.projectNamesByKey : EMPTY_PROJECT_NAMES;
+
+  useEffect(() => {
+    if (!hostRegistryLoaded) return;
+    if (allServerIds.length > 0 && allHydratedServerIds.length !== allServerIds.length) {
+      return;
+    }
+    reconcileHiddenWorkspaceKeys(allWorkspaceKeys);
+  }, [
+    allHydratedServerIds.length,
+    allServerIds.length,
+    allWorkspaceKeys,
+    hostRegistryLoaded,
+    reconcileHiddenWorkspaceKeys,
+  ]);
 
   useEffect(() => {
     const orderStore = useSidebarOrderStore.getState();
@@ -136,9 +170,10 @@ export function useSidebarWorkspacesList(options?: {
       const client = runtime.getClient(serverId);
       if (!client) continue;
       void (async () => {
+        const snapshotToken = useSessionStore.getState().beginWorkspaceSnapshot(serverId);
         const next = new Map<string, WorkspaceDescriptor>();
         try {
-          const { workspaces, emptyProjects } = await fetchAllWorkspaceDescriptors({
+          const { workspaces, collections, emptyProjects } = await fetchAllWorkspaceDescriptors({
             client,
             sort: [{ key: "activity_at", direction: "desc" }],
           });
@@ -149,10 +184,18 @@ export function useSidebarWorkspacesList(options?: {
             next.set(workspace.id, workspace);
           }
           const store = useSessionStore.getState();
-          store.setWorkspaces(serverId, next);
-          // Keep parents with no workspaces yet, so a manual refresh doesn't drop
-          // a freshly-added project from the sidebar.
-          store.setEmptyProjects(serverId, emptyProjects);
+          const didCommit = store.commitWorkspaceSnapshot(
+            serverId,
+            {
+              workspaces: next,
+              workspaceCollections: collections,
+              // Keep parents with no workspaces yet, so a manual refresh doesn't drop
+              // a freshly-added project from the sidebar.
+              emptyProjects,
+            },
+            snapshotToken,
+          );
+          if (!didCommit) return;
           store.setHasHydratedWorkspaces(serverId, true);
         } catch (error) {
           console.error("[WorkspaceFetch][sidebar-refresh] failed", {

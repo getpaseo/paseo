@@ -11,6 +11,8 @@ import {
   type PersistedWorkspaceRecord,
   type ProjectRegistry,
   type WorkspaceRegistry,
+  unarchiveProjectRegistryRecord,
+  unarchiveWorkspaceRegistryRecord,
 } from "../../workspace-registry.js";
 import type { WorkspaceGitService } from "../../workspace-git-service.js";
 import type { CreatePaseoWorktreeWorkflowResult } from "../../worktree-session.js";
@@ -109,6 +111,11 @@ export function createWorkspaceProvisioningService(deps: {
     };
   }
 
+  async function persistActiveProject(project: PersistedProjectRecord): Promise<void> {
+    await projectRegistry.upsert(project);
+    await unarchiveProjectRegistryRecord(projectRegistry, project.projectId, project.updatedAt);
+  }
+
   async function reclassifyOrUnarchiveWorkspaceForDirectory(input: {
     workspace: PersistedWorkspaceRecord;
     project: PersistedProjectRecord | null;
@@ -131,12 +138,12 @@ export function createWorkspaceProvisioningService(deps: {
       input.workspace.displayName === displayName
     ) {
       if (!input.project) {
-        await projectRegistry.upsert(projectRecord);
+        await persistActiveProject(projectRecord);
       }
       return ensureWorkspaceRecordUnarchived(input.workspace);
     }
 
-    await projectRegistry.upsert(projectRecord);
+    await persistActiveProject(projectRecord);
 
     const nextWorkspace = {
       ...input.workspace,
@@ -148,7 +155,8 @@ export function createWorkspaceProvisioningService(deps: {
       updatedAt: timestamp,
     };
     await workspaceRegistry.upsert(nextWorkspace);
-    return nextWorkspace;
+    await unarchiveWorkspaceRegistryRecord(workspaceRegistry, nextWorkspace.workspaceId, timestamp);
+    return (await workspaceRegistry.get(nextWorkspace.workspaceId)) ?? nextWorkspace;
   }
 
   async function findOrCreateWorkspaceForDirectory(cwd: string): Promise<PersistedWorkspaceRecord> {
@@ -173,7 +181,7 @@ export function createWorkspaceProvisioningService(deps: {
           membership,
           timestamp,
         });
-        await projectRegistry.upsert(projectRecord);
+        await persistActiveProject(projectRecord);
         const workspaceRecord = createPersistedWorkspaceRecord({
           workspaceId: generateWorkspaceId(),
           projectId: projectRecord.projectId,
@@ -222,7 +230,7 @@ export function createWorkspaceProvisioningService(deps: {
       membership,
       timestamp,
     });
-    await projectRegistry.upsert(projectRecord);
+    await persistActiveProject(projectRecord);
 
     const workspaceRecord = createPersistedWorkspaceRecord({
       workspaceId: generateWorkspaceId(),
@@ -246,8 +254,8 @@ export function createWorkspaceProvisioningService(deps: {
       membership,
       timestamp: new Date().toISOString(),
     });
-    await projectRegistry.upsert(projectRecord);
-    return projectRecord;
+    await persistActiveProject(projectRecord);
+    return (await projectRegistry.get(projectRecord.projectId)) ?? projectRecord;
   }
 
   async function ensureWorkspaceRecordUnarchived(
@@ -261,15 +269,15 @@ export function createWorkspaceProvisioningService(deps: {
     const timestamp = new Date().toISOString();
     let unarchivedWorkspace = workspace;
     if (workspace.archivedAt) {
-      unarchivedWorkspace = { ...workspace, archivedAt: null, updatedAt: timestamp };
-      await workspaceRegistry.upsert(unarchivedWorkspace);
-    }
-    if (project?.archivedAt) {
-      await projectRegistry.upsert({
-        ...project,
+      await unarchiveWorkspaceRegistryRecord(workspaceRegistry, workspace.workspaceId, timestamp);
+      unarchivedWorkspace = (await workspaceRegistry.get(workspace.workspaceId)) ?? {
+        ...workspace,
         archivedAt: null,
         updatedAt: timestamp,
-      });
+      };
+    }
+    if (project?.archivedAt) {
+      await unarchiveProjectRegistryRecord(projectRegistry, project.projectId, timestamp);
     }
     return unarchivedWorkspace;
   }

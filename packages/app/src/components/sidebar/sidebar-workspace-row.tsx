@@ -404,7 +404,7 @@ function WorkspaceRowTrailingActions({
           <SidebarWorkspaceTrailingActionOverlay visible={showKebabInSlot}>
             {onArchive ? (
               <SidebarWorkspaceMenu
-                workspaceKey={workspace.workspaceKey}
+                workspace={workspace}
                 onCopyPath={onCopyPath}
                 onCopyBranchName={onCopyBranchName}
                 onRename={onRename}

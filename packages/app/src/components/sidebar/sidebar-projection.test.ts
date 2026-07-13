@@ -61,7 +61,9 @@ function projectionInput(options?: {
     projects: [makeProject([pinned.placement, unpinned.placement])],
     pinnedKeys: {
       pinnedWorkspaceKeys: [pinned.placement.workspaceKey],
-      pinnedAtByKey: { [pinned.placement.workspaceKey]: "2026-07-12T12:00:00.000Z" },
+      pinnedAtByKey: {
+        [pinned.placement.workspaceKey]: Date.parse("2026-07-12T12:00:00.000Z"),
+      },
     },
     workspaceEntriesByKey: new Map([
       [pinned.entry.workspaceKey, pinned.entry],

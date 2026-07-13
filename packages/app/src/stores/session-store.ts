@@ -24,6 +24,7 @@ import type {
   ServerInfoStatusPayload,
   ProjectPlacementPayload,
   ServerCapabilities,
+  WorkspaceCollectionPayload,
   WorkspaceDescriptorPayload,
   WorkspaceProjectDescriptorPayload,
 } from "@getpaseo/protocol/messages";
@@ -118,6 +119,7 @@ export interface Agent {
   attentionReason?: "finished" | "error" | "permission" | null;
   attentionTimestamp?: Date | null;
   archivedAt?: Date | null;
+  pinnedAt?: Date | null;
   parentAgentId: string | null;
   labels: Record<string, string>;
   projectPlacement?: ProjectPlacementPayload | null;
@@ -134,9 +136,12 @@ export interface WorkspaceDescriptor {
   workspaceKind: WorkspaceDescriptorPayload["workspaceKind"];
   name: string;
   title?: string | null;
-  pinnedAt?: string | null;
   status: WorkspaceDescriptorPayload["status"];
   statusEnteredAt: Date | null;
+  createdAt?: Date | null;
+  activityAt?: Date | null;
+  pinnedAt?: Date | null;
+  collectionId?: string | null;
   archivingAt: string | null;
   diffStat: { additions: number; deletions: number } | null;
   scripts: WorkspaceDescriptorPayload["scripts"];
@@ -145,14 +150,64 @@ export interface WorkspaceDescriptor {
   project?: ProjectPlacementPayload;
 }
 
+export interface WorkspaceCollection {
+  id: string;
+  name: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+function normalizeOptionalDate(value: string | null | undefined): Date | null {
+  if (!value) {
+    return null;
+  }
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+export function normalizeWorkspaceCollection(
+  payload: WorkspaceCollectionPayload,
+): WorkspaceCollection {
+  return {
+    id: payload.id,
+    name: payload.name,
+    createdAt: new Date(payload.createdAt),
+    updatedAt: new Date(payload.updatedAt),
+  };
+}
+
+function areWorkspaceCollectionMapsEqual(
+  current: ReadonlyMap<string, WorkspaceCollection>,
+  next: ReadonlyMap<string, WorkspaceCollection>,
+): boolean {
+  if (current.size !== next.size) {
+    return false;
+  }
+  for (const [id, collection] of next) {
+    const existing = current.get(id);
+    if (!existing || !equal(existing, collection)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function areEmptyProjectMapsEqual(
+  current: ReadonlyMap<string, EmptyProjectDescriptor>,
+  next: ReadonlyMap<string, EmptyProjectDescriptor>,
+): boolean {
+  if (current.size !== next.size) return false;
+  for (const [projectId, project] of next) {
+    const existing = current.get(projectId);
+    if (!existing || !equal(existing, project)) return false;
+  }
+  return true;
+}
+
 export function normalizeWorkspaceDescriptor(
   payload: WorkspaceDescriptorPayload,
 ): WorkspaceDescriptor {
-  const statusEnteredAtRaw = payload.statusEnteredAt;
-  const statusEnteredAt: Date | null =
-    typeof statusEnteredAtRaw === "string" && statusEnteredAtRaw.length > 0
-      ? new Date(statusEnteredAtRaw)
-      : null;
+  const statusEnteredAt = normalizeOptionalDate(payload.statusEnteredAt);
   return {
     id: normalizeWorkspaceOpaqueId(payload.id) ?? payload.id,
     projectId: payload.projectId,
@@ -167,9 +222,14 @@ export function normalizeWorkspaceDescriptor(
     workspaceKind: payload.workspaceKind,
     name: payload.name,
     title: payload.title ?? null,
-    pinnedAt: payload.pinnedAt ?? null,
     status: payload.status,
     statusEnteredAt,
+    // COMPAT(workspaceOrganization): added in v0.1.108, remove after 2027-01-13.
+    // Organization metadata is absent on pre-feature daemons.
+    createdAt: normalizeOptionalDate(payload.createdAt),
+    activityAt: normalizeOptionalDate(payload.activityAt),
+    pinnedAt: normalizeOptionalDate(payload.pinnedAt),
+    collectionId: payload.collectionId ?? null,
     archivingAt: payload.archivingAt ?? null,
     diffStat: payload.diffStat ?? null,
     scripts: (payload.scripts ?? []).map((s) => Object.assign({}, s)),
@@ -361,6 +421,18 @@ export interface SessionState {
   workspaceAgentActivity: Map<string, WorkspaceAgentActivity>;
   agentDetails: Map<string, Agent>;
   workspaces: Map<string, WorkspaceDescriptor>;
+  workspaceCollections: Map<string, WorkspaceCollection>;
+  // Monotonic client-side revision metadata lets a paginated snapshot replay
+  // workspace/catalog updates that arrive while the snapshot is in flight.
+  workspaceSyncRevision: number;
+  workspaceRevisionById: Map<string, number>;
+  workspaceRemovalRevisionById: Map<string, number>;
+  projectRemovalRevisionById: Map<string, number>;
+  workspaceCollectionsRevision: number;
+  emptyProjectsRevision: number;
+  workspaceSnapshotGeneration: number;
+  lastCommittedWorkspaceSnapshotGeneration: number;
+  workspaceSnapshotSessionId: number;
   // Project parents with no active workspaces, keyed by projectId. The
   // `emptyProjects` name is the existing protocol/store projection.
   emptyProjects: Map<string, EmptyProjectDescriptor>;
@@ -482,8 +554,24 @@ interface SessionStoreActions {
       | Map<string, WorkspaceDescriptor>
       | ((prev: Map<string, WorkspaceDescriptor>) => Map<string, WorkspaceDescriptor>),
   ) => void;
+  setWorkspaceCollections: (serverId: string, collections: Iterable<WorkspaceCollection>) => void;
+  beginWorkspaceSnapshot: (serverId: string) => {
+    baseRevision: number;
+    generation: number;
+    sessionId: number;
+  };
+  commitWorkspaceSnapshot: (
+    serverId: string,
+    snapshot: {
+      workspaces: Map<string, WorkspaceDescriptor>;
+      workspaceCollections: Iterable<WorkspaceCollection>;
+      emptyProjects: Iterable<EmptyProjectDescriptor>;
+    },
+    token: { baseRevision: number; generation: number; sessionId: number },
+  ) => boolean;
   mergeWorkspaces: (serverId: string, workspaces: Iterable<WorkspaceDescriptor>) => void;
   removeWorkspace: (serverId: string, workspaceId: string) => void;
+  removeProjectWorkspaces: (serverId: string, projectId: string) => void;
   setEmptyProjects: (serverId: string, emptyProjects: Iterable<EmptyProjectDescriptor>) => void;
   addEmptyProject: (serverId: string, emptyProject: EmptyProjectDescriptor) => void;
   removeEmptyProject: (serverId: string, projectId: string) => void;
@@ -540,6 +628,8 @@ type SessionStore = SessionStoreState & SessionStoreActions;
 const agentLastActivityCoalescer = createAgentLastActivityCoalescer();
 
 // Helper to create initial session state
+let nextWorkspaceSnapshotSessionId = 1;
+
 function createInitialSessionState(serverId: string, client: DaemonClient): SessionState {
   return {
     serverId,
@@ -565,6 +655,16 @@ function createInitialSessionState(serverId: string, client: DaemonClient): Sess
     workspaceAgentActivity: new Map(),
     agentDetails: new Map(),
     workspaces: new Map(),
+    workspaceCollections: new Map(),
+    workspaceSyncRevision: 0,
+    workspaceRevisionById: new Map(),
+    workspaceRemovalRevisionById: new Map(),
+    projectRemovalRevisionById: new Map(),
+    workspaceCollectionsRevision: 0,
+    emptyProjectsRevision: 0,
+    workspaceSnapshotGeneration: 0,
+    lastCommittedWorkspaceSnapshotGeneration: 0,
+    workspaceSnapshotSessionId: nextWorkspaceSnapshotSessionId++,
     emptyProjects: new Map(),
     restoringWorkspaces: new Map(),
     pendingPermissions: new Map(),
@@ -1243,14 +1343,177 @@ export const useSessionStore = create<SessionStore>()(
           if (session.workspaces === preservedWorkspaces) {
             return prev;
           }
+          const revision = session.workspaceSyncRevision + 1;
+          const workspaceRevisionById = new Map(session.workspaceRevisionById);
+          const workspaceRemovalRevisionById = new Map(session.workspaceRemovalRevisionById);
+          for (const [workspaceId, workspace] of preservedWorkspaces) {
+            if (session.workspaces.get(workspaceId) === workspace) continue;
+            workspaceRevisionById.set(workspaceId, revision);
+            workspaceRemovalRevisionById.delete(workspaceId);
+          }
+          for (const workspaceId of session.workspaces.keys()) {
+            if (preservedWorkspaces.has(workspaceId)) continue;
+            workspaceRevisionById.delete(workspaceId);
+            workspaceRemovalRevisionById.set(workspaceId, revision);
+          }
           return {
             ...prev,
             sessions: {
               ...prev.sessions,
-              [serverId]: { ...session, workspaces: preservedWorkspaces },
+              [serverId]: {
+                ...session,
+                workspaces: preservedWorkspaces,
+                workspaceSyncRevision: revision,
+                workspaceRevisionById,
+                workspaceRemovalRevisionById,
+              },
             },
           };
         });
+      },
+
+      setWorkspaceCollections: (serverId, collections) => {
+        const next = new Map<string, WorkspaceCollection>();
+        for (const collection of collections) {
+          next.set(collection.id, collection);
+        }
+        set((prev) => {
+          const session = prev.sessions[serverId];
+          if (!session) {
+            return prev;
+          }
+          if (areWorkspaceCollectionMapsEqual(session.workspaceCollections, next)) {
+            return prev;
+          }
+          return {
+            ...prev,
+            sessions: {
+              ...prev.sessions,
+              [serverId]: {
+                ...session,
+                workspaceCollections: next,
+                workspaceSyncRevision: session.workspaceSyncRevision + 1,
+                workspaceCollectionsRevision: session.workspaceSyncRevision + 1,
+              },
+            },
+          };
+        });
+      },
+
+      beginWorkspaceSnapshot: (serverId) => {
+        let token = { baseRevision: 0, generation: 0, sessionId: 0 };
+        set((prev) => {
+          const session = prev.sessions[serverId];
+          if (!session) return prev;
+          const generation = session.workspaceSnapshotGeneration + 1;
+          token = {
+            baseRevision: session.workspaceSyncRevision,
+            generation,
+            sessionId: session.workspaceSnapshotSessionId,
+          };
+          return {
+            ...prev,
+            sessions: {
+              ...prev.sessions,
+              [serverId]: { ...session, workspaceSnapshotGeneration: generation },
+            },
+          };
+        });
+        return token;
+      },
+
+      commitWorkspaceSnapshot: (serverId, snapshot, token) => {
+        let applied = false;
+        const incomingCollections = new Map<string, WorkspaceCollection>();
+        for (const collection of snapshot.workspaceCollections) {
+          incomingCollections.set(collection.id, collection);
+        }
+        const incomingEmptyProjects = new Map<string, EmptyProjectDescriptor>();
+        for (const project of snapshot.emptyProjects) {
+          incomingEmptyProjects.set(project.projectId, project);
+        }
+
+        set((prev) => {
+          const session = prev.sessions[serverId];
+          if (!session) return prev;
+          if (token.sessionId !== session.workspaceSnapshotSessionId) return prev;
+          if (token.generation <= session.lastCommittedWorkspaceSnapshotGeneration) return prev;
+          applied = true;
+
+          const replayedWorkspaces = new Map(snapshot.workspaces);
+          for (const [workspaceId, revision] of session.workspaceRevisionById) {
+            if (revision <= token.baseRevision) continue;
+            const workspace = session.workspaces.get(workspaceId);
+            if (workspace) replayedWorkspaces.set(workspaceId, workspace);
+          }
+          for (const [workspaceId, revision] of session.workspaceRemovalRevisionById) {
+            if (revision > token.baseRevision) replayedWorkspaces.delete(workspaceId);
+          }
+          for (const [projectId, revision] of session.projectRemovalRevisionById) {
+            if (revision <= token.baseRevision) continue;
+            for (const [workspaceId, workspace] of replayedWorkspaces) {
+              if (workspace.projectId === projectId) replayedWorkspaces.delete(workspaceId);
+            }
+            incomingEmptyProjects.delete(projectId);
+          }
+
+          const nextWorkspaces = preserveWorkspaceMapIdentity(
+            session.workspaces,
+            replayedWorkspaces,
+          );
+          const nextCollections =
+            session.workspaceCollectionsRevision > token.baseRevision
+              ? session.workspaceCollections
+              : incomingCollections;
+          const nextEmptyProjects =
+            session.emptyProjectsRevision > token.baseRevision
+              ? session.emptyProjects
+              : incomingEmptyProjects;
+
+          const collectionsChanged = !areWorkspaceCollectionMapsEqual(
+            session.workspaceCollections,
+            nextCollections,
+          );
+          const emptyProjectsChanged = !areEmptyProjectMapsEqual(
+            session.emptyProjects,
+            nextEmptyProjects,
+          );
+          const workspaceRevisionById = new Map(
+            Array.from(session.workspaceRevisionById).filter(
+              ([, revision]) => revision > token.baseRevision,
+            ),
+          );
+          const workspaceRemovalRevisionById = new Map(
+            Array.from(session.workspaceRemovalRevisionById).filter(
+              ([, revision]) => revision > token.baseRevision,
+            ),
+          );
+          const projectRemovalRevisionById = new Map(
+            Array.from(session.projectRemovalRevisionById).filter(
+              ([, revision]) => revision > token.baseRevision,
+            ),
+          );
+
+          return {
+            ...prev,
+            sessions: {
+              ...prev.sessions,
+              [serverId]: {
+                ...session,
+                workspaces: nextWorkspaces,
+                workspaceCollections: collectionsChanged
+                  ? nextCollections
+                  : session.workspaceCollections,
+                emptyProjects: emptyProjectsChanged ? nextEmptyProjects : session.emptyProjects,
+                workspaceRevisionById,
+                workspaceRemovalRevisionById,
+                projectRemovalRevisionById,
+                lastCommittedWorkspaceSnapshotGeneration: token.generation,
+              },
+            },
+          };
+        });
+        return applied;
       },
 
       setEmptyProjects: (serverId, emptyProjects) => {
@@ -1270,7 +1533,12 @@ export const useSessionStore = create<SessionStore>()(
             ...prev,
             sessions: {
               ...prev.sessions,
-              [serverId]: { ...session, emptyProjects: next },
+              [serverId]: {
+                ...session,
+                emptyProjects: next,
+                workspaceSyncRevision: session.workspaceSyncRevision + 1,
+                emptyProjectsRevision: session.workspaceSyncRevision + 1,
+              },
             },
           };
         });
@@ -1283,16 +1551,28 @@ export const useSessionStore = create<SessionStore>()(
             return prev;
           }
           const existing = session.emptyProjects.get(emptyProject.projectId);
-          if (existing && equal(existing, emptyProject)) {
+          if (
+            existing &&
+            equal(existing, emptyProject) &&
+            !session.projectRemovalRevisionById.has(emptyProject.projectId)
+          ) {
             return prev;
           }
           const next = new Map(session.emptyProjects);
           next.set(emptyProject.projectId, emptyProject);
+          const projectRemovalRevisionById = new Map(session.projectRemovalRevisionById);
+          projectRemovalRevisionById.delete(emptyProject.projectId);
           return {
             ...prev,
             sessions: {
               ...prev.sessions,
-              [serverId]: { ...session, emptyProjects: next },
+              [serverId]: {
+                ...session,
+                emptyProjects: next,
+                projectRemovalRevisionById,
+                workspaceSyncRevision: session.workspaceSyncRevision + 1,
+                emptyProjectsRevision: session.workspaceSyncRevision + 1,
+              },
             },
           };
         });
@@ -1310,7 +1590,12 @@ export const useSessionStore = create<SessionStore>()(
             ...prev,
             sessions: {
               ...prev.sessions,
-              [serverId]: { ...session, emptyProjects: next },
+              [serverId]: {
+                ...session,
+                emptyProjects: next,
+                workspaceSyncRevision: session.workspaceSyncRevision + 1,
+                emptyProjectsRevision: session.workspaceSyncRevision + 1,
+              },
             },
           };
         });
@@ -1376,12 +1661,14 @@ export const useSessionStore = create<SessionStore>()(
           // A workspace landing in a project means that project is no longer
           // empty: prune any stale empty descriptor so it stops governing the
           // project's rendered metadata.
-          const nextEmptyProjects = new Map(session.emptyProjects);
+          let nextEmptyProjects: Map<string, EmptyProjectDescriptor> | null = null;
           // A descriptor arriving is the success signal for a pending restore:
           // clear it at the source so every entry point converges to "ready".
           let nextRestoring: Map<string, WorkspaceRestoreStatus> | null = null;
           for (const workspace of nextEntries) {
-            if (nextEmptyProjects.delete(workspace.projectId)) {
+            if (session.emptyProjects.has(workspace.projectId)) {
+              nextEmptyProjects ??= new Map(session.emptyProjects);
+              nextEmptyProjects.delete(workspace.projectId);
               changed = true;
             }
             if (session.restoringWorkspaces.has(workspace.id)) {
@@ -1400,6 +1687,16 @@ export const useSessionStore = create<SessionStore>()(
           if (!changed) {
             return prev;
           }
+          const revision = session.workspaceSyncRevision + 1;
+          const workspaceRevisionById = new Map(session.workspaceRevisionById);
+          const workspaceRemovalRevisionById = new Map(session.workspaceRemovalRevisionById);
+          const projectRemovalRevisionById = new Map(session.projectRemovalRevisionById);
+          for (const workspace of nextEntries) {
+            if (session.workspaces.get(workspace.id) === next.get(workspace.id)) continue;
+            workspaceRevisionById.set(workspace.id, revision);
+            workspaceRemovalRevisionById.delete(workspace.id);
+            projectRemovalRevisionById.delete(workspace.projectId);
+          }
           return {
             ...prev,
             sessions: {
@@ -1407,8 +1704,13 @@ export const useSessionStore = create<SessionStore>()(
               [serverId]: {
                 ...session,
                 workspaces: next,
-                emptyProjects: nextEmptyProjects,
+                emptyProjects: nextEmptyProjects ?? session.emptyProjects,
                 restoringWorkspaces: nextRestoring ?? session.restoringWorkspaces,
+                workspaceSyncRevision: revision,
+                workspaceRevisionById,
+                workspaceRemovalRevisionById,
+                projectRemovalRevisionById,
+                emptyProjectsRevision: nextEmptyProjects ? revision : session.emptyProjectsRevision,
               },
             },
           };
@@ -1445,11 +1747,64 @@ export const useSessionStore = create<SessionStore>()(
               nextEmptyProjects.set(emptyProject.projectId, emptyProject);
             }
           }
+          const revision = session.workspaceSyncRevision + 1;
+          const workspaceRevisionById = new Map(session.workspaceRevisionById);
+          workspaceRevisionById.delete(workspaceKey);
+          const workspaceRemovalRevisionById = new Map(session.workspaceRemovalRevisionById);
+          workspaceRemovalRevisionById.set(workspaceKey, revision);
           return {
             ...prev,
             sessions: {
               ...prev.sessions,
-              [serverId]: { ...session, workspaces: next, emptyProjects: nextEmptyProjects },
+              [serverId]: {
+                ...session,
+                workspaces: next,
+                emptyProjects: nextEmptyProjects,
+                workspaceSyncRevision: revision,
+                workspaceRevisionById,
+                workspaceRemovalRevisionById,
+                emptyProjectsRevision:
+                  nextEmptyProjects === session.emptyProjects
+                    ? session.emptyProjectsRevision
+                    : revision,
+              },
+            },
+          };
+        });
+      },
+
+      removeProjectWorkspaces: (serverId, projectId) => {
+        set((prev) => {
+          const session = prev.sessions[serverId];
+          if (!session) return prev;
+          const revision = session.workspaceSyncRevision + 1;
+          const workspaces = new Map(session.workspaces);
+          const workspaceRevisionById = new Map(session.workspaceRevisionById);
+          const workspaceRemovalRevisionById = new Map(session.workspaceRemovalRevisionById);
+          for (const [workspaceId, workspace] of session.workspaces) {
+            if (workspace.projectId !== projectId) continue;
+            workspaces.delete(workspaceId);
+            workspaceRevisionById.delete(workspaceId);
+            workspaceRemovalRevisionById.set(workspaceId, revision);
+          }
+          const emptyProjects = new Map(session.emptyProjects);
+          emptyProjects.delete(projectId);
+          const projectRemovalRevisionById = new Map(session.projectRemovalRevisionById);
+          projectRemovalRevisionById.set(projectId, revision);
+          return {
+            ...prev,
+            sessions: {
+              ...prev.sessions,
+              [serverId]: {
+                ...session,
+                workspaces,
+                emptyProjects,
+                workspaceSyncRevision: revision,
+                workspaceRevisionById,
+                workspaceRemovalRevisionById,
+                projectRemovalRevisionById,
+                emptyProjectsRevision: revision,
+              },
             },
           };
         });

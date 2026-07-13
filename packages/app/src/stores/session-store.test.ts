@@ -5,6 +5,7 @@ import type { WorkspaceDescriptorPayload } from "@getpaseo/protocol/messages";
 
 import {
   normalizeWorkspaceDescriptor,
+  normalizeWorkspaceCollection,
   useSessionStore,
   type WorkspaceDescriptor,
 } from "./session-store";
@@ -48,12 +49,13 @@ function getTestSessionReferences() {
     sessions: state.sessions,
     session,
     workspaces: session.workspaces,
+    workspaceCollections: session.workspaceCollections,
     emptyProjects: session.emptyProjects,
   };
 }
 
 describe("normalizeWorkspaceDescriptor", () => {
-  it("normalizes workspace scripts and invalid activity timestamps", () => {
+  it("normalizes workspace organization timestamps and scripts", () => {
     const scripts = [
       {
         scriptName: "web",
@@ -79,7 +81,10 @@ describe("normalizeWorkspaceDescriptor", () => {
       archivingAt: null,
       status: "running",
       statusEnteredAt: null,
-      activityAt: "not-a-date",
+      createdAt: "2026-04-19T23:59:00.000Z",
+      activityAt: "2026-04-20T00:01:00.000Z",
+      pinnedAt: "2026-04-20T00:02:00.000Z",
+      collectionId: "collection-1",
       diffStat: null,
       scripts,
     });
@@ -98,6 +103,36 @@ describe("normalizeWorkspaceDescriptor", () => {
       },
     ]);
     expect(workspace.scripts).not.toBe(scripts);
+    expect(workspace.createdAt).toEqual(new Date("2026-04-19T23:59:00.000Z"));
+    expect(workspace.activityAt).toEqual(new Date("2026-04-20T00:01:00.000Z"));
+    expect(workspace.pinnedAt).toEqual(new Date("2026-04-20T00:02:00.000Z"));
+    expect(workspace.collectionId).toBe("collection-1");
+  });
+
+  it("maps missing or invalid workspace organization fields to null", () => {
+    const workspace = normalizeWorkspaceDescriptor({
+      id: "1",
+      projectId: "1",
+      projectDisplayName: "Project 1",
+      projectRootPath: "/repo",
+      workspaceDirectory: "/repo",
+      projectKind: "git",
+      workspaceKind: "checkout",
+      name: "main",
+      archivingAt: null,
+      status: "running",
+      statusEnteredAt: null,
+      createdAt: "not-a-date",
+      activityAt: "not-a-date",
+      pinnedAt: null,
+      diffStat: null,
+      scripts: [],
+    });
+
+    expect(workspace.createdAt).toBeNull();
+    expect(workspace.activityAt).toBeNull();
+    expect(workspace.pinnedAt).toBeNull();
+    expect(workspace.collectionId).toBeNull();
   });
 
   it("canonicalizes the workspace directory and treats a blank one as empty", () => {
@@ -262,6 +297,255 @@ describe("normalizeWorkspaceDescriptor", () => {
         mainRepoRoot: null,
       },
     });
+  });
+});
+
+describe("workspace collections", () => {
+  it("normalizes daemon collection timestamps", () => {
+    const collection = normalizeWorkspaceCollection({
+      id: "collection-1",
+      name: "Important",
+      createdAt: "2026-04-20T00:00:00.000Z",
+      updatedAt: "2026-04-20T00:01:00.000Z",
+    });
+
+    expect(collection).toEqual({
+      id: "collection-1",
+      name: "Important",
+      createdAt: new Date("2026-04-20T00:00:00.000Z"),
+      updatedAt: new Date("2026-04-20T00:01:00.000Z"),
+    });
+  });
+
+  it("stores a host-scoped collection catalog and preserves equal state", () => {
+    const store = useSessionStore.getState();
+    initializeTestSession();
+    const collection = normalizeWorkspaceCollection({
+      id: "collection-1",
+      name: "Important",
+      createdAt: "2026-04-20T00:00:00.000Z",
+      updatedAt: "2026-04-20T00:01:00.000Z",
+    });
+
+    store.setWorkspaceCollections("test-server", [collection]);
+    const before = getTestSessionReferences();
+    store.setWorkspaceCollections("test-server", [{ ...collection }]);
+    const after = getTestSessionReferences();
+
+    expect(after.workspaceCollections.get(collection.id)).toEqual(collection);
+    expect(after.sessions).toBe(before.sessions);
+    expect(after.session).toBe(before.session);
+  });
+});
+
+describe("commitWorkspaceSnapshot", () => {
+  it("replays live workspace and catalog changes received during pagination", () => {
+    const store = useSessionStore.getState();
+    initializeTestSession();
+    const original = createWorkspace({ id: "workspace-1", collectionId: null });
+    const removed = createWorkspace({ id: "workspace-removed" });
+    store.setWorkspaces(
+      "test-server",
+      new Map([
+        [original.id, original],
+        [removed.id, removed],
+      ]),
+    );
+    const snapshotToken = store.beginWorkspaceSnapshot("test-server");
+
+    const liveCollection = normalizeWorkspaceCollection({
+      id: "collection-live",
+      name: "Live",
+      createdAt: "2026-07-13T10:00:00.000Z",
+      updatedAt: "2026-07-13T10:01:00.000Z",
+    });
+    store.mergeWorkspaces("test-server", [
+      {
+        ...original,
+        pinnedAt: new Date("2026-07-13T10:02:00.000Z"),
+        collectionId: liveCollection.id,
+      },
+    ]);
+    store.removeWorkspace("test-server", removed.id);
+    store.setWorkspaceCollections("test-server", [liveCollection]);
+
+    const fetched = createWorkspace({ id: "workspace-fetched" });
+    store.commitWorkspaceSnapshot(
+      "test-server",
+      {
+        workspaces: new Map([
+          [original.id, original],
+          [removed.id, removed],
+          [fetched.id, fetched],
+        ]),
+        workspaceCollections: [],
+        emptyProjects: [],
+      },
+      snapshotToken,
+    );
+
+    const session = store.getSession("test-server");
+    expect(session?.workspaces.get(original.id)).toMatchObject({
+      pinnedAt: new Date("2026-07-13T10:02:00.000Z"),
+      collectionId: liveCollection.id,
+    });
+    expect(session?.workspaces.has(removed.id)).toBe(false);
+    expect(session?.workspaces.get(fetched.id)).toEqual(fetched);
+    expect(Array.from(session?.workspaceCollections.values() ?? [])).toEqual([liveCollection]);
+  });
+
+  it("accepts authoritative empty projects after an unrelated live workspace update", () => {
+    const store = useSessionStore.getState();
+    initializeTestSession();
+    const original = createWorkspace({ id: "workspace-1", status: "done" });
+    store.setWorkspaces("test-server", new Map([[original.id, original]]));
+    const snapshotToken = store.beginWorkspaceSnapshot("test-server");
+
+    store.mergeWorkspaces("test-server", [{ ...original, status: "running" }]);
+    const emptyProject = {
+      projectId: "empty-project",
+      projectDisplayName: "Empty project",
+      projectCustomName: null,
+      projectRootPath: "/empty",
+      projectKind: "non_git" as const,
+    };
+    store.commitWorkspaceSnapshot(
+      "test-server",
+      {
+        workspaces: new Map([[original.id, original]]),
+        workspaceCollections: [],
+        emptyProjects: [emptyProject],
+      },
+      snapshotToken,
+    );
+
+    const session = store.getSession("test-server");
+    expect(session?.workspaces.get(original.id)?.status).toBe("running");
+    expect(session?.emptyProjects.get(emptyProject.projectId)).toEqual(emptyProject);
+  });
+
+  it("prevents an older overlapping snapshot from replacing a newer committed snapshot", () => {
+    const store = useSessionStore.getState();
+    initializeTestSession();
+    const original = createWorkspace({ id: "workspace-1", name: "Original" });
+    store.setWorkspaces("test-server", new Map([[original.id, original]]));
+    const olderToken = store.beginWorkspaceSnapshot("test-server");
+    const newerToken = store.beginWorkspaceSnapshot("test-server");
+
+    const newer = { ...original, name: "Newer snapshot" };
+    store.commitWorkspaceSnapshot(
+      "test-server",
+      { workspaces: new Map([[newer.id, newer]]), workspaceCollections: [], emptyProjects: [] },
+      newerToken,
+    );
+    store.commitWorkspaceSnapshot(
+      "test-server",
+      {
+        workspaces: new Map([[original.id, original]]),
+        workspaceCollections: [],
+        emptyProjects: [],
+      },
+      olderToken,
+    );
+
+    expect(store.getSession("test-server")?.workspaces.get(original.id)?.name).toBe(
+      "Newer snapshot",
+    );
+    expect(store.getSession("test-server")?.workspaceRevisionById.size).toBe(0);
+    expect(store.getSession("test-server")?.workspaceRemovalRevisionById.size).toBe(0);
+  });
+
+  it("allows a newer overlapping snapshot to replace an older snapshot that completed first", () => {
+    const store = useSessionStore.getState();
+    initializeTestSession();
+    const original = createWorkspace({ id: "workspace-1", name: "Original" });
+    store.setWorkspaces("test-server", new Map([[original.id, original]]));
+    const olderToken = store.beginWorkspaceSnapshot("test-server");
+    const newerToken = store.beginWorkspaceSnapshot("test-server");
+
+    const older = { ...original, name: "Older snapshot" };
+    const newer = { ...original, name: "Newer snapshot" };
+    store.commitWorkspaceSnapshot(
+      "test-server",
+      { workspaces: new Map([[older.id, older]]), workspaceCollections: [], emptyProjects: [] },
+      olderToken,
+    );
+    store.commitWorkspaceSnapshot(
+      "test-server",
+      { workspaces: new Map([[newer.id, newer]]), workspaceCollections: [], emptyProjects: [] },
+      newerToken,
+    );
+
+    expect(store.getSession("test-server")?.workspaces.get(original.id)?.name).toBe(
+      "Newer snapshot",
+    );
+  });
+
+  it("rejects a snapshot started by a cleared session with the same server id", () => {
+    const store = useSessionStore.getState();
+    initializeTestSession();
+    const staleWorkspace = createWorkspace({ id: "workspace-stale" });
+    const staleToken = store.beginWorkspaceSnapshot("test-server");
+    const staleSessionId = staleToken.sessionId;
+
+    store.clearSession("test-server");
+    initializeTestSession();
+    const replacement = store.getSession("test-server");
+    expect(replacement?.workspaceSnapshotSessionId).not.toBe(staleSessionId);
+
+    const didCommit = store.commitWorkspaceSnapshot(
+      "test-server",
+      {
+        workspaces: new Map([[staleWorkspace.id, staleWorkspace]]),
+        workspaceCollections: [],
+        emptyProjects: [],
+      },
+      staleToken,
+    );
+    if (didCommit) store.setHasHydratedWorkspaces("test-server", true);
+
+    const afterStaleCompletion = store.getSession("test-server");
+    expect(didCommit).toBe(false);
+    expect(afterStaleCompletion?.workspaces.size).toBe(0);
+    expect(afterStaleCompletion?.hasHydratedWorkspaces).toBe(false);
+  });
+
+  it("keeps a concurrently removed project tombstoned when a delayed page contains another child", () => {
+    const store = useSessionStore.getState();
+    initializeTestSession();
+    const firstChild = createWorkspace({ id: "workspace-first", projectId: "project-removed" });
+    store.setWorkspaces("test-server", new Map([[firstChild.id, firstChild]]));
+    const snapshotToken = store.beginWorkspaceSnapshot("test-server");
+
+    store.removeProjectWorkspaces("test-server", "project-removed");
+    const delayedChild = createWorkspace({
+      id: "workspace-delayed",
+      projectId: "project-removed",
+    });
+    store.commitWorkspaceSnapshot(
+      "test-server",
+      {
+        workspaces: new Map([
+          [firstChild.id, firstChild],
+          [delayedChild.id, delayedChild],
+        ]),
+        workspaceCollections: [],
+        emptyProjects: [
+          {
+            projectId: "project-removed",
+            projectDisplayName: "Removed",
+            projectCustomName: null,
+            projectRootPath: "/removed",
+            projectKind: "non_git",
+          },
+        ],
+      },
+      snapshotToken,
+    );
+
+    const session = store.getSession("test-server");
+    expect(session?.workspaces.size).toBe(0);
+    expect(session?.emptyProjects.has("project-removed")).toBe(false);
   });
 });
 

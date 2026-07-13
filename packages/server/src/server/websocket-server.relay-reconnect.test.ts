@@ -10,6 +10,7 @@ import type { LoopService } from "./loop-service.js";
 import type { ScheduleService } from "./schedule/service.js";
 import type { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import type { WorkspaceAutoName } from "./workspace-auto-name.js";
+import type { WorkspaceCollectionRegistry } from "./workspace-registry.js";
 import { asInternals, createStub } from "./test-utils/class-mocks.js";
 import { createProviderSnapshotManagerStub } from "./test-utils/session-stubs.js";
 import {
@@ -226,6 +227,7 @@ function createWorkspaceAutoNameStub(): WorkspaceAutoName {
 function createServer(options?: {
   speechReadiness?: SpeechReadinessSnapshot | null;
   logger?: ReturnType<typeof createLogger>;
+  workspaceCollectionRegistry?: WorkspaceCollectionRegistry;
 }) {
   const speechReadiness = options?.speechReadiness ?? null;
   const daemonConfigStore = {
@@ -301,6 +303,10 @@ function createServer(options?: {
     undefined,
     undefined,
     createProviderSnapshotManagerStub().manager,
+    undefined,
+    undefined,
+    undefined,
+    options?.workspaceCollectionRegistry,
   );
 }
 
@@ -946,6 +952,32 @@ describe("relay external socket reconnect behavior", () => {
     expect(serverInfo.capabilities?.voice?.voice?.reason).toBe("");
 
     await server.close();
+  });
+
+  test("advertises organization features truthfully from available server services", async () => {
+    const unavailableServer = createServer();
+    const unavailableInfo = (await attachRelayAndHello({
+      server: unavailableServer,
+      socket: new MockSocket(),
+      clientId: "cid-organization-unavailable",
+    })) as { features?: Record<string, unknown> };
+    expect(unavailableInfo.features).toMatchObject({
+      workspaceOrganization: false,
+      agentPinning: true,
+      agentHistoryOrganization: true,
+    });
+    await unavailableServer.close();
+
+    const availableServer = createServer({
+      workspaceCollectionRegistry: createStub<WorkspaceCollectionRegistry>({}),
+    });
+    const availableInfo = (await attachRelayAndHello({
+      server: availableServer,
+      socket: new MockSocket(),
+      clientId: "cid-organization-available",
+    })) as { features?: Record<string, unknown> };
+    expect(availableInfo.features?.workspaceOrganization).toBe(true);
+    await availableServer.close();
   });
 
   test("broadcasts updated server_info when capabilities change", async () => {

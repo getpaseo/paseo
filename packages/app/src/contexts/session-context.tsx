@@ -43,8 +43,10 @@ import {
   type MessageEntry,
   type SessionState,
   type WorkspaceDescriptor,
+  type WorkspaceCollection,
   type EmptyProjectDescriptor,
   normalizeWorkspaceDescriptor,
+  normalizeWorkspaceCollection,
   normalizeEmptyProjectDescriptor,
 } from "@/stores/session-store";
 import { useDraftStore } from "@/stores/draft-store";
@@ -79,6 +81,7 @@ import {
   backfillLegacyDaemonWorkspaceDirectoryIfEmpty,
 } from "@/workspace/legacy-daemon-workspaces";
 import { useProviderSubagentStore } from "@/subagents/provider-store";
+import { invalidateAgentHistoryQueriesIfPinChanged } from "@/hooks/agent-history-query-key";
 
 // Re-export types from session-store and draft-store for backward compatibility
 export type { DraftInput } from "@/stores/draft-store";
@@ -123,6 +126,7 @@ interface BufferedAudioChunk {
 
 interface WorkspaceHydrationSnapshot {
   workspaces: Map<string, WorkspaceDescriptor>;
+  workspaceCollections: Map<string, WorkspaceCollection>;
   emptyProjects: Map<string, EmptyProjectDescriptor>;
 }
 
@@ -133,6 +137,7 @@ async function fetchWorkspaceHydrationSnapshot(input: {
   isCancelled?: () => boolean;
 }): Promise<WorkspaceHydrationSnapshot | null> {
   const workspaces = new Map<string, WorkspaceDescriptor>();
+  const workspaceCollections = new Map<string, WorkspaceCollection>();
   const emptyProjects = new Map<string, EmptyProjectDescriptor>();
   let cursor: string | null = null;
   let includeSubscribe = input.subscribe;
@@ -155,6 +160,13 @@ async function fetchWorkspaceHydrationSnapshot(input: {
       workspaces.set(workspace.id, workspace);
     }
 
+    // COMPAT(workspaceOrganization): added in v0.1.108, remove after 2027-01-13.
+    // Older daemons do not include collection metadata.
+    for (const entry of payload.collections ?? []) {
+      const collection = normalizeWorkspaceCollection(entry);
+      workspaceCollections.set(collection.id, collection);
+    }
+
     // Project parents with no active workspaces only ride on the first page.
     for (const project of payload.emptyProjects ?? []) {
       const descriptor = normalizeEmptyProjectDescriptor(project);
@@ -168,7 +180,7 @@ async function fetchWorkspaceHydrationSnapshot(input: {
     includeSubscribe = false;
   }
 
-  return { workspaces, emptyProjects };
+  return { workspaces, workspaceCollections, emptyProjects };
 }
 
 function decodeBase64Chunk(base64: string): Uint8Array {
@@ -532,11 +544,14 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   const setHasHydratedWorkspaces = useSessionStore((state) => state.setHasHydratedWorkspaces);
   const setAgents = useSessionStore((state) => state.setAgents);
   const setWorkspaces = useSessionStore((state) => state.setWorkspaces);
-  const setEmptyProjects = useSessionStore((state) => state.setEmptyProjects);
+  const setWorkspaceCollections = useSessionStore((state) => state.setWorkspaceCollections);
+  const beginWorkspaceSnapshot = useSessionStore((state) => state.beginWorkspaceSnapshot);
+  const commitWorkspaceSnapshot = useSessionStore((state) => state.commitWorkspaceSnapshot);
   const addEmptyProject = useSessionStore((state) => state.addEmptyProject);
   const removeEmptyProject = useSessionStore((state) => state.removeEmptyProject);
   const mergeWorkspaces = useSessionStore((state) => state.mergeWorkspaces);
   const removeWorkspace = useSessionStore((state) => state.removeWorkspace);
+  const removeProjectWorkspaces = useSessionStore((state) => state.removeProjectWorkspaces);
   const setAgentLastActivity = useSessionStore((state) => state.setAgentLastActivity);
   const flushAgentLastActivity = useSessionStore((state) => state.flushAgentLastActivity);
   const setPendingPermissions = useSessionStore((state) => state.setPendingPermissions);
@@ -600,6 +615,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       if (!client || !isConnected) {
         return;
       }
+      const snapshotToken = beginWorkspaceSnapshot(serverId);
 
       const snapshot = await fetchWorkspaceHydrationSnapshot({
         client,
@@ -622,11 +638,26 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         return;
       }
 
-      setWorkspaces(serverId, snapshot.workspaces);
-      setEmptyProjects(serverId, snapshot.emptyProjects.values());
+      const didCommit = commitWorkspaceSnapshot(
+        serverId,
+        {
+          workspaces: snapshot.workspaces,
+          workspaceCollections: snapshot.workspaceCollections.values(),
+          emptyProjects: snapshot.emptyProjects.values(),
+        },
+        snapshotToken,
+      );
+      if (!didCommit) return;
       setHasHydratedWorkspaces(serverId, true);
     },
-    [client, isConnected, serverId, setEmptyProjects, setHasHydratedWorkspaces, setWorkspaces],
+    [
+      beginWorkspaceSnapshot,
+      client,
+      commitWorkspaceSnapshot,
+      isConnected,
+      serverId,
+      setHasHydratedWorkspaces,
+    ],
   );
 
   const applyAuthoritativeAgentSnapshot = useCallback(
@@ -1094,7 +1125,14 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         },
       });
 
+      const currentAgent = useSessionStore.getState().sessions[serverId]?.agents.get(agent.id);
       applyAuthoritativeAgentSnapshot(agent);
+      void invalidateAgentHistoryQueriesIfPinChanged(
+        queryClient,
+        serverId,
+        currentAgent?.pinnedAt,
+        agent.pinnedAt ?? null,
+      );
     },
     [
       applyAuthoritativeAgentSnapshot,
@@ -1363,12 +1401,13 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
           workspaceId: message.payload.id,
         });
         removeWorkspaceSetup({ serverId, workspaceId: message.payload.id });
-        removeWorkspace(serverId, message.payload.id);
+        if (message.payload.removedProjectId) {
+          removeProjectWorkspaces(serverId, message.payload.removedProjectId);
+        } else {
+          removeWorkspace(serverId, message.payload.id);
+        }
         if (message.payload.emptyProject) {
           addEmptyProject(serverId, normalizeEmptyProjectDescriptor(message.payload.emptyProject));
-        }
-        if (message.payload.removedProjectId) {
-          removeEmptyProject(serverId, message.payload.removedProjectId);
         }
         return;
       }
@@ -1378,6 +1417,17 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       }
       mergeWorkspaces(serverId, [workspace]);
     });
+
+    const unsubWorkspaceCollectionCatalogUpdate = client.on(
+      "workspace_collection_catalog_update",
+      (message) => {
+        if (message.type !== "workspace.collection.catalog.update") return;
+        setWorkspaceCollections(
+          serverId,
+          message.payload.collections.map(normalizeWorkspaceCollection),
+        );
+      },
+    );
 
     const unsubScriptStatusUpdate = client.on("script_status_update", (message) => {
       if (message.type !== "script_status_update") return;
@@ -1758,6 +1808,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       unsubAgentTimeline();
       unsubProviderSubagentUpdate();
       unsubWorkspaceUpdate();
+      unsubWorkspaceCollectionCatalogUpdate();
       unsubScriptStatusUpdate();
       unsubCheckoutStatusUpdate();
       unsubWorkspaceSetupProgress();
@@ -1790,8 +1841,10 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     setInitializingAgents,
     setAgents,
     setWorkspaces,
+    setWorkspaceCollections,
     mergeWorkspaces,
     removeWorkspace,
+    removeProjectWorkspaces,
     removeWorkspaceSetup,
     addEmptyProject,
     removeEmptyProject,

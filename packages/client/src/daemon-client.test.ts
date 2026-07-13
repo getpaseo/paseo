@@ -558,6 +558,7 @@ test("advertises client capabilities in hello", async () => {
       provider_subagents: true,
       reasoning_merge_enum: true,
       terminal_reflowable_snapshot: true,
+      workspace_collection_updates: true,
       browser_host: {
         supportedCommands: ["list_tabs"],
         hostKind: "desktop app",
@@ -2322,6 +2323,154 @@ test("sends first-agent prompt context with workspace.create.request", async () 
     workspace: null,
     error: "local title sentinel",
     setupTerminalId: null,
+  });
+});
+
+test("sends workspace organization and agent pin RPCs", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_organization_test",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const workspacePin = client.setWorkspacePinned("ws-1", true, "req-ws-pin");
+  expect(parseSentFrame(mock.sent.pop())).toEqual({
+    type: "workspace.pin.set.request",
+    requestId: "req-ws-pin",
+    workspaceId: "ws-1",
+    pinned: true,
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "workspace.pin.set.response",
+      payload: {
+        requestId: "req-ws-pin",
+        workspaceId: "ws-1",
+        accepted: true,
+        pinnedAt: "2026-07-13T09:00:00.000Z",
+        error: null,
+      },
+    }),
+  );
+  await expect(workspacePin).resolves.toEqual({ pinnedAt: "2026-07-13T09:00:00.000Z" });
+
+  const agentPin = client.setAgentPinned("agent-1", false, "req-agent-pin");
+  expect(parseSentFrame(mock.sent.pop())).toMatchObject({
+    type: "agent.pin.set.request",
+    agentId: "agent-1",
+    pinned: false,
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "agent.pin.set.response",
+      payload: {
+        requestId: "req-agent-pin",
+        agentId: "agent-1",
+        accepted: true,
+        pinnedAt: null,
+        error: null,
+      },
+    }),
+  );
+  await expect(agentPin).resolves.toEqual({ pinnedAt: null });
+
+  const createCollection = client.createWorkspaceCollection("Focus", "req-create-collection");
+  expect(parseSentFrame(mock.sent.pop())).toMatchObject({
+    type: "workspace.collection.create.request",
+    name: "Focus",
+  });
+  const collection = {
+    id: "wsc-1",
+    name: "Focus",
+    createdAt: "2026-07-13T09:00:00.000Z",
+    updatedAt: "2026-07-13T09:00:00.000Z",
+  };
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "workspace.collection.create.response",
+      payload: { requestId: "req-create-collection", accepted: true, collection, error: null },
+    }),
+  );
+  await expect(createCollection).resolves.toEqual(collection);
+
+  const assign = client.assignWorkspaceCollection("ws-1", collection.id, "req-assign");
+  expect(parseSentFrame(mock.sent.pop())).toMatchObject({
+    type: "workspace.collection.assign.request",
+    workspaceId: "ws-1",
+    collectionId: "wsc-1",
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "workspace.collection.assign.response",
+      payload: {
+        requestId: "req-assign",
+        workspaceId: "ws-1",
+        collectionId: "wsc-1",
+        accepted: true,
+        error: null,
+      },
+    }),
+  );
+  await expect(assign).resolves.toEqual({ collectionId: "wsc-1" });
+
+  const rename = client.renameWorkspaceCollection("wsc-1", "Urgent", "req-rename");
+  expect(parseSentFrame(mock.sent.pop())).toMatchObject({
+    type: "workspace.collection.rename.request",
+    collectionId: "wsc-1",
+    name: "Urgent",
+  });
+  const renamed = { ...collection, name: "Urgent", updatedAt: "2026-07-13T10:00:00.000Z" };
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "workspace.collection.rename.response",
+      payload: {
+        requestId: "req-rename",
+        collectionId: "wsc-1",
+        accepted: true,
+        collection: renamed,
+        error: null,
+      },
+    }),
+  );
+  await expect(rename).resolves.toEqual(renamed);
+
+  const remove = client.deleteWorkspaceCollection("wsc-1", "req-delete");
+  expect(parseSentFrame(mock.sent.pop())).toMatchObject({
+    type: "workspace.collection.delete.request",
+    collectionId: "wsc-1",
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "workspace.collection.delete.response",
+      payload: {
+        requestId: "req-delete",
+        collectionId: "wsc-1",
+        accepted: true,
+        unassignedWorkspaceIds: ["ws-1"],
+        error: null,
+      },
+    }),
+  );
+  await expect(remove).resolves.toEqual({ unassignedWorkspaceIds: ["ws-1"] });
+
+  const events: Array<{ type: string; payload?: unknown }> = [];
+  client.on("workspace_collection_catalog_update", (event) => events.push(event));
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "workspace.collection.catalog.update",
+      payload: { collections: [] },
+    }),
+  );
+  expect(events).toContainEqual({
+    type: "workspace.collection.catalog.update",
+    payload: { collections: [] },
   });
 });
 

@@ -708,6 +708,9 @@ export const AgentSnapshotPayloadSchema = z.object({
   attentionReason: z.enum(["finished", "error", "permission"]).nullable().optional(),
   attentionTimestamp: z.string().nullable().optional(),
   archivedAt: z.string().nullable().optional(),
+  // COMPAT(agentHistoryOrganization): added in v0.1.108, remove after 2027-01-13
+  // when the daemon floor includes persisted agent pinning.
+  pinnedAt: z.string().nullable().optional(),
   providerUnavailable: z.boolean().optional(),
 });
 
@@ -727,6 +730,7 @@ export const AgentListItemPayloadSchema = z.object({
   updatedAt: z.string(),
   lastUserMessageAt: z.string().nullable(),
   archivedAt: z.string().nullable().optional(),
+  pinnedAt: z.string().nullable().optional(),
   requiresAttention: z.boolean().optional(),
   attentionReason: z.enum(["finished", "error", "permission"]).nullable().optional(),
   attentionTimestamp: z.string().nullable().optional(),
@@ -778,6 +782,11 @@ const AgentDirectoryFilterSchema = z.object({
   projectKeys: z.array(z.string()).optional(),
   statuses: z.array(AgentStatusSchema).optional(),
   includeArchived: z.boolean().optional(),
+  // COMPAT(agentHistoryOrganization): added in v0.1.108, remove legacy
+  // includeArchived support after 2027-01-13 once the daemon floor includes
+  // archiveState.
+  archiveState: z.enum(["active", "archived", "all"]).optional(),
+  updatedAfter: z.string().optional(),
   requiresAttention: z.boolean().optional(),
   thinkingOptionId: z.string().nullable().optional(),
 });
@@ -835,6 +844,39 @@ export const WorkspacePinSetRequestSchema = z.object({
   type: z.literal("workspace.pin.set.request"),
   workspaceId: z.string(),
   pinned: z.boolean(),
+  requestId: z.string(),
+});
+
+export const AgentPinSetRequestSchema = z.object({
+  type: z.literal("agent.pin.set.request"),
+  agentId: z.string(),
+  pinned: z.boolean(),
+  requestId: z.string(),
+});
+
+export const WorkspaceCollectionCreateRequestSchema = z.object({
+  type: z.literal("workspace.collection.create.request"),
+  name: z.string(),
+  requestId: z.string(),
+});
+
+export const WorkspaceCollectionRenameRequestSchema = z.object({
+  type: z.literal("workspace.collection.rename.request"),
+  collectionId: z.string(),
+  name: z.string(),
+  requestId: z.string(),
+});
+
+export const WorkspaceCollectionDeleteRequestSchema = z.object({
+  type: z.literal("workspace.collection.delete.request"),
+  collectionId: z.string(),
+  requestId: z.string(),
+});
+
+export const WorkspaceCollectionAssignRequestSchema = z.object({
+  type: z.literal("workspace.collection.assign.request"),
+  workspaceId: z.string(),
+  collectionId: z.string().nullable(),
   requestId: z.string(),
 });
 
@@ -965,7 +1007,7 @@ export const FetchAgentsRequestMessageSchema = z.object({
   sort: z
     .array(
       z.object({
-        key: z.enum(["status_priority", "created_at", "updated_at", "title"]),
+        key: z.enum(["status_priority", "created_at", "updated_at", "title", "pinned"]),
         direction: z.enum(["asc", "desc"]),
       }),
     )
@@ -1030,7 +1072,7 @@ export const FetchAgentHistoryRequestMessageSchema = z.object({
   sort: z
     .array(
       z.object({
-        key: z.enum(["status_priority", "created_at", "updated_at", "title"]),
+        key: z.enum(["status_priority", "created_at", "updated_at", "title", "pinned"]),
         direction: z.enum(["asc", "desc"]),
       }),
     )
@@ -1457,17 +1499,69 @@ export const WorkspaceTitleSetResponseSchema = z.object({
   payload: WorkspaceTitleSetResponsePayloadSchema,
 });
 
-export const WorkspacePinSetResponsePayloadSchema = z.object({
+const PinSetResponsePayloadSchema = z.object({
   requestId: z.string(),
-  workspaceId: z.string(),
   accepted: z.boolean(),
   pinnedAt: z.string().nullable(),
   error: z.string().nullable(),
 });
 
+export const WorkspacePinSetResponsePayloadSchema = PinSetResponsePayloadSchema.extend({
+  workspaceId: z.string(),
+});
+
 export const WorkspacePinSetResponseSchema = z.object({
   type: z.literal("workspace.pin.set.response"),
   payload: WorkspacePinSetResponsePayloadSchema,
+});
+
+export const AgentPinSetResponseSchema = z.object({
+  type: z.literal("agent.pin.set.response"),
+  payload: PinSetResponsePayloadSchema.extend({ agentId: z.string() }),
+});
+
+export const WorkspaceCollectionPayloadSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+const WorkspaceCollectionMutationResponsePayloadSchema = z.object({
+  requestId: z.string(),
+  accepted: z.boolean(),
+  error: z.string().nullable(),
+});
+
+export const WorkspaceCollectionCreateResponseSchema = z.object({
+  type: z.literal("workspace.collection.create.response"),
+  payload: WorkspaceCollectionMutationResponsePayloadSchema.extend({
+    collection: WorkspaceCollectionPayloadSchema.nullable(),
+  }),
+});
+
+export const WorkspaceCollectionRenameResponseSchema = z.object({
+  type: z.literal("workspace.collection.rename.response"),
+  payload: WorkspaceCollectionMutationResponsePayloadSchema.extend({
+    collectionId: z.string(),
+    collection: WorkspaceCollectionPayloadSchema.nullable(),
+  }),
+});
+
+export const WorkspaceCollectionDeleteResponseSchema = z.object({
+  type: z.literal("workspace.collection.delete.response"),
+  payload: WorkspaceCollectionMutationResponsePayloadSchema.extend({
+    collectionId: z.string(),
+    unassignedWorkspaceIds: z.array(z.string()),
+  }),
+});
+
+export const WorkspaceCollectionAssignResponseSchema = z.object({
+  type: z.literal("workspace.collection.assign.response"),
+  payload: WorkspaceCollectionMutationResponsePayloadSchema.extend({
+    workspaceId: z.string(),
+    collectionId: z.string().nullable(),
+  }),
 });
 
 export const SetVoiceModeResponseMessageSchema = z.object({
@@ -2117,6 +2211,11 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ProjectRemoveRequestSchema,
   WorkspaceTitleSetRequestSchema,
   WorkspacePinSetRequestSchema,
+  AgentPinSetRequestSchema,
+  WorkspaceCollectionCreateRequestSchema,
+  WorkspaceCollectionRenameRequestSchema,
+  WorkspaceCollectionDeleteRequestSchema,
+  WorkspaceCollectionAssignRequestSchema,
   SetVoiceModeMessageSchema,
   SendAgentMessageRequestSchema,
   WaitForFinishRequestSchema,
@@ -2435,6 +2534,12 @@ export const ServerInfoStatusPayloadSchema = z
         workspacePinning: z.boolean().optional(),
         // COMPAT(workspaceGithubClone): added in v0.1.108, remove gate after 2027-01-13.
         workspaceGithubClone: z.boolean().optional(),
+        // COMPAT(workspaceOrganization): added in v0.1.108, remove gate after 2027-01-13.
+        workspaceOrganization: z.boolean().optional(),
+        // COMPAT(agentPinning): added in v0.1.108, remove gate after 2027-01-13.
+        agentPinning: z.boolean().optional(),
+        // COMPAT(agentHistoryOrganization): added in v0.1.108, remove gate after 2027-01-13.
+        agentHistoryOrganization: z.boolean().optional(),
       })
       .optional(),
   })
@@ -2714,7 +2819,11 @@ export const WorkspaceDescriptorPayloadSchema = z
     // is derived from the branch/directory.
     title: z.string().nullable().optional(),
     // COMPAT(workspacePinning): added in v0.1.107, remove optional after 2027-01-12.
+    // COMPAT(workspaceOrganization): added in v0.1.108, remove after 2027-01-13
+    // when the daemon floor includes workspace organization.
+    createdAt: z.string().optional(),
     pinnedAt: z.string().nullable().optional(),
+    collectionId: z.string().nullable().optional(),
     archivingAt: z.string().nullable().optional().default(null),
     status: WorkspaceStateBucketSchema,
     // Best-effort workspace status entry timestamp. Old daemons omit the
@@ -2847,6 +2956,9 @@ export const FetchWorkspacesResponseMessageSchema = z.object({
     // Project parents with no active workspaces. Old daemons omit it; old clients
     // ignore it. Only populated on the first page (no cursor).
     emptyProjects: z.array(WorkspaceProjectDescriptorPayloadSchema).optional().default([]),
+    // COMPAT(workspaceOrganization): added in v0.1.108, remove after 2027-01-13. Old daemons omit the
+    // host-scoped collection catalog and old clients ignore it.
+    collections: z.array(WorkspaceCollectionPayloadSchema).optional(),
     pageInfo: z.object({
       nextCursor: z.string().nullable(),
       prevCursor: z.string().nullable(),
@@ -2877,6 +2989,13 @@ export const WorkspaceUpdateMessageSchema = z.object({
       removedProjectId: z.string().optional(),
     }),
   ]),
+});
+
+export const WorkspaceCollectionCatalogUpdateMessageSchema = z.object({
+  type: z.literal("workspace.collection.catalog.update"),
+  payload: z.object({
+    collections: z.array(WorkspaceCollectionPayloadSchema),
+  }),
 });
 
 export const ScriptStatusUpdateMessageSchema = z.object({
@@ -4353,6 +4472,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ArtifactMessageSchema,
   AgentUpdateMessageSchema,
   WorkspaceUpdateMessageSchema,
+  WorkspaceCollectionCatalogUpdateMessageSchema,
   ScriptStatusUpdateMessageSchema,
   WorkspaceSetupProgressMessageSchema,
   WorkspaceSetupStatusResponseMessageSchema,
@@ -4399,6 +4519,11 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ProjectRemoveResponseSchema,
   WorkspaceTitleSetResponseSchema,
   WorkspacePinSetResponseSchema,
+  AgentPinSetResponseSchema,
+  WorkspaceCollectionCreateResponseSchema,
+  WorkspaceCollectionRenameResponseSchema,
+  WorkspaceCollectionDeleteResponseSchema,
+  WorkspaceCollectionAssignResponseSchema,
   WaitForFinishResponseMessageSchema,
   AgentPermissionRequestMessageSchema,
   AgentPermissionResolvedMessageSchema,
@@ -4507,6 +4632,7 @@ export type ProjectCheckoutLitePayload = z.infer<typeof ProjectCheckoutLitePaylo
 export type ProjectPlacementPayload = z.infer<typeof ProjectPlacementPayloadSchema>;
 export type WorkspaceStateBucket = z.infer<typeof WorkspaceStateBucketSchema>;
 export type WorkspaceDescriptorPayload = z.infer<typeof WorkspaceDescriptorPayloadSchema>;
+export type WorkspaceCollectionPayload = z.infer<typeof WorkspaceCollectionPayloadSchema>;
 export type WorkspaceProjectDescriptorPayload = z.infer<
   typeof WorkspaceProjectDescriptorPayloadSchema
 >;
@@ -4553,10 +4679,11 @@ export type UpdateAgentResponseMessage = z.infer<typeof UpdateAgentResponseMessa
 export type ProjectRenameResponse = z.infer<typeof ProjectRenameResponseSchema>;
 export type ProjectRemoveResponse = z.infer<typeof ProjectRemoveResponseSchema>;
 export type WorkspaceTitleSetResponse = z.infer<typeof WorkspaceTitleSetResponseSchema>;
+export type WorkspacePinSetResponse = z.infer<typeof WorkspacePinSetResponseSchema>;
+export type AgentPinSetResponse = z.infer<typeof AgentPinSetResponseSchema>;
 export type WorkspaceTitleSetResponsePayload = z.infer<
   typeof WorkspaceTitleSetResponsePayloadSchema
 >;
-export type WorkspacePinSetResponse = z.infer<typeof WorkspacePinSetResponseSchema>;
 export type WorkspacePinSetResponsePayload = z.infer<typeof WorkspacePinSetResponsePayloadSchema>;
 export type WorkspaceCreateRequest = z.infer<typeof WorkspaceCreateRequestSchema>;
 export type WorkspaceCreateResponse = z.infer<typeof WorkspaceCreateResponseSchema>;
@@ -4854,6 +4981,7 @@ export const WSHelloMessageSchema = z.object({
       [CLIENT_CAPS.customModeIcons]: z.boolean().optional(),
       [CLIENT_CAPS.terminalReflowableSnapshot]: z.boolean().optional(),
       [CLIENT_CAPS.providerSubagents]: z.boolean().optional(),
+      [CLIENT_CAPS.workspaceCollectionUpdates]: z.boolean().optional(),
       [CLIENT_CAPS.browserHost]: BrowserAutomationHostCapabilitySchema.optional(),
     })
     .passthrough()

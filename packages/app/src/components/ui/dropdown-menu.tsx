@@ -23,6 +23,7 @@ import {
   StatusBar,
   type PressableProps,
   type PressableStateCallbackType,
+  type GestureResponderEvent,
   type ViewStyle,
   type StyleProp,
 } from "react-native";
@@ -311,15 +312,20 @@ export interface DropdownMenuTriggerProps extends Omit<PressableProps, "style" |
 export function DropdownMenuTrigger({
   children,
   disabled,
+  onPress,
   style,
   ...props
 }: DropdownMenuTriggerProps): ReactElement {
   const ctx = useDropdownMenuContext("DropdownMenuTrigger");
 
-  const handlePress = useCallback(() => {
-    if (disabled) return;
-    ctx.setOpen(!ctx.open);
-  }, [disabled, ctx]);
+  const handlePress = useCallback(
+    (event: GestureResponderEvent) => {
+      onPress?.(event);
+      if (disabled) return;
+      ctx.setOpen(!ctx.open);
+    },
+    [disabled, ctx, onPress],
+  );
 
   const pressableStyle = useCallback(
     ({ pressed, hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => {

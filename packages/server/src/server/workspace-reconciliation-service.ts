@@ -279,12 +279,18 @@ export class WorkspaceReconciliationService {
     }
 
     const timestamp = new Date().toISOString();
-    await this.projectRegistry.upsert({
-      ...canonical,
+    const updated = await this.projectRegistry.setCustomName(
+      canonical.projectId,
       customName,
-      updatedAt: timestamp,
-    });
-    canonical.customName = customName;
+      timestamp,
+      {
+        expectedCurrentNames: [null],
+      },
+    );
+    canonical.customName = updated.customName;
+    if (updated.customName !== customName) {
+      return;
+    }
     changes.push({
       kind: "project_updated",
       projectId: canonical.projectId,
