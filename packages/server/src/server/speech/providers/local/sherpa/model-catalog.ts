@@ -179,42 +179,52 @@ export function getDefaultSpeakerId(id: LocalTtsModelId): number | undefined {
   return SHERPA_ONNX_MODEL_CATALOG[id].defaultSpeakerId as number | undefined;
 }
 
+/**
+ * Normalize a BCP 47 language tag to its base subtag for catalog matching.
+ * Examples: "zh-CN" -> "zh", "pt-BR" -> "pt", "en-US" -> "en", "EN" -> "en".
+ */
+function normalizeLanguageTag(tag: string): string {
+  return tag.split("-")[0].toLowerCase();
+}
+
 export function resolveDefaultSttModelForLanguage(language: string): LocalSttModelId {
+  const lang = normalizeLanguageTag(language);
   // If the global default model supports this language, keep it.
   const defaultSpec = SHERPA_ONNX_MODEL_CATALOG[DEFAULT_LOCAL_STT_MODEL];
-  if ((defaultSpec.supportedLanguages as readonly string[] | undefined)?.includes(language)) {
+  if ((defaultSpec.supportedLanguages as readonly string[] | undefined)?.includes(lang)) {
     return DEFAULT_LOCAL_STT_MODEL;
   }
   // Prefer a model that explicitly declares itself as the default for this language.
   const explicit = LOCAL_STT_MODEL_IDS.find((id) => {
     const entry = SHERPA_ONNX_MODEL_CATALOG[id];
-    return (entry.defaultForLanguages as readonly string[] | undefined)?.includes(language);
+    return (entry.defaultForLanguages as readonly string[] | undefined)?.includes(lang);
   });
   if (explicit) return explicit;
   // Fallback: first model that supports the language.
   const match = LOCAL_STT_MODEL_IDS.find((id) => {
     const entry = SHERPA_ONNX_MODEL_CATALOG[id];
-    return (entry.supportedLanguages as readonly string[] | undefined)?.includes(language);
+    return (entry.supportedLanguages as readonly string[] | undefined)?.includes(lang);
   });
   return match ?? DEFAULT_LOCAL_STT_MODEL;
 }
 
 export function resolveDefaultTtsModelForLanguage(language: string): LocalTtsModelId {
+  const lang = normalizeLanguageTag(language);
   // If the global default model supports this language, keep it.
   const defaultSpec = SHERPA_ONNX_MODEL_CATALOG[DEFAULT_LOCAL_TTS_MODEL];
-  if ((defaultSpec.supportedLanguages as readonly string[] | undefined)?.includes(language)) {
+  if ((defaultSpec.supportedLanguages as readonly string[] | undefined)?.includes(lang)) {
     return DEFAULT_LOCAL_TTS_MODEL;
   }
   // Prefer a model that explicitly declares itself as the default for this language.
   const explicit = LOCAL_TTS_MODEL_IDS.find((id) => {
     const entry = SHERPA_ONNX_MODEL_CATALOG[id];
-    return (entry.defaultForLanguages as readonly string[] | undefined)?.includes(language);
+    return (entry.defaultForLanguages as readonly string[] | undefined)?.includes(lang);
   });
   if (explicit) return explicit;
   // Fallback: first model that supports the language.
   const match = LOCAL_TTS_MODEL_IDS.find((id) => {
     const entry = SHERPA_ONNX_MODEL_CATALOG[id];
-    return (entry.supportedLanguages as readonly string[] | undefined)?.includes(language);
+    return (entry.supportedLanguages as readonly string[] | undefined)?.includes(lang);
   });
   return match ?? DEFAULT_LOCAL_TTS_MODEL;
 }
