@@ -5,7 +5,8 @@ import { openSettingsSection } from "./helpers/settings";
 const DISCORD_DESTINATION =
   /^https:\/\/(?:discord\.gg\/jz8T2uahpH|discord\.com\/invite\/jz8T2uahpH)(?:[/?#]|$)/;
 const GITHUB_ISSUE_DESTINATION =
-  /^https:\/\/github\.com\/(?:getpaseo\/paseo\/issues\/new(?:[/?#]|$)|login\?return_to=https%3A%2F%2Fgithub\.com%2Fgetpaseo%2Fpaseo%2Fissues%2Fnew$)/;
+  /^https:\/\/github\.com\/(?:getpaseo\/paseo\/issues\/new(?:\/choose)?(?:[/?#]|$)|login\?return_to=https%3A%2F%2Fgithub\.com%2Fgetpaseo%2Fpaseo%2Fissues%2Fnew$)/;
+const APP_VERSION = /^Paseo v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 
 async function openHelpMenu(page: Page): Promise<void> {
   await page.getByTestId("sidebar-help").click();
@@ -53,7 +54,7 @@ test("opens troubleshooting tools from the sidebar help menu", async ({ page }) 
   expect(menuBox.y + menuBox.height).toBeLessThanOrEqual(triggerBox.y);
   await expect(page.getByText("Troubleshoot", { exact: true })).toBeVisible();
   await expect(page.getByText("Report an issue", { exact: true })).toBeVisible();
-  await expect(page.getByTestId("sidebar-help-version")).toHaveText(/^Paseo v\d+\.\d+\.\d+$/);
+  await expect(page.getByTestId("sidebar-help-version")).toHaveText(APP_VERSION);
 
   await page.getByTestId("sidebar-help-diagnostics").click();
   await expectDiagnosticReport(page);
