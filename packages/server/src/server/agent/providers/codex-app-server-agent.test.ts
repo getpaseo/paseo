@@ -669,7 +669,7 @@ describe("Codex app-server provider", () => {
         provider: "codex",
         item: {
           type: "tool_call",
-          callId: "terminal-session-4242",
+          callId: "terminal-session-4242-1",
           name: "terminal",
           status: "completed",
           error: null,
@@ -684,7 +684,7 @@ describe("Codex app-server provider", () => {
         },
       });
 
-      const relabeledTerminal = waitForTimelineToolCall(session, "terminal-session-4242");
+      const relabeledTerminal = waitForTimelineToolCall(session, "terminal-session-4242-1");
       appServer.runsLegacyCommand({
         threadId: "thread-1",
         callId: "interactive-shell",
@@ -697,7 +697,7 @@ describe("Codex app-server provider", () => {
         provider: "codex",
         item: {
           type: "tool_call",
-          callId: "terminal-session-4242",
+          callId: "terminal-session-4242-1",
           name: "terminal",
           status: "completed",
           error: null,
@@ -711,6 +711,53 @@ describe("Codex app-server provider", () => {
             processId: "4242",
           },
         },
+      });
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("keeps repeated writes to one terminal as separate timeline rows", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+
+    try {
+      await session.connect();
+
+      const firstTimelineItem = waitForNextTimelineItem(session);
+      appServer.typesIntoTerminal({
+        threadId: "thread-1",
+        turnId: "turn-1",
+        itemId: "interactive-shell",
+        processId: "4242",
+        text: "git status\n",
+      });
+
+      const secondTimelineItem = waitForNextTimelineItem(session);
+      appServer.typesIntoTerminal({
+        threadId: "thread-1",
+        turnId: "turn-1",
+        itemId: "interactive-shell",
+        processId: "4242",
+        text: "git push\n",
+      });
+
+      const [first, second] = await Promise.all([firstTimelineItem, secondTimelineItem]);
+      expect(first.item).toMatchObject({
+        type: "tool_call",
+        callId: "terminal-session-4242-1",
+        detail: { type: "plain_text", text: "git status\n" },
+      });
+      expect(second.item).toMatchObject({
+        type: "tool_call",
+        callId: "terminal-session-4242-2",
+        detail: { type: "plain_text", text: "git push\n" },
       });
       appServer.assertNoErrors();
     } finally {
