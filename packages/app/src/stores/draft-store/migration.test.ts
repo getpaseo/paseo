@@ -1,17 +1,57 @@
 import { describe, expect, it } from "vitest";
-import type { ComposerAttachment } from "@/attachments/types";
+import type { ComposerAttachment, UserComposerAttachment } from "@/attachments/types";
 import { migratePersistedState, type MigrateLegacyImages } from "./migration";
 import { isAttachmentMetadata, type DraftRecord } from "./state";
 
 const passThroughMigrateLegacyImages: MigrateLegacyImages = async (images) =>
   images.filter(isAttachmentMetadata);
 
-function activeDraft(text: string, updatedAt: number): DraftRecord {
+function activeDraft(
+  text: string,
+  updatedAt: number,
+  attachments: UserComposerAttachment[] = [],
+): DraftRecord {
   return {
-    input: { text, attachments: [] },
+    input: { text, attachments },
     lifecycle: "active",
     updatedAt,
     version: 1,
+  };
+}
+
+function githubIssueAttachment(
+  number: number,
+): Extract<UserComposerAttachment, { kind: "github_issue" }> {
+  return {
+    kind: "github_issue",
+    item: {
+      kind: "issue",
+      number,
+      title: `Review item ${number}`,
+      url: `https://example.com/issues/${number}`,
+      state: "open",
+      body: null,
+      labels: [],
+    },
+  };
+}
+
+function githubPrAttachment(
+  number: number,
+): Extract<UserComposerAttachment, { kind: "github_pr" }> {
+  return {
+    kind: "github_pr",
+    item: {
+      kind: "pr",
+      number,
+      title: `Review item ${number}`,
+      url: `https://example.com/pulls/${number}`,
+      state: "open",
+      body: null,
+      labels: [],
+      baseRefName: "main",
+      headRefName: "feature/legacy",
+    },
   };
 }
 
@@ -83,6 +123,27 @@ describe("draft-store migration", () => {
       "new-workspace": activeDraft("newer new workspace prompt", 1700000000002),
       "new-workspace:draft:fork-1": forkDraft,
       "agent:server-a:agent-1": agentDraft,
+    });
+  });
+
+  it("drops unowned checkout PR context when promoting a scoped New Workspace draft", async () => {
+    const issue = githubIssueAttachment(101);
+    const migrated = await migratePersistedState(
+      {
+        drafts: {
+          "new-workspace:server-a:/project/a": activeDraft("keep the prompt", 2, [
+            issue,
+            githubPrAttachment(202),
+          ]),
+        },
+        createModalDraft: null,
+      },
+      { migrateLegacyImages: passThroughMigrateLegacyImages, nowMs: 3 },
+    );
+
+    expect(migrated.drafts["new-workspace"]?.input).toEqual({
+      text: "keep the prompt",
+      attachments: [issue],
     });
   });
 

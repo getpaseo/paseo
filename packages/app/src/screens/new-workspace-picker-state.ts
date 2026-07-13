@@ -46,6 +46,17 @@ export function syncPickerPrAttachment(input: {
   return nextAttachments;
 }
 
+export function clearPickerPrAttachmentForTargetChange(input: {
+  attachments: UserComposerAttachment[];
+  currentTargetId: string;
+  nextTargetId: string;
+}): UserComposerAttachment[] {
+  if (input.currentTargetId === input.nextTargetId) {
+    return input.attachments;
+  }
+  return syncPickerPrAttachment({ attachments: input.attachments, item: null });
+}
+
 export function findCheckoutHintPrAttachment(input: {
   attachments: ReadonlyArray<UserComposerAttachment>;
   selectedItem: PickerItem | null;

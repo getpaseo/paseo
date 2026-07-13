@@ -123,7 +123,17 @@ function migrateNewWorkspaceDraftKeys(
     .filter((draft) => draft.lifecycle === "active")
     .sort((left, right) => right.updatedAt - left.updatedAt)[0];
   if (newestActiveDraft) {
-    nextDrafts[NEW_WORKSPACE_DRAFT_KEY] = newestActiveDraft;
+    // Legacy scoped drafts did not record whether a PR came from the Base
+    // picker. That checkout context is unsafe to carry onto a global surface.
+    nextDrafts[NEW_WORKSPACE_DRAFT_KEY] = {
+      ...newestActiveDraft,
+      input: {
+        ...newestActiveDraft.input,
+        attachments: newestActiveDraft.input.attachments.filter(
+          (attachment) => attachment.kind !== "github_pr",
+        ),
+      },
+    };
   }
 
   return nextDrafts;

@@ -92,7 +92,11 @@ import {
   type PickerCheckoutRequest,
   type PickerItem,
 } from "./new-workspace-picker-item";
-import { findCheckoutHintPrAttachment, syncPickerPrAttachment } from "./new-workspace-picker-state";
+import {
+  clearPickerPrAttachmentForTargetChange,
+  findCheckoutHintPrAttachment,
+  syncPickerPrAttachment,
+} from "./new-workspace-picker-state";
 import {
   resolveNewWorkspaceAutomaticServerId,
   resolveNewWorkspaceInitialServerId,
@@ -1805,14 +1809,19 @@ export function NewWorkspaceScreen({
     [itemById, selectPickerItem],
   );
 
-  const clearManualPickerSelection = useCallback(() => {
-    const nextAttachments = syncPickerPrAttachment({
-      attachments: chatDraft.attachments,
-      item: null,
-    });
-    chatDraft.setAttachments(nextAttachments);
-    setManualPickerSelection(null);
-  }, [chatDraft]);
+  const clearManualPickerSelectionForTargetChange = useCallback(
+    (currentTargetId: string, nextTargetId: string) => {
+      const nextAttachments = clearPickerPrAttachmentForTargetChange({
+        attachments: chatDraft.attachments,
+        currentTargetId,
+        nextTargetId,
+      });
+      if (nextAttachments === chatDraft.attachments) return;
+      chatDraft.setAttachments(nextAttachments);
+      setManualPickerSelection(null);
+    },
+    [chatDraft],
+  );
 
   const handleSelectProjectOption = useCallback(
     (id: string) => {
@@ -1821,17 +1830,17 @@ export function NewWorkspaceScreen({
       // canCreateWorktree or non-git projects become unselectable.
       selectProjectOption(id);
       setProjectPickerOpen(false);
-      clearManualPickerSelection();
+      clearManualPickerSelectionForTargetChange(selectedProjectOptionId, id);
     },
-    [clearManualPickerSelection, selectProjectOption],
+    [clearManualPickerSelectionForTargetChange, selectProjectOption, selectedProjectOptionId],
   );
 
   const handleSelectWorkspaceHost = useCallback(
     (id: string) => {
       handleSelectHost(id);
-      clearManualPickerSelection();
+      clearManualPickerSelectionForTargetChange(selectedServerId, id);
     },
-    [clearManualPickerSelection, handleSelectHost],
+    [clearManualPickerSelectionForTargetChange, handleSelectHost, selectedServerId],
   );
 
   const handleAddProject = useCallback(() => {

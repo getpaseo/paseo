@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { UserComposerAttachment } from "@/attachments/types";
 import type { GitHubSearchItem } from "@getpaseo/protocol/messages";
-import { findCheckoutHintPrAttachment, syncPickerPrAttachment } from "./new-workspace-picker-state";
+import {
+  clearPickerPrAttachmentForTargetChange,
+  findCheckoutHintPrAttachment,
+  syncPickerPrAttachment,
+} from "./new-workspace-picker-state";
 
 function makePrItem(number: number, title: string, headRefName = "feature/x"): GitHubSearchItem {
   return {
@@ -98,6 +102,34 @@ describe("syncPickerPrAttachment", () => {
     });
 
     expect(result).toEqual([issue, manuallyAttachedPr]);
+  });
+});
+
+describe("clearPickerPrAttachmentForTargetChange", () => {
+  it("keeps the picker selection when the target is reselected", () => {
+    const pickerPr = prAttachment(makePrItem(202, "Picker PR"), "new-workspace-picker");
+    const attachments = [pickerPr];
+
+    expect(
+      clearPickerPrAttachmentForTargetChange({
+        attachments,
+        currentTargetId: "server-a",
+        nextTargetId: "server-a",
+      }),
+    ).toBe(attachments);
+  });
+
+  it("clears only the picker-owned PR when the target changes", () => {
+    const pickerPr = prAttachment(makePrItem(202, "Picker PR"), "new-workspace-picker");
+    const manualPr = prAttachment(makePrItem(303, "Manual PR"));
+
+    expect(
+      clearPickerPrAttachmentForTargetChange({
+        attachments: [pickerPr, manualPr],
+        currentTargetId: "server-a",
+        nextTargetId: "server-b",
+      }),
+    ).toEqual([manualPr]);
   });
 });
 
