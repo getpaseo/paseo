@@ -41,7 +41,6 @@ import {
 } from "@/components/sidebar/sidebar-workspace-row-content";
 import { useSidebarCollapsedSectionsStore } from "@/stores/sidebar-collapsed-sections-store";
 import { SidebarWorkspaceMenu } from "@/components/sidebar/sidebar-workspace-menu";
-import { SidebarWorkspacePinButton } from "@/components/sidebar/sidebar-workspace-pin-button";
 import { PinnedSectionHeader } from "@/components/sidebar/pinned-section-header";
 import type { ToggleSidebarWorkspacePin } from "@/hooks/use-sidebar-workspace-pin";
 
@@ -117,6 +116,7 @@ export function SidebarStatusWorkspaceList({
                   showShortcutBadge={showShortcutBadges}
                   canPin={supportsPinningByServerId.get(workspace.serverId) === true}
                   onToggleWorkspacePin={onToggleWorkspacePin}
+                  reserveIdleStatusIndicatorSpace={false}
                   onWorkspacePress={onWorkspacePress}
                 />
               ))}
@@ -325,6 +325,7 @@ const StatusWorkspaceRow = memo(function StatusWorkspaceRow({
   showShortcutBadge,
   canPin,
   onToggleWorkspacePin,
+  reserveIdleStatusIndicatorSpace = true,
   onWorkspacePress,
 }: {
   workspace: SidebarWorkspaceEntry;
@@ -333,6 +334,7 @@ const StatusWorkspaceRow = memo(function StatusWorkspaceRow({
   showShortcutBadge: boolean;
   canPin: boolean;
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
+  reserveIdleStatusIndicatorSpace?: boolean;
   onWorkspacePress?: () => void;
 }) {
   const activeWorkspaceSelection = useActiveWorkspaceSelection();
@@ -355,6 +357,7 @@ const StatusWorkspaceRow = memo(function StatusWorkspaceRow({
       showShortcutBadge={showShortcutBadge}
       canPin={canPin}
       onToggleWorkspacePin={onToggleWorkspacePin}
+      reserveIdleStatusIndicatorSpace={reserveIdleStatusIndicatorSpace}
       onPress={handlePress}
     />
   );
@@ -368,6 +371,7 @@ function StatusWorkspaceRowWithMenu({
   showShortcutBadge,
   canPin,
   onToggleWorkspacePin,
+  reserveIdleStatusIndicatorSpace = true,
   onPress,
 }: {
   workspace: SidebarWorkspaceEntry;
@@ -377,6 +381,7 @@ function StatusWorkspaceRowWithMenu({
   showShortcutBadge: boolean;
   canPin: boolean;
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
+  reserveIdleStatusIndicatorSpace?: boolean;
   onPress: () => void;
 }) {
   const { t } = useTranslation();
@@ -506,6 +511,7 @@ function StatusWorkspaceRowWithMenu({
         archiveShortcutKeys={selected ? archiveShortcutKeys : null}
         isPinned={isPinned}
         onTogglePin={onTogglePin}
+        reserveIdleStatusIndicatorSpace={reserveIdleStatusIndicatorSpace}
       />
       <AdaptiveRenameModal
         visible={isRenameOpen}
@@ -540,6 +546,7 @@ function StatusWorkspaceRowInner({
   archiveShortcutKeys,
   isPinned,
   onTogglePin,
+  reserveIdleStatusIndicatorSpace = true,
 }: {
   workspace: SidebarWorkspaceEntry;
   subtitle: string;
@@ -559,6 +566,7 @@ function StatusWorkspaceRowInner({
   archiveShortcutKeys?: ShortcutKey[][] | null;
   isPinned?: boolean;
   onTogglePin?: () => void;
+  reserveIdleStatusIndicatorSpace?: boolean;
 }) {
   const isTouchPlatform = platformIsNative;
 
@@ -580,8 +588,7 @@ function StatusWorkspaceRowInner({
         const showShortcut = showShortcutBadge && shortcutNumber !== null;
         const showKebab = Boolean(onArchive && (isHovered || isTouchPlatform));
         const showKebabInSlot = showKebab && !showShortcut;
-        const showPin = Boolean(onTogglePin && !showShortcut && (isHovered || isTouchPlatform));
-        const shouldRenderActionSlot = Boolean(onArchive || workspace.diffStat || onTogglePin);
+        const shouldRenderActionSlot = Boolean(onArchive || workspace.diffStat);
         const workspaceRowStyle = getStatusWorkspaceRowStyle({ selected, isHovered });
         return (
           <View style={styles.workspaceRowContainer} {...hoverHandlers}>
@@ -601,14 +608,12 @@ function StatusWorkspaceRowInner({
                 isLoading={isArchiving}
                 shortcutNumber={shortcutNumber}
                 showShortcutBadge={showShortcutBadge}
+                reserveIdleStatusIndicatorSpace={reserveIdleStatusIndicatorSpace}
               >
                 {shouldRenderActionSlot ? (
                   <StatusWorkspaceActionSlot
                     workspace={workspace}
-                    showBase={Boolean(
-                      workspace.diffStat && !showPin && !showKebabInSlot && !showShortcut,
-                    )}
-                    showPin={showPin}
+                    showBase={Boolean(workspace.diffStat && !showKebabInSlot && !showShortcut)}
                     showKebab={showKebabInSlot}
                     isPinned={isPinned}
                     onTogglePin={onTogglePin}
@@ -635,7 +640,6 @@ function StatusWorkspaceRowInner({
 function StatusWorkspaceActionSlot({
   workspace,
   showBase,
-  showPin,
   showKebab,
   isPinned,
   onTogglePin,
@@ -651,7 +655,6 @@ function StatusWorkspaceActionSlot({
 }: {
   workspace: SidebarWorkspaceEntry;
   showBase: boolean;
-  showPin: boolean;
   showKebab: boolean;
   isPinned?: boolean;
   onTogglePin?: () => void;
@@ -675,32 +678,23 @@ function StatusWorkspaceActionSlot({
           />
         ) : null}
       </SidebarWorkspaceTrailingActionBase>
-      <SidebarWorkspaceTrailingActionOverlay visible={showPin || showKebab}>
-        <View style={styles.trailingControlsRow}>
-          {showPin && onTogglePin ? (
-            <SidebarWorkspacePinButton
-              workspaceKey={workspace.workspaceKey}
-              isPinned={isPinned}
-              onTogglePin={onTogglePin}
-            />
-          ) : null}
-          {showKebab && onArchive ? (
-            <SidebarWorkspaceMenu
-              workspaceKey={workspace.workspaceKey}
-              onCopyPath={onCopyPath}
-              onCopyBranchName={onCopyBranchName}
-              onRename={onRename}
-              onMarkAsRead={onMarkAsRead}
-              onArchive={onArchive}
-              archiveLabel={archiveLabel}
-              archiveStatus={archiveStatus}
-              archivePendingLabel={archivePendingLabel}
-              archiveShortcutKeys={archiveShortcutKeys}
-              isPinned={isPinned}
-              onTogglePin={onTogglePin}
-            />
-          ) : null}
-        </View>
+      <SidebarWorkspaceTrailingActionOverlay visible={showKebab}>
+        {showKebab && onArchive ? (
+          <SidebarWorkspaceMenu
+            workspaceKey={workspace.workspaceKey}
+            onCopyPath={onCopyPath}
+            onCopyBranchName={onCopyBranchName}
+            onRename={onRename}
+            onMarkAsRead={onMarkAsRead}
+            onArchive={onArchive}
+            archiveLabel={archiveLabel}
+            archiveStatus={archiveStatus}
+            archivePendingLabel={archivePendingLabel}
+            archiveShortcutKeys={archiveShortcutKeys}
+            isPinned={isPinned}
+            onTogglePin={onTogglePin}
+          />
+        ) : null}
       </SidebarWorkspaceTrailingActionOverlay>
     </SidebarWorkspaceTrailingActionSlot>
   );
@@ -734,11 +728,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   pinnedSection: {
     marginBottom: theme.spacing[1],
-  },
-  trailingControlsRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 2,
   },
   statusGroupBlock: {
     marginBottom: theme.spacing[1],
