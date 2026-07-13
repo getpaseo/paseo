@@ -32,6 +32,7 @@ import {
   type FakeCodexAppServer,
   waitForNextPermission,
   waitForNextTimelineItem,
+  waitForTimelineToolCall,
 } from "./codex/test-utils/fake-app-server.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { asInternals as castInternals, createStub } from "../../test-utils/class-mocks.js";
@@ -599,6 +600,49 @@ describe("Codex app-server provider", () => {
     }
   });
 
+  test("shows a silent shell command from legacy live notifications", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+
+    try {
+      await session.connect();
+      const nextTimelineItem = waitForNextTimelineItem(session);
+
+      appServer.completesSilentLegacyCommand({
+        threadId: "thread-1",
+        callId: "legacy-silent-merge",
+        command: "gh pr merge 2030 --squash",
+        cwd: "/workspace/project",
+      });
+
+      await expect(nextTimelineItem).resolves.toEqual({
+        type: "timeline",
+        provider: "codex",
+        item: {
+          type: "tool_call",
+          callId: "legacy-silent-merge",
+          name: "shell",
+          status: "completed",
+          error: null,
+          detail: {
+            type: "shell",
+            command: "gh pr merge 2030 --squash",
+            cwd: "/workspace/project",
+            exitCode: 0,
+          },
+        },
+      });
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
   test("shows the exact bytes Codex writes into an existing terminal", async () => {
     const appServer = createFakeCodexAppServer();
     const session = new CodexAppServerAgentSession(
@@ -631,6 +675,35 @@ describe("Codex app-server provider", () => {
           error: null,
           detail: {
             type: "plain_text",
+            text: "gh pr merge 2030 --squash\n",
+            icon: "square_terminal",
+          },
+          metadata: {
+            processId: "4242",
+          },
+        },
+      });
+
+      const relabeledTerminal = waitForTimelineToolCall(session, "terminal-session-4242");
+      appServer.runsLegacyCommand({
+        threadId: "thread-1",
+        callId: "interactive-shell",
+        command: "sleep 30",
+        output: "Process running with session id 4242",
+      });
+
+      await expect(relabeledTerminal).resolves.toEqual({
+        type: "timeline",
+        provider: "codex",
+        item: {
+          type: "tool_call",
+          callId: "terminal-session-4242",
+          name: "terminal",
+          status: "completed",
+          error: null,
+          detail: {
+            type: "plain_text",
+            label: "sleep 30",
             text: "gh pr merge 2030 --squash\n",
             icon: "square_terminal",
           },

@@ -65,6 +65,7 @@ export interface FakeCodexAppServer {
   appliesLegacyPatch(params: FakeLegacyPatch): void;
   completesCommand(params: FakeLegacyCommand): void;
   completesSilentCommand(params: FakeSilentCommand): void;
+  completesSilentLegacyCommand(params: FakeSilentCommand): void;
   typesIntoTerminal(params: FakeTerminalInput): void;
   says(params: { threadId: string; itemId?: string; text: string; chunks?: string[] }): void;
   requestCommandApproval(params: {
@@ -392,6 +393,17 @@ export function createFakeCodexAppServer(
         exitCode: 0,
       });
     },
+    completesSilentLegacyCommand(params) {
+      writeLegacyEvent(params.threadId, "codex/event/exec_command_end", {
+        type: "exec_command_end",
+        call_id: params.callId,
+        command: params.command,
+        cwd: params.cwd,
+        aggregatedOutput: null,
+        exit_code: 0,
+        success: true,
+      });
+    },
     typesIntoTerminal(params) {
       writeNotification("item/commandExecution/terminalInteraction", {
         threadId: params.threadId,
@@ -499,6 +511,7 @@ type StreamEventOfType<TType extends StreamEventType> = Extract<AgentStreamEvent
 function waitForNextEvent<TType extends StreamEventType>(
   session: AgentSession,
   type: TType,
+  accepts?: (event: StreamEventOfType<TType>) => boolean,
 ): Promise<StreamEventOfType<TType>> {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
@@ -509,9 +522,13 @@ function waitForNextEvent<TType extends StreamEventType>(
       if (event.type !== type) {
         return;
       }
+      const typedEvent = event as StreamEventOfType<TType>;
+      if (accepts && !accepts(typedEvent)) {
+        return;
+      }
       clearTimeout(timeout);
       unsubscribe();
-      resolve(event as StreamEventOfType<TType>);
+      resolve(typedEvent);
     });
   });
 }
@@ -526,4 +543,15 @@ export function waitForNextPermission(
 
 export function waitForNextTimelineItem(session: AgentSession): Promise<TimelineEvent> {
   return waitForNextEvent(session, "timeline");
+}
+
+export function waitForTimelineToolCall(
+  session: AgentSession,
+  callId: string,
+): Promise<TimelineEvent> {
+  return waitForNextEvent(
+    session,
+    "timeline",
+    (event) => event.item.type === "tool_call" && event.item.callId === callId,
+  );
 }

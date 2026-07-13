@@ -2113,8 +2113,8 @@ const CodexEventExecCommandEndNotificationSchema = z
         cwd: z.string().optional(),
         stdout: z.string().optional(),
         stderr: z.string().optional(),
-        aggregated_output: z.string().optional(),
-        aggregatedOutput: z.string().optional(),
+        aggregated_output: z.string().nullable().optional(),
+        aggregatedOutput: z.string().nullable().optional(),
         formatted_output: z.string().optional(),
         exit_code: z.number().nullable().optional(),
         exitCode: z.number().nullable().optional(),
@@ -3104,7 +3104,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   private pendingFileChangeOutputDeltas = new Map<string, string[]>();
   private pendingAssistantMessageBoundary = false;
   private terminalCommandByProcessId = new Map<string, string>();
-  private pendingUnlabeledTerminalInteractions = new Set<string>();
+  private pendingUnlabeledTerminalInteractions = new Map<string, string | null>();
   private emittedTerminalInteractionKeys = new Set<string>();
   private emittedExecCommandStartedCallIds = new Set<string>();
   private emittedExecCommandCompletedCallIds = new Set<string>();
@@ -5450,7 +5450,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       (parsed.processId ? this.terminalCommandByProcessId.get(parsed.processId) : undefined) ??
       null;
     if (!command && parsed.processId) {
-      this.pendingUnlabeledTerminalInteractions.add(parsed.processId);
+      this.pendingUnlabeledTerminalInteractions.set(parsed.processId, parsed.stdin);
     }
     const timelineItem = mapCodexTerminalInteractionToToolCall({
       processId: parsed.processId,
@@ -5865,6 +5865,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (!this.pendingUnlabeledTerminalInteractions.has(processId)) {
       return;
     }
+    const pendingStdin = this.pendingUnlabeledTerminalInteractions.get(processId) ?? null;
     this.pendingUnlabeledTerminalInteractions.delete(processId);
     this.emitEvent({
       type: "timeline",
@@ -5872,6 +5873,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       item: mapCodexTerminalInteractionToToolCall({
         processId,
         command: displayCommand,
+        stdin: pendingStdin,
       }),
     });
   }
