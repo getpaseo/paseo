@@ -9,8 +9,8 @@ vi.mock("expo-router", () => ({
   router: { navigate: vi.fn() },
 }));
 
-vi.mock("@/utils/workspace-navigation", () => ({
-  navigateToPreparedWorkspaceTab: vi.fn(() => ""),
+vi.mock("@/stores/navigation-active-workspace-store", () => ({
+  navigateToWorkspace: vi.fn(() => ""),
 }));
 
 vi.mock("@/runtime/host-runtime", () => ({

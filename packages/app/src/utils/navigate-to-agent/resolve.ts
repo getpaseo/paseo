@@ -1,6 +1,6 @@
 import { buildHostAgentDetailRoute } from "@/utils/host-routes";
 import { normalizeWorkspaceOpaqueId } from "@/utils/workspace-identity";
-import type { NavigateToPreparedWorkspaceTabInput } from "@/utils/prepare-workspace-tab";
+import type { NavigateToWorkspaceInput } from "@/stores/navigation-active-workspace-store";
 
 export interface NavigateToAgentInput {
   serverId: string;
@@ -18,7 +18,7 @@ export interface AgentNavTarget {
 export interface NavigateToAgentDeps {
   readAgentNavTarget: (input: { serverId: string; agentId: string }) => AgentNavTarget;
   navigateToHostAgent: (route: string) => void;
-  navigateToPreparedWorkspaceTab: (input: NavigateToPreparedWorkspaceTabInput) => string;
+  navigateToWorkspace: (input: NavigateToWorkspaceInput) => string;
   restoreArchivedWorkspace: (input: {
     serverId: string;
     agentId: string;
@@ -49,7 +49,7 @@ export function resolveNavigateToAgent(
     workspaceId,
   });
 
-  return deps.navigateToPreparedWorkspaceTab({
+  return deps.navigateToWorkspace({
     serverId: input.serverId,
     workspaceId,
     target: { kind: "agent", agentId: input.agentId },

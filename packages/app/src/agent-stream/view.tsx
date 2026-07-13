@@ -81,7 +81,7 @@ import {
   type OpenFileDisposition,
   type WorkspaceFileOpenRequest,
 } from "@/workspace/file-open";
-import { navigateToPreparedWorkspaceTab } from "@/utils/workspace-navigation";
+import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import { buildNewWorkspaceRoute } from "@/utils/host-routes";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { isWeb } from "@/constants/platform";
@@ -423,7 +423,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           }
 
           if (context.workspaceId) {
-            navigateToPreparedWorkspaceTab({
+            navigateToWorkspace({
               serverId: resolvedServerId,
               workspaceId: context.workspaceId,
               target: createWorkspaceFileTabTarget(location),
@@ -491,7 +491,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
               throw new Error(t("message.actions.forkMissingWorkspace"));
             }
             const draftId = await prepareForkDraft();
-            navigateToPreparedWorkspaceTab({
+            navigateToWorkspace({
               serverId: resolvedServerId,
               workspaceId,
               target: buildForkDraftTabTarget(draftSetup, draftId),
