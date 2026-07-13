@@ -493,40 +493,37 @@ function toJsonObject(value: unknown): JsonObject {
   return {};
 }
 
-export function waitForNextPermission(
+type StreamEventType = AgentStreamEvent["type"];
+type StreamEventOfType<TType extends StreamEventType> = Extract<AgentStreamEvent, { type: TType }>;
+
+function waitForNextEvent<TType extends StreamEventType>(
   session: AgentSession,
-): Promise<Extract<AgentStreamEvent, { type: "permission_requested" }>> {
+  type: TType,
+): Promise<StreamEventOfType<TType>> {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       unsubscribe();
-      reject(new Error("Timed out waiting for permission_requested"));
+      reject(new Error(`Timed out waiting for ${type}`));
     }, 1000);
     const unsubscribe = session.subscribe((event) => {
-      if (event.type !== "permission_requested") {
+      if (event.type !== type) {
         return;
       }
       clearTimeout(timeout);
       unsubscribe();
-      resolve(event);
+      resolve(event as StreamEventOfType<TType>);
     });
   });
 }
 
-type TimelineEvent = Extract<AgentStreamEvent, { type: "timeline" }>;
+type TimelineEvent = StreamEventOfType<"timeline">;
+
+export function waitForNextPermission(
+  session: AgentSession,
+): Promise<StreamEventOfType<"permission_requested">> {
+  return waitForNextEvent(session, "permission_requested");
+}
 
 export function waitForNextTimelineItem(session: AgentSession): Promise<TimelineEvent> {
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      unsubscribe();
-      reject(new Error("Timed out waiting for timeline item"));
-    }, 1000);
-    const unsubscribe = session.subscribe((event) => {
-      if (event.type !== "timeline") {
-        return;
-      }
-      clearTimeout(timeout);
-      unsubscribe();
-      resolve(event);
-    });
-  });
+  return waitForNextEvent(session, "timeline");
 }
