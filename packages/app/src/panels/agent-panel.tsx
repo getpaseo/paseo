@@ -13,6 +13,7 @@ import { useStoreWithEqualityFn } from "zustand/traditional";
 import { AgentStreamView, type AgentStreamViewHandle } from "@/agent-stream/view";
 import { ArchivedAgentCallout } from "@/components/archived-agent-callout";
 import { FileDropZone } from "@/components/file-drop/file-drop-zone";
+import { useRetainedPanelActive } from "@/components/retained-panel";
 import { Composer } from "@/composer";
 import { AgentModeControl } from "@/composer/agent-controls/mode-control";
 import { RewindComposerRestoreProvider } from "@/components/rewind/composer-restore";
@@ -706,6 +707,7 @@ function ChatAgentContent({
   onOpenWorkspaceFile?: (request: WorkspaceFileOpenRequest) => void;
 }) {
   const { t } = useTranslation();
+  const isPaneVisible = useRetainedPanelActive();
   const { api: toastApi, toast: toastState, dismiss: dismissToast } = useToastHost();
   const { isArchivingAgent } = useArchiveAgent();
   const streamViewRef = useRef<AgentStreamViewHandle>(null);
@@ -917,7 +919,7 @@ function ChatAgentContent({
       }
       return;
     }
-    if (!isPaneFocused || !isConnected || !hasSession) {
+    if (!isPaneVisible || !isConnected || !hasSession) {
       return;
     }
     if (
@@ -978,7 +980,7 @@ function ChatAgentContent({
     ensureAgentIsInitialized,
     hasSession,
     isConnected,
-    isPaneFocused,
+    isPaneVisible,
     missingAgentState.kind,
     serverId,
   ]);

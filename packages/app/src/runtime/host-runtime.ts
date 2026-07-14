@@ -61,6 +61,7 @@ import {
 } from "@/data/push-router";
 import { mountBrowserAutomationDaemonClientHandler } from "@/browser-automation/handler";
 import { schedulesQueryBaseKey } from "@/schedules/aggregated-schedules";
+import { sendQueuedComposerMessageNow } from "@/composer/actions";
 import { splitComposerAttachmentsForSubmit } from "@/composer/attachments/submit";
 import { encodeImages } from "@/utils/encode-images";
 
@@ -2126,31 +2127,38 @@ export class HostRuntimeStore {
     const store = useSessionStore.getState();
     const session = store.sessions[serverId];
     const queue = session?.queuedMessages.get(agentId);
-    if (!session?.client || !queue?.length || session.initializingAgents.get(agentId) === true) {
+    const client = session?.client;
+    if (!client || !queue?.length || session.initializingAgents.get(agentId) === true) {
       return;
     }
-    const [next, ...rest] = queue;
-    const wirePayload = splitComposerAttachmentsForSubmit(next.attachments);
-    store.setQueuedMessages(serverId, (current) => {
-      const updated = new Map(current);
-      updated.set(agentId, rest);
-      return updated;
-    });
-    void encodeImages(wirePayload.images)
-      .then((images) =>
-        session.client?.sendAgentMessage(agentId, next.text, {
+    const next = queue[0];
+    void sendQueuedComposerMessageNow({
+      agentId,
+      messageId: next.id,
+      queue: {
+        read: (queuedAgentId) =>
+          useSessionStore.getState().sessions[serverId]?.queuedMessages.get(queuedAgentId) ?? [],
+        write: (update) => useSessionStore.getState().setQueuedMessages(serverId, update),
+      },
+      submitMessage: async ({ text, attachments }) => {
+        const wirePayload = splitComposerAttachmentsForSubmit(attachments);
+        const images = await encodeImages(wirePayload.images);
+        await client.sendAgentMessage(agentId, text, {
           messageId: next.id,
           ...(images && images.length > 0 ? { images } : {}),
           attachments: wirePayload.attachments,
-        }),
-      )
-      .catch((error) => {
+        });
+      },
+    }).then((result) => {
+      if (result.status === "failed") {
         console.error("[HostRuntime] failed to drain queued agent message", {
           serverId,
           agentId,
-          error: toErrorMessage(error),
+          error: result.errorMessage,
         });
-      });
+      }
+      return result;
+    });
   }
 
   getSnapshot(serverId: string): HostRuntimeSnapshot | null {

@@ -34,6 +34,7 @@ class FakeDaemonClient {
     Awaited<ReturnType<DaemonClient["fetchAgents"]>> | ReturnType<DaemonClient["fetchAgents"]>
   > = [];
   public sentAgentMessages: Array<Parameters<DaemonClient["sendAgentMessage"]>> = [];
+  public sendAgentMessageFailures: Error[] = [];
   private agentUpdateListeners = new Set<
     (message: Extract<SessionOutboundMessage, { type: "agent_update" }>) => void
   >();
@@ -80,6 +81,8 @@ class FakeDaemonClient {
   async sendAgentMessage(...args: Parameters<DaemonClient["sendAgentMessage"]>): Promise<void> {
     this.sentAgentMessages.push(args);
     for (const waiter of this.sentMessageWaiters) waiter();
+    const failure = this.sendAgentMessageFailures.shift();
+    if (failure) throw failure;
   }
 
   async waitForSentMessages(count: number): Promise<void> {
@@ -2102,6 +2105,51 @@ describe("HostRuntimeStore", () => {
     ).toEqual([[], []]);
 
     store.syncHosts([]);
+    useSessionStore.getState().clearSession(host.serverId);
+  });
+
+  it("restores an automatically drained message when sending fails", async () => {
+    const host = makeHost({ serverId: "srv_failed_queue_drain" });
+    const fakeClient = new FakeDaemonClient();
+    fakeClient.sendAgentMessageFailures.push(new Error("connection lost"));
+    const store = new HostRuntimeStore({
+      deps: {
+        createClient: () => fakeClient as unknown as DaemonClient,
+        connectToDaemon: async () => ({
+          client: fakeClient as unknown as DaemonClient,
+          serverId: host.serverId,
+          hostname: null,
+        }),
+        getClientId: async () => "cid_failed_queue_drain",
+      },
+    });
+    const sessionStore = useSessionStore.getState();
+    sessionStore.initializeSession(host.serverId, fakeClient as unknown as DaemonClient, 1);
+    sessionStore.setQueuedMessages(
+      host.serverId,
+      new Map([
+        [
+          "agent",
+          [
+            { id: "first", text: "retry me", attachments: [] },
+            { id: "second", text: "keep me behind", attachments: [] },
+          ],
+        ],
+      ]),
+    );
+
+    store.drainQueuedAgentMessage(host.serverId, "agent");
+
+    await vi.waitFor(() => {
+      expect(fakeClient.sentAgentMessages).toHaveLength(1);
+      expect(
+        useSessionStore.getState().sessions[host.serverId]?.queuedMessages.get("agent"),
+      ).toEqual([
+        { id: "first", text: "retry me", attachments: [] },
+        { id: "second", text: "keep me behind", attachments: [] },
+      ]);
+    });
+
     useSessionStore.getState().clearSession(host.serverId);
   });
 

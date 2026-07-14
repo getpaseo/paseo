@@ -120,7 +120,6 @@ interface BufferedAudioChunk {
 interface WorkspaceHydrationSnapshot {
   workspaces: Map<string, WorkspaceDescriptor>;
   emptyProjects: Map<string, EmptyProjectDescriptor>;
-  deltas: readonly WorkspaceUpdatePayload[];
 }
 
 interface WorkspaceHydrationTransaction {
@@ -128,6 +127,10 @@ interface WorkspaceHydrationTransaction {
   client: DaemonClient;
   workspaces: Map<string, WorkspaceDescriptor>;
   deltas: WorkspaceUpdatePayload[];
+}
+
+function isWorkspaceHydrationCancelled(isCancelled?: () => boolean): boolean {
+  return isCancelled?.() ?? false;
 }
 
 type WorkspaceUpdatePayload = Extract<
@@ -181,7 +184,6 @@ async function fetchWorkspaceHydrationSnapshot(input: {
   return {
     workspaces: new Map(input.transaction.workspaces),
     emptyProjects,
-    deltas: [...input.transaction.deltas],
   };
 }
 
@@ -406,17 +408,15 @@ function finalizeTimelineApplication(input: {
   if (shouldMarkAuthoritativeHistoryApplied) {
     setAgentAuthoritativeHistoryApplied(serverId, agentId, true);
     useCreateFlowStore.getState().clearByAgent({ serverId, agentId });
-  }
-  if (result.initResolution === "resolve") {
-    resolveInitDeferred(initKey);
-  }
-  if (result.clearInitializing) {
     markAgentHistorySynchronized(serverId, agentId);
     const session = useSessionStore.getState().sessions[serverId];
     const agent = session?.agents.get(agentId) ?? session?.agentDetails.get(agentId);
     if (agent && agent.status !== "running") {
       getHostRuntimeStore().drainQueuedAgentMessage(serverId, agentId);
     }
+  }
+  if (result.initResolution === "resolve") {
+    resolveInitDeferred(initKey);
   }
 }
 
@@ -612,7 +612,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         }
         throw error;
       }
-      if (!snapshot || options?.isCancelled?.()) {
+      if (!snapshot || isWorkspaceHydrationCancelled(options?.isCancelled)) {
         if (workspaceHydrationRef.current === transaction) workspaceHydrationRef.current = null;
         return;
       }
@@ -629,18 +629,25 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         return;
       }
 
+      if (
+        workspaceHydrationRef.current !== transaction ||
+        isWorkspaceHydrationCancelled(options?.isCancelled)
+      ) {
+        return;
+      }
+      const deltas = [...transaction.deltas];
+      workspaceHydrationRef.current = null;
       setWorkspaces(
         serverId,
         reconcileWorkspaceDirectory({
           serverId,
           snapshot: snapshot.workspaces,
-          deltas: snapshot.deltas,
+          deltas,
         }),
       );
       setEmptyProjects(serverId, snapshot.emptyProjects.values());
       setHasHydratedWorkspaces(serverId, true);
-      for (const delta of snapshot.deltas) applyWorkspaceUpdatePayload(delta);
-      if (workspaceHydrationRef.current === transaction) workspaceHydrationRef.current = null;
+      for (const delta of deltas) applyWorkspaceUpdatePayload(delta);
     },
     [
       applyWorkspaceUpdatePayload,
