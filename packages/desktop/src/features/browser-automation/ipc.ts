@@ -21,7 +21,7 @@ import {
   listRegisteredPaseoBrowserIds,
   listRegisteredPaseoBrowserIdsForWorkspace,
   getPaseoBrowserWebContentsForHostWindow,
-  getWorkspaceActivePaseoBrowserId,
+  getWorkspaceActivePaseoBrowserIdForHostWindow,
   getPaseoBrowserWorkspaceId,
 } from "../browser-webviews/index.js";
 
@@ -352,7 +352,9 @@ function createRegistry(hostWebContentsId: number): BrowserRegistry {
       return contents ? adaptWebContents(contents) : null;
     },
     getBrowserWorkspaceId: getPaseoBrowserWorkspaceId,
-    getWorkspaceActiveBrowserId: getWorkspaceActivePaseoBrowserId,
+    getWorkspaceActiveBrowserId(workspaceId: string): string | null {
+      return getWorkspaceActivePaseoBrowserIdForHostWindow(workspaceId, hostWebContentsId);
+    },
   };
 }
 
