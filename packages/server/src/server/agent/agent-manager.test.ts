@@ -2760,11 +2760,31 @@ test("reloadAgentSession clears provider children before rehydrating from disk",
     provider: "codex",
     event: { type: "upsert", id: "stale-child", title: "Stale child", status: "running" },
   });
-  await vi.waitFor(() => expect(manager.listProviderSubagents(snapshot.id)).toHaveLength(1));
+  activeSession?.pushEvent({
+    type: "provider_subagent",
+    provider: "codex",
+    event: { type: "upsert", id: "dismissed-child", status: "completed" },
+  });
+  await vi.waitFor(() => expect(manager.listProviderSubagents(snapshot.id)).toHaveLength(2));
+  await manager.archiveFinishedSubagents(snapshot.id);
+  const events: AgentManagerEvent[] = [];
+  manager.subscribe((event) => events.push(event), {
+    agentId: snapshot.id,
+    replayState: false,
+  });
 
   await manager.reloadAgentSession(snapshot.id, undefined, { rehydrateFromDisk: true });
 
   expect(manager.listProviderSubagents(snapshot.id)).toEqual([]);
+  expect(events).toContainEqual({
+    type: "provider_subagent",
+    event: {
+      type: "remove",
+      parentAgentId: snapshot.id,
+      subagentId: "dismissed-child",
+      retainTimeline: true,
+    },
+  });
 });
 
 test("hydrateTimelineFromProvider restores and broadcasts provider children from session history", async () => {

@@ -1303,7 +1303,12 @@ export class AgentManager {
         await this.deleteCommittedTimeline(agentId);
         this.timelineStore.delete(agentId);
         for (const event of this.providerSubagents.deleteParent(agentId)) {
-          this.dispatch({ type: "provider_subagent", event });
+          this.dispatch({
+            type: "provider_subagent",
+            event: existing.dismissedProviderSubagentIds.has(event.subagentId)
+              ? { ...event, retainTimeline: true }
+              : event,
+          });
         }
       }
 
