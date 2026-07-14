@@ -120,7 +120,7 @@ describe("AgentManager rewind", () => {
     await run.next();
 
     await expect(manager.rewind(agent.id, "message-1", "files")).rejects.toThrow(
-      "Cannot rewind agent while its active run cancellation is unacknowledged",
+      `Cannot rewind agent ${agent.id} because its active run cancellation was not acknowledged`,
     );
     expect(session.recordedRewinds).toEqual([]);
     expect(manager.getAgent(agent.id)).toMatchObject({

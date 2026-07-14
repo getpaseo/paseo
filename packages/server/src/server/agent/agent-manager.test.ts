@@ -4359,7 +4359,7 @@ test("replaceAgentRun does not emit idle or resolve waiters between interrupted 
   await manager.waitForAgentRunStart(snapshot.id);
 
   const waitPromise = manager.waitForAgentEvent(snapshot.id);
-  const secondRun = manager.replaceAgentRun(snapshot.id, "second run");
+  const secondRun = await manager.replaceAgentRun(snapshot.id, "second run");
   const secondRunDrain = (async () => {
     for await (const _event of secondRun) {
       // Drain replacement run.
@@ -4490,12 +4490,7 @@ test("replaceAgentRun stays running when a stale old terminal arrives before the
 
   const replaceUpdatesStart = stateUpdates.length;
   const beforeReplaceUpdatedAt = manager.getAgent(snapshot.id)?.updatedAt.getTime() ?? 0;
-  const secondRun = manager.replaceAgentRun(snapshot.id, "replacement run");
-  const secondRunDrain = (async () => {
-    for await (const _event of secondRun) {
-      // Drain replacement run.
-    }
-  })();
+  const secondRunPromise = manager.replaceAgentRun(snapshot.id, "replacement run");
 
   await interruptStarted.promise;
   const replacementUpdates = stateUpdates.slice(replaceUpdatesStart);
@@ -4507,6 +4502,12 @@ test("replaceAgentRun stays running when a stale old terminal arrives before the
   expect(replacementUpdates.map((update) => update.lifecycle)).not.toContain("idle");
   allowInterruptToFinish.resolve();
 
+  const secondRun = await secondRunPromise;
+  const secondRunDrain = (async () => {
+    for await (const _event of secondRun) {
+      // Drain replacement run.
+    }
+  })();
   await secondStartEntered.promise;
 
   const replaceGapSnapshot = manager.getAgent(snapshot.id) as
@@ -7286,7 +7287,7 @@ test("replaceAgentRun succeeds when foreground turn terminal event is never deli
   // Replace the hung run. cancelAgentRun will time out after 2s because
   // no terminal event arrives. After the fix, it should force-clear the
   // stale foreground state so streamAgent can proceed.
-  const secondRun = manager.replaceAgentRun(snapshot.id, "replacement prompt");
+  const secondRun = await manager.replaceAgentRun(snapshot.id, "replacement prompt");
   const collectedEvents: AgentStreamEvent[] = [];
   const secondRunDrain = (async () => {
     for await (const event of secondRun) {

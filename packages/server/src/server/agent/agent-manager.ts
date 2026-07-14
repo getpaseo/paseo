@@ -95,6 +95,15 @@ export class AgentManagerShuttingDownError extends Error {
   }
 }
 
+export class AgentRunCancellationError extends Error {
+  constructor(agentId: string, action: "reload" | "replace" | "rewind" | "stop") {
+    super(
+      `Cannot ${action} agent ${agentId} because its active run cancellation was not acknowledged`,
+    );
+    this.name = "AgentRunCancellationError";
+  }
+}
+
 interface PreparedSessionConfig {
   storedConfig: AgentSessionConfig;
   launchConfig: AgentSessionConfig;
@@ -1962,11 +1971,11 @@ export class AgentManager {
     }
   }
 
-  replaceAgentRun(
+  async replaceAgentRun(
     agentId: string,
     prompt: AgentPromptInput,
     options?: AgentRunOptions,
-  ): AsyncGenerator<AgentStreamEvent> {
+  ): Promise<AsyncGenerator<AgentStreamEvent>> {
     const snapshot = this.requireAgent(agentId);
     if (
       snapshot.lifecycle !== "running" &&
@@ -1982,27 +1991,22 @@ export class AgentManager {
     this.touchUpdatedAt(agent);
     this.emitState(agent);
 
-    return async function* replaceRunForwarder(this: AgentManager) {
-      try {
-        await this.cancelAgentRunBefore(agentId, "replace");
-        const nextRun = this.streamAgent(agentId, prompt, options);
-        for await (const event of nextRun) {
-          yield event;
+    try {
+      await this.cancelAgentRunBefore(agentId, "replace");
+      return this.streamAgent(agentId, prompt, options);
+    } catch (error) {
+      const latest = this.agents.get(agentId);
+      if (latest) {
+        const latestActive = latest;
+        latestActive.pendingReplacement = false;
+        if (!latestActive.activeForegroundTurnId && latestActive.lifecycle === "running") {
+          (latestActive as ActiveManagedAgent).lifecycle = "idle";
+          this.touchUpdatedAt(latestActive);
+          this.emitState(latestActive);
         }
-      } catch (error) {
-        const latest = this.agents.get(agentId);
-        if (latest) {
-          const latestActive = latest;
-          latestActive.pendingReplacement = false;
-          if (!latestActive.activeForegroundTurnId && latestActive.lifecycle === "running") {
-            (latestActive as ActiveManagedAgent).lifecycle = "idle";
-            this.touchUpdatedAt(latestActive);
-            this.emitState(latestActive);
-          }
-        }
-        throw error;
       }
-    }.call(this);
+      throw error;
+    }
   }
 
   async waitForAgentRunStart(agentId: string, options?: WaitForAgentStartOptions): Promise<void> {
@@ -2254,7 +2258,7 @@ export class AgentManager {
   ): Promise<void> {
     const cancelled = await this.cancelAgentRun(agentId);
     if (!cancelled) {
-      throw new Error(`Cannot ${action} agent while its active run cancellation is unacknowledged`);
+      throw new AgentRunCancellationError(agentId, action);
     }
   }
 

@@ -14,7 +14,7 @@ Each agent in `AgentManager` carries a `lastStatus` of `initializing`, `idle`, `
 
 ### Cancellation
 
-Cancellation changes lifecycle state only after the provider acknowledges the interrupt or emits a terminal turn event. If the interrupt is rejected or times out, the agent remains `running` with its active foreground turn intact. Synthesizing a local cancellation without provider acknowledgment creates a split-brain session: Paseo accepts a new prompt while the provider still owns the previous foreground turn.
+Cancellation changes lifecycle state only after the provider acknowledges the interrupt or emits a terminal turn event. If the interrupt is rejected or times out, the agent remains `running` with its active foreground turn intact. Follow-up actions such as replacement, reload, rewind, and Stop must report that failure instead of accepting work they cannot perform. Synthesizing a local cancellation without provider acknowledgment creates a split-brain session: Paseo accepts a new prompt while the provider still owns the previous foreground turn.
 
 ## Relationships
 

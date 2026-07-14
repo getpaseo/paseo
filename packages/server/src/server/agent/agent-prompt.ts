@@ -15,13 +15,13 @@ export interface StartAgentRunOptions {
   runOptions?: AgentRunOptions;
 }
 
-export function startAgentRun(
+export async function startAgentRun(
   agentManager: AgentRunController,
   agentId: string,
   prompt: AgentPromptInput,
   logger: Logger,
   options?: StartAgentRunOptions,
-): { outOfBand: boolean } {
+): Promise<{ outOfBand: boolean }> {
   const snapshot = agentManager.getAgent(agentId);
   logger.trace(
     {
@@ -44,7 +44,7 @@ export function startAgentRun(
   const shouldReplace = Boolean(options?.replaceRunning && agentManager.hasInFlightRun(agentId));
   const runOptions = options?.runOptions;
   const iterator = shouldReplace
-    ? agentManager.replaceAgentRun(agentId, prompt, runOptions)
+    ? await agentManager.replaceAgentRun(agentId, prompt, runOptions)
     : agentManager.streamAgent(agentId, prompt, runOptions);
   logger.trace(
     {
@@ -197,7 +197,7 @@ export async function sendPromptToAgent(
     ? { ...params.runOptions, messageId: params.messageId }
     : params.runOptions;
 
-  return startAgentRun(params.agentManager, params.agentId, params.prompt, params.logger, {
+  return await startAgentRun(params.agentManager, params.agentId, params.prompt, params.logger, {
     replaceRunning: true,
     runOptions,
   });
@@ -215,7 +215,7 @@ export async function startCreatedAgentInitialPrompt(
     return currentSnapshot;
   }
 
-  const dispatchResult = startAgentRun(
+  const dispatchResult = await startAgentRun(
     params.agentManager,
     params.agentId,
     params.prompt,

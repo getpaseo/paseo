@@ -2857,11 +2857,25 @@ export class Session {
             requestId,
             agentId,
             agent: payload,
+            error: null,
           },
         });
       }
     } catch (error) {
       this.handleAgentRunError(agentId, error, "Failed to cancel running agent on request");
+      if (requestId) {
+        const agent = this.agentManager.getAgent(agentId);
+        const payload = agent ? await this.buildAgentPayload(agent) : null;
+        this.emit({
+          type: "cancel_agent_response",
+          payload: {
+            requestId,
+            agentId,
+            agent: payload,
+            error: errorToFriendlyMessage(error),
+          },
+        });
+      }
     }
   }
 

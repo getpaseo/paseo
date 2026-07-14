@@ -1,6 +1,6 @@
 import type { Logger } from "pino";
 
-import type { ManagedAgent } from "./agent-manager.js";
+import { AgentRunCancellationError, type ManagedAgent } from "./agent-manager.js";
 import type { StoredAgentRecord } from "./agent-storage.js";
 import type { AgentProviderNotice } from "./agent-sdk-types.js";
 
@@ -83,6 +83,7 @@ export async function cancelAgentRunCommand(
       { agentId },
       "cancelAgentRunCommand: reported running but no active run was cancelled",
     );
+    throw new AgentRunCancellationError(agentId, "stop");
   }
 
   return {

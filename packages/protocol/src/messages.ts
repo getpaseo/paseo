@@ -3139,6 +3139,7 @@ export const CancelAgentResponseMessageSchema = z.object({
     requestId: z.string(),
     agentId: z.string(),
     agent: AgentSnapshotPayloadSchema.nullable(),
+    error: z.string().nullable().optional(),
   }),
 });
 

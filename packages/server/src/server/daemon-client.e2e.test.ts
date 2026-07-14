@@ -335,6 +335,151 @@ test("createAgent fails when the initial turn cannot start", async () => {
   }
 });
 
+const UNINTERRUPTIBLE_CAPABILITIES = {
+  supportsStreaming: true,
+  supportsSessionPersistence: true,
+  supportsDynamicModes: false,
+  supportsMcpServers: false,
+  supportsReasoningStream: false,
+  supportsToolInvocations: false,
+  supportsRewindConversation: false,
+  supportsRewindFiles: false,
+  supportsRewindBoth: false,
+} as const;
+
+class UninterruptibleSession implements AgentSession {
+  readonly provider = "codex" as const;
+  readonly id = "uninterruptible-session";
+  readonly capabilities = UNINTERRUPTIBLE_CAPABILITIES;
+
+  private activeTurnId: string | null = null;
+
+  async run(): Promise<AgentRunResult> {
+    return { sessionId: this.id, finalText: "", timeline: [] };
+  }
+
+  async startTurn(): Promise<{ turnId: string }> {
+    if (this.activeTurnId) {
+      throw new Error("A foreground turn is already active");
+    }
+    this.activeTurnId = "provider-owned-turn";
+    return { turnId: this.activeTurnId };
+  }
+
+  subscribe(): () => void {
+    return () => undefined;
+  }
+
+  async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+    yield* [];
+  }
+
+  async getRuntimeInfo() {
+    return {
+      provider: this.provider,
+      sessionId: this.id,
+      model: "gpt-5.4-mini",
+      modeId: "full-access",
+    };
+  }
+
+  async getAvailableModes(): Promise<Array<{ id: string; label: string; description: string }>> {
+    return [{ id: "full-access", label: "Full access", description: "No prompts" }];
+  }
+
+  async getCurrentMode(): Promise<string | null> {
+    return "full-access";
+  }
+
+  async setMode(): Promise<void> {}
+
+  getPendingPermissions() {
+    return [];
+  }
+
+  async respondToPermission(): Promise<void> {}
+
+  describePersistence(): AgentPersistenceHandle {
+    return { provider: this.provider, sessionId: this.id };
+  }
+
+  async interrupt(): Promise<void> {
+    throw new Error("Provider did not acknowledge cancellation");
+  }
+
+  async close(): Promise<void> {
+    this.activeTurnId = null;
+  }
+}
+
+class UninterruptibleClient implements AgentClient {
+  readonly provider = "codex" as const;
+  readonly capabilities = UNINTERRUPTIBLE_CAPABILITIES;
+
+  async isAvailable(): Promise<boolean> {
+    return true;
+  }
+
+  async createSession(): Promise<AgentSession> {
+    return new UninterruptibleSession();
+  }
+
+  async resumeSession(): Promise<AgentSession> {
+    return new UninterruptibleSession();
+  }
+
+  async fetchCatalog() {
+    return {
+      models: [{ id: "gpt-5.4-mini", label: "GPT-5.4 mini", provider: this.provider }],
+      modes: [{ id: "full-access", label: "Full access", description: "No prompts" }],
+    };
+  }
+}
+
+test("DaemonClient rejects a replacement prompt when cancellation is not acknowledged", async () => {
+  const cwd = tmpCwd();
+  const daemon = await createTestPaseoDaemon({
+    agentClients: { codex: new UninterruptibleClient() },
+  });
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+
+  try {
+    await client.connect();
+    const agent = await client.createAgent({ provider: "codex", cwd });
+    await client.sendMessage(agent.id, "Keep working on the first prompt.");
+
+    await expect(client.sendMessage(agent.id, "Replace it with this prompt.")).rejects.toThrow(
+      `Cannot replace agent ${agent.id} because its active run cancellation was not acknowledged`,
+    );
+  } finally {
+    await client.close();
+    await daemon.close();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+}, 30_000);
+
+test("DaemonClient rejects Stop when cancellation is not acknowledged", async () => {
+  const cwd = tmpCwd();
+  const daemon = await createTestPaseoDaemon({
+    agentClients: { codex: new UninterruptibleClient() },
+  });
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+
+  try {
+    await client.connect();
+    const agent = await client.createAgent({ provider: "codex", cwd });
+    await client.sendMessage(agent.id, "Keep working until stopped.");
+
+    await expect(client.cancelAgent(agent.id)).rejects.toThrow(
+      `Cannot stop agent ${agent.id} because its active run cancellation was not acknowledged`,
+    );
+  } finally {
+    await client.close();
+    await daemon.close();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+}, 30_000);
+
 function waitForSignal<T>(
   timeoutMs: number,
   setup: (resolve: (value: T) => void, reject: (error: Error) => void) => () => void,
