@@ -2885,6 +2885,11 @@ test("archiveFinishedSubagents archives managed children and keeps dismissed pro
       workspaceId: undefined,
     },
   );
+  const managedWithRunningProviderDescendant = await manager.createAgent(
+    { provider: "codex", cwd: workdir },
+    undefined,
+    { labels: { [PARENT_AGENT_ID_LABEL]: parent.id }, workspaceId: undefined },
+  );
   client.sessions[3]?.pushEvent({
     type: "turn_started",
     provider: "codex",
@@ -2892,6 +2897,19 @@ test("archiveFinishedSubagents archives managed children and keeps dismissed pro
   });
   await vi.waitFor(() => {
     expect(manager.getAgent(runningGrandchild.id)?.lifecycle).toBe("running");
+  });
+  client.sessions[4]?.pushEvent({
+    type: "provider_subagent",
+    provider: "codex",
+    event: { type: "upsert", id: "running-provider-grandchild", status: "running" },
+  });
+  await vi.waitFor(() => {
+    expect(
+      manager.getProviderSubagent(
+        managedWithRunningProviderDescendant.id,
+        "running-provider-grandchild",
+      )?.status,
+    ).toBe("running");
   });
   await manager.hydrateTimelineFromProvider(parent.id);
 
@@ -2903,6 +2921,7 @@ test("archiveFinishedSubagents archives managed children and keeps dismissed pro
   });
   expectArchivedAgentRecord(await storage.get(managedFinished.id), "closed");
   expect((await storage.get(managedWithRunningDescendant.id))?.archivedAt).toBeFalsy();
+  expect((await storage.get(managedWithRunningProviderDescendant.id))?.archivedAt).toBeFalsy();
   expect(manager.getAgent(runningGrandchild.id)?.lifecycle).toBe("running");
   expect(manager.listProviderSubagents(parent.id).map((subagent) => subagent.id)).toEqual([
     "native-running",
@@ -2927,6 +2946,11 @@ test("archiveFinishedSubagents archives managed children and keeps dismissed pro
   expect(manager.listProviderSubagents(parent.id).map((subagent) => subagent.id)).toEqual([
     "native-running",
   ]);
+  expect(manager.getProviderSubagent(parent.id, "native-finished")).toMatchObject({
+    id: "native-finished",
+    status: "completed",
+  });
+  expect(() => manager.fetchProviderSubagentTimeline(parent.id, "native-finished")).not.toThrow();
 });
 
 test("force provider hydration removes children absent from current history", async () => {

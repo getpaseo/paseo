@@ -1003,6 +1003,7 @@ function mapSubAgentActivityItem(
       Math.max(nativeName.lastIndexOf("/"), nativeName.lastIndexOf("\\")) + 1,
     );
   }
+  const description = nativeName;
   nativeName ||= "Sub-agent";
   return {
     type: "tool_call",
@@ -1013,7 +1014,7 @@ function mapSubAgentActivityItem(
     detail: {
       type: "sub_agent",
       subAgentType: nativeName,
-      description: item.agentPath,
+      description,
       log: "",
       actions: [],
     },

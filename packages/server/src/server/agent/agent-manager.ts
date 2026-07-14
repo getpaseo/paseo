@@ -985,6 +985,9 @@ export class AgentManager {
     const hasBusyDescendant = (agentId: string, visited = new Set<string>()): boolean => {
       if (visited.has(agentId)) return true;
       visited.add(agentId);
+      if (this.providerSubagents.list(agentId).some((subagent) => subagent.status === "running")) {
+        return true;
+      }
       for (const child of recordsByParentId.get(agentId) ?? []) {
         const liveChild = this.agents.get(child.id);
         if (
@@ -2980,8 +2983,9 @@ export class AgentManager {
   private applyProviderSubagentEvent(
     agent: ManagedAgent,
     event: Extract<AgentStreamEvent, { type: "provider_subagent" }>,
+    options?: { includeDismissed?: boolean },
   ): ProviderSubagentStoreEvent | null {
-    if (agent.dismissedProviderSubagentIds.has(event.event.id)) {
+    if (!options?.includeDismissed && agent.dismissedProviderSubagentIds.has(event.event.id)) {
       return null;
     }
     return this.providerSubagents.apply(agent.id, event.provider, event.event);
@@ -3120,12 +3124,18 @@ export class AgentManager {
 
     for (const event of this.providerSubagents.deleteParent(agent.id)) {
       if (broadcast) {
-        this.dispatch({ type: "provider_subagent", event });
+        this.dispatch({
+          type: "provider_subagent",
+          event: agent.dismissedProviderSubagentIds.has(event.subagentId)
+            ? { ...event, retainTimeline: true }
+            : event,
+        });
       }
     }
     for (const event of providerSubagentEvents) {
-      const update = this.applyProviderSubagentEvent(agent, event);
-      if (broadcast && update) {
+      const dismissed = agent.dismissedProviderSubagentIds.has(event.event.id);
+      const update = this.applyProviderSubagentEvent(agent, event, { includeDismissed: true });
+      if (broadcast && update && !dismissed) {
         this.dispatch({ type: "provider_subagent", event: update });
       }
     }

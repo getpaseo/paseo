@@ -246,7 +246,7 @@ describe("codex tool-call mapper", () => {
       detail: {
         type: "sub_agent",
         subAgentType: "research/investigator",
-        description: "/root/research/investigator",
+        description: "research/investigator",
         log: "",
         actions: [],
       },
@@ -280,7 +280,7 @@ describe("codex tool-call mapper", () => {
       detail: {
         type: "sub_agent",
         subAgentType: "investigator",
-        description: "/tmp/native/investigator",
+        description: "investigator",
       },
     });
   });
@@ -298,7 +298,7 @@ describe("codex tool-call mapper", () => {
       detail: {
         type: "sub_agent",
         subAgentType: "investigator",
-        description: "C:\\Users\\dev\\agents\\investigator",
+        description: "investigator",
       },
     });
   });
