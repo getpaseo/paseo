@@ -2999,7 +2999,7 @@ describe("Codex app-server provider", () => {
       {
         callId: "v2-spawn-history",
         status: "completed",
-        detail: { type: "sub_agent", description: "/root/v2-child" },
+        detail: { type: "sub_agent", description: "v2-child" },
       },
     ]);
 
@@ -3121,7 +3121,7 @@ describe("Codex app-server provider", () => {
           status: "canceled",
           detail: expect.objectContaining({
             type: "sub_agent",
-            description: "/root/history-child",
+            description: "history-child",
           }),
         }),
       },
