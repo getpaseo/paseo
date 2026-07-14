@@ -3,6 +3,7 @@ import { PaseoBrowserWebviewRegistry } from "../browser-webviews/registry.js";
 import {
   type BrowserKeyboardPolicy,
   classifyBrowserReservedShortcut,
+  matchesBrowserShortcutPrefixes,
   matchesBrowserShortcutPolicy,
   parseBrowserKeyboardPolicy,
   parseBrowserShortcutInput,
@@ -150,19 +151,21 @@ export class BrowserKeyboard {
     input: Electron.Input,
   ): void {
     const policy = this.policiesByHostWebContentsId.get(registration.hostWebContentsId);
+    const matchInput = {
+      alt: input.alt,
+      code: input.code,
+      control: input.control,
+      key: input.key,
+      meta: input.meta,
+      repeat: input.isAutoRepeat,
+      shift: input.shift,
+    };
     const belongsToBrowserPolicy =
-      policy !== undefined &&
-      matchesBrowserShortcutPolicy(policy, {
-        alt: input.alt,
-        code: input.code,
-        control: input.control,
-        key: input.key,
-        meta: input.meta,
-        repeat: input.isAutoRepeat,
-        shift: input.shift,
-      });
+      policy !== undefined && matchesBrowserShortcutPolicy(policy, matchInput);
+    const belongsToMenuPolicy =
+      policy !== undefined && matchesBrowserShortcutPrefixes(policy.menuPrefixes, matchInput);
     guest.contents.setIgnoreMenuShortcuts(
-      (!input.control && !input.meta) || belongsToBrowserPolicy,
+      (!input.control && !input.meta) || belongsToBrowserPolicy || belongsToMenuPolicy,
     );
     const reservedShortcut = classifyBrowserReservedShortcut(input, {
       isMac: process.platform === "darwin",
@@ -182,7 +185,6 @@ export class BrowserKeyboard {
         }
         return;
       case "focus-url":
-      case "new-tab":
         event.preventDefault();
         if (!guest.hostContents.isDestroyed()) {
           guest.hostContents.send(RESERVED_SHORTCUT_OUTPUT_CHANNEL, {

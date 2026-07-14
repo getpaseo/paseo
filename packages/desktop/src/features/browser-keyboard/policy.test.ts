@@ -22,10 +22,10 @@ describe("browser keyboard policy", () => {
 
     expect(
       macInputs.map((input) => classifyBrowserReservedShortcut(input, { isMac: true })),
-    ).toEqual(["new-tab", "focus-url", "reload", "force-reload"]);
+    ).toEqual([null, "focus-url", "reload", "force-reload"]);
     expect(
       nonMacInputs.map((input) => classifyBrowserReservedShortcut(input, { isMac: false })),
-    ).toEqual(["new-tab", "focus-url", "reload", "force-reload"]);
+    ).toEqual([null, "focus-url", "reload", "force-reload"]);
   });
 
   test("rejects the wrong or ambiguous command modifier for reserved shortcuts", () => {
@@ -65,11 +65,17 @@ describe("browser keyboard policy", () => {
   test("accepts only complete modifier prefixes from the host renderer", () => {
     expect(
       parseBrowserKeyboardPolicy({
+        menuPrefixes: [
+          { code: "KeyB", control: true, meta: false, alt: false, repeat: false, shift: false },
+        ],
         prefixes: [
           { code: "KeyB", control: true, meta: false, alt: false, repeat: false, shift: false },
         ],
       }),
     ).toEqual({
+      menuPrefixes: [
+        { code: "KeyB", control: true, meta: false, alt: false, repeat: false, shift: false },
+      ],
       prefixes: [
         { code: "KeyB", control: true, meta: false, alt: false, repeat: false, shift: false },
       ],
@@ -80,6 +86,7 @@ describe("browser keyboard policy", () => {
   test("rejects a false code fallback instead of treating it as absent", () => {
     expect(
       parseBrowserKeyboardPolicy({
+        menuPrefixes: [],
         prefixes: [
           {
             alt: false,
@@ -110,6 +117,7 @@ describe("browser keyboard policy", () => {
 
   test("matches digit shortcuts for the top row and numeric keypad", () => {
     const policy = parseBrowserKeyboardPolicy({
+      menuPrefixes: [],
       prefixes: [
         { alt: false, code: "Digit", control: true, meta: false, repeat: false, shift: false },
       ],

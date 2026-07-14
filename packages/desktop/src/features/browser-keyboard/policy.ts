@@ -11,6 +11,7 @@ export interface BrowserShortcutPrefix {
 }
 
 export interface BrowserKeyboardPolicy {
+  menuPrefixes: BrowserShortcutPrefix[];
   prefixes: BrowserShortcutPrefix[];
 }
 
@@ -35,7 +36,7 @@ export interface BrowserShortcutMatchInput {
   shift: boolean;
 }
 
-export type BrowserReservedShortcut = "new-tab" | "focus-url" | "reload" | "force-reload";
+export type BrowserReservedShortcut = "focus-url" | "reload" | "force-reload";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -72,19 +73,28 @@ function parsePrefix(value: unknown): BrowserShortcutPrefix | null {
   };
 }
 
-export function parseBrowserKeyboardPolicy(value: unknown): BrowserKeyboardPolicy | null {
-  if (!isRecord(value) || !Array.isArray(value.prefixes)) {
+function parsePrefixes(value: unknown): BrowserShortcutPrefix[] | null {
+  if (!Array.isArray(value)) {
     return null;
   }
   const prefixes: BrowserShortcutPrefix[] = [];
-  for (const entry of value.prefixes) {
+  for (const entry of value) {
     const prefix = parsePrefix(entry);
     if (!prefix) {
       return null;
     }
     prefixes.push(prefix);
   }
-  return { prefixes };
+  return prefixes;
+}
+
+export function parseBrowserKeyboardPolicy(value: unknown): BrowserKeyboardPolicy | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const menuPrefixes = parsePrefixes(value.menuPrefixes);
+  const prefixes = parsePrefixes(value.prefixes);
+  return menuPrefixes && prefixes ? { menuPrefixes, prefixes } : null;
 }
 
 export function parseBrowserShortcutInput(value: unknown): BrowserShortcutInput | null {
@@ -145,11 +155,18 @@ function matchesPrefix(prefix: BrowserShortcutPrefix, input: BrowserShortcutMatc
   return (prefix.alt || prefix.codeFallback === true) && matchesCode(prefix.code, input.code);
 }
 
+export function matchesBrowserShortcutPrefixes(
+  prefixes: BrowserShortcutPrefix[],
+  input: BrowserShortcutMatchInput,
+): boolean {
+  return prefixes.some((prefix) => matchesPrefix(prefix, input));
+}
+
 export function matchesBrowserShortcutPolicy(
   policy: BrowserKeyboardPolicy,
   input: BrowserShortcutMatchInput,
 ): boolean {
-  return policy.prefixes.some((prefix) => matchesPrefix(prefix, input));
+  return matchesBrowserShortcutPrefixes(policy.prefixes, input);
 }
 
 export function classifyBrowserReservedShortcut(
@@ -172,7 +189,6 @@ export function classifyBrowserReservedShortcut(
     return null;
   }
   const key = input.key.toLowerCase();
-  if (!input.shift && key === "t") return "new-tab";
   if (!input.shift && key === "l") return "focus-url";
   if (key !== "r") return null;
   return input.shift ? "force-reload" : "reload";

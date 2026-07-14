@@ -15,7 +15,7 @@ import {
 } from "@/keyboard/keyboard-shortcuts";
 import { resolveKeyboardFocusScope } from "@/keyboard/focus-scope";
 import {
-  buildBrowserShortcutPolicy,
+  buildBrowserKeyboardPolicy,
   parseBrowserShortcutInput,
   shouldPublishBrowserShortcutPolicy,
 } from "@/keyboard/browser-shortcuts";
@@ -68,16 +68,16 @@ export function useKeyboardShortcuts({
 
   const publishBrowserShortcutPolicy = useCallback(
     (chordState?: ChordState) => {
-      const prefixes =
+      const policy =
         enabled && !isMobile
-          ? buildBrowserShortcutPolicy({
+          ? buildBrowserKeyboardPolicy({
               bindings,
               chordState,
               isMac,
               isDesktop: isDesktopApp,
             })
-          : [];
-      void getDesktopHost()?.browser?.setShortcutPolicy?.({ prefixes });
+          : { menuPrefixes: [], prefixes: [] };
+      void getDesktopHost()?.browser?.setShortcutPolicy?.(policy);
     },
     [bindings, enabled, isDesktopApp, isMac, isMobile],
   );
@@ -348,29 +348,6 @@ export function useKeyboardShortcuts({
           });
         })
       : null;
-    const browserReservedShortcutSubscription = isElectronRuntime()
-      ? getDesktopHost()?.events?.on?.("browser-shortcut", (payload) => {
-          if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
-            return;
-          }
-          if (!("action" in payload) || payload.action !== "new-tab") {
-            return;
-          }
-          if (
-            !("browserId" in payload) ||
-            typeof payload.browserId !== "string" ||
-            payload.browserId.length === 0
-          ) {
-            return;
-          }
-          routeAndPerformShortcut({
-            action: "workspace.tab.new",
-            payload: null,
-            domEvent: null,
-          });
-        })
-      : null;
-
     return () => {
       if (chordStateRef.current.timeoutId !== null) {
         clearTimeout(chordStateRef.current.timeoutId);
@@ -388,11 +365,6 @@ export function useKeyboardShortcuts({
         browserShortcutSubscription();
       } else {
         void browserShortcutSubscription?.then((dispose) => dispose());
-      }
-      if (typeof browserReservedShortcutSubscription === "function") {
-        browserReservedShortcutSubscription();
-      } else {
-        void browserReservedShortcutSubscription?.then((dispose) => dispose());
       }
     };
   }, [

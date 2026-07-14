@@ -53,18 +53,23 @@ function installKeydownListener(): void {
     if (!event.isTrusted || event.defaultPrevented || !browserId || !matchesPolicy(event)) {
       return;
     }
-    event.preventDefault();
-    event.stopPropagation();
-    ipcRenderer.send(SHORTCUT_INPUT_CHANNEL, {
-      alt: event.altKey,
-      browserId,
-      code: event.code,
-      control: event.ctrlKey,
-      key: event.key,
-      meta: event.metaKey,
-      repeat: event.repeat,
-      shift: event.shiftKey,
-    });
+    const shortcutBrowserId = browserId;
+    setTimeout(() => {
+      if (event.defaultPrevented) {
+        return;
+      }
+      event.preventDefault();
+      ipcRenderer.send(SHORTCUT_INPUT_CHANNEL, {
+        alt: event.altKey,
+        browserId: shortcutBrowserId,
+        code: event.code,
+        control: event.ctrlKey,
+        key: event.key,
+        meta: event.metaKey,
+        repeat: event.repeat,
+        shift: event.shiftKey,
+      });
+    }, 0);
   });
 }
 

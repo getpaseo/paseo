@@ -1774,6 +1774,46 @@ function installBrowserKeyboardSentinels() {
   };
 }
 
+async function verifyLateBrowserShortcutFirstRefusal({ guest, sentinel }) {
+  const { shortcutInputs } = sentinel;
+  await guest.executeJavaScript(
+    `window.addEventListener("keydown", function preventLateBrowserShortcut(event) {
+       if (
+         (event.metaKey || event.ctrlKey) &&
+         !event.altKey &&
+         !event.shiftKey &&
+         event.key.toLowerCase() === "b"
+       ) {
+         window.removeEventListener("keydown", preventLateBrowserShortcut);
+         event.preventDefault();
+         window.fixtureLog.push({
+           event: "late-shortcut-b",
+           defaultPrevented: event.defaultPrevented,
+           trusted: event.isTrusted,
+         });
+       }
+     });`,
+    true,
+  );
+  automationBrowserShortcut(guest);
+  await waitForAutomationLog(
+    guest,
+    (entry) =>
+      entry.event === "late-shortcut-b" &&
+      entry.defaultPrevented === true &&
+      entry.trusted === true,
+    "late page-prevented trusted browser shortcut",
+  );
+  await delay(100);
+  if (shortcutInputs.length !== 0 || sentinel.applicationMenuShortcutHits !== 0) {
+    fail(
+      `late page-prevented browser shortcut escaped guest: inputs=${JSON.stringify(shortcutInputs)} menu=${sentinel.applicationMenuShortcutHits}`,
+    );
+  }
+  pass("automation late page preventDefault keeps browser shortcut in the guest");
+  return { group: "automation", check: "browser-shortcut-late-page-prevented", pass: true };
+}
+
 async function verifyBrowserKeyboardIsolation({ guest, win, browserId, usesMeta, sentinel }) {
   const checks = [];
   const { shortcutInputs } = sentinel;
@@ -1812,8 +1852,11 @@ async function verifyBrowserKeyboardIsolation({ guest, win, browserId, usesMeta,
   pass("automation page preventDefault keeps browser shortcut in the guest");
   checks.push({ group: "automation", check: "browser-shortcut-page-prevented", pass: true });
 
+  await guest.executeJavaScript("window.preventBrowserShortcut = false", true);
+  checks.push(await verifyLateBrowserShortcutFirstRefusal({ guest, sentinel }));
+
   const unhandledTarget = await guest.executeJavaScript(
-    "window.preventBrowserShortcut = false; document.getElementById('save').focus(); document.activeElement.id",
+    "document.getElementById('save').focus(); document.activeElement.id",
     true,
   );
   if (unhandledTarget !== "save") {
@@ -2011,6 +2054,17 @@ async function runAutomationGroup() {
     });
     browserKeyboard.attach({ contents: guest, hostContents: win.webContents });
     browserKeyboard.publish(win.webContents.id, {
+      menuPrefixes: [
+        {
+          alt: false,
+          code: "KeyB",
+          control: !usesMeta,
+          key: "b",
+          meta: usesMeta,
+          repeat: false,
+          shift: false,
+        },
+      ],
       prefixes: [
         {
           alt: false,

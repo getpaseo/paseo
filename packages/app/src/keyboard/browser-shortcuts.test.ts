@@ -1,21 +1,21 @@
 import { describe, expect, it } from "vitest";
 import {
-  buildBrowserShortcutPolicy,
+  buildBrowserKeyboardPolicy,
   parseBrowserShortcutInput,
   shouldPublishBrowserShortcutPolicy,
 } from "./browser-shortcuts";
 import { buildEffectiveBindings, resolveKeyboardShortcut } from "./keyboard-shortcuts";
 
-describe("buildBrowserShortcutPolicy", () => {
+describe("buildBrowserKeyboardPolicy", () => {
   it("publishes only chord starts while no browser chord is pending", () => {
     const bindings = buildEffectiveBindings({
       "workspace-tab-new-ctrl-t-non-mac": "Ctrl+Y",
       "workspace-terminal-new-ctrl-shift-t-non-mac": "Ctrl+F12 Ctrl+F11",
     });
 
-    const policy = buildBrowserShortcutPolicy({ bindings, isMac: false, isDesktop: true });
+    const policy = buildBrowserKeyboardPolicy({ bindings, isMac: false, isDesktop: true });
 
-    expect(policy).toContainEqual({
+    expect(policy.prefixes).toContainEqual({
       alt: false,
       code: "KeyY",
       control: true,
@@ -23,14 +23,14 @@ describe("buildBrowserShortcutPolicy", () => {
       meta: false,
       shift: false,
     });
-    expect(policy).toContainEqual({
+    expect(policy.prefixes).toContainEqual({
       alt: false,
       code: "F12",
       control: true,
       meta: false,
       shift: false,
     });
-    expect(policy).not.toContainEqual({
+    expect(policy.prefixes).not.toContainEqual({
       alt: false,
       code: "F11",
       control: true,
@@ -47,14 +47,14 @@ describe("buildBrowserShortcutPolicy", () => {
       (binding) => binding.id === "workspace-terminal-new-ctrl-shift-t-non-mac",
     );
 
-    const policy = buildBrowserShortcutPolicy({
+    const policy = buildBrowserKeyboardPolicy({
       bindings,
       chordState: { candidateIndices: [chordIndex], step: 1, timeoutId: null },
       isMac: false,
       isDesktop: true,
     });
 
-    expect(policy).toEqual([
+    expect(policy.prefixes).toEqual([
       {
         alt: false,
         code: "F11",
@@ -63,6 +63,14 @@ describe("buildBrowserShortcutPolicy", () => {
         shift: false,
       },
     ]);
+    expect(policy.menuPrefixes).toContainEqual({
+      alt: false,
+      code: "KeyW",
+      control: true,
+      key: "w",
+      meta: false,
+      shift: false,
+    });
 
     const result = resolveKeyboardShortcut({
       event: {
@@ -93,16 +101,16 @@ describe("buildBrowserShortcutPolicy", () => {
       "settings-toggle-ctrl-comma-non-mac": "Ctrl+F10 F9",
     });
 
-    const policy = buildBrowserShortcutPolicy({ bindings, isMac: false, isDesktop: true });
+    const policy = buildBrowserKeyboardPolicy({ bindings, isMac: false, isDesktop: true });
 
-    expect(policy).not.toContainEqual({
+    expect(policy.prefixes).not.toContainEqual({
       alt: false,
       code: "F10",
       control: true,
       meta: false,
       shift: false,
     });
-    expect(policy).not.toContainEqual({
+    expect(policy.prefixes).not.toContainEqual({
       alt: false,
       code: "F9",
       control: false,
@@ -116,7 +124,9 @@ describe("buildBrowserShortcutPolicy", () => {
       "workspace-tab-new-cmd-t-mac": "Mod+Y",
     });
 
-    expect(buildBrowserShortcutPolicy({ bindings, isMac: true, isDesktop: true })).toContainEqual({
+    expect(
+      buildBrowserKeyboardPolicy({ bindings, isMac: true, isDesktop: true }).prefixes,
+    ).toContainEqual({
       alt: false,
       code: "KeyY",
       control: false,
@@ -128,16 +138,16 @@ describe("buildBrowserShortcutPolicy", () => {
 
   it("does not publish plain browser keys", () => {
     const bindings = buildEffectiveBindings({});
-    const policy = buildBrowserShortcutPolicy({ bindings, isMac: false, isDesktop: true });
+    const policy = buildBrowserKeyboardPolicy({ bindings, isMac: false, isDesktop: true });
 
-    expect(policy).not.toContainEqual({
+    expect(policy.prefixes).not.toContainEqual({
       alt: false,
       code: "Enter",
       control: false,
       meta: false,
       shift: false,
     });
-    expect(policy).not.toContainEqual({
+    expect(policy.prefixes).not.toContainEqual({
       alt: false,
       code: "Slash",
       control: false,
@@ -148,9 +158,9 @@ describe("buildBrowserShortcutPolicy", () => {
 
   it("publishes Cmd+B with its logical key for non-QWERTY layouts", () => {
     const bindings = buildEffectiveBindings({});
-    const policy = buildBrowserShortcutPolicy({ bindings, isMac: true, isDesktop: true });
+    const policy = buildBrowserKeyboardPolicy({ bindings, isMac: true, isDesktop: true });
 
-    expect(policy).toContainEqual({
+    expect(policy.prefixes).toContainEqual({
       alt: false,
       code: "KeyB",
       control: false,
@@ -162,9 +172,9 @@ describe("buildBrowserShortcutPolicy", () => {
 
   it("publishes the physical code needed for macOS Option shortcuts", () => {
     const bindings = buildEffectiveBindings({});
-    const policy = buildBrowserShortcutPolicy({ bindings, isMac: true, isDesktop: true });
+    const policy = buildBrowserKeyboardPolicy({ bindings, isMac: true, isDesktop: true });
 
-    expect(policy).toContainEqual({
+    expect(policy.prefixes).toContainEqual({
       alt: true,
       code: "KeyT",
       control: false,

@@ -193,6 +193,16 @@ describe("BrowserKeyboard", () => {
     const guest = new FakeBrowserContents(61);
     const host = new FakeBrowserContents(62);
     const initialPolicy = {
+      menuPrefixes: [
+        {
+          alt: false,
+          code: "KeyB",
+          control: true,
+          meta: false,
+          repeat: false as const,
+          shift: false,
+        },
+      ],
       prefixes: [
         {
           alt: false,
@@ -204,7 +214,7 @@ describe("BrowserKeyboard", () => {
         },
       ],
     };
-    const latestPolicy = { prefixes: [] };
+    const latestPolicy = { menuPrefixes: [], prefixes: [] };
     keyboard.publish(host.id, initialPolicy);
     attach({ browserId: "browser-a", contents: guest, hostContents: host });
     keyboard.publish(host.id, latestPolicy);
@@ -235,7 +245,7 @@ describe("BrowserKeyboard", () => {
     const guest = new FakeBrowserContents(71);
     const host = new FakeBrowserContents(72);
     attach({ browserId: "browser-a", contents: guest, hostContents: host });
-    keyboard.publish(host.id, { prefixes: [] });
+    keyboard.publish(host.id, { menuPrefixes: [], prefixes: [] });
 
     host.destroy();
     guest.domReady();
@@ -243,28 +253,32 @@ describe("BrowserKeyboard", () => {
     expect(guest.sent).toEqual([
       {
         channel: "paseo:browser-keyboard-policy",
-        payload: { browserId: "browser-a", prefixes: [] },
+        payload: { browserId: "browser-a", menuPrefixes: [], prefixes: [] },
       },
     ]);
   });
 
-  test("owns reserved shortcuts and leaves plain guest input contained", () => {
+  test("owns browser chrome shortcuts and leaves customizable shortcuts to policy", () => {
     const { attach } = createBrowserKeyboard();
     const guest = new FakeBrowserContents(81);
     const host = new FakeBrowserContents(82);
     attach({ browserId: "browser-a", contents: guest, hostContents: host });
     const command = process.platform === "darwin" ? { meta: true } : { control: true };
 
-    const reservedWasPrevented = guest.input(electronInput({ ...command, code: "KeyT", key: "t" }));
+    const reservedWasPrevented = guest.input(electronInput({ ...command, code: "KeyL", key: "l" }));
+    const customizableWasPrevented = guest.input(
+      electronInput({ ...command, code: "KeyT", key: "t" }),
+    );
     const enterWasPrevented = guest.input(electronInput({ code: "Enter", key: "Enter" }));
 
     expect(reservedWasPrevented).toBe(true);
+    expect(customizableWasPrevented).toBe(false);
     expect(enterWasPrevented).toBe(false);
-    expect(guest.ignoredMenuShortcuts).toEqual([false, true]);
+    expect(guest.ignoredMenuShortcuts).toEqual([false, false, true]);
     expect(host.sent).toEqual([
       {
         channel: "paseo:event:browser-shortcut",
-        payload: { action: "new-tab", browserId: "browser-a" },
+        payload: { action: "focus-url", browserId: "browser-a" },
       },
     ]);
   });
@@ -274,8 +288,31 @@ describe("BrowserKeyboard", () => {
     const guest = new FakeBrowserContents(91);
     const host = new FakeBrowserContents(92);
     keyboard.publish(host.id, {
+      menuPrefixes: [
+        { alt: false, code: "KeyW", control: true, meta: false, repeat: false, shift: false },
+      ],
       prefixes: [
         { alt: false, code: "KeyW", control: true, meta: false, repeat: false, shift: false },
+      ],
+    });
+    attach({ browserId: "browser-a", contents: guest, hostContents: host });
+
+    const wasPrevented = guest.input(electronInput({ code: "KeyW", control: true, key: "w" }));
+
+    expect(wasPrevented).toBe(false);
+    expect(guest.ignoredMenuShortcuts).toEqual([true]);
+  });
+
+  test("keeps idle policy shortcuts out of the application menu while a chord is pending", () => {
+    const { attach, keyboard } = createBrowserKeyboard();
+    const guest = new FakeBrowserContents(101);
+    const host = new FakeBrowserContents(102);
+    keyboard.publish(host.id, {
+      menuPrefixes: [
+        { alt: false, code: "KeyW", control: true, meta: false, repeat: false, shift: false },
+      ],
+      prefixes: [
+        { alt: false, code: "F11", control: true, meta: false, repeat: false, shift: false },
       ],
     });
     attach({ browserId: "browser-a", contents: guest, hostContents: host });

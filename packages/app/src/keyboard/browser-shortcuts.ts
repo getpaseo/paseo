@@ -22,6 +22,11 @@ export interface BrowserShortcutInput extends KeyboardShortcutInput {
   browserId: string;
 }
 
+export interface BrowserKeyboardPolicy {
+  menuPrefixes: BrowserShortcutPrefix[];
+  prefixes: BrowserShortcutPrefix[];
+}
+
 interface BrowserShortcutPolicyInput {
   bindings: readonly ParsedShortcutBinding[];
   chordState?: ChordState;
@@ -117,9 +122,7 @@ function prefixKey(prefix: BrowserShortcutPrefix): string {
   ].join(":");
 }
 
-export function buildBrowserShortcutPolicy(
-  input: BrowserShortcutPolicyInput,
-): BrowserShortcutPrefix[] {
+function buildBrowserShortcutPrefixes(input: BrowserShortcutPolicyInput): BrowserShortcutPrefix[] {
   const prefixes = new Map<string, BrowserShortcutPrefix>();
   const context = {
     isMac: input.isMac,
@@ -157,4 +160,15 @@ export function buildBrowserShortcutPolicy(
   }
 
   return [...prefixes.values()];
+}
+
+export function buildBrowserKeyboardPolicy(
+  input: BrowserShortcutPolicyInput,
+): BrowserKeyboardPolicy {
+  const menuPrefixes = buildBrowserShortcutPrefixes({ ...input, chordState: undefined });
+  const prefixes =
+    input.chordState && input.chordState.step > 0
+      ? buildBrowserShortcutPrefixes(input)
+      : menuPrefixes;
+  return { menuPrefixes, prefixes };
 }
