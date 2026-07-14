@@ -165,6 +165,49 @@ describe("resolveSpeechConfig", () => {
     });
   });
 
+  test("selects Chinese local speech defaults for regional language tags", () => {
+    const result = resolveSpeechConfig({
+      paseoHome: "/tmp/paseo-home",
+      env: {
+        PASEO_DICTATION_LANGUAGE: "zh-CN",
+        PASEO_VOICE_LANGUAGE: "ZH-Hant",
+      } as NodeJS.ProcessEnv,
+      persisted: PersistedConfigSchema.parse({}),
+    });
+
+    expect(result.speech.local?.models).toEqual({
+      dictationStt: "sense-voice-zh-en-ja-ko-yue-int8",
+      voiceStt: "sense-voice-zh-en-ja-ko-yue-int8",
+      voiceTts: "kokoro-multi-lang-v1_0",
+      voiceTtsSpeakerId: 48,
+    });
+    expect(result.speech.sttLanguages).toEqual({
+      dictation: "zh-CN",
+      voice: "ZH-Hant",
+    });
+  });
+
+  test("keeps explicit local model overrides for Chinese speech", () => {
+    const result = resolveSpeechConfig({
+      paseoHome: "/tmp/paseo-home",
+      env: {
+        PASEO_DICTATION_LANGUAGE: "zh",
+        PASEO_VOICE_LANGUAGE: "zh",
+        PASEO_DICTATION_LOCAL_STT_MODEL: "paraformer-zh-2024-03-09-int8",
+        PASEO_VOICE_LOCAL_STT_MODEL: "paraformer-zh-2024-03-09-int8",
+        PASEO_VOICE_LOCAL_TTS_MODEL: "kokoro-en-v0_19",
+      } as NodeJS.ProcessEnv,
+      persisted: PersistedConfigSchema.parse({}),
+    });
+
+    expect(result.speech.local?.models).toEqual({
+      dictationStt: "paraformer-zh-2024-03-09-int8",
+      voiceStt: "paraformer-zh-2024-03-09-int8",
+      voiceTts: "kokoro-en-v0_19",
+      voiceTtsSpeakerId: 0,
+    });
+  });
+
   test("respects disabled dictation and voice mode feature flags", () => {
     const persisted = PersistedConfigSchema.parse({
       features: {
