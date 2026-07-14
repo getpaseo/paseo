@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import { PaseoBrowserWebviewRegistry } from "../browser-webviews/registry.js";
 import { BrowserKeyboard } from "./index.js";
 
 interface SentMessage {
@@ -11,7 +12,7 @@ class FakeBrowserContents {
   public readonly reloads: string[] = [];
   public readonly sent: SentMessage[] = [];
   private destroyed = false;
-  private destroyedListener: (() => void) | null = null;
+  private readonly destroyedListeners: Array<() => void> = [];
   private finishLoadListener: (() => void) | null = null;
   private inputListener:
     | ((event: { preventDefault(): void }, input: Electron.Input) => void)
@@ -36,7 +37,7 @@ class FakeBrowserContents {
 
   public once(event: "destroyed", listener: () => void): void {
     expect(event).toBe("destroyed");
-    this.destroyedListener = listener;
+    this.destroyedListeners.push(listener);
   }
 
   public on(event: "did-finish-load", listener: () => void): void;
@@ -80,7 +81,9 @@ class FakeBrowserContents {
 
   public destroy(): void {
     this.destroyed = true;
-    this.destroyedListener?.();
+    for (const listener of this.destroyedListeners) {
+      listener();
+    }
   }
 
   public finishLoad(): void {
@@ -101,19 +104,6 @@ class FakeBrowserContents {
   }
 }
 
-function shortcutInput(browserId: string) {
-  return {
-    alt: false,
-    browserId,
-    code: "KeyB",
-    control: true,
-    key: "b",
-    meta: false,
-    repeat: false,
-    shift: false,
-  };
-}
-
 function electronInput(input: Partial<Electron.Input>): Electron.Input {
   return {
     alt: false,
@@ -131,96 +121,65 @@ function electronInput(input: Partial<Electron.Input>): Electron.Input {
   };
 }
 
+function createBrowserKeyboard() {
+  const registry = new PaseoBrowserWebviewRegistry();
+  const keyboard = new BrowserKeyboard(registry);
+
+  function attach(input: {
+    browserId: string;
+    contents: FakeBrowserContents;
+    hostContents: FakeBrowserContents;
+  }): void {
+    const webContentsId = input.contents.id;
+    registry.registerWebContents({
+      browserId: input.browserId,
+      hostWebContentsId: input.hostContents.id,
+      webContentsId,
+    });
+    input.contents.once("destroyed", () => registry.unregisterWebContents(webContentsId));
+    keyboard.attach(input);
+  }
+
+  return { attach, keyboard };
+}
+
 describe("BrowserKeyboard", () => {
-  test("forgets a guest after Electron invalidates its wrapper", () => {
-    const keyboard = new BrowserKeyboard();
-    const guest = new FakeBrowserContents(41);
-    const host = new FakeBrowserContents(42);
-    const liveContentsWithSameId = new FakeBrowserContents(41);
-    keyboard.attach({ browserId: "browser-a", contents: guest, hostContents: host });
+  test("forwards a validated guest shortcut to its host", () => {
+    const { attach, keyboard } = createBrowserKeyboard();
+    const guest = new FakeBrowserContents(51);
+    const host = new FakeBrowserContents(52);
+    attach({ browserId: "browser-a", contents: guest, hostContents: host });
 
-    expect(() => guest.destroy()).not.toThrow();
-    keyboard.forwardShortcutInput(liveContentsWithSameId, shortcutInput("browser-a"));
-
-    expect(host.sent).toEqual([]);
-  });
-
-  test("does not let a stale destroy event detach a replacement guest", () => {
-    const keyboard = new BrowserKeyboard();
-    const staleGuest = new FakeBrowserContents(51);
-    const replacementGuest = new FakeBrowserContents(51);
-    const staleHost = new FakeBrowserContents(52);
-    const replacementHost = new FakeBrowserContents(53);
-    keyboard.attach({
+    keyboard.forwardShortcutInput(guest, {
+      alt: false,
       browserId: "browser-a",
-      contents: staleGuest,
-      hostContents: staleHost,
+      code: "KeyB",
+      control: true,
+      key: "b",
+      meta: false,
+      repeat: false,
+      shift: false,
     });
-    keyboard.attach({
-      browserId: "browser-a",
-      contents: replacementGuest,
-      hostContents: replacementHost,
-    });
-
-    staleGuest.destroy();
-    keyboard.forwardShortcutInput(replacementGuest, shortcutInput("browser-a"));
-
-    expect(staleHost.sent).toEqual([]);
-    expect(replacementHost.sent).toEqual([
-      {
-        channel: "paseo:event:browser-shortcut-input",
-        payload: shortcutInput("browser-a"),
-      },
-    ]);
-  });
-
-  test("accepts input only from the authoritative guest for a browser", () => {
-    const keyboard = new BrowserKeyboard();
-    const staleGuest = new FakeBrowserContents(54);
-    const currentGuest = new FakeBrowserContents(55);
-    const host = new FakeBrowserContents(56);
-    keyboard.attach({ browserId: "browser-a", contents: staleGuest, hostContents: host });
-    keyboard.attach({ browserId: "browser-a", contents: currentGuest, hostContents: host });
-
-    keyboard.forwardShortcutInput(staleGuest, shortcutInput("browser-a"));
-    keyboard.forwardShortcutInput(currentGuest, shortcutInput("browser-a"));
 
     expect(host.sent).toEqual([
       {
         channel: "paseo:event:browser-shortcut-input",
-        payload: shortcutInput("browser-a"),
-      },
-    ]);
-  });
-
-  test("keeps same-browser guests active in separate host windows", () => {
-    const keyboard = new BrowserKeyboard();
-    const firstGuest = new FakeBrowserContents(57);
-    const secondGuest = new FakeBrowserContents(58);
-    const firstHost = new FakeBrowserContents(59);
-    const secondHost = new FakeBrowserContents(60);
-    keyboard.attach({ browserId: "browser-a", contents: firstGuest, hostContents: firstHost });
-    keyboard.attach({ browserId: "browser-a", contents: secondGuest, hostContents: secondHost });
-
-    keyboard.forwardShortcutInput(firstGuest, shortcutInput("browser-a"));
-    keyboard.forwardShortcutInput(secondGuest, shortcutInput("browser-a"));
-
-    expect(firstHost.sent).toEqual([
-      {
-        channel: "paseo:event:browser-shortcut-input",
-        payload: shortcutInput("browser-a"),
-      },
-    ]);
-    expect(secondHost.sent).toEqual([
-      {
-        channel: "paseo:event:browser-shortcut-input",
-        payload: shortcutInput("browser-a"),
+        payload: {
+          alt: false,
+          browserId: "browser-a",
+          code: "KeyB",
+          control: true,
+          key: "b",
+          meta: false,
+          repeat: false,
+          shift: false,
+        },
       },
     ]);
   });
 
   test("resends the latest shortcut policy after every main-frame load", () => {
-    const keyboard = new BrowserKeyboard();
+    const { attach, keyboard } = createBrowserKeyboard();
     const guest = new FakeBrowserContents(61);
     const host = new FakeBrowserContents(62);
     const initialPolicy = {
@@ -237,7 +196,7 @@ describe("BrowserKeyboard", () => {
     };
     const latestPolicy = { prefixes: [] };
     keyboard.publish(host.id, initialPolicy);
-    keyboard.attach({ browserId: "browser-a", contents: guest, hostContents: host });
+    attach({ browserId: "browser-a", contents: guest, hostContents: host });
     keyboard.publish(host.id, latestPolicy);
 
     guest.finishLoad();
@@ -263,32 +222,11 @@ describe("BrowserKeyboard", () => {
     ]);
   });
 
-  test("forgets policy and guests when their host window closes", () => {
-    const keyboard = new BrowserKeyboard();
-    const guest = new FakeBrowserContents(71);
-    const host = new FakeBrowserContents(72);
-    const policy = { prefixes: [] };
-    keyboard.publish(host.id, policy);
-    keyboard.attach({ browserId: "browser-a", contents: guest, hostContents: host });
-
-    keyboard.detachHost(host.id);
-    guest.finishLoad();
-    keyboard.forwardShortcutInput(guest, shortcutInput("browser-a"));
-
-    expect(guest.sent).toEqual([
-      {
-        channel: "paseo:browser-keyboard-policy",
-        payload: { ...policy, browserId: "browser-a" },
-      },
-    ]);
-    expect(host.sent).toEqual([]);
-  });
-
   test("owns reserved shortcuts and leaves plain guest input contained", () => {
-    const keyboard = new BrowserKeyboard();
+    const { attach } = createBrowserKeyboard();
     const guest = new FakeBrowserContents(81);
     const host = new FakeBrowserContents(82);
-    keyboard.attach({ browserId: "browser-a", contents: guest, hostContents: host });
+    attach({ browserId: "browser-a", contents: guest, hostContents: host });
     const command = process.platform === "darwin" ? { meta: true } : { control: true };
 
     const reservedWasPrevented = guest.input(electronInput({ ...command, code: "KeyT", key: "t" }));
@@ -306,7 +244,7 @@ describe("BrowserKeyboard", () => {
   });
 
   test("keeps policy-owned shortcuts out of the application menu without preempting the page", () => {
-    const keyboard = new BrowserKeyboard();
+    const { attach, keyboard } = createBrowserKeyboard();
     const guest = new FakeBrowserContents(91);
     const host = new FakeBrowserContents(92);
     keyboard.publish(host.id, {
@@ -314,7 +252,7 @@ describe("BrowserKeyboard", () => {
         { alt: false, code: "KeyW", control: true, meta: false, repeat: false, shift: false },
       ],
     });
-    keyboard.attach({ browserId: "browser-a", contents: guest, hostContents: host });
+    attach({ browserId: "browser-a", contents: guest, hostContents: host });
 
     const wasPrevented = guest.input(electronInput({ code: "KeyW", control: true, key: "w" }));
 

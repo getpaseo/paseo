@@ -20,7 +20,7 @@ import { executeAutomationCommand } from "./service.js";
 import {
   listRegisteredPaseoBrowserIds,
   listRegisteredPaseoBrowserIdsForWorkspace,
-  getPaseoBrowserWebContents,
+  getPaseoBrowserWebContentsForHostWindow,
   getWorkspaceActivePaseoBrowserId,
   getPaseoBrowserWorkspaceId,
 } from "../browser-webviews/index.js";
@@ -343,12 +343,12 @@ function normalizeConsoleMessage(input: {
   };
 }
 
-function createRegistry(): BrowserRegistry {
+function createRegistry(hostWebContentsId: number): BrowserRegistry {
   return {
     listRegisteredBrowserIds: listRegisteredPaseoBrowserIds,
     listRegisteredBrowserIdsForWorkspace: listRegisteredPaseoBrowserIdsForWorkspace,
     getTabContents(browserId: string): TabContents | null {
-      const contents = getPaseoBrowserWebContents(browserId);
+      const contents = getPaseoBrowserWebContentsForHostWindow(browserId, hostWebContentsId);
       return contents ? adaptWebContents(contents) : null;
     },
     getBrowserWorkspaceId: getPaseoBrowserWorkspaceId,
@@ -358,9 +358,20 @@ function createRegistry(): BrowserRegistry {
 
 export function registerBrowserAutomationIpc(options?: { ipc?: IpcHandlerRegistry }): void {
   const ipc = options?.ipc ?? ipcMain;
-  const registry = createRegistry();
 
-  ipc.handle("paseo:browser:execute-automation-command", async (_event, rawRequest: unknown) => {
+  ipc.handle("paseo:browser:execute-automation-command", async (event, rawRequest: unknown) => {
+    const hostWebContentsId = (event as { sender?: { id?: unknown } }).sender?.id;
+    if (typeof hostWebContentsId !== "number") {
+      return {
+        requestId: readRequestId(rawRequest),
+        ok: false as const,
+        error: {
+          code: "browser_unsupported" as const,
+          message: "Browser automation requires a host window.",
+        },
+      };
+    }
+    const registry = createRegistry(hostWebContentsId);
     const parsed = BrowserAutomationExecuteRequestSchema.safeParse(rawRequest);
     if (!parsed.success) {
       return {

@@ -1,4 +1,5 @@
 import { ipcMain } from "electron";
+import { PaseoBrowserWebviewRegistry } from "../browser-webviews/registry.js";
 import {
   type BrowserKeyboardPolicy,
   classifyBrowserReservedShortcut,
@@ -45,17 +46,15 @@ interface BrowserKeyboardHostContents extends BrowserKeyboardContentsIdentity {
 }
 
 interface BrowserKeyboardGuest {
-  browserId: string;
   contents: BrowserKeyboardGuestContents;
   hostContents: BrowserKeyboardHostContents;
-  hostWebContentsId: number;
-  webContentsId: number;
 }
 
 export class BrowserKeyboard {
-  private readonly guestsByHostAndBrowserId = new Map<string, BrowserKeyboardGuest>();
-  private readonly guestsByWebContentsId = new Map<number, BrowserKeyboardGuest>();
+  private readonly attachedGuestsByWebContentsId = new Map<number, BrowserKeyboardGuest>();
   private readonly policiesByHostWebContentsId = new Map<number, BrowserKeyboardPolicy>();
+
+  public constructor(private readonly browserRegistry: PaseoBrowserWebviewRegistry) {}
 
   public registerIpc(): void {
     ipcMain.handle(POLICY_INPUT_CHANNEL, (event, rawPolicy: unknown) => {
@@ -67,49 +66,42 @@ export class BrowserKeyboard {
   }
 
   public attach(input: {
-    browserId: string;
     contents: BrowserKeyboardGuestContents;
     hostContents: BrowserKeyboardHostContents;
   }): void {
-    const guest: BrowserKeyboardGuest = {
-      ...input,
-      hostWebContentsId: input.hostContents.id,
-      webContentsId: input.contents.id,
-    };
-    const guestAtWebContentsId = this.guestsByWebContentsId.get(guest.webContentsId);
-    if (guestAtWebContentsId) {
-      this.detachGuest(guestAtWebContentsId);
+    const webContentsId = input.contents.id;
+    const registration = this.browserRegistry.getRegistrationForWebContents(webContentsId);
+    if (!registration || registration.hostWebContentsId !== input.hostContents.id) {
+      return;
     }
-    const guestForBrowser = this.guestsByHostAndBrowserId.get(
-      guestKey(guest.hostWebContentsId, guest.browserId),
-    );
-    if (guestForBrowser) {
-      this.detachGuest(guestForBrowser);
-    }
-    this.guestsByHostAndBrowserId.set(guestKey(guest.hostWebContentsId, guest.browserId), guest);
-    this.guestsByWebContentsId.set(guest.webContentsId, guest);
+    const guest: BrowserKeyboardGuest = input;
+    this.attachedGuestsByWebContentsId.set(webContentsId, guest);
 
     input.contents.once("destroyed", () => {
-      this.detachGuest(guest);
+      if (this.attachedGuestsByWebContentsId.get(webContentsId) === guest) {
+        this.attachedGuestsByWebContentsId.delete(webContentsId);
+      }
     });
     input.contents.on("did-finish-load", () => {
-      if (this.guestsByWebContentsId.get(guest.webContentsId) !== guest) {
+      const currentRegistration = this.registrationForGuest(webContentsId, guest);
+      if (!currentRegistration) {
         return;
       }
-      const policy = this.policiesByHostWebContentsId.get(guest.hostWebContentsId);
+      const policy = this.policiesByHostWebContentsId.get(currentRegistration.hostWebContentsId);
       if (policy) {
-        this.sendPolicy(guest, policy);
+        this.sendPolicy(guest, currentRegistration.browserId, policy);
       }
     });
     input.contents.on("before-input-event", (event, keyboardInput) => {
-      if (this.guestsByWebContentsId.get(guest.webContentsId) === guest) {
-        this.handleGuestInput(guest, event, keyboardInput);
+      const currentRegistration = this.registrationForGuest(webContentsId, guest);
+      if (currentRegistration) {
+        this.handleGuestInput(guest, currentRegistration, event, keyboardInput);
       }
     });
 
-    const policy = this.policiesByHostWebContentsId.get(guest.hostWebContentsId);
+    const policy = this.policiesByHostWebContentsId.get(registration.hostWebContentsId);
     if (policy) {
-      this.sendPolicy(guest, policy);
+      this.sendPolicy(guest, registration.browserId, policy);
     }
   }
 
@@ -119,9 +111,10 @@ export class BrowserKeyboard {
       return;
     }
     this.policiesByHostWebContentsId.set(hostWebContentsId, policy);
-    for (const guest of this.guestsByWebContentsId.values()) {
-      if (guest.hostWebContentsId === hostWebContentsId) {
-        this.sendPolicy(guest, policy);
+    for (const [webContentsId, guest] of this.attachedGuestsByWebContentsId) {
+      const registration = this.registrationForGuest(webContentsId, guest);
+      if (registration?.hostWebContentsId === hostWebContentsId) {
+        this.sendPolicy(guest, registration.browserId, policy);
       }
     }
   }
@@ -131,8 +124,16 @@ export class BrowserKeyboard {
     if (!input) {
       return;
     }
-    const guest = this.guestsByWebContentsId.get(contents.id);
-    if (!guest || guest.browserId !== input.browserId || guest.hostContents.isDestroyed()) {
+    const guest = this.attachedGuestsByWebContentsId.get(contents.id);
+    if (!guest) {
+      return;
+    }
+    const registration = this.registrationForGuest(contents.id, guest);
+    if (
+      !registration ||
+      registration.browserId !== input.browserId ||
+      guest.hostContents.isDestroyed()
+    ) {
       return;
     }
     guest.hostContents.send(SHORTCUT_OUTPUT_CHANNEL, input);
@@ -140,29 +141,15 @@ export class BrowserKeyboard {
 
   public detachHost(hostWebContentsId: number): void {
     this.policiesByHostWebContentsId.delete(hostWebContentsId);
-    for (const guest of this.guestsByWebContentsId.values()) {
-      if (guest.hostWebContentsId === hostWebContentsId) {
-        this.detachGuest(guest);
-      }
-    }
-  }
-
-  private detachGuest(guest: BrowserKeyboardGuest): void {
-    if (this.guestsByWebContentsId.get(guest.webContentsId) === guest) {
-      this.guestsByWebContentsId.delete(guest.webContentsId);
-    }
-    const key = guestKey(guest.hostWebContentsId, guest.browserId);
-    if (this.guestsByHostAndBrowserId.get(key) === guest) {
-      this.guestsByHostAndBrowserId.delete(key);
-    }
   }
 
   private handleGuestInput(
     guest: BrowserKeyboardGuest,
+    registration: { browserId: string; hostWebContentsId: number },
     event: BrowserKeyboardInputEvent,
     input: Electron.Input,
   ): void {
-    const policy = this.policiesByHostWebContentsId.get(guest.hostWebContentsId);
+    const policy = this.policiesByHostWebContentsId.get(registration.hostWebContentsId);
     const belongsToBrowserPolicy =
       policy !== undefined &&
       matchesBrowserShortcutPolicy(policy, {
@@ -200,7 +187,7 @@ export class BrowserKeyboard {
         if (!guest.hostContents.isDestroyed()) {
           guest.hostContents.send(RESERVED_SHORTCUT_OUTPUT_CHANNEL, {
             action: reservedShortcut,
-            browserId: guest.browserId,
+            browserId: registration.browserId,
           });
         }
         return;
@@ -209,13 +196,24 @@ export class BrowserKeyboard {
     }
   }
 
-  private sendPolicy(guest: BrowserKeyboardGuest, policy: BrowserKeyboardPolicy): void {
+  private registrationForGuest(
+    webContentsId: number,
+    guest: BrowserKeyboardGuest,
+  ): { browserId: string; hostWebContentsId: number } | null {
+    if (this.attachedGuestsByWebContentsId.get(webContentsId) !== guest) {
+      return null;
+    }
+    const registration = this.browserRegistry.getRegistrationForWebContents(webContentsId);
+    return registration?.hostWebContentsId === guest.hostContents.id ? registration : null;
+  }
+
+  private sendPolicy(
+    guest: BrowserKeyboardGuest,
+    browserId: string,
+    policy: BrowserKeyboardPolicy,
+  ): void {
     if (!guest.contents.isDestroyed()) {
-      guest.contents.send(POLICY_OUTPUT_CHANNEL, { ...policy, browserId: guest.browserId });
+      guest.contents.send(POLICY_OUTPUT_CHANNEL, { ...policy, browserId });
     }
   }
-}
-
-function guestKey(hostWebContentsId: number, browserId: string): string {
-  return `${hostWebContentsId}:${browserId}`;
 }

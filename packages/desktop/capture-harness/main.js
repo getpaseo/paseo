@@ -19,6 +19,14 @@ const PRODUCTION_BROWSER_GUEST_PRELOAD_PATH = path.join(
   "guest-preload.js",
 );
 const PRODUCTION_BROWSER_KEYBOARD_PATH = path.join(PRODUCTION_BROWSER_KEYBOARD_DIR, "index.js");
+const PRODUCTION_BROWSER_WEBVIEW_REGISTRY_PATH = path.join(
+  ROOT,
+  "..",
+  "dist",
+  "features",
+  "browser-webviews",
+  "registry.js",
+);
 const BROWSER_SHORTCUT_INPUT_CHANNEL = "paseo:browser-shortcut-input";
 const VIEWPORT_WIDTH = 1280;
 const VIEWPORT_HEIGHT = 800;
@@ -1953,7 +1961,9 @@ async function verifyBrowserKeyboardIsolation({ guest, win, browserId, usesMeta,
 async function runAutomationGroup() {
   const results = [];
   const { BrowserKeyboard } = require(PRODUCTION_BROWSER_KEYBOARD_PATH);
-  const browserKeyboard = new BrowserKeyboard();
+  const { PaseoBrowserWebviewRegistry } = require(PRODUCTION_BROWSER_WEBVIEW_REGISTRY_PATH);
+  const browserRegistry = new PaseoBrowserWebviewRegistry();
+  const browserKeyboard = new BrowserKeyboard(browserRegistry);
   const browserKeyboardSentinels = installBrowserKeyboardSentinels();
   const handle = createInactiveHarnessWindow({
     width: 1000,
@@ -1994,7 +2004,12 @@ async function runAutomationGroup() {
 
     const browserId = "capture-harness-browser";
     const usesMeta = process.platform === "darwin";
-    browserKeyboard.attach({ browserId, contents: guest, hostContents: win.webContents });
+    browserRegistry.registerWebContents({
+      browserId,
+      hostWebContentsId: win.webContents.id,
+      webContentsId: guest.id,
+    });
+    browserKeyboard.attach({ contents: guest, hostContents: win.webContents });
     browserKeyboard.publish(win.webContents.id, {
       prefixes: [
         {

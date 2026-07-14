@@ -1,4 +1,5 @@
 import {
+  type ChordState,
   matchesKeyboardShortcutContext,
   type KeyboardShortcutInput,
   type ParsedShortcutBinding,
@@ -23,6 +24,7 @@ export interface BrowserShortcutInput extends KeyboardShortcutInput {
 
 interface BrowserShortcutPolicyInput {
   bindings: readonly ParsedShortcutBinding[];
+  chordState?: ChordState;
   isMac: boolean;
   isDesktop: boolean;
 }
@@ -87,19 +89,8 @@ function prefixFromCombo(combo: KeyCombo, isMac: boolean): BrowserShortcutPrefix
   return prefix.meta || prefix.control || prefix.alt ? prefix : null;
 }
 
-function prefixesFromBinding(
-  binding: ParsedShortcutBinding,
-  isMac: boolean,
-): BrowserShortcutPrefix[] | null {
-  const prefixes: BrowserShortcutPrefix[] = [];
-  for (const combo of binding.parsedChord) {
-    const prefix = prefixFromCombo(combo, isMac);
-    if (!prefix) {
-      return null;
-    }
-    prefixes.push(prefix);
-  }
-  return prefixes;
+function canCrossBrowserBoundary(binding: ParsedShortcutBinding, isMac: boolean): boolean {
+  return binding.parsedChord.every((combo) => prefixFromCombo(combo, isMac) !== null);
 }
 
 function prefixKey(prefix: BrowserShortcutPrefix): string {
@@ -127,17 +118,32 @@ export function buildBrowserShortcutPolicy(
     commandCenterOpen: false,
   };
 
-  for (const binding of input.bindings) {
+  const candidates =
+    input.chordState && input.chordState.step > 0
+      ? input.chordState.candidateIndices
+      : input.bindings.map((_, index) => index);
+  const step = input.chordState?.step ?? 0;
+
+  for (const index of candidates) {
+    const binding = input.bindings[index];
+    if (!binding) {
+      continue;
+    }
     if (!matchesKeyboardShortcutContext(binding.when, context)) {
       continue;
     }
-    const bindingPrefixes = prefixesFromBinding(binding, input.isMac);
-    if (!bindingPrefixes) {
+    if (!canCrossBrowserBoundary(binding, input.isMac)) {
       continue;
     }
-    for (const prefix of bindingPrefixes) {
-      prefixes.set(prefixKey(prefix), prefix);
+    const combo = binding.parsedChord[step];
+    if (!combo) {
+      continue;
     }
+    const prefix = prefixFromCombo(combo, input.isMac);
+    if (!prefix) {
+      continue;
+    }
+    prefixes.set(prefixKey(prefix), prefix);
   }
 
   return [...prefixes.values()];

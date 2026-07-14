@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { buildBrowserShortcutPolicy, parseBrowserShortcutInput } from "./browser-shortcuts";
-import { buildEffectiveBindings } from "./keyboard-shortcuts";
+import { buildEffectiveBindings, resolveKeyboardShortcut } from "./keyboard-shortcuts";
 
 describe("buildBrowserShortcutPolicy", () => {
-  it("publishes the effective browser page-first shortcut prefixes", () => {
+  it("publishes only chord starts while no browser chord is pending", () => {
     const bindings = buildEffectiveBindings({
       "workspace-tab-new-ctrl-t-non-mac": "Ctrl+Y",
       "workspace-terminal-new-ctrl-shift-t-non-mac": "Ctrl+F12 Ctrl+F11",
@@ -26,13 +26,62 @@ describe("buildBrowserShortcutPolicy", () => {
       meta: false,
       shift: false,
     });
-    expect(policy).toContainEqual({
+    expect(policy).not.toContainEqual({
       alt: false,
       code: "F11",
       control: true,
       meta: false,
       shift: false,
     });
+  });
+
+  it("publishes a chord continuation only after its browser start crosses the boundary", () => {
+    const bindings = buildEffectiveBindings({
+      "workspace-terminal-new-ctrl-shift-t-non-mac": "Ctrl+F12 Ctrl+F11",
+    });
+    const chordIndex = bindings.findIndex(
+      (binding) => binding.id === "workspace-terminal-new-ctrl-shift-t-non-mac",
+    );
+
+    const policy = buildBrowserShortcutPolicy({
+      bindings,
+      chordState: { candidateIndices: [chordIndex], step: 1, timeoutId: null },
+      isMac: false,
+      isDesktop: true,
+    });
+
+    expect(policy).toEqual([
+      {
+        alt: false,
+        code: "F11",
+        control: true,
+        meta: false,
+        shift: false,
+      },
+    ]);
+
+    const result = resolveKeyboardShortcut({
+      event: {
+        altKey: false,
+        code: "F11",
+        ctrlKey: true,
+        key: "F11",
+        metaKey: false,
+        repeat: false,
+        shiftKey: false,
+      },
+      context: {
+        commandCenterOpen: false,
+        focusScope: "browser",
+        isDesktop: true,
+        isMac: false,
+      },
+      chordState: { candidateIndices: [chordIndex], step: 1, timeoutId: null },
+      onChordReset: () => undefined,
+      bindings,
+    });
+
+    expect(result.match?.action).toBe("workspace.terminal.new");
   });
 
   it("rejects an entire chord when a continuation cannot cross the browser boundary", () => {
