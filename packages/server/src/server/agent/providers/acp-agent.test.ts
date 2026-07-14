@@ -2231,7 +2231,10 @@ describe("ACPAgentSession", () => {
     const turnStartedIndex = events.findIndex((e) => e.type === "turn_started");
     expect(turnStartedIndex).toBeGreaterThanOrEqual(0);
     const timelineIndex = events.findIndex(
-      (e) => e.type === "timeline" && e.item.type === "assistant_message" && e.item.text === "Autonomous update",
+      (e) =>
+        e.type === "timeline" &&
+        e.item.type === "assistant_message" &&
+        e.item.text === "Autonomous update",
     );
     expect(timelineIndex).toBeGreaterThan(turnStartedIndex);
 

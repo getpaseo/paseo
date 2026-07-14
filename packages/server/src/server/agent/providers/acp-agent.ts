@@ -2134,10 +2134,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       return;
     }
 
-    if (events.length > 0 && !this.activeForegroundTurnId && !this.autonomousTurnId) {
+    if (events.length > 0 && !this.activeForegroundTurnId) {
       this.startAutonomousTurn();
-    }
-    if (events.length > 0) {
       this.resetAutonomousTurnTimer();
     }
 
@@ -2680,7 +2678,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
   private pushEvent(event: AgentStreamEvent): void {
     const turnId = this.activeForegroundTurnId ?? this.autonomousTurnId;
-    const tagged = turnId ? { ...event, turnId } : event;
+    const tagged = event.type === "timeline" && turnId ? { ...event, turnId } : event;
     this.logger.trace(
       {
         agentId: this.agentId,
@@ -2745,7 +2743,11 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       return;
     }
     this.autonomousTurnId = randomUUID();
-    this.pushEvent({ type: "turn_started", provider: this.provider, turnId: this.autonomousTurnId });
+    this.pushEvent({
+      type: "turn_started",
+      provider: this.provider,
+      turnId: this.autonomousTurnId,
+    });
   }
 
   private completeAutonomousTurn(): void {
