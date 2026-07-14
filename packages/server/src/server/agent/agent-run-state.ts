@@ -79,7 +79,7 @@ export class AgentRunState {
     if (!run) {
       return;
     }
-    if (run.kind === "foreground" && run.turnId !== null && run.turnId !== turnId) {
+    if (run.kind === "foreground" && (run.turnId === null || run.turnId !== turnId)) {
       return;
     }
     if (
