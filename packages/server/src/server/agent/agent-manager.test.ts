@@ -2848,12 +2848,36 @@ test("archiveFinishedSubagents archives managed children and keeps dismissed pro
       };
     }
   }
+  class PendingStartSession extends TestAgentSession {
+    private readonly startEntered = deferred<void>();
+    private readonly startAllowed = deferred<void>();
+
+    override async startTurn(): Promise<{ turnId: string }> {
+      this.startEntered.resolve();
+      await this.startAllowed.promise;
+      return super.startTurn();
+    }
+
+    waitForStart(): Promise<void> {
+      return this.startEntered.promise;
+    }
+
+    finishStart(): void {
+      this.startAllowed.resolve();
+    }
+  }
   class SubagentsClient extends TestAgentClient {
     readonly sessions: TestAgentSession[] = [];
 
     override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
-      const session =
-        this.sessions.length === 0 ? new ParentSession(config) : new TestAgentSession(config);
+      let session: TestAgentSession;
+      if (this.sessions.length === 0) {
+        session = new ParentSession(config);
+      } else if (this.sessions.length === 5) {
+        session = new PendingStartSession(config);
+      } else {
+        session = new TestAgentSession(config);
+      }
       this.sessions.push(session);
       return session;
     }
@@ -2899,6 +2923,15 @@ test("archiveFinishedSubagents archives managed children and keeps dismissed pro
     undefined,
     { labels: { [PARENT_AGENT_ID_LABEL]: parent.id }, workspaceId: undefined },
   );
+  const managedWithPendingRun = await manager.createAgent(
+    { provider: "codex", cwd: workdir },
+    undefined,
+    { labels: { [PARENT_AGENT_ID_LABEL]: parent.id }, workspaceId: undefined },
+  );
+  const pendingSession = client.sessions[5] as PendingStartSession;
+  const pendingStream = manager.streamAgent(managedWithPendingRun.id, "starting now");
+  const firstPendingEvent = pendingStream.next();
+  await pendingSession.waitForStart();
   client.sessions[3]?.pushEvent({
     type: "turn_started",
     provider: "codex",
@@ -2931,6 +2964,7 @@ test("archiveFinishedSubagents archives managed children and keeps dismissed pro
   expectArchivedAgentRecord(await storage.get(managedFinished.id), "closed");
   expect((await storage.get(managedWithRunningDescendant.id))?.archivedAt).toBeFalsy();
   expect((await storage.get(managedWithRunningProviderDescendant.id))?.archivedAt).toBeFalsy();
+  expect((await storage.get(managedWithPendingRun.id))?.archivedAt).toBeFalsy();
   expect(manager.getAgent(runningGrandchild.id)?.lifecycle).toBe("running");
   expect(manager.listProviderSubagents(parent.id).map((subagent) => subagent.id)).toEqual([
     "native-running",
@@ -2980,6 +3014,10 @@ test("archiveFinishedSubagents archives managed children and keeps dismissed pro
     id: "native-finished",
     status: "completed",
   });
+
+  pendingSession.finishStart();
+  await firstPendingEvent;
+  await pendingStream.return(undefined);
 });
 
 test("force provider hydration removes children absent from current history", async () => {

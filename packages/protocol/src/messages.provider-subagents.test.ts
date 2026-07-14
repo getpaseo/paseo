@@ -115,4 +115,40 @@ describe("provider subagent protocol", () => {
       }),
     ).toMatchObject({ payload: { kind: "remove", retainTimeline: true } });
   });
+
+  test("accepts a retained descriptor with provider timeline history", () => {
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "agent.provider_subagents.timeline.get.response",
+        payload: {
+          requestId: "request-1",
+          parentAgentId: "parent-1",
+          subagentId: "child-1",
+          provider: "codex",
+          subagent: {
+            id: "child-1",
+            parentAgentId: "parent-1",
+            provider: "codex",
+            title: "Finished child",
+            description: null,
+            status: "completed",
+            createdAt: "2026-07-12T10:00:00.000Z",
+            updatedAt: "2026-07-12T10:01:00.000Z",
+            toolCallId: null,
+          },
+          hiddenFromTrack: true,
+          direction: "tail",
+          epoch: "epoch-1",
+          reset: false,
+          staleCursor: false,
+          gap: false,
+          window: { minSeq: 0, maxSeq: 0, nextSeq: 1 },
+          hasOlder: false,
+          hasNewer: false,
+          rows: [],
+          error: null,
+        },
+      }),
+    ).toMatchObject({ payload: { hiddenFromTrack: true, subagent: { id: "child-1" } } });
+  });
 });

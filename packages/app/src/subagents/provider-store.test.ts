@@ -174,6 +174,47 @@ describe("provider subagent client store", () => {
     expect(state.timelines.get(key)?.tail).toEqual([
       expect.objectContaining({ kind: "assistant_message", text: "Finished output." }),
     ]);
+
+    store.replaceList(SERVER_ID, PARENT_ID, [state.descriptors.get(key)!]);
+    expect(useProviderSubagentStore.getState().hiddenFromTrack.has(key)).toBe(true);
+  });
+
+  test("restores a hidden descriptor from a provider timeline response", () => {
+    const store = useProviderSubagentStore.getState();
+    store.replaceTimeline(SERVER_ID, {
+      requestId: "restored-tab",
+      parentAgentId: PARENT_ID,
+      subagentId: SUBAGENT_ID,
+      provider: "codex",
+      subagent: {
+        id: SUBAGENT_ID,
+        parentAgentId: PARENT_ID,
+        provider: "codex",
+        title: "Finished child",
+        description: null,
+        status: "completed",
+        createdAt: "2026-07-12T10:00:00.000Z",
+        updatedAt: "2026-07-12T10:02:00.000Z",
+        toolCallId: "call-1",
+      },
+      hiddenFromTrack: true,
+      direction: "tail",
+      epoch: "epoch-1",
+      reset: false,
+      staleCursor: false,
+      gap: false,
+      window: { minSeq: 0, maxSeq: 0, nextSeq: 1 },
+      hasOlder: false,
+      hasNewer: false,
+      rows: [],
+      error: null,
+    });
+
+    const key = providerSubagentKey(SERVER_ID, PARENT_ID, SUBAGENT_ID);
+    const state = useProviderSubagentStore.getState();
+    expect(state.descriptors.get(key)?.title).toBe("Finished child");
+    expect(state.hiddenFromTrack.has(key)).toBe(true);
+    expect(state.timelines.get(key)?.head).toEqual([]);
   });
 
   test("applies terminal list status to a timeline received before its descriptor", () => {

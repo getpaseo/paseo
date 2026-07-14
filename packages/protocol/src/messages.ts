@@ -3093,6 +3093,8 @@ export const ProviderSubagentTimelineResponseMessageSchema = z.object({
     parentAgentId: z.string(),
     subagentId: z.string(),
     provider: AgentProviderSchema.nullable(),
+    subagent: ProviderSubagentDescriptorPayloadSchema.optional(),
+    hiddenFromTrack: z.boolean().optional(),
     direction: z.enum(["tail", "before", "after"]),
     epoch: z.string(),
     reset: z.boolean(),
@@ -4877,6 +4879,7 @@ export const WSHelloMessageSchema = z.object({
       [CLIENT_CAPS.customModeIcons]: z.boolean().optional(),
       [CLIENT_CAPS.terminalReflowableSnapshot]: z.boolean().optional(),
       [CLIENT_CAPS.providerSubagents]: z.boolean().optional(),
+      [CLIENT_CAPS.providerSubagentRetainTimeline]: z.boolean().optional(),
       [CLIENT_CAPS.browserHost]: BrowserAutomationHostCapabilitySchema.optional(),
     })
     .passthrough()

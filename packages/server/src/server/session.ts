@@ -1186,6 +1186,12 @@ export class Session {
               },
             });
           } else {
+            if (
+              update.retainTimeline &&
+              !this.supports(CLIENT_CAPS.providerSubagentRetainTimeline)
+            ) {
+              return;
+            }
             this.emit({
               type: "agent.provider_subagents.update",
               payload: {
@@ -5504,6 +5510,11 @@ export class Session {
           parentAgentId: msg.parentAgentId,
           subagentId: msg.subagentId,
           provider: descriptor.provider,
+          subagent: descriptor,
+          hiddenFromTrack: this.agentManager.isProviderSubagentDismissed(
+            msg.parentAgentId,
+            msg.subagentId,
+          ),
           direction,
           epoch: timeline.epoch,
           reset: timeline.reset,
