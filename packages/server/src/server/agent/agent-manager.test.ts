@@ -2849,15 +2849,18 @@ test("archiveFinishedSubagents archives managed children and keeps dismissed pro
     }
   }
   class SubagentsClient extends TestAgentClient {
-    private sessionsCreated = 0;
+    readonly sessions: TestAgentSession[] = [];
 
     override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
-      this.sessionsCreated += 1;
-      return this.sessionsCreated === 1 ? new ParentSession(config) : new TestAgentSession(config);
+      const session =
+        this.sessions.length === 0 ? new ParentSession(config) : new TestAgentSession(config);
+      this.sessions.push(session);
+      return session;
     }
   }
+  const client = new SubagentsClient();
   const manager = new AgentManager({
-    clients: { codex: new SubagentsClient() },
+    clients: { codex: client },
     registry: storage,
     logger,
   });
@@ -2869,6 +2872,27 @@ test("archiveFinishedSubagents archives managed children and keeps dismissed pro
     undefined,
     { labels: { [PARENT_AGENT_ID_LABEL]: parent.id }, workspaceId: undefined },
   );
+  const managedWithRunningDescendant = await manager.createAgent(
+    { provider: "codex", cwd: workdir },
+    undefined,
+    { labels: { [PARENT_AGENT_ID_LABEL]: parent.id }, workspaceId: undefined },
+  );
+  const runningGrandchild = await manager.createAgent(
+    { provider: "codex", cwd: workdir },
+    undefined,
+    {
+      labels: { [PARENT_AGENT_ID_LABEL]: managedWithRunningDescendant.id },
+      workspaceId: undefined,
+    },
+  );
+  client.sessions[3]?.pushEvent({
+    type: "turn_started",
+    provider: "codex",
+    turnId: "running-grandchild-turn",
+  });
+  await vi.waitFor(() => {
+    expect(manager.getAgent(runningGrandchild.id)?.lifecycle).toBe("running");
+  });
   await manager.hydrateTimelineFromProvider(parent.id);
 
   const result = await manager.archiveFinishedSubagents(parent.id);
@@ -2878,6 +2902,8 @@ test("archiveFinishedSubagents archives managed children and keeps dismissed pro
     dismissedProviderSubagentIds: ["native-finished", "native-failed"],
   });
   expectArchivedAgentRecord(await storage.get(managedFinished.id), "closed");
+  expect((await storage.get(managedWithRunningDescendant.id))?.archivedAt).toBeFalsy();
+  expect(manager.getAgent(runningGrandchild.id)?.lifecycle).toBe("running");
   expect(manager.listProviderSubagents(parent.id).map((subagent) => subagent.id)).toEqual([
     "native-running",
   ]);

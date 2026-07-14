@@ -4843,6 +4843,21 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (activity.id) {
       state.activityItemIds.add(activity.id);
     }
+    const activityToolCall = mapCodexToolCallFromThreadItem(rawItem, {
+      cwd: this.config.cwd ?? null,
+    });
+    if (
+      activityToolCall?.detail.type === "sub_agent" &&
+      state.toolCall.detail.type === "sub_agent"
+    ) {
+      state.toolCall = {
+        ...state.toolCall,
+        detail: {
+          ...state.toolCall.detail,
+          subAgentType: activityToolCall.detail.subAgentType,
+        },
+      };
+    }
     this.emitSubAgentActivityUpdate(
       callId,
       activity.kind === "interrupted" ? "canceled" : "running",

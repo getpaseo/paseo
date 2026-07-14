@@ -971,14 +971,35 @@ export class AgentManager {
     const parent = this.requirePublicAgent(parentAgentId);
     const registry = this.requireRegistry();
     const archivedAgentIds: string[] = [];
-
-    for (const record of await registry.list()) {
-      if (record.archivedAt || record.labels[PARENT_AGENT_ID_LABEL] !== parentAgentId) {
-        continue;
+    const records = (await registry.list()).filter((record) => !record.archivedAt);
+    const recordsByParentId = new Map<string, StoredAgentRecord[]>();
+    for (const record of records) {
+      const recordParentId = record.labels[PARENT_AGENT_ID_LABEL];
+      if (!recordParentId) continue;
+      const siblings = recordsByParentId.get(recordParentId) ?? [];
+      siblings.push(record);
+      recordsByParentId.set(recordParentId, siblings);
+    }
+    const hasBusyDescendant = (agentId: string, visited = new Set<string>()): boolean => {
+      if (visited.has(agentId)) return true;
+      visited.add(agentId);
+      for (const child of recordsByParentId.get(agentId) ?? []) {
+        const liveChild = this.agents.get(child.id);
+        if (
+          isAgentBusy(liveChild?.lifecycle ?? child.lastStatus) ||
+          hasBusyDescendant(child.id, visited)
+        ) {
+          return true;
+        }
       }
+      visited.delete(agentId);
+      return false;
+    };
+
+    for (const record of recordsByParentId.get(parentAgentId) ?? []) {
       const live = this.agents.get(record.id);
       const status = live?.lifecycle ?? record.lastStatus;
-      if (isAgentBusy(status)) {
+      if (isAgentBusy(status) || hasBusyDescendant(record.id)) {
         continue;
       }
       if (live) {
