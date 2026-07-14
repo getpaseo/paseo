@@ -169,10 +169,15 @@ export function normalizeAppSettings(value: unknown): AppSettings {
 
 function parseToolCallDetailLevel(stored: StoredAppSettings): ToolCallDetailLevel | null {
   if (stored.toolCallDetailLevel !== undefined) {
-    return typeof stored.toolCallDetailLevel === "string" &&
+    if (
+      typeof stored.toolCallDetailLevel === "string" &&
       VALID_TOOL_CALL_DETAIL_LEVELS.has(stored.toolCallDetailLevel)
-      ? stored.toolCallDetailLevel
-      : "overview";
+    ) {
+      return stored.toolCallDetailLevel;
+    }
+    // COMPAT(toolCallDetailLevelConcise): removed in v0.1.107; legacy "concise" values
+    // deliberately follow the unknown-value fallback. Remove after 2027-01-14.
+    return "overview";
   }
   if (typeof stored.compactToolCalls === "boolean") {
     // COMPAT(compactToolCalls): migrated in v0.1.105, remove after 2027-01-12.

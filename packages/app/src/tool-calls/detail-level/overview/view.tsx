@@ -79,7 +79,6 @@ export const OverviewToolCallGroupView = memo(function OverviewToolCallGroupView
     const descriptor = describeToolCall(latestCall);
     return {
       detail: descriptor.detail,
-      status: descriptor.status,
       presentation: buildToolCallPresentation({
         toolName: descriptor.name,
         status: descriptor.status,
@@ -152,7 +151,7 @@ export const OverviewToolCallGroupView = memo(function OverviewToolCallGroupView
       secondaryLabel={showsLatest ? latest.presentation.summary : failedSummary}
       icon={showsLatest ? latest.presentation.icon : Wrench}
       isLoading={group.isLoading}
-      isError={showsLatest ? latest.status === "failed" : group.failedCount > 0}
+      isError={group.failedCount > 0}
       isExpanded={opensSingleCallSheet ? false : expanded}
       isLastInSequence={isLastInSequence}
       onToggle={canExpand ? toggle : undefined}
