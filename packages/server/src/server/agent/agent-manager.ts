@@ -1872,7 +1872,7 @@ export class AgentManager {
     }
 
     const agent = existingAgent;
-    agent.pendingReplacement = false;
+    const isReplacement = agent.pendingReplacement;
     agent.lastError = undefined;
 
     const pendingRun = this.foregroundRuns.createPendingRun(agentId);
@@ -1884,6 +1884,7 @@ export class AgentManager {
         const result = await agent.session.startTurn(prompt, options);
         turnId = result.turnId;
       } catch (error) {
+        agent.pendingReplacement = false;
         const errorMsg = error instanceof Error ? error.message : "Failed to start turn";
         await this.handleStreamEvent(agent, {
           type: "turn_failed",
@@ -1896,6 +1897,9 @@ export class AgentManager {
       }
 
       pendingRun.started = true;
+      if (isReplacement) {
+        agent.pendingReplacement = false;
+      }
       agent.activeForegroundTurnId = turnId;
       agent.lifecycle = "running";
       this.touchUpdatedAt(agent);

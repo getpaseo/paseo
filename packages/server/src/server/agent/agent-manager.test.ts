@@ -4582,9 +4582,16 @@ test("replaceAgentRun stays running when a stale old terminal arrives before the
   const replaceGapSnapshot = manager.getAgent(snapshot.id) as
     | { pendingReplacement: boolean; activeForegroundTurnId: string | null; lifecycle: string }
     | undefined;
-  expect(replaceGapSnapshot?.pendingReplacement).toBe(false);
+  expect(replaceGapSnapshot?.pendingReplacement).toBe(true);
   expect(replaceGapSnapshot?.activeForegroundTurnId).toBeNull();
   expect(replaceGapSnapshot?.lifecycle).toBe("running");
+
+  const replacementStart = manager.waitForAgentRunStart(snapshot.id);
+  const prematureStart = await Promise.race([
+    replacementStart.then(() => "resolved"),
+    new Promise<"pending">((resolve) => setTimeout(() => resolve("pending"), 50)),
+  ]);
+  expect(prematureStart).toBe("pending");
 
   capturedSession!.pushEvent({ type: "turn_completed", provider: "codex", turnId: "turn-1" });
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -4597,7 +4604,7 @@ test("replaceAgentRun stays running when a stale old terminal arrives before the
 
   allowSecondStartToResolve.resolve();
 
-  await manager.waitForAgentRunStart(snapshot.id);
+  await replacementStart;
   await firstRunDrain;
   await secondRunDrain;
   unsubscribe();

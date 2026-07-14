@@ -227,6 +227,7 @@ describe("cancelComposerAgent", () => {
     isAgentRunning: boolean;
     isCancellingAgent: boolean;
     isConnected: boolean;
+    onCancelFailed: (error: unknown) => void;
   } {
     const canceledIds: string[] = [];
     return {
@@ -240,6 +241,7 @@ describe("cancelComposerAgent", () => {
       isAgentRunning: true,
       isCancellingAgent: false,
       isConnected: true,
+      onCancelFailed: () => undefined,
     };
   }
 
@@ -248,6 +250,24 @@ describe("cancelComposerAgent", () => {
     const result = cancelComposerAgent(input);
     expect(result).toBe(true);
     expect(input.client.canceledIds).toEqual(["agent"]);
+  });
+
+  it("reports a rejected cancel so the composer can leave its canceling state", async () => {
+    const cancellationError = new Error("Provider rejected the interrupt");
+    const failures: unknown[] = [];
+    const input = baseInput();
+    input.client.cancelAgent = async () => {
+      throw cancellationError;
+    };
+
+    const result = cancelComposerAgent({
+      ...input,
+      onCancelFailed: (error: unknown) => failures.push(error),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(result).toBe(true);
+    expect(failures).toEqual([cancellationError]);
   });
 
   it("does nothing when the agent is not running", () => {
