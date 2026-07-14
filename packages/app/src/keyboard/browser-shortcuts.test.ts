@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { buildBrowserShortcutPolicy, parseBrowserShortcutInput } from "./browser-shortcuts";
+import {
+  buildBrowserShortcutPolicy,
+  parseBrowserShortcutInput,
+  shouldPublishBrowserShortcutPolicy,
+} from "./browser-shortcuts";
 import { buildEffectiveBindings, resolveKeyboardShortcut } from "./keyboard-shortcuts";
 
 describe("buildBrowserShortcutPolicy", () => {
@@ -168,6 +172,18 @@ describe("buildBrowserShortcutPolicy", () => {
       meta: true,
       shift: false,
     });
+  });
+});
+
+describe("shouldPublishBrowserShortcutPolicy", () => {
+  it("restores the initial browser policy when a host key resets a pending chord", () => {
+    expect(
+      shouldPublishBrowserShortcutPolicy({
+        isBrowserInput: false,
+        previousChordState: { candidateIndices: [1], step: 1, timeoutId: null },
+        nextChordState: { candidateIndices: [], step: 0, timeoutId: null },
+      }),
+    ).toBe(true);
   });
 });
 

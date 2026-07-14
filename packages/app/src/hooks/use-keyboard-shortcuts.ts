@@ -17,6 +17,7 @@ import { resolveKeyboardFocusScope } from "@/keyboard/focus-scope";
 import {
   buildBrowserShortcutPolicy,
   parseBrowserShortcutInput,
+  shouldPublishBrowserShortcutPolicy,
 } from "@/keyboard/browser-shortcuts";
 import type { KeyboardFocusScope, KeyboardShortcutPayload } from "@/keyboard/actions";
 import {
@@ -220,6 +221,7 @@ export function useKeyboardShortcuts({
       browserFocusRestoreElement?: HTMLElement | null;
     }) => {
       const store = useKeyboardShortcutsStore.getState();
+      const previousChordState = chordStateRef.current;
       const result = resolveKeyboardShortcut({
         event: input.event,
         context: {
@@ -241,7 +243,13 @@ export function useKeyboardShortcuts({
       });
 
       chordStateRef.current = result.nextChordState;
-      if ("browserId" in input.event) {
+      if (
+        shouldPublishBrowserShortcutPolicy({
+          isBrowserInput: "browserId" in input.event,
+          previousChordState,
+          nextChordState: result.nextChordState,
+        })
+      ) {
         publishBrowserShortcutPolicy(result.nextChordState);
       }
 

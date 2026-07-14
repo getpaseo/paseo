@@ -203,6 +203,9 @@ export class BrowserKeyboard {
     if (this.attachedGuestsByWebContentsId.get(webContentsId) !== guest) {
       return null;
     }
+    if (guest.hostContents.isDestroyed()) {
+      return null;
+    }
     const registration = this.browserRegistry.getRegistrationForWebContents(webContentsId);
     return registration?.hostWebContentsId === guest.hostContents.id ? registration : null;
   }

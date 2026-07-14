@@ -230,6 +230,24 @@ describe("BrowserKeyboard", () => {
     expect(guest.sent).toHaveLength(3);
   });
 
+  test("ignores guest lifecycle events after the host is destroyed", () => {
+    const { attach, keyboard } = createBrowserKeyboard();
+    const guest = new FakeBrowserContents(71);
+    const host = new FakeBrowserContents(72);
+    attach({ browserId: "browser-a", contents: guest, hostContents: host });
+    keyboard.publish(host.id, { prefixes: [] });
+
+    host.destroy();
+    guest.domReady();
+
+    expect(guest.sent).toEqual([
+      {
+        channel: "paseo:browser-keyboard-policy",
+        payload: { browserId: "browser-a", prefixes: [] },
+      },
+    ]);
+  });
+
   test("owns reserved shortcuts and leaves plain guest input contained", () => {
     const { attach } = createBrowserKeyboard();
     const guest = new FakeBrowserContents(81);

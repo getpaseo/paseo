@@ -29,6 +29,16 @@ interface BrowserShortcutPolicyInput {
   isDesktop: boolean;
 }
 
+export function shouldPublishBrowserShortcutPolicy(input: {
+  isBrowserInput: boolean;
+  nextChordState: ChordState;
+  previousChordState: ChordState;
+}): boolean {
+  return (
+    input.isBrowserInput || (input.previousChordState.step > 0 && input.nextChordState.step === 0)
+  );
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
