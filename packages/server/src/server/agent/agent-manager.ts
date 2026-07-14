@@ -389,6 +389,11 @@ type ActiveManagedAgent =
   | ManagedAgentRunning
   | ManagedAgentError;
 
+interface RunSettlementCheck {
+  agent: ActiveManagedAgent;
+  wasAutonomousRunning: boolean;
+}
+
 type LiveManagedAgent = ActiveManagedAgent;
 type AgentLabelPatch = Record<string, string | null>;
 
@@ -2163,7 +2168,10 @@ export class AgentManager {
 
     const interruptAcknowledged = await this.interruptSession(agent.session, agentId);
     if (!interruptAcknowledged) {
-      return false;
+      return this.didRunSettleDuringInterrupt({
+        agent,
+        wasAutonomousRunning: isAutonomousRunning,
+      });
     }
 
     // The interrupt will produce a turn_canceled/turn_failed event via subscribe(),
@@ -2250,6 +2258,16 @@ export class AgentManager {
     }
 
     return true;
+  }
+
+  private didRunSettleDuringInterrupt({
+    agent,
+    wasAutonomousRunning,
+  }: RunSettlementCheck): boolean {
+    if (wasAutonomousRunning) {
+      return agent.lifecycle !== "running";
+    }
+    return !agent.activeForegroundTurnId && !this.foregroundRuns.hasPendingRun(agent.id);
   }
 
   private async cancelAgentRunBefore(

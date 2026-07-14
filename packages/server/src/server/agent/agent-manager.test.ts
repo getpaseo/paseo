@@ -1500,6 +1500,75 @@ test("cancelAgentRun preserves the active turn when the provider rejects the int
   }
 });
 
+test("cancelAgentRun succeeds when the foreground turn finishes before the provider rejects the interrupt", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-interrupt-after-completion-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const turnSettled = deferred<void>();
+
+  class CompletingInterruptSession extends TestAgentSession {
+    override async startTurn(): Promise<{ turnId: string }> {
+      const turnId = "naturally-completed-turn";
+      setTimeout(() => {
+        this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+      }, 0);
+      return { turnId };
+    }
+
+    override async interrupt(): Promise<void> {
+      this.pushEvent({
+        type: "turn_completed",
+        provider: this.provider,
+        turnId: "naturally-completed-turn",
+      });
+      await turnSettled.promise;
+      throw new Error("turn already completed");
+    }
+  }
+
+  class CompletingInterruptClient extends TestAgentClient {
+    readonly session = new CompletingInterruptSession({
+      provider: "codex",
+      cwd: workdir,
+    });
+
+    override async createSession(): Promise<AgentSession> {
+      return this.session;
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new CompletingInterruptClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000305",
+  });
+
+  try {
+    const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+
+    const run = manager.streamAgent(snapshot.id, "Finish while cancellation is in flight.");
+    const runDrain = (async () => {
+      for await (const _event of run) {
+        // Drain the foreground turn until the provider completes it.
+      }
+      turnSettled.resolve();
+    })();
+    await manager.waitForAgentRunStart(snapshot.id);
+
+    await expect(manager.cancelAgentRun(snapshot.id)).resolves.toBe(true);
+    expect(manager.getAgent(snapshot.id)).toMatchObject({
+      lifecycle: "idle",
+      activeForegroundTurnId: null,
+    });
+    await runDrain;
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("listProviderAvailability uses registered client keys, including custom providers", async () => {
   const customClient: AgentClient = {
     provider: "zai",
