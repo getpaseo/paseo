@@ -66,7 +66,7 @@ import {
   normalizeClientRestartRpcReason,
 } from "./lifecycle-reasons.js";
 
-import { AgentManager } from "./agent/agent-manager.js";
+import { AgentManager, AgentRunCancellationError } from "./agent/agent-manager.js";
 import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import type {
   AgentManagerEvent,
@@ -1095,6 +1095,7 @@ export class Session {
         { agentId },
         "interruptAgentIfRunning: reported running but no active run was cancelled",
       );
+      throw new AgentRunCancellationError(agentId, "stop");
     }
   }
 

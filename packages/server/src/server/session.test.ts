@@ -43,6 +43,7 @@ import type {
 } from "../services/github-service.js";
 
 interface SessionHandlerInternals {
+  interruptAgentIfRunning(agentId: string): Promise<void>;
   handleSendAgentMessage(
     agentId: string,
     text: string,
@@ -88,6 +89,21 @@ function createBinaryMessageHandler(
     binaryMessages.push(frame);
   };
 }
+
+test("interruptAgentIfRunning rejects when graceful cancellation is refused", async () => {
+  const agentId = "11111111-1111-4111-8111-111111111111";
+  const session = createSessionForTest({
+    agentManager: {
+      getAgent: vi.fn(() => ({ id: agentId, provider: "codex", lifecycle: "running" })),
+      hasInFlightRun: vi.fn(() => true),
+      cancelAgentRun: vi.fn(async () => false),
+    },
+  });
+
+  await expect(asSessionInternals(session).interruptAgentIfRunning(agentId)).rejects.toThrow(
+    "active run cancellation was not acknowledged",
+  );
+});
 
 const checkoutGitMocks = vi.hoisted(() => ({
   checkoutResolvedBranch: vi.fn(),
