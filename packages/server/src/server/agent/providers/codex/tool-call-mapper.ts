@@ -993,7 +993,15 @@ function mapCollabAgentToolCallItem(
 function mapSubAgentActivityItem(
   item: z.infer<typeof CodexSubAgentActivityItemSchema>,
 ): ToolCallTimelineItem {
-  const nativeName = item.agentPath.replace(/^\/root(?:\/|$)/, "") || "Sub-agent";
+  let nativeName = item.agentPath;
+  if (nativeName === "/root") {
+    nativeName = "";
+  } else if (nativeName.startsWith("/root/")) {
+    nativeName = nativeName.slice("/root/".length);
+  } else if (nativeName.includes("/")) {
+    nativeName = nativeName.slice(nativeName.lastIndexOf("/") + 1);
+  }
+  nativeName ||= "Sub-agent";
   return {
     type: "tool_call",
     callId: item.id,

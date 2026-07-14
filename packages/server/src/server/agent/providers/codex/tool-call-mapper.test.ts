@@ -267,6 +267,24 @@ describe("codex tool-call mapper", () => {
     });
   });
 
+  it("uses only the final segment of a subAgentActivity path outside the root namespace", () => {
+    const item = mapCodexToolCallFromThreadItem({
+      type: "subAgentActivity",
+      id: "activity-external-path",
+      kind: "started",
+      agentThreadId: "child-thread-external-path",
+      agentPath: "/tmp/native/investigator",
+    });
+
+    expect(item).toMatchObject({
+      detail: {
+        type: "sub_agent",
+        subAgentType: "investigator",
+        description: "/tmp/native/investigator",
+      },
+    });
+  });
+
   it("does not fail a collabAgentToolCall from child error state alone", () => {
     const item = mapCodexToolCallFromThreadItem({
       type: "collabAgentToolCall",

@@ -126,6 +126,7 @@ function createManagedAgent(overrides: ManagedAgentOverrides = {}): ManagedAgent
     lastUserMessageAt: overrides.lastUserMessageAt ?? core.now,
     lastUsage: overrides.lastUsage,
     lastError: overrides.lastError,
+    dismissedProviderSubagentIds: overrides.dismissedProviderSubagentIds ?? new Set(),
   };
 }
 

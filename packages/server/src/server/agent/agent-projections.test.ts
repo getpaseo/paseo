@@ -94,6 +94,7 @@ function createManagedAgent(overrides: ManagedAgentOverrides = {}): ManagedAgent
     historyPrimed: true,
     lastUserMessageAt: now,
     attention: { requiresAttention: false },
+    dismissedProviderSubagentIds: new Set(),
   };
 
   return {
@@ -134,6 +135,7 @@ describe("toStoredAgentRecord", () => {
   it("captures lifecycle metadata, config, and persistence", () => {
     const agent = createManagedAgent({
       currentModeId: "focus",
+      dismissedProviderSubagentIds: new Set(["native-child"]),
       persistence: {
         provider: "claude",
         sessionId: "persist-2",
@@ -155,6 +157,7 @@ describe("toStoredAgentRecord", () => {
     expect(record.updatedAt).toBe(agent.updatedAt.toISOString());
     expect(record.lastActivityAt).toBe(agent.updatedAt.toISOString());
     expect(record.lastUserMessageAt).toBe(agent.lastUserMessageAt?.toISOString());
+    expect(record.dismissedProviderSubagentIds).toEqual(["native-child"]);
     expect(record.persistence).toEqual({
       provider: "claude",
       sessionId: "persist-2",
