@@ -1,4 +1,5 @@
 import type { AttachmentMetadata, UserComposerAttachment } from "@/attachments/types";
+import { isLegacyNewWorkspaceDraftKey, NEW_WORKSPACE_DRAFT_KEY } from "@/stores/draft-keys";
 import {
   isAttachmentMetadata,
   isLegacyDraftImage,
@@ -98,6 +99,46 @@ async function buildMigratedDraftRecord(
   };
 }
 
+function migrateNewWorkspaceDraftKeys(
+  drafts: Record<string, DraftRecord>,
+): Record<string, DraftRecord> {
+  const legacyEntries = Object.entries(drafts).filter(([draftKey]) =>
+    isLegacyNewWorkspaceDraftKey(draftKey),
+  );
+  if (legacyEntries.length === 0) {
+    return drafts;
+  }
+
+  const nextDrafts = { ...drafts };
+  for (const [draftKey] of legacyEntries) {
+    delete nextDrafts[draftKey];
+  }
+
+  if (nextDrafts[NEW_WORKSPACE_DRAFT_KEY]) {
+    return nextDrafts;
+  }
+
+  const newestActiveDraft = legacyEntries
+    .map(([, draft]) => draft)
+    .filter((draft) => draft.lifecycle === "active")
+    .sort((left, right) => right.updatedAt - left.updatedAt)[0];
+  if (newestActiveDraft) {
+    // Legacy scoped drafts did not record whether a PR came from the Base
+    // picker. That checkout context is unsafe to carry onto a global surface.
+    nextDrafts[NEW_WORKSPACE_DRAFT_KEY] = {
+      ...newestActiveDraft,
+      input: {
+        ...newestActiveDraft.input,
+        attachments: newestActiveDraft.input.attachments.filter(
+          (attachment) => attachment.kind !== "github_pr",
+        ),
+      },
+    };
+  }
+
+  return nextDrafts;
+}
+
 export async function migratePersistedState(
   state: unknown,
   ports: { migrateLegacyImages: MigrateLegacyImages; nowMs: number },
@@ -129,7 +170,8 @@ export async function migratePersistedState(
   }
 
   return {
-    drafts: nextDrafts,
+    // COMPAT(newWorkspaceDraftSingleton): migrated in v0.1.108; remove after 2027-01-13.
+    drafts: migrateNewWorkspaceDraftKeys(nextDrafts),
     createModalDraft,
   };
 }

@@ -1514,24 +1514,23 @@ export function mapCodexPatchNotificationToToolCall(params: {
 }
 
 function mapCodexTerminalInteractionToToolCall(params: {
+  callId: string;
   processId?: string | null;
-  fallbackCallId?: string | null;
   command?: string | null;
+  stdin?: string | null;
 }): ToolCallTimelineItem {
   const processId = nonEmptyString(params.processId ?? undefined);
-  const callId = processId
-    ? `terminal-session-${processId}`
-    : (nonEmptyString(params.fallbackCallId ?? undefined) ?? "terminal-interaction");
   const label = nonEmptyString(params.command ?? undefined);
   return {
     type: "tool_call",
-    callId,
+    callId: params.callId,
     name: "terminal",
     status: "completed",
     error: null,
     detail: {
       type: "plain_text",
       ...(label ? { label } : {}),
+      ...(params.stdin !== null && params.stdin !== undefined ? { text: params.stdin } : {}),
       icon: "square_terminal",
     },
     ...(processId ? { metadata: { processId } } : {}),
@@ -2111,8 +2110,8 @@ const CodexEventExecCommandEndNotificationSchema = z
         cwd: z.string().optional(),
         stdout: z.string().optional(),
         stderr: z.string().optional(),
-        aggregated_output: z.string().optional(),
-        aggregatedOutput: z.string().optional(),
+        aggregated_output: z.string().nullable().optional(),
+        aggregatedOutput: z.string().nullable().optional(),
         formatted_output: z.string().optional(),
         exit_code: z.number().nullable().optional(),
         exitCode: z.number().nullable().optional(),
@@ -3102,7 +3101,11 @@ export class CodexAppServerAgentSession implements AgentSession {
   private pendingFileChangeOutputDeltas = new Map<string, string[]>();
   private pendingAssistantMessageBoundary = false;
   private terminalCommandByProcessId = new Map<string, string>();
-  private pendingUnlabeledTerminalInteractions = new Set<string>();
+  private pendingUnlabeledTerminalInteractions = new Map<
+    string,
+    Array<{ callId: string; stdin: string | null }>
+  >();
+  private nextTerminalInteractionOrdinal = 0;
   private emittedTerminalInteractionKeys = new Set<string>();
   private emittedExecCommandStartedCallIds = new Set<string>();
   private emittedExecCommandCompletedCallIds = new Set<string>();
@@ -5447,13 +5450,18 @@ export class CodexAppServerAgentSession implements AgentSession {
     const command =
       (parsed.processId ? this.terminalCommandByProcessId.get(parsed.processId) : undefined) ??
       null;
+    const callId = this.createTerminalInteractionCallId(parsed.processId, parsed.callId);
     if (!command && parsed.processId) {
-      this.pendingUnlabeledTerminalInteractions.add(parsed.processId);
+      const pendingInteractions =
+        this.pendingUnlabeledTerminalInteractions.get(parsed.processId) ?? [];
+      pendingInteractions.push({ callId, stdin: parsed.stdin });
+      this.pendingUnlabeledTerminalInteractions.set(parsed.processId, pendingInteractions);
     }
     const timelineItem = mapCodexTerminalInteractionToToolCall({
+      callId,
       processId: parsed.processId,
-      fallbackCallId: parsed.callId,
       command,
+      stdin: parsed.stdin,
     });
     this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: timelineItem });
   }
@@ -5862,15 +5870,31 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (!this.pendingUnlabeledTerminalInteractions.has(processId)) {
       return;
     }
+    const pendingInteractions = this.pendingUnlabeledTerminalInteractions.get(processId) ?? [];
     this.pendingUnlabeledTerminalInteractions.delete(processId);
-    this.emitEvent({
-      type: "timeline",
-      provider: CODEX_PROVIDER,
-      item: mapCodexTerminalInteractionToToolCall({
-        processId,
-        command: displayCommand,
-      }),
-    });
+    for (const pendingInteraction of pendingInteractions) {
+      this.emitEvent({
+        type: "timeline",
+        provider: CODEX_PROVIDER,
+        item: mapCodexTerminalInteractionToToolCall({
+          callId: pendingInteraction.callId,
+          processId,
+          command: displayCommand,
+          stdin: pendingInteraction.stdin,
+        }),
+      });
+    }
+  }
+
+  private createTerminalInteractionCallId(
+    processId: string | null,
+    fallbackCallId: string | null,
+  ): string {
+    const baseCallId = processId
+      ? `terminal-session-${processId}`
+      : (nonEmptyString(fallbackCallId ?? undefined) ?? "terminal-interaction");
+    this.nextTerminalInteractionOrdinal += 1;
+    return `${baseCallId}-${this.nextTerminalInteractionOrdinal}`;
   }
 
   private shouldEmitTerminalInteractionKey(key: string): boolean {

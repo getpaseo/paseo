@@ -24,7 +24,7 @@ export interface SearchDirectoryEntriesOptions {
   pathQueryPolicy?: PathQueryPolicy;
   rootAliases?: string[];
   blankQueryBehavior?: BlankQueryBehavior;
-  traversableHiddenDirectoryNames?: string[];
+  traversableHiddenDirectoryNames?: readonly string[];
   limit?: number;
   maxDepth?: number;
   maxEntriesScanned?: number;
@@ -84,6 +84,15 @@ const NO_SEGMENT_INDEX = Number.MAX_SAFE_INTEGER;
 const NO_MATCH_OFFSET = Number.MAX_SAFE_INTEGER;
 const NO_FUZZY_SCORE = Number.MAX_SAFE_INTEGER;
 const NO_MATCH_TIER = 5;
+export const WORKSPACE_SEARCH_HIDDEN_DIRECTORIES = [
+  ".agents",
+  ".claude",
+  ".codex",
+  ".github",
+  ".opencode",
+  ".paseo",
+  ".vscode",
+] as const;
 const IGNORED_DIRECTORY_NAMES = new Set([
   "node_modules",
   "venv",

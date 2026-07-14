@@ -24,8 +24,27 @@ function limitFailedShellError(item: AgentTimelineItem): AgentTimelineItem {
   };
 }
 
+function limitPlainText(item: AgentTimelineItem): AgentTimelineItem {
+  if (
+    item.type !== "tool_call" ||
+    item.detail.type !== "plain_text" ||
+    typeof item.detail.text !== "string" ||
+    item.detail.text.length <= TOOL_CALL_CONTENT_MAX_LENGTH
+  ) {
+    return item;
+  }
+  return {
+    ...item,
+    detail: {
+      ...item.detail,
+      text: item.detail.text.slice(0, TOOL_CALL_CONTENT_MAX_LENGTH),
+    },
+  };
+}
+
 export function limitAgentTimelineItemContent(item: AgentTimelineItem): AgentTimelineItem {
   item = limitFailedShellError(item);
+  item = limitPlainText(item);
   if (
     item.type !== "tool_call" ||
     item.detail.type !== "shell" ||

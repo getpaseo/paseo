@@ -48,8 +48,13 @@ dynamic params exist before any nested workspace leaf is selected.
 ## App-Wide Route Hops
 
 When app-wide routes such as `/new`, `/settings`, or `/sessions` navigate back
-into a host workspace, express only the destination with `navigateToWorkspace()`.
-Do not make the caller branch on its current route.
+into a host workspace, use `navigateToWorkspace()`. Do not make the caller
+branch on its current route.
+
+Pass only `serverId` and `workspaceId` for normal attention-aware navigation.
+When the action names a specific tab, pass it as `target`; that explicit choice
+is authoritative. Callers should not choose between separate route and tab
+navigation APIs.
 
 The root stack owns `h/[serverId]`; the host stack owns
 `workspace/[workspaceId]/index`. Repeated global-route hops must `POP_TO` the
@@ -133,7 +138,8 @@ Before landing route changes:
 
 - [ ] Did you change `packages/app/src/app`? Re-read this file.
 - [ ] Did you touch remembered workspace restore? Keep root on `/h/[serverId]`.
-- [ ] Did any route return to a workspace? Use `navigateToWorkspace()`.
+- [ ] Did a route return to a workspace? Use `navigateToWorkspace()` and pass a
+      `target` when the action names a specific tab.
 - [ ] Did you add a route? Register it in the layout that directly owns it.
 - [ ] Did `useLocalSearchParams()` lose a required param? Fix the route tree.
 - [ ] Did native show a blank screen without a crash? Suspect route ownership

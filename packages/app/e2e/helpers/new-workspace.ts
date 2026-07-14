@@ -181,6 +181,21 @@ export async function expectNewWorkspaceProjectSelected(
   await expect(projectPicker).toContainText(projectDisplayName);
 }
 
+export async function fillNewWorkspaceDraft(page: Page, draft: string): Promise<void> {
+  const composer = page.getByRole("textbox", { name: "Message agent..." });
+  await expect(composer).toBeVisible({ timeout: 30_000 });
+  await composer.fill(draft);
+}
+
+export async function expectNewWorkspaceDraft(page: Page, draft: string): Promise<void> {
+  await expect(page.getByRole("textbox", { name: "Message agent..." })).toHaveValue(draft);
+}
+
+export async function selectNewWorkspaceHost(page: Page, hostLabel: string): Promise<void> {
+  await page.getByTestId("host-picker-trigger").click();
+  await page.getByText(hostLabel, { exact: true }).click();
+}
+
 export async function submitNewWorkspacePrompt(
   page: Page,
   prompt = "Hello from e2e",

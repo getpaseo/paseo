@@ -6,6 +6,8 @@ import {
   type EmptyProjectDescriptor as ProjectWithoutWorkspacesDescriptor,
   type WorkspaceDescriptor,
 } from "@/stores/session-store";
+import { generateDraftId } from "@/stores/draft-keys";
+import type { NavigateToWorkspaceInput } from "@/stores/navigation-active-workspace-store";
 import { buildWorkspaceTabPersistenceKey } from "@/stores/workspace-tabs-store";
 
 type OpenProjectPayload = ProjectAddResponse["payload"];
@@ -57,8 +59,7 @@ interface WorkspaceOpenCallbacks {
   isConnected: boolean;
   mergeWorkspaces: (serverId: string, workspaces: Iterable<WorkspaceDescriptor>) => void;
   setHasHydratedWorkspaces: (serverId: string, hydrated: boolean) => void;
-  openDraftTab: (workspaceKey: string) => string | null;
-  navigateToWorkspace: (serverId: string, workspaceId: string) => void;
+  navigateToWorkspace: (input: NavigateToWorkspaceInput) => string;
 }
 
 export interface OpenGithubRepoDirectlyInput extends WorkspaceOpenCallbacks {
@@ -122,8 +123,11 @@ function finishWorkspaceOpen(
 
   input.mergeWorkspaces(normalizedServerId, [workspace]);
   input.setHasHydratedWorkspaces(normalizedServerId, true);
-  input.openDraftTab(workspaceKey);
-  input.navigateToWorkspace(normalizedServerId, workspace.id);
+  input.navigateToWorkspace({
+    serverId: normalizedServerId,
+    workspaceId: workspace.id,
+    target: { kind: "draft", draftId: generateDraftId() },
+  });
   return true;
 }
 

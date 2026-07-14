@@ -8,6 +8,7 @@ import type {
   EmptyProjectDescriptor as ProjectWithoutWorkspacesDescriptor,
   WorkspaceDescriptor,
 } from "@/stores/session-store";
+import type { NavigateToWorkspaceInput } from "@/stores/navigation-active-workspace-store";
 
 const SERVER_ID = "server-1";
 const PROJECT_PATH = "/repo/project";
@@ -55,15 +56,6 @@ interface RecordedHydrated {
   hydrated: boolean;
 }
 
-interface RecordedOpenDraftTab {
-  workspaceKey: string;
-}
-
-interface RecordedNavigate {
-  serverId: string;
-  workspaceId: string;
-}
-
 interface RecordedClone {
   repo: string;
   targetDirectory: string;
@@ -90,23 +82,13 @@ function createFakeSession() {
   };
 }
 
-function createFakeWorkspaceLayout() {
-  const openedTabs: RecordedOpenDraftTab[] = [];
-  return {
-    openedTabs,
-    openDraftTab: (workspaceKey: string) => {
-      openedTabs.push({ workspaceKey });
-      return "tab-1";
-    },
-  };
-}
-
 function createFakeNavigator() {
-  const navigations: RecordedNavigate[] = [];
+  const navigations: NavigateToWorkspaceInput[] = [];
   return {
     navigations,
-    navigateToWorkspace: (serverId: string, workspaceId: string) => {
-      navigations.push({ serverId, workspaceId });
+    navigateToWorkspace: (input: NavigateToWorkspaceInput) => {
+      navigations.push(input);
+      return `/hosts/${input.serverId}/workspaces/${input.workspaceId}`;
     },
   };
 }
@@ -226,7 +208,6 @@ describe("openProjectDirectly", () => {
 describe("openGithubRepoDirectly", () => {
   it("opens a cloned GitHub workspace and seeds a draft tab", async () => {
     const session = createFakeSession();
-    const layout = createFakeWorkspaceLayout();
     const navigator = createFakeNavigator();
     const workspacePayload = buildWorkspacePayload();
     const github = createFakeGithubCloneClient(workspacePayload);
@@ -240,7 +221,6 @@ describe("openGithubRepoDirectly", () => {
       client: github,
       mergeWorkspaces: session.mergeWorkspaces,
       setHasHydratedWorkspaces: session.setHasHydratedWorkspaces,
-      openDraftTab: layout.openDraftTab,
       navigateToWorkspace: navigator.navigateToWorkspace,
     });
 
@@ -261,13 +241,17 @@ describe("openGithubRepoDirectly", () => {
       workspaceDirectory: PROJECT_PATH,
     });
     expect(session.hydrated).toEqual([{ serverId: SERVER_ID, hydrated: true }]);
-    expect(layout.openedTabs).toEqual([{ workspaceKey: `${SERVER_ID}:1` }]);
-    expect(navigator.navigations).toEqual([{ serverId: SERVER_ID, workspaceId: "1" }]);
+    expect(navigator.navigations).toEqual([
+      {
+        serverId: SERVER_ID,
+        workspaceId: "1",
+        target: { kind: "draft", draftId: expect.any(String) },
+      },
+    ]);
   });
 
   it("rejects a workspace without an identity before changing app state", async () => {
     const session = createFakeSession();
-    const layout = createFakeWorkspaceLayout();
     const navigator = createFakeNavigator();
     const github = createFakeGithubCloneClient({ ...buildWorkspacePayload(), id: " " });
 
@@ -280,14 +264,12 @@ describe("openGithubRepoDirectly", () => {
       client: github,
       mergeWorkspaces: session.mergeWorkspaces,
       setHasHydratedWorkspaces: session.setHasHydratedWorkspaces,
-      openDraftTab: layout.openDraftTab,
       navigateToWorkspace: navigator.navigateToWorkspace,
     });
 
     expect(result).toBe(false);
     expect(session.merges).toEqual([]);
     expect(session.hydrated).toEqual([]);
-    expect(layout.openedTabs).toEqual([]);
     expect(navigator.navigations).toEqual([]);
   });
 });
