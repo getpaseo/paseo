@@ -871,6 +871,10 @@ export class Session {
       projectRegistry: this.projectRegistry,
       workspaceRegistry: this.workspaceRegistry,
       listAgentPayloads: () => this.listAgentPayloads(),
+      listProviderSubagents: (parentAgentId) =>
+        this.agentManager.getAgent(parentAgentId)
+          ? this.agentManager.listProviderSubagents(parentAgentId)
+          : [],
       listTerminalActivityContributions: () => this.listTerminalActivityContributions(),
       isProviderVisibleToClient: (provider) => this.isProviderVisibleToClient(provider),
       buildWorkspaceDescriptor: (input) => this.buildWorkspaceDescriptor(input),
@@ -1161,38 +1165,48 @@ export class Session {
         }
 
         if (event.type === "provider_subagent") {
-          if (!this.supports(CLIENT_CAPS.providerSubagents)) {
-            return;
-          }
           const update = event.event;
-          if (update.type === "upsert") {
-            this.emit({
-              type: "agent.provider_subagents.update",
-              payload: { kind: "upsert", subagent: update.subagent },
+          const parentAgentId =
+            update.type === "upsert" ? update.subagent.parentAgentId : update.parentAgentId;
+          if (update.type !== "timeline") {
+            void this.emitWorkspaceUpdateForProviderSubagent(parentAgentId).catch((error) => {
+              this.sessionLogger.warn(
+                { err: error, parentAgentId },
+                "Failed to emit workspace update after provider subagent changed",
+              );
             });
-          } else if (update.type === "timeline") {
-            this.emit({
-              type: "agent.provider_subagents.update",
-              payload: {
-                kind: "timeline",
-                parentAgentId: update.parentAgentId,
-                subagentId: update.subagentId,
-                provider: update.provider,
-                item: update.row.item,
-                timestamp: update.row.timestamp,
-                seq: update.row.seq,
-                epoch: update.epoch,
-              },
-            });
-          } else {
-            this.emit({
-              type: "agent.provider_subagents.update",
-              payload: {
-                kind: "remove",
-                parentAgentId: update.parentAgentId,
-                subagentId: update.subagentId,
-              },
-            });
+          }
+
+          if (this.supports(CLIENT_CAPS.providerSubagents)) {
+            if (update.type === "upsert") {
+              this.emit({
+                type: "agent.provider_subagents.update",
+                payload: { kind: "upsert", subagent: update.subagent },
+              });
+            } else if (update.type === "timeline") {
+              this.emit({
+                type: "agent.provider_subagents.update",
+                payload: {
+                  kind: "timeline",
+                  parentAgentId: update.parentAgentId,
+                  subagentId: update.subagentId,
+                  provider: update.provider,
+                  item: update.row.item,
+                  timestamp: update.row.timestamp,
+                  seq: update.row.seq,
+                  epoch: update.epoch,
+                },
+              });
+            } else {
+              this.emit({
+                type: "agent.provider_subagents.update",
+                payload: {
+                  kind: "remove",
+                  parentAgentId: update.parentAgentId,
+                  subagentId: update.subagentId,
+                },
+              });
+            }
           }
           return;
         }
@@ -3400,6 +3414,14 @@ export class Session {
       }
       currentAgentId = parentAgentId;
     }
+  }
+
+  private async emitWorkspaceUpdateForProviderSubagent(parentAgentId: string): Promise<void> {
+    const workspaceId = await this.resolveDelegationRootWorkspaceId(parentAgentId);
+    if (!workspaceId) {
+      return;
+    }
+    await this.emitWorkspaceUpdateForWorkspaceId(workspaceId);
   }
 
   private async buildActiveProjectPlacementsByWorkspaceId(): Promise<

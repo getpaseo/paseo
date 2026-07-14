@@ -68,6 +68,7 @@ class WorkspaceStatus {
     projectRegistry: { list: async () => [this.project] },
     workspaceRegistry: { list: async () => this.workspaces },
     listAgentPayloads: async () => this.agents,
+    listProviderSubagents: () => [],
     listTerminalActivityContributions: async () => this.terminals,
     isProviderVisibleToClient: () => true,
     buildWorkspaceDescriptor: async ({ workspace }) => ({
@@ -492,6 +493,7 @@ describe("WorkspaceDirectory empty projects", () => {
       projectRegistry: { list: async () => input.projects },
       workspaceRegistry: { list: async () => input.workspaces },
       listAgentPayloads: async () => [],
+      listProviderSubagents: () => [],
       listTerminalActivityContributions: async () => [],
       isProviderVisibleToClient: () => true,
       buildWorkspaceDescriptor: async ({ workspace }) => ({

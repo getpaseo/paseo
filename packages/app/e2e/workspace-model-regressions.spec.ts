@@ -527,4 +527,51 @@ test.describe("Workspace model regressions", () => {
       await seeded.cleanup();
     }
   });
+
+  test("provider subagent started after its parent finishes moves the workspace to Working", async ({
+    page,
+  }) => {
+    const serverId = getServerId();
+    const seeded = await seedWorkspace({ repoPrefix: "workspace-provider-subagent-running-" });
+
+    try {
+      const parent = await seeded.client.createAgent({
+        provider: "mock",
+        cwd: seeded.repoPath,
+        workspaceId: seeded.workspaceId,
+        title: "Parent agent",
+        modeId: "load-test",
+        model: "ten-second-stream",
+      });
+
+      await gotoWorkspace(page, seeded.workspaceId);
+      await waitForSidebarHydration(page);
+
+      const rowTestId = `sidebar-workspace-row-${serverId}:${seeded.workspaceId}`;
+      await expectWorkspaceRowHasOnlyIndicator(page, {
+        rowTestId,
+        indicator: "done",
+      });
+
+      await seeded.client.sendAgentMessage(parent.id, "Start a synthetic background subagent.");
+      const finishedParent = await seeded.client.waitForFinish(parent.id, 15_000);
+      expect(finishedParent.status).toBe("idle");
+      await expect(
+        page.getByTestId(rowTestId).locator('[data-testid="workspace-status-indicator-attention"]'),
+      ).toBeVisible({ timeout: 3_000 });
+
+      await expectWorkspaceRowHasOnlyIndicator(page, {
+        rowTestId,
+        indicator: "running",
+      });
+
+      await switchSidebarToStatusGrouping(page);
+      await expectWorkspaceRowInStatusBucket(page, {
+        rowTestId,
+        bucket: "running",
+      });
+    } finally {
+      await seeded.cleanup();
+    }
+  });
 });

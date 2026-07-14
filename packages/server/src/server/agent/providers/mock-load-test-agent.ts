@@ -36,6 +36,7 @@ export const MOCK_LOAD_TEST_DEFAULT_MODEL_ID = "five-minute-stream";
 const MOCK_LOAD_TEST_MODE_ID = "load-test";
 const MOCK_LOAD_TEST_DURATION_MS = 5 * 60 * 1000;
 const MOCK_LOAD_TEST_INTERVAL_MS = 40;
+const MOCK_BACKGROUND_SUBAGENT_DELAY_MS = 5_000;
 
 const CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
@@ -150,6 +151,10 @@ interface MockQuestionPromptRequest {
 
 function shouldEmitPlanApprovalPrompt(prompt: AgentPromptInput): boolean {
   return /emit\s+(?:a\s+)?synthetic\s+plan\s+approval/i.test(promptToText(prompt));
+}
+
+function shouldStartBackgroundSubagent(prompt: AgentPromptInput): boolean {
+  return /start\s+(?:a\s+)?synthetic\s+background\s+subagent/i.test(promptToText(prompt));
 }
 
 function parseMockQuestionPrompt(prompt: AgentPromptInput): MockQuestionPromptRequest | null {
@@ -654,6 +659,8 @@ export class MockLoadTestAgentSession implements AgentSession {
     const structuredBranchName = parseStructuredBranchNamePrompt(prompt);
     if (structuredBranchName) {
       this.scheduleStructuredJsonTurn(turn, structuredBranchName);
+    } else if (shouldStartBackgroundSubagent(prompt)) {
+      this.scheduleBackgroundSubagentTurn(turn);
     } else if (shouldEmitPlanApprovalPrompt(prompt)) {
       this.schedulePlanApprovalTurn(turn);
     } else if (questionPrompt) {
@@ -830,6 +837,13 @@ export class MockLoadTestAgentSession implements AgentSession {
     turn.timer.unref?.();
   }
 
+  private scheduleBackgroundSubagentTurn(turn: ActiveTurn): void {
+    turn.timer = setTimeout(() => {
+      this.emitBackgroundSubagentTurn(turn);
+    }, 0);
+    turn.timer.unref?.();
+  }
+
   private scheduleQuestionPromptTurn(
     turn: ActiveTurn,
     questionPrompt: MockQuestionPromptRequest,
@@ -935,6 +949,39 @@ export class MockLoadTestAgentSession implements AgentSession {
       request,
       turnId: turn.turnId,
     });
+  }
+
+  private emitBackgroundSubagentTurn(turn: ActiveTurn): void {
+    if (this.activeTurn !== turn) {
+      return;
+    }
+
+    this.clearTurnTimer(turn);
+    this.emit({
+      type: "turn_started",
+      provider: this.provider,
+      turnId: turn.turnId,
+    });
+    this.emitTimeline(turn.turnId, {
+      type: "assistant_message",
+      text: "The background subagent is running.",
+      messageId: turn.assistantMessageId,
+    });
+    this.finishTurnWithText(turn, "The background subagent is running.");
+
+    const subagentTimer = setTimeout(() => {
+      this.emit({
+        type: "provider_subagent",
+        provider: this.provider,
+        event: {
+          type: "upsert",
+          id: "mock-background-subagent",
+          title: "Background subagent",
+          status: "running",
+        },
+      });
+    }, MOCK_BACKGROUND_SUBAGENT_DELAY_MS);
+    subagentTimer.unref?.();
   }
 
   private emitQuestionPromptTurn(
