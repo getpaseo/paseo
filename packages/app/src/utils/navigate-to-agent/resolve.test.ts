@@ -4,7 +4,7 @@ import {
   type AgentNavTarget,
   type NavigateToAgentDeps,
 } from "@/utils/navigate-to-agent/resolve";
-import type { NavigateToPreparedWorkspaceTabInput } from "@/utils/prepare-workspace-tab";
+import type { NavigateToWorkspaceInput } from "@/stores/navigation-active-workspace-store";
 
 const SERVER_ID = "server-1";
 const WORKSPACE_ID = "workspace-1";
@@ -14,7 +14,7 @@ interface RecordedHostNav {
   route: string;
 }
 
-interface RecordedTabNav extends NavigateToPreparedWorkspaceTabInput {}
+interface RecordedTabNav extends NavigateToWorkspaceInput {}
 
 interface RecordedRestore {
   serverId: string;
@@ -40,7 +40,7 @@ function createFakeNavigators(target: AgentNavTarget): {
       navigateToHostAgent: (route) => {
         hostNavigations.push({ route });
       },
-      navigateToPreparedWorkspaceTab: (input) => {
+      navigateToWorkspace: (input) => {
         tabNavigations.push(input);
         return `/h/${input.serverId}/workspace/${input.workspaceId}`;
       },

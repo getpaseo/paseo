@@ -7,6 +7,7 @@ import {
   appendOptimisticUserMessageToStream,
   buildOptimisticUserMessage,
   clearOptimisticUserMessages,
+  handoffCreatedAgentUserMessageToStream,
   hydrateStreamState,
   mergeToolCallDetail,
   reduceStreamUpdate,
@@ -374,6 +375,142 @@ describe("stream reducer canonical tool calls", () => {
     assert.strictEqual(first.text, "Hello");
     assert.strictEqual(first.id, "msg-same");
     assert.strictEqual(first.messageId, "msg-same");
+  });
+
+  it("keeps row identities unique when an assistant message resumes after a tool", () => {
+    const messageId = "msg-resumed";
+    const state = hydrateStreamState([
+      {
+        event: assistantTimeline("Before the tool.", "codex", messageId),
+        timestamp: new Date("2025-01-01T10:02:00Z"),
+      },
+      {
+        event: canonicalToolTimeline({
+          provider: "codex",
+          callId: "tool-between-assistant-segments",
+          name: "shell",
+          status: "completed",
+        }),
+        timestamp: new Date("2025-01-01T10:02:01Z"),
+      },
+      {
+        event: assistantTimeline("After the tool.", "codex", messageId),
+        timestamp: new Date("2025-01-01T10:02:02Z"),
+      },
+    ]);
+
+    const messages = state.filter(
+      (item): item is Extract<StreamItem, { kind: "assistant_message" }> =>
+        item.kind === "assistant_message",
+    );
+    expect(messages.map((message) => message.text)).toEqual([
+      "Before the tool.",
+      "After the tool.",
+    ]);
+    expect(messages.map((message) => message.messageId)).toEqual([messageId, messageId]);
+    expect(new Set(messages.map((message) => message.id)).size).toBe(2);
+  });
+
+  it("keeps resumed live assistant rows when the turn completes", () => {
+    const messageId = "msg-live-resumed";
+    let tail: StreamItem[] = [];
+    let head: StreamItem[] = [];
+
+    for (const update of [
+      {
+        event: assistantTimeline("Before the tool.", "codex", messageId),
+        timestamp: new Date("2025-01-01T10:02:00Z"),
+      },
+      {
+        event: canonicalToolTimeline({
+          provider: "codex",
+          callId: "live-tool-between-assistant-segments",
+          name: "shell",
+          status: "completed",
+        }),
+        timestamp: new Date("2025-01-01T10:02:01Z"),
+      },
+      {
+        event: assistantTimeline("After the tool.", "codex", messageId),
+        timestamp: new Date("2025-01-01T10:02:02Z"),
+      },
+      {
+        event: { type: "turn_completed" as const, provider: "codex" as const },
+        timestamp: new Date("2025-01-01T10:02:03Z"),
+      },
+    ]) {
+      const result = applyStreamEvent({
+        tail,
+        head,
+        event: update.event,
+        timestamp: update.timestamp,
+      });
+      tail = result.tail;
+      head = result.head;
+    }
+
+    const messages = tail.filter(
+      (item): item is Extract<StreamItem, { kind: "assistant_message" }> =>
+        item.kind === "assistant_message",
+    );
+    expect(head).toEqual([]);
+    expect(messages.map((message) => message.text)).toEqual([
+      "Before the tool.",
+      "After the tool.",
+    ]);
+    expect(messages.map((message) => message.messageId)).toEqual([messageId, messageId]);
+    expect(new Set(messages.map((message) => message.id)).size).toBe(2);
+  });
+
+  it("keeps every promoted block when an assistant message resumes after a tool", () => {
+    const messageId = "msg-promoted-resume";
+    let tail: StreamItem[] = [];
+    let head: StreamItem[] = [];
+
+    for (const update of [
+      {
+        event: assistantTimeline("Before one.\n\nBefore two.", "codex", messageId),
+        timestamp: new Date("2025-01-01T10:02:00Z"),
+      },
+      {
+        event: canonicalToolTimeline({
+          provider: "codex" as const,
+          callId: "tool-between-promoted-segments",
+          name: "shell",
+          status: "completed" as const,
+        }),
+        timestamp: new Date("2025-01-01T10:02:01Z"),
+      },
+      {
+        event: assistantTimeline("After one.\n\nAfter two.", "codex", messageId),
+        timestamp: new Date("2025-01-01T10:02:02Z"),
+      },
+      {
+        event: { type: "turn_completed" as const, provider: "codex" as const },
+        timestamp: new Date("2025-01-01T10:02:03Z"),
+      },
+    ]) {
+      const result = applyStreamEvent({
+        tail,
+        head,
+        event: update.event,
+        timestamp: update.timestamp,
+      });
+      tail = result.tail;
+      head = result.head;
+    }
+
+    const messages = tail.filter(
+      (item): item is Extract<StreamItem, { kind: "assistant_message" }> =>
+        item.kind === "assistant_message",
+    );
+    expect(messages.map((message) => message.text)).toEqual([
+      "Before one.",
+      "Before two.",
+      "After one.",
+      "After two.",
+    ]);
+    expect(new Set(messages.map((message) => message.id)).size).toBe(messages.length);
   });
 
   it("preserves old assistant merge behavior when message ids are absent", () => {
@@ -1148,27 +1285,86 @@ describe("turn lifecycle events", () => {
       message: optimistic,
       placement: "active-head",
     });
-    const skipped = appendOptimisticUserMessageToStream({
-      tail: [
-        {
-          kind: "user_message",
-          id: "canonical-user",
-          text: "already canonical",
-          timestamp: new Date("2025-01-01T15:03:21Z"),
-        },
-      ],
-      head: [],
-      message: optimistic,
-      placement: "tail",
-      skipIfUserMessageExists: true,
-    });
-
     assert.deepStrictEqual(first.tail, []);
     assert.deepStrictEqual(first.head, [headItem, optimistic]);
     assert.strictEqual(second.changedHead, false);
     assert.strictEqual(second.head, first.head);
-    assert.strictEqual(skipped.changedTail, false);
-    assert.strictEqual(skipped.tail.length, 1);
+  });
+
+  it("hands rich optimistic content to an authoritative create message without duplicating it", () => {
+    const timestamp = new Date("2025-01-01T15:03:20Z");
+    const optimistic = buildOptimisticUserMessage({
+      id: "client-user",
+      text: "",
+      timestamp,
+      images: [
+        {
+          id: "image-1",
+          mimeType: "image/png",
+          storageType: "web-indexeddb",
+          storageKey: "image-1",
+          createdAt: timestamp.getTime(),
+        },
+      ],
+      attachments: [
+        {
+          type: "text",
+          mimeType: "text/plain",
+          text: "Previous conversation",
+          title: "Chat history",
+          contextKind: "chat_history",
+        },
+      ],
+    });
+    const canonical: StreamItem = {
+      kind: "user_message",
+      id: "provider-user",
+      text: "server-rendered attachment text",
+      timestamp: new Date("2025-01-01T15:03:21Z"),
+    };
+
+    const handedOff = handoffCreatedAgentUserMessageToStream({
+      tail: [canonical],
+      head: [],
+      message: optimistic,
+    });
+    const repeated = handoffCreatedAgentUserMessageToStream({
+      tail: handedOff.tail,
+      head: handedOff.head,
+      message: optimistic,
+    });
+
+    assert.deepStrictEqual(handedOff.tail, [
+      {
+        kind: "user_message",
+        id: "provider-user",
+        text: optimistic.text,
+        timestamp: optimistic.timestamp,
+        images: optimistic.images,
+        attachments: optimistic.attachments,
+      },
+    ]);
+    assert.deepStrictEqual(handedOff.head, []);
+    assert.deepStrictEqual(repeated.tail, handedOff.tail);
+    assert.deepStrictEqual(repeated.head, handedOff.head);
+
+    const afterNextUser = reduceStreamUpdate(
+      handedOff.tail,
+      {
+        type: "timeline",
+        provider: "claude",
+        item: {
+          type: "user_message",
+          text: "Next prompt",
+          messageId: "provider-next-user",
+        },
+      },
+      new Date("2025-01-01T15:04:00Z"),
+    );
+    assert.deepStrictEqual(
+      afterNextUser.filter((item) => item.kind === "user_message").map((item) => item.id),
+      ["provider-user", "provider-next-user"],
+    );
   });
 
   it("reconciles an optimistic user message that was pending in the streaming head", () => {

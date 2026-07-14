@@ -1,6 +1,6 @@
 {
   "name": "@getpaseo/server",
-  "version": "0.1.105",
+  "version": "0.1.107",
   "description": "Paseo backend server",
   "files": [
     "dist/server",
@@ -60,16 +60,17 @@
     "test:e2e:all": "vitest run e2e.test.ts --maxWorkers=1",
     "test:e2e:real": "npm run test:integration:real",
     "test:e2e:local": "npm run test:integration:local",
+    "test:e2e:relay:live": "cross-env RUN_LIVE_RELAY_E2E=1 vitest run src/server/daemon-e2e/live-relay.real.e2e.test.ts --maxWorkers=1",
     "test:e2e:ui": "vitest --ui e2e.test.ts"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.17.1",
     "@anthropic-ai/claude-agent-sdk": "^0.3.195",
     "@anthropic-ai/sdk": "^0.104.2",
-    "@getpaseo/client": "0.1.105",
-    "@getpaseo/highlight": "0.1.105",
-    "@getpaseo/protocol": "0.1.105",
-    "@getpaseo/relay": "0.1.105",
+    "@getpaseo/client": "0.1.107",
+    "@getpaseo/highlight": "0.1.107",
+    "@getpaseo/protocol": "0.1.107",
+    "@getpaseo/relay": "0.1.107",
     "@isaacs/ttlcache": "^2.1.4",
     "@modelcontextprotocol/sdk": "^1.20.1",
     "@opencode-ai/sdk": "1.14.46",

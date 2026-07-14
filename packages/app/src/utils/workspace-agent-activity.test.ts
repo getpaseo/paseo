@@ -92,8 +92,22 @@ describe("workspace agent activity index", () => {
 
     expect(index).toEqual(
       new Map([
-        ["workspace-a", { status: "needs_input", enteredAt: new Date("2026-06-01T10:01:00.000Z") }],
-        ["workspace-b", { status: "attention", enteredAt: new Date("2026-06-01T10:02:00.000Z") }],
+        [
+          "workspace-a",
+          {
+            agentId: "permission",
+            status: "needs_input",
+            enteredAt: new Date("2026-06-01T10:01:00.000Z"),
+          },
+        ],
+        [
+          "workspace-b",
+          {
+            agentId: "attention",
+            status: "attention",
+            enteredAt: new Date("2026-06-01T10:02:00.000Z"),
+          },
+        ],
       ]),
     );
   });
@@ -135,8 +149,82 @@ describe("workspace agent activity index", () => {
     );
 
     expect(index.get("workspace-a")).toEqual({
+      agentId: "root",
       status: "running",
       enteredAt: new Date("2026-06-01T10:00:00.000Z"),
+    });
+  });
+
+  it("preserves the activity index while the same agent remains in the same status", () => {
+    const previous = buildWorkspaceAgentActivityIndex(
+      new Map([
+        [
+          "root",
+          agent({
+            id: "root",
+            workspaceId: "workspace-a",
+            status: "running",
+            updatedAt: "2026-06-01T10:00:00.000Z",
+          }),
+        ],
+      ]),
+    );
+
+    const next = buildWorkspaceAgentActivityIndex(
+      new Map([
+        [
+          "root",
+          agent({
+            id: "root",
+            workspaceId: "workspace-a",
+            status: "running",
+            updatedAt: "2026-06-01T10:05:00.000Z",
+          }),
+        ],
+      ]),
+      previous,
+    );
+
+    expect(next).toBe(previous);
+    expect(next.get("workspace-a")?.enteredAt).toEqual(new Date("2026-06-01T10:00:00.000Z"));
+  });
+
+  it("records a new entry time when an agent changes status", () => {
+    const previous = buildWorkspaceAgentActivityIndex(
+      new Map([
+        [
+          "root",
+          agent({
+            id: "root",
+            workspaceId: "workspace-a",
+            status: "running",
+            updatedAt: "2026-06-01T10:00:00.000Z",
+          }),
+        ],
+      ]),
+    );
+
+    const next = buildWorkspaceAgentActivityIndex(
+      new Map([
+        [
+          "root",
+          agent({
+            id: "root",
+            workspaceId: "workspace-a",
+            status: "idle",
+            updatedAt: "2026-06-01T10:05:00.000Z",
+            pendingPermissionCount: 1,
+          }),
+        ],
+      ]),
+      previous,
+    );
+
+    expect(next).not.toBe(previous);
+    expect(next.get("workspace-a")).toEqual({
+      agentId: "root",
+      status: "needs_input",
+      enteredAt: new Date("2026-06-01T10:05:00.000Z"),
     });
   });
 });

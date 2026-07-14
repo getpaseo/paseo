@@ -141,7 +141,7 @@ const CodexCommandExecutionItemSchema = z
     error: z.unknown().optional(),
     command: CodexCommandValueSchema.optional(),
     cwd: z.string().optional(),
-    aggregatedOutput: z.string().optional(),
+    aggregatedOutput: z.string().nullable().optional(),
     exitCode: z.number().nullable().optional(),
   })
   .passthrough();
@@ -221,7 +221,9 @@ const CodexThreadItemSchema = z.discriminatedUnion("type", [
 
 function maybeUnwrapShellWrapperCommand(command: string): string {
   const trimmed = command.trim();
-  const unixWrapperMatch = trimmed.match(/^(?:\/bin\/)?(?:zsh|bash|sh)\s+-(?:lc|c)\s+([\s\S]+)$/);
+  const unixWrapperMatch = trimmed.match(
+    /^(?:(?:\/[^/\s]+)*\/)?(?:zsh|bash|sh)\s+-(?:lc|c)\s+([\s\S]+)$/,
+  );
   if (unixWrapperMatch) {
     const candidate = unixWrapperMatch[1]?.trim() ?? "";
     if (!candidate) {
@@ -692,7 +694,7 @@ function mapCommandExecutionItem(
   item: z.infer<typeof CodexCommandExecutionItemSchema>,
 ): CodexNormalizedToolCallEnvelope {
   const command = normalizeCommandExecutionCommand(item.command);
-  const parsedOutput = extractCodexShellOutput(item.aggregatedOutput);
+  const parsedOutput = extractCodexShellOutput(item.aggregatedOutput ?? undefined);
   const input = toNullableObject({
     ...(command !== undefined ? { command } : {}),
     ...(item.cwd !== undefined ? { cwd: item.cwd } : {}),

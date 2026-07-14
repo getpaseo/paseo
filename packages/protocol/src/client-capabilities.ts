@@ -11,6 +11,9 @@ export const CLIENT_CAPS = {
   // Old clients use a strict TerminalState schema and would reject the extra fields.
   // Drop the gate (always send the flags) when floor >= v0.1.88.
   terminalReflowableSnapshot: "terminal_reflowable_snapshot",
+  // COMPAT(providerSubagents): added in v0.1.107. The daemon emits provider-owned
+  // child descriptors and timelines only to clients that understand the new messages.
+  providerSubagents: "provider_subagents",
   browserHost: "browser_host",
 } as const;
 

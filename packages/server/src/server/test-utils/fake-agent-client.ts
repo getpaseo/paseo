@@ -51,6 +51,18 @@ interface Deferred<T> {
   reject: (err: unknown) => void;
 }
 
+interface FakeAgentSessionOptions {
+  providerName: string;
+  config: AgentSessionConfig;
+  sessionId?: string;
+  memoryMarker?: string | null;
+  closeSession?: () => Promise<void>;
+}
+
+export interface TestAgentClientOptions {
+  closeSession?: () => Promise<void>;
+}
+
 function createDeferred<T>(): Deferred<T> {
   let resolve!: (value: T) => void;
   let reject!: (err: unknown) => void;
@@ -316,16 +328,14 @@ class FakeAgentSession implements AgentSession {
   private nextTurnOrdinal = 0;
   private activeForegroundTurnId: string | null = null;
 
-  constructor(
-    providerName: string,
-    config: AgentSessionConfig,
-    sessionId?: string,
-    memoryMarker?: string | null,
-  ) {
-    this.providerName = providerName;
-    this.config = config;
-    this.id = sessionId ?? randomUUID();
-    this.memoryMarker = memoryMarker ?? null;
+  private readonly closeSession: (() => Promise<void>) | undefined;
+
+  constructor(options: FakeAgentSessionOptions) {
+    this.providerName = options.providerName;
+    this.config = options.config;
+    this.id = options.sessionId ?? randomUUID();
+    this.memoryMarker = options.memoryMarker ?? null;
+    this.closeSession = options.closeSession;
     this.historyPath = path.join(
       tmpdir(),
       "paseo-fake-provider-history",
@@ -847,7 +857,9 @@ class FakeAgentSession implements AgentSession {
     this.interruptSignal.resolve();
   }
 
-  async close(): Promise<void> {}
+  async close(): Promise<void> {
+    await this.closeSession?.();
+  }
 
   async listCommands(): Promise<AgentSlashCommand[]> {
     if (this.providerName === "codex") {
@@ -1155,13 +1167,20 @@ class FakeAgentSession implements AgentSession {
 
 class FakeAgentClient implements AgentClient {
   readonly capabilities = TEST_CAPABILITIES;
-  constructor(public readonly provider: string) {}
+  constructor(
+    public readonly provider: string,
+    private readonly options: TestAgentClientOptions,
+  ) {}
 
   async createSession(
     config: AgentSessionConfig,
     _launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
-    return new FakeAgentSession(this.provider, { ...config });
+    return new FakeAgentSession({
+      providerName: this.provider,
+      config: { ...config },
+      closeSession: this.options.closeSession,
+    });
   }
 
   async resumeSession(
@@ -1178,12 +1197,13 @@ class FakeAgentClient implements AgentClient {
       (handle.metadata as Record<string, unknown> | undefined)?.marker ??
       (handle.metadata as Record<string, unknown> | undefined)?.conversationId ??
       null;
-    return new FakeAgentSession(
-      this.provider,
-      cfg,
-      handle.sessionId,
-      typeof marker === "string" ? marker : null,
-    );
+    return new FakeAgentSession({
+      providerName: this.provider,
+      config: cfg,
+      sessionId: handle.sessionId,
+      memoryMarker: typeof marker === "string" ? marker : null,
+      closeSession: this.options.closeSession,
+    });
   }
 
   async fetchCatalog(
@@ -1222,10 +1242,12 @@ class FakeAgentClient implements AgentClient {
   }
 }
 
-export function createTestAgentClients(): Record<string, AgentClient> {
+export function createTestAgentClients(
+  options: TestAgentClientOptions = {},
+): Record<string, AgentClient> {
   return {
-    claude: new FakeAgentClient("claude"),
-    codex: new FakeAgentClient("codex"),
-    opencode: new FakeAgentClient("opencode"),
+    claude: new FakeAgentClient("claude", options),
+    codex: new FakeAgentClient("codex", options),
+    opencode: new FakeAgentClient("opencode", options),
   };
 }

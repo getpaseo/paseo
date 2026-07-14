@@ -4,8 +4,7 @@ import { subscribeWithSelector } from "zustand/middleware";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { AgentDirectoryEntry } from "@/types/agent-directory";
 import {
-  appendOptimisticUserMessageToStream,
-  type OptimisticUserMessagePlacement,
+  handoffCreatedAgentUserMessageToStream,
   type StreamItem,
   type UserMessageItem,
 } from "@/types/stream";
@@ -135,6 +134,7 @@ export interface WorkspaceDescriptor {
   workspaceKind: WorkspaceDescriptorPayload["workspaceKind"];
   name: string;
   title?: string | null;
+  pinnedAt?: string | null;
   status: WorkspaceDescriptorPayload["status"];
   statusEnteredAt: Date | null;
   archivingAt: string | null;
@@ -167,6 +167,7 @@ export function normalizeWorkspaceDescriptor(
     workspaceKind: payload.workspaceKind,
     name: payload.name,
     title: payload.title ?? null,
+    pinnedAt: payload.pinnedAt ?? null,
     status: payload.status,
     statusEnteredAt,
     archivingAt: payload.archivingAt ?? null,
@@ -432,14 +433,10 @@ interface SessionStoreActions {
     agentId: string,
     state: { tail?: StreamItem[]; head?: StreamItem[] },
   ) => void;
-  appendOptimisticUserMessageToAgentStream: (
+  handoffCreatedAgentUserMessage: (
     serverId: string,
     agentId: string,
     message: UserMessageItem,
-    options: {
-      placement: OptimisticUserMessagePlacement;
-      skipIfUserMessageExists?: boolean;
-    },
   ) => boolean;
   clearAgentStreamHead: (serverId: string, agentId: string) => void;
   setAgentTimelineCursor: (
@@ -958,8 +955,8 @@ export const useSessionStore = create<SessionStore>()(
         });
       },
 
-      appendOptimisticUserMessageToAgentStream: (serverId, agentId, message, options) => {
-        let didAppend = false;
+      handoffCreatedAgentUserMessage: (serverId, agentId, message) => {
+        let didHandoff = false;
         set((prev) => {
           const session = prev.sessions[serverId];
           if (!session) {
@@ -968,12 +965,10 @@ export const useSessionStore = create<SessionStore>()(
 
           const currentTail = session.agentStreamTail.get(agentId) ?? [];
           const currentHead = session.agentStreamHead.get(agentId) ?? [];
-          const result = appendOptimisticUserMessageToStream({
+          const result = handoffCreatedAgentUserMessageToStream({
             tail: currentTail,
             head: currentHead,
             message,
-            placement: options.placement,
-            skipIfUserMessageExists: options.skipIfUserMessageExists,
           });
           if (!result.changedTail && !result.changedHead) {
             return prev;
@@ -985,7 +980,7 @@ export const useSessionStore = create<SessionStore>()(
           const nextHead = result.changedHead
             ? new Map(session.agentStreamHead).set(agentId, result.head)
             : session.agentStreamHead;
-          didAppend = true;
+          didHandoff = true;
 
           return {
             ...prev,
@@ -999,7 +994,7 @@ export const useSessionStore = create<SessionStore>()(
             },
           };
         });
-        return didAppend;
+        return didHandoff;
       },
 
       clearAgentStreamHead: (serverId, agentId) => {
@@ -1203,7 +1198,10 @@ export const useSessionStore = create<SessionStore>()(
               [serverId]: {
                 ...session,
                 agents: nextAgents,
-                workspaceAgentActivity: buildWorkspaceAgentActivityIndex(nextAgents),
+                workspaceAgentActivity: buildWorkspaceAgentActivityIndex(
+                  nextAgents,
+                  session.workspaceAgentActivity,
+                ),
               },
             },
           };

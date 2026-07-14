@@ -51,23 +51,26 @@ describe("codex tool-call mapper", () => {
     });
   });
 
-  it("unwraps shell wrapper strings for commandExecution", () => {
-    const item = expectMapped(
-      mapCodexToolCallFromThreadItem({
-        type: "commandExecution",
-        id: "codex-call-wrapper-string",
-        status: "running",
-        command: '/bin/zsh -lc "echo hello"',
-        cwd: "/tmp/repo",
-      }),
-    );
+  it.each(['/bin/zsh -lc "echo hello"', '/usr/bin/zsh -lc "echo hello"'])(
+    "unwraps zsh wrapper strings for commandExecution: %s",
+    (command) => {
+      const item = expectMapped(
+        mapCodexToolCallFromThreadItem({
+          type: "commandExecution",
+          id: "codex-call-wrapper-string",
+          status: "running",
+          command,
+          cwd: "/tmp/repo",
+        }),
+      );
 
-    expect(item.detail).toEqual({
-      type: "shell",
-      command: "echo hello",
-      cwd: "/tmp/repo",
-    });
-  });
+      expect(item.detail).toEqual({
+        type: "shell",
+        command: "echo hello",
+        cwd: "/tmp/repo",
+      });
+    },
+  );
 
   it("unwraps pwsh wrapper strings for commandExecution on Windows", () => {
     const item = expectMapped(

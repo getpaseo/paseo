@@ -892,6 +892,42 @@ test("returns typed relative suggestions within a requested directory", async ()
   }
 }, 30000);
 
+test("finds workspace files inside the OpenCode directory", async () => {
+  const cwd = mkdtempSync(path.join(tmpdir(), "paseo-opencode-suggestion-"));
+  const target = path.join(
+    cwd,
+    ".opencode",
+    "command",
+    "workflow",
+    "00-kickoff",
+    "00-user-stories.md",
+  );
+
+  try {
+    mkdirSync(path.dirname(target), { recursive: true });
+    writeFileSync(target, "");
+
+    const result = await ctx.client.getDirectorySuggestions({
+      cwd,
+      query: "00-user-stories.md",
+      includeFiles: true,
+      includeDirectories: false,
+      limit: 20,
+    });
+
+    expect(result.error).toBeNull();
+    expect(result.directories).toEqual([]);
+    expect(result.entries).toEqual([
+      {
+        path: ".opencode/command/workflow/00-kickoff/00-user-stories.md",
+        kind: "file",
+      },
+    ]);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+}, 30000);
+
 test("receives server_info on websocket connect", async () => {
   const client = new DaemonClient({
     url: `ws://127.0.0.1:${ctx.daemon.port}/ws`,

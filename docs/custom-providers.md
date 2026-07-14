@@ -457,6 +457,37 @@ Paseo tools such as subagent creation come from the shared internal tool catalog
 }
 ```
 
+ACP agents execute filesystem and terminal operations in their own environment
+by default. To let a compliant agent delegate those operations to Paseo instead,
+enable the corresponding client capabilities:
+
+```json
+{
+  "agents": {
+    "providers": {
+      "local-agent": {
+        "extends": "acp",
+        "label": "Local Agent",
+        "command": ["local-agent", "acp"],
+        "params": {
+          "clientCapabilities": {
+            "fs": {
+              "readTextFile": true,
+              "writeTextFile": true
+            },
+            "terminal": true
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+Only enable capabilities Paseo should execute. When the agent and Paseo run in
+different environments, configure equivalent absolute workspace paths before
+delegating filesystem or terminal operations to Paseo.
+
 ### Generic ACP diagnostics
 
 Paseo diagnostics for `extends: "acp"` providers report the configured command, resolved launcher binary, version output, ACP `initialize`, ACP `session/new`, model count, modes, and final status.

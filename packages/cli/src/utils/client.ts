@@ -22,6 +22,12 @@ export interface ConnectOptions {
   timeout?: number;
 }
 
+export interface DaemonConnectionCommandError {
+  code: "DAEMON_NOT_RUNNING";
+  message: string;
+  details: string;
+}
+
 const DEFAULT_HOST = "localhost:6767";
 const DEFAULT_TIMEOUT = 15000;
 const PID_FILENAME = "paseo.pid";
@@ -42,6 +48,19 @@ type DaemonTarget =
  */
 export function getDaemonHost(options?: ConnectOptions): string {
   return resolveDaemonHostCandidates(options)[0] ?? DEFAULT_HOST;
+}
+
+export function buildDaemonConnectionCommandError(options: {
+  host?: string;
+  error: unknown;
+}): DaemonConnectionCommandError {
+  const host = getDaemonHost({ host: options.host });
+  const message = options.error instanceof Error ? options.error.message : String(options.error);
+  return {
+    code: "DAEMON_NOT_RUNNING",
+    message: `Cannot connect to daemon at ${host}: ${message}`,
+    details: "Start the daemon with: paseo daemon start",
+  };
 }
 
 export function normalizeDaemonHost(raw: string): string | null {

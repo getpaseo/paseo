@@ -352,6 +352,29 @@ describe("processTimelineResponse", () => {
       attachments: [attachment],
     });
     expect(userMessages[0]?.optimistic).toBeUndefined();
+
+    const repeated = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail: result.tail,
+      payload: {
+        ...baseTimelineInput.payload,
+        reset: true,
+        startCursor: { seq: 1 },
+        endCursor: { seq: 1 },
+        entries: [
+          {
+            ...makeTimelineEntry(1, "Analyze this", "user_message"),
+            item: {
+              type: "user_message",
+              text: "server-rendered attachment text",
+              messageId: "canonical-create-user",
+            },
+          },
+        ],
+      },
+    });
+
+    expect(repeated.tail.filter((item) => item.kind === "user_message")).toEqual(userMessages);
   });
 
   it("keeps an unmatched optimistic user message during tail replacement", () => {

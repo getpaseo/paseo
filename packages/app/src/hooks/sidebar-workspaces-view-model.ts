@@ -37,6 +37,7 @@ export interface SidebarWorkspaceEntry extends SidebarStatusWorkspacePlacement {
   // Raw user-set title (null when the name is derived from branch/directory).
   // Prefills the rename input and signals whether a reset is available.
   title: string | null;
+  pinnedAt?: string | null;
   // Checkout branch (null when not a git checkout or detached HEAD).
   currentBranch: string | null;
   archivingAt: string | null;
@@ -63,10 +64,57 @@ export interface SidebarWorkspacePlacementModel {
   projectNamesByKey: Map<string, string>;
 }
 
-export interface SidebarStatusWorkspaceSession {
+export interface SidebarWorkspaceSession {
   serverId: string;
   workspaces: Map<string, WorkspaceDescriptor>;
   workspaceAgentActivity: Map<string, WorkspaceAgentActivity>;
+}
+
+interface SidebarWorkspaceSessionSource {
+  workspaces: Map<string, WorkspaceDescriptor>;
+  workspaceAgentActivity: Map<string, WorkspaceAgentActivity>;
+}
+
+export function selectSidebarWorkspaceSessions(
+  sessions: Record<string, SidebarWorkspaceSessionSource | undefined>,
+  serverIds: readonly string[],
+): SidebarWorkspaceSession[] {
+  const selected: SidebarWorkspaceSession[] = [];
+  for (const serverId of serverIds) {
+    const session = sessions[serverId];
+    if (!session) {
+      continue;
+    }
+    selected.push({
+      serverId,
+      workspaces: session.workspaces,
+      workspaceAgentActivity: session.workspaceAgentActivity,
+    });
+  }
+  return selected;
+}
+
+export function areSidebarWorkspaceSessionsEqual(
+  left: readonly SidebarWorkspaceSession[],
+  right: readonly SidebarWorkspaceSession[],
+): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+  for (let index = 0; index < left.length; index += 1) {
+    const leftSession = left[index];
+    const rightSession = right[index];
+    if (
+      !leftSession ||
+      !rightSession ||
+      leftSession.serverId !== rightSession.serverId ||
+      leftSession.workspaces !== rightSession.workspaces ||
+      leftSession.workspaceAgentActivity !== rightSession.workspaceAgentActivity
+    ) {
+      return false;
+    }
+  }
+  return true;
 }
 
 interface EffectiveWorkspaceStatus {
@@ -110,6 +158,7 @@ export function createSidebarWorkspaceEntry(input: {
     workspaceKind: input.workspace.workspaceKind,
     name: input.workspace.name,
     title: input.workspace.title ?? null,
+    pinnedAt: input.workspace.pinnedAt,
     currentBranch: normalizeCurrentBranch(input.workspace.gitRuntime?.currentBranch),
     statusBucket: effectiveStatus.status,
     statusEnteredAt: effectiveStatus.enteredAt,
@@ -245,17 +294,18 @@ function resolveStructuralWorkspaceIdentity(input: {
   };
 }
 
-export function buildSidebarStatusWorkspacePlacements(input: {
+export function buildSidebarWorkspaceEntries(input: {
   placements: readonly SidebarWorkspacePlacement[];
-  sessions: SidebarStatusWorkspaceSession[];
+  sessions: SidebarWorkspaceSession[];
   pendingCreateAttempts?: Record<string, PendingCreateAttempt>;
-}): SidebarStatusWorkspacePlacement[] {
+  previousEntries?: ReadonlyMap<string, SidebarWorkspaceEntry>;
+}): Map<string, SidebarWorkspaceEntry> {
   if (input.placements.length === 0 || input.sessions.length === 0) {
-    return [];
+    return new Map();
   }
 
   const sessionByServerId = new Map(input.sessions.map((session) => [session.serverId, session]));
-  const rows: SidebarStatusWorkspacePlacement[] = [];
+  const entries = new Map<string, SidebarWorkspaceEntry>();
 
   for (const placement of input.placements) {
     const session = sessionByServerId.get(placement.serverId);
@@ -267,24 +317,46 @@ export function buildSidebarStatusWorkspacePlacements(input: {
     const workspace = workspaceKey ? session.workspaces.get(workspaceKey) : null;
     if (!workspace) continue;
 
-    const effectiveStatus = deriveEffectiveWorkspaceStatus({
+    const entry = createSidebarWorkspaceEntry({
       serverId: placement.serverId,
       workspace,
       pendingCreateAttempts: input.pendingCreateAttempts,
       workspaceAgentActivity: session.workspaceAgentActivity,
     });
-
-    rows.push({
-      ...placement,
-      name: workspace.name,
-      workspaceDirectory: workspace.workspaceDirectory,
-      workspaceKind: workspace.workspaceKind,
-      statusBucket: effectiveStatus.status,
-      statusEnteredAt: effectiveStatus.enteredAt,
-    });
+    const previousEntry = input.previousEntries?.get(placement.workspaceKey);
+    entries.set(
+      placement.workspaceKey,
+      previousEntry && areSidebarWorkspaceEntriesEqual(previousEntry, entry)
+        ? previousEntry
+        : entry,
+    );
   }
 
-  return rows;
+  return entries;
+}
+
+function areSidebarWorkspaceEntriesEqual(
+  left: SidebarWorkspaceEntry,
+  right: SidebarWorkspaceEntry,
+): boolean {
+  const keys = Object.keys(left) as Array<keyof SidebarWorkspaceEntry>;
+  if (keys.length !== Object.keys(right).length) return false;
+  return keys.every((key) => {
+    if (key !== "prHint") return Object.is(left[key], right[key]);
+    const leftHint = left.prHint;
+    const rightHint = right.prHint;
+    return (
+      leftHint === rightHint ||
+      (leftHint !== null &&
+        rightHint !== null &&
+        leftHint.url === rightHint.url &&
+        leftHint.number === rightHint.number &&
+        leftHint.state === rightHint.state &&
+        leftHint.checks === rightHint.checks &&
+        leftHint.checksStatus === rightHint.checksStatus &&
+        leftHint.reviewDecision === rightHint.reviewDecision)
+    );
+  });
 }
 
 export function buildSidebarProjectsFromStructure(input: {

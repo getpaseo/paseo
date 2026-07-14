@@ -5,6 +5,7 @@ import type { WorkspaceDescriptor } from "@/stores/session-store";
 import { useTranslation } from "react-i18next";
 import { useReplicaQuery } from "@/data/query";
 import { workspaceTerminalsPushRoute } from "@/data/push-router";
+import { estimateTerminalViewportSize } from "@/terminal/runtime/terminal-size-cache";
 import {
   buildTerminalsQueryKey,
   canCreateWorkspaceTerminal,
@@ -135,14 +136,20 @@ export function useWorkspaceTerminals(input: UseWorkspaceTerminalsInput) {
       if (!client || !workspaceDirectory) {
         throw new Error(t("workspace.terminal.hostDisconnected"));
       }
+      // Seed the new PTY with the workspace's measured pane size so it isn't born at 80x24.
+      const estimatedSize =
+        estimateTerminalViewportSize({ serverId: normalizedServerId, cwd: workspaceDirectory }) ??
+        undefined;
       const payload = _input?.profile
         ? await client.createTerminal(workspaceDirectory, _input.profile.name, undefined, {
             command: _input.profile.command,
             args: _input.profile.args,
             workspaceId: normalizedWorkspaceId || undefined,
+            size: estimatedSize,
           })
         : await client.createTerminal(workspaceDirectory, undefined, undefined, {
             workspaceId: normalizedWorkspaceId || undefined,
+            size: estimatedSize,
           });
       // The daemon reports a failed spawn (e.g. a profile command that isn't
       // installed) via payload.error with a null terminal. Surface it instead

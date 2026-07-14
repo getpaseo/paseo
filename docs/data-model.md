@@ -420,15 +420,16 @@ Single file containing an array of all loop records. Writes are direct (not atom
 
 Array of project records.
 
-| Field         | Type                        | Description                              |
-| ------------- | --------------------------- | ---------------------------------------- |
-| `projectId`   | `string`                    | Primary key                              |
-| `rootPath`    | `string`                    | Filesystem root of the project           |
-| `kind`        | `"git" \| "non_git"`        |                                          |
-| `displayName` | `string`                    |                                          |
-| `createdAt`   | `string` (ISO 8601)         |                                          |
-| `updatedAt`   | `string` (ISO 8601)         |                                          |
-| `archivedAt`  | `string \| null` (ISO 8601) | Soft-delete timestamp; required nullable |
+| Field         | Type                        | Description                                                                      |
+| ------------- | --------------------------- | -------------------------------------------------------------------------------- |
+| `projectId`   | `string`                    | Primary key                                                                      |
+| `rootPath`    | `string`                    | Filesystem root of the project                                                   |
+| `kind`        | `"git" \| "non_git"`        |                                                                                  |
+| `displayName` | `string`                    |                                                                                  |
+| `customName`  | `string \| null`            | User-set override layered over `displayName`. Null means "use the derived name". |
+| `createdAt`   | `string` (ISO 8601)         |                                                                                  |
+| `updatedAt`   | `string` (ISO 8601)         |                                                                                  |
+| `archivedAt`  | `string \| null` (ISO 8601) | Soft-delete timestamp; required nullable                                         |
 
 Active git projects are unique by normalized `rootPath`. Startup reconciliation repairs older bad
 states by moving workspaces from duplicate path-keyed projects onto the canonical project,
@@ -455,6 +456,7 @@ Array of workspace records. A workspace is a specific working directory within a
 | `createdAt`   | `string` (ISO 8601)                             |                                                                                                                                                                                       |
 | `updatedAt`   | `string` (ISO 8601)                             |                                                                                                                                                                                       |
 | `archivedAt`  | `string \| null` (ISO 8601)                     | Soft-delete; required nullable                                                                                                                                                        |
+| `pinnedAt`    | `string \| null` (ISO 8601)                     | Pinned-to-top-of-sidebar timestamp; null means "not pinned"                                                                                                                           |
 
 > **Opaque-ID invariant:** `workspaceId` is opaque identity, never a filesystem path. Filesystem and git operations take `cwd`/`workspaceDirectory` only — never the id. Path-derived grouping keys (e.g. `deriveWorkspaceDirectoryKey`, used at bootstrap to group agents into a workspace) are directory keys, not workspace identity, and must not be persisted or compared as ids.
 

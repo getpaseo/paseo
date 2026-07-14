@@ -119,6 +119,10 @@ interface SessionTestAccess {
     list(...args: unknown[]): Promise<unknown[]>;
     archive(workspaceId: string, archivedAt: string): Promise<void>;
     get(workspaceId: string): Promise<unknown>;
+    update(
+      workspaceId: string,
+      updater: (record: PersistedWorkspaceRecord) => PersistedWorkspaceRecord,
+    ): Promise<unknown>;
     upsert(record: unknown): Promise<unknown>;
   };
   agentUpdates: AgentUpdatesService;
@@ -558,7 +562,7 @@ function createSessionForWorkspaceTests(
     clearAgentAttention: async () => {},
     notifyAgentState: () => {},
   });
-  const workspaceRegistry = options.workspaceRegistry ?? {
+  const workspaceRegistry: SessionOptions["workspaceRegistry"] = options.workspaceRegistry ?? {
     initialize: async () => {},
     existsOnDisk: async () => true,
     list: async () => [
@@ -584,6 +588,22 @@ function createSessionForWorkspaceTests(
             updatedAt: "2026-03-01T12:00:00.000Z",
           })
         : null,
+    update: async (workspaceId, updater) => {
+      if (workspaceId !== "ws-repo-running") {
+        return null;
+      }
+      return updater(
+        createPersistedWorkspaceRecord({
+          workspaceId: "ws-repo-running",
+          projectId: "proj-repo-running",
+          cwd: REPO_CWD,
+          kind: "directory",
+          displayName: "repo",
+          createdAt: "2026-03-01T12:00:00.000Z",
+          updatedAt: "2026-03-01T12:00:00.000Z",
+        }),
+      );
+    },
     upsert: async () => {},
     archive: async () => {},
     remove: async () => {},
@@ -6569,9 +6589,12 @@ test("workspace.title.set.request stores the title and emits an updated descript
   session.projectRegistry.list = async () => Array.from(projects.values());
   session.workspaceRegistry.list = async () => Array.from(workspaces.values());
   session.workspaceRegistry.get = async (id: string) => workspaces.get(id) ?? null;
-  session.workspaceRegistry.upsert = async (record: unknown) => {
-    const parsed = record as typeof workspace;
-    workspaces.set(parsed.workspaceId, parsed);
+  session.workspaceRegistry.update = async (id, updater) => {
+    const existing = workspaces.get(id);
+    if (!existing) return null;
+    const updated = updater(existing);
+    workspaces.set(id, updated);
+    return updated;
   };
 
   session.workspaceUpdatesSubscription = {
@@ -6611,6 +6634,72 @@ test("workspace.title.set.request stores the title and emits an updated descript
   });
 });
 
+test("workspace.pin.set.request stores the pin timestamp and emits an updated descriptor", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const session = asTestSession(
+    createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) }),
+  );
+  const project = createPersistedProjectRecord({
+    projectId: "proj-1",
+    rootPath: REPO_CWD,
+    kind: "git",
+    displayName: "acme/repo",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: "ws-1",
+    projectId: project.projectId,
+    cwd: REPO_CWD,
+    kind: "local_checkout",
+    displayName: "main",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  const workspaces = new Map([[workspace.workspaceId, workspace]]);
+  session.projectRegistry.get = async (id: string) => (id === project.projectId ? project : null);
+  session.projectRegistry.list = async () => [project];
+  session.workspaceRegistry.list = async () => Array.from(workspaces.values());
+  session.workspaceRegistry.update = async (id, updater) => {
+    const existing = workspaces.get(id);
+    if (!existing) return null;
+    const updated = updater(existing);
+    workspaces.set(id, updated);
+    return updated;
+  };
+  session.workspaceUpdatesSubscription = {
+    subscriptionId: "sub-workspaces",
+    filter: {},
+    isBootstrapping: false,
+    lastEmittedByWorkspaceId: new Map(),
+    pendingUpdatesByWorkspaceId: new Map(),
+  };
+
+  await session.handleMessage({
+    type: "workspace.pin.set.request",
+    workspaceId: workspace.workspaceId,
+    pinned: true,
+    requestId: "req-pin-1",
+  });
+
+  const response = findByType(emitted, "workspace.pin.set.response");
+  expect(response?.payload).toMatchObject({
+    requestId: "req-pin-1",
+    workspaceId: "ws-1",
+    accepted: true,
+    error: null,
+  });
+  expect(response?.payload.pinnedAt).toEqual(expect.any(String));
+  expect(workspaces.get("ws-1")?.pinnedAt).toBe(response?.payload.pinnedAt);
+  expect(findByType(emitted, "workspace_update")?.payload).toMatchObject({
+    kind: "upsert",
+    workspace: {
+      id: "ws-1",
+      pinnedAt: response?.payload.pinnedAt,
+    },
+  });
+});
+
 test("workspace.title.set.request with whitespace-only title clears the title", async () => {
   const emitted: SessionOutboundMessage[] = [];
   const session = asTestSession(
@@ -6631,9 +6720,12 @@ test("workspace.title.set.request with whitespace-only title clears the title", 
   const workspaces = new Map([[workspace.workspaceId, workspace]]);
   session.workspaceRegistry.list = async () => Array.from(workspaces.values());
   session.workspaceRegistry.get = async (id: string) => workspaces.get(id) ?? null;
-  session.workspaceRegistry.upsert = async (record: unknown) => {
-    const parsed = record as typeof workspace;
-    workspaces.set(parsed.workspaceId, parsed);
+  session.workspaceRegistry.update = async (id, updater) => {
+    const existing = workspaces.get(id);
+    if (!existing) return null;
+    const updated = updater(existing);
+    workspaces.set(id, updated);
+    return updated;
   };
 
   await session.handleMessage({
@@ -6659,7 +6751,7 @@ test("workspace.title.set.request returns accepted=false when workspace is not f
   const session = asTestSession(
     createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) }),
   );
-  session.workspaceRegistry.get = async () => null;
+  session.workspaceRegistry.update = async () => null;
 
   await session.handleMessage({
     type: "workspace.title.set.request",

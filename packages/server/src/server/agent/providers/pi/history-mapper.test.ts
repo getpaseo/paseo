@@ -29,6 +29,7 @@ describe("Pi history mapper", () => {
         },
         {
           role: "assistant",
+          responseId: "response-1",
           content: [
             { type: "thinking", thinking: "checking file" },
             { type: "toolCall", id: "tool-1", name: "read", arguments: { path: "note.txt" } },
@@ -77,7 +78,7 @@ describe("Pi history mapper", () => {
       {
         type: "timeline",
         provider: "pi",
-        item: { type: "assistant_message", text: "done" },
+        item: { type: "assistant_message", text: "done", messageId: "response-1" },
       },
       {
         type: "timeline",
@@ -153,7 +154,11 @@ describe("Pi history mapper", () => {
       {
         type: "timeline",
         provider: "pi",
-        item: { type: "assistant_message", text: "first answer" },
+        item: {
+          type: "assistant_message",
+          text: "first answer",
+          messageId: "pi-history-assistant-1",
+        },
       },
       {
         type: "timeline",

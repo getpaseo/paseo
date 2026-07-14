@@ -14,6 +14,11 @@ export interface SidebarShortcutModel {
   shortcutIndexByWorkspaceKey: Map<string, number>;
 }
 
+export interface SidebarShortcutSection {
+  workspaces: readonly SidebarWorkspacePlacement[];
+  collapsed?: boolean;
+}
+
 function createShortcutTarget(
   workspace: SidebarWorkspacePlacement,
 ): SidebarShortcutWorkspaceTarget {
@@ -28,27 +33,13 @@ export function buildSidebarShortcutModel(input: {
   collapsedProjectKeys: ReadonlySet<string>;
   shortcutLimit?: number;
 }): SidebarShortcutModel {
-  const maxShortcuts = Math.max(0, Math.floor(input.shortcutLimit ?? 9));
-  const shortcutTargets: SidebarShortcutWorkspaceTarget[] = [];
-  const shortcutIndexByWorkspaceKey = new Map<string, number>();
-
-  for (const project of input.projects) {
-    if (input.collapsedProjectKeys.has(project.projectKey)) {
-      continue;
-    }
-
-    for (const workspace of project.workspaces) {
-      if (shortcutTargets.length >= maxShortcuts) {
-        break;
-      }
-
-      const shortcutNumber = shortcutTargets.length + 1;
-      shortcutTargets.push(createShortcutTarget(workspace));
-      shortcutIndexByWorkspaceKey.set(workspace.workspaceKey, shortcutNumber);
-    }
-  }
-
-  return { shortcutTargets, shortcutIndexByWorkspaceKey };
+  return buildSidebarShortcutSections({
+    sections: input.projects.map((project) => ({
+      workspaces: project.workspaces,
+      collapsed: input.collapsedProjectKeys.has(project.projectKey),
+    })),
+    shortcutLimit: input.shortcutLimit,
+  });
 }
 
 export function buildStatusSidebarShortcutModel(input: {
@@ -56,16 +47,29 @@ export function buildStatusSidebarShortcutModel(input: {
   collapsedStatusGroupKeys?: ReadonlySet<string>;
   shortcutLimit?: number;
 }): SidebarShortcutModel {
+  return buildSidebarShortcutSections({
+    sections: input.groups.map((group) => ({
+      workspaces: group.rows,
+      collapsed: input.collapsedStatusGroupKeys?.has(group.bucket),
+    })),
+    shortcutLimit: input.shortcutLimit,
+  });
+}
+
+export function buildSidebarShortcutSections(input: {
+  sections: readonly SidebarShortcutSection[];
+  shortcutLimit?: number;
+}): SidebarShortcutModel {
   const maxShortcuts = Math.max(0, Math.floor(input.shortcutLimit ?? 9));
   const shortcutTargets: SidebarShortcutWorkspaceTarget[] = [];
   const shortcutIndexByWorkspaceKey = new Map<string, number>();
 
-  for (const group of input.groups) {
-    if (input.collapsedStatusGroupKeys?.has(group.bucket)) {
+  for (const section of input.sections) {
+    if (section.collapsed) {
       continue;
     }
 
-    for (const workspace of group.rows) {
+    for (const workspace of section.workspaces) {
       if (shortcutTargets.length >= maxShortcuts) {
         break;
       }

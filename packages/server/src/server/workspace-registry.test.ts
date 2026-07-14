@@ -211,4 +211,42 @@ describe("workspace registries", () => {
     expect(await workspaceRegistry.get("/tmp/repo")).toBeNull();
     expect(await workspaceRegistry.list()).toEqual([]);
   });
+
+  test("composes concurrent workspace field updates without losing either change", async () => {
+    await workspaceRegistry.initialize();
+    await workspaceRegistry.upsert(
+      createPersistedWorkspaceRecord({
+        workspaceId: "ws-1",
+        projectId: "proj-1",
+        cwd: "/tmp/repo",
+        kind: "local_checkout",
+        displayName: "main",
+        createdAt: "2026-03-01T00:00:00.000Z",
+        updatedAt: "2026-03-01T00:00:00.000Z",
+      }),
+    );
+
+    await Promise.all([
+      workspaceRegistry.update("ws-1", (record) => ({
+        ...record,
+        title: "Payments work",
+        updatedAt: "2026-03-02T00:00:00.000Z",
+      })),
+      workspaceRegistry.update("ws-1", (record) => ({
+        ...record,
+        pinnedAt: "2026-03-03T00:00:00.000Z",
+        updatedAt: "2026-03-03T00:00:00.000Z",
+      })),
+    ]);
+
+    const reloadedRegistry = new FileBackedWorkspaceRegistry(
+      path.join(tmpDir, "projects", "workspaces.json"),
+      logger,
+    );
+    await reloadedRegistry.initialize();
+    expect(await reloadedRegistry.get("ws-1")).toMatchObject({
+      title: "Payments work",
+      pinnedAt: "2026-03-03T00:00:00.000Z",
+    });
+  });
 });

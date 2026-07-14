@@ -90,6 +90,19 @@ When a reusable component has a prop whose whole job is dynamic geometry, make t
 
 Do not flatten a caller-provided style array and pass the flattened object back to a React Native component. Unistyles style entries carry `unistyles_*` metadata; flattening two entries produces one object with multiple metadata keys and triggers the runtime warning: "use array syntax instead of object syntax." Preserve caller styles as arrays, and only flatten the dynamic geometry value you explicitly own. If that owned value was flattened from a mixed style prop, strip `unistyles_*` metadata before sending it through `inlineUnistylesStyle`.
 
+Do not register an existing Unistyles style inside another `StyleSheet.create` either. That also combines two metadata identities into one object. Reuse the original style directly at the component:
+
+```tsx
+// Wrong: sharedStyles.row already carries Unistyles metadata.
+const styles = StyleSheet.create({ row: sharedStyles.row });
+<View style={styles.row} />;
+
+// Right: one registered style identity reaches the native view.
+<View style={sharedStyles.row} />;
+```
+
+This mistake once produced tens of thousands of warnings from retained sidebar rows. Because React Native captures component stacks for warnings, the warning loop itself can consume enough CPU and memory to make the app appear blank.
+
 ## Main Gotcha: `contentContainerStyle`
 
 `ScrollView.contentContainerStyle` is the canonical trap. It looks like a style prop, but it is not the same prop that Unistyles' remapped native component registers by default. The upstream tutorial calls this out directly in its [ScrollView Background Issue](https://www.unistyl.es/v3/tutorial/settings-screen#scrollview-background-issue) section.

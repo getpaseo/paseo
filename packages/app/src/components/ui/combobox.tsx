@@ -116,6 +116,8 @@ export interface ComboboxProps {
   desktopFixedHeight?: number;
   /** Content rendered above the scroll area on desktop (sticky header). */
   stickyHeader?: ReactNode;
+  /** Content rendered below the scroll area. */
+  footer?: ReactNode;
   /** When true, selecting an option does not close the picker (multi-select mode). */
   keepOpenOnSelect?: boolean;
   anchorRef: React.RefObject<View | null>;
@@ -928,6 +930,7 @@ interface MobileBodyProps {
   header: SheetHeader | undefined;
   onClose: () => void;
   stickyHeader: ReactNode;
+  footer: ReactNode;
   searchable: boolean;
   hasChildren: boolean;
   mobileChildrenScrollEnabled: boolean;
@@ -1026,6 +1029,7 @@ function MobileComboboxBody(props: MobileBodyProps): ReactElement {
           {body}
         </BottomSheetScrollView>
       )}
+      {props.footer ? <View style={styles.footer}>{props.footer}</View> : null}
     </IsolatedBottomSheetModal>
   );
 }
@@ -1039,6 +1043,7 @@ interface DesktopBodyProps {
   handleDesktopContentLayout: (event: LayoutChangeEvent) => void;
   header: SheetHeader | undefined;
   stickyHeader: ReactNode;
+  footer: ReactNode;
   searchable: boolean;
   searchPlaceholder: string;
   searchQuery: string;
@@ -1192,6 +1197,7 @@ function DesktopComboboxBody(props: DesktopBodyProps): ReactElement {
               renderOption={props.renderOption}
             />
           )}
+          {props.footer ? <View style={styles.footer}>{props.footer}</View> : null}
         </FloatingSurface>
       </View>
     </Modal>
@@ -1224,6 +1230,7 @@ export function Combobox({
   desktopMinWidth,
   desktopFixedHeight,
   stickyHeader,
+  footer,
   keepOpenOnSelect = false,
   anchorRef,
   children,
@@ -1504,6 +1511,7 @@ export function Combobox({
         header={header}
         onClose={handleClose}
         stickyHeader={stickyHeader}
+        footer={footer}
         searchable={searchable}
         hasChildren={hasChildren}
         mobileChildrenScrollEnabled={mobileChildrenScrollEnabled}
@@ -1537,6 +1545,7 @@ export function Combobox({
       handleDesktopContentLayout={handleDesktopContentLayout}
       header={header}
       stickyHeader={stickyHeader}
+      footer={footer}
       searchable={searchable}
       searchPlaceholder={effectiveSearchPlaceholder}
       searchQuery={searchQuery}
@@ -1649,6 +1658,10 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.spacing[2],
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
+  },
+  footer: {
+    borderTopWidth: 1,
+    borderTopColor: theme.colors.border,
   },
   bottomSheetHeader: {
     paddingHorizontal: theme.spacing[6],

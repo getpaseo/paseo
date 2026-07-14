@@ -31,6 +31,8 @@ import {
   createFakeCodexAppServer,
   type FakeCodexAppServer,
   waitForNextPermission,
+  waitForNextTimelineItem,
+  waitForTimelineToolCall,
 } from "./codex/test-utils/fake-app-server.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { asInternals as castInternals, createStub } from "../../test-utils/class-mocks.js";
@@ -554,6 +556,289 @@ describe("Codex app-server provider", () => {
     await session.close();
   });
 
+  test("shows a successful shell command that produces no output", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+
+    try {
+      await session.connect();
+      const nextTimelineItem = waitForNextTimelineItem(session);
+
+      appServer.completesSilentCommand({
+        threadId: "thread-1",
+        callId: "silent-merge",
+        command: "gh pr merge 2030 --squash",
+        cwd: "/workspace/project",
+      });
+      appServer.says({ threadId: "thread-1", text: "Merged." });
+
+      await expect(nextTimelineItem).resolves.toEqual({
+        type: "timeline",
+        provider: "codex",
+        item: {
+          type: "tool_call",
+          callId: "silent-merge",
+          name: "shell",
+          status: "completed",
+          error: null,
+          detail: {
+            type: "shell",
+            command: "gh pr merge 2030 --squash",
+            cwd: "/workspace/project",
+            exitCode: 0,
+          },
+        },
+      });
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("shows a silent shell command from legacy live notifications", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+
+    try {
+      await session.connect();
+      const nextTimelineItem = waitForNextTimelineItem(session);
+
+      appServer.completesSilentLegacyCommand({
+        threadId: "thread-1",
+        callId: "legacy-silent-merge",
+        command: "gh pr merge 2030 --squash",
+        cwd: "/workspace/project",
+      });
+
+      await expect(nextTimelineItem).resolves.toEqual({
+        type: "timeline",
+        provider: "codex",
+        item: {
+          type: "tool_call",
+          callId: "legacy-silent-merge",
+          name: "shell",
+          status: "completed",
+          error: null,
+          detail: {
+            type: "shell",
+            command: "gh pr merge 2030 --squash",
+            cwd: "/workspace/project",
+            exitCode: 0,
+          },
+        },
+      });
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("shows the exact bytes Codex writes into an existing terminal", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+
+    try {
+      await session.connect();
+      const nextTimelineItem = waitForNextTimelineItem(session);
+
+      appServer.typesIntoTerminal({
+        threadId: "thread-1",
+        turnId: "turn-1",
+        itemId: "interactive-shell",
+        processId: "4242",
+        text: "gh pr merge 2030 --squash\n",
+      });
+
+      await expect(nextTimelineItem).resolves.toEqual({
+        type: "timeline",
+        provider: "codex",
+        item: {
+          type: "tool_call",
+          callId: "terminal-session-4242-1",
+          name: "terminal",
+          status: "completed",
+          error: null,
+          detail: {
+            type: "plain_text",
+            text: "gh pr merge 2030 --squash\n",
+            icon: "square_terminal",
+          },
+          metadata: {
+            processId: "4242",
+          },
+        },
+      });
+
+      const relabeledTerminal = waitForTimelineToolCall(session, "terminal-session-4242-1");
+      appServer.runsLegacyCommand({
+        threadId: "thread-1",
+        callId: "interactive-shell",
+        command: "sleep 30",
+        output: "Process running with session id 4242",
+      });
+
+      await expect(relabeledTerminal).resolves.toEqual({
+        type: "timeline",
+        provider: "codex",
+        item: {
+          type: "tool_call",
+          callId: "terminal-session-4242-1",
+          name: "terminal",
+          status: "completed",
+          error: null,
+          detail: {
+            type: "plain_text",
+            label: "sleep 30",
+            text: "gh pr merge 2030 --squash\n",
+            icon: "square_terminal",
+          },
+          metadata: {
+            processId: "4242",
+          },
+        },
+      });
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("keeps repeated writes to one terminal as separate timeline rows", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+
+    try {
+      await session.connect();
+
+      const firstTimelineItem = waitForNextTimelineItem(session);
+      appServer.typesIntoTerminal({
+        threadId: "thread-1",
+        turnId: "turn-1",
+        itemId: "interactive-shell",
+        processId: "4242",
+        text: "git status\n",
+      });
+
+      const secondTimelineItem = waitForNextTimelineItem(session);
+      appServer.typesIntoTerminal({
+        threadId: "thread-1",
+        turnId: "turn-1",
+        itemId: "interactive-shell",
+        processId: "4242",
+        text: "git push\n",
+      });
+
+      const [first, second] = await Promise.all([firstTimelineItem, secondTimelineItem]);
+      expect(first.item).toMatchObject({
+        type: "tool_call",
+        callId: "terminal-session-4242-1",
+        detail: { type: "plain_text", text: "git status\n" },
+      });
+      expect(second.item).toMatchObject({
+        type: "tool_call",
+        callId: "terminal-session-4242-2",
+        detail: { type: "plain_text", text: "git push\n" },
+      });
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("surfaces an MCP elicitation and returns Codex's required approval action", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+
+    await session.connect();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    const permissionRequested = waitForNextPermission(session);
+    appServer.requestMcpElicitation({
+      threadId: "thread-1",
+      turnId: "turn-1",
+      serverName: "browser",
+      message: "Allow the browser to open this page?",
+      requestedSchema: {
+        type: "object",
+        properties: {},
+      },
+    });
+
+    const permission = await permissionRequested;
+    expect(permission.request).toEqual({
+      id: expect.any(String),
+      provider: "codex",
+      name: "CodexMcpElicitation",
+      kind: "tool",
+      title: "MCP approval: browser",
+      description: "Allow the browser to open this page?",
+      input: {
+        mode: "openai/form",
+        requestedSchema: {
+          type: "object",
+          properties: {},
+        },
+        url: null,
+      },
+      metadata: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        serverName: "browser",
+        elicitationId: null,
+      },
+    });
+    await session.respondToPermission(permission.request.id, { behavior: "allow" });
+
+    await expect(appServer.waitForMcpElicitationDecision()).resolves.toEqual({
+      action: "accept",
+      content: {},
+      _meta: null,
+    });
+    appServer.resolvesMcpElicitation();
+
+    await vi.waitFor(() => {
+      expect(events).toContainEqual({
+        type: "permission_resolved",
+        provider: "codex",
+        requestId: permission.request.id,
+        resolution: { behavior: "allow" },
+      });
+    });
+    expect(events).not.toContainEqual({
+      type: "permission_resolved",
+      provider: "codex",
+      requestId: permission.request.id,
+      resolution: { behavior: "deny", interrupt: true },
+    });
+    await session.close();
+  });
+
   test("initializes Codex app-server without making Paseo the request originator", async () => {
     let initializeParams: unknown;
     const appServer = createFakeCodexAppServer({
@@ -579,7 +864,7 @@ describe("Codex app-server provider", () => {
         title: "Codex App Server Daemon",
         version: "0.0.0",
       },
-      capabilities: { experimentalApi: true },
+      capabilities: { experimentalApi: true, mcpServerOpenaiFormElicitation: true },
     });
     appServer.assertNoErrors();
     await session.close();
@@ -1493,7 +1778,7 @@ describe("Codex app-server provider", () => {
     asInternals(session).handleNotification("item/agentMessage/delta", {
       threadId: "child-thread-1",
       itemId: "child-message-1",
-      delta: "Found the path.",
+      delta: "Found",
     });
     asInternals(session).handleNotification("item/completed", {
       threadId: "child-thread-1",
@@ -1525,6 +1810,128 @@ describe("Codex app-server provider", () => {
         actions: [],
       },
     });
+
+    const providerEvents = events.flatMap((event) =>
+      event.type === "provider_subagent" ? [event.event] : [],
+    );
+    expect(providerEvents).toContainEqual(
+      expect.objectContaining({
+        type: "upsert",
+        id: "child-thread-1",
+        description: "Report findings.",
+      }),
+    );
+    expect(providerEvents).toContainEqual({
+      type: "timeline",
+      id: "child-thread-1",
+      item: {
+        type: "assistant_message",
+        messageId: "child-message-1",
+        text: "Found",
+      },
+    });
+    expect(providerEvents).toContainEqual({
+      type: "timeline",
+      id: "child-thread-1",
+      item: {
+        type: "assistant_message",
+        messageId: "child-message-1",
+        text: " the path.",
+      },
+    });
+    expect(providerEvents.at(-1)).toMatchObject({
+      type: "upsert",
+      id: "child-thread-1",
+      status: "completed",
+    });
+  });
+
+  test("renders child MCP image results in the provider subagent timeline", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "test-thread",
+      item: {
+        type: "subAgentActivity",
+        id: "spawn-image-child",
+        kind: "started",
+        agentThreadId: "image-child-thread",
+        agentPath: "/root/image-child",
+      },
+    });
+
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "image-child-thread",
+      item: {
+        id: "child-mcp-image",
+        type: "mcpToolCall",
+        status: "completed",
+        server: "paseo",
+        tool: "browser_screenshot",
+        arguments: {},
+        result: {
+          content: [{ type: "image", data: ONE_BY_ONE_PNG_BASE64, mimeType: "image/png" }],
+        },
+      },
+    });
+
+    const childItems = events.flatMap((event) =>
+      event.type === "provider_subagent" &&
+      event.event.type === "timeline" &&
+      event.event.id === "image-child-thread"
+        ? [event.event.item]
+        : [],
+    );
+    expect(childItems).toHaveLength(2);
+    expect(childItems[0]).toMatchObject({ type: "tool_call", callId: "child-mcp-image" });
+    expect(childItems[1]).toMatchObject({ type: "assistant_message" });
+    if (childItems[1]?.type !== "assistant_message") {
+      throw new Error("Expected child image markdown");
+    }
+    const source = markdownImageSource(childItems[1].text);
+    expect(existsSync(source)).toBe(true);
+    rmSync(source, { force: true });
+  });
+
+  test("renders a child user message once across lifecycle notifications", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "test-thread",
+      item: {
+        type: "subAgentActivity",
+        id: "spawn-user-child",
+        kind: "started",
+        agentThreadId: "user-child-thread",
+        agentPath: "/root/user-child",
+      },
+    });
+    const childUserMessage = {
+      type: "userMessage",
+      id: "child-user-message",
+      content: [{ type: "text", text: "Inspect this path." }],
+    };
+
+    asInternals(session).handleNotification("item/started", {
+      threadId: "user-child-thread",
+      item: childUserMessage,
+    });
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "user-child-thread",
+      item: childUserMessage,
+    });
+
+    expect(
+      events.filter(
+        (event) =>
+          event.type === "provider_subagent" &&
+          event.event.type === "timeline" &&
+          event.event.id === "user-child-thread" &&
+          event.event.item.type === "user_message",
+      ),
+    ).toHaveLength(1);
   });
 
   test("keeps the parent running when a MultiAgentV2 sub-agent finishes", async () => {
@@ -2021,6 +2428,20 @@ describe("Codex app-server provider", () => {
           event.item.callId === "child-command",
       ),
     ).toBe(false);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "provider_subagent",
+        event: {
+          type: "timeline",
+          id: "legacy-envelope-child",
+          item: expect.objectContaining({
+            type: "tool_call",
+            callId: "child-command",
+            status: "running",
+          }),
+        },
+      }),
+    );
     expect(events.filter((event) => event.type === "turn_completed")).toHaveLength(0);
     expect(events.at(-1)).toMatchObject({
       type: "timeline",
@@ -2269,9 +2690,27 @@ describe("Codex app-server provider", () => {
   test("loads mixed legacy and MultiAgentV2 sub-agent history", async () => {
     const session = createSession();
     session.client = {
-      request: vi.fn(async (method: string) => {
+      request: vi.fn(async (method: string, params: unknown) => {
         if (method !== "thread/read") {
           return {};
+        }
+        const threadId = (params as { threadId?: string }).threadId;
+        if (threadId !== "test-thread") {
+          return {
+            thread: {
+              turns: [
+                {
+                  items: [
+                    {
+                      type: "agentMessage",
+                      id: `message-${threadId}`,
+                      text: `History from ${threadId}`,
+                    },
+                  ],
+                },
+              ],
+            },
+          };
         }
         return {
           thread: {
@@ -2308,6 +2747,38 @@ describe("Codex app-server provider", () => {
     for await (const event of session.streamHistory()) {
       history.push(event);
     }
+    expect(
+      history.flatMap((event) =>
+        event.type === "provider_subagent" && event.event.type === "upsert" ? [event.event] : [],
+      ),
+    ).toMatchObject([
+      { type: "upsert", id: "legacy-child-thread", status: "completed" },
+      { type: "upsert", id: "v2-child-thread", status: "completed" },
+    ]);
+    expect(
+      history.flatMap((event) =>
+        event.type === "provider_subagent" && event.event.type === "timeline" ? [event.event] : [],
+      ),
+    ).toEqual([
+      {
+        type: "timeline",
+        id: "legacy-child-thread",
+        item: {
+          type: "assistant_message",
+          messageId: "message-legacy-child-thread",
+          text: "History from legacy-child-thread",
+        },
+      },
+      {
+        type: "timeline",
+        id: "v2-child-thread",
+        item: {
+          type: "assistant_message",
+          messageId: "message-v2-child-thread",
+          text: "History from v2-child-thread",
+        },
+      },
+    ]);
     expect(
       history
         .filter((event) => event.type === "timeline" && event.item.type === "tool_call")
@@ -2373,9 +2844,12 @@ describe("Codex app-server provider", () => {
   test("coalesces persisted MultiAgentV2 activity for one child into one terminal card", async () => {
     const session = createSession();
     session.client = {
-      request: vi.fn(async (method: string) => {
+      request: vi.fn(async (method: string, params: unknown) => {
         if (method !== "thread/read") {
           return {};
+        }
+        if ((params as { threadId?: string }).threadId !== "test-thread") {
+          return { thread: { turns: [] } };
         }
         return {
           thread: {
@@ -2421,6 +2895,15 @@ describe("Codex app-server provider", () => {
       history.push(event);
     }
     expect(history).toEqual([
+      {
+        type: "provider_subagent",
+        provider: "codex",
+        event: expect.objectContaining({
+          type: "upsert",
+          id: "history-child-thread",
+          status: "canceled",
+        }),
+      },
       {
         type: "timeline",
         provider: "codex",
@@ -3771,7 +4254,7 @@ describe("Codex importable sessions", () => {
             title: "Codex App Server Daemon",
             version: "0.0.0",
           },
-          capabilities: { experimentalApi: true },
+          capabilities: { experimentalApi: true, mcpServerOpenaiFormElicitation: true },
         },
       },
       { method: "thread/list", params: { limit: 50, cwd: "/workspace/project-a" } },

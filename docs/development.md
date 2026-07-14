@@ -338,6 +338,7 @@ npm run cli -- ls -a -g --json       # Same, as JSON
 npm run cli -- inspect <id>          # Show detailed agent info
 npm run cli -- logs <id>             # View agent timeline
 npm run cli -- daemon status         # Check daemon status
+npm run cli -- clone owner/repo --dir ~/workspace # Clone GitHub repo and register workspace
 ```
 
 Use `--host <host:port>` to point the CLI at a different daemon:

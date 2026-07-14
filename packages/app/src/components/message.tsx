@@ -12,6 +12,7 @@ import {
 } from "react-native";
 import { useTranslation } from "react-i18next";
 import { MarkdownParagraphView, MarkdownTextSpan } from "@/components/markdown-text";
+import { MarkdownTableCellText } from "@/components/markdown-text-selection";
 import * as React from "react";
 import {
   useState,
@@ -692,33 +693,39 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
 
 interface LiveElapsedProps {
   startedAt: Date;
+  active?: boolean;
   style?: StyleProp<TextStyle>;
   testID?: string;
 }
 
 /**
- * Ticks every 100ms to render an elapsed duration. Isolated from parents so
+ * Ticks every second to render an elapsed duration. Isolated from parents so
  * only this component re-renders on each tick.
  */
 export const LiveElapsed = memo(function LiveElapsed({
   startedAt,
+  active = true,
   style,
   testID,
 }: LiveElapsedProps) {
   const startedAtMs = startedAt.getTime();
   const [elapsedMs, setElapsedMs] = useState(() => Math.max(0, Date.now() - startedAtMs));
+  const visibleElapsedMs = active ? Math.max(0, Date.now() - startedAtMs) : elapsedMs;
 
   useEffect(() => {
+    if (!active) {
+      return;
+    }
     setElapsedMs(Math.max(0, Date.now() - startedAtMs));
     const handle = setInterval(() => {
       setElapsedMs(Math.max(0, Date.now() - startedAtMs));
-    }, 100);
+    }, 1000);
     return () => clearInterval(handle);
-  }, [startedAtMs]);
+  }, [active, startedAtMs]);
 
   return (
     <Text style={style} testID={testID}>
-      {formatDuration(elapsedMs)}
+      {formatDuration(visibleElapsedMs)}
     </Text>
   );
 });
@@ -1819,6 +1826,16 @@ export const AssistantMessage = memo(function AssistantMessage({
           </View>
         );
       },
+      th: (node: ASTNode, children: ReactNode[], _parent: ASTNode[], styles: MarkdownStyles) => (
+        <MarkdownTableCellText key={node.key}>
+          <View style={styles._VIEW_SAFE_th}>{children}</View>
+        </MarkdownTableCellText>
+      ),
+      td: (node: ASTNode, children: ReactNode[], _parent: ASTNode[], styles: MarkdownStyles) => (
+        <MarkdownTableCellText key={node.key}>
+          <View style={styles._VIEW_SAFE_td}>{children}</View>
+        </MarkdownTableCellText>
+      ),
       paragraph: (
         node: ASTNode,
         children: ReactNode[],

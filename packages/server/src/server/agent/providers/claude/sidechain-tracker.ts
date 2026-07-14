@@ -1,6 +1,10 @@
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 
-import { mapClaudeRunningToolCall } from "./tool-call-mapper.js";
+import {
+  mapClaudeCompletedToolCall,
+  mapClaudeFailedToolCall,
+  mapClaudeRunningToolCall,
+} from "./tool-call-mapper.js";
 import { buildToolCallDisplayModel } from "@getpaseo/protocol/tool-call-display";
 
 import type { AgentMetadata, AgentStreamEvent, AgentTimelineItem } from "../../agent-sdk-types.js";
@@ -13,6 +17,7 @@ interface ClaudeContentChunk {
 interface SubAgentActionEntry {
   index: number;
   toolName: string;
+  input: unknown;
   summary?: string;
 }
 
@@ -23,6 +28,7 @@ interface SubAgentActivityState {
   actionKeys: string[];
   nextActionIndex: number;
   actionIndexByKey: Map<string, number>;
+  completedActionKeys: Set<string>;
 }
 
 interface SubAgentActionCandidate {
@@ -64,19 +70,34 @@ export class ClaudeSidechainTracker {
         actionKeys: [],
         nextActionIndex: 1,
         actionIndexByKey: new Map<string, number>(),
+        completedActionKeys: new Set<string>(),
       } satisfies SubAgentActivityState);
     this.activeSidechains.set(parentToolUseId, state);
 
     const contextUpdated = this.updateSubAgentContextFromTaskInput(state, parentToolUseId);
     const actionCandidates = this.extractSubAgentActionCandidates(message);
+    const childTimelineItems = [
+      ...this.extractSubAgentTimelineItems(message),
+      ...this.extractSubAgentToolResults(message, state),
+    ];
     let actionUpdated = false;
     for (const action of actionCandidates) {
+      if (state.completedActionKeys.has(action.key)) continue;
       if (this.appendSubAgentAction(state, action)) {
         actionUpdated = true;
+        const toolCall = mapClaudeRunningToolCall({
+          name: action.toolName,
+          callId: action.key,
+          input: action.input,
+          output: null,
+        });
+        if (toolCall) {
+          childTimelineItems.push(toolCall);
+        }
       }
     }
 
-    if (!contextUpdated && !actionUpdated) {
+    if (!contextUpdated && !actionUpdated && childTimelineItems.length === 0) {
       return [];
     }
 
@@ -104,6 +125,25 @@ export class ClaudeSidechainTracker {
 
     return [
       {
+        type: "provider_subagent",
+        provider: "claude",
+        event: {
+          type: "upsert",
+          id: parentToolUseId,
+          title: state.subAgentType ?? "Claude subagent",
+          description: state.description ?? null,
+          status: "running",
+          toolCallId: parentToolUseId,
+        },
+      },
+      ...childTimelineItems.map(
+        (item): AgentStreamEvent => ({
+          type: "provider_subagent",
+          provider: "claude",
+          event: { type: "timeline", id: parentToolUseId, item },
+        }),
+      ),
+      {
         type: "timeline",
         item: {
           ...toolCall,
@@ -114,12 +154,112 @@ export class ClaudeSidechainTracker {
     ];
   }
 
+  finishAll(status: "completed" | "failed" | "canceled"): AgentStreamEvent[] {
+    const events: AgentStreamEvent[] = [];
+    for (const [id, state] of this.activeSidechains) {
+      events.push({
+        type: "provider_subagent",
+        provider: "claude",
+        event: {
+          type: "upsert",
+          id,
+          title: state.subAgentType ?? "Claude subagent",
+          description: state.description ?? null,
+          status,
+          toolCallId: id,
+        },
+      });
+    }
+    this.activeSidechains.clear();
+    return events;
+  }
+
+  finish(id: string, status: "completed" | "failed" | "canceled"): AgentStreamEvent[] {
+    const state = this.activeSidechains.get(id);
+    if (!state) return [];
+    this.activeSidechains.delete(id);
+    return [
+      {
+        type: "provider_subagent",
+        provider: "claude",
+        event: {
+          type: "upsert",
+          id,
+          title: state.subAgentType ?? "Claude subagent",
+          description: state.description ?? null,
+          status,
+          toolCallId: id,
+        },
+      },
+    ];
+  }
+
   delete(toolUseId: string): void {
     this.activeSidechains.delete(toolUseId);
   }
 
   clear(): void {
     this.activeSidechains.clear();
+  }
+
+  private extractSubAgentTimelineItems(message: SDKMessage): AgentTimelineItem[] {
+    if (message.type !== "assistant" || !Array.isArray(message.message?.content)) {
+      return [];
+    }
+    const messageId = readTrimmedString(message.message.id);
+    const items: AgentTimelineItem[] = [];
+    for (const block of message.message.content) {
+      if (!isClaudeContentChunk(block)) continue;
+      if (block.type === "text") {
+        const text = readTrimmedString(block.text);
+        if (text) {
+          items.push({
+            type: "assistant_message",
+            text,
+            ...(messageId ? { messageId } : {}),
+          });
+        }
+      } else if (block.type === "thinking") {
+        const text = readTrimmedString(block.thinking);
+        if (text) items.push({ type: "reasoning", text });
+      }
+    }
+    return items;
+  }
+
+  private extractSubAgentToolResults(
+    message: SDKMessage,
+    state: SubAgentActivityState,
+  ): AgentTimelineItem[] {
+    const messageRecord = message as unknown as Record<string, unknown>;
+    const messageContainer = messageRecord.message as Record<string, unknown> | undefined;
+    const content = messageContainer?.content;
+    if (!Array.isArray(content)) return [];
+
+    const items: AgentTimelineItem[] = [];
+    for (const block of content) {
+      if (!isClaudeContentChunk(block) || !block.type.endsWith("tool_result")) continue;
+      const callId = readTrimmedString(block.tool_use_id);
+      if (!callId || state.completedActionKeys.has(callId)) continue;
+      const actionIndex = state.actionIndexByKey.get(callId);
+      const action = actionIndex === undefined ? undefined : state.actions[actionIndex];
+      const toolName = action?.toolName ?? readTrimmedString(block.tool_name);
+      if (!toolName) continue;
+      const params = {
+        name: toolName,
+        callId,
+        input: action?.input ?? null,
+        output: block.content ?? null,
+      };
+      const toolCall = block.is_error
+        ? mapClaudeFailedToolCall({ ...params, error: block })
+        : mapClaudeCompletedToolCall(params);
+      if (toolCall) {
+        state.completedActionKeys.add(callId);
+        items.push(toolCall);
+      }
+    }
+    return items;
   }
 
   private updateSubAgentContextFromTaskInput(
@@ -259,6 +399,7 @@ export class ClaudeSidechainTracker {
       state.actions[existingIndex] = {
         ...existing,
         toolName: normalizedToolName,
+        input: existing.input ?? candidate.input,
         ...(nextSummary ? { summary: nextSummary } : {}),
       };
       return true;
@@ -267,6 +408,7 @@ export class ClaudeSidechainTracker {
     state.actions.push({
       index: state.nextActionIndex,
       toolName: normalizedToolName,
+      input: candidate.input,
       ...(summary ? { summary } : {}),
     });
     state.nextActionIndex += 1;
@@ -279,7 +421,8 @@ export class ClaudeSidechainTracker {
   private trimSubAgentTail(state: SubAgentActivityState): void {
     while (state.actions.length > MAX_SUB_AGENT_LOG_ENTRIES) {
       state.actions.shift();
-      state.actionKeys.shift();
+      const removedKey = state.actionKeys.shift();
+      if (removedKey) state.completedActionKeys.delete(removedKey);
     }
   }
 

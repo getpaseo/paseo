@@ -625,7 +625,7 @@ export const fr: TranslationResources = {
           success: "Mis à jour",
         },
         archive: {
-          label: "Arbre de travail d'archivage",
+          label: "Archiver l’espace de travail",
           pending: "Archivage...",
           success: "Archivé",
         },
@@ -679,8 +679,6 @@ export const fr: TranslationResources = {
             "La mise à jour n'est pas disponible tant que vous avez des modifications locales, alors validez-les ou cachez-les d'abord",
           updateCurrent:
             "La mise à jour n'est pas disponible car cette branche est déjà à jour avec{{baseRef}}",
-          archiveNotWorktree:
-            "L'archive n'est pas disponible ici car cet espace de travail n'a pas été créé en tant qu'arbre de travailPaseo",
           mergePrNoGithub:
             "La fusionPRn'est pas disponible pour le moment carGitHubn'est pas connecté",
           mergePrMissing:
@@ -711,11 +709,9 @@ export const fr: TranslationResources = {
           baseRefUnavailable: "Réf de base indisponible",
           failedMerge: "Échec de la fusion",
           failedMergeFromBase: "Échec de la fusion à partir de la base",
-          worktreePathUnavailable: "Chemin d'accès à l'arbre de travail indisponible",
-          failedArchive: "Échec de l'archivage de l'arbre de travail",
         },
         archiveWarning: {
-          title: "Archiver «{{worktreeName}}»?",
+          title: "Archiver «{{workspaceName}}»?",
           confirm: "Archive",
           cancel: "Annuler",
           uncommittedChanges: "Modifications non validées",
@@ -804,6 +800,9 @@ export const fr: TranslationResources = {
     },
   },
   sidebar: {
+    pinned: {
+      title: "Épinglés",
+    },
     host: {
       noHost: "Aucun hôte",
       switchTitle: "Changer d'hôte",
@@ -812,9 +811,24 @@ export const fr: TranslationResources = {
     actions: {
       addProject: "Ajouter un projet",
       newWorkspace: "Nouvel espace de travail",
+      hosts: "Hôtes",
       home: "Maison",
       settings: "Paramètres",
       closeSidebar: "Fermer la barre latérale",
+    },
+    help: {
+      trigger: "Aide et assistance",
+      troubleshoot: "Dépannage",
+      diagnostics: "Lancer le diagnostic",
+      diagnosticsDescription: "Collecter les détails de l’app et des hôtes connectés",
+      shortcuts: "Raccourcis clavier",
+      shortcutsDescription: "Afficher les raccourcis clavier disponibles",
+      reportIssue: "Signaler un problème",
+      discord: "Discord",
+      discordDescription: "Idéal pour obtenir une aide rapide et échanger",
+      github: "Créer un ticket GitHub",
+      githubDescription: "Signaler un bug reproductible",
+      version: "Paseo {{version}}",
     },
     sections: {
       sessions: "Historique",
@@ -864,8 +878,10 @@ export const fr: TranslationResources = {
         copyPath: "Copier le chemin",
         copyBranchName: "Copier le nom de la branche",
         rename: "Renommer l'espace de travail",
+        pin: "Épingler en haut",
+        unpin: "Désépingler",
         archive: "Archive",
-        archiveWorktree: "Arbre de travail d'archivage",
+        archiveWorkspace: "Archiver l’espace de travail",
         hideFromSidebar: "Masquer de la barre latérale",
         archiving: "Archivage...",
         hiding: "Dissimulation...",
@@ -888,7 +904,7 @@ export const fr: TranslationResources = {
         branchNameCopied: "Nom de la succursale copié",
         hostDisconnected: "Hostn'est pas connecté",
         hideFailed: "Échec du masquage de l'espace de travail",
-        archiveFailed: "Échec de l'archivage de l'arbre de travail",
+        archiveFailed: "Échec de l'archivage de l'espace de travail",
       },
     },
   },
@@ -1650,7 +1666,7 @@ export const fr: TranslationResources = {
         openProject: "Projet ouvert",
         newWorkspace: "Nouvel espace de travail",
         newWorktree: "Nouvel arbre de travail",
-        archiveWorktree: "Arbre de travail d'archivage",
+        archiveWorkspace: "Archiver l’espace de travail",
         newTab: "Nouvel onglet",
         closeCurrentTab: "Fermer l'onglet actuel",
         jumpToWorkspace: "Accéder à l'espace de travail",

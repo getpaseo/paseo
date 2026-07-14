@@ -262,7 +262,7 @@ function applyTimelineReplacePath(args: {
   const { timelineUnits, payload, bootstrapPolicy, currentTail, currentHead, toHydratedEvents } =
     args;
   const hydratedTail = hydrateStreamState(toHydratedEvents(timelineUnits), { source: "canonical" });
-  const reconciledTail = reconcileOptimisticUsersAfterReplace({
+  const reconciledTail = reconcileLocalUserPresentationAfterReplace({
     canonicalTail: hydratedTail,
     previousTail: currentTail,
     previousHead: currentHead,
@@ -286,50 +286,50 @@ function applyTimelineReplacePath(args: {
   return { tail, head, cursor, cursorChanged: true, sideEffects };
 }
 
-function collectOptimisticUserMessages(items: StreamItem[]): Array<{
+function collectLocallyPresentedUserMessages(items: StreamItem[]): Array<{
   ordinal: number;
   item: UserMessageItem;
 }> {
-  const optimistic: Array<{ ordinal: number; item: UserMessageItem }> = [];
+  const localUsers: Array<{ ordinal: number; item: UserMessageItem }> = [];
   let ordinal = 0;
   for (const item of items) {
     if (item.kind !== "user_message") {
       continue;
     }
-    if (item.optimistic) {
-      optimistic.push({ ordinal, item });
+    if (item.optimistic || item.images?.length || item.attachments?.length) {
+      localUsers.push({ ordinal, item });
     }
     ordinal += 1;
   }
-  return optimistic;
+  return localUsers;
 }
 
-function mergeCanonicalUserWithOptimistic(
+function mergeCanonicalUserWithLocalPresentation(
   canonical: UserMessageItem,
-  optimistic: UserMessageItem,
+  local: UserMessageItem,
 ): UserMessageItem {
   return {
     kind: "user_message",
     id: canonical.id,
-    text: optimistic.text,
-    timestamp: optimistic.timestamp,
-    ...(optimistic.images && optimistic.images.length > 0 ? { images: optimistic.images } : {}),
-    ...(optimistic.attachments && optimistic.attachments.length > 0
-      ? { attachments: optimistic.attachments }
+    text: local.text,
+    timestamp: local.timestamp,
+    ...(local.images && local.images.length > 0 ? { images: local.images } : {}),
+    ...(local.attachments && local.attachments.length > 0
+      ? { attachments: local.attachments }
       : {}),
   };
 }
 
-function reconcileOptimisticUsersAfterReplace(params: {
+function reconcileLocalUserPresentationAfterReplace(params: {
   canonicalTail: StreamItem[];
   previousTail: StreamItem[];
   previousHead: StreamItem[];
 }): StreamItem[] {
-  const optimisticUsers = collectOptimisticUserMessages([
+  const localUsers = collectLocallyPresentedUserMessages([
     ...params.previousTail,
     ...params.previousHead,
   ]);
-  if (optimisticUsers.length === 0) {
+  if (localUsers.length === 0) {
     return params.canonicalTail;
   }
 
@@ -345,22 +345,32 @@ function reconcileOptimisticUsersAfterReplace(params: {
   let searchFromOrdinal = 0;
   const unmatched: UserMessageItem[] = [];
 
-  for (const optimistic of optimisticUsers) {
-    const canonicalOrdinal = canonicalUserIndexes.findIndex(
-      (_index, ordinal) => ordinal >= Math.max(optimistic.ordinal, searchFromOrdinal),
-    );
+  for (const local of localUsers) {
+    const canonicalOrdinal = canonicalUserIndexes.findIndex((index, ordinal) => {
+      if (ordinal < searchFromOrdinal) {
+        return false;
+      }
+      if (local.item.optimistic) {
+        return ordinal >= local.ordinal;
+      }
+      return params.canonicalTail[index]?.id === local.item.id;
+    });
     if (canonicalOrdinal < 0) {
-      unmatched.push(optimistic.item);
+      if (local.item.optimistic) {
+        unmatched.push(local.item);
+      }
       continue;
     }
 
     const canonicalIndex = canonicalUserIndexes[canonicalOrdinal];
     const canonicalItem = canonicalIndex !== undefined ? nextTail[canonicalIndex] : undefined;
     if (!canonicalItem || canonicalItem.kind !== "user_message") {
-      unmatched.push(optimistic.item);
+      if (local.item.optimistic) {
+        unmatched.push(local.item);
+      }
       continue;
     }
-    nextTail[canonicalIndex] = mergeCanonicalUserWithOptimistic(canonicalItem, optimistic.item);
+    nextTail[canonicalIndex] = mergeCanonicalUserWithLocalPresentation(canonicalItem, local.item);
     searchFromOrdinal = canonicalOrdinal + 1;
     changed = true;
   }
