@@ -59,7 +59,11 @@ import {
   AgentStreamCoalescer,
 } from "./agent-stream-coalescer.js";
 import { limitAgentTimelineItemContent } from "./agent-timeline-content.js";
-import { ForegroundRunState, type ForegroundTurnWaiter } from "./foreground-run-state.js";
+import {
+  ForegroundRunState,
+  type ForegroundTurnWaiter,
+  type PendingForegroundRun,
+} from "./foreground-run-state.js";
 import { getAgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
 import { invokeRewindCapability, type RewindMode } from "./rewind/rewind.js";
 import { isSystemInjectedEnvelope } from "./agent-prompt.js";
@@ -392,6 +396,11 @@ type ActiveManagedAgent =
 interface RunSettlementCheck {
   agent: ActiveManagedAgent;
   wasAutonomousRunning: boolean;
+}
+
+interface InterruptedRunSnapshot extends RunSettlementCheck {
+  foregroundTurnId: string | null;
+  pendingRun: PendingForegroundRun | null;
 }
 
 type LiveManagedAgent = ActiveManagedAgent;
@@ -2006,13 +2015,7 @@ export class AgentManager {
     } catch (error) {
       const latest = this.agents.get(agentId);
       if (latest) {
-        const latestActive = latest;
-        latestActive.pendingReplacement = false;
-        if (!latestActive.activeForegroundTurnId && latestActive.lifecycle === "running") {
-          (latestActive as ActiveManagedAgent).lifecycle = "idle";
-          this.touchUpdatedAt(latestActive);
-          this.emitState(latestActive);
-        }
+        latest.pendingReplacement = false;
       }
       throw error;
     }
@@ -2172,6 +2175,12 @@ export class AgentManager {
 
     const interruptAcknowledged = await this.interruptSession(agent.session, agentId);
     if (!interruptAcknowledged) {
+      await this.waitForInterruptedRunSettlement({
+        agent,
+        foregroundTurnId,
+        pendingRun,
+        wasAutonomousRunning: isAutonomousRunning,
+      });
       return this.didRunSettleDuringInterrupt({
         agent,
         wasAutonomousRunning: isAutonomousRunning,
@@ -2262,6 +2271,80 @@ export class AgentManager {
     }
 
     return true;
+  }
+
+  private async waitForInterruptedRunSettlement({
+    agent,
+    foregroundTurnId,
+    pendingRun,
+    wasAutonomousRunning,
+  }: InterruptedRunSnapshot): Promise<void> {
+    if (this.didRunSettleDuringInterrupt({ agent, wasAutonomousRunning })) {
+      return;
+    }
+
+    let unsubscribe: (() => void) | null = null;
+    let settlement: Promise<void> | null = null;
+
+    if (foregroundTurnId) {
+      const waiter = Array.from(agent.foregroundTurnWaiters).find(
+        (candidate) => candidate.turnId === foregroundTurnId,
+      );
+      if (waiter) {
+        settlement = waiter.settledPromise;
+      } else {
+        let resolveSettlement!: () => void;
+        settlement = new Promise<void>((resolvePromise) => {
+          resolveSettlement = resolvePromise;
+        });
+        unsubscribe = this.subscribe(
+          (event) => {
+            if (
+              event.type === "agent_state" &&
+              event.agent.id === agent.id &&
+              event.agent.activeForegroundTurnId !== foregroundTurnId
+            ) {
+              resolveSettlement();
+            }
+          },
+          { agentId: agent.id, replayState: false },
+        );
+      }
+    } else if (wasAutonomousRunning) {
+      let resolveSettlement!: () => void;
+      settlement = new Promise<void>((resolvePromise) => {
+        resolveSettlement = resolvePromise;
+      });
+      unsubscribe = this.subscribe(
+        (event) => {
+          if (
+            event.type === "agent_state" &&
+            event.agent.id === agent.id &&
+            event.agent.lifecycle !== "running"
+          ) {
+            resolveSettlement();
+          }
+        },
+        { agentId: agent.id, replayState: false },
+      );
+    } else if (pendingRun) {
+      settlement = pendingRun.settledPromise;
+    }
+
+    if (settlement) {
+      await this.waitWithTimeout({
+        operation: settlement,
+        timeoutMs: this.rescueTimeouts.interruptSessionMs,
+      });
+      unsubscribe?.();
+    }
+
+    if (!agent.activeForegroundTurnId && pendingRun && !pendingRun.settled) {
+      await this.waitWithTimeout({
+        operation: pendingRun.settledPromise,
+        timeoutMs: this.rescueTimeouts.interruptSessionMs,
+      });
+    }
   }
 
   private didRunSettleDuringInterrupt({

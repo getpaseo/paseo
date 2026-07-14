@@ -298,6 +298,15 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
     });
   }
 
+  function notifySafely(reason: "finished" | "errored" | "needs permission"): void {
+    void notify(reason).catch((error) => {
+      logger.error(
+        { err: error, childAgentId, callerAgentId, reason },
+        "Failed to notify caller agent",
+      );
+    });
+  }
+
   unsubscribe = agentManager.subscribe(
     (event) => {
       if (fired) {
@@ -310,11 +319,11 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
           return;
         }
         if (event.agent.lifecycle === "error") {
-          void notify("errored");
+          notifySafely("errored");
           return;
         }
         if (event.agent.lifecycle === "idle" && hasSeenRunning) {
-          void notify("finished");
+          notifySafely("finished");
           return;
         }
         if (event.agent.lifecycle === "closed") {
@@ -326,7 +335,7 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
       }
 
       if (event.event.type === "permission_requested") {
-        void notify("needs permission");
+        notifySafely("needs permission");
       }
     },
     { agentId: childAgentId, replayState: false },
@@ -345,6 +354,6 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
   if (childSnapshot.lifecycle === "running") {
     hasSeenRunning = true;
   } else if (childSnapshot.lifecycle === "error") {
-    void notify("errored");
+    notifySafely("errored");
   }
 }

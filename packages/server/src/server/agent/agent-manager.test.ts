@@ -54,6 +54,28 @@ function deferred<T>(): Deferred<T> {
   return { promise, resolve, reject };
 }
 
+function waitForAgentLifecycle(
+  manager: AgentManager,
+  agentId: string,
+  lifecycle: ManagedAgent["lifecycle"],
+): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const unsubscribe = manager.subscribe(
+      (event) => {
+        if (
+          event.type === "agent_state" &&
+          event.agent.id === agentId &&
+          event.agent.lifecycle === lifecycle
+        ) {
+          unsubscribe();
+          resolve();
+        }
+      },
+      { agentId, replayState: false },
+    );
+  });
+}
+
 const TEST_CAPABILITIES = {
   supportsStreaming: false,
   supportsSessionPersistence: false,
@@ -1467,6 +1489,7 @@ test("cancelAgentRun preserves the active turn when the provider rejects the int
     clients: { codex: client },
     registry: storage,
     logger,
+    rescueTimeouts: { interruptSessionMs: 10 },
     idFactory: () => "00000000-0000-4000-8000-000000000304",
   });
 
@@ -1564,6 +1587,70 @@ test("cancelAgentRun succeeds when the foreground turn finishes before the provi
       activeForegroundTurnId: null,
     });
     await runDrain;
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("cancelAgentRun succeeds when the provider queues completion before rejecting the interrupt", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-interrupt-queued-completion-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+
+  class QueuedCompletionInterruptSession extends TestAgentSession {
+    override async startTurn(): Promise<{ turnId: string }> {
+      const turnId = "queued-completion-turn";
+      setTimeout(() => {
+        this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+      }, 0);
+      return { turnId };
+    }
+
+    override async interrupt(): Promise<void> {
+      this.pushEvent({
+        type: "turn_completed",
+        provider: this.provider,
+        turnId: "queued-completion-turn",
+      });
+      throw new Error("turn already completed");
+    }
+  }
+
+  class QueuedCompletionInterruptClient extends TestAgentClient {
+    readonly session = new QueuedCompletionInterruptSession({
+      provider: "codex",
+      cwd: workdir,
+    });
+
+    override async createSession(): Promise<AgentSession> {
+      return this.session;
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new QueuedCompletionInterruptClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000306",
+  });
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const run = manager.streamAgent(agent.id, "Complete as cancellation starts.");
+    const runDrain = (async () => {
+      for await (const _event of run) {
+        // Drain the foreground turn until the queued completion is processed.
+      }
+    })();
+    await manager.waitForAgentRunStart(agent.id);
+
+    await expect(manager.cancelAgentRun(agent.id)).resolves.toBe(true);
+    await runDrain;
+    expect(manager.getAgent(agent.id)).toMatchObject({
+      lifecycle: "idle",
+      activeForegroundTurnId: null,
+    });
   } finally {
     rmSync(workdir, { recursive: true, force: true });
   }
@@ -4767,6 +4854,61 @@ test("cancelAgentRun can interrupt autonomous running state without a foreground
   const cancelled = await manager.cancelAgentRun(snapshot.id);
   expect(cancelled).toBe(true);
   expect(client.lastSession?.interruptCount).toBe(1);
+});
+
+test("failed replacement cancellation preserves an autonomous running state", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-live-replace-rejected-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+
+  class RejectingLiveInterruptSession extends TestAgentSession {
+    override async interrupt(): Promise<void> {
+      throw new Error("provider still owns the autonomous turn");
+    }
+  }
+
+  class RejectingLiveInterruptClient extends TestAgentClient {
+    readonly session = new RejectingLiveInterruptSession({
+      provider: "codex",
+      cwd: workdir,
+    });
+
+    override async createSession(): Promise<AgentSession> {
+      return this.session;
+    }
+  }
+
+  const client = new RejectingLiveInterruptClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    rescueTimeouts: { interruptSessionMs: 10 },
+    idFactory: () => "00000000-0000-4000-8000-000000000130",
+  });
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const running = waitForAgentLifecycle(manager, agent.id, "running");
+
+    client.session.pushEvent({
+      type: "turn_started",
+      provider: "codex",
+      turnId: "autonomous-replace-1",
+    });
+    await running;
+
+    await expect(manager.replaceAgentRun(agent.id, "replacement prompt")).rejects.toThrow(
+      `Cannot replace agent ${agent.id} because its active run cancellation was not acknowledged`,
+    );
+    expect(manager.getAgent(agent.id)).toMatchObject({
+      lifecycle: "running",
+      activeForegroundTurnId: null,
+    });
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
 });
 
 test("waitForAgentEvent waitForActive resolves for autonomous live-event run", async () => {
