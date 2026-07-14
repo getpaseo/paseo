@@ -94,6 +94,7 @@ function isScrollContainerOverscrolledPastBottom(
 function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: boolean }) {
   const {
     segments,
+    liveHeadRowRevision,
     boundary,
     renderers,
     listEmptyComponent,
@@ -534,10 +535,11 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     ));
   }, [renderHistoryMountedRow, segments.historyMounted]);
   const liveHeadRows = useMemo(() => {
+    void liveHeadRowRevision;
     return segments.liveHead.map((item, index) => (
       <Fragment key={item.id}>{renderLiveHeadRow(item, index, segments.liveHead)}</Fragment>
     ));
-  }, [renderLiveHeadRow, segments.liveHead]);
+  }, [liveHeadRowRevision, renderLiveHeadRow, segments.liveHead]);
   const liveAuxiliary = useMemo(() => {
     return renderLiveAuxiliary();
   }, [renderLiveAuxiliary]);
