@@ -523,10 +523,10 @@ export class LoopService {
 
     if (running) {
       if (loop.activeWorkerAgentId) {
-        await this.options.agentManager.cancelAgentRun(loop.activeWorkerAgentId).catch(() => {});
+        await this.stopInternalAgent(loop.activeWorkerAgentId, loop.archive);
       }
       if (loop.activeVerifierAgentId) {
-        await this.options.agentManager.cancelAgentRun(loop.activeVerifierAgentId).catch(() => {});
+        await this.stopInternalAgent(loop.activeVerifierAgentId, loop.archive);
       }
       await running.promise.catch(() => {});
     } else {
@@ -537,6 +537,18 @@ export class LoopService {
     }
 
     return cloneLoop(loop);
+  }
+
+  private async stopInternalAgent(agentId: string, archive: boolean): Promise<void> {
+    const cancelled = await this.options.agentManager.cancelAgentRun(agentId).catch(() => false);
+    if (cancelled) {
+      return;
+    }
+    if (archive) {
+      await this.options.agentManager.archiveAgent(agentId);
+      return;
+    }
+    await this.options.agentManager.closeAgent(agentId);
   }
 
   private async executeLoop(loopId: string, signal: AbortSignal): Promise<void> {

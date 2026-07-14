@@ -4779,16 +4779,18 @@ test("applies live autonomous events while no foreground run is active", async (
   expect(lifecycleUpdates).toContain("idle");
 });
 
-test("cancelAgentRun can interrupt autonomous running state without a foreground activeForegroundTurnId", async () => {
+test("cancelAgentRun waits for an acknowledged autonomous interrupt to settle", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-live-cancel-"));
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
 
   class LiveInterruptSession extends TestAgentSession {
     public interruptCount = 0;
+    readonly interruptCalled = deferred<void>();
 
     override async interrupt(): Promise<void> {
       this.interruptCount += 1;
+      this.interruptCalled.resolve(undefined);
     }
   }
 
@@ -4851,9 +4853,25 @@ test("cancelAgentRun can interrupt autonomous running state without a foreground
   expect(beforeCancel?.lifecycle).toBe("running");
   expect(beforeCancel?.activeForegroundTurnId).toBeNull();
 
-  const cancelled = await manager.cancelAgentRun(snapshot.id);
-  expect(cancelled).toBe(true);
+  let cancelSettled = false;
+  const cancelPromise = manager.cancelAgentRun(snapshot.id).finally(() => {
+    cancelSettled = true;
+  });
+  await capturedSession.interruptCalled.promise;
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  expect(cancelSettled).toBe(false);
   expect(client.lastSession?.interruptCount).toBe(1);
+
+  capturedSession.pushEvent({
+    type: "turn_canceled",
+    provider: "codex",
+    turnId: "autonomous-cancel-1",
+    reason: "interrupted",
+  });
+
+  await expect(cancelPromise).resolves.toBe(true);
+  expect(manager.getAgent(snapshot.id)?.lifecycle).toBe("idle");
 });
 
 test("failed replacement cancellation preserves an autonomous running state", async () => {

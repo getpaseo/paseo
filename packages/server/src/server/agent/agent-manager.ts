@@ -401,6 +401,13 @@ interface RunSettlementCheck {
 interface InterruptedRunSnapshot extends RunSettlementCheck {
   foregroundTurnId: string | null;
   pendingRun: PendingForegroundRun | null;
+  autonomousSettlement: AutonomousRunSettlementObserver | null;
+}
+
+interface AutonomousRunSettlementObserver {
+  readonly promise: Promise<void>;
+  didSettle(): boolean;
+  dispose(): void;
 }
 
 type LiveManagedAgent = ActiveManagedAgent;
@@ -2173,18 +2180,68 @@ export class AgentManager {
       return false;
     }
 
-    const interruptAcknowledged = await this.interruptSession(agent.session, agentId);
-    if (!interruptAcknowledged) {
-      await this.waitForInterruptedRunSettlement({
+    const autonomousSettlement = isAutonomousRunning
+      ? this.observeAutonomousRunSettlement(agentId)
+      : null;
+
+    try {
+      const interruptAcknowledged = await this.interruptSession(agent.session, agentId);
+      if (!interruptAcknowledged) {
+        await this.waitForInterruptedRunSettlement({
+          agent,
+          foregroundTurnId,
+          pendingRun,
+          wasAutonomousRunning: isAutonomousRunning,
+          autonomousSettlement,
+        });
+        return this.didRunSettleDuringInterrupt({
+          agent,
+          wasAutonomousRunning: isAutonomousRunning,
+          autonomousSettlement,
+        });
+      }
+
+      await this.settleAcknowledgedInterrupt({
+        agentId,
         agent,
         foregroundTurnId,
         pendingRun,
         wasAutonomousRunning: isAutonomousRunning,
+        autonomousSettlement,
       });
-      return this.didRunSettleDuringInterrupt({
+      return true;
+    } finally {
+      autonomousSettlement?.dispose();
+    }
+  }
+
+  private async settleAcknowledgedInterrupt({
+    agentId,
+    agent,
+    foregroundTurnId,
+    pendingRun,
+    wasAutonomousRunning,
+    autonomousSettlement,
+  }: InterruptedRunSnapshot & { agentId: string }): Promise<void> {
+    if (wasAutonomousRunning) {
+      await this.waitForInterruptedRunSettlement({
         agent,
-        wasAutonomousRunning: isAutonomousRunning,
+        foregroundTurnId,
+        pendingRun,
+        wasAutonomousRunning,
+        autonomousSettlement,
       });
+      if (!autonomousSettlement?.didSettle() && agent.lifecycle === "running") {
+        this.logger.warn(
+          { agentId },
+          "cancelAgentRun: autonomous turn still active after timeout, force-canceling",
+        );
+        await this.dispatchSessionEvent(agent, {
+          type: "turn_canceled",
+          provider: agent.provider,
+          reason: "interrupted",
+        });
+      }
     }
 
     // The interrupt will produce a turn_canceled/turn_failed event via subscribe(),
@@ -2269,8 +2326,33 @@ export class AgentManager {
       this.touchUpdatedAt(agent);
       this.emitState(agent);
     }
+  }
 
-    return true;
+  private observeAutonomousRunSettlement(agentId: string): AutonomousRunSettlementObserver {
+    let settled = false;
+    let resolveSettlement!: () => void;
+    const promise = new Promise<void>((resolvePromise) => {
+      resolveSettlement = resolvePromise;
+    });
+    const unsubscribe = this.subscribe(
+      (event) => {
+        const terminalStreamEvent =
+          event.type === "agent_stream" && isTurnTerminalEvent(event.event);
+        const terminalState = event.type === "agent_state" && event.agent.lifecycle !== "running";
+        if (!terminalStreamEvent && !terminalState) {
+          return;
+        }
+        settled = true;
+        resolveSettlement();
+      },
+      { agentId, replayState: false },
+    );
+
+    return {
+      promise,
+      didSettle: () => settled,
+      dispose: unsubscribe,
+    };
   }
 
   private async waitForInterruptedRunSettlement({
@@ -2278,8 +2360,15 @@ export class AgentManager {
     foregroundTurnId,
     pendingRun,
     wasAutonomousRunning,
+    autonomousSettlement,
   }: InterruptedRunSnapshot): Promise<void> {
-    if (this.didRunSettleDuringInterrupt({ agent, wasAutonomousRunning })) {
+    if (
+      this.didRunSettleDuringInterrupt({
+        agent,
+        wasAutonomousRunning,
+        autonomousSettlement,
+      })
+    ) {
       return;
     }
 
@@ -2311,22 +2400,7 @@ export class AgentManager {
         );
       }
     } else if (wasAutonomousRunning) {
-      let resolveSettlement!: () => void;
-      settlement = new Promise<void>((resolvePromise) => {
-        resolveSettlement = resolvePromise;
-      });
-      unsubscribe = this.subscribe(
-        (event) => {
-          if (
-            event.type === "agent_state" &&
-            event.agent.id === agent.id &&
-            event.agent.lifecycle !== "running"
-          ) {
-            resolveSettlement();
-          }
-        },
-        { agentId: agent.id, replayState: false },
-      );
+      settlement = autonomousSettlement?.promise ?? null;
     } else if (pendingRun) {
       settlement = pendingRun.settledPromise;
     }
@@ -2350,9 +2424,12 @@ export class AgentManager {
   private didRunSettleDuringInterrupt({
     agent,
     wasAutonomousRunning,
-  }: RunSettlementCheck): boolean {
+    autonomousSettlement,
+  }: RunSettlementCheck & {
+    autonomousSettlement?: AutonomousRunSettlementObserver | null;
+  }): boolean {
     if (wasAutonomousRunning) {
-      return agent.lifecycle !== "running";
+      return autonomousSettlement?.didSettle() === true || agent.lifecycle !== "running";
     }
     return !agent.activeForegroundTurnId && !this.foregroundRuns.hasPendingRun(agent.id);
   }

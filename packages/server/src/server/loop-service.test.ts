@@ -1033,6 +1033,73 @@ describe("LoopService", () => {
     expect(finalLoop.logs.some((entry) => entry.text.includes("Stop requested"))).toBe(true);
   });
 
+  test("force-closes a loop worker when graceful cancellation is refused", async () => {
+    let release: (() => void) | null = null;
+    const blocker = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const cancelledAgentIds: string[] = [];
+    const closedAgentIds: string[] = [];
+    const manager = new AgentManager({
+      clients: {
+        claude: new ScriptedAgentClient("claude", {
+          async onRun({ config }) {
+            if (config.title?.includes("worker")) {
+              await blocker;
+              return "finished";
+            }
+            return '{"passed":true,"reason":"ok"}';
+          },
+        }),
+      },
+      registry: storage,
+      logger,
+    });
+    manager.cancelAgentRun = async (agentId) => {
+      cancelledAgentIds.push(agentId);
+      return false;
+    };
+    const closeAgent = manager.closeAgent.bind(manager);
+    manager.closeAgent = async (agentId) => {
+      closedAgentIds.push(agentId);
+      await closeAgent(agentId);
+    };
+    const service = createLoopService({
+      paseoHome,
+      agentManager: manager,
+      agentStorage: storage,
+      logger,
+    });
+    await service.initialize();
+
+    const loop = await service.runLoop({
+      prompt: "Wait forever",
+      cwd: workspaceDir,
+      model: "test-model",
+      verifyChecks: ["test -f never.txt"],
+    });
+    const workerAgentId = await waitForActiveWorkerRun(service, manager, loop.id);
+    const stopPromise = service.stopLoop(loop.id);
+    let closeWaitError: unknown;
+
+    try {
+      await waitForCancelledAgent(cancelledAgentIds, workerAgentId);
+      await waitForCancelledAgent(closedAgentIds, workerAgentId);
+    } catch (error) {
+      closeWaitError = error;
+    } finally {
+      release?.();
+    }
+
+    const stopped = await stopPromise;
+    if (closeWaitError) {
+      throw closeWaitError;
+    }
+    expect(stopped.status).toBe("stopped");
+    expect(cancelledAgentIds).toEqual([workerAgentId]);
+    expect(closedAgentIds).toContain(workerAgentId);
+  });
+
   test("stops while waiting for loop workspace provisioning without starting a worker", async () => {
     let resolveWorkspace: ((workspaceId: string) => void) | null = null;
     const workspaceProvisioned = new Promise<string>((resolve) => {

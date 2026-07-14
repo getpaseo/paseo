@@ -2567,6 +2567,33 @@ describe("Codex app-server provider", () => {
     }
   });
 
+  test("interrupts an autonomous Codex turn identified by live notifications", async () => {
+    const session = createSession();
+    const requests: Array<{ method: string; params: unknown }> = [];
+    session.activeForegroundTurnId = null;
+    session.client = {
+      request: async (method, params) => {
+        requests.push({ method, params });
+        return {};
+      },
+    };
+
+    asInternals(session).handleNotification("turn/started", {
+      threadId: "test-thread",
+      turn: { id: "autonomous-turn" },
+    });
+
+    await session.interrupt();
+
+    expect(requests).toContainEqual({
+      method: "turn/interrupt",
+      params: {
+        threadId: "test-thread",
+        turnId: "autonomous-turn",
+      },
+    });
+  });
+
   test("never replaces the root identity with an early child thread start", () => {
     const session = createSession();
 
