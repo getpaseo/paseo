@@ -2554,7 +2554,7 @@ describe("Codex app-server provider", () => {
           status: "running",
           detail: {
             type: "sub_agent",
-            description: "/root/legacy-only-child",
+            description: "legacy-only-child",
           },
         },
       });
