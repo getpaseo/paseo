@@ -8,6 +8,18 @@ import {
 
 export const MIN_DESKTOP_CENTER_WIDTH = 400;
 
+export function resolveDesktopAppChromeLayout(input: {
+  desktopSidebarRendered: boolean;
+  hasTopLeftWindowControls: boolean;
+}) {
+  const sidebarOwnsTopLeft = input.desktopSidebarRendered && input.hasTopLeftWindowControls;
+  return {
+    sidebarCorners: sidebarOwnsTopLeft ? ("top-left" as const) : ("none" as const),
+    contentCorners: sidebarOwnsTopLeft ? ("top-right" as const) : ("both" as const),
+    sidebarToggleOwner: input.hasTopLeftWindowControls ? ("window" as const) : ("content" as const),
+  };
+}
+
 function resolveDesktopPanelWidth(input: {
   requestedWidth: number;
   viewportWidth: number;

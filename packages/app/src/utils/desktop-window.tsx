@@ -24,6 +24,8 @@ interface WindowChromeObstruction {
   topRight: WindowChromeCornerObstruction | null;
 }
 
+export type WindowChromeCorner = "top-left" | "top-right";
+
 type WindowChromeSafeAreaStyle = { height: number } | { paddingLeft: number; paddingRight: number };
 
 const EMPTY_OBSTRUCTION: WindowChromeObstruction = { topLeft: null, topRight: null };
@@ -35,6 +37,29 @@ function windowChromeCornersFromFlags(topLeft: boolean, topRight: boolean): Wind
   if (topLeft) return "top-left";
   if (topRight) return "top-right";
   return "none";
+}
+
+export function windowChromeCornersInclude(
+  corners: WindowChromeCorners,
+  corner: WindowChromeCorner,
+): boolean {
+  return corners === "both" || corners === corner;
+}
+
+export function resolveHasOwnedWindowChromeObstruction(input: {
+  obstruction: WindowChromeObstruction;
+  corners: WindowChromeCorners;
+  corner: WindowChromeCorner;
+}): boolean {
+  if (!windowChromeCornersInclude(input.corners, input.corner)) return false;
+  return input.corner === "top-left"
+    ? input.obstruction.topLeft !== null
+    : input.obstruction.topRight !== null;
+}
+
+export function useHasWindowChromeObstruction(corner: WindowChromeCorner): boolean {
+  const obstruction = useContext(WindowChromeContext);
+  return corner === "top-left" ? obstruction.topLeft !== null : obstruction.topRight !== null;
 }
 
 export function intersectWindowChromeCorners(
@@ -208,6 +233,17 @@ export function WindowChromeRootRegion({
 
 export function useWindowChromeCorners(): WindowChromeCorners {
   return useContext(WindowChromeCornersContext);
+}
+
+export function useOwnsWindowChromeCorner(corner: WindowChromeCorner): boolean {
+  const corners = useContext(WindowChromeCornersContext);
+  return windowChromeCornersInclude(corners, corner);
+}
+
+export function useHasOwnedWindowChromeObstruction(corner: WindowChromeCorner): boolean {
+  const obstruction = useContext(WindowChromeContext);
+  const corners = useContext(WindowChromeCornersContext);
+  return resolveHasOwnedWindowChromeObstruction({ obstruction, corners, corner });
 }
 
 type WindowChromeSafeAreaProps = ViewProps & {

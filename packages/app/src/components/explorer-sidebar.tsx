@@ -30,7 +30,7 @@ import { HEADER_INNER_HEIGHT } from "@/constants/layout";
 import { GitDiffPane } from "@/git/diff-pane";
 import { FileExplorerPane } from "./file-explorer-pane";
 import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
-import { WindowChromeSafeArea } from "@/utils/desktop-window";
+import { useHasOwnedWindowChromeObstruction, WindowChromeSafeArea } from "@/utils/desktop-window";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 import { RetainedPanelActivity } from "@/components/retained-panel";
 import { isWeb } from "@/constants/platform";
@@ -130,7 +130,6 @@ export function CompactExplorerSidebar({
           workspaceId={workspaceId}
           workspaceRoot={workspaceRoot}
           isGit={isGit}
-          isMobile
           isOpen={isOpen}
           onOpenFile={onOpenFile}
         />
@@ -225,7 +224,6 @@ export function ExplorerSidebar({
           workspaceId={workspaceId}
           workspaceRoot={workspaceRoot}
           isGit={isGit}
-          isMobile={false}
           isOpen={isOpen}
           onOpenFile={onOpenFile}
         />
@@ -270,7 +268,6 @@ interface SidebarContentProps {
   workspaceId?: string | null;
   workspaceRoot: string;
   isGit: boolean;
-  isMobile: boolean;
   isOpen: boolean;
   onOpenFile?: (filePath: string) => void;
 }
@@ -283,13 +280,13 @@ function ExplorerSidebarContent({
   workspaceId,
   workspaceRoot,
   isGit,
-  isMobile,
   isOpen,
   onOpenFile,
 }: SidebarContentProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
   const toast = useToast();
+  const hasRightWindowControls = useHasOwnedWindowChromeObstruction("top-right");
   const canQueryPullRequest = isGit && Boolean(workspaceRoot);
   const prPane = usePrPaneData({
     serverId,
@@ -359,9 +356,25 @@ function ExplorerSidebarContent({
           )}
         </View>
         <View style={styles.headerRightSection}>
-          {isMobile && (
-            <Pressable onPress={onClose} style={styles.closeButton}>
-              <X size={18} color={theme.colors.foregroundMuted} />
+          {!hasRightWindowControls && (
+            <Pressable
+              onPress={onClose}
+              style={styles.closeButton}
+              testID="explorer-close"
+              nativeID="explorer-close"
+              accessible
+              accessibilityRole="button"
+              accessibilityLabel={t("workspace.tabs.explorer.close")}
+              hitSlop={8}
+            >
+              {({ hovered, pressed }) => (
+                <X
+                  size={18}
+                  color={
+                    hovered || pressed ? theme.colors.foreground : theme.colors.foregroundMuted
+                  }
+                />
+              )}
             </Pressable>
           )}
         </View>

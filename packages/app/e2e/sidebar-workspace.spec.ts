@@ -175,6 +175,24 @@ test.describe("Half-screen desktop layout", () => {
     await expect(page.getByTestId("agent-list-backdrop")).not.toBeVisible();
   });
 
+  test("keeps the left toggle center-owned without left window controls", async ({ page }) => {
+    await gotoAppShell(page);
+
+    const openToggle = page.getByTestId("menu-button");
+    const openBounds = await openToggle.locator("svg").first().boundingBox();
+    expect(openBounds).not.toBeNull();
+    expect(openBounds?.x).toBeGreaterThan(12);
+
+    await openToggle.click();
+    await expect(page.getByTestId("sidebar-global-new-workspace")).not.toBeVisible();
+
+    const closedToggle = page.getByTestId("menu-button");
+    const closedBounds = await closedToggle.locator("svg").first().boundingBox();
+    expect(closedBounds).not.toBeNull();
+    expect(closedBounds?.x).toBeCloseTo(12, 0);
+    expect(closedBounds?.y).toBe(openBounds?.y);
+  });
+
   test("yields app navigation to the settings split", async ({ page }) => {
     await gotoAppShell(page);
     await page.getByTestId("sidebar-settings").click();
@@ -196,13 +214,40 @@ test.describe("Half-screen desktop layout", () => {
       await expect(
         page.getByTestId("explorer-tab-files").filter({ visible: true }).first(),
       ).toBeVisible();
+      await expect(page.getByTestId("workspace-explorer-toggle").first()).toBeVisible();
+      await expect(page.getByTestId("explorer-close")).toBeVisible();
       await expect(page.getByTestId("sidebar-global-new-workspace")).not.toBeVisible();
+
+      const centerBounds = await page.getByTestId("workspace-tabs-row").first().boundingBox();
+      const headerGlyphBounds = await page
+        .getByTestId("menu-button")
+        .locator("svg")
+        .first()
+        .boundingBox();
+      const tabGlyphBounds = await page
+        .locator('[data-testid^="workspace-tab-"]')
+        .first()
+        .locator("svg")
+        .first()
+        .boundingBox();
+      expect(centerBounds).not.toBeNull();
+      expect(headerGlyphBounds).not.toBeNull();
+      expect(tabGlyphBounds).not.toBeNull();
+      expect((headerGlyphBounds?.x ?? 0) - (centerBounds?.x ?? 0)).toBeCloseTo(
+        (tabGlyphBounds?.x ?? 0) - (centerBounds?.x ?? 0),
+        0,
+      );
+
       await expect
         .poll(
           async () =>
             (await page.getByTestId("workspace-tabs-row").first().boundingBox())?.width ?? 0,
         )
         .toBeGreaterThanOrEqual(400);
+
+      await page.getByTestId("explorer-close").click();
+      await expect(page.getByTestId("explorer-tab-files")).not.toBeVisible();
+      await expect(page.getByTestId("workspace-explorer-toggle").first()).toBeVisible();
     } finally {
       await workspace.cleanup();
     }

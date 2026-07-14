@@ -1,12 +1,46 @@
 import { describe, expect, it } from "vitest";
 import {
   canDesktopAppSidebarShare,
+  resolveDesktopAppChromeLayout,
   resolveDesktopAppContentMinimum,
   resolveDesktopExplorerWidth,
   resolveDesktopSidebarWidth,
 } from "@/components/desktop-sidebar-layout";
 
 describe("desktop sidebar layout", () => {
+  it("keeps the sidebar toggle window-owned beside left window controls", () => {
+    expect(
+      resolveDesktopAppChromeLayout({
+        desktopSidebarRendered: true,
+        hasTopLeftWindowControls: true,
+      }),
+    ).toEqual({
+      sidebarCorners: "top-left",
+      contentCorners: "top-right",
+      sidebarToggleOwner: "window",
+    });
+    expect(
+      resolveDesktopAppChromeLayout({
+        desktopSidebarRendered: true,
+        hasTopLeftWindowControls: false,
+      }),
+    ).toEqual({
+      sidebarCorners: "none",
+      contentCorners: "both",
+      sidebarToggleOwner: "content",
+    });
+    expect(
+      resolveDesktopAppChromeLayout({
+        desktopSidebarRendered: false,
+        hasTopLeftWindowControls: true,
+      }),
+    ).toEqual({
+      sidebarCorners: "none",
+      contentCorners: "both",
+      sidebarToggleOwner: "window",
+    });
+  });
+
   it("clamps a persisted wide sidebar to preserve the center pane", () => {
     const atHalfScreen = resolveDesktopSidebarWidth({ requestedWidth: 600, viewportWidth: 751 });
     expect(atHalfScreen).toBe(351);

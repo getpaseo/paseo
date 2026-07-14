@@ -38,7 +38,7 @@ export function ScreenHeader({
   const isMobile = useIsCompactFormFactor();
   // Only add extra padding on mobile for better touch targets; on desktop, only use safe area insets
   const topPadding = isMobile ? HEADER_TOP_PADDING_MOBILE : 0;
-  const baseHorizontalPadding = theme.spacing[2];
+  const baseHorizontalPadding = isMobile ? theme.spacing[2] : theme.spacing[3];
 
   const innerStyle = useMemo(
     () => [styles.inner, { paddingTop: insets.top + topPadding }],

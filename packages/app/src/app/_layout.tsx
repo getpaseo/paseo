@@ -28,6 +28,7 @@ import { QuittingOverlay } from "@/components/quitting-overlay";
 import { KeyboardShortcutsDialog } from "@/components/keyboard-shortcuts-dialog";
 import { AppDiagnosticHost } from "@/components/app-diagnostic-host";
 import { LeftSidebar } from "@/components/left-sidebar";
+import { WindowSidebarMenuToggle } from "@/components/headers/menu-header";
 import { SidebarModelProvider } from "@/components/sidebar/sidebar-model";
 import { CompactExplorerSidebarHost } from "@/components/compact-explorer-sidebar-host";
 import { ProjectPickerModal } from "@/components/project-picker-modal";
@@ -37,9 +38,14 @@ import { WorkspaceSetupDialog } from "@/components/workspace-setup-dialog";
 import { WorkspaceShortcutTargetsSubscriber } from "@/components/workspace-shortcut-targets-subscriber";
 import { FloatingPanelPortalHost } from "@/components/ui/floating-panel-portal";
 import { HostChooserModal, useHostChooser } from "@/hosts/host-chooser";
-import { getIsElectronRuntime, useIsCompactFormFactor } from "@/constants/layout";
+import {
+  getIsElectronRuntime,
+  HEADER_INNER_HEIGHT,
+  useIsCompactFormFactor,
+} from "@/constants/layout";
 import {
   canDesktopAppSidebarShare,
+  resolveDesktopAppChromeLayout,
   resolveDesktopAppContentMinimum,
 } from "@/components/desktop-sidebar-layout";
 import { isNative, isWeb } from "@/constants/platform";
@@ -95,7 +101,12 @@ import { THEME_TO_UNISTYLES, type ThemeName } from "@/styles/theme";
 import { installWebScrollbarStyles } from "@/styles/install-web-scrollbar-styles";
 import type { HostProfile } from "@/types/host-connection";
 import { toggleDesktopSidebarsWithCheckoutIntent } from "@/utils/desktop-sidebar-toggle";
-import { WindowChromeProvider, WindowChromeRegion } from "@/utils/desktop-window";
+import {
+  useHasWindowChromeObstruction,
+  WindowChromeProvider,
+  WindowChromeRegion,
+  WindowChromeSafeArea,
+} from "@/utils/desktop-window";
 import { buildOpenProjectRoute, parseServerIdFromPathname } from "@/utils/host-routes";
 import { buildNotificationRoute, resolveNotificationTarget } from "@/utils/notification-routing";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
@@ -405,6 +416,7 @@ interface AppContainerProps {
 const THEME_CYCLE_ORDER: ThemeName[] = ["dark", "zinc", "midnight", "claude", "ghostty", "light"];
 
 function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppContainerProps) {
+  const { theme } = useUnistyles();
   const daemons = useHosts();
   const { settings, updateSettings } = useAppSettings();
   const toggleMobileAgentList = usePanelStore((state) => state.toggleMobileAgentList);
@@ -480,7 +492,11 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
       requestedSidebarWidth: sidebarWidth,
       viewportWidth,
     });
-  const contentWindowChromeCorners = desktopSidebarRendered ? "top-right" : "both";
+  const hasTopLeftWindowControls = useHasWindowChromeObstruction("top-left");
+  const appChromeLayout = resolveDesktopAppChromeLayout({
+    desktopSidebarRendered,
+    hasTopLeftWindowControls,
+  });
   const sidebarChrome = (
     <SidebarChrome
       showSidebar={isCompactLayout ? chromeEnabled : desktopSidebarRendered}
@@ -490,7 +506,7 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
   const workspaceChrome = (
     <View style={rowStyle}>
       {!isCompactLayout ? (
-        <WindowChromeRegion corners={desktopSidebarRendered ? "top-left" : "none"}>
+        <WindowChromeRegion corners={appChromeLayout.sidebarCorners}>
           {sidebarChrome}
         </WindowChromeRegion>
       ) : null}
@@ -501,7 +517,7 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
           </WindowChromeRegion>
         </CompactExplorerSidebarHost>
       ) : (
-        <WindowChromeRegion corners={contentWindowChromeCorners}>
+        <WindowChromeRegion corners={appChromeLayout.contentCorners}>
           <View style={flexStyle}>{children}</View>
         </WindowChromeRegion>
       )}
@@ -511,6 +527,18 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
   const surface = (
     <View style={layoutStyles.surfaceFill}>
       {workspaceChrome}
+      {!isCompactLayout && appChromeLayout.sidebarToggleOwner === "window" ? (
+        <WindowChromeRegion corners="top-left">
+          <WindowChromeSafeArea
+            placement="inline"
+            horizontalPadding={theme.spacing[3]}
+            pointerEvents="box-none"
+            style={layoutStyles.windowSidebarToggle}
+          >
+            <WindowSidebarMenuToggle />
+          </WindowChromeSafeArea>
+        </WindowChromeRegion>
+      ) : null}
       <FloatingPanelPortalHost />
       {isCompactLayout ? sidebarChrome : null}
       <DownloadToast />
@@ -942,5 +970,16 @@ const layoutStyles = StyleSheet.create((theme) => ({
   surfaceFill: {
     flex: 1,
     backgroundColor: theme.colors.surface0,
+  },
+  windowSidebarToggle: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    zIndex: 20,
+    height: HEADER_INNER_HEIGHT,
+    flexDirection: "row",
+    alignItems: "center",
+    borderBottomWidth: theme.borderWidth[1],
+    borderBottomColor: "transparent",
   },
 }));
