@@ -818,16 +818,13 @@ export const fr: TranslationResources = {
     },
     help: {
       trigger: "Aide et assistance",
-      troubleshoot: "Dépannage",
+      sectionHelp: "Aide",
       diagnostics: "Lancer le diagnostic",
-      diagnosticsDescription: "Collecter les détails de l’app et des hôtes connectés",
       shortcuts: "Raccourcis clavier",
-      shortcutsDescription: "Afficher les raccourcis clavier disponibles",
       reportIssue: "Signaler un problème",
       discord: "Discord",
-      discordDescription: "Idéal pour obtenir une aide rapide et échanger",
       github: "Créer un ticket GitHub",
-      githubDescription: "Signaler un bug reproductible",
+      whatsNew: "Nouveautés",
       version: "Paseo {{version}}",
     },
     sections: {

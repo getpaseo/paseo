@@ -675,10 +675,12 @@ export function DropdownMenuSeparator({
 
 export function DropdownMenuHint({
   children,
+  style,
   testID,
-}: PropsWithChildren<{ testID?: string }>): ReactElement {
+}: PropsWithChildren<{ style?: ViewStyle | ViewStyle[]; testID?: string }>): ReactElement {
+  const hintContainerStyle = useMemo(() => [styles.hintContainer, style], [style]);
   return (
-    <View style={styles.hintContainer} testID={testID}>
+    <View style={hintContainerStyle} testID={testID}>
       <Text style={styles.hintText}>{children}</Text>
     </View>
   );
@@ -908,7 +910,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   hintContainer: {
     paddingHorizontal: theme.spacing[3],
-    paddingBottom: theme.spacing[2],
+    paddingVertical: theme.spacing[2],
   },
   hintText: {
     fontSize: theme.fontSize.xs,

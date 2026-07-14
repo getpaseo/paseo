@@ -799,16 +799,13 @@ export const en = {
     },
     help: {
       trigger: "Help and support",
-      troubleshoot: "Troubleshoot",
+      sectionHelp: "Help",
       diagnostics: "Run diagnostics",
-      diagnosticsDescription: "Collect app and connected host details",
       shortcuts: "Keyboard shortcuts",
-      shortcutsDescription: "View available keyboard shortcuts",
       reportIssue: "Report an issue",
       discord: "Discord",
-      discordDescription: "Best for quick help and discussion",
       github: "Create GitHub issue",
-      githubDescription: "Report a reproducible bug",
+      whatsNew: "What's new",
       version: "Paseo {{version}}",
     },
     sections: {

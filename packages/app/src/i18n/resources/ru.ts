@@ -811,16 +811,13 @@ export const ru: TranslationResources = {
     },
     help: {
       trigger: "Помощь и поддержка",
-      troubleshoot: "Устранение неполадок",
+      sectionHelp: "Помощь",
       diagnostics: "Запустить диагностику",
-      diagnosticsDescription: "Собрать данные приложения и подключённых хостов",
       shortcuts: "Сочетания клавиш",
-      shortcutsDescription: "Показать доступные сочетания клавиш",
       reportIssue: "Сообщить о проблеме",
       discord: "Discord",
-      discordDescription: "Для быстрой помощи и обсуждения",
       github: "Создать issue в GitHub",
-      githubDescription: "Сообщить о воспроизводимой ошибке",
+      whatsNew: "Что нового",
       version: "Paseo {{version}}",
     },
     sections: {

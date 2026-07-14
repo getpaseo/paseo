@@ -787,16 +787,13 @@ export const zhCN: TranslationResources = {
     },
     help: {
       trigger: "帮助与支持",
-      troubleshoot: "问题排查",
+      sectionHelp: "帮助",
       diagnostics: "运行诊断",
-      diagnosticsDescription: "收集应用和已连接 Host 的详细信息",
       shortcuts: "键盘快捷键",
-      shortcutsDescription: "查看可用的键盘快捷键",
       reportIssue: "报告问题",
       discord: "Discord",
-      discordDescription: "适合快速求助和讨论",
       github: "创建 GitHub Issue",
-      githubDescription: "报告可复现的 bug",
+      whatsNew: "新功能",
       version: "Paseo {{version}}",
     },
     sections: {

@@ -792,16 +792,13 @@ export const ar: TranslationResources = {
     },
     help: {
       trigger: "المساعدة والدعم",
-      troubleshoot: "استكشاف الأخطاء وإصلاحها",
+      sectionHelp: "المساعدة",
       diagnostics: "تشغيل التشخيص",
-      diagnosticsDescription: "جمع تفاصيل التطبيق والمضيفين المتصلين",
       shortcuts: "اختصارات لوحة المفاتيح",
-      shortcutsDescription: "عرض اختصارات لوحة المفاتيح المتاحة",
       reportIssue: "الإبلاغ عن مشكلة",
       discord: "Discord",
-      discordDescription: "الأفضل للمساعدة السريعة والنقاش",
       github: "إنشاء مشكلة على GitHub",
-      githubDescription: "الإبلاغ عن خطأ يمكن إعادة إنتاجه",
+      whatsNew: "ما الجديد",
       version: "Paseo {{version}}",
     },
     sections: {

@@ -819,16 +819,13 @@ export const es: TranslationResources = {
     },
     help: {
       trigger: "Ayuda y soporte",
-      troubleshoot: "Solucionar problemas",
+      sectionHelp: "Ayuda",
       diagnostics: "Ejecutar diagnóstico",
-      diagnosticsDescription: "Recopila datos de la app y los hosts conectados",
       shortcuts: "Atajos de teclado",
-      shortcutsDescription: "Ver los atajos de teclado disponibles",
       reportIssue: "Informar de un problema",
       discord: "Discord",
-      discordDescription: "La mejor opción para ayuda rápida y conversación",
       github: "Crear incidencia en GitHub",
-      githubDescription: "Informar de un error reproducible",
+      whatsNew: "Novedades",
       version: "Paseo {{version}}",
     },
     sections: {

@@ -810,16 +810,13 @@ export const ptBR: TranslationResources = {
     },
     help: {
       trigger: "Ajuda e suporte",
-      troubleshoot: "Resolver problemas",
+      sectionHelp: "Ajuda",
       diagnostics: "Executar diagnóstico",
-      diagnosticsDescription: "Coletar detalhes do app e dos hosts conectados",
       shortcuts: "Atalhos de teclado",
-      shortcutsDescription: "Ver os atalhos de teclado disponíveis",
       reportIssue: "Relatar um problema",
       discord: "Discord",
-      discordDescription: "Ideal para ajuda rápida e conversa",
       github: "Criar issue no GitHub",
-      githubDescription: "Relatar um bug reproduzível",
+      whatsNew: "Novidades",
       version: "Paseo {{version}}",
     },
     sections: {
