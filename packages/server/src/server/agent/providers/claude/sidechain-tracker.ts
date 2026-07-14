@@ -22,6 +22,7 @@ interface SubAgentActionEntry {
 }
 
 interface SubAgentActivityState {
+  name?: string;
   subAgentType?: string;
   description?: string;
   actions: SubAgentActionEntry[];
@@ -130,7 +131,7 @@ export class ClaudeSidechainTracker {
         event: {
           type: "upsert",
           id: parentToolUseId,
-          title: state.subAgentType ?? "Claude subagent",
+          title: state.name ?? state.subAgentType ?? "Claude subagent",
           description: state.description ?? null,
           status: "running",
           toolCallId: parentToolUseId,
@@ -163,7 +164,7 @@ export class ClaudeSidechainTracker {
         event: {
           type: "upsert",
           id,
-          title: state.subAgentType ?? "Claude subagent",
+          title: state.name ?? state.subAgentType ?? "Claude subagent",
           description: state.description ?? null,
           status,
           toolCallId: id,
@@ -185,7 +186,7 @@ export class ClaudeSidechainTracker {
         event: {
           type: "upsert",
           id,
-          title: state.subAgentType ?? "Claude subagent",
+          title: state.name ?? state.subAgentType ?? "Claude subagent",
           description: state.description ?? null,
           status,
           toolCallId: id,
@@ -267,10 +268,15 @@ export class ClaudeSidechainTracker {
     parentToolUseId: string,
   ): boolean {
     const taskInput = this.getToolInput(parentToolUseId);
+    const nextName = this.normalizeSubAgentText(taskInput?.name);
     const nextSubAgentType = this.normalizeSubAgentText(taskInput?.subagent_type);
     const nextDescription = this.normalizeSubAgentText(taskInput?.description);
 
     let changed = false;
+    if (nextName && nextName !== state.name) {
+      state.name = nextName;
+      changed = true;
+    }
     if (nextSubAgentType && nextSubAgentType !== state.subAgentType) {
       state.subAgentType = nextSubAgentType;
       changed = true;

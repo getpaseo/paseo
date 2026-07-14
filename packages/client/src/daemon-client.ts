@@ -498,6 +498,10 @@ export type ProviderSubagentListPayload = Extract<
   SessionOutboundMessage,
   { type: "agent.provider_subagents.list.response" }
 >["payload"];
+export type ArchiveFinishedSubagentsPayload = Extract<
+  SessionOutboundMessage,
+  { type: "agent.subagents.archive_finished.response" }
+>["payload"];
 export type ProviderSubagentTimelinePayload = Extract<
   SessionOutboundMessage,
   { type: "agent.provider_subagents.timeline.get.response" }
@@ -2504,6 +2508,33 @@ export class DaemonClient {
       options: { skipQueue: true },
       select: (response) =>
         response.type === "agent.provider_subagents.list.response" &&
+        response.payload.requestId === requestId
+          ? response.payload
+          : null,
+    });
+    if (payload.error) {
+      throw new Error(payload.error);
+    }
+    return payload;
+  }
+
+  async archiveFinishedSubagents(
+    parentAgentId: string,
+    options: { requestId?: string; timeout?: number } = {},
+  ): Promise<ArchiveFinishedSubagentsPayload> {
+    const requestId = this.createRequestId(options.requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "agent.subagents.archive_finished.request",
+      parentAgentId,
+      requestId,
+    });
+    const payload = await this.sendRequest({
+      requestId,
+      message,
+      timeout: options.timeout,
+      options: { skipQueue: true },
+      select: (response) =>
+        response.type === "agent.subagents.archive_finished.response" &&
         response.payload.requestId === requestId
           ? response.payload
           : null,

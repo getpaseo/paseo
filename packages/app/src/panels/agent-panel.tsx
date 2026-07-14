@@ -68,7 +68,12 @@ import { type Agent, useSessionStore } from "@/stores/session-store";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { buildWorkspaceTabPersistenceKey } from "@/stores/workspace-tabs-store";
 import type { Theme } from "@/styles/theme";
-import { useArchiveSubagent, useDetachSubagent, useSubagentsForParent } from "@/subagents";
+import {
+  useArchiveFinishedSubagents,
+  useArchiveSubagent,
+  useDetachSubagent,
+  useSubagentsForParent,
+} from "@/subagents";
 import { SubagentsTrack } from "@/subagents/track";
 import type { PendingPermission } from "@/types/shared";
 import type { StreamItem } from "@/types/stream";
@@ -1376,6 +1381,9 @@ function ActiveAgentComposer({
   const canDetachSubagents = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.features?.agentDetach === true,
   );
+  const canArchiveFinishedSubagents = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.features?.archiveFinishedSubagents === true,
+  );
   const handleOpenSubagent = useCallback(
     (subagentId: string) => {
       navigateToAgent({ serverId, agentId: subagentId });
@@ -1390,6 +1398,10 @@ function ActiveAgentComposer({
   );
   const handleArchiveSubagent = useArchiveSubagent({ serverId });
   const handleDetachSubagent = useDetachSubagent({ serverId });
+  const handleArchiveFinishedSubagents = useArchiveFinishedSubagents({
+    serverId,
+    parentAgentId: agentId,
+  });
   const workspaceAttachmentScopeKey = useWorkspaceAttachmentScopeKey({
     serverId,
     cwd,
@@ -1490,6 +1502,7 @@ function ActiveAgentComposer({
         onOpenSubagent={handleOpenSubagent}
         onOpenProviderSubagent={handleOpenProviderSubagent}
         onArchiveSubagent={handleArchiveSubagent}
+        onArchiveFinished={canArchiveFinishedSubagents ? handleArchiveFinishedSubagents : undefined}
         onDetachSubagent={canDetachSubagents ? handleDetachSubagent : undefined}
       />
       <Composer

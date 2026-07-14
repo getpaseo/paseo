@@ -63,6 +63,7 @@ const STORED_AGENT_SCHEMA = z.object({
   attentionReason: z.enum(["finished", "error", "permission"]).nullable().optional(),
   attentionTimestamp: z.string().nullable().optional(),
   internal: z.boolean().optional(),
+  dismissedProviderSubagentIds: z.array(z.string()).default([]),
   archivedAt: z.string().nullable().optional(),
 });
 

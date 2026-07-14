@@ -234,7 +234,7 @@ describe("codex tool-call mapper", () => {
       id: `activity-${kind}`,
       kind,
       agentThreadId: "child-thread-1",
-      agentPath: "/root/investigator",
+      agentPath: "/root/research/investigator",
     });
 
     expect(item).toEqual({
@@ -245,8 +245,8 @@ describe("codex tool-call mapper", () => {
       error: null,
       detail: {
         type: "sub_agent",
-        subAgentType: "Sub-agent",
-        description: "/root/investigator",
+        subAgentType: "research/investigator",
+        description: "/root/research/investigator",
         log: "",
         actions: [],
       },

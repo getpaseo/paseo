@@ -226,6 +226,7 @@ type ProviderClientMap = Partial<Record<AgentProvider, AgentClient>>;
 
 export interface CreateAgentOptions {
   labels?: Record<string, string>;
+  dismissedProviderSubagentIds?: string[];
   initialPrompt?: string;
   env?: Record<string, string>;
   persistSession?: boolean;
@@ -338,6 +339,7 @@ interface ManagedAgentBase {
    * User-defined labels for categorizing agents (e.g., { surface: "workspace" }).
    */
   labels: Record<string, string>;
+  dismissedProviderSubagentIds: Set<string>;
 }
 
 type ManagedAgentWithSession = ManagedAgentBase & {
@@ -962,6 +964,51 @@ export class AgentManager {
     return this.providerSubagents.list(parentAgentId);
   }
 
+  async archiveFinishedSubagents(parentAgentId: string): Promise<{
+    archivedAgentIds: string[];
+    dismissedProviderSubagentIds: string[];
+  }> {
+    const parent = this.requirePublicAgent(parentAgentId);
+    const registry = this.requireRegistry();
+    const archivedAgentIds: string[] = [];
+
+    for (const record of await registry.list()) {
+      if (record.archivedAt || record.labels[PARENT_AGENT_ID_LABEL] !== parentAgentId) {
+        continue;
+      }
+      const live = this.agents.get(record.id);
+      const status = live?.lifecycle ?? record.lastStatus;
+      if (isAgentBusy(status)) {
+        continue;
+      }
+      if (live) {
+        await this.archiveAgent(record.id);
+      } else {
+        await this.markRecordArchived(record);
+        await this.cascadeArchiveChildren(record.id);
+      }
+      archivedAgentIds.push(record.id);
+    }
+
+    const dismissedProviderSubagentIds = this.providerSubagents
+      .list(parentAgentId)
+      .filter((subagent) => subagent.status !== "running")
+      .map((subagent) => subagent.id);
+    for (const subagentId of dismissedProviderSubagentIds) {
+      parent.dismissedProviderSubagentIds.add(subagentId);
+      const event = this.providerSubagents.apply(parentAgentId, parent.provider, {
+        type: "remove",
+        id: subagentId,
+      });
+      this.dispatch({ type: "provider_subagent", event });
+    }
+    if (dismissedProviderSubagentIds.length > 0) {
+      await this.persistSnapshot(parent);
+    }
+
+    return { archivedAgentIds, dismissedProviderSubagentIds };
+  }
+
   getProviderSubagent(
     parentAgentId: string,
     subagentId: string,
@@ -1005,6 +1052,7 @@ export class AgentManager {
     const session = await client.createSession(providerLaunchConfig, launchContext, createOptions);
     return this.registerSession(session, storedConfig, resolvedAgentId, {
       labels: options.labels,
+      dismissedProviderSubagentIds: options.dismissedProviderSubagentIds,
       initialTitle: options.initialTitle,
       workspaceId: options.workspaceId,
     });
@@ -1030,6 +1078,7 @@ export class AgentManager {
       lastUserMessageAt?: Date | null;
       labels?: Record<string, string>;
       workspaceId?: string;
+      dismissedProviderSubagentIds?: string[];
     },
   ): Promise<ManagedAgent> {
     return this.trackAgentRegistrationOperation(
@@ -1047,6 +1096,7 @@ export class AgentManager {
       lastUserMessageAt?: Date | null;
       labels?: Record<string, string>;
       workspaceId?: string;
+      dismissedProviderSubagentIds?: string[];
     },
   ): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
@@ -1233,6 +1283,7 @@ export class AgentManager {
         lastUsage: preservedLastUsage,
         lastError: preservedLastError,
         attention: preservedAttention,
+        dismissedProviderSubagentIds: [...existing.dismissedProviderSubagentIds],
       });
     } finally {
       if (!handedToRegistration) {
@@ -1443,6 +1494,7 @@ export class AgentManager {
         attention: { requiresAttention: false },
         internal: record.internal,
         labels: record.labels,
+        dismissedProviderSubagentIds: new Set(record.dismissedProviderSubagentIds),
       },
     });
   }
@@ -2566,6 +2618,7 @@ export class AgentManager {
       initialTitle?: string | null;
       publishWhenReady?: boolean;
       workspaceId?: string;
+      dismissedProviderSubagentIds?: string[];
     },
   ): Promise<ManagedAgent> {
     let registered = false;
@@ -2701,6 +2754,7 @@ export class AgentManager {
           attention?: AttentionState;
           persistence?: AgentPersistenceHandle;
           workspaceId?: string;
+          dismissedProviderSubagentIds?: string[];
         }
       | undefined;
   }): ActiveManagedAgent {
@@ -2738,6 +2792,7 @@ export class AgentManager {
       attention: resolveInitialAttention(options?.attention),
       internal: config.internal ?? false,
       labels: options?.labels ?? {},
+      dismissedProviderSubagentIds: new Set(options?.dismissedProviderSubagentIds ?? []),
     } as ActiveManagedAgent;
   }
 
@@ -2851,8 +2906,10 @@ export class AgentManager {
     event: AgentStreamEvent,
   ): Promise<void> {
     if (event.type === "provider_subagent") {
-      const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
-      this.dispatch({ type: "provider_subagent", event: update });
+      const update = this.applyProviderSubagentEvent(agent, event);
+      if (update) {
+        this.dispatch({ type: "provider_subagent", event: update });
+      }
       return;
     }
     const turnId = getAgentStreamEventTurnId(event);
@@ -2890,6 +2947,16 @@ export class AgentManager {
       },
       "agent.manager.notify_waiters",
     );
+  }
+
+  private applyProviderSubagentEvent(
+    agent: ManagedAgent,
+    event: Extract<AgentStreamEvent, { type: "provider_subagent" }>,
+  ): ProviderSubagentStoreEvent | null {
+    if (agent.dismissedProviderSubagentIds.has(event.event.id)) {
+      return null;
+    }
+    return this.providerSubagents.apply(agent.id, event.provider, event.event);
   }
 
   private async resolveInitialPersistedTitle(
@@ -3029,8 +3096,8 @@ export class AgentManager {
       }
     }
     for (const event of providerSubagentEvents) {
-      const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
-      if (broadcast) {
+      const update = this.applyProviderSubagentEvent(agent, event);
+      if (broadcast && update) {
         this.dispatch({ type: "provider_subagent", event: update });
       }
     }
@@ -3060,8 +3127,8 @@ export class AgentManager {
     try {
       for await (const event of agent.session.streamHistory()) {
         if (event.type === "provider_subagent") {
-          const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
-          if (broadcast) {
+          const update = this.applyProviderSubagentEvent(agent, event);
+          if (broadcast && update) {
             this.dispatch({ type: "provider_subagent", event: update });
           }
           continue;

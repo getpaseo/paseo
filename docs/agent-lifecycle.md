@@ -89,7 +89,9 @@ Clicking either kind opens a workspace tab. A Paseo subagent tab is a normal int
 
 Provider timelines use the same structural timeline item format but deliberately have a separate lifecycle and transport. A provider thread/session identifier is not a Paseo agent identifier, and closing its tab is always layout-only.
 
-Archived Paseo subagents disappear from the track, by design. To remove one from the track without closing its tab, use the **archive button (X)** on the row — it opens a confirm dialog and archives the subagent on confirm. Provider-owned rows have no Paseo lifecycle controls and disappear only when the provider removes them or the parent session is discarded.
+Archived Paseo subagents disappear from the track, by design. To remove one from the track without closing its tab, use the **archive button** on the row — it opens a confirm dialog and archives the subagent on confirm. Provider-owned rows have no individual Paseo lifecycle controls.
+
+The track header's **Archive finished** action handles both kinds in one daemon operation. Finished Paseo children are soft-deleted normally. Finished provider children are hidden from the track; their native sessions are untouched. The daemon persists those provider IDs on the parent as dismissal tombstones so replaying Claude or Codex history does not resurrect them. Running children of either kind stay visible.
 
 To keep the agent alive but remove it from the parent's track, use **detach**. The daemon clears the parent label, emits the normal agent update, and every client reclassifies the agent from subagent to root/sibling from that updated snapshot.
 
@@ -109,7 +111,7 @@ We considered universal decoupling (no tab close ever archives, archive is alway
 
 ### Subagent accumulation under long-lived parents
 
-A parent that spawns many subagents will see the track grow. There's no automatic cleanup for completed subagents — the user prunes via the archive button on each row. A bulk gesture (e.g. "archive all idle children") could land later if this becomes a real problem.
+A parent that spawns many subagents will see the track grow until the user chooses **Archive finished**. Cleanup is explicit rather than automatic so completed child output remains available until the user is done with it.
 
 ### Cross-client tab dismissal
 
@@ -131,5 +133,6 @@ Each agent is a single JSON file. Fields relevant to this doc:
 | `archivedAt`                      | `string?`     | Soft-delete timestamp (ISO 8601)                                                             |
 | `labels["paseo.parent-agent-id"]` | `string?`     | Parent agent ID, set automatically by `create_agent` when `relationship.kind === "subagent"` |
 | `lastStatus`                      | `AgentStatus` | `initializing` / `idle` / `running` / `error` / `closed`                                     |
+| `dismissedProviderSubagentIds`    | `string[]`    | Native child IDs hidden by the parent's **Archive finished** action                          |
 
 See [`docs/data-model.md`](./data-model.md) for the full agent record.

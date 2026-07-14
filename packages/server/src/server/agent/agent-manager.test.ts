@@ -2826,6 +2826,73 @@ test("hydrateTimelineFromProvider restores and broadcasts provider children from
   });
 });
 
+test("archiveFinishedSubagents archives managed children and keeps dismissed provider history hidden", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-archive-finished-subagents-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  class ParentSession extends TestAgentSession {
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      yield {
+        type: "provider_subagent",
+        provider: "codex",
+        event: { type: "upsert", id: "native-finished", status: "completed" },
+      };
+      yield {
+        type: "provider_subagent",
+        provider: "codex",
+        event: { type: "upsert", id: "native-running", status: "running" },
+      };
+      yield {
+        type: "provider_subagent",
+        provider: "codex",
+        event: { type: "upsert", id: "native-failed", status: "failed" },
+      };
+    }
+  }
+  class SubagentsClient extends TestAgentClient {
+    private sessionsCreated = 0;
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      this.sessionsCreated += 1;
+      return this.sessionsCreated === 1 ? new ParentSession(config) : new TestAgentSession(config);
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new SubagentsClient() },
+    registry: storage,
+    logger,
+  });
+  const parent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const managedFinished = await manager.createAgent(
+    { provider: "codex", cwd: workdir },
+    undefined,
+    { labels: { [PARENT_AGENT_ID_LABEL]: parent.id }, workspaceId: undefined },
+  );
+  await manager.hydrateTimelineFromProvider(parent.id);
+
+  const result = await manager.archiveFinishedSubagents(parent.id);
+
+  expect(result).toEqual({
+    archivedAgentIds: [managedFinished.id],
+    dismissedProviderSubagentIds: ["native-finished", "native-failed"],
+  });
+  expectArchivedAgentRecord(await storage.get(managedFinished.id), "closed");
+  expect(manager.listProviderSubagents(parent.id).map((subagent) => subagent.id)).toEqual([
+    "native-running",
+  ]);
+  expect((await storage.get(parent.id))?.dismissedProviderSubagentIds).toEqual([
+    "native-finished",
+    "native-failed",
+  ]);
+
+  await manager.hydrateTimelineFromProvider(parent.id, { force: true });
+
+  expect(manager.listProviderSubagents(parent.id).map((subagent) => subagent.id)).toEqual([
+    "native-running",
+  ]);
+});
+
 test("force provider hydration removes children absent from current history", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-provider-child-force-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);

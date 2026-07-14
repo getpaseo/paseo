@@ -5036,6 +5036,7 @@ function readClaudeSidechainHistory(historyPath: string): string[] {
 }
 
 interface ClaudeHistoricalSubagentToolCall {
+  name?: string;
   subagentType?: string;
   description?: string;
 }
@@ -5057,9 +5058,11 @@ function readClaudeHistoricalSubagentToolCalls(
         continue;
       }
       const input = toObjectRecord(block.input);
+      const name = readNonEmptyString(input?.name);
       const subagentType = readNonEmptyString(input?.subagent_type);
       const description = readNonEmptyString(input?.description);
       toolCalls.set(block.id, {
+        ...(name ? { name } : {}),
         ...(subagentType ? { subagentType } : {}),
         ...(description ? { description } : {}),
       });
@@ -5121,6 +5124,12 @@ function buildClaudePersistedSidechainEvents(
   return events;
 }
 
+function resolveClaudeHistoricalSubagentTitle(
+  toolCall: ClaudeHistoricalSubagentToolCall | undefined,
+): string {
+  return toolCall?.name ?? toolCall?.subagentType ?? "Claude subagent";
+}
+
 function buildClaudePersistedSidechainAgentEvents(
   agentId: string,
   entries: ClaudeHistoryEntry[],
@@ -5139,7 +5148,7 @@ function buildClaudePersistedSidechainAgentEvents(
       event: {
         type: "upsert",
         id,
-        title: toolCall?.subagentType ?? "Claude subagent",
+        title: resolveClaudeHistoricalSubagentTitle(toolCall),
         description: toolCall?.description ?? null,
         status: "running",
         toolCallId: result?.toolCallId ?? null,

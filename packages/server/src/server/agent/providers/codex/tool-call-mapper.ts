@@ -993,6 +993,7 @@ function mapCollabAgentToolCallItem(
 function mapSubAgentActivityItem(
   item: z.infer<typeof CodexSubAgentActivityItemSchema>,
 ): ToolCallTimelineItem {
+  const nativeName = item.agentPath.replace(/^\/root(?:\/|$)/, "") || "Sub-agent";
   return {
     type: "tool_call",
     callId: item.id,
@@ -1001,7 +1002,7 @@ function mapSubAgentActivityItem(
     error: null,
     detail: {
       type: "sub_agent",
-      subAgentType: "Sub-agent",
+      subAgentType: nativeName,
       description: item.agentPath,
       log: "",
       actions: [],

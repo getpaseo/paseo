@@ -1308,6 +1308,12 @@ export const ProviderSubagentListRequestMessageSchema = z.object({
   requestId: z.string(),
 });
 
+export const ArchiveFinishedSubagentsRequestMessageSchema = z.object({
+  type: z.literal("agent.subagents.archive_finished.request"),
+  parentAgentId: z.string(),
+  requestId: z.string(),
+});
+
 export const ProviderSubagentTimelineRequestMessageSchema = z.object({
   type: z.literal("agent.provider_subagents.timeline.get.request"),
   parentAgentId: z.string(),
@@ -2149,6 +2155,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   DaemonUpdateRequestMessageSchema,
   FetchAgentTimelineRequestMessageSchema,
   ProviderSubagentListRequestMessageSchema,
+  ArchiveFinishedSubagentsRequestMessageSchema,
   ProviderSubagentTimelineRequestMessageSchema,
   AgentForkContextRequestMessageSchema,
   SetAgentModeRequestMessageSchema,
@@ -2431,6 +2438,8 @@ export const ServerInfoStatusPayloadSchema = z
         agentForkContext: z.boolean().optional(),
         // COMPAT(providerSubagents): added in v0.1.107, remove gate after 2027-01-12.
         providerSubagents: z.boolean().optional(),
+        // COMPAT(archiveFinishedSubagents): added in v0.1.108, remove gate after 2027-01-14.
+        archiveFinishedSubagents: z.boolean().optional(),
         // COMPAT(workspacePinning): added in v0.1.107, remove gate after 2027-01-12.
         workspacePinning: z.boolean().optional(),
         // COMPAT(workspaceGithubClone): added in v0.1.108, remove gate after 2027-01-13.
@@ -3062,6 +3071,17 @@ export const ProviderSubagentListResponseMessageSchema = z.object({
     requestId: z.string(),
     parentAgentId: z.string(),
     subagents: z.array(ProviderSubagentDescriptorPayloadSchema),
+    error: z.string().nullable(),
+  }),
+});
+
+export const ArchiveFinishedSubagentsResponseMessageSchema = z.object({
+  type: z.literal("agent.subagents.archive_finished.response"),
+  payload: z.object({
+    requestId: z.string(),
+    parentAgentId: z.string(),
+    archivedAgentIds: z.array(z.string()),
+    dismissedProviderSubagentIds: z.array(z.string()),
     error: z.string().nullable(),
   }),
 });
@@ -4373,6 +4393,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   FetchAgentResponseMessageSchema,
   FetchAgentTimelineResponseMessageSchema,
   ProviderSubagentListResponseMessageSchema,
+  ArchiveFinishedSubagentsResponseMessageSchema,
   ProviderSubagentTimelineResponseMessageSchema,
   ProviderSubagentUpdateMessageSchema,
   AgentForkContextResponseMessageSchema,

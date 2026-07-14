@@ -73,4 +73,32 @@ describe("provider subagent protocol", () => {
       }),
     ).toMatchObject({ payload: { subagents: [{ id: "child-1" }] } });
   });
+
+  test("accepts one archive-finished operation across managed and provider children", () => {
+    expect(
+      SessionInboundMessageSchema.parse({
+        type: "agent.subagents.archive_finished.request",
+        parentAgentId: "parent-1",
+        requestId: "request-1",
+      }),
+    ).toMatchObject({ parentAgentId: "parent-1" });
+
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "agent.subagents.archive_finished.response",
+        payload: {
+          requestId: "request-1",
+          parentAgentId: "parent-1",
+          archivedAgentIds: ["managed-1"],
+          dismissedProviderSubagentIds: ["native-1"],
+          error: null,
+        },
+      }),
+    ).toMatchObject({
+      payload: {
+        archivedAgentIds: ["managed-1"],
+        dismissedProviderSubagentIds: ["native-1"],
+      },
+    });
+  });
 });

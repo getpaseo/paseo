@@ -1486,6 +1486,8 @@ export class Session {
         return this.handleFetchAgentTimelineRequest(msg);
       case "agent.provider_subagents.list.request":
         return this.handleProviderSubagentListRequest(msg);
+      case "agent.subagents.archive_finished.request":
+        return this.handleArchiveFinishedSubagentsRequest(msg);
       case "agent.provider_subagents.timeline.get.request":
         return this.handleProviderSubagentTimelineRequest(msg);
       case "agent.fork_context.request":
@@ -5442,6 +5444,34 @@ export class Session {
           requestId: msg.requestId,
           parentAgentId: msg.parentAgentId,
           subagents: [],
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+    }
+  }
+
+  private async handleArchiveFinishedSubagentsRequest(
+    msg: Extract<SessionInboundMessage, { type: "agent.subagents.archive_finished.request" }>,
+  ): Promise<void> {
+    try {
+      const result = await this.agentManager.archiveFinishedSubagents(msg.parentAgentId);
+      this.emit({
+        type: "agent.subagents.archive_finished.response",
+        payload: {
+          requestId: msg.requestId,
+          parentAgentId: msg.parentAgentId,
+          ...result,
+          error: null,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "agent.subagents.archive_finished.response",
+        payload: {
+          requestId: msg.requestId,
+          parentAgentId: msg.parentAgentId,
+          archivedAgentIds: [],
+          dismissedProviderSubagentIds: [],
           error: error instanceof Error ? error.message : String(error),
         },
       });
