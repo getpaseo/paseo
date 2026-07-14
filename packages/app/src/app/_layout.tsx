@@ -414,9 +414,9 @@ interface AppContainerProps {
 }
 
 const THEME_CYCLE_ORDER: ThemeName[] = ["dark", "zinc", "midnight", "claude", "ghostty", "light"];
+const WINDOW_SIDEBAR_TOGGLE_HORIZONTAL_PADDING = 12;
 
 function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppContainerProps) {
-  const { theme } = useUnistyles();
   const daemons = useHosts();
   const { settings, updateSettings } = useAppSettings();
   const toggleMobileAgentList = usePanelStore((state) => state.toggleMobileAgentList);
@@ -496,6 +496,7 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
   const appChromeLayout = resolveDesktopAppChromeLayout({
     desktopSidebarRendered,
     hasTopLeftWindowControls,
+    sidebarControlsEnabled: chromeEnabled && !isFocusModeEnabled,
   });
   const sidebarChrome = (
     <SidebarChrome
@@ -531,7 +532,7 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
         <WindowChromeRegion corners="top-left">
           <WindowChromeSafeArea
             placement="inline"
-            horizontalPadding={theme.spacing[3]}
+            horizontalPadding={WINDOW_SIDEBAR_TOGGLE_HORIZONTAL_PADDING}
             pointerEvents="box-none"
             style={layoutStyles.windowSidebarToggle}
           >

@@ -13,6 +13,7 @@ describe("desktop sidebar layout", () => {
       resolveDesktopAppChromeLayout({
         desktopSidebarRendered: true,
         hasTopLeftWindowControls: true,
+        sidebarControlsEnabled: true,
       }),
     ).toEqual({
       sidebarCorners: "top-left",
@@ -23,6 +24,7 @@ describe("desktop sidebar layout", () => {
       resolveDesktopAppChromeLayout({
         desktopSidebarRendered: true,
         hasTopLeftWindowControls: false,
+        sidebarControlsEnabled: true,
       }),
     ).toEqual({
       sidebarCorners: "none",
@@ -33,12 +35,23 @@ describe("desktop sidebar layout", () => {
       resolveDesktopAppChromeLayout({
         desktopSidebarRendered: false,
         hasTopLeftWindowControls: true,
+        sidebarControlsEnabled: true,
       }),
     ).toEqual({
       sidebarCorners: "none",
       contentCorners: "both",
       sidebarToggleOwner: "window",
     });
+  });
+
+  it("hides the window-owned sidebar toggle when app chrome is suppressed", () => {
+    expect(
+      resolveDesktopAppChromeLayout({
+        desktopSidebarRendered: false,
+        hasTopLeftWindowControls: true,
+        sidebarControlsEnabled: false,
+      }).sidebarToggleOwner,
+    ).toBe("none");
   });
 
   it("clamps a persisted wide sidebar to preserve the center pane", () => {
