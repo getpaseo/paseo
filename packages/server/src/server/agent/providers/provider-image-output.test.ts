@@ -63,6 +63,12 @@ describe("isProviderImageMarkdown", () => {
     expect(markdown).toBe("![Image](file:///tmp/screenshot%231%3Fdraft.png)");
   });
 
+  test("preserves double-leading slashes in POSIX file paths", () => {
+    const markdown = renderImageMarkdown("//tmp/screenshot#1.png");
+
+    expect(markdown).toBe("![Image](file:////tmp/screenshot%231.png)");
+  });
+
   test.each([
     ["UNC", "\\\\server\\share\\shot#1.png", "file://server/share/shot%231.png"],
     [

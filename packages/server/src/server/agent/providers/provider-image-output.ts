@@ -136,6 +136,7 @@ function encodeFilePath(value: string): string {
 }
 
 function windowsFileUri(value: string): string | null {
+  const isWindowsNetworkPath = value.startsWith("\\\\");
   let normalizedPath = value.replace(/\\/g, "/");
   if (/^\/\/\?\/UNC\//i.test(normalizedPath)) {
     normalizedPath = `//${normalizedPath.slice(8)}`;
@@ -147,7 +148,7 @@ function windowsFileUri(value: string): string | null {
     const drive = normalizedPath.slice(0, 2);
     return `file:///${drive}${encodeFilePath(normalizedPath.slice(2))}`;
   }
-  if (normalizedPath.startsWith("//")) {
+  if (isWindowsNetworkPath && normalizedPath.startsWith("//")) {
     return `file:${encodeFilePath(normalizedPath)}`;
   }
   return null;
