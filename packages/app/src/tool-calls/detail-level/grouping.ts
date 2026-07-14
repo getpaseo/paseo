@@ -26,12 +26,16 @@ export interface GroupedToolCalls<TGroup> {
   tail: StreamItem[];
   head: StreamItem[];
   groupsByHostId: ToolCallGroupLookup<TGroup>;
+  historyGroupUpdatesByHostId: ToolCallGroupLookup<TGroup>;
 }
 
 export interface ToolCallGroupLookup<TGroup> {
   readonly size: number;
   get(id: string): TGroup | undefined;
+  has(id: string): boolean;
 }
+
+const EMPTY_GROUPS = new Map<string, never>();
 
 export function describeToolCall(item: ToolCallItem): ToolCallDescriptor {
   if (item.payload.source === "agent") {
@@ -195,6 +199,7 @@ export function groupLiveToolCalls<TGroup>(input: {
       tail: input.history.tail,
       head: input.head,
       groupsByHostId: input.history.groupsByHostId,
+      historyGroupUpdatesByHostId: EMPTY_GROUPS,
     };
   }
   if (input.history.groupsByHostId.size === 0) {
@@ -202,15 +207,22 @@ export function groupLiveToolCalls<TGroup>(input: {
       tail: input.history.tail,
       head,
       groupsByHostId: liveGroups,
+      historyGroupUpdatesByHostId: EMPTY_GROUPS,
     };
   }
   const groupsByHostId = new Map(input.history.groupsByHostId);
+  let historyGroupUpdatesByHostId: Map<string, TGroup> | null = null;
   for (const [id, group] of liveGroups) {
     groupsByHostId.set(id, group);
+    if (input.history.groupsByHostId.has(id)) {
+      historyGroupUpdatesByHostId ??= new Map();
+      historyGroupUpdatesByHostId.set(id, group);
+    }
   }
   return {
     tail: input.history.tail,
     head,
     groupsByHostId,
+    historyGroupUpdatesByHostId: historyGroupUpdatesByHostId ?? EMPTY_GROUPS,
   };
 }

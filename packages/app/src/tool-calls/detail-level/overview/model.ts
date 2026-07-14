@@ -18,6 +18,7 @@ export interface OverviewToolCallGroup {
   run: ToolCallRun;
   summary: OverviewSummary;
   failedCount: number;
+  isLoading: boolean;
 }
 
 export type OverviewHeader = { kind: "latest"; call: ToolCallRun["latest"] } | { kind: "summary" };
@@ -47,6 +48,7 @@ export function buildOverviewGroup(run: ToolCallRun): OverviewToolCallGroup {
   const editedFiles = new Set<string>();
   const readFiles = new Set<string>();
   let failedCount = 0;
+  let isLoading = false;
   let commandCount = 0;
   let searchCount = 0;
   let otherToolCount = 0;
@@ -56,6 +58,7 @@ export function buildOverviewGroup(run: ToolCallRun): OverviewToolCallGroup {
     const descriptor = describeToolCall(call);
     const normalizedName = descriptor.name.trim().toLowerCase();
     failedCount += descriptor.status === "failed" ? 1 : 0;
+    isLoading ||= descriptor.status === "running" || descriptor.status === "executing";
     if (isPaseoCall(descriptor.name, normalizedName)) {
       paseoCallCount += 1;
     } else if (descriptor.detail.type === "edit" || descriptor.detail.type === "write") {
@@ -83,6 +86,7 @@ export function buildOverviewGroup(run: ToolCallRun): OverviewToolCallGroup {
     mode: "overview",
     run,
     failedCount,
+    isLoading,
     summary,
   };
 }

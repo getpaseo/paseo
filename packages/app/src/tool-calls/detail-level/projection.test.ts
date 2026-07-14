@@ -130,6 +130,16 @@ describe("tool call detail-level projection", () => {
     expect(resolveOverviewHeader(group, true)).toEqual({ kind: "summary" });
   });
 
+  it("keeps a parallel group loading while any call is still running", () => {
+    const calls = [
+      toolCall("1", { type: "shell", command: "slow" }, { status: "running" }),
+      toolCall("2", { type: "shell", command: "done" }),
+    ];
+    const result = project({ level: "overview", head: calls, isTurnActive: true });
+
+    expect(result.groupsByHostId.get("1")?.isLoading).toBe(true);
+  });
+
   it("keeps a one-call run presented as its tool call", () => {
     const call = toolCall("1", { type: "shell", command: "one" });
     const result = project({ level: "overview", head: [call] });
@@ -261,6 +271,7 @@ describe("tool call detail-level projection", () => {
       mode: "overview",
       run: expect.any(Object),
       failedCount: 1,
+      isLoading: false,
       summary: {
         editedFileCount: 1,
         commandCount: 1,
@@ -393,6 +404,8 @@ describe("tool call detail-level projection", () => {
     expect(second.tail).toBe(prepared.grouped.tail);
     expect(first.groupsByHostId.get("1")).toBe(prepared.grouped.groupsByHostId.get("1"));
     expect(second.groupsByHostId.get("1")).toBe(prepared.grouped.groupsByHostId.get("1"));
+    expect(first.historyGroupUpdatesByHostId.size).toBe(0);
+    expect(second.historyGroupUpdatesByHostId).toBe(first.historyGroupUpdatesByHostId);
     expect(second.groupsByHostId.get("5")?.run.calls).toHaveLength(2);
   });
 
@@ -428,6 +441,8 @@ describe("tool call detail-level projection", () => {
     expect(second.tail).toBe(prepared.grouped.tail);
     expect(first.groupsByHostId).toBe(prepared.grouped.groupsByHostId);
     expect(second.groupsByHostId).toBe(prepared.grouped.groupsByHostId);
+    expect(first.historyGroupUpdatesByHostId.size).toBe(0);
+    expect(second.historyGroupUpdatesByHostId).toBe(first.historyGroupUpdatesByHostId);
   });
 
   it("forms one group across the retained-history and live-head boundary", () => {
@@ -453,6 +468,7 @@ describe("tool call detail-level projection", () => {
       latest: head[1],
       isSealed: false,
     });
+    expect(result.historyGroupUpdatesByHostId.get("1")).toBe(result.groupsByHostId.get("1"));
   });
 
   it("keeps a trailing history-only group in the retained segment", () => {

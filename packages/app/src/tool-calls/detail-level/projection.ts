@@ -45,6 +45,7 @@ export function projectToolCallDetailLevel(input: {
       tail: input.tail,
       head: input.head,
       groupsByHostId: EMPTY_TOOL_CALL_GROUPS,
+      historyGroupUpdatesByHostId: EMPTY_TOOL_CALL_GROUPS,
     };
   }
   if (!input.preparedHistory || input.preparedHistory.mode !== input.level) {

@@ -775,6 +775,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           <OverviewToolCallGroupView
             group={group}
             expanded={expanded}
+            isCompact={isMobile}
             isLastInSequence={layoutItem.isLastInToolSequence}
             onExpandedChange={setToolCallGroupExpanded}
             cwd={context.cwd}
@@ -799,6 +800,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         context.cwd,
         expandedToolCallGroupIds,
         handleToolCallOpenFile,
+        isMobile,
         renderSingleToolCallItem,
         setToolCallGroupExpanded,
       ],
@@ -992,6 +994,14 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const streamScrollEnabled =
       !streamRenderStrategy.shouldDisableParentScrollOnInlineDetailsExpansion() ||
       expandedInlineToolCallIds.size === 0;
+    const historyRowRevision = useMemo(
+      () => ({
+        contentById: projectedToolCalls.historyGroupUpdatesByHostId,
+        displayStateById: expandedToolCallGroupIds,
+        globalDisplayState: isMobile,
+      }),
+      [expandedToolCallGroupIds, isMobile, projectedToolCalls.historyGroupUpdatesByHostId],
+    );
 
     return (
       <ToolCallSheetProvider>
@@ -1000,6 +1010,8 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             {streamRenderStrategy.render({
               agentId,
               segments: renderModel.segments,
+              historyRowRevision,
+              liveHeadRowRevision: expandedToolCallGroupIds,
               boundary,
               renderers,
               listEmptyComponent,
