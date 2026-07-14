@@ -1081,7 +1081,22 @@ export class VoiceSession {
 
     // Voice abort should always interrupt active agent output immediately.
     if (this.isVoiceMode && this.voiceModeAgentId) {
-      await this.host.interruptAgentIfRunning(this.voiceModeAgentId);
+      try {
+        await this.host.interruptAgentIfRunning(this.voiceModeAgentId);
+      } catch (error) {
+        const message = `Voice interruption failed: ${getErrorMessage(error)}`;
+        this.emit({
+          type: "activity_log",
+          payload: {
+            id: uuidv4(),
+            timestamp: new Date(),
+            type: "error",
+            content: message,
+            metadata: { voiceAbortFailed: true },
+          },
+        });
+        throw error;
+      }
     }
 
     if (this.processingPhase === "transcribing") {

@@ -234,7 +234,13 @@ function buildVerifierTitle(loop: LoopRecord, iterationIndex: number): string {
 
 type LoopAgentManager = Pick<
   AgentManager,
-  "archiveAgent" | "cancelAgentRun" | "closeAgent" | "runAgent" | "subscribe" | "waitForAgentEvent"
+  | "archiveAgent"
+  | "cancelAgentRun"
+  | "closeAgent"
+  | "getAgent"
+  | "runAgent"
+  | "subscribe"
+  | "waitForAgentEvent"
 >;
 
 interface LoopExecutionContext {
@@ -546,11 +552,20 @@ export class LoopService {
     if (cancellation.status !== "refused") {
       return;
     }
-    if (archive) {
-      await this.options.agentManager.archiveAgent(agentId);
+    if (!this.options.agentManager.getAgent(agentId)) {
       return;
     }
-    await this.options.agentManager.closeAgent(agentId);
+    try {
+      if (archive) {
+        await this.options.agentManager.archiveAgent(agentId);
+        return;
+      }
+      await this.options.agentManager.closeAgent(agentId);
+    } catch (error) {
+      if (!(error instanceof Error) || error.message !== `Unknown agent '${agentId}'`) {
+        throw error;
+      }
+    }
   }
 
   private async executeLoop(loopId: string, signal: AbortSignal): Promise<void> {

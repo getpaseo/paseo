@@ -1100,6 +1100,56 @@ describe("LoopService", () => {
     expect(closedAgentIds).toContain(workerAgentId);
   });
 
+  test("tolerates a loop worker closing while graceful cancellation is refused", async () => {
+    let release: (() => void) | null = null;
+    const blocker = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const cancelledAgentIds: string[] = [];
+    const manager = new AgentManager({
+      clients: {
+        claude: new ScriptedAgentClient("claude", {
+          async onRun({ config }) {
+            if (config.title?.includes("worker")) {
+              await blocker;
+              return "finished";
+            }
+            return '{"passed":true,"reason":"ok"}';
+          },
+        }),
+      },
+      registry: storage,
+      logger,
+    });
+    const closeAgent = manager.closeAgent.bind(manager);
+    manager.cancelAgentRun = async (agentId) => {
+      cancelledAgentIds.push(agentId);
+      await closeAgent(agentId);
+      return { status: "refused" };
+    };
+    const service = createLoopService({
+      paseoHome,
+      agentManager: manager,
+      agentStorage: storage,
+      logger,
+    });
+    await service.initialize();
+
+    const loop = await service.runLoop({
+      prompt: "Finish while Stop is canceling",
+      cwd: workspaceDir,
+      model: "test-model",
+      verifyChecks: ["test -f never.txt"],
+    });
+    const workerAgentId = await waitForActiveWorkerRun(service, manager, loop.id);
+    const stopPromise = service.stopLoop(loop.id);
+
+    await waitForCancelledAgent(cancelledAgentIds, workerAgentId);
+    release?.();
+
+    await expect(stopPromise).resolves.toMatchObject({ status: "stopped" });
+  });
+
   test("stops while waiting for loop workspace provisioning without starting a worker", async () => {
     let resolveWorkspace: ((workspaceId: string) => void) | null = null;
     const workspaceProvisioned = new Promise<string>((resolve) => {

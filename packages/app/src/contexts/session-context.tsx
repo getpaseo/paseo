@@ -476,6 +476,15 @@ function applyToolErrorToMessages(
     );
 }
 
+function notifyVoiceAbortFailure(
+  data: Extract<SessionOutboundMessage, { type: "activity_log" }>["payload"],
+  notifyError: (message: string) => void,
+): void {
+  if (data.type === "error" && data.metadata?.voiceAbortFailed === true) {
+    notifyError(data.content);
+  }
+}
+
 interface SessionProviderSharedProps {
   children: ReactNode;
   serverId: string;
@@ -1570,6 +1579,8 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         setMessages(serverId, applyToolError);
       }
 
+      notifyVoiceAbortFailure(data, toast.error);
+
       let activityType: "system" | "info" | "success" | "error" = "info";
       if (data.type === "error") activityType = "error";
 
@@ -1805,6 +1816,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     applyWorkspaceSetupProgress,
     applyTimelineResponse,
     updateSessionServerInfo,
+    toast,
     voiceRuntime,
     voiceAudioEngine,
   ]);

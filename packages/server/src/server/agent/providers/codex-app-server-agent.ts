@@ -4196,7 +4196,9 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   async interrupt(): Promise<void> {
-    if (!this.client || !this.currentThreadId) return;
+    if (!this.client || !this.currentThreadId) {
+      throw new Error("Cannot interrupt Codex before the active thread is initialized");
+    }
     if (!this.currentTurnId) {
       throw new Error("Cannot interrupt Codex before turn/started identifies the active turn");
     }

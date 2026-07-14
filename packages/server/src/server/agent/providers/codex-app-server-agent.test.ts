@@ -2567,6 +2567,22 @@ describe("Codex app-server provider", () => {
     }
   });
 
+  test("rejects an interrupt before Codex initializes the thread", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+
+    await expect(session.interrupt()).rejects.toThrow(
+      "Cannot interrupt Codex before the active thread is initialized",
+    );
+
+    await session.close();
+  });
+
   test("interrupts an autonomous Codex turn identified by live notifications", async () => {
     const session = createSession();
     const requests: Array<{ method: string; params: unknown }> = [];

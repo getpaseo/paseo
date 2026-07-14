@@ -122,6 +122,16 @@ describe("VoiceSession streaming transcription", () => {
       "active run cancellation was not acknowledged",
     );
     expect(host.interruptAgentIfRunning).toHaveBeenCalledWith(VOICE_AGENT_ID);
+    expect(host.emitted).toContainEqual(
+      expect.objectContaining({
+        type: "activity_log",
+        payload: expect.objectContaining({
+          type: "error",
+          content: "Voice interruption failed: active run cancellation was not acknowledged",
+          metadata: { voiceAbortFailed: true },
+        }),
+      }),
+    );
 
     await voiceSession.cleanup();
   });
