@@ -1150,6 +1150,56 @@ describe("LoopService", () => {
     await expect(stopPromise).resolves.toMatchObject({ status: "stopped" });
   });
 
+  test("reports unexpected loop worker cancellation errors", async () => {
+    let release: (() => void) | null = null;
+    const blocker = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const manager = new AgentManager({
+      clients: {
+        claude: new ScriptedAgentClient("claude", {
+          async onRun({ config }) {
+            if (config.title?.includes("worker")) {
+              await blocker;
+              return "finished";
+            }
+            return '{"passed":true,"reason":"ok"}';
+          },
+        }),
+      },
+      registry: storage,
+      logger,
+    });
+    manager.cancelAgentRun = async () => {
+      throw new Error("cancellation transport failed");
+    };
+    const service = createLoopService({
+      paseoHome,
+      agentManager: manager,
+      agentStorage: storage,
+      logger,
+    });
+    await service.initialize();
+
+    const loop = await service.runLoop({
+      prompt: "Fail while Stop is canceling",
+      cwd: workspaceDir,
+      model: "test-model",
+      verifyChecks: ["test -f never.txt"],
+    });
+    await waitForActiveWorkerRun(service, manager, loop.id);
+    const execution = (
+      service as unknown as { running: Map<string, { promise: Promise<void> }> }
+    ).running.get(loop.id)?.promise;
+
+    try {
+      await expect(service.stopLoop(loop.id)).rejects.toThrow("cancellation transport failed");
+    } finally {
+      release?.();
+      await execution;
+    }
+  });
+
   test("stops while waiting for loop workspace provisioning without starting a worker", async () => {
     let resolveWorkspace: ((workspaceId: string) => void) | null = null;
     const workspaceProvisioned = new Promise<string>((resolve) => {

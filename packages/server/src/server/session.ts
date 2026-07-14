@@ -2863,8 +2863,11 @@ export class Session {
         });
       }
     } catch (error) {
-      this.handleAgentRunError(agentId, error, "Failed to cancel running agent on request");
       if (requestId) {
+        this.sessionLogger.error(
+          { err: error, agentId },
+          `Failed to cancel running agent on request for agent ${agentId}`,
+        );
         const agent = this.agentManager.getAgent(agentId);
         const payload = agent ? await this.buildAgentPayload(agent) : null;
         this.emit({
@@ -2876,6 +2879,8 @@ export class Session {
             error: errorToFriendlyMessage(error),
           },
         });
+      } else {
+        this.handleAgentRunError(agentId, error, "Failed to cancel running agent on request");
       }
     }
   }

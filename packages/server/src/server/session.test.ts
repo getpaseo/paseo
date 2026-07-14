@@ -105,6 +105,70 @@ test("interruptAgentIfRunning rejects when graceful cancellation is refused", as
   );
 });
 
+test("cancel_agent_request reports refusal only through its response", async () => {
+  const agentId = "11111111-1111-4111-8111-111111111111";
+  const messages: SessionOutboundMessage[] = [];
+  const getAgent = vi
+    .fn()
+    .mockReturnValueOnce({ id: agentId, provider: "codex", lifecycle: "running" })
+    .mockReturnValue(null);
+  const session = createSessionForTest({
+    messages,
+    agentManager: {
+      getAgent,
+      hasInFlightRun: vi.fn(() => true),
+      cancelAgentRun: vi.fn(async () => ({ status: "refused" as const })),
+    },
+  });
+
+  await session.handleMessage({
+    type: "cancel_agent_request",
+    agentId,
+    requestId: "cancel-refused",
+  });
+
+  expect(messages).toEqual([
+    {
+      type: "cancel_agent_response",
+      payload: {
+        requestId: "cancel-refused",
+        agentId,
+        agent: null,
+        error:
+          "Cannot stop agent 11111111-1111-4111-8111-111111111111 because its active run cancellation was not acknowledged",
+      },
+    },
+  ]);
+});
+
+test("legacy cancel_agent_request reports refusal through the activity log", async () => {
+  const agentId = "11111111-1111-4111-8111-111111111111";
+  const messages: SessionOutboundMessage[] = [];
+  const session = createSessionForTest({
+    messages,
+    agentManager: {
+      getAgent: vi.fn(() => ({ id: agentId, provider: "codex", lifecycle: "running" })),
+      hasInFlightRun: vi.fn(() => true),
+      cancelAgentRun: vi.fn(async () => ({ status: "refused" as const })),
+    },
+  });
+
+  await session.handleMessage({ type: "cancel_agent_request", agentId });
+
+  expect(messages).toEqual([
+    {
+      type: "activity_log",
+      payload: {
+        id: expect.any(String),
+        timestamp: expect.any(Date),
+        type: "error",
+        content:
+          "Failed to cancel running agent on request: Cannot stop agent 11111111-1111-4111-8111-111111111111 because its active run cancellation was not acknowledged",
+      },
+    },
+  ]);
+});
+
 const checkoutGitMocks = vi.hoisted(() => ({
   checkoutResolvedBranch: vi.fn(),
   commitChanges: vi.fn(),

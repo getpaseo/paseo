@@ -10,7 +10,7 @@ import {
   type EnsureWorkspaceForCreate,
   formatProviderModel,
 } from "./agent/create-agent/create.js";
-import type { AgentManager } from "./agent/agent-manager.js";
+import type { AgentManager, AgentRunCancellationResult } from "./agent/agent-manager.js";
 import {
   buildStructuredAgentResponsePrompt,
   getStructuredAgentResponse,
@@ -230,6 +230,10 @@ function buildWorkerTitle(loop: LoopRecord, iterationIndex: number): string {
 function buildVerifierTitle(loop: LoopRecord, iterationIndex: number): string {
   const prefix = loop.name ?? loop.id;
   return `${prefix} [loop ${iterationIndex} verifier]`;
+}
+
+function isUnknownLoopAgentError(error: unknown, agentId: string): boolean {
+  return error instanceof Error && error.message === `Unknown agent '${agentId}'`;
 }
 
 type LoopAgentManager = Pick<
@@ -546,9 +550,15 @@ export class LoopService {
   }
 
   private async stopInternalAgent(agentId: string, archive: boolean): Promise<void> {
-    const cancellation = await this.options.agentManager
-      .cancelAgentRun(agentId)
-      .catch(() => ({ status: "refused" }) as const);
+    let cancellation: AgentRunCancellationResult;
+    try {
+      cancellation = await this.options.agentManager.cancelAgentRun(agentId);
+    } catch (error) {
+      if (isUnknownLoopAgentError(error, agentId)) {
+        return;
+      }
+      throw error;
+    }
     if (cancellation.status !== "refused") {
       return;
     }
@@ -562,7 +572,7 @@ export class LoopService {
       }
       await this.options.agentManager.closeAgent(agentId);
     } catch (error) {
-      if (!(error instanceof Error) || error.message !== `Unknown agent '${agentId}'`) {
+      if (!isUnknownLoopAgentError(error, agentId)) {
         throw error;
       }
     }
