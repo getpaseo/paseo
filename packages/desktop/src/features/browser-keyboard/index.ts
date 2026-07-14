@@ -27,7 +27,7 @@ interface BrowserKeyboardInputEvent {
 interface BrowserKeyboardGuestContents extends BrowserKeyboardContentsIdentity {
   isDestroyed(): boolean;
   isLoadingMainFrame(): boolean;
-  on(event: "did-finish-load", listener: () => void): void;
+  on(event: "dom-ready", listener: () => void): void;
   on(
     event: "before-input-event",
     listener: (event: BrowserKeyboardInputEvent, input: Electron.Input) => void,
@@ -82,7 +82,7 @@ export class BrowserKeyboard {
         this.attachedGuestsByWebContentsId.delete(webContentsId);
       }
     });
-    input.contents.on("did-finish-load", () => {
+    input.contents.on("dom-ready", () => {
       const currentRegistration = this.registrationForGuest(webContentsId, guest);
       if (!currentRegistration) {
         return;

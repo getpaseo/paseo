@@ -163,15 +163,21 @@ export async function dispatchTrustedText(send: CdpCommandSender, text: string):
 
 export function dispatchTrustedKey(send: KeyboardInputSender, key: string): void {
   const keyCode = ELECTRON_KEY_CODE_ALIASES[key] ?? key;
+  let character: string | null = null;
+  if (key === "Space") {
+    character = " ";
+  } else if (key.length === 1) {
+    character = key;
+  }
   send({
     type: "keyDown",
     keyCode,
     skipIfUnhandled: true,
   });
-  if (key.length === 1) {
+  if (character !== null) {
     send({
       type: "char",
-      keyCode,
+      keyCode: character,
       skipIfUnhandled: true,
     });
   }

@@ -6,7 +6,6 @@ describe("trusted browser input", () => {
   test.each([
     ["a", "a", ["keyDown", "char", "keyUp"]],
     ["Z", "Z", ["keyDown", "char", "keyUp"]],
-    ["Space", "Space", ["keyDown", "keyUp"]],
     ["ArrowDown", "Down", ["keyDown", "keyUp"]],
   ])(
     "sends %s as Electron key code %s with unhandled redispatch disabled",
@@ -26,4 +25,18 @@ describe("trusted browser input", () => {
       );
     },
   );
+
+  test("inserts a named Space keypress", () => {
+    const events: IsolatedKeyboardInputEvent[] = [];
+
+    dispatchTrustedKey((event) => {
+      events.push(event);
+    }, "Space");
+
+    expect(events).toEqual([
+      { type: "keyDown", keyCode: "Space", skipIfUnhandled: true },
+      { type: "char", keyCode: " ", skipIfUnhandled: true },
+      { type: "keyUp", keyCode: "Space", skipIfUnhandled: true },
+    ]);
+  });
 });

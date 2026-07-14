@@ -13,6 +13,7 @@ class FakeBrowserContents {
   public readonly sent: SentMessage[] = [];
   private destroyed = false;
   private readonly destroyedListeners: Array<() => void> = [];
+  private domReadyListener: (() => void) | null = null;
   private finishLoadListener: (() => void) | null = null;
   private inputListener:
     | ((event: { preventDefault(): void }, input: Electron.Input) => void)
@@ -41,16 +42,21 @@ class FakeBrowserContents {
   }
 
   public on(event: "did-finish-load", listener: () => void): void;
+  public on(event: "dom-ready", listener: () => void): void;
   public on(
     event: "before-input-event",
     listener: (event: { preventDefault(): void }, input: Electron.Input) => void,
   ): void;
   public on(
-    event: "did-finish-load" | "before-input-event",
+    event: "did-finish-load" | "dom-ready" | "before-input-event",
     listener: (() => void) | ((event: { preventDefault(): void }, input: Electron.Input) => void),
   ): void {
     if (event === "did-finish-load") {
       this.finishLoadListener = listener as () => void;
+      return;
+    }
+    if (event === "dom-ready") {
+      this.domReadyListener = listener as () => void;
       return;
     }
     this.inputListener = listener as (
@@ -88,6 +94,10 @@ class FakeBrowserContents {
 
   public finishLoad(): void {
     this.finishLoadListener?.();
+  }
+
+  public domReady(): void {
+    this.domReadyListener?.();
   }
 
   public input(input: Electron.Input): boolean {
@@ -178,7 +188,7 @@ describe("BrowserKeyboard", () => {
     ]);
   });
 
-  test("resends the latest shortcut policy after every main-frame load", () => {
+  test("republishes the latest shortcut policy when the next guest document is ready", () => {
     const { attach, keyboard } = createBrowserKeyboard();
     const guest = new FakeBrowserContents(61);
     const host = new FakeBrowserContents(62);
@@ -199,8 +209,7 @@ describe("BrowserKeyboard", () => {
     attach({ browserId: "browser-a", contents: guest, hostContents: host });
     keyboard.publish(host.id, latestPolicy);
 
-    guest.finishLoad();
-    guest.finishLoad();
+    guest.domReady();
 
     expect(guest.sent).toEqual([
       {
@@ -215,11 +224,10 @@ describe("BrowserKeyboard", () => {
         channel: "paseo:browser-keyboard-policy",
         payload: { ...latestPolicy, browserId: "browser-a" },
       },
-      {
-        channel: "paseo:browser-keyboard-policy",
-        payload: { ...latestPolicy, browserId: "browser-a" },
-      },
     ]);
+
+    guest.finishLoad();
+    expect(guest.sent).toHaveLength(3);
   });
 
   test("owns reserved shortcuts and leaves plain guest input contained", () => {
