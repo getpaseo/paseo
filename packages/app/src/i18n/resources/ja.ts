@@ -1542,6 +1542,12 @@ export const ja: TranslationResources = {
         description: "組み込みターミナルバッファに保持する行数",
         accessibilityLabel: "ターミナルスクロールバック行数",
       },
+      terminalFileLinksRequireModifier: {
+        label: "ターミナルのファイルリンク",
+        description: "検出されたファイルパスを開くには Command/Ctrl クリックを必須にする",
+        accessibilityLabel:
+          "ターミナルのファイルリンクに Command または Control クリックを必須にする",
+      },
       autoExpandReasoning: {
         label: "常に思考プロセスを展開",
         description: "デフォルトでAIのエージェント思考・推論ブロックを完全に展開して表示します",

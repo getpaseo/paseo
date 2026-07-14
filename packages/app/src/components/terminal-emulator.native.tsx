@@ -72,6 +72,7 @@ interface TerminalEmulatorProps {
   ) => Promise<void> | void;
   onRendererReadyChange?: (change: TerminalRendererReadyChange) => void;
   pendingModifiers?: PendingTerminalModifiers;
+  localFileLinksRequireModifier?: boolean;
   focusRequestToken?: number;
   resizeRequestToken?: number;
 }
@@ -86,6 +87,7 @@ type BridgeInboundMessage =
       fontFamily?: string;
       fontSize?: number;
       pendingModifiers: PendingTerminalModifiers;
+      localFileLinksRequireModifier: boolean;
       swipeGesturesEnabled: boolean;
     }
   | { type: "unmount"; streamKey: string }
@@ -99,6 +101,7 @@ type BridgeInboundMessage =
   | { type: "setScrollback"; streamKey: string; lines: number }
   | { type: "setFont"; streamKey: string; fontFamily?: string; fontSize?: number }
   | { type: "setPendingModifiers"; streamKey: string; pendingModifiers: PendingTerminalModifiers }
+  | { type: "setLocalFileLinksRequireModifier"; streamKey: string; requireModifier: boolean }
   | { type: "setSwipeGesturesEnabled"; streamKey: string; enabled: boolean }
   | {
       type: "resolveLocalFileLinkResponse";
@@ -168,6 +171,7 @@ function createMountMessage(input: {
   fontFamily?: string;
   fontSize?: number;
   pendingModifiers: PendingTerminalModifiers;
+  localFileLinksRequireModifier: boolean;
   swipeGesturesEnabled: boolean;
 }): BridgeInboundMessage {
   return {
@@ -179,6 +183,7 @@ function createMountMessage(input: {
     fontFamily: input.fontFamily,
     fontSize: input.fontSize,
     pendingModifiers: input.pendingModifiers,
+    localFileLinksRequireModifier: input.localFileLinksRequireModifier,
     swipeGesturesEnabled: input.swipeGesturesEnabled,
   };
 }
@@ -209,6 +214,7 @@ export default function TerminalEmulator({
   onOpenLocalFileLink,
   onRendererReadyChange,
   pendingModifiers = { ctrl: false, shift: false, alt: false },
+  localFileLinksRequireModifier = true,
   focusRequestToken = 0,
   resizeRequestToken = 0,
 }: TerminalEmulatorProps) {
@@ -232,6 +238,7 @@ export default function TerminalEmulator({
     fontFamily,
     fontSize,
     pendingModifiers,
+    localFileLinksRequireModifier,
     swipeGesturesEnabled,
   });
   mountConfigRef.current = {
@@ -242,6 +249,7 @@ export default function TerminalEmulator({
     fontFamily,
     fontSize,
     pendingModifiers,
+    localFileLinksRequireModifier,
     swipeGesturesEnabled,
   };
   const callbacksRef = useRef({
@@ -417,6 +425,15 @@ export default function TerminalEmulator({
     if (!mountedStreamKeyRef.current) return;
     sendToWebView({ type: "setPendingModifiers", streamKey, pendingModifiers });
   }, [pendingModifiers, sendToWebView, streamKey]);
+
+  useEffect(() => {
+    if (!mountedStreamKeyRef.current) return;
+    sendToWebView({
+      type: "setLocalFileLinksRequireModifier",
+      streamKey,
+      requireModifier: localFileLinksRequireModifier,
+    });
+  }, [localFileLinksRequireModifier, sendToWebView, streamKey]);
 
   useEffect(() => {
     if (!mountedStreamKeyRef.current) return;

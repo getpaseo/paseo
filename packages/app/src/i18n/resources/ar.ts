@@ -1526,6 +1526,11 @@ export const ar: TranslationResources = {
         description: "يتم الاحتفاظ بالخطوط في المخزن المؤقت الطرفي المدمج",
         accessibilityLabel: "خطوط التمرير Terminal",
       },
+      terminalFileLinksRequireModifier: {
+        label: "روابط ملفات الطرفية",
+        description: "يتطلب Command/Ctrl-نقرة لفتح مسارات الملفات المكتشفة",
+        accessibilityLabel: "يتطلب نقرة Command أو Control لروابط ملفات الطرفية",
+      },
       autoExpandReasoning: {
         label: "عرض التفكير دائماً",
         description: "إظهار تفكير الوكيل وخطوات الاستدلال بشكل كامل بشكل افتراضي",

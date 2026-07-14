@@ -70,6 +70,14 @@ describe("loadAppSettingsFromStorage", () => {
     expect(result.workspaceTitleSource).toBe("title");
   });
 
+  it("requires a modifier for terminal file links by default", async () => {
+    const deps = makeDeps();
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.terminalFileLinksRequireModifier).toBe(true);
+  });
+
   it("loads configured terminal scrollback lines from app settings", async () => {
     const deps = makeDeps({
       storage: createInMemoryKeyValueStorage({
@@ -80,6 +88,18 @@ describe("loadAppSettingsFromStorage", () => {
     const result = await loadAppSettingsFromStorage(deps);
 
     expect(result.terminalScrollbackLines).toBe(42_000);
+  });
+
+  it("loads configured terminal file link activation from app settings", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ terminalFileLinksRequireModifier: false }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.terminalFileLinksRequireModifier).toBe(false);
   });
 
   it("loads configured workspace title source from app settings", async () => {
@@ -280,6 +300,28 @@ describe("saveAppSettings", () => {
       JSON.stringify({
         ...DEFAULT_CLIENT_SETTINGS,
         terminalScrollbackLines: 42_000,
+      }),
+    );
+  });
+
+  it("saves terminal file link activation through app settings persistence", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify(DEFAULT_CLIENT_SETTINGS),
+      }),
+    });
+    const queryClient = new QueryClient();
+
+    await saveAppSettings({
+      queryClient,
+      updates: { terminalFileLinksRequireModifier: false },
+      deps,
+    });
+
+    expect(deps.storage.entries.get(APP_SETTINGS_KEY)).toBe(
+      JSON.stringify({
+        ...DEFAULT_CLIENT_SETTINGS,
+        terminalFileLinksRequireModifier: false,
       }),
     );
   });

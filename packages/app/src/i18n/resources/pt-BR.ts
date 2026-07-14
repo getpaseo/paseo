@@ -1552,6 +1552,11 @@ export const ptBR: TranslationResources = {
         description: "Linhas mantidas no buffer do terminal integrado",
         accessibilityLabel: "Linhas do scrollback do terminal",
       },
+      terminalFileLinksRequireModifier: {
+        label: "Links de arquivos do terminal",
+        description: "Exigir Command/Ctrl+clique para abrir caminhos de arquivo detectados",
+        accessibilityLabel: "Exigir Command ou Control clique para links de arquivos do terminal",
+      },
       autoExpandReasoning: {
         label: "Sempre expandir raciocínio",
         description:

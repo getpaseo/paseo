@@ -1568,6 +1568,11 @@ export const es: TranslationResources = {
         description: "Líneas mantenidas en el búfer de terminal incorporado",
         accessibilityLabel: "Líneas del historial de terminal",
       },
+      terminalFileLinksRequireModifier: {
+        label: "Enlaces de archivos del terminal",
+        description: "Exigir Command/Ctrl+clic para abrir rutas de archivo detectadas",
+        accessibilityLabel: "Exigir Command o Control clic para enlaces de archivos del terminal",
+      },
       autoExpandReasoning: {
         label: "Siempre expandir razonamiento",
         description:

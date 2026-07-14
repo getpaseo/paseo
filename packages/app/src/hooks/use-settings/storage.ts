@@ -35,6 +35,7 @@ export interface AppSettings {
   sendBehavior: SendBehavior;
   serviceUrlBehavior: ServiceUrlBehavior;
   terminalScrollbackLines: number;
+  terminalFileLinksRequireModifier: boolean;
   uiFontFamily: string; // "" = platform default UI stack
   monoFontFamily: string; // "" = platform default mono stack
   uiFontSize: number; // clamped px, default 16
@@ -58,6 +59,7 @@ export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   sendBehavior: "interrupt",
   serviceUrlBehavior: "ask",
   terminalScrollbackLines: DEFAULT_TERMINAL_SCROLLBACK_LINES,
+  terminalFileLinksRequireModifier: true,
   uiFontFamily: "",
   monoFontFamily: "",
   uiFontSize: DEFAULT_UI_FONT_SIZE,
@@ -207,6 +209,9 @@ function pickAppSettings(stored: StoredAppSettings): Partial<AppSettings> {
   const terminalScrollbackLines = parseTerminalScrollbackLines(stored.terminalScrollbackLines);
   if (terminalScrollbackLines !== null) {
     result.terminalScrollbackLines = terminalScrollbackLines;
+  }
+  if (typeof stored.terminalFileLinksRequireModifier === "boolean") {
+    result.terminalFileLinksRequireModifier = stored.terminalFileLinksRequireModifier;
   }
   const uiFontFamily = sanitizeFontFamily(stored.uiFontFamily);
   if (uiFontFamily !== null) {

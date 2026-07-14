@@ -21,6 +21,7 @@ interface MountMessage {
   fontFamily?: string;
   fontSize?: number;
   pendingModifiers: PendingTerminalModifiers;
+  localFileLinksRequireModifier: boolean;
   swipeGesturesEnabled: boolean;
 }
 
@@ -37,6 +38,7 @@ type InboundMessage =
   | { type: "setScrollback"; streamKey: string; lines: number }
   | { type: "setFont"; streamKey: string; fontFamily?: string; fontSize?: number }
   | { type: "setPendingModifiers"; streamKey: string; pendingModifiers: PendingTerminalModifiers }
+  | { type: "setLocalFileLinksRequireModifier"; streamKey: string; requireModifier: boolean }
   | { type: "setSwipeGesturesEnabled"; streamKey: string; enabled: boolean }
   | {
       type: "resolveLocalFileLinkResponse";
@@ -274,6 +276,11 @@ class TerminalWebViewBridge {
       case "setPendingModifiers":
         this.runtime?.setPendingModifiers({ pendingModifiers: message.pendingModifiers });
         return true;
+      case "setLocalFileLinksRequireModifier":
+        this.runtime?.setLocalFileLinksRequireModifier({
+          requireModifier: message.requireModifier,
+        });
+        return true;
       case "setSwipeGesturesEnabled":
         this.swipeGesturesEnabled = message.enabled;
         return true;
@@ -314,6 +321,9 @@ class TerminalWebViewBridge {
       },
     });
     runtime.setPendingModifiers({ pendingModifiers: message.pendingModifiers });
+    runtime.setLocalFileLinksRequireModifier({
+      requireModifier: message.localFileLinksRequireModifier,
+    });
     runtime.mount({
       root: this.root,
       host: this.host,

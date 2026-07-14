@@ -167,6 +167,9 @@ export function useSettings<TSelected>(
       if (updates.terminalScrollbackLines !== undefined) {
         appUpdates.terminalScrollbackLines = updates.terminalScrollbackLines;
       }
+      if (updates.terminalFileLinksRequireModifier !== undefined) {
+        appUpdates.terminalFileLinksRequireModifier = updates.terminalFileLinksRequireModifier;
+      }
       if (updates.uiFontFamily !== undefined) {
         appUpdates.uiFontFamily = updates.uiFontFamily;
       }

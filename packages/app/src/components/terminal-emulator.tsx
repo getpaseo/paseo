@@ -123,6 +123,7 @@ interface TerminalEmulatorProps {
   ) => Promise<void> | void;
   onRendererReadyChange?: (change: TerminalRendererReadyChange) => void;
   pendingModifiers?: PendingTerminalModifiers;
+  localFileLinksRequireModifier?: boolean;
   focusRequestToken?: number;
   resizeRequestToken?: number;
 }
@@ -167,6 +168,7 @@ export default function TerminalEmulator({
   onOpenLocalFileLink,
   onRendererReadyChange,
   pendingModifiers = { ctrl: false, shift: false, alt: false },
+  localFileLinksRequireModifier = true,
   focusRequestToken = 0,
   resizeRequestToken = 0,
 }: TerminalEmulatorProps) {
@@ -207,6 +209,8 @@ export default function TerminalEmulator({
   initialSnapshotRef.current = initialSnapshot;
   const pendingModifiersRef = useRef(pendingModifiers);
   pendingModifiersRef.current = pendingModifiers;
+  const localFileLinksRequireModifierRef = useRef(localFileLinksRequireModifier);
+  localFileLinksRequireModifierRef.current = localFileLinksRequireModifier;
   const [isDropActive, setIsDropActive] = useState(false);
   const dropActiveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -403,6 +407,9 @@ export default function TerminalEmulator({
       },
     });
     runtime.setPendingModifiers({ pendingModifiers: pendingModifiersRef.current });
+    runtime.setLocalFileLinksRequireModifier({
+      requireModifier: localFileLinksRequireModifierRef.current,
+    });
     runtime.mount({
       root,
       host,
@@ -449,6 +456,12 @@ export default function TerminalEmulator({
   useEffect(() => {
     runtimeRef.current?.setPendingModifiers({ pendingModifiers });
   }, [pendingModifiers]);
+
+  useEffect(() => {
+    runtimeRef.current?.setLocalFileLinksRequireModifier({
+      requireModifier: localFileLinksRequireModifier,
+    });
+  }, [localFileLinksRequireModifier]);
 
   useEffect(() => {
     runtimeRef.current?.setFont({ fontFamily, fontSize });

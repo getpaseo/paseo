@@ -175,6 +175,7 @@ export class TerminalEmulatorRuntime {
     shift: false,
     alt: false,
   };
+  private localFileLinksRequireModifier = true;
   private terminal: Terminal | null = null;
   private fitAddon: FitAddon | null = null;
   private fitAndEmitResize: ((input?: { force?: boolean; shouldClaim?: boolean }) => void) | null =
@@ -218,6 +219,10 @@ export class TerminalEmulatorRuntime {
 
   setPendingModifiers(input: { pendingModifiers: PendingTerminalModifiers }): void {
     this.pendingModifiers = input.pendingModifiers;
+  }
+
+  setLocalFileLinksRequireModifier(input: { requireModifier: boolean }): void {
+    this.localFileLinksRequireModifier = input.requireModifier;
   }
 
   mount(input: TerminalEmulatorRuntimeMountInput): void {
@@ -265,6 +270,14 @@ export class TerminalEmulatorRuntime {
         },
         openLink: (target, disposition) => {
           void this.callbacks.onOpenLocalFileLink?.(target, disposition);
+        },
+        hasActivationModifier: (event) =>
+          event.metaKey || event.ctrlKey || this.pendingModifiers.ctrl,
+        requiresActivationModifier: () => this.localFileLinksRequireModifier,
+        consumeActivationModifier: () => {
+          if (this.pendingModifiers.ctrl) {
+            void this.callbacks.onPendingModifiersConsumed?.();
+          }
         },
       }),
     );

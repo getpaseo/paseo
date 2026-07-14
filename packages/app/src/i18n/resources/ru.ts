@@ -1557,6 +1557,11 @@ export const ru: TranslationResources = {
         description: "Строки, хранящиеся во встроенном буфере терминала.",
         accessibilityLabel: "Линии прокрутки Terminal",
       },
+      terminalFileLinksRequireModifier: {
+        label: "Ссылки на файлы в терминале",
+        description: "Требовать Command/Ctrl+щелчок для открытия найденных путей к файлам",
+        accessibilityLabel: "Требовать Command или Control щелчок для ссылок на файлы в терминале",
+      },
       autoExpandReasoning: {
         label: "Всегда разворачивать размышления",
         description:

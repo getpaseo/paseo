@@ -1570,6 +1570,11 @@ export const fr: TranslationResources = {
         description: "Lignes conservées dans le tampon du terminal intégré",
         accessibilityLabel: "Lignes de défilementTerminal",
       },
+      terminalFileLinksRequireModifier: {
+        label: "Liens de fichiers du terminal",
+        description: "Exiger Command/Ctrl+clic pour ouvrir les chemins de fichiers detectes",
+        accessibilityLabel: "Exiger Command ou Control clic pour les liens de fichiers du terminal",
+      },
       autoExpandReasoning: {
         label: "Toujours afficher le raisonnement",
         description: "Afficher le raisonnement de l'agent entièrement développé par défaut",

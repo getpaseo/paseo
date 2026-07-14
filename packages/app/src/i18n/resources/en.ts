@@ -1533,6 +1533,11 @@ export const en = {
         description: "Lines kept in the built-in terminal buffer",
         accessibilityLabel: "Terminal scrollback lines",
       },
+      terminalFileLinksRequireModifier: {
+        label: "Terminal file links",
+        description: "Require Command/Ctrl-click to open detected file paths",
+        accessibilityLabel: "Require Command or Control click for terminal file links",
+      },
       autoExpandReasoning: {
         label: "Always expand reasoning",
         description: "Show agent thinking and chain-of-thought blocks fully expanded by default",

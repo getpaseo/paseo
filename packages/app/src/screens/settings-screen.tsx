@@ -68,6 +68,7 @@ import { KeyboardShortcutsSection } from "@/screens/settings/keyboard-shortcuts-
 import { Button } from "@/components/ui/button";
 import { CommunityLinks } from "@/components/community-links";
 import { SegmentedControl } from "@/components/ui/segmented-control";
+import { Switch } from "@/components/ui/switch";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { DesktopPermissionsSection } from "@/desktop/components/desktop-permissions-section";
 import { BrowserDataSection } from "@/desktop/components/browser-data-section";
@@ -246,6 +247,7 @@ interface GeneralSectionProps {
   handleServiceUrlBehaviorChange: (behavior: ServiceUrlBehavior) => void;
   handleLanguageChange: (language: AppLanguage) => void;
   handleTerminalScrollbackLinesChange: (lines: number) => void;
+  handleTerminalFileLinksRequireModifierChange: (value: boolean) => void;
 }
 
 interface ServiceUrlBehaviorMenuItemProps {
@@ -302,6 +304,7 @@ function GeneralSection({
   handleServiceUrlBehaviorChange,
   handleLanguageChange,
   handleTerminalScrollbackLinesChange,
+  handleTerminalFileLinksRequireModifierChange,
 }: GeneralSectionProps) {
   const { t, i18n } = useTranslation();
   const activeLocale = getActiveLocale(i18n.language);
@@ -433,6 +436,23 @@ function GeneralSection({
             selectTextOnFocus
             style={styles.terminalScrollbackInput}
             accessibilityLabel={t("settings.general.terminalScrollback.accessibilityLabel")}
+          />
+        </View>
+        <View style={ROW_WITH_BORDER_STYLE}>
+          <View style={settingsStyles.rowContent}>
+            <Text style={settingsStyles.rowTitle}>
+              {t("settings.general.terminalFileLinksRequireModifier.label")}
+            </Text>
+            <Text style={settingsStyles.rowHint}>
+              {t("settings.general.terminalFileLinksRequireModifier.description")}
+            </Text>
+          </View>
+          <Switch
+            value={settings.terminalFileLinksRequireModifier}
+            onValueChange={handleTerminalFileLinksRequireModifierChange}
+            accessibilityLabel={t(
+              "settings.general.terminalFileLinksRequireModifier.accessibilityLabel",
+            )}
           />
         </View>
       </View>
@@ -1187,6 +1207,12 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
     },
     [updateSettings],
   );
+  const handleTerminalFileLinksRequireModifierChange = useCallback(
+    (terminalFileLinksRequireModifier: boolean) => {
+      void updateSettings({ terminalFileLinksRequireModifier });
+    },
+    [updateSettings],
+  );
 
   const handlePlaybackTest = useCallback(async () => {
     if (!voiceAudioEngine || isPlaybackTestRunning) {
@@ -1394,10 +1420,13 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
                 handleServiceUrlBehaviorChange={handleServiceUrlBehaviorChange}
                 handleLanguageChange={handleLanguageChange}
                 handleTerminalScrollbackLinesChange={handleTerminalScrollbackLinesChange}
+                handleTerminalFileLinksRequireModifierChange={
+                  handleTerminalFileLinksRequireModifierChange
+                }
               />
               {isDesktopApp ? <BrowserDataSection /> : null}
             </>
-          );
+            );
         case "appearance":
           return <AppearanceSection />;
         case "shortcuts":

@@ -50,6 +50,79 @@ describe("createTerminalLocalFileLinkProvider", () => {
     expect(openLink).toHaveBeenCalledWith(target, "side", expect.anything());
   });
 
+  it("requires a modifier before opening when configured", async () => {
+    const terminal = createTerminal(["src/file.ts:42"]);
+    const target = { path: "/repo/src/file.ts", lineStart: 42 };
+    const openLink = vi.fn();
+    const provider = createTerminalLocalFileLinkProvider(terminal, {
+      resolveLink: vi.fn(async () => target),
+      openLink,
+      requiresActivationModifier: () => true,
+    });
+    const [link] = (await provideLinks(provider, 1)) ?? [];
+    const plainPreventDefault = vi.fn();
+    const modifiedPreventDefault = vi.fn();
+
+    link?.activate(
+      {
+        preventDefault: plainPreventDefault,
+        ctrlKey: false,
+        metaKey: false,
+      } as unknown as MouseEvent,
+      link.text,
+    );
+    link?.activate(
+      { preventDefault: modifiedPreventDefault, metaKey: true } as unknown as MouseEvent,
+      link.text,
+    );
+
+    expect(plainPreventDefault).not.toHaveBeenCalled();
+    expect(modifiedPreventDefault).toHaveBeenCalledTimes(1);
+    expect(openLink).toHaveBeenCalledTimes(1);
+    expect(openLink).toHaveBeenCalledWith(target, "side", expect.anything());
+  });
+
+  it("opens plain clicks when the modifier requirement is disabled", async () => {
+    const terminal = createTerminal(["src/file.ts:42"]);
+    const target = { path: "/repo/src/file.ts", lineStart: 42 };
+    const openLink = vi.fn();
+    const provider = createTerminalLocalFileLinkProvider(terminal, {
+      resolveLink: vi.fn(async () => target),
+      openLink,
+      requiresActivationModifier: () => false,
+    });
+    const [link] = (await provideLinks(provider, 1)) ?? [];
+    const preventDefault = vi.fn();
+
+    link?.activate(
+      { preventDefault, ctrlKey: false, metaKey: false } as unknown as MouseEvent,
+      link.text,
+    );
+
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+    expect(openLink).toHaveBeenCalledWith(target, "main", expect.anything());
+  });
+
+  it("accepts runtime-supplied modifiers for activation", async () => {
+    const terminal = createTerminal(["src/file.ts:42"]);
+    const target = { path: "/repo/src/file.ts", lineStart: 42 };
+    const openLink = vi.fn();
+    const consumeActivationModifier = vi.fn();
+    const provider = createTerminalLocalFileLinkProvider(terminal, {
+      resolveLink: vi.fn(async () => target),
+      openLink,
+      hasActivationModifier: () => true,
+      requiresActivationModifier: () => true,
+      consumeActivationModifier,
+    });
+    const [link] = (await provideLinks(provider, 1)) ?? [];
+
+    link?.activate({ preventDefault: vi.fn() } as unknown as MouseEvent, link.text);
+
+    expect(openLink).toHaveBeenCalledWith(target, "side", expect.anything());
+    expect(consumeActivationModifier).toHaveBeenCalledTimes(1);
+  });
+
   it("does not expose unresolved candidates as links", async () => {
     const terminal = createTerminal(["missing.ts:42"]);
     const provider = createTerminalLocalFileLinkProvider(terminal, {

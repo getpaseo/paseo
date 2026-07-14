@@ -30,6 +30,9 @@ export interface TerminalLocalFileLinkProviderOptions {
     disposition: "main" | "side",
     event: MouseEvent,
   ) => void;
+  hasActivationModifier?: (event: MouseEvent) => boolean;
+  requiresActivationModifier?: () => boolean;
+  consumeActivationModifier?: (event: MouseEvent) => void;
 }
 
 const MAX_LINE_LENGTH = 2_000;
@@ -127,11 +130,23 @@ function createLocalFileLink(input: {
       underline: true,
     },
     activate: (event) => {
+      const hasModifier =
+        input.options.hasActivationModifier?.(event) ?? hasActivationModifier(event);
+      if (input.options.requiresActivationModifier?.() && !hasModifier) {
+        return;
+      }
       event.preventDefault();
-      const disposition = event.metaKey || event.ctrlKey ? "side" : "main";
+      const disposition = hasModifier ? "side" : "main";
       input.options.openLink(input.target, disposition, event);
+      if (hasModifier) {
+        input.options.consumeActivationModifier?.(event);
+      }
     },
   };
+}
+
+function hasActivationModifier(event: MouseEvent): boolean {
+  return event.metaKey || event.ctrlKey;
 }
 
 function toLinkSource(

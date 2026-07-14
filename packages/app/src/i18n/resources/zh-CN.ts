@@ -1509,6 +1509,11 @@ export const zhCN: TranslationResources = {
         description: "内置终端缓冲区保留的行数",
         accessibilityLabel: "终端回滚行数",
       },
+      terminalFileLinksRequireModifier: {
+        label: "终端文件链接",
+        description: "需要 Command/Ctrl+点击才能打开检测到的文件路径",
+        accessibilityLabel: "终端文件链接需要 Command 或 Control 点击",
+      },
       autoExpandReasoning: {
         label: "始终展开推理过程",
         description: "默认情况下完全展开 AI 的思考和推理过程",

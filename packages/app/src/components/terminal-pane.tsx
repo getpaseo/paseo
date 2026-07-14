@@ -800,6 +800,7 @@ export function TerminalPane({
               onOpenLocalFileLink={handleOpenLocalFileLink}
               onPendingModifiersConsumed={handlePendingModifiersConsumed}
               pendingModifiers={modifiers}
+              localFileLinksRequireModifier={settings.terminalFileLinksRequireModifier}
               focusRequestToken={focusRequestToken}
               resizeRequestToken={resizeRequestToken}
             />

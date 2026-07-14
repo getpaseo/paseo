@@ -1,7 +1,12 @@
 import { page } from "@vitest/browser/context";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TerminalInputModeState } from "@getpaseo/protocol/terminal-input-mode";
+import type { TerminalLocalFileLinkProviderOptions } from "../local-links/terminal-local-link-provider";
 import { encodeTerminalOutput, TerminalEmulatorRuntime } from "./terminal-emulator-runtime";
+
+const localFileLinkProviderOptions = vi.hoisted(() => ({
+  values: [] as TerminalLocalFileLinkProviderOptions[],
+}));
 
 vi.mock("@xterm/addon-webgl", () => ({
   WebglAddon: class WebglAddon {
@@ -10,6 +15,24 @@ vi.mock("@xterm/addon-webgl", () => ({
     onContextLoss(): void {}
   },
 }));
+
+vi.mock("../local-links/terminal-local-link-provider", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../local-links/terminal-local-link-provider")>();
+
+  return {
+    ...actual,
+    createTerminalLocalFileLinkProvider: vi.fn(
+      (
+        terminal: Parameters<typeof actual.createTerminalLocalFileLinkProvider>[0],
+        options: TerminalLocalFileLinkProviderOptions,
+      ) => {
+        localFileLinkProviderOptions.values.push(options);
+        return actual.createTerminalLocalFileLinkProvider(terminal, options);
+      },
+    ),
+  };
+});
 
 interface TerminalSize {
   rows: number;
@@ -139,6 +162,14 @@ function getBrowserTerminal(): BrowserTerminal {
   return terminal;
 }
 
+function latestLocalFileLinkProviderOptions(): TerminalLocalFileLinkProviderOptions {
+  const options = localFileLinkProviderOptions.values.at(-1);
+  if (!options) {
+    throw new Error("Expected local file link provider options to be captured");
+  }
+  return options;
+}
+
 function dispatchTerminalKey(input: {
   host: HTMLElement;
   key: string;
@@ -170,6 +201,7 @@ afterEach(() => {
     mounted.runtime.unmount();
     mounted.root.remove();
   }
+  localFileLinkProviderOptions.values = [];
 });
 
 describe("terminal emulator runtime in a real browser", () => {
@@ -197,6 +229,42 @@ describe("terminal emulator runtime in a real browser", () => {
 
     expect(window.__paseoTerminal).toBe(terminal);
     expect(window.__paseoTerminal?.options.scrollback).toBe(42_000);
+  });
+
+  it("uses pending Ctrl to activate and consume local file links", async () => {
+    await page.viewport(900, 600);
+    const mounted = createTerminalHost({ width: 720, height: 360 });
+    await waitFor({ predicate: () => localFileLinkProviderOptions.values.length > 0 });
+
+    const onOpenLocalFileLink = vi.fn();
+    const onPendingModifiersConsumed = vi.fn();
+    const event = new MouseEvent("click", { ctrlKey: false, metaKey: false });
+    const target = { path: "/repo/src/file.ts", lineStart: 42 };
+    const options = latestLocalFileLinkProviderOptions();
+
+    mounted.runtime.setCallbacks({
+      callbacks: {
+        onOpenLocalFileLink,
+        onPendingModifiersConsumed,
+      },
+    });
+    mounted.runtime.setLocalFileLinksRequireModifier({ requireModifier: true });
+
+    expect(options.requiresActivationModifier?.()).toBe(true);
+    expect(options.hasActivationModifier?.(event)).toBe(false);
+    options.consumeActivationModifier?.(event);
+    expect(onPendingModifiersConsumed).not.toHaveBeenCalled();
+
+    mounted.runtime.setPendingModifiers({
+      pendingModifiers: { ctrl: true, shift: false, alt: false },
+    });
+
+    expect(options.hasActivationModifier?.(event)).toBe(true);
+    options.openLink(target, "side", event);
+    options.consumeActivationModifier?.(event);
+
+    expect(onOpenLocalFileLink).toHaveBeenCalledWith(target, "side");
+    expect(onPendingModifiersConsumed).toHaveBeenCalledTimes(1);
   });
 
   it("does not claim PTY ownership from passive mount refits", async () => {
