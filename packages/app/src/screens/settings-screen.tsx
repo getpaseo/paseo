@@ -103,7 +103,6 @@ import {
   type EnableBuiltInDaemonOption,
   useEnableBuiltInDaemonOption,
 } from "@/desktop/hooks/use-enable-built-in-daemon-option";
-import { useWebScrollbarStyle } from "@/hooks/use-web-scrollbar-style";
 import {
   buildOpenProjectRoute,
   buildProjectsSettingsRoute,
@@ -1134,11 +1133,6 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
   const isCompactLayout = useIsCompactFormFactor();
   const insets = useSafeAreaInsets();
   const insetBottomStyle = useMemo(() => ({ paddingBottom: insets.bottom }), [insets.bottom]);
-  const webScrollbarStyle = useWebScrollbarStyle();
-  const scrollViewStyle = useMemo(
-    () => [styles.scrollView, webScrollbarStyle],
-    [webScrollbarStyle],
-  );
   const hosts = useHosts();
   const localServerId = useLocalDaemonServerId();
   const sortedHosts = useSortedHosts(hosts, localServerId);
@@ -1469,7 +1463,7 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
     return (
       <View style={styles.container}>
         <BackHeader title={t("settings.title")} onBack={handleBackToWorkspace} />
-        <ScrollView style={scrollViewStyle} contentContainerStyle={insetBottomStyle}>
+        <ScrollView style={styles.scrollView} contentContainerStyle={insetBottomStyle}>
           <SettingsSidebar
             view={view}
             onSelectSection={handleSelectSection}
@@ -1500,7 +1494,7 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
           titleAccessory={detailHeader?.titleAccessory}
           onBack={detailBackHandler}
         />
-        <ScrollView style={scrollViewStyle} contentContainerStyle={insetBottomStyle}>
+        <ScrollView style={styles.scrollView} contentContainerStyle={insetBottomStyle}>
           <View style={styles.content}>{content}</View>
         </ScrollView>
         {addHostModals}
@@ -1547,7 +1541,7 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
             }
             leftStyle={desktopStyles.detailLeft}
           />
-          <ScrollView style={scrollViewStyle} contentContainerStyle={insetBottomStyle}>
+          <ScrollView style={styles.scrollView} contentContainerStyle={insetBottomStyle}>
             <View style={styles.content}>{content}</View>
           </ScrollView>
         </View>

@@ -799,16 +799,13 @@ export const en = {
     },
     help: {
       trigger: "Help and support",
-      troubleshoot: "Troubleshoot",
+      sectionHelp: "Help",
       diagnostics: "Run diagnostics",
-      diagnosticsDescription: "Collect app and connected host details",
       shortcuts: "Keyboard shortcuts",
-      shortcutsDescription: "View available keyboard shortcuts",
       reportIssue: "Report an issue",
       discord: "Discord",
-      discordDescription: "Best for quick help and discussion",
       github: "Create GitHub issue",
-      githubDescription: "Report a reproducible bug",
+      whatsNew: "What's new",
       version: "Paseo {{version}}",
     },
     sections: {
@@ -1403,6 +1400,34 @@ export const en = {
     input: "Input",
     output: "Output",
   },
+  toolCallGroup: {
+    editedFiles: {
+      one: "edited {{count}} file",
+      other: "edited {{count}} files",
+    },
+    commands: {
+      one: "ran {{count}} command",
+      other: "ran {{count}} commands",
+    },
+    readFiles: {
+      one: "read {{count}} file",
+      other: "read {{count}} files",
+    },
+    searches: {
+      one: "searched {{count}} time",
+      other: "searched {{count}} times",
+    },
+    otherTools: {
+      one: "used {{count}} other tool",
+      other: "used {{count}} other tools",
+    },
+    paseoCalls: {
+      one: "called Paseo {{count}} time",
+      other: "called Paseo {{count}} times",
+    },
+    and: "and",
+    failed: "{{count}} failed",
+  },
   renameModal: {
     rename: "Rename",
     saving: "Saving...",
@@ -1498,6 +1523,15 @@ export const en = {
       autoExpandReasoning: {
         label: "Always expand reasoning",
         description: "Show agent thinking and chain-of-thought blocks fully expanded by default",
+      },
+      toolCallDetail: {
+        label: "Tool call display",
+        description: "How tool calls appear in the timeline",
+        accessibilityLabel: "Select tool call display ({{value}})",
+        options: {
+          overview: "Summary",
+          detailed: "Full detail",
+        },
       },
       language: {
         label: "Language",

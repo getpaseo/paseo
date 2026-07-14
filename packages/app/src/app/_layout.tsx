@@ -88,6 +88,7 @@ import { getDaemonStartService } from "@/runtime/daemon-start-service";
 import { applyAppearance } from "@/screens/settings/appearance/apply-appearance";
 import { selectIsAgentListOpen, usePanelStore } from "@/stores/panel-store";
 import { THEME_TO_UNISTYLES, type ThemeName } from "@/styles/theme";
+import { installWebScrollbarStyles } from "@/styles/install-web-scrollbar-styles";
 import type { HostProfile } from "@/types/host-connection";
 import { toggleDesktopSidebarsWithCheckoutIntent } from "@/utils/desktop-sidebar-toggle";
 import { buildOpenProjectRoute, parseServerIdFromPathname } from "@/utils/host-routes";
@@ -888,6 +889,8 @@ function RootAppTree() {
 }
 
 export default function RootLayout() {
+  useEffect(() => installWebScrollbarStyles(), []);
+
   return (
     <QueryProvider>
       <I18nProvider>

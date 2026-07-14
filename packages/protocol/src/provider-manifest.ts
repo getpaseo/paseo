@@ -198,7 +198,10 @@ export const AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [
     id: "opencode",
     label: "OpenCode",
     description: "Open-source coding assistant with multi-provider model support",
-    defaultModeId: "build",
+    // No static default: OpenCode users can rename or delete any agent,
+    // including "build". Leaving this unset means the daemon and OpenCode
+    // itself decide (see normalizeOpenCodeModeId in opencode-agent.ts).
+    defaultModeId: null,
     modes: OPENCODE_MODES,
     voice: {
       enabled: true,

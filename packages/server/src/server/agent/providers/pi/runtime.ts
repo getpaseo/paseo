@@ -1,6 +1,7 @@
 import type {
   PiAgentMessage,
   PiModel,
+  PiPromptAck,
   PiRpcSlashCommand,
   PiRuntimeEvent,
   PiSessionState,
@@ -38,7 +39,7 @@ export interface PiRuntimeSession {
   prompt(
     message: string,
     images?: Array<{ type: "image"; data: string; mimeType: string }>,
-  ): Promise<void>;
+  ): Promise<PiPromptAck>;
   compact(customInstructions?: string): Promise<void>;
   setAutoCompaction(enabled: boolean): Promise<void>;
   abort(): Promise<void>;

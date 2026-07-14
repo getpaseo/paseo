@@ -811,16 +811,13 @@ export const ru: TranslationResources = {
     },
     help: {
       trigger: "Помощь и поддержка",
-      troubleshoot: "Устранение неполадок",
+      sectionHelp: "Помощь",
       diagnostics: "Запустить диагностику",
-      diagnosticsDescription: "Собрать данные приложения и подключённых хостов",
       shortcuts: "Сочетания клавиш",
-      shortcutsDescription: "Показать доступные сочетания клавиш",
       reportIssue: "Сообщить о проблеме",
       discord: "Discord",
-      discordDescription: "Для быстрой помощи и обсуждения",
       github: "Создать issue в GitHub",
-      githubDescription: "Сообщить о воспроизводимой ошибке",
+      whatsNew: "Что нового",
       version: "Paseo {{version}}",
     },
     sections: {
@@ -1426,6 +1423,34 @@ export const ru: TranslationResources = {
     input: "Вход",
     output: "Выход",
   },
+  toolCallGroup: {
+    editedFiles: {
+      one: "изменён {{count}} файл",
+      other: "изменено {{count}} файлов",
+    },
+    commands: {
+      one: "выполнена {{count}} команда",
+      other: "выполнено {{count}} команд",
+    },
+    readFiles: {
+      one: "прочитан {{count}} файл",
+      other: "прочитано {{count}} файлов",
+    },
+    searches: {
+      one: "выполнен {{count}} поиск",
+      other: "выполнено {{count}} поисков",
+    },
+    otherTools: {
+      one: "использован {{count}} другой инструмент",
+      other: "использовано {{count}} других инструментов",
+    },
+    paseoCalls: {
+      one: "Paseo вызван {{count}} раз",
+      other: "Paseo вызван {{count}} раз",
+    },
+    and: "и",
+    failed: "С ошибкой: {{count}}",
+  },
   renameModal: {
     rename: "Переименовать",
     saving: "Сохранение...",
@@ -1522,6 +1547,15 @@ export const ru: TranslationResources = {
         label: "Всегда разворачивать размышления",
         description:
           "По умолчанию показывать блоки размышлений и логики агента полностью развернутыми",
+      },
+      toolCallDetail: {
+        label: "Отображение вызовов инструментов",
+        description: "Как вызовы инструментов отображаются на временной шкале",
+        accessibilityLabel: "Выбрать отображение вызовов инструментов ({{value}})",
+        options: {
+          overview: "Сводка",
+          detailed: "Полная детализация",
+        },
       },
       language: {
         label: "Язык",

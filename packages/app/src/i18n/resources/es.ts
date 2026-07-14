@@ -819,16 +819,13 @@ export const es: TranslationResources = {
     },
     help: {
       trigger: "Ayuda y soporte",
-      troubleshoot: "Solucionar problemas",
+      sectionHelp: "Ayuda",
       diagnostics: "Ejecutar diagnóstico",
-      diagnosticsDescription: "Recopila datos de la app y los hosts conectados",
       shortcuts: "Atajos de teclado",
-      shortcutsDescription: "Ver los atajos de teclado disponibles",
       reportIssue: "Informar de un problema",
       discord: "Discord",
-      discordDescription: "La mejor opción para ayuda rápida y conversación",
       github: "Crear incidencia en GitHub",
-      githubDescription: "Informar de un error reproducible",
+      whatsNew: "Novedades",
       version: "Paseo {{version}}",
     },
     sections: {
@@ -1434,6 +1431,34 @@ export const es: TranslationResources = {
     input: "Aporte",
     output: "Producción",
   },
+  toolCallGroup: {
+    editedFiles: {
+      one: "editó {{count}} archivo",
+      other: "editó {{count}} archivos",
+    },
+    commands: {
+      one: "ejecutó {{count}} comando",
+      other: "ejecutó {{count}} comandos",
+    },
+    readFiles: {
+      one: "leyó {{count}} archivo",
+      other: "leyó {{count}} archivos",
+    },
+    searches: {
+      one: "buscó {{count}} vez",
+      other: "buscó {{count}} veces",
+    },
+    otherTools: {
+      one: "usó {{count}} herramienta adicional",
+      other: "usó {{count}} herramientas adicionales",
+    },
+    paseoCalls: {
+      one: "llamó a Paseo {{count}} vez",
+      other: "llamó a Paseo {{count}} veces",
+    },
+    and: "y",
+    failed: "{{count}} con error",
+  },
   renameModal: {
     rename: "Rebautizar",
     saving: "Guardando...",
@@ -1532,6 +1557,15 @@ export const es: TranslationResources = {
         label: "Siempre expandir razonamiento",
         description:
           "Mostrar los bloques de pensamiento y razonamiento del agente totalmente expandidos de forma predeterminada",
+      },
+      toolCallDetail: {
+        label: "Visualización de llamadas a herramientas",
+        description: "Cómo aparecen las llamadas a herramientas en la cronología",
+        accessibilityLabel: "Seleccionar visualización de llamadas a herramientas ({{value}})",
+        options: {
+          overview: "Resumen",
+          detailed: "Detalle completo",
+        },
       },
       language: {
         label: "Idioma",

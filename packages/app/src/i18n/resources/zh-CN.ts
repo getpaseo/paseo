@@ -787,16 +787,13 @@ export const zhCN: TranslationResources = {
     },
     help: {
       trigger: "帮助与支持",
-      troubleshoot: "问题排查",
+      sectionHelp: "帮助",
       diagnostics: "运行诊断",
-      diagnosticsDescription: "收集应用和已连接 Host 的详细信息",
       shortcuts: "键盘快捷键",
-      shortcutsDescription: "查看可用的键盘快捷键",
       reportIssue: "报告问题",
       discord: "Discord",
-      discordDescription: "适合快速求助和讨论",
       github: "创建 GitHub Issue",
-      githubDescription: "报告可复现的 bug",
+      whatsNew: "新功能",
       version: "Paseo {{version}}",
     },
     sections: {
@@ -1379,6 +1376,34 @@ export const zhCN: TranslationResources = {
     input: "输入",
     output: "输出",
   },
+  toolCallGroup: {
+    editedFiles: {
+      one: "编辑了 {{count}} 个文件",
+      other: "编辑了 {{count}} 个文件",
+    },
+    commands: {
+      one: "运行了 {{count}} 个命令",
+      other: "运行了 {{count}} 个命令",
+    },
+    readFiles: {
+      one: "读取了 {{count}} 个文件",
+      other: "读取了 {{count}} 个文件",
+    },
+    searches: {
+      one: "搜索了 {{count}} 次",
+      other: "搜索了 {{count}} 次",
+    },
+    otherTools: {
+      one: "使用了 {{count}} 个其他工具",
+      other: "使用了 {{count}} 个其他工具",
+    },
+    paseoCalls: {
+      one: "调用了 Paseo {{count}} 次",
+      other: "调用了 Paseo {{count}} 次",
+    },
+    and: "并",
+    failed: "{{count}} 次失败",
+  },
   renameModal: {
     rename: "重命名",
     saving: "正在保存...",
@@ -1474,6 +1499,15 @@ export const zhCN: TranslationResources = {
       autoExpandReasoning: {
         label: "始终展开推理过程",
         description: "默认情况下完全展开 AI 的思考和推理过程",
+      },
+      toolCallDetail: {
+        label: "工具调用显示",
+        description: "工具调用在时间线中的显示方式",
+        accessibilityLabel: "选择工具调用显示方式（{{value}}）",
+        options: {
+          overview: "摘要",
+          detailed: "完整详情",
+        },
       },
       language: {
         label: "语言",

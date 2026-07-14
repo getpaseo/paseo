@@ -5,6 +5,9 @@ export interface PiImageContent {
   data: string;
   mimeType: string;
 }
+export interface PiPromptAck {
+  agentInvoked?: boolean;
+}
 
 export interface PiTextContent {
   type: "text";
@@ -180,6 +183,10 @@ export type PiRuntimeEvent =
       id: string;
       method: string;
       [key: string]: unknown;
+    }
+  | {
+      type: "command_output";
+      text?: string;
     }
   | {
       type: "process_exit";

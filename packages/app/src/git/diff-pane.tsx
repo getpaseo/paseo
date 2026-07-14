@@ -85,7 +85,6 @@ import {
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { GitHubIcon } from "@/components/icons/github-icon";
 import { lineNumberGutterWidth } from "@/components/code-insets";
-import { useWebScrollViewScrollbar } from "@/components/use-web-scrollbar";
 import { GitActionsSplitButton } from "@/git/actions-split-button";
 import { BranchSwitcher } from "@/components/branch-switcher";
 import { useGitActions } from "@/git/use-actions";
@@ -1536,8 +1535,6 @@ interface DiffBodyContentProps {
   diffListRef: RefObject<FlatList<DiffFlatItem> | null>;
   handleDiffListLayout: (event: LayoutChangeEvent) => void;
   handleDiffListScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
-  onContentSizeChange: (width: number, height: number) => void;
-  showDesktopWebScrollbar: boolean;
   checkingRepositoryLabel: string;
   notRepositoryLabel: string;
 }
@@ -1559,8 +1556,6 @@ function DiffBodyContent({
   diffListRef,
   handleDiffListLayout,
   handleDiffListScroll,
-  onContentSizeChange,
-  showDesktopWebScrollbar,
   checkingRepositoryLabel,
   notRepositoryLabel,
 }: DiffBodyContentProps) {
@@ -1621,9 +1616,8 @@ function DiffBodyContent({
       testID="git-diff-scroll"
       onLayout={handleDiffListLayout}
       onScroll={handleDiffListScroll}
-      onContentSizeChange={onContentSizeChange}
       scrollEventThrottle={16}
-      showsVerticalScrollIndicator={!showDesktopWebScrollbar}
+      showsVerticalScrollIndicator
       // Mixed-height rows (header + potentially very large body) are prone to clipping artifacts.
       // Keep a larger render window and disable clipping to avoid bodies disappearing mid-scroll.
       removeClippedSubviews={false}
@@ -1737,7 +1731,6 @@ export function GitDiffPane({ serverId, workspaceId, cwd, enabled }: GitDiffPane
   const { settings: appSettings } = useAppSettings();
   const { t } = useTranslation();
   const isMobile = useIsCompactFormFactor();
-  const showDesktopWebScrollbar = isWeb && !isMobile;
   const canUseSplitLayout = isWeb && !isMobile;
   const { preferences: changesPreferences, updatePreferences: updateChangesPreferences } =
     useChangesPreferences();
@@ -1963,9 +1956,6 @@ export function GitDiffPane({ serverId, workspaceId, cwd, enabled }: GitDiffPane
     }
     void updateChangesPreferences({ viewMode: nextViewMode });
   }, [setDiffCollapsedFoldersForWorkspace, updateChangesPreferences, viewMode, workspaceStateKey]);
-  const scrollbar = useWebScrollViewScrollbar(diffListRef, {
-    enabled: showDesktopWebScrollbar,
-  });
   const diffListScrollOffsetRef = useRef(0);
   const diffListViewportHeightRef = useRef(0);
   const headerHeightByPathRef = useRef<Record<string, number>>({});
@@ -2089,25 +2079,17 @@ export function GitDiffPane({ serverId, workspaceId, cwd, enabled }: GitDiffPane
     [getBodyHeightKey],
   );
 
-  const handleDiffListScroll = useCallback(
-    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-      diffListScrollOffsetRef.current = event.nativeEvent.contentOffset.y;
-      scrollbar.onScroll(event);
-    },
-    [scrollbar],
-  );
+  const handleDiffListScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    diffListScrollOffsetRef.current = event.nativeEvent.contentOffset.y;
+  }, []);
 
-  const handleDiffListLayout = useCallback(
-    (event: LayoutChangeEvent) => {
-      const height = event.nativeEvent.layout.height;
-      if (!Number.isFinite(height) || height <= 0) {
-        return;
-      }
-      diffListViewportHeightRef.current = height;
-      scrollbar.onLayout(event);
-    },
-    [scrollbar],
-  );
+  const handleDiffListLayout = useCallback((event: LayoutChangeEvent) => {
+    const height = event.nativeEvent.layout.height;
+    if (!Number.isFinite(height) || height <= 0) {
+      return;
+    }
+    diffListViewportHeightRef.current = height;
+  }, []);
 
   // Offset of the first item matching `predicate`, walking the SAME flatItems
   // list getFlatItemLayout uses so folder rows are counted (single source of
@@ -2379,8 +2361,6 @@ export function GitDiffPane({ serverId, workspaceId, cwd, enabled }: GitDiffPane
       diffListRef={diffListRef}
       handleDiffListLayout={handleDiffListLayout}
       handleDiffListScroll={handleDiffListScroll}
-      onContentSizeChange={scrollbar.onContentSizeChange}
-      showDesktopWebScrollbar={showDesktopWebScrollbar}
       checkingRepositoryLabel={t("workspace.git.diff.checkingRepository")}
       notRepositoryLabel={t("workspace.git.diff.notRepository")}
     />
@@ -2479,10 +2459,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, enabled }: GitDiffPane
 
       {prErrorMessage ? <Text style={styles.actionErrorText}>{prErrorMessage}</Text> : null}
 
-      <View style={styles.diffContainer}>
-        {bodyContent}
-        {hasChanges ? scrollbar.overlay : null}
-      </View>
+      <View style={styles.diffContainer}>{bodyContent}</View>
     </View>
   );
 }

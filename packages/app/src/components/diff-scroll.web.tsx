@@ -1,6 +1,5 @@
-import { useCallback, useMemo } from "react";
+import { useCallback } from "react";
 import { ScrollView, type LayoutChangeEvent, type StyleProp, type ViewStyle } from "react-native";
-import { useWebScrollbarStyle } from "@/hooks/use-web-scrollbar-style";
 
 interface DiffScrollProps {
   children: React.ReactNode;
@@ -16,8 +15,6 @@ export function DiffScroll({
   style,
   contentContainerStyle,
 }: DiffScrollProps) {
-  const webScrollbarStyle = useWebScrollbarStyle();
-  const combinedStyle = useMemo(() => [style, webScrollbarStyle], [style, webScrollbarStyle]);
   const handleLayout = useCallback(
     (e: LayoutChangeEvent) => onScrollViewWidthChange(e.nativeEvent.layout.width),
     [onScrollViewWidthChange],
@@ -28,7 +25,7 @@ export function DiffScroll({
       horizontal
       nestedScrollEnabled
       showsHorizontalScrollIndicator
-      style={combinedStyle}
+      style={style}
       contentContainerStyle={contentContainerStyle}
       onLayout={handleLayout}
     >

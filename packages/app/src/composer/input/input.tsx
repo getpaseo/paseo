@@ -51,7 +51,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { useDismissKeyboardOnOpen } from "@/components/ui/keyboard-dismiss";
-import { useWebElementScrollbar } from "@/components/use-web-scrollbar";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { useIosHardwareKeyboardSubmit } from "@/hooks/use-ios-hardware-keyboard-submit";
 import { formatShortcut, type ShortcutKey } from "@/utils/format-shortcut";
@@ -1616,10 +1615,6 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       }
     }, [getWebTextArea]);
 
-    const inputScrollbar = useWebElementScrollbar(webTextareaRef, {
-      enabled: isWeb,
-    });
-
     usePasteImagesEffect({
       getWebTextArea,
       isConnected,
@@ -1842,7 +1837,6 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
               onSelectionChange={handleSelectionChange}
               autoFocus={isWeb && autoFocus}
             />
-            {inputScrollbar}
             <FocusHint
               visible={isWeb && isPaneFocused && !isInputFocused && !value}
               focusInputKeys={focusInputKeys}

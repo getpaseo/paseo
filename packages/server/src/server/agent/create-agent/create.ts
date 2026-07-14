@@ -217,12 +217,42 @@ async function resolveSessionCreateAgent(
   input: CreateAgentFromSessionInput,
 ): Promise<ResolvedCreateAgent> {
   const trimmedPrompt = input.initialPrompt?.trim();
-  const { sessionConfig, setupContinuation, createdWorkspaceId } = await input.buildSessionConfig(
+  const {
+    sessionConfig: builtSessionConfig,
+    setupContinuation,
+    createdWorkspaceId,
+  } = await input.buildSessionConfig(
     input.config,
     input.git,
     input.worktreeName,
     input.firstAgentContext,
   );
+  // Validate the requested mode against the provider's modes for the resolved
+  // cwd. The app remembers mode preferences globally, so a saved mode can be
+  // stale for a workspace whose provider config no longer defines it — reject
+  // it here instead of letting the provider fail mid-turn.
+  //
+  // This runs after buildSessionConfig, which may already have created a
+  // worktree and/or workspace record — cwd (required to resolve modes) is
+  // only known once that step completes. If validation throws, any
+  // worktree/workspace buildSessionConfig created is the caller's
+  // responsibility to clean up (session.ts's handleCreateAgentRequest does
+  // this for the worktree path via cleanupCreatedWorktreeAfterFailedAgentCreate;
+  // this is a pre-existing gap for directory-only workspace creates, not
+  // introduced by this validation).
+  const resolvedCreateConfig = await dependencies.providerSnapshotManager.resolveCreateConfig({
+    cwd: builtSessionConfig.cwd,
+    provider: builtSessionConfig.provider,
+    requestedMode: builtSessionConfig.modeId,
+    featureValues: builtSessionConfig.featureValues,
+    parent: null,
+    unattended: false,
+  });
+  const sessionConfig: AgentSessionConfig = {
+    ...builtSessionConfig,
+    modeId: resolvedCreateConfig.modeId,
+    featureValues: resolvedCreateConfig.featureValues,
+  };
   const prompt = buildAgentPrompt(trimmedPrompt ?? "", input.images, input.attachments);
   const hasPromptContent = Array.isArray(prompt) ? prompt.length > 0 : prompt.length > 0;
   const clientMessageId = normalizeClientMessageId(input.clientMessageId);

@@ -792,16 +792,13 @@ export const ar: TranslationResources = {
     },
     help: {
       trigger: "المساعدة والدعم",
-      troubleshoot: "استكشاف الأخطاء وإصلاحها",
+      sectionHelp: "المساعدة",
       diagnostics: "تشغيل التشخيص",
-      diagnosticsDescription: "جمع تفاصيل التطبيق والمضيفين المتصلين",
       shortcuts: "اختصارات لوحة المفاتيح",
-      shortcutsDescription: "عرض اختصارات لوحة المفاتيح المتاحة",
       reportIssue: "الإبلاغ عن مشكلة",
       discord: "Discord",
-      discordDescription: "الأفضل للمساعدة السريعة والنقاش",
       github: "إنشاء مشكلة على GitHub",
-      githubDescription: "الإبلاغ عن خطأ يمكن إعادة إنتاجه",
+      whatsNew: "ما الجديد",
       version: "Paseo {{version}}",
     },
     sections: {
@@ -1395,6 +1392,34 @@ export const ar: TranslationResources = {
     input: "مدخل",
     output: "الإخراج",
   },
+  toolCallGroup: {
+    editedFiles: {
+      one: "حرّر {{count}} ملفًا",
+      other: "حرّر {{count}} ملفات",
+    },
+    commands: {
+      one: "شغّل {{count}} أمرًا",
+      other: "شغّل {{count}} أوامر",
+    },
+    readFiles: {
+      one: "قرأ {{count}} ملفًا",
+      other: "قرأ {{count}} ملفات",
+    },
+    searches: {
+      one: "بحث {{count}} مرة",
+      other: "بحث {{count}} مرات",
+    },
+    otherTools: {
+      one: "استخدم {{count}} أداة أخرى",
+      other: "استخدم {{count}} أدوات أخرى",
+    },
+    paseoCalls: {
+      one: "استدعى Paseo {{count}} مرة",
+      other: "استدعى Paseo {{count}} مرات",
+    },
+    and: "و",
+    failed: "فشل {{count}}",
+  },
   renameModal: {
     rename: "إعادة تسمية",
     saving: "جارٍ الحفظ...",
@@ -1491,6 +1516,15 @@ export const ar: TranslationResources = {
       autoExpandReasoning: {
         label: "عرض التفكير دائماً",
         description: "إظهار تفكير الوكيل وخطوات الاستدلال بشكل كامل بشكل افتراضي",
+      },
+      toolCallDetail: {
+        label: "عرض استدعاءات الأدوات",
+        description: "كيفية ظهور استدعاءات الأدوات في المخطط الزمني",
+        accessibilityLabel: "حدد عرض استدعاءات الأدوات ({{value}})",
+        options: {
+          overview: "ملخص",
+          detailed: "التفاصيل الكاملة",
+        },
       },
       language: {
         label: "لغة",

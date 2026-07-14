@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { queryClient as appQueryClient } from "@/data/query-client";
@@ -26,6 +26,7 @@ import {
   MIN_UI_FONT_SIZE,
   loadAppSettingsFromStorage as loadAppSettingsFromStoragePure,
   loadSettingsFromStorage as loadSettingsFromStoragePure,
+  normalizeAppSettings,
   parseClampedFontSize,
   parseTerminalScrollbackLines,
   sanitizeFontFamily,
@@ -129,9 +130,10 @@ export function useAppSettings(): UseAppSettingsReturn {
       throw err;
     }
   }, [queryClient]);
+  const settings = useMemo(() => normalizeAppSettings(data), [data]);
 
   return {
-    settings: data ?? DEFAULT_CLIENT_SETTINGS,
+    settings,
     isLoading: isPending,
     error: error ?? null,
     updateSettings,
@@ -185,6 +187,9 @@ export function useSettings<TSelected>(
       }
       if (updates.autoExpandReasoning !== undefined) {
         appUpdates.autoExpandReasoning = updates.autoExpandReasoning;
+      }
+      if (updates.toolCallDetailLevel !== undefined) {
+        appUpdates.toolCallDetailLevel = updates.toolCallDetailLevel;
       }
       const promises: Promise<void>[] = [];
       if (Object.keys(appUpdates).length > 0) {
