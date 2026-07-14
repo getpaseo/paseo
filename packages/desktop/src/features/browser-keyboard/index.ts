@@ -13,6 +13,7 @@ export type { BrowserKeyboardPolicy } from "./policy.js";
 
 const POLICY_INPUT_CHANNEL = "paseo:browser:set-shortcut-policy";
 const POLICY_OUTPUT_CHANNEL = "paseo:browser-keyboard-policy";
+const POLICY_REQUEST_CHANNEL = "paseo:browser-keyboard-policy-request";
 const SHORTCUT_INPUT_CHANNEL = "paseo:browser-shortcut-input";
 const SHORTCUT_OUTPUT_CHANNEL = "paseo:event:browser-shortcut-input";
 const RESERVED_SHORTCUT_OUTPUT_CHANNEL = "paseo:event:browser-shortcut";
@@ -26,6 +27,12 @@ interface BrowserKeyboardInputEvent {
 }
 
 interface BrowserKeyboardGuestContents extends BrowserKeyboardContentsIdentity {
+  readonly mainFrame: {
+    readonly framesInSubtree: ReadonlyArray<{
+      readonly detached: boolean;
+      send(channel: string, ...args: unknown[]): void;
+    }>;
+  };
   isDestroyed(): boolean;
   isLoadingMainFrame(): boolean;
   on(event: "dom-ready", listener: () => void): void;
@@ -36,7 +43,6 @@ interface BrowserKeyboardGuestContents extends BrowserKeyboardContentsIdentity {
   once(event: "destroyed", listener: () => void): void;
   reload(): void;
   reloadIgnoringCache(): void;
-  send(channel: string, ...args: unknown[]): void;
   setIgnoreMenuShortcuts(ignore: boolean): void;
   stop(): void;
 }
@@ -63,6 +69,12 @@ export class BrowserKeyboard {
     });
     ipcMain.on(SHORTCUT_INPUT_CHANNEL, (event, rawInput: unknown) => {
       this.forwardShortcutInput(event.sender, rawInput);
+    });
+    ipcMain.on(POLICY_REQUEST_CHANNEL, (event) => {
+      const payload = this.policyForGuest(event.sender);
+      if (payload) {
+        event.reply(POLICY_OUTPUT_CHANNEL, payload);
+      }
     });
   }
 
@@ -217,8 +229,29 @@ export class BrowserKeyboard {
     browserId: string,
     policy: BrowserKeyboardPolicy,
   ): void {
-    if (!guest.contents.isDestroyed()) {
-      guest.contents.send(POLICY_OUTPUT_CHANNEL, { ...policy, browserId });
+    if (guest.contents.isDestroyed()) {
+      return;
     }
+    const payload = { ...policy, browserId };
+    for (const frame of guest.contents.mainFrame.framesInSubtree) {
+      if (!frame.detached) {
+        frame.send(POLICY_OUTPUT_CHANNEL, payload);
+      }
+    }
+  }
+
+  private policyForGuest(
+    contents: BrowserKeyboardContentsIdentity,
+  ): (BrowserKeyboardPolicy & { browserId: string }) | null {
+    const guest = this.attachedGuestsByWebContentsId.get(contents.id);
+    if (!guest) {
+      return null;
+    }
+    const registration = this.registrationForGuest(contents.id, guest);
+    if (!registration) {
+      return null;
+    }
+    const policy = this.policiesByHostWebContentsId.get(registration.hostWebContentsId);
+    return policy ? { ...policy, browserId: registration.browserId } : null;
   }
 }

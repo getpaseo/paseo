@@ -260,8 +260,9 @@ describe("resident browser webviews", () => {
   });
 
   it("finds the originating browser webview for focus restoration", () => {
-    const webview = ensureResidentBrowserWebview({
+    const webview = ensureTestBrowser({
       browserId: "browser-focus",
+      workspaceId: "workspace-focus",
       url: "https://example.com",
     });
 

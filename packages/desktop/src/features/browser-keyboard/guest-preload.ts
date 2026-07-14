@@ -2,11 +2,11 @@ import { ipcRenderer } from "electron";
 import type { BrowserKeyboardPolicy, BrowserShortcutPrefix } from "./policy.js";
 
 const POLICY_CHANNEL = "paseo:browser-keyboard-policy";
+const POLICY_REQUEST_CHANNEL = "paseo:browser-keyboard-policy-request";
 const SHORTCUT_INPUT_CHANNEL = "paseo:browser-shortcut-input";
 
 let browserId: string | null = null;
 let policy: BrowserShortcutPrefix[] = [];
-let keydownListenerInstalled = false;
 
 interface BrowserKeyboardPolicyPayload extends BrowserKeyboardPolicy {
   browserId: string;
@@ -44,45 +44,42 @@ function matchesCode(prefixCode: string, eventCode: string): boolean {
   return /^(?:Digit|Numpad)[1-9]$/.test(eventCode);
 }
 
-function installKeydownListener(): void {
-  if (keydownListenerInstalled) {
+function stageShortcutForward(event: KeyboardEvent): void {
+  if (!event.isTrusted || event.defaultPrevented || !browserId || !matchesPolicy(event)) {
     return;
   }
-  keydownListenerInstalled = true;
-  window.addEventListener("keydown", (event) => {
-    if (!event.isTrusted || event.defaultPrevented || !browserId || !matchesPolicy(event)) {
-      return;
-    }
-    event.preventDefault();
-    ipcRenderer.send(SHORTCUT_INPUT_CHANNEL, {
-      alt: event.altKey,
-      browserId,
-      code: event.code,
-      control: event.ctrlKey,
-      key: event.key,
-      meta: event.metaKey,
-      repeat: event.repeat,
-      shift: event.shiftKey,
-    });
-  });
+
+  const shortcutBrowserId = browserId;
+  window.addEventListener(
+    "keydown",
+    (completedEvent) => {
+      if (completedEvent !== event || completedEvent.defaultPrevented) {
+        return;
+      }
+      completedEvent.preventDefault();
+      ipcRenderer.send(SHORTCUT_INPUT_CHANNEL, {
+        alt: completedEvent.altKey,
+        browserId: shortcutBrowserId,
+        code: completedEvent.code,
+        control: completedEvent.ctrlKey,
+        key: completedEvent.key,
+        meta: completedEvent.metaKey,
+        repeat: completedEvent.repeat,
+        shift: completedEvent.shiftKey,
+      });
+    },
+    { once: true },
+  );
 }
 
-function scheduleKeydownListener(): void {
-  if (keydownListenerInstalled) {
-    return;
-  }
-  const installAfterInitialPageHandlers = () => {
-    setTimeout(installKeydownListener, 0);
-  };
-  if (document.readyState === "loading") {
-    window.addEventListener("DOMContentLoaded", installAfterInitialPageHandlers, { once: true });
-    return;
-  }
-  installAfterInitialPageHandlers();
-}
+window.addEventListener("keydown", stageShortcutForward, { capture: true });
 
 ipcRenderer.on(POLICY_CHANNEL, (_event, value: BrowserKeyboardPolicyPayload) => {
+  if (!value || typeof value.browserId !== "string" || !Array.isArray(value.prefixes)) {
+    return;
+  }
   browserId = value.browserId;
   policy = value.prefixes;
-  scheduleKeydownListener();
 });
+
+ipcRenderer.send(POLICY_REQUEST_CHANNEL);

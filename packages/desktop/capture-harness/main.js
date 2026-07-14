@@ -494,7 +494,7 @@ function installHarnessWebviewGuards(win, options = {}) {
     webPreferences.nodeIntegration = false;
     webPreferences.contextIsolation = true;
     if (options.preloadPath) {
-      webPreferences.nodeIntegrationInSubFrames = false;
+      webPreferences.nodeIntegrationInSubFrames = true;
       webPreferences.nodeIntegrationInWorker = false;
       webPreferences.sandbox = true;
       webPreferences.webSecurity = true;
@@ -1236,6 +1236,27 @@ function automationFixtureUrl() {
         <script>
           window.fixtureLog = [];
           window.preventBrowserShortcut = false;
+          window.installLateBrowserShortcutHandler = () => {
+            window.addEventListener(
+              "keydown",
+              (event) => {
+                if (
+                  (event.metaKey || event.ctrlKey) &&
+                  !event.altKey &&
+                  !event.shiftKey &&
+                  event.key.toLowerCase() === "b"
+                ) {
+                  event.preventDefault();
+                  window.fixtureLog.push({
+                    event: "late-shortcut-b",
+                    defaultPrevented: event.defaultPrevented,
+                    trusted: event.isTrusted,
+                  });
+                }
+              },
+              { once: true },
+            );
+          };
           window.addEventListener("keydown", (event) => {
             if (
               (event.metaKey || event.ctrlKey) &&
@@ -1774,6 +1795,57 @@ function installBrowserKeyboardSentinels() {
   };
 }
 
+async function verifyLatePageShortcutFirstRefusal({ guest, sentinel, shortcutInputs }) {
+  await guest.executeJavaScript(
+    "window.preventBrowserShortcut = false; window.installLateBrowserShortcutHandler();",
+    true,
+  );
+  automationBrowserShortcut(guest);
+  await waitForAutomationLog(
+    guest,
+    (entry) =>
+      entry.event === "late-shortcut-b" &&
+      entry.defaultPrevented === true &&
+      entry.trusted === true,
+    "late page-prevented trusted browser shortcut",
+  );
+  await delay(100);
+  if (shortcutInputs.length !== 0 || sentinel.applicationMenuShortcutHits !== 0) {
+    fail(
+      `late page-prevented browser shortcut escaped guest: inputs=${JSON.stringify(shortcutInputs)} menu=${sentinel.applicationMenuShortcutHits}`,
+    );
+  }
+  pass("automation late page handlers get first refusal for browser shortcuts");
+  return { group: "automation", check: "browser-shortcut-late-page-handler", pass: true };
+}
+
+async function verifyFocusedIframeShortcut({ guest, shortcutInputs, expectedInput }) {
+  const iframeFocused = await guest.executeJavaScript(
+    `new Promise((resolve) => {
+      const iframe = document.createElement("iframe");
+      iframe.srcdoc = '<!doctype html><button id="iframe-target">Frame target</button>';
+      iframe.addEventListener("load", () => {
+        iframe.contentDocument.getElementById("iframe-target").focus();
+        resolve(iframe.contentDocument.activeElement.id);
+      }, { once: true });
+      document.body.appendChild(iframe);
+    })`,
+    true,
+  );
+  if (iframeFocused !== "iframe-target") {
+    fail(`automation iframe browser shortcut target was not focused: ${iframeFocused}`);
+  }
+  automationBrowserShortcut(guest);
+  await waitForBrowserShortcutInput(shortcutInputs, 4);
+  if (!isDeepStrictEqual(shortcutInputs[3], expectedInput)) {
+    fail(
+      `iframe browser shortcut crossed boundary incorrectly: inputs=${JSON.stringify(shortcutInputs)}`,
+    );
+  }
+  pass("automation production guest preload forwards shortcuts from focused iframes");
+  return { group: "automation", check: "browser-shortcut-focused-iframe", pass: true };
+}
+
 async function verifyBrowserKeyboardIsolation({ guest, win, browserId, usesMeta, sentinel }) {
   const checks = [];
   const { shortcutInputs } = sentinel;
@@ -1811,6 +1883,8 @@ async function verifyBrowserKeyboardIsolation({ guest, win, browserId, usesMeta,
   }
   pass("automation page preventDefault keeps browser shortcut in the guest");
   checks.push({ group: "automation", check: "browser-shortcut-page-prevented", pass: true });
+
+  checks.push(await verifyLatePageShortcutFirstRefusal({ guest, sentinel, shortcutInputs }));
 
   await guest.executeJavaScript("window.preventBrowserShortcut = false", true);
   const unhandledTarget = await guest.executeJavaScript(
@@ -1914,6 +1988,14 @@ async function verifyBrowserKeyboardIsolation({ guest, win, browserId, usesMeta,
   pass("automation production guest preload forwards digit wildcard shortcuts");
   checks.push({ group: "automation", check: "browser-shortcut-digit-wildcard", pass: true });
 
+  checks.push(
+    await verifyFocusedIframeShortcut({
+      guest,
+      shortcutInputs,
+      expectedInput: expectedBrowserShortcutInput,
+    }),
+  );
+
   const focusedGuestInput = await guest.executeJavaScript(
     "document.getElementById('name').focus(); document.activeElement.id",
     true,
@@ -1986,6 +2068,7 @@ async function runAutomationGroup() {
   const { PaseoBrowserWebviewRegistry } = require(PRODUCTION_BROWSER_WEBVIEW_REGISTRY_PATH);
   const browserRegistry = new PaseoBrowserWebviewRegistry();
   const browserKeyboard = new BrowserKeyboard(browserRegistry);
+  browserKeyboard.registerIpc();
   const browserKeyboardSentinels = installBrowserKeyboardSentinels();
   const handle = createInactiveHarnessWindow({
     width: 1000,

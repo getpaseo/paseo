@@ -8,6 +8,14 @@ interface SentMessage {
 }
 
 class FakeBrowserContents {
+  public readonly mainFrame = {
+    framesInSubtree: [
+      {
+        detached: false,
+        send: (channel: string, payload: unknown) => this.send(channel, payload),
+      },
+    ],
+  };
   public readonly ignoredMenuShortcuts: boolean[] = [];
   public readonly reloads: string[] = [];
   public readonly sent: SentMessage[] = [];
