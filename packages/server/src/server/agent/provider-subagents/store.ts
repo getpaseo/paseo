@@ -52,7 +52,12 @@ export type ProviderSubagentStoreEvent =
       row: AgentTimelineRow;
       epoch: string;
     }
-  | { type: "remove"; parentAgentId: string; subagentId: string };
+  | {
+      type: "remove";
+      parentAgentId: string;
+      subagentId: string;
+      retainTimeline?: boolean;
+    };
 
 function storeKey(parentAgentId: string, subagentId: string): string {
   return `${parentAgentId}\0${subagentId}`;

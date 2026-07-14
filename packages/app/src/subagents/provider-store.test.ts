@@ -129,6 +129,48 @@ describe("provider subagent client store", () => {
     ).toBe(false);
   });
 
+  test("keeps an open timeline when a child is removed only from the subagent track", () => {
+    const store = useProviderSubagentStore.getState();
+    store.applyUpdate(SERVER_ID, {
+      kind: "upsert",
+      subagent: {
+        id: SUBAGENT_ID,
+        parentAgentId: PARENT_ID,
+        provider: "codex",
+        title: "Finished child",
+        description: null,
+        status: "completed",
+        createdAt: "2026-07-12T10:00:00.000Z",
+        updatedAt: "2026-07-12T10:00:02.000Z",
+        toolCallId: "call-1",
+      },
+    });
+    store.applyUpdate(SERVER_ID, {
+      kind: "timeline",
+      parentAgentId: PARENT_ID,
+      subagentId: SUBAGENT_ID,
+      provider: "codex",
+      epoch: "epoch-1",
+      seq: 1,
+      timestamp: "2026-07-12T10:00:01.000Z",
+      item: { type: "assistant_message", text: "Finished output." },
+    });
+
+    store.applyUpdate(SERVER_ID, {
+      kind: "remove",
+      parentAgentId: PARENT_ID,
+      subagentId: SUBAGENT_ID,
+      retainTimeline: true,
+    });
+
+    const state = useProviderSubagentStore.getState();
+    const key = providerSubagentKey(SERVER_ID, PARENT_ID, SUBAGENT_ID);
+    expect(state.descriptors.has(key)).toBe(false);
+    expect(state.timelines.get(key)?.tail).toEqual([
+      expect.objectContaining({ kind: "assistant_message", text: "Finished output." }),
+    ]);
+  });
+
   test("applies terminal list status to a timeline received before its descriptor", () => {
     const store = useProviderSubagentStore.getState();
     store.applyUpdate(SERVER_ID, {

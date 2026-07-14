@@ -2907,10 +2907,20 @@ test("archiveFinishedSubagents archives managed children and keeps dismissed pro
   expect(manager.listProviderSubagents(parent.id).map((subagent) => subagent.id)).toEqual([
     "native-running",
   ]);
+  expect(manager.getProviderSubagent(parent.id, "native-finished")).toMatchObject({
+    id: "native-finished",
+    status: "completed",
+  });
+  expect(() => manager.fetchProviderSubagentTimeline(parent.id, "native-finished")).not.toThrow();
   expect((await storage.get(parent.id))?.dismissedProviderSubagentIds).toEqual([
     "native-finished",
     "native-failed",
   ]);
+
+  await expect(manager.archiveFinishedSubagents(parent.id)).resolves.toEqual({
+    archivedAgentIds: [],
+    dismissedProviderSubagentIds: [],
+  });
 
   await manager.hydrateTimelineFromProvider(parent.id, { force: true });
 

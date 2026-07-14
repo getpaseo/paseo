@@ -3137,6 +3137,7 @@ export const ProviderSubagentUpdateMessageSchema = z.object({
       kind: z.literal("remove"),
       parentAgentId: z.string(),
       subagentId: z.string(),
+      retainTimeline: z.boolean().optional(),
     }),
   ]),
 });

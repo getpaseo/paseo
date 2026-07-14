@@ -245,8 +245,11 @@ export const useProviderSubagentStore = create<ProviderSubagentState>((set) => (
       if (payload.kind === "remove") {
         const key = providerSubagentKey(serverId, payload.parentAgentId, payload.subagentId);
         const descriptors = new Map(state.descriptors);
-        const timelines = new Map(state.timelines);
         descriptors.delete(key);
+        if (payload.retainTimeline) {
+          return { descriptors, timelines: state.timelines };
+        }
+        const timelines = new Map(state.timelines);
         timelines.delete(key);
         return { descriptors, timelines };
       }

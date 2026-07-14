@@ -960,8 +960,10 @@ export class AgentManager {
   }
 
   listProviderSubagents(parentAgentId: string): ProviderSubagentDescriptor[] {
-    this.requirePublicAgent(parentAgentId);
-    return this.providerSubagents.list(parentAgentId);
+    const parent = this.requirePublicAgent(parentAgentId);
+    return this.providerSubagents
+      .list(parentAgentId)
+      .filter((subagent) => !parent.dismissedProviderSubagentIds.has(subagent.id));
   }
 
   async archiveFinishedSubagents(parentAgentId: string): Promise<{
@@ -1013,14 +1015,19 @@ export class AgentManager {
 
     const dismissedProviderSubagentIds = this.providerSubagents
       .list(parentAgentId)
-      .filter((subagent) => subagent.status !== "running")
+      .filter(
+        (subagent) =>
+          subagent.status !== "running" && !parent.dismissedProviderSubagentIds.has(subagent.id),
+      )
       .map((subagent) => subagent.id);
     for (const subagentId of dismissedProviderSubagentIds) {
       parent.dismissedProviderSubagentIds.add(subagentId);
-      const event = this.providerSubagents.apply(parentAgentId, parent.provider, {
+      const event: ProviderSubagentStoreEvent = {
         type: "remove",
-        id: subagentId,
-      });
+        parentAgentId,
+        subagentId,
+        retainTimeline: true,
+      };
       this.dispatch({ type: "provider_subagent", event });
     }
     if (dismissedProviderSubagentIds.length > 0) {

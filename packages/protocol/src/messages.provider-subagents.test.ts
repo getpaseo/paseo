@@ -101,4 +101,18 @@ describe("provider subagent protocol", () => {
       },
     });
   });
+
+  test("accepts a remove update that preserves an open provider timeline", () => {
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "agent.provider_subagents.update",
+        payload: {
+          kind: "remove",
+          parentAgentId: "parent-1",
+          subagentId: "child-1",
+          retainTimeline: true,
+        },
+      }),
+    ).toMatchObject({ payload: { kind: "remove", retainTimeline: true } });
+  });
 });

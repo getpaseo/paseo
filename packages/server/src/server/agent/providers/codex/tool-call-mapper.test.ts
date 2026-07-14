@@ -285,6 +285,24 @@ describe("codex tool-call mapper", () => {
     });
   });
 
+  it("uses only the final segment of a Windows subAgentActivity path", () => {
+    const item = mapCodexToolCallFromThreadItem({
+      type: "subAgentActivity",
+      id: "activity-windows-path",
+      kind: "started",
+      agentThreadId: "child-thread-windows-path",
+      agentPath: "C:\\Users\\dev\\agents\\investigator",
+    });
+
+    expect(item).toMatchObject({
+      detail: {
+        type: "sub_agent",
+        subAgentType: "investigator",
+        description: "C:\\Users\\dev\\agents\\investigator",
+      },
+    });
+  });
+
   it("does not fail a collabAgentToolCall from child error state alone", () => {
     const item = mapCodexToolCallFromThreadItem({
       type: "collabAgentToolCall",

@@ -998,8 +998,10 @@ function mapSubAgentActivityItem(
     nativeName = "";
   } else if (nativeName.startsWith("/root/")) {
     nativeName = nativeName.slice("/root/".length);
-  } else if (nativeName.includes("/")) {
-    nativeName = nativeName.slice(nativeName.lastIndexOf("/") + 1);
+  } else if (/[\\/]/.test(nativeName)) {
+    nativeName = nativeName.slice(
+      Math.max(nativeName.lastIndexOf("/"), nativeName.lastIndexOf("\\")) + 1,
+    );
   }
   nativeName ||= "Sub-agent";
   return {
