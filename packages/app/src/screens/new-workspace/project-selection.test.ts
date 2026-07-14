@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { HostProjectListItem } from "@/projects/host-projects";
 import {
+  createChatProjectSelection,
   createManualProjectSelectionContextKey,
   createProjectSelectionContextKey,
   createProjectSelection,
+  isChatProjectSelection,
   reconcileProjectSelection,
   resolveInitialProjectSelectionSource,
   resolveProjectSelection,
@@ -43,6 +45,8 @@ function context(
         routeProject,
         lastActiveProject,
       }),
+    allowChatWorkspace: false,
+    initialChatWorkspace: false,
     shouldPreserveMissingProject: () => false,
     ...input,
   };
@@ -284,6 +288,32 @@ describe("reconcileProjectSelection", () => {
       project: fallback,
       source: "initial",
     });
+  });
+
+  it("preselects chat only when the host supports chat workspaces", () => {
+    const enabled = createProjectSelection(
+      context({
+        initialProject: null,
+        projects: [],
+        allowChatWorkspace: true,
+        initialChatWorkspace: true,
+      }),
+    );
+    const disabled = createProjectSelection(
+      context({
+        initialProject: null,
+        projects: [],
+        allowChatWorkspace: false,
+        initialChatWorkspace: true,
+      }),
+    );
+
+    const manuallySelected = createChatProjectSelection("host:", "manual");
+
+    expect(isChatProjectSelection(enabled)).toBe(true);
+    expect(isChatProjectSelection(disabled)).toBe(false);
+    expect(isChatProjectSelection(manuallySelected)).toBe(true);
+    expect(manuallySelected.source).toBe("manual");
   });
 
   it("resolves manual selections from selectable projects, not route or remembered projects", () => {

@@ -865,6 +865,7 @@ export const ar: TranslationResources = {
     },
     actions: {
       addProject: "إضافة مشروع",
+      newChat: "محادثة جديدة",
       newWorkspace: "مساحة عمل جديدة",
       hosts: "المضيفون",
       home: "بيت",
@@ -885,6 +886,7 @@ export const ar: TranslationResources = {
     sections: {
       sessions: "السجل",
       schedules: "الجداول",
+      chats: "المحادثات",
     },
     worktreeSetup: {
       title: "إعداد البرامج النصية لشجرة العمل",
@@ -947,6 +949,13 @@ export const ar: TranslationResources = {
         hideConfirm: "يخفي",
         cancel: "يلغي",
       },
+      archiveChat: {
+        title: "حذف المحادثة؟",
+        message:
+          "سيؤدي هذا إلى حذف المحادثة وأي ملفات أنشأها الوكيل فيها بشكل دائم. لا يمكن التراجع عن هذا الإجراء.",
+        confirm: "حذف",
+        cancel: "يلغي",
+      },
       rename: {
         title: "إعادة تسمية مساحة العمل",
         submit: "إعادة تسمية",
@@ -965,6 +974,10 @@ export const ar: TranslationResources = {
   newWorkspace: {
     title: "مساحة عمل جديدة",
     create: "يخلق",
+    chat: {
+      title: "محادثة جديدة",
+      noWorkspace: "بدون مساحة عمل (دردشة فقط)",
+    },
     isolation: {
       local: "محلي",
       worktree: "شجرة عمل جديدة",
@@ -981,6 +994,8 @@ export const ar: TranslationResources = {
       createWorktreeFailed: "فشل في إنشاء شجرة العمل",
       composerStateRequired: "حالة الملحن مطلوبة",
       selectModel: "اختر نموذجا",
+      chatPromptRequired: "أدخل رسالة لبدء محادثة",
+      chatWorkspaceRequired: "لم يُرجع المضيف مساحة عمل للمحادثة",
     },
     refPicker: {
       startingRef: "بدء المرجع",
@@ -1182,6 +1197,10 @@ export const ar: TranslationResources = {
       pairDevice: {
         title: "إقران الجهاز",
         description: "قم بتوصيل هاتفك بهذا البرنامج الخفي",
+      },
+      newChat: {
+        title: "محادثة جديدة",
+        description: "تحدث مع نموذج بدون مساحة عمل",
       },
     },
   },

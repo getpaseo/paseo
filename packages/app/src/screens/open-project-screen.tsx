@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useState, type ComponentType } from "react";
 import { useTranslation } from "react-i18next";
-import { View, Text, Pressable } from "react-native";
+import { View, Text, Pressable, ScrollView } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useRouter } from "expo-router";
-import { FolderOpen, Inbox, Plug, Smartphone } from "lucide-react-native";
+import { FolderOpen, Inbox, MessageCircle, Plug, Smartphone } from "lucide-react-native";
 import { PaseoLogo } from "@/components/icons/paseo-logo";
 import { CommunityLinks } from "@/components/community-links";
 import { MenuHeader } from "@/components/headers/menu-header";
 import { useOpenAddProject } from "@/hooks/use-open-add-project";
 import { useHostChooser } from "@/hosts/host-chooser";
+import { useHostFeature } from "@/runtime/host-features";
+import { useEarliestOnlineHostServerId } from "@/app/_layout";
 import { usePanelStore } from "@/stores/panel-store";
 import {
   useIsCompactFormFactor,
@@ -37,6 +39,8 @@ export function OpenProjectScreen() {
   const openImportedProject = useOpenProject(importServerId);
   const [isPairDeviceOpen, setIsPairDeviceOpen] = useState(false);
   const [isImportSheetOpen, setIsImportSheetOpen] = useState(false);
+  const earliestOnlineHostServerId = useEarliestOnlineHostServerId();
+  const supportsChatWorkspace = useHostFeature(earliestOnlineHostServerId, "chatWorkspace");
 
   const isCompactLayout = useIsCompactFormFactor();
 
@@ -86,11 +90,21 @@ export function OpenProjectScreen() {
     });
   }, [chooseHost, router]);
 
+  const handleOpenNewChat = useCallback(() => {
+    if (!earliestOnlineHostServerId) {
+      return;
+    }
+    router.push({
+      pathname: "/new",
+      params: { chat: "1", serverId: earliestOnlineHostServerId },
+    });
+  }, [earliestOnlineHostServerId, router]);
+
   return (
     <View style={styles.container}>
       <MenuHeader borderless />
-      <View style={styles.content}>
-        <TitlebarDragRegion />
+      <TitlebarDragRegion />
+      <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
         <View style={styles.logo}>
           <PaseoLogo size={52} />
         </View>
@@ -103,6 +117,15 @@ export function OpenProjectScreen() {
             testID="open-project-submit"
             accent
           />
+          {supportsChatWorkspace ? (
+            <HomeTile
+              icon={MessageCircle}
+              title={t("openProject.tiles.newChat.title")}
+              description={t("openProject.tiles.newChat.description")}
+              onPress={handleOpenNewChat}
+              testID="open-project-new-chat"
+            />
+          ) : null}
           <HomeTile
             icon={Inbox}
             title={t("openProject.tiles.importSession.title")}
@@ -127,10 +150,10 @@ export function OpenProjectScreen() {
             />
           ) : null}
         </View>
-      </View>
-      <View style={styles.communityRow}>
-        <CommunityLinks />
-      </View>
+        <View style={styles.communityRow}>
+          <CommunityLinks />
+        </View>
+      </ScrollView>
       <PairDeviceModal
         visible={isPairDeviceOpen}
         onClose={handleClosePairDevice}
@@ -197,10 +220,11 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surface0,
     userSelect: "none",
   },
-  content: {
-    position: "relative",
+  scroll: {
     flex: 1,
-    justifyContent: { xs: "flex-start", md: "center" },
+  },
+  content: {
+    flexGrow: 1,
     alignItems: "center",
     gap: 0,
     padding: theme.spacing[6],
@@ -211,6 +235,9 @@ const styles = StyleSheet.create((theme) => ({
     },
   },
   logo: {
+    // Splits leftover space with communityRow's auto margin so the logo + tiles
+    // sit centered on tall viewports while everything stays in scrollable flow.
+    marginTop: { xs: 0, md: "auto" },
     marginBottom: theme.spacing[8],
   },
   tiles: {
@@ -253,13 +280,9 @@ const styles = StyleSheet.create((theme) => ({
     lineHeight: 18,
   },
   communityRow: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    bottom: {
-      xs: HEADER_INNER_HEIGHT_MOBILE + HEADER_TOP_PADDING_MOBILE + theme.spacing[2],
-      md: HEADER_INNER_HEIGHT + theme.spacing[2],
-    },
+    marginTop: "auto",
+    paddingTop: theme.spacing[6],
+    alignSelf: "stretch",
     flexDirection: "row",
     justifyContent: "center",
     alignItems: "center",

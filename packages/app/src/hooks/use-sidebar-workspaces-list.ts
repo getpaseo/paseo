@@ -26,6 +26,8 @@ export {
   computeSidebarOrderUpdates,
   deriveSidebarLoadingState,
   shouldShowSidebarHostLabels,
+  splitSidebarChatWorkspaces,
+  type SidebarChatsSplit,
   type SidebarLoadingState,
   type SidebarOrderUpdates,
   type SidebarStatusWorkspacePlacement,

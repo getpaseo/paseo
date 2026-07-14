@@ -895,6 +895,7 @@ export const fr: TranslationResources = {
     },
     actions: {
       addProject: "Ajouter un projet",
+      newChat: "Nouvelle discussion",
       newWorkspace: "Nouvel espace de travail",
       hosts: "Hôtes",
       home: "Maison",
@@ -915,6 +916,7 @@ export const fr: TranslationResources = {
     sections: {
       sessions: "Historique",
       schedules: "Planifications",
+      chats: "Discussions",
     },
     worktreeSetup: {
       title: "Configurer les scripts d'arbre de travail",
@@ -977,6 +979,13 @@ export const fr: TranslationResources = {
         hideConfirm: "Cacher",
         cancel: "Annuler",
       },
+      archiveChat: {
+        title: "Supprimer la discussion?",
+        message:
+          "Cette action supprime définitivement la conversation et tous les fichiers créés par l'agent. Cette action est irréversible.",
+        confirm: "Supprimer",
+        cancel: "Annuler",
+      },
       rename: {
         title: "Renommer l'espace de travail",
         submit: "Rebaptiser",
@@ -995,6 +1004,10 @@ export const fr: TranslationResources = {
   newWorkspace: {
     title: "Nouvel espace de travail",
     create: "Créer",
+    chat: {
+      title: "Nouvelle discussion",
+      noWorkspace: "Sans espace de travail (chat uniquement)",
+    },
     isolation: {
       local: "Local",
       worktree: "Nouveau worktree",
@@ -1011,6 +1024,8 @@ export const fr: TranslationResources = {
       createWorktreeFailed: "Échec de la création de l'arbre de travail",
       composerStateRequired: "L'état du compositeur est requis",
       selectModel: "Sélectionnez un modèle",
+      chatPromptRequired: "Saisissez un message pour démarrer une discussion",
+      chatWorkspaceRequired: "L'hôte n'a pas renvoyé d'espace de discussion",
     },
     refPicker: {
       startingRef: "Réf de départ",
@@ -1224,6 +1239,10 @@ export const fr: TranslationResources = {
       pairDevice: {
         title: "Associer un appareil",
         description: "Connectez votre téléphone à ce démon",
+      },
+      newChat: {
+        title: "Nouvelle discussion",
+        description: "Discutez avec un modèle sans espace de travail",
       },
     },
   },

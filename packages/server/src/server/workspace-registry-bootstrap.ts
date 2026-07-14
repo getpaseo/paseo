@@ -8,6 +8,7 @@ import type { AgentStorage } from "./agent/agent-storage.js";
 import { classifyDirectoryForProjectMembership } from "./workspace-registry-bootstrap-legacy.js";
 import { generateWorkspaceId } from "./workspace-registry-model.js";
 import { backfillWorkspaceIdForLegacyAgents } from "./migrations/backfill-workspace-id.migration.js";
+import { classifyChatWorkspaceMembership } from "./chat-workspace/project-membership.js";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
 import {
   createPersistedProjectRecord,
@@ -93,10 +94,16 @@ export async function bootstrapWorkspaceRegistries(options: {
     activeRecords.map(async (record) => {
       const normalizedCwd = path.resolve(record.cwd);
       const checkout = await options.workspaceGitService.getCheckout(normalizedCwd);
-      const membership = classifyDirectoryForProjectMembership({
-        cwd: normalizedCwd,
-        checkout,
-      });
+      const membership =
+        classifyChatWorkspaceMembership({
+          paseoHome: options.paseoHome,
+          cwd: normalizedCwd,
+          checkout,
+        }) ??
+        classifyDirectoryForProjectMembership({
+          cwd: normalizedCwd,
+          checkout,
+        });
       return { record, membership, directoryKey: membership.workspaceDirectoryKey };
     }),
   );

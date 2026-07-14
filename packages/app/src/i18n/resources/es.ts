@@ -896,6 +896,7 @@ export const es: TranslationResources = {
     },
     actions: {
       addProject: "Agregar proyecto",
+      newChat: "Nuevo chat",
       newWorkspace: "Nuevo espacio de trabajo",
       hosts: "Hosts",
       home: "Hogar",
@@ -916,6 +917,7 @@ export const es: TranslationResources = {
     sections: {
       sessions: "Historial",
       schedules: "Horarios",
+      chats: "Chats",
     },
     worktreeSetup: {
       title: "Configurar secuencias de comandos del árbol de trabajo",
@@ -978,6 +980,13 @@ export const es: TranslationResources = {
         hideConfirm: "Esconder",
         cancel: "Cancelar",
       },
+      archiveChat: {
+        title: "¿Eliminar chat?",
+        message:
+          "Esto elimina permanentemente la conversación y cualquier archivo que el agente haya creado en ella. Esta acción no se puede deshacer.",
+        confirm: "Eliminar",
+        cancel: "Cancelar",
+      },
       rename: {
         title: "Cambiar nombre del espacio de trabajo",
         submit: "Rebautizar",
@@ -996,6 +1005,10 @@ export const es: TranslationResources = {
   newWorkspace: {
     title: "Nuevo espacio de trabajo",
     create: "Crear",
+    chat: {
+      title: "Nuevo chat",
+      noWorkspace: "Sin espacio de trabajo (solo chat)",
+    },
     isolation: {
       local: "Local",
       worktree: "Nuevo worktree",
@@ -1012,6 +1025,8 @@ export const es: TranslationResources = {
       createWorktreeFailed: "No se pudo crear el árbol de trabajo",
       composerStateRequired: "Se requiere el estado del compositor",
       selectModel: "Selecciona un modelo",
+      chatPromptRequired: "Escribe un mensaje para iniciar un chat",
+      chatWorkspaceRequired: "El host no devolvió un espacio de chat",
     },
     refPicker: {
       startingRef: "Árbitro inicial",
@@ -1222,6 +1237,10 @@ export const es: TranslationResources = {
       pairDevice: {
         title: "Emparejar dispositivo",
         description: "Conecta tu teléfono a este demonio",
+      },
+      newChat: {
+        title: "Nuevo chat",
+        description: "Chatea con un modelo sin un espacio de trabajo",
       },
     },
   },

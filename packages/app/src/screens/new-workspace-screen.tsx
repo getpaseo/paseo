@@ -9,7 +9,14 @@ import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles"
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { createNameId } from "mnemonic-id";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronDown, Folder, FolderPlus, GitBranch, GitPullRequest } from "lucide-react-native";
+import {
+  ChevronDown,
+  Folder,
+  FolderPlus,
+  GitBranch,
+  GitPullRequest,
+  MessageCircle,
+} from "lucide-react-native";
 import { Composer } from "@/composer";
 import { FileDropZone } from "@/components/file-drop/file-drop-zone";
 import { DraftAgentModeControl } from "@/composer/agent-controls/mode-control";
@@ -62,6 +69,9 @@ import { getForgePresentation } from "@/git/forge";
 import type { CreateAgentInitialValues } from "@/hooks/use-agent-form-state";
 import { generateMessageId } from "@/types/stream";
 import { toErrorMessage } from "@/utils/error-messages";
+import { encodeImages } from "@/utils/encode-images";
+import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
+import { applyLegacyDaemonWorkspaceOwnership } from "@/workspace/legacy-daemon-workspaces";
 import { projectIconPlaceholderLabelFromDisplayName } from "@/utils/project-display-name";
 import {
   getHostProjectSourceDirectory,
@@ -99,7 +109,14 @@ import {
   resolveNewWorkspaceAutomaticServerId,
   resolveNewWorkspaceInitialServerId,
 } from "./new-workspace-initial-context";
-import { useNewWorkspaceProjectPicker } from "./new-workspace/project-picker";
+import {
+  CHAT_WORKSPACE_OPTION_ID,
+  useNewWorkspaceProjectPicker,
+} from "./new-workspace/project-picker";
+import {
+  buildChatWorkspaceCreateAgentOptions,
+  isEmptyChatWorkspaceSubmission,
+} from "./new-workspace/chat-workspace";
 
 const ThemedFolderPlus = withUnistyles(FolderPlus);
 const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
@@ -172,6 +189,7 @@ interface NewWorkspaceScreenProps {
   projectId?: string;
   displayName?: string;
   draftId?: string;
+  initialChatMode?: boolean;
 }
 
 interface PickerOptionData {
@@ -273,6 +291,7 @@ function ProjectPickerTrigger({
   iconDataUri,
   iconColor,
   iconSize,
+  isChatWorkspace,
 }: {
   pickerAnchorRef: React.RefObject<View | null>;
   onPress: () => void;
@@ -283,9 +302,31 @@ function ProjectPickerTrigger({
   iconDataUri: string | null;
   iconColor: string;
   iconSize: number;
+  isChatWorkspace: boolean;
 }) {
   const placeholderLabel = projectIconPlaceholderLabelFromDisplayName(label);
   const placeholderInitial = placeholderLabel.charAt(0).toUpperCase() || "?";
+  const badgeTextStyle = useMemo(
+    () => [styles.badgeText, isChatWorkspace && styles.badgeTextChatWorkspace],
+    [isChatWorkspace],
+  );
+  let badgeIcon: ReactElement;
+  if (projectKey) {
+    badgeIcon = (
+      <ProjectIconView
+        iconDataUri={iconDataUri}
+        initial={placeholderInitial}
+        projectKey={projectKey}
+        imageStyle={styles.projectIcon}
+        fallbackStyle={styles.projectIconFallback}
+        textStyle={styles.projectIconFallbackText}
+      />
+    );
+  } else if (isChatWorkspace) {
+    badgeIcon = <MessageCircle size={iconSize} color={iconColor} />;
+  } else {
+    badgeIcon = <Folder size={iconSize} color={iconColor} />;
+  }
   return (
     <Tooltip>
       <TooltipTrigger asChild triggerRefProp="ref">
@@ -298,21 +339,8 @@ function ProjectPickerTrigger({
           accessibilityRole="button"
           accessibilityLabel="Workspace project"
         >
-          <View style={styles.badgeIconBox}>
-            {projectKey ? (
-              <ProjectIconView
-                iconDataUri={iconDataUri}
-                initial={placeholderInitial}
-                projectKey={projectKey}
-                imageStyle={styles.projectIcon}
-                fallbackStyle={styles.projectIconFallback}
-                textStyle={styles.projectIconFallbackText}
-              />
-            ) : (
-              <Folder size={iconSize} color={iconColor} />
-            )}
-          </View>
-          <Text style={styles.badgeText} numberOfLines={1}>
+          <View style={styles.badgeIconBox}>{badgeIcon}</View>
+          <Text style={badgeTextStyle} numberOfLines={1}>
             {label}
           </Text>
         </ComboboxTrigger>
@@ -544,6 +572,29 @@ function NewWorkspaceProjectPickerOption({
   isPending: boolean;
   supportsWorkspaceMultiplicity: boolean;
 }) {
+  const { theme } = useUnistyles();
+  const chatLeadingSlot = useMemo(
+    () => (
+      <View style={styles.rowIconBox}>
+        <MessageCircle size={theme.iconSize.sm} color={theme.colors.statusWarning} />
+      </View>
+    ),
+    [theme.colors.statusWarning, theme.iconSize.sm],
+  );
+  if (option.id === CHAT_WORKSPACE_OPTION_ID) {
+    return (
+      <ComboboxItem
+        testID="new-workspace-project-picker-option-chat"
+        label={option.label}
+        labelColor={theme.colors.statusWarning}
+        selected={selected}
+        active={active}
+        disabled={isPending}
+        onPress={onPress}
+        leadingSlot={chatLeadingSlot}
+      />
+    );
+  }
   const project = projectByOptionId.get(option.id);
   if (!project) return <View key={option.id} />;
   const sourceDirectory =
@@ -929,6 +980,56 @@ function buildComposerInitialValues(input: {
   return undefined;
 }
 
+async function runCreateChatWorkspaceAgent(input: {
+  payload: MessagePayload;
+  composerState: ReturnType<typeof useAgentInputDraft>["composerState"];
+  client: NonNullable<ReturnType<typeof useHostRuntimeClient>>;
+  serverId: string;
+  draftKey: string;
+  labels: CreateChatAgentInput["labels"] & { workspaceRequired: string };
+}): Promise<void> {
+  if (!input.composerState) {
+    throw new Error(input.labels.composerStateRequired);
+  }
+  const provider = input.composerState.selectedProvider;
+  if (!provider) {
+    throw new Error(input.labels.selectModel);
+  }
+
+  const wirePayload = splitComposerAttachmentsForSubmit(input.payload.attachments);
+  const images = await encodeImages(wirePayload.images);
+  const agentSnapshot = await input.client.createAgent(
+    buildChatWorkspaceCreateAgentOptions({
+      provider,
+      composerState: input.composerState,
+      text: input.payload.text,
+      clientMessageId: generateMessageId(),
+      images,
+      attachments: wirePayload.attachments,
+    }),
+  );
+  const agent = applyLegacyDaemonWorkspaceOwnership({
+    serverId: input.serverId,
+    agent: normalizeAgentSnapshot(agentSnapshot, input.serverId),
+  });
+  const workspaceId = agent.workspaceId?.trim();
+  if (!workspaceId) {
+    throw new Error(input.labels.workspaceRequired);
+  }
+
+  useSessionStore.getState().setAgents(input.serverId, (previous) => {
+    const next = new Map(previous);
+    next.set(agent.id, agent);
+    return next;
+  });
+  navigateToWorkspace({
+    serverId: input.serverId,
+    workspaceId,
+    target: { kind: "agent", agentId: agent.id },
+  });
+  useDraftStore.getState().clearDraftInput({ draftKey: input.draftKey, lifecycle: "sent" });
+}
+
 async function runCreateChatAgent(input: CreateChatAgentInput): Promise<void> {
   const { payload, composerState, ensureWorkspace, serverId, draftKey } = input;
   const { text, attachments, cwd } = payload;
@@ -992,6 +1093,29 @@ function buildComposerConfig(input: {
   };
 }
 
+function resolveChatWorkspacePresentation(input: {
+  isChatWorkspace: boolean;
+  selectedSourceDirectory: string | null;
+  canCreateWorktree: boolean;
+  showRefPicker: boolean;
+}) {
+  if (input.isChatWorkspace) {
+    return {
+      titleKey: "newWorkspace.chat.title" as const,
+      allowEmptySubmit: false,
+      composerCwd: "",
+      canCreateWorktree: false,
+      showRefPicker: false,
+    };
+  }
+  return {
+    titleKey: "newWorkspace.title" as const,
+    allowEmptySubmit: true,
+    composerCwd: input.selectedSourceDirectory ?? "",
+    canCreateWorktree: input.canCreateWorktree,
+    showRefPicker: input.showRefPicker,
+  };
+}
 function usePendingWorkspaceDraftSetup(
   draftId: string | undefined,
 ): PendingWorkspaceDraftSetup | null {
@@ -1340,6 +1464,7 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
     host.allHosts.find((h) => h.serverId === host.selectedServerId)?.label ?? "Host";
   const showHostControl = host.allHosts.length > 1;
   const isolationTriggerLabel = isolationLabel(t, isolation.effectiveIsolation);
+  const isChatWorkspaceSelection = project.selectedOptionId === CHAT_WORKSPACE_OPTION_ID;
   const addProjectAction = useMemo(
     () => <AddProjectPickerAction onPress={project.onAddProject} />,
     [project.onAddProject],
@@ -1369,8 +1494,11 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
             ? (project.iconDataByProjectKey.get(project.selectedProject.projectKey) ?? null)
             : null
         }
-        iconColor={theme.colors.foregroundMuted}
+        iconColor={
+          isChatWorkspaceSelection ? theme.colors.statusWarning : theme.colors.foregroundMuted
+        }
         iconSize={theme.iconSize.sm}
+        isChatWorkspace={isChatWorkspaceSelection}
       />
       <Combobox
         options={project.options}
@@ -1507,6 +1635,7 @@ export function NewWorkspaceScreen({
   projectId,
   displayName: displayNameProp,
   draftId,
+  initialChatMode = false,
 }: NewWorkspaceScreenProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
@@ -1533,6 +1662,8 @@ export function NewWorkspaceScreen({
   // COMPAT(workspaceMultiplicity): added in v0.1.97, drop the gate when floor >= v0.1.97
   const supportsWorkspaceMultiplicity = useHostFeature(selectedServerId, "workspaceMultiplicity");
   const supportsForgeSearch = useHostFeature(selectedServerId, "forgeSearch");
+  // COMPAT(chatWorkspace): added in v0.1.106, drop the gate when floor >= v0.1.106
+  const supportsChatWorkspace = useHostFeature(selectedServerId, "chatWorkspace");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [createdWorkspace, setCreatedWorkspace] = useState<ReturnType<
     typeof normalizeWorkspaceDescriptor
@@ -1562,6 +1693,7 @@ export function NewWorkspaceScreen({
   const isConnected = useHostRuntimeIsConnected(selectedServerId);
   const {
     selectedProject,
+    isChatWorkspace,
     selectedSourceDirectory,
     projectPickerOptions,
     projectByOptionId,
@@ -1574,6 +1706,9 @@ export function NewWorkspaceScreen({
     routeProject,
     lastActiveProject,
     allowAllProjects: supportsWorkspaceMultiplicity,
+    allowChatWorkspace: supportsChatWorkspace,
+    initialChatWorkspace: initialChatMode,
+    chatWorkspaceLabel: t("newWorkspace.chat.noWorkspace"),
   });
   const projectIconTargets = useMemo(
     () =>
@@ -1942,6 +2077,26 @@ export function NewWorkspaceScreen({
       try {
         setErrorMessage(null);
         await composerState?.persistFormPreferences();
+        if (isChatWorkspace) {
+          if (isEmptyChatWorkspaceSubmission(payload.text)) {
+            throw new Error(t("newWorkspace.errors.chatPromptRequired"));
+          }
+          setPendingAction("chat");
+          await runCreateChatWorkspaceAgent({
+            payload,
+            composerState,
+            client: withConnectedClient(),
+            serverId: selectedServerId,
+            draftKey,
+            labels: {
+              composerStateRequired: t("newWorkspace.errors.composerStateRequired"),
+              selectModel: t("newWorkspace.errors.selectModel"),
+              workspaceRequired: t("newWorkspace.errors.chatWorkspaceRequired"),
+            },
+          });
+          return;
+        }
+
         if (isEmptyWorkspaceSubmission(payload)) {
           setPendingAction("empty");
           await runCreateEmptyWorkspace({
@@ -1986,6 +2141,8 @@ export function NewWorkspaceScreen({
       supportsForgeSearch,
       t,
       toast,
+      isChatWorkspace,
+      withConnectedClient,
     ],
   );
 
@@ -2054,6 +2211,12 @@ export function NewWorkspaceScreen({
       ? t("newWorkspace.refPicker.searching")
       : t("newWorkspace.refPicker.noMatchingRefs");
 
+  const chatWorkspacePresentation = resolveChatWorkspacePresentation({
+    isChatWorkspace,
+    selectedSourceDirectory,
+    canCreateWorktree,
+    showRefPicker,
+  });
   const formStack = useNewWorkspaceFormStack({
     isCompact,
     isPending,
@@ -2089,7 +2252,7 @@ export function NewWorkspaceScreen({
       openState: isolationPickerOpen,
       onOpenChange: handleIsolationPickerOpenChange,
       renderOption: renderIsolationOption,
-      canCreateWorktree,
+      canCreateWorktree: chatWorkspacePresentation.canCreateWorktree,
     },
     base: {
       anchorRef: pickerAnchorRef,
@@ -2105,7 +2268,7 @@ export function NewWorkspaceScreen({
       setSearchQuery: setPickerSearchQuery,
       emptyText: pickerEmptyText,
       renderOption: renderPickerOption,
-      showRefPicker,
+      showRefPicker: chatWorkspacePresentation.showRefPicker,
     },
   });
 
@@ -2125,7 +2288,7 @@ export function NewWorkspaceScreen({
         <TitlebarDragRegion />
         <ReanimatedAnimated.View style={centeredStyle}>
           <View style={styles.composerTitleContainer}>
-            <Text style={styles.composerTitle}>{t("newWorkspace.title")}</Text>
+            <Text style={styles.composerTitle}>{t(chatWorkspacePresentation.titleKey)}</Text>
           </View>
           {formStack}
           <Composer
@@ -2134,7 +2297,7 @@ export function NewWorkspaceScreen({
             serverId={selectedServerId}
             isPaneFocused={true}
             onSubmitMessage={handleSubmitNewWorkspace}
-            allowEmptySubmit={true}
+            allowEmptySubmit={chatWorkspacePresentation.allowEmptySubmit}
             submitButtonAccessibilityLabel={t("newWorkspace.create")}
             submitButtonTestID="workspace-create-submit"
             submitIcon="return"
@@ -2149,7 +2312,7 @@ export function NewWorkspaceScreen({
             onChangeAttachments={chatDraft.setAttachments}
             onGithubPrDetected={handleGithubPrDetected}
             onGithubPrAutoAttach={handleGithubPrAutoAttach}
-            cwd={selectedSourceDirectory ?? ""}
+            cwd={chatWorkspacePresentation.composerCwd}
             clearDraft={handleClearDraft}
             autoFocus
             commandDraftConfig={composerState?.commandDraftConfig}
@@ -2252,6 +2415,9 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
     flexShrink: 1,
+  },
+  badgeTextChatWorkspace: {
+    color: theme.colors.statusWarning,
   },
   tooltipText: {
     fontSize: theme.fontSize.sm,

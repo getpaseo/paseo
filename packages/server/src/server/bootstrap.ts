@@ -703,6 +703,10 @@ export async function createPaseoDaemon(
       hostname: getHostname(),
       version: daemonVersion,
       listen: formatListenTarget(boundListenTarget ?? listenTarget),
+      features: {
+        // COMPAT(chatWorkspace): added in v0.1.106, drop the gate when floor >= v0.1.106.
+        chatWorkspace: true,
+      },
     });
   });
 
@@ -797,6 +801,7 @@ export async function createPaseoDaemon(
     },
   });
   const workspaceProvisioning = createWorkspaceProvisioningService({
+    paseoHome: config.paseoHome,
     projectRegistry,
     workspaceRegistry,
     workspaceGitService,
@@ -846,6 +851,7 @@ export async function createPaseoDaemon(
     workspaceRegistry,
     logger,
     workspaceGitService,
+    paseoHome: config.paseoHome,
     onProjectUpdate: (update) => wsServer?.publishProjectUpdate(update),
     onWorkspacesChanged: async (workspaceIds) => {
       await fanOutReconciledWorkspaceUpdates({

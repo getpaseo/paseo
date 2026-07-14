@@ -13,7 +13,7 @@ import {
 
 // COMPAT(legacyRegistryBootstrap): added in v0.1.109 on 2026-07-15; remove after
 // 2027-01-15, once every supported install has materialized its registry files.
-interface DirectoryProjectMembership {
+export interface DirectoryProjectMembership {
   cwd: string;
   checkout: ProjectCheckoutLitePayload;
   workspaceDirectoryKey: string;
@@ -50,7 +50,10 @@ export function classifyDirectoryForProjectMembership(input: {
   };
 }
 
-function deriveWorkspaceDirectoryKey(cwd: string, checkout: ProjectCheckoutLitePayload): string {
+export function deriveWorkspaceDirectoryKey(
+  cwd: string,
+  checkout: ProjectCheckoutLitePayload,
+): string {
   const worktreeRoot = checkout.worktreeRoot ? parseGitRevParsePath(checkout.worktreeRoot) : null;
   return worktreeRoot ?? resolve(cwd);
 }

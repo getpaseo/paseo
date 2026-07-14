@@ -2273,6 +2273,104 @@ test("omitting create_agent_request worktree base-ref fields preserves legacy wi
   await expect(createPromise).rejects.toThrow("legacy git shape sentinel");
 });
 
+test("sends chatWorkspace in create_agent_request, omitted when unset", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const createPromise = client.createAgent({
+    provider: "codex",
+    cwd: "/tmp/project",
+    chatWorkspace: true,
+  });
+
+  expect(mock.sent).toHaveLength(1);
+  const request = parseSentFrame(mock.sent[0]);
+  expect(request).toEqual(
+    expect.objectContaining({
+      type: "create_agent_request",
+      chatWorkspace: true,
+    }),
+  );
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "status",
+      payload: {
+        status: "agent_create_failed",
+        requestId: request.requestId,
+        error: "chat workspace sentinel",
+      },
+    }),
+  );
+
+  await expect(createPromise).rejects.toThrow("chat workspace sentinel");
+
+  mock.sent.length = 0;
+
+  const scratchPromise = client.createAgent({
+    provider: "codex",
+    chatWorkspace: true,
+    requestId: "req-chat-workspace-scratch",
+  });
+
+  expect(mock.sent).toHaveLength(1);
+  const scratchRequest = parseSentFrame(mock.sent[0]);
+  expect(scratchRequest.chatWorkspace).toBe(true);
+  expect(scratchRequest.config.cwd).toBe("");
+  expect(scratchRequest.config).not.toHaveProperty("chatWorkspace");
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "status",
+      payload: {
+        status: "agent_create_failed",
+        requestId: "req-chat-workspace-scratch",
+        error: "chat workspace scratch sentinel",
+      },
+    }),
+  );
+
+  await expect(scratchPromise).rejects.toThrow("chat workspace scratch sentinel");
+
+  mock.sent.length = 0;
+
+  const legacyPromise = client.createAgent({
+    provider: "codex",
+    cwd: "/tmp/project",
+    requestId: "req-chat-workspace-legacy",
+  });
+
+  expect(mock.sent).toHaveLength(1);
+  const legacyRequest = parseSentFrame(mock.sent[0]);
+  expect(legacyRequest).not.toHaveProperty("chatWorkspace");
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "status",
+      payload: {
+        status: "agent_create_failed",
+        requestId: "req-chat-workspace-legacy",
+        error: "chat workspace legacy sentinel",
+      },
+    }),
+  );
+
+  await expect(legacyPromise).rejects.toThrow("chat workspace legacy sentinel");
+});
+
 test("sends structured first-agent context attachments with create_paseo_worktree_request", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();

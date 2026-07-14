@@ -65,6 +65,7 @@ import {
 } from "@/utils/host-routes";
 import {
   shouldShowSidebarHostLabels,
+  splitSidebarChatWorkspaces,
   type SidebarProjectEntry,
   type SidebarWorkspaceEntry,
   type SidebarWorkspacePlacement,
@@ -1277,6 +1278,7 @@ function WorkspaceRowWithMenu({
     workspaceKind: workspace.workspaceKind,
     name: workspace.name,
     ...toWorktreeArchiveRisk(workspace),
+    isChatWorkspace: workspace.chatWorkspace,
     onArchiveStarted: redirectAfterArchive,
     onSetHiding: setIsHidingWorkspace,
   });
@@ -1399,7 +1401,7 @@ function WorkspaceRowWithMenu({
         archivePendingLabel={t("sidebar.workspace.actions.archiving")}
         onArchive={handleArchive}
         onCopyBranchName={canCopyBranchName ? handleCopyBranchName : undefined}
-        onCopyPath={handleCopyPath}
+        onCopyPath={workspace.chatWorkspace ? undefined : handleCopyPath}
         onRename={handleOpenRename}
         onMarkAsRead={hasClearableAttention ? handleMarkAsRead : undefined}
         archiveShortcutKeys={selected ? archiveShortcutKeys : null}
@@ -1917,6 +1919,64 @@ function areProjectBlockSelectionsEqual(
 
 const MemoProjectBlock = memo(ProjectBlock, areProjectBlockPropsEqual);
 
+function SidebarChatsSection({
+  chats,
+  workspaceEntriesByKey,
+  shortcutIndexByWorkspaceKey,
+  selectionEnabled,
+  activeWorkspaceSelection,
+  showShortcutBadges,
+  onWorkspacePress,
+  hostLabelByServerId,
+  showHostLabels,
+  supportsPinningByServerId,
+  onToggleWorkspacePin,
+}: {
+  chats: SidebarWorkspacePlacement[];
+  workspaceEntriesByKey: ReadonlyMap<string, SidebarWorkspaceEntry>;
+  shortcutIndexByWorkspaceKey: Map<string, number>;
+  selectionEnabled: boolean;
+  activeWorkspaceSelection: ActiveWorkspaceSelection | null;
+  showShortcutBadges: boolean;
+  onWorkspacePress?: () => void;
+  hostLabelByServerId: ReadonlyMap<string, string>;
+  showHostLabels: boolean;
+  supportsPinningByServerId: ReadonlyMap<string, boolean>;
+  onToggleWorkspacePin: ToggleSidebarWorkspacePin;
+}) {
+  const { t } = useTranslation();
+
+  if (chats.length === 0) {
+    return null;
+  }
+
+  return (
+    <View style={styles.chatsSection}>
+      <View style={styles.chatsSectionHeader}>
+        <Text style={styles.chatsSectionTitle}>{t("sidebar.sections.chats")}</Text>
+      </View>
+      {chats.map((chat) => (
+        <MemoWorkspaceRowItem
+          key={chat.workspaceKey}
+          workspace={chat}
+          workspaceEntry={workspaceEntriesByKey.get(chat.workspaceKey) ?? null}
+          subtitle={
+            showHostLabels ? (hostLabelByServerId.get(chat.serverId) ?? chat.serverId) : null
+          }
+          shortcutNumber={shortcutIndexByWorkspaceKey.get(chat.workspaceKey) ?? null}
+          showShortcutBadge={showShortcutBadges}
+          canCopyBranchName={chat.projectKind === "git"}
+          canPin={supportsPinningByServerId.get(chat.serverId) === true}
+          onToggleWorkspacePin={onToggleWorkspacePin}
+          selectionEnabled={selectionEnabled}
+          activeWorkspaceSelection={activeWorkspaceSelection}
+          onWorkspacePress={onWorkspacePress}
+        />
+      ))}
+    </View>
+  );
+}
+
 export function SidebarWorkspaceList({
   statusGroups,
   pinnedGroups,
@@ -2096,13 +2156,21 @@ function ProjectModeList({
     canToggle: canTogglePinnedChats,
     toggleExpanded: togglePinnedChatsExpanded,
   } = useLimitedSidebarGroup(pinnedChats);
+  // Pinned chats are hoisted to the top by splitPinnedSidebarGroups; the remaining
+  // unpinned projects then feed the chat split, so unpinned chat workspaces land in
+  // the dedicated bottom Chats section and everything else stays in the project list.
+  const chatsSplit = useMemo(
+    () => splitSidebarChatWorkspaces({ projects: unpinnedProjects, workspaceEntriesByKey }),
+    [unpinnedProjects, workspaceEntriesByKey],
+  );
+  const projectEntries = chatsSplit.projects;
   const projectIconTargets = useMemo(
     () =>
-      projects.flatMap((project) => {
+      projectEntries.flatMap((project) => {
         const target = resolveSidebarProjectIconTarget(project);
         return target ? [{ projectKey: project.projectKey, ...target }] : [];
       }),
-    [projects],
+    [projectEntries],
   );
   const nativeScrollGestureProps = useMemo(
     () =>
@@ -2367,8 +2435,8 @@ function ProjectModeList({
           )}
         </View>
       ) : null}
-      {unpinnedProjects.length > 0 || hasActiveHostFilter ? listHeaderComponent : null}
-      {projects.length === 0 ? (
+      {projectEntries.length > 0 || hasActiveHostFilter ? listHeaderComponent : null}
+      {projectEntries.length === 0 ? (
         <View style={styles.emptyContainer}>
           <Text style={styles.emptyTitle} testID="sidebar-project-empty-state">
             {t("sidebar.project.empty.title")}
@@ -2381,7 +2449,7 @@ function ProjectModeList({
       ) : (
         <DraggableList
           testID="sidebar-project-list"
-          data={unpinnedProjects}
+          data={projectEntries}
           keyExtractor={projectKeyExtractor}
           renderItem={renderProject}
           onDragEnd={handleProjectDragEnd}
@@ -2393,6 +2461,19 @@ function ProjectModeList({
           containerStyle={styles.projectListContainer}
         />
       )}
+      <SidebarChatsSection
+        chats={chatsSplit.chats}
+        workspaceEntriesByKey={workspaceEntriesByKey}
+        shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
+        selectionEnabled={selectionEnabled}
+        activeWorkspaceSelection={activeWorkspaceSelection}
+        showShortcutBadges={showShortcutBadges}
+        onWorkspacePress={onWorkspacePress}
+        hostLabelByServerId={hostLabelByServerId}
+        showHostLabels={showHostLabels}
+        supportsPinningByServerId={supportsPinningByServerId}
+        onToggleWorkspacePin={onToggleWorkspacePin}
+      />
       {listFooterComponent}
     </>
   );
@@ -2439,6 +2520,18 @@ const styles = StyleSheet.create((theme) => ({
   },
   projectListContainer: {
     width: "100%",
+  },
+  chatsSection: {
+    marginTop: theme.spacing[2],
+  },
+  chatsSectionHeader: {
+    paddingHorizontal: theme.spacing[2],
+    paddingBottom: theme.spacing[1],
+  },
+  chatsSectionTitle: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.normal,
   },
   pinnedSection: {
     marginBottom: theme.spacing[1],

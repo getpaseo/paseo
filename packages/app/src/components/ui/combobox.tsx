@@ -227,6 +227,8 @@ export function SearchInput({
 
 export interface ComboboxItemProps {
   label: string;
+  /** Overrides the default label color (e.g. the chat-workspace option renders in warning yellow). */
+  labelColor?: string;
   description?: string;
   kind?: "directory" | "file";
   leadingSlot?: ReactNode;
@@ -242,6 +244,7 @@ export interface ComboboxItemProps {
 
 export function ComboboxItem({
   label,
+  labelColor,
   description,
   kind,
   leadingSlot,
@@ -288,11 +291,16 @@ export function ComboboxItem({
     [description],
   );
 
+  const itemLabelStyle = useMemo(
+    () => [styles.comboboxItemLabel, labelColor ? { color: labelColor } : null],
+    [labelColor],
+  );
+
   return (
     <Pressable testID={testID} disabled={disabled} onPress={onPress} style={itemPressableStyle}>
       {leadingContent}
       <View style={itemContentStyle}>
-        <Text numberOfLines={1} style={styles.comboboxItemLabel}>
+        <Text numberOfLines={1} style={itemLabelStyle}>
           {label}
         </Text>
         {description ? (

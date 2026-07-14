@@ -5,6 +5,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { afterEach, beforeEach, expect, test } from "vitest";
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";
+import { resolveChatsRoot } from "../../chat-workspace/scratch-dir.js";
 import { createNoopWorkspaceGitService } from "../../test-utils/workspace-git-service-stub.js";
 import {
   FileBackedProjectRegistry,
@@ -79,6 +80,7 @@ beforeEach(async () => {
   await workspaceRegistry.initialize();
   await projectRegistry.initialize();
   provisioning = createWorkspaceProvisioningService({
+    paseoHome: tmpDir,
     workspaceRegistry,
     projectRegistry,
     workspaceGitService: gitService(),
@@ -474,6 +476,23 @@ test("createWorkspaceForDirectory classifies unknown and archived explicit proje
   ).rejects.toMatchObject({
     code: "archived_project",
   } satisfies Partial<WorkspaceProvisioningError>);
+});
+
+test("two different chat scratch dirs land in the same synthetic Chats project", async () => {
+  const chatsRoot = resolveChatsRoot(tmpDir);
+  const first = await provisioning.findOrCreateWorkspaceForDirectory(
+    path.join(chatsRoot, "chat-0123456789ab"),
+  );
+  const second = await provisioning.findOrCreateWorkspaceForDirectory(
+    path.join(chatsRoot, "chat-ba9876543210"),
+  );
+
+  expect(second.projectId).toBe(first.projectId);
+  expect(second.workspaceId).not.toBe(first.workspaceId);
+  const chatProjects = (await projectRegistry.list()).filter(
+    (project) => project.displayName === "Chats",
+  );
+  expect(chatProjects).toHaveLength(1);
 });
 
 test("findOrCreateProjectForDirectory keeps nested selected roots independent", async () => {

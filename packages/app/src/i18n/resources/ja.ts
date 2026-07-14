@@ -876,6 +876,7 @@ export const ja: TranslationResources = {
     },
     actions: {
       addProject: "プロジェクトを追加",
+      newChat: "新しいチャット",
       newWorkspace: "新しいワークスペース",
       hosts: "ホスト",
       home: "ホーム",
@@ -896,6 +897,7 @@ export const ja: TranslationResources = {
     sections: {
       sessions: "履歴",
       schedules: "スケジュール",
+      chats: "チャット",
     },
     worktreeSetup: {
       title: "ワークツリースクリプトを設定",
@@ -958,6 +960,13 @@ export const ja: TranslationResources = {
         hideConfirm: "非表示",
         cancel: "キャンセル",
       },
+      archiveChat: {
+        title: "チャットを削除しますか？",
+        message:
+          "この操作を行うと、会話とエージェントが作成したファイルが完全に削除されます。この操作は元に戻せません。",
+        confirm: "削除",
+        cancel: "キャンセル",
+      },
       rename: {
         title: "ワークスペースの名前を変更",
         submit: "名前を変更",
@@ -976,6 +985,10 @@ export const ja: TranslationResources = {
   newWorkspace: {
     title: "新しいワークスペース",
     create: "作成",
+    chat: {
+      title: "新しいチャット",
+      noWorkspace: "ワークスペースなし（チャットのみ）",
+    },
     isolation: {
       local: "ローカル",
       worktree: "新しいワークツリー",
@@ -992,6 +1005,8 @@ export const ja: TranslationResources = {
       createWorktreeFailed: "ワークツリーの作成に失敗しました",
       composerStateRequired: "コンポーザーの状態が必要です",
       selectModel: "モデルを選択してください",
+      chatPromptRequired: "チャットを開始するメッセージを入力してください",
+      chatWorkspaceRequired: "ホストがチャットワークスペースを返しませんでした",
     },
     refPicker: {
       startingRef: "開始Ref",
@@ -1195,6 +1210,10 @@ export const ja: TranslationResources = {
       pairDevice: {
         title: "デバイスをペアリング",
         description: "このデーモンにスマートフォンを接続",
+      },
+      newChat: {
+        title: "新しいチャット",
+        description: "ワークスペースなしでモデルとチャット",
       },
     },
   },
