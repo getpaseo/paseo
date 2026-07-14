@@ -3165,8 +3165,9 @@ export class AgentManager {
     try {
       for await (const event of agent.session.streamHistory()) {
         if (event.type === "provider_subagent") {
-          const update = this.applyProviderSubagentEvent(agent, event);
-          if (broadcast && update) {
+          const dismissed = agent.dismissedProviderSubagentIds.has(event.event.id);
+          const update = this.applyProviderSubagentEvent(agent, event, { includeDismissed: true });
+          if (broadcast && update && !dismissed) {
             this.dispatch({ type: "provider_subagent", event: update });
           }
           continue;

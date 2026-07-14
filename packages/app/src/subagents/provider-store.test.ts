@@ -6,7 +6,11 @@ const PARENT_ID = "parent-1";
 const SUBAGENT_ID = "child-1";
 
 afterEach(() => {
-  useProviderSubagentStore.setState({ descriptors: new Map(), timelines: new Map() });
+  useProviderSubagentStore.setState({
+    descriptors: new Map(),
+    timelines: new Map(),
+    hiddenFromTrack: new Set(),
+  });
 });
 
 describe("provider subagent client store", () => {
@@ -165,7 +169,8 @@ describe("provider subagent client store", () => {
 
     const state = useProviderSubagentStore.getState();
     const key = providerSubagentKey(SERVER_ID, PARENT_ID, SUBAGENT_ID);
-    expect(state.descriptors.has(key)).toBe(false);
+    expect(state.descriptors.get(key)?.title).toBe("Finished child");
+    expect(state.hiddenFromTrack.has(key)).toBe(true);
     expect(state.timelines.get(key)?.tail).toEqual([
       expect.objectContaining({ kind: "assistant_message", text: "Finished output." }),
     ]);

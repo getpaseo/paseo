@@ -91,7 +91,7 @@ export function selectProviderSubagentsForParent(
   const rows: ProviderSubagentRow[] = [];
   const prefix = `${params.serverId}\0${params.parentAgentId}\0`;
   for (const [key, subagent] of state.descriptors) {
-    if (!key.startsWith(prefix)) continue;
+    if (!key.startsWith(prefix) || state.hiddenFromTrack.has(key)) continue;
     rows.push({
       kind: "provider",
       id: subagent.id,

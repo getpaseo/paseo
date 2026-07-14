@@ -2857,6 +2857,15 @@ test("archiveFinishedSubagents archives managed children and keeps dismissed pro
       this.sessions.push(session);
       return session;
     }
+
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      const session = new ParentSession({ provider: "codex", cwd: config?.cwd ?? workdir });
+      this.sessions.push(session);
+      return session;
+    }
   }
   const client = new SubagentsClient();
   const manager = new AgentManager({
@@ -2951,6 +2960,26 @@ test("archiveFinishedSubagents archives managed children and keeps dismissed pro
     status: "completed",
   });
   expect(() => manager.fetchProviderSubagentTimeline(parent.id, "native-finished")).not.toThrow();
+
+  const reloadedManager = new AgentManager({
+    clients: { codex: new SubagentsClient() },
+    registry: storage,
+    logger,
+  });
+  await reloadedManager.resumeAgentFromPersistence(
+    { provider: "codex", sessionId: "persisted-parent" },
+    { cwd: workdir },
+    parent.id,
+    { dismissedProviderSubagentIds: ["native-finished", "native-failed"] },
+  );
+  await reloadedManager.hydrateTimelineFromProvider(parent.id);
+  expect(reloadedManager.listProviderSubagents(parent.id).map((subagent) => subagent.id)).toEqual([
+    "native-running",
+  ]);
+  expect(reloadedManager.getProviderSubagent(parent.id, "native-finished")).toMatchObject({
+    id: "native-finished",
+    status: "completed",
+  });
 });
 
 test("force provider hydration removes children absent from current history", async () => {

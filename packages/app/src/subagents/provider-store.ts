@@ -32,6 +32,7 @@ export interface ProviderSubagentTimelineState {
 interface ProviderSubagentState {
   descriptors: Map<string, ProviderSubagentDescriptorPayload>;
   timelines: Map<string, ProviderSubagentTimelineState>;
+  hiddenFromTrack: Set<string>;
   replaceList(
     serverId: string,
     parentAgentId: string,
@@ -193,14 +194,20 @@ function buildTimelineResponseRows(
 export const useProviderSubagentStore = create<ProviderSubagentState>((set) => ({
   descriptors: new Map(),
   timelines: new Map(),
+  hiddenFromTrack: new Set(),
   replaceList(serverId, parentAgentId, subagents) {
     set((state) => {
       const prefix = parentPrefix(serverId, parentAgentId);
       const descriptors = new Map(
-        [...state.descriptors].filter(([key]) => !key.startsWith(prefix)),
+        [...state.descriptors].filter(
+          ([key]) => !key.startsWith(prefix) || state.hiddenFromTrack.has(key),
+        ),
       );
+      const hiddenFromTrack = new Set(state.hiddenFromTrack);
       for (const subagent of subagents) {
-        descriptors.set(providerSubagentKey(serverId, parentAgentId, subagent.id), subagent);
+        const key = providerSubagentKey(serverId, parentAgentId, subagent.id);
+        descriptors.set(key, subagent);
+        hiddenFromTrack.delete(key);
       }
       const retainedKeys = new Set(descriptors.keys());
       const timelines = new Map(
@@ -217,7 +224,7 @@ export const useProviderSubagentStore = create<ProviderSubagentState>((set) => (
           );
         }
       }
-      return { descriptors, timelines };
+      return { descriptors, timelines, hiddenFromTrack };
     });
   },
   applyUpdate(serverId, payload) {
@@ -229,8 +236,10 @@ export const useProviderSubagentStore = create<ProviderSubagentState>((set) => (
           payload.subagent.id,
         );
         const descriptors = new Map(state.descriptors);
+        const hiddenFromTrack = new Set(state.hiddenFromTrack);
         const previous = descriptors.get(key);
         descriptors.set(key, payload.subagent);
+        hiddenFromTrack.delete(key);
         let timelines = state.timelines;
         const current = state.timelines.get(key);
         if (current && previous?.status !== payload.subagent.status) {
@@ -240,18 +249,22 @@ export const useProviderSubagentStore = create<ProviderSubagentState>((set) => (
             buildTimelineState(current.rows, current.epoch, payload.subagent, current.hasOlder),
           );
         }
-        return { descriptors, timelines };
+        return { descriptors, timelines, hiddenFromTrack };
       }
       if (payload.kind === "remove") {
         const key = providerSubagentKey(serverId, payload.parentAgentId, payload.subagentId);
         const descriptors = new Map(state.descriptors);
-        descriptors.delete(key);
         if (payload.retainTimeline) {
-          return { descriptors, timelines: state.timelines };
+          const hiddenFromTrack = new Set(state.hiddenFromTrack);
+          hiddenFromTrack.add(key);
+          return { descriptors, timelines: state.timelines, hiddenFromTrack };
         }
+        descriptors.delete(key);
         const timelines = new Map(state.timelines);
+        const hiddenFromTrack = new Set(state.hiddenFromTrack);
+        hiddenFromTrack.delete(key);
         timelines.delete(key);
-        return { descriptors, timelines };
+        return { descriptors, timelines, hiddenFromTrack };
       }
       const key = providerSubagentKey(serverId, payload.parentAgentId, payload.subagentId);
       const existing = state.timelines.get(key);
