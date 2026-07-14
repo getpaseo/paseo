@@ -63,6 +63,17 @@ describe("isProviderImageMarkdown", () => {
     expect(markdown).toBe("![Image](file:///tmp/screenshot%231%3Fdraft.png)");
   });
 
+  test.each([
+    ["UNC", "\\\\server\\share\\shot#1.png", "file://server/share/shot%231.png"],
+    [
+      "extended UNC",
+      "\\\\?\\UNC\\server\\share\\shot?draft.png",
+      "file://server/share/shot%3Fdraft.png",
+    ],
+  ])("encodes %s image paths as file URIs", (_label, imagePath, expectedSource) => {
+    expect(renderImageMarkdown(imagePath)).toBe(`![Image](${expectedSource})`);
+  });
+
   test("rejects user-authored markdown that is not a materialized attachment", () => {
     // No content hash — a hand-written path, not something the writer produced.
     expect(isProviderImageMarkdown("![diagram](./paseo-attachments/notes.png)")).toBe(false);
