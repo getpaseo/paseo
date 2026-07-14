@@ -1395,6 +1395,36 @@ export const ar: TranslationResources = {
     input: "مدخل",
     output: "الإخراج",
   },
+  toolCallGroup: {
+    title: "الأدوات",
+    accessibilityLabel: "الأدوات، {{count}} استدعاءات",
+    editedFiles: {
+      one: "حرّر {{count}} ملفًا",
+      other: "حرّر {{count}} ملفات",
+    },
+    commands: {
+      one: "شغّل {{count}} أمرًا",
+      other: "شغّل {{count}} أوامر",
+    },
+    readFiles: {
+      one: "قرأ {{count}} ملفًا",
+      other: "قرأ {{count}} ملفات",
+    },
+    searches: {
+      one: "بحث {{count}} مرة",
+      other: "بحث {{count}} مرات",
+    },
+    otherTools: {
+      one: "استخدم {{count}} أداة أخرى",
+      other: "استخدم {{count}} أدوات أخرى",
+    },
+    paseoCalls: {
+      one: "استدعى Paseo {{count}} مرة",
+      other: "استدعى Paseo {{count}} مرات",
+    },
+    and: "و",
+    failed: "فشل {{count}}",
+  },
   renameModal: {
     rename: "إعادة تسمية",
     saving: "جارٍ الحفظ...",
@@ -1491,6 +1521,16 @@ export const ar: TranslationResources = {
       autoExpandReasoning: {
         label: "عرض التفكير دائماً",
         description: "إظهار تفكير الوكيل وخطوات الاستدلال بشكل كامل بشكل افتراضي",
+      },
+      toolCallDetail: {
+        label: "تفاصيل استدعاءات الأدوات",
+        description: "كيفية ظهور نشاط الأدوات في الخط الزمني للوكيل",
+        accessibilityLabel: "حدد مستوى تفاصيل الأدوات ({{value}})",
+        options: {
+          overview: "نظرة عامة",
+          concise: "موجز",
+          detailed: "مفصل",
+        },
       },
       language: {
         label: "لغة",

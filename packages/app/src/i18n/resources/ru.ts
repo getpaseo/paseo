@@ -1426,6 +1426,36 @@ export const ru: TranslationResources = {
     input: "Вход",
     output: "Выход",
   },
+  toolCallGroup: {
+    title: "Инструменты",
+    accessibilityLabel: "Инструменты, вызовов: {{count}}",
+    editedFiles: {
+      one: "изменён {{count}} файл",
+      other: "изменено {{count}} файлов",
+    },
+    commands: {
+      one: "выполнена {{count}} команда",
+      other: "выполнено {{count}} команд",
+    },
+    readFiles: {
+      one: "прочитан {{count}} файл",
+      other: "прочитано {{count}} файлов",
+    },
+    searches: {
+      one: "выполнен {{count}} поиск",
+      other: "выполнено {{count}} поисков",
+    },
+    otherTools: {
+      one: "использован {{count}} другой инструмент",
+      other: "использовано {{count}} других инструментов",
+    },
+    paseoCalls: {
+      one: "Paseo вызван {{count}} раз",
+      other: "Paseo вызван {{count}} раз",
+    },
+    and: "и",
+    failed: "С ошибкой: {{count}}",
+  },
   renameModal: {
     rename: "Переименовать",
     saving: "Сохранение...",
@@ -1522,6 +1552,16 @@ export const ru: TranslationResources = {
         label: "Всегда разворачивать размышления",
         description:
           "По умолчанию показывать блоки размышлений и логики агента полностью развернутыми",
+      },
+      toolCallDetail: {
+        label: "Детализация вызовов инструментов",
+        description: "Отображение активности инструментов в хронологии агента",
+        accessibilityLabel: "Выбрать детализацию инструментов ({{value}})",
+        options: {
+          overview: "Обзор",
+          concise: "Кратко",
+          detailed: "Подробно",
+        },
       },
       language: {
         label: "Язык",

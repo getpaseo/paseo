@@ -1434,6 +1434,36 @@ export const es: TranslationResources = {
     input: "Aporte",
     output: "Producción",
   },
+  toolCallGroup: {
+    title: "Herramientas",
+    accessibilityLabel: "Herramientas, {{count}} llamadas",
+    editedFiles: {
+      one: "editó {{count}} archivo",
+      other: "editó {{count}} archivos",
+    },
+    commands: {
+      one: "ejecutó {{count}} comando",
+      other: "ejecutó {{count}} comandos",
+    },
+    readFiles: {
+      one: "leyó {{count}} archivo",
+      other: "leyó {{count}} archivos",
+    },
+    searches: {
+      one: "buscó {{count}} vez",
+      other: "buscó {{count}} veces",
+    },
+    otherTools: {
+      one: "usó {{count}} herramienta adicional",
+      other: "usó {{count}} herramientas adicionales",
+    },
+    paseoCalls: {
+      one: "llamó a Paseo {{count}} vez",
+      other: "llamó a Paseo {{count}} veces",
+    },
+    and: "y",
+    failed: "{{count}} con error",
+  },
   renameModal: {
     rename: "Rebautizar",
     saving: "Guardando...",
@@ -1532,6 +1562,16 @@ export const es: TranslationResources = {
         label: "Siempre expandir razonamiento",
         description:
           "Mostrar los bloques de pensamiento y razonamiento del agente totalmente expandidos de forma predeterminada",
+      },
+      toolCallDetail: {
+        label: "Detalle de llamadas a herramientas",
+        description: "Cómo aparece la actividad de herramientas en las cronologías del agente",
+        accessibilityLabel: "Seleccionar detalle de herramientas ({{value}})",
+        options: {
+          overview: "Resumen",
+          concise: "Conciso",
+          detailed: "Detallado",
+        },
       },
       language: {
         label: "Idioma",

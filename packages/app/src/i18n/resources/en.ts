@@ -1403,6 +1403,36 @@ export const en = {
     input: "Input",
     output: "Output",
   },
+  toolCallGroup: {
+    title: "Tools",
+    accessibilityLabel: "Tools, {{count}} calls",
+    editedFiles: {
+      one: "edited {{count}} file",
+      other: "edited {{count}} files",
+    },
+    commands: {
+      one: "ran {{count}} command",
+      other: "ran {{count}} commands",
+    },
+    readFiles: {
+      one: "read {{count}} file",
+      other: "read {{count}} files",
+    },
+    searches: {
+      one: "searched {{count}} time",
+      other: "searched {{count}} times",
+    },
+    otherTools: {
+      one: "used {{count}} other tool",
+      other: "used {{count}} other tools",
+    },
+    paseoCalls: {
+      one: "called Paseo {{count}} time",
+      other: "called Paseo {{count}} times",
+    },
+    and: "and",
+    failed: "{{count}} failed",
+  },
   renameModal: {
     rename: "Rename",
     saving: "Saving...",
@@ -1498,6 +1528,16 @@ export const en = {
       autoExpandReasoning: {
         label: "Always expand reasoning",
         description: "Show agent thinking and chain-of-thought blocks fully expanded by default",
+      },
+      toolCallDetail: {
+        label: "Tool call detail",
+        description: "How tool activity appears in agent timelines",
+        accessibilityLabel: "Select tool call detail ({{value}})",
+        options: {
+          overview: "Overview",
+          concise: "Concise",
+          detailed: "Detailed",
+        },
       },
       language: {
         label: "Language",

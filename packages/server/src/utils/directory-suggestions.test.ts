@@ -11,12 +11,13 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { isPlatform } from "../test-utils/platform.js";
-import { searchDirectoryEntries } from "./directory-suggestions.js";
+import {
+  searchDirectoryEntries,
+  WORKSPACE_SEARCH_HIDDEN_DIRECTORIES,
+} from "./directory-suggestions.js";
 
 const isWindows = isPlatform("win32");
 const filesystemRootDirectoryName = isWindows ? "Windows" : "usr";
-const workspaceHiddenDirectories = [".agents", ".claude", ".codex", ".github", ".paseo", ".vscode"];
-
 async function searchAbsoluteDirectoryPaths(options: {
   homeDir: string;
   query: string;
@@ -60,7 +61,7 @@ async function searchRelativeDirectoryEntries(options: {
     matchMode: options.matchMode,
     pathQueryPolicy: "slashes",
     blankQueryBehavior: "children",
-    traversableHiddenDirectoryNames: workspaceHiddenDirectories,
+    traversableHiddenDirectoryNames: WORKSPACE_SEARCH_HIDDEN_DIRECTORIES,
     limit: options.limit,
     maxDepth: options.maxDepth,
     maxEntriesScanned: options.maxEntriesScanned,

@@ -1437,6 +1437,36 @@ export const fr: TranslationResources = {
     input: "Saisir",
     output: "Sortir",
   },
+  toolCallGroup: {
+    title: "Outils",
+    accessibilityLabel: "Outils, {{count}} appels",
+    editedFiles: {
+      one: "a modifié {{count}} fichier",
+      other: "a modifié {{count}} fichiers",
+    },
+    commands: {
+      one: "a exécuté {{count}} commande",
+      other: "a exécuté {{count}} commandes",
+    },
+    readFiles: {
+      one: "a lu {{count}} fichier",
+      other: "a lu {{count}} fichiers",
+    },
+    searches: {
+      one: "a effectué {{count}} recherche",
+      other: "a effectué {{count}} recherches",
+    },
+    otherTools: {
+      one: "a utilisé {{count}} autre outil",
+      other: "a utilisé {{count}} autres outils",
+    },
+    paseoCalls: {
+      one: "a appelé Paseo {{count}} fois",
+      other: "a appelé Paseo {{count}} fois",
+    },
+    and: "et",
+    failed: "{{count}} en échec",
+  },
   renameModal: {
     rename: "Rebaptiser",
     saving: "Sauvegarde...",
@@ -1534,6 +1564,16 @@ export const fr: TranslationResources = {
       autoExpandReasoning: {
         label: "Toujours afficher le raisonnement",
         description: "Afficher le raisonnement de l'agent entièrement développé par défaut",
+      },
+      toolCallDetail: {
+        label: "Détail des appels d’outils",
+        description: "Affichage de l’activité des outils dans la chronologie de l’agent",
+        accessibilityLabel: "Sélectionner le détail des outils ({{value}})",
+        options: {
+          overview: "Vue d’ensemble",
+          concise: "Concis",
+          detailed: "Détaillé",
+        },
       },
       language: {
         label: "Langue",

@@ -68,10 +68,10 @@ const CATALOG_DATA = [
     id: "codebuddy-code",
     title: "Codebuddy Code",
     description: "Tencent Cloud's official intelligent coding tool",
-    version: "2.119.3",
+    version: "manual",
     iconId: "codebuddy-code",
     installLink: "https://www.codebuddy.cn/cli/",
-    command: ["npx", "-y", "@tencent-ai/codebuddy-code@2.119.3", "--acp"],
+    command: ["codebuddy", "--acp"],
   },
   {
     id: "codewhale",

@@ -1379,6 +1379,36 @@ export const zhCN: TranslationResources = {
     input: "输入",
     output: "输出",
   },
+  toolCallGroup: {
+    title: "工具",
+    accessibilityLabel: "工具，{{count}} 次调用",
+    editedFiles: {
+      one: "编辑了 {{count}} 个文件",
+      other: "编辑了 {{count}} 个文件",
+    },
+    commands: {
+      one: "运行了 {{count}} 个命令",
+      other: "运行了 {{count}} 个命令",
+    },
+    readFiles: {
+      one: "读取了 {{count}} 个文件",
+      other: "读取了 {{count}} 个文件",
+    },
+    searches: {
+      one: "搜索了 {{count}} 次",
+      other: "搜索了 {{count}} 次",
+    },
+    otherTools: {
+      one: "使用了 {{count}} 个其他工具",
+      other: "使用了 {{count}} 个其他工具",
+    },
+    paseoCalls: {
+      one: "调用了 Paseo {{count}} 次",
+      other: "调用了 Paseo {{count}} 次",
+    },
+    and: "并",
+    failed: "{{count}} 次失败",
+  },
   renameModal: {
     rename: "重命名",
     saving: "正在保存...",
@@ -1474,6 +1504,16 @@ export const zhCN: TranslationResources = {
       autoExpandReasoning: {
         label: "始终展开推理过程",
         description: "默认情况下完全展开 AI 的思考和推理过程",
+      },
+      toolCallDetail: {
+        label: "工具调用详情",
+        description: "工具活动在智能体时间线中的显示方式",
+        accessibilityLabel: "选择工具调用详情（{{value}}）",
+        options: {
+          overview: "概览",
+          concise: "简洁",
+          detailed: "详细",
+        },
       },
       language: {
         label: "语言",
