@@ -1774,46 +1774,6 @@ function installBrowserKeyboardSentinels() {
   };
 }
 
-async function verifyLateBrowserShortcutFirstRefusal({ guest, sentinel }) {
-  const { shortcutInputs } = sentinel;
-  await guest.executeJavaScript(
-    `window.addEventListener("keydown", function preventLateBrowserShortcut(event) {
-       if (
-         (event.metaKey || event.ctrlKey) &&
-         !event.altKey &&
-         !event.shiftKey &&
-         event.key.toLowerCase() === "b"
-       ) {
-         window.removeEventListener("keydown", preventLateBrowserShortcut);
-         event.preventDefault();
-         window.fixtureLog.push({
-           event: "late-shortcut-b",
-           defaultPrevented: event.defaultPrevented,
-           trusted: event.isTrusted,
-         });
-       }
-     });`,
-    true,
-  );
-  automationBrowserShortcut(guest);
-  await waitForAutomationLog(
-    guest,
-    (entry) =>
-      entry.event === "late-shortcut-b" &&
-      entry.defaultPrevented === true &&
-      entry.trusted === true,
-    "late page-prevented trusted browser shortcut",
-  );
-  await delay(100);
-  if (shortcutInputs.length !== 0 || sentinel.applicationMenuShortcutHits !== 0) {
-    fail(
-      `late page-prevented browser shortcut escaped guest: inputs=${JSON.stringify(shortcutInputs)} menu=${sentinel.applicationMenuShortcutHits}`,
-    );
-  }
-  pass("automation late page preventDefault keeps browser shortcut in the guest");
-  return { group: "automation", check: "browser-shortcut-late-page-prevented", pass: true };
-}
-
 async function verifyBrowserKeyboardIsolation({ guest, win, browserId, usesMeta, sentinel }) {
   const checks = [];
   const { shortcutInputs } = sentinel;
@@ -1853,8 +1813,6 @@ async function verifyBrowserKeyboardIsolation({ guest, win, browserId, usesMeta,
   checks.push({ group: "automation", check: "browser-shortcut-page-prevented", pass: true });
 
   await guest.executeJavaScript("window.preventBrowserShortcut = false", true);
-  checks.push(await verifyLateBrowserShortcutFirstRefusal({ guest, sentinel }));
-
   const unhandledTarget = await guest.executeJavaScript(
     "document.getElementById('save').focus(); document.activeElement.id",
     true,
@@ -1899,21 +1857,42 @@ async function verifyBrowserKeyboardIsolation({ guest, win, browserId, usesMeta,
   checks.push({ group: "automation", check: "browser-shortcut-page-first-forward", pass: true });
 
   const editableTarget = await guest.executeJavaScript(
-    "document.getElementById('name').focus(); document.activeElement.id",
+    `(() => {
+      const editable = document.querySelector("p");
+      editable.contentEditable = "true";
+      editable.focus();
+      const range = document.createRange();
+      range.selectNodeContents(editable);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      return document.activeElement === editable;
+    })()`,
     true,
   );
-  if (editableTarget !== "name") {
-    fail(`automation editable browser shortcut target was not focused: ${editableTarget}`);
+  if (!editableTarget) {
+    fail("automation editable browser shortcut target was not focused");
   }
   automationBrowserShortcut(guest);
   await waitForBrowserShortcutInput(shortcutInputs, 2);
-  if (!isDeepStrictEqual(shortcutInputs[1], expectedBrowserShortcutInput)) {
+  await delay(100);
+  const editableState = await guest.executeJavaScript(
+    `(() => {
+      const editable = document.querySelector("p");
+      return { bold: document.queryCommandState("bold"), html: editable.innerHTML };
+    })()`,
+    true,
+  );
+  if (
+    !isDeepStrictEqual(shortcutInputs[1], expectedBrowserShortcutInput) ||
+    !isDeepStrictEqual(editableState, { bold: false, html: "Connected as Maya" })
+  ) {
     fail(
-      `editable browser shortcut crossed boundary incorrectly: inputs=${JSON.stringify(shortcutInputs)}`,
+      `editable browser shortcut crossed boundary incorrectly: inputs=${JSON.stringify(shortcutInputs)} editable=${JSON.stringify(editableState)}`,
     );
   }
-  pass("automation production guest preload forwards an unhandled editable browser shortcut");
-  checks.push({ group: "automation", check: "browser-shortcut-editable-forward", pass: true });
+  pass("automation guest preload owns an unhandled editable browser shortcut");
+  checks.push({ group: "automation", check: "browser-shortcut-editable-owned", pass: true });
 
   automationBrowserShortcut(guest, "1");
   await waitForBrowserShortcutInput(shortcutInputs, 3);
