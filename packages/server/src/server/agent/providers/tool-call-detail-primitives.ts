@@ -528,10 +528,14 @@ export const ToolWriteOutputSchema = z.union([
 
 export const ToolEditTextSchema = z
   .object({
+    oldString: z.string().optional(),
+    oldText: z.string().optional(),
     old_string: z.string().optional(),
     old_str: z.string().optional(),
     oldContent: z.string().optional(),
     old_content: z.string().optional(),
+    newString: z.string().optional(),
+    newText: z.string().optional(),
     new_string: z.string().optional(),
     new_str: z.string().optional(),
     newContent: z.string().optional(),
@@ -549,11 +553,15 @@ export const ToolEditInputSchema = z
   .transform((value) => ({
     filePath: value.filePath,
     oldString:
+      nonEmptyString(value.oldString) ??
+      nonEmptyString(value.oldText) ??
       nonEmptyString(value.old_string) ??
       nonEmptyString(value.old_str) ??
       nonEmptyString(value.oldContent) ??
       nonEmptyString(value.old_content),
     newString:
+      nonEmptyString(value.newString) ??
+      nonEmptyString(value.newText) ??
       nonEmptyString(value.new_string) ??
       nonEmptyString(value.new_str) ??
       nonEmptyString(value.newContent) ??
