@@ -49,6 +49,14 @@ describe("isProviderImageMarkdown", () => {
     expect(isProviderImageMarkdown(markdown)).toBe(true);
   });
 
+  test("emits POSIX file paths with spaces as valid file URI markdown", () => {
+    const markdown = renderImageMarkdown("/home/user/Projects/Project With Spaces/screenshot.png");
+
+    expect(markdown).toBe(
+      "![Image](file:///home/user/Projects/Project%20With%20Spaces/screenshot.png)",
+    );
+  });
+
   test("rejects user-authored markdown that is not a materialized attachment", () => {
     // No content hash — a hand-written path, not something the writer produced.
     expect(isProviderImageMarkdown("![diagram](./paseo-attachments/notes.png)")).toBe(false);

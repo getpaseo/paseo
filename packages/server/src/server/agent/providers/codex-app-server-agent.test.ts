@@ -3515,7 +3515,7 @@ describe("Codex app-server provider", () => {
     });
   });
 
-  test("emits imageView thread items as assistant markdown images using the path", () => {
+  test("emits imageView paths with spaces as valid assistant markdown images", () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
@@ -3535,7 +3535,7 @@ describe("Codex app-server provider", () => {
         turnId: "test-turn",
         item: {
           type: "assistant_message",
-          text: "![Image](/tmp/paseo image.png)",
+          text: "![Image](file:///tmp/paseo%20image.png)",
         },
       },
     ]);

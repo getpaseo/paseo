@@ -128,9 +128,21 @@ function escapeMarkdownImageAlt(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/\]/g, "\\]");
 }
 
+function encodeFilePath(value: string): string {
+  return value
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+}
+
 function markdownImageSource(value: string): string {
   if (/^[A-Za-z]:[\\/]/.test(value)) {
-    return `file:///${value.replace(/\\/g, "/")}`;
+    const normalizedPath = value.replace(/\\/g, "/");
+    const drive = normalizedPath.slice(0, 2);
+    return `file:///${drive}${encodeFilePath(normalizedPath.slice(2))}`;
+  }
+  if (value.startsWith("/") && /\s/.test(value)) {
+    return `file://${encodeFilePath(value)}`;
   }
   return value;
 }
