@@ -1,4 +1,5 @@
 import { test, expect } from "./fixtures";
+import { expectWorkspaceTabVisible } from "./helpers/archive-tab";
 import { expectComposerEditable, expectComposerVisible, submitMessage } from "./helpers/composer";
 import { clickNewChat, gotoWorkspace } from "./helpers/launcher";
 import {
@@ -12,6 +13,11 @@ import {
 } from "./helpers/new-workspace";
 import { getServerId } from "./helpers/server-id";
 import { seedWorkspace, type SeededWorkspace } from "./helpers/seed-client";
+import {
+  expectSubagentRowVisible,
+  openSubagentsTrack,
+  seedParentWithCrossWorkspaceSubagent,
+} from "./helpers/subagents";
 import { expectWorkspaceHeader, waitForSidebarHydration } from "./helpers/workspace-ui";
 import { getVisibleWorkspaceAgentTabIds } from "./helpers/workspace-tabs";
 
@@ -528,48 +534,36 @@ test.describe("Workspace model regressions", () => {
     }
   });
 
-  test("provider subagent started after its parent finishes moves the workspace to Working", async ({
+  test("cross-workspace subagent opens in its workspace and keeps its parent relationship", async ({
     page,
   }) => {
     const serverId = getServerId();
-    const seeded = await seedWorkspace({ repoPrefix: "workspace-provider-subagent-running-" });
+    const seeded = await seedWorkspace({ repoPrefix: "workspace-cross-subagent-" });
 
     try {
-      const parent = await seeded.client.createAgent({
-        provider: "mock",
-        cwd: seeded.repoPath,
-        workspaceId: seeded.workspaceId,
-        title: "Parent agent",
-        modeId: "load-test",
-        model: "ten-second-stream",
+      const agents = await seedParentWithCrossWorkspaceSubagent(seeded, {
+        parentTitle: "Parent agent",
+        childTitle: "Cross-workspace subagent",
       });
 
-      await gotoWorkspace(page, seeded.workspaceId);
+      await gotoWorkspace(page, agents.child.workspaceId);
       await waitForSidebarHydration(page);
+      await expectWorkspaceTabVisible(page, agents.child.id);
 
-      const rowTestId = `sidebar-workspace-row-${serverId}:${seeded.workspaceId}`;
+      const parentRowTestId = `sidebar-workspace-row-${serverId}:${agents.parent.workspaceId}`;
+      const childRowTestId = `sidebar-workspace-row-${serverId}:${agents.child.workspaceId}`;
       await expectWorkspaceRowHasOnlyIndicator(page, {
-        rowTestId,
+        rowTestId: childRowTestId,
+        indicator: "running",
+      });
+      await expectWorkspaceRowHasOnlyIndicator(page, {
+        rowTestId: parentRowTestId,
         indicator: "done",
       });
 
-      await seeded.client.sendAgentMessage(parent.id, "Start a synthetic background subagent.");
-      const finishedParent = await seeded.client.waitForFinish(parent.id, 15_000);
-      expect(finishedParent.status).toBe("idle");
-      await expect(
-        page.getByTestId(rowTestId).locator('[data-testid="workspace-status-indicator-attention"]'),
-      ).toBeVisible({ timeout: 3_000 });
-
-      await expectWorkspaceRowHasOnlyIndicator(page, {
-        rowTestId,
-        indicator: "running",
-      });
-
-      await switchSidebarToStatusGrouping(page);
-      await expectWorkspaceRowInStatusBucket(page, {
-        rowTestId,
-        bucket: "running",
-      });
+      await gotoWorkspace(page, agents.parent.workspaceId);
+      await openSubagentsTrack(page);
+      await expectSubagentRowVisible(page, agents.child.id);
     } finally {
       await seeded.cleanup();
     }
