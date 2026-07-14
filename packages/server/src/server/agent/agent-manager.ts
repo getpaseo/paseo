@@ -985,7 +985,7 @@ export class AgentManager {
     const hasBusyDescendant = (agentId: string, visited = new Set<string>()): boolean => {
       if (visited.has(agentId)) return true;
       visited.add(agentId);
-      if (this.foregroundRuns.hasPendingRun(agentId)) return true;
+      if (this.runs.hasRun(agentId)) return true;
       if (this.providerSubagents.list(agentId).some((subagent) => subagent.status === "running")) {
         return true;
       }
