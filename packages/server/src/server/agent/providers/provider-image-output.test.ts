@@ -57,6 +57,12 @@ describe("isProviderImageMarkdown", () => {
     );
   });
 
+  test("encodes URI-significant characters in POSIX file paths", () => {
+    const markdown = renderImageMarkdown("/tmp/screenshot#1?draft.png");
+
+    expect(markdown).toBe("![Image](file:///tmp/screenshot%231%3Fdraft.png)");
+  });
+
   test("rejects user-authored markdown that is not a materialized attachment", () => {
     // No content hash — a hand-written path, not something the writer produced.
     expect(isProviderImageMarkdown("![diagram](./paseo-attachments/notes.png)")).toBe(false);

@@ -3542,8 +3542,8 @@ describe("Codex app-server provider", () => {
   });
 
   test.each([
-    ["savedPath", { savedPath: "/tmp/generated-camel.png" }, "/tmp/generated-camel.png"],
-    ["saved_path", { saved_path: "/tmp/generated-snake.png" }, "/tmp/generated-snake.png"],
+    ["savedPath", { savedPath: "/tmp/generated-camel.png" }, "file:///tmp/generated-camel.png"],
+    ["saved_path", { saved_path: "/tmp/generated-snake.png" }, "file:///tmp/generated-snake.png"],
   ])(
     "emits imageGeneration thread items with %s as assistant markdown images",
     (_fieldName, imageFields, expectedPath) => {

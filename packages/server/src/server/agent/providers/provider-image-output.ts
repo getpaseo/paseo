@@ -141,7 +141,7 @@ function markdownImageSource(value: string): string {
     const drive = normalizedPath.slice(0, 2);
     return `file:///${drive}${encodeFilePath(normalizedPath.slice(2))}`;
   }
-  if (value.startsWith("/") && /\s/.test(value)) {
+  if (value.startsWith("/")) {
     return `file://${encodeFilePath(value)}`;
   }
   return value;
