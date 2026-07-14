@@ -424,6 +424,83 @@ class TestAgentSession implements AgentSession {
   async close(): Promise<void> {}
 }
 
+class ControlledInterruptSession extends TestAgentSession {
+  interruptCalled = false;
+
+  constructor(
+    config: AgentSessionConfig,
+    readonly turnId: string,
+    private readonly interruptBehavior: (session: ControlledInterruptSession) => Promise<void>,
+  ) {
+    super(config);
+  }
+
+  override async startTurn(): Promise<{ turnId: string }> {
+    setTimeout(() => {
+      this.pushEvent({ type: "turn_started", provider: this.provider, turnId: this.turnId });
+    }, 0);
+    return { turnId: this.turnId };
+  }
+
+  override async interrupt(): Promise<void> {
+    this.interruptCalled = true;
+    await this.interruptBehavior(this);
+  }
+}
+
+interface ControlledInterruptFixture {
+  agentId: string;
+  manager: AgentManager;
+  session: ControlledInterruptSession;
+  startForegroundRun(): Promise<void>;
+  cleanup(): void;
+}
+
+async function createControlledInterruptFixture(options: {
+  name: string;
+  agentId: string;
+  turnId: string;
+  interrupt: (session: ControlledInterruptSession) => Promise<void>;
+}): Promise<ControlledInterruptFixture> {
+  const workdir = mkdtempSync(join(tmpdir(), `agent-manager-${options.name}-`));
+  const session = new ControlledInterruptSession(
+    { provider: "codex", cwd: workdir },
+    options.turnId,
+    options.interrupt,
+  );
+  const client = new (class extends TestAgentClient {
+    override async createSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+    rescueTimeouts: { interruptSessionMs: 10 },
+    idFactory: () => options.agentId,
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+
+  return {
+    agentId: agent.id,
+    manager,
+    session,
+    async startForegroundRun() {
+      const run = manager.streamAgent(agent.id, "exercise cancellation");
+      void (async () => {
+        for await (const _event of run) {
+          // Keep the foreground stream subscribed until the controlled turn settles.
+        }
+      })();
+      await manager.waitForAgentRunStart(agent.id);
+    },
+    cleanup: () => rmSync(workdir, { recursive: true, force: true }),
+  };
+}
+
 class HeldRuntimeInfoSession extends TestAgentSession {
   private readonly runtimeInfoRequested = deferred<void>();
   private readonly runtimeInfoAllowed = deferred<void>();
@@ -1380,279 +1457,123 @@ test("reloadAgentSession completes when the previous session close hangs", async
 });
 
 test("cancelAgentRun preserves running state when the provider interrupt hangs", async () => {
-  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-interrupt-timeout-"));
-  const storagePath = join(workdir, "agents");
-  const storage = new AgentStorage(storagePath, logger);
-
-  class HangingInterruptSession extends TestAgentSession {
-    interruptCalled = false;
-
-    override async interrupt(): Promise<void> {
-      this.interruptCalled = true;
-      await new Promise(() => {});
-    }
-  }
-
-  class HangingInterruptClient extends TestAgentClient {
-    readonly session = new HangingInterruptSession({
-      provider: "codex",
-      cwd: workdir,
-    });
-
-    override async createSession(): Promise<AgentSession> {
-      return this.session;
-    }
-  }
-
-  const client = new HangingInterruptClient();
-  const manager = new AgentManager({
-    clients: {
-      codex: client,
-    },
-    registry: storage,
-    logger,
-    rescueTimeouts: { interruptSessionMs: 10 },
-    idFactory: () => "00000000-0000-4000-8000-000000000303",
+  const fixture = await createControlledInterruptFixture({
+    name: "interrupt-timeout",
+    agentId: "00000000-0000-4000-8000-000000000303",
+    turnId: "hanging-interrupt-turn",
+    interrupt: async () => await new Promise(() => {}),
   });
 
   try {
-    const snapshot = await manager.createAgent(
-      {
-        provider: "codex",
-        cwd: workdir,
-      },
-      undefined,
-      { workspaceId: undefined },
-    );
-
-    await new Promise<void>((resolve) => {
-      const unsubscribe = manager.subscribe(
-        (event) => {
-          if (
-            event.type === "agent_state" &&
-            event.agent.id === snapshot.id &&
-            event.agent.lifecycle === "running"
-          ) {
-            unsubscribe();
-            resolve();
-          }
-        },
-        { agentId: snapshot.id, replayState: false },
-      );
-      client.session.pushEvent({
-        type: "turn_started",
-        provider: "codex",
-        turnId: "hanging-interrupt-turn",
-      });
+    const running = waitForAgentLifecycle(fixture.manager, fixture.agentId, "running");
+    fixture.session.pushEvent({
+      type: "turn_started",
+      provider: "codex",
+      turnId: "hanging-interrupt-turn",
     });
+    await running;
 
-    await expect(manager.cancelAgentRun(snapshot.id)).resolves.toBe(false);
-    expect(client.session.interruptCalled).toBe(true);
-    expect(manager.getAgent(snapshot.id)?.lifecycle).toBe("running");
+    await expect(fixture.manager.cancelAgentRun(fixture.agentId)).resolves.toEqual({
+      status: "refused",
+    });
+    expect(fixture.session.interruptCalled).toBe(true);
+    expect(fixture.manager.getAgent(fixture.agentId)?.lifecycle).toBe("running");
   } finally {
-    rmSync(workdir, { recursive: true, force: true });
+    fixture.cleanup();
   }
 });
 
 test("cancelAgentRun preserves the active turn when the provider rejects the interrupt", async () => {
-  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-interrupt-rejected-"));
-  const storagePath = join(workdir, "agents");
-  const storage = new AgentStorage(storagePath, logger);
-
-  class RejectingInterruptSession extends TestAgentSession {
-    override async startTurn(): Promise<{ turnId: string }> {
-      const turnId = "provider-still-active-turn";
-      setTimeout(() => {
-        this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
-      }, 0);
-      return { turnId };
-    }
-
-    override async interrupt(): Promise<void> {
+  const fixture = await createControlledInterruptFixture({
+    name: "interrupt-rejected",
+    agentId: "00000000-0000-4000-8000-000000000304",
+    turnId: "provider-still-active-turn",
+    interrupt: async () => {
       throw new Error("A foreground turn is already active");
-    }
-  }
-
-  class RejectingInterruptClient extends TestAgentClient {
-    readonly session = new RejectingInterruptSession({
-      provider: "codex",
-      cwd: workdir,
-    });
-
-    override async createSession(): Promise<AgentSession> {
-      return this.session;
-    }
-  }
-
-  const client = new RejectingInterruptClient();
-  const manager = new AgentManager({
-    clients: { codex: client },
-    registry: storage,
-    logger,
-    rescueTimeouts: { interruptSessionMs: 10 },
-    idFactory: () => "00000000-0000-4000-8000-000000000304",
+    },
   });
 
   try {
-    const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
-      workspaceId: undefined,
+    await fixture.startForegroundRun();
+
+    await expect(fixture.manager.cancelAgentRun(fixture.agentId)).resolves.toEqual({
+      status: "refused",
     });
-
-    const run = manager.streamAgent(snapshot.id, "Wait for the child.");
-    const runDrain = (async () => {
-      for await (const _event of run) {
-        // Keep the foreground run subscribed until the provider completes it.
-      }
-    })();
-    await manager.waitForAgentRunStart(snapshot.id);
-
-    await expect(manager.cancelAgentRun(snapshot.id)).resolves.toBe(false);
-    expect(manager.getAgent(snapshot.id)).toMatchObject({
+    expect(fixture.manager.getAgent(fixture.agentId)).toMatchObject({
       lifecycle: "running",
       activeForegroundTurnId: "provider-still-active-turn",
     });
 
-    client.session.pushEvent({
+    fixture.session.pushEvent({
       type: "turn_completed",
       provider: "codex",
       turnId: "provider-still-active-turn",
     });
-    await runDrain;
   } finally {
-    rmSync(workdir, { recursive: true, force: true });
+    fixture.cleanup();
   }
 });
 
 test("cancelAgentRun succeeds when the foreground turn finishes before the provider rejects the interrupt", async () => {
-  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-interrupt-after-completion-"));
-  const storagePath = join(workdir, "agents");
-  const storage = new AgentStorage(storagePath, logger);
-  const turnSettled = deferred<void>();
-
-  class CompletingInterruptSession extends TestAgentSession {
-    override async startTurn(): Promise<{ turnId: string }> {
-      const turnId = "naturally-completed-turn";
-      setTimeout(() => {
-        this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
-      }, 0);
-      return { turnId };
-    }
-
-    override async interrupt(): Promise<void> {
-      this.pushEvent({
+  let fixture!: ControlledInterruptFixture;
+  fixture = await createControlledInterruptFixture({
+    name: "interrupt-after-completion",
+    agentId: "00000000-0000-4000-8000-000000000305",
+    turnId: "naturally-completed-turn",
+    interrupt: async (session) => {
+      const settled = waitForAgentLifecycle(fixture.manager, fixture.agentId, "idle");
+      session.pushEvent({
         type: "turn_completed",
-        provider: this.provider,
+        provider: session.provider,
         turnId: "naturally-completed-turn",
       });
-      await turnSettled.promise;
+      await settled;
       throw new Error("turn already completed");
-    }
-  }
-
-  class CompletingInterruptClient extends TestAgentClient {
-    readonly session = new CompletingInterruptSession({
-      provider: "codex",
-      cwd: workdir,
-    });
-
-    override async createSession(): Promise<AgentSession> {
-      return this.session;
-    }
-  }
-
-  const manager = new AgentManager({
-    clients: { codex: new CompletingInterruptClient() },
-    registry: storage,
-    logger,
-    idFactory: () => "00000000-0000-4000-8000-000000000305",
+    },
   });
 
   try {
-    const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
-      workspaceId: undefined,
+    await fixture.startForegroundRun();
+
+    await expect(fixture.manager.cancelAgentRun(fixture.agentId)).resolves.toEqual({
+      status: "settled",
     });
-
-    const run = manager.streamAgent(snapshot.id, "Finish while cancellation is in flight.");
-    const runDrain = (async () => {
-      for await (const _event of run) {
-        // Drain the foreground turn until the provider completes it.
-      }
-      turnSettled.resolve();
-    })();
-    await manager.waitForAgentRunStart(snapshot.id);
-
-    await expect(manager.cancelAgentRun(snapshot.id)).resolves.toBe(true);
-    expect(manager.getAgent(snapshot.id)).toMatchObject({
+    expect(fixture.manager.getAgent(fixture.agentId)).toMatchObject({
       lifecycle: "idle",
       activeForegroundTurnId: null,
     });
-    await runDrain;
   } finally {
-    rmSync(workdir, { recursive: true, force: true });
+    fixture.cleanup();
   }
 });
 
 test("cancelAgentRun succeeds when the provider queues completion before rejecting the interrupt", async () => {
-  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-interrupt-queued-completion-"));
-  const storage = new AgentStorage(join(workdir, "agents"), logger);
-
-  class QueuedCompletionInterruptSession extends TestAgentSession {
-    override async startTurn(): Promise<{ turnId: string }> {
-      const turnId = "queued-completion-turn";
-      setTimeout(() => {
-        this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
-      }, 0);
-      return { turnId };
-    }
-
-    override async interrupt(): Promise<void> {
-      this.pushEvent({
+  const fixture = await createControlledInterruptFixture({
+    name: "interrupt-queued-completion",
+    agentId: "00000000-0000-4000-8000-000000000306",
+    turnId: "queued-completion-turn",
+    interrupt: async (session) => {
+      session.pushEvent({
         type: "turn_completed",
-        provider: this.provider,
+        provider: session.provider,
         turnId: "queued-completion-turn",
       });
       throw new Error("turn already completed");
-    }
-  }
-
-  class QueuedCompletionInterruptClient extends TestAgentClient {
-    readonly session = new QueuedCompletionInterruptSession({
-      provider: "codex",
-      cwd: workdir,
-    });
-
-    override async createSession(): Promise<AgentSession> {
-      return this.session;
-    }
-  }
-
-  const manager = new AgentManager({
-    clients: { codex: new QueuedCompletionInterruptClient() },
-    registry: storage,
-    logger,
-    idFactory: () => "00000000-0000-4000-8000-000000000306",
+    },
   });
 
   try {
-    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
-      workspaceId: undefined,
-    });
-    const run = manager.streamAgent(agent.id, "Complete as cancellation starts.");
-    const runDrain = (async () => {
-      for await (const _event of run) {
-        // Drain the foreground turn until the queued completion is processed.
-      }
-    })();
-    await manager.waitForAgentRunStart(agent.id);
+    await fixture.startForegroundRun();
 
-    await expect(manager.cancelAgentRun(agent.id)).resolves.toBe(true);
-    await runDrain;
-    expect(manager.getAgent(agent.id)).toMatchObject({
+    await expect(fixture.manager.cancelAgentRun(fixture.agentId)).resolves.toEqual({
+      status: "settled",
+    });
+    expect(fixture.manager.getAgent(fixture.agentId)).toMatchObject({
       lifecycle: "idle",
       activeForegroundTurnId: null,
     });
   } finally {
-    rmSync(workdir, { recursive: true, force: true });
+    fixture.cleanup();
   }
 });
 
@@ -4870,7 +4791,7 @@ test("cancelAgentRun waits for an acknowledged autonomous interrupt to settle", 
     reason: "interrupted",
   });
 
-  await expect(cancelPromise).resolves.toBe(true);
+  await expect(cancelPromise).resolves.toEqual({ status: "settled" });
   expect(manager.getAgent(snapshot.id)?.lifecycle).toBe("idle");
 });
 

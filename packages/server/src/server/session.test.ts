@@ -96,7 +96,7 @@ test("interruptAgentIfRunning rejects when graceful cancellation is refused", as
     agentManager: {
       getAgent: vi.fn(() => ({ id: agentId, provider: "codex", lifecycle: "running" })),
       hasInFlightRun: vi.fn(() => true),
-      cancelAgentRun: vi.fn(async () => false),
+      cancelAgentRun: vi.fn(async () => ({ status: "refused" as const })),
     },
   });
 

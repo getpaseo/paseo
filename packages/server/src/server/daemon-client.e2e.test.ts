@@ -210,105 +210,120 @@ test("createAgent with background initialPrompt returns a running snapshot befor
   }
 });
 
+interface StubAgentOptions {
+  sessionId: string;
+  supportsStreaming: boolean;
+  startError?: string;
+  interruptError?: string;
+}
+
+class StubAgentSession implements AgentSession {
+  readonly provider = "codex" as const;
+  readonly capabilities;
+  private activeTurnId: string | null = null;
+
+  constructor(private readonly options: StubAgentOptions) {
+    this.capabilities = {
+      supportsStreaming: options.supportsStreaming,
+      supportsSessionPersistence: true,
+      supportsDynamicModes: false,
+      supportsMcpServers: false,
+      supportsReasoningStream: false,
+      supportsToolInvocations: false,
+      supportsRewindConversation: false,
+      supportsRewindFiles: false,
+      supportsRewindBoth: false,
+    } as const;
+  }
+
+  get id(): string {
+    return this.options.sessionId;
+  }
+
+  async run(): Promise<AgentRunResult> {
+    return { sessionId: this.id, finalText: "", timeline: [] };
+  }
+
+  async startTurn(): Promise<{ turnId: string }> {
+    if (this.options.startError) throw new Error(this.options.startError);
+    if (this.activeTurnId) throw new Error("A foreground turn is already active");
+    this.activeTurnId = "provider-owned-turn";
+    return { turnId: this.activeTurnId };
+  }
+
+  subscribe(): () => void {
+    return () => undefined;
+  }
+
+  async *streamHistory(): AsyncGenerator<AgentStreamEvent> {}
+
+  async getRuntimeInfo() {
+    return {
+      provider: this.provider,
+      sessionId: this.id,
+      model: "gpt-5.4-mini",
+      modeId: "full-access",
+    };
+  }
+
+  async getAvailableModes() {
+    return [{ id: "full-access", label: "Full access", description: "No prompts" }];
+  }
+
+  async getCurrentMode(): Promise<string> {
+    return "full-access";
+  }
+
+  async setMode(): Promise<void> {}
+  getPendingPermissions() {
+    return [];
+  }
+  async respondToPermission(): Promise<void> {}
+  describePersistence(): AgentPersistenceHandle {
+    return { provider: this.provider, sessionId: this.id };
+  }
+  async interrupt(): Promise<void> {
+    if (this.options.interruptError) throw new Error(this.options.interruptError);
+  }
+  async close(): Promise<void> {
+    this.activeTurnId = null;
+  }
+}
+
+class StubAgentClient implements AgentClient {
+  readonly provider = "codex" as const;
+  readonly capabilities;
+
+  constructor(private readonly options: StubAgentOptions) {
+    this.capabilities = new StubAgentSession(options).capabilities;
+  }
+
+  async isAvailable(): Promise<boolean> {
+    return true;
+  }
+  async createSession(): Promise<AgentSession> {
+    return new StubAgentSession(this.options);
+  }
+  async resumeSession(): Promise<AgentSession> {
+    return new StubAgentSession(this.options);
+  }
+  async fetchCatalog() {
+    return {
+      models: [{ id: "gpt-5.4-mini", label: "GPT-5.4 mini", provider: this.provider }],
+      modes: [{ id: "full-access", label: "Full access", description: "No prompts" }],
+    };
+  }
+}
+
 test("createAgent fails when the initial turn cannot start", async () => {
-  class StartTurnFailureSession implements AgentSession {
-    readonly provider = "codex" as const;
-    readonly id = "start-turn-failure-session";
-    readonly capabilities = {
-      supportsStreaming: false,
-      supportsSessionPersistence: true,
-      supportsDynamicModes: false,
-      supportsMcpServers: false,
-      supportsReasoningStream: false,
-      supportsToolInvocations: false,
-      supportsRewindConversation: false,
-      supportsRewindFiles: false,
-      supportsRewindBoth: false,
-    } as const;
-
-    async run(): Promise<AgentRunResult> {
-      return {
-        sessionId: this.id,
-        finalText: "",
-        timeline: [],
-      };
-    }
-
-    async startTurn(): Promise<{ turnId: string }> {
-      throw new Error("Initial turn failed to start");
-    }
-
-    subscribe(): () => void {
-      return () => undefined;
-    }
-
-    async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
-      yield* [];
-    }
-
-    async getRuntimeInfo() {
-      return {
-        provider: "codex" as const,
-        sessionId: this.id,
-        model: "gpt-5.4-mini",
-        modeId: "full-access",
-      };
-    }
-
-    async getAvailableModes(): Promise<Array<{ id: string; label: string; description: string }>> {
-      return [{ id: "full-access", label: "Full access", description: "No prompts" }];
-    }
-
-    async getCurrentMode(): Promise<string | null> {
-      return "full-access";
-    }
-
-    async setMode(): Promise<void> {}
-
-    getPendingPermissions() {
-      return [];
-    }
-
-    async respondToPermission(): Promise<void> {}
-
-    describePersistence(): AgentPersistenceHandle | null {
-      return { provider: "codex", sessionId: this.id };
-    }
-
-    async interrupt(): Promise<void> {}
-
-    async close(): Promise<void> {}
-  }
-
-  class StartTurnFailureClient implements AgentClient {
-    readonly provider = "codex" as const;
-    readonly capabilities = {
-      supportsStreaming: false,
-      supportsSessionPersistence: true,
-      supportsDynamicModes: false,
-      supportsMcpServers: false,
-      supportsReasoningStream: false,
-      supportsToolInvocations: false,
-      supportsRewindConversation: false,
-      supportsRewindFiles: false,
-      supportsRewindBoth: false,
-    } as const;
-
-    async isAvailable(): Promise<boolean> {
-      return true;
-    }
-
-    async createSession(_config: AgentSessionConfig): Promise<AgentSession> {
-      return new StartTurnFailureSession();
-    }
-
-    async resumeSession(): Promise<AgentSession> {
-      return new StartTurnFailureSession();
-    }
-  }
+  const testAgent = new StubAgentClient({
+    sessionId: "start-turn-failure-session",
+    supportsStreaming: false,
+    startError: "Initial turn failed to start",
+  });
 
   const daemon = await createTestPaseoDaemon({
-    agentClients: { codex: new StartTurnFailureClient() },
+    agentClients: { codex: testAgent },
   });
   const client = new DaemonClient({
     url: `ws://127.0.0.1:${daemon.port}/ws`,
@@ -335,111 +350,18 @@ test("createAgent fails when the initial turn cannot start", async () => {
   }
 });
 
-const UNINTERRUPTIBLE_CAPABILITIES = {
-  supportsStreaming: true,
-  supportsSessionPersistence: true,
-  supportsDynamicModes: false,
-  supportsMcpServers: false,
-  supportsReasoningStream: false,
-  supportsToolInvocations: false,
-  supportsRewindConversation: false,
-  supportsRewindFiles: false,
-  supportsRewindBoth: false,
-} as const;
-
-class UninterruptibleSession implements AgentSession {
-  readonly provider = "codex" as const;
-  readonly id = "uninterruptible-session";
-  readonly capabilities = UNINTERRUPTIBLE_CAPABILITIES;
-
-  private activeTurnId: string | null = null;
-
-  async run(): Promise<AgentRunResult> {
-    return { sessionId: this.id, finalText: "", timeline: [] };
-  }
-
-  async startTurn(): Promise<{ turnId: string }> {
-    if (this.activeTurnId) {
-      throw new Error("A foreground turn is already active");
-    }
-    this.activeTurnId = "provider-owned-turn";
-    return { turnId: this.activeTurnId };
-  }
-
-  subscribe(): () => void {
-    return () => undefined;
-  }
-
-  async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
-    yield* [];
-  }
-
-  async getRuntimeInfo() {
-    return {
-      provider: this.provider,
-      sessionId: this.id,
-      model: "gpt-5.4-mini",
-      modeId: "full-access",
-    };
-  }
-
-  async getAvailableModes(): Promise<Array<{ id: string; label: string; description: string }>> {
-    return [{ id: "full-access", label: "Full access", description: "No prompts" }];
-  }
-
-  async getCurrentMode(): Promise<string | null> {
-    return "full-access";
-  }
-
-  async setMode(): Promise<void> {}
-
-  getPendingPermissions() {
-    return [];
-  }
-
-  async respondToPermission(): Promise<void> {}
-
-  describePersistence(): AgentPersistenceHandle {
-    return { provider: this.provider, sessionId: this.id };
-  }
-
-  async interrupt(): Promise<void> {
-    throw new Error("Provider did not acknowledge cancellation");
-  }
-
-  async close(): Promise<void> {
-    this.activeTurnId = null;
-  }
-}
-
-class UninterruptibleClient implements AgentClient {
-  readonly provider = "codex" as const;
-  readonly capabilities = UNINTERRUPTIBLE_CAPABILITIES;
-
-  async isAvailable(): Promise<boolean> {
-    return true;
-  }
-
-  async createSession(): Promise<AgentSession> {
-    return new UninterruptibleSession();
-  }
-
-  async resumeSession(): Promise<AgentSession> {
-    return new UninterruptibleSession();
-  }
-
-  async fetchCatalog() {
-    return {
-      models: [{ id: "gpt-5.4-mini", label: "GPT-5.4 mini", provider: this.provider }],
-      modes: [{ id: "full-access", label: "Full access", description: "No prompts" }],
-    };
-  }
+function createUninterruptibleClient(): AgentClient {
+  return new StubAgentClient({
+    sessionId: "uninterruptible-session",
+    supportsStreaming: true,
+    interruptError: "Provider did not acknowledge cancellation",
+  });
 }
 
 test("DaemonClient rejects a replacement prompt when cancellation is not acknowledged", async () => {
   const cwd = tmpCwd();
   const daemon = await createTestPaseoDaemon({
-    agentClients: { codex: new UninterruptibleClient() },
+    agentClients: { codex: createUninterruptibleClient() },
   });
   const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
 
@@ -461,7 +383,7 @@ test("DaemonClient rejects a replacement prompt when cancellation is not acknowl
 test("DaemonClient rejects Stop when cancellation is not acknowledged", async () => {
   const cwd = tmpCwd();
   const daemon = await createTestPaseoDaemon({
-    agentClients: { codex: new UninterruptibleClient() },
+    agentClients: { codex: createUninterruptibleClient() },
   });
   const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
 

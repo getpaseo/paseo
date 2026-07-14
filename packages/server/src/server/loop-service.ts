@@ -540,8 +540,10 @@ export class LoopService {
   }
 
   private async stopInternalAgent(agentId: string, archive: boolean): Promise<void> {
-    const cancelled = await this.options.agentManager.cancelAgentRun(agentId).catch(() => false);
-    if (cancelled) {
+    const cancellation = await this.options.agentManager
+      .cancelAgentRun(agentId)
+      .catch(() => ({ status: "refused" }) as const);
+    if (cancellation.status !== "refused") {
       return;
     }
     if (archive) {

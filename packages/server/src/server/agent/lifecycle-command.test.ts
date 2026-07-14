@@ -56,16 +56,18 @@ class FakeLifecycleAgentManager implements LifecycleAgentManager {
     return this.inFlightAgentIds.has(agentId);
   }
 
-  async cancelAgentRun(agentId: string): Promise<boolean> {
+  async cancelAgentRun(agentId: string) {
     this.cancelledAgentIds.push(agentId);
     if (this.settledDuringCancellationAgentIds.delete(agentId)) {
       this.inFlightAgentIds.delete(agentId);
-      return false;
+      return { status: "not_running" } as const;
     }
     if (this.rejectedCancellationAgentIds.has(agentId)) {
-      return false;
+      return { status: "refused" } as const;
     }
-    return this.inFlightAgentIds.delete(agentId);
+    return this.inFlightAgentIds.delete(agentId)
+      ? ({ status: "settled" } as const)
+      : ({ status: "not_running" } as const);
   }
 
   async clearAgentAttention(agentId: string): Promise<void> {

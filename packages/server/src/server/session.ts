@@ -1085,12 +1085,12 @@ export class Session {
     );
 
     const t0 = Date.now();
-    const cancelled = await this.agentManager.cancelAgentRun(agentId);
+    const cancellation = await this.agentManager.cancelAgentRun(agentId);
     this.sessionLogger.debug(
-      { agentId, cancelled, durationMs: Date.now() - t0 },
+      { agentId, cancellation: cancellation.status, durationMs: Date.now() - t0 },
       "interruptAgentIfRunning: cancelAgentRun completed",
     );
-    if (!cancelled) {
+    if (cancellation.status === "refused") {
       this.sessionLogger.warn(
         { agentId },
         "interruptAgentIfRunning: reported running but no active run was cancelled",

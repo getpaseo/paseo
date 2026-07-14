@@ -1057,7 +1057,7 @@ describe("LoopService", () => {
     });
     manager.cancelAgentRun = async (agentId) => {
       cancelledAgentIds.push(agentId);
-      return false;
+      return { status: "refused" };
     };
     const closeAgent = manager.closeAgent.bind(manager);
     manager.closeAgent = async (agentId) => {
