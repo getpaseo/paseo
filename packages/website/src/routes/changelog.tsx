@@ -34,14 +34,21 @@ function formatDate(date: string): string {
 
 function parseChangelog(markdown: string): ChangelogRelease[] {
   const releases: ChangelogRelease[] = [];
+  const versions = new Set<string>();
   let currentRelease: ChangelogRelease | null = null;
 
   for (const line of markdown.split("\n")) {
     const heading = line.match(releaseHeadingPattern);
     if (heading) {
+      const version = heading[1];
+      if (versions.has(version)) {
+        throw new Error(`Duplicate changelog version: ${version}`);
+      }
+      versions.add(version);
+
       if (currentRelease) releases.push(currentRelease);
       currentRelease = {
-        version: heading[1],
+        version,
         date: heading[2],
         markdown: "",
       };
