@@ -421,6 +421,7 @@ interface WorkspaceDesktopTabsRowProps {
   onCopyAgentId: (agentId: string) => Promise<void> | void;
   onCopyFilePath: (path: string) => Promise<void> | void;
   onReloadAgent: (agentId: string) => Promise<void> | void;
+  onRefreshFile: (path: string) => void;
   onRenameTab: (tab: WorkspaceTabDescriptor) => void;
   onCloseTabsToLeft: (tabId: string) => Promise<void> | void;
   onCloseTabsToRight: (tabId: string) => Promise<void> | void;
@@ -741,6 +742,7 @@ export function WorkspaceDesktopTabsRow({
   onCopyAgentId,
   onCopyFilePath,
   onReloadAgent,
+  onRefreshFile,
   onRenameTab,
   onCloseTabsToLeft,
   onCloseTabsToRight,
@@ -764,9 +766,15 @@ export function WorkspaceDesktopTabsRow({
   const newTabKeys = useShortcutKeys("workspace-tab-new");
   const splitRightKeys = useShortcutKeys("workspace-pane-split-right");
   const splitDownKeys = useShortcutKeys("workspace-pane-split-down");
+  const refreshFileKeys = useShortcutKeys("workspace-file-refresh");
   const [tabsContainerWidth, setTabsContainerWidth] = useState<number>(0);
   const [tabsActionsWidth, setTabsActionsWidth] = useState<number>(0);
   const [inlineAddButtonWidth, setInlineAddButtonWidth] = useState<number>(0);
+
+  const activeFileTab = useMemo(
+    () => tabs.find((tab) => tab.isActive && tab.target.kind === "filePreview"),
+    [tabs],
+  );
 
   const handleTabsContainerLayout = useCallback((event: LayoutChangeEvent) => {
     updateMeasuredWidth(setTabsContainerWidth, event);
@@ -1019,6 +1027,30 @@ export function WorkspaceDesktopTabsRow({
               shortcutKeys={splitDownKeys}
             />
           </>
+        ) : null}
+        {activeFileTab != null ? (
+          <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
+            <TooltipTrigger
+              onPress={() => {
+                onRefreshFile(activeFileTab.target.path);
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={t("workspace.tabs.actions.refreshFile")}
+              style={newTabActionButtonStyle}
+            >
+              <ThemedRotateCw size={14} uniProps={mutedColorMapping} />
+            </TooltipTrigger>
+            <TooltipContent side="bottom" align="center" offset={8}>
+              <View style={styles.newTabTooltipRow}>
+                <Text style={styles.newTabTooltipText}>
+                  {t("workspace.tabs.actions.refreshFile")}
+                </Text>
+                {refreshFileKeys ? (
+                  <Shortcut chord={refreshFileKeys} style={styles.newTabTooltipShortcut} />
+                ) : null}
+              </View>
+            </TooltipContent>
+          </Tooltip>
         ) : null}
       </View>
     </View>

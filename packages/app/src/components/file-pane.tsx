@@ -4,6 +4,7 @@ import type { FileReadResult } from "@getpaseo/client/internal/daemon-client";
 import {
   ActivityIndicator,
   Image as RNImage,
+  RefreshControl,
   ScrollView as RNScrollView,
   Text,
   View,
@@ -47,6 +48,8 @@ interface FilePreviewBodyProps {
   isMobile: boolean;
   location: WorkspaceFileLocation;
   imagePreviewUri: string | null;
+  isRefreshing: boolean;
+  onRefresh: () => void;
 }
 
 function trimNonEmpty(value: string | null | undefined): string | null {
@@ -196,6 +199,8 @@ function FilePreviewBody({
   isMobile,
   location,
   imagePreviewUri,
+  isRefreshing,
+  onRefresh,
 }: FilePreviewBodyProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
@@ -208,6 +213,14 @@ function FilePreviewBody({
   const scrollbar = useWebScrollViewScrollbar(previewScrollRef, {
     enabled: showDesktopWebScrollbar,
   });
+
+  const mobileRefreshControl = isMobile
+    ? {
+        refreshControl: (
+          <RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor="transparent" />
+        ),
+      }
+    : {};
 
   const highlightedLines = useMemo(() => {
     if (!preview || preview.kind !== "text" || isMarkdownFile) {
@@ -281,6 +294,7 @@ function FilePreviewBody({
             onContentSizeChange={scrollbar.onContentSizeChange}
             scrollEventThrottle={16}
             showsVerticalScrollIndicator={!showDesktopWebScrollbar}
+            {...mobileRefreshControl}
           >
             <MarkdownRenderer text={preview.content ?? ""} />
           </RNScrollView>
@@ -323,6 +337,7 @@ function FilePreviewBody({
           onContentSizeChange={scrollbar.onContentSizeChange}
           scrollEventThrottle={16}
           showsVerticalScrollIndicator={!showDesktopWebScrollbar}
+          {...mobileRefreshControl}
         >
           {isMobile ? (
             <View style={styles.previewCodeScrollContent}>{codeLines}</View>
@@ -364,6 +379,7 @@ function FilePreviewBody({
           onContentSizeChange={scrollbar.onContentSizeChange}
           scrollEventThrottle={16}
           showsVerticalScrollIndicator={!showDesktopWebScrollbar}
+          {...mobileRefreshControl}
         >
           <RNImage
             source={imageSource ?? undefined}
@@ -467,6 +483,10 @@ export function FilePane({
         isMobile={isMobile}
         location={location}
         imagePreviewUri={imagePreviewUri}
+        isRefreshing={query.isFetching}
+        onRefresh={() => {
+          void query.refetch();
+        }}
       />
     </View>
   );

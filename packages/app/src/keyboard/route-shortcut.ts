@@ -54,6 +54,7 @@ const PASSTHROUGH_DISPATCH: Record<string, KeyboardActionDefinition> = {
   "sidebar.toggle.right": { id: "sidebar.toggle.right", scope: "sidebar" },
   "workspace.pane.split.right": { id: "workspace.pane.split.right", scope: "workspace" },
   "workspace.pane.split.down": { id: "workspace.pane.split.down", scope: "workspace" },
+  "workspace.file.refresh": { id: "workspace.file.refresh", scope: "workspace" },
   "workspace.pane.focus.left": { id: "workspace.pane.focus.left", scope: "workspace" },
   "workspace.pane.focus.right": { id: "workspace.pane.focus.right", scope: "workspace" },
   "workspace.pane.focus.up": { id: "workspace.pane.focus.up", scope: "workspace" },

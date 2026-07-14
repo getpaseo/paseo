@@ -2687,6 +2687,19 @@ function WorkspaceScreenContent({
     [client, isConnected, normalizedServerId, toast, t],
   );
 
+  const handleRefreshFile = useCallback(
+    (filePath: string) => {
+      queryClient.invalidateQueries({
+        queryKey: ["workspaceFile", normalizedServerId],
+        predicate: (query) => {
+          const key = query.queryKey;
+          return key[3] === filePath;
+        },
+      });
+    },
+    [queryClient, normalizedServerId],
+  );
+
   const handleCopyWorkspacePath = useCallback(async () => {
     if (!workspaceDirectory) {
       toast.error(t("workspace.header.toasts.workspacePathUnavailable"));
@@ -2873,6 +2886,15 @@ function WorkspaceScreenContent({
           }
           return true;
         }
+        case "workspace.file.refresh": {
+          const activeFileTab = tabs.find(
+            (tab) => tab.tabId === activeTabId && tab.target.kind === "filePreview",
+          );
+          if (activeFileTab) {
+            handleRefreshFile(activeFileTab.target.path);
+          }
+          return true;
+        }
         default:
           return false;
       }
@@ -2882,6 +2904,7 @@ function WorkspaceScreenContent({
       handleCloseTabById,
       handleCreateDraftTab,
       handleCreateTerminal,
+      handleRefreshFile,
       navigateToTabId,
       tabs,
     ],
@@ -2985,6 +3008,7 @@ function WorkspaceScreenContent({
       "workspace.tab.navigate-index",
       "workspace.tab.navigate-relative",
       "workspace.terminal.new",
+      "workspace.file.refresh",
     ] as const,
     enabled: Boolean(isRouteFocused && normalizedServerId && normalizedWorkspaceId),
     priority: 100,
@@ -3448,6 +3472,7 @@ function WorkspaceScreenContent({
         onCopyAgentId={handleCopyAgentId}
         onCopyFilePath={handleCopyFilePath}
         onReloadAgent={handleReloadAgent}
+        onRefreshFile={handleRefreshFile}
         onRenameTab={handleRenameTab}
         onCloseTabsToLeft={handleCloseTabsToLeftInPane}
         onCloseTabsToRight={handleCloseTabsToRightInPane}
@@ -3483,6 +3508,7 @@ function WorkspaceScreenContent({
     handleCopyAgentId,
     handleCopyFilePath,
     handleReloadAgent,
+    handleRefreshFile,
     handleRenameTab,
     handleCloseTabsToLeftInPane,
     handleCloseTabsToRightInPane,
@@ -3586,6 +3612,7 @@ function WorkspaceScreenContent({
           onCopyAgentId={handleCopyAgentId}
           onCopyFilePath={handleCopyFilePath}
           onReloadAgent={handleReloadAgent}
+          onRefreshFile={handleRefreshFile}
           onRenameTab={handleRenameTab}
           onCloseTabsToLeft={handleCloseTabsToLeft}
           onCloseTabsToRight={handleCloseTabsToRight}

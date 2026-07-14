@@ -16,6 +16,7 @@ export type KeyboardActionId =
   | "workspace.tab.navigate-relative"
   | "workspace.pane.split.right"
   | "workspace.pane.split.down"
+  | "workspace.file.refresh"
   | "workspace.pane.focus.left"
   | "workspace.pane.focus.right"
   | "workspace.pane.focus.up"
@@ -48,6 +49,7 @@ export type KeyboardActionDefinition =
   | { id: "workspace.tab.navigate-relative"; scope: KeyboardActionScope; delta: 1 | -1 }
   | { id: "workspace.pane.split.right"; scope: KeyboardActionScope }
   | { id: "workspace.pane.split.down"; scope: KeyboardActionScope }
+  | { id: "workspace.file.refresh"; scope: KeyboardActionScope }
   | { id: "workspace.pane.focus.left"; scope: KeyboardActionScope }
   | { id: "workspace.pane.focus.right"; scope: KeyboardActionScope }
   | { id: "workspace.pane.focus.up"; scope: KeyboardActionScope }
