@@ -29,6 +29,14 @@ import type { WorkspaceFileLocation } from "@/workspace/file-open";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useAppVisible } from "@/hooks/use-app-visible";
 import { isFileQueryEnabled } from "@/components/file-pane-enabled";
+import {
+  findFileSizeFromParentDirectory,
+  formatFileSize,
+  getFileNameFromFilePath,
+  shouldWarnBeforeOpeningFile,
+  type FileSizeLookupClient,
+} from "@/components/file-pane-large-file";
+import { confirmDialog } from "@/utils/confirm-dialog";
 
 interface CodeLineProps {
   tokens: HighlightToken[];
@@ -58,15 +66,7 @@ interface FileLineSelection {
   lineEnd: number;
 }
 
-function formatFileSize({ size }: { size: number }): string {
-  if (size < 1024) {
-    return `${size} B`;
-  }
-  if (size < 1024 * 1024) {
-    return `${(size / 1024).toFixed(1)} KB`;
-  }
-  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
-}
+const approvedLargeFileOpenKeys = new Set<string>();
 
 async function createFilePanePreview(file: FileReadResult | null): Promise<{
   file: ExplorerFile | null;
@@ -113,6 +113,54 @@ function clampLineSelection(input: {
     input.lineEnd && input.lineEnd >= input.lineStart ? input.lineEnd : input.lineStart;
   const lineEnd = Math.min(Math.floor(rawLineEnd), input.lineCount);
   return { lineStart, lineEnd: Math.max(lineStart, lineEnd) };
+}
+
+async function confirmLargeFileOpenIfNeeded({
+  client,
+  serverId,
+  cwd,
+  path,
+  labels,
+}: {
+  client: FileSizeLookupClient;
+  serverId: string;
+  cwd: string;
+  path: string;
+  labels: {
+    title: string;
+    message: (input: { fileName: string; size: string }) => string;
+    confirmLabel: string;
+    cancelLabel: string;
+  };
+}): Promise<boolean> {
+  let size: number | null = null;
+  try {
+    size = await findFileSizeFromParentDirectory({ client, cwd, path });
+  } catch {
+    return true;
+  }
+  if (size === null || !shouldWarnBeforeOpeningFile(size)) {
+    return true;
+  }
+
+  const approvalKey = `${serverId}\0${cwd}\0${path}`;
+  if (approvedLargeFileOpenKeys.has(approvalKey)) {
+    return true;
+  }
+
+  const confirmed = await confirmDialog({
+    title: labels.title,
+    message: labels.message({
+      fileName: getFileNameFromFilePath(path),
+      size: formatFileSize({ size }),
+    }),
+    confirmLabel: labels.confirmLabel,
+    cancelLabel: labels.cancelLabel,
+  });
+  if (confirmed) {
+    approvedLargeFileOpenKeys.add(approvalKey);
+  }
+  return confirmed;
 }
 
 const CodeLine = React.memo(function CodeLine({
@@ -402,10 +450,28 @@ export function FilePane({
       if (!client || !readTarget) {
         return {
           file: null as ExplorerFile | null,
+          imageAttachment: null,
           error: t("workspace.terminal.hostDisconnected"),
         };
       }
       try {
+        const confirmed = await confirmLargeFileOpenIfNeeded({
+          client,
+          serverId,
+          cwd: readTarget.cwd,
+          path: readTarget.path,
+          labels: {
+            title: t("panels.file.largeFileWarningTitle"),
+            message: ({ fileName, size }) =>
+              t("panels.file.largeFileWarningMessage", { fileName, size }),
+            confirmLabel: t("panels.file.largeFileWarningOpen"),
+            cancelLabel: t("panels.file.largeFileWarningCancel"),
+          },
+        });
+        if (!confirmed) {
+          return { file: null, imageAttachment: null, error: null };
+        }
+
         const file = await client.readFile(readTarget.cwd, readTarget.path);
         const preview = await createFilePanePreview(file);
         return {

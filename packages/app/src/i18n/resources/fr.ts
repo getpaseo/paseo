@@ -1428,6 +1428,11 @@ export const fr: TranslationResources = {
       binaryPreviewUnavailable: "Aperçu binaire indisponible",
       failedToLoad: "Échec du chargement du fichier",
       failedToLoadPreview: "Échec du chargement de l'aperçu du fichier",
+      largeFileWarningTitle: "Ouvrir un fichier volumineux ?",
+      largeFileWarningMessage:
+        "{{fileName}} fait {{size}}. Son ouverture pourrait rendre l'interface instable.",
+      largeFileWarningOpen: "Ouvrir",
+      largeFileWarningCancel: "Annuler",
     },
   },
   toolCallDetails: {

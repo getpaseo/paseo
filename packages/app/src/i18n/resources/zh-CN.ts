@@ -1370,6 +1370,10 @@ export const zhCN: TranslationResources = {
       binaryPreviewUnavailable: "二进制预览不可用",
       failedToLoad: "加载文件失败",
       failedToLoadPreview: "加载文件预览失败",
+      largeFileWarningTitle: "打开大文件？",
+      largeFileWarningMessage: "{{fileName}} 的大小为 {{size}}。打开它可能会导致界面不稳定。",
+      largeFileWarningOpen: "打开",
+      largeFileWarningCancel: "取消",
     },
   },
   toolCallDetails: {

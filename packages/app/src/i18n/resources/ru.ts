@@ -1417,6 +1417,11 @@ export const ru: TranslationResources = {
       binaryPreviewUnavailable: "Предварительный просмотр двоичного файла недоступен.",
       failedToLoad: "Не удалось загрузить файл",
       failedToLoadPreview: "Не удалось загрузить предварительный просмотр файла.",
+      largeFileWarningTitle: "Открыть большой файл?",
+      largeFileWarningMessage:
+        "{{fileName}} имеет размер {{size}}. Открытие может сделать интерфейс нестабильным.",
+      largeFileWarningOpen: "Открыть",
+      largeFileWarningCancel: "Отмена",
     },
   },
   toolCallDetails: {

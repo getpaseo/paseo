@@ -1394,6 +1394,10 @@ export const en = {
       binaryPreviewUnavailable: "Binary preview unavailable",
       failedToLoad: "Failed to load file",
       failedToLoadPreview: "Failed to load file preview",
+      largeFileWarningTitle: "Open large file?",
+      largeFileWarningMessage: "{{fileName}} is {{size}}. Opening it could make the UI unstable.",
+      largeFileWarningOpen: "Open",
+      largeFileWarningCancel: "Cancel",
     },
   },
   toolCallDetails: {

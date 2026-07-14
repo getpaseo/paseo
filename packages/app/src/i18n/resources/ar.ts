@@ -1386,6 +1386,11 @@ export const ar: TranslationResources = {
       binaryPreviewUnavailable: "المعاينة الثنائية غير متاحة",
       failedToLoad: "فشل تحميل الملف",
       failedToLoadPreview: "فشل تحميل معاينة الملف",
+      largeFileWarningTitle: "فتح ملف كبير؟",
+      largeFileWarningMessage:
+        "{{fileName}} حجمه {{size}}. قد يؤدي فتحه إلى جعل واجهة المستخدم غير مستقرة.",
+      largeFileWarningOpen: "فتح",
+      largeFileWarningCancel: "إلغاء",
     },
   },
   toolCallDetails: {

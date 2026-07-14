@@ -1411,6 +1411,11 @@ export const ptBR: TranslationResources = {
       binaryPreviewUnavailable: "Prévia binária indisponível",
       failedToLoad: "Falha ao carregar arquivo",
       failedToLoadPreview: "Falha ao carregar prévia do arquivo",
+      largeFileWarningTitle: "Abrir arquivo grande?",
+      largeFileWarningMessage:
+        "{{fileName}} tem {{size}}. Abri-lo pode deixar a interface instável.",
+      largeFileWarningOpen: "Abrir",
+      largeFileWarningCancel: "Cancelar",
     },
   },
   toolCallDetails: {

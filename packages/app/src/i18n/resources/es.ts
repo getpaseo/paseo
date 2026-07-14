@@ -1425,6 +1425,11 @@ export const es: TranslationResources = {
       binaryPreviewUnavailable: "Vista previa binaria no disponible",
       failedToLoad: "No se pudo cargar el archivo",
       failedToLoadPreview: "No se pudo cargar la vista previa del archivo",
+      largeFileWarningTitle: "¿Abrir archivo grande?",
+      largeFileWarningMessage:
+        "{{fileName}} ocupa {{size}}. Abrirlo podría volver inestable la interfaz.",
+      largeFileWarningOpen: "Abrir",
+      largeFileWarningCancel: "Cancelar",
     },
   },
   toolCallDetails: {

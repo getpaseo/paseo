@@ -1403,6 +1403,11 @@ export const ja: TranslationResources = {
       binaryPreviewUnavailable: "バイナリプレビューが利用できません",
       failedToLoad: "ファイルの読み込みに失敗しました",
       failedToLoadPreview: "ファイルプレビューの読み込みに失敗しました",
+      largeFileWarningTitle: "大きなファイルを開きますか？",
+      largeFileWarningMessage:
+        "{{fileName}} は {{size}} です。開くとUIが不安定になる可能性があります。",
+      largeFileWarningOpen: "開く",
+      largeFileWarningCancel: "キャンセル",
     },
   },
   toolCallDetails: {
