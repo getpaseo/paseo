@@ -23,6 +23,7 @@ function makeAgentPayload(input: {
   status?: AgentSnapshotPayload["status"];
   updatedAt?: string;
   archivedAt?: string | null;
+  pinnedAt?: string | null;
   labels?: Record<string, string>;
   requiresAttention?: boolean;
   effectiveThinkingOptionId?: string | null;
@@ -61,6 +62,7 @@ function makeAgentPayload(input: {
     attentionReason: null,
     attentionTimestamp: null,
     archivedAt: input.archivedAt ?? null,
+    pinnedAt: input.pinnedAt ?? null,
   };
 }
 
@@ -235,6 +237,22 @@ describe("matchesAgentUpdatesFilter", () => {
       matchesAgentUpdatesFilter({ agent, project: otherProject, filter: { projectKeys: ["  "] } }),
     ).toBe(true);
   });
+
+  test("updatedAfter includes an agent updated exactly at the cutoff", () => {
+    const cutoff = "2026-03-01T12:00:00.000Z";
+    const atCutoff = makeAgentPayload({ id: "at-cutoff", updatedAt: cutoff });
+    const beforeCutoff = makeAgentPayload({
+      id: "before-cutoff",
+      updatedAt: "2026-03-01T11:59:59.999Z",
+    });
+
+    expect(
+      matchesAgentUpdatesFilter({ agent: atCutoff, project, filter: { updatedAfter: cutoff } }),
+    ).toBe(true);
+    expect(
+      matchesAgentUpdatesFilter({ agent: beforeCutoff, project, filter: { updatedAfter: cutoff } }),
+    ).toBe(false);
+  });
 });
 
 describe("forwardLiveAgent", () => {
@@ -394,7 +412,7 @@ describe("bootstrap buffering", () => {
     });
   });
 
-  test("skips a buffered upsert that is not newer than the snapshot", async () => {
+  test("skips a buffered upsert older than the snapshot", async () => {
     const h = buildHarness();
     h.service.beginSubscription({ subscriptionId: "sub", filter: {} });
 
@@ -416,6 +434,37 @@ describe("bootstrap buffering", () => {
 
     expect(h.agentUpdates()).toEqual([
       { kind: "upsert", agent: expect.objectContaining({ id: "fresh" }), project: makeProject() },
+    ]);
+  });
+
+  test("replays an equal-timestamp pin update after the snapshot", async () => {
+    const h = buildHarness();
+    h.service.beginSubscription({ subscriptionId: "sub", filter: {} });
+    const updatedAt = "2026-03-02T00:00:00.000Z";
+
+    h.register(
+      makeAgentPayload({
+        id: "pinned-during-bootstrap",
+        workspaceId: "ws-1",
+        updatedAt,
+        pinnedAt: "2026-03-03T00:00:00.000Z",
+      }),
+    );
+    await h.service.emitStoredRecord(h.stored("pinned-during-bootstrap"));
+
+    h.service.flushBootstrapped("sub", {
+      snapshotUpdatedAtByAgentId: new Map([["pinned-during-bootstrap", Date.parse(updatedAt)]]),
+    });
+
+    expect(h.agentUpdates()).toEqual([
+      {
+        kind: "upsert",
+        agent: expect.objectContaining({
+          id: "pinned-during-bootstrap",
+          pinnedAt: "2026-03-03T00:00:00.000Z",
+        }),
+        project: makeProject(),
+      },
     ]);
   });
 

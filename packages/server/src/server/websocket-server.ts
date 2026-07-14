@@ -9,7 +9,11 @@ import type { AgentStorage } from "./agent/agent-storage.js";
 import type { DownloadTokenStore } from "./file-download/token-store.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type pino from "pino";
-import type { ProjectRegistry, WorkspaceRegistry } from "./workspace-registry.js";
+import type {
+  ProjectRegistry,
+  WorkspaceCollectionRegistry,
+  WorkspaceRegistry,
+} from "./workspace-registry.js";
 import type { FileBackedChatService } from "./chat/chat-service.js";
 import type { LoopService } from "./loop-service.js";
 import type { ScheduleService } from "./schedule/service.js";
@@ -219,8 +223,13 @@ function createNoopProjectRegistry(): ProjectRegistry {
     list: async () => [],
     get: async () => null,
     upsert: async () => {},
+    setCustomName: async () => {
+      throw new Error("Project not found");
+    },
     archive: async () => {},
+    unarchive: async () => {},
     remove: async () => {},
+    subscribeChanges: () => () => {},
   };
 }
 
@@ -232,7 +241,17 @@ function createNoopWorkspaceRegistry(): WorkspaceRegistry {
     get: async () => null,
     update: async () => null,
     upsert: async () => {},
+    setTitle: async () => {
+      throw new Error("Workspace not found");
+    },
+    setPinnedAt: async () => {
+      throw new Error("Workspace not found");
+    },
+    setCollectionId: async () => {
+      throw new Error("Workspace not found");
+    },
     archive: async () => {},
+    unarchive: async () => {},
     remove: async () => {},
   };
 }
@@ -421,6 +440,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly agentStorage: AgentStorage;
   private readonly projectRegistry: ProjectRegistry;
   private readonly workspaceRegistry: WorkspaceRegistry;
+  private readonly workspaceCollectionRegistry: WorkspaceCollectionRegistry | undefined;
   private readonly chatService: FileBackedChatService;
   private readonly loopService: LoopService;
   private readonly scheduleService: ScheduleService;
@@ -521,6 +541,7 @@ export class VoiceAssistantWebSocketServer {
     },
     serviceProxyPublicBaseUrl?: string | null,
     browserToolsBroker?: BrowserToolsBroker | null,
+    workspaceCollectionRegistry?: WorkspaceCollectionRegistry,
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.serverId = serverId;
@@ -534,6 +555,7 @@ export class VoiceAssistantWebSocketServer {
     this.agentStorage = agentStorage;
     this.projectRegistry = projectRegistry ?? createNoopProjectRegistry();
     this.workspaceRegistry = workspaceRegistry ?? createNoopWorkspaceRegistry();
+    this.workspaceCollectionRegistry = workspaceCollectionRegistry;
     const requiredServices = requireWebSocketServices({
       chatService,
       loopService,
@@ -1039,6 +1061,7 @@ export class VoiceAssistantWebSocketServer {
       agentStorage: this.agentStorage,
       projectRegistry: this.projectRegistry,
       workspaceRegistry: this.workspaceRegistry,
+      workspaceCollectionRegistry: this.workspaceCollectionRegistry,
       chatService: this.chatService,
       loopService: this.loopService,
       scheduleService: this.scheduleService,
@@ -1266,6 +1289,12 @@ export class VoiceAssistantWebSocketServer {
         workspacePinning: true,
         // COMPAT(workspaceGithubClone): added in v0.1.108, remove gate after 2027-01-13.
         workspaceGithubClone: true,
+        // COMPAT(workspaceOrganization): added in v0.1.108, remove gate after 2027-01-13.
+        workspaceOrganization: this.workspaceCollectionRegistry !== undefined,
+        // COMPAT(agentPinning): added in v0.1.108, remove gate after 2027-01-13.
+        agentPinning: true,
+        // COMPAT(agentHistoryOrganization): added in v0.1.108, remove gate after 2027-01-13.
+        agentHistoryOrganization: true,
       },
     };
   }

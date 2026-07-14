@@ -4,6 +4,7 @@ import type { DaemonServerInfo } from "@/stores/session-store";
 import { useSessionStore } from "@/stores/session-store";
 
 export type HostFeatureName = keyof NonNullable<DaemonServerInfo["features"]>;
+export type HostFeatureAvailability = "supported" | "unsupported" | "unknown";
 
 export interface HostFeatureSessionState {
   sessions: Record<
@@ -20,6 +21,16 @@ export function hostSupportsFeature(
   feature: HostFeatureName,
 ): boolean {
   return serverInfo?.features?.[feature] === true;
+}
+
+export function hostFeatureAvailability(
+  serverInfo: DaemonServerInfo | null | undefined,
+  feature: HostFeatureName,
+): HostFeatureAvailability {
+  if (!serverInfo) {
+    return "unknown";
+  }
+  return serverInfo.features?.[feature] === true ? "supported" : "unsupported";
 }
 
 export function selectHostFeature(
@@ -49,5 +60,26 @@ export function useHostFeatureMap(
   return useMemo(
     () => new Map(serverIds.map((serverId, index) => [serverId, flags[index] === true] as const)),
     [flags, serverIds],
+  );
+}
+
+export function useHostFeatureAvailabilityMap(
+  serverIds: readonly string[],
+  feature: HostFeatureName,
+): ReadonlyMap<string, HostFeatureAvailability> {
+  const availability = useSessionStore(
+    useShallow((state) =>
+      serverIds.map((serverId) =>
+        hostFeatureAvailability(state.sessions[serverId]?.serverInfo, feature),
+      ),
+    ),
+  );
+
+  return useMemo(
+    () =>
+      new Map(
+        serverIds.map((serverId, index) => [serverId, availability[index] ?? "unknown"] as const),
+      ),
+    [availability, serverIds],
   );
 }

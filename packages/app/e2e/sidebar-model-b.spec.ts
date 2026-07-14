@@ -131,6 +131,7 @@ test.describe("Model B sidebar shape", () => {
 
       // Switch to status grouping.
       await page.getByTestId("sidebar-display-preferences-menu").click();
+      await page.getByTestId("sidebar-organization-page-group").click();
       await page.getByTestId("sidebar-grouping-status").click();
 
       const sidebar = page.getByTestId("sidebar-sessions").filter({ visible: true }).first();

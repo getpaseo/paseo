@@ -6,6 +6,7 @@ import {
   type WorkspaceRegistry,
   createPersistedProjectRecord,
   createPersistedWorkspaceRecord,
+  unarchiveProjectRegistryRecord,
 } from "./workspace-registry.js";
 import {
   classifyDirectoryForProjectMembership,
@@ -56,7 +57,7 @@ export interface AttemptFirstAgentBranchAutoNameResult {
 }
 
 export interface CreatePaseoWorktreeDeps extends CreateWorktreeCoreDeps {
-  projectRegistry: Pick<ProjectRegistry, "get" | "upsert">;
+  projectRegistry: Pick<ProjectRegistry, "get" | "unarchive" | "upsert">;
   workspaceRegistry: Pick<WorkspaceRegistry, "get" | "list" | "upsert">;
   workspaceGitService: WorkspaceGitService;
 }
@@ -252,6 +253,7 @@ async function upsertWorkspaceForWorktree(options: {
       archivedAt: null,
     }),
   );
+  await unarchiveProjectRegistryRecord(options.deps.projectRegistry, sourceProject.projectId, now);
 
   const workspace = createPersistedWorkspaceRecord({
     workspaceId,
@@ -272,7 +274,7 @@ async function upsertWorkspaceForWorktree(options: {
 }
 
 export interface CreateLocalCheckoutWorkspaceDeps {
-  projectRegistry: Pick<ProjectRegistry, "get" | "list" | "upsert">;
+  projectRegistry: Pick<ProjectRegistry, "get" | "list" | "unarchive" | "upsert">;
   workspaceRegistry: Pick<WorkspaceRegistry, "list" | "upsert">;
   workspaceGitService: Pick<WorkspaceGitService, "getCheckout">;
 }
@@ -294,6 +296,7 @@ export async function createLocalCheckoutWorkspace(
     projectRegistry: deps.projectRegistry,
   });
   await deps.projectRegistry.upsert(projectRecord);
+  await unarchiveProjectRegistryRecord(deps.projectRegistry, projectRecord.projectId, now);
 
   const trimmedTitle = options.title?.trim();
   // Persist the live git branch into the dedicated `branch` field so

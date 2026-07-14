@@ -1,7 +1,9 @@
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import {
   type EmptyProjectDescriptor,
+  type WorkspaceCollection,
   normalizeEmptyProjectDescriptor,
+  normalizeWorkspaceCollection,
   normalizeWorkspaceDescriptor,
   type WorkspaceDescriptor,
 } from "@/stores/session-store";
@@ -13,6 +15,7 @@ export type FetchWorkspacesSort = NonNullable<
 
 export interface FetchWorkspaceDescriptorsResult {
   workspaces: WorkspaceDescriptor[];
+  collections: WorkspaceCollection[];
   /**
    * Project parents with no active workspaces. The daemon only rides these on
    * the first page of `fetchWorkspaces`, so a freshly-added project that has no
@@ -28,6 +31,7 @@ export async function fetchAllWorkspaceDescriptors(input: {
 }): Promise<FetchWorkspaceDescriptorsResult> {
   const workspaces: WorkspaceDescriptor[] = [];
   const emptyProjects = new Map<string, EmptyProjectDescriptor>();
+  const collections = new Map<string, WorkspaceCollection>();
   let cursor: string | null = null;
 
   while (true) {
@@ -36,6 +40,10 @@ export async function fetchAllWorkspaceDescriptors(input: {
       page: cursor ? { limit: 200, cursor } : { limit: 200 },
     });
     workspaces.push(...payload.entries.map((entry) => normalizeWorkspaceDescriptor(entry)));
+    for (const entry of payload.collections ?? []) {
+      const collection = normalizeWorkspaceCollection(entry);
+      collections.set(collection.id, collection);
+    }
     for (const project of payload.emptyProjects ?? []) {
       const descriptor = normalizeEmptyProjectDescriptor(project);
       emptyProjects.set(descriptor.projectId, descriptor);
@@ -46,5 +54,9 @@ export async function fetchAllWorkspaceDescriptors(input: {
     cursor = payload.pageInfo.nextCursor;
   }
 
-  return { workspaces, emptyProjects: Array.from(emptyProjects.values()) };
+  return {
+    workspaces,
+    collections: Array.from(collections.values()),
+    emptyProjects: Array.from(emptyProjects.values()),
+  };
 }

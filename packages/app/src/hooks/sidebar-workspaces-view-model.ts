@@ -37,7 +37,6 @@ export interface SidebarWorkspaceEntry extends SidebarStatusWorkspacePlacement {
   // Raw user-set title (null when the name is derived from branch/directory).
   // Prefills the rename input and signals whether a reset is available.
   title: string | null;
-  pinnedAt?: string | null;
   // Checkout branch (null when not a git checkout or detached HEAD).
   currentBranch: string | null;
   archivingAt: string | null;
@@ -47,6 +46,11 @@ export interface SidebarWorkspaceEntry extends SidebarStatusWorkspacePlacement {
   archiveUnpushedCommitCount: number | null;
   scripts: WorkspaceDescriptor["scripts"];
   hasRunningScripts: boolean;
+  createdAt?: Date | null;
+  activityAt?: Date | null;
+  pinnedAt?: Date | null;
+  collectionId?: string | null;
+  collectionLabel?: string | null;
 }
 
 export interface SidebarProjectEntry {
@@ -56,6 +60,7 @@ export interface SidebarProjectEntry {
   iconWorkingDir: string;
   hosts: WorkspaceStructureHostPlacement[];
   workspaces: SidebarWorkspacePlacement[];
+  workspaceCount?: number;
 }
 
 export interface SidebarWorkspacePlacementModel {
@@ -158,7 +163,6 @@ export function createSidebarWorkspaceEntry(input: {
     workspaceKind: input.workspace.workspaceKind,
     name: input.workspace.name,
     title: input.workspace.title ?? null,
-    pinnedAt: input.workspace.pinnedAt,
     currentBranch: normalizeCurrentBranch(input.workspace.gitRuntime?.currentBranch),
     statusBucket: effectiveStatus.status,
     statusEnteredAt: effectiveStatus.enteredAt,
@@ -169,6 +173,11 @@ export function createSidebarWorkspaceEntry(input: {
     archiveUnpushedCommitCount: input.workspace.gitRuntime?.aheadOfOrigin ?? null,
     scripts: input.workspace.scripts,
     hasRunningScripts: input.workspace.scripts.some((script) => script.lifecycle === "running"),
+    createdAt: input.workspace.createdAt ?? null,
+    activityAt: input.workspace.activityAt ?? null,
+    pinnedAt: input.workspace.pinnedAt ?? null,
+    collectionId: input.workspace.collectionId ?? null,
+    collectionLabel: null,
   };
 }
 
@@ -393,15 +402,19 @@ export function buildSidebarProjectsFromHostProjects(input: {
         workspaceKey,
       }),
     ),
+    workspaceCount: project.workspaceKeys.length,
   }));
 }
 
 // Host labels disambiguate which machine a workspace lives on; they only earn their
 // space once the visible sidebar spans more than one host. Counting distinct hosts
-// across the visible projects (not all connected hosts) keeps labels off when a host
-// filter pins the view to a single host.
-export function shouldShowSidebarHostLabels(projects: SidebarProjectEntry[]): boolean {
-  const serverIds = new Set<string>();
+// across the rendered projects and standalone rows (not all connected hosts) keeps
+// labels off when a host filter pins the view to a single host.
+export function shouldShowSidebarHostLabels(
+  projects: readonly SidebarProjectEntry[],
+  standaloneServerIds: Iterable<string> = [],
+): boolean {
+  const serverIds = new Set(standaloneServerIds);
   for (const project of projects) {
     for (const host of project.hosts) {
       serverIds.add(host.serverId);

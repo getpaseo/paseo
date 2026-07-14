@@ -1,4 +1,5 @@
 import { memo, useCallback, useMemo, useState, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import {
   ActivityIndicator,
   Pressable,
@@ -30,6 +31,7 @@ import { isEmphasizedStatusDotBucket } from "@/utils/status-dot-color";
 import { shouldRenderSyncedStatusLoader } from "@/utils/status-loader";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { resolveSidebarWorkspacePrimaryLabel } from "@/components/sidebar/sidebar-workspace-title";
+import { SidebarWorkspaceLabelDot } from "@/components/sidebar/sidebar-workspace-label-dot";
 
 const DEFAULT_STATUS_DOT_SIZE = 7;
 const EMPHASIZED_STATUS_DOT_SIZE = 9;
@@ -115,10 +117,11 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   reserveIdleStatusIndicatorSpace?: boolean;
   children?: ReactNode;
 }) {
+  const { t } = useTranslation();
   const {
     settings: { workspaceTitleSource },
   } = useAppSettings();
-  const workspaceLabel = resolveSidebarWorkspacePrimaryLabel({ workspace, workspaceTitleSource });
+  const primaryLabel = resolveSidebarWorkspacePrimaryLabel({ workspace, workspaceTitleSource });
   const workspaceBranchTextStyle = useMemo(
     () => [
       styles.workspaceBranchText,
@@ -142,11 +145,21 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
           <View style={styles.workspaceTitleRow}>
             <View style={styles.workspaceTitleLeft}>
               <Text style={workspaceBranchTextStyle} numberOfLines={1}>
-                {workspaceLabel}
+                {primaryLabel}
               </Text>
               {scriptIconKind ? <WorkspaceScriptIcon kind={scriptIconKind} /> : null}
             </View>
-            <View style={sidebarWorkspaceRowStyles.rowRight}>{children}</View>
+            <View style={sidebarWorkspaceRowStyles.rowRight}>
+              {workspace.collectionId ? (
+                <SidebarWorkspaceLabelDot
+                  labelKey={`${workspace.serverId}:${workspace.collectionId}`}
+                  label={
+                    workspace.collectionLabel ?? t("sidebar.organization.workspaceLabel.unknown")
+                  }
+                />
+              ) : null}
+              {children}
+            </View>
           </View>
           {subtitle ? (
             <Text style={styles.workspaceSubtitle} numberOfLines={1}>
@@ -411,7 +424,7 @@ const checksBadgeStyles = StyleSheet.create((theme) => ({
 export const sidebarWorkspaceRowStyles = StyleSheet.create((theme) => ({
   rowRight: {
     flexDirection: "row",
-    alignItems: "flex-start",
+    alignItems: "center",
     gap: theme.spacing[2],
     flexShrink: 0,
   },

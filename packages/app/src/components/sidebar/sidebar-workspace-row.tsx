@@ -16,11 +16,13 @@ import { useWorkspaceArchive } from "@/workspace/use-workspace-archive";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import { useClearWorkspaceAttention } from "@/hooks/use-clear-workspace-attention";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import { redirectIfArchivingActiveWorkspace } from "@/utils/sidebar-workspace-archive-redirect";
 import { requireWorkspaceDirectory } from "@/utils/workspace-directory";
 import { isNative as platformIsNative } from "@/constants/platform";
 import { useLongPressDragInteraction } from "@/components/sidebar/use-long-press-drag-interaction";
 import { SidebarWorkspaceMenu } from "@/components/sidebar/sidebar-workspace-menu";
+import type { ToggleSidebarWorkspacePin } from "@/hooks/use-sidebar-workspace-pin";
 import {
   SidebarWorkspaceRowFrame,
   SidebarWorkspaceRowContent,
@@ -37,11 +39,15 @@ interface SidebarWorkspaceRowProps {
   shortcutNumber: number | null;
   showShortcutBadge: boolean;
   canCopyBranchName: boolean;
+  canPin: boolean;
+  onToggleWorkspacePin: ToggleSidebarWorkspacePin;
   onPress: () => void;
   /** Secondary line under the name (status grouping shows the project name). */
   subtitle?: string | null;
   /** Project grouping only: shows a transient "creating" affordance. */
   isCreating?: boolean;
+  /** Pinned section only: omit the empty status slot for idle workspaces. */
+  reserveIdleStatusIndicatorSpace?: boolean;
   /** Project grouping only: drag-to-reorder wiring. Absent → not draggable. */
   drag?: () => void;
   isDragging?: boolean;
@@ -54,9 +60,12 @@ export function SidebarWorkspaceRow({
   shortcutNumber,
   showShortcutBadge,
   canCopyBranchName,
+  canPin,
+  onToggleWorkspacePin,
   onPress,
   subtitle,
   isCreating = false,
+  reserveIdleStatusIndicatorSpace = true,
   drag,
   isDragging = false,
   dragHandleProps,
@@ -146,6 +155,12 @@ export function SidebarWorkspaceRow({
     [renameMutation],
   );
 
+  const isPinned = workspace.pinnedAt != null;
+  const handleTogglePin = useCallback(() => {
+    onToggleWorkspacePin(workspace);
+  }, [onToggleWorkspacePin, workspace]);
+  const onTogglePin = canPin ? handleTogglePin : undefined;
+
   const archiveShortcutKeys = useShortcutKeys("archive-workspace");
   const { hasClearableAttention, clearAttention } = useClearWorkspaceAttention({
     serverId: workspace.serverId,
@@ -168,6 +183,17 @@ export function SidebarWorkspaceRow({
     },
   });
 
+  useKeyboardActionHandler({
+    handlerId: `workspace-pin-${workspace.workspaceKey}`,
+    actions: ["workspace.pin"],
+    enabled: selected && canPin,
+    priority: 0,
+    handle: () => {
+      onTogglePin?.();
+      return true;
+    },
+  });
+
   return (
     <>
       <WorkspaceRowBody
@@ -177,6 +203,7 @@ export function SidebarWorkspaceRow({
         showShortcutBadge={showShortcutBadge}
         subtitle={subtitle}
         isCreating={isCreating}
+        reserveIdleStatusIndicatorSpace={reserveIdleStatusIndicatorSpace}
         isArchiving={isArchiving}
         onPress={onPress}
         drag={drag}
@@ -191,6 +218,8 @@ export function SidebarWorkspaceRow({
         onRename={handleOpenRename}
         onMarkAsRead={hasClearableAttention ? handleMarkAsRead : undefined}
         archiveShortcutKeys={selected ? archiveShortcutKeys : null}
+        isPinned={isPinned}
+        onTogglePin={onTogglePin}
       />
       <AdaptiveRenameModal
         visible={isRenameOpen}
@@ -213,6 +242,7 @@ interface WorkspaceRowBodyProps {
   showShortcutBadge: boolean;
   subtitle?: string | null;
   isCreating: boolean;
+  reserveIdleStatusIndicatorSpace: boolean;
   isArchiving: boolean;
   onPress: () => void;
   drag?: () => void;
@@ -227,6 +257,8 @@ interface WorkspaceRowBodyProps {
   onRename?: () => void;
   onMarkAsRead?: () => void;
   archiveShortcutKeys?: ShortcutKey[][] | null;
+  isPinned: boolean;
+  onTogglePin?: () => void;
 }
 
 function WorkspaceRowBody({
@@ -236,6 +268,7 @@ function WorkspaceRowBody({
   showShortcutBadge,
   subtitle,
   isCreating,
+  reserveIdleStatusIndicatorSpace,
   isArchiving,
   onPress,
   drag,
@@ -250,8 +283,11 @@ function WorkspaceRowBody({
   onRename,
   onMarkAsRead,
   archiveShortcutKeys,
+  isPinned,
+  onTogglePin,
 }: WorkspaceRowBodyProps) {
-  const isTouchPlatform = platformIsNative;
+  const isCompact = useIsCompactFormFactor();
+  const showActionsWithoutHover = platformIsNative || isCompact;
   const draggable = Boolean(drag);
   const interaction = useLongPressDragInteraction({
     drag: drag ?? noop,
@@ -277,7 +313,7 @@ function WorkspaceRowBody({
   return (
     <SidebarWorkspaceRowFrame workspace={workspace} isDragging={isDragging}>
       {({ isHovered, hoverHandlers }) => {
-        const isDesktop = !isTouchPlatform;
+        const isDesktop = !platformIsNative;
         const showScriptsIcon = isDesktop && workspace.hasRunningScripts;
         const hasRunningService = workspace.scripts.some(
           (s) => s.lifecycle === "running" && (s.type ?? "service") === "service",
@@ -318,11 +354,12 @@ function WorkspaceRowBody({
                 isCreating={isCreating}
                 shortcutNumber={shortcutNumber}
                 showShortcutBadge={showShortcutBadge}
+                reserveIdleStatusIndicatorSpace={reserveIdleStatusIndicatorSpace}
               >
                 <WorkspaceRowTrailingActions
                   workspace={workspace}
                   isHovered={isHovered}
-                  isTouchPlatform={isTouchPlatform}
+                  showActionsWithoutHover={showActionsWithoutHover}
                   isCreating={isCreating}
                   showShortcutBadge={showShortcutBadge}
                   shortcutNumber={shortcutNumber}
@@ -335,6 +372,8 @@ function WorkspaceRowBody({
                   onCopyPath={onCopyPath}
                   onRename={onRename}
                   onMarkAsRead={onMarkAsRead}
+                  isPinned={isPinned}
+                  onTogglePin={onTogglePin}
                 />
               </SidebarWorkspaceRowContent>
             </Pressable>
@@ -348,7 +387,7 @@ function WorkspaceRowBody({
 function WorkspaceRowTrailingActions({
   workspace,
   isHovered,
-  isTouchPlatform,
+  showActionsWithoutHover,
   isCreating,
   showShortcutBadge,
   shortcutNumber,
@@ -361,10 +400,12 @@ function WorkspaceRowTrailingActions({
   onCopyBranchName,
   onCopyPath,
   onRename,
+  isPinned,
+  onTogglePin,
 }: {
   workspace: SidebarWorkspaceEntry;
   isHovered: boolean;
-  isTouchPlatform: boolean;
+  showActionsWithoutHover: boolean;
   isCreating: boolean;
   showShortcutBadge: boolean;
   shortcutNumber: number | null;
@@ -377,10 +418,12 @@ function WorkspaceRowTrailingActions({
   onCopyBranchName?: () => void;
   onCopyPath?: () => void;
   onRename?: () => void;
+  isPinned: boolean;
+  onTogglePin?: () => void;
 }) {
   const { t } = useTranslation();
   const showShortcut = showShortcutBadge && shortcutNumber !== null;
-  const showKebab = Boolean(onArchive && (isHovered || isTouchPlatform));
+  const showKebab = Boolean(onArchive && (isHovered || showActionsWithoutHover));
   const showKebabInSlot = showKebab && !showShortcut;
   const shouldRenderActionSlot = Boolean(onArchive || workspace.diffStat);
 
@@ -404,7 +447,7 @@ function WorkspaceRowTrailingActions({
           <SidebarWorkspaceTrailingActionOverlay visible={showKebabInSlot}>
             {onArchive ? (
               <SidebarWorkspaceMenu
-                workspaceKey={workspace.workspaceKey}
+                workspace={workspace}
                 onCopyPath={onCopyPath}
                 onCopyBranchName={onCopyBranchName}
                 onRename={onRename}
@@ -414,6 +457,8 @@ function WorkspaceRowTrailingActions({
                 archiveStatus={archiveStatus}
                 archivePendingLabel={archivePendingLabel}
                 archiveShortcutKeys={archiveShortcutKeys}
+                isPinned={isPinned}
+                onTogglePin={onTogglePin}
               />
             ) : null}
           </SidebarWorkspaceTrailingActionOverlay>

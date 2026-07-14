@@ -10,7 +10,7 @@ export interface LifecycleAgentManager {
   getAgent(agentId: string): LifecycleAgentSnapshot | null;
   hasInFlightRun(agentId: string): boolean;
   cancelAgentRun(agentId: string): Promise<boolean>;
-  clearAgentAttention(agentId: string): Promise<void>;
+  clearAgentAttention(agentId: string): Promise<boolean | void>;
   archiveAgent(agentId: string): Promise<{ archivedAt: string }>;
   archiveSnapshot(agentId: string, archivedAt: string): Promise<StoredAgentRecord>;
   closeAgent(agentId: string): Promise<void>;

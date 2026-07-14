@@ -3590,9 +3590,13 @@ describe("rename_workspace MCP tool", () => {
       providerSnapshotManager: createOpenCodeManager().manager,
       workspaceRegistry: {
         get: async (workspaceId) => workspaces.get(workspaceId) ?? null,
-        upsert: async (record) => {
+        setTitle: async (workspaceId, title, updatedAt) => {
+          const existing = workspaces.get(workspaceId);
+          if (!existing) throw new Error(`Workspace ${workspaceId} not found`);
+          const record = { ...existing, title, updatedAt };
           upsertedWorkspaces.push(record);
           workspaces.set(record.workspaceId, record);
+          return record;
         },
       },
       emitWorkspaceUpdatesForWorkspaceIds: async (workspaceIds) => {
@@ -3661,9 +3665,13 @@ describe("rename_workspace MCP tool", () => {
       providerSnapshotManager: createOpenCodeManager().manager,
       workspaceRegistry: {
         get: async (workspaceId) => workspaces.get(workspaceId) ?? null,
-        upsert: async (record) => {
+        setTitle: async (workspaceId, title, updatedAt) => {
+          const existing = workspaces.get(workspaceId);
+          if (!existing) throw new Error(`Workspace ${workspaceId} not found`);
+          const record = { ...existing, title, updatedAt };
           upsertedWorkspaces.push(record);
           workspaces.set(record.workspaceId, record);
+          return record;
         },
       },
       emitWorkspaceUpdatesForWorkspaceIds: async (workspaceIds) => {
@@ -3722,9 +3730,13 @@ describe("rename_workspace MCP tool", () => {
       providerSnapshotManager: createOpenCodeManager().manager,
       workspaceRegistry: {
         get: async (workspaceId) => workspaces.get(workspaceId) ?? null,
-        upsert: async (record) => {
+        setTitle: async (workspaceId, title, updatedAt) => {
+          const existing = workspaces.get(workspaceId);
+          if (!existing) throw new Error(`Workspace ${workspaceId} not found`);
+          const record = { ...existing, title, updatedAt };
           upsertedWorkspaces.push(record);
           workspaces.set(record.workspaceId, record);
+          return record;
         },
       },
       emitWorkspaceUpdatesForWorkspaceIds: async (workspaceIds) => {
@@ -4768,6 +4780,7 @@ describe("agent snapshot MCP serialization", () => {
           updatedAt: expect.any(String),
           lastUserMessageAt: null,
           archivedAt: null,
+          pinnedAt: null,
           requiresAttention: false,
           attentionReason: null,
           attentionTimestamp: null,
@@ -5133,6 +5146,7 @@ describe("agent snapshot MCP serialization", () => {
       updatedAt: now,
       lastUserMessageAt: null,
       archivedAt: now,
+      pinnedAt: null,
       requiresAttention: false,
       attentionReason: null,
       attentionTimestamp: null,

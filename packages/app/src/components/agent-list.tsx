@@ -2,13 +2,11 @@ import {
   View,
   Text,
   Pressable,
-  Modal,
   RefreshControl,
   FlatList,
   type ListRenderItem,
   type PressableStateCallbackType,
 } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useCallback, useMemo, useState, type ReactElement } from "react";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import type { TFunction } from "i18next";
@@ -17,15 +15,21 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import { formatTimeAgo } from "@/utils/time";
 import { type AggregatedAgent } from "@/hooks/use-aggregated-agents";
 import { useSessionStore } from "@/stores/session-store";
-import { Archive, ChevronRight } from "lucide-react-native";
+import { Archive, ChevronRight, MoreVertical, Pin, PinOff } from "lucide-react-native";
 import { getProviderIcon } from "@/components/provider-icons";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
 import { useQueryClient } from "@tanstack/react-query";
-import { agentHistoryQueryKey } from "@/hooks/agent-history-query-key";
+import { agentHistoryQueryKey, allAgentHistoryQueryRootKey } from "@/hooks/agent-history-query-key";
+import type { HistorySection, HistoryDateSectionKey } from "@/hooks/history-view-model";
+import { HistoryAgentActionMenu } from "@/components/history-agent-action-menu";
+import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
+import { Button } from "@/components/ui/button";
+import { useHostFeature } from "@/runtime/host-features";
+import { useToast } from "@/contexts/toast-context";
 
 interface AgentListProps {
-  agents: AggregatedAgent[];
+  sections: HistorySection[];
   showCheckoutInfo?: boolean;
   isRefreshing?: boolean;
   onRefresh?: () => void;
@@ -36,49 +40,13 @@ interface AgentListProps {
   showHostColumn?: boolean;
 }
 
-type DateSectionKey = "today" | "yesterday" | "thisWeek" | "thisMonth" | "older";
-
-const DATE_SECTION_ORDER = [
-  "today",
-  "yesterday",
-  "thisWeek",
-  "thisMonth",
-  "older",
-] as const satisfies readonly DateSectionKey[];
-
 type FlatListItem =
-  | { type: "header"; key: string; section: DateSectionKey }
+  | { type: "header"; key: string; section: Exclude<HistorySection, { kind: "none" }> }
   | { type: "agent"; key: string; agent: AggregatedAgent };
 
-function deriveDateSectionKey(lastActivityAt: Date): DateSectionKey {
-  const now = new Date();
-  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const yesterdayStart = new Date(todayStart.getTime() - 24 * 60 * 60 * 1000);
-  const activityStart = new Date(
-    lastActivityAt.getFullYear(),
-    lastActivityAt.getMonth(),
-    lastActivityAt.getDate(),
-  );
+const ACTION_SHEET_SNAP_POINTS = ["45%", "75%"];
 
-  if (activityStart.getTime() >= todayStart.getTime()) {
-    return "today";
-  }
-  if (activityStart.getTime() >= yesterdayStart.getTime()) {
-    return "yesterday";
-  }
-
-  const diffTime = todayStart.getTime() - activityStart.getTime();
-  const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
-  if (diffDays <= 7) {
-    return "thisWeek";
-  }
-  if (diffDays <= 30) {
-    return "thisMonth";
-  }
-  return "older";
-}
-
-function formatDateSectionLabel(t: TFunction, section: DateSectionKey): string {
+function formatDateSectionLabel(t: TFunction, section: HistoryDateSectionKey): string {
   switch (section) {
     case "today":
       return t("agentList.dateSections.today");
@@ -91,6 +59,15 @@ function formatDateSectionLabel(t: TFunction, section: DateSectionKey): string {
     case "older":
       return t("agentList.dateSections.older");
   }
+}
+
+function formatSectionLabel(
+  t: TFunction,
+  section: Exclude<HistorySection, { kind: "none" }>,
+): string {
+  if (section.kind === "pinned") return t("agentList.sections.pinned");
+  if (section.kind === "project") return section.title;
+  return formatDateSectionLabel(t, section.dateKey);
 }
 
 function SessionBadge({
@@ -210,7 +187,10 @@ function SessionRow({
   showAttentionIndicator,
   showHostColumn,
   onPress,
-  onLongPress,
+  onOpenActions,
+  onTogglePin,
+  onArchive,
+  actionPending,
 }: {
   agent: AggregatedAgent;
   isMobile: boolean;
@@ -218,7 +198,10 @@ function SessionRow({
   showAttentionIndicator: boolean;
   showHostColumn: boolean;
   onPress: (agent: AggregatedAgent) => void;
-  onLongPress: (agent: AggregatedAgent) => void;
+  onOpenActions: (agent: AggregatedAgent) => void;
+  onTogglePin: (agent: AggregatedAgent) => void;
+  onArchive: (agent: AggregatedAgent) => void;
+  actionPending: boolean;
 }) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
@@ -242,12 +225,13 @@ function SessionRow({
   );
 
   const handlePress = useCallback(() => onPress(agent), [onPress, agent]);
-  const handleLongPress = useCallback(() => onLongPress(agent), [onLongPress, agent]);
+  const handleOpenActions = useCallback(() => onOpenActions(agent), [onOpenActions, agent]);
 
   const sessionTitleStyle = useMemo(
     () => [styles.sessionTitle, isSelected && styles.sessionTitleHighlighted],
     [isSelected],
   );
+  const accessibilityState = useMemo(() => ({ selected: isSelected }), [isSelected]);
 
   const archivedIcon = useMemo(
     () => <Archive size={theme.fontSize.xs} color={theme.colors.foregroundMuted} />,
@@ -257,109 +241,134 @@ function SessionRow({
     !isMobile && showAttentionIndicator && Boolean(agent.requiresAttention);
 
   return (
-    <Pressable
-      style={pressableStyle}
-      onPress={handlePress}
-      onLongPress={handleLongPress}
-      testID={`agent-row-${agent.serverId}-${agent.id}`}
-    >
-      <View style={styles.rowContent}>
-        <View style={styles.rowTitleRow}>
-          <WorkspaceTitlePrefix
-            visible={!isMobile && Boolean(workspaceName)}
-            workspaceName={workspaceName}
-            testID={`agent-row-workspace-${agent.serverId}-${agent.id}`}
-            iconSize={theme.iconSize.xs}
-            color={theme.colors.foregroundMuted}
-          />
-          <View style={styles.providerIconWrap}>
-            <ProviderIcon size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+    <View style={styles.rowFrame}>
+      <Pressable
+        style={pressableStyle}
+        onPress={handlePress}
+        onLongPress={handleOpenActions}
+        accessibilityRole="button"
+        accessibilityState={accessibilityState}
+        testID={`agent-row-${agent.serverId}-${agent.id}`}
+      >
+        <View style={styles.rowContent}>
+          <View style={styles.rowTitleRow}>
+            <WorkspaceTitlePrefix
+              visible={!isMobile && Boolean(workspaceName)}
+              workspaceName={workspaceName}
+              testID={`agent-row-workspace-${agent.serverId}-${agent.id}`}
+              iconSize={theme.iconSize.xs}
+              color={theme.colors.foregroundMuted}
+            />
+            <View style={styles.providerIconWrap}>
+              <ProviderIcon size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+            </View>
+            <Text style={sessionTitleStyle} numberOfLines={1}>
+              {agent.title || t("agentList.fallbackTitle")}
+            </Text>
+            <SessionRowBadges
+              agent={agent}
+              archivedIcon={archivedIcon}
+              pendingPermissionCount={pendingPermissionCount}
+              showDesktopAttention={showDesktopAttention}
+            />
           </View>
-          <Text style={sessionTitleStyle} numberOfLines={1}>
-            {agent.title || t("agentList.fallbackTitle")}
-          </Text>
-          <SessionRowBadges
-            agent={agent}
-            archivedIcon={archivedIcon}
-            pendingPermissionCount={pendingPermissionCount}
-            showDesktopAttention={showDesktopAttention}
-          />
+          {isMobile ? (
+            <View style={styles.rowMetaRow}>
+              <Text
+                style={styles.sessionMetaText}
+                numberOfLines={1}
+                testID={`agent-row-project-${agent.serverId}-${agent.id}`}
+              >
+                {projectName}
+              </Text>
+              <Text style={styles.sessionMetaSeparator}>·</Text>
+              <Text
+                style={styles.sessionMetaText}
+                numberOfLines={1}
+                testID={`agent-row-branch-${agent.serverId}-${agent.id}`}
+              >
+                {branch}
+              </Text>
+              <Text style={styles.sessionMetaSeparator}>·</Text>
+              <Text
+                style={styles.sessionMetaText}
+                numberOfLines={1}
+                testID={`agent-row-workspace-${agent.serverId}-${agent.id}`}
+              >
+                {workspaceName}
+              </Text>
+              <Text style={styles.sessionMetaSeparator}>·</Text>
+              <Text style={styles.sessionMetaText}>{timeAgo}</Text>
+              {showHostColumn && agent.serverLabel ? (
+                <>
+                  <Text style={styles.sessionMetaSeparator}>·</Text>
+                  <Text style={styles.sessionMetaText} numberOfLines={1}>
+                    {agent.serverLabel}
+                  </Text>
+                </>
+              ) : null}
+            </View>
+          ) : null}
         </View>
-        {isMobile ? (
-          <View style={styles.rowMetaRow}>
+        {!isMobile ? (
+          <View style={styles.rowColumns}>
             <Text
-              style={styles.sessionMetaText}
+              style={styles.columnMeta}
               numberOfLines={1}
               testID={`agent-row-project-${agent.serverId}-${agent.id}`}
             >
               {projectName}
             </Text>
-            <Text style={styles.sessionMetaSeparator}>·</Text>
+            {showHostColumn ? (
+              <Text style={styles.columnMetaHost} numberOfLines={1}>
+                {agent.serverLabel}
+              </Text>
+            ) : null}
             <Text
-              style={styles.sessionMetaText}
+              style={styles.columnMeta}
               numberOfLines={1}
               testID={`agent-row-branch-${agent.serverId}-${agent.id}`}
             >
               {branch}
             </Text>
-            <Text style={styles.sessionMetaSeparator}>·</Text>
-            <Text
-              style={styles.sessionMetaText}
-              numberOfLines={1}
-              testID={`agent-row-workspace-${agent.serverId}-${agent.id}`}
-            >
-              {workspaceName}
+            <Text style={styles.columnMetaFixed} numberOfLines={1}>
+              {timeAgo}
             </Text>
-            <Text style={styles.sessionMetaSeparator}>·</Text>
-            <Text style={styles.sessionMetaText}>{timeAgo}</Text>
-            {showHostColumn && agent.serverLabel ? (
-              <>
-                <Text style={styles.sessionMetaSeparator}>·</Text>
-                <Text style={styles.sessionMetaText} numberOfLines={1}>
-                  {agent.serverLabel}
-                </Text>
-              </>
-            ) : null}
           </View>
         ) : null}
+        <SessionRowTrailingAttention
+          isMobile={isMobile}
+          showAttentionIndicator={showAttentionIndicator}
+          requiresAttention={agent.requiresAttention}
+        />
+      </Pressable>
+      <View style={styles.rowActionSlot}>
+        {isMobile ? (
+          <Button
+            variant="ghost"
+            size="xs"
+            leftIcon={MoreVertical}
+            onPress={handleOpenActions}
+            accessibilityLabel={t("agentList.actions.menuAccessibility", {
+              title: agent.title || t("agentList.actions.fallbackSession"),
+            })}
+            testID={`history-agent-actions-${agent.serverId}-${agent.id}`}
+          />
+        ) : (
+          <HistoryAgentActionMenu
+            agent={agent}
+            pending={actionPending}
+            onTogglePin={onTogglePin}
+            onArchive={onArchive}
+          />
+        )}
       </View>
-      {!isMobile ? (
-        <View style={styles.rowColumns}>
-          <Text
-            style={styles.columnMeta}
-            numberOfLines={1}
-            testID={`agent-row-project-${agent.serverId}-${agent.id}`}
-          >
-            {projectName}
-          </Text>
-          {showHostColumn ? (
-            <Text style={styles.columnMetaHost} numberOfLines={1}>
-              {agent.serverLabel}
-            </Text>
-          ) : null}
-          <Text
-            style={styles.columnMeta}
-            numberOfLines={1}
-            testID={`agent-row-branch-${agent.serverId}-${agent.id}`}
-          >
-            {branch}
-          </Text>
-          <Text style={styles.columnMetaFixed} numberOfLines={1}>
-            {timeAgo}
-          </Text>
-        </View>
-      ) : null}
-      <SessionRowTrailingAttention
-        isMobile={isMobile}
-        showAttentionIndicator={showAttentionIndicator}
-        requiresAttention={agent.requiresAttention}
-      />
-    </Pressable>
+    </View>
   );
 }
 
 export function AgentList({
-  agents,
+  sections,
   isRefreshing = false,
   onRefresh,
   selectedAgentId,
@@ -370,11 +379,13 @@ export function AgentList({
 }: AgentListProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
-  const insets = useSafeAreaInsets();
   const [actionAgent, setActionAgent] = useState<AggregatedAgent | null>(null);
+  const [pendingActionKey, setPendingActionKey] = useState<string | null>(null);
   const isMobile = useIsCompactFormFactor();
   const { archiveAgent } = useArchiveAgent();
+  const toast = useToast();
   const queryClient = useQueryClient();
+  const actionSupportsPinning = useHostFeature(actionAgent?.serverId, "agentPinning");
 
   const actionClient = useSessionStore((state) =>
     actionAgent?.serverId ? (state.sessions[actionAgent.serverId]?.client ?? null) : null,
@@ -382,6 +393,29 @@ export function AgentList({
 
   const isActionSheetVisible = actionAgent !== null;
   const isActionDaemonUnavailable = Boolean(actionAgent?.serverId && !actionClient);
+  const actionSheetHeader = useMemo(
+    () => ({
+      title: t("agentList.actions.sheetTitle"),
+      subtitle: actionAgent?.title || t("agentList.fallbackTitle"),
+    }),
+    [actionAgent?.title, t],
+  );
+  let actionPinLabel = t("agentList.actions.updateHostToPin");
+  if (actionSupportsPinning) {
+    actionPinLabel = actionAgent?.pinnedAt
+      ? t("agentList.actions.unpin")
+      : t("agentList.actions.pin");
+  }
+
+  const invalidateAgentHistory = useCallback(
+    async (serverId: string) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: agentHistoryQueryKey(serverId) }),
+        queryClient.invalidateQueries({ queryKey: allAgentHistoryQueryRootKey() }),
+      ]);
+    },
+    [queryClient],
+  );
 
   const handleAgentPress = useCallback(
     (agent: AggregatedAgent) => {
@@ -408,9 +442,7 @@ export function AgentList({
             .refreshAgent(agentId)
             .then(() => {
               openAgent();
-              return queryClient.invalidateQueries({
-                queryKey: agentHistoryQueryKey(serverId),
-              });
+              return invalidateAgentHistory(serverId);
             })
             .catch(() => {});
         }
@@ -419,69 +451,78 @@ export function AgentList({
 
       openAgent();
     },
-    [isActionSheetVisible, onAgentSelect, queryClient],
+    [invalidateAgentHistory, isActionSheetVisible, onAgentSelect],
   );
 
-  const handleAgentLongPress = useCallback(
-    (agent: AggregatedAgent) => {
-      const isRunning = agent.status === "running";
-      if (isRunning) {
-        setActionAgent(agent);
-        return;
-      }
-
-      const client = useSessionStore.getState().sessions[agent.serverId]?.client ?? null;
-      if (!client) {
-        setActionAgent(agent);
-        return;
-      }
-      void archiveAgent({ serverId: agent.serverId, agentId: agent.id }).catch(() => {});
-    },
-    [archiveAgent],
-  );
+  const handleOpenActions = useCallback((agent: AggregatedAgent) => {
+    setActionAgent(agent);
+  }, []);
 
   const handleCloseActionSheet = useCallback(() => {
     setActionAgent(null);
   }, []);
 
+  const handleTogglePin = useCallback(
+    (agent: AggregatedAgent) => {
+      const client = useSessionStore.getState().sessions[agent.serverId]?.client ?? null;
+      if (!client) {
+        setActionAgent(agent);
+        return;
+      }
+      const actionKey = `${agent.serverId}:${agent.id}`;
+      setPendingActionKey(actionKey);
+      void client
+        .setAgentPinned(agent.id, !agent.pinnedAt)
+        .then(() => invalidateAgentHistory(agent.serverId))
+        .catch((error) => {
+          toast.error(
+            error instanceof Error ? error.message : t("agentList.actions.updatePinFailed"),
+          );
+        })
+        .finally(() => setPendingActionKey((current) => (current === actionKey ? null : current)));
+    },
+    [invalidateAgentHistory, t, toast],
+  );
+
+  const handleRequestArchive = useCallback((agent: AggregatedAgent) => {
+    setActionAgent(agent);
+  }, []);
+
   const handleArchiveAgent = useCallback(() => {
-    if (!actionAgent || !actionClient) {
-      return;
-    }
-    // Timeout errors are swallowed — the daemon will still process the archive
-    void archiveAgent({ serverId: actionAgent.serverId, agentId: actionAgent.id }).catch(() => {});
+    if (!actionAgent || !actionClient) return;
+    const actionKey = `${actionAgent.serverId}:${actionAgent.id}`;
+    setPendingActionKey(actionKey);
+    void archiveAgent({ serverId: actionAgent.serverId, agentId: actionAgent.id })
+      .catch(() => {})
+      .finally(() => setPendingActionKey((current) => (current === actionKey ? null : current)));
     setActionAgent(null);
   }, [actionAgent, actionClient, archiveAgent]);
 
-  const flatItems = useMemo((): FlatListItem[] => {
-    const buckets = new Map<DateSectionKey, AggregatedAgent[]>();
-    for (const agent of agents) {
-      const section = deriveDateSectionKey(agent.lastActivityAt);
-      const existing = buckets.get(section) ?? [];
-      existing.push(agent);
-      buckets.set(section, existing);
-    }
+  const handleSheetTogglePin = useCallback(() => {
+    if (!actionAgent || !actionSupportsPinning || !actionClient) return;
+    handleTogglePin(actionAgent);
+    setActionAgent(null);
+  }, [actionAgent, actionClient, actionSupportsPinning, handleTogglePin]);
 
+  const flatItems = useMemo((): FlatListItem[] => {
     const result: FlatListItem[] = [];
-    for (const section of DATE_SECTION_ORDER) {
-      const data = buckets.get(section);
-      if (!data || data.length === 0) {
-        continue;
+    for (const section of sections) {
+      if (section.kind !== "none") {
+        result.push({ type: "header", key: `header:${section.key}`, section });
       }
-      result.push({ type: "header", key: `header:${section}`, section });
-      for (const agent of data) {
+      for (const agent of section.agents) {
         result.push({ type: "agent", key: `${agent.serverId}:${agent.id}`, agent });
       }
     }
     return result;
-  }, [agents]);
+  }, [sections]);
 
   const renderItem: ListRenderItem<FlatListItem> = useCallback(
     ({ item }) => {
       if (item.type === "header") {
         return (
           <View style={styles.sectionHeading}>
-            <Text style={styles.sectionTitle}>{formatDateSectionLabel(t, item.section)}</Text>
+            <Text style={styles.sectionTitle}>{formatSectionLabel(t, item.section)}</Text>
           </View>
         );
       }
@@ -493,14 +534,20 @@ export function AgentList({
           showAttentionIndicator={showAttentionIndicator}
           showHostColumn={showHostColumn}
           onPress={handleAgentPress}
-          onLongPress={handleAgentLongPress}
+          onOpenActions={handleOpenActions}
+          onTogglePin={handleTogglePin}
+          onArchive={handleRequestArchive}
+          actionPending={pendingActionKey === `${item.agent.serverId}:${item.agent.id}`}
         />
       );
     },
     [
-      handleAgentLongPress,
       handleAgentPress,
+      handleOpenActions,
+      handleRequestArchive,
+      handleTogglePin,
       isMobile,
+      pendingActionKey,
       selectedAgentId,
       showAttentionIndicator,
       showHostColumn,
@@ -514,15 +561,6 @@ export function AgentList({
     () => [theme.colors.foregroundMuted],
     [theme.colors.foregroundMuted],
   );
-  const sheetContainerStyle = useMemo(
-    () => [styles.sheetContainer, { paddingBottom: Math.max(insets.bottom, theme.spacing[6]) }],
-    [insets.bottom, theme.spacing],
-  );
-  const sheetArchiveTextStyle = useMemo(
-    () => [styles.sheetArchiveText, isActionDaemonUnavailable && styles.sheetArchiveTextDisabled],
-    [isActionDaemonUnavailable],
-  );
-
   const refreshControl = useMemo(
     () =>
       onRefresh ? (
@@ -550,41 +588,46 @@ export function AgentList({
         refreshControl={refreshControl}
       />
 
-      <Modal
+      <AdaptiveModalSheet
         visible={isActionSheetVisible}
-        animationType="fade"
-        transparent
-        onRequestClose={handleCloseActionSheet}
+        onClose={handleCloseActionSheet}
+        header={actionSheetHeader}
+        snapPoints={ACTION_SHEET_SNAP_POINTS}
+        scrollable={false}
+        testID="history-agent-action-sheet"
       >
-        <View style={styles.sheetOverlay}>
-          <Pressable style={styles.sheetBackdrop} onPress={handleCloseActionSheet} />
-          <View style={sheetContainerStyle}>
-            <View style={styles.sheetHandle} />
-            <Text style={styles.sheetTitle}>
-              {isActionDaemonUnavailable
-                ? t("agentList.archiveSheet.hostOffline")
-                : t("agentList.archiveSheet.runningAgent")}
-            </Text>
-            <View style={styles.sheetButtonRow}>
-              <Pressable
-                style={SHEET_CANCEL_BUTTON_STYLE}
-                onPress={handleCloseActionSheet}
-                testID="agent-action-cancel"
-              >
-                <Text style={styles.sheetCancelText}>{t("common.actions.cancel")}</Text>
-              </Pressable>
-              <Pressable
-                disabled={isActionDaemonUnavailable}
-                style={SHEET_ARCHIVE_BUTTON_STYLE}
-                onPress={handleArchiveAgent}
-                testID="agent-action-archive"
-              >
-                <Text style={sheetArchiveTextStyle}>{t("agentList.archiveSheet.archive")}</Text>
-              </Pressable>
-            </View>
-          </View>
+        <View style={styles.sheetActions}>
+          <Button
+            variant="secondary"
+            leftIcon={actionAgent?.pinnedAt ? PinOff : Pin}
+            disabled={
+              !actionSupportsPinning ||
+              isActionDaemonUnavailable ||
+              (actionAgent
+                ? pendingActionKey === `${actionAgent.serverId}:${actionAgent.id}`
+                : false)
+            }
+            onPress={handleSheetTogglePin}
+            testID="agent-action-pin"
+          >
+            {actionPinLabel}
+          </Button>
+          {!actionAgent?.archivedAt ? (
+            <Button
+              variant="outline"
+              leftIcon={Archive}
+              disabled={isActionDaemonUnavailable}
+              onPress={handleArchiveAgent}
+              testID="agent-action-archive"
+            >
+              {t("agentList.actions.archive")}
+            </Button>
+          ) : null}
+          <Button variant="ghost" onPress={handleCloseActionSheet} testID="agent-action-cancel">
+            {t("common.actions.cancel")}
+          </Button>
         </View>
-      </Modal>
+      </AdaptiveModalSheet>
     </>
   );
 }
@@ -616,7 +659,14 @@ const styles = StyleSheet.create((theme) => ({
     fontWeight: theme.fontWeight.medium,
     color: theme.colors.foregroundMuted,
   },
+  rowFrame: {
+    flexDirection: "row",
+    alignItems: "center",
+    minWidth: 0,
+  },
   row: {
+    flex: 1,
+    minWidth: 0,
     flexDirection: "row",
     alignItems: "center",
     paddingVertical: theme.spacing[2],
@@ -629,6 +679,12 @@ const styles = StyleSheet.create((theme) => ({
       xs: theme.spacing[1],
       md: 0,
     },
+  },
+  rowActionSlot: {
+    width: 32,
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
   },
   rowContent: {
     flex: 1,
@@ -747,71 +803,7 @@ const styles = StyleSheet.create((theme) => ({
   badgeTextDanger: {
     color: theme.colors.palette.red[300],
   },
-  sheetOverlay: {
-    flex: 1,
-    justifyContent: "flex-end",
-  },
-  sheetBackdrop: {
-    position: "absolute",
-    top: 0,
-    right: 0,
-    bottom: 0,
-    left: 0,
-    backgroundColor: "rgba(0,0,0,0.35)",
-  },
-  sheetContainer: {
-    backgroundColor: theme.colors.surface2,
-    borderTopLeftRadius: theme.borderRadius["2xl"],
-    borderTopRightRadius: theme.borderRadius["2xl"],
-    paddingHorizontal: theme.spacing[6],
-    paddingTop: theme.spacing[4],
-    gap: theme.spacing[4],
-  },
-  sheetHandle: {
-    alignSelf: "center",
-    width: 40,
-    height: 4,
-    borderRadius: theme.borderRadius.full,
-    backgroundColor: theme.colors.foregroundMuted,
-    opacity: 0.3,
-  },
-  sheetTitle: {
-    fontSize: theme.fontSize.lg,
-    fontWeight: theme.fontWeight.semibold,
-    color: theme.colors.foreground,
-    textAlign: "center",
-  },
-  sheetButtonRow: {
-    flexDirection: "row",
+  sheetActions: {
     gap: theme.spacing[3],
   },
-  sheetButton: {
-    flex: 1,
-    borderRadius: theme.borderRadius.lg,
-    paddingVertical: theme.spacing[4],
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  sheetArchiveButton: {
-    backgroundColor: theme.colors.primary,
-  },
-  sheetArchiveText: {
-    color: theme.colors.primaryForeground,
-    fontWeight: theme.fontWeight.semibold,
-    fontSize: theme.fontSize.base,
-  },
-  sheetArchiveTextDisabled: {
-    opacity: 0.5,
-  },
-  sheetCancelButton: {
-    backgroundColor: theme.colors.surface1,
-  },
-  sheetCancelText: {
-    color: theme.colors.foreground,
-    fontWeight: theme.fontWeight.semibold,
-    fontSize: theme.fontSize.base,
-  },
 }));
-
-const SHEET_CANCEL_BUTTON_STYLE = [styles.sheetButton, styles.sheetCancelButton];
-const SHEET_ARCHIVE_BUTTON_STYLE = [styles.sheetButton, styles.sheetArchiveButton];

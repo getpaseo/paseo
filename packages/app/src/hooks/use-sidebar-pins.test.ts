@@ -37,7 +37,7 @@ describe("splitPinnedSidebarGroups", () => {
       projects,
       keys: {
         pinnedWorkspaceKeys: ["w1"],
-        pinnedAtByKey: { w1: "2026-01-01T00:00:00Z" },
+        pinnedAtByKey: { w1: Date.parse("2026-01-01T00:00:00Z") },
       },
     });
     expect(result.pinnedChats).toHaveLength(1);
@@ -59,7 +59,7 @@ describe("splitPinnedSidebarGroups", () => {
       projects,
       keys: {
         pinnedWorkspaceKeys: ["w1"],
-        pinnedAtByKey: { w1: "2026-01-01T00:00:00Z" },
+        pinnedAtByKey: { w1: Date.parse("2026-01-01T00:00:00Z") },
       },
     });
     expect(result.pinnedChats.map((w) => w.workspaceKey)).toEqual(["w1"]);
@@ -73,8 +73,8 @@ describe("splitPinnedSidebarGroups", () => {
       keys: {
         pinnedWorkspaceKeys: ["older", "newer"],
         pinnedAtByKey: {
-          older: "2026-01-01T00:00:00Z",
-          newer: "2026-02-01T00:00:00Z",
+          older: Date.parse("2026-01-01T00:00:00Z"),
+          newer: Date.parse("2026-02-01T00:00:00Z"),
         },
       },
     });

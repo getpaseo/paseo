@@ -9,8 +9,8 @@ import { useSessionStore } from "@/stores/session-store";
 
 export interface PinnedSidebarKeys {
   pinnedWorkspaceKeys: string[];
-  // workspaceKey -> pinnedAt ISO string, used to order by recency.
-  pinnedAtByKey: Record<string, string>;
+  // workspaceKey -> pinnedAt epoch milliseconds, used to order by recency.
+  pinnedAtByKey: Record<string, number>;
 }
 
 export interface PinnedSidebarGroups {
@@ -23,17 +23,17 @@ export interface PinnedSidebarGroups {
 
 function buildPinnedSidebarKeys(
   projects: SidebarProjectEntry[],
-  workspaceMaps: ReadonlyMap<string, ReadonlyMap<string, { pinnedAt?: string | null }>>,
+  workspaceMaps: ReadonlyMap<string, ReadonlyMap<string, { pinnedAt?: Date | null }>>,
 ): PinnedSidebarKeys {
   const pinnedWorkspaceKeys: string[] = [];
-  const pinnedAtByKey: Record<string, string> = {};
+  const pinnedAtByKey: Record<string, number> = {};
 
   for (const project of projects) {
     for (const placement of project.workspaces) {
       const workspace = workspaceMaps.get(placement.serverId)?.get(placement.workspaceId);
       if (workspace?.pinnedAt) {
         pinnedWorkspaceKeys.push(placement.workspaceKey);
-        pinnedAtByKey[placement.workspaceKey] = workspace.pinnedAt;
+        pinnedAtByKey[placement.workspaceKey] = workspace.pinnedAt.getTime();
       }
     }
   }
@@ -78,7 +78,7 @@ export function usePinnedSidebarKeys(projects: SidebarProjectEntry[]): PinnedSid
   return useMemo(() => {
     const workspaceMapByServerId = new Map<
       string,
-      ReadonlyMap<string, { pinnedAt?: string | null }>
+      ReadonlyMap<string, { pinnedAt?: Date | null }>
     >();
     for (let index = 0; index < serverIds.length; index += 1) {
       const serverId = serverIds[index];
@@ -132,10 +132,8 @@ export function splitPinnedSidebarGroups(input: {
     );
   }
 
-  pinnedChats.sort((a, b) =>
-    (keys.pinnedAtByKey[b.workspaceKey] ?? "").localeCompare(
-      keys.pinnedAtByKey[a.workspaceKey] ?? "",
-    ),
+  pinnedChats.sort(
+    (a, b) => (keys.pinnedAtByKey[b.workspaceKey] ?? 0) - (keys.pinnedAtByKey[a.workspaceKey] ?? 0),
   );
 
   return { pinnedChats, unpinnedProjects };

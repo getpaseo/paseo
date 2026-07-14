@@ -17,6 +17,8 @@ export interface SortablePagerConfig<TItem, K extends string> {
   label: string;
   getId: (item: TItem) => string;
   getSortValue: (item: TItem, key: K) => CursorSortValue;
+  compareSortValues?: (left: CursorSortValue, right: CursorSortValue, key: K) => number;
+  compareIds?: (left: string, right: string) => number;
 }
 
 export class SortablePager<TItem, K extends string> {
@@ -42,26 +44,26 @@ export class SortablePager<TItem, K extends string> {
     for (const spec of sort) {
       const leftValue = this.config.getSortValue(left, spec.key);
       const rightValue = this.config.getSortValue(right, spec.key);
-      const base = compareValues(leftValue, rightValue);
+      const base = this.compareSortValues(leftValue, rightValue, spec.key);
       if (base === 0) {
         continue;
       }
       return spec.direction === "asc" ? base : -base;
     }
-    return this.config.getId(left).localeCompare(this.config.getId(right));
+    return this.compareIds(this.config.getId(left), this.config.getId(right));
   }
 
   compareWithCursor(item: TItem, cursor: DecodedCursor<K>, sort: readonly SortSpec<K>[]): number {
     for (const spec of sort) {
       const leftValue = this.config.getSortValue(item, spec.key);
       const rightValue = cursor.values[spec.key] ?? null;
-      const base = compareValues(leftValue, rightValue);
+      const base = this.compareSortValues(leftValue, rightValue, spec.key);
       if (base === 0) {
         continue;
       }
       return spec.direction === "asc" ? base : -base;
     }
-    return this.config.getId(item).localeCompare(cursor.id);
+    return this.compareIds(this.config.getId(item), cursor.id);
   }
 
   encode(item: TItem, sort: readonly SortSpec<K>[]): string {
@@ -70,6 +72,14 @@ export class SortablePager<TItem, K extends string> {
 
   decode(token: string, sort: readonly SortSpec<K>[]): DecodedCursor<K> {
     return decodeCursor(token, sort, this.config.validKeys, this.config.label);
+  }
+
+  private compareSortValues(left: CursorSortValue, right: CursorSortValue, key: K): number {
+    return this.config.compareSortValues?.(left, right, key) ?? compareValues(left, right);
+  }
+
+  private compareIds(left: string, right: string): number {
+    return this.config.compareIds?.(left, right) ?? left.localeCompare(right);
   }
 }
 

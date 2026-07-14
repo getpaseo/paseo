@@ -244,6 +244,21 @@ export class WorkspaceDirectory {
       activeAgents,
       activeWorkspaceIds,
     );
+    const activityAgentsByWorkspaceId = groupAgentsByWorkspaceId(agents, activeWorkspaceIds);
+
+    // Recency is workspace-owned. Start at creation, then consider only
+    // agents and terminals carrying this exact workspaceId; never infer
+    // ownership from cwd because multiple workspaces can share a directory.
+    for (const [workspaceId, descriptor] of descriptorsByWorkspaceId) {
+      const createdAt = activeRecordsByWorkspaceId.get(workspaceId)?.createdAt ?? null;
+      const agentActivity = (activityAgentsByWorkspaceId.get(workspaceId) ?? []).map(
+        (agent) => agent.updatedAt,
+      );
+      const terminalActivity = terminalContributions
+        .filter((terminal) => terminal.workspaceId === workspaceId && terminal.activity)
+        .map((terminal) => new Date(terminal.activity!.changedAt).toISOString());
+      descriptor.activityAt = newestTimestamp([createdAt, ...agentActivity, ...terminalActivity]);
+    }
 
     // Resolve the workspace-level `statusEnteredAt` (see aggregate semantics
     // on `resolveStatusEnteredAt`).
@@ -600,6 +615,19 @@ export class WorkspaceDirectory {
       },
     };
   }
+}
+
+function newestTimestamp(values: Array<string | null | undefined>): string | null {
+  let newest: { value: string; time: number } | null = null;
+  for (const value of values) {
+    if (!value) continue;
+    const time = Date.parse(value);
+    if (Number.isNaN(time)) continue;
+    if (!newest || time > newest.time) {
+      newest = { value, time };
+    }
+  }
+  return newest?.value ?? null;
 }
 
 function groupAgentsByWorkspaceId(

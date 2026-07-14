@@ -30,6 +30,7 @@ test.describe("Sidebar host filter (multi-select)", () => {
       await expect(workspaceRow).toBeVisible({ timeout: 30_000 });
 
       await openSidebarDisplayPreferences(page);
+      await page.getByTestId("sidebar-organization-page-host").click();
       await expectHostFilterRow(page, serverId);
       await expectHostFilterRow(page, SECONDARY_HOST_ID);
 

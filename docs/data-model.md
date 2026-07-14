@@ -30,7 +30,8 @@ $PASEO_HOME/
 │   └── loops.json                       # All loop records
 ├── projects/
 │   ├── projects.json                    # Project registry
-│   └── workspaces.json                  # Workspace registry
+│   ├── workspaces.json                  # Workspace registry
+│   └── workspace-collections.json       # Host-scoped workspace-label catalog
 ├── runtime/
 │   └── managed-processes/
 │       └── {recordId}.json              # Helper processes owned by Paseo; reconciled on daemon bootstrap
@@ -71,6 +72,7 @@ Each agent is stored as a separate JSON file, grouped by project directory.
 | `attentionTimestamp` | `string?` (ISO 8601)                     | When attention was flagged                                                                                                                                                                                                                                                                                                                                                          |
 | `internal`           | `boolean?`                               | Whether this is a system-internal agent (loop workers, etc.)                                                                                                                                                                                                                                                                                                                        |
 | `archivedAt`         | `string?` (ISO 8601)                     | Soft-delete timestamp                                                                                                                                                                                                                                                                                                                                                               |
+| `pinnedAt`           | `string?` (ISO 8601, nullable)           | User pin timestamp. Null/absent means unpinned; a timestamp keeps the agent pinned across clients connected to this host.                                                                                                                                                                                                                                                           |
 
 ### Nested: SerializableConfig
 
@@ -444,19 +446,20 @@ emptied duplicate.
 
 Array of workspace records. A workspace is a specific working directory within a project.
 
-| Field         | Type                                            | Description                                                                                                                                                                           |
-| ------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `workspaceId` | `string`                                        | Opaque stable identifier (`wks_<hex>`), generated independently of the directory. MUST NOT be treated as a path; compare by exact equality. Use the `cwd` field for directory access. |
-| `projectId`   | `string`                                        | FK to Project.projectId                                                                                                                                                               |
-| `cwd`         | `string`                                        | Filesystem path                                                                                                                                                                       |
-| `kind`        | `"local_checkout" \| "worktree" \| "directory"` |                                                                                                                                                                                       |
-| `displayName` | `string`                                        | The human name (the generated/derived title). Decoupled from `branch` by construction.                                                                                                |
-| `title`       | `string \| null`                                | User-set name override layered over `displayName`. Null means "use `displayName`".                                                                                                    |
-| `branch`      | `string \| null`                                | The worktree's git branch. Separate from `displayName`/`title`; only worktree workspaces set it. A branch rename writes this and never the name.                                      |
-| `createdAt`   | `string` (ISO 8601)                             |                                                                                                                                                                                       |
-| `updatedAt`   | `string` (ISO 8601)                             |                                                                                                                                                                                       |
-| `archivedAt`  | `string \| null` (ISO 8601)                     | Soft-delete; required nullable                                                                                                                                                        |
-| `pinnedAt`    | `string \| null` (ISO 8601)                     | Pinned-to-top-of-sidebar timestamp; null means "not pinned"                                                                                                                           |
+| Field          | Type                                            | Description                                                                                                                                                                           |
+| -------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `workspaceId`  | `string`                                        | Opaque stable identifier (`wks_<hex>`), generated independently of the directory. MUST NOT be treated as a path; compare by exact equality. Use the `cwd` field for directory access. |
+| `projectId`    | `string`                                        | FK to Project.projectId                                                                                                                                                               |
+| `cwd`          | `string`                                        | Filesystem path                                                                                                                                                                       |
+| `kind`         | `"local_checkout" \| "worktree" \| "directory"` |                                                                                                                                                                                       |
+| `displayName`  | `string`                                        | The human name (the generated/derived title). Decoupled from `branch` by construction.                                                                                                |
+| `title`        | `string \| null`                                | User-set name override layered over `displayName`. Null means "use `displayName`".                                                                                                    |
+| `branch`       | `string \| null`                                | The worktree's git branch. Separate from `displayName`/`title`; only worktree workspaces set it. A branch rename writes this and never the name.                                      |
+| `createdAt`    | `string` (ISO 8601)                             |                                                                                                                                                                                       |
+| `updatedAt`    | `string` (ISO 8601)                             |                                                                                                                                                                                       |
+| `archivedAt`   | `string \| null` (ISO 8601)                     | Soft-delete; required nullable                                                                                                                                                        |
+| `pinnedAt`     | `string \| null` (ISO 8601)                     | Host-backed workspace pin timestamp. Null means unpinned.                                                                                                                             |
+| `collectionId` | `string \| null`                                | FK to `workspace-collections.json`. Null means no label. Startup reconciliation clears references to missing collections.                                                             |
 
 > **Opaque-ID invariant:** `workspaceId` is opaque identity, never a filesystem path. Filesystem and git operations take `cwd`/`workspaceDirectory` only — never the id. Path-derived grouping keys (e.g. `deriveWorkspaceDirectoryKey`, used at bootstrap to group agents into a workspace) are directory keys, not workspace identity, and must not be persisted or compared as ids.
 
@@ -467,7 +470,27 @@ than treating it as valid.
 
 ---
 
-## 8. Push Token Store
+## 8. Workspace Collection Registry
+
+**Path:** `$PASEO_HOME/projects/workspace-collections.json`
+
+Array of host-scoped workspace labels. A collection assignment is stored on the workspace record as
+`collectionId`; deleting a collection first clears every assignment and then removes the catalog row.
+Assignment and deletion are serialized by the daemon. If a clear or catalog write fails, the daemon first
+restores the catalog row and then rolls back assignments already cleared by that request before reporting
+failure. Any rollback failure is surfaced explicitly. Startup reconciliation clears dangling IDs left by
+an interrupted or older daemon.
+
+| Field       | Type                | Description                      |
+| ----------- | ------------------- | -------------------------------- |
+| `id`        | `string`            | Opaque identifier (`wsc_<uuid>`) |
+| `name`      | `string`            | User-visible label               |
+| `createdAt` | `string` (ISO 8601) | Creation time                    |
+| `updatedAt` | `string` (ISO 8601) | Last rename time                 |
+
+---
+
+## 9. Push Token Store
 
 **Path:** `$PASEO_HOME/push-tokens.json`
 
@@ -481,7 +504,7 @@ Simple set of Expo push notification tokens. Loaded with permissive parsing (fil
 
 ---
 
-## 9. Daemon meta files
+## 10. Daemon meta files
 
 These small files are not validated as full Zod schemas but are persisted under `$PASEO_HOME` for daemon identity and runtime coordination.
 
@@ -497,6 +520,16 @@ These small files are not validated as full Zod schemas but are persisted under 
 ## Client-side stores (App)
 
 These live in React Native `AsyncStorage` or browser `IndexedDB`, not on the daemon filesystem.
+
+### Sidebar organization persistence boundary
+
+Agent pins, workspace pins, workspace label assignments, and the workspace-label catalog are
+host-backed. They are stored in `agents/*.json`, `projects/workspaces.json`, and
+`projects/workspace-collections.json`, so every client connected to the same host sees them.
+
+Project pins and project groups (`sidebar-project-preferences`), hidden project/workspace choices
+(`sidebar-hidden-workspaces`), and sidebar grouping/sorting/filter choices (`sidebar-view`) are app-local
+AsyncStorage preferences. They intentionally follow the device/app profile rather than the daemon.
 
 ### Keying convention: directory-backed vs workspace-owned
 

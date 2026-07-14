@@ -108,6 +108,7 @@ function createHarness(input: {
       get: async () => null,
     }),
     projectRegistry: createStub<SessionOptions["projectRegistry"]>({
+      subscribeChanges: () => () => {},
       initialize: async () => {},
       existsOnDisk: async () => true,
       list: async () => Array.from(projects.values()),
@@ -119,11 +120,16 @@ function createHarness(input: {
         const p = projects.get(id);
         if (p) projects.set(id, { ...p, archivedAt });
       },
+      unarchive: async (id: string, updatedAt: string) => {
+        const p = projects.get(id);
+        if (p) projects.set(id, { ...p, archivedAt: null, updatedAt });
+      },
       remove: async (id: string) => {
         projects.delete(id);
       },
     }),
     workspaceRegistry: createStub<SessionOptions["workspaceRegistry"]>({
+      subscribeOrganizationChanges: () => () => {},
       initialize: async () => {},
       existsOnDisk: async () => true,
       list: async () => Array.from(workspaces.values()),
@@ -134,6 +140,10 @@ function createHarness(input: {
       archive: async (id: string, archivedAt: string) => {
         const w = workspaces.get(id);
         if (w) workspaces.set(id, { ...w, archivedAt });
+      },
+      unarchive: async (id: string, updatedAt: string) => {
+        const w = workspaces.get(id);
+        if (w) workspaces.set(id, { ...w, archivedAt: null, updatedAt });
       },
       remove: async (id: string) => {
         workspaces.delete(id);

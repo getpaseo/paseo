@@ -407,6 +407,14 @@ describe("shouldShowSidebarHostLabels", () => {
 
     expect(shouldShowSidebarHostLabels(projects)).toBe(true);
   });
+
+  it("is true when standalone workspace rows span separate hosts", () => {
+    expect(shouldShowSidebarHostLabels([], ["host-a", "host-b"])).toBe(true);
+  });
+
+  it("is false when standalone workspace rows share one host", () => {
+    expect(shouldShowSidebarHostLabels([], ["host-a", "host-a"])).toBe(false);
+  });
 });
 
 describe("computeSidebarOrderUpdates", () => {

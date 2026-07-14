@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
 import { z } from "zod";
+import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
 
 import { createTestLogger } from "../test-utils/test-logger.js";
 import { Session } from "./session.js";
@@ -22,6 +23,7 @@ import type { TerminalManager } from "../terminal/terminal-manager.js";
 import { createTerminalManager } from "../terminal/terminal-manager.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import { AgentStorage, type StoredAgentRecord } from "./agent/agent-storage.js";
+import { ControlledAgentStorageWriter } from "./agent/test-utils/controlled-agent-storage-writer.js";
 import type {
   AgentClient,
   AgentCreateSessionOptions,
@@ -64,11 +66,13 @@ import {
 } from "./test-utils/session-stubs.js";
 import {
   FileBackedProjectRegistry,
+  FileBackedWorkspaceCollectionRegistry,
   FileBackedWorkspaceRegistry,
   createPersistedProjectRecord,
   createPersistedWorkspaceRecord,
   type PersistedProjectRecord,
   type PersistedWorkspaceRecord,
+  type WorkspaceCollectionRegistry,
 } from "./workspace-registry.js";
 
 const REPO_CWD = path.resolve("/tmp/repo");
@@ -98,6 +102,10 @@ interface SessionTestAccess {
     list(...args: unknown[]): Promise<unknown[]>;
     get(agentId: string): Promise<unknown>;
     upsert(record: unknown): Promise<void>;
+    update(
+      agentId: string,
+      updateRecord: (existing: StoredAgentRecord) => StoredAgentRecord,
+    ): Promise<StoredAgentRecord>;
   };
   agentManager: {
     listAgents(): unknown[];
@@ -157,6 +165,7 @@ interface SessionTestAccess {
   clearWorkspaceArchiving(workspaceIds: Iterable<string>): void;
   emitWorkspaceUpdateForCwd(...args: unknown[]): Promise<unknown>;
   emitWorkspaceUpdatesForWorkspaceIds(...args: unknown[]): Promise<unknown>;
+  bufferOrEmitWorkspaceUpdate(subscription: unknown, payload: unknown): void;
   emit(message: unknown): void;
   onMessage(message: unknown): void;
   paseoHome: string;
@@ -529,11 +538,14 @@ class CreateAgentTestClient implements AgentClient {
 function createSessionForWorkspaceTests(
   options: {
     appVersion?: string | null;
+    clientCapabilities?: Record<string, unknown>;
     onMessage?: (message: SessionOutboundMessage) => void;
     workspaceGitService?: ReturnType<typeof createNoopWorkspaceGitService>;
     terminalManager?: TerminalManager | null;
     projectRegistry?: SessionOptions["projectRegistry"];
     workspaceRegistry?: SessionOptions["workspaceRegistry"];
+    workspaceCollectionRegistry?: SessionOptions["workspaceCollectionRegistry"];
+    agentStorage?: SessionOptions["agentStorage"];
     github?: GitHubService;
     paseoHome?: string;
     worktreesRoot?: string;
@@ -605,8 +617,48 @@ function createSessionForWorkspaceTests(
       );
     },
     upsert: async () => {},
+    setTitle: async (workspaceId: string, title: string | null, updatedAt: string) => {
+      const existing = await workspaceRegistry.get(workspaceId);
+      if (!existing) throw new Error("Workspace not found");
+      const updated = { ...existing, title, updatedAt };
+      await workspaceRegistry.upsert(updated);
+      return updated;
+    },
     archive: async () => {},
+    unarchive: async (workspaceId: string, updatedAt: string) => {
+      const existing = await workspaceRegistry.get(workspaceId);
+      if (!existing) return;
+      await workspaceRegistry.upsert({ ...existing, archivedAt: null, updatedAt });
+    },
     remove: async () => {},
+    setPinnedAt: async (workspaceId: string, pinnedAt: string | null) => {
+      const existing = await workspaceRegistry.get(workspaceId);
+      if (!existing) throw new Error("Workspace not found");
+      return { ...existing, pinnedAt };
+    },
+    setCollectionId: async (workspaceId: string, collectionId: string | null) => {
+      const existing = await workspaceRegistry.get(workspaceId);
+      if (!existing) throw new Error("Workspace not found");
+      return { ...existing, collectionId };
+    },
+  };
+  const projectRegistry: SessionOptions["projectRegistry"] = options.projectRegistry ?? {
+    initialize: async () => {},
+    existsOnDisk: async () => true,
+    list: async () => [],
+    get: async () => null,
+    upsert: async () => {},
+    setCustomName: async () => {
+      throw new Error("Project not found");
+    },
+    archive: async () => {},
+    unarchive: async (projectId: string, updatedAt: string) => {
+      const existing = await projectRegistry.get(projectId);
+      if (!existing) return;
+      await projectRegistry.upsert({ ...existing, archivedAt: null, updatedAt });
+    },
+    remove: async () => {},
+    subscribeChanges: () => () => {},
   };
   const workspaceGitService = options.workspaceGitService ?? createNoopWorkspaceGitService();
   const providerSnapshotManager = createProviderSnapshotManagerStub().manager;
@@ -615,6 +667,7 @@ function createSessionForWorkspaceTests(
     new Session({
       clientId: "test-client",
       appVersion: options.appVersion ?? null,
+      clientCapabilities: options.clientCapabilities,
       onMessage: options.onMessage ?? vi.fn(),
       logger: asSessionLogger(logger),
       downloadTokenStore: asDownloadTokenStore(),
@@ -622,42 +675,37 @@ function createSessionForWorkspaceTests(
       paseoHome: options.paseoHome ?? "/tmp/paseo-test",
       worktreesRoot: options.worktreesRoot,
       agentManager,
-      agentStorage: asAgentStorage({
-        list: async () => [
-          createPersistedWorkspaceRecord({
-            workspaceId: "ws-repo-running",
-            projectId: "proj-repo-running",
-            cwd: REPO_CWD,
-            kind: "directory",
-            displayName: "repo",
-            createdAt: "2026-03-01T12:00:00.000Z",
-            updatedAt: "2026-03-01T12:00:00.000Z",
-          }),
-        ],
-        get: async (workspaceId: string) =>
-          workspaceId === "ws-repo-running"
-            ? createPersistedWorkspaceRecord({
-                workspaceId: "ws-repo-running",
-                projectId: "proj-repo-running",
-                cwd: REPO_CWD,
-                kind: "directory",
-                displayName: "repo",
-                createdAt: "2026-03-01T12:00:00.000Z",
-                updatedAt: "2026-03-01T12:00:00.000Z",
-              })
-            : null,
-        upsert: async () => {},
-      }),
-      projectRegistry: options.projectRegistry ?? {
-        initialize: async () => {},
-        existsOnDisk: async () => true,
-        list: async () => [],
-        get: async () => null,
-        upsert: async () => {},
-        archive: async () => {},
-        remove: async () => {},
-      },
+      agentStorage:
+        options.agentStorage ??
+        asAgentStorage({
+          list: async () => [
+            createPersistedWorkspaceRecord({
+              workspaceId: "ws-repo-running",
+              projectId: "proj-repo-running",
+              cwd: REPO_CWD,
+              kind: "directory",
+              displayName: "repo",
+              createdAt: "2026-03-01T12:00:00.000Z",
+              updatedAt: "2026-03-01T12:00:00.000Z",
+            }),
+          ],
+          get: async (workspaceId: string) =>
+            workspaceId === "ws-repo-running"
+              ? createPersistedWorkspaceRecord({
+                  workspaceId: "ws-repo-running",
+                  projectId: "proj-repo-running",
+                  cwd: REPO_CWD,
+                  kind: "directory",
+                  displayName: "repo",
+                  createdAt: "2026-03-01T12:00:00.000Z",
+                  updatedAt: "2026-03-01T12:00:00.000Z",
+                })
+              : null,
+          upsert: async () => {},
+        }),
+      projectRegistry,
       workspaceRegistry,
+      workspaceCollectionRegistry: options.workspaceCollectionRegistry,
       filesystem: { isDirectory: async () => true },
       chatService: asChatService(),
       scheduleService: asScheduleService(),
@@ -705,6 +753,958 @@ function createSessionForWorkspaceTests(
   );
   return session;
 }
+
+test("workspace organization RPCs persist pins and collection lifecycle", async () => {
+  const home = mkdtempSync(path.join(tmpdir(), "paseo-workspace-organization-"));
+  const logger = createTestLogger();
+  const projectRegistry = new FileBackedProjectRegistry(
+    path.join(home, "projects", "projects.json"),
+    logger,
+  );
+  const workspaceRegistry = new FileBackedWorkspaceRegistry(
+    path.join(home, "projects", "workspaces.json"),
+    logger,
+  );
+  const collectionRegistry = new FileBackedWorkspaceCollectionRegistry(
+    path.join(home, "projects", "workspace-collections.json"),
+    logger,
+  );
+  const agentStorage = new AgentStorage(path.join(home, "agents"), logger);
+  const messages: SessionOutboundMessage[] = [];
+  const createdAt = "2026-07-13T08:00:00.000Z";
+  const updatedAt = "2026-07-13T08:30:00.000Z";
+
+  await Promise.all([
+    projectRegistry.initialize(),
+    workspaceRegistry.initialize(),
+    collectionRegistry.initialize(),
+    agentStorage.initialize(),
+  ]);
+  await projectRegistry.upsert(
+    createPersistedProjectRecord({
+      projectId: "project-organization",
+      rootPath: home,
+      kind: "non_git",
+      displayName: "Organization",
+      createdAt,
+      updatedAt,
+    }),
+  );
+  await workspaceRegistry.upsert(
+    createPersistedWorkspaceRecord({
+      workspaceId: "ws-organization",
+      projectId: "project-organization",
+      cwd: home,
+      kind: "directory",
+      displayName: "main",
+      createdAt,
+      updatedAt,
+    }),
+  );
+  await agentStorage.upsert({
+    id: "agent-organization",
+    provider: "claude",
+    cwd: home,
+    workspaceId: "ws-organization",
+    createdAt,
+    updatedAt,
+    lastActivityAt: updatedAt,
+    lastUserMessageAt: null,
+    title: "Organize",
+    labels: {},
+    lastStatus: "closed",
+    lastModeId: null,
+    config: null,
+    persistence: null,
+    archivedAt: null,
+  });
+
+  const session = createSessionForWorkspaceTests({
+    onMessage: (message) => messages.push(message),
+    paseoHome: home,
+    projectRegistry,
+    workspaceRegistry,
+    workspaceCollectionRegistry: collectionRegistry,
+    agentStorage,
+    clientCapabilities: { [CLIENT_CAPS.workspaceCollectionUpdates]: true },
+  });
+  const legacyMessages: SessionOutboundMessage[] = [];
+  const legacySession = createSessionForWorkspaceTests({
+    onMessage: (message) => legacyMessages.push(message),
+    paseoHome: home,
+    projectRegistry,
+    workspaceRegistry,
+    workspaceCollectionRegistry: collectionRegistry,
+    agentStorage,
+  });
+
+  try {
+    await session.handleMessage({
+      type: "fetch_workspaces_request",
+      requestId: "subscribe-organization",
+      subscribe: { subscriptionId: "workspace-organization" },
+    });
+    messages.length = 0;
+    await session.handleMessage({
+      type: "workspace.pin.set.request",
+      workspaceId: "ws-organization",
+      pinned: true,
+      requestId: "pin-workspace",
+    });
+    await session.handleMessage({
+      type: "agent.pin.set.request",
+      agentId: "agent-organization",
+      pinned: true,
+      requestId: "pin-agent",
+    });
+
+    const workspacePin = findByType(messages, "workspace.pin.set.response");
+    const agentPin = findByType(messages, "agent.pin.set.response");
+    expect(workspacePin?.payload.accepted).toBe(true);
+    expect(agentPin?.payload.accepted).toBe(true);
+    await vi.waitFor(() => {
+      expect(findByType(messages, "agent_update")?.payload).toMatchObject({
+        kind: "upsert",
+        agent: { id: "agent-organization", pinnedAt: expect.any(String) },
+      });
+      expect(findByType(messages, "workspace_update")?.payload).toMatchObject({
+        kind: "upsert",
+        workspace: { id: "ws-organization", pinnedAt: expect.any(String) },
+      });
+    });
+    expect(filterByType(legacyMessages, "agent_update")).toEqual([]);
+    expect((await workspaceRegistry.get("ws-organization"))?.updatedAt).toBe(updatedAt);
+    expect((await agentStorage.get("agent-organization"))?.updatedAt).toBe(updatedAt);
+
+    await session.handleMessage({
+      type: "workspace.collection.create.request",
+      name: " Focus ",
+      requestId: "create-collection",
+    });
+    const createResponse = findByType(messages, "workspace.collection.create.response");
+    const collectionId = createResponse?.payload.collection?.id;
+    expect(collectionId).toMatch(/^wsc_/);
+    if (!collectionId) throw new Error("Expected collection id");
+    await vi.waitFor(() => {
+      expect(
+        filterByType(messages, "workspace.collection.catalog.update").at(-1)?.payload.collections,
+      ).toEqual([expect.objectContaining({ id: collectionId, name: "Focus" })]);
+    });
+    expect(filterByType(legacyMessages, "workspace.collection.catalog.update")).toEqual([]);
+
+    await session.handleMessage({
+      type: "workspace.collection.assign.request",
+      workspaceId: "ws-organization",
+      collectionId,
+      requestId: "assign-collection",
+    });
+    await session.handleMessage({
+      type: "workspace.collection.rename.request",
+      collectionId,
+      name: "Priority",
+      requestId: "rename-collection",
+    });
+    await vi.waitFor(() => {
+      expect(
+        filterByType(messages, "workspace.collection.catalog.update").at(-1)?.payload.collections,
+      ).toEqual([expect.objectContaining({ id: collectionId, name: "Priority" })]);
+    });
+    await session.handleMessage({
+      type: "fetch_workspaces_request",
+      requestId: "fetch-organized",
+    });
+
+    const fetched = findByType(messages, "fetch_workspaces_response");
+    expect(fetched?.payload.collections).toEqual([
+      expect.objectContaining({ id: collectionId, name: "Priority" }),
+    ]);
+    expect(fetched?.payload.entries[0]).toMatchObject({
+      id: "ws-organization",
+      createdAt,
+      collectionId,
+      activityAt: updatedAt,
+    });
+
+    await session.handleMessage({
+      type: "workspace.collection.delete.request",
+      collectionId,
+      requestId: "delete-collection",
+    });
+    expect(findByType(messages, "workspace.collection.delete.response")?.payload).toMatchObject({
+      accepted: true,
+      unassignedWorkspaceIds: ["ws-organization"],
+    });
+    expect((await workspaceRegistry.get("ws-organization"))?.collectionId).toBeNull();
+    expect(await collectionRegistry.list()).toEqual([]);
+    await vi.waitFor(() => {
+      expect(
+        filterByType(messages, "workspace.collection.catalog.update").at(-1)?.payload.collections,
+      ).toEqual([]);
+    });
+    expect(filterByType(legacyMessages, "workspace.collection.catalog.update")).toEqual([]);
+  } finally {
+    await session.cleanup();
+    await legacySession.cleanup();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+async function createCollectionDeletionFixture(suffix: string) {
+  const home = mkdtempSync(path.join(tmpdir(), `paseo-collection-delete-${suffix}-`));
+  const logger = createTestLogger();
+  const workspaceRegistry = new FileBackedWorkspaceRegistry(
+    path.join(home, "projects", "workspaces.json"),
+    logger,
+  );
+  const collectionRegistry = new FileBackedWorkspaceCollectionRegistry(
+    path.join(home, "projects", "workspace-collections.json"),
+    logger,
+  );
+  const collection = {
+    id: `wsc-${suffix}`,
+    name: "Rollback",
+    createdAt: "2026-07-13T08:00:00.000Z",
+    updatedAt: "2026-07-13T08:00:00.000Z",
+  };
+  const createWorkspace = (workspaceId: string) =>
+    createPersistedWorkspaceRecord({
+      workspaceId,
+      projectId: "project-rollback",
+      cwd: path.join(home, workspaceId),
+      kind: "directory",
+      displayName: workspaceId,
+      createdAt: collection.createdAt,
+      updatedAt: collection.updatedAt,
+      collectionId: collection.id,
+    });
+  await Promise.all([workspaceRegistry.initialize(), collectionRegistry.initialize()]);
+  await workspaceRegistry.upsert(createWorkspace("ws-rollback-a"));
+  await workspaceRegistry.upsert(createWorkspace("ws-rollback-b"));
+  await collectionRegistry.upsert(collection);
+  return { collection, collectionRegistry, home, workspaceRegistry };
+}
+
+test("collection deletion rolls back every member when one unassignment fails", async () => {
+  const { collection, collectionRegistry, home, workspaceRegistry } =
+    await createCollectionDeletionFixture("clear-rollback");
+
+  let clearAttempts = 0;
+  const failingWorkspaceRegistry: SessionOptions["workspaceRegistry"] = {
+    initialize: () => workspaceRegistry.initialize(),
+    existsOnDisk: () => workspaceRegistry.existsOnDisk(),
+    list: () => workspaceRegistry.list(),
+    get: (workspaceId) => workspaceRegistry.get(workspaceId),
+    update: (workspaceId, updater) => workspaceRegistry.update(workspaceId, updater),
+    upsert: (record) => workspaceRegistry.upsert(record),
+    archive: (workspaceId, archivedAt) => workspaceRegistry.archive(workspaceId, archivedAt),
+    remove: (workspaceId) => workspaceRegistry.remove(workspaceId),
+    setPinnedAt: (workspaceId, pinnedAt) => workspaceRegistry.setPinnedAt(workspaceId, pinnedAt),
+    setCollectionId: async (workspaceId, collectionId) => {
+      if (collectionId === null && ++clearAttempts === 2) {
+        throw new Error("injected second-member failure");
+      }
+      return workspaceRegistry.setCollectionId(workspaceId, collectionId);
+    },
+  };
+  const messages: SessionOutboundMessage[] = [];
+  const session = createSessionForWorkspaceTests({
+    onMessage: (message) => messages.push(message),
+    paseoHome: home,
+    workspaceRegistry: failingWorkspaceRegistry,
+    workspaceCollectionRegistry: collectionRegistry,
+  });
+
+  try {
+    await session.handleMessage({
+      type: "workspace.collection.delete.request",
+      collectionId: collection.id,
+      requestId: "delete-with-failure",
+    });
+
+    expect(findByType(messages, "workspace.collection.delete.response")?.payload).toMatchObject({
+      accepted: false,
+      unassignedWorkspaceIds: [],
+      error: "injected second-member failure",
+    });
+    expect(
+      (await workspaceRegistry.list()).map((workspace) => [
+        workspace.workspaceId,
+        workspace.collectionId,
+      ]),
+    ).toEqual([
+      ["ws-rollback-a", collection.id],
+      ["ws-rollback-b", collection.id],
+    ]);
+    expect(await collectionRegistry.list()).toEqual([collection]);
+  } finally {
+    await session.cleanup();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("collection deletion restores the catalog when removal commits before rejecting", async () => {
+  const { collection, collectionRegistry, home, workspaceRegistry } =
+    await createCollectionDeletionFixture("catalog-rollback");
+  const committedThenRejectedRegistry: WorkspaceCollectionRegistry = {
+    initialize: () => collectionRegistry.initialize(),
+    list: () => collectionRegistry.list(),
+    get: (collectionId) => collectionRegistry.get(collectionId),
+    upsert: (record) => collectionRegistry.upsert(record),
+    remove: async (collectionId) => {
+      await collectionRegistry.remove(collectionId);
+      throw new Error("injected post-commit failure");
+    },
+  };
+  const messages: SessionOutboundMessage[] = [];
+  const session = createSessionForWorkspaceTests({
+    onMessage: (message) => messages.push(message),
+    paseoHome: home,
+    workspaceRegistry,
+    workspaceCollectionRegistry: committedThenRejectedRegistry,
+  });
+
+  try {
+    await session.handleMessage({
+      type: "workspace.collection.delete.request",
+      collectionId: collection.id,
+      requestId: "delete-after-commit-failure",
+    });
+
+    expect(findByType(messages, "workspace.collection.delete.response")?.payload).toMatchObject({
+      accepted: false,
+      unassignedWorkspaceIds: [],
+      error: "injected post-commit failure",
+    });
+    expect(await collectionRegistry.list()).toEqual([collection]);
+    expect((await workspaceRegistry.list()).map((workspace) => workspace.collectionId)).toEqual([
+      collection.id,
+      collection.id,
+    ]);
+  } finally {
+    await session.cleanup();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("agent pin fanout respects an active-only subscription in another session", async () => {
+  const home = mkdtempSync(path.join(tmpdir(), "paseo-agent-pin-filter-fanout-"));
+  const logger = createTestLogger();
+  const projectRegistry = new FileBackedProjectRegistry(
+    path.join(home, "projects", "projects.json"),
+    logger,
+  );
+  const workspaceRegistry = new FileBackedWorkspaceRegistry(
+    path.join(home, "projects", "workspaces.json"),
+    logger,
+  );
+  const agentStorage = new AgentStorage(path.join(home, "agents"), logger);
+  await Promise.all([
+    projectRegistry.initialize(),
+    workspaceRegistry.initialize(),
+    agentStorage.initialize(),
+  ]);
+  const timestamp = "2026-07-13T10:00:00.000Z";
+  const project = createPersistedProjectRecord({
+    projectId: "project-agent-pin-filter-fanout",
+    rootPath: home,
+    kind: "non_git",
+    displayName: "Agent pin filter fanout",
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  });
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: "workspace-agent-pin-filter-fanout",
+    projectId: project.projectId,
+    cwd: home,
+    kind: "directory",
+    displayName: "agent-pin-filter-fanout",
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  });
+  await projectRegistry.upsert(project);
+  await workspaceRegistry.upsert(workspace);
+  await agentStorage.upsert({
+    ...makeStoredAgent({
+      id: "agent-pin-filter-fanout",
+      cwd: home,
+      updatedAt: timestamp,
+    }),
+    workspaceId: workspace.workspaceId,
+    archivedAt: timestamp,
+  });
+
+  const mutatingMessages: SessionOutboundMessage[] = [];
+  const observingMessages: SessionOutboundMessage[] = [];
+  const unsubscribedMessages: SessionOutboundMessage[] = [];
+  const mutatingSession = createSessionForWorkspaceTests({
+    onMessage: (message) => mutatingMessages.push(message),
+    paseoHome: home,
+    projectRegistry,
+    workspaceRegistry,
+    agentStorage,
+  });
+  const observingSession = createSessionForWorkspaceTests({
+    onMessage: (message) => observingMessages.push(message),
+    paseoHome: home,
+    projectRegistry,
+    workspaceRegistry,
+    agentStorage,
+  });
+  const unsubscribedSession = createSessionForWorkspaceTests({
+    onMessage: (message) => unsubscribedMessages.push(message),
+    paseoHome: home,
+    projectRegistry,
+    workspaceRegistry,
+    agentStorage,
+  });
+
+  try {
+    await observingSession.handleMessage({
+      type: "fetch_agents_request",
+      requestId: "fetch-active-agent-pin-filter-fanout",
+      scope: "active",
+      subscribe: { subscriptionId: "active-agent-pin-filter-fanout" },
+    });
+    observingMessages.length = 0;
+
+    await mutatingSession.handleMessage({
+      type: "agent.pin.set.request",
+      agentId: "agent-pin-filter-fanout",
+      pinned: true,
+      requestId: "pin-archived-agent-filter-fanout",
+    });
+
+    await vi.waitFor(() => {
+      expect(filterByType(observingMessages, "agent_update")).toContainEqual({
+        type: "agent_update",
+        payload: { kind: "remove", agentId: "agent-pin-filter-fanout" },
+      });
+    });
+    expect(
+      filterByType(observingMessages, "agent_update").some(
+        (message) =>
+          message.payload.kind === "upsert" &&
+          message.payload.agent.id === "agent-pin-filter-fanout",
+      ),
+    ).toBe(false);
+    expect(filterByType(unsubscribedMessages, "agent_update")).toEqual([]);
+    expect(filterByType(mutatingMessages, "agent_update")).toContainEqual({
+      type: "agent_update",
+      payload: {
+        kind: "upsert",
+        agent: expect.objectContaining({ id: "agent-pin-filter-fanout" }),
+        project: expect.any(Object),
+      },
+    });
+  } finally {
+    await mutatingSession.cleanup();
+    await observingSession.cleanup();
+    await unsubscribedSession.cleanup();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("collection assignment and deletion are serialized across client sessions", async () => {
+  const home = mkdtempSync(path.join(tmpdir(), "paseo-collection-race-"));
+  const logger = createTestLogger();
+  const workspaceRegistry = new FileBackedWorkspaceRegistry(
+    path.join(home, "projects", "workspaces.json"),
+    logger,
+  );
+  const collectionRegistry = new FileBackedWorkspaceCollectionRegistry(
+    path.join(home, "projects", "workspace-collections.json"),
+    logger,
+  );
+  await Promise.all([workspaceRegistry.initialize(), collectionRegistry.initialize()]);
+  await workspaceRegistry.upsert(
+    createPersistedWorkspaceRecord({
+      workspaceId: "workspace-race",
+      projectId: "project-race",
+      cwd: home,
+      kind: "directory",
+      displayName: "race",
+      createdAt: "2026-07-13T10:00:00.000Z",
+      updatedAt: "2026-07-13T10:00:00.000Z",
+    }),
+  );
+  await collectionRegistry.upsert({
+    id: "collection-race",
+    name: "Race",
+    createdAt: "2026-07-13T10:00:00.000Z",
+    updatedAt: "2026-07-13T10:00:00.000Z",
+  });
+
+  let releaseFirstGet = () => {};
+  const firstGetReleased = new Promise<void>((resolve) => {
+    releaseFirstGet = resolve;
+  });
+  let reportFirstGetStarted = () => {};
+  const firstGetStarted = new Promise<void>((resolve) => {
+    reportFirstGetStarted = resolve;
+  });
+  const originalGet = collectionRegistry.get.bind(collectionRegistry);
+  let shouldBlockNextGet = true;
+  collectionRegistry.get = async (collectionId) => {
+    if (shouldBlockNextGet) {
+      shouldBlockNextGet = false;
+      reportFirstGetStarted();
+      await firstGetReleased;
+    }
+    return originalGet(collectionId);
+  };
+
+  const assigningSession = createSessionForWorkspaceTests({
+    paseoHome: home,
+    workspaceRegistry,
+    workspaceCollectionRegistry: collectionRegistry,
+  });
+  const deletingSession = createSessionForWorkspaceTests({
+    paseoHome: home,
+    workspaceRegistry,
+    workspaceCollectionRegistry: collectionRegistry,
+  });
+
+  try {
+    const assign = assigningSession.handleMessage({
+      type: "workspace.collection.assign.request",
+      workspaceId: "workspace-race",
+      collectionId: "collection-race",
+      requestId: "assign-race",
+    });
+    await firstGetStarted;
+    const remove = deletingSession.handleMessage({
+      type: "workspace.collection.delete.request",
+      collectionId: "collection-race",
+      requestId: "delete-race",
+    });
+    releaseFirstGet();
+    await Promise.all([assign, remove]);
+
+    expect(await collectionRegistry.get("collection-race")).toBeNull();
+    expect((await workspaceRegistry.get("workspace-race"))?.collectionId).toBeNull();
+  } finally {
+    releaseFirstGet();
+    await assigningSession.cleanup();
+    await deletingSession.cleanup();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("collection catalog updates subscribe through the registry interface", async () => {
+  const collections = [
+    {
+      id: "collection-interface",
+      name: "Interface",
+      createdAt: "2026-07-13T10:00:00.000Z",
+      updatedAt: "2026-07-13T10:00:00.000Z",
+    },
+  ];
+  let notifyChange: (() => void) | null = null;
+  const registry: WorkspaceCollectionRegistry = {
+    initialize: async () => {},
+    list: async () => collections,
+    get: async (id) => collections.find((collection) => collection.id === id) ?? null,
+    upsert: async () => {},
+    remove: async () => {},
+    subscribeChanges: (listener) => {
+      notifyChange = listener;
+      return () => {
+        notifyChange = null;
+      };
+    },
+  };
+  const messages: SessionOutboundMessage[] = [];
+  const session = createSessionForWorkspaceTests({
+    onMessage: (message) => messages.push(message),
+    workspaceCollectionRegistry: registry,
+    clientCapabilities: { [CLIENT_CAPS.workspaceCollectionUpdates]: true },
+  });
+
+  try {
+    notifyChange?.();
+    await vi.waitFor(() => {
+      expect(
+        findByType(messages, "workspace.collection.catalog.update")?.payload.collections,
+      ).toEqual(collections);
+    });
+  } finally {
+    await session.cleanup();
+  }
+});
+
+test("workspace subscription bootstrap emits organization changes captured after the page", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const session = createSessionForWorkspaceTests({
+    onMessage: (message) => messages.push(message),
+  });
+  const staleWorkspace = {
+    id: "workspace-bootstrap-organization",
+    projectId: "project-bootstrap-organization",
+    projectDisplayName: "Bootstrap",
+    projectCustomName: null,
+    projectRootPath: REPO_CWD,
+    workspaceDirectory: REPO_CWD,
+    projectKind: "non_git" as const,
+    workspaceKind: "directory" as const,
+    name: "bootstrap",
+    title: null,
+    status: "done" as const,
+    statusEnteredAt: "2026-07-13T10:00:00.000Z",
+    createdAt: "2026-07-13T10:00:00.000Z",
+    activityAt: "2026-07-13T10:00:00.000Z",
+    pinnedAt: null,
+    collectionId: null,
+    archivingAt: null,
+    diffStat: null,
+    scripts: [],
+  };
+  let releasePage = () => {};
+  const pageReleased = new Promise<void>((resolve) => {
+    releasePage = resolve;
+  });
+  let reportPageCaptured = () => {};
+  const pageCaptured = new Promise<void>((resolve) => {
+    reportPageCaptured = resolve;
+  });
+  session.listFetchWorkspacesEntries = async () => {
+    reportPageCaptured();
+    await pageReleased;
+    return {
+      entries: [staleWorkspace],
+      emptyProjects: [],
+      pageInfo: { hasMore: false, nextCursor: null },
+    };
+  };
+
+  try {
+    const fetch = session.handleMessage({
+      type: "fetch_workspaces_request",
+      requestId: "fetch-bootstrap-organization",
+      subscribe: { subscriptionId: "subscription-bootstrap-organization" },
+    });
+    await pageCaptured;
+    session.bufferOrEmitWorkspaceUpdate(session.workspaceUpdatesSubscription, {
+      kind: "upsert",
+      workspace: {
+        ...staleWorkspace,
+        pinnedAt: "2026-07-13T10:05:00.000Z",
+        collectionId: "collection-bootstrap-organization",
+      },
+    });
+    releasePage();
+    await fetch;
+
+    expect(findByType(messages, "fetch_workspaces_response")?.payload.entries[0]).toMatchObject({
+      id: staleWorkspace.id,
+      pinnedAt: null,
+      collectionId: null,
+    });
+    expect(findByType(messages, "workspace_update")?.payload).toMatchObject({
+      kind: "upsert",
+      workspace: {
+        id: staleWorkspace.id,
+        pinnedAt: "2026-07-13T10:05:00.000Z",
+        collectionId: "collection-bootstrap-organization",
+      },
+    });
+  } finally {
+    releasePage();
+    await session.cleanup();
+  }
+});
+
+test("project registry changes fan out empty-project add rename and remove across sessions", async () => {
+  const home = mkdtempSync(path.join(tmpdir(), "paseo-project-fanout-"));
+  const logger = createTestLogger();
+  const projectRegistry = new FileBackedProjectRegistry(
+    path.join(home, "projects", "projects.json"),
+    logger,
+  );
+  const workspaceRegistry = new FileBackedWorkspaceRegistry(
+    path.join(home, "projects", "workspaces.json"),
+    logger,
+  );
+  const collectionRegistry = new FileBackedWorkspaceCollectionRegistry(
+    path.join(home, "projects", "workspace-collections.json"),
+    logger,
+  );
+  await Promise.all([
+    projectRegistry.initialize(),
+    workspaceRegistry.initialize(),
+    collectionRegistry.initialize(),
+  ]);
+  const firstMessages: SessionOutboundMessage[] = [];
+  const secondMessages: SessionOutboundMessage[] = [];
+  const first = createSessionForWorkspaceTests({
+    onMessage: (message) => firstMessages.push(message),
+    paseoHome: home,
+    projectRegistry,
+    workspaceRegistry,
+    workspaceCollectionRegistry: collectionRegistry,
+  });
+  const second = createSessionForWorkspaceTests({
+    onMessage: (message) => secondMessages.push(message),
+    paseoHome: home,
+    projectRegistry,
+    workspaceRegistry,
+    workspaceCollectionRegistry: collectionRegistry,
+  });
+  const project = createPersistedProjectRecord({
+    projectId: "project-fanout",
+    rootPath: path.join(home, "project-fanout"),
+    kind: "non_git",
+    displayName: "Fanout",
+    createdAt: "2026-07-13T10:00:00.000Z",
+    updatedAt: "2026-07-13T10:00:00.000Z",
+  });
+
+  try {
+    await Promise.all([
+      first.handleMessage({
+        type: "fetch_workspaces_request",
+        requestId: "fetch-project-fanout-first",
+        subscribe: { subscriptionId: "project-fanout-first" },
+      }),
+      second.handleMessage({
+        type: "fetch_workspaces_request",
+        requestId: "fetch-project-fanout-second",
+        subscribe: { subscriptionId: "project-fanout-second" },
+      }),
+    ]);
+    firstMessages.length = 0;
+    secondMessages.length = 0;
+
+    await projectRegistry.upsert(project);
+    await vi.waitFor(() => {
+      expect(filterByType(secondMessages, "workspace_update").at(-1)?.payload).toMatchObject({
+        kind: "remove",
+        emptyProject: { projectId: project.projectId, projectCustomName: null },
+      });
+    });
+
+    secondMessages.length = 0;
+    await projectRegistry.setCustomName(
+      project.projectId,
+      "Renamed fanout",
+      "2026-07-13T10:01:00.000Z",
+    );
+    await vi.waitFor(() => {
+      expect(filterByType(secondMessages, "workspace_update").at(-1)?.payload).toMatchObject({
+        kind: "remove",
+        emptyProject: {
+          projectId: project.projectId,
+          projectCustomName: "Renamed fanout",
+        },
+      });
+    });
+
+    secondMessages.length = 0;
+    await projectRegistry.remove(project.projectId);
+    await vi.waitFor(() => {
+      expect(filterByType(secondMessages, "workspace_update").at(-1)?.payload).toMatchObject({
+        kind: "remove",
+        removedProjectId: project.projectId,
+      });
+    });
+  } finally {
+    await first.cleanup();
+    await second.cleanup();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("project removal fans out real child workspace removals across sessions", async () => {
+  const home = mkdtempSync(path.join(tmpdir(), "paseo-project-child-fanout-"));
+  const logger = createTestLogger();
+  const projectRegistry = new FileBackedProjectRegistry(
+    path.join(home, "projects", "projects.json"),
+    logger,
+  );
+  const workspaceRegistry = new FileBackedWorkspaceRegistry(
+    path.join(home, "projects", "workspaces.json"),
+    logger,
+  );
+  await Promise.all([projectRegistry.initialize(), workspaceRegistry.initialize()]);
+  const project = createPersistedProjectRecord({
+    projectId: "project-child-fanout",
+    rootPath: home,
+    kind: "non_git",
+    displayName: "Child fanout",
+    createdAt: "2026-07-13T10:00:00.000Z",
+    updatedAt: "2026-07-13T10:00:00.000Z",
+  });
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: "workspace-child-fanout",
+    projectId: project.projectId,
+    cwd: home,
+    kind: "directory",
+    displayName: "child-fanout",
+    createdAt: project.createdAt,
+    updatedAt: project.updatedAt,
+  });
+  await projectRegistry.upsert(project);
+  await workspaceRegistry.upsert(workspace);
+  const firstMessages: SessionOutboundMessage[] = [];
+  const secondMessages: SessionOutboundMessage[] = [];
+  const first = createSessionForWorkspaceTests({
+    onMessage: (message) => firstMessages.push(message),
+    paseoHome: home,
+    projectRegistry,
+    workspaceRegistry,
+  });
+  const second = createSessionForWorkspaceTests({
+    onMessage: (message) => secondMessages.push(message),
+    paseoHome: home,
+    projectRegistry,
+    workspaceRegistry,
+  });
+
+  try {
+    await Promise.all([
+      first.handleMessage({
+        type: "fetch_workspaces_request",
+        requestId: "fetch-child-fanout-first",
+        subscribe: { subscriptionId: "child-fanout-first" },
+      }),
+      second.handleMessage({
+        type: "fetch_workspaces_request",
+        requestId: "fetch-child-fanout-second",
+        subscribe: { subscriptionId: "child-fanout-second" },
+      }),
+    ]);
+    firstMessages.length = 0;
+    secondMessages.length = 0;
+
+    await first.handleMessage({
+      type: "project.remove.request",
+      projectId: project.projectId,
+      requestId: "remove-child-fanout",
+    });
+
+    await vi.waitFor(() => {
+      expect(
+        filterByType(secondMessages, "workspace_update").some(
+          (message) =>
+            message.payload.kind === "remove" &&
+            message.payload.id === workspace.workspaceId &&
+            message.payload.removedProjectId === project.projectId,
+        ),
+      ).toBe(true);
+    });
+  } finally {
+    await first.cleanup();
+    await second.cleanup();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("archiving an old project upserts a child moved to another project across sessions", async () => {
+  const home = mkdtempSync(path.join(tmpdir(), "paseo-project-move-fanout-"));
+  const logger = createTestLogger();
+  const projectRegistry = new FileBackedProjectRegistry(
+    path.join(home, "projects", "projects.json"),
+    logger,
+  );
+  const workspaceRegistry = new FileBackedWorkspaceRegistry(
+    path.join(home, "projects", "workspaces.json"),
+    logger,
+  );
+  await Promise.all([projectRegistry.initialize(), workspaceRegistry.initialize()]);
+  const projectRoot = path.join(home, "shared");
+  mkdirSync(projectRoot, { recursive: true });
+  const oldProject = createPersistedProjectRecord({
+    projectId: "project-move-fanout-old",
+    rootPath: projectRoot,
+    kind: "non_git",
+    displayName: "Old project",
+    createdAt: "2026-07-13T10:00:00.000Z",
+    updatedAt: "2026-07-13T10:00:00.000Z",
+  });
+  const newProject = createPersistedProjectRecord({
+    projectId: "project-move-fanout-new",
+    rootPath: projectRoot,
+    kind: "non_git",
+    displayName: "New project",
+    createdAt: "2026-07-13T10:00:00.000Z",
+    updatedAt: "2026-07-13T10:00:00.000Z",
+  });
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: "workspace-project-move-fanout",
+    projectId: oldProject.projectId,
+    cwd: projectRoot,
+    kind: "directory",
+    displayName: "project-move-fanout",
+    createdAt: "2026-07-13T10:00:00.000Z",
+    updatedAt: "2026-07-13T10:00:00.000Z",
+  });
+  await projectRegistry.upsert(oldProject);
+  await projectRegistry.upsert(newProject);
+  await workspaceRegistry.upsert(workspace);
+
+  const firstMessages: SessionOutboundMessage[] = [];
+  const secondMessages: SessionOutboundMessage[] = [];
+  const first = createSessionForWorkspaceTests({
+    onMessage: (message) => firstMessages.push(message),
+    paseoHome: home,
+    projectRegistry,
+    workspaceRegistry,
+  });
+  const second = createSessionForWorkspaceTests({
+    onMessage: (message) => secondMessages.push(message),
+    paseoHome: home,
+    projectRegistry,
+    workspaceRegistry,
+  });
+
+  try {
+    await Promise.all([
+      first.handleMessage({
+        type: "fetch_workspaces_request",
+        requestId: "fetch-project-move-fanout-first",
+        subscribe: { subscriptionId: "project-move-fanout-first" },
+      }),
+      second.handleMessage({
+        type: "fetch_workspaces_request",
+        requestId: "fetch-project-move-fanout-second",
+        subscribe: { subscriptionId: "project-move-fanout-second" },
+      }),
+    ]);
+    firstMessages.length = 0;
+    secondMessages.length = 0;
+
+    await workspaceRegistry.upsert({
+      ...workspace,
+      projectId: newProject.projectId,
+      updatedAt: "2026-07-13T10:01:00.000Z",
+    });
+    await projectRegistry.archive(oldProject.projectId, "2026-07-13T10:02:00.000Z");
+
+    await vi.waitFor(() => {
+      expect(filterByType(secondMessages, "workspace_update")).toContainEqual({
+        type: "workspace_update",
+        payload: {
+          kind: "upsert",
+          workspace: expect.objectContaining({
+            id: workspace.workspaceId,
+            projectId: newProject.projectId,
+          }),
+        },
+      });
+    });
+    expect(
+      filterByType(secondMessages, "workspace_update").some(
+        (message) =>
+          message.payload.kind === "remove" &&
+          message.payload.id === workspace.workspaceId &&
+          message.payload.removedProjectId === oldProject.projectId,
+      ),
+    ).toBe(false);
+  } finally {
+    await first.cleanup();
+    await second.cleanup();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
 
 test("client heartbeat clears attention for the focused terminal", async () => {
   const clearedTerminalIds: string[] = [];
@@ -1394,18 +2394,27 @@ test("workspace clear attention clears stored-only agents and responds", async (
     requiresAttention: true,
     attentionReason: "finished",
   });
-  const session = createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) });
+  const agentStorage = asAgentStorage({
+    get: async (agentId: string) => (agentId === storedRecord.id ? storedRecord : null),
+    update: async (
+      agentId: string,
+      updateRecord: (existing: StoredAgentRecord) => StoredAgentRecord,
+    ) => {
+      if (agentId !== storedRecord.id) throw new Error("Agent not found");
+      storedRecord = updateRecord(storedRecord);
+      return storedRecord;
+    },
+  });
+  const session = createSessionForWorkspaceTests({
+    agentStorage,
+    onMessage: (message) => emitted.push(message),
+  });
 
   session.workspaceRegistry.list = async () => [workspace];
   session.workspaceRegistry.get = async (id: string) =>
     id === workspace.workspaceId ? workspace : null;
   session.projectRegistry.list = async () => [project];
   session.projectRegistry.get = async (id: string) => (id === project.projectId ? project : null);
-  session.agentStorage.get = async (agentId: string) =>
-    agentId === storedRecord.id ? storedRecord : null;
-  session.agentStorage.upsert = async (record: unknown) => {
-    storedRecord = record as StoredAgentRecord;
-  };
   session.listAgentPayloads = async () => [
     makeAgent({
       id: storedRecord.id,
@@ -1415,6 +2424,7 @@ test("workspace clear attention clears stored-only agents and responds", async (
       updatedAt: storedRecord.updatedAt,
       requiresAttention: true,
       attentionReason: "finished",
+      attentionTimestamp: storedRecord.attentionTimestamp,
     }),
   ];
 
@@ -1441,6 +2451,103 @@ test("workspace clear attention clears stored-only agents and responds", async (
   }
 });
 
+test("workspace clear attention preserves a concurrent stored-agent pin update", async () => {
+  const home = mkdtempSync(path.join(tmpdir(), "paseo-attention-pin-race-"));
+  const logger = createTestLogger();
+  const projectRegistry = new FileBackedProjectRegistry(
+    path.join(home, "projects", "projects.json"),
+    logger,
+  );
+  const workspaceRegistry = new FileBackedWorkspaceRegistry(
+    path.join(home, "projects", "workspaces.json"),
+    logger,
+  );
+  const writer = new ControlledAgentStorageWriter();
+  const agentStorage = new AgentStorage(path.join(home, "agents"), logger, {
+    recordWriter: writer,
+  });
+  await Promise.all([
+    projectRegistry.initialize(),
+    workspaceRegistry.initialize(),
+    agentStorage.initialize(),
+  ]);
+  await projectRegistry.upsert(
+    createPersistedProjectRecord({
+      projectId: "project-attention-race",
+      rootPath: home,
+      kind: "non_git",
+      displayName: "attention-race",
+      createdAt: "2026-07-13T10:00:00.000Z",
+      updatedAt: "2026-07-13T10:00:00.000Z",
+    }),
+  );
+  await workspaceRegistry.upsert(
+    createPersistedWorkspaceRecord({
+      workspaceId: "workspace-attention-race",
+      projectId: "project-attention-race",
+      cwd: home,
+      kind: "directory",
+      displayName: "attention-race",
+      createdAt: "2026-07-13T10:00:00.000Z",
+      updatedAt: "2026-07-13T10:00:00.000Z",
+    }),
+  );
+  await agentStorage.upsert({
+    ...makeStoredAgent({
+      id: "agent-attention-race",
+      cwd: home,
+      updatedAt: "2026-07-13T10:00:00.000Z",
+      requiresAttention: true,
+      attentionReason: "finished",
+    }),
+    workspaceId: "workspace-attention-race",
+  });
+
+  const session = createSessionForWorkspaceTests({
+    paseoHome: home,
+    projectRegistry,
+    workspaceRegistry,
+    agentStorage,
+  });
+  session.listAgentPayloads = async () => [
+    makeAgent({
+      id: "agent-attention-race",
+      cwd: home,
+      workspaceId: "workspace-attention-race",
+      status: "closed",
+      updatedAt: "2026-07-13T10:00:00.000Z",
+      requiresAttention: true,
+      attentionReason: "finished",
+      attentionTimestamp: "2026-07-13T10:00:00.000Z",
+    }),
+  ];
+
+  const heldWrite = writer.holdNextWrite();
+  try {
+    const clearAttention = session.handleMessage({
+      type: "workspace.clear_attention.request",
+      workspaceId: "workspace-attention-race",
+      requestId: "clear-attention-race",
+    });
+    await heldWrite.started;
+    const pinnedAt = "2026-07-13T10:05:00.000Z";
+    const pinUpdate = agentStorage.setPinnedAt("agent-attention-race", pinnedAt);
+    heldWrite.release();
+    await Promise.all([clearAttention, pinUpdate]);
+
+    expect(await agentStorage.get("agent-attention-race")).toMatchObject({
+      pinnedAt,
+      requiresAttention: false,
+      attentionReason: null,
+      attentionTimestamp: null,
+    });
+  } finally {
+    heldWrite.release();
+    await session.cleanup();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("workspace clear attention responds with an error instead of timing out", async () => {
   const emitted: SessionOutboundMessage[] = [];
   const session = createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) });
@@ -1458,6 +2565,73 @@ test("workspace clear attention responds with an error instead of timing out", a
     clearedAgentIds: [],
     success: false,
     error: "Workspace not found: missing-workspace",
+  });
+});
+
+test("workspace clear attention preserves stored permission attention", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: "workspace-permission-attention",
+    projectId: "project-permission-attention",
+    cwd: REPO_CWD,
+    kind: "directory",
+    displayName: "permission-attention",
+    createdAt: "2026-07-13T10:00:00.000Z",
+    updatedAt: "2026-07-13T10:00:00.000Z",
+  });
+  const permissionAt = "2026-07-13T10:06:00.000Z";
+  const storedRecord = makeStoredAgent({
+    id: "agent-permission-attention",
+    cwd: REPO_CWD,
+    updatedAt: permissionAt,
+    requiresAttention: true,
+    attentionReason: "permission",
+  });
+  let updateCalls = 0;
+  const agentStorage = asAgentStorage({
+    get: async (agentId: string) => (agentId === storedRecord.id ? storedRecord : null),
+    update: async () => {
+      updateCalls += 1;
+      return storedRecord;
+    },
+  });
+  const session = createSessionForWorkspaceTests({
+    agentStorage,
+    onMessage: (message) => emitted.push(message),
+  });
+  session.workspaceRegistry.get = async (workspaceId: string) =>
+    workspaceId === workspace.workspaceId ? workspace : null;
+  session.listAgentPayloads = async () => [
+    makeAgent({
+      id: storedRecord.id,
+      cwd: storedRecord.cwd,
+      workspaceId: workspace.workspaceId,
+      status: "closed",
+      updatedAt: storedRecord.updatedAt,
+      requiresAttention: true,
+      attentionReason: "permission",
+      attentionTimestamp: permissionAt,
+    }),
+  ];
+
+  await session.handleMessage({
+    type: "workspace.clear_attention.request",
+    workspaceId: workspace.workspaceId,
+    requestId: "permission-attention",
+  });
+
+  expect(updateCalls).toBe(0);
+  expect(storedRecord).toMatchObject({
+    requiresAttention: true,
+    attentionReason: "permission",
+    attentionTimestamp: permissionAt,
+  });
+  expect(findByType(emitted, "workspace.clear_attention.response").payload).toMatchObject({
+    requestId: "permission-attention",
+    workspaceId: workspace.workspaceId,
+    clearedAgentIds: [],
+    success: true,
+    error: null,
   });
 });
 
@@ -1505,7 +2679,23 @@ test("workspace clear attention can clear multiple workspaces in one request", a
       }),
     ]),
   );
-  const session = createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) });
+  const agentStorage = asAgentStorage({
+    get: async (agentId: string) => storedRecords.get(agentId) ?? null,
+    update: async (
+      agentId: string,
+      updateRecord: (existing: StoredAgentRecord) => StoredAgentRecord,
+    ) => {
+      const record = storedRecords.get(agentId);
+      if (!record) throw new Error("Agent not found");
+      const updated = updateRecord(record);
+      storedRecords.set(agentId, updated);
+      return updated;
+    },
+  });
+  const session = createSessionForWorkspaceTests({
+    agentStorage,
+    onMessage: (message) => emitted.push(message),
+  });
 
   session.workspaceRegistry.list = async () => workspaces;
   session.workspaceRegistry.get = async (id: string) =>
@@ -1513,11 +2703,6 @@ test("workspace clear attention can clear multiple workspaces in one request", a
   session.projectRegistry.list = async () => projects;
   session.projectRegistry.get = async (id: string) =>
     projects.find((project) => project.projectId === id) ?? null;
-  session.agentStorage.get = async (agentId: string) => storedRecords.get(agentId) ?? null;
-  session.agentStorage.upsert = async (record: unknown) => {
-    const storedRecord = record as StoredAgentRecord;
-    storedRecords.set(storedRecord.id, storedRecord);
-  };
   session.listAgentPayloads = async () =>
     Array.from(storedRecords.values()).map((record) => {
       const owner = workspaces.find((workspace) => workspace.cwd === record.cwd);
@@ -1529,6 +2714,7 @@ test("workspace clear attention can clear multiple workspaces in one request", a
         updatedAt: record.updatedAt,
         requiresAttention: record.requiresAttention,
         attentionReason: record.attentionReason,
+        attentionTimestamp: record.attentionTimestamp,
       });
     });
 
@@ -2207,6 +3393,176 @@ test("active-scoped fetch_agents includes only unarchived agents in active works
 
   expect(agentIdsFromEntries(result.entries)).toEqual(["agent-active", "agent-subdir"]);
   expect(result.pageInfo.hasMore).toBe(false);
+});
+
+test("agent history supports archiveState, updatedAfter, and compound pinned sorting", async () => {
+  const session = createSessionForWorkspaceTests();
+  const project = createPersistedProjectRecord({
+    projectId: "proj-history-organization",
+    rootPath: REPO_CWD,
+    kind: "non_git",
+    displayName: "history",
+    createdAt: "2026-03-01T10:00:00.000Z",
+    updatedAt: "2026-03-01T10:00:00.000Z",
+  });
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: "ws-history-organization",
+    projectId: project.projectId,
+    cwd: REPO_CWD,
+    kind: "directory",
+    displayName: "history",
+    createdAt: project.createdAt,
+    updatedAt: project.updatedAt,
+  });
+  session.projectRegistry.get = async () => project;
+  session.workspaceRegistry.get = async () => workspace;
+  session.listAgentPayloads = async () => [
+    {
+      ...makeAgent({
+        id: "archived-unpinned",
+        cwd: REPO_CWD,
+        workspaceId: workspace.workspaceId,
+        status: "closed",
+        updatedAt: "2026-03-01T12:04:00.000Z",
+      }),
+      title: "Alpha",
+      archivedAt: "2026-03-01T12:05:00.000Z",
+      pinnedAt: null,
+    },
+    {
+      ...makeAgent({
+        id: "archived-pinned",
+        cwd: REPO_CWD,
+        workspaceId: workspace.workspaceId,
+        status: "closed",
+        updatedAt: "2026-03-01T12:03:00.000Z",
+      }),
+      title: "Zulu",
+      archivedAt: "2026-03-01T12:05:00.000Z",
+      pinnedAt: "2026-03-01T12:06:00.000Z",
+    },
+    {
+      ...makeAgent({
+        id: "active-pinned",
+        cwd: REPO_CWD,
+        workspaceId: workspace.workspaceId,
+        status: "idle",
+        updatedAt: "2026-03-01T12:05:00.000Z",
+      }),
+      pinnedAt: "2026-03-01T12:06:00.000Z",
+    },
+    {
+      ...makeAgent({
+        id: "archived-old",
+        cwd: REPO_CWD,
+        workspaceId: workspace.workspaceId,
+        status: "closed",
+        updatedAt: "2026-03-01T11:00:00.000Z",
+      }),
+      archivedAt: "2026-03-01T11:30:00.000Z",
+    },
+  ];
+
+  const result = await session.listFetchAgentsEntries({
+    type: "fetch_agent_history_request",
+    requestId: "history-organization",
+    filter: {
+      archiveState: "archived",
+      updatedAfter: "2026-03-01T12:00:00.000Z",
+    },
+    sort: [
+      { key: "pinned", direction: "desc" },
+      { key: "title", direction: "asc" },
+    ],
+  });
+
+  expect(agentIdsFromEntries(result.entries)).toEqual(["archived-pinned", "archived-unpinned"]);
+});
+
+test("alphabetical history cursors preserve canonical numeric order beyond one page", async () => {
+  const session = createSessionForWorkspaceTests();
+  const project = createPersistedProjectRecord({
+    projectId: "proj-history-pages",
+    rootPath: REPO_CWD,
+    kind: "non_git",
+    displayName: "history pages",
+    createdAt: "2026-03-01T10:00:00.000Z",
+    updatedAt: "2026-03-01T10:00:00.000Z",
+  });
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: "ws-history-pages",
+    projectId: project.projectId,
+    cwd: REPO_CWD,
+    kind: "directory",
+    displayName: "history pages",
+    createdAt: project.createdAt,
+    updatedAt: project.updatedAt,
+  });
+  session.projectRegistry.get = async () => project;
+  session.workspaceRegistry.get = async () => workspace;
+  session.listAgentPayloads = async () => [
+    {
+      ...makeAgent({
+        id: "pinned-205",
+        cwd: REPO_CWD,
+        workspaceId: workspace.workspaceId,
+        status: "closed",
+        updatedAt: "2026-03-01T12:00:00.000Z",
+      }),
+      title: "Session 205",
+      pinnedAt: "2026-03-01T13:00:00.000Z",
+    },
+    ...Array.from({ length: 204 }, (_, index) => ({
+      ...makeAgent({
+        id: `session-${index + 1}`,
+        cwd: REPO_CWD,
+        workspaceId: workspace.workspaceId,
+        status: "closed" as const,
+        updatedAt: "2026-03-01T12:00:00.000Z",
+      }),
+      title: `Session ${index + 1}`,
+      pinnedAt: null,
+    })),
+    {
+      ...makeAgent({
+        id: "untitled",
+        cwd: REPO_CWD,
+        workspaceId: workspace.workspaceId,
+        status: "closed",
+        updatedAt: "2026-03-01T12:00:00.000Z",
+      }),
+      title: null,
+      pinnedAt: null,
+    },
+  ];
+  const sort = [
+    { key: "pinned", direction: "desc" },
+    { key: "title", direction: "asc" },
+  ] as const;
+
+  const first = await session.listFetchAgentsEntries({
+    type: "fetch_agent_history_request",
+    requestId: "history-page-1",
+    sort: [...sort],
+    page: { limit: 200 },
+  });
+  expect(first.pageInfo.hasMore).toBe(true);
+  expect(first.pageInfo.nextCursor).toEqual(expect.any(String));
+  const nextCursor = first.pageInfo.nextCursor;
+  if (!nextCursor) throw new Error("Expected a second history page");
+  const second = await session.listFetchAgentsEntries({
+    type: "fetch_agent_history_request",
+    requestId: "history-page-2",
+    sort: [...sort],
+    page: { limit: 200, cursor: nextCursor },
+  });
+
+  expect(agentIdsFromEntries([...first.entries, ...second.entries])).toEqual([
+    "pinned-205",
+    ...Array.from({ length: 204 }, (_, index) => `session-${index + 1}`),
+    "untitled",
+  ]);
+  expect(second.pageInfo.hasMore).toBe(false);
 });
 
 test("active-scoped fetch_agents pages within active scope instead of global history", async () => {
@@ -2933,7 +4289,7 @@ test("subdirectory agents contribute to their owning workspace descriptor", asyn
   expect(result.entries[0]).toMatchObject({
     id: "ws-repo-subdir",
     status: "running",
-    activityAt: null,
+    activityAt: "2026-03-01T12:03:00.000Z",
   });
 });
 
@@ -5574,7 +6930,7 @@ test("listWorkspaceDescriptorsSnapshot keeps git workspaces on the baseline desc
     archivingAt: null,
     status: "done",
     statusEnteredAt: workspace.createdAt,
-    activityAt: null,
+    activityAt: workspace.createdAt,
     diffStat: null,
   } as const;
   const gitDescriptor = {
@@ -6448,9 +7804,12 @@ test("project.rename.request stores customName and emits an updated workspace de
   const projects = new Map([[project.projectId, project]]);
   session.projectRegistry.get = async (id: string) => projects.get(id) ?? null;
   session.projectRegistry.list = async () => Array.from(projects.values());
-  session.projectRegistry.upsert = async (record: unknown) => {
-    const parsed = record as typeof project;
-    projects.set(parsed.projectId, parsed);
+  session.projectRegistry.setCustomName = async (projectId, customName, updatedAt) => {
+    const existing = projects.get(projectId);
+    if (!existing) throw new Error("Project not found");
+    const updated = { ...existing, customName, updatedAt };
+    projects.set(projectId, updated);
+    return updated;
   };
   session.workspaceRegistry.list = async () => [workspace];
   session.workspaceRegistry.get = async (id: string) =>
@@ -6512,9 +7871,12 @@ test("project.rename.request with whitespace-only customName clears the override
   const projects = new Map([[project.projectId, project]]);
   session.projectRegistry.get = async (id: string) => projects.get(id) ?? null;
   session.projectRegistry.list = async () => Array.from(projects.values());
-  session.projectRegistry.upsert = async (record: unknown) => {
-    const parsed = record as typeof project;
-    projects.set(parsed.projectId, parsed);
+  session.projectRegistry.setCustomName = async (projectId, customName, updatedAt) => {
+    const existing = projects.get(projectId);
+    if (!existing) throw new Error("Project not found");
+    const updated = { ...existing, customName, updatedAt };
+    projects.set(projectId, updated);
+    return updated;
   };
   session.workspaceRegistry.list = async () => [];
 
@@ -6589,11 +7951,11 @@ test("workspace.title.set.request stores the title and emits an updated descript
   session.projectRegistry.list = async () => Array.from(projects.values());
   session.workspaceRegistry.list = async () => Array.from(workspaces.values());
   session.workspaceRegistry.get = async (id: string) => workspaces.get(id) ?? null;
-  session.workspaceRegistry.update = async (id, updater) => {
-    const existing = workspaces.get(id);
-    if (!existing) return null;
-    const updated = updater(existing);
-    workspaces.set(id, updated);
+  session.workspaceRegistry.setTitle = async (workspaceId, title, updatedAt) => {
+    const existing = workspaces.get(workspaceId);
+    if (!existing) throw new Error("Workspace not found");
+    const updated = { ...existing, title, updatedAt };
+    workspaces.set(workspaceId, updated);
     return updated;
   };
 
@@ -6660,10 +8022,11 @@ test("workspace.pin.set.request stores the pin timestamp and emits an updated de
   session.projectRegistry.get = async (id: string) => (id === project.projectId ? project : null);
   session.projectRegistry.list = async () => [project];
   session.workspaceRegistry.list = async () => Array.from(workspaces.values());
-  session.workspaceRegistry.update = async (id, updater) => {
+  session.workspaceRegistry.get = async (id: string) => workspaces.get(id) ?? null;
+  session.workspaceRegistry.setPinnedAt = async (id, pinnedAt) => {
     const existing = workspaces.get(id);
-    if (!existing) return null;
-    const updated = updater(existing);
+    if (!existing) throw new Error("Workspace not found");
+    const updated = { ...existing, pinnedAt };
     workspaces.set(id, updated);
     return updated;
   };
@@ -6700,6 +8063,52 @@ test("workspace.pin.set.request stores the pin timestamp and emits an updated de
   });
 });
 
+test("workspace.pin.set.request reports persisted success once when legacy update emission fails", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const session = asTestSession(
+    createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) }),
+  );
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: "ws-pin-emission-failure",
+    projectId: "proj-1",
+    cwd: REPO_CWD,
+    kind: "local_checkout",
+    displayName: "main",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  const workspaces = new Map([[workspace.workspaceId, workspace]]);
+  session.workspaceRegistry.get = async (id: string) => workspaces.get(id) ?? null;
+  session.workspaceRegistry.setPinnedAt = async (id, pinnedAt) => {
+    const existing = workspaces.get(id);
+    if (!existing) throw new Error("Workspace not found");
+    const updated = { ...existing, pinnedAt };
+    workspaces.set(id, updated);
+    return updated;
+  };
+  session.emitWorkspaceUpdatesForWorkspaceIds = async () => {
+    throw new Error("descriptor emission failed");
+  };
+
+  await session.handleMessage({
+    type: "workspace.pin.set.request",
+    workspaceId: workspace.workspaceId,
+    pinned: true,
+    requestId: "req-pin-emission-failure",
+  });
+
+  const responses = filterByType(emitted, "workspace.pin.set.response");
+  expect(responses).toHaveLength(1);
+  expect(responses[0]?.payload).toMatchObject({
+    requestId: "req-pin-emission-failure",
+    workspaceId: workspace.workspaceId,
+    accepted: true,
+    pinnedAt: expect.any(String),
+    error: null,
+  });
+  expect(workspaces.get(workspace.workspaceId)?.pinnedAt).toBe(responses[0]?.payload.pinnedAt);
+});
+
 test("workspace.title.set.request with whitespace-only title clears the title", async () => {
   const emitted: SessionOutboundMessage[] = [];
   const session = asTestSession(
@@ -6720,11 +8129,11 @@ test("workspace.title.set.request with whitespace-only title clears the title", 
   const workspaces = new Map([[workspace.workspaceId, workspace]]);
   session.workspaceRegistry.list = async () => Array.from(workspaces.values());
   session.workspaceRegistry.get = async (id: string) => workspaces.get(id) ?? null;
-  session.workspaceRegistry.update = async (id, updater) => {
-    const existing = workspaces.get(id);
-    if (!existing) return null;
-    const updated = updater(existing);
-    workspaces.set(id, updated);
+  session.workspaceRegistry.setTitle = async (workspaceId, title, updatedAt) => {
+    const existing = workspaces.get(workspaceId);
+    if (!existing) throw new Error("Workspace not found");
+    const updated = { ...existing, title, updatedAt };
+    workspaces.set(workspaceId, updated);
     return updated;
   };
 
@@ -6751,7 +8160,7 @@ test("workspace.title.set.request returns accepted=false when workspace is not f
   const session = asTestSession(
     createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) }),
   );
-  session.workspaceRegistry.update = async () => null;
+  session.workspaceRegistry.get = async () => null;
 
   await session.handleMessage({
     type: "workspace.title.set.request",
@@ -7648,8 +9057,30 @@ test("workspace.create.response persists the first prompt as the initial title",
       upsert: async (workspace) => {
         workspaces.set(workspace.workspaceId, workspace);
       },
+      setTitle: async (workspaceId, title, updatedAt) => {
+        const existing = workspaces.get(workspaceId);
+        if (!existing) throw new Error("Workspace not found");
+        const updated = { ...existing, title, updatedAt };
+        workspaces.set(workspaceId, updated);
+        return updated;
+      },
       archive: async () => {},
+      unarchive: async () => {},
       remove: async () => {},
+      setPinnedAt: async (workspaceId, pinnedAt) => {
+        const existing = workspaces.get(workspaceId);
+        if (!existing) throw new Error("Workspace not found");
+        const updated = { ...existing, pinnedAt };
+        workspaces.set(workspaceId, updated);
+        return updated;
+      },
+      setCollectionId: async (workspaceId, collectionId) => {
+        const existing = workspaces.get(workspaceId);
+        if (!existing) throw new Error("Workspace not found");
+        const updated = { ...existing, collectionId };
+        workspaces.set(workspaceId, updated);
+        return updated;
+      },
     },
   });
   session.listAgentPayloads = async () => [];

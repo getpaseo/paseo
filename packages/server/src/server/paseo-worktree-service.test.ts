@@ -679,7 +679,7 @@ test.skipIf(isPlatform("win32"))(
 );
 
 interface TestDeps extends CreatePaseoWorktreeDeps {
-  projectRegistry: Pick<ProjectRegistry, "get" | "list" | "upsert">;
+  projectRegistry: Pick<ProjectRegistry, "get" | "list" | "unarchive" | "upsert">;
   projects: Map<string, PersistedProjectRecord>;
   workspaces: Map<string, PersistedWorkspaceRecord>;
 }
@@ -703,6 +703,12 @@ function createDeps(options?: {
       upsert: async (record) => {
         events.push(`project:${record.projectId}`);
         projects.set(record.projectId, record);
+      },
+      unarchive: async (projectId, updatedAt) => {
+        const existing = projects.get(projectId);
+        if (existing?.archivedAt) {
+          projects.set(projectId, { ...existing, archivedAt: null, updatedAt });
+        }
       },
     },
     workspaceRegistry: {

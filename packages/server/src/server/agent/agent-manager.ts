@@ -1365,9 +1365,16 @@ export class AgentManager {
   private async markRecordArchived(record: StoredAgentRecord): Promise<ArchivedStoredAgentRecord> {
     const registry = this.requireRegistry();
     const archivedAt = new Date().toISOString();
-    const archivedRecord = buildArchivedAgentRecord(record, { archivedAt, updatedAt: archivedAt });
-
-    await registry.upsert(archivedRecord);
+    const persistedArchive = await registry.update(record.id, (current) =>
+      buildArchivedAgentRecord(current, { archivedAt, updatedAt: archivedAt }),
+    );
+    if (!persistedArchive.archivedAt) {
+      throw new Error(`Agent ${record.id} missing archivedAt after archive`);
+    }
+    const archivedRecord: ArchivedStoredAgentRecord = {
+      ...persistedArchive,
+      archivedAt: persistedArchive.archivedAt,
+    };
 
     await this.archiveNativeSessionBestEffort(record.provider, record.persistence);
 
@@ -1548,19 +1555,12 @@ export class AgentManager {
     patch: AgentMetadataPatch,
   ): Promise<StoredAgentRecord> {
     const registry = this.requireRegistry();
-    const record = await registry.get(agentId);
-    if (!record) {
-      throw new Error(`Agent not found: ${agentId}`);
-    }
-
-    const nextRecord = {
+    return registry.update(agentId, (record) => ({
       ...record,
       ...(patch.title ? { title: patch.title } : {}),
       ...(patch.labels ? { labels: applyLabelPatch(record.labels, patch.labels) } : {}),
       updatedAt: this.nextStoredUpdatedAt(record),
-    };
-    await registry.upsert(nextRecord);
-    return nextRecord;
+    }));
   }
 
   async detachAgent(agentId: string): Promise<{
@@ -1613,13 +1613,49 @@ export class AgentManager {
     this.emitState(agent);
   }
 
-  async clearAgentAttention(agentId: string): Promise<void> {
+  async clearAgentAttention(agentId: string): Promise<boolean> {
     const agent = this.requireAgent(agentId);
     if (agent.attention.requiresAttention) {
+      const observedAttention = agent.attention;
+      const observedUpdatedAt = agent.updatedAt;
+      if (observedAttention.attentionReason === "permission") return false;
+      if (!this.registry || agent.internal) {
+        agent.attention = { requiresAttention: false };
+        this.touchUpdatedAt(agent);
+        this.emitState(agent, { persist: false });
+        return true;
+      }
+      let didPersistClear = false;
+      const clearedRecord = await this.registry.update(agentId, (record) => {
+        if (
+          record.requiresAttention !== true ||
+          record.attentionReason !== observedAttention.attentionReason ||
+          record.attentionTimestamp !==
+            (observedAttention.attentionTimestamp?.toISOString() ?? null) ||
+          record.attentionReason === "permission"
+        ) {
+          return record;
+        }
+        didPersistClear = true;
+        return {
+          ...record,
+          updatedAt: this.nextStoredUpdatedAt(record),
+          requiresAttention: false,
+          attentionReason: null,
+          attentionTimestamp: null,
+        };
+      });
+      if (!didPersistClear) return false;
+      if (agent.attention !== observedAttention || agent.updatedAt !== observedUpdatedAt) {
+        await this.persistSnapshot(agent);
+        return false;
+      }
       agent.attention = { requiresAttention: false };
-      await this.persistSnapshot(agent);
+      agent.updatedAt = new Date(clearedRecord.updatedAt);
       this.emitState(agent, { persist: false });
+      return true;
     }
+    return false;
   }
 
   async archiveSnapshot(agentId: string, archivedAt: string): Promise<StoredAgentRecord> {
@@ -1636,8 +1672,9 @@ export class AgentManager {
       throw new Error(`Agent not found: ${agentId}`);
     }
 
-    const nextRecord = buildArchivedAgentRecord(record, { archivedAt });
-    await registry.upsert(nextRecord);
+    const nextRecord = await registry.update(agentId, (current) =>
+      buildArchivedAgentRecord(current, { archivedAt }),
+    );
 
     await this.archiveNativeSessionBestEffort(record.provider, record.persistence);
 
@@ -1661,11 +1698,11 @@ export class AgentManager {
 
     await this.unarchiveNativeSession(record.provider, record.persistence);
 
-    await registry.upsert({
-      ...record,
+    await registry.update(agentId, (current) => ({
+      ...current,
       archivedAt: null,
       updatedAt: new Date().toISOString(),
-    });
+    }));
 
     if (this.getAgent(agentId)) {
       this.notifyAgentState(agentId);

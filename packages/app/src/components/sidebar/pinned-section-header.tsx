@@ -23,6 +23,10 @@ export function PinnedSectionHeader({
   const { t } = useTranslation();
   const isCompact = useIsCompactFormFactor();
   const accessibilityState = useMemo(() => ({ expanded: !collapsed }), [collapsed]);
+  const headerStyle = useMemo(
+    () => (isNative ? [styles.header, styles.nativeHeader] : styles.header),
+    [],
+  );
   const Chevron = collapsed ? ThemedChevronRight : ThemedChevronDown;
 
   return (
@@ -30,7 +34,7 @@ export function PinnedSectionHeader({
       accessibilityRole="button"
       accessibilityState={accessibilityState}
       onPress={onToggle}
-      style={styles.header}
+      style={headerStyle}
       testID="sidebar-pinned-section-header"
     >
       {({ hovered }) => (
@@ -54,6 +58,10 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.spacing[2],
     paddingVertical: theme.spacing[1],
     userSelect: "none",
+  },
+  nativeHeader: {
+    minWidth: 44,
+    minHeight: 44,
   },
   title: {
     color: theme.colors.foregroundMuted,

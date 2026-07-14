@@ -28,15 +28,33 @@ function createTestRegistries() {
     upsert: async (record: PersistedProjectRecord) => {
       projects.set(record.projectId, record);
     },
+    setCustomName: async (id, customName, updatedAt, options) => {
+      const existing = projects.get(id);
+      if (!existing) throw new Error(`Project ${id} not found`);
+      if (
+        options?.expectedCurrentNames &&
+        !options.expectedCurrentNames.includes(existing.customName)
+      ) {
+        return existing;
+      }
+      const updated = { ...existing, customName, updatedAt };
+      projects.set(id, updated);
+      return updated;
+    },
     archive: async (id: string, archivedAt: string) => {
       const existing = projects.get(id);
       if (existing) {
         projects.set(id, { ...existing, archivedAt, updatedAt: archivedAt });
       }
     },
+    unarchive: async (id, updatedAt) => {
+      const existing = projects.get(id);
+      if (existing) projects.set(id, { ...existing, archivedAt: null, updatedAt });
+    },
     remove: async (id: string) => {
       projects.delete(id);
     },
+    subscribeChanges: () => () => {},
   };
 
   const workspaceRegistry: WorkspaceRegistry = {
@@ -47,11 +65,42 @@ function createTestRegistries() {
     upsert: async (record: PersistedWorkspaceRecord) => {
       workspaces.set(record.workspaceId, record);
     },
+    setTitle: async (id, title, updatedAt, options) => {
+      const existing = workspaces.get(id);
+      if (!existing) throw new Error(`Workspace ${id} not found`);
+      if (
+        options?.expectedCurrentTitles &&
+        !options.expectedCurrentTitles.includes(existing.title)
+      ) {
+        return existing;
+      }
+      const updated = { ...existing, title, updatedAt };
+      workspaces.set(id, updated);
+      return updated;
+    },
+    setPinnedAt: async (id, pinnedAt) => {
+      const existing = workspaces.get(id);
+      if (!existing) throw new Error(`Workspace ${id} not found`);
+      const updated = { ...existing, pinnedAt };
+      workspaces.set(id, updated);
+      return updated;
+    },
+    setCollectionId: async (id, collectionId) => {
+      const existing = workspaces.get(id);
+      if (!existing) throw new Error(`Workspace ${id} not found`);
+      const updated = { ...existing, collectionId };
+      workspaces.set(id, updated);
+      return updated;
+    },
     archive: async (id: string, archivedAt: string) => {
       const existing = workspaces.get(id);
       if (existing) {
         workspaces.set(id, { ...existing, archivedAt, updatedAt: archivedAt });
       }
+    },
+    unarchive: async (id, updatedAt) => {
+      const existing = workspaces.get(id);
+      if (existing) workspaces.set(id, { ...existing, archivedAt: null, updatedAt });
     },
     remove: async (id: string) => {
       workspaces.delete(id);

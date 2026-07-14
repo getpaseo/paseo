@@ -7,9 +7,117 @@ import {
   WorkspaceCreateRequestSchema,
   WorkspaceDescriptorPayloadSchema,
   WorkspaceScriptPayloadSchema,
+  WSHelloMessageSchema,
 } from "./messages.js";
+import { CLIENT_CAPS } from "./client-capabilities.js";
 
 describe("workspace message schemas", () => {
+  test("parses additive workspace organization RPCs and descriptors", () => {
+    const requests = [
+      {
+        type: "workspace.pin.set.request",
+        workspaceId: "ws-1",
+        pinned: true,
+        requestId: "pin-1",
+      },
+      {
+        type: "agent.pin.set.request",
+        agentId: "agent-1",
+        pinned: false,
+        requestId: "pin-2",
+      },
+      { type: "workspace.collection.create.request", name: "Focus", requestId: "collection-1" },
+      {
+        type: "workspace.collection.assign.request",
+        workspaceId: "ws-1",
+        collectionId: "wsc-1",
+        requestId: "collection-2",
+      },
+    ];
+
+    for (const request of requests) {
+      expect(SessionInboundMessageSchema.parse(request)).toMatchObject(request);
+    }
+
+    const workspace = WorkspaceDescriptorPayloadSchema.parse({
+      id: "ws-1",
+      projectId: "project-1",
+      projectDisplayName: "Project",
+      projectRootPath: "/repo",
+      projectKind: "git",
+      workspaceKind: "local_checkout",
+      name: "main",
+      createdAt: "2026-07-13T08:00:00.000Z",
+      pinnedAt: "2026-07-13T09:00:00.000Z",
+      collectionId: "wsc-1",
+      status: "done",
+      activityAt: "2026-07-13T10:00:00.000Z",
+    });
+    expect(workspace).toMatchObject({
+      createdAt: "2026-07-13T08:00:00.000Z",
+      pinnedAt: "2026-07-13T09:00:00.000Z",
+      collectionId: "wsc-1",
+    });
+  });
+
+  test("old workspace responses still parse with empty organization defaults", () => {
+    const parsed = SessionOutboundMessageSchema.parse({
+      type: "fetch_workspaces_response",
+      payload: {
+        requestId: "legacy",
+        entries: [],
+        pageInfo: { nextCursor: null, prevCursor: null, hasMore: false },
+      },
+    });
+    expect(parsed.type).toBe("fetch_workspaces_response");
+    if (parsed.type !== "fetch_workspaces_response") throw new Error("wrong response");
+    expect(parsed.payload.collections).toBeUndefined();
+  });
+
+  test("parses compound pinned history sorting and archive filters", () => {
+    const parsed = SessionInboundMessageSchema.parse({
+      type: "fetch_agent_history_request",
+      requestId: "history-1",
+      filter: {
+        archiveState: "archived",
+        updatedAfter: "2026-07-01T00:00:00.000Z",
+      },
+      sort: [
+        { key: "pinned", direction: "desc" },
+        { key: "title", direction: "asc" },
+      ],
+    });
+    expect(parsed).toMatchObject({
+      filter: { archiveState: "archived" },
+      sort: [
+        { key: "pinned", direction: "desc" },
+        { key: "title", direction: "asc" },
+      ],
+    });
+  });
+
+  test("parses capability-gated full collection catalog updates including empty catalogs", () => {
+    expect(
+      WSHelloMessageSchema.parse({
+        type: "hello",
+        clientId: "client-1",
+        clientType: "browser",
+        protocolVersion: 1,
+        capabilities: { [CLIENT_CAPS.workspaceCollectionUpdates]: true },
+      }).capabilities,
+    ).toMatchObject({ [CLIENT_CAPS.workspaceCollectionUpdates]: true });
+
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "workspace.collection.catalog.update",
+        payload: { collections: [] },
+      }),
+    ).toEqual({
+      type: "workspace.collection.catalog.update",
+      payload: { collections: [] },
+    });
+  });
+
   test("parses fetch_workspaces_request", () => {
     const parsed = SessionInboundMessageSchema.parse({
       type: "fetch_workspaces_request",

@@ -9,16 +9,10 @@ import type {
   SidebarWorkspaceEntry,
 } from "@/hooks/use-sidebar-workspaces-list";
 import type { SidebarGroupMode } from "@/stores/sidebar-view-store";
-import {
-  buildSidebarShortcutSections,
-  type SidebarShortcutModel,
-  type SidebarShortcutSection,
-} from "@/utils/sidebar-shortcuts";
 
 export interface SidebarProjection {
   pinnedGroups: PinnedSidebarGroups;
   statusGroups: StatusGroup[];
-  shortcutModel: SidebarShortcutModel;
 }
 
 export function buildSidebarProjection(input: {
@@ -27,9 +21,6 @@ export function buildSidebarProjection(input: {
   workspaceEntriesByKey: ReadonlyMap<string, SidebarWorkspaceEntry>;
   projectNamesByKey: Map<string, string>;
   groupMode: SidebarGroupMode;
-  pinnedCollapsed: boolean;
-  collapsedProjectKeys: ReadonlySet<string>;
-  collapsedStatusGroupKeys: ReadonlySet<string>;
 }): SidebarProjection {
   const pinnedGroups = splitPinnedSidebarGroups({
     projects: input.projects,
@@ -46,29 +37,8 @@ export function buildSidebarProjection(input: {
         )
       : [];
 
-  const sections: SidebarShortcutSection[] = [];
-  if (!input.pinnedCollapsed) {
-    sections.push({ workspaces: pinnedGroups.pinnedChats });
-  }
-  if (input.groupMode === "status") {
-    sections.push(
-      ...statusGroups.map((group) => ({
-        workspaces: group.rows,
-        collapsed: input.collapsedStatusGroupKeys.has(group.bucket),
-      })),
-    );
-  } else {
-    sections.push(
-      ...pinnedGroups.unpinnedProjects.map((project) => ({
-        workspaces: project.workspaces,
-        collapsed: input.collapsedProjectKeys.has(project.projectKey),
-      })),
-    );
-  }
-
   return {
     pinnedGroups,
     statusGroups,
-    shortcutModel: buildSidebarShortcutSections({ sections }),
   };
 }

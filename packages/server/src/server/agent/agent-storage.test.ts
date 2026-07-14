@@ -6,6 +6,7 @@ import { promises as fs } from "node:fs";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { AgentStorage } from "./agent-storage.js";
+import { ControlledAgentStorageWriter } from "./test-utils/controlled-agent-storage-writer.js";
 import { buildConfigOverrides, buildSessionConfig } from "../persistence-hooks.js";
 import type { ManagedAgent } from "./agent-manager.js";
 import type {
@@ -190,6 +191,113 @@ describe("AgentStorage", () => {
     const [persisted] = await reloaded.list();
     expect(persisted.cwd).toBe("/tmp/project");
     expect(persisted.config?.extra?.claude).toMatchObject({ maxThinkingTokens: 1024 });
+  });
+
+  test("persists pin state without advancing agent activity timestamps", async () => {
+    const agent = createManagedAgent({
+      id: "agent-pinned",
+      cwd: "/tmp/pinned",
+      createdAt: new Date("2026-07-13T08:00:00.000Z"),
+      updatedAt: new Date("2026-07-13T08:30:00.000Z"),
+    });
+    await storage.applySnapshot(agent);
+    const before = await storage.get(agent.id);
+    await storage.setPinnedAt(agent.id, "2026-07-13T09:00:00.000Z");
+
+    const reloaded = new AgentStorage(storagePath, logger);
+    const persisted = await reloaded.get(agent.id);
+    expect(persisted).toMatchObject({
+      pinnedAt: "2026-07-13T09:00:00.000Z",
+      createdAt: before?.createdAt,
+      updatedAt: before?.updatedAt,
+      lastActivityAt: before?.lastActivityAt,
+    });
+
+    await storage.applySnapshot({
+      ...agent,
+      updatedAt: new Date("2026-07-13T10:00:00.000Z"),
+    });
+    expect((await storage.get(agent.id))?.pinnedAt).toBe("2026-07-13T09:00:00.000Z");
+  });
+
+  test("serializes concurrent pin and title mutations", async () => {
+    const agentId = "agent-concurrent-title";
+    await storage.applySnapshot(createManagedAgent({ id: agentId }));
+
+    await Promise.all([
+      storage.setPinnedAt(agentId, "2026-07-13T09:00:00.000Z"),
+      storage.setTitle(agentId, "Concurrent title"),
+    ]);
+
+    const persisted = await new AgentStorage(storagePath, logger).get(agentId);
+    expect(persisted).toMatchObject({
+      pinnedAt: "2026-07-13T09:00:00.000Z",
+      title: "Concurrent title",
+    });
+  });
+
+  test("serializes concurrent pin and snapshot mutations", async () => {
+    const agentId = "agent-concurrent-snapshot";
+    await storage.applySnapshot(createManagedAgent({ id: agentId, lifecycle: "idle" }));
+
+    await Promise.all([
+      storage.setPinnedAt(agentId, "2026-07-13T09:00:00.000Z"),
+      storage.applySnapshot(
+        createManagedAgent({
+          id: agentId,
+          lifecycle: "running",
+          updatedAt: new Date("2026-07-13T09:30:00.000Z"),
+        }),
+      ),
+    ]);
+
+    const persisted = await new AgentStorage(storagePath, logger).get(agentId);
+    expect(persisted).toMatchObject({
+      pinnedAt: "2026-07-13T09:00:00.000Z",
+      lastStatus: "running",
+      updatedAt: "2026-07-13T09:30:00.000Z",
+    });
+  });
+
+  test("serializes concurrent pin and atomic archive mutations", async () => {
+    const agentId = "agent-concurrent-archive";
+    await storage.applySnapshot(createManagedAgent({ id: agentId }));
+
+    await Promise.all([
+      storage.setPinnedAt(agentId, "2026-07-13T09:00:00.000Z"),
+      storage.update(agentId, (current) => ({
+        ...current,
+        archivedAt: "2026-07-13T09:30:00.000Z",
+      })),
+    ]);
+
+    const persisted = await new AgentStorage(storagePath, logger).get(agentId);
+    expect(persisted).toMatchObject({
+      pinnedAt: "2026-07-13T09:00:00.000Z",
+      archivedAt: "2026-07-13T09:30:00.000Z",
+    });
+  });
+
+  test("flush waits for a queued record mutation", async () => {
+    const agentId = "agent-flush-queued-mutation";
+    const writer = new ControlledAgentStorageWriter();
+    const controlledStorage = new AgentStorage(storagePath, logger, { recordWriter: writer });
+    await controlledStorage.applySnapshot(createManagedAgent({ id: agentId }));
+
+    const heldWrite = writer.holdNextWrite();
+    const pinPromise = controlledStorage.setPinnedAt(agentId, "2026-07-13T09:00:00.000Z");
+    await heldWrite.started;
+    let flushed = false;
+    const flushPromise = controlledStorage.flush().then(() => {
+      flushed = true;
+      return undefined;
+    });
+    await Promise.resolve();
+    expect(flushed).toBe(false);
+
+    heldWrite.release();
+    await Promise.all([pinPromise, flushPromise]);
+    expect((await controlledStorage.get(agentId))?.pinnedAt).toBe("2026-07-13T09:00:00.000Z");
   });
 
   test("applySnapshot stores and reloads featureValues when present", async () => {

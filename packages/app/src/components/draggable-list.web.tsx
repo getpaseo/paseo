@@ -30,8 +30,7 @@ const restrictToVerticalAxis: Modifier = ({ transform }) => ({
 const DND_MODIFIERS = [restrictToVerticalAxis];
 const POINTER_ACTIVATION_CONFIG = {
   defaultDistance: 6,
-  holdDelayMs: 250,
-  holdTolerance: 8,
+  handleDistance: 3,
 };
 
 interface SortableItemProps<T> {

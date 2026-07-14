@@ -64,6 +64,7 @@ const STORED_AGENT_SCHEMA = z.object({
   attentionTimestamp: z.string().nullable().optional(),
   internal: z.boolean().optional(),
   archivedAt: z.string().nullable().optional(),
+  pinnedAt: z.string().nullable().optional(),
 });
 
 export type SerializableAgentConfig = Pick<
@@ -82,6 +83,18 @@ export function parseStoredAgentRecord(value: unknown): StoredAgentRecord {
   return STORED_AGENT_SCHEMA.parse(value);
 }
 
+export interface AgentStorageRecordWriter {
+  write(filePath: string, record: StoredAgentRecord): Promise<void>;
+}
+
+const defaultRecordWriter: AgentStorageRecordWriter = {
+  write: writeJsonFileAtomic,
+};
+
+export interface AgentStorageOptions {
+  recordWriter?: AgentStorageRecordWriter;
+}
+
 export class AgentStorage {
   private cache: Map<string, StoredAgentRecord> = new Map();
   private pathById: Map<string, string> = new Map();
@@ -92,10 +105,13 @@ export class AgentStorage {
   private baseDir: string;
   private loadPromise: Promise<StoredAgentRecord[]> | null = null;
   private logger: Logger;
+  private readonly recordWriter: AgentStorageRecordWriter;
+  private readonly pinListeners = new Set<(agentId: string) => void>();
 
-  constructor(baseDir: string, logger: Logger) {
+  constructor(baseDir: string, logger: Logger, options: AgentStorageOptions = {}) {
     this.baseDir = baseDir;
     this.logger = logger.child({ module: "agent", component: "agent-storage" });
+    this.recordWriter = options.recordWriter ?? defaultRecordWriter;
   }
 
   async initialize(): Promise<void> {
@@ -114,29 +130,73 @@ export class AgentStorage {
 
   async upsert(record: StoredAgentRecord): Promise<void> {
     await this.load();
-    await this.queueRecordWrite(record);
+    const parsed = parseStoredAgentRecord(record);
+    await this.queueRecordOperation(parsed.id, async () => {
+      await this.writeRecord(parsed);
+    });
   }
 
-  private queueRecordWrite(record: StoredAgentRecord): Promise<void> {
-    const agentId = record.id;
+  async update(
+    agentId: string,
+    updateRecord: (existing: StoredAgentRecord) => StoredAgentRecord,
+  ): Promise<StoredAgentRecord> {
+    await this.load();
+    const next = await this.queueRecordOperation(agentId, async () => {
+      const existing = this.cache.get(agentId);
+      if (!existing) {
+        throw new Error(`Agent ${agentId} not found`);
+      }
+      const updated = parseStoredAgentRecord(updateRecord(existing));
+      if (updated.id !== agentId) {
+        throw new Error(`Agent update cannot change id from ${agentId} to ${updated.id}`);
+      }
+      await this.writeRecord(updated);
+      return updated;
+    });
+    if (!next) {
+      throw new Error(`Agent ${agentId} not found`);
+    }
+    return next;
+  }
+
+  async setPinnedAt(agentId: string, pinnedAt: string | null): Promise<StoredAgentRecord> {
+    const next = await this.update(agentId, (existing) => ({ ...existing, pinnedAt }));
+    for (const listener of this.pinListeners) {
+      listener(agentId);
+    }
+    return next;
+  }
+
+  subscribePinChanges(listener: (agentId: string) => void): () => void {
+    this.pinListeners.add(listener);
+    return () => this.pinListeners.delete(listener);
+  }
+
+  private queueRecordOperation<TResult>(
+    agentId: string,
+    operation: () => Promise<TResult>,
+    options?: { allowDeleting?: boolean },
+  ): Promise<TResult | undefined> {
     const prev = this.pendingWrites.get(agentId) ?? Promise.resolve();
-    const next = prev.then(async () => {
-      if (this.deleting.has(agentId)) {
-        return undefined;
-      }
-
-      await this.writeRecord(record);
-      return undefined;
+    let release: () => void = () => {};
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
     });
-
-    const tracked = next.finally(() => {
-      if (this.pendingWrites.get(agentId) === tracked) {
-        this.pendingWrites.delete(agentId);
+    this.pendingWrites.set(agentId, current);
+    return (async () => {
+      await prev.catch(() => undefined);
+      try {
+        if (this.deleting.has(agentId) && options?.allowDeleting !== true) {
+          return undefined;
+        }
+        return await operation();
+      } finally {
+        release();
+        if (this.pendingWrites.get(agentId) === current) {
+          this.pendingWrites.delete(agentId);
+        }
       }
-    });
-
-    this.pendingWrites.set(agentId, tracked);
-    return tracked;
+    })();
   }
 
   private async writeRecord(record: StoredAgentRecord): Promise<void> {
@@ -144,7 +204,7 @@ export class AgentStorage {
     const nextPath = this.buildRecordPath(record);
     const previousPath = this.pathById.get(agentId);
 
-    await writeJsonFileAtomic(nextPath, record);
+    await this.recordWriter.write(nextPath, record);
     this.addIndexedPath(agentId, nextPath);
 
     if (previousPath && previousPath !== nextPath) {
@@ -167,27 +227,32 @@ export class AgentStorage {
   async remove(agentId: string): Promise<void> {
     await this.load();
     this.beginDelete(agentId);
-    await (this.pendingWrites.get(agentId) ?? Promise.resolve());
-    const paths = Array.from(this.pathsById.get(agentId) ?? []);
-    await Promise.all(
-      paths.map(async (filePath) => {
-        try {
-          await fs.unlink(filePath);
-        } catch (error) {
-          const code = (error as NodeJS.ErrnoException).code;
-          if (code && code !== "ENOENT") {
-            this.logger.warn(
-              { err: error, agentId, filePath },
-              "Failed to remove agent record file",
-            );
-          }
-        }
-      }),
-    );
+    await this.queueRecordOperation(
+      agentId,
+      async () => {
+        const paths = Array.from(this.pathsById.get(agentId) ?? []);
+        await Promise.all(
+          paths.map(async (filePath) => {
+            try {
+              await fs.unlink(filePath);
+            } catch (error) {
+              const code = (error as NodeJS.ErrnoException).code;
+              if (code && code !== "ENOENT") {
+                this.logger.warn(
+                  { err: error, agentId, filePath },
+                  "Failed to remove agent record file",
+                );
+              }
+            }
+          }),
+        );
 
-    this.cache.delete(agentId);
-    this.pathById.delete(agentId);
-    this.pathsById.delete(agentId);
+        this.cache.delete(agentId);
+        this.pathById.delete(agentId);
+        this.pathsById.delete(agentId);
+      },
+      { allowDeleting: true },
+    );
   }
 
   async applySnapshot(
@@ -195,35 +260,32 @@ export class AgentStorage {
     options?: { title?: string | null; internal?: boolean },
   ): Promise<void> {
     await this.load();
-    await this.waitForPendingWrite(agent.id);
-    const existing = (await this.get(agent.id)) ?? null;
-    const hasTitleOverride =
-      options !== undefined && Object.prototype.hasOwnProperty.call(options, "title");
-    const hasInternalOverride =
-      options !== undefined && Object.prototype.hasOwnProperty.call(options, "internal");
-    const record = toStoredAgentRecord(agent, {
-      title: hasTitleOverride ? (options?.title ?? null) : (existing?.title ?? null),
-      createdAt: existing?.createdAt,
-      internal: hasInternalOverride ? options?.internal : (agent.internal ?? existing?.internal),
-    });
+    await this.queueRecordOperation(agent.id, async () => {
+      const existing = this.cache.get(agent.id) ?? null;
+      const hasTitleOverride =
+        options !== undefined && Object.prototype.hasOwnProperty.call(options, "title");
+      const hasInternalOverride =
+        options !== undefined && Object.prototype.hasOwnProperty.call(options, "internal");
+      const record = toStoredAgentRecord(agent, {
+        title: hasTitleOverride ? (options?.title ?? null) : (existing?.title ?? null),
+        createdAt: existing?.createdAt,
+        internal: hasInternalOverride ? options?.internal : (agent.internal ?? existing?.internal),
+      });
 
-    // Preserve soft-delete/archive status across snapshot flushes.
-    // `archivedAt` is not part of the ManagedAgent snapshot, so a naive projection
-    // would wipe it during normal persistence (including on daemon restart).
-    if (existing && existing.archivedAt !== undefined) {
-      record.archivedAt = existing.archivedAt;
-    }
-    await this.upsert(record);
+      // Preserve soft-delete/archive and organization state across snapshot
+      // flushes. Neither field is owned by the ManagedAgent snapshot.
+      if (existing && existing.archivedAt !== undefined) {
+        record.archivedAt = existing.archivedAt;
+      }
+      if (existing && existing.pinnedAt !== undefined) {
+        record.pinnedAt = existing.pinnedAt;
+      }
+      await this.writeRecord(record);
+    });
   }
 
   async setTitle(agentId: string, title: string): Promise<void> {
-    await this.load();
-    await this.waitForPendingWrite(agentId);
-    const record = await this.get(agentId);
-    if (!record) {
-      throw new Error(`Agent ${agentId} not found`);
-    }
-    await this.upsert({ ...record, title });
+    await this.update(agentId, (record) => ({ ...record, title }));
   }
 
   async flush(): Promise<void> {
@@ -348,10 +410,6 @@ export class AgentStorage {
     if (paths.size === 0) {
       this.pathsById.delete(agentId);
     }
-  }
-
-  private async waitForPendingWrite(agentId: string): Promise<void> {
-    await (this.pendingWrites.get(agentId) ?? Promise.resolve()).catch(() => undefined);
   }
 }
 
