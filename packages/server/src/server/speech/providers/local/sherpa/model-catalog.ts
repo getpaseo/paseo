@@ -42,7 +42,33 @@ export const SHERPA_ONNX_MODEL_CATALOG = {
     requiredFiles: ["encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt"],
     description:
       "NVIDIA Parakeet TDT v3 (offline NeMo transducer, 25 European languages, auto-detected).",
-    supportedLanguages: ["en", "de", "fr", "es", "it", "pt", "nl", "pl", "ru", "uk", "cs", "sk", "ro", "hu", "bg", "hr", "sr", "sl", "lt", "lv", "et", "fi", "sv", "da", "no"],
+    supportedLanguages: [
+      "en",
+      "de",
+      "fr",
+      "es",
+      "it",
+      "pt",
+      "nl",
+      "pl",
+      "ru",
+      "uk",
+      "cs",
+      "sk",
+      "ro",
+      "hu",
+      "bg",
+      "hr",
+      "sr",
+      "sl",
+      "lt",
+      "lv",
+      "et",
+      "fi",
+      "sv",
+      "da",
+      "no",
+    ],
   },
   "sense-voice-zh-en-ja-ko-yue-int8": {
     kind: "stt-offline",
@@ -62,8 +88,7 @@ export const SHERPA_ONNX_MODEL_CATALOG = {
       "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-paraformer-zh-2024-03-09.tar.bz2",
     extractedDir: "sherpa-onnx-paraformer-zh-2024-03-09",
     requiredFiles: ["model.int8.onnx", "tokens.txt"],
-    description:
-      "Paraformer Chinese+English (offline, higher accuracy for Mandarin and dialects).",
+    description: "Paraformer Chinese+English (offline, higher accuracy for Mandarin and dialects).",
     supportedLanguages: ["zh", "en"],
   },
   "kokoro-en-v0_19": {
@@ -196,7 +221,7 @@ export function resolveDefaultSttModelForLanguage(language: string): LocalSttMod
   }
   // Prefer a model that explicitly declares itself as the default for this language.
   const explicit = LOCAL_STT_MODEL_IDS.find((id) => {
-    const entry = SHERPA_ONNX_MODEL_CATALOG[id];
+    const entry: SherpaOnnxCatalogEntry = SHERPA_ONNX_MODEL_CATALOG[id];
     return (entry.defaultForLanguages as readonly string[] | undefined)?.includes(lang);
   });
   if (explicit) return explicit;
@@ -217,7 +242,7 @@ export function resolveDefaultTtsModelForLanguage(language: string): LocalTtsMod
   }
   // Prefer a model that explicitly declares itself as the default for this language.
   const explicit = LOCAL_TTS_MODEL_IDS.find((id) => {
-    const entry = SHERPA_ONNX_MODEL_CATALOG[id];
+    const entry: SherpaOnnxCatalogEntry = SHERPA_ONNX_MODEL_CATALOG[id];
     return (entry.defaultForLanguages as readonly string[] | undefined)?.includes(lang);
   });
   if (explicit) return explicit;
