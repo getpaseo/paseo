@@ -55,9 +55,10 @@ export const fr: TranslationResources = {
       close: "Fermer le menu",
     },
     commandCenter: {
-      placeholder: "Tapez une commande ou recherchez des agents...",
+      placeholder: "Rechercher des commandes, espaces de travail et agents...",
       noMatches: "Aucune correspondance",
       actions: "Actes",
+      workspaces: "Espaces de travail",
       agents: "Agents",
       newAgent: "Nouvel agent",
       openProject: "Projet ouvert",

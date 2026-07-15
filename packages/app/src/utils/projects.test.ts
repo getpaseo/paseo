@@ -32,6 +32,7 @@ function workspace(input: {
   projectId?: string;
   projectName?: string;
   remoteUrl?: string | null;
+  currentBranch?: string;
 }): WorkspaceDescriptor {
   return {
     id: input.id,
@@ -48,7 +49,7 @@ function workspace(input: {
     diffStat: null,
     scripts: [],
     gitRuntime: {
-      currentBranch: "main",
+      currentBranch: input.currentBranch ?? "main",
       remoteUrl: input.remoteUrl ?? input.project?.checkout.remoteUrl ?? null,
       isPaseoOwnedWorktree: false,
       isDirty: false,
@@ -62,6 +63,27 @@ function workspace(input: {
 }
 
 describe("buildProjects", () => {
+  it("normalizes detached and blank branches out of workspace summaries", () => {
+    const result = buildProjects({
+      hosts: [
+        {
+          serverId: "local",
+          serverName: "Local",
+          isOnline: true,
+          workspaces: [
+            workspace({ id: "detached", repoRoot: "/repo/app", currentBranch: "HEAD" }),
+            workspace({ id: "blank", repoRoot: "/repo/app", currentBranch: "  " }),
+          ],
+        },
+      ],
+    });
+
+    expect(result.projects[0]?.hosts[0]?.workspaces).toMatchObject([
+      { id: "detached", currentBranch: null },
+      { id: "blank", currentBranch: null },
+    ]);
+  });
+
   it("groups two daemons with the same GitHub project key into one project with one host entry per daemon", () => {
     const result = buildProjects({
       hosts: [

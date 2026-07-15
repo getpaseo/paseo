@@ -54,9 +54,10 @@ export const zhCN: TranslationResources = {
       close: "关闭菜单",
     },
     commandCenter: {
-      placeholder: "输入命令或搜索 Agent...",
+      placeholder: "搜索命令、工作区和 Agent...",
       noMatches: "没有匹配项",
       actions: "操作",
+      workspaces: "工作区",
       agents: "Agents",
       newAgent: "新建 Agent",
       openProject: "打开项目",

@@ -54,9 +54,10 @@ export const ru: TranslationResources = {
       close: "Закрыть меню",
     },
     commandCenter: {
-      placeholder: "Введите команду или найдите агентов...",
+      placeholder: "Поиск команд, рабочих пространств и агентов...",
       noMatches: "Нет совпадений",
       actions: "Действия",
+      workspaces: "Рабочие пространства",
       agents: "Агенты",
       newAgent: "Новый агент",
       openProject: "Открыть проект",

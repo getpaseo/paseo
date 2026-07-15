@@ -54,9 +54,10 @@ export const ar: TranslationResources = {
       close: "إغلاق القائمة",
     },
     commandCenter: {
-      placeholder: "اكتب أمرًا أو وكلاء بحث...",
+      placeholder: "ابحث في الأوامر ومساحات العمل والوكلاء...",
       noMatches: "لا توجد مباريات",
       actions: "الإجراءات",
+      workspaces: "مساحات العمل",
       agents: "الوكلاء",
       newAgent: "وكيل جديد",
       openProject: "مشروع مفتوح",

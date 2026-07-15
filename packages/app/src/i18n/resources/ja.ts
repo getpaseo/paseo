@@ -54,9 +54,10 @@ export const ja: TranslationResources = {
       close: "メニューを閉じる",
     },
     commandCenter: {
-      placeholder: "コマンドを入力またはエージェントを検索...",
+      placeholder: "コマンド、ワークスペース、エージェントを検索...",
       noMatches: "一致なし",
       actions: "アクション",
+      workspaces: "ワークスペース",
       agents: "エージェント",
       newAgent: "新しいエージェント",
       openProject: "プロジェクトを開く",

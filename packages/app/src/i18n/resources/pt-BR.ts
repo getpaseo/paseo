@@ -54,9 +54,10 @@ export const ptBR: TranslationResources = {
       close: "Fechar menu",
     },
     commandCenter: {
-      placeholder: "Digite um comando ou busque agentes...",
+      placeholder: "Buscar comandos, espaços de trabalho e agentes...",
       noMatches: "Nenhuma correspondência",
       actions: "Ações",
+      workspaces: "Espaços de trabalho",
       agents: "Agentes",
       newAgent: "Novo agente",
       openProject: "Abrir projeto",
