@@ -15,13 +15,18 @@ import {
   setNewDirectoryName,
   type AddProjectHost,
 } from "./model";
-import { buildAddProjectMethods, buildCloneLocationOptions } from "./options";
+import {
+  buildAddProjectMethods,
+  buildCloneLocationOptions,
+  buildManualGithubRepositoryChoices,
+} from "./options";
 
 const HOST: AddProjectHost = {
   serverId: "host-1",
   label: "Local",
   canAddProject: true,
   canBrowse: true,
+  canCloneGithubRepositories: true,
   canSearchGithubRepositories: true,
   canCreateDirectory: true,
 };
@@ -110,6 +115,7 @@ describe("Add Project options", () => {
       buildAddProjectMethods({
         ...HOST,
         canBrowse: false,
+        canCloneGithubRepositories: false,
         canSearchGithubRepositories: false,
         canCreateDirectory: false,
       }),
@@ -122,7 +128,7 @@ describe("Add Project options", () => {
       {
         id: "github",
         label: "Clone from GitHub",
-        description: "Update this host to search GitHub",
+        description: "Update this host to clone GitHub repositories",
         disabled: true,
       },
       {
@@ -132,6 +138,21 @@ describe("Add Project options", () => {
         disabled: true,
       },
     ]);
+  });
+
+  it("offers manual URL and protocol-specific owner/repo clone choices", () => {
+    expect(buildManualGithubRepositoryChoices("git@github.com:getpaseo/paseo.git")).toEqual([
+      expect.objectContaining({
+        id: "manual:git@github.com:getpaseo/paseo.git",
+        nameWithOwner: "getpaseo/paseo",
+        cloneUrl: "git@github.com:getpaseo/paseo.git",
+      }),
+    ]);
+    expect(buildManualGithubRepositoryChoices("getpaseo/paseo")).toEqual([
+      expect.objectContaining({ cloneProtocol: "https", cloneUrl: "getpaseo/paseo" }),
+      expect.objectContaining({ cloneProtocol: "ssh", cloneUrl: "getpaseo/paseo" }),
+    ]);
+    expect(buildManualGithubRepositoryChoices("paseo")).toEqual([]);
   });
 
   it("shows final clone paths while retaining parent paths as values", () => {

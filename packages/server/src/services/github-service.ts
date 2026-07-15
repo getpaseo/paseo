@@ -1410,38 +1410,42 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
       const limit = input.limit ?? 20;
       const query = input.query.trim();
       if (query.length === 0) {
-        const stdout = await run(
+        const [stdout, cloneProtocol] = await Promise.all([
+          run(
+            [
+              "repo",
+              "list",
+              "--json",
+              "id,name,nameWithOwner,description,visibility,updatedAt,sshUrl,url",
+              "--limit",
+              String(limit),
+            ],
+            { cwd: input.cwd },
+          ),
+          resolveConfiguredCloneProtocol(input.cwd, run),
+        ]);
+        return parseRepositoryList(stdout, cloneProtocol);
+      }
+
+      const [stdout, cloneProtocol] = await Promise.all([
+        run(
           [
-            "repo",
-            "list",
+            "search",
+            "repos",
+            query,
             "--json",
-            "id,name,nameWithOwner,description,visibility,updatedAt,sshUrl,url",
+            "id,name,fullName,description,visibility,updatedAt,url",
+            "--sort",
+            "updated",
+            "--order",
+            "desc",
             "--limit",
             String(limit),
           ],
           { cwd: input.cwd },
-        );
-        const cloneProtocol = await resolveConfiguredCloneProtocol(input.cwd, run);
-        return parseRepositoryList(stdout, cloneProtocol);
-      }
-
-      const stdout = await run(
-        [
-          "search",
-          "repos",
-          query,
-          "--json",
-          "id,name,fullName,description,visibility,updatedAt,url",
-          "--sort",
-          "updated",
-          "--order",
-          "desc",
-          "--limit",
-          String(limit),
-        ],
-        { cwd: input.cwd },
-      );
-      const cloneProtocol = await resolveConfiguredCloneProtocol(input.cwd, run);
+        ),
+        resolveConfiguredCloneProtocol(input.cwd, run),
+      ]);
       return parseRepositorySearch(stdout, cloneProtocol);
     },
 
@@ -2257,7 +2261,9 @@ async function resolveConfiguredCloneProtocol(
       await run(["config", "get", "git_protocol", "--host", "github.com"], {
         cwd,
       })
-    ).toLowerCase();
+    )
+      .trim()
+      .toLowerCase();
     return protocol === "ssh" ? "ssh" : "https";
   } catch (error) {
     if (error instanceof GitHubCommandError) {
@@ -2310,13 +2316,13 @@ function normalizeRepositorySummary(repository: {
     throw new Error(`GitHub repository is missing owner identity: ${nameWithOwner}`);
   }
   return {
-    id: String(repository.id),
-    name: repository.name,
+    id: String(repository.id).trim(),
+    name: repository.name.trim(),
     nameWithOwner,
     description: repository.description ?? null,
     visibility: normalizeRepositoryVisibility(repository.visibility),
     updatedAt: repository.updatedAt,
-    cloneUrl: repository.cloneUrl,
+    cloneUrl: repository.cloneUrl.trim(),
   };
 }
 

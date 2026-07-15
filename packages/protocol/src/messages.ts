@@ -1807,12 +1807,12 @@ export const ProjectCreateDirectoryRequestSchema = z.object({
 
 export const GithubRepositorySchema = z.object({
   id: z.string().min(1),
-  name: z.string().trim().min(1),
-  nameWithOwner: z.string().trim().min(MIN_REPOSITORY_PATH_LENGTH),
+  name: z.string().min(1),
+  nameWithOwner: z.string().min(MIN_REPOSITORY_PATH_LENGTH),
   description: z.string().nullable(),
   visibility: z.enum(["public", "private", "internal"]),
   updatedAt: z.string(),
-  cloneUrl: z.string().trim().min(MIN_REPOSITORY_PATH_LENGTH),
+  cloneUrl: z.string().min(MIN_REPOSITORY_PATH_LENGTH),
 });
 
 export const WorkspaceGithubSearchRepositoriesRequestSchema = z.object({
@@ -2983,7 +2983,9 @@ export const ProjectCreateDirectoryResponseSchema = z.object({
     directoryPath: z.string().nullable(),
     project: WorkspaceProjectDescriptorPayloadSchema.nullable(),
     error: z.string().nullable(),
-    errorCode: ProjectCreateDirectoryErrorCodeSchema.nullable(),
+    // Error codes are open-ended on the wire so older clients can still parse
+    // responses after a newer daemon learns another failure reason.
+    errorCode: z.string().nullable(),
   }),
 });
 

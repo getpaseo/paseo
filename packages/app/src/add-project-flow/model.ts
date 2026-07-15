@@ -3,6 +3,7 @@ export interface AddProjectHost {
   label: string;
   canAddProject: boolean;
   canBrowse: boolean;
+  canCloneGithubRepositories: boolean;
   canSearchGithubRepositories: boolean;
   canCreateDirectory: boolean;
 }
@@ -11,6 +12,7 @@ export interface GithubRepositoryChoice {
   id: string;
   nameWithOwner: string;
   cloneUrl: string;
+  cloneProtocol?: "https" | "ssh";
   description: string | null;
   visibility: string | null;
   updatedAt: string | null;

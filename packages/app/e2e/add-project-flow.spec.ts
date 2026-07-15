@@ -253,6 +253,26 @@ test.describe("Add Project command-center flow", () => {
     await expect(addProjectFlowMethod(page, "new-directory")).toContainText("New directory");
   });
 
+  test("a complete repository URL remains selectable without a GitHub search result", async ({
+    page,
+  }) => {
+    await gotoAppShell(page);
+    await openAddProjectFlow(page);
+    await chooseAddProjectMethod(page, "github");
+
+    const remote = "https://github.invalid/acme/manual.git";
+    await addProjectFlowInput(page).fill(remote);
+    await expect(addProjectFlow(page).getByText("manual", { exact: true })).toBeVisible();
+    await page.keyboard.press("Enter");
+
+    await expectAddProjectPage(page, "github-location");
+    await expect(addProjectFlow(page).getByTestId("add-project-flow-title")).toContainText(
+      "manual",
+    );
+    await addProjectFlowBack(page).click();
+    await expect(addProjectFlowInput(page)).toHaveValue(remote);
+  });
+
   test("New directory validates the name, restores parent and name state, then creates a Project", async ({
     page,
   }) => {

@@ -26,17 +26,17 @@ describe("GitHub repository search", () => {
     const runner = createRunner([
       JSON.stringify([
         {
-          id: "R_recent",
-          name: "paseo",
-          nameWithOwner: "getpaseo/paseo",
+          id: " R_recent ",
+          name: " paseo ",
+          nameWithOwner: " getpaseo/paseo ",
           description: null,
           visibility: "PUBLIC",
           updatedAt: "2026-07-15T12:00:00Z",
-          sshUrl: "git@github.com:getpaseo/paseo.git",
+          sshUrl: " git@github.com:getpaseo/paseo.git ",
           url: "https://github.com/getpaseo/paseo",
         },
       ]),
-      "ssh",
+      "ssh\n",
     ]);
     const service = createGitHubService({
       runner: runner.runner,

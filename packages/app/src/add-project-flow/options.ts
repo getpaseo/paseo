@@ -1,4 +1,9 @@
-import type { AddProjectHost } from "./model";
+import {
+  isCompleteGitRemote,
+  parseGitHubRemoteUrl,
+  parseGitRemoteLocation,
+} from "@getpaseo/protocol/git-remote";
+import type { AddProjectHost, GithubRepositoryChoice } from "./model";
 
 export type AddProjectMethodId = "directory-search" | "browse" | "github" | "new-directory";
 
@@ -46,10 +51,8 @@ export function buildAddProjectMethods(host: AddProjectHost): AddProjectMethodOp
   options.push({
     id: "github",
     label: "Clone from GitHub",
-    description: host.canSearchGithubRepositories
-      ? "Search projects available to your GitHub account"
-      : "Update this host to search GitHub",
-    disabled: !host.canSearchGithubRepositories,
+    description: githubMethodDescription(host),
+    disabled: !host.canCloneGithubRepositories,
   });
   options.push({
     id: "new-directory",
@@ -62,10 +65,54 @@ export function buildAddProjectMethods(host: AddProjectHost): AddProjectMethodOp
   return options;
 }
 
+function githubMethodDescription(host: AddProjectHost): string {
+  if (!host.canCloneGithubRepositories) {
+    return "Update this host to clone GitHub repositories";
+  }
+  if (host.canSearchGithubRepositories) {
+    return "Search projects available to your GitHub account";
+  }
+  return "Enter a GitHub URL or owner/repo";
+}
+
 export function pathBaseName(path: string): string {
   const trimmed = path.replace(/[\\/]+$/, "");
   const parts = trimmed.split(/[\\/]/);
   return parts[parts.length - 1] ?? trimmed;
+}
+
+export function buildManualGithubRepositoryChoices(query: string): GithubRepositoryChoice[] {
+  const repo = query.trim();
+  if (!repo) return [];
+
+  if (isCompleteGitRemote(repo)) {
+    const identity = parseGitHubRemoteUrl(repo);
+    const location = parseGitRemoteLocation(repo);
+    const remoteName = location ? pathBaseName(location.path).replace(/\.git$/u, "") : repo;
+    return [
+      {
+        id: `manual:${repo}`,
+        nameWithOwner: identity?.repo ?? remoteName,
+        cloneUrl: repo,
+        description: "Clone this repository URL",
+        visibility: null,
+        updatedAt: null,
+      },
+    ];
+  }
+
+  const shorthand = repo.match(/^([^\s/]+)\/([^\s/]+)$/u);
+  if (!shorthand) return [];
+  const nameWithOwner = `${shorthand[1]}/${shorthand[2]}`;
+  return (["https", "ssh"] as const).map((cloneProtocol) => ({
+    id: `manual:${cloneProtocol}:${nameWithOwner}`,
+    nameWithOwner,
+    cloneUrl: nameWithOwner,
+    cloneProtocol,
+    description: `Clone owner/repo via ${cloneProtocol.toUpperCase()}`,
+    visibility: null,
+    updatedAt: null,
+  }));
 }
 
 export function parentDirectory(path: string): string | null {

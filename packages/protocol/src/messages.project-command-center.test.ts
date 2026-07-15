@@ -119,6 +119,44 @@ describe("project command-center protocol", () => {
     ).toBe(true);
   });
 
+  it("accepts future project directory error codes without transforming wire values", () => {
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "project.create_directory.response",
+        payload: {
+          requestId: "req-create",
+          directoryPath: null,
+          project: null,
+          error: "A newer failure",
+          errorCode: "future_failure_reason",
+        },
+      }).payload.errorCode,
+    ).toBe("future_failure_reason");
+
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "workspace.github.search_repositories.response",
+        payload: {
+          status: "success",
+          requestId: "req-search",
+          repositories: [
+            {
+              id: "repo",
+              name: " paseo ",
+              nameWithOwner: " getpaseo/paseo ",
+              description: null,
+              visibility: "public",
+              updatedAt: "2026-07-15T10:00:00Z",
+              cloneUrl: " https://github.com/getpaseo/paseo ",
+            },
+          ],
+          available: true,
+          error: null,
+        },
+      }).payload.repositories[0]?.name,
+    ).toBe(" paseo ");
+  });
+
   it("keeps both feature flags optional for older server_info payloads", () => {
     const parsed = parseServerInfoStatusPayload({
       status: "server_info",

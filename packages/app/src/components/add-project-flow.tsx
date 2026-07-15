@@ -40,10 +40,12 @@ import {
   type AddProjectFlowState,
   type AddProjectHost,
   type AddProjectPage,
+  type GithubRepositoryChoice,
 } from "@/add-project-flow/model";
 import {
   buildAddProjectMethods,
   buildCloneLocationOptions,
+  buildManualGithubRepositoryChoices,
   buildSuggestedParentDirectories,
   filterAddProjectHosts,
   joinDirectoryPath,
@@ -160,7 +162,7 @@ function progressText(page: AddProjectPage): string {
 
 function emptyText(page: AddProjectPage): string {
   if (page.kind === "host") return "No connected hosts";
-  if (page.kind === "github-search") return "No GitHub repositories found";
+  if (page.kind === "github-search") return "Enter a GitHub URL or owner/repo";
   return "No matching options";
 }
 
@@ -175,6 +177,7 @@ interface QueryErrorInput {
 function queryErrorText(input: QueryErrorInput): string | null {
   if (input.searchesDirectories && input.directoryFailed) return "Unable to search directories";
   if (input.githubFailed) return "Unable to search GitHub repositories";
+  if (input.githubError) return input.githubError;
   if (input.githubAvailable === false) return input.githubError ?? "GitHub search is unavailable";
   return null;
 }
@@ -211,7 +214,7 @@ function pagePlaceholder(page: AddProjectPage): string {
     case "directory-search":
       return "Search directories or enter a path...";
     case "github-search":
-      return "Search GitHub repositories...";
+      return "Search or enter a GitHub repository...";
     case "github-location":
     case "new-directory-parent":
       return "Search parent directories or enter a path...";
@@ -293,6 +296,8 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
   const hostIds = useMemo(() => hosts.map((host) => host.serverId), [hosts]);
   const connectionStatuses = useHostRuntimeConnectionStatuses(hostIds);
   const projectAddByHost = useHostFeatureMap(hostIds, "projectAdd");
+  // COMPAT(workspaceGithubClone): added in v0.1.108, remove gate after 2027-01-15.
+  const githubCloneByHost = useHostFeatureMap(hostIds, "workspaceGithubClone");
   // COMPAT(workspaceGithubRepositorySearch): added in v0.1.108, remove gate after 2027-01-15.
   const githubSearchByHost = useHostFeatureMap(hostIds, "workspaceGithubRepositorySearch");
   // COMPAT(projectCreateDirectory): added in v0.1.108, remove gate after 2027-01-15.
@@ -309,6 +314,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
             label: host.label,
             canAddProject,
             canBrowse: canAddProject && getIsElectronRuntime() && localServerId === host.serverId,
+            canCloneGithubRepositories: githubCloneByHost.get(host.serverId) === true,
             canSearchGithubRepositories: githubSearchByHost.get(host.serverId) === true,
             canCreateDirectory: createDirectoryByHost.get(host.serverId) === true,
           },
@@ -317,6 +323,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     [
       connectionStatuses,
       createDirectoryByHost,
+      githubCloneByHost,
       githubSearchByHost,
       hosts,
       localServerId,
@@ -394,7 +401,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
       const payload = await client.searchGithubRepositories({ query: debouncedQuery, limit: 30 });
       return { query: debouncedQuery, payload };
     },
-    enabled: Boolean(client && page.kind === "github-search"),
+    enabled: Boolean(client && page.kind === "github-search" && host?.canSearchGithubRepositories),
     dataShape: "value",
     retry: false,
     staleTimeMs: 15_000,
@@ -494,7 +501,11 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
         setPageStatus(current, "github-location", { isSubmitting: true, error: null }),
       );
       try {
-        const opened = await openGithubRepo(locationPage.repository.cloneUrl, parentPath);
+        const opened = await openGithubRepo(
+          locationPage.repository.cloneUrl,
+          parentPath,
+          locationPage.repository.cloneProtocol,
+        );
         if (opened) {
           lastCloneParentByHost.set(locationPage.hostId, parentPath);
           onClose();
@@ -581,9 +592,22 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     }
     if (page.kind === "github-search") {
       const search = githubQuery.data?.query === page.query ? githubQuery.data.payload : null;
-      return (search?.repositories ?? []).map((repository) => ({
+      const repositories = search?.repositories ?? [];
+      const normalizedQuery = page.query.trim().toLowerCase();
+      const hasExactSearchResult = repositories.some(
+        (repository) =>
+          repository.nameWithOwner.toLowerCase() === normalizedQuery ||
+          repository.cloneUrl.toLowerCase() === normalizedQuery,
+      );
+      const manualRepositories = hasExactSearchResult
+        ? []
+        : buildManualGithubRepositoryChoices(page.query);
+      const repositoryChoices: GithubRepositoryChoice[] = [...manualRepositories, ...repositories];
+      return repositoryChoices.map((repository) => ({
         id: repository.id,
-        title: repository.nameWithOwner,
+        title: repository.cloneProtocol
+          ? `${repository.nameWithOwner} via ${repository.cloneProtocol.toUpperCase()}`
+          : repository.nameWithOwner,
         subtitle: repository.description ?? repository.visibility,
         icon: Github,
         testID: `add-project-flow-repository-${repository.id}`,
@@ -754,7 +778,9 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
       : null;
   const loading =
     (searchesDirectories && (query !== debouncedQuery || directoryQuery.isFetching)) ||
-    (page.kind === "github-search" && (query !== debouncedQuery || githubQuery.isFetching));
+    (page.kind === "github-search" &&
+      host?.canSearchGithubRepositories === true &&
+      (query !== debouncedQuery || githubQuery.isFetching));
   const queryError = queryErrorText({
     searchesDirectories,
     directoryFailed: directoryQuery.isError,
@@ -829,7 +855,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
               </Text>
             ) : null}
             {!isSubmitting && queryError ? (
-              <Text style={styles.errorText} testID="add-project-flow-error">
+              <Text style={styles.errorText} testID="add-project-flow-query-error">
                 {queryError}
               </Text>
             ) : null}
@@ -838,7 +864,9 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
                 Loading...
               </Text>
             ) : null}
-            {!isSubmitting && !loading && !queryError
+            {!isSubmitting &&
+            (!loading || page.kind === "github-search") &&
+            (!queryError || page.kind === "github-search")
               ? rows.map((option, index) => (
                   <FlowRow key={option.id} option={option} active={index === activeIndex} />
                 ))
