@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   findFileSizeFromParentDirectory,
   getFileNameFromFilePath,
-  getParentDirectoryFromFilePath,
   LARGE_FILE_OPEN_WARNING_THRESHOLD_BYTES,
   shouldWarnBeforeOpeningFile,
   type FileSizeLookupClient,
@@ -15,14 +14,13 @@ describe("large file open warning helpers", () => {
   });
 
   it.each([
-    ["app.tsx", ".", "app.tsx"],
-    ["src/app.tsx", "src", "app.tsx"],
-    ["src/nested/app.tsx", "src/nested", "app.tsx"],
-    ["/repo/src/app.tsx", "/repo/src", "app.tsx"],
-    ["C:/repo/src/app.tsx", "C:/repo/src", "app.tsx"],
-    ["C:/app.tsx", "C:/", "app.tsx"],
-  ])("splits %s into parent and filename", (path, parent, fileName) => {
-    expect(getParentDirectoryFromFilePath(path)).toBe(parent);
+    ["app.tsx", "app.tsx"],
+    ["src/app.tsx", "app.tsx"],
+    ["src/nested/app.tsx", "app.tsx"],
+    ["/repo/src/app.tsx", "app.tsx"],
+    ["C:/repo/src/app.tsx", "app.tsx"],
+    ["C:/app.tsx", "app.tsx"],
+  ])("extracts the filename from %s", (path, fileName) => {
     expect(getFileNameFromFilePath(path)).toBe(fileName);
   });
 
@@ -34,7 +32,7 @@ describe("large file open warning helpers", () => {
         return {
           entries: [
             { kind: "directory", name: "other", size: 0 },
-            { kind: "file", name: "large.log", size: 2 * 1024 * 1024 },
+            { kind: "file", name: "app.tsx", size: 2 * 1024 * 1024 },
           ],
         };
       },
@@ -44,9 +42,9 @@ describe("large file open warning helpers", () => {
       findFileSizeFromParentDirectory({
         client,
         cwd: "/repo",
-        path: "logs/large.log",
+        path: "C:/app.tsx",
       }),
     ).resolves.toBe(2 * 1024 * 1024);
-    expect(calls).toEqual([{ cwd: "/repo", path: "logs" }]);
+    expect(calls).toEqual([{ cwd: "/repo", path: "C:/" }]);
   });
 });

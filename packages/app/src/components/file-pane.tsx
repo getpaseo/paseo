@@ -411,10 +411,12 @@ export function FilePane({
   serverId,
   workspaceRoot,
   location,
+  onLargeFileOpenCancel,
 }: {
   serverId: string;
   workspaceRoot: string;
   location: WorkspaceFileLocation;
+  onLargeFileOpenCancel: () => void;
 }) {
   const { t } = useTranslation();
   const isMobile = useIsCompactFormFactor();
@@ -452,6 +454,7 @@ export function FilePane({
           file: null as ExplorerFile | null,
           imageAttachment: null,
           error: t("workspace.terminal.hostDisconnected"),
+          cancelled: false,
         };
       }
       try {
@@ -469,7 +472,8 @@ export function FilePane({
           },
         });
         if (!confirmed) {
-          return { file: null, imageAttachment: null, error: null };
+          onLargeFileOpenCancel();
+          return { file: null, imageAttachment: null, error: null, cancelled: true };
         }
 
         const file = await client.readFile(readTarget.cwd, readTarget.path);
@@ -478,16 +482,18 @@ export function FilePane({
           file: preview.file,
           imageAttachment: preview.imageAttachment,
           error: null,
+          cancelled: false,
         };
       } catch (error) {
         return {
           file: null,
           imageAttachment: null,
           error: error instanceof Error ? error.message : t("panels.file.failedToLoad"),
+          cancelled: false,
         };
       }
     },
-    staleTime: 5_000,
+    staleTime: (fileQuery) => (fileQuery.state.data?.cancelled ? 0 : 5_000),
     refetchOnMount: true,
   });
   const imagePreviewUri = useAttachmentPreviewUrl(query.data?.imageAttachment ?? null);

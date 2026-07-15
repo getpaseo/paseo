@@ -35,7 +35,7 @@ export function getFileNameFromFilePath(filePath: string): string {
   return slashIndex >= 0 ? normalized.slice(slashIndex + 1) : normalized;
 }
 
-export function getParentDirectoryFromFilePath(filePath: string): string {
+function getParentDirectoryFromFilePath(filePath: string): string {
   const normalized = trimTrailingSeparators(filePath.replace(/\\/g, "/"));
   const slashIndex = normalized.lastIndexOf("/");
   if (slashIndex < 0) {
