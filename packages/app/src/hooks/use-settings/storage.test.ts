@@ -42,6 +42,18 @@ describe("loadAppSettingsFromStorage", () => {
     expect(result.theme).toBe("auto");
   });
 
+  it("loads the persisted Solarized Teal theme", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ theme: "solarized" }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.theme).toBe("solarized");
+  });
+
   it("seeds storage with the client defaults when nothing is persisted", async () => {
     const deps = makeDeps();
 

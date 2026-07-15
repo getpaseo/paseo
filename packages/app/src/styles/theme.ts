@@ -107,7 +107,7 @@ export const baseColors = {
   },
 } as const;
 
-export type ThemeName = "light" | "dark" | "zinc" | "midnight" | "claude" | "ghostty";
+export type ThemeName = "light" | "dark" | "zinc" | "midnight" | "claude" | "ghostty" | "solarized";
 
 // Diff stat colors — light uses muted tones, dark uses the brighter palette values
 const lightDiffColors = {
@@ -425,6 +425,74 @@ const ghosttyDarkColors = buildDarkSemanticColors({
   destructive: "#c44a55", // red with slight cool lean against the slate-blue surfaces
 });
 
+// Solarized Teal — VS Code Solarized Dark structure with brighter prose for
+// long agent timelines. The terminal keeps the canonical Solarized ANSI set.
+const solarizedDarkColors = {
+  ...buildDarkSemanticColors({
+    surface0: "#002b36",
+    surface1: "#073642",
+    surface2: "#0a3b45",
+    surface3: "#0a4548",
+    // surface4 is the composer placeholder token, so it must remain legible.
+    surface4: "#93a1a1",
+    surfaceDiffEmpty: "#012631",
+    surfaceSidebar: "#00212b",
+    surfaceSidebarHover: "#0a4c52",
+    foregroundMuted: "#93a1a1",
+    foregroundExtraMuted: "#586e75",
+    scrollbarHandle: "#586e75",
+    border: "#164852",
+    borderAccent: "#586e7566",
+    accent: "#2aa198",
+    accentBright: "#55b8d8",
+    accentForeground: "#002b36",
+    destructive: "#dc322f",
+  }),
+  surfaceWorkspace: "#002b36",
+  foreground: "#c9d6d3",
+  popoverForeground: "#c9d6d3",
+  primary: "#c9d6d3",
+  primaryForeground: "#002b36",
+  secondaryForeground: "#c9d6d3",
+  mutedForeground: "#93a1a1",
+  ring: "#2aa19899",
+  destructiveForeground: "#ffffff",
+  success: "#859900",
+  successForeground: "#002b36",
+  diffAddition: "#859900",
+  diffDeletion: "#dc322f",
+  // Brighter semantic variants keep 12px status text at WCAG AA contrast on
+  // elevated teal surfaces. Terminal ANSI colors remain canonical below.
+  statusSuccess: "#9fb900",
+  statusDanger: "#ff746d",
+  statusWarning: "#d5a800",
+  statusMerged: "#9b9fe5",
+  terminal: {
+    background: "#002b36",
+    foreground: "#e0e9e6",
+    cursor: "#2aa198",
+    cursorAccent: "#002b36",
+    selectionBackground: "#274642",
+    selectionForeground: "#e0e9e6",
+    black: "#073642",
+    red: "#dc322f",
+    green: "#859900",
+    yellow: "#b58900",
+    blue: "#268bd2",
+    magenta: "#d33682",
+    cyan: "#2aa198",
+    white: "#eee8d5",
+    brightBlack: "#002b36",
+    brightRed: "#cb4b16",
+    brightGreen: "#586e75",
+    brightYellow: "#657b83",
+    brightBlue: "#839496",
+    brightMagenta: "#6c71c4",
+    brightCyan: "#93a1a1",
+    brightWhite: "#fdf6e3",
+  },
+};
+
 export const SPACING = {
   0: 0,
   1: 4,
@@ -558,7 +626,13 @@ const darkShadow = {
   },
 } as const;
 
-function buildDarkTheme(semanticColors: ReturnType<typeof buildDarkSemanticColors>) {
+type DarkSemanticColors = ReturnType<typeof buildDarkSemanticColors>;
+type DarkThemeColors = Omit<DarkSemanticColors, "terminal"> & {
+  // Theme variants can supply their own ANSI palette while keeping every key.
+  terminal: { [K in keyof DarkSemanticColors["terminal"]]: string };
+};
+
+function buildDarkTheme(semanticColors: DarkThemeColors) {
   return {
     colorScheme: "dark" as const,
     colors: {
@@ -576,6 +650,7 @@ export const darkZincTheme = buildDarkTheme(zincDarkColors);
 export const darkMidnightTheme = buildDarkTheme(midnightDarkColors);
 export const darkClaudeTheme = buildDarkTheme(claudeDarkColors);
 export const darkGhosttyTheme = buildDarkTheme(ghosttyDarkColors);
+export const darkSolarizedTheme = buildDarkTheme(solarizedDarkColors);
 
 export const lightTheme = {
   colorScheme: "light" as const,
@@ -619,7 +694,8 @@ type UnistylesThemeKey =
   | "darkZinc"
   | "darkMidnight"
   | "darkClaude"
-  | "darkGhostty";
+  | "darkGhostty"
+  | "darkSolarized";
 
 export const THEME_TO_UNISTYLES: Record<ThemeName, UnistylesThemeKey> = {
   light: "light",
@@ -628,6 +704,7 @@ export const THEME_TO_UNISTYLES: Record<ThemeName, UnistylesThemeKey> = {
   midnight: "darkMidnight",
   claude: "darkClaude",
   ghostty: "darkGhostty",
+  solarized: "darkSolarized",
 };
 
 export const THEME_SWATCHES: Record<ThemeName, string> = {
@@ -637,4 +714,5 @@ export const THEME_SWATCHES: Record<ThemeName, string> = {
   midnight: "#4A6BA8",
   claude: "#D97757",
   ghostty: "#8caaee",
+  solarized: "#2aa198",
 };

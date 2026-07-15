@@ -6,6 +6,7 @@ import {
   darkMidnightTheme,
   darkClaudeTheme,
   darkGhosttyTheme,
+  darkSolarizedTheme,
 } from "./theme";
 
 StyleSheet.configure({
@@ -16,6 +17,7 @@ StyleSheet.configure({
     darkMidnight: darkMidnightTheme,
     darkClaude: darkClaudeTheme,
     darkGhostty: darkGhosttyTheme,
+    darkSolarized: darkSolarizedTheme,
   },
   breakpoints: {
     xs: 0,
@@ -37,6 +39,7 @@ interface AppThemes {
   darkMidnight: typeof darkMidnightTheme;
   darkClaude: typeof darkClaudeTheme;
   darkGhostty: typeof darkGhosttyTheme;
+  darkSolarized: typeof darkSolarizedTheme;
 }
 
 interface AppBreakpoints {

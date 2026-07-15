@@ -420,7 +420,15 @@ interface AppContainerProps {
   chromeEnabled?: boolean;
 }
 
-const THEME_CYCLE_ORDER: ThemeName[] = ["dark", "zinc", "midnight", "claude", "ghostty", "light"];
+const THEME_CYCLE_ORDER: ThemeName[] = [
+  "dark",
+  "zinc",
+  "midnight",
+  "claude",
+  "ghostty",
+  "solarized",
+  "light",
+];
 const WINDOW_SIDEBAR_TOGGLE_HORIZONTAL_PADDING = 12;
 
 function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppContainerProps) {
@@ -632,7 +640,7 @@ function ProvidersWrapper({ children }: { children: ReactNode }) {
 
   // Apply font / size / syntax appearance settings on mount and when they change.
   // Sibling to the theme effect above; order is irrelevant because both patch all
-  // six registered theme keys, so the active key is always current.
+  // seven registered theme keys, so the active key is always current.
   useEffect(() => {
     if (settingsLoading) return;
     applyAppearance({

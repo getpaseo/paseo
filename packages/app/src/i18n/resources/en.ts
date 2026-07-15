@@ -1696,6 +1696,7 @@ export const en = {
           midnight: "Midnight",
           claude: "Claude",
           ghostty: "Ghostty",
+          solarized: "Solarized Teal",
           auto: "System",
         },
       },

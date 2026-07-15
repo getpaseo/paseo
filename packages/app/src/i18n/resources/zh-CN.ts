@@ -1667,6 +1667,7 @@ export const zhCN: TranslationResources = {
           midnight: "Midnight",
           claude: "Claude",
           ghostty: "Ghostty",
+          solarized: "Solarized Teal",
           auto: "系统",
         },
       },

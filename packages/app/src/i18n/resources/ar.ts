@@ -1685,6 +1685,7 @@ export const ar: TranslationResources = {
           midnight: "منتصف الليل",
           claude: "كلود",
           ghostty: "شبحي",
+          solarized: "Solarized Teal",
           auto: "نظام",
         },
       },
