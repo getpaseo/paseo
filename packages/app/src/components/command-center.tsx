@@ -468,6 +468,14 @@ export function CommandCenter() {
     () => [styles.sectionDivider, { backgroundColor: theme.colors.border }],
     [theme.colors.border],
   );
+  const sheetBackgroundStyle = useMemo(
+    () => ({ backgroundColor: theme.colors.surface0 }),
+    [theme.colors.surface0],
+  );
+  const sheetHandleStyle = useMemo(
+    () => ({ backgroundColor: theme.colors.palette.zinc[600] }),
+    [theme.colors.palette.zinc],
+  );
 
   const handleKeyPress = useCallback(
     ({ nativeEvent: { key } }: { nativeEvent: { key: string } }) => {
@@ -544,6 +552,8 @@ export function CommandCenter() {
         onDismiss={handleSheetDismiss}
         backdropComponent={renderBackdrop}
         enablePanDownToClose
+        backgroundStyle={sheetBackgroundStyle}
+        handleIndicatorStyle={sheetHandleStyle}
         keyboardBehavior="extend"
         keyboardBlurBehavior="restore"
         accessible={false}
