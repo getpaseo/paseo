@@ -199,7 +199,7 @@ describe("provider subagent client store", () => {
     expect(useProviderSubagentStore.getState().hiddenFromTrack.has(key)).toBe(false);
   });
 
-  test("forgets hidden state when a child disappears from the provider list", () => {
+  test("keeps hidden state when a child temporarily disappears from the provider list", () => {
     const store = useProviderSubagentStore.getState();
     store.applyUpdate(SERVER_ID, {
       kind: "upsert",
@@ -222,7 +222,33 @@ describe("provider subagent client store", () => {
     const state = useProviderSubagentStore.getState();
     const key = providerSubagentKey(SERVER_ID, PARENT_ID, SUBAGENT_ID);
     expect(state.descriptors.has(key)).toBe(false);
-    expect(state.hiddenFromTrack.has(key)).toBe(false);
+    expect(state.hiddenFromTrack.has(key)).toBe(true);
+  });
+
+  test("keeps a finished child hidden across remove and history replay", () => {
+    const store = useProviderSubagentStore.getState();
+    const completed = {
+      id: SUBAGENT_ID,
+      parentAgentId: PARENT_ID,
+      provider: "codex" as const,
+      title: "Finished child",
+      description: null,
+      status: "completed" as const,
+      createdAt: "2026-07-12T10:00:00.000Z",
+      updatedAt: "2026-07-12T10:00:02.000Z",
+      toolCallId: "call-1",
+    };
+    store.applyUpdate(SERVER_ID, { kind: "upsert", subagent: completed });
+    store.hideFinishedForParent(SERVER_ID, PARENT_ID);
+    store.applyUpdate(SERVER_ID, {
+      kind: "remove",
+      parentAgentId: PARENT_ID,
+      subagentId: SUBAGENT_ID,
+    });
+    store.applyUpdate(SERVER_ID, { kind: "upsert", subagent: completed });
+
+    const key = providerSubagentKey(SERVER_ID, PARENT_ID, SUBAGENT_ID);
+    expect(useProviderSubagentStore.getState().hiddenFromTrack.has(key)).toBe(true);
   });
   test("applies terminal list status to a timeline received before its descriptor", () => {
     const store = useProviderSubagentStore.getState();

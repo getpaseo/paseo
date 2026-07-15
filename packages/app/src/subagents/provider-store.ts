@@ -215,17 +215,10 @@ export const useProviderSubagentStore = create<ProviderSubagentState>((set) => (
         [...state.descriptors].filter(([key]) => !key.startsWith(prefix)),
       );
       const hiddenFromTrack = new Set(state.hiddenFromTrack);
-      const incomingKeys = new Set<string>();
       for (const subagent of subagents) {
         const key = providerSubagentKey(serverId, parentAgentId, subagent.id);
-        incomingKeys.add(key);
         descriptors.set(key, subagent);
         if (subagent.status === "running") {
-          hiddenFromTrack.delete(key);
-        }
-      }
-      for (const key of hiddenFromTrack) {
-        if (key.startsWith(prefix) && !incomingKeys.has(key)) {
           hiddenFromTrack.delete(key);
         }
       }
@@ -278,10 +271,8 @@ export const useProviderSubagentStore = create<ProviderSubagentState>((set) => (
         const descriptors = new Map(state.descriptors);
         descriptors.delete(key);
         const timelines = new Map(state.timelines);
-        const hiddenFromTrack = new Set(state.hiddenFromTrack);
-        hiddenFromTrack.delete(key);
         timelines.delete(key);
-        return { descriptors, timelines, hiddenFromTrack };
+        return { descriptors, timelines };
       }
       const key = providerSubagentKey(serverId, payload.parentAgentId, payload.subagentId);
       const existing = state.timelines.get(key);
