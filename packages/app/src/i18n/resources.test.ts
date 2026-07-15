@@ -182,7 +182,7 @@ describe("translation resources", () => {
     expect(en.shell.commandCenter.workspaces).toBe("Workspaces");
     expect(en.shell.commandCenter.agents).toBe("Agents");
     expect(en.shell.commandCenter.newAgent).toBe("New agent");
-    expect(en.shell.commandCenter.openProject).toBe("Open project");
+    expect(en.shell.commandCenter.addProject).toBe("Add project");
     expect(en.shell.commandCenter.home).toBe("Home");
   });
 

@@ -1789,14 +1789,39 @@ export const OpenProjectRequestSchema = z.object({
   requestId: z.string(),
 });
 
+// Smallest shorthand repo path is "a/b": owner, slash, repository.
+const MIN_REPOSITORY_PATH_LENGTH = 3;
+
 export const ProjectAddRequestSchema = z.object({
   type: z.literal("project.add.request"),
   cwd: z.string(),
   requestId: z.string(),
 });
 
-// Smallest shorthand repo path is "a/b": owner, slash, repository.
-const MIN_REPOSITORY_PATH_LENGTH = 3;
+export const ProjectCreateDirectoryRequestSchema = z.object({
+  type: z.literal("project.create_directory.request"),
+  parentPath: z.string(),
+  name: z.string(),
+  requestId: z.string(),
+});
+
+export const GithubRepositorySchema = z.object({
+  id: z.string().min(1),
+  name: z.string().trim().min(1),
+  nameWithOwner: z.string().trim().min(MIN_REPOSITORY_PATH_LENGTH),
+  description: z.string().nullable(),
+  visibility: z.enum(["public", "private", "internal"]),
+  updatedAt: z.string(),
+  cloneUrl: z.string().trim().min(MIN_REPOSITORY_PATH_LENGTH),
+});
+
+export const WorkspaceGithubSearchRepositoriesRequestSchema = z.object({
+  type: z.literal("workspace.github.search_repositories.request"),
+  query: z.string(),
+  limit: z.number().int().min(1).max(50).optional(),
+  requestId: z.string(),
+});
+
 export const WorkspaceGithubCloneProtocolSchema = z.enum(["https", "ssh"]);
 
 export const WorkspaceGithubCloneRequestSchema = z.object({
@@ -2191,6 +2216,8 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   LegacyOpenInEditorRequestSchema,
   OpenProjectRequestSchema,
   ProjectAddRequestSchema,
+  ProjectCreateDirectoryRequestSchema,
+  WorkspaceGithubSearchRepositoriesRequestSchema,
   WorkspaceGithubCloneRequestSchema,
   ArchiveWorkspaceRequestSchema,
   WorkspaceCreateRequestSchema,
@@ -2438,6 +2465,10 @@ export const ServerInfoStatusPayloadSchema = z
         workspacePinning: z.boolean().optional(),
         // COMPAT(workspaceGithubClone): added in v0.1.108, remove gate after 2027-01-13.
         workspaceGithubClone: z.boolean().optional(),
+        // COMPAT(workspaceGithubRepositorySearch): added in v0.1.108, remove gate after 2027-01-15.
+        workspaceGithubRepositorySearch: z.boolean().optional(),
+        // COMPAT(projectCreateDirectory): added in v0.1.108, remove gate after 2027-01-15.
+        projectCreateDirectory: z.boolean().optional(),
       })
       .optional(),
   })
@@ -2934,6 +2965,61 @@ export const ProjectAddResponseSchema = z.object({
     error: z.string().nullable(),
     errorCode: z.enum(["directory_not_found"]).nullish().catch(null),
   }),
+});
+
+export const ProjectCreateDirectoryErrorCodeSchema = z.enum([
+  "invalid_name",
+  "parent_directory_not_found",
+  "directory_exists",
+  "permission_denied",
+  "registration_failed",
+  "filesystem_error",
+]);
+
+export const ProjectCreateDirectoryResponseSchema = z.object({
+  type: z.literal("project.create_directory.response"),
+  payload: z.object({
+    requestId: z.string(),
+    directoryPath: z.string().nullable(),
+    project: WorkspaceProjectDescriptorPayloadSchema.nullable(),
+    error: z.string().nullable(),
+    errorCode: ProjectCreateDirectoryErrorCodeSchema.nullable(),
+  }),
+});
+
+export const WorkspaceGithubSearchRepositoriesResponseSchema = z.object({
+  type: z.literal("workspace.github.search_repositories.response"),
+  payload: z.discriminatedUnion("status", [
+    z.object({
+      status: z.literal("success"),
+      requestId: z.string(),
+      repositories: z.array(GithubRepositorySchema),
+      available: z.literal(true),
+      error: z.null(),
+    }),
+    z.object({
+      status: z.literal("unavailable"),
+      requestId: z.string(),
+      repositories: z.array(GithubRepositorySchema),
+      reason: z.literal("gh_missing"),
+      available: z.literal(false),
+      error: z.string(),
+    }),
+    z.object({
+      status: z.literal("unauthenticated"),
+      requestId: z.string(),
+      repositories: z.array(GithubRepositorySchema),
+      available: z.literal(false),
+      error: z.string(),
+    }),
+    z.object({
+      status: z.literal("error"),
+      requestId: z.string(),
+      repositories: z.array(GithubRepositorySchema),
+      available: z.literal(true),
+      error: z.string(),
+    }),
+  ]),
 });
 
 export const WorkspaceGithubCloneResponseSchema = z.object({
@@ -4368,7 +4454,9 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   FetchRecentProviderSessionsResponseMessageSchema,
   FetchWorkspacesResponseMessageSchema,
   ProjectAddResponseSchema,
+  ProjectCreateDirectoryResponseSchema,
   OpenProjectResponseMessageSchema,
+  WorkspaceGithubSearchRepositoriesResponseSchema,
   WorkspaceGithubCloneResponseSchema,
   StartWorkspaceScriptResponseMessageSchema,
   LegacyListAvailableEditorsResponseMessageSchema,
@@ -4527,8 +4615,13 @@ export type FetchRecentProviderSessionsResponseMessage = z.infer<
 >;
 export type FetchWorkspacesResponseMessage = z.infer<typeof FetchWorkspacesResponseMessageSchema>;
 export type ProjectAddResponse = z.infer<typeof ProjectAddResponseSchema>;
+export type ProjectCreateDirectoryResponse = z.infer<typeof ProjectCreateDirectoryResponseSchema>;
 export type ScriptStatusUpdateMessage = z.infer<typeof ScriptStatusUpdateMessageSchema>;
 export type OpenProjectResponseMessage = z.infer<typeof OpenProjectResponseMessageSchema>;
+export type WorkspaceGithubSearchRepositoriesResponse = z.infer<
+  typeof WorkspaceGithubSearchRepositoriesResponseSchema
+>;
+export type GithubRepository = z.infer<typeof GithubRepositorySchema>;
 export type WorkspaceGithubCloneResponse = z.infer<typeof WorkspaceGithubCloneResponseSchema>;
 export type StartWorkspaceScriptResponseMessage = z.infer<
   typeof StartWorkspaceScriptResponseMessageSchema
@@ -4778,6 +4871,11 @@ export type LegacyListAvailableEditorsRequest = z.infer<
 export type LegacyOpenInEditorRequest = z.infer<typeof LegacyOpenInEditorRequestSchema>;
 export type OpenProjectRequest = z.infer<typeof OpenProjectRequestSchema>;
 export type ProjectAddRequest = z.infer<typeof ProjectAddRequestSchema>;
+export type ProjectCreateDirectoryRequest = z.infer<typeof ProjectCreateDirectoryRequestSchema>;
+export type ProjectCreateDirectoryErrorCode = z.infer<typeof ProjectCreateDirectoryErrorCodeSchema>;
+export type WorkspaceGithubSearchRepositoriesRequest = z.infer<
+  typeof WorkspaceGithubSearchRepositoriesRequestSchema
+>;
 export type WorkspaceGithubCloneRequest = z.infer<typeof WorkspaceGithubCloneRequestSchema>;
 export type WorkspaceGithubCloneProtocol = z.infer<typeof WorkspaceGithubCloneProtocolSchema>;
 export type ArchiveWorkspaceRequest = z.infer<typeof ArchiveWorkspaceRequestSchema>;

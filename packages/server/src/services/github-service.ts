@@ -45,6 +45,27 @@ const GitHubPullRequestSummarySchema = z.object({
   updatedAt: z.string().catch(""),
 });
 
+const GitHubRepositoryListItemSchema = z.object({
+  id: z.union([z.string(), z.number()]),
+  name: z.string(),
+  nameWithOwner: z.string(),
+  description: z.string().nullable().optional(),
+  visibility: z.string(),
+  updatedAt: z.string(),
+  sshUrl: z.string(),
+  url: z.string(),
+});
+
+const GitHubRepositorySearchItemSchema = z.object({
+  id: z.union([z.string(), z.number()]),
+  name: z.string(),
+  fullName: z.string(),
+  description: z.string().nullable().optional(),
+  visibility: z.string(),
+  updatedAt: z.string(),
+  url: z.string(),
+});
+
 const PullRequestCheckRunNodeSchema = z.object({
   __typename: z.literal("CheckRun"),
   databaseId: z.number().nullable().optional(),
@@ -783,6 +804,22 @@ export interface GitHubSearchResult {
   githubFeaturesEnabled: boolean;
 }
 
+export interface GitHubRepositorySummary {
+  id: string;
+  name: string;
+  nameWithOwner: string;
+  description: string | null;
+  visibility: "public" | "private" | "internal";
+  updatedAt: string;
+  cloneUrl: string;
+}
+
+export interface SearchGitHubRepositoriesOptions {
+  cwd: string;
+  query: string;
+  limit?: number;
+}
+
 export type SearchGitHubIssuesAndPrsOptions = {
   cwd: string;
   query: string;
@@ -819,6 +856,7 @@ export interface GitHubService {
   ): Promise<GitHubPullRequestTimeline>;
   getGitHubCheckDetails(options: GetGitHubCheckDetailsOptions): Promise<GitHubCheckDetails>;
   searchIssuesAndPrs(options: SearchGitHubIssuesAndPrsOptions): Promise<GitHubSearchResult>;
+  searchRepositories(options: SearchGitHubRepositoriesOptions): Promise<GitHubRepositorySummary[]>;
   createPullRequest(
     options: CreateGitHubPullRequestOptions,
   ): Promise<GitHubPullRequestCreateResult>;
@@ -1366,6 +1404,45 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
           };
         },
       });
+    },
+
+    async searchRepositories(input) {
+      const limit = input.limit ?? 20;
+      const query = input.query.trim();
+      if (query.length === 0) {
+        const stdout = await run(
+          [
+            "repo",
+            "list",
+            "--json",
+            "id,name,nameWithOwner,description,visibility,updatedAt,sshUrl,url",
+            "--limit",
+            String(limit),
+          ],
+          { cwd: input.cwd },
+        );
+        const cloneProtocol = await resolveConfiguredCloneProtocol(input.cwd, run);
+        return parseRepositoryList(stdout, cloneProtocol);
+      }
+
+      const stdout = await run(
+        [
+          "search",
+          "repos",
+          query,
+          "--json",
+          "id,name,fullName,description,visibility,updatedAt,url",
+          "--sort",
+          "updated",
+          "--order",
+          "desc",
+          "--limit",
+          String(limit),
+        ],
+        { cwd: input.cwd },
+      );
+      const cloneProtocol = await resolveConfiguredCloneProtocol(input.cwd, run);
+      return parseRepositorySearch(stdout, cloneProtocol);
     },
 
     async searchIssuesAndPrs(input) {
@@ -2167,6 +2244,88 @@ function getPullRequestStateRank(status: GitHubCurrentPullRequestStatus): number
 function parsePullRequestSummaries(stdout: string): GitHubPullRequestSummary[] {
   const parsed = z.array(GitHubPullRequestSummarySchema).parse(JSON.parse(stdout || "[]"));
   return parsed.map(toPullRequestSummary);
+}
+
+type GitHubCloneProtocol = "https" | "ssh";
+
+async function resolveConfiguredCloneProtocol(
+  cwd: string,
+  run: (args: string[], options: GitHubCommandRunnerOptions) => Promise<string>,
+): Promise<GitHubCloneProtocol> {
+  try {
+    const protocol = (
+      await run(["config", "get", "git_protocol", "--host", "github.com"], {
+        cwd,
+      })
+    ).toLowerCase();
+    return protocol === "ssh" ? "ssh" : "https";
+  } catch (error) {
+    if (error instanceof GitHubCommandError) {
+      return "https";
+    }
+    throw error;
+  }
+}
+
+function parseRepositoryList(
+  stdout: string,
+  cloneProtocol: GitHubCloneProtocol,
+): GitHubRepositorySummary[] {
+  const parsed = z.array(GitHubRepositoryListItemSchema).parse(JSON.parse(stdout || "[]"));
+  return parsed.map((repository) =>
+    normalizeRepositorySummary({
+      ...repository,
+      nameWithOwner: repository.nameWithOwner,
+      cloneUrl: cloneProtocol === "ssh" ? repository.sshUrl : repository.url,
+    }),
+  );
+}
+
+function parseRepositorySearch(
+  stdout: string,
+  cloneProtocol: GitHubCloneProtocol,
+): GitHubRepositorySummary[] {
+  const parsed = z.array(GitHubRepositorySearchItemSchema).parse(JSON.parse(stdout || "[]"));
+  return parsed.map((repository) =>
+    normalizeRepositorySummary({
+      ...repository,
+      nameWithOwner: repository.fullName,
+      cloneUrl:
+        cloneProtocol === "ssh" ? `git@github.com:${repository.fullName}.git` : repository.url,
+    }),
+  );
+}
+
+function normalizeRepositorySummary(repository: {
+  id: string | number;
+  name: string;
+  nameWithOwner: string;
+  description?: string | null;
+  visibility: string;
+  updatedAt: string;
+  cloneUrl: string;
+}): GitHubRepositorySummary {
+  const nameWithOwner = repository.nameWithOwner.trim();
+  if (!nameWithOwner.includes("/")) {
+    throw new Error(`GitHub repository is missing owner identity: ${nameWithOwner}`);
+  }
+  return {
+    id: String(repository.id),
+    name: repository.name,
+    nameWithOwner,
+    description: repository.description ?? null,
+    visibility: normalizeRepositoryVisibility(repository.visibility),
+    updatedAt: repository.updatedAt,
+    cloneUrl: repository.cloneUrl,
+  };
+}
+
+function normalizeRepositoryVisibility(visibility: string): GitHubRepositorySummary["visibility"] {
+  const normalized = visibility.toLowerCase();
+  if (normalized === "public" || normalized === "private" || normalized === "internal") {
+    return normalized;
+  }
+  throw new Error(`Unknown GitHub repository visibility: ${visibility}`);
 }
 
 function parsePullRequestSummary(stdout: string): GitHubPullRequestSummary {

@@ -21,6 +21,8 @@ import {
 import { AgentStatusDot } from "@/components/agent-status-dot";
 import { Shortcut } from "@/components/ui/shortcut";
 import { isNative, isWeb } from "@/constants/platform";
+import { AddProjectFlow } from "@/components/add-project-flow";
+import { useAddProjectFlowStore } from "@/stores/add-project-flow-store";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import {
   IsolatedBottomSheetModal,
@@ -336,6 +338,7 @@ export function CommandCenter() {
     handleSelectItem,
     handleKeyEvent,
   } = useCommandCenter();
+  const addProjectRequest = useAddProjectFlowStore((state) => state.request);
 
   const isCompact = useIsCompactFormFactor();
   const showBottomSheet = isCompact && isNative;
@@ -489,6 +492,16 @@ export function CommandCenter() {
   }, [handleKeyEvent]);
 
   const snapPoints = useMemo(() => ["60%", "90%"], []);
+
+  if (open && addProjectRequest) {
+    return (
+      <AddProjectFlow
+        key={addProjectRequest.id}
+        request={addProjectRequest}
+        onClose={handleClose}
+      />
+    );
+  }
 
   const resultList =
     items.length === 0 ? (

@@ -60,7 +60,7 @@ export const ja: TranslationResources = {
       workspaces: "ワークスペース",
       agents: "エージェント",
       newAgent: "新しいエージェント",
-      openProject: "プロジェクトを開く",
+      addProject: "プロジェクトを追加",
       home: "ホーム",
     },
   },

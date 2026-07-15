@@ -60,7 +60,7 @@ export const ar: TranslationResources = {
       workspaces: "مساحات العمل",
       agents: "الوكلاء",
       newAgent: "وكيل جديد",
-      openProject: "مشروع مفتوح",
+      addProject: "إضافة مشروع",
       home: "بيت",
     },
   },

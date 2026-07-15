@@ -58,7 +58,7 @@ export const en = {
       workspaces: "Workspaces",
       agents: "Agents",
       newAgent: "New agent",
-      openProject: "Open project",
+      addProject: "Add project",
       home: "Home",
     },
   },

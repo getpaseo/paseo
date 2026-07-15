@@ -1,5 +1,9 @@
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import type { ProjectAddResponse, WorkspaceGithubCloneProtocol } from "@getpaseo/protocol/messages";
+import type {
+  ProjectAddResponse,
+  WorkspaceGithubCloneProtocol,
+  WorkspaceProjectDescriptorPayload,
+} from "@getpaseo/protocol/messages";
 import {
   normalizeEmptyProjectDescriptor as normalizeProjectWithoutWorkspacesDescriptor,
   normalizeWorkspaceDescriptor,
@@ -62,6 +66,21 @@ interface WorkspaceOpenCallbacks {
   navigateToWorkspace: (input: NavigateToWorkspaceInput) => string;
 }
 
+export interface RegisterProjectDescriptorInput {
+  serverId: string;
+  project: WorkspaceProjectDescriptorPayload;
+  addEmptyProject: (serverId: string, project: ProjectWithoutWorkspacesDescriptor) => void;
+  setHasHydratedWorkspaces: (serverId: string, hydrated: boolean) => void;
+}
+
+export function registerProjectDescriptor(input: RegisterProjectDescriptorInput): boolean {
+  const serverId = input.serverId.trim();
+  if (!serverId) return false;
+  input.addEmptyProject(serverId, normalizeProjectWithoutWorkspacesDescriptor(input.project));
+  input.setHasHydratedWorkspaces(serverId, true);
+  return true;
+}
+
 export interface OpenGithubRepoDirectlyInput extends WorkspaceOpenCallbacks {
   repo: string;
   targetDirectory: string;
@@ -95,11 +114,12 @@ export async function openProjectDirectly(
     };
   }
 
-  input.addEmptyProject(
-    normalizedServerId,
-    normalizeProjectWithoutWorkspacesDescriptor(payload.project),
-  );
-  input.setHasHydratedWorkspaces(normalizedServerId, true);
+  registerProjectDescriptor({
+    serverId: normalizedServerId,
+    project: payload.project,
+    addEmptyProject: input.addEmptyProject,
+    setHasHydratedWorkspaces: input.setHasHydratedWorkspaces,
+  });
   return { ok: true };
 }
 

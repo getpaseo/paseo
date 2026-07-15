@@ -18,7 +18,7 @@ test("Browse opens the folder selected by the desktop dialog", async ({
   await gotoAppShell(page);
 
   await page.getByTestId("sidebar-add-project").click();
-  const browse = page.getByRole("button", { name: "Browse…" });
+  const browse = page.getByRole("button", { name: /^Browse/ });
   await expect(browse).toBeVisible({ timeout: 30_000 });
   await browse.click();
 
@@ -26,7 +26,7 @@ test("Browse opens the folder selected by the desktop dialog", async ({
   projectPickerFixture.rememberProjectId(projectId);
 });
 
-test("Browse owns Enter without opening the active typed path", async ({
+test("canceling Browse returns to the Add Project methods", async ({
   page,
   projectPickerFixture,
 }) => {
@@ -38,20 +38,17 @@ test("Browse owns Enter without opening the active typed path", async ({
   await gotoAppShell(page);
 
   await page.getByTestId("sidebar-add-project").click();
-  const input = page.getByTestId("project-picker-input");
-  await expect(input).toBeVisible({ timeout: 30_000 });
-  await input.fill(projectPickerFixture.projectPath);
-
-  const browse = page.getByRole("button", { name: "Browse…" });
+  const browse = page.getByRole("button", { name: /^Browse/ });
   await expect(browse).toBeVisible({ timeout: 30_000 });
-  await browse.press("Enter");
+  await browse.click();
 
   const dialogOptions = await waitForDirectoryDialog(page);
   expect(dialogOptions).toEqual({
+    createDirectory: true,
     directory: true,
     multiple: false,
   });
-  await expect(input).toBeVisible();
+  await expect(browse).toBeVisible();
   await expect(
     page
       .locator('[data-testid^="sidebar-project-row-"]')

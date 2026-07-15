@@ -11,6 +11,7 @@ export async function pickDirectory(
   const selection = await open({
     directory: true,
     multiple: false,
+    createDirectory: true,
   });
   if (selection === null) {
     return null;

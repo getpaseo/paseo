@@ -60,7 +60,7 @@ export const zhCN: TranslationResources = {
       workspaces: "工作区",
       agents: "Agents",
       newAgent: "新建 Agent",
-      openProject: "打开项目",
+      addProject: "添加 project",
       home: "首页",
     },
   },

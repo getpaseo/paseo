@@ -55,7 +55,9 @@ import type {
   PaseoWorktreeArchiveResponse,
   ProjectIconResponse,
   ProjectAddResponse,
+  ProjectCreateDirectoryResponse,
   OpenProjectResponseMessage,
+  WorkspaceGithubSearchRepositoriesResponse,
   WorkspaceGithubCloneProtocol,
   WorkspaceGithubCloneResponse,
   ArchiveWorkspaceResponseMessage,
@@ -763,6 +765,9 @@ export interface RenameTerminalInput {
 }
 type OpenProjectPayload = OpenProjectResponseMessage["payload"];
 type ProjectAddPayload = ProjectAddResponse["payload"];
+export type ProjectCreateDirectoryPayload = ProjectCreateDirectoryResponse["payload"];
+export type WorkspaceGithubSearchRepositoriesPayload =
+  WorkspaceGithubSearchRepositoriesResponse["payload"];
 type WorkspaceGithubClonePayload = WorkspaceGithubCloneResponse["payload"];
 type ArchiveWorkspacePayload = ArchiveWorkspaceResponseMessage["payload"];
 type WorkspaceSetupStatusPayload = WorkspaceSetupStatusResponseMessage["payload"];
@@ -1992,6 +1997,36 @@ export class DaemonClient {
       },
       responseType: "project.add.response",
     });
+  }
+
+  async createProjectDirectory(
+    input: { parentPath: string; name: string },
+    requestId?: string,
+  ): Promise<ProjectCreateDirectoryPayload> {
+    return this.sendNamespacedCorrelatedSessionRequest<"project.create_directory.response">({
+      requestId,
+      message: {
+        type: "project.create_directory.request",
+        parentPath: input.parentPath,
+        name: input.name,
+      },
+    });
+  }
+
+  async searchGithubRepositories(
+    input: { query: string; limit?: number },
+    requestId?: string,
+  ): Promise<WorkspaceGithubSearchRepositoriesPayload> {
+    return this.sendNamespacedCorrelatedSessionRequest<"workspace.github.search_repositories.response">(
+      {
+        requestId,
+        message: {
+          type: "workspace.github.search_repositories.request",
+          query: input.query,
+          limit: input.limit,
+        },
+      },
+    );
   }
 
   async cloneGithubWorkspace(

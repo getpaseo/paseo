@@ -19,6 +19,7 @@ describe("pickDirectory", () => {
       {
         directory: true,
         multiple: false,
+        createDirectory: true,
       },
     ]);
   });
