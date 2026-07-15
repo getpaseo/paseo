@@ -14,9 +14,7 @@ import { useTranslation } from "react-i18next";
 import { MarkdownRenderer } from "@/components/markdown/renderer";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useSessionStore, type ExplorerFile } from "@/stores/session-store";
-import { useWebScrollViewScrollbar } from "@/components/use-web-scrollbar";
-import { useWebScrollbarStyle } from "@/hooks/use-web-scrollbar-style";
-import { highlightCode, type HighlightToken } from "@getpaseo/highlight";
+import { highlightCode } from "@getpaseo/highlight";
 import { syntaxTokenStyleFor } from "@/styles/syntax-token-styles";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { lineNumberGutterWidth } from "@/components/code-insets";
@@ -288,8 +286,6 @@ function FilePreviewBody({
     content: findableContent(preview, isMarkdownFile),
     highlightedLines,
     previewScrollRef,
-    scrollbarOnScroll: scrollbar.onScroll,
-    scrollbarOnLayout: scrollbar.onLayout,
     gutterWidth,
     lineHeight,
     codeFontSize: theme.fontSize.code,
@@ -386,7 +382,6 @@ function FilePreviewBody({
           style={styles.previewContent}
           onLayout={find.handleVerticalLayout}
           onScroll={find.handleVerticalScroll}
-          onContentSizeChange={scrollbar.onContentSizeChange}
           scrollEventThrottle={16}
           showsVerticalScrollIndicator
         >
@@ -411,7 +406,6 @@ function FilePreviewBody({
           )}
         </RNScrollView>
         {isMobile ? null : findBar}
-        {scrollbar.overlay}
       </View>
     );
   }

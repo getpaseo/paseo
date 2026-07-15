@@ -1,13 +1,4 @@
-import {
-  useCallback,
-  useContext,
-  useEffect,
-  useId,
-  useMemo,
-  useRef,
-  useState,
-  type RefObject,
-} from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type RefObject } from "react";
 import type {
   LayoutChangeEvent,
   NativeScrollEvent,
@@ -26,7 +17,7 @@ import {
   type FileFindMatch,
   type FileFindToken,
 } from "@/components/file-find";
-import { MountedTabActiveContext } from "@/components/split-container";
+import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import { useKeyboardShift } from "@/hooks/use-keyboard-shift-style";
 import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
@@ -67,8 +58,6 @@ export interface UseFileFindInput {
   content: string | null;
   highlightedLines: HighlightToken[][] | null;
   previewScrollRef: RefObject<RNScrollView | null>;
-  scrollbarOnScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
-  scrollbarOnLayout: (event: LayoutChangeEvent) => void;
   gutterWidth: number;
   lineHeight: number;
   codeFontSize: number;
@@ -111,8 +100,6 @@ export function useFileFind(input: UseFileFindInput): UseFileFindResult {
     content,
     highlightedLines,
     previewScrollRef,
-    scrollbarOnScroll,
-    scrollbarOnLayout,
     gutterWidth,
     lineHeight,
     codeFontSize,
@@ -133,7 +120,7 @@ export function useFileFind(input: UseFileFindInput): UseFileFindResult {
   const horizontalScrollRef = useRef<RNScrollView>(null);
   const paneFocus = usePaneFocus();
   const { tabId } = usePaneContext();
-  const isTabActive = useContext(MountedTabActiveContext);
+  const isTabActive = useRetainedPanelActive();
   const handlerId = useId();
   // Pane displacement while the software keyboard is up (0 on web); the
   // keyboard overlays the pane, so this much of the viewport is not visible.
@@ -310,20 +297,12 @@ export function useFileFind(input: UseFileFindInput): UseFileFindResult {
   const verticalMetricsRef = useRef({ offset: 0, viewport: 0 });
   const horizontalMetricsRef = useRef({ offset: 0, viewport: 0 });
 
-  const handleVerticalScroll = useCallback(
-    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-      verticalMetricsRef.current.offset = event.nativeEvent.contentOffset.y;
-      scrollbarOnScroll(event);
-    },
-    [scrollbarOnScroll],
-  );
-  const handleVerticalLayout = useCallback(
-    (event: LayoutChangeEvent) => {
-      verticalMetricsRef.current.viewport = event.nativeEvent.layout.height;
-      scrollbarOnLayout(event);
-    },
-    [scrollbarOnLayout],
-  );
+  const handleVerticalScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    verticalMetricsRef.current.offset = event.nativeEvent.contentOffset.y;
+  }, []);
+  const handleVerticalLayout = useCallback((event: LayoutChangeEvent) => {
+    verticalMetricsRef.current.viewport = event.nativeEvent.layout.height;
+  }, []);
   const handleHorizontalScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
     horizontalMetricsRef.current.offset = event.nativeEvent.contentOffset.x;
   }, []);
