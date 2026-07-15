@@ -1668,14 +1668,22 @@ function updateHistoricalSubAgentActivity(
   timeline: PersistedTimelineEntry[],
   index: number,
   kind: CodexSubAgentActivity["kind"],
+  subAgentType?: string,
 ): void {
   const existing = timeline[index];
   if (existing?.item.type !== "tool_call") {
     return;
   }
+  const settledItem = settleHistoricalSubAgentActivity(existing.item, kind);
   timeline[index] = {
     ...existing,
-    item: settleHistoricalSubAgentActivity(existing.item, kind),
+    item:
+      subAgentType && settledItem.detail.type === "sub_agent"
+        ? {
+            ...settledItem,
+            detail: { ...settledItem.detail, subAgentType },
+          }
+        : settledItem,
   };
 }
 
@@ -1869,10 +1877,15 @@ async function loadCodexThreadHistoryTimeline(params: {
           historicalSubAgentActivity.agentThreadId,
         );
         if (existingIndex !== undefined) {
+          const activityTimelineItem = threadItemToTimeline(item, { cwd: params.cwd });
           updateHistoricalSubAgentActivity(
             timeline,
             existingIndex,
             historicalSubAgentActivity.kind,
+            activityTimelineItem?.type === "tool_call" &&
+              activityTimelineItem.detail.type === "sub_agent"
+              ? activityTimelineItem.detail.subAgentType
+              : undefined,
           );
           continue;
         }

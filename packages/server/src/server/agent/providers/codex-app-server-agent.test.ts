@@ -2935,6 +2935,13 @@ describe("Codex app-server provider", () => {
                   },
                   {
                     type: "subAgentActivity",
+                    id: "legacy-native-name-history",
+                    kind: "started",
+                    agentThreadId: "legacy-child-thread",
+                    agentPath: "/root/sentinel_child",
+                  },
+                  {
+                    type: "subAgentActivity",
                     id: "v2-spawn-history",
                     kind: "started",
                     agentThreadId: "v2-child-thread",
@@ -2959,7 +2966,12 @@ describe("Codex app-server provider", () => {
         event.type === "provider_subagent" && event.event.type === "upsert" ? [event.event] : [],
       ),
     ).toMatchObject([
-      { type: "upsert", id: "legacy-child-thread", status: "completed" },
+      {
+        type: "upsert",
+        id: "legacy-child-thread",
+        status: "completed",
+        title: "Sentinel child",
+      },
       { type: "upsert", id: "v2-child-thread", status: "completed" },
     ]);
     expect(
@@ -2994,7 +3006,11 @@ describe("Codex app-server provider", () => {
       {
         callId: "legacy-spawn-history",
         status: "completed",
-        detail: { type: "sub_agent", description: "Legacy child" },
+        detail: {
+          type: "sub_agent",
+          description: "Legacy child",
+          subAgentType: "Sentinel child",
+        },
       },
       {
         callId: "v2-spawn-history",
