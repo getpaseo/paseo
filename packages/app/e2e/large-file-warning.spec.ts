@@ -23,22 +23,22 @@ test.afterAll(async () => {
   await workspace?.cleanup();
 });
 
-test("cancels or confirms opening a large file", async ({ page }) => {
+test("cancels or opens a large file from the inline warning", async ({ page }) => {
   await gotoWorkspace(page, workspace.workspaceId);
   await openFileExplorer(page);
 
-  const dialogPromise = page.waitForEvent("dialog");
-  const openPromise = openFileFromExplorer(page, "large.txt");
-  const dialog = await dialogPromise;
+  await openFileFromExplorer(page, "large.txt");
+  await expect(page.getByTestId("workspace-tab-file_large.txt")).toBeVisible();
+  const warning = page.getByTestId("large-file-warning");
+  await expect(warning).toContainText("Open large file?");
+  await expect(warning).toContainText("large.txt is 1.0 MB");
 
-  expect(dialog.message()).toContain("Open large file?");
-  expect(dialog.message()).toContain("large.txt is 1.0 MB");
-  await dialog.dismiss();
-  await openPromise;
+  await page.getByTestId("large-file-warning-cancel").click();
   await expect(page.getByTestId("workspace-tab-file_large.txt")).toHaveCount(0);
 
-  page.once("dialog", (reopenDialog) => reopenDialog.accept());
   await openFileFromExplorer(page, "large.txt");
+  await expect(page.getByTestId("large-file-warning")).toBeVisible();
+  await page.getByTestId("large-file-warning-open").click();
   await expect(page.getByTestId("workspace-tab-file_large.txt")).toBeVisible();
   await expect(
     page

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef } from "react";
+import React, { useCallback, useEffect, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { FileReadResult } from "@getpaseo/client/internal/daemon-client";
 import {
@@ -36,7 +36,8 @@ import {
   shouldWarnBeforeOpeningFile,
   type FileSizeLookupClient,
 } from "@/components/file-pane-large-file";
-import { confirmDialog } from "@/utils/confirm-dialog";
+import { Alert } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 
 interface CodeLineProps {
   tokens: HighlightToken[];
@@ -67,6 +68,12 @@ interface FileLineSelection {
 }
 
 const approvedLargeFileOpenKeys = new Set<string>();
+
+interface LargeFileOpenWarning {
+  approvalKey: string;
+  fileName: string;
+  size: string;
+}
 
 async function createFilePanePreview(file: FileReadResult | null): Promise<{
   file: ExplorerFile | null;
@@ -115,52 +122,37 @@ function clampLineSelection(input: {
   return { lineStart, lineEnd: Math.max(lineStart, lineEnd) };
 }
 
-async function confirmLargeFileOpenIfNeeded({
+async function getLargeFileOpenWarningIfNeeded({
   client,
   serverId,
   cwd,
   path,
-  labels,
 }: {
   client: FileSizeLookupClient;
   serverId: string;
   cwd: string;
   path: string;
-  labels: {
-    title: string;
-    message: (input: { fileName: string; size: string }) => string;
-    confirmLabel: string;
-    cancelLabel: string;
-  };
-}): Promise<boolean> {
+}): Promise<LargeFileOpenWarning | null> {
   let size: number | null = null;
   try {
     size = await findFileSizeFromParentDirectory({ client, cwd, path });
   } catch {
-    return true;
+    return null;
   }
   if (size === null || !shouldWarnBeforeOpeningFile(size)) {
-    return true;
+    return null;
   }
 
   const approvalKey = `${serverId}\0${cwd}\0${path}`;
   if (approvedLargeFileOpenKeys.has(approvalKey)) {
-    return true;
+    return null;
   }
 
-  const confirmed = await confirmDialog({
-    title: labels.title,
-    message: labels.message({
-      fileName: getFileNameFromFilePath(path),
-      size: formatFileSize({ size }),
-    }),
-    confirmLabel: labels.confirmLabel,
-    cancelLabel: labels.cancelLabel,
-  });
-  if (confirmed) {
-    approvedLargeFileOpenKeys.add(approvalKey);
-  }
-  return confirmed;
+  return {
+    approvalKey,
+    fileName: getFileNameFromFilePath(path),
+    size: formatFileSize({ size }),
+  };
 }
 
 const CodeLine = React.memo(function CodeLine({
@@ -407,6 +399,55 @@ function FilePreviewBody({
   );
 }
 
+function LargeFileWarning({
+  warning,
+  isOpening,
+  onOpen,
+  onCancel,
+}: {
+  warning: LargeFileOpenWarning;
+  isOpening: boolean;
+  onOpen: () => void;
+  onCancel: () => void;
+}) {
+  const { t } = useTranslation();
+
+  return (
+    <View style={styles.largeFileWarningContainer}>
+      <View style={styles.largeFileWarningContent}>
+        <Alert
+          testID="large-file-warning"
+          variant="warning"
+          title={t("panels.file.largeFileWarningTitle")}
+          description={t("panels.file.largeFileWarningMessage", {
+            fileName: warning.fileName,
+            size: warning.size,
+          })}
+        >
+          <Button
+            testID="large-file-warning-open"
+            variant="outline"
+            size="sm"
+            loading={isOpening}
+            onPress={onOpen}
+          >
+            {t("panels.file.largeFileWarningOpen")}
+          </Button>
+          <Button
+            testID="large-file-warning-cancel"
+            variant="ghost"
+            size="sm"
+            disabled={isOpening}
+            onPress={onCancel}
+          >
+            {t("panels.file.largeFileWarningCancel")}
+          </Button>
+        </Alert>
+      </View>
+    </View>
+  );
+}
+
 export function FilePane({
   serverId,
   workspaceRoot,
@@ -454,26 +495,18 @@ export function FilePane({
           file: null as ExplorerFile | null,
           imageAttachment: null,
           error: t("workspace.terminal.hostDisconnected"),
-          cancelled: false,
+          largeFileWarning: null,
         };
       }
       try {
-        const confirmed = await confirmLargeFileOpenIfNeeded({
+        const largeFileWarning = await getLargeFileOpenWarningIfNeeded({
           client,
           serverId,
           cwd: readTarget.cwd,
           path: readTarget.path,
-          labels: {
-            title: t("panels.file.largeFileWarningTitle"),
-            message: ({ fileName, size }) =>
-              t("panels.file.largeFileWarningMessage", { fileName, size }),
-            confirmLabel: t("panels.file.largeFileWarningOpen"),
-            cancelLabel: t("panels.file.largeFileWarningCancel"),
-          },
         });
-        if (!confirmed) {
-          onLargeFileOpenCancel();
-          return { file: null, imageAttachment: null, error: null, cancelled: true };
+        if (largeFileWarning) {
+          return { file: null, imageAttachment: null, error: null, largeFileWarning };
         }
 
         const file = await client.readFile(readTarget.cwd, readTarget.path);
@@ -482,21 +515,31 @@ export function FilePane({
           file: preview.file,
           imageAttachment: preview.imageAttachment,
           error: null,
-          cancelled: false,
+          largeFileWarning: null,
         };
       } catch (error) {
         return {
           file: null,
           imageAttachment: null,
           error: error instanceof Error ? error.message : t("panels.file.failedToLoad"),
-          cancelled: false,
+          largeFileWarning: null,
         };
       }
     },
-    staleTime: (fileQuery) => (fileQuery.state.data?.cancelled ? 0 : 5_000),
+    staleTime: 5_000,
     refetchOnMount: true,
   });
   const imagePreviewUri = useAttachmentPreviewUrl(query.data?.imageAttachment ?? null);
+  const largeFileWarning = query.data?.largeFileWarning ?? null;
+  const refetchFile = query.refetch;
+
+  const openLargeFile = useCallback(() => {
+    if (!largeFileWarning) {
+      return;
+    }
+    approvedLargeFileOpenKeys.add(largeFileWarning.approvalKey);
+    void refetchFile();
+  }, [largeFileWarning, refetchFile]);
 
   return (
     <View style={styles.container} testID="workspace-file-pane">
@@ -506,13 +549,22 @@ export function FilePane({
         </View>
       ) : null}
 
-      <FilePreviewBody
-        preview={query.data?.file ?? null}
-        isLoading={query.isFetching}
-        isMobile={isMobile}
-        location={location}
-        imagePreviewUri={imagePreviewUri}
-      />
+      {largeFileWarning ? (
+        <LargeFileWarning
+          warning={largeFileWarning}
+          isOpening={query.isFetching}
+          onOpen={openLargeFile}
+          onCancel={onLargeFileOpenCancel}
+        />
+      ) : (
+        <FilePreviewBody
+          preview={query.data?.file ?? null}
+          isLoading={query.isFetching}
+          isMobile={isMobile}
+          location={location}
+          imagePreviewUri={imagePreviewUri}
+        />
+      )}
     </View>
   );
 }
@@ -528,6 +580,16 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "center",
     padding: theme.spacing[4],
+  },
+  largeFileWarningContainer: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: theme.spacing[4],
+  },
+  largeFileWarningContent: {
+    width: "100%",
+    maxWidth: 480,
   },
   loadingText: {
     marginTop: theme.spacing[2],
