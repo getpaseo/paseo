@@ -1473,6 +1473,16 @@ export const zhCN: TranslationResources = {
     },
     general: {
       title: "通用",
+      browserData: {
+        title: "Browser data",
+        description: "Browser tabs share sign-ins and site data across Paseo.",
+        clear: "Clear browser data",
+        clearing: "Clearing...",
+        confirmTitle: "Clear browser data?",
+        confirmMessage: "Sites will be signed out and open browser tabs will reload.",
+        success: "Browser data cleared.",
+        error: "Couldn't clear browser data.",
+      },
       defaultSend: {
         label: "默认发送",
         descriptions: {

@@ -10,6 +10,17 @@ export class PaseoBrowserWebviewRegistry {
   private readonly activeBrowserIdsByWorkspaceId = new Map<string, string>();
 
   public registerWebContents(input: { webContentsId: number; browserId: string }): void {
+    const previousBrowserId = this.browserIdsByWebContentsId.get(input.webContentsId) ?? null;
+    if (
+      previousBrowserId !== null &&
+      previousBrowserId !== input.browserId &&
+      this.webContentsIdsByBrowserId.get(previousBrowserId) === input.webContentsId
+    ) {
+      this.webContentsIdsByBrowserId.delete(previousBrowserId);
+      this.workspaceIdsByBrowserId.delete(previousBrowserId);
+      this.deleteActiveBrowserReferences(previousBrowserId);
+    }
+
     const previousWebContentsId = this.webContentsIdsByBrowserId.get(input.browserId) ?? null;
     if (previousWebContentsId !== null && previousWebContentsId !== input.webContentsId) {
       this.browserIdsByWebContentsId.delete(previousWebContentsId);

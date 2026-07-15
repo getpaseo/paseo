@@ -52,29 +52,70 @@
         ? Math.max(0, requestedWebviewCount)
         : 2;
       const webviews = [];
+      const profileAttachPromises = [];
       const activeTokens = new Set();
       let nextTokenId = 0;
       let permanentParkingState = params.get("permanentParkingState") || "";
 
-      function appendHarnessWebview(sourceUrl) {
+      function createHarnessWebview({ sourceUrl, browserId, partition }) {
         const index = webviews.length;
         const webview = document.createElement("webview");
         webview.id = `target-webview-${index + 1}`;
         webview.className = "capture-harness-webview";
-        webview.setAttribute("data-paseo-browser-id", `capture-harness-${index + 1}`);
-        webview.setAttribute("partition", `persist:paseo-capture-harness-${index + 1}`);
+        webview.setAttribute("data-paseo-browser-id", browserId);
+        webview.setAttribute("partition", partition);
         webview.setAttribute("allowpopups", "true");
         webview.setAttribute("spellcheck", "false");
         webview.setAttribute("autosize", "on");
         webview.src = sourceUrl;
         applyStackedWebviewStyle(webview);
+        return webview;
+      }
+
+      function appendHarnessWebview(sourceUrl) {
+        const index = webviews.length;
+        const webview = createHarnessWebview({
+          sourceUrl,
+          browserId: `capture-harness-${index + 1}`,
+          partition: `persist:paseo-capture-harness-${index + 1}`,
+        });
         host.appendChild(webview);
         webviews.push(webview);
         return index;
       }
 
-      for (let index = 0; index < webviewCount; index += 1) {
-        appendHarnessWebview(params.get("targetUrl") || "bright.html");
+      function appendProfileHarnessWebview({ browserId, partition, sourceUrl }) {
+        const webview = createHarnessWebview({ browserId, partition, sourceUrl });
+        const attached = new Promise((resolve) => {
+          webview.addEventListener(
+            "did-attach",
+            () => resolve({ browserId, webContentsId: webview.getWebContentsId() }),
+            { once: true },
+          );
+        });
+        host.appendChild(webview);
+        webviews.push(webview);
+        profileAttachPromises.push(attached);
+        return attached;
+      }
+
+      const profilePartition = params.get("profilePartition");
+      const profileBrowserIds = (params.get("profileBrowserIds") || "").split(",").filter(Boolean);
+      let profileAttachSequence = Promise.resolve();
+      if (profilePartition && profileBrowserIds.length > 0) {
+        profileAttachSequence = (async () => {
+          for (const browserId of profileBrowserIds) {
+            await appendProfileHarnessWebview({
+              browserId,
+              partition: profilePartition,
+              sourceUrl: params.get("targetUrl") || "bright.html",
+            });
+          }
+        })();
+      } else {
+        for (let index = 0; index < webviewCount; index += 1) {
+          appendHarnessWebview(params.get("targetUrl") || "bright.html");
+        }
       }
 
       function applyHostParking() {
@@ -317,6 +358,10 @@
         },
         addWebview(sourceUrl) {
           return appendHarnessWebview(sourceUrl || params.get("targetUrl") || "bright.html");
+        },
+        async profileIdentities() {
+          await profileAttachSequence;
+          return await Promise.all(profileAttachPromises);
         },
         addPermanentWebview(sourceUrl, stateName) {
           const index = appendHarnessWebview(sourceUrl || params.get("targetUrl") || "bright.html");

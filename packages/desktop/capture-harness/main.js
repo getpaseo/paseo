@@ -1,7 +1,8 @@
 const fs = require("node:fs");
 const fsp = require("node:fs/promises");
+const http = require("node:http");
 const path = require("node:path");
-const { app, BrowserWindow, nativeImage, screen } = require("electron");
+const { app, BrowserWindow, nativeImage, screen, session } = require("electron");
 
 const ROOT = __dirname;
 const OUT_DIR = process.env.PASEO_CAPTURE_HARNESS_OUT_DIR || path.join(ROOT, "out");
@@ -9,11 +10,15 @@ const VIEWPORT_WIDTH = 1280;
 const VIEWPORT_HEIGHT = 800;
 const FULL_PAGE_HEIGHT = 1600;
 const CAPTURE_TIMEOUT_MS = 5000;
+const BROWSER_PROFILE_TIMEOUT_MS = 15000;
 const CAPTURE_RETRY_INTERVAL_MS = 200;
 const REPEAT_COUNT = 5;
 const FRESH_REPEAT_COUNT = 3;
 const SOAK_MS = Number(process.env.PASEO_CAPTURE_HARNESS_SOAK_MS || 75000);
 const HARNESS_GROUP = process.env.PASEO_CAPTURE_HARNESS_GROUP || "permanent-parking";
+const BROWSER_PROFILE_PHASE = process.env.PASEO_CAPTURE_HARNESS_PHASE || "";
+const BROWSER_PROFILE_ORIGIN_FILE = path.join(OUT_DIR, "browser-profile-origin.txt");
+const BROWSER_PROFILE_VALUE_FILE = path.join(OUT_DIR, "browser-profile-value.txt");
 const PERMANENT_STATE_FILTER = new Set(
   (process.env.PASEO_CAPTURE_HARNESS_STATES || "P1")
     .split(",")
@@ -121,6 +126,44 @@ function fileUrl(filePath, params = {}) {
   return url.toString();
 }
 
+async function startBrowserProfileServer() {
+  let port = 0;
+  if (BROWSER_PROFILE_PHASE === "read") {
+    const previousOrigin = (await fsp.readFile(BROWSER_PROFILE_ORIGIN_FILE, "utf8")).trim();
+    port = Number(new URL(previousOrigin).port);
+  }
+
+  const server = http.createServer((_request, response) => {
+    response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+    response.end("<!doctype html><title>Shared browser profile</title><h1>Profile fixture</h1>");
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(port, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("browser profile fixture server has no TCP address");
+  }
+  const origin = `http://127.0.0.1:${address.port}`;
+  if (BROWSER_PROFILE_PHASE === "write") {
+    await fsp.writeFile(BROWSER_PROFILE_ORIGIN_FILE, `${origin}\n`);
+  }
+  return { origin, server };
+}
+
+async function closeServer(server) {
+  await new Promise((resolve, reject) => {
+    server.close((error) => {
+      if (error) {
+        reject(error);
+      } else {
+        resolve();
+      }
+    });
+  });
+}
+
 function ensureDirSync(dir) {
   fs.mkdirSync(dir, { recursive: true });
 }
@@ -160,12 +203,12 @@ async function waitForInactiveReveal(handle, label) {
   await delay(250);
 }
 
-function withTimeout(promise, label) {
+function withTimeout(promise, label, timeoutMs = CAPTURE_TIMEOUT_MS) {
   let timeoutId;
   const timeout = new Promise((_, reject) => {
     timeoutId = setTimeout(() => {
-      reject(new Error(`${label} timed out after ${CAPTURE_TIMEOUT_MS}ms`));
-    }, CAPTURE_TIMEOUT_MS);
+      reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
   });
   return Promise.race([promise, timeout]).finally(() => {
     clearTimeout(timeoutId);
@@ -434,6 +477,7 @@ function installHarnessWebviewGuards(win) {
 function trackAttachedGuests(win, input = {}) {
   const attachedGuests = [];
   const waiters = [];
+  const countWaiters = [];
   win.webContents.on("did-attach-webview", (_event, contents) => {
     if (input.disableGuestBackgroundThrottlingAtAttach) {
       contents.setBackgroundThrottling(false);
@@ -443,12 +487,27 @@ function trackAttachedGuests(win, input = {}) {
     if (waiter) {
       waiter(contents);
     }
+    for (let index = countWaiters.length - 1; index >= 0; index -= 1) {
+      const countWaiter = countWaiters[index];
+      if (attachedGuests.length >= countWaiter.count) {
+        countWaiters.splice(index, 1);
+        countWaiter.resolve(attachedGuests.slice(0, countWaiter.count));
+      }
+    }
   });
   return {
     attachedGuests,
     waitForNextAttachedGuest() {
       return new Promise((resolve) => {
         waiters.push(resolve);
+      });
+    },
+    waitForAttachedGuests(count) {
+      if (attachedGuests.length >= count) {
+        return Promise.resolve(attachedGuests.slice(0, count));
+      }
+      return new Promise((resolve) => {
+        countWaiters.push({ count, resolve });
       });
     },
   };
@@ -1889,10 +1948,191 @@ function assertAutomationSnapshot(snapshot) {
   }
 }
 
+async function createBrowserProfileHarnessWindow(partition, sourceUrl) {
+  const handle = createInactiveHarnessWindow({
+    width: 640,
+    height: 480,
+    backgroundColor: "#202020",
+    webPreferences: {
+      webviewTag: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+  });
+  const { win } = handle;
+  installHarnessWebviewGuards(win);
+  const tracker = trackAttachedGuests(win);
+  const guestsPromise = tracker.waitForAttachedGuests(2);
+  await withTimeout(
+    win.loadFile(path.join(ROOT, "index.html"), {
+      query: {
+        webviewCount: "2",
+        targetUrl: sourceUrl,
+        profilePartition: partition,
+        profileBrowserIds: "browser-first,browser-second",
+      },
+    }),
+    "browser profile window loadFile",
+  );
+  await waitForInactiveReveal(handle, "browser profile window");
+  const [guests, identities] = await withTimeout(
+    Promise.all([guestsPromise, renderer(win, "window.captureHarness.profileIdentities()")]),
+    "browser profile did-attach",
+    BROWSER_PROFILE_TIMEOUT_MS,
+  );
+  return { handle, guests, identities };
+}
+
+async function readBrowserProfileFixture(guest) {
+  return await guest.executeJavaScript(`({
+    cookie: document.cookie,
+    localStorage: localStorage.getItem("paseo-browser-profile")
+  })`);
+}
+
+function assertBrowserProfileFixture(state, expectedValue, label) {
+  if (state.localStorage !== expectedValue) {
+    fail(`${label} localStorage mismatch ${JSON.stringify(state)}`);
+  }
+  if (!state.cookie.split("; ").includes(`paseo-browser-profile=${expectedValue}`)) {
+    fail(`${label} cookie mismatch ${JSON.stringify(state)}`);
+  }
+}
+
+function resolveBrowserProfileGuests(profileWindow, profileSession) {
+  if (profileWindow.identities.length !== 2 || profileWindow.guests.length !== 2) {
+    fail("browser profile harness did not attach exactly two guests");
+  }
+  const guestsById = new Map(profileWindow.guests.map((guest) => [guest.id, guest]));
+  const [firstIdentity, secondIdentity] = profileWindow.identities;
+  const firstGuest = guestsById.get(firstIdentity.webContentsId);
+  const secondGuest = guestsById.get(secondIdentity.webContentsId);
+  if (!firstGuest || !secondGuest) {
+    fail("browser profile renderer identities did not map to attached main-process guests");
+  }
+  if (
+    firstIdentity.browserId !== "browser-first" ||
+    firstIdentity.webContentsId !== firstGuest.id
+  ) {
+    fail(
+      `browser profile first attach mismatch ${JSON.stringify(firstIdentity)} main=${firstGuest.id}`,
+    );
+  }
+  if (
+    secondIdentity.browserId !== "browser-second" ||
+    secondIdentity.webContentsId !== secondGuest.id
+  ) {
+    fail(
+      `browser profile second attach mismatch ${JSON.stringify(secondIdentity)} main=${secondGuest.id}`,
+    );
+  }
+  if (
+    firstGuest.hostWebContents !== profileWindow.handle.win.webContents ||
+    secondGuest.hostWebContents !== profileWindow.handle.win.webContents
+  ) {
+    fail("browser profile guests were not owned by their renderer");
+  }
+  if (firstGuest.session !== profileSession || secondGuest.session !== profileSession) {
+    fail("browser profile guests did not share the persistent session");
+  }
+  return [firstGuest, secondGuest];
+}
+
+async function prepareBrowserProfileValue(firstGuest, profileSession) {
+  if (BROWSER_PROFILE_PHASE === "read") {
+    return (await fsp.readFile(BROWSER_PROFILE_VALUE_FILE, "utf8")).trim();
+  }
+
+  const profileValue = `profile-${Date.now()}-${process.pid}`;
+  await firstGuest.executeJavaScript(`(() => {
+    const value = ${JSON.stringify(profileValue)};
+    localStorage.setItem("paseo-browser-profile", value);
+    document.cookie = "paseo-browser-profile=" + value + "; Max-Age=86400; SameSite=Lax";
+  })()`);
+  if (BROWSER_PROFILE_PHASE === "write") {
+    await fsp.writeFile(BROWSER_PROFILE_VALUE_FILE, `${profileValue}\n`);
+    await profileSession.cookies.flushStore();
+  }
+  return profileValue;
+}
+
+async function runBrowserProfileGroup() {
+  if (!["write", "read"].includes(BROWSER_PROFILE_PHASE)) {
+    fail(`unknown browser profile phase ${BROWSER_PROFILE_PHASE}`);
+  }
+  const partition = "persist:paseo-browser-profile-harness-restart";
+  const profileSession = session.fromPartition(partition);
+  const fixture = await startBrowserProfileServer();
+  const windows = [];
+  try {
+    if (BROWSER_PROFILE_PHASE === "write") {
+      await profileSession.clearStorageData();
+      await profileSession.clearCache();
+    }
+    const profileWindow = await createBrowserProfileHarnessWindow(partition, fixture.origin);
+    windows.push(profileWindow.handle);
+    const [firstGuest, secondGuest] = resolveBrowserProfileGuests(profileWindow, profileSession);
+    await Promise.all([waitForGuestLoad(firstGuest), waitForGuestLoad(secondGuest)]);
+
+    const profileValue = await prepareBrowserProfileValue(firstGuest, profileSession);
+
+    const firstState = await readBrowserProfileFixture(firstGuest);
+    const secondState = await readBrowserProfileFixture(secondGuest);
+    assertBrowserProfileFixture(firstState, profileValue, "browser profile first tab");
+    assertBrowserProfileFixture(secondState, profileValue, "browser profile second tab");
+
+    pass("browser profile renderer did-attach identities match their main-process guests");
+    pass("browser profile tabs share cookies, localStorage, and one persistent session");
+    if (BROWSER_PROFILE_PHASE === "read") {
+      pass("browser profile cookies and localStorage survived an Electron process restart");
+    }
+    const results = [
+      { group: "browser-profile", check: "renderer-main-identity", pass: true },
+      { group: "browser-profile", check: "shared-profile-data", pass: true },
+    ];
+    if (BROWSER_PROFILE_PHASE === "read") {
+      results.push({
+        group: "browser-profile",
+        check: "process-restart-persistence",
+        pass: true,
+      });
+    }
+    return results;
+  } finally {
+    for (const handle of windows) {
+      await closeHarnessWindow(handle.win);
+    }
+    if (BROWSER_PROFILE_PHASE !== "write") {
+      await profileSession.clearStorageData();
+      await profileSession.clearCache();
+    }
+    await closeServer(fixture.server);
+  }
+}
+
 async function main() {
   ensureDirSync(OUT_DIR);
-  if (!["all", "existing", "permanent-parking", "automation"].includes(HARNESS_GROUP)) {
+  if (
+    !["all", "existing", "permanent-parking", "automation", "browser-profile"].includes(
+      HARNESS_GROUP,
+    )
+  ) {
     fail(`unknown harness group ${HARNESS_GROUP}`);
+  }
+
+  if (HARNESS_GROUP === "browser-profile") {
+    const browserProfileResults = await runBrowserProfileGroup();
+    await fsp.writeFile(
+      path.join(OUT_DIR, "results.json"),
+      `${JSON.stringify(
+        { generatedAt: new Date().toISOString(), browserProfileResults },
+        null,
+        2,
+      )}\n`,
+    );
+    pass(`capture harness browser-profile complete output=${OUT_DIR}`);
+    return;
   }
 
   if (HARNESS_GROUP === "automation") {

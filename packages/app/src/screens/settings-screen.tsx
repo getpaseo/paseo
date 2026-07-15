@@ -70,6 +70,7 @@ import { CommunityLinks } from "@/components/community-links";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { DesktopPermissionsSection } from "@/desktop/components/desktop-permissions-section";
+import { BrowserDataSection } from "@/desktop/components/browser-data-section";
 import { IntegrationsSection } from "@/desktop/components/integrations-section";
 import { isElectronRuntime } from "@/desktop/host";
 import { useDesktopAppUpdater } from "@/desktop/updates/use-desktop-app-updater";
@@ -1385,14 +1386,17 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
       switch (view.section) {
         case "general":
           return (
-            <GeneralSection
-              settings={settings}
-              isDesktopApp={isDesktopApp}
-              handleSendBehaviorChange={handleSendBehaviorChange}
-              handleServiceUrlBehaviorChange={handleServiceUrlBehaviorChange}
-              handleLanguageChange={handleLanguageChange}
-              handleTerminalScrollbackLinesChange={handleTerminalScrollbackLinesChange}
-            />
+            <>
+              <GeneralSection
+                settings={settings}
+                isDesktopApp={isDesktopApp}
+                handleSendBehaviorChange={handleSendBehaviorChange}
+                handleServiceUrlBehaviorChange={handleServiceUrlBehaviorChange}
+                handleLanguageChange={handleLanguageChange}
+                handleTerminalScrollbackLinesChange={handleTerminalScrollbackLinesChange}
+              />
+              {isDesktopApp ? <BrowserDataSection /> : null}
+            </>
           );
         case "appearance":
           return <AppearanceSection />;

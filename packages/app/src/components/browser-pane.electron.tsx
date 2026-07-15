@@ -740,10 +740,10 @@ export function BrowserPane({
     const residentWebview = takeResidentBrowserWebview(browserId) as ElectronWebview | null;
     const webview = residentWebview ?? (document.createElement("webview") as ElectronWebview);
     webviewRef.current = webview;
-    void getDesktopHost()?.browser?.registerWorkspaceBrowser?.({ browserId, workspaceId });
     if (!residentWebview) {
       prepareBrowserWebview(webview, {
         browserId,
+        workspaceId,
         initialUrl: initialUnsafeNavigationMessage ? "about:blank" : initialUrlRef.current,
       });
     }
