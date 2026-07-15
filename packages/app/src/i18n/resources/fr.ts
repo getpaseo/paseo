@@ -2024,6 +2024,33 @@ export const fr: TranslationResources = {
         teardown: "Démolir",
         teardownAccessibility: "Commandes de démontage de Worktree",
       },
+      agentEnv: {
+        title: "Environnement de l'agent",
+        info: "L'environnement de l'agent et des serveurs MCP qu'il lance. Définissez les variables directement, ou exécutez une commande qui les affiche",
+        accessibility: "Commande d'environnement de l'agent",
+        empty: "Aucun environnement configuré. L'agent démarre avec l'environnement du démon.",
+        orderHint: "Appliqués dans l'ordre. Les dernières entrées l'emportent.",
+        staticTitle: "Variables",
+        commandTitle: "Commande",
+        varKeyAccessibility: "Nom de la variable",
+        varValueAccessibility: "Valeur de la variable",
+        varValuePlaceholder: "valeur",
+        unsupported:
+          "L'agentEnv de ce projet ne peut pas être affiché ici. Modifiez-le dans paseo.json : l'enregistrement ne le changera pas.",
+        removeTitle: "Supprimer l'entrée ?",
+        removeMessage: "L'agent ne recevra plus cet environnement.",
+        actions: {
+          addVariables: "Ajouter des variables",
+          addCommand: "Ajouter une commande",
+          addVariable: "Ajouter une variable",
+          remove: "Supprimer",
+          removeVariable: "Supprimer la variable",
+          moveUp: "Monter",
+          moveDown: "Descendre",
+        },
+        docsTooltip:
+          "Consultez la documentation pour plus de détails et les variables d'environnement disponibles pour cette commande",
+      },
       scripts: {
         title: "Scripts",
         info: "Services de longue durée et commandes ponctuelles que vous pouvez lancer à partir de n'importe quel agent de ce projet",

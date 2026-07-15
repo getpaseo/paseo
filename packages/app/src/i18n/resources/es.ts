@@ -2019,6 +2019,33 @@ export const es: TranslationResources = {
         teardown: "Demoler",
         teardownAccessibility: "Comandos de desmontaje del árbol de trabajo",
       },
+      agentEnv: {
+        title: "Entorno del agente",
+        info: "El entorno del agente y de los servidores MCP que este inicia. Define las variables directamente o ejecuta un comando que las imprima",
+        accessibility: "Comando de entorno del agente",
+        empty: "Sin entorno configurado. El agente arranca con el entorno del daemon.",
+        orderHint: "Se aplican en orden. Las últimas entradas ganan.",
+        staticTitle: "Variables",
+        commandTitle: "Comando",
+        varKeyAccessibility: "Nombre de la variable",
+        varValueAccessibility: "Valor de la variable",
+        varValuePlaceholder: "valor",
+        unsupported:
+          "El agentEnv de este proyecto no se puede mostrar aquí. Edítalo en paseo.json: guardar no lo cambiará.",
+        removeTitle: "¿Eliminar la entrada?",
+        removeMessage: "El agente dejará de recibir este entorno.",
+        actions: {
+          addVariables: "Añadir variables",
+          addCommand: "Añadir comando",
+          addVariable: "Añadir variable",
+          remove: "Eliminar",
+          removeVariable: "Eliminar variable",
+          moveUp: "Subir",
+          moveDown: "Bajar",
+        },
+        docsTooltip:
+          "Consulta la documentación para más detalles y las variables de entorno disponibles para este comando",
+      },
       scripts: {
         title: "Scripts",
         info: "Servicios de larga duración y comandos únicos que puede iniciar desde cualquier agente en este proyecto",

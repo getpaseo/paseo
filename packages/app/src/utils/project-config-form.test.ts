@@ -9,6 +9,8 @@ function emptyDraft(): ProjectConfigDraft {
     setupOriginalKind: "missing",
     teardownText: "",
     teardownOriginalKind: "missing",
+    agentEnvLayers: [],
+    agentEnvUnsupported: false,
     scripts: [],
     metadataPrompts: {
       branchName: "",
@@ -98,6 +100,64 @@ describe("applyDraftToConfig", () => {
     draft.setupText = "npm install\nnpm run prepare";
     const next = applyDraftToConfig({ draft, base });
     expect(next.worktree?.setup).toEqual(["npm install", "npm run prepare"]);
+  });
+
+  it("round-trips a single agentEnv command as a bare string", () => {
+    const base: PaseoConfigRaw = { agentEnv: "direnv exec . env -0" };
+    const draft = configToDraft(base);
+    expect(draft.agentEnvLayers).toMatchObject([
+      { kind: "command", command: "direnv exec . env -0" },
+    ]);
+
+    const layer = draft.agentEnvLayers[0];
+    if (layer?.kind !== "command") throw new Error("expected a command layer");
+    layer.command = "mise env --json";
+    // A single command stays a bare string rather than becoming a one-element array.
+    expect(applyDraftToConfig({ draft, base }).agentEnv).toBe("mise env --json");
+  });
+
+  it("round-trips a single static map as a bare object", () => {
+    const base = { agentEnv: { FOO: "bar" } } as PaseoConfigRaw;
+    const draft = configToDraft(base);
+    expect(draft.agentEnvLayers).toMatchObject([
+      { kind: "static", vars: [{ key: "FOO", value: "bar" }] },
+    ]);
+    expect(applyDraftToConfig({ draft, base }).agentEnv).toEqual({ FOO: "bar" });
+  });
+
+  it("round-trips a mixed layer list, preserving order", () => {
+    const agentEnv = [{ FOO: "bar" }, "direnv exec . env -0"];
+    const base = { agentEnv } as PaseoConfigRaw;
+    const draft = configToDraft(base);
+    expect(draft.agentEnvLayers).toMatchObject([
+      { kind: "static", vars: [{ key: "FOO", value: "bar" }] },
+      { kind: "command", command: "direnv exec . env -0" },
+    ]);
+    expect(applyDraftToConfig({ draft, base }).agentEnv).toEqual(agentEnv);
+  });
+
+  it("drops empty layers and omits agentEnv when nothing is left", () => {
+    const base = { agentEnv: [{ FOO: "bar" }, "cmd"] } as PaseoConfigRaw;
+    const draft = configToDraft(base);
+    const [staticLayer, commandLayer] = draft.agentEnvLayers;
+    if (staticLayer?.kind !== "static" || commandLayer?.kind !== "command") {
+      throw new Error("unexpected layer shape");
+    }
+    // A variable with no name and a blank command contribute nothing.
+    staticLayer.vars = [{ id: "v1", key: "  ", value: "ignored" }];
+    commandLayer.command = "   ";
+    expect(applyDraftToConfig({ draft, base }).agentEnv).toBeUndefined();
+  });
+
+  it("preserves an agentEnv the form cannot represent instead of rewriting it", () => {
+    // A non-string value is invalid config (the daemon rejects it at launch), but saving an
+    // unrelated field must not silently rewrite the user's file.
+    const agentEnv = [{ TOKEN: "ok" }, { API_KEY: 123 }] as unknown;
+    const base = { agentEnv } as PaseoConfigRaw;
+    const draft = configToDraft(base);
+    expect(draft.agentEnvUnsupported).toBe(true);
+    expect(draft.agentEnvLayers).toEqual([]);
+    expect(applyDraftToConfig({ draft, base }).agentEnv).toEqual(agentEnv);
   });
 
   it("omits a lifecycle field whose draft text is empty", () => {

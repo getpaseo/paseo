@@ -1997,6 +1997,33 @@ export const ja: TranslationResources = {
         teardown: "削除時",
         teardownAccessibility: "ワークツリー削除時のコマンド",
       },
+      agentEnv: {
+        title: "エージェント環境",
+        info: "エージェントと、エージェントが起動する MCP サーバーの環境。変数を直接指定するか、環境を出力するコマンドを実行します",
+        accessibility: "エージェント環境コマンド",
+        empty: "環境が未設定です。エージェントはデーモンの環境で起動します。",
+        orderHint: "順番に適用されます。後の項目が優先されます。",
+        staticTitle: "変数",
+        commandTitle: "コマンド",
+        varKeyAccessibility: "変数名",
+        varValueAccessibility: "変数の値",
+        varValuePlaceholder: "値",
+        unsupported:
+          "このプロジェクトの agentEnv はここに表示できません。paseo.json で編集してください。保存しても変更されません。",
+        removeTitle: "項目を削除しますか？",
+        removeMessage: "エージェントはこの環境を受け取らなくなります。",
+        actions: {
+          addVariables: "変数を追加",
+          addCommand: "コマンドを追加",
+          addVariable: "変数を追加",
+          remove: "削除",
+          removeVariable: "変数を削除",
+          moveUp: "上へ",
+          moveDown: "下へ",
+        },
+        docsTooltip:
+          "詳細とこのコマンドで使用できる環境変数についてはドキュメントを参照してください",
+      },
       scripts: {
         title: "スクリプト",
         info: "このプロジェクトのどのエージェントからでも起動できる、長時間実行サービスと単発コマンド",

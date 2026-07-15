@@ -20,7 +20,13 @@ export {
   type PaseoConfig,
   type PaseoConfigRaw,
 } from "@getpaseo/protocol/paseo-config-schema";
-import { PaseoConfigSchema, type PaseoConfig } from "@getpaseo/protocol/paseo-config-schema";
+import {
+  AgentEnvRawSchema,
+  normalizeAgentEnv,
+  PaseoConfigSchema,
+  type AgentEnvLayer,
+  type PaseoConfig,
+} from "@getpaseo/protocol/paseo-config-schema";
 import {
   normalizeBaseRefName,
   readPaseoWorktreeMetadata,
@@ -257,6 +263,43 @@ export function getWorktreeSetupCommands(repoRoot: string): string[] {
 
 export function getWorktreeTeardownCommands(repoRoot: string): string[] {
   return readPaseoConfigOrThrow(repoRoot)?.worktree?.teardown ?? [];
+}
+
+export class AgentEnvConfigError extends Error {
+  constructor(readonly detail: string) {
+    super(`Invalid \`agentEnv\` in paseo.json: ${detail}`);
+    this.name = "AgentEnvConfigError";
+  }
+}
+
+// The committed top-level `agentEnv` layers, resolved before the agent CLI starts to prepare
+// its environment (see server/agent/pre-launch-env.ts). Empty when not configured.
+//
+// Validated strictly against the raw schema and thrown on, rather than normalized leniently:
+// dropping a malformed entry would launch the agent with a PARTIAL environment, and a missing
+// secret surfaces later as an unexplained auth failure inside an MCP server — the exact bug
+// this feature exists to prevent. The rest of paseo.json stays lenient; only this key fails hard.
+export function getAgentEnvLayers(repoRoot: string): AgentEnvLayer[] {
+  let json: unknown;
+  try {
+    json = readPaseoConfigJson(repoRoot);
+  } catch (error) {
+    throw paseoConfigParseError({ configPath: resolvePaseoConfigPath(repoRoot), error });
+  }
+  if (json === null || typeof json !== "object" || Array.isArray(json)) {
+    return [];
+  }
+  const raw = (json as Record<string, unknown>).agentEnv;
+  if (raw === undefined) {
+    return [];
+  }
+  const parsed = AgentEnvRawSchema.safeParse(raw);
+  if (!parsed.success) {
+    throw new AgentEnvConfigError(
+      "expected a command string, a map of string variables, or a list of both",
+    );
+  }
+  return normalizeAgentEnv(parsed.data) ?? [];
 }
 
 export function getWorktreeTerminalSpecs(repoRoot: string): WorktreeTerminalConfig[] {
@@ -666,6 +709,28 @@ async function resolveBranchNameForWorktreePath(worktreePath: string): Promise<s
   }
 
   return basename(worktreePath);
+}
+
+// Like resolveWorktreeRuntimeEnv but WITHOUT side effects: it never allocates a port
+// or asserts port availability. Safe to call on the hot agent-launch path (the
+// pre-launch env hook), where a port assert could throw EADDRINUSE once the worktree's
+// dev server is up. Omits PASEO_WORKTREE_PORT when none is persisted yet.
+export async function resolveWorktreeHookEnv(
+  worktreePath: string,
+): Promise<Record<string, string>> {
+  const repoRootPath = await inferRepoRootPathFromWorktreePath(worktreePath);
+  const branchName = await resolveBranchNameForWorktreePath(worktreePath);
+  const env: Record<string, string> = {
+    PASEO_SOURCE_CHECKOUT_PATH: repoRootPath,
+    PASEO_ROOT_PATH: repoRootPath,
+    PASEO_WORKTREE_PATH: worktreePath,
+    PASEO_BRANCH_NAME: branchName,
+  };
+  const worktreePort = readPaseoWorktreeRuntimePort(worktreePath);
+  if (worktreePort !== null) {
+    env.PASEO_WORKTREE_PORT = String(worktreePort);
+  }
+  return env;
 }
 
 export async function resolveWorktreeRuntimeEnv(options: {

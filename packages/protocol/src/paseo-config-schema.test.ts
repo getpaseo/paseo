@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { PaseoConfigRawSchema, PaseoConfigSchema } from "@getpaseo/protocol/paseo-config-schema";
+import {
+  AgentEnvRawSchema,
+  PaseoConfigRawSchema,
+  PaseoConfigSchema,
+} from "@getpaseo/protocol/paseo-config-schema";
 
 describe("paseo config schema", () => {
   it("parses an empty config without metadata generation", () => {
@@ -31,6 +35,53 @@ describe("paseo config schema", () => {
       },
       scripts: config.scripts,
     });
+  });
+
+  it("normalizes a single agentEnv command into one layer", () => {
+    expect(PaseoConfigSchema.parse({ agentEnv: "  direnv exec . env -0  " }).agentEnv).toEqual([
+      { kind: "command", command: "direnv exec . env -0" },
+    ]);
+    // Round-trips unchanged through the raw schema (UI read/write path).
+    expect(PaseoConfigRawSchema.parse({ agentEnv: "mise env --json" }).agentEnv).toBe(
+      "mise env --json",
+    );
+  });
+
+  it("normalizes a static agentEnv map into one layer", () => {
+    expect(PaseoConfigSchema.parse({ agentEnv: { FOO: "bar" } }).agentEnv).toEqual([
+      { kind: "static", vars: { FOO: "bar" } },
+    ]);
+    expect(PaseoConfigRawSchema.parse({ agentEnv: { FOO: "bar" } }).agentEnv).toEqual({
+      FOO: "bar",
+    });
+  });
+
+  it("normalizes a mixed agentEnv list into layers, preserving order", () => {
+    expect(
+      PaseoConfigSchema.parse({
+        agentEnv: [{ STATIC: "1" }, "direnv exec . env -0"],
+      }).agentEnv,
+    ).toEqual([
+      { kind: "static", vars: { STATIC: "1" } },
+      { kind: "command", command: "direnv exec . env -0" },
+    ]);
+  });
+
+  it("drops blank and empty agentEnv entries", () => {
+    expect(PaseoConfigSchema.parse({ agentEnv: "   " }).agentEnv).toBeUndefined();
+    expect(PaseoConfigSchema.parse({ agentEnv: {} }).agentEnv).toBeUndefined();
+    expect(PaseoConfigSchema.parse({ worktree: { setup: "npm i" } }).agentEnv).toBeUndefined();
+  });
+
+  it("rejects malformed agentEnv at the raw schema, so the server can fail the launch", () => {
+    // The normalizer is deliberately defensive (a bad config must not brick config reads), but
+    // silently dropping a layer would launch an agent with a PARTIAL environment. The raw schema
+    // is the strict gate; `getAgentEnvLayers` validates against it and throws. See worktree.ts.
+    expect(AgentEnvRawSchema.safeParse([{ TOKEN: "ok" }, { API_KEY: 123 }]).success).toBe(false);
+    expect(AgentEnvRawSchema.safeParse([42, "direnv exec . env -0"]).success).toBe(false);
+    expect(AgentEnvRawSchema.safeParse({ TOKEN: "ok" }).success).toBe(true);
+    expect(AgentEnvRawSchema.safeParse("direnv exec . env -0").success).toBe(true);
+    expect(AgentEnvRawSchema.safeParse([{ A: "1" }, "cmd"]).success).toBe(true);
   });
 
   it("normalizes partial worktree lifecycle config without dropping present commands", () => {

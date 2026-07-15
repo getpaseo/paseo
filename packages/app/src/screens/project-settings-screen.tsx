@@ -5,7 +5,16 @@ import { Pressable, Text, TextInput, View } from "react-native";
 import { router } from "expo-router";
 import { StyleSheet } from "react-native-unistyles";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Check, ChevronDown, MoreVertical, Pencil, Plus, X } from "lucide-react-native";
+import {
+  ArrowLeft,
+  Check,
+  ChevronDown,
+  ChevronUp,
+  MoreVertical,
+  Pencil,
+  Plus,
+  X,
+} from "lucide-react-native";
 import { ProjectIconView } from "@/components/project-icon-view";
 import { HostPicker as SharedHostPicker, HostStatusDotSlot } from "@/components/hosts/host-picker";
 import type {
@@ -33,14 +42,18 @@ import { settingsStyles } from "@/styles/settings";
 import { useProjects } from "@/hooks/use-projects";
 import { useProjectIconDataByProjectKey } from "@/projects/project-icons";
 import { useHostRuntimeClient, useHostRuntimeSnapshot } from "@/runtime/host-runtime";
+import { useSessionStore } from "@/stores/session-store";
 import { useToast } from "@/contexts/toast-context";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import {
   applyDraftToConfig,
   configToDraft,
   METADATA_PROMPT_KEYS,
+  nextAgentEnvDraftId,
   type LifecycleOriginalKind,
   type MetadataPromptKey,
+  type ProjectAgentEnvLayerDraft,
+  type ProjectAgentEnvVarDraft,
   type ProjectConfigDraft,
   type ProjectScriptDraft,
 } from "@/utils/project-config-form";
@@ -336,6 +349,7 @@ function renderContent({
       baseConfig={loadedConfig}
       revision={loadedRevision}
       repoRoot={selectedHost.repoRoot}
+      serverId={selectedHost.serverId}
       queryKey={queryKey}
       client={client}
       onReload={onReload}
@@ -421,6 +435,7 @@ interface ProjectConfigFormProps {
   baseConfig: PaseoConfigRaw;
   revision: PaseoConfigRevision | null;
   repoRoot: string;
+  serverId: string;
   queryKey: readonly [string, string, string];
   client: DaemonClient;
   onReload: () => void;
@@ -430,6 +445,7 @@ function ProjectConfigForm({
   baseConfig,
   revision,
   repoRoot,
+  serverId,
   queryKey,
   client,
   onReload,
@@ -437,6 +453,11 @@ function ProjectConfigForm({
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const toast = useToast();
+  // COMPAT(agentEnv): added in v0.1.108, remove gate after 2027-01-13.
+  // Old daemons ignore `agentEnv`, so only offer the editor when the host runs it.
+  const supportsAgentEnv = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.features?.agentEnv === true,
+  );
 
   const [draft, setDraft] = useState<ProjectConfigDraft>(() => configToDraft(baseConfig));
   const [writeError, setWriteError] = useState<ProjectConfigRpcError | null>(null);
@@ -493,6 +514,34 @@ function ProjectConfigForm({
   const handleTeardownChange = useCallback(
     (text: string) => updateDraft((d) => ({ ...d, teardownText: text })),
     [updateDraft],
+  );
+  const handleAgentEnvLayersChange = useCallback(
+    (layers: ProjectAgentEnvLayerDraft[]) => updateDraft((d) => ({ ...d, agentEnvLayers: layers })),
+    [updateDraft],
+  );
+
+  const handleRemoveAgentEnvLayer = useCallback(
+    async (layer: ProjectAgentEnvLayerDraft) => {
+      const isEmpty =
+        layer.kind === "command"
+          ? layer.command.trim().length === 0
+          : layer.vars.every((entry) => entry.key.trim().length === 0);
+      if (!isEmpty) {
+        const ok = await confirmDialog({
+          title: t("settings.project.agentEnv.removeTitle"),
+          message: t("settings.project.agentEnv.removeMessage"),
+          confirmLabel: t("settings.project.agentEnv.actions.remove"),
+          cancelLabel: t("settings.project.actions.cancel"),
+          destructive: true,
+        });
+        if (!ok) return;
+      }
+      updateDraft((d) => ({
+        ...d,
+        agentEnvLayers: d.agentEnvLayers.filter((entry) => entry.id !== layer.id),
+      }));
+    },
+    [t, updateDraft],
   );
 
   const handleMetadataPromptChange = useCallback(
@@ -625,6 +674,17 @@ function ProjectConfigForm({
     ),
     [t],
   );
+  const agentEnvDocsLink = useMemo(
+    () => (
+      <ExternalLink
+        href={WORKTREE_DOCS_URL}
+        label={t("settings.project.worktree.docs")}
+        tooltip={t("settings.project.agentEnv.docsTooltip")}
+        testID="agent-env-docs-link"
+      />
+    ),
+    [t],
+  );
 
   const isStale = writeError?.code === "stale_project_config";
   const isWriteFailed = writeError?.code === "write_failed";
@@ -666,6 +726,29 @@ function ProjectConfigForm({
           />
         </SettingsSection>
       </SettingsGroup>
+
+      {supportsAgentEnv ? (
+        <SettingsGroup
+          title={t("settings.project.agentEnv.title")}
+          info={t("settings.project.agentEnv.info")}
+          trailing={agentEnvDocsLink}
+          testID="agent-env-group"
+        >
+          {draft.agentEnvUnsupported ? (
+            <View style={settingsStyles.card} testID="agent-env-unsupported">
+              <Text style={styles.agentEnvNoticeText}>
+                {t("settings.project.agentEnv.unsupported")}
+              </Text>
+            </View>
+          ) : (
+            <AgentEnvEditor
+              layers={draft.agentEnvLayers}
+              onChange={handleAgentEnvLayersChange}
+              onRemove={handleRemoveAgentEnvLayer}
+            />
+          )}
+        </SettingsGroup>
+      ) : null}
 
       <SettingsGroup
         title={t("settings.project.scripts.title")}
@@ -1032,6 +1115,287 @@ interface ScriptRowProps {
   onRemove: (script: ProjectScriptDraft) => void;
 }
 
+interface AgentEnvEditorProps {
+  layers: ProjectAgentEnvLayerDraft[];
+  onChange: (layers: ProjectAgentEnvLayerDraft[]) => void;
+  onRemove: (layer: ProjectAgentEnvLayerDraft) => void;
+}
+
+function AgentEnvEditor({ layers, onChange, onRemove }: AgentEnvEditorProps) {
+  const { t } = useTranslation();
+
+  const replaceLayer = useCallback(
+    (next: ProjectAgentEnvLayerDraft) => {
+      onChange(layers.map((layer) => (layer.id === next.id ? next : layer)));
+    },
+    [layers, onChange],
+  );
+
+  const moveLayer = useCallback(
+    (index: number, delta: number) => {
+      const target = index + delta;
+      if (target < 0 || target >= layers.length) return;
+      const next = [...layers];
+      const [moved] = next.splice(index, 1);
+      if (!moved) return;
+      next.splice(target, 0, moved);
+      onChange(next);
+    },
+    [layers, onChange],
+  );
+
+  const handleAddStatic = useCallback(() => {
+    onChange([
+      ...layers,
+      {
+        id: nextAgentEnvDraftId("layer"),
+        kind: "static",
+        vars: [{ id: nextAgentEnvDraftId("var"), key: "", value: "" }],
+      },
+    ]);
+  }, [layers, onChange]);
+
+  const handleAddCommand = useCallback(() => {
+    onChange([...layers, { id: nextAgentEnvDraftId("layer"), kind: "command", command: "" }]);
+  }, [layers, onChange]);
+
+  return (
+    <View testID="agent-env-editor">
+      {layers.map((layer, index) => (
+        <AgentEnvLayerCard
+          key={layer.id}
+          layer={layer}
+          index={index}
+          total={layers.length}
+          onChange={replaceLayer}
+          onRemove={onRemove}
+          onMove={moveLayer}
+        />
+      ))}
+
+      {layers.length === 0 ? (
+        <View style={settingsStyles.card}>
+          <Text style={styles.agentEnvNoticeText}>{t("settings.project.agentEnv.empty")}</Text>
+        </View>
+      ) : (
+        // Order is the precedence rule, so say so where the user can act on it.
+        <Text style={styles.agentEnvOrderHint}>{t("settings.project.agentEnv.orderHint")}</Text>
+      )}
+
+      <View style={styles.agentEnvAddRow}>
+        <Button testID="agent-env-add-static" onPress={handleAddStatic} variant="outline" size="sm">
+          {t("settings.project.agentEnv.actions.addVariables")}
+        </Button>
+        <Button
+          testID="agent-env-add-command"
+          onPress={handleAddCommand}
+          variant="outline"
+          size="sm"
+        >
+          {t("settings.project.agentEnv.actions.addCommand")}
+        </Button>
+      </View>
+    </View>
+  );
+}
+
+interface AgentEnvLayerCardProps {
+  layer: ProjectAgentEnvLayerDraft;
+  index: number;
+  total: number;
+  onChange: (layer: ProjectAgentEnvLayerDraft) => void;
+  onRemove: (layer: ProjectAgentEnvLayerDraft) => void;
+  onMove: (index: number, delta: number) => void;
+}
+
+function AgentEnvLayerCard({
+  layer,
+  index,
+  total,
+  onChange,
+  onRemove,
+  onMove,
+}: AgentEnvLayerCardProps) {
+  const { t } = useTranslation();
+  const handleRemove = useCallback(() => onRemove(layer), [layer, onRemove]);
+  const handleMoveUp = useCallback(() => onMove(index, -1), [index, onMove]);
+  const handleMoveDown = useCallback(() => onMove(index, 1), [index, onMove]);
+
+  const handleCommandChange = useCallback(
+    (command: string) => {
+      if (layer.kind !== "command") return;
+      onChange({ ...layer, command });
+    },
+    [layer, onChange],
+  );
+
+  const handleVarChange = useCallback(
+    (id: string, field: "key" | "value", text: string) => {
+      if (layer.kind !== "static") return;
+      onChange({
+        ...layer,
+        vars: layer.vars.map((entry) => (entry.id === id ? { ...entry, [field]: text } : entry)),
+      });
+    },
+    [layer, onChange],
+  );
+
+  const handleRemoveVar = useCallback(
+    (id: string) => {
+      if (layer.kind !== "static") return;
+      onChange({ ...layer, vars: layer.vars.filter((entry) => entry.id !== id) });
+    },
+    [layer, onChange],
+  );
+
+  const handleAddVar = useCallback(() => {
+    if (layer.kind !== "static") return;
+    onChange({
+      ...layer,
+      vars: [...layer.vars, { id: nextAgentEnvDraftId("var"), key: "", value: "" }],
+    });
+  }, [layer, onChange]);
+
+  return (
+    <View style={styles.agentEnvLayerCard} testID={`agent-env-layer-${layer.id}`}>
+      <View style={styles.agentEnvLayerHeader}>
+        <Text style={styles.agentEnvLayerTitle}>
+          {layer.kind === "static"
+            ? t("settings.project.agentEnv.staticTitle")
+            : t("settings.project.agentEnv.commandTitle")}
+        </Text>
+        {total > 1 ? (
+          <>
+            <Pressable
+              onPress={handleMoveUp}
+              disabled={index === 0}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel={t("settings.project.agentEnv.actions.moveUp")}
+              testID={`agent-env-layer-${layer.id}-up`}
+              style={index === 0 ? styles.agentEnvIconDisabled : undefined}
+            >
+              <ChevronUp size={ICON_SIZE} color={styles.chevronColor.color} />
+            </Pressable>
+            <Pressable
+              onPress={handleMoveDown}
+              disabled={index === total - 1}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel={t("settings.project.agentEnv.actions.moveDown")}
+              testID={`agent-env-layer-${layer.id}-down`}
+              style={index === total - 1 ? styles.agentEnvIconDisabled : undefined}
+            >
+              <ChevronDown size={ICON_SIZE} color={styles.chevronColor.color} />
+            </Pressable>
+          </>
+        ) : null}
+        <Pressable
+          onPress={handleRemove}
+          hitSlop={8}
+          accessibilityRole="button"
+          accessibilityLabel={t("settings.project.agentEnv.actions.remove")}
+          testID={`agent-env-layer-${layer.id}-remove`}
+        >
+          <X size={ICON_SIZE} color={styles.chevronColor.color} />
+        </Pressable>
+      </View>
+
+      {layer.kind === "command" ? (
+        <TextInput
+          testID={`agent-env-layer-${layer.id}-command`}
+          accessibilityLabel={t("settings.project.agentEnv.accessibility")}
+          value={layer.command}
+          onChangeText={handleCommandChange}
+          placeholder="direnv exec . env -0"
+          placeholderTextColor={styles.placeholderColor.color}
+          autoCapitalize="none"
+          autoCorrect={false}
+          style={styles.agentEnvCommandInput}
+        />
+      ) : (
+        <View>
+          {layer.vars.map((entry) => (
+            <AgentEnvVarRow
+              key={entry.id}
+              entry={entry}
+              onChange={handleVarChange}
+              onRemove={handleRemoveVar}
+            />
+          ))}
+          <Pressable
+            onPress={handleAddVar}
+            style={styles.agentEnvAddVarRow}
+            accessibilityRole="button"
+            accessibilityLabel={t("settings.project.agentEnv.actions.addVariable")}
+            testID={`agent-env-layer-${layer.id}-add-var`}
+          >
+            <Plus size={ICON_SIZE} color={styles.iconColor.color} />
+            <Text style={styles.agentEnvAddVarText}>
+              {t("settings.project.agentEnv.actions.addVariable")}
+            </Text>
+          </Pressable>
+        </View>
+      )}
+    </View>
+  );
+}
+
+interface AgentEnvVarRowProps {
+  entry: ProjectAgentEnvVarDraft;
+  onChange: (id: string, field: "key" | "value", text: string) => void;
+  onRemove: (id: string) => void;
+}
+
+function AgentEnvVarRow({ entry, onChange, onRemove }: AgentEnvVarRowProps) {
+  const { t } = useTranslation();
+  const handleKey = useCallback(
+    (text: string) => onChange(entry.id, "key", text),
+    [entry.id, onChange],
+  );
+  const handleValue = useCallback(
+    (text: string) => onChange(entry.id, "value", text),
+    [entry.id, onChange],
+  );
+  const handleRemove = useCallback(() => onRemove(entry.id), [entry.id, onRemove]);
+
+  return (
+    <View style={styles.agentEnvVarRow} testID={`agent-env-var-${entry.id}`}>
+      <TextInput
+        testID={`agent-env-var-${entry.id}-key`}
+        accessibilityLabel={t("settings.project.agentEnv.varKeyAccessibility")}
+        value={entry.key}
+        onChangeText={handleKey}
+        placeholder="API_KEY"
+        placeholderTextColor={styles.placeholderColor.color}
+        autoCapitalize="characters"
+        autoCorrect={false}
+        style={styles.agentEnvVarKeyInput}
+      />
+      <TextInput
+        testID={`agent-env-var-${entry.id}-value`}
+        accessibilityLabel={t("settings.project.agentEnv.varValueAccessibility")}
+        value={entry.value}
+        onChangeText={handleValue}
+        placeholder={t("settings.project.agentEnv.varValuePlaceholder")}
+        placeholderTextColor={styles.placeholderColor.color}
+        autoCapitalize="none"
+        autoCorrect={false}
+        style={styles.agentEnvVarValueInput}
+      />
+      <Pressable
+        onPress={handleRemove}
+        hitSlop={8}
+        accessibilityRole="button"
+        accessibilityLabel={t("settings.project.agentEnv.actions.removeVariable")}
+        testID={`agent-env-var-${entry.id}-remove`}
+      >
+        <X size={ICON_SIZE} color={styles.chevronColor.color} />
+      </Pressable>
+    </View>
+  );
+}
+
 function ScriptRow({ script, isFirst, onEdit, onRemove }: ScriptRowProps) {
   const { t } = useTranslation();
   const handleEdit = useCallback(() => onEdit(script), [onEdit, script]);
@@ -1238,6 +1602,87 @@ function ScriptEditModal({ script, onChange, onCancel, onSave }: ScriptEditModal
 }
 
 const styles = StyleSheet.create((theme) => ({
+  agentEnvNoticeText: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+    paddingVertical: theme.spacing[3],
+    paddingHorizontal: theme.spacing[4],
+  },
+  agentEnvLayerCard: {
+    backgroundColor: theme.colors.surface1,
+    borderColor: theme.colors.border,
+    borderRadius: theme.borderRadius.lg,
+    borderWidth: 1,
+    marginBottom: theme.spacing[2],
+    overflow: "hidden",
+    paddingVertical: theme.spacing[2],
+  },
+  agentEnvLayerHeader: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: theme.spacing[3],
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: theme.spacing[2],
+  },
+  agentEnvLayerTitle: {
+    color: theme.colors.foreground,
+    flex: 1,
+    fontSize: theme.fontSize.sm,
+    fontWeight: "600",
+  },
+  agentEnvIconDisabled: {
+    opacity: 0.35,
+  },
+  agentEnvCommandInput: {
+    color: theme.colors.foreground,
+    fontFamily: theme.fontFamily.mono,
+    fontSize: theme.fontSize.sm,
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: theme.spacing[2],
+  },
+  agentEnvVarRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: theme.spacing[2],
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: theme.spacing[1],
+  },
+  agentEnvVarKeyInput: {
+    color: theme.colors.foreground,
+    flex: 2,
+    fontFamily: theme.fontFamily.mono,
+    fontSize: theme.fontSize.sm,
+    paddingVertical: theme.spacing[2],
+  },
+  agentEnvVarValueInput: {
+    color: theme.colors.foreground,
+    flex: 3,
+    fontFamily: theme.fontFamily.mono,
+    fontSize: theme.fontSize.sm,
+    paddingVertical: theme.spacing[2],
+  },
+  agentEnvAddVarRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: theme.spacing[2],
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: theme.spacing[2],
+  },
+  agentEnvAddVarText: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+  },
+  agentEnvOrderHint: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+    paddingBottom: theme.spacing[2],
+    paddingHorizontal: theme.spacing[1],
+  },
+  agentEnvAddRow: {
+    flexDirection: "row",
+    gap: theme.spacing[2],
+    paddingTop: theme.spacing[1],
+  },
   noTargetContainer: {
     padding: theme.spacing[4],
     alignItems: "flex-start",

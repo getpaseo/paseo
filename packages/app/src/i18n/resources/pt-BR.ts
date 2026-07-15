@@ -2005,6 +2005,33 @@ export const ptBR: TranslationResources = {
         teardown: "Desmontagem",
         teardownAccessibility: "Comandos de desmontagem do worktree",
       },
+      agentEnv: {
+        title: "Ambiente do agente",
+        info: "O ambiente do agente e dos servidores MCP que ele inicia. Defina as variáveis diretamente ou execute um comando que as imprima",
+        accessibility: "Comando de ambiente do agente",
+        empty: "Nenhum ambiente configurado. O agente inicia com o ambiente do daemon.",
+        orderHint: "Aplicados em ordem. As últimas entradas prevalecem.",
+        staticTitle: "Variáveis",
+        commandTitle: "Comando",
+        varKeyAccessibility: "Nome da variável",
+        varValueAccessibility: "Valor da variável",
+        varValuePlaceholder: "valor",
+        unsupported:
+          "O agentEnv deste projeto não pode ser exibido aqui. Edite-o no paseo.json — salvar não vai alterá-lo.",
+        removeTitle: "Remover entrada?",
+        removeMessage: "O agente deixará de receber este ambiente.",
+        actions: {
+          addVariables: "Adicionar variáveis",
+          addCommand: "Adicionar comando",
+          addVariable: "Adicionar variável",
+          remove: "Remover",
+          removeVariable: "Remover variável",
+          moveUp: "Mover para cima",
+          moveDown: "Mover para baixo",
+        },
+        docsTooltip:
+          "Veja a documentação para mais detalhes e as variáveis de ambiente disponíveis para este comando",
+      },
       scripts: {
         title: "Scripts",
         info: "Serviços contínuos e comandos avulsos que você pode iniciar de qualquer agente neste projeto",

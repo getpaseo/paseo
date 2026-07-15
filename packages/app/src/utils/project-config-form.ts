@@ -20,11 +20,28 @@ export interface ProjectScriptDraft {
   rawEntry: PaseoScriptEntryRaw;
 }
 
+export interface ProjectAgentEnvVarDraft {
+  id: string;
+  key: string;
+  value: string;
+}
+
+/** One `agentEnv` layer: a static set of variables, or a command that prints the environment. */
+export type ProjectAgentEnvLayerDraft =
+  | { id: string; kind: "static"; vars: ProjectAgentEnvVarDraft[] }
+  | { id: string; kind: "command"; command: string };
+
 export interface ProjectConfigDraft {
   setupText: string;
   setupOriginalKind: LifecycleOriginalKind;
   teardownText: string;
   teardownOriginalKind: LifecycleOriginalKind;
+  // The agent environment (top-level `agentEnv`), as ordered layers.
+  agentEnvLayers: ProjectAgentEnvLayerDraft[];
+  // True when the committed `agentEnv` is a shape this form cannot represent (e.g. a non-string
+  // value in a map). We render it read-only rather than rewriting the file into something the
+  // user did not ask for — the config is already invalid and the daemon rejects it at launch.
+  agentEnvUnsupported: boolean;
   scripts: ProjectScriptDraft[];
   metadataPrompts: Record<MetadataPromptKey, string>;
   metadataGenerationBase: PaseoMetadataGeneration | undefined;
@@ -98,6 +115,90 @@ function nextScriptDraftId(): string {
   return `script-draft-${scriptDraftIdCounter}`;
 }
 
+let agentEnvDraftIdCounter = 0;
+
+export function nextAgentEnvDraftId(prefix: string): string {
+  agentEnvDraftIdCounter += 1;
+  return `agent-env-${prefix}-${agentEnvDraftIdCounter}`;
+}
+
+function isStaticVarMap(value: unknown): value is Record<string, string> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.values(value).every((entry) => typeof entry === "string")
+  );
+}
+
+function staticLayerFromMap(map: Record<string, string>): ProjectAgentEnvLayerDraft {
+  return {
+    id: nextAgentEnvDraftId("layer"),
+    kind: "static",
+    vars: Object.entries(map).map(([key, value]) => ({
+      id: nextAgentEnvDraftId("var"),
+      key,
+      value,
+    })),
+  };
+}
+
+interface AgentEnvProjection {
+  layers: ProjectAgentEnvLayerDraft[];
+  unsupported: boolean;
+}
+
+function projectAgentEnv(value: unknown): AgentEnvProjection {
+  if (value === undefined) {
+    return { layers: [], unsupported: false };
+  }
+  const entries = Array.isArray(value) ? value : [value];
+  const layers: ProjectAgentEnvLayerDraft[] = [];
+  for (const entry of entries) {
+    if (typeof entry === "string") {
+      layers.push({ id: nextAgentEnvDraftId("layer"), kind: "command", command: entry });
+      continue;
+    }
+    if (isStaticVarMap(entry)) {
+      layers.push(staticLayerFromMap(entry));
+      continue;
+    }
+    // Something we can't round-trip. Bail out entirely rather than half-representing it.
+    return { layers: [], unsupported: true };
+  }
+  return { layers, unsupported: false };
+}
+
+/** Serialize layers back to the narrowest shape: a bare string, a bare map, or a list. */
+function agentEnvFromLayers(
+  layers: ProjectAgentEnvLayerDraft[],
+): string | Record<string, string> | (string | Record<string, string>)[] | undefined {
+  const serialized: (string | Record<string, string>)[] = [];
+  for (const layer of layers) {
+    if (layer.kind === "command") {
+      const command = layer.command.trim();
+      if (command.length > 0) {
+        serialized.push(command);
+      }
+      continue;
+    }
+    const vars: Record<string, string> = {};
+    for (const entry of layer.vars) {
+      const key = entry.key.trim();
+      if (key.length > 0) {
+        vars[key] = entry.value;
+      }
+    }
+    if (Object.keys(vars).length > 0) {
+      serialized.push(vars);
+    }
+  }
+  if (serialized.length === 0) {
+    return undefined;
+  }
+  return serialized.length === 1 ? serialized[0] : serialized;
+}
+
 function emptyMetadataPrompts(): Record<MetadataPromptKey, string> {
   return {
     branchName: "",
@@ -135,11 +236,15 @@ export function configToDraft(config: PaseoConfigRaw | null | undefined): Projec
     }
   }
 
+  const agentEnv = projectAgentEnv(config?.agentEnv);
+
   return {
     setupText: setup.text,
     setupOriginalKind: setup.kind,
     teardownText: teardown.text,
     teardownOriginalKind: teardown.kind,
+    agentEnvLayers: agentEnv.layers,
+    agentEnvUnsupported: agentEnv.unsupported,
     scripts,
     metadataPrompts,
     metadataGenerationBase: metadataGeneration,
@@ -171,7 +276,6 @@ export function applyDraftToConfig(input: ApplyDraftInput): PaseoConfigRaw {
   } else {
     nextWorktree.teardown = nextTeardown;
   }
-
   const nextScripts: Record<string, PaseoScriptEntryRaw> = {};
   for (const row of input.draft.scripts) {
     const trimmedName = row.name.trim();
@@ -231,6 +335,16 @@ export function applyDraftToConfig(input: ApplyDraftInput): PaseoConfigRaw {
     delete result.worktree;
   } else {
     result.worktree = nextWorktree;
+  }
+  // An `agentEnv` the form can't represent is left exactly as committed — saving an unrelated
+  // field must never rewrite it into something the user didn't ask for.
+  if (!input.draft.agentEnvUnsupported) {
+    const nextAgentEnv = agentEnvFromLayers(input.draft.agentEnvLayers);
+    if (nextAgentEnv === undefined) {
+      delete result.agentEnv;
+    } else {
+      result.agentEnv = nextAgentEnv;
+    }
   }
   if (Object.keys(nextScripts).length === 0) {
     delete result.scripts;

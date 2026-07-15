@@ -50,6 +50,7 @@ Drop a `paseo.json` in your repo root. Paseo reads it from the committed version
     "setup": "npm ci",
     "teardown": "rm -rf .cache"
   },
+  "agentEnv": "direnv exec . env -0",
   "scripts": {
     "test": { "command": "npm test" },
     "web": { "command": "npm run dev", "type": "service", "port": 3000 }
@@ -73,6 +74,86 @@ Drop a `paseo.json` in your repo root. Paseo reads it from the committed version
 Both fields accept a multiline shell script or an array of commands; commands run sequentially either way.
 
 Commands run with the worktree as `cwd`. Use `$PASEO_SOURCE_CHECKOUT_PATH` to reach files in the original checkout (untracked config, local caches, etc).
+
+## Agent environment
+
+`agentEnv` is a top-level `paseo.json` key: the environment for the agent CLI **and the MCP servers it spawns**, resolved before the CLI starts. It's the committed way to give an agent the environment you already manage with [direnv](https://direnv.net), [mise](https://mise.jdx.dev), or a script — and the only way to set variables the CLI reads at startup, since the CLI is launched directly rather than through your shell.
+
+It sits at the top level rather than under `worktree` because it's an agent-launch concern, not part of the worktree lifecycle.
+
+Use it for:
+
+- **Variables the agent CLI itself reads at startup** — for example a per-project `CLAUDE_CONFIG_DIR` to pick which Claude account a project uses.
+- **`PATH` and project tooling** — a project's `bin/`, `node_modules/.bin`, or mise/asdf shims that its docs assume are on `PATH`.
+- **Secrets for MCP servers** — API keys the MCP servers read from the environment, which otherwise never reach them. No more wrapping each `.mcp.json` server to load them.
+
+### Static variables
+
+An object sets variables directly. No shell, no subprocess.
+
+```json
+{
+  "agentEnv": {
+    "CLAUDE_CONFIG_DIR": ".claude-work",
+    "NODE_OPTIONS": "--max-old-space-size=8192"
+  }
+}
+```
+
+### A command that prints the environment
+
+A string is a command that **prints the environment to stdout**. Paseo runs it and applies what it printed. Three output encodings are accepted, detected automatically:
+
+| Encoding                      | Example command        | Multi-line values |
+| ----------------------------- | ---------------------- | ----------------- |
+| JSON object                   | `mise env --json`      | yes               |
+| NUL-delimited `KEY=VALUE`     | `direnv exec . env -0` | yes               |
+| Newline-delimited `KEY=VALUE` | `echo FOO=bar`         | **no**            |
+
+**direnv** — keep your committed `.envrc` (and a gitignored `.envrc.local` for per-dev secrets). Run `direnv allow` once in the checkout.
+
+```json
+{
+  "agentEnv": "direnv exec . env -0"
+}
+```
+
+Use `env -0`, not plain `env`: NUL-delimited output is what lets a multi-line secret (a PEM key, a service-account JSON blob) survive. Plain `env` truncates it at the first newline. `direnv export json` is not a substitute — it prints nothing once the environment is already loaded.
+
+**mise** — `mise env --json` prints the `[env]` block from `mise.toml` plus `PATH`, as JSON, so multi-line values are safe.
+
+```json
+{
+  "agentEnv": "mise env --json"
+}
+```
+
+### Both together
+
+An array is an ordered list of layers, merged left to right — later layers win, so precedence is visible in the file. Each command runs with the earlier layers already applied.
+
+```json
+{
+  "agentEnv": [{ "CLAUDE_CONFIG_DIR": ".claude-work" }, "direnv exec . env -0"]
+}
+```
+
+### How it works and what to know
+
+- **Commands run in the source checkout.** Unlike `worktree.setup`, which runs later in the background, `agentEnv` resolves synchronously before the agent, with its working directory set to `$PASEO_SOURCE_CHECKOUT_PATH` — the original checkout, where your committed `.envrc`/`mise.toml` and your gitignored secrets live. So it works even on a brand-new worktree whose setup hasn't finished. `$PASEO_WORKTREE_PATH`, `$PASEO_BRANCH_NAME`, and `$PASEO_SOURCE_CHECKOUT_PATH` are all available, so a command can target the worktree explicitly (`direnv exec "$PASEO_WORKTREE_PATH" env -0`) if you prefer.
+- **It feeds the agent and its MCP servers.** MCP servers the agent launches inherit the environment. You no longer need to wrap each `.mcp.json` server to load secrets.
+- **It's a snapshot.** Commands run once per launch; rotated secrets or `.envrc` changes apply on the next launch.
+- **Print only the environment to stdout.** Log to stderr instead — direnv and mise already do. A command that prints anything else fails the launch rather than importing half an environment.
+- **It fails fast.** A non-zero exit, a timeout, or unparseable output aborts the launch rather than starting an agent with a half-resolved environment. Keep secrets out of your tool's stderr — error output may be surfaced.
+- **Commands contribute only what they changed.** A variable a command doesn't touch is unaffected, so a per-user `runtimeSettings.env` override of an unrelated variable still applies.
+- **Variables can be added or overridden, not removed.**
+- **A malformed `agentEnv` fails the launch.** It is not partially applied — a dropped layer would mean an agent starting without a secret it needs, which surfaces later as a confusing auth error inside an MCP server.
+- **It applies to agents, not to Paseo itself.** `agentEnv` feeds the agent CLI and the MCP servers it spawns. Paseo's own commands — the `gh` calls behind pull-request status, `git` — still run with the daemon's environment, so a per-project `GH_CONFIG_DIR` or `GH_TOKEN` here will not change which account Paseo uses.
+- **`worktree.setup` cannot hand variables to the agent.** The agent starts before setup runs, so a database URL or credential that setup generates is not in the agent's environment.
+- **It cannot make the agent CLI itself discoverable.** Paseo checks that the provider (Claude, Codex, ...) is installed before resolving `agentEnv`, so a CLI that only exists on a `PATH` your command produces will not be found. Install the agent CLI normally; use `agentEnv` for the tools the agent _runs_.
+- **Windows:** commands run under PowerShell, so use PowerShell syntax (`& "C:\path\tool.exe"` to invoke a quoted path). mise works natively; direnv evaluates `.envrc` with bash, so it needs Git Bash or WSL.
+
+> A command in `agentEnv` runs on every agent launch, the same trust model as `worktree.setup`/`teardown`. Only open repos you trust. Static variables run nothing.
 
 ## Scripts and services
 
@@ -155,12 +236,16 @@ Open terminals automatically when a worktree is created. Useful for tailing logs
 
 ## Environment variables
 
-Setup, teardown, scripts, and services all see:
+Setup, teardown, `agentEnv`, terminals, scripts, services, **and the agent itself** all see:
 
 - `$PASEO_SOURCE_CHECKOUT_PATH`, the original repo root
 - `$PASEO_WORKTREE_PATH`, the worktree directory
 - `$PASEO_BRANCH_NAME`, the worktree's branch
 - `$PASEO_WORKTREE_PORT`, legacy per-worktree port (prefer `$PASEO_PORT` inside services)
+
+So an agent can find the checkout it branched from — to read a gitignored file, or to compare against the original — without being told where it is. Agents also get `$PASEO_AGENT_ID`.
+
+`agentEnv` runs before the worktree's port is assigned, so `$PASEO_WORKTREE_PORT` is only present for `agentEnv` and the agent if the worktree already has one.
 
 Services additionally get:
 

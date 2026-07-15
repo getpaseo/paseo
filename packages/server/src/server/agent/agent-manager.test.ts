@@ -1,6 +1,6 @@
 import { expect, test, vi } from "vitest";
-import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync, spawn } from "node:child_process";
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -17,6 +17,8 @@ import { AgentStorage } from "./agent-storage.js";
 import { toAgentPayload } from "./agent-projections.js";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { formatSystemNotificationPrompt } from "./agent-prompt.js";
+import { PreLaunchEnvError } from "./pre-launch-env.js";
+import { AgentEnvConfigError } from "../../utils/worktree.js";
 import type { StoredAgentRecord } from "./agent-storage.js";
 import type {
   AgentClient,
@@ -295,17 +297,30 @@ class NativeArchiveRecordingClient extends TestAgentClient {
   }
 }
 
+interface EnvProbeResult {
+  probe: string | null;
+  agentId: string | null;
+  worktreePath: string | null;
+  branchName: string | null;
+  sourceCheckoutPath: string | null;
+}
+
 class EnvProbeAgentClient extends TestAgentClient {
-  probe: Promise<{ probe: string | null; agentId: string | null }> | null = null;
+  probe: Promise<EnvProbeResult> | null = null;
 
   override async createSession(
     config: AgentSessionConfig,
     launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
+    // The probe reads the env of the ACTUAL spawned child, not launchContext — that's the whole
+    // point: these vars have to survive the provider env pipeline, not just be in the context.
     const script = `
       process.stdout.write(JSON.stringify({
         probe: process.env.CHUNK14_PROBE ?? null,
-        agentId: process.env.PASEO_AGENT_ID ?? null
+        agentId: process.env.PASEO_AGENT_ID ?? null,
+        worktreePath: process.env.PASEO_WORKTREE_PATH ?? null,
+        branchName: process.env.PASEO_BRANCH_NAME ?? null,
+        sourceCheckoutPath: process.env.PASEO_SOURCE_CHECKOUT_PATH ?? null
       }));
     `;
     const child = spawn(process.execPath, ["-e", script], {
@@ -328,7 +343,7 @@ class EnvProbeAgentClient extends TestAgentClient {
           reject(new Error(`env probe exited ${code}: ${stderr}`));
           return;
         }
-        resolve(JSON.parse(stdout) as { probe: string | null; agentId: string | null });
+        resolve(JSON.parse(stdout) as EnvProbeResult);
       });
     });
     return new TestAgentSession(config);
@@ -963,10 +978,182 @@ test("createAgent forwards request env into the spawned provider process", async
       },
     );
 
-    await expect(client.probe).resolves.toEqual({
+    await expect(client.probe).resolves.toMatchObject({
       probe: "expected",
       agentId: "00000000-0000-4000-8000-00000000e001",
     });
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("createAgent gives the agent its worktree PASEO_* variables", async () => {
+  // Every other consumer (setup, teardown, terminals, scripts, services) already gets these.
+  // The agent was the only one that couldn't even locate its own source checkout.
+  const workdir = gitInitTempDir("agent-manager-worktree-env-");
+  const client = new EnvProbeAgentClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-00000000e005",
+  });
+
+  try {
+    // No paseo.json at all: the vars must not depend on `agentEnv` being configured.
+    await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {});
+
+    const probe = await client.probe;
+    expect(probe?.worktreePath).toBe(workdir);
+    expect(probe?.sourceCheckoutPath).toBe(workdir);
+    expect(probe?.branchName).toBeTruthy();
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("agentEnv overrides a PASEO_* variable, and a request env does not", async () => {
+  const workdir = gitInitTempDir("agent-manager-worktree-env-override-");
+  writeFileSync(
+    join(workdir, "paseo.json"),
+    JSON.stringify({ agentEnv: { PASEO_BRANCH_NAME: "from-agent-env" } }),
+  );
+  const client = new EnvProbeAgentClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-00000000e006",
+  });
+
+  try {
+    await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      env: { PASEO_WORKTREE_PATH: "from-request" },
+      workspaceId: undefined,
+    });
+
+    const probe = await client.probe;
+    // Precedence, lowest to highest: derived worktree vars, request env, then committed agentEnv.
+    expect(probe?.branchName).toBe("from-agent-env");
+    expect(probe?.worktreePath).toBe("from-request");
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("createAgent launches fine in a non-git directory, simply without PASEO_* vars", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-nongit-env-"));
+  const client = new EnvProbeAgentClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-00000000e007",
+  });
+
+  try {
+    await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {});
+
+    const probe = await client.probe;
+    expect(probe?.agentId).toBe("00000000-0000-4000-8000-00000000e007");
+    expect(probe?.worktreePath).toBeNull();
+    expect(probe?.branchName).toBeNull();
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+// The PASEO_* vars come from real git plumbing (`git rev-parse`, `git branch --show-current`),
+// so the cwd has to be a real repo. `git init` alone is enough — an unborn branch still reports
+// its name.
+function gitInitTempDir(prefix: string): string {
+  // realpath: on macOS the temp dir is under the /var -> /private/var symlink, and git reports
+  // the resolved path, so an unresolved cwd would never compare equal.
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), prefix)));
+  execFileSync("git", ["init"], { cwd: dir, stdio: "ignore" });
+  return dir;
+}
+
+// An `agentEnv` command runs under the project-command shell: bash on POSIX, PowerShell on
+// Windows. PowerShell needs the `&` call operator to invoke a quoted path, so the fixture is
+// built per platform — a bare quoted path would fail on the Windows CI leg.
+function nodeEnvCommand(script: string): string {
+  const invocation = `"${process.execPath}" "${script}"`;
+  return process.platform === "win32" ? `& ${invocation}` : invocation;
+}
+
+test("createAgent resolves agentEnv layers and injects them into the spawned provider process", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-prelaunch-env-"));
+  // A node script, not `env FOO=bar`: the command runs under bash on POSIX and PowerShell on
+  // Windows, and this test runs on both CI legs.
+  const printer = join(workdir, "prints-env.cjs");
+  writeFileSync(printer, 'process.stdout.write(JSON.stringify({ CHUNK14_PROBE: "from-hook" }));');
+  writeFileSync(
+    join(workdir, "paseo.json"),
+    JSON.stringify({
+      agentEnv: [{ CHUNK14_PROBE: "from-static" }, nodeEnvCommand(printer)],
+    }),
+  );
+  const client = new EnvProbeAgentClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-00000000e002",
+  });
+
+  try {
+    await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {});
+
+    // The command layer runs after the static one, so it wins.
+    await expect(client.probe).resolves.toMatchObject({
+      probe: "from-hook",
+      agentId: "00000000-0000-4000-8000-00000000e002",
+    });
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("createAgent fails fast when an agentEnv command layer fails", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-prelaunch-env-fail-"));
+  const failing = join(workdir, "fails.cjs");
+  writeFileSync(failing, "process.exit(3);");
+  writeFileSync(join(workdir, "paseo.json"), JSON.stringify({ agentEnv: nodeEnvCommand(failing) }));
+  const client = new EnvProbeAgentClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-00000000e003",
+  });
+
+  try {
+    await expect(
+      manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {}),
+    ).rejects.toBeInstanceOf(PreLaunchEnvError);
+    // The hook failed before the provider session was created.
+    expect(client.probe).toBeNull();
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("createAgent fails fast when agentEnv is malformed, rather than launching partially", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-prelaunch-env-bad-"));
+  // A typo in one layer must not silently drop it: the agent would start missing the secret,
+  // which resurfaces as an unexplained auth failure inside an MCP server.
+  writeFileSync(
+    join(workdir, "paseo.json"),
+    JSON.stringify({ agentEnv: [{ TOKEN: "ok" }, { API_KEY: 123 }] }),
+  );
+  const client = new EnvProbeAgentClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-00000000e004",
+  });
+
+  try {
+    await expect(
+      manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {}),
+    ).rejects.toBeInstanceOf(AgentEnvConfigError);
+    expect(client.probe).toBeNull();
   } finally {
     rmSync(workdir, { recursive: true, force: true });
   }

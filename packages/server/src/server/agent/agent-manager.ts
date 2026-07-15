@@ -61,6 +61,7 @@ import {
 import { limitAgentTimelineItemContent } from "./agent-timeline-content.js";
 import { AgentRunState, type ForegroundTurnWaiter } from "./agent-run-state.js";
 import { getAgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
+import type { AgentEnvLayer } from "@getpaseo/protocol/paseo-config-schema";
 import { invokeRewindCapability, type RewindMode } from "./rewind/rewind.js";
 import { isSystemInjectedEnvelope } from "./agent-prompt.js";
 import { stripInternalPaseoMcpServer, withRuntimePaseoMcpServer } from "./runtime-mcp-config.js";
@@ -71,6 +72,12 @@ import {
   type ProviderSubagentDescriptor,
   type ProviderSubagentStoreEvent,
 } from "./provider-subagents/store.js";
+import {
+  AgentEnvConfigError,
+  getAgentEnvLayers,
+  resolveWorktreeHookEnv,
+} from "../../utils/worktree.js";
+import { PreLaunchEnvError, resolveAgentEnvVars } from "./pre-launch-env.js";
 
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
 const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
@@ -996,10 +1003,11 @@ export class AgentManager {
     const resolvedAgentId = validateAgentId(agentId ?? this.idFactory(), "createAgent");
     const { storedConfig, launchConfig } = await this.prepareSessionConfig(config, resolvedAgentId);
     this.requireEnabledProvider(storedConfig.provider);
+    const launchEnv = await this.resolveAgentLaunchEnv(storedConfig.cwd, options?.env);
     const client = await this.requireAvailableClient({
       provider: storedConfig.provider,
     });
-    const launchContext = await this.buildLaunchContext(resolvedAgentId, client, options?.env);
+    const launchContext = await this.buildLaunchContext(resolvedAgentId, client, launchEnv);
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
     const createOptions = this.buildCreateSessionOptions(options);
     const session = await client.createSession(providerLaunchConfig, launchContext, createOptions);
@@ -1065,6 +1073,7 @@ export class AgentManager {
       resolvedAgentId,
     );
 
+    const launchEnv = await this.resolveAgentLaunchEnv(storedConfig.cwd);
     const client = this.requireClient(handle.provider);
     const available = await client.isAvailable();
     if (!available) {
@@ -1072,7 +1081,7 @@ export class AgentManager {
         `Provider '${handle.provider}' is not available. Please ensure the CLI is installed.`,
       );
     }
-    const launchContext = await this.buildLaunchContext(resolvedAgentId, client);
+    const launchContext = await this.buildLaunchContext(resolvedAgentId, client, launchEnv);
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
     const session = await client.resumeSession(handle, providerLaunchConfig, launchContext);
     return this.registerSession(session, storedConfig, resolvedAgentId, options);
@@ -1111,7 +1120,10 @@ export class AgentManager {
       },
       resolvedAgentId,
     );
-    const launchContext = await this.buildLaunchContext(resolvedAgentId, client);
+    // An imported session still spawns the provider CLI, so it needs the same environment a
+    // fresh launch gets — otherwise its MCP servers come up without their credentials.
+    const launchEnv = await this.resolveAgentLaunchEnv(storedConfig.cwd);
+    const launchContext = await this.buildLaunchContext(resolvedAgentId, client, launchEnv);
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
     const imported = await client.importSession(
       {
@@ -1192,7 +1204,10 @@ export class AgentManager {
       provider,
     } as AgentSessionConfig;
     const { storedConfig, launchConfig } = await this.prepareSessionConfig(refreshConfig, agentId);
-    const launchContext = await this.buildLaunchContext(agentId, client);
+    // A reload re-launches the provider CLI, so it must re-resolve the environment too. Skipping
+    // it would silently drop the secrets and PATH the agent had on its first launch.
+    const launchEnv = await this.resolveAgentLaunchEnv(storedConfig.cwd);
+    const launchContext = await this.buildLaunchContext(agentId, client, launchEnv);
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
 
     const session = handle
@@ -3973,6 +3988,75 @@ export class AgentManager {
           daemonAppendSystemPrompt,
         }
       : next;
+  }
+
+  // The environment for the agent CLI — and the MCP servers it spawns. Resolved synchronously
+  // before the CLI starts, from two sources:
+  //
+  //   1. The worktree's own PASEO_* variables, so an agent can locate its source checkout and
+  //      know its branch. Every other consumer (setup, teardown, terminals, scripts, services)
+  //      already gets these; the agent was the only one that didn't.
+  //   2. The committed `agentEnv` layers, which win over (1) so a project can override them.
+  //
+  // `agentEnv` command layers run in the source checkout (the branch-off point) so the
+  // developer's gitignored secrets are present even before a freshly created worktree finishes
+  // its background setup. Fails the launch on error.
+  // Precedence, lowest to highest: the worktree's PASEO_* vars, then the env the client asked
+  // for on the request, then the project's committed `agentEnv`. Derived values must never
+  // override an explicit one.
+  private async resolveAgentLaunchEnv(
+    cwd: string,
+    requestEnv?: Record<string, string>,
+  ): Promise<Record<string, string>> {
+    // Side-effect-free by design: resolveWorktreeRuntimeEnv would allocate a port and assert it
+    // is free, which throws EADDRINUSE once the worktree's dev server is up. Never block a
+    // launch on worktree bookkeeping — a non-git cwd simply has no PASEO_* vars.
+    const worktreeEnv = (await resolveWorktreeHookEnv(cwd).catch(() => undefined)) ?? {};
+
+    let layers: AgentEnvLayer[];
+    try {
+      layers = getAgentEnvLayers(cwd);
+    } catch (error) {
+      // A malformed `agentEnv` fails the launch: silently dropping it would start the agent
+      // with a partial environment, which resurfaces as an unexplained auth failure inside an
+      // MCP server. Any OTHER paseo.json problem (bad JSON, say) is surfaced during worktree
+      // setup, so it must not block every agent launch — but it does mean this agent starts
+      // without its configured environment, so leave a trace at the moment it happens rather
+      // than letting the developer discover it via a puzzled MCP server later.
+      if (error instanceof AgentEnvConfigError) {
+        throw error;
+      }
+      this.logger.warn(
+        { cwd, err: error },
+        "Could not read agentEnv from paseo.json; starting the agent without it",
+      );
+      return { ...worktreeEnv, ...requestEnv };
+    }
+    if (layers.length === 0) {
+      return { ...worktreeEnv, ...requestEnv };
+    }
+
+    const hookCwd = worktreeEnv.PASEO_SOURCE_CHECKOUT_PATH ?? cwd;
+    try {
+      const agentEnv = await resolveAgentEnvVars({ layers, cwd: hookCwd, runtimeEnv: worktreeEnv });
+      return { ...worktreeEnv, ...requestEnv, ...agentEnv };
+    } catch (error) {
+      // The command's output can contain secrets, so it is kept out of the error message that
+      // reaches clients and the activity log. Keep it here, in the daemon log, where the
+      // developer can actually debug the failure.
+      if (error instanceof PreLaunchEnvError) {
+        this.logger.error(
+          {
+            command: error.command,
+            cwd: error.cwd,
+            exitCode: error.exitCode,
+            detail: error.detail,
+          },
+          "agentEnv command failed",
+        );
+      }
+      throw error;
+    }
   }
 
   private async buildLaunchContext(
