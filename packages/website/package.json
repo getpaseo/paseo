@@ -11,8 +11,6 @@
     "deploy": "npm run build && wrangler deploy"
   },
   "dependencies": {
-    "@cloudflare/vite-plugin": "^1.29.1",
-    "@cloudflare/workers-types": "^4.20260317.1",
     "@tanstack/react-router": "^1.170.16",
     "@tanstack/react-start": "^1.168.26",
     "framer-motion": "^12.35.2",
@@ -25,10 +23,11 @@
     "rehype-pretty-code": "^0.14.3",
     "rehype-slug": "^6.0.0",
     "remark-gfm": "^4.0.1",
-    "shiki": "^4.0.2",
-    "wrangler": "^4.75.0"
+    "shiki": "^4.0.2"
   },
   "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.29.1",
+    "@cloudflare/workers-types": "^4.20260317.1",
     "@tailwindcss/vite": "^4.1.8",
     "@types/node": "^22.15.29",
     "@types/react": "^19.1.6",
@@ -36,6 +35,7 @@
     "@vitejs/plugin-react": "^4.5.1",
     "typescript": "^5.9.3",
     "vite": "^7.3.3",
-    "vite-tsconfig-paths": "^5.1.4"
+    "vite-tsconfig-paths": "^5.1.4",
+    "wrangler": "^4.75.0"
   }
 }
