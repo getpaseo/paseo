@@ -80,6 +80,16 @@ export function getPaseoBrowserProfileSessions(
   ];
 }
 
+export function getLegacyPaseoBrowserProfileSession(
+  sessions: ElectronSessions,
+  browserId: string,
+): BrowserProfileSession | null {
+  const [legacyBrowserId] = readLegacyPaseoBrowserIds([browserId]);
+  return legacyBrowserId
+    ? sessions.fromPartition(`${PASEO_BROWSER_PROFILE_PARTITION}-${legacyBrowserId}`)
+    : null;
+}
+
 export function listPaseoBrowserProfileGuests(
   input: ListBrowserProfileGuestsInput,
 ): BrowserProfileGuest[] {

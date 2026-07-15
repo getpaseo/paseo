@@ -4,10 +4,15 @@ import {
   BROWSER_NEW_TAB_REQUEST_EVENT,
   handleBrowserWindowOpenRequest,
   isAllowedBrowserWebviewUrl,
+  PendingBrowserWindowOpenRequests,
 } from "./window-open.js";
 import { PaseoBrowserWebviewRegistry } from "./registry.js";
 
-export { BROWSER_NEW_TAB_REQUEST_EVENT, handleBrowserWindowOpenRequest };
+export {
+  BROWSER_NEW_TAB_REQUEST_EVENT,
+  handleBrowserWindowOpenRequest,
+  PendingBrowserWindowOpenRequests,
+};
 
 const browserRegistry = new PaseoBrowserWebviewRegistry();
 

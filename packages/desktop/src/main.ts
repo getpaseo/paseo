@@ -55,6 +55,7 @@ import {
   listRegisteredPaseoBrowserIds,
   isPaseoBrowserWebviewAttach,
   preparePaseoBrowserWebContents,
+  PendingBrowserWindowOpenRequests,
   registerBrowserWebviewNavigationGuards,
   unregisterPaseoBrowser,
   registerAttachedPaseoBrowser,
@@ -62,6 +63,7 @@ import {
 } from "./features/browser-webviews/index.js";
 import {
   clearPaseoBrowserProfile,
+  getLegacyPaseoBrowserProfileSession,
   getPaseoBrowserProfileSession,
   getPaseoBrowserProfileSessions,
   listPaseoBrowserProfileGuests,
@@ -88,6 +90,7 @@ const APP_SCHEME = "paseo";
 const PASEO_DEBUG = process.env.PASEO_DEBUG === "1";
 const DISABLE_SINGLE_INSTANCE_LOCK = process.env.PASEO_DISABLE_SINGLE_INSTANCE_LOCK === "1";
 const APP_NAME = process.env.PASEO_TEST_APP_NAME?.trim() || "Paseo";
+const pendingBrowserWindowOpenRequests = new PendingBrowserWindowOpenRequests();
 
 const BROWSER_SHORTCUT_EVENT = "paseo:event:browser-shortcut";
 const BROWSER_FORWARDED_KEY_EVENT = "paseo:event:browser-forwarded-key";
@@ -362,11 +365,34 @@ ipcMain.handle("paseo:browser:register-attached", (event, rawInput: unknown) => 
     webContentsId: input.webContentsId,
     registeredBrowserIds: listRegisteredPaseoBrowserIds(),
   });
+  for (const url of pendingBrowserWindowOpenRequests.take(input.webContentsId)) {
+    event.sender.send(BROWSER_NEW_TAB_REQUEST_EVENT, {
+      sourceBrowserId: input.browserId,
+      url,
+    });
+  }
 });
 
-ipcMain.handle("paseo:browser:unregister-workspace-browser", (_event, browserId: unknown) => {
+ipcMain.handle("paseo:browser:unregister-workspace-browser", async (_event, browserId: unknown) => {
   if (typeof browserId === "string" && browserId.trim().length > 0) {
-    unregisterPaseoBrowser(browserId.trim());
+    const normalizedBrowserId = browserId.trim();
+    unregisterPaseoBrowser(normalizedBrowserId);
+    // COMPAT(browserProfile): added in v0.1.108; remove after 2027-01-15.
+    const legacyProfile = getLegacyPaseoBrowserProfileSession(session, normalizedBrowserId);
+    if (legacyProfile) {
+      try {
+        await clearPaseoBrowserProfile({
+          profileSessions: [legacyProfile],
+          listGuests: () => [],
+          logReloadError: () => {},
+        });
+      } catch (error) {
+        log.warn("[browser-profile] failed to clear legacy tab profile", {
+          browserId: normalizedBrowserId,
+          error,
+        });
+      }
+    }
   }
 });
 
@@ -664,6 +690,9 @@ async function createWindow(
   });
   mainWindow.webContents.on("did-attach-webview", (_event, contents) => {
     preparePaseoBrowserWebContents(contents);
+    contents.once("destroyed", () => {
+      pendingBrowserWindowOpenRequests.delete(contents.id);
+    });
     contents.on("before-input-event", (event, input) => {
       if (isBrowserRefreshInput(input)) {
         event.preventDefault();
@@ -695,15 +724,19 @@ async function createWindow(
         });
       }
     });
-    contents.setWindowOpenHandler(({ url }) =>
-      handleBrowserWindowOpenRequest({
+    contents.setWindowOpenHandler(({ url }) => {
+      const sourceBrowserId = getPaseoBrowserIdForWebContents(contents);
+      if (!sourceBrowserId) {
+        pendingBrowserWindowOpenRequests.add(contents.id, url);
+      }
+      return handleBrowserWindowOpenRequest({
         url,
-        sourceBrowserId: getPaseoBrowserIdForWebContents(contents),
+        sourceBrowserId,
         requestNewTab: (payload) => {
           mainWindow.webContents.send(BROWSER_NEW_TAB_REQUEST_EVENT, payload);
         },
-      }),
-    );
+      });
+    });
     contents.on("context-menu", (_contextMenuEvent, params) => {
       showBrowserWebviewContextMenu(mainWindow, contents, params);
     });

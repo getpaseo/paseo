@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   clearPaseoBrowserProfile,
+  getLegacyPaseoBrowserProfileSession,
   getPaseoBrowserProfileSessions,
   listPaseoBrowserProfileGuests,
   readLegacyPaseoBrowserIds,
@@ -110,6 +111,20 @@ describe("legacy browser profiles", () => {
       `persist:paseo-browser-${fallbackId}`,
     ]);
     expect(sessions).toHaveLength(3);
+  });
+
+  test("resolves one valid legacy profile for tab-close cleanup", () => {
+    const partitions: string[] = [];
+    const sessions = {
+      fromPartition: (partition: string) => {
+        partitions.push(partition);
+        return new FakeProfileSession();
+      },
+    };
+
+    expect(getLegacyPaseoBrowserProfileSession(sessions, "1700000000000-abcd")).not.toBeNull();
+    expect(getLegacyPaseoBrowserProfileSession(sessions, "invalid")).toBeNull();
+    expect(partitions).toEqual(["persist:paseo-browser-1700000000000-abcd"]);
   });
 });
 
