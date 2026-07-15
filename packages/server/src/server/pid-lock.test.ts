@@ -1,4 +1,4 @@
-import { mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
+import { mkdtemp, open, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
@@ -6,6 +6,7 @@ import { describe, expect, test } from "vitest";
 import {
   acquirePidLock,
   getPidLockInfo,
+  isLocked,
   PidLockError,
   refreshPidLock,
   releasePidLock,
@@ -58,7 +59,7 @@ describe("pid-lock ownership", () => {
     }
   });
 
-  test("reclaims a stale heartbeat lock when the recorded pid is alive", async () => {
+  test("keeps a stale heartbeat lock when the recorded pid is alive without a reachability check", async () => {
     const paseoHome = await mkdtemp(join(tmpdir(), "paseo-pid-lock-stale-heartbeat-"));
     const replacementOwnerPid = process.pid + 10_000;
 
@@ -79,7 +80,43 @@ describe("pid-lock ownership", () => {
       const staleTime = new Date(Date.now() - 10 * 60_000);
       await utimes(pidPath, staleTime, staleTime);
 
-      await acquirePidLock(paseoHome, null, { ownerPid: replacementOwnerPid });
+      await expect(isLocked(paseoHome)).resolves.toMatchObject({ locked: true });
+      await expect(
+        acquirePidLock(paseoHome, null, { ownerPid: replacementOwnerPid }),
+      ).rejects.toThrow("Another Paseo daemon is already running");
+
+      const lock = await getPidLockInfo(paseoHome);
+      expect(lock?.pid).toBe(process.pid);
+    } finally {
+      await rm(paseoHome, { recursive: true, force: true });
+    }
+  });
+
+  test("reclaims a stale desktop heartbeat lock after desktop confirms the daemon is unreachable", async () => {
+    const paseoHome = await mkdtemp(join(tmpdir(), "paseo-pid-lock-stale-desktop-heartbeat-"));
+    const replacementOwnerPid = process.pid + 10_000;
+
+    try {
+      const pidPath = join(paseoHome, "paseo.pid");
+      await writeFile(
+        pidPath,
+        JSON.stringify({
+          pid: process.pid,
+          startedAt: "2026-01-01T00:00:00.000Z",
+          hostname: "old-host",
+          uid: process.getuid?.() ?? 0,
+          listen: "127.0.0.1:6767",
+          desktopManaged: true,
+          heartbeat: true,
+        }),
+      );
+      const staleTime = new Date(Date.now() - 10 * 60_000);
+      await utimes(pidPath, staleTime, staleTime);
+
+      await acquirePidLock(paseoHome, null, {
+        ownerPid: replacementOwnerPid,
+        reclaimStaleDesktopLock: true,
+      });
 
       const lock = await getPidLockInfo(paseoHome);
       expect(lock?.pid).toBe(replacementOwnerPid);
@@ -141,7 +178,7 @@ describe("pid-lock ownership", () => {
 
       await acquirePidLock(paseoHome, null, {
         ownerPid: replacementOwnerPid,
-        reclaimLegacyDesktopLock: true,
+        reclaimStaleDesktopLock: true,
       });
 
       const lock = await getPidLockInfo(paseoHome);
@@ -161,6 +198,29 @@ describe("pid-lock ownership", () => {
       await expect(refreshPidLock(paseoHome, { ownerPid: process.pid })).rejects.toBeInstanceOf(
         PidLockError,
       );
+    } finally {
+      await rm(paseoHome, { recursive: true, force: true });
+    }
+  });
+
+  test("retries a heartbeat refresh while its owner is rewriting the lock", async () => {
+    const paseoHome = await mkdtemp(join(tmpdir(), "paseo-pid-lock-refresh-rewrite-"));
+    const pidPath = join(paseoHome, "paseo.pid");
+
+    try {
+      await acquirePidLock(paseoHome, null, { ownerPid: process.pid });
+      const lock = await getPidLockInfo(paseoHome);
+      expect(lock).not.toBeNull();
+
+      const rewriteHandle = await open(pidPath, "r+");
+      await rewriteHandle.truncate(0);
+
+      const refresh = refreshPidLock(paseoHome, { ownerPid: process.pid });
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      await rewriteHandle.writeFile(JSON.stringify(lock));
+      await rewriteHandle.close();
+
+      await expect(refresh).resolves.toBeUndefined();
     } finally {
       await rm(paseoHome, { recursive: true, force: true });
     }

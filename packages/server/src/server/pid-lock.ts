@@ -1,4 +1,5 @@
 import { open, readFile, stat, unlink, mkdir, utimes } from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { hostname } from "node:os";
@@ -38,6 +39,8 @@ export class PidLockError extends Error {
 // Stale recovery is for abandoned locks, so keep this well above ordinary event-loop stalls.
 const PID_LOCK_STALE_MS = 5 * 60_000;
 const PID_LOCK_HEARTBEAT_INTERVAL_MS = 30_000;
+const PID_LOCK_READ_RETRY_ATTEMPTS = 10;
+const PID_LOCK_READ_RETRY_DELAY_MS = 50;
 
 function isPidRunning(pid: number): boolean {
   try {
@@ -84,20 +87,16 @@ function resolveOwnerPid(ownerPid?: number): number {
 
 interface AcquirePidLockOptions {
   ownerPid?: number;
-  reclaimLegacyDesktopLock?: boolean;
+  reclaimStaleDesktopLock?: boolean;
 }
 
 function canReclaimLiveLock(
   lock: PidLockInfo,
   options: AcquirePidLockOptions | undefined,
 ): boolean {
-  if (lock.heartbeat === true) {
-    return true;
-  }
-
   // COMPAT(pidLockHeartbeat): v0.1.108 desktop startup has already confirmed the old daemon is
   // unreachable before it launches the supervisor. Remove after 2027-01-15.
-  return options?.reclaimLegacyDesktopLock === true && lock.desktopManaged === true;
+  return options?.reclaimStaleDesktopLock === true && lock.desktopManaged === true;
 }
 
 function isSamePidLock(left: PidLockInfo, right: PidLockInfo): boolean {
@@ -222,12 +221,7 @@ export async function refreshPidLock(
   }
 
   try {
-    let lock: PidLockInfo | null = null;
-    try {
-      lock = parsePidLockInfo(JSON.parse(await fd.readFile("utf-8")));
-    } catch {
-      // Report malformed contents as an ownership failure below.
-    }
+    const lock = await readPidLockFromHandleWithRetry(fd);
     if (!lock) {
       throw new PidLockError("Cannot refresh PID lock: invalid lock file");
     }
@@ -239,6 +233,33 @@ export async function refreshPidLock(
   } finally {
     await fd.close();
   }
+}
+
+async function readPidLockFromHandle(fd: FileHandle): Promise<PidLockInfo | null> {
+  try {
+    const { size } = await fd.stat();
+    if (size === 0) {
+      return null;
+    }
+    const content = Buffer.alloc(size);
+    const { bytesRead } = await fd.read(content, 0, size, 0);
+    return parsePidLockInfo(JSON.parse(content.subarray(0, bytesRead).toString("utf-8")));
+  } catch {
+    return null;
+  }
+}
+
+async function readPidLockFromHandleWithRetry(fd: FileHandle): Promise<PidLockInfo | null> {
+  for (let attempt = 0; attempt < PID_LOCK_READ_RETRY_ATTEMPTS; attempt += 1) {
+    const lock = await readPidLockFromHandle(fd);
+    if (lock) {
+      return lock;
+    }
+    if (attempt < PID_LOCK_READ_RETRY_ATTEMPTS - 1) {
+      await new Promise((resolve) => setTimeout(resolve, PID_LOCK_READ_RETRY_DELAY_MS));
+    }
+  }
+  return null;
 }
 
 export function startPidLockHeartbeat(
@@ -282,23 +303,23 @@ export async function updatePidLock(
 ): Promise<void> {
   const pidPath = getPidFilePath(paseoHome);
   const lockOwnerPid = resolveOwnerPid(options?.ownerPid);
-  const content = await readFile(pidPath, "utf-8");
-  const existingLock = parsePidLockInfo(JSON.parse(content));
-  if (!existingLock) {
-    throw new PidLockError("Cannot update PID lock: invalid lock file");
-  }
-
-  if (existingLock.pid !== lockOwnerPid) {
-    throw new PidLockError(`Cannot update PID lock owned by PID ${existingLock.pid}`, existingLock);
-  }
-
-  const updatedLock: PidLockInfo = {
-    ...existingLock,
-    ...patch,
-  };
-
   const fd = await open(pidPath, "r+");
   try {
+    const existingLock = await readPidLockFromHandleWithRetry(fd);
+    if (!existingLock) {
+      throw new PidLockError("Cannot update PID lock: invalid lock file");
+    }
+    if (existingLock.pid !== lockOwnerPid) {
+      throw new PidLockError(
+        `Cannot update PID lock owned by PID ${existingLock.pid}`,
+        existingLock,
+      );
+    }
+
+    const updatedLock: PidLockInfo = {
+      ...existingLock,
+      ...patch,
+    };
     await fd.truncate(0);
     await fd.writeFile(JSON.stringify(updatedLock));
   } finally {
@@ -336,11 +357,7 @@ export async function isLocked(
   if (!info) {
     return { locked: false };
   }
-  const pidPath = getPidFilePath(paseoHome);
   if (!isPidRunning(info.pid)) {
-    return { locked: false, info };
-  }
-  if (info.heartbeat === true && !(await isPidLockFresh(pidPath))) {
     return { locked: false, info };
   }
   return { locked: true, info };

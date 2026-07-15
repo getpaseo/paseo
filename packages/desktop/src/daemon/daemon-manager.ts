@@ -388,7 +388,8 @@ async function startDaemon(): Promise<DesktopDaemonStatus> {
   const invocation = createNodeEntrypointInvocation({
     entrypoint: daemonRunner,
     argvMode: "node-script",
-    args: [],
+    // The status probe above confirmed that the recorded daemon is unreachable.
+    args: ["--reclaim-stale-pid-lock"],
     baseEnv: process.env,
   });
 

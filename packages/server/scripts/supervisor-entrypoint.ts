@@ -18,11 +18,13 @@ process.title = "Paseo Supervisor";
 
 interface DaemonRunnerConfig {
   devMode: boolean;
+  reclaimStalePidLock: boolean;
   workerArgs: string[];
 }
 
 function parseConfig(argv: string[]): DaemonRunnerConfig {
   let devMode = false;
+  let reclaimStalePidLock = false;
   const workerArgs: string[] = [];
 
   for (const arg of argv) {
@@ -30,10 +32,14 @@ function parseConfig(argv: string[]): DaemonRunnerConfig {
       devMode = true;
       continue;
     }
+    if (arg === "--reclaim-stale-pid-lock") {
+      reclaimStalePidLock = true;
+      continue;
+    }
     workerArgs.push(arg);
   }
 
-  return { devMode, workerArgs };
+  return { devMode, reclaimStalePidLock, workerArgs };
 }
 
 function resolveWorkerEntry(): string {
@@ -110,7 +116,7 @@ async function main(): Promise<void> {
   try {
     await acquirePidLock(paseoHome, null, {
       ownerPid: process.pid,
-      reclaimLegacyDesktopLock: process.env.PASEO_DESKTOP_MANAGED === "1",
+      reclaimStaleDesktopLock: config.reclaimStalePidLock,
     });
   } catch (error) {
     if (error instanceof PidLockError) {
