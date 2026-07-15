@@ -35,6 +35,9 @@ import {
 const ThemedBottomSheetTextInput = withUnistyles(BottomSheetTextInput, (theme) => ({
   placeholderTextColor: theme.colors.foregroundMuted,
 }));
+const ThemedFolder = withUnistyles(Folder, (theme) => ({
+  color: theme.colors.foregroundMuted,
+}));
 
 interface CommandCenterRowProps {
   active: boolean;
@@ -276,16 +279,7 @@ function WorkspaceItemsSection({
   sectionDividerStyle,
   sectionLabelStyle,
 }: WorkspaceItemsSectionProps) {
-  const { theme } = useUnistyles();
   const { t } = useTranslation();
-  const titleStyle = useMemo(
-    () => [styles.title, { color: theme.colors.foreground }],
-    [theme.colors.foreground],
-  );
-  const subtitleStyle = useMemo(
-    () => [styles.subtitle, { color: theme.colors.foregroundMuted }],
-    [theme.colors.foregroundMuted],
-  );
 
   return (
     <>
@@ -309,13 +303,13 @@ function WorkspaceItemsSection({
             >
               <View style={styles.rowMain}>
                 <View style={styles.iconSlot}>
-                  <Folder size={16} strokeWidth={2.2} color={theme.colors.foregroundMuted} />
+                  <ThemedFolder size={16} strokeWidth={2.2} />
                 </View>
                 <View style={styles.textContent}>
-                  <Text style={titleStyle} numberOfLines={1}>
+                  <Text style={styles.title} numberOfLines={1}>
                     {item.title}
                   </Text>
-                  <Text style={subtitleStyle} numberOfLines={1}>
+                  <Text style={styles.subtitle} numberOfLines={1}>
                     {item.subtitle}
                   </Text>
                 </View>
@@ -708,10 +702,12 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
     fontWeight: "400",
     lineHeight: 20,
+    color: theme.colors.foreground,
   },
   subtitle: {
     fontSize: theme.fontSize.xs,
     lineHeight: 18,
+    color: theme.colors.foregroundMuted,
   },
   emptyText: {
     paddingHorizontal: theme.spacing[4],
