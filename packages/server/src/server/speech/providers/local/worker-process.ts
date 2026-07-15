@@ -81,9 +81,8 @@ function buildSttModelConfig(
   modelId: LocalSttModelId,
 ): SherpaOfflineRecognizerModel {
   const spec = getSherpaOnnxModelSpec(modelId);
-  const modelType = spec.sttModelType ?? "nemo_transducer";
 
-  switch (modelType) {
+  switch (spec.sttModelType) {
     case "nemo_transducer":
       return {
         kind: "nemo_transducer",

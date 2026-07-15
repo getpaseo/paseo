@@ -6,8 +6,7 @@ export type SttModelType = "nemo_transducer" | "sense_voice" | "paraformer";
 
 type DefaultModelRole = "stt" | "tts";
 
-interface SherpaOnnxCatalogEntry {
-  kind: SherpaOnnxModelKind;
+interface SherpaOnnxCatalogEntryBase {
   archiveUrl: string;
   extractedDir: string;
   requiredFiles: string[];
@@ -15,11 +14,21 @@ interface SherpaOnnxCatalogEntry {
   defaultFor?: DefaultModelRole;
   /** Which language(s) this model is the default for (explicit priority over insertion order). */
   defaultForLanguages?: string[];
-  sttModelType?: SttModelType;
   supportedLanguages?: string[];
+}
+
+interface SherpaOnnxSttCatalogEntry extends SherpaOnnxCatalogEntryBase {
+  kind: "stt-offline";
+  sttModelType: SttModelType;
+}
+
+interface SherpaOnnxTtsCatalogEntry extends SherpaOnnxCatalogEntryBase {
+  kind: "tts";
   /** Default speaker ID for TTS models (avoids scattering model-specific policy in config). */
   defaultSpeakerId?: number;
 }
+
+type SherpaOnnxCatalogEntry = SherpaOnnxSttCatalogEntry | SherpaOnnxTtsCatalogEntry;
 
 export const SHERPA_ONNX_MODEL_CATALOG = {
   "parakeet-tdt-0.6b-v2-int8": {
@@ -201,7 +210,8 @@ export function getSherpaOnnxModelSpec(id: SherpaOnnxModelId): SherpaOnnxModelSp
 
 /** Returns the catalog-defined default speaker ID for a TTS model, or undefined if none. */
 export function getDefaultSpeakerId(id: LocalTtsModelId): number | undefined {
-  return SHERPA_ONNX_MODEL_CATALOG[id].defaultSpeakerId as number | undefined;
+  const entry = SHERPA_ONNX_MODEL_CATALOG[id];
+  return entry.kind === "tts" ? entry.defaultSpeakerId : undefined;
 }
 
 /**
