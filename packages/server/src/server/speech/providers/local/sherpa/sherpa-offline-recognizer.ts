@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import type pino from "pino";
 
-import { loadSherpaOnnxNode } from "./sherpa-onnx-node-loader.js";
+import { loadSherpaOnnxNode, type SherpaOnnxNodeModule } from "./sherpa-onnx-node-loader.js";
 
 function assertFileExists(filePath: string, label: string): void {
   if (!existsSync(filePath)) {
@@ -38,6 +38,8 @@ export interface SherpaOfflineRecognizerConfig {
   featureDim?: number;
   decodingMethod?: "greedy_search";
   maxActivePaths?: number;
+  /** Injectable for tests; defaults to the real native addon loader. */
+  loadSherpaOnnxNode?: () => SherpaOnnxNodeModule;
 }
 
 interface SherpaOfflineRecognizerNative {
@@ -120,7 +122,7 @@ export class SherpaOfflineRecognizerEngine {
       }
     }
 
-    const sherpa = loadSherpaOnnxNode();
+    const sherpa = (config.loadSherpaOnnxNode ?? loadSherpaOnnxNode)();
 
     const recognizerConfig = {
       featConfig: {
