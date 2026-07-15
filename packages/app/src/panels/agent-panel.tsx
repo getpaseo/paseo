@@ -69,7 +69,7 @@ import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { buildWorkspaceTabPersistenceKey } from "@/stores/workspace-tabs-store";
 import type { Theme } from "@/styles/theme";
 import {
-  useArchiveFinishedSubagents,
+  useHideFinishedProviderSubagents,
   useArchiveSubagent,
   useDetachSubagent,
   useSubagentsForParent,
@@ -1381,9 +1381,6 @@ function ActiveAgentComposer({
   const canDetachSubagents = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.features?.agentDetach === true,
   );
-  const canArchiveFinishedSubagents = useSessionStore(
-    (state) => state.sessions[serverId]?.serverInfo?.features?.archiveFinishedSubagents === true,
-  );
   const handleOpenSubagent = useCallback(
     (subagentId: string) => {
       navigateToAgent({ serverId, agentId: subagentId });
@@ -1398,7 +1395,7 @@ function ActiveAgentComposer({
   );
   const handleArchiveSubagent = useArchiveSubagent({ serverId });
   const handleDetachSubagent = useDetachSubagent({ serverId });
-  const handleArchiveFinishedSubagents = useArchiveFinishedSubagents({
+  const handleHideFinishedProviderSubagents = useHideFinishedProviderSubagents({
     serverId,
     parentAgentId: agentId,
   });
@@ -1502,7 +1499,7 @@ function ActiveAgentComposer({
         onOpenSubagent={handleOpenSubagent}
         onOpenProviderSubagent={handleOpenProviderSubagent}
         onArchiveSubagent={handleArchiveSubagent}
-        onArchiveFinished={canArchiveFinishedSubagents ? handleArchiveFinishedSubagents : undefined}
+        onArchiveFinished={handleHideFinishedProviderSubagents}
         onDetachSubagent={canDetachSubagents ? handleDetachSubagent : undefined}
       />
       <Composer

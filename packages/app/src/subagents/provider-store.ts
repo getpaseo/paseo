@@ -33,6 +33,7 @@ interface ProviderSubagentState {
   descriptors: Map<string, ProviderSubagentDescriptorPayload>;
   timelines: Map<string, ProviderSubagentTimelineState>;
   hiddenFromTrack: Set<string>;
+  hideFinishedForParent(serverId: string, parentAgentId: string): void;
   replaceList(
     serverId: string,
     parentAgentId: string,
@@ -195,18 +196,38 @@ export const useProviderSubagentStore = create<ProviderSubagentState>((set) => (
   descriptors: new Map(),
   timelines: new Map(),
   hiddenFromTrack: new Set(),
+  hideFinishedForParent(serverId, parentAgentId) {
+    set((state) => {
+      const prefix = parentPrefix(serverId, parentAgentId);
+      const hiddenFromTrack = new Set(state.hiddenFromTrack);
+      for (const [key, subagent] of state.descriptors) {
+        if (key.startsWith(prefix) && subagent.status !== "running") {
+          hiddenFromTrack.add(key);
+        }
+      }
+      return { hiddenFromTrack };
+    });
+  },
   replaceList(serverId, parentAgentId, subagents) {
     set((state) => {
       const prefix = parentPrefix(serverId, parentAgentId);
       const descriptors = new Map(
-        [...state.descriptors].filter(
-          ([key]) => !key.startsWith(prefix) || state.hiddenFromTrack.has(key),
-        ),
+        [...state.descriptors].filter(([key]) => !key.startsWith(prefix)),
       );
       const hiddenFromTrack = new Set(state.hiddenFromTrack);
+      const incomingKeys = new Set<string>();
       for (const subagent of subagents) {
         const key = providerSubagentKey(serverId, parentAgentId, subagent.id);
+        incomingKeys.add(key);
         descriptors.set(key, subagent);
+        if (subagent.status === "running") {
+          hiddenFromTrack.delete(key);
+        }
+      }
+      for (const key of hiddenFromTrack) {
+        if (key.startsWith(prefix) && !incomingKeys.has(key)) {
+          hiddenFromTrack.delete(key);
+        }
       }
       const retainedKeys = new Set(descriptors.keys());
       const timelines = new Map(
@@ -238,7 +259,9 @@ export const useProviderSubagentStore = create<ProviderSubagentState>((set) => (
         const hiddenFromTrack = new Set(state.hiddenFromTrack);
         const previous = descriptors.get(key);
         descriptors.set(key, payload.subagent);
-        hiddenFromTrack.delete(key);
+        if (payload.subagent.status === "running") {
+          hiddenFromTrack.delete(key);
+        }
         let timelines = state.timelines;
         const current = state.timelines.get(key);
         if (current && previous?.status !== payload.subagent.status) {
@@ -253,11 +276,6 @@ export const useProviderSubagentStore = create<ProviderSubagentState>((set) => (
       if (payload.kind === "remove") {
         const key = providerSubagentKey(serverId, payload.parentAgentId, payload.subagentId);
         const descriptors = new Map(state.descriptors);
-        if (payload.retainTimeline) {
-          const hiddenFromTrack = new Set(state.hiddenFromTrack);
-          hiddenFromTrack.add(key);
-          return { descriptors, timelines: state.timelines, hiddenFromTrack };
-        }
         descriptors.delete(key);
         const timelines = new Map(state.timelines);
         const hiddenFromTrack = new Set(state.hiddenFromTrack);
@@ -310,18 +328,10 @@ export const useProviderSubagentStore = create<ProviderSubagentState>((set) => (
       const key = providerSubagentKey(serverId, payload.parentAgentId, payload.subagentId);
       const existing = state.timelines.get(key);
       const rows = buildTimelineResponseRows(existing, payload, provider);
-      const descriptors = new Map(state.descriptors);
-      if (payload.subagent) {
-        descriptors.set(key, payload.subagent);
-      }
-      const hiddenFromTrack = new Set(state.hiddenFromTrack);
-      if (payload.hiddenFromTrack) {
-        hiddenFromTrack.add(key);
-      }
-      const descriptor = payload.subagent ?? state.descriptors.get(key);
+      const descriptor = state.descriptors.get(key);
       const timelines = new Map(state.timelines);
       timelines.set(key, buildTimelineState(rows, payload.epoch, descriptor, payload.hasOlder));
-      return { descriptors, timelines, hiddenFromTrack };
+      return { timelines };
     });
   },
 }));

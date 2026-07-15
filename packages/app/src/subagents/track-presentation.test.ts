@@ -74,7 +74,7 @@ describe("formatHeaderLabel", () => {
 });
 
 describe("countFinishedSubagents", () => {
-  it("counts terminal managed and native children", () => {
+  it("counts only terminal provider-owned children", () => {
     const providerRows: SubagentRow[] = [
       {
         kind: "provider",
@@ -104,7 +104,7 @@ describe("countFinishedSubagents", () => {
         row({ id: "managed-idle", status: "idle" }),
         ...providerRows,
       ]),
-    ).toBe(2);
+    ).toBe(1);
   });
 });
 

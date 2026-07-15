@@ -1186,19 +1186,12 @@ export class Session {
               },
             });
           } else {
-            if (
-              update.retainTimeline &&
-              !this.supports(CLIENT_CAPS.providerSubagentRetainTimeline)
-            ) {
-              return;
-            }
             this.emit({
               type: "agent.provider_subagents.update",
               payload: {
                 kind: "remove",
                 parentAgentId: update.parentAgentId,
                 subagentId: update.subagentId,
-                ...(update.retainTimeline ? { retainTimeline: true } : {}),
               },
             });
           }
@@ -1493,8 +1486,6 @@ export class Session {
         return this.handleFetchAgentTimelineRequest(msg);
       case "agent.provider_subagents.list.request":
         return this.handleProviderSubagentListRequest(msg);
-      case "agent.subagents.archive_finished.request":
-        return this.handleArchiveFinishedSubagentsRequest(msg);
       case "agent.provider_subagents.timeline.get.request":
         return this.handleProviderSubagentTimelineRequest(msg);
       case "agent.fork_context.request":
@@ -5457,34 +5448,6 @@ export class Session {
     }
   }
 
-  private async handleArchiveFinishedSubagentsRequest(
-    msg: Extract<SessionInboundMessage, { type: "agent.subagents.archive_finished.request" }>,
-  ): Promise<void> {
-    try {
-      const result = await this.agentManager.archiveFinishedSubagents(msg.parentAgentId);
-      this.emit({
-        type: "agent.subagents.archive_finished.response",
-        payload: {
-          requestId: msg.requestId,
-          parentAgentId: msg.parentAgentId,
-          ...result,
-          error: null,
-        },
-      });
-    } catch (error) {
-      this.emit({
-        type: "agent.subagents.archive_finished.response",
-        payload: {
-          requestId: msg.requestId,
-          parentAgentId: msg.parentAgentId,
-          archivedAgentIds: [],
-          dismissedProviderSubagentIds: [],
-          error: error instanceof Error ? error.message : String(error),
-        },
-      });
-    }
-  }
-
   private async handleProviderSubagentTimelineRequest(
     msg: Extract<SessionInboundMessage, { type: "agent.provider_subagents.timeline.get.request" }>,
   ): Promise<void> {
@@ -5510,11 +5473,6 @@ export class Session {
           parentAgentId: msg.parentAgentId,
           subagentId: msg.subagentId,
           provider: descriptor.provider,
-          subagent: descriptor,
-          hiddenFromTrack: this.agentManager.isProviderSubagentDismissed(
-            msg.parentAgentId,
-            msg.subagentId,
-          ),
           direction,
           epoch: timeline.epoch,
           reset: timeline.reset,

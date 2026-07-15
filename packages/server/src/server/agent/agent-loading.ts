@@ -74,7 +74,6 @@ export async function ensureAgentLoaded(
       }
       snapshot = await deps.agentManager.createAgent(config, agentId, {
         labels: record.labels,
-        dismissedProviderSubagentIds: record.dismissedProviderSubagentIds,
         workspaceId: record.workspaceId,
       });
       deps.logger.info({ agentId, provider: record.provider }, "Agent created from stored config");

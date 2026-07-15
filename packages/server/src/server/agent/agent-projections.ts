@@ -93,7 +93,6 @@ export function toStoredAgentRecord(
       ? agent.attention.attentionTimestamp.toISOString()
       : null,
     internal: options?.internal,
-    dismissedProviderSubagentIds: [...agent.dismissedProviderSubagentIds],
   } satisfies StoredAgentRecord;
 }
 

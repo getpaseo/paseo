@@ -14,10 +14,6 @@ export const CLIENT_CAPS = {
   // COMPAT(providerSubagents): added in v0.1.107. The daemon emits provider-owned
   // child descriptors and timelines only to clients that understand the new messages.
   providerSubagents: "provider_subagents",
-  // COMPAT(providerSubagentRetainTimeline): added in v0.1.108. Retained-remove
-  // updates are withheld from older clients because they interpret every remove
-  // as destructive and blank already-open provider child tabs.
-  providerSubagentRetainTimeline: "provider_subagent_retain_timeline",
   browserHost: "browser_host",
 } as const;
 

@@ -94,7 +94,7 @@ describe("selectSubagentsForParent", () => {
     ).toEqual(["provider-child"]);
   });
 
-  it("hides dismissed provider children from the track while retaining their descriptor", () => {
+  it("hides locally dismissed provider children while retaining their descriptor", () => {
     const store = useProviderSubagentStore.getState();
     store.applyUpdate(SERVER_ID, {
       kind: "upsert",
@@ -110,12 +110,7 @@ describe("selectSubagentsForParent", () => {
         toolCallId: "call-1",
       },
     });
-    store.applyUpdate(SERVER_ID, {
-      kind: "remove",
-      parentAgentId: "parent-a",
-      subagentId: "provider-child",
-      retainTimeline: true,
-    });
+    store.hideFinishedForParent(SERVER_ID, "parent-a");
 
     expect(
       selectProviderSubagentsForParent(

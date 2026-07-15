@@ -52,12 +52,7 @@ export type ProviderSubagentStoreEvent =
       row: AgentTimelineRow;
       epoch: string;
     }
-  | {
-      type: "remove";
-      parentAgentId: string;
-      subagentId: string;
-      retainTimeline?: boolean;
-    };
+  | { type: "remove"; parentAgentId: string; subagentId: string };
 
 function storeKey(parentAgentId: string, subagentId: string): string {
   return `${parentAgentId}\0${subagentId}`;
@@ -160,8 +155,8 @@ export class ProviderSubagentStore {
     };
   }
 
-  deleteParent(parentAgentId: string): Extract<ProviderSubagentStoreEvent, { type: "remove" }>[] {
-    const events: Extract<ProviderSubagentStoreEvent, { type: "remove" }>[] = [];
+  deleteParent(parentAgentId: string): ProviderSubagentStoreEvent[] {
+    const events: ProviderSubagentStoreEvent[] = [];
     for (const subagent of this.list(parentAgentId)) {
       const key = storeKey(parentAgentId, subagent.id);
       this.descriptors.delete(key);

@@ -91,7 +91,7 @@ Provider timelines use the same structural timeline item format but deliberately
 
 Archived Paseo subagents disappear from the track, by design. To remove one from the track without closing its tab, use the **archive button** on the row — it opens a confirm dialog and archives the subagent on confirm. Provider-owned rows have no individual Paseo lifecycle controls.
 
-The track header's **Archive finished** action handles both kinds in one daemon operation. Finished Paseo children are soft-deleted normally. Finished provider children are hidden from the track; their native sessions are untouched. The daemon persists those provider IDs on the parent as dismissal tombstones so replaying Claude or Codex history does not resurrect them. Running children of either kind stay visible.
+The track header's **Archive finished** action hides finished provider-owned rows in the current app session. Their native sessions and timelines are untouched, and managed Paseo subagents are not archived by this bulk action. If a hidden provider child starts running again, the app brings it back to the track.
 
 To keep the agent alive but remove it from the parent's track, use **detach**. The daemon clears the parent label, emits the normal agent update, and every client reclassifies the agent from subagent to root/sibling from that updated snapshot.
 
@@ -111,7 +111,7 @@ We considered universal decoupling (no tab close ever archives, archive is alway
 
 ### Subagent accumulation under long-lived parents
 
-A parent that spawns many subagents will see the track grow until the user chooses **Archive finished**. Cleanup is explicit rather than automatic so completed child output remains available until the user is done with it.
+A parent that spawns many subagents will see the track grow. Managed Paseo subagents can be archived individually. Finished provider-owned rows can be hidden together with **Archive finished**; this is app-local presentation state and resets when the app restarts.
 
 ### Cross-client tab dismissal
 
@@ -133,6 +133,5 @@ Each agent is a single JSON file. Fields relevant to this doc:
 | `archivedAt`                      | `string?`     | Soft-delete timestamp (ISO 8601)                                                             |
 | `labels["paseo.parent-agent-id"]` | `string?`     | Parent agent ID, set automatically by `create_agent` when `relationship.kind === "subagent"` |
 | `lastStatus`                      | `AgentStatus` | `initializing` / `idle` / `running` / `error` / `closed`                                     |
-| `dismissedProviderSubagentIds`    | `string[]`    | Native child IDs hidden by the parent's **Archive finished** action                          |
 
 See [`docs/data-model.md`](./data-model.md) for the full agent record.
