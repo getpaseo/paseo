@@ -1330,6 +1330,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private initialCommandsWaitTimeoutMs: number;
   private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
   private currentTurnUsage: AgentUsage | undefined;
+  private contextWindowMaxTokens: number | undefined;
+  private contextWindowUsedTokens: number | undefined;
+  private totalCostUsd: number | undefined;
   private activeForegroundTurnId: string | null = null;
   private fallbackAssistantMessageId: string | null = null;
   private closed = false;
@@ -2495,8 +2498,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         this.handleSessionInfoUpdate(update);
         return [];
       case "usage_update":
-        this.handleUsageUpdate(update);
-        return [];
+        return this.handleUsageUpdate(update);
       case "available_commands_update":
         this.cachedCommands = update.availableCommands.map((command) => ({
           name: command.name,
@@ -2626,8 +2628,21 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
   }
 
-  private handleUsageUpdate(update: UsageUpdate): void {
-    void update;
+  private handleUsageUpdate(update: UsageUpdate): AgentStreamEvent[] {
+    this.contextWindowMaxTokens = update.size;
+    this.contextWindowUsedTokens = update.used;
+    if (update.cost?.currency === "USD") {
+      this.totalCostUsd = update.cost.amount;
+    }
+
+    const usage: AgentUsage = {
+      contextWindowMaxTokens: this.contextWindowMaxTokens,
+      contextWindowUsedTokens: this.contextWindowUsedTokens,
+    };
+    if (this.totalCostUsd !== undefined) {
+      usage.totalCostUsd = this.totalCostUsd;
+    }
+    return [{ type: "usage_updated", provider: this.provider, usage }];
   }
 
   private handlePromptResponse(response: PromptResponse, turnId: string): void {
@@ -2648,10 +2663,20 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       case "max_turn_requests":
       case "refusal":
       default:
+        const finalUsage: AgentUsage = { ...this.currentTurnUsage };
+        if (this.contextWindowMaxTokens !== undefined) {
+          finalUsage.contextWindowMaxTokens = this.contextWindowMaxTokens;
+        }
+        if (this.contextWindowUsedTokens !== undefined) {
+          finalUsage.contextWindowUsedTokens = this.contextWindowUsedTokens;
+        }
+        if (this.totalCostUsd !== undefined) {
+          finalUsage.totalCostUsd = this.totalCostUsd;
+        }
         this.finishTurn({
           type: "turn_completed",
           provider: this.provider,
-          usage: this.currentTurnUsage,
+          usage: finalUsage,
           turnId,
         });
         break;
