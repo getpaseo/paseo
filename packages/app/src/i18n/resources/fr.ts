@@ -1572,7 +1572,7 @@ export const fr: TranslationResources = {
       },
       terminalFileLinksRequireModifier: {
         label: "Liens de fichiers du terminal",
-        description: "Exiger Command/Ctrl+clic pour ouvrir les chemins de fichiers detectes",
+        description: "Exiger Command/Ctrl+clic pour ouvrir les chemins de fichiers détectés",
         accessibilityLabel: "Exiger Command ou Control clic pour les liens de fichiers du terminal",
       },
       autoExpandReasoning: {

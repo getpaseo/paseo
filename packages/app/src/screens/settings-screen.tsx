@@ -1426,7 +1426,7 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
               />
               {isDesktopApp ? <BrowserDataSection /> : null}
             </>
-            );
+          );
         case "appearance":
           return <AppearanceSection />;
         case "shortcuts":
