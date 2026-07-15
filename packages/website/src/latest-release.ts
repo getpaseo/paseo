@@ -4,7 +4,7 @@ interface GitHubAsset {
   name: string;
 }
 
-interface GitHubRelease {
+export interface GitHubRelease {
   tag_name: string;
   assets: GitHubAsset[];
   prerelease: boolean;
@@ -29,6 +29,7 @@ const REQUIRED_ASSET_PATTERNS = [
 
 const GITHUB_RELEASES_URL = "https://api.github.com/repos/getpaseo/paseo/releases?per_page=10";
 const RELEASE_CACHE_KEY = "github-release:v1";
+const ANDROID_RELEASE_CACHE_KEY = "github-android-release:v1";
 
 function hasRequiredAssets(release: GitHubRelease): boolean {
   return REQUIRED_ASSET_PATTERNS.every((pattern) =>
@@ -59,7 +60,7 @@ function versionFromTag(tag: string): string {
   return tag.replace(/^v/, "");
 }
 
-async function fetchLatestReadyRelease(): Promise<ReleaseInfo> {
+async function fetchGitHubReleases(): Promise<GitHubRelease[]> {
   const response = await fetch(GITHUB_RELEASES_URL, {
     headers: {
       Accept: "application/vnd.github+json",
@@ -73,7 +74,11 @@ async function fetchLatestReadyRelease(): Promise<ReleaseInfo> {
   } as RequestInit);
   if (!response.ok) throw new Error(`github releases ${response.status}`);
 
-  const releases = (await response.json()) as GitHubRelease[];
+  return (await response.json()) as GitHubRelease[];
+}
+
+async function fetchLatestReadyRelease(): Promise<ReleaseInfo> {
+  const releases = await fetchGitHubReleases();
   const ready = releases.find(
     (release) => !release.prerelease && !release.draft && hasRequiredAssets(release),
   );
@@ -89,6 +94,27 @@ async function fetchLatestReadyRelease(): Promise<ReleaseInfo> {
     windowsX64Asset: windowsAssets.x64,
     windowsArm64Asset: windowsAssets.arm64,
   };
+}
+
+export function getLatestAndroidVersionFromReleases(releases: GitHubRelease[]): string {
+  const release = releases.find((candidate) => {
+    if (candidate.prerelease || candidate.draft) return false;
+    const version = versionFromTag(candidate.tag_name);
+    if (!/^\d+\.\d+\.\d+$/.test(version)) return false;
+    return candidate.assets.some(
+      (asset) => asset.name === `paseo-${candidate.tag_name}-android.apk`,
+    );
+  });
+  if (!release) throw new Error("no stable GitHub release with an Android APK found");
+  return versionFromTag(release.tag_name);
+}
+
+async function fetchLatestAndroidVersion(): Promise<string> {
+  return getLatestAndroidVersionFromReleases(await fetchGitHubReleases());
+}
+
+function isAndroidVersion(value: unknown): value is string {
+  return typeof value === "string" && /^\d+\.\d+\.\d+$/.test(value);
 }
 
 function isReleaseInfo(value: unknown): value is ReleaseInfo {
@@ -121,5 +147,14 @@ export async function getLatestReleaseInfo(context: WebsiteCacheContext): Promis
     key: RELEASE_CACHE_KEY,
     isValue: isReleaseInfo,
     fetchFresh: fetchLatestReadyRelease,
+  });
+}
+
+export async function getLatestAndroidVersion(context: WebsiteCacheContext): Promise<string> {
+  return getBlockingColdCache({
+    context,
+    key: ANDROID_RELEASE_CACHE_KEY,
+    isValue: isAndroidVersion,
+    fetchFresh: fetchLatestAndroidVersion,
   });
 }

@@ -1,7 +1,7 @@
 import startEntry from "@tanstack/react-start/server-entry";
 import { getAndroidVersionCode } from "~/android-version";
 import { getDoc } from "~/docs";
-import { getLatestReleaseInfo } from "~/latest-release";
+import { getLatestAndroidVersion } from "~/latest-release";
 import { buildLlmsTxt } from "~/llms";
 
 const CANONICAL_HOST = "paseo.sh";
@@ -56,11 +56,11 @@ export default {
     }
 
     if (url.pathname === "/android-version.txt") {
-      const release = await getLatestReleaseInfo({
+      const version = await getLatestAndroidVersion({
         cache: env.WEBSITE_CACHE ?? null,
         waitUntil: (promise) => context.waitUntil(promise),
       });
-      return plainTextResponse(`${getAndroidVersionCode(release.version)}\n`);
+      return plainTextResponse(`${getAndroidVersionCode(version)}\n`);
     }
 
     const slug = docSlugFromMarkdownPath(url.pathname);
