@@ -1428,7 +1428,6 @@ export const en = {
       other: "called Paseo {{count}} times",
     },
     and: "and",
-    failed: "{{count}} failed",
   },
   renameModal: {
     rename: "Rename",

@@ -1451,7 +1451,6 @@ export const ru: TranslationResources = {
       other: "Paseo вызван {{count}} раз",
     },
     and: "и",
-    failed: "С ошибкой: {{count}}",
   },
   renameModal: {
     rename: "Переименовать",

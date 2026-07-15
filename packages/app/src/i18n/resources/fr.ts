@@ -1462,7 +1462,6 @@ export const fr: TranslationResources = {
       other: "a appelé Paseo {{count}} fois",
     },
     and: "et",
-    failed: "{{count}} en échec",
   },
   renameModal: {
     rename: "Rebaptiser",

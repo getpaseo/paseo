@@ -231,7 +231,6 @@ describe("tool call detail-level projection", () => {
     expect(overview.groupsByHostId.get("1")).toEqual({
       mode: "overview",
       run: expect.any(Object),
-      failedCount: 1,
       isLoading: false,
       summary: {
         editedFileCount: 1,
@@ -260,7 +259,6 @@ describe("tool call detail-level projection", () => {
     const result = project({ level: "overview", head: calls });
 
     expect(result.groupsByHostId.get("1")).toMatchObject({
-      failedCount: 1,
       summary: {
         editedFileCount: 0,
         commandCount: 0,

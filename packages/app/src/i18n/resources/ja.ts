@@ -1437,7 +1437,6 @@ export const ja: TranslationResources = {
       other: "Paseoを{{count}}回呼び出し",
     },
     and: "および",
-    failed: "{{count}}件失敗",
   },
   renameModal: {
     rename: "名前を変更",

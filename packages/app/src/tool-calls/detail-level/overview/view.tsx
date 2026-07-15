@@ -58,11 +58,8 @@ export const OverviewToolCallGroupView = memo(function OverviewToolCallGroupView
   onExpandedChange,
   children,
 }: OverviewGroupProps) {
-  const { t } = useTranslation();
   const scrollRef = useRef<ScrollView>(null);
   const aggregateSummary = useOverviewSummary(group.summary);
-  const failedSummary =
-    group.failedCount > 0 ? t("toolCallGroup.failed", { count: group.failedCount }) : undefined;
   const scrollToLatest = useCallback(() => {
     scrollRef.current?.scrollToEnd({ animated: false });
   }, []);
@@ -89,10 +86,8 @@ export const OverviewToolCallGroupView = memo(function OverviewToolCallGroupView
     <ExpandableBadge
       testID="tool-call-group"
       label={aggregateSummary}
-      secondaryLabel={failedSummary}
       icon={Wrench}
       isLoading={group.isLoading}
-      isError={group.failedCount > 0}
       isExpanded={expanded}
       isLastInSequence={isLastInSequence}
       onToggle={toggle}
