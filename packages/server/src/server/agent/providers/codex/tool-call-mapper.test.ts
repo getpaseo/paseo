@@ -245,7 +245,7 @@ describe("codex tool-call mapper", () => {
       error: null,
       detail: {
         type: "sub_agent",
-        subAgentType: "research/investigator",
+        subAgentType: "Research / Investigator",
         description: "research/investigator",
         log: "",
         actions: [],
@@ -267,6 +267,24 @@ describe("codex tool-call mapper", () => {
     });
   });
 
+  it("humanizes a subagent task name for display", () => {
+    const item = mapCodexToolCallFromThreadItem({
+      type: "subAgentActivity",
+      id: "activity-human-name",
+      kind: "started",
+      agentThreadId: "child-thread-human-name",
+      agentPath: "/root/hello_one",
+    });
+
+    expect(item).toMatchObject({
+      detail: {
+        type: "sub_agent",
+        subAgentType: "Hello one",
+        description: "hello_one",
+      },
+    });
+  });
+
   it("uses only the final segment of a subAgentActivity path outside the root namespace", () => {
     const item = mapCodexToolCallFromThreadItem({
       type: "subAgentActivity",
@@ -279,7 +297,7 @@ describe("codex tool-call mapper", () => {
     expect(item).toMatchObject({
       detail: {
         type: "sub_agent",
-        subAgentType: "investigator",
+        subAgentType: "Investigator",
         description: "investigator",
       },
     });
@@ -297,7 +315,7 @@ describe("codex tool-call mapper", () => {
     expect(item).toMatchObject({
       detail: {
         type: "sub_agent",
-        subAgentType: "investigator",
+        subAgentType: "Investigator",
         description: "investigator",
       },
     });

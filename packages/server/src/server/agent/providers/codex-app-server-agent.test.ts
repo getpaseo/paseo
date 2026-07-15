@@ -1884,7 +1884,7 @@ describe("Codex app-server provider", () => {
         event: expect.objectContaining({
           type: "upsert",
           id: "child-native-name-later",
-          title: "research/investigator",
+          title: "Research / Investigator",
         }),
       }),
     );
@@ -1894,7 +1894,7 @@ describe("Codex app-server provider", () => {
         callId: "call-native-name-later",
         detail: {
           type: "sub_agent",
-          subAgentType: "research/investigator",
+          subAgentType: "Research / Investigator",
           description: "Inspect the repository.",
         },
       },

@@ -1004,6 +1004,12 @@ function mapSubAgentActivityItem(
     );
   }
   const description = nativeName;
+  nativeName = nativeName
+    .split("/")
+    .map((segment) => segment.replace(/[_-]+/g, " ").trim())
+    .filter(Boolean)
+    .map((segment) => segment[0]?.toUpperCase() + segment.slice(1))
+    .join(" / ");
   nativeName ||= "Sub-agent";
   return {
     type: "tool_call",
