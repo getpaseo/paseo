@@ -205,8 +205,8 @@ const lightSemanticColors = {
     blue: "#2563eb",
     magenta: "#9333ea",
     cyan: "#0891b2",
-    white: "#ffffff",
-
+    // ANSI white slots must contrast on white background (e.g. PSReadLine args)
+    white: "#71717a",
     brightBlack: "#3f3f46",
     brightRed: "#ef4444",
     brightGreen: "#22c55e",
@@ -214,7 +214,8 @@ const lightSemanticColors = {
     brightBlue: "#3b82f6",
     brightMagenta: "#a855f7",
     brightCyan: "#06b6d4",
-    brightWhite: "#fafafa",
+    // readable bright/default on white — not near-background #fafafa
+    brightWhite: "#1a1a1e",
   },
 } as const;
 
