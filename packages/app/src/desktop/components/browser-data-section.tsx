@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
@@ -11,13 +11,16 @@ import { confirmDialog } from "@/utils/confirm-dialog";
 export function BrowserDataSection() {
   const { t } = useTranslation();
   const toast = useToast();
+  const clearInFlightRef = useRef(false);
   const [isClearing, setIsClearing] = useState(false);
 
   const handleClear = useCallback(async () => {
-    if (isClearing) {
+    if (clearInFlightRef.current) {
       return;
     }
 
+    clearInFlightRef.current = true;
+    setIsClearing(true);
     try {
       const confirmed = await confirmDialog({
         title: t("settings.general.browserData.confirmTitle"),
@@ -35,15 +38,15 @@ export function BrowserDataSection() {
         throw new Error("Electron browser profile bridge is unavailable");
       }
 
-      setIsClearing(true);
       await clearProfile();
       toast.show(t("settings.general.browserData.success"), { variant: "success" });
     } catch {
       toast.error(t("settings.general.browserData.error"));
     } finally {
+      clearInFlightRef.current = false;
       setIsClearing(false);
     }
-  }, [isClearing, t, toast]);
+  }, [t, toast]);
   const clearButtonLabel = isClearing
     ? t("settings.general.browserData.clearing")
     : t("settings.general.browserData.clear");
@@ -53,7 +56,9 @@ export function BrowserDataSection() {
       <View style={settingsStyles.card}>
         <View style={settingsStyles.row}>
           <View style={settingsStyles.rowContent}>
-            <Text style={settingsStyles.rowTitle}>{t("settings.general.browserData.title")}</Text>
+            <Text style={settingsStyles.rowTitle}>
+              {t("settings.general.browserData.siteData")}
+            </Text>
             <Text style={settingsStyles.rowHint}>
               {t("settings.general.browserData.description")}
             </Text>

@@ -1491,6 +1491,7 @@ export const ar: TranslationResources = {
       title: "عام",
       browserData: {
         title: "Browser data",
+        siteData: "Cookies and site data",
         description: "Browser tabs share sign-ins and site data across Paseo.",
         clear: "Clear browser data",
         clearing: "Clearing...",

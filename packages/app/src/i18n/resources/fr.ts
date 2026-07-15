@@ -1533,6 +1533,7 @@ export const fr: TranslationResources = {
       title: "Général",
       browserData: {
         title: "Browser data",
+        siteData: "Cookies and site data",
         description: "Browser tabs share sign-ins and site data across Paseo.",
         clear: "Clear browser data",
         clearing: "Clearing...",
