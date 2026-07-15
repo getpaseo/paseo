@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { createJSONStorage, persist, type PersistStorage } from "zustand/middleware";
+import { createJSONStorage, persist } from "zustand/middleware";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { AttachmentMetadata } from "@/attachments/types";
 import {
@@ -26,6 +26,7 @@ import {
   type DraftStoreState,
 } from "./state";
 import { migrateDraftInput, migratePersistedState, type MigrateLegacyImages } from "./migration";
+import { createDraftPersistStorage } from "./persistence";
 
 export type { DraftInput, DraftLifecycleState } from "./state";
 
@@ -47,57 +48,8 @@ interface DraftStoreActions {
 
 type DraftStore = DraftStoreState & DraftStoreActions;
 
-const DRAFT_PERSIST_INTERVAL_MS = 200;
 const draftGenerations = new Map<string, number>();
 let gcScheduled = false;
-
-function createThrottledStorage<T>(
-  storage: PersistStorage<T> | undefined,
-): PersistStorage<T> | undefined {
-  if (!storage) {
-    return undefined;
-  }
-
-  let pending: { name: string; value: Parameters<typeof storage.setItem>[1] } | null = null;
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  let lastWriteAt = -Infinity;
-
-  const cancelTimer = () => {
-    if (timer !== null) {
-      clearTimeout(timer);
-      timer = null;
-    }
-  };
-  const flush = () => {
-    cancelTimer();
-    const write = pending;
-    pending = null;
-    if (!write) {
-      return;
-    }
-    storage.setItem(write.name, write.value);
-    lastWriteAt = Date.now();
-  };
-
-  return {
-    getItem: (name) => storage.getItem(name),
-    setItem: (name, value) => {
-      pending = { name, value };
-      const delay = DRAFT_PERSIST_INTERVAL_MS - (Date.now() - lastWriteAt);
-      if (delay <= 0) {
-        flush();
-        return;
-      }
-      timer ??= setTimeout(flush, delay);
-    },
-    removeItem: (name) => {
-      cancelTimer();
-      pending = null;
-      lastWriteAt = Date.now();
-      return storage.removeItem(name);
-    },
-  };
-}
 
 function createDraftRecord(input: {
   draft: DraftInput;
@@ -427,7 +379,7 @@ export const useDraftStore = create<DraftStore>()(
     {
       name: "paseo-drafts",
       version: DRAFT_STORE_VERSION,
-      storage: createThrottledStorage(createJSONStorage(() => AsyncStorage)),
+      storage: createDraftPersistStorage(createJSONStorage(() => AsyncStorage)),
       migrate: (persistedState) => {
         return migratePersistedState(persistedState, {
           migrateLegacyImages,
