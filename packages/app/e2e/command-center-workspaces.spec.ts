@@ -85,6 +85,10 @@ test.describe("Command center workspaces", () => {
       await expect(row).toBeVisible();
       await expect(agentRow).toBeVisible();
 
+      await input.fill(seeded.repoPath);
+      await expect(agentRow).toBeVisible();
+      await expect(row).not.toBeVisible();
+
       await input.fill(AGENT_TITLE);
       await expect(agentRow).toBeVisible();
       await expect(row).not.toBeVisible();

@@ -9,6 +9,7 @@ export interface WorkspaceSummary {
   workspaceKind: WorkspaceDescriptor["workspaceKind"];
   status: WorkspaceDescriptor["status"];
   currentBranch: string | null;
+  archivingAt?: string;
 }
 
 export interface ProjectHostEntry {
@@ -125,6 +126,7 @@ function toWorkspaceSummary(workspace: WorkspaceDescriptor): WorkspaceSummary {
     workspaceKind: workspace.workspaceKind,
     status: workspace.status,
     currentBranch: currentBranch && currentBranch !== "HEAD" ? currentBranch : null,
+    ...(workspace.archivingAt ? { archivingAt: workspace.archivingAt } : {}),
   };
 }
 

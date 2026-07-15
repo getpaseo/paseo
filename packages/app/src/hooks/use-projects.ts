@@ -50,6 +50,13 @@ export interface UseProjectsResult {
   refetch: () => void;
 }
 
+export interface UseProjectsOptions {
+  enabled?: boolean;
+}
+
+const EMPTY_PROJECT_HOST_REPLICAS: ProjectHostReplica[] = [];
+const EMPTY_PROJECT_HOST_RUNTIME_STATES: ProjectHostRuntimeState[] = [];
+
 function toProjectHostRuntimeState(
   serverId: string,
   snapshot: HostRuntimeSnapshot | null,
@@ -68,7 +75,11 @@ function toProjectHostRuntimeState(
 
 function selectProjectHostReplicas(
   hosts: readonly { serverId: string; label: string }[],
+  enabled: boolean,
 ): (state: ReturnType<typeof useSessionStore.getState>) => ProjectHostReplica[] {
+  if (!enabled) {
+    return () => EMPTY_PROJECT_HOST_REPLICAS;
+  }
   return (state) =>
     hosts.map((host) => {
       const session = state.sessions[host.serverId];
@@ -119,15 +130,24 @@ export function deriveProjectsFromReplica(input: {
   };
 }
 
-function useProjectHostRuntimeStates(serverIds: readonly string[]): ProjectHostRuntimeState[] {
+function useProjectHostRuntimeStates(
+  serverIds: readonly string[],
+  enabled: boolean,
+): ProjectHostRuntimeState[] {
   const runtime = getHostRuntimeStore();
   const previousStatesRef = useRef<ProjectHostRuntimeState[]>([]);
-  const runtimeSnapshotTick = useSyncExternalStore(
-    (onStoreChange) => runtime.subscribeAll(onStoreChange),
-    () => runtime.getVersion(),
-    () => runtime.getVersion(),
+  const subscribe = useCallback(
+    (onStoreChange: () => void) =>
+      enabled ? runtime.subscribeAll(onStoreChange) : () => undefined,
+    [enabled, runtime],
   );
+  const getSnapshot = useCallback(() => (enabled ? runtime.getVersion() : 0), [enabled, runtime]);
+  const runtimeSnapshotTick = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
   return useMemo(() => {
+    if (!enabled) {
+      previousStatesRef.current = EMPTY_PROJECT_HOST_RUNTIME_STATES;
+      return EMPTY_PROJECT_HOST_RUNTIME_STATES;
+    }
     void runtimeSnapshotTick;
     const nextStates = serverIds.map((serverId) =>
       toProjectHostRuntimeState(serverId, runtime.getSnapshot(serverId)),
@@ -137,22 +157,31 @@ function useProjectHostRuntimeStates(serverIds: readonly string[]): ProjectHostR
     }
     previousStatesRef.current = nextStates;
     return nextStates;
-  }, [runtime, runtimeSnapshotTick, serverIds]);
+  }, [enabled, runtime, runtimeSnapshotTick, serverIds]);
 }
 
-export function useProjects(): UseProjectsResult {
+export function useProjects(options: UseProjectsOptions = {}): UseProjectsResult {
+  const enabled = options.enabled ?? true;
   const hosts = useHosts();
   const runtime = getHostRuntimeStore();
-  const serverIds = useMemo(() => hosts.map((host) => host.serverId), [hosts]);
-  const replicas = useStoreWithEqualityFn(useSessionStore, selectProjectHostReplicas(hosts), equal);
-  const runtimeStates = useProjectHostRuntimeStates(serverIds);
+  const serverIds = useMemo(
+    () => (enabled ? hosts.map((host) => host.serverId) : []),
+    [enabled, hosts],
+  );
+  const replicaSelector = useMemo(
+    () => selectProjectHostReplicas(hosts, enabled),
+    [enabled, hosts],
+  );
+  const replicas = useStoreWithEqualityFn(useSessionStore, replicaSelector, equal);
+  const runtimeStates = useProjectHostRuntimeStates(serverIds, enabled);
   const derived = useMemo(
     () => deriveProjectsFromReplica({ replicas, runtimeStates }),
     [replicas, runtimeStates],
   );
   const refetch = useCallback(() => {
+    if (!enabled) return;
     runtime.refreshAllAgentDirectories({ serverIds });
-  }, [runtime, serverIds]);
+  }, [enabled, runtime, serverIds]);
 
   return {
     ...derived,

@@ -157,7 +157,7 @@ export function useCommandCenter() {
   const [activeIndex, setActiveIndex] = useState(0);
 
   const { agents } = useAggregatedAgents();
-  const { projects } = useProjects();
+  const { projects } = useProjects({ enabled: open });
   const hosts = useHosts();
   const showAgentHost = hosts.length > 1;
 
@@ -166,6 +166,7 @@ export function useCommandCenter() {
     for (const project of projects) {
       for (const host of project.hosts) {
         for (const workspace of host.workspaces) {
+          if (workspace.archivingAt) continue;
           const title = workspace.title ?? workspace.name;
           const subtitle = workspace.currentBranch
             ? `${host.serverName} · ${workspace.currentBranch}`
@@ -239,7 +240,7 @@ export function useCommandCenter() {
         agent,
         title,
         subtitle,
-        searchText: buildSearchText(title, subtitle),
+        searchText: buildSearchText(title, subtitle, agent.cwd),
       };
     });
     const filtered = items.filter((item) => matchesQuery(item.searchText, query));

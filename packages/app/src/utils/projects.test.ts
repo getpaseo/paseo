@@ -33,6 +33,7 @@ function workspace(input: {
   projectName?: string;
   remoteUrl?: string | null;
   currentBranch?: string;
+  archivingAt?: string | null;
 }): WorkspaceDescriptor {
   return {
     id: input.id,
@@ -44,7 +45,7 @@ function workspace(input: {
     workspaceKind: "local_checkout",
     name: input.id,
     status: "done",
-    archivingAt: null,
+    archivingAt: input.archivingAt ?? null,
     statusEnteredAt: null,
     diffStat: null,
     scripts: [],
@@ -82,6 +83,29 @@ describe("buildProjects", () => {
       { id: "detached", currentBranch: null },
       { id: "blank", currentBranch: null },
     ]);
+  });
+
+  it("carries active archive state into workspace summaries", () => {
+    const archivingAt = "2026-07-15T18:00:00.000Z";
+    const result = buildProjects({
+      hosts: [
+        {
+          serverId: "local",
+          serverName: "Local",
+          isOnline: true,
+          workspaces: [
+            workspace({ id: "archiving", repoRoot: "/repo/app", archivingAt }),
+            workspace({ id: "active", repoRoot: "/repo/app" }),
+          ],
+        },
+      ],
+    });
+
+    expect(result.projects[0]?.hosts[0]?.workspaces).toMatchObject([
+      { id: "archiving", archivingAt },
+      { id: "active" },
+    ]);
+    expect(result.projects[0]?.hosts[0]?.workspaces[1]).not.toHaveProperty("archivingAt");
   });
 
   it("groups two daemons with the same GitHub project key into one project with one host entry per daemon", () => {
