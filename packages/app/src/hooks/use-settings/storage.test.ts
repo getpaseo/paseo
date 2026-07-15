@@ -6,10 +6,12 @@ import {
   DEFAULT_APP_SETTINGS,
   DEFAULT_CLIENT_SETTINGS,
   DEFAULT_CODE_FONT_SIZE,
+  DEFAULT_LARGE_FILE_WARNING_THRESHOLD_MB,
   DEFAULT_UI_FONT_SIZE,
   loadAppSettingsFromStorage,
   loadSettingsFromStorage,
   parseClampedFontSize,
+  parseLargeFileWarningThresholdMb,
   parseTerminalScrollbackLines,
   saveAppSettings,
   type SettingsDeps,
@@ -80,6 +82,18 @@ describe("loadAppSettingsFromStorage", () => {
     const result = await loadAppSettingsFromStorage(deps);
 
     expect(result.terminalScrollbackLines).toBe(42_000);
+  });
+
+  it("loads a configured large-file warning threshold", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ largeFileWarningThresholdMb: 12 }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.largeFileWarningThresholdMb).toBe(12);
   });
 
   it("loads configured workspace title source from app settings", async () => {
@@ -310,6 +324,16 @@ describe("parseTerminalScrollbackLines", () => {
   it("clamps negative values to the minimum and rejects non-numeric strings", () => {
     expect(parseTerminalScrollbackLines("-10")).toBe(0);
     expect(parseTerminalScrollbackLines("abc")).toBeNull();
+  });
+});
+
+describe("parseLargeFileWarningThresholdMb", () => {
+  it("defaults to 5 MB and clamps configured values", () => {
+    expect(DEFAULT_LARGE_FILE_WARNING_THRESHOLD_MB).toBe(5);
+    expect(parseLargeFileWarningThresholdMb("12")).toBe(12);
+    expect(parseLargeFileWarningThresholdMb(0)).toBe(1);
+    expect(parseLargeFileWarningThresholdMb(2048)).toBe(1024);
+    expect(parseLargeFileWarningThresholdMb("abc")).toBeNull();
   });
 });
 

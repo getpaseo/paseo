@@ -21,6 +21,9 @@ const VALID_TOOL_CALL_DETAIL_LEVELS = new Set<ToolCallDetailLevel>(["overview", 
 export const DEFAULT_TERMINAL_SCROLLBACK_LINES = 10_000;
 export const MIN_TERMINAL_SCROLLBACK_LINES = 0;
 export const MAX_TERMINAL_SCROLLBACK_LINES = 1_000_000;
+export const DEFAULT_LARGE_FILE_WARNING_THRESHOLD_MB = 5;
+export const MIN_LARGE_FILE_WARNING_THRESHOLD_MB = 1;
+export const MAX_LARGE_FILE_WARNING_THRESHOLD_MB = 1024;
 export const DEFAULT_UI_FONT_SIZE = 16; // == FONT_SIZE.base
 export const MIN_UI_FONT_SIZE = 11;
 export const MAX_UI_FONT_SIZE = 24;
@@ -35,6 +38,7 @@ export interface AppSettings {
   sendBehavior: SendBehavior;
   serviceUrlBehavior: ServiceUrlBehavior;
   terminalScrollbackLines: number;
+  largeFileWarningThresholdMb: number;
   uiFontFamily: string; // "" = platform default UI stack
   monoFontFamily: string; // "" = platform default mono stack
   uiFontSize: number; // clamped px, default 16
@@ -58,6 +62,7 @@ export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   sendBehavior: "interrupt",
   serviceUrlBehavior: "ask",
   terminalScrollbackLines: DEFAULT_TERMINAL_SCROLLBACK_LINES,
+  largeFileWarningThresholdMb: DEFAULT_LARGE_FILE_WARNING_THRESHOLD_MB,
   uiFontFamily: "",
   monoFontFamily: "",
   uiFontSize: DEFAULT_UI_FONT_SIZE,
@@ -208,6 +213,12 @@ function pickAppSettings(stored: StoredAppSettings): Partial<AppSettings> {
   if (terminalScrollbackLines !== null) {
     result.terminalScrollbackLines = terminalScrollbackLines;
   }
+  const largeFileWarningThresholdMb = parseLargeFileWarningThresholdMb(
+    stored.largeFileWarningThresholdMb,
+  );
+  if (largeFileWarningThresholdMb !== null) {
+    result.largeFileWarningThresholdMb = largeFileWarningThresholdMb;
+  }
   const uiFontFamily = sanitizeFontFamily(stored.uiFontFamily);
   if (uiFontFamily !== null) {
     result.uiFontFamily = uiFontFamily;
@@ -271,6 +282,13 @@ export function parseTerminalScrollbackLines(value: unknown): number | null {
     MAX_TERMINAL_SCROLLBACK_LINES,
     Math.max(MIN_TERMINAL_SCROLLBACK_LINES, Math.floor(numericValue)),
   );
+}
+
+export function parseLargeFileWarningThresholdMb(value: unknown): number | null {
+  return parseClampedFontSize(value, {
+    min: MIN_LARGE_FILE_WARNING_THRESHOLD_MB,
+    max: MAX_LARGE_FILE_WARNING_THRESHOLD_MB,
+  });
 }
 
 export function parseClampedFontSize(

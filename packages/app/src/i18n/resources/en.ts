@@ -1537,6 +1537,11 @@ export const en = {
         description: "Lines kept in the built-in terminal buffer",
         accessibilityLabel: "Terminal scrollback lines",
       },
+      largeFileWarning: {
+        label: "Large file warning",
+        description: "Warn before opening files larger than this size",
+        accessibilityLabel: "Large file warning threshold in megabytes",
+      },
       autoExpandReasoning: {
         label: "Always expand reasoning",
         description: "Show agent thinking and chain-of-thought blocks fully expanded by default",

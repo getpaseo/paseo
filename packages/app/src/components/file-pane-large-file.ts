@@ -1,5 +1,3 @@
-export const LARGE_FILE_OPEN_WARNING_THRESHOLD_BYTES = 1024 * 1024;
-
 export interface FileSizeLookupEntry {
   name: string;
   kind: "file" | "directory";
@@ -25,8 +23,8 @@ export function formatFileSize({ size }: { size: number }): string {
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export function shouldWarnBeforeOpeningFile(size: number): boolean {
-  return size > LARGE_FILE_OPEN_WARNING_THRESHOLD_BYTES;
+export function shouldWarnBeforeOpeningFile(size: number, thresholdBytes: number): boolean {
+  return size > thresholdBytes;
 }
 
 export function getFileNameFromFilePath(filePath: string): string {

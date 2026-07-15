@@ -47,6 +47,7 @@ import { AppearanceSection } from "@/screens/settings/appearance/appearance-sect
 import {
   useAppSettings,
   useSettings,
+  parseLargeFileWarningThresholdMb,
   parseTerminalScrollbackLines,
   type AppSettings,
   type SendBehavior,
@@ -246,6 +247,7 @@ interface GeneralSectionProps {
   handleServiceUrlBehaviorChange: (behavior: ServiceUrlBehavior) => void;
   handleLanguageChange: (language: AppLanguage) => void;
   handleTerminalScrollbackLinesChange: (lines: number) => void;
+  handleLargeFileWarningThresholdChange: (thresholdMb: number) => void;
 }
 
 interface ServiceUrlBehaviorMenuItemProps {
@@ -302,6 +304,7 @@ function GeneralSection({
   handleServiceUrlBehaviorChange,
   handleLanguageChange,
   handleTerminalScrollbackLinesChange,
+  handleLargeFileWarningThresholdChange,
 }: GeneralSectionProps) {
   const { t, i18n } = useTranslation();
   const activeLocale = getActiveLocale(i18n.language);
@@ -322,6 +325,9 @@ function GeneralSection({
     : settings.language;
   const [terminalScrollbackValue, setTerminalScrollbackValue] = useState(
     String(settings.terminalScrollbackLines),
+  );
+  const [largeFileWarningThresholdValue, setLargeFileWarningThresholdValue] = useState(
+    String(settings.largeFileWarningThresholdMb),
   );
 
   const handleTerminalScrollbackChangeText = useCallback((value: string) => {
@@ -344,6 +350,27 @@ function GeneralSection({
   useEffect(() => {
     setTerminalScrollbackValue(String(settings.terminalScrollbackLines));
   }, [settings.terminalScrollbackLines]);
+
+  const handleLargeFileWarningThresholdChangeText = useCallback((value: string) => {
+    setLargeFileWarningThresholdValue(value.replace(/[^\d]/g, ""));
+  }, []);
+
+  const commitLargeFileWarningThreshold = useCallback(() => {
+    const parsed = parseLargeFileWarningThresholdMb(largeFileWarningThresholdValue);
+    const nextValue = parsed ?? settings.largeFileWarningThresholdMb;
+    setLargeFileWarningThresholdValue(String(nextValue));
+    if (nextValue !== settings.largeFileWarningThresholdMb) {
+      handleLargeFileWarningThresholdChange(nextValue);
+    }
+  }, [
+    handleLargeFileWarningThresholdChange,
+    largeFileWarningThresholdValue,
+    settings.largeFileWarningThresholdMb,
+  ]);
+
+  useEffect(() => {
+    setLargeFileWarningThresholdValue(String(settings.largeFileWarningThresholdMb));
+  }, [settings.largeFileWarningThresholdMb]);
 
   return (
     <SettingsSection title={t("settings.general.title")}>
@@ -431,9 +458,34 @@ function GeneralSection({
             keyboardType="number-pad"
             inputMode="numeric"
             selectTextOnFocus
-            style={styles.terminalScrollbackInput}
+            style={styles.numericInput}
             accessibilityLabel={t("settings.general.terminalScrollback.accessibilityLabel")}
           />
+        </View>
+        <View style={ROW_WITH_BORDER_STYLE} testID="large-file-warning-threshold-row">
+          <View style={settingsStyles.rowContent}>
+            <Text style={settingsStyles.rowTitle}>
+              {t("settings.general.largeFileWarning.label")}
+            </Text>
+            <Text style={settingsStyles.rowHint}>
+              {t("settings.general.largeFileWarning.description")}
+            </Text>
+          </View>
+          <View style={styles.numericInputWithUnit}>
+            <TextInput
+              testID="large-file-warning-threshold-input"
+              value={largeFileWarningThresholdValue}
+              onChangeText={handleLargeFileWarningThresholdChangeText}
+              onBlur={commitLargeFileWarningThreshold}
+              onSubmitEditing={commitLargeFileWarningThreshold}
+              keyboardType="number-pad"
+              inputMode="numeric"
+              selectTextOnFocus
+              style={styles.numericInput}
+              accessibilityLabel={t("settings.general.largeFileWarning.accessibilityLabel")}
+            />
+            <Text style={styles.numericInputUnit}>MB</Text>
+          </View>
         </View>
       </View>
     </SettingsSection>
@@ -1188,6 +1240,13 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
     [updateSettings],
   );
 
+  const handleLargeFileWarningThresholdChange = useCallback(
+    (largeFileWarningThresholdMb: number) => {
+      void updateSettings({ largeFileWarningThresholdMb });
+    },
+    [updateSettings],
+  );
+
   const handlePlaybackTest = useCallback(async () => {
     if (!voiceAudioEngine || isPlaybackTestRunning) {
       return;
@@ -1394,6 +1453,7 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
                 handleServiceUrlBehaviorChange={handleServiceUrlBehaviorChange}
                 handleLanguageChange={handleLanguageChange}
                 handleTerminalScrollbackLinesChange={handleTerminalScrollbackLinesChange}
+                handleLargeFileWarningThresholdChange={handleLargeFileWarningThresholdChange}
               />
               {isDesktopApp ? <BrowserDataSection /> : null}
             </>
@@ -1614,7 +1674,7 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
   },
-  terminalScrollbackInput: {
+  numericInput: {
     width: 112,
     minHeight: 36,
     paddingVertical: theme.spacing[2],
@@ -1626,6 +1686,15 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
     textAlign: "right",
+  },
+  numericInputWithUnit: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  numericInputUnit: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
   },
   placeholder: {
     flex: 1,

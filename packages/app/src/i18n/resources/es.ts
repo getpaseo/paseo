@@ -1573,6 +1573,11 @@ export const es: TranslationResources = {
         description: "Líneas mantenidas en el búfer de terminal incorporado",
         accessibilityLabel: "Líneas del historial de terminal",
       },
+      largeFileWarning: {
+        label: "Advertencia de archivos grandes",
+        description: "Avisar antes de abrir archivos que superen este tamaño",
+        accessibilityLabel: "Umbral de advertencia de archivos grandes en megabytes",
+      },
       autoExpandReasoning: {
         label: "Siempre expandir razonamiento",
         description:

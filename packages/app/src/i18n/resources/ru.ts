@@ -1562,6 +1562,11 @@ export const ru: TranslationResources = {
         description: "Строки, хранящиеся во встроенном буфере терминала.",
         accessibilityLabel: "Линии прокрутки Terminal",
       },
+      largeFileWarning: {
+        label: "Предупреждение о больших файлах",
+        description: "Предупреждать перед открытием файлов больше указанного размера",
+        accessibilityLabel: "Порог предупреждения о больших файлах в мегабайтах",
+      },
       autoExpandReasoning: {
         label: "Всегда разворачивать размышления",
         description:

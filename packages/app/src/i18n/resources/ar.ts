@@ -1531,6 +1531,11 @@ export const ar: TranslationResources = {
         description: "يتم الاحتفاظ بالخطوط في المخزن المؤقت الطرفي المدمج",
         accessibilityLabel: "خطوط التمرير Terminal",
       },
+      largeFileWarning: {
+        label: "تحذير الملفات الكبيرة",
+        description: "التحذير قبل فتح الملفات التي تتجاوز هذا الحجم",
+        accessibilityLabel: "حد تحذير الملفات الكبيرة بالميغابايت",
+      },
       autoExpandReasoning: {
         label: "عرض التفكير دائماً",
         description: "إظهار تفكير الوكيل وخطوات الاستدلال بشكل كامل بشكل افتراضي",

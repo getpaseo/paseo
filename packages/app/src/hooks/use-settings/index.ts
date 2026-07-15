@@ -16,18 +16,22 @@ import {
   DEFAULT_APP_SETTINGS,
   DEFAULT_CLIENT_SETTINGS,
   DEFAULT_CODE_FONT_SIZE,
+  DEFAULT_LARGE_FILE_WARNING_THRESHOLD_MB,
   DEFAULT_TERMINAL_SCROLLBACK_LINES,
   DEFAULT_UI_FONT_SIZE,
   MAX_CODE_FONT_SIZE,
+  MAX_LARGE_FILE_WARNING_THRESHOLD_MB,
   MAX_TERMINAL_SCROLLBACK_LINES,
   MAX_UI_FONT_SIZE,
   MIN_CODE_FONT_SIZE,
+  MIN_LARGE_FILE_WARNING_THRESHOLD_MB,
   MIN_TERMINAL_SCROLLBACK_LINES,
   MIN_UI_FONT_SIZE,
   loadAppSettingsFromStorage as loadAppSettingsFromStoragePure,
   loadSettingsFromStorage as loadSettingsFromStoragePure,
   normalizeAppSettings,
   parseClampedFontSize,
+  parseLargeFileWarningThresholdMb,
   parseTerminalScrollbackLines,
   sanitizeFontFamily,
   saveAppSettings as saveAppSettingsPure,
@@ -47,15 +51,19 @@ export {
   DEFAULT_APP_SETTINGS,
   DEFAULT_CLIENT_SETTINGS,
   DEFAULT_CODE_FONT_SIZE,
+  DEFAULT_LARGE_FILE_WARNING_THRESHOLD_MB,
   DEFAULT_TERMINAL_SCROLLBACK_LINES,
   DEFAULT_UI_FONT_SIZE,
   MAX_CODE_FONT_SIZE,
+  MAX_LARGE_FILE_WARNING_THRESHOLD_MB,
   MAX_TERMINAL_SCROLLBACK_LINES,
   MAX_UI_FONT_SIZE,
   MIN_CODE_FONT_SIZE,
+  MIN_LARGE_FILE_WARNING_THRESHOLD_MB,
   MIN_TERMINAL_SCROLLBACK_LINES,
   MIN_UI_FONT_SIZE,
   parseClampedFontSize,
+  parseLargeFileWarningThresholdMb,
   parseTerminalScrollbackLines,
   sanitizeFontFamily,
 };
@@ -166,6 +174,9 @@ export function useSettings<TSelected>(
       }
       if (updates.terminalScrollbackLines !== undefined) {
         appUpdates.terminalScrollbackLines = updates.terminalScrollbackLines;
+      }
+      if (updates.largeFileWarningThresholdMb !== undefined) {
+        appUpdates.largeFileWarningThresholdMb = updates.largeFileWarningThresholdMb;
       }
       if (updates.uiFontFamily !== undefined) {
         appUpdates.uiFontFamily = updates.uiFontFamily;

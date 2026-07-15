@@ -28,6 +28,7 @@ import { resolveFilePreviewReadTarget } from "@/file-explorer/preview-target";
 import type { WorkspaceFileLocation } from "@/workspace/file-open";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useAppVisible } from "@/hooks/use-app-visible";
+import { useSettings } from "@/hooks/use-settings";
 import { isFileQueryEnabled } from "@/components/file-pane-enabled";
 import {
   findFileSizeFromParentDirectory,
@@ -127,11 +128,13 @@ async function getLargeFileOpenWarningIfNeeded({
   serverId,
   cwd,
   path,
+  thresholdBytes,
 }: {
   client: FileSizeLookupClient;
   serverId: string;
   cwd: string;
   path: string;
+  thresholdBytes: number;
 }): Promise<LargeFileOpenWarning | null> {
   let size: number | null = null;
   try {
@@ -139,7 +142,7 @@ async function getLargeFileOpenWarningIfNeeded({
   } catch {
     return null;
   }
-  if (size === null || !shouldWarnBeforeOpeningFile(size)) {
+  if (size === null || !shouldWarnBeforeOpeningFile(size, thresholdBytes)) {
     return null;
   }
 
@@ -463,6 +466,10 @@ export function FilePane({
   const isMobile = useIsCompactFormFactor();
 
   const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
+  const largeFileWarningThresholdMb = useSettings(
+    (settings) => settings.largeFileWarningThresholdMb,
+  );
+  const largeFileWarningThresholdBytes = largeFileWarningThresholdMb * 1024 * 1024;
   const normalizedWorkspaceRoot = useMemo(() => workspaceRoot.trim(), [workspaceRoot]);
   const normalizedFilePath = useMemo(() => trimNonEmpty(location.path), [location.path]);
   const readTarget = useMemo(
@@ -483,7 +490,13 @@ export function FilePane({
   const isAppVisible = useAppVisible();
 
   const query = useQuery({
-    queryKey: ["workspaceFile", serverId, readTarget?.cwd ?? null, readTarget?.path ?? null],
+    queryKey: [
+      "workspaceFile",
+      serverId,
+      readTarget?.cwd ?? null,
+      readTarget?.path ?? null,
+      largeFileWarningThresholdBytes,
+    ],
     enabled: isFileQueryEnabled({
       hasReadTarget: Boolean(client && readTarget),
       isTabActive: isActive,
@@ -504,6 +517,7 @@ export function FilePane({
           serverId,
           cwd: readTarget.cwd,
           path: readTarget.path,
+          thresholdBytes: largeFileWarningThresholdBytes,
         });
         if (largeFileWarning) {
           return { file: null, imageAttachment: null, error: null, largeFileWarning };

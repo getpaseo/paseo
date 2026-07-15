@@ -1575,6 +1575,11 @@ export const fr: TranslationResources = {
         description: "Lignes conservées dans le tampon du terminal intégré",
         accessibilityLabel: "Lignes de défilementTerminal",
       },
+      largeFileWarning: {
+        label: "Avertissement de fichier volumineux",
+        description: "Avertir avant d'ouvrir les fichiers dépassant cette taille",
+        accessibilityLabel: "Seuil d'avertissement en mégaoctets",
+      },
       autoExpandReasoning: {
         label: "Toujours afficher le raisonnement",
         description: "Afficher le raisonnement de l'agent entièrement développé par défaut",

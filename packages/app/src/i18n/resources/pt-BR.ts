@@ -1557,6 +1557,11 @@ export const ptBR: TranslationResources = {
         description: "Linhas mantidas no buffer do terminal integrado",
         accessibilityLabel: "Linhas do scrollback do terminal",
       },
+      largeFileWarning: {
+        label: "Aviso de arquivo grande",
+        description: "Avisar antes de abrir arquivos maiores que este tamanho",
+        accessibilityLabel: "Limite de aviso de arquivo grande em megabytes",
+      },
       autoExpandReasoning: {
         label: "Sempre expandir raciocínio",
         description:
