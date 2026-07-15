@@ -143,7 +143,7 @@ export interface DesktopBrowserBridge {
     browserId: string | null;
   }) => Promise<void>;
   openDevTools?: (browserId: string) => Promise<unknown>;
-  clearProfile?: () => Promise<void>;
+  clearProfile?: (legacyBrowserIds: string[]) => Promise<void>;
   executeAutomationCommand?: (
     request: BrowserAutomationExecuteRequest,
   ) => Promise<BrowserAutomationExecuteResponse["payload"]>;

@@ -1521,15 +1521,16 @@ export const ru: TranslationResources = {
     general: {
       title: "Общий",
       browserData: {
-        title: "Browser data",
-        siteData: "Cookies and site data",
-        description: "Browser tabs share sign-ins and site data across Paseo.",
-        clear: "Clear browser data",
-        clearing: "Clearing...",
-        confirmTitle: "Clear browser data?",
-        confirmMessage: "Sites will be signed out and open browser tabs will reload.",
-        success: "Browser data cleared.",
-        error: "Couldn't clear browser data.",
+        title: "Данные браузера",
+        siteData: "Файлы cookie и данные сайтов",
+        description: "Вкладки браузера используют общие данные входа и данные сайтов в Paseo.",
+        clear: "Очистить данные браузера",
+        clearing: "Очистка...",
+        confirmTitle: "Очистить данные браузера?",
+        confirmMessage:
+          "На сайтах будет выполнен выход, а открытые вкладки браузера перезагрузятся.",
+        success: "Данные браузера очищены.",
+        error: "Не удалось очистить данные браузера.",
       },
       defaultSend: {
         label: "Отправка по умолчанию",

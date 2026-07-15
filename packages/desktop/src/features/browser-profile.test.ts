@@ -1,5 +1,10 @@
 import { describe, expect, test } from "vitest";
-import { clearPaseoBrowserProfile, listPaseoBrowserProfileGuests } from "./browser-profile.js";
+import {
+  clearPaseoBrowserProfile,
+  getPaseoBrowserProfileSessions,
+  listPaseoBrowserProfileGuests,
+  readLegacyPaseoBrowserIds,
+} from "./browser-profile.js";
 
 class FakeProfileSession {
   public readonly storageClears: unknown[] = [];
@@ -83,9 +88,35 @@ describe("listPaseoBrowserProfileGuests", () => {
   });
 });
 
+describe("legacy browser profiles", () => {
+  test("accepts only unique saved browser ids and resolves their old partitions", () => {
+    const uuid = "123e4567-e89b-42d3-a456-426614174000";
+    const fallbackId = "1700000000000-abcd";
+    const browserIds = readLegacyPaseoBrowserIds([uuid, fallbackId, uuid, "not-a-browser-id", 123]);
+    const partitions: string[] = [];
+    const sessions = getPaseoBrowserProfileSessions(
+      {
+        fromPartition: (partition) => {
+          partitions.push(partition);
+          return new FakeProfileSession();
+        },
+      },
+      browserIds,
+    );
+
+    expect(partitions).toEqual([
+      "persist:paseo-browser",
+      `persist:paseo-browser-${uuid}`,
+      `persist:paseo-browser-${fallbackId}`,
+    ]);
+    expect(sessions).toHaveLength(3);
+  });
+});
+
 describe("clearPaseoBrowserProfile", () => {
   test("clears site data, HTTP cache, and auth before reloading live guests", async () => {
     const profile = new FakeProfileSession();
+    const legacyProfile = new FakeProfileSession();
     let finishStorageClear: (() => void) | null = null;
     profile.storageClear = new Promise((resolve) => {
       finishStorageClear = resolve;
@@ -94,7 +125,7 @@ describe("clearPaseoBrowserProfile", () => {
     const secondGuest = new FakeLiveGuest(2);
 
     const clearing = clearPaseoBrowserProfile({
-      profileSession: profile,
+      profileSessions: [profile, legacyProfile],
       listGuests: () => [firstGuest, secondGuest],
       logReloadError: () => {},
     });
@@ -119,6 +150,9 @@ describe("clearPaseoBrowserProfile", () => {
     ]);
     expect(profile.cacheClears).toBe(1);
     expect(profile.authClears).toBe(1);
+    expect(legacyProfile.storageClears).toEqual(profile.storageClears);
+    expect(legacyProfile.cacheClears).toBe(1);
+    expect(legacyProfile.authClears).toBe(1);
     expect(firstGuest.reloads).toBe(1);
     expect(secondGuest.reloads).toBe(1);
   });
@@ -131,7 +165,7 @@ describe("clearPaseoBrowserProfile", () => {
     const reloadErrors: Array<{ guestId: number; error: unknown }> = [];
 
     await clearPaseoBrowserProfile({
-      profileSession: profile,
+      profileSessions: [profile],
       listGuests: () => [destroyedGuest, failedGuest],
       logReloadError: (guestId, error) => reloadErrors.push({ guestId, error }),
     });
@@ -149,7 +183,7 @@ describe("clearPaseoBrowserProfile", () => {
 
     await expect(
       clearPaseoBrowserProfile({
-        profileSession: profile,
+        profileSessions: [profile],
         listGuests: () => [guest],
         logReloadError: () => {},
       }),

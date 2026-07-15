@@ -63,7 +63,9 @@ import {
 import {
   clearPaseoBrowserProfile,
   getPaseoBrowserProfileSession,
+  getPaseoBrowserProfileSessions,
   listPaseoBrowserProfileGuests,
+  readLegacyPaseoBrowserIds,
 } from "./features/browser-profile.js";
 import { parseOpenProjectPathFromArgv } from "./open-project-routing.js";
 import { PendingOpenProjectStore } from "./pending-open-project-store.js";
@@ -416,10 +418,14 @@ ipcMain.handle("paseo:browser:open-devtools", (_event, browserId: unknown) => {
   return result;
 });
 
-ipcMain.handle("paseo:browser:clear-profile", async () => {
-  const profileSession = getPaseoBrowserProfileSession(session);
+ipcMain.handle("paseo:browser:clear-profile", async (_event, rawLegacyBrowserIds: unknown) => {
+  const profileSessions = getPaseoBrowserProfileSessions(
+    session,
+    readLegacyPaseoBrowserIds(rawLegacyBrowserIds),
+  );
+  const profileSession = profileSessions[0];
   await clearPaseoBrowserProfile({
-    profileSession,
+    profileSessions,
     listGuests: () =>
       listPaseoBrowserProfileGuests({
         profileSession,

@@ -1515,15 +1515,16 @@ export const ptBR: TranslationResources = {
     general: {
       title: "Geral",
       browserData: {
-        title: "Browser data",
-        siteData: "Cookies and site data",
-        description: "Browser tabs share sign-ins and site data across Paseo.",
-        clear: "Clear browser data",
-        clearing: "Clearing...",
-        confirmTitle: "Clear browser data?",
-        confirmMessage: "Sites will be signed out and open browser tabs will reload.",
-        success: "Browser data cleared.",
-        error: "Couldn't clear browser data.",
+        title: "Dados do navegador",
+        siteData: "Cookies e dados de sites",
+        description: "As abas do navegador compartilham logins e dados de sites no Paseo.",
+        clear: "Limpar dados do navegador",
+        clearing: "Limpando...",
+        confirmTitle: "Limpar dados do navegador?",
+        confirmMessage:
+          "Você será desconectado dos sites e as abas abertas do navegador serão recarregadas.",
+        success: "Dados do navegador limpos.",
+        error: "Não foi possível limpar os dados do navegador.",
       },
       defaultSend: {
         label: "Envio padrão",
