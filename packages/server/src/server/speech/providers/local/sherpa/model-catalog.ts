@@ -189,14 +189,25 @@ function createModelIdSchema<T extends string>(modelIds: readonly T[]): z.ZodTyp
 export const LocalSttModelIdSchema = createModelIdSchema(LOCAL_STT_MODEL_IDS);
 export const LocalTtsModelIdSchema = createModelIdSchema(LOCAL_TTS_MODEL_IDS);
 
-export type SherpaOnnxModelSpec = SherpaOnnxCatalogEntry & {
-  id: SherpaOnnxModelId;
+export type SherpaOnnxSttModelSpec = SherpaOnnxSttCatalogEntry & {
+  id: LocalSttModelId;
 };
 
+export type SherpaOnnxTtsModelSpec = SherpaOnnxTtsCatalogEntry & {
+  id: LocalTtsModelId;
+};
+
+export type SherpaOnnxModelSpec = SherpaOnnxSttModelSpec | SherpaOnnxTtsModelSpec;
+
 export function listSherpaOnnxModels(): SherpaOnnxModelSpec[] {
-  return ALL_MODEL_IDS.map((id) => Object.assign({ id }, SHERPA_ONNX_MODEL_CATALOG[id]));
+  return ALL_MODEL_IDS.map((id) =>
+    Object.assign({ id }, SHERPA_ONNX_MODEL_CATALOG[id]),
+  ) as SherpaOnnxModelSpec[];
 }
 
+export function getSherpaOnnxModelSpec(id: LocalSttModelId): SherpaOnnxSttModelSpec;
+export function getSherpaOnnxModelSpec(id: LocalTtsModelId): SherpaOnnxTtsModelSpec;
+export function getSherpaOnnxModelSpec(id: SherpaOnnxModelId): SherpaOnnxModelSpec;
 export function getSherpaOnnxModelSpec(id: SherpaOnnxModelId): SherpaOnnxModelSpec {
   const spec = SHERPA_ONNX_MODEL_CATALOG[id];
   if (!spec) {
@@ -205,7 +216,7 @@ export function getSherpaOnnxModelSpec(id: SherpaOnnxModelId): SherpaOnnxModelSp
   return {
     id,
     ...spec,
-  };
+  } as SherpaOnnxModelSpec;
 }
 
 /** Returns the catalog-defined default speaker ID for a TTS model, or undefined if none. */
