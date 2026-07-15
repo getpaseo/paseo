@@ -385,11 +385,12 @@ async function startDaemon(): Promise<DesktopDaemonStatus> {
   }
 
   const daemonRunner = resolveDaemonRunnerEntrypoint();
+  const reclaimStalePidLock =
+    current.status === "errored" && current.desktopManaged && current.error === null;
   const invocation = createNodeEntrypointInvocation({
     entrypoint: daemonRunner,
     argvMode: "node-script",
-    // The status probe above confirmed that the recorded daemon is unreachable.
-    args: ["--reclaim-stale-pid-lock"],
+    args: reclaimStalePidLock ? ["--reclaim-stale-pid-lock"] : [],
     baseEnv: process.env,
   });
 

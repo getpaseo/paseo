@@ -443,7 +443,7 @@ describe("daemon-manager commands", () => {
     expect(recentLogsLabel?.split(/[\\/]/).at(-1)).toBe("daemon.log");
     expect(message).toContain("recent daemon failure");
     expect(mocks.createNodeEntrypointInvocation).toHaveBeenCalledWith(
-      expect.objectContaining({ args: ["--reclaim-stale-pid-lock"] }),
+      expect.objectContaining({ args: [] }),
     );
     expect(mocks.spawnProcess).toHaveBeenCalledWith(
       "node",
@@ -453,6 +453,47 @@ describe("daemon-manager commands", () => {
         stdio: ["ignore", "ignore", "ignore"],
         envOverlay: expect.objectContaining({ PASEO_WEB_UI_ENABLED: "false" }),
       }),
+    );
+  });
+
+  it("passes stale lock reclaim only after a live desktop daemon is confirmed unresponsive", async () => {
+    mocks.runExternalCliJsonCommand.mockResolvedValue({
+      localDaemon: "unresponsive",
+      connectedDaemon: "unreachable",
+      serverId: "",
+      pid: 7675,
+      listen: "127.0.0.1:6767",
+      desktopManaged: true,
+    });
+    mocks.spawnProcess.mockImplementation(() => {
+      const child = createMockChildProcess();
+      scheduleFailedStartup(child);
+      return child;
+    });
+
+    await expect(createDaemonCommandHandlers().start_desktop_daemon()).rejects.toThrow(
+      "Daemon failed to start: exit code 1",
+    );
+
+    expect(mocks.createNodeEntrypointInvocation).toHaveBeenCalledWith(
+      expect.objectContaining({ args: ["--reclaim-stale-pid-lock"] }),
+    );
+  });
+
+  it("does not pass stale lock reclaim when the status command fails", async () => {
+    mocks.runExternalCliJsonCommand.mockRejectedValue(new Error("status command failed"));
+    mocks.spawnProcess.mockImplementation(() => {
+      const child = createMockChildProcess();
+      scheduleFailedStartup(child);
+      return child;
+    });
+
+    await expect(createDaemonCommandHandlers().start_desktop_daemon()).rejects.toThrow(
+      "Daemon failed to start: exit code 1",
+    );
+
+    expect(mocks.createNodeEntrypointInvocation).toHaveBeenCalledWith(
+      expect.objectContaining({ args: [] }),
     );
   });
 
