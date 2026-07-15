@@ -23,7 +23,7 @@ import type {
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import type { ProviderSnapshotManager } from "../agent/provider-snapshot-manager.js";
-import { createLocalCheckoutWorkspace } from "../paseo-worktree-service.js";
+import { createWorkspaceProvisioningService } from "../session/workspace-provisioning/workspace-provisioning-service.js";
 import { resolveWorkspaceIdForPath } from "../resolve-workspace-id-for-path.js";
 import { createNoopWorkspaceGitService } from "../test-utils/workspace-git-service-stub.js";
 import {
@@ -66,15 +66,12 @@ let workspaceArchiveInProgress = false;
 
 type TestScheduleServiceOptions = Omit<
   ScheduleServiceOptions,
-  | "createAgent"
-  | "createLocalCheckoutWorkspace"
-  | "createPaseoWorktreeWorkspace"
-  | "archiveWorkspace"
+  "createAgent" | "createDirectoryWorkspace" | "createPaseoWorktreeWorkspace" | "archiveWorkspace"
 > & {
   agentManager: AgentManager;
   providerSnapshotManager: Pick<ProviderSnapshotManager, "resolveCreateConfig">;
   createAgent?: ScheduleServiceOptions["createAgent"];
-  createLocalCheckoutWorkspace?: ScheduleServiceOptions["createLocalCheckoutWorkspace"];
+  createDirectoryWorkspace?: ScheduleServiceOptions["createDirectoryWorkspace"];
   createPaseoWorktreeWorkspace?: ScheduleServiceOptions["createPaseoWorktreeWorkspace"];
   archiveWorkspace?: ScheduleServiceOptions["archiveWorkspace"];
 };
@@ -83,7 +80,7 @@ function createScheduleService(options: TestScheduleServiceOptions): ScheduleSer
   let workspaceCounter = 0;
   const workspaces = new Map<string, PersistedWorkspaceRecord>();
   const workspaceGitService = createNoopWorkspaceGitService();
-  const createDefaultWorkspace: ScheduleServiceOptions["createLocalCheckoutWorkspace"] = async (
+  const createDefaultWorkspace: ScheduleServiceOptions["createDirectoryWorkspace"] = async (
     input,
   ) => {
     const timestamp = new Date().toISOString();
@@ -163,7 +160,7 @@ function createScheduleService(options: TestScheduleServiceOptions): ScheduleSer
           },
           input,
         )),
-    createLocalCheckoutWorkspace: options.createLocalCheckoutWorkspace ?? createDefaultWorkspace,
+    createDirectoryWorkspace: options.createDirectoryWorkspace ?? createDefaultWorkspace,
     createPaseoWorktreeWorkspace:
       options.createPaseoWorktreeWorkspace ??
       (async (input) => {
@@ -182,7 +179,7 @@ function createScheduleService(options: TestScheduleServiceOptions): ScheduleSer
 
 async function createRegistryBackedScheduleWorkspaceDeps(rootDir: string): Promise<{
   workspaceRegistry: FileBackedWorkspaceRegistry;
-  createLocalCheckoutWorkspace: ScheduleServiceOptions["createLocalCheckoutWorkspace"];
+  createDirectoryWorkspace: ScheduleServiceOptions["createDirectoryWorkspace"];
   createArchiveWorkspace: (input: {
     agentManager: AgentManager;
     agentStorage: AgentStorage;
@@ -200,12 +197,17 @@ async function createRegistryBackedScheduleWorkspaceDeps(rootDir: string): Promi
   await workspaceRegistry.initialize();
   await projectRegistry.initialize();
   const workspaceGitService = createNoopWorkspaceGitService();
+  const workspaceProvisioning = createWorkspaceProvisioningService({
+    projectRegistry,
+    workspaceRegistry,
+    workspaceGitService,
+  });
   return {
     workspaceRegistry,
-    createLocalCheckoutWorkspace: async (input) => {
-      return createLocalCheckoutWorkspace(
-        { cwd: input.cwd, title: input.firstAgentContext.prompt },
-        { projectRegistry, workspaceRegistry, workspaceGitService },
+    createDirectoryWorkspace: async (input) => {
+      return workspaceProvisioning.createWorkspaceForDirectory(
+        input.cwd,
+        input.firstAgentContext.prompt,
       );
     },
     createArchiveWorkspace:
@@ -493,7 +495,7 @@ describe("ScheduleService", () => {
   });
 
   test("new-agent schedule records create no workspace until run time", async () => {
-    const { workspaceRegistry, createLocalCheckoutWorkspace: createScheduleLocalWorkspace } =
+    const { workspaceRegistry, createDirectoryWorkspace: createScheduleDirectoryWorkspace } =
       await createRegistryBackedScheduleWorkspaceDeps(tempDir);
     const service = createScheduleService({
       paseoHome: tempDir,
@@ -501,7 +503,7 @@ describe("ScheduleService", () => {
       agentManager: new AgentManager({ logger: createTestLogger() }),
       agentStorage,
       providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
-      createLocalCheckoutWorkspace: createScheduleLocalWorkspace,
+      createDirectoryWorkspace: createScheduleDirectoryWorkspace,
       now: () => now,
       runner: async () => ({ agentId: null, output: "ok" }),
     });
@@ -531,7 +533,7 @@ describe("ScheduleService", () => {
   test("archiveOnFinish=false local runs create one active workspace per run", async () => {
     const {
       workspaceRegistry,
-      createLocalCheckoutWorkspace: createScheduleLocalWorkspace,
+      createDirectoryWorkspace: createScheduleDirectoryWorkspace,
       createArchiveWorkspace,
     } = await createRegistryBackedScheduleWorkspaceDeps(tempDir);
     const manager = new AgentManager({
@@ -545,7 +547,7 @@ describe("ScheduleService", () => {
       agentManager: manager,
       agentStorage,
       providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
-      createLocalCheckoutWorkspace: createScheduleLocalWorkspace,
+      createDirectoryWorkspace: createScheduleDirectoryWorkspace,
       archiveWorkspace: createArchiveWorkspace({
         agentManager: manager,
         agentStorage,
@@ -599,7 +601,7 @@ describe("ScheduleService", () => {
   test("archiveOnFinish=true archives the run workspace through workspace archive", async () => {
     const {
       workspaceRegistry,
-      createLocalCheckoutWorkspace: createScheduleLocalWorkspace,
+      createDirectoryWorkspace: createScheduleDirectoryWorkspace,
       createArchiveWorkspace,
     } = await createRegistryBackedScheduleWorkspaceDeps(tempDir);
     const manager = new AgentManager({
@@ -620,7 +622,7 @@ describe("ScheduleService", () => {
       agentManager: manager,
       agentStorage,
       providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
-      createLocalCheckoutWorkspace: createScheduleLocalWorkspace,
+      createDirectoryWorkspace: createScheduleDirectoryWorkspace,
       archiveWorkspace: createArchiveWorkspace({
         agentManager: manager,
         agentStorage,
@@ -663,7 +665,7 @@ describe("ScheduleService", () => {
   test("archives the run workspace when scheduled agent creation fails before archive opt-out can preserve an agent", async () => {
     const {
       workspaceRegistry,
-      createLocalCheckoutWorkspace: createScheduleLocalWorkspace,
+      createDirectoryWorkspace: createScheduleDirectoryWorkspace,
       createArchiveWorkspace,
     } = await createRegistryBackedScheduleWorkspaceDeps(tempDir);
     const manager = new AgentManager({
@@ -678,7 +680,7 @@ describe("ScheduleService", () => {
       agentManager: manager,
       agentStorage,
       providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
-      createLocalCheckoutWorkspace: createScheduleLocalWorkspace,
+      createDirectoryWorkspace: createScheduleDirectoryWorkspace,
       archiveWorkspace: createArchiveWorkspace({
         agentManager: manager,
         agentStorage,

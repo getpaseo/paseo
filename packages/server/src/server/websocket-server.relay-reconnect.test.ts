@@ -921,6 +921,20 @@ describe("relay external socket reconnect behavior", () => {
     await server.close();
   });
 
+  test("advertises stable project identity in initial server_info", async () => {
+    const server = createServer();
+    const socket = new MockSocket();
+
+    const serverInfo = await attachRelayAndHello({
+      server,
+      socket,
+      clientId: "cid-stable-project-identity",
+    });
+
+    expect(serverInfo.features?.stableProjectIdentity).toBe(true);
+    await server.close();
+  });
+
   test("includes voice capabilities in initial server_info when speech readiness exists", async () => {
     const speechReadiness = createReadySpeechReadinessSnapshot();
     const server = createServer({ speechReadiness });

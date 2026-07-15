@@ -294,6 +294,7 @@ interface SessionForTestOptions {
     resolveRepoRoot?: ReturnType<typeof vi.fn>;
     resolveForge?: ReturnType<typeof vi.fn>;
     getWorkspaceGitMetadata?: ReturnType<typeof vi.fn>;
+    getProjectSlug?: ReturnType<typeof vi.fn>;
   };
   workspaceRegistry?: { get: ReturnType<typeof vi.fn> };
   projectRegistry?: Partial<SessionOptions["projectRegistry"]>;
@@ -342,6 +343,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     // Mirror production: invalidateForge resolves the forge and busts the
     // adapter's cache. The resolved forge here is github, so delegate to it.
     invalidateForge: vi.fn((cwd: string) => github.invalidate({ cwd })),
+    getProjectSlug: vi.fn(),
     ...options.workspaceGitService,
   };
   const messages = options.messages ?? [];
@@ -4041,17 +4043,17 @@ describe("session paseo worktree creation handling", () => {
 });
 
 describe("session workspace script handling", () => {
-  test("passes service-owned git metadata into workspace script spawning", async () => {
+  test("passes the project slug and cached branch into workspace script spawning", async () => {
     const messages: unknown[] = [];
-    const workspaceGitService = {
-      peekSnapshot: vi.fn(() => null),
-      getWorkspaceGitMetadata: vi.fn().mockResolvedValue({
-        projectKind: "git",
-        projectDisplayName: "getpaseo/paseo",
-        workspaceDisplayName: "feature/service-scripts",
-        projectSlug: "paseo",
+    const snapshot = createWorkspaceGitSnapshot("/tmp/repo", {
+      git: {
         currentBranch: "feature/service-scripts",
-      }),
+        remoteUrl: "https://github.com/getpaseo/paseo.git",
+      },
+    });
+    const workspaceGitService = {
+      peekSnapshot: vi.fn(() => snapshot),
+      getProjectSlug: vi.fn().mockResolvedValue("paseo"),
     };
     const workspaceRegistry = {
       get: vi.fn().mockResolvedValue({
@@ -4084,8 +4086,6 @@ describe("session workspace script handling", () => {
       requestId: "request-script",
     });
 
-    expect(workspaceGitService.getWorkspaceGitMetadata).toHaveBeenCalledTimes(1);
-    expect(workspaceGitService.getWorkspaceGitMetadata).toHaveBeenCalledWith("/tmp/repo");
     expect(spawnMocks.spawnWorkspaceScript).toHaveBeenCalledWith(
       expect.objectContaining({
         repoRoot: "/tmp/repo",

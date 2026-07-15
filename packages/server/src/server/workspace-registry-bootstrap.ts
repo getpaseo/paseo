@@ -4,10 +4,8 @@ import type { Logger } from "pino";
 
 import type { StoredAgentRecord } from "./agent/agent-storage.js";
 import type { AgentStorage } from "./agent/agent-storage.js";
-import {
-  classifyDirectoryForProjectMembership,
-  generateWorkspaceId,
-} from "./workspace-registry-model.js";
+import { classifyDirectoryForProjectMembership } from "./workspace-registry-bootstrap-legacy.js";
+import { generateWorkspaceId } from "./workspace-registry-model.js";
 import { backfillWorkspaceIdForLegacyAgents } from "./migrations/backfill-workspace-id.migration.js";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
 import {

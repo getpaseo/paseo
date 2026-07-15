@@ -22,11 +22,6 @@ import { deriveProjectSlug } from "../../workspace-git-metadata.js";
 
 type WorkspaceScriptsPayload = WorkspaceDescriptorPayload["scripts"];
 
-interface WorkspaceScriptGitMetadata {
-  projectSlug: string;
-  currentBranch: string | null;
-}
-
 /**
  * The service-proxy-backed scripts a workspace exposes: build the scripts payload
  * snapshot, emit a script_status_update to clients, and start a script.
@@ -42,10 +37,7 @@ export interface WorkspaceScriptsService {
   start(request: StartWorkspaceScriptRequest): Promise<void>;
 }
 
-type WorkspaceScriptsGitSource = Pick<
-  WorkspaceGitService,
-  "peekSnapshot" | "getWorkspaceGitMetadata"
->;
+type WorkspaceScriptsGitSource = Pick<WorkspaceGitService, "peekSnapshot" | "getProjectSlug">;
 
 export function createWorkspaceScriptsService(deps: {
   serviceProxy: ServiceProxySubsystem | null;
@@ -76,7 +68,7 @@ export function createWorkspaceScriptsService(deps: {
     spawnWorkspaceScript,
   } = deps;
 
-  function resolveGitMetadata(workspaceDirectory: string): WorkspaceScriptGitMetadata | undefined {
+  function resolveGitMetadata(workspaceDirectory: string) {
     const snapshot = workspaceGitService.peekSnapshot(workspaceDirectory);
     if (!snapshot) {
       return undefined;
@@ -127,13 +119,14 @@ export function createWorkspaceScriptsService(deps: {
       if (!workspace) {
         throw new Error(`Workspace not found: ${request.workspaceId}`);
       }
-      const gitMetadata = await workspaceGitService.getWorkspaceGitMetadata(workspace.cwd);
+      const projectSlug = await workspaceGitService.getProjectSlug(workspace.cwd);
+      const branchName = workspaceGitService.peekSnapshot(workspace.cwd)?.git.currentBranch ?? null;
 
       const serviceResult = await spawnWorkspaceScript({
         repoRoot: workspace.cwd,
         workspaceId: workspace.workspaceId,
-        projectSlug: gitMetadata.projectSlug,
-        branchName: gitMetadata.currentBranch,
+        projectSlug,
+        branchName,
         scriptName: request.scriptName,
         daemonPort: getDaemonTcpPort?.() ?? null,
         daemonListenHost: getDaemonTcpHost?.() ?? null,

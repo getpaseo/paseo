@@ -14,6 +14,7 @@ import {
 import type { CreatePaseoWorktreeWorkflowResult } from "../../worktree-session.js";
 import {
   createWorkspaceProvisioningService,
+  WorkspaceProvisioningError,
   type WorkspaceProvisioningService,
 } from "./workspace-provisioning-service.js";
 
@@ -138,7 +139,7 @@ test("opening a subpath of an archived git workspace mints a fresh workspace at 
   expect((await workspaceRegistry.get(canonical.workspaceId))?.archivedAt).toBe(ARCHIVED_AT);
 });
 
-test("ensureWorkspaceRecordUnarchived clears archivedAt on the workspace and its project", async () => {
+test("ensureWorkspaceRecordUnarchived restores the owning archived project with the workspace", async () => {
   const repo = path.join(tmpDir, "repo");
   gitRoots.add(repo);
   const created = await provisioning.findOrCreateWorkspaceForDirectory(repo);
@@ -207,15 +208,63 @@ test("createWorkspaceForDirectory always mints a fresh workspace even when one a
   expect(await workspaceRegistry.list()).toHaveLength(2);
 });
 
-test("findOrCreateProjectForDirectory reuses the active project for the same root", async () => {
+test("directory creation persists the live branch and a trimmed title", async () => {
+  const repo = path.join(tmpDir, "repo");
+  gitRoots.add(repo);
+  const workspace = await provisioning.createWorkspaceForDirectory(repo, "  Focused work  ");
+  expect(workspace).toMatchObject({ branch: "main", title: "Focused work" });
+});
+
+test("createWorkspaceForDirectory honors an explicit active project without cwd containment", async () => {
+  const project = await projectRegistry.getOrCreateActiveByRoot({
+    rootPath: path.join(tmpDir, "elsewhere"),
+    kind: "non_git",
+    displayName: "elsewhere",
+    timestamp: "2026-03-01T00:00:00.000Z",
+  });
+  const workspace = await provisioning.createWorkspaceForDirectory(
+    path.join(tmpDir, "directory"),
+    null,
+    project.projectId,
+  );
+  expect(workspace.projectId).toBe(project.projectId);
+});
+
+test("createWorkspaceForDirectory classifies unknown and archived explicit projects", async () => {
+  await expect(
+    provisioning.createWorkspaceForDirectory(path.join(tmpDir, "directory"), null, "missing"),
+  ).rejects.toMatchObject({
+    code: "unknown_project",
+  } satisfies Partial<WorkspaceProvisioningError>);
+  const project = await projectRegistry.getOrCreateActiveByRoot({
+    rootPath: path.join(tmpDir, "archived"),
+    kind: "non_git",
+    displayName: "archived",
+    timestamp: "2026-03-01T00:00:00.000Z",
+  });
+  await projectRegistry.archive(project.projectId, "2026-03-02T00:00:00.000Z");
+  await expect(
+    provisioning.createWorkspaceForDirectory(
+      path.join(tmpDir, "directory"),
+      null,
+      project.projectId,
+    ),
+  ).rejects.toMatchObject({
+    code: "archived_project",
+  } satisfies Partial<WorkspaceProvisioningError>);
+});
+
+test("findOrCreateProjectForDirectory keeps nested selected roots independent", async () => {
   const repo = path.join(tmpDir, "repo");
   gitRoots.add(repo);
 
   const first = await provisioning.findOrCreateProjectForDirectory(repo);
   const second = await provisioning.findOrCreateProjectForDirectory(path.join(repo, "sub"));
 
-  expect(second.projectId).toBe(first.projectId);
-  expect(await projectRegistry.list()).toHaveLength(1);
+  expect(second.projectId).not.toBe(first.projectId);
+  expect(first.rootPath).toBe(repo);
+  expect(second.rootPath).toBe(path.join(repo, "sub"));
+  expect(await projectRegistry.list()).toHaveLength(2);
 });
 
 test("runInImportWorkspace uses an active requested workspace without creating another", async () => {

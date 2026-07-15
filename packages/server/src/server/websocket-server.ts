@@ -1,6 +1,6 @@
 import { WebSocket, WebSocketServer } from "ws";
 import type { IncomingMessage, Server as HTTPServer } from "http";
-import { basename, join } from "path";
+import { join } from "path";
 import { hostname as getHostname } from "node:os";
 import { randomUUID } from "node:crypto";
 import { monitorEventLoopDelay } from "node:perf_hooks";
@@ -9,7 +9,11 @@ import type { AgentStorage } from "./agent/agent-storage.js";
 import type { DownloadTokenStore } from "./file-download/token-store.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type pino from "pino";
-import type { ProjectRegistry, WorkspaceRegistry } from "./workspace-registry.js";
+import type {
+  PersistedProjectRecord,
+  ProjectRegistry,
+  WorkspaceRegistry,
+} from "./workspace-registry.js";
 import type { FileBackedChatService } from "./chat/chat-service.js";
 import type { LoopService } from "./loop-service.js";
 import type { ScheduleService } from "./schedule/service.js";
@@ -35,7 +39,7 @@ import type { AgentProvider } from "./agent/agent-sdk-types.js";
 import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "./workspace-git-service.js";
 import type { WorkspaceAutoName } from "./workspace-auto-name.js";
-import { buildWorkspaceGitMetadataFromSnapshot } from "./workspace-git-metadata.js";
+import { deriveProjectSlug } from "./workspace-git-metadata.js";
 import { PushTokenStore } from "./push/token-store.js";
 import { createPushNotificationSender, type PushNotificationSender } from "./push/notifications.js";
 import type { ScriptHealthState } from "./script-health-monitor.js";
@@ -190,17 +194,9 @@ function createFallbackWorkspaceGitService(): WorkspaceGitService {
     suggestBranchesForCwd: async () => [],
     listStashes: async () => [],
     listWorktrees: async () => [],
-    getWorkspaceGitMetadata: async (cwd: string, options) => {
+    getProjectSlug: async (cwd: string) => {
       const snapshot = createFallbackWorkspaceGitSnapshot(cwd);
-      return buildWorkspaceGitMetadataFromSnapshot({
-        cwd,
-        directoryName: options?.directoryName ?? basename(cwd),
-        isGit: snapshot.git.isGit,
-        repoRoot: snapshot.git.repoRoot,
-        mainRepoRoot: snapshot.git.mainRepoRoot,
-        currentBranch: snapshot.git.currentBranch,
-        remoteUrl: snapshot.git.remoteUrl,
-      });
+      return deriveProjectSlug(cwd, snapshot.git.isGit ? snapshot.git.remoteUrl : null);
     },
     resolveRepoRoot: async (cwd: string) => cwd,
     resolveDefaultBranch: async () => "main",
@@ -223,6 +219,16 @@ function createNoopProjectRegistry(): ProjectRegistry {
     existsOnDisk: async () => true,
     list: async () => [],
     get: async () => null,
+    getOrCreateActiveByRoot: async (input) => ({
+      projectId: "prj_noop",
+      rootPath: input.rootPath,
+      kind: input.kind,
+      displayName: input.displayName,
+      customName: null,
+      createdAt: input.timestamp,
+      updatedAt: input.timestamp,
+      archivedAt: null,
+    }),
     upsert: async () => {},
     archive: async () => {},
     remove: async () => {},
@@ -767,6 +773,14 @@ export class VoiceAssistantWebSocketServer {
     );
   }
 
+  public publishProjectUpdate(project: PersistedProjectRecord): void {
+    for (const session of this.listActiveSessions()) session.emitProjectUpdate(project);
+  }
+
+  public publishProjectRemove(projectId: string): void {
+    for (const session of this.listActiveSessions()) session.emitProjectRemove(projectId);
+  }
+
   public publishSpeechReadiness(readiness: SpeechReadinessSnapshot | null): void {
     this.updateServerCapabilities(buildServerCapabilities({ readiness }));
   }
@@ -1293,6 +1307,8 @@ export class VoiceAssistantWebSocketServer {
         forgeProviders: true,
         // COMPAT(selectiveAgentTimeline): added in v0.1.106, remove after 2027-01-12.
         selectiveAgentTimeline: true,
+        // COMPAT(stableProjectIdentity): added in v0.1.109, remove gate after 2027-01-15.
+        stableProjectIdentity: true,
       },
     };
   }

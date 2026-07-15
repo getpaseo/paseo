@@ -1,9 +1,5 @@
-import { basename } from "node:path";
 import type { CheckoutDiffResult } from "../../utils/checkout-git.js";
-import {
-  buildWorkspaceGitMetadataFromSnapshot,
-  type WorkspaceGitMetadata,
-} from "../workspace-git-metadata.js";
+import { deriveProjectSlug } from "../workspace-git-metadata.js";
 import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "../workspace-git-service.js";
 
 export function createNoGitWorkspaceRuntimeSnapshot(cwd: string): WorkspaceGitRuntimeSnapshot {
@@ -39,6 +35,9 @@ export function createNoopWorkspaceGitService(
     registerWorkspace: () => ({
       unsubscribe: () => {},
     }),
+    onSnapshotUpdated: () => ({
+      unsubscribe: () => {},
+    }),
     peekSnapshot: () => null,
     getCheckout: async (cwd: string) => ({
       cwd,
@@ -56,17 +55,9 @@ export function createNoopWorkspaceGitService(
     suggestBranchesForCwd: async () => [],
     listStashes: async () => [],
     listWorktrees: async () => [],
-    getWorkspaceGitMetadata: async (cwd: string, options): Promise<WorkspaceGitMetadata> => {
+    getProjectSlug: async (cwd: string) => {
       const snapshot = createNoGitWorkspaceRuntimeSnapshot(cwd);
-      return buildWorkspaceGitMetadataFromSnapshot({
-        cwd,
-        directoryName: options?.directoryName ?? basename(cwd),
-        isGit: snapshot.git.isGit,
-        repoRoot: snapshot.git.repoRoot,
-        mainRepoRoot: snapshot.git.mainRepoRoot,
-        currentBranch: snapshot.git.currentBranch,
-        remoteUrl: snapshot.git.remoteUrl,
-      });
+      return deriveProjectSlug(cwd, snapshot.git.isGit ? snapshot.git.remoteUrl : null);
     },
     resolveForge: async () => null,
     resolveRepoRoot: async (cwd: string) => cwd,

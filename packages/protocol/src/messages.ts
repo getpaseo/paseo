@@ -2687,6 +2687,8 @@ export const ServerInfoStatusPayloadSchema = z
         forgeProviders: z.boolean().optional(),
         // COMPAT(selectiveAgentTimeline): added in v0.1.106, remove after 2027-01-12.
         selectiveAgentTimeline: z.boolean().optional(),
+        // COMPAT(stableProjectIdentity): added in v0.1.109, remove gate after 2027-01-15.
+        stableProjectIdentity: z.boolean().optional(),
       })
       .optional(),
   })
@@ -3132,6 +3134,14 @@ export const WorkspaceUpdateMessageSchema = z.object({
       // so old clients can still parse the message and ignore the extra field.
       removedProjectId: z.string().optional(),
     }),
+  ]),
+});
+
+export const ProjectUpdateMessageSchema = z.object({
+  type: z.literal("project.update"),
+  payload: z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("upsert"), project: WorkspaceProjectDescriptorPayloadSchema }),
+    z.object({ kind: z.literal("remove"), projectId: z.string() }),
   ]),
 });
 
@@ -4847,6 +4857,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ArtifactMessageSchema,
   AgentUpdateMessageSchema,
   WorkspaceUpdateMessageSchema,
+  ProjectUpdateMessageSchema,
   ScriptStatusUpdateMessageSchema,
   WorkspaceSetupProgressMessageSchema,
   WorkspaceSetupStatusResponseMessageSchema,
@@ -5409,6 +5420,7 @@ export const WSHelloMessageSchema = z.object({
       [CLIENT_CAPS.customModeIcons]: z.boolean().optional(),
       [CLIENT_CAPS.terminalReflowableSnapshot]: z.boolean().optional(),
       [CLIENT_CAPS.providerSubagents]: z.boolean().optional(),
+      [CLIENT_CAPS.projectUpdates]: z.boolean().optional(),
       [CLIENT_CAPS.browserHost]: BrowserAutomationHostCapabilitySchema.optional(),
     })
     .passthrough()

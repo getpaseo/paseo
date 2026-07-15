@@ -250,6 +250,10 @@ export type DaemonEvent =
       payload: Extract<SessionOutboundMessage, { type: "workspace_update" }>["payload"];
     }
   | {
+      type: "project.update";
+      payload: Extract<SessionOutboundMessage, { type: "project.update" }>["payload"];
+    }
+  | {
       type: "workspace_setup_progress";
       workspaceId: string;
       payload: Extract<SessionOutboundMessage, { type: "workspace_setup_progress" }>["payload"];
@@ -5111,6 +5115,7 @@ export class DaemonClient {
             [CLIENT_CAPS.reasoningMergeEnum]: true,
             [CLIENT_CAPS.terminalReflowableSnapshot]: true,
             [CLIENT_CAPS.providerSubagents]: true,
+            [CLIENT_CAPS.projectUpdates]: true,
             ...this.config.capabilities,
           },
           ...(this.config.appVersion ? { appVersion: this.config.appVersion } : {}),
@@ -5581,6 +5586,8 @@ export class DaemonClient {
           workspaceId: msg.payload.kind === "upsert" ? msg.payload.workspace.id : msg.payload.id,
           payload: msg.payload,
         };
+      case "project.update":
+        return { type: "project.update", payload: msg.payload };
       case "workspace_setup_progress":
         return {
           type: "workspace_setup_progress",

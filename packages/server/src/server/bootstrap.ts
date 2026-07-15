@@ -91,10 +91,8 @@ function formatListenTarget(listenTarget: ListenTarget | null): string | null {
 
 import { VoiceAssistantWebSocketServer } from "./websocket-server.js";
 import { createGitHubService } from "../services/github-service.js";
-import {
-  createPaseoWorktree as createRegisteredPaseoWorktree,
-  createLocalCheckoutWorkspace,
-} from "./paseo-worktree-service.js";
+import { createPaseoWorktree as createRegisteredPaseoWorktree } from "./paseo-worktree-service.js";
+import { createWorkspaceProvisioningService } from "./session/workspace-provisioning/workspace-provisioning-service.js";
 import { createPaseoWorktreeWorkflow } from "./worktree-session.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
 import type { OpenAiSpeechProviderConfig } from "./speech/providers/openai/config.js";
@@ -113,6 +111,7 @@ import type { PaseoToolRuntimeContext } from "./agent/tools/types.js";
 import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import { bootstrapWorkspaceRegistries } from "./workspace-registry-bootstrap.js";
 import { WorkspaceReconciliationService } from "./workspace-reconciliation-service.js";
+import { ProjectGitObserverService } from "./project-git-observer-service.js";
 import { FileBackedProjectRegistry, FileBackedWorkspaceRegistry } from "./workspace-registry.js";
 import { FileBackedChatService } from "./chat/chat-service.js";
 import { CheckoutDiffManager } from "./checkout-diff-manager.js";
@@ -744,6 +743,11 @@ export async function createPaseoDaemon(
       forgeOverrides: { github },
     },
   });
+  const workspaceProvisioning = createWorkspaceProvisioningService({
+    projectRegistry,
+    workspaceRegistry,
+    workspaceGitService,
+  });
   const providerSnapshotLogger = logger.child({ module: "provider-snapshot-manager" });
   const providerSnapshotManager = new ProviderSnapshotManager({
     logger: providerSnapshotLogger,
@@ -789,20 +793,31 @@ export async function createPaseoDaemon(
     logger,
     workspaceGitService,
   });
-  void (async () => {
-    try {
-      const result = await workspaceReconciliation.runOnce();
-      logger.info(
-        {
-          elapsed: elapsed(),
-          changeCount: result.changesApplied.length,
-        },
-        "Workspace registries reconciled",
+  const projectGitObserver = new ProjectGitObserverService({
+    projectRegistry,
+    reconciliation: workspaceReconciliation,
+    logger,
+    onProjectUpdate: (update) => {
+      if (update.kind === "upsert") {
+        wsServer?.publishProjectUpdate(update.project);
+      } else {
+        wsServer?.publishProjectRemove(update.projectId);
+      }
+    },
+    onWorkspacesChanged: async (workspaceIds) => {
+      await Promise.all(
+        (wsServer?.listActiveSessions() ?? []).map((session) =>
+          session.emitWorkspaceUpdatesForExternalWorkspaceIds(workspaceIds, {
+            skipReconcile: true,
+          }),
+        ),
       );
-    } catch (error) {
-      logger.error({ err: error }, "Background workspace reconciliation failed");
-    }
-  })();
+    },
+  });
+  await projectGitObserver.start();
+  void workspaceReconciliation.runOnce().catch((error) => {
+    logger.warn({ err: error }, "Initial workspace reconciliation failed");
+  });
   await chatService.initialize();
   logger.info({ elapsed: elapsed() }, "Chat service initialized");
   const checkoutDiffManager = new CheckoutDiffManager({
@@ -833,9 +848,9 @@ export async function createPaseoDaemon(
     cwd: string,
     firstAgentContext?: FirstAgentContext,
   ): Promise<string> => {
-    const workspace = await createLocalCheckoutWorkspace(
-      { cwd, title: resolveFirstAgentPromptTitle(firstAgentContext) },
-      { projectRegistry, workspaceRegistry, workspaceGitService },
+    const workspace = await workspaceProvisioning.createWorkspaceForDirectory(
+      cwd,
+      resolveFirstAgentPromptTitle(firstAgentContext),
     );
     if (firstAgentContext) {
       workspaceAutoName.scheduleForDirectory({
@@ -1003,9 +1018,9 @@ export async function createPaseoDaemon(
     cwd: string;
     firstAgentContext: FirstAgentContext;
   }) => {
-    const workspace = await createLocalCheckoutWorkspace(
-      { cwd: input.cwd, title: resolveFirstAgentPromptTitle(input.firstAgentContext) },
-      { projectRegistry, workspaceRegistry, workspaceGitService },
+    const workspace = await workspaceProvisioning.createWorkspaceForDirectory(
+      input.cwd,
+      resolveFirstAgentPromptTitle(input.firstAgentContext),
     );
     workspaceAutoName.scheduleForDirectory({
       workspaceId: workspace.workspaceId,
@@ -1065,7 +1080,7 @@ export async function createPaseoDaemon(
     agentManager,
     agentStorage,
     createAgent,
-    createLocalCheckoutWorkspace: createScheduleLocalWorkspaceExternal,
+    createDirectoryWorkspace: createScheduleLocalWorkspaceExternal,
     createPaseoWorktreeWorkspace: createSchedulePaseoWorktreeExternal,
     archiveWorkspace: archiveScheduleWorkspaceExternal,
   });
@@ -1444,6 +1459,7 @@ export async function createPaseoDaemon(
   };
 
   const stop = async () => {
+    projectGitObserver.dispose();
     scriptHealthMonitor.stop();
     // Freeze both ingress and registration before taking the agent closure snapshot.
     wsServer?.prepareForShutdown();

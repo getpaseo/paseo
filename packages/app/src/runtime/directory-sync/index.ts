@@ -119,6 +119,12 @@ export class DirectorySync {
           this.workspaces.applyDelta(message.payload);
         }
       }),
+      client.on("project.update", (message) => {
+        if (message.type !== "project.update" || !this.isCurrent(client, source)) return;
+        if (!this.workspaceTransactions.record(source, message.payload)) {
+          this.workspaces.applyDelta(message.payload);
+        }
+      }),
       client.on("agent_deleted", (message) => {
         if (message.type === "agent_deleted" && this.isCurrent(client, source)) {
           this.agents.remove(message.payload.agentId);

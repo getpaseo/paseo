@@ -6,6 +6,7 @@ import type { WorkspaceDescriptorPayload } from "@getpaseo/protocol/messages";
 import {
   normalizeWorkspaceDescriptor,
   useSessionStore,
+  type EmptyProjectDescriptor,
   type WorkspaceDescriptor,
 } from "./session-store";
 import { patchWorkspaceScripts } from "../contexts/session-workspace-scripts";
@@ -17,6 +18,7 @@ function createWorkspace(
     id: input.id,
     projectId: input.projectId ?? "project-1",
     projectDisplayName: input.projectDisplayName ?? "Project 1",
+    projectCustomName: input.projectCustomName ?? null,
     projectRootPath: input.projectRootPath ?? "/repo",
     workspaceDirectory: input.workspaceDirectory ?? "/repo",
     projectKind: input.projectKind ?? "git",
@@ -27,6 +29,18 @@ function createWorkspace(
     archivingAt: input.archivingAt ?? null,
     diffStat: input.diffStat ?? null,
     scripts: input.scripts ?? [],
+  };
+}
+
+function createProject(
+  input: Partial<EmptyProjectDescriptor> & Pick<EmptyProjectDescriptor, "projectId">,
+): EmptyProjectDescriptor {
+  return {
+    projectId: input.projectId,
+    projectDisplayName: input.projectDisplayName ?? "Project 1",
+    projectCustomName: input.projectCustomName ?? null,
+    projectRootPath: input.projectRootPath ?? "/repo",
+    projectKind: input.projectKind ?? "git",
   };
 }
 
@@ -443,6 +457,162 @@ describe("removeEmptyProject", () => {
     expect(after.sessions).toBe(before.sessions);
     expect(after.session).toBe(before.session);
     expect(after.emptyProjects).toBe(before.emptyProjects);
+  });
+});
+
+describe("applyProjectUpdate", () => {
+  it("inserts an unseen project into the empty-project projection", () => {
+    const store = useSessionStore.getState();
+    initializeTestSession();
+    const project = createProject({
+      projectId: "project-empty",
+      projectDisplayName: "Empty project",
+      projectRootPath: "/empty",
+      projectKind: "non_git",
+    });
+
+    store.applyProjectUpdate("test-server", {
+      kind: "upsert",
+      project,
+    });
+
+    expect(getTestSessionReferences().emptyProjects).toEqual(
+      new Map([[project.projectId, project]]),
+    );
+  });
+
+  it("updates the metadata of an existing empty project", () => {
+    const store = useSessionStore.getState();
+    initializeTestSession();
+    const existing = createProject({ projectId: "project-empty" });
+    const updated = createProject({
+      projectId: existing.projectId,
+      projectDisplayName: "Renamed project",
+      projectCustomName: "Personal name",
+      projectRootPath: "/moved/repo",
+      projectKind: "non_git",
+    });
+    store.setEmptyProjects("test-server", [existing]);
+
+    store.applyProjectUpdate("test-server", { kind: "upsert", project: updated });
+
+    expect(getTestSessionReferences().emptyProjects).toEqual(
+      new Map([[updated.projectId, updated]]),
+    );
+  });
+
+  it("patches project metadata onto every workspace attached to the project", () => {
+    const store = useSessionStore.getState();
+    initializeTestSession();
+    const main = createWorkspace({ id: "workspace-main", projectId: "project-1" });
+    const feature = createWorkspace({ id: "workspace-feature", projectId: "project-1" });
+    const unrelated = createWorkspace({ id: "workspace-other", projectId: "project-2" });
+    store.setWorkspaces(
+      "test-server",
+      new Map([
+        [main.id, main],
+        [feature.id, feature],
+        [unrelated.id, unrelated],
+      ]),
+    );
+    const project = createProject({
+      projectId: "project-1",
+      projectDisplayName: "Renamed project",
+      projectCustomName: "Personal name",
+      projectRootPath: "/moved/repo",
+      projectKind: "non_git",
+    });
+
+    store.applyProjectUpdate("test-server", { kind: "upsert", project });
+
+    const workspaces = getTestSessionReferences().workspaces;
+    const projectMetadata = {
+      projectDisplayName: project.projectDisplayName,
+      projectCustomName: project.projectCustomName,
+      projectRootPath: project.projectRootPath,
+      projectKind: project.projectKind,
+    };
+    expect(workspaces).toEqual(
+      new Map([
+        [main.id, { ...main, ...projectMetadata }],
+        [feature.id, { ...feature, ...projectMetadata }],
+        [unrelated.id, unrelated],
+      ]),
+    );
+    expect(workspaces.get(unrelated.id)).toBe(unrelated);
+  });
+
+  it("removes a stale empty-project projection when the project has a workspace", () => {
+    const store = useSessionStore.getState();
+    initializeTestSession();
+    const workspace = createWorkspace({ id: "workspace-main", projectId: "project-1" });
+    const project = createProject({
+      projectId: workspace.projectId,
+      projectDisplayName: workspace.projectDisplayName,
+      projectCustomName: workspace.projectCustomName,
+      projectRootPath: workspace.projectRootPath,
+      projectKind: workspace.projectKind,
+    });
+    store.setWorkspaces("test-server", new Map([[workspace.id, workspace]]));
+    store.setEmptyProjects("test-server", [project]);
+
+    store.applyProjectUpdate("test-server", { kind: "upsert", project });
+
+    const after = getTestSessionReferences();
+    expect(after.emptyProjects).toEqual(new Map());
+    expect(after.workspaces.get(workspace.id)).toBe(workspace);
+  });
+
+  it("removes every workspace and empty-project projection for a removed project", () => {
+    const store = useSessionStore.getState();
+    initializeTestSession();
+    const removedMain = createWorkspace({ id: "workspace-main", projectId: "project-1" });
+    const removedFeature = createWorkspace({ id: "workspace-feature", projectId: "project-1" });
+    const remainingWorkspace = createWorkspace({ id: "workspace-other", projectId: "project-2" });
+    const removedProject = createProject({ projectId: "project-1" });
+    const remainingProject = createProject({ projectId: "project-empty" });
+    store.setWorkspaces(
+      "test-server",
+      new Map([
+        [removedMain.id, removedMain],
+        [removedFeature.id, removedFeature],
+        [remainingWorkspace.id, remainingWorkspace],
+      ]),
+    );
+    store.setEmptyProjects("test-server", [removedProject, remainingProject]);
+
+    store.applyProjectUpdate("test-server", {
+      kind: "remove",
+      projectId: removedProject.projectId,
+    });
+
+    const after = getTestSessionReferences();
+    expect(after.workspaces).toEqual(new Map([[remainingWorkspace.id, remainingWorkspace]]));
+    expect(after.emptyProjects).toEqual(new Map([[remainingProject.projectId, remainingProject]]));
+    expect(after.workspaces.get(remainingWorkspace.id)).toBe(remainingWorkspace);
+  });
+
+  it("preserves session and workspace identity when an upsert changes nothing", () => {
+    const store = useSessionStore.getState();
+    initializeTestSession();
+    const workspace = createWorkspace({ id: "workspace-main", projectId: "project-1" });
+    const project = createProject({
+      projectId: workspace.projectId,
+      projectDisplayName: workspace.projectDisplayName,
+      projectCustomName: workspace.projectCustomName,
+      projectRootPath: workspace.projectRootPath,
+      projectKind: workspace.projectKind,
+    });
+    store.setWorkspaces("test-server", new Map([[workspace.id, workspace]]));
+    const before = getTestSessionReferences();
+
+    store.applyProjectUpdate("test-server", { kind: "upsert", project });
+
+    const after = getTestSessionReferences();
+    expect(after.sessions).toBe(before.sessions);
+    expect(after.session).toBe(before.session);
+    expect(after.workspaces).toBe(before.workspaces);
+    expect(after.workspaces.get(workspace.id)).toBe(workspace);
   });
 });
 

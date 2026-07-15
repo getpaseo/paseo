@@ -1735,7 +1735,7 @@ describe("WorkspaceGitServiceImpl D2 read methods", () => {
     service.dispose();
   });
 
-  test("getWorkspaceGitMetadata derives reconciliation metadata from the snapshot cache", async () => {
+  test("getProjectSlug derives the slug from the snapshot cache", async () => {
     let nowMs = 0;
     const getCheckoutStatus = vi.fn(async (cwd: string) =>
       createCheckoutStatus(cwd, {
@@ -1749,22 +1749,10 @@ describe("WorkspaceGitServiceImpl D2 read methods", () => {
       now: () => new Date(nowMs),
     });
 
-    await expect(
-      service.getWorkspaceGitMetadata(REPO_CWD, { directoryName: "Local Repo" }),
-    ).resolves.toEqual({
-      projectKind: "git",
-      projectDisplayName: "getpaseo/paseo",
-      workspaceDisplayName: "feature/service-metadata",
-      gitRemote: "https://github.com/getpaseo/paseo.git",
-      isWorktree: false,
-      projectSlug: "paseo",
-      repoRoot: REPO_CWD,
-      currentBranch: "feature/service-metadata",
-      remoteUrl: "https://github.com/getpaseo/paseo.git",
-    });
+    await expect(service.getProjectSlug(REPO_CWD)).resolves.toBe("paseo");
 
     nowMs = 1_000;
-    await service.getWorkspaceGitMetadata(join(REPO_CWD, "."), { directoryName: "Local Repo" });
+    await service.getProjectSlug(join(REPO_CWD, "."));
     expect(getCheckoutStatus).toHaveBeenCalledTimes(1);
 
     service.dispose();

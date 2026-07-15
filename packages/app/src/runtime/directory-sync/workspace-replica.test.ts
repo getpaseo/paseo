@@ -55,3 +55,30 @@ it("commits workspace and project-parent state with filtered removals", () => {
   expect(Array.from(session?.emptyProjects.keys() ?? [])).toEqual(["empty"]);
   store.clearSession(serverId);
 });
+
+it("applies project updates through the directory synchronization owner", () => {
+  const serverId = "project-update-replica";
+  const store = useSessionStore.getState();
+  store.initializeSession(serverId, null as unknown as DaemonClient);
+  store.setWorkspaces(serverId, [normalizeWorkspaceDescriptor(workspace("attached"))]);
+  const replica = new WorkspaceDirectoryReplica(serverId);
+
+  replica.applyDelta({
+    kind: "upsert",
+    project: {
+      projectId: "project",
+      projectDisplayName: "Renamed project",
+      projectRootPath: "/repo/project",
+      projectKind: "directory",
+    },
+  });
+
+  expect(store.sessions[serverId]?.workspaces.get("attached")).toMatchObject({
+    projectDisplayName: "Renamed project",
+    projectKind: "directory",
+  });
+
+  replica.applyDelta({ kind: "remove", projectId: "project" });
+  expect(store.sessions[serverId]?.workspaces.size).toBe(0);
+  store.clearSession(serverId);
+});

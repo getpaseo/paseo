@@ -13,7 +13,6 @@ import type {
 } from "./workspace-registry.js";
 import {
   attemptFirstAgentBranchAutoName,
-  createLocalCheckoutWorkspace,
   createPaseoWorktree,
   type CreatePaseoWorktreeDeps,
 } from "./paseo-worktree-service.js";
@@ -69,10 +68,41 @@ test("creates a worktree and registers it in the source workspace project withou
   expect(result.workspace.displayName).toBe("feature-one");
   expect(result.workspace.baseBranch).toBe("main");
   expect(deps.workspaceGitService.getSnapshot).not.toHaveBeenCalled();
-  expect(events).toEqual([
-    "project:remote:github.com/acme/repo",
-    `workspace:${result.workspace.workspaceId}`,
-  ]);
+  expect(deps.projects.get(sourceProject.projectId)).toEqual(sourceProject);
+  expect(events).toEqual([`workspace:${result.workspace.workspaceId}`]);
+});
+
+test("repairs a legacy source workspace whose project record is missing", async () => {
+  const { repoDir, tempDir } = createGitRepo();
+  cleanupPaths.push(tempDir);
+  const deps = createDeps();
+  const sourceWorkspace = createPersistedWorkspaceRecordForTest({
+    workspaceId: "ws-missing-project",
+    projectId: "project-missing",
+    cwd: repoDir,
+    kind: "local_checkout",
+    displayName: "main",
+  });
+  deps.workspaces.set(sourceWorkspace.workspaceId, sourceWorkspace);
+
+  const result = await createPaseoWorktree(
+    {
+      cwd: repoDir,
+      worktreeSlug: "repaired-source",
+      runSetup: false,
+      paseoHome: path.join(tempDir, ".paseo"),
+    },
+    deps,
+  );
+
+  expect(result.workspace.projectId).toMatch(/^prj_[0-9a-f]{16}$/);
+  expect(result.workspace.projectId).not.toBe(sourceWorkspace.projectId);
+  expect(deps.projects.get(result.workspace.projectId)).toMatchObject({
+    projectId: result.workspace.projectId,
+    rootPath: repoDir,
+    kind: "git",
+    archivedAt: null,
+  });
 });
 
 test("registers a new worktree in the existing root project after the main checkout workspace is removed", async () => {
@@ -107,6 +137,35 @@ test("registers a new worktree in the existing root project after the main check
 
   expect(result.workspace.projectId).toBe("remote:github.com/acme/repo");
   expect(Array.from(deps.projects.keys()).sort()).toEqual(["remote:github.com/acme/repo"]);
+});
+
+test("an explicit project FK remains unchanged when its worktree comes from another checkout", async () => {
+  const { repoDir, tempDir } = createGitRepo();
+  cleanupPaths.push(tempDir);
+  const deps = createDeps();
+  const project = {
+    ...createPersistedProjectRecordForTest({
+      projectId: "prj_explicitproject",
+      rootPath: path.join(tempDir, "unrelated"),
+      displayName: "unrelated",
+    }),
+    kind: "non_git" as const,
+  };
+  deps.projects.set(project.projectId, project);
+
+  const result = await createPaseoWorktree(
+    {
+      cwd: repoDir,
+      projectId: project.projectId,
+      worktreeSlug: "attached-worktree",
+      runSetup: false,
+      paseoHome: path.join(tempDir, ".paseo"),
+    },
+    deps,
+  );
+
+  expect(result.workspace.projectId).toBe(project.projectId);
+  expect(deps.projects.get(project.projectId)).toEqual(project);
 });
 
 // POSIX-only: Windows git worktree paths need separate canonicalization coverage.
@@ -151,19 +210,6 @@ test.skipIf(isPlatform("win32"))(
     expect(second.workspace.workspaceId).not.toBe(first.workspace.workspaceId);
   },
 );
-
-test("creates a distinct local checkout workspace for the same cwd on every call", async () => {
-  const { repoDir, tempDir } = createGitRepo();
-  cleanupPaths.push(tempDir);
-  const deps = createDeps();
-
-  const first = await createLocalCheckoutWorkspace({ cwd: repoDir }, deps);
-  const second = await createLocalCheckoutWorkspace({ cwd: repoDir }, deps);
-
-  expect(first.cwd).toBe(second.cwd);
-  expect(first.workspaceId).not.toBe(second.workspaceId);
-  expect(deps.workspaces.size).toBe(2);
-});
 
 test("renames an eligible unnamed branch-off worktree once on first agent context", async () => {
   const { repoDir, tempDir } = createGitRepo();
@@ -679,7 +725,7 @@ test.skipIf(isPlatform("win32"))(
 );
 
 interface TestDeps extends CreatePaseoWorktreeDeps {
-  projectRegistry: Pick<ProjectRegistry, "get" | "list" | "upsert">;
+  projectRegistry: Pick<ProjectRegistry, "get" | "getOrCreateActiveByRoot">;
   projects: Map<string, PersistedProjectRecord>;
   workspaces: Map<string, PersistedWorkspaceRecord>;
 }
@@ -699,10 +745,18 @@ function createDeps(options?: {
     workspaces,
     projectRegistry: {
       get: async (projectId) => projects.get(projectId) ?? null,
-      list: async () => Array.from(projects.values()),
-      upsert: async (record) => {
-        events.push(`project:${record.projectId}`);
-        projects.set(record.projectId, record);
+      getOrCreateActiveByRoot: async (input) => {
+        const existing = Array.from(projects.values()).find(
+          (project) => !project.archivedAt && project.rootPath === input.rootPath,
+        );
+        if (existing) return existing;
+        const project = createPersistedProjectRecordForTest({
+          projectId: `prj_${projects.size.toString().padStart(16, "0")}`,
+          rootPath: input.rootPath,
+          displayName: input.displayName,
+        });
+        projects.set(project.projectId, project);
+        return project;
       },
     },
     workspaceRegistry: {

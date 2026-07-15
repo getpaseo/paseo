@@ -165,6 +165,7 @@ import {
 } from "./session/git-mutation/git-mutation-service.js";
 import {
   createWorkspaceProvisioningService,
+  WorkspaceProvisioningError,
   type WorkspaceProvisioningService,
 } from "./session/workspace-provisioning/workspace-provisioning-service.js";
 import {
@@ -205,7 +206,6 @@ import {
 } from "./workspace-directory.js";
 import { shouldEmitPendingBootstrapUpdate } from "./workspace-bootstrap-dedupe.js";
 import {
-  createLocalCheckoutWorkspace,
   createPaseoWorktree,
   type CreatePaseoWorktreeInput,
   type CreatePaseoWorktreeResult,
@@ -1085,6 +1085,19 @@ export class Session {
     return this.supports(capability);
   }
 
+  emitProjectUpdate(project: PersistedProjectRecord): void {
+    if (!this.supports(CLIENT_CAPS.projectUpdates)) return;
+    this.emit({
+      type: "project.update",
+      payload: { kind: "upsert", project: this.buildProjectDescriptor(project) },
+    });
+  }
+
+  emitProjectRemove(projectId: string): void {
+    if (!this.supports(CLIENT_CAPS.projectUpdates)) return;
+    this.emit({ type: "project.update", payload: { kind: "remove", projectId } });
+  }
+
   async syncWorkspaceGitObserverForWorkspace(workspace: PersistedWorkspaceRecord): Promise<void> {
     await this.workspaceGitObserver.syncObserverForWorkspace(workspace);
   }
@@ -1118,8 +1131,11 @@ export class Session {
     this.clearWorkspaceArchiving(workspaceIds);
   }
 
-  async emitWorkspaceUpdatesForExternalWorkspaceIds(workspaceIds: Iterable<string>): Promise<void> {
-    await this.emitWorkspaceUpdatesForWorkspaceIds(workspaceIds);
+  async emitWorkspaceUpdatesForExternalWorkspaceIds(
+    workspaceIds: Iterable<string>,
+    options?: { skipReconcile?: boolean },
+  ): Promise<void> {
+    await this.emitWorkspaceUpdatesForWorkspaceIds(workspaceIds, options);
   }
 
   async warmWorkspaceGitDataForWorkspace(workspace: PersistedWorkspaceRecord): Promise<void> {
@@ -4350,7 +4366,6 @@ export class Session {
           case "workspace_updated":
             changedWorkspaceIds.add(change.workspaceId);
             break;
-          case "project_archived":
           case "project_updated":
             changedProjectIds.add(change.projectId);
             break;
@@ -4770,6 +4785,7 @@ export class Session {
         { err: error, sourceKind: request.source.kind, requestId: request.requestId },
         "Failed to create workspace",
       );
+      const errorCode = error instanceof WorkspaceProvisioningError ? error.code : undefined;
       this.emit({
         type: "workspace.create.response",
         payload: {
@@ -4777,6 +4793,7 @@ export class Session {
           workspace: null,
           setupTerminalId: null,
           error: message,
+          errorCode,
         },
       });
     }
@@ -4807,13 +4824,10 @@ export class Session {
 
     const explicitTitle = request.title?.trim() || null;
     const promptTitle = resolveFirstAgentPromptTitle(request.firstAgentContext);
-    const workspace = await createLocalCheckoutWorkspace(
-      { cwd, title: explicitTitle ?? promptTitle },
-      {
-        projectRegistry: this.projectRegistry,
-        workspaceRegistry: this.workspaceRegistry,
-        workspaceGitService: this.workspaceGitService,
-      },
+    const workspace = await this.workspaceProvisioning.createWorkspaceForDirectory(
+      cwd,
+      explicitTitle ?? promptTitle,
+      request.source.projectId,
     );
     await this.syncWorkspaceGitObserverForWorkspace(workspace);
     const descriptor = await this.describeWorkspaceRecord(workspace);

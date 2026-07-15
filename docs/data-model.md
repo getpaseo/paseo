@@ -1,5 +1,14 @@
 # Data Model
 
+## Project identity
+
+Projects are allocated for the exact root selected by the caller, normalized lexically with `path.resolve` (never `realpath`). New project IDs are opaque `prj_<16 hex>` values. Existing remote-shaped or path-shaped IDs are retained as readable compatibility records and are never rekeyed. An active exact root is idempotent; archived-only matches do not resurrect an old project. Workspace `projectId` is stable membership: reconciliation may update git-derived kind and branch metadata, but never rehomes a workspace or changes a project's root, ID, or default name.
+
+`kind` is mutable metadata, not identity. A daemon-global root observer updates only a project's
+`kind` and `updatedAt` when `.git` appears or disappears, preserving its ID, root path, names, and
+workspace foreign keys. Attached workspaces are independently refreshed from their own cwd, so an
+explicit project root never implies a workspace checkout. Empty projects are observed too.
+
 Paseo uses **file-based JSON persistence** instead of a traditional database. All data is validated at runtime with Zod schemas. Most stores write atomically (write to temp file, then rename); a few still use plain `writeFile` — see each section. There is no schema-versioning/migration framework — schemas rely on optional fields with defaults for forward compatibility, with a small amount of inline normalization in `persisted-config.ts` for legacy provider/speech entries.
 
 All server-side stores live under `$PASEO_HOME` (defaults to `~/.paseo`).
@@ -422,19 +431,22 @@ Array of project records.
 
 | Field         | Type                        | Description                                                                      |
 | ------------- | --------------------------- | -------------------------------------------------------------------------------- |
-| `projectId`   | `string`                    | Primary key                                                                      |
-| `rootPath`    | `string`                    | Filesystem root of the project                                                   |
-| `kind`        | `"git" \| "non_git"`        |                                                                                  |
-| `displayName` | `string`                    |                                                                                  |
+| `projectId`   | `string`                    | Primary key; new records use opaque `prj_<16 hex>` IDs                           |
+| `rootPath`    | `string`                    | Exact lexically normalized selected root; never realpathed                       |
+| `kind`        | `"git" \| "non_git"`        | Mutable Git observation about `rootPath`, never a membership key                 |
+| `displayName` | `string`                    | Selected-root basename, stable across remote and Git changes                     |
 | `customName`  | `string \| null`            | User-set override layered over `displayName`. Null means "use the derived name". |
 | `createdAt`   | `string` (ISO 8601)         |                                                                                  |
 | `updatedAt`   | `string` (ISO 8601)         |                                                                                  |
 | `archivedAt`  | `string \| null` (ISO 8601) | Soft-delete timestamp; required nullable                                         |
 
-Active git projects are unique by normalized `rootPath`. Startup reconciliation repairs older bad
-states by moving workspaces from duplicate path-keyed projects onto the canonical project,
-preferring remote-keyed project IDs such as `remote:github.com/owner/repo`, then archiving the
-emptied duplicate.
+Active exact roots are idempotent using lexical platform-equivalence semantics. Existing legacy
+remote-shaped and path-shaped IDs remain readable, including duplicate roots; reconciliation never
+merges them, transfers names, archives them, or moves workspace foreign keys. An explicit
+workspace `projectId` is authoritative when it names an active project, regardless of cwd
+containment. Archived-only exact-root records are not resurrected by explicit add/open; a fresh
+opaque project is allocated instead. Agent restore is separate and restores the agent's existing
+workspace together with its owning project.
 
 ---
 
@@ -452,13 +464,13 @@ Array of workspace records. A workspace is a specific working directory within a
 | `kind`        | `"local_checkout" \| "worktree" \| "directory"` |                                                                                                                                                                                       |
 | `displayName` | `string`                                        | The human name (the generated/derived title). Decoupled from `branch` by construction.                                                                                                |
 | `title`       | `string \| null`                                | User-set name override layered over `displayName`. Null means "use `displayName`".                                                                                                    |
-| `branch`      | `string \| null`                                | The worktree's git branch. Separate from `displayName`/`title`; only worktree workspaces set it. A branch rename writes this and never the name.                                      |
+| `branch`      | `string \| null`                                | The current Git branch for git-backed workspaces (local checkout or worktree). Separate from `displayName`/`title`; a branch rename writes this and never the name.                   |
 | `createdAt`   | `string` (ISO 8601)                             |                                                                                                                                                                                       |
 | `updatedAt`   | `string` (ISO 8601)                             |                                                                                                                                                                                       |
 | `archivedAt`  | `string \| null` (ISO 8601)                     | Soft-delete; required nullable                                                                                                                                                        |
 | `pinnedAt`    | `string \| null` (ISO 8601)                     | Pinned-to-top-of-sidebar timestamp; null means "not pinned"                                                                                                                           |
 
-> **Opaque-ID invariant:** `workspaceId` is opaque identity, never a filesystem path. Filesystem and git operations take `cwd`/`workspaceDirectory` only — never the id. Path-derived grouping keys (e.g. `deriveWorkspaceDirectoryKey`, used at bootstrap to group agents into a workspace) are directory keys, not workspace identity, and must not be persisted or compared as ids.
+> **Opaque-ID invariant:** `workspaceId` is opaque identity, never a filesystem path. Filesystem and git operations take `cwd`/`workspaceDirectory` only — never the id. A compatibility-only first-materialization bootstrap still groups pre-registry agent records by path and Git remote so existing installs retain their legacy records. That grouping never runs against a live registry, and its keys are not runtime project or workspace identity.
 
 `projectId` is still a real FK: workspace records should have a matching project record. Read-only
 history surfaces tolerate transient orphaned workspaces by omitting those rows so one bad FK cannot

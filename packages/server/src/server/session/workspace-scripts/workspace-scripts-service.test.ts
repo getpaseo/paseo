@@ -7,7 +7,7 @@ import type { SessionOutboundMessage, StartWorkspaceScriptRequest } from "../../
 import { createServiceProxySubsystem, type ServiceProxySubsystem } from "../../service-proxy.js";
 import type { TerminalManager } from "../../../terminal/terminal-manager.js";
 import type { PersistedWorkspaceRecord, WorkspaceRegistry } from "../../workspace-registry.js";
-import type { WorkspaceGitMetadata } from "../../workspace-git-metadata.js";
+import { createNoGitWorkspaceRuntimeSnapshot } from "../../test-utils/workspace-git-service-stub.js";
 import { WorkspaceScriptRuntimeStore } from "../../workspace-script-runtime-store.js";
 import type {
   SpawnWorkspaceScriptOptions,
@@ -15,24 +15,12 @@ import type {
 } from "../../worktree-bootstrap.js";
 import { createWorkspaceScriptsService } from "./workspace-scripts-service.js";
 
-// The production module reads only WorkspaceGitService.{peekSnapshot,getWorkspaceGitMetadata},
+// The production module reads only WorkspaceGitService.{peekSnapshot,getProjectSlug},
 // WorkspaceRegistry.get, and forwards the launcher + opaque managers to the injected
 // spawnWorkspaceScript port. The fakes below implement exactly that slice; the service proxy and
 // runtime store are the real in-memory implementations, and spawning is injected so no process runs.
 
 const logger = pino({ level: "silent" });
-
-const gitMetadata: WorkspaceGitMetadata = {
-  projectKind: "git",
-  projectDisplayName: "repo",
-  workspaceDisplayName: "repo",
-  gitRemote: null,
-  isWorktree: false,
-  projectSlug: "paseo",
-  repoRoot: "/tmp/repo",
-  currentBranch: "feature/scripts",
-  remoteUrl: null,
-};
 
 function fakeWorkspaceRegistry(
   record: PersistedWorkspaceRecord | null,
@@ -44,13 +32,23 @@ function fakeWorkspaceRegistry(
   };
 }
 
-function fakeGitService(metadata: WorkspaceGitMetadata = gitMetadata) {
+function fakeGitService(projectSlug = "paseo") {
+  const snapshot = createNoGitWorkspaceRuntimeSnapshot("/tmp/repo");
+  snapshot.git = {
+    ...snapshot.git,
+    isGit: true,
+    repoRoot: "/tmp/repo",
+    currentBranch: "feature/scripts",
+    remoteUrl: "https://github.com/getpaseo/paseo.git",
+    hasRemote: true,
+  };
+
   return {
     peekSnapshot() {
-      return null;
+      return snapshot;
     },
-    async getWorkspaceGitMetadata() {
-      return metadata;
+    async getProjectSlug() {
+      return projectSlug;
     },
   };
 }

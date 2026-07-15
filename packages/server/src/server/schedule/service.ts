@@ -218,7 +218,7 @@ export interface ScheduleServiceOptions {
   agentManager: ScheduleAgentManager;
   agentStorage: AgentStorage;
   createAgent: BoundCreateAgentCommand;
-  createLocalCheckoutWorkspace: (
+  createDirectoryWorkspace: (
     input: ScheduleWorkspaceCreateInput,
   ) => Promise<PersistedWorkspaceRecord>;
   createPaseoWorktreeWorkspace: (
@@ -235,7 +235,7 @@ export class ScheduleService {
   private readonly agentManager: ScheduleAgentManager;
   private readonly agentStorage: AgentStorage;
   private readonly createAgent: BoundCreateAgentCommand;
-  private readonly createLocalCheckoutWorkspace: (
+  private readonly createDirectoryWorkspace: (
     input: ScheduleWorkspaceCreateInput,
   ) => Promise<PersistedWorkspaceRecord>;
   private readonly createPaseoWorktreeWorkspace: (
@@ -256,7 +256,7 @@ export class ScheduleService {
     this.agentManager = options.agentManager;
     this.agentStorage = options.agentStorage;
     this.createAgent = options.createAgent;
-    this.createLocalCheckoutWorkspace = options.createLocalCheckoutWorkspace;
+    this.createDirectoryWorkspace = options.createDirectoryWorkspace;
     this.createPaseoWorktreeWorkspace = options.createPaseoWorktreeWorkspace;
     this.archiveWorkspace = options.archiveWorkspace;
     this.now = options.now ?? (() => new Date());
@@ -954,7 +954,7 @@ export class ScheduleService {
     const firstAgentContext = { prompt };
     switch (config.isolation ?? "local") {
       case "local":
-        return this.createLocalCheckoutWorkspace({ cwd: config.cwd, firstAgentContext });
+        return this.createDirectoryWorkspace({ cwd: config.cwd, firstAgentContext });
       case "worktree":
         return (await this.createPaseoWorktreeWorkspace({ cwd: config.cwd, firstAgentContext }))
           .workspace;

@@ -4,7 +4,12 @@ import type { Logger } from "pino";
 import { z } from "zod";
 
 import { writeJsonFileAtomic } from "./atomic-file.js";
-import type { PersistedProjectKind, PersistedWorkspaceKind } from "./workspace-registry-model.js";
+import { areEquivalentPaths } from "../utils/path.js";
+import {
+  generateProjectId,
+  type PersistedProjectKind,
+  type PersistedWorkspaceKind,
+} from "./workspace-registry-model.js";
 
 const PersistedProjectRecordSchema = z.object({
   projectId: z.string(),
@@ -71,9 +76,23 @@ export interface ProjectRegistry {
   existsOnDisk(): Promise<boolean>;
   list(): Promise<PersistedProjectRecord[]>;
   get(projectId: string): Promise<PersistedProjectRecord | null>;
+  getOrCreateActiveByRoot(input: {
+    rootPath: string;
+    kind: PersistedProjectKind;
+    displayName: string;
+    timestamp: string;
+  }): Promise<PersistedProjectRecord>;
   upsert(record: PersistedProjectRecord): Promise<void>;
   archive(projectId: string, archivedAt: string): Promise<void>;
   remove(projectId: string): Promise<void>;
+  /** Central lifecycle seam for daemon-global project observers. */
+  subscribeToMutations?(
+    listener: (mutation: {
+      kind: "upsert" | "archive" | "remove";
+      projectId: string;
+      project: PersistedProjectRecord | null;
+    }) => void | Promise<void>,
+  ): () => void;
 }
 
 export interface WorkspaceRegistry {
@@ -162,24 +181,43 @@ class FileBackedRegistry<TRecord extends RegistryRecord> {
   async archive(id: string, archivedAt: string): Promise<void> {
     await this.load();
     const existing = this.cache.get(id);
-    if (!existing) {
-      return;
+    if (!existing) return;
+    await this.persistArchive(existing, archivedAt);
+  }
+
+  protected async archiveIfActive(id: string, archivedAt: string): Promise<TRecord | null> {
+    await this.load();
+    const existing = this.cache.get(id);
+    if (!existing || existing.archivedAt) {
+      return null;
     }
+    return this.persistArchive(existing, archivedAt);
+  }
+
+  private async persistArchive(existing: TRecord, archivedAt: string): Promise<TRecord> {
     const next = this.schema.parse({
       ...existing,
       updatedAt: archivedAt,
       archivedAt,
     });
-    this.cache.set(id, next);
+    this.cache.set(this.getId(next), next);
     await this.enqueuePersist();
+    return next;
   }
 
   async remove(id: string): Promise<void> {
+    await this.removeIfPresent(id);
+  }
+
+  protected async removeIfPresent(id: string): Promise<TRecord | null> {
     await this.load();
-    if (!this.cache.delete(id)) {
-      return;
+    const existing = this.cache.get(id);
+    if (!existing) {
+      return null;
     }
+    this.cache.delete(id);
     await this.enqueuePersist();
+    return existing;
   }
 
   private async load(): Promise<void> {
@@ -219,7 +257,17 @@ export class FileBackedProjectRegistry
   extends FileBackedRegistry<PersistedProjectRecord>
   implements ProjectRegistry
 {
-  constructor(filePath: string, logger: Logger) {
+  private allocationQueue: Promise<void> = Promise.resolve();
+  private readonly projectIdFactory: () => string;
+  private readonly mutationListeners = new Set<
+    (mutation: {
+      kind: "upsert" | "archive" | "remove";
+      projectId: string;
+      project: PersistedProjectRecord | null;
+    }) => void | Promise<void>
+  >();
+
+  constructor(filePath: string, logger: Logger, options?: { projectIdFactory?: () => string }) {
     super({
       filePath,
       logger,
@@ -227,6 +275,84 @@ export class FileBackedProjectRegistry
       getId: (record) => record.projectId,
       component: "projects",
     });
+    this.projectIdFactory = options?.projectIdFactory ?? generateProjectId;
+  }
+
+  async getOrCreateActiveByRoot(input: {
+    rootPath: string;
+    kind: PersistedProjectKind;
+    displayName: string;
+    timestamp: string;
+  }): Promise<PersistedProjectRecord> {
+    const previous = this.allocationQueue;
+    let release!: () => void;
+    this.allocationQueue = new Promise<void>((resolve) => (release = resolve));
+    await previous;
+    try {
+      const active = (await this.list())
+        .filter(
+          (project) => !project.archivedAt && areEquivalentPaths(project.rootPath, input.rootPath),
+        )
+        .sort(
+          (left, right) =>
+            Date.parse(left.createdAt) - Date.parse(right.createdAt) ||
+            left.projectId.localeCompare(right.projectId),
+        )[0];
+      if (active) return active;
+
+      for (;;) {
+        const projectId = this.projectIdFactory();
+        if (await this.get(projectId)) continue;
+        const record = createPersistedProjectRecord({
+          projectId,
+          rootPath: input.rootPath,
+          kind: input.kind,
+          displayName: input.displayName,
+          createdAt: input.timestamp,
+          updatedAt: input.timestamp,
+        });
+        await this.upsert(record);
+        return record;
+      }
+    } finally {
+      release();
+    }
+  }
+
+  subscribeToMutations(
+    listener: (mutation: {
+      kind: "upsert" | "archive" | "remove";
+      projectId: string;
+      project: PersistedProjectRecord | null;
+    }) => void | Promise<void>,
+  ): () => void {
+    this.mutationListeners.add(listener);
+    return () => this.mutationListeners.delete(listener);
+  }
+
+  override async upsert(record: PersistedProjectRecord): Promise<void> {
+    await super.upsert(record);
+    await this.notifyMutation({ kind: "upsert", projectId: record.projectId, project: record });
+  }
+
+  override async archive(projectId: string, archivedAt: string): Promise<void> {
+    const project = await this.archiveIfActive(projectId, archivedAt);
+    if (!project) return;
+    await this.notifyMutation({ kind: "archive", projectId, project });
+  }
+
+  override async remove(projectId: string): Promise<void> {
+    const project = await this.removeIfPresent(projectId);
+    if (!project) return;
+    await this.notifyMutation({ kind: "remove", projectId, project: null });
+  }
+
+  private async notifyMutation(mutation: {
+    kind: "upsert" | "archive" | "remove";
+    projectId: string;
+    project: PersistedProjectRecord | null;
+  }): Promise<void> {
+    await Promise.all([...this.mutationListeners].map((listener) => listener(mutation)));
   }
 }
 

@@ -14,7 +14,7 @@ import {
 
 export type WorkspaceDirectoryDelta = Extract<
   SessionOutboundMessage,
-  { type: "workspace_update" }
+  { type: "workspace_update" | "project.update" }
 >["payload"];
 
 export interface WorkspaceDirectorySnapshot {
@@ -27,7 +27,7 @@ export class WorkspaceDirectoryReplica {
 
   applyDelta(delta: WorkspaceDirectoryDelta): void {
     const state = this.reconcile(this.read(), [delta]);
-    this.commit(state, delta.kind === "remove" ? [delta.id] : []);
+    this.commit(state, delta.kind === "remove" && "id" in delta ? [delta.id] : []);
   }
 
   commitSnapshot(
@@ -35,7 +35,7 @@ export class WorkspaceDirectoryReplica {
     deltas: readonly WorkspaceDirectoryDelta[],
   ): void {
     const removedWorkspaceIds = deltas.flatMap((delta) =>
-      delta.kind === "remove" ? [delta.id] : [],
+      delta.kind === "remove" && "id" in delta ? [delta.id] : [],
     );
     this.commit(this.reconcile(snapshot, deltas), removedWorkspaceIds);
   }
@@ -60,6 +60,31 @@ export class WorkspaceDirectoryReplica {
       }
     }
     for (const delta of deltas) {
+      if ("projectId" in delta || "project" in delta) {
+        if (delta.kind === "remove") {
+          emptyProjects.delete(delta.projectId);
+          for (const [workspaceId, workspace] of workspaces) {
+            if (workspace.projectId === delta.projectId) workspaces.delete(workspaceId);
+          }
+          continue;
+        }
+        const project = normalizeEmptyProjectDescriptor(delta.project);
+        let hasAttachedWorkspace = false;
+        for (const [workspaceId, workspace] of workspaces) {
+          if (workspace.projectId !== project.projectId) continue;
+          hasAttachedWorkspace = true;
+          workspaces.set(workspaceId, {
+            ...workspace,
+            projectDisplayName: project.projectDisplayName,
+            projectCustomName: project.projectCustomName,
+            projectRootPath: project.projectRootPath,
+            projectKind: project.projectKind,
+          });
+        }
+        if (hasAttachedWorkspace) emptyProjects.delete(project.projectId);
+        else emptyProjects.set(project.projectId, project);
+        continue;
+      }
       if (delta.kind === "remove") {
         workspaces.delete(delta.id);
         if (delta.emptyProject) {
