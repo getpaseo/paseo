@@ -416,7 +416,7 @@ function renderComposerAttachmentPill(args: RenderComposerAttachmentPillArgs): R
   );
 }
 
-function resolveVoiceStartErrorMessage(error: unknown): string | null {
+function resolveErrorMessage(error: unknown): string | null {
   if (error instanceof Error) return error.message;
   if (typeof error === "string") return error;
   return null;
@@ -438,7 +438,7 @@ function attemptStartRealtimeVoice(args: AttemptStartRealtimeVoiceArgs): void {
   if (voice.isVoiceModeForAgent(serverId, agentId)) return;
   void voice.startVoice(serverId, agentId).catch((error) => {
     console.error("[Composer] Failed to start voice mode", error);
-    const message = resolveVoiceStartErrorMessage(error);
+    const message = resolveErrorMessage(error);
     if (message && message.trim().length > 0) {
       toastErrorRef.current(message);
     }
@@ -1466,6 +1466,13 @@ export function Composer({
       isAgentRunning,
       isCancellingAgent,
       isConnected,
+      onCancelFailed: (error) => {
+        setIsCancellingAgent(false);
+        const message = resolveErrorMessage(error);
+        if (message && message.trim().length > 0) {
+          toastErrorRef.current(message);
+        }
+      },
     });
     if (!didCancel) return;
     setIsCancellingAgent(true);

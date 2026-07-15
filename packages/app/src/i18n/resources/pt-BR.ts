@@ -808,6 +808,17 @@ export const ptBR: TranslationResources = {
       settings: "Configurações",
       closeSidebar: "Fechar barra lateral",
     },
+    help: {
+      trigger: "Ajuda e suporte",
+      sectionHelp: "Ajuda",
+      diagnostics: "Executar diagnóstico",
+      shortcuts: "Atalhos de teclado",
+      reportIssue: "Relatar um problema",
+      discord: "Discord",
+      github: "Criar issue no GitHub",
+      whatsNew: "Novidades",
+      version: "Paseo {{version}}",
+    },
     sections: {
       sessions: "Histórico",
       schedules: "Agendamentos",
@@ -1416,6 +1427,34 @@ export const ptBR: TranslationResources = {
     input: "Entrada",
     output: "Saída",
   },
+  toolCallGroup: {
+    editedFiles: {
+      one: "editou {{count}} arquivo",
+      other: "editou {{count}} arquivos",
+    },
+    commands: {
+      one: "executou {{count}} comando",
+      other: "executou {{count}} comandos",
+    },
+    readFiles: {
+      one: "leu {{count}} arquivo",
+      other: "leu {{count}} arquivos",
+    },
+    searches: {
+      one: "pesquisou {{count}} vez",
+      other: "pesquisou {{count}} vezes",
+    },
+    otherTools: {
+      one: "usou {{count}} outra ferramenta",
+      other: "usou {{count}} outras ferramentas",
+    },
+    paseoCalls: {
+      one: "chamou o Paseo {{count}} vez",
+      other: "chamou o Paseo {{count}} vezes",
+    },
+    and: "e",
+    failed: "{{count}} com falha",
+  },
   renameModal: {
     rename: "Renomear",
     saving: "Salvando...",
@@ -1513,6 +1552,15 @@ export const ptBR: TranslationResources = {
         label: "Sempre expandir raciocínio",
         description:
           "Mostrar os blocos de pensamento e raciocínio do agente totalmente expandidos por padrão",
+      },
+      toolCallDetail: {
+        label: "Exibição de chamadas de ferramentas",
+        description: "Como as chamadas de ferramentas aparecem na linha do tempo",
+        accessibilityLabel: "Selecionar exibição de chamadas de ferramentas ({{value}})",
+        options: {
+          overview: "Resumo",
+          detailed: "Detalhes completos",
+        },
       },
       language: {
         label: "Idioma",

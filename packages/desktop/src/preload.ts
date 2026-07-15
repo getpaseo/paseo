@@ -24,6 +24,8 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
       ipcRenderer.invoke("paseo:window:openNew", options),
     getCurrentWindow: () => ({
       toggleMaximize: () => ipcRenderer.invoke("paseo:window:toggleMaximize"),
+      setFullscreen: (fullscreen: boolean) =>
+        ipcRenderer.invoke("paseo:window:setFullscreen", fullscreen),
       isFullscreen: () => ipcRenderer.invoke("paseo:window:isFullscreen"),
       updateWindowControls: (update: {
         height?: number;
@@ -72,6 +74,8 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
   menu: {
     showContextMenu: (input?: Record<string, unknown>) =>
       ipcRenderer.invoke("paseo:menu:showContextMenu", input),
+    setCapturingShortcut: (capturing: boolean) =>
+      ipcRenderer.invoke("paseo:menu:set-capturing-shortcut", capturing),
   },
   browser: {
     registerWorkspaceBrowser: (input: { browserId: string; workspaceId: string }) =>

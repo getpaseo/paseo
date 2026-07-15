@@ -47,8 +47,10 @@ function reloadFocusedContentsOrWindow(win: BrowserWindow, options?: { ignoreCac
 
 function buildApplicationMenuTemplate(
   options: ApplicationMenuOptions,
+  capturing: boolean,
 ): Electron.MenuItemConstructorOptions[] {
   const isMac = process.platform === "darwin";
+  const zoomEnabled = !capturing;
 
   return [
     ...(isMac
@@ -99,6 +101,7 @@ function buildApplicationMenuTemplate(
         {
           label: "Zoom In",
           accelerator: "CmdOrCtrl+=",
+          enabled: zoomEnabled,
           click: withBrowserWindow((win) => {
             win.webContents.setZoomLevel(win.webContents.getZoomLevel() + 0.5);
           }),
@@ -106,6 +109,7 @@ function buildApplicationMenuTemplate(
         {
           label: "Zoom Out",
           accelerator: "CmdOrCtrl+-",
+          enabled: zoomEnabled,
           click: withBrowserWindow((win) => {
             win.webContents.setZoomLevel(win.webContents.getZoomLevel() - 0.5);
           }),
@@ -113,6 +117,7 @@ function buildApplicationMenuTemplate(
         {
           label: "Actual Size",
           accelerator: "CmdOrCtrl+0",
+          enabled: zoomEnabled,
           click: withBrowserWindow((win) => {
             win.webContents.setZoomLevel(0);
           }),
@@ -150,9 +155,20 @@ function buildApplicationMenuTemplate(
   ];
 }
 
-export function setupApplicationMenu(options: ApplicationMenuOptions): void {
-  const menu = Menu.buildFromTemplate(buildApplicationMenuTemplate(options));
+let applicationMenuOptions: ApplicationMenuOptions | null = null;
+let capturingShortcut = false;
+
+function rebuildApplicationMenu(): void {
+  if (!applicationMenuOptions) return;
+  const menu = Menu.buildFromTemplate(
+    buildApplicationMenuTemplate(applicationMenuOptions, capturingShortcut),
+  );
   Menu.setApplicationMenu(menu);
+}
+
+export function setupApplicationMenu(options: ApplicationMenuOptions): void {
+  applicationMenuOptions = options;
+  rebuildApplicationMenu();
 
   ipcMain.handle("paseo:menu:showContextMenu", (event, input?: ShowContextMenuInput) => {
     const win = BrowserWindow.fromWebContents(event.sender);
@@ -184,5 +200,24 @@ export function setupApplicationMenu(options: ApplicationMenuOptions): void {
     ]);
 
     contextMenu.popup({ window: win });
+  });
+
+  // Disable the zoom accelerators while capturing a shortcut so combos like
+  // Cmd+- / Cmd+= reach the renderer instead of zooming the window.
+  ipcMain.handle("paseo:menu:set-capturing-shortcut", (_event, capturing?: boolean) => {
+    capturingShortcut = capturing === true;
+    rebuildApplicationMenu();
+  });
+
+  // If the renderer reloads mid-capture (e.g. Cmd+R) the renderer-side effect
+  // never gets to send `false`, so reset the flag from the main process when a
+  // main window finishes loading. Workspace browser webviews are not
+  // BrowserWindows, so they don't trigger this.
+  app.on("browser-window-created", (_event, win) => {
+    win.webContents.on("did-finish-load", () => {
+      if (!capturingShortcut) return;
+      capturingShortcut = false;
+      rebuildApplicationMenu();
+    });
   });
 }

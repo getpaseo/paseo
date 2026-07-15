@@ -22,7 +22,6 @@ import {
 import { getCompactSheetSafeAreaPadding } from "@/components/adaptive-modal-sheet-layout";
 import { createControlGeometry } from "@/components/ui/control-geometry";
 import { isNative, isWeb } from "@/constants/platform";
-import { useWebScrollViewScrollbar } from "@/components/use-web-scrollbar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 // Horizontal indent token shared by the sheet header (title, back arrow,
@@ -460,11 +459,6 @@ export interface AdaptiveModalSheetProps {
   desktopMaxWidth?: number;
   scrollable?: boolean;
   presentation?: "push" | "replace";
-  /**
-   * Render the themed desktop-web scrollbar over the scroll area instead of the
-   * native browser scrollbar. No-op on native and on the mobile bottom sheet.
-   */
-  webScrollbar?: boolean;
 }
 
 export function AdaptiveModalSheet({
@@ -479,16 +473,11 @@ export function AdaptiveModalSheet({
   desktopMaxWidth,
   scrollable = true,
   presentation,
-  webScrollbar = false,
 }: AdaptiveModalSheetProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
   const isMobile = useIsCompactFormFactor();
   const insets = useSafeAreaInsets();
-  const desktopScrollRef = useRef<ScrollView>(null);
-  const desktopScrollbar = useWebScrollViewScrollbar(desktopScrollRef, {
-    enabled: webScrollbar && !isMobile,
-  });
   const resolvedSnapPoints = useMemo(() => snapPoints ?? ["65%", "90%"], [snapPoints]);
   const compactSafeAreaPadding = useMemo(
     () =>
@@ -651,19 +640,13 @@ export function AdaptiveModalSheet({
       {scrollable ? (
         <View style={styles.desktopScrollContainer}>
           <ScrollView
-            ref={desktopScrollRef}
             style={styles.desktopScroll}
             contentContainerStyle={styles.desktopContent}
             keyboardShouldPersistTaps="handled"
-            onLayout={desktopScrollbar.onLayout}
-            onScroll={desktopScrollbar.onScroll}
-            onContentSizeChange={desktopScrollbar.onContentSizeChange}
-            scrollEventThrottle={16}
-            showsVerticalScrollIndicator={!webScrollbar}
+            showsVerticalScrollIndicator
           >
             {children}
           </ScrollView>
-          {desktopScrollbar.overlay}
         </View>
       ) : (
         <View style={styles.desktopStaticContent}>{children}</View>

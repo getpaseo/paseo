@@ -24,7 +24,6 @@ export function DraggableList<T>({
   ListHeaderComponent,
   ListEmptyComponent,
   showsVerticalScrollIndicator = true,
-  enableDesktopWebScrollbar: _enableDesktopWebScrollbar = false,
   scrollEnabled = true,
   useDragHandle: _useDragHandle = false,
   refreshing,

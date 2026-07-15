@@ -797,6 +797,17 @@ export const en = {
       settings: "Settings",
       closeSidebar: "Close sidebar",
     },
+    help: {
+      trigger: "Help and support",
+      sectionHelp: "Help",
+      diagnostics: "Run diagnostics",
+      shortcuts: "Keyboard shortcuts",
+      reportIssue: "Report an issue",
+      discord: "Discord",
+      github: "Create GitHub issue",
+      whatsNew: "What's new",
+      version: "Paseo {{version}}",
+    },
     sections: {
       sessions: "History",
       schedules: "Schedules",
@@ -1399,6 +1410,34 @@ export const en = {
     input: "Input",
     output: "Output",
   },
+  toolCallGroup: {
+    editedFiles: {
+      one: "edited {{count}} file",
+      other: "edited {{count}} files",
+    },
+    commands: {
+      one: "ran {{count}} command",
+      other: "ran {{count}} commands",
+    },
+    readFiles: {
+      one: "read {{count}} file",
+      other: "read {{count}} files",
+    },
+    searches: {
+      one: "searched {{count}} time",
+      other: "searched {{count}} times",
+    },
+    otherTools: {
+      one: "used {{count}} other tool",
+      other: "used {{count}} other tools",
+    },
+    paseoCalls: {
+      one: "called Paseo {{count}} time",
+      other: "called Paseo {{count}} times",
+    },
+    and: "and",
+    failed: "{{count}} failed",
+  },
   renameModal: {
     rename: "Rename",
     saving: "Saving...",
@@ -1494,6 +1533,15 @@ export const en = {
       autoExpandReasoning: {
         label: "Always expand reasoning",
         description: "Show agent thinking and chain-of-thought blocks fully expanded by default",
+      },
+      toolCallDetail: {
+        label: "Tool call display",
+        description: "How tool calls appear in the timeline",
+        accessibilityLabel: "Select tool call display ({{value}})",
+        options: {
+          overview: "Summary",
+          detailed: "Full detail",
+        },
       },
       language: {
         label: "Language",

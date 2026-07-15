@@ -816,6 +816,17 @@ export const fr: TranslationResources = {
       settings: "Paramètres",
       closeSidebar: "Fermer la barre latérale",
     },
+    help: {
+      trigger: "Aide et assistance",
+      sectionHelp: "Aide",
+      diagnostics: "Lancer le diagnostic",
+      shortcuts: "Raccourcis clavier",
+      reportIssue: "Signaler un problème",
+      discord: "Discord",
+      github: "Créer un ticket GitHub",
+      whatsNew: "Nouveautés",
+      version: "Paseo {{version}}",
+    },
     sections: {
       sessions: "Historique",
       schedules: "Planifications",
@@ -1433,6 +1444,34 @@ export const fr: TranslationResources = {
     input: "Saisir",
     output: "Sortir",
   },
+  toolCallGroup: {
+    editedFiles: {
+      one: "a modifié {{count}} fichier",
+      other: "a modifié {{count}} fichiers",
+    },
+    commands: {
+      one: "a exécuté {{count}} commande",
+      other: "a exécuté {{count}} commandes",
+    },
+    readFiles: {
+      one: "a lu {{count}} fichier",
+      other: "a lu {{count}} fichiers",
+    },
+    searches: {
+      one: "a effectué {{count}} recherche",
+      other: "a effectué {{count}} recherches",
+    },
+    otherTools: {
+      one: "a utilisé {{count}} autre outil",
+      other: "a utilisé {{count}} autres outils",
+    },
+    paseoCalls: {
+      one: "a appelé Paseo {{count}} fois",
+      other: "a appelé Paseo {{count}} fois",
+    },
+    and: "et",
+    failed: "{{count}} en échec",
+  },
   renameModal: {
     rename: "Rebaptiser",
     saving: "Sauvegarde...",
@@ -1530,6 +1569,15 @@ export const fr: TranslationResources = {
       autoExpandReasoning: {
         label: "Toujours afficher le raisonnement",
         description: "Afficher le raisonnement de l'agent entièrement développé par défaut",
+      },
+      toolCallDetail: {
+        label: "Affichage des appels d’outils",
+        description: "Comment les appels d’outils apparaissent dans la chronologie",
+        accessibilityLabel: "Sélectionner l’affichage des appels d’outils ({{value}})",
+        options: {
+          overview: "Résumé",
+          detailed: "Détails complets",
+        },
       },
       language: {
         label: "Langue",

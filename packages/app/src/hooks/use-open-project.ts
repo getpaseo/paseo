@@ -1,8 +1,6 @@
 import { useCallback } from "react";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { useSessionStore } from "@/stores/session-store";
-import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
-import { generateDraftId } from "@/stores/draft-keys";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import {
   openGithubRepoDirectly,
@@ -61,12 +59,6 @@ export function useOpenGithubRepo(
   const isConnected = useHostRuntimeIsConnected(normalizedServerId);
   const mergeWorkspaces = useSessionStore((state) => state.mergeWorkspaces);
   const setHasHydratedWorkspaces = useSessionStore((state) => state.setHasHydratedWorkspaces);
-  const openDraftTab = useCallback((workspaceKey: string) => {
-    return useWorkspaceLayoutStore.getState().openTabFocused(workspaceKey, {
-      kind: "draft",
-      draftId: generateDraftId(),
-    });
-  }, []);
 
   return useCallback(
     async (repo: string, targetDirectory: string, cloneProtocol?: WorkspaceGithubCloneProtocol) => {
@@ -79,17 +71,9 @@ export function useOpenGithubRepo(
         client,
         mergeWorkspaces,
         setHasHydratedWorkspaces,
-        openDraftTab,
         navigateToWorkspace,
       });
     },
-    [
-      client,
-      isConnected,
-      mergeWorkspaces,
-      normalizedServerId,
-      openDraftTab,
-      setHasHydratedWorkspaces,
-    ],
+    [client, isConnected, mergeWorkspaces, normalizedServerId, setHasHydratedWorkspaces],
   );
 }

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { QueryClient } from "@tanstack/react-query";
 import {
   APP_SETTINGS_KEY,
+  APP_SETTINGS_QUERY_KEY,
   DEFAULT_APP_SETTINGS,
   DEFAULT_CLIENT_SETTINGS,
   DEFAULT_CODE_FONT_SIZE,
@@ -282,6 +283,27 @@ describe("saveAppSettings", () => {
       }),
     );
   });
+
+  it("normalizes a legacy cached settings shape before saving", async () => {
+    const deps = makeDeps();
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(APP_SETTINGS_QUERY_KEY, {
+      theme: "dark",
+      compactToolCalls: true,
+    });
+
+    await saveAppSettings({
+      queryClient,
+      updates: { theme: "light" },
+      deps,
+    });
+
+    expect(JSON.parse(deps.storage.entries.get(APP_SETTINGS_KEY) ?? "null")).toEqual({
+      ...DEFAULT_CLIENT_SETTINGS,
+      theme: "light",
+      toolCallDetailLevel: "overview",
+    });
+  });
 });
 
 describe("parseTerminalScrollbackLines", () => {
@@ -306,6 +328,27 @@ describe("appearance settings", () => {
     expect(result.uiFontSize).toBe(DEFAULT_UI_FONT_SIZE);
     expect(result.codeFontSize).toBe(DEFAULT_CODE_FONT_SIZE);
     expect(result.syntaxTheme).toBe("one");
+    expect(result.toolCallDetailLevel).toBe("detailed");
+  });
+
+  it("migrates the enabled compact tool call preference to overview", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ compactToolCalls: true }),
+      }),
+    });
+
+    expect((await loadAppSettingsFromStorage(deps)).toolCallDetailLevel).toBe("overview");
+  });
+
+  it("maps an unrecognized tool call detail level to overview", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ toolCallDetailLevel: "unknown" }),
+      }),
+    });
+
+    expect((await loadAppSettingsFromStorage(deps)).toolCallDetailLevel).toBe("overview");
   });
 
   it("clamps the UI font size into range and rejects non-numeric values", async () => {

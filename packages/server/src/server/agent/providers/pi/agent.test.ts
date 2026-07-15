@@ -12,6 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import pino from "pino";
+import { setImmediate as waitForImmediate } from "node:timers/promises";
 import { describe, expect, onTestFinished, test } from "vitest";
 
 import type { AgentSession, AgentSessionConfig, AgentStreamEvent } from "../../agent-sdk-types.js";
@@ -53,6 +54,9 @@ function readUtf8File(pathname: string): string {
   } finally {
     closeSync(fd);
   }
+}
+async function flushTurnScheduling(): Promise<void> {
+  await waitForImmediate();
 }
 
 async function createSession(pi = new FakePi()): Promise<{
@@ -145,6 +149,13 @@ class SessionEvents {
       }
       return [];
     });
+  }
+
+  turnCompletedEvents() {
+    return this.events.filter(
+      (event): event is Extract<AgentStreamEvent, { type: "turn_completed" }> =>
+        event.type === "turn_completed",
+    );
   }
 
   nextTurnCompletion(): Promise<Extract<AgentStreamEvent, { type: "turn_completed" }>> {
@@ -884,6 +895,137 @@ describe("PiRpcAgentSession", () => {
     await expect(events.nextTurnFailure()).resolves.toMatchObject({
       error: "Pi exited",
     });
+  });
+  test("completes locally handled slash commands when agentInvoked is false", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+    fakeSession.promptAck = { agentInvoked: false };
+
+    const { turnId: usageTurnId } = await session.startTurn("/usage");
+    fakeSession.emit({
+      type: "command_output",
+      text: "\u001b[38;2;138;138;138mUsage 12%\u001b[39m",
+    });
+
+    await flushTurnScheduling();
+    const usageCompletion = await events.nextTurnCompletion();
+    expect(usageCompletion).toMatchObject({ type: "turn_completed", turnId: usageTurnId });
+    expect(events.timelineAndCompletionEvents()).toEqual([
+      { type: "timeline", item: { type: "user_message", text: "/usage" } },
+      { type: "timeline", item: { type: "assistant_message", text: "Usage 12%" } },
+      { type: "turn_completed" },
+    ]);
+
+    const { turnId: helloTurnId } = await session.startTurn("hello");
+    fakeSession.finishTurn();
+    await flushTurnScheduling();
+    expect(events.turnCompletedEvents()).toHaveLength(2);
+    expect(events.turnCompletedEvents()[1]).toMatchObject({
+      type: "turn_completed",
+      turnId: helloTurnId,
+    });
+  });
+
+  test("does not synthesize completion when agentInvoked is true for slash prompts", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+    fakeSession.promptAck = { agentInvoked: true };
+
+    const { turnId } = await session.startTurn("/usage");
+    await flushTurnScheduling();
+    expect(events.turnCompletedEvents()).toHaveLength(0);
+
+    fakeSession.emit({ type: "agent_start" });
+    fakeSession.finishTurn();
+    await flushTurnScheduling();
+
+    const completion = await events.nextTurnCompletion();
+    expect(completion).toMatchObject({ type: "turn_completed", turnId });
+    expect(events.turnCompletedEvents()).toHaveLength(1);
+  });
+
+  test("probes slash prompts without agentInvoked and surfaces buffered notify output", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    const { turnId } = await session.startTurn("/plan on");
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "notify-plan",
+      method: "notify",
+      message: "Plan mode enabled",
+    });
+
+    await flushTurnScheduling();
+    const completion = await events.nextTurnCompletion();
+    expect(completion).toMatchObject({ type: "turn_completed", turnId });
+    expect(events.timelineAndCompletionEvents()).toEqual([
+      { type: "timeline", item: { type: "user_message", text: "/plan on" } },
+      { type: "timeline", item: { type: "assistant_message", text: "Plan mode enabled" } },
+      { type: "turn_completed" },
+    ]);
+  });
+
+  test("does not synthesize completion when lifecycle starts before the no-turn probe", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    const { turnId } = await session.startTurn("/custom-template-cmd");
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "notify-buffered",
+      method: "notify",
+      message: "Should not appear after turn starts",
+    });
+    fakeSession.emit({ type: "agent_start" });
+
+    await flushTurnScheduling();
+    expect(events.turnCompletedEvents()).toHaveLength(0);
+    expect(events.timelineItems()).toEqual([]);
+
+    fakeSession.finishTurn();
+    await flushTurnScheduling();
+    const completion = await events.nextTurnCompletion();
+    expect(completion).toMatchObject({ type: "turn_completed", turnId });
+    expect(events.turnCompletedEvents()).toHaveLength(1);
+  });
+
+  test("fails slash turns when the no-turn getState barrier errors", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+    fakeSession.getStateError = new Error("get_state timed out");
+
+    const { turnId } = await session.startTurn("/local-command on");
+    await flushTurnScheduling();
+
+    await expect(events.nextTurnFailure()).resolves.toMatchObject({
+      turnId,
+      error: "get_state timed out",
+    });
+
+    fakeSession.getStateError = null;
+    const { turnId: recoveryTurnId } = await session.startTurn("hello");
+    fakeSession.finishTurn();
+    await flushTurnScheduling();
+    await expect(events.nextTurnCompletion()).resolves.toMatchObject({
+      type: "turn_completed",
+      turnId: recoveryTurnId,
+    });
+  });
+
+  test("does not probe non-slash prompts when agentInvoked is missing", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    const { turnId } = await session.startTurn("hello");
+    await flushTurnScheduling();
+    expect(events.turnCompletedEvents()).toHaveLength(0);
+
+    fakeSession.finishTurn();
+    await flushTurnScheduling();
+    const completion = await events.nextTurnCompletion();
+    expect(completion).toMatchObject({ type: "turn_completed", turnId });
+    expect(events.turnCompletedEvents()).toHaveLength(1);
   });
 });
 

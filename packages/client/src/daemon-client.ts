@@ -2664,7 +2664,7 @@ export class DaemonClient {
       agentId,
       requestId,
     });
-    await this.sendRequest({
+    const payload = await this.sendRequest({
       requestId,
       message,
       options: { skipQueue: true },
@@ -2678,6 +2678,9 @@ export class DaemonClient {
         return msg.payload;
       },
     });
+    if (payload.error) {
+      throw new Error(payload.error);
+    }
   }
 
   async setAgentMode(agentId: string, modeId: string): Promise<AgentProviderNotice | null> {

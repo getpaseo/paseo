@@ -16,7 +16,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { View } from "react-native";
+import { useWindowDimensions, View } from "react-native";
 import { GestureDetector, GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
@@ -26,6 +26,7 @@ import { WorktreeSetupCalloutSource } from "@/components/worktree-setup-callout-
 import { DownloadToast } from "@/components/download-toast";
 import { QuittingOverlay } from "@/components/quitting-overlay";
 import { KeyboardShortcutsDialog } from "@/components/keyboard-shortcuts-dialog";
+import { AppDiagnosticHost } from "@/components/app-diagnostic-host";
 import { LeftSidebar } from "@/components/left-sidebar";
 import { SidebarModelProvider } from "@/components/sidebar/sidebar-model";
 import { CompactExplorerSidebarHost } from "@/components/compact-explorer-sidebar-host";
@@ -37,6 +38,10 @@ import { WorkspaceShortcutTargetsSubscriber } from "@/components/workspace-short
 import { FloatingPanelPortalHost } from "@/components/ui/floating-panel-portal";
 import { HostChooserModal, useHostChooser } from "@/hosts/host-chooser";
 import { getIsElectronRuntime, useIsCompactFormFactor } from "@/constants/layout";
+import {
+  canDesktopAppSidebarShare,
+  resolveDesktopAppContentMinimum,
+} from "@/components/desktop-sidebar-layout";
 import { isNative, isWeb } from "@/constants/platform";
 import { HorizontalScrollProvider } from "@/contexts/horizontal-scroll-context";
 import { SessionProvider } from "@/contexts/session-context";
@@ -87,8 +92,10 @@ import { getDaemonStartService } from "@/runtime/daemon-start-service";
 import { applyAppearance } from "@/screens/settings/appearance/apply-appearance";
 import { selectIsAgentListOpen, usePanelStore } from "@/stores/panel-store";
 import { THEME_TO_UNISTYLES, type ThemeName } from "@/styles/theme";
+import { installWebScrollbarStyles } from "@/styles/install-web-scrollbar-styles";
 import type { HostProfile } from "@/types/host-connection";
 import { toggleDesktopSidebarsWithCheckoutIntent } from "@/utils/desktop-sidebar-toggle";
+import { WindowChromeProvider, WindowChromeRegion } from "@/utils/desktop-window";
 import { buildOpenProjectRoute, parseServerIdFromPathname } from "@/utils/host-routes";
 import { buildNotificationRoute, resolveNotificationTarget } from "@/utils/notification-routing";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
@@ -407,6 +414,11 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
   const closeDesktopFileExplorer = usePanelStore((state) => state.closeDesktopFileExplorer);
   const toggleFocusMode = usePanelStore((state) => state.toggleFocusMode);
   const isFocusModeEnabled = usePanelStore((state) => state.desktop.focusModeEnabled);
+  const isDesktopAgentListOpen = usePanelStore((state) => state.desktop.agentListOpen);
+  const isDesktopFileExplorerOpen = usePanelStore((state) => state.desktop.fileExplorerOpen);
+  const sidebarWidth = usePanelStore((state) => state.sidebarWidth);
+  const explorerWidth = usePanelStore((state) => state.explorerWidth);
+  const { width: viewportWidth } = useWindowDimensions();
 
   const cycleTheme = useCallback(() => {
     const currentIndex = THEME_CYCLE_ORDER.indexOf(settings.theme as ThemeName);
@@ -452,22 +464,46 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
   useActiveWorktreeNewAction();
   useGlobalNewWorkspaceAction();
 
+  const appContentMinimumWidth = resolveDesktopAppContentMinimum({
+    isSettingsRoute: pathname.includes("/settings"),
+    isWorkspaceExplorerOpen: pathname.includes("/workspace/") && isDesktopFileExplorerOpen,
+    requestedExplorerWidth: explorerWidth,
+    viewportWidth,
+  });
+  const desktopSidebarRendered =
+    !isCompactLayout &&
+    chromeEnabled &&
+    !isFocusModeEnabled &&
+    isDesktopAgentListOpen &&
+    canDesktopAppSidebarShare({
+      contentMinimumWidth: appContentMinimumWidth,
+      requestedSidebarWidth: sidebarWidth,
+      viewportWidth,
+    });
+  const contentWindowChromeCorners = desktopSidebarRendered ? "top-right" : "both";
   const sidebarChrome = (
     <SidebarChrome
-      showSidebar={chromeEnabled && (isCompactLayout || !isFocusModeEnabled)}
+      showSidebar={isCompactLayout ? chromeEnabled : desktopSidebarRendered}
       keyboardShortcutsEnabled={keyboardShortcutsEnabled}
     />
   );
-
   const workspaceChrome = (
     <View style={rowStyle}>
-      {!isCompactLayout ? sidebarChrome : null}
+      {!isCompactLayout ? (
+        <WindowChromeRegion corners={desktopSidebarRendered ? "top-left" : "none"}>
+          {sidebarChrome}
+        </WindowChromeRegion>
+      ) : null}
       {isCompactLayout && chromeEnabled ? (
         <CompactExplorerSidebarHost enabled={chromeEnabled}>
-          <View style={flexStyle}>{children}</View>
+          <WindowChromeRegion corners="both">
+            <View style={flexStyle}>{children}</View>
+          </WindowChromeRegion>
         </CompactExplorerSidebarHost>
       ) : (
-        <View style={flexStyle}>{children}</View>
+        <WindowChromeRegion corners={contentWindowChromeCorners}>
+          <View style={flexStyle}>{children}</View>
+        </WindowChromeRegion>
       )}
     </View>
   );
@@ -487,6 +523,7 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
       <ProviderSettingsHost />
       <WorkspaceSetupDialog />
       <KeyboardShortcutsDialog />
+      <AppDiagnosticHost />
       <QuittingOverlay />
     </View>
   );
@@ -860,13 +897,15 @@ function RuntimeProviders({ children }: { children: ReactNode }) {
 function RootProviders({ children }: { children: ReactNode }) {
   return (
     <SafeAreaProvider>
-      <KeyboardProvider>
-        <KeyboardShiftProvider>
-          <PortalProvider>
-            <BottomSheetModalProvider>{children}</BottomSheetModalProvider>
-          </PortalProvider>
-        </KeyboardShiftProvider>
-      </KeyboardProvider>
+      <WindowChromeProvider>
+        <KeyboardProvider>
+          <KeyboardShiftProvider>
+            <PortalProvider>
+              <BottomSheetModalProvider>{children}</BottomSheetModalProvider>
+            </PortalProvider>
+          </KeyboardShiftProvider>
+        </KeyboardProvider>
+      </WindowChromeProvider>
     </SafeAreaProvider>
   );
 }
@@ -886,6 +925,8 @@ function RootAppTree() {
 }
 
 export default function RootLayout() {
+  useEffect(() => installWebScrollbarStyles(), []);
+
   return (
     <QueryProvider>
       <I18nProvider>

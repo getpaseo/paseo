@@ -12,45 +12,102 @@ export interface ForegroundTurnWaiter {
 
 export interface PendingForegroundRun {
   token: string;
+  kind: "foreground";
+  turnId: string | null;
   started: boolean;
   settled: boolean;
   settledPromise: Promise<void>;
   resolveSettled: () => void;
 }
 
+export interface AutonomousAgentRun {
+  token: string;
+  kind: "autonomous";
+  turnId: string | null;
+  started: true;
+  settled: boolean;
+  settledPromise: Promise<void>;
+  resolveSettled: () => void;
+}
+
+export type TrackedAgentRun = PendingForegroundRun | AutonomousAgentRun;
+
 export interface ForegroundRunAgentState {
   foregroundTurnWaiters: Set<ForegroundTurnWaiter>;
   finalizedForegroundTurnIds: Set<string>;
 }
 
-export class ForegroundRunState {
-  private readonly pendingRuns = new Map<string, PendingForegroundRun>();
+export class AgentRunState {
+  private readonly runs = new Map<string, TrackedAgentRun>();
 
   createPendingRun(agentId: string): PendingForegroundRun {
     const pendingRun = createPendingForegroundRun();
-    this.pendingRuns.set(agentId, pendingRun);
+    this.runs.set(agentId, pendingRun);
     return pendingRun;
   }
 
   getPendingRun(agentId: string): PendingForegroundRun | null {
-    return this.pendingRuns.get(agentId) ?? null;
+    const run = this.runs.get(agentId);
+    return run?.kind === "foreground" ? run : null;
   }
 
   hasPendingRun(agentId: string): boolean {
-    return this.pendingRuns.has(agentId);
+    return this.getPendingRun(agentId) !== null;
   }
 
-  settlePendingRun(agentId: string, token?: string): void {
-    const pendingRun = this.pendingRuns.get(agentId);
-    if (!pendingRun) {
+  getRun(agentId: string): TrackedAgentRun | null {
+    return this.runs.get(agentId) ?? null;
+  }
+
+  hasRun(agentId: string): boolean {
+    return this.runs.has(agentId);
+  }
+
+  trackAutonomousRun(agentId: string, turnId: string | null): TrackedAgentRun {
+    const current = this.runs.get(agentId);
+    if (current) {
+      return current;
+    }
+
+    const run = createTrackedRun({ kind: "autonomous", turnId, started: true });
+    this.runs.set(agentId, run);
+    return run;
+  }
+
+  settleTerminalRun(agentId: string, turnId: string | undefined): void {
+    const run = this.runs.get(agentId);
+    if (!run) {
       return;
     }
-    if (token && pendingRun.token !== token) {
+    if (run.kind === "foreground" && (run.turnId === null || run.turnId !== turnId)) {
+      return;
+    }
+    if (
+      run.kind === "autonomous" &&
+      run.turnId !== null &&
+      turnId !== undefined &&
+      run.turnId !== turnId
+    ) {
       return;
     }
 
-    this.pendingRuns.delete(agentId);
-    settlePendingForegroundRun(pendingRun);
+    this.clearRun(agentId, run);
+  }
+
+  settleForegroundRun(agentId: string, token: string): void {
+    const run = this.runs.get(agentId);
+    if (run?.kind !== "foreground" || run.token !== token) {
+      return;
+    }
+
+    this.clearRun(agentId, run);
+  }
+
+  clearAgentRun(agentId: string): void {
+    const run = this.runs.get(agentId);
+    if (run) {
+      this.clearRun(agentId, run);
+    }
   }
 
   createTurnStream(turnId: string): ForegroundTurnStream {
@@ -120,14 +177,6 @@ export class ForegroundRunState {
     agent.foregroundTurnWaiters.clear();
   }
 
-  clearAgent(agentId: string, agent: ForegroundRunAgentState): void {
-    for (const waiter of agent.foregroundTurnWaiters) {
-      this.settleWaiter(waiter);
-    }
-    agent.foregroundTurnWaiters.clear();
-    this.settlePendingRun(agentId);
-  }
-
   rememberFinalizedTurn(agent: ForegroundRunAgentState, turnId: string): void {
     agent.finalizedForegroundTurnIds.add(turnId);
     if (agent.finalizedForegroundTurnIds.size <= 50) {
@@ -142,6 +191,11 @@ export class ForegroundRunState {
 
   hasFinalizedTurn(agent: ForegroundRunAgentState, turnId: string): boolean {
     return agent.finalizedForegroundTurnIds.has(turnId);
+  }
+
+  private clearRun(agentId: string, run: TrackedAgentRun): void {
+    this.runs.delete(agentId);
+    settleTrackedRun(run);
   }
 }
 
@@ -205,24 +259,42 @@ export class ForegroundTurnStream {
 }
 
 function createPendingForegroundRun(): PendingForegroundRun {
+  return createTrackedRun({ kind: "foreground", turnId: null, started: false });
+}
+
+function createTrackedRun(input: {
+  kind: "foreground";
+  turnId: null;
+  started: false;
+}): PendingForegroundRun;
+function createTrackedRun(input: {
+  kind: "autonomous";
+  turnId: string | null;
+  started: true;
+}): AutonomousAgentRun;
+function createTrackedRun(
+  input:
+    | { kind: "foreground"; turnId: null; started: false }
+    | { kind: "autonomous"; turnId: string | null; started: true },
+): TrackedAgentRun {
   let resolveSettled!: () => void;
   const settledPromise = new Promise<void>((resolvePromise) => {
     resolveSettled = resolvePromise;
   });
   return {
     token: randomUUID(),
-    started: false,
+    ...input,
     settled: false,
     settledPromise,
     resolveSettled,
   };
 }
 
-function settlePendingForegroundRun(pendingRun: PendingForegroundRun): void {
-  if (pendingRun.settled) {
+function settleTrackedRun(run: TrackedAgentRun): void {
+  if (run.settled) {
     return;
   }
 
-  pendingRun.settled = true;
-  pendingRun.resolveSettled();
+  run.settled = true;
+  run.resolveSettled();
 }

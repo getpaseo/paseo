@@ -432,7 +432,6 @@ function OpenScheduleFormSheet({
       onClose={onClose}
       onDismiss={onDismiss}
       footer={footer}
-      webScrollbar
       testID="schedule-form-sheet"
     >
       <ScheduleFormFields

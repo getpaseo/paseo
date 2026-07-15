@@ -92,7 +92,7 @@ export async function runDeleteCommand(
       agents.map(async (agent) => {
         try {
           if (agent.status === "running") {
-            await client.cancelAgent(agent.id);
+            await client.cancelAgent(agent.id).catch(() => {});
           }
           await client.deleteAgent(agent.id);
           return { ok: true as const, id: agent.id };

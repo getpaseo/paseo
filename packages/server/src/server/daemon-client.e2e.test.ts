@@ -210,105 +210,120 @@ test("createAgent with background initialPrompt returns a running snapshot befor
   }
 });
 
+interface StubAgentOptions {
+  sessionId: string;
+  supportsStreaming: boolean;
+  startError?: string;
+  interruptError?: string;
+}
+
+class StubAgentSession implements AgentSession {
+  readonly provider = "codex" as const;
+  readonly capabilities;
+  private activeTurnId: string | null = null;
+
+  constructor(private readonly options: StubAgentOptions) {
+    this.capabilities = {
+      supportsStreaming: options.supportsStreaming,
+      supportsSessionPersistence: true,
+      supportsDynamicModes: false,
+      supportsMcpServers: false,
+      supportsReasoningStream: false,
+      supportsToolInvocations: false,
+      supportsRewindConversation: false,
+      supportsRewindFiles: false,
+      supportsRewindBoth: false,
+    } as const;
+  }
+
+  get id(): string {
+    return this.options.sessionId;
+  }
+
+  async run(): Promise<AgentRunResult> {
+    return { sessionId: this.id, finalText: "", timeline: [] };
+  }
+
+  async startTurn(): Promise<{ turnId: string }> {
+    if (this.options.startError) throw new Error(this.options.startError);
+    if (this.activeTurnId) throw new Error("A foreground turn is already active");
+    this.activeTurnId = "provider-owned-turn";
+    return { turnId: this.activeTurnId };
+  }
+
+  subscribe(): () => void {
+    return () => undefined;
+  }
+
+  async *streamHistory(): AsyncGenerator<AgentStreamEvent> {}
+
+  async getRuntimeInfo() {
+    return {
+      provider: this.provider,
+      sessionId: this.id,
+      model: "gpt-5.4-mini",
+      modeId: "full-access",
+    };
+  }
+
+  async getAvailableModes() {
+    return [{ id: "full-access", label: "Full access", description: "No prompts" }];
+  }
+
+  async getCurrentMode(): Promise<string> {
+    return "full-access";
+  }
+
+  async setMode(): Promise<void> {}
+  getPendingPermissions() {
+    return [];
+  }
+  async respondToPermission(): Promise<void> {}
+  describePersistence(): AgentPersistenceHandle {
+    return { provider: this.provider, sessionId: this.id };
+  }
+  async interrupt(): Promise<void> {
+    if (this.options.interruptError) throw new Error(this.options.interruptError);
+  }
+  async close(): Promise<void> {
+    this.activeTurnId = null;
+  }
+}
+
+class StubAgentClient implements AgentClient {
+  readonly provider = "codex" as const;
+  readonly capabilities;
+
+  constructor(private readonly options: StubAgentOptions) {
+    this.capabilities = new StubAgentSession(options).capabilities;
+  }
+
+  async isAvailable(): Promise<boolean> {
+    return true;
+  }
+  async createSession(): Promise<AgentSession> {
+    return new StubAgentSession(this.options);
+  }
+  async resumeSession(): Promise<AgentSession> {
+    return new StubAgentSession(this.options);
+  }
+  async fetchCatalog() {
+    return {
+      models: [{ id: "gpt-5.4-mini", label: "GPT-5.4 mini", provider: this.provider }],
+      modes: [{ id: "full-access", label: "Full access", description: "No prompts" }],
+    };
+  }
+}
+
 test("createAgent fails when the initial turn cannot start", async () => {
-  class StartTurnFailureSession implements AgentSession {
-    readonly provider = "codex" as const;
-    readonly id = "start-turn-failure-session";
-    readonly capabilities = {
-      supportsStreaming: false,
-      supportsSessionPersistence: true,
-      supportsDynamicModes: false,
-      supportsMcpServers: false,
-      supportsReasoningStream: false,
-      supportsToolInvocations: false,
-      supportsRewindConversation: false,
-      supportsRewindFiles: false,
-      supportsRewindBoth: false,
-    } as const;
-
-    async run(): Promise<AgentRunResult> {
-      return {
-        sessionId: this.id,
-        finalText: "",
-        timeline: [],
-      };
-    }
-
-    async startTurn(): Promise<{ turnId: string }> {
-      throw new Error("Initial turn failed to start");
-    }
-
-    subscribe(): () => void {
-      return () => undefined;
-    }
-
-    async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
-      yield* [];
-    }
-
-    async getRuntimeInfo() {
-      return {
-        provider: "codex" as const,
-        sessionId: this.id,
-        model: "gpt-5.4-mini",
-        modeId: "full-access",
-      };
-    }
-
-    async getAvailableModes(): Promise<Array<{ id: string; label: string; description: string }>> {
-      return [{ id: "full-access", label: "Full access", description: "No prompts" }];
-    }
-
-    async getCurrentMode(): Promise<string | null> {
-      return "full-access";
-    }
-
-    async setMode(): Promise<void> {}
-
-    getPendingPermissions() {
-      return [];
-    }
-
-    async respondToPermission(): Promise<void> {}
-
-    describePersistence(): AgentPersistenceHandle | null {
-      return { provider: "codex", sessionId: this.id };
-    }
-
-    async interrupt(): Promise<void> {}
-
-    async close(): Promise<void> {}
-  }
-
-  class StartTurnFailureClient implements AgentClient {
-    readonly provider = "codex" as const;
-    readonly capabilities = {
-      supportsStreaming: false,
-      supportsSessionPersistence: true,
-      supportsDynamicModes: false,
-      supportsMcpServers: false,
-      supportsReasoningStream: false,
-      supportsToolInvocations: false,
-      supportsRewindConversation: false,
-      supportsRewindFiles: false,
-      supportsRewindBoth: false,
-    } as const;
-
-    async isAvailable(): Promise<boolean> {
-      return true;
-    }
-
-    async createSession(_config: AgentSessionConfig): Promise<AgentSession> {
-      return new StartTurnFailureSession();
-    }
-
-    async resumeSession(): Promise<AgentSession> {
-      return new StartTurnFailureSession();
-    }
-  }
+  const testAgent = new StubAgentClient({
+    sessionId: "start-turn-failure-session",
+    supportsStreaming: false,
+    startError: "Initial turn failed to start",
+  });
 
   const daemon = await createTestPaseoDaemon({
-    agentClients: { codex: new StartTurnFailureClient() },
+    agentClients: { codex: testAgent },
   });
   const client = new DaemonClient({
     url: `ws://127.0.0.1:${daemon.port}/ws`,
@@ -334,6 +349,58 @@ test("createAgent fails when the initial turn cannot start", async () => {
     await daemon.close();
   }
 });
+
+function createUninterruptibleClient(): AgentClient {
+  return new StubAgentClient({
+    sessionId: "uninterruptible-session",
+    supportsStreaming: true,
+    interruptError: "Provider did not acknowledge cancellation",
+  });
+}
+
+test("DaemonClient rejects a replacement prompt when cancellation is not acknowledged", async () => {
+  const cwd = tmpCwd();
+  const daemon = await createTestPaseoDaemon({
+    agentClients: { codex: createUninterruptibleClient() },
+  });
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+
+  try {
+    await client.connect();
+    const agent = await client.createAgent({ provider: "codex", cwd });
+    await client.sendMessage(agent.id, "Keep working on the first prompt.");
+
+    await expect(client.sendMessage(agent.id, "Replace it with this prompt.")).rejects.toThrow(
+      `Cannot replace agent ${agent.id} because its active run cancellation was not acknowledged`,
+    );
+  } finally {
+    await client.close();
+    await daemon.close();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+}, 30_000);
+
+test("DaemonClient rejects Stop when cancellation is not acknowledged", async () => {
+  const cwd = tmpCwd();
+  const daemon = await createTestPaseoDaemon({
+    agentClients: { codex: createUninterruptibleClient() },
+  });
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+
+  try {
+    await client.connect();
+    const agent = await client.createAgent({ provider: "codex", cwd });
+    await client.sendMessage(agent.id, "Keep working until stopped.");
+
+    await expect(client.cancelAgent(agent.id)).rejects.toThrow(
+      `Cannot stop agent ${agent.id} because its active run cancellation was not acknowledged`,
+    );
+  } finally {
+    await client.close();
+    await daemon.close();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+}, 30_000);
 
 function waitForSignal<T>(
   timeoutMs: number,
@@ -887,6 +954,42 @@ test("returns typed relative suggestions within a requested directory", async ()
     expect(result.error).toBeNull();
     expect(result.directories).toEqual([]);
     expect(result.entries).toEqual([{ path: "src/components/message-renderer.tsx", kind: "file" }]);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+}, 30000);
+
+test("finds workspace files inside the OpenCode directory", async () => {
+  const cwd = mkdtempSync(path.join(tmpdir(), "paseo-opencode-suggestion-"));
+  const target = path.join(
+    cwd,
+    ".opencode",
+    "command",
+    "workflow",
+    "00-kickoff",
+    "00-user-stories.md",
+  );
+
+  try {
+    mkdirSync(path.dirname(target), { recursive: true });
+    writeFileSync(target, "");
+
+    const result = await ctx.client.getDirectorySuggestions({
+      cwd,
+      query: "00-user-stories.md",
+      includeFiles: true,
+      includeDirectories: false,
+      limit: 20,
+    });
+
+    expect(result.error).toBeNull();
+    expect(result.directories).toEqual([]);
+    expect(result.entries).toEqual([
+      {
+        path: ".opencode/command/workflow/00-kickoff/00-user-stories.md",
+        kind: "file",
+      },
+    ]);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }

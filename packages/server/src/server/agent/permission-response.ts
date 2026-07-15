@@ -33,7 +33,7 @@ export async function respondToAgentPermission(
 
   if (result?.followUpPrompt) {
     logger.debug({ agentId }, "Permission response requires follow-up turn, starting agent stream");
-    startAgentRun(agentManager, agentId, result.followUpPrompt, logger, {
+    await startAgentRun(agentManager, agentId, result.followUpPrompt, logger, {
       replaceRunning: true,
     });
   }

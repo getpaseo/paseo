@@ -20,6 +20,7 @@
     "capture-harness": "./capture-harness/run.sh",
     "dev": "./scripts/dev.sh",
     "dev:win": "powershell ./scripts/dev.ps1",
+    "verify:electron-cdp": "node ./scripts/verify-electron-cdp.mjs",
     "test": "vitest run",
     "typecheck": "tsgo --noEmit -p tsconfig.json"
   },

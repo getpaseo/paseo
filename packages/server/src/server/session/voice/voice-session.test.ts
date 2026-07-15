@@ -110,6 +110,32 @@ async function settle(): Promise<void> {
 }
 
 describe("VoiceSession streaming transcription", () => {
+  test("surfaces a refused voice-mode agent interruption", async () => {
+    const { voiceSession, host } = createVoiceSession();
+    host.interruptAgentIfRunning = vi.fn(async () => {
+      throw new Error("active run cancellation was not acknowledged");
+    });
+
+    await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
+
+    await expect(voiceSession.handleAbort()).rejects.toThrow(
+      "active run cancellation was not acknowledged",
+    );
+    expect(host.interruptAgentIfRunning).toHaveBeenCalledWith(VOICE_AGENT_ID);
+    expect(host.emitted).toContainEqual(
+      expect.objectContaining({
+        type: "activity_log",
+        payload: expect.objectContaining({
+          type: "error",
+          content: "Voice interruption failed: active run cancellation was not acknowledged",
+          metadata: { voiceAbortFailed: true },
+        }),
+      }),
+    );
+
+    await voiceSession.cleanup();
+  });
+
   test("delivers the streaming final transcript to the agent exactly once", async () => {
     const { voiceSession, detector, sttSession, host } = createVoiceSession();
 

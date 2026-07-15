@@ -23,6 +23,7 @@ import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { getShortcutOs } from "@/utils/shortcut-platform";
 import { getIsElectronRuntime } from "@/constants/layout";
 import { isNative } from "@/constants/platform";
+import { getDesktopHost } from "@/desktop/host";
 
 const EMPTY_CAPTURED_COMBOS: string[] = [];
 
@@ -169,6 +170,7 @@ export function KeyboardShortcutsSection() {
   const { overrides, hasOverrides, setOverride, removeOverride, resetAll } =
     useKeyboardShortcutOverrides();
   const setCapturingShortcut = useKeyboardShortcutsStore((s) => s.setCapturingShortcut);
+  const capturing = useKeyboardShortcutsStore((s) => s.capturingShortcut);
 
   const isFocused = useIsFocused();
   const isMac = getShortcutOs() === "mac";
@@ -241,6 +243,17 @@ export function KeyboardShortcutsSection() {
       setCapturingShortcut(false);
     };
   }, [setCapturingShortcut]);
+
+  // Suppress desktop zoom accelerators while capturing so combos like Cmd+- are
+  // recorded instead of zooming the window. No-op outside Electron.
+  useEffect(() => {
+    if (isNative || !capturing) return;
+    const menu = getDesktopHost()?.menu;
+    void menu?.setCapturingShortcut?.(true);
+    return () => {
+      void menu?.setCapturingShortcut?.(false);
+    };
+  }, [capturing]);
 
   const handleResetAll = useCallback(() => void resetAll(), [resetAll]);
   const handleRemoveOverride = useCallback(

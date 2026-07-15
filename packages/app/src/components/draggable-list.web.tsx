@@ -17,7 +17,6 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import type { DraggableListProps, DraggableRenderItemInfo } from "./draggable-list.types";
-import { useWebScrollViewScrollbar } from "./use-web-scrollbar";
 import { getPointerActivationConstraint, useDragReorderState } from "./drag-reorder";
 
 export type { DraggableListProps, DraggableRenderItemInfo };
@@ -133,7 +132,6 @@ export function DraggableList<T>({
   ListHeaderComponent,
   ListEmptyComponent,
   showsVerticalScrollIndicator = true,
-  enableDesktopWebScrollbar = false,
   scrollEnabled = true,
   extraData: _extraData,
   useDragHandle = false,
@@ -146,11 +144,6 @@ export function DraggableList<T>({
     keyExtractor,
     onDragEnd,
     onDragBegin,
-  });
-  const showCustomScrollbar = enableDesktopWebScrollbar && scrollEnabled;
-  const scrollViewRef = useRef<ScrollView>(null);
-  const scrollbar = useWebScrollViewScrollbar(scrollViewRef, {
-    enabled: showCustomScrollbar,
   });
   const pointerActivationConstraint = getPointerActivationConstraint(
     useDragHandle,
@@ -183,15 +176,10 @@ export function DraggableList<T>({
     <View style={wrapperStyle}>
       {scrollEnabled ? (
         <ScrollView
-          ref={scrollViewRef}
           testID={testID}
           style={style}
           contentContainerStyle={contentContainerStyle}
-          showsVerticalScrollIndicator={showCustomScrollbar ? false : showsVerticalScrollIndicator}
-          onLayout={scrollbar.onLayout}
-          onContentSizeChange={scrollbar.onContentSizeChange}
-          onScroll={scrollbar.onScroll}
-          scrollEventThrottle={16}
+          showsVerticalScrollIndicator={showsVerticalScrollIndicator}
         >
           {ListHeaderComponent}
           {items.length === 0 && ListEmptyComponent}
@@ -254,7 +242,6 @@ export function DraggableList<T>({
           {ListFooterComponent}
         </>
       )}
-      {scrollbar.overlay}
     </View>
   );
 }

@@ -15,13 +15,13 @@ export interface StartAgentRunOptions {
   runOptions?: AgentRunOptions;
 }
 
-export function startAgentRun(
+export async function startAgentRun(
   agentManager: AgentRunController,
   agentId: string,
   prompt: AgentPromptInput,
   logger: Logger,
   options?: StartAgentRunOptions,
-): { outOfBand: boolean } {
+): Promise<{ outOfBand: boolean }> {
   const snapshot = agentManager.getAgent(agentId);
   logger.trace(
     {
@@ -44,7 +44,7 @@ export function startAgentRun(
   const shouldReplace = Boolean(options?.replaceRunning && agentManager.hasInFlightRun(agentId));
   const runOptions = options?.runOptions;
   const iterator = shouldReplace
-    ? agentManager.replaceAgentRun(agentId, prompt, runOptions)
+    ? await agentManager.replaceAgentRun(agentId, prompt, runOptions)
     : agentManager.streamAgent(agentId, prompt, runOptions);
   logger.trace(
     {
@@ -197,7 +197,7 @@ export async function sendPromptToAgent(
     ? { ...params.runOptions, messageId: params.messageId }
     : params.runOptions;
 
-  return startAgentRun(params.agentManager, params.agentId, params.prompt, params.logger, {
+  return await startAgentRun(params.agentManager, params.agentId, params.prompt, params.logger, {
     replaceRunning: true,
     runOptions,
   });
@@ -215,7 +215,7 @@ export async function startCreatedAgentInitialPrompt(
     return currentSnapshot;
   }
 
-  const dispatchResult = startAgentRun(
+  const dispatchResult = await startAgentRun(
     params.agentManager,
     params.agentId,
     params.prompt,
@@ -298,6 +298,15 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
     });
   }
 
+  function notifySafely(reason: "finished" | "errored" | "needs permission"): void {
+    void notify(reason).catch((error) => {
+      logger.error(
+        { err: error, childAgentId, callerAgentId, reason },
+        "Failed to notify caller agent",
+      );
+    });
+  }
+
   unsubscribe = agentManager.subscribe(
     (event) => {
       if (fired) {
@@ -310,11 +319,11 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
           return;
         }
         if (event.agent.lifecycle === "error") {
-          void notify("errored");
+          notifySafely("errored");
           return;
         }
         if (event.agent.lifecycle === "idle" && hasSeenRunning) {
-          void notify("finished");
+          notifySafely("finished");
           return;
         }
         if (event.agent.lifecycle === "closed") {
@@ -326,7 +335,7 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
       }
 
       if (event.event.type === "permission_requested") {
-        void notify("needs permission");
+        notifySafely("needs permission");
       }
     },
     { agentId: childAgentId, replayState: false },
@@ -345,6 +354,6 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
   if (childSnapshot.lifecycle === "running") {
     hasSeenRunning = true;
   } else if (childSnapshot.lifecycle === "error") {
-    void notify("errored");
+    notifySafely("errored");
   }
 }

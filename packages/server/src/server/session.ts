@@ -66,7 +66,7 @@ import {
   normalizeClientRestartRpcReason,
 } from "./lifecycle-reasons.js";
 
-import { AgentManager } from "./agent/agent-manager.js";
+import { AgentManager, AgentRunCancellationError } from "./agent/agent-manager.js";
 import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import type {
   AgentManagerEvent,
@@ -174,7 +174,10 @@ import {
   type AgentUpdatesService,
 } from "./session/agent-updates/agent-updates-service.js";
 import { expandTilde } from "../utils/path.js";
-import { searchDirectoryEntries } from "../utils/directory-suggestions.js";
+import {
+  searchDirectoryEntries,
+  WORKSPACE_SEARCH_HIDDEN_DIRECTORIES,
+} from "../utils/directory-suggestions.js";
 import type { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import type { Resolvable } from "./speech/provider-resolver.js";
 import type { SpeechReadinessSnapshot } from "./speech/speech-runtime.js";
@@ -224,15 +227,6 @@ import { CreateAgentLifecycleDispatch } from "./agent/create-agent-lifecycle-dis
 // the entire session message if they encounter an unknown provider.
 const LEGACY_PROVIDER_IDS = new Set(["claude", "codex", "opencode"]);
 const MIN_VERSION_ALL_PROVIDERS = "0.1.45";
-const WORKSPACE_SEARCH_HIDDEN_DIRECTORIES = [
-  ".agents",
-  ".claude",
-  ".codex",
-  ".github",
-  ".paseo",
-  ".vscode",
-];
-
 function errorToFriendlyMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (typeof error === "string") return error;
@@ -1091,16 +1085,17 @@ export class Session {
     );
 
     const t0 = Date.now();
-    const cancelled = await this.agentManager.cancelAgentRun(agentId);
+    const cancellation = await this.agentManager.cancelAgentRun(agentId);
     this.sessionLogger.debug(
-      { agentId, cancelled, durationMs: Date.now() - t0 },
+      { agentId, cancellation: cancellation.status, durationMs: Date.now() - t0 },
       "interruptAgentIfRunning: cancelAgentRun completed",
     );
-    if (!cancelled) {
+    if (cancellation.status === "refused") {
       this.sessionLogger.warn(
         { agentId },
         "interruptAgentIfRunning: reported running but no active run was cancelled",
       );
+      throw new AgentRunCancellationError(agentId, "stop");
     }
   }
 
@@ -2863,11 +2858,30 @@ export class Session {
             requestId,
             agentId,
             agent: payload,
+            error: null,
           },
         });
       }
     } catch (error) {
-      this.handleAgentRunError(agentId, error, "Failed to cancel running agent on request");
+      if (requestId) {
+        this.sessionLogger.error(
+          { err: error, agentId },
+          `Failed to cancel running agent on request for agent ${agentId}`,
+        );
+        const agent = this.agentManager.getAgent(agentId);
+        const payload = agent ? await this.buildAgentPayload(agent) : null;
+        this.emit({
+          type: "cancel_agent_response",
+          payload: {
+            requestId,
+            agentId,
+            agent: payload,
+            error: errorToFriendlyMessage(error),
+          },
+        });
+      } else {
+        this.handleAgentRunError(agentId, error, "Failed to cancel running agent on request");
+      }
     }
   }
 

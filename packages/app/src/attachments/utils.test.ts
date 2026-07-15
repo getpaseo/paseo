@@ -34,6 +34,10 @@ describe("fileUriToPath", () => {
   it("converts Windows drive-letter file URIs back to paths", () => {
     expect(fileUriToPath("file:///C:/Users/file.txt")).toBe("C:/Users/file.txt");
   });
+
+  it("converts host-based file URIs back to UNC paths", () => {
+    expect(fileUriToPath("file://server/share/shot%231.png")).toBe("\\\\server\\share\\shot#1.png");
+  });
 });
 
 describe("localFileSourceToPath", () => {

@@ -85,6 +85,7 @@ export interface DesktopWebUtilsBridge {
 
 export interface DesktopMenuBridge {
   showContextMenu?: (input?: { kind?: "terminal"; hasSelection?: boolean }) => Promise<void>;
+  setCapturingShortcut?: (capturing: boolean) => Promise<void>;
 }
 
 export interface DesktopWindowControlsOverlayUpdate {
@@ -96,6 +97,7 @@ export interface DesktopWindowControlsOverlayUpdate {
 export interface DesktopWindowBridge {
   label?: string;
   toggleMaximize?: () => Promise<void>;
+  setFullscreen?: (fullscreen: boolean) => Promise<void>;
   isFullscreen?: () => Promise<boolean>;
   updateWindowControls?: (update: DesktopWindowControlsOverlayUpdate) => Promise<void>;
   onResized?: <TEvent = unknown>(

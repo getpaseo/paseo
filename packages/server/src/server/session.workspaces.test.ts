@@ -1609,7 +1609,7 @@ test("close_items_request archives agents and kills terminals in one batch", asy
     archivedAt: null,
   };
   const killTerminal = vi.fn();
-  const cancelAgentRun = vi.fn(async () => true);
+  const cancelAgentRun = vi.fn(async () => ({ status: "settled" as const }));
   const session = asTestSession(
     new Session({
       clientId: "test-client",

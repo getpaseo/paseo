@@ -802,6 +802,17 @@ export const ja: TranslationResources = {
       settings: "設定",
       closeSidebar: "サイドバーを閉じる",
     },
+    help: {
+      trigger: "ヘルプとサポート",
+      sectionHelp: "ヘルプ",
+      diagnostics: "診断を実行",
+      shortcuts: "キーボードショートカット",
+      reportIssue: "問題を報告",
+      discord: "Discord",
+      github: "GitHub Issueを作成",
+      whatsNew: "新着情報",
+      version: "Paseo {{version}}",
+    },
     sections: {
       sessions: "履歴",
       schedules: "スケジュール",
@@ -1408,6 +1419,34 @@ export const ja: TranslationResources = {
     input: "入力",
     output: "出力",
   },
+  toolCallGroup: {
+    editedFiles: {
+      one: "{{count}}個のファイルを編集",
+      other: "{{count}}個のファイルを編集",
+    },
+    commands: {
+      one: "{{count}}個のコマンドを実行",
+      other: "{{count}}個のコマンドを実行",
+    },
+    readFiles: {
+      one: "{{count}}個のファイルを読み取り",
+      other: "{{count}}個のファイルを読み取り",
+    },
+    searches: {
+      one: "{{count}}回検索",
+      other: "{{count}}回検索",
+    },
+    otherTools: {
+      one: "その他のツールを{{count}}回使用",
+      other: "その他のツールを{{count}}回使用",
+    },
+    paseoCalls: {
+      one: "Paseoを{{count}}回呼び出し",
+      other: "Paseoを{{count}}回呼び出し",
+    },
+    and: "および",
+    failed: "{{count}}件失敗",
+  },
   renameModal: {
     rename: "名前を変更",
     saving: "保存中...",
@@ -1503,6 +1542,15 @@ export const ja: TranslationResources = {
       autoExpandReasoning: {
         label: "常に思考プロセスを展開",
         description: "デフォルトでAIのエージェント思考・推論ブロックを完全に展開して表示します",
+      },
+      toolCallDetail: {
+        label: "ツール呼び出しの表示",
+        description: "タイムラインでのツール呼び出しの表示方法",
+        accessibilityLabel: "ツール呼び出しの表示を選択（{{value}}）",
+        options: {
+          overview: "要約",
+          detailed: "すべての詳細",
+        },
       },
       language: {
         label: "言語",

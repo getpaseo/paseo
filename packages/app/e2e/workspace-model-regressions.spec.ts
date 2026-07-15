@@ -1,4 +1,5 @@
 import { test, expect } from "./fixtures";
+import { expectWorkspaceTabVisible } from "./helpers/archive-tab";
 import { expectComposerEditable, expectComposerVisible, submitMessage } from "./helpers/composer";
 import { clickNewChat, gotoWorkspace } from "./helpers/launcher";
 import {
@@ -12,6 +13,11 @@ import {
 } from "./helpers/new-workspace";
 import { getServerId } from "./helpers/server-id";
 import { seedWorkspace, type SeededWorkspace } from "./helpers/seed-client";
+import {
+  expectSubagentRowVisible,
+  openSubagentsTrack,
+  seedParentWithCrossWorkspaceSubagent,
+} from "./helpers/subagents";
 import { expectWorkspaceHeader, waitForSidebarHydration } from "./helpers/workspace-ui";
 import { getVisibleWorkspaceAgentTabIds } from "./helpers/workspace-tabs";
 
@@ -523,6 +529,41 @@ test.describe("Workspace model regressions", () => {
         rowTestId: createdRowTestId,
         buckets: ["running", "needs_input", "attention"],
       });
+    } finally {
+      await seeded.cleanup();
+    }
+  });
+
+  test("cross-workspace subagent opens in its workspace and keeps its parent relationship", async ({
+    page,
+  }) => {
+    const serverId = getServerId();
+    const seeded = await seedWorkspace({ repoPrefix: "workspace-cross-subagent-" });
+
+    try {
+      const agents = await seedParentWithCrossWorkspaceSubagent(seeded, {
+        parentTitle: "Parent agent",
+        childTitle: "Cross-workspace subagent",
+      });
+
+      await gotoWorkspace(page, agents.child.workspaceId);
+      await waitForSidebarHydration(page);
+      await expectWorkspaceTabVisible(page, agents.child.id);
+
+      const parentRowTestId = `sidebar-workspace-row-${serverId}:${agents.parent.workspaceId}`;
+      const childRowTestId = `sidebar-workspace-row-${serverId}:${agents.child.workspaceId}`;
+      await expectWorkspaceRowHasOnlyIndicator(page, {
+        rowTestId: childRowTestId,
+        indicator: "running",
+      });
+      await expectWorkspaceRowHasOnlyIndicator(page, {
+        rowTestId: parentRowTestId,
+        indicator: "done",
+      });
+
+      await gotoWorkspace(page, agents.parent.workspaceId);
+      await openSubagentsTrack(page);
+      await expectSubagentRowVisible(page, agents.child.id);
     } finally {
       await seeded.cleanup();
     }
