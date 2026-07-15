@@ -651,7 +651,7 @@ const styles = StyleSheet.create((theme) => ({
     borderBottomWidth: 1,
   },
   input: {
-    fontSize: theme.fontSize.lg,
+    fontSize: theme.fontSize.base,
     paddingVertical: theme.spacing[1],
     outlineStyle: "none",
   } as object,
@@ -705,12 +705,12 @@ const styles = StyleSheet.create((theme) => ({
     flexShrink: 0,
   },
   title: {
-    fontSize: theme.fontSize.base,
+    fontSize: theme.fontSize.sm,
     fontWeight: "400",
     lineHeight: 20,
   },
   subtitle: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.xs,
     lineHeight: 18,
   },
   emptyText: {
