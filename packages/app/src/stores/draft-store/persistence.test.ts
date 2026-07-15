@@ -39,6 +39,9 @@ function createDraftPersistence() {
     remove() {
       drafts.removeItem("drafts");
     },
+    flush() {
+      return drafts.flush();
+    },
     advance(ms: number) {
       nowMs += ms;
       if (scheduled && scheduled.dueAt <= nowMs) {
@@ -78,5 +81,29 @@ describe("draft persistence", () => {
     drafts.advance(DRAFT_PERSIST_INTERVAL_MS);
 
     expect(drafts.text()).toBeNull();
+  });
+
+  it("continues checkpointing the latest change across consecutive intervals", () => {
+    const drafts = createDraftPersistence();
+
+    drafts.save("first");
+    drafts.save("first interval");
+    drafts.advance(DRAFT_PERSIST_INTERVAL_MS);
+    expect(drafts.text()).toBe("first interval");
+
+    drafts.save("second");
+    drafts.save("second interval");
+    drafts.advance(DRAFT_PERSIST_INTERVAL_MS);
+    expect(drafts.text()).toBe("second interval");
+  });
+
+  it("flushes the latest pending change before the interval ends", async () => {
+    const drafts = createDraftPersistence();
+
+    drafts.save("first checkpoint");
+    drafts.save("pending checkpoint");
+    await drafts.flush();
+
+    expect(drafts.text()).toBe("pending checkpoint");
   });
 });

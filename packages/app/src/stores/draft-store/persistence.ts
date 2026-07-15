@@ -8,6 +8,10 @@ export interface PersistenceScheduler {
   cancel: (handle: unknown) => void;
 }
 
+export interface DraftPersistStorage<T> extends PersistStorage<T> {
+  flush: () => Promise<void>;
+}
+
 const systemScheduler: PersistenceScheduler = {
   now: Date.now,
   schedule: (callback, delayMs) => setTimeout(callback, delayMs),
@@ -17,15 +21,15 @@ const systemScheduler: PersistenceScheduler = {
 export function createDraftPersistStorage<T>(
   storage: PersistStorage<T>,
   scheduler?: PersistenceScheduler,
-): PersistStorage<T>;
+): DraftPersistStorage<T>;
 export function createDraftPersistStorage<T>(
   storage: PersistStorage<T> | undefined,
   scheduler?: PersistenceScheduler,
-): PersistStorage<T> | undefined;
+): DraftPersistStorage<T> | undefined;
 export function createDraftPersistStorage<T>(
   storage: PersistStorage<T> | undefined,
   scheduler: PersistenceScheduler = systemScheduler,
-): PersistStorage<T> | undefined {
+): DraftPersistStorage<T> | undefined {
   if (!storage) {
     return undefined;
   }
@@ -40,15 +44,19 @@ export function createDraftPersistStorage<T>(
       timer = null;
     }
   };
-  const flush = () => {
+  const flush = async (): Promise<void> => {
     cancelTimer();
     const write = pending;
     pending = null;
     if (!write) {
       return;
     }
-    storage.setItem(write.name, write.value);
     lastWriteAt = scheduler.now();
+    try {
+      await storage.setItem(write.name, write.value);
+    } catch (error) {
+      console.warn("[DraftStore] Failed to persist draft checkpoint", error);
+    }
   };
 
   return {
@@ -57,10 +65,11 @@ export function createDraftPersistStorage<T>(
       pending = { name, value };
       const delay = DRAFT_PERSIST_INTERVAL_MS - (scheduler.now() - lastWriteAt);
       if (delay <= 0) {
-        flush();
-        return;
+        return flush();
       }
-      timer ??= scheduler.schedule(flush, delay);
+      timer ??= scheduler.schedule(() => {
+        void flush();
+      }, delay);
     },
     removeItem: (name) => {
       cancelTimer();
@@ -68,5 +77,6 @@ export function createDraftPersistStorage<T>(
       lastWriteAt = scheduler.now();
       return storage.removeItem(name);
     },
+    flush,
   };
 }

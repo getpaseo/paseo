@@ -50,6 +50,13 @@ type DraftStore = DraftStoreState & DraftStoreActions;
 
 const draftGenerations = new Map<string, number>();
 let gcScheduled = false;
+const draftPersistStorage = createDraftPersistStorage(
+  createJSONStorage<DraftStoreState>(() => AsyncStorage),
+);
+
+export function flushDraftPersistStorage(): Promise<void> {
+  return draftPersistStorage?.flush() ?? Promise.resolve();
+}
 
 function createDraftRecord(input: {
   draft: DraftInput;
@@ -379,7 +386,7 @@ export const useDraftStore = create<DraftStore>()(
     {
       name: "paseo-drafts",
       version: DRAFT_STORE_VERSION,
-      storage: createDraftPersistStorage(createJSONStorage(() => AsyncStorage)),
+      storage: draftPersistStorage,
       migrate: (persistedState) => {
         return migratePersistedState(persistedState, {
           migrateLegacyImages,

@@ -16,7 +16,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { useWindowDimensions, View } from "react-native";
+import { AppState, useWindowDimensions, View } from "react-native";
 import { GestureDetector, GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
@@ -97,6 +97,7 @@ import {
 import { getDaemonStartService } from "@/runtime/daemon-start-service";
 import { applyAppearance } from "@/screens/settings/appearance/apply-appearance";
 import { selectIsAgentListOpen, usePanelStore } from "@/stores/panel-store";
+import { flushDraftPersistStorage } from "@/stores/draft-store";
 import { THEME_TO_UNISTYLES, type ThemeName } from "@/styles/theme";
 import { installWebScrollbarStyles } from "@/styles/install-web-scrollbar-styles";
 import type { HostProfile } from "@/types/host-connection";
@@ -959,6 +960,14 @@ function RootAppTree() {
 
 export default function RootLayout() {
   useEffect(() => installWebScrollbarStyles(), []);
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (nextState) => {
+      if (nextState !== "active") {
+        void flushDraftPersistStorage();
+      }
+    });
+    return () => subscription.remove();
+  }, []);
 
   return (
     <QueryProvider>
