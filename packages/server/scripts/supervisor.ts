@@ -47,6 +47,10 @@ interface SupervisorOptions {
   logFile?: SupervisorLogFileOptions;
 }
 
+export interface SupervisorController {
+  requestShutdown(reason: string): void;
+}
+
 function describeExit(code: number | null, signal: NodeJS.Signals | null): string {
   return signal ?? (typeof code === "number" ? `code ${code}` : "unknown");
 }
@@ -105,7 +109,7 @@ function createSupervisorLogStream(options: SupervisorLogFileOptions | undefined
   });
 }
 
-export function runSupervisor(options: SupervisorOptions): void {
+export function runSupervisor(options: SupervisorOptions): SupervisorController {
   const restartOnCrash = options.restartOnCrash ?? false;
   const workerArgs = options.workerArgs ?? process.argv.slice(2);
   const workerEnv = options.workerEnv ?? process.env;
@@ -331,4 +335,6 @@ export function runSupervisor(options: SupervisorOptions): void {
   process.stdout.write(`[${options.name}] ${options.startupMessage}\n`);
   writeLifecycleLog(options.startupMessage);
   spawnWorker();
+
+  return { requestShutdown };
 }
