@@ -305,6 +305,28 @@ describe("app update service", () => {
     expect(runtime.installedVersions).toEqual([]);
   });
 
+  it("does not install an unvalidated download when the quit-time check fails", async () => {
+    const { runtime, service } = createService({ bucket: async () => 0 });
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+
+    await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+    });
+    runtime.finishUpdateDownload(rolledOutUpdate);
+
+    runtime.failNextCheck(new Error("offline"));
+    const installed = await service.installUpdateOnQuit({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      signal: new AbortController().signal,
+    });
+
+    expect(installed).toBe(false);
+    expect(runtime.installedVersions).toEqual([]);
+  });
+
   it("rechecks for the newest release before a manual install", async () => {
     const { runtime, service } = createService({ bucket: async () => 0.99 });
     runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });

@@ -114,6 +114,14 @@ function getErrorMessage(error: unknown): string {
   return String(error);
 }
 
+function buildDeferredInstallResult(currentVersion: string): AppUpdateInstallResult {
+  return {
+    installed: false,
+    version: currentVersion,
+    message: "Update validation timed out. The update will be installed later.",
+  };
+}
+
 export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateService {
   let cachedUpdateInfo: RuntimeUpdateInfo | null = null;
   let downloadedUpdateVersion: string | null = null;
@@ -275,11 +283,7 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
 
     const readyVersion = cachedUpdateInfo.version;
     if (signal?.aborted) {
-      return {
-        installed: false,
-        version: currentVersion,
-        message: "Update installation was deferred while the app quit.",
-      };
+      return buildDeferredInstallResult(currentVersion);
     }
 
     if (isReadyToInstallVersion(readyVersion)) {
@@ -293,7 +297,10 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
 
     try {
       await deps.runtime.downloadUpdate();
-      if (signal?.aborted || cachedUpdateInfo?.version !== readyVersion) {
+      if (signal?.aborted) {
+        return buildDeferredInstallResult(currentVersion);
+      }
+      if (cachedUpdateInfo?.version !== readyVersion) {
         return {
           installed: false,
           version: currentVersion,
