@@ -4947,14 +4947,13 @@ test("parses canonical fetch_agent_timeline_response payloads without crashing",
   expect(logger.warn).not.toHaveBeenCalled();
 });
 
-test("drops invalid fetch_agent_timeline_response tool_call payloads and logs validation warning", async () => {
-  const logger = createMockLogger();
+test("rejects a correlated request when its response violates the protocol schema", async () => {
   const mock = createMockTransport();
 
   const client = new DaemonClient({
     url: "ws://test",
     clientId: "clsk_unit_test",
-    logger,
+    logger: noopLogger,
     reconnect: { enabled: false },
     transportFactory: () => mock.transport,
   });
@@ -4964,9 +4963,9 @@ test("drops invalid fetch_agent_timeline_response tool_call payloads and logs va
   mock.triggerOpen();
   await connectPromise;
 
-  const received: unknown[] = [];
-  const unsubscribe = client.on("fetch_agent_timeline_response", (msg) => {
-    received.push(msg);
+  const response = client.fetchAgentTimeline("agent_cli", {
+    requestId: "req-invalid",
+    timeout: 1,
   });
 
   mock.triggerMessage(
@@ -5013,10 +5012,10 @@ test("drops invalid fetch_agent_timeline_response tool_call payloads and logs va
     }),
   );
 
-  unsubscribe();
-
-  expect(received).toHaveLength(0);
-  expect(logger.warn).toHaveBeenCalled();
+  await expect(response).rejects.toMatchObject({
+    requestId: "req-invalid",
+    message: expect.stringMatching(/validation/i),
+  });
 });
 
 test("sends subscribe/unsubscribe terminals messages", async () => {

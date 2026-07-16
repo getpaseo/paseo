@@ -176,6 +176,32 @@ function normalizePassword(value: string | undefined): string | null {
   return value.length > 0 ? value : null;
 }
 
+function extractCorrelatedResponseIdentity(input: unknown): CorrelatedResponseIdentity | null {
+  if (!input || typeof input !== "object") {
+    return null;
+  }
+
+  const envelope = input as { type?: unknown; message?: unknown };
+  if (envelope.type !== "session" || !envelope.message || typeof envelope.message !== "object") {
+    return null;
+  }
+
+  const message = envelope.message as { type?: unknown; payload?: unknown };
+  if (!message.payload || typeof message.payload !== "object") {
+    return null;
+  }
+
+  const payload = message.payload as { requestId?: unknown };
+  if (typeof payload.requestId !== "string") {
+    return null;
+  }
+
+  return {
+    requestId: payload.requestId,
+    ...(typeof message.type === "string" ? { responseType: message.type } : {}),
+  };
+}
+
 export type {
   DaemonTransport,
   DaemonTransportFactory,
@@ -789,11 +815,22 @@ interface Waiter<T> {
   resolve(value: T): void;
   reject(error: Error): void;
   timeoutHandle: ReturnType<typeof setTimeout> | null;
+  requestId?: string;
 }
 
 interface WaitHandle<T> {
   promise: Promise<T>;
   cancel: (error: Error) => void;
+}
+
+interface WaitOptions {
+  skipQueue?: boolean;
+  requestId?: string;
+}
+
+interface CorrelatedResponseIdentity {
+  requestId: string;
+  responseType?: string;
 }
 
 interface PendingBinaryFileRead {
@@ -845,6 +882,20 @@ class DaemonRpcError extends Error {
     this.requestId = params.requestId;
     this.requestType = params.requestType;
     this.code = params.code;
+  }
+}
+
+class DaemonProtocolError extends Error {
+  readonly requestId: string;
+  readonly responseType?: string;
+  readonly code = "invalid_response";
+
+  constructor(identity: CorrelatedResponseIdentity) {
+    const responseLabel = identity.responseType ?? "unknown response";
+    super(`Response validation failed for ${responseLabel}`);
+    this.name = "DaemonProtocolError";
+    this.requestId = identity.requestId;
+    this.responseType = identity.responseType;
   }
 }
 
@@ -1548,7 +1599,7 @@ export class DaemonClient {
         return { kind: "ok", value };
       },
       timeout,
-      params.options,
+      { ...params.options, requestId: params.requestId },
     );
 
     try {
@@ -4934,14 +4985,22 @@ export class DaemonClient {
 
     const parsed = validateWSOutboundMessage(parsedJson);
     if (!parsed.success) {
-      const msgType =
+      const responseIdentity = extractCorrelatedResponseIdentity(parsedJson);
+      const envelopeType =
         parsedJson != null &&
         typeof parsedJson === "object" &&
         "type" in parsedJson &&
         typeof parsedJson.type === "string"
           ? parsedJson.type
           : "unknown";
+      const msgType = responseIdentity?.responseType ?? envelopeType;
       this.logger.warn({ msgType, error: parsed.error.message }, "Message validation failed");
+      if (responseIdentity) {
+        this.rejectWaitersForRequestId(
+          responseIdentity.requestId,
+          new DaemonProtocolError(responseIdentity),
+        );
+      }
       return;
     }
 
@@ -5262,6 +5321,19 @@ export class DaemonClient {
     }
   }
 
+  private rejectWaitersForRequestId(requestId: string, error: Error): void {
+    for (const waiter of Array.from(this.waiters)) {
+      if (waiter.requestId !== requestId) {
+        continue;
+      }
+      this.waiters.delete(waiter);
+      if (waiter.timeoutHandle) {
+        clearTimeout(waiter.timeoutHandle);
+      }
+      waiter.reject(error);
+    }
+  }
+
   private clearWaiters(error: Error): void {
     for (const waiter of Array.from(this.waiters)) {
       if (waiter.timeoutHandle) {
@@ -5331,7 +5403,7 @@ export class DaemonClient {
   private waitForWithCancel<T>(
     predicate: (msg: SessionOutboundMessage) => T | null,
     timeout = 30000,
-    _options?: { skipQueue?: boolean },
+    options?: WaitOptions,
   ): WaitHandle<T> {
     // Capture stack trace at call site, not inside setTimeout
     const timeoutError = new Error(`Timeout waiting for message (${timeout}ms)`);
@@ -5368,6 +5440,7 @@ export class DaemonClient {
         resolve: wrappedResolve,
         reject: wrappedReject,
         timeoutHandle,
+        requestId: options?.requestId,
       };
       this.waiters.add(waiter);
     });
