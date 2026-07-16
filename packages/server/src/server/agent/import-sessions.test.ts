@@ -275,6 +275,51 @@ test("listImportableProviderSessions includes a provider session after its Paseo
   expect(result.filteredAlreadyImportedCount).toBe(0);
 });
 
+test("listImportableProviderSessions includes an archived provider session still loaded in memory", async () => {
+  const cwd = "/tmp/project";
+  const agentId = "00000000-0000-4000-8000-000000000633";
+  const archivedSession = makeImportableSession({
+    provider: "claude",
+    sessionId: "archived-live-session",
+    cwd,
+    title: "Archived live import",
+    lastActivityAt: "2026-04-30T12:00:00.000Z",
+    firstPrompt: "import the loaded session again",
+  });
+
+  const result = await listImportableProviderSessions({
+    request: makeRequest({ cwd, providers: ["claude"] }),
+    agentManager: {
+      listAgents: () => [
+        makeManagedAgent({
+          id: agentId,
+          provider: "claude",
+          cwd,
+          sessionId: "archived-live-session",
+        }),
+      ],
+      listImportableSessions: async () => [archivedSession],
+    },
+    agentStorage: {
+      list: async () => [
+        {
+          id: agentId,
+          provider: "claude",
+          archivedAt: "2026-04-30T12:01:00.000Z",
+          persistence: {
+            provider: "claude",
+            sessionId: "archived-live-session",
+          },
+        } as StoredAgentRecord,
+      ],
+    },
+    providerSnapshotManager: { getProviderLabel: () => "Claude" },
+  });
+
+  expect(result.entries.map((entry) => entry.providerHandleId)).toEqual(["archived-live-session"]);
+  expect(result.filteredAlreadyImportedCount).toBe(0);
+});
+
 test("listImportableProviderSessions filters out metadata generation sessions", async () => {
   const cwd = "/tmp/project";
   const sessions = [
@@ -479,6 +524,100 @@ test("importProviderSession passes labels through the manager import operation",
     workspaceId: "ws-imported",
     labels: { source: "import" },
   });
+});
+
+test("importProviderSession restores an archived session as the same Paseo agent", async () => {
+  const cwd = "/tmp/imported-agent";
+  const agentId = "00000000-0000-4000-8000-000000000634";
+  const persistence = {
+    provider: "codex",
+    sessionId: "thread-archived",
+    nativeHandle: "thread-archived",
+    metadata: { provider: "codex", cwd },
+  };
+  const archivedRecord = {
+    id: agentId,
+    provider: "codex",
+    cwd,
+    workspaceId: "ws-archived",
+    createdAt: "2026-04-30T10:00:00.000Z",
+    updatedAt: "2026-04-30T11:00:00.000Z",
+    lastActivityAt: "2026-04-30T10:30:00.000Z",
+    lastUserMessageAt: null,
+    labels: { existing: "label" },
+    config: { provider: "codex", cwd },
+    persistence,
+    archivedAt: "2026-04-30T12:00:00.000Z",
+  } as StoredAgentRecord;
+  const snapshot = makeManagedAgent({
+    id: agentId,
+    provider: "codex",
+    cwd,
+    sessionId: "thread-archived",
+    nativeHandle: "thread-archived",
+  });
+  let freshImportAttempted = false;
+  let unarchivedAgentId: string | undefined;
+  let unarchiveUpdates: { workspaceId?: string; labels?: Record<string, string> } | undefined;
+  let resumedAgentId: string | undefined;
+  let resumeOptions: { workspaceId?: string; labels?: Record<string, string> } | undefined;
+  const agentManager = {
+    importProviderSession: async () => {
+      freshImportAttempted = true;
+      return snapshot;
+    },
+    unarchiveSnapshot: async (
+      id: string,
+      updates?: { workspaceId?: string; labels?: Record<string, string> },
+    ) => {
+      unarchivedAgentId = id;
+      unarchiveUpdates = updates;
+      return true;
+    },
+    notifyAgentState: () => {},
+    resumeAgentFromPersistence: async (
+      _handle: unknown,
+      _overrides: unknown,
+      id?: string,
+      options?: { workspaceId?: string; labels?: Record<string, string> },
+    ) => {
+      resumedAgentId = id;
+      resumeOptions = options;
+      return snapshot;
+    },
+    hydrateTimelineFromProvider: async () => {},
+    getTimeline: () => [{ type: "user_message", text: "restored" }],
+  } as unknown as AgentManager;
+  const agentStorage = {
+    list: async () => [archivedRecord],
+  } as unknown as AgentStorage;
+
+  const result = await importProviderSession({
+    request: {
+      requestId: "reimport-thread",
+      provider: "codex",
+      providerHandleId: "thread-archived",
+      cwd,
+      labels: { source: "reimport" },
+    },
+    workspaceId: "ws-restored",
+    agentManager,
+    agentStorage,
+    logger: { warn: () => {}, error: () => {} } as never,
+  });
+
+  expect(freshImportAttempted).toBe(false);
+  expect(unarchivedAgentId).toBe(agentId);
+  expect(unarchiveUpdates).toEqual({
+    workspaceId: "ws-restored",
+    labels: { source: "reimport" },
+  });
+  expect(resumedAgentId).toBe(agentId);
+  expect(resumeOptions).toMatchObject({
+    workspaceId: "ws-restored",
+    labels: { existing: "label", source: "reimport" },
+  });
+  expect(result).toEqual({ snapshot, timelineSize: 1 });
 });
 
 test("importProviderSession requires cwd from the selected provider row", async () => {

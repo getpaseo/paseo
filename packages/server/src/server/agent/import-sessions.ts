@@ -10,6 +10,7 @@ import type { AgentStorage, StoredAgentRecord } from "./agent-storage.js";
 import type { AgentPersistenceHandle, AgentProvider } from "./agent-sdk-types.js";
 import { unarchiveAgentState } from "./agent-prompt.js";
 import { toRecentProviderSessionDescriptorPayload } from "./agent-projections.js";
+import { buildConfigOverrides, extractTimestamps } from "../persistence-hooks.js";
 import type {
   FetchRecentProviderSessionsRequestMessage,
   ImportAgentRequestMessageSchema,
@@ -146,7 +147,41 @@ export async function importProviderSession(
   }
 
   const handle = buildImportPersistenceHandle({ provider, providerHandleId, cwd });
-  await unarchiveAgentByHandle(input.agentStorage, input.agentManager, handle);
+  const matchingRecords = (await input.agentStorage.list()).filter((record) =>
+    recordMatchesProviderHandle(record, handle),
+  );
+  const activeRecord = matchingRecords.find((record) => !record.archivedAt);
+  if (activeRecord) {
+    throw new Error(`Provider session is already imported: ${providerHandleId}`);
+  }
+  const archivedRecord = matchingRecords.find((record) => record.archivedAt);
+  if (archivedRecord?.persistence) {
+    const restoredLabels = input.request.labels
+      ? { ...archivedRecord.labels, ...input.request.labels }
+      : archivedRecord.labels;
+    const restoredRecord = {
+      ...archivedRecord,
+      workspaceId: input.workspaceId,
+      labels: restoredLabels,
+      archivedAt: null,
+    };
+    await unarchiveAgentState(input.agentStorage, input.agentManager, archivedRecord.id, {
+      workspaceId: input.workspaceId,
+      labels: input.request.labels,
+    });
+    const snapshot = await input.agentManager.resumeAgentFromPersistence(
+      archivedRecord.persistence,
+      buildConfigOverrides(restoredRecord),
+      archivedRecord.id,
+      extractTimestamps(restoredRecord),
+    );
+    await input.agentManager.hydrateTimelineFromProvider(snapshot.id);
+    return {
+      snapshot,
+      timelineSize: input.agentManager.getTimeline(snapshot.id).length,
+    };
+  }
+
   const snapshot = await input.agentManager.importProviderSession({
     provider,
     providerHandleId,
@@ -162,22 +197,15 @@ export async function importProviderSession(
   };
 }
 
-async function unarchiveAgentByHandle(
-  agentStorage: AgentStorage,
-  agentManager: AgentManager,
+function recordMatchesProviderHandle(
+  record: StoredAgentRecord,
   handle: AgentPersistenceHandle,
-): Promise<void> {
-  const records = await agentStorage.list();
-  const matched = records.find(
-    (record) =>
-      record.persistence?.provider === handle.provider &&
-      (record.persistence.sessionId === handle.sessionId ||
-        record.persistence.nativeHandle === handle.nativeHandle),
+): boolean {
+  return (
+    record.persistence?.provider === handle.provider &&
+    (record.persistence.sessionId === handle.sessionId ||
+      record.persistence.nativeHandle === handle.nativeHandle)
   );
-  if (!matched) {
-    return;
-  }
-  await unarchiveAgentState(agentStorage, agentManager, matched.id);
 }
 
 function parseRecentProviderSessionsSince(since: string | undefined): number | null {
@@ -212,12 +240,17 @@ async function collectImportedProviderSessionHandles(
   agentStorage: Pick<AgentStorage, "list">,
 ): Promise<Set<string>> {
   const handles = new Set<string>();
+  const records = await agentStorage.list();
+  const storedRecordsById = new Map(records.map((record) => [record.id, record]));
 
   for (const agent of agentManager.listAgents()) {
+    if (storedRecordsById.get(agent.id)?.archivedAt) {
+      continue;
+    }
     collectProviderSessionHandleKeys(handles, agent.provider, agent.persistence);
   }
 
-  for (const record of await agentStorage.list()) {
+  for (const record of records) {
     if (record.archivedAt) {
       continue;
     }

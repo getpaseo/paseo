@@ -172,7 +172,7 @@ import {
   matchesAgentUpdatesFilter,
   type AgentUpdatesService,
 } from "./session/agent-updates/agent-updates-service.js";
-import { expandTilde } from "../utils/path.js";
+import { createRealpathAwarePathMatcher, expandTilde } from "../utils/path.js";
 import {
   searchDirectoryEntries,
   WORKSPACE_SEARCH_HIDDEN_DIRECTORIES,
@@ -2711,7 +2711,14 @@ export class Session {
       let workspace: PersistedWorkspaceRecord | null = null;
       let workspaceId: string;
       if (normalized.workspaceId) {
-        workspaceId = normalized.workspaceId;
+        const requestedWorkspace = await this.workspaceRegistry.get(normalized.workspaceId);
+        if (!requestedWorkspace || requestedWorkspace.archivedAt) {
+          throw new Error(`Workspace not found: ${normalized.workspaceId}`);
+        }
+        if (!createRealpathAwarePathMatcher(requestedWorkspace.cwd)(normalized.cwd)) {
+          throw new Error(`Import cwd does not match workspace: ${normalized.workspaceId}`);
+        }
+        workspaceId = requestedWorkspace.workspaceId;
       } else {
         workspace = await this.workspaceProvisioning.createWorkspaceForDirectory(normalized.cwd);
         workspaceId = workspace.workspaceId;

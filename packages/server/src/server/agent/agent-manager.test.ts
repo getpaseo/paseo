@@ -5975,7 +5975,10 @@ test("unarchiveSnapshot unarchives native provider storage before clearing archi
   await manager.archiveAgent(agent.id);
   client.readArchivedAtDuringUnarchive = async () => (await storage.get(agent.id))?.archivedAt;
 
-  const unarchived = await manager.unarchiveSnapshot(agent.id);
+  const unarchived = await manager.unarchiveSnapshot(agent.id, {
+    workspaceId: "ws-restored",
+    labels: { source: "reimport" },
+  });
   const stored = await storage.get(agent.id);
 
   expect(unarchived).toBe(true);
@@ -5983,6 +5986,8 @@ test("unarchiveSnapshot unarchives native provider storage before clearing archi
   expect(client.unarchivedHandles).toEqual(client.archivedHandles);
   expect(client.archivedAtDuringUnarchive).toEqual(expect.any(String));
   expect(stored?.archivedAt).toBeNull();
+  expect(stored?.workspaceId).toBe("ws-restored");
+  expect(stored?.labels).toMatchObject({ source: "reimport" });
 });
 
 test("unarchiveSnapshotByHandle unarchives native provider storage for the matched snapshot", async () => {
