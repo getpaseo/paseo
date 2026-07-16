@@ -155,7 +155,7 @@ export async function importProviderSession(
     throw new Error(`Provider session is already imported: ${providerHandleId}`);
   }
   const archivedRecord = matchingRecords.find((record) => record.archivedAt);
-  if (archivedRecord?.persistence) {
+  if (archivedRecord?.persistence && archivedRecord.archivedAt) {
     const restoredLabels = input.request.labels
       ? { ...archivedRecord.labels, ...input.request.labels }
       : archivedRecord.labels;
@@ -169,17 +169,22 @@ export async function importProviderSession(
       workspaceId: input.workspaceId,
       labels: input.request.labels,
     });
-    const snapshot = await input.agentManager.resumeAgentFromPersistence(
-      archivedRecord.persistence,
-      buildConfigOverrides(restoredRecord),
-      archivedRecord.id,
-      extractTimestamps(restoredRecord),
-    );
-    await input.agentManager.hydrateTimelineFromProvider(snapshot.id);
-    return {
-      snapshot,
-      timelineSize: input.agentManager.getTimeline(snapshot.id).length,
-    };
+    try {
+      const snapshot = await input.agentManager.resumeAgentFromPersistence(
+        archivedRecord.persistence,
+        buildConfigOverrides(restoredRecord),
+        archivedRecord.id,
+        extractTimestamps(restoredRecord),
+      );
+      await input.agentManager.hydrateTimelineFromProvider(snapshot.id);
+      return {
+        snapshot,
+        timelineSize: input.agentManager.getTimeline(snapshot.id).length,
+      };
+    } catch (error) {
+      await rollbackArchivedImport(input, archivedRecord, archivedRecord.archivedAt);
+      throw error;
+    }
   }
 
   const snapshot = await input.agentManager.importProviderSession({
@@ -195,6 +200,33 @@ export async function importProviderSession(
     snapshot,
     timelineSize: input.agentManager.getTimeline(snapshot.id).length,
   };
+}
+
+async function rollbackArchivedImport(
+  input: ImportProviderSessionInput,
+  archivedRecord: StoredAgentRecord,
+  archivedAt: string,
+): Promise<void> {
+  try {
+    if (input.agentManager.getAgent(archivedRecord.id)) {
+      await input.agentManager.closeAgent(archivedRecord.id);
+    }
+    await input.agentManager.archiveSnapshot(archivedRecord.id, archivedAt);
+  } catch (error) {
+    input.logger.error(
+      { err: error, agentId: archivedRecord.id },
+      "Failed to re-archive provider session after import failure",
+    );
+  }
+
+  try {
+    await input.agentStorage.upsert(archivedRecord);
+  } catch (error) {
+    input.logger.error(
+      { err: error, agentId: archivedRecord.id },
+      "Failed to restore archived agent record after import failure",
+    );
+  }
 }
 
 function recordMatchesProviderHandle(

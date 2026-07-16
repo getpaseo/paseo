@@ -620,6 +620,75 @@ test("importProviderSession restores an archived session as the same Paseo agent
   expect(result).toEqual({ snapshot, timelineSize: 1 });
 });
 
+test("importProviderSession restores the archived record when provider resume fails", async () => {
+  const cwd = "/tmp/imported-agent";
+  const agentId = "00000000-0000-4000-8000-000000000635";
+  const archivedAt = "2026-04-30T12:00:00.000Z";
+  const archivedRecord = {
+    id: agentId,
+    provider: "codex",
+    cwd,
+    workspaceId: "ws-archived",
+    createdAt: "2026-04-30T10:00:00.000Z",
+    updatedAt: "2026-04-30T11:00:00.000Z",
+    lastActivityAt: "2026-04-30T10:30:00.000Z",
+    lastUserMessageAt: null,
+    labels: { existing: "label" },
+    config: { provider: "codex", cwd },
+    persistence: {
+      provider: "codex",
+      sessionId: "thread-stale",
+      nativeHandle: "thread-stale",
+      metadata: { provider: "codex", cwd },
+    },
+    archivedAt,
+  } as StoredAgentRecord;
+  let rearchivedAgentId: string | undefined;
+  let rearchivedAt: string | undefined;
+  let restoredRecord: StoredAgentRecord | undefined;
+  const agentManager = {
+    importProviderSession: async () => {
+      throw new Error("fresh import should not run");
+    },
+    unarchiveSnapshot: async () => true,
+    notifyAgentState: () => {},
+    resumeAgentFromPersistence: async () => {
+      throw new Error("provider session is unavailable");
+    },
+    getAgent: () => null,
+    archiveSnapshot: async (id: string, timestamp: string) => {
+      rearchivedAgentId = id;
+      rearchivedAt = timestamp;
+      return archivedRecord;
+    },
+  } as unknown as AgentManager;
+  const agentStorage = {
+    list: async () => [archivedRecord],
+    upsert: async (record: StoredAgentRecord) => {
+      restoredRecord = record;
+    },
+  } as unknown as AgentStorage;
+
+  await expect(
+    importProviderSession({
+      request: {
+        requestId: "reimport-stale-thread",
+        provider: "codex",
+        providerHandleId: "thread-stale",
+        cwd,
+      },
+      workspaceId: "ws-restored",
+      agentManager,
+      agentStorage,
+      logger: { warn: () => {}, error: () => {} } as never,
+    }),
+  ).rejects.toThrow("provider session is unavailable");
+
+  expect(rearchivedAgentId).toBe(agentId);
+  expect(rearchivedAt).toBe(archivedAt);
+  expect(restoredRecord).toBe(archivedRecord);
+});
+
 test("importProviderSession requires cwd from the selected provider row", async () => {
   const agentManager = {} as unknown as AgentManager;
 
