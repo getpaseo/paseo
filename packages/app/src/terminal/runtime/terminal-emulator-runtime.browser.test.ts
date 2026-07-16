@@ -255,7 +255,7 @@ describe("terminal emulator runtime in a real browser", () => {
 
     await activateTerminalCell({ host: mounted.host, column: 2 });
 
-    expect(onOpenLocalFileLink).toHaveBeenCalledWith(target, "side");
+    expect(onOpenLocalFileLink).toHaveBeenCalledWith(target, "main");
     expect(onPendingModifiersConsumed).toHaveBeenCalledTimes(1);
   });
 

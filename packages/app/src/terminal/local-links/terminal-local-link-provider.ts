@@ -132,11 +132,12 @@ function createLocalFileLink(input: {
     activate: (event) => {
       const hasModifier =
         input.options.hasActivationModifier?.(event) ?? hasActivationModifier(event);
-      if (input.options.requiresActivationModifier?.() && !hasModifier) {
+      const requiresModifier = input.options.requiresActivationModifier?.() ?? false;
+      if (requiresModifier && !hasModifier) {
         return;
       }
       event.preventDefault();
-      const disposition = hasModifier ? "side" : "main";
+      const disposition = hasModifier && !requiresModifier ? "side" : "main";
       input.options.openLink(input.target, disposition, event);
       if (hasModifier) {
         input.options.consumeActivationModifier?.(event);

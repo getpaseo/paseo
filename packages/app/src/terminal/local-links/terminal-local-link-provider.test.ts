@@ -79,7 +79,7 @@ describe("createTerminalLocalFileLinkProvider", () => {
     expect(plainPreventDefault).not.toHaveBeenCalled();
     expect(modifiedPreventDefault).toHaveBeenCalledTimes(1);
     expect(openLink).toHaveBeenCalledTimes(1);
-    expect(openLink).toHaveBeenCalledWith(target, "side", expect.anything());
+    expect(openLink).toHaveBeenCalledWith(target, "main", expect.anything());
   });
 
   it("opens plain clicks when the modifier requirement is disabled", async () => {
@@ -119,7 +119,7 @@ describe("createTerminalLocalFileLinkProvider", () => {
 
     link?.activate({ preventDefault: vi.fn() } as unknown as MouseEvent, link.text);
 
-    expect(openLink).toHaveBeenCalledWith(target, "side", expect.anything());
+    expect(openLink).toHaveBeenCalledWith(target, "main", expect.anything());
     expect(consumeActivationModifier).toHaveBeenCalledTimes(1);
   });
 
