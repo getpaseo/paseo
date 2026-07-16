@@ -4419,6 +4419,83 @@ test("open_project_request recreates a missing project record when unarchiving i
   expect(response?.payload.workspace?.projectDisplayName).toBe("repo");
 });
 
+test("workspace recovery stays accepted when git observer warming fails", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const workspaceGitService = createNoopWorkspaceGitService({
+    registerWorkspace: () => {
+      throw new Error("git watcher unavailable");
+    },
+  });
+  const session = createSessionForWorkspaceTests({
+    appVersion: "0.1.105",
+    workspaceGitService,
+    onMessage: (message) => {
+      if (isSessionOutboundMessage(message)) emitted.push(message);
+    },
+  });
+  const archivedAt = "2026-03-10T00:00:00.000Z";
+  let project = createPersistedProjectRecord({
+    projectId: REPO_CWD,
+    rootPath: REPO_CWD,
+    kind: "git",
+    displayName: "repo",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: archivedAt,
+    archivedAt,
+  });
+  let workspace = createPersistedWorkspaceRecord({
+    workspaceId: "ws-recovery-warm-failure",
+    projectId: project.projectId,
+    cwd: REPO_CWD,
+    kind: "directory",
+    displayName: "repo",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: archivedAt,
+    archivedAt,
+  });
+
+  session.filesystem.isDirectory = async () => true;
+  session.projectRegistry.get = async (projectId: string) =>
+    projectId === project.projectId ? project : null;
+  session.projectRegistry.list = async () => [project];
+  session.projectRegistry.upsert = async (record: PersistedProjectRecord) => {
+    project = record;
+  };
+  session.workspaceRegistry.get = async (workspaceId: string) =>
+    workspaceId === workspace.workspaceId ? workspace : null;
+  session.workspaceRegistry.list = async () => [workspace];
+  session.workspaceRegistry.upsert = async (record: PersistedWorkspaceRecord) => {
+    workspace = record;
+  };
+  session.workspaceUpdatesSubscription = {
+    subscriptionId: "sub-recovery-warm-failure",
+    filter: undefined,
+    isBootstrapping: false,
+    pendingUpdatesByWorkspaceId: new Map(),
+    lastEmittedByWorkspaceId: new Map(),
+  };
+  session.reconcileActiveWorkspaceRecords = async () => new Set();
+  session.listAgentPayloads = async () => [];
+
+  await session.handleMessage({
+    type: "workspace.recovery.restore.request",
+    requestId: "req-recovery-warm-failure",
+    workspaceId: workspace.workspaceId,
+  });
+
+  expect(workspace.archivedAt).toBeNull();
+  expect(findByType(emitted, "workspace.recovery.restore.response")?.payload).toEqual({
+    requestId: "req-recovery-warm-failure",
+    workspaceId: workspace.workspaceId,
+    accepted: true,
+    error: null,
+  });
+  expect(findByType(emitted, "workspace_update")?.payload).toMatchObject({
+    kind: "upsert",
+    workspace: { id: workspace.workspaceId },
+  });
+});
+
 test("refresh_agent_request leaves workspace archival independent when its directory exists", async () => {
   const emitted: SessionOutboundMessage[] = [];
   const session = createSessionForWorkspaceTests({

@@ -4016,7 +4016,22 @@ export class Session {
     if (!workspace) {
       throw new Error(`Recovered workspace record not found: ${workspaceId}`);
     }
-    await this.workspaceGitObserver.warmGitData(workspace);
+    try {
+      await this.workspaceGitObserver.warmGitData(workspace);
+    } catch (error) {
+      this.sessionLogger.warn(
+        { err: error, workspaceId },
+        "Failed to warm git observer after workspace recovery",
+      );
+      try {
+        await this.emitWorkspaceUpdateForWorkspaceId(workspaceId);
+      } catch (emitError) {
+        this.sessionLogger.warn(
+          { err: emitError, workspaceId },
+          "Failed to emit workspace update after recovery",
+        );
+      }
+    }
   }
 
   private async restoreOwningWorkspaceForLegacyAgentRefresh(agentId: string): Promise<void> {
