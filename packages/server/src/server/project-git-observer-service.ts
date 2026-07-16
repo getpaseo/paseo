@@ -3,7 +3,12 @@ import { watch as watchPath } from "node:fs";
 import type pino from "pino";
 
 import { areEquivalentPaths } from "../utils/path.js";
-import type { PersistedProjectRecord, ProjectRegistry } from "./workspace-registry.js";
+import { workspaceIdsForProjects } from "./workspace-directory.js";
+import type {
+  PersistedProjectRecord,
+  ProjectRegistry,
+  WorkspaceRegistry,
+} from "./workspace-registry.js";
 import type { WorkspaceReconciliationService } from "./workspace-reconciliation-service.js";
 
 const DEFAULT_RESCAN_INTERVAL_MS = 5 * 60_000;
@@ -67,6 +72,7 @@ export class ProjectGitObserverService {
   constructor(
     private readonly deps: {
       projectRegistry: ProjectRegistry;
+      workspaceRegistry: Pick<WorkspaceRegistry, "list">;
       reconciliation: Pick<WorkspaceReconciliationService, "reconcileGitMetadata">;
       logger: pino.Logger;
       onProjectUpdate: (update: ProjectUpdate) => void;
@@ -182,18 +188,22 @@ export class ProjectGitObserverService {
     try {
       await this.sync();
       const result = await this.deps.reconciliation.reconcileGitMetadata();
-      const workspaceIds = [
-        ...new Set(
-          result.changesApplied
-            .filter(
-              (change): change is Extract<typeof change, { kind: "workspace_updated" }> =>
-                change.kind === "workspace_updated",
-            )
-            .map((change) => change.workspaceId),
-        ),
-      ];
-      if (!this.disposed && workspaceIds.length > 0)
-        await this.deps.onWorkspacesChanged(workspaceIds);
+      const workspaceIds = new Set<string>();
+      const projectIds = new Set<string>();
+      for (const change of result.changesApplied) {
+        if (change.kind === "workspace_updated") workspaceIds.add(change.workspaceId);
+        if (change.kind === "project_updated") projectIds.add(change.projectId);
+      }
+      if (projectIds.size > 0) {
+        for (const workspaceId of workspaceIdsForProjects(
+          await this.deps.workspaceRegistry.list(),
+          projectIds,
+        )) {
+          workspaceIds.add(workspaceId);
+        }
+      }
+      if (!this.disposed && workspaceIds.size > 0)
+        await this.deps.onWorkspacesChanged(Array.from(workspaceIds));
     } finally {
       this.reconciling = false;
       if (this.queued) {

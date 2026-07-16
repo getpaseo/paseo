@@ -165,7 +165,7 @@ export function createWorkspaceProvisioningService(deps: {
     const normalizedCwd = resolve(cwd);
     const checkout = await workspaceGitService.getCheckout(normalizedCwd);
     const project = projectId
-      ? await requireActiveProject(projectId)
+      ? await refreshProjectKind(await requireActiveProject(projectId), normalizedCwd, checkout)
       : // COMPAT(workspaceCreateMissingProjectId): added in v0.1.107, remove after 2027-01-15.
         await findOrCreateProjectForDirectory(normalizedCwd);
     const timestamp = new Date().toISOString();
@@ -193,7 +193,9 @@ export function createWorkspaceProvisioningService(deps: {
     const normalizedCwd = resolve(cwd);
     const workspaces = await workspaceRegistry.list();
     const active = workspaces
-      .filter((workspace) => !workspace.archivedAt && workspace.cwd === normalizedCwd)
+      .filter(
+        (workspace) => !workspace.archivedAt && areEquivalentPaths(workspace.cwd, normalizedCwd),
+      )
       .sort(
         (left, right) =>
           Date.parse(left.createdAt) - Date.parse(right.createdAt) ||
@@ -201,7 +203,9 @@ export function createWorkspaceProvisioningService(deps: {
       )[0];
     if (active) return refreshWorkspaceRecord(active);
     const archived = workspaces
-      .filter((workspace) => workspace.archivedAt && workspace.cwd === normalizedCwd)
+      .filter(
+        (workspace) => workspace.archivedAt && areEquivalentPaths(workspace.cwd, normalizedCwd),
+      )
       .sort(
         (left, right) =>
           Date.parse(left.createdAt) - Date.parse(right.createdAt) ||
@@ -300,13 +304,15 @@ export function createWorkspaceProvisioningService(deps: {
     project: PersistedProjectRecord,
     workspaceCwd: string,
     workspaceCheckout: Awaited<ReturnType<WorkspaceGitService["getCheckout"]>>,
-  ): Promise<void> {
+  ): Promise<PersistedProjectRecord> {
     const projectCheckout = areEquivalentPaths(project.rootPath, workspaceCwd)
       ? workspaceCheckout
       : await workspaceGitService.getCheckout(project.rootPath);
-    const kind = projectCheckout.isGit ? "git" : "non_git";
-    if (project.kind === kind) return;
-    await projectRegistry.upsert({ ...project, kind, updatedAt: new Date().toISOString() });
+    const kind: PersistedProjectRecord["kind"] = projectCheckout.isGit ? "git" : "non_git";
+    if (project.kind === kind) return project;
+    const refreshed = { ...project, kind, updatedAt: new Date().toISOString() };
+    await projectRegistry.upsert(refreshed);
+    return refreshed;
   }
 
   return {

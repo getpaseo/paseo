@@ -4,7 +4,9 @@ import { describe, expect, test } from "vitest";
 import { ProjectGitObserverService, type ProjectUpdate } from "./project-git-observer-service.js";
 import {
   createPersistedProjectRecord,
+  createPersistedWorkspaceRecord,
   type PersistedProjectRecord,
+  type PersistedWorkspaceRecord,
   type ProjectRegistry,
 } from "./workspace-registry.js";
 import type {
@@ -48,6 +50,18 @@ function project(
     createdAt: TIMESTAMP,
     updatedAt: TIMESTAMP,
     archivedAt,
+  });
+}
+
+function workspace(workspaceId: string, projectId: string, cwd: string): PersistedWorkspaceRecord {
+  return createPersistedWorkspaceRecord({
+    workspaceId,
+    projectId,
+    cwd,
+    kind: "directory",
+    displayName: workspaceId,
+    createdAt: TIMESTAMP,
+    updatedAt: TIMESTAMP,
   });
 }
 
@@ -346,10 +360,14 @@ class ObservedProjects {
   private readonly logRecords: LogRecord[] = [];
   private readonly service: ProjectGitObserverService;
 
-  constructor(initialProjects: PersistedProjectRecord[]) {
+  constructor(
+    initialProjects: PersistedProjectRecord[],
+    private readonly workspaces: PersistedWorkspaceRecord[] = [],
+  ) {
     this.registry = new FakeProjectRegistry(initialProjects, this.lifecycleEvents);
     this.service = new ProjectGitObserverService({
       projectRegistry: this.registry,
+      workspaceRegistry: { list: async () => this.workspaces },
       reconciliation: this.gitMetadata,
       logger: capturingLogger(this.logRecords),
       onProjectUpdate: (update) => {
@@ -624,12 +642,46 @@ describe("ProjectGitObserverService", () => {
     projects.dispose();
   });
 
-  test("publishes registry project changes once and fans out one deduplicated workspace batch", async () => {
+  test("publishes a capable project update and fans its workspaces out for legacy clients", async () => {
     const original = project("project-one", "/work/repo");
     const updated = { ...original, kind: "git" as const };
-    const projects = new ObservedProjects([original]);
+    const projects = new ObservedProjects(
+      [original],
+      [
+        workspace("workspace-one", original.projectId, "/work/repo"),
+        workspace("workspace-two", original.projectId, "/work/repo/feature"),
+        workspace("workspace-other", "project-other", "/work/other"),
+      ],
+    );
     await projects.start();
     projects.reconcileNextWithProjectUpdate(updated, [
+      {
+        kind: "project_updated",
+        projectId: original.projectId,
+        directory: original.rootPath,
+        fields: { kind: "git" },
+      },
+    ]);
+
+    projects.change(original.rootPath, ".git");
+    await projects.advanceBy(DEBOUNCE_MS);
+
+    expect(projects.publishedProjects).toEqual([{ kind: "upsert", project: updated }]);
+    expect(projects.publishedWorkspaceBatches).toEqual([["workspace-one", "workspace-two"]]);
+    projects.dispose();
+  });
+
+  test("deduplicates direct and project-derived workspace fanout", async () => {
+    const original = project("project-one", "/work/repo");
+    const projects = new ObservedProjects(
+      [original],
+      [
+        workspace("workspace-one", original.projectId, "/work/repo"),
+        workspace("workspace-two", original.projectId, "/work/repo/feature"),
+      ],
+    );
+    await projects.start();
+    projects.reconcileNextWithProjectUpdate(original, [
       {
         kind: "project_updated",
         projectId: original.projectId,
@@ -640,26 +692,19 @@ describe("ProjectGitObserverService", () => {
         kind: "workspace_updated",
         workspaceId: "workspace-one",
         directory: "/work/repo",
-        fields: { kind: "local_checkout" },
+        fields: { branch: "main" },
       },
       {
         kind: "workspace_updated",
         workspaceId: "workspace-one",
         directory: "/work/repo/.",
-        fields: { branch: "main" },
-      },
-      {
-        kind: "workspace_updated",
-        workspaceId: "workspace-two",
-        directory: "/work/other",
-        fields: { branch: "topic" },
+        fields: { kind: "local_checkout" },
       },
     ]);
 
     projects.change(original.rootPath, ".git");
     await projects.advanceBy(DEBOUNCE_MS);
 
-    expect(projects.publishedProjects).toEqual([{ kind: "upsert", project: updated }]);
     expect(projects.publishedWorkspaceBatches).toEqual([["workspace-one", "workspace-two"]]);
     projects.dispose();
   });

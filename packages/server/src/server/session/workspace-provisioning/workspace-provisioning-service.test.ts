@@ -120,6 +120,21 @@ test("re-opening an active workspace by exact path returns the same record witho
   expect(await workspaceRegistry.list()).toHaveLength(1);
 });
 
+test("re-opening Windows-equivalent workspace cwd spellings reuses the active and archived record", async () => {
+  const cwd = path.join(tmpDir, "workspace");
+  const created = await provisioning.findOrCreateWorkspaceForDirectory(cwd);
+  await workspaceRegistry.upsert({ ...created, cwd: `${cwd}${path.sep}` });
+
+  const active = await provisioning.findOrCreateWorkspaceForDirectory(cwd);
+  expect(active.workspaceId).toBe(created.workspaceId);
+  expect(await workspaceRegistry.list()).toHaveLength(1);
+
+  await workspaceRegistry.archive(created.workspaceId, ARCHIVED_AT);
+  const reopened = await provisioning.findOrCreateWorkspaceForDirectory(cwd);
+  expect(reopened).toMatchObject({ workspaceId: created.workspaceId, archivedAt: null });
+  expect(await workspaceRegistry.list()).toHaveLength(1);
+});
+
 test("re-opening an active workspace refreshes its checkout metadata", async () => {
   const repo = path.join(tmpDir, "repo");
   const first = await provisioning.findOrCreateWorkspaceForDirectory(repo);
@@ -401,6 +416,33 @@ test("createWorkspaceForDirectory honors an explicit active project without cwd 
     project.projectId,
   );
   expect(workspace.projectId).toBe(project.projectId);
+});
+
+test("createWorkspaceForDirectory refreshes an explicit project's stale Git kind", async () => {
+  const rootPath = path.join(tmpDir, "repo");
+  gitRoots.add(rootPath);
+  const project = await projectRegistry.getOrCreateActiveByRoot({
+    rootPath,
+    kind: "non_git",
+    displayName: "Saved project name",
+    timestamp: ARCHIVED_AT,
+  });
+  await projectRegistry.upsert({ ...project, customName: "Pinned project name" });
+
+  const workspace = await provisioning.createWorkspaceForDirectory(
+    rootPath,
+    null,
+    project.projectId,
+  );
+
+  expect(workspace.projectId).toBe(project.projectId);
+  expect(await projectRegistry.get(project.projectId)).toMatchObject({
+    projectId: project.projectId,
+    rootPath,
+    kind: "git",
+    displayName: "Saved project name",
+    customName: "Pinned project name",
+  });
 });
 
 test("createWorkspaceForDirectory classifies unknown and archived explicit projects", async () => {

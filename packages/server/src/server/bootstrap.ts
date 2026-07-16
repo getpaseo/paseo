@@ -795,6 +795,7 @@ export async function createPaseoDaemon(
   });
   const projectGitObserver = new ProjectGitObserverService({
     projectRegistry,
+    workspaceRegistry,
     reconciliation: workspaceReconciliation,
     logger,
     onProjectUpdate: (update) => wsServer?.publishProjectUpdate(update),

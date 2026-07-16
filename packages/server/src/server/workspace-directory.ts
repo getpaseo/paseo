@@ -130,6 +130,17 @@ export function workspaceIdsOnCheckout(
     .map((workspace) => workspace.workspaceId);
 }
 
+export function workspaceIdsForProjects(
+  workspaces: Iterable<PersistedWorkspaceRecord>,
+  projectIds: ReadonlySet<string>,
+): string[] {
+  const workspaceIds = new Set<string>();
+  for (const workspace of workspaces) {
+    if (projectIds.has(workspace.projectId)) workspaceIds.add(workspace.workspaceId);
+  }
+  return Array.from(workspaceIds);
+}
+
 export class WorkspaceDirectory {
   private readonly archivingByWorkspaceId = new Map<string, string>();
   /**
