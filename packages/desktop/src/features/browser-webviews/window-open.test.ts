@@ -39,6 +39,21 @@ describe("browser webview window-open requests", () => {
     expect(result).toEqual({ kind: "popup" });
   });
 
+  it.each(["noopener", "noreferrer"])(
+    "routes a named target with %s to a Paseo workspace tab",
+    (features) => {
+      const result = decideBrowserWindowOpenRequest({
+        url: "https://example.com/target",
+        disposition: "new-window",
+        frameName: "secure-target",
+        features,
+        hasPostBody: false,
+      });
+
+      expect(result).toEqual({ kind: "workspace-tab", url: "https://example.com/target" });
+    },
+  );
+
   it("routes Shift-clicked links to a Paseo workspace tab", () => {
     const result = decideBrowserWindowOpenRequest({
       url: "https://example.com/target",
@@ -72,6 +87,18 @@ describe("browser webview window-open requests", () => {
       disposition: "new-window",
       frameName: "_blank",
       features: "noopener,popup=yes",
+      hasPostBody: false,
+    });
+
+    expect(result).toEqual({ kind: "popup" });
+  });
+
+  it("keeps legacy browser-chrome features as a real popup", () => {
+    const result = decideBrowserWindowOpenRequest({
+      url: "https://login.example.com/signin",
+      disposition: "new-window",
+      frameName: "_blank",
+      features: "menubar=no,toolbar=no,status=no,scrollbars=no",
       hasPostBody: false,
     });
 

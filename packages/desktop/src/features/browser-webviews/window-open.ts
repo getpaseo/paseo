@@ -13,7 +13,7 @@ export type BrowserWindowOpenDecision =
   | { kind: "workspace-tab"; url: string };
 
 const MAX_PENDING_WINDOW_OPEN_REQUESTS_PER_GUEST = 20;
-const POPUP_WINDOW_FEATURE_NAMES = new Set([
+const POPUP_WINDOW_GEOMETRY_FEATURE_NAMES = new Set([
   "height",
   "innerheight",
   "innerwidth",
@@ -26,6 +26,14 @@ const POPUP_WINDOW_FEATURE_NAMES = new Set([
   "width",
   "x",
   "y",
+]);
+const POPUP_WINDOW_UI_FEATURE_NAMES = new Set([
+  "location",
+  "menubar",
+  "resizable",
+  "scrollbars",
+  "status",
+  "toolbar",
 ]);
 
 export class PendingBrowserWindowOpenRequests {
@@ -79,10 +87,11 @@ export function decideBrowserWindowOpenRequest(input: {
     return { kind: "deny" };
   }
 
+  const featureIntent = getBrowserWindowFeatureIntent(input.features);
   const hasNamedWindowTarget = input.frameName.length > 0 && input.frameName !== "_blank";
   const isScriptPopup =
     input.disposition === "new-window" &&
-    (hasPopupWindowFeatures(input.features) || hasNamedWindowTarget);
+    (featureIntent.requestsPopup || (hasNamedWindowTarget && !featureIntent.disownsOpener));
 
   // A real popup preserves window.opener, postMessage, named-window reuse, and
   // window.close(). OAuth and payment flows depend on those browser contracts.
@@ -95,7 +104,13 @@ export function decideBrowserWindowOpenRequest(input: {
   return { kind: "workspace-tab", url: input.url };
 }
 
-function hasPopupWindowFeatures(features: string): boolean {
+function getBrowserWindowFeatureIntent(features: string): {
+  requestsPopup: boolean;
+  disownsOpener: boolean;
+} {
+  let requestsPopup = false;
+  let disownsOpener = false;
+
   for (const rawFeature of features.split(",")) {
     const separatorIndex = rawFeature.indexOf("=");
     const name = rawFeature
@@ -110,12 +125,20 @@ function hasPopupWindowFeatures(features: string): boolean {
             .trim()
             .toLowerCase();
 
-    if (POPUP_WINDOW_FEATURE_NAMES.has(name)) {
-      return true;
+    if (POPUP_WINDOW_GEOMETRY_FEATURE_NAMES.has(name) || POPUP_WINDOW_UI_FEATURE_NAMES.has(name)) {
+      requestsPopup = true;
     }
-    if (name === "popup" && value !== "0" && value !== "false" && value !== "no") {
-      return true;
+    if (name === "popup" && isEnabledWindowFeature(value)) {
+      requestsPopup = true;
+    }
+    if ((name === "noopener" || name === "noreferrer") && isEnabledWindowFeature(value)) {
+      disownsOpener = true;
     }
   }
-  return false;
+
+  return { requestsPopup, disownsOpener };
+}
+
+function isEnabledWindowFeature(value: string): boolean {
+  return value !== "0" && value !== "false" && value !== "no";
 }
