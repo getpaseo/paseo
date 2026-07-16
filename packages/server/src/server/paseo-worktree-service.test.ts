@@ -20,7 +20,7 @@ import { readPaseoWorktreeMetadata } from "../utils/worktree-metadata.js";
 import { createWorktree } from "../utils/worktree.js";
 import { isPlatform } from "../test-utils/platform.js";
 import { existsSync } from "node:fs";
-import { areEquivalentPaths } from "../utils/path.js";
+import { areEquivalentPaths, createRealpathAwarePathMatcher } from "../utils/path.js";
 
 const cleanupPaths: string[] = [];
 
@@ -104,7 +104,7 @@ test("repairs a legacy source workspace whose project record is missing", async 
     kind: "git",
     archivedAt: null,
   });
-  expect(areEquivalentPaths(repairedProject?.rootPath ?? "", repoDir)).toBe(true);
+  expect(createRealpathAwarePathMatcher(repoDir)(repairedProject?.rootPath ?? "")).toBe(true);
 });
 
 test("registers a new worktree in the existing root project after the main checkout workspace is removed", async () => {
