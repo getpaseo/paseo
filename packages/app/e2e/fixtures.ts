@@ -1,4 +1,5 @@
 import { test as base, expect, type Page } from "@playwright/test";
+import { startOutdatedDaemon, type OutdatedDaemon } from "./helpers/daemon-update";
 import { getE2EDaemonPort } from "./helpers/daemon-port";
 import { buildCreateAgentPreferences, buildSeededHost } from "./helpers/daemon-registry";
 import {
@@ -22,6 +23,8 @@ interface TrackedProjectPickerFixture extends ProjectPickerFixture {
 // reliably for every test that uses this `test` object.
 const test = base.extend<{
   paseoE2ESetup: void;
+  outdatedDaemon: OutdatedDaemon;
+  desktopManagedOutdatedDaemon: OutdatedDaemon;
   projectPickerFixture: TrackedProjectPickerFixture;
   withWorkspace: WithWorkspace;
 }>({
@@ -116,6 +119,16 @@ const test = base.extend<{
     },
     { auto: true },
   ],
+  outdatedDaemon: async ({}, provide) => {
+    const daemon = await startOutdatedDaemon();
+    await provide(daemon);
+    await daemon.close();
+  },
+  desktopManagedOutdatedDaemon: async ({}, provide) => {
+    const daemon = await startOutdatedDaemon({ desktopManaged: true });
+    await provide(daemon);
+    await daemon.close();
+  },
   projectPickerFixture: async ({}, provide) => {
     const resource = await createProjectPickerFixture();
     const { fixture } = resource;

@@ -2,8 +2,18 @@ import { describe, expect, it } from "vitest";
 import { planWorkspaceOpenTargets } from "./open-target-planner";
 
 const desktopTargets = [
-  { id: "vscode", label: "VS Code", kind: "editor" as const },
-  { id: "finder", label: "Finder", kind: "file-manager" as const },
+  {
+    id: "vscode",
+    label: "VS Code",
+    kind: "editor" as const,
+    icon: { kind: "symbol" as const, name: "terminal" as const },
+  },
+  {
+    id: "finder",
+    label: "Finder",
+    kind: "file-manager" as const,
+    icon: { kind: "symbol" as const, name: "folder" as const },
+  },
 ];
 
 const checkoutStatus = {
@@ -25,7 +35,12 @@ describe("planWorkspaceOpenTargets", () => {
     expect(targets[0]).toMatchObject({
       source: "desktop",
       id: "vscode",
-      openInput: { editorId: "vscode", path: "/repo/src/app.ts", cwd: "/repo" },
+      openInput: {
+        editorId: "vscode",
+        workspacePath: "/repo",
+        filePath: "/repo/src/app.ts",
+        line: 3,
+      },
     });
   });
 
@@ -41,7 +56,11 @@ describe("planWorkspaceOpenTargets", () => {
     expect(targets[1]).toMatchObject({
       source: "desktop",
       id: "finder",
-      openInput: { editorId: "finder", path: "/repo/src/app.ts", mode: "reveal" },
+      openInput: {
+        editorId: "finder",
+        workspacePath: "/repo",
+        filePath: "/repo/src/app.ts",
+      },
     });
   });
 
@@ -56,12 +75,12 @@ describe("planWorkspaceOpenTargets", () => {
     expect(targets[0]).toMatchObject({
       source: "desktop",
       id: "vscode",
-      openInput: { editorId: "vscode", path: "/repo" },
+      openInput: { editorId: "vscode", workspacePath: "/repo" },
     });
     expect(targets[1]).toMatchObject({
       source: "desktop",
       id: "finder",
-      openInput: { editorId: "finder", path: "/repo" },
+      openInput: { editorId: "finder", workspacePath: "/repo" },
     });
   });
 
@@ -69,7 +88,14 @@ describe("planWorkspaceOpenTargets", () => {
     const targets = planWorkspaceOpenTargets({
       workspaceDirectory: "/repo",
       activeFile: { path: "src/app.ts" },
-      desktopTargets: [{ id: "script:open-in-nvim", label: "Open in Neovim", kind: "editor" }],
+      desktopTargets: [
+        {
+          id: "script:open-in-nvim",
+          label: "Open in Neovim",
+          kind: "editor",
+          icon: { kind: "symbol", name: "terminal" },
+        },
+      ],
       canUseDesktopBridge: true,
       isLocalExecution: true,
     });
@@ -80,10 +106,11 @@ describe("planWorkspaceOpenTargets", () => {
         id: "script:open-in-nvim",
         label: "Open in Neovim",
         editorId: "script:open-in-nvim",
+        icon: { kind: "symbol", name: "terminal" },
         openInput: {
           editorId: "script:open-in-nvim",
-          path: "/repo/src/app.ts",
-          cwd: "/repo",
+          workspacePath: "/repo",
+          filePath: "/repo/src/app.ts",
         },
       },
     ]);

@@ -66,13 +66,15 @@ export interface DesktopEditorTargetDescriptor {
   id: string;
   label: string;
   kind: "editor" | "file-manager";
+  icon: { kind: "image"; dataUrl: string } | { kind: "symbol"; name: "folder" | "terminal" };
 }
 
 export interface DesktopEditorOpenTargetInput {
   editorId: string;
-  path: string;
-  cwd?: string;
-  mode?: "open" | "reveal";
+  workspacePath: string;
+  filePath?: string;
+  line?: number;
+  column?: number;
 }
 
 export interface DesktopEditorBridge {

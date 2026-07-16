@@ -17,6 +17,7 @@ export interface PlannedDesktopOpenTarget {
   id: string;
   label: string;
   editorId: string;
+  icon: DesktopOpenTarget["icon"];
   openInput: OpenDesktopTargetInput;
 }
 
@@ -58,6 +59,7 @@ function resolveActiveFileForOpenTargets(
 
 function planDesktopOpenTargets(input: {
   workspaceDirectory: string;
+  activeFile?: WorkspaceFileLocation | null;
   resolvedFile: ResolvedWorkspaceFilePaths | null;
   desktopTargets: readonly DesktopOpenTarget[];
   canUseDesktopBridge: boolean;
@@ -74,20 +76,8 @@ function planDesktopOpenTargets(input: {
         id: target.id,
         label: target.label,
         editorId: target.id,
-        openInput: { editorId: target.id, path: input.workspaceDirectory },
-      };
-    }
-    if (target.kind === "editor") {
-      return {
-        source: "desktop",
-        id: target.id,
-        label: target.label,
-        editorId: target.id,
-        openInput: {
-          editorId: target.id,
-          path: input.resolvedFile.absolutePath,
-          cwd: input.workspaceDirectory,
-        },
+        icon: target.icon,
+        openInput: { editorId: target.id, workspacePath: input.workspaceDirectory },
       };
     }
     return {
@@ -95,10 +85,12 @@ function planDesktopOpenTargets(input: {
       id: target.id,
       label: target.label,
       editorId: target.id,
+      icon: target.icon,
       openInput: {
         editorId: target.id,
-        path: input.resolvedFile.absolutePath,
-        mode: "reveal",
+        workspacePath: input.workspaceDirectory,
+        filePath: input.resolvedFile.absolutePath,
+        ...(input.activeFile?.lineStart ? { line: input.activeFile.lineStart } : {}),
       },
     };
   });

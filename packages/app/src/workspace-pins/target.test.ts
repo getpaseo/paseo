@@ -1,5 +1,29 @@
 import { describe, expect, it } from "vitest";
-import { isTargetPinned, pinnedTargetKey, togglePinnedTarget } from "./target";
+import {
+  isPinnedTargetAvailable,
+  isTargetPinned,
+  pinnedTargetKey,
+  togglePinnedTarget,
+} from "./target";
+
+describe("isPinnedTargetAvailable", () => {
+  it("only offers browser targets in Electron", () => {
+    const browser = { kind: "browser" } as const;
+
+    expect(isPinnedTargetAvailable(browser, { isElectron: true })).toBe(true);
+    expect(isPinnedTargetAvailable(browser, { isElectron: false })).toBe(false);
+  });
+
+  it("offers cross-platform targets outside Electron", () => {
+    const environment = { isElectron: false };
+
+    expect(isPinnedTargetAvailable({ kind: "draft" }, environment)).toBe(true);
+    expect(isPinnedTargetAvailable({ kind: "terminal" }, environment)).toBe(true);
+    expect(isPinnedTargetAvailable({ kind: "profile", profileId: "claude" }, environment)).toBe(
+      true,
+    );
+  });
+});
 
 describe("pinnedTargetKey", () => {
   it("uses the bare kind as the key for non-profile targets", () => {
