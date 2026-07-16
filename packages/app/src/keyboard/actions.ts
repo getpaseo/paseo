@@ -43,6 +43,7 @@ export type KeyboardActionId =
   | "shortcuts.dialog.toggle"
   | "workspace.terminal.new"
   | "workspace.new"
+  | "workspace.project.pick"
   | "worktree.new"
   | "workspace.archive"
   | "workspace.pin"

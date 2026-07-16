@@ -1676,6 +1676,7 @@ export const zhCN: TranslationResources = {
         sendMessage: "发送消息",
         queueMessage: "消息排队",
         muteUnmuteVoiceMode: "静音/取消静音语音模式",
+        switchProject: "切换项目",
       },
       helpNotes: {
         showKeyboardShortcuts: "焦点不在文本输入框或终端内时可用。",

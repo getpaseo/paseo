@@ -61,6 +61,8 @@ import {
   type PendingWorkspaceDraftSetup,
 } from "@/stores/workspace-draft-submission-store";
 import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
+import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
+import type { KeyboardActionId } from "@/keyboard/keyboard-action-dispatcher";
 import { useFormPreferences } from "@/hooks/use-form-preferences";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import type { CreateAgentInitialValues } from "@/hooks/use-agent-form-state";
@@ -189,6 +191,8 @@ interface PickerSelection {
 const BRANCH_OPTION_PREFIX = "branch:";
 const PR_OPTION_PREFIX = "github-pr:";
 const PROJECT_ICON_FALLBACK_FONT_SIZE = 10;
+// Stable reference so the keyboard-action handler doesn't re-register each render.
+const PROJECT_PICK_ACTIONS: readonly KeyboardActionId[] = ["workspace.project.pick"];
 // Height of a single picker-trigger badge. The Base-row spacer reserves exactly
 // this so toggling Isolation to Local hides the row without shifting the form.
 const BADGE_HEIGHT = 28;
@@ -1882,6 +1886,22 @@ export function NewWorkspaceScreen({
   const openProjectPicker = useCallback(() => {
     setProjectPickerOpen(true);
   }, []);
+
+  // Cmd/Ctrl+P opens the project picker with its search focused so the user can
+  // switch projects from the keyboard. Registered only while this screen is
+  // mounted, so the shortcut doesn't swallow the browser's native print
+  // elsewhere; gated on having projects to pick.
+  const handleProjectPick = useCallback(() => {
+    openProjectPicker();
+    return true;
+  }, [openProjectPicker]);
+  useKeyboardActionHandler({
+    handlerId: "new-workspace-project-pick",
+    actions: PROJECT_PICK_ACTIONS,
+    enabled: projectPickerOptions.length > 0,
+    priority: 0,
+    handle: handleProjectPick,
+  });
 
   const openIsolationPicker = useCallback(() => {
     setIsolationPickerOpen(true);
