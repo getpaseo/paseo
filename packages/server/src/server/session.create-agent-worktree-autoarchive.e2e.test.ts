@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
@@ -8,6 +8,7 @@ import { getFullAccessConfig } from "./daemon-e2e/agent-configs.js";
 import { createDaemonTestContext, type DaemonTestContext } from "./test-utils/index.js";
 import type { CreateAgentOptions } from "./test-utils/index.js";
 import type { CreateAgentWorktreeTarget } from "./messages.js";
+import { createRealpathAwarePathMatcher } from "../utils/path.js";
 
 let ctx: DaemonTestContext;
 const tempRoots: string[] = [];
@@ -36,6 +37,18 @@ function createGitRepo(): string {
   writeFileSync(path.join(repoDir, "README.md"), "hello\n");
   execFileSync("git", ["add", "README.md"], { cwd: repoDir, stdio: "pipe" });
   execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "initial"], {
+    cwd: repoDir,
+    stdio: "pipe",
+  });
+  return repoDir;
+}
+
+function createGitRepoWithNestedDirectory(): string {
+  const repoDir = createGitRepo();
+  mkdirSync(path.join(repoDir, "packages", "app"), { recursive: true });
+  writeFileSync(path.join(repoDir, "packages", "app", ".gitkeep"), "");
+  execFileSync("git", ["add", "."], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "add nested app"], {
     cwd: repoDir,
     stdio: "pipe",
   });
@@ -84,8 +97,9 @@ async function expectWorktreeListEmpty(repoDir: string): Promise<void> {
 async function createAgentInBranchOffWorktree(options?: {
   autoArchive?: boolean;
   branchName?: string;
+  repoDir?: string;
 }): Promise<{ repoDir: string; agentId: string; worktreePath: string }> {
-  const repoDir = createGitRepo();
+  const repoDir = options?.repoDir ?? createGitRepo();
   const branchName = options?.branchName ?? `agent-lifecycle-${Date.now()}`;
   const created = await ctx.client.createAgent({
     config: {
@@ -140,6 +154,109 @@ test("create_agent_request creates a worktree and auto-archives both after the f
   // last-reference worktree directory is gone.
   await expectAgentAbsentFromActiveList(created.id);
   await expect.poll(() => existsSync(created.cwd), { timeout: 10000, interval: 100 }).toBe(false);
+}, 30000);
+
+test("create_agent_request auto-archives a nested workspace from an existing Paseo worktree", async () => {
+  const repoDir = createGitRepoWithNestedDirectory();
+  const source = await createAgentInBranchOffWorktree({ branchName: "nested-source", repoDir });
+  await ctx.client.waitForFinish(source.agentId, 10000);
+  const nestedCwd = path.join(source.worktreePath, "packages", "app");
+
+  const created = await ctx.client.createAgent({
+    config: {
+      ...getFullAccessConfig("codex"),
+      cwd: nestedCwd,
+    },
+    worktree: {
+      mode: "branch-off",
+      newBranch: "nested-auto-archive",
+      base: "main",
+    },
+    autoArchive: true,
+    initialPrompt: "Say done.",
+  });
+
+  const createdWorktreeRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], {
+    cwd: created.cwd,
+    stdio: "pipe",
+  })
+    .toString()
+    .trim();
+  expect(
+    createRealpathAwarePathMatcher(path.join(createdWorktreeRoot, "packages", "app"))(created.cwd),
+  ).toBe(true);
+  await ctx.client.waitForFinish(created.id, 10000);
+
+  await expectAgentAbsentFromActiveList(created.id);
+  await expect
+    .poll(
+      async () => {
+        const workspaces = await ctx.client.fetchWorkspaces();
+        const matchesCreatedWorkspace = createRealpathAwarePathMatcher(created.cwd);
+        return workspaces.entries.some((workspace) =>
+          matchesCreatedWorkspace(workspace.workspaceDirectory),
+        );
+      },
+      { timeout: 10000, interval: 100 },
+    )
+    .toBe(false);
+  await expect.poll(() => existsSync(created.cwd), { timeout: 10000, interval: 100 }).toBe(false);
+  expect(existsSync(source.worktreePath)).toBe(true);
+
+  await ctx.client.archivePaseoWorktree({ worktreePath: source.worktreePath });
+}, 30000);
+
+test("failed nested worktree creation cleans up the created workspace and backing directory", async () => {
+  const repoDir = createGitRepoWithNestedDirectory();
+  const source = await createAgentInBranchOffWorktree({
+    branchName: "nested-failure-source",
+    repoDir,
+  });
+  await ctx.client.waitForFinish(source.agentId, 10000);
+  const nestedCwd = path.join(source.worktreePath, "packages", "app");
+
+  await expect(
+    ctx.client.createAgent({
+      config: { provider: "unknown-provider", cwd: nestedCwd },
+      worktree: {
+        mode: "branch-off",
+        newBranch: "nested-failure-cleanup",
+        base: "main",
+      },
+      initialPrompt: "This agent cannot be created.",
+    }),
+  ).rejects.toThrow();
+
+  await expect
+    .poll(
+      async () => {
+        const listed = await ctx.client.getPaseoWorktreeList({ cwd: source.repoDir });
+        return (
+          listed.worktrees.length === 1 &&
+          createRealpathAwarePathMatcher(source.worktreePath)(
+            listed.worktrees[0]?.worktreePath ?? "",
+          )
+        );
+      },
+      { timeout: 10000, interval: 100 },
+    )
+    .toBe(true);
+  await expect
+    .poll(
+      async () => {
+        const workspaces = await ctx.client.fetchWorkspaces();
+        return (
+          workspaces.entries.length === 1 &&
+          createRealpathAwarePathMatcher(source.worktreePath)(
+            workspaces.entries[0]?.workspaceDirectory ?? "",
+          )
+        );
+      },
+      { timeout: 10000, interval: 100 },
+    )
+    .toBe(true);
+
+  await ctx.client.archivePaseoWorktree({ worktreePath: source.worktreePath });
 }, 30000);
 
 test("create_agent_request with autoArchive archives only the agent when no worktree was created", async () => {

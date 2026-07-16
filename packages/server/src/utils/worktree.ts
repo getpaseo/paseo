@@ -858,9 +858,19 @@ export function mapWorkspaceCwdToWorktree(input: {
     throw new Error(`Workspace cwd is outside its source worktree: ${input.workspaceCwd}`);
   }
 
-  const mappedCwd = resolve(input.targetWorktreePath, relativeWorkspaceCwd);
+  return mapWorkspaceRelativeCwdToWorktree({
+    relativeWorkspaceCwd,
+    targetWorktreePath: input.targetWorktreePath,
+  });
+}
+
+export function mapWorkspaceRelativeCwdToWorktree(input: {
+  relativeWorkspaceCwd: string;
+  targetWorktreePath: string;
+}): string {
+  const mappedCwd = resolve(input.targetWorktreePath, input.relativeWorkspaceCwd);
   if (!isPathInsideRoot(input.targetWorktreePath, mappedCwd)) {
-    throw new Error(`Workspace cwd escapes its target worktree: ${input.workspaceCwd}`);
+    throw new Error(`Workspace cwd escapes its target worktree: ${input.relativeWorkspaceCwd}`);
   }
   return mappedCwd;
 }

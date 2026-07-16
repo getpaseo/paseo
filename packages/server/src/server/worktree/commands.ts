@@ -124,13 +124,12 @@ export async function archiveCommand(
 ): Promise<ArchiveCommandResult> {
   const resolvedTarget = await resolveArchiveTarget(dependencies, input);
   const scope = input.scope ?? "workspace";
+  const ownership = await isPaseoOwnedWorktreeCwd(resolvedTarget.targetPath, {
+    paseoHome: dependencies.paseoHome,
+    worktreesRoot: dependencies.paseoWorktreesBaseRoot,
+  });
 
   if (scope === "worktree") {
-    const ownership = await isPaseoOwnedWorktreeCwd(resolvedTarget.targetPath, {
-      paseoHome: dependencies.paseoHome,
-      worktreesRoot: dependencies.paseoWorktreesBaseRoot,
-    });
-
     if (!ownership.allowed) {
       return {
         ok: false,
@@ -170,7 +169,8 @@ export async function archiveCommand(
 
   const result = await archiveByScope(dependencies, {
     scope: { kind: "workspace", workspaceId },
-    repoRoot: resolvedTarget.repoRoot,
+    repoRoot: resolvedTarget.repoRoot ?? ownership.repoRoot ?? null,
+    repoWorktreesRoot: ownership.worktreeRoot,
     paseoWorktreesBaseRoot: dependencies.paseoWorktreesBaseRoot,
     requestId: input.requestId,
   });

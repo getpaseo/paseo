@@ -240,13 +240,7 @@ export function createWorkspaceProvisioningService(deps: {
     if (workspace.archivedAt && checkout) {
       next = {
         ...workspace,
-        kind: deriveWorkspaceKind(checkout),
-        branch:
-          checkout.currentBranch && checkout.currentBranch.toUpperCase() !== "HEAD"
-            ? checkout.currentBranch
-            : null,
-        isPaseoOwnedWorktree: checkout.isGit && checkout.isPaseoOwnedWorktree,
-        mainRepoRoot: checkout.isGit ? checkout.mainRepoRoot : null,
+        ...checkoutDerivedWorkspaceFields(workspace, checkout),
         archivedAt: null,
         updatedAt: timestamp,
       };
@@ -273,31 +267,42 @@ export function createWorkspaceProvisioningService(deps: {
     if (project && !project.archivedAt) {
       await refreshProjectKind(project, workspace.cwd, checkout);
     }
-    const kind = deriveWorkspaceKind(checkout);
-    const branch =
-      checkout.currentBranch && checkout.currentBranch.toUpperCase() !== "HEAD"
-        ? checkout.currentBranch
-        : null;
-    const isPaseoOwnedWorktree = checkout.isGit && checkout.isPaseoOwnedWorktree;
-    const mainRepoRoot = checkout.isGit ? checkout.mainRepoRoot : null;
+    const derived = checkoutDerivedWorkspaceFields(workspace, checkout);
     if (
-      workspace.kind === kind &&
-      workspace.branch === branch &&
-      workspace.isPaseoOwnedWorktree === isPaseoOwnedWorktree &&
-      workspace.mainRepoRoot === mainRepoRoot
+      workspace.kind === derived.kind &&
+      workspace.branch === derived.branch &&
+      workspace.displayName === derived.displayName &&
+      workspace.isPaseoOwnedWorktree === derived.isPaseoOwnedWorktree &&
+      workspace.mainRepoRoot === derived.mainRepoRoot
     ) {
       return workspace;
     }
     const next = {
       ...workspace,
-      kind,
-      branch,
-      isPaseoOwnedWorktree,
-      mainRepoRoot,
+      ...derived,
       updatedAt: new Date().toISOString(),
     };
     await workspaceRegistry.upsert(next);
     return next;
+  }
+
+  function checkoutDerivedWorkspaceFields(
+    workspace: PersistedWorkspaceRecord,
+    checkout: Awaited<ReturnType<WorkspaceGitService["getCheckout"]>>,
+  ): Pick<
+    PersistedWorkspaceRecord,
+    "kind" | "branch" | "displayName" | "isPaseoOwnedWorktree" | "mainRepoRoot"
+  > {
+    return {
+      kind: deriveWorkspaceKind(checkout),
+      branch:
+        checkout.currentBranch && checkout.currentBranch.toUpperCase() !== "HEAD"
+          ? checkout.currentBranch
+          : null,
+      displayName: deriveWorkspaceDisplayName({ cwd: workspace.cwd, checkout }),
+      isPaseoOwnedWorktree: checkout.isGit && checkout.isPaseoOwnedWorktree,
+      mainRepoRoot: checkout.isGit ? checkout.mainRepoRoot : null,
+    };
   }
 
   async function refreshProjectKind(

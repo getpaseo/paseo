@@ -138,6 +138,7 @@ test("re-opening Windows-equivalent workspace cwd spellings reuses the active an
 test("re-opening an active workspace refreshes its checkout metadata", async () => {
   const repo = path.join(tmpDir, "repo");
   const first = await provisioning.findOrCreateWorkspaceForDirectory(repo);
+  await workspaceRegistry.upsert({ ...first, title: "Pinned work" });
   gitRoots.add(repo);
   gitBranches.set(repo, "feature/refresh");
 
@@ -147,6 +148,8 @@ test("re-opening an active workspace refreshes its checkout metadata", async () 
     workspaceId: first.workspaceId,
     kind: "local_checkout",
     branch: "feature/refresh",
+    displayName: "feature/refresh",
+    title: "Pinned work",
     isPaseoOwnedWorktree: false,
     mainRepoRoot: null,
   });
@@ -276,22 +279,26 @@ test("uses one workspace snapshot when reopening an archived workspace", async (
   expect(await workspaceRegistry.list()).toHaveLength(1);
 });
 
-test("reopening an archived workspace refreshes git-derived kind and branch", async () => {
+test("reopening an archived workspace refreshes its checkout-derived fields", async () => {
   const repo = path.join(tmpDir, "repo");
   gitRoots.add(repo);
   const created = await provisioning.findOrCreateWorkspaceForDirectory(repo);
+  await workspaceRegistry.upsert({ ...created, title: "Pinned archived work" });
   await workspaceRegistry.archive(created.workspaceId, ARCHIVED_AT);
   gitRoots.delete(repo);
 
   const reopened = await provisioning.findOrCreateWorkspaceForDirectory(repo);
 
-  expect(reopened).toEqual({
-    ...created,
+  expect(reopened).toMatchObject({
+    workspaceId: created.workspaceId,
+    projectId: created.projectId,
+    title: "Pinned archived work",
     kind: "directory",
     branch: null,
+    displayName: "repo",
     archivedAt: null,
-    updatedAt: expect.any(String),
   });
+  expect(reopened.updatedAt).toEqual(expect.any(String));
   expect(await workspaceRegistry.get(created.workspaceId)).toEqual(reopened);
 });
 

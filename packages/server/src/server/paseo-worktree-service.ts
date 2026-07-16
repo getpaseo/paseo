@@ -1,6 +1,6 @@
 import type { WorkspaceGitService } from "./workspace-git-service.js";
 import { resolve } from "node:path";
-import { areEquivalentPaths } from "../utils/path.js";
+import { areEquivalentPaths, getRealpathAwareRelativePath } from "../utils/path.js";
 import {
   type PersistedProjectRecord,
   type PersistedWorkspaceRecord,
@@ -15,7 +15,7 @@ import {
   type CreateWorktreeCoreInput,
 } from "./worktree-core.js";
 import {
-  mapWorkspaceCwdToWorktree,
+  mapWorkspaceRelativeCwdToWorktree,
   validateBranchSlug,
   type WorktreeConfig,
 } from "../utils/worktree.js";
@@ -66,12 +66,14 @@ export async function createPaseoWorktree(
   input: CreatePaseoWorktreeInput,
   deps: CreatePaseoWorktreeDeps,
 ): Promise<CreatePaseoWorktreeResult> {
+  const workspaceCwdPlan = await planWorkspaceCwdForWorktree(input.cwd, deps.workspaceGitService);
   const createdWorktree = await createWorktreeCore(input, deps);
   maybeMarkFirstAgentBranchAutoNameEligible({ createdWorktree });
   const workspace = await upsertWorkspaceForWorktree({
-    inputCwd: input.cwd,
+    inputCwd: workspaceCwdPlan.inputCwd,
     projectId: input.projectId,
     repoRoot: createdWorktree.repoRoot,
+    relativeWorkspaceCwd: workspaceCwdPlan.relativeWorkspaceCwd,
     worktree: createdWorktree.worktree,
     baseBranch: resolveIntentBaseBranch(createdWorktree.intent),
     title: resolveFirstAgentPromptTitle(input.firstAgentContext),
@@ -87,6 +89,20 @@ export async function createPaseoWorktree(
     repoRoot: createdWorktree.repoRoot,
     created: createdWorktree.created,
   };
+}
+
+async function planWorkspaceCwdForWorktree(
+  inputCwd: string,
+  workspaceGitService: Pick<WorkspaceGitService, "getCheckout">,
+): Promise<{ inputCwd: string; relativeWorkspaceCwd: string }> {
+  const normalizedInputCwd = resolve(inputCwd);
+  const sourceCheckout = await workspaceGitService.getCheckout(normalizedInputCwd);
+  const sourceWorktreePath = sourceCheckout.worktreeRoot ?? normalizedInputCwd;
+  const relativeWorkspaceCwd = getRealpathAwareRelativePath(sourceWorktreePath, normalizedInputCwd);
+  if (relativeWorkspaceCwd === null) {
+    throw new Error(`Workspace cwd is outside its source worktree: ${normalizedInputCwd}`);
+  }
+  return { inputCwd: normalizedInputCwd, relativeWorkspaceCwd };
 }
 
 export async function attemptFirstAgentBranchAutoName(options: {
@@ -219,6 +235,7 @@ async function upsertWorkspaceForWorktree(options: {
   inputCwd: string;
   projectId?: string;
   repoRoot: string;
+  relativeWorkspaceCwd: string;
   worktree: WorktreeConfig;
   baseBranch?: string | null;
   title?: string | null;
@@ -229,9 +246,8 @@ async function upsertWorkspaceForWorktree(options: {
 }): Promise<PersistedWorkspaceRecord> {
   const normalizedInputCwd = resolve(options.inputCwd);
   const normalizedRepoRoot = resolve(options.repoRoot);
-  const normalizedCwd = mapWorkspaceCwdToWorktree({
-    sourceWorktreePath: normalizedRepoRoot,
-    workspaceCwd: normalizedInputCwd,
+  const normalizedCwd = mapWorkspaceRelativeCwdToWorktree({
+    relativeWorkspaceCwd: options.relativeWorkspaceCwd,
     targetWorktreePath: options.worktree.worktreePath,
   });
   // Creation never deduplicates by directory: a worktree directory may back

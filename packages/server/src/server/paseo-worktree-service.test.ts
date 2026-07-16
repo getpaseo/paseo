@@ -217,6 +217,62 @@ test("creates a worktree workspace at the selected project subdirectory", async 
   });
 });
 
+test("maps a nested cwd from an existing Paseo worktree into the next worktree", async () => {
+  const { repoDir, tempDir } = createGitRepo();
+  cleanupPaths.push(tempDir);
+  const paseoHome = path.join(tempDir, ".paseo");
+  const deps = createDeps();
+  const source = await createPaseoWorktree(
+    {
+      cwd: repoDir,
+      worktreeSlug: "source-worktree",
+      runSetup: false,
+      paseoHome,
+    },
+    deps,
+  );
+  const sourceCwd = path.join(source.worktree.worktreePath, "packages", "app");
+  mkdirSync(sourceCwd, { recursive: true });
+
+  const created = await createPaseoWorktree(
+    {
+      cwd: sourceCwd,
+      worktreeSlug: "nested-worktree",
+      runSetup: false,
+      paseoHome,
+    },
+    deps,
+  );
+
+  expect(created.workspace.cwd).toBe(path.join(created.worktree.worktreePath, "packages", "app"));
+  expect(deps.workspaces.get(created.workspace.workspaceId)).toEqual(created.workspace);
+});
+
+test("rejects source checkout planning before creating a worktree", async () => {
+  const { repoDir, tempDir } = createGitRepo();
+  cleanupPaths.push(tempDir);
+  const paseoHome = path.join(tempDir, ".paseo");
+  const deps = createDeps();
+  deps.workspaceGitService.getCheckout = async () => {
+    throw new Error("source checkout unavailable");
+  };
+
+  await expect(
+    createPaseoWorktree(
+      {
+        cwd: repoDir,
+        worktreeSlug: "must-not-create",
+        runSetup: false,
+        paseoHome,
+      },
+      deps,
+    ),
+  ).rejects.toThrow("source checkout unavailable");
+
+  expect(existsSync(path.join(paseoHome, "worktrees"))).toBe(false);
+  expect(Array.from(deps.workspaces.values())).toEqual([]);
+});
+
 test("registers a new worktree in the existing root project after the main checkout workspace is removed", async () => {
   const { repoDir, tempDir } = createGitRepo();
   cleanupPaths.push(tempDir);
