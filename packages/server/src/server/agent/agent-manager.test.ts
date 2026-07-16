@@ -7717,6 +7717,42 @@ test("user_message events with a leading paseo-system block show only the traili
   expect(userMessages[0].text).toBe("Implement the feature");
 });
 
+test("user_message events wrapping an agent-to-agent envelope show a readable sender header", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-sender-envelope-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+
+  const senderEnvelope =
+    '<paseo-agent-message from="agent-a" from_title="Ship the release">\n' +
+    "Please review the auth changes.\n" +
+    "</paseo-agent-message>\n\n" +
+    "When you finish this turn and go idle, your last assistant message is automatically delivered back to agent agent-a as your reply - make it complete and self-contained.";
+  const codex = fakeCodexEmitting({
+    turnItems: [{ type: "user_message", text: senderEnvelope }],
+  });
+
+  const manager = new AgentManager({
+    clients: { codex },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-0000000005a4",
+  });
+
+  const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+
+  await manager.runAgent(snapshot.id, { text: "do something" });
+
+  const timeline = manager.getTimeline(snapshot.id);
+  const userMessages = timeline.filter((item) => item.type === "user_message");
+
+  expect(userMessages).toHaveLength(1);
+  expect(userMessages[0].text).toBe(
+    "Message from agent agent-a (Ship the release):\n\nPlease review the auth changes.",
+  );
+});
+
 test("user_message events wrapping a paseo-system envelope are not restored during history replay", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-envelope-history-"));
   const storagePath = join(workdir, "agents");

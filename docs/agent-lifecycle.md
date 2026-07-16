@@ -69,6 +69,29 @@ The Layer 2 block rides on the child's first user message, but the timeline must
 `displayTextForUserMessage` (`agent-prompt.ts`) extends the existing "hide a pure `<paseo-system>` envelope" rule: a message that begins with a system envelope and then has real content has the leading envelope stripped for display, while the provider still receives the full text.
 The four timeline choke points in `agent-manager.ts` route through `projectTimelineItemForDisplay`, so both live turns and history replay show the clean parent prompt.
 
+## Agent-to-agent message envelope
+
+When one agent calls `send_agent_prompt` targeting another, the receiver used to get the text verbatim - unable to tell it came from an agent (vs a human, a schedule, or a finish notification) or whom to reply to.
+The daemon now wraps agent-initiated sends in a sender-identity envelope, composed by `buildAgentMessageEnvelope` in `agent-spawn-context.ts` and applied in the `send_agent_prompt` handler **only when `callerAgentId` is present**.
+Human/app sends and other system paths (chat mentions, schedule fires, notify-on-finish) are untouched.
+
+**Envelope format.**
+The prompt is wrapped in an attributed tag: `<paseo-agent-message from="<senderId>" from_title="<title>">\n<prompt>\n</paseo-agent-message>`, followed by a trailing reply-contract line.
+This is deliberately **not** a `<paseo-system>` envelope: it must not match `SYSTEM_ENVELOPE_PATTERN` / `isSystemInjectedEnvelope`, because a full match would hide the message from the receiver's timeline (round-1 behavior) - and sender attribution is exactly what a human viewing the receiver wants to see.
+It also keeps the archived-target delivery path intact: `send_agent_prompt` calls `sendPromptToAgent` with `unarchive` defaulting to true, and because the message is not a system envelope it cannot accidentally flip that gate.
+
+**Reply contract (conditional, like the spawn-context wording).**
+The handler already arms `setupFinishNotification` back to the sender for agent-scoped background sends (`shouldNotifyOnFinish = callerAgentId && notifyOnFinish && background`).
+When that is set, the envelope tells the receiver its final idle message is automatically delivered back to the sender as its reply.
+Otherwise it tells the receiver the reply is not automatic and to use `send_agent_prompt` with the sender's agentId.
+
+**Timeline display.**
+Unlike spawn context (stripped entirely), sender attribution is useful, so `projectAgentMessageForDisplay` rewrites the turn to a compact `Message from agent <id> (<title>):` header followed by the original prompt, dropping the trailing reply-contract boilerplate.
+It runs through the same daemon-side `projectTimelineItemForDisplay` choke points, so every client - including old ones - sees the readable form.
+The receiving model still gets the full envelope (identity + reply contract) in the dispatched prompt.
+
+`composeAgentMcpInstructions` (Layer 1) also teaches every agent to recognize `<paseo-agent-message>` turns, read the `from` id, and reply via `send_agent_prompt` (or rely on the automatic relay when the envelope says so).
+
 ## Archive
 
 Archive is a **soft delete**: the agent record stays on disk with `archivedAt` set, the runtime is closed, and the agent disappears from active lists. Archive is **global** — it lives on the server and propagates to every connected client.
