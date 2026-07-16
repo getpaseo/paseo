@@ -16,6 +16,13 @@ interface AttachedBrowserRegistration {
   webContentsId: number;
 }
 
+interface BrowserFoundInPageResult {
+  requestId: number;
+  activeMatchOrdinal: number;
+  matches: number;
+  finalUpdate: boolean;
+}
+
 contextBridge.exposeInMainWorld("paseoDesktop", {
   platform: process.platform,
   invoke: (command: string, args?: Record<string, unknown>) =>
@@ -112,5 +119,34 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
     ) => ipcRenderer.invoke("paseo:browser:capture-element", browserId, rect),
     copyElement: (payload: { text?: string; imageDataUrl?: string }) =>
       ipcRenderer.invoke("paseo:browser:copy-element", payload),
+    findInPage: (
+      browserId: string,
+      text: string,
+      options?: { forward?: boolean; findNext?: boolean; matchCase?: boolean },
+    ): Promise<number | null> =>
+      ipcRenderer.invoke("paseo:browser:find-in-page", browserId, text, options),
+    stopFindInPage: (
+      browserId: string,
+      action: "clearSelection" | "keepSelection" | "activateSelection",
+    ): Promise<void> => ipcRenderer.invoke("paseo:browser:stop-find-in-page", browserId, action),
+    onFoundInPage: (
+      browserId: string,
+      listener: (result: BrowserFoundInPageResult) => void,
+    ): (() => void) => {
+      const ipcListener = (
+        _ipcEvent: Electron.IpcRendererEvent,
+        payload: BrowserFoundInPageResult & { browserId?: unknown },
+      ) => {
+        if (payload?.browserId !== browserId) {
+          return;
+        }
+        const { browserId: _browserId, ...result } = payload;
+        listener(result);
+      };
+      ipcRenderer.on("paseo:event:browser-found-in-page", ipcListener);
+      return () => {
+        ipcRenderer.removeListener("paseo:event:browser-found-in-page", ipcListener);
+      };
+    },
   },
 });

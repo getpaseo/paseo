@@ -54,12 +54,12 @@ import {
   handleBrowserWindowOpenRequest,
   listRegisteredPaseoBrowserIds,
   isPaseoBrowserWebviewAttach,
-  preparePaseoBrowserWebContents,
   PendingBrowserWindowOpenRequests,
   registerBrowserWebviewNavigationGuards,
   unregisterPaseoBrowser,
   registerAttachedPaseoBrowser,
   setWorkspaceActivePaseoBrowserId,
+  getPaseoBrowserOwnerWebContentsId,
 } from "./features/browser-webviews/index.js";
 import {
   clearPaseoBrowserProfile,
@@ -98,6 +98,7 @@ const BROWSER_FORWARDED_KEY_EVENT = "paseo:event:browser-forwarded-key";
 const FORWARDED_PASEO_SHORTCUT_KEYS = new Set([
   "b",
   "e",
+  "f",
   "w",
   "t",
   "k",
@@ -461,6 +462,58 @@ ipcMain.handle("paseo:browser:clear-profile", async (_event, rawLegacyBrowserIds
   });
 });
 
+function validateBrowserOwner(event: Electron.IpcMainInvokeEvent, browserId: string): boolean {
+  const registeredOwnerId = getPaseoBrowserOwnerWebContentsId(browserId);
+  return registeredOwnerId !== null && registeredOwnerId === event.sender.id;
+}
+
+ipcMain.handle(
+  "paseo:browser:find-in-page",
+  (event, browserId: unknown, text: unknown, options: unknown): number | null => {
+    if (typeof browserId !== "string" || typeof text !== "string" || text.length === 0) {
+      return null;
+    }
+    if (!validateBrowserOwner(event, browserId)) {
+      log.warn("[browser-find] unauthorized find-in-page attempt blocked", {
+        browserId,
+        senderId: event.sender.id,
+      });
+      return null;
+    }
+    const contents = getPaseoBrowserWebContents(browserId);
+    if (!contents) {
+      return null;
+    }
+    const inputOptions =
+      options && typeof options === "object"
+        ? (options as { forward?: unknown; findNext?: unknown; matchCase?: unknown })
+        : {};
+    return contents.findInPage(text, {
+      forward: inputOptions.forward !== false,
+      findNext: inputOptions.findNext === true,
+      matchCase: inputOptions.matchCase === true,
+    });
+  },
+);
+
+ipcMain.handle(
+  "paseo:browser:stop-find-in-page",
+  (event, browserId: unknown, action: unknown): null => {
+    if (typeof browserId !== "string" || !validateBrowserOwner(event, browserId)) {
+      return null;
+    }
+    if (
+      action !== "clearSelection" &&
+      action !== "keepSelection" &&
+      action !== "activateSelection"
+    ) {
+      return null;
+    }
+    getPaseoBrowserWebContents(browserId)?.stopFindInPage(action);
+    return null;
+  },
+);
+
 ipcMain.handle(
   "paseo:browser:capture-element",
   async (_event, browserId: unknown, rect: unknown) => {
@@ -687,7 +740,6 @@ async function createWindow(
     delete (params as { preloadURL?: string }).preloadURL;
   });
   mainWindow.webContents.on("did-attach-webview", (_event, contents) => {
-    preparePaseoBrowserWebContents(contents);
     contents.once("destroyed", () => {
       pendingBrowserWindowOpenRequests.delete(contents.id);
     });

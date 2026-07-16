@@ -137,6 +137,13 @@ export interface DesktopAttachedBrowserRegistration {
   webContentsId: number;
 }
 
+export interface BrowserFoundInPageResult {
+  requestId: number;
+  activeMatchOrdinal: number;
+  matches: number;
+  finalUpdate: boolean;
+}
+
 export interface DesktopBrowserBridge {
   readonly profilePartition?: string;
   registerAttachedBrowser?: (input: DesktopAttachedBrowserRegistration) => Promise<void>;
@@ -157,6 +164,19 @@ export interface DesktopBrowserBridge {
   ) => Promise<string | null>;
   /** Copy element text and/or an image to the system clipboard from main. */
   copyElement?: (payload: { text?: string; imageDataUrl?: string }) => Promise<boolean>;
+  findInPage?: (
+    browserId: string,
+    text: string,
+    options?: { forward?: boolean; findNext?: boolean; matchCase?: boolean },
+  ) => Promise<number | null>;
+  stopFindInPage?: (
+    browserId: string,
+    action: "clearSelection" | "keepSelection" | "activateSelection",
+  ) => Promise<void>;
+  onFoundInPage?: (
+    browserId: string,
+    listener: (result: BrowserFoundInPageResult) => void,
+  ) => () => void;
 }
 
 export interface DesktopInvokeBridge {

@@ -8,8 +8,13 @@ export class PaseoBrowserWebviewRegistry {
   private readonly webContentsIdsByBrowserId = new Map<string, number>();
   private readonly workspaceIdsByBrowserId = new Map<string, string>();
   private readonly activeBrowserIdsByWorkspaceId = new Map<string, string>();
+  private readonly ownerWebContentsIdsByBrowserId = new Map<string, number>();
 
-  public registerWebContents(input: { webContentsId: number; browserId: string }): void {
+  public registerWebContents(input: {
+    webContentsId: number;
+    browserId: string;
+    ownerWebContentsId?: number;
+  }): void {
     const previousBrowserId = this.browserIdsByWebContentsId.get(input.webContentsId) ?? null;
     if (
       previousBrowserId !== null &&
@@ -28,6 +33,9 @@ export class PaseoBrowserWebviewRegistry {
 
     this.browserIdsByWebContentsId.set(input.webContentsId, input.browserId);
     this.webContentsIdsByBrowserId.set(input.browserId, input.webContentsId);
+    if (input.ownerWebContentsId !== undefined) {
+      this.ownerWebContentsIdsByBrowserId.set(input.browserId, input.ownerWebContentsId);
+    }
   }
 
   public unregisterWebContents(webContentsId: number): void {
@@ -43,6 +51,7 @@ export class PaseoBrowserWebviewRegistry {
 
     this.webContentsIdsByBrowserId.delete(browserId);
     this.workspaceIdsByBrowserId.delete(browserId);
+    this.ownerWebContentsIdsByBrowserId.delete(browserId);
     this.deleteActiveBrowserReferences(browserId);
   }
 
@@ -52,6 +61,10 @@ export class PaseoBrowserWebviewRegistry {
 
   public getWebContentsIdForBrowser(browserId: string): number | null {
     return this.webContentsIdsByBrowserId.get(browserId) ?? null;
+  }
+
+  public getOwnerWebContentsId(browserId: string): number | null {
+    return this.ownerWebContentsIdsByBrowserId.get(browserId) ?? null;
   }
 
   public listBrowserIds(): string[] {
@@ -69,6 +82,7 @@ export class PaseoBrowserWebviewRegistry {
       this.webContentsIdsByBrowserId.delete(browserId);
     }
     this.workspaceIdsByBrowserId.delete(browserId);
+    this.ownerWebContentsIdsByBrowserId.delete(browserId);
     this.deleteActiveBrowserReferences(browserId);
   }
 
