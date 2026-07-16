@@ -76,6 +76,15 @@ export function getStagingUserId(): Promise<string> {
   return cachedStagingUserIdPromise;
 }
 
+export function shouldInstallAppUpdateOnQuit(input: {
+  platform: NodeJS.Platform;
+  isAppImage: boolean;
+}): boolean {
+  // AppImage's no-relaunch install path blocks while launching the replacement
+  // binary, which can hang after the running file has already been replaced.
+  return !(input.platform === "linux" && input.isAppImage);
+}
+
 class ElectronAppUpdateRuntime implements AppUpdateRuntime {
   private configured = false;
 
@@ -190,5 +199,14 @@ export async function installAppUpdateOnQuit({
   releaseChannel: AppReleaseChannel;
   signal: AbortSignal;
 }): Promise<boolean> {
+  if (
+    !shouldInstallAppUpdateOnQuit({
+      platform: process.platform,
+      isAppImage: Boolean(process.env.APPIMAGE),
+    })
+  ) {
+    return false;
+  }
+
   return appUpdateService.installUpdateOnQuit({ currentVersion, releaseChannel, signal });
 }
