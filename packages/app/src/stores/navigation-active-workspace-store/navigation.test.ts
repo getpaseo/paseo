@@ -134,6 +134,24 @@ describe("workspace navigation", () => {
     ]);
   });
 
+  it("defers an agent tab until a missing workspace is recovered", () => {
+    const { deps, navigations, openedTabs } = createFakeDeps({
+      getSessionWorkspaces: () => new Map(),
+    });
+
+    navigateToWorkspace(
+      {
+        serverId: "server-1",
+        workspaceId: "workspace-a",
+        target: { kind: "agent", agentId: "agent-1" },
+      },
+      deps,
+    );
+
+    expect(openedTabs).toEqual([]);
+    expect(navigations).toEqual(["/h/server-1/workspace/workspace-a?open=agent%3Aagent-1"]);
+  });
+
   it("reads the active workspace from the current route", () => {
     const selection = parseActiveWorkspaceSelection({
       pathname: "/h/server-1/workspace/workspace-a",

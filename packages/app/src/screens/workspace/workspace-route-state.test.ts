@@ -82,6 +82,17 @@ describe("resolveWorkspaceRouteState", () => {
     });
   });
 
+  it("keeps an ordinary missing route distinct from an explicit recovery request", () => {
+    expect(resolve({ recovery: { kind: "idle" } })).toEqual({
+      kind: "missing",
+      hostName: "Laptop",
+    });
+    expect(resolve({ recovery: { kind: "needsHostUpgrade" } })).toEqual({
+      kind: "needsHostUpgrade",
+      hostName: "Laptop",
+    });
+  });
+
   it("renders the authoritative archived-workspace state through ready, restoring, and failed phases", () => {
     expect(resolve({ recovery: recoverable })).toEqual({
       kind: "archived",

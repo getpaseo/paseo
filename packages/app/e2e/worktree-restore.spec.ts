@@ -180,22 +180,49 @@ test.describe("Worktree restore", () => {
       page,
       "restore-success",
     );
-
-    await page.getByTestId("workspace-recovery-action").click();
-
-    await expect(page.getByText("Restoring workspace", { exact: true })).toBeVisible();
-    await expect
-      .poll(() => existsSync(worktree.workspaceDirectory), { timeout: 30_000 })
-      .toBe(true);
-    await waitForWorkspaceInSidebar(page, {
-      serverId: getServerId(),
-      workspaceId: worktree.workspaceId,
+    await worktreeClient.fetchWorkspaces({
+      subscribe: { subscriptionId: `restore-secondary-${randomUUID()}` },
     });
-    await expect(
-      page.getByTestId(`workspace-tab-agent_${agent.id}`).filter({ visible: true }).first(),
-    ).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByTestId("workspace-recovery-action")).toHaveCount(0);
-    expect(await fetchAgentArchivedAt(client, agent.id)).toBeNull();
+    let updateTimeout: ReturnType<typeof setTimeout> | null = null;
+    let unsubscribeSecondaryWorkspaceUpdate = () => {};
+    const secondaryWorkspaceUpdate = new Promise<void>((resolve, reject) => {
+      updateTimeout = setTimeout(
+        () => reject(new Error("Secondary client did not receive the restored workspace")),
+        30_000,
+      );
+      unsubscribeSecondaryWorkspaceUpdate = worktreeClient.on("workspace_update", (message) => {
+        if (
+          message.payload.kind === "upsert" &&
+          message.payload.workspace.id === worktree.workspaceId
+        ) {
+          resolve();
+        }
+      });
+    });
+
+    try {
+      await page.getByTestId("workspace-recovery-action").click();
+
+      await expect(page.getByText("Restoring workspace", { exact: true })).toBeVisible();
+      await expect
+        .poll(() => existsSync(worktree.workspaceDirectory), { timeout: 30_000 })
+        .toBe(true);
+      await secondaryWorkspaceUpdate;
+      await waitForWorkspaceInSidebar(page, {
+        serverId: getServerId(),
+        workspaceId: worktree.workspaceId,
+      });
+      await expect(
+        page.getByTestId(`workspace-tab-agent_${agent.id}`).filter({ visible: true }).first(),
+      ).toBeVisible({ timeout: 30_000 });
+      await expect(page.getByTestId("workspace-recovery-action")).toHaveCount(0);
+      expect(await fetchAgentArchivedAt(client, agent.id)).toBeNull();
+    } finally {
+      unsubscribeSecondaryWorkspaceUpdate();
+      if (updateTimeout) {
+        clearTimeout(updateTimeout);
+      }
+    }
 
     const switchedBranch = `restored-live-${randomUUID().slice(0, 8)}`;
     execFileSync("git", ["branch", switchedBranch], {
@@ -215,7 +242,7 @@ test.describe("Worktree restore", () => {
   });
 
   test("restore failure stays visible and permits a successful retry", async ({ page }) => {
-    const { worktree } = await openArchivedWorkspaceFromHistory(page, "restore-retry");
+    const { agent, worktree } = await openArchivedWorkspaceFromHistory(page, "restore-retry");
     const displacedProjectPath = `${tempRepo.path}-temporarily-unavailable`;
     await rename(tempRepo.path, displacedProjectPath);
 
@@ -238,6 +265,9 @@ test.describe("Worktree restore", () => {
       serverId: getServerId(),
       workspaceId: worktree.workspaceId,
     });
+    await expect(
+      page.getByTestId(`workspace-tab-agent_${agent.id}`).filter({ visible: true }).first(),
+    ).toBeVisible({ timeout: 30_000 });
   });
 
   test("an unrecoverable missing workspace shows no misleading recovery action", async ({

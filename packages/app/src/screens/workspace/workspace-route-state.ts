@@ -17,6 +17,7 @@ export type WorkspaceRouteState =
       lastError: string | null;
     }
   | { kind: "loading"; hostName: string }
+  | { kind: "missing"; hostName: string }
   | { kind: "needsHostUpgrade"; hostName: string }
   | {
       kind: "archived";
@@ -59,8 +60,11 @@ export function resolveWorkspaceRouteState(input: {
     };
   }
 
-  if (!input.hasHydratedWorkspaces || input.recovery.kind === "idle") {
+  if (!input.hasHydratedWorkspaces) {
     return { kind: "loading", hostName: input.hostName };
+  }
+  if (input.recovery.kind === "idle") {
+    return { kind: "missing", hostName: input.hostName };
   }
 
   switch (input.recovery.kind) {

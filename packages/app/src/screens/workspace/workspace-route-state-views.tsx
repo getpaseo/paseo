@@ -29,6 +29,14 @@ export function renderWorkspaceRouteGate(input: {
   switch (input.state.kind) {
     case "loading":
       return <WorkspaceConnecting hostName={input.state.hostName} />;
+    case "missing":
+      return (
+        <WorkspaceEmptyState
+          titleKey="workspace.route.recovery.unavailableTitle"
+          hostName={input.state.hostName}
+          onDismiss={input.actions.onDismissMissingWorkspace}
+        />
+      );
     case "archived":
       return (
         <ArchivedWorkspaceRecovery

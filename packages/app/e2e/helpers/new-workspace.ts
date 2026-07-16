@@ -18,6 +18,7 @@ type NewWorkspaceDaemonClient = Pick<
   | "getPaseoWorktreeList"
   | "getDaemonConfig"
   | "inspectWorkspaceRecovery"
+  | "on"
   | "patchDaemonConfig"
   | "removeProject"
 >;

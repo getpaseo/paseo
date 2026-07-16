@@ -431,6 +431,7 @@ export interface SessionOptions {
   onBinaryMessage?: (frame: Uint8Array) => void;
   getTransportBufferedAmount?: () => number | null;
   onLifecycleIntent?: (intent: SessionLifecycleIntent) => void;
+  onWorkspaceRecovered?: (workspace: PersistedWorkspaceRecord) => Promise<void>;
   logger: pino.Logger;
   downloadTokenStore: DownloadTokenStore;
   pushTokenStore: PushTokenStore;
@@ -559,6 +560,9 @@ export class Session {
   private readonly onBinaryMessage: ((frame: Uint8Array) => void) | null;
   private readonly getTransportBufferedAmount: () => number | null;
   private readonly onLifecycleIntent: ((intent: SessionLifecycleIntent) => void) | null;
+  private readonly onWorkspaceRecovered:
+    | ((workspace: PersistedWorkspaceRecord) => Promise<void>)
+    | null;
   private readonly sessionLogger: pino.Logger;
   private readonly paseoHome: string;
   private readonly worktreesRoot: string | undefined;
@@ -623,6 +627,7 @@ export class Session {
       onBinaryMessage,
       getTransportBufferedAmount,
       onLifecycleIntent,
+      onWorkspaceRecovered,
       logger,
       downloadTokenStore,
       pushTokenStore,
@@ -672,6 +677,7 @@ export class Session {
     this.onBinaryMessage = onBinaryMessage ?? null;
     this.getTransportBufferedAmount = getTransportBufferedAmount ?? (() => 0);
     this.onLifecycleIntent = onLifecycleIntent ?? null;
+    this.onWorkspaceRecovered = onWorkspaceRecovered ?? null;
     this.pushTokenStore = pushTokenStore;
     this.paseoHome = paseoHome;
     this.worktreesRoot = worktreesRoot;
@@ -993,6 +999,27 @@ export class Session {
 
   async warmWorkspaceGitDataForWorkspace(workspace: PersistedWorkspaceRecord): Promise<void> {
     await this.workspaceGitObserver.warmGitData(workspace);
+  }
+
+  async refreshRecoveredWorkspaceForExternalMutation(
+    workspace: PersistedWorkspaceRecord,
+  ): Promise<void> {
+    try {
+      await this.workspaceGitObserver.warmGitData(workspace);
+    } catch (error) {
+      this.sessionLogger.warn(
+        { err: error, workspaceId: workspace.workspaceId },
+        "Failed to warm git observer after workspace recovery",
+      );
+      try {
+        await this.emitWorkspaceUpdateForWorkspaceId(workspace.workspaceId);
+      } catch (emitError) {
+        this.sessionLogger.warn(
+          { err: emitError, workspaceId: workspace.workspaceId },
+          "Failed to emit workspace update after recovery",
+        );
+      }
+    }
   }
 
   /**
@@ -4016,22 +4043,18 @@ export class Session {
     if (!workspace) {
       throw new Error(`Recovered workspace record not found: ${workspaceId}`);
     }
-    try {
-      await this.workspaceGitObserver.warmGitData(workspace);
-    } catch (error) {
-      this.sessionLogger.warn(
-        { err: error, workspaceId },
-        "Failed to warm git observer after workspace recovery",
-      );
+    if (this.onWorkspaceRecovered) {
       try {
-        await this.emitWorkspaceUpdateForWorkspaceId(workspaceId);
-      } catch (emitError) {
+        await this.onWorkspaceRecovered(workspace);
+        return;
+      } catch (error) {
         this.sessionLogger.warn(
-          { err: emitError, workspaceId },
-          "Failed to emit workspace update after recovery",
+          { err: error, workspaceId },
+          "Failed to publish workspace recovery to active sessions",
         );
       }
     }
+    await this.refreshRecoveredWorkspaceForExternalMutation(workspace);
   }
 
   private async restoreOwningWorkspaceForLegacyAgentRefresh(agentId: string): Promise<void> {

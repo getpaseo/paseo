@@ -185,10 +185,10 @@ function HostWorkspaceRouteContent() {
     return null;
   }
 
-  return <WorkspaceDeck />;
+  return <WorkspaceDeck recoveryRequested={isAgentOpenIntent} />;
 }
 
-function WorkspaceDeck() {
+function WorkspaceDeck({ recoveryRequested }: { recoveryRequested: boolean }) {
   const activeSelection = useActiveWorkspaceSelection();
   const [mountedSelections, setMountedSelections] = useState<ActiveWorkspaceSelection[]>(() =>
     activeSelection ? [activeSelection] : [],
@@ -233,6 +233,7 @@ function WorkspaceDeck() {
             key={getWorkspaceSelectionKey(selection)}
             selection={selection}
             activeSelection={activeSelection}
+            recoveryRequested={recoveryRequested}
             onUnmountInactive={unmountWorkspaceSelection}
           />
         );
@@ -244,10 +245,12 @@ function WorkspaceDeck() {
 function WorkspaceDeckEntry({
   selection,
   activeSelection,
+  recoveryRequested,
   onUnmountInactive,
 }: {
   selection: ActiveWorkspaceSelection;
   activeSelection: ActiveWorkspaceSelection;
+  recoveryRequested: boolean;
   onUnmountInactive: (selection: ActiveWorkspaceSelection) => void;
 }) {
   const isActive = areWorkspaceSelectionsEqual(selection, activeSelection);
@@ -278,6 +281,7 @@ function WorkspaceDeckEntry({
         serverId={selection.serverId}
         workspaceId={selection.workspaceId}
         isRouteFocused={isActive}
+        recoveryRequested={isActive && recoveryRequested}
       />
     </RetainedPanel>
   );
