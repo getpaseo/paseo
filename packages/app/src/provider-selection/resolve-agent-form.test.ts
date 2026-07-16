@@ -56,7 +56,22 @@ const CODEX_MODELS: AgentModelDefinition[] = [
     defaultThinkingOptionId: "xhigh",
     thinkingOptions: [
       { id: "low", label: "low" },
+      { id: "medium", label: "medium" },
       { id: "xhigh", label: "xhigh", isDefault: true },
+    ],
+  },
+];
+
+const CLAUDE_MODELS: AgentModelDefinition[] = [
+  {
+    provider: "claude",
+    id: "claude-sonnet-4-6",
+    label: "Claude Sonnet 4.6",
+    isDefault: true,
+    defaultThinkingOptionId: "low",
+    thinkingOptions: [
+      { id: "low", label: "Low", isDefault: true },
+      { id: "medium", label: "Medium" },
     ],
   },
 ];
@@ -906,6 +921,23 @@ describe("resolveAgentForm", () => {
       expect(next.form.modeId).toBe("auto");
       expect(next.form.model).toBe("gpt-5.3-codex");
     });
+
+    it("preserves the selected thinking option when switching providers", () => {
+      const state = makeState({
+        provider: "claude",
+        model: "claude-sonnet-4-6",
+        thinkingOptionId: "low",
+      });
+      const next = resolveAgentForm(state, {
+        type: "SET_PROVIDER_FROM_USER",
+        provider: "codex",
+        providerModels: CODEX_MODELS,
+        providerDef: TEST_CODEX_DEFINITION,
+        providerPrefs: undefined,
+      });
+
+      expect(next.form.thinkingOptionId).toBe("low");
+    });
   });
 
   describe("SET_PROVIDER_AND_MODEL_FROM_USER", () => {
@@ -966,6 +998,40 @@ describe("resolveAgentForm", () => {
 
       expect(next.form.thinkingOptionId).toBe("xhigh");
     });
+
+    it("preserves the selected thinking option when switching providers", () => {
+      const state = makeState(
+        { provider: "codex", model: "gpt-5.3-codex", thinkingOptionId: "medium" },
+        { thinkingOptionId: true },
+      );
+      const next = resolveAgentForm(state, {
+        type: "SET_PROVIDER_AND_MODEL_FROM_USER",
+        provider: "claude",
+        modelId: "claude-sonnet-4-6",
+        providerDef: TEST_CLAUDE_DEFINITION,
+        providerModels: CLAUDE_MODELS,
+      });
+
+      expect(next.form.thinkingOptionId).toBe("medium");
+    });
+
+    it("uses the target model preference when the current thinking option is unsupported", () => {
+      const state = makeState({
+        provider: "codex",
+        model: "gpt-5.3-codex",
+        thinkingOptionId: "xhigh",
+      });
+      const next = resolveAgentForm(state, {
+        type: "SET_PROVIDER_AND_MODEL_FROM_USER",
+        provider: "claude",
+        modelId: "claude-sonnet-4-6",
+        providerDef: TEST_CLAUDE_DEFINITION,
+        providerModels: CLAUDE_MODELS,
+        providerPrefs: { thinkingByModel: { "claude-sonnet-4-6": "medium" } },
+      });
+
+      expect(next.form.thinkingOptionId).toBe("medium");
+    });
   });
 
   describe("SET_MODE_FROM_USER", () => {
@@ -1001,6 +1067,34 @@ describe("resolveAgentForm", () => {
         type: "SET_MODEL_FROM_USER",
         modelId: "gpt-5.3-codex",
         availableModels: CODEX_MODELS,
+      });
+
+      expect(next.form.thinkingOptionId).toBe("low");
+    });
+
+    it("preserves the current thinking option when switching models", () => {
+      const availableModels: AgentModelDefinition[] = [
+        ...CODEX_MODELS,
+        {
+          provider: "codex",
+          id: "gpt-5.4-codex",
+          label: "gpt-5.4-codex",
+          defaultThinkingOptionId: "xhigh",
+          thinkingOptions: [
+            { id: "low", label: "low" },
+            { id: "xhigh", label: "xhigh", isDefault: true },
+          ],
+        },
+      ];
+      const state = makeState({
+        provider: "codex",
+        model: "gpt-5.3-codex",
+        thinkingOptionId: "low",
+      });
+      const next = resolveAgentForm(state, {
+        type: "SET_MODEL_FROM_USER",
+        modelId: "gpt-5.4-codex",
+        availableModels,
       });
 
       expect(next.form.thinkingOptionId).toBe("low");
