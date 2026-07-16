@@ -311,7 +311,7 @@ function DiffPanelBody({
   if (error) {
     return (
       <View style={styles.centerState} testID="diff-panel-error">
-        <Text style={styles.errorText}>{error.message || t("panels.diff.loadError")}</Text>
+        <Text style={styles.errorText}>{t("panels.diff.loadError")}</Text>
       </View>
     );
   }

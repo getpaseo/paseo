@@ -31,7 +31,7 @@ export function useCommitFileDiff({
 }: UseCommitFileDiffOptions): CommitFileDiffResult {
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
-  // COMPAT(commitsList): added in v0.1.97, drop the gate when floor >= v0.1.97.
+  // COMPAT(commitsList): added in v0.1.110, remove gate after 2027-01-16.
   // The commits section is already capability-gated; this keeps the hook safe if
   // ever called standalone without the capability present.
   const capabilityPresent = useSessionStore(

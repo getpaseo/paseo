@@ -29,7 +29,7 @@ export function useCheckoutCommitsQuery({
 }: UseCheckoutCommitsQueryOptions): CheckoutCommitsQueryResult {
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
-  // COMPAT(commitsList): added in v0.1.97, drop the gate when floor >= v0.1.97.
+  // COMPAT(commitsList): added in v0.1.110, remove gate after 2027-01-16.
   // Single capability-detection site; downstream reads a clean `capabilityMissing` shape.
   const capabilityPresent = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.features?.commitsList === true,
