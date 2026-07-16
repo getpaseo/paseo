@@ -130,7 +130,7 @@ describe("SherpaOnnxTTS", () => {
       "lexicon-zh.txt",
     ]);
 
-    new SherpaOnnxTTS(
+    const tts = new SherpaOnnxTTS(
       {
         preset: "kokoro-multi-lang-v1_0",
         modelDir,
@@ -139,6 +139,7 @@ describe("SherpaOnnxTTS", () => {
       pino({ level: "silent" }),
     );
 
+    expect(tts).toBeInstanceOf(SherpaOnnxTTS);
     expect(ttsConfigs).toEqual([
       {
         model: {

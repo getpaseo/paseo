@@ -9,6 +9,59 @@ function assertFileExists(filePath: string, label: string): void {
   }
 }
 
+function buildOfflineModelConfig(
+  model: SherpaOfflineRecognizerModel,
+  config: Pick<SherpaOfflineRecognizerConfig, "numThreads" | "provider" | "debug">,
+): Record<string, unknown> {
+  const shared = {
+    numThreads: config.numThreads ?? 1,
+    provider: config.provider ?? "cpu",
+    debug: config.debug ?? 0,
+  };
+
+  switch (model.kind) {
+    case "nemo_transducer": {
+      assertFileExists(model.encoder, "offline encoder");
+      assertFileExists(model.decoder, "offline decoder");
+      assertFileExists(model.joiner, "offline joiner");
+      assertFileExists(model.tokens, "tokens");
+      return {
+        transducer: {
+          encoder: model.encoder,
+          decoder: model.decoder,
+          joiner: model.joiner,
+        },
+        tokens: model.tokens,
+        modelType: "nemo_transducer",
+        ...shared,
+      };
+    }
+    case "sense_voice": {
+      assertFileExists(model.model, "sense_voice model");
+      assertFileExists(model.tokens, "tokens");
+      return {
+        senseVoice: {
+          model: model.model,
+          useInverseTextNormalization: model.useInverseTextNormalization !== false ? 1 : 0,
+        },
+        tokens: model.tokens,
+        ...shared,
+      };
+    }
+    case "paraformer": {
+      assertFileExists(model.model, "paraformer model");
+      assertFileExists(model.tokens, "tokens");
+      return {
+        paraformer: {
+          model: model.model,
+        },
+        tokens: model.tokens,
+        ...shared,
+      };
+    }
+  }
+}
+
 export type SherpaOfflineRecognizerModel =
   | {
       kind: "nemo_transducer";
@@ -69,58 +122,7 @@ export class SherpaOfflineRecognizerEngine {
     });
 
     const model = config.model;
-    let modelConfig: Record<string, unknown>;
-
-    switch (model.kind) {
-      case "nemo_transducer": {
-        assertFileExists(model.encoder, "offline encoder");
-        assertFileExists(model.decoder, "offline decoder");
-        assertFileExists(model.joiner, "offline joiner");
-        assertFileExists(model.tokens, "tokens");
-        modelConfig = {
-          transducer: {
-            encoder: model.encoder,
-            decoder: model.decoder,
-            joiner: model.joiner,
-          },
-          tokens: model.tokens,
-          modelType: "nemo_transducer",
-          numThreads: config.numThreads ?? 1,
-          provider: config.provider ?? "cpu",
-          debug: config.debug ?? 0,
-        };
-        break;
-      }
-      case "sense_voice": {
-        assertFileExists(model.model, "sense_voice model");
-        assertFileExists(model.tokens, "tokens");
-        modelConfig = {
-          senseVoice: {
-            model: model.model,
-            useInverseTextNormalization: model.useInverseTextNormalization !== false ? 1 : 0,
-          },
-          tokens: model.tokens,
-          numThreads: config.numThreads ?? 1,
-          provider: config.provider ?? "cpu",
-          debug: config.debug ?? 0,
-        };
-        break;
-      }
-      case "paraformer": {
-        assertFileExists(model.model, "paraformer model");
-        assertFileExists(model.tokens, "tokens");
-        modelConfig = {
-          paraformer: {
-            model: model.model,
-          },
-          tokens: model.tokens,
-          numThreads: config.numThreads ?? 1,
-          provider: config.provider ?? "cpu",
-          debug: config.debug ?? 0,
-        };
-        break;
-      }
-    }
+    const modelConfig = buildOfflineModelConfig(model, config);
 
     const sherpa = (config.loadSherpaOnnxNode ?? loadSherpaOnnxNode)();
 
