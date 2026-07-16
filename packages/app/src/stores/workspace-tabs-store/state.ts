@@ -540,10 +540,14 @@ function coerceWorkspaceTabTarget(raw: Record<string, unknown>): WorkspaceTabTar
   if (kind === "setup" && typeof raw.workspaceId === "string") {
     return normalizeWorkspaceTabTarget({ kind: "setup", workspaceId: raw.workspaceId });
   }
-  if (kind === "diff") {
-    return coercePersistedDiffTabTarget(raw);
-  }
-  return null;
+  return coercePersistedDiffTabTargetByKind(kind, raw);
+}
+
+function coercePersistedDiffTabTargetByKind(
+  kind: string | null,
+  raw: Record<string, unknown>,
+): WorkspaceTabTarget | null {
+  return kind === "diff" ? coercePersistedDiffTabTarget(raw) : null;
 }
 
 // NOTE: This legacy store no longer persists diff tabs — live tab persistence is
