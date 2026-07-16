@@ -2016,8 +2016,38 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
     this.pendingPermissions.clear();
 
-    if (this.activeForegroundTurnId) {
+    const turnId = this.activeForegroundTurnId;
+    if (!turnId) {
+      return;
+    }
+
+    // Ask the agent to cancel the in-flight prompt. session/cancel is an ACP
+    // notification, so this resolves once the request is flushed to the
+    // transport — it never waits for the agent to acknowledge or for the
+    // in-flight session/prompt call to return.
+    try {
       await this.connection.cancel({ sessionId: this.sessionId });
+    } catch (error) {
+      this.logger.debug({ err: error }, "ACP session/cancel failed during interrupt");
+    }
+
+    // Finalize the turn locally so the session is immediately ready for the
+    // next prompt. A backend stalled in inference can be slow to return its
+    // final stopReason after a cancel — or never return it at all — and
+    // blocking finalization on that response would leave activeForegroundTurnId
+    // set, wedging the next startTurn() with "A foreground turn is already
+    // active". finishTurn() is idempotent and handlePromptResponse() bails on a
+    // stale turn, so the eventual (or never-arriving) prompt response is a
+    // harmless no-op. Guard on turnId in case the real response won the race
+    // during the await above.
+    if (this.activeForegroundTurnId === turnId) {
+      this.synthesizeCanceledToolCalls();
+      this.finishTurn({
+        type: "turn_canceled",
+        provider: this.provider,
+        reason: "Interrupted",
+        turnId,
+      });
     }
   }
 
@@ -2640,6 +2670,14 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   private handlePromptResponse(response: PromptResponse, turnId: string): void {
+    // The session/prompt call for this turn has resolved. If the turn was
+    // already finalized locally (e.g. interrupt() canceled it, or a newer turn
+    // has since started), ignore the response entirely — don't let its usage
+    // leak into the current turn. finishTurn() is idempotent, but bailing here
+    // keeps currentTurnUsage from being clobbered by a stale response.
+    if (turnId !== this.activeForegroundTurnId) {
+      return;
+    }
     this.currentTurnUsage = mapACPUsage(response.usage) ?? this.currentTurnUsage;
 
     switch (response.stopReason) {
@@ -2730,6 +2768,13 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private finishTurn(
     event: Extract<AgentStreamEvent, { type: "turn_completed" | "turn_failed" | "turn_canceled" }>,
   ): void {
+    // Idempotent: only the active foreground turn can be finalized. A late or
+    // duplicate terminal — e.g. a slow session/prompt response that resolves
+    // after interrupt() already canceled the turn locally, or after a newer
+    // turn has started — must not re-emit a terminal or disturb the live turn.
+    if (event.turnId !== this.activeForegroundTurnId) {
+      return;
+    }
     this.activeForegroundTurnId = null;
     this.fallbackAssistantMessageId = null;
     if (this.activeSubmittedUserMessage?.turnId === event.turnId) {
