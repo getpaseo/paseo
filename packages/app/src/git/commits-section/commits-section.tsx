@@ -30,6 +30,8 @@ function CommitsSectionSkeleton() {
           <View style={styles.skeletonDot} />
           <View style={styles.skeletonSha} />
           <View style={styles.skeletonSubject} />
+          <View style={styles.skeletonTimestamp} />
+          <View style={styles.skeletonCaret} />
         </View>
       ))}
     </View>
@@ -195,14 +197,15 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.spacing[2],
   },
   skeleton: {
-    paddingHorizontal: theme.spacing[2],
-    paddingBottom: theme.spacing[2],
+    paddingBottom: theme.spacing[1],
     gap: theme.spacing[2],
   },
   skeletonRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: theme.spacing[1],
     minHeight: 20,
   },
   skeletonDot: {
@@ -218,9 +221,22 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surface2,
   },
   skeletonSubject: {
-    width: "55%",
+    flex: 1,
+    minWidth: 0,
     height: 12,
     borderRadius: theme.borderRadius.sm,
     backgroundColor: theme.colors.surface2,
+  },
+  skeletonTimestamp: {
+    width: 40,
+    height: 10,
+    borderRadius: theme.borderRadius.sm,
+    backgroundColor: theme.colors.surface2,
+    flexShrink: 0,
+  },
+  skeletonCaret: {
+    width: 16,
+    height: 16,
+    flexShrink: 0,
   },
 }));
