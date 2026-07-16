@@ -4947,13 +4947,18 @@ test("parses canonical fetch_agent_timeline_response payloads without crashing",
   expect(logger.warn).not.toHaveBeenCalled();
 });
 
-test("rejects a correlated request when its response violates the protocol schema", async () => {
+test("rejects and logs a correlated response that violates the protocol schema", async () => {
   const mock = createMockTransport();
+  const warnings: string[] = [];
+  const logger: Logger = {
+    ...noopLogger,
+    warn: (_fields, message) => warnings.push(message ?? ""),
+  };
 
   const client = new DaemonClient({
     url: "ws://test",
     clientId: "clsk_unit_test",
-    logger: noopLogger,
+    logger,
     reconnect: { enabled: false },
     transportFactory: () => mock.transport,
   });
@@ -5016,6 +5021,7 @@ test("rejects a correlated request when its response violates the protocol schem
     requestId: "req-invalid",
     message: expect.stringMatching(/validation/i),
   });
+  expect(warnings).toEqual(["Message validation failed"]);
 });
 
 test("sends subscribe/unsubscribe terminals messages", async () => {
