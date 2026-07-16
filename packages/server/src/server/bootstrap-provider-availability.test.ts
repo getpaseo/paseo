@@ -19,7 +19,9 @@ describe("bootstrap provider availability", () => {
     process.env.PATH = originalEnv.PATH;
     process.env.PATHEXT = originalEnv.PATHEXT;
     await Promise.all(
-      tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
+      tempRoots
+        .splice(0)
+        .map((root) => rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })),
     );
   });
 
