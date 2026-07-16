@@ -102,9 +102,9 @@ The harness launches the unpacked packaged app with isolated user data and daemo
 - the renderer starts a fresh desktop-managed daemon through the normal startup bootstrap;
 - the bundled CLI can query that daemon and run a terminal command.
 
-The required Linux `desktop-tests` pull-request job builds only the x64 unpacked directory with `electron-builder --dir --publish never`, runs it under Xvfb, and uploads renderer, desktop, and daemon diagnostics on failure. It does not create an installer, GitHub release, tag, or published artifact. The desktop release matrix runs the same harness against each host-native packaged app before publishing.
+The desktop release matrix runs this harness against each host-native packaged app before publishing. Linux runs the real unpacked artifact under Xvfb; all platforms upload renderer, desktop, and daemon diagnostics on failure.
 
-To exercise the PR path on Linux:
+To exercise the release smoke locally on Linux:
 
 ```bash
 PASEO_DESKTOP_SMOKE=1 \
