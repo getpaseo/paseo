@@ -390,6 +390,18 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
     vi.useRealTimers();
   });
 
+  test("getCheckout surfaces an unexpected Git read failure", async () => {
+    const service = createService({
+      getCheckoutStatus: vi.fn(async () => {
+        throw new Error("Git read failed");
+      }),
+    });
+
+    await expect(service.getCheckout(REPO_CWD)).rejects.toThrow("Git read failed");
+
+    service.dispose();
+  });
+
   test("getSnapshot returns the current snapshot without shelling out", async () => {
     let nowMs = Date.parse("2026-04-12T00:00:00.000Z");
     const getCheckoutStatus = vi.fn(async (cwd: string) => createCheckoutStatus(cwd));

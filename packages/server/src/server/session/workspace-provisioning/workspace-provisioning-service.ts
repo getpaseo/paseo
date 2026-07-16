@@ -189,7 +189,8 @@ export function createWorkspaceProvisioningService(deps: {
 
   async function findOrCreateWorkspaceForDirectory(cwd: string): Promise<PersistedWorkspaceRecord> {
     const normalizedCwd = resolve(cwd);
-    const active = (await workspaceRegistry.list())
+    const workspaces = await workspaceRegistry.list();
+    const active = workspaces
       .filter((workspace) => !workspace.archivedAt && workspace.cwd === normalizedCwd)
       .sort(
         (left, right) =>
@@ -197,7 +198,7 @@ export function createWorkspaceProvisioningService(deps: {
           left.workspaceId.localeCompare(right.workspaceId),
       )[0];
     if (active) return active;
-    const archived = (await workspaceRegistry.list())
+    const archived = workspaces
       .filter((workspace) => workspace.archivedAt && workspace.cwd === normalizedCwd)
       .sort(
         (left, right) =>
@@ -225,11 +226,24 @@ export function createWorkspaceProvisioningService(deps: {
     const project = await projectRegistry.get(workspace.projectId);
     if (!project) throw new Error(`Unknown project: ${workspace.projectId}`);
     const timestamp = new Date().toISOString();
+    let next: PersistedWorkspaceRecord | null = null;
+    if (workspace.archivedAt) {
+      const checkout = await workspaceGitService.getCheckout(workspace.cwd);
+      next = {
+        ...workspace,
+        kind: deriveWorkspaceKind(checkout),
+        branch:
+          checkout.currentBranch && checkout.currentBranch.toUpperCase() !== "HEAD"
+            ? checkout.currentBranch
+            : null,
+        archivedAt: null,
+        updatedAt: timestamp,
+      };
+    }
     if (project.archivedAt) {
       await projectRegistry.upsert({ ...project, archivedAt: null, updatedAt: timestamp });
     }
-    if (!workspace.archivedAt) return workspace;
-    const next = { ...workspace, archivedAt: null, updatedAt: timestamp };
+    if (!next) return workspace;
     await workspaceRegistry.upsert(next);
     return next;
   }

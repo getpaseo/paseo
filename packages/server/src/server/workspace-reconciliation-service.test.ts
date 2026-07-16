@@ -899,6 +899,51 @@ describe("WorkspaceReconciliationService", () => {
     expect(projects.get("p1")!.customName).toBe("My Fork");
   });
 
+  test("keeps persisted Git metadata when a workspace checkout read fails", async () => {
+    const projectRoot = mkdtempSync(path.join(tmpdir(), "reconcile-checkout-read-project-"));
+    const workspaceRoot = path.join(projectRoot, "workspace");
+    mkdirSync(workspaceRoot);
+    tempDirs.push(projectRoot);
+    const { projects, workspaces, projectRegistry, workspaceRegistry } = createTestRegistries();
+    const project = createPersistedProjectRecord({
+      projectId: "p1",
+      rootPath: projectRoot,
+      kind: "non_git",
+      displayName: "project",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+    const workspace = createPersistedWorkspaceRecord({
+      workspaceId: "w1",
+      projectId: project.projectId,
+      cwd: workspaceRoot,
+      kind: "local_checkout",
+      displayName: "workspace",
+      branch: "feature",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+    projects.set(project.projectId, project);
+    workspaces.set(workspace.workspaceId, workspace);
+    const service = new WorkspaceReconciliationService({
+      projectRegistry,
+      workspaceRegistry,
+      logger: createTestLogger(),
+      workspaceGitService: {
+        getCheckout: async (cwd) => {
+          if (cwd === workspaceRoot) throw new Error("Git read failed");
+          return createCheckout(cwd, { isGit: true, currentBranch: "main", worktreeRoot: cwd });
+        },
+      },
+    });
+
+    const result = await service.reconcileGitMetadata();
+
+    expect(result.changesApplied).toEqual([]);
+    expect(projects.get(project.projectId)).toEqual(project);
+    expect(workspaces.get(workspace.workspaceId)).toEqual(workspace);
+  });
+
   test("updates workspace branch metadata without clobbering the workspace name", async () => {
     const dir = createTempGitRepo("reconcile-branch-");
     tempDirs.push(dir);

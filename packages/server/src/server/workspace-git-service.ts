@@ -467,31 +467,12 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
 
   async getCheckout(cwd: string): Promise<ProjectCheckoutLitePayload> {
     const normalizedCwd = resolve(cwd);
-    try {
-      const status = await this.deps.getCheckoutStatus(normalizedCwd, {
-        paseoHome: this.paseoHome,
-        worktreesRoot: this.worktreesRoot,
-        logger: this.logger,
-      });
-      if (!status.isGit) {
-        return checkoutLiteFromGitSnapshot(normalizedCwd, {
-          isGit: false,
-          currentBranch: null,
-          remoteUrl: null,
-          repoRoot: null,
-          isPaseoOwnedWorktree: false,
-          mainRepoRoot: null,
-        });
-      }
-      return checkoutLiteFromGitSnapshot(normalizedCwd, {
-        isGit: true,
-        currentBranch: status.currentBranch,
-        remoteUrl: status.remoteUrl,
-        repoRoot: status.repoRoot,
-        isPaseoOwnedWorktree: status.isPaseoOwnedWorktree,
-        mainRepoRoot: status.mainRepoRoot,
-      });
-    } catch {
+    const status = await this.deps.getCheckoutStatus(normalizedCwd, {
+      paseoHome: this.paseoHome,
+      worktreesRoot: this.worktreesRoot,
+      logger: this.logger,
+    });
+    if (!status.isGit) {
       return checkoutLiteFromGitSnapshot(normalizedCwd, {
         isGit: false,
         currentBranch: null,
@@ -501,6 +482,14 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         mainRepoRoot: null,
       });
     }
+    return checkoutLiteFromGitSnapshot(normalizedCwd, {
+      isGit: true,
+      currentBranch: status.currentBranch,
+      remoteUrl: status.remoteUrl,
+      repoRoot: status.repoRoot,
+      isPaseoOwnedWorktree: status.isPaseoOwnedWorktree,
+      mainRepoRoot: status.mainRepoRoot,
+    });
   }
 
   peekSnapshot(cwd: string): WorkspaceGitRuntimeSnapshot | null {

@@ -176,26 +176,39 @@ export class WorkspaceReconciliationService {
     }
     await Promise.all(
       roots.map(async ({ rootPath, projects }) => {
-        const rootGit = await readCheckout(rootPath);
-        await Promise.all(
-          projects.map((project) =>
-            this.reconcileProject({
-              project,
-              siblings: workspacesByProject.get(project.projectId) ?? [],
-              currentGit: rootGit,
-              readCheckout,
-              changes,
-            }),
-          ),
-        );
+        try {
+          const rootGit = await readCheckout(rootPath);
+          await Promise.all(
+            projects.map((project) =>
+              this.reconcileProject({
+                project,
+                siblings: workspacesByProject.get(project.projectId) ?? [],
+                currentGit: rootGit,
+                readCheckout,
+                changes,
+              }),
+            ),
+          );
+        } catch (error) {
+          this.logger.warn(
+            { err: error, rootPath },
+            "Skipped workspace reconciliation after Git read failed",
+          );
+        }
       }),
     );
   }
 
   private async reconcileProject(input: ProjectReconciliationInput): Promise<void> {
     const { project, siblings, currentGit, readCheckout, changes } = input;
+    const existingSiblings = siblings.filter((workspace) => existsSync(workspace.cwd));
+    const workspaceCheckouts = await Promise.all(
+      existingSiblings.map(async (workspace) => ({
+        workspace,
+        checkout: await readCheckout(workspace.cwd),
+      })),
+    );
     const projectUpdates: Partial<Pick<PersistedProjectRecord, "kind">> = {};
-
     const mappedKind = deriveProjectKind(currentGit);
 
     if (project.kind !== mappedKind) {
@@ -217,10 +230,8 @@ export class WorkspaceReconciliationService {
       });
     }
 
-    const existingSiblings = siblings.filter((workspace) => existsSync(workspace.cwd));
     await Promise.all(
-      existingSiblings.map(async (workspace) => {
-        const wsGit = await readCheckout(workspace.cwd);
+      workspaceCheckouts.map(async ({ workspace, checkout: wsGit }) => {
         const expectedKind = deriveWorkspaceKind(wsGit);
 
         const workspaceUpdates: Partial<Pick<PersistedWorkspaceRecord, "branch" | "kind">> = {};
