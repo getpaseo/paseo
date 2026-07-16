@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
+import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useChangesPreferences } from "@/hooks/use-changes-preferences";
 import { useCheckoutCommitsQuery, type CheckoutCommitsQueryResult } from "@/git/use-commits-query";
 import { ThemedChevron, chevronColorMapping } from "@/git/themed-chevron";
@@ -77,8 +78,10 @@ function CommitsSectionContent({
 export function CommitsSection({ serverId, cwd, onCommitPress }: CommitsSectionProps) {
   const { t } = useTranslation();
   const { preferences, updatePreferences } = useChangesPreferences();
+  const isPanelActive = useRetainedPanelActive();
   const collapsed = preferences.commitsCollapsed;
   const [now, setNow] = useState(() => new Date());
+  const displayNow = useMemo(() => (isPanelActive ? new Date() : now), [isPanelActive, now]);
   const query = useCheckoutCommitsQuery({
     serverId,
     cwd,
@@ -93,12 +96,12 @@ export function CommitsSection({ serverId, cwd, onCommitPress }: CommitsSectionP
   }, [collapsed, updatePreferences]);
 
   useEffect(() => {
-    if (collapsed) {
+    if (collapsed || !isPanelActive) {
       return;
     }
     const interval = setInterval(() => setNow(new Date()), 10_000);
     return () => clearInterval(interval);
-  }, [collapsed]);
+  }, [collapsed, isPanelActive]);
 
   const headerChevronStyle = useMemo(
     () => [styles.headerChevron, !collapsed && styles.headerChevronExpanded],
@@ -142,7 +145,7 @@ export function CommitsSection({ serverId, cwd, onCommitPress }: CommitsSectionP
         </View>
       </Pressable>
       {collapsed ? null : (
-        <CommitsSectionContent query={query} now={now} onCommitPress={onCommitPress} />
+        <CommitsSectionContent query={query} now={displayNow} onCommitPress={onCommitPress} />
       )}
     </View>
   );
