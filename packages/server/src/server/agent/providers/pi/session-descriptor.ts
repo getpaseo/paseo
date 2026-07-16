@@ -201,9 +201,7 @@ async function readPiImportableSession(
 }
 
 async function readPiSessionDescriptor(filePath: string): Promise<PiSessionDescriptor | null> {
-  const firstLine = await readFirstLine(filePath);
-  if (!firstLine) return null;
-  const header = parseSessionHeader(firstLine);
+  const header = await readSessionHeader(filePath);
   if (!header) return null;
 
   const tail = await readTail(filePath).catch(() => "");
@@ -233,16 +231,19 @@ function toPiImportSessionConfig(descriptor: PiSessionDescriptor): PiImportSessi
   };
 }
 
-async function readFirstLine(filePath: string): Promise<string | null> {
+async function readSessionHeader(filePath: string): Promise<PiSessionHeader | null> {
   const handle = await open(filePath, "r").catch(() => null);
   if (!handle) return null;
   try {
     const buffer = Buffer.alloc(HEAD_BYTES);
     const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
     if (bytesRead <= 0) return null;
-    const chunk = buffer.subarray(0, bytesRead).toString("utf8");
-    const newlineIndex = chunk.indexOf("\n");
-    return (newlineIndex === -1 ? chunk : chunk.slice(0, newlineIndex)).trim();
+    const lines = buffer.subarray(0, bytesRead).toString("utf8").split(/\r?\n/u);
+    for (const line of lines) {
+      const header = parseSessionHeader(line.trim());
+      if (header) return header;
+    }
+    return null;
   } finally {
     await handle.close().catch(() => undefined);
   }
@@ -270,8 +271,8 @@ async function readFileMtime(filePath: string): Promise<Date | null> {
   }
 }
 
-function parseSessionHeader(firstLine: string): PiSessionHeader | null {
-  const entry = parseJsonRecord(firstLine);
+function parseSessionHeader(line: string): PiSessionHeader | null {
+  const entry = parseJsonRecord(line);
   if (!entry || entry.type !== "session") return null;
   const sessionId = typeof entry.id === "string" ? entry.id : null;
   const cwd = typeof entry.cwd === "string" ? entry.cwd : null;

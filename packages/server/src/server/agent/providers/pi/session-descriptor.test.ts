@@ -13,6 +13,51 @@ async function writeSession(root: string, lines: unknown[]): Promise<string> {
   return filePath;
 }
 
+test("lists OMP sessions with a title record before the session header", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "paseo-omp-leading-title-"));
+  const cwd = path.join(root, "repo");
+  const sessionFile = await writeSession(root, [
+    {
+      type: "title",
+      v: 1,
+      title: "Leading metadata title",
+      updatedAt: "2026-06-09T00:00:00.000Z",
+    },
+    {
+      type: "session",
+      version: 3,
+      id: "session-with-leading-title",
+      timestamp: "2026-06-09T00:00:01.000Z",
+      cwd,
+    },
+    {
+      type: "message",
+      id: "user-1",
+      timestamp: "2026-06-09T00:00:02.000Z",
+      message: { role: "user", content: "import this session" },
+    },
+    {
+      type: "session_info",
+      id: "info-1",
+      timestamp: "2026-06-09T00:00:03.000Z",
+      name: "Imported OMP session",
+    },
+  ]);
+
+  const sessions = await listPiImportableSessions({ sessionDir: path.join(root, "sessions") });
+
+  expect(sessions).toEqual([
+    {
+      providerHandleId: sessionFile,
+      cwd,
+      title: "Imported OMP session",
+      firstPromptPreview: "import this session",
+      lastPromptPreview: "import this session",
+      lastActivityAt: new Date("2026-06-09T00:00:02.000Z"),
+    },
+  ]);
+});
+
 test("Pi import config preserves the latest recorded model and thinking level", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "paseo-pi-session-model-"));
   const cwd = path.join(root, "repo");
