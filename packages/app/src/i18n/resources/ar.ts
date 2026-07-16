@@ -793,6 +793,7 @@ export const ar: TranslationResources = {
     sections: {
       sessions: "السجل",
       schedules: "الجداول",
+      pinned: "المثبتة",
     },
     worktreeSetup: {
       title: "إعداد البرامج النصية لشجرة العمل",
@@ -840,6 +841,8 @@ export const ar: TranslationResources = {
         rename: "إعادة تسمية مساحة العمل",
         archive: "أرشيف",
         archiveWorktree: "أرشفة شجرة العمل",
+        pinWorkspace: "تثبيت مساحة العمل",
+        unpinWorkspace: "إلغاء تثبيت مساحة العمل",
         hideFromSidebar: "إخفاء من الشريط الجانبي",
         archiving: "أرشفة...",
         hiding: "إخفاء...",
@@ -863,6 +866,7 @@ export const ar: TranslationResources = {
         hostDisconnected: "Host غير متصل",
         hideFailed: "فشل في إخفاء مساحة العمل",
         archiveFailed: "فشل في أرشفة شجرة العمل",
+        pinFailed: "فشل في تثبيت مساحة العمل",
       },
     },
   },

@@ -812,6 +812,7 @@ export const ru: TranslationResources = {
     sections: {
       sessions: "История",
       schedules: "Расписания",
+      pinned: "Закреплённые",
     },
     worktreeSetup: {
       title: "Настройка сценариев рабочего дерева",
@@ -859,6 +860,8 @@ export const ru: TranslationResources = {
         rename: "Переименовать рабочую область",
         archive: "Архив",
         archiveWorktree: "Архив рабочего дерева",
+        pinWorkspace: "Закрепить рабочую область",
+        unpinWorkspace: "Открепить рабочую область",
         hideFromSidebar: "Скрыть с боковой панели",
         archiving: "Архивирование...",
         hiding: "Скрытие...",
@@ -882,6 +885,7 @@ export const ru: TranslationResources = {
         hostDisconnected: "Host не подключен",
         hideFailed: "Не удалось скрыть рабочую область.",
         archiveFailed: "Не удалось заархивировать рабочее дерево.",
+        pinFailed: "Не удалось закрепить рабочую область",
       },
     },
   },

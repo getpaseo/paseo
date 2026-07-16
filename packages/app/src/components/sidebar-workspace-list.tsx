@@ -52,6 +52,7 @@ import { NestableScrollContainer } from "react-native-draggable-flatlist";
 import { DraggableList, type DraggableRenderItemInfo } from "./draggable-list";
 import type { DraggableListDragHandleProps } from "./draggable-list.types";
 import { getHostRuntimeStore, useHosts } from "@/runtime/host-runtime";
+import { useSessionStore } from "@/stores/session-store";
 import { useHostFeatureMap } from "@/runtime/host-features";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useProjectIconDataByProjectKey } from "@/projects/project-icons";
@@ -127,6 +128,8 @@ import {
 import { getDesktopHost } from "@/desktop/host";
 
 const workspaceKeyExtractor = (workspace: SidebarWorkspacePlacement) => workspace.workspaceKey;
+
+const EMPTY_PINNED_WORKSPACES: SidebarWorkspacePlacement[] = [];
 
 const projectKeyExtractor = (project: SidebarProjectEntry) => project.projectKey;
 
@@ -222,6 +225,7 @@ function selectionForSelectedWorkspace(
 
 interface SidebarWorkspaceListProps {
   statusGroups: StatusGroup[];
+  pinnedWorkspaces?: SidebarWorkspacePlacement[];
   projects: SidebarProjectEntry[];
   projectNamesByKey: Map<string, string>;
   collapsedProjectKeys: ReadonlySet<string>;
@@ -281,6 +285,8 @@ interface WorkspaceRowInnerProps {
   onCopyPath?: () => void;
   onRename?: () => void;
   onMarkAsRead?: () => void;
+  onTogglePinned?: () => void;
+  isPinned?: boolean;
   archiveShortcutKeys?: ShortcutKey[][] | null;
 }
 
@@ -632,6 +638,8 @@ function WorkspaceRowRightGroup({
   onCopyBranchName,
   onCopyPath,
   onRename,
+  onTogglePinned,
+  isPinned,
 }: {
   workspace: SidebarWorkspaceEntry;
   isHovered: boolean;
@@ -648,6 +656,8 @@ function WorkspaceRowRightGroup({
   onCopyBranchName?: () => void;
   onCopyPath?: () => void;
   onRename?: () => void;
+  onTogglePinned?: () => void;
+  isPinned?: boolean;
 }) {
   const { t } = useTranslation();
   const showShortcut = showShortcutBadge && shortcutNumber !== null;
@@ -680,6 +690,8 @@ function WorkspaceRowRightGroup({
                 onCopyBranchName={onCopyBranchName}
                 onRename={onRename}
                 onMarkAsRead={onMarkAsRead}
+                onTogglePinned={onTogglePinned}
+                isPinned={isPinned}
                 onArchive={onArchive}
                 archiveLabel={archiveLabel}
                 archiveStatus={archiveStatus}
@@ -1328,6 +1340,9 @@ function WorkspaceRowInner({
   onCopyBranchName,
   onCopyPath,
   onRename,
+  onMarkAsRead,
+  onTogglePinned,
+  isPinned,
   archiveShortcutKeys,
 }: WorkspaceRowInnerProps) {
   const _isCompact = useIsCompactFormFactor();
@@ -1415,6 +1430,9 @@ function WorkspaceRowInner({
                   onCopyBranchName={onCopyBranchName}
                   onCopyPath={onCopyPath}
                   onRename={onRename}
+                  onMarkAsRead={onMarkAsRead}
+                  onTogglePinned={onTogglePinned}
+                  isPinned={isPinned}
                 />
               </SidebarWorkspaceRowContent>
             </Pressable>
@@ -1531,6 +1549,31 @@ function WorkspaceRowWithMenu({
     },
   });
 
+  // COMPAT(workspacePins): added in v0.1.106, drop the gate when floor >= v0.1.106.
+  const supportsWorkspacePins = useSessionStore(
+    (s) => s.sessions[workspace.serverId]?.serverInfo?.features?.workspacePins === true,
+  );
+  const isPinned = workspace.pinnedAt !== null;
+  const pinMutation = useMutation({
+    mutationFn: async (pinned: boolean) => {
+      const client = getHostRuntimeStore().getClient(workspace.serverId);
+      if (!client) {
+        throw new Error(t("sidebar.workspace.toasts.hostDisconnected"));
+      }
+      await client.setWorkspacePinned(workspace.workspaceId, pinned);
+    },
+  });
+  const handleTogglePinned = useCallback(() => {
+    // No optimistic update: the daemon confirms via a workspace_update push.
+    pinMutation.mutate(!isPinned, {
+      onError: (error) => {
+        toast.error(
+          error instanceof Error ? error.message : t("sidebar.workspace.toasts.pinFailed"),
+        );
+      },
+    });
+  }, [isPinned, pinMutation, t, toast]);
+
   const handleOpenRename = useCallback(() => {
     setIsRenameOpen(true);
   }, []);
@@ -1595,6 +1638,8 @@ function WorkspaceRowWithMenu({
         onCopyPath={handleCopyPath}
         onRename={handleOpenRename}
         onMarkAsRead={hasClearableAttention ? handleMarkAsRead : undefined}
+        onTogglePinned={supportsWorkspacePins ? handleTogglePinned : undefined}
+        isPinned={isPinned}
         archiveShortcutKeys={selected ? archiveShortcutKeys : null}
       />
       <AdaptiveRenameModal
@@ -2055,8 +2100,61 @@ function areProjectBlockSelectionsEqual(
 
 const MemoProjectBlock = memo(ProjectBlock, areProjectBlockPropsEqual);
 
+// Pinned workspaces sit above every project group; they are excluded from their
+// project blocks by the view-model partition and ordered by pinnedAt ascending.
+function PinnedWorkspacesSection({
+  pinnedWorkspaces,
+  selectionEnabled,
+  activeWorkspaceSelection,
+  showShortcutBadges,
+  shortcutIndexByWorkspaceKey,
+  hostLabelByServerId,
+  showHostLabels,
+  creatingWorkspaceIds,
+  onWorkspacePress,
+}: {
+  pinnedWorkspaces: SidebarWorkspacePlacement[];
+  selectionEnabled: boolean;
+  activeWorkspaceSelection: ActiveWorkspaceSelection | null;
+  showShortcutBadges: boolean;
+  shortcutIndexByWorkspaceKey: Map<string, number>;
+  hostLabelByServerId: ReadonlyMap<string, string>;
+  showHostLabels: boolean;
+  creatingWorkspaceIds: ReadonlySet<string>;
+  onWorkspacePress?: () => void;
+}) {
+  const { t } = useTranslation();
+  if (pinnedWorkspaces.length === 0) {
+    return null;
+  }
+  return (
+    <View style={styles.pinnedSection} testID="sidebar-pinned-section">
+      <Text style={styles.pinnedSectionTitle}>{t("sidebar.sections.pinned")}</Text>
+      {pinnedWorkspaces.map((placement) => (
+        <MemoWorkspaceRowItem
+          key={placement.workspaceKey}
+          workspace={placement}
+          subtitle={
+            showHostLabels
+              ? (hostLabelByServerId.get(placement.serverId) ?? placement.serverId)
+              : null
+          }
+          shortcutNumber={shortcutIndexByWorkspaceKey.get(placement.workspaceKey) ?? null}
+          showShortcutBadge={showShortcutBadges}
+          canCopyBranchName={placement.projectKind === "git"}
+          isCreating={creatingWorkspaceIds.has(placement.workspaceId)}
+          selectionEnabled={selectionEnabled}
+          activeWorkspaceSelection={activeWorkspaceSelection}
+          onWorkspacePress={onWorkspacePress}
+        />
+      ))}
+    </View>
+  );
+}
+
 export function SidebarWorkspaceList({
   statusGroups,
+  pinnedWorkspaces,
   projects,
   projectNamesByKey,
   collapsedProjectKeys,
@@ -2095,6 +2193,7 @@ export function SidebarWorkspaceList({
       />
     ) : (
       <ProjectModeList
+        pinnedWorkspaces={pinnedWorkspaces}
         projects={projects}
         collapsedProjectKeys={collapsedProjectKeys}
         onToggleProjectCollapsed={onToggleProjectCollapsed}
@@ -2144,6 +2243,7 @@ function SidebarStatusModeWrapper({
 }
 
 function ProjectModeList({
+  pinnedWorkspaces,
   projects,
   collapsedProjectKeys,
   onToggleProjectCollapsed,
@@ -2377,6 +2477,17 @@ function ProjectModeList({
 
   const content = (
     <>
+      <PinnedWorkspacesSection
+        pinnedWorkspaces={pinnedWorkspaces ?? EMPTY_PINNED_WORKSPACES}
+        selectionEnabled={selectionEnabled}
+        activeWorkspaceSelection={activeWorkspaceSelection}
+        showShortcutBadges={showShortcutBadges}
+        shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
+        hostLabelByServerId={hostLabelByServerId}
+        showHostLabels={showHostLabels}
+        creatingWorkspaceIds={creatingWorkspaceIds}
+        onWorkspacePress={onWorkspacePress}
+      />
       {projects.length === 0 ? (
         <View style={styles.emptyContainer}>
           <Text style={styles.emptyTitle} testID="sidebar-project-empty-state">
@@ -2446,6 +2557,17 @@ const styles = StyleSheet.create((theme) => ({
   },
   projectListContainer: {
     width: "100%",
+  },
+  pinnedSection: {
+    marginBottom: theme.spacing[2],
+  },
+  pinnedSectionTitle: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.medium,
+    paddingHorizontal: theme.spacing[2],
+    paddingBottom: theme.spacing[1],
+    userSelect: "none",
   },
   projectBlock: {
     marginBottom: theme.spacing[1],

@@ -811,6 +811,7 @@ export const ptBR: TranslationResources = {
     sections: {
       sessions: "Histórico",
       schedules: "Agendamentos",
+      pinned: "Fixados",
     },
     worktreeSetup: {
       title: "Configurar scripts de worktree",
@@ -858,6 +859,8 @@ export const ptBR: TranslationResources = {
         rename: "Renomear workspace",
         archive: "Arquivar",
         archiveWorktree: "Arquivar worktree",
+        pinWorkspace: "Fixar workspace",
+        unpinWorkspace: "Desafixar workspace",
         hideFromSidebar: "Ocultar da barra lateral",
         archiving: "Arquivando...",
         hiding: "Ocultando...",
@@ -881,6 +884,7 @@ export const ptBR: TranslationResources = {
         hostDisconnected: "Host não está conectado",
         hideFailed: "Falha ao ocultar workspace",
         archiveFailed: "Falha ao arquivar worktree",
+        pinFailed: "Falha ao fixar workspace",
       },
     },
   },

@@ -37,6 +37,8 @@ export interface SidebarWorkspaceEntry extends SidebarStatusWorkspacePlacement {
   // Raw user-set title (null when the name is derived from branch/directory).
   // Prefills the rename input and signals whether a reset is available.
   title: string | null;
+  // When the workspace is pinned to the sidebar's Pinned section (null when unpinned).
+  pinnedAt: string | null;
   // Checkout branch (null when not a git checkout or detached HEAD).
   currentBranch: string | null;
   archivingAt: string | null;
@@ -110,6 +112,7 @@ export function createSidebarWorkspaceEntry(input: {
     workspaceKind: input.workspace.workspaceKind,
     name: input.workspace.name,
     title: input.workspace.title ?? null,
+    pinnedAt: input.workspace.pinnedAt ?? null,
     currentBranch: normalizeCurrentBranch(input.workspace.gitRuntime?.currentBranch),
     statusBucket: effectiveStatus.status,
     statusEnteredAt: effectiveStatus.enteredAt,
@@ -322,6 +325,48 @@ export function buildSidebarProjectsFromHostProjects(input: {
       }),
     ),
   }));
+}
+
+export interface SidebarPinnedWorkspacesPartition {
+  // Pinned workspaces sorted by pinnedAt ascending (most recently pinned last).
+  pinnedWorkspaces: SidebarWorkspacePlacement[];
+  // Project groups with pinned workspaces removed; identity preserved for
+  // untouched projects so memoized rows don't re-render.
+  projects: SidebarProjectEntry[];
+}
+
+// Pure derivation of the sidebar's Pinned section: workspaces with a pinnedAt
+// timestamp leave their project group and gather in a top-level section.
+export function partitionPinnedSidebarWorkspaces(input: {
+  projects: SidebarProjectEntry[];
+  getPinnedAt: (workspaceKey: string) => string | null;
+}): SidebarPinnedWorkspacesPartition {
+  const pinned: Array<{ placement: SidebarWorkspacePlacement; pinnedAt: string }> = [];
+  let anyProjectChanged = false;
+
+  const projects = input.projects.map((project) => {
+    const remaining: SidebarWorkspacePlacement[] = [];
+    for (const placement of project.workspaces) {
+      const pinnedAt = input.getPinnedAt(placement.workspaceKey);
+      if (pinnedAt !== null) {
+        pinned.push({ placement, pinnedAt });
+      } else {
+        remaining.push(placement);
+      }
+    }
+    if (remaining.length === project.workspaces.length) {
+      return project;
+    }
+    anyProjectChanged = true;
+    return { ...project, workspaces: remaining };
+  });
+
+  pinned.sort((left, right) => left.pinnedAt.localeCompare(right.pinnedAt));
+
+  return {
+    pinnedWorkspaces: pinned.map((entry) => entry.placement),
+    projects: anyProjectChanged ? projects : input.projects,
+  };
 }
 
 // Host labels disambiguate which machine a workspace lives on; they only earn their

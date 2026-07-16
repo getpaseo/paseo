@@ -53,6 +53,13 @@ const PersistedWorkspaceRecordSchema = z.object({
     .nullable()
     .optional()
     .transform((value) => value ?? null),
+  // When the user pinned this workspace (ISO timestamp), mirroring archivedAt.
+  // Null means the workspace is not pinned.
+  pinnedAt: z
+    .string()
+    .nullable()
+    .optional()
+    .transform((value) => value ?? null),
   createdAt: z.string(),
   updatedAt: z.string(),
   archivedAt: z.string().nullable(),
@@ -254,6 +261,7 @@ export function createPersistedWorkspaceRecord(input: {
   title?: string | null;
   branch?: string | null;
   baseBranch?: string | null;
+  pinnedAt?: string | null;
   createdAt: string;
   updatedAt: string;
   archivedAt?: string | null;
@@ -263,6 +271,7 @@ export function createPersistedWorkspaceRecord(input: {
     title: input.title ?? null,
     branch: input.branch ?? null,
     baseBranch: input.baseBranch ?? null,
+    pinnedAt: input.pinnedAt ?? null,
     archivedAt: input.archivedAt ?? null,
   });
 }

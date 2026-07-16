@@ -1632,6 +1632,8 @@ export class Session {
         return this.handleWorkspaceClearAttentionRequest(msg);
       case "workspace.title.set.request":
         return this.handleWorkspaceTitleSetRequest(msg.workspaceId, msg.title, msg.requestId);
+      case "workspace.pin.set.request":
+        return this.handleWorkspacePinSetRequest(msg.workspaceId, msg.pinned, msg.requestId);
       case "file_explorer_request":
         return this.workspaceFilesSession.handleFileExplorerRequest(msg);
       case "project_icon_request":
@@ -2312,6 +2314,72 @@ export class Session {
           accepted: false,
           title: null,
           error: getErrorMessageOr(error, "Failed to set workspace title"),
+        },
+      });
+    }
+  }
+
+  private async handleWorkspacePinSetRequest(
+    workspaceId: string,
+    pinned: boolean,
+    requestId: string,
+  ): Promise<void> {
+    this.sessionLogger.info(
+      { workspaceId, requestId, pinned },
+      "session: workspace.pin.set.request",
+    );
+
+    try {
+      const existing = await this.workspaceRegistry.get(workspaceId);
+      if (!existing) {
+        this.emit({
+          type: "workspace.pin.set.response",
+          payload: {
+            requestId,
+            workspaceId,
+            accepted: false,
+            pinnedAt: null,
+            error: "Workspace not found",
+          },
+        });
+        return;
+      }
+
+      const pinnedAt = pinned ? new Date().toISOString() : null;
+
+      await this.workspaceRegistry.upsert({
+        ...existing,
+        pinnedAt,
+        updatedAt: new Date().toISOString(),
+      });
+
+      this.emit({
+        type: "workspace.pin.set.response",
+        payload: {
+          requestId,
+          workspaceId,
+          accepted: true,
+          pinnedAt,
+          error: null,
+        },
+      });
+
+      await this.emitWorkspaceUpdatesForWorkspaceIds([workspaceId], {
+        skipReconcile: true,
+      });
+    } catch (error) {
+      this.sessionLogger.error(
+        { err: error, workspaceId, requestId },
+        "session: workspace.pin.set.request error",
+      );
+      this.emit({
+        type: "workspace.pin.set.response",
+        payload: {
+          requestId,
+          workspaceId,
+          accepted: false,
+          pinnedAt: null,
+          error: getErrorMessageOr(error, "Failed to set workspace pin"),
         },
       });
     }
@@ -3532,6 +3600,7 @@ export class Session {
       workspaceKind: workspace.kind,
       name: resolveWorkspaceDisplayName(workspace),
       title: workspace.title,
+      pinnedAt: workspace.pinnedAt,
       archivingAt: null,
       status: "done",
       statusEnteredAt: null,
@@ -3616,6 +3685,7 @@ export class Session {
         derivedDisplayName: result.worktree.branchName || result.workspace.displayName,
       }),
       title: result.workspace.title,
+      pinnedAt: result.workspace.pinnedAt,
       archivingAt: null,
       status: "done",
       statusEnteredAt: result.workspace.createdAt,

@@ -6678,6 +6678,145 @@ test("workspace.title.set.request returns accepted=false when workspace is not f
   expect(response?.payload.error).toBeTruthy();
 });
 
+test("workspace.pin.set.request pins the workspace and emits an updated descriptor", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const session = asTestSession(
+    createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) }),
+  );
+
+  const project = createPersistedProjectRecord({
+    projectId: "proj-1",
+    rootPath: REPO_CWD,
+    kind: "git",
+    displayName: "acme/repo",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: "ws-1",
+    projectId: project.projectId,
+    cwd: REPO_CWD,
+    kind: "local_checkout",
+    displayName: "main",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+
+  const projects = new Map([[project.projectId, project]]);
+  const workspaces = new Map([[workspace.workspaceId, workspace]]);
+  session.projectRegistry.get = async (id: string) => projects.get(id) ?? null;
+  session.projectRegistry.list = async () => Array.from(projects.values());
+  session.workspaceRegistry.list = async () => Array.from(workspaces.values());
+  session.workspaceRegistry.get = async (id: string) => workspaces.get(id) ?? null;
+  session.workspaceRegistry.upsert = async (record: unknown) => {
+    const parsed = record as typeof workspace;
+    workspaces.set(parsed.workspaceId, parsed);
+  };
+
+  session.workspaceUpdatesSubscription = {
+    subscriptionId: "sub-workspaces",
+    filter: {},
+    isBootstrapping: false,
+    lastEmittedByWorkspaceId: new Map(),
+    pendingUpdatesByWorkspaceId: new Map(),
+  };
+
+  await session.handleMessage({
+    type: "workspace.pin.set.request",
+    workspaceId: workspace.workspaceId,
+    pinned: true,
+    requestId: "req-pin-1",
+  });
+
+  const response = findByType(emitted, "workspace.pin.set.response");
+  expect(response?.payload).toMatchObject({
+    requestId: "req-pin-1",
+    workspaceId: workspace.workspaceId,
+    accepted: true,
+    error: null,
+  });
+  const pinnedAt = response?.payload.pinnedAt;
+  expect(typeof pinnedAt).toBe("string");
+
+  expect(workspaces.get(workspace.workspaceId)?.pinnedAt).toBe(pinnedAt);
+
+  const update = findByType(emitted, "workspace_update");
+  expect(update?.payload).toMatchObject({
+    kind: "upsert",
+    workspace: {
+      id: "ws-1",
+      pinnedAt,
+    },
+  });
+});
+
+test("workspace.pin.set.request with pinned=false clears pinnedAt", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const session = asTestSession(
+    createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) }),
+  );
+
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: "ws-1",
+    projectId: "proj-1",
+    cwd: REPO_CWD,
+    kind: "local_checkout",
+    displayName: "main",
+    pinnedAt: "2026-03-01T12:00:00.000Z",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+
+  const workspaces = new Map([[workspace.workspaceId, workspace]]);
+  session.workspaceRegistry.list = async () => Array.from(workspaces.values());
+  session.workspaceRegistry.get = async (id: string) => workspaces.get(id) ?? null;
+  session.workspaceRegistry.upsert = async (record: unknown) => {
+    const parsed = record as typeof workspace;
+    workspaces.set(parsed.workspaceId, parsed);
+  };
+
+  await session.handleMessage({
+    type: "workspace.pin.set.request",
+    workspaceId: workspace.workspaceId,
+    pinned: false,
+    requestId: "req-pin-clear",
+  });
+
+  const response = findByType(emitted, "workspace.pin.set.response");
+  expect(response?.payload).toEqual({
+    requestId: "req-pin-clear",
+    workspaceId: workspace.workspaceId,
+    accepted: true,
+    pinnedAt: null,
+    error: null,
+  });
+  expect(workspaces.get(workspace.workspaceId)?.pinnedAt).toBeNull();
+});
+
+test("workspace.pin.set.request returns accepted=false when workspace is not found", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const session = asTestSession(
+    createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) }),
+  );
+  session.workspaceRegistry.get = async () => null;
+
+  await session.handleMessage({
+    type: "workspace.pin.set.request",
+    workspaceId: "does-not-exist",
+    pinned: true,
+    requestId: "req-pin-missing",
+  });
+
+  const response = findByType(emitted, "workspace.pin.set.response");
+  expect(response?.payload).toMatchObject({
+    requestId: "req-pin-missing",
+    workspaceId: "does-not-exist",
+    accepted: false,
+    pinnedAt: null,
+  });
+  expect(response?.payload.error).toBeTruthy();
+});
+
 function createSessionWithTerminalManager(options: {
   workspaces: PersistedWorkspaceRecord[];
   projects: PersistedProjectRecord[];

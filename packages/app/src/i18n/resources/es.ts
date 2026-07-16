@@ -820,6 +820,7 @@ export const es: TranslationResources = {
     sections: {
       sessions: "Historial",
       schedules: "Horarios",
+      pinned: "Fijados",
     },
     worktreeSetup: {
       title: "Configurar secuencias de comandos del árbol de trabajo",
@@ -867,6 +868,8 @@ export const es: TranslationResources = {
         rename: "Cambiar nombre del espacio de trabajo",
         archive: "Archivo",
         archiveWorktree: "Árbol de trabajo de archivo",
+        pinWorkspace: "Fijar espacio de trabajo",
+        unpinWorkspace: "Dejar de fijar espacio de trabajo",
         hideFromSidebar: "Ocultar de la barra lateral",
         archiving: "Archivando...",
         hiding: "Ocultación...",
@@ -890,6 +893,7 @@ export const es: TranslationResources = {
         hostDisconnected: "Hostno está conectado",
         hideFailed: "No se pudo ocultar el espacio de trabajo",
         archiveFailed: "No se pudo archivar el árbol de trabajo",
+        pinFailed: "No se pudo fijar el espacio de trabajo",
       },
     },
   },

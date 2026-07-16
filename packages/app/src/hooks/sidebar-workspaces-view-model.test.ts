@@ -9,6 +9,7 @@ import {
   buildSidebarProjectsFromStructure,
   computeSidebarOrderUpdates,
   deriveSidebarLoadingState,
+  partitionPinnedSidebarWorkspaces,
   shouldShowSidebarHostLabels,
   type SidebarProjectEntry,
 } from "./sidebar-workspaces-view-model";
@@ -297,6 +298,70 @@ describe("shared sidebar workspace model", () => {
       ],
     );
     expect(model.projectNamesByKey).toEqual(new Map([["getpaseo/paseo", "getpaseo/paseo"]]));
+  });
+});
+
+describe("partitionPinnedSidebarWorkspaces", () => {
+  it("lifts pinned placements out of their project groups into the pinned section", () => {
+    const projects = [
+      sidebarProject({ projectKey: "project-a", workspaceKeys: ["ws-1", "ws-2", "ws-3"] }),
+      sidebarProject({ projectKey: "project-b", workspaceKeys: ["ws-4"] }),
+    ];
+    const pinnedAtByKey = new Map<string, string>([
+      ["srv:ws-2", "2026-01-01T00:00:00.000Z"],
+      ["srv:ws-4", "2026-02-01T00:00:00.000Z"],
+    ]);
+
+    const result = partitionPinnedSidebarWorkspaces({
+      projects,
+      getPinnedAt: (workspaceKey) => pinnedAtByKey.get(workspaceKey) ?? null,
+    });
+
+    expect(result.projects[0]?.workspaces.map((placement) => placement.workspaceKey)).toEqual([
+      "srv:ws-1",
+      "srv:ws-3",
+    ]);
+    expect(result.projects[1]?.workspaces.map((placement) => placement.workspaceKey)).toEqual([]);
+    expect(result.pinnedWorkspaces.map((placement) => placement.workspaceKey)).toEqual([
+      "srv:ws-2",
+      "srv:ws-4",
+    ]);
+  });
+
+  it("orders pinned workspaces by pinnedAt ascending so the most recent pin is last", () => {
+    const projects = [sidebarProject({ projectKey: "project-a", workspaceKeys: ["a", "b", "c"] })];
+    const pinnedAtByKey = new Map<string, string>([
+      ["srv:a", "2026-03-01T00:00:00.000Z"],
+      ["srv:b", "2026-01-01T00:00:00.000Z"],
+      ["srv:c", "2026-02-01T00:00:00.000Z"],
+    ]);
+
+    const result = partitionPinnedSidebarWorkspaces({
+      projects,
+      getPinnedAt: (workspaceKey) => pinnedAtByKey.get(workspaceKey) ?? null,
+    });
+
+    expect(result.pinnedWorkspaces.map((placement) => placement.workspaceKey)).toEqual([
+      "srv:b",
+      "srv:c",
+      "srv:a",
+    ]);
+    expect(result.projects[0]?.workspaces).toEqual([]);
+  });
+
+  it("preserves project identity and returns no pins when nothing is pinned", () => {
+    const projects = [
+      sidebarProject({ projectKey: "project-a", workspaceKeys: ["ws-1", "ws-2"] }),
+      sidebarProject({ projectKey: "project-b", workspaceKeys: ["ws-3"] }),
+    ];
+
+    const result = partitionPinnedSidebarWorkspaces({
+      projects,
+      getPinnedAt: () => null,
+    });
+
+    expect(result.projects).toBe(projects);
+    expect(result.pinnedWorkspaces).toEqual([]);
   });
 });
 

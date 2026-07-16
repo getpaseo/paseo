@@ -2295,6 +2295,26 @@ export class DaemonClient {
     return { title: payload.title };
   }
 
+  async setWorkspacePinned(
+    workspaceId: string,
+    pinned: boolean,
+    requestId?: string,
+  ): Promise<{ pinnedAt: string | null }> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "workspace.pin.set.request",
+        workspaceId,
+        pinned,
+      },
+      responseType: "workspace.pin.set.response",
+    });
+    if (!payload.accepted) {
+      throw new Error(payload.error ?? "setWorkspacePinned rejected");
+    }
+    return { pinnedAt: payload.pinnedAt };
+  }
+
   async resumeAgent(
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,

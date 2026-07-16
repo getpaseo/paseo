@@ -787,6 +787,7 @@ export const zhCN: TranslationResources = {
     sections: {
       sessions: "历史",
       schedules: "计划",
+      pinned: "已固定",
     },
     worktreeSetup: {
       title: "设置 worktree scripts",
@@ -832,6 +833,8 @@ export const zhCN: TranslationResources = {
         rename: "重命名 workspace",
         archive: "归档",
         archiveWorktree: "归档 worktree",
+        pinWorkspace: "固定 workspace",
+        unpinWorkspace: "取消固定 workspace",
         hideFromSidebar: "从侧边栏隐藏",
         archiving: "正在归档...",
         hiding: "正在隐藏...",
@@ -854,6 +857,7 @@ export const zhCN: TranslationResources = {
         hostDisconnected: "Host 未连接",
         hideFailed: "隐藏 workspace 失败",
         archiveFailed: "归档 worktree 失败",
+        pinFailed: "固定 workspace 失败",
       },
     },
   },

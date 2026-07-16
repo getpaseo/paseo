@@ -36,7 +36,10 @@ import { useOpenProjectPicker } from "@/hooks/use-open-project-picker";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { canCreateWorktreeForProjectKind } from "@/projects/host-projects";
 import { useHostFeature } from "@/runtime/host-features";
-import { type SidebarProjectEntry } from "@/hooks/use-sidebar-workspaces-list";
+import {
+  type SidebarProjectEntry,
+  type SidebarWorkspacePlacement,
+} from "@/hooks/use-sidebar-workspaces-list";
 import { useSidebarModel } from "@/components/sidebar/sidebar-model";
 import type { StatusGroup } from "@/hooks/sidebar-status-view-model";
 import { type SidebarGroupMode } from "@/stores/sidebar-view-store";
@@ -75,6 +78,7 @@ interface SidebarSharedProps {
   theme: SidebarTheme;
   statusGroups: StatusGroup[];
   projects: SidebarProjectEntry[];
+  pinnedWorkspaces: SidebarWorkspacePlacement[];
   projectNamesByKey: Map<string, string>;
   isInitialLoad: boolean;
   isRevalidating: boolean;
@@ -132,6 +136,7 @@ export const LeftSidebar = memo(function LeftSidebar() {
 
   const {
     projects,
+    pinnedWorkspaces,
     projectNamesByKey,
     isInitialLoad,
     isRevalidating,
@@ -235,6 +240,7 @@ export const LeftSidebar = memo(function LeftSidebar() {
     theme,
     statusGroups,
     projects,
+    pinnedWorkspaces,
     projectNamesByKey,
     isInitialLoad,
     isRevalidating,
@@ -533,6 +539,7 @@ function MobileSidebar({
   theme,
   statusGroups,
   projects,
+  pinnedWorkspaces,
   projectNamesByKey,
   isInitialLoad,
   isRevalidating,
@@ -644,6 +651,7 @@ function MobileSidebar({
             groupMode={groupMode}
             statusGroups={statusGroups}
             projects={projects}
+            pinnedWorkspaces={pinnedWorkspaces}
             projectNamesByKey={projectNamesByKey}
             isRefreshing={isManualRefresh && isRevalidating}
             onRefresh={handleRefresh}
@@ -671,6 +679,7 @@ function DesktopSidebar({
   theme,
   statusGroups,
   projects,
+  pinnedWorkspaces,
   projectNamesByKey,
   isInitialLoad,
   isRevalidating,
@@ -796,6 +805,7 @@ function DesktopSidebar({
             groupMode={groupMode}
             statusGroups={statusGroups}
             projects={projects}
+            pinnedWorkspaces={pinnedWorkspaces}
             projectNamesByKey={projectNamesByKey}
             isRefreshing={isManualRefresh && isRevalidating}
             onRefresh={handleRefresh}

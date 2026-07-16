@@ -211,4 +211,44 @@ describe("workspace registries", () => {
     expect(await workspaceRegistry.get("/tmp/repo")).toBeNull();
     expect(await workspaceRegistry.list()).toEqual([]);
   });
+
+  test("workspace record schema defaults pinnedAt to null (legacy on-disk records)", async () => {
+    await workspaceRegistry.initialize();
+
+    await workspaceRegistry.upsert(
+      createPersistedWorkspaceRecord({
+        workspaceId: "/tmp/repo",
+        projectId: "remote:github.com/acme/repo",
+        cwd: "/tmp/repo",
+        kind: "local_checkout",
+        displayName: "main",
+        createdAt: "2026-03-01T00:00:00.000Z",
+        updatedAt: "2026-03-01T00:00:00.000Z",
+      }),
+    );
+
+    const record = await workspaceRegistry.get("/tmp/repo");
+    expect(record?.pinnedAt).toBeNull();
+  });
+
+  test("workspace record persists pinnedAt across upserts", async () => {
+    await workspaceRegistry.initialize();
+
+    const base = createPersistedWorkspaceRecord({
+      workspaceId: "/tmp/repo",
+      projectId: "remote:github.com/acme/repo",
+      cwd: "/tmp/repo",
+      kind: "local_checkout",
+      displayName: "main",
+      createdAt: "2026-03-01T00:00:00.000Z",
+      updatedAt: "2026-03-01T00:00:00.000Z",
+    });
+    await workspaceRegistry.upsert({
+      ...base,
+      pinnedAt: "2026-03-02T00:00:00.000Z",
+    });
+
+    const record = await workspaceRegistry.get("/tmp/repo");
+    expect(record?.pinnedAt).toBe("2026-03-02T00:00:00.000Z");
+  });
 });

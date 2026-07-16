@@ -800,6 +800,7 @@ export const en = {
     sections: {
       sessions: "History",
       schedules: "Schedules",
+      pinned: "Pinned",
     },
     worktreeSetup: {
       title: "Set up worktree scripts",
@@ -847,6 +848,8 @@ export const en = {
         rename: "Rename workspace",
         archive: "Archive",
         archiveWorktree: "Archive worktree",
+        pinWorkspace: "Pin workspace",
+        unpinWorkspace: "Unpin workspace",
         hideFromSidebar: "Hide from sidebar",
         archiving: "Archiving...",
         hiding: "Hiding...",
@@ -870,6 +873,7 @@ export const en = {
         hostDisconnected: "Host is not connected",
         hideFailed: "Failed to hide workspace",
         archiveFailed: "Failed to archive worktree",
+        pinFailed: "Failed to pin workspace",
       },
     },
   },

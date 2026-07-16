@@ -819,6 +819,7 @@ export const fr: TranslationResources = {
     sections: {
       sessions: "Historique",
       schedules: "Planifications",
+      pinned: "Épinglés",
     },
     worktreeSetup: {
       title: "Configurer les scripts d'arbre de travail",
@@ -866,6 +867,8 @@ export const fr: TranslationResources = {
         rename: "Renommer l'espace de travail",
         archive: "Archive",
         archiveWorktree: "Arbre de travail d'archivage",
+        pinWorkspace: "Épingler l'espace de travail",
+        unpinWorkspace: "Désépingler l'espace de travail",
         hideFromSidebar: "Masquer de la barre latérale",
         archiving: "Archivage...",
         hiding: "Dissimulation...",
@@ -889,6 +892,7 @@ export const fr: TranslationResources = {
         hostDisconnected: "Hostn'est pas connecté",
         hideFailed: "Échec du masquage de l'espace de travail",
         archiveFailed: "Échec de l'archivage de l'arbre de travail",
+        pinFailed: "Échec de l'épinglage de l'espace de travail",
       },
     },
   },

@@ -16,12 +16,15 @@ import {
   computeSidebarOrderUpdates,
   createSidebarWorkspaceEntry,
   deriveSidebarLoadingState,
+  partitionPinnedSidebarWorkspaces,
   type SidebarProjectEntry,
   type SidebarWorkspaceEntry,
   type SidebarWorkspacePlacement,
 } from "./sidebar-workspaces-view-model";
 
 export {
+  partitionPinnedSidebarWorkspaces,
+  type SidebarPinnedWorkspacesPartition,
   appendMissingOrderKeys,
   applyStoredOrdering,
   buildSidebarProjectsFromHostProjects,
@@ -82,6 +85,7 @@ const EMPTY_PROJECT_NAMES = new Map<string, string>();
 
 export interface SidebarWorkspacesListResult {
   workspacePlacements: SidebarWorkspacePlacement[];
+  pinnedWorkspaces: SidebarWorkspacePlacement[];
   projects: SidebarProjectEntry[];
   projectNamesByKey: Map<string, string>;
   isLoading: boolean;
@@ -143,7 +147,40 @@ export function useSidebarWorkspacesList(options?: {
     [hostProjects],
   );
 
-  const projects = sidebarModel.projects.length > 0 ? sidebarModel.projects : EMPTY_PROJECTS;
+  // Pinned timestamps keyed by `${serverId}:${workspaceId}` — shallow-compared so
+  // unrelated workspace updates don't rebuild the partition.
+  const pinnedAtByWorkspaceKey = useStoreWithEqualityFn(
+    useSessionStore,
+    (state) => {
+      const pins: Record<string, string> = {};
+      for (const serverId of serverIds) {
+        const workspaces = state.sessions[serverId]?.workspaces;
+        if (!workspaces) continue;
+        for (const workspace of workspaces.values()) {
+          if (workspace.pinnedAt) {
+            pins[`${serverId}:${workspace.id}`] = workspace.pinnedAt;
+          }
+        }
+      }
+      return pins;
+    },
+    shallow,
+  );
+
+  const pinnedPartition = useMemo(
+    () =>
+      partitionPinnedSidebarWorkspaces({
+        projects: sidebarModel.projects,
+        getPinnedAt: (workspaceKey) => pinnedAtByWorkspaceKey[workspaceKey] ?? null,
+      }),
+    [pinnedAtByWorkspaceKey, sidebarModel.projects],
+  );
+
+  const projects = pinnedPartition.projects.length > 0 ? pinnedPartition.projects : EMPTY_PROJECTS;
+  const pinnedWorkspaces =
+    pinnedPartition.pinnedWorkspaces.length > 0
+      ? pinnedPartition.pinnedWorkspaces
+      : EMPTY_WORKSPACES;
   const workspacePlacements =
     sidebarModel.workspaces.length > 0 ? sidebarModel.workspaces : EMPTY_WORKSPACES;
   const projectNamesByKey =
@@ -212,6 +249,7 @@ export function useSidebarWorkspacesList(options?: {
 
   return {
     workspacePlacements,
+    pinnedWorkspaces,
     projects,
     projectNamesByKey,
     ...loadingState,

@@ -805,6 +805,7 @@ export const ja: TranslationResources = {
     sections: {
       sessions: "履歴",
       schedules: "スケジュール",
+      pinned: "ピン留め",
     },
     worktreeSetup: {
       title: "ワークツリースクリプトを設定",
@@ -852,6 +853,8 @@ export const ja: TranslationResources = {
         rename: "ワークスペースの名前を変更",
         archive: "アーカイブ",
         archiveWorktree: "ワークツリーをアーカイブ",
+        pinWorkspace: "ワークスペースをピン留め",
+        unpinWorkspace: "ワークスペースのピン留めを解除",
         hideFromSidebar: "サイドバーから非表示",
         archiving: "アーカイブ中...",
         hiding: "非表示にしています...",
@@ -875,6 +878,7 @@ export const ja: TranslationResources = {
         hostDisconnected: "ホストが接続されていません",
         hideFailed: "ワークスペースの非表示に失敗しました",
         archiveFailed: "ワークツリーのアーカイブに失敗しました",
+        pinFailed: "ワークスペースのピン留めに失敗しました",
       },
     },
   },
