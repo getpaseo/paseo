@@ -458,11 +458,6 @@ export function TimelineSearchPanel({
 
 const styles = StyleSheet.create((theme) => ({
   container: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    zIndex: 20,
     backgroundColor: theme.colors.surface1,
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,

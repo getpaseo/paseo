@@ -1147,6 +1147,20 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       <ToolCallSheetProvider>
         <TimelineSearchProviders highlightQuery={highlightQuery} target={timelineSearchTarget}>
           <View style={stylesheet.container}>
+            {timelineSearchState.isOpen && (
+              <TimelineSearchPanel
+                state={timelineSearchState}
+                isPaging={isTimelineSearchPaging}
+                historyLoadFailed={timelineSearchLoadFailed}
+                onQueryChange={timelineSearchModel.setQuery}
+                onFilterChange={timelineSearchModel.setFilter}
+                onSelectNext={timelineSearchModel.selectNext}
+                onSelectPrev={timelineSearchModel.selectPrev}
+                onSelectIndex={timelineSearchModel.selectIndex}
+                onClose={timelineSearchModel.close}
+                testID="timeline-search-panel"
+              />
+            )}
             <MessageOuterSpacingProvider disableOuterSpacing>
               {streamRenderStrategy.render({
                 agentId,
@@ -1183,20 +1197,6 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
                   </Pressable>
                 </Animated.View>
               </View>
-            )}
-            {timelineSearchState.isOpen && (
-              <TimelineSearchPanel
-                state={timelineSearchState}
-                isPaging={isTimelineSearchPaging}
-                historyLoadFailed={timelineSearchLoadFailed}
-                onQueryChange={timelineSearchModel.setQuery}
-                onFilterChange={timelineSearchModel.setFilter}
-                onSelectNext={timelineSearchModel.selectNext}
-                onSelectPrev={timelineSearchModel.selectPrev}
-                onSelectIndex={timelineSearchModel.selectIndex}
-                onClose={timelineSearchModel.close}
-                testID="timeline-search-panel"
-              />
             )}
           </View>
         </TimelineSearchProviders>
