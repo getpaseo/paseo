@@ -35,6 +35,12 @@ const POPUP_WINDOW_UI_FEATURE_NAMES = new Set([
   "status",
   "toolbar",
 ]);
+const NON_POPUP_WINDOW_FEATURE_NAMES = new Set([
+  "attributionsrc",
+  "noopener",
+  "noreferrer",
+  "popup",
+]);
 
 export class PendingBrowserWindowOpenRequests {
   private readonly urlsByWebContentsId = new Map<number, string[]>();
@@ -110,6 +116,8 @@ function getBrowserWindowFeatureIntent(features: string): {
 } {
   let requestsPopup = false;
   let disownsOpener = false;
+  let hasPopupRelevantFeature = false;
+  const enabledUiFeatures = new Map<string, boolean>();
 
   for (const rawFeature of features.split(",")) {
     const separatorIndex = rawFeature.indexOf("=");
@@ -125,8 +133,14 @@ function getBrowserWindowFeatureIntent(features: string): {
             .trim()
             .toLowerCase();
 
-    if (POPUP_WINDOW_GEOMETRY_FEATURE_NAMES.has(name) || POPUP_WINDOW_UI_FEATURE_NAMES.has(name)) {
+    if (POPUP_WINDOW_GEOMETRY_FEATURE_NAMES.has(name)) {
       requestsPopup = true;
+    }
+    if (POPUP_WINDOW_UI_FEATURE_NAMES.has(name)) {
+      hasPopupRelevantFeature = true;
+      enabledUiFeatures.set(name, isEnabledWindowFeature(value));
+    } else if (name.length > 0 && !NON_POPUP_WINDOW_FEATURE_NAMES.has(name)) {
+      hasPopupRelevantFeature = true;
     }
     if (name === "popup" && isEnabledWindowFeature(value)) {
       requestsPopup = true;
@@ -134,6 +148,16 @@ function getBrowserWindowFeatureIntent(features: string): {
     if ((name === "noopener" || name === "noreferrer") && isEnabledWindowFeature(value)) {
       disownsOpener = true;
     }
+  }
+
+  if (!requestsPopup && hasPopupRelevantFeature) {
+    const isUiFeatureEnabled = (name: string): boolean => enabledUiFeatures.get(name) ?? false;
+    requestsPopup =
+      (!isUiFeatureEnabled("location") && !isUiFeatureEnabled("toolbar")) ||
+      !isUiFeatureEnabled("menubar") ||
+      !isUiFeatureEnabled("resizable") ||
+      !isUiFeatureEnabled("scrollbars") ||
+      !isUiFeatureEnabled("status");
   }
 
   return { requestsPopup, disownsOpener };

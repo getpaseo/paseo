@@ -66,7 +66,7 @@ describe("browser webview window-open requests", () => {
     expect(result).toEqual({ kind: "workspace-tab", url: "https://example.com/target" });
   });
 
-  it.each(["noopener", "noreferrer", "popup=false"])(
+  it.each(["noopener", "noreferrer", "attributionsrc=https://example.com/register", "popup=false"])(
     "routes non-popup feature %s to a Paseo workspace tab",
     (features) => {
       const result = decideBrowserWindowOpenRequest({
@@ -103,6 +103,31 @@ describe("browser webview window-open requests", () => {
     });
 
     expect(result).toEqual({ kind: "popup" });
+  });
+
+  it("keeps unknown window features as a real popup", () => {
+    const result = decideBrowserWindowOpenRequest({
+      url: "https://login.example.com/signin",
+      disposition: "new-window",
+      frameName: "_blank",
+      features: "dialog=yes",
+      hasPostBody: false,
+    });
+
+    expect(result).toEqual({ kind: "popup" });
+  });
+
+  it("routes an all-enabled browser-chrome request to a Paseo workspace tab", () => {
+    const result = decideBrowserWindowOpenRequest({
+      url: "https://example.com/target",
+      disposition: "new-window",
+      frameName: "_blank",
+      features:
+        "toolbar=yes,location=yes,menubar=yes,status=yes,scrollbars=yes,resizable=yes,noopener",
+      hasPostBody: false,
+    });
+
+    expect(result).toEqual({ kind: "workspace-tab", url: "https://example.com/target" });
   });
 
   it("keeps POST-backed foreground tabs as real popups", () => {
