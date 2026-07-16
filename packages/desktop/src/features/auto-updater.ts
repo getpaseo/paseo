@@ -183,9 +183,11 @@ export async function downloadAndInstallUpdate(
 export async function installAppUpdateOnQuit({
   currentVersion,
   releaseChannel,
+  signal,
 }: {
   currentVersion: string;
   releaseChannel: AppReleaseChannel;
+  signal: AbortSignal;
 }): Promise<boolean> {
-  return appUpdateService.installUpdateOnQuit({ currentVersion, releaseChannel });
+  return appUpdateService.installUpdateOnQuit({ currentVersion, releaseChannel, signal });
 }

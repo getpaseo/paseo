@@ -65,6 +65,7 @@ export interface AppUpdateService {
   installUpdateOnQuit(input: {
     currentVersion: string;
     releaseChannel: AppReleaseChannel;
+    signal: AbortSignal;
   }): Promise<boolean>;
 }
 
@@ -262,6 +263,7 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
   async function installCachedUpdate(
     currentVersion: string,
     onBeforeQuit?: () => Promise<void>,
+    signal?: AbortSignal,
   ): Promise<AppUpdateInstallResult> {
     if (!cachedUpdateInfo) {
       return {
@@ -272,6 +274,14 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
     }
 
     const readyVersion = cachedUpdateInfo.version;
+    if (signal?.aborted) {
+      return {
+        installed: false,
+        version: currentVersion,
+        message: "Update installation was deferred while the app quit.",
+      };
+    }
+
     if (isReadyToInstallVersion(readyVersion)) {
       await performQuitAndInstall(deps.runtime, onBeforeQuit);
       return {
@@ -283,7 +293,7 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
 
     try {
       await deps.runtime.downloadUpdate();
-      if (cachedUpdateInfo?.version !== readyVersion) {
+      if (signal?.aborted || cachedUpdateInfo?.version !== readyVersion) {
         return {
           installed: false,
           version: currentVersion,
@@ -312,9 +322,11 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
   async function installUpdateOnQuit({
     currentVersion,
     releaseChannel,
+    signal,
   }: {
     currentVersion: string;
     releaseChannel: AppReleaseChannel;
+    signal: AbortSignal;
   }): Promise<boolean> {
     if (!deps.isPackaged() || !downloadedUpdateVersion) {
       return false;
@@ -325,11 +337,11 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
       releaseChannel,
       intent: "automatic",
     });
-    if (!check.hasUpdate) {
+    if (signal.aborted || !check.hasUpdate) {
       return false;
     }
 
-    const result = await installCachedUpdate(currentVersion);
+    const result = await installCachedUpdate(currentVersion, undefined, signal);
     return result.installed;
   }
 

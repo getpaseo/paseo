@@ -14,6 +14,11 @@ interface BeforeQuitApp {
   exit(code: number): void;
 }
 
+interface QuitLifecycle {
+  handleBeforeQuit(event: BeforeQuitEvent): void;
+  handleBeforeQuitForUpdate(): void;
+}
+
 export interface StopOnQuitDeps {
   settingsStore: Pick<DesktopSettingsStore, "get">;
   isDesktopManagedDaemonRunning: () => boolean;
@@ -42,29 +47,42 @@ export async function stopDesktopManagedDaemonOnQuitIfNeeded(
   return true;
 }
 
-export function createBeforeQuitHandler({
+function waitForUpdateRevalidationTimeout(signal: AbortSignal): Promise<boolean> {
+  if (signal.aborted) {
+    return Promise.resolve(false);
+  }
+
+  return new Promise((resolve) => {
+    signal.addEventListener("abort", () => resolve(false), { once: true });
+  });
+}
+
+export function createQuitLifecycle({
   app,
   closeTransportSessions,
   stopDesktopManagedDaemonIfNeeded,
   installAppUpdateOnQuit,
+  createUpdateRevalidationSignal,
   onStopError,
   onUpdateError,
 }: {
   app: BeforeQuitApp;
   closeTransportSessions: () => void;
   stopDesktopManagedDaemonIfNeeded: () => Promise<boolean>;
-  installAppUpdateOnQuit: () => Promise<boolean>;
+  installAppUpdateOnQuit: (signal: AbortSignal) => Promise<boolean>;
+  createUpdateRevalidationSignal: () => AbortSignal;
   onStopError: (error: unknown) => void;
   onUpdateError: (error: unknown) => void;
-}): (event: BeforeQuitEvent) => void {
+}): QuitLifecycle {
   // The first quit waits for daemon shutdown and update revalidation. A validated
   // update re-fires app.quit(); otherwise app.exit(0) bypasses Electron's macOS
   // window-all-closed handler, which would veto that second quit.
   let quitting = false;
+  let quittingForUpdate = false;
 
-  return (event) => {
+  function handleBeforeQuit(event: BeforeQuitEvent): void {
     closeTransportSessions();
-    if (quitting) return;
+    if (quitting || quittingForUpdate) return;
     quitting = true;
     event.preventDefault();
 
@@ -75,16 +93,27 @@ export function createBeforeQuitHandler({
         onStopError(error);
       }
 
-      try {
-        const installingUpdate = await installAppUpdateOnQuit();
-        if (installingUpdate) {
-          return;
-        }
-      } catch (error) {
+      const signal = createUpdateRevalidationSignal();
+      const updateInstallation = installAppUpdateOnQuit(signal).catch((error) => {
         onUpdateError(error);
+        return false;
+      });
+      const installingUpdate = await Promise.race([
+        updateInstallation,
+        waitForUpdateRevalidationTimeout(signal),
+      ]);
+      if (installingUpdate) {
+        return;
       }
 
       app.exit(0);
     })();
+  }
+
+  return {
+    handleBeforeQuit,
+    handleBeforeQuitForUpdate() {
+      quittingForUpdate = true;
+    },
   };
 }

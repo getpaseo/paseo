@@ -12,6 +12,7 @@ import { existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import {
   app,
+  autoUpdater as electronAutoUpdater,
   BrowserWindow,
   clipboard,
   Menu,
@@ -81,7 +82,7 @@ import {
   stopDesktopDaemonViaCli,
 } from "./daemon/daemon-manager.js";
 import {
-  createBeforeQuitHandler,
+  createQuitLifecycle,
   stopDesktopManagedDaemonOnQuitIfNeeded,
 } from "./daemon/quit-lifecycle.js";
 import { runDesktopStartup } from "./desktop-startup.js";
@@ -95,6 +96,7 @@ const APP_SCHEME = "paseo";
 const PASEO_DEBUG = process.env.PASEO_DEBUG === "1";
 const DISABLE_SINGLE_INSTANCE_LOCK = process.env.PASEO_DISABLE_SINGLE_INSTANCE_LOCK === "1";
 const APP_NAME = process.env.PASEO_TEST_APP_NAME?.trim() || "Paseo";
+const UPDATE_REVALIDATION_TIMEOUT_MS = 5_000;
 const pendingBrowserWindowOpenRequests = new PendingBrowserWindowOpenRequests();
 
 app.setName(APP_NAME);
@@ -929,33 +931,36 @@ function showDaemonShutdownDialog(): void {
   }
 }
 
-app.on(
-  "before-quit",
-  createBeforeQuitHandler({
-    app,
-    closeTransportSessions: closeAllTransportSessions,
-    stopDesktopManagedDaemonIfNeeded: () =>
-      stopDesktopManagedDaemonOnQuitIfNeeded({
-        settingsStore: getDesktopSettingsStore(),
-        isDesktopManagedDaemonRunning: isDesktopManagedDaemonRunningSync,
-        stopDaemon: () => stopDesktopDaemonViaCli("quit"),
-        showShutdownFeedback: showDaemonShutdownDialog,
-      }),
-    installAppUpdateOnQuit: async () => {
-      const settings = await getDesktopSettingsStore().get();
-      return installAppUpdateOnQuit({
-        currentVersion: app.getVersion(),
-        releaseChannel: settings.releaseChannel,
-      });
-    },
-    onStopError: (error) => {
-      log.error("[desktop daemon] failed to stop managed daemon on quit", error);
-    },
-    onUpdateError: (error) => {
-      log.error("[auto-updater] failed to validate downloaded update on quit", error);
-    },
-  }),
-);
+const quitLifecycle = createQuitLifecycle({
+  app,
+  closeTransportSessions: closeAllTransportSessions,
+  stopDesktopManagedDaemonIfNeeded: () =>
+    stopDesktopManagedDaemonOnQuitIfNeeded({
+      settingsStore: getDesktopSettingsStore(),
+      isDesktopManagedDaemonRunning: isDesktopManagedDaemonRunningSync,
+      stopDaemon: () => stopDesktopDaemonViaCli("quit"),
+      showShutdownFeedback: showDaemonShutdownDialog,
+    }),
+  installAppUpdateOnQuit: async (signal) => {
+    const settings = await getDesktopSettingsStore().get();
+    return installAppUpdateOnQuit({
+      currentVersion: app.getVersion(),
+      releaseChannel: settings.releaseChannel,
+      signal,
+    });
+  },
+  createUpdateRevalidationSignal: () => AbortSignal.timeout(UPDATE_REVALIDATION_TIMEOUT_MS),
+  onStopError: (error) => {
+    log.error("[desktop daemon] failed to stop managed daemon on quit", error);
+  },
+  onUpdateError: (error) => {
+    log.error("[auto-updater] failed to validate downloaded update on quit", error);
+  },
+});
+
+// electron-updater forwards this event through Electron's built-in autoUpdater.
+electronAutoUpdater.on("before-quit-for-update", quitLifecycle.handleBeforeQuitForUpdate);
+app.on("before-quit", quitLifecycle.handleBeforeQuit);
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {

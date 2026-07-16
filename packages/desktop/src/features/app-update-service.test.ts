@@ -239,6 +239,7 @@ describe("app update service", () => {
     const installed = await service.installUpdateOnQuit({
       currentVersion: "1.2.3",
       releaseChannel: "stable",
+      signal: new AbortController().signal,
     });
 
     expect(installed).toBe(true);
@@ -270,6 +271,34 @@ describe("app update service", () => {
     const installed = await service.installUpdateOnQuit({
       currentVersion: "1.2.3",
       releaseChannel: "stable",
+      signal: new AbortController().signal,
+    });
+
+    expect(installed).toBe(false);
+    expect(runtime.installedVersions).toEqual([]);
+  });
+
+  it("does not install after quit-time revalidation expires", async () => {
+    const { runtime, service } = createService({ bucket: async () => 0 });
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+
+    await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+    });
+    runtime.finishUpdateDownload(rolledOutUpdate);
+
+    const deadline = new AbortController();
+    deadline.abort();
+    runtime.nextCheck({
+      isUpdateAvailable: true,
+      updateInfo: { ...rolledOutUpdate, version: "1.2.5" },
+    });
+    const installed = await service.installUpdateOnQuit({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      signal: deadline.signal,
     });
 
     expect(installed).toBe(false);
