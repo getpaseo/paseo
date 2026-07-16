@@ -308,12 +308,15 @@ describe("archiveByScope", () => {
     expect(existsSync(worktree.worktreePath)).toBe(true);
   });
 
-  test("worktree scope archives every workspace on the directory and removes it", async () => {
+  test("worktree scope archives root and subdirectory workspaces before removing the backing worktree", async () => {
     const { tempDir, repoDir } = createGitRepo();
     const paseoHome = path.join(tempDir, ".paseo");
     const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "worktree-scope");
     const workspaceA = "ws-worktree-a";
     const workspaceB = "ws-worktree-b";
+    const workspaceC = "ws-worktree-subdirectory";
+    const subdirectory = path.join(worktree.worktreePath, "packages", "app");
+    mkdirSync(subdirectory, { recursive: true });
 
     const result = await archiveByScope(
       createArchiveDeps({
@@ -321,6 +324,7 @@ describe("archiveByScope", () => {
         activeWorkspaces: [
           { workspaceId: workspaceA, cwd: worktree.worktreePath, kind: "worktree" },
           { workspaceId: workspaceB, cwd: worktree.worktreePath, kind: "local_checkout" },
+          { workspaceId: workspaceC, cwd: subdirectory, kind: "local_checkout" },
         ],
       }),
       {
@@ -330,8 +334,10 @@ describe("archiveByScope", () => {
       },
     );
 
-    expect(result.archivedWorkspaceIds).toEqual(expect.arrayContaining([workspaceA, workspaceB]));
-    expect(result.archivedWorkspaceIds).toHaveLength(2);
+    expect(result.archivedWorkspaceIds).toEqual(
+      expect.arrayContaining([workspaceA, workspaceB, workspaceC]),
+    );
+    expect(result.archivedWorkspaceIds).toHaveLength(3);
     expect(result.removedDirectory).toBe(true);
     expect(existsSync(worktree.worktreePath)).toBe(false);
   });

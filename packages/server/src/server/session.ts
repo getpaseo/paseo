@@ -1,7 +1,7 @@
 import equal from "fast-deep-equal";
 import { v4 as uuidv4 } from "uuid";
 import { lstat, mkdir, mkdtemp, rename, rm, stat } from "node:fs/promises";
-import { basename, normalize, resolve, sep } from "path";
+import { basename, resolve, sep } from "path";
 import { homedir } from "node:os";
 import { CLIENT_CAPS, type ClientCapability } from "@getpaseo/protocol/client-capabilities";
 import {
@@ -178,7 +178,7 @@ import {
   matchesAgentUpdatesFilter,
   type AgentUpdatesService,
 } from "./session/agent-updates/agent-updates-service.js";
-import { expandTilde } from "../utils/path.js";
+import { areEquivalentPaths, expandTilde } from "../utils/path.js";
 import {
   searchDirectoryEntries,
   WORKSPACE_SEARCH_HIDDEN_DIRECTORIES,
@@ -234,7 +234,12 @@ import {
   createProjectDirectory,
   ProjectDirectoryRequestError,
 } from "./project-directory-service.js";
-import { type WorktreeConfig, createWorktree } from "../utils/worktree.js";
+import {
+  type WorktreeConfig,
+  createWorktree,
+  isPaseoOwnedWorktreeCwd,
+  mapWorkspaceCwdToWorktree,
+} from "../utils/worktree.js";
 import { runGitCommand } from "../utils/run-git-command.js";
 import { CreateAgentLifecycleDispatch } from "./agent/create-agent-lifecycle-dispatch.js";
 
@@ -268,6 +273,7 @@ function buildWorkspaceCheckout(
   // per data-model.md) and for any path that didn't backfill it. Fall back to
   // the live git branch so checkout.currentBranch never regresses to null.
   fallbackBranch?: string | null,
+  worktreeRoot?: string | null,
 ): ProjectPlacementPayload["checkout"] {
   if (workspace.kind === "directory") {
     return {
@@ -287,7 +293,7 @@ function buildWorkspaceCheckout(
       isGit: true,
       currentBranch,
       remoteUrl: null,
-      worktreeRoot: workspace.cwd,
+      worktreeRoot: worktreeRoot ?? workspace.cwd,
       isPaseoOwnedWorktree: true,
       mainRepoRoot: workspace.mainRepoRoot,
     };
@@ -297,7 +303,7 @@ function buildWorkspaceCheckout(
     isGit: true,
     currentBranch,
     remoteUrl: null,
-    worktreeRoot: workspace.cwd,
+    worktreeRoot: worktreeRoot ?? workspace.cwd,
     isPaseoOwnedWorktree: false,
     mainRepoRoot: workspace.mainRepoRoot ?? null,
   };
@@ -1489,9 +1495,12 @@ export class Session {
     if (!project) {
       throw new Error(`Project not found for workspace ${workspace.workspaceId}`);
     }
-    const liveBranch =
-      this.workspaceGitService.peekSnapshot(workspace.cwd)?.git.currentBranch ?? null;
-    const checkout = buildWorkspaceCheckout(workspace, liveBranch);
+    const snapshot = this.workspaceGitService.peekSnapshot(workspace.cwd);
+    const checkout = buildWorkspaceCheckout(
+      workspace,
+      snapshot?.git.currentBranch ?? null,
+      snapshot?.git.repoRoot,
+    );
     return {
       projectKey: project.projectId,
       projectName: resolveProjectDisplayName(project),
@@ -2772,7 +2781,7 @@ export class Session {
       });
       createdWorktreeForCleanup = createdWorktree;
       const createAgentConfig: AgentSessionConfig = createdWorktree
-        ? { ...config, cwd: createdWorktree.worktree.worktreePath }
+        ? { ...config, cwd: createdWorktree.workspace.cwd }
         : config;
       const workspaceId = await this.workspaceProvisioning.resolveOrCreateWorkspaceIdForCreateAgent(
         {
@@ -4183,11 +4192,18 @@ export class Session {
       // not critical; git will prune lazily
     }
 
+    const ownership = await isPaseoOwnedWorktreeCwd(workspace.cwd, {
+      paseoHome: this.paseoHome,
+      worktreesRoot: this.worktreesRoot,
+    });
+    const previousWorktreePath = ownership.allowed
+      ? (ownership.worktreePath ?? workspace.cwd)
+      : workspace.cwd;
     let result: WorktreeConfig;
     try {
       result = await createWorktree({
         cwd: project.rootPath,
-        worktreeSlug: basename(workspace.cwd),
+        worktreeSlug: basename(previousWorktreePath),
         source: { kind: "checkout-branch", branchName: branch },
         runSetup: false,
         paseoHome: this.paseoHome,
@@ -4197,12 +4213,18 @@ export class Session {
       throw toWorktreeRequestError(error);
     }
 
-    if (normalize(result.worktreePath) !== normalize(workspace.cwd)) {
+    const recreatedWorkspacePath = mapWorkspaceCwdToWorktree({
+      sourceWorktreePath: previousWorktreePath,
+      workspaceCwd: workspace.cwd,
+      targetWorktreePath: result.worktreePath,
+    });
+    if (!areEquivalentPaths(recreatedWorkspacePath, workspace.cwd)) {
       throw new WorktreeRequestError({
         code: "unknown",
-        message: `Recreated worktree diverged from ${workspace.cwd}: ${result.worktreePath}`,
+        message: `Recreated worktree diverged from ${workspace.cwd}: ${recreatedWorkspacePath}`,
       });
     }
+    await mkdir(recreatedWorkspacePath, { recursive: true });
   }
 
   private async restoreWorkspaceAndEmit(workspaceId: string): Promise<void> {

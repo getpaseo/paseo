@@ -160,7 +160,7 @@ export function createWorkspaceGitObserverService(deps: {
   function syncObservers(workspaces: Iterable<WorkspaceDescriptorPayload>): void {
     for (const workspace of workspaces) {
       syncObserver(workspace.workspaceDirectory, {
-        isGit: workspace.projectKind === "git",
+        isGit: workspace.workspaceKind !== "directory",
         workspaceId: workspace.id,
       });
       rememberDescriptorState(workspace.workspaceDirectory, workspace);

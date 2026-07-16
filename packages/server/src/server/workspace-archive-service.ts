@@ -14,6 +14,7 @@ import {
 } from "../utils/worktree.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type { PersistedWorkspaceRecord, WorkspaceRegistry } from "./workspace-registry.js";
+import { areEquivalentPaths } from "../utils/path.js";
 
 export interface ActiveWorkspaceRef {
   workspaceId: string;
@@ -80,7 +81,9 @@ export async function resolveWorkspaceIdAtPath(
 ): Promise<string | null> {
   const targetDir = resolve(targetPath);
   const activeWorkspaces = await dependencies.listActiveWorkspaces();
-  const exactMatches = activeWorkspaces.filter((workspace) => resolve(workspace.cwd) === targetDir);
+  const exactMatches = activeWorkspaces.filter((workspace) =>
+    areEquivalentPaths(workspace.cwd, targetDir),
+  );
   const worktreeMatch = exactMatches.find((workspace) => workspace.kind === "worktree");
   if (worktreeMatch) {
     return worktreeMatch.workspaceId;
@@ -171,29 +174,52 @@ async function resolveArchiveTargets(
       );
       return { targetDir: null, targetWorkspaceIds: [] };
     }
-    const worktree = await resolvePaseoWorktreeRootForCwd(record.cwd, {
-      paseoHome: dependencies.paseoHome,
-      worktreesRoot: paseoWorktreesBaseRoot ?? dependencies.paseoWorktreesBaseRoot,
-    });
     return {
-      targetDir: worktree?.worktreePath ?? resolve(record.cwd),
+      targetDir: await resolveBackingWorktreeDirectory(
+        record.cwd,
+        dependencies,
+        paseoWorktreesBaseRoot,
+      ),
       targetWorkspaceIds: [workspaceId],
     };
   }
 
   let targetPath = scope.targetPath;
-  const resolvedWorktree = await resolvePaseoWorktreeRootForCwd(targetPath, {
+  targetPath = await resolveBackingWorktreeDirectory(
+    targetPath,
+    dependencies,
+    paseoWorktreesBaseRoot,
+  );
+  const targetDir = resolve(targetPath);
+  const targetWorkspaceIds = (
+    await Promise.all(
+      activeWorkspaces.map(async (workspace) => {
+        const backingDirectory = await resolveBackingWorktreeDirectory(
+          workspace.cwd,
+          dependencies,
+          paseoWorktreesBaseRoot,
+        );
+        return areEquivalentPaths(backingDirectory, targetDir) ? workspace.workspaceId : null;
+      }),
+    )
+  ).filter((workspaceId): workspaceId is string => workspaceId !== null);
+  return { targetDir, targetWorkspaceIds };
+}
+
+async function resolveBackingWorktreeDirectory(
+  cwd: string,
+  dependencies: Pick<ArchiveDependencies, "paseoHome" | "paseoWorktreesBaseRoot">,
+  paseoWorktreesBaseRoot?: string,
+): Promise<string> {
+  const options = {
     paseoHome: dependencies.paseoHome,
     worktreesRoot: paseoWorktreesBaseRoot ?? dependencies.paseoWorktreesBaseRoot,
-  });
-  if (resolvedWorktree) {
-    targetPath = resolvedWorktree.worktreePath;
-  }
-  const targetDir = resolve(targetPath);
-  const targetWorkspaceIds = activeWorkspaces
-    .filter((workspace) => resolve(workspace.cwd) === targetDir)
-    .map((workspace) => workspace.workspaceId);
-  return { targetDir, targetWorkspaceIds };
+  };
+  const resolvedWorktree = await resolvePaseoWorktreeRootForCwd(cwd, options);
+  if (resolvedWorktree) return resolvedWorktree.worktreePath;
+
+  const ownership = await isPaseoOwnedWorktreeCwd(cwd, options);
+  return ownership.allowed && ownership.worktreePath ? ownership.worktreePath : resolve(cwd);
 }
 
 async function archiveTargetRecords(
@@ -351,11 +377,12 @@ async function isDirectoryUnreferenced(
   const target = resolve(targetDir);
   for (const workspace of activeWorkspaces) {
     if (archivedWorkspaceIds.has(workspace.workspaceId)) continue;
-    const worktree = await resolvePaseoWorktreeRootForCwd(workspace.cwd, {
-      paseoHome: dependencies.paseoHome,
-      worktreesRoot: request.paseoWorktreesBaseRoot ?? dependencies.paseoWorktreesBaseRoot,
-    });
-    if (resolve(worktree?.worktreePath ?? workspace.cwd) === target) return false;
+    const backingDirectory = await resolveBackingWorktreeDirectory(
+      workspace.cwd,
+      dependencies,
+      request.paseoWorktreesBaseRoot,
+    );
+    if (areEquivalentPaths(backingDirectory, target)) return false;
   }
   return true;
 }

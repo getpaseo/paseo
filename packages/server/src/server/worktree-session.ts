@@ -244,7 +244,7 @@ export async function buildAgentSessionConfig(
               ),
       },
     );
-    cwd = createdWorktree.worktree.worktreePath;
+    cwd = createdWorktree.workspace.cwd;
     setupContinuation = createdWorktree.setupContinuation;
     createdWorkspaceId = createdWorktree.workspace.workspaceId;
   } else if (normalized.createNewBranch) {

@@ -186,6 +186,37 @@ test("uses an equivalent source workspace path when creating a worktree", async 
   expect(result.workspace.projectId).toBe(sourceProject.projectId);
 });
 
+test("creates a worktree workspace at the selected project subdirectory", async () => {
+  const { repoDir, tempDir } = createGitRepo();
+  cleanupPaths.push(tempDir);
+  const sourceDir = path.join(repoDir, "packages", "app");
+  mkdirSync(sourceDir, { recursive: true });
+  const deps = createDeps();
+  const project = createPersistedProjectRecordForTest({
+    projectId: "prj_selected-subdirectory",
+    rootPath: sourceDir,
+    displayName: "app",
+  });
+  deps.projects.set(project.projectId, project);
+
+  const result = await createPaseoWorktree(
+    {
+      cwd: sourceDir,
+      projectId: project.projectId,
+      worktreeSlug: "selected-subdirectory",
+      runSetup: false,
+      paseoHome: path.join(tempDir, ".paseo"),
+    },
+    deps,
+  );
+
+  expect(result.workspace).toMatchObject({
+    projectId: project.projectId,
+    cwd: path.join(result.worktree.worktreePath, "packages", "app"),
+    kind: "worktree",
+  });
+});
+
 test("registers a new worktree in the existing root project after the main checkout workspace is removed", async () => {
   const { repoDir, tempDir } = createGitRepo();
   cleanupPaths.push(tempDir);

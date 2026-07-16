@@ -4,6 +4,7 @@ import {
   deriveWorktreeProjectHash,
   deletePaseoWorktree,
   isPaseoOwnedWorktreeCwd,
+  mapWorkspaceCwdToWorktree,
   slugify,
   type CreateWorktreeOptions,
   type WorktreeConfig,
@@ -86,6 +87,12 @@ describe("paseo worktree manager", () => {
 
     const ownership = await isPaseoOwnedWorktreeCwd(created.worktreePath, { paseoHome });
     expect(ownership.allowed).toBe(true);
+    await expect(
+      isPaseoOwnedWorktreeCwd(join(created.worktreePath, "packages", "app"), { paseoHome }),
+    ).resolves.toMatchObject({
+      allowed: true,
+      worktreePath: created.worktreePath,
+    });
   });
 
   it("rejects paths that are not under the paseo worktrees root", async () => {
@@ -95,6 +102,34 @@ describe("paseo worktree manager", () => {
     const ownership = await isPaseoOwnedWorktreeCwd(outsidePath, { paseoHome });
 
     expect(ownership.allowed).toBe(false);
+  });
+
+  it("maps only root-contained workspace paths into a replacement worktree", () => {
+    const sourceWorktreePath = join(tempDir, "source-worktree");
+    const targetWorktreePath = join(tempDir, "target-worktree");
+    const nestedWorkspaceCwd = join(sourceWorktreePath, "packages", "app");
+
+    expect(
+      mapWorkspaceCwdToWorktree({
+        sourceWorktreePath,
+        workspaceCwd: sourceWorktreePath,
+        targetWorktreePath,
+      }),
+    ).toBe(targetWorktreePath);
+    expect(
+      mapWorkspaceCwdToWorktree({
+        sourceWorktreePath,
+        workspaceCwd: nestedWorkspaceCwd,
+        targetWorktreePath,
+      }),
+    ).toBe(join(targetWorktreePath, "packages", "app"));
+    expect(() =>
+      mapWorkspaceCwdToWorktree({
+        sourceWorktreePath,
+        workspaceCwd: join(tempDir, "outside-worktree"),
+        targetWorktreePath,
+      }),
+    ).toThrow("outside its source worktree");
   });
 
   it("rejects the worktrees root itself and the per-repo hash dir", async () => {

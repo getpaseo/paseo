@@ -27,12 +27,13 @@ function createRealAgentManager(storage: AgentStorage): AgentManager {
 // worktree service).
 function fakeWorktreeCreator(args: { repoRoot: string; createdWorkspaceId: string }) {
   const worktreePath = join(args.repoRoot, "worktree");
-  mkdirSync(worktreePath, { recursive: true });
+  const workspaceCwd = join(worktreePath, "packages", "app");
+  mkdirSync(workspaceCwd, { recursive: true });
   return async (): Promise<CreatePaseoWorktreeWorkflowResult> =>
     ({
       worktree: { worktreePath },
       intent: {},
-      workspace: { workspaceId: args.createdWorkspaceId },
+      workspace: { workspaceId: args.createdWorkspaceId, cwd: workspaceCwd },
       repoRoot: args.repoRoot,
       created: true,
       setupContinuation: { kind: "agent" as const, startAfterAgentCreate: () => {} },
@@ -321,6 +322,7 @@ test("mcp create stamps the new worktree's workspaceId, not the parent's", async
 
     const storedChild = await storage.get(child.id);
     expect(storedChild?.workspaceId).toBe("ws-new-worktree");
+    expect(child.cwd).toBe(join(workdir, "worktree", "packages", "app"));
   } finally {
     rmSync(workdir, { recursive: true, force: true });
   }

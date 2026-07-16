@@ -857,7 +857,6 @@ test("create_agent_request keeps requested child cwd when grouped under an exist
         terminalManager: null,
       }),
     );
-
     await session.handleMessage({
       type: "create_agent_request",
       requestId: "req-create-child",
@@ -876,6 +875,159 @@ test("create_agent_request keeps requested child cwd when grouped under an exist
     expect(findByType(emitted, "status")?.payload).toMatchObject({
       status: "agent_created",
       agent: { cwd: child },
+    });
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("create_agent_request launches from an exact subdirectory in a created worktree", async () => {
+  const workdir = mkdtempSync(path.join(tmpdir(), "paseo-create-agent-worktree-cwd-"));
+  try {
+    const parent = path.join(workdir, "parent");
+    const child = path.join(parent, "packages", "app");
+    mkdirSync(child, { recursive: true });
+    execFileSync("git", ["init", "-b", "main"], { cwd: parent, stdio: "pipe" });
+    execFileSync("git", ["config", "user.email", "test@getpaseo.local"], {
+      cwd: parent,
+      stdio: "pipe",
+    });
+    execFileSync("git", ["config", "user.name", "Paseo Test"], { cwd: parent, stdio: "pipe" });
+    writeFileSync(path.join(child, "README.md"), "app\n");
+    execFileSync("git", ["add", "."], { cwd: parent, stdio: "pipe" });
+    execFileSync("git", ["commit", "-m", "initial"], { cwd: parent, stdio: "pipe" });
+
+    const logger = {
+      child: () => logger,
+      trace: vi.fn(),
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
+    const agentStorage = new AgentStorage(path.join(workdir, "agents"), asSessionLogger(logger));
+    const agentManager = new AgentManager({
+      clients: { codex: new CreateAgentTestClient() },
+      registry: agentStorage,
+      logger: asSessionLogger(logger),
+      idFactory: () => "00000000-0000-4000-8000-000000000552",
+    });
+    const projectRegistry = new FileBackedProjectRegistry(
+      path.join(workdir, "projects.json"),
+      asSessionLogger(logger),
+    );
+    const workspaceRegistry = new FileBackedWorkspaceRegistry(
+      path.join(workdir, "workspaces.json"),
+      asSessionLogger(logger),
+    );
+    const workspaceGitService = createNoopWorkspaceGitService({
+      getCheckout: async (cwd: string) => ({
+        cwd,
+        isGit: true,
+        currentBranch: "main",
+        remoteUrl: null,
+        worktreeRoot: parent,
+        isPaseoOwnedWorktree: false,
+        mainRepoRoot: null,
+      }),
+      resolveRepoRoot: async () => parent,
+      resolveDefaultBranch: async () => "main",
+    });
+    await projectRegistry.upsert(
+      createPersistedProjectRecord({
+        projectId: "proj-parent",
+        rootPath: parent,
+        kind: "git",
+        displayName: "parent",
+        createdAt: "2026-05-07T00:00:00.000Z",
+        updatedAt: "2026-05-07T00:00:00.000Z",
+      }),
+    );
+    await workspaceRegistry.upsert(
+      createPersistedWorkspaceRecord({
+        workspaceId: "ws-parent",
+        projectId: "proj-parent",
+        cwd: parent,
+        kind: "local_checkout",
+        displayName: "parent",
+        createdAt: "2026-05-07T00:00:00.000Z",
+        updatedAt: "2026-05-07T00:00:00.000Z",
+      }),
+    );
+
+    const emitted: SessionOutboundMessage[] = [];
+    const session = new Session({
+      clientId: "test-client",
+      appVersion: null,
+      onMessage: (message) => emitted.push(message),
+      logger: asSessionLogger(logger),
+      downloadTokenStore: asDownloadTokenStore(),
+      pushTokenStore: asPushTokenStore(),
+      paseoHome: path.join(workdir, "paseo-home"),
+      agentManager,
+      agentStorage,
+      projectRegistry,
+      workspaceRegistry,
+      chatService: asChatService(),
+      scheduleService: asScheduleService(),
+      loopService: asLoopService(),
+      checkoutDiffManager: asCheckoutDiffManager({
+        subscribe: async () => ({
+          initial: { cwd: child, files: [], error: null },
+          unsubscribe: () => {},
+        }),
+        scheduleRefreshForCwd: () => {},
+        onWorkspaceStateMayHaveChanged: () => {},
+        getMetrics: () => ({
+          checkoutDiffTargetCount: 0,
+          checkoutDiffSubscriptionCount: 0,
+          checkoutDiffWatcherCount: 0,
+          checkoutDiffFallbackRefreshTargetCount: 0,
+        }),
+        dispose: () => {},
+      }),
+      workspaceGitService,
+      workspaceAutoName: new WorkspaceAutoName({
+        agentManager,
+        workspaceRegistry,
+        workspaceGitService,
+        providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+        readDaemonConfig: () => ({ metadataGeneration: { providers: [] } }),
+        gitMutation: { notifyGitMutation: async () => {} },
+        emitWorkspaceUpdateForCwd: async () => {},
+        emitWorkspaceUpdateForWorkspaceId: async () => {},
+        logger: asSessionLogger(logger),
+      }),
+      daemonConfigStore: asDaemonConfigStore({
+        get: () => ({ mcp: { injectIntoAgents: false }, providers: {} }),
+        onChange: () => () => {},
+      }),
+      mcpBaseUrl: null,
+      stt: null,
+      tts: null,
+      providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+      terminalManager: null,
+    });
+
+    await session.handleMessage({
+      type: "create_agent_request",
+      requestId: "req-create-worktree-child",
+      config: { provider: "codex", cwd: child },
+      attachments: [],
+      worktree: { mode: "branch-off", newBranch: "feature/created-worktree" },
+    });
+
+    const [createdAgent] = agentManager.listAgents();
+    const createdWorktreeRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], {
+      cwd: createdAgent!.cwd,
+      stdio: "pipe",
+    })
+      .toString()
+      .trim();
+    expect(createdAgent?.cwd).toBe(path.join(createdWorktreeRoot, "packages", "app"));
+    expect(findByType(emitted, "status")?.payload).toMatchObject({
+      status: "agent_created",
+      agent: { cwd: createdAgent?.cwd },
     });
   } finally {
     rmSync(workdir, { recursive: true, force: true });
@@ -2141,6 +2293,17 @@ test("workspace placements preserve checkout facts independently from the projec
     createdAt: "2026-03-01T12:00:00.000Z",
     updatedAt: "2026-03-01T12:00:00.000Z",
   });
+  const paseoSubdirectory = createPersistedWorkspaceRecord({
+    workspaceId: "ws-paseo-subdirectory",
+    projectId: "proj-manual-worktree",
+    cwd: "/tmp/paseo-worktree/packages/app",
+    kind: "worktree",
+    displayName: "app",
+    isPaseoOwnedWorktree: true,
+    mainRepoRoot: "/tmp/main-repo",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
   const project = createPersistedProjectRecord({
     projectId: "proj-manual-worktree",
     rootPath: "/tmp/main-repo",
@@ -2150,10 +2313,16 @@ test("workspace placements preserve checkout facts independently from the projec
     updatedAt: "2026-03-01T12:00:00.000Z",
   });
   session.workspaceRegistry.get = async (workspaceId: string) =>
-    [manualWorktree, explicitDirectory].find(
+    [manualWorktree, explicitDirectory, paseoSubdirectory].find(
       (workspace) => workspace.workspaceId === workspaceId,
     ) ?? null;
   session.projectRegistry.get = async () => project;
+  session.workspaceGitService.peekSnapshot = (cwd: string) =>
+    cwd === paseoSubdirectory.cwd
+      ? createWorkspaceRuntimeSnapshot(cwd, {
+          git: { repoRoot: "/tmp/paseo-worktree" },
+        })
+      : null;
 
   await expect(
     session.buildProjectPlacementForWorkspaceId(manualWorktree.workspaceId),
@@ -2174,6 +2343,16 @@ test("workspace placements preserve checkout facts independently from the projec
         isGit: false,
         isPaseoOwnedWorktree: false,
         mainRepoRoot: null,
+      }),
+    }),
+  );
+  await expect(
+    session.buildProjectPlacementForWorkspaceId(paseoSubdirectory.workspaceId),
+  ).resolves.toEqual(
+    expect.objectContaining({
+      checkout: expect.objectContaining({
+        cwd: paseoSubdirectory.cwd,
+        worktreeRoot: "/tmp/paseo-worktree",
       }),
     }),
   );
@@ -5195,6 +5374,62 @@ test("legacy refresh_agent_request restores a real deleted worktree", async () =
   expect(workspaces.get(workspaceId)?.cwd).toBe(worktreePath);
   expect(workspaces.get(workspaceId)?.archivedAt).toBeNull();
 
+  rmSync(tempDir, { recursive: true, force: true });
+});
+
+test("recreateArchivedWorktree restores an archived exact subdirectory", async () => {
+  const { tempDir, repoDir } = createRecreateWorktreeRepo();
+  const sourceSubdirectory = path.join(repoDir, "packages", "app");
+  mkdirSync(sourceSubdirectory, { recursive: true });
+  writeFileSync(path.join(sourceSubdirectory, "README.md"), "app\n");
+  execFileSync("git", ["add", "."], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["commit", "-m", "add app"], { cwd: repoDir, stdio: "pipe" });
+  const branch = "feature/subdirectory";
+  execFileSync("git", ["branch", branch], { cwd: repoDir, stdio: "pipe" });
+
+  const worktreesRoot = path.join(tempDir, "worktrees");
+  const paseoHome = path.join(tempDir, "paseo-home");
+  const created = await createWorktree({
+    cwd: repoDir,
+    worktreeSlug: "subdirectory",
+    source: { kind: "checkout-branch", branchName: branch },
+    runSetup: false,
+    paseoHome,
+    worktreesRoot,
+  });
+  const worktreeRoot = realpathSync(created.worktreePath);
+  const workspaceCwd = path.join(worktreeRoot, "packages", "app");
+  rmSync(worktreeRoot, { recursive: true, force: true });
+  execFileSync("git", ["worktree", "prune"], { cwd: repoDir, stdio: "pipe" });
+
+  const session = createSessionForWorkspaceTests({ paseoHome, worktreesRoot });
+  const project = createPersistedProjectRecord({
+    projectId: repoDir,
+    rootPath: repoDir,
+    kind: "git",
+    displayName: "worktree-project",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-10T00:00:00.000Z",
+    archivedAt: "2026-03-10T00:00:00.000Z",
+  });
+  session.projectRegistry.get = async () => project;
+
+  await session.recreateArchivedWorktree(
+    createPersistedWorkspaceRecord({
+      workspaceId: "ws-subdirectory-recreate",
+      projectId: project.projectId,
+      cwd: workspaceCwd,
+      kind: "worktree",
+      branch,
+      displayName: branch,
+      createdAt: "2026-03-01T12:00:00.000Z",
+      updatedAt: "2026-03-10T00:00:00.000Z",
+      archivedAt: "2026-03-10T00:00:00.000Z",
+    }),
+  );
+
+  expect(existsSync(worktreeRoot)).toBe(true);
+  expect(existsSync(workspaceCwd)).toBe(true);
   rmSync(tempDir, { recursive: true, force: true });
 });
 

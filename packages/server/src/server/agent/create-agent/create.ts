@@ -573,7 +573,7 @@ async function resolveMcpCwd(params: {
     },
   });
   return {
-    resolvedCwd: createdWorktree.worktree.worktreePath,
+    resolvedCwd: createdWorktree.workspace.cwd,
     setupContinuation: createdWorktree.setupContinuation,
     createdWorkspaceId: createdWorktree.workspace.workspaceId,
   };

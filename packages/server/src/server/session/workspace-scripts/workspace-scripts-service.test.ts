@@ -18,6 +18,7 @@ import type {
   SpawnWorkspaceScriptOptions,
   WorktreeScriptResult,
 } from "../../worktree-bootstrap.js";
+import type { WorkspaceGitService } from "../../workspace-git-service.js";
 import { createWorkspaceScriptsService } from "./workspace-scripts-service.js";
 import { deriveProjectServiceSlug } from "../../workspace-git-metadata.js";
 
@@ -75,6 +76,7 @@ interface BuildOptions {
   workspace?: PersistedWorkspaceRecord | null;
   project?: PersistedProjectRecord | null;
   spawnThrows?: string;
+  gitService?: Pick<WorkspaceGitService, "peekSnapshot">;
 }
 
 function buildService(options: BuildOptions = {}) {
@@ -98,7 +100,7 @@ function buildService(options: BuildOptions = {}) {
       options.terminalManager === undefined ? availableTerminalManager : options.terminalManager,
     workspaceRegistry: fakeWorkspaceRegistry(workspace),
     projectRegistry: fakeProjectRegistry(options.project ?? null),
-    workspaceGitService: fakeGitService(),
+    workspaceGitService: options.gitService ?? fakeGitService(),
     getDaemonTcpPort: () => 6767,
     getDaemonTcpHost: () => "127.0.0.1",
     serviceProxyPublicBaseUrl: null,
@@ -162,6 +164,46 @@ describe("buildSnapshot", () => {
     expect(
       service.buildSnapshot({ workspaceId: "ws-1", cwd: dir } as PersistedWorkspaceRecord),
     ).toEqual([]);
+  });
+
+  test("projects service hostnames without a Git snapshot", () => {
+    const directory = mkdtempSync(join(tmpdir(), "workspace-scripts-"));
+    tempDirs.push(directory);
+    writeFileSync(
+      join(directory, "paseo.json"),
+      JSON.stringify({ scripts: { app: { type: "service", command: "npm run app", port: 3000 } } }),
+    );
+    const project = {
+      projectId: "prj_no_snapshot",
+      rootPath: directory,
+      kind: "git",
+      displayName: "app",
+      customName: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      archivedAt: null,
+    } as PersistedProjectRecord;
+    const workspace = {
+      workspaceId: "ws-no-snapshot",
+      projectId: project.projectId,
+      cwd: directory,
+    } as PersistedWorkspaceRecord;
+    const serviceProxy = createServiceProxySubsystem({ logger });
+    const { service } = buildService({
+      workspace,
+      project,
+      serviceProxy,
+      gitService: { peekSnapshot: () => undefined },
+    });
+
+    expect(service.buildSnapshot(workspace, project)[0]?.hostname).toBe(
+      serviceProxy.projectWorkspaceService({
+        projectSlug: deriveProjectServiceSlug(project),
+        branchName: null,
+        scriptName: "app",
+        daemonPort: 6767,
+      }).hostname,
+    );
   });
 });
 

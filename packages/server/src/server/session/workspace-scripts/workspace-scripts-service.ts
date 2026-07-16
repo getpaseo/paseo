@@ -83,13 +83,18 @@ export function createWorkspaceScriptsService(deps: {
     project: { projectId: string; rootPath: string } | null,
   ) {
     const snapshot = workspaceGitService.peekSnapshot(workspaceDirectory);
-    if (!snapshot) {
-      return undefined;
+    if (project) {
+      return {
+        projectSlug: deriveProjectServiceSlug(project),
+        currentBranch: snapshot?.git.currentBranch ?? null,
+      };
     }
+    if (!snapshot) return undefined;
     return {
-      projectSlug: project
-        ? deriveProjectServiceSlug(project)
-        : deriveProjectSlug(workspaceDirectory, snapshot.git.isGit ? snapshot.git.remoteUrl : null),
+      projectSlug: deriveProjectSlug(
+        workspaceDirectory,
+        snapshot.git.isGit ? snapshot.git.remoteUrl : null,
+      ),
       currentBranch: snapshot.git.currentBranch,
     };
   }

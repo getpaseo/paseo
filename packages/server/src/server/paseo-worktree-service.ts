@@ -14,7 +14,11 @@ import {
   type CreateWorktreeCoreDeps,
   type CreateWorktreeCoreInput,
 } from "./worktree-core.js";
-import { validateBranchSlug, type WorktreeConfig } from "../utils/worktree.js";
+import {
+  mapWorkspaceCwdToWorktree,
+  validateBranchSlug,
+  type WorktreeConfig,
+} from "../utils/worktree.js";
 import { getCurrentBranch, localBranchExists, renameCurrentBranch } from "../utils/checkout-git.js";
 import {
   markPaseoWorktreeFirstAgentBranchAutoNameAttempted,
@@ -223,9 +227,13 @@ async function upsertWorkspaceForWorktree(options: {
     "projectRegistry" | "workspaceRegistry" | "workspaceGitService"
   >;
 }): Promise<PersistedWorkspaceRecord> {
-  const normalizedCwd = resolve(options.worktree.worktreePath);
   const normalizedInputCwd = resolve(options.inputCwd);
   const normalizedRepoRoot = resolve(options.repoRoot);
+  const normalizedCwd = mapWorkspaceCwdToWorktree({
+    sourceWorktreePath: normalizedRepoRoot,
+    workspaceCwd: normalizedInputCwd,
+    targetWorktreePath: options.worktree.worktreePath,
+  });
   // Creation never deduplicates by directory: a worktree directory may back
   // more than one workspace. We still resolve the source project from the
   // originating checkout, but always mint a fresh workspace record.

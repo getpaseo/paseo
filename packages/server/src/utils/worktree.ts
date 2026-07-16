@@ -2,7 +2,7 @@ import { execFile } from "child_process";
 import { promisify } from "util";
 import { existsSync, mkdirSync, realpathSync, rmSync, statSync } from "fs";
 import { copyFile, rm, stat } from "fs/promises";
-import { join, basename, dirname, isAbsolute, resolve, sep } from "path";
+import { join, basename, dirname, isAbsolute, relative, resolve, sep } from "path";
 import net from "node:net";
 import { createHash } from "node:crypto";
 import stripAnsi from "strip-ansi";
@@ -35,7 +35,7 @@ import { resolvePaseoHome } from "../server/paseo-home.js";
 import { createExternalProcessEnv } from "../server/paseo-env.js";
 import { parseGitRevParsePath, resolveGitRevParsePath } from "./git-rev-parse-path.js";
 import { validateBranchSlug } from "@getpaseo/protocol/branch-slug";
-import { expandTilde } from "./path.js";
+import { expandTilde, isPathInsideRoot } from "./path.js";
 
 export { slugify, validateBranchSlug } from "@getpaseo/protocol/branch-slug";
 
@@ -845,6 +845,25 @@ export async function computeWorktreePath(
   return join(projectWorktreesRoot, slug);
 }
 
+export function mapWorkspaceCwdToWorktree(input: {
+  sourceWorktreePath: string;
+  workspaceCwd: string;
+  targetWorktreePath: string;
+}): string {
+  if (!isPathInsideRoot(input.sourceWorktreePath, input.workspaceCwd)) {
+    throw new Error(`Workspace cwd is outside its source worktree: ${input.workspaceCwd}`);
+  }
+
+  const mappedCwd = resolve(
+    input.targetWorktreePath,
+    relative(input.sourceWorktreePath, input.workspaceCwd),
+  );
+  if (!isPathInsideRoot(input.targetWorktreePath, mappedCwd)) {
+    throw new Error(`Workspace cwd escapes its target worktree: ${input.workspaceCwd}`);
+  }
+  return mappedCwd;
+}
+
 function normalizePathForOwnership(input: string): string {
   try {
     return realpathSync(input);
@@ -892,8 +911,8 @@ export async function isPaseoOwnedWorktreeCwd(
     };
   }
 
-  const relative = resolvedCwd.slice(paseoWorktreesPrefix.length);
-  const parts = relative.split(sep).filter((part) => part.length > 0);
+  const relativePath = resolvedCwd.slice(paseoWorktreesPrefix.length);
+  const parts = relativePath.split(sep).filter((part) => part.length > 0);
   if (parts.length < 2) {
     return {
       allowed: false,
@@ -907,7 +926,7 @@ export async function isPaseoOwnedWorktreeCwd(
     allowed: true,
     ...(repoRoot !== undefined ? { repoRoot } : {}),
     worktreeRoot: worktreesRoot,
-    worktreePath: resolvedCwd,
+    worktreePath: join(worktreesRoot, parts[1]),
   };
 }
 

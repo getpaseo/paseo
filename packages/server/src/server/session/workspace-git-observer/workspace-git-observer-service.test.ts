@@ -24,6 +24,7 @@ function makeDescriptor(overrides: {
   id: string;
   workspaceDirectory: string;
   projectKind?: string;
+  workspaceKind?: "directory" | "local_checkout" | "worktree";
   name?: string | null;
   diffStat?: { additions: number; deletions: number } | null;
 }): WorkspaceDescriptorPayload {
@@ -31,6 +32,7 @@ function makeDescriptor(overrides: {
     id: overrides.id,
     workspaceDirectory: overrides.workspaceDirectory,
     projectKind: overrides.projectKind ?? "git",
+    workspaceKind: overrides.workspaceKind ?? "local_checkout",
     name: overrides.name ?? null,
     diffStat: overrides.diffStat ?? null,
   } as unknown as WorkspaceDescriptorPayload;
@@ -135,9 +137,22 @@ describe("syncObservers", () => {
   test("does not register a non-git workspace", () => {
     const h = buildHarness();
     h.service.syncObservers([
-      makeDescriptor({ id: "ws1", workspaceDirectory: WS1, projectKind: "directory" }),
+      makeDescriptor({
+        id: "ws1",
+        workspaceDirectory: WS1,
+        projectKind: "directory",
+        workspaceKind: "directory",
+      }),
     ]);
     expect(h.registerCalls).toEqual([]);
+  });
+
+  test("registers a Git workspace even when its owning project is non-Git", () => {
+    const h = buildHarness();
+    h.service.syncObservers([
+      makeDescriptor({ id: "ws1", workspaceDirectory: WS1, projectKind: "non_git" }),
+    ]);
+    expect(h.registerCalls).toEqual([WS1]);
   });
 
   test("is idempotent — re-syncing the same git workspace does not re-register", () => {
@@ -152,7 +167,12 @@ describe("syncObservers", () => {
     const h = buildHarness();
     h.service.syncObservers([makeDescriptor({ id: "ws1", workspaceDirectory: WS1 })]);
     h.service.syncObservers([
-      makeDescriptor({ id: "ws1", workspaceDirectory: WS1, projectKind: "directory" }),
+      makeDescriptor({
+        id: "ws1",
+        workspaceDirectory: WS1,
+        projectKind: "directory",
+        workspaceKind: "directory",
+      }),
     ]);
     expect(h.unsubscribeCalls).toEqual([WS1]);
   });
