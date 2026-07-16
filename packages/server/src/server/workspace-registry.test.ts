@@ -210,7 +210,7 @@ describe("workspace registries", () => {
     expect(await projectRegistry.get(archived.projectId)).toEqual(archived);
   });
 
-  test("returns the oldest active legacy duplicate without rewriting either record", async () => {
+  test("refreshes the oldest active legacy duplicate kind without rewriting its identity", async () => {
     await projectRegistry.initialize();
     const rootPath = path.join(tmpDir, "legacy-root");
     const oldest = createPersistedProjectRecord({
@@ -239,8 +239,15 @@ describe("workspace registries", () => {
         displayName: "new-name",
         timestamp: "2026-03-03T00:00:00.000Z",
       }),
-    ).resolves.toEqual(oldest);
-    expect(await projectRegistry.list()).toEqual([oldest, duplicate]);
+    ).resolves.toEqual({
+      ...oldest,
+      kind: "non_git",
+      updatedAt: "2026-03-03T00:00:00.000Z",
+    });
+    expect(await projectRegistry.list()).toEqual([
+      { ...oldest, kind: "non_git", updatedAt: "2026-03-03T00:00:00.000Z" },
+      duplicate,
+    ]);
   });
 
   test("reuses an active project for Windows lexical-equivalent root spellings", async () => {

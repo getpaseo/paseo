@@ -23,7 +23,9 @@ export type ReconciliationChange =
       kind: "workspace_updated";
       workspaceId: string;
       directory: string;
-      fields: Partial<Pick<PersistedWorkspaceRecord, "branch" | "kind">>;
+      fields: Partial<
+        Pick<PersistedWorkspaceRecord, "branch" | "kind" | "isPaseoOwnedWorktree" | "mainRepoRoot">
+      >;
     };
 
 export interface ReconciliationResult {
@@ -234,7 +236,12 @@ export class WorkspaceReconciliationService {
       workspaceCheckouts.map(async ({ workspace, checkout: wsGit }) => {
         const expectedKind = deriveWorkspaceKind(wsGit);
 
-        const workspaceUpdates: Partial<Pick<PersistedWorkspaceRecord, "branch" | "kind">> = {};
+        const workspaceUpdates: Partial<
+          Pick<
+            PersistedWorkspaceRecord,
+            "branch" | "kind" | "isPaseoOwnedWorktree" | "mainRepoRoot"
+          >
+        > = {};
 
         if (workspace.branch !== (wsGit.isGit ? wsGit.currentBranch : null)) {
           workspaceUpdates.branch = wsGit.isGit ? wsGit.currentBranch : null;
@@ -242,6 +249,14 @@ export class WorkspaceReconciliationService {
 
         if (workspace.kind !== expectedKind) {
           workspaceUpdates.kind = expectedKind;
+        }
+        const isPaseoOwnedWorktree = wsGit.isGit && wsGit.isPaseoOwnedWorktree;
+        const mainRepoRoot = wsGit.isGit ? wsGit.mainRepoRoot : null;
+        if (workspace.isPaseoOwnedWorktree !== isPaseoOwnedWorktree) {
+          workspaceUpdates.isPaseoOwnedWorktree = isPaseoOwnedWorktree;
+        }
+        if (workspace.mainRepoRoot !== mainRepoRoot) {
+          workspaceUpdates.mainRepoRoot = mainRepoRoot;
         }
 
         if (Object.keys(workspaceUpdates).length === 0) {

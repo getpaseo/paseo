@@ -34,14 +34,13 @@ export function filterAddProjectHosts(hosts: AddProjectHost[], query: string): A
 }
 
 export function buildAddProjectMethods(host: AddProjectHost): AddProjectMethodOption[] {
+  if (!host.canAddProject) return [];
   const options: AddProjectMethodOption[] = [];
-  if (host.canAddProject) {
-    options.push({
-      id: "directory-search",
-      label: "Search for directory",
-      description: `Find a directory on ${host.label}`,
-    });
-  }
+  options.push({
+    id: "directory-search",
+    label: "Search for directory",
+    description: `Find a directory on ${host.label}`,
+  });
   if (host.canBrowse) {
     options.push({
       id: "browse",
@@ -64,6 +63,12 @@ export function buildAddProjectMethods(host: AddProjectHost): AddProjectMethodOp
     disabled: !host.canCreateDirectory,
   });
   return options;
+}
+
+export function addProjectMethodEmptyText(host: AddProjectHost | null): string {
+  return host?.canAddProject === false
+    ? "Update the host to use Add Project."
+    : "No matching options";
 }
 
 function githubMethodDescription(host: AddProjectHost): string {

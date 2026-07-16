@@ -560,6 +560,8 @@ describe("WorkspaceReconciliationService", () => {
       pinnedAt: null,
       branch: null,
       baseBranch: null,
+      isPaseoOwnedWorktree: false,
+      mainRepoRoot: null,
       createdAt: timestamp,
       updatedAt: expect.any(String),
       archivedAt: expect.any(String),
@@ -1159,5 +1161,65 @@ describe("WorkspaceReconciliationService", () => {
     await service.runOnce();
 
     expect(infoRecords).toEqual([]);
+  });
+
+  test("backfills persisted worktree ownership from the current checkout", async () => {
+    const rootPath = realpathSync(mkdtempSync(path.join(tmpdir(), "reconcile-worktree-owner-")));
+    tempDirs.push(rootPath);
+    const { projects, workspaces, projectRegistry, workspaceRegistry } = createTestRegistries();
+    const checkouts = new TestCheckouts();
+    checkouts.set(
+      rootPath,
+      createCheckout(rootPath, {
+        isGit: true,
+        worktreeRoot: rootPath,
+        isPaseoOwnedWorktree: true,
+        mainRepoRoot: "/tmp/main-repo",
+      }),
+    );
+    projects.set(
+      "p1",
+      createPersistedProjectRecord({
+        projectId: "p1",
+        rootPath,
+        kind: "git",
+        displayName: "worktree",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      }),
+    );
+    workspaces.set(
+      "w1",
+      createPersistedWorkspaceRecord({
+        workspaceId: "w1",
+        projectId: "p1",
+        cwd: rootPath,
+        kind: "worktree",
+        displayName: "worktree",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      }),
+    );
+    const service = new WorkspaceReconciliationService({
+      projectRegistry,
+      workspaceRegistry,
+      workspaceGitService: checkouts,
+      logger: createTestLogger(),
+    });
+
+    const result = await service.reconcileGitMetadata();
+
+    expect(result.changesApplied).toEqual([
+      {
+        kind: "workspace_updated",
+        workspaceId: "w1",
+        directory: rootPath,
+        fields: { isPaseoOwnedWorktree: true, mainRepoRoot: "/tmp/main-repo" },
+      },
+    ]);
+    expect(workspaces.get("w1")).toMatchObject({
+      isPaseoOwnedWorktree: true,
+      mainRepoRoot: "/tmp/main-repo",
+    });
   });
 });

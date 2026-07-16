@@ -58,6 +58,8 @@ const PersistedWorkspaceRecordSchema = z.object({
     .nullable()
     .optional()
     .transform((value) => value ?? null),
+  isPaseoOwnedWorktree: z.boolean().default(false),
+  mainRepoRoot: z.string().nullable().default(null),
   createdAt: z.string(),
   updatedAt: z.string(),
   archivedAt: z.string().nullable(),
@@ -298,7 +300,12 @@ export class FileBackedProjectRegistry
             Date.parse(left.createdAt) - Date.parse(right.createdAt) ||
             left.projectId.localeCompare(right.projectId),
         )[0];
-      if (active) return active;
+      if (active) {
+        if (active.kind === input.kind) return active;
+        const refreshed = { ...active, kind: input.kind, updatedAt: input.timestamp };
+        await this.upsert(refreshed);
+        return refreshed;
+      }
 
       for (;;) {
         const projectId = this.projectIdFactory();
@@ -401,6 +408,8 @@ export function createPersistedWorkspaceRecord(input: {
   title?: string | null;
   branch?: string | null;
   baseBranch?: string | null;
+  isPaseoOwnedWorktree?: boolean;
+  mainRepoRoot?: string | null;
   createdAt: string;
   updatedAt: string;
   archivedAt?: string | null;
@@ -411,6 +420,8 @@ export function createPersistedWorkspaceRecord(input: {
     title: input.title ?? null,
     branch: input.branch ?? null,
     baseBranch: input.baseBranch ?? null,
+    isPaseoOwnedWorktree: input.isPaseoOwnedWorktree ?? false,
+    mainRepoRoot: input.mainRepoRoot ?? null,
     archivedAt: input.archivedAt ?? null,
     pinnedAt: input.pinnedAt ?? null,
   });

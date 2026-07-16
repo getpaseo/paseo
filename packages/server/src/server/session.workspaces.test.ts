@@ -2119,6 +2119,66 @@ test("non-git workspace uses deterministic directory name and no unknown branch 
   expect(result.entries[0]?.name).not.toBe("Unknown branch");
 });
 
+test("workspace placements preserve checkout facts independently from the project", async () => {
+  const session = createSessionForWorkspaceTests();
+  const manualWorktree = createPersistedWorkspaceRecord({
+    workspaceId: "ws-manual-worktree",
+    projectId: "proj-manual-worktree",
+    cwd: "/tmp/manual-worktree",
+    kind: "worktree",
+    displayName: "manual",
+    isPaseoOwnedWorktree: false,
+    mainRepoRoot: "/tmp/main-repo",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  const explicitDirectory = createPersistedWorkspaceRecord({
+    workspaceId: "ws-explicit-directory",
+    projectId: "proj-manual-worktree",
+    cwd: "/tmp/plain-directory",
+    kind: "directory",
+    displayName: "plain",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  const project = createPersistedProjectRecord({
+    projectId: "proj-manual-worktree",
+    rootPath: "/tmp/main-repo",
+    kind: "git",
+    displayName: "main",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  session.workspaceRegistry.get = async (workspaceId: string) =>
+    [manualWorktree, explicitDirectory].find(
+      (workspace) => workspace.workspaceId === workspaceId,
+    ) ?? null;
+  session.projectRegistry.get = async () => project;
+
+  await expect(
+    session.buildProjectPlacementForWorkspaceId(manualWorktree.workspaceId),
+  ).resolves.toEqual(
+    expect.objectContaining({
+      checkout: expect.objectContaining({
+        isGit: true,
+        isPaseoOwnedWorktree: false,
+        mainRepoRoot: "/tmp/main-repo",
+      }),
+    }),
+  );
+  await expect(
+    session.buildProjectPlacementForWorkspaceId(explicitDirectory.workspaceId),
+  ).resolves.toEqual(
+    expect.objectContaining({
+      checkout: expect.objectContaining({
+        isGit: false,
+        isPaseoOwnedWorktree: false,
+        mainRepoRoot: null,
+      }),
+    }),
+  );
+});
+
 test("active-scoped fetch_agents includes only unarchived agents in active workspaces", async () => {
   const session = createSessionForWorkspaceTests();
   const archivedAt = "2026-03-02T12:00:00.000Z";

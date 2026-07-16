@@ -749,7 +749,7 @@ function createDeps(options?: {
       get: async (projectId) => projects.get(projectId) ?? null,
       getOrCreateActiveByRoot: async (input) => {
         const existing = Array.from(projects.values()).find(
-          (project) => !project.archivedAt && project.rootPath === input.rootPath,
+          (project) => !project.archivedAt && areEquivalentPaths(project.rootPath, input.rootPath),
         );
         if (existing) return existing;
         const project = createPersistedProjectRecordForTest({

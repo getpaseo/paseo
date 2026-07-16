@@ -262,14 +262,13 @@ function resolveSubscriptionId(
 
 function buildWorkspaceCheckout(
   workspace: PersistedWorkspaceRecord,
-  project: PersistedProjectRecord,
   // The persisted `branch` field is the source of truth, but it is null for
   // records created before branch was lifted to its own field (no migrations,
   // per data-model.md) and for any path that didn't backfill it. Fall back to
   // the live git branch so checkout.currentBranch never regresses to null.
   fallbackBranch?: string | null,
 ): ProjectPlacementPayload["checkout"] {
-  if (project.kind !== "git") {
+  if (workspace.kind === "directory") {
     return {
       cwd: workspace.cwd,
       isGit: false,
@@ -281,7 +280,7 @@ function buildWorkspaceCheckout(
     };
   }
   const currentBranch = workspace.branch ?? fallbackBranch ?? null;
-  if (workspace.kind === "worktree") {
+  if (workspace.isPaseoOwnedWorktree && workspace.mainRepoRoot) {
     return {
       cwd: workspace.cwd,
       isGit: true,
@@ -289,7 +288,7 @@ function buildWorkspaceCheckout(
       remoteUrl: null,
       worktreeRoot: workspace.cwd,
       isPaseoOwnedWorktree: true,
-      mainRepoRoot: project.rootPath,
+      mainRepoRoot: workspace.mainRepoRoot,
     };
   }
   return {
@@ -299,7 +298,7 @@ function buildWorkspaceCheckout(
     remoteUrl: null,
     worktreeRoot: workspace.cwd,
     isPaseoOwnedWorktree: false,
-    mainRepoRoot: null,
+    mainRepoRoot: workspace.mainRepoRoot ?? null,
   };
 }
 
@@ -1490,7 +1489,7 @@ export class Session {
     }
     const liveBranch =
       this.workspaceGitService.peekSnapshot(workspace.cwd)?.git.currentBranch ?? null;
-    const checkout = buildWorkspaceCheckout(workspace, project, liveBranch);
+    const checkout = buildWorkspaceCheckout(workspace, liveBranch);
     return {
       projectKey: project.projectId,
       projectName: resolveProjectDisplayName(project),

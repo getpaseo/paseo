@@ -10,6 +10,7 @@ import {
   FileBackedProjectRegistry,
   FileBackedWorkspaceRegistry,
   type PersistedProjectRecord,
+  createPersistedWorkspaceRecord,
   type WorkspaceRegistry,
 } from "../../workspace-registry.js";
 import type { CreatePaseoWorktreeWorkflowResult } from "../../worktree-session.js";
@@ -119,6 +120,54 @@ test("re-opening an active workspace by exact path returns the same record witho
   expect(await workspaceRegistry.list()).toHaveLength(1);
 });
 
+test("re-opening an active workspace refreshes its checkout metadata", async () => {
+  const repo = path.join(tmpDir, "repo");
+  const first = await provisioning.findOrCreateWorkspaceForDirectory(repo);
+  gitRoots.add(repo);
+  gitBranches.set(repo, "feature/refresh");
+
+  const refreshed = await provisioning.findOrCreateWorkspaceForDirectory(repo);
+
+  expect(refreshed).toMatchObject({
+    workspaceId: first.workspaceId,
+    kind: "local_checkout",
+    branch: "feature/refresh",
+    isPaseoOwnedWorktree: false,
+    mainRepoRoot: null,
+  });
+  expect(await workspaceRegistry.get(first.workspaceId)).toEqual(refreshed);
+  expect((await projectRegistry.get(first.projectId))?.kind).toBe("git");
+});
+
+test("persists manual worktree ownership separately from its workspace kind", async () => {
+  const cwd = path.join(tmpDir, "manual-worktree");
+  const mainRepoRoot = path.join(tmpDir, "main-repo");
+  const manualWorktreeProvisioning = createWorkspaceProvisioningService({
+    workspaceRegistry,
+    projectRegistry,
+    workspaceGitService: createNoopWorkspaceGitService({
+      peekSnapshot: () => null,
+      getCheckout: async () => ({
+        cwd,
+        isGit: true,
+        currentBranch: "feature/manual",
+        remoteUrl: null,
+        worktreeRoot: cwd,
+        isPaseoOwnedWorktree: false,
+        mainRepoRoot,
+      }),
+    }),
+  });
+
+  const workspace = await manualWorktreeProvisioning.findOrCreateWorkspaceForDirectory(cwd);
+
+  expect(workspace).toMatchObject({
+    kind: "worktree",
+    isPaseoOwnedWorktree: false,
+    mainRepoRoot,
+  });
+});
+
 test("re-opening an archived workspace by its exact path unarchives it and keeps the id", async () => {
   const repo = path.join(tmpDir, "repo");
   gitRoots.add(repo);
@@ -129,6 +178,56 @@ test("re-opening an archived workspace by its exact path unarchives it and keeps
 
   expect(reopened.workspaceId).toBe(created.workspaceId);
   expect(reopened.archivedAt).toBeNull();
+});
+
+test("reopening archived exact-root records restores the fresh Git project", async () => {
+  const cwd = path.join(tmpDir, "repo");
+  const project = await projectRegistry.getOrCreateActiveByRoot({
+    rootPath: cwd,
+    kind: "non_git",
+    displayName: "repo",
+    timestamp: ARCHIVED_AT,
+  });
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: "ws-archived-root",
+    projectId: project.projectId,
+    cwd,
+    kind: "directory",
+    displayName: "repo",
+    createdAt: ARCHIVED_AT,
+    updatedAt: ARCHIVED_AT,
+    archivedAt: ARCHIVED_AT,
+  });
+  await workspaceRegistry.upsert(workspace);
+  await projectRegistry.archive(project.projectId, ARCHIVED_AT);
+  const archivedProvisioning = createWorkspaceProvisioningService({
+    workspaceRegistry,
+    projectRegistry,
+    workspaceGitService: createNoopWorkspaceGitService({
+      peekSnapshot: () => null,
+      getCheckout: async () => ({
+        cwd,
+        isGit: true,
+        currentBranch: "main",
+        remoteUrl: null,
+        worktreeRoot: cwd,
+        isPaseoOwnedWorktree: false,
+        mainRepoRoot: null,
+      }),
+    }),
+  });
+
+  const reopened = await archivedProvisioning.ensureWorkspaceRecordUnarchived(workspace);
+
+  expect(reopened).toMatchObject({
+    workspaceId: workspace.workspaceId,
+    kind: "local_checkout",
+    archivedAt: null,
+  });
+  expect(await projectRegistry.get(project.projectId)).toMatchObject({
+    kind: "git",
+    archivedAt: null,
+  });
 });
 
 test("uses one workspace snapshot when reopening an archived workspace", async () => {

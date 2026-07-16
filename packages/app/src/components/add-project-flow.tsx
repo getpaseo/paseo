@@ -45,6 +45,7 @@ import {
 } from "@/add-project-flow/model";
 import {
   buildAddProjectMethods,
+  addProjectMethodEmptyText,
   buildCloneLocationOptions,
   buildManualGithubRepositoryChoices,
   buildSuggestedParentDirectories,
@@ -161,9 +162,10 @@ function progressText(page: AddProjectPage): string {
   return "Adding project...";
 }
 
-function emptyText(page: AddProjectPage): string {
+function emptyText(page: AddProjectPage, host: AddProjectHost | null): string {
   if (page.kind === "host") return "No connected hosts";
   if (page.kind === "github-search") return "Enter a GitHub URL or owner/repo";
+  if (page.kind === "method") return addProjectMethodEmptyText(host);
   return "No matching options";
 }
 
@@ -297,6 +299,8 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
   const hostIds = useMemo(() => hosts.map((host) => host.serverId), [hosts]);
   const connectionStatuses = useHostRuntimeConnectionStatuses(hostIds);
   const projectAddByHost = useHostFeatureMap(hostIds, "projectAdd");
+  // COMPAT(stableProjectIdentity): added in v0.1.109, remove gate after 2027-01-15.
+  const stableProjectIdentityByHost = useHostFeatureMap(hostIds, "stableProjectIdentity");
   // COMPAT(projectGithubClone): added in v0.1.108, remove gate after 2027-01-15.
   const githubCloneByHost = useHostFeatureMap(hostIds, "projectGithubClone");
   // COMPAT(workspaceGithubRepositorySearch): added in v0.1.108, remove gate after 2027-01-15.
@@ -308,7 +312,9 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     () =>
       hosts.flatMap((host) => {
         if (connectionStatuses.get(host.serverId) !== "online") return [];
-        const canAddProject = projectAddByHost.get(host.serverId) === true;
+        const canAddProject =
+          projectAddByHost.get(host.serverId) === true &&
+          stableProjectIdentityByHost.get(host.serverId) === true;
         return [
           {
             serverId: host.serverId,
@@ -329,6 +335,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
       hosts,
       localServerId,
       projectAddByHost,
+      stableProjectIdentityByHost,
     ],
   );
   const [state, setState] = useState(() =>
@@ -893,7 +900,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
             rows.length === 0 &&
             page.kind !== "new-directory-name" ? (
               <Text style={styles.stateText} testID="add-project-flow-empty">
-                {emptyText(page)}
+                {emptyText(page, host ?? null)}
               </Text>
             ) : null}
           </ScrollView>
