@@ -48,7 +48,8 @@ export type KeyboardActionId =
   | "workspace.pin"
   | "view.toggle.focus"
   | "theme.cycle"
-  | "message-input.action";
+  | "message-input.action"
+  | "workspace.find.open";
 
 export type KeyboardShortcutPayload =
   | { index: number }

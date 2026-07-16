@@ -1705,6 +1705,7 @@ export const ar: TranslationResources = {
         sendMessage: "أرسل رسالة",
         queueMessage: "رسالة قائمة الانتظار",
         muteUnmuteVoiceMode: "كتم وضع الصوت /unmute",
+        toggleTimelineSearch: "البحث في اللوحة",
       },
       helpNotes: {
         showKeyboardShortcuts: "متاح عندما لا يكون التركيز في حقل نص أو محطة طرفية.",
@@ -2037,5 +2038,30 @@ export const ar: TranslationResources = {
         cancel: "يلغي",
       },
     },
+  },
+  timelineSearch: {
+    placeholder: "البحث في الجدول الزمني...",
+    noResults: "لا توجد نتائج في السجل المحمّل",
+    matchCount_one: "{{count}} نتيجة",
+    matchCount_other: "{{count}} نتائج",
+    next: "النتيجة التالية",
+    prev: "النتيجة السابقة",
+    close: "إغلاق",
+    loadedHistoryNote: "البحث في السجل المحمّل فقط",
+    filters: {
+      all: "الكل",
+      prompts: "المطالبات",
+      messages: "الرسائل",
+      toolCalls: "استدعاءات الأدوات",
+      toolOutput: "مخرجات الأدوات",
+      errors: "الأخطاء",
+    },
+  },
+  paneFind: {
+    noMatches: "لا توجد نتائج",
+    matchCount_one: "{{count}} نتيجة",
+    matchCount_other: "{{count}} نتائج",
+    next: "النتيجة التالية",
+    prev: "النتيجة السابقة",
   },
 };

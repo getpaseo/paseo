@@ -1687,6 +1687,7 @@ export const zhCN: TranslationResources = {
         sendMessage: "发送消息",
         queueMessage: "消息排队",
         muteUnmuteVoiceMode: "静音/取消静音语音模式",
+        toggleTimelineSearch: "在窗格中查找",
       },
       helpNotes: {
         showKeyboardShortcuts: "焦点不在文本输入框或终端内时可用。",
@@ -2015,5 +2016,30 @@ export const zhCN: TranslationResources = {
         cancel: "取消",
       },
     },
+  },
+  timelineSearch: {
+    placeholder: "搜索时间线...",
+    noResults: "已加载的历史记录中没有结果",
+    matchCount_one: "{{count}} 个匹配项",
+    matchCount_other: "{{count}} 个匹配项",
+    next: "下一个结果",
+    prev: "上一个结果",
+    close: "关闭",
+    loadedHistoryNote: "仅搜索已加载的历史记录",
+    filters: {
+      all: "全部",
+      prompts: "提示词",
+      messages: "消息",
+      toolCalls: "工具调用",
+      toolOutput: "工具输出",
+      errors: "错误",
+    },
+  },
+  paneFind: {
+    noMatches: "没有匹配项",
+    matchCount_one: "{{count}} 个匹配项",
+    matchCount_other: "{{count}} 个匹配项",
+    next: "下一个结果",
+    prev: "上一个结果",
   },
 };

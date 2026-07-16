@@ -1740,6 +1740,7 @@ export const ru: TranslationResources = {
         sendMessage: "Отправить сообщение",
         queueMessage: "Сообщение в очереди",
         muteUnmuteVoiceMode: "Отключить голосовой режим /unmute",
+        toggleTimelineSearch: "Найти в панели",
       },
       helpNotes: {
         showKeyboardShortcuts: "Доступно, когда фокус находится не в текстовом поле или терминале.",
@@ -2078,5 +2079,30 @@ export const ru: TranslationResources = {
         cancel: "Отмена",
       },
     },
+  },
+  timelineSearch: {
+    placeholder: "Поиск по хронологии...",
+    noResults: "Нет результатов в загруженной истории",
+    matchCount_one: "{{count}} совпадение",
+    matchCount_other: "{{count}} совпадений",
+    next: "Следующий результат",
+    prev: "Предыдущий результат",
+    close: "Закрыть",
+    loadedHistoryNote: "Поиск только по загруженной истории",
+    filters: {
+      all: "Все",
+      prompts: "Запросы",
+      messages: "Сообщения",
+      toolCalls: "Вызовы инструментов",
+      toolOutput: "Вывод инструментов",
+      errors: "Ошибки",
+    },
+  },
+  paneFind: {
+    noMatches: "Нет совпадений",
+    matchCount_one: "{{count}} совпадение",
+    matchCount_other: "{{count}} совпадений",
+    next: "Следующий результат",
+    prev: "Предыдущий результат",
   },
 };

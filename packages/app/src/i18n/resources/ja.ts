@@ -1722,6 +1722,7 @@ export const ja: TranslationResources = {
         sendMessage: "メッセージを送信",
         queueMessage: "メッセージをキューに追加",
         muteUnmuteVoiceMode: "音声モードのミュートを切り替え",
+        toggleTimelineSearch: "ペイン内を検索",
       },
       helpNotes: {
         showKeyboardShortcuts:
@@ -2061,5 +2062,30 @@ export const ja: TranslationResources = {
         cancel: "キャンセル",
       },
     },
+  },
+  timelineSearch: {
+    placeholder: "タイムラインを検索...",
+    noResults: "読み込み済みの履歴に一致する結果がありません",
+    matchCount_one: "{{count}} 件の一致",
+    matchCount_other: "{{count}} 件の一致",
+    next: "次の結果",
+    prev: "前の結果",
+    close: "閉じる",
+    loadedHistoryNote: "読み込み済みの履歴のみを検索",
+    filters: {
+      all: "すべて",
+      prompts: "プロンプト",
+      messages: "メッセージ",
+      toolCalls: "ツール呼び出し",
+      toolOutput: "ツール出力",
+      errors: "エラー",
+    },
+  },
+  paneFind: {
+    noMatches: "一致する結果がありません",
+    matchCount_one: "{{count}} 件の一致",
+    matchCount_other: "{{count}} 件の一致",
+    next: "次の結果",
+    prev: "前の結果",
   },
 } as const;

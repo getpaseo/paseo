@@ -1712,6 +1712,7 @@ export const en = {
         sendMessage: "Send message",
         queueMessage: "Queue message",
         muteUnmuteVoiceMode: "Mute/unmute voice mode",
+        toggleTimelineSearch: "Find in pane",
       },
       helpNotes: {
         showKeyboardShortcuts: "Available when focus is not in a text field or terminal.",
@@ -2047,6 +2048,31 @@ export const en = {
         cancel: "Cancel",
       },
     },
+  },
+  timelineSearch: {
+    placeholder: "Search timeline...",
+    noResults: "No results in loaded history",
+    matchCount_one: "{{count}} match",
+    matchCount_other: "{{count}} matches",
+    next: "Next result",
+    prev: "Previous result",
+    close: "Close",
+    loadedHistoryNote: "Searching loaded history only",
+    filters: {
+      all: "All",
+      prompts: "Prompts",
+      messages: "Messages",
+      toolCalls: "Tool calls",
+      toolOutput: "Tool output",
+      errors: "Errors",
+    },
+  },
+  paneFind: {
+    noMatches: "No matches",
+    matchCount_one: "{{count}} match",
+    matchCount_other: "{{count}} matches",
+    next: "Next result",
+    prev: "Previous result",
   },
 } as const;
 

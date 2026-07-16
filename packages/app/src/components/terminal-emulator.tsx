@@ -21,6 +21,7 @@ import type { TerminalInputModeState } from "@getpaseo/protocol/terminal-input-m
 import type { PendingTerminalModifiers } from "../utils/terminal-keys";
 import {
   TerminalEmulatorRuntime,
+  type TerminalFindResult,
   type TerminalOutputData,
 } from "../terminal/runtime/terminal-emulator-runtime";
 import type {
@@ -44,6 +45,10 @@ export interface TerminalEmulatorHandle {
   renderSnapshot: (state: TerminalState | null) => void;
   clear: () => void;
   blur: () => void;
+  findNext: (query: string) => boolean;
+  findPrevious: (query: string) => boolean;
+  clearFind: () => void;
+  subscribeFindResult: (listener: (result: TerminalFindResult) => void) => () => void;
 }
 
 const HOST_DIV_STYLE: CSSProperties = {
@@ -257,6 +262,13 @@ export default function TerminalEmulator({
       blur: () => {
         runtimeRef.current?.blur();
       },
+      findNext: (query: string) => runtimeRef.current?.findNext({ query }) ?? false,
+      findPrevious: (query: string) => runtimeRef.current?.findPrevious({ query }) ?? false,
+      clearFind: () => {
+        runtimeRef.current?.clearFind();
+      },
+      subscribeFindResult: (listener) =>
+        runtimeRef.current?.onFindResult(listener) ?? (() => undefined),
     }),
     [],
   );

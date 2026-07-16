@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -32,6 +32,7 @@ import { useSessionStore } from "@/stores/session-store";
 import { toXtermTheme } from "@/utils/to-xterm-theme";
 import TerminalEmulator, { type TerminalEmulatorHandle } from "./terminal-emulator";
 import { useIsCompactFormFactor } from "@/constants/layout";
+import { isNative } from "@/constants/platform";
 import {
   applyTerminalRendererReadyChange,
   shouldReplayTerminalSnapshotForRenderer,
@@ -39,6 +40,10 @@ import {
   type TerminalRendererReadyChange,
 } from "@/utils/terminal-renderer-readiness";
 import { useAppSettings } from "@/hooks/use-settings";
+import { PaneFindBar } from "@/pane-find/pane-find-bar";
+import type { PaneFindAdapter, PaneFindState } from "@/pane-find/pane-find-types";
+import { usePaneFindRegistration } from "@/pane-find/use-pane-find-registration";
+import { usePaneFindKey } from "@/panels/pane-context";
 import { classifyForResolution, fetchDaemonResolution } from "@/assistant-file-links/resolver";
 import type {
   TerminalLocalFileLinkSource,
@@ -58,6 +63,44 @@ interface TerminalPaneProps {
   isPaneFocused: boolean;
   onOpenFileExplorer: () => void;
   onOpenWorkspaceFile: (request: WorkspaceFileOpenRequest) => void;
+}
+
+type TerminalFindAction =
+  | { type: "open" }
+  | { type: "reset" }
+  | { type: "query"; query: string }
+  | { type: "result"; matchCount: number; selectedIndex: number };
+
+const INITIAL_TERMINAL_FIND_STATE: PaneFindState = {
+  isOpen: false,
+  query: "",
+  isPending: false,
+  matchCount: 0,
+  selectedIndex: -1,
+};
+
+function reduceTerminalFindState(state: PaneFindState, action: TerminalFindAction): PaneFindState {
+  if (action.type === "open") {
+    return { ...state, isOpen: true };
+  }
+  if (action.type === "reset") {
+    return INITIAL_TERMINAL_FIND_STATE;
+  }
+  if (action.type === "query") {
+    return {
+      ...state,
+      query: action.query,
+      isPending: action.query.length > 0,
+      matchCount: 0,
+      selectedIndex: -1,
+    };
+  }
+  return {
+    ...state,
+    isPending: false,
+    matchCount: action.matchCount,
+    selectedIndex: action.selectedIndex,
+  };
 }
 
 const TERMINAL_REFIT_DELAYS_MS = [0, 48, 144, 320];
@@ -214,6 +257,14 @@ export function TerminalPane({
   const [focusRequestToken, setFocusRequestToken] = useState(0);
   const [resizeRequestToken, setResizeRequestToken] = useState(0);
   const emulatorRef = useRef<TerminalEmulatorHandle>(null);
+  const [findState, dispatchFind] = useReducer(
+    reduceTerminalFindState,
+    INITIAL_TERMINAL_FIND_STATE,
+  );
+  const findStateRef = useRef(findState);
+  findStateRef.current = findState;
+  const findListenersRef = useRef(new Set<() => void>());
+  const activeFindQueryRef = useRef("");
   const terminalIdRef = useRef<string>(terminalId);
   const inputModeRef = useRef<TerminalInputModeState>({
     kittyKeyboardFlags: 0,
@@ -225,6 +276,95 @@ export function TerminalPane({
   const lastPaneFocusResizeKeyRef = useRef<string | null>(null);
   const initialSnapshot = workspaceTerminalSession.snapshots.get({ terminalId });
 
+  const requestTerminalFocus = useCallback(() => {
+    setFocusRequestToken((current) => current + 1);
+  }, []);
+
+  useEffect(() => {
+    for (const listener of findListenersRef.current) {
+      listener();
+    }
+  }, [findState]);
+
+  useEffect(() => {
+    const emulator = emulatorRef.current;
+    if (!emulator || rendererReadyStreamKey !== terminalStreamKey) {
+      return undefined;
+    }
+    return emulator.subscribeFindResult((result) => {
+      if (activeFindQueryRef.current.length === 0) {
+        return;
+      }
+      dispatchFind({ type: "result", ...result });
+    });
+  }, [rendererReadyStreamKey, terminalStreamKey]);
+
+  const clearFind = useCallback(() => {
+    activeFindQueryRef.current = "";
+    emulatorRef.current?.clearFind();
+    dispatchFind({ type: "reset" });
+  }, []);
+
+  const findAdapter = useMemo<PaneFindAdapter>(
+    () => ({
+      hasCustomUI: false,
+      getState: () => findStateRef.current,
+      subscribe: (listener) => {
+        findListenersRef.current.add(listener);
+        return () => findListenersRef.current.delete(listener);
+      },
+      open: () => dispatchFind({ type: "open" }),
+      close: () => {
+        clearFind();
+        requestTerminalFocus();
+      },
+      setQuery: (query) => {
+        activeFindQueryRef.current = query;
+        dispatchFind({ type: "query", query });
+        if (query.length === 0) {
+          emulatorRef.current?.clearFind();
+          return;
+        }
+        emulatorRef.current?.findNext(query);
+      },
+      selectNext: () => {
+        const query = findStateRef.current.query;
+        if (query.length > 0) {
+          emulatorRef.current?.findNext(query);
+        }
+      },
+      selectPrev: () => {
+        const query = findStateRef.current.query;
+        if (query.length > 0) {
+          emulatorRef.current?.findPrevious(query);
+        }
+      },
+    }),
+    [clearFind, requestTerminalFocus],
+  );
+  const isFindFocused = isWorkspaceFocused && isPaneFocused;
+  const paneFindKey = usePaneFindKey();
+  usePaneFindRegistration({ paneKey: isNative ? null : paneFindKey, adapter: findAdapter });
+
+  useEffect(() => {
+    if (isFindFocused) {
+      return undefined;
+    }
+    clearFind();
+    return undefined;
+  }, [clearFind, isFindFocused]);
+
+  useEffect(() => {
+    const emulator = emulatorRef.current;
+    activeFindQueryRef.current = "";
+    emulator?.clearFind();
+    dispatchFind({ type: "reset" });
+    return () => {
+      activeFindQueryRef.current = "";
+      emulator?.clearFind();
+    };
+  }, [terminalStreamKey]);
+
   useEffect(() => {
     terminalIdRef.current = terminalId;
     inputModeRef.current = {
@@ -233,9 +373,6 @@ export function TerminalPane({
     };
   }, [terminalId]);
 
-  const requestTerminalFocus = useCallback(() => {
-    setFocusRequestToken((current) => current + 1);
-  }, []);
   const requestTerminalReflow = useCallback(() => {
     setResizeRequestToken((current) => current + 1);
   }, []);
@@ -813,6 +950,7 @@ export function TerminalPane({
             <ActivityIndicator size="small" color={theme.colors.foregroundMuted} />
           </View>
         ) : null}
+        {isFindFocused ? <PaneFindBar testID="terminal-find-bar" /> : null}
       </View>
 
       {streamError ? (

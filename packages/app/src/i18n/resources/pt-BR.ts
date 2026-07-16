@@ -1732,6 +1732,7 @@ export const ptBR: TranslationResources = {
         sendMessage: "Enviar mensagem",
         queueMessage: "Enfileirar mensagem",
         muteUnmuteVoiceMode: "Silenciar/ativar modo de voz",
+        toggleTimelineSearch: "Localizar no painel",
       },
       helpNotes: {
         showKeyboardShortcuts:
@@ -2070,5 +2071,30 @@ export const ptBR: TranslationResources = {
         cancel: "Cancelar",
       },
     },
+  },
+  timelineSearch: {
+    placeholder: "Pesquisar na linha do tempo...",
+    noResults: "Nenhum resultado no histórico carregado",
+    matchCount_one: "{{count}} correspondência",
+    matchCount_other: "{{count}} correspondências",
+    next: "Próximo resultado",
+    prev: "Resultado anterior",
+    close: "Fechar",
+    loadedHistoryNote: "Pesquisando apenas o histórico carregado",
+    filters: {
+      all: "Tudo",
+      prompts: "Prompts",
+      messages: "Mensagens",
+      toolCalls: "Chamadas de ferramentas",
+      toolOutput: "Saída de ferramentas",
+      errors: "Erros",
+    },
+  },
+  paneFind: {
+    noMatches: "Nenhuma correspondência",
+    matchCount_one: "{{count}} correspondência",
+    matchCount_other: "{{count}} correspondências",
+    next: "Próximo resultado",
+    prev: "Resultado anterior",
   },
 };
