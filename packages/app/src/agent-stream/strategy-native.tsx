@@ -1,4 +1,4 @@
-import {
+import React, {
   Fragment,
   type ReactElement,
   useCallback,
@@ -120,6 +120,10 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       ),
     [displayStateHistoryRows, historyRowRevision?.contentById],
   );
+  // Read from the handle's scrollToItem, which must not go stale between the
+  // renders that rebuild `historyRows` and the effect that registers the handle.
+  const historyRowsRef = useRef(historyRows);
+  historyRowsRef.current = historyRows;
 
   const clearNativeViewportSettling = useCallback(() => {
     if (nativeViewportSettlingFrameIdRef.current !== null) {
@@ -250,6 +254,19 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
         bottomAnchorController.prepareForStickyViewportChange();
         markNativeViewportSettling();
       },
+      scrollToItem: (itemId) => {
+        const index = historyRowsRef.current.findIndex((row) => row.id === itemId);
+        if (index === -1) {
+          return false;
+        }
+        try {
+          flatListRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.5 });
+        } catch {
+          // Swallow synchronous out-of-range errors; onScrollToIndexFailed
+          // below retries via an estimated offset for the async case.
+        }
+        return true;
+      },
     };
     viewportRef.current = handle;
     return () => {
@@ -258,6 +275,20 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       }
     };
   }, [agentId, bottomAnchorController, markNativeViewportSettling, viewportRef]);
+
+  const handleScrollToIndexFailed = useStableEvent(
+    (info: { index: number; highestMeasuredFrameIndex: number; averageItemLength: number }) => {
+      const estimatedOffset = info.averageItemLength * info.index;
+      flatListRef.current?.scrollToOffset({ offset: estimatedOffset, animated: false });
+      requestAnimationFrame(() => {
+        flatListRef.current?.scrollToIndex({
+          index: info.index,
+          animated: true,
+          viewPosition: 0.5,
+        });
+      });
+    },
+  );
 
   const handleScroll = useStableEvent((event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
@@ -414,6 +445,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       onScroll={handleScroll}
       scrollEventThrottle={16}
       onContentSizeChange={handleContentSizeChange}
+      onScrollToIndexFailed={handleScrollToIndexFailed}
       maintainVisibleContentPosition={DEFAULT_MAINTAIN_VISIBLE_CONTENT_POSITION}
       initialNumToRender={40}
       maxToRenderPerBatch={40}

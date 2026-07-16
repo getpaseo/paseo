@@ -42,6 +42,13 @@ export interface StreamEdgeSlotProps {
 export interface StreamViewportHandle {
   scrollToBottom: (reason?: BottomAnchorLocalRequest["reason"]) => void;
   prepareForViewportChange: () => void;
+  /**
+   * Scrolls the given stream item into view, if it is currently reachable in
+   * this strategy's rendered rows (history — virtualized or mounted). Returns
+   * false without side effects when the item isn't found there; callers
+   * should not report a scroll as having happened in that case.
+   */
+  scrollToItem: (itemId: string) => boolean;
 }
 
 export interface StreamSegmentRenderers {

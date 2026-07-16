@@ -1,9 +1,10 @@
-import { memo, useCallback, useMemo, useRef, type ReactNode } from "react";
-import { ScrollView } from "react-native";
+import { Children, memo, useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
+import { ScrollView, View, type LayoutChangeEvent } from "react-native";
 import { useTranslation } from "react-i18next";
 import { Wrench } from "lucide-react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { ExpandableBadge } from "@/components/message";
+import { useTimelineSearchTarget } from "@/timeline-search/search-target";
 import { type OverviewSummary, type OverviewToolCallGroup } from "./model";
 
 interface OverviewGroupProps {
@@ -51,6 +52,29 @@ function useOverviewSummary(summary: OverviewSummary): string {
   }, [summary, t]);
 }
 
+/**
+ * Wraps one grouped call so its y-offset inside the group's inner ScrollView
+ * is known — needed to bring a searched call into view (the children are
+ * rendered 1:1, in order, from group.run.calls).
+ */
+function MeasuredGroupChild({
+  index,
+  onMeasured,
+  children,
+}: {
+  index: number;
+  onMeasured: (index: number, y: number) => void;
+  children: ReactNode;
+}) {
+  const handleLayout = useCallback(
+    (event: LayoutChangeEvent) => {
+      onMeasured(index, event.nativeEvent.layout.y);
+    },
+    [index, onMeasured],
+  );
+  return <View onLayout={handleLayout}>{children}</View>;
+}
+
 export const OverviewToolCallGroupView = memo(function OverviewToolCallGroupView({
   group,
   expanded,
@@ -59,10 +83,67 @@ export const OverviewToolCallGroupView = memo(function OverviewToolCallGroupView
   children,
 }: OverviewGroupProps) {
   const scrollRef = useRef<ScrollView>(null);
+  const childOffsetsRef = useRef(new Map<number, number>());
   const aggregateSummary = useOverviewSummary(group.summary);
-  const scrollToLatest = useCallback(() => {
+
+  // When timeline search targets a call inside this group, the inner viewport
+  // must scroll TO that call — the default scroll-to-latest would leave an
+  // early match hidden above the fold of the capped ScrollView.
+  const searchTarget = useTimelineSearchTarget();
+  const searchTargetIndex = useMemo(() => {
+    if (!searchTarget) {
+      return -1;
+    }
+    return group.run.calls.findIndex((call) => call.id === searchTarget.itemId);
+  }, [group.run.calls, searchTarget]);
+  const hasSearchTarget = searchTargetIndex >= 0;
+
+  const scrollToSearchTarget = useCallback(() => {
+    const y = childOffsetsRef.current.get(searchTargetIndex);
+    if (y != null) {
+      scrollRef.current?.scrollTo({ y: Math.max(0, y), animated: false });
+    }
+  }, [searchTargetIndex]);
+
+  const handleContentSizeChange = useCallback(() => {
+    if (hasSearchTarget) {
+      scrollToSearchTarget();
+      return;
+    }
     scrollRef.current?.scrollToEnd({ animated: false });
+  }, [hasSearchTarget, scrollToSearchTarget]);
+
+  const searchTargetRevision = searchTarget?.navigationRevision;
+  useEffect(() => {
+    if (!expanded || !hasSearchTarget) {
+      return;
+    }
+    const frame = requestAnimationFrame(scrollToSearchTarget);
+    return () => cancelAnimationFrame(frame);
+  }, [expanded, hasSearchTarget, searchTargetRevision, scrollToSearchTarget]);
+
+  const handleChildMeasured = useCallback((index: number, y: number) => {
+    childOffsetsRef.current.set(index, y);
   }, []);
+
+  const measuredChildren = useMemo(() => {
+    childOffsetsRef.current.clear();
+    // Children are rendered 1:1, in order, from group.run.calls — key each
+    // wrapper by the call id it measures.
+    const childArray = Children.toArray(children);
+    return group.run.calls.map((call, index) => {
+      const child = childArray[index];
+      if (child === undefined) {
+        return null;
+      }
+      return (
+        <MeasuredGroupChild key={call.id} index={index} onMeasured={handleChildMeasured}>
+          {child}
+        </MeasuredGroupChild>
+      );
+    });
+  }, [children, group.run.calls, handleChildMeasured]);
+
   const toggle = useCallback(() => {
     onExpandedChange(group.run.id, !expanded);
   }, [expanded, group.run.id, onExpandedChange]);
@@ -74,12 +155,12 @@ export const OverviewToolCallGroupView = memo(function OverviewToolCallGroupView
         contentContainerStyle={styles.content}
         nestedScrollEnabled
         showsVerticalScrollIndicator
-        onContentSizeChange={scrollToLatest}
+        onContentSizeChange={handleContentSizeChange}
       >
-        {children}
+        {measuredChildren}
       </ScrollView>
     ),
-    [children, scrollToLatest],
+    [measuredChildren, handleContentSizeChange],
   );
 
   return (

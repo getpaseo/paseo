@@ -93,6 +93,18 @@ import { isWeb } from "@/constants/platform";
 import type { Theme } from "@/styles/theme";
 import { recordRenderProfileReasons } from "@/utils/render-profiler";
 import { useRetainedPanelActive } from "@/components/retained-panel";
+import { usePaneFindKey } from "@/panels/pane-context";
+import { usePaneFindRegistration } from "@/pane-find/use-pane-find-registration";
+import type { PaneFindAdapter } from "@/pane-find/pane-find-types";
+import { TimelineSearchPanel } from "@/timeline-search/timeline-search-panel";
+import { TimelineHighlightProvider } from "@/timeline-search/highlight";
+import {
+  TimelineSearchTargetProvider,
+  useTimelineSearchTargetValue,
+  type TimelineSearchTarget,
+} from "@/timeline-search/search-target";
+import { useTimelineSearchModel } from "@/timeline-search/use-timeline-search-model";
+import { useTimelineSearchScroll } from "@/timeline-search/use-timeline-search-scroll";
 import { generateDraftId } from "@/stores/draft-keys";
 import {
   buildDraftWorkspaceAttachmentScopeKey,
@@ -102,6 +114,22 @@ import type { WorkspaceComposerAttachment } from "@/attachments/types";
 import type { WorkspaceDraftTabSetup, WorkspaceTabTarget } from "@/stores/workspace-tabs-store";
 import { toErrorMessage } from "@/utils/error-messages";
 import { useWorkspaceDraftSubmissionStore } from "@/stores/workspace-draft-submission-store";
+
+function TimelineSearchProviders({
+  highlightQuery,
+  target,
+  children,
+}: {
+  highlightQuery: string;
+  target: TimelineSearchTarget | null;
+  children: ReactNode;
+}) {
+  return (
+    <TimelineHighlightProvider value={highlightQuery}>
+      <TimelineSearchTargetProvider value={target}>{children}</TimelineSearchTargetProvider>
+    </TimelineHighlightProvider>
+  );
+}
 
 function renderLiveAuxiliaryNode(input: {
   pendingPermissions: ReactNode;
@@ -557,6 +585,55 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       () => prepareToolCallHistory(toolCallDetailLevel, effectiveStreamItems),
       [effectiveStreamItems, toolCallDetailLevel],
     );
+
+    // --- Timeline search (Ctrl/Cmd+F find panel) ---
+    const paneFindKey = usePaneFindKey();
+    const timelineSearchItems = useMemo(
+      () => [...effectiveStreamItems, ...(effectiveStreamHead ?? EMPTY_STREAM_HEAD)],
+      [effectiveStreamItems, effectiveStreamHead],
+    );
+    const { state: timelineSearchState, model: timelineSearchModel } = useTimelineSearchModel(
+      useCallback(() => timelineSearchItems, [timelineSearchItems]),
+      // Scope search state (and its persistence) per server+agent: the same
+      // agent id can exist on multiple hosts, so keying by agentId alone would
+      // leak one host's query/filter into another's identically-named agent.
+      `${resolvedServerId}:${agentId}`,
+    );
+    useEffect(() => {
+      if (timelineSearchState.isOpen) {
+        timelineSearchModel.refresh();
+      }
+      // Re-run only when the underlying item list actually changes (new stream
+      // content), not on every render of this component.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [timelineSearchItems, timelineSearchState.isOpen]);
+    // The rich filtered timeline panel is this pane's find UI (hasCustomUI),
+    // registered so `workspace.find.open` (Ctrl/Cmd+F) routes here through
+    // the shared pane-find registry instead of a bespoke per-pane handler.
+    const timelineFindAdapter = useMemo<PaneFindAdapter>(
+      () => ({
+        hasCustomUI: true,
+        getState: () => {
+          const modelState = timelineSearchModel.getState();
+          return {
+            isOpen: modelState.isOpen,
+            query: modelState.query,
+            isPending: false,
+            matchCount: modelState.matches.length,
+            selectedIndex: modelState.selectedIndex,
+          };
+        },
+        subscribe: timelineSearchModel.subscribe,
+        open: timelineSearchModel.open,
+        close: timelineSearchModel.close,
+        setQuery: timelineSearchModel.setQuery,
+        selectNext: timelineSearchModel.selectNext,
+        selectPrev: timelineSearchModel.selectPrev,
+      }),
+      [timelineSearchModel],
+    );
+    usePaneFindRegistration({ paneKey: paneFindKey, adapter: timelineFindAdapter });
+
     const projectedToolCalls = useMemo(
       () =>
         projectToolCallDetailLevel({
@@ -647,6 +724,43 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         return next;
       });
     }, []);
+
+    // --- Timeline search: scroll to the selected match ---
+    const isTimelineSearchLiveHeadItem = useCallback(
+      (itemId: string) =>
+        (effectiveStreamHead ?? EMPTY_STREAM_HEAD).some((item) => item.id === itemId),
+      [effectiveStreamHead],
+    );
+    const findTimelineSearchGroupIdForItem = useCallback(
+      (itemId: string) => {
+        for (const group of projectedToolCalls.groupsByHostId.values()) {
+          if (group.run.calls.some((call) => call.id === itemId)) {
+            return group.run.id;
+          }
+        }
+        return null;
+      },
+      [projectedToolCalls.groupsByHostId],
+    );
+    const isTimelineSearchGroupExpanded = useCallback(
+      (groupId: string) => expandedToolCallGroupIds.has(groupId),
+      [expandedToolCallGroupIds],
+    );
+    const expandTimelineSearchGroup = useCallback(
+      (groupId: string) => setToolCallGroupExpanded(groupId, true),
+      [setToolCallGroupExpanded],
+    );
+    useTimelineSearchScroll({
+      isOpen: timelineSearchState.isOpen,
+      matches: timelineSearchState.matches,
+      selectedIndex: timelineSearchState.selectedIndex,
+      navigationRevision: timelineSearchState.navigationRevision,
+      isLiveHeadItem: isTimelineSearchLiveHeadItem,
+      findGroupIdForItem: findTimelineSearchGroupIdForItem,
+      isGroupExpanded: isTimelineSearchGroupExpanded,
+      expandGroup: expandTimelineSearchGroup,
+      viewportRef,
+    });
 
     const renderUserMessageItem = useCallback(
       (layoutItem: StreamLayoutItem, item: Extract<StreamItem, { kind: "user_message" }>) => {
@@ -831,7 +945,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             );
 
           case "todo_list":
-            return <TodoListCard items={item.items} />;
+            return <TodoListCard items={item.items} streamItemId={item.id} />;
 
           case "compaction":
             return (
@@ -1010,47 +1124,65 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       [expandedToolCallGroupIds, isMobile, projectedToolCalls.historyGroupUpdatesByHostId],
     );
 
+    const highlightQuery = timelineSearchState.isOpen ? timelineSearchState.query : "";
+
+    const timelineSearchTarget = useTimelineSearchTargetValue(timelineSearchState);
+
     return (
       <ToolCallSheetProvider>
-        <View style={stylesheet.container}>
-          <MessageOuterSpacingProvider disableOuterSpacing>
-            {streamRenderStrategy.render({
-              agentId,
-              segments: renderModel.segments,
-              historyRowRevision,
-              liveHeadRowRevision: expandedToolCallGroupIds,
-              boundary,
-              renderers,
-              listEmptyComponent,
-              viewportRef,
-              routeBottomAnchorRequest,
-              isAuthoritativeHistoryReady,
-              onNearBottomChange: setIsNearBottom,
-              onNearHistoryStart: loadOlder,
-              isLoadingOlderHistory: isLoadingOlder,
-              hasOlderHistory: hasOlder,
-              scrollEnabled: streamScrollEnabled,
-              listStyle: stylesheet.list,
-              baseListContentContainerStyle: stylesheet.listContentContainer,
-              forwardListContentContainerStyle: stylesheet.forwardListContentContainer,
-            })}
-          </MessageOuterSpacingProvider>
-          {!isNearBottom && (
-            <View style={stylesheet.scrollToBottomContainer} pointerEvents="box-none">
-              <Animated.View entering={scrollIndicatorFadeIn} exiting={scrollIndicatorFadeOut}>
-                <Pressable
-                  style={stylesheet.scrollToBottomButton}
-                  onPress={scrollToBottom}
-                  accessibilityRole="button"
-                  accessibilityLabel={t("agentStream.scrollToBottom")}
-                  testID="scroll-to-bottom-button"
-                >
-                  <ChevronDown size={24} color={stylesheet.scrollToBottomIcon.color} />
-                </Pressable>
-              </Animated.View>
-            </View>
-          )}
-        </View>
+        <TimelineSearchProviders highlightQuery={highlightQuery} target={timelineSearchTarget}>
+          <View style={stylesheet.container}>
+            <MessageOuterSpacingProvider disableOuterSpacing>
+              {streamRenderStrategy.render({
+                agentId,
+                segments: renderModel.segments,
+                historyRowRevision,
+                liveHeadRowRevision: expandedToolCallGroupIds,
+                boundary,
+                renderers,
+                listEmptyComponent,
+                viewportRef,
+                routeBottomAnchorRequest,
+                isAuthoritativeHistoryReady,
+                onNearBottomChange: setIsNearBottom,
+                onNearHistoryStart: loadOlder,
+                isLoadingOlderHistory: isLoadingOlder,
+                hasOlderHistory: hasOlder,
+                scrollEnabled: streamScrollEnabled,
+                listStyle: stylesheet.list,
+                baseListContentContainerStyle: stylesheet.listContentContainer,
+                forwardListContentContainerStyle: stylesheet.forwardListContentContainer,
+              })}
+            </MessageOuterSpacingProvider>
+            {!isNearBottom && (
+              <View style={stylesheet.scrollToBottomContainer} pointerEvents="box-none">
+                <Animated.View entering={scrollIndicatorFadeIn} exiting={scrollIndicatorFadeOut}>
+                  <Pressable
+                    style={stylesheet.scrollToBottomButton}
+                    onPress={scrollToBottom}
+                    accessibilityRole="button"
+                    accessibilityLabel={t("agentStream.scrollToBottom")}
+                    testID="scroll-to-bottom-button"
+                  >
+                    <ChevronDown size={24} color={stylesheet.scrollToBottomIcon.color} />
+                  </Pressable>
+                </Animated.View>
+              </View>
+            )}
+            {timelineSearchState.isOpen && (
+              <TimelineSearchPanel
+                state={timelineSearchState}
+                onQueryChange={timelineSearchModel.setQuery}
+                onFilterChange={timelineSearchModel.setFilter}
+                onSelectNext={timelineSearchModel.selectNext}
+                onSelectPrev={timelineSearchModel.selectPrev}
+                onSelectIndex={timelineSearchModel.selectIndex}
+                onClose={timelineSearchModel.close}
+                testID="timeline-search-panel"
+              />
+            )}
+          </View>
+        </TimelineSearchProviders>
       </ToolCallSheetProvider>
     );
   },

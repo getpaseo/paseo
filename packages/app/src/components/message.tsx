@@ -49,6 +49,9 @@ import {
 } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { Theme } from "@/styles/theme";
+import { splitHighlightSegments, useTimelineHighlightQuery } from "@/timeline-search/highlight";
+import { HighlightedText, timelineHighlightStyles } from "@/timeline-search/highlighted-text";
+import { useTimelineSearchTarget } from "@/timeline-search/search-target";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import Animated, {
   Easing,
@@ -532,7 +535,7 @@ export const UserMessage = memo(function UserMessage({
           ) : null}
           {hasText ? (
             <Text selectable style={userMessageStylesheet.text}>
-              {message}
+              <HighlightedText text={message} />
             </Text>
           ) : null}
         </View>
@@ -1519,6 +1522,57 @@ interface MarkdownInheritedTextProps {
   children: ReactNode;
 }
 
+/**
+ * Highlights the active search query inside a markdown text leaf. Matched
+ * substrings are wrapped in a nested MarkdownInheritedText (the same span path
+ * strong/em use) so they stay visible and selectable on every platform,
+ * including iOS UITextView. Returns the raw string when nothing matches.
+ */
+/**
+ * Leaf component that reads the highlight query itself (via context) so the
+ * markdown `rules` object never depends on it — a rules identity change
+ * re-renders every mounted markdown message, which made each search keystroke
+ * O(all messages). The context value changing re-renders only these leaves.
+ */
+function MarkdownHighlightedTextRun({
+  content,
+  inheritedStyles,
+  textStyle,
+}: {
+  content: string;
+  inheritedStyles: TextStyle;
+  textStyle: TextStyle;
+}) {
+  const highlightQuery = useTimelineHighlightQuery();
+  return <>{renderMarkdownTextContent(content, highlightQuery, inheritedStyles, textStyle)}</>;
+}
+
+function renderMarkdownTextContent(
+  content: string,
+  query: string,
+  inheritedStyles: TextStyle,
+  textStyle: TextStyle,
+): ReactNode {
+  const segments = splitHighlightSegments(content, query);
+  if (segments.length === 1 && !segments[0]?.isMatch) {
+    return content;
+  }
+  return segments.map((segment) =>
+    segment.isMatch ? (
+      <MarkdownInheritedText
+        key={segment.offset}
+        inheritedStyles={inheritedStyles}
+        textStyle={textStyle}
+        style={timelineHighlightStyles.match}
+      >
+        {segment.text}
+      </MarkdownInheritedText>
+    ) : (
+      <React.Fragment key={segment.offset}>{segment.text}</React.Fragment>
+    ),
+  );
+}
+
 function MarkdownInheritedText({
   inheritedStyles,
   textStyle,
@@ -1614,7 +1668,11 @@ export const AssistantMessage = memo(function AssistantMessage({
           inheritedStyles={inheritedStyles}
           textStyle={styles.text}
         >
-          {node.content}
+          <MarkdownHighlightedTextRun
+            content={node.content}
+            inheritedStyles={inheritedStyles}
+            textStyle={styles.text}
+          />
         </MarkdownInheritedText>
       ),
       textgroup: (
@@ -2154,7 +2212,7 @@ export const ActivityLog = memo(function ActivityLog({
           </View>
           <View style={activityLogStylesheet.textContainer}>
             <Text style={messageTextStyle} selectable>
-              {displayMessage}
+              <HighlightedText text={displayMessage} />
             </Text>
             {metadata && (
               <View style={activityLogStylesheet.detailsRow}>
@@ -2239,6 +2297,8 @@ export const CompactionMarker = memo(function CompactionMarker({
 interface TodoListCardProps {
   items: TodoEntry[];
   disableOuterSpacing?: boolean;
+  /** Stream item id of the todo_list item, for timeline-search targeting. */
+  streamItemId?: string;
 }
 
 interface TodoListItemRowProps {
@@ -2267,7 +2327,9 @@ function TodoListItemRow({ text, completed }: TodoListItemRowProps) {
           <ThemedTodoCheckIcon size={12} uniProps={primaryForegroundColorMapping} />
         ) : null}
       </View>
-      <Text style={textStyle}>{text}</Text>
+      <Text style={textStyle}>
+        <HighlightedText text={text} />
+      </Text>
     </View>
   );
 }
@@ -2316,9 +2378,24 @@ const todoListCardStylesheet = StyleSheet.create((theme) => ({
 export const TodoListCard = memo(function TodoListCard({
   items,
   disableOuterSpacing,
+  streamItemId,
 }: TodoListCardProps) {
   const { t } = useTranslation();
   const [isExpanded, setIsExpanded] = useState(false);
+
+  // When timeline search navigates to this todo item, the card must open —
+  // collapsed it shows only the next incomplete task, so a match on any other
+  // todo would stay invisible. Keyed off navigationRevision so re-selecting
+  // the same match (Enter on a single result) re-expands a card the user
+  // collapsed in between.
+  const searchTarget = useTimelineSearchTarget();
+  const isSearchTarget = streamItemId != null && searchTarget?.itemId === streamItemId;
+  const searchTargetRevision = searchTarget?.navigationRevision;
+  useEffect(() => {
+    if (isSearchTarget) {
+      setIsExpanded(true);
+    }
+  }, [isSearchTarget, searchTargetRevision]);
 
   const nextTask = useMemo(() => items.find((item) => !item.completed)?.text, [items]);
 

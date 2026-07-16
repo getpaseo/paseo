@@ -19,6 +19,7 @@ import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { extensionFromPath, highlightToKeyedLines } from "@/utils/highlight-cache";
 import { HighlightedLines } from "./highlighted-content";
+import { HighlightedText } from "@/timeline-search/highlighted-text";
 import { DiffViewer } from "./diff-viewer";
 import { getCodeInsets } from "./code-insets";
 import { isWeb } from "@/constants/platform";
@@ -171,8 +172,8 @@ function ShellDetailSection({ command, output, ds }: ShellDetailProps) {
             <View style={styles.codeLine} dataSet={CODE_SURFACE_DATASET}>
               <Text selectable style={styles.scrollText}>
                 <Text style={styles.shellPrompt}>$ </Text>
-                {normalizedCommand}
-                {hasOutput ? `\n\n${commandOutput}` : ""}
+                <HighlightedText text={normalizedCommand} />
+                {hasOutput ? <HighlightedText text={`\n\n${commandOutput}`} /> : ""}
               </Text>
             </View>
           </ScrollView>
@@ -300,7 +301,7 @@ function SubAgentActionRow({ action }: { action: SubAgentActivityRow }) {
       </Text>
       {action.summary ? (
         <Text selectable style={styles.subAgentActionSummary}>
-          {action.summary}
+          <HighlightedText text={action.summary} />
         </Text>
       ) : null}
     </View>
@@ -332,14 +333,14 @@ function SubAgentLogText({
   if (activityLog.length > 0) {
     return (
       <Text selectable style={styles.scrollText}>
-        {activityLog}
+        <HighlightedText text={activityLog} />
       </Text>
     );
   }
   if (!hasActions) {
     return (
       <Text selectable style={styles.scrollText}>
-        {fallbackHeader}
+        <HighlightedText text={fallbackHeader} />
       </Text>
     );
   }
@@ -494,7 +495,7 @@ function PlainTextSection({ text }: { text: string }) {
   return (
     <View style={styles.plainTextSection}>
       <Text selectable style={styles.plainText}>
-        {text}
+        <HighlightedText text={text} />
       </Text>
     </View>
   );
