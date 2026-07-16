@@ -324,8 +324,11 @@ async function waitForCoalescerFlush(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 30));
 }
 
-describe("terminal-session-controller wrap-flag gating", () => {
-  function setup(clientSupportsWrapReflow?: () => boolean): {
+describe("terminal-session-controller snapshot metadata gating", () => {
+  function setup(options?: {
+    clientSupportsWrapReflow?: () => boolean;
+    clientSupportsAlternateBufferSnapshot?: () => boolean;
+  }): {
     controller: TerminalSessionController;
     getTerminalState: ReturnType<typeof vi.fn>;
   } {
@@ -383,7 +386,14 @@ describe("terminal-session-controller wrap-flag gating", () => {
       hasBinaryChannel: () => true,
       isPathWithinRoot: () => false,
       sessionLogger: createLogger(),
-      ...(clientSupportsWrapReflow ? { clientSupportsWrapReflow } : {}),
+      ...(options?.clientSupportsWrapReflow
+        ? { clientSupportsWrapReflow: options.clientSupportsWrapReflow }
+        : {}),
+      ...(options?.clientSupportsAlternateBufferSnapshot
+        ? {
+            clientSupportsAlternateBufferSnapshot: options.clientSupportsAlternateBufferSnapshot,
+          }
+        : {}),
     });
     return { controller, getTerminalState };
   }
@@ -399,7 +409,7 @@ describe("terminal-session-controller wrap-flag gating", () => {
   }
 
   test("requests wrap flags when the client supports reflowable snapshots", async () => {
-    const { controller, getTerminalState } = setup(() => true);
+    const { controller, getTerminalState } = setup({ clientSupportsWrapReflow: () => true });
     await subscribe(controller);
     expect(getTerminalState).toHaveBeenCalledWith(
       "term-1",
@@ -413,6 +423,26 @@ describe("terminal-session-controller wrap-flag gating", () => {
     expect(getTerminalState).toHaveBeenCalledWith(
       "term-1",
       expect.objectContaining({ includeWrapFlags: false }),
+    );
+  });
+
+  test("requests buffer mode when the client supports alternate-screen snapshots", async () => {
+    const { controller, getTerminalState } = setup({
+      clientSupportsAlternateBufferSnapshot: () => true,
+    });
+    await subscribe(controller);
+    expect(getTerminalState).toHaveBeenCalledWith(
+      "term-1",
+      expect.objectContaining({ includeBufferMode: true }),
+    );
+  });
+
+  test("omits buffer mode when the client does not advertise support", async () => {
+    const { controller, getTerminalState } = setup();
+    await subscribe(controller);
+    expect(getTerminalState).toHaveBeenCalledWith(
+      "term-1",
+      expect.objectContaining({ includeBufferMode: false }),
     );
   });
 });

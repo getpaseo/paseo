@@ -51,6 +51,9 @@ export interface TerminalStateSnapshotOptions {
   // can reflow restored content on resize. Gated on a client capability, so old
   // clients never receive the extra fields.
   includeWrapFlags?: boolean;
+  // Include the active normal/alternate xterm buffer so full-screen TUIs can be
+  // restored without leaking their transient frames into normal scrollback.
+  includeBufferMode?: boolean;
 }
 
 export interface TerminalSubscribeOptions {
@@ -1167,6 +1170,11 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
             scrollbackWrapped: extractScrollbackWrapped(terminal, {
               scrollbackLines: snapshotOptions?.scrollbackLines,
             }),
+          }
+        : {}),
+      ...(snapshotOptions?.includeBufferMode
+        ? {
+            bufferMode: terminal.buffer.active.type,
           }
         : {}),
     };

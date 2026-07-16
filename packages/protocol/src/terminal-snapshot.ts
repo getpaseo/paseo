@@ -35,7 +35,16 @@ export function renderTerminalSnapshotToAnsi(state: TerminalState): string {
   // them. Without it (old daemon) we keep the verbatim per-row replay: autowrap off
   // plus a hard newline per row.
   const hasWrapInfo = wrapFlags.length === rows.length;
-  const lines: string[] = hasWrapInfo ? [] : ["\u001b[?7l"];
+  const lines: string[] = [];
+  if (state.bufferMode === "alternate") {
+    // Snapshot replay is preceded by RIS on the client. Re-enter the same
+    // full-screen buffer before painting rows so TUI frames never become normal
+    // scrollback when the viewport is resized.
+    lines.push("\u001b[?1049h");
+  }
+  if (!hasWrapInfo) {
+    lines.push("\u001b[?7l");
+  }
 
   for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
     const row = rows[rowIndex] ?? [];

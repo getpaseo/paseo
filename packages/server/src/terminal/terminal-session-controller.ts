@@ -74,6 +74,9 @@ export interface TerminalSessionControllerOptions {
   // daemon attaches per-row soft-wrap flags to snapshots; otherwise it omits them
   // so old (strict-schema) clients still parse the snapshot.
   clientSupportsWrapReflow?: () => boolean;
+  // Whether the connected client can restore the active normal/alternate xterm
+  // buffer. The field is gated because old clients strictly parse TerminalState.
+  clientSupportsAlternateBufferSnapshot?: () => boolean;
   // Current max bytes queued on the client's transport(s) but not yet sent.
   // Drives the snapshot catch-up fallback: a keeping-up client reports ~0 and
   // keeps streaming; a backed-up client trips the snapshot path. Defaults to a
@@ -129,6 +132,7 @@ export class TerminalSessionController {
   private readonly listTerminalWorkspaceRefs: () => Promise<readonly TerminalWorkspaceRef[]>;
   private readonly listTerminalWorkspaceRoots: () => Promise<readonly string[]>;
   private readonly clientSupportsWrapReflow: () => boolean;
+  private readonly clientSupportsAlternateBufferSnapshot: () => boolean;
   private readonly getClientBufferedAmount: () => number | null;
 
   // A subscription is scoped to a (cwd, workspaceId) pair, keyed by
@@ -157,6 +161,8 @@ export class TerminalSessionController {
       options.listTerminalWorkspaceRoots ??
       (async () => (await this.listTerminalWorkspaceRefs()).map((workspace) => workspace.cwd));
     this.clientSupportsWrapReflow = options.clientSupportsWrapReflow ?? (() => false);
+    this.clientSupportsAlternateBufferSnapshot =
+      options.clientSupportsAlternateBufferSnapshot ?? (() => false);
     this.getClientBufferedAmount = options.getClientBufferedAmount ?? (() => 0);
   }
 
@@ -973,6 +979,7 @@ export class TerminalSessionController {
   ): Promise<SnapshotSendResult> {
     const snapshot = await terminalManager.getTerminalState(activeStream.terminalId, {
       includeWrapFlags: this.clientSupportsWrapReflow(),
+      includeBufferMode: this.clientSupportsAlternateBufferSnapshot(),
     });
     if (this.activeStreams.get(activeStream.slot) !== activeStream) {
       return { shouldContinue: false };
@@ -1007,6 +1014,7 @@ export class TerminalSessionController {
     const snapshot = await terminalManager.getTerminalState(activeStream.terminalId, {
       ...snapshotOptions,
       includeWrapFlags: this.clientSupportsWrapReflow(),
+      includeBufferMode: this.clientSupportsAlternateBufferSnapshot(),
     });
     if (this.activeStreams.get(activeStream.slot) !== activeStream) {
       return { shouldContinue: false };

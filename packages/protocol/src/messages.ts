@@ -4413,6 +4413,8 @@ export const TerminalCursorSchema = z.object({
   blink: z.boolean().optional(),
 });
 
+export const TerminalBufferModeSchema = z.enum(["normal", "alternate"]);
+
 export const TerminalStateSchema = z.object({
   rows: z.number(),
   cols: z.number(),
@@ -4427,6 +4429,8 @@ export const TerminalStateSchema = z.object({
   // `terminalReflowableSnapshot` capability, so old daemons/clients are unaffected.
   gridWrapped: z.array(z.boolean()).optional(),
   scrollbackWrapped: z.array(z.boolean()).optional(),
+  // Active xterm buffer at snapshot time. Optional for old daemons/clients.
+  bufferMode: TerminalBufferModeSchema.optional(),
 });
 
 export const ListTerminalsResponseSchema = z.object({
@@ -5094,6 +5098,7 @@ export const WSHelloMessageSchema = z.object({
       [CLIENT_CAPS.reasoningMergeEnum]: z.boolean().optional(),
       [CLIENT_CAPS.customModeIcons]: z.boolean().optional(),
       [CLIENT_CAPS.terminalReflowableSnapshot]: z.boolean().optional(),
+      [CLIENT_CAPS.terminalAlternateBufferSnapshot]: z.boolean().optional(),
       [CLIENT_CAPS.providerSubagents]: z.boolean().optional(),
       [CLIENT_CAPS.browserHost]: BrowserAutomationHostCapabilitySchema.optional(),
     })

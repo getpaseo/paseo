@@ -18,15 +18,20 @@ interface Mounted {
   terminal: InspectableTerminal;
 }
 
+interface InspectableBuffer {
+  baseY: number;
+  length: number;
+  getLine: (
+    index: number,
+  ) => { translateToString: (trimRight: boolean) => string; isWrapped: boolean } | undefined;
+}
+
 interface InspectableTerminal {
   cols: number;
   buffer: {
-    active: {
-      length: number;
-      getLine: (
-        index: number,
-      ) => { translateToString: (trimRight: boolean) => string; isWrapped: boolean } | undefined;
-    };
+    active: InspectableBuffer;
+    normal: InspectableBuffer;
+    alternate: InspectableBuffer;
   };
 }
 
@@ -133,6 +138,25 @@ function pinoLine(seq: number): string {
   return `[server] [15:30:${String(seq % 60).padStart(2, "0")}.123] TRACE: provider.claude.raw_event {"module":"agent","seq":${seq},"sessionId":"ed8972f4-d3be-45d0-992c-631f8f1ed04e","turnId":"foreground-turn-1","payload":"${"A".repeat(40)}"}\r\n`;
 }
 
+function buildAlternateScreenSnapshot(input: { rows: number; cols: number }): TerminalState {
+  const grid = Array.from({ length: input.rows }, () => [] as TerminalState["grid"][number]);
+  const setRow = (row: number, text: string): void => {
+    grid[row] = [...text].map((char) => ({ char }));
+  };
+
+  setRow(2, "OLD_FRAME_MARKER — this must not survive a viewport redraw");
+  setRow(input.rows - 2, "• Working (42m 00s • esc to interrupt)");
+
+  return {
+    rows: input.rows,
+    cols: input.cols,
+    scrollback: [],
+    grid,
+    cursor: { row: input.rows - 1, col: 0, hidden: true },
+    bufferMode: "alternate",
+  };
+}
+
 afterEach(() => {
   for (const m of mounted.splice(0)) {
     m.runtime.unmount();
@@ -141,6 +165,39 @@ afterEach(() => {
 });
 
 describe("terminal resize reflow repro (Paseo terminal)", () => {
+  it("keeps alternate-screen snapshots out of normal scrollback across a narrow redraw", async () => {
+    await page.viewport(900, 600);
+    const m = mount(420, 180);
+    await waitFor(() => m.terminal.cols > 20);
+
+    // Codex was snapshotted while its TUI owned a much larger alternate screen.
+    // Restoring that frame in the normal buffer, then fitting to the phone-sized
+    // viewport, pushes the old frame into normal scrollback. A later TUI clear
+    // only erases the viewport and the stale frame remains reachable/renderable.
+    await renderSnapshotCommitted(m.runtime, buildAlternateScreenSnapshot({ rows: 45, cols: 160 }));
+    m.runtime.resize({ force: true, shouldClaim: true });
+    await nextFrame();
+    await nextFrame();
+
+    await writeCommitted(
+      m.runtime,
+      encodeTerminalOutput(
+        "\u001b[2J\u001b[HCurrent chat frame\r\n• Working (42m 01s • esc to interrupt)",
+      ),
+    );
+
+    const rows = dumpRows(m.terminal);
+    const text = rows.map((row) => row.text).join("\n");
+    const workingRows = rows.filter((row) => row.text.includes("Working"));
+
+    expect(m.terminal.buffer.active).toBe(m.terminal.buffer.alternate);
+    expect(m.terminal.buffer.active.baseY).toBe(0);
+    expect(text).not.toContain("OLD_FRAME_MARKER");
+    expect(text).not.toContain("�");
+    expect(workingRows).toHaveLength(1);
+    expect(workingRows[0]?.text).toContain("42m 01s");
+  });
+
   it("snapshot-restored rows stay frozen at the snapshot width after the terminal grows", async () => {
     await page.viewport(1600, 700);
     const m = mount(560, 360); // ~70 cols

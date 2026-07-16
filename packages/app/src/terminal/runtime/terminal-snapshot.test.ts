@@ -2,6 +2,7 @@ import { Terminal as HeadlessTerminal } from "@xterm/headless";
 import { Terminal as ClientTerminal } from "@xterm/xterm";
 import { describe, expect, it } from "vitest";
 
+import type { TerminalState } from "@getpaseo/protocol/messages";
 import { renderTerminalSnapshotToAnsi } from "./terminal-snapshot";
 
 interface SnapshotCell {
@@ -150,5 +151,44 @@ describe("terminal-snapshot", () => {
     await writeToTerminal(client, renderTerminalSnapshotToAnsi(snapshot));
 
     expect(extractState(client)).toEqual(snapshot);
+  });
+
+  it("restores an alternate-screen snapshot into the alternate buffer", async () => {
+    const rows = 24;
+    const cols = 120;
+    const grid: TerminalState["grid"] = Array.from({ length: rows }, () => []);
+    grid[2] = [..."OLD_FRAME_MARKER"].map((char) => ({ char }));
+    grid[rows - 2] = [..."• Working (42m 00s)"].map((char) => ({ char }));
+
+    const snapshot: TerminalState = {
+      rows,
+      cols,
+      scrollback: [],
+      grid,
+      cursor: { row: rows - 1, col: 0, hidden: true },
+      bufferMode: "alternate",
+    };
+    const client = new ClientTerminal({
+      rows: 8,
+      cols: 40,
+      allowProposedApi: true,
+      scrollback: 100,
+    });
+
+    await writeToTerminal(client, renderTerminalSnapshotToAnsi(snapshot));
+    client.resize(40, 8);
+    await writeToTerminal(client, "\u001b[2J\u001b[HCurrent chat frame\r\n• Working (42m 01s)");
+
+    const active = client.buffer.active;
+    const visible = Array.from(
+      { length: active.length },
+      (_, row) => active.getLine(row)?.translateToString(true).trimEnd() ?? "",
+    ).join("\n");
+
+    expect(active).toBe(client.buffer.alternate);
+    expect(active.baseY).toBe(0);
+    expect(visible).not.toContain("OLD_FRAME_MARKER");
+    expect(visible.match(/Working/g)).toHaveLength(1);
+    expect(visible).toContain("42m 01s");
   });
 });

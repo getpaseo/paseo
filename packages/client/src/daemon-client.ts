@@ -4973,6 +4973,7 @@ export class DaemonClient {
             [CLIENT_CAPS.customModeIcons]: true,
             [CLIENT_CAPS.reasoningMergeEnum]: true,
             [CLIENT_CAPS.terminalReflowableSnapshot]: true,
+            [CLIENT_CAPS.terminalAlternateBufferSnapshot]: true,
             [CLIENT_CAPS.providerSubagents]: true,
             ...this.config.capabilities,
           },

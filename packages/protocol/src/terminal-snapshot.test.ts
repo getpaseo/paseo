@@ -46,4 +46,19 @@ describe("renderTerminalSnapshotToAnsi", () => {
     expect(ansi).toContain("[?7l");
     expect(ansi).toContain("ABCDEFGHIJ\r\nKLMNOP");
   });
+
+  it("re-enters the alternate buffer before replaying a full-screen snapshot", () => {
+    const state: TerminalState = {
+      rows: 2,
+      cols: 10,
+      scrollback: [],
+      grid: [cells("Working"), cells("")],
+      cursor: { row: 1, col: 0 },
+      bufferMode: "alternate",
+    };
+
+    const ansi = renderTerminalSnapshotToAnsi(state);
+
+    expect(ansi.startsWith("\u001b[?1049h")).toBe(true);
+  });
 });

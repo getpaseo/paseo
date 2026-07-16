@@ -846,6 +846,8 @@ export class Session {
       listTerminalWorkspaceRefs: () => this.listActiveWorkspaceRefs(),
       clientSupportsWrapReflow: () =>
         this.clientCapabilities.has(CLIENT_CAPS.terminalReflowableSnapshot),
+      clientSupportsAlternateBufferSnapshot: () =>
+        this.clientCapabilities.has(CLIENT_CAPS.terminalAlternateBufferSnapshot),
       getClientBufferedAmount: () => this.getTransportBufferedAmount(),
     });
     this.agentUpdates = createAgentUpdatesService({

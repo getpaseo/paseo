@@ -11,6 +11,12 @@ export const CLIENT_CAPS = {
   // Old clients use a strict TerminalState schema and would reject the extra fields.
   // Drop the gate (always send the flags) when floor >= v0.1.88.
   terminalReflowableSnapshot: "terminal_reflowable_snapshot",
+  // COMPAT(terminalAlternateBufferSnapshot): added in v0.1.110. The daemon attaches
+  // the active xterm buffer mode to snapshots so full-screen TUIs restore into the
+  // alternate buffer instead of leaking frames into normal scrollback. Old clients
+  // use a strict TerminalState schema. Drop the gate after 2027-01-16 once the client
+  // floor includes this field.
+  terminalAlternateBufferSnapshot: "terminal_alternate_buffer_snapshot",
   // COMPAT(providerSubagents): added in v0.1.107. The daemon emits provider-owned
   // child descriptors and timelines only to clients that understand the new messages.
   providerSubagents: "provider_subagents",

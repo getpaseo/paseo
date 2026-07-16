@@ -13,6 +13,7 @@ import type {
   TerminalExitInfo,
   TerminalSession,
   TerminalStateSnapshot,
+  TerminalStateSnapshotOptions,
 } from "./terminal.js";
 import type { CaptureTerminalLinesResult } from "./terminal-capture.js";
 import type {
@@ -341,7 +342,7 @@ export function createWorkerTerminalManager(
       getState(): TerminalState {
         return record.state;
       },
-      getStateSnapshot(options?: { scrollbackLines?: number }): TerminalStateSnapshot {
+      getStateSnapshot(options?: TerminalStateSnapshotOptions): TerminalStateSnapshot {
         const scrollbackLines = options?.scrollbackLines;
         const scrollback =
           typeof scrollbackLines === "number"
@@ -736,7 +737,7 @@ export function createWorkerTerminalManager(
 
     async getTerminalState(
       id: string,
-      options?: { scrollbackLines?: number },
+      options?: TerminalStateSnapshotOptions,
     ): Promise<TerminalStateSnapshot | null> {
       const snapshot = (await sendRequest({
         type: "getTerminalState",

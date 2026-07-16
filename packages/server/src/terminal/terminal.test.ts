@@ -361,6 +361,34 @@ describe("createTerminal", () => {
     expect(withoutFlags.scrollbackWrapped).toBeUndefined();
   });
 
+  it("reports the active alternate buffer only when buffer mode is requested", async () => {
+    const session = trackSession(
+      await createTerminal({
+        workspaceId: "ws-test",
+        cwd: realpathSync(tmpdir()),
+        cols: 80,
+        rows: 12,
+        command: process.execPath,
+        args: [
+          "-e",
+          "process.stdout.write('\\u001b[?1049hALT_SCREEN'); setInterval(() => {}, 100000);",
+        ],
+      }),
+    );
+
+    const start = Date.now();
+    while (Date.now() - start < 5000) {
+      const state = session.getState({ includeBufferMode: true });
+      if (state.bufferMode === "alternate") {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+
+    expect(session.getState({ includeBufferMode: true }).bufferMode).toBe("alternate");
+    expect(session.getState().bufferMode).toBeUndefined();
+  });
+
   it("captures exit diagnostics from the terminal buffer", async () => {
     const session = trackSession(
       await createTerminal({
