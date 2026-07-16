@@ -5024,6 +5024,51 @@ test("rejects and logs a correlated response that violates the protocol schema",
   expect(warnings).toEqual(["Message validation failed"]);
 });
 
+test("does not reject a request for an invalid correlated progress event", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger: noopLogger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const response = client.updateDaemon("req-update");
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "daemon.update.progress",
+      payload: {
+        requestId: "req-update",
+        phase: "verifying",
+      },
+    }),
+  );
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "daemon.update.response",
+      payload: {
+        requestId: "req-update",
+        success: true,
+        error: null,
+        previousVersion: "0.1.106",
+        newVersion: "0.1.107",
+      },
+    }),
+  );
+
+  await expect(response).resolves.toMatchObject({
+    requestId: "req-update",
+    success: true,
+  });
+});
+
 test("sends subscribe/unsubscribe terminals messages", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();

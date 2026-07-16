@@ -187,6 +187,17 @@ function extractCorrelatedResponseIdentity(input: unknown): CorrelatedResponseId
   }
 
   const message = envelope.message as { type?: unknown; payload?: unknown };
+  if (
+    typeof message.type !== "string" ||
+    !(
+      message.type === "rpc_error" ||
+      message.type.endsWith("_response") ||
+      message.type.endsWith(".response") ||
+      message.type.endsWith("/response")
+    )
+  ) {
+    return null;
+  }
   if (!message.payload || typeof message.payload !== "object") {
     return null;
   }
@@ -198,7 +209,7 @@ function extractCorrelatedResponseIdentity(input: unknown): CorrelatedResponseId
 
   return {
     requestId: payload.requestId,
-    ...(typeof message.type === "string" ? { responseType: message.type } : {}),
+    responseType: message.type,
   };
 }
 
