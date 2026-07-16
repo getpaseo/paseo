@@ -32,6 +32,7 @@ import { useSessionStore } from "@/stores/session-store";
 import { toXtermTheme } from "@/utils/to-xterm-theme";
 import TerminalEmulator, { type TerminalEmulatorHandle } from "./terminal-emulator";
 import { useIsCompactFormFactor } from "@/constants/layout";
+import { isNative } from "@/constants/platform";
 import {
   applyTerminalRendererReadyChange,
   shouldReplayTerminalSnapshotForRenderer,
@@ -800,7 +801,7 @@ export function TerminalPane({
               onOpenLocalFileLink={handleOpenLocalFileLink}
               onPendingModifiersConsumed={handlePendingModifiersConsumed}
               pendingModifiers={modifiers}
-              localFileLinksRequireModifier={settings.terminalFileLinksRequireModifier}
+              localFileLinksRequireModifier={!isNative && settings.terminalFileLinksRequireModifier}
               focusRequestToken={focusRequestToken}
               resizeRequestToken={resizeRequestToken}
             />

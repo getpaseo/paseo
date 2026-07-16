@@ -74,6 +74,7 @@ import { DesktopPermissionsSection } from "@/desktop/components/desktop-permissi
 import { BrowserDataSection } from "@/desktop/components/browser-data-section";
 import { IntegrationsSection } from "@/desktop/components/integrations-section";
 import { isElectronRuntime } from "@/desktop/host";
+import { isNative } from "@/constants/platform";
 import { useDesktopAppUpdater } from "@/desktop/updates/use-desktop-app-updater";
 import { formatVersionWithPrefix } from "@/desktop/updates/desktop-updates";
 import { resolveAppVersion } from "@/utils/app-version";
@@ -438,23 +439,25 @@ function GeneralSection({
             accessibilityLabel={t("settings.general.terminalScrollback.accessibilityLabel")}
           />
         </View>
-        <View style={ROW_WITH_BORDER_STYLE}>
-          <View style={settingsStyles.rowContent}>
-            <Text style={settingsStyles.rowTitle}>
-              {t("settings.general.terminalFileLinksRequireModifier.label")}
-            </Text>
-            <Text style={settingsStyles.rowHint}>
-              {t("settings.general.terminalFileLinksRequireModifier.description")}
-            </Text>
+        {!isNative ? (
+          <View style={ROW_WITH_BORDER_STYLE}>
+            <View style={settingsStyles.rowContent}>
+              <Text style={settingsStyles.rowTitle}>
+                {t("settings.general.terminalFileLinksRequireModifier.label")}
+              </Text>
+              <Text style={settingsStyles.rowHint}>
+                {t("settings.general.terminalFileLinksRequireModifier.description")}
+              </Text>
+            </View>
+            <Switch
+              value={settings.terminalFileLinksRequireModifier}
+              onValueChange={handleTerminalFileLinksRequireModifierChange}
+              accessibilityLabel={t(
+                "settings.general.terminalFileLinksRequireModifier.accessibilityLabel",
+              )}
+            />
           </View>
-          <Switch
-            value={settings.terminalFileLinksRequireModifier}
-            onValueChange={handleTerminalFileLinksRequireModifierChange}
-            accessibilityLabel={t(
-              "settings.general.terminalFileLinksRequireModifier.accessibilityLabel",
-            )}
-          />
-        </View>
+        ) : null}
       </View>
     </SettingsSection>
   );
