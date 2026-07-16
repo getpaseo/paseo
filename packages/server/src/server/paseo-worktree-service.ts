@@ -1,6 +1,7 @@
 import type { WorkspaceGitService } from "./workspace-git-service.js";
 import { resolve } from "node:path";
 import {
+  type PersistedProjectRecord,
   type PersistedWorkspaceRecord,
   type ProjectRegistry,
   type WorkspaceRegistry,
@@ -51,7 +52,7 @@ export interface AttemptFirstAgentBranchAutoNameResult {
 }
 
 export interface CreatePaseoWorktreeDeps extends CreateWorktreeCoreDeps {
-  projectRegistry: Pick<ProjectRegistry, "get" | "getOrCreateActiveByRoot">;
+  projectRegistry: Pick<ProjectRegistry, "get" | "getOrCreateActiveByRoot" | "upsert">;
   workspaceRegistry: Pick<WorkspaceRegistry, "get" | "list" | "upsert">;
   workspaceGitService: WorkspaceGitService;
 }
@@ -260,14 +261,17 @@ async function resolveSourceProjectIdForWorktree(options: {
   inputCwd: string;
   projectId?: string;
   repoRoot: string;
-  deps: Pick<CreatePaseoWorktreeDeps, "projectRegistry" | "workspaceRegistry">;
+  deps: Pick<
+    CreatePaseoWorktreeDeps,
+    "projectRegistry" | "workspaceRegistry" | "workspaceGitService"
+  >;
 }): Promise<string> {
   if (options.projectId) {
     const project = await options.deps.projectRegistry.get(options.projectId);
     if (!project || project.archivedAt) {
       throw new Error(`Project not found for worktree: ${options.projectId}`);
     }
-    return project.projectId;
+    return (await refreshProjectKind(project, options.deps)).projectId;
   }
 
   const sourceWorkspace = await findWorkspaceForSource({
@@ -278,7 +282,7 @@ async function resolveSourceProjectIdForWorktree(options: {
 
   if (sourceWorkspace) {
     const sourceProject = await options.deps.projectRegistry.get(sourceWorkspace.projectId);
-    if (sourceProject) return sourceProject.projectId;
+    if (sourceProject) return (await refreshProjectKind(sourceProject, options.deps)).projectId;
     // COMPAT(worktreeMissingSourceProject): added in v0.1.107, remove after 2027-01-15.
     // Orphaned legacy workspace FKs fall through to exact-root allocation.
   }
@@ -289,7 +293,20 @@ async function resolveSourceProjectIdForWorktree(options: {
     displayName: options.repoRoot.split(/[\\/]/).findLast(Boolean) ?? options.repoRoot,
     timestamp: new Date().toISOString(),
   });
-  return project.projectId;
+  return (await refreshProjectKind(project, options.deps)).projectId;
+}
+
+async function refreshProjectKind(
+  project: PersistedProjectRecord,
+  deps: Pick<CreatePaseoWorktreeDeps, "projectRegistry" | "workspaceGitService">,
+): Promise<PersistedProjectRecord> {
+  const checkout = await deps.workspaceGitService.getCheckout(project.rootPath);
+  const kind: PersistedProjectRecord["kind"] = checkout.isGit ? "git" : "non_git";
+  if (project.kind === kind) return project;
+
+  const refreshed = { ...project, kind, updatedAt: new Date().toISOString() };
+  await deps.projectRegistry.upsert(refreshed);
+  return refreshed;
 }
 
 async function findWorkspaceForSource(options: {
