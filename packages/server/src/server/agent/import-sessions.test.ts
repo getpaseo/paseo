@@ -1,5 +1,5 @@
-import { beforeEach, expect, test, vi } from "vitest";
-import { mkdirSync, mkdtempSync, realpathSync, symlinkSync } from "node:fs";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type {
@@ -7,11 +7,15 @@ import type {
   ManagedAgent,
   ManagedImportableProviderSession,
 } from "./agent-manager.js";
-import type { AgentStorage, StoredAgentRecord } from "./agent-storage.js";
+import { AgentStorage, type StoredAgentRecord } from "./agent-storage.js";
 import type { FetchRecentProviderSessionsRequestMessage } from "@getpaseo/protocol/messages";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import type { AgentTimelineItem } from "./agent-sdk-types.js";
+import { createPersistedWorkspaceRecord } from "../workspace-registry.js";
+import type { WorkspaceProvisioningService } from "../session/workspace-provisioning/workspace-provisioning-service.js";
+import { createTestLogger } from "../../test-utils/test-logger.js";
 import {
+  type ImportSessionAgentManager,
   ImportSessionsRequestError,
   importProviderSession,
   listImportableProviderSessions,
@@ -19,6 +23,7 @@ import {
 } from "./import-sessions.js";
 
 const directorySymlinkType = process.platform === "win32" ? "junction" : "dir";
+const importTestDirectories: string[] = [];
 
 const TEST_CAPABILITIES = {
   supportsStreaming: true,
@@ -31,6 +36,12 @@ const TEST_CAPABILITIES = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+afterEach(() => {
+  for (const directory of importTestDirectories.splice(0)) {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 function makeImportableSession(args: {
@@ -99,15 +110,25 @@ function makeManagedAgent(args: {
   } satisfies ManagedAgent;
 }
 
-function createUnarchiveGate() {
-  let allowUnarchive: () => void = () => {};
-  const unarchiveAllowed = new Promise<void>((resolve) => {
-    allowUnarchive = resolve;
-  });
-
+function createImportWorkspace(
+  workspaceId: string,
+): Pick<WorkspaceProvisioningService, "runInImportWorkspace"> {
   return {
-    holdUnarchive: () => unarchiveAllowed,
-    allowUnarchive,
+    async runInImportWorkspace(input, operation) {
+      const workspace = createPersistedWorkspaceRecord({
+        workspaceId,
+        projectId: `project-${workspaceId}`,
+        cwd: input.cwd,
+        kind: "directory",
+        displayName: "imported",
+        createdAt: "2026-04-30T00:00:00.000Z",
+        updatedAt: "2026-04-30T00:00:00.000Z",
+      });
+      return {
+        value: await operation(workspace),
+        createdWorkspace: null,
+      };
+    },
   };
 }
 
@@ -451,421 +472,335 @@ test("normalizeImportAgentRequest accepts new and legacy import handle shapes", 
   });
 });
 
-test("importProviderSession imports a selected provider session without listing", async () => {
-  const cwd = "/tmp/imported-agent";
-  const timeline: AgentTimelineItem[] = [
-    { type: "user_message", text: "Trace recent provider sessions\n\nkeep it tight" },
+function makeStoredProviderSession(input: {
+  id: string;
+  cwd: string;
+  sessionId: string;
+  nativeHandle?: string;
+  workspaceId?: string;
+  labels?: Record<string, string>;
+  archivedAt?: string | null;
+}): StoredAgentRecord {
+  return {
+    id: input.id,
+    provider: "codex",
+    cwd: input.cwd,
+    workspaceId: input.workspaceId ?? "ws-archived",
+    createdAt: "2026-04-30T10:00:00.000Z",
+    updatedAt: "2026-04-30T11:00:00.000Z",
+    lastActivityAt: "2026-04-30T10:30:00.000Z",
+    lastUserMessageAt: null,
+    labels: input.labels ?? {},
+    config: { provider: "codex", cwd: input.cwd },
+    persistence: {
+      provider: "codex",
+      sessionId: input.sessionId,
+      nativeHandle: input.nativeHandle ?? input.sessionId,
+      metadata: { provider: "codex", cwd: input.cwd },
+    },
+    archivedAt: input.archivedAt === undefined ? "2026-04-30T12:00:00.000Z" : input.archivedAt,
+  };
+}
+
+class ProviderImportHarness {
+  readonly storage: AgentStorage;
+  readonly manager: ImportSessionAgentManager;
+  readonly snapshot: ManagedAgent;
+  readonly freshImports: unknown[] = [];
+  readonly closedAgentIds: string[] = [];
+  timeline: AgentTimelineItem[] = [];
+  activeAgent: ManagedAgent | null = null;
+  resumeError: Error | null = null;
+  resumeAttempts = 0;
+  private unarchiveWait: Promise<void> | null = null;
+  private releaseUnarchive: (() => void) | null = null;
+
+  private constructor(input: { storage: AgentStorage; snapshot: ManagedAgent }) {
+    this.storage = input.storage;
+    this.snapshot = input.snapshot;
+    this.manager = {
+      importProviderSession: async (request: unknown) => {
+        this.freshImports.push(request);
+        this.activeAgent = this.snapshot;
+        return this.snapshot;
+      },
+      unarchiveSnapshot: async (
+        agentId: string,
+        updates?: { workspaceId?: string; labels?: Record<string, string | null> },
+      ) => {
+        if (this.unarchiveWait) {
+          await this.unarchiveWait;
+        }
+        const record = await this.storage.get(agentId);
+        if (!record?.archivedAt) {
+          return false;
+        }
+        const labels = { ...record.labels };
+        for (const [key, value] of Object.entries(updates?.labels ?? {})) {
+          if (value === null) {
+            delete labels[key];
+          } else {
+            labels[key] = value;
+          }
+        }
+        await this.storage.upsert({
+          ...record,
+          workspaceId: updates?.workspaceId ?? record.workspaceId,
+          labels,
+          archivedAt: null,
+        });
+        return true;
+      },
+      notifyAgentState: () => {},
+      getAgent: () => this.activeAgent,
+      getRegisteredProviderIds: () => ["codex"],
+      createAgent: async () => {
+        throw new Error("Stored provider imports must resume their persisted session");
+      },
+      resumeAgentFromPersistence: async (
+        _handle: unknown,
+        _overrides: unknown,
+        _agentId?: string,
+        _options?: unknown,
+      ) => {
+        this.resumeAttempts += 1;
+        if (this.resumeError) {
+          this.activeAgent = this.snapshot;
+          throw this.resumeError;
+        }
+        this.activeAgent = this.snapshot;
+        return this.snapshot;
+      },
+      hydrateTimelineFromProvider: async () => {},
+      getTimeline: () => this.timeline,
+      closeAgent: async (agentId: string) => {
+        this.closedAgentIds.push(agentId);
+        this.activeAgent = null;
+      },
+      archiveSnapshot: async (agentId: string, archivedAt: string) => {
+        const record = await this.storage.get(agentId);
+        if (!record) {
+          throw new Error("Agent not found: " + agentId);
+        }
+        const archived = { ...record, archivedAt };
+        await this.storage.upsert(archived);
+        return archived;
+      },
+    } satisfies ImportSessionAgentManager;
+  }
+
+  static async create(
+    input: {
+      id?: string;
+      cwd?: string;
+      sessionId?: string;
+      nativeHandle?: string;
+    } = {},
+  ): Promise<ProviderImportHarness> {
+    const directory = mkdtempSync(path.join(tmpdir(), "provider-import-"));
+    importTestDirectories.push(directory);
+    const storage = new AgentStorage(path.join(directory, "agents"), createTestLogger());
+    await storage.initialize();
+    const cwd = input.cwd ?? "/tmp/imported-agent";
+    const sessionId = input.sessionId ?? "thread-imported";
+    const snapshot = makeManagedAgent({
+      id: input.id,
+      provider: "codex",
+      cwd,
+      sessionId,
+      nativeHandle: input.nativeHandle,
+    });
+    return new ProviderImportHarness({ storage, snapshot });
+  }
+
+  async seed(record: StoredAgentRecord): Promise<void> {
+    await this.storage.upsert(record);
+  }
+
+  blockUnarchive(): () => void {
+    this.unarchiveWait = new Promise<void>((resolve) => {
+      this.releaseUnarchive = resolve;
+    });
+    return () => {
+      this.releaseUnarchive?.();
+      this.unarchiveWait = null;
+      this.releaseUnarchive = null;
+    };
+  }
+
+  import(input: { providerHandleId: string; cwd?: string; labels?: Record<string, string> }) {
+    return importProviderSession({
+      request: {
+        requestId: "import-thread",
+        provider: "codex",
+        providerHandleId: input.providerHandleId,
+        cwd: input.cwd,
+        labels: input.labels,
+      },
+      workspaceProvisioning: createImportWorkspace("ws-restored"),
+      agentManager: this.manager,
+      agentStorage: this.storage,
+      logger: createTestLogger(),
+    });
+  }
+}
+
+test("importProviderSession uses the provider import path with the requested labels", async () => {
+  const harness = await ProviderImportHarness.create();
+  harness.timeline = [
+    { type: "user_message", text: "Trace recent provider sessions" },
     { type: "assistant_message", text: "I will inspect the provider listing." },
   ];
-  const snapshot = makeManagedAgent({
-    id: "00000000-0000-4000-8000-000000000633",
-    provider: "custom-codex",
-    cwd,
-    sessionId: "thread-imported",
-    nativeHandle: "provider-thread-imported",
-    title: null,
-  });
-  const agentManager = {
-    importProviderSession: vi.fn().mockResolvedValue(snapshot),
-    getTimeline: vi.fn().mockReturnValue(timeline),
-    unarchiveSnapshot: vi.fn().mockResolvedValue(false),
-  } as unknown as AgentManager;
-  const agentStorage = {
-    list: vi.fn().mockResolvedValue([]),
-    get: vi.fn().mockResolvedValue(null),
-  } as unknown as AgentStorage;
 
-  const result = await importProviderSession({
-    request: {
-      requestId: "import-thread",
-      provider: "custom-codex",
-      providerHandleId: "provider-thread-imported",
-      cwd,
-    },
-    workspaceId: "ws-imported",
-    agentManager,
-    agentStorage,
-    logger: { warn: vi.fn(), error: vi.fn() } as never,
-  });
-
-  expect(agentManager.importProviderSession).toHaveBeenCalledWith({
-    provider: "custom-codex",
-    providerHandleId: "provider-thread-imported",
-    cwd,
-    workspaceId: "ws-imported",
-    labels: undefined,
-  });
-  expect(result).toEqual({ snapshot, timelineSize: 2 });
-});
-
-test("importProviderSession passes labels through the manager import operation", async () => {
-  const cwd = "/tmp/imported-agent";
-  const snapshot = makeManagedAgent({
-    provider: "codex",
-    cwd,
-    sessionId: "thread-imported",
-    nativeHandle: "thread-imported",
-  });
-  const agentManager = {
-    importProviderSession: vi.fn().mockResolvedValue(snapshot),
-    getTimeline: vi.fn().mockReturnValue([]),
-    unarchiveSnapshot: vi.fn().mockResolvedValue(false),
-  } as unknown as AgentManager;
-  const agentStorage = {
-    list: vi.fn().mockResolvedValue([]),
-    get: vi.fn().mockResolvedValue(null),
-  } as unknown as AgentStorage;
-
-  await importProviderSession({
-    request: {
-      requestId: "import-thread",
-      provider: "codex",
-      providerHandleId: "thread-imported",
-      cwd,
-      labels: { source: "import" },
-    },
-    workspaceId: "ws-imported",
-    agentManager,
-    agentStorage,
-    logger: { warn: vi.fn(), error: vi.fn() } as never,
-  });
-
-  expect(agentManager.importProviderSession).toHaveBeenCalledWith({
-    provider: "codex",
+  const result = await harness.import({
     providerHandleId: "thread-imported",
-    cwd,
-    workspaceId: "ws-imported",
+    cwd: "/tmp/imported-agent",
     labels: { source: "import" },
   });
+
+  expect(harness.freshImports).toEqual([
+    {
+      provider: "codex",
+      providerHandleId: "thread-imported",
+      cwd: "/tmp/imported-agent",
+      workspaceId: "ws-restored",
+      labels: { source: "import" },
+    },
+  ]);
+  expect(result).toEqual({
+    snapshot: harness.snapshot,
+    timelineSize: 2,
+    createdWorkspace: null,
+  });
 });
 
-test("importProviderSession restores an archived subagent as the same standalone Paseo agent", async () => {
-  const cwd = "/tmp/imported-agent";
-  const agentId = "00000000-0000-4000-8000-000000000634";
-  const persistence = {
-    provider: "codex",
+test("importProviderSession rejects a provider session with an active stored owner", async () => {
+  const harness = await ProviderImportHarness.create({ sessionId: "thread-active" });
+  await harness.seed(
+    makeStoredProviderSession({
+      id: harness.snapshot.id,
+      cwd: harness.snapshot.cwd,
+      sessionId: "thread-active",
+      archivedAt: null,
+    }),
+  );
+
+  await expect(
+    harness.import({ providerHandleId: "thread-active", cwd: harness.snapshot.cwd }),
+  ).rejects.toThrow("Provider session is already imported: thread-active");
+  expect(harness.freshImports).toEqual([]);
+});
+
+test("importProviderSession restores an archived session as the same standalone agent", async () => {
+  const harness = await ProviderImportHarness.create({ sessionId: "thread-archived" });
+  harness.timeline = [{ type: "user_message", text: "restored" }];
+  const archived = makeStoredProviderSession({
+    id: harness.snapshot.id,
+    cwd: harness.snapshot.cwd,
     sessionId: "thread-archived",
-    nativeHandle: "thread-archived",
-    metadata: { provider: "codex", cwd },
-  };
-  const archivedRecord = {
-    id: agentId,
-    provider: "codex",
-    cwd,
-    workspaceId: "ws-archived",
-    createdAt: "2026-04-30T10:00:00.000Z",
-    updatedAt: "2026-04-30T11:00:00.000Z",
-    lastActivityAt: "2026-04-30T10:30:00.000Z",
-    lastUserMessageAt: null,
     labels: { existing: "label", [PARENT_AGENT_ID_LABEL]: "archived-parent" },
-    config: { provider: "codex", cwd },
-    persistence,
-    archivedAt: "2026-04-30T12:00:00.000Z",
-  } as StoredAgentRecord;
-  const snapshot = makeManagedAgent({
-    id: agentId,
-    provider: "codex",
-    cwd,
-    sessionId: "thread-archived",
-    nativeHandle: "thread-archived",
   });
-  let freshImportAttempted = false;
-  let unarchivedAgentId: string | undefined;
-  let unarchiveUpdates:
-    | { workspaceId?: string; labels?: Record<string, string | null> }
-    | undefined;
-  let resumedAgentId: string | undefined;
-  let resumeOptions: { workspaceId?: string; labels?: Record<string, string> } | undefined;
-  const agentManager = {
-    importProviderSession: async () => {
-      freshImportAttempted = true;
-      return snapshot;
-    },
-    unarchiveSnapshot: async (
-      id: string,
-      updates?: { workspaceId?: string; labels?: Record<string, string | null> },
-    ) => {
-      unarchivedAgentId = id;
-      unarchiveUpdates = updates;
-      return true;
-    },
-    notifyAgentState: () => {},
-    resumeAgentFromPersistence: async (
-      _handle: unknown,
-      _overrides: unknown,
-      id?: string,
-      options?: { workspaceId?: string; labels?: Record<string, string> },
-    ) => {
-      resumedAgentId = id;
-      resumeOptions = options;
-      return snapshot;
-    },
-    hydrateTimelineFromProvider: async () => {},
-    getTimeline: () => [{ type: "user_message", text: "restored" }],
-  } as unknown as AgentManager;
-  const agentStorage = {
-    list: async () => [archivedRecord],
-  } as unknown as AgentStorage;
+  await harness.seed(archived);
 
-  const result = await importProviderSession({
-    request: {
-      requestId: "reimport-thread",
-      provider: "codex",
-      providerHandleId: "thread-archived",
-      cwd,
-      labels: { source: "reimport" },
-    },
-    workspaceId: "ws-restored",
-    agentManager,
-    agentStorage,
-    logger: { warn: () => {}, error: () => {} } as never,
+  const result = await harness.import({
+    providerHandleId: "thread-archived",
+    cwd: harness.snapshot.cwd,
+    labels: { source: "reimport" },
   });
 
-  expect(freshImportAttempted).toBe(false);
-  expect(unarchivedAgentId).toBe(agentId);
-  expect(unarchiveUpdates).toEqual({
-    workspaceId: "ws-restored",
-    labels: { [PARENT_AGENT_ID_LABEL]: null, source: "reimport" },
+  expect(result).toEqual({
+    snapshot: harness.snapshot,
+    timelineSize: 1,
+    createdWorkspace: null,
   });
-  expect(resumedAgentId).toBe(agentId);
-  expect(resumeOptions).toMatchObject({
+  expect(await harness.storage.get(harness.snapshot.id)).toMatchObject({
+    id: harness.snapshot.id,
     workspaceId: "ws-restored",
     labels: { existing: "label", source: "reimport" },
+    archivedAt: null,
   });
-  expect(resumeOptions?.labels).not.toHaveProperty(PARENT_AGENT_ID_LABEL);
-  expect(result).toEqual({ snapshot, timelineSize: 1 });
+  expect((await harness.storage.get(harness.snapshot.id))?.labels).not.toHaveProperty(
+    PARENT_AGENT_ID_LABEL,
+  );
+  expect(harness.resumeAttempts).toBe(1);
+  expect(harness.freshImports).toEqual([]);
 });
 
-test("importProviderSession rejects an archived session from a different cwd before restoring it", async () => {
-  const archivedRecord = {
-    id: "00000000-0000-4000-8000-000000000637",
-    provider: "codex",
+test("importProviderSession rejects an archived session from a different cwd before restoring", async () => {
+  const harness = await ProviderImportHarness.create({ sessionId: "thread-other-cwd" });
+  const archived = makeStoredProviderSession({
+    id: harness.snapshot.id,
     cwd: "/tmp/other-agent",
-    workspaceId: "ws-other",
-    createdAt: "2026-04-30T10:00:00.000Z",
-    updatedAt: "2026-04-30T11:00:00.000Z",
-    labels: {},
-    config: { provider: "codex", cwd: "/tmp/other-agent" },
-    persistence: {
-      provider: "codex",
-      sessionId: "thread-other-cwd",
-      nativeHandle: "thread-other-cwd",
-      metadata: { provider: "codex", cwd: "/tmp/other-agent" },
-    },
-    archivedAt: "2026-04-30T12:00:00.000Z",
-  } as StoredAgentRecord;
-  let unarchiveAttempted = false;
-  const agentManager = {
-    unarchiveSnapshot: async () => {
-      unarchiveAttempted = true;
-      return true;
-    },
-  } as unknown as AgentManager;
-  const agentStorage = {
-    list: async () => [archivedRecord],
-  } as unknown as AgentStorage;
+    sessionId: "thread-other-cwd",
+  });
+  await harness.seed(archived);
 
   await expect(
-    importProviderSession({
-      request: {
-        requestId: "reimport-other-cwd",
-        provider: "codex",
-        providerHandleId: "thread-other-cwd",
-        cwd: "/tmp/target-agent",
-      },
-      workspaceId: "ws-target",
-      agentManager,
-      agentStorage,
-      logger: { warn: () => {}, error: () => {} } as never,
-    }),
+    harness.import({ providerHandleId: "thread-other-cwd", cwd: "/tmp/target-agent" }),
   ).rejects.toThrow("Provider session cwd does not match import cwd: thread-other-cwd");
-  expect(unarchiveAttempted).toBe(false);
+  expect(await harness.storage.get(harness.snapshot.id)).toEqual(archived);
+  expect(harness.resumeAttempts).toBe(0);
 });
 
-test("importProviderSession restores the archived record when provider resume fails", async () => {
-  const cwd = "/tmp/imported-agent";
-  const agentId = "00000000-0000-4000-8000-000000000635";
-  const archivedAt = "2026-04-30T12:00:00.000Z";
-  const archivedRecord = {
-    id: agentId,
-    provider: "codex",
-    cwd,
-    workspaceId: "ws-archived",
-    createdAt: "2026-04-30T10:00:00.000Z",
-    updatedAt: "2026-04-30T11:00:00.000Z",
-    lastActivityAt: "2026-04-30T10:30:00.000Z",
-    lastUserMessageAt: null,
-    labels: { existing: "label" },
-    config: { provider: "codex", cwd },
-    persistence: {
-      provider: "codex",
-      sessionId: "thread-stale",
-      nativeHandle: "thread-stale",
-      metadata: { provider: "codex", cwd },
-    },
-    archivedAt,
-  } as StoredAgentRecord;
-  let rearchivedAgentId: string | undefined;
-  let rearchivedAt: string | undefined;
-  let restoredRecord: StoredAgentRecord | undefined;
-  const agentManager = {
-    importProviderSession: async () => {
-      throw new Error("fresh import should not run");
-    },
-    unarchiveSnapshot: async () => true,
-    notifyAgentState: () => {},
-    resumeAgentFromPersistence: async () => {
-      throw new Error("provider session is unavailable");
-    },
-    getAgent: () => null,
-    archiveSnapshot: async (id: string, timestamp: string) => {
-      rearchivedAgentId = id;
-      rearchivedAt = timestamp;
-      return archivedRecord;
-    },
-  } as unknown as AgentManager;
-  const agentStorage = {
-    list: async () => [archivedRecord],
-    upsert: async (record: StoredAgentRecord) => {
-      restoredRecord = record;
-    },
-  } as unknown as AgentStorage;
+test("importProviderSession restores storage and closes a partial runtime when loading fails", async () => {
+  const harness = await ProviderImportHarness.create({ sessionId: "thread-stale" });
+  const archived = makeStoredProviderSession({
+    id: harness.snapshot.id,
+    cwd: harness.snapshot.cwd,
+    sessionId: "thread-stale",
+  });
+  await harness.seed(archived);
+  harness.resumeError = new Error("provider session is unavailable");
 
   await expect(
-    importProviderSession({
-      request: {
-        requestId: "reimport-stale-thread",
-        provider: "codex",
-        providerHandleId: "thread-stale",
-        cwd,
-      },
-      workspaceId: "ws-restored",
-      agentManager,
-      agentStorage,
-      logger: { warn: () => {}, error: () => {} } as never,
-    }),
+    harness.import({ providerHandleId: "thread-stale", cwd: harness.snapshot.cwd }),
   ).rejects.toThrow("provider session is unavailable");
 
-  expect(rearchivedAgentId).toBe(agentId);
-  expect(rearchivedAt).toBe(archivedAt);
-  expect(restoredRecord).toBe(archivedRecord);
+  expect(await harness.storage.get(harness.snapshot.id)).toEqual(archived);
+  expect(harness.activeAgent).toBeNull();
+  expect(harness.closedAgentIds).toEqual([harness.snapshot.id]);
 });
 
 test("importProviderSession serializes legacy and native aliases for one archived session", async () => {
-  const cwd = "/tmp/imported-agent";
-  const agentId = "00000000-0000-4000-8000-000000000636";
-  let storedRecord = {
-    id: agentId,
-    provider: "codex",
-    cwd,
-    workspaceId: "ws-archived",
-    createdAt: "2026-04-30T10:00:00.000Z",
-    updatedAt: "2026-04-30T11:00:00.000Z",
-    lastActivityAt: "2026-04-30T10:30:00.000Z",
-    lastUserMessageAt: null,
-    labels: {},
-    config: { provider: "codex", cwd },
-    persistence: {
-      provider: "codex",
-      sessionId: "legacy-thread-concurrent",
-      nativeHandle: "native-thread-concurrent",
-      metadata: { provider: "codex", cwd },
-    },
-    archivedAt: "2026-04-30T12:00:00.000Z",
-  } as StoredAgentRecord;
-  const snapshot = makeManagedAgent({
-    id: agentId,
-    provider: "codex",
-    cwd,
-    sessionId: "legacy-thread-concurrent",
-    nativeHandle: "native-thread-concurrent",
+  const harness = await ProviderImportHarness.create({
+    sessionId: "legacy-thread",
+    nativeHandle: "native-thread",
   });
-  const unarchive = createUnarchiveGate();
-  const closedAgentIds: string[] = [];
-  let activeAgent: ManagedAgent | null = null;
-  let resumeAttempts = 0;
-  const agentManager = {
-    unarchiveSnapshot: async (_id: string, updates?: { workspaceId?: string }) => {
-      await unarchive.holdUnarchive();
-      storedRecord = {
-        ...storedRecord,
-        ...(updates?.workspaceId ? { workspaceId: updates.workspaceId } : {}),
-        archivedAt: null,
-      };
-      return true;
-    },
-    notifyAgentState: () => {},
-    resumeAgentFromPersistence: async () => {
-      resumeAttempts += 1;
-      if (resumeAttempts > 1) {
-        throw new Error(`Agent with id ${agentId} already exists`);
-      }
-      activeAgent = snapshot;
-      return snapshot;
-    },
-    hydrateTimelineFromProvider: async () => {},
-    getTimeline: () => [],
-    getAgent: () => activeAgent,
-    closeAgent: async (id: string) => {
-      closedAgentIds.push(id);
-      activeAgent = null;
-    },
-    archiveSnapshot: async (_id: string, archivedAt: string) => {
-      storedRecord = { ...storedRecord, archivedAt };
-      return storedRecord;
-    },
-  } as unknown as AgentManager;
-  const agentStorage = {
-    list: async () => [{ ...storedRecord }],
-    upsert: async (record: StoredAgentRecord) => {
-      storedRecord = record;
-    },
-  } as unknown as AgentStorage;
-  const input = {
-    request: {
-      requestId: "reimport-concurrent-thread",
-      provider: "codex" as const,
-      providerHandleId: "native-thread-concurrent",
-      cwd,
-    },
-    workspaceId: "ws-restored",
-    agentManager,
-    agentStorage,
-    logger: { warn: () => {}, error: () => {} } as never,
-  };
-
-  const winningRestore = importProviderSession(input);
-  const duplicateRestore = importProviderSession({
-    ...input,
-    request: {
-      ...input.request,
-      providerHandleId: "legacy-thread-concurrent",
-    },
-  });
-  unarchive.allowUnarchive();
-
-  await expect(winningRestore).resolves.toEqual({ snapshot, timelineSize: 0 });
-  await expect(duplicateRestore).rejects.toThrow(
-    "Provider session is already imported: legacy-thread-concurrent",
+  await harness.seed(
+    makeStoredProviderSession({
+      id: harness.snapshot.id,
+      cwd: harness.snapshot.cwd,
+      sessionId: "legacy-thread",
+      nativeHandle: "native-thread",
+    }),
   );
-  expect(storedRecord.archivedAt).toBeNull();
-  expect(closedAgentIds).toEqual([]);
+  const releaseUnarchive = harness.blockUnarchive();
+
+  const winningRestore = harness.import({
+    providerHandleId: "native-thread",
+    cwd: harness.snapshot.cwd,
+  });
+  const duplicateRestore = harness.import({
+    providerHandleId: "legacy-thread",
+    cwd: harness.snapshot.cwd,
+  });
+  releaseUnarchive();
+
+  await expect(winningRestore).resolves.toMatchObject({
+    snapshot: { id: harness.snapshot.id },
+    timelineSize: 0,
+  });
+  await expect(duplicateRestore).rejects.toThrow(
+    "Provider session is already imported: legacy-thread",
+  );
+  expect(harness.resumeAttempts).toBe(1);
+  expect(harness.closedAgentIds).toEqual([]);
 });
 
 test("importProviderSession requires cwd from the selected provider row", async () => {
-  const agentManager = {} as unknown as AgentManager;
+  const harness = await ProviderImportHarness.create();
 
-  await expect(
-    importProviderSession({
-      request: {
-        requestId: "import-thread",
-        provider: "opencode",
-        providerHandleId: "thread-imported",
-      },
-      workspaceId: "ws-imported",
-      agentManager,
-      agentStorage: { list: vi.fn() } as unknown as AgentStorage,
-      logger: { warn: vi.fn(), error: vi.fn() } as never,
-    }),
-  ).rejects.toThrow("Import requires cwd from the selected provider session");
+  await expect(harness.import({ providerHandleId: "thread-imported" })).rejects.toThrow(
+    "Import requires cwd from the selected provider session",
+  );
 });

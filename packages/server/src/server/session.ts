@@ -172,7 +172,7 @@ import {
   matchesAgentUpdatesFilter,
   type AgentUpdatesService,
 } from "./session/agent-updates/agent-updates-service.js";
-import { createRealpathAwarePathMatcher, expandTilde } from "../utils/path.js";
+import { expandTilde } from "../utils/path.js";
 import {
   searchDirectoryEntries,
   WORKSPACE_SEARCH_HIDDEN_DIRECTORIES,
@@ -696,6 +696,7 @@ export class Session {
       workspaceRegistry: this.workspaceRegistry,
       projectRegistry: this.projectRegistry,
       workspaceGitService: this.workspaceGitService,
+      logger: this.sessionLogger,
     });
     this.checkoutSession = new CheckoutSession({
       host: {
@@ -2708,52 +2709,15 @@ export class Session {
       if (!normalized.cwd) {
         throw new Error("Import requires cwd from the selected provider session");
       }
-      let workspace: PersistedWorkspaceRecord | null = null;
-      let previousProject: PersistedProjectRecord | null = null;
-      let workspaceId: string;
-      if (normalized.workspaceId) {
-        const requestedWorkspace = await this.workspaceRegistry.get(normalized.workspaceId);
-        if (!requestedWorkspace || requestedWorkspace.archivedAt) {
-          throw new Error(`Workspace not found: ${normalized.workspaceId}`);
-        }
-        if (!createRealpathAwarePathMatcher(requestedWorkspace.cwd)(normalized.cwd)) {
-          throw new Error(`Import cwd does not match workspace: ${normalized.workspaceId}`);
-        }
-        const requestedProject = await this.projectRegistry.get(requestedWorkspace.projectId);
-        if (!requestedProject || requestedProject.archivedAt) {
-          throw new Error(`Project not found: ${requestedWorkspace.projectId}`);
-        }
-        workspaceId = requestedWorkspace.workspaceId;
-      } else {
-        const projectsBeforeImport = await this.projectRegistry.list();
-        const createdWorkspace = await this.workspaceProvisioning.createWorkspaceForDirectory(
-          normalized.cwd,
-        );
-        workspace = createdWorkspace;
-        previousProject =
-          projectsBeforeImport.find(
-            (project) => project.projectId === createdWorkspace.projectId,
-          ) ?? null;
-        workspaceId = createdWorkspace.workspaceId;
-      }
-      let importResult: Awaited<ReturnType<typeof importProviderSession>>;
-      try {
-        importResult = await importProviderSession({
-          request: normalized,
-          workspaceId,
-          agentManager: this.agentManager,
-          agentStorage: this.agentStorage,
-          logger: this.sessionLogger,
-        });
-      } catch (error) {
-        if (workspace) {
-          await this.rollbackWorkspaceCreatedForFailedImport(workspace, previousProject);
-        }
-        throw error;
-      }
-      const { snapshot, timelineSize } = importResult;
-      if (workspace) {
-        await this.registerWorkspaceForImportedAgent(workspace);
+      const { snapshot, timelineSize, createdWorkspace } = await importProviderSession({
+        request: normalized,
+        workspaceProvisioning: this.workspaceProvisioning,
+        agentManager: this.agentManager,
+        agentStorage: this.agentStorage,
+        logger: this.sessionLogger,
+      });
+      if (createdWorkspace) {
+        await this.registerWorkspaceForImportedAgent(createdWorkspace);
       }
       const agentPayload = await this.buildAgentPayload(snapshot);
       this.emit({
@@ -4491,31 +4455,6 @@ export class Session {
       this.sessionLogger.warn(
         { err: error, workspaceId: workspace.workspaceId, cwd: workspace.cwd },
         "Failed to register workspace for imported agent",
-      );
-    }
-  }
-
-  private async rollbackWorkspaceCreatedForFailedImport(
-    workspace: PersistedWorkspaceRecord,
-    previousProject: PersistedProjectRecord | null,
-  ): Promise<void> {
-    try {
-      await this.workspaceRegistry.remove(workspace.workspaceId);
-      const projectHasActiveWorkspace = (await this.workspaceRegistry.list()).some(
-        (candidate) => candidate.projectId === workspace.projectId && !candidate.archivedAt,
-      );
-      if (projectHasActiveWorkspace) {
-        return;
-      }
-      if (previousProject?.archivedAt) {
-        await this.projectRegistry.upsert(previousProject);
-      } else if (!previousProject) {
-        await this.projectRegistry.remove(workspace.projectId);
-      }
-    } catch (error) {
-      this.sessionLogger.error(
-        { err: error, workspaceId: workspace.workspaceId, projectId: workspace.projectId },
-        "Failed to restore workspace state after provider import failure",
       );
     }
   }

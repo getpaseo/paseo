@@ -8,9 +8,11 @@ import type {
 } from "./agent-manager.js";
 import type { AgentStorage, StoredAgentRecord } from "./agent-storage.js";
 import type { AgentPersistenceHandle, AgentProvider } from "./agent-sdk-types.js";
+import { ensureAgentLoaded, type AgentLoaderManager } from "./agent-loading.js";
 import { unarchiveAgentState } from "./agent-prompt.js";
 import { toRecentProviderSessionDescriptorPayload } from "./agent-projections.js";
-import { buildConfigOverrides, extractTimestamps } from "../persistence-hooks.js";
+import type { WorkspaceProvisioningService } from "../session/workspace-provisioning/workspace-provisioning-service.js";
+import type { PersistedWorkspaceRecord } from "../workspace-registry.js";
 import type {
   FetchRecentProviderSessionsRequestMessage,
   ImportAgentRequestMessageSchema,
@@ -23,7 +25,21 @@ type ImportAgentRequestMessage = z.infer<typeof ImportAgentRequestMessageSchema>
 
 const METADATA_GENERATION_PROMPT_PREFIX =
   "Generate metadata for a coding agent based on the user prompt.";
-const providerSessionImportMutations = new WeakMap<AgentManager, Map<string, Promise<unknown>>>();
+export type ImportSessionAgentManager = AgentLoaderManager &
+  Pick<
+    AgentManager,
+    | "archiveSnapshot"
+    | "closeAgent"
+    | "getTimeline"
+    | "importProviderSession"
+    | "notifyAgentState"
+    | "unarchiveSnapshot"
+  >;
+
+const providerSessionImportMutations = new WeakMap<
+  ImportSessionAgentManager,
+  Map<string, Promise<unknown>>
+>();
 
 export interface NormalizedImportAgentRequest {
   provider: AgentProvider;
@@ -58,13 +74,19 @@ export interface ListImportableProviderSessionsResult {
 
 export interface ImportProviderSessionInput {
   request: NormalizedImportAgentRequest;
-  workspaceId: string;
-  agentManager: AgentManager;
+  workspaceProvisioning: Pick<WorkspaceProvisioningService, "runInImportWorkspace">;
+  agentManager: ImportSessionAgentManager;
   agentStorage: AgentStorage;
   logger: Logger;
 }
 
 export interface ImportProviderSessionResult {
+  snapshot: ManagedAgent;
+  timelineSize: number;
+  createdWorkspace: PersistedWorkspaceRecord | null;
+}
+
+interface ImportedProviderSession {
   snapshot: ManagedAgent;
   timelineSize: number;
 }
@@ -148,15 +170,20 @@ export async function importProviderSession(
     throw new Error("Import requires cwd from the selected provider session");
   }
   const key = await resolveProviderSessionImportMutationKey(input);
-  return serializeProviderSessionImport(input.agentManager, key, () =>
-    importProviderSessionNow(input, cwd),
-  );
+  return serializeProviderSessionImport(input.agentManager, key, async () => {
+    const placement = await input.workspaceProvisioning.runInImportWorkspace(
+      { cwd, requestedWorkspaceId: input.request.workspaceId },
+      (workspace) => importProviderSessionNow(input, cwd, workspace.workspaceId),
+    );
+    return { ...placement.value, createdWorkspace: placement.createdWorkspace };
+  });
 }
 
 async function importProviderSessionNow(
   input: ImportProviderSessionInput,
   cwd: string,
-): Promise<ImportProviderSessionResult> {
+  workspaceId: string,
+): Promise<ImportedProviderSession> {
   const { provider, providerHandleId, labels } = input.request;
 
   const matchingRecords = (await input.agentStorage.list()).filter((record) =>
@@ -171,13 +198,7 @@ async function importProviderSessionNow(
     if (!createRealpathAwarePathMatcher(cwd)(archivedRecord.cwd)) {
       throw new Error(`Provider session cwd does not match import cwd: ${providerHandleId}`);
     }
-    const restoredLabels = { ...archivedRecord.labels, ...input.request.labels };
     const requestedParentAgentId = getParentAgentIdFromLabels(input.request.labels);
-    if (requestedParentAgentId) {
-      restoredLabels[PARENT_AGENT_ID_LABEL] = requestedParentAgentId;
-    } else {
-      delete restoredLabels[PARENT_AGENT_ID_LABEL];
-    }
     const labelPatch: Record<string, string | null> = { ...input.request.labels };
     if (
       Object.hasOwn(archivedRecord.labels, PARENT_AGENT_ID_LABEL) ||
@@ -185,24 +206,16 @@ async function importProviderSessionNow(
     ) {
       labelPatch[PARENT_AGENT_ID_LABEL] = requestedParentAgentId;
     }
-    const restoredRecord = {
-      ...archivedRecord,
-      workspaceId: input.workspaceId,
-      labels: restoredLabels,
-      archivedAt: null,
-    };
     await unarchiveAgentState(input.agentStorage, input.agentManager, archivedRecord.id, {
-      workspaceId: input.workspaceId,
+      workspaceId,
       labels: Object.keys(labelPatch).length > 0 ? labelPatch : undefined,
     });
     try {
-      const snapshot = await input.agentManager.resumeAgentFromPersistence(
-        archivedRecord.persistence,
-        buildConfigOverrides(restoredRecord),
-        archivedRecord.id,
-        extractTimestamps(restoredRecord),
-      );
-      await input.agentManager.hydrateTimelineFromProvider(snapshot.id);
+      const snapshot = await ensureAgentLoaded(archivedRecord.id, {
+        agentManager: input.agentManager,
+        agentStorage: input.agentStorage,
+        logger: input.logger,
+      });
       return {
         snapshot,
         timelineSize: input.agentManager.getTimeline(snapshot.id).length,
@@ -217,7 +230,7 @@ async function importProviderSessionNow(
     provider,
     providerHandleId,
     cwd,
-    workspaceId: input.workspaceId,
+    workspaceId,
     labels,
   });
   await unarchiveAgentState(input.agentStorage, input.agentManager, snapshot.id);
@@ -229,7 +242,7 @@ async function importProviderSessionNow(
 }
 
 async function serializeProviderSessionImport<T>(
-  agentManager: AgentManager,
+  agentManager: ImportSessionAgentManager,
   key: string,
   operation: () => Promise<T>,
 ): Promise<T> {

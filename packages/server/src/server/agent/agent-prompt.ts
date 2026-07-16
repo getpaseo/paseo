@@ -5,6 +5,8 @@ import type { AgentManager, ManagedAgent } from "./agent-manager.js";
 import type { AgentStorage } from "./agent-storage.js";
 import { ensureAgentLoaded } from "./agent-loading.js";
 
+export type AgentUnarchiveController = Pick<AgentManager, "notifyAgentState" | "unarchiveSnapshot">;
+
 export type AgentRunController = Pick<
   AgentManager,
   "getAgent" | "tryRunOutOfBand" | "hasInFlightRun" | "replaceAgentRun" | "streamAgent"
@@ -91,7 +93,7 @@ export async function startAgentRun(
  */
 export async function unarchiveAgentState(
   _agentStorage: AgentStorage,
-  agentManager: AgentManager,
+  agentManager: AgentUnarchiveController,
   agentId: string,
   updates?: { workspaceId?: string; labels?: Record<string, string | null> },
 ): Promise<boolean> {
