@@ -1,4 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
+import contentDisposition from "content-disposition";
 import { mkdtempSync, writeFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
@@ -54,6 +55,49 @@ describe("daemon E2E", () => {
       expect(response.headers.get("content-type")).toBe(tokenResponse.mimeType);
       const disposition = response.headers.get("content-disposition") ?? "";
       expect(disposition).toContain("download.txt");
+
+      const body = await response.text();
+      expect(body).toBe(fileContents);
+
+      rmSync(cwd, { recursive: true, force: true });
+    }, 60000);
+
+    test("downloads files with non-ASCII names", async () => {
+      const cwd = tmpCwd();
+      const fileName = "中文报告 (最终版).txt";
+      const filePath = path.join(cwd, fileName);
+      const fileContents = "unicode download payload";
+      writeFileSync(filePath, fileContents, "utf-8");
+
+      const agent = await ctx.client.createAgent({
+        provider: "codex",
+        model: CODEX_TEST_MODEL,
+        thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
+        cwd,
+        title: "Unicode Download Token Test Agent",
+      });
+
+      expect(agent.id).toBeTruthy();
+
+      const tokenResponse = await ctx.client.requestDownloadToken(cwd, fileName);
+
+      expect(tokenResponse.error).toBeNull();
+      expect(tokenResponse.token).toBeTruthy();
+      expect(tokenResponse.fileName).toBe(fileName);
+
+      const response = await fetch(
+        `http://127.0.0.1:${ctx.daemon.port}/api/files/download?token=${tokenResponse.token}`,
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toBe(tokenResponse.mimeType);
+
+      const disposition = response.headers.get("content-disposition") ?? "";
+      // Same package the server uses (ASCII fallback + RFC 5987 filename*).
+      // content-disposition is always ASCII-safe for Node setHeader.
+      expect(disposition).toBe(contentDisposition(fileName));
+      expect(disposition).toMatch(/filename\*=UTF-8''/i);
+      expect(disposition).not.toContain("中");
 
       const body = await response.text();
       expect(body).toBe(fileContents);
