@@ -136,6 +136,48 @@ describe("buildBrowserKeyboardPolicy", () => {
     });
   });
 
+  it("keeps Ctrl+W out of the window menu after the tab-close shortcut is remapped", () => {
+    const bindings = buildEffectiveBindings({
+      "workspace-tab-close-current-ctrl-w-non-mac": "Ctrl+Y",
+    });
+
+    const policy = buildBrowserKeyboardPolicy({ bindings, isMac: false, isDesktop: true });
+
+    expect(policy.prefixes).not.toContainEqual({
+      alt: false,
+      code: "KeyW",
+      control: true,
+      key: "w",
+      meta: false,
+      shift: false,
+    });
+    expect(policy.menuPrefixes).toContainEqual({
+      alt: false,
+      code: "KeyW",
+      control: true,
+      key: "w",
+      meta: false,
+      shift: false,
+    });
+  });
+
+  it("leaves macOS browser back and forward shortcuts in the guest", () => {
+    const bindings = buildEffectiveBindings({});
+
+    const policy = buildBrowserKeyboardPolicy({ bindings, isMac: true, isDesktop: true });
+
+    for (const code of ["BracketLeft", "BracketRight"]) {
+      expect(policy.prefixes).not.toContainEqual({
+        alt: false,
+        code,
+        control: false,
+        key: code === "BracketLeft" ? "[" : "]",
+        meta: true,
+        shift: false,
+      });
+    }
+  });
+
   it("does not publish plain browser keys", () => {
     const bindings = buildEffectiveBindings({});
     const policy = buildBrowserKeyboardPolicy({ bindings, isMac: false, isDesktop: true });

@@ -104,8 +104,22 @@ function prefixFromCombo(combo: KeyCombo, isMac: boolean): BrowserShortcutPrefix
   return prefix.meta || prefix.control || prefix.alt ? prefix : null;
 }
 
+function isBrowserNativeNavigationPrefix(prefix: BrowserShortcutPrefix, isMac: boolean): boolean {
+  return (
+    isMac &&
+    prefix.meta &&
+    !prefix.control &&
+    !prefix.alt &&
+    !prefix.shift &&
+    (prefix.code === "BracketLeft" || prefix.code === "BracketRight")
+  );
+}
+
 function canCrossBrowserBoundary(binding: ParsedShortcutBinding, isMac: boolean): boolean {
-  return binding.parsedChord.every((combo) => prefixFromCombo(combo, isMac) !== null);
+  return binding.parsedChord.every((combo) => {
+    const prefix = prefixFromCombo(combo, isMac);
+    return prefix !== null && !isBrowserNativeNavigationPrefix(prefix, isMac);
+  });
 }
 
 function prefixKey(prefix: BrowserShortcutPrefix): string {
@@ -165,10 +179,24 @@ function buildBrowserShortcutPrefixes(input: BrowserShortcutPolicyInput): Browse
 export function buildBrowserKeyboardPolicy(
   input: BrowserShortcutPolicyInput,
 ): BrowserKeyboardPolicy {
-  const menuPrefixes = buildBrowserShortcutPrefixes({ ...input, chordState: undefined });
+  const idlePrefixes = buildBrowserShortcutPrefixes({ ...input, chordState: undefined });
   const prefixes =
     input.chordState && input.chordState.step > 0
       ? buildBrowserShortcutPrefixes(input)
-      : menuPrefixes;
+      : idlePrefixes;
+  const menuPrefixes = [...idlePrefixes];
+  if (!input.isMac) {
+    const closeWindowGuard: BrowserShortcutPrefix = {
+      alt: false,
+      code: "KeyW",
+      control: true,
+      key: "w",
+      meta: false,
+      shift: false,
+    };
+    if (!menuPrefixes.some((prefix) => prefixKey(prefix) === prefixKey(closeWindowGuard))) {
+      menuPrefixes.push(closeWindowGuard);
+    }
+  }
   return { menuPrefixes, prefixes };
 }
