@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, type ComponentType, type ReactElement, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { type PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -12,6 +12,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { ContextMenuContent, ContextMenuItem } from "@/components/ui/context-menu";
 import { Shortcut } from "@/components/ui/shortcut";
 
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
@@ -45,7 +46,7 @@ function renderTriggerIcon({ hovered }: { hovered?: boolean }) {
   );
 }
 
-interface SidebarWorkspaceMenuProps {
+export interface SidebarWorkspaceMenuProps {
   workspaceKey: string;
   onCopyPath?: () => void;
   onCopyBranchName?: () => void;
@@ -58,6 +59,98 @@ interface SidebarWorkspaceMenuProps {
   archiveShortcutKeys?: ShortcutKey[][] | null;
   isPinned?: boolean;
   onTogglePin?: () => void;
+}
+
+interface SidebarWorkspaceMenuItemProps {
+  children: ReactNode;
+  testID: string;
+  leading: ReactElement;
+  trailing?: ReactElement | null;
+  onSelect: () => void;
+  status?: "idle" | "pending" | "success";
+  pendingLabel?: string;
+}
+
+function SidebarWorkspaceMenuItems({
+  workspaceKey,
+  onCopyPath,
+  onCopyBranchName,
+  onRename,
+  onMarkAsRead,
+  onArchive,
+  archiveLabel,
+  archiveStatus,
+  archivePendingLabel,
+  archiveShortcutKeys,
+  isPinned,
+  onTogglePin,
+  Item,
+}: SidebarWorkspaceMenuProps & { Item: ComponentType<SidebarWorkspaceMenuItemProps> }) {
+  const { t } = useTranslation();
+  const archiveTrailing = useMemo(
+    () => (archiveShortcutKeys && !isNative ? <Shortcut chord={archiveShortcutKeys} /> : null),
+    [archiveShortcutKeys],
+  );
+
+  return (
+    <>
+      {onCopyPath ? (
+        <Item
+          testID={`sidebar-workspace-menu-copy-path-${workspaceKey}`}
+          leading={copyLeadingIcon}
+          onSelect={onCopyPath}
+        >
+          {t("sidebar.workspace.actions.copyPath")}
+        </Item>
+      ) : null}
+      {onCopyBranchName ? (
+        <Item
+          testID={`sidebar-workspace-menu-copy-branch-name-${workspaceKey}`}
+          leading={copyLeadingIcon}
+          onSelect={onCopyBranchName}
+        >
+          {t("sidebar.workspace.actions.copyBranchName")}
+        </Item>
+      ) : null}
+      {onRename ? (
+        <Item
+          testID={`sidebar-workspace-menu-rename-${workspaceKey}`}
+          leading={renameLeadingIcon}
+          onSelect={onRename}
+        >
+          {t("sidebar.workspace.actions.rename")}
+        </Item>
+      ) : null}
+      {onMarkAsRead ? (
+        <Item
+          testID={`sidebar-workspace-menu-mark-as-read-${workspaceKey}`}
+          leading={markAsReadLeadingIcon}
+          onSelect={onMarkAsRead}
+        >
+          Mark as read
+        </Item>
+      ) : null}
+      {onTogglePin ? (
+        <Item
+          testID={`sidebar-workspace-menu-pin-${workspaceKey}`}
+          leading={isPinned ? unpinLeadingIcon : pinLeadingIcon}
+          onSelect={onTogglePin}
+        >
+          {isPinned ? t("sidebar.workspace.actions.unpin") : t("sidebar.workspace.actions.pin")}
+        </Item>
+      ) : null}
+      <Item
+        testID={`sidebar-workspace-menu-archive-${workspaceKey}`}
+        leading={archiveLeadingIcon}
+        trailing={archiveTrailing}
+        status={archiveStatus}
+        pendingLabel={archivePendingLabel}
+        onSelect={onArchive}
+      >
+        {archiveLabel ?? t("sidebar.workspace.actions.archive")}
+      </Item>
+    </>
+  );
 }
 
 export function SidebarWorkspaceMenu({
@@ -75,10 +168,6 @@ export function SidebarWorkspaceMenu({
   onTogglePin,
 }: SidebarWorkspaceMenuProps) {
   const { t } = useTranslation();
-  const archiveTrailing = useMemo(
-    () => (archiveShortcutKeys && !isNative ? <Shortcut chord={archiveShortcutKeys} /> : null),
-    [archiveShortcutKeys],
-  );
 
   return (
     <DropdownMenu>
@@ -92,63 +181,31 @@ export function SidebarWorkspaceMenu({
         {renderTriggerIcon}
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" width={260}>
-        {onCopyPath ? (
-          <DropdownMenuItem
-            testID={`sidebar-workspace-menu-copy-path-${workspaceKey}`}
-            leading={copyLeadingIcon}
-            onSelect={onCopyPath}
-          >
-            {t("sidebar.workspace.actions.copyPath")}
-          </DropdownMenuItem>
-        ) : null}
-        {onCopyBranchName ? (
-          <DropdownMenuItem
-            testID={`sidebar-workspace-menu-copy-branch-name-${workspaceKey}`}
-            leading={copyLeadingIcon}
-            onSelect={onCopyBranchName}
-          >
-            {t("sidebar.workspace.actions.copyBranchName")}
-          </DropdownMenuItem>
-        ) : null}
-        {onRename ? (
-          <DropdownMenuItem
-            testID={`sidebar-workspace-menu-rename-${workspaceKey}`}
-            leading={renameLeadingIcon}
-            onSelect={onRename}
-          >
-            {t("sidebar.workspace.actions.rename")}
-          </DropdownMenuItem>
-        ) : null}
-        {onMarkAsRead ? (
-          <DropdownMenuItem
-            testID={`sidebar-workspace-menu-mark-as-read-${workspaceKey}`}
-            leading={markAsReadLeadingIcon}
-            onSelect={onMarkAsRead}
-          >
-            Mark as read
-          </DropdownMenuItem>
-        ) : null}
-        {onTogglePin ? (
-          <DropdownMenuItem
-            testID={`sidebar-workspace-menu-pin-${workspaceKey}`}
-            leading={isPinned ? unpinLeadingIcon : pinLeadingIcon}
-            onSelect={onTogglePin}
-          >
-            {isPinned ? t("sidebar.workspace.actions.unpin") : t("sidebar.workspace.actions.pin")}
-          </DropdownMenuItem>
-        ) : null}
-        <DropdownMenuItem
-          testID={`sidebar-workspace-menu-archive-${workspaceKey}`}
-          leading={archiveLeadingIcon}
-          trailing={archiveTrailing}
-          status={archiveStatus}
-          pendingLabel={archivePendingLabel}
-          onSelect={onArchive}
-        >
-          {archiveLabel ?? t("sidebar.workspace.actions.archive")}
-        </DropdownMenuItem>
+        <SidebarWorkspaceMenuItems
+          workspaceKey={workspaceKey}
+          onCopyPath={onCopyPath}
+          onCopyBranchName={onCopyBranchName}
+          onRename={onRename}
+          onMarkAsRead={onMarkAsRead}
+          onArchive={onArchive}
+          archiveLabel={archiveLabel}
+          archiveStatus={archiveStatus}
+          archivePendingLabel={archivePendingLabel}
+          archiveShortcutKeys={archiveShortcutKeys}
+          isPinned={isPinned}
+          onTogglePin={onTogglePin}
+          Item={DropdownMenuItem}
+        />
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+}
+
+export function SidebarWorkspaceContextMenu(props: SidebarWorkspaceMenuProps) {
+  return (
+    <ContextMenuContent align="start" width={260}>
+      <SidebarWorkspaceMenuItems {...props} Item={ContextMenuItem} />
+    </ContextMenuContent>
   );
 }
 

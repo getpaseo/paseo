@@ -75,7 +75,7 @@ import {
 import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
 import { useSidebarViewStore } from "@/stores/sidebar-view-store";
 import { useShowShortcutBadges } from "@/hooks/use-show-shortcut-badges";
-import { ContextMenuTrigger, useContextMenu } from "@/components/ui/context-menu";
+import { ContextMenu, ContextMenuTrigger, useContextMenu } from "@/components/ui/context-menu";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -94,7 +94,10 @@ import { isEmphasizedStatusDotBucket } from "@/utils/status-dot-color";
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { SidebarStatusWorkspaceList } from "@/components/sidebar/sidebar-status-list";
 import type { StatusGroup } from "@/hooks/sidebar-status-view-model";
-import { SidebarWorkspaceMenu } from "@/components/sidebar/sidebar-workspace-menu";
+import {
+  SidebarWorkspaceContextMenu,
+  SidebarWorkspaceMenu,
+} from "@/components/sidebar/sidebar-workspace-menu";
 import { PinnedSectionHeader } from "@/components/sidebar/pinned-section-header";
 import {
   SidebarWorkspaceRowFrame,
@@ -1338,6 +1341,7 @@ function WorkspaceRowInner({
   onCopyBranchName,
   onCopyPath,
   onRename,
+  onMarkAsRead,
   archiveShortcutKeys,
   isPinned,
   onTogglePin,
@@ -1364,80 +1368,105 @@ function WorkspaceRowInner({
     onPress();
   }, [interaction.didLongPressRef, onPress]);
 
+  const [isContextMenuOpen, setIsContextMenuOpen] = useState(false);
   const accessibilityState = useMemo(() => ({ selected }), [selected]);
 
   return (
-    <SidebarWorkspaceRowFrame workspace={workspace} isDragging={isDragging}>
-      {({ isHovered, hoverHandlers }) => {
-        const isDesktop = !isTouchPlatform;
-        const showScriptsIcon = isDesktop && workspace.hasRunningScripts;
-        const hasRunningService = workspace.scripts.some(
-          (s) => s.lifecycle === "running" && (s.type ?? "service") === "service",
-        );
-        let scriptIconKind: "service" | "command" | null = null;
-        if (showScriptsIcon) {
-          scriptIconKind = hasRunningService ? "service" : "command";
-        }
-        const workspaceRowStyle = getProjectWorkspaceRowStyle({
-          isDragging,
-          selected,
-          isHovered,
-        });
-        return (
-          <View
-            {...dragAttributes}
-            {...dragHandleProps?.listeners}
-            ref={dragHandleProps?.setActivatorNodeRef as unknown as Ref<View>}
-            style={styles.workspaceRowContainer}
-            {...hoverHandlers}
-          >
-            <Pressable
-              disabled={isArchiving}
-              aria-selected={selected}
-              accessibilityRole="button"
-              accessibilityState={accessibilityState}
-              style={workspaceRowStyle}
-              onPressIn={interaction.handlePressIn}
-              onTouchMove={interaction.handleTouchMove}
-              onPressOut={interaction.handlePressOut}
-              onPress={handlePress}
-              testID={`sidebar-workspace-row-${workspace.workspaceKey}`}
+    <ContextMenu open={isContextMenuOpen} onOpenChange={setIsContextMenuOpen}>
+      <SidebarWorkspaceRowFrame
+        workspace={workspace}
+        isDragging={isDragging}
+        isContextMenuOpen={isContextMenuOpen}
+      >
+        {({ isActive, hoverHandlers }) => {
+          const isDesktop = !isTouchPlatform;
+          const showScriptsIcon = isDesktop && workspace.hasRunningScripts;
+          const hasRunningService = workspace.scripts.some(
+            (s) => s.lifecycle === "running" && (s.type ?? "service") === "service",
+          );
+          let scriptIconKind: "service" | "command" | null = null;
+          if (showScriptsIcon) {
+            scriptIconKind = hasRunningService ? "service" : "command";
+          }
+          const workspaceRowStyle = getProjectWorkspaceRowStyle({
+            isDragging,
+            selected,
+            isHovered: isActive,
+          });
+          return (
+            <View
+              {...dragAttributes}
+              {...dragHandleProps?.listeners}
+              ref={dragHandleProps?.setActivatorNodeRef as unknown as Ref<View>}
+              style={styles.workspaceRowContainer}
+              {...hoverHandlers}
             >
-              <SidebarWorkspaceRowContent
-                workspace={workspace}
-                subtitle={subtitle}
-                scriptIconKind={scriptIconKind}
-                isHovered={isHovered}
-                isLoading={isArchiving || isCreating}
-                isCreating={isCreating}
-                shortcutNumber={shortcutNumber}
-                showShortcutBadge={showShortcutBadge}
-                reserveIdleStatusIndicatorSpace={reserveIdleStatusIndicatorSpace}
+              <ContextMenuTrigger
+                enabledOnMobile={false}
+                disabled={isArchiving}
+                aria-selected={selected}
+                accessibilityRole="button"
+                accessibilityState={accessibilityState}
+                style={workspaceRowStyle}
+                onPressIn={interaction.handlePressIn}
+                onTouchMove={interaction.handleTouchMove}
+                onPressOut={interaction.handlePressOut}
+                onPress={handlePress}
+                testID={`sidebar-workspace-row-${workspace.workspaceKey}`}
               >
-                <WorkspaceRowRightGroup
+                <SidebarWorkspaceRowContent
                   workspace={workspace}
-                  isHovered={isHovered}
-                  isTouchPlatform={isTouchPlatform}
+                  subtitle={subtitle}
+                  scriptIconKind={scriptIconKind}
+                  isHovered={isActive}
+                  isLoading={isArchiving || isCreating}
                   isCreating={isCreating}
-                  showShortcutBadge={showShortcutBadge}
                   shortcutNumber={shortcutNumber}
-                  archiveLabel={archiveLabel}
-                  archiveStatus={archiveStatus}
-                  archivePendingLabel={archivePendingLabel}
-                  archiveShortcutKeys={archiveShortcutKeys}
-                  onArchive={onArchive}
-                  onCopyBranchName={onCopyBranchName}
-                  onCopyPath={onCopyPath}
-                  onRename={onRename}
-                  isPinned={isPinned}
-                  onTogglePin={onTogglePin}
-                />
-              </SidebarWorkspaceRowContent>
-            </Pressable>
-          </View>
-        );
-      }}
-    </SidebarWorkspaceRowFrame>
+                  showShortcutBadge={showShortcutBadge}
+                  reserveIdleStatusIndicatorSpace={reserveIdleStatusIndicatorSpace}
+                >
+                  <WorkspaceRowRightGroup
+                    workspace={workspace}
+                    isHovered={isActive}
+                    isTouchPlatform={isTouchPlatform}
+                    isCreating={isCreating}
+                    showShortcutBadge={showShortcutBadge}
+                    shortcutNumber={shortcutNumber}
+                    archiveLabel={archiveLabel}
+                    archiveStatus={archiveStatus}
+                    archivePendingLabel={archivePendingLabel}
+                    archiveShortcutKeys={archiveShortcutKeys}
+                    onArchive={onArchive}
+                    onCopyBranchName={onCopyBranchName}
+                    onCopyPath={onCopyPath}
+                    onRename={onRename}
+                    onMarkAsRead={onMarkAsRead}
+                    isPinned={isPinned}
+                    onTogglePin={onTogglePin}
+                  />
+                </SidebarWorkspaceRowContent>
+              </ContextMenuTrigger>
+            </View>
+          );
+        }}
+      </SidebarWorkspaceRowFrame>
+      {onArchive ? (
+        <SidebarWorkspaceContextMenu
+          workspaceKey={workspace.workspaceKey}
+          onCopyPath={onCopyPath}
+          onCopyBranchName={onCopyBranchName}
+          onRename={onRename}
+          onMarkAsRead={onMarkAsRead}
+          onArchive={onArchive}
+          archiveLabel={archiveLabel}
+          archiveStatus={archiveStatus}
+          archivePendingLabel={archivePendingLabel}
+          archiveShortcutKeys={archiveShortcutKeys}
+          isPinned={isPinned}
+          onTogglePin={onTogglePin}
+        />
+      ) : null}
+    </ContextMenu>
   );
 }
 

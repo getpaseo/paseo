@@ -40,9 +40,13 @@ import {
   SidebarWorkspaceTrailingActionSlot,
 } from "@/components/sidebar/sidebar-workspace-row-content";
 import { useSidebarCollapsedSectionsStore } from "@/stores/sidebar-collapsed-sections-store";
-import { SidebarWorkspaceMenu } from "@/components/sidebar/sidebar-workspace-menu";
+import {
+  SidebarWorkspaceContextMenu,
+  SidebarWorkspaceMenu,
+} from "@/components/sidebar/sidebar-workspace-menu";
 import { PinnedSectionHeader } from "@/components/sidebar/pinned-section-header";
 import type { ToggleSidebarWorkspacePin } from "@/hooks/use-sidebar-workspace-pin";
+import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
 
 // Themed icon wrappers
 const foregroundMutedColorMapping = (theme: Theme) => ({
@@ -580,60 +584,83 @@ function StatusWorkspaceRowInner({
     scriptIconKind = hasRunningService ? "service" : "command";
   }
 
+  const [isContextMenuOpen, setIsContextMenuOpen] = useState(false);
   const accessibilityState = useMemo(() => ({ selected }), [selected]);
 
   return (
-    <SidebarWorkspaceRowFrame workspace={workspace}>
-      {({ isHovered, hoverHandlers }) => {
-        const showShortcut = showShortcutBadge && shortcutNumber !== null;
-        const showKebab = Boolean(onArchive && (isHovered || isTouchPlatform));
-        const showKebabInSlot = showKebab && !showShortcut;
-        const shouldRenderActionSlot = Boolean(onArchive || workspace.diffStat);
-        const workspaceRowStyle = getStatusWorkspaceRowStyle({ selected, isHovered });
-        return (
-          <View style={styles.workspaceRowContainer} {...hoverHandlers}>
-            <Pressable
-              disabled={isArchiving}
-              accessibilityRole="button"
-              accessibilityState={accessibilityState}
-              style={workspaceRowStyle}
-              onPress={onPress}
-              testID={`sidebar-workspace-row-${workspace.workspaceKey}`}
-            >
-              <SidebarWorkspaceRowContent
-                workspace={workspace}
-                subtitle={subtitle}
-                scriptIconKind={scriptIconKind}
-                isHovered={isHovered}
-                isLoading={isArchiving}
-                shortcutNumber={shortcutNumber}
-                showShortcutBadge={showShortcutBadge}
-                reserveIdleStatusIndicatorSpace={reserveIdleStatusIndicatorSpace}
+    <ContextMenu open={isContextMenuOpen} onOpenChange={setIsContextMenuOpen}>
+      <SidebarWorkspaceRowFrame workspace={workspace} isContextMenuOpen={isContextMenuOpen}>
+        {({ isActive, hoverHandlers }) => {
+          const showShortcut = showShortcutBadge && shortcutNumber !== null;
+          const showKebab = Boolean(onArchive && (isActive || isTouchPlatform));
+          const showKebabInSlot = showKebab && !showShortcut;
+          const shouldRenderActionSlot = Boolean(onArchive || workspace.diffStat);
+          const workspaceRowStyle = getStatusWorkspaceRowStyle({
+            selected,
+            isHovered: isActive,
+          });
+          return (
+            <View style={styles.workspaceRowContainer} {...hoverHandlers}>
+              <ContextMenuTrigger
+                enabledOnMobile={false}
+                disabled={isArchiving}
+                accessibilityRole="button"
+                accessibilityState={accessibilityState}
+                style={workspaceRowStyle}
+                onPress={onPress}
+                testID={`sidebar-workspace-row-${workspace.workspaceKey}`}
               >
-                {shouldRenderActionSlot ? (
-                  <StatusWorkspaceActionSlot
-                    workspace={workspace}
-                    showBase={Boolean(workspace.diffStat && !showKebabInSlot && !showShortcut)}
-                    showKebab={showKebabInSlot}
-                    isPinned={isPinned}
-                    onTogglePin={onTogglePin}
-                    onCopyPath={onCopyPath}
-                    onCopyBranchName={onCopyBranchName}
-                    onRename={onRename}
-                    onMarkAsRead={onMarkAsRead}
-                    onArchive={onArchive}
-                    archiveLabel={archiveLabel}
-                    archiveStatus={archiveStatus}
-                    archivePendingLabel={archivePendingLabel}
-                    archiveShortcutKeys={archiveShortcutKeys}
-                  />
-                ) : null}
-              </SidebarWorkspaceRowContent>
-            </Pressable>
-          </View>
-        );
-      }}
-    </SidebarWorkspaceRowFrame>
+                <SidebarWorkspaceRowContent
+                  workspace={workspace}
+                  subtitle={subtitle}
+                  scriptIconKind={scriptIconKind}
+                  isHovered={isActive}
+                  isLoading={isArchiving}
+                  shortcutNumber={shortcutNumber}
+                  showShortcutBadge={showShortcutBadge}
+                  reserveIdleStatusIndicatorSpace={reserveIdleStatusIndicatorSpace}
+                >
+                  {shouldRenderActionSlot ? (
+                    <StatusWorkspaceActionSlot
+                      workspace={workspace}
+                      showBase={Boolean(workspace.diffStat && !showKebabInSlot && !showShortcut)}
+                      showKebab={showKebabInSlot}
+                      isPinned={isPinned}
+                      onTogglePin={onTogglePin}
+                      onCopyPath={onCopyPath}
+                      onCopyBranchName={onCopyBranchName}
+                      onRename={onRename}
+                      onMarkAsRead={onMarkAsRead}
+                      onArchive={onArchive}
+                      archiveLabel={archiveLabel}
+                      archiveStatus={archiveStatus}
+                      archivePendingLabel={archivePendingLabel}
+                      archiveShortcutKeys={archiveShortcutKeys}
+                    />
+                  ) : null}
+                </SidebarWorkspaceRowContent>
+              </ContextMenuTrigger>
+            </View>
+          );
+        }}
+      </SidebarWorkspaceRowFrame>
+      {onArchive ? (
+        <SidebarWorkspaceContextMenu
+          workspaceKey={workspace.workspaceKey}
+          onCopyPath={onCopyPath}
+          onCopyBranchName={onCopyBranchName}
+          onRename={onRename}
+          onMarkAsRead={onMarkAsRead}
+          onArchive={onArchive}
+          archiveLabel={archiveLabel}
+          archiveStatus={archiveStatus}
+          archivePendingLabel={archivePendingLabel}
+          archiveShortcutKeys={archiveShortcutKeys}
+          isPinned={isPinned}
+          onTogglePin={onTogglePin}
+        />
+      ) : null}
+    </ContextMenu>
   );
 }
 

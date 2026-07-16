@@ -67,12 +67,15 @@ type SidebarWorkspaceScriptIconKind = "service" | "command";
 export function SidebarWorkspaceRowFrame({
   workspace,
   isDragging = false,
+  isContextMenuOpen = false,
   children,
 }: {
   workspace: SidebarWorkspaceEntry;
   isDragging?: boolean;
+  isContextMenuOpen?: boolean;
   children: (input: {
     isHovered: boolean;
+    isActive: boolean;
     hoverHandlers: { onPointerEnter: () => void; onPointerLeave: () => void };
   }) => ReactNode;
 }) {
@@ -86,7 +89,7 @@ export function SidebarWorkspaceRowFrame({
 
   return (
     <WorkspaceHoverCard workspace={workspace} prHint={workspace.prHint} isDragging={isDragging}>
-      {children({ isHovered, hoverHandlers })}
+      {children({ isHovered, isActive: isHovered || isContextMenuOpen, hoverHandlers })}
     </WorkspaceHoverCard>
   );
 }
