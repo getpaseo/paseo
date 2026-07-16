@@ -143,6 +143,7 @@ const SHORTCUT_HELP_LABEL_KEYS: Record<string, string> = {
   "workspace-pane-close": "settings.shortcuts.help.closePane",
   "workspace-terminal-new": "settings.shortcuts.help.newTerminal",
   "toggle-command-center": "settings.shortcuts.help.toggleCommandCenter",
+  "file-find": "settings.shortcuts.help.findInFile",
   "show-shortcuts": "settings.shortcuts.help.showKeyboardShortcuts",
   "toggle-left-sidebar": "settings.shortcuts.help.toggleLeftSidebar",
   "toggle-right-sidebar": "settings.shortcuts.help.toggleRightSidebar",
@@ -686,6 +687,34 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       section: "panels",
       label: "New terminal",
       keys: ["mod", "shift", "T"],
+    },
+  },
+
+  // --- Find in file ---
+  // When no file pane is focused the dispatcher finds no handler, the event is
+  // not consumed, and the browser's native find-in-page keeps working.
+  {
+    id: "file-find-cmd-f-mac",
+    action: "file.find",
+    combo: "Cmd+F",
+    when: { mac: true, commandCenter: false },
+    help: {
+      id: "file-find",
+      section: "panels",
+      label: "Find in file",
+      keys: ["mod", "F"],
+    },
+  },
+  {
+    id: "file-find-ctrl-f-non-mac",
+    action: "file.find",
+    combo: "Ctrl+F",
+    when: { mac: false, commandCenter: false, terminal: false },
+    help: {
+      id: "file-find",
+      section: "panels",
+      label: "Find in file",
+      keys: ["mod", "F"],
     },
   },
 

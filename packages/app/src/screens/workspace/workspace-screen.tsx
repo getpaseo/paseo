@@ -30,6 +30,7 @@ import {
   PanelRight,
   Pencil,
   RotateCw,
+  Search,
   Settings,
   SquarePen,
   SquareTerminal,
@@ -82,8 +83,12 @@ import {
 } from "@/stores/workspace-layout-store";
 import type { WorkspaceTab, WorkspaceTabTarget } from "@/stores/workspace-tabs-store";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
-import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
+import {
+  keyboardActionDispatcher,
+  type KeyboardActionDefinition,
+} from "@/keyboard/keyboard-action-dispatcher";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
+import { useFileFindCapabilityStore } from "@/stores/file-find-capability-store";
 import {
   buildDeterministicWorkspaceTabId,
   normalizeWorkspaceTabTarget,
@@ -236,6 +241,7 @@ const ThemedActivityIndicator = withUnistyles(ActivityIndicator);
 const ThemedEllipsis = withUnistyles(Ellipsis);
 const ThemedEllipsisVertical = withUnistyles(EllipsisVertical);
 const ThemedChevronDown = withUnistyles(ChevronDown);
+const ThemedSearch = withUnistyles(Search);
 const ThemedCopy = withUnistyles(Copy);
 const ThemedRotateCw = withUnistyles(RotateCw);
 const ThemedArrowLeftToLine = withUnistyles(ArrowLeftToLine);
@@ -501,6 +507,21 @@ function switcherTriggerStyle({ pressed }: { pressed?: boolean }) {
   return [styles.switcherTrigger, Boolean(pressed) && styles.switcherTriggerPressed];
 }
 
+function mobileFileFindTriggerStyle({ pressed }: { pressed?: boolean }) {
+  return [styles.mobileTabMenuTrigger, Boolean(pressed) && styles.mobileTabMenuTriggerActive];
+}
+
+function switcherChevronStyle({ pressed }: { pressed?: boolean }) {
+  return [styles.switcherChevron, Boolean(pressed) && styles.switcherTriggerPressed];
+}
+
+// The tabs-row find button lives outside the file pane's PaneFocusProvider, so
+// it reuses the keyboard action: the visible file pane's registered handler
+// picks it up, exactly like Cmd+F does on desktop.
+function openActiveFileFind() {
+  keyboardActionDispatcher.dispatch({ id: "file.find", scope: "workspace" });
+}
+
 function MobileTabTrailingAccessory({
   menuTestIDBase,
   presentationLabel,
@@ -721,6 +742,13 @@ const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitcher({
   const { t } = useTranslation();
   const [isOpen, setIsOpen] = useState(false);
   const anchorRef = useRef<View>(null);
+  // Only offer find-in-file when the active file pane reports searchable
+  // content — file tabs also cover rendered markdown, images, and binaries,
+  // where the find action would be a silent no-op.
+  const activeFileTabId = activeTab?.kind === "file" ? activeTab.tabId : null;
+  const showFileFindTrigger = useFileFindCapabilityStore(
+    (state) => activeFileTabId !== null && state.findableTabIds[activeFileTabId] === true,
+  );
   const tabIndexByKey = useMemo(() => {
     const map = new Map<string, number>();
     tabs.forEach((tab, index) => {
@@ -811,6 +839,30 @@ const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitcher({
             normalizedWorkspaceId={normalizedWorkspaceId}
           />
         </View>
+      </Pressable>
+
+      {showFileFindTrigger ? (
+        <Pressable
+          testID="workspace-file-find-trigger"
+          accessibilityRole="button"
+          accessibilityLabel={t("panels.file.find.open")}
+          hitSlop={8}
+          style={mobileFileFindTriggerStyle}
+          onPress={openActiveFileFind}
+        >
+          <ThemedSearch size={16} uniProps={mutedColorMapping} />
+        </Pressable>
+      ) : null}
+
+      {/* Same action as the main trigger; hidden from assistive tech so the
+          switcher is announced once. Keeps the chevron tappable now that the
+          find trigger sits between it and the label. */}
+      <Pressable
+        accessible={false}
+        focusable={false}
+        style={switcherChevronStyle}
+        onPress={handleOpenSwitcher}
+      >
         <ThemedChevronDown size={14} uniProps={mutedColorMapping} />
       </Pressable>
 
@@ -3889,16 +3941,27 @@ const styles = StyleSheet.create((theme) => ({
   },
   explorerTooltipShortcut: {},
   mobileTabsRow: {
+    flexDirection: "row",
+    alignItems: "center",
     backgroundColor: theme.colors.surface0,
     borderBottomWidth: theme.borderWidth[1],
     borderBottomColor: theme.colors.border,
   },
   switcherTrigger: {
+    flex: 1,
+    minWidth: 0,
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
-    paddingHorizontal: theme.spacing[2] + theme.spacing[3],
+    paddingLeft: theme.spacing[2] + theme.spacing[3],
+    paddingRight: theme.spacing[2],
     paddingVertical: theme.spacing[2],
+  },
+  switcherChevron: {
+    alignSelf: "stretch",
+    justifyContent: "center",
+    paddingLeft: theme.spacing[2],
+    paddingRight: theme.spacing[2] + theme.spacing[3],
   },
   switcherTriggerPressed: {
     backgroundColor: theme.colors.surface1,

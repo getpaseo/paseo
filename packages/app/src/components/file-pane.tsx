@@ -9,11 +9,12 @@ import {
   View,
 } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import Animated from "react-native-reanimated";
 import { useTranslation } from "react-i18next";
 import { MarkdownRenderer } from "@/components/markdown/renderer";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useSessionStore, type ExplorerFile } from "@/stores/session-store";
-import { highlightCode, type HighlightToken } from "@getpaseo/highlight";
+import { highlightCode } from "@getpaseo/highlight";
 import { syntaxTokenStyleFor } from "@/styles/syntax-token-styles";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { lineNumberGutterWidth } from "@/components/code-insets";
@@ -29,12 +30,18 @@ import type { WorkspaceFileLocation } from "@/workspace/file-open";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useAppVisible } from "@/hooks/use-app-visible";
 import { isFileQueryEnabled } from "@/components/file-pane-enabled";
+import { FileFindBar } from "@/components/file-find-bar";
+import type { FileFindToken } from "@/components/file-find";
+import { useFileFind } from "@/components/use-file-find";
+import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
 
 interface CodeLineProps {
-  tokens: HighlightToken[];
+  tokens: FileFindToken[];
   lineNumber: number;
   gutterWidth: number;
   highlighted: boolean;
+  /** Set on the active find match's line so scrolling can measure it. */
+  rowRef?: React.Ref<View>;
 }
 
 interface FilePreviewBodyProps {
@@ -51,6 +58,14 @@ function trimNonEmpty(value: string | null | undefined): string | null {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+/** Content the find bar can search: code views only, never rendered markdown. */
+function findableContent(preview: ExplorerFile | null, isMarkdownFile: boolean): string | null {
+  if (!preview || preview.kind !== "text" || isMarkdownFile) {
+    return null;
+  }
+  return preview.content ?? "";
 }
 
 interface FileLineSelection {
@@ -120,6 +135,7 @@ const CodeLine = React.memo(function CodeLine({
   lineNumber,
   gutterWidth,
   highlighted,
+  rowRef,
 }: CodeLineProps) {
   const gutterStyle = useMemo(
     () => [codeLineStyles.gutter, inlineUnistylesStyle({ width: gutterWidth })],
@@ -134,7 +150,7 @@ const CodeLine = React.memo(function CodeLine({
     [tokens],
   );
   return (
-    <View style={lineStyle}>
+    <View ref={rowRef} style={lineStyle}>
       <View style={gutterStyle}>
         <Text numberOfLines={1} style={codeLineStyles.gutterText}>
           {String(lineNumber)}
@@ -150,11 +166,27 @@ const CodeLine = React.memo(function CodeLine({
 });
 
 interface CodeLineTokenProps {
-  token: HighlightToken;
+  token: FileFindToken;
+}
+
+function findHighlightStyle(find: FileFindToken["find"]) {
+  if (find === "active") {
+    return codeLineStyles.findMatchActive;
+  }
+  if (find === "match") {
+    return codeLineStyles.findMatch;
+  }
+  return null;
 }
 
 function CodeLineToken({ token }: CodeLineTokenProps) {
-  return <Text style={syntaxTokenStyleFor(token.style)}>{token.text}</Text>;
+  const syntaxStyle = syntaxTokenStyleFor(token.style);
+  const findStyle = findHighlightStyle(token.find);
+  const style = useMemo(
+    () => (findStyle ? [syntaxStyle, findStyle] : syntaxStyle),
+    [findStyle, syntaxStyle],
+  );
+  return <Text style={style}>{token.text}</Text>;
 }
 
 const codeLineStyles = StyleSheet.create((theme) => ({
@@ -182,6 +214,12 @@ const codeLineStyles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.code,
     lineHeight: theme.fontSize.code * 1.45,
     flex: 1,
+  },
+  findMatch: {
+    backgroundColor: theme.colors.findMatch,
+  },
+  findMatchActive: {
+    backgroundColor: theme.colors.findMatchActive,
   },
 }));
 
@@ -242,6 +280,26 @@ function FilePreviewBody({
     return () => clearTimeout(timeout);
   }, [lineHeight, lineSelection]);
 
+  // Find in file (#1437). Content is non-null only for code views, so the
+  // hook's keyboard handler falls through (native browser find) elsewhere.
+  const find = useFileFind({
+    content: findableContent(preview, isMarkdownFile),
+    highlightedLines,
+    previewScrollRef,
+    gutterWidth,
+    lineHeight,
+    codeFontSize: theme.fontSize.code,
+    contentPadding: theme.spacing[4],
+  });
+
+  // While the docked find bar has the software keyboard up, this spacer adds
+  // scrollable room so matches near the end of the file can still be brought
+  // above the keyboard (the keyboard overlays the pane without resizing it).
+  const findKeyboardSpacer = useKeyboardShiftStyle({
+    mode: "padding",
+    enabled: isMobile && find.findOpen,
+  });
+
   if (isLoading && !preview) {
     return (
       <View style={styles.centerState}>
@@ -275,7 +333,7 @@ function FilePreviewBody({
       );
     }
 
-    const lines = highlightedLines ?? [[{ text: preview.content ?? "", style: null }]];
+    const lines = find.displayLines ?? [[{ text: preview.content ?? "", style: null }]];
     const keyedLines = lines.map((tokens, index) => ({
       key: `line-${index}`,
       tokens,
@@ -294,31 +352,60 @@ function FilePreviewBody({
               lineNumber >= (lineSelection?.lineStart ?? 0) &&
               lineNumber <= (lineSelection?.lineEnd ?? 0)
             }
+            rowRef={lineNumber === find.activeFindLine ? find.activeFindLineRef : undefined}
           />
         ))}
       </View>
     );
 
+    const findBar = find.findOpen ? (
+      <FileFindBar
+        query={find.findQuery}
+        onQueryChange={find.handleFindQueryChange}
+        caseSensitive={find.findCaseSensitive}
+        onToggleCaseSensitive={find.toggleFindCaseSensitive}
+        matchCount={find.matchCount}
+        activeIndex={find.activeFindIndex}
+        onNext={find.handleFindNext}
+        onPrevious={find.handleFindPrevious}
+        onClose={find.closeFind}
+        inputRef={find.findInputRef}
+        docked={isMobile}
+      />
+    ) : null;
+
     return (
       <View style={styles.previewScrollContainer}>
+        {isMobile ? findBar : null}
         <RNScrollView
           ref={previewScrollRef}
           style={styles.previewContent}
+          onLayout={find.handleVerticalLayout}
+          onScroll={find.handleVerticalScroll}
+          scrollEventThrottle={16}
           showsVerticalScrollIndicator
         >
           {isMobile ? (
-            <View style={styles.previewCodeScrollContent}>{codeLines}</View>
+            <View style={styles.previewCodeScrollContent}>
+              {codeLines}
+              <Animated.View style={findKeyboardSpacer.style} />
+            </View>
           ) : (
             <RNScrollView
+              ref={find.horizontalScrollRef}
               horizontal
               nestedScrollEnabled
               showsHorizontalScrollIndicator
               contentContainerStyle={styles.previewCodeScrollContent}
+              onLayout={find.handleHorizontalLayout}
+              onScroll={find.handleHorizontalScroll}
+              scrollEventThrottle={16}
             >
               {codeLines}
             </RNScrollView>
           )}
         </RNScrollView>
+        {isMobile ? null : findBar}
       </View>
     );
   }
