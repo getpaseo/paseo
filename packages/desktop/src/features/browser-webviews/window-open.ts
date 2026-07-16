@@ -57,17 +57,24 @@ export function isAllowedBrowserWebviewUrl(value: string | undefined): boolean {
 export function decideBrowserWindowOpenRequest(input: {
   url: string;
   disposition: BrowserWindowOpenDisposition;
+  frameName: string;
+  features: string;
   hasPostBody: boolean;
 }): BrowserWindowOpenDecision {
   if (!isAllowedBrowserWebviewUrl(input.url)) {
     return { kind: "deny" };
   }
 
+  const hasNamedWindowTarget = input.frameName.length > 0 && input.frameName !== "_blank";
+  const isScriptPopup =
+    input.disposition === "new-window" &&
+    (input.features.trim().length > 0 || hasNamedWindowTarget);
+
   // A real popup preserves window.opener, postMessage, named-window reuse, and
   // window.close(). OAuth and payment flows depend on those browser contracts.
   // POST-backed opens must also remain real windows because a workspace tab can
   // only carry the URL and would silently turn the request into a GET.
-  if (input.disposition === "new-window" || input.hasPostBody) {
+  if (isScriptPopup || input.hasPostBody) {
     return { kind: "popup" };
   }
 

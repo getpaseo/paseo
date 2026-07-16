@@ -255,10 +255,12 @@ function installBrowserWindowOpenHandler(input: {
 }): void {
   const { contents, sourceContents, mainWindow } = input;
 
-  contents.setWindowOpenHandler(({ url, disposition, postBody }) => {
+  contents.setWindowOpenHandler(({ url, disposition, frameName, features, postBody }) => {
     const decision = decideBrowserWindowOpenRequest({
       url,
       disposition,
+      frameName,
+      features,
       hasPostBody: postBody !== undefined && postBody !== null,
     });
 

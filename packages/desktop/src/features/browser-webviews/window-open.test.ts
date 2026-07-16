@@ -7,6 +7,8 @@ describe("browser webview window-open requests", () => {
     const result = decideBrowserWindowOpenRequest({
       url: "https://example.com/target",
       disposition: "foreground-tab",
+      frameName: "_blank",
+      features: "",
       hasPostBody: false,
     });
 
@@ -17,16 +19,44 @@ describe("browser webview window-open requests", () => {
     const result = decideBrowserWindowOpenRequest({
       url: "https://login.example.com/signin",
       disposition: "new-window",
+      frameName: "oauth",
+      features: "width=500,height=600",
       hasPostBody: false,
     });
 
     expect(result).toEqual({ kind: "popup" });
   });
 
+  it("keeps named windows as real popups without a feature string", () => {
+    const result = decideBrowserWindowOpenRequest({
+      url: "https://login.example.com/signin",
+      disposition: "new-window",
+      frameName: "oauth",
+      features: "",
+      hasPostBody: false,
+    });
+
+    expect(result).toEqual({ kind: "popup" });
+  });
+
+  it("routes Shift-clicked links to a Paseo workspace tab", () => {
+    const result = decideBrowserWindowOpenRequest({
+      url: "https://example.com/target",
+      disposition: "new-window",
+      frameName: "",
+      features: "",
+      hasPostBody: false,
+    });
+
+    expect(result).toEqual({ kind: "workspace-tab", url: "https://example.com/target" });
+  });
+
   it("keeps POST-backed foreground tabs as real popups", () => {
     const result = decideBrowserWindowOpenRequest({
       url: "https://example.com/submit",
       disposition: "foreground-tab",
+      frameName: "_blank",
+      features: "",
       hasPostBody: true,
     });
 
@@ -37,6 +67,8 @@ describe("browser webview window-open requests", () => {
     const result = decideBrowserWindowOpenRequest({
       url: "file:///etc/passwd",
       disposition: "new-window",
+      frameName: "oauth",
+      features: "width=500,height=600",
       hasPostBody: false,
     });
 
