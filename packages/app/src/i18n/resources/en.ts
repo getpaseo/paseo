@@ -749,6 +749,7 @@ export const en = {
           fileDiffError: "Failed to load file diff",
           loading: "Loading commits…",
           loadError: "Failed to load commits",
+          empty: "No commits ahead of base",
         },
       },
       openInEditor: {

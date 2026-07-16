@@ -26,7 +26,7 @@ export const DEFAULT_CHANGES_PREFERENCES: ChangesPreferences = {
   viewMode: "flat",
   wrapLines: false,
   hideWhitespace: false,
-  commitsCollapsed: false,
+  commitsCollapsed: true,
 };
 
 export interface KeyValueStorage {

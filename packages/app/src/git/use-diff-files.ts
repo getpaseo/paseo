@@ -60,16 +60,17 @@ export function useCommitDiffFiles(ctx: CommitDiffFilesContext): CommitDiffFiles
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
   const commitsQuery = useCheckoutCommitsQuery({ serverId, cwd, enabled });
+  const commitsData = commitsQuery.status === "loaded" ? commitsQuery.data : null;
   const commitFiles = useMemo(() => {
-    if (!sha) {
+    if (!sha || !commitsData) {
       return [];
     }
-    return commitsQuery.commits.find((commit) => commit.sha === sha)?.files ?? [];
-  }, [commitsQuery.commits, sha]);
+    return commitsData.commits.find((commit) => commit.sha === sha)?.files ?? [];
+  }, [commitsData, sha]);
 
   const fileDiffsEnabled =
     enabled &&
-    !commitsQuery.capabilityMissing &&
+    commitsQuery.status === "loaded" &&
     Boolean(cwd) &&
     Boolean(sha) &&
     Boolean(client) &&
@@ -88,6 +89,9 @@ export function useCommitDiffFiles(ctx: CommitDiffFilesContext): CommitDiffFiles
       dataShape: "value" as const,
     })),
   );
+  const commitsLoading = commitsQuery.status === "connecting" || commitsQuery.status === "loading";
+  const commitsError = commitsQuery.status === "error" ? commitsQuery.error : null;
+  const capabilityMissing = commitsQuery.status === "unsupported";
 
   return useMemo<CommitDiffFilesResult>(() => {
     const resolvedByPath = new Map<string, ParsedDiffFile | null | undefined>();
@@ -105,15 +109,9 @@ export function useCommitDiffFiles(ctx: CommitDiffFilesContext): CommitDiffFiles
     }
     return {
       files,
-      isLoading: commitsQuery.isLoading || fileDiffResults.some((r) => r.isLoading),
-      error: commitsQuery.error ?? firstFileError,
-      capabilityMissing: commitsQuery.capabilityMissing,
+      isLoading: commitsLoading || fileDiffResults.some((r) => r.isLoading),
+      error: commitsError ?? firstFileError,
+      capabilityMissing,
     };
-  }, [
-    commitFiles,
-    fileDiffResults,
-    commitsQuery.isLoading,
-    commitsQuery.error,
-    commitsQuery.capabilityMissing,
-  ]);
+  }, [capabilityMissing, commitFiles, commitsError, commitsLoading, fileDiffResults]);
 }

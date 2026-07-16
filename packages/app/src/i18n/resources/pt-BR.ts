@@ -760,6 +760,7 @@ export const ptBR: TranslationResources = {
           fileDiffError: "Falha ao carregar diff do arquivo",
           loading: "Carregando commits…",
           loadError: "Falha ao carregar commits",
+          empty: "Nenhum commit à frente da base",
         },
       },
       openInEditor: {

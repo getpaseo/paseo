@@ -754,6 +754,7 @@ export const ja: TranslationResources = {
           fileDiffError: "ファイル差分の読み込みに失敗しました",
           loading: "コミットを読み込み中…",
           loadError: "コミットの読み込みに失敗しました",
+          empty: "ベースより先のコミットはありません",
         },
       },
       openInEditor: {

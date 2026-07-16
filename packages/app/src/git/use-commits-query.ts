@@ -4,8 +4,8 @@ import { checkoutCommitsQueryKey } from "@/git/query-keys";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { useSessionStore } from "@/stores/session-store";
 
-// Commits ahead of base change rarely within a single view; a modest staleTime
-// avoids refetching on every remount while staying fresh enough after a commit.
+// Commits ahead of base change rarely while the section is open; this keeps a
+// collapse/re-expand cycle warm without leaving the fetch result stale for long.
 const CHECKOUT_COMMITS_STALE_TIME = 30_000;
 
 interface UseCheckoutCommitsQueryOptions {
@@ -14,12 +14,52 @@ interface UseCheckoutCommitsQueryOptions {
   enabled?: boolean;
 }
 
-export interface CheckoutCommitsQueryResult {
+export interface CheckoutCommitsData {
+  baseRef: string | null;
   commits: CheckoutCommit[];
-  isLoading: boolean;
-  capabilityMissing: boolean;
+}
+
+export type CheckoutCommitsQueryResult =
+  | { status: "unsupported" }
+  | { status: "idle" }
+  | { status: "connecting" }
+  | { status: "loading" }
+  | { status: "error"; error: Error }
+  | { status: "loaded"; data: CheckoutCommitsData };
+
+interface ResolveCheckoutCommitsQueryResultInput {
+  enabled: boolean;
+  capabilityPresent: boolean;
+  canFetch: boolean;
+  data: CheckoutCommitsData | undefined;
+  isPlaceholderData: boolean;
   error: Error | null;
-  refetch: () => void;
+}
+
+export function resolveCheckoutCommitsQueryResult({
+  enabled,
+  capabilityPresent,
+  canFetch,
+  data,
+  isPlaceholderData,
+  error,
+}: ResolveCheckoutCommitsQueryResultInput): CheckoutCommitsQueryResult {
+  if (!capabilityPresent) {
+    return { status: "unsupported" };
+  }
+  if (data && !isPlaceholderData) {
+    return { status: "loaded", data };
+  }
+  if (!enabled) {
+    return { status: "idle" };
+  }
+  if (!canFetch) {
+    return { status: "connecting" };
+  }
+  if (error) {
+    return { status: "error", error };
+  }
+  return { status: "loading" };
 }
 
 export function useCheckoutCommitsQuery({
@@ -30,15 +70,15 @@ export function useCheckoutCommitsQuery({
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
   // COMPAT(commitsList): added in v0.1.110, remove gate after 2027-01-16.
-  // Single capability-detection site; downstream reads a clean `capabilityMissing` shape.
+  // Single capability-detection site; downstream reads a clean load-state union.
   const capabilityPresent = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.features?.commitsList === true,
   );
 
-  const queryEnabled =
-    enabled && capabilityPresent && Boolean(cwd) && Boolean(client) && isConnected;
+  const canFetch = Boolean(cwd) && Boolean(client) && isConnected;
+  const queryEnabled = enabled && capabilityPresent && canFetch;
 
-  const query = useFetchQuery<{ baseRef: string | null; commits: CheckoutCommit[] }>({
+  const query = useFetchQuery<CheckoutCommitsData>({
     queryKey: checkoutCommitsQueryKey(serverId, cwd),
     queryFn: async () => {
       if (!client) {
@@ -51,13 +91,12 @@ export function useCheckoutCommitsQuery({
     dataShape: "list",
   });
 
-  return {
-    commits: query.data?.commits ?? [],
-    isLoading: queryEnabled && query.isLoading,
-    capabilityMissing: !capabilityPresent,
+  return resolveCheckoutCommitsQueryResult({
+    enabled,
+    capabilityPresent,
+    canFetch,
+    data: query.data,
+    isPlaceholderData: query.isPlaceholderData,
     error: query.error,
-    refetch: () => {
-      void query.refetch();
-    },
-  };
+  });
 }

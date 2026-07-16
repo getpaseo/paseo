@@ -769,6 +769,7 @@ export const es: TranslationResources = {
           fileDiffError: "Error al cargar el diff del archivo",
           loading: "Cargando commits…",
           loadError: "Error al cargar los commits",
+          empty: "No hay commits por delante de la base",
         },
       },
       openInEditor: {
