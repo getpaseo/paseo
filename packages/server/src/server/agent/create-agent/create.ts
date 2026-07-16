@@ -18,6 +18,7 @@ import type { AgentStorage } from "../agent-storage.js";
 import type { AgentOwner } from "../agent-owner.js";
 import type { ProviderSnapshotManager } from "../provider-snapshot-manager.js";
 import { setupFinishNotification, startCreatedAgentInitialPrompt } from "../agent-prompt.js";
+import { buildSpawnContextEnvelope, prependSpawnContext } from "../agent-spawn-context.js";
 import { resolveCreateAgentTitles } from "../create-agent-title.js";
 import { buildAgentPrompt } from "../prompt-attachments.js";
 import { normalizeClientMessageId, resolveClientMessageId } from "../../client-message-id.js";
@@ -158,6 +159,12 @@ function resolveProviderModel(providerValue: string): ResolvedProviderModel {
   return { provider: providerInput, model: undefined };
 }
 
+interface ResolvedSpawnContext {
+  parentAgentId: string;
+  parentTitle: string | null;
+  notifyOnFinish: boolean;
+}
+
 interface ResolvedCreateAgent {
   config: AgentSessionConfig;
   createOptions: CreateAgentOptions;
@@ -168,6 +175,11 @@ interface ResolvedCreateAgent {
   promptFailure: CreateAgentPromptFailureMode;
   promptLogger?: Logger;
   createdWorktree?: CreatePaseoWorktreeWorkflowResult;
+  // Present when another agent spawned this one: the daemon prepends a
+  // <paseo-system> identity/report-contract block to the initial prompt so the
+  // contract reaches every provider, not only those that surface MCP
+  // instructions. Applied after createAgent so the child's own id is known.
+  spawnContext?: ResolvedSpawnContext;
 }
 
 export async function createAgentCommand(
@@ -188,6 +200,20 @@ export async function createAgentCommand(
   resolved.setupContinuation?.startAfterAgentCreate({
     agentId: snapshot.id,
   });
+
+  // The child's own id is only known after createAgent, so the spawn-context
+  // block (which names the child) is prepended here rather than at resolve time.
+  if (resolved.prompt !== undefined && resolved.spawnContext) {
+    resolved.prompt = prependSpawnContext(
+      resolved.prompt,
+      buildSpawnContextEnvelope({
+        childAgentId: snapshot.id,
+        parentAgentId: resolved.spawnContext.parentAgentId,
+        parentTitle: resolved.spawnContext.parentTitle,
+        notifyOnFinish: resolved.spawnContext.notifyOnFinish,
+      }),
+    );
+  }
 
   let liveSnapshot = snapshot;
   let initialPromptStarted = false;
@@ -362,6 +388,15 @@ async function resolveMcpCreateAgent(
     createdWorktree,
     background: input.background,
     promptFailure: input.promptFailure ?? "log",
+    ...(input.callerAgentId
+      ? {
+          spawnContext: {
+            parentAgentId: input.callerAgentId,
+            parentTitle: parentAgent?.config?.title ?? null,
+            notifyOnFinish: input.notifyOnFinish,
+          },
+        }
+      : {}),
   };
 }
 

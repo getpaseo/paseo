@@ -7680,6 +7680,43 @@ test("user_message events wrapping a paseo-system envelope are not added to the 
   expect(userMessages[0].text).toBe("plain user message");
 });
 
+test("user_message events with a leading paseo-system block show only the trailing prompt", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-envelope-leading-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+
+  const spawnContext = formatSystemNotificationPrompt(
+    "You are agent child-1, spawned by agent parent-1 inside Paseo's multi-agent environment.",
+  );
+  const codex = fakeCodexEmitting({
+    turnItems: [
+      {
+        type: "user_message",
+        text: `${spawnContext}\n\nImplement the feature`,
+      },
+    ],
+  });
+
+  const manager = new AgentManager({
+    clients: { codex },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-0000000005a3",
+  });
+
+  const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+
+  await manager.runAgent(snapshot.id, { text: "do something" });
+
+  const timeline = manager.getTimeline(snapshot.id);
+  const userMessages = timeline.filter((item) => item.type === "user_message");
+
+  expect(userMessages).toHaveLength(1);
+  expect(userMessages[0].text).toBe("Implement the feature");
+});
+
 test("user_message events wrapping a paseo-system envelope are not restored during history replay", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-envelope-history-"));
   const storagePath = join(workdir, "agents");

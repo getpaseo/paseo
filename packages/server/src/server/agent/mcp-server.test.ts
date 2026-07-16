@@ -5466,3 +5466,46 @@ describe("agent snapshot MCP serialization", () => {
     expect(content).not.toContain("first answer");
   });
 });
+
+describe("agent MCP server instructions", () => {
+  const logger = createTestLogger();
+
+  it("surfaces composed instructions to the connected client", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createClaudeOnlyManager(),
+      instructions: "You are running inside Paseo. Your agentId is agent-child.",
+      logger,
+    });
+    const client = await connectInMemoryMcpClient(server);
+
+    try {
+      expect(client.getInstructions()).toBe(
+        "You are running inside Paseo. Your agentId is agent-child.",
+      );
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it("omits instructions when none are composed", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createClaudeOnlyManager(),
+      logger,
+    });
+    const client = await connectInMemoryMcpClient(server);
+
+    try {
+      expect(client.getInstructions()).toBeUndefined();
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+});

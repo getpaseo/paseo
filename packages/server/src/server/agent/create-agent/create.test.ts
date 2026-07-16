@@ -455,3 +455,132 @@ test("session create keeps an explicit title after the initial prompt settles", 
     rmSync(workdir, { recursive: true, force: true });
   }
 });
+
+// Builds the dependency bag the three spawn-context tests share. `parent` is
+// null for the no-caller case; `getAgent` resolves the parent by id and falls
+// back to the child so both the parent lookup and the created child resolve.
+function buildSpawnContextDependencies(params: {
+  parent: ManagedAgent | null;
+  child: ManagedAgent;
+  streamAgent: ReturnType<typeof vi.fn>;
+}): Parameters<typeof createAgentCommand>[0] {
+  const { parent, child, streamAgent } = params;
+  return {
+    agentManager: {
+      createAgent: vi.fn(async () => child),
+      getAgent: vi.fn((id: string) => (parent && id === parent.id ? parent : child)),
+      tryRunOutOfBand: vi.fn(() => false),
+      hasInFlightRun: vi.fn(() => false),
+      streamAgent,
+      waitForAgentRunStart: vi.fn(async () => undefined),
+      subscribe: vi.fn(() => () => {}),
+    } as unknown as Parameters<typeof createAgentCommand>[0]["agentManager"],
+    agentStorage: {
+      get: vi.fn(async () => null),
+    } as unknown as Parameters<typeof createAgentCommand>[0]["agentStorage"],
+    logger: createTestLogger(),
+    providerSnapshotManager: {
+      resolveCreateConfig: vi.fn(async () => ({})),
+    } as Parameters<typeof createAgentCommand>[0]["providerSnapshotManager"],
+  };
+}
+
+test("mcp create prepends a spawn-context envelope naming the child and parent", async () => {
+  const parent = {
+    id: "agent-parent",
+    provider: "claude",
+    cwd: "/tmp/paseo-create-test",
+    workspaceId: "ws-parent",
+    config: { title: "Ship the release" },
+  } as ManagedAgent;
+  const child = {
+    id: "agent-child",
+    provider: "claude",
+    cwd: "/tmp/paseo-create-test",
+    runtimeInfo: null,
+  } as ManagedAgent;
+  const streamAgent = vi.fn(() => (async function* noop() {})());
+  const dependencies = buildSpawnContextDependencies({ parent, child, streamAgent });
+
+  await createAgentCommand(dependencies, {
+    kind: "mcp",
+    provider: "claude",
+    title: "child",
+    initialPrompt: "Do the work",
+    background: true,
+    notifyOnFinish: true,
+    callerAgentId: "agent-parent",
+  });
+
+  expect(streamAgent).toHaveBeenCalledWith(
+    "agent-child",
+    expect.stringContaining(
+      "You are agent agent-child, spawned by agent agent-parent (Ship the release)",
+    ),
+    undefined,
+  );
+  const dispatched = streamAgent.mock.lastCall?.[1] as string;
+  expect(dispatched).toContain("automatically delivered to agent agent-parent as your report");
+  expect(dispatched.endsWith("</paseo-system>\n\nDo the work")).toBe(true);
+});
+
+test("mcp create states no auto-delivery for notifyOnFinish=false spawns", async () => {
+  const parent = {
+    id: "agent-parent",
+    provider: "claude",
+    cwd: "/tmp/paseo-create-test",
+    workspaceId: "ws-parent",
+    config: { title: "Ship the release" },
+  } as ManagedAgent;
+  const child = {
+    id: "agent-child",
+    provider: "claude",
+    cwd: "/tmp/paseo-create-test",
+    runtimeInfo: null,
+  } as ManagedAgent;
+  const streamAgent = vi.fn(() => (async function* noop() {})());
+  const dependencies = buildSpawnContextDependencies({ parent, child, streamAgent });
+
+  await createAgentCommand(dependencies, {
+    kind: "mcp",
+    provider: "claude",
+    title: "child",
+    initialPrompt: "Do the work",
+    background: true,
+    notifyOnFinish: false,
+    detached: true,
+    callerAgentId: "agent-parent",
+  });
+
+  expect(streamAgent).toHaveBeenCalledWith(
+    "agent-child",
+    expect.stringContaining("not automatically delivered back"),
+    undefined,
+  );
+  const dispatched = streamAgent.mock.lastCall?.[1] as string;
+  expect(dispatched.endsWith("</paseo-system>\n\nDo the work")).toBe(true);
+});
+
+test("mcp create without a caller leaves the initial prompt untouched", async () => {
+  const child = {
+    id: "agent-solo",
+    provider: "claude",
+    cwd: "/tmp/paseo-create-test",
+    runtimeInfo: null,
+  } as ManagedAgent;
+  const streamAgent = vi.fn(() => (async function* noop() {})());
+  const dependencies = buildSpawnContextDependencies({ parent: null, child, streamAgent });
+
+  await createAgentCommand(dependencies, {
+    kind: "mcp",
+    provider: "claude",
+    cwd: "/tmp/paseo-create-test",
+    workspaceId: "ws-solo",
+    title: "solo",
+    initialPrompt: "Do the work",
+    background: true,
+    notifyOnFinish: false,
+  });
+
+  expect(streamAgent).toHaveBeenCalledWith("agent-solo", "Do the work", undefined);
+});

@@ -42,6 +42,33 @@ Some providers can create their own child sessions inside one provider runtime. 
 
 The provider still owns the underlying runtime. Paseo keeps an agent record so the child can be opened, tracked, archived, and cascaded with the parent, but prompts and history hydration route through the provider adapter for that native child handle.
 
+## Automatic spawn-context injection
+
+Spawned agents used to receive only the parent-authored `initialPrompt`, so a child had no deterministic way to know it runs inside a multi-agent environment, who spawned it, or that its last idle message is auto-delivered to the parent as its report.
+That awareness is now injected by the daemon on two layers, so no parent model has to hand-write a protocol block.
+
+Both layers are composed by `composeAgentMcpInstructions` / `buildSpawnContextEnvelope` in `packages/server/src/server/agent/agent-spawn-context.ts`.
+
+**Layer 1 - per-agent MCP server instructions.**
+`createAgentMcpSession(callerAgentId)` (`bootstrap.ts`) looks up the connecting agent's own record, reads its `paseo.parent-agent-id` label plus the parent's title, and composes a personalized `instructions` string that is passed to the MCP `McpServer` constructor.
+Providers that surface MCP server instructions in their system prompt (Claude Code, per the claude-peers prior art) make the agent "born knowing" its id, its parent, the `<paseo-system>` / `<agent-response>` semantics, and the delegation contract for when it spawns its own children.
+External MCP clients (no `callerAgentId`) still get the generic delegation contract, minus the identity/parent lines.
+
+**Layer 2 - daemon-side spawn-context block.**
+MCP instructions only help providers that surface them, so Layer 1 is not sufficient on its own.
+When a create comes from another agent (`callerAgentId` present), `createAgentCommand` prepends a compact `<paseo-system>` block - naming the child, the parent, and the report contract - to the child's initial prompt before dispatch (`prependSpawnContext`).
+This is applied after `createAgent` returns, because the block names the child's own id.
+The block is short by design: it duplicates only the identity + report-contract core of Layer 1, so agents on providers that already surface MCP instructions are not bloated with a second full copy.
+
+**Report contract wording follows `notifyOnFinish`, not the relationship kind.**
+The "your final message is automatically delivered to the parent as your report" sentence is emitted only when `notifyOnFinish` is set (the same flag that arms `setupFinishNotification`).
+A detached spawn still gets the identity/environment context, but is told its final message is not auto-delivered unless the parent follows up.
+
+**Timeline display.**
+The Layer 2 block rides on the child's first user message, but the timeline must still show only what the parent actually asked.
+`displayTextForUserMessage` (`agent-prompt.ts`) extends the existing "hide a pure `<paseo-system>` envelope" rule: a message that begins with a system envelope and then has real content has the leading envelope stripped for display, while the provider still receives the full text.
+The four timeline choke points in `agent-manager.ts` route through `projectTimelineItemForDisplay`, so both live turns and history replay show the clean parent prompt.
+
 ## Archive
 
 Archive is a **soft delete**: the agent record stays on disk with `archivedAt` set, the runtime is closed, and the agent disappears from active lists. Archive is **global** — it lives on the server and propagates to every connected client.
