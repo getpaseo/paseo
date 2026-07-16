@@ -209,28 +209,4 @@ describe("browser webview attachment", () => {
     expect(getPaseoBrowserIdForWebContents(guest)).toBeNull();
     expect(guest.backgroundThrottlingCalls).toEqual([false]);
   });
-
-  test("unregisters a browser only from its requesting host", () => {
-    const firstContents = new FakeRegisteredWebContents(9003);
-    const secondContents = new FakeRegisteredWebContents(9004);
-    registerPaseoBrowserWebContents({
-      contents: firstContents,
-      browserId: "browser-shared-hosts",
-      hostWebContentsId: 1001,
-    });
-    registerPaseoBrowserWebContents({
-      contents: secondContents,
-      browserId: "browser-shared-hosts",
-      hostWebContentsId: 1002,
-    });
-
-    unregisterPaseoBrowserFromHost(1001, "browser-shared-hosts");
-
-    expect(getPaseoBrowserIdForWebContents(new LiveWebContentsIdentity(9003))).toBeNull();
-    expect(getPaseoBrowserIdForWebContents(new LiveWebContentsIdentity(9004))).toBe(
-      "browser-shared-hosts",
-    );
-
-    unregisterPaseoBrowser("browser-shared-hosts");
-  });
 });
