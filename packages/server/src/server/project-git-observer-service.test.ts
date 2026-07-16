@@ -1,10 +1,7 @@
 import type pino from "pino";
 import { describe, expect, test } from "vitest";
 
-import {
-  ProjectGitObserverService,
-  type ProjectGitObserverUpdate,
-} from "./project-git-observer-service.js";
+import { ProjectGitObserverService, type ProjectUpdate } from "./project-git-observer-service.js";
 import {
   createPersistedProjectRecord,
   type PersistedProjectRecord,
@@ -344,7 +341,7 @@ class ObservedProjects {
   private readonly roots = new FakeProjectRoots(this.lifecycleEvents);
   private readonly registry: FakeProjectRegistry;
   private readonly gitMetadata = new FakeGitMetadata();
-  private readonly projectEvents: ProjectGitObserverUpdate[] = [];
+  private readonly projectEvents: ProjectUpdate[] = [];
   private readonly workspaceEvents: string[][] = [];
   private readonly logRecords: LogRecord[] = [];
   private readonly service: ProjectGitObserverService;
@@ -459,7 +456,7 @@ class ObservedProjects {
     return [...this.lifecycleEvents];
   }
 
-  get publishedProjects(): ProjectGitObserverUpdate[] {
+  get publishedProjects(): ProjectUpdate[] {
     return [...this.projectEvents];
   }
 

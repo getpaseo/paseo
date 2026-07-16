@@ -797,13 +797,7 @@ export async function createPaseoDaemon(
     projectRegistry,
     reconciliation: workspaceReconciliation,
     logger,
-    onProjectUpdate: (update) => {
-      if (update.kind === "upsert") {
-        wsServer?.publishProjectUpdate(update.project);
-      } else {
-        wsServer?.publishProjectRemove(update.projectId);
-      }
-    },
+    onProjectUpdate: (update) => wsServer?.publishProjectUpdate(update),
     onWorkspacesChanged: async (workspaceIds) => {
       await Promise.all(
         (wsServer?.listActiveSessions() ?? []).map((session) =>

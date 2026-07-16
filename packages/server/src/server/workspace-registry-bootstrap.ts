@@ -1,4 +1,5 @@
 import path from "node:path";
+import { existsSync } from "node:fs";
 
 import type { Logger } from "pino";
 
@@ -70,7 +71,10 @@ export async function bootstrapWorkspaceRegistries(options: {
     ]),
   );
   const records = await options.agentStorage.list();
-  const activeRecords = records.filter((record) => !record.archivedAt);
+  // A legacy agent can outlive its working directory. Reconciliation treats a
+  // missing directory as absent rather than asking Git about it; bootstrap must
+  // do the same before materializing its first workspace record.
+  const activeRecords = records.filter((record) => !record.archivedAt && existsSync(record.cwd));
   const recordsByDirectoryKey = new Map<
     string,
     {

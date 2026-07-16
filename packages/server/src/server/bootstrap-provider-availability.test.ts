@@ -1,4 +1,5 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import pino from "pino";
@@ -28,10 +29,21 @@ describe("bootstrap provider availability", () => {
     tempRoots.push(root);
     const binDir = await mkdtemp(path.join(os.tmpdir(), "paseo-bootstrap-provider-bin-"));
     tempRoots.push(binDir);
+    const gitPath = execFileSync(process.platform === "win32" ? "where" : "which", ["git"], {
+      encoding: "utf8",
+    })
+      .split(/\r?\n/)[0]
+      .trim();
+    if (process.platform === "win32") {
+      await writeFile(path.join(binDir, "git.cmd"), `@"${gitPath}" %*\r\n`);
+    } else {
+      await symlink(gitPath, path.join(binDir, "git"));
+    }
     process.env.PATH = binDir;
     if (process.platform === "win32") {
       process.env.PATHEXT = ".CMD";
     }
+    expect(execFileSync("git", ["--version"], { encoding: "utf8" })).toMatch(/git version/i);
     const paseoHome = path.join(root, ".paseo");
     const staticDir = path.join(root, "static");
     const agentStoragePath = path.join(paseoHome, "agents");

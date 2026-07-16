@@ -9,7 +9,7 @@ import type { WorkspaceReconciliationService } from "./workspace-reconciliation-
 const DEFAULT_RESCAN_INTERVAL_MS = 5 * 60_000;
 const DEFAULT_DEBOUNCE_MS = 100;
 
-export type ProjectGitObserverUpdate =
+export type ProjectUpdate =
   | { kind: "upsert"; project: PersistedProjectRecord }
   | { kind: "remove"; projectId: string };
 
@@ -69,7 +69,7 @@ export class ProjectGitObserverService {
       projectRegistry: ProjectRegistry;
       reconciliation: Pick<WorkspaceReconciliationService, "reconcileGitMetadata">;
       logger: pino.Logger;
-      onProjectUpdate: (update: ProjectGitObserverUpdate) => void;
+      onProjectUpdate: (update: ProjectUpdate) => void;
       onWorkspacesChanged: (workspaceIds: string[]) => Promise<void>;
       watch?: ProjectRootWatch;
       clock?: ObserverClock;

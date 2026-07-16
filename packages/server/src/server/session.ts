@@ -61,6 +61,7 @@ import { getErrorMessage, getErrorMessageOr } from "@getpaseo/protocol/error-uti
 import { getAgentStatusPriority } from "@getpaseo/protocol/agent-state-bucket";
 import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
 import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "./workspace-git-service.js";
+import type { ProjectUpdate } from "./project-git-observer-service.js";
 import {
   CLIENT_SHUTDOWN_RPC_REASON,
   normalizeClientRestartRpcReason,
@@ -1085,17 +1086,15 @@ export class Session {
     return this.supports(capability);
   }
 
-  emitProjectUpdate(project: PersistedProjectRecord): void {
+  emitProjectUpdate(update: ProjectUpdate): void {
     if (!this.supports(CLIENT_CAPS.projectUpdates)) return;
     this.emit({
       type: "project.update",
-      payload: { kind: "upsert", project: this.buildProjectDescriptor(project) },
+      payload:
+        update.kind === "upsert"
+          ? { kind: "upsert", project: this.buildProjectDescriptor(update.project) }
+          : update,
     });
-  }
-
-  emitProjectRemove(projectId: string): void {
-    if (!this.supports(CLIENT_CAPS.projectUpdates)) return;
-    this.emit({ type: "project.update", payload: { kind: "remove", projectId } });
   }
 
   async syncWorkspaceGitObserverForWorkspace(workspace: PersistedWorkspaceRecord): Promise<void> {

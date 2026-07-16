@@ -32,8 +32,13 @@ import {
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type { TerminalSession } from "../terminal/terminal.js";
 import type { AgentStorage, StoredAgentRecord } from "./agent/agent-storage.js";
-import type { PersistedProjectRecord, PersistedWorkspaceRecord } from "./workspace-registry.js";
+import {
+  createPersistedProjectRecord,
+  type PersistedProjectRecord,
+  type PersistedWorkspaceRecord,
+} from "./workspace-registry.js";
 import type { ForgeService } from "../services/forge-service.js";
+import { areEquivalentPaths } from "../utils/path.js";
 import {
   createPaseoWorktree as createPaseoWorktreeService,
   type CreatePaseoWorktreeFn,
@@ -303,6 +308,23 @@ function createPaseoWorktreeForTest(options: {
         : {}),
       projectRegistry: {
         get: async (projectId) => projects.get(projectId) ?? null,
+        getOrCreateActiveByRoot: async (allocation) => {
+          const existing = Array.from(projects.values()).find(
+            (project) =>
+              areEquivalentPaths(project.rootPath, allocation.rootPath) && !project.archivedAt,
+          );
+          if (existing) return existing;
+          const project = createPersistedProjectRecord({
+            projectId: `prj_test_${projects.size + 1}`,
+            rootPath: allocation.rootPath,
+            kind: allocation.kind,
+            displayName: allocation.displayName,
+            createdAt: allocation.timestamp,
+            updatedAt: allocation.timestamp,
+          });
+          projects.set(project.projectId, project);
+          return project;
+        },
         upsert: async (record) => {
           options.events?.push(`project:${record.projectId}`);
           projects.set(record.projectId, record);

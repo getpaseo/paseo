@@ -9,11 +9,8 @@ import type { AgentStorage } from "./agent/agent-storage.js";
 import type { DownloadTokenStore } from "./file-download/token-store.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type pino from "pino";
-import type {
-  PersistedProjectRecord,
-  ProjectRegistry,
-  WorkspaceRegistry,
-} from "./workspace-registry.js";
+import type { ProjectRegistry, WorkspaceRegistry } from "./workspace-registry.js";
+import type { ProjectUpdate } from "./project-git-observer-service.js";
 import type { FileBackedChatService } from "./chat/chat-service.js";
 import type { LoopService } from "./loop-service.js";
 import type { ScheduleService } from "./schedule/service.js";
@@ -773,12 +770,8 @@ export class VoiceAssistantWebSocketServer {
     );
   }
 
-  public publishProjectUpdate(project: PersistedProjectRecord): void {
-    for (const session of this.listActiveSessions()) session.emitProjectUpdate(project);
-  }
-
-  public publishProjectRemove(projectId: string): void {
-    for (const session of this.listActiveSessions()) session.emitProjectRemove(projectId);
+  public publishProjectUpdate(update: ProjectUpdate): void {
+    for (const session of this.listActiveSessions()) session.emitProjectUpdate(update);
   }
 
   public publishSpeechReadiness(readiness: SpeechReadinessSnapshot | null): void {

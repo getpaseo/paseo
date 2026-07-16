@@ -22,6 +22,7 @@ import {
   AgentSnapshotPayloadSchema,
 } from "@getpaseo/protocol/messages";
 import {
+  createPersistedProjectRecord,
   createPersistedWorkspaceRecord,
   type PersistedProjectRecord,
   type PersistedWorkspaceRecord,
@@ -46,6 +47,7 @@ import { WorkspaceAutoName } from "../workspace-auto-name.js";
 import { createGitMutationService } from "../session/git-mutation/git-mutation-service.js";
 import type { GeneratedWorkspaceName } from "../worktree-branch-name-generator.js";
 import type { ForgeService } from "../../services/forge-service.js";
+import { areEquivalentPaths } from "../../utils/path.js";
 import type { TerminalManager } from "../../terminal/terminal-manager.js";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import type { BrowserToolsBroker, BrowserToolsExecuteInput } from "../browser-tools/broker.js";
@@ -712,6 +714,24 @@ function createPaseoWorktreeForMcpTest(options: {
               : {}),
             projectRegistry: {
               get: async (projectId) => projects.get(projectId) ?? null,
+              getOrCreateActiveByRoot: async (allocation) => {
+                const existing = Array.from(projects.values()).find(
+                  (project) =>
+                    areEquivalentPaths(project.rootPath, allocation.rootPath) &&
+                    !project.archivedAt,
+                );
+                if (existing) return existing;
+                const project = createPersistedProjectRecord({
+                  projectId: `prj_test_${projects.size + 1}`,
+                  rootPath: allocation.rootPath,
+                  kind: allocation.kind,
+                  displayName: allocation.displayName,
+                  createdAt: allocation.timestamp,
+                  updatedAt: allocation.timestamp,
+                });
+                projects.set(project.projectId, project);
+                return project;
+              },
               upsert: async (record) => {
                 projects.set(record.projectId, record);
               },

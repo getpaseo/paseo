@@ -348,10 +348,10 @@ describe("wire compatibility", () => {
       messages: capableMessages,
     });
 
-    legacy.emitProjectUpdate(project);
-    legacy.emitProjectRemove(project.projectId);
-    capable.emitProjectUpdate(project);
-    capable.emitProjectRemove(project.projectId);
+    legacy.emitProjectUpdate({ kind: "upsert", project });
+    legacy.emitProjectUpdate({ kind: "remove", projectId: project.projectId });
+    capable.emitProjectUpdate({ kind: "upsert", project });
+    capable.emitProjectUpdate({ kind: "remove", projectId: project.projectId });
 
     expect(legacyMessages).toEqual([]);
     expect(capableMessages.map((message) => SessionOutboundMessageSchema.parse(message))).toEqual([

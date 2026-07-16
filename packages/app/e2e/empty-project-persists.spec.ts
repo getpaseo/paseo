@@ -219,15 +219,20 @@ test.describe("Project remove", () => {
 
       const readded = await workspace.client.addProject(workspace.repoPath);
       expect(readded.error).toBeNull();
+      expect(readded.project).not.toBeNull();
+      const readdedProjectId = readded.project?.projectId ?? "";
+      expect(readdedProjectId).not.toBe(workspace.projectId);
       expect(readded.project?.projectDisplayName).toBe(workspace.projectDisplayName);
 
       await page.reload();
       await waitForSidebarHydration(page);
-      await expect(projectRow).toBeVisible({ timeout: 30_000 });
-      await expect(projectRow).toContainText(workspace.projectDisplayName);
-      await expect(projectRow).not.toContainText(workspace.repoPath);
+      await expect(projectRow).toHaveCount(0, { timeout: 30_000 });
+      const readdedProjectRow = page.getByTestId(`sidebar-project-row-${readdedProjectId}`);
+      await expect(readdedProjectRow).toBeVisible({ timeout: 30_000 });
+      await expect(readdedProjectRow).toContainText(workspace.projectDisplayName);
+      await expect(readdedProjectRow).not.toContainText(workspace.repoPath);
       await expect(
-        page.getByTestId(`sidebar-project-new-workspace-row-${workspace.projectId}`),
+        page.getByTestId(`sidebar-project-new-workspace-row-${readdedProjectId}`),
       ).toBeVisible({ timeout: 30_000 });
     } finally {
       await workspace.cleanup();
