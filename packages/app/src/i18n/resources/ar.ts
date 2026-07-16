@@ -62,6 +62,8 @@ export const ar: TranslationResources = {
       newAgent: "وكيل جديد",
       addProject: "إضافة مشروع",
       home: "بيت",
+      modelGroupLabel: "النموذج",
+      modelSearchKeywords: "تبديل النموذج تغيير النموذج تعيين النموذج اختيار النموذج",
     },
   },
   composer: {

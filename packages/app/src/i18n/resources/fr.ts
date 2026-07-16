@@ -63,6 +63,9 @@ export const fr: TranslationResources = {
       newAgent: "Nouvel agent",
       addProject: "Ajouter un projet",
       home: "Maison",
+      modelGroupLabel: "Modèle",
+      modelSearchKeywords:
+        "changer de modèle modifier le modèle définir le modèle sélectionner le modèle",
     },
   },
   composer: {

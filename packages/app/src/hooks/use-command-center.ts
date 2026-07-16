@@ -22,13 +22,33 @@ import { focusWithRetries } from "@/utils/web-focus";
 import { isWeb } from "@/constants/platform";
 import { useProjects } from "@/hooks/use-projects";
 import { useHosts } from "@/runtime/host-runtime";
-import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
+import {
+  navigateToWorkspace,
+  useLastWorkspaceSelection,
+} from "@/stores/navigation-active-workspace-store";
+import type {
+  AgentModelDefinition,
+  AgentProvider,
+  ProviderSnapshotEntry,
+} from "@getpaseo/protocol/agent-types";
+import { useSessionStore } from "@/stores/session-store";
+import {
+  useFocusedDraftControllerStore,
+  type FocusedDraftController,
+} from "@/stores/focused-draft-controller-store";
+import { useShallow } from "zustand/shallow";
+import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
+import { resolveAgentModelSelection } from "@/composer/agent-controls/utils";
+import { mergeProviderPreferences, useFormPreferences } from "@/hooks/use-form-preferences";
+import { useToast } from "@/contexts/toast-context";
+import { toErrorMessage } from "@/utils/error-messages";
 import { formatTimeAgo } from "@/utils/time";
 import { shortenPath } from "@/utils/shorten-path";
 
 const EMPTY_ACTION_ITEMS: CommandCenterActionItem[] = [];
 const EMPTY_WORKSPACE_ITEMS: CommandCenterWorkspaceItem[] = [];
 const EMPTY_AGENT_ITEMS: CommandCenterAgentItem[] = [];
+const EMPTY_MODEL_ITEMS: CommandCenterModelItem[] = [];
 const EMPTY_COMMAND_CENTER_ITEMS: CommandCenterItem[] = [];
 
 function buildSearchText(...fields: string[]): string {
@@ -120,10 +140,30 @@ export interface CommandCenterAgentItem {
   searchText: string;
 }
 
+export interface CommandCenterModelItem {
+  kind: "model";
+  /** "agent": switch a running agent's model. "draft": pick provider+model for a new tab. */
+  source: "agent" | "draft";
+  serverId: string;
+  /** Present for the "agent" source; null for a draft (handled via the focused-draft store). */
+  agentId: string | null;
+  provider: AgentProvider;
+  modelId: string;
+  /** Breadcrumb top segment shown muted, e.g. "Model". */
+  groupLabel: string;
+  /** Breadcrumb middle segment shown muted, e.g. "Claude". */
+  providerLabel: string;
+  /** Breadcrumb leaf (the model label), highlighted, e.g. "Opus 4.8". */
+  title: string;
+  isActive: boolean;
+  searchText: string;
+}
+
 export type CommandCenterItem =
   | CommandCenterActionItem
   | CommandCenterWorkspaceItem
-  | CommandCenterAgentItem;
+  | CommandCenterAgentItem
+  | CommandCenterModelItem;
 
 function resolveActionShortcutKeys(
   actionId: string | undefined,
@@ -139,6 +179,105 @@ function resolveActionShortcutKeys(
   if (override) return chordStringToShortcutKeys(override);
   const defaultKeys = getDefaultKeysForAction(actionId, platform);
   return defaultKeys ? [defaultKeys] : undefined;
+}
+
+interface ModelRowContext {
+  serverId: string;
+  groupLabel: string;
+  keywords: string;
+}
+
+function buildModelItem(
+  ctx: ModelRowContext,
+  input: {
+    source: "agent" | "draft";
+    agentId: string | null;
+    provider: AgentProvider;
+    providerLabel: string;
+    model: AgentModelDefinition;
+    isActive: boolean;
+  },
+): CommandCenterModelItem {
+  return {
+    kind: "model",
+    source: input.source,
+    serverId: ctx.serverId,
+    agentId: input.agentId,
+    provider: input.provider,
+    modelId: input.model.id,
+    groupLabel: ctx.groupLabel,
+    providerLabel: input.providerLabel,
+    title: input.model.label,
+    isActive: input.isActive,
+    searchText: buildSearchText(
+      ctx.groupLabel,
+      input.providerLabel,
+      input.model.label,
+      input.model.id,
+      ctx.keywords,
+    ),
+  };
+}
+
+interface ModelAgentSlice {
+  provider: AgentProvider;
+  runtimeModelId: string | null;
+  model: string | null;
+  thinkingOptionId: string | null | undefined;
+}
+
+// Running agent: only its own provider's models (a live agent can't change provider).
+function buildAgentModelRows(
+  ctx: ModelRowContext,
+  input: { agentId: string; slice: ModelAgentSlice; entries: ProviderSnapshotEntry[] | undefined },
+): CommandCenterModelItem[] {
+  const entry = input.entries?.find((e) => e.provider === input.slice.provider) ?? null;
+  const models = entry?.models ?? null;
+  if (!models || models.length === 0) return [];
+  const providerLabel = entry?.label ?? input.slice.provider;
+  const { activeModelId } = resolveAgentModelSelection({
+    models,
+    runtimeModelId: input.slice.runtimeModelId,
+    configuredModelId: input.slice.model,
+    explicitThinkingOptionId: input.slice.thinkingOptionId,
+  });
+  return models.map((model) =>
+    buildModelItem(ctx, {
+      source: "agent",
+      agentId: input.agentId,
+      provider: input.slice.provider,
+      providerLabel,
+      model,
+      isActive: model.id === activeModelId,
+    }),
+  );
+}
+
+// New draft tab: every available provider's models flattened into one list.
+function buildDraftModelRows(
+  ctx: ModelRowContext,
+  input: { draft: FocusedDraftController; entries: ProviderSnapshotEntry[] | undefined },
+): CommandCenterModelItem[] {
+  const rows: CommandCenterModelItem[] = [];
+  for (const entry of input.entries ?? []) {
+    const models = entry.models ?? [];
+    if (models.length === 0) continue;
+    const providerLabel = entry.label ?? entry.provider;
+    for (const model of models) {
+      rows.push(
+        buildModelItem(ctx, {
+          source: "draft",
+          agentId: null,
+          provider: entry.provider,
+          providerLabel,
+          model,
+          isActive:
+            input.draft.provider === entry.provider && input.draft.selectedModelId === model.id,
+        }),
+      );
+    }
+  }
+  return rows;
 }
 
 export function useCommandCenter() {
@@ -161,6 +300,47 @@ export function useCommandCenter() {
   const { projects } = useProjects({ enabled: open });
   const hosts = useHosts();
   const showAgentHost = hosts.length > 1;
+
+  const toast = useToast();
+  const { updatePreferences } = useFormPreferences();
+
+  // Active agent (the focused pane's agent of the active workspace). Read from global
+  // zustand singletons — SessionContext is not an ancestor of the CommandCenter.
+  const activeSelection = useLastWorkspaceSelection();
+  const activeServerId = activeSelection?.serverId ?? null;
+  const activeAgentId = useSessionStore((state) =>
+    activeServerId ? (state.sessions[activeServerId]?.focusedAgentId ?? null) : null,
+  );
+  const activeClient = useSessionStore((state) =>
+    activeServerId ? (state.sessions[activeServerId]?.client ?? null) : null,
+  );
+  const activeAgentSlice = useSessionStore(
+    useShallow((state) => {
+      if (!activeServerId || !activeAgentId) return null;
+      const agent = state.sessions[activeServerId]?.agents?.get(activeAgentId);
+      if (!agent) return null;
+      return {
+        provider: agent.provider,
+        cwd: agent.cwd,
+        runtimeModelId: agent.runtimeInfo?.model ?? null,
+        model: agent.model,
+        thinkingOptionId: agent.thinkingOptionId,
+      };
+    }),
+  );
+
+  // A running agent takes priority; otherwise a focused draft (new tab) contributes the
+  // "pick provider + model" list. The draft publishes its controller globally (see store).
+  const draftController = useFocusedDraftControllerStore((state) => state.controller);
+  const isAgentFocus = Boolean(activeAgentId && activeAgentSlice);
+  const draftFocus = !isAgentFocus ? draftController : null;
+
+  const modelServerId = isAgentFocus ? activeServerId : (draftFocus?.serverId ?? null);
+  const modelCwd = isAgentFocus ? activeAgentSlice?.cwd : draftFocus?.cwd;
+  const { entries: snapshotEntries } = useProvidersSnapshot(modelServerId, {
+    cwd: modelCwd,
+    enabled: open && Boolean(modelServerId && (isAgentFocus || draftFocus)),
+  });
 
   const allWorkspaceItems = useMemo(() => {
     const results: CommandCenterWorkspaceItem[] = [];
@@ -280,12 +460,47 @@ export function useCommandCenter() {
       .filter((action) => matchesQuery(action.searchText, query));
   }, [open, query, settingsRoute, homeRoute, overrides, t]);
 
+  const modelResults = useMemo(() => {
+    // Only surface models once the user starts typing — keeps the default view clean.
+    if (!open || !query.trim() || !modelServerId) {
+      return EMPTY_MODEL_ITEMS;
+    }
+    const ctx: ModelRowContext = {
+      serverId: modelServerId,
+      groupLabel: t("shell.commandCenter.modelGroupLabel"),
+      keywords: t("shell.commandCenter.modelSearchKeywords"),
+    };
+    let rows: CommandCenterModelItem[];
+    if (isAgentFocus && activeAgentId && activeAgentSlice) {
+      rows = buildAgentModelRows(ctx, {
+        agentId: activeAgentId,
+        slice: activeAgentSlice,
+        entries: snapshotEntries,
+      });
+    } else if (draftFocus) {
+      rows = buildDraftModelRows(ctx, { draft: draftFocus, entries: snapshotEntries });
+    } else {
+      rows = [];
+    }
+    return rows.filter((item) => matchesQuery(item.searchText, query));
+  }, [
+    open,
+    query,
+    modelServerId,
+    isAgentFocus,
+    activeAgentId,
+    activeAgentSlice,
+    draftFocus,
+    snapshotEntries,
+    t,
+  ]);
+
   const items = useMemo(() => {
     if (!open) {
       return EMPTY_COMMAND_CENTER_ITEMS;
     }
-    return [...actionItems, ...workspaceResults, ...agentResults];
-  }, [actionItems, workspaceResults, agentResults, open]);
+    return [...actionItems, ...modelResults, ...workspaceResults, ...agentResults];
+  }, [actionItems, modelResults, workspaceResults, agentResults, open]);
 
   const handleClose = useCallback(() => {
     setOpen(false);
@@ -336,6 +551,38 @@ export function useCommandCenter() {
     [openAddProject, setOpen],
   );
 
+  const handleSelectModel = useCallback(
+    (item: CommandCenterModelItem) => {
+      // Switching a model does not navigate — keep the focus-restore behavior so focus
+      // returns to the previously focused element after the palette closes.
+      setOpen(false);
+      if (item.source === "draft") {
+        // Write the choice into the focused draft's live form (sets provider + model).
+        useFocusedDraftControllerStore
+          .getState()
+          .controller?.setProviderAndModel(item.provider, item.modelId);
+        return;
+      }
+      if (item.isActive || !activeClient || !item.agentId) {
+        return;
+      }
+      void updatePreferences((current) =>
+        mergeProviderPreferences({
+          preferences: current,
+          provider: item.provider,
+          updates: { model: item.modelId },
+        }),
+      ).catch((error) => {
+        console.warn("[CommandCenter] persist model preference failed", error);
+      });
+      void activeClient.setAgentModel(item.agentId, item.modelId).catch((error) => {
+        console.warn("[CommandCenter] setAgentModel failed", error);
+        toast.error(toErrorMessage(error));
+      });
+    },
+    [activeClient, setOpen, toast, updatePreferences],
+  );
+
   const handleSelectItem = useCallback(
     (item: CommandCenterItem) => {
       if (item.kind === "action") {
@@ -346,9 +593,13 @@ export function useCommandCenter() {
         handleSelectWorkspace(item);
         return;
       }
+      if (item.kind === "model") {
+        handleSelectModel(item);
+        return;
+      }
       handleSelectAgent(item.agent);
     },
-    [handleSelectAction, handleSelectAgent, handleSelectWorkspace],
+    [handleSelectAction, handleSelectAgent, handleSelectWorkspace, handleSelectModel],
   );
 
   useEffect(() => {

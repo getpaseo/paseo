@@ -62,6 +62,8 @@ export const ja: TranslationResources = {
       newAgent: "新しいエージェント",
       addProject: "プロジェクトを追加",
       home: "ホーム",
+      modelGroupLabel: "モデル",
+      modelSearchKeywords: "モデルを切り替え モデルを変更 モデルを設定 モデルを選択",
     },
   },
   composer: {

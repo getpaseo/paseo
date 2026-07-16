@@ -62,6 +62,8 @@ export const ptBR: TranslationResources = {
       newAgent: "Novo agente",
       addProject: "Adicionar projeto",
       home: "Início",
+      modelGroupLabel: "Modelo",
+      modelSearchKeywords: "trocar modelo mudar modelo definir modelo selecionar modelo",
     },
   },
   composer: {
