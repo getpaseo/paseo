@@ -705,7 +705,7 @@ test("importProviderSession restores the archived record when provider resume fa
   expect(restoredRecord).toBe(archivedRecord);
 });
 
-test("importProviderSession leaves the winning agent active when two clients restore it concurrently", async () => {
+test("importProviderSession serializes legacy and native aliases for one archived session", async () => {
   const cwd = "/tmp/imported-agent";
   const agentId = "00000000-0000-4000-8000-000000000636";
   let storedRecord = {
@@ -721,8 +721,8 @@ test("importProviderSession leaves the winning agent active when two clients res
     config: { provider: "codex", cwd },
     persistence: {
       provider: "codex",
-      sessionId: "thread-concurrent",
-      nativeHandle: "thread-concurrent",
+      sessionId: "legacy-thread-concurrent",
+      nativeHandle: "native-thread-concurrent",
       metadata: { provider: "codex", cwd },
     },
     archivedAt: "2026-04-30T12:00:00.000Z",
@@ -731,8 +731,8 @@ test("importProviderSession leaves the winning agent active when two clients res
     id: agentId,
     provider: "codex",
     cwd,
-    sessionId: "thread-concurrent",
-    nativeHandle: "thread-concurrent",
+    sessionId: "legacy-thread-concurrent",
+    nativeHandle: "native-thread-concurrent",
   });
   const unarchive = createUnarchiveGate();
   const closedAgentIds: string[] = [];
@@ -779,7 +779,7 @@ test("importProviderSession leaves the winning agent active when two clients res
     request: {
       requestId: "reimport-concurrent-thread",
       provider: "codex" as const,
-      providerHandleId: "thread-concurrent",
+      providerHandleId: "native-thread-concurrent",
       cwd,
     },
     workspaceId: "ws-restored",
@@ -789,12 +789,18 @@ test("importProviderSession leaves the winning agent active when two clients res
   };
 
   const winningRestore = importProviderSession(input);
-  const duplicateRestore = importProviderSession(input);
+  const duplicateRestore = importProviderSession({
+    ...input,
+    request: {
+      ...input.request,
+      providerHandleId: "legacy-thread-concurrent",
+    },
+  });
   unarchive.allowUnarchive();
 
   await expect(winningRestore).resolves.toEqual({ snapshot, timelineSize: 0 });
   await expect(duplicateRestore).rejects.toThrow(
-    "Provider session is already imported: thread-concurrent",
+    "Provider session is already imported: legacy-thread-concurrent",
   );
   expect(storedRecord.archivedAt).toBeNull();
   expect(closedAgentIds).toEqual([]);

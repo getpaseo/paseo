@@ -143,23 +143,24 @@ export async function listImportableProviderSessions(
 export async function importProviderSession(
   input: ImportProviderSessionInput,
 ): Promise<ImportProviderSessionResult> {
-  const key = toProviderSessionHandleKey(input.request.provider, input.request.providerHandleId);
+  const cwd = input.request.cwd;
+  if (!cwd) {
+    throw new Error("Import requires cwd from the selected provider session");
+  }
+  const key = await resolveProviderSessionImportMutationKey(input);
   return serializeProviderSessionImport(input.agentManager, key, () =>
-    importProviderSessionNow(input),
+    importProviderSessionNow(input, cwd),
   );
 }
 
 async function importProviderSessionNow(
   input: ImportProviderSessionInput,
+  cwd: string,
 ): Promise<ImportProviderSessionResult> {
-  const { provider, providerHandleId, cwd, labels } = input.request;
-  if (!cwd) {
-    throw new Error("Import requires cwd from the selected provider session");
-  }
+  const { provider, providerHandleId, labels } = input.request;
 
-  const handle = buildImportPersistenceHandle({ provider, providerHandleId, cwd });
   const matchingRecords = (await input.agentStorage.list()).filter((record) =>
-    recordMatchesProviderHandle(record, handle),
+    recordMatchesProviderHandle(record, { provider, providerHandleId }),
   );
   const activeRecord = matchingRecords.find((record) => !record.archivedAt);
   if (activeRecord) {
@@ -247,6 +248,21 @@ async function serializeProviderSessionImport<T>(
   }
 }
 
+async function resolveProviderSessionImportMutationKey(
+  input: ImportProviderSessionInput,
+): Promise<string> {
+  const identity = {
+    provider: input.request.provider,
+    providerHandleId: input.request.providerHandleId,
+  };
+  const matchingRecord = (await input.agentStorage.list()).find((record) =>
+    recordMatchesProviderHandle(record, identity),
+  );
+  return matchingRecord
+    ? `agent\0${matchingRecord.id}`
+    : `handle\0${toProviderSessionHandleKey(identity.provider, identity.providerHandleId)}`;
+}
+
 async function rollbackArchivedImport(
   input: ImportProviderSessionInput,
   archivedRecord: StoredAgentRecord,
@@ -276,12 +292,12 @@ async function rollbackArchivedImport(
 
 function recordMatchesProviderHandle(
   record: StoredAgentRecord,
-  handle: AgentPersistenceHandle,
+  identity: { provider: string; providerHandleId: string },
 ): boolean {
   return (
-    record.persistence?.provider === handle.provider &&
-    (record.persistence.sessionId === handle.sessionId ||
-      record.persistence.nativeHandle === handle.nativeHandle)
+    record.persistence?.provider === identity.provider &&
+    (record.persistence.sessionId === identity.providerHandleId ||
+      record.persistence.nativeHandle === identity.providerHandleId)
   );
 }
 
@@ -294,22 +310,6 @@ function parseRecentProviderSessionsSince(since: string | undefined): number | n
     throw new ImportSessionsRequestError("invalid_since", "Invalid recent provider sessions since");
   }
   return timestamp;
-}
-
-function buildImportPersistenceHandle(input: {
-  provider: string;
-  providerHandleId: string;
-  cwd: string;
-}): AgentPersistenceHandle {
-  return {
-    provider: input.provider,
-    sessionId: input.providerHandleId,
-    nativeHandle: input.providerHandleId,
-    metadata: {
-      provider: input.provider,
-      cwd: input.cwd,
-    },
-  };
 }
 
 async function collectImportedProviderSessionHandles(

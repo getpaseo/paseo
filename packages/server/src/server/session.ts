@@ -2727,13 +2727,27 @@ export class Session {
         workspace = await this.workspaceProvisioning.createWorkspaceForDirectory(normalized.cwd);
         workspaceId = workspace.workspaceId;
       }
-      const { snapshot, timelineSize } = await importProviderSession({
-        request: normalized,
-        workspaceId,
-        agentManager: this.agentManager,
-        agentStorage: this.agentStorage,
-        logger: this.sessionLogger,
-      });
+      let importResult: Awaited<ReturnType<typeof importProviderSession>>;
+      try {
+        importResult = await importProviderSession({
+          request: normalized,
+          workspaceId,
+          agentManager: this.agentManager,
+          agentStorage: this.agentStorage,
+          logger: this.sessionLogger,
+        });
+      } catch (error) {
+        if (workspace) {
+          await this.workspaceRegistry.remove(workspace.workspaceId).catch((cleanupError) => {
+            this.sessionLogger.error(
+              { err: cleanupError, workspaceId: workspace.workspaceId },
+              "Failed to remove workspace after provider import failure",
+            );
+          });
+        }
+        throw error;
+      }
+      const { snapshot, timelineSize } = importResult;
       if (workspace) {
         await this.registerWorkspaceForImportedAgent(workspace);
       }
