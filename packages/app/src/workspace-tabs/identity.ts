@@ -1,8 +1,5 @@
-import { type DiffTarget, diffTargetKey } from "@/git/diff-target";
 import type { WorkspaceTabTarget } from "@/stores/workspace-tabs-store";
 import { normalizeWorkspaceFileLocation, workspaceFileLocationsEqual } from "@/workspace/file-open";
-
-type DiffTabTarget = Extract<WorkspaceTabTarget, { kind: "diff" }>;
 
 type WorkspaceDraftTabSetup = NonNullable<Extract<WorkspaceTabTarget, { kind: "draft" }>["setup"]>;
 
@@ -31,57 +28,37 @@ export function normalizeWorkspaceTabTarget(
       ? { kind: "provider_subagent", parentAgentId, subagentId }
       : null;
   }
-  if (value.kind === "terminal") {
-    const terminalId = trimNonEmpty(value.terminalId);
-    return terminalId ? { kind: "terminal", terminalId } : null;
-  }
-  if (value.kind === "browser") {
-    const browserId = trimNonEmpty(value.browserId);
-    return browserId ? { kind: "browser", browserId } : null;
-  }
   if (value.kind === "file") {
     return normalizeFileTabTarget(value);
   }
-  if (value.kind === "setup") {
-    const workspaceId = trimNonEmpty(value.workspaceId);
-    return workspaceId ? { kind: "setup", workspaceId } : null;
-  }
-  if (value.kind === "diff") {
-    return normalizeDiffTabTarget(value);
-  }
-  return null;
+  return normalizeSimpleWorkspaceTabTarget(value);
 }
 
-function normalizeDiffTarget(value: DiffTarget | null | undefined): DiffTarget | null {
-  if (!value || typeof value !== "object") {
-    return null;
+function normalizeSimpleWorkspaceTabTarget(value: WorkspaceTabTarget): WorkspaceTabTarget | null {
+  switch (value.kind) {
+    case "agent": {
+      const agentId = trimNonEmpty(value.agentId);
+      return agentId ? { kind: "agent", agentId } : null;
+    }
+    case "terminal": {
+      const terminalId = trimNonEmpty(value.terminalId);
+      return terminalId ? { kind: "terminal", terminalId } : null;
+    }
+    case "browser": {
+      const browserId = trimNonEmpty(value.browserId);
+      return browserId ? { kind: "browser", browserId } : null;
+    }
+    case "setup": {
+      const workspaceId = trimNonEmpty(value.workspaceId);
+      return workspaceId ? { kind: "setup", workspaceId } : null;
+    }
+    case "commit_diff": {
+      const sha = trimNonEmpty(value.sha);
+      return sha ? { kind: "commit_diff", sha } : null;
+    }
+    default:
+      return null;
   }
-  if (value.kind === "commit") {
-    const sha = trimNonEmpty(value.sha);
-    return sha ? { kind: "commit", sha } : null;
-  }
-  if (value.kind === "working") {
-    const mode = value.mode === "base" ? "base" : "uncommitted";
-    const baseRef = trimOptionalString(value.baseRef);
-    return {
-      kind: "working",
-      mode,
-      ...(baseRef != null ? { baseRef } : {}),
-      ...(typeof value.ignoreWhitespace === "boolean"
-        ? { ignoreWhitespace: value.ignoreWhitespace }
-        : {}),
-    };
-  }
-  return null;
-}
-
-function normalizeDiffTabTarget(value: DiffTabTarget): WorkspaceTabTarget | null {
-  const diffTarget = normalizeDiffTarget(value.diffTarget);
-  if (!diffTarget) {
-    return null;
-  }
-  const focusPath = trimNonEmpty(value.focusPath);
-  return focusPath ? { kind: "diff", diffTarget, focusPath } : { kind: "diff", diffTarget };
 }
 
 export function normalizeWorkspaceDraftTabSetup(
@@ -136,34 +113,10 @@ export function workspaceTabTargetsEqual(
   if (left.kind === "setup" && right.kind === "setup") {
     return left.workspaceId === right.workspaceId;
   }
-  if (left.kind === "diff" && right.kind === "diff") {
-    // focusPath is intentionally excluded — re-clicking a diff focuses the same
-    // tab and only updates the scroll target.
-    return diffTargetKey(left.diffTarget) === diffTargetKey(right.diffTarget);
+  if (left.kind === "commit_diff" && right.kind === "commit_diff") {
+    return left.sha === right.sha;
   }
   return false;
-}
-
-/**
- * Stricter than {@link workspaceTabTargetsEqual}: also compares the parts that
- * are deliberately excluded from tab *identity* but still belong to the stored
- * target. Today the only such part is a diff tab's `focusPath`, which drives
- * scroll-to-file. Use this to decide whether re-opening an already-matched tab
- * actually needs its stored target refreshed — `workspaceTabTargetsEqual` would
- * report a focusPath-only change as "equal" and skip the update, leaving the
- * panel scrolled at the previous file.
- */
-export function workspaceTabTargetsFullyEqual(
-  left: WorkspaceTabTarget,
-  right: WorkspaceTabTarget,
-): boolean {
-  if (!workspaceTabTargetsEqual(left, right)) {
-    return false;
-  }
-  if (left.kind === "diff" && right.kind === "diff") {
-    return (left.focusPath ?? null) === (right.focusPath ?? null);
-  }
-  return true;
 }
 
 function workspaceDraftTabSetupsEqual(
@@ -218,10 +171,8 @@ export function buildDeterministicWorkspaceTabId(target: WorkspaceTabTarget): st
   if (target.kind === "setup") {
     return `setup_${target.workspaceId}`;
   }
-  if (target.kind === "diff") {
-    // focusPath is excluded so a working diff dedupes to one tab and each commit
-    // dedupes by sha.
-    return `diff_${diffTargetKey(target.diffTarget)}`;
+  if (target.kind === "commit_diff") {
+    return `commit_diff_${target.sha}`;
   }
   return `file_${target.path}`;
 }

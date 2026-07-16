@@ -1,5 +1,4 @@
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
-import { diffTargetKey } from "@/git/diff-target";
 import { i18n } from "@/i18n/i18next";
 import { encodeFilePathForPathSegment, encodeWorkspaceIdForPathSegment } from "@/utils/host-routes";
 import { buildDeterministicWorkspaceTabId } from "@/workspace-tabs/identity";
@@ -142,8 +141,8 @@ function getCloseButtonTestId(tab: WorkspaceTabDescriptor): string {
   if (tab.target.kind === "provider_subagent") {
     return `workspace-provider-subagent-close-${tab.target.subagentId}`;
   }
-  if (tab.target.kind === "diff") {
-    return `workspace-diff-close-${encodeFilePathForPathSegment(diffTargetKey(tab.target.diffTarget))}`;
+  if (tab.target.kind === "commit_diff") {
+    return `workspace-commit-diff-close-${encodeFilePathForPathSegment(tab.target.sha)}`;
   }
   return `workspace-file-close-${encodeFilePathForPathSegment(tab.target.path)}`;
 }

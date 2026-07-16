@@ -1,5 +1,4 @@
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
-import type { DiffTarget } from "@/git/diff-target";
 import {
   buildDeterministicWorkspaceTabId,
   normalizeWorkspaceDraftTabSetup,
@@ -25,8 +24,7 @@ export type WorkspaceTabTarget =
   | { kind: "browser"; browserId: string }
   | WorkspaceFileTabTarget
   | { kind: "setup"; workspaceId: string }
-  // focusPath drives scroll-to-file only; it is NOT part of tab identity.
-  | { kind: "diff"; diffTarget: DiffTarget; focusPath?: string };
+  | { kind: "commit_diff"; sha: string };
 
 export interface WorkspaceTab {
   tabId: string;
@@ -547,6 +545,9 @@ function coercePersistedDiffTabTargetByKind(
   kind: string | null,
   raw: Record<string, unknown>,
 ): WorkspaceTabTarget | null {
+  if (kind === "commit_diff" && typeof raw.sha === "string") {
+    return normalizeWorkspaceTabTarget({ kind: "commit_diff", sha: raw.sha });
+  }
   return kind === "diff" ? coercePersistedDiffTabTarget(raw) : null;
 }
 
@@ -554,19 +555,18 @@ function coercePersistedDiffTabTargetByKind(
 // owned by the workspace-layout store, which is where the "commit diff tabs are
 // ephemeral on reload" guarantee is enforced (see stripEphemeralTabsFromLayout).
 // This coercion exists only so this store's migration stays type-complete for any
-// diff-shaped entries left in old `workspace-tabs-state` blobs; it does NOT drop
-// commit diff tabs and makes no ephemerality claim. Both working and commit diff
-// targets are normalized straight through normalizeWorkspaceTabTarget.
+// old diff-shaped entries left in `workspace-tabs-state` blobs. Working-tree diff
+// tabs are dropped because they no longer exist as workspace targets; commit diff
+// tabs migrate to the dedicated `commit_diff` target shape.
 function coercePersistedDiffTabTarget(raw: Record<string, unknown>): WorkspaceTabTarget | null {
-  if (!toObjectRecord(raw.diffTarget)) {
+  const diffTarget = toObjectRecord(raw.diffTarget);
+  if (!diffTarget || diffTarget.kind !== "commit" || typeof diffTarget.sha !== "string") {
     return null;
   }
-  const focusPath = typeof raw.focusPath === "string" ? raw.focusPath : undefined;
   return normalizeWorkspaceTabTarget({
-    kind: "diff",
-    diffTarget: raw.diffTarget,
-    ...(focusPath !== undefined ? { focusPath } : {}),
-  } as WorkspaceTabTarget);
+    kind: "commit_diff",
+    sha: diffTarget.sha,
+  });
 }
 
 function migrateSingleTab(rawTab: unknown, now: number): WorkspaceTab | null {

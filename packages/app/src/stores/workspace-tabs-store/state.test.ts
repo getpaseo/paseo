@@ -335,50 +335,17 @@ describe("workspace-tabs-store reducers", () => {
     expect(result.state.focusedTabIdByWorkspace[WORKSPACE_KEY]).toBe(result.tabId);
   });
 
-  it("ensures distinct ids for a working diff tab and a commit diff tab", () => {
+  it("opens a commit diff tab with a commit-specific id", () => {
     let state = emptyState();
-    const working = applyOpenOrFocusTab(state, {
-      serverId: SERVER_ID,
-      workspaceId: WORKSPACE_ID,
-      target: { kind: "diff", diffTarget: { kind: "working", mode: "uncommitted" } },
-      now: NOW,
-    });
-    state = working.state;
     const commit = applyOpenOrFocusTab(state, {
       serverId: SERVER_ID,
       workspaceId: WORKSPACE_ID,
-      target: { kind: "diff", diffTarget: { kind: "commit", sha: "abc123" } },
+      target: { kind: "commit_diff", sha: "abc123" },
       now: NOW,
     });
     state = commit.state;
 
-    expect(working.tabId).toBe("diff_working:uncommitted:");
-    expect(commit.tabId).toBe("diff_commit:abc123");
-    expect(state.uiTabsByWorkspace[WORKSPACE_KEY]).toHaveLength(2);
-  });
-
-  it("dedupes a working diff tab and just updates focusPath on re-open", () => {
-    let state = emptyState();
-    const first = applyOpenOrFocusTab(state, {
-      serverId: SERVER_ID,
-      workspaceId: WORKSPACE_ID,
-      target: { kind: "diff", diffTarget: { kind: "working", mode: "uncommitted" } },
-      now: NOW,
-    });
-    state = first.state;
-    const second = applyOpenOrFocusTab(state, {
-      serverId: SERVER_ID,
-      workspaceId: WORKSPACE_ID,
-      target: {
-        kind: "diff",
-        diffTarget: { kind: "working", mode: "uncommitted" },
-        focusPath: "src/index.ts",
-      },
-      now: NOW,
-    });
-    state = second.state;
-
-    expect(second.tabId).toBe(first.tabId);
+    expect(commit.tabId).toBe("commit_diff_abc123");
     expect(state.uiTabsByWorkspace[WORKSPACE_KEY]).toHaveLength(1);
   });
 
@@ -411,24 +378,18 @@ describe("workspace-tabs-store reducers", () => {
   });
 });
 
-describe("migrateWorkspaceTabsState diff tab coercion", () => {
+describe("migrateWorkspaceTabsState commit diff coercion", () => {
   // This legacy store no longer enforces the "commit diff tabs are ephemeral"
   // guarantee — that now lives in the workspace-layout store's partialize (see
-  // stripEphemeralTabsFromLayout). This migration only needs to round-trip any
-  // diff-shaped entries left in old `workspace-tabs-state` blobs without dropping
-  // them, so both working and commit diff tabs are restored as-is here.
-  it("restores both working and commit diff tabs across reload", () => {
+  // stripEphemeralTabsFromLayout). This migration only needs to carry old commit
+  // diff targets forward to the dedicated `commit_diff` tab shape.
+  it("migrates a legacy commit diff tab to the dedicated target shape", () => {
     const persisted = {
       state: {
         uiTabsByWorkspace: {
           [WORKSPACE_KEY]: [
             {
-              tabId: "diff_working:uncommitted:",
-              target: { kind: "diff", diffTarget: { kind: "working", mode: "uncommitted" } },
-              createdAt: NOW,
-            },
-            {
-              tabId: "diff_commit:abc123",
+              tabId: "commit_diff_abc123",
               target: { kind: "diff", diffTarget: { kind: "commit", sha: "abc123" } },
               createdAt: NOW,
             },
@@ -440,18 +401,12 @@ describe("migrateWorkspaceTabsState diff tab coercion", () => {
     const migrated = migrateWorkspaceTabsState(persisted, { now: NOW });
     const tabs = migrated.uiTabsByWorkspace[WORKSPACE_KEY] ?? [];
 
-    expect(tabs).toHaveLength(2);
-    expect(tabs.map((tab) => tab.target)).toEqual([
-      { kind: "diff", diffTarget: { kind: "working", mode: "uncommitted" } },
-      { kind: "diff", diffTarget: { kind: "commit", sha: "abc123" } },
-    ]);
-    expect(migrated.tabOrderByWorkspace[WORKSPACE_KEY]).toEqual([
-      "diff_working:uncommitted:",
-      "diff_commit:abc123",
-    ]);
+    expect(tabs).toHaveLength(1);
+    expect(tabs[0]?.target).toEqual({ kind: "commit_diff", sha: "abc123" });
+    expect(migrated.tabOrderByWorkspace[WORKSPACE_KEY]).toEqual(["commit_diff_abc123"]);
   });
 
-  it("restores a working base diff tab with its baseRef", () => {
+  it("drops a legacy working diff tab during migration", () => {
     const persisted = {
       state: {
         uiTabsByWorkspace: {
@@ -470,12 +425,8 @@ describe("migrateWorkspaceTabsState diff tab coercion", () => {
     };
 
     const migrated = migrateWorkspaceTabsState(persisted, { now: NOW });
-    const tabs = migrated.uiTabsByWorkspace[WORKSPACE_KEY] ?? [];
 
-    expect(tabs).toHaveLength(1);
-    expect(tabs[0]?.target).toEqual({
-      kind: "diff",
-      diffTarget: { kind: "working", mode: "base", baseRef: "main" },
-    });
+    expect(migrated.uiTabsByWorkspace[WORKSPACE_KEY]).toBeUndefined();
+    expect(migrated.tabOrderByWorkspace[WORKSPACE_KEY]).toBeUndefined();
   });
 });
