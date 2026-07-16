@@ -42,7 +42,9 @@ test("commit history shows dates and shares diff layout preferences", async ({
   await expect(panel.getByTestId("diff-code-row-0")).toHaveCount(0);
   await expect(panel.getByTestId("diff-file-0-body")).toBeVisible();
 
-  await page.reload();
+  await page.getByTestId(/^workspace-commit-diff-close-/).click();
+  await expect(panel).toHaveCount(0);
+  await commitRow.click();
   await expect(panel.getByTestId("commit-diff-layout-split")).toHaveAttribute(
     "aria-selected",
     "true",
