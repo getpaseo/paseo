@@ -96,7 +96,7 @@ const APP_SCHEME = "paseo";
 const PASEO_DEBUG = process.env.PASEO_DEBUG === "1";
 const DISABLE_SINGLE_INSTANCE_LOCK = process.env.PASEO_DISABLE_SINGLE_INSTANCE_LOCK === "1";
 const APP_NAME = process.env.PASEO_TEST_APP_NAME?.trim() || "Paseo";
-const UPDATE_REVALIDATION_TIMEOUT_MS = 5_000;
+const UPDATE_QUIT_DEADLINE_MS = 5_000;
 const pendingBrowserWindowOpenRequests = new PendingBrowserWindowOpenRequests();
 
 app.setName(APP_NAME);
@@ -949,7 +949,7 @@ const quitLifecycle = createQuitLifecycle({
       signal,
     });
   },
-  createUpdateRevalidationSignal: () => AbortSignal.timeout(UPDATE_REVALIDATION_TIMEOUT_MS),
+  createUpdateDeadlineSignal: () => AbortSignal.timeout(UPDATE_QUIT_DEADLINE_MS),
   onStopError: (error) => {
     log.error("[desktop daemon] failed to stop managed daemon on quit", error);
   },

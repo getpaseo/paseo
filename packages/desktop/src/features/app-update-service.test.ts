@@ -21,6 +21,7 @@ class FakeAppUpdateRuntime implements AppUpdateRuntime {
   private downloadedUpdate: RuntimeUpdateInfo | null = null;
   checkCount = 0;
   installedVersions: string[] = [];
+  installModes: Array<{ isSilent: boolean; isForceRunAfter: boolean }> = [];
 
   configure(input: AppUpdateRuntimeConfiguration): void {
     this.configuration = input;
@@ -95,9 +96,10 @@ class FakeAppUpdateRuntime implements AppUpdateRuntime {
     }
   }
 
-  quitAndInstall(): void {
+  quitAndInstall(isSilent: boolean, isForceRunAfter: boolean): void {
     if (this.downloadedUpdate) {
       this.installedVersions.push(this.downloadedUpdate.version);
+      this.installModes.push({ isSilent, isForceRunAfter });
     }
   }
 }
@@ -244,6 +246,7 @@ describe("app update service", () => {
 
     expect(installed).toBe(true);
     expect(runtime.installedVersions).toEqual(["1.2.5"]);
+    expect(runtime.installModes).toEqual([{ isSilent: true, isForceRunAfter: false }]);
   });
 
   it("does not install an older download while its replacement is still rolling out", async () => {
@@ -347,6 +350,7 @@ describe("app update service", () => {
 
     expect(result.installed).toBe(true);
     expect(runtime.installedVersions).toEqual(["1.2.5"]);
+    expect(runtime.installModes).toEqual([{ isSilent: false, isForceRunAfter: true }]);
   });
 
   it("trusts the runtime availability decision before comparing versions", async () => {
@@ -492,7 +496,7 @@ describe("app update service", () => {
     });
   });
 
-  it("discovers newer releases after an update fails to prepare", async () => {
+  it("surfaces preparation errors without blocking newer releases", async () => {
     const { runtime, service } = createService({ bucket: async () => 0 });
     runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
 
@@ -502,6 +506,23 @@ describe("app update service", () => {
       intent: "manual",
     });
     runtime.failRuntime(new Error("sha512 checksum mismatch"));
+
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    const failedPreparation = await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+    });
+
+    expect(failedPreparation).toEqual({
+      hasUpdate: true,
+      readyToInstall: false,
+      currentVersion: "1.2.3",
+      latestVersion: "1.2.4",
+      body: null,
+      date: "2026-04-28T00:00:00.000Z",
+      errorMessage: "sha512 checksum mismatch",
+    });
 
     const newerUpdate = { ...rolledOutUpdate, version: "1.2.5" };
     runtime.nextCheck({ isUpdateAvailable: true, updateInfo: newerUpdate });

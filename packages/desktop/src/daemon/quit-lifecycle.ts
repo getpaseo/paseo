@@ -19,6 +19,11 @@ interface QuitLifecycle {
   handleBeforeQuitForUpdate(): void;
 }
 
+interface DeferredUpdateQuit {
+  promise: Promise<boolean>;
+  resolve(): void;
+}
+
 export interface StopOnQuitDeps {
   settingsStore: Pick<DesktopSettingsStore, "get">;
   isDesktopManagedDaemonRunning: () => boolean;
@@ -47,7 +52,7 @@ export async function stopDesktopManagedDaemonOnQuitIfNeeded(
   return true;
 }
 
-function waitForUpdateRevalidationTimeout(signal: AbortSignal): Promise<boolean> {
+function waitForUpdateDeadline(signal: AbortSignal): Promise<boolean> {
   if (signal.aborted) {
     return Promise.resolve(false);
   }
@@ -57,12 +62,20 @@ function waitForUpdateRevalidationTimeout(signal: AbortSignal): Promise<boolean>
   });
 }
 
+function createDeferredUpdateQuit(): DeferredUpdateQuit {
+  let resolvePromise!: (started: boolean) => void;
+  const promise = new Promise<boolean>((resolve) => {
+    resolvePromise = resolve;
+  });
+  return { promise, resolve: () => resolvePromise(true) };
+}
+
 export function createQuitLifecycle({
   app,
   closeTransportSessions,
   stopDesktopManagedDaemonIfNeeded,
   installAppUpdateOnQuit,
-  createUpdateRevalidationSignal,
+  createUpdateDeadlineSignal,
   onStopError,
   onUpdateError,
 }: {
@@ -70,7 +83,7 @@ export function createQuitLifecycle({
   closeTransportSessions: () => void;
   stopDesktopManagedDaemonIfNeeded: () => Promise<boolean>;
   installAppUpdateOnQuit: (signal: AbortSignal) => Promise<boolean>;
-  createUpdateRevalidationSignal: () => AbortSignal;
+  createUpdateDeadlineSignal: () => AbortSignal;
   onStopError: (error: unknown) => void;
   onUpdateError: (error: unknown) => void;
 }): QuitLifecycle {
@@ -79,6 +92,7 @@ export function createQuitLifecycle({
   // window-all-closed handler, which would veto that second quit.
   let quitting = false;
   let quittingForUpdate = false;
+  const updateQuit = createDeferredUpdateQuit();
 
   function handleBeforeQuit(event: BeforeQuitEvent): void {
     closeTransportSessions();
@@ -93,17 +107,23 @@ export function createQuitLifecycle({
         onStopError(error);
       }
 
-      const signal = createUpdateRevalidationSignal();
+      const signal = createUpdateDeadlineSignal();
       const updateInstallation = installAppUpdateOnQuit(signal).catch((error) => {
         onUpdateError(error);
         return false;
       });
       const installingUpdate = await Promise.race([
         updateInstallation,
-        waitForUpdateRevalidationTimeout(signal),
+        waitForUpdateDeadline(signal),
       ]);
       if (installingUpdate) {
-        return;
+        const handoffStarted = await Promise.race([
+          updateQuit.promise,
+          waitForUpdateDeadline(createUpdateDeadlineSignal()),
+        ]);
+        if (handoffStarted) {
+          return;
+        }
       }
 
       app.exit(0);
@@ -114,6 +134,7 @@ export function createQuitLifecycle({
     handleBeforeQuit,
     handleBeforeQuitForUpdate() {
       quittingForUpdate = true;
+      updateQuit.resolve();
     },
   };
 }

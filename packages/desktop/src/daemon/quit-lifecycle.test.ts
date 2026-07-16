@@ -107,7 +107,7 @@ describe("quit-lifecycle", () => {
       },
       stopDesktopManagedDaemonIfNeeded: () => stopDecision.promise,
       installAppUpdateOnQuit: () => updateDecision.promise,
-      createUpdateRevalidationSignal: () => new AbortController().signal,
+      createUpdateDeadlineSignal: () => new AbortController().signal,
       onStopError: () => {
         events.push("stop-error");
       },
@@ -159,15 +159,41 @@ describe("quit-lifecycle", () => {
       closeTransportSessions: () => {},
       stopDesktopManagedDaemonIfNeeded: async () => false,
       installAppUpdateOnQuit: async () => true,
-      createUpdateRevalidationSignal: () => new AbortController().signal,
+      createUpdateDeadlineSignal: () => new AbortController().signal,
       onStopError: () => {},
       onUpdateError: () => {},
     });
 
     quitLifecycle.handleBeforeQuit({ preventDefault: () => {} });
     await waitForQuitLifecycle();
+    quitLifecycle.handleBeforeQuitForUpdate();
+    await waitForQuitLifecycle();
 
     expect(exits).toEqual([]);
+  });
+
+  it("exits when the updater does not take ownership before its deadline", async () => {
+    const revalidationDeadline = new AbortController();
+    const handoffDeadline = new AbortController();
+    let deadlineCount = 0;
+    const exits: number[] = [];
+    const quitLifecycle = createQuitLifecycle({
+      app: { exit: (code) => exits.push(code) },
+      closeTransportSessions: () => {},
+      stopDesktopManagedDaemonIfNeeded: async () => false,
+      installAppUpdateOnQuit: async () => true,
+      createUpdateDeadlineSignal: () =>
+        deadlineCount++ === 0 ? revalidationDeadline.signal : handoffDeadline.signal,
+      onStopError: () => {},
+      onUpdateError: () => {},
+    });
+
+    quitLifecycle.handleBeforeQuit({ preventDefault: () => {} });
+    await waitForQuitLifecycle();
+    handoffDeadline.abort();
+    await waitForQuitLifecycle();
+
+    expect(exits).toEqual([0]);
   });
 
   it("does not intercept a quit started by a manual update", () => {
@@ -183,7 +209,7 @@ describe("quit-lifecycle", () => {
         events.push("revalidate-update");
         return false;
       },
-      createUpdateRevalidationSignal: () => new AbortController().signal,
+      createUpdateDeadlineSignal: () => new AbortController().signal,
       onStopError: () => events.push("stop-error"),
       onUpdateError: () => events.push("update-error"),
     });
@@ -205,7 +231,7 @@ describe("quit-lifecycle", () => {
       closeTransportSessions: () => {},
       stopDesktopManagedDaemonIfNeeded: async () => false,
       installAppUpdateOnQuit: () => updateDecision.promise,
-      createUpdateRevalidationSignal: () => deadline.signal,
+      createUpdateDeadlineSignal: () => deadline.signal,
       onStopError: () => {},
       onUpdateError: () => {},
     });

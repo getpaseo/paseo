@@ -101,10 +101,16 @@ function buildCheckResult(input: {
 
 async function performQuitAndInstall(
   runtime: AppUpdateRuntime,
-  onBeforeQuit?: () => Promise<void>,
+  {
+    onBeforeQuit,
+    restart,
+  }: {
+    onBeforeQuit?: () => Promise<void>;
+    restart: boolean;
+  },
 ): Promise<void> {
   if (onBeforeQuit) await onBeforeQuit();
-  runtime.quitAndInstall(/* isSilent */ false, /* isForceRunAfter */ true);
+  runtime.quitAndInstall(/* isSilent */ !restart, /* isForceRunAfter */ restart);
 }
 
 function getErrorMessage(error: unknown): string {
@@ -126,6 +132,7 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
   let cachedUpdateInfo: RuntimeUpdateInfo | null = null;
   let downloadedUpdateVersion: string | null = null;
   let configuredReleaseChannel: AppReleaseChannel | null = null;
+  let preparationError: { version: string; message: string } | null = null;
 
   function isReadyToInstallVersion(version: string): boolean {
     return downloadedUpdateVersion === version;
@@ -134,6 +141,7 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
   function clearUpdateState(): void {
     cachedUpdateInfo = null;
     downloadedUpdateVersion = null;
+    preparationError = null;
   }
 
   function configureRuntime(releaseChannel: AppReleaseChannel, intent: AppUpdateCheckIntent): void {
@@ -163,11 +171,18 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
       onUpdateDownloaded(info) {
         cachedUpdateInfo = info;
         downloadedUpdateVersion = info.version;
+        preparationError = null;
       },
       onUpdateNotAvailable() {
         clearUpdateState();
       },
       onError(error) {
+        if (cachedUpdateInfo) {
+          preparationError = {
+            version: cachedUpdateInfo.version,
+            message: getErrorMessage(error),
+          };
+        }
         deps.reportRuntimeError?.(error);
       },
     });
@@ -209,11 +224,17 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
 
       if (hasUpdate) {
         cachedUpdateInfo = info;
+        const errorMessage =
+          preparationError?.version === latestVersion ? preparationError.message : null;
+        if (!errorMessage) {
+          preparationError = null;
+        }
         return buildCheckResult({
           currentVersion,
           hasUpdate: true,
           readyToInstall: isReadyToInstallVersion(latestVersion),
           info,
+          errorMessage,
         });
       }
 
@@ -265,13 +286,20 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
       };
     }
 
-    return installCachedUpdate(currentVersion, onBeforeQuit);
+    return installCachedUpdate(currentVersion, { onBeforeQuit, restart: true });
   }
 
   async function installCachedUpdate(
     currentVersion: string,
-    onBeforeQuit?: () => Promise<void>,
-    signal?: AbortSignal,
+    {
+      onBeforeQuit,
+      signal,
+      restart,
+    }: {
+      onBeforeQuit?: () => Promise<void>;
+      signal?: AbortSignal;
+      restart: boolean;
+    },
   ): Promise<AppUpdateInstallResult> {
     if (!cachedUpdateInfo) {
       return {
@@ -287,7 +315,7 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
     }
 
     if (isReadyToInstallVersion(readyVersion)) {
-      await performQuitAndInstall(deps.runtime, onBeforeQuit);
+      await performQuitAndInstall(deps.runtime, { onBeforeQuit, restart });
       return {
         installed: true,
         version: readyVersion,
@@ -308,7 +336,7 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
         };
       }
       downloadedUpdateVersion = readyVersion;
-      await performQuitAndInstall(deps.runtime, onBeforeQuit);
+      await performQuitAndInstall(deps.runtime, { onBeforeQuit, restart });
 
       return {
         installed: true,
@@ -348,7 +376,7 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
       return false;
     }
 
-    const result = await installCachedUpdate(currentVersion, undefined, signal);
+    const result = await installCachedUpdate(currentVersion, { signal, restart: false });
     return result.installed;
   }
 

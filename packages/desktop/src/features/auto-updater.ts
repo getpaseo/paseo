@@ -128,6 +128,7 @@ class ElectronAppUpdateRuntime implements AppUpdateRuntime {
   }
 
   quitAndInstall(isSilent: boolean, isForceRunAfter: boolean): void {
+    autoUpdater.autoRunAppAfterInstall = isForceRunAfter;
     autoUpdater.quitAndInstall(isSilent, isForceRunAfter);
   }
 }
