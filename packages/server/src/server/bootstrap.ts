@@ -89,6 +89,34 @@ function formatListenTarget(listenTarget: ListenTarget | null): string | null {
   return listenTarget.path;
 }
 
+export async function fanOutReconciledWorkspaceUpdates(input: {
+  sessions: Iterable<{
+    syncWorkspaceGitObserversForExternalWorkspaceIds(workspaceIds: Iterable<string>): Promise<void>;
+    emitWorkspaceUpdatesForExternalWorkspaceIds(
+      workspaceIds: Iterable<string>,
+      options: { skipReconcile: boolean },
+    ): Promise<void>;
+  }>;
+  workspaceIds: readonly string[];
+  logger: Pick<Logger, "warn">;
+}): Promise<void> {
+  await Promise.all(
+    Array.from(input.sessions, async (session) => {
+      try {
+        await session.syncWorkspaceGitObserversForExternalWorkspaceIds(input.workspaceIds);
+      } catch (error) {
+        input.logger.warn(
+          { err: error },
+          "Failed to sync workspace Git observers after reconciliation",
+        );
+      }
+      await session.emitWorkspaceUpdatesForExternalWorkspaceIds(input.workspaceIds, {
+        skipReconcile: true,
+      });
+    }),
+  );
+}
+
 import { VoiceAssistantWebSocketServer } from "./websocket-server.js";
 import { createGitHubService } from "../services/github-service.js";
 import { createPaseoWorktree as createRegisteredPaseoWorktree } from "./paseo-worktree-service.js";
@@ -800,13 +828,11 @@ export async function createPaseoDaemon(
     logger,
     onProjectUpdate: (update) => wsServer?.publishProjectUpdate(update),
     onWorkspacesChanged: async (workspaceIds) => {
-      await Promise.all(
-        (wsServer?.listActiveSessions() ?? []).map((session) =>
-          session.emitWorkspaceUpdatesForExternalWorkspaceIds(workspaceIds, {
-            skipReconcile: true,
-          }),
-        ),
-      );
+      await fanOutReconciledWorkspaceUpdates({
+        sessions: wsServer?.listActiveSessions() ?? [],
+        workspaceIds,
+        logger,
+      });
     },
   });
   await projectGitObserver.start();

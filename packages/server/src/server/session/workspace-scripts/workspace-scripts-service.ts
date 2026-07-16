@@ -79,23 +79,24 @@ export function createWorkspaceScriptsService(deps: {
   } = deps;
 
   function resolveGitMetadata(
-    workspaceDirectory: string,
+    workspace: PersistedWorkspaceRecord,
     project: { projectId: string; rootPath: string } | null,
   ) {
-    const snapshot = workspaceGitService.peekSnapshot(workspaceDirectory);
+    const snapshot = workspaceGitService.peekSnapshot(workspace.cwd);
+    const currentBranch = snapshot?.git.currentBranch ?? workspace.branch ?? null;
     if (project) {
       return {
         projectSlug: deriveProjectServiceSlug(project),
-        currentBranch: snapshot?.git.currentBranch ?? null,
+        currentBranch,
       };
     }
     if (!snapshot) return undefined;
     return {
       projectSlug: deriveProjectSlug(
-        workspaceDirectory,
+        workspace.cwd,
         snapshot.git.isGit ? snapshot.git.remoteUrl : null,
       ),
-      currentBranch: snapshot.git.currentBranch,
+      currentBranch,
     };
   }
 
@@ -114,7 +115,7 @@ export function createWorkspaceScriptsService(deps: {
       runtimeStore: scriptRuntimeStore,
       daemonPort: getDaemonTcpPort?.() ?? null,
       serviceProxyPublicBaseUrl,
-      gitMetadata: resolveGitMetadata(workspace.cwd, project),
+      gitMetadata: resolveGitMetadata(workspace, project),
       resolveHealth: resolveScriptHealth ?? undefined,
     });
   }
@@ -150,7 +151,10 @@ export function createWorkspaceScriptsService(deps: {
             workspace.cwd,
             workspaceGitService.peekSnapshot(workspace.cwd)?.git.remoteUrl ?? null,
           );
-      const branchName = workspaceGitService.peekSnapshot(workspace.cwd)?.git.currentBranch ?? null;
+      const branchName =
+        workspaceGitService.peekSnapshot(workspace.cwd)?.git.currentBranch ??
+        workspace.branch ??
+        null;
 
       const serviceResult = await spawnWorkspaceScript({
         repoRoot: workspace.cwd,

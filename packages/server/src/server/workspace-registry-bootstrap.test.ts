@@ -1,6 +1,6 @@
 import os from "node:os";
 import path from "node:path";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 
@@ -62,6 +62,47 @@ describe("bootstrapWorkspaceRegistries", () => {
       id: "agent-missing-directory",
       provider: "codex",
       cwd: missingDirectory,
+      createdAt: "2026-03-01T00:00:00.000Z",
+      updatedAt: "2026-03-01T00:00:00.000Z",
+      lastActivityAt: null,
+      lastUserMessageAt: null,
+      title: null,
+      labels: {},
+      lastStatus: "idle",
+      lastModeId: null,
+      config: null,
+      runtimeInfo: { provider: "codex", sessionId: null },
+      persistence: null,
+      archivedAt: null,
+    });
+
+    await bootstrapWorkspaceRegistries({
+      paseoHome,
+      agentStorage,
+      projectRegistry,
+      workspaceRegistry,
+      workspaceGitService,
+      logger,
+    });
+
+    expect(await projectRegistry.list()).toEqual([]);
+    expect(await workspaceRegistry.list()).toEqual([]);
+  });
+
+  test("skips a legacy agent whose cwd is a file", async () => {
+    const cwd = path.join(tmpDir, "not-a-directory");
+    writeFileSync(cwd, "not a directory");
+    workspaceGitService = {
+      ...createNoopWorkspaceGitService(),
+      getCheckout: async () => {
+        throw new Error("Git must not inspect a file");
+      },
+    };
+    await agentStorage.initialize();
+    await agentStorage.upsert({
+      id: "agent-file-cwd",
+      provider: "codex",
+      cwd,
       createdAt: "2026-03-01T00:00:00.000Z",
       updatedAt: "2026-03-01T00:00:00.000Z",
       lastActivityAt: null,

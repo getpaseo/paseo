@@ -44,6 +44,7 @@ export interface RunAsyncWorktreeBootstrapOptions {
   // workspaceId-scoped archive tear these terminals down.
   workspaceId: string;
   worktree: WorktreeConfig;
+  workspaceCwd?: string;
   shouldBootstrap?: boolean;
   terminalManager: TerminalManager | null;
   appendTimelineItem: (item: AgentTimelineItem) => Promise<boolean>;
@@ -503,7 +504,8 @@ async function runWorktreeTerminalBootstrap(
   options: RunAsyncWorktreeBootstrapOptions,
   runtimeEnv: WorktreeRuntimeEnv,
 ): Promise<void> {
-  const terminalSpecs = getWorktreeTerminalSpecs(options.worktree.worktreePath);
+  const workspaceCwd = options.workspaceCwd ?? options.worktree.worktreePath;
+  const terminalSpecs = getWorktreeTerminalSpecs(workspaceCwd);
   if (terminalSpecs.length === 0) {
     return;
   }
@@ -540,7 +542,7 @@ async function runWorktreeTerminalBootstrap(
     terminalSpecs.map(async (spec): Promise<WorktreeBootstrapTerminalResult> => {
       try {
         const terminal = await terminalManager.createTerminal({
-          cwd: options.worktree.worktreePath,
+          cwd: workspaceCwd,
           name: spec.name,
           env: runtimeEnv,
           workspaceId: options.workspaceId,
@@ -597,6 +599,7 @@ export async function runAsyncWorktreeBootstrap(
   let runtimeEnv: WorktreeRuntimeEnv | null = null;
   const emitLiveTimelineItem = options.emitLiveTimelineItem;
   const progressAccumulator = createWorktreeSetupProgressAccumulator();
+  const workspaceCwd = options.workspaceCwd ?? options.worktree.worktreePath;
   let liveEmitQueue = Promise.resolve();
 
   const queueLiveRunningEmit = () => {
@@ -632,12 +635,12 @@ export async function runAsyncWorktreeBootstrap(
       branchName: options.worktree.branchName,
     });
     options.terminalManager?.registerCwdEnv({
-      cwd: options.worktree.worktreePath,
+      cwd: workspaceCwd,
       env: runtimeEnv,
     });
 
     setupResults = await runWorktreeSetupCommands({
-      worktreePath: options.worktree.worktreePath,
+      worktreePath: workspaceCwd,
       branchName: options.worktree.branchName,
       cleanupOnFailure: false,
       runtimeEnv,

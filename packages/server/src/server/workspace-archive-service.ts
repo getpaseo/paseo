@@ -14,7 +14,7 @@ import {
 } from "../utils/worktree.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type { PersistedWorkspaceRecord, WorkspaceRegistry } from "./workspace-registry.js";
-import { areEquivalentPaths } from "../utils/path.js";
+import { areEquivalentPaths, createRealpathAwarePathMatcher } from "../utils/path.js";
 
 export interface ActiveWorkspaceRef {
   workspaceId: string;
@@ -79,11 +79,9 @@ export async function resolveWorkspaceIdAtPath(
   dependencies: Pick<ArchiveDependencies, "findWorkspaceIdForCwd" | "listActiveWorkspaces">,
   targetPath: string,
 ): Promise<string | null> {
-  const targetDir = resolve(targetPath);
+  const matchesTarget = createRealpathAwarePathMatcher(targetPath);
   const activeWorkspaces = await dependencies.listActiveWorkspaces();
-  const exactMatches = activeWorkspaces.filter((workspace) =>
-    areEquivalentPaths(workspace.cwd, targetDir),
-  );
+  const exactMatches = activeWorkspaces.filter((workspace) => matchesTarget(workspace.cwd));
   const worktreeMatch = exactMatches.find((workspace) => workspace.kind === "worktree");
   if (worktreeMatch) {
     return worktreeMatch.workspaceId;

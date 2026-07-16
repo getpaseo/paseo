@@ -166,7 +166,7 @@ describe("buildSnapshot", () => {
     ).toEqual([]);
   });
 
-  test("projects service hostnames without a Git snapshot", () => {
+  test("projects service hostnames without a Git snapshot", async () => {
     const directory = mkdtempSync(join(tmpdir(), "workspace-scripts-"));
     tempDirs.push(directory);
     writeFileSync(
@@ -187,9 +187,10 @@ describe("buildSnapshot", () => {
       workspaceId: "ws-no-snapshot",
       projectId: project.projectId,
       cwd: directory,
+      branch: "feature/persisted",
     } as PersistedWorkspaceRecord;
     const serviceProxy = createServiceProxySubsystem({ logger });
-    const { service } = buildService({
+    const { service, spawnCalls } = buildService({
       workspace,
       project,
       serviceProxy,
@@ -199,11 +200,13 @@ describe("buildSnapshot", () => {
     expect(service.buildSnapshot(workspace, project)[0]?.hostname).toBe(
       serviceProxy.projectWorkspaceService({
         projectSlug: deriveProjectServiceSlug(project),
-        branchName: null,
+        branchName: workspace.branch,
         scriptName: "app",
         daemonPort: 6767,
       }).hostname,
     );
+    await service.start({ ...request, workspaceId: workspace.workspaceId });
+    expect(spawnCalls[0]?.branchName).toBe(workspace.branch);
   });
 });
 

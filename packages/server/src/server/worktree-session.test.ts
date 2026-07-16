@@ -570,6 +570,62 @@ describe("runWorktreeSetupInBackground", () => {
     }
   });
 
+  test("runs setup from an exact workspace subdirectory", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    cleanupPaths.push(tempDir);
+    const sourceWorkspaceCwd = path.join(repoDir, "packages", "app");
+    mkdirSync(sourceWorkspaceCwd, { recursive: true });
+    writeFileSync(
+      path.join(sourceWorkspaceCwd, "paseo.json"),
+      JSON.stringify({
+        worktree: {
+          setup: ["pwd > setup-cwd.txt"],
+        },
+      }),
+    );
+    execFileSync("git", ["add", "."], { cwd: repoDir, stdio: "pipe" });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "add app setup"], {
+      cwd: repoDir,
+      stdio: "pipe",
+    });
+
+    const paseoHome = path.join(tempDir, ".paseo");
+    const createdWorktree = await createLegacyWorktreeForTest({
+      branchName: "feature-subdirectory-setup",
+      cwd: repoDir,
+      baseBranch: "main",
+      worktreeSlug: "feature-subdirectory-setup",
+      runSetup: false,
+      paseoHome,
+    });
+    const workspaceCwd = path.join(createdWorktree.worktreePath, "packages", "app");
+
+    await runWorktreeSetupInBackground(
+      {
+        paseoHome,
+        emitWorkspaceUpdateForWorkspaceId: async () => {},
+        cacheWorkspaceSetupSnapshot: () => {},
+        emit: () => {},
+        sessionLogger: createLogger(),
+        terminalManager: null,
+        archiveWorkspaceRecord: async () => {},
+      },
+      {
+        requestCwd: sourceWorkspaceCwd,
+        repoRoot: repoDir,
+        workspaceId: "ws-subdirectory-setup",
+        worktree: createdWorktree,
+        shouldBootstrap: true,
+        slug: "feature-subdirectory-setup",
+        worktreePath: createdWorktree.worktreePath,
+        workspaceCwd,
+      },
+    );
+
+    expect(existsSync(path.join(workspaceCwd, "setup-cwd.txt"))).toBe(true);
+    expect(existsSync(path.join(createdWorktree.worktreePath, "setup-cwd.txt"))).toBe(false);
+  });
+
   test("emits running then completed snapshots for no-setup workspaces without auto-starting scripts", async () => {
     const { tempDir, repoDir } = createGitRepo({
       paseoConfig: {

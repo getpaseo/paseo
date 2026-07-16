@@ -35,7 +35,7 @@ import { resolvePaseoHome } from "../server/paseo-home.js";
 import { createExternalProcessEnv } from "../server/paseo-env.js";
 import { parseGitRevParsePath, resolveGitRevParsePath } from "./git-rev-parse-path.js";
 import { validateBranchSlug } from "@getpaseo/protocol/branch-slug";
-import { expandTilde, isPathInsideRoot } from "./path.js";
+import { expandTilde, isRealpathInsideRoot } from "./path.js";
 
 export { slugify, validateBranchSlug } from "@getpaseo/protocol/branch-slug";
 
@@ -850,15 +850,14 @@ export function mapWorkspaceCwdToWorktree(input: {
   workspaceCwd: string;
   targetWorktreePath: string;
 }): string {
-  if (!isPathInsideRoot(input.sourceWorktreePath, input.workspaceCwd)) {
+  if (!isRealpathInsideRoot(input.sourceWorktreePath, input.workspaceCwd)) {
     throw new Error(`Workspace cwd is outside its source worktree: ${input.workspaceCwd}`);
   }
 
-  const mappedCwd = resolve(
-    input.targetWorktreePath,
-    relative(input.sourceWorktreePath, input.workspaceCwd),
-  );
-  if (!isPathInsideRoot(input.targetWorktreePath, mappedCwd)) {
+  const sourceWorktreePath = normalizePathForOwnership(input.sourceWorktreePath);
+  const workspaceCwd = normalizePathForOwnership(input.workspaceCwd);
+  const mappedCwd = resolve(input.targetWorktreePath, relative(sourceWorktreePath, workspaceCwd));
+  if (!isRealpathInsideRoot(input.targetWorktreePath, mappedCwd)) {
     throw new Error(`Workspace cwd escapes its target worktree: ${input.workspaceCwd}`);
   }
   return mappedCwd;
