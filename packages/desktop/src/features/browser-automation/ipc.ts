@@ -17,6 +17,7 @@ import {
   promptShimRestoreScript,
 } from "./dialog-handling.js";
 import { executeAutomationCommand } from "./service.js";
+import { BrowserSnapshotEngine } from "./snapshot-engine.js";
 import {
   listRegisteredPaseoBrowserIds,
   listRegisteredPaseoBrowserIdsForWorkspace,
@@ -34,6 +35,36 @@ const observedContentsIds = new Set<number>();
 interface IpcHandlerRegistry {
   handle(channel: string, listener: (event: unknown, ...args: unknown[]) => unknown): void;
 }
+
+interface HostWebContents {
+  readonly id: number;
+  once(event: "destroyed", listener: () => void): void;
+}
+
+export class HostSnapshotEngineRegistry {
+  private readonly entries = new Map<
+    number,
+    { hostContents: HostWebContents; snapshotEngine: BrowserSnapshotEngine }
+  >();
+
+  public get(hostContents: HostWebContents): BrowserSnapshotEngine {
+    const existing = this.entries.get(hostContents.id);
+    if (existing) {
+      return existing.snapshotEngine;
+    }
+    const snapshotEngine = new BrowserSnapshotEngine();
+    const entry = { hostContents, snapshotEngine };
+    this.entries.set(hostContents.id, entry);
+    hostContents.once("destroyed", () => {
+      if (this.entries.get(hostContents.id) === entry) {
+        this.entries.delete(hostContents.id);
+      }
+    });
+    return snapshotEngine;
+  }
+}
+
+const hostSnapshotEngines = new HostSnapshotEngineRegistry();
 
 interface WebContentsDebugger {
   isAttached(): boolean;
@@ -362,8 +393,9 @@ export function registerBrowserAutomationIpc(options?: { ipc?: IpcHandlerRegistr
   const ipc = options?.ipc ?? ipcMain;
 
   ipc.handle("paseo:browser:execute-automation-command", async (event, rawRequest: unknown) => {
-    const hostWebContentsId = (event as { sender?: { id?: unknown } }).sender?.id;
-    if (typeof hostWebContentsId !== "number") {
+    const hostContents = (event as { sender?: HostWebContents }).sender;
+    const hostWebContentsId = hostContents?.id;
+    if (!hostContents || typeof hostWebContentsId !== "number") {
       return {
         requestId: readRequestId(rawRequest),
         ok: false as const,
@@ -386,7 +418,9 @@ export function registerBrowserAutomationIpc(options?: { ipc?: IpcHandlerRegistr
         },
       };
     }
-    return executeAutomationCommand(parsed.data, registry);
+    return executeAutomationCommand(parsed.data, registry, {
+      snapshotEngine: hostSnapshotEngines.get(hostContents),
+    });
   });
 }
 

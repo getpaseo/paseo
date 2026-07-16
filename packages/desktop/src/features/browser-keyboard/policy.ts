@@ -3,6 +3,7 @@ export interface BrowserShortcutPrefix {
   code: string;
   codeFallback?: true;
   control: boolean;
+  editable?: false;
   key?: string;
   meta: boolean;
   repeat?: false;
@@ -30,6 +31,7 @@ export interface BrowserShortcutMatchInput {
   alt: boolean;
   code: string;
   control: boolean;
+  editable?: boolean;
   key: string;
   meta: boolean;
   repeat: boolean;
@@ -40,6 +42,16 @@ export type BrowserReservedShortcut = "focus-url" | "reload" | "force-reload";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasValidOptionalPrefixFields(value: Record<string, unknown>): boolean {
+  return (
+    (value.key === undefined || typeof value.key === "string") &&
+    (value.shiftedKey === undefined || typeof value.shiftedKey === "string") &&
+    (value.codeFallback === undefined || value.codeFallback === true) &&
+    (value.editable === undefined || value.editable === false) &&
+    (value.repeat === undefined || value.repeat === false)
+  );
 }
 
 function parsePrefix(value: unknown): BrowserShortcutPrefix | null {
@@ -53,10 +65,7 @@ function parsePrefix(value: unknown): BrowserShortcutPrefix | null {
     typeof value.control !== "boolean" ||
     typeof value.meta !== "boolean" ||
     typeof value.shift !== "boolean" ||
-    (value.key !== undefined && typeof value.key !== "string") ||
-    (value.shiftedKey !== undefined && typeof value.shiftedKey !== "string") ||
-    (value.codeFallback !== undefined && value.codeFallback !== true) ||
-    (value.repeat !== undefined && value.repeat !== false)
+    !hasValidOptionalPrefixFields(value)
   ) {
     return null;
   }
@@ -65,6 +74,7 @@ function parsePrefix(value: unknown): BrowserShortcutPrefix | null {
     code: value.code,
     ...(value.codeFallback === true ? { codeFallback: true } : {}),
     control: value.control,
+    ...(value.editable === false ? { editable: false } : {}),
     ...(typeof value.key === "string" ? { key: value.key.toLowerCase() } : {}),
     meta: value.meta,
     ...(value.repeat === false ? { repeat: false } : {}),
@@ -138,6 +148,7 @@ function matchesPrefix(prefix: BrowserShortcutPrefix, input: BrowserShortcutMatc
     prefix.control !== input.control ||
     prefix.meta !== input.meta ||
     prefix.shift !== input.shift ||
+    (prefix.editable === false && input.editable === true) ||
     (prefix.repeat === false && input.repeat)
   ) {
     return false;

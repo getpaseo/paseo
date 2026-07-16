@@ -101,6 +101,76 @@ describe("browser keyboard policy", () => {
     ).toBeNull();
   });
 
+  test("preserves editable exclusions and rejects permissive values", () => {
+    expect(
+      parseBrowserKeyboardPolicy({
+        menuPrefixes: [],
+        prefixes: [
+          {
+            alt: false,
+            code: "ArrowLeft",
+            control: false,
+            editable: false,
+            meta: true,
+            shift: true,
+          },
+        ],
+      }),
+    ).toEqual({
+      menuPrefixes: [],
+      prefixes: [
+        {
+          alt: false,
+          code: "ArrowLeft",
+          control: false,
+          editable: false,
+          meta: true,
+          shift: true,
+        },
+      ],
+    });
+    expect(
+      parseBrowserKeyboardPolicy({
+        menuPrefixes: [],
+        prefixes: [
+          {
+            alt: false,
+            code: "ArrowLeft",
+            control: false,
+            editable: true,
+            meta: true,
+            shift: true,
+          },
+        ],
+      }),
+    ).toBeNull();
+
+    const policy = parseBrowserKeyboardPolicy({
+      menuPrefixes: [],
+      prefixes: [
+        {
+          alt: false,
+          code: "ArrowLeft",
+          control: false,
+          editable: false,
+          meta: true,
+          shift: true,
+        },
+      ],
+    });
+    const input = {
+      alt: false,
+      code: "ArrowLeft",
+      control: false,
+      key: "ArrowLeft",
+      meta: true,
+      repeat: false,
+      shift: true,
+    };
+    expect(matchesBrowserShortcutPolicy(policy!, { ...input, editable: false })).toBe(true);
+    expect(matchesBrowserShortcutPolicy(policy!, { ...input, editable: true })).toBe(false);
+  });
+
   test("keeps browser identities exact", () => {
     expect(
       parseBrowserShortcutInput({

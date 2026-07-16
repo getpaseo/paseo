@@ -19,9 +19,10 @@ It validates the compositor behavior that unit tests cannot see:
 - the automation group loads the compiled production keyboard boundary and guest
   preload, then proves that initial page window handlers get first refusal, unhandled
   shortcuts synchronously suppress editable browser defaults before crossing the host
-  boundary, handlers registered after preload still get first refusal, focused iframes
-  share the same boundary, digit wildcard shortcuts cross, and background automation stays
-  in the guest.
+  boundary, shortcuts marked unavailable in editable targets retain the browser field's
+  native behavior, handlers registered after preload still get first refusal, focused
+  iframes share the same boundary, digit wildcard shortcuts cross, and background automation
+  stays in the guest.
 
 Run it with the repo Electron:
 

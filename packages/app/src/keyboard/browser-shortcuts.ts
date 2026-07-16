@@ -11,6 +11,7 @@ export interface BrowserShortcutPrefix {
   code: string;
   codeFallback?: true;
   control: boolean;
+  editable?: false;
   key?: string;
   meta: boolean;
   repeat?: false;
@@ -81,7 +82,11 @@ export function parseBrowserShortcutInput(value: unknown): BrowserShortcutInput 
   };
 }
 
-function prefixFromCombo(combo: KeyCombo, isMac: boolean): BrowserShortcutPrefix | null {
+function prefixFromCombo(
+  combo: KeyCombo,
+  isMac: boolean,
+  editable: false | undefined,
+): BrowserShortcutPrefix | null {
   const prefix: BrowserShortcutPrefix = {
     alt: combo.alt === true,
     code: combo.code,
@@ -91,6 +96,9 @@ function prefixFromCombo(combo: KeyCombo, isMac: boolean): BrowserShortcutPrefix
   };
   if (combo.codeFallback === true) {
     prefix.codeFallback = true;
+  }
+  if (editable === false) {
+    prefix.editable = false;
   }
   if (combo.key) {
     prefix.key = combo.key;
@@ -117,7 +125,7 @@ function isBrowserNativeNavigationPrefix(prefix: BrowserShortcutPrefix, isMac: b
 
 function canCrossBrowserBoundary(binding: ParsedShortcutBinding, isMac: boolean): boolean {
   return binding.parsedChord.every((combo) => {
-    const prefix = prefixFromCombo(combo, isMac);
+    const prefix = prefixFromCombo(combo, isMac, binding.when?.editable);
     return prefix !== null && !isBrowserNativeNavigationPrefix(prefix, isMac);
   });
 }
@@ -128,6 +136,7 @@ function prefixKey(prefix: BrowserShortcutPrefix): string {
     prefix.key ?? "",
     prefix.shiftedKey ?? "",
     prefix.codeFallback ?? "",
+    prefix.editable ?? "",
     prefix.control,
     prefix.meta,
     prefix.alt,
@@ -166,7 +175,7 @@ function buildBrowserShortcutPrefixes(input: BrowserShortcutPolicyInput): Browse
     if (!combo) {
       continue;
     }
-    const prefix = prefixFromCombo(combo, input.isMac);
+    const prefix = prefixFromCombo(combo, input.isMac, binding.when?.editable);
     if (!prefix) {
       continue;
     }

@@ -1588,8 +1588,11 @@ function sendContainedEnter(guest) {
   });
 }
 
-function automationBrowserShortcut(guest, keyCode = "B") {
+function automationBrowserShortcut(guest, keyCode = "B", options = {}) {
   const modifiers = [process.platform === "darwin" ? "meta" : "control"];
+  if (options.shift) {
+    modifiers.push("shift");
+  }
   guest.sendInputEvent({
     type: "keyDown",
     keyCode,
@@ -1846,6 +1849,31 @@ async function verifyFocusedIframeShortcut({ guest, shortcutInputs, expectedInpu
   return { group: "automation", check: "browser-shortcut-focused-iframe", pass: true };
 }
 
+async function verifyEditableShortcutExclusion({ guest, shortcutInputs }) {
+  await guest.executeJavaScript(
+    `window.editableExcludedShortcut = null;
+     window.addEventListener("keydown", (event) => {
+       if (event.code === "ArrowLeft" && event.shiftKey) {
+         window.editableExcludedShortcut = { defaultPrevented: event.defaultPrevented };
+       }
+     }, { once: true });`,
+    true,
+  );
+  automationBrowserShortcut(guest, "Left", { shift: true });
+  await delay(100);
+  const observedEvent = await guest.executeJavaScript("window.editableExcludedShortcut", true);
+  if (
+    shortcutInputs.length !== 2 ||
+    !isDeepStrictEqual(observedEvent, { defaultPrevented: false })
+  ) {
+    fail(
+      `editable-only exclusion escaped guest: inputs=${JSON.stringify(shortcutInputs)} event=${JSON.stringify(observedEvent)}`,
+    );
+  }
+  pass("automation editable-only shortcuts keep browser field ownership");
+  return { group: "automation", check: "browser-shortcut-editable-exclusion", pass: true };
+}
+
 async function verifyBrowserKeyboardIsolation({ guest, win, browserId, usesMeta, sentinel }) {
   const checks = [];
   const { shortcutInputs } = sentinel;
@@ -1967,6 +1995,8 @@ async function verifyBrowserKeyboardIsolation({ guest, win, browserId, usesMeta,
   }
   pass("automation guest preload owns an unhandled editable browser shortcut");
   checks.push({ group: "automation", check: "browser-shortcut-editable-owned", pass: true });
+
+  checks.push(await verifyEditableShortcutExclusion({ guest, shortcutInputs }));
 
   automationBrowserShortcut(guest, "1");
   await waitForBrowserShortcutInput(shortcutInputs, 3);
@@ -2136,6 +2166,15 @@ async function runAutomationGroup() {
           meta: usesMeta,
           repeat: false,
           shift: false,
+        },
+        {
+          alt: false,
+          code: "ArrowLeft",
+          control: !usesMeta,
+          editable: false,
+          meta: usesMeta,
+          repeat: false,
+          shift: true,
         },
         {
           alt: false,

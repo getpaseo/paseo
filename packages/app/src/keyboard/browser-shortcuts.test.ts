@@ -178,6 +178,20 @@ describe("buildBrowserKeyboardPolicy", () => {
     }
   });
 
+  it("marks editable-only exclusions for enforcement inside the guest", () => {
+    const bindings = buildEffectiveBindings({});
+    const policy = buildBrowserKeyboardPolicy({ bindings, isMac: true, isDesktop: true });
+
+    expect(policy.prefixes).toContainEqual({
+      alt: false,
+      code: "ArrowLeft",
+      control: false,
+      editable: false,
+      meta: true,
+      shift: true,
+    });
+  });
+
   it("does not publish plain browser keys", () => {
     const bindings = buildEffectiveBindings({});
     const policy = buildBrowserKeyboardPolicy({ bindings, isMac: false, isDesktop: true });

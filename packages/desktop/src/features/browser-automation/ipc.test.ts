@@ -1,7 +1,7 @@
 import type { Rectangle } from "electron";
 import { describe, expect, test, vi } from "vitest";
 import type { TabImage } from "./service.js";
-import { adaptWebContents } from "./ipc.js";
+import { adaptWebContents, HostSnapshotEngineRegistry } from "./ipc.js";
 import type { IsolatedKeyboardInputEvent } from "./trusted-input.js";
 
 class FakeImage implements TabImage {
@@ -191,6 +191,19 @@ class FakeWebContents {
 }
 
 describe("browser automation IPC adapter", () => {
+  test("isolates snapshot refs by host window and releases them on destruction", () => {
+    const registry = new HostSnapshotEngineRegistry();
+    const firstHost = new FakeHostWebContents(1);
+    const secondHost = new FakeHostWebContents(2);
+
+    const firstEngine = registry.get(firstHost);
+    expect(registry.get(firstHost)).toBe(firstEngine);
+    expect(registry.get(secondHost)).not.toBe(firstEngine);
+
+    firstHost.destroy();
+    expect(registry.get(new FakeHostWebContents(1))).not.toBe(firstEngine);
+  });
+
   test("sends contained keyboard input directly to the guest", () => {
     const contents = new FakeWebContents(19);
     const tab = adaptWebContents(contents);
@@ -559,6 +572,21 @@ describe("browser automation IPC adapter", () => {
     warn.mockRestore();
   });
 });
+
+class FakeHostWebContents {
+  private destroyedListener: (() => void) | null = null;
+
+  public constructor(public readonly id: number) {}
+
+  public once(event: "destroyed", listener: () => void): void {
+    expect(event).toBe("destroyed");
+    this.destroyedListener = listener;
+  }
+
+  public destroy(): void {
+    this.destroyedListener?.();
+  }
+}
 
 async function flushMicrotasks(): Promise<void> {
   await Promise.resolve();

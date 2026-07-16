@@ -13,12 +13,14 @@ interface BrowserKeyboardPolicyPayload extends BrowserKeyboardPolicy {
 }
 
 function matchesPolicy(event: KeyboardEvent): boolean {
+  const editable = isEditableTarget(event.target);
   return policy.some((prefix) => {
     if (
       prefix.alt !== event.altKey ||
       prefix.control !== event.ctrlKey ||
       prefix.meta !== event.metaKey ||
       prefix.shift !== event.shiftKey ||
+      (prefix.editable === false && editable) ||
       (prefix.repeat === false && event.repeat)
     ) {
       return false;
@@ -35,6 +37,18 @@ function matchesPolicy(event: KeyboardEvent): boolean {
     }
     return (prefix.alt || prefix.codeFallback === true) && matchesCode(prefix.code, event.code);
   });
+}
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) {
+    return false;
+  }
+  const element = target as HTMLElement;
+  if (element.isContentEditable) {
+    return true;
+  }
+  const tag = element.tagName.toLowerCase();
+  return tag === "input" || tag === "textarea" || tag === "select";
 }
 
 function matchesCode(prefixCode: string, eventCode: string): boolean {
