@@ -1,40 +1,51 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
-import { handleBrowserWindowOpenRequest, PendingBrowserWindowOpenRequests } from ".";
+import { decideBrowserWindowOpenRequest, PendingBrowserWindowOpenRequests } from ".";
 
 describe("browser webview window-open requests", () => {
-  it("denies Electron window creation and requests a Paseo browser tab", () => {
-    const requestNewTab = vi.fn();
-
-    const result = handleBrowserWindowOpenRequest({
+  it("routes foreground tabs to a Paseo workspace tab", () => {
+    const result = decideBrowserWindowOpenRequest({
       url: "https://example.com/target",
-      sourceBrowserId: "browser-1",
-      requestNewTab,
+      disposition: "foreground-tab",
+      hasPostBody: false,
     });
 
-    expect(result).toEqual({ action: "deny" });
-    expect(requestNewTab).toHaveBeenCalledWith({
-      sourceBrowserId: "browser-1",
-      url: "https://example.com/target",
-    });
+    expect(result).toEqual({ kind: "workspace-tab", url: "https://example.com/target" });
   });
 
-  it("denies unsupported window-open requests before asking for a Paseo browser tab", () => {
-    const requestNewTab = vi.fn();
-
-    const result = handleBrowserWindowOpenRequest({
-      url: "file:///etc/passwd",
-      sourceBrowserId: "browser-1",
-      requestNewTab,
+  it("keeps script-opened windows as real popups", () => {
+    const result = decideBrowserWindowOpenRequest({
+      url: "https://login.example.com/signin",
+      disposition: "new-window",
+      hasPostBody: false,
     });
 
-    expect(result).toEqual({ action: "deny" });
-    expect(requestNewTab).not.toHaveBeenCalled();
+    expect(result).toEqual({ kind: "popup" });
+  });
+
+  it("keeps POST-backed foreground tabs as real popups", () => {
+    const result = decideBrowserWindowOpenRequest({
+      url: "https://example.com/submit",
+      disposition: "foreground-tab",
+      hasPostBody: true,
+    });
+
+    expect(result).toEqual({ kind: "popup" });
+  });
+
+  it("denies unsupported window-open requests", () => {
+    const result = decideBrowserWindowOpenRequest({
+      url: "file:///etc/passwd",
+      disposition: "new-window",
+      hasPostBody: false,
+    });
+
+    expect(result).toEqual({ kind: "deny" });
   });
 });
 
 describe("pending browser window-open requests", () => {
-  it("holds early allowed popups until browser identity registration", () => {
+  it("holds early workspace-tab requests until browser identity registration", () => {
     const pending = new PendingBrowserWindowOpenRequests();
     pending.add(101, "https://example.com/first");
     pending.add(101, "file:///etc/passwd");
@@ -44,7 +55,7 @@ describe("pending browser window-open requests", () => {
     expect(pending.take(101)).toEqual([]);
   });
 
-  it("drops pending popups when an unregistered guest is destroyed", () => {
+  it("drops pending workspace-tab requests when an unregistered guest is destroyed", () => {
     const pending = new PendingBrowserWindowOpenRequests();
     pending.add(202, "https://example.com/target");
     pending.delete(202);

@@ -1,9 +1,16 @@
 export const BROWSER_NEW_TAB_REQUEST_EVENT = "paseo:event:browser-new-tab-request";
 
-export interface BrowserNewTabRequestPayload {
-  sourceBrowserId: string;
-  url: string;
-}
+export type BrowserWindowOpenDisposition =
+  | "default"
+  | "foreground-tab"
+  | "background-tab"
+  | "new-window"
+  | "other";
+
+export type BrowserWindowOpenDecision =
+  | { kind: "deny" }
+  | { kind: "popup" }
+  | { kind: "workspace-tab"; url: string };
 
 const MAX_PENDING_WINDOW_OPEN_REQUESTS_PER_GUEST = 20;
 
@@ -47,18 +54,22 @@ export function isAllowedBrowserWebviewUrl(value: string | undefined): boolean {
   }
 }
 
-export function handleBrowserWindowOpenRequest(input: {
+export function decideBrowserWindowOpenRequest(input: {
   url: string;
-  sourceBrowserId: string | null;
-  requestNewTab: (payload: BrowserNewTabRequestPayload) => void;
-}): { action: "deny" } {
-  if (!isAllowedBrowserWebviewUrl(input.url) || !input.sourceBrowserId) {
-    return { action: "deny" };
+  disposition: BrowserWindowOpenDisposition;
+  hasPostBody: boolean;
+}): BrowserWindowOpenDecision {
+  if (!isAllowedBrowserWebviewUrl(input.url)) {
+    return { kind: "deny" };
   }
 
-  input.requestNewTab({
-    sourceBrowserId: input.sourceBrowserId,
-    url: input.url,
-  });
-  return { action: "deny" };
+  // A real popup preserves window.opener, postMessage, named-window reuse, and
+  // window.close(). OAuth and payment flows depend on those browser contracts.
+  // POST-backed opens must also remain real windows because a workspace tab can
+  // only carry the URL and would silently turn the request into a GET.
+  if (input.disposition === "new-window" || input.hasPostBody) {
+    return { kind: "popup" };
+  }
+
+  return { kind: "workspace-tab", url: input.url };
 }
