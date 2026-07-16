@@ -3693,6 +3693,38 @@ test("import_agent_request registers a workspace for a never-seen cwd", async ()
   ).toBe(true);
 });
 
+test("import_agent_request imports into the workspace that opened the import sheet", async () => {
+  const session = createSessionForWorkspaceTests();
+  const workspaceId = "ws-repo-running";
+  let importedWorkspaceId: string | undefined;
+
+  session.agentManager.importProviderSession = async (input: unknown) => {
+    importedWorkspaceId = (input as { workspaceId: string }).workspaceId;
+    return makeManagedAgent({
+      id: "imported-agent",
+      cwd: REPO_CWD,
+      workspaceId: importedWorkspaceId,
+      lifecycle: "idle",
+      updatedAt: "2026-05-21T00:00:00.000Z",
+    });
+  };
+  session.agentManager.getTimeline = () => [];
+  session.agentStorage.list = async () => [];
+  session.agentStorage.get = async () => null;
+  session.agentUpdates.forwardLiveAgent = async () => undefined;
+
+  await session.handleMessage({
+    type: "import_agent_request",
+    requestId: "req-import-current-workspace",
+    providerId: "codex",
+    providerHandleId: "session-xyz",
+    cwd: REPO_CWD,
+    workspaceId,
+  });
+
+  expect(importedWorkspaceId).toBe(workspaceId);
+});
+
 test("open_project_response returns immediately even when the GitHub fetch is slow", async () => {
   const emitted: SessionOutboundMessage[] = [];
   const session = createSessionForWorkspaceTests();

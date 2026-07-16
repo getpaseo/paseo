@@ -26,6 +26,7 @@ export interface NormalizedImportAgentRequest {
   provider: AgentProvider;
   providerHandleId: string;
   cwd?: string;
+  workspaceId?: string;
   labels?: Record<string, string>;
   requestId: string;
 }
@@ -82,6 +83,7 @@ export function normalizeImportAgentRequest(
     provider: provider as AgentProvider,
     providerHandleId,
     cwd: msg.cwd,
+    workspaceId: msg.workspaceId,
     labels: msg.labels,
     requestId: msg.requestId,
   };
@@ -216,6 +218,9 @@ async function collectImportedProviderSessionHandles(
   }
 
   for (const record of await agentStorage.list()) {
+    if (record.archivedAt) {
+      continue;
+    }
     collectProviderSessionHandleKeys(handles, record.provider, record.persistence);
   }
 

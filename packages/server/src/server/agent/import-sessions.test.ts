@@ -239,6 +239,42 @@ test("listImportableProviderSessions filters, sorts, limits, and projects import
   });
 });
 
+test("listImportableProviderSessions includes a provider session after its Paseo agent is archived", async () => {
+  const cwd = "/tmp/project";
+  const archivedSession = makeImportableSession({
+    provider: "claude",
+    sessionId: "archived-session",
+    cwd,
+    title: "Archived import",
+    lastActivityAt: "2026-04-30T12:00:00.000Z",
+    firstPrompt: "import me again",
+  });
+
+  const result = await listImportableProviderSessions({
+    request: makeRequest({ cwd, providers: ["claude"] }),
+    agentManager: {
+      listAgents: () => [],
+      listImportableSessions: async () => [archivedSession],
+    },
+    agentStorage: {
+      list: async () => [
+        {
+          provider: "claude",
+          archivedAt: "2026-04-30T12:01:00.000Z",
+          persistence: {
+            provider: "claude",
+            sessionId: "archived-session",
+          },
+        } as StoredAgentRecord,
+      ],
+    },
+    providerSnapshotManager: { getProviderLabel: () => "Claude" },
+  });
+
+  expect(result.entries.map((entry) => entry.providerHandleId)).toEqual(["archived-session"]);
+  expect(result.filteredAlreadyImportedCount).toBe(0);
+});
+
 test("listImportableProviderSessions filters out metadata generation sessions", async () => {
   const cwd = "/tmp/project";
   const sessions = [

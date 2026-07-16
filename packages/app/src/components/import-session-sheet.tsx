@@ -44,6 +44,7 @@ interface ImportSessionSheetProps {
   client: RecentProviderSessionsClient | null;
   serverId: string | null;
   cwd?: string | null;
+  workspaceId?: string | null;
   onClose: () => void;
   onImportedAgent?: (agentId: string) => void;
   onImported?: (agent: ImportedAgent) => void;
@@ -260,6 +261,7 @@ export function ImportSessionSheet({
   client,
   serverId,
   cwd,
+  workspaceId,
   onClose,
   onImportedAgent,
   onImported,
@@ -408,6 +410,7 @@ export function ImportSessionSheet({
         providerId: entry.providerId,
         providerHandleId: entry.providerHandleId,
         cwd: entry.cwd,
+        ...(workspaceId ? { workspaceId } : {}),
       });
       return agent;
     },

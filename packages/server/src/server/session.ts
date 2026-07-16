@@ -2708,19 +2708,24 @@ export class Session {
       if (!normalized.cwd) {
         throw new Error("Import requires cwd from the selected provider session");
       }
-      // An imported agent mints its own workspace; ownership is its workspaceId,
-      // never an existing same-cwd workspace resolved by path.
-      const workspace = await this.workspaceProvisioning.createWorkspaceForDirectory(
-        normalized.cwd,
-      );
+      let workspace: PersistedWorkspaceRecord | null = null;
+      let workspaceId: string;
+      if (normalized.workspaceId) {
+        workspaceId = normalized.workspaceId;
+      } else {
+        workspace = await this.workspaceProvisioning.createWorkspaceForDirectory(normalized.cwd);
+        workspaceId = workspace.workspaceId;
+      }
       const { snapshot, timelineSize } = await importProviderSession({
         request: normalized,
-        workspaceId: workspace.workspaceId,
+        workspaceId,
         agentManager: this.agentManager,
         agentStorage: this.agentStorage,
         logger: this.sessionLogger,
       });
-      await this.registerWorkspaceForImportedAgent(workspace);
+      if (workspace) {
+        await this.registerWorkspaceForImportedAgent(workspace);
+      }
       const agentPayload = await this.buildAgentPayload(snapshot);
       this.emit({
         type: "status",
