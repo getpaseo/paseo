@@ -1,6 +1,6 @@
 import type { EditorTarget } from "../target.js";
 
-const COMMANDS = ["rubymine"] as const;
+const COMMANDS = ["rubymine", "rubymine64"] as const;
 
 export const rubymineTarget: EditorTarget = {
   id: "rubymine",
@@ -22,7 +22,7 @@ export const rubymineTarget: EditorTarget = {
     const args: string[] = [];
     if (input.line) args.push("--line", String(input.line));
     if (input.column) args.push("--column", String(input.column));
-    args.push(input.filePath);
+    args.push(input.workspacePath, input.filePath);
     await runtime.spawnDetached({ command, args });
   },
 };

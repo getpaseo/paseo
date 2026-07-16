@@ -3,8 +3,9 @@ import { describe, expect, it } from "vitest";
 import { listAvailableEditorTargets, openEditorTarget } from "./registry.js";
 import type { EditorTargetIcon, EditorTargetRuntime } from "./target.js";
 import { cursorTarget } from "./targets/cursor.js";
-import { fileManagerTarget } from "./targets/file-manager.js";
+import { explorerTarget, fileManagerTarget, finderTarget } from "./targets/file-manager.js";
 import { intellijIdeaTarget } from "./targets/intellij-idea.js";
+import { pycharmTarget } from "./targets/pycharm.js";
 import { vscodeTarget } from "./targets/vscode.js";
 import { webstormTarget } from "./targets/webstorm.js";
 import { zedTarget } from "./targets/zed.js";
@@ -174,9 +175,27 @@ describe("editor target registry", () => {
       { command: "/bin/zeditor", args: ["/repo", "/repo/src/app.ts:7:2"] },
       {
         command: "/bin/webstorm",
-        args: ["--line", "7", "--column", "2", "/repo/src/app.ts"],
+        args: ["--line", "7", "--column", "2", "/repo", "/repo/src/app.ts"],
       },
       { command: "/bin/idea", args: ["/repo"] },
+    ]);
+  });
+
+  it("recognizes Windows 64-bit project IDE launchers", async () => {
+    const runtime = new FakeEditorTargets("win32");
+    runtime.installCommand("pycharm64", "C:/Tools/PyCharm/bin/pycharm64.exe");
+
+    expect(await pycharmTarget.isInstalled(runtime)).toBe(true);
+    await pycharmTarget.launch(
+      { workspacePath: "C:/repo", filePath: "C:/repo/src/app.py", line: 6 },
+      runtime,
+    );
+
+    expect(runtime.launches).toEqual([
+      {
+        command: "C:/Tools/PyCharm/bin/pycharm64.exe",
+        args: ["--line", "6", "C:/repo", "C:/repo/src/app.py"],
+      },
     ]);
   });
 
@@ -239,19 +258,35 @@ describe("editor target registry", () => {
   it("delegates folder opening and file reveal to the system file manager", async () => {
     const runtime = new FakeEditorTargets("win32");
 
-    expect(await fileManagerTarget.describe(runtime)).toEqual({
-      id: "file-manager",
+    expect(await explorerTarget.describe(runtime)).toEqual({
+      id: "explorer",
       label: "Explorer",
       kind: "file-manager",
       icon: { kind: "symbol", name: "folder" },
     });
-    await fileManagerTarget.launch({ workspacePath: "C:/repo" }, runtime);
-    await fileManagerTarget.launch(
+    await explorerTarget.launch({ workspacePath: "C:/repo" }, runtime);
+    await explorerTarget.launch(
       { workspacePath: "C:/repo", filePath: "C:/repo/src/app.ts" },
       runtime,
     );
 
     expect(runtime.openedPaths).toEqual(["C:/repo"]);
     expect(runtime.revealedPaths).toEqual(["C:/repo/src/app.ts"]);
+  });
+
+  it("keeps the platform file-manager ids used by stored preferences", async () => {
+    const macTargets = await listAvailableEditorTargets(new FakeEditorTargets("darwin"), [
+      finderTarget,
+      explorerTarget,
+      fileManagerTarget,
+    ]);
+    const windowsTargets = await listAvailableEditorTargets(new FakeEditorTargets("win32"), [
+      finderTarget,
+      explorerTarget,
+      fileManagerTarget,
+    ]);
+
+    expect(macTargets.map((target) => target.id)).toEqual(["finder"]);
+    expect(windowsTargets.map((target) => target.id)).toEqual(["explorer"]);
   });
 });

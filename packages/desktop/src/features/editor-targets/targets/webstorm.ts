@@ -1,6 +1,6 @@
 import type { EditorTarget } from "../target.js";
 
-const COMMANDS = ["webstorm"] as const;
+const COMMANDS = ["webstorm", "webstorm64"] as const;
 
 export const webstormTarget: EditorTarget = {
   id: "webstorm",
@@ -25,7 +25,7 @@ export const webstormTarget: EditorTarget = {
     const args: string[] = [];
     if (input.line) args.push("--line", String(input.line));
     if (input.column) args.push("--column", String(input.column));
-    args.push(input.filePath);
+    args.push(input.workspacePath, input.filePath);
     await runtime.spawnDetached({ command, args });
   },
 };

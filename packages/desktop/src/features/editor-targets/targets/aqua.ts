@@ -1,6 +1,6 @@
 import type { EditorTarget } from "../target.js";
 
-const COMMANDS = ["aqua"] as const;
+const COMMANDS = ["aqua", "aqua64"] as const;
 
 export const aquaTarget: EditorTarget = {
   id: "aqua",
@@ -22,7 +22,7 @@ export const aquaTarget: EditorTarget = {
     const args: string[] = [];
     if (input.line) args.push("--line", String(input.line));
     if (input.column) args.push("--column", String(input.column));
-    args.push(input.filePath);
+    args.push(input.workspacePath, input.filePath);
     await runtime.spawnDetached({ command, args });
   },
 };

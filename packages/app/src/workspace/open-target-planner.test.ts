@@ -9,7 +9,7 @@ const desktopTargets = [
     icon: { kind: "symbol" as const, name: "terminal" as const },
   },
   {
-    id: "file-manager",
+    id: "finder",
     label: "Finder",
     kind: "file-manager" as const,
     icon: { kind: "symbol" as const, name: "folder" as const },
@@ -55,9 +55,9 @@ describe("planWorkspaceOpenTargets", () => {
 
     expect(targets[1]).toMatchObject({
       source: "desktop",
-      id: "file-manager",
+      id: "finder",
       openInput: {
-        editorId: "file-manager",
+        editorId: "finder",
         workspacePath: "/repo",
         filePath: "/repo/src/app.ts",
       },
@@ -79,8 +79,8 @@ describe("planWorkspaceOpenTargets", () => {
     });
     expect(targets[1]).toMatchObject({
       source: "desktop",
-      id: "file-manager",
-      openInput: { editorId: "file-manager", workspacePath: "/repo" },
+      id: "finder",
+      openInput: { editorId: "finder", workspacePath: "/repo" },
     });
   });
 
