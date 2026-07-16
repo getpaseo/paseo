@@ -2272,6 +2272,47 @@ test("updateProviderRegistry registers a previously unknown provider", async () 
   expect(snapshot.config.provider).toBe("codex");
 });
 
+test("updateProviderRegistry removes providers omitted from the next registry", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const removedProvider = "zai-claude" as AgentProvider;
+  class RemovedProviderClient extends TestAgentClient {
+    createSessionCalls = 0;
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      this.createSessionCalls += 1;
+      return await super.createSession(config);
+    }
+  }
+
+  const removedClient = new RemovedProviderClient();
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient(), [removedProvider]: removedClient },
+    providerDefinitions: {
+      codex: { enabled: true },
+      [removedProvider]: { enabled: true },
+    },
+    registry: storage,
+    logger,
+  });
+
+  expect(manager.getRegisteredProviderIds()).toContain(removedProvider);
+
+  manager.updateProviderRegistry({
+    providerDefinitions: { codex: { enabled: true } },
+    clients: { codex: new TestAgentClient() },
+  });
+
+  expect(manager.getRegisteredProviderIds()).not.toContain(removedProvider);
+  await expect(
+    manager.createAgent({ provider: removedProvider, cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    }),
+  ).rejects.toThrow("Unknown provider 'zai-claude'");
+  expect(removedClient.createSessionCalls).toBe(0);
+});
+
 test("createAgent passes explicit model strings through to the provider", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const storagePath = join(workdir, "agents");

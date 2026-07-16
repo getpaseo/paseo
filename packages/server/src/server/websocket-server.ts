@@ -554,9 +554,10 @@ export class VoiceAssistantWebSocketServer {
       this.speech?.onReadinessChange((snapshot) => {
         this.publishSpeechReadiness(snapshot);
       }) ?? null;
-    this.unsubscribeDaemonConfigChange = this.daemonConfigStore.onChange((config) => {
+    this.unsubscribeDaemonConfigChange = this.daemonConfigStore.onChange((config, details) => {
       const nextAgentManagerState = this.providerSnapshotManager.applyMutableProviderConfig(
         config.providers,
+        { removeProviders: details.removedProviders },
       );
       this.agentManager.updateProviderRegistry(nextAgentManagerState);
       this.broadcastDaemonConfigChanged(config);
@@ -1254,6 +1255,8 @@ export class VoiceAssistantWebSocketServer {
         projectCreateDirectory: true,
         // COMPAT(commitsList): added in v0.1.110, remove gate after 2027-01-16.
         commitsList: true,
+        // COMPAT(providerRemoval): added in v0.1.105, drop the gate when floor >= v0.1.105.
+        providerRemoval: true,
       },
     };
   }
