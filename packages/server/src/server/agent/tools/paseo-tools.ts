@@ -55,6 +55,7 @@ import {
   waitForAgentWithTimeout,
 } from "../mcp-shared.js";
 import { sendPromptToAgent, setupFinishNotification } from "../agent-prompt.js";
+import { buildAgentMessageEnvelope } from "../agent-spawn-context.js";
 import { respondToAgentPermission } from "../permission-response.js";
 import {
   archiveAgentCommand,
@@ -1431,11 +1432,25 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     }) => {
       const shouldNotifyOnFinish = Boolean(callerAgentId && notifyOnFinish && background);
 
+      // Agent-to-agent sends get a sender-identity envelope so the receiver knows
+      // who is asking and how to reply. Human/app sends and other system paths
+      // (chat mentions, schedule fires, notify-on-finish) are left untouched.
+      let deliveredPrompt = prompt;
+      if (callerAgentId) {
+        const senderRecord = await agentStorage.get(callerAgentId);
+        deliveredPrompt = buildAgentMessageEnvelope({
+          senderAgentId: callerAgentId,
+          senderTitle: senderRecord?.title ?? null,
+          prompt,
+          autoReply: shouldNotifyOnFinish,
+        });
+      }
+
       await sendPromptToAgent({
         agentManager,
         agentStorage,
         agentId,
-        prompt,
+        prompt: deliveredPrompt,
         sessionMode,
         logger: childLogger,
       });

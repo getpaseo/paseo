@@ -63,6 +63,7 @@ import { AgentRunState, type ForegroundTurnWaiter } from "./agent-run-state.js";
 import { getAgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
 import { invokeRewindCapability, type RewindMode } from "./rewind/rewind.js";
 import { displayTextForUserMessage } from "./agent-prompt.js";
+import { projectAgentMessageForDisplay } from "./agent-spawn-context.js";
 import { stripInternalPaseoMcpServer, withRuntimePaseoMcpServer } from "./runtime-mcp-config.js";
 import { resolveCreateAgentTitles } from "./create-agent-title.js";
 import type { PaseoToolCatalogFactory } from "./tools/types.js";
@@ -505,10 +506,12 @@ function buildExplicitTimelineSeedForRegister(
   };
 }
 
-// Shapes a timeline item for display: drops fully system-injected user messages
-// and trims a leading <paseo-system> spawn-context block off the visible first
-// user message. The provider already received the full text; this only affects
-// what the timeline shows. Returns null when the item should be hidden.
+// Shapes a timeline item for display: drops fully system-injected user messages,
+// trims a leading <paseo-system> spawn-context block off the visible first user
+// message, and rewrites an agent-to-agent <paseo-agent-message> turn to a
+// readable "Message from agent ..." header. The provider already received the
+// full text; this only affects what the timeline shows. Returns null when the
+// item should be hidden.
 function projectTimelineItemForDisplay<Item extends AgentTimelineItem>(item: Item): Item | null {
   if (item.type !== "user_message") {
     return item;
@@ -517,7 +520,8 @@ function projectTimelineItemForDisplay<Item extends AgentTimelineItem>(item: Ite
   if (display === null) {
     return null;
   }
-  return display === item.text ? item : { ...item, text: display };
+  const projected = projectAgentMessageForDisplay(display);
+  return projected === item.text ? item : { ...item, text: projected };
 }
 
 function buildImportedTimelineRows(entries: readonly ImportedTimelineEntry[]): AgentTimelineRow[] {
