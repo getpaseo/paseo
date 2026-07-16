@@ -68,12 +68,14 @@ export function findFirstMatch(
 export function findAllMatches(
   text: string,
   query: string,
+  limit = Number.POSITIVE_INFINITY,
 ): Array<{ index: number; length: number }> {
   const trimmed = query.trim();
-  if (trimmed.length === 0 || text.length === 0) return [];
+  if (trimmed.length === 0 || text.length === 0 || limit <= 0) return [];
   const results: Array<{ index: number; length: number }> = [];
   for (const match of text.matchAll(buildMatchExpression(trimmed))) {
     results.push({ index: match.index, length: match[0].length });
+    if (results.length >= limit) break;
   }
   return results;
 }

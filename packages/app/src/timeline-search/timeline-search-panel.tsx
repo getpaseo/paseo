@@ -1,21 +1,23 @@
-import React, { useCallback, useMemo } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
+  FlatList,
   Pressable,
-  ScrollView,
   Text,
   TextInput,
   View,
+  type ListRenderItemInfo,
   type NativeSyntheticEvent,
   type PressableStateCallbackType,
   type TextInputKeyPressEventData,
 } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { ChevronDown, ChevronUp, Search, X } from "lucide-react-native";
-import type {
-  TimelineSearchFilter,
-  TimelineSearchMatch,
-  TimelineSearchState,
+import {
+  MAX_TIMELINE_SEARCH_MATCHES,
+  type TimelineSearchFilter,
+  type TimelineSearchMatch,
+  type TimelineSearchState,
 } from "./timeline-search-model";
 import { splitHighlightSegments } from "./highlight";
 
@@ -23,10 +25,18 @@ const FILTERS: readonly TimelineSearchFilter[] = [
   "all",
   "prompts",
   "messages",
+  "thinking",
   "toolCalls",
   "toolOutput",
   "errors",
 ];
+
+/**
+ * Keystroke → search debounce. Every committed query change re-searches the
+ * full loaded history AND re-renders every mounted message's highlighting, so
+ * on large threads committing per keystroke is the dominant typing cost.
+ */
+const QUERY_DEBOUNCE_MS = 150;
 
 const ThemedSearchIcon = withUnistyles(Search, (theme) => ({
   color: theme.colors.foregroundMuted,
@@ -48,6 +58,11 @@ export interface TimelineSearchPanelProps {
    * isn't shown as a final "no results".
    */
   isPaging?: boolean;
+  /**
+   * True when older-history paging gave up (repeated loads made no progress).
+   * Shows a note so partial results aren't mistaken for complete ones.
+   */
+  historyLoadFailed?: boolean;
   onQueryChange: (query: string) => void;
   onFilterChange: (filter: TimelineSearchFilter) => void;
   onSelectNext: () => void;
@@ -57,7 +72,7 @@ export interface TimelineSearchPanelProps {
   testID?: string;
 }
 
-function MatchRow({
+const MatchRow = React.memo(function MatchRow({
   match,
   index,
   active,
@@ -98,7 +113,7 @@ function MatchRow({
       </Text>
     </Pressable>
   );
-}
+});
 
 function FilterChip({
   filter,
@@ -125,9 +140,11 @@ function FilterChip({
   );
 }
 
+// oxlint-disable-next-line max-lines-per-function
 export function TimelineSearchPanel({
   state,
   isPaging = false,
+  historyLoadFailed = false,
   onQueryChange,
   onFilterChange,
   onSelectNext,
@@ -138,6 +155,86 @@ export function TimelineSearchPanel({
 }: TimelineSearchPanelProps) {
   const { t } = useTranslation();
 
+  // The input edits a local draft that commits to the model after a short
+  // debounce (or immediately on clear/Enter), so typing doesn't re-search the
+  // whole thread and re-render every message's highlight per keystroke.
+  const [draftQuery, setDraftQuery] = useState(state.query);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastSentQueryRef = useRef(state.query);
+
+  // External query changes (persisted restore, adapter setQuery) sync into the
+  // draft; changes we sent ourselves are already reflected there.
+  useEffect(() => {
+    if (state.query !== lastSentQueryRef.current) {
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+        debounceRef.current = null;
+      }
+      lastSentQueryRef.current = state.query;
+      setDraftQuery(state.query);
+    }
+  }, [state.query]);
+
+  useEffect(
+    () => () => {
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+      }
+    },
+    [],
+  );
+
+  const commitQuery = useCallback(
+    (query: string) => {
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+        debounceRef.current = null;
+      }
+      if (query === lastSentQueryRef.current) {
+        return;
+      }
+      lastSentQueryRef.current = query;
+      onQueryChange(query);
+    },
+    [onQueryChange],
+  );
+
+  const handleChangeText = useCallback(
+    (query: string) => {
+      setDraftQuery(query);
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+        debounceRef.current = null;
+      }
+      // Clearing should feel instant (it also stops history paging).
+      if (query.trim().length === 0) {
+        commitQuery(query);
+        return;
+      }
+      debounceRef.current = setTimeout(() => {
+        debounceRef.current = null;
+        commitQuery(query);
+      }, QUERY_DEBOUNCE_MS);
+    },
+    [commitQuery],
+  );
+
+  /** Commits a pending (debounced) draft immediately. True if it committed. */
+  const flushPendingQuery = useCallback((): boolean => {
+    const wasPending = debounceRef.current !== null;
+    if (!wasPending) {
+      return false;
+    }
+    clearTimeout(debounceRef.current as ReturnType<typeof setTimeout>);
+    debounceRef.current = null;
+    if (draftQuery === lastSentQueryRef.current) {
+      return false;
+    }
+    lastSentQueryRef.current = draftQuery;
+    onQueryChange(draftQuery);
+    return true;
+  }, [draftQuery, onQueryChange]);
+
   const handleKeyPress = useCallback(
     (event: NativeSyntheticEvent<TextInputKeyPressEventData>) => {
       if (event.nativeEvent.key === "Escape") {
@@ -145,6 +242,11 @@ export function TimelineSearchPanel({
         return;
       }
       if (event.nativeEvent.key === "Enter") {
+        // Enter with an uncommitted draft searches it now (landing on the
+        // first match) rather than stepping through stale results.
+        if (flushPendingQuery()) {
+          return;
+        }
         // Shift+Enter steps backwards, matching native find bars and the shared
         // PaneFindBar. `shiftKey` is present on the web nativeEvent but not in
         // the RN TextInputKeyPressEventData type.
@@ -155,26 +257,111 @@ export function TimelineSearchPanel({
         }
       }
     },
-    [onClose, onSelectNext, onSelectPrev],
+    [onClose, onSelectNext, onSelectPrev, flushPendingQuery],
+  );
+
+  const handleSelectNext = useCallback(() => {
+    if (!flushPendingQuery()) onSelectNext();
+  }, [flushPendingQuery, onSelectNext]);
+  const handleSelectPrev = useCallback(() => {
+    if (!flushPendingQuery()) onSelectPrev();
+  }, [flushPendingQuery, onSelectPrev]);
+  const handleFilterChange = useCallback(
+    (filter: TimelineSearchFilter) => {
+      flushPendingQuery();
+      onFilterChange(filter);
+    },
+    [flushPendingQuery, onFilterChange],
   );
 
   const hasQuery = state.query.trim().length > 0;
   const hasMatches = state.matches.length > 0;
+  const hasPendingQuery = draftQuery !== lastSentQueryRef.current;
+  const canNavigate = hasMatches || hasPendingQuery;
   const navButtonStyle = useMemo(
-    () => [styles.iconButton, !hasMatches && styles.iconButtonDisabled],
-    [hasMatches],
+    () => [styles.iconButton, !canNavigate && styles.iconButtonDisabled],
+    [canNavigate],
   );
 
   // While older history is still paging in, show a pending status rather than a
-  // premature "no results"; otherwise the match count (or no-results) label.
+  // premature "no results"; otherwise the (possibly capped) match count.
   let matchStatusLabel: string;
   if (isPaging) {
     matchStatusLabel = t("timelineSearch.searchingHistory");
+  } else if (state.isMatchLimitExceeded) {
+    matchStatusLabel = t("timelineSearch.matchCountCapped", {
+      count: MAX_TIMELINE_SEARCH_MATCHES,
+    });
   } else if (hasMatches) {
     matchStatusLabel = t("timelineSearch.matchCount", { count: state.matches.length });
   } else {
     matchStatusLabel = t("timelineSearch.noResults");
   }
+
+  // Virtualized result list: per-occurrence matching means thousands of rows on
+  // broad queries — mounting them all in a ScrollView is the other major
+  // large-thread cost. Keep the active row visible while cycling.
+  const listRef = useRef<FlatList<TimelineSearchMatch>>(null);
+  const scrollRetryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const renderMatchRow = useCallback(
+    ({ item, index }: ListRenderItemInfo<TimelineSearchMatch>) => (
+      <MatchRow
+        match={item}
+        index={index}
+        active={index === state.selectedIndex}
+        query={state.query}
+        onSelectIndex={onSelectIndex}
+      />
+    ),
+    [state.selectedIndex, state.query, onSelectIndex],
+  );
+  const keyExtractor = useCallback(
+    (match: TimelineSearchMatch) => `${match.item.id}:${match.matchOffset}`,
+    [],
+  );
+  const handleScrollToIndexFailed = useCallback(
+    (info: { index: number; averageItemLength: number }) => {
+      // Row not rendered yet — jump near it; FlatList fills in around it.
+      listRef.current?.scrollToOffset({
+        offset: Math.max(0, info.averageItemLength * info.index),
+        animated: false,
+      });
+      if (scrollRetryRef.current) clearTimeout(scrollRetryRef.current);
+      scrollRetryRef.current = setTimeout(() => {
+        scrollRetryRef.current = null;
+        try {
+          listRef.current?.scrollToIndex({
+            index: info.index,
+            viewPosition: 0.5,
+            animated: false,
+          });
+        } catch {
+          // The data may have changed while the retry was queued.
+        }
+      }, 50);
+    },
+    [],
+  );
+  useEffect(
+    () => () => {
+      if (scrollRetryRef.current) clearTimeout(scrollRetryRef.current);
+    },
+    [],
+  );
+  useEffect(() => {
+    if (state.selectedIndex < 0) {
+      return;
+    }
+    const index = state.selectedIndex;
+    const frame = requestAnimationFrame(() => {
+      try {
+        listRef.current?.scrollToIndex({ index, viewPosition: 0.5, animated: false });
+      } catch {
+        // Index briefly out of range while a refresh replaces the matches.
+      }
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [state.selectedIndex, state.navigationRevision]);
 
   return (
     <View style={styles.container} testID={testID}>
@@ -182,8 +369,8 @@ export function TimelineSearchPanel({
         <View style={styles.inputWrapper}>
           <ThemedSearchIcon size={16} />
           <ThemedTextInput
-            value={state.query}
-            onChangeText={onQueryChange}
+            value={draftQuery}
+            onChangeText={handleChangeText}
             onKeyPress={handleKeyPress}
             placeholder={t("timelineSearch.placeholder")}
             style={styles.input}
@@ -199,8 +386,8 @@ export function TimelineSearchPanel({
           </Text>
         )}
         <Pressable
-          onPress={onSelectPrev}
-          disabled={!hasMatches}
+          onPress={handleSelectPrev}
+          disabled={!canNavigate}
           accessibilityRole="button"
           accessibilityLabel={t("timelineSearch.prev")}
           style={navButtonStyle}
@@ -209,8 +396,8 @@ export function TimelineSearchPanel({
           <ThemedChevronUp size={16} />
         </Pressable>
         <Pressable
-          onPress={onSelectNext}
-          disabled={!hasMatches}
+          onPress={handleSelectNext}
+          disabled={!canNavigate}
           accessibilityRole="button"
           accessibilityLabel={t("timelineSearch.next")}
           style={navButtonStyle}
@@ -236,29 +423,33 @@ export function TimelineSearchPanel({
             filter={filter}
             active={state.filter === filter}
             label={t(`timelineSearch.filters.${filter}`)}
-            onPress={onFilterChange}
+            onPress={handleFilterChange}
           />
         ))}
       </View>
 
       {hasQuery && hasMatches && (
-        <ScrollView style={styles.matchList} keyboardShouldPersistTaps="handled">
-          {state.matches.map((match, index) => (
-            <MatchRow
-              key={`${match.item.id}:${match.matchOffset}`}
-              match={match}
-              index={index}
-              active={index === state.selectedIndex}
-              query={state.query}
-              onSelectIndex={onSelectIndex}
-            />
-          ))}
-        </ScrollView>
+        <FlatList
+          ref={listRef}
+          style={styles.matchList}
+          data={state.matches}
+          renderItem={renderMatchRow}
+          keyExtractor={keyExtractor}
+          extraData={state.selectedIndex}
+          keyboardShouldPersistTaps="handled"
+          onScrollToIndexFailed={handleScrollToIndexFailed}
+          initialNumToRender={12}
+        />
       )}
 
       {isPaging && (
         <Text style={styles.note} numberOfLines={1}>
           {t("timelineSearch.loadingOlderHistory")}
+        </Text>
+      )}
+      {!isPaging && historyLoadFailed && (
+        <Text style={styles.note} numberOfLines={1} testID="timeline-search-history-failed">
+          {t("timelineSearch.historyLoadFailed")}
         </Text>
       )}
     </View>

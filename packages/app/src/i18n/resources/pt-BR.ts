@@ -2077,6 +2077,9 @@ export const ptBR: TranslationResources = {
     noResults: "Nenhum resultado no histórico carregado",
     matchCount_one: "{{count}} correspondência",
     matchCount_other: "{{count}} correspondências",
+    matchCountCapped: "{{count}}+ correspondências",
+    historyLoadFailed:
+      "Não foi possível carregar o histórico anterior — os resultados podem estar incompletos",
     next: "Próximo resultado",
     prev: "Resultado anterior",
     close: "Fechar",
@@ -2086,6 +2089,7 @@ export const ptBR: TranslationResources = {
       all: "Tudo",
       prompts: "Prompts",
       messages: "Mensagens",
+      thinking: "Racioc\u00ednio",
       toolCalls: "Chamadas de ferramentas",
       toolOutput: "Saída de ferramentas",
       errors: "Erros",

@@ -2,8 +2,9 @@
  * timeline-search-model.ts
  *
  * Pure, framework-free model for the timeline find panel.
- * Operates entirely on the already-loaded StreamItem[] that is
- * present in the component tree — no server RPCs, no global search.
+ * Searches the StreamItem[] supplied by its caller. The React binding pages
+ * older history into that array while a query is active; this model remains
+ * framework-free and performs no server RPCs itself.
  *
  * Filter semantics:
  *   all        — every searchable kind
@@ -44,6 +45,7 @@ export type TimelineSearchFilter =
   | "all"
   | "prompts"
   | "messages"
+  | "thinking"
   | "toolCalls"
   | "toolOutput"
   | "errors";
@@ -71,6 +73,8 @@ export interface TimelineSearchState {
   query: string;
   filter: TimelineSearchFilter;
   matches: TimelineSearchMatch[];
+  /** True when more occurrences exist beyond the bounded result list. */
+  isMatchLimitExceeded: boolean;
   /** Zero-based index into `matches`; -1 when no matches or query is empty. */
   selectedIndex: number;
   isOpen: boolean;
@@ -213,22 +217,23 @@ const SNIPPET_HEAD_ANCHOR_THRESHOLD = 80;
 const SNIPPET_CONTEXT_BEFORE = 30;
 
 /**
- * Builds a display snippet centered on a SPECIFIC occurrence of `query` in
- * `text` (the `occurrenceIndex`-th match), so each per-occurrence result shows
- * its own surrounding context rather than repeating the first match. A match
- * that starts within the first `SNIPPET_HEAD_ANCHOR_THRESHOLD` chars keeps the
- * head-anchored behavior (truncate from the start); a deeper match instead
- * takes a window of `SNIPPET_CONTEXT_BEFORE` chars before the match, filled out
- * to ~`SNIPPET_MAX_LENGTH` chars total, with a leading "…" (and trailing "…" if
+ * Builds a display snippet centered on a SPECIFIC occurrence (`occurrenceIndex`)
+ * given the pre-computed whitespace-collapsed text and its match positions, so
+ * each per-occurrence result shows its own surrounding context rather than
+ * repeating the first match. A match that starts within the first
+ * `SNIPPET_HEAD_ANCHOR_THRESHOLD` chars keeps the head-anchored behavior
+ * (truncate from the start); a deeper match instead takes a window of
+ * `SNIPPET_CONTEXT_BEFORE` chars before the match, filled out to
+ * ~`SNIPPET_MAX_LENGTH` chars total, with a leading "…" (and trailing "…" if
  * the window doesn't reach the end of the text). Occurrence order is stable
  * between the original and whitespace-collapsed text, so the Nth cleaned match
  * lines up with the Nth occurrence used for navigation.
  */
-function makeSnippet(text: string, query: string, occurrenceIndex: number): string {
-  const cleaned = text.replace(/\s+/g, " ").trim();
-  if (cleaned.length <= SNIPPET_MAX_LENGTH) return cleaned;
-
-  const cleanedMatches = findAllMatches(cleaned, query);
+function makeSnippetFromCleaned(
+  cleaned: string,
+  cleanedMatches: ReadonlyArray<{ index: number; length: number }>,
+  occurrenceIndex: number,
+): string {
   const match = cleanedMatches[occurrenceIndex] ?? cleanedMatches[0];
   if (!match || match.index < SNIPPET_HEAD_ANCHOR_THRESHOLD) {
     return `${cleaned.slice(0, SNIPPET_MAX_LENGTH - 3)}…`;
@@ -239,6 +244,41 @@ function makeSnippet(text: string, query: string, occurrenceIndex: number): stri
   const prefix = start > 0 ? "…" : "";
   const suffix = end < cleaned.length ? "…" : "";
   return `${prefix}${cleaned.slice(start, end)}${suffix}`;
+}
+
+/**
+ * All occurrence-level matches for one item, computed in a single pass: the
+ * whitespace-collapsed snippet text and its match positions are computed ONCE
+ * per item, not once per occurrence — an item with hundreds of hits used to
+ * re-clean and re-scan its full text for every hit, which is exactly the
+ * many-hits slowdown on large threads.
+ */
+interface ComputedItemMatches {
+  matches: TimelineSearchMatch[];
+  isMatchLimitExceeded: boolean;
+}
+
+function computeItemMatches(item: StreamItem, text: string, query: string): ComputedItemMatches {
+  const occurrences = findAllMatches(text, query, MAX_TIMELINE_SEARCH_MATCHES + 1);
+  if (occurrences.length === 0) {
+    return { matches: [], isMatchLimitExceeded: false };
+  }
+  const isMatchLimitExceeded = occurrences.length > MAX_TIMELINE_SEARCH_MATCHES;
+  const boundedOccurrences = occurrences.slice(0, MAX_TIMELINE_SEARCH_MATCHES);
+
+  const cleaned = text.replace(/\s+/g, " ").trim();
+  const isShort = cleaned.length <= SNIPPET_MAX_LENGTH;
+  const cleanedMatches = isShort ? [] : findAllMatches(cleaned, query, boundedOccurrences.length);
+
+  return {
+    matches: boundedOccurrences.map((occurrence, occurrenceIndex) => ({
+      item,
+      snippet: isShort ? cleaned : makeSnippetFromCleaned(cleaned, cleanedMatches, occurrenceIndex),
+      matchOffset: occurrence.index,
+      occurrenceIndex,
+    })),
+    isMatchLimitExceeded,
+  };
 }
 
 type ToolCallStreamItem = Extract<StreamItem, { kind: "tool_call" }>;
@@ -339,9 +379,13 @@ export function extractSearchText(item: StreamItem, filter: TimelineSearchFilter
       return item.text || null;
     }
 
-    case "assistant_message":
-    case "thought": {
+    case "assistant_message": {
       if (filter !== "all" && filter !== "messages") return null;
+      return item.text || null;
+    }
+
+    case "thought": {
+      if (filter !== "all" && filter !== "thinking") return null;
       return item.text || null;
     }
 
@@ -367,34 +411,99 @@ export function extractSearchText(item: StreamItem, filter: TimelineSearchFilter
 
 // ---- Core search ----
 
+/**
+ * Hard ceiling on the total number of navigable matches (VS Code-style "999+").
+ * Bounds the per-occurrence match array (and the panel's result list) on
+ * pathological queries — e.g. a single letter against a fully-paged-in thread —
+ * where an unbounded list would burn memory and render time for results nobody
+ * will step through. When the cap is hit, the panel shows "999+ matches".
+ */
+export const MAX_TIMELINE_SEARCH_MATCHES = 999;
+
+/**
+ * Per-item memo for `searchItems`, keyed by item object identity (stream items
+ * are immutable snapshots — an item is replaced, not mutated, when it changes).
+ * Two levels of reuse:
+ *  - `text` (the extracted searchable text — for tool calls this includes
+ *    JSON.stringify of payloads, the expensive part) is reused whenever the
+ *    FILTER is unchanged, even when the query changed (each keystroke);
+ *  - `matches` are reused wholesale when both query and filter are unchanged
+ *    (each streaming refresh, where only the tail item has a new identity).
+ */
+interface ItemMatchCacheEntry {
+  filter: TimelineSearchFilter;
+  text: string | null;
+  query: string;
+  matches: TimelineSearchMatch[];
+  isMatchLimitExceeded: boolean;
+}
+export type TimelineSearchItemCache = WeakMap<StreamItem, ItemMatchCacheEntry>;
+
+export function createTimelineSearchItemCache(): TimelineSearchItemCache {
+  return new WeakMap();
+}
+
+const EMPTY_ITEM_MATCHES: TimelineSearchMatch[] = [];
+
+interface TimelineSearchResult {
+  matches: TimelineSearchMatch[];
+  isMatchLimitExceeded: boolean;
+}
+
+function searchItemsWithMetadata(
+  items: readonly StreamItem[],
+  query: string,
+  filter: TimelineSearchFilter,
+  cache?: TimelineSearchItemCache,
+): TimelineSearchResult {
+  const trimmed = query.trim();
+  if (!trimmed) return { matches: [], isMatchLimitExceeded: false };
+
+  const results: TimelineSearchMatch[] = [];
+  for (const item of items) {
+    if (!item) continue;
+
+    const cached = cache?.get(item);
+    let itemMatches: TimelineSearchMatch[];
+    let itemLimitExceeded: boolean;
+    if (cached && cached.filter === filter && cached.query === trimmed) {
+      itemMatches = cached.matches;
+      itemLimitExceeded = cached.isMatchLimitExceeded;
+    } else {
+      const text =
+        cached && cached.filter === filter ? cached.text : extractSearchText(item, filter);
+      const computed = text
+        ? computeItemMatches(item, text, trimmed)
+        : { matches: EMPTY_ITEM_MATCHES, isMatchLimitExceeded: false };
+      itemMatches = computed.matches;
+      itemLimitExceeded = computed.isMatchLimitExceeded;
+      cache?.set(item, {
+        filter,
+        text: text ?? null,
+        query: trimmed,
+        matches: itemMatches,
+        isMatchLimitExceeded: itemLimitExceeded,
+      });
+    }
+
+    const remaining = MAX_TIMELINE_SEARCH_MATCHES - results.length;
+    if (itemMatches.length > remaining || (itemMatches.length === remaining && itemLimitExceeded)) {
+      results.push(...itemMatches.slice(0, remaining));
+      return { matches: results, isMatchLimitExceeded: true };
+    }
+    results.push(...itemMatches);
+  }
+
+  return { matches: results, isMatchLimitExceeded: false };
+}
+
 export function searchItems(
   items: readonly StreamItem[],
   query: string,
   filter: TimelineSearchFilter,
+  cache?: TimelineSearchItemCache,
 ): TimelineSearchMatch[] {
-  const trimmed = query.trim();
-  if (!trimmed) return [];
-  const results: TimelineSearchMatch[] = [];
-  for (const item of items) {
-    if (!item) continue;
-    const text = extractSearchText(item, filter);
-    if (!text) continue;
-    // One navigable match PER occurrence, so a message that contains the query
-    // more than once contributes one result per hit (and the in-thread
-    // highlighting, which marks every occurrence, stays in sync with the count).
-    const occurrences = findAllMatches(text, trimmed);
-    for (let occurrenceIndex = 0; occurrenceIndex < occurrences.length; occurrenceIndex++) {
-      const occurrence = occurrences[occurrenceIndex];
-      if (!occurrence) continue;
-      results.push({
-        item,
-        snippet: makeSnippet(text, trimmed, occurrenceIndex),
-        matchOffset: occurrence.index,
-        occurrenceIndex,
-      });
-    }
-  }
-  return results;
+  return searchItemsWithMetadata(items, query, filter, cache).matches;
 }
 
 // ---- Model factory ----
@@ -425,11 +534,16 @@ export function createTimelineSearchModel(
     query: "",
     filter: "all",
     matches: [],
+    isMatchLimitExceeded: false,
     selectedIndex: -1,
     isOpen: false,
     navigationRevision: 0,
   };
   const listeners = new Set<() => void>();
+  // Per-model item memo: makes streaming refresh() (only the tail item changes
+  // identity) and per-keystroke re-searches (text extraction reused) cheap on
+  // large, fully-paged-in threads.
+  const itemCache = createTimelineSearchItemCache();
 
   function notify() {
     for (const listener of listeners) {
@@ -438,9 +552,14 @@ export function createTimelineSearchModel(
   }
 
   function recompute(query: string, filter: TimelineSearchFilter) {
-    const matches = searchItems(getItems(), query, filter);
+    const { matches, isMatchLimitExceeded } = searchItemsWithMetadata(
+      getItems(),
+      query,
+      filter,
+      itemCache,
+    );
     const selectedIndex = matches.length > 0 ? 0 : -1;
-    return { matches, selectedIndex };
+    return { matches, isMatchLimitExceeded, selectedIndex };
   }
 
   return {
@@ -449,14 +568,14 @@ export function createTimelineSearchModel(
     },
     setQuery(query) {
       if (query === state.query) return;
-      const { matches, selectedIndex } = recompute(query, state.filter);
-      state = { ...state, query, matches, selectedIndex };
+      const { matches, isMatchLimitExceeded, selectedIndex } = recompute(query, state.filter);
+      state = { ...state, query, matches, isMatchLimitExceeded, selectedIndex };
       notify();
     },
     setFilter(filter) {
       if (filter === state.filter) return;
-      const { matches, selectedIndex } = recompute(state.query, filter);
-      state = { ...state, filter, matches, selectedIndex };
+      const { matches, isMatchLimitExceeded, selectedIndex } = recompute(state.query, filter);
+      state = { ...state, filter, matches, isMatchLimitExceeded, selectedIndex };
       notify();
     },
     refresh() {
@@ -464,8 +583,16 @@ export function createTimelineSearchModel(
         state.selectedIndex >= 0 && state.matches[state.selectedIndex]
           ? matchKey(state.matches[state.selectedIndex] as TimelineSearchMatch)
           : undefined;
-      const newMatches = searchItems(getItems(), state.query, state.filter);
-      if (matchesAreIdEqual(state.matches, newMatches)) {
+      const { matches: newMatches, isMatchLimitExceeded } = searchItemsWithMetadata(
+        getItems(),
+        state.query,
+        state.filter,
+        itemCache,
+      );
+      if (
+        state.isMatchLimitExceeded === isMatchLimitExceeded &&
+        matchesAreIdEqual(state.matches, newMatches)
+      ) {
         // Same occurrences matched, in the same order — keep the existing
         // matches array identity and skip notifying. This is what stops a
         // streaming token from re-triggering the scroll-to-match effect on every
@@ -479,7 +606,7 @@ export function createTimelineSearchModel(
         : -1;
       const fallbackIndex = newMatches.length > 0 ? 0 : -1;
       const selectedIndex = preservedIndex >= 0 ? preservedIndex : fallbackIndex;
-      state = { ...state, matches: newMatches, selectedIndex };
+      state = { ...state, matches: newMatches, isMatchLimitExceeded, selectedIndex };
       notify();
     },
     selectNext() {
@@ -504,11 +631,12 @@ export function createTimelineSearchModel(
     },
     open() {
       if (state.isOpen) return;
-      const { matches, selectedIndex } = recompute(state.query, state.filter);
+      const { matches, isMatchLimitExceeded, selectedIndex } = recompute(state.query, state.filter);
       state = {
         ...state,
         isOpen: true,
         matches,
+        isMatchLimitExceeded,
         selectedIndex,
         navigationRevision: state.navigationRevision + 1,
       };

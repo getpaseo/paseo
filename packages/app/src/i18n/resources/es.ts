@@ -2093,6 +2093,9 @@ export const es: TranslationResources = {
     noResults: "No hay resultados en el historial cargado",
     matchCount_one: "{{count}} coincidencia",
     matchCount_other: "{{count}} coincidencias",
+    matchCountCapped: "{{count}}+ coincidencias",
+    historyLoadFailed:
+      "No se pudo cargar el historial anterior; los resultados pueden estar incompletos",
     next: "Siguiente resultado",
     prev: "Resultado anterior",
     close: "Cerrar",
@@ -2102,6 +2105,7 @@ export const es: TranslationResources = {
       all: "Todo",
       prompts: "Indicaciones",
       messages: "Mensajes",
+      thinking: "Razonamiento",
       toolCalls: "Llamadas a herramientas",
       toolOutput: "Salida de herramientas",
       errors: "Errores",

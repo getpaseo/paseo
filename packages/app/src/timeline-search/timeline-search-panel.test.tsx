@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { StreamItem } from "@/types/stream";
 import { createTimelineSearchModel, type TimelineSearchState } from "./timeline-search-model";
@@ -73,6 +73,10 @@ function makeAssistantMessage(text: string, id: string): StreamItem {
   return { kind: "assistant_message", id, text, timestamp: new Date("2024-01-01") };
 }
 
+function makeThought(text: string, id: string): StreamItem {
+  return { kind: "thought", id, text, timestamp: new Date("2024-01-01"), status: "ready" };
+}
+
 function renderPanel(items: StreamItem[], query = "world", { isPaging = false } = {}) {
   const model = createTimelineSearchModel(() => items);
   model.setFilter("all");
@@ -124,6 +128,7 @@ function renderPanel(items: StreamItem[], query = "world", { isPaging = false } 
 describe("TimelineSearchPanel", () => {
   afterEach(() => {
     cleanup();
+    vi.useRealTimers();
   });
 
   it("shows the match count and highlights the query in each match snippet", () => {
@@ -166,6 +171,18 @@ describe("TimelineSearchPanel", () => {
 
     fireEvent.click(screen.getByTestId("timeline-search-filter-messages"));
     expect(model.getState().filter).toBe("messages");
+  });
+
+  it("offers a thinking filter that isolates reasoning matches", () => {
+    const { model } = renderPanel(
+      [makeAssistantMessage("Visible response", "a1"), makeThought("Private reasoning", "t1")],
+      "reasoning",
+    );
+
+    fireEvent.click(screen.getByTestId("timeline-search-filter-thinking"));
+    expect(model.getState().filter).toBe("thinking");
+    expect(model.getState().matches).toHaveLength(1);
+    expect(model.getState().matches[0]?.item.id).toBe("t1");
   });
 
   it("calls onSelectNext/onSelectPrev from the nav buttons", () => {
@@ -229,11 +246,48 @@ describe("TimelineSearchPanel", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it("calls onQueryChange as the user types", () => {
+  it("debounces query changes while the user types", () => {
+    vi.useFakeTimers();
     const { model } = renderPanel([makeUserMessage("hello world", "u1")], "");
     const input = screen.getByTestId("timeline-search-input");
     fireEvent.change(input, { target: { value: "hello" } });
+    expect(model.getState().query).toBe("");
+    act(() => vi.advanceTimersByTime(150));
     expect(model.getState().query).toBe("hello");
+  });
+
+  it("flushes a pending query before navigation", () => {
+    vi.useFakeTimers();
+    const { model } = renderPanel([makeUserMessage("hello world", "u1")], "");
+    fireEvent.change(screen.getByTestId("timeline-search-input"), {
+      target: { value: "hello" },
+    });
+    fireEvent.click(screen.getByTestId("timeline-search-next"));
+    expect(model.getState().query).toBe("hello");
+    expect(model.getState().selectedIndex).toBe(0);
+  });
+
+  it("flushes a pending query before changing filters", () => {
+    vi.useFakeTimers();
+    const { model } = renderPanel([makeAssistantMessage("goodbye world", "a1")], "");
+    fireEvent.change(screen.getByTestId("timeline-search-input"), {
+      target: { value: "goodbye" },
+    });
+    fireEvent.click(screen.getByTestId("timeline-search-filter-messages"));
+    expect(model.getState().query).toBe("goodbye");
+    expect(model.getState().filter).toBe("messages");
+    expect(model.getState().matches).toHaveLength(1);
+  });
+
+  it("cancels a pending draft when the query changes externally", () => {
+    vi.useFakeTimers();
+    const { model } = renderPanel([makeUserMessage("hello external", "u1")], "");
+    fireEvent.change(screen.getByTestId("timeline-search-input"), {
+      target: { value: "hello" },
+    });
+    act(() => model.setQuery("external"));
+    act(() => vi.advanceTimersByTime(150));
+    expect(model.getState().query).toBe("external");
   });
 
   it("closes on Escape and does not close on other keys", () => {

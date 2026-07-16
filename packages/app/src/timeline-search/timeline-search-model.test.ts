@@ -1,6 +1,12 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import type { StreamItem } from "@/types/stream";
-import { searchItems, extractSearchText, createTimelineSearchModel } from "./timeline-search-model";
+import {
+  searchItems,
+  extractSearchText,
+  createTimelineSearchModel,
+  createTimelineSearchItemCache,
+  MAX_TIMELINE_SEARCH_MATCHES,
+} from "./timeline-search-model";
 
 // ---- Fixtures ----
 
@@ -155,9 +161,9 @@ describe("extractSearchText", () => {
       expect(extractSearchText(item, "messages")).toBe("I will help you");
     });
 
-    it("matches thoughts", () => {
+    it("excludes thoughts", () => {
       const item = makeThought("Thinking about approach");
-      expect(extractSearchText(item, "messages")).toBe("Thinking about approach");
+      expect(extractSearchText(item, "messages")).toBeNull();
     });
 
     it("matches todos", () => {
@@ -173,6 +179,15 @@ describe("extractSearchText", () => {
     it("excludes error activity logs", () => {
       const item = makeActivityLog("Something failed", "error");
       expect(extractSearchText(item, "messages")).toBeNull();
+    });
+  });
+
+  describe("thinking filter", () => {
+    it("matches thoughts and excludes assistant messages", () => {
+      expect(extractSearchText(makeThought("Thinking about approach"), "thinking")).toBe(
+        "Thinking about approach",
+      );
+      expect(extractSearchText(makeAssistantMessage("Visible answer"), "thinking")).toBeNull();
     });
   });
 
@@ -409,6 +424,53 @@ describe("searchItems", () => {
     expect(model.getState().selectedIndex).toBe(0); // wraps
   });
 
+  it("caps the total match count at MAX_TIMELINE_SEARCH_MATCHES", () => {
+    // A pathological broad query (e.g. one letter against a fully-paged-in
+    // thread) must not build an unbounded result list.
+    const hugeText = "needle ".repeat(MAX_TIMELINE_SEARCH_MATCHES + 500);
+    const results = searchItems([makeUserMessage(hugeText, "u1")], "needle", "all");
+
+    expect(results).toHaveLength(MAX_TIMELINE_SEARCH_MATCHES);
+  });
+
+  it("distinguishes an exact limit from a truncated result set", () => {
+    const exact = createTimelineSearchModel(() => [
+      makeUserMessage("needle ".repeat(MAX_TIMELINE_SEARCH_MATCHES), "exact"),
+    ]);
+    exact.setQuery("needle");
+    expect(exact.getState().matches).toHaveLength(MAX_TIMELINE_SEARCH_MATCHES);
+    expect(exact.getState().isMatchLimitExceeded).toBe(false);
+
+    const exceeded = createTimelineSearchModel(() => [
+      makeUserMessage("needle ".repeat(MAX_TIMELINE_SEARCH_MATCHES + 1), "exceeded"),
+    ]);
+    exceeded.setQuery("needle");
+    expect(exceeded.getState().matches).toHaveLength(MAX_TIMELINE_SEARCH_MATCHES);
+    expect(exceeded.getState().isMatchLimitExceeded).toBe(true);
+  });
+
+  it("reuses cached per-item matches across identical searches (streaming refresh path)", () => {
+    const cache = createTimelineSearchItemCache();
+    const stable = makeUserMessage("stable wall of text", "u1");
+    const first = searchItems([stable], "wall", "all", cache);
+    const second = searchItems([stable], "wall", "all", cache);
+
+    // Same item identity + same query/filter -> the per-item match objects are
+    // reused, not recomputed (this is what keeps refresh() cheap while a large
+    // thread streams).
+    expect(second[0]).toBe(first[0]);
+  });
+
+  it("recomputes cached matches when the query changes but reuses across items", () => {
+    const cache = createTimelineSearchItemCache();
+    const item = makeUserMessage("wall and floor", "u1");
+    expect(searchItems([item], "wall", "all", cache)).toHaveLength(1);
+    // Query change invalidates the match cache but must still return correct
+    // results for the new query.
+    expect(searchItems([item], "floor", "all", cache)).toHaveLength(1);
+    expect(searchItems([item], "ceiling", "all", cache)).toHaveLength(0);
+  });
+
   it("filters to messages only", () => {
     const results = searchItems(items, "deploy", "messages");
     const kinds = results.map((r) => r.item.kind);
@@ -597,6 +659,23 @@ describe("createTimelineSearchModel", () => {
   });
 
   describe("refresh", () => {
+    it("reuses cached item text extraction", () => {
+      let reads = 0;
+      const item = makeUserMessage("", "cached");
+      Object.defineProperty(item, "text", {
+        configurable: true,
+        get: () => {
+          reads += 1;
+          return "cached needle";
+        },
+      });
+      items = [item];
+      model.setQuery("needle");
+      expect(reads).toBe(1);
+      model.refresh();
+      expect(reads).toBe(1);
+    });
+
     it("recomputes matches against the latest items snapshot", () => {
       model.setQuery("newitem");
       expect(model.getState().matches).toHaveLength(0);

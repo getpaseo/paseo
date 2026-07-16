@@ -2085,6 +2085,9 @@ export const ru: TranslationResources = {
     noResults: "Нет результатов в загруженной истории",
     matchCount_one: "{{count}} совпадение",
     matchCount_other: "{{count}} совпадений",
+    matchCountCapped: "{{count}}+ совпадений",
+    historyLoadFailed:
+      "Не удалось загрузить более старую историю — результаты могут быть неполными",
     next: "Следующий результат",
     prev: "Предыдущий результат",
     close: "Закрыть",
@@ -2094,6 +2097,7 @@ export const ru: TranslationResources = {
       all: "Все",
       prompts: "Запросы",
       messages: "Сообщения",
+      thinking: "Размышления",
       toolCalls: "Вызовы инструментов",
       toolOutput: "Вывод инструментов",
       errors: "Ошибки",

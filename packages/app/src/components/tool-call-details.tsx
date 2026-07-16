@@ -580,7 +580,7 @@ function buildUnknownSections(detail: UnknownDetail, ds: DetailStyles, t: TFunct
     return [
       <View key="unknown-plain-text" style={styles.plainTextSection}>
         <Text selectable style={styles.plainText}>
-          {plainInputText}
+          <HighlightedText text={plainInputText} />
         </Text>
       </View>,
     ];
