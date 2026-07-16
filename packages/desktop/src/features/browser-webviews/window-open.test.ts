@@ -51,6 +51,33 @@ describe("browser webview window-open requests", () => {
     expect(result).toEqual({ kind: "workspace-tab", url: "https://example.com/target" });
   });
 
+  it.each(["noopener", "noreferrer", "popup=false"])(
+    "routes non-popup feature %s to a Paseo workspace tab",
+    (features) => {
+      const result = decideBrowserWindowOpenRequest({
+        url: "https://example.com/target",
+        disposition: "new-window",
+        frameName: "_blank",
+        features,
+        hasPostBody: false,
+      });
+
+      expect(result).toEqual({ kind: "workspace-tab", url: "https://example.com/target" });
+    },
+  );
+
+  it("keeps an explicitly requested popup as a real popup", () => {
+    const result = decideBrowserWindowOpenRequest({
+      url: "https://login.example.com/signin",
+      disposition: "new-window",
+      frameName: "_blank",
+      features: "noopener,popup=yes",
+      hasPostBody: false,
+    });
+
+    expect(result).toEqual({ kind: "popup" });
+  });
+
   it("keeps POST-backed foreground tabs as real popups", () => {
     const result = decideBrowserWindowOpenRequest({
       url: "https://example.com/submit",

@@ -13,6 +13,20 @@ export type BrowserWindowOpenDecision =
   | { kind: "workspace-tab"; url: string };
 
 const MAX_PENDING_WINDOW_OPEN_REQUESTS_PER_GUEST = 20;
+const POPUP_WINDOW_FEATURE_NAMES = new Set([
+  "height",
+  "innerheight",
+  "innerwidth",
+  "left",
+  "outerheight",
+  "outerwidth",
+  "screenx",
+  "screeny",
+  "top",
+  "width",
+  "x",
+  "y",
+]);
 
 export class PendingBrowserWindowOpenRequests {
   private readonly urlsByWebContentsId = new Map<number, string[]>();
@@ -68,7 +82,7 @@ export function decideBrowserWindowOpenRequest(input: {
   const hasNamedWindowTarget = input.frameName.length > 0 && input.frameName !== "_blank";
   const isScriptPopup =
     input.disposition === "new-window" &&
-    (input.features.trim().length > 0 || hasNamedWindowTarget);
+    (hasPopupWindowFeatures(input.features) || hasNamedWindowTarget);
 
   // A real popup preserves window.opener, postMessage, named-window reuse, and
   // window.close(). OAuth and payment flows depend on those browser contracts.
@@ -79,4 +93,29 @@ export function decideBrowserWindowOpenRequest(input: {
   }
 
   return { kind: "workspace-tab", url: input.url };
+}
+
+function hasPopupWindowFeatures(features: string): boolean {
+  for (const rawFeature of features.split(",")) {
+    const separatorIndex = rawFeature.indexOf("=");
+    const name = rawFeature
+      .slice(0, separatorIndex === -1 ? undefined : separatorIndex)
+      .trim()
+      .toLowerCase();
+    const value =
+      separatorIndex === -1
+        ? ""
+        : rawFeature
+            .slice(separatorIndex + 1)
+            .trim()
+            .toLowerCase();
+
+    if (POPUP_WINDOW_FEATURE_NAMES.has(name)) {
+      return true;
+    }
+    if (name === "popup" && value !== "0" && value !== "false" && value !== "no") {
+      return true;
+    }
+  }
+  return false;
 }
