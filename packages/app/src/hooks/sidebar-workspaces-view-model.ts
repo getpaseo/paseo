@@ -361,7 +361,13 @@ export function partitionPinnedSidebarWorkspaces(input: {
     return { ...project, workspaces: remaining };
   });
 
-  pinned.sort((left, right) => left.pinnedAt.localeCompare(right.pinnedAt));
+  // ISO 8601 timestamps sort chronologically under plain ASCII comparison; a
+  // direct comparison avoids locale-sensitive collation from localeCompare.
+  pinned.sort((left, right) => {
+    if (left.pinnedAt < right.pinnedAt) return -1;
+    if (left.pinnedAt > right.pinnedAt) return 1;
+    return 0;
+  });
 
   return {
     pinnedWorkspaces: pinned.map((entry) => entry.placement),
