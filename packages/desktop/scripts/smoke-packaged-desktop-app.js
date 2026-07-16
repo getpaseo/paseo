@@ -67,6 +67,41 @@ function getMacMainExecutablePath(appPath) {
   return path.join(appPath, "Contents", "MacOS", EXECUTABLE_NAME);
 }
 
+function ensureLinuxSandboxPermissions(appPath) {
+  if (process.platform !== "linux") {
+    return;
+  }
+
+  const sandboxPath = path.join(appPath, "chrome-sandbox");
+  if (!fs.existsSync(sandboxPath)) {
+    throw new Error(`Chromium sandbox helper does not exist: ${sandboxPath}`);
+  }
+
+  const hasRequiredPermissions = () => {
+    const stat = fs.statSync(sandboxPath);
+    return stat.uid === 0 && (stat.mode & 0o7777) === 0o4755;
+  };
+  if (hasRequiredPermissions()) {
+    return;
+  }
+
+  const chown = spawnSync("sudo", ["-n", "chown", "root:root", sandboxPath], {
+    encoding: "utf8",
+  });
+  const chmod =
+    chown.status === 0
+      ? spawnSync("sudo", ["-n", "chmod", "4755", sandboxPath], { encoding: "utf8" })
+      : null;
+  if (chown.error || chown.status !== 0 || chmod?.error || chmod?.status !== 0) {
+    throw new Error(
+      `Failed to configure Chromium sandbox helper ${sandboxPath}. Run: sudo chown root:root ${sandboxPath} && sudo chmod 4755 ${sandboxPath}.\n${chown.stderr?.trim() || chmod?.stderr?.trim() || chown.error || chmod?.error || "Permissions remained incorrect."}`,
+    );
+  }
+  if (!hasRequiredPermissions()) {
+    throw new Error(`Chromium sandbox helper permissions remained incorrect: ${sandboxPath}`);
+  }
+}
+
 function getLaunchCommand(executablePath) {
   if (process.platform !== "linux") {
     return {
@@ -374,8 +409,19 @@ async function removeTempDir(tempDir) {
   }
 }
 
-async function connectToPackagedApp({ child, cdpPort, stdout, stderr, userData, daemonHome }) {
-  const deadline = Date.now() + SMOKE_TIMEOUT_MS;
+function remainingTime(deadline) {
+  return Math.max(1, deadline - Date.now());
+}
+
+async function connectToPackagedApp({
+  child,
+  cdpPort,
+  stdout,
+  stderr,
+  userData,
+  daemonHome,
+  deadline,
+}) {
   let lastError = null;
 
   while (Date.now() < deadline) {
@@ -405,8 +451,7 @@ async function connectToPackagedApp({ child, cdpPort, stdout, stderr, userData, 
   );
 }
 
-async function waitForPackagedAppPage(browser) {
-  const deadline = Date.now() + SMOKE_TIMEOUT_MS;
+async function waitForPackagedAppPage(browser, deadline) {
   while (Date.now() < deadline) {
     const page = browser
       .contexts()
@@ -420,14 +465,14 @@ async function waitForPackagedAppPage(browser) {
   throw new Error("Timed out waiting for the packaged paseo://app/ renderer");
 }
 
-async function assertPackagedRendererLoaded(page) {
+async function assertPackagedRendererLoaded(page, deadline) {
   await page.waitForFunction(
     () => {
       const root = document.querySelector("#root");
       return root instanceof HTMLElement && root.childElementCount > 0;
     },
     undefined,
-    { timeout: SMOKE_TIMEOUT_MS },
+    { timeout: remainingTime(deadline) },
   );
 
   const bridgeKeys = await page.evaluate(() =>
@@ -443,8 +488,15 @@ async function assertPackagedRendererLoaded(page) {
   }
 }
 
-async function waitForRendererStartedDaemon({ page, daemonHome, listen }) {
-  const deadline = Date.now() + SMOKE_TIMEOUT_MS;
+async function waitForRendererStartedDaemon({
+  page,
+  daemonHome,
+  listen,
+  stdout,
+  stderr,
+  userData,
+  deadline,
+}) {
   let lastStatus = null;
   let lastError = null;
 
@@ -469,7 +521,7 @@ async function waitForRendererStartedDaemon({ page, daemonHome, listen }) {
   }
 
   throw new Error(
-    `Packaged renderer did not start its desktop-managed daemon. Last status: ${JSON.stringify(lastStatus)}. Last error: ${lastError}`,
+    `Packaged renderer did not start its desktop-managed daemon. Last status: ${JSON.stringify(lastStatus)}. Last error: ${lastError}.\n${formatLogs({ stdout, stderr, userData, daemonHome })}`,
   );
 }
 
@@ -739,14 +791,18 @@ async function stopCliDaemon({ appPath, env }) {
 async function smokePackagedDesktopApp({ appPath }) {
   const executablePath = getExecutablePath(appPath);
   assertExecutable(executablePath, "Packaged app executable");
+  ensureLinuxSandboxPermissions(appPath);
   await smokeColdCliDaemonStart({ appPath });
 
   const userData = createTempDir("paseo-smoke-user-data-");
   const daemonHome = createTempDir("paseo-smoke-daemon-home-");
   const daemonPort = await reserveLocalTcpPort();
   let cdpPort = await reserveLocalTcpPort();
-  while (cdpPort === daemonPort) {
+  for (let attempt = 0; cdpPort === daemonPort && attempt < 10; attempt += 1) {
     cdpPort = await reserveLocalTcpPort();
+  }
+  if (cdpPort === daemonPort) {
+    throw new Error("Failed to reserve distinct TCP ports for the daemon and CDP");
   }
   const listen = `127.0.0.1:${daemonPort}`;
   configureIsolatedDaemonHome(daemonHome, listen);
@@ -771,6 +827,7 @@ async function smokePackagedDesktopApp({ appPath }) {
   child.once("error", (error) =>
     stderr.push(`Packaged app launch error: ${error.stack ?? error}\n`),
   );
+  const deadline = Date.now() + SMOKE_TIMEOUT_MS;
 
   let browser = null;
   let page = null;
@@ -793,14 +850,19 @@ async function smokePackagedDesktopApp({ appPath }) {
       stderr,
       userData,
       daemonHome,
+      deadline,
     });
-    page = await waitForPackagedAppPage(browser);
-    await assertPackagedRendererLoaded(page);
+    page = await waitForPackagedAppPage(browser, deadline);
+    await assertPackagedRendererLoaded(page, deadline);
     console.log("Packaged desktop smoke: real app renderer and preload bridge loaded");
     const status = await waitForRendererStartedDaemon({
       page,
       daemonHome,
       listen,
+      stdout,
+      stderr,
+      userData,
+      deadline,
     });
     console.log("Packaged desktop smoke: renderer-started desktop daemon reported running");
     await smokeCliShim({ appPath, env });
