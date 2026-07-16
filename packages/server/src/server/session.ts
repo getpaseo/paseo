@@ -2718,6 +2718,10 @@ export class Session {
         if (!createRealpathAwarePathMatcher(requestedWorkspace.cwd)(normalized.cwd)) {
           throw new Error(`Import cwd does not match workspace: ${normalized.workspaceId}`);
         }
+        const requestedProject = await this.projectRegistry.get(requestedWorkspace.projectId);
+        if (!requestedProject || requestedProject.archivedAt) {
+          throw new Error(`Project not found: ${requestedWorkspace.projectId}`);
+        }
         workspaceId = requestedWorkspace.workspaceId;
       } else {
         workspace = await this.workspaceProvisioning.createWorkspaceForDirectory(normalized.cwd);

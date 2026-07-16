@@ -9,6 +9,7 @@ import type {
 } from "./agent-manager.js";
 import type { AgentStorage, StoredAgentRecord } from "./agent-storage.js";
 import type { FetchRecentProviderSessionsRequestMessage } from "@getpaseo/protocol/messages";
+import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import type { AgentTimelineItem } from "./agent-sdk-types.js";
 import {
   ImportSessionsRequestError,
@@ -526,7 +527,7 @@ test("importProviderSession passes labels through the manager import operation",
   });
 });
 
-test("importProviderSession restores an archived session as the same Paseo agent", async () => {
+test("importProviderSession restores an archived subagent as the same standalone Paseo agent", async () => {
   const cwd = "/tmp/imported-agent";
   const agentId = "00000000-0000-4000-8000-000000000634";
   const persistence = {
@@ -544,7 +545,7 @@ test("importProviderSession restores an archived session as the same Paseo agent
     updatedAt: "2026-04-30T11:00:00.000Z",
     lastActivityAt: "2026-04-30T10:30:00.000Z",
     lastUserMessageAt: null,
-    labels: { existing: "label" },
+    labels: { existing: "label", [PARENT_AGENT_ID_LABEL]: "archived-parent" },
     config: { provider: "codex", cwd },
     persistence,
     archivedAt: "2026-04-30T12:00:00.000Z",
@@ -558,7 +559,9 @@ test("importProviderSession restores an archived session as the same Paseo agent
   });
   let freshImportAttempted = false;
   let unarchivedAgentId: string | undefined;
-  let unarchiveUpdates: { workspaceId?: string; labels?: Record<string, string> } | undefined;
+  let unarchiveUpdates:
+    | { workspaceId?: string; labels?: Record<string, string | null> }
+    | undefined;
   let resumedAgentId: string | undefined;
   let resumeOptions: { workspaceId?: string; labels?: Record<string, string> } | undefined;
   const agentManager = {
@@ -568,7 +571,7 @@ test("importProviderSession restores an archived session as the same Paseo agent
     },
     unarchiveSnapshot: async (
       id: string,
-      updates?: { workspaceId?: string; labels?: Record<string, string> },
+      updates?: { workspaceId?: string; labels?: Record<string, string | null> },
     ) => {
       unarchivedAgentId = id;
       unarchiveUpdates = updates;
@@ -610,13 +613,14 @@ test("importProviderSession restores an archived session as the same Paseo agent
   expect(unarchivedAgentId).toBe(agentId);
   expect(unarchiveUpdates).toEqual({
     workspaceId: "ws-restored",
-    labels: { source: "reimport" },
+    labels: { [PARENT_AGENT_ID_LABEL]: null, source: "reimport" },
   });
   expect(resumedAgentId).toBe(agentId);
   expect(resumeOptions).toMatchObject({
     workspaceId: "ws-restored",
     labels: { existing: "label", source: "reimport" },
   });
+  expect(resumeOptions?.labels).not.toHaveProperty(PARENT_AGENT_ID_LABEL);
   expect(result).toEqual({ snapshot, timelineSize: 1 });
 });
 

@@ -16,6 +16,7 @@ import type {
   ImportAgentRequestMessageSchema,
   RecentProviderSessionDescriptorPayload,
 } from "@getpaseo/protocol/messages";
+import { getParentAgentIdFromLabels, PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { createRealpathAwarePathMatcher } from "../../utils/path.js";
 
 type ImportAgentRequestMessage = z.infer<typeof ImportAgentRequestMessageSchema>;
@@ -156,9 +157,20 @@ export async function importProviderSession(
   }
   const archivedRecord = matchingRecords.find((record) => record.archivedAt);
   if (archivedRecord?.persistence && archivedRecord.archivedAt) {
-    const restoredLabels = input.request.labels
-      ? { ...archivedRecord.labels, ...input.request.labels }
-      : archivedRecord.labels;
+    const restoredLabels = { ...archivedRecord.labels, ...input.request.labels };
+    const requestedParentAgentId = getParentAgentIdFromLabels(input.request.labels);
+    if (requestedParentAgentId) {
+      restoredLabels[PARENT_AGENT_ID_LABEL] = requestedParentAgentId;
+    } else {
+      delete restoredLabels[PARENT_AGENT_ID_LABEL];
+    }
+    const labelPatch: Record<string, string | null> = { ...input.request.labels };
+    if (
+      Object.hasOwn(archivedRecord.labels, PARENT_AGENT_ID_LABEL) ||
+      Object.hasOwn(input.request.labels ?? {}, PARENT_AGENT_ID_LABEL)
+    ) {
+      labelPatch[PARENT_AGENT_ID_LABEL] = requestedParentAgentId;
+    }
     const restoredRecord = {
       ...archivedRecord,
       workspaceId: input.workspaceId,
@@ -167,7 +179,7 @@ export async function importProviderSession(
     };
     await unarchiveAgentState(input.agentStorage, input.agentManager, archivedRecord.id, {
       workspaceId: input.workspaceId,
-      labels: input.request.labels,
+      labels: Object.keys(labelPatch).length > 0 ? labelPatch : undefined,
     });
     try {
       const snapshot = await input.agentManager.resumeAgentFromPersistence(

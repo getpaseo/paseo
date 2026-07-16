@@ -93,7 +93,7 @@ export async function unarchiveAgentState(
   _agentStorage: AgentStorage,
   agentManager: AgentManager,
   agentId: string,
-  updates?: { workspaceId?: string; labels?: Record<string, string> },
+  updates?: { workspaceId?: string; labels?: Record<string, string | null> },
 ): Promise<boolean> {
   const unarchived = await agentManager.unarchiveSnapshot(agentId, updates);
   if (!unarchived) return false;
