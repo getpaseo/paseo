@@ -334,16 +334,24 @@ export const en = {
   workspace: {
     route: {
       loading: "Loading workspace",
-      restoring: "Restoring workspace",
-      restoreFailed:
-        "Couldn't restore this workspace — the directory may have been moved or deleted",
       connecting: "Connecting",
       hostOffline: "{{hostName}} is offline",
       cannotReachHost: "Cannot reach {{hostName}}",
       hostStatus: "Host status: {{status}}",
-      missing: "Workspace not found",
       needsHostUpgrade: "Update your host to restore this workspace",
       manageHost: "Manage host",
+      recovery: {
+        archivedTitle: "Workspace archived",
+        restoreDescription:
+          "{{workspaceName}} was archived and its worktree was removed. Restore branch {{branch}} to open it again.",
+        unarchiveDescription: "{{workspaceName}} is archived. Unarchive it to open it again.",
+        restoreAction: "Restore",
+        unarchiveAction: "Unarchive",
+        restoringTitle: "Restoring workspace",
+        restoringAction: "Restoring...",
+        unavailableTitle: "Workspace unavailable",
+        checkFailedTitle: "Couldn't check workspace",
+      },
     },
     hoverCard: {
       scriptsAccessibility: "Workspace scripts",
@@ -740,6 +748,17 @@ export const en = {
         base: "base",
         newFile: "New",
         deletedFile: "Deleted",
+        commits: {
+          title: "Commits",
+          legendLocal: "local",
+          legendRemote: "on remote",
+          countLabel: "{{count}} commits ahead of base",
+          fileDiffEmpty: "No changes to display",
+          fileDiffError: "Failed to load file diff",
+          loading: "Loading commits…",
+          loadError: "Failed to load commits",
+          empty: "No commits ahead of base",
+        },
       },
       openInEditor: {
         open: "Open",
@@ -1394,6 +1413,15 @@ export const en = {
       binaryPreviewUnavailable: "Binary preview unavailable",
       failedToLoad: "Failed to load file",
       failedToLoadPreview: "Failed to load file preview",
+    },
+    diff: {
+      changesLabel: "Changes",
+      changesSubtitle: "Working tree diff",
+      commitSubtitle: "Commit diff",
+      directoryMissing: "Workspace directory not found.",
+      empty: "No changes",
+      loadError: "Failed to load diff",
+      capabilityMissing: "Update the host to view commit diffs.",
     },
   },
   toolCallDetails: {

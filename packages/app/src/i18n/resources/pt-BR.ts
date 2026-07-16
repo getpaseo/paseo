@@ -338,16 +338,25 @@ export const ptBR: TranslationResources = {
   workspace: {
     route: {
       loading: "Carregando workspace",
-      restoring: "Restaurando workspace",
-      restoreFailed:
-        "Não foi possível restaurar este workspace — o diretório pode ter sido movido ou excluído",
       connecting: "Conectando",
       hostOffline: "{{hostName}} está offline",
       cannotReachHost: "Não é possível acessar {{hostName}}",
       hostStatus: "Status do host: {{status}}",
-      missing: "Workspace não encontrado",
       needsHostUpgrade: "Atualize o host para restaurar este workspace",
       manageHost: "Gerenciar host",
+      recovery: {
+        archivedTitle: "Workspace arquivado",
+        restoreDescription:
+          "{{workspaceName}} foi arquivado e sua worktree foi removida. Restaure a branch {{branch}} para abri-lo novamente.",
+        unarchiveDescription:
+          "{{workspaceName}} está arquivado. Desarquive-o para abri-lo novamente.",
+        restoreAction: "Restaurar",
+        unarchiveAction: "Desarquivar",
+        restoringTitle: "Restaurando workspace",
+        restoringAction: "Restaurando...",
+        unavailableTitle: "Workspace indisponível",
+        checkFailedTitle: "Não foi possível verificar o workspace",
+      },
     },
     hoverCard: {
       scriptsAccessibility: "Scripts do workspace",
@@ -751,6 +760,17 @@ export const ptBR: TranslationResources = {
         base: "base",
         newFile: "Novo",
         deletedFile: "Excluído",
+        commits: {
+          title: "Commits",
+          legendLocal: "local",
+          legendRemote: "no remoto",
+          countLabel: "{{count}} commits à frente da base",
+          fileDiffEmpty: "Nenhuma alteração para exibir",
+          fileDiffError: "Falha ao carregar diff do arquivo",
+          loading: "Carregando commits…",
+          loadError: "Falha ao carregar commits",
+          empty: "Nenhum commit à frente da base",
+        },
       },
       openInEditor: {
         open: "Abrir",
@@ -1411,6 +1431,15 @@ export const ptBR: TranslationResources = {
       binaryPreviewUnavailable: "Prévia binária indisponível",
       failedToLoad: "Falha ao carregar arquivo",
       failedToLoadPreview: "Falha ao carregar prévia do arquivo",
+    },
+    diff: {
+      changesLabel: "Alterações",
+      changesSubtitle: "Diff da árvore de trabalho",
+      commitSubtitle: "Diff do commit",
+      directoryMissing: "Diretório do workspace não encontrado.",
+      empty: "Nenhuma alteração",
+      loadError: "Falha ao carregar diff",
+      capabilityMissing: "Atualize o host para ver diffs de commits.",
     },
   },
   toolCallDetails: {

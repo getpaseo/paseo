@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { WorkspaceDescriptor } from "@/stores/session-store";
+import type { WorkspaceRecoveryModel } from "@/workspace-recovery/model";
 import { resolveWorkspaceRouteState } from "./workspace-route-state";
 
 function createWorkspaceDescriptor(): WorkspaceDescriptor {
@@ -20,18 +21,38 @@ function createWorkspaceDescriptor(): WorkspaceDescriptor {
   };
 }
 
+function resolve(input: {
+  workspace?: WorkspaceDescriptor | null;
+  connectionStatus?: "online" | "offline";
+  hasHydratedWorkspaces?: boolean;
+  recovery?: WorkspaceRecoveryModel;
+}) {
+  return resolveWorkspaceRouteState({
+    hostName: "Laptop",
+    connectionStatus: input.connectionStatus ?? "online",
+    lastError: input.connectionStatus === "offline" ? "transport closed" : null,
+    workspace: input.workspace ?? null,
+    hasHydratedWorkspaces: input.hasHydratedWorkspaces ?? true,
+    recovery: input.recovery ?? { kind: "checking" },
+  });
+}
+
+const recoverable = {
+  kind: "recoverable",
+  recovery: {
+    kind: "recoverable",
+    workspaceId: "workspace-1",
+    workspaceName: "Feature branch",
+    action: "restore",
+    branch: "feature",
+  },
+  phase: "ready",
+  error: null,
+} as const satisfies WorkspaceRecoveryModel;
+
 describe("resolveWorkspaceRouteState", () => {
-  it("returns unreachable when no descriptor is cached and the host is offline", () => {
-    expect(
-      resolveWorkspaceRouteState({
-        hostName: "Laptop",
-        connectionStatus: "offline",
-        lastError: "transport closed",
-        workspace: null,
-        hasHydratedWorkspaces: false,
-        restoreStatus: null,
-      }),
-    ).toEqual({
+  it("keeps a missing route unreachable while its host is offline", () => {
+    expect(resolve({ connectionStatus: "offline" })).toEqual({
       kind: "unreachable",
       hostName: "Laptop",
       connectionStatus: "offline",
@@ -39,34 +60,9 @@ describe("resolveWorkspaceRouteState", () => {
     });
   });
 
-  it("keeps offline routes unreachable after workspace hydration", () => {
+  it("keeps a cached workspace visible while its host reconnects", () => {
     expect(
-      resolveWorkspaceRouteState({
-        hostName: "Laptop",
-        connectionStatus: "offline",
-        lastError: "transport closed",
-        workspace: null,
-        hasHydratedWorkspaces: true,
-        restoreStatus: null,
-      }),
-    ).toEqual({
-      kind: "unreachable",
-      hostName: "Laptop",
-      connectionStatus: "offline",
-      lastError: "transport closed",
-    });
-  });
-
-  it("returns reconnecting when the descriptor is cached and the host is offline", () => {
-    expect(
-      resolveWorkspaceRouteState({
-        hostName: "Laptop",
-        connectionStatus: "offline",
-        lastError: "transport closed",
-        workspace: createWorkspaceDescriptor(),
-        hasHydratedWorkspaces: true,
-        restoreStatus: null,
-      }),
+      resolve({ workspace: createWorkspaceDescriptor(), connectionStatus: "offline" }),
     ).toEqual({
       kind: "reconnecting",
       hostName: "Laptop",
@@ -75,93 +71,102 @@ describe("resolveWorkspaceRouteState", () => {
     });
   });
 
-  it("returns missing after workspace hydration when the host is online", () => {
-    expect(
-      resolveWorkspaceRouteState({
-        hostName: "Laptop",
-        connectionStatus: "online",
-        lastError: null,
-        workspace: null,
-        hasHydratedWorkspaces: true,
-        restoreStatus: null,
-      }),
-    ).toEqual({ kind: "missing", hostName: "Laptop", restoreFailed: false });
+  it("waits for workspace hydration and authoritative recovery inspection", () => {
+    expect(resolve({ hasHydratedWorkspaces: false })).toEqual({
+      kind: "loading",
+      hostName: "Laptop",
+    });
+    expect(resolve({ recovery: { kind: "checking" } })).toEqual({
+      kind: "loading",
+      hostName: "Laptop",
+    });
   });
 
-  it("returns loading before workspace hydration when the host is online", () => {
-    expect(
-      resolveWorkspaceRouteState({
-        hostName: "Laptop",
-        connectionStatus: "online",
-        lastError: null,
-        workspace: null,
-        hasHydratedWorkspaces: false,
-        restoreStatus: null,
-      }),
-    ).toEqual({ kind: "loading", hostName: "Laptop" });
+  it("keeps an ordinary missing route distinct from an explicit recovery request", () => {
+    expect(resolve({ recovery: { kind: "idle" } })).toEqual({
+      kind: "missing",
+      hostName: "Laptop",
+    });
+    expect(resolve({ recovery: { kind: "needsHostUpgrade" } })).toEqual({
+      kind: "needsHostUpgrade",
+      hostName: "Laptop",
+    });
   });
 
-  it("returns ready when the host is online and the descriptor exists", () => {
+  it("renders the authoritative archived-workspace state through ready, restoring, and failed phases", () => {
+    expect(resolve({ recovery: recoverable })).toEqual({
+      kind: "archived",
+      hostName: "Laptop",
+      recovery: recoverable,
+    });
+
+    const restoring = { ...recoverable, phase: "restoring" as const };
+    expect(resolve({ recovery: restoring })).toMatchObject({
+      kind: "archived",
+      recovery: { phase: "restoring" },
+    });
+
+    const failed = {
+      ...recoverable,
+      phase: "failed" as const,
+      error: "Project root is missing",
+    };
+    expect(resolve({ recovery: failed })).toMatchObject({
+      kind: "archived",
+      recovery: { phase: "failed", error: "Project root is missing" },
+    });
+  });
+
+  it("distinguishes unsupported and authoritatively unavailable workspaces", () => {
+    expect(resolve({ recovery: { kind: "needsHostUpgrade" } })).toEqual({
+      kind: "needsHostUpgrade",
+      hostName: "Laptop",
+    });
     expect(
-      resolveWorkspaceRouteState({
-        hostName: "Laptop",
-        connectionStatus: "online",
-        lastError: null,
+      resolve({
+        recovery: {
+          kind: "unavailable",
+          recovery: {
+            kind: "unavailable",
+            workspaceId: "workspace-1",
+            reason: "workspace_directory_missing",
+            message: "The workspace directory cannot be recreated.",
+          },
+        },
+      }),
+    ).toEqual({
+      kind: "recoveryUnavailable",
+      hostName: "Laptop",
+      message: "The workspace directory cannot be recreated.",
+    });
+
+    expect(
+      resolve({
+        recovery: {
+          kind: "unsupportedAction",
+          action: "repair_from_snapshot",
+        },
+      }),
+    ).toEqual({
+      kind: "recoveryUnavailable",
+      hostName: "Laptop",
+      message: "Update Paseo to recover this workspace.",
+    });
+  });
+
+  it("keeps loading visible when the descriptor arrives, then uses it as the success transition", () => {
+    const restoring = { ...recoverable, phase: "restoring" as const };
+    expect(
+      resolve({
         workspace: createWorkspaceDescriptor(),
-        hasHydratedWorkspaces: true,
-        restoreStatus: null,
+        recovery: restoring,
       }),
-    ).toEqual({ kind: "ready" });
-  });
+    ).toEqual({ kind: "archived", hostName: "Laptop", recovery: restoring });
 
-  it("returns restoring while an archived workspace restore is in flight", () => {
     expect(
-      resolveWorkspaceRouteState({
-        hostName: "Laptop",
-        connectionStatus: "online",
-        lastError: null,
-        workspace: null,
-        hasHydratedWorkspaces: true,
-        restoreStatus: "restoring",
-      }),
-    ).toEqual({ kind: "restoring", hostName: "Laptop" });
-  });
-
-  it("returns needsHostUpgrade when the daemon lacks the restore capability", () => {
-    expect(
-      resolveWorkspaceRouteState({
-        hostName: "Laptop",
-        connectionStatus: "online",
-        lastError: null,
-        workspace: null,
-        hasHydratedWorkspaces: true,
-        restoreStatus: "needs-host-upgrade",
-      }),
-    ).toEqual({ kind: "needsHostUpgrade", hostName: "Laptop" });
-  });
-
-  it("falls back to a restore-failed missing state once the restore times out", () => {
-    expect(
-      resolveWorkspaceRouteState({
-        hostName: "Laptop",
-        connectionStatus: "online",
-        lastError: null,
-        workspace: null,
-        hasHydratedWorkspaces: true,
-        restoreStatus: "failed",
-      }),
-    ).toEqual({ kind: "missing", hostName: "Laptop", restoreFailed: true });
-  });
-
-  it("resolves to ready when the descriptor arrives even while restoring", () => {
-    expect(
-      resolveWorkspaceRouteState({
-        hostName: "Laptop",
-        connectionStatus: "online",
-        lastError: null,
+      resolve({
         workspace: createWorkspaceDescriptor(),
-        hasHydratedWorkspaces: true,
-        restoreStatus: "restoring",
+        recovery: recoverable,
       }),
     ).toEqual({ kind: "ready" });
   });

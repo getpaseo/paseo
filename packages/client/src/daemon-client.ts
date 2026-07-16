@@ -29,6 +29,8 @@ import type {
   AgentForkContextResponseMessage,
   GitSetupOptions,
   CheckoutStatusResponse,
+  CheckoutCommit,
+  ParsedDiffFile,
   CheckoutCommitResponse,
   CheckoutMergeResponse,
   CheckoutMergeFromBaseResponse,
@@ -89,6 +91,7 @@ import type {
   PaseoConfigRaw,
   PaseoConfigRevision,
   WorkspaceCreateRequest,
+  WorkspaceRecoveryState,
 } from "@getpaseo/protocol/messages";
 import type {
   AgentPermissionRequest,
@@ -2451,6 +2454,36 @@ export class DaemonClient {
     return { pinnedAt: payload.pinnedAt };
   }
 
+  async inspectWorkspaceRecovery(
+    workspaceId: string,
+    requestId?: string,
+  ): Promise<WorkspaceRecoveryState> {
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"workspace.recovery.inspect.response">({
+        requestId,
+        message: {
+          type: "workspace.recovery.inspect.request",
+          workspaceId,
+        },
+      });
+    return payload.state;
+  }
+
+  async restoreWorkspace(workspaceId: string, requestId?: string): Promise<void> {
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"workspace.recovery.restore.response">({
+        requestId,
+        message: {
+          type: "workspace.recovery.restore.request",
+          workspaceId,
+        },
+        timeout: 150_000,
+      });
+    if (!payload.accepted) {
+      throw new Error(payload.error ?? "Workspace recovery was rejected by the host");
+    }
+  }
+
   async resumeAgent(
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
@@ -3466,6 +3499,48 @@ export class DaemonClient {
       },
       responseType: "checkout.refresh.response",
     });
+  }
+
+  async listCheckoutCommits(
+    cwd: string,
+    requestId?: string,
+  ): Promise<{ baseRef: string | null; commits: CheckoutCommit[] }> {
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"checkout.commits.list.response">({
+        requestId,
+        message: {
+          type: "checkout.commits.list.request",
+          cwd,
+        },
+        timeout: 60000,
+      });
+    if (payload.error) {
+      throw new Error(payload.error.message);
+    }
+    return { baseRef: payload.baseRef, commits: payload.commits };
+  }
+
+  async getCommitFileDiff(
+    cwd: string,
+    sha: string,
+    path: string,
+    requestId?: string,
+  ): Promise<{ file: ParsedDiffFile | null }> {
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"checkout.commits.file_diff.response">({
+        requestId,
+        message: {
+          type: "checkout.commits.file_diff.request",
+          cwd,
+          sha,
+          path,
+        },
+        timeout: 60000,
+      });
+    if (payload.error) {
+      throw new Error(payload.error.message);
+    }
+    return { file: payload.file };
   }
 
   async checkoutPrCreate(

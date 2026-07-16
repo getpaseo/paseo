@@ -7,7 +7,6 @@ import {
   memo,
   type ReactElement,
   type ReactNode,
-  type RefObject,
 } from "react";
 import { useTranslation } from "react-i18next";
 import { DiffStat } from "@/components/diff-stat";
@@ -62,6 +61,7 @@ import { SvgXml } from "react-native-svg";
 import { getFileIconSvg } from "@/components/material-file-icons";
 import { useCheckoutStatusQuery } from "@/git/use-status-query";
 import { useCheckoutPrStatusQuery } from "@/git/use-pr-status-query";
+import { CommitsSection } from "@/git/commits-section/commits-section";
 import { useChangesPreferences } from "@/hooks/use-changes-preferences";
 import { useAppSettings } from "@/hooks/use-settings";
 import { DiffScroll } from "@/components/diff-scroll";
@@ -94,6 +94,8 @@ import { useSessionStore } from "@/stores/session-store";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { usePanelStore } from "@/stores/panel-store";
+import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
+import { buildWorkspaceTabPersistenceKey } from "@/stores/workspace-tabs-store";
 import { buildWorkspaceExplorerStateKey } from "@/hooks/use-file-explorer-actions";
 import {
   formatDiffContentText,
@@ -202,7 +204,8 @@ interface DiffFileSectionProps {
   depth?: number;
   /** Show the muted directory suffix (flat list); false inside the folder tree. */
   showDir?: boolean;
-  onToggle: (path: string) => void;
+  interactive?: boolean;
+  onToggle?: (path: string) => void;
   onHeaderHeightChange?: (path: string, height: number) => void;
   testID?: string;
 }
@@ -902,6 +905,7 @@ const DiffFileHeader = memo(function DiffFileHeader({
   isExpanded,
   depth = 0,
   showDir = true,
+  interactive = true,
   onToggle,
   onHeaderHeightChange,
   testID,
@@ -912,9 +916,12 @@ const DiffFileHeader = memo(function DiffFileHeader({
   const pressInRef = useRef<{ ts: number; pageX: number; pageY: number } | null>(null);
 
   const toggleExpanded = useCallback(() => {
+    if (!interactive) {
+      return;
+    }
     pressHandledRef.current = true;
-    onToggle(file.path);
-  }, [file.path, onToggle]);
+    onToggle?.(file.path);
+  }, [file.path, interactive, onToggle]);
 
   const handleLayout = useCallback(
     (event: LayoutChangeEvent) => {
@@ -935,7 +942,13 @@ const DiffFileHeader = memo(function DiffFileHeader({
 
   const handlePressOut = useCallback(
     (event: { nativeEvent: { pageX: number; pageY: number } }) => {
-      if (isNative && !pressHandledRef.current && layoutYRef.current === 0 && pressInRef.current) {
+      if (
+        interactive &&
+        isNative &&
+        !pressHandledRef.current &&
+        layoutYRef.current === 0 &&
+        pressInRef.current
+      ) {
         const durationMs = Date.now() - pressInRef.current.ts;
         const dx = event.nativeEvent.pageX - pressInRef.current.pageX;
         const dy = event.nativeEvent.pageY - pressInRef.current.pageY;
@@ -945,7 +958,7 @@ const DiffFileHeader = memo(function DiffFileHeader({
         }
       }
     },
-    [toggleExpanded],
+    [interactive, toggleExpanded],
   );
 
   const containerStyle = useMemo(
@@ -965,56 +978,65 @@ const DiffFileHeader = memo(function DiffFileHeader({
   );
 
   const fileName = file.path.split("/").pop() ?? file.path;
+  const headerContent = (
+    <>
+      <View style={styles.fileHeaderLeft}>
+        {showDir ? null : (
+          <View style={styles.fileIcon}>
+            <SvgXml xml={getFileIconSvg(fileName)} width={16} height={16} />
+          </View>
+        )}
+        <Text style={styles.fileName} numberOfLines={1}>
+          {fileName}
+        </Text>
+        {showDir ? (
+          <Text style={styles.fileDir} numberOfLines={1}>
+            {file.path.includes("/") ? ` ${file.path.slice(0, file.path.lastIndexOf("/"))}` : ""}
+          </Text>
+        ) : (
+          // Flex spacer in tree mode (no dir suffix) so the New/Deleted badge
+          // stays right-aligned next to the diff stats, as in the flat list.
+          <View style={styles.fileDirSpacer} />
+        )}
+        {file.isNew && (
+          <View style={styles.newBadge}>
+            <Text style={styles.newBadgeText}>{t("workspace.git.diff.newFile")}</Text>
+          </View>
+        )}
+        {file.isDeleted && (
+          <View style={styles.deletedBadge}>
+            <Text style={styles.deletedBadgeText}>{t("workspace.git.diff.deletedFile")}</Text>
+          </View>
+        )}
+      </View>
+      <View style={styles.fileHeaderRight}>
+        <DiffStat additions={file.additions} deletions={file.deletions} />
+      </View>
+    </>
+  );
 
   return (
     <View style={containerStyle} onLayout={handleLayout} testID={testID}>
       <TreeIndentGuides depth={depth} />
       <Tooltip delayDuration={300} enabledOnDesktop enabledOnMobile={false}>
         <TooltipTrigger asChild>
-          <Pressable
-            testID={testID ? `${testID}-toggle` : undefined}
-            style={headerPressableStyle}
-            // Android: prevent parent pan/scroll gestures from canceling the tap release.
-            cancelable={false}
-            onPressIn={handlePressIn}
-            onPressOut={handlePressOut}
-            onPress={toggleExpanded}
-          >
-            <View style={styles.fileHeaderLeft}>
-              {showDir ? null : (
-                <View style={styles.fileIcon}>
-                  <SvgXml xml={getFileIconSvg(fileName)} width={16} height={16} />
-                </View>
-              )}
-              <Text style={styles.fileName} numberOfLines={1}>
-                {fileName}
-              </Text>
-              {showDir ? (
-                <Text style={styles.fileDir} numberOfLines={1}>
-                  {file.path.includes("/")
-                    ? ` ${file.path.slice(0, file.path.lastIndexOf("/"))}`
-                    : ""}
-                </Text>
-              ) : (
-                // Flex spacer in tree mode (no dir suffix) so the New/Deleted badge
-                // stays right-aligned next to the diff stats, as in the flat list.
-                <View style={styles.fileDirSpacer} />
-              )}
-              {file.isNew && (
-                <View style={styles.newBadge}>
-                  <Text style={styles.newBadgeText}>{t("workspace.git.diff.newFile")}</Text>
-                </View>
-              )}
-              {file.isDeleted && (
-                <View style={styles.deletedBadge}>
-                  <Text style={styles.deletedBadgeText}>{t("workspace.git.diff.deletedFile")}</Text>
-                </View>
-              )}
+          {interactive ? (
+            <Pressable
+              testID={testID ? `${testID}-toggle` : undefined}
+              style={headerPressableStyle}
+              // Android: prevent parent pan/scroll gestures from canceling the tap release.
+              cancelable={false}
+              onPressIn={handlePressIn}
+              onPressOut={handlePressOut}
+              onPress={toggleExpanded}
+            >
+              {headerContent}
+            </Pressable>
+          ) : (
+            <View style={headerPressableStyle({ hovered: false, pressed: false })}>
+              {headerContent}
             </View>
-            <View style={styles.fileHeaderRight}>
-              <DiffStat additions={file.additions} deletions={file.deletions} />
-            </View>
-          </Pressable>
+          )}
         </TooltipTrigger>
         <TooltipContent side="bottom" align="start" offset={6} maxWidth={520}>
           <Text style={styles.tooltipText}>{file.path}</Text>
@@ -1024,7 +1046,7 @@ const DiffFileHeader = memo(function DiffFileHeader({
   );
 });
 
-function DiffFileBody({
+export function DiffFileBody({
   file,
   layout,
   wrapLines,
@@ -1480,6 +1502,7 @@ const ThemedRotateCw = withUnistyles(RotateCw);
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 
 type DiffFlatItemLayoutGetter = NonNullable<FlatListProps<DiffFlatItem>["getItemLayout"]>;
+const EMPTY_PATH_LIST: string[] = [];
 
 function getUnifiedDiffLineCount(file: ParsedDiffFile): number {
   let lineCount = 0;
@@ -1526,15 +1549,7 @@ interface DiffBodyContentProps {
   diffErrorMessage: string | null;
   hasChanges: boolean;
   emptyMessage: string;
-  flatItems: DiffFlatItem[];
-  stickyHeaderIndices: number[];
-  renderFlatItem: ({ item }: { item: DiffFlatItem }) => ReactElement;
-  flatKeyExtractor: (item: DiffFlatItem) => string;
-  getFlatItemLayout: DiffFlatItemLayoutGetter;
-  flatExtraData: unknown;
-  diffListRef: RefObject<FlatList<DiffFlatItem> | null>;
-  handleDiffListLayout: (event: LayoutChangeEvent) => void;
-  handleDiffListScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
+  children: ReactElement;
   checkingRepositoryLabel: string;
   notRepositoryLabel: string;
 }
@@ -1547,15 +1562,7 @@ function DiffBodyContent({
   diffErrorMessage,
   hasChanges,
   emptyMessage,
-  flatItems,
-  stickyHeaderIndices,
-  renderFlatItem,
-  flatKeyExtractor,
-  getFlatItemLayout,
-  flatExtraData,
-  diffListRef,
-  handleDiffListLayout,
-  handleDiffListScroll,
+  children,
   checkingRepositoryLabel,
   notRepositoryLabel,
 }: DiffBodyContentProps) {
@@ -1602,6 +1609,380 @@ function DiffBodyContent({
       </View>
     );
   }
+  return children;
+}
+
+interface SharedDiffViewProps {
+  files: ParsedDiffFile[];
+  displayPreferences: {
+    layout: "unified" | "split";
+    wrapLines: boolean;
+    codeFontSize: number;
+    monoFontFamily: string;
+  };
+  mode:
+    | {
+        kind: "working_tree";
+        viewMode: "flat" | "tree";
+        expandedPaths: string[];
+        collapsedFolders: string[];
+        reviewActions?: InlineReviewActions;
+        onExpandedPathsChange: (paths: string[]) => void;
+        onCollapsedFoldersChange: (paths: string[]) => void;
+      }
+    | {
+        kind: "commit";
+      };
+}
+
+export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffViewProps) {
+  const { layout, wrapLines, codeFontSize, monoFontFamily } = displayPreferences;
+  const diffBodyLineHeight = Math.round(codeFontSize * 1.5);
+  const typographyKey = [monoFontFamily, codeFontSize, diffBodyLineHeight].join(":");
+  const textMetricsStyle = useMemo<TextStyle>(() => {
+    const trimmedMonoFontFamily = monoFontFamily.trim();
+    return {
+      fontSize: codeFontSize,
+      lineHeight: diffBodyLineHeight,
+      ...(trimmedMonoFontFamily ? { fontFamily: trimmedMonoFontFamily } : null),
+    };
+  }, [codeFontSize, diffBodyLineHeight, monoFontFamily]);
+  const viewMode = mode.kind === "working_tree" ? mode.viewMode : "flat";
+  const expandedPathsArray = useMemo(
+    () => (mode.kind === "working_tree" ? mode.expandedPaths : files.map((file) => file.path)),
+    [files, mode],
+  );
+  const expandedPaths = useMemo(() => new Set(expandedPathsArray), [expandedPathsArray]);
+  const collapsedFoldersArray =
+    mode.kind === "working_tree" ? mode.collapsedFolders : EMPTY_PATH_LIST;
+  const collapsedFolders = useMemo(() => new Set(collapsedFoldersArray), [collapsedFoldersArray]);
+  const stickyHeaders = mode.kind === "working_tree";
+  const interactive = mode.kind === "working_tree";
+  const reviewActions = mode.kind === "working_tree" ? mode.reviewActions : undefined;
+  const compressedTree = useMemo(() => compressSingleChildChains(buildDiffTree(files)), [files]);
+  const allFolderPaths = useMemo(() => collectDirPaths(compressedTree), [compressedTree]);
+  const allFolderPathSet = useMemo(() => new Set(allFolderPaths), [allFolderPaths]);
+  const effectiveCollapsedFolders = useMemo(
+    () => new Set(Array.from(collapsedFolders).filter((path) => allFolderPathSet.has(path))),
+    [allFolderPathSet, collapsedFolders],
+  );
+  const diffListRef = useRef<FlatList<DiffFlatItem>>(null);
+  const diffListScrollOffsetRef = useRef(0);
+  const diffListViewportHeightRef = useRef(0);
+  const headerHeightByPathRef = useRef<Record<string, number>>({});
+  const bodyHeightByKeyRef = useRef<Record<string, number>>({});
+  const folderRowHeightRef = useRef<number>(0);
+  const defaultHeaderHeightRef = useRef<number>(44);
+  const [heightVersion, setHeightVersion] = useState(0);
+  const diffBodyChromeHeight = BORDER_WIDTH[1] * 2;
+  const statusBodyHeightEstimate = diffBodyChromeHeight + SPACING[4] * 2 + diffBodyLineHeight;
+
+  const { flatItems, stickyHeaderIndices } = useMemo(() => {
+    const { items, stickyHeaderIndices: stickyIndices } = buildDiffFlatItems({
+      files,
+      viewMode,
+      tree: compressedTree,
+      collapsedFolders: effectiveCollapsedFolders,
+      expandedPaths,
+    });
+    return {
+      flatItems: items,
+      stickyHeaderIndices: stickyHeaders ? stickyIndices : [],
+    };
+  }, [compressedTree, effectiveCollapsedFolders, expandedPaths, files, stickyHeaders, viewMode]);
+
+  const getBodyHeightKey = useCallback(
+    (file: ParsedDiffFile): string => {
+      if (file.status === "too_large" || file.status === "binary") {
+        return `${layout}:${wrapLines ? "wrap" : "scroll"}:${typographyKey}:${file.path}:${file.status}`;
+      }
+
+      return [
+        layout,
+        wrapLines ? "wrap" : "scroll",
+        typographyKey,
+        file.path,
+        file.status ?? "ok",
+        file.additions,
+        file.deletions,
+        file.hunks.length,
+        getUnifiedDiffLineCount(file),
+        getDiffContentLength(file),
+      ].join(":");
+    },
+    [layout, typographyKey, wrapLines],
+  );
+
+  const estimateBodyHeight = useCallback(
+    (file: ParsedDiffFile): number => {
+      if (file.status === "too_large" || file.status === "binary") {
+        return statusBodyHeightEstimate;
+      }
+
+      const lineCount =
+        layout === "split" ? buildSplitDiffRows(file).length : getUnifiedDiffLineCount(file);
+      return diffBodyChromeHeight + lineCount * diffBodyLineHeight;
+    },
+    [diffBodyChromeHeight, diffBodyLineHeight, layout, statusBodyHeightEstimate],
+  );
+
+  const getFlatItemHeight = useCallback(
+    (item: DiffFlatItem): number => {
+      if (item.type === "folder") {
+        return folderRowHeightRef.current || defaultHeaderHeightRef.current;
+      }
+      if (item.type === "header") {
+        return headerHeightByPathRef.current[item.file.path] ?? defaultHeaderHeightRef.current;
+      }
+      const bodyHeightKey = getBodyHeightKey(item.file);
+      return bodyHeightByKeyRef.current[bodyHeightKey] ?? estimateBodyHeight(item.file);
+    },
+    [estimateBodyHeight, getBodyHeightKey],
+  );
+
+  const handleFolderRowHeightChange = useCallback((height: number) => {
+    if (!Number.isFinite(height) || height <= 0) {
+      return;
+    }
+    const previousHeight = folderRowHeightRef.current;
+    if (previousHeight > 0 && Math.abs(previousHeight - height) <= DIFF_HEIGHT_CHANGE_EPSILON) {
+      return;
+    }
+    folderRowHeightRef.current = height;
+    setHeightVersion((version) => version + 1);
+  }, []);
+
+  const handleHeaderHeightChange = useCallback((path: string, height: number) => {
+    if (!Number.isFinite(height) || height <= 0) {
+      return;
+    }
+    const previousHeight = headerHeightByPathRef.current[path];
+    if (
+      previousHeight !== undefined &&
+      Math.abs(previousHeight - height) <= DIFF_HEIGHT_CHANGE_EPSILON
+    ) {
+      return;
+    }
+    headerHeightByPathRef.current[path] = height;
+    defaultHeaderHeightRef.current = height;
+    setHeightVersion((version) => version + 1);
+  }, []);
+
+  const handleBodyHeightChange = useCallback(
+    (file: ParsedDiffFile, height: number) => {
+      if (!Number.isFinite(height) || height < 0) {
+        return;
+      }
+      const heightKey = getBodyHeightKey(file);
+      const previousHeight = bodyHeightByKeyRef.current[heightKey];
+      if (
+        previousHeight !== undefined &&
+        Math.abs(previousHeight - height) <= DIFF_HEIGHT_CHANGE_EPSILON
+      ) {
+        return;
+      }
+      bodyHeightByKeyRef.current[heightKey] = height;
+      setHeightVersion((version) => version + 1);
+    },
+    [getBodyHeightKey],
+  );
+
+  const handleDiffListScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    diffListScrollOffsetRef.current = event.nativeEvent.contentOffset.y;
+  }, []);
+
+  const handleDiffListLayout = useCallback((event: LayoutChangeEvent) => {
+    const height = event.nativeEvent.layout.height;
+    if (!Number.isFinite(height) || height <= 0) {
+      return;
+    }
+    diffListViewportHeightRef.current = height;
+  }, []);
+
+  const computeItemOffset = useCallback(
+    (predicate: (item: DiffFlatItem) => boolean): number | null => {
+      const index = flatItems.findIndex(predicate);
+      if (index < 0) {
+        return null;
+      }
+      return sumHeightsBefore(flatItems, index, getFlatItemHeight);
+    },
+    [flatItems, getFlatItemHeight],
+  );
+
+  const computeHeaderOffset = useCallback(
+    (path: string): number =>
+      computeItemOffset((item) => item.type === "header" && item.file.path === path) ?? 0,
+    [computeItemOffset],
+  );
+
+  const handleToggleExpanded = useCallback(
+    (path: string) => {
+      if (mode.kind !== "working_tree") {
+        return;
+      }
+      const isCurrentlyExpanded = expandedPaths.has(path);
+      const nextExpanded = !isCurrentlyExpanded;
+      const targetOffset = isCurrentlyExpanded ? computeHeaderOffset(path) : null;
+      const headerHeight = headerHeightByPathRef.current[path] ?? defaultHeaderHeightRef.current;
+      const shouldAnchor =
+        isCurrentlyExpanded &&
+        targetOffset !== null &&
+        shouldAnchorHeaderBeforeCollapse({
+          headerOffset: targetOffset,
+          headerHeight,
+          viewportOffset: diffListScrollOffsetRef.current,
+          viewportHeight: diffListViewportHeightRef.current,
+        });
+
+      if (shouldAnchor && targetOffset !== null) {
+        diffListRef.current?.scrollToOffset({
+          offset: targetOffset,
+          animated: false,
+        });
+      }
+
+      mode.onExpandedPathsChange(
+        nextExpanded
+          ? [...expandedPaths, path]
+          : Array.from(expandedPaths).filter((expandedPath) => expandedPath !== path),
+      );
+    },
+    [computeHeaderOffset, expandedPaths, mode],
+  );
+
+  const handleToggleFolder = useCallback(
+    (dirPath: string) => {
+      if (mode.kind !== "working_tree") {
+        return;
+      }
+      const isCurrentlyCollapsed = effectiveCollapsedFolders.has(dirPath);
+      if (!isCurrentlyCollapsed) {
+        const targetOffset = computeItemOffset(
+          (item) => item.type === "folder" && item.dirPath === dirPath,
+        );
+        const folderHeight = folderRowHeightRef.current || defaultHeaderHeightRef.current;
+        if (
+          targetOffset !== null &&
+          shouldAnchorHeaderBeforeCollapse({
+            headerOffset: targetOffset,
+            headerHeight: folderHeight,
+            viewportOffset: diffListScrollOffsetRef.current,
+            viewportHeight: diffListViewportHeightRef.current,
+          })
+        ) {
+          diffListRef.current?.scrollToOffset({ offset: targetOffset, animated: false });
+        }
+      }
+
+      mode.onCollapsedFoldersChange(
+        isCurrentlyCollapsed
+          ? Array.from(effectiveCollapsedFolders).filter((path) => path !== dirPath)
+          : [...effectiveCollapsedFolders, dirPath],
+      );
+    },
+    [computeItemOffset, effectiveCollapsedFolders, mode],
+  );
+
+  const renderFlatItem = useCallback(
+    ({ item }: { item: DiffFlatItem }) => {
+      if (item.type === "folder") {
+        return (
+          <DiffFolderRow
+            dirPath={item.dirPath}
+            displayName={item.displayName}
+            depth={item.depth}
+            collapsed={item.collapsed}
+            additions={item.additions}
+            deletions={item.deletions}
+            onToggle={handleToggleFolder}
+            onHeightChange={handleFolderRowHeightChange}
+            testID={`diff-folder-${item.dirPath}`}
+          />
+        );
+      }
+      if (item.type === "header") {
+        return (
+          <DiffFileHeader
+            file={item.file}
+            isExpanded={item.isExpanded}
+            depth={item.depth}
+            showDir={viewMode === "flat"}
+            interactive={interactive}
+            onToggle={interactive ? handleToggleExpanded : undefined}
+            onHeaderHeightChange={handleHeaderHeightChange}
+            testID={`diff-file-${item.fileIndex}`}
+          />
+        );
+      }
+      return (
+        <DiffFileBody
+          file={item.file}
+          layout={layout}
+          wrapLines={wrapLines}
+          codeFontSize={codeFontSize}
+          textMetricsStyle={textMetricsStyle}
+          reviewActions={reviewActions}
+          onBodyHeightChange={handleBodyHeightChange}
+          testID={`diff-file-${item.fileIndex}-body`}
+        />
+      );
+    },
+    [
+      codeFontSize,
+      handleBodyHeightChange,
+      handleFolderRowHeightChange,
+      handleHeaderHeightChange,
+      handleToggleExpanded,
+      handleToggleFolder,
+      layout,
+      reviewActions,
+      textMetricsStyle,
+      viewMode,
+      wrapLines,
+      interactive,
+    ],
+  );
+
+  const flatKeyExtractor = useCallback(
+    (item: DiffFlatItem) =>
+      item.type === "folder" ? `folder-${item.dirPath}` : `${item.type}-${item.file.path}`,
+    [],
+  );
+
+  const getFlatItemLayout = useCallback<DiffFlatItemLayoutGetter>(
+    (_data, index) => {
+      const offset = sumHeightsBefore(flatItems, index, getFlatItemHeight);
+      const item = flatItems[index];
+      const length = item ? getFlatItemHeight(item) : 0;
+      return { length, offset, index };
+    },
+    [flatItems, getFlatItemHeight],
+  );
+
+  const flatExtraData = useMemo(
+    () => ({
+      expandedPathsArray,
+      collapsedFoldersArray,
+      layout,
+      typographyKey,
+      heightVersion,
+      viewMode,
+      wrapLines,
+      reviewActions,
+    }),
+    [
+      expandedPathsArray,
+      collapsedFoldersArray,
+      heightVersion,
+      layout,
+      reviewActions,
+      typographyKey,
+      viewMode,
+      wrapLines,
+    ],
+  );
+
   return (
     <FlatList
       ref={diffListRef}
@@ -1618,8 +1999,6 @@ function DiffBodyContent({
       onScroll={handleDiffListScroll}
       scrollEventThrottle={16}
       showsVerticalScrollIndicator
-      // Mixed-height rows (header + potentially very large body) are prone to clipping artifacts.
-      // Keep a larger render window and disable clipping to avoid bodies disappearing mid-scroll.
       removeClippedSubviews={false}
       initialNumToRender={12}
       maxToRenderPerBatch={12}
@@ -1753,18 +2132,6 @@ export function GitDiffPane({ serverId, workspaceId, cwd, enabled }: GitDiffPane
   }, [changesPreferences.layout, updateChangesPreferences]);
 
   const codeFontSize = appSettings.codeFontSize;
-  const diffBodyLineHeight = Math.round(codeFontSize * 1.5);
-  const diffBodyTypographyKey = [appSettings.monoFontFamily, codeFontSize, diffBodyLineHeight].join(
-    ":",
-  );
-  const diffTextMetricsStyle = useMemo<TextStyle>(() => {
-    const monoFontFamily = appSettings.monoFontFamily.trim();
-    return {
-      fontSize: codeFontSize,
-      lineHeight: diffBodyLineHeight,
-      ...(monoFontFamily ? { fontFamily: monoFontFamily } : null),
-    };
-  }, [appSettings.monoFontFamily, codeFontSize, diffBodyLineHeight]);
   const diffModeTriggerStyle = useMemo(() => buildDiffModeTriggerStyle(), []);
 
   const layoutToggleStyle = useMemo(
@@ -1782,6 +2149,23 @@ export function GitDiffPane({ serverId, workspaceId, cwd, enabled }: GitDiffPane
   const overflowToggleStyle = useMemo(() => buildExpandAllButtonStyle(), []);
 
   const toast = useToast();
+  const openWorkspaceTabFocused = useWorkspaceLayoutStore((state) => state.openTabFocused);
+  const commitDiffPersistenceKey = useMemo(
+    () => buildWorkspaceTabPersistenceKey({ serverId, workspaceId: workspaceId ?? cwd }),
+    [cwd, serverId, workspaceId],
+  );
+  const handleCommitPress = useCallback(
+    (sha: string) => {
+      if (!commitDiffPersistenceKey) {
+        return;
+      }
+      openWorkspaceTabFocused(commitDiffPersistenceKey, {
+        kind: "commit_diff",
+        sha,
+      });
+    },
+    [commitDiffPersistenceKey, openWorkspaceTabFocused],
+  );
   const refreshSupported = useSessionStore(
     (s) => s.sessions[serverId]?.serverInfo?.features?.checkoutRefresh === true,
   );
@@ -1930,256 +2314,24 @@ export function GitDiffPane({ serverId, workspaceId, cwd, enabled }: GitDiffPane
   const setDiffCollapsedFoldersForWorkspace = usePanelStore(
     (state) => state.setDiffCollapsedFoldersForWorkspace,
   );
-  // Build the directory tree once per files-change; collapse/expand toggles only
-  // re-flatten it (they don't change tree shape).
-  const compressedTree = useMemo(() => compressSingleChildChains(buildDiffTree(files)), [files]);
-  // Every directory path currently in the tree — used by "collapse all folders" and to
-  // filter stale collapse state.
-  const allFolderPaths = useMemo(() => collectDirPaths(compressedTree), [compressedTree]);
-  const allFolderPathSet = useMemo(() => new Set(allFolderPaths), [allFolderPaths]);
-  // Effective collapsed set: intersect the persisted paths with the folders actually
-  // present, purely at render (no store-syncing effect). A folder that left the diff and
-  // reappears defaults to expanded; toggles write back this pruned set, so the stored
-  // array stays bounded. (empty = all folders expanded, the default)
-  const collapsedFolders = useMemo(
-    () => new Set((collapsedFoldersArray ?? []).filter((path) => allFolderPathSet.has(path))),
-    [collapsedFoldersArray, allFolderPathSet],
+  const stableExpandedPathsArray = expandedPathsArray ?? EMPTY_PATH_LIST;
+  const stableCollapsedFoldersArray = collapsedFoldersArray ?? EMPTY_PATH_LIST;
+  const sharedDisplayPreferences = useMemo(
+    () => ({
+      layout: effectiveLayout,
+      wrapLines,
+      codeFontSize,
+      monoFontFamily: appSettings.monoFontFamily,
+    }),
+    [appSettings.monoFontFamily, codeFontSize, effectiveLayout, wrapLines],
   );
-  const diffListRef = useRef<FlatList<DiffFlatItem>>(null);
   const handleToggleViewMode = useCallback(() => {
     const nextViewMode = viewMode === "flat" ? "tree" : "flat";
-    if (nextViewMode === "tree") {
-      diffListRef.current?.scrollToOffset({ offset: 0, animated: false });
-      if (workspaceStateKey) {
-        setDiffCollapsedFoldersForWorkspace(workspaceStateKey, []);
-      }
+    if (nextViewMode === "tree" && workspaceStateKey) {
+      setDiffCollapsedFoldersForWorkspace(workspaceStateKey, []);
     }
     void updateChangesPreferences({ viewMode: nextViewMode });
   }, [setDiffCollapsedFoldersForWorkspace, updateChangesPreferences, viewMode, workspaceStateKey]);
-  const diffListScrollOffsetRef = useRef(0);
-  const diffListViewportHeightRef = useRef(0);
-  const headerHeightByPathRef = useRef<Record<string, number>>({});
-  const bodyHeightByKeyRef = useRef<Record<string, number>>({});
-  // Folder rows are a distinct kind; keep their height out of headerHeightByPathRef
-  // (Codex item 6) so file/folder heights can't collide by path.
-  const folderRowHeightRef = useRef<number>(0);
-  const defaultHeaderHeightRef = useRef<number>(44);
-  const [heightVersion, setHeightVersion] = useState(0);
-  const diffBodyChromeHeight = BORDER_WIDTH[1] * 2;
-  const statusBodyHeightEstimate = diffBodyChromeHeight + SPACING[4] * 2 + diffBodyLineHeight;
-  const { flatItems, stickyHeaderIndices } = useMemo(() => {
-    const { items, stickyHeaderIndices: stickyIndices } = buildDiffFlatItems({
-      files,
-      viewMode,
-      tree: compressedTree,
-      collapsedFolders,
-      expandedPaths,
-    });
-    return { flatItems: items, stickyHeaderIndices: stickyIndices };
-  }, [compressedTree, collapsedFolders, expandedPaths, files, viewMode]);
-
-  const getBodyHeightKey = useCallback(
-    (file: ParsedDiffFile): string => {
-      if (file.status === "too_large" || file.status === "binary") {
-        return `${effectiveLayout}:${wrapLines ? "wrap" : "scroll"}:${diffBodyTypographyKey}:${file.path}:${file.status}`;
-      }
-
-      return [
-        effectiveLayout,
-        wrapLines ? "wrap" : "scroll",
-        diffBodyTypographyKey,
-        file.path,
-        file.status ?? "ok",
-        file.additions,
-        file.deletions,
-        file.hunks.length,
-        getUnifiedDiffLineCount(file),
-        getDiffContentLength(file),
-      ].join(":");
-    },
-    [diffBodyTypographyKey, effectiveLayout, wrapLines],
-  );
-
-  const estimateBodyHeight = useCallback(
-    (file: ParsedDiffFile): number => {
-      if (file.status === "too_large" || file.status === "binary") {
-        return statusBodyHeightEstimate;
-      }
-
-      const lineCount =
-        effectiveLayout === "split"
-          ? buildSplitDiffRows(file).length
-          : getUnifiedDiffLineCount(file);
-      return diffBodyChromeHeight + lineCount * diffBodyLineHeight;
-    },
-    [diffBodyChromeHeight, diffBodyLineHeight, effectiveLayout, statusBodyHeightEstimate],
-  );
-
-  // Single height source of truth for both getItemLayout and the collapse
-  // scroll-anchor math. Folder rows use their own measured height (Codex item 6),
-  // falling back to the default header height before first measurement.
-  const getFlatItemHeight = useCallback(
-    (item: DiffFlatItem): number => {
-      if (item.type === "folder") {
-        return folderRowHeightRef.current || defaultHeaderHeightRef.current;
-      }
-      if (item.type === "header") {
-        return headerHeightByPathRef.current[item.file.path] ?? defaultHeaderHeightRef.current;
-      }
-      const bodyHeightKey = getBodyHeightKey(item.file);
-      return bodyHeightByKeyRef.current[bodyHeightKey] ?? estimateBodyHeight(item.file);
-    },
-    [estimateBodyHeight, getBodyHeightKey],
-  );
-
-  const handleFolderRowHeightChange = useCallback((height: number) => {
-    if (!Number.isFinite(height) || height <= 0) {
-      return;
-    }
-    const previousHeight = folderRowHeightRef.current;
-    if (previousHeight > 0 && Math.abs(previousHeight - height) <= DIFF_HEIGHT_CHANGE_EPSILON) {
-      return;
-    }
-    folderRowHeightRef.current = height;
-    setHeightVersion((version) => version + 1);
-  }, []);
-
-  const handleHeaderHeightChange = useCallback((path: string, height: number) => {
-    if (!Number.isFinite(height) || height <= 0) {
-      return;
-    }
-    const previousHeight = headerHeightByPathRef.current[path];
-    if (
-      previousHeight !== undefined &&
-      Math.abs(previousHeight - height) <= DIFF_HEIGHT_CHANGE_EPSILON
-    ) {
-      return;
-    }
-    headerHeightByPathRef.current[path] = height;
-    defaultHeaderHeightRef.current = height;
-    setHeightVersion((version) => version + 1);
-  }, []);
-
-  const handleBodyHeightChange = useCallback(
-    (file: ParsedDiffFile, height: number) => {
-      if (!Number.isFinite(height) || height < 0) {
-        return;
-      }
-      const heightKey = getBodyHeightKey(file);
-      const previousHeight = bodyHeightByKeyRef.current[heightKey];
-      if (
-        previousHeight !== undefined &&
-        Math.abs(previousHeight - height) <= DIFF_HEIGHT_CHANGE_EPSILON
-      ) {
-        return;
-      }
-      bodyHeightByKeyRef.current[heightKey] = height;
-      setHeightVersion((version) => version + 1);
-    },
-    [getBodyHeightKey],
-  );
-
-  const handleDiffListScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    diffListScrollOffsetRef.current = event.nativeEvent.contentOffset.y;
-  }, []);
-
-  const handleDiffListLayout = useCallback((event: LayoutChangeEvent) => {
-    const height = event.nativeEvent.layout.height;
-    if (!Number.isFinite(height) || height <= 0) {
-      return;
-    }
-    diffListViewportHeightRef.current = height;
-  }, []);
-
-  // Offset of the first item matching `predicate`, walking the SAME flatItems
-  // list getFlatItemLayout uses so folder rows are counted (single source of
-  // truth — Codex item 5 / finding 2).
-  const computeItemOffset = useCallback(
-    (predicate: (item: DiffFlatItem) => boolean): number | null => {
-      const index = flatItems.findIndex(predicate);
-      if (index < 0) {
-        return null;
-      }
-      return sumHeightsBefore(flatItems, index, getFlatItemHeight);
-    },
-    [flatItems, getFlatItemHeight],
-  );
-
-  const computeHeaderOffset = useCallback(
-    (path: string): number =>
-      computeItemOffset((item) => item.type === "header" && item.file.path === path) ?? 0,
-    [computeItemOffset],
-  );
-
-  const handleToggleExpanded = useCallback(
-    (path: string) => {
-      if (!workspaceStateKey) {
-        return;
-      }
-      const isCurrentlyExpanded = expandedPaths.has(path);
-      const nextExpanded = !isCurrentlyExpanded;
-      const targetOffset = isCurrentlyExpanded ? computeHeaderOffset(path) : null;
-      const headerHeight = headerHeightByPathRef.current[path] ?? defaultHeaderHeightRef.current;
-      const shouldAnchor =
-        isCurrentlyExpanded &&
-        targetOffset !== null &&
-        shouldAnchorHeaderBeforeCollapse({
-          headerOffset: targetOffset,
-          headerHeight,
-          viewportOffset: diffListScrollOffsetRef.current,
-          viewportHeight: diffListViewportHeightRef.current,
-        });
-
-      // Anchor to the clicked header before collapsing so visual context is preserved.
-      if (shouldAnchor && targetOffset !== null) {
-        diffListRef.current?.scrollToOffset({
-          offset: targetOffset,
-          animated: false,
-        });
-      }
-
-      const nextPaths = nextExpanded
-        ? [...expandedPaths, path]
-        : Array.from(expandedPaths).filter((expandedPath) => expandedPath !== path);
-      setDiffExpandedPathsForWorkspace(workspaceStateKey, nextPaths);
-    },
-    [computeHeaderOffset, expandedPaths, setDiffExpandedPathsForWorkspace, workspaceStateKey],
-  );
-
-  const handleToggleFolder = useCallback(
-    (dirPath: string) => {
-      if (!workspaceStateKey) {
-        return;
-      }
-      const isCurrentlyCollapsed = collapsedFolders.has(dirPath);
-      // Collapsing hides the subtree below this row; anchor to the folder row
-      // first so the viewport doesn't jump to a dead offset (Codex item 5).
-      if (!isCurrentlyCollapsed) {
-        const targetOffset = computeItemOffset(
-          (item) => item.type === "folder" && item.dirPath === dirPath,
-        );
-        const folderHeight = folderRowHeightRef.current || defaultHeaderHeightRef.current;
-        if (
-          targetOffset !== null &&
-          shouldAnchorHeaderBeforeCollapse({
-            headerOffset: targetOffset,
-            headerHeight: folderHeight,
-            viewportOffset: diffListScrollOffsetRef.current,
-            viewportHeight: diffListViewportHeightRef.current,
-          })
-        ) {
-          diffListRef.current?.scrollToOffset({ offset: targetOffset, animated: false });
-        }
-      }
-
-      const nextCollapsed = isCurrentlyCollapsed
-        ? Array.from(collapsedFolders).filter((path) => path !== dirPath)
-        : [...collapsedFolders, dirPath];
-      setDiffCollapsedFoldersForWorkspace(workspaceStateKey, nextCollapsed);
-    },
-    [collapsedFolders, computeItemOffset, setDiffCollapsedFoldersForWorkspace, workspaceStateKey],
-  );
-
   const allFileDiffsExpanded = useMemo(() => {
     if (files.length === 0) return false;
     return files.every((file) => expandedPaths.has(file.path));
@@ -2198,101 +2350,41 @@ export function GitDiffPane({ serverId, workspaceId, cwd, enabled }: GitDiffPane
       );
     }
   }, [allFileDiffsExpanded, files, setDiffExpandedPathsForWorkspace, workspaceStateKey]);
-
-  const renderFlatItem = useCallback(
-    ({ item }: { item: DiffFlatItem }) => {
-      if (item.type === "folder") {
-        return (
-          <DiffFolderRow
-            dirPath={item.dirPath}
-            displayName={item.displayName}
-            depth={item.depth}
-            collapsed={item.collapsed}
-            additions={item.additions}
-            deletions={item.deletions}
-            onToggle={handleToggleFolder}
-            onHeightChange={handleFolderRowHeightChange}
-            testID={`diff-folder-${item.dirPath}`}
-          />
-        );
+  const handleExpandedPathsChange = useCallback(
+    (nextPaths: string[]) => {
+      if (!workspaceStateKey) {
+        return;
       }
-      if (item.type === "header") {
-        return (
-          <DiffFileHeader
-            file={item.file}
-            isExpanded={item.isExpanded}
-            depth={item.depth}
-            showDir={viewMode === "flat"}
-            onToggle={handleToggleExpanded}
-            onHeaderHeightChange={handleHeaderHeightChange}
-            testID={`diff-file-${item.fileIndex}`}
-          />
-        );
+      setDiffExpandedPathsForWorkspace(workspaceStateKey, nextPaths);
+    },
+    [setDiffExpandedPathsForWorkspace, workspaceStateKey],
+  );
+  const handleCollapsedFoldersChange = useCallback(
+    (nextPaths: string[]) => {
+      if (!workspaceStateKey) {
+        return;
       }
-      return (
-        <DiffFileBody
-          file={item.file}
-          layout={effectiveLayout}
-          wrapLines={wrapLines}
-          codeFontSize={codeFontSize}
-          textMetricsStyle={diffTextMetricsStyle}
-          reviewActions={reviewActions}
-          onBodyHeightChange={handleBodyHeightChange}
-          testID={`diff-file-${item.fileIndex}-body`}
-        />
-      );
+      setDiffCollapsedFoldersForWorkspace(workspaceStateKey, nextPaths);
     },
-    [
-      codeFontSize,
-      diffTextMetricsStyle,
-      effectiveLayout,
-      handleBodyHeightChange,
-      handleFolderRowHeightChange,
-      handleHeaderHeightChange,
-      handleToggleExpanded,
-      handleToggleFolder,
-      reviewActions,
-      viewMode,
-      wrapLines,
-    ],
+    [setDiffCollapsedFoldersForWorkspace, workspaceStateKey],
   );
-
-  const flatKeyExtractor = useCallback(
-    (item: DiffFlatItem) =>
-      item.type === "folder" ? `folder-${item.dirPath}` : `${item.type}-${item.file.path}`,
-    [],
-  );
-
-  const getFlatItemLayout = useCallback<DiffFlatItemLayoutGetter>(
-    (_data, index) => {
-      const offset = sumHeightsBefore(flatItems, index, getFlatItemHeight);
-      const item = flatItems[index];
-      const length = item ? getFlatItemHeight(item) : 0;
-      return { length, offset, index };
-    },
-    [flatItems, getFlatItemHeight],
-  );
-
-  const flatExtraData = useMemo(
+  const workingTreeMode = useMemo(
     () => ({
-      expandedPathsArray,
-      collapsedFoldersArray,
-      effectiveLayout,
-      diffBodyTypographyKey,
-      heightVersion,
+      kind: "working_tree" as const,
       viewMode,
-      wrapLines,
+      expandedPaths: stableExpandedPathsArray,
+      collapsedFolders: stableCollapsedFoldersArray,
       reviewActions,
+      onExpandedPathsChange: handleExpandedPathsChange,
+      onCollapsedFoldersChange: handleCollapsedFoldersChange,
     }),
     [
-      expandedPathsArray,
-      collapsedFoldersArray,
-      effectiveLayout,
-      diffBodyTypographyKey,
-      heightVersion,
       viewMode,
-      wrapLines,
+      stableExpandedPathsArray,
+      stableCollapsedFoldersArray,
       reviewActions,
+      handleExpandedPathsChange,
+      handleCollapsedFoldersChange,
     ],
   );
 
@@ -2352,18 +2444,15 @@ export function GitDiffPane({ serverId, workspaceId, cwd, enabled }: GitDiffPane
       diffErrorMessage={diffErrorMessage}
       hasChanges={hasChanges}
       emptyMessage={emptyMessage}
-      flatItems={flatItems}
-      stickyHeaderIndices={stickyHeaderIndices}
-      renderFlatItem={renderFlatItem}
-      flatKeyExtractor={flatKeyExtractor}
-      getFlatItemLayout={getFlatItemLayout}
-      flatExtraData={flatExtraData}
-      diffListRef={diffListRef}
-      handleDiffListLayout={handleDiffListLayout}
-      handleDiffListScroll={handleDiffListScroll}
       checkingRepositoryLabel={t("workspace.git.diff.checkingRepository")}
       notRepositoryLabel={t("workspace.git.diff.notRepository")}
-    />
+    >
+      <SharedDiffView
+        files={files}
+        displayPreferences={sharedDisplayPreferences}
+        mode={workingTreeMode}
+      />
+    </DiffBodyContent>
   );
 
   return (
@@ -2460,6 +2549,8 @@ export function GitDiffPane({ serverId, workspaceId, cwd, enabled }: GitDiffPane
       {prErrorMessage ? <Text style={styles.actionErrorText}>{prErrorMessage}</Text> : null}
 
       <View style={styles.diffContainer}>{bodyContent}</View>
+
+      <CommitsSection serverId={serverId} cwd={cwd} onCommitPress={handleCommitPress} />
     </View>
   );
 }

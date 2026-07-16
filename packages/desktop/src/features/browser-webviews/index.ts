@@ -2,7 +2,7 @@ import { webContents as allWebContents, type WebContents } from "electron";
 import { PASEO_BROWSER_PROFILE_PARTITION } from "../browser-profile.js";
 import {
   BROWSER_NEW_TAB_REQUEST_EVENT,
-  handleBrowserWindowOpenRequest,
+  decideBrowserWindowOpenRequest,
   isAllowedBrowserWebviewUrl,
   PendingBrowserWindowOpenRequests,
 } from "./window-open.js";
@@ -10,7 +10,7 @@ import { PaseoBrowserWebviewRegistry } from "./registry.js";
 
 export {
   BROWSER_NEW_TAB_REQUEST_EVENT,
-  handleBrowserWindowOpenRequest,
+  decideBrowserWindowOpenRequest,
   PendingBrowserWindowOpenRequests,
 };
 

@@ -1009,6 +1009,13 @@ export class VoiceAssistantWebSocketServer {
       onLifecycleIntent: (intent) => {
         this.onLifecycleIntent?.(intent);
       },
+      onWorkspaceRecovered: async (workspace) => {
+        await Promise.all(
+          this.listActiveSessions().map((activeSession) =>
+            activeSession.refreshRecoveredWorkspaceForExternalMutation(workspace),
+          ),
+        );
+      },
       logger: connectionLogger.child({ module: "session" }),
       downloadTokenStore: this.downloadTokenStore,
       pushTokenStore: this.pushTokenStore,
@@ -1229,8 +1236,10 @@ export class VoiceAssistantWebSocketServer {
         projectRemove: true,
         // COMPAT(projectAdd): added in v0.1.97, drop the gate when floor >= v0.1.97.
         projectAdd: true,
-        // COMPAT(worktreeRestore): added in v0.1.97, drop the gate when floor >= v0.1.97
+        // COMPAT(worktreeRestore): keep through 2027-01-11 for clients older than v0.1.105.
         worktreeRestore: true,
+        // COMPAT(workspaceRecovery): added in v0.1.105, remove after 2027-01-11 once daemon floor >= v0.1.105.
+        workspaceRecovery: true,
         // COMPAT(providerUsageList): added in v0.1.98, drop the gate when daemon floor >= v0.1.98.
         providerUsageList: true,
         // COMPAT(agentDetach): added in v0.1.98, remove gate after 2026-12-19 once daemon floor >= v0.1.98.
@@ -1253,6 +1262,8 @@ export class VoiceAssistantWebSocketServer {
         workspaceGithubRepositorySearch: true,
         // COMPAT(projectCreateDirectory): added in v0.1.108, remove gate after 2027-01-15.
         projectCreateDirectory: true,
+        // COMPAT(commitsList): added in v0.1.110, remove gate after 2027-01-16.
+        commitsList: true,
         // COMPAT(providerRemoval): added in v0.1.105, drop the gate when floor >= v0.1.105.
         providerRemoval: true,
       },

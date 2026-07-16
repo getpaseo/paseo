@@ -1,0 +1,226 @@
+import { useCallback, useMemo } from "react";
+import { Pressable, Text, View } from "react-native";
+import { StyleSheet } from "react-native-unistyles";
+import { useTranslation } from "react-i18next";
+import { useChangesPreferences } from "@/hooks/use-changes-preferences";
+import { useCheckoutCommitsQuery, type CheckoutCommitsQueryResult } from "@/git/use-commits-query";
+import { ThemedChevron, chevronColorMapping } from "@/git/themed-chevron";
+import { CommitRow } from "./commit-row";
+import { dotStyles } from "./shared";
+
+interface CommitsSectionProps {
+  serverId: string;
+  cwd: string;
+  onCommitPress: (sha: string) => void;
+}
+
+const SKELETON_ROW_KEYS = ["commit-skeleton-1", "commit-skeleton-2", "commit-skeleton-3"];
+
+function CommitsSectionSkeleton() {
+  const { t } = useTranslation();
+  return (
+    <View
+      accessible
+      accessibilityLabel={t("workspace.git.diff.commits.loading")}
+      style={styles.skeleton}
+      testID="commits-section-skeleton"
+    >
+      {SKELETON_ROW_KEYS.map((key) => (
+        <View key={key} style={styles.skeletonRow}>
+          <View style={styles.skeletonDot} />
+          <View style={styles.skeletonSha} />
+          <View style={styles.skeletonSubject} />
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function CommitsSectionContent({
+  query,
+  onCommitPress,
+}: {
+  query: Exclude<CheckoutCommitsQueryResult, { status: "unsupported" }>;
+  onCommitPress: (sha: string) => void;
+}) {
+  const { t } = useTranslation();
+  if (query.status === "error") {
+    return (
+      <Text style={styles.errorRow} testID="commits-section-error">
+        {t("workspace.git.diff.commits.loadError")}
+      </Text>
+    );
+  }
+  if (query.status !== "loaded") {
+    return <CommitsSectionSkeleton />;
+  }
+  if (query.data.commits.length === 0) {
+    return (
+      <Text style={styles.emptyRow} testID="commits-section-empty">
+        {t("workspace.git.diff.commits.empty")}
+      </Text>
+    );
+  }
+  return (
+    <View style={styles.list}>
+      {query.data.commits.map((commit) => (
+        <CommitRow key={commit.sha} commit={commit} onCommitPress={onCommitPress} />
+      ))}
+    </View>
+  );
+}
+
+export function CommitsSection({ serverId, cwd, onCommitPress }: CommitsSectionProps) {
+  const { t } = useTranslation();
+  const { preferences, updatePreferences } = useChangesPreferences();
+  const collapsed = preferences.commitsCollapsed;
+  const query = useCheckoutCommitsQuery({
+    serverId,
+    cwd,
+    enabled: !collapsed,
+  });
+
+  const handleToggleSection = useCallback(() => {
+    void updatePreferences({ commitsCollapsed: !collapsed });
+  }, [collapsed, updatePreferences]);
+
+  const headerChevronStyle = useMemo(
+    () => [styles.headerChevron, !collapsed && styles.headerChevronExpanded],
+    [collapsed],
+  );
+
+  if (query.status === "unsupported") {
+    return null;
+  }
+  const commitCount = query.status === "loaded" ? query.data.commits.length : null;
+
+  return (
+    <View style={styles.container}>
+      <Pressable
+        accessibilityRole="button"
+        testID="commits-section-header"
+        onPress={handleToggleSection}
+        style={styles.header}
+      >
+        <View style={headerChevronStyle}>
+          <ThemedChevron size={14} uniProps={chevronColorMapping} />
+        </View>
+        <Text style={styles.title}>{t("workspace.git.diff.commits.title")}</Text>
+        {commitCount === null ? (
+          <View style={styles.countSpacer} />
+        ) : (
+          <Text
+            style={styles.count}
+            accessibilityLabel={t("workspace.git.diff.commits.countLabel", {
+              count: commitCount,
+            })}
+          >
+            {commitCount}
+          </Text>
+        )}
+        <View style={styles.legend}>
+          <View style={dotStyles.dotLocal} />
+          <Text style={styles.legendText}>{t("workspace.git.diff.commits.legendLocal")}</Text>
+          <View style={dotStyles.legendDotRemote} />
+          <Text style={styles.legendText}>{t("workspace.git.diff.commits.legendRemote")}</Text>
+        </View>
+      </Pressable>
+      {collapsed ? null : <CommitsSectionContent query={query} onCommitPress={onCommitPress} />}
+    </View>
+  );
+}
+
+const styles = StyleSheet.create((theme) => ({
+  container: {
+    borderTopWidth: theme.borderWidth[1],
+    borderTopColor: theme.colors.border,
+  },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    paddingLeft: theme.spacing[2],
+    paddingRight: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
+    flexShrink: 0,
+  },
+  headerChevron: {
+    width: 16,
+    height: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  headerChevronExpanded: {
+    transform: [{ rotate: "90deg" }],
+  },
+  title: {
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.medium,
+    color: theme.colors.foreground,
+  },
+  count: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foregroundMuted,
+    flex: 1,
+  },
+  countSpacer: {
+    flex: 1,
+  },
+  legend: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+    flexShrink: 0,
+  },
+  legendText: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foregroundMuted,
+  },
+  list: {
+    paddingBottom: theme.spacing[1],
+  },
+  emptyRow: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foregroundMuted,
+    paddingLeft: theme.spacing[2],
+    paddingRight: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
+  },
+  errorRow: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.statusDanger,
+    paddingLeft: theme.spacing[2],
+    paddingRight: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
+  },
+  skeleton: {
+    paddingHorizontal: theme.spacing[2],
+    paddingBottom: theme.spacing[2],
+    gap: theme.spacing[2],
+  },
+  skeletonRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    minHeight: 20,
+  },
+  skeletonDot: {
+    width: 8,
+    height: 8,
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.surface2,
+  },
+  skeletonSha: {
+    width: 48,
+    height: 10,
+    borderRadius: theme.borderRadius.sm,
+    backgroundColor: theme.colors.surface2,
+  },
+  skeletonSubject: {
+    width: "55%",
+    height: 12,
+    borderRadius: theme.borderRadius.sm,
+    backgroundColor: theme.colors.surface2,
+  },
+}));

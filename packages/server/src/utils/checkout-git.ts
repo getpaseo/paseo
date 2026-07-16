@@ -2,6 +2,7 @@ import { resolve, dirname, basename } from "path";
 import { existsSync, realpathSync } from "fs";
 import { open as openFile, readFile, stat as statFile } from "fs/promises";
 import { TTLCache } from "@isaacs/ttlcache";
+import type { CheckoutCommit, CheckoutCommitFile } from "@getpaseo/protocol/messages";
 import type { Logger } from "pino";
 import type { ParsedDiffFile } from "../server/utils/diff-highlighter.js";
 import { parseAndHighlightDiff } from "../server/utils/diff-highlighter.js";
@@ -1921,6 +1922,323 @@ export async function getCheckoutStatus(
     remoteUrl,
     isPaseoOwnedWorktree: false,
   };
+}
+
+// Cap on how many ahead-of-base commits we enumerate. Branches with more than
+// this many unmerged commits are truncated to the newest MAX_CHECKOUT_COMMITS.
+const MAX_CHECKOUT_COMMITS = 200;
+// Bytes git emits between fields/records. We split parsed output on these.
+const COMMIT_FIELD_SEPARATOR = "\x00";
+const COMMIT_RECORD_SEPARATOR = "\x1e";
+// Record-separated, NUL-field-separated so arbitrary subject text stays parseable.
+// `%x1e`/`%x00` are git placeholders (literal text in the arg, real bytes in the
+// output) — passing actual NUL bytes as a process arg is rejected by Node.
+const COMMIT_LOG_FORMAT = "%x1e%H%x00%h%x00%an%x00%aI%x00%s";
+
+type CheckoutCommitFileStatus = NonNullable<CheckoutCommitFile["status"]>;
+
+interface ParsedCheckoutCommit {
+  sha: string;
+  shortSha: string;
+  authorName: string;
+  authorDate: string;
+  subject: string;
+  files: CheckoutCommitFile[];
+}
+
+function mapNameStatusLetter(letter: string): CheckoutCommitFileStatus | undefined {
+  switch (letter) {
+    case "A":
+      return "added";
+    case "C":
+      return "added";
+    case "M":
+      return "modified";
+    case "T":
+      return "modified";
+    case "D":
+      return "deleted";
+    case "R":
+      return "renamed";
+    default:
+      return undefined;
+  }
+}
+
+// A `--raw` line: `:<srcmode> <dstmode> <srcsha> <dstsha> <STATUS>\t<path>`
+// (rename/copy add a second path: `R100\t<old>\t<new>`). The status token is the
+// last space-separated field before the first tab. Keyed on the destination path.
+function parseRawStatusLine(line: string, statuses: Map<string, CheckoutCommitFileStatus>): void {
+  const tabParts = line.split("\t");
+  const meta = tabParts[0] ?? "";
+  const statusToken = meta.slice(meta.lastIndexOf(" ") + 1);
+  const letter = statusToken.charAt(0);
+  const status = mapNameStatusLetter(letter);
+  if (!status) {
+    return;
+  }
+  const path =
+    letter === "R" || letter === "C" ? (tabParts[tabParts.length - 1] ?? "") : (tabParts[1] ?? "");
+  if (!path) {
+    return;
+  }
+  statuses.set(path, status);
+}
+
+// A `--numstat` line: `<adds>\t<dels>\t<path>` (renames use `old => new`, binary
+// files report `-` for both counts). Keyed on the (normalized) destination path.
+function parseNumstatLine(
+  line: string,
+  stats: Map<string, { additions: number; deletions: number }>,
+): void {
+  const parts = line.split("\t");
+  if (parts.length < 3) {
+    return;
+  }
+  const additionsField = parts[0] ?? "";
+  const deletionsField = parts[1] ?? "";
+  const path = normalizeNumstatPath(parts.slice(2).join("\t"));
+  if (!path) {
+    return;
+  }
+  if (additionsField === "-" || deletionsField === "-") {
+    stats.set(path, { additions: 0, deletions: 0 });
+    return;
+  }
+  const additions = Number.parseInt(additionsField, 10);
+  const deletions = Number.parseInt(deletionsField, 10);
+  if (Number.isNaN(additions) || Number.isNaN(deletions)) {
+    return;
+  }
+  stats.set(path, { additions, deletions });
+}
+
+// Parses the single combined `git log ... --raw --numstat -M` stream. Each record
+// (split on the record separator) starts with the NUL-field-separated header line,
+// then a blank line, then the interleaved `--raw` (status) and `--numstat` (counts)
+// blocks. We merge both by destination path so each file carries counts + status.
+function parseCheckoutCommitRecords(stdout: string): ParsedCheckoutCommit[] {
+  const records = stdout.split(COMMIT_RECORD_SEPARATOR).filter((record) => record.length > 0);
+  const commits: ParsedCheckoutCommit[] = [];
+  for (const record of records) {
+    const lines = record.split("\n");
+    const fields = (lines[0] ?? "").split(COMMIT_FIELD_SEPARATOR);
+    if (fields.length < 5) {
+      continue;
+    }
+    const sha = (fields[0] ?? "").trim();
+    if (!sha) {
+      continue;
+    }
+
+    const stats = new Map<string, { additions: number; deletions: number }>();
+    const statuses = new Map<string, CheckoutCommitFileStatus>();
+    for (let index = 1; index < lines.length; index += 1) {
+      const line = lines[index] ?? "";
+      if (!line) {
+        continue;
+      }
+      if (line.startsWith(":")) {
+        parseRawStatusLine(line, statuses);
+      } else {
+        parseNumstatLine(line, stats);
+      }
+    }
+
+    const files: CheckoutCommitFile[] = [];
+    for (const [path, stat] of stats) {
+      const status = statuses.get(path);
+      files.push({
+        path,
+        additions: stat.additions,
+        deletions: stat.deletions,
+        ...(status ? { status } : {}),
+      });
+    }
+
+    commits.push({
+      sha,
+      shortSha: (fields[1] ?? "").trim(),
+      authorName: fields[2] ?? "",
+      authorDate: (fields[3] ?? "").trim(),
+      subject: fields[4] ?? "",
+      files,
+    });
+  }
+  return commits;
+}
+
+async function resolveCheckoutCommitUpstreamRef(
+  cwd: string,
+  currentBranch: string,
+  context?: CheckoutContext,
+): Promise<string | null> {
+  // Prefer the branch's configured `@{u}`. If it's configured but the
+  // remote-tracking ref isn't present locally (e.g. configured upstream that was
+  // never fetched), fall back to `origin/<branch>` when that ref does exist, so a
+  // standard `origin` push is still recognized. Both missing => no remote.
+  const configured = await getConfiguredUpstreamRef(cwd, currentBranch, context);
+  if (configured && (await doesGitRefExist(cwd, `refs/remotes/${configured}`, context))) {
+    return configured;
+  }
+  if (await doesGitRefExist(cwd, `refs/remotes/origin/${currentBranch}`, context)) {
+    return `origin/${currentBranch}`;
+  }
+  return null;
+}
+
+// Returns the set of SHAs on the current branch that are NOT on the upstream
+// (local-only/unpushed), or `null` when no upstream exists (no remote at all).
+async function getLocalOnlyCommitShas(
+  cwd: string,
+  currentBranch: string,
+  context?: CheckoutContext,
+): Promise<Set<string> | null> {
+  const upstreamRef = await resolveCheckoutCommitUpstreamRef(cwd, currentBranch, context);
+  if (!upstreamRef) {
+    return null;
+  }
+  const { stdout } = await runGitCommand(["rev-list", `${upstreamRef}..HEAD`], {
+    cwd,
+    envOverlay: READ_ONLY_GIT_ENV,
+    logger: context?.logger,
+  });
+  return new Set(
+    stdout
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean),
+  );
+}
+
+/**
+ * Lists the current branch's commits that are ahead of its base branch, newest
+ * first, each flagged local-only vs on-remote with per-commit file +/- stats.
+ *
+ * Base ref is resolved exactly like {@link getCheckoutStatus}: the stored/default
+ * base branch, mapped to the best comparison ref (origin/<base> when present,
+ * else local <base>). Returns `[]` when the base cannot be resolved, the current
+ * ref is the base itself, or there are no commits ahead.
+ */
+export interface CheckoutCommitsResult {
+  baseRef: string | null;
+  commits: CheckoutCommit[];
+}
+
+export async function listCheckoutCommits({
+  cwd,
+}: {
+  cwd: string;
+}): Promise<CheckoutCommitsResult> {
+  const currentBranch = await getCurrentBranch(cwd);
+  if (!currentBranch) {
+    return { baseRef: null, commits: [] };
+  }
+
+  const { resolvedBaseRef } = await resolveBaseRefForCwd(cwd);
+  if (!resolvedBaseRef) {
+    return { baseRef: null, commits: [] };
+  }
+
+  const normalizedBaseRef = normalizeLocalBranchRefName(resolvedBaseRef);
+  if (!normalizedBaseRef || normalizedBaseRef === currentBranch) {
+    return { baseRef: null, commits: [] };
+  }
+
+  let comparisonBaseRef: string;
+  try {
+    comparisonBaseRef = await resolveBestComparisonBaseRef(cwd, resolvedBaseRef);
+  } catch {
+    // Base branch is not present locally or on origin — nothing to compare against.
+    return { baseRef: null, commits: [] };
+  }
+
+  // Single pass: `--raw` carries the status letter, `--numstat` the +/- counts.
+  // (`--name-status` cannot be combined with `--numstat` — git emits only one.)
+  const logResult = await runGitCommand(
+    [
+      "log",
+      `${comparisonBaseRef}..HEAD`,
+      "--no-merges",
+      `--max-count=${MAX_CHECKOUT_COMMITS}`,
+      `--format=${COMMIT_LOG_FORMAT}`,
+      "--raw",
+      "--numstat",
+      "-M",
+    ],
+    { cwd, envOverlay: READ_ONLY_GIT_ENV },
+  );
+
+  const records = parseCheckoutCommitRecords(logResult.stdout);
+  if (records.length === 0) {
+    return { baseRef: comparisonBaseRef, commits: [] };
+  }
+
+  const localOnlyShas = await getLocalOnlyCommitShas(cwd, currentBranch);
+
+  const commits = records.map((record) => ({
+    sha: record.sha,
+    shortSha: record.shortSha,
+    subject: record.subject,
+    authorName: record.authorName,
+    authorDate: record.authorDate,
+    isOnRemote: localOnlyShas === null ? false : !localOnlyShas.has(record.sha),
+    files: record.files,
+  }));
+
+  return { baseRef: comparisonBaseRef, commits };
+}
+
+/**
+ * Fetches the unified diff of a single file as introduced by one commit and
+ * parses it into the same {@link ParsedDiffFile} shape the diff subscription
+ * emits (so the client can reuse its existing renderer).
+ *
+ * Runs `git show <sha> --format= -- <path>` with the sha and path passed as
+ * separate process args (never interpolated into a shell string), and `--format=`
+ * suppresses the commit header so the output is a pure unified diff. The text is
+ * parsed and highlighted by {@link parseAndHighlightDiff} — the exact parser the
+ * diff subscription uses. Returns `null` when the file is absent from the commit
+ * or the change is binary-only (no textual hunks). Throws on git failure (e.g. an
+ * unknown sha), which the caller maps to a typed checkout error.
+ */
+export async function getCommitFileDiff({
+  cwd,
+  sha,
+  path,
+}: {
+  cwd: string;
+  sha: string;
+  path: string;
+}): Promise<ParsedDiffFile | null> {
+  const { stdout } = await runGitCommand(["show", sha, "--format=", "--", path], {
+    cwd,
+    envOverlay: READ_ONLY_GIT_ENV,
+  });
+
+  if (stdout.trim().length === 0) {
+    return null;
+  }
+
+  const parsedFiles = await parseAndHighlightDiff(stdout, cwd, {
+    getOldFileContent: (file) => readGitFileContentAtRef(cwd, `${sha}^`, file.path),
+    getNewFileContent: (file) => readGitFileContentAtRef(cwd, sha, file.path),
+  });
+
+  // `--` scopes the diff to a single pathspec, so there is at most one real
+  // entry. Pick by path to drop any stray header-only section the parser emits.
+  const file = parsedFiles.find((candidate) => candidate.path === path) ?? null;
+  if (!file) {
+    return null;
+  }
+
+  // Binary changes carry a "Binary files ... differ" marker and no hunks; there
+  // is nothing textual to render, so report them as absent.
+  if (file.hunks.length === 0 && /^Binary files .* differ$/m.test(stdout)) {
+    return null;
+  }
+
+  return file;
 }
 
 export interface CheckoutShortstat {

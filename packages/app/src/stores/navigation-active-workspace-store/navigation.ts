@@ -1,6 +1,7 @@
 import type { Agent, WorkspaceDescriptor } from "@/stores/session-store";
 import { pickAttentionAgent } from "@/utils/agent-attention";
 import {
+  buildHostWorkspaceOpenRoute,
   buildHostWorkspaceRoute,
   decodeWorkspaceIdFromPathSegment,
   parseHostWorkspaceRouteFromPathname,
@@ -82,14 +83,16 @@ export function navigateToWorkspace(
   input: NavigateToWorkspaceInput,
   deps: NavigateToWorkspaceDeps,
 ): string {
+  const workspaces = deps.getSessionWorkspaces(input.serverId);
+  const resolvedWorkspaceId = resolveWorkspaceMapKeyByIdentity({
+    workspaces,
+    workspaceId: input.workspaceId,
+  });
   if (input.target) {
-    prepareWorkspaceTab({ ...input, target: input.target }, deps);
+    if (resolvedWorkspaceId || input.target.kind !== "agent") {
+      prepareWorkspaceTab({ ...input, target: input.target }, deps);
+    }
   } else {
-    const workspaces = deps.getSessionWorkspaces(input.serverId);
-    const resolvedWorkspaceId = resolveWorkspaceMapKeyByIdentity({
-      workspaces,
-      workspaceId: input.workspaceId,
-    });
     const workspaceAgents = resolvedWorkspaceId
       ? Array.from(deps.getSessionAgents(input.serverId)).filter(
           (agent) => normalizeWorkspaceOpaqueId(agent.workspaceId) === resolvedWorkspaceId,
@@ -104,7 +107,14 @@ export function navigateToWorkspace(
     }
   }
 
-  const route = buildHostWorkspaceRoute(input.serverId, input.workspaceId);
+  const route =
+    input.target?.kind === "agent" && !resolvedWorkspaceId
+      ? buildHostWorkspaceOpenRoute(
+          input.serverId,
+          input.workspaceId,
+          `agent:${input.target.agentId}`,
+        )
+      : buildHostWorkspaceRoute(input.serverId, input.workspaceId);
   deps.rememberLastWorkspace({ serverId: input.serverId, workspaceId: input.workspaceId });
   deps.navigateToRoute(route);
   return route;

@@ -335,15 +335,24 @@ export const ar: TranslationResources = {
   workspace: {
     route: {
       loading: "جارٍ تحميل مساحة العمل",
-      restoring: "جارٍ استعادة مساحة العمل",
-      restoreFailed: "تعذّر استعادة مساحة العمل هذه — ربما تم نقل المجلد أو حذفه",
       connecting: "الاتصال",
       hostOffline: "{{hostName}}غير متواجد حالياً",
       cannotReachHost: "لا يمكن الوصول إلى{{hostName}}",
       hostStatus: "حالة Host:{{status}}",
-      missing: "لم يتم العثور على Workspace",
       needsHostUpgrade: "قم بتحديث مضيفك لاستعادة مساحة العمل هذه",
       manageHost: "إدارة المضيف",
+      recovery: {
+        archivedTitle: "مساحة العمل مؤرشفة",
+        restoreDescription:
+          "تمت أرشفة {{workspaceName}} وإزالة شجرة العمل الخاصة بها. استعد الفرع {{branch}} لفتحها مجددًا.",
+        unarchiveDescription: "{{workspaceName}} مؤرشفة. ألغِ أرشفتها لفتحها مجددًا.",
+        restoreAction: "استعادة",
+        unarchiveAction: "إلغاء الأرشفة",
+        restoringTitle: "جارٍ استعادة مساحة العمل",
+        restoringAction: "جارٍ الاستعادة...",
+        unavailableTitle: "مساحة العمل غير متاحة",
+        checkFailedTitle: "تعذر التحقق من مساحة العمل",
+      },
     },
     hoverCard: {
       scriptsAccessibility: "البرامج النصية Workspace",
@@ -733,6 +742,17 @@ export const ar: TranslationResources = {
         base: "قاعدة",
         newFile: "جديد",
         deletedFile: "تم الحذف",
+        commits: {
+          title: "الإيداعات",
+          legendLocal: "محلي",
+          legendRemote: "على المستودع البعيد",
+          countLabel: "{{count}} إيداعات قبل الأساس",
+          fileDiffEmpty: "لا توجد تغييرات لعرضها",
+          fileDiffError: "تعذّر تحميل فروق الملف",
+          loading: "جارٍ تحميل الإيداعات…",
+          loadError: "تعذّر تحميل الإيداعات",
+          empty: "لا توجد إيداعات قبل الأساس",
+        },
       },
       openInEditor: {
         open: "يفتح",
@@ -1386,6 +1406,15 @@ export const ar: TranslationResources = {
       binaryPreviewUnavailable: "المعاينة الثنائية غير متاحة",
       failedToLoad: "فشل تحميل الملف",
       failedToLoadPreview: "فشل تحميل معاينة الملف",
+    },
+    diff: {
+      changesLabel: "التغييرات",
+      changesSubtitle: "فروقات شجرة العمل",
+      commitSubtitle: "فروقات الالتزام",
+      directoryMissing: "لم يتم العثور على دليل Workspace.",
+      empty: "لا توجد تغييرات",
+      loadError: "فشل تحميل الفروقات",
+      capabilityMissing: "حدّث المضيف لعرض فروقات الالتزامات.",
     },
   },
   toolCallDetails: {

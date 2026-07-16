@@ -338,16 +338,25 @@ export const es: TranslationResources = {
   workspace: {
     route: {
       loading: "Cargando espacio de trabajo",
-      restoring: "Restaurando espacio de trabajo",
-      restoreFailed:
-        "No se pudo restaurar este espacio de trabajo — es posible que el directorio se haya movido o eliminado",
       connecting: "Conectando",
       hostOffline: "{{hostName}}está desconectado",
       cannotReachHost: "No se puede alcanzar{{hostName}}",
       hostStatus: "Estado deHost:{{status}}",
-      missing: "Workspaceno encontrado",
       needsHostUpgrade: "Actualiza tu host para restaurar este espacio de trabajo",
       manageHost: "Administrar host",
+      recovery: {
+        archivedTitle: "Espacio de trabajo archivado",
+        restoreDescription:
+          "{{workspaceName}} se archivó y se eliminó su worktree. Restaura la rama {{branch}} para volver a abrirlo.",
+        unarchiveDescription:
+          "{{workspaceName}} está archivado. Desarchívalo para volver a abrirlo.",
+        restoreAction: "Restaurar",
+        unarchiveAction: "Desarchivar",
+        restoringTitle: "Restaurando espacio de trabajo",
+        restoringAction: "Restaurando...",
+        unavailableTitle: "Espacio de trabajo no disponible",
+        checkFailedTitle: "No se pudo comprobar el espacio de trabajo",
+      },
     },
     hoverCard: {
       scriptsAccessibility: "GuionesWorkspace",
@@ -760,6 +769,17 @@ export const es: TranslationResources = {
         base: "base",
         newFile: "Nuevo",
         deletedFile: "Eliminado",
+        commits: {
+          title: "Commits",
+          legendLocal: "local",
+          legendRemote: "en remoto",
+          countLabel: "{{count}} commits por delante de la base",
+          fileDiffEmpty: "No hay cambios para mostrar",
+          fileDiffError: "Error al cargar el diff del archivo",
+          loading: "Cargando commits…",
+          loadError: "Error al cargar los commits",
+          empty: "No hay commits por delante de la base",
+        },
       },
       openInEditor: {
         open: "Abierto",
@@ -1425,6 +1445,15 @@ export const es: TranslationResources = {
       binaryPreviewUnavailable: "Vista previa binaria no disponible",
       failedToLoad: "No se pudo cargar el archivo",
       failedToLoadPreview: "No se pudo cargar la vista previa del archivo",
+    },
+    diff: {
+      changesLabel: "Cambios",
+      changesSubtitle: "Diferencias del árbol de trabajo",
+      commitSubtitle: "Diferencias del commit",
+      directoryMissing: "No se encontró el directorio de Workspace.",
+      empty: "Sin cambios",
+      loadError: "No se pudieron cargar las diferencias",
+      capabilityMissing: "Actualiza el host para ver las diferencias de los commits.",
     },
   },
   toolCallDetails: {
