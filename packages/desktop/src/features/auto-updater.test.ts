@@ -19,17 +19,7 @@ import {
   resolveStagingUserId,
   rolloutManifestSchema,
   shouldAdmitToRollout,
-  shouldAutoInstallOnQuit,
 } from "./auto-updater";
-
-describe("shouldAutoInstallOnQuit", () => {
-  it("auto-installs on quit everywhere except Linux AppImage", () => {
-    expect(shouldAutoInstallOnQuit({ platform: "linux", isAppImage: true })).toBe(false);
-    expect(shouldAutoInstallOnQuit({ platform: "linux", isAppImage: false })).toBe(true);
-    expect(shouldAutoInstallOnQuit({ platform: "darwin", isAppImage: false })).toBe(true);
-    expect(shouldAutoInstallOnQuit({ platform: "win32", isAppImage: false })).toBe(true);
-  });
-});
 
 describe("shouldAdmitToRollout", () => {
   it("admits beta, missing rollout hours, zero-hour rollout, and missing release date", () => {

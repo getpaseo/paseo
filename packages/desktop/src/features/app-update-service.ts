@@ -62,6 +62,10 @@ export interface AppUpdateService {
     },
     onBeforeQuit?: () => Promise<void>,
   ): Promise<AppUpdateInstallResult>;
+  installUpdateOnQuit(input: {
+    currentVersion: string;
+    releaseChannel: AppReleaseChannel;
+  }): Promise<boolean>;
 }
 
 export interface AppUpdateServiceDeps {
@@ -112,10 +116,7 @@ function getErrorMessage(error: unknown): string {
 export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateService {
   let cachedUpdateInfo: RuntimeUpdateInfo | null = null;
   let downloadedUpdateVersion: string | null = null;
-  let downloading = false;
   let configuredReleaseChannel: AppReleaseChannel | null = null;
-  let runtimeErrorMessage: string | null = null;
-  let inFlightUpdateCheckCount = 0;
 
   function isReadyToInstallVersion(version: string): boolean {
     return downloadedUpdateVersion === version;
@@ -124,23 +125,6 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
   function clearUpdateState(): void {
     cachedUpdateInfo = null;
     downloadedUpdateVersion = null;
-    downloading = false;
-    runtimeErrorMessage = null;
-  }
-
-  function buildRuntimeErrorResult(currentVersion: string): AppUpdateCheckResult | null {
-    if (!runtimeErrorMessage) {
-      return null;
-    }
-
-    const info = cachedUpdateInfo;
-    return buildCheckResult({
-      currentVersion,
-      hasUpdate: info?.version !== undefined && info.version !== currentVersion,
-      readyToInstall: false,
-      info,
-      errorMessage: runtimeErrorMessage,
-    });
   }
 
   function configureRuntime(releaseChannel: AppReleaseChannel, intent: AppUpdateCheckIntent): void {
@@ -166,23 +150,15 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
         const alreadyReady = downloadedUpdateVersion === info.version;
         cachedUpdateInfo = info;
         downloadedUpdateVersion = alreadyReady ? info.version : null;
-        downloading = !alreadyReady;
-        runtimeErrorMessage = null;
       },
       onUpdateDownloaded(info) {
         cachedUpdateInfo = info;
         downloadedUpdateVersion = info.version;
-        downloading = false;
-        runtimeErrorMessage = null;
       },
       onUpdateNotAvailable() {
         clearUpdateState();
       },
       onError(error) {
-        downloading = false;
-        if (inFlightUpdateCheckCount === 0 || cachedUpdateInfo) {
-          runtimeErrorMessage = getErrorMessage(error);
-        }
         deps.reportRuntimeError?.(error);
       },
     });
@@ -207,28 +183,7 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
 
     configureRuntime(releaseChannel, intent);
 
-    const runtimeErrorResult = buildRuntimeErrorResult(currentVersion);
-    if (runtimeErrorResult && intent === "automatic") {
-      return runtimeErrorResult;
-    }
-
-    const cachedVersion = cachedUpdateInfo?.version ?? null;
-    if (
-      !runtimeErrorResult &&
-      intent === "automatic" &&
-      cachedVersion &&
-      cachedVersion !== currentVersion
-    ) {
-      return buildCheckResult({
-        currentVersion,
-        hasUpdate: true,
-        readyToInstall: isReadyToInstallVersion(cachedVersion),
-        info: cachedUpdateInfo,
-      });
-    }
-
     try {
-      inFlightUpdateCheckCount += 1;
       const result = await deps.runtime.checkForUpdates();
       if (!result || !result.updateInfo || !result.isUpdateAvailable) {
         clearUpdateState();
@@ -245,8 +200,6 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
 
       if (hasUpdate) {
         cachedUpdateInfo = info;
-        downloading = !isReadyToInstallVersion(latestVersion);
-        runtimeErrorMessage = null;
         return buildCheckResult({
           currentVersion,
           hasUpdate: true,
@@ -269,8 +222,6 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
         readyToInstall: false,
         errorMessage: getErrorMessage(error),
       });
-    } finally {
-      inFlightUpdateCheckCount -= 1;
     }
   }
 
@@ -292,6 +243,26 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
       };
     }
 
+    const check = await checkForAppUpdate({
+      currentVersion,
+      releaseChannel,
+      intent: "manual",
+    });
+    if (!check.hasUpdate) {
+      return {
+        installed: false,
+        version: currentVersion,
+        message: check.errorMessage ?? "No update available.",
+      };
+    }
+
+    return installCachedUpdate(currentVersion, onBeforeQuit);
+  }
+
+  async function installCachedUpdate(
+    currentVersion: string,
+    onBeforeQuit?: () => Promise<void>,
+  ): Promise<AppUpdateInstallResult> {
     if (!cachedUpdateInfo) {
       return {
         installed: false,
@@ -299,8 +270,6 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
         message: "No update available. Check for updates first.",
       };
     }
-
-    configureRuntime(releaseChannel, "manual");
 
     const readyVersion = cachedUpdateInfo.version;
     if (isReadyToInstallVersion(readyVersion)) {
@@ -312,20 +281,16 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
       };
     }
 
-    if (downloading) {
-      return {
-        installed: false,
-        version: currentVersion,
-        message: "Update is still being prepared. Try again in a moment.",
-      };
-    }
-
-    downloading = true;
-
     try {
       await deps.runtime.downloadUpdate();
+      if (cachedUpdateInfo?.version !== readyVersion) {
+        return {
+          installed: false,
+          version: currentVersion,
+          message: "A newer update was found and will be installed later.",
+        };
+      }
       downloadedUpdateVersion = readyVersion;
-      downloading = false;
       await performQuitAndInstall(deps.runtime, onBeforeQuit);
 
       return {
@@ -334,7 +299,6 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
         message: "Update downloaded. The app will restart shortly.",
       };
     } catch (error) {
-      downloading = false;
       const message = error instanceof Error ? error.message : String(error);
       deps.reportInstallError?.(message);
       return {
@@ -345,8 +309,33 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
     }
   }
 
+  async function installUpdateOnQuit({
+    currentVersion,
+    releaseChannel,
+  }: {
+    currentVersion: string;
+    releaseChannel: AppReleaseChannel;
+  }): Promise<boolean> {
+    if (!deps.isPackaged() || !downloadedUpdateVersion) {
+      return false;
+    }
+
+    const check = await checkForAppUpdate({
+      currentVersion,
+      releaseChannel,
+      intent: "automatic",
+    });
+    if (!check.hasUpdate) {
+      return false;
+    }
+
+    const result = await installCachedUpdate(currentVersion);
+    return result.installed;
+  }
+
   return {
     checkForAppUpdate,
     downloadAndInstallUpdate,
+    installUpdateOnQuit,
   };
 }

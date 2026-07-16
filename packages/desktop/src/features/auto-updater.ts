@@ -76,31 +76,16 @@ export function getStagingUserId(): Promise<string> {
   return cachedStagingUserIdPromise;
 }
 
-// AppImages have no install step. electron-updater "installs" by unlinking the
-// running file and mv-ing the downloaded one into place; on app quit it does this
-// via a *blocking* execFileSync(newAppImage, { APPIMAGE_EXIT_AFTER_INSTALL: "true" }).
-// That env var is only honored by AppImageLauncher, so without it the freshly
-// launched process boots the full app and never exits — the quit hangs forever,
-// with the old binary already deleted. We therefore install AppImages only on
-// explicit quitAndInstall (the "Update now" button), which takes the non-blocking
-// spawn path. Every other target keeps auto-install-on-quit, which works there.
-export function shouldAutoInstallOnQuit(input: {
-  platform: NodeJS.Platform;
-  isAppImage: boolean;
-}): boolean {
-  return !(input.platform === "linux" && input.isAppImage);
-}
-
 class ElectronAppUpdateRuntime implements AppUpdateRuntime {
   private configured = false;
 
   configure(input: AppUpdateRuntimeConfiguration): void {
     autoUpdater.autoDownload = true;
     autoUpdater.autoRunAppAfterInstall = true;
-    autoUpdater.autoInstallOnAppQuit = shouldAutoInstallOnQuit({
-      platform: process.platform,
-      isAppImage: Boolean(process.env.APPIMAGE),
-    });
+    // Paseo revalidates the current manifest before explicitly installing on quit.
+    // Electron's built-in handler would install an older download without checking
+    // whether a newer release has superseded it.
+    autoUpdater.autoInstallOnAppQuit = false;
     autoUpdater.allowPrerelease = input.releaseChannel === "beta";
     autoUpdater.channel = input.releaseChannel === "beta" ? "beta" : "latest";
     autoUpdater.allowDowngrade = false;
@@ -193,4 +178,14 @@ export async function downloadAndInstallUpdate(
     { currentVersion, releaseChannel },
     onBeforeQuit,
   );
+}
+
+export async function installAppUpdateOnQuit({
+  currentVersion,
+  releaseChannel,
+}: {
+  currentVersion: string;
+  releaseChannel: AppReleaseChannel;
+}): Promise<boolean> {
+  return appUpdateService.installUpdateOnQuit({ currentVersion, releaseChannel });
 }

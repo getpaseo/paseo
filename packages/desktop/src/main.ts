@@ -88,6 +88,7 @@ import { runDesktopStartup } from "./desktop-startup.js";
 import { autoUpdateInstalledSkills } from "./integrations/skills/index.js";
 import { registerBrowserAutomationIpc } from "./features/browser-automation/ipc.js";
 import { BrowserKeyboard } from "./features/browser-keyboard/index.js";
+import { installAppUpdateOnQuit } from "./features/auto-updater.js";
 
 const DEV_SERVER_URL = process.env.EXPO_DEV_URL ?? "http://localhost:8081";
 const APP_SCHEME = "paseo";
@@ -940,8 +941,18 @@ app.on(
         stopDaemon: () => stopDesktopDaemonViaCli("quit"),
         showShutdownFeedback: showDaemonShutdownDialog,
       }),
+    installAppUpdateOnQuit: async () => {
+      const settings = await getDesktopSettingsStore().get();
+      return installAppUpdateOnQuit({
+        currentVersion: app.getVersion(),
+        releaseChannel: settings.releaseChannel,
+      });
+    },
     onStopError: (error) => {
       log.error("[desktop daemon] failed to stop managed daemon on quit", error);
+    },
+    onUpdateError: (error) => {
+      log.error("[auto-updater] failed to validate downloaded update on quit", error);
     },
   }),
 );

@@ -46,18 +46,20 @@ export function createBeforeQuitHandler({
   app,
   closeTransportSessions,
   stopDesktopManagedDaemonIfNeeded,
+  installAppUpdateOnQuit,
   onStopError,
+  onUpdateError,
 }: {
   app: BeforeQuitApp;
   closeTransportSessions: () => void;
   stopDesktopManagedDaemonIfNeeded: () => Promise<boolean>;
+  installAppUpdateOnQuit: () => Promise<boolean>;
   onStopError: (error: unknown) => void;
+  onUpdateError: (error: unknown) => void;
 }): (event: BeforeQuitEvent) => void {
-  // We always preventDefault on first quit so we can run the async stop
-  // decision, then call app.exit(0) — which bypasses Electron's
-  // close → window-all-closed → will-quit chain. The window-all-closed
-  // listener is a darwin no-op (macOS convention) and would otherwise
-  // veto a re-fired app.quit().
+  // The first quit waits for daemon shutdown and update revalidation. A validated
+  // update re-fires app.quit(); otherwise app.exit(0) bypasses Electron's macOS
+  // window-all-closed handler, which would veto that second quit.
   let quitting = false;
 
   return (event) => {
@@ -66,12 +68,23 @@ export function createBeforeQuitHandler({
     quitting = true;
     event.preventDefault();
 
-    void stopDesktopManagedDaemonIfNeeded()
-      .catch((error) => {
+    void (async () => {
+      try {
+        await stopDesktopManagedDaemonIfNeeded();
+      } catch (error) {
         onStopError(error);
-      })
-      .finally(() => {
-        app.exit(0);
-      });
+      }
+
+      try {
+        const installingUpdate = await installAppUpdateOnQuit();
+        if (installingUpdate) {
+          return;
+        }
+      } catch (error) {
+        onUpdateError(error);
+      }
+
+      app.exit(0);
+    })();
   };
 }
