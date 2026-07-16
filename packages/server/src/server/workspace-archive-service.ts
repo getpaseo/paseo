@@ -171,7 +171,14 @@ async function resolveArchiveTargets(
       );
       return { targetDir: null, targetWorkspaceIds: [] };
     }
-    return { targetDir: resolve(record.cwd), targetWorkspaceIds: [workspaceId] };
+    const worktree = await resolvePaseoWorktreeRootForCwd(record.cwd, {
+      paseoHome: dependencies.paseoHome,
+      worktreesRoot: paseoWorktreesBaseRoot ?? dependencies.paseoWorktreesBaseRoot,
+    });
+    return {
+      targetDir: worktree?.worktreePath ?? resolve(record.cwd),
+      targetWorkspaceIds: [workspaceId],
+    };
   }
 
   let targetPath = scope.targetPath;
@@ -237,7 +244,15 @@ async function maybeRemoveDirectory(
   }
 
   const remainingActive = await dependencies.listActiveWorkspaces();
-  if (!isDirectoryUnreferenced(remainingActive, targetDir, new Set(archivedWorkspaceIds))) {
+  if (
+    !(await isDirectoryUnreferenced(
+      remainingActive,
+      targetDir,
+      new Set(archivedWorkspaceIds),
+      dependencies,
+      request,
+    ))
+  ) {
     return false;
   }
 
@@ -326,16 +341,23 @@ export async function archiveWorkspaceContents(
 // EXACTLY one last-reference predicate in the module. True when, after archiving
 // the in-scope records, no active workspace still points at targetDir. Derived
 // from records each call — no stored counter.
-function isDirectoryUnreferenced(
+async function isDirectoryUnreferenced(
   activeWorkspaces: ActiveWorkspaceRef[],
   targetDir: string,
   archivedWorkspaceIds: ReadonlySet<string>,
-): boolean {
+  dependencies: Pick<ArchiveDependencies, "paseoHome" | "paseoWorktreesBaseRoot">,
+  request: Pick<ArchiveByScopeRequest, "paseoWorktreesBaseRoot">,
+): Promise<boolean> {
   const target = resolve(targetDir);
-  return !activeWorkspaces.some(
-    (workspace) =>
-      !archivedWorkspaceIds.has(workspace.workspaceId) && resolve(workspace.cwd) === target,
-  );
+  for (const workspace of activeWorkspaces) {
+    if (archivedWorkspaceIds.has(workspace.workspaceId)) continue;
+    const worktree = await resolvePaseoWorktreeRootForCwd(workspace.cwd, {
+      paseoHome: dependencies.paseoHome,
+      worktreesRoot: request.paseoWorktreesBaseRoot ?? dependencies.paseoWorktreesBaseRoot,
+    });
+    if (resolve(worktree?.worktreePath ?? workspace.cwd) === target) return false;
+  }
+  return true;
 }
 
 export async function killTerminalsForWorkspace(

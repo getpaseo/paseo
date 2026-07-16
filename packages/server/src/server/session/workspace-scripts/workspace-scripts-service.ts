@@ -9,7 +9,12 @@ import type { ServiceProxySubsystem } from "../../service-proxy.js";
 import type { WorkspaceScriptRuntimeStore } from "../../workspace-script-runtime-store.js";
 import type { ScriptHealthState } from "../../script-health-monitor.js";
 import type { WorkspaceGitService } from "../../workspace-git-service.js";
-import type { WorkspaceRegistry } from "../../workspace-registry.js";
+import type {
+  PersistedProjectRecord,
+  PersistedWorkspaceRecord,
+  ProjectRegistry,
+  WorkspaceRegistry,
+} from "../../workspace-registry.js";
 import type {
   SpawnWorkspaceScriptOptions,
   WorktreeScriptResult,
@@ -18,7 +23,7 @@ import {
   buildWorkspaceScriptPayloads,
   readPaseoConfigForProjection,
 } from "../../script-status-projection.js";
-import { deriveProjectSlug } from "../../workspace-git-metadata.js";
+import { deriveProjectServiceSlug, deriveProjectSlug } from "../../workspace-git-metadata.js";
 
 type WorkspaceScriptsPayload = WorkspaceDescriptorPayload["scripts"];
 
@@ -32,18 +37,22 @@ type WorkspaceScriptsPayload = WorkspaceDescriptorPayload["scripts"];
  * that assembly and guard across the session.
  */
 export interface WorkspaceScriptsService {
-  buildSnapshot(workspaceId: string, workspaceDirectory: string): WorkspaceScriptsPayload;
-  emitStatusUpdate(workspaceId: string, workspaceDirectory: string): void;
+  buildSnapshot(
+    workspace: PersistedWorkspaceRecord,
+    project?: PersistedProjectRecord | null,
+  ): WorkspaceScriptsPayload;
+  emitStatusUpdate(workspaceId: string, workspaceDirectory: string): Promise<void>;
   start(request: StartWorkspaceScriptRequest): Promise<void>;
 }
 
-type WorkspaceScriptsGitSource = Pick<WorkspaceGitService, "peekSnapshot" | "getProjectSlug">;
+type WorkspaceScriptsGitSource = Pick<WorkspaceGitService, "peekSnapshot">;
 
 export function createWorkspaceScriptsService(deps: {
   serviceProxy: ServiceProxySubsystem | null;
   scriptRuntimeStore: WorkspaceScriptRuntimeStore | null;
   terminalManager: TerminalManager | null;
   workspaceRegistry: Pick<WorkspaceRegistry, "get">;
+  projectRegistry: Pick<ProjectRegistry, "get">;
   workspaceGitService: WorkspaceScriptsGitSource;
   getDaemonTcpPort: (() => number | null) | null;
   getDaemonTcpHost: (() => string | null) | null;
@@ -58,6 +67,7 @@ export function createWorkspaceScriptsService(deps: {
     scriptRuntimeStore,
     terminalManager,
     workspaceRegistry,
+    projectRegistry,
     workspaceGitService,
     getDaemonTcpPort,
     getDaemonTcpHost,
@@ -68,45 +78,54 @@ export function createWorkspaceScriptsService(deps: {
     spawnWorkspaceScript,
   } = deps;
 
-  function resolveGitMetadata(workspaceDirectory: string) {
+  function resolveGitMetadata(
+    workspaceDirectory: string,
+    project: { projectId: string; rootPath: string } | null,
+  ) {
     const snapshot = workspaceGitService.peekSnapshot(workspaceDirectory);
     if (!snapshot) {
       return undefined;
     }
     return {
-      projectSlug: deriveProjectSlug(
-        workspaceDirectory,
-        snapshot.git.isGit ? snapshot.git.remoteUrl : null,
-      ),
+      projectSlug: project
+        ? deriveProjectServiceSlug(project)
+        : deriveProjectSlug(workspaceDirectory, snapshot.git.isGit ? snapshot.git.remoteUrl : null),
       currentBranch: snapshot.git.currentBranch,
     };
   }
 
-  function buildSnapshot(workspaceId: string, workspaceDirectory: string): WorkspaceScriptsPayload {
+  function buildSnapshot(
+    workspace: PersistedWorkspaceRecord,
+    project: PersistedProjectRecord | null = null,
+  ): WorkspaceScriptsPayload {
     if (!serviceProxy || !scriptRuntimeStore) {
       return [];
     }
     return buildWorkspaceScriptPayloads({
-      workspaceId,
-      workspaceDirectory,
-      paseoConfig: readPaseoConfigForProjection(workspaceDirectory, logger),
+      workspaceId: workspace.workspaceId,
+      workspaceDirectory: workspace.cwd,
+      paseoConfig: readPaseoConfigForProjection(workspace.cwd, logger),
       serviceProxy,
       runtimeStore: scriptRuntimeStore,
       daemonPort: getDaemonTcpPort?.() ?? null,
       serviceProxyPublicBaseUrl,
-      gitMetadata: resolveGitMetadata(workspaceDirectory),
+      gitMetadata: resolveGitMetadata(workspace.cwd, project),
       resolveHealth: resolveScriptHealth ?? undefined,
     });
   }
 
-  function emitStatusUpdate(workspaceId: string, workspaceDirectory: string): void {
-    emit({
-      type: "script_status_update",
-      payload: {
-        workspaceId,
-        scripts: buildSnapshot(workspaceId, workspaceDirectory),
-      },
-    });
+  async function emitStatusUpdate(workspaceId: string, _workspaceDirectory: string): Promise<void> {
+    try {
+      const workspace = await workspaceRegistry.get(workspaceId);
+      if (!workspace) return;
+      const project = await projectRegistry.get(workspace.projectId);
+      emit({
+        type: "script_status_update",
+        payload: { workspaceId, scripts: buildSnapshot(workspace, project) },
+      });
+    } catch (error) {
+      logger.warn({ err: error, workspaceId }, "Failed to project workspace script status");
+    }
   }
 
   async function start(request: StartWorkspaceScriptRequest): Promise<void> {
@@ -119,7 +138,13 @@ export function createWorkspaceScriptsService(deps: {
       if (!workspace) {
         throw new Error(`Workspace not found: ${request.workspaceId}`);
       }
-      const projectSlug = await workspaceGitService.getProjectSlug(workspace.cwd);
+      const project = await projectRegistry.get(workspace.projectId);
+      const projectSlug = project
+        ? deriveProjectServiceSlug(project)
+        : deriveProjectSlug(
+            workspace.cwd,
+            workspaceGitService.peekSnapshot(workspace.cwd)?.git.remoteUrl ?? null,
+          );
       const branchName = workspaceGitService.peekSnapshot(workspace.cwd)?.git.currentBranch ?? null;
 
       const serviceResult = await spawnWorkspaceScript({
@@ -136,11 +161,11 @@ export function createWorkspaceScriptsService(deps: {
         terminalManager,
         logger,
         onLifecycleChanged: () => {
-          emitStatusUpdate(workspace.workspaceId, workspace.cwd);
+          void emitStatusUpdate(workspace.workspaceId, workspace.cwd);
         },
       });
 
-      emitStatusUpdate(workspace.workspaceId, workspace.cwd);
+      void emitStatusUpdate(workspace.workspaceId, workspace.cwd);
       emit({
         type: "start_workspace_script_response",
         payload: {

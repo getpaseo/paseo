@@ -1,4 +1,5 @@
 import { basename } from "path";
+import { createHash } from "node:crypto";
 import { parseGitHubRemoteUrl } from "@getpaseo/protocol/git-remote";
 import { slugify } from "../utils/worktree.js";
 
@@ -19,4 +20,9 @@ export function deriveProjectSlug(cwd: string, remoteUrl: string | null = null):
   const githubRepoName = remoteUrl ? parseGitHubRepoNameFromRemote(remoteUrl) : null;
   const sourceName = githubRepoName ?? basename(cwd);
   return slugify(sourceName) || "untitled";
+}
+
+export function deriveProjectServiceSlug(project: { projectId: string; rootPath: string }): string {
+  const identity = createHash("sha256").update(project.projectId).digest("hex").slice(0, 8);
+  return `${deriveProjectSlug(project.rootPath)}-${identity}`;
 }

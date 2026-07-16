@@ -246,6 +246,68 @@ describe("archiveByScope", () => {
     expect(existsSync(worktree.worktreePath)).toBe(true);
   });
 
+  test("workspace scope keeps a worktree for an active workspace in a subdirectory", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const paseoHome = path.join(tempDir, ".paseo");
+    const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "subdirectory-sibling");
+    const sourceWorkspaceId = "ws-subdirectory-source";
+    const siblingWorkspaceId = "ws-subdirectory-sibling";
+    const siblingDirectory = path.join(worktree.worktreePath, "packages", "app");
+    mkdirSync(siblingDirectory, { recursive: true });
+
+    const result = await archiveByScope(
+      createArchiveDeps({
+        paseoHome,
+        activeWorkspaces: [
+          { workspaceId: sourceWorkspaceId, cwd: worktree.worktreePath, kind: "worktree" },
+          { workspaceId: siblingWorkspaceId, cwd: siblingDirectory, kind: "local_checkout" },
+        ],
+      }),
+      {
+        scope: { kind: "workspace", workspaceId: sourceWorkspaceId },
+        repoRoot: repoDir,
+        requestId: "req-subdirectory-sibling",
+      },
+    );
+
+    assertArchiveResult(result, {
+      archivedWorkspaceIds: [sourceWorkspaceId],
+      removedDirectory: false,
+    });
+    expect(existsSync(worktree.worktreePath)).toBe(true);
+  });
+
+  test("archiving a subdirectory workspace keeps its active worktree root", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const paseoHome = path.join(tempDir, ".paseo");
+    const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "subdirectory-target");
+    const rootWorkspaceId = "ws-subdirectory-root";
+    const subdirectoryWorkspaceId = "ws-subdirectory-target";
+    const subdirectory = path.join(worktree.worktreePath, "packages", "app");
+    mkdirSync(subdirectory, { recursive: true });
+
+    const result = await archiveByScope(
+      createArchiveDeps({
+        paseoHome,
+        activeWorkspaces: [
+          { workspaceId: rootWorkspaceId, cwd: worktree.worktreePath, kind: "worktree" },
+          { workspaceId: subdirectoryWorkspaceId, cwd: subdirectory, kind: "local_checkout" },
+        ],
+      }),
+      {
+        scope: { kind: "workspace", workspaceId: subdirectoryWorkspaceId },
+        repoRoot: repoDir,
+        requestId: "req-subdirectory-target",
+      },
+    );
+
+    assertArchiveResult(result, {
+      archivedWorkspaceIds: [subdirectoryWorkspaceId],
+      removedDirectory: false,
+    });
+    expect(existsSync(worktree.worktreePath)).toBe(true);
+  });
+
   test("worktree scope archives every workspace on the directory and removes it", async () => {
     const { tempDir, repoDir } = createGitRepo();
     const paseoHome = path.join(tempDir, ".paseo");

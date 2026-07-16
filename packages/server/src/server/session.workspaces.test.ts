@@ -5846,6 +5846,40 @@ test("listWorkspaceDescriptorsSnapshot keeps git workspaces on the baseline desc
   expect(descriptors).toEqual([baselineDescriptor]);
 });
 
+test("lists Git runtime for a checkout explicitly owned by a non-Git project", async () => {
+  const session = createSessionForWorkspaceTests();
+  const project = createPersistedProjectRecord({
+    projectId: "proj-explicit-directory",
+    rootPath: "/tmp/explicit-directory",
+    kind: "non_git",
+    displayName: "directory project",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: "ws-explicit-checkout",
+    projectId: project.projectId,
+    cwd: REPO_CWD,
+    kind: "local_checkout",
+    displayName: "main",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  session.listAgentPayloads = async () => [];
+  session.projectRegistry.list = async () => [project];
+  session.workspaceRegistry.list = async () => [workspace];
+  session.workspaceGitService.peekSnapshot = () => createWorkspaceRuntimeSnapshot(REPO_CWD);
+
+  const descriptors = Array.from(
+    (await session.buildWorkspaceDescriptorMap({ includeGitData: true })).values(),
+  ) as Array<{ gitRuntime?: { currentBranch: string | null }; githubRuntime?: unknown }>;
+
+  expect(descriptors[0]).toMatchObject({
+    gitRuntime: { currentBranch: "main" },
+    githubRuntime: expect.any(Object),
+  });
+});
+
 test("buildWorkspaceDescriptorMap computes statusEnteredAt from runtime agent fields", async () => {
   const setupSession = () => {
     const session = createSessionForWorkspaceTests();

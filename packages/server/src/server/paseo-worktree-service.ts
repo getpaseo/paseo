@@ -1,5 +1,6 @@
 import type { WorkspaceGitService } from "./workspace-git-service.js";
 import { resolve } from "node:path";
+import { areEquivalentPaths } from "../utils/path.js";
 import {
   type PersistedProjectRecord,
   type PersistedWorkspaceRecord,
@@ -316,8 +317,12 @@ async function findWorkspaceForSource(options: {
 }): Promise<PersistedWorkspaceRecord | null> {
   const workspaces = await options.workspaceRegistry.list();
   return (
-    workspaces.find((workspace) => workspace.cwd === options.inputCwd && !workspace.archivedAt) ??
-    workspaces.find((workspace) => workspace.cwd === options.repoRoot && !workspace.archivedAt) ??
+    workspaces.find(
+      (workspace) => !workspace.archivedAt && areEquivalentPaths(workspace.cwd, options.inputCwd),
+    ) ??
+    workspaces.find(
+      (workspace) => !workspace.archivedAt && areEquivalentPaths(workspace.cwd, options.repoRoot),
+    ) ??
     null
   );
 }

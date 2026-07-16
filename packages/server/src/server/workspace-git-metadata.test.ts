@@ -5,7 +5,11 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 
-import { deriveProjectSlug, parseGitHubRepoNameFromRemote } from "./workspace-git-metadata.js";
+import {
+  deriveProjectServiceSlug,
+  deriveProjectSlug,
+  parseGitHubRepoNameFromRemote,
+} from "./workspace-git-metadata.js";
 
 function runGit(cwd: string, args: string[]): void {
   execFileSync("git", args, {
@@ -164,5 +168,15 @@ describe("deriveProjectSlug", () => {
     mkdirSync(cwd);
 
     expect(deriveProjectSlug(cwd)).toBe("untitled");
+  });
+});
+
+describe("deriveProjectServiceSlug", () => {
+  test("keeps same-basename exact projects distinct and stable", () => {
+    const first = { projectId: "prj_aaaaaaaaaaaaaaaa", rootPath: "/repo-a/app" };
+    const second = { projectId: "prj_bbbbbbbbbbbbbbbb", rootPath: "/repo-b/app" };
+
+    expect(deriveProjectServiceSlug(first)).toBe(deriveProjectServiceSlug(first));
+    expect(deriveProjectServiceSlug(first)).not.toBe(deriveProjectServiceSlug(second));
   });
 });

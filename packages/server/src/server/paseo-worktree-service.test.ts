@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
@@ -149,6 +149,41 @@ test("repairs a legacy source workspace whose project record is missing", async 
     archivedAt: null,
   });
   expect(createRealpathAwarePathMatcher(repoDir)(repairedProject?.rootPath ?? "")).toBe(true);
+});
+
+test("uses an equivalent source workspace path when creating a worktree", async () => {
+  const { repoDir, tempDir } = createGitRepo();
+  cleanupPaths.push(tempDir);
+  const sourceDir = path.join(repoDir, "app");
+  mkdirSync(sourceDir);
+  writeFileSync(path.join(repoDir, "app", ".gitkeep"), "");
+  const deps = createDeps();
+  const sourceProject = createPersistedProjectRecordForTest({
+    projectId: "prj_source-folder",
+    rootPath: sourceDir,
+    displayName: "app",
+  });
+  const sourceWorkspace = createPersistedWorkspaceRecordForTest({
+    workspaceId: "ws-source-folder",
+    projectId: sourceProject.projectId,
+    cwd: `${sourceDir}${path.sep}`,
+    kind: "local_checkout",
+    displayName: "app",
+  });
+  deps.projects.set(sourceProject.projectId, sourceProject);
+  deps.workspaces.set(sourceWorkspace.workspaceId, sourceWorkspace);
+
+  const result = await createPaseoWorktree(
+    {
+      cwd: sourceDir,
+      worktreeSlug: "equivalent-source",
+      runSetup: false,
+      paseoHome: path.join(tempDir, ".paseo"),
+    },
+    deps,
+  );
+
+  expect(result.workspace.projectId).toBe(sourceProject.projectId);
 });
 
 test("registers a new worktree in the existing root project after the main checkout workspace is removed", async () => {
