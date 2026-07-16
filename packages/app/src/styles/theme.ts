@@ -153,6 +153,7 @@ const lightSemanticColors = {
   // Text
   foreground: "#1a1a1e",
   foregroundMuted: "#71717a",
+  foregroundExtraMuted: "#a1a1aa",
 
   // Controls
   scrollbarHandle: "#3f3f46", // zinc-700
@@ -271,6 +272,7 @@ function buildDarkSemanticColors(tint: DarkThemeConfig) {
 
     foreground: "#fafafa",
     foregroundMuted: tint.foregroundMuted,
+    foregroundExtraMuted: tint.scrollbarHandle,
 
     scrollbarHandle: tint.scrollbarHandle,
 

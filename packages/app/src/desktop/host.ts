@@ -95,6 +95,7 @@ export interface DesktopWindowControlsOverlayUpdate {
   height?: number;
   backgroundColor?: string;
   foregroundColor?: string;
+  trafficLightOffsetY?: number;
 }
 
 export interface DesktopWindowBridge {

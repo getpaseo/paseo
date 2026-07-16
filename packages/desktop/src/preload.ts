@@ -45,6 +45,7 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
         height?: number;
         backgroundColor?: string;
         foregroundColor?: string;
+        trafficLightOffsetY?: number;
       }) => ipcRenderer.invoke("paseo:window:updateWindowControls", update),
       onResized: (handler: EventHandler): (() => void) => {
         const listener = (_ipcEvent: Electron.IpcRendererEvent, payload: unknown) => {

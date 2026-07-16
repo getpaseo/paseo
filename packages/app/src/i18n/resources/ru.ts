@@ -503,6 +503,7 @@ export const ru: TranslationResources = {
         preparingTerminal: "Подготовка вкладки терминала",
         preparingTerminalTooltip: "Подготовка терминала...",
         newBrowser: "Новый браузер",
+        exitFocusMode: "Выйти из режима фокусировки",
         splitRight: "Разделить панель справа",
         splitDown: "Разделить панель вниз",
         terminalProfilesMenu: "Terminal profiles",
