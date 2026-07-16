@@ -12,6 +12,9 @@ export function isFileQueryEnabled(input: {
   hasReadTarget: boolean;
   isTabActive: boolean;
   isAppVisible: boolean;
+  areAppSettingsLoaded: boolean;
 }): boolean {
-  return input.hasReadTarget && input.isTabActive && input.isAppVisible;
+  return (
+    input.hasReadTarget && input.isTabActive && input.isAppVisible && input.areAppSettingsLoaded
+  );
 }

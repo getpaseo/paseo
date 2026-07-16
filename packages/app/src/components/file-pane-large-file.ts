@@ -62,9 +62,10 @@ export async function findFileSizeFromParentDirectory({
   }
 
   const directory = await client.listDirectory(cwd, getParentDirectoryFromFilePath(path));
-  const entry = directory.entries.find(
-    (candidate) => candidate.kind === "file" && candidate.name === fileName,
-  );
+  const files = directory.entries.filter((candidate) => candidate.kind === "file");
+  const entry =
+    files.find((candidate) => candidate.name === fileName) ??
+    files.find((candidate) => candidate.name.toLowerCase() === fileName.toLowerCase());
   return entry?.size ?? null;
 }
 

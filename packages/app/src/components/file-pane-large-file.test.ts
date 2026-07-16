@@ -47,4 +47,18 @@ describe("large file open warning helpers", () => {
     ).resolves.toBe(2 * 1024 * 1024);
     expect(calls).toEqual([{ cwd: "/repo", path: "C:/" }]);
   });
+
+  it("finds the target file size when path casing differs from the directory entry", async () => {
+    const client: FileSizeLookupClient = {
+      async listDirectory() {
+        return {
+          entries: [{ kind: "file", name: "Large.txt", size: 6 * 1024 * 1024 }],
+        };
+      },
+    };
+
+    await expect(
+      findFileSizeFromParentDirectory({ client, cwd: "/repo", path: "large.txt" }),
+    ).resolves.toBe(6 * 1024 * 1024);
+  });
 });

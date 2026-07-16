@@ -28,7 +28,7 @@ import { resolveFilePreviewReadTarget } from "@/file-explorer/preview-target";
 import type { WorkspaceFileLocation } from "@/workspace/file-open";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useAppVisible } from "@/hooks/use-app-visible";
-import { useSettings } from "@/hooks/use-settings";
+import { useAppSettings } from "@/hooks/use-settings";
 import { isFileQueryEnabled } from "@/components/file-pane-enabled";
 import {
   findFileSizeFromParentDirectory,
@@ -466,9 +466,8 @@ export function FilePane({
   const isMobile = useIsCompactFormFactor();
 
   const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
-  const largeFileWarningThresholdMb = useSettings(
-    (settings) => settings.largeFileWarningThresholdMb,
-  );
+  const { settings: appSettings, isLoading: areAppSettingsLoading } = useAppSettings();
+  const largeFileWarningThresholdMb = appSettings.largeFileWarningThresholdMb;
   const largeFileWarningThresholdBytes = largeFileWarningThresholdMb * 1024 * 1024;
   const [approvedLargeFileOpenKey, setApprovedLargeFileOpenKey] = useState<string | null>(null);
   const normalizedWorkspaceRoot = useMemo(() => workspaceRoot.trim(), [workspaceRoot]);
@@ -503,6 +502,7 @@ export function FilePane({
       hasReadTarget: Boolean(client && readTarget),
       isTabActive: isActive,
       isAppVisible,
+      areAppSettingsLoaded: !areAppSettingsLoading,
     }),
     queryFn: async () => {
       if (!client || !readTarget) {
