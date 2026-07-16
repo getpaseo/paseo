@@ -267,9 +267,33 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
         .trim();
       expect(currentBranch).toBe("dev");
 
+      // baseRefName must be the repo's default branch, not the checked-out branch
+      // itself — otherwise the diff panel compares the branch against itself and
+      // always shows no changes.
       const metadataPath = getPaseoWorktreeMetadataPath(result.worktreePath);
       const metadata = JSON.parse(readFileSync(metadataPath, "utf8"));
-      expect(metadata).toMatchObject({ version: 1, baseRefName: "dev" });
+      expect(metadata).toMatchObject({ version: 1, baseRefName: "main" });
+    });
+
+    it("falls back to the currently checked out branch when no default branch can be resolved", async () => {
+      // No origin remote and no local main/master — resolveRepositoryDefaultBranch
+      // can't find a default branch, so the fix must fall back to whatever is
+      // currently checked out in the main repo (here: "develop").
+      execFileSync("git", ["branch", "-m", "main", "develop"], { cwd: repoDir });
+      execFileSync("git", ["branch", "feature-x"], { cwd: repoDir });
+
+      const result = await createLegacyWorktreeForTest({
+        cwd: repoDir,
+        worktreeSlug: "feature-x-worktree",
+        source: { kind: "checkout-branch", branchName: "feature-x" },
+        runSetup: true,
+        paseoHome,
+      });
+
+      expect(existsSync(result.worktreePath)).toBe(true);
+      const metadataPath = getPaseoWorktreeMetadataPath(result.worktreePath);
+      const metadata = JSON.parse(readFileSync(metadataPath, "utf8"));
+      expect(metadata).toMatchObject({ version: 1, baseRefName: "develop" });
     });
 
     it("checks out an existing local branch whose name contains uppercase letters and dots", async () => {
