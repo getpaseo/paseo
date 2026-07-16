@@ -1,5 +1,6 @@
-import { test } from "./fixtures";
+import { expect, test } from "./fixtures";
 import { gotoAppShell, openSettings } from "./helpers/app";
+import { startOutdatedDaemon } from "./helpers/daemon-update";
 import { getE2EDaemonPort } from "./helpers/daemon-port";
 import { TEST_HOST_LABEL } from "./helpers/daemon-registry";
 import { getServerId } from "./helpers/server-id";
@@ -18,6 +19,7 @@ import {
   expectRetiredSidebarSectionsAbsent,
   expectHostPageVisible,
   expectLocalHostEntryFirst,
+  seedSavedSettingsHosts,
 } from "./helpers/settings";
 
 test.describe("Settings host page", () => {
@@ -67,6 +69,32 @@ test.describe("Settings host page", () => {
     await expectSettingsHeader(page, "Overview");
     await expectHostLabelDisplayed(page);
     await expectHostActionCards(page, serverId);
+  });
+
+  test("a failed remote daemon update remains visible in the host UI", async ({ page }) => {
+    const daemon = await startOutdatedDaemon();
+    try {
+      await seedSavedSettingsHosts(page, [daemon]);
+      await page.reload();
+      await openSettings(page);
+      await openSettingsHost(page, daemon.serverId);
+      await openHostSection(page, daemon.serverId, "host");
+
+      page.once("dialog", (dialog) => dialog.accept());
+      const updateButton = page.getByTestId("host-page-update-button");
+      await updateButton.click();
+
+      await expect(updateButton).toBeDisabled();
+      await expect(updateButton).toContainText(/Preparing update|Downloading packages|Installing/);
+
+      const updateFailure = page.getByTestId("host-page-update-error");
+      await expect(updateFailure).toBeVisible();
+      await expect(updateFailure).toContainText("Update failed");
+      await expect(updateFailure).toContainText("Failed to update the daemon:");
+      await expect(updateButton).toBeEnabled();
+    } finally {
+      await daemon.close();
+    }
   });
 
   test("clicking the label pencil reveals the inline editor", async ({ page }) => {

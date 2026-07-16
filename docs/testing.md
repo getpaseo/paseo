@@ -21,6 +21,18 @@ WRONG (horizontal):
 
 Writing all tests first then all implementation produces bad tests — you end up testing imagined behavior instead of actual behavior.
 
+## Fallible user actions
+
+Every user action that can fail must expose the complete operation state in the UI:
+
+- **Pending:** show immediate progress and prevent accidental duplicate submissions.
+- **Success:** show the requested result, or a clear success acknowledgement when the result is not otherwise visible.
+- **Failure:** keep an actionable error visible in the same context until the user retries or dismisses it.
+
+Logs, console output, and a reset button are not user feedback. Neither is a platform API unless it is verified on every supported platform: React Native Web's `Alert.alert()` is a no-op, so browser and Electron failures must use rendered app UI such as the shared alert component.
+
+Every fallible action needs behavioral coverage for success and failure. RPC-backed UI should use an app Playwright test with a real browser, network, and daemon whenever feasible. The failure test must assert what the user can see and do after the failure, not an internal response, state field, or log line. Add distinct timeout or disconnect cases when they produce distinct recovery behavior.
+
 ## Determinism first
 
 Tests must produce the same result every run:

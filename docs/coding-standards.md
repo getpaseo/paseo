@@ -47,6 +47,7 @@ For testing rules, see [testing.md](testing.md).
 - Catch blocks branch on `instanceof` for what they can handle; rethrow the rest. No `catch (e) { return null }`.
 - Separate user-facing copy from log/debug strings — don't make one string serve telemetry, logs, and the UI.
 - Fail explicitly. If the caller asked for X and X isn't available, throw — don't silently substitute Y.
+- Every fallible user action owns explicit pending, success, and failure UI. Console logs and unverified platform alerts do not satisfy this contract. See [testing.md](testing.md#fallible-user-actions).
 
 ## Density
 

@@ -24,6 +24,7 @@ import {
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { AdaptiveRenameModal } from "@/components/rename-modal";
 import { SettingsTextAreaCard } from "@/components/settings-textarea";
+import { Alert as InlineAlert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -755,14 +756,19 @@ function RestartDaemonCard({ host }: { host: HostProfile }) {
     </View>
   );
 }
+
+type DaemonUpdateState =
+  | { status: "idle" }
+  | { status: "updating"; phase: string }
+  | { status: "failed"; title: string; message: string };
+
 function UpdateDaemonCard({ host }: { host: HostProfile }) {
   const { t } = useTranslation();
   const { theme } = useUnistyles();
   const daemonClient = useHostRuntimeClient(host.serverId);
   const isConnected = useHostRuntimeIsConnected(host.serverId);
   const runtime = getHostRuntimeStore();
-  const [isUpdating, setIsUpdating] = useState(false);
-  const [progressPhase, setProgressPhase] = useState<string | null>(null);
+  const [updateState, setUpdateState] = useState<DaemonUpdateState>({ status: "idle" });
   const isMountedRef = useRef(true);
   const unsubscribeRef = useRef<(() => void) | null>(null);
 
@@ -823,14 +829,17 @@ function UpdateDaemonCard({ host }: { host: HostProfile }) {
         hasReconnectedAfter(startGeneration) ||
         (await waitForCondition(() => hasReconnectedAfter(startGeneration), reconnectTimeoutMs));
       if (isMountedRef.current) {
-        setIsUpdating(false);
-        setProgressPhase(null);
         if (!reconnected) {
-          Alert.alert(
-            t("settings.host.daemon.update.unableToReconnectTitle"),
-            t("settings.host.daemon.update.unableToReconnectMessage", { name: host.label }),
-          );
+          setUpdateState({
+            status: "failed",
+            title: t("settings.host.daemon.update.unableToReconnectTitle"),
+            message: t("settings.host.daemon.update.unableToReconnectMessage", {
+              name: host.label,
+            }),
+          });
+          return;
         }
+        setUpdateState({ status: "idle" });
       }
     },
     [hasReconnectedAfter, host.label, isHostConnected, t, waitForCondition],
@@ -838,17 +847,19 @@ function UpdateDaemonCard({ host }: { host: HostProfile }) {
 
   const handleUpdate = useCallback(() => {
     if (!daemonClient) {
-      Alert.alert(
-        t("settings.host.daemon.update.unavailableTitle"),
-        t("settings.host.daemon.update.unavailableMessage"),
-      );
+      setUpdateState({
+        status: "failed",
+        title: t("settings.host.daemon.update.unavailableTitle"),
+        message: t("settings.host.daemon.update.unavailableMessage"),
+      });
       return;
     }
     if (!isHostConnected()) {
-      Alert.alert(
-        t("settings.host.daemon.update.offlineTitle"),
-        t("settings.host.daemon.update.offlineMessage"),
-      );
+      setUpdateState({
+        status: "failed",
+        title: t("settings.host.daemon.update.offlineTitle"),
+        message: t("settings.host.daemon.update.offlineMessage"),
+      });
       return;
     }
 
@@ -860,10 +871,12 @@ function UpdateDaemonCard({ host }: { host: HostProfile }) {
       destructive: false,
     })
       .then((confirmed) => {
-        if (!confirmed) return;
+        if (!confirmed || !isMountedRef.current) return;
         const startGeneration = runtime.getSnapshot(host.serverId)?.clientGeneration ?? null;
-        setIsUpdating(true);
-        setProgressPhase(t("settings.host.daemon.update.phaseStarting"));
+        setUpdateState({
+          status: "updating",
+          phase: t("settings.host.daemon.update.phaseStarting"),
+        });
         const requestId = `settings_daemon_update_${host.serverId}`;
 
         const unsubscribe = daemonClient.on("daemon.update.progress", (message) => {
@@ -871,13 +884,25 @@ function UpdateDaemonCard({ host }: { host: HostProfile }) {
           if (!isMountedRef.current) return;
           const { phase } = message.payload;
           if (phase === "starting")
-            setProgressPhase(t("settings.host.daemon.update.phaseStarting"));
+            setUpdateState({
+              status: "updating",
+              phase: t("settings.host.daemon.update.phaseStarting"),
+            });
           else if (phase === "downloading")
-            setProgressPhase(t("settings.host.daemon.update.phaseDownloading"));
+            setUpdateState({
+              status: "updating",
+              phase: t("settings.host.daemon.update.phaseDownloading"),
+            });
           else if (phase === "installing")
-            setProgressPhase(t("settings.host.daemon.update.phaseInstalling"));
+            setUpdateState({
+              status: "updating",
+              phase: t("settings.host.daemon.update.phaseInstalling"),
+            });
           else if (phase === "complete")
-            setProgressPhase(t("settings.host.daemon.update.phaseComplete"));
+            setUpdateState({
+              status: "updating",
+              phase: t("settings.host.daemon.update.phaseComplete"),
+            });
         });
         unsubscribeRef.current = unsubscribe;
 
@@ -888,14 +913,13 @@ function UpdateDaemonCard({ host }: { host: HostProfile }) {
             unsubscribe();
             if (!response.success) {
               if (!isMountedRef.current) return undefined;
-              setIsUpdating(false);
-              setProgressPhase(null);
-              Alert.alert(
-                t("settings.host.daemon.update.requestFailedTitle"),
-                t("settings.host.daemon.update.requestFailedMessage", {
+              setUpdateState({
+                status: "failed",
+                title: t("settings.host.daemon.update.requestFailedTitle"),
+                message: t("settings.host.daemon.update.requestFailedMessage", {
                   error: response.error ?? "Unknown error",
                 }),
-              );
+              });
               return undefined;
             }
             // Update succeeded — wait for daemon to restart and reconnect
@@ -907,23 +931,24 @@ function UpdateDaemonCard({ host }: { host: HostProfile }) {
             unsubscribe();
             console.error(`[HostPage] Failed to update daemon ${host.label}`, error);
             if (!isMountedRef.current) return;
-            setIsUpdating(false);
-            setProgressPhase(null);
-            Alert.alert(
-              t("settings.host.daemon.update.requestFailedTitle"),
-              t("settings.host.daemon.update.requestFailedMessage", {
+            setUpdateState({
+              status: "failed",
+              title: t("settings.host.daemon.update.requestFailedTitle"),
+              message: t("settings.host.daemon.update.requestFailedMessage", {
                 error: error instanceof Error ? error.message : "Unknown error",
               }),
-            );
+            });
           });
         return;
       })
       .catch((error) => {
         console.error(`[HostPage] Failed to open update confirmation for ${host.label}`, error);
-        Alert.alert(
-          t("settings.host.daemon.update.requestFailedTitle"),
-          t("settings.host.daemon.update.dialogFailedMessage"),
-        );
+        if (!isMountedRef.current) return;
+        setUpdateState({
+          status: "failed",
+          title: t("settings.host.daemon.update.requestFailedTitle"),
+          message: t("settings.host.daemon.update.dialogFailedMessage"),
+        });
       });
   }, [daemonClient, host.label, host.serverId, isHostConnected, runtime, t, waitForDaemonRestart]);
 
@@ -937,9 +962,8 @@ function UpdateDaemonCard({ host }: { host: HostProfile }) {
     return null;
   }
 
-  const buttonLabel = isUpdating
-    ? (progressPhase ?? t("settings.host.daemon.update.updating"))
-    : t("settings.host.daemon.update.confirm");
+  const isUpdating = updateState.status === "updating";
+  const buttonLabel = isUpdating ? updateState.phase : t("settings.host.daemon.update.confirm");
 
   return (
     <View style={settingsStyles.card} testID="host-page-update-card">
@@ -959,6 +983,16 @@ function UpdateDaemonCard({ host }: { host: HostProfile }) {
           {buttonLabel}
         </Button>
       </View>
+      {updateState.status === "failed" ? (
+        <View style={styles.updateFailure}>
+          <InlineAlert
+            variant="error"
+            title={updateState.title}
+            description={updateState.message}
+            testID="host-page-update-error"
+          />
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -1798,6 +1832,10 @@ const terminalProfileStyles = StyleSheet.create((theme) => ({
 }));
 
 const styles = StyleSheet.create((theme) => ({
+  updateFailure: {
+    marginHorizontal: theme.spacing[4],
+    marginBottom: theme.spacing[4],
+  },
   identityEditButton: {
     padding: theme.spacing[1],
     borderRadius: theme.borderRadius.md,
