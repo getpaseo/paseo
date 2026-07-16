@@ -133,6 +133,8 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
   let downloadedUpdateVersion: string | null = null;
   let configuredReleaseChannel: AppReleaseChannel | null = null;
   let preparationError: { version: string; message: string } | null = null;
+  let preparingUpdateVersion: string | null = null;
+  let checkQueue: Promise<void> = Promise.resolve();
 
   function isReadyToInstallVersion(version: string): boolean {
     return downloadedUpdateVersion === version;
@@ -142,6 +144,7 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
     cachedUpdateInfo = null;
     downloadedUpdateVersion = null;
     preparationError = null;
+    preparingUpdateVersion = null;
   }
 
   function configureRuntime(releaseChannel: AppReleaseChannel, intent: AppUpdateCheckIntent): void {
@@ -167,25 +170,45 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
         const alreadyReady = downloadedUpdateVersion === info.version;
         cachedUpdateInfo = info;
         downloadedUpdateVersion = alreadyReady ? info.version : null;
+        if (!alreadyReady && preparingUpdateVersion === null) {
+          preparingUpdateVersion = info.version;
+        }
       },
       onUpdateDownloaded(info) {
-        cachedUpdateInfo = info;
+        // A superseded download can finish after a newer manifest check. Keep
+        // the validated manifest as the install target in that case.
+        cachedUpdateInfo ??= info;
         downloadedUpdateVersion = info.version;
-        preparationError = null;
+        if (preparingUpdateVersion === info.version) {
+          preparingUpdateVersion = null;
+        }
+        if (preparationError?.version === info.version) {
+          preparationError = null;
+        }
       },
       onUpdateNotAvailable() {
         clearUpdateState();
       },
       onError(error) {
-        if (cachedUpdateInfo) {
+        if (preparingUpdateVersion) {
           preparationError = {
-            version: cachedUpdateInfo.version,
+            version: preparingUpdateVersion,
             message: getErrorMessage(error),
           };
+          preparingUpdateVersion = null;
         }
         deps.reportRuntimeError?.(error);
       },
     });
+  }
+
+  function runCheckExclusively<T>(check: () => Promise<T>): Promise<T> {
+    const result = checkQueue.then(check, check);
+    checkQueue = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
   }
 
   async function checkForAppUpdate({
@@ -205,54 +228,56 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
       });
     }
 
-    configureRuntime(releaseChannel, intent);
+    return runCheckExclusively(async () => {
+      configureRuntime(releaseChannel, intent);
 
-    try {
-      const result = await deps.runtime.checkForUpdates();
-      if (!result || !result.updateInfo || !result.isUpdateAvailable) {
+      try {
+        const result = await deps.runtime.checkForUpdates();
+        if (!result || !result.updateInfo || !result.isUpdateAvailable) {
+          clearUpdateState();
+          return buildCheckResult({
+            currentVersion,
+            hasUpdate: false,
+            readyToInstall: false,
+          });
+        }
+
+        const info = result.updateInfo;
+        const latestVersion = info.version;
+        const hasUpdate = latestVersion !== currentVersion;
+
+        if (hasUpdate) {
+          cachedUpdateInfo = info;
+          const errorMessage =
+            preparationError?.version === latestVersion ? preparationError.message : null;
+          if (!errorMessage) {
+            preparationError = null;
+          }
+          return buildCheckResult({
+            currentVersion,
+            hasUpdate: true,
+            readyToInstall: isReadyToInstallVersion(latestVersion),
+            info,
+            errorMessage,
+          });
+        }
+
         clearUpdateState();
         return buildCheckResult({
           currentVersion,
           hasUpdate: false,
           readyToInstall: false,
         });
-      }
-
-      const info = result.updateInfo;
-      const latestVersion = info.version;
-      const hasUpdate = latestVersion !== currentVersion;
-
-      if (hasUpdate) {
-        cachedUpdateInfo = info;
-        const errorMessage =
-          preparationError?.version === latestVersion ? preparationError.message : null;
-        if (!errorMessage) {
-          preparationError = null;
-        }
+      } catch (error) {
+        deps.reportCheckError?.(error);
         return buildCheckResult({
           currentVersion,
-          hasUpdate: true,
-          readyToInstall: isReadyToInstallVersion(latestVersion),
-          info,
-          errorMessage,
+          hasUpdate: false,
+          readyToInstall: false,
+          errorMessage: getErrorMessage(error),
         });
       }
-
-      clearUpdateState();
-      return buildCheckResult({
-        currentVersion,
-        hasUpdate: false,
-        readyToInstall: false,
-      });
-    } catch (error) {
-      deps.reportCheckError?.(error);
-      return buildCheckResult({
-        currentVersion,
-        hasUpdate: false,
-        readyToInstall: false,
-        errorMessage: getErrorMessage(error),
-      });
-    }
+    });
   }
 
   async function downloadAndInstallUpdate(
@@ -287,6 +312,41 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
     }
 
     return installCachedUpdate(currentVersion, { onBeforeQuit, restart: true });
+  }
+
+  async function ensureUpdateDownloaded(
+    readyVersion: string,
+    signal?: AbortSignal,
+  ): Promise<"ready" | "aborted" | "superseded"> {
+    while (!isReadyToInstallVersion(readyVersion)) {
+      if (signal?.aborted) return "aborted";
+      if (cachedUpdateInfo?.version !== readyVersion) return "superseded";
+
+      const attemptedVersion: string = preparingUpdateVersion ?? readyVersion;
+      preparingUpdateVersion ??= readyVersion;
+      try {
+        await deps.runtime.downloadUpdate();
+      } catch (error) {
+        if (
+          attemptedVersion !== readyVersion &&
+          cachedUpdateInfo?.version === readyVersion &&
+          !signal?.aborted
+        ) {
+          continue;
+        }
+        throw error;
+      }
+
+      // electron-updater can return an older, already-running download. Its
+      // event clears that version, then the next iteration starts the newly
+      // validated release instead of treating the stale artifact as ready.
+      if (attemptedVersion === readyVersion && !isReadyToInstallVersion(readyVersion)) {
+        downloadedUpdateVersion = readyVersion;
+        preparingUpdateVersion = null;
+      }
+    }
+
+    return signal?.aborted ? "aborted" : "ready";
   }
 
   async function installCachedUpdate(
@@ -324,18 +384,17 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
     }
 
     try {
-      await deps.runtime.downloadUpdate();
-      if (signal?.aborted) {
+      const preparation = await ensureUpdateDownloaded(readyVersion, signal);
+      if (preparation === "aborted") {
         return buildDeferredInstallResult(currentVersion);
       }
-      if (cachedUpdateInfo?.version !== readyVersion) {
+      if (preparation === "superseded") {
         return {
           installed: false,
           version: currentVersion,
           message: "A newer update was found and will be installed later.",
         };
       }
-      downloadedUpdateVersion = readyVersion;
       await performQuitAndInstall(deps.runtime, { onBeforeQuit, restart });
 
       return {
