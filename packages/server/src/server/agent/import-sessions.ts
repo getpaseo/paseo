@@ -23,6 +23,7 @@ type ImportAgentRequestMessage = z.infer<typeof ImportAgentRequestMessageSchema>
 
 const METADATA_GENERATION_PROMPT_PREFIX =
   "Generate metadata for a coding agent based on the user prompt.";
+const providerSessionImportMutations = new WeakMap<AgentManager, Map<string, Promise<unknown>>>();
 
 export interface NormalizedImportAgentRequest {
   provider: AgentProvider;
@@ -142,6 +143,15 @@ export async function listImportableProviderSessions(
 export async function importProviderSession(
   input: ImportProviderSessionInput,
 ): Promise<ImportProviderSessionResult> {
+  const key = toProviderSessionHandleKey(input.request.provider, input.request.providerHandleId);
+  return serializeProviderSessionImport(input.agentManager, key, () =>
+    importProviderSessionNow(input),
+  );
+}
+
+async function importProviderSessionNow(
+  input: ImportProviderSessionInput,
+): Promise<ImportProviderSessionResult> {
   const { provider, providerHandleId, cwd, labels } = input.request;
   if (!cwd) {
     throw new Error("Import requires cwd from the selected provider session");
@@ -212,6 +222,29 @@ export async function importProviderSession(
     snapshot,
     timelineSize: input.agentManager.getTimeline(snapshot.id).length,
   };
+}
+
+async function serializeProviderSessionImport<T>(
+  agentManager: AgentManager,
+  key: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  let mutations = providerSessionImportMutations.get(agentManager);
+  if (!mutations) {
+    mutations = new Map();
+    providerSessionImportMutations.set(agentManager, mutations);
+  }
+
+  const previous = mutations.get(key) ?? Promise.resolve();
+  const next = previous.catch(() => undefined).then(operation);
+  mutations.set(key, next);
+  try {
+    return await next;
+  } finally {
+    if (mutations.get(key) === next) {
+      mutations.delete(key);
+    }
+  }
 }
 
 async function rollbackArchivedImport(

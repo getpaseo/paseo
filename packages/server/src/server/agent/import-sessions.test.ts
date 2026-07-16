@@ -99,6 +99,18 @@ function makeManagedAgent(args: {
   } satisfies ManagedAgent;
 }
 
+function createUnarchiveGate() {
+  let allowUnarchive: () => void = () => {};
+  const unarchiveAllowed = new Promise<void>((resolve) => {
+    allowUnarchive = resolve;
+  });
+
+  return {
+    holdUnarchive: () => unarchiveAllowed,
+    allowUnarchive,
+  };
+}
+
 function makeRequest(
   overrides: Partial<FetchRecentProviderSessionsRequestMessage> = {},
 ): FetchRecentProviderSessionsRequestMessage {
@@ -691,6 +703,101 @@ test("importProviderSession restores the archived record when provider resume fa
   expect(rearchivedAgentId).toBe(agentId);
   expect(rearchivedAt).toBe(archivedAt);
   expect(restoredRecord).toBe(archivedRecord);
+});
+
+test("importProviderSession leaves the winning agent active when two clients restore it concurrently", async () => {
+  const cwd = "/tmp/imported-agent";
+  const agentId = "00000000-0000-4000-8000-000000000636";
+  let storedRecord = {
+    id: agentId,
+    provider: "codex",
+    cwd,
+    workspaceId: "ws-archived",
+    createdAt: "2026-04-30T10:00:00.000Z",
+    updatedAt: "2026-04-30T11:00:00.000Z",
+    lastActivityAt: "2026-04-30T10:30:00.000Z",
+    lastUserMessageAt: null,
+    labels: {},
+    config: { provider: "codex", cwd },
+    persistence: {
+      provider: "codex",
+      sessionId: "thread-concurrent",
+      nativeHandle: "thread-concurrent",
+      metadata: { provider: "codex", cwd },
+    },
+    archivedAt: "2026-04-30T12:00:00.000Z",
+  } as StoredAgentRecord;
+  const snapshot = makeManagedAgent({
+    id: agentId,
+    provider: "codex",
+    cwd,
+    sessionId: "thread-concurrent",
+    nativeHandle: "thread-concurrent",
+  });
+  const unarchive = createUnarchiveGate();
+  const closedAgentIds: string[] = [];
+  let activeAgent: ManagedAgent | null = null;
+  let resumeAttempts = 0;
+  const agentManager = {
+    unarchiveSnapshot: async (_id: string, updates?: { workspaceId?: string }) => {
+      await unarchive.holdUnarchive();
+      storedRecord = {
+        ...storedRecord,
+        ...(updates?.workspaceId ? { workspaceId: updates.workspaceId } : {}),
+        archivedAt: null,
+      };
+      return true;
+    },
+    notifyAgentState: () => {},
+    resumeAgentFromPersistence: async () => {
+      resumeAttempts += 1;
+      if (resumeAttempts > 1) {
+        throw new Error(`Agent with id ${agentId} already exists`);
+      }
+      activeAgent = snapshot;
+      return snapshot;
+    },
+    hydrateTimelineFromProvider: async () => {},
+    getTimeline: () => [],
+    getAgent: () => activeAgent,
+    closeAgent: async (id: string) => {
+      closedAgentIds.push(id);
+      activeAgent = null;
+    },
+    archiveSnapshot: async (_id: string, archivedAt: string) => {
+      storedRecord = { ...storedRecord, archivedAt };
+      return storedRecord;
+    },
+  } as unknown as AgentManager;
+  const agentStorage = {
+    list: async () => [{ ...storedRecord }],
+    upsert: async (record: StoredAgentRecord) => {
+      storedRecord = record;
+    },
+  } as unknown as AgentStorage;
+  const input = {
+    request: {
+      requestId: "reimport-concurrent-thread",
+      provider: "codex" as const,
+      providerHandleId: "thread-concurrent",
+      cwd,
+    },
+    workspaceId: "ws-restored",
+    agentManager,
+    agentStorage,
+    logger: { warn: () => {}, error: () => {} } as never,
+  };
+
+  const winningRestore = importProviderSession(input);
+  const duplicateRestore = importProviderSession(input);
+  unarchive.allowUnarchive();
+
+  await expect(winningRestore).resolves.toEqual({ snapshot, timelineSize: 0 });
+  await expect(duplicateRestore).rejects.toThrow(
+    "Provider session is already imported: thread-concurrent",
+  );
+  expect(storedRecord.archivedAt).toBeNull();
+  expect(closedAgentIds).toEqual([]);
 });
 
 test("importProviderSession requires cwd from the selected provider row", async () => {
