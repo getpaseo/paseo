@@ -10,7 +10,15 @@ import {
   type WorktreeConfig,
 } from "./worktree";
 import { execFileSync } from "child_process";
-import { mkdtempSync, mkdirSync, rmSync, existsSync, realpathSync, writeFileSync } from "fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  rmSync,
+  existsSync,
+  realpathSync,
+  symlinkSync,
+  writeFileSync,
+} from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 
@@ -131,6 +139,26 @@ describe("paseo worktree manager", () => {
       }),
     ).toThrow("outside its source worktree");
   });
+
+  it.skipIf(process.platform === "win32")(
+    "maps a realpath-equivalent source workspace into the matching target subdirectory",
+    () => {
+      const sourceWorktreePath = join(tempDir, "source-worktree");
+      const workspaceCwd = join(sourceWorktreePath, "packages", "app");
+      const sourceAlias = join(tempDir, "source-alias");
+      const targetWorktreePath = join(tempDir, "target-worktree");
+      mkdirSync(workspaceCwd, { recursive: true });
+      symlinkSync(sourceWorktreePath, sourceAlias, "dir");
+
+      expect(
+        mapWorkspaceCwdToWorktree({
+          sourceWorktreePath: sourceAlias,
+          workspaceCwd,
+          targetWorktreePath,
+        }),
+      ).toBe(join(targetWorktreePath, "packages", "app"));
+    },
+  );
 
   it("rejects the worktrees root itself and the per-repo hash dir", async () => {
     const projectHash = await deriveWorktreeProjectHash(repoDir);

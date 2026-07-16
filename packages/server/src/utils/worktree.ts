@@ -2,7 +2,7 @@ import { execFile } from "child_process";
 import { promisify } from "util";
 import { existsSync, mkdirSync, realpathSync, rmSync, statSync } from "fs";
 import { copyFile, rm, stat } from "fs/promises";
-import { join, basename, dirname, isAbsolute, relative, resolve, sep } from "path";
+import { join, basename, dirname, isAbsolute, resolve, sep } from "path";
 import net from "node:net";
 import { createHash } from "node:crypto";
 import stripAnsi from "strip-ansi";
@@ -35,7 +35,7 @@ import { resolvePaseoHome } from "../server/paseo-home.js";
 import { createExternalProcessEnv } from "../server/paseo-env.js";
 import { parseGitRevParsePath, resolveGitRevParsePath } from "./git-rev-parse-path.js";
 import { validateBranchSlug } from "@getpaseo/protocol/branch-slug";
-import { expandTilde, isRealpathInsideRoot } from "./path.js";
+import { expandTilde, getRealpathAwareRelativePath, isPathInsideRoot } from "./path.js";
 
 export { slugify, validateBranchSlug } from "@getpaseo/protocol/branch-slug";
 
@@ -850,14 +850,16 @@ export function mapWorkspaceCwdToWorktree(input: {
   workspaceCwd: string;
   targetWorktreePath: string;
 }): string {
-  if (!isRealpathInsideRoot(input.sourceWorktreePath, input.workspaceCwd)) {
+  const relativeWorkspaceCwd = getRealpathAwareRelativePath(
+    input.sourceWorktreePath,
+    input.workspaceCwd,
+  );
+  if (relativeWorkspaceCwd === null) {
     throw new Error(`Workspace cwd is outside its source worktree: ${input.workspaceCwd}`);
   }
 
-  const sourceWorktreePath = normalizePathForOwnership(input.sourceWorktreePath);
-  const workspaceCwd = normalizePathForOwnership(input.workspaceCwd);
-  const mappedCwd = resolve(input.targetWorktreePath, relative(sourceWorktreePath, workspaceCwd));
-  if (!isRealpathInsideRoot(input.targetWorktreePath, mappedCwd)) {
+  const mappedCwd = resolve(input.targetWorktreePath, relativeWorkspaceCwd);
+  if (!isPathInsideRoot(input.targetWorktreePath, mappedCwd)) {
     throw new Error(`Workspace cwd escapes its target worktree: ${input.workspaceCwd}`);
   }
   return mappedCwd;

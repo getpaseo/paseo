@@ -14,7 +14,7 @@ import {
 } from "../utils/worktree.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type { PersistedWorkspaceRecord, WorkspaceRegistry } from "./workspace-registry.js";
-import { areEquivalentPaths, createRealpathAwarePathMatcher } from "../utils/path.js";
+import { createRealpathAwarePathMatcher } from "../utils/path.js";
 
 export interface ActiveWorkspaceRef {
   workspaceId: string;
@@ -189,6 +189,7 @@ async function resolveArchiveTargets(
     paseoWorktreesBaseRoot,
   );
   const targetDir = resolve(targetPath);
+  const matchesTargetDir = createRealpathAwarePathMatcher(targetDir);
   const targetWorkspaceIds = (
     await Promise.all(
       activeWorkspaces.map(async (workspace) => {
@@ -197,7 +198,7 @@ async function resolveArchiveTargets(
           dependencies,
           paseoWorktreesBaseRoot,
         );
-        return areEquivalentPaths(backingDirectory, targetDir) ? workspace.workspaceId : null;
+        return matchesTargetDir(backingDirectory) ? workspace.workspaceId : null;
       }),
     )
   ).filter((workspaceId): workspaceId is string => workspaceId !== null);
@@ -373,6 +374,7 @@ async function isDirectoryUnreferenced(
   request: Pick<ArchiveByScopeRequest, "paseoWorktreesBaseRoot">,
 ): Promise<boolean> {
   const target = resolve(targetDir);
+  const matchesTarget = createRealpathAwarePathMatcher(target);
   for (const workspace of activeWorkspaces) {
     if (archivedWorkspaceIds.has(workspace.workspaceId)) continue;
     const backingDirectory = await resolveBackingWorktreeDirectory(
@@ -380,7 +382,7 @@ async function isDirectoryUnreferenced(
       dependencies,
       request.paseoWorktreesBaseRoot,
     );
-    if (areEquivalentPaths(backingDirectory, target)) return false;
+    if (matchesTarget(backingDirectory)) return false;
   }
   return true;
 }

@@ -178,7 +178,7 @@ import {
   matchesAgentUpdatesFilter,
   type AgentUpdatesService,
 } from "./session/agent-updates/agent-updates-service.js";
-import { areEquivalentPaths, expandTilde } from "../utils/path.js";
+import { createRealpathAwarePathMatcher, expandTilde } from "../utils/path.js";
 import {
   searchDirectoryEntries,
   WORKSPACE_SEARCH_HIDDEN_DIRECTORIES,
@@ -4231,7 +4231,7 @@ export class Session {
       workspaceCwd: workspace.cwd,
       targetWorktreePath: result.worktreePath,
     });
-    if (!areEquivalentPaths(recreatedWorkspacePath, workspace.cwd)) {
+    if (!createRealpathAwarePathMatcher(workspace.cwd)(recreatedWorkspacePath)) {
       throw new WorktreeRequestError({
         code: "unknown",
         message: `Recreated worktree diverged from ${workspace.cwd}: ${recreatedWorkspacePath}`,
