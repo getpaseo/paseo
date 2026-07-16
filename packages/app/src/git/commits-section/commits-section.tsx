@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
@@ -40,9 +40,11 @@ function CommitsSectionSkeleton() {
 
 function CommitsSectionContent({
   query,
+  now,
   onCommitPress,
 }: {
   query: Exclude<CheckoutCommitsQueryResult, { status: "unsupported" }>;
+  now: Date;
   onCommitPress: (sha: string) => void;
 }) {
   const { t } = useTranslation();
@@ -66,7 +68,7 @@ function CommitsSectionContent({
   return (
     <View style={styles.list}>
       {query.data.commits.map((commit) => (
-        <CommitRow key={commit.sha} commit={commit} onCommitPress={onCommitPress} />
+        <CommitRow key={commit.sha} commit={commit} now={now} onCommitPress={onCommitPress} />
       ))}
     </View>
   );
@@ -76,6 +78,7 @@ export function CommitsSection({ serverId, cwd, onCommitPress }: CommitsSectionP
   const { t } = useTranslation();
   const { preferences, updatePreferences } = useChangesPreferences();
   const collapsed = preferences.commitsCollapsed;
+  const [now, setNow] = useState(() => new Date());
   const query = useCheckoutCommitsQuery({
     serverId,
     cwd,
@@ -83,8 +86,19 @@ export function CommitsSection({ serverId, cwd, onCommitPress }: CommitsSectionP
   });
 
   const handleToggleSection = useCallback(() => {
+    if (collapsed) {
+      setNow(new Date());
+    }
     void updatePreferences({ commitsCollapsed: !collapsed });
   }, [collapsed, updatePreferences]);
+
+  useEffect(() => {
+    if (collapsed) {
+      return;
+    }
+    const interval = setInterval(() => setNow(new Date()), 10_000);
+    return () => clearInterval(interval);
+  }, [collapsed]);
 
   const headerChevronStyle = useMemo(
     () => [styles.headerChevron, !collapsed && styles.headerChevronExpanded],
@@ -127,7 +141,9 @@ export function CommitsSection({ serverId, cwd, onCommitPress }: CommitsSectionP
           <Text style={styles.legendText}>{t("workspace.git.diff.commits.legendRemote")}</Text>
         </View>
       </Pressable>
-      {collapsed ? null : <CommitsSectionContent query={query} onCommitPress={onCommitPress} />}
+      {collapsed ? null : (
+        <CommitsSectionContent query={query} now={now} onCommitPress={onCommitPress} />
+      )}
     </View>
   );
 }

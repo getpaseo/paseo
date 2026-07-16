@@ -8,10 +8,11 @@ import { dotStyles } from "./shared";
 
 interface CommitRowProps {
   commit: CheckoutCommit;
+  now: Date;
   onCommitPress: (sha: string) => void;
 }
 
-export const CommitRow = memo(function CommitRow({ commit, onCommitPress }: CommitRowProps) {
+export const CommitRow = memo(function CommitRow({ commit, now, onCommitPress }: CommitRowProps) {
   const handlePress = useCallback(() => {
     onCommitPress(commit.sha);
   }, [commit.sha, onCommitPress]);
@@ -31,7 +32,7 @@ export const CommitRow = memo(function CommitRow({ commit, onCommitPress }: Comm
       <Text style={styles.subject} numberOfLines={1}>
         {commit.subject}
       </Text>
-      <Text style={styles.timestamp}>{formatTimeAgo(new Date(commit.authorDate))}</Text>
+      <Text style={styles.timestamp}>{formatTimeAgo(new Date(commit.authorDate), now)}</Text>
       <View style={styles.caret}>
         <ThemedChevron size={14} uniProps={chevronColorMapping} />
       </View>

@@ -1,9 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
-import { test, expect, type Page } from "./fixtures";
+import { test, expect } from "./fixtures";
 
-const CHANGES_PREFERENCES_KEY = "@paseo:changes-preferences";
 const COMMIT_SUBJECT = "Show commit timestamps";
 
 test("commit history shows dates and shares diff layout preferences", async ({
@@ -16,8 +15,9 @@ test("commit history shows dates and shares diff layout preferences", async ({
   await workspace.navigateTo();
 
   await page.getByRole("button", { name: "Open explorer" }).click();
-  await expect(page.getByTestId("commits-section-header")).toBeVisible({ timeout: 30_000 });
-  await page.getByTestId("commits-section-header").click();
+  const commitsSection = page.getByRole("button", { name: /Commits/i });
+  await expect(commitsSection).toBeVisible({ timeout: 30_000 });
+  await commitsSection.click();
 
   const commitRow = page.locator('[data-testid^="commit-row-"]').filter({
     hasText: COMMIT_SUBJECT,
@@ -39,9 +39,15 @@ test("commit history shows dates and shares diff layout preferences", async ({
     "aria-selected",
     "true",
   );
-  await expectStoredLayout(page, "split");
   await expect(panel.getByTestId("diff-code-row-0")).toHaveCount(0);
   await expect(panel.getByTestId("diff-file-0-body")).toBeVisible();
+
+  await page.reload();
+  await expect(panel.getByTestId("commit-diff-layout-split")).toHaveAttribute(
+    "aria-selected",
+    "true",
+    { timeout: 30_000 },
+  );
 
   await page.setViewportSize({ width: 480, height: 900 });
   await expect(panel.getByTestId("commit-diff-toolbar")).toHaveCount(0);
@@ -61,19 +67,4 @@ async function createFeatureCommit(repoPath: string): Promise<void> {
       GIT_COMMITTER_DATE: "2020-01-15T12:00:00Z",
     },
   });
-}
-
-async function expectStoredLayout(page: Page, layout: "unified" | "split"): Promise<void> {
-  await expect
-    .poll(async () => {
-      const stored = await page.evaluate(
-        (key) => localStorage.getItem(key),
-        CHANGES_PREFERENCES_KEY,
-      );
-      if (!stored) {
-        return null;
-      }
-      return (JSON.parse(stored) as { layout?: string }).layout ?? null;
-    })
-    .toBe(layout);
 }
