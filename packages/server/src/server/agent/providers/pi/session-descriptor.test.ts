@@ -13,6 +13,45 @@ async function writeSession(root: string, lines: unknown[]): Promise<string> {
   return filePath;
 }
 
+async function writeNamedSession(
+  root: string,
+  cwdDir: string,
+  fileName: string,
+  lines: unknown[],
+  nestedDir?: string,
+): Promise<string> {
+  const sessionsDir = nestedDir
+    ? path.join(root, "sessions", cwdDir, nestedDir)
+    : path.join(root, "sessions", cwdDir);
+  await mkdir(sessionsDir, { recursive: true });
+  const filePath = path.join(sessionsDir, fileName);
+  await writeFile(filePath, `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`, "utf8");
+  return filePath;
+}
+
+function sessionHeader(id: string, cwd: string, timestamp: string) {
+  return {
+    type: "session",
+    version: 3,
+    id,
+    timestamp,
+    cwd,
+  };
+}
+
+function userMessage(id: string, timestamp: string, text: string) {
+  return {
+    type: "message",
+    id,
+    timestamp,
+    message: {
+      role: "user",
+      content: [{ type: "text", text }],
+    },
+  };
+}
+
+
 test("Pi import config preserves the latest recorded model and thinking level", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "paseo-pi-session-model-"));
   const cwd = path.join(root, "repo");
@@ -168,5 +207,128 @@ test("Pi import config preserves thinking before a later model in large sessions
   expect(importConfig).toEqual({
     model: "openrouter/google/gemini-2.5-pro",
     thinkingOptionId: "low",
+  });
+});
+
+test("Pi import listing skips nested subagent transcripts", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "paseo-pi-session-skip-nested-"));
+  const cwd = path.join(root, "repo");
+  const parent = await writeNamedSession(
+    root,
+    "project",
+    "2026-06-09T00-00-00-000Z_parent.jsonl",
+    [
+      sessionHeader("parent-1", cwd, "2026-06-09T00:00:00.000Z"),
+      userMessage("user-1", "2026-06-09T00:00:01.000Z", "parent prompt"),
+    ],
+  );
+  await writeNamedSession(
+    root,
+    "project",
+    "subagent.jsonl",
+    [
+      sessionHeader("subagent-1", cwd, "2026-06-09T00:00:02.000Z"),
+      userMessage("user-2", "2026-06-09T00:00:03.000Z", "nested subagent prompt"),
+    ],
+    "2026-06-09T00-00-00-000Z_parent",
+  );
+
+  const sessions = await listPiImportableSessions({ sessionDir: path.join(root, "sessions") });
+
+  expect(sessions).toHaveLength(1);
+  expect(sessions[0]).toMatchObject({
+    providerHandleId: parent,
+    cwd,
+    firstPromptPreview: "parent prompt",
+  });
+});
+
+test("OMP import listing accepts title-first session headers", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "paseo-omp-session-title-first-"));
+  const cwd = path.join(root, "repo");
+  const sessionFile = await writeNamedSession(
+    root,
+    "project",
+    "2026-06-09T00-00-00-000Z_title_first.jsonl",
+    [
+      {
+        type: "title",
+        id: "title-1",
+        timestamp: "2026-06-09T00:00:00.000Z",
+        title: "Deploy paseo and verify",
+      },
+      sessionHeader("session-title-first", cwd, "2026-06-09T00:00:00.100Z"),
+      {
+        type: "model_change",
+        id: "model-1",
+        timestamp: "2026-06-09T00:00:00.200Z",
+        model: "openai-codex/gpt-5.1",
+      },
+      userMessage("user-1", "2026-06-09T00:00:01.000Z", "import me"),
+    ],
+  );
+
+  const sessions = await listPiImportableSessions({ sessionDir: path.join(root, "sessions") });
+  const importConfig = await readPiImportSessionConfig(sessionFile);
+
+  expect(sessions).toHaveLength(1);
+  expect(sessions[0]).toMatchObject({
+    providerHandleId: sessionFile,
+    cwd,
+    title: "Deploy paseo and verify",
+    firstPromptPreview: "import me",
+  });
+  expect(importConfig).toEqual({
+    model: "openai-codex/gpt-5.1",
+  });
+});
+
+test("Pi import listing prefers recent parent sessions without scanning nested trees", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "paseo-pi-session-recent-limit-"));
+  const cwd = path.join(root, "repo");
+  const older = await writeNamedSession(
+    root,
+    "project",
+    "2026-06-08T00-00-00-000Z_old.jsonl",
+    [
+      sessionHeader("old-session", cwd, "2026-06-08T00:00:00.000Z"),
+      userMessage("user-old", "2026-06-08T00:00:01.000Z", "old prompt"),
+    ],
+  );
+  const newer = await writeNamedSession(
+    root,
+    "project",
+    "2026-06-09T00-00-00-000Z_new.jsonl",
+    [
+      sessionHeader("new-session", cwd, "2026-06-09T00:00:00.000Z"),
+      userMessage("user-new", "2026-06-09T00:00:01.000Z", "new prompt"),
+    ],
+  );
+  // Nested noise should never appear in the importable list.
+  await writeNamedSession(
+    root,
+    "project",
+    "noise.jsonl",
+    [
+      sessionHeader("noise-session", cwd, "2026-06-09T12:00:00.000Z"),
+      userMessage("user-noise", "2026-06-09T12:00:01.000Z", "noise prompt"),
+    ],
+    "2026-06-09T00-00-00-000Z_new",
+  );
+
+  // Ensure mtime ordering is deterministic across filesystems.
+  const { utimes } = await import("node:fs/promises");
+  await utimes(older, new Date("2026-06-08T00:00:00.000Z"), new Date("2026-06-08T00:00:00.000Z"));
+  await utimes(newer, new Date("2026-06-09T00:00:00.000Z"), new Date("2026-06-09T00:00:00.000Z"));
+
+  const sessions = await listPiImportableSessions({
+    sessionDir: path.join(root, "sessions"),
+    limit: 1,
+  });
+
+  expect(sessions).toHaveLength(1);
+  expect(sessions[0]).toMatchObject({
+    providerHandleId: newer,
+    firstPromptPreview: "new prompt",
   });
 });

@@ -15,6 +15,14 @@ const PI_SESSION_DIR_ENV = "PI_CODING_AGENT_SESSION_DIR";
 const HEAD_BYTES = 64 * 1024;
 const TAIL_BYTES = 256 * 1024;
 const FULL_SCAN_LINE_LIMIT = 2_000;
+// Parent sessions live at <sessionsDir>/<cwdDir>/<session>.jsonl.
+// Nested <sessionsDir>/<cwdDir>/<session>/<subagent>.jsonl files are subagent
+// transcripts and must not be treated as importable parent sessions.
+const PARENT_SESSION_MAX_DEPTH = 2;
+// Overscan by mtime so cwd filters and non-session nested files still leave
+// enough valid parent sessions for the requested limit.
+const IMPORT_CANDIDATE_OVERSCAN = 40;
+const IMPORT_CANDIDATE_MIN = 400;
 
 interface PiSessionDescriptorOptions extends ListImportableSessionsOptions {
   sessionDir?: string;
@@ -54,6 +62,11 @@ interface PiSessionDescriptor {
   thinkingOptionId: string | null;
 }
 
+interface RankedSessionFile {
+  file: string;
+  mtime: Date;
+}
+
 export interface PiImportSessionConfig {
   model?: string;
   thinkingOptionId?: string;
@@ -63,16 +76,21 @@ export async function listPiImportableSessions(
   options: PiSessionDescriptorOptions = {},
 ): Promise<ImportableProviderSession[]> {
   const sessionsDir = await resolvePiSessionsDir(options);
-  const files = await walkJsonlFiles(sessionsDir);
+  const files = await walkParentSessionJsonlFiles(sessionsDir);
   const matchesCwd = options.cwd ? createRealpathAwarePathMatcher(options.cwd) : null;
   const limit = options.limit ?? 20;
+  const ranked = await rankSessionFilesByMtime(files);
+  const candidateLimit = Math.max(limit * IMPORT_CANDIDATE_OVERSCAN, IMPORT_CANDIDATE_MIN);
   const sessions: ImportableProviderSession[] = [];
 
-  for (const file of files) {
-    const session = await readPiImportableSession(file);
+  for (const entry of ranked.slice(0, candidateLimit)) {
+    const session = await readPiImportableSession(entry.file);
     if (!session) continue;
     if (matchesCwd && !matchesCwd(session.cwd)) continue;
     sessions.push(session);
+    if (sessions.length >= limit) {
+      break;
+    }
   }
 
   return sessions
@@ -162,7 +180,11 @@ function resolveConfigPath(value: string, options: { baseDir: string; homeDir: s
   return path.isAbsolute(value) ? value : path.resolve(options.baseDir, value);
 }
 
-async function walkJsonlFiles(root: string): Promise<string[]> {
+async function walkParentSessionJsonlFiles(root: string): Promise<string[]> {
+  return await walkJsonlFiles(root, 1);
+}
+
+async function walkJsonlFiles(root: string, depth: number): Promise<string[]> {
   let entries: import("node:fs").Dirent[];
   try {
     entries = await readdir(root, { withFileTypes: true });
@@ -174,12 +196,27 @@ async function walkJsonlFiles(root: string): Promise<string[]> {
     entries.map(async (entry) => {
       const entryPath = path.join(root, entry.name);
       if (entry.isDirectory()) {
-        return await walkJsonlFiles(entryPath);
+        if (depth >= PARENT_SESSION_MAX_DEPTH) {
+          return [];
+        }
+        return await walkJsonlFiles(entryPath, depth + 1);
       }
       return entry.isFile() && entry.name.endsWith(".jsonl") ? [entryPath] : [];
     }),
   );
   return files.flat();
+}
+
+async function rankSessionFilesByMtime(files: string[]): Promise<RankedSessionFile[]> {
+  const ranked = await Promise.all(
+    files.map(async (file) => {
+      const mtime = await readFileMtime(file);
+      return mtime ? { file, mtime } : null;
+    }),
+  );
+  return ranked
+    .filter((entry): entry is RankedSessionFile => entry !== null)
+    .sort((left, right) => right.mtime.getTime() - left.mtime.getTime());
 }
 
 async function readPiImportableSession(
@@ -201,14 +238,16 @@ async function readPiImportableSession(
 }
 
 async function readPiSessionDescriptor(filePath: string): Promise<PiSessionDescriptor | null> {
-  const firstLine = await readFirstLine(filePath);
-  if (!firstLine) return null;
-  const header = parseSessionHeader(firstLine);
+  // OMP may emit title/session_info lines before the session header. Scan the
+  // file head for the first type:"session" record instead of requiring line 1.
+  const headChunk = await readHeadChunk(filePath);
+  if (!headChunk) return null;
+  const header = parseSessionHeaderFromChunk(headChunk);
   if (!header) return null;
 
   const tail = await readTail(filePath).catch(() => "");
   const tailInfo = parseSessionTail(tail);
-  const headInfo = await scanSessionHead(filePath);
+  const headInfo = parseSessionHeadFromChunk(headChunk);
   const title = tailInfo.title ?? headInfo.title ?? headInfo.firstUserMessage;
   const model = tailInfo.model ?? headInfo.model;
   const thinkingOptionId = tailInfo.thinkingOptionId ?? headInfo.thinkingOptionId;
@@ -233,19 +272,64 @@ function toPiImportSessionConfig(descriptor: PiSessionDescriptor): PiImportSessi
   };
 }
 
-async function readFirstLine(filePath: string): Promise<string | null> {
+async function readHeadChunk(filePath: string): Promise<string | null> {
   const handle = await open(filePath, "r").catch(() => null);
   if (!handle) return null;
   try {
     const buffer = Buffer.alloc(HEAD_BYTES);
     const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
     if (bytesRead <= 0) return null;
-    const chunk = buffer.subarray(0, bytesRead).toString("utf8");
-    const newlineIndex = chunk.indexOf("\n");
-    return (newlineIndex === -1 ? chunk : chunk.slice(0, newlineIndex)).trim();
+    return buffer.subarray(0, bytesRead).toString("utf8");
   } finally {
     await handle.close().catch(() => undefined);
   }
+}
+
+function parseSessionHeaderFromChunk(chunk: string): PiSessionHeader | null {
+  for (const line of chunk.split(/\r?\n/u)) {
+    const header = parseSessionHeader(line.trim());
+    if (header) return header;
+  }
+  return null;
+}
+
+function parseSessionHeadFromChunk(chunk: string): PiSessionHead {
+  let title: string | null = null;
+  let firstUserMessage: string | null = null;
+  let model: string | null = null;
+  let thinkingOptionId: string | null = null;
+  let lineCount = 0;
+
+  for (const rawLine of chunk.split(/\r?\n/u)) {
+    lineCount += 1;
+    const entry = parseJsonRecord(rawLine.trim());
+    if (!entry) continue;
+
+    if (entry.type === "session_info") {
+      title = readNonEmptyString(entry.name) ?? title;
+    }
+    if (entry.type === "title") {
+      title = readNonEmptyString(entry.title) ?? title;
+    }
+
+    model = extractModel(entry) ?? model;
+    thinkingOptionId = extractThinkingOptionId(entry) ?? thinkingOptionId;
+
+    if (!firstUserMessage && entry.type === "message" && isRecord(entry.message)) {
+      if (entry.message.role === "user") {
+        firstUserMessage = extractMessageText(entry.message.content);
+      }
+    }
+
+    if (title && firstUserMessage && model && thinkingOptionId) {
+      break;
+    }
+    if (lineCount >= FULL_SCAN_LINE_LIMIT && firstUserMessage) {
+      break;
+    }
+  }
+
+  return { title, firstUserMessage, model, thinkingOptionId };
 }
 
 async function readTail(filePath: string): Promise<string> {
@@ -296,6 +380,9 @@ function parseSessionTail(tail: string): PiSessionTail {
     if (!title && entry.type === "session_info") {
       title = readNonEmptyString(entry.name);
     }
+    if (!title && entry.type === "title") {
+      title = readNonEmptyString(entry.title);
+    }
 
     if (!model) {
       model = extractModel(entry);
@@ -330,52 +417,13 @@ function parseSessionTail(tail: string): PiSessionTail {
   };
 }
 
-async function scanSessionHead(filePath: string): Promise<PiSessionHead> {
-  let content: string;
-  try {
-    content = await readFile(filePath, "utf8");
-  } catch {
-    return { title: null, firstUserMessage: null, model: null, thinkingOptionId: null };
-  }
-
-  let title: string | null = null;
-  let firstUserMessage: string | null = null;
-  let model: string | null = null;
-  let thinkingOptionId: string | null = null;
-  let lineCount = 0;
-
-  for (const rawLine of content.split(/\r?\n/u)) {
-    lineCount += 1;
-    const entry = parseJsonRecord(rawLine.trim());
-    if (!entry) continue;
-
-    if (entry.type === "session_info") {
-      title = readNonEmptyString(entry.name) ?? title;
-    }
-
-    model = extractModel(entry) ?? model;
-    thinkingOptionId = extractThinkingOptionId(entry) ?? thinkingOptionId;
-
-    if (!firstUserMessage && entry.type === "message" && isRecord(entry.message)) {
-      if (entry.message.role === "user") {
-        firstUserMessage = extractMessageText(entry.message.content);
-      }
-    }
-
-    if (title && firstUserMessage && model && thinkingOptionId) {
-      break;
-    }
-    if (lineCount >= FULL_SCAN_LINE_LIMIT && firstUserMessage) {
-      break;
-    }
-  }
-
-  return { title, firstUserMessage, model, thinkingOptionId };
-}
-
 function extractModel(entry: Record<string, unknown>): string | null {
   if (entry.type === "model_change") {
-    return buildModelId(entry.provider, entry.modelId);
+    // Pi records provider + modelId; OMP records a combined model string.
+    return (
+      buildModelId(entry.provider, entry.modelId) ??
+      readNonEmptyString(entry.model)
+    );
   }
 
   if (entry.type === "message" && isRecord(entry.message)) {
