@@ -19,7 +19,6 @@ import {
   type TimelineSearchMatch,
   type TimelineSearchState,
 } from "./timeline-search-model";
-import { splitHighlightSegments } from "./highlight";
 
 const FILTERS: readonly TimelineSearchFilter[] = [
   "all",
@@ -76,13 +75,11 @@ const MatchRow = React.memo(function MatchRow({
   match,
   index,
   active,
-  query,
   onSelectIndex,
 }: {
   match: TimelineSearchMatch;
   index: number;
   active: boolean;
-  query: string;
   onSelectIndex: (index: number) => void;
 }) {
   const handlePress = useCallback(() => onSelectIndex(index), [onSelectIndex, index]);
@@ -93,23 +90,24 @@ const MatchRow = React.memo(function MatchRow({
     ],
     [active],
   );
-  const segments = useMemo(
-    () => splitHighlightSegments(match.snippet, query),
-    [match.snippet, query],
-  );
+  const snippetParts = useMemo(() => {
+    const start = Math.min(Math.max(match.snippetMatchOffset, 0), match.snippet.length);
+    const end = Math.min(start + match.snippetMatchLength, match.snippet.length);
+    return {
+      before: match.snippet.slice(0, start),
+      match: match.snippet.slice(start, end),
+      after: match.snippet.slice(end),
+    };
+  }, [match.snippet, match.snippetMatchLength, match.snippetMatchOffset]);
 
   return (
     <Pressable onPress={handlePress} style={pressableStyle}>
       <Text numberOfLines={1} style={styles.matchRowText}>
-        {segments.map((segment) =>
-          segment.isMatch ? (
-            <Text key={segment.offset} style={styles.matchRowHighlight}>
-              {segment.text}
-            </Text>
-          ) : (
-            <React.Fragment key={segment.offset}>{segment.text}</React.Fragment>
-          ),
-        )}
+        {snippetParts.before}
+        {snippetParts.match ? (
+          <Text style={styles.matchRowHighlight}>{snippetParts.match}</Text>
+        ) : null}
+        {snippetParts.after}
       </Text>
     </Pressable>
   );
@@ -309,11 +307,10 @@ export function TimelineSearchPanel({
         match={item}
         index={index}
         active={index === state.selectedIndex}
-        query={state.query}
         onSelectIndex={onSelectIndex}
       />
     ),
-    [state.selectedIndex, state.query, onSelectIndex],
+    [state.selectedIndex, onSelectIndex],
   );
   const keyExtractor = useCallback(
     (match: TimelineSearchMatch) => `${match.item.id}:${match.matchOffset}`,

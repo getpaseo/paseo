@@ -14,7 +14,14 @@ function makeMatch(id: string): TimelineSearchMatch {
     text: id,
     timestamp: new Date("2024-01-01"),
   };
-  return { item, snippet: id, matchOffset: 0, occurrenceIndex: 0 };
+  return {
+    item,
+    snippet: id,
+    snippetMatchOffset: 0,
+    snippetMatchLength: id.length,
+    matchOffset: 0,
+    occurrenceIndex: 0,
+  };
 }
 
 function makeViewportHandle(): StreamViewportHandle {

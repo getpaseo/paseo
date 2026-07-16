@@ -57,6 +57,10 @@ export interface TimelineSearchMatch {
   item: StreamItem;
   /** Snippet for display (truncated to ~80 chars), centered on this occurrence. */
   snippet: string;
+  /** Character offset of this occurrence within `snippet`. */
+  snippetMatchOffset: number;
+  /** Character length of this occurrence within `snippet`. */
+  snippetMatchLength: number;
   /**
    * Character offset of this occurrence within the item's searchable text.
    * A single item yields one match PER occurrence, so a message containing the
@@ -229,21 +233,38 @@ const SNIPPET_CONTEXT_BEFORE = 30;
  * between the original and whitespace-collapsed text, so the Nth cleaned match
  * lines up with the Nth occurrence used for navigation.
  */
+interface TimelineSearchSnippet {
+  text: string;
+  matchOffset: number;
+  matchLength: number;
+}
+
 function makeSnippetFromCleaned(
   cleaned: string,
   cleanedMatches: ReadonlyArray<{ index: number; length: number }>,
   occurrenceIndex: number,
-): string {
+): TimelineSearchSnippet {
   const match = cleanedMatches[occurrenceIndex] ?? cleanedMatches[0];
-  if (!match || match.index < SNIPPET_HEAD_ANCHOR_THRESHOLD) {
-    return `${cleaned.slice(0, SNIPPET_MAX_LENGTH - 3)}…`;
+  if (!match) {
+    return { text: `${cleaned.slice(0, SNIPPET_MAX_LENGTH - 3)}…`, matchOffset: 0, matchLength: 0 };
+  }
+  if (match.index < SNIPPET_HEAD_ANCHOR_THRESHOLD) {
+    return {
+      text: `${cleaned.slice(0, SNIPPET_MAX_LENGTH - 3)}…`,
+      matchOffset: match.index,
+      matchLength: match.length,
+    };
   }
 
   const start = Math.max(0, match.index - SNIPPET_CONTEXT_BEFORE);
   const end = Math.min(cleaned.length, start + SNIPPET_MAX_LENGTH);
   const prefix = start > 0 ? "…" : "";
   const suffix = end < cleaned.length ? "…" : "";
-  return `${prefix}${cleaned.slice(start, end)}${suffix}`;
+  return {
+    text: `${prefix}${cleaned.slice(start, end)}${suffix}`,
+    matchOffset: prefix.length + match.index - start,
+    matchLength: match.length,
+  };
 }
 
 /**
@@ -268,15 +289,26 @@ function computeItemMatches(item: StreamItem, text: string, query: string): Comp
 
   const cleaned = text.replace(/\s+/g, " ").trim();
   const isShort = cleaned.length <= SNIPPET_MAX_LENGTH;
-  const cleanedMatches = isShort ? [] : findAllMatches(cleaned, query, boundedOccurrences.length);
+  const cleanedMatches = findAllMatches(cleaned, query, boundedOccurrences.length);
 
   return {
-    matches: boundedOccurrences.map((occurrence, occurrenceIndex) => ({
-      item,
-      snippet: isShort ? cleaned : makeSnippetFromCleaned(cleaned, cleanedMatches, occurrenceIndex),
-      matchOffset: occurrence.index,
-      occurrenceIndex,
-    })),
+    matches: boundedOccurrences.map((occurrence, occurrenceIndex) => {
+      const snippet = isShort
+        ? {
+            text: cleaned,
+            matchOffset: cleanedMatches[occurrenceIndex]?.index ?? 0,
+            matchLength: cleanedMatches[occurrenceIndex]?.length ?? 0,
+          }
+        : makeSnippetFromCleaned(cleaned, cleanedMatches, occurrenceIndex);
+      return {
+        item,
+        snippet: snippet.text,
+        snippetMatchOffset: snippet.matchOffset,
+        snippetMatchLength: snippet.matchLength,
+        matchOffset: occurrence.index,
+        occurrenceIndex,
+      };
+    }),
     isMatchLimitExceeded,
   };
 }

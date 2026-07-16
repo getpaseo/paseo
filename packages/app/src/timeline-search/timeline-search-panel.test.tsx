@@ -146,6 +146,18 @@ describe("TimelineSearchPanel", () => {
     expect(screen.getByText("goodbye", { exact: false })).toBeTruthy();
   });
 
+  it("highlights only the occurrence represented by each result row", () => {
+    const { model } = renderPanel(
+      [makeAssistantMessage("the alpha, the beta, the gamma", "a1")],
+      "the",
+    );
+
+    expect(model.getState().matches).toHaveLength(3);
+    // Each result row has exactly one highlighted occurrence, rather than
+    // highlighting every occurrence present in its contextual snippet.
+    expect(screen.getAllByText("the")).toHaveLength(3);
+  });
+
   it("shows the no-results message when the query has no matches", () => {
     renderPanel([makeUserMessage("hello", "u1")], "zzznomatch");
 
