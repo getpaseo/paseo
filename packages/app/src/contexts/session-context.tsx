@@ -951,6 +951,9 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       serverId: serverInfo.serverId,
       hostname: serverInfo.hostname,
       version: serverInfo.version,
+      ...(serverInfo.desktopManaged !== undefined
+        ? { desktopManaged: serverInfo.desktopManaged }
+        : {}),
       ...(serverInfo.capabilities ? { capabilities: serverInfo.capabilities } : {}),
       ...(serverInfo.features ? { features: serverInfo.features } : {}),
     });
@@ -1422,6 +1425,9 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
           serverId: serverInfo.serverId,
           hostname: serverInfo.hostname,
           version: serverInfo.version,
+          ...(serverInfo.desktopManaged !== undefined
+            ? { desktopManaged: serverInfo.desktopManaged }
+            : {}),
           ...(serverInfo.capabilities ? { capabilities: serverInfo.capabilities } : {}),
           ...(serverInfo.features ? { features: serverInfo.features } : {}),
         });

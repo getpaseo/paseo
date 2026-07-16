@@ -48,6 +48,7 @@ For testing rules, see [testing.md](testing.md).
 - Separate user-facing copy from log/debug strings — don't make one string serve telemetry, logs, and the UI.
 - Fail explicitly. If the caller asked for X and X isn't available, throw — don't silently substitute Y.
 - Every fallible user action owns explicit pending, success, and failure UI. Console logs and unverified platform alerts do not satisfy this contract. See [testing.md](testing.md#fallible-user-actions).
+- A capability advertised to a client means the current runtime can perform the action, not merely that its RPC handler exists. If an unavailable action needs explanatory UI, send the runtime fact or reason separately and keep the server-side refusal fail-closed.
 
 ## Density
 

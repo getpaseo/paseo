@@ -1006,8 +1006,30 @@ test("receives server_info on websocket connect", async () => {
   expect(serverInfo).not.toBeNull();
   expect(serverInfo?.serverId.length).toBeGreaterThan(0);
   expect(serverInfo?.features?.["terminal-restore-modes"]).toBe(true);
+  expect(serverInfo?.desktopManaged).toBe(false);
+  expect(serverInfo?.features?.daemonSelfUpdate).toBe(true);
 
   await client.close();
+}, 15000);
+
+test("a Desktop-managed daemon does not advertise npm self-update", async () => {
+  const daemon = await createTestPaseoDaemon({ desktopManaged: true });
+  const client = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    clientId: `cid-desktop-managed-${randomUUID()}`,
+    clientType: "cli",
+  });
+
+  try {
+    await client.connect();
+    const serverInfo = client.getLastServerInfoMessage();
+
+    expect(serverInfo?.desktopManaged).toBe(true);
+    expect(serverInfo?.features?.daemonSelfUpdate).toBe(false);
+  } finally {
+    await client.close();
+    await daemon.close();
+  }
 }, 15000);
 
 test("emits disabled voice capability reasons on fresh daemon startup", async () => {

@@ -1896,6 +1896,8 @@ export const ru: TranslationResources = {
           dialogFailedMessage: "Невозможно открыть диалоговое окно подтверждения перезапуска.",
         },
         update: {
+          desktopManagedHint:
+            "Этот демон управляется Paseo Desktop. Обновите Paseo Desktop на хосте.",
           title: "Update daemon",
           hint: "Update the daemon to the latest version and restart it",
           confirm: "Update",

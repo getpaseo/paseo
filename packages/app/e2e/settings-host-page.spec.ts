@@ -95,6 +95,24 @@ test.describe("Settings host page", () => {
     await expect(updateButton).toBeEnabled();
   });
 
+  test("a Desktop-managed daemon explains why its update action is disabled", async ({
+    page,
+    desktopManagedOutdatedDaemon,
+  }) => {
+    await seedSavedSettingsHosts(page, [desktopManagedOutdatedDaemon]);
+    await page.reload();
+    await openSettings(page);
+    await openSettingsHost(page, desktopManagedOutdatedDaemon.serverId);
+    await openHostSection(page, desktopManagedOutdatedDaemon.serverId, "host");
+
+    const updateCard = page.getByTestId("host-page-update-card");
+    await expect(updateCard).toBeVisible();
+    await expect(updateCard).toContainText(
+      "This daemon is managed by Paseo Desktop. Update Paseo Desktop on the host.",
+    );
+    await expect(page.getByTestId("host-page-update-button")).toBeDisabled();
+  });
+
   test("clicking the label pencil reveals the inline editor", async ({ page }) => {
     const serverId = getServerId();
 

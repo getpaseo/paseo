@@ -22,7 +22,9 @@ interface OutdatedDaemonErrorMessage {
 
 type OutdatedDaemonMessage = OutdatedDaemonReadyMessage | OutdatedDaemonErrorMessage;
 
-export async function startOutdatedDaemon(): Promise<OutdatedDaemon> {
+export async function startOutdatedDaemon(options?: {
+  desktopManaged?: boolean;
+}): Promise<OutdatedDaemon> {
   const metroPort = process.env.E2E_METRO_PORT;
   if (!metroPort) {
     throw new Error("E2E_METRO_PORT is not set - globalSetup must run first");
@@ -31,7 +33,11 @@ export async function startOutdatedDaemon(): Promise<OutdatedDaemon> {
   const child = fork(
     path.resolve(__dirname, "../../../server/src/server/test-utils/outdated-daemon-process.ts"),
     {
-      env: { ...process.env, E2E_METRO_PORT: metroPort },
+      env: {
+        ...process.env,
+        E2E_METRO_PORT: metroPort,
+        E2E_DESKTOP_MANAGED: options?.desktopManaged === true ? "1" : "0",
+      },
       execArgv: ["--import", "tsx"],
       stdio: ["ignore", "pipe", "pipe", "ipc"],
     },
@@ -43,7 +49,7 @@ export async function startOutdatedDaemon(): Promise<OutdatedDaemon> {
     const ready = await waitForDaemon(child, stderr);
     return {
       endpoint: ready.endpoint,
-      label: "outdated host",
+      label: options?.desktopManaged === true ? "outdated Desktop host" : "outdated host",
       serverId: ready.serverId,
       async close() {
         if (child.exitCode !== null || child.signalCode !== null) return;

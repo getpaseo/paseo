@@ -11,6 +11,7 @@ async function main(): Promise<void> {
   const daemon = await createTestPaseoDaemon({
     corsAllowedOrigins: [`http://localhost:${metroPort}`],
     daemonVersion: "0.0.0",
+    desktopManaged: process.env.E2E_DESKTOP_MANAGED === "1",
   });
   const serverId = (await readFile(path.join(daemon.paseoHome, "server-id"), "utf8")).trim();
 
