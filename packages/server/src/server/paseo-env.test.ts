@@ -117,3 +117,33 @@ describe("paseo env contract", () => {
     expect(resolvePaseoNodeEnv({ NODE_ENV: "test", PASEO_NODE_ENV: "local" })).toBeUndefined();
   });
 });
+
+describe("external process env UTF-8 locale default", () => {
+  const baseEnv = { PATH: "/usr/bin" };
+
+  test("injects a UTF-8 LANG when no locale category is set", () => {
+    const env = createExternalProcessEnv(baseEnv);
+
+    expect(env.LANG).toBe("en_US.UTF-8");
+  });
+
+  test("preserves an explicit LANG instead of overriding it", () => {
+    const env = createExternalProcessEnv(baseEnv, { LANG: "C.UTF-8" });
+
+    expect(env.LANG).toBe("C.UTF-8");
+  });
+
+  test("does not inject LANG when LC_ALL already selects a locale", () => {
+    const env = createExternalProcessEnv(baseEnv, { LC_ALL: "ja_JP.UTF-8" });
+
+    expect(env.LANG).toBeUndefined();
+    expect(env.LC_ALL).toBe("ja_JP.UTF-8");
+  });
+
+  test("does not inject LANG when LC_CTYPE already selects a locale", () => {
+    const env = createExternalProcessEnv(baseEnv, { LC_CTYPE: "en_US.UTF-8" });
+
+    expect(env.LANG).toBeUndefined();
+    expect(env.LC_CTYPE).toBe("en_US.UTF-8");
+  });
+});

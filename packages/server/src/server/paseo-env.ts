@@ -9,12 +9,29 @@ const RUNTIME_CONTROL_ENV_KEYS = [
   "ELECTRON_NO_ATTACH_CONSOLE",
 ] as const;
 
+// Fallback locale injected when the caller provides none. Locale-sensitive
+// tools decide how to decode bytes from this. macOS `pbcopy` is the concrete
+// victim: with no UTF-8 locale it decodes stdin via CoreFoundation's default
+// text encoding (MacRoman when ~/.CFUserTextEncoding is 0x0:0x0), corrupting
+// multi-byte UTF-8 such as CJK into mojibake. en_US.UTF-8 ships on macOS and
+// virtually every Linux distro, so it is a safe default.
+const DEFAULT_UTF8_LOCALE = "en_US.UTF-8";
+
 export type PaseoNodeEnv = "development" | "production" | "test";
 export type ProcessEnvRecord = Record<string, string | undefined>;
 export type ExternalProcessEnv = NodeJS.ProcessEnv & Record<string, string>;
 
 function buildInternalProcessEnv<T extends ProcessEnvRecord>(baseEnv: T): T {
   return { ...baseEnv };
+}
+
+// Guarantee a UTF-8 default only when the caller did not set any locale
+// category itself, so a deliberate locale choice is never overridden.
+function ensureUtf8LocaleDefault(env: ProcessEnvRecord): void {
+  if (env.LANG || env.LC_ALL || env.LC_CTYPE) {
+    return;
+  }
+  env.LANG = DEFAULT_UTF8_LOCALE;
 }
 
 function buildExternalProcessEnv(
@@ -30,6 +47,7 @@ function buildExternalProcessEnv(
       delete sanitized[key];
     }
   }
+  ensureUtf8LocaleDefault(sanitized);
   return sanitized as ExternalProcessEnv;
 }
 
