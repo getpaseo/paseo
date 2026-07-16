@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
@@ -30,7 +30,7 @@ afterEach(() => {
   }
 });
 
-test("creates a worktree and registers it in the source workspace project without git snapshot lookup", async () => {
+test("creates a worktree and registers it in the source workspace project without extra git snapshot lookup", async () => {
   const { repoDir, tempDir } = createGitRepo();
   cleanupPaths.push(tempDir);
   const events: string[] = [];
@@ -73,6 +73,105 @@ test("creates a worktree and registers it in the source workspace project withou
     "project:remote:github.com/acme/repo",
     `workspace:${result.workspace.workspaceId}`,
   ]);
+});
+
+test("maps subdirectory inputs onto the same subdirectory inside the worktree", async () => {
+  const { repoDir, tempDir } = createGitRepo();
+  cleanupPaths.push(tempDir);
+  const subdirectory = path.join(repoDir, "packages", "app");
+  mkdirSync(subdirectory, { recursive: true });
+  writeFileSync(path.join(subdirectory, "index.ts"), "export const app = true;\n");
+  execFileSync("git", ["add", "packages/app/index.ts"], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["commit", "-m", "add packages/app"], { cwd: repoDir, stdio: "pipe" });
+
+  const result = await createPaseoWorktree(
+    {
+      cwd: subdirectory,
+      worktreeSlug: "feature-subdir",
+      runSetup: false,
+      paseoHome: path.join(tempDir, ".paseo"),
+    },
+    createDeps(),
+  );
+
+  const expectedWorkspaceDirectory = path.join(result.worktree.worktreePath, "packages", "app");
+  expect(result.workspace.cwd).toBe(expectedWorkspaceDirectory);
+  expect(result.workspace.workspaceId).toMatch(/^wks_[0-9a-f]{16}$/);
+});
+
+test("preserves subdirectory mapping when creating from an existing paseo worktree subdirectory", async () => {
+  const { repoDir, tempDir } = createGitRepo();
+  cleanupPaths.push(tempDir);
+  const subdirectory = path.join(repoDir, "fitnexa2");
+  mkdirSync(subdirectory, { recursive: true });
+  writeFileSync(path.join(subdirectory, "README.md"), "# Fitnexa2\n");
+  execFileSync("git", ["add", "fitnexa2/README.md"], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["commit", "-m", "add fitnexa2"], { cwd: repoDir, stdio: "pipe" });
+
+  const paseoHome = path.join(tempDir, ".paseo");
+  const first = await createPaseoWorktree(
+    {
+      cwd: subdirectory,
+      worktreeSlug: "first-hop",
+      runSetup: false,
+      paseoHome,
+    },
+    createDeps(),
+  );
+
+  const second = await createPaseoWorktree(
+    {
+      cwd: first.workspace.cwd,
+      worktreeSlug: "second-hop",
+      runSetup: false,
+      paseoHome,
+    },
+    createDeps(),
+  );
+
+  const expectedWorkspaceDirectory = path.join(second.worktree.worktreePath, "fitnexa2");
+  expect(first.workspace.cwd).toBe(path.join(first.worktree.worktreePath, "fitnexa2"));
+  expect(second.workspace.cwd).toBe(expectedWorkspaceDirectory);
+  expect(second.workspace.workspaceId).toMatch(/^wks_[0-9a-f]{16}$/);
+});
+
+test("infers subdirectory from existing workspace when app sends repo root as cwd", async () => {
+  const { repoDir, tempDir } = createGitRepo();
+  cleanupPaths.push(tempDir);
+  const subdirectory = path.join(repoDir, "fitnexa2");
+  mkdirSync(subdirectory, { recursive: true });
+  writeFileSync(path.join(subdirectory, "index.ts"), "export default 1;\n");
+  execFileSync("git", ["add", "fitnexa2/index.ts"], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["commit", "-m", "add fitnexa2"], { cwd: repoDir, stdio: "pipe" });
+
+  const deps = createDeps();
+  const sourceProject = createPersistedProjectRecordForTest({
+    projectId: repoDir,
+    rootPath: repoDir,
+    displayName: "Fitnexa2",
+  });
+  const sourceWorkspace = createPersistedWorkspaceRecordForTest({
+    workspaceId: "ws-subdir-checkout",
+    projectId: repoDir,
+    cwd: subdirectory,
+    kind: "local_checkout",
+    displayName: "develop",
+  });
+  deps.projects.set(sourceProject.projectId, sourceProject);
+  deps.workspaces.set(sourceWorkspace.workspaceId, sourceWorkspace);
+
+  const result = await createPaseoWorktree(
+    {
+      cwd: repoDir,
+      projectId: repoDir,
+      worktreeSlug: "from-root-cwd",
+      runSetup: false,
+      paseoHome: path.join(tempDir, ".paseo"),
+    },
+    deps,
+  );
+
+  expect(result.workspace.cwd).toBe(path.join(result.worktree.worktreePath, "fitnexa2"));
 });
 
 test("registers a new worktree in the existing root project after the main checkout workspace is removed", async () => {
@@ -784,7 +883,7 @@ function createWorkspaceGitServiceStub(): WorkspaceGitService {
     registerWorkspace: () => ({
       unsubscribe: () => {},
     }),
-    peekSnapshot: (cwd) => createWorkspaceGitSnapshot(cwd),
+    peekSnapshot: (cwd) => createWorkspaceGitSnapshotOrNoGit(cwd),
     getCheckout: async (cwd) => ({
       cwd,
       isGit: false,
@@ -794,7 +893,7 @@ function createWorkspaceGitServiceStub(): WorkspaceGitService {
       isPaseoOwnedWorktree: false,
       mainRepoRoot: null,
     }),
-    getSnapshot: async (cwd) => createWorkspaceGitSnapshot(cwd),
+    getSnapshot: async (cwd) => createWorkspaceGitSnapshotOrNoGit(cwd),
     resolveRepoRoot: async (cwd) => {
       try {
         return createWorkspaceGitSnapshot(cwd).git.repoRoot ?? cwd;
@@ -812,6 +911,36 @@ function createWorkspaceGitServiceStub(): WorkspaceGitService {
     onWorkspaceStateMayHaveChanged: () => {},
     dispose: () => {},
   };
+}
+
+function createWorkspaceGitSnapshotOrNoGit(cwd: string): WorkspaceGitRuntimeSnapshot {
+  try {
+    return createWorkspaceGitSnapshot(cwd);
+  } catch {
+    return {
+      cwd,
+      git: {
+        isGit: false,
+        repoRoot: null,
+        mainRepoRoot: null,
+        currentBranch: null,
+        remoteUrl: null,
+        isPaseoOwnedWorktree: false,
+        isDirty: null,
+        baseRef: null,
+        aheadBehind: null,
+        aheadOfOrigin: null,
+        behindOfOrigin: null,
+        hasRemote: false,
+        diffStat: null,
+      },
+      github: {
+        featuresEnabled: false,
+        pullRequest: null,
+        error: null,
+      },
+    };
+  }
 }
 
 function createWorkspaceGitSnapshot(cwd: string): WorkspaceGitRuntimeSnapshot {

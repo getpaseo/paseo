@@ -1,5 +1,6 @@
 import type { WorkspaceGitService } from "./workspace-git-service.js";
-import { resolve } from "node:path";
+import { resolve, relative, isAbsolute } from "node:path";
+import { realpathSync } from "node:fs";
 import {
   type PersistedWorkspaceRecord,
   type ProjectRegistry,
@@ -199,8 +200,6 @@ function maybeMarkFirstAgentBranchAutoNameEligible(options: {
   });
 }
 
-// The base branch is normalized to match worktree.json's baseRefName (origin/
-// stripped). checkout-branch worktrees have no distinct base, so they stay null.
 function resolveIntentBaseBranch(intent: WorktreeCreationIntent): string | null {
   switch (intent.kind) {
     case "branch-off":
@@ -210,6 +209,37 @@ function resolveIntentBaseBranch(intent: WorktreeCreationIntent): string | null 
     case "checkout-branch":
       return null;
   }
+}
+
+function resolveWorktreeWorkspaceDirectory(options: {
+  inputCwd: string;
+  sourceRepoRoot: string;
+  worktreePath: string;
+}): string {
+  const normalizedWorktreePath = resolve(options.worktreePath);
+
+  let compInputCwd = resolve(options.inputCwd);
+  let compSourceRepoRoot = resolve(options.sourceRepoRoot);
+  try {
+    compInputCwd = realpathSync.native(compInputCwd);
+  } catch {}
+  try {
+    compSourceRepoRoot = realpathSync.native(compSourceRepoRoot);
+  } catch {}
+
+  const rel = relative(compSourceRepoRoot, compInputCwd);
+  if (!rel || rel === "." || rel.startsWith("..") || isAbsolute(rel)) {
+    return normalizedWorktreePath;
+  }
+
+  const mapped = resolve(normalizedWorktreePath, rel);
+  const rootPrefix = normalizedWorktreePath.endsWith("/")
+    ? normalizedWorktreePath
+    : `${normalizedWorktreePath}/`;
+  if (mapped !== normalizedWorktreePath && !mapped.startsWith(rootPrefix)) {
+    return normalizedWorktreePath;
+  }
+  return mapped;
 }
 
 async function upsertWorkspaceForWorktree(options: {
@@ -224,9 +254,25 @@ async function upsertWorkspaceForWorktree(options: {
     "projectRegistry" | "workspaceRegistry" | "workspaceGitService"
   >;
 }): Promise<PersistedWorkspaceRecord> {
-  const normalizedCwd = resolve(options.worktree.worktreePath);
   const normalizedInputCwd = resolve(options.inputCwd);
   const normalizedRepoRoot = resolve(options.repoRoot);
+
+  const sourceWorkspace = await findSourceWorkspaceForWorktree({
+    inputCwd: normalizedInputCwd,
+    projectId: options.projectId,
+    repoRoot: normalizedRepoRoot,
+    workspaceRegistry: options.deps.workspaceRegistry,
+  });
+  const effectiveInputCwd = sourceWorkspace?.cwd ?? normalizedInputCwd;
+  const sourceRepoRoot = await resolveSourceRepoRoot(
+    effectiveInputCwd,
+    options.deps.workspaceGitService,
+  );
+  const normalizedCwd = resolveWorktreeWorkspaceDirectory({
+    inputCwd: effectiveInputCwd,
+    sourceRepoRoot,
+    worktreePath: options.worktree.worktreePath,
+  });
   // Creation never deduplicates by directory: a worktree directory may back
   // more than one workspace. We still resolve the source project from the
   // originating checkout, but always mint a fresh workspace record.
@@ -451,6 +497,39 @@ async function resolveSourceProjectForWorktree(options: {
     repoRoot: options.repoRoot,
     projectRegistry: options.deps.projectRegistry,
   });
+}
+
+async function resolveSourceRepoRoot(
+  cwd: string,
+  workspaceGitService: WorkspaceGitService,
+): Promise<string> {
+  try {
+    return await workspaceGitService.resolveRepoRoot(cwd);
+  } catch {
+    return resolve(cwd);
+  }
+}
+
+async function findSourceWorkspaceForWorktree(options: {
+  inputCwd: string;
+  projectId?: string;
+  repoRoot: string;
+  workspaceRegistry: Pick<WorkspaceRegistry, "list">;
+}): Promise<PersistedWorkspaceRecord | null> {
+  const workspaces = await options.workspaceRegistry.list();
+  const active = workspaces.filter((ws) => !ws.archivedAt && ws.kind !== "worktree");
+  if (options.projectId) {
+    const candidates = active.filter((ws) => ws.projectId === options.projectId);
+    if (candidates.length === 1) return candidates[0];
+    if (candidates.length > 1) {
+      return candidates.reduce((a, b) => (a.updatedAt > b.updatedAt ? a : b));
+    }
+  }
+  return (
+    active.find((ws) => ws.cwd === options.inputCwd) ??
+    active.find((ws) => ws.cwd === options.repoRoot) ??
+    null
+  );
 }
 
 async function findWorkspaceForSource(options: {
