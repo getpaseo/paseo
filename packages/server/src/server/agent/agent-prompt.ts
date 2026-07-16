@@ -115,6 +115,29 @@ export function isSystemInjectedEnvelope(text: string): boolean {
   return SYSTEM_ENVELOPE_PATTERN.test(text);
 }
 
+// Matches a <paseo-system> block at the START of a message that has further
+// content after it (spawn-context injection: envelope + blank line + prompt).
+// Non-greedy so the first closing tag ends the envelope.
+const LEADING_SYSTEM_ENVELOPE_PATTERN = /^<paseo-system>\n[\s\S]*?\n<\/paseo-system>\n\n/;
+
+/**
+ * Resolve what a user_message should display in the timeline once daemon-injected
+ * context is accounted for:
+ * - `null` when the whole message is a system envelope (hide it entirely).
+ * - the trailing body when an envelope only prefixes real content, so the
+ *   visible first message is exactly what the parent/user asked for.
+ * - the text unchanged otherwise.
+ *
+ * The provider still receives the full text; this only shapes the display echo.
+ */
+export function displayTextForUserMessage(text: string): string | null {
+  if (isSystemInjectedEnvelope(text)) {
+    return null;
+  }
+  const leadingEnvelope = LEADING_SYSTEM_ENVELOPE_PATTERN.exec(text);
+  return leadingEnvelope ? text.slice(leadingEnvelope[0].length) : text;
+}
+
 export interface SendPromptToAgentParams {
   agentManager: AgentManager;
   agentStorage: AgentStorage;

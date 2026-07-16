@@ -9,7 +9,14 @@ import type {
 import { createPaseoToolCatalog, type PaseoToolHostDependencies } from "./tools/paseo-tools.js";
 import type { PaseoToolResult } from "./tools/types.js";
 
-export type AgentMcpServerOptions = PaseoToolHostDependencies;
+export interface AgentMcpServerOptions extends PaseoToolHostDependencies {
+  /**
+   * Per-agent instructions surfaced in the connecting agent's system prompt on
+   * providers that expose MCP server instructions (e.g. Claude Code). Composed
+   * by the daemon from the caller's identity - see composeAgentMcpInstructions.
+   */
+  instructions?: string;
+}
 
 type McpToolContext = RequestHandlerExtra<ServerRequest, ServerNotification>;
 
@@ -73,10 +80,13 @@ function toMcpToolResult(result: PaseoToolResult): CallToolResult {
 
 export async function createAgentMcpServer(options: AgentMcpServerOptions): Promise<McpServer> {
   const catalog = await createPaseoToolCatalog(options);
-  const server = new McpServer({
-    name: "agent-mcp",
-    version: "2.0.0",
-  });
+  const server = new McpServer(
+    {
+      name: "agent-mcp",
+      version: "2.0.0",
+    },
+    options.instructions ? { instructions: options.instructions } : undefined,
+  );
 
   for (const tool of catalog.tools.values()) {
     server.registerTool(

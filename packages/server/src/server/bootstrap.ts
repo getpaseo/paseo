@@ -105,6 +105,8 @@ import { AgentManager } from "./agent/agent-manager.js";
 import { AgentStorage } from "./agent/agent-storage.js";
 import { attachAgentStoragePersistence } from "./persistence-hooks.js";
 import { createAgentMcpServer } from "./agent/mcp-server.js";
+import { composeAgentMcpInstructions } from "./agent/agent-spawn-context.js";
+import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
 import {
   createPaseoToolCatalog,
   type PaseoToolHostDependencies,
@@ -1131,10 +1133,27 @@ export async function createPaseoDaemon(
   if (mcpEnabled) {
     const agentMcpRoute = "/mcp/agents";
 
+    // Compose the per-agent MCP instructions from the caller's own record:
+    // its id plus its parent linkage (and the parent's title, when resolvable).
+    // Providers that surface MCP instructions read this in their system prompt,
+    // so the agent is "born knowing" the multi-agent contract.
+    const composeMcpInstructionsForCaller = async (callerAgentId?: string): Promise<string> => {
+      if (!callerAgentId) {
+        return composeAgentMcpInstructions({});
+      }
+      const callerRecord = await agentStorage.get(callerAgentId);
+      const parentAgentId = getParentAgentIdFromLabels(callerRecord?.labels);
+      const parentTitle = parentAgentId
+        ? ((await agentStorage.get(parentAgentId))?.title ?? null)
+        : null;
+      return composeAgentMcpInstructions({ callerAgentId, parentAgentId, parentTitle });
+    };
+
     const createAgentMcpSession = async (callerAgentId?: string) => {
-      const agentMcpServer = await createAgentMcpServer(
-        createAgentToolHostDependencies({ callerAgentId }),
-      );
+      const agentMcpServer = await createAgentMcpServer({
+        ...createAgentToolHostDependencies({ callerAgentId }),
+        instructions: await composeMcpInstructionsForCaller(callerAgentId),
+      });
 
       // Stateless mode: each HTTP request builds a fresh server + transport that is
       // torn down when the response closes, so no per-session state is retained between
