@@ -2633,6 +2633,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.contextWindowUsedTokens = update.used;
     if (update.cost?.currency === "USD") {
       this.totalCostUsd = update.cost.amount;
+    } else if (!update.cost) {
+      this.totalCostUsd = undefined;
     }
 
     const usage: AgentUsage = {
@@ -2662,7 +2664,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       case "max_tokens":
       case "max_turn_requests":
       case "refusal":
-      default:
+      default: {
         const finalUsage: AgentUsage = { ...this.currentTurnUsage };
         if (this.contextWindowMaxTokens !== undefined) {
           finalUsage.contextWindowMaxTokens = this.contextWindowMaxTokens;
@@ -2680,6 +2682,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
           turnId,
         });
         break;
+      }
     }
   }
 
