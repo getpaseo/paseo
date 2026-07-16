@@ -91,6 +91,27 @@ function createTestEmailSender() {
 
 When a test is labeled end-to-end, it calls the real service. No environment variable gates, no conditional skipping, no mocking the external dependency.
 
+### Packaged desktop smoke
+
+The packaged desktop smoke is an external observer of the production launch path. It must not add a smoke-only branch to Electron main or start the daemon itself.
+
+The harness launches the unpacked packaged app with isolated user data and daemon state, connects to the real renderer over Chromium's debugging protocol, and requires all of these outcomes:
+
+- the `paseo://app/` renderer mounts into `#root`;
+- the sandboxed preload exposes the desktop bridge;
+- the renderer starts a fresh desktop-managed daemon through the normal startup bootstrap;
+- the bundled CLI can query that daemon and run a terminal command.
+
+The required Linux `desktop-tests` pull-request job builds only the x64 unpacked directory with `electron-builder --dir --publish never`, runs it under Xvfb, and uploads renderer, desktop, and daemon diagnostics on failure. It does not create an installer, GitHub release, tag, or published artifact. The desktop release matrix runs the same harness against each host-native packaged app before publishing.
+
+To exercise the PR path on Linux:
+
+```bash
+PASEO_DESKTOP_SMOKE=1 \
+PASEO_DESKTOP_SMOKE_ARTIFACT_DIR=/tmp/paseo-desktop-smoke \
+npm run build:desktop -- --publish never --linux --x64 --dir
+```
+
 ## Test organization
 
 - Collocate tests with implementation: `thing.ts` + `thing.test.ts`
