@@ -48,6 +48,12 @@ test("cancels or opens a large file from the inline warning", async ({ page }) =
       .getByText(/line 0000/)
       .first(),
   ).toBeVisible();
+
+  await page.keyboard.press("Alt+Shift+W");
+  await expect(page.getByTestId("workspace-tab-file_large.txt")).toHaveCount(0);
+
+  await openFileFromExplorer(page, "large.txt");
+  await expect(page.getByTestId("large-file-warning")).toBeVisible();
 });
 
 test("uses the configured large-file warning threshold", async ({ page }) => {

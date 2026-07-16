@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { FileReadResult } from "@getpaseo/client/internal/daemon-client";
 import {
@@ -68,8 +68,6 @@ interface FileLineSelection {
   lineEnd: number;
 }
 
-const approvedLargeFileOpenKeys = new Set<string>();
-
 interface LargeFileOpenWarning {
   approvalKey: string;
   fileName: string;
@@ -129,12 +127,14 @@ async function getLargeFileOpenWarningIfNeeded({
   cwd,
   path,
   thresholdBytes,
+  approvedLargeFileOpenKey,
 }: {
   client: FileSizeLookupClient;
   serverId: string;
   cwd: string;
   path: string;
   thresholdBytes: number;
+  approvedLargeFileOpenKey: string | null;
 }): Promise<LargeFileOpenWarning | null> {
   let size: number | null = null;
   try {
@@ -147,7 +147,7 @@ async function getLargeFileOpenWarningIfNeeded({
   }
 
   const approvalKey = `${serverId}\0${cwd}\0${path}`;
-  if (approvedLargeFileOpenKeys.has(approvalKey)) {
+  if (approvedLargeFileOpenKey === approvalKey) {
     return null;
   }
 
@@ -470,6 +470,7 @@ export function FilePane({
     (settings) => settings.largeFileWarningThresholdMb,
   );
   const largeFileWarningThresholdBytes = largeFileWarningThresholdMb * 1024 * 1024;
+  const [approvedLargeFileOpenKey, setApprovedLargeFileOpenKey] = useState<string | null>(null);
   const normalizedWorkspaceRoot = useMemo(() => workspaceRoot.trim(), [workspaceRoot]);
   const normalizedFilePath = useMemo(() => trimNonEmpty(location.path), [location.path]);
   const readTarget = useMemo(
@@ -496,6 +497,7 @@ export function FilePane({
       readTarget?.cwd ?? null,
       readTarget?.path ?? null,
       largeFileWarningThresholdBytes,
+      approvedLargeFileOpenKey,
     ],
     enabled: isFileQueryEnabled({
       hasReadTarget: Boolean(client && readTarget),
@@ -518,6 +520,7 @@ export function FilePane({
           cwd: readTarget.cwd,
           path: readTarget.path,
           thresholdBytes: largeFileWarningThresholdBytes,
+          approvedLargeFileOpenKey,
         });
         if (largeFileWarning) {
           return { file: null, imageAttachment: null, error: null, largeFileWarning };
@@ -545,15 +548,13 @@ export function FilePane({
   });
   const imagePreviewUri = useAttachmentPreviewUrl(query.data?.imageAttachment ?? null);
   const largeFileWarning = query.data?.largeFileWarning ?? null;
-  const refetchFile = query.refetch;
 
   const openLargeFile = useCallback(() => {
     if (!largeFileWarning) {
       return;
     }
-    approvedLargeFileOpenKeys.add(largeFileWarning.approvalKey);
-    void refetchFile();
-  }, [largeFileWarning, refetchFile]);
+    setApprovedLargeFileOpenKey(largeFileWarning.approvalKey);
+  }, [largeFileWarning]);
 
   return (
     <View style={styles.container} testID="workspace-file-pane">
