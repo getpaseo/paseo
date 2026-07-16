@@ -371,6 +371,44 @@ describe("searchItems", () => {
     expect(results).toHaveLength(1);
   });
 
+  it("returns one navigable match per occurrence, including repeats within one item", () => {
+    // Regression: an item containing the query more than once used to collapse to
+    // a single match, so you couldn't cycle to (or even see) the later hits.
+    const multi: StreamItem[] = [
+      makeUserMessage("write a huge wall of text", "u1"),
+      makeAssistantMessage("this huge wall of text is a large wall of text", "a1"),
+    ];
+    const results = searchItems(multi, "wall", "all");
+
+    // 1 hit in the prompt + 2 hits in the assistant reply = 3 navigable matches.
+    expect(results).toHaveLength(3);
+    expect(results.map((r) => r.item.id)).toEqual(["u1", "a1", "a1"]);
+
+    // The two assistant occurrences are distinct, ordered by position, and each
+    // carries its own occurrence index for a stable key.
+    const assistant = results.filter((r) => r.item.id === "a1");
+    expect(assistant.map((r) => r.occurrenceIndex)).toEqual([0, 1]);
+    expect(assistant[0]!.matchOffset).toBeLessThan(assistant[1]!.matchOffset);
+  });
+
+  it("cycles through every occurrence, wrapping past the last", () => {
+    const model = createTimelineSearchModel(() => [
+      makeUserMessage("write a huge wall of text", "u1"),
+      makeAssistantMessage("this huge wall of text is a large wall of text", "a1"),
+    ]);
+    model.open();
+    model.setQuery("wall");
+
+    expect(model.getState().matches).toHaveLength(3);
+    expect(model.getState().selectedIndex).toBe(0);
+    model.selectNext();
+    expect(model.getState().selectedIndex).toBe(1);
+    model.selectNext();
+    expect(model.getState().selectedIndex).toBe(2);
+    model.selectNext();
+    expect(model.getState().selectedIndex).toBe(0); // wraps
+  });
+
   it("filters to messages only", () => {
     const results = searchItems(items, "deploy", "messages");
     const kinds = results.map((r) => r.item.kind);

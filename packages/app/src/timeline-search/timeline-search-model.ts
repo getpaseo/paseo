@@ -36,7 +36,7 @@
 
 import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
 import type { StreamItem } from "@/types/stream";
-import { findFirstMatch, textMatchesQuery } from "./highlight";
+import { findAllMatches } from "./highlight";
 
 // ---- Filter types ----
 
@@ -53,8 +53,16 @@ export type TimelineSearchFilter =
 export interface TimelineSearchMatch {
   /** The stream item that matched. */
   item: StreamItem;
-  /** Snippet for display (truncated to ~80 chars). */
+  /** Snippet for display (truncated to ~80 chars), centered on this occurrence. */
   snippet: string;
+  /**
+   * Character offset of this occurrence within the item's searchable text.
+   * A single item yields one match PER occurrence, so a message containing the
+   * query twice produces two navigable matches (distinguished by this offset).
+   */
+  matchOffset: number;
+  /** 0-based index of this occurrence among all matches within the same item. */
+  occurrenceIndex: number;
 }
 
 // ---- Model state ----
@@ -165,14 +173,27 @@ function extractDetailOutput(detail: ToolCallDetail): string | null {
   }
 }
 
-/** Whether `a` and `b` contain the same item ids, in the same order. */
+/** Stable identity for a single occurrence-level match (item + occurrence). */
+function matchKey(match: TimelineSearchMatch): string {
+  return `${match.item.id}:${match.matchOffset}`;
+}
+
+/**
+ * Whether `a` and `b` contain the same occurrence-level matches, in the same
+ * order — keyed by item id AND match offset so two occurrences within one item
+ * are treated as distinct (a streaming refresh that only appends new content
+ * keeps the existing matches' identity and skips a re-notify/scroll).
+ */
 function matchesAreIdEqual(
   a: readonly TimelineSearchMatch[],
   b: readonly TimelineSearchMatch[],
 ): boolean {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) {
-    if (a[i]?.item.id !== b[i]?.item.id) return false;
+    const left = a[i];
+    const right = b[i];
+    if (!left || !right) return false;
+    if (matchKey(left) !== matchKey(right)) return false;
   }
   return true;
 }
@@ -192,19 +213,23 @@ const SNIPPET_HEAD_ANCHOR_THRESHOLD = 80;
 const SNIPPET_CONTEXT_BEFORE = 30;
 
 /**
- * Builds a display snippet centered on the first match of `query` in `text`,
- * so a deep match is never truncated away before it can be shown. A match
- * that starts within the first `SNIPPET_HEAD_ANCHOR_THRESHOLD` chars keeps
- * the original head-anchored behavior (truncate from the start); a deeper
- * match instead takes a window of `SNIPPET_CONTEXT_BEFORE` chars before the
- * match, filled out to ~`SNIPPET_MAX_LENGTH` chars total, with a leading "…"
- * (and trailing "…" if the window doesn't reach the end of the text).
+ * Builds a display snippet centered on a SPECIFIC occurrence of `query` in
+ * `text` (the `occurrenceIndex`-th match), so each per-occurrence result shows
+ * its own surrounding context rather than repeating the first match. A match
+ * that starts within the first `SNIPPET_HEAD_ANCHOR_THRESHOLD` chars keeps the
+ * head-anchored behavior (truncate from the start); a deeper match instead
+ * takes a window of `SNIPPET_CONTEXT_BEFORE` chars before the match, filled out
+ * to ~`SNIPPET_MAX_LENGTH` chars total, with a leading "…" (and trailing "…" if
+ * the window doesn't reach the end of the text). Occurrence order is stable
+ * between the original and whitespace-collapsed text, so the Nth cleaned match
+ * lines up with the Nth occurrence used for navigation.
  */
-function makeSnippet(text: string, query: string): string {
+function makeSnippet(text: string, query: string, occurrenceIndex: number): string {
   const cleaned = text.replace(/\s+/g, " ").trim();
   if (cleaned.length <= SNIPPET_MAX_LENGTH) return cleaned;
 
-  const match = findFirstMatch(cleaned, query);
+  const cleanedMatches = findAllMatches(cleaned, query);
+  const match = cleanedMatches[occurrenceIndex] ?? cleanedMatches[0];
   if (!match || match.index < SNIPPET_HEAD_ANCHOR_THRESHOLD) {
     return `${cleaned.slice(0, SNIPPET_MAX_LENGTH - 3)}…`;
   }
@@ -354,8 +379,20 @@ export function searchItems(
     if (!item) continue;
     const text = extractSearchText(item, filter);
     if (!text) continue;
-    if (!textMatchesQuery(text, trimmed)) continue;
-    results.push({ item, snippet: makeSnippet(text, trimmed) });
+    // One navigable match PER occurrence, so a message that contains the query
+    // more than once contributes one result per hit (and the in-thread
+    // highlighting, which marks every occurrence, stays in sync with the count).
+    const occurrences = findAllMatches(text, trimmed);
+    for (let occurrenceIndex = 0; occurrenceIndex < occurrences.length; occurrenceIndex++) {
+      const occurrence = occurrences[occurrenceIndex];
+      if (!occurrence) continue;
+      results.push({
+        item,
+        snippet: makeSnippet(text, trimmed, occurrenceIndex),
+        matchOffset: occurrence.index,
+        occurrenceIndex,
+      });
+    }
   }
   return results;
 }
@@ -423,20 +460,22 @@ export function createTimelineSearchModel(
       notify();
     },
     refresh() {
-      const previousSelectedId =
-        state.selectedIndex >= 0 ? state.matches[state.selectedIndex]?.item.id : undefined;
+      const previousSelectedKey =
+        state.selectedIndex >= 0 && state.matches[state.selectedIndex]
+          ? matchKey(state.matches[state.selectedIndex] as TimelineSearchMatch)
+          : undefined;
       const newMatches = searchItems(getItems(), state.query, state.filter);
       if (matchesAreIdEqual(state.matches, newMatches)) {
-        // Same items matched, in the same order — keep the existing matches
-        // array identity and skip notifying. This is what stops a streaming
-        // token from re-triggering the scroll-to-match effect on every
+        // Same occurrences matched, in the same order — keep the existing
+        // matches array identity and skip notifying. This is what stops a
+        // streaming token from re-triggering the scroll-to-match effect on every
         // refresh() call while the panel is open (see
         // use-timeline-search-scroll.ts, which keys off navigationRevision,
         // not matches identity, for exactly this reason).
         return;
       }
-      const preservedIndex = previousSelectedId
-        ? newMatches.findIndex((match) => match.item.id === previousSelectedId)
+      const preservedIndex = previousSelectedKey
+        ? newMatches.findIndex((match) => matchKey(match) === previousSelectedKey)
         : -1;
       const fallbackIndex = newMatches.length > 0 ? 0 : -1;
       const selectedIndex = preservedIndex >= 0 ? preservedIndex : fallbackIndex;

@@ -59,6 +59,26 @@ export function findFirstMatch(
 }
 
 /**
+ * Locates EVERY case-insensitive, Unicode-aware occurrence of `query` in
+ * `text`, in order — same matching semantics as `textMatchesQuery`/
+ * `splitHighlightSegments`, so every occurrence counted here also highlights.
+ * Returns an empty array when the trimmed query is empty or there is no match.
+ * Used by timeline search to make each occurrence its own navigable result.
+ */
+export function findAllMatches(
+  text: string,
+  query: string,
+): Array<{ index: number; length: number }> {
+  const trimmed = query.trim();
+  if (trimmed.length === 0 || text.length === 0) return [];
+  const results: Array<{ index: number; length: number }> = [];
+  for (const match of text.matchAll(buildMatchExpression(trimmed))) {
+    results.push({ index: match.index, length: match[0].length });
+  }
+  return results;
+}
+
+/**
  * Splits `text` into alternating non-match / match segments for `query`.
  * Case-insensitive; the query is treated as a literal (no regex). Returns a
  * single non-match segment when the query is empty or absent.

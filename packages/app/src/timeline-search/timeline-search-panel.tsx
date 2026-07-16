@@ -165,6 +165,17 @@ export function TimelineSearchPanel({
     [hasMatches],
   );
 
+  // While older history is still paging in, show a pending status rather than a
+  // premature "no results"; otherwise the match count (or no-results) label.
+  let matchStatusLabel: string;
+  if (isPaging) {
+    matchStatusLabel = t("timelineSearch.searchingHistory");
+  } else if (hasMatches) {
+    matchStatusLabel = t("timelineSearch.matchCount", { count: state.matches.length });
+  } else {
+    matchStatusLabel = t("timelineSearch.noResults");
+  }
+
   return (
     <View style={styles.container} testID={testID}>
       <View style={styles.searchRow}>
@@ -184,11 +195,7 @@ export function TimelineSearchPanel({
         </View>
         {hasQuery && (
           <Text style={styles.matchCount} numberOfLines={1}>
-            {isPaging
-              ? t("timelineSearch.searchingHistory")
-              : hasMatches
-                ? t("timelineSearch.matchCount", { count: state.matches.length })
-                : t("timelineSearch.noResults")}
+            {matchStatusLabel}
           </Text>
         )}
         <Pressable
@@ -238,7 +245,7 @@ export function TimelineSearchPanel({
         <ScrollView style={styles.matchList} keyboardShouldPersistTaps="handled">
           {state.matches.map((match, index) => (
             <MatchRow
-              key={match.item.id}
+              key={`${match.item.id}:${match.matchOffset}`}
               match={match}
               index={index}
               active={index === state.selectedIndex}
