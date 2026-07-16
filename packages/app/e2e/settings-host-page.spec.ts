@@ -1,6 +1,5 @@
 import { expect, test } from "./fixtures";
 import { gotoAppShell, openSettings } from "./helpers/app";
-import { startOutdatedDaemon } from "./helpers/daemon-update";
 import { getE2EDaemonPort } from "./helpers/daemon-port";
 import { TEST_HOST_LABEL } from "./helpers/daemon-registry";
 import { getServerId } from "./helpers/server-id";
@@ -71,30 +70,29 @@ test.describe("Settings host page", () => {
     await expectHostActionCards(page, serverId);
   });
 
-  test("a failed remote daemon update remains visible in the host UI", async ({ page }) => {
-    const daemon = await startOutdatedDaemon();
-    try {
-      await seedSavedSettingsHosts(page, [daemon]);
-      await page.reload();
-      await openSettings(page);
-      await openSettingsHost(page, daemon.serverId);
-      await openHostSection(page, daemon.serverId, "host");
+  test("a failed remote daemon update remains visible in the host UI", async ({
+    page,
+    outdatedDaemon,
+  }) => {
+    await seedSavedSettingsHosts(page, [outdatedDaemon]);
+    await page.reload();
+    await openSettings(page);
+    await openSettingsHost(page, outdatedDaemon.serverId);
+    await openHostSection(page, outdatedDaemon.serverId, "host");
 
-      page.once("dialog", (dialog) => dialog.accept());
-      const updateButton = page.getByTestId("host-page-update-button");
-      await updateButton.click();
+    page.once("dialog", (dialog) => dialog.accept());
+    const updateButton = page.getByTestId("host-page-update-button");
+    await updateButton.click();
 
-      await expect(updateButton).toBeDisabled();
-      await expect(updateButton).toContainText(/Preparing update|Downloading packages|Installing/);
+    await expect(
+      updateButton.filter({ hasText: /Preparing update|Downloading packages|Installing/ }),
+    ).toBeDisabled();
 
-      const updateFailure = page.getByTestId("host-page-update-error");
-      await expect(updateFailure).toBeVisible();
-      await expect(updateFailure).toContainText("Update failed");
-      await expect(updateFailure).toContainText("Failed to update the daemon:");
-      await expect(updateButton).toBeEnabled();
-    } finally {
-      await daemon.close();
-    }
+    const updateFailure = page.getByTestId("host-page-update-error");
+    await expect(updateFailure).toBeVisible();
+    await expect(updateFailure).toContainText("Update failed");
+    await expect(updateFailure).toContainText("Failed to update the daemon:");
+    await expect(updateButton).toBeEnabled();
   });
 
   test("clicking the label pencil reveals the inline editor", async ({ page }) => {

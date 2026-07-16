@@ -74,7 +74,7 @@ async function waitForDaemon(
         ),
       );
     });
-    child.on("message", (message: OutdatedDaemonMessage) => {
+    child.once("message", (message: OutdatedDaemonMessage) => {
       if (message.type === "error") {
         clearTimeout(timeout);
         reject(new Error(message.error));

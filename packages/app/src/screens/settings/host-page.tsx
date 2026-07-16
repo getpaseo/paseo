@@ -69,6 +69,7 @@ import { ICON_SIZE } from "@/styles/theme";
 import type { Theme } from "@/styles/theme";
 import { getProviderIcon } from "@/components/provider-icons";
 import { BrowserToolsOptInCard } from "./browser-tools-card";
+import { hasDaemonReconnectedAfter, type DaemonConnectionMarker } from "./daemon-reconnect";
 import { restartDaemonFromSettings } from "./daemon-restart";
 
 const ThemedArrowUp = withUnistyles(ArrowUp);
@@ -366,7 +367,7 @@ export function HostSettingsPage({
 
       {isLocalDaemon ? <LocalDaemonSection /> : null}
 
-      {!isLocalDaemon ? <UpdateDaemonCard host={host} /> : null}
+      {!isLocalDaemon ? <UpdateDaemonCard key={host.serverId} host={host} /> : null}
 
       <RemoveHostSection host={host} isLocalDaemon={isLocalDaemon} onRemoved={onHostRemoved} />
     </View>
@@ -794,11 +795,8 @@ function UpdateDaemonCard({ host }: { host: HostProfile }) {
     [host.serverId, runtime],
   );
   const hasReconnectedAfter = useCallback(
-    (startGeneration: number | null) => {
-      const snapshot = runtime.getSnapshot(host.serverId);
-      if (!snapshot || !isHostRuntimeConnected(snapshot)) return false;
-      return startGeneration === null || snapshot.clientGeneration !== startGeneration;
-    },
+    (startMarker: DaemonConnectionMarker | null) =>
+      hasDaemonReconnectedAfter(runtime.getSnapshot(host.serverId), startMarker),
     [host.serverId, runtime],
   );
 
@@ -816,18 +814,18 @@ function UpdateDaemonCard({ host }: { host: HostProfile }) {
   );
 
   const waitForDaemonRestart = useCallback(
-    async (startGeneration: number | null) => {
+    async (startMarker: DaemonConnectionMarker | null) => {
       const disconnectTimeoutMs = 15000;
       const reconnectTimeoutMs = 120000; // 2 minutes — npm update + restart can take a while
-      if (!hasReconnectedAfter(startGeneration) && isHostConnected()) {
+      if (!hasReconnectedAfter(startMarker) && isHostConnected()) {
         await waitForCondition(
-          () => !isHostConnected() || hasReconnectedAfter(startGeneration),
+          () => !isHostConnected() || hasReconnectedAfter(startMarker),
           disconnectTimeoutMs,
         );
       }
       const reconnected =
-        hasReconnectedAfter(startGeneration) ||
-        (await waitForCondition(() => hasReconnectedAfter(startGeneration), reconnectTimeoutMs));
+        hasReconnectedAfter(startMarker) ||
+        (await waitForCondition(() => hasReconnectedAfter(startMarker), reconnectTimeoutMs));
       if (isMountedRef.current) {
         if (!reconnected) {
           setUpdateState({
@@ -872,7 +870,13 @@ function UpdateDaemonCard({ host }: { host: HostProfile }) {
     })
       .then((confirmed) => {
         if (!confirmed || !isMountedRef.current) return;
-        const startGeneration = runtime.getSnapshot(host.serverId)?.clientGeneration ?? null;
+        const startSnapshot = runtime.getSnapshot(host.serverId);
+        const startMarker = startSnapshot
+          ? {
+              clientGeneration: startSnapshot.clientGeneration,
+              lastOnlineAt: startSnapshot.lastOnlineAt,
+            }
+          : null;
         setUpdateState({
           status: "updating",
           phase: t("settings.host.daemon.update.phaseStarting"),
@@ -923,7 +927,7 @@ function UpdateDaemonCard({ host }: { host: HostProfile }) {
               return undefined;
             }
             // Update succeeded — wait for daemon to restart and reconnect
-            void waitForDaemonRestart(startGeneration);
+            void waitForDaemonRestart(startMarker);
             return undefined;
           })
           .catch((error) => {
