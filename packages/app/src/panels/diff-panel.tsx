@@ -110,13 +110,11 @@ type DiffPanelItemLayoutGetter = NonNullable<FlatListProps<DiffPanelItem>["getIt
  */
 function DiffPanelBody({
   serverId,
-  workspaceId,
   cwd,
   target,
   focusPath,
 }: {
   serverId: string;
-  workspaceId: string;
   cwd: string;
   target: DiffTarget;
   focusPath?: string;
@@ -128,7 +126,6 @@ function DiffPanelBody({
 
   const { files, isLoading, error, capabilityMissing } = useDiffFiles(target, {
     serverId,
-    workspaceId,
     cwd,
   });
 
@@ -365,7 +362,6 @@ function DiffPanel() {
   return (
     <DiffPanelBody
       serverId={serverId}
-      workspaceId={workspaceId}
       cwd={cwd}
       target={target.diffTarget}
       focusPath={target.focusPath}

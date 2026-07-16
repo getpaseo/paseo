@@ -2,23 +2,18 @@ import { useMemo } from "react";
 import type { ParsedDiffFile } from "@getpaseo/protocol/messages";
 import { useFetchQueries } from "@/data/query";
 import type { DiffTarget } from "@/git/diff-target";
-import { checkoutCommitFileDiffQueryKey } from "@/git/query-keys";
+import { checkoutCommitFileDiffQueryKey, COMMIT_FILE_DIFF_STALE_TIME } from "@/git/query-keys";
 import { useCheckoutCommitsQuery } from "@/git/use-commits-query";
 import { useCheckoutDiffQuery } from "@/git/use-diff-query";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 
-// A commit's file diff is immutable for a given sha+path, so it can stay cached
-// for the lifetime of the view without refetching. Matches use-commit-file-diff.
-const COMMIT_FILE_DIFF_STALE_TIME = 5 * 60_000;
-
 /**
  * Context every diff target needs to resolve against a host: which daemon
- * (`serverId`), which workspace tab (`workspaceId`), and which checkout (`cwd`).
- * `enabled` lets the consumer pause all fetching (e.g. an inactive tab).
+ * (`serverId`) and which checkout (`cwd`). `enabled` lets the consumer pause
+ * all fetching (e.g. an inactive tab).
  */
 export interface DiffFilesContext {
   serverId: string;
-  workspaceId: string;
   cwd: string;
   enabled?: boolean;
 }
