@@ -2,6 +2,7 @@ export type KeyboardFocusScope =
   | "terminal"
   | "message-input"
   | "command-center"
+  | "find-input"
   | "editable"
   | "other";
 

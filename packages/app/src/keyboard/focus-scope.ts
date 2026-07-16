@@ -65,6 +65,17 @@ export function resolveKeyboardFocusScope(input: {
   }
 
   if (
+    candidates.some((element) =>
+      Boolean(
+        element.closest("[data-testid='pane-find-input']") ||
+        element.closest("[data-testid='timeline-search-input']"),
+      ),
+    )
+  ) {
+    return "find-input";
+  }
+
+  if (
     candidates.some((element) => {
       const editable = element as HTMLElement;
       if (editable.isContentEditable) {

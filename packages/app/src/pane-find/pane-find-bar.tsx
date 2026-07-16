@@ -80,19 +80,21 @@ export function PaneFindBarView({
 
   return (
     <View style={styles.container} testID={testID}>
-      <ThemedSearchIcon size={16} />
-      <ThemedTextInput
-        ref={inputRef}
-        value={state.query}
-        onChangeText={handleQueryChange}
-        onKeyPress={handleKeyPress}
-        placeholder={t("common.placeholders.search")}
-        style={styles.input}
-        autoFocus
-        returnKeyType="search"
-        accessibilityLabel={t("common.placeholders.search")}
-        testID="pane-find-input"
-      />
+      <View style={styles.inputWrapper}>
+        <ThemedSearchIcon size={16} />
+        <ThemedTextInput
+          ref={inputRef}
+          value={state.query}
+          onChangeText={handleQueryChange}
+          onKeyPress={handleKeyPress}
+          placeholder={t("common.placeholders.search")}
+          style={styles.input}
+          autoFocus
+          returnKeyType="search"
+          accessibilityLabel={t("common.placeholders.search")}
+          testID="pane-find-input"
+        />
+      </View>
       {hasQuery && !state.isPending && (
         <Text style={styles.matchCount} numberOfLines={1}>
           {hasMatches
@@ -205,6 +207,18 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
+    paddingVertical: theme.spacing[1],
+    outlineWidth: 0,
+  },
+  inputWrapper: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    borderWidth: 1.5,
+    borderColor: theme.colors.accent,
+    borderRadius: theme.borderRadius.md,
+    paddingHorizontal: theme.spacing[2],
     paddingVertical: theme.spacing[1],
   },
   matchCount: {

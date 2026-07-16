@@ -32,7 +32,7 @@ function makeAdapter(): PaneFindAdapter & { open: () => void } {
 }
 
 describe("useGlobalPaneFindAction", () => {
-  it("dispatching workspace.find.open opens the currently focused pane's adapter", () => {
+  it("dispatching workspace.find.open toggles the currently focused pane's adapter", () => {
     const { unmount } = renderHook(() => useGlobalPaneFindAction());
 
     const adapter = makeAdapter();
@@ -49,6 +49,13 @@ describe("useGlobalPaneFindAction", () => {
 
     expect(handled).toBe(true);
     expect(adapter.getState().isOpen).toBe(true);
+
+    const handledAgain = keyboardActionDispatcher.dispatch({
+      id: "workspace.find.open",
+      scope: "workspace",
+    });
+    expect(handledAgain).toBe(true);
+    expect(adapter.getState().isOpen).toBe(false);
 
     unregister();
     unmount();

@@ -11,7 +11,15 @@ const PANE_FIND_ACTIONS: readonly KeyboardActionId[] = ["workspace.find.open"];
  * pane registering its own bespoke keyboard handler.
  */
 export function useGlobalPaneFindAction() {
-  const handle = useCallback(() => paneFindController.openActive(), []);
+  const handle = useCallback(() => {
+    const state = paneFindController.getActiveState();
+    if (!state) return false;
+    if (state.isOpen) {
+      paneFindController.closeActive();
+      return true;
+    }
+    return paneFindController.openActive();
+  }, []);
 
   useKeyboardActionHandler({
     handlerId: "workspace-find-open-global",

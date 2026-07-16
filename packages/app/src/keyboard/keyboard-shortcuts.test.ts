@@ -711,4 +711,12 @@ describe("workspace.find.open — terminal scope", () => {
       context: { isMac: false, focusScope: "editable" },
     });
   });
+
+  it("toggles find when Ctrl+F is pressed from the find input", () => {
+    expectShortcutResolution({
+      event: { key: "f", ctrlKey: true },
+      context: { isMac: false, focusScope: "find-input" },
+      action: "workspace.find.open",
+    });
+  });
 });

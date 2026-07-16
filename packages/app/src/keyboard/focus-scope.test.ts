@@ -77,4 +77,16 @@ describe("resolveKeyboardFocusScope", () => {
     });
     expect(scope).toBe("editable");
   });
+
+  it.each(["[data-testid='pane-find-input']", "[data-testid='timeline-search-input']"])(
+    "detects find input scope for %s",
+    (selector) => {
+      const target = new FakeElement({ tagName: "input", selectors: [selector] });
+      const scope = resolveKeyboardFocusScope({
+        target: target as unknown as EventTarget,
+        commandCenterOpen: false,
+      });
+      expect(scope).toBe("find-input");
+    },
+  );
 });
