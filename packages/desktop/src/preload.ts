@@ -77,9 +77,10 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
     listTargets: () => ipcRenderer.invoke("paseo:editor:listTargets"),
     openTarget: (input: {
       editorId: string;
-      path: string;
-      cwd?: string;
-      mode?: "open" | "reveal";
+      workspacePath: string;
+      filePath?: string;
+      line?: number;
+      column?: number;
     }) => ipcRenderer.invoke("paseo:editor:openTarget", input),
   },
   webUtils: {

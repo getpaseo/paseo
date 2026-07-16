@@ -10,7 +10,7 @@ import {
 import { useMutation } from "@tanstack/react-query";
 import { Check, ChevronDown } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { EditorAppIcon } from "@/components/icons/editor-app-icons";
+import { EditorTargetIcon } from "@/components/icons/editor-target-icon";
 import { GitHubIcon } from "@/components/icons/github-icon";
 import {
   DropdownMenu,
@@ -46,7 +46,7 @@ interface OpenTarget {
 }
 
 const ThemedActivityIndicator = withUnistyles(ActivityIndicator);
-const ThemedEditorAppIcon = withUnistyles(EditorAppIcon);
+const ThemedEditorTargetIcon = withUnistyles(EditorTargetIcon);
 const ThemedGitHubIcon = withUnistyles(GitHubIcon);
 const ThemedChevronDown = withUnistyles(ChevronDown);
 const ThemedCheckIcon = withUnistyles(Check);
@@ -134,7 +134,9 @@ export function WorkspaceOpenInEditorButton({
         return {
           id: target.id,
           label: target.label,
-          icon: <ThemedEditorAppIcon editorId={target.id} size={16} uniProps={mutedColorMapping} />,
+          icon: (
+            <ThemedEditorTargetIcon icon={target.icon} size={16} uniProps={mutedColorMapping} />
+          ),
           onOpen: () => openDesktopTarget(target.openInput),
         };
       }),

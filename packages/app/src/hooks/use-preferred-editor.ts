@@ -1,7 +1,8 @@
 import { useCallback } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import type { EditorTargetId } from "@/workspace/editor-targets";
+
+type EditorTargetId = string;
 
 const PREFERRED_EDITOR_STORAGE_KEY = "@paseo:preferred-editor";
 const PREFERRED_EDITOR_QUERY_KEY = ["preferred-editor"];
