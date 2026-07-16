@@ -168,6 +168,9 @@ async function importProviderSessionNow(
   }
   const archivedRecord = matchingRecords.find((record) => record.archivedAt);
   if (archivedRecord?.persistence && archivedRecord.archivedAt) {
+    if (!createRealpathAwarePathMatcher(cwd)(archivedRecord.cwd)) {
+      throw new Error(`Provider session cwd does not match import cwd: ${providerHandleId}`);
+    }
     const restoredLabels = { ...archivedRecord.labels, ...input.request.labels };
     const requestedParentAgentId = getParentAgentIdFromLabels(input.request.labels);
     if (requestedParentAgentId) {

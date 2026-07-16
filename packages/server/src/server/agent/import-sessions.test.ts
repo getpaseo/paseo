@@ -636,6 +636,52 @@ test("importProviderSession restores an archived subagent as the same standalone
   expect(result).toEqual({ snapshot, timelineSize: 1 });
 });
 
+test("importProviderSession rejects an archived session from a different cwd before restoring it", async () => {
+  const archivedRecord = {
+    id: "00000000-0000-4000-8000-000000000637",
+    provider: "codex",
+    cwd: "/tmp/other-agent",
+    workspaceId: "ws-other",
+    createdAt: "2026-04-30T10:00:00.000Z",
+    updatedAt: "2026-04-30T11:00:00.000Z",
+    labels: {},
+    config: { provider: "codex", cwd: "/tmp/other-agent" },
+    persistence: {
+      provider: "codex",
+      sessionId: "thread-other-cwd",
+      nativeHandle: "thread-other-cwd",
+      metadata: { provider: "codex", cwd: "/tmp/other-agent" },
+    },
+    archivedAt: "2026-04-30T12:00:00.000Z",
+  } as StoredAgentRecord;
+  let unarchiveAttempted = false;
+  const agentManager = {
+    unarchiveSnapshot: async () => {
+      unarchiveAttempted = true;
+      return true;
+    },
+  } as unknown as AgentManager;
+  const agentStorage = {
+    list: async () => [archivedRecord],
+  } as unknown as AgentStorage;
+
+  await expect(
+    importProviderSession({
+      request: {
+        requestId: "reimport-other-cwd",
+        provider: "codex",
+        providerHandleId: "thread-other-cwd",
+        cwd: "/tmp/target-agent",
+      },
+      workspaceId: "ws-target",
+      agentManager,
+      agentStorage,
+      logger: { warn: () => {}, error: () => {} } as never,
+    }),
+  ).rejects.toThrow("Provider session cwd does not match import cwd: thread-other-cwd");
+  expect(unarchiveAttempted).toBe(false);
+});
+
 test("importProviderSession restores the archived record when provider resume fails", async () => {
   const cwd = "/tmp/imported-agent";
   const agentId = "00000000-0000-4000-8000-000000000635";

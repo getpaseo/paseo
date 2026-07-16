@@ -3693,47 +3693,69 @@ test("import_agent_request registers a workspace for a never-seen cwd", async ()
   ).toBe(true);
 });
 
-test("failed import_agent_request removes the workspace created for the import", async () => {
-  const workdir = mkdtempSync(path.join(tmpdir(), "paseo-failed-import-"));
-  const emitted: SessionOutboundMessage[] = [];
-  const logger = createTestLogger();
-  const projectRegistry = new FileBackedProjectRegistry(
-    path.join(workdir, "projects.json"),
-    logger,
-  );
-  const workspaceRegistry = new FileBackedWorkspaceRegistry(
-    path.join(workdir, "workspaces.json"),
-    logger,
-  );
-  const session = createSessionForWorkspaceTests({
-    onMessage: (message) => emitted.push(message),
-    projectRegistry,
-    workspaceRegistry,
-  });
-  session.agentStorage.list = async () => [];
-  session.agentManager.importProviderSession = async () => {
-    throw new Error("provider session is unavailable");
-  };
-
-  try {
-    await session.handleMessage({
-      type: "import_agent_request",
-      requestId: "req-failed-import",
-      providerId: "codex",
-      providerHandleId: "stale-session",
-      cwd: path.resolve("/tmp/stale-import"),
+test.each(["missing", "archived"] as const)(
+  "failed import_agent_request restores the %s project state",
+  async (projectState) => {
+    const workdir = mkdtempSync(path.join(tmpdir(), "paseo-failed-import-"));
+    const importedCwd = path.resolve("/tmp/stale-import");
+    const emitted: SessionOutboundMessage[] = [];
+    const logger = createTestLogger();
+    const projectRegistry = new FileBackedProjectRegistry(
+      path.join(workdir, "projects.json"),
+      logger,
+    );
+    const workspaceRegistry = new FileBackedWorkspaceRegistry(
+      path.join(workdir, "workspaces.json"),
+      logger,
+    );
+    const originalProject =
+      projectState === "archived"
+        ? createPersistedProjectRecord({
+            projectId: importedCwd,
+            rootPath: importedCwd,
+            kind: "non_git",
+            displayName: "stale-import",
+            createdAt: "2026-05-21T00:00:00.000Z",
+            updatedAt: "2026-05-21T00:01:00.000Z",
+            archivedAt: "2026-05-21T00:02:00.000Z",
+          })
+        : null;
+    if (originalProject) {
+      await projectRegistry.upsert(originalProject);
+    }
+    const session = createSessionForWorkspaceTests({
+      onMessage: (message) => emitted.push(message),
+      projectRegistry,
+      workspaceRegistry,
     });
+    session.agentStorage.list = async () => [];
+    session.agentManager.importProviderSession = async () => {
+      throw new Error("provider session is unavailable");
+    };
 
-    await expect(workspaceRegistry.list()).resolves.toEqual([]);
-    expect(findByType(emitted, "status")?.payload).toMatchObject({
-      status: "agent_create_failed",
-      requestId: "req-failed-import",
-      error: "provider session is unavailable",
-    });
-  } finally {
-    rmSync(workdir, { recursive: true, force: true });
-  }
-});
+    try {
+      await session.handleMessage({
+        type: "import_agent_request",
+        requestId: "req-failed-import",
+        providerId: "codex",
+        providerHandleId: "stale-session",
+        cwd: importedCwd,
+      });
+
+      await expect(workspaceRegistry.list()).resolves.toEqual([]);
+      await expect(projectRegistry.list()).resolves.toEqual(
+        originalProject ? [originalProject] : [],
+      );
+      expect(findByType(emitted, "status")?.payload).toMatchObject({
+        status: "agent_create_failed",
+        requestId: "req-failed-import",
+        error: "provider session is unavailable",
+      });
+    } finally {
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);
 
 test("import_agent_request imports into the workspace that opened the import sheet", async () => {
   const session = createSessionForWorkspaceTests();

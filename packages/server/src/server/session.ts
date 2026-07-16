@@ -2709,6 +2709,7 @@ export class Session {
         throw new Error("Import requires cwd from the selected provider session");
       }
       let workspace: PersistedWorkspaceRecord | null = null;
+      let previousProject: PersistedProjectRecord | null = null;
       let workspaceId: string;
       if (normalized.workspaceId) {
         const requestedWorkspace = await this.workspaceRegistry.get(normalized.workspaceId);
@@ -2724,8 +2725,16 @@ export class Session {
         }
         workspaceId = requestedWorkspace.workspaceId;
       } else {
-        workspace = await this.workspaceProvisioning.createWorkspaceForDirectory(normalized.cwd);
-        workspaceId = workspace.workspaceId;
+        const projectsBeforeImport = await this.projectRegistry.list();
+        const createdWorkspace = await this.workspaceProvisioning.createWorkspaceForDirectory(
+          normalized.cwd,
+        );
+        workspace = createdWorkspace;
+        previousProject =
+          projectsBeforeImport.find(
+            (project) => project.projectId === createdWorkspace.projectId,
+          ) ?? null;
+        workspaceId = createdWorkspace.workspaceId;
       }
       let importResult: Awaited<ReturnType<typeof importProviderSession>>;
       try {
@@ -2738,12 +2747,7 @@ export class Session {
         });
       } catch (error) {
         if (workspace) {
-          await this.workspaceRegistry.remove(workspace.workspaceId).catch((cleanupError) => {
-            this.sessionLogger.error(
-              { err: cleanupError, workspaceId: workspace.workspaceId },
-              "Failed to remove workspace after provider import failure",
-            );
-          });
+          await this.rollbackWorkspaceCreatedForFailedImport(workspace, previousProject);
         }
         throw error;
       }
@@ -4487,6 +4491,31 @@ export class Session {
       this.sessionLogger.warn(
         { err: error, workspaceId: workspace.workspaceId, cwd: workspace.cwd },
         "Failed to register workspace for imported agent",
+      );
+    }
+  }
+
+  private async rollbackWorkspaceCreatedForFailedImport(
+    workspace: PersistedWorkspaceRecord,
+    previousProject: PersistedProjectRecord | null,
+  ): Promise<void> {
+    try {
+      await this.workspaceRegistry.remove(workspace.workspaceId);
+      const projectHasActiveWorkspace = (await this.workspaceRegistry.list()).some(
+        (candidate) => candidate.projectId === workspace.projectId && !candidate.archivedAt,
+      );
+      if (projectHasActiveWorkspace) {
+        return;
+      }
+      if (previousProject?.archivedAt) {
+        await this.projectRegistry.upsert(previousProject);
+      } else if (!previousProject) {
+        await this.projectRegistry.remove(workspace.projectId);
+      }
+    } catch (error) {
+      this.sessionLogger.error(
+        { err: error, workspaceId: workspace.workspaceId, projectId: workspace.projectId },
+        "Failed to restore workspace state after provider import failure",
       );
     }
   }
