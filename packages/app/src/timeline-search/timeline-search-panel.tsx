@@ -42,6 +42,12 @@ const ThemedTextInput = withUnistyles(TextInput, (theme) => ({
 
 export interface TimelineSearchPanelProps {
   state: TimelineSearchState;
+  /**
+   * True while older history is still being paged in for the current query.
+   * Drives a "searching history" pending state so an incomplete result set
+   * isn't shown as a final "no results".
+   */
+  isPaging?: boolean;
   onQueryChange: (query: string) => void;
   onFilterChange: (filter: TimelineSearchFilter) => void;
   onSelectNext: () => void;
@@ -121,6 +127,7 @@ function FilterChip({
 
 export function TimelineSearchPanel({
   state,
+  isPaging = false,
   onQueryChange,
   onFilterChange,
   onSelectNext,
@@ -177,9 +184,11 @@ export function TimelineSearchPanel({
         </View>
         {hasQuery && (
           <Text style={styles.matchCount} numberOfLines={1}>
-            {hasMatches
-              ? t("timelineSearch.matchCount", { count: state.matches.length })
-              : t("timelineSearch.noResults")}
+            {isPaging
+              ? t("timelineSearch.searchingHistory")
+              : hasMatches
+                ? t("timelineSearch.matchCount", { count: state.matches.length })
+                : t("timelineSearch.noResults")}
           </Text>
         )}
         <Pressable
@@ -240,9 +249,11 @@ export function TimelineSearchPanel({
         </ScrollView>
       )}
 
-      <Text style={styles.note} numberOfLines={1}>
-        {t("timelineSearch.loadedHistoryNote")}
-      </Text>
+      {isPaging && (
+        <Text style={styles.note} numberOfLines={1}>
+          {t("timelineSearch.loadingOlderHistory")}
+        </Text>
+      )}
     </View>
   );
 }

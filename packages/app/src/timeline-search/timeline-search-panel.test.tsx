@@ -73,7 +73,7 @@ function makeAssistantMessage(text: string, id: string): StreamItem {
   return { kind: "assistant_message", id, text, timestamp: new Date("2024-01-01") };
 }
 
-function renderPanel(items: StreamItem[], query = "world") {
+function renderPanel(items: StreamItem[], query = "world", { isPaging = false } = {}) {
   const model = createTimelineSearchModel(() => items);
   model.setFilter("all");
   model.setQuery(query);
@@ -91,6 +91,7 @@ function renderPanel(items: StreamItem[], query = "world") {
   const { rerender } = render(
     <TimelineSearchPanel
       state={state}
+      isPaging={isPaging}
       onQueryChange={model.setQuery}
       onFilterChange={model.setFilter}
       onSelectNext={model.selectNext}
@@ -105,6 +106,7 @@ function renderPanel(items: StreamItem[], query = "world") {
     rerender(
       <TimelineSearchPanel
         state={model.getState()}
+        isPaging={isPaging}
         onQueryChange={model.setQuery}
         onFilterChange={model.setFilter}
         onSelectNext={model.selectNext}
@@ -144,6 +146,16 @@ describe("TimelineSearchPanel", () => {
 
     expect(screen.getByText("timelineSearch.noResults")).toBeTruthy();
     expect(screen.queryByText("hello")).toBeNull();
+  });
+
+  it("shows a searching-history pending state instead of no-results while paging older history", () => {
+    renderPanel([makeUserMessage("hello", "u1")], "zzznomatch", { isPaging: true });
+
+    // While older history is still loading, the panel must not claim there are no
+    // results — it shows the pending status and the loading-older-history note.
+    expect(screen.getByText("timelineSearch.searchingHistory")).toBeTruthy();
+    expect(screen.queryByText("timelineSearch.noResults")).toBeNull();
+    expect(screen.getByText("timelineSearch.loadingOlderHistory")).toBeTruthy();
   });
 
   it("calls onFilterChange when a filter chip is pressed", () => {

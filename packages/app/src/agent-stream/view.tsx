@@ -104,6 +104,7 @@ import {
   type TimelineSearchTarget,
 } from "@/timeline-search/search-target";
 import { useTimelineSearchModel } from "@/timeline-search/use-timeline-search-model";
+import { useTimelineSearchHistoryPaging } from "@/timeline-search/use-timeline-search-history-paging";
 import { useTimelineSearchScroll } from "@/timeline-search/use-timeline-search-scroll";
 import { generateDraftId } from "@/stores/draft-keys";
 import {
@@ -607,6 +608,17 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       // content), not on every render of this component.
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [timelineSearchItems, timelineSearchState.isOpen]);
+    // Complete-history search: as the find panel pages older history in, each
+    // loaded page grows `timelineSearchItems`, which re-runs the refresh() effect
+    // above so matches accumulate. `isTimelineSearchPaging` gates the panel's
+    // "searching history" pending state (see the hook for the paging loop).
+    const isTimelineSearchPaging = useTimelineSearchHistoryPaging({
+      isOpen: timelineSearchState.isOpen,
+      query: timelineSearchState.query,
+      hasOlder,
+      isLoadingOlder,
+      loadOlder,
+    });
     // The rich filtered timeline panel is this pane's find UI (hasCustomUI),
     // registered so `workspace.find.open` (Ctrl/Cmd+F) routes here through
     // the shared pane-find registry instead of a bespoke per-pane handler.
@@ -1172,6 +1184,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             {timelineSearchState.isOpen && (
               <TimelineSearchPanel
                 state={timelineSearchState}
+                isPaging={isTimelineSearchPaging}
                 onQueryChange={timelineSearchModel.setQuery}
                 onFilterChange={timelineSearchModel.setFilter}
                 onSelectNext={timelineSearchModel.selectNext}
