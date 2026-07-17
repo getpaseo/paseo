@@ -128,7 +128,7 @@ export class WorkspaceReconciliationService {
   private disposed = false;
   private started = false;
   private reconciling = false;
-  private reconcileQueued = false;
+  private reconcileQueuedMode: "metadata" | "full" | null = null;
 
   constructor(options: WorkspaceReconciliationServiceOptions) {
     this.projectRegistry = options.projectRegistry;
@@ -165,7 +165,7 @@ export class WorkspaceReconciliationService {
       }) ?? null;
     await this.syncProjectRootWatches();
     this.rescanTimer = this.clock.setInterval(
-      () => this.reconcileObservedGitMetadata(),
+      () => this.reconcileObservedGitMetadata("full"),
       this.rescanIntervalMs,
     );
     this.rescanTimer.unref?.();
@@ -434,20 +434,26 @@ export class WorkspaceReconciliationService {
     }, this.debounceMs);
   }
 
-  private async reconcileObservedGitMetadata(): Promise<void> {
+  private async reconcileObservedGitMetadata(
+    mode: "metadata" | "full" = "metadata",
+  ): Promise<void> {
     if (this.disposed) return;
     if (this.reconciling) {
-      this.reconcileQueued = true;
+      if (mode === "full" || this.reconcileQueuedMode === null) {
+        this.reconcileQueuedMode = mode;
+      }
       return;
     }
     this.reconciling = true;
     try {
       await this.syncProjectRootWatches();
-      const result = await this.reconcileGitMetadata();
+      const result = mode === "full" ? await this.runOnce() : await this.reconcileGitMetadata();
       const workspaceIds = new Set<string>();
       const projectIds = new Set<string>();
       for (const change of result.changesApplied) {
-        if (change.kind === "workspace_updated") workspaceIds.add(change.workspaceId);
+        if (change.kind === "workspace_updated" || change.kind === "workspace_archived") {
+          workspaceIds.add(change.workspaceId);
+        }
         if (change.kind === "project_updated") projectIds.add(change.projectId);
       }
       if (projectIds.size > 0) {
@@ -461,13 +467,14 @@ export class WorkspaceReconciliationService {
       }
     } catch (error) {
       if (!this.disposed) {
-        this.logger.warn({ err: error }, "Project Git metadata reconciliation failed");
+        this.logger.warn({ err: error }, "Workspace reconciliation failed");
       }
     } finally {
       this.reconciling = false;
-      if (this.reconcileQueued) {
-        this.reconcileQueued = false;
-        void this.reconcileObservedGitMetadata();
+      if (this.reconcileQueuedMode) {
+        const queuedMode = this.reconcileQueuedMode;
+        this.reconcileQueuedMode = null;
+        void this.reconcileObservedGitMetadata(queuedMode);
       }
     }
   }

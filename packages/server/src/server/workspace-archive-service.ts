@@ -9,6 +9,7 @@ import type { ForgeService } from "../services/forge-service.js";
 import {
   deletePaseoWorktree,
   isPaseoOwnedWorktreeCwd,
+  runWorktreeTeardownCommands,
   WorktreeTeardownError,
 } from "../utils/worktree.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
@@ -75,7 +76,7 @@ interface BackingDirectory {
 
 interface ArchiveTarget {
   backing: BackingDirectory | null;
-  teardownCwds: string[];
+  teardownTargets: Array<{ workspaceId: string | null; cwd: string }>;
   workspaceIds: string[];
 }
 
@@ -170,11 +171,11 @@ async function resolveArchiveTarget(
         { workspaceId },
         "Workspace not found for archive-by-scope; skipping",
       );
-      return { backing: null, teardownCwds: [], workspaceIds: [] };
+      return { backing: null, teardownTargets: [], workspaceIds: [] };
     }
     return {
       backing: await resolveWorkspaceBackingDirectory(record, dependencies),
-      teardownCwds: [record.cwd],
+      teardownTargets: [{ workspaceId, cwd: record.cwd }],
       workspaceIds: [workspaceId],
     };
   }
@@ -197,11 +198,13 @@ async function resolveArchiveTarget(
       ...backing,
       mainRepoRoot: persistedMainRepoRoot ?? backing.mainRepoRoot,
     },
-    teardownCwds: uniqueFilesystemPaths(
+    teardownTargets:
       targetWorkspaces.length > 0
-        ? targetWorkspaces.map((workspace) => workspace.cwd)
-        : [scope.targetPath],
-    ),
+        ? targetWorkspaces.map((workspace) => ({
+            workspaceId: workspace.workspaceId,
+            cwd: workspace.cwd,
+          }))
+        : [{ workspaceId: null, cwd: scope.targetPath }],
     workspaceIds: targetWorkspaces.map((workspace) => workspace.workspaceId),
   };
 }
@@ -297,6 +300,36 @@ async function maybeRemoveDirectory(
     return false;
   }
 
+  const archivedWorkspaceIdSet = new Set(archivedWorkspaceIds);
+  const teardownCwds = uniqueFilesystemPaths(
+    target.teardownTargets
+      .filter(
+        (teardownTarget) =>
+          teardownTarget.workspaceId === null ||
+          archivedWorkspaceIdSet.has(teardownTarget.workspaceId),
+      )
+      .map((teardownTarget) => teardownTarget.cwd),
+  );
+
+  try {
+    for (const teardownCwd of teardownCwds) {
+      await runWorktreeTeardownCommands({
+        worktreePath: backing.path,
+        teardownCwd,
+        repoRootPath: backing.mainRepoRoot ?? undefined,
+      });
+    }
+  } catch (error) {
+    if (error instanceof WorktreeTeardownError) {
+      dependencies.sessionLogger?.warn(
+        { err: error, targetPath: backing.path, requestId: request.requestId },
+        "Worktree teardown failed during archive; workspace already archived",
+      );
+      return false;
+    }
+    throw error;
+  }
+
   const remainingActive = await dependencies.listActiveWorkspaces();
   if (
     !(await isDirectoryUnreferenced(
@@ -313,7 +346,7 @@ async function maybeRemoveDirectory(
     await deletePaseoWorktree({
       cwd: backing.mainRepoRoot,
       worktreePath: backing.path,
-      teardownCwds: target.teardownCwds,
+      teardownCwds: [],
       worktreesRoot: backing.paseoWorktreesRoot ?? undefined,
       paseoHome: dependencies.paseoHome,
       worktreesBaseRoot: dependencies.paseoWorktreesBaseRoot,

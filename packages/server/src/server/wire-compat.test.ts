@@ -419,7 +419,7 @@ describe("wire compatibility", () => {
       serverId: "legacy-server",
       hostname: null,
       version: null,
-      features: { workspaceGithubClone: true },
+      features: {},
     });
   });
 

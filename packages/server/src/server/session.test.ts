@@ -4788,6 +4788,39 @@ test("keeps selective delivery scoped per socket when a retained session also ha
   ]);
 });
 
+test("sends project updates only to capable sockets in a retained session", () => {
+  const messages: SessionOutboundMessage[] = [];
+  const targetedMessages: Array<{ source: object; message: SessionOutboundMessage }> = [];
+  const session = createSessionForTest({ messages, targetedMessages });
+  const legacySocket = {};
+  const capableSocket = {};
+  session.updateClientCapabilities(null, legacySocket);
+  session.updateClientCapabilities({ [CLIENT_CAPS.projectUpdates]: true }, capableSocket);
+
+  session.emitProjectUpdate({
+    kind: "upsert",
+    project: createPersistedProjectRecord({
+      projectId: "project-capable-socket",
+      rootPath: "/tmp/project-capable-socket",
+      kind: "git",
+      displayName: "project-capable-socket",
+      createdAt: "2026-07-17T00:00:00.000Z",
+      updatedAt: "2026-07-17T00:00:00.000Z",
+    }),
+  });
+
+  expect(messages).toEqual([]);
+  expect(targetedMessages).toEqual([
+    {
+      source: capableSocket,
+      message: expect.objectContaining({
+        type: "project.update",
+        payload: expect.objectContaining({ kind: "upsert" }),
+      }),
+    },
+  ]);
+});
+
 describe("agent config setters", () => {
   test("set_agent_mode_request: success emits accepted response carrying the notice", async () => {
     const messages: SessionOutboundMessage[] = [];

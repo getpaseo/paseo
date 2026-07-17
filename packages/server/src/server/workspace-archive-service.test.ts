@@ -217,8 +217,23 @@ describe("archiveByScope", () => {
     expect(existsSync(worktree.worktreePath)).toBe(false);
   });
 
-  test("workspace scope keeps the directory when a sibling workspace still references it", async () => {
+  test("workspace scope runs teardown while keeping a directory referenced by a sibling", async () => {
     const { tempDir, repoDir } = createGitRepo();
+    writeFileSync(
+      path.join(repoDir, "paseo.json"),
+      JSON.stringify({
+        worktree: {
+          teardown: [
+            "node -e \"require('fs').writeFileSync(process.env.PASEO_SOURCE_CHECKOUT_PATH + '/shared-teardown.log', 'ok')\"",
+          ],
+        },
+      }),
+    );
+    execFileSync("git", ["add", "."], { cwd: repoDir, stdio: "pipe" });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "shared teardown"], {
+      cwd: repoDir,
+      stdio: "pipe",
+    });
     const paseoHome = path.join(tempDir, ".paseo");
     const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "sibling-workspace");
     const workspaceA = "ws-sibling-a";
@@ -243,6 +258,7 @@ describe("archiveByScope", () => {
       removedDirectory: false,
     });
     expect(existsSync(worktree.worktreePath)).toBe(true);
+    expect(readFileSync(path.join(repoDir, "shared-teardown.log"), "utf8")).toBe("ok");
   });
 
   test("workspace scope keeps a worktree for an active workspace in a subdirectory", async () => {

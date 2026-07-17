@@ -544,7 +544,7 @@ export class Session {
   private unsubscribeAgentEvents: (() => void) | null = null;
   private viewedTimelineAgentIds = new Set<string>();
   private readonly viewedTimelineAgentIdsBySource = new Map<object, Set<string>>();
-  private readonly selectiveTimelineCapabilityBySource = new Map<object, boolean>();
+  private readonly clientCapabilitiesBySource = new Map<object, ReadonlySet<ClientCapability>>();
   private readonly defaultTimelineSubscriptionSource = {};
   private unsubscribeTerminalWorkspaceContributionEvents: (() => void) | null = null;
   private readonly agentUpdates: AgentUpdatesService;
@@ -933,10 +933,7 @@ export class Session {
   updateClientCapabilities(capabilities: Record<string, unknown> | null, source?: object): void {
     this.clientCapabilities = parseClientCapabilities(capabilities);
     if (source) {
-      this.selectiveTimelineCapabilityBySource.set(
-        source,
-        this.supports(CLIENT_CAPS.selectiveAgentTimeline),
-      );
+      this.clientCapabilitiesBySource.set(source, this.clientCapabilities);
     }
     if (!source && !this.supports(CLIENT_CAPS.selectiveAgentTimeline)) {
       this.viewedTimelineAgentIdsBySource.clear();
@@ -945,7 +942,7 @@ export class Session {
   }
 
   clearAgentTimelineSubscription(source: object): void {
-    this.selectiveTimelineCapabilityBySource.delete(source);
+    this.clientCapabilitiesBySource.delete(source);
     if (this.viewedTimelineAgentIdsBySource.delete(source)) {
       this.rebuildViewedTimelineAgentIds();
     }
@@ -967,11 +964,11 @@ export class Session {
   }
 
   private usesSelectiveTimelineDelivery(): boolean {
-    if (this.selectiveTimelineCapabilityBySource.size === 0) {
+    if (this.clientCapabilitiesBySource.size === 0) {
       return this.supports(CLIENT_CAPS.selectiveAgentTimeline);
     }
-    for (const capable of this.selectiveTimelineCapabilityBySource.values()) {
-      if (!capable) return false;
+    for (const capabilities of this.clientCapabilitiesBySource.values()) {
+      if (!capabilities.has(CLIENT_CAPS.selectiveAgentTimeline)) return false;
     }
     return true;
   }
@@ -980,7 +977,7 @@ export class Session {
     event: Extract<AgentManagerEvent, { type: "agent_stream" }>,
     serializedEvent: Extract<SessionOutboundMessage, { type: "agent_stream" }>["payload"]["event"],
   ): void {
-    if (this.selectiveTimelineCapabilityBySource.size === 0 || !this.onMessageToSource) {
+    if (this.clientCapabilitiesBySource.size === 0 || !this.onMessageToSource) {
       if (this.usesSelectiveTimelineDelivery() && serializedEvent.type === "attention_required") {
         this.emit({
           type: "agent_attention_required",
@@ -1004,7 +1001,8 @@ export class Session {
       return;
     }
 
-    for (const [source, supportsSelectiveDelivery] of this.selectiveTimelineCapabilityBySource) {
+    for (const [source, capabilities] of this.clientCapabilitiesBySource) {
+      const supportsSelectiveDelivery = capabilities.has(CLIENT_CAPS.selectiveAgentTimeline);
       if (supportsSelectiveDelivery && serializedEvent.type === "attention_required") {
         this.onMessageToSource(source, {
           type: "agent_attention_required",
@@ -1036,21 +1034,28 @@ export class Session {
   }
 
   supportsForSource(capability: ClientCapability, source: object): boolean {
-    if (capability === CLIENT_CAPS.selectiveAgentTimeline) {
-      return this.selectiveTimelineCapabilityBySource.get(source) ?? this.supports(capability);
-    }
-    return this.supports(capability);
+    return (
+      this.clientCapabilitiesBySource.get(source)?.has(capability) ?? this.supports(capability)
+    );
   }
 
   emitProjectUpdate(update: ProjectUpdate): void {
-    if (!this.supports(CLIENT_CAPS.projectUpdates)) return;
-    this.emit({
+    const message: SessionOutboundMessage = {
       type: "project.update",
       payload:
         update.kind === "upsert"
           ? { kind: "upsert", project: this.buildProjectDescriptor(update.project) }
           : update,
-    });
+    };
+    if (this.clientCapabilitiesBySource.size === 0 || !this.onMessageToSource) {
+      if (this.supports(CLIENT_CAPS.projectUpdates)) this.emit(message);
+      return;
+    }
+    for (const [source, capabilities] of this.clientCapabilitiesBySource) {
+      if (capabilities.has(CLIENT_CAPS.projectUpdates)) {
+        this.onMessageToSource(source, message);
+      }
+    }
   }
 
   async syncWorkspaceGitObserverForWorkspace(workspace: PersistedWorkspaceRecord): Promise<void> {
@@ -1642,8 +1647,7 @@ export class Session {
         const agentIds = [...new Set(msg.agentIds)].sort();
         if (
           source
-            ? (this.selectiveTimelineCapabilityBySource.get(source) ??
-              this.supports(CLIENT_CAPS.selectiveAgentTimeline))
+            ? this.supportsForSource(CLIENT_CAPS.selectiveAgentTimeline, source)
             : this.supports(CLIENT_CAPS.selectiveAgentTimeline)
         ) {
           this.replaceAgentTimelineSubscription(source, agentIds);

@@ -293,6 +293,12 @@ class ObservedPlacements {
     return this.workspaces.get(workspaceId);
   }
 
+  async deleteWorkspaceDirectory(workspaceId: string): Promise<void> {
+    const workspace = await this.workspaces.get(workspaceId);
+    if (!workspace) throw new Error(`Unknown workspace: ${workspaceId}`);
+    rmSync(workspace.cwd, { recursive: true, force: true });
+  }
+
   get projectUpdates(): ProjectUpdate[] {
     return [...this.projectEvents];
   }
@@ -454,6 +460,20 @@ describe("observed workspace placement", () => {
 
     expect(observed.watchedRoots()).toEqual(["errored", "unavailable"]);
     expect(observed.closedRoots()).toEqual(["errored"]);
+    observed.dispose();
+  });
+
+  test("archives missing workspace directories on the periodic pass", async () => {
+    const observed = new ObservedPlacements([
+      { id: "project-one", root: "repo", workspaces: [{ id: "workspace-one", cwd: "repo" }] },
+    ]);
+    await observed.start();
+    await observed.deleteWorkspaceDirectory("workspace-one");
+
+    await observed.advanceBy(RESCAN_INTERVAL_MS);
+
+    expect((await observed.placement("workspace-one"))?.archivedAt).toEqual(expect.any(String));
+    expect(observed.workspaceBatches).toEqual([["workspace-one"]]);
     observed.dispose();
   });
 
