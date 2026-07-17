@@ -181,6 +181,7 @@ function createSessionForWorkspaceGitWatchTests(options?: {
 
   const session = new Session({
     clientId: "test-client",
+    scopes: ["*"],
     onMessage: (message) => emitted.push(message as { type: string; payload: unknown }),
     logger: createStub<pino.Logger>(logger),
     downloadTokenStore: createStub<SessionOptions["downloadTokenStore"]>({}),

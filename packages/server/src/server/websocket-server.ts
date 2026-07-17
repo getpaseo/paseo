@@ -376,7 +376,7 @@ interface SocketSessionOptions {
   clientId: string;
   appVersion: string | null;
   clientCapabilities: Record<string, unknown> | null;
-  grants: readonly string[];
+  scopes: readonly string[];
   connectionLogger: pino.Logger;
   onMessage: (message: SessionOutboundMessage) => void;
   onBinaryMessage?: (frame: Uint8Array) => void;
@@ -859,7 +859,7 @@ export class VoiceAssistantWebSocketServer {
     ws: WebSocketLike,
     options: {
       daemonId: string;
-      grants: readonly string[];
+      scopes: readonly string[];
       agents: HubExecutionAgents;
     },
   ): Promise<void> {
@@ -876,7 +876,7 @@ export class VoiceAssistantWebSocketServer {
       clientId: `hub:${options.daemonId}`,
       appVersion: null,
       clientCapabilities: null,
-      grants: options.grants,
+      scopes: options.scopes,
       connectionLogger,
       onMessage: (message) => this.sendToClient(ws, wrapSessionMessage(message)),
       hubExecutionAgents: options.agents,
@@ -1090,7 +1090,7 @@ export class VoiceAssistantWebSocketServer {
       clientId,
       appVersion,
       clientCapabilities,
-      grants: ["*"],
+      scopes: ["*"],
       connectionLogger,
       onMessage: (msg) => {
         if (!connection) {
@@ -1144,7 +1144,7 @@ export class VoiceAssistantWebSocketServer {
       clientId: options.clientId,
       appVersion: options.appVersion,
       clientCapabilities: options.clientCapabilities,
-      grants: options.grants,
+      scopes: options.scopes,
       onMessage: options.onMessage,
       onBinaryMessage: options.onBinaryMessage,
       getTransportBufferedAmount: options.getTransportBufferedAmount,

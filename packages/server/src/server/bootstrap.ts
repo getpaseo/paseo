@@ -418,6 +418,7 @@ export interface PaseoDaemonDependencies {
   hubRelationshipRemote?: HubRelationshipRemote;
   hubRelationshipClock?: HubRelationshipClock;
   hubRelationshipRetryPolicy?: HubRelationshipRetryPolicy;
+  createHubDaemonId?: () => string;
 }
 
 function createBootstrapManagedProcessRegistry(
@@ -1037,6 +1038,7 @@ export async function createPaseoDaemon(
     remote: dependencies.hubRelationshipRemote ?? new DirectHubRelationshipRemote(),
     clock: dependencies.hubRelationshipClock,
     retryPolicy: dependencies.hubRelationshipRetryPolicy,
+    createDaemonId: dependencies.createHubDaemonId,
     attachSocket: async (socket, options) => {
       if (!wsServer) throw new Error("WebSocket server is not running");
       await wsServer.attachHubSocket(socket, options);

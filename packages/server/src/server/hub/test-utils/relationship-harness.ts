@@ -707,6 +707,16 @@ export class HubRelationshipHarness {
       .map((record) => record.id);
   }
 
+  async durableOwnedAgentIdsOnDisk(): Promise<string[]> {
+    const storage = new AgentStorage(
+      path.join(this.paseoHome, "agents"),
+      pino({ level: "silent" }),
+    );
+    return (await storage.list())
+      .filter((record) => record.owner?.kind === "daemon")
+      .map((record) => record.id);
+  }
+
   activeOwnedAgentIds(): string[] {
     return this.daemon!.agentManager.listAgents()
       .filter((agent) => agent.owner?.kind === "daemon")
@@ -1155,6 +1165,10 @@ export class HubRelationshipHarness {
     await this.startDaemon();
   }
 
+  async shutdownDaemon(): Promise<void> {
+    await this.stopDaemon();
+  }
+
   async close(): Promise<void> {
     await this.stopDaemon();
     await Promise.allSettled(this.cliProcesses);
@@ -1205,6 +1219,7 @@ export class HubRelationshipHarness {
       hubRelationshipRemote: this.remote,
       hubRelationshipClock: this.clock,
       hubRelationshipRetryPolicy: this.clock,
+      createHubDaemonId: () => "daemon-test",
     });
     await this.daemon.start();
     const target = this.daemon.getListenTarget();

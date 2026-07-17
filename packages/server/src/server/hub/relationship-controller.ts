@@ -15,7 +15,8 @@ import { HubEnrollmentRejectedError } from "./relationship-remote.js";
 import { BoundedExponentialHubRetryPolicy } from "./relationship-retry.js";
 
 const FILE_NAME = "hub-relationship.json";
-const SCOPES = ["hub.execution.*"] as const;
+const HUB_EXECUTION_SCOPE = "hub.execution.*";
+const SCOPES = [HUB_EXECUTION_SCOPE] as const;
 const HubOriginSchema = z
   .string()
   .url()
@@ -35,7 +36,7 @@ const RelationshipSchema = z.object({
   idempotencyKey: z.string().min(1),
   hubOrigin: HubOriginSchema,
   createdAt: z.string(),
-  scopes: z.array(z.string()),
+  scopes: z.tuple([z.literal(HUB_EXECUTION_SCOPE)]),
 });
 const SanitizedRelationshipSchema = RelationshipSchema.omit({ idempotencyKey: true });
 const CredentialSchema = z.object({ secret: z.string().min(1) });
@@ -142,9 +143,10 @@ export interface HubRelationshipControllerOptions {
   remote: HubRelationshipRemote;
   clock?: HubRelationshipClock;
   retryPolicy?: HubRelationshipRetryPolicy;
+  createDaemonId?: () => string;
   attachSocket: (
     socket: WebSocketLike,
-    options: { daemonId: string; grants: readonly string[]; agents: HubExecutionAgents },
+    options: { daemonId: string; scopes: readonly string[]; agents: HubExecutionAgents },
   ) => Promise<void>;
   createExecutionAgents: (daemonId: string) => HubExecutionAgents;
 }
@@ -219,9 +221,11 @@ export class HubRelationshipController implements HubRelationshipManagement {
   }
 
   async stop(): Promise<void> {
+    const pendingExecutionCleanup = this.retireExecutionAgents();
     this.cancelLifecycle();
     this.socket?.close();
     this.socket = null;
+    await pendingExecutionCleanup;
   }
 
   status(): HubRelationshipStatus {
@@ -255,7 +259,7 @@ export class HubRelationshipController implements HubRelationshipManagement {
       version: 1,
       state: "pending",
       relationship: {
-        daemonId: randomUUID(),
+        daemonId: this.options.createDaemonId?.() ?? randomUUID(),
         idempotencyKey: randomUUID(),
         hubOrigin: normalizeHubUrl(input.hubUrl),
         createdAt: this.clock.now().toISOString(),
@@ -277,8 +281,7 @@ export class HubRelationshipController implements HubRelationshipManagement {
     force: boolean;
   }): Promise<{ status: HubRelationshipStatus; warning?: string }> {
     const waitForEnrollment = this.record?.state === "pending";
-    const pendingCreateCleanup =
-      this.executionAgents?.value.invalidateAuthority() ?? Promise.resolve();
+    const pendingCreateCleanup = this.retireExecutionAgents();
     this.cancelLifecycle();
     this.socket?.close();
     this.socket = null;
@@ -336,7 +339,7 @@ export class HubRelationshipController implements HubRelationshipManagement {
       if (enrollmentGeneration !== this.enrollmentGeneration) return;
       if (
         enrollment.daemonId !== pending.relationship.daemonId ||
-        !enrollment.scopes.includes("hub.execution.*")
+        !enrollment.scopes.includes(HUB_EXECUTION_SCOPE)
       ) {
         throw new Error("Hub enrollment response did not match the pending relationship");
       }
@@ -395,7 +398,7 @@ export class HubRelationshipController implements HubRelationshipManagement {
     this.lastError = null;
     void this.options.attachSocket(socket, {
       daemonId: record.relationship.daemonId,
-      grants: record.relationship.scopes,
+      scopes: record.relationship.scopes,
       agents: this.executionAgentsFor(record.relationship.daemonId),
     });
   }
@@ -405,6 +408,12 @@ export class HubRelationshipController implements HubRelationshipManagement {
     const value = this.options.createExecutionAgents(daemonId);
     this.executionAgents = { daemonId, value };
     return value;
+  }
+
+  private retireExecutionAgents(): Promise<void> {
+    const executionAgents = this.executionAgents;
+    this.executionAgents = null;
+    return executionAgents?.value.invalidateAuthority() ?? Promise.resolve();
   }
 
   private socketRejected(generation: number, statusCode: 401 | 403): void {
@@ -474,7 +483,7 @@ export class HubRelationshipController implements HubRelationshipManagement {
   }
 
   private revoke(reason: string): void {
-    void this.executionAgents?.value.invalidateAuthority();
+    void this.retireExecutionAgents();
     this.cancelLifecycle();
     if (!this.record) return;
     const revoked: RevokedRecord = {
@@ -514,7 +523,7 @@ export class HubRelationshipController implements HubRelationshipManagement {
   }
 
   private remove(): void {
-    void this.executionAgents?.value.invalidateAuthority();
+    void this.retireExecutionAgents();
     this.cancelLifecycle();
     rmSync(this.filePath, { force: true });
     this.record = null;

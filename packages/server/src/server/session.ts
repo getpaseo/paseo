@@ -410,7 +410,7 @@ type AgentMcpTransportFactory = () => Promise<unknown>;
 
 export interface SessionOptions {
   clientId: string;
-  grants?: readonly string[];
+  scopes: readonly string[];
   appVersion?: string | null;
   clientCapabilities?: Record<string, unknown> | null;
   onMessage: (msg: SessionOutboundMessage) => void;
@@ -511,15 +511,15 @@ function parseClientCapabilities(
   return new Set(result);
 }
 
-export function isSessionRpcGranted(grants: readonly string[], rpcName: string): boolean {
-  return grants.some((grant) => {
-    if (grant === "*" || grant === rpcName) {
+export function isSessionRpcAllowed(scopes: readonly string[], rpcName: string): boolean {
+  return scopes.some((scope) => {
+    if (scope === "*" || scope === rpcName) {
       return true;
     }
-    if (!grant.endsWith(".*")) {
+    if (!scope.endsWith(".*")) {
       return false;
     }
-    return rpcName.startsWith(grant.slice(0, -1));
+    return rpcName.startsWith(scope.slice(0, -1));
   });
 }
 
@@ -568,7 +568,7 @@ function describeRegistryTransition(record: ArchivedRecordSnapshot | null): Regi
  */
 export class Session {
   private readonly clientId: string;
-  private readonly grants: readonly string[];
+  private scopes: readonly string[];
   private appVersion: string | null;
   private clientCapabilities: ReadonlySet<ClientCapability>;
   private readonly sessionId: string;
@@ -634,7 +634,7 @@ export class Session {
   constructor(options: SessionOptions) {
     const {
       clientId,
-      grants,
+      scopes,
       appVersion,
       clientCapabilities,
       onMessage,
@@ -683,7 +683,7 @@ export class Session {
       getWebSocketRuntimeMetrics,
     } = options;
     this.clientId = clientId;
-    this.grants = grants ?? ["*"];
+    this.scopes = [...scopes];
     this.appVersion = appVersion ?? null;
     this.clientCapabilities = parseClientCapabilities(clientCapabilities);
     this.sessionId = uuidv4();
@@ -1405,7 +1405,7 @@ export class Session {
         },
         "agent.session.inbound",
       );
-      if (!isSessionRpcGranted(this.grants, msg.type)) {
+      if (!isSessionRpcAllowed(this.scopes, msg.type)) {
         const requestId = sessionRequestId(msg);
         if (requestId) {
           this.emit({
@@ -1457,6 +1457,10 @@ export class Session {
     } finally {
       this.inflightRequests--;
     }
+  }
+
+  public setScopes(scopes: readonly string[]): void {
+    this.scopes = [...scopes];
   }
 
   private async dispatchInboundMessage(msg: SessionInboundMessage): Promise<void> {
@@ -5850,7 +5854,7 @@ export class Session {
    * Emit a message to the client
    */
   private emit(msg: SessionOutboundMessage): void {
-    if (msg.type !== "rpc_error" && !isSessionRpcGranted(this.grants, msg.type)) {
+    if (msg.type !== "rpc_error" && !isSessionRpcAllowed(this.scopes, msg.type)) {
       return;
     }
     // JSON.stringify(msg) is only computed when trace is enabled — it runs for
@@ -5890,7 +5894,7 @@ export class Session {
       this.unsubscribeAgentEvents = null;
     }
     this.agentUpdates.dispose();
-    this.hubExecutionController?.cleanup();
+    await this.hubExecutionController?.cleanup();
     if (this.unsubscribeTerminalWorkspaceContributionEvents) {
       this.unsubscribeTerminalWorkspaceContributionEvents();
       this.unsubscribeTerminalWorkspaceContributionEvents = null;

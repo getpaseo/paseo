@@ -236,6 +236,7 @@ function createSessionForWireCompatTest(options?: {
 
   const session = new Session({
     clientId: "wire-compat-client",
+    scopes: ["*"],
     clientCapabilities: options?.clientCapabilities ?? null,
     onMessage: (message) => messages.push(message),
     logger: pino({ level: "silent" }),

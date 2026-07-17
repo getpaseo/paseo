@@ -15,6 +15,9 @@ export class HubExecutionController {
   private readonly agents: HubExecutionAgents;
   private readonly send: (message: SessionOutboundMessage) => void;
   private readonly unsubscribe: () => void;
+  private readonly pendingCreates = new Set<Promise<void>>();
+  private cleanupPromise: Promise<void> | null = null;
+  private closed = false;
 
   constructor(options: HubExecutionControllerOptions) {
     this.agents = options.agents;
@@ -22,11 +25,29 @@ export class HubExecutionController {
     this.unsubscribe = this.agents.subscribe((event) => this.sendOwnedEvent(event));
   }
 
-  cleanup(): void {
+  cleanup(): Promise<void> {
+    this.cleanupPromise ??= this.cleanupOnce();
+    return this.cleanupPromise;
+  }
+
+  private async cleanupOnce(): Promise<void> {
+    this.closed = true;
     this.unsubscribe();
+    await Promise.allSettled(this.pendingCreates);
   }
 
   async createAgent(message: HubExecutionAgentCreateRequest): Promise<void> {
+    if (this.closed) return;
+    const create = this.createAgentWithResponse(message);
+    this.pendingCreates.add(create);
+    try {
+      await create;
+    } finally {
+      this.pendingCreates.delete(create);
+    }
+  }
+
+  private async createAgentWithResponse(message: HubExecutionAgentCreateRequest): Promise<void> {
     try {
       requireNonBlankHubAgentField("executionId", message.executionId);
       requireNonBlankHubAgentField("prompt", message.prompt);
@@ -46,6 +67,7 @@ export class HubExecutionController {
         worktree: message.worktree,
         autoArchive: message.autoArchive,
       });
+      if (this.closed) return;
       this.send({
         type: "hub.execution.agent.create.response",
         payload: {
@@ -58,6 +80,7 @@ export class HubExecutionController {
         },
       });
     } catch (error) {
+      if (this.closed) return;
       this.send({
         type: "hub.execution.agent.create.response",
         payload: {
@@ -73,6 +96,7 @@ export class HubExecutionController {
   }
 
   private sendOwnedEvent(event: OwnedAgentEvent): void {
+    if (this.closed) return;
     if (event.type === "update") {
       this.send({
         type: "hub.execution.agent.update",

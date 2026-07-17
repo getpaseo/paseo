@@ -88,6 +88,7 @@ function createHarness(input: {
 
   const session = new Session({
     clientId: "test",
+    scopes: ["*"],
     appVersion: null,
     onMessage: (m) => emitted.push(m),
     logger: createStub<SessionOptions["logger"]>(logger),

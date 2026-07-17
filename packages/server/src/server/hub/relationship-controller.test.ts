@@ -282,6 +282,23 @@ describe("Hub relationship", () => {
     expect(relationship.enrollmentAttempts()).toEqual([]);
   });
 
+  test("a persisted Hub relationship cannot widen its local execution scope", async () => {
+    relationship = await HubRelationshipHarness.start();
+    await relationship.beginConnect().result;
+    const persisted = relationship.relationshipFile();
+    expect(persisted).not.toBeNull();
+    persisted!.relationship.scopes = ["*"];
+    await relationship.corruptRelationshipFile(JSON.stringify(persisted));
+    const socketAttemptsBeforeRestart = relationship.socketAttempts();
+
+    await relationship.startStoppedDaemon();
+
+    expect(await relationship.status()).toMatchObject({ state: "not_connected" });
+    expect(relationship.relationshipFile()).toBeNull();
+    expect(await relationship.quarantinedRelationshipFiles()).toHaveLength(1);
+    expect(relationship.socketAttempts()).toBe(socketAttemptsBeforeRestart);
+  });
+
   test("a persisted non-WebSocket transport is quarantined before daemon startup", async () => {
     relationship = await HubRelationshipHarness.start();
     await relationship.corruptRelationshipFile(
@@ -648,6 +665,42 @@ describe("Hub relationship", () => {
     expect(relationship.activeOwnedAgentIds()).toEqual([]);
     expect(await relationship.durableOwnedAgentIds()).toEqual([]);
     expect(await relationship.listedWorktrees()).toHaveLength(1);
+  });
+
+  test("re-enrollment gives the same daemon fresh execution authority", async () => {
+    relationship = await HubRelationshipHarness.start();
+    await relationship.beginConnect().result;
+    relationship.connectLatestSocket();
+    relationship.beginOwnedCreate("first-create", "first-execution");
+    const first = await relationship.ownedCreateResult("first-create");
+    const daemonId = relationship.relationshipFile()?.relationship.daemonId;
+
+    await relationship.disconnect();
+    await relationship.beginConnect("fresh-token").result;
+    relationship.connectLatestSocket();
+    relationship.beginOwnedCreate("second-create", "second-execution");
+    const second = await relationship.ownedCreateResult("second-create");
+
+    expect(relationship.relationshipFile()?.relationship.daemonId).toBe(daemonId);
+    expect(first).toMatchObject({ payload: { success: true, executionId: "first-execution" } });
+    expect(second).toMatchObject({ payload: { success: true, executionId: "second-execution" } });
+    expect(relationship.providerCreations()).toBe(2);
+  });
+
+  test("daemon shutdown fences a pending create before closing owned agents", async () => {
+    relationship = await HubRelationshipHarness.start();
+    await relationship.beginConnect().result;
+    relationship.connectLatestSocket();
+    relationship.holdAgentCreation();
+    relationship.beginOwnedCreate("shutdown-create", "execution-shutdown", { prompt: "sleep 30" });
+    await relationship.agentCreationAttempts(1);
+
+    const shutdown = relationship.shutdownDaemon();
+    relationship.finishAgentCreation();
+    await shutdown;
+
+    expect(relationship.socketDeliveredResponse(0, "shutdown-create")).toBe(false);
+    expect(await relationship.durableOwnedAgentIdsOnDisk()).toEqual([]);
   });
 
   test.each([
