@@ -41,6 +41,8 @@ import {
   type AgentTimelineItem,
   type AgentUsage,
   type FetchCatalogOptions,
+  type ForkProviderSessionContext,
+  type ForkProviderSessionInput,
   type ImportableProviderSession,
   type ImportProviderSessionContext,
   type ImportProviderSessionInput,
@@ -1540,6 +1542,53 @@ export class OpenCodeAgentClient implements AgentClient {
           ...(model ? { model } : {}),
         },
       });
+    } finally {
+      acquisition.release();
+    }
+  }
+
+  async forkSession(input: ForkProviderSessionInput, context: ForkProviderSessionContext) {
+    const acquisition = await this.serverManager.acquireCurrent();
+    const { url } = acquisition.server;
+    const client = this.createOpenCodeClient({
+      baseUrl: url,
+      directory: input.cwd,
+    });
+
+    try {
+      // Native fork: OpenCode creates a real child session that preserves the
+      // provider-side history up to the fork point, rather than Paseo
+      // re-importing a text transcript.
+      const forkResponse = await client.session.fork({
+        sessionID: input.providerHandleId,
+        directory: input.cwd,
+        ...(input.messageId ? { messageID: input.messageId } : {}),
+      });
+      if (forkResponse.error || !forkResponse.data) {
+        throw new Error(
+          `Failed to fork OpenCode session ${input.providerHandleId}: ${JSON.stringify(
+            forkResponse.error,
+          )}`,
+        );
+      }
+      const forkedSession = forkResponse.data;
+      const parentSessionId = readNonEmptyString(forkedSession.parentID) ?? input.providerHandleId;
+
+      const messages = await readOpenCodeSessionMessagesFromSdk(client, forkedSession);
+      const modeId = resolveOpenCodePersistedSessionModeId(forkedSession, messages);
+      const model = resolveOpenCodePersistedSessionModel(forkedSession, messages);
+      const imported = await importSessionFromPersistence({
+        provider: "opencode",
+        request: { providerHandleId: forkedSession.id, cwd: input.cwd },
+        context,
+        resumeSession: this.resumeSession.bind(this),
+        config: {
+          title: normalizeOpenCodeSessionTitle(forkedSession.title) ?? undefined,
+          ...(modeId ? { modeId } : {}),
+          ...(model ? { model } : {}),
+        },
+      });
+      return { ...imported, parentSessionId };
     } finally {
       acquisition.release();
     }

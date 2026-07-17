@@ -537,6 +537,23 @@ export interface ImportProviderSessionInput {
   cwd: string;
 }
 
+export interface ForkProviderSessionInput {
+  /** Native provider session id to fork from. */
+  providerHandleId: string;
+  cwd: string;
+  /**
+   * Native provider message id to fork at. When omitted, the provider forks
+   * from the tail of the session.
+   */
+  messageId?: string;
+}
+
+export interface ForkProviderSessionContext {
+  config: AgentSessionConfig;
+  storedConfig: AgentSessionConfig;
+  launchContext?: AgentLaunchContext;
+}
+
 export interface ImportProviderSessionContext {
   config: AgentSessionConfig;
   storedConfig: AgentSessionConfig;
@@ -552,6 +569,11 @@ export interface ImportedProviderSession {
   session: AgentSession;
   config: AgentSessionConfig;
   persistence: AgentPersistenceHandle;
+  /**
+   * Native provider session id this session was forked from, when it is a real
+   * provider child session (native fork). Absent for plain imports.
+   */
+  parentSessionId?: string;
   timeline: ImportedTimelineEntry[];
   providerSubagentEvents?: Extract<AgentStreamEvent, { type: "provider_subagent" }>[];
 }
@@ -705,6 +727,16 @@ export interface AgentClient {
   importSession?(
     input: ImportProviderSessionInput,
     context: ImportProviderSessionContext,
+  ): Promise<ImportedProviderSession>;
+  /**
+   * Fork an existing native provider session at a message point, returning a
+   * real provider child session that preserves provider-side history. Providers
+   * that expose a native fork endpoint implement this; others fall back to the
+   * generic client-side fork flow.
+   */
+  forkSession?(
+    input: ForkProviderSessionInput,
+    context: ForkProviderSessionContext,
   ): Promise<ImportedProviderSession>;
   /**
    * Check if this provider is available (CLI binary is installed).

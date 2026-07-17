@@ -2455,6 +2455,87 @@ describe("OpenCode persisted sessions", () => {
     ]);
   });
 
+  test("forkSession forks natively and returns a child session tied to the parent", async () => {
+    const runtime = new TestOpenCodeHarness();
+    const forkClient = new TestOpenCodeClient();
+    const resumedClient = new TestOpenCodeClient();
+    const cwd = "/workspace/repo";
+    const forkedSession = {
+      id: "ses_fork",
+      parentID: "ses_parent",
+      directory: cwd,
+      title: "Forked session",
+      time: { created: 2000, updated: 3000 },
+    };
+    const messages = [
+      {
+        info: {
+          id: "msg_user",
+          sessionID: "ses_fork",
+          role: "user",
+          time: { created: 2100 },
+          agent: "build",
+          model: { providerID: "opencode", modelID: "big-pickle" },
+        },
+        parts: [
+          {
+            id: "prt_user",
+            sessionID: "ses_fork",
+            messageID: "msg_user",
+            type: "text",
+            text: "history preserved across the fork",
+            time: { start: 2100 },
+          },
+        ],
+      },
+    ];
+    forkClient.sessionForkResponse = { data: forkedSession };
+    forkClient.sessionMessagesResponse = { data: messages };
+    resumedClient.sessionGetResponse = { data: forkedSession };
+    resumedClient.sessionMessagesResponse = { data: messages };
+    runtime.enqueueClient(forkClient);
+    runtime.enqueueClient(resumedClient);
+
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const forked = await client.forkSession(
+      { providerHandleId: "ses_parent", cwd, messageId: "msg_boundary" },
+      {
+        config: { provider: "opencode", cwd },
+        storedConfig: { provider: "opencode", cwd },
+      },
+    );
+
+    // Native fork endpoint is called with the source session + message point.
+    expect(forkClient.calls.sessionFork).toEqual([
+      { sessionID: "ses_parent", directory: cwd, messageID: "msg_boundary" },
+    ]);
+    // The returned session is the real provider child session, not a re-import
+    // of the parent under a new id.
+    expect(forked.session.id).toBe("ses_fork");
+    expect(forked.persistence).toMatchObject({
+      provider: "opencode",
+      sessionId: "ses_fork",
+      nativeHandle: "ses_fork",
+    });
+    // Child session is tied to the parent it was forked from.
+    expect(forked.parentSessionId).toBe("ses_parent");
+    // Provider-side history is preserved (hydrated from the forked session,
+    // not rebuilt from a text transcript).
+    expect(forked.timeline.map((entry) => entry.item)).toEqual([
+      { type: "user_message", text: "history preserved across the fork", messageId: "msg_user" },
+    ]);
+    expect(forked.config).toMatchObject({
+      provider: "opencode",
+      cwd,
+      title: "Forked session",
+      modeId: "build",
+      model: "opencode/big-pickle",
+    });
+  });
+
   test("listImportableSessions matches Windows cwd paths with forward slashes", async () => {
     const runtime = new TestOpenCodeHarness();
     const openCodeClient = new TestOpenCodeClient();
