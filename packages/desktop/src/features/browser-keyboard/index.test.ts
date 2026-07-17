@@ -21,11 +21,11 @@ class FakeBrowserContents {
   public readonly sent: SentMessage[] = [];
   private destroyed = false;
   private readonly destroyedListeners: Array<() => void> = [];
-  private domReadyListener: (() => void) | null = null;
+  private readonly domReadyListeners: Array<() => void> = [];
   private finishLoadListener: (() => void) | null = null;
-  private inputListener:
-    | ((event: { preventDefault(): void }, input: Electron.Input) => void)
-    | null = null;
+  private readonly inputListeners: Array<
+    (event: { preventDefault(): void }, input: Electron.Input) => void
+  > = [];
 
   public constructor(private readonly webContentsId: number) {}
 
@@ -64,13 +64,12 @@ class FakeBrowserContents {
       return;
     }
     if (event === "dom-ready") {
-      this.domReadyListener = listener as () => void;
+      this.domReadyListeners.push(listener as () => void);
       return;
     }
-    this.inputListener = listener as (
-      event: { preventDefault(): void },
-      input: Electron.Input,
-    ) => void;
+    this.inputListeners.push(
+      listener as (event: { preventDefault(): void }, input: Electron.Input) => void,
+    );
   }
 
   public send(channel: string, payload: unknown): void {
@@ -105,19 +104,23 @@ class FakeBrowserContents {
   }
 
   public domReady(): void {
-    this.domReadyListener?.();
+    for (const listener of this.domReadyListeners) {
+      listener();
+    }
   }
 
   public input(input: Electron.Input): boolean {
     let wasPrevented = false;
-    this.inputListener?.(
-      {
-        preventDefault: () => {
-          wasPrevented = true;
+    for (const listener of this.inputListeners) {
+      listener(
+        {
+          preventDefault: () => {
+            wasPrevented = true;
+          },
         },
-      },
-      input,
-    );
+        input,
+      );
+    }
     return wasPrevented;
   }
 }
@@ -194,6 +197,20 @@ describe("BrowserKeyboard", () => {
         },
       },
     ]);
+  });
+
+  test("handles a reserved shortcut once when the same guest attaches again", () => {
+    const { attach } = createBrowserKeyboard();
+    const guest = new FakeBrowserContents(53);
+    const host = new FakeBrowserContents(54);
+    attach({ browserId: "browser-a", contents: guest, hostContents: host });
+    attach({ browserId: "browser-a", contents: guest, hostContents: host });
+    const command = process.platform === "darwin" ? { meta: true } : { control: true };
+
+    const wasPrevented = guest.input(electronInput({ ...command, code: "KeyR", key: "r" }));
+
+    expect(wasPrevented).toBe(true);
+    expect(guest.reloads).toEqual(["reload"]);
   });
 
   test("republishes the latest shortcut policy when the next guest document is ready", () => {

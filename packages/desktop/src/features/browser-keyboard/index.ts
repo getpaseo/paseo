@@ -87,6 +87,13 @@ export class BrowserKeyboard {
     if (!registration || registration.hostWebContentsId !== input.hostContents.id) {
       return;
     }
+    const attachedGuest = this.attachedGuestsByWebContentsId.get(webContentsId);
+    if (
+      attachedGuest?.contents === input.contents &&
+      attachedGuest.hostContents === input.hostContents
+    ) {
+      return;
+    }
     const guest: BrowserKeyboardGuest = input;
     this.attachedGuestsByWebContentsId.set(webContentsId, guest);
 
