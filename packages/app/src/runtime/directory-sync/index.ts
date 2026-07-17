@@ -107,6 +107,10 @@ export class DirectorySync {
     if (!connection.client || connection.status !== "online") return true;
     const client = connection.client;
     const source = connection.source;
+    this.workspaceTransactions.begin(source, () => ({
+      workspaces: new Map(),
+      emptyProjects: new Map(),
+    }));
     const subscriptions = [
       client.on("agent_update", (message) => {
         if (message.type !== "agent_update" || !this.isCurrent(client, source)) return;

@@ -215,4 +215,43 @@ describe("DirectorySync session readiness", () => {
     });
     directory.dispose();
   });
+
+  it("buffers project updates from the online epoch before workspace hydration starts", async () => {
+    const serverId = "project-before-workspace-hydration";
+    const { client, directory } = createDirectory(serverId);
+    const store = useSessionStore.getState();
+    store.initializeSession(serverId, client as unknown as DaemonClient, 1);
+    store.updateSessionServerInfo(serverId, {
+      serverId,
+      hostname: null,
+      version: "test",
+      features: { workspaceMultiplicity: true },
+    });
+
+    client.emit({
+      type: "project.update",
+      payload: {
+        kind: "upsert",
+        project: {
+          projectId: "early-project",
+          projectDisplayName: "Early project",
+          projectRootPath: "/repo/early-project",
+          projectKind: "git",
+        },
+      },
+    });
+
+    expect(useSessionStore.getState().sessions[serverId]?.hasHydratedWorkspaces).toBe(false);
+
+    await directory.refreshWorkspaces({ subscribe: true });
+
+    expect(useSessionStore.getState().sessions[serverId]?.hasHydratedWorkspaces).toBe(true);
+    expect(
+      useSessionStore.getState().sessions[serverId]?.emptyProjects.get("early-project"),
+    ).toMatchObject({
+      projectDisplayName: "Early project",
+      projectRootPath: "/repo/early-project",
+    });
+    directory.dispose();
+  });
 });

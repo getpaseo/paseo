@@ -68,6 +68,7 @@ export class WorkspaceDirectoryReplica {
       delta.kind === "remove" && "id" in delta ? [delta.id] : [],
     );
     this.commit(this.reconcile(snapshot, deltas), removedWorkspaceIds);
+    useSessionStore.getState().setHasHydratedWorkspaces(this.serverId, true);
   }
 
   private read(): WorkspaceDirectorySnapshot {
@@ -118,7 +119,6 @@ export class WorkspaceDirectoryReplica {
     const store = useSessionStore.getState();
     store.setWorkspaces(this.serverId, snapshot.workspaces);
     store.setEmptyProjects(this.serverId, snapshot.emptyProjects.values());
-    store.setHasHydratedWorkspaces(this.serverId, true);
     for (const workspaceId of removedWorkspaceIds) {
       clearWorkspaceArchivePending({ serverId: this.serverId, workspaceId });
       useWorkspaceSetupStore.getState().removeWorkspace({ serverId: this.serverId, workspaceId });
