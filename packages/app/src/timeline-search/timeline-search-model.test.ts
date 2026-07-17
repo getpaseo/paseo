@@ -919,6 +919,49 @@ describe("TimelineSearchMatch field/fieldOffset stamping", () => {
     // Both occurrences start at the beginning of their own entry text.
     expect(results.every((r) => r.fieldOffset === 0)).toBe(true);
   });
+
+  it("keeps repeated output occurrences distinct and relative to the output field", () => {
+    const item = makeShellToolCall("Bash", "echo needle", "needle\nneedle", "completed", "tc1");
+    const results = searchItems([item], "needle", "toolOutput");
+
+    expect(results).toHaveLength(2);
+    expect(results.map((match) => match.field)).toEqual(["toolOutput", "toolOutput"]);
+    expect(results.map((match) => match.fieldOffset)).toEqual([0, 7]);
+    expect(results.map(matchKey)).toEqual(["tc1:0", "tc1:7"]);
+  });
+});
+
+describe("filter-scoped field eligibility", () => {
+  it("returns only the fields eligible for each tool filter when the same query appears everywhere", () => {
+    const item = makeShellToolCall("needle", "needle", "needle", "completed", "tc1");
+
+    expect(searchItems([item], "needle", "toolCalls").map((match) => match.field)).toEqual([
+      "tool",
+      "toolInput",
+    ]);
+    expect(searchItems([item], "needle", "toolOutput").map((match) => match.field)).toEqual([
+      "toolOutput",
+    ]);
+    expect(searchItems([item], "needle", "errors")).toEqual([]);
+  });
+
+  it("does not leak thinking text into another active filter", () => {
+    const items = [
+      makeThought("needle", "thought-1"),
+      makeAssistantMessage("needle", "assistant-1"),
+      makeUserMessage("needle", "user-1"),
+    ];
+
+    expect(searchItems(items, "needle", "thinking").map((match) => match.item.id)).toEqual([
+      "thought-1",
+    ]);
+    expect(searchItems(items, "needle", "messages").map((match) => match.item.id)).toEqual([
+      "assistant-1",
+    ]);
+    expect(searchItems(items, "needle", "prompts").map((match) => match.item.id)).toEqual([
+      "user-1",
+    ]);
+  });
 });
 
 // ---- whitespace-collapse alignment tests ----

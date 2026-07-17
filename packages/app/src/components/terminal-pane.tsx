@@ -41,9 +41,10 @@ import {
 } from "@/utils/terminal-renderer-readiness";
 import { useAppSettings } from "@/hooks/use-settings";
 import { PaneFindBar } from "@/pane-find/pane-find-bar";
-import type { PaneFindAdapter, PaneFindState } from "@/pane-find/pane-find-types";
+import type { PaneFindAdapter } from "@/pane-find/pane-find-types";
 import { usePaneFindRegistration } from "@/pane-find/use-pane-find-registration";
 import { usePaneFindKey } from "@/panels/pane-context";
+import { INITIAL_TERMINAL_FIND_STATE, reduceTerminalFindState } from "./terminal-find-state";
 import { classifyForResolution, fetchDaemonResolution } from "@/assistant-file-links/resolver";
 import type {
   TerminalLocalFileLinkSource,
@@ -63,44 +64,6 @@ interface TerminalPaneProps {
   isPaneFocused: boolean;
   onOpenFileExplorer: () => void;
   onOpenWorkspaceFile: (request: WorkspaceFileOpenRequest) => void;
-}
-
-type TerminalFindAction =
-  | { type: "open" }
-  | { type: "reset" }
-  | { type: "query"; query: string }
-  | { type: "result"; matchCount: number; selectedIndex: number };
-
-const INITIAL_TERMINAL_FIND_STATE: PaneFindState = {
-  isOpen: false,
-  query: "",
-  isPending: false,
-  matchCount: 0,
-  selectedIndex: -1,
-};
-
-function reduceTerminalFindState(state: PaneFindState, action: TerminalFindAction): PaneFindState {
-  if (action.type === "open") {
-    return { ...state, isOpen: true };
-  }
-  if (action.type === "reset") {
-    return INITIAL_TERMINAL_FIND_STATE;
-  }
-  if (action.type === "query") {
-    return {
-      ...state,
-      query: action.query,
-      isPending: action.query.length > 0,
-      matchCount: 0,
-      selectedIndex: -1,
-    };
-  }
-  return {
-    ...state,
-    isPending: false,
-    matchCount: action.matchCount,
-    selectedIndex: action.selectedIndex,
-  };
 }
 
 const TERMINAL_REFIT_DELAYS_MS = [0, 48, 144, 320];

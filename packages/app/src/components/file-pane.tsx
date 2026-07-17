@@ -25,6 +25,7 @@ import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { lineNumberGutterWidth } from "@/components/code-insets";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { isRenderedMarkdownFile } from "@/components/file-pane-render-mode";
+import { countMarkdownFindMatches } from "@/components/file-pane-markdown-find-data";
 import type { AttachmentMetadata } from "@/attachments/types";
 import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
 import { persistAttachmentFromBytes } from "@/attachments/service";
@@ -47,7 +48,7 @@ import {
 import { PaneFindBar } from "@/pane-find/pane-find-bar";
 import { usePaneFindRegistration } from "@/pane-find/use-pane-find-registration";
 import { usePaneFindKey, usePaneFocus } from "@/panels/pane-context";
-import { findAllMatches, splitHighlightSegments } from "@/timeline-search/highlight";
+import { splitHighlightSegments } from "@/timeline-search/highlight";
 import type { ASTNode, RenderRules } from "react-native-markdown-display";
 
 interface CodeLineProps {
@@ -454,7 +455,7 @@ function MarkdownFileView({
         if (matchIndexBase === undefined) {
           matchIndexBase = nextMatchIndex;
           matchBasesByNodeKey.set(node.key, matchIndexBase);
-          nextMatchIndex += findAllMatches(node.content, query).length;
+          nextMatchIndex += countMarkdownFindMatches(node.content, query);
         }
         return (
           <MarkdownFindText

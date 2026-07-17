@@ -100,6 +100,25 @@ describe("createBrowserFindSequencer", () => {
     expect(results).toEqual([result(1)]);
   });
 
+  it("keeps the latest early result when an earlier request resolves afterwards", async () => {
+    const port = new FakeBrowserFindPort();
+    const results: BrowserFindResult[] = [];
+    const sequencer = createBrowserFindSequencer(port, {
+      onUnavailable: () => {},
+      onResult: (nextResult) => results.push(nextResult),
+    });
+
+    sequencer.request("first", { findNext: false, forward: true });
+    sequencer.request("second", { findNext: false, forward: true });
+    sequencer.receive(result(2));
+    port.pendingRequests[0]?.resolve(1);
+    await flushPromises();
+    port.pendingRequests[1]?.resolve(2);
+    await flushPromises();
+
+    expect(results).toEqual([result(2)]);
+  });
+
   it("clears state when the latest request is unavailable or fails", async () => {
     const port = new FakeBrowserFindPort();
     let unavailableCount = 0;
