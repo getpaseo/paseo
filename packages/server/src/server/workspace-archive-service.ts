@@ -75,7 +75,7 @@ interface BackingDirectory {
 
 interface ArchiveTarget {
   backing: BackingDirectory | null;
-  teardownCwd: string | null;
+  teardownCwds: string[];
   workspaceIds: string[];
 }
 
@@ -170,11 +170,11 @@ async function resolveArchiveTarget(
         { workspaceId },
         "Workspace not found for archive-by-scope; skipping",
       );
-      return { backing: null, teardownCwd: null, workspaceIds: [] };
+      return { backing: null, teardownCwds: [], workspaceIds: [] };
     }
     return {
       backing: await resolveWorkspaceBackingDirectory(record, dependencies),
-      teardownCwd: record.cwd,
+      teardownCwds: [record.cwd],
       workspaceIds: [workspaceId],
     };
   }
@@ -189,8 +189,6 @@ async function resolveArchiveTarget(
       }),
     )
   ).filter((workspace): workspace is ActiveWorkspaceRef => workspace !== null);
-  const exactTarget = createRealpathAwarePathMatcher(scope.targetPath);
-  const teardownWorkspace = targetWorkspaces.find((workspace) => exactTarget(workspace.cwd));
   const persistedMainRepoRoot = targetWorkspaces.find(
     (workspace) => workspace.mainRepoRoot,
   )?.mainRepoRoot;
@@ -199,7 +197,11 @@ async function resolveArchiveTarget(
       ...backing,
       mainRepoRoot: persistedMainRepoRoot ?? backing.mainRepoRoot,
     },
-    teardownCwd: teardownWorkspace?.cwd ?? scope.targetPath,
+    teardownCwds: uniqueFilesystemPaths(
+      targetWorkspaces.length > 0
+        ? targetWorkspaces.map((workspace) => workspace.cwd)
+        : [scope.targetPath],
+    ),
     workspaceIds: targetWorkspaces.map((workspace) => workspace.workspaceId),
   };
 }
@@ -311,7 +313,7 @@ async function maybeRemoveDirectory(
     await deletePaseoWorktree({
       cwd: backing.mainRepoRoot,
       worktreePath: backing.path,
-      teardownCwd: target.teardownCwd ?? backing.path,
+      teardownCwds: target.teardownCwds,
       worktreesRoot: backing.paseoWorktreesRoot ?? undefined,
       paseoHome: dependencies.paseoHome,
       worktreesBaseRoot: dependencies.paseoWorktreesBaseRoot,
@@ -328,6 +330,16 @@ async function maybeRemoveDirectory(
     }
     throw error;
   }
+}
+
+function uniqueFilesystemPaths(paths: string[]): string[] {
+  const unique: string[] = [];
+  for (const candidate of paths) {
+    if (!unique.some((existing) => createRealpathAwarePathMatcher(existing)(candidate))) {
+      unique.push(candidate);
+    }
+  }
+  return unique;
 }
 
 export type ArchiveWorkspaceContentsDependencies = Pick<

@@ -1,4 +1,3 @@
-import { mkdir } from "node:fs/promises";
 import { basename } from "node:path";
 
 import { createRealpathAwarePathMatcher } from "../../../utils/path.js";
@@ -7,6 +6,7 @@ import {
   createWorktree,
   isPaseoOwnedWorktreeCwd,
   mapWorkspaceCwdToWorktree,
+  rollbackCreatedPaseoWorktree,
 } from "../../../utils/worktree.js";
 import { WorktreeRequestError, toWorktreeRequestError } from "../../worktree-errors.js";
 import {
@@ -199,18 +199,36 @@ export function createWorkspaceRecoveryService(deps: {
       throw toWorktreeRequestError(error);
     }
 
-    const recreatedWorkspacePath = mapWorkspaceCwdToWorktree({
-      sourceWorktreePath: previousWorktreePath,
-      workspaceCwd: workspace.cwd,
-      targetWorktreePath: recreatedWorktreePath,
-    });
-    if (!createRealpathAwarePathMatcher(workspace.cwd)(recreatedWorkspacePath)) {
-      throw new WorktreeRequestError({
-        code: "unknown",
-        message: `Recreated worktree diverged from ${workspace.cwd}: ${recreatedWorkspacePath}`,
+    try {
+      const recreatedWorkspacePath = mapWorkspaceCwdToWorktree({
+        sourceWorktreePath: previousWorktreePath,
+        workspaceCwd: workspace.cwd,
+        targetWorktreePath: recreatedWorktreePath,
       });
+      if (!createRealpathAwarePathMatcher(workspace.cwd)(recreatedWorkspacePath)) {
+        throw new WorktreeRequestError({
+          code: "unknown",
+          message: `Recreated worktree diverged from ${workspace.cwd}: ${recreatedWorkspacePath}`,
+        });
+      }
+      if (!(await deps.isDirectory(recreatedWorkspacePath))) {
+        throw new WorktreeRequestError({
+          code: "unknown",
+          message: `Selected project directory is missing from the restored worktree: ${recreatedWorkspacePath}`,
+        });
+      }
+    } catch (error) {
+      return rollbackCreatedPaseoWorktree(
+        {
+          cwd: sourceRepoRoot,
+          worktreePath: recreatedWorktreePath,
+          teardownCwds: [],
+          paseoHome: deps.paseoHome,
+          worktreesBaseRoot: deps.worktreesRoot,
+        },
+        error,
+      );
     }
-    await mkdir(recreatedWorkspacePath, { recursive: true });
   }
 
   return { inspect, restore };

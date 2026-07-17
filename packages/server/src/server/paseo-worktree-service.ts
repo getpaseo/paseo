@@ -12,7 +12,8 @@ import {
 } from "./worktree-core.js";
 import {
   mapWorkspaceRelativeCwdToWorktree,
-  deletePaseoWorktree,
+  rollbackCreatedPaseoWorktree,
+  seedPaseoConfigFile,
   validateBranchSlug,
   type WorktreeConfig,
 } from "../utils/worktree.js";
@@ -64,42 +65,57 @@ export async function createPaseoWorktree(
 ): Promise<CreatePaseoWorktreeResult> {
   const workspaceCwdPlan = await planWorkspaceCwdForWorktree(input.cwd, deps.workspaceGitService);
   const createdWorktree = await createWorktreeCore(input, deps);
-  maybeMarkFirstAgentBranchAutoNameEligible({ createdWorktree });
-  const workspaceCwd = mapWorkspaceRelativeCwdToWorktree({
-    relativeWorkspaceCwd: workspaceCwdPlan.relativeWorkspaceCwd,
-    targetWorktreePath: createdWorktree.worktree.worktreePath,
-  });
-  if (!(await isDirectory(workspaceCwd))) {
+  try {
+    maybeMarkFirstAgentBranchAutoNameEligible({ createdWorktree });
+    const workspaceCwd = mapWorkspaceRelativeCwdToWorktree({
+      relativeWorkspaceCwd: workspaceCwdPlan.relativeWorkspaceCwd,
+      targetWorktreePath: createdWorktree.worktree.worktreePath,
+    });
+    if (!(await isDirectory(workspaceCwd))) {
+      throw new Error(`Selected project directory is missing from the worktree: ${workspaceCwd}`);
+    }
+
     if (createdWorktree.created) {
-      await deletePaseoWorktree({
-        cwd: createdWorktree.repoRoot,
-        worktreePath: createdWorktree.worktree.worktreePath,
-        paseoHome: input.paseoHome,
-        worktreesBaseRoot: input.worktreesRoot,
+      await seedPaseoConfigFile({
+        sourceCwd: workspaceCwdPlan.inputCwd,
+        targetCwd: workspaceCwd,
       });
     }
-    throw new Error(`Selected project directory is missing from the worktree: ${workspaceCwd}`);
+    const workspace = await deps.workspaceProvisioning.createWorkspaceForWorktree({
+      sourceCwd: workspaceCwdPlan.inputCwd,
+      projectId: input.projectId,
+      repoRoot: createdWorktree.repoRoot,
+      cwd: workspaceCwd,
+      worktreeRoot: createdWorktree.worktree.worktreePath,
+      branch: createdWorktree.worktree.branchName || null,
+      baseBranch: resolveIntentBaseBranch(createdWorktree.intent),
+      title: resolveFirstAgentPromptTitle(input.firstAgentContext),
+    });
+
+    deps.github.invalidate({ cwd: createdWorktree.worktree.worktreePath });
+
+    return {
+      worktree: createdWorktree.worktree,
+      intent: createdWorktree.intent,
+      workspace,
+      repoRoot: createdWorktree.repoRoot,
+      created: createdWorktree.created,
+    };
+  } catch (error) {
+    if (!createdWorktree.created) {
+      throw error;
+    }
+    return rollbackCreatedPaseoWorktree(
+      {
+        cwd: createdWorktree.repoRoot,
+        worktreePath: createdWorktree.worktree.worktreePath,
+        ...(input.runSetup === false ? { teardownCwds: [] } : {}),
+        paseoHome: input.paseoHome,
+        worktreesBaseRoot: input.worktreesRoot,
+      },
+      error,
+    );
   }
-  const workspace = await deps.workspaceProvisioning.createWorkspaceForWorktree({
-    sourceCwd: workspaceCwdPlan.inputCwd,
-    projectId: input.projectId,
-    repoRoot: createdWorktree.repoRoot,
-    cwd: workspaceCwd,
-    worktreeRoot: createdWorktree.worktree.worktreePath,
-    branch: createdWorktree.worktree.branchName || null,
-    baseBranch: resolveIntentBaseBranch(createdWorktree.intent),
-    title: resolveFirstAgentPromptTitle(input.firstAgentContext),
-  });
-
-  deps.github.invalidate({ cwd: createdWorktree.worktree.worktreePath });
-
-  return {
-    worktree: createdWorktree.worktree,
-    intent: createdWorktree.intent,
-    workspace,
-    repoRoot: createdWorktree.repoRoot,
-    created: createdWorktree.created,
-  };
 }
 
 async function isDirectory(targetPath: string): Promise<boolean> {

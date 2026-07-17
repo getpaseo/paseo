@@ -388,13 +388,42 @@ describe("archiveByScope", () => {
 
   test("worktree scope archives root and subdirectory workspaces before removing the backing worktree", async () => {
     const { tempDir, repoDir } = createGitRepo();
+    const nestedRelative = path.join("packages", "app");
+    const sourceNested = path.join(repoDir, nestedRelative);
+    mkdirSync(sourceNested, { recursive: true });
+    writeFileSync(
+      path.join(repoDir, "paseo.json"),
+      JSON.stringify({
+        worktree: {
+          teardown: [
+            "node -e \"require('fs').appendFileSync(process.env.PASEO_SOURCE_CHECKOUT_PATH + '/root-scope-teardown.log', process.cwd() + '\\\\n')\"",
+          ],
+        },
+      }),
+    );
+    writeFileSync(
+      path.join(sourceNested, "paseo.json"),
+      JSON.stringify({
+        worktree: {
+          teardown: [
+            "node -e \"require('fs').writeFileSync(process.env.PASEO_SOURCE_CHECKOUT_PATH + '/nested-scope-teardown.log', process.cwd())\"",
+          ],
+        },
+      }),
+    );
+    execFileSync("git", ["add", "."], { cwd: repoDir, stdio: "pipe" });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "scope teardown"], {
+      cwd: repoDir,
+      stdio: "pipe",
+    });
     const paseoHome = path.join(tempDir, ".paseo");
     const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "worktree-scope");
     const workspaceA = "ws-worktree-a";
     const workspaceB = "ws-worktree-b";
     const workspaceC = "ws-worktree-subdirectory";
-    const subdirectory = path.join(worktree.worktreePath, "packages", "app");
-    mkdirSync(subdirectory, { recursive: true });
+    const subdirectory = path.join(worktree.worktreePath, nestedRelative);
+    const matchesRoot = createRealpathAwarePathMatcher(worktree.worktreePath);
+    const matchesSubdirectory = createRealpathAwarePathMatcher(subdirectory);
 
     const result = await archiveByScope(
       createArchiveDeps({
@@ -435,6 +464,14 @@ describe("archiveByScope", () => {
     expect(result.archivedWorkspaceIds).toHaveLength(3);
     expect(result.removedDirectory).toBe(true);
     expect(existsSync(worktree.worktreePath)).toBe(false);
+    const rootTeardownCwds = readFileSync(path.join(repoDir, "root-scope-teardown.log"), "utf8")
+      .trim()
+      .split("\n");
+    expect(rootTeardownCwds).toHaveLength(1);
+    expect(matchesRoot(rootTeardownCwds[0] ?? "")).toBe(true);
+    expect(
+      matchesSubdirectory(readFileSync(path.join(repoDir, "nested-scope-teardown.log"), "utf8")),
+    ).toBe(true);
   });
 
   test("workspace scope never removes a non-Paseo-owned directory", async () => {

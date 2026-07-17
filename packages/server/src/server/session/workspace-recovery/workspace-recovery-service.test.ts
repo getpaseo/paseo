@@ -191,6 +191,62 @@ describe("workspace recovery", () => {
     expect(unarchived).toEqual([workspace.workspaceId]);
   });
 
+  test("keeps an exact-subdirectory workspace archived when its branch lacks that directory", async () => {
+    const { tempDir, repoDir } = createGitRepository();
+    const branch = "feature/without-subproject";
+    execFileSync("git", ["branch", branch], { cwd: repoDir, stdio: "pipe" });
+    const paseoHome = join(tempDir, "paseo-home");
+    const worktreesRoot = join(tempDir, "worktrees");
+    const created = await createWorktree({
+      cwd: repoDir,
+      worktreeSlug: "without-subproject",
+      source: { kind: "checkout-branch", branchName: branch },
+      runSetup: false,
+      paseoHome,
+      worktreesRoot,
+    });
+    const worktreeRoot = realpathSync(created.worktreePath);
+    const workspaceCwd = join(worktreeRoot, "packages", "app");
+    rmSync(worktreeRoot, { recursive: true, force: true });
+    execFileSync("git", ["worktree", "prune"], { cwd: repoDir, stdio: "pipe" });
+
+    const project = createProject({ rootPath: repoDir });
+    const workspace = createWorkspace({
+      workspaceId: "ws-missing-restored-subdirectory",
+      cwd: workspaceCwd,
+      branch,
+      worktreeRoot,
+      mainRepoRoot: repoDir,
+    });
+    const unarchived: string[] = [];
+    const service = createWorkspaceRecoveryService({
+      paseoHome,
+      worktreesRoot,
+      getWorkspace: async (workspaceId) =>
+        workspaceId === workspace.workspaceId ? workspace : null,
+      getProject: async (projectId) => (projectId === project.projectId ? project : null),
+      isDirectory: async (targetPath) =>
+        existsSync(targetPath) && statSync(targetPath).isDirectory(),
+      unarchiveWorkspace: async (record) => {
+        unarchived.push(record.workspaceId);
+      },
+    });
+
+    await expect(service.restore(workspace.workspaceId)).rejects.toThrow(
+      "Selected project directory is missing from the restored worktree",
+    );
+    expect(unarchived).toEqual([]);
+    expect(existsSync(worktreeRoot)).toBe(false);
+    expect(
+      execFileSync("git", ["worktree", "list", "--porcelain"], {
+        cwd: repoDir,
+        stdio: "pipe",
+      })
+        .toString()
+        .includes("without-subproject"),
+    ).toBe(false);
+  });
+
   test("keeps the workspace archived when its persisted source repository is missing", async () => {
     const workspace = createWorkspace({ mainRepoRoot: "/missing-source" });
     const { service, unarchived } = createHarness({

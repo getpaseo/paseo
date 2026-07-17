@@ -776,6 +776,23 @@ export async function runWorktreeTeardownCommands(options: {
   return results;
 }
 
+export async function seedPaseoConfigFile(options: {
+  sourceCwd: string;
+  targetCwd: string;
+}): Promise<void> {
+  const sourceConfigPath = join(options.sourceCwd, "paseo.json");
+  const targetConfigPath = join(options.targetCwd, "paseo.json");
+  try {
+    await stat(targetConfigPath);
+    return;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  await copyFile(sourceConfigPath, targetConfigPath).catch((error) => {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  });
+}
+
 /**
  * Get the git common directory (shared across worktrees) for a given cwd.
  * This is where refs, objects, etc. are stored.
@@ -1050,23 +1067,25 @@ export async function resolveExistingWorktreeForSlug({
   };
 }
 
-export async function deletePaseoWorktree({
-  cwd,
-  worktreePath,
-  teardownCwd,
-  worktreeSlug,
-  worktreesRoot,
-  paseoHome,
-  worktreesBaseRoot,
-}: {
+export interface DeletePaseoWorktreeOptions {
   cwd: string | null;
   worktreePath?: string;
-  teardownCwd?: string;
+  teardownCwds?: string[];
   worktreeSlug?: string;
   worktreesRoot?: string;
   paseoHome?: string;
   worktreesBaseRoot?: string;
-}): Promise<void> {
+}
+
+export async function deletePaseoWorktree({
+  cwd,
+  worktreePath,
+  teardownCwds,
+  worktreeSlug,
+  worktreesRoot,
+  paseoHome,
+  worktreesBaseRoot,
+}: DeletePaseoWorktreeOptions): Promise<void> {
   if (!worktreePath && !worktreeSlug) {
     throw new Error("worktreePath or worktreeSlug is required");
   }
@@ -1101,10 +1120,12 @@ export async function deletePaseoWorktree({
   }
 
   if (await pathExists(resolvedWorktree)) {
-    await runWorktreeTeardownCommands({
-      worktreePath: resolvedWorktree,
-      teardownCwd,
-    });
+    for (const teardownCwd of teardownCwds ?? [resolvedWorktree]) {
+      await runWorktreeTeardownCommands({
+        worktreePath: resolvedWorktree,
+        teardownCwd,
+      });
+    }
   }
 
   if (cwd) {
@@ -1130,6 +1151,27 @@ export async function deletePaseoWorktree({
       // not critical; git will prune lazily
     }
   }
+}
+
+export async function rollbackCreatedPaseoWorktree(
+  options: DeletePaseoWorktreeOptions,
+  cause: unknown,
+): Promise<never> {
+  let cleanupError: unknown;
+  try {
+    await deletePaseoWorktree(options);
+  } catch (error) {
+    cleanupError = error;
+  }
+  if (cleanupError) {
+    const failure = new Error(
+      `${cause instanceof Error ? cause.message : "Worktree workflow failed"}; rollback also failed: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
+      { cause },
+    );
+    Object.assign(failure, { cleanupError });
+    throw failure;
+  }
+  throw cause;
 }
 
 async function pathExists(path: string): Promise<boolean> {
@@ -1225,18 +1267,7 @@ export const createWorktree = async ({
       : {}),
   });
 
-  // If paseo.json exists in the main repo but wasn't checked into the worktree
-  // (e.g. uncommitted on first-time setup), seed the worktree with it so setup
-  // commands and scripts pick up the user's intended config.
-  const mainConfigPath = join(cwd, "paseo.json");
-  const worktreeConfigPath = join(worktreePath, "paseo.json");
-  try {
-    await stat(worktreeConfigPath);
-  } catch {
-    await copyFile(mainConfigPath, worktreeConfigPath).catch((err) => {
-      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
-    });
-  }
+  await seedPaseoConfigFile({ sourceCwd: cwd, targetCwd: worktreePath });
 
   if (runSetup) {
     await runWorktreeSetupCommands({

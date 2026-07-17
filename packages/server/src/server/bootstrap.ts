@@ -110,9 +110,13 @@ export async function fanOutReconciledWorkspaceUpdates(input: {
           "Failed to sync workspace Git observers after reconciliation",
         );
       }
-      await session.emitWorkspaceUpdatesForExternalWorkspaceIds(input.workspaceIds, {
-        skipReconcile: true,
-      });
+      try {
+        await session.emitWorkspaceUpdatesForExternalWorkspaceIds(input.workspaceIds, {
+          skipReconcile: true,
+        });
+      } catch (error) {
+        input.logger.warn({ err: error }, "Failed to emit workspace updates after reconciliation");
+      }
     }),
   );
 }

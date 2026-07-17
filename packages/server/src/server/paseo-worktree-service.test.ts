@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
@@ -223,6 +223,30 @@ test("creates a worktree workspace at the selected project subdirectory", async 
   });
 });
 
+test("seeds an uncommitted exact-project config into the mapped worktree directory", async () => {
+  const { repoDir, tempDir } = createGitRepo();
+  cleanupPaths.push(tempDir);
+  const sourceDir = path.join(repoDir, "packages", "app");
+  mkdirSync(sourceDir, { recursive: true });
+  writeFileSync(path.join(sourceDir, "package.json"), "{}\n");
+  commitAll(repoDir, "add subproject");
+  const config = JSON.stringify({ worktree: { setup: ["npm install"] } });
+  writeFileSync(path.join(sourceDir, "paseo.json"), config);
+
+  const result = await createPaseoWorktree(
+    {
+      cwd: sourceDir,
+      worktreeSlug: "seed-nested-config",
+      runSetup: false,
+      paseoHome: path.join(tempDir, ".paseo"),
+    },
+    createDeps(),
+  );
+
+  expect(readFileSync(path.join(result.workspace.cwd, "paseo.json"), "utf8")).toBe(config);
+  expect(existsSync(path.join(result.worktree.worktreePath, "paseo.json"))).toBe(false);
+});
+
 test("removes a new worktree when its ref does not contain the selected project directory", async () => {
   const { repoDir, tempDir } = createGitRepo();
   cleanupPaths.push(tempDir);
@@ -258,6 +282,36 @@ test("removes a new worktree when its ref does not contain the selected project 
     execFileSync("git", ["worktree", "list", "--porcelain"], { cwd: repoDir, stdio: "pipe" })
       .toString()
       .includes("missing-subproject"),
+  ).toBe(false);
+});
+
+test("removes a new worktree when workspace persistence fails", async () => {
+  const { repoDir, tempDir } = createGitRepo();
+  cleanupPaths.push(tempDir);
+  const paseoHome = path.join(tempDir, ".paseo");
+  const worktreePath = path.join(
+    await getPaseoWorktreesRoot(repoDir, paseoHome),
+    "persistence-failure",
+  );
+
+  await expect(
+    createPaseoWorktree(
+      {
+        cwd: repoDir,
+        projectId: "missing-project",
+        worktreeSlug: "persistence-failure",
+        runSetup: false,
+        paseoHome,
+      },
+      createDeps(),
+    ),
+  ).rejects.toThrow("Unknown project: missing-project");
+
+  expect(existsSync(worktreePath)).toBe(false);
+  expect(
+    execFileSync("git", ["worktree", "list", "--porcelain"], { cwd: repoDir, stdio: "pipe" })
+      .toString()
+      .includes("persistence-failure"),
   ).toBe(false);
 });
 
