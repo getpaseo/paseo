@@ -347,6 +347,7 @@ function ExplorerSidebarContent({
               testID="explorer-tab-pr"
             >
               <PullRequestTabIcon
+                forge={prPane.forge}
                 size={13}
                 color={
                   resolvedTab === "pr" ? theme.colors.foreground : theme.colors.foregroundMuted

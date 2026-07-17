@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type { Logger } from "pino";
 import pino from "pino";
-import { beforeEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import {
   archiveIfSafe,
@@ -14,7 +14,7 @@ import {
 import type { ArchiveResult, ActiveWorkspaceRef } from "../workspace-archive-service.js";
 import type { WorkspaceGitRuntimeSnapshot } from "../workspace-git-service.js";
 import { createWorktree, type WorktreeConfig } from "../../utils/worktree.js";
-import type { GitHubService } from "../../../services/github-service.js";
+import type { ForgeService } from "../../../services/forge-service.js";
 import type { StoredAgentRecord } from "../agent/agent-storage.js";
 
 const CWD = "/tmp/paseo/worktrees/repo/branch";
@@ -22,8 +22,8 @@ const PASEO_HOME = "/tmp/paseo";
 const WORKTREES_ROOT = "/tmp/paseo/worktrees/repo";
 
 function createPullRequest(
-  overrides?: Partial<NonNullable<WorkspaceGitRuntimeSnapshot["github"]["pullRequest"]>>,
-): NonNullable<WorkspaceGitRuntimeSnapshot["github"]["pullRequest"]> {
+  overrides?: Partial<NonNullable<WorkspaceGitRuntimeSnapshot["forge"]["pullRequest"]>>,
+): NonNullable<WorkspaceGitRuntimeSnapshot["forge"]["pullRequest"]> {
   return {
     url: "https://github.com/acme/repo/pull/123",
     title: "Merge me",
@@ -37,7 +37,7 @@ function createPullRequest(
 
 function createSnapshot(overrides?: {
   git?: Partial<WorkspaceGitRuntimeSnapshot["git"]>;
-  pullRequest?: WorkspaceGitRuntimeSnapshot["github"]["pullRequest"];
+  pullRequest?: WorkspaceGitRuntimeSnapshot["forge"]["pullRequest"];
 }): WorkspaceGitRuntimeSnapshot {
   return {
     cwd: CWD,
@@ -154,7 +154,7 @@ async function runArchiveIfSafe(
   harness: ReturnType<typeof createHarness>,
   overrides?: {
     cwd?: string;
-    pullRequest?: WorkspaceGitRuntimeSnapshot["github"]["pullRequest"];
+    pullRequest?: WorkspaceGitRuntimeSnapshot["forge"]["pullRequest"];
   },
 ): Promise<void> {
   await archiveIfSafe({
@@ -211,11 +211,15 @@ async function createPaseoOwnedWorktree(
   });
 }
 
-function createGitHubServiceStub(): GitHubService {
+function createGitHubServiceStub(): ForgeService {
   return {
     listPullRequests: async () => [],
     listIssues: async () => [],
-    searchIssuesAndPrs: async () => ({ items: [], githubFeaturesEnabled: true }),
+    searchIssuesAndPrs: async () => ({
+      items: [],
+      featuresEnabled: true,
+      githubFeaturesEnabled: true,
+    }),
     getPullRequest: async ({ number }) => ({
       number,
       title: `PR ${number}`,
@@ -227,6 +231,15 @@ function createGitHubServiceStub(): GitHubService {
       labels: [],
     }),
     getPullRequestHeadRef: async ({ number }) => `pr-${number}`,
+    getPullRequestCheckoutTarget: async ({ number }) => ({
+      number,
+      baseRefName: "main",
+      headRefName: `pr-${number}`,
+      headOwnerLogin: null,
+      headRepositorySshUrl: null,
+      headRepositoryUrl: null,
+      isCrossRepository: false,
+    }),
     getCurrentPullRequestStatus: async () => null,
     createPullRequest: async () => ({
       number: 1,

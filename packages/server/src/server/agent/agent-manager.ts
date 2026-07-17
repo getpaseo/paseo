@@ -1669,7 +1669,10 @@ export class AgentManager {
     return nextRecord;
   }
 
-  async unarchiveSnapshot(agentId: string): Promise<boolean> {
+  async unarchiveSnapshot(
+    agentId: string,
+    updates?: { workspaceId?: string; labels?: AgentLabelPatch },
+  ): Promise<boolean> {
     const registry = this.requireRegistry();
     const record = await registry.get(agentId);
     if (!record || !record.archivedAt) {
@@ -1680,6 +1683,8 @@ export class AgentManager {
 
     await registry.upsert({
       ...record,
+      ...(updates?.workspaceId ? { workspaceId: updates.workspaceId } : {}),
+      ...(updates?.labels ? { labels: applyLabelPatch(record.labels, updates.labels) } : {}),
       archivedAt: null,
       updatedAt: new Date().toISOString(),
     });

@@ -3,14 +3,16 @@ import { Pressable, Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import type { CheckoutCommit } from "@getpaseo/protocol/messages";
 import { ThemedChevron, chevronColorMapping } from "@/git/themed-chevron";
+import { formatTimeAgo } from "@/utils/time";
 import { dotStyles } from "./shared";
 
 interface CommitRowProps {
   commit: CheckoutCommit;
+  now: Date;
   onCommitPress: (sha: string) => void;
 }
 
-export const CommitRow = memo(function CommitRow({ commit, onCommitPress }: CommitRowProps) {
+export const CommitRow = memo(function CommitRow({ commit, now, onCommitPress }: CommitRowProps) {
   const handlePress = useCallback(() => {
     onCommitPress(commit.sha);
   }, [commit.sha, onCommitPress]);
@@ -30,6 +32,7 @@ export const CommitRow = memo(function CommitRow({ commit, onCommitPress }: Comm
       <Text style={styles.subject} numberOfLines={1}>
         {commit.subject}
       </Text>
+      <Text style={styles.timestamp}>{formatTimeAgo(new Date(commit.authorDate), now)}</Text>
       <View style={styles.caret}>
         <ThemedChevron size={14} uniProps={chevronColorMapping} />
       </View>
@@ -57,6 +60,11 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
     fontSize: theme.fontSize.sm,
     color: theme.colors.foreground,
+  },
+  timestamp: {
+    flexShrink: 0,
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foregroundMuted,
   },
   caret: {
     width: 16,

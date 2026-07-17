@@ -1,8 +1,8 @@
 import { describe, expect, test } from "vitest";
 
 import type { AgentStreamEvent } from "../../agent-sdk-types.js";
-import type { PiAgentMessage } from "./rpc-types.js";
 import { streamPiHistory, type PiCapturedUserMessageEntry } from "./history-mapper.js";
+import type { PiAgentMessage } from "./rpc-types.js";
 
 async function collectHistory(
   messages: PiAgentMessage[],
@@ -124,6 +124,18 @@ describe("Pi history mapper", () => {
           detail: { type: "shell", command: "echo hi", output: "hi\n", exitCode: 0 },
           error: null,
         },
+      },
+    ]);
+  });
+
+  test("replays non-notice custom messages as assistant text, matching the live path", async () => {
+    await expect(
+      collectHistory([{ role: "custom", content: "Extension command output" }]),
+    ).resolves.toEqual([
+      {
+        type: "timeline",
+        provider: "pi",
+        item: { type: "assistant_message", text: "Extension command output" },
       },
     ]);
   });

@@ -5,6 +5,7 @@ import type { AgentSessionConfig } from "./agent/agent-sdk-types.js";
 import {
   type GitSetupOptions,
   type FirstAgentContext,
+  type ChangeRequestCheckoutSource,
   type SessionInboundMessage,
   type SessionOutboundMessage,
   type WorkspaceSetupSnapshot,
@@ -22,7 +23,6 @@ import {
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type { ServiceProxySubsystem } from "./service-proxy.js";
 import type { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
-import type { GitHubService } from "../services/github-service.js";
 import type { CheckoutExistingBranchResult } from "../utils/checkout-git.js";
 import { expandTilde } from "../utils/path.js";
 import {
@@ -59,6 +59,7 @@ export interface NormalizedGitOptions {
   requestedWorktreeSlug?: string;
   refName?: string;
   action?: "branch-off" | "checkout";
+  checkoutSource?: ChangeRequestCheckoutSource;
   githubPrNumber?: number;
 }
 
@@ -91,7 +92,6 @@ interface BuildAgentSessionConfigDependencies {
     baseBranch: string;
     newBranchName: string;
   }) => Promise<void>;
-  github?: Pick<GitHubService, "invalidate">;
 }
 
 interface CreatePaseoWorktreeInBackgroundDependencies {
@@ -226,6 +226,7 @@ export async function buildAgentSessionConfig(
         worktreeSlug: normalized.worktreeSlug,
         refName: normalized.refName,
         action: normalized.action,
+        checkoutSource: normalized.checkoutSource,
         githubPrNumber: normalized.githubPrNumber,
         firstAgentContext,
         runSetup: false,
@@ -259,10 +260,10 @@ export async function buildAgentSessionConfig(
       baseBranch,
       newBranchName: normalized.newBranchName!,
     });
-    dependencies.github?.invalidate({ cwd });
+    dependencies.workspaceGitService?.invalidateForge(cwd);
   } else if (normalized.baseBranch) {
     await dependencies.checkoutExistingBranch(cwd, normalized.baseBranch);
-    dependencies.github?.invalidate({ cwd });
+    dependencies.workspaceGitService?.invalidateForge(cwd);
   }
 
   return {
@@ -331,6 +332,13 @@ export function normalizeGitOptions(
   const normalizedWorktreeSlug = requestedWorktreeSlug ?? normalizedBranchName;
   const refName = merged.refName?.trim() || undefined;
   const action = merged.action;
+  // COMPAT(githubPrNumber): added in v0.1.106, remove after 2026-12-28 once
+  // clients send checkoutSource.
+  const checkoutSource =
+    merged.checkoutSource ??
+    (merged.githubPrNumber
+      ? ({ kind: "change_request", forge: "github", number: merged.githubPrNumber } as const)
+      : undefined);
   const githubPrNumber = merged.githubPrNumber;
 
   if (
@@ -339,6 +347,7 @@ export function normalizeGitOptions(
     !baseBranch &&
     !refName &&
     !action &&
+    !checkoutSource &&
     !githubPrNumber
   ) {
     return null;
@@ -360,6 +369,7 @@ export function normalizeGitOptions(
     requestedWorktreeSlug,
     refName,
     action,
+    checkoutSource,
     githubPrNumber,
   };
 }
@@ -512,6 +522,7 @@ export async function handleCreatePaseoWorktreeRequest(
         firstAgentContext: normalizeFirstAgentContext(request),
         refName: request.refName,
         action: request.action,
+        checkoutSource: request.checkoutSource,
         githubPrNumber: request.githubPrNumber,
       },
     );

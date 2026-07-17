@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import { DiffStat } from "@/components/diff-stat";
 import {
   View,
@@ -83,11 +84,13 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
-import { GitHubIcon } from "@/components/icons/github-icon";
 import { lineNumberGutterWidth } from "@/components/code-insets";
 import { GitActionsSplitButton } from "@/git/actions-split-button";
 import { BranchSwitcher } from "@/components/branch-switcher";
 import { useGitActions } from "@/git/use-actions";
+import { buildForgeSignInCommand, getForgePresentation, type Forge } from "@/git/forge";
+import { parseGitRemoteLocation } from "@getpaseo/protocol/git-remote";
+import type { ForgeAuthState } from "@getpaseo/protocol/messages";
 import { useCheckoutGitActionsStore } from "@/git/actions-store";
 import { useToast } from "@/contexts/toast-context";
 import { useSessionStore } from "@/stores/session-store";
@@ -1256,7 +1259,6 @@ const ThemedGitCommitHorizontal = withUnistyles(GitCommitHorizontal);
 const ThemedDownload = withUnistyles(Download);
 const ThemedUpload = withUnistyles(Upload);
 const ThemedArrowDownUp = withUnistyles(ArrowDownUp);
-const ThemedGitHubIcon = withUnistyles(GitHubIcon);
 const ThemedGitMerge = withUnistyles(GitMerge);
 const ThemedRefreshCcw = withUnistyles(RefreshCcw);
 const ThemedArchive = withUnistyles(Archive);
@@ -1403,6 +1405,7 @@ function DiffFilesToolbar({
 }
 
 interface DiffOptionsMenuProps {
+  brand: string;
   hideWhitespace: boolean;
   isMobile: boolean;
   isRefreshing: boolean;
@@ -1415,6 +1418,7 @@ interface DiffOptionsMenuProps {
 }
 
 function DiffOptionsMenu({
+  brand,
   hideWhitespace,
   isMobile,
   isRefreshing,
@@ -1489,7 +1493,11 @@ function DiffOptionsMenu({
               testID="changes-refresh"
               onSelect={onRefresh}
             >
-              {isRefreshing ? t("workspace.git.diff.refreshing") : t("workspace.git.diff.refresh")}
+              {isRefreshing
+                ? t("workspace.git.diff.refreshing")
+                : t("workspace.git.diff.refreshState", {
+                    brand,
+                  })}
             </DropdownMenuItem>
           </>
         ) : null}
@@ -2078,6 +2086,62 @@ function computePrErrorMessage(
   return prPayloadError?.message ?? null;
 }
 
+// The precise setup step a workspace needs before its forge features work, or
+// null when nothing is actionable (authenticated, or no forge remote at all).
+type ForgeSetupAction = "install_cli" | "sign_in" | null;
+
+// Drive the onboarding callout from the forge's auth state so the message names
+// the exact next step (install the CLI vs sign in) for whichever forge backs the
+// workspace — GitHub included. GitLab additionally requires the host to advertise
+// GitLab support, matching the rest of the GitLab UI.
+function computeForgeSetupAction(input: {
+  forge: Forge;
+  forgeProvidersSupported: boolean;
+  authState: ForgeAuthState | undefined;
+}): ForgeSetupAction {
+  // A daemon without pluggable forge support can't operate any non-GitHub forge,
+  // so don't offer a setup action for one it can't drive.
+  if (input.forge !== "github" && !input.forgeProvidersSupported) {
+    return null;
+  }
+  switch (input.authState) {
+    case "cli_missing":
+      return "install_cli";
+    case "unauthenticated":
+      return "sign_in";
+    case "authenticated":
+    case "no_remote":
+    case "error":
+      return null;
+    default:
+      return null;
+  }
+}
+
+function parseForgeHost(url: string | null | undefined): string | null {
+  return url ? (parseGitRemoteLocation(url)?.host ?? null) : null;
+}
+
+function buildForgeSetupMessage(input: {
+  action: Exclude<ForgeSetupAction, null>;
+  forge: Forge;
+  host: string | null;
+  t: TFunction;
+}): string {
+  const { brandLabel, signInCli } = getForgePresentation(input.forge);
+  // A forge with no known CLI (an unknown/third-party forge rendered neutrally)
+  // has no install/sign-in command to interpolate — show neutral guidance
+  // rather than the GitLab-specific callout or a null command.
+  if (signInCli === null) {
+    return input.t("workspace.git.forgeSetup.generic", { brand: brandLabel });
+  }
+  if (input.action === "install_cli") {
+    return input.t("workspace.git.forgeSetup.installCli", { cli: signInCli, brand: brandLabel });
+  }
+  const command = buildForgeSignInCommand(input.forge, input.host);
+  return input.t("workspace.git.forgeSetup.signIn", { command, brand: brandLabel });
+}
+
 function buildDiffModeTriggerStyle(): PressableStyleFn {
   return ({ hovered, pressed, open }) => [
     styles.diffModeTrigger,
@@ -2285,11 +2349,36 @@ export function GitDiffPane({ serverId, workspaceId, cwd, enabled }: GitDiffPane
     setWorkspaceAttachments,
     workspaceAttachmentScopeKey,
   ]);
-  const { githubFeaturesEnabled, payloadError: prPayloadError } = useCheckoutPrStatusQuery({
+  const {
+    githubFeaturesEnabled,
+    forge,
+    authState,
+    payloadError: prPayloadError,
+  } = useCheckoutPrStatusQuery({
     serverId,
     cwd,
     enabled: isGit,
   });
+  const forgeProvidersSupported = useSessionStore(
+    (s) => s.sessions[serverId]?.serverInfo?.features?.forgeProviders === true,
+  );
+  const forgeSetupAction = computeForgeSetupAction({
+    forge,
+    forgeProvidersSupported,
+    authState,
+  });
+  const forgeSetupMessage = useMemo(
+    () =>
+      forgeSetupAction
+        ? buildForgeSetupMessage({
+            action: forgeSetupAction,
+            forge,
+            host: parseForgeHost(status?.remoteUrl),
+            t,
+          })
+        : null,
+    [forgeSetupAction, forge, status?.remoteUrl, t],
+  );
   const normalizedWorkspaceRoot = useMemo(() => cwd.trim(), [cwd]);
   const workspaceStateKey = useMemo(
     () =>
@@ -2401,11 +2490,6 @@ export function GitDiffPane({ serverId, workspaceId, cwd, enabled }: GitDiffPane
       pull: <ThemedDownload size={16} uniProps={foregroundMutedIconColorMapping} />,
       push: <ThemedUpload size={16} uniProps={foregroundMutedIconColorMapping} />,
       pullAndPush: <ThemedArrowDownUp size={16} uniProps={foregroundMutedIconColorMapping} />,
-      viewPr: <ThemedGitHubIcon size={16} uniProps={foregroundMutedIconColorMapping} />,
-      createPr: <ThemedGitHubIcon size={16} uniProps={foregroundMutedIconColorMapping} />,
-      mergePrSquash: <ThemedGitHubIcon size={16} uniProps={foregroundMutedIconColorMapping} />,
-      mergePrMerge: <ThemedGitHubIcon size={16} uniProps={foregroundMutedIconColorMapping} />,
-      mergePrRebase: <ThemedGitHubIcon size={16} uniProps={foregroundMutedIconColorMapping} />,
       merge: <ThemedGitMerge size={16} uniProps={foregroundMutedIconColorMapping} />,
       mergeFromBase: <ThemedRefreshCcw size={16} uniProps={foregroundMutedIconColorMapping} />,
       archive: <ThemedArchive size={16} uniProps={foregroundMutedIconColorMapping} />,
@@ -2531,6 +2615,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, enabled }: GitDiffPane
                 />
               ) : null}
               <DiffOptionsMenu
+                brand={getForgePresentation(forge).brandLabel}
                 hideWhitespace={changesPreferences.hideWhitespace}
                 isMobile={isMobile}
                 isRefreshing={isRefreshing}
@@ -2543,6 +2628,12 @@ export function GitDiffPane({ serverId, workspaceId, cwd, enabled }: GitDiffPane
               />
             </View>
           </View>
+        </View>
+      ) : null}
+
+      {forgeSetupMessage ? (
+        <View style={styles.forgeSetupCallout} testID="forge-setup-callout">
+          <Text style={styles.forgeSetupCalloutText}>{forgeSetupMessage}</Text>
         </View>
       ) : null}
 
@@ -2652,6 +2743,20 @@ const styles = StyleSheet.create((theme) => ({
     paddingBottom: theme.spacing[1],
     fontSize: theme.fontSize.xs,
     color: theme.colors.destructive,
+  },
+  forgeSetupCallout: {
+    marginHorizontal: theme.spacing[3],
+    marginBottom: theme.spacing[2],
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderRadius: theme.borderRadius.md,
+    backgroundColor: theme.colors.surface1,
+  },
+  forgeSetupCalloutText: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foregroundMuted,
   },
   diffContainer: {
     flex: 1,

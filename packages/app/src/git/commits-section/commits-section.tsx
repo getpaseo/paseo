@@ -1,7 +1,8 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
+import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useChangesPreferences } from "@/hooks/use-changes-preferences";
 import { useCheckoutCommitsQuery, type CheckoutCommitsQueryResult } from "@/git/use-commits-query";
 import { ThemedChevron, chevronColorMapping } from "@/git/themed-chevron";
@@ -30,6 +31,8 @@ function CommitsSectionSkeleton() {
           <View style={styles.skeletonDot} />
           <View style={styles.skeletonSha} />
           <View style={styles.skeletonSubject} />
+          <View style={styles.skeletonTimestamp} />
+          <View style={styles.skeletonCaret} />
         </View>
       ))}
     </View>
@@ -38,9 +41,11 @@ function CommitsSectionSkeleton() {
 
 function CommitsSectionContent({
   query,
+  now,
   onCommitPress,
 }: {
   query: Exclude<CheckoutCommitsQueryResult, { status: "unsupported" }>;
+  now: Date;
   onCommitPress: (sha: string) => void;
 }) {
   const { t } = useTranslation();
@@ -64,7 +69,7 @@ function CommitsSectionContent({
   return (
     <View style={styles.list}>
       {query.data.commits.map((commit) => (
-        <CommitRow key={commit.sha} commit={commit} onCommitPress={onCommitPress} />
+        <CommitRow key={commit.sha} commit={commit} now={now} onCommitPress={onCommitPress} />
       ))}
     </View>
   );
@@ -73,7 +78,10 @@ function CommitsSectionContent({
 export function CommitsSection({ serverId, cwd, onCommitPress }: CommitsSectionProps) {
   const { t } = useTranslation();
   const { preferences, updatePreferences } = useChangesPreferences();
+  const isPanelActive = useRetainedPanelActive();
   const collapsed = preferences.commitsCollapsed;
+  const [now, setNow] = useState(() => new Date());
+  const displayNow = useMemo(() => (isPanelActive ? new Date() : now), [isPanelActive, now]);
   const query = useCheckoutCommitsQuery({
     serverId,
     cwd,
@@ -81,8 +89,19 @@ export function CommitsSection({ serverId, cwd, onCommitPress }: CommitsSectionP
   });
 
   const handleToggleSection = useCallback(() => {
+    if (collapsed) {
+      setNow(new Date());
+    }
     void updatePreferences({ commitsCollapsed: !collapsed });
   }, [collapsed, updatePreferences]);
+
+  useEffect(() => {
+    if (collapsed || !isPanelActive) {
+      return;
+    }
+    const interval = setInterval(() => setNow(new Date()), 10_000);
+    return () => clearInterval(interval);
+  }, [collapsed, isPanelActive]);
 
   const headerChevronStyle = useMemo(
     () => [styles.headerChevron, !collapsed && styles.headerChevronExpanded],
@@ -125,7 +144,9 @@ export function CommitsSection({ serverId, cwd, onCommitPress }: CommitsSectionP
           <Text style={styles.legendText}>{t("workspace.git.diff.commits.legendRemote")}</Text>
         </View>
       </Pressable>
-      {collapsed ? null : <CommitsSectionContent query={query} onCommitPress={onCommitPress} />}
+      {collapsed ? null : (
+        <CommitsSectionContent query={query} now={displayNow} onCommitPress={onCommitPress} />
+      )}
     </View>
   );
 }
@@ -195,14 +216,15 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.spacing[2],
   },
   skeleton: {
-    paddingHorizontal: theme.spacing[2],
-    paddingBottom: theme.spacing[2],
+    paddingBottom: theme.spacing[1],
     gap: theme.spacing[2],
   },
   skeletonRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: theme.spacing[1],
     minHeight: 20,
   },
   skeletonDot: {
@@ -218,9 +240,22 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surface2,
   },
   skeletonSubject: {
-    width: "55%",
+    flex: 1,
+    minWidth: 0,
     height: 12,
     borderRadius: theme.borderRadius.sm,
     backgroundColor: theme.colors.surface2,
+  },
+  skeletonTimestamp: {
+    width: 40,
+    height: 10,
+    borderRadius: theme.borderRadius.sm,
+    backgroundColor: theme.colors.surface2,
+    flexShrink: 0,
+  },
+  skeletonCaret: {
+    width: 16,
+    height: 16,
+    flexShrink: 0,
   },
 }));

@@ -7,21 +7,19 @@ import type { Logger } from "pino";
 import type { ParsedDiffFile } from "../server/utils/diff-highlighter.js";
 import { parseAndHighlightDiff } from "../server/utils/diff-highlighter.js";
 import { parseGitHubRepoFromRemote } from "../server/workspace-git-metadata.js";
-import {
-  GitHubAuthenticationError,
-  GitHubCliMissingError,
-  GitHubCommandError,
-  createGitHubService,
-  resolveGitHubRepo,
-  type GitHubCurrentPullRequestStatus,
-  type GitHubPullRequestStatusFacts,
-  type GitHubService,
-  type PullRequestMergeable,
-} from "../services/github-service.js";
+import { GitHubCommandError, createGitHubService } from "../services/github-service.js";
+import type {
+  CurrentPullRequestStatus,
+  ForgeAuthState,
+  ForgeService,
+  ForgeSpecificStatusFacts,
+  PullRequestMergeable,
+} from "../services/forge-service.js";
+import { ForgeAuthenticationError, ForgeCliMissingError } from "../services/forge-cli-command.js";
 import { parseGitRevParsePath, resolveGitRevParsePath } from "./git-rev-parse-path.js";
 import { runGitCommand } from "./run-git-command.js";
 import { isPaseoOwnedWorktreeCwd, resolvePaseoWorktreesBaseRoot } from "./worktree.js";
-import { readPaseoWorktreeMetadata } from "./worktree-metadata.js";
+import { type PaseoWorktreeMetadata, readPaseoWorktreeMetadata } from "./worktree-metadata.js";
 const READ_ONLY_GIT_ENV = {
   GIT_OPTIONAL_LOCKS: "0",
 } as const;
@@ -1626,6 +1624,45 @@ function buildPullRequestLookupTargetFromPushConfig(
   };
 }
 
+function buildPullRequestLookupTargetFromMetadata(
+  metadata: PaseoWorktreeMetadata | null,
+): PullRequestStatusLookupTarget | null {
+  const target = metadata?.changeRequestLookupTarget;
+  if (!target) {
+    return null;
+  }
+  return {
+    headRef: target.headRef,
+    ...(target.headRepositoryOwner ? { headRepositoryOwner: target.headRepositoryOwner } : {}),
+  };
+}
+
+function buildInitialPullRequestLookupTarget(input: {
+  currentBranch: string | null;
+  metadata: PaseoWorktreeMetadata | null;
+  branchRemoteName: string | null;
+  branchMergeRef: string | null;
+  branchRemoteUrl: string | null;
+  originRemoteUrl: string | null;
+  resolvedBaseRef: string | null;
+}): PullRequestStatusLookupTarget | null {
+  if (!input.currentBranch) {
+    return null;
+  }
+
+  return (
+    buildPullRequestLookupTargetFromMetadata(input.metadata) ??
+    buildPullRequestLookupTargetFromBranchConfig({
+      currentBranch: input.currentBranch,
+      branchRemoteName: input.branchRemoteName,
+      branchMergeRef: input.branchMergeRef,
+      branchRemoteUrl: input.branchRemoteUrl,
+      originRemoteUrl: input.originRemoteUrl,
+      resolvedBaseRef: input.resolvedBaseRef,
+    })
+  );
+}
+
 async function resolvePullRequestLookupTargetFromPushConfig(
   cwd: string,
   currentBranch: string,
@@ -1671,9 +1708,10 @@ export async function getCheckoutSnapshotFacts(
     return { isGit: false };
   }
 
-  const storedBaseRef = inspected.paseoWorktree.isPaseoOwnedWorktree
-    ? readPaseoWorktreeBaseRef(inspected.paseoWorktree.worktreeRoot)
+  const paseoWorktreeMetadata = inspected.paseoWorktree.isPaseoOwnedWorktree
+    ? readPaseoWorktreeMetadata(inspected.paseoWorktree.worktreeRoot)
     : null;
+  const storedBaseRef = paseoWorktreeMetadata?.baseRefName ?? null;
   const resolvedBaseRef = storedBaseRef ?? (await resolveBaseRef(cwd));
   const mainRepoRoot = await getMainRepoRootFromCommonDir(
     cwd,
@@ -1707,16 +1745,15 @@ export async function getCheckoutSnapshotFacts(
       ]);
     }
   }
-  let pullRequestLookupTarget = inspected.currentBranch
-    ? buildPullRequestLookupTargetFromBranchConfig({
-        currentBranch: inspected.currentBranch,
-        branchRemoteName,
-        branchMergeRef,
-        branchRemoteUrl,
-        originRemoteUrl: inspected.remoteUrl,
-        resolvedBaseRef,
-      })
-    : null;
+  let pullRequestLookupTarget = buildInitialPullRequestLookupTarget({
+    currentBranch: inspected.currentBranch,
+    metadata: paseoWorktreeMetadata,
+    branchRemoteName,
+    branchMergeRef,
+    branchRemoteUrl,
+    originRemoteUrl: inspected.remoteUrl,
+    resolvedBaseRef,
+  });
   if (
     inspected.currentBranch &&
     pullRequestLookupTarget?.headRef === inspected.currentBranch &&
@@ -3100,7 +3137,7 @@ async function detectAndThrowMergeFromBaseConflict(
   }
 }
 
-export async function pullCurrentBranch(cwd: string, github?: GitHubService): Promise<void> {
+export async function pullCurrentBranch(cwd: string, forgeService?: ForgeService): Promise<void> {
   await requireGitRepo(cwd);
   const currentBranch = await getCurrentBranch(cwd);
   if (!currentBranch || currentBranch === "HEAD") {
@@ -3112,14 +3149,14 @@ export async function pullCurrentBranch(cwd: string, github?: GitHubService): Pr
   }
   try {
     await runGitCommand(["pull"], { cwd, timeout: 120_000 });
-    github?.invalidate({ cwd });
+    forgeService?.invalidate({ cwd });
   } catch (error) {
     await abortGitPullConflictState(cwd);
     throw error;
   }
 }
 
-export async function pushCurrentBranch(cwd: string, github?: GitHubService): Promise<void> {
+export async function pushCurrentBranch(cwd: string, forgeService?: ForgeService): Promise<void> {
   await requireGitRepo(cwd);
   const currentBranch = await getCurrentBranch(cwd);
   if (!currentBranch || currentBranch === "HEAD") {
@@ -3132,7 +3169,7 @@ export async function pushCurrentBranch(cwd: string, github?: GitHubService): Pr
       { cwd, timeout: 120_000 },
     );
     await refreshCurrentBranchTrackedRefAfterPush(cwd, currentBranch, configuredPushTarget);
-    github?.invalidate({ cwd });
+    forgeService?.invalidate({ cwd });
     return;
   }
 
@@ -3142,7 +3179,7 @@ export async function pushCurrentBranch(cwd: string, github?: GitHubService): Pr
       ["push", "-u", upstreamTarget.remoteName, `HEAD:refs/heads/${upstreamTarget.headRef}`],
       { cwd, timeout: 120_000 },
     );
-    github?.invalidate({ cwd });
+    forgeService?.invalidate({ cwd });
     return;
   }
 
@@ -3151,7 +3188,7 @@ export async function pushCurrentBranch(cwd: string, github?: GitHubService): Pr
     throw new Error("Remote 'origin' is not configured.");
   }
   await runGitCommand(["push", "-u", "origin", currentBranch], { cwd, timeout: 120_000 });
-  github?.invalidate({ cwd });
+  forgeService?.invalidate({ cwd });
 }
 
 async function getCurrentBranchConfiguredPushTarget(
@@ -3266,6 +3303,7 @@ export interface PullRequestStatus {
   number?: number;
   repoOwner?: string;
   repoName?: string;
+  projectPath?: string;
   url: string;
   title: string;
   state: string;
@@ -3277,12 +3315,39 @@ export interface PullRequestStatus {
   checks?: PullRequestCheck[];
   checksStatus?: ChecksStatus;
   reviewDecision?: ReviewDecision;
-  github?: GitHubPullRequestStatusFacts;
+  forgeSpecific?: ForgeSpecificStatusFacts;
 }
 
 export interface PullRequestStatusResult {
   status: PullRequestStatus | null;
+  /** Why forge features are (un)available — drives the onboarding callout. */
+  authState: ForgeAuthState;
+  /** Kept in sync with {@link authState} for back-compat; true iff authenticated. */
   githubFeaturesEnabled: boolean;
+}
+
+function buildPullRequestStatusResult(
+  status: PullRequestStatus | null,
+  authState: ForgeAuthState,
+): PullRequestStatusResult {
+  return { status, authState, githubFeaturesEnabled: authState === "authenticated" };
+}
+
+/** True for the CLI-missing / authentication errors of any supported forge. */
+export function isForgeAuthError(error: unknown): boolean {
+  return error instanceof ForgeCliMissingError || error instanceof ForgeAuthenticationError;
+}
+
+/**
+ * Map a forge CLI failure to an auth state. A missing-CLI error means the user
+ * must install the tool; anything else surfaced as an auth probe failure means
+ * they must sign in.
+ */
+export function forgeAuthStateFromError(error: unknown): ForgeAuthState {
+  if (error instanceof ForgeCliMissingError) {
+    return "cli_missing";
+  }
+  return "unauthenticated";
 }
 
 export interface PullRequestCheck {
@@ -3300,14 +3365,10 @@ export type ReviewDecision = "approved" | "changes_requested" | "pending" | null
 export async function createPullRequest(
   cwd: string,
   options: CreatePullRequestOptions,
-  github: GitHubService = createGitHubService(),
+  forgeService: ForgeService = createGitHubService(),
   context?: CheckoutContext,
 ): Promise<{ url: string; number: number }> {
   await requireGitRepo(cwd);
-  const repo = await resolveGitHubRepo(cwd);
-  if (!repo) {
-    throw new Error("Unable to determine GitHub repo from git remote");
-  }
 
   const head = options.head ?? (await getCurrentBranch(cwd));
   const { storedBaseRef, resolvedBaseRef } = await resolveBaseRefForCwd(cwd, context);
@@ -3323,23 +3384,28 @@ export async function createPullRequest(
     throw new Error(`Base ref mismatch: expected ${base}, got ${options.base}`);
   }
 
+  // The push deliberately happens before the adapter resolves the target
+  // repository: slug resolution is adapter-internal (e.g. `gh repo view`, which
+  // handles GHES and renamed repos), and the RPC path only reaches here after
+  // the forge resolver has already matched the origin remote to a forge. If the
+  // adapter still fails after the push, retrying is safe — the non-force push
+  // of the head branch is idempotent.
   await runGitCommand(["push", "-u", "origin", head], { cwd, timeout: 120_000 });
 
-  const result = await github.createPullRequest({
+  const result = await forgeService.createPullRequest({
     cwd,
-    repo,
     title: options.title,
     body: options.body,
     head,
     base: normalizedBase,
   });
-  github.invalidate({ cwd });
+  forgeService.invalidate({ cwd });
   return result;
 }
 
 export async function getPullRequestStatus(
   cwd: string,
-  github: GitHubService = createGitHubService(),
+  forgeService: ForgeService = createGitHubService(),
   options?: CheckoutReadCacheOptions,
   context?: CheckoutContext,
 ): Promise<PullRequestStatusResult> {
@@ -3356,7 +3422,7 @@ export async function getPullRequestStatus(
     }
   }
 
-  const lookup = getPullRequestStatusUncached(cwd, github, options, context)
+  const lookup = getPullRequestStatusUncached(cwd, forgeService, options, context)
     .then((status) => {
       pullRequestStatusCache.set(cacheKey, status);
       rememberPullRequestStatus(cacheKey, status);
@@ -3381,54 +3447,45 @@ export async function getPullRequestStatus(
 
 async function getPullRequestStatusUncached(
   cwd: string,
-  github: GitHubService,
+  forgeService: ForgeService,
   options?: CheckoutReadCacheOptions,
   context?: CheckoutContext,
 ): Promise<PullRequestStatusResult> {
   if (context?.facts?.isGit === false) {
-    return {
-      status: null,
-      githubFeaturesEnabled: false,
-    };
+    return buildPullRequestStatusResult(null, "no_remote");
   }
   if (!context?.facts?.isGit) {
     await requireGitRepo(cwd);
   }
   const head = context?.facts?.isGit ? context.facts.currentBranch : await getCurrentBranch(cwd);
   if (!head) {
-    return {
-      status: null,
-      githubFeaturesEnabled: false,
-    };
+    return buildPullRequestStatusResult(null, "no_remote");
   }
   try {
     const lookupTarget = await resolvePullRequestStatusLookupTarget(cwd, head, context);
-    let status: GitHubCurrentPullRequestStatus | null;
+    let status: CurrentPullRequestStatus | null;
     if (options?.force) {
       const reason = options.reason;
       if (!reason) {
         throw new Error("Forced PR status read requires a reason");
       }
-      status = await github.getCurrentPullRequestStatus({
+      status = await forgeService.getCurrentPullRequestStatus({
         cwd,
         ...lookupTarget,
         force: true,
         reason,
       });
     } else {
-      status = await github.getCurrentPullRequestStatus({
+      status = await forgeService.getCurrentPullRequestStatus({
         cwd,
         ...lookupTarget,
         reason: options?.reason,
       });
     }
-    return {
-      status,
-      githubFeaturesEnabled: true,
-    };
+    return buildPullRequestStatusResult(status, "authenticated");
   } catch (error) {
-    if (error instanceof GitHubCliMissingError || error instanceof GitHubAuthenticationError) {
-      return { status: null, githubFeaturesEnabled: false };
+    if (isForgeAuthError(error)) {
+      return buildPullRequestStatusResult(null, forgeAuthStateFromError(error));
     }
     throw error;
   }

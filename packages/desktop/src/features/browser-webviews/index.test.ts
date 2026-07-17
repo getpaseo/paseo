@@ -6,6 +6,8 @@ import {
   isPaseoBrowserWebviewAttach,
   preparePaseoBrowserWebContents,
   registerAttachedPaseoBrowser,
+  unregisterPaseoBrowser,
+  unregisterPaseoBrowserFromHost,
 } from "./index.js";
 
 class FakeRenderer {
@@ -82,6 +84,7 @@ describe("browser webview attachment", () => {
     expect(registered).toBe(true);
     expect(getPaseoBrowserIdForWebContents(guest)).toBe("browser-a");
     expect(getPaseoBrowserWorkspaceId("browser-a")).toBe("workspace-a");
+    unregisterPaseoBrowser("browser-a");
   });
 
   test("rejects a guest hosted by another renderer", () => {
@@ -91,7 +94,7 @@ describe("browser webview attachment", () => {
     const guest = new FakeBrowserGuest(201, owner, profileSession);
 
     const registered = registerAttachedPaseoBrowser({
-      browserId: "browser-a",
+      browserId: "browser-rejected-owner",
       workspaceId: "workspace-a",
       webContentsId: guest.id,
       sender: claimant,
@@ -109,7 +112,7 @@ describe("browser webview attachment", () => {
     const guest = new FakeBrowserGuest(301, renderer, {});
 
     const registered = registerAttachedPaseoBrowser({
-      browserId: "browser-a",
+      browserId: "browser-rejected-profile",
       workspaceId: "workspace-a",
       webContentsId: guest.id,
       sender: renderer,
@@ -151,12 +154,43 @@ describe("browser webview attachment", () => {
 
     expect(getPaseoBrowserIdForWebContents(firstGuest)).toBe("browser-first");
     expect(getPaseoBrowserIdForWebContents(secondGuest)).toBe("browser-second");
+    unregisterPaseoBrowser("browser-first");
+    unregisterPaseoBrowser("browser-second");
+  });
+
+  test("unregisters the same browser only from its requesting host", () => {
+    const profileSession = {};
+    const firstRenderer = new FakeRenderer(11);
+    const secondRenderer = new FakeRenderer(22);
+    const firstGuest = new FakeBrowserGuest(501, firstRenderer, profileSession);
+    const secondGuest = new FakeBrowserGuest(502, secondRenderer, profileSession);
+
+    for (const [renderer, guest] of [
+      [firstRenderer, firstGuest],
+      [secondRenderer, secondGuest],
+    ] as const) {
+      registerAttachedPaseoBrowser({
+        browserId: "browser-shared-hosts",
+        workspaceId: "workspace-shared",
+        webContentsId: guest.id,
+        sender: renderer,
+        profileSession,
+        findWebContents: () => guest,
+      });
+    }
+
+    unregisterPaseoBrowserFromHost(firstRenderer.id, "browser-shared-hosts");
+
+    expect(getPaseoBrowserIdForWebContents(firstGuest)).toBeNull();
+    expect(getPaseoBrowserIdForWebContents(secondGuest)).toBe("browser-shared-hosts");
+    expect(getPaseoBrowserWorkspaceId("browser-shared-hosts")).toBe("workspace-shared");
+    unregisterPaseoBrowser("browser-shared-hosts");
   });
 
   test("prepares throttling once and removes registration when the guest is destroyed", () => {
     const profileSession = {};
-    const renderer = new FakeRenderer(1);
-    const guest = new FakeBrowserGuest(501, renderer, profileSession);
+    const renderer = new FakeRenderer(31);
+    const guest = new FakeBrowserGuest(601, renderer, profileSession);
     preparePaseoBrowserWebContents(guest);
     registerAttachedPaseoBrowser({
       browserId: "browser-cleanup",
