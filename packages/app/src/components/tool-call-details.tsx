@@ -653,14 +653,29 @@ function FetchDetailSection({ url, result, ds, itemId }: FetchDetailProps) {
   );
 }
 
-function PlainTextSection({ text, itemId }: { text: string; itemId?: string }) {
+function ScrollablePlainTextSection({
+  text,
+  itemId,
+  ds,
+}: {
+  text: string;
+  itemId?: string;
+  ds: DetailStyles;
+}) {
   // detail.text is its own "toolInput" span (buildDetailInputParts's
   // "plain_text" case) — rendered verbatim here, so fieldOffset lines up.
   return (
-    <View style={styles.plainTextSection}>
-      <Text selectable style={styles.plainText}>
-        <HighlightedText text={text} itemId={itemId} field="toolInput" />
-      </Text>
+    <View style={styles.section}>
+      <ScrollView
+        style={ds.scrollAreaStyle}
+        contentContainerStyle={styles.scrollContent}
+        nestedScrollEnabled
+        showsVerticalScrollIndicator
+      >
+        <Text selectable style={styles.plainText}>
+          <HighlightedText text={text} itemId={itemId} field="toolInput" />
+        </Text>
+      </ScrollView>
     </View>
   );
 }
@@ -785,11 +800,12 @@ function buildUnknownSections(
 
   if (plainInputText !== null) {
     return [
-      <View key="unknown-plain-text" style={styles.plainTextSection}>
-        <Text selectable style={styles.plainText}>
-          <HighlightedText text={plainInputText} itemId={timelineSearchItemId} field="toolInput" />
-        </Text>
-      </View>,
+      <ScrollablePlainTextSection
+        key="unknown-plain-text"
+        text={plainInputText}
+        itemId={timelineSearchItemId}
+        ds={ds}
+      />,
     ];
   }
 
@@ -933,7 +949,14 @@ function buildDetailSections(
   }
   if (detail.type === "plain_text") {
     if (!detail.text) return [];
-    return [<PlainTextSection key="plain-text" text={detail.text} itemId={timelineSearchItemId} />];
+    return [
+      <ScrollablePlainTextSection
+        key="plain-text"
+        text={detail.text}
+        itemId={timelineSearchItemId}
+        ds={ds}
+      />,
+    ];
   }
   if (detail.type === "unknown") {
     return buildUnknownSections(detail, ds, t, timelineSearchItemId);
@@ -1086,10 +1109,6 @@ const styles = StyleSheet.create((theme) => {
     fillHeight: {
       flex: 1,
       minHeight: 0,
-    },
-    plainTextSection: {
-      gap: theme.spacing[2],
-      padding: theme.spacing[3],
     },
     plainText: {
       fontFamily: theme.fontFamily.ui,

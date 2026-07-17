@@ -37,6 +37,94 @@ describe("Pi tool call mapper", () => {
     });
   });
 
+  test("preserves ordinary writes as write details", () => {
+    const toolCall = parseToolArgs("write", {
+      path: "notes.txt",
+      content: "unchanged\n",
+    });
+
+    expect(mapToolDetail(toolCall, parseToolResult({ text: "Wrote notes.txt" }))).toEqual({
+      type: "write",
+      filePath: "notes.txt",
+      content: "unchanged\n",
+    });
+  });
+
+  test("maps executed xdev writes to their wrapped tool detail", () => {
+    const toolCall = parseToolArgs("write", {
+      path: "xd://browser",
+      content: "{}",
+    });
+    const result = parseToolResult({
+      content: [{ type: "text", text: "Opened Example Domain" }],
+      details: {
+        xdev: {
+          tool: "browser",
+          mode: "execute",
+          args: { action: "open", url: "https://example.com" },
+          inner: { title: "Example Domain" },
+        },
+      },
+    });
+
+    expect(mapToolDetail(toolCall, result)).toEqual({
+      type: "unknown",
+      input: { action: "open", url: "https://example.com" },
+      output: {
+        content: [{ type: "text", text: "Opened Example Domain" }],
+        details: { title: "Example Domain" },
+      },
+    });
+    expect(resolveToolCallName(toolCall, result)).toBe("browser");
+  });
+
+  test("does not treat xdev help metadata as an executed inner tool", () => {
+    const toolCall = parseToolArgs("write", {
+      path: "xd://browser",
+      content: "",
+    });
+    const result = parseToolResult({
+      details: {
+        xdev: {
+          tool: "browser",
+          mode: "help",
+          inner: "Browser help",
+        },
+      },
+    });
+
+    expect(mapToolDetail(toolCall, result)).toEqual({
+      type: "unknown",
+      input: { path: "xd://browser", content: "" },
+      output: result,
+    });
+    expect(resolveToolCallName(toolCall, result)).toBe("write");
+  });
+
+  test("does not treat malformed xdev metadata as an executed inner tool", () => {
+    const toolCall = parseToolArgs("write", {
+      path: "xd://browser",
+      content: "{}",
+    });
+    const result = parseToolResult({
+      details: {
+        xdev: {
+          tool: "",
+          mode: "execute",
+          args: { action: "open" },
+          inner: { title: "must not surface" },
+        },
+      },
+    });
+
+    expect(mapToolDetail(toolCall, result)).toEqual({
+      type: "unknown",
+      input: { path: "xd://browser", content: "{}" },
+      output: result,
+    });
+    expect(resolveToolCallName(toolCall, result)).toBe("write");
+  });
+
   test("preserves unknown tool input and parsed output", () => {
     const toolCall = parseToolArgs("custom_tool", { value: 42 });
     const result = parseToolResult({ text: "custom result" });

@@ -1,7 +1,10 @@
 import { useCallback, useMemo, useReducer } from "react";
 import { useTranslation } from "react-i18next";
 import type { ComposerAttachment } from "@/attachments/types";
-import { splitComposerAttachmentsForSubmit } from "@/composer/attachments/submit";
+import {
+  resolveComposerAttachmentSubmitFormat,
+  splitComposerAttachmentsForSubmit,
+} from "@/composer/attachments/submit";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
 import { useSessionStore } from "@/stores/session-store";
 import {
@@ -236,10 +239,23 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
       }
 
       dispatch({ type: "DRAFT_SET_ERROR", message: "" });
-      const wirePayload = splitComposerAttachmentsForSubmit(attachments);
+      const trimmedPrompt = text.trim();
+      const pendingServerId = getPendingServerId();
+      if (!pendingServerId) {
+        const error = new Error(t("composer.errors.noHostSelected"));
+        dispatch({ type: "DRAFT_SET_ERROR", message: error.message });
+        throw error;
+      }
+      const supportsForgeSearch =
+        useSessionStore.getState().sessions[pendingServerId]?.serverInfo?.features?.forgeSearch ===
+        true;
+      const wirePayload = splitComposerAttachmentsForSubmit(attachments, {
+        format: resolveComposerAttachmentSubmitFormat({
+          supportsForgeAttachments: supportsForgeSearch,
+        }),
+      });
       const images = wirePayload.images;
 
-      const trimmedPrompt = text.trim();
       const hasAttachmentContent = images.length > 0 || wirePayload.attachments.length > 0;
       if (!trimmedPrompt && !hasAttachmentContent && !allowEmptyText) {
         const error = new Error(t("composer.errors.initialPromptRequired"));
@@ -255,13 +271,6 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
       if (validationError) {
         const error = new Error(validationError);
         dispatch({ type: "DRAFT_SET_ERROR", message: validationError });
-        throw error;
-      }
-
-      const pendingServerId = getPendingServerId();
-      if (!pendingServerId) {
-        const error = new Error(t("composer.errors.noHostSelected"));
-        dispatch({ type: "DRAFT_SET_ERROR", message: error.message });
         throw error;
       }
 

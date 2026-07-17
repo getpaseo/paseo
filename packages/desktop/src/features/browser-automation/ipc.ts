@@ -6,6 +6,7 @@ import type {
   BrowserAutomationDialogEvent,
 } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import type { TabContents, BrowserRegistry, TabImage } from "./service.js";
+import type { IsolatedKeyboardInputEvent } from "./trusted-input.js";
 import { CdpSessionQueue } from "./cdp-session-queue.js";
 import {
   dialogAcceptValue,
@@ -16,11 +17,12 @@ import {
   promptShimRestoreScript,
 } from "./dialog-handling.js";
 import { executeAutomationCommand } from "./service.js";
+import { BrowserSnapshotEngine } from "./snapshot-engine.js";
 import {
   listRegisteredPaseoBrowserIds,
   listRegisteredPaseoBrowserIdsForWorkspace,
-  getPaseoBrowserWebContents,
-  getWorkspaceActivePaseoBrowserId,
+  getPaseoBrowserWebContentsForHostWindow,
+  getWorkspaceActivePaseoBrowserIdForHostWindow,
   getPaseoBrowserWorkspaceId,
 } from "../browser-webviews/index.js";
 
@@ -33,6 +35,36 @@ const observedContentsIds = new Set<number>();
 interface IpcHandlerRegistry {
   handle(channel: string, listener: (event: unknown, ...args: unknown[]) => unknown): void;
 }
+
+interface HostWebContents {
+  readonly id: number;
+  once(event: "destroyed", listener: () => void): void;
+}
+
+export class HostSnapshotEngineRegistry {
+  private readonly entries = new Map<
+    number,
+    { hostContents: HostWebContents; snapshotEngine: BrowserSnapshotEngine }
+  >();
+
+  public get(hostContents: HostWebContents): BrowserSnapshotEngine {
+    const existing = this.entries.get(hostContents.id);
+    if (existing) {
+      return existing.snapshotEngine;
+    }
+    const snapshotEngine = new BrowserSnapshotEngine();
+    const entry = { hostContents, snapshotEngine };
+    this.entries.set(hostContents.id, entry);
+    hostContents.once("destroyed", () => {
+      if (this.entries.get(hostContents.id) === entry) {
+        this.entries.delete(hostContents.id);
+      }
+    });
+    return snapshotEngine;
+  }
+}
+
+const hostSnapshotEngines = new HostSnapshotEngineRegistry();
 
 interface WebContentsDebugger {
   isAttached(): boolean;
@@ -74,14 +106,16 @@ interface BrowserAutomationWebContents extends ConsoleMessageEmitter {
   reload(): void;
   capturePage(rect?: Rectangle, options?: { stayHidden?: boolean }): Promise<TabImage>;
   invalidate(): void;
+  sendInputEvent(event: IsolatedKeyboardInputEvent): void;
 }
 
 export function adaptWebContents(contents: BrowserAutomationWebContents): TabContents {
-  observeConsoleMessages(contents);
-  const cdpQueue = getCdpQueue(contents.id);
-  const dialogMonitor = getDialogMonitor(contents, cdpQueue);
+  const contentsId = contents.id;
+  observeConsoleMessages(contents, contentsId);
+  const cdpQueue = getCdpQueue(contentsId);
+  const dialogMonitor = getDialogMonitor(contents, contentsId, cdpQueue);
   return {
-    id: contents.id,
+    id: contentsId,
     getURL: () => contents.getURL(),
     getTitle: () => contents.getTitle(),
     canGoBack: () => contents.canGoBack(),
@@ -95,7 +129,8 @@ export function adaptWebContents(contents: BrowserAutomationWebContents): TabCon
     reload: () => contents.reload(),
     capturePage: (captureOptions) => contents.capturePage(undefined, captureOptions),
     invalidate: () => contents.invalidate(),
-    getConsoleMessages: () => consoleMessagesByContentsId.get(contents.id) ?? [],
+    sendInputEvent: (event) => contents.sendInputEvent(event),
+    getConsoleMessages: () => consoleMessagesByContentsId.get(contentsId) ?? [],
     captureDialogs: (task) => dialogMonitor.capture(task),
     sendDebugCommand: (command: string, params?: Record<string, unknown>) =>
       cdpQueue.run(async () => {
@@ -117,35 +152,36 @@ function getCdpQueue(contentsId: number): CdpSessionQueue {
   return queue;
 }
 
-function observeConsoleMessages(contents: BrowserAutomationWebContents): void {
-  if (observedContentsIds.has(contents.id)) {
+function observeConsoleMessages(contents: BrowserAutomationWebContents, contentsId: number): void {
+  if (observedContentsIds.has(contentsId)) {
     return;
   }
-  observedContentsIds.add(contents.id);
+  observedContentsIds.add(contentsId);
   contents.on("console-message", (_event, level, message, line, sourceId) => {
     const entry = normalizeConsoleMessage({ level, message, line, sourceId });
-    const messages = consoleMessagesByContentsId.get(contents.id) ?? [];
+    const messages = consoleMessagesByContentsId.get(contentsId) ?? [];
     messages.push(entry);
-    consoleMessagesByContentsId.set(contents.id, messages.slice(-MAX_CONSOLE_MESSAGES_PER_TAB));
+    consoleMessagesByContentsId.set(contentsId, messages.slice(-MAX_CONSOLE_MESSAGES_PER_TAB));
   });
   contents.once("destroyed", () => {
-    observedContentsIds.delete(contents.id);
-    consoleMessagesByContentsId.delete(contents.id);
-    cdpQueuesByContentsId.delete(contents.id);
-    dialogMonitorsByContentsId.delete(contents.id);
+    observedContentsIds.delete(contentsId);
+    consoleMessagesByContentsId.delete(contentsId);
+    cdpQueuesByContentsId.delete(contentsId);
+    dialogMonitorsByContentsId.delete(contentsId);
   });
 }
 
 function getDialogMonitor(
   contents: BrowserAutomationWebContents,
+  contentsId: number,
   cdpQueue: CdpSessionQueue,
 ): DialogMonitor {
-  const existing = dialogMonitorsByContentsId.get(contents.id);
+  const existing = dialogMonitorsByContentsId.get(contentsId);
   if (existing) {
     return existing;
   }
-  const monitor = new DialogMonitor(contents, cdpQueue);
-  dialogMonitorsByContentsId.set(contents.id, monitor);
+  const monitor = new DialogMonitor(contents, contentsId, cdpQueue);
+  dialogMonitorsByContentsId.set(contentsId, monitor);
   return monitor;
 }
 
@@ -156,6 +192,7 @@ class DialogMonitor {
 
   public constructor(
     private readonly contents: BrowserAutomationWebContents,
+    private readonly contentsId: number,
     private readonly cdpQueue: CdpSessionQueue,
   ) {}
 
@@ -168,7 +205,7 @@ class DialogMonitor {
       await this.installPromptShim();
     } catch (error) {
       console.warn("[browser-automation] Dialog capture unavailable; running command without it", {
-        contentsId: this.contents.id,
+        contentsId: this.contentsId,
         error,
       });
       return { result: await task(), dialogs: [] };
@@ -337,24 +374,38 @@ function normalizeConsoleMessage(input: {
   };
 }
 
-function createRegistry(): BrowserRegistry {
+function createRegistry(hostWebContentsId: number): BrowserRegistry {
   return {
     listRegisteredBrowserIds: listRegisteredPaseoBrowserIds,
     listRegisteredBrowserIdsForWorkspace: listRegisteredPaseoBrowserIdsForWorkspace,
     getTabContents(browserId: string): TabContents | null {
-      const contents = getPaseoBrowserWebContents(browserId);
+      const contents = getPaseoBrowserWebContentsForHostWindow(browserId, hostWebContentsId);
       return contents ? adaptWebContents(contents) : null;
     },
     getBrowserWorkspaceId: getPaseoBrowserWorkspaceId,
-    getWorkspaceActiveBrowserId: getWorkspaceActivePaseoBrowserId,
+    getWorkspaceActiveBrowserId(workspaceId: string): string | null {
+      return getWorkspaceActivePaseoBrowserIdForHostWindow(workspaceId, hostWebContentsId);
+    },
   };
 }
 
 export function registerBrowserAutomationIpc(options?: { ipc?: IpcHandlerRegistry }): void {
   const ipc = options?.ipc ?? ipcMain;
-  const registry = createRegistry();
 
-  ipc.handle("paseo:browser:execute-automation-command", async (_event, rawRequest: unknown) => {
+  ipc.handle("paseo:browser:execute-automation-command", async (event, rawRequest: unknown) => {
+    const hostContents = (event as { sender?: HostWebContents }).sender;
+    const hostWebContentsId = hostContents?.id;
+    if (!hostContents || typeof hostWebContentsId !== "number") {
+      return {
+        requestId: readRequestId(rawRequest),
+        ok: false as const,
+        error: {
+          code: "browser_unsupported" as const,
+          message: "Browser automation requires a host window.",
+        },
+      };
+    }
+    const registry = createRegistry(hostWebContentsId);
     const parsed = BrowserAutomationExecuteRequestSchema.safeParse(rawRequest);
     if (!parsed.success) {
       return {
@@ -367,7 +418,9 @@ export function registerBrowserAutomationIpc(options?: { ipc?: IpcHandlerRegistr
         },
       };
     }
-    return executeAutomationCommand(parsed.data, registry);
+    return executeAutomationCommand(parsed.data, registry, {
+      snapshotEngine: hostSnapshotEngines.get(hostContents),
+    });
   });
 }
 

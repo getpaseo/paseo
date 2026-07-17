@@ -10,10 +10,13 @@ import {
 import { DaemonSelfUpdateSessionController } from "./daemon-self-update-session-controller.js";
 import type { ManagedAgent } from "../../agent/agent-manager.js";
 import type { PersistedProjectRecord, PersistedWorkspaceRecord } from "../../workspace-registry.js";
+import type { HubRelationshipManagement } from "../../hub/relationship-controller.js";
 
 export interface DaemonRuntimeConfig {
   listen: string | null;
+  worktreesRoot?: string;
   appBaseUrl?: string;
+  desktopManaged?: boolean;
   relay: {
     enabled: boolean;
     endpoint: string;
@@ -46,6 +49,7 @@ export interface DaemonSessionOptions {
   listProviderAvailability: () => Promise<ProviderAvailability[]>;
   getWebSocketRuntimeMetrics?: () => DaemonWebSocketRuntimeDiagnosticSnapshot | null;
   logger: pino.Logger;
+  hubRelationships?: HubRelationshipManagement;
 }
 
 /**
@@ -69,6 +73,7 @@ export class DaemonSession {
   private readonly getWebSocketRuntimeMetrics: () => DaemonWebSocketRuntimeDiagnosticSnapshot | null;
   private readonly logger: pino.Logger;
   private readonly selfUpdate: DaemonSelfUpdateSessionController;
+  private readonly hubRelationships: HubRelationshipManagement | null;
 
   constructor(options: DaemonSessionOptions) {
     this.host = options.host;
@@ -83,13 +88,65 @@ export class DaemonSession {
     this.listProviderAvailability = options.listProviderAvailability;
     this.getWebSocketRuntimeMetrics = options.getWebSocketRuntimeMetrics ?? (() => null);
     this.logger = options.logger;
+    this.hubRelationships = options.hubRelationships ?? null;
     this.selfUpdate = new DaemonSelfUpdateSessionController({
       clientId: this.clientId,
       daemonVersion: this.daemonVersion ?? null,
+      desktopManaged: this.daemonRuntimeConfig?.desktopManaged === true,
       emit: (msg) => this.host.emit(msg),
       emitLifecycleIntent: (intent) => this.host.emitLifecycleIntent(intent),
       sessionLogger: this.logger,
     });
+  }
+
+  async handleHubRelationshipRequest(
+    msg: Extract<
+      SessionInboundMessage,
+      {
+        type:
+          | "hub.management.daemon.connect.request"
+          | "hub.management.daemon.get_status.request"
+          | "hub.management.daemon.disconnect.request";
+      }
+    >,
+  ): Promise<void> {
+    try {
+      if (!this.hubRelationships) throw new Error("Hub relationship management is unavailable");
+      if (msg.type === "hub.management.daemon.connect.request") {
+        const status = await this.hubRelationships.connect({
+          hubUrl: msg.hubUrl,
+          token: msg.token,
+        });
+        this.host.emit({
+          type: "hub.management.daemon.connect.response",
+          payload: { requestId: msg.requestId, status },
+        });
+        return;
+      }
+      if (msg.type === "hub.management.daemon.disconnect.request") {
+        const result = await this.hubRelationships.disconnect({ force: msg.force ?? false });
+        this.host.emit({
+          type: "hub.management.daemon.disconnect.response",
+          payload: { requestId: msg.requestId, ...result },
+        });
+        return;
+      }
+      this.host.emit({
+        type: "hub.management.daemon.get_status.response",
+        payload: { requestId: msg.requestId, status: this.hubRelationships.status() },
+      });
+    } catch (error) {
+      this.logger.error({ err: error }, "Failed to handle Hub relationship request");
+      this.host.emit({
+        type: "rpc_error",
+        payload: {
+          requestId: msg.requestId,
+          requestType: msg.type,
+          error: error instanceof Error ? error.message : String(error),
+          code: "handler_error",
+        },
+      });
+    }
   }
 
   async handleGetStatusRequest(

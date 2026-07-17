@@ -1,5 +1,4 @@
 import { buildHostAgentDetailRoute, buildHostWorkspaceRoute } from "@/utils/host-routes";
-import type { WebSocketRoute } from "@playwright/test";
 import { expect, test, type Page } from "./fixtures";
 import { gotoAppShell, openSettings } from "./helpers/app";
 import {
@@ -34,6 +33,7 @@ import { clickSettingsBackToWorkspace } from "./helpers/settings";
 import { getServerId } from "./helpers/server-id";
 import { injectDesktopBridge } from "./helpers/desktop-updates";
 import { expectAppRoute } from "./helpers/route-assertions";
+import { installDaemonWebSocketGate } from "./helpers/daemon-websocket-gate";
 
 const LOADING_WORKSPACE_TEXT_PATTERN = /Loading workspace/i;
 
@@ -112,61 +112,6 @@ async function expectWorkspaceLocation(
     title: input.workspace.workspaceName,
     subtitle: input.workspace.projectDisplayName,
   });
-}
-
-async function installDaemonWebSocketGate(page: Page) {
-  let acceptingConnections = true;
-  const activeSockets = new Set<WebSocketRoute>();
-
-  await page.routeWebSocket(daemonWsRoutePattern(), (ws) => {
-    if (!acceptingConnections) {
-      void ws.close({ code: 1008, reason: "Blocked by workspace reconnect regression test." });
-      return;
-    }
-
-    activeSockets.add(ws);
-    const server = ws.connectToServer();
-
-    ws.onMessage((message) => {
-      if (!acceptingConnections) {
-        return;
-      }
-      try {
-        server.send(message);
-      } catch {
-        activeSockets.delete(ws);
-      }
-    });
-
-    server.onMessage((message) => {
-      if (!acceptingConnections) {
-        return;
-      }
-      try {
-        ws.send(message);
-      } catch {
-        activeSockets.delete(ws);
-      }
-    });
-  });
-
-  return {
-    async drop(): Promise<void> {
-      acceptingConnections = false;
-      const sockets = Array.from(activeSockets);
-      activeSockets.clear();
-      await Promise.all(
-        sockets.map((ws) =>
-          ws
-            .close({ code: 1008, reason: "Dropped by workspace reconnect regression test." })
-            .catch(() => undefined),
-        ),
-      );
-    },
-    restore(): void {
-      acceptingConnections = true;
-    },
-  };
 }
 
 test.describe("Workspace navigation regression", () => {

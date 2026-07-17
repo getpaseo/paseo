@@ -1,5 +1,6 @@
 import { Platform } from "react-native";
 import { getElectronHost } from "@/desktop/electron/host";
+import type { BrowserKeyboardPolicy } from "@/keyboard/browser-shortcuts";
 import type { SessionInboundMessage, SessionOutboundMessage } from "@getpaseo/protocol/messages";
 
 type BrowserAutomationExecuteRequest = Extract<
@@ -95,6 +96,7 @@ export interface DesktopWindowControlsOverlayUpdate {
   height?: number;
   backgroundColor?: string;
   foregroundColor?: string;
+  trafficLightOffsetY?: number;
 }
 
 export interface DesktopWindowBridge {
@@ -121,10 +123,9 @@ export interface DesktopEventsBridge {
   on?: (event: string, handler: (payload: unknown) => void) => Promise<() => void> | (() => void);
 }
 
-export interface DesktopBrowserShortcutEvent {
-  browserId?: string;
-  action: "focus-url";
-}
+export type DesktopBrowserShortcutEvent =
+  | { browserId?: string; action: "focus-url" }
+  | { browserId: string; action: "new-tab" };
 
 export interface DesktopBrowserNewTabRequestEvent {
   sourceBrowserId: string;
@@ -145,6 +146,7 @@ export interface BrowserFoundInPageResult {
 }
 
 export interface DesktopBrowserBridge {
+  setShortcutPolicy?: (input: BrowserKeyboardPolicy) => Promise<void>;
   readonly profilePartition?: string;
   registerAttachedBrowser?: (input: DesktopAttachedBrowserRegistration) => Promise<void>;
   unregisterWorkspaceBrowser?: (browserId: string) => Promise<void>;

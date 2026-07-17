@@ -1,5 +1,5 @@
 import type { Query, QueryClient } from "@tanstack/react-query";
-import { prPaneTimelineQueryKind } from "./pull-request-panel/query-keys";
+import { prPanePipelineQueryKind, prPaneTimelineQueryKind } from "./pull-request-panel/query-keys";
 
 interface CheckoutQueryIdentity {
   serverId: string;
@@ -12,6 +12,10 @@ interface CheckoutQueryScope {
 }
 
 type CheckoutQueryKey = readonly unknown[];
+
+// A commit's file diff is immutable for a given sha+path, so every consumer
+// can share the same long-lived cache policy.
+export const COMMIT_FILE_DIFF_STALE_TIME = 5 * 60_000;
 
 export function checkoutStatusQueryKey(serverId: string, cwd: string) {
   return ["checkoutStatus", serverId, cwd] as const;
@@ -31,6 +35,19 @@ export function checkoutPrStatusQueryKey(serverId: string, cwd: string) {
   return ["checkoutPrStatus", serverId, cwd] as const;
 }
 
+export function checkoutCommitsQueryKey(serverId: string, cwd: string) {
+  return ["checkoutCommits", serverId, cwd] as const;
+}
+
+export function checkoutCommitFileDiffQueryKey(
+  serverId: string,
+  cwd: string,
+  sha: string,
+  path: string,
+) {
+  return ["checkoutCommitFileDiff", serverId, cwd, sha, path] as const;
+}
+
 export async function invalidateCheckoutGitQueriesForClient(
   queryClient: QueryClient,
   identity: CheckoutQueryIdentity,
@@ -48,6 +65,9 @@ export async function invalidateCheckoutGitQueriesForClient(
     queryClient.invalidateQueries({
       predicate: checkoutQueryPredicate(prPaneTimelineQueryKind, identity),
     }),
+    queryClient.invalidateQueries({
+      predicate: checkoutQueryPredicate(prPanePipelineQueryKind, identity),
+    }),
   ]);
 }
 
@@ -58,7 +78,12 @@ export async function invalidateCheckoutGitQueriesForServer(
   queryClient: QueryClient,
   serverId: string,
 ) {
-  const kinds = ["checkoutStatus", "checkoutPrStatus", prPaneTimelineQueryKind];
+  const kinds = [
+    "checkoutStatus",
+    "checkoutPrStatus",
+    prPaneTimelineQueryKind,
+    prPanePipelineQueryKind,
+  ];
   await Promise.all(
     kinds.map((kind) =>
       queryClient.invalidateQueries({ predicate: checkoutQueryPredicate(kind, { serverId }) }),
@@ -70,9 +95,14 @@ export async function invalidatePrPaneTimelineForCheckout(
   queryClient: QueryClient,
   identity: CheckoutQueryIdentity,
 ) {
-  await queryClient.invalidateQueries({
-    predicate: checkoutQueryPredicate(prPaneTimelineQueryKind, identity),
-  });
+  await Promise.all([
+    queryClient.invalidateQueries({
+      predicate: checkoutQueryPredicate(prPaneTimelineQueryKind, identity),
+    }),
+    queryClient.invalidateQueries({
+      predicate: checkoutQueryPredicate(prPanePipelineQueryKind, identity),
+    }),
+  ]);
 }
 
 function checkoutQueryPredicate(

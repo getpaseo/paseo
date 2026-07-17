@@ -982,6 +982,30 @@ describe("workspace message schemas", () => {
     expect(checkout?.worktreeRoot).toBe("C:\\repo");
   });
 
+  test("workspace summary parses without forge and round-trips forge when present", () => {
+    const baseWorkspace = {
+      id: "ws-forge",
+      projectId: "proj",
+      projectDisplayName: "repo",
+      projectRootPath: "/repo",
+      workspaceDirectory: "/repo",
+      projectKind: "git",
+      workspaceKind: "worktree",
+      name: "feature",
+      status: "done",
+      activityAt: null,
+      scripts: [],
+    } as const;
+
+    // Old daemon: forge omitted -> parses, field absent (client falls back to github).
+    expect(WorkspaceDescriptorPayloadSchema.parse(baseWorkspace).forge).toBeUndefined();
+
+    // New daemon: forge present -> round-trips (open string, like the PR-status forge).
+    expect(
+      WorkspaceDescriptorPayloadSchema.parse({ ...baseWorkspace, forge: "gitlab" }).forge,
+    ).toBe("gitlab");
+  });
+
   test("workspace.create.request rejects old flat backing shape and accepts new source envelope", () => {
     // Old flat shape with backing enum must be rejected.
     const oldFlat = WorkspaceCreateRequestSchema.safeParse({

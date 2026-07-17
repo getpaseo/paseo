@@ -54,22 +54,20 @@ function registerBrowserWhenAttached(
   identity: BrowserWebviewIdentity,
   browser: BrowserWebviewProfileHost,
 ): void {
-  webview.addEventListener(
-    "did-attach",
-    () => {
-      const webContentsId = webview.getWebContentsId();
-      void browser
-        .registerAttachedBrowser({
-          browserId: identity.browserId,
-          workspaceId: identity.workspaceId,
-          webContentsId,
-        })
-        .catch((error) => {
-          console.error("[browser-webview] attached registration failed", error);
-        });
-    },
-    { once: true },
-  );
+  // Reparenting a webview can replace its guest WebContents without replacing
+  // this DOM element, so every attachment needs a fresh main-process registration.
+  webview.addEventListener("did-attach", () => {
+    const webContentsId = webview.getWebContentsId();
+    void browser
+      .registerAttachedBrowser({
+        browserId: identity.browserId,
+        workspaceId: identity.workspaceId,
+        webContentsId,
+      })
+      .catch((error) => {
+        console.error("[browser-webview] attached registration failed", error);
+      });
+  });
 }
 
 function trimNonEmpty(value: string | null | undefined): string | null {
@@ -223,6 +221,19 @@ export function ensureResidentBrowserWebview(input: {
   });
   releaseResidentBrowserWebview(browserId, webview);
   return webview;
+}
+
+export function getResidentBrowserWebview(browserId: string): HTMLElement | null {
+  const normalizedBrowserId = trimNonEmpty(browserId);
+  if (!normalizedBrowserId) {
+    return null;
+  }
+  const resident = residentWebviewsByBrowserId.get(normalizedBrowserId) ?? null;
+  if (resident?.isConnected) {
+    return resident;
+  }
+  const ownerDocument = readDocument();
+  return ownerDocument ? findBrowserWebview(normalizedBrowserId, ownerDocument) : null;
 }
 
 export function takeResidentBrowserWebview(browserId: string): HTMLElement | null {

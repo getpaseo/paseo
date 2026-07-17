@@ -78,13 +78,8 @@ export async function navigateToTerminal(
     { timeout: 30_000 },
   );
 
-  // Wait for daemon connection (sidebar shows host label)
-  await page
-    .getByText("localhost", { exact: true })
-    .first()
-    .waitFor({ state: "visible", timeout: 30_000 });
-
   // The open intent should have prepared and focused the exact pre-created terminal tab.
+  // Its presence is the user-visible proof that workspace and terminal state have hydrated.
   // The tab reconciliation effect also auto-creates terminal tabs once hydration completes,
   // so we give it enough time for the full workspace hydration + tab creation cycle.
   const terminalTab = page.locator(`[data-testid="workspace-tab-terminal_${input.terminalId}"]`);
