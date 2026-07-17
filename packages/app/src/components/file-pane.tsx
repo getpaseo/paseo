@@ -196,10 +196,12 @@ const codeLineStyles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.accentBorder,
   },
   findMatch: {
-    backgroundColor: "rgba(250, 204, 21, 0.38)",
+    backgroundColor: theme.colors.searchHighlight,
+    color: theme.colors.accentForeground,
   },
   currentFindMatch: {
-    backgroundColor: "rgba(251, 146, 60, 0.58)",
+    backgroundColor: theme.colors.searchHighlightActive,
+    color: theme.colors.searchHighlightActiveForeground,
   },
   gutter: {
     alignItems: "flex-end",
@@ -531,7 +533,7 @@ function FilePreviewBody({
     if (isMarkdownFile) {
       return (
         <View style={styles.previewScrollContainer}>
-          {isPaneFocused ? <PaneFindBar testID="file-pane-find-bar" /> : null}
+          {isPaneFocused ? <PaneFindBar placement="inline" testID="file-pane-find-bar" /> : null}
           <RNScrollView
             ref={previewScrollRef}
             style={styles.previewContent}
@@ -566,7 +568,7 @@ function FilePreviewBody({
           bar itself out of view while its input keeps keyboard focus.
           Mirrors the pattern in terminal-pane.tsx (outputContainer).
         */}
-        {isPaneFocused ? <PaneFindBar testID="file-pane-find-bar" /> : null}
+        {isPaneFocused ? <PaneFindBar placement="inline" testID="file-pane-find-bar" /> : null}
         <RNScrollView
           ref={previewScrollRef}
           style={styles.previewContent}

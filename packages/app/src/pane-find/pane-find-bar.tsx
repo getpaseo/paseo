@@ -32,6 +32,7 @@ export interface PaneFindBarViewProps {
   onClose: () => void;
   inputRef?: RefObject<TextInput | null>;
   testID?: string;
+  placement?: "overlay" | "inline";
 }
 
 /**
@@ -47,6 +48,7 @@ export function PaneFindBarView({
   onClose,
   inputRef,
   testID,
+  placement = "overlay",
 }: PaneFindBarViewProps) {
   const { t } = useTranslation();
 
@@ -74,9 +76,13 @@ export function PaneFindBarView({
     [hasMatches],
   );
   const findInputDataSet = useMemo(() => ({ paseoKeyboardFocusScope: "find-input" }), []);
+  const containerStyle = useMemo(
+    () => [styles.container, placement === "inline" && styles.containerInline],
+    [placement],
+  );
 
   return (
-    <View style={styles.container} testID={testID}>
+    <View style={containerStyle} testID={testID}>
       <View style={styles.inputWrapper}>
         <ThemedSearchIcon size={16} />
         <ThemedTextInput
@@ -138,7 +144,13 @@ export function PaneFindBarView({
  * pane-find registry and renders nothing when no pane is focused, or when
  * the focused pane provides its own find UI (`hasCustomUI`).
  */
-export function PaneFindBar({ testID }: { testID?: string }) {
+export function PaneFindBar({
+  testID,
+  placement,
+}: {
+  testID?: string;
+  placement?: "overlay" | "inline";
+}) {
   const adapter = useActivePaneFindAdapter();
   const state = usePaneFindAdapterState(adapter);
   const focusRequestRevision = usePaneFindFocusRequestRevision();
@@ -181,6 +193,7 @@ export function PaneFindBar({ testID }: { testID?: string }) {
       onClose={handleClose}
       inputRef={inputRef}
       testID={testID}
+      placement={placement}
     />
   );
 }
@@ -200,6 +213,12 @@ const styles = StyleSheet.create((theme) => ({
     borderBottomColor: theme.colors.border,
     paddingHorizontal: theme.spacing[3],
     paddingVertical: theme.spacing[2],
+  },
+  containerInline: {
+    position: "relative",
+    left: undefined,
+    right: undefined,
+    zIndex: undefined,
   },
   input: {
     flex: 1,
