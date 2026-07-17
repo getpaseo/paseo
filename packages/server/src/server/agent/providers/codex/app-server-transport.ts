@@ -1,5 +1,4 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
-import readline from "node:readline";
 import type { Logger } from "pino";
 import { z } from "zod";
 
@@ -156,13 +155,13 @@ function readProviderTurnId(params: unknown): string | undefined {
 }
 
 export class CodexAppServerClient {
-  private readonly rl: readline.Interface;
   private readonly pending = new Map<number, PendingRequest>();
   private readonly requestHandlers = new Map<string, RequestHandler>();
   private notificationHandler: NotificationHandler | null = null;
   private unexpectedTerminationHandler: UnexpectedTerminationHandler | null = null;
   private nextId = 1;
   private disposed = false;
+  private stdoutBuffer = "";
   private stderrBuffer = "";
 
   constructor(
@@ -170,11 +169,10 @@ export class CodexAppServerClient {
     private readonly logger: Logger,
     private readonly getTraceContext: () => CodexAppServerTraceContext = () => ({}),
   ) {
-    this.rl = readline.createInterface({ input: child.stdout });
-    this.rl.on("line", (line) => {
-      void this.handleLine(line).catch((error) => {
-        this.logger.warn({ error, line }, "Failed to handle Codex app-server stdout line");
-      });
+    // JSONL framing must use LF only. node:readline also treats U+2028/U+2029 as
+    // line boundaries (Node 24+ / Electron), which splits valid JSON strings.
+    child.stdout.on("data", (chunk) => {
+      this.handleStdoutChunk(chunk.toString());
     });
 
     child.stderr.on("data", (chunk) => {
@@ -248,7 +246,6 @@ export class CodexAppServerClient {
     if (this.disposed) return;
     this.disposed = true;
     this.unexpectedTerminationHandler = null;
-    this.rl.close();
     try {
       this.child.stdin.end();
     } catch {
@@ -277,7 +274,6 @@ export class CodexAppServerClient {
       return;
     }
     this.disposed = true;
-    this.rl.close();
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timer);
       pending.reject(error);
@@ -303,6 +299,21 @@ export class CodexAppServerClient {
       this.child.stdin.write(`${JSON.stringify(response)}\n`);
     } catch (error) {
       this.logger.debug({ error }, "Failed to write Codex app-server JSON-RPC response");
+    }
+  }
+
+  private handleStdoutChunk(chunk: string): void {
+    this.stdoutBuffer += chunk;
+    for (;;) {
+      const newlineIndex = this.stdoutBuffer.indexOf("\n");
+      if (newlineIndex === -1) {
+        break;
+      }
+      const line = this.stdoutBuffer.slice(0, newlineIndex).replace(/\r$/, "");
+      this.stdoutBuffer = this.stdoutBuffer.slice(newlineIndex + 1);
+      void this.handleLine(line).catch((error) => {
+        this.logger.warn({ error, line }, "Failed to handle Codex app-server stdout line");
+      });
     }
   }
 
