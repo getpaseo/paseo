@@ -50,6 +50,11 @@ const PersistedWorkspaceRecordSchema = z.object({
     .nullable()
     .optional()
     .transform((value) => value ?? null),
+  // Exact checkout/worktree root backing cwd. This differs from cwd when the
+  // selected project is a subdirectory inside a repository. Persist it so
+  // archive and recovery do not need the directory to still exist in order to
+  // recover placement.
+  worktreeRoot: z.string().nullable().default(null),
   // The base branch the worktree was created from (normalized like worktree.json's
   // baseRefName). Only worktree workspaces carry a base branch; checkout-branch
   // worktrees and directory/local_checkout workspaces leave it null.
@@ -407,6 +412,7 @@ export function createPersistedWorkspaceRecord(input: {
   displayName: string;
   title?: string | null;
   branch?: string | null;
+  worktreeRoot?: string | null;
   baseBranch?: string | null;
   isPaseoOwnedWorktree?: boolean;
   mainRepoRoot?: string | null;
@@ -419,6 +425,7 @@ export function createPersistedWorkspaceRecord(input: {
     ...input,
     title: input.title ?? null,
     branch: input.branch ?? null,
+    worktreeRoot: input.worktreeRoot ?? null,
     baseBranch: input.baseBranch ?? null,
     isPaseoOwnedWorktree: input.isPaseoOwnedWorktree ?? false,
     mainRepoRoot: input.mainRepoRoot ?? null,

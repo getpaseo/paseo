@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, watch as watchPath } from "node:fs";
 import type { ProjectCheckoutLitePayload } from "@getpaseo/protocol/messages";
 import type pino from "pino";
 import type {
@@ -9,7 +9,56 @@ import type {
 } from "./workspace-registry.js";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
 import { areEquivalentPaths } from "../utils/path.js";
-import { deriveProjectKind, deriveWorkspaceKind } from "./workspace-registry-model.js";
+import {
+  deriveProjectKind,
+  reconcileWorkspacePlacement,
+  type MutableWorkspacePlacement,
+} from "./workspace-registry-model.js";
+import { workspaceIdsForProjects } from "./workspace-directory.js";
+
+const DEFAULT_RESCAN_INTERVAL_MS = 5 * 60_000;
+const DEFAULT_DEBOUNCE_MS = 100;
+
+export type ProjectUpdate =
+  | { kind: "upsert"; project: PersistedProjectRecord }
+  | { kind: "remove"; projectId: string };
+
+interface ProjectRootWatcher {
+  close(): void;
+}
+
+export interface ProjectRootWatch {
+  (
+    rootPath: string,
+    options: { recursive: false },
+    onChange: (event: string, filename: string | Buffer | null) => void,
+    onError: (error: Error) => void,
+  ): ProjectRootWatcher;
+}
+
+export interface ReconciliationTimer {
+  unref?(): void;
+}
+
+export interface ReconciliationClock {
+  setTimeout(callback: () => void | Promise<void>, delayMs: number): ReconciliationTimer;
+  clearTimeout(timer: ReconciliationTimer): void;
+  setInterval(callback: () => void | Promise<void>, delayMs: number): ReconciliationTimer;
+  clearInterval(timer: ReconciliationTimer): void;
+}
+
+const systemClock: ReconciliationClock = {
+  setTimeout: (callback, delayMs) => setTimeout(() => void callback(), delayMs),
+  clearTimeout: (timer) => clearTimeout(timer as ReturnType<typeof setTimeout>),
+  setInterval: (callback, delayMs) => setInterval(() => void callback(), delayMs),
+  clearInterval: (timer) => clearInterval(timer as ReturnType<typeof setInterval>),
+};
+
+const watchProjectRoot: ProjectRootWatch = (rootPath, options, onChange, onError) => {
+  const watcher = watchPath(rootPath, options, onChange);
+  watcher.on("error", onError);
+  return watcher;
+};
 
 export type ReconciliationChange =
   | { kind: "workspace_archived"; workspaceId: string; directory: string; reason: string }
@@ -23,9 +72,7 @@ export type ReconciliationChange =
       kind: "workspace_updated";
       workspaceId: string;
       directory: string;
-      fields: Partial<
-        Pick<PersistedWorkspaceRecord, "branch" | "kind" | "isPaseoOwnedWorktree" | "mainRepoRoot">
-      >;
+      fields: Partial<MutableWorkspacePlacement>;
     };
 
 export interface ReconciliationResult {
@@ -39,6 +86,12 @@ export interface WorkspaceReconciliationServiceOptions {
   logger: pino.Logger;
   onChanges?: (changes: ReconciliationChange[]) => void;
   workspaceGitService?: Pick<WorkspaceGitService, "getCheckout">;
+  onProjectUpdate?: (update: ProjectUpdate) => void;
+  onWorkspacesChanged?: (workspaceIds: string[]) => Promise<void>;
+  watchProjectRoot?: ProjectRootWatch;
+  clock?: ReconciliationClock;
+  rescanIntervalMs?: number;
+  debounceMs?: number;
 }
 
 interface ProjectReconciliationInput {
@@ -60,6 +113,20 @@ export class WorkspaceReconciliationService {
   private readonly logger: pino.Logger;
   private readonly onChanges: ((changes: ReconciliationChange[]) => void) | null;
   private readonly workspaceGitService: Pick<WorkspaceGitService, "getCheckout"> | null;
+  private readonly onProjectUpdate: ((update: ProjectUpdate) => void) | null;
+  private readonly onWorkspacesChanged: ((workspaceIds: string[]) => Promise<void>) | null;
+  private readonly watchProjectRoot: ProjectRootWatch;
+  private readonly clock: ReconciliationClock;
+  private readonly rescanIntervalMs: number;
+  private readonly debounceMs: number;
+  private readonly watchers: Array<{ rootPath: string; watcher: ProjectRootWatcher }> = [];
+  private unsubscribeRegistry: (() => void) | null = null;
+  private rescanTimer: ReconciliationTimer | null = null;
+  private debounceTimer: ReconciliationTimer | null = null;
+  private disposed = false;
+  private started = false;
+  private reconciling = false;
+  private reconcileQueued = false;
 
   constructor(options: WorkspaceReconciliationServiceOptions) {
     this.projectRegistry = options.projectRegistry;
@@ -67,6 +134,49 @@ export class WorkspaceReconciliationService {
     this.logger = options.logger.child({ module: "workspace-reconciliation" });
     this.onChanges = options.onChanges ?? null;
     this.workspaceGitService = options.workspaceGitService ?? null;
+    this.onProjectUpdate = options.onProjectUpdate ?? null;
+    this.onWorkspacesChanged = options.onWorkspacesChanged ?? null;
+    this.watchProjectRoot = options.watchProjectRoot ?? watchProjectRoot;
+    this.clock = options.clock ?? systemClock;
+    this.rescanIntervalMs = options.rescanIntervalMs ?? DEFAULT_RESCAN_INTERVAL_MS;
+    this.debounceMs = options.debounceMs ?? DEFAULT_DEBOUNCE_MS;
+  }
+
+  async start(): Promise<void> {
+    if (this.started) return;
+    this.started = true;
+    this.unsubscribeRegistry =
+      this.projectRegistry.subscribeToMutations?.(async (mutation) => {
+        try {
+          // Project creation does not resolve until its root watch is installed,
+          // closing the git-init race for newly added empty projects.
+          await this.syncProjectRootWatches();
+          if (this.disposed) return;
+          if (mutation.kind === "upsert" && mutation.project && !mutation.project.archivedAt) {
+            this.onProjectUpdate?.({ kind: "upsert", project: mutation.project });
+          } else {
+            this.onProjectUpdate?.({ kind: "remove", projectId: mutation.projectId });
+          }
+        } catch (error) {
+          this.logger.warn({ err: error }, "Project reconciliation mutation handling failed");
+        }
+      }) ?? null;
+    await this.syncProjectRootWatches();
+    this.rescanTimer = this.clock.setInterval(
+      () => this.reconcileObservedGitMetadata(),
+      this.rescanIntervalMs,
+    );
+    this.rescanTimer.unref?.();
+  }
+
+  dispose(): void {
+    this.disposed = true;
+    this.unsubscribeRegistry?.();
+    this.unsubscribeRegistry = null;
+    if (this.rescanTimer) this.clock.clearInterval(this.rescanTimer);
+    if (this.debounceTimer) this.clock.clearTimeout(this.debounceTimer);
+    for (const { watcher } of this.watchers) watcher.close();
+    this.watchers.length = 0;
   }
 
   /** Reconciles mutable Git facts only; never archives missing records. */
@@ -234,49 +344,122 @@ export class WorkspaceReconciliationService {
 
     await Promise.all(
       workspaceCheckouts.map(async ({ workspace, checkout: wsGit }) => {
-        const expectedKind = deriveWorkspaceKind(wsGit);
-
-        const workspaceUpdates: Partial<
-          Pick<
-            PersistedWorkspaceRecord,
-            "branch" | "kind" | "isPaseoOwnedWorktree" | "mainRepoRoot"
-          >
-        > = {};
-
-        if (workspace.branch !== (wsGit.isGit ? wsGit.currentBranch : null)) {
-          workspaceUpdates.branch = wsGit.isGit ? wsGit.currentBranch : null;
-        }
-
-        if (workspace.kind !== expectedKind) {
-          workspaceUpdates.kind = expectedKind;
-        }
-        const isPaseoOwnedWorktree = wsGit.isGit && wsGit.isPaseoOwnedWorktree;
-        const mainRepoRoot = wsGit.isGit ? wsGit.mainRepoRoot : null;
-        if (workspace.isPaseoOwnedWorktree !== isPaseoOwnedWorktree) {
-          workspaceUpdates.isPaseoOwnedWorktree = isPaseoOwnedWorktree;
-        }
-        if (workspace.mainRepoRoot !== mainRepoRoot) {
-          workspaceUpdates.mainRepoRoot = mainRepoRoot;
-        }
-
-        if (Object.keys(workspaceUpdates).length === 0) {
-          return;
-        }
-
         const timestamp = new Date().toISOString();
-        await this.workspaceRegistry.upsert({
-          ...workspace,
-          ...workspaceUpdates,
+        const update = reconcileWorkspacePlacement({
+          workspace,
+          checkout: wsGit,
           updatedAt: timestamp,
         });
+        if (!update) return;
+
+        await this.workspaceRegistry.upsert(update.workspace);
         changes.push({
           kind: "workspace_updated",
           workspaceId: workspace.workspaceId,
           directory: workspace.cwd,
-          fields: workspaceUpdates,
+          fields: update.fields,
         });
       }),
     );
+  }
+
+  private async syncProjectRootWatches(): Promise<void> {
+    if (this.disposed) return;
+    const projects = await this.projectRegistry.list();
+    if (this.disposed) return;
+    const activeProjects = projects.filter((project) => !project.archivedAt);
+
+    for (let index = this.watchers.length - 1; index >= 0; index -= 1) {
+      const target = this.watchers[index]!;
+      const stillActive = activeProjects.some((project) =>
+        areEquivalentPaths(project.rootPath, target.rootPath),
+      );
+      if (stillActive) continue;
+      target.watcher.close();
+      this.watchers.splice(index, 1);
+    }
+
+    for (const project of activeProjects) {
+      const alreadyWatching = this.watchers.some((target) =>
+        areEquivalentPaths(target.rootPath, project.rootPath),
+      );
+      if (alreadyWatching) continue;
+      try {
+        let watcher: ProjectRootWatcher;
+        watcher = this.watchProjectRoot(
+          project.rootPath,
+          { recursive: false },
+          (_event, filename) => {
+            if (filename === null || filename.toString() === ".git") {
+              this.scheduleObservedReconciliation();
+            }
+          },
+          (error) => {
+            watcher.close();
+            const index = this.watchers.findIndex((target) => target.watcher === watcher);
+            if (index >= 0) this.watchers.splice(index, 1);
+            this.logger.warn(
+              { err: error, rootPath: project.rootPath },
+              "Project root watch failed",
+            );
+          },
+        );
+        this.watchers.push({ rootPath: project.rootPath, watcher });
+      } catch (error) {
+        // The periodic reconciliation is the convergence path for roots that
+        // are temporarily missing or unwatchable.
+        this.logger.debug(
+          { err: error, rootPath: project.rootPath },
+          "Project root is not watchable yet",
+        );
+      }
+    }
+  }
+
+  private scheduleObservedReconciliation(): void {
+    if (this.disposed || this.debounceTimer) return;
+    this.debounceTimer = this.clock.setTimeout(() => {
+      this.debounceTimer = null;
+      return this.reconcileObservedGitMetadata();
+    }, this.debounceMs);
+  }
+
+  private async reconcileObservedGitMetadata(): Promise<void> {
+    if (this.disposed) return;
+    if (this.reconciling) {
+      this.reconcileQueued = true;
+      return;
+    }
+    this.reconciling = true;
+    try {
+      await this.syncProjectRootWatches();
+      const result = await this.reconcileGitMetadata();
+      const workspaceIds = new Set<string>();
+      const projectIds = new Set<string>();
+      for (const change of result.changesApplied) {
+        if (change.kind === "workspace_updated") workspaceIds.add(change.workspaceId);
+        if (change.kind === "project_updated") projectIds.add(change.projectId);
+      }
+      if (projectIds.size > 0) {
+        const workspaces = await this.workspaceRegistry.list();
+        for (const workspaceId of workspaceIdsForProjects(workspaces, projectIds)) {
+          workspaceIds.add(workspaceId);
+        }
+      }
+      if (!this.disposed && workspaceIds.size > 0) {
+        await this.onWorkspacesChanged?.(Array.from(workspaceIds));
+      }
+    } catch (error) {
+      if (!this.disposed) {
+        this.logger.warn({ err: error }, "Project Git metadata reconciliation failed");
+      }
+    } finally {
+      this.reconciling = false;
+      if (this.reconcileQueued) {
+        this.reconcileQueued = false;
+        void this.reconcileObservedGitMetadata();
+      }
+    }
   }
 
   private async readCheckout(cwd: string): Promise<ProjectCheckoutLitePayload> {

@@ -10,7 +10,10 @@ import type {
   PersistedProjectRecord,
   PersistedWorkspaceRecord,
   ProjectRegistry,
+  WorkspaceRegistry,
 } from "./workspace-registry.js";
+import { createWorkspaceProvisioningService } from "./session/workspace-provisioning/workspace-provisioning-service.js";
+import { createTestLogger } from "../test-utils/test-logger.js";
 import {
   attemptFirstAgentBranchAutoName,
   createPaseoWorktree,
@@ -213,6 +216,7 @@ test("creates a worktree workspace at the selected project subdirectory", async 
   expect(result.workspace).toMatchObject({
     projectId: project.projectId,
     cwd: path.join(result.worktree.worktreePath, "packages", "app"),
+    worktreeRoot: result.worktree.worktreePath,
     kind: "worktree",
   });
 });
@@ -893,7 +897,6 @@ test.skipIf(isPlatform("win32"))(
 );
 
 interface TestDeps extends CreatePaseoWorktreeDeps {
-  projectRegistry: Pick<ProjectRegistry, "get" | "getOrCreateActiveByRoot" | "upsert">;
   projects: Map<string, PersistedProjectRecord>;
   workspaces: Map<string, PersistedWorkspaceRecord>;
 }
@@ -906,39 +909,73 @@ function createDeps(options?: {
   const events = options?.events ?? [];
   const projects = options?.projects ?? new Map<string, PersistedProjectRecord>();
   const workspaces = options?.workspaces ?? new Map<string, PersistedWorkspaceRecord>();
+  const projectRegistry: ProjectRegistry = {
+    initialize: async () => {},
+    existsOnDisk: async () => true,
+    list: async () => Array.from(projects.values()),
+    get: async (projectId) => projects.get(projectId) ?? null,
+    getOrCreateActiveByRoot: async (input) => {
+      const existing = Array.from(projects.values()).find(
+        (project) => !project.archivedAt && areEquivalentPaths(project.rootPath, input.rootPath),
+      );
+      if (existing) return existing;
+      const project = createPersistedProjectRecordForTest({
+        projectId: `prj_${projects.size.toString().padStart(16, "0")}`,
+        rootPath: input.rootPath,
+        displayName: input.displayName,
+      });
+      projects.set(project.projectId, project);
+      return project;
+    },
+    upsert: async (project) => {
+      projects.set(project.projectId, project);
+    },
+    archive: async (projectId, archivedAt) => {
+      const project = projects.get(projectId);
+      if (project) projects.set(projectId, { ...project, archivedAt });
+    },
+    remove: async (projectId) => {
+      projects.delete(projectId);
+    },
+  };
+  const workspaceRegistry: WorkspaceRegistry = {
+    initialize: async () => {},
+    existsOnDisk: async () => true,
+    list: async () => Array.from(workspaces.values()),
+    get: async (workspaceId) => workspaces.get(workspaceId) ?? null,
+    update: async (workspaceId, updater) => {
+      const workspace = workspaces.get(workspaceId);
+      if (!workspace) return null;
+      const updated = updater(workspace);
+      workspaces.set(workspaceId, updated);
+      return updated;
+    },
+    upsert: async (record) => {
+      events.push(`workspace:${record.workspaceId}`);
+      workspaces.set(record.workspaceId, record);
+    },
+    archive: async (workspaceId, archivedAt) => {
+      const workspace = workspaces.get(workspaceId);
+      if (workspace) workspaces.set(workspaceId, { ...workspace, archivedAt });
+    },
+    remove: async (workspaceId) => {
+      workspaces.delete(workspaceId);
+    },
+  };
+  const workspaceGitService = createWorkspaceGitServiceStub();
+  const workspaceProvisioning = createWorkspaceProvisioningService({
+    projectRegistry,
+    workspaceRegistry,
+    workspaceGitService,
+    logger: createTestLogger(),
+  });
 
   return {
     github: createGitHubServiceStub(),
     projects,
     workspaces,
-    projectRegistry: {
-      get: async (projectId) => projects.get(projectId) ?? null,
-      getOrCreateActiveByRoot: async (input) => {
-        const existing = Array.from(projects.values()).find(
-          (project) => !project.archivedAt && areEquivalentPaths(project.rootPath, input.rootPath),
-        );
-        if (existing) return existing;
-        const project = createPersistedProjectRecordForTest({
-          projectId: `prj_${projects.size.toString().padStart(16, "0")}`,
-          rootPath: input.rootPath,
-          displayName: input.displayName,
-        });
-        projects.set(project.projectId, project);
-        return project;
-      },
-      upsert: async (project) => {
-        projects.set(project.projectId, project);
-      },
-    },
-    workspaceRegistry: {
-      get: async (workspaceId) => workspaces.get(workspaceId) ?? null,
-      list: async () => Array.from(workspaces.values()),
-      upsert: async (record) => {
-        events.push(`workspace:${record.workspaceId}`);
-        workspaces.set(record.workspaceId, record);
-      },
-    },
-    workspaceGitService: createWorkspaceGitServiceStub(),
+    workspaceGitService,
+    workspaceProvisioning,
   };
 }
 

@@ -61,7 +61,7 @@ import { getErrorMessage, getErrorMessageOr } from "@getpaseo/protocol/error-uti
 import { getAgentStatusPriority } from "@getpaseo/protocol/agent-state-bucket";
 import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
 import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "./workspace-git-service.js";
-import type { ProjectUpdate } from "./project-git-observer-service.js";
+import type { ProjectUpdate } from "./workspace-reconciliation-service.js";
 import {
   CLIENT_SHUTDOWN_RPC_REASON,
   normalizeClientRestartRpcReason,
@@ -120,6 +120,7 @@ import {
 } from "./agent/import-sessions.js";
 import {
   checkoutLiteFromGitSnapshot,
+  checkoutFromPersistedWorkspacePlacement,
   deriveWorkspaceDisplayName,
 } from "./workspace-registry-model.js";
 import { resolveWorkspaceIdForPath } from "./resolve-workspace-id-for-path.js";
@@ -264,49 +265,6 @@ function resolveSubscriptionId(
     return requestedSubscriptionId;
   }
   return uuidv4();
-}
-
-function buildWorkspaceCheckout(
-  workspace: PersistedWorkspaceRecord,
-  // The persisted `branch` field is the source of truth, but it is null for
-  // records created before branch was lifted to its own field (no migrations,
-  // per data-model.md) and for any path that didn't backfill it. Fall back to
-  // the live git branch so checkout.currentBranch never regresses to null.
-  fallbackBranch?: string | null,
-  worktreeRoot?: string | null,
-): ProjectPlacementPayload["checkout"] {
-  if (workspace.kind === "directory") {
-    return {
-      cwd: workspace.cwd,
-      isGit: false,
-      currentBranch: null,
-      remoteUrl: null,
-      worktreeRoot: null,
-      isPaseoOwnedWorktree: false,
-      mainRepoRoot: null,
-    };
-  }
-  const currentBranch = workspace.branch ?? fallbackBranch ?? null;
-  if (workspace.isPaseoOwnedWorktree && workspace.mainRepoRoot) {
-    return {
-      cwd: workspace.cwd,
-      isGit: true,
-      currentBranch,
-      remoteUrl: null,
-      worktreeRoot: worktreeRoot ?? workspace.cwd,
-      isPaseoOwnedWorktree: true,
-      mainRepoRoot: workspace.mainRepoRoot,
-    };
-  }
-  return {
-    cwd: workspace.cwd,
-    isGit: true,
-    currentBranch,
-    remoteUrl: null,
-    worktreeRoot: worktreeRoot ?? workspace.cwd,
-    isPaseoOwnedWorktree: false,
-    mainRepoRoot: workspace.mainRepoRoot ?? null,
-  };
 }
 
 function isAppVersionAtLeast(appVersion: string | null, minVersion: string): boolean {
@@ -1509,11 +1467,14 @@ export class Session {
       throw new Error(`Project not found for workspace ${workspace.workspaceId}`);
     }
     const snapshot = this.workspaceGitService.peekSnapshot(workspace.cwd);
-    const checkout = buildWorkspaceCheckout(
+    const checkout = checkoutFromPersistedWorkspacePlacement({
       workspace,
-      snapshot?.git.currentBranch ?? null,
-      snapshot?.git.repoRoot,
-    );
+      // COMPAT(workspacePlacementBackfill): added in v0.1.107, remove after 2027-01-15.
+      // Legacy records can lack branch and worktreeRoot because persisted registries
+      // are not migrated in place.
+      fallbackBranch: snapshot?.git.currentBranch ?? null,
+      fallbackWorktreeRoot: snapshot?.git.repoRoot,
+    });
     return {
       projectKey: project.projectId,
       projectName: resolveProjectDisplayName(project),
@@ -4209,9 +4170,9 @@ export class Session {
       paseoHome: this.paseoHome,
       worktreesRoot: this.worktreesRoot,
     });
-    const previousWorktreePath = ownership.allowed
-      ? (ownership.worktreePath ?? workspace.cwd)
-      : workspace.cwd;
+    const previousWorktreePath =
+      workspace.worktreeRoot ??
+      (ownership.allowed ? (ownership.worktreePath ?? workspace.cwd) : workspace.cwd);
     let result: WorktreeConfig;
     try {
       result = await createWorktree({
@@ -4288,9 +4249,8 @@ export class Session {
       ...(options?.resolveDefaultBranch
         ? { resolveDefaultBranch: options.resolveDefaultBranch }
         : {}),
-      projectRegistry: this.projectRegistry,
-      workspaceRegistry: this.workspaceRegistry,
       workspaceGitService: this.workspaceGitService,
+      workspaceProvisioning: this.workspaceProvisioning,
     });
     void Promise.all([
       this.gitMutation.notifyGitMutation(input.cwd, "create-worktree"),
@@ -4312,6 +4272,8 @@ export class Session {
         workspaceId: workspace.workspaceId,
         cwd: workspace.cwd,
         kind: workspace.kind,
+        worktreeRoot: workspace.worktreeRoot,
+        isPaseoOwnedWorktree: workspace.isPaseoOwnedWorktree,
       }));
   }
 

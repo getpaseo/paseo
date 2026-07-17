@@ -259,8 +259,20 @@ describe("archiveByScope", () => {
       createArchiveDeps({
         paseoHome,
         activeWorkspaces: [
-          { workspaceId: sourceWorkspaceId, cwd: worktree.worktreePath, kind: "worktree" },
-          { workspaceId: siblingWorkspaceId, cwd: siblingDirectory, kind: "local_checkout" },
+          {
+            workspaceId: sourceWorkspaceId,
+            cwd: worktree.worktreePath,
+            kind: "worktree",
+            worktreeRoot: worktree.worktreePath,
+            isPaseoOwnedWorktree: true,
+          },
+          {
+            workspaceId: siblingWorkspaceId,
+            cwd: siblingDirectory,
+            kind: "worktree",
+            worktreeRoot: worktree.worktreePath,
+            isPaseoOwnedWorktree: true,
+          },
         ],
       }),
       {
@@ -290,8 +302,20 @@ describe("archiveByScope", () => {
       createArchiveDeps({
         paseoHome,
         activeWorkspaces: [
-          { workspaceId: rootWorkspaceId, cwd: worktree.worktreePath, kind: "worktree" },
-          { workspaceId: subdirectoryWorkspaceId, cwd: subdirectory, kind: "local_checkout" },
+          {
+            workspaceId: rootWorkspaceId,
+            cwd: worktree.worktreePath,
+            kind: "worktree",
+            worktreeRoot: worktree.worktreePath,
+            isPaseoOwnedWorktree: true,
+          },
+          {
+            workspaceId: subdirectoryWorkspaceId,
+            cwd: subdirectory,
+            kind: "worktree",
+            worktreeRoot: worktree.worktreePath,
+            isPaseoOwnedWorktree: true,
+          },
         ],
       }),
       {
@@ -322,9 +346,27 @@ describe("archiveByScope", () => {
       createArchiveDeps({
         paseoHome,
         activeWorkspaces: [
-          { workspaceId: workspaceA, cwd: worktree.worktreePath, kind: "worktree" },
-          { workspaceId: workspaceB, cwd: worktree.worktreePath, kind: "local_checkout" },
-          { workspaceId: workspaceC, cwd: subdirectory, kind: "local_checkout" },
+          {
+            workspaceId: workspaceA,
+            cwd: worktree.worktreePath,
+            kind: "worktree",
+            worktreeRoot: worktree.worktreePath,
+            isPaseoOwnedWorktree: true,
+          },
+          {
+            workspaceId: workspaceB,
+            cwd: worktree.worktreePath,
+            kind: "worktree",
+            worktreeRoot: worktree.worktreePath,
+            isPaseoOwnedWorktree: true,
+          },
+          {
+            workspaceId: workspaceC,
+            cwd: subdirectory,
+            kind: "worktree",
+            worktreeRoot: worktree.worktreePath,
+            isPaseoOwnedWorktree: true,
+          },
         ],
       }),
       {

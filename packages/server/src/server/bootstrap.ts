@@ -139,7 +139,6 @@ import type { PaseoToolRuntimeContext } from "./agent/tools/types.js";
 import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import { bootstrapWorkspaceRegistries } from "./workspace-registry-bootstrap.js";
 import { WorkspaceReconciliationService } from "./workspace-reconciliation-service.js";
-import { ProjectGitObserverService } from "./project-git-observer-service.js";
 import { FileBackedProjectRegistry, FileBackedWorkspaceRegistry } from "./workspace-registry.js";
 import { FileBackedChatService } from "./chat/chat-service.js";
 import { CheckoutDiffManager } from "./checkout-diff-manager.js";
@@ -820,12 +819,6 @@ export async function createPaseoDaemon(
     workspaceRegistry,
     logger,
     workspaceGitService,
-  });
-  const projectGitObserver = new ProjectGitObserverService({
-    projectRegistry,
-    workspaceRegistry,
-    reconciliation: workspaceReconciliation,
-    logger,
     onProjectUpdate: (update) => wsServer?.publishProjectUpdate(update),
     onWorkspacesChanged: async (workspaceIds) => {
       await fanOutReconciledWorkspaceUpdates({
@@ -835,7 +828,7 @@ export async function createPaseoDaemon(
       });
     },
   });
-  await projectGitObserver.start();
+  await workspaceReconciliation.start();
   void workspaceReconciliation.runOnce().catch((error) => {
     logger.warn({ err: error }, "Initial workspace reconciliation failed");
   });
@@ -890,6 +883,8 @@ export async function createPaseoDaemon(
         workspaceId: workspace.workspaceId,
         cwd: workspace.cwd,
         kind: workspace.kind,
+        worktreeRoot: workspace.worktreeRoot,
+        isPaseoOwnedWorktree: workspace.isPaseoOwnedWorktree,
       }));
   };
   const markWorkspaceArchivingExternal = (workspaceIds: Iterable<string>, archivingAt: string) => {
@@ -978,9 +973,8 @@ export async function createPaseoDaemon(
                   resolveDefaultBranch: workflowOptions.resolveDefaultBranch,
                 }
               : {}),
-            projectRegistry,
-            workspaceRegistry,
             workspaceGitService,
+            workspaceProvisioning,
           });
         },
         warmWorkspaceGitData: async (workspace) => {
@@ -1480,7 +1474,7 @@ export async function createPaseoDaemon(
   };
 
   const stop = async () => {
-    projectGitObserver.dispose();
+    workspaceReconciliation.dispose();
     scriptHealthMonitor.stop();
     // Freeze both ingress and registration before taking the agent closure snapshot.
     wsServer?.prepareForShutdown();

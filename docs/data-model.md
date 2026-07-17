@@ -4,10 +4,22 @@
 
 Projects are allocated for the exact root selected by the caller, normalized lexically with `path.resolve` (never `realpath`). New project IDs are opaque `prj_<16 hex>` values. Existing remote-shaped or path-shaped IDs are retained as readable compatibility records and are never rekeyed. An active exact root is idempotent; archived-only matches do not resurrect an old project. Workspace `projectId` is stable membership: reconciliation may update git-derived kind and branch metadata, but never rehomes a workspace or changes a project's root, ID, or default name.
 
-`kind` is mutable metadata, not identity. A daemon-global root observer updates only a project's
-`kind` and `updatedAt` when `.git` appears or disappears, preserving its ID, root path, names, and
-workspace foreign keys. Attached workspaces are independently refreshed from their own cwd, so an
-explicit project root never implies a workspace checkout. Empty projects are observed too.
+`kind` is mutable metadata, not identity. Workspace reconciliation watches active project roots and
+updates only a project's `kind` and `updatedAt` when `.git` appears or disappears, preserving its
+ID, root path, names, and workspace foreign keys. Attached workspaces are independently refreshed
+from their own cwd, so an explicit project root never implies a workspace checkout. Empty projects
+are observed too.
+
+The workspace registry model defines placement once: initial directory/worktree construction,
+mutable reconciliation fields, and the persisted-to-wire checkout projection. Its update policy
+preserves `displayName` and `baseBranch`. `WorkspaceProvisioningService` owns the corresponding
+registry writes, so directory opens, agent imports, and worktree creation all enter through that
+service instead of constructing records independently. The workspace record is then the durable
+placement authority: `cwd` is the exact execution directory, while `worktreeRoot` is the backing
+checkout root. They intentionally differ for an exact subproject inside a worktree. Archive,
+restore, branch auto-name, and descriptor flows consume those persisted facts rather than
+rediscovering ownership from a directory that may already be gone. Reconciliation may refresh
+mutable placement facts, but never changes `projectId`, `cwd`, `displayName`, or `baseBranch`.
 
 Paseo uses **file-based JSON persistence** instead of a traditional database. All data is validated at runtime with Zod schemas. Most stores write atomically (write to temp file, then rename); a few still use plain `writeFile` — see each section. There is no schema-versioning/migration framework — schemas rely on optional fields with defaults for forward compatibility, with a small amount of inline normalization in `persisted-config.ts` for legacy provider/speech entries.
 
@@ -456,19 +468,23 @@ workspace together with its owning project.
 
 Array of workspace records. A workspace is a specific working directory within a project.
 
-| Field         | Type                                            | Description                                                                                                                                                                           |
-| ------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `workspaceId` | `string`                                        | Opaque stable identifier (`wks_<hex>`), generated independently of the directory. MUST NOT be treated as a path; compare by exact equality. Use the `cwd` field for directory access. |
-| `projectId`   | `string`                                        | FK to Project.projectId                                                                                                                                                               |
-| `cwd`         | `string`                                        | Filesystem path                                                                                                                                                                       |
-| `kind`        | `"local_checkout" \| "worktree" \| "directory"` |                                                                                                                                                                                       |
-| `displayName` | `string`                                        | The human name (the generated/derived title). Decoupled from `branch` by construction.                                                                                                |
-| `title`       | `string \| null`                                | User-set name override layered over `displayName`. Null means "use `displayName`".                                                                                                    |
-| `branch`      | `string \| null`                                | The current Git branch for git-backed workspaces (local checkout or worktree). Separate from `displayName`/`title`; a branch rename writes this and never the name.                   |
-| `createdAt`   | `string` (ISO 8601)                             |                                                                                                                                                                                       |
-| `updatedAt`   | `string` (ISO 8601)                             |                                                                                                                                                                                       |
-| `archivedAt`  | `string \| null` (ISO 8601)                     | Soft-delete; required nullable                                                                                                                                                        |
-| `pinnedAt`    | `string \| null` (ISO 8601)                     | Pinned-to-top-of-sidebar timestamp; null means "not pinned"                                                                                                                           |
+| Field                  | Type                                            | Description                                                                                                                                                                           |
+| ---------------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `workspaceId`          | `string`                                        | Opaque stable identifier (`wks_<hex>`), generated independently of the directory. MUST NOT be treated as a path; compare by exact equality. Use the `cwd` field for directory access. |
+| `projectId`            | `string`                                        | FK to Project.projectId; the workspace's stable project membership                                                                                                                    |
+| `cwd`                  | `string`                                        | Exact execution directory selected for agents, files, scripts, and setup                                                                                                              |
+| `kind`                 | `"local_checkout" \| "worktree" \| "directory"` | Mutable checkout classification                                                                                                                                                       |
+| `displayName`          | `string`                                        | The human name (the generated/derived title). Decoupled from `branch` by construction.                                                                                                |
+| `title`                | `string \| null`                                | User-set name override layered over `displayName`. Null means "use `displayName`".                                                                                                    |
+| `branch`               | `string \| null`                                | The current Git branch for git-backed workspaces. Separate from `displayName`/`title`; a background branch refresh never rewrites the name.                                           |
+| `worktreeRoot`         | `string \| null`                                | Backing checkout/worktree root. May differ from `cwd` for exact subprojects and remains persisted after the worktree is deleted so restore can reproduce the placement.               |
+| `baseBranch`           | `string \| null`                                | Normalized branch the Paseo worktree was created from; null for directories, local checkouts, and checkout-branch worktrees                                                           |
+| `isPaseoOwnedWorktree` | `boolean`                                       | Whether Paseo owns and may remove/recreate the backing `worktreeRoot`                                                                                                                 |
+| `mainRepoRoot`         | `string \| null`                                | Main repository root for worktree checkouts, independent of both exact `cwd` and backing `worktreeRoot`                                                                               |
+| `createdAt`            | `string` (ISO 8601)                             |                                                                                                                                                                                       |
+| `updatedAt`            | `string` (ISO 8601)                             |                                                                                                                                                                                       |
+| `archivedAt`           | `string \| null` (ISO 8601)                     | Soft-delete; required nullable                                                                                                                                                        |
+| `pinnedAt`             | `string \| null` (ISO 8601)                     | Pinned-to-top-of-sidebar timestamp; null means "not pinned"                                                                                                                           |
 
 > **Opaque-ID invariant:** `workspaceId` is opaque identity, never a filesystem path. Filesystem and git operations take `cwd`/`workspaceDirectory` only — never the id. A compatibility-only first-materialization bootstrap still groups pre-registry agent records by path and Git remote so existing installs retain their legacy records. That grouping never runs against a live registry, and its keys are not runtime project or workspace identity.
 

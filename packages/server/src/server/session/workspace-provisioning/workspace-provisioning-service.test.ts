@@ -135,7 +135,7 @@ test("re-opening Windows-equivalent workspace cwd spellings reuses the active an
   expect(await workspaceRegistry.list()).toHaveLength(1);
 });
 
-test("re-opening an active workspace refreshes its checkout metadata", async () => {
+test("re-opening refreshes mutable checkout metadata without renaming the workspace", async () => {
   const repo = path.join(tmpDir, "repo");
   const first = await provisioning.findOrCreateWorkspaceForDirectory(repo);
   await workspaceRegistry.upsert({ ...first, title: "Pinned work" });
@@ -148,7 +148,7 @@ test("re-opening an active workspace refreshes its checkout metadata", async () 
     workspaceId: first.workspaceId,
     kind: "local_checkout",
     branch: "feature/refresh",
-    displayName: "feature/refresh",
+    displayName: first.displayName,
     title: "Pinned work",
     isPaseoOwnedWorktree: false,
     mainRepoRoot: null,
@@ -279,7 +279,7 @@ test("uses one workspace snapshot when reopening an archived workspace", async (
   expect(await workspaceRegistry.list()).toHaveLength(1);
 });
 
-test("reopening an archived workspace refreshes its checkout-derived fields", async () => {
+test("reopening an archived workspace refreshes placement without renaming it", async () => {
   const repo = path.join(tmpDir, "repo");
   gitRoots.add(repo);
   const created = await provisioning.findOrCreateWorkspaceForDirectory(repo);
@@ -295,7 +295,7 @@ test("reopening an archived workspace refreshes its checkout-derived fields", as
     title: "Pinned archived work",
     kind: "directory",
     branch: null,
-    displayName: "repo",
+    displayName: created.displayName,
     archivedAt: null,
   });
   expect(reopened.updatedAt).toEqual(expect.any(String));

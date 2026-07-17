@@ -371,6 +371,7 @@ describe("WorkspaceReconciliationService", () => {
           kind: "local_checkout",
           displayName: workspaceId,
           branch: "topic",
+          worktreeRoot: workspaceRoot,
           createdAt: timestamp,
           updatedAt: timestamp,
         }),
@@ -450,7 +451,10 @@ describe("WorkspaceReconciliationService", () => {
           kind: "workspace_updated",
           workspaceId: "w1",
           directory: workspaceRoot,
-          fields: { branch: null, kind: "directory" },
+          fields: {
+            branch: null,
+            kind: "directory",
+          },
         },
       ]),
     );
@@ -559,6 +563,7 @@ describe("WorkspaceReconciliationService", () => {
       title: null,
       pinnedAt: null,
       branch: null,
+      worktreeRoot: null,
       baseBranch: null,
       isPaseoOwnedWorktree: false,
       mainRepoRoot: null,
@@ -1214,10 +1219,15 @@ describe("WorkspaceReconciliationService", () => {
         kind: "workspace_updated",
         workspaceId: "w1",
         directory: rootPath,
-        fields: { isPaseoOwnedWorktree: true, mainRepoRoot: "/tmp/main-repo" },
+        fields: {
+          worktreeRoot: rootPath,
+          isPaseoOwnedWorktree: true,
+          mainRepoRoot: "/tmp/main-repo",
+        },
       },
     ]);
     expect(workspaces.get("w1")).toMatchObject({
+      worktreeRoot: rootPath,
       isPaseoOwnedWorktree: true,
       mainRepoRoot: "/tmp/main-repo",
     });

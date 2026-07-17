@@ -5426,6 +5426,9 @@ test("recreateArchivedWorktree restores an archived exact subdirectory", async (
       cwd: workspaceCwd,
       kind: "worktree",
       branch,
+      worktreeRoot,
+      isPaseoOwnedWorktree: true,
+      mainRepoRoot: repoDir,
       displayName: branch,
       createdAt: "2026-03-01T12:00:00.000Z",
       updatedAt: "2026-03-10T00:00:00.000Z",
@@ -8160,7 +8163,7 @@ test("workspace auto-name replaces the unchanged prompt title", async () => {
   }
 });
 
-test("workspace auto-name applies title once when branch auto-name is rejected", async () => {
+test("workspace auto-name uses the backing root for a nested worktree", async () => {
   vi.useFakeTimers();
   const tempDir = realpathSync(mkdtempSync(path.join(tmpdir(), "workspace-auto-name-rejected-")));
   const repoDir = path.join(tempDir, "repo");
@@ -8180,15 +8183,19 @@ test("workspace auto-name applies title once when branch auto-name is rejected",
   writePaseoWorktreeFirstAgentBranchAutoNameMetadata(repoDir, {
     placeholderBranchName: "placeholder-branch",
   });
+  const workspaceCwd = path.join(repoDir, "packages", "app");
+  mkdirSync(workspaceCwd, { recursive: true });
 
   const workspace = createPersistedWorkspaceRecord({
     workspaceId: "ws-rejected-branch-title",
     projectId: "proj-rejected-branch-title",
-    cwd: repoDir,
+    cwd: workspaceCwd,
     kind: "worktree",
     displayName: "Fix checkout title",
     title: "Fix checkout title",
     branch: "placeholder-branch",
+    worktreeRoot: repoDir,
+    isPaseoOwnedWorktree: true,
     createdAt: "2026-03-01T12:00:00.000Z",
     updatedAt: "2026-03-01T12:00:00.000Z",
   });
@@ -8248,7 +8255,7 @@ test("workspace auto-name applies title once when branch auto-name is rejected",
       },
     });
     expect(gitMutations).toEqual([]);
-    expect(emittedCwds).toEqual([repoDir]);
+    expect(emittedCwds).toEqual([workspaceCwd]);
   } finally {
     vi.useRealTimers();
     rmSync(tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });

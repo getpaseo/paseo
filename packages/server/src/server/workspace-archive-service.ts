@@ -20,6 +20,8 @@ export interface ActiveWorkspaceRef {
   workspaceId: string;
   cwd: string;
   kind?: "local_checkout" | "worktree" | "directory";
+  worktreeRoot?: string | null;
+  isPaseoOwnedWorktree?: boolean;
 }
 
 export interface ArchiveDependencies {
@@ -173,8 +175,8 @@ async function resolveArchiveTargets(
       return { targetDir: null, targetWorkspaceIds: [] };
     }
     return {
-      targetDir: await resolveBackingWorktreeDirectory(
-        record.cwd,
+      targetDir: await resolveWorkspaceBackingDirectory(
+        record,
         dependencies,
         paseoWorktreesBaseRoot,
       ),
@@ -193,8 +195,8 @@ async function resolveArchiveTargets(
   const targetWorkspaceIds = (
     await Promise.all(
       activeWorkspaces.map(async (workspace) => {
-        const backingDirectory = await resolveBackingWorktreeDirectory(
-          workspace.cwd,
+        const backingDirectory = await resolveWorkspaceBackingDirectory(
+          workspace,
           dependencies,
           paseoWorktreesBaseRoot,
         );
@@ -203,6 +205,17 @@ async function resolveArchiveTargets(
     )
   ).filter((workspaceId): workspaceId is string => workspaceId !== null);
   return { targetDir, targetWorkspaceIds };
+}
+
+async function resolveWorkspaceBackingDirectory(
+  workspace: ActiveWorkspaceRef,
+  dependencies: Pick<ArchiveDependencies, "paseoHome" | "paseoWorktreesBaseRoot">,
+  paseoWorktreesBaseRoot?: string,
+): Promise<string> {
+  if (workspace.isPaseoOwnedWorktree && workspace.worktreeRoot) {
+    return resolve(workspace.worktreeRoot);
+  }
+  return resolveBackingWorktreeDirectory(workspace.cwd, dependencies, paseoWorktreesBaseRoot);
 }
 
 async function resolveBackingWorktreeDirectory(
@@ -377,8 +390,8 @@ async function isDirectoryUnreferenced(
   const matchesTarget = createRealpathAwarePathMatcher(target);
   for (const workspace of activeWorkspaces) {
     if (archivedWorkspaceIds.has(workspace.workspaceId)) continue;
-    const backingDirectory = await resolveBackingWorktreeDirectory(
-      workspace.cwd,
+    const backingDirectory = await resolveWorkspaceBackingDirectory(
+      workspace,
       dependencies,
       request.paseoWorktreesBaseRoot,
     );
