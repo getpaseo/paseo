@@ -96,7 +96,13 @@ export function createQuitLifecycle({
 
   function handleBeforeQuit(event: BeforeQuitEvent): void {
     closeTransportSessions();
-    if (quitting || quittingForUpdate) return;
+    if (quittingForUpdate) return;
+    if (quitting) {
+      // MacUpdater's no-relaunch path calls app.quit() without emitting
+      // before-quit-for-update. A second quit is equivalent handoff evidence.
+      updateQuit.resolve();
+      return;
+    }
     quitting = true;
     event.preventDefault();
 

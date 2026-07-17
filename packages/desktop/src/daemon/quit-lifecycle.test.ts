@@ -172,6 +172,28 @@ describe("quit-lifecycle", () => {
     expect(exits).toEqual([]);
   });
 
+  it("recognizes a repeated quit as updater handoff", async () => {
+    const exits: number[] = [];
+    let preventedQuitCount = 0;
+    const quitLifecycle = createQuitLifecycle({
+      app: { exit: (code) => exits.push(code) },
+      closeTransportSessions: () => {},
+      stopDesktopManagedDaemonIfNeeded: async () => false,
+      installAppUpdateOnQuit: async () => true,
+      createUpdateDeadlineSignal: () => new AbortController().signal,
+      onStopError: () => {},
+      onUpdateError: () => {},
+    });
+
+    quitLifecycle.handleBeforeQuit({ preventDefault: () => preventedQuitCount++ });
+    await waitForQuitLifecycle();
+    quitLifecycle.handleBeforeQuit({ preventDefault: () => preventedQuitCount++ });
+    await waitForQuitLifecycle();
+
+    expect(preventedQuitCount).toBe(1);
+    expect(exits).toEqual([]);
+  });
+
   it("exits when the updater does not take ownership before its deadline", async () => {
     const revalidationDeadline = new AbortController();
     const handoffDeadline = new AbortController();
