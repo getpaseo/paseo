@@ -9,7 +9,6 @@ import type { ForgeService } from "../services/forge-service.js";
 import {
   deletePaseoWorktree,
   isPaseoOwnedWorktreeCwd,
-  resolvePaseoWorktreeRootForCwd,
   WorktreeTeardownError,
 } from "../utils/worktree.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
@@ -243,16 +242,6 @@ async function resolveBackingDirectory(
     paseoHome: dependencies.paseoHome,
     worktreesRoot: dependencies.paseoWorktreesBaseRoot,
   };
-  const resolvedWorktree = await resolvePaseoWorktreeRootForCwd(cwd, options);
-  if (resolvedWorktree) {
-    return {
-      path: resolve(resolvedWorktree.worktreePath),
-      isPaseoOwnedWorktree: true,
-      mainRepoRoot: resolvedWorktree.repoRoot,
-      paseoWorktreesRoot: resolvedWorktree.worktreeRoot,
-    };
-  }
-
   const ownership = await isPaseoOwnedWorktreeCwd(cwd, options);
   return {
     path: resolve(ownership.allowed && ownership.worktreePath ? ownership.worktreePath : cwd),

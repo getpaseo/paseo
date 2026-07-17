@@ -35,12 +35,7 @@ import { resolvePaseoHome } from "../server/paseo-home.js";
 import { createExternalProcessEnv } from "../server/paseo-env.js";
 import { parseGitRevParsePath, resolveGitRevParsePath } from "./git-rev-parse-path.js";
 import { validateBranchSlug } from "@getpaseo/protocol/branch-slug";
-import {
-  createRealpathAwarePathMatcher,
-  expandTilde,
-  getRealpathAwareRelativePath,
-  isPathInsideRoot,
-} from "./path.js";
+import { expandTilde, getRealpathAwareRelativePath, isPathInsideRoot } from "./path.js";
 
 export { slugify, validateBranchSlug } from "@getpaseo/protocol/branch-slug";
 
@@ -1055,55 +1050,6 @@ export async function resolveExistingWorktreeForSlug({
   };
 }
 
-export async function resolvePaseoWorktreeRootForCwd(
-  cwd: string,
-  options?: WorktreeRootOptions,
-): Promise<{ repoRoot: string; worktreeRoot: string; worktreePath: string } | null> {
-  let gitCommonDir: string;
-  try {
-    gitCommonDir = await getGitCommonDir(cwd);
-  } catch {
-    return null;
-  }
-
-  const worktreesRoot = await getPaseoWorktreesRoot(
-    cwd,
-    options?.paseoHome,
-    options?.worktreesRoot,
-  );
-  let worktreeRoot: string | null = null;
-  try {
-    const { stdout } = await runGitCommand(["rev-parse", "--show-toplevel"], {
-      cwd,
-      envOverlay: READ_ONLY_GIT_ENV,
-    });
-    worktreeRoot = parseGitRevParsePath(stdout);
-  } catch {
-    worktreeRoot = null;
-  }
-
-  if (!worktreeRoot) {
-    return null;
-  }
-
-  const knownWorktrees = await listPaseoWorktrees({
-    cwd,
-    paseoHome: options?.paseoHome,
-    worktreesRoot: options?.worktreesRoot,
-  });
-  const matchesWorktreeRoot = createRealpathAwarePathMatcher(worktreeRoot);
-  const match = knownWorktrees.find((entry) => matchesWorktreeRoot(entry.path));
-  if (!match) {
-    return null;
-  }
-
-  return {
-    repoRoot: resolveRepoRootFromGitCommonDir(gitCommonDir),
-    worktreeRoot: worktreesRoot,
-    worktreePath: match.path,
-  };
-}
-
 export async function deletePaseoWorktree({
   cwd,
   worktreePath,
@@ -1139,13 +1085,12 @@ export async function deletePaseoWorktree({
 
   const requestedPath = worktreePath ?? join(resolvedWorktreesRoot, worktreeSlug!);
   const resolvedRequested = normalizePathForOwnership(requestedPath);
+  const ownership = await isPaseoOwnedWorktreeCwd(requestedPath, {
+    paseoHome,
+    worktreesRoot: worktreesBaseRoot,
+  });
   const resolvedWorktree =
-    (
-      await resolvePaseoWorktreeRootForCwd(requestedPath, {
-        paseoHome,
-        worktreesRoot: worktreesBaseRoot,
-      })
-    )?.worktreePath ?? resolvedRequested;
+    ownership.allowed && ownership.worktreePath ? ownership.worktreePath : resolvedRequested;
 
   const relativeWorktreePath = getRealpathAwareRelativePath(
     resolvedWorktreesRoot,

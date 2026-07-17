@@ -5,7 +5,6 @@ import {
   deletePaseoWorktree,
   isPaseoOwnedWorktreeCwd,
   mapWorkspaceCwdToWorktree,
-  resolvePaseoWorktreeRootForCwd,
   slugify,
   type CreateWorktreeOptions,
   type WorktreeConfig,
@@ -114,7 +113,7 @@ describe("paseo worktree manager", () => {
     expect(ownership.allowed).toBe(false);
   });
 
-  it("resolves the source checkout root separately from Git's common directory", async () => {
+  it("reports the source checkout root separately from Git's common directory", async () => {
     const created = await createLegacyWorktreeForTest({
       branchName: "placement-root-branch",
       cwd: repoDir,
@@ -123,11 +122,11 @@ describe("paseo worktree manager", () => {
       paseoHome,
     });
 
-    const resolved = await resolvePaseoWorktreeRootForCwd(created.worktreePath, { paseoHome });
+    const ownership = await isPaseoOwnedWorktreeCwd(created.worktreePath, { paseoHome });
 
-    expect(resolved).not.toBeNull();
-    expect(createRealpathAwarePathMatcher(repoDir)(resolved?.repoRoot ?? "")).toBe(true);
-    expect(createRealpathAwarePathMatcher(created.worktreePath)(resolved?.worktreePath ?? "")).toBe(
+    expect(ownership.allowed).toBe(true);
+    expect(createRealpathAwarePathMatcher(repoDir)(ownership.repoRoot ?? "")).toBe(true);
+    expect(createRealpathAwarePathMatcher(created.worktreePath)(ownership.worktreePath ?? "")).toBe(
       true,
     );
   });
