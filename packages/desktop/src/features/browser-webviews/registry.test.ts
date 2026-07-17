@@ -33,6 +33,32 @@ describe("PaseoBrowserWebviewRegistry", () => {
     expect(registry.getActiveBrowserIdForHostWindow(101)).toBe("browser-a");
   });
 
+  it("keeps the active browser when the same guest registers again", () => {
+    const registry = new PaseoBrowserWebviewRegistry();
+
+    registry.registerWebContents({
+      webContentsId: 1,
+      browserId: "browser-a",
+      hostWebContentsId: 101,
+    });
+    registry.setWorkspaceActiveBrowser({
+      hostWebContentsId: 101,
+      workspaceId: "workspace-a",
+      browserId: "browser-a",
+    });
+
+    registry.registerWebContents({
+      webContentsId: 1,
+      browserId: "browser-a",
+      hostWebContentsId: 101,
+    });
+
+    expect(registry.getActiveBrowserIdForWorkspaceInHostWindow(101, "workspace-a")).toBe(
+      "browser-a",
+    );
+    expect(registry.getWebContentsIdForBrowserInHostWindow(101, "browser-a")).toBe(1);
+  });
+
   it("ignores stale destroy events after a duplicate browserId moved", () => {
     const registry = new PaseoBrowserWebviewRegistry();
 

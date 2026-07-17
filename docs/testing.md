@@ -124,6 +124,16 @@ PASEO_DESKTOP_SMOKE_ARTIFACT_DIR=/tmp/paseo-desktop-smoke \
 npm run build:desktop -- --publish never --linux --x64 --dir
 ```
 
+### Browser tab bridge regression
+
+The desktop browser tab bridge E2E launches an isolated real daemon, Metro, and Electron app. It forces workspace LRU eviction to reparent the original tab and replace its guest `WebContents`, then makes one MCP call each for tab listing, snapshot, and click against that original browser id. A final MCP wait proves the real target page received the click.
+
+Run it locally with the same command owned by the Ubuntu leg of the existing `desktop-tests` CI check:
+
+```bash
+npm run test:e2e:browser-tab-bridge --workspace=@getpaseo/desktop
+```
+
 ## Test organization
 
 - Collocate tests with implementation: `thing.ts` + `thing.test.ts`

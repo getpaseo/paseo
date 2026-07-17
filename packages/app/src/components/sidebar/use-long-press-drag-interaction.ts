@@ -59,6 +59,9 @@ export function useLongPressDragInteraction(input: {
 
   const armTimers = useCallback(() => {
     clearTimers();
+    if (platformIsWeb) {
+      return;
+    }
 
     const DRAG_ARM_DELAY_MS = 180;
     const DRAG_ARM_STATIONARY_SLOP_PX = 4;
@@ -87,7 +90,7 @@ export function useLongPressDragInteraction(input: {
       input.drag();
     }, DRAG_ARM_DELAY_MS);
 
-    if (!input.menuController || platformIsWeb) {
+    if (!input.menuController) {
       return;
     }
 
