@@ -23,6 +23,7 @@ import { HighlightedLines } from "./highlighted-content";
 import { HighlightedText } from "@/timeline-search/highlighted-text";
 import { useTimelineSearchOccurrenceAnchor } from "@/timeline-search/occurrence-anchor";
 import { useTimelineSearchTarget } from "@/timeline-search/search-target";
+import type { TimelineSearchField } from "@/timeline-search/timeline-search-model";
 import { DiffViewer } from "./diff-viewer";
 import { getCodeInsets } from "./code-insets";
 import { isWeb } from "@/constants/platform";
@@ -34,7 +35,7 @@ const ScrollView = isWeb ? RNScrollView : GHScrollView;
 interface ToolCallDetailsContentProps {
   detail?: ToolCallDetail;
   timelineSearchItemId?: string;
-  timelineSearchField?: "text" | "tool" | "other";
+  timelineSearchField?: TimelineSearchField;
   errorText?: string;
   maxHeight?: number;
   fillAvailableHeight?: boolean;
@@ -153,12 +154,21 @@ interface ShellDetailProps {
   command: string;
   output: string | null | undefined;
   ds: DetailStyles;
+  itemId?: string;
 }
 
-function ShellDetailSection({ command, output, ds }: ShellDetailProps) {
+function ShellDetailSection({ command, output, ds, itemId }: ShellDetailProps) {
+  // Only trailing whitespace is trimmed off `command` for display — that
+  // can't shift any match's start offset, so it stays exactly the "toolInput"
+  // field text `extractSearchSpans` extracted (see buildDetailInputParts's
+  // "shell" case) and `fieldOffset` lines up.
   const normalizedCommand = command.replace(/\n+$/, "");
-  const commandOutput = (output ?? "").replace(/^\n+/, "");
-  const hasOutput = commandOutput.length > 0;
+  // The output field is rendered RAW (no leading-newline trim) so its text
+  // stays exactly the "toolOutput" span text (extractDetailOutput's "shell"
+  // case returns `detail.output` untouched) — trimming here would shift
+  // every match's offset left and break `fieldOffset` alignment.
+  const outputText = output ?? "";
+  const hasOutput = outputText.replace(/^\n+/, "").length > 0;
   return (
     <View style={ds.sectionFillStyle}>
       <View style={ds.codeBlockFillStyle}>
@@ -177,8 +187,18 @@ function ShellDetailSection({ command, output, ds }: ShellDetailProps) {
             <View style={styles.codeLine} dataSet={CODE_SURFACE_DATASET}>
               <Text selectable style={styles.scrollText}>
                 <Text style={styles.shellPrompt}>$ </Text>
-                <HighlightedText text={normalizedCommand} />
-                {hasOutput ? <HighlightedText text={`\n\n${commandOutput}`} /> : ""}
+                <HighlightedText text={normalizedCommand} itemId={itemId} field="toolInput" />
+                {hasOutput
+                  ? [
+                      "\n\n",
+                      <HighlightedText
+                        key="output"
+                        text={outputText}
+                        itemId={itemId}
+                        field="toolOutput"
+                      />,
+                    ]
+                  : ""}
               </Text>
             </View>
           </ScrollView>
@@ -193,6 +213,7 @@ interface WorktreeSetupDetailProps {
   branchName: string;
   worktreePath: string;
   ds: DetailStyles;
+  itemId?: string;
 }
 
 function WorktreeSetupDetailSection({
@@ -200,9 +221,9 @@ function WorktreeSetupDetailSection({
   branchName,
   worktreePath,
   ds,
+  itemId,
 }: WorktreeSetupDetailProps) {
-  const setupLog = log.replace(/^\n+/, "");
-  const hasLog = setupLog.length > 0;
+  const hasLog = log.replace(/^\n+/, "").length > 0;
   return (
     <View style={ds.sectionFillStyle}>
       <View style={ds.codeBlockFillStyle}>
@@ -220,7 +241,14 @@ function WorktreeSetupDetailSection({
           >
             <View style={styles.codeLine} dataSet={CODE_SURFACE_DATASET}>
               <Text selectable style={styles.scrollText}>
-                {hasLog ? setupLog : `Preparing worktree ${branchName} at ${worktreePath}`}
+                {hasLog ? (
+                  // Rendered RAW (no leading-newline trim) to match
+                  // extractDetailOutput's "worktree_setup" case (`detail.log`
+                  // untouched), so fieldOffset stays aligned.
+                  <HighlightedText text={log} itemId={itemId} field="toolOutput" />
+                ) : (
+                  `Preparing worktree ${branchName} at ${worktreePath}`
+                )}
               </Text>
             </View>
           </ScrollView>
@@ -247,6 +275,7 @@ interface SubAgentDetailProps {
   subAgentType: string | null | undefined;
   description: string | null | undefined;
   ds: DetailStyles;
+  itemId?: string;
 }
 
 interface SubAgentActivityRow {
@@ -298,7 +327,7 @@ function parseSubAgentLog(log: string): ParsedSubAgentLog {
   };
 }
 
-function SubAgentActionRow({ action }: { action: SubAgentActivityRow }) {
+function SubAgentActionRow({ action, itemId }: { action: SubAgentActivityRow; itemId?: string }) {
   return (
     <View style={styles.subAgentActionRow}>
       <Text selectable style={styles.subAgentActionTool}>
@@ -306,7 +335,11 @@ function SubAgentActionRow({ action }: { action: SubAgentActivityRow }) {
       </Text>
       {action.summary ? (
         <Text selectable style={styles.subAgentActionSummary}>
-          <HighlightedText text={action.summary} />
+          {/* action.summary is parsed out of the raw "toolOutput" log (see
+              parseSubAgentLog) — its offsets no longer line up with the raw
+              span, so this gets basic query highlighting but can't reliably
+              go active; the block-level fallback anchor covers reveal. */}
+          <HighlightedText text={action.summary} itemId={itemId} field="toolOutput" />
         </Text>
       ) : null}
     </View>
@@ -330,21 +363,30 @@ function SubAgentLogText({
   activityLog,
   fallbackHeader,
   hasActions,
+  itemId,
 }: {
   activityLog: string;
   fallbackHeader: string;
   hasActions: boolean;
+  itemId?: string;
 }) {
   if (activityLog.length > 0) {
     return (
       <Text selectable style={styles.scrollText}>
-        <HighlightedText text={activityLog} />
+        {/* remainingLog (see parseSubAgentLog) is the raw "toolOutput" log
+            with bracketed action lines stripped out — offsets can drift from
+            the raw span, same caveat as SubAgentActionRow above. */}
+        <HighlightedText text={activityLog} itemId={itemId} field="toolOutput" />
       </Text>
     );
   }
   if (!hasActions) {
     return (
       <Text selectable style={styles.scrollText}>
+        {/* fallbackHeader is a synthesized string (subAgentType + description),
+            not any single field's own text — highlight the query in it, but
+            don't wire itemId/field, which could otherwise coincidentally
+            satisfy an unrelated match's offset and show a false "active" state. */}
         <HighlightedText text={fallbackHeader} />
       </Text>
     );
@@ -358,6 +400,7 @@ function SubAgentDetailSection({
   subAgentType,
   description,
   ds,
+  itemId,
 }: SubAgentDetailProps) {
   const { t } = useTranslation();
   const { actions, remainingLog } = useMemo(() => parseSubAgentLog(log), [log]);
@@ -391,7 +434,7 @@ function SubAgentDetailSection({
               {hasActions ? (
                 <View style={styles.subAgentActions}>
                   {actions.map((action) => (
-                    <SubAgentActionRow key={action.index} action={action} />
+                    <SubAgentActionRow key={action.index} action={action} itemId={itemId} />
                   ))}
                 </View>
               ) : null}
@@ -399,6 +442,7 @@ function SubAgentDetailSection({
                 activityLog={remainingLog}
                 fallbackHeader={fallbackHeader}
                 hasActions={hasActions}
+                itemId={itemId}
               />
             </View>
           </ScrollView>
@@ -496,11 +540,13 @@ function FetchDetailSection({ url, result, ds }: FetchDetailProps) {
   );
 }
 
-function PlainTextSection({ text }: { text: string }) {
+function PlainTextSection({ text, itemId }: { text: string; itemId?: string }) {
+  // detail.text is its own "toolInput" span (buildDetailInputParts's
+  // "plain_text" case) — rendered verbatim here, so fieldOffset lines up.
   return (
     <View style={styles.plainTextSection}>
       <Text selectable style={styles.plainText}>
-        <HighlightedText text={text} />
+        <HighlightedText text={text} itemId={itemId} field="toolInput" />
       </Text>
     </View>
   );
@@ -582,7 +628,7 @@ function buildUnknownSections(
   ds: DetailStyles,
   t: TFunction,
   timelineSearchItemId?: string,
-  timelineSearchField?: "text" | "tool" | "other",
+  timelineSearchField?: TimelineSearchField,
 ): ReactNode[] {
   const plainInputText =
     typeof detail.input === "string" && detail.output === null ? detail.input : null;
@@ -648,12 +694,18 @@ function buildDetailSections(
   ds: DetailStyles,
   t: TFunction,
   timelineSearchItemId?: string,
-  timelineSearchField?: "text" | "tool" | "other",
+  timelineSearchField?: TimelineSearchField,
 ): ReactNode[] {
   if (!detail) return [];
   if (detail.type === "shell") {
     return [
-      <ShellDetailSection key="shell" command={detail.command} output={detail.output} ds={ds} />,
+      <ShellDetailSection
+        key="shell"
+        command={detail.command}
+        output={detail.output}
+        ds={ds}
+        itemId={timelineSearchItemId}
+      />,
     ];
   }
   if (detail.type === "worktree_setup") {
@@ -664,6 +716,7 @@ function buildDetailSections(
         branchName={detail.branchName}
         worktreePath={detail.worktreePath}
         ds={ds}
+        itemId={timelineSearchItemId}
       />,
     ];
   }
@@ -676,6 +729,7 @@ function buildDetailSections(
         subAgentType={detail.subAgentType}
         description={detail.description}
         ds={ds}
+        itemId={timelineSearchItemId}
       />,
     ];
   }
@@ -716,7 +770,7 @@ function buildDetailSections(
   }
   if (detail.type === "plain_text") {
     if (!detail.text) return [];
-    return [<PlainTextSection key="plain-text" text={detail.text} />];
+    return [<PlainTextSection key="plain-text" text={detail.text} itemId={timelineSearchItemId} />];
   }
   if (detail.type === "unknown") {
     return buildUnknownSections(detail, ds, t, timelineSearchItemId, timelineSearchField);
@@ -724,7 +778,15 @@ function buildDetailSections(
   return [];
 }
 
-function ErrorSection({ errorText, ds }: { errorText: string; ds: DetailStyles }) {
+function ErrorSection({
+  errorText,
+  ds,
+  itemId,
+}: {
+  errorText: string;
+  ds: DetailStyles;
+  itemId?: string;
+}) {
   const { t } = useTranslation();
   return (
     <View style={styles.section}>
@@ -737,7 +799,11 @@ function ErrorSection({ errorText, ds }: { errorText: string; ds: DetailStyles }
         showsHorizontalScrollIndicator={true}
       >
         <Text selectable style={SCROLL_TEXT_ERROR_STYLE} dataSet={CODE_SURFACE_DATASET}>
-          {errorText}
+          {/* errorText comes from buildToolCallPresentation, which may format
+              the raw error differently than the model's own safeStringify —
+              highlight the query, but exact active-match alignment isn't
+              guaranteed here. */}
+          <HighlightedText text={errorText} itemId={itemId} field="toolError" />
         </Text>
       </ScrollView>
     </View>
@@ -773,10 +839,16 @@ function ToolCallDetailsContentInner({
 }: ToolCallDetailsContentProps) {
   const { t } = useTranslation();
   const searchTarget = useTimelineSearchTarget();
+  // itemId-only: a tool call has several field spans (tool/toolInput/
+  // toolOutput/toolError), any of which can be the active match, and several
+  // detail renderers (diff/JSON/parsed sub-agent log) can't map an exact span
+  // at all. This block-level anchor is the fallback for ALL of them — same
+  // itemId-only pattern as AssistantMessage/UserMessage — so it must not also
+  // require `searchTarget.field === timelineSearchField` (that coarse single
+  // field, defaulted by the caller, would almost never match the field the
+  // active occurrence actually landed in).
   const isSearchTarget =
-    timelineSearchItemId != null &&
-    searchTarget?.itemId === timelineSearchItemId &&
-    searchTarget.field === timelineSearchField;
+    timelineSearchItemId != null && searchTarget?.itemId === timelineSearchItemId;
   const searchAnchorRef = useRef<View>(null);
   const measureSearchAnchor = useCallback((report: (centerY: number) => void) => {
     searchAnchorRef.current?.measureInWindow?.((_x, y, _width, height) => {
@@ -805,7 +877,9 @@ function ToolCallDetailsContentInner({
   );
 
   if (errorText) {
-    sections.push(<ErrorSection key="error" errorText={errorText} ds={ds} />);
+    sections.push(
+      <ErrorSection key="error" errorText={errorText} ds={ds} itemId={timelineSearchItemId} />,
+    );
   }
 
   if (sections.length === 0) {

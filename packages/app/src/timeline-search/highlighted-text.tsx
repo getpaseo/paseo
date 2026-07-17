@@ -5,31 +5,62 @@ import {
   splitHighlightSegments,
   useTimelineHighlightQuery,
   useTimelineHighlightTarget,
+  type HighlightSegment,
 } from "./highlight";
 import { useTimelineSearchOccurrenceAnchor } from "./occurrence-anchor";
 import type { TimelineSearchTarget } from "./search-target";
+import type { TimelineSearchField } from "./timeline-search-model";
 
 export const timelineHighlightStyles = StyleSheet.create((theme) => ({
   match: {
-    backgroundColor: theme.colors.accent,
+    backgroundColor: theme.colors.searchHighlight,
     color: theme.colors.accentForeground,
   },
+  // Color swap only — no borders or text decorations. This same style is
+  // reused for the markdown-leaf path (message.tsx), where a segment is
+  // nested inside another styled span; borders/underlines applied to a
+  // nested Text are unreliable across platforms (see docs/hover.md-adjacent
+  // native Text nesting gotchas), so background+foreground color is the only
+  // "active" signal that is guaranteed to render everywhere.
   activeMatch: {
-    backgroundColor: theme.colors.accentBright,
-    color: theme.colors.accentForeground,
-    fontWeight: theme.fontWeight.semibold,
-    textDecorationLine: "underline",
-    textDecorationColor: theme.colors.accentForeground,
+    backgroundColor: theme.colors.searchHighlightActive,
+    color: theme.colors.searchHighlightActiveForeground,
   },
 }));
 
-function ActiveHighlightedText({
-  target,
-  children,
-}: {
-  target: TimelineSearchTarget;
-  children: string;
-}) {
+/** Context a segment is evaluated against to decide if it's the ACTIVE occurrence. */
+export interface HighlightSegmentMatchContext {
+  /** Identify the stream source so one selected occurrence can receive active styling. */
+  itemId?: string;
+  field: TimelineSearchField;
+  target: TimelineSearchTarget | null;
+}
+
+/**
+ * Whether `segment` is the exact occurrence the timeline-search model has
+ * currently selected. `target.fieldOffset` is relative to the OWNING field's
+ * own text (see `TimelineSearchTarget.fieldOffset`'s doc comment) — so this
+ * must be compared against `segment.offset`, never `target.matchOffset`
+ * (which is relative to the item's cross-field CONCATENATED text and is
+ * meaningless to a component that only owns one field's raw text).
+ */
+export function isActiveHighlightSegment(
+  segment: HighlightSegment,
+  context: HighlightSegmentMatchContext,
+): boolean {
+  const { itemId, field, target } = context;
+  return (
+    segment.isMatch &&
+    target !== null &&
+    itemId !== undefined &&
+    itemId === target.itemId &&
+    field === target.field &&
+    segment.offset === target.fieldOffset
+  );
+}
+
+function ActiveHighlightedText({ children }: { children: string }) {
+  const target = useTimelineHighlightTarget();
   const ref = useRef<Text>(null);
   const measure = useCallback((report: (centerY: number) => void) => {
     ref.current?.measureInWindow?.((_x, y, _width, height) => {
@@ -42,6 +73,44 @@ function ActiveHighlightedText({
       {children}
     </Text>
   );
+}
+
+export interface RenderHighlightedSegmentsOptions {
+  text: string;
+  /** Identify the stream source so one selected occurrence can receive active styling. */
+  itemId?: string;
+  field: TimelineSearchField;
+  /** Renders one segment (match or non-match). `isActive` is only ever true for a match segment. */
+  renderMatch: (segment: HighlightSegment, isActive: boolean) => ReactNode;
+}
+
+/**
+ * Shared segment mapper for every "highlight the timeline-search query"
+ * surface — both plain `<Text>` (`HighlightedText`) and the markdown-leaf
+ * path (`message.tsx`'s `MarkdownHighlightedTextRun`) route through this so
+ * the split/active-match logic is defined exactly once. Splits `text` via
+ * `splitHighlightSegments` and hands each segment to `renderMatch`, along
+ * with whether it's the currently-selected occurrence (see
+ * `isActiveHighlightSegment`). Returns the raw string when nothing matches,
+ * so highlighting adds no render cost while the search panel is closed.
+ */
+export function useHighlightedSegments({
+  text,
+  itemId,
+  field,
+  renderMatch,
+}: RenderHighlightedSegmentsOptions): ReactNode {
+  const query = useTimelineHighlightQuery();
+  const target = useTimelineHighlightTarget();
+  const segments = useMemo(() => splitHighlightSegments(text, query), [text, query]);
+  if (segments.length === 1 && !segments[0]?.isMatch) {
+    return text;
+  }
+  return segments.map((segment) => (
+    <React.Fragment key={segment.offset}>
+      {renderMatch(segment, isActiveHighlightSegment(segment, { itemId, field, target }))}
+    </React.Fragment>
+  ));
 }
 
 /**
@@ -63,35 +132,20 @@ export function HighlightedText({
   text: string;
   /** Identify the stream source so one selected occurrence can receive active styling. */
   itemId?: string;
-  field?: "text" | "tool" | "other";
+  field?: TimelineSearchField;
 }): ReactNode {
-  const query = useTimelineHighlightQuery();
-  const target = useTimelineHighlightTarget();
-  const segments = useMemo(() => splitHighlightSegments(text, query), [text, query]);
-  if (segments.length === 1 && !segments[0]?.isMatch) {
-    return text;
-  }
-  return segments.map((segment) => {
-    const isActive =
-      segment.isMatch &&
-      target !== null &&
-      itemId === target.itemId &&
-      field === target.field &&
-      segment.offset === target.matchOffset &&
-      segment.text.length === target.matchLength;
-    if (isActive && target) {
-      return (
-        <ActiveHighlightedText key={segment.offset} target={target}>
-          {segment.text}
-        </ActiveHighlightedText>
-      );
-    }
-    return segment.isMatch ? (
-      <Text key={segment.offset} style={timelineHighlightStyles.match}>
-        {segment.text}
-      </Text>
-    ) : (
-      <React.Fragment key={segment.offset}>{segment.text}</React.Fragment>
-    );
+  return useHighlightedSegments({
+    text,
+    itemId,
+    field,
+    renderMatch: (segment, isActive) => {
+      if (!segment.isMatch) {
+        return segment.text;
+      }
+      if (isActive) {
+        return <ActiveHighlightedText>{segment.text}</ActiveHighlightedText>;
+      }
+      return <Text style={timelineHighlightStyles.match}>{segment.text}</Text>;
+    },
   });
 }

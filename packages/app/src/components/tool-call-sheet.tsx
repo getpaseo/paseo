@@ -16,6 +16,15 @@ import {
 } from "@/components/ui/isolated-bottom-sheet-modal";
 import type { ToolCallIconComponent } from "@/utils/tool-call-icon";
 import { ToolCallDetailsContent } from "./tool-call-details";
+import {
+  TimelineHighlightProvider,
+  type TimelineHighlightState,
+} from "@/timeline-search/highlight";
+import {
+  TimelineSearchTargetProvider,
+  type TimelineSearchTarget,
+} from "@/timeline-search/search-target";
+import type { TimelineSearchField } from "@/timeline-search/timeline-search-model";
 
 // ----- Types -----
 
@@ -26,6 +35,19 @@ export interface ToolCallSheetData {
   errorText?: string;
   icon: ToolCallIconComponent;
   showLoadingSkeleton?: boolean;
+  /** Owning stream item id, so the sheet's detail content can match timeline-search field spans. */
+  streamItemId?: string;
+  timelineSearchField?: TimelineSearchField;
+  /**
+   * Snapshot of the timeline-search highlight query at the moment the sheet
+   * was opened. The sheet (ToolCallSheetContent, below) renders OUTSIDE
+   * TimelineHighlightProvider/TimelineSearchTargetProvider — it's a sibling
+   * of TimelineSearchProviders inside ToolCallSheetProvider's own render
+   * output, not a descendant of it — so it has no live context to read and
+   * instead re-provides both contexts locally from this captured snapshot.
+   */
+  timelineHighlightQuery?: string;
+  timelineSearchTarget?: TimelineSearchTarget | null;
 }
 
 interface ToolCallSheetContextValue {
@@ -139,7 +161,22 @@ interface ToolCallSheetContentProps {
 
 function ToolCallSheetContent({ data, onClose }: ToolCallSheetContentProps) {
   const { theme } = useUnistyles();
-  const { displayName, detail, errorText, icon: IconComponent, showLoadingSkeleton } = data;
+  const {
+    displayName,
+    detail,
+    errorText,
+    icon: IconComponent,
+    showLoadingSkeleton,
+    streamItemId,
+    timelineSearchField,
+    timelineHighlightQuery,
+    timelineSearchTarget,
+  } = data;
+
+  const highlightState = useMemo<TimelineHighlightState>(
+    () => ({ query: timelineHighlightQuery ?? "", target: timelineSearchTarget ?? null }),
+    [timelineHighlightQuery, timelineSearchTarget],
+  );
 
   return (
     <View style={styles.container}>
@@ -158,12 +195,18 @@ function ToolCallSheetContent({ data, onClose }: ToolCallSheetContentProps) {
 
       {/* Content */}
       <BottomSheetScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
-        <ToolCallDetailsContent
-          detail={detail}
-          errorText={errorText}
-          fillAvailableHeight
-          showLoadingSkeleton={showLoadingSkeleton}
-        />
+        <TimelineHighlightProvider value={highlightState}>
+          <TimelineSearchTargetProvider value={timelineSearchTarget ?? null}>
+            <ToolCallDetailsContent
+              detail={detail}
+              timelineSearchItemId={streamItemId}
+              timelineSearchField={timelineSearchField}
+              errorText={errorText}
+              fillAvailableHeight
+              showLoadingSkeleton={showLoadingSkeleton}
+            />
+          </TimelineSearchTargetProvider>
+        </TimelineHighlightProvider>
       </BottomSheetScrollView>
     </View>
   );

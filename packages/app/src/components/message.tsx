@@ -49,10 +49,15 @@ import {
 } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { Theme } from "@/styles/theme";
-import { splitHighlightSegments, useTimelineHighlightQuery } from "@/timeline-search/highlight";
-import { HighlightedText, timelineHighlightStyles } from "@/timeline-search/highlighted-text";
+import { useTimelineHighlightQuery } from "@/timeline-search/highlight";
+import {
+  HighlightedText,
+  timelineHighlightStyles,
+  useHighlightedSegments,
+} from "@/timeline-search/highlighted-text";
 import { useTimelineSearchOccurrenceAnchor } from "@/timeline-search/occurrence-anchor";
 import { useTimelineSearchTarget } from "@/timeline-search/search-target";
+import type { TimelineSearchField } from "@/timeline-search/timeline-search-model";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import Animated, {
   Easing,
@@ -451,6 +456,24 @@ export const UserMessage = memo(function UserMessage({
   );
   const rewindMutation = useRewindAgentMutation({ serverId, agentId, client, messageId });
 
+  const searchTarget = useTimelineSearchTarget();
+  const isSearchTarget = messageId != null && searchTarget?.itemId === messageId;
+  const searchAnchorRef = useRef<View>(null);
+  const measureSearchAnchor = useCallback((report: (centerY: number) => void) => {
+    searchAnchorRef.current?.measureInWindow?.((_x, y, _width, height) => {
+      report(y + height / 2);
+    });
+  }, []);
+  // HighlightedText already registers an exact-span anchor for the matched
+  // occurrence (via ActiveHighlightedText, priority 2). This is a lower-
+  // priority block-level fallback covering the rest of the row (image/
+  // attachment pills, or a match that for any reason didn't register its own
+  // span) — same pattern as AssistantMessage/ToolCallDetailsContent.
+  useTimelineSearchOccurrenceAnchor(
+    isSearchTarget ? (searchTarget ?? null) : null,
+    measureSearchAnchor,
+  );
+
   const handlePointerEnter = useCallback(() => setIsHovered(true), []);
   const handlePointerLeave = useCallback(() => setIsHovered(false), []);
   const getMessageContent = useCallback(() => message, [message]);
@@ -497,7 +520,7 @@ export const UserMessage = memo(function UserMessage({
   );
 
   return (
-    <View style={containerStyle} testID="user-message">
+    <View ref={searchAnchorRef} style={containerStyle} testID="user-message">
       <View
         style={userMessageStylesheet.content}
         onPointerEnter={handlePointerEnter}
@@ -1526,54 +1549,52 @@ interface MarkdownInheritedTextProps {
 }
 
 /**
- * Highlights the active search query inside a markdown text leaf. Matched
- * substrings are wrapped in a nested MarkdownInheritedText (the same span path
- * strong/em use) so they stay visible and selectable on every platform,
- * including iOS UITextView. Returns the raw string when nothing matches.
- */
-/**
- * Leaf component that reads the highlight query itself (via context) so the
- * markdown `rules` object never depends on it — a rules identity change
- * re-renders every mounted markdown message, which made each search keystroke
- * O(all messages). The context value changing re-renders only these leaves.
+ * Highlights the active search query inside a markdown text leaf, routed
+ * through the same `useHighlightedSegments` mapper the plain-`<Text>`
+ * surfaces use (see timeline-search/highlighted-text.tsx) so the split/
+ * active-match logic is defined exactly once. Matched substrings are wrapped
+ * in a nested MarkdownInheritedText (the same span path strong/em use) so
+ * they stay visible and selectable on every platform, including iOS
+ * UITextView. Reads the highlight query/target itself (via context) rather
+ * than taking them as props, so the markdown `rules` object never depends on
+ * them — a `rules` identity change re-renders every mounted markdown
+ * message, which made each search keystroke O(all messages). The context
+ * value changing re-renders only these leaves.
+ *
+ * `itemId` is the owning stream item — always field "text" here, since a
+ * markdown leaf only ever renders an assistant message's own "text" field
+ * (see `extractSearchSpans`'s `assistant_message` case).
  */
 function MarkdownHighlightedTextRun({
   content,
+  itemId,
   inheritedStyles,
   textStyle,
 }: {
   content: string;
+  itemId?: string;
   inheritedStyles: TextStyle;
   textStyle: TextStyle;
 }) {
-  const highlightQuery = useTimelineHighlightQuery();
-  return <>{renderMarkdownTextContent(content, highlightQuery, inheritedStyles, textStyle)}</>;
-}
-
-function renderMarkdownTextContent(
-  content: string,
-  query: string,
-  inheritedStyles: TextStyle,
-  textStyle: TextStyle,
-): ReactNode {
-  const segments = splitHighlightSegments(content, query);
-  if (segments.length === 1 && !segments[0]?.isMatch) {
-    return content;
-  }
-  return segments.map((segment) =>
-    segment.isMatch ? (
-      <MarkdownInheritedText
-        key={segment.offset}
-        inheritedStyles={inheritedStyles}
-        textStyle={textStyle}
-        style={timelineHighlightStyles.match}
-      >
-        {segment.text}
-      </MarkdownInheritedText>
-    ) : (
-      <React.Fragment key={segment.offset}>{segment.text}</React.Fragment>
-    ),
-  );
+  return useHighlightedSegments({
+    text: content,
+    itemId,
+    field: "text",
+    renderMatch: (segment, isActive) => {
+      if (!segment.isMatch) {
+        return segment.text;
+      }
+      return (
+        <MarkdownInheritedText
+          inheritedStyles={inheritedStyles}
+          textStyle={textStyle}
+          style={isActive ? timelineHighlightStyles.activeMatch : timelineHighlightStyles.match}
+        >
+          {segment.text}
+        </MarkdownInheritedText>
+      );
+    },
+  });
 }
 
 function MarkdownInheritedText({
@@ -1689,6 +1710,7 @@ export const AssistantMessage = memo(function AssistantMessage({
         >
           <MarkdownHighlightedTextRun
             content={node.content}
+            itemId={streamItemId}
             inheritedStyles={inheritedStyles}
             textStyle={styles.text}
           />
@@ -1973,7 +1995,7 @@ export const AssistantMessage = memo(function AssistantMessage({
         );
       },
     };
-  }, [client, fileLinkActions, markdownParser, serverId, workspaceRoot]);
+  }, [client, fileLinkActions, markdownParser, serverId, streamItemId, workspaceRoot]);
 
   const blocks = useMemo(() => splitMarkdownBlocks(message), [message]);
   const keyedBlocks = useMemo(
@@ -2081,6 +2103,12 @@ interface ActivityLogProps {
   title?: string;
   onArtifactClick?: (artifactId: string) => void;
   disableOuterSpacing?: boolean;
+  /**
+   * Stream item id of the activity_log item, for timeline-search targeting
+   * (field "text" — see `extractSearchSpans`'s `activity_log` case). Optional
+   * because not every caller has plumbed it through yet.
+   */
+  streamItemId?: string;
 }
 
 const activityLogStylesheet = StyleSheet.create((theme) => ({
@@ -2164,6 +2192,7 @@ export const ActivityLog = memo(function ActivityLog({
   title,
   onArtifactClick,
   disableOuterSpacing,
+  streamItemId,
 }: ActivityLogProps) {
   const { t } = useTranslation();
   const resolvedDisableOuterSpacing = useDisableOuterSpacing(disableOuterSpacing);
@@ -2231,7 +2260,7 @@ export const ActivityLog = memo(function ActivityLog({
           </View>
           <View style={activityLogStylesheet.textContainer}>
             <Text style={messageTextStyle} selectable>
-              <HighlightedText text={displayMessage} />
+              <HighlightedText text={displayMessage} itemId={streamItemId} field="text" />
             </Text>
             {metadata && (
               <View style={activityLogStylesheet.detailsRow}>
@@ -2323,9 +2352,12 @@ interface TodoListCardProps {
 interface TodoListItemRowProps {
   text: string;
   completed: boolean;
+  /** Owning todo_list item id + this row's per-entry field, for timeline-search targeting. */
+  itemId?: string;
+  field?: TimelineSearchField;
 }
 
-function TodoListItemRow({ text, completed }: TodoListItemRowProps) {
+function TodoListItemRow({ text, completed, itemId, field }: TodoListItemRowProps) {
   const badgeStyle = useMemo(
     () => [
       todoListCardStylesheet.radioBadge,
@@ -2347,7 +2379,7 @@ function TodoListItemRow({ text, completed }: TodoListItemRowProps) {
         ) : null}
       </View>
       <Text style={textStyle}>
-        <HighlightedText text={text} />
+        <HighlightedText text={text} itemId={itemId} field={field ?? "text"} />
       </Text>
     </View>
   );
@@ -2429,14 +2461,20 @@ export const TodoListCard = memo(function TodoListCard({
           {items.length === 0 ? (
             <Text style={todoListCardStylesheet.emptyText}>{t("message.todo.empty")}</Text>
           ) : (
-            items.map((item) => (
-              <TodoListItemRow key={item.text} text={item.text} completed={item.completed} />
+            items.map((item, index) => (
+              <TodoListItemRow
+                key={item.text}
+                text={item.text}
+                completed={item.completed}
+                itemId={streamItemId}
+                field={`todo:${index}`}
+              />
             ))
           )}
         </View>
       </View>
     );
-  }, [items, t]);
+  }, [items, streamItemId, t]);
 
   return (
     <ExpandableBadge
@@ -3159,7 +3197,7 @@ function areExpandableBadgePropsEqual(previous: ExpandableBadgeProps, next: Expa
 interface ToolCallProps {
   /** Stream identity lets timeline search reveal a collapsed detail body. */
   streamItemId?: string;
-  timelineSearchField?: "text" | "tool" | "other";
+  timelineSearchField?: TimelineSearchField;
   toolName: string;
   args?: unknown;
   result?: unknown;
@@ -3201,6 +3239,7 @@ export const ToolCall = memo(function ToolCall({
   const { openToolCall } = useToolCallSheet();
   const [isExpanded, setIsExpanded] = useState(defaultExpanded ?? false);
   const searchTarget = useTimelineSearchTarget();
+  const highlightQuery = useTimelineHighlightQuery();
   const isSearchTarget = streamItemId != null && searchTarget?.itemId === streamItemId;
   const searchTargetRevision = searchTarget?.navigationRevision;
 
@@ -3260,6 +3299,15 @@ export const ToolCall = memo(function ToolCall({
         errorText: presentation.errorText,
         icon: presentation.icon,
         showLoadingSkeleton: presentation.isLoadingDetails,
+        streamItemId,
+        timelineSearchField,
+        // The sheet renders outside TimelineHighlightProvider/
+        // TimelineSearchTargetProvider (see tool-call-sheet.tsx), so it can't
+        // read the live query/target via context. Capture both here, at the
+        // moment the sheet opens, so ToolCallSheetContent can re-provide them
+        // locally around its own detail content.
+        timelineHighlightQuery: highlightQuery,
+        timelineSearchTarget: searchTarget,
       });
     } else {
       setIsExpanded((prev) => !prev);
@@ -3273,6 +3321,10 @@ export const ToolCall = memo(function ToolCall({
     presentation.icon,
     presentation.isLoadingDetails,
     effectiveDetail,
+    streamItemId,
+    timelineSearchField,
+    highlightQuery,
+    searchTarget,
   ]);
 
   useEffect(() => {
