@@ -1,13 +1,23 @@
-import type { StreamItem } from "@/types/stream";
+import type { StreamItem, TimelinePosition } from "@/types/stream";
 
-export function resolveAssistantTurnBoundaryMessageId(input: {
+export type AssistantTurnForkBoundary =
+  | { boundaryCursor: TimelinePosition; boundaryMessageId?: string }
+  | { boundaryCursor?: undefined; boundaryMessageId: string };
+
+export function resolveAssistantTurnForkBoundary(input: {
   items: readonly StreamItem[];
   startIndex: number;
-}): string | undefined {
+  supportsTimelineCursor: boolean;
+}): AssistantTurnForkBoundary | undefined {
   const item = input.items[input.startIndex];
   if (item?.kind !== "assistant_message") {
     return undefined;
   }
-  // Forking without the selected assistant's durable message id would send the wrong slice.
-  return item.messageId || undefined;
+  if (input.supportsTimelineCursor && item.timelineCursor) {
+    return {
+      boundaryCursor: item.timelineCursor,
+      ...(item.messageId ? { boundaryMessageId: item.messageId } : {}),
+    };
+  }
+  return item.messageId ? { boundaryMessageId: item.messageId } : undefined;
 }

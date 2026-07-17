@@ -176,12 +176,13 @@ describe("translation resources", () => {
     expect(en.shell.menu.toggleSidebar).toBe("Toggle sidebar");
     expect(en.shell.menu.open).toBe("Open menu");
     expect(en.shell.menu.close).toBe("Close menu");
-    expect(en.shell.commandCenter.placeholder).toBe("Type a command or search agents...");
+    expect(en.shell.commandCenter.placeholder).toBe("Search commands, workspaces, and agents...");
     expect(en.shell.commandCenter.noMatches).toBe("No matches");
     expect(en.shell.commandCenter.actions).toBe("Actions");
+    expect(en.shell.commandCenter.workspaces).toBe("Workspaces");
     expect(en.shell.commandCenter.agents).toBe("Agents");
     expect(en.shell.commandCenter.newAgent).toBe("New agent");
-    expect(en.shell.commandCenter.openProject).toBe("Open project");
+    expect(en.shell.commandCenter.addProject).toBe("Add project");
     expect(en.shell.commandCenter.home).toBe("Home");
   });
 
@@ -193,7 +194,10 @@ describe("translation resources", () => {
     expect(en.composer.input.sendMessage).toBe("Send message");
     expect(en.composer.voice.startDictation).toBe("Start dictation");
     expect(en.composer.attachments.addIssueOrPr).toBe("Add issue or PR");
+    expect(en.composer.attachments.addIssueOrPr_mr).toBe("Add issue or MR");
     expect(en.composer.github.title).toBe("Attach issue or PR");
+    expect(en.composer.github.title_mr).toBe("Attach issue or MR");
+    expect(en.composer.github.searchPlaceholder_mr).toBe("Search issues and MRs...");
     expect(en.agentControls.provider.fallback).toBe("Provider");
     expect(en.agentControls.hints.model).toBe("Change model");
     expect(en.agentControls.hints.mode).toBe("Change mode");
@@ -257,7 +261,14 @@ describe("translation resources", () => {
     expect(en.workspace.git.actions.commit.label).toBe("Commit");
     expect(en.workspace.git.diff.binaryFile).toBe("Binary file");
     expect(en.workspace.git.pr.sections.checks).toBe("Checks");
+    expect(en.workspace.git.pr.sections.pipeline).toBe("Pipeline");
     expect(en.workspace.git.pr.actions.viewPullRequest).toBe("View");
+    expect(en.workspace.git.pr.actions.openOn).toBe("Open on {{brand}}");
+    expect(en.workspace.git.pr.empty.noJobs).toBe("No jobs");
+    expect(en.workspace.git.pr.empty.loadingPipeline).toBe("Loading pipeline…");
+    expect(en.workspace.git.pr.empty.pipelineJobsLoadFailed).toBe("Could not load pipeline jobs");
+    expect(en.workspace.git.pr.empty.allowedToFail).toBe("allowed to fail");
+    expect(en.workspace.git.pr.approvals).toBe("{{given}} of {{required}} approvals");
     expect(en.review.comment.placeholder).toBe("Leave a comment");
   });
 
@@ -488,7 +499,8 @@ describe("translation resources", () => {
     expect(en.workspace.route.hostOffline).toBe("{{hostName}} is offline");
     expect(en.workspace.route.cannotReachHost).toBe("Cannot reach {{hostName}}");
     expect(en.workspace.route.hostStatus).toBe("Host status: {{status}}");
-    expect(en.workspace.route.missing).toBe("Workspace not found");
+    expect(en.workspace.route.recovery.archivedTitle).toBe("Workspace archived");
+    expect(en.workspace.route.recovery.unavailableTitle).toBe("Workspace unavailable");
     expect(en.message.compaction.loading).toBe("Compacting...");
     expect(en.message.compaction.auto).toBe("Context automatically compacted");
     expect(en.message.compaction.manual).toBe("Context manually compacted");

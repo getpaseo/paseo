@@ -128,9 +128,39 @@ function escapeMarkdownImageAlt(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/\]/g, "\\]");
 }
 
+function encodeFilePath(value: string): string {
+  return value
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+}
+
+function windowsFileUri(value: string): string | null {
+  const isWindowsNetworkPath = value.startsWith("\\\\");
+  let normalizedPath = value.replace(/\\/g, "/");
+  if (/^\/\/\?\/UNC\//i.test(normalizedPath)) {
+    normalizedPath = `//${normalizedPath.slice(8)}`;
+  } else if (/^\/\/\?\/[A-Za-z]:\//.test(normalizedPath)) {
+    normalizedPath = normalizedPath.slice(4);
+  }
+
+  if (/^[A-Za-z]:\//.test(normalizedPath)) {
+    const drive = normalizedPath.slice(0, 2);
+    return `file:///${drive}${encodeFilePath(normalizedPath.slice(2))}`;
+  }
+  if (isWindowsNetworkPath && normalizedPath.startsWith("//")) {
+    return `file:${encodeFilePath(normalizedPath)}`;
+  }
+  return null;
+}
+
 function markdownImageSource(value: string): string {
-  if (/^[A-Za-z]:[\\/]/.test(value)) {
-    return `file:///${value.replace(/\\/g, "/")}`;
+  const windowsUri = windowsFileUri(value);
+  if (windowsUri) {
+    return windowsUri;
+  }
+  if (value.startsWith("/")) {
+    return `file://${encodeFilePath(value)}`;
   }
   return value;
 }

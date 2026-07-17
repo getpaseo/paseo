@@ -97,25 +97,39 @@ vi.mock("lucide-react-native", () => {
   const icon = (name: string) => () => React.createElement("span", { "data-icon": name });
   return {
     ChevronRight: icon("ChevronRight"),
+    MoreHorizontal: icon("MoreHorizontal"),
+    Trash2: icon("Trash2"),
   };
 });
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
-    t: (key: string, values?: Record<string, string | number>) => {
-      if (key === "settings.providers.providerDetails") return `${values?.name} provider details`;
-      if (key === "settings.providers.enableProvider") return `Enable ${values?.name}`;
-      if (key === "settings.providers.statuses.disabled") return "Disabled";
-      if (key === "settings.providers.statuses.available") return "Available";
-      if (key === "settings.providers.statuses.loading") return "Loading";
-      if (key === "settings.providers.statuses.error") return "Error";
-      if (key === "settings.providers.statuses.notInstalled") return "Not installed";
-      if (key === "settings.providers.models.one") return "1 model";
-      if (key === "settings.providers.models.many") return `${values?.count} models`;
-      if (key === "settings.providers.addErrorTitle") return "Unable to add provider";
-      if (key === "settings.providers.updateErrorTitle") return "Unable to update provider";
-      return key;
-    },
+    t: (key: string, values?: Record<string, string | number>) =>
+      (
+        ({
+          "settings.providers.providerDetails": "{{name}} provider details",
+          "settings.providers.enableProvider": "Enable {{name}}",
+          "settings.providers.statuses.disabled": "Disabled",
+          "settings.providers.statuses.available": "Available",
+          "settings.providers.statuses.loading": "Loading",
+          "settings.providers.statuses.error": "Error",
+          "settings.providers.statuses.notInstalled": "Not installed",
+          "settings.providers.models.one": "1 model",
+          "settings.providers.models.many": "{{count}} models",
+          "settings.providers.addErrorTitle": "Unable to add provider",
+          "settings.providers.updateErrorTitle": "Unable to update provider",
+          "settings.providers.actions.menu": "{{name}} actions",
+          "settings.providers.actions.remove": "Remove provider",
+          "settings.providers.actions.removing": "Removing...",
+          "settings.providers.remove.confirmTitle": "Remove {{name}}?",
+          "settings.providers.remove.confirmMessage":
+            "This deletes the provider entry from config.json. It cannot be undone.",
+          "settings.providers.remove.confirm": "Remove",
+          "settings.providers.remove.errorTitle": "Unable to remove provider",
+        })[key] ?? key
+      )
+        .replaceAll("{{name}}", String(values?.name ?? ""))
+        .replaceAll("{{count}}", String(values?.count ?? "")),
   }),
 }));
 
@@ -149,6 +163,68 @@ vi.mock("@/components/ui/switch", () => ({
 
 vi.mock("@/components/ui/loading-spinner", () => ({
   LoadingSpinner: () => React.createElement("span", { "data-testid": "loading-spinner" }),
+}));
+
+vi.mock("@/components/ui/dropdown-menu", () => ({
+  DropdownMenu: ({ children }: { children?: React.ReactNode }) =>
+    React.createElement("div", null, children),
+  DropdownMenuTrigger: ({
+    children,
+    onPressIn,
+    accessibilityRole,
+    accessibilityLabel,
+    testID,
+  }: {
+    children?:
+      | React.ReactNode
+      | ((state: { pressed: boolean; hovered: boolean; open: boolean }) => React.ReactNode);
+    onPressIn?: (event: { stopPropagation: () => void }) => void;
+    accessibilityRole?: string;
+    accessibilityLabel?: string;
+    testID?: string;
+  }) =>
+    React.createElement(
+      "button",
+      {
+        type: "button",
+        role: accessibilityRole,
+        "aria-label": accessibilityLabel,
+        "data-testid": testID,
+        onMouseDown: (event: React.MouseEvent) => onPressIn?.(event),
+        onClick: (event: React.MouseEvent) => event.stopPropagation(),
+      },
+      typeof children === "function"
+        ? children({ pressed: false, hovered: false, open: false })
+        : children,
+    ),
+  DropdownMenuContent: ({ children }: { children?: React.ReactNode }) =>
+    React.createElement("div", null, children),
+  DropdownMenuItem: ({
+    children,
+    onSelect,
+    status,
+    pendingLabel,
+    testID,
+  }: {
+    children?: React.ReactNode;
+    onSelect?: () => void;
+    status?: "idle" | "pending" | "success";
+    pendingLabel?: string;
+    testID?: string;
+  }) =>
+    React.createElement(
+      "button",
+      {
+        type: "button",
+        "data-testid": testID,
+        disabled: status === "pending" || status === "success",
+        onClick: (event: React.MouseEvent) => {
+          event.stopPropagation();
+          onSelect?.();
+        },
+      },
+      status === "pending" ? pendingLabel : children,
+    ),
 }));
 
 vi.mock("@/components/provider-icons", () => ({
@@ -188,6 +264,14 @@ vi.mock("@/hooks/use-daemon-config", () => ({
 
 vi.mock("@/runtime/host-runtime", () => ({
   useHostRuntimeIsConnected: () => true,
+}));
+
+vi.mock("@/runtime/host-features", () => ({
+  useHostFeature: () => false,
+}));
+
+vi.mock("@/utils/confirm-dialog", () => ({
+  confirmDialog: vi.fn(async () => true),
 }));
 
 import { ProvidersSection } from "./providers-section";

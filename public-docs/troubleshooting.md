@@ -81,7 +81,7 @@ Desktop app log location:
 paseo daemon restart
 ```
 
-Or in the app, open **Settings → your host → Host** and use **Restart daemon**. Running agents keep going, and clients reconnect automatically.
+Or in the app, open **Settings → your host → Overview** and use **Restart daemon**. Running agents keep going, and clients reconnect automatically.
 
 ## Still stuck?
 

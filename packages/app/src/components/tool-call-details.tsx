@@ -15,7 +15,6 @@ import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
 import { buildLineDiff, parseUnifiedDiff, type DiffLine } from "@/utils/tool-call-parsers";
 import { highlightDiffLines } from "@/utils/diff-highlight";
 import { hasMeaningfulToolCallDetail } from "@/utils/tool-call-detail-state";
-import { useWebScrollbarStyle } from "@/hooks/use-web-scrollbar-style";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { extensionFromPath, highlightToKeyedLines } from "@/utils/highlight-cache";
@@ -46,7 +45,6 @@ interface DetailStyles {
   jsonScrollErrorCombined: StyleProp<ViewStyle>;
   fullBleedContainerStyle: StyleProp<ViewStyle>;
   loadingContainerStyle: StyleProp<ViewStyle>;
-  webScrollbarStyle: StyleProp<ViewStyle>;
   resolvedMaxHeight: number | undefined;
   shouldFill: boolean;
   isFullBleed: boolean;
@@ -70,7 +68,6 @@ function useDetailStyles(
   resolvedMaxHeight: number | undefined,
   fillAvailableHeight: boolean,
 ): DetailStyles {
-  const webScrollbarStyle = useWebScrollbarStyle();
   const isFullBleed = resolveIsFullBleed(detail);
   const shouldFill = resolveShouldFill(detail, fillAvailableHeight);
   const codeBlockStyle = isFullBleed ? styles.fullBleedBlock : styles.diffContainer;
@@ -88,35 +85,26 @@ function useDetailStyles(
       styles.codeVerticalScroll,
       resolvedMaxHeight !== undefined && inlineUnistylesStyle({ maxHeight: resolvedMaxHeight }),
       shouldFill && styles.fillHeight,
-      webScrollbarStyle,
     ],
-    [resolvedMaxHeight, shouldFill, webScrollbarStyle],
+    [resolvedMaxHeight, shouldFill],
   );
   const scrollAreaFillStyle = useMemo(
     () => [
       styles.scrollArea,
       resolvedMaxHeight !== undefined && inlineUnistylesStyle({ maxHeight: resolvedMaxHeight }),
       shouldFill && styles.fillHeight,
-      webScrollbarStyle,
     ],
-    [resolvedMaxHeight, shouldFill, webScrollbarStyle],
+    [resolvedMaxHeight, shouldFill],
   );
   const scrollAreaStyle = useMemo(
     () => [
       styles.scrollArea,
       resolvedMaxHeight !== undefined && inlineUnistylesStyle({ maxHeight: resolvedMaxHeight }),
-      webScrollbarStyle,
     ],
-    [resolvedMaxHeight, webScrollbarStyle],
+    [resolvedMaxHeight],
   );
-  const jsonScrollCombined = useMemo(
-    () => [styles.jsonScroll, webScrollbarStyle],
-    [webScrollbarStyle],
-  );
-  const jsonScrollErrorCombined = useMemo(
-    () => [styles.jsonScroll, styles.jsonScrollError, webScrollbarStyle],
-    [webScrollbarStyle],
-  );
+  const jsonScrollCombined = styles.jsonScroll;
+  const jsonScrollErrorCombined = [styles.jsonScroll, styles.jsonScrollError];
   const fullBleedContainerStyle = useMemo(
     () => [
       isFullBleed ? styles.fullBleedContainer : styles.paddedContainer,
@@ -139,7 +127,6 @@ function useDetailStyles(
     jsonScrollErrorCombined,
     fullBleedContainerStyle,
     loadingContainerStyle,
-    webScrollbarStyle,
     resolvedMaxHeight,
     shouldFill,
     isFullBleed,
@@ -179,7 +166,6 @@ function ShellDetailSection({ command, output, ds }: ShellDetailProps) {
             horizontal
             nestedScrollEnabled
             showsHorizontalScrollIndicator
-            style={ds.webScrollbarStyle}
             contentContainerStyle={styles.codeHorizontalContent}
           >
             <View style={styles.codeLine} dataSet={CODE_SURFACE_DATASET}>
@@ -224,7 +210,6 @@ function WorktreeSetupDetailSection({
             horizontal
             nestedScrollEnabled
             showsHorizontalScrollIndicator
-            style={ds.webScrollbarStyle}
             contentContainerStyle={styles.codeHorizontalContent}
           >
             <View style={styles.codeLine} dataSet={CODE_SURFACE_DATASET}>
@@ -389,7 +374,6 @@ function SubAgentDetailSection({
             horizontal
             nestedScrollEnabled
             showsHorizontalScrollIndicator
-            style={ds.webScrollbarStyle}
             contentContainerStyle={styles.codeHorizontalContent}
           >
             <View style={styles.codeLine} dataSet={CODE_SURFACE_DATASET}>
@@ -466,12 +450,7 @@ function ScrollableTextSection({
       nestedScrollEnabled
       showsVerticalScrollIndicator={true}
     >
-      <ScrollView
-        horizontal
-        nestedScrollEnabled
-        showsHorizontalScrollIndicator={true}
-        style={ds.webScrollbarStyle}
-      >
+      <ScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator={true}>
         {keyedLines ? (
           <HighlightedLines lines={keyedLines} startLine={startLine} />
         ) : (
@@ -501,12 +480,7 @@ function FetchDetailSection({ url, result, ds }: FetchDetailProps) {
         nestedScrollEnabled
         showsVerticalScrollIndicator
       >
-        <ScrollView
-          horizontal
-          nestedScrollEnabled
-          showsHorizontalScrollIndicator
-          style={ds.webScrollbarStyle}
-        >
+        <ScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator>
           <Text selectable style={styles.scrollText} dataSet={CODE_SURFACE_DATASET}>
             {result ? `${url}\n\n${result}` : url}
           </Text>
@@ -545,12 +519,7 @@ function buildSearchSections(detail: SearchDetail, ds: DetailStyles): ReactNode[
           nestedScrollEnabled
           showsVerticalScrollIndicator
         >
-          <ScrollView
-            horizontal
-            nestedScrollEnabled
-            showsHorizontalScrollIndicator
-            style={ds.webScrollbarStyle}
-          >
+          <ScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator>
             <Text selectable style={styles.scrollText} dataSet={CODE_SURFACE_DATASET}>
               {detail.content}
             </Text>

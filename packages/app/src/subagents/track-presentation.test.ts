@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { PaseoSubagentRow, SubagentRow } from "./select";
 import {
   buildSubagentRowPresentationData,
+  countFinishedSubagents,
   formatHeaderLabel,
   resolveRowLabel,
 } from "./track-presentation";
@@ -69,6 +70,41 @@ describe("formatHeaderLabel", () => {
 
   it("uses singular 'subagent' for a single row that requires attention upstream", () => {
     expect(formatHeaderLabel([row({ id: "a", requiresAttention: true })])).toBe("1 subagent");
+  });
+});
+
+describe("countFinishedSubagents", () => {
+  it("counts only terminal provider-owned children", () => {
+    const providerRows: SubagentRow[] = [
+      {
+        kind: "provider",
+        id: "native-running",
+        parentAgentId: "parent",
+        provider: "claude",
+        title: "running",
+        status: "running",
+        requiresAttention: false,
+        createdAt: new Date("2026-04-20T00:00:00.000Z"),
+      },
+      {
+        kind: "provider",
+        id: "native-failed",
+        parentAgentId: "parent",
+        provider: "claude",
+        title: "failed",
+        status: "failed",
+        requiresAttention: true,
+        createdAt: new Date("2026-04-20T00:00:01.000Z"),
+      },
+    ];
+
+    expect(
+      countFinishedSubagents([
+        row({ id: "managed-running", status: "running" }),
+        row({ id: "managed-idle", status: "idle" }),
+        ...providerRows,
+      ]),
+    ).toBe(1);
   });
 });
 

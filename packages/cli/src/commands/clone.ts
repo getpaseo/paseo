@@ -14,15 +14,15 @@ interface CloneCommandOptions extends CommandOptions {
 export interface CloneResult {
   repo: string;
   checkoutPath: string;
-  workspaceId: string;
-  workspaceName: string;
+  projectId: string;
+  projectName: string;
 }
 
 export const cloneSchema: OutputSchema<CloneResult> = {
-  idField: "workspaceId",
+  idField: "projectId",
   columns: [
     { header: "REPO", field: "repo", width: 28 },
-    { header: "WORKSPACE", field: "workspaceName", width: 28 },
+    { header: "PROJECT", field: "projectName", width: 28 },
     { header: "PATH", field: "checkoutPath", width: 56 },
   ],
 };
@@ -52,7 +52,7 @@ export async function runCloneCommand(
     throw buildDaemonConnectionCommandError({ host: options.host, error: err });
   }
 
-  if (client.getLastServerInfoMessage()?.features?.workspaceGithubClone !== true) {
+  if (client.getLastServerInfoMessage()?.features?.projectGithubClone !== true) {
     await client.close().catch(() => {});
     throw cmdError(
       "UNSUPPORTED_BY_HOST",
@@ -62,15 +62,15 @@ export async function runCloneCommand(
   }
 
   try {
-    const response = await client.cloneGithubWorkspace({
+    const response = await client.cloneGithubProject({
       repo,
       targetDirectory,
       ...(repoIsCompleteRemote ? {} : { cloneProtocol: options.protocol }),
     });
-    if (response.error || !response.workspace || !response.checkoutPath) {
+    if (response.error || !response.project || !response.checkoutPath) {
       throw cmdError(
         "CLONE_FAILED",
-        `Failed to clone GitHub repo: ${response.error ?? "no workspace returned"}`,
+        `Failed to clone GitHub repo: ${response.error ?? "no project returned"}`,
       );
     }
 
@@ -79,8 +79,8 @@ export async function runCloneCommand(
       data: {
         repo: response.repo,
         checkoutPath: response.checkoutPath,
-        workspaceId: response.workspace.id,
-        workspaceName: response.workspace.name,
+        projectId: response.project.projectId,
+        projectName: response.project.projectDisplayName,
       },
       schema: cloneSchema,
     };

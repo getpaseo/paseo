@@ -75,6 +75,9 @@ definition, no longer eligible to begin.
   so its injected `collapsable={false}` reaches Android/Fabric.
 - Mobile sidebars render through `MobilePanelOverlay`; do not duplicate overlay lifecycle or motion
   styles in sidebar components.
+- The desktop left sidebar is retained too. App chrome owns separate mounted and visible decisions:
+  closing it or yielding its width marks it inactive and applies `display: none` without conditionally
+  removing the sidebar tree.
 - Animated panel nodes use React Native static styles plus inline theme values. Do not attach
   Unistyles-generated styles to those nodes; Unistyles and Reanimated patching the same Fabric node
   has caused native crashes.

@@ -17,6 +17,7 @@ import {
   __resetPullRequestStatusCacheForTests,
   __setPullRequestStatusCacheTtlForTests,
   commitAll,
+  createPullRequest,
   getCachedCheckoutShortstat,
   getCheckoutSnapshotFacts,
   getCurrentBranch,
@@ -42,12 +43,10 @@ import {
   warmCheckoutShortstatInBackground,
 } from "./checkout-git.js";
 import { startGitCommandMetrics, stopGitCommandMetrics } from "./run-git-command.js";
-import {
-  GitHubCommandError,
-  GitHubCliMissingError,
-  type GitHubCurrentPullRequestStatus,
-  type GitHubService,
-} from "../services/github-service.js";
+import { createForgeResolver } from "../services/forge-resolver.js";
+import { GitHubCommandError, GitHubCliMissingError } from "../services/github-service.js";
+import type { CurrentPullRequestStatus, ForgeService } from "../services/forge-service.js";
+import { TeaAuthenticationError, TeaCliMissingError } from "../services/gitea-service.js";
 import {
   createWorktree as createWorktreePrimitive,
   type CreateWorktreeOptions,
@@ -102,9 +101,9 @@ function sleep(ms: number): Promise<void> {
 }
 
 function createGitHubServiceForStatus(
-  status: GitHubCurrentPullRequestStatus | null,
+  status: CurrentPullRequestStatus | null,
   options?: { onStatus?: () => void },
-): GitHubService {
+): ForgeService {
   return {
     listPullRequests: async () => [],
     listIssues: async () => [],
@@ -120,6 +119,15 @@ function createGitHubServiceForStatus(
       labels: [],
     }),
     getPullRequestHeadRef: async () => "feature",
+    getPullRequestCheckoutTarget: async ({ number }) => ({
+      number,
+      baseRefName: "main",
+      headRefName: "feature",
+      headOwnerLogin: null,
+      headRepositorySshUrl: null,
+      headRepositoryUrl: null,
+      isCrossRepository: false,
+    }),
     getCurrentPullRequestStatus: async () => {
       options?.onStatus?.();
       return status;
@@ -134,7 +142,7 @@ function createGitHubServiceForStatus(
   };
 }
 
-function createPullRequestStatus(overrides?: Partial<GitHubCurrentPullRequestStatus>) {
+function createPullRequestStatus(overrides?: Partial<CurrentPullRequestStatus>) {
   return {
     url: "https://github.com/getpaseo/paseo/pull/123",
     title: "Ship feature",
@@ -156,12 +164,12 @@ interface RequestedPullRequestTarget {
 
 interface RecordingPullRequestTargetsOptions {
   requestedTargets: RequestedPullRequestTarget[];
-  statusOverrides?: Partial<GitHubCurrentPullRequestStatus>;
+  statusOverrides?: Partial<CurrentPullRequestStatus>;
 }
 
 function createGitHubServiceRecordingPullRequestTargets(
   options: RecordingPullRequestTargetsOptions,
-): GitHubService {
+): ForgeService {
   const github = createGitHubServiceForStatus(null);
   github.getCurrentPullRequestStatus = async (request) => {
     options.requestedTargets.push({
@@ -243,6 +251,67 @@ describe("checkout git utilities", () => {
     await expect(getCheckoutDiff(nonGitDir, { mode: "uncommitted" })).rejects.toBeInstanceOf(
       NotGitRepoError,
     );
+  });
+
+  it("creates a pull request via the given adapter without resolving a repo slug in the shell", async () => {
+    setupRemoteTrackingMain(repoDir, tempDir);
+    let adapterReached = false;
+    const adapter = createGitHubServiceForStatus(null);
+    adapter.createPullRequest = async () => {
+      adapterReached = true;
+      return { url: "https://gitlab.com/group/proj/-/merge_requests/7", number: 7 };
+    };
+
+    const result = await createPullRequest(
+      repoDir,
+      { title: "Add thing", body: "desc", base: "main" },
+      adapter,
+    );
+
+    expect(adapterReached).toBe(true);
+    expect(result).toEqual({
+      url: "https://gitlab.com/group/proj/-/merge_requests/7",
+      number: 7,
+    });
+  });
+
+  it("resolves a gitlab remote through the resolver and creates via the gitlab adapter", async () => {
+    // origin is a real local bare repo so the push succeeds; the resolver reads a
+    // gitlab remote URL (injected) so it selects the gitlab adapter from the host.
+    setupRemoteTrackingMain(repoDir, tempDir);
+    let adapterReached = false;
+    const adapter = createGitHubServiceForStatus(null);
+    adapter.createPullRequest = async () => {
+      adapterReached = true;
+      return { url: "https://gitlab.com/group/proj/-/merge_requests/9", number: 9 };
+    };
+
+    const resolver = createForgeResolver({
+      resolveRemoteUrl: async () => "git@gitlab.com:group/proj.git",
+      createService: (forge) => (forge === "gitlab" ? adapter : null),
+    });
+    const resolution = await resolver.resolve(repoDir);
+    expect(resolution).toMatchObject({ forge: "gitlab", host: "gitlab.com" });
+    expect(resolution?.service).toBe(adapter);
+
+    const result = await createPullRequest(
+      repoDir,
+      { title: "Add thing", body: "desc", base: "main" },
+      resolution?.service,
+    );
+
+    expect(adapterReached).toBe(true);
+    expect(result).toEqual({
+      url: "https://gitlab.com/group/proj/-/merge_requests/9",
+      number: 9,
+    });
+  });
+
+  it("reports a real non-git directory as non-git", async () => {
+    const nonGitDir = join(tempDir, "not-git-status");
+    mkdirSync(nonGitDir, { recursive: true });
+
+    await expect(getCheckoutStatus(nonGitDir)).resolves.toEqual({ isGit: false });
   });
 
   it("returns null for getCurrentBranch in a repo with no commits", async () => {
@@ -2199,6 +2268,7 @@ const x = 1;
 
     expect(status).toEqual({
       githubFeaturesEnabled: true,
+      authState: "authenticated",
       status: {
         number: 123,
         url: "https://github.com/getpaseo/paseo/pull/123",
@@ -2593,12 +2663,49 @@ const x = 1;
       expect(fresh.status?.url).toContain("/pull/123");
       expect(cleared).toEqual({
         githubFeaturesEnabled: true,
+        authState: "authenticated",
         status: null,
       });
       expect(callCount).toBe(2);
     } finally {
       __resetPullRequestStatusCacheForTests();
     }
+  });
+
+  it("maps missing Gitea CLI PR status lookups to cli_missing auth state", async () => {
+    execFileSync("git", ["checkout", "-b", "feature"], { cwd: repoDir });
+    execFileSync("git", ["remote", "add", "origin", "https://gitea.example.com/acme/repo.git"], {
+      cwd: repoDir,
+    });
+
+    const service = createGitHubServiceForStatus(null);
+    service.getCurrentPullRequestStatus = async () => {
+      throw new TeaCliMissingError();
+    };
+
+    await expect(getPullRequestStatus(repoDir, service)).resolves.toEqual({
+      status: null,
+      authState: "cli_missing",
+      githubFeaturesEnabled: false,
+    });
+  });
+
+  it("maps Gitea authentication PR status failures to unauthenticated auth state", async () => {
+    execFileSync("git", ["checkout", "-b", "feature"], { cwd: repoDir });
+    execFileSync("git", ["remote", "add", "origin", "https://gitea.example.com/acme/repo.git"], {
+      cwd: repoDir,
+    });
+
+    const service = createGitHubServiceForStatus(null);
+    service.getCurrentPullRequestStatus = async () => {
+      throw new TeaAuthenticationError({ stderr: "401 unauthorized" });
+    };
+
+    await expect(getPullRequestStatus(repoDir, service)).resolves.toEqual({
+      status: null,
+      authState: "unauthenticated",
+      githubFeaturesEnabled: false,
+    });
   });
 
   it("dedupes concurrent PR status lookups for the same cwd", async () => {

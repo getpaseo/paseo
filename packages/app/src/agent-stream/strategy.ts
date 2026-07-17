@@ -51,9 +51,17 @@ export interface StreamSegmentRenderers {
   renderLiveAuxiliary: () => ReactNode;
 }
 
+export interface StreamHistoryRowRevision {
+  contentById: { has(id: string): boolean };
+  displayStateById: { has(id: string): boolean };
+  globalDisplayState: boolean;
+}
+
 export interface StreamRenderInput {
   agentId: string;
   segments: StreamRenderSegments;
+  historyRowRevision?: StreamHistoryRowRevision;
+  liveHeadRowRevision?: unknown;
   boundary: StreamHistoryBoundary;
   renderers: StreamSegmentRenderers;
   listEmptyComponent: ReactNode;

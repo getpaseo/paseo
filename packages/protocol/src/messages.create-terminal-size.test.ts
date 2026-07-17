@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { CreateTerminalRequestSchema } from "./messages";
 
-// COMPAT(createTerminalSize): the size field is optional so old clients (which send no size)
-// still parse, and old daemons ignore it. These tests pin that contract.
+// The optional size field stays accepted permanently: released v0.1.107 clients send it, newer
+// app clients don't, and programmatic callers may. These tests pin that contract.
 describe("CreateTerminalRequest size", () => {
   const base = {
     type: "create_terminal_request" as const,

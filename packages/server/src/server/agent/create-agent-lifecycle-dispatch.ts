@@ -1,13 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type pino from "pino";
 
-import type { GitHubService } from "../../services/github-service.js";
+import type { ForgeService } from "../../services/forge-service.js";
 import { isPaseoOwnedWorktreeCwd } from "../../utils/worktree.js";
-import {
-  archiveByScope,
-  type ActiveWorkspaceRef,
-  resolveWorkspaceIdAtPath,
-} from "../workspace-archive-service.js";
+import { archiveByScope, type ActiveWorkspaceRef } from "../workspace-archive-service.js";
 import type {
   CreatePaseoWorktreeWorkflowFn,
   CreatePaseoWorktreeWorkflowResult,
@@ -26,7 +22,7 @@ interface CreateAgentLifecycleDispatchDependencies {
   worktreesRoot?: string;
   agentManager: AgentManager;
   agentStorage: AgentStorage;
-  github: GitHubService;
+  github: ForgeService;
   workspaceGitService: WorkspaceGitService;
   createPaseoWorktreeWorkflow: CreatePaseoWorktreeWorkflowFn;
   archiveAgentForClose: (agentId: string) => Promise<unknown>;
@@ -51,6 +47,10 @@ interface AgentLifecycleEvents {
 }
 
 const inactiveRegistration: LifecycleRegistration = { cancel: async () => undefined };
+
+type AutoArchiveTarget =
+  | { kind: "agent-only" }
+  | { kind: "created-worktree"; result: CreatePaseoWorktreeWorkflowResult };
 
 export class CreateAgentLifecycleDispatch {
   private readonly autoArchiveAgentIds = new Set<string>();
@@ -82,10 +82,10 @@ export class CreateAgentLifecycleDispatch {
       return inactiveRegistration;
     }
 
-    return this.registerAutoArchiveOnTerminalState(input.agentId, {
-      worktreePath: input.createdWorktree?.worktree.worktreePath ?? null,
-      repoRoot: input.createdWorktree?.repoRoot ?? null,
-    });
+    return this.registerAutoArchiveOnTerminalState(
+      input.agentId,
+      toAutoArchiveTarget(input.createdWorktree),
+    );
   }
 
   async cleanupCreatedWorktreeAfterFailedAgentCreate(input: {
@@ -99,8 +99,7 @@ export class CreateAgentLifecycleDispatch {
 
     await this.archiveAutoCreatedWorktree({
       agentId: null,
-      worktreePath: createdWorktree.worktree.worktreePath,
-      repoRoot: createdWorktree.repoRoot,
+      createdWorktree,
     }).catch((archiveError) => {
       this.dependencies.logger.warn(
         {
@@ -155,30 +154,26 @@ export class CreateAgentLifecycleDispatch {
 
   private registerAutoArchiveOnTerminalState(
     agentId: string,
-    options: { worktreePath: string | null; repoRoot: string | null },
+    target: AutoArchiveTarget,
   ): LifecycleRegistration {
     return registerAgentAutoArchive({
       agentManager: this.dependencies.agentManager,
       agentId,
-      archive: () => this.autoArchiveAgentOnce(agentId, options),
+      archive: () => this.autoArchiveAgentOnce(agentId, target),
     });
   }
 
-  private async autoArchiveAgentOnce(
-    agentId: string,
-    options: { worktreePath: string | null; repoRoot: string | null },
-  ): Promise<void> {
+  private async autoArchiveAgentOnce(agentId: string, target: AutoArchiveTarget): Promise<void> {
     if (this.autoArchiveAgentIds.has(agentId)) {
       return;
     }
     this.autoArchiveAgentIds.add(agentId);
 
     try {
-      if (options.worktreePath) {
+      if (target.kind === "created-worktree") {
         await this.archiveAutoCreatedWorktree({
           agentId,
-          worktreePath: options.worktreePath,
-          repoRoot: options.repoRoot,
+          createdWorktree: target.result,
         });
         return;
       }
@@ -191,10 +186,11 @@ export class CreateAgentLifecycleDispatch {
 
   private async archiveAutoCreatedWorktree(options: {
     agentId: string | null;
-    worktreePath: string;
-    repoRoot: string | null;
+    createdWorktree: CreatePaseoWorktreeWorkflowResult;
   }): Promise<void> {
-    const ownership = await isPaseoOwnedWorktreeCwd(options.worktreePath, {
+    const { createdWorktree } = options;
+    const worktreePath = createdWorktree.worktree.worktreePath;
+    const ownership = await isPaseoOwnedWorktreeCwd(worktreePath, {
       paseoHome: this.dependencies.paseoHome,
       worktreesRoot: this.dependencies.worktreesRoot,
     });
@@ -202,46 +198,28 @@ export class CreateAgentLifecycleDispatch {
       throw new Error("Auto-created worktree is not a Paseo-owned worktree");
     }
 
-    const workspaceId = await resolveWorkspaceIdAtPath(
+    await archiveByScope(
       {
+        paseoHome: this.dependencies.paseoHome,
+        paseoWorktreesBaseRoot: this.dependencies.worktreesRoot,
+        github: this.dependencies.github,
+        workspaceGitService: this.dependencies.workspaceGitService,
+        agentManager: this.dependencies.agentManager,
+        agentStorage: this.dependencies.agentStorage,
         findWorkspaceIdForCwd: this.dependencies.findWorkspaceIdForCwd,
         listActiveWorkspaces: this.dependencies.listActiveWorkspaces,
+        archiveWorkspaceRecord: this.dependencies.archiveWorkspaceRecord,
+        emitWorkspaceUpdatesForWorkspaceIds: this.dependencies.emitWorkspaceUpdatesForWorkspaceIds,
+        markWorkspaceArchiving: this.dependencies.markWorkspaceArchiving,
+        clearWorkspaceArchiving: this.dependencies.clearWorkspaceArchiving,
+        killTerminalsForWorkspace: this.dependencies.killTerminalsForWorkspace,
+        sessionLogger: this.dependencies.logger,
       },
-      options.worktreePath,
+      {
+        scope: { kind: "workspace", workspaceId: createdWorktree.workspace.workspaceId },
+        requestId: randomUUID(),
+      },
     );
-
-    if (!workspaceId) {
-      this.dependencies.logger.warn(
-        { worktreePath: options.worktreePath },
-        "Could not resolve workspace for auto-archive; skipping",
-      );
-    } else {
-      await archiveByScope(
-        {
-          paseoHome: this.dependencies.paseoHome,
-          paseoWorktreesBaseRoot: this.dependencies.worktreesRoot,
-          github: this.dependencies.github,
-          workspaceGitService: this.dependencies.workspaceGitService,
-          agentManager: this.dependencies.agentManager,
-          agentStorage: this.dependencies.agentStorage,
-          findWorkspaceIdForCwd: this.dependencies.findWorkspaceIdForCwd,
-          listActiveWorkspaces: this.dependencies.listActiveWorkspaces,
-          archiveWorkspaceRecord: this.dependencies.archiveWorkspaceRecord,
-          emitWorkspaceUpdatesForWorkspaceIds:
-            this.dependencies.emitWorkspaceUpdatesForWorkspaceIds,
-          markWorkspaceArchiving: this.dependencies.markWorkspaceArchiving,
-          clearWorkspaceArchiving: this.dependencies.clearWorkspaceArchiving,
-          killTerminalsForWorkspace: this.dependencies.killTerminalsForWorkspace,
-          sessionLogger: this.dependencies.logger,
-        },
-        {
-          scope: { kind: "workspace", workspaceId },
-          repoRoot: options.repoRoot ?? ownership.repoRoot ?? null,
-          paseoWorktreesBaseRoot: this.dependencies.worktreesRoot,
-          requestId: randomUUID(),
-        },
-      );
-    }
 
     if (options.agentId) {
       this.dependencies.emitAgentRemove(options.agentId);
@@ -284,4 +262,12 @@ export function registerAgentAutoArchive(input: {
     { agentId: input.agentId, replayState: false },
   );
   return registration;
+}
+
+function toAutoArchiveTarget(
+  createdWorktree: CreatePaseoWorktreeWorkflowResult | null,
+): AutoArchiveTarget {
+  return createdWorktree
+    ? { kind: "created-worktree", result: createdWorktree }
+    : { kind: "agent-only" };
 }

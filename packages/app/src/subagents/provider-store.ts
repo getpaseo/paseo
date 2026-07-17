@@ -32,6 +32,8 @@ export interface ProviderSubagentTimelineState {
 interface ProviderSubagentState {
   descriptors: Map<string, ProviderSubagentDescriptorPayload>;
   timelines: Map<string, ProviderSubagentTimelineState>;
+  hiddenFromTrack: Set<string>;
+  hideFinishedForParent(serverId: string, parentAgentId: string): void;
   replaceList(
     serverId: string,
     parentAgentId: string,
@@ -193,14 +195,32 @@ function buildTimelineResponseRows(
 export const useProviderSubagentStore = create<ProviderSubagentState>((set) => ({
   descriptors: new Map(),
   timelines: new Map(),
+  hiddenFromTrack: new Set(),
+  hideFinishedForParent(serverId, parentAgentId) {
+    set((state) => {
+      const prefix = parentPrefix(serverId, parentAgentId);
+      const hiddenFromTrack = new Set(state.hiddenFromTrack);
+      for (const [key, subagent] of state.descriptors) {
+        if (key.startsWith(prefix) && subagent.status !== "running") {
+          hiddenFromTrack.add(key);
+        }
+      }
+      return { hiddenFromTrack };
+    });
+  },
   replaceList(serverId, parentAgentId, subagents) {
     set((state) => {
       const prefix = parentPrefix(serverId, parentAgentId);
       const descriptors = new Map(
         [...state.descriptors].filter(([key]) => !key.startsWith(prefix)),
       );
+      const hiddenFromTrack = new Set(state.hiddenFromTrack);
       for (const subagent of subagents) {
-        descriptors.set(providerSubagentKey(serverId, parentAgentId, subagent.id), subagent);
+        const key = providerSubagentKey(serverId, parentAgentId, subagent.id);
+        descriptors.set(key, subagent);
+        if (subagent.status === "running") {
+          hiddenFromTrack.delete(key);
+        }
       }
       const retainedKeys = new Set(descriptors.keys());
       const timelines = new Map(
@@ -217,7 +237,7 @@ export const useProviderSubagentStore = create<ProviderSubagentState>((set) => (
           );
         }
       }
-      return { descriptors, timelines };
+      return { descriptors, timelines, hiddenFromTrack };
     });
   },
   applyUpdate(serverId, payload) {
@@ -229,8 +249,12 @@ export const useProviderSubagentStore = create<ProviderSubagentState>((set) => (
           payload.subagent.id,
         );
         const descriptors = new Map(state.descriptors);
+        const hiddenFromTrack = new Set(state.hiddenFromTrack);
         const previous = descriptors.get(key);
         descriptors.set(key, payload.subagent);
+        if (payload.subagent.status === "running") {
+          hiddenFromTrack.delete(key);
+        }
         let timelines = state.timelines;
         const current = state.timelines.get(key);
         if (current && previous?.status !== payload.subagent.status) {
@@ -240,13 +264,13 @@ export const useProviderSubagentStore = create<ProviderSubagentState>((set) => (
             buildTimelineState(current.rows, current.epoch, payload.subagent, current.hasOlder),
           );
         }
-        return { descriptors, timelines };
+        return { descriptors, timelines, hiddenFromTrack };
       }
       if (payload.kind === "remove") {
         const key = providerSubagentKey(serverId, payload.parentAgentId, payload.subagentId);
         const descriptors = new Map(state.descriptors);
-        const timelines = new Map(state.timelines);
         descriptors.delete(key);
+        const timelines = new Map(state.timelines);
         timelines.delete(key);
         return { descriptors, timelines };
       }

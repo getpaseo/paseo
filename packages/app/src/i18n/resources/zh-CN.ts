@@ -54,12 +54,13 @@ export const zhCN: TranslationResources = {
       close: "关闭菜单",
     },
     commandCenter: {
-      placeholder: "输入命令或搜索 Agent...",
+      placeholder: "搜索命令、工作区和 Agent...",
       noMatches: "没有匹配项",
       actions: "操作",
+      workspaces: "工作区",
       agents: "Agents",
       newAgent: "新建 Agent",
-      openProject: "打开项目",
+      addProject: "添加 project",
       home: "首页",
     },
   },
@@ -101,6 +102,7 @@ export const zhCN: TranslationResources = {
       addImage: "添加图片",
       addFile: "Upload file",
       addIssueOrPr: "添加 issue 或 PR",
+      addIssueOrPr_mr: "添加 issue 或 MR",
       dropImagesHere: "将图片拖放到这里",
       dropFilesHere: "Drop files here",
       editQueuedMessage: "编辑排队消息",
@@ -108,8 +110,8 @@ export const zhCN: TranslationResources = {
       openImage: "打开图片附件",
       removeImage: "移除图片附件",
       removeFile: "Remove file attachment",
-      openGithub: "打开 {{kind}} #{{number}}",
-      removeGithub: "移除 {{kind}} #{{number}}",
+      openGithub: "打开 {{kind}} {{number}}",
+      removeGithub: "移除 {{kind}} {{number}}",
       element: "元素",
       openBrowserElement: "打开浏览器元素附件",
       removeBrowserElement: "移除浏览器元素附件",
@@ -133,7 +135,9 @@ export const zhCN: TranslationResources = {
       searching: "正在搜索...",
       noResults: "没有结果。",
       searchPlaceholder: "搜索 issues 和 PRs...",
+      searchPlaceholder_mr: "搜索 issues 和 MRs...",
       title: "附加 issue 或 PR",
+      title_mr: "附加 issue 或 MR",
     },
   },
   agentControls: {
@@ -334,15 +338,24 @@ export const zhCN: TranslationResources = {
   workspace: {
     route: {
       loading: "正在加载 workspace",
-      restoring: "正在恢复 workspace",
-      restoreFailed: "无法恢复此 workspace — 目录可能已被移动或删除",
       connecting: "正在连接",
       hostOffline: "{{hostName}} 已离线",
       cannotReachHost: "无法连接 {{hostName}}",
       hostStatus: "Host 状态：{{status}}",
-      missing: "Workspace 未找到",
       needsHostUpgrade: "更新你的 Host 以恢复此 workspace",
       manageHost: "管理 Host",
+      recovery: {
+        archivedTitle: "Workspace 已归档",
+        restoreDescription:
+          "{{workspaceName}} 已归档，其 worktree 已移除。恢复分支 {{branch}} 以重新打开。",
+        unarchiveDescription: "{{workspaceName}} 已归档。取消归档以重新打开。",
+        restoreAction: "恢复",
+        unarchiveAction: "取消归档",
+        restoringTitle: "正在恢复 workspace",
+        restoringAction: "正在恢复...",
+        unavailableTitle: "Workspace 不可用",
+        checkFailedTitle: "无法检查 workspace",
+      },
     },
     hoverCard: {
       scriptsAccessibility: "Workspace scripts",
@@ -489,6 +502,7 @@ export const zhCN: TranslationResources = {
         preparingTerminal: "正在准备 Terminal 标签",
         preparingTerminalTooltip: "正在准备 Terminal...",
         newBrowser: "新建浏览器",
+        exitFocusMode: "退出专注模式",
         splitRight: "向右拆分窗格",
         splitDown: "向下拆分窗格",
         terminalProfilesMenu: "Terminal profiles",
@@ -605,6 +619,9 @@ export const zhCN: TranslationResources = {
           label: "创建 PR",
           pending: "正在创建 PR...",
           success: "PR 已创建",
+          label_mr: "创建 MR",
+          pending_mr: "正在创建 MR...",
+          success_mr: "MR 已创建",
         },
         mergeBranch: {
           label: "本地 merge",
@@ -627,7 +644,13 @@ export const zhCN: TranslationResources = {
           rebase: "Merge PR (rebase)",
           pending: "正在 merge PR...",
           success: "PR 已 merge",
+          squash_mr: "Merge MR (squash)",
+          merge_mr: "Merge MR (merge)",
+          rebase_mr: "Merge MR (rebase)",
+          pending_mr: "正在 merge MR...",
+          success_mr: "MR 已 merge",
         },
+        viewPr_mr: "查看 MR",
         autoMerge: {
           enableSquash: "Auto merge (squash)",
           enableMerge: "Auto merge (merge)",
@@ -638,7 +661,7 @@ export const zhCN: TranslationResources = {
           disabled: "Auto-merge 已禁用",
         },
         unavailable: {
-          viewPrNoGithub: "当前无法查看 PR，因为 GitHub 未连接",
+          viewPrNoForge: "当前无法查看 {{noun}}，因为 {{brand}} 未连接",
           pullNoRemote: "此处无法 pull，因为此分支尚未连接到 remote",
           pullDirty: "有本地变更时无法 pull，请先 commit 或 stash",
           pullUpToDate: "无法 pull，因为此分支已是最新",
@@ -647,8 +670,10 @@ export const zhCN: TranslationResources = {
           pushNothing: "无法 push，因为没有新的内容可发送",
           pullAndPushNoRemote: "此处无法 pull 并 push，因为此分支尚未连接到 remote",
           pullAndPushDirty: "有本地变更时无法 pull 并 push，请先 commit 或 stash",
+          pullAndPushNoIncoming: "无法 pull 并 push，因为没有需要先 pull 的传入变更",
           pullAndPushInSync: "无法 pull 并 push，因为此分支已同步",
-          createPrNoGithub: "当前无法创建 PR，因为 GitHub 未连接",
+          pullAndPushNothingToPush: "无法 pull 并 push，因为 pull 之后没有新的内容可发送",
+          createPrNoForge: "当前无法创建 {{noun}}，因为 {{brand}} 未连接",
           createPrNoCommits: "无法创建 PR，因为此分支还没有新的 commit",
           mergeNoBase: "无法 merge，因为无法确定 base branch",
           mergeDirty: "有本地变更时无法 merge，请先 commit 或 stash",
@@ -657,13 +682,15 @@ export const zhCN: TranslationResources = {
           updateDirty: "有本地变更时无法更新，请先 commit 或 stash",
           updateCurrent: "无法更新，因为此分支已与 {{baseRef}} 保持最新",
           mergePrNoGithub: "当前无法 merge PR，因为 GitHub 未连接",
+          archiveNotWorktree: "此处无法归档，因为此 workspace 不是作为 Paseo worktree 创建的",
+          mergePrNoForge: "当前无法 merge {{noun}}，因为 {{brand}} 未连接",
           mergePrMissing: "无法 merge PR，因为还没有 pull request",
           mergePrDraft: "无法 merge PR，因为 pull request 仍是 draft",
           mergePrMerged: "无法 merge PR，因为 pull request 已 merge",
           mergePrClosed: "无法 merge PR，因为 pull request 已关闭",
           mergePrConflicts: "无法 merge PR，因为 pull request 存在冲突",
           mergePrQueue: "此处无法 merge PR，因为此 repository 使用 merge queue",
-          mergePrNotReady: "GitHub 报告 pull request 可 merge 后才能 merge PR",
+          mergePrNotReady: "{{brand}} 报告 {{noun}} 可 merge 后才能 merge {{noun}}",
           autoMergeCannotDisable: "Auto-merge 已启用，但此账号无法禁用",
         },
         toasts: {
@@ -713,7 +740,7 @@ export const zhCN: TranslationResources = {
         expandAllFolders: "展开所有文件夹",
         refreshing: "正在刷新",
         refresh: "刷新",
-        refreshState: "刷新 git 和 GitHub 状态",
+        refreshState: "刷新 git 和 {{brand}} 状态",
         failedRefresh: "刷新 git 状态失败。",
         emptyHiddenWhitespace: "隐藏空白差异后没有可见变更",
         emptyUncommitted: "没有未 commit 的变更",
@@ -727,6 +754,17 @@ export const zhCN: TranslationResources = {
         base: "base",
         newFile: "新增",
         deletedFile: "已删除",
+        commits: {
+          title: "提交",
+          legendLocal: "本地",
+          legendRemote: "已推送",
+          countLabel: "领先基线 {{count}} 个提交",
+          fileDiffEmpty: "没有可显示的更改",
+          fileDiffError: "加载文件差异失败",
+          loading: "正在加载提交…",
+          loadError: "加载提交失败",
+          empty: "没有领先基线的提交",
+        },
       },
       openInEditor: {
         open: "打开",
@@ -738,13 +776,23 @@ export const zhCN: TranslationResources = {
       pr: {
         actions: {
           viewPullRequest: "查看",
+          openOn: "在 {{brand}} 上打开",
         },
         sections: {
           checks: "Checks",
+          pipeline: "流水线",
           reviews: "Reviews",
         },
+        empty: {
+          noJobs: "无作业",
+          loadingPipeline: "正在加载流水线...",
+          pipelineJobsLoadFailed: "无法加载流水线作业",
+          allowedToFail: "允许失败",
+        },
+        approvals: "{{given}} / {{required}} 批准",
         accessibility: {
           pullRequest: "Pull request #{{number}}",
+          pullRequest_mr: "合并请求 !{{number}}",
         },
         states: {
           draft: "Draft",
@@ -761,10 +809,18 @@ export const zhCN: TranslationResources = {
         time: {
           justNow: "刚刚",
         },
+        thread: {
+          discussion: "讨论主题",
+        },
         errors: {
           statusLoadFailed: "无法加载 Pull Request 状态",
           activityLoadFailed: "无法加载 Pull Request 活动",
         },
+      },
+      forgeSetup: {
+        installCli: "安装 {{cli}} CLI 以使用 {{brand}} 功能。",
+        signIn: "运行 {{command}} 以使用 {{brand}} 功能。",
+        generic: "在此主机上设置 {{brand}} 以使用其功能。",
       },
     },
   },
@@ -787,16 +843,13 @@ export const zhCN: TranslationResources = {
     },
     help: {
       trigger: "帮助与支持",
-      troubleshoot: "问题排查",
+      sectionHelp: "帮助",
       diagnostics: "运行诊断",
-      diagnosticsDescription: "收集应用和已连接 Host 的详细信息",
       shortcuts: "键盘快捷键",
-      shortcutsDescription: "查看可用的键盘快捷键",
       reportIssue: "报告问题",
       discord: "Discord",
-      discordDescription: "适合快速求助和讨论",
       github: "创建 GitHub Issue",
-      githubDescription: "报告可复现的 bug",
+      whatsNew: "新功能",
       version: "Paseo {{version}}",
     },
     sections: {
@@ -897,9 +950,9 @@ export const zhCN: TranslationResources = {
     refPicker: {
       startingRef: "起始 ref",
       chooseStart: "选择起始位置",
-      checkoutHint: "Checkout PR #{{number}}？",
-      checkoutPr: "Checkout PR #{{number}}",
-      dismissCheckoutHint: "忽略 PR #{{number}} checkout 提示",
+      checkoutHint: "Checkout {{noun}} {{numberPrefix}}{{number}}？",
+      checkoutPr: "Checkout {{noun}} {{numberPrefix}}{{number}}",
+      dismissCheckoutHint: "忽略 {{noun}} {{numberPrefix}}{{number}} checkout 提示",
       intoBase: "进入 {{baseRef}}",
       searching: "正在搜索...",
       noMatchingRefs: "没有匹配的 refs。",
@@ -1357,6 +1410,8 @@ export const zhCN: TranslationResources = {
     detachTooltip: "分离 subagent",
     archiveAction: "归档 {{label}}",
     archiveTooltip: "归档 subagent",
+    archiveFinishedAction: "归档已完成的 subagent",
+    archiveFinishedTooltip: "归档已完成项",
   },
   panels: {
     draft: {
@@ -1371,6 +1426,15 @@ export const zhCN: TranslationResources = {
       failedToLoad: "加载文件失败",
       failedToLoadPreview: "加载文件预览失败",
     },
+    diff: {
+      changesLabel: "更改",
+      changesSubtitle: "工作区差异",
+      commitSubtitle: "提交差异",
+      directoryMissing: "未找到 workspace 目录。",
+      empty: "没有更改",
+      loadError: "加载差异失败",
+      capabilityMissing: "请更新主机以查看提交差异。",
+    },
   },
   toolCallDetails: {
     error: "错误",
@@ -1378,6 +1442,33 @@ export const zhCN: TranslationResources = {
     subAgentActivity: "Sub-agent 活动",
     input: "输入",
     output: "输出",
+  },
+  toolCallGroup: {
+    editedFiles: {
+      one: "编辑了 {{count}} 个文件",
+      other: "编辑了 {{count}} 个文件",
+    },
+    commands: {
+      one: "运行了 {{count}} 个命令",
+      other: "运行了 {{count}} 个命令",
+    },
+    readFiles: {
+      one: "读取了 {{count}} 个文件",
+      other: "读取了 {{count}} 个文件",
+    },
+    searches: {
+      one: "搜索了 {{count}} 次",
+      other: "搜索了 {{count}} 次",
+    },
+    otherTools: {
+      one: "使用了 {{count}} 个其他工具",
+      other: "使用了 {{count}} 个其他工具",
+    },
+    paseoCalls: {
+      one: "调用了 Paseo {{count}} 次",
+      other: "调用了 Paseo {{count}} 次",
+    },
+    and: "并",
   },
   renameModal: {
     rename: "重命名",
@@ -1446,6 +1537,17 @@ export const zhCN: TranslationResources = {
     },
     general: {
       title: "通用",
+      browserData: {
+        title: "浏览器数据",
+        siteData: "Cookie 和网站数据",
+        description: "浏览器标签页在 Paseo 中共享登录状态和网站数据。",
+        clear: "清除浏览器数据",
+        clearing: "正在清除...",
+        confirmTitle: "清除浏览器数据？",
+        confirmMessage: "网站帐号将退出登录，打开的浏览器标签页将重新加载。",
+        success: "浏览器数据已清除。",
+        error: "无法清除浏览器数据。",
+      },
       defaultSend: {
         label: "默认发送",
         descriptions: {
@@ -1474,6 +1576,15 @@ export const zhCN: TranslationResources = {
       autoExpandReasoning: {
         label: "始终展开推理过程",
         description: "默认情况下完全展开 AI 的思考和推理过程",
+      },
+      toolCallDetail: {
+        label: "工具调用显示",
+        description: "工具调用在时间线中的显示方式",
+        accessibilityLabel: "选择工具调用显示方式（{{value}}）",
+        options: {
+          overview: "摘要",
+          detailed: "完整详情",
+        },
       },
       language: {
         label: "语言",
@@ -1790,6 +1901,7 @@ export const zhCN: TranslationResources = {
           dialogFailedMessage: "无法打开重启确认对话框。",
         },
         update: {
+          desktopManagedHint: "此 Daemon 由 Paseo Desktop 管理。请在 Host 上更新 Paseo Desktop。",
           title: "Update daemon",
           hint: "Update the daemon to the latest version and restart it",
           confirm: "Update",
@@ -1838,6 +1950,17 @@ export const zhCN: TranslationResources = {
       loading: "正在加载...",
       addErrorTitle: "无法添加 Provider",
       updateErrorTitle: "无法更新 Provider",
+      actions: {
+        menu: "{{name}} actions",
+        remove: "Remove provider",
+        removing: "Removing...",
+      },
+      remove: {
+        confirmTitle: "Remove {{name}}?",
+        confirmMessage: "This deletes the provider entry from config.json. It cannot be undone.",
+        confirm: "Remove",
+        errorTitle: "Unable to remove provider",
+      },
       statuses: {
         disabled: "已禁用",
         loading: "正在加载",

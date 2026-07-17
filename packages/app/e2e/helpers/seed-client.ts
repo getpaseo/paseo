@@ -132,11 +132,15 @@ export interface SeedDaemonClient {
     timeout?: number,
   ): Promise<{ status: string; final?: { lastError?: string | null } | null }>;
   archiveAgent(agentId: string): Promise<{ archivedAt: string }>;
+  refreshAgent(agentId: string): Promise<unknown>;
   fetchAgent(options: {
     agentId: string;
   }): Promise<{ agent: { id: string; archivedAt?: string | null } } | null>;
   getLastServerInfoMessage(): {
-    features?: { projectAdd?: boolean; worktreeRestore?: boolean } | null;
+    features?: {
+      projectAdd?: boolean;
+      workspaceRecovery?: boolean;
+    } | null;
   } | null;
   fetchAgentHistory(options?: {
     page?: { limit: number };
@@ -154,10 +158,11 @@ export interface SeedDaemonClient {
   killTerminal(terminalId: string): Promise<{ error: string | null }>;
 }
 
-export async function connectSeedClient(): Promise<SeedDaemonClient> {
+export async function connectSeedClient(options?: { port?: number }): Promise<SeedDaemonClient> {
   return connectDaemonClient<SeedDaemonClient>({
     clientIdPrefix: "seed",
     appVersion: loadAppVersion(),
+    port: options?.port,
   });
 }
 
@@ -183,6 +188,7 @@ export interface SeededWorkspace {
 
 export async function seedWorkspace(options: {
   repoPrefix: string;
+  title?: string;
   /** Repo fixture options; only applies to git projects (the default). */
   repo?: Parameters<typeof createTempGitRepo>[1];
   /** Set to false to seed a plain non-git directory instead of a git repo. */
@@ -196,6 +202,7 @@ export async function seedWorkspace(options: {
   try {
     const created = await client.createWorkspace({
       source: { kind: "directory", path: project.path },
+      title: options.title,
     });
     if (!created.workspace) {
       throw new Error(created.error ?? `Failed to create workspace ${project.path}`);

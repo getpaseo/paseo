@@ -1,14 +1,46 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  type BrowserWebviewProfileHost,
   clearResidentBrowserWebviewsForTests,
   ensureResidentBrowserWebview,
+  getResidentBrowserWebview,
   prepareBrowserWebview,
   releaseResidentBrowserWebview,
   removeResidentBrowserWebview,
   takeResidentBrowserWebview,
 } from "./browser-webview-resident";
+import {
+  setCommandCenterFocusRestoreElement,
+  takeCommandCenterFocusRestoreElement,
+} from "../utils/command-center-focus-restore";
 
 const RESIDENT_HOST_ID = "paseo-browser-resident-webviews";
+const attachedBrowsers: Array<{
+  browserId: string;
+  workspaceId: string;
+  webContentsId: number;
+}> = [];
+const profileHost: BrowserWebviewProfileHost = {
+  profilePartition: "persist:paseo-browser",
+  registerAttachedBrowser: async (input) => {
+    attachedBrowsers.push(input);
+  },
+};
+
+function ensureTestBrowser(input: {
+  browserId: string;
+  workspaceId: string;
+  url: string;
+}): HTMLElement | null {
+  return ensureResidentBrowserWebview({ ...input, profileHost });
+}
+
+function prepareTestBrowser(
+  webview: HTMLElement,
+  input: { browserId: string; workspaceId: string; initialUrl?: string | null },
+): void {
+  prepareBrowserWebview(webview, { ...input, profileHost });
+}
 
 function residentHost(): HTMLElement {
   const host = document.getElementById(RESIDENT_HOST_ID);
@@ -44,6 +76,10 @@ function expectResidentWebviewParking(webview: HTMLElement): void {
 }
 
 describe("resident browser webviews", () => {
+  beforeEach(() => {
+    attachedBrowsers.length = 0;
+  });
+
   afterEach(() => {
     clearResidentBrowserWebviewsForTests();
   });
@@ -65,20 +101,49 @@ describe("resident browser webviews", () => {
   });
 
   it("creates a resident webview for an agent-created unfocused tab", () => {
-    const webview = ensureResidentBrowserWebview({
+    const webview = ensureTestBrowser({
       browserId: "browser-agent",
+      workspaceId: "workspace-agent",
       url: "https://example.com",
     });
 
     expect(webview).not.toBeNull();
     expect(webview?.isConnected).toBe(true);
     expect(webview?.getAttribute("data-paseo-browser-id")).toBe("browser-agent");
-    expect(webview?.getAttribute("partition")).toBe("persist:paseo-browser-browser-agent");
+    expect(webview?.getAttribute("partition")).toBe("persist:paseo-browser");
     expect((webview as HTMLUnknownElement & { src?: string })?.src).toContain(
       "https://example.com",
     );
     expectPermanentHostParking(residentHost());
     expectResidentWebviewParking(webview as HTMLElement);
+  });
+
+  it("shares one profile and registers attached guests with explicit identity", () => {
+    const firstWebview = ensureTestBrowser({
+      browserId: "browser-first",
+      workspaceId: "workspace-a",
+      url: "https://example.com/first",
+    });
+    const secondWebview = ensureTestBrowser({
+      browserId: "browser-second",
+      workspaceId: "workspace-b",
+      url: "https://example.com/second",
+    });
+    if (!firstWebview || !secondWebview) {
+      throw new Error("Expected resident webviews");
+    }
+    Object.assign(firstWebview, { getWebContentsId: () => 101 });
+    Object.assign(secondWebview, { getWebContentsId: () => 202 });
+
+    firstWebview.dispatchEvent(new Event("did-attach"));
+    secondWebview.dispatchEvent(new Event("did-attach"));
+
+    expect(firstWebview.getAttribute("partition")).toBe("persist:paseo-browser");
+    expect(secondWebview.getAttribute("partition")).toBe("persist:paseo-browser");
+    expect(attachedBrowsers).toEqual([
+      { browserId: "browser-first", workspaceId: "workspace-a", webContentsId: 101 },
+      { browserId: "browser-second", workspaceId: "workspace-b", webContentsId: 202 },
+    ]);
   });
 
   it("normalizes an existing resident host back to permanent parking", () => {
@@ -91,8 +156,9 @@ describe("resident browser webviews", () => {
     staleHost.style.display = "none";
     document.body.appendChild(staleHost);
 
-    const webview = ensureResidentBrowserWebview({
+    const webview = ensureTestBrowser({
       browserId: "browser-stale-host",
+      workspaceId: "workspace-stale-host",
       url: "https://example.com",
     });
 
@@ -111,8 +177,9 @@ describe("resident browser webviews", () => {
     staleHost.style.display = "none";
 
     const staleWebview = document.createElement("webview");
-    prepareBrowserWebview(staleWebview, {
+    prepareTestBrowser(staleWebview, {
       browserId: "browser-stale-child",
+      workspaceId: "workspace-stale-child",
       initialUrl: "https://example.com",
     });
     staleWebview.style.display = "none";
@@ -123,8 +190,9 @@ describe("resident browser webviews", () => {
     staleHost.appendChild(staleWebview);
     document.body.appendChild(staleHost);
 
-    const webview = ensureResidentBrowserWebview({
+    const webview = ensureTestBrowser({
       browserId: "browser-stale-child",
+      workspaceId: "workspace-stale-child",
       url: "https://example.com/agent",
     });
 
@@ -135,12 +203,14 @@ describe("resident browser webviews", () => {
   });
 
   it("parks resident webviews as an overlapping stack", () => {
-    const firstWebview = ensureResidentBrowserWebview({
+    const firstWebview = ensureTestBrowser({
       browserId: "browser-first",
+      workspaceId: "workspace-stack",
       url: "https://example.com/first",
     });
-    const secondWebview = ensureResidentBrowserWebview({
+    const secondWebview = ensureTestBrowser({
       browserId: "browser-second",
+      workspaceId: "workspace-stack",
       url: "https://example.com/second",
     });
 
@@ -152,8 +222,9 @@ describe("resident browser webviews", () => {
   });
 
   it("moves a resident webview into a visible pane without recreating the node", () => {
-    const webview = ensureResidentBrowserWebview({
+    const webview = ensureTestBrowser({
       browserId: "browser-visible",
+      workspaceId: "workspace-visible",
       url: "https://example.com",
     });
 
@@ -170,15 +241,17 @@ describe("resident browser webviews", () => {
   it("returns an existing visible pane webview instead of creating a resident duplicate", () => {
     const visibleHost = document.createElement("div");
     const visibleWebview = document.createElement("webview");
-    prepareBrowserWebview(visibleWebview, {
+    prepareTestBrowser(visibleWebview, {
       browserId: "browser-visible-pane",
+      workspaceId: "workspace-visible-pane",
       initialUrl: "https://example.com",
     });
     visibleHost.appendChild(visibleWebview);
     document.body.appendChild(visibleHost);
 
-    const webview = ensureResidentBrowserWebview({
+    const webview = ensureTestBrowser({
       browserId: "browser-visible-pane",
+      workspaceId: "workspace-visible-pane",
       url: "https://example.com/agent",
     });
 
@@ -186,9 +259,24 @@ describe("resident browser webviews", () => {
     expect(document.getElementById(RESIDENT_HOST_ID)).toBeNull();
   });
 
+  it("finds the originating browser webview for focus restoration", () => {
+    const webview = ensureTestBrowser({
+      browserId: "browser-focus",
+      workspaceId: "workspace-focus",
+      url: "https://example.com",
+    });
+
+    setCommandCenterFocusRestoreElement(getResidentBrowserWebview("browser-focus"));
+
+    expect(takeCommandCenterFocusRestoreElement()).toBe(webview);
+
+    expect(getResidentBrowserWebview("browser-missing")).toBeNull();
+  });
+
   it("removes a resident webview when its browser tab closes", () => {
-    const webview = ensureResidentBrowserWebview({
+    const webview = ensureTestBrowser({
       browserId: "browser-closed",
+      workspaceId: "workspace-closed",
       url: "https://example.com",
     });
 

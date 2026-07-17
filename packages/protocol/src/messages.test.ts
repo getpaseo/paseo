@@ -293,6 +293,21 @@ describe("agent detach RPC", () => {
     }
     expect(parsed.features?.agentDetach).toBe(true);
   });
+
+  test("parses the workspace-targeted session import feature gate", () => {
+    const parsed = parseServerInfoStatusPayload({
+      status: "server_info",
+      serverId: "srv-test",
+      features: {
+        importSessionWorkspaceTarget: true,
+      },
+    });
+
+    if (!parsed) {
+      throw new Error("Expected server info payload to parse");
+    }
+    expect(parsed.features?.importSessionWorkspaceTarget).toBe(true);
+  });
 });
 
 describe("agent setting action responses", () => {
@@ -418,6 +433,38 @@ describe("daemon update messages", () => {
       payload: {
         requestId: "update-1",
         phase: "installing",
+      },
+    });
+  });
+});
+
+describe("viewed timeline subscription messages", () => {
+  test("parses a complete viewed-agent set and its acknowledgement", () => {
+    const request = SessionInboundMessageSchema.parse({
+      type: "agent.timeline.set_subscription.request",
+      agentIds: ["agent-a", "agent-b"],
+      requestId: "timeline-subscription-1",
+    });
+    const response = SessionOutboundMessageSchema.parse({
+      type: "agent.timeline.set_subscription.response",
+      payload: {
+        agentIds: ["agent-a", "agent-b"],
+        requestId: "timeline-subscription-1",
+      },
+    });
+
+    expect({ request, response }).toEqual({
+      request: {
+        type: "agent.timeline.set_subscription.request",
+        agentIds: ["agent-a", "agent-b"],
+        requestId: "timeline-subscription-1",
+      },
+      response: {
+        type: "agent.timeline.set_subscription.response",
+        payload: {
+          agentIds: ["agent-a", "agent-b"],
+          requestId: "timeline-subscription-1",
+        },
       },
     });
   });

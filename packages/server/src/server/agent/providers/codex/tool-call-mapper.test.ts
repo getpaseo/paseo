@@ -234,7 +234,7 @@ describe("codex tool-call mapper", () => {
       id: `activity-${kind}`,
       kind,
       agentThreadId: "child-thread-1",
-      agentPath: "/root/investigator",
+      agentPath: "/root/research/investigator",
     });
 
     expect(item).toEqual({
@@ -245,8 +245,8 @@ describe("codex tool-call mapper", () => {
       error: null,
       detail: {
         type: "sub_agent",
-        subAgentType: "Sub-agent",
-        description: "/root/investigator",
+        subAgentType: "Research / Investigator",
+        description: "research/investigator",
         log: "",
         actions: [],
       },
@@ -264,6 +264,60 @@ describe("codex tool-call mapper", () => {
 
     expect(item).toMatchObject({
       detail: { type: "sub_agent", description: "" },
+    });
+  });
+
+  it("humanizes a subagent task name for display", () => {
+    const item = mapCodexToolCallFromThreadItem({
+      type: "subAgentActivity",
+      id: "activity-human-name",
+      kind: "started",
+      agentThreadId: "child-thread-human-name",
+      agentPath: "/root/hello_one",
+    });
+
+    expect(item).toMatchObject({
+      detail: {
+        type: "sub_agent",
+        subAgentType: "Hello one",
+        description: "hello_one",
+      },
+    });
+  });
+
+  it("uses only the final segment of a subAgentActivity path outside the root namespace", () => {
+    const item = mapCodexToolCallFromThreadItem({
+      type: "subAgentActivity",
+      id: "activity-external-path",
+      kind: "started",
+      agentThreadId: "child-thread-external-path",
+      agentPath: "/tmp/native/investigator",
+    });
+
+    expect(item).toMatchObject({
+      detail: {
+        type: "sub_agent",
+        subAgentType: "Investigator",
+        description: "investigator",
+      },
+    });
+  });
+
+  it("uses only the final segment of a Windows subAgentActivity path", () => {
+    const item = mapCodexToolCallFromThreadItem({
+      type: "subAgentActivity",
+      id: "activity-windows-path",
+      kind: "started",
+      agentThreadId: "child-thread-windows-path",
+      agentPath: "C:\\Users\\dev\\agents\\investigator",
+    });
+
+    expect(item).toMatchObject({
+      detail: {
+        type: "sub_agent",
+        subAgentType: "Investigator",
+        description: "investigator",
+      },
     });
   });
 

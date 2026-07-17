@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  applyMacWindowControlsUpdate,
   applyWindowControlsOverlayUpdate,
   createWindowControlsOverlayState,
   DEFAULT_WINDOW_HEIGHT,
@@ -70,10 +71,12 @@ describe("window-manager", () => {
         readWindowControlsOverlayUpdate({
           height: 48,
           backgroundColor: "#181B1A",
+          trafficLightOffsetY: -5,
         }),
       ).toEqual({
         height: 48,
         backgroundColor: "#181B1A",
+        trafficLightOffsetY: -5,
       });
     });
 
@@ -82,6 +85,13 @@ describe("window-manager", () => {
       expect(readWindowControlsOverlayUpdate({})).toBeNull();
       expect(readWindowControlsOverlayUpdate({ height: 0 })).toBeNull();
       expect(readWindowControlsOverlayUpdate({ backgroundColor: 12 })).toBeNull();
+      expect(readWindowControlsOverlayUpdate({ trafficLightOffsetY: -11 })).toBeNull();
+    });
+
+    it("preserves fractional traffic-light offsets", () => {
+      expect(readWindowControlsOverlayUpdate({ trafficLightOffsetY: 1.5 })).toEqual({
+        trafficLightOffsetY: 1.5,
+      });
     });
   });
 
@@ -136,6 +146,24 @@ describe("window-manager", () => {
         symbolColor: "#e4e4e7",
         height: 47,
       });
+    });
+  });
+
+  describe("applyMacWindowControlsUpdate", () => {
+    it("uses the focus and normal traffic-light positions", () => {
+      const setWindowButtonPosition = vi.fn();
+
+      applyMacWindowControlsUpdate({
+        win: { setWindowButtonPosition },
+        update: { trafficLightOffsetY: -5 },
+      });
+      applyMacWindowControlsUpdate({
+        win: { setWindowButtonPosition },
+        update: { trafficLightOffsetY: 0.5 },
+      });
+
+      expect(setWindowButtonPosition).toHaveBeenNthCalledWith(1, { x: 16, y: 9 });
+      expect(setWindowButtonPosition).toHaveBeenNthCalledWith(2, { x: 16, y: 14.5 });
     });
   });
 

@@ -14,7 +14,9 @@ import type { HubRelationshipManagement } from "../../hub/relationship-controlle
 
 export interface DaemonRuntimeConfig {
   listen: string | null;
+  worktreesRoot?: string;
   appBaseUrl?: string;
+  desktopManaged?: boolean;
   relay: {
     enabled: boolean;
     endpoint: string;
@@ -90,6 +92,7 @@ export class DaemonSession {
     this.selfUpdate = new DaemonSelfUpdateSessionController({
       clientId: this.clientId,
       daemonVersion: this.daemonVersion ?? null,
+      desktopManaged: this.daemonRuntimeConfig?.desktopManaged === true,
       emit: (msg) => this.host.emit(msg),
       emitLifecycleIntent: (intent) => this.host.emitLifecycleIntent(intent),
       sessionLogger: this.logger,

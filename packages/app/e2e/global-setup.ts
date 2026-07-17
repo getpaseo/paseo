@@ -14,13 +14,15 @@ import { withDisabledE2ESpeechEnv } from "./helpers/speech-env";
 
 const wranglerCliPath = path.resolve(__dirname, "../node_modules/wrangler/bin/wrangler.js");
 
-interface WaitForServerOptions {
+export interface WaitForServerOptions {
   host?: string;
   timeoutMs?: number;
   label: string;
   childProcess?: ChildProcess | null;
   getRecentOutput?: () => string;
 }
+
+type ServerProbe = (host: string, port: number) => Promise<void>;
 
 async function getAvailablePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -75,7 +77,25 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function waitForServer(port: number, options: WaitForServerOptions): Promise<void> {
+async function connectToServer(host: string, port: number): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const socket = net.connect(port, host, () => {
+      socket.end();
+      resolve();
+    });
+    socket.setTimeout(1000, () => {
+      socket.destroy();
+      reject(new Error(`Connection timed out to ${host}:${port}`));
+    });
+    socket.on("error", reject);
+  });
+}
+
+async function waitForServer(
+  port: number,
+  options: WaitForServerOptions,
+  probe: ServerProbe = connectToServer,
+): Promise<void> {
   const { host = "127.0.0.1", timeoutMs = 15000, label, childProcess, getRecentOutput } = options;
   const start = Date.now();
   let lastConnectionError: unknown = null;
@@ -89,17 +109,7 @@ async function waitForServer(port: number, options: WaitForServerOptions): Promi
     }
 
     try {
-      await new Promise<void>((resolve, reject) => {
-        const socket = net.connect(port, host, () => {
-          socket.end();
-          resolve();
-        });
-        socket.setTimeout(1000, () => {
-          socket.destroy();
-          reject(new Error(`Connection timed out to ${host}:${port}`));
-        });
-        socket.on("error", reject);
-      });
+      await probe(host, port);
       return;
     } catch (error) {
       lastConnectionError = error;
@@ -114,6 +124,22 @@ async function waitForServer(port: number, options: WaitForServerOptions): Promi
   throw new Error(
     `${label} did not start on ${host}:${port} within ${timeoutMs}ms.${reason}${formatRecentOutput(getRecentOutput)}`,
   );
+}
+
+async function probeMetro(host: string, port: number): Promise<void> {
+  const response = await fetch(`http://${host}:${port}/status`, {
+    signal: AbortSignal.timeout(1000),
+  });
+  const body = (await response.text()).trim();
+  if (response.status !== 200 || body !== "packager-status:running") {
+    throw new Error(
+      `Expected Metro status on ${host}:${port}, received HTTP ${response.status}: ${JSON.stringify(body.slice(0, 200))}`,
+    );
+  }
+}
+
+export async function waitForMetro(port: number, options: WaitForServerOptions): Promise<void> {
+  await waitForServer(port, options, probeMetro);
 }
 
 function parseRelayStartupFailure(line: string): string | null {
@@ -556,13 +582,19 @@ async function getAvailablePortExcluding(excludedPorts: Set<number>): Promise<nu
   }
 }
 
-async function startRelay(excludedPorts: Set<number>): Promise<number> {
+interface RelayPorts {
+  relayPort: number;
+  inspectorPort: number;
+}
+
+async function startRelay(excludedPorts: Set<number>): Promise<RelayPorts> {
   const relayDir = path.resolve(__dirname, "..", "..", "relay");
   const maxRelayStartupAttempts = 5;
   let lastRelayStartupError: unknown = null;
 
   for (let attempt = 1; attempt <= maxRelayStartupAttempts; attempt += 1) {
     const relayPort = await getAvailablePortExcluding(excludedPorts);
+    const inspectorPort = await getAvailablePortExcluding(new Set([...excludedPorts, relayPort]));
     const buffer = createLineBuffer();
     const state: RelayStreamState = { failureLine: null, readyForSelectedPort: false };
 
@@ -576,6 +608,10 @@ async function startRelay(excludedPorts: Set<number>): Promise<number> {
         "127.0.0.1",
         "--port",
         String(relayPort),
+        "--inspector-ip",
+        "127.0.0.1",
+        "--inspector-port",
+        String(inspectorPort),
         "--live-reload=false",
         "--show-interactive-dev-session=false",
       ],
@@ -590,7 +626,7 @@ async function startRelay(excludedPorts: Set<number>): Promise<number> {
 
     try {
       await awaitRelayReady(relayProcess, relayPort, state, buffer);
-      return relayPort;
+      return { relayPort, inspectorPort };
     } catch (error) {
       lastRelayStartupError = error;
       await stopProcess(relayProcess);
@@ -767,12 +803,19 @@ export default async function globalSetup() {
   await logSpeechHarnessConfig();
 
   try {
-    const relayPort = await startRelay(new Set([port, metroPort]));
     metroProcess = startMetro({
       metroPort,
       daemonPort: port,
       buffer: metroLineBuffer,
     });
+    await waitForMetro(metroPort, {
+      label: "Metro web server",
+      timeoutMs: 120000,
+      childProcess: metroProcess,
+      getRecentOutput: metroLineBuffer.dump,
+    });
+
+    const { relayPort, inspectorPort } = await startRelay(new Set([port, metroPort]));
     daemonProcess = startDaemon({
       port,
       relayPort,
@@ -783,19 +826,11 @@ export default async function globalSetup() {
       buffer: daemonLineBuffer,
     });
 
-    await Promise.all([
-      waitForServer(port, {
-        label: "Paseo daemon",
-        childProcess: daemonProcess,
-        getRecentOutput: daemonLineBuffer.dump,
-      }),
-      waitForServer(metroPort, {
-        label: "Metro web server",
-        timeoutMs: 120000,
-        childProcess: metroProcess,
-        getRecentOutput: metroLineBuffer.dump,
-      }),
-    ]);
+    await waitForServer(port, {
+      label: "Paseo daemon",
+      childProcess: daemonProcess,
+      getRecentOutput: daemonLineBuffer.dump,
+    });
 
     const offer = await waitForPairingOfferFromDaemon({
       port,
@@ -809,7 +844,7 @@ export default async function globalSetup() {
     process.env.E2E_PASEO_HOME = paseoHome;
     process.env.E2E_EDITOR_RECORD_PATH = editorRecordPath;
     console.log(
-      `[e2e] Test daemon started on port ${port}, Metro on port ${metroPort}, home: ${paseoHome}`,
+      `[e2e] Test daemon started on port ${port}, Metro on port ${metroPort}, relay on port ${relayPort}, relay inspector on port ${inspectorPort}, home: ${paseoHome}`,
     );
 
     return async () => {

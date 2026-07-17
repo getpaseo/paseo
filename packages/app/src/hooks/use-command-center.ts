@@ -5,7 +5,7 @@ import { useTranslation } from "react-i18next";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { keyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher";
 import { useAggregatedAgents, type AggregatedAgent } from "@/hooks/use-aggregated-agents";
-import { useOpenProjectPicker } from "@/hooks/use-open-project-picker";
+import { useOpenAddProject } from "@/hooks/use-open-add-project";
 import {
   clearCommandCenterFocusRestoreElement,
   takeCommandCenterFocusRestoreElement,
@@ -20,17 +20,24 @@ import { getIsElectronRuntime } from "@/constants/layout";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { focusWithRetries } from "@/utils/web-focus";
 import { isWeb } from "@/constants/platform";
+import { useProjects } from "@/hooks/use-projects";
+import { useHosts } from "@/runtime/host-runtime";
+import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
+import { formatTimeAgo } from "@/utils/time";
+import { shortenPath } from "@/utils/shorten-path";
 
-const EMPTY_AGENTS: AggregatedAgent[] = [];
 const EMPTY_ACTION_ITEMS: CommandCenterActionItem[] = [];
+const EMPTY_WORKSPACE_ITEMS: CommandCenterWorkspaceItem[] = [];
+const EMPTY_AGENT_ITEMS: CommandCenterAgentItem[] = [];
 const EMPTY_COMMAND_CENTER_ITEMS: CommandCenterItem[] = [];
 
-function isMatch(agent: AggregatedAgent, query: string): boolean {
-  if (!query) return true;
-  const q = query.toLowerCase();
-  const title = (agent.title ?? "New agent").toLowerCase();
-  const cwd = agent.cwd.toLowerCase();
-  return title.includes(q) || cwd.includes(q);
+function buildSearchText(...fields: string[]): string {
+  return fields.join(" ").toLowerCase();
+}
+
+function matchesQuery(searchText: string, query: string): boolean {
+  const normalized = query.trim().toLowerCase();
+  return !normalized || searchText.includes(normalized);
 }
 
 function sortAgents(left: AggregatedAgent, right: AggregatedAgent): number {
@@ -52,7 +59,7 @@ function sortAgents(left: AggregatedAgent, right: AggregatedAgent): number {
 interface CommandCenterActionDefinition {
   id: string;
   titleKey:
-    | "shell.commandCenter.openProject"
+    | "shell.commandCenter.addProject"
     | "shell.commandCenter.home"
     | "sidebar.actions.settings";
   icon?: "plus" | "settings" | "home";
@@ -64,7 +71,7 @@ interface CommandCenterActionDefinition {
 const COMMAND_CENTER_ACTIONS: readonly CommandCenterActionDefinition[] = [
   {
     id: "new-agent",
-    titleKey: "shell.commandCenter.openProject",
+    titleKey: "shell.commandCenter.addProject",
     icon: "plus",
     actionId: "new-agent",
     keywords: ["open", "project", "folder", "workspace", "repo"],
@@ -86,19 +93,6 @@ const COMMAND_CENTER_ACTIONS: readonly CommandCenterActionDefinition[] = [
   },
 ];
 
-function matchesActionQuery(
-  query: string,
-  action: CommandCenterActionDefinition,
-  title: string,
-): boolean {
-  const normalized = query.trim().toLowerCase();
-  if (!normalized) return true;
-  if (title.toLowerCase().includes(normalized)) {
-    return true;
-  }
-  return action.keywords.some((keyword) => keyword.includes(normalized));
-}
-
 export interface CommandCenterActionItem {
   kind: "action";
   id: string;
@@ -106,17 +100,30 @@ export interface CommandCenterActionItem {
   icon?: "plus" | "settings" | "home";
   route?: Href;
   shortcutKeys?: ShortcutKey[][];
+  searchText: string;
+}
+
+export interface CommandCenterWorkspaceItem {
+  kind: "workspace";
+  serverId: string;
+  workspaceId: string;
+  title: string;
+  subtitle: string;
+  searchText: string;
+}
+
+export interface CommandCenterAgentItem {
+  kind: "agent";
+  agent: AggregatedAgent;
+  title: string;
+  subtitle: string;
+  searchText: string;
 }
 
 export type CommandCenterItem =
-  | {
-      kind: "action";
-      action: CommandCenterActionItem;
-    }
-  | {
-      kind: "agent";
-      agent: AggregatedAgent;
-    };
+  | CommandCenterActionItem
+  | CommandCenterWorkspaceItem
+  | CommandCenterAgentItem;
 
 function resolveActionShortcutKeys(
   actionId: string | undefined,
@@ -139,6 +146,7 @@ export function useCommandCenter() {
   const { overrides } = useKeyboardShortcutOverrides();
   const open = useKeyboardShortcutsStore((s) => s.commandCenterOpen);
   const setOpen = useKeyboardShortcutsStore((s) => s.setCommandCenterOpen);
+  const openAddProject = useOpenAddProject();
   const inputRef = useRef<TextInput>(null);
   const didNavigateRef = useRef(false);
   const prevOpenRef = useRef(open);
@@ -150,15 +158,96 @@ export function useCommandCenter() {
   const [activeIndex, setActiveIndex] = useState(0);
 
   const { agents } = useAggregatedAgents();
+  const { projects } = useProjects({ enabled: open });
+  const hosts = useHosts();
+  const showAgentHost = hosts.length > 1;
+
+  const allWorkspaceItems = useMemo(() => {
+    const results: CommandCenterWorkspaceItem[] = [];
+    for (const project of projects) {
+      for (const host of project.hosts) {
+        for (const workspace of host.workspaces) {
+          if (workspace.archivingAt) continue;
+          const title = workspace.title ?? workspace.name;
+          const subtitle = workspace.currentBranch
+            ? `${host.serverName} · ${workspace.currentBranch}`
+            : host.serverName;
+          results.push({
+            kind: "workspace",
+            serverId: host.serverId,
+            workspaceId: workspace.id,
+            title,
+            subtitle,
+            searchText: buildSearchText(title, subtitle),
+          });
+        }
+      }
+    }
+    results.sort((left, right) => {
+      const titleDelta = left.title.localeCompare(right.title, undefined, {
+        numeric: true,
+        sensitivity: "base",
+      });
+      if (titleDelta !== 0) return titleDelta;
+      const hostDelta = left.subtitle.localeCompare(right.subtitle, undefined, {
+        numeric: true,
+        sensitivity: "base",
+      });
+      if (hostDelta !== 0) return hostDelta;
+      return `${left.serverId}:${left.workspaceId}`.localeCompare(
+        `${right.serverId}:${right.workspaceId}`,
+      );
+    });
+    return results;
+  }, [projects]);
+
+  const workspaceTitleByKey = useMemo(
+    () =>
+      new Map(
+        allWorkspaceItems.map((workspace) => [
+          `${workspace.serverId}:${workspace.workspaceId}`,
+          workspace.title,
+        ]),
+      ),
+    [allWorkspaceItems],
+  );
+
+  const workspaceResults = useMemo(() => {
+    if (!open || allWorkspaceItems.length === 0) {
+      return EMPTY_WORKSPACE_ITEMS;
+    }
+    return allWorkspaceItems.filter((workspace) => matchesQuery(workspace.searchText, query));
+  }, [allWorkspaceItems, open, query]);
 
   const agentResults = useMemo(() => {
     if (!open || agents.length === 0) {
-      return EMPTY_AGENTS;
+      return EMPTY_AGENT_ITEMS;
     }
-    const filtered = agents.filter((agent) => isMatch(agent, query));
-    filtered.sort(sortAgents);
+    const items = agents.map<CommandCenterAgentItem>((agent) => {
+      const title = agent.title || t("shell.commandCenter.newAgent");
+      const workspaceTitle = agent.workspaceId
+        ? workspaceTitleByKey.get(`${agent.serverId}:${agent.workspaceId}`)
+        : undefined;
+      const location = workspaceTitle ?? shortenPath(agent.cwd);
+      const subtitle = [
+        showAgentHost ? agent.serverLabel : null,
+        location,
+        formatTimeAgo(agent.lastActivityAt),
+      ]
+        .filter((part): part is string => Boolean(part))
+        .join(" · ");
+      return {
+        kind: "agent",
+        agent,
+        title,
+        subtitle,
+        searchText: buildSearchText(title, subtitle, agent.cwd),
+      };
+    });
+    const filtered = items.filter((item) => matchesQuery(item.searchText, query));
+    filtered.sort((left, right) => sortAgents(left.agent, right.agent));
     return filtered;
-  }, [agents, open, query]);
+  }, [agents, open, query, showAgentHost, t, workspaceTitleByKey]);
 
   const settingsRoute = useMemo<Href>(() => {
     return buildSettingsRoute();
@@ -170,43 +259,33 @@ export function useCommandCenter() {
     if (!open) {
       return EMPTY_ACTION_ITEMS;
     }
-    return COMMAND_CENTER_ACTIONS.filter((action) => {
-      if (action.routeKind === "home" && !homeRoute) return false;
-      return matchesActionQuery(query, action, t(action.titleKey));
-    }).map<CommandCenterActionItem>((action) => {
-      let route: Href | undefined;
-      if (action.routeKind === "settings") route = settingsRoute;
-      else if (action.routeKind === "home") route = homeRoute;
-      return {
-        kind: "action",
-        id: action.id,
-        title: t(action.titleKey),
-        icon: action.icon,
-        route,
-        shortcutKeys: resolveActionShortcutKeys(action.actionId, overrides),
-      };
-    });
+    return COMMAND_CENTER_ACTIONS.filter(
+      (action) => action.routeKind !== "home" || Boolean(homeRoute),
+    )
+      .map<CommandCenterActionItem>((action) => {
+        let route: Href | undefined;
+        if (action.routeKind === "settings") route = settingsRoute;
+        else if (action.routeKind === "home") route = homeRoute;
+        const title = t(action.titleKey);
+        return {
+          kind: "action",
+          id: action.id,
+          title,
+          icon: action.icon,
+          route,
+          shortcutKeys: resolveActionShortcutKeys(action.actionId, overrides),
+          searchText: buildSearchText(title, ...action.keywords),
+        };
+      })
+      .filter((action) => matchesQuery(action.searchText, query));
   }, [open, query, settingsRoute, homeRoute, overrides, t]);
 
   const items = useMemo(() => {
     if (!open) {
       return EMPTY_COMMAND_CENTER_ITEMS;
     }
-    const next: CommandCenterItem[] = [];
-    for (const action of actionItems) {
-      next.push({
-        kind: "action",
-        action,
-      });
-    }
-    for (const agent of agentResults) {
-      next.push({
-        kind: "agent",
-        agent,
-      });
-    }
-    return next;
-  }, [actionItems, agentResults, open]);
+    return [...actionItems, ...workspaceResults, ...agentResults];
+  }, [actionItems, workspaceResults, agentResults, open]);
 
   const handleClose = useCallback(() => {
     setOpen(false);
@@ -227,14 +306,25 @@ export function useCommandCenter() {
     [setOpen],
   );
 
-  const openProjectPicker = useOpenProjectPicker();
+  const handleSelectWorkspace = useCallback(
+    (workspace: CommandCenterWorkspaceItem) => {
+      didNavigateRef.current = true;
+      clearCommandCenterFocusRestoreElement();
+      setOpen(false);
+      navigateToWorkspace({
+        serverId: workspace.serverId,
+        workspaceId: workspace.workspaceId,
+      });
+    },
+    [setOpen],
+  );
 
   const handleSelectAction = useCallback(
     (action: CommandCenterActionItem) => {
       clearCommandCenterFocusRestoreElement();
       setOpen(false);
       if (action.id === "new-agent") {
-        void openProjectPicker();
+        openAddProject();
         return;
       }
       if (!action.route) {
@@ -243,18 +333,22 @@ export function useCommandCenter() {
       didNavigateRef.current = true;
       router.push(action.route);
     },
-    [openProjectPicker, setOpen],
+    [openAddProject, setOpen],
   );
 
   const handleSelectItem = useCallback(
     (item: CommandCenterItem) => {
       if (item.kind === "action") {
-        handleSelectAction(item.action);
+        handleSelectAction(item);
+        return;
+      }
+      if (item.kind === "workspace") {
+        handleSelectWorkspace(item);
         return;
       }
       handleSelectAgent(item.agent);
     },
-    [handleSelectAction, handleSelectAgent],
+    [handleSelectAction, handleSelectAgent, handleSelectWorkspace],
   );
 
   useEffect(() => {

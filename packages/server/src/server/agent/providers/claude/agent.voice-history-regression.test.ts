@@ -139,7 +139,11 @@ describe("ClaudeAgentSession history replay regression", () => {
                 type: "tool_use",
                 id: "history-task-call",
                 name: "Agent",
-                input: { description: "Inspect persisted history" },
+                input: {
+                  name: "history_researcher",
+                  subagent_type: "Explore",
+                  description: "Inspect persisted history",
+                },
               },
             ],
           },
@@ -302,6 +306,16 @@ describe("ClaudeAgentSession history replay regression", () => {
         },
         timestamp: "2026-07-12T10:00:01.000Z",
       },
+    });
+    expect(historyEvents).toContainEqual({
+      type: "provider_subagent",
+      provider: "claude",
+      event: expect.objectContaining({
+        type: "upsert",
+        id: "history-task-call",
+        title: "history_researcher",
+        status: "running",
+      }),
     });
     expect(historyEvents).toContainEqual({
       type: "provider_subagent",
