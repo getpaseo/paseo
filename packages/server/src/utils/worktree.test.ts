@@ -22,6 +22,7 @@ import {
 } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
+import { createRealpathAwarePathMatcher } from "./path";
 
 interface LegacyCreateWorktreeTestOptions {
   branchName: string;
@@ -122,12 +123,13 @@ describe("paseo worktree manager", () => {
       paseoHome,
     });
 
-    await expect(
-      resolvePaseoWorktreeRootForCwd(created.worktreePath, { paseoHome }),
-    ).resolves.toMatchObject({
-      repoRoot: repoDir,
-      worktreePath: created.worktreePath,
-    });
+    const resolved = await resolvePaseoWorktreeRootForCwd(created.worktreePath, { paseoHome });
+
+    expect(resolved).not.toBeNull();
+    expect(createRealpathAwarePathMatcher(repoDir)(resolved?.repoRoot ?? "")).toBe(true);
+    expect(createRealpathAwarePathMatcher(created.worktreePath)(resolved?.worktreePath ?? "")).toBe(
+      true,
+    );
   });
 
   it("maps only root-contained workspace paths into a replacement worktree", () => {

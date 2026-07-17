@@ -6,6 +6,7 @@ import pino, { type Logger } from "pino";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import type { ForgeService } from "../services/forge-service.js";
+import { createRealpathAwarePathMatcher } from "../utils/path.js";
 import { createWorktree, type WorktreeConfig } from "../utils/worktree.js";
 import type { ManagedAgent } from "./agent/agent-manager.js";
 import type { AgentStorage, StoredAgentRecord } from "./agent/agent-storage.js";
@@ -379,7 +380,11 @@ describe("archiveByScope", () => {
       removedDirectory: true,
     });
     expect(existsSync(worktree.worktreePath)).toBe(false);
-    expect(readFileSync(path.join(repoDir, "nested-teardown.log"), "utf8")).toBe(workspaceCwd);
+    expect(
+      createRealpathAwarePathMatcher(workspaceCwd)(
+        readFileSync(path.join(repoDir, "nested-teardown.log"), "utf8"),
+      ),
+    ).toBe(true);
   });
 
   test("worktree scope archives root and subdirectory workspaces before removing the backing worktree", async () => {

@@ -35,7 +35,12 @@ import { resolvePaseoHome } from "../server/paseo-home.js";
 import { createExternalProcessEnv } from "../server/paseo-env.js";
 import { parseGitRevParsePath, resolveGitRevParsePath } from "./git-rev-parse-path.js";
 import { validateBranchSlug } from "@getpaseo/protocol/branch-slug";
-import { expandTilde, getRealpathAwareRelativePath, isPathInsideRoot } from "./path.js";
+import {
+  createRealpathAwarePathMatcher,
+  expandTilde,
+  getRealpathAwareRelativePath,
+  isPathInsideRoot,
+} from "./path.js";
 
 export { slugify, validateBranchSlug } from "@getpaseo/protocol/branch-slug";
 
@@ -1095,7 +1100,8 @@ export async function resolvePaseoWorktreeRootForCwd(
     paseoHome: options?.paseoHome,
     worktreesRoot: options?.worktreesRoot,
   });
-  const match = knownWorktrees.find((entry) => entry.path === resolvedWorktreeRoot);
+  const matchesWorktreeRoot = createRealpathAwarePathMatcher(resolvedWorktreeRoot);
+  const match = knownWorktrees.find((entry) => matchesWorktreeRoot(entry.path));
   if (!match) {
     return null;
   }
