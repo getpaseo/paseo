@@ -1,5 +1,7 @@
-import type { WorkspaceGitService } from "./workspace-git-service.js";
+import { stat } from "node:fs/promises";
 import { resolve } from "node:path";
+
+import type { WorkspaceGitService } from "./workspace-git-service.js";
 import { getRealpathAwareRelativePath } from "../utils/path.js";
 import type { PersistedWorkspaceRecord } from "./workspace-registry.js";
 import type { WorkspaceProvisioningService } from "./session/workspace-provisioning/workspace-provisioning-service.js";
@@ -10,6 +12,7 @@ import {
 } from "./worktree-core.js";
 import {
   mapWorkspaceRelativeCwdToWorktree,
+  deletePaseoWorktree,
   validateBranchSlug,
   type WorktreeConfig,
 } from "../utils/worktree.js";
@@ -66,6 +69,17 @@ export async function createPaseoWorktree(
     relativeWorkspaceCwd: workspaceCwdPlan.relativeWorkspaceCwd,
     targetWorktreePath: createdWorktree.worktree.worktreePath,
   });
+  if (!(await isDirectory(workspaceCwd))) {
+    if (createdWorktree.created) {
+      await deletePaseoWorktree({
+        cwd: createdWorktree.repoRoot,
+        worktreePath: createdWorktree.worktree.worktreePath,
+        paseoHome: input.paseoHome,
+        worktreesBaseRoot: input.worktreesRoot,
+      });
+    }
+    throw new Error(`Selected project directory is missing from the worktree: ${workspaceCwd}`);
+  }
   const workspace = await deps.workspaceProvisioning.createWorkspaceForWorktree({
     sourceCwd: workspaceCwdPlan.inputCwd,
     projectId: input.projectId,
@@ -86,6 +100,14 @@ export async function createPaseoWorktree(
     repoRoot: createdWorktree.repoRoot,
     created: createdWorktree.created,
   };
+}
+
+async function isDirectory(targetPath: string): Promise<boolean> {
+  try {
+    return (await stat(targetPath)).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 async function planWorkspaceCwdForWorktree(

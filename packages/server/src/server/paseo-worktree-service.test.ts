@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
@@ -20,9 +20,8 @@ import {
   type CreatePaseoWorktreeDeps,
 } from "./paseo-worktree-service.js";
 import { readPaseoWorktreeMetadata } from "../utils/worktree-metadata.js";
-import { createWorktree } from "../utils/worktree.js";
+import { createWorktree, getPaseoWorktreesRoot } from "../utils/worktree.js";
 import { isPlatform } from "../test-utils/platform.js";
-import { existsSync } from "node:fs";
 import { areEquivalentPaths, createRealpathAwarePathMatcher } from "../utils/path.js";
 
 const cleanupPaths: string[] = [];
@@ -160,6 +159,7 @@ test("uses an equivalent source workspace path when creating a worktree", async 
   const sourceDir = path.join(repoDir, "app");
   mkdirSync(sourceDir);
   writeFileSync(path.join(repoDir, "app", ".gitkeep"), "");
+  commitAll(repoDir, "add app");
   const deps = createDeps();
   const sourceProject = createPersistedProjectRecordForTest({
     projectId: "prj_source-folder",
@@ -194,6 +194,8 @@ test("creates a worktree workspace at the selected project subdirectory", async 
   cleanupPaths.push(tempDir);
   const sourceDir = path.join(repoDir, "packages", "app");
   mkdirSync(sourceDir, { recursive: true });
+  writeFileSync(path.join(sourceDir, "package.json"), "{}\n");
+  commitAll(repoDir, "add subproject");
   const deps = createDeps();
   const project = createPersistedProjectRecordForTest({
     projectId: "prj_selected-subdirectory",
@@ -221,10 +223,52 @@ test("creates a worktree workspace at the selected project subdirectory", async 
   });
 });
 
+test("removes a new worktree when its ref does not contain the selected project directory", async () => {
+  const { repoDir, tempDir } = createGitRepo();
+  cleanupPaths.push(tempDir);
+  execFileSync("git", ["branch", "without-subproject"], { cwd: repoDir, stdio: "pipe" });
+  const sourceDir = path.join(repoDir, "packages", "app");
+  mkdirSync(sourceDir, { recursive: true });
+  writeFileSync(path.join(sourceDir, "package.json"), "{}\n");
+  commitAll(repoDir, "add subproject");
+  const deps = createDeps();
+  const paseoHome = path.join(tempDir, ".paseo");
+  const worktreePath = path.join(
+    await getPaseoWorktreesRoot(repoDir, paseoHome),
+    "missing-subproject",
+  );
+
+  await expect(
+    createPaseoWorktree(
+      {
+        cwd: sourceDir,
+        action: "checkout",
+        refName: "without-subproject",
+        worktreeSlug: "missing-subproject",
+        runSetup: false,
+        paseoHome,
+      },
+      deps,
+    ),
+  ).rejects.toThrow("Selected project directory is missing from the worktree");
+
+  expect(deps.workspaces.size).toBe(0);
+  expect(existsSync(worktreePath)).toBe(false);
+  expect(
+    execFileSync("git", ["worktree", "list", "--porcelain"], { cwd: repoDir, stdio: "pipe" })
+      .toString()
+      .includes("missing-subproject"),
+  ).toBe(false);
+});
+
 test("maps a nested cwd from an existing Paseo worktree into the next worktree", async () => {
   const { repoDir, tempDir } = createGitRepo();
   cleanupPaths.push(tempDir);
   const paseoHome = path.join(tempDir, ".paseo");
+  const projectDir = path.join(repoDir, "packages", "app");
+  mkdirSync(projectDir, { recursive: true });
+  writeFileSync(path.join(projectDir, "package.json"), "{}\n");
+  commitAll(repoDir, "add subproject");
   const deps = createDeps();
   const source = await createPaseoWorktree(
     {
@@ -236,7 +280,6 @@ test("maps a nested cwd from an existing Paseo worktree into the next worktree",
     deps,
   );
   const sourceCwd = path.join(source.worktree.worktreePath, "packages", "app");
-  mkdirSync(sourceCwd, { recursive: true });
 
   const created = await createPaseoWorktree(
     {
@@ -1177,6 +1220,11 @@ function createGitRepo(): { tempDir: string; repoDir: string } {
   execFileSync("git", ["commit", "-m", "init"], { cwd: repoDir, stdio: "pipe" });
   execFileSync("git", ["branch", "-M", "main"], { cwd: repoDir, stdio: "pipe" });
   return { tempDir, repoDir };
+}
+
+function commitAll(repoDir: string, message: string): void {
+  execFileSync("git", ["add", "."], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["commit", "-m", message], { cwd: repoDir, stdio: "pipe" });
 }
 
 function createGitHubPrRemoteRepo(): { tempDir: string; repoDir: string } {

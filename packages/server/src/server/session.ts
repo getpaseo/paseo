@@ -3966,7 +3966,7 @@ export class Session {
       projectCustomName: projectRecord?.customName ?? null,
       projectRootPath: projectRecord?.rootPath ?? result.repoRoot,
       workspaceDirectory: result.workspace.cwd,
-      projectKind: "git",
+      projectKind: projectRecord?.kind ?? "git",
       workspaceKind: result.workspace.kind,
       name: resolveWorkspaceName({
         title: result.workspace.title,
