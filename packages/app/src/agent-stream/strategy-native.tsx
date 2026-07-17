@@ -1,6 +1,7 @@
 import React, {
   Fragment,
   type ReactElement,
+  type RefObject,
   useCallback,
   useEffect,
   useMemo,
@@ -25,7 +26,34 @@ import {
   createStreamStrategy,
   isNearBottomForStreamRenderStrategy,
   resolveBottomAnchorTransportBehavior,
+  TIMELINE_SEARCH_SCROLL_CENTER_FRACTION,
 } from "./strategy";
+
+/**
+ * Wraps FlatList#scrollToIndex with a try/catch — RN can throw synchronously
+ * for an index outside the currently measured range. Shared by the direct
+ * scrollToItem call below and by the async onScrollToIndexFailed retry,
+ * which is otherwise the one call site in this file that previously had no
+ * guard and could crash if the rows shrank between the failure callback
+ * firing and the retry running.
+ */
+function tryScrollToIndex(
+  flatListRef: RefObject<FlatList<StreamItem> | null>,
+  index: number,
+  animated: boolean,
+): void {
+  try {
+    flatListRef.current?.scrollToIndex({
+      index,
+      animated,
+      viewPosition: TIMELINE_SEARCH_SCROLL_CENTER_FRACTION,
+    });
+  } catch {
+    // Swallow synchronous out-of-range errors. If this call IS itself the
+    // onScrollToIndexFailed retry, there's nothing further to recover with —
+    // RN will fire onScrollToIndexFailed again if it detects another one.
+  }
+}
 
 const DEFAULT_MAINTAIN_VISIBLE_CONTENT_POSITION = Object.freeze({
   minIndexForVisible: 0,
@@ -89,6 +117,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   });
   const scrollOffsetYRef = useRef(0);
   const programmaticScrollEventBudgetRef = useRef(0);
+  const scrollToIndexRecoveryFrameRef = useRef<number | null>(null);
   const [isNativeViewportSettling, setIsNativeViewportSettling] = useState(false);
   const nativeViewportSettlingFrameIdRef = useRef<number | null>(null);
   const historyStartReadyRef = useRef(false);
@@ -257,14 +286,13 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       scrollToItem: (itemId) => {
         const index = historyRowsRef.current.findIndex((row) => row.id === itemId);
         if (index === -1) {
+          // Not reachable in the virtualized FlatList `data` — e.g. a row
+          // that's still only in the live head. Unlike web's DOM-wide
+          // querySelector fallback, native has no way to scroll to a row
+          // that isn't part of the list's own index space.
           return false;
         }
-        try {
-          flatListRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.5 });
-        } catch {
-          // Swallow synchronous out-of-range errors; onScrollToIndexFailed
-          // below retries via an estimated offset for the async case.
-        }
+        tryScrollToIndex(flatListRef, index, true);
         return true;
       },
       scrollBy: (deltaY) => {
@@ -284,17 +312,26 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
 
   const handleScrollToIndexFailed = useStableEvent(
     (info: { index: number; highestMeasuredFrameIndex: number; averageItemLength: number }) => {
+      if (scrollToIndexRecoveryFrameRef.current !== null) {
+        cancelAnimationFrame(scrollToIndexRecoveryFrameRef.current);
+      }
       const estimatedOffset = info.averageItemLength * info.index;
       flatListRef.current?.scrollToOffset({ offset: estimatedOffset, animated: false });
-      requestAnimationFrame(() => {
-        flatListRef.current?.scrollToIndex({
-          index: info.index,
-          animated: true,
-          viewPosition: 0.5,
-        });
+      scrollToIndexRecoveryFrameRef.current = requestAnimationFrame(() => {
+        scrollToIndexRecoveryFrameRef.current = null;
+        tryScrollToIndex(flatListRef, info.index, true);
       });
     },
   );
+
+  useEffect(() => {
+    return () => {
+      if (scrollToIndexRecoveryFrameRef.current !== null) {
+        cancelAnimationFrame(scrollToIndexRecoveryFrameRef.current);
+        scrollToIndexRecoveryFrameRef.current = null;
+      }
+    };
+  }, []);
 
   const handleScroll = useStableEvent((event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;

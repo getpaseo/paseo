@@ -17,6 +17,7 @@ function makeMatch(id: string): TimelineSearchMatch {
   return {
     item,
     field: "text",
+    fieldOffset: 0,
     snippet: id,
     snippetMatchOffset: 0,
     snippetMatchLength: id.length,
@@ -232,5 +233,42 @@ describe("useTimelineSearchScroll", () => {
     });
 
     expect(viewportRef.current.scrollToItem).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not re-fire when isLiveHeadItem/findGroupIdForItem/isGroupExpanded/expandGroup get fresh closures on every render without navigation (the scroll-hijack regression)", () => {
+    const viewportRef = { current: makeViewportHandle() };
+
+    // Simulates view.tsx: these are recreated on every ~48ms stream flush
+    // and every unrelated tool-call-group toggle, but their *results* for
+    // this item/group don't change between renders.
+    const { rerender } = renderHook(
+      (props: { renderCount: number }) =>
+        useTimelineSearchScroll({
+          isOpen: true,
+          matches: [makeMatch("message-1")],
+          selectedIndex: 0,
+          navigationRevision: 1,
+          isLiveHeadItem: (id) => id === `never-${props.renderCount}`,
+          findGroupIdForItem: () => null,
+          isGroupExpanded: () => false,
+          expandGroup: vi.fn(),
+          viewportRef,
+          requestFrame: syncRequestFrame,
+          cancelFrame: noopCancelFrame,
+        }),
+      { initialProps: { renderCount: 0 } },
+    );
+
+    expect(viewportRef.current.scrollToItem).toHaveBeenCalledTimes(1);
+
+    // Re-render several times with brand-new closures (a different
+    // renderCount forces new function identities) and no navigation change.
+    for (let renderCount = 1; renderCount <= 5; renderCount++) {
+      act(() => {
+        rerender({ renderCount });
+      });
+    }
+
+    expect(viewportRef.current.scrollToItem).toHaveBeenCalledTimes(1);
   });
 });

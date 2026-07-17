@@ -65,7 +65,11 @@ import {
 import { OverviewToolCallGroupView } from "@/tool-calls/detail-level/overview/view";
 import { type AgentStreamRenderModel, buildAgentStreamRenderModel } from "./model";
 import { resolveStreamRenderStrategy } from "./strategy-resolver";
-import { type StreamSegmentRenderers, type StreamViewportHandle } from "./strategy";
+import {
+  TIMELINE_SEARCH_SCROLL_CENTER_FRACTION,
+  type StreamSegmentRenderers,
+  type StreamViewportHandle,
+} from "./strategy";
 import {
   CompletedTurnFooterRow,
   TurnFooter,
@@ -124,12 +128,18 @@ import { useWorkspaceDraftSubmissionStore } from "@/stores/workspace-draft-submi
 function TimelineSearchProviders({
   highlight,
   target,
+  occurrenceTarget,
   scrollBy,
   targetCenterY,
   children,
 }: {
   highlight: TimelineHighlightState;
+  /** Ungated — reaches group-level scroll (the coarse chain's own next
+   * stage) and highlighting immediately, without waiting on itself. */
   target: TimelineSearchTarget | null;
+  /** Gated to the coarse-settled navigationRevision — see
+   * `timelineSearchCoarseSettledRevision` at the call site. */
+  occurrenceTarget: TimelineSearchTarget | null;
   scrollBy: (deltaY: number) => void;
   targetCenterY: number;
   children: ReactNode;
@@ -138,7 +148,7 @@ function TimelineSearchProviders({
     <TimelineHighlightProvider value={highlight}>
       <TimelineSearchTargetProvider value={target}>
         <TimelineSearchOccurrenceAnchorProvider
-          target={target}
+          target={occurrenceTarget}
           scrollBy={scrollBy}
           targetCenterY={targetCenterY}
         >
@@ -607,12 +617,23 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
 
     // --- Timeline search (Ctrl/Cmd+F find panel) ---
     const paneFindKey = usePaneFindKey();
-    const timelineSearchItems = useMemo(
+    // Item count without materializing the combined array — computed on
+    // every render (cheap, two `.length` reads) purely to drive the paging
+    // hook's fruitless-load detection below.
+    const timelineSearchItemCount =
+      effectiveStreamItems.length + (effectiveStreamHead?.length ?? 0);
+    // The actual concatenation is lazy: `getItems` is only invoked from
+    // inside the model when a caller (refresh() below) actually asks for
+    // items, not on every ~48ms stream flush regardless of whether the find
+    // panel is even open (useTimelineSearchModel reads this closure through
+    // a ref, so a fresh one every render is cheap and doesn't reset search
+    // state).
+    const getTimelineSearchItems = useCallback(
       () => [...effectiveStreamItems, ...(effectiveStreamHead ?? EMPTY_STREAM_HEAD)],
       [effectiveStreamItems, effectiveStreamHead],
     );
     const { state: timelineSearchState, model: timelineSearchModel } = useTimelineSearchModel(
-      useCallback(() => timelineSearchItems, [timelineSearchItems]),
+      getTimelineSearchItems,
       // Scope search state (and its persistence) per server+agent: the same
       // agent id can exist on multiple hosts, so keying by agentId alone would
       // leak one host's query/filter into another's identically-named agent.
@@ -625,9 +646,9 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       // Re-run only when the underlying item list actually changes (new stream
       // content), not on every render of this component.
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [timelineSearchItems, timelineSearchState.isOpen]);
+    }, [effectiveStreamItems, effectiveStreamHead, timelineSearchState.isOpen]);
     // Complete-history search: as the find panel pages older history in, each
-    // loaded page grows `timelineSearchItems`, which re-runs the refresh() effect
+    // loaded page grows the timeline, which re-runs the refresh() effect
     // above so matches accumulate. `isPaging` gates the panel's "searching
     // history" pending state; `historyLoadFailed` surfaces a stalled loop (see
     // the hook for the paging + failure-stop logic).
@@ -637,9 +658,29 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         query: timelineSearchState.query,
         hasOlder,
         isLoadingOlder,
-        itemCount: timelineSearchItems.length,
+        itemCount: timelineSearchItemCount,
         loadOlder,
+        // Inactive retained panels freeze effectiveStreamItems, so itemCount
+        // stops growing even though loadOlder still lands pages — pause the
+        // loop rather than let it count those loads as fruitless and stall.
+        isFrozen: !isActive,
       });
+    // Read through a ref inside the adapter below so `getState()` always
+    // reports the latest paging state without forcing the adapter's own
+    // identity (and thus its `subscribe`) to churn on every paging flip.
+    const isTimelineSearchPagingRef = useRef(isTimelineSearchPaging);
+    isTimelineSearchPagingRef.current = isTimelineSearchPaging;
+    // Listeners registered through the adapter's `subscribe` below, notified
+    // whenever `isTimelineSearchPaging` changes so an already-subscribed
+    // pane-find consumer's useSyncExternalStore snapshot picks up a paging
+    // flip (the model's own subscribe doesn't fire for this — it's driven by
+    // a separate hook).
+    const timelineSearchPagingListenersRef = useRef(new Set<() => void>());
+    useEffect(() => {
+      for (const listener of timelineSearchPagingListenersRef.current) {
+        listener();
+      }
+    }, [isTimelineSearchPaging]);
     // The rich filtered timeline panel is this pane's find UI (hasCustomUI),
     // registered so `workspace.find.open` (Ctrl/Cmd+F) routes here through
     // the shared pane-find registry instead of a bespoke per-pane handler.
@@ -651,12 +692,24 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           return {
             isOpen: modelState.isOpen,
             query: modelState.query,
-            isPending: false,
+            isPending: isTimelineSearchPagingRef.current,
             matchCount: modelState.matches.length,
             selectedIndex: modelState.selectedIndex,
           };
         },
-        subscribe: timelineSearchModel.subscribe,
+        // The model's own subscribe only notifies on query/filter/matches
+        // changes — `isPending` is driven by a separate hook, so also notify
+        // pane-find listeners whenever the ref above is updated (the effect
+        // below), or a paging flip would never reach an already-subscribed
+        // consumer's useSyncExternalStore snapshot.
+        subscribe: (listener) => {
+          const unsubscribeModel = timelineSearchModel.subscribe(listener);
+          timelineSearchPagingListenersRef.current.add(listener);
+          return () => {
+            unsubscribeModel();
+            timelineSearchPagingListenersRef.current.delete(listener);
+          };
+        },
         open: timelineSearchModel.open,
         close: timelineSearchModel.close,
         setQuery: timelineSearchModel.setQuery,
@@ -783,7 +836,11 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       (groupId: string) => setToolCallGroupExpanded(groupId, true),
       [setToolCallGroupExpanded],
     );
-    useTimelineSearchScroll({
+    // The navigationRevision the coarse stage (row scroll / group expand /
+    // group offset scroll) has actually finished issuing a scroll for —
+    // gates the occurrence-anchor fine correction below so it never races
+    // ahead of the coarse scroll it's relative to.
+    const timelineSearchCoarseSettledRevision = useTimelineSearchScroll({
       isOpen: timelineSearchState.isOpen,
       matches: timelineSearchState.matches,
       selectedIndex: timelineSearchState.selectedIndex,
@@ -977,6 +1034,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
                 message={item.message}
                 timestamp={item.timestamp.getTime()}
                 metadata={item.metadata}
+                streamItemId={item.id}
               />
             );
 
@@ -1172,14 +1230,28 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       (deltaY: number) => viewportRef.current?.scrollBy(deltaY),
       [],
     );
+    // Chain the fine occurrence correction behind the coarse stage: only
+    // hand the occurrence-anchor provider a real target once the coarse
+    // scroll (row scroll → group expand → group offset scroll) has actually
+    // been issued for this navigationRevision. Before that, it stays null —
+    // the provider's own effect no-ops on a null target, so this never
+    // fights the coarse scroll it depends on for a correct starting
+    // position.
+    const isTimelineSearchCoarseSettled =
+      timelineSearchCoarseSettledRevision === timelineSearchState.navigationRevision;
+    const timelineSearchOccurrenceTarget = useMemo(
+      () => (isTimelineSearchCoarseSettled ? timelineSearchTarget : null),
+      [isTimelineSearchCoarseSettled, timelineSearchTarget],
+    );
 
     return (
       <ToolCallSheetProvider>
         <TimelineSearchProviders
           highlight={timelineHighlight}
           target={timelineSearchTarget}
+          occurrenceTarget={timelineSearchOccurrenceTarget}
           scrollBy={scrollTimelineSearchAnchorBy}
-          targetCenterY={windowHeight * 0.6}
+          targetCenterY={windowHeight * TIMELINE_SEARCH_SCROLL_CENTER_FRACTION}
         >
           <View style={stylesheet.container}>
             {timelineSearchState.isOpen && (

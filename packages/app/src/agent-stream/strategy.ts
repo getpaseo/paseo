@@ -146,6 +146,17 @@ interface StreamStrategyConfig {
 
 const NATIVE_SETTLING_VERIFICATION_DELAY_FRAMES = 4;
 
+/**
+ * Fraction of the viewport height used to vertically center a timeline-
+ * search scroll target. Shared by the coarse row-centering stage
+ * (`viewPosition` passed to FlatList#scrollToIndex in strategy-native's
+ * scrollToItem) and the fine occurrence-anchor correction stage
+ * (`targetCenterY` computed in agent-stream/view.tsx and consumed by
+ * timeline-search/occurrence-anchor.tsx) so both stages agree on where
+ * "centered" means instead of fighting each other with different targets.
+ */
+export const TIMELINE_SEARCH_SCROLL_CENTER_FRACTION = 0.5;
+
 export function createStreamStrategy(config: StreamStrategyConfig): StreamStrategy {
   return {
     render: config.render,

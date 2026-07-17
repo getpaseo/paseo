@@ -3,7 +3,19 @@ import type { TimelineSearchTarget } from "./search-target";
 
 export interface TimelineSearchOccurrenceAnchor {
   key: string;
-  /** Exact spans win over containing-block fallbacks for the same occurrence. */
+  /**
+   * Exact spans win over containing-block fallbacks for the same occurrence.
+   * When more than one anchor is registered under the same key, the
+   * controller tries them in descending priority order: if the current
+   * highest-priority anchor's `measure` doesn't call back within one extra
+   * frame — native `measureInWindow` crosses the RN bridge asynchronously
+   * and can silently never report (a stale ref, an unmounted node, or a
+   * consumer's own `?.()` optional call swallowing a missing method) — the
+   * controller falls back to the next-priority anchor instead of leaving the
+   * viewport permanently uncorrected. Register a coarser containing-block
+   * anchor at a lower priority alongside a precise per-span one to get this
+   * degradation path for free.
+   */
   priority?: number;
   /** Measures the anchor in window coordinates, after layout has settled. */
   measure: (report: (centerY: number) => void) => void;
@@ -60,45 +72,50 @@ export function createTimelineSearchOccurrenceAnchorController(
   const cancelFrame = input.cancelFrame ?? cancelAnimationFrame;
   const anchors = new Map<string, Map<symbol, TimelineSearchOccurrenceAnchor>>();
   let target: TimelineSearchTarget | null = null;
-  let frame: number | null = null;
+  let pendingFrames: number[] = [];
   let centeredRevisionKey: string | null = null;
 
-  const getAnchor = (key: string): TimelineSearchOccurrenceAnchor | undefined => {
+  // Highest priority first, so a precise per-span anchor is always tried
+  // before a coarser containing-block fallback registered under the same
+  // key.
+  const getAnchorCandidates = (key: string): TimelineSearchOccurrenceAnchor[] => {
     const anchorsForKey = anchors.get(key);
-    if (!anchorsForKey) return undefined;
-    let selected: TimelineSearchOccurrenceAnchor | undefined;
-    for (const candidate of anchorsForKey.values()) {
-      if (!selected || (candidate.priority ?? 0) > (selected.priority ?? 0)) {
-        selected = candidate;
-      }
-    }
-    return selected;
+    if (!anchorsForKey) return [];
+    return [...anchorsForKey.values()].sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
   };
 
-  const cancelPendingFrame = () => {
-    if (frame !== null) {
-      cancelFrame(frame);
-      frame = null;
+  const cancelPendingFrames = () => {
+    for (const handle of pendingFrames) {
+      cancelFrame(handle);
     }
+    pendingFrames = [];
   };
 
-  const scheduleMeasurement = () => {
-    cancelPendingFrame();
-    if (!target) return;
-    const revisionKey = getTargetRevisionKey(target);
-    if (centeredRevisionKey === revisionKey) return;
-    const anchorKey = getTimelineSearchOccurrenceAnchorKey(target);
-    const anchor = getAnchor(anchorKey);
+  const scheduleFrame = (callback: () => void): void => {
+    pendingFrames.push(requestFrame(callback));
+  };
+
+  /**
+   * Tries the highest-priority remaining candidate for this occurrence. If
+   * it hasn't reported within one extra frame after measuring, falls back to
+   * the next-priority candidate — see the `priority` doc comment above for
+   * why a `measure` callback can silently never report.
+   */
+  const attemptMeasurement = (
+    candidates: readonly TimelineSearchOccurrenceAnchor[],
+    candidateIndex: number,
+    revisionKey: string,
+  ): void => {
+    const anchor = candidates[candidateIndex];
     if (!anchor) return;
 
-    frame = requestFrame(() => {
-      frame = requestFrame(() => {
-        frame = null;
+    scheduleFrame(() => {
+      scheduleFrame(() => {
         if (!target || getTargetRevisionKey(target) !== revisionKey) return;
-        const currentAnchor = getAnchor(anchorKey);
-        if (!currentAnchor) return;
-        currentAnchor.measure((anchorCenterY) => {
-          if (!target || getTargetRevisionKey(target) !== revisionKey) return;
+        let reported = false;
+        anchor.measure((anchorCenterY) => {
+          if (reported || !target || getTargetRevisionKey(target) !== revisionKey) return;
+          reported = true;
           const deltaY = getTimelineSearchOccurrenceScrollDelta(
             anchorCenterY,
             input.getTargetCenterY(),
@@ -106,14 +123,39 @@ export function createTimelineSearchOccurrenceAnchorController(
           centeredRevisionKey = revisionKey;
           if (deltaY !== 0) input.scrollBy(deltaY);
         });
+        scheduleFrame(() => {
+          if (reported) return;
+          if (!target || getTargetRevisionKey(target) !== revisionKey) return;
+          attemptMeasurement(candidates, candidateIndex + 1, revisionKey);
+        });
       });
     });
   };
 
+  const scheduleMeasurement = () => {
+    cancelPendingFrames();
+    if (!target) return;
+    const revisionKey = getTargetRevisionKey(target);
+    if (centeredRevisionKey === revisionKey) return;
+    const anchorKey = getTimelineSearchOccurrenceAnchorKey(target);
+    const candidates = getAnchorCandidates(anchorKey);
+    if (candidates.length === 0) return;
+    attemptMeasurement(candidates, 0, revisionKey);
+  };
+
   return {
     setTarget(nextTarget) {
+      const nextRevisionKey = nextTarget ? getTargetRevisionKey(nextTarget) : null;
+      const previousRevisionKey = target ? getTargetRevisionKey(target) : null;
       target = nextTarget;
-      centeredRevisionKey = null;
+      // Only reset once the occurrence/revision actually changes — a caller
+      // re-supplying an equivalent target (e.g. a stream flush re-render
+      // that hands the provider a new-but-equal target object) must not
+      // force a redundant re-measure/re-scroll of an already-centered
+      // occurrence.
+      if (nextRevisionKey !== previousRevisionKey) {
+        centeredRevisionKey = null;
+      }
       scheduleMeasurement();
     },
     register(anchor) {
@@ -133,7 +175,7 @@ export function createTimelineSearchOccurrenceAnchorController(
       };
     },
     dispose() {
-      cancelPendingFrame();
+      cancelPendingFrames();
       anchors.clear();
       target = null;
     },

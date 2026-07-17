@@ -10,6 +10,7 @@ function makeTarget(overrides: Partial<TimelineSearchTarget> = {}): TimelineSear
   return {
     itemId: "message-1",
     field: "text",
+    fieldOffset: 12,
     matchOffset: 12,
     matchLength: 3,
     navigationRevision: 1,
@@ -131,5 +132,66 @@ describe("timeline search occurrence anchor controller", () => {
   it("does not move the viewport when the anchor is already centred", () => {
     expect(getTimelineSearchOccurrenceScrollDelta(416, 400)).toBe(0);
     expect(getTimelineSearchOccurrenceScrollDelta(425, 400)).toBe(25);
+  });
+
+  it("does not re-measure when setTarget is called again with an equivalent target for the same revision (e.g. a stream flush re-render)", () => {
+    const frames = createFrames();
+    const scrollBy = vi.fn();
+    const controller = createTimelineSearchOccurrenceAnchorController({
+      scrollBy,
+      getTargetCenterY: () => 400,
+      requestFrame: frames.requestFrame,
+      cancelFrame: frames.cancelFrame,
+    });
+    const target = makeTarget();
+    controller.register({
+      key: getTimelineSearchOccurrenceAnchorKey(target),
+      measure: (report) => report(700),
+    });
+    controller.setTarget(target);
+    frames.flushOne();
+    frames.flushOne();
+    expect(scrollBy).toHaveBeenCalledTimes(1);
+
+    // A stream flush that re-renders the provider hands the controller a
+    // new-but-equal target object (same occurrence, same navigationRevision)
+    // — this must not schedule another measurement or scroll.
+    controller.setTarget({ ...target });
+    expect(frames.size).toBe(0);
+    expect(scrollBy).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to the next-priority anchor when the highest-priority one never reports", () => {
+    const frames = createFrames();
+    const scrollBy = vi.fn();
+    const controller = createTimelineSearchOccurrenceAnchorController({
+      scrollBy,
+      getTargetCenterY: () => 400,
+      requestFrame: frames.requestFrame,
+      cancelFrame: frames.cancelFrame,
+    });
+    const target = makeTarget();
+    // The exact-span anchor never calls `report` — simulating a native
+    // measureInWindow that silently fails (stale ref / unmounted node / a
+    // consumer's own `?.()` swallowing a missing method).
+    controller.register({
+      key: getTimelineSearchOccurrenceAnchorKey(target),
+      priority: 2,
+      measure: () => {},
+    });
+    controller.register({
+      key: getTimelineSearchOccurrenceAnchorKey(target),
+      priority: 1,
+      measure: (report) => report(700),
+    });
+    controller.setTarget(target);
+
+    frames.flushOne(); // first double-rAF frame for the priority-2 anchor
+    frames.flushOne(); // second double-rAF frame — calls measure(), no report
+    expect(scrollBy).not.toHaveBeenCalled();
+    frames.flushOne(); // degrade-timeout frame — falls back to priority-1
+    frames.flushOne(); // first double-rAF frame for the priority-1 anchor
+    frames.flushOne(); // second double-rAF frame — calls measure(), reports
+    expect(scrollBy).toHaveBeenCalledWith(300);
   });
 });
