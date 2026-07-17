@@ -1,8 +1,18 @@
 import type { TurnTiming } from "@/timeline/turn-time";
-import type { StreamItem } from "@/types/stream";
+import { isAgentToolCallItem, type StreamItem } from "@/types/stream";
 
+/** Speak tool calls render as transcript outcomes (SpeakMessage), not collapsible work traces. */
 export function isTurnTraceStreamItem(item: StreamItem): boolean {
-  return item.kind === "tool_call" || item.kind === "thought" || item.kind === "todo_list";
+  if (item.kind === "thought" || item.kind === "todo_list") {
+    return true;
+  }
+  if (item.kind !== "tool_call") {
+    return false;
+  }
+  if (isAgentToolCallItem(item) && item.payload.data.name === "speak") {
+    return false;
+  }
+  return true;
 }
 
 export interface TurnWorkTraceBundle {
@@ -19,6 +29,7 @@ export interface TurnWorkTraceLayout {
   bundlesByTurnKey: Map<string, TurnWorkTraceBundle>;
   traceItemIdToTurnKey: Map<string, string>;
   userMessageIdToBundle: Map<string, TurnWorkTraceBundle>;
+  assistantMessageIdToBundle: Map<string, TurnWorkTraceBundle>;
 }
 
 function computeTurnTiming(startedAt: Date, items: StreamItem[]): TurnTiming | null {
@@ -45,6 +56,7 @@ export function deriveTurnWorkTraceLayout(input: {
   const bundlesByTurnKey = new Map<string, TurnWorkTraceBundle>();
   const traceItemIdToTurnKey = new Map<string, string>();
   const userMessageIdToBundle = new Map<string, TurnWorkTraceBundle>();
+  const assistantMessageIdToBundle = new Map<string, TurnWorkTraceBundle>();
 
   let currentUser: Extract<StreamItem, { kind: "user_message" }> | null = null;
   let currentTurnItems: StreamItem[] = [];
@@ -108,12 +120,16 @@ export function deriveTurnWorkTraceLayout(input: {
     for (const traceId of traceIds) {
       traceItemIdToTurnKey.set(traceId, user.id);
     }
+    for (const assistantId of assistantIds) {
+      assistantMessageIdToBundle.set(assistantId, bundle);
+    }
   }
 
   return {
     bundlesByTurnKey,
     traceItemIdToTurnKey,
     userMessageIdToBundle,
+    assistantMessageIdToBundle,
   };
 }
 
@@ -128,7 +144,7 @@ export function shouldHideCompletedTurnTraceFromMainList(input: {
     return false;
   }
   const bundle = input.bundlesByTurnKey.get(turnKey);
-  if (!bundle || !bundle.hasTrace || bundle.isInFlight) {
+  if (!bundle || bundle.isInFlight) {
     return false;
   }
   return true;
@@ -148,61 +164,25 @@ export function shouldShowTurnWorkTracesHeader(input: {
 export function completedTurnFooterShowsTimestampOnly(input: {
   assistantMessageId: string;
   bundlesByTurnKey: Map<string, TurnWorkTraceBundle>;
+  assistantMessageIdToBundle?: Map<string, TurnWorkTraceBundle>;
 }): boolean {
-  for (const bundle of input.bundlesByTurnKey.values()) {
-    if (!bundle.hasTrace || bundle.isInFlight) {
-      continue;
-    }
-    if (bundle.assistantMessageIds.has(input.assistantMessageId)) {
-      return true;
-    }
+  const bundle =
+    input.assistantMessageIdToBundle?.get(input.assistantMessageId) ??
+    findBundleForAssistant(input.assistantMessageId, input.bundlesByTurnKey);
+  if (!bundle || !bundle.hasTrace || bundle.isInFlight) {
+    return false;
   }
-  return false;
+  return true;
 }
 
-export interface StreamRenderRow {
-  key: string;
-  kind: "stream_item" | "turn_work_traces_header";
-  streamItem?: StreamItem;
-  turnKey?: string;
-}
-
-export function buildStreamRenderRows(input: {
-  items: StreamItem[];
-  agentStatus: string;
-}): StreamRenderRow[] {
-  const layout = deriveTurnWorkTraceLayout({
-    items: input.items,
-    agentStatus: input.agentStatus,
-  });
-  const rows: StreamRenderRow[] = [];
-
-  for (const item of input.items) {
-    if (
-      shouldHideCompletedTurnTraceFromMainList({
-        itemId: item.id,
-        traceItemIdToTurnKey: layout.traceItemIdToTurnKey,
-        bundlesByTurnKey: layout.bundlesByTurnKey,
-      })
-    ) {
-      continue;
+function findBundleForAssistant(
+  assistantMessageId: string,
+  bundlesByTurnKey: Map<string, TurnWorkTraceBundle>,
+): TurnWorkTraceBundle | undefined {
+  for (const bundle of bundlesByTurnKey.values()) {
+    if (bundle.assistantMessageIds.has(assistantMessageId)) {
+      return bundle;
     }
-
-    if (item.kind === "user_message") {
-      rows.push({ key: item.id, kind: "stream_item", streamItem: item });
-      const bundle = layout.userMessageIdToBundle.get(item.id);
-      if (shouldShowTurnWorkTracesHeader({ bundle })) {
-        rows.push({
-          key: `work-traces:${item.id}`,
-          kind: "turn_work_traces_header",
-          turnKey: item.id,
-        });
-      }
-      continue;
-    }
-
-    rows.push({ key: item.id, kind: "stream_item", streamItem: item });
   }
-
-  return rows;
+  return undefined;
 }

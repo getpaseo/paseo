@@ -39,6 +39,7 @@ export const TurnWorkTracesHeader = memo(function TurnWorkTracesHeader({
       }),
     [durationLabel, t],
   );
+  const accessibilityState = useMemo(() => ({ expanded: isExpanded }), [isExpanded]);
 
   const Chevron = isExpanded ? ThemedChevronDown : ThemedChevronRight;
 
@@ -46,7 +47,7 @@ export const TurnWorkTracesHeader = memo(function TurnWorkTracesHeader({
     <Pressable
       onPress={onToggle}
       accessibilityRole="button"
-      accessibilityState={{ expanded: isExpanded }}
+      accessibilityState={accessibilityState}
       accessibilityLabel={accessibilityLabel}
       testID="turn-work-traces-header"
     >
