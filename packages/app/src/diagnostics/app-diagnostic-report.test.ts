@@ -79,6 +79,7 @@ describe("app diagnostics report", () => {
         ["relay:relay.secret.test:443", { status: "available", latencyMs: 8 }],
       ]),
       clientGeneration: 1,
+      connectionEpoch: 1,
     };
 
     const report = formatHostRuntimeSection({ host, snapshot });

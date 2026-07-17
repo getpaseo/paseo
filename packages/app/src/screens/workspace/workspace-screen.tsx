@@ -2766,7 +2766,7 @@ function WorkspaceScreenContent({
         // dropped against the stale cursor.
         const sessionState = useSessionStore.getState().sessions[normalizedServerId];
         const currentCursor = sessionState?.agentTimelineCursor.get(agentId);
-        await client.fetchAgentTimeline(agentId, {
+        await getHostRuntimeStore().fetchAgentTimeline(normalizedServerId, agentId, {
           direction: "tail",
           projection: "projected",
           ...(currentCursor

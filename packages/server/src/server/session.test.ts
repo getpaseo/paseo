@@ -4721,6 +4721,58 @@ test("unions viewed timelines across socket sources and removes detached sources
   ).toEqual(["agent-b"]);
 });
 
+test("keeps selective delivery scoped per socket when a retained session also has a legacy socket", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const targetedMessages: Array<{ source: object; message: SessionOutboundMessage }> = [];
+  const agentEventListeners: Array<(event: AgentManagerEvent) => void> = [];
+  const session = createSessionForTest({
+    messages,
+    targetedMessages,
+    agentManager: {
+      subscribe: vi.fn((listener: (event: AgentManagerEvent) => void) => {
+        agentEventListeners.push(listener);
+        return () => {};
+      }),
+    },
+  });
+  const legacySocket = {};
+  const selectiveSocket = {};
+  session.updateClientCapabilities(null, legacySocket);
+  session.updateClientCapabilities({ selective_agent_timeline: true }, selectiveSocket);
+  await session.handleMessage(
+    {
+      type: "agent.timeline.set_subscription.request",
+      agentIds: ["viewed-agent"],
+      requestId: "timeline-subscription-selective",
+    },
+    selectiveSocket,
+  );
+  targetedMessages.length = 0;
+
+  const listener = agentEventListeners[0];
+  if (!listener) throw new Error("Agent event listener was not installed");
+  listener({
+    type: "agent_stream",
+    agentId: "not-viewed-agent",
+    event: {
+      type: "timeline",
+      provider: "mock",
+      item: { type: "assistant_message", messageId: "message-global", text: "global" },
+    },
+  });
+
+  expect(messages).toEqual([]);
+  expect(targetedMessages).toEqual([
+    {
+      source: legacySocket,
+      message: expect.objectContaining({
+        type: "agent_stream",
+        payload: expect.objectContaining({ agentId: "not-viewed-agent" }),
+      }),
+    },
+  ]);
+});
+
 describe("agent config setters", () => {
   test("set_agent_mode_request: success emits accepted response carrying the notice", async () => {
     const messages: SessionOutboundMessage[] = [];

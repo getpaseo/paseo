@@ -7,11 +7,7 @@ import { useSessionStore } from "@/stores/session-store";
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { isAgentArchiving, setAgentArchiving } from "@/hooks/use-archive-agent";
 import { queryClient } from "@/data/query-client";
-import {
-  applyAgentDirectoryDelta,
-  replaceFetchedAgentDirectory,
-  shouldApplyTimelineAgentSnapshot,
-} from "./agent-directory-sync";
+import { applyAgentDirectoryDelta, replaceFetchedAgentDirectory } from "./agent-directory-sync";
 
 function createAgentPayload(
   input: Partial<Omit<AgentSnapshotPayload, "labels">> & {
@@ -158,7 +154,6 @@ describe("replaceFetchedAgentDirectory", () => {
       cursor: session?.agentTimelineCursor.has(agentId),
       permissions: session?.pendingPermissions.size,
       initializing: session?.initializingAgents.has(agentId),
-      acceptsStaleTimelineSnapshot: shouldApplyTimelineAgentSnapshot(serverId, agentId),
       archivePending: isAgentArchiving({ queryClient, serverId, agentId }),
     }).toEqual({
       agents: false,
@@ -167,7 +162,6 @@ describe("replaceFetchedAgentDirectory", () => {
       cursor: false,
       permissions: 0,
       initializing: false,
-      acceptsStaleTimelineSnapshot: false,
       archivePending: false,
     });
 

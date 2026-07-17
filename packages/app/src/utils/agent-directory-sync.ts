@@ -6,6 +6,9 @@ import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { clearArchiveAgentPending } from "@/hooks/use-archive-agent";
 import { queryClient } from "@/data/query-client";
 import { acceptAgentDirectoryUpdate } from "@/utils/agent-directory-update-policy";
+import { buildDraftStoreKey } from "@/stores/draft-keys";
+import { useDraftStore } from "@/stores/draft-store";
+import { getInitDeferred, getInitKey, rejectInitDeferred } from "@/utils/agent-initialization";
 
 type AgentDirectoryFetchEntry = FetchAgentsEntry;
 export type AgentDirectoryDelta = Extract<
@@ -22,11 +25,6 @@ export function applyAgentDirectoryDelta(input: { serverId: string; delta: Agent
     return { agentId: input.delta.agentId, stoppedRunning: false };
   }
   return upsertAgentDirectoryReplica(input.serverId, input.delta);
-}
-
-export function shouldApplyTimelineAgentSnapshot(serverId: string, agentId: string): boolean {
-  const session = useSessionStore.getState().sessions[serverId];
-  return session?.agents.has(agentId) === true || session?.initializingAgents.get(agentId) === true;
 }
 
 type AgentUpsertDelta = Extract<AgentDirectoryDelta, { kind: "upsert" }>;
@@ -65,7 +63,7 @@ function upsertAgentDirectoryReplica(
   };
 }
 
-function upsertAgentReplica(serverId: string, agent: Agent): Agent {
+export function upsertAgentReplica(serverId: string, agent: Agent): Agent {
   let acceptedAgent = agent;
   useSessionStore.getState().setAgents(serverId, (current) => {
     const currentAgent = current.get(agent.id);
@@ -78,7 +76,7 @@ function upsertAgentReplica(serverId: string, agent: Agent): Agent {
   return acceptedAgent;
 }
 
-function replaceAgentPendingPermissions(serverId: string, agent: Agent): void {
+export function replaceAgentPendingPermissions(serverId: string, agent: Agent): void {
   const pendingPermissions = new Map(
     useSessionStore.getState().sessions[serverId]?.pendingPermissions,
   );
@@ -92,7 +90,7 @@ function replaceAgentPendingPermissions(serverId: string, agent: Agent): void {
   useSessionStore.getState().setPendingPermissions(serverId, pendingPermissions);
 }
 
-function removeAgentDirectoryReplica(serverId: string, agentId: string): void {
+export function removeAgentDirectoryReplica(serverId: string, agentId: string): void {
   const store = useSessionStore.getState();
   clearArchiveAgentPending({ queryClient, serverId, agentId });
   const removeKey = <T>(current: Map<string, T>): Map<string, T> => {
@@ -114,6 +112,21 @@ function removeAgentDirectoryReplica(serverId: string, agentId: string): void {
     return next.size === current.size ? current : next;
   });
   store.setAgentAuthoritativeHistoryApplied(serverId, agentId, false);
+  store.setAgentStreamTail(serverId, removeKey);
+  store.clearAgentStreamHead(serverId, agentId);
+  useSessionStore.setState((state) => {
+    if (!state.agentLastActivity.has(agentId)) return state;
+    const agentLastActivity = new Map(state.agentLastActivity);
+    agentLastActivity.delete(agentId);
+    return { ...state, agentLastActivity };
+  });
+  useDraftStore.getState().clearDraftInput({
+    draftKey: buildDraftStoreKey({ serverId, agentId }),
+  });
+  const initKey = getInitKey(serverId, agentId);
+  if (getInitDeferred(initKey)) {
+    rejectInitDeferred(initKey, new Error("Agent was removed during initialization"));
+  }
 }
 
 interface PendingPermissionEntry {

@@ -255,7 +255,9 @@ export function stampLegacyWorkspaceIds(entries: FetchAgentsEntry[]): FetchAgent
   });
 }
 
-function buildLegacyWorkspaces(entries: FetchAgentsEntry[]): Map<string, WorkspaceDescriptor> {
+export function buildLegacyWorkspaces(
+  entries: FetchAgentsEntry[],
+): Map<string, WorkspaceDescriptor> {
   const workspaces = new Map<string, WorkspaceDescriptor>();
   for (const entry of entries) {
     const workspaceId = entry.agent.workspaceId ?? resolveLegacyWorkspaceId(entry);

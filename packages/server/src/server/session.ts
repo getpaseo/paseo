@@ -1019,6 +1019,61 @@ export class Session {
     return true;
   }
 
+  private forwardAgentStream(
+    event: Extract<AgentManagerEvent, { type: "agent_stream" }>,
+    serializedEvent: Extract<SessionOutboundMessage, { type: "agent_stream" }>["payload"]["event"],
+  ): void {
+    if (this.selectiveTimelineCapabilityBySource.size === 0 || !this.onMessageToSource) {
+      if (this.usesSelectiveTimelineDelivery() && serializedEvent.type === "attention_required") {
+        this.emit({
+          type: "agent_attention_required",
+          payload: {
+            agentId: event.agentId,
+            reason: serializedEvent.reason,
+            timestamp: serializedEvent.timestamp,
+            shouldNotify: serializedEvent.shouldNotify,
+            ...(serializedEvent.notification ? { notification: serializedEvent.notification } : {}),
+          },
+        });
+      } else if (
+        !this.usesSelectiveTimelineDelivery() ||
+        this.viewedTimelineAgentIds.has(event.agentId)
+      ) {
+        this.emit({
+          type: "agent_stream",
+          payload: this.buildAgentStreamPayload(event, serializedEvent),
+        });
+      }
+      return;
+    }
+
+    for (const [source, supportsSelectiveDelivery] of this.selectiveTimelineCapabilityBySource) {
+      if (supportsSelectiveDelivery && serializedEvent.type === "attention_required") {
+        this.onMessageToSource(source, {
+          type: "agent_attention_required",
+          payload: {
+            agentId: event.agentId,
+            reason: serializedEvent.reason,
+            timestamp: serializedEvent.timestamp,
+            shouldNotify: serializedEvent.shouldNotify,
+            ...(serializedEvent.notification ? { notification: serializedEvent.notification } : {}),
+          },
+        });
+        continue;
+      }
+      if (
+        supportsSelectiveDelivery &&
+        !this.viewedTimelineAgentIdsBySource.get(source)?.has(event.agentId)
+      ) {
+        continue;
+      }
+      this.onMessageToSource(source, {
+        type: "agent_stream",
+        payload: this.buildAgentStreamPayload(event, serializedEvent),
+      });
+    }
+  }
+
   supports(capability: ClientCapability): boolean {
     return this.clientCapabilities.has(capability);
   }
@@ -1340,28 +1395,7 @@ export class Session {
           "agent.session.forward_stream",
         );
 
-        if (this.usesSelectiveTimelineDelivery() && serializedEvent.type === "attention_required") {
-          this.emit({
-            type: "agent_attention_required",
-            payload: {
-              agentId: event.agentId,
-              reason: serializedEvent.reason,
-              timestamp: serializedEvent.timestamp,
-              shouldNotify: serializedEvent.shouldNotify,
-              ...(serializedEvent.notification
-                ? { notification: serializedEvent.notification }
-                : {}),
-            },
-          });
-        } else if (
-          !this.usesSelectiveTimelineDelivery() ||
-          this.viewedTimelineAgentIds.has(event.agentId)
-        ) {
-          this.emit({
-            type: "agent_stream",
-            payload: this.buildAgentStreamPayload(event, serializedEvent),
-          });
-        }
+        this.forwardAgentStream(event, serializedEvent);
 
         if (event.event.type === "permission_requested") {
           this.emit({

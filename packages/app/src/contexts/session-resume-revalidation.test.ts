@@ -12,14 +12,11 @@ describe("session resume revalidation", () => {
       awayMs: SESSION_STALE_AFTER_MS,
       serverId: "server",
       bumpHistorySyncGeneration: (serverId) => calls.push(`history:${serverId}`),
-      refreshAgentDirectory: async () => calls.push("agents"),
-      hydrateWorkspaces: async () => {
-        calls.push("workspaces");
-      },
+      refreshDirectories: async () => calls.push("directories"),
     });
 
     expect(revalidated).toBe(true);
-    expect(calls).toEqual(["history:server", "agents", "workspaces"]);
+    expect(calls).toEqual(["history:server", "directories"]);
   });
 
   it("does nothing after a brief background interval", async () => {
@@ -29,10 +26,7 @@ describe("session resume revalidation", () => {
       awayMs: SESSION_STALE_AFTER_MS - 1,
       serverId: "server",
       bumpHistorySyncGeneration: () => calls.push("history"),
-      refreshAgentDirectory: async () => calls.push("agents"),
-      hydrateWorkspaces: async () => {
-        calls.push("workspaces");
-      },
+      refreshDirectories: async () => calls.push("directories"),
     });
 
     expect(revalidated).toBe(false);

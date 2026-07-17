@@ -35,6 +35,7 @@ class FakeDaemonClient {
   > = [];
   public sentAgentMessages: Array<Parameters<DaemonClient["sendAgentMessage"]>> = [];
   public sendAgentMessageFailures: Error[] = [];
+  public sendAgentMessageResponses: Promise<void>[] = [];
   private agentUpdateListeners = new Set<
     (message: Extract<SessionOutboundMessage, { type: "agent_update" }>) => void
   >();
@@ -81,6 +82,8 @@ class FakeDaemonClient {
   async sendAgentMessage(...args: Parameters<DaemonClient["sendAgentMessage"]>): Promise<void> {
     this.sentAgentMessages.push(args);
     for (const waiter of this.sentMessageWaiters) waiter();
+    const response = this.sendAgentMessageResponses.shift();
+    if (response) await response;
     const failure = this.sendAgentMessageFailures.shift();
     if (failure) throw failure;
   }
@@ -630,7 +633,6 @@ describe("HostRuntimeController", () => {
     });
 
     await controller.start({ autoProbe: false });
-
     const snapshot = controller.getSnapshot();
     expect(snapshot.activeConnectionId).toBe("direct:lan:6767");
     expect(snapshot.connectionStatus).toBe("online");
@@ -1111,6 +1113,7 @@ describe("HostRuntimeController", () => {
     });
 
     await controller.start({ autoProbe: false });
+    const firstEpoch = controller.getSnapshot().connectionEpoch;
     controller.markAgentDirectorySyncReady();
     expect(controller.getSnapshot().agentDirectoryStatus).toBe("ready");
     expect(controller.getSnapshot().hasEverLoadedAgentDirectory).toBe(true);
@@ -1125,6 +1128,7 @@ describe("HostRuntimeController", () => {
     clients[0]?.setConnectionState({ status: "connected" });
     expect(controller.getSnapshot().connectionStatus).toBe("online");
     expect(controller.getSnapshot().agentDirectoryStatus).toBe("ready");
+    expect(controller.getSnapshot().connectionEpoch).toBe(firstEpoch + 1);
   });
 
   it("stores directory sync errors as non-blocking after a successful directory load", async () => {
@@ -1577,7 +1581,10 @@ describe("HostRuntimeStore", () => {
   });
 
   it("drains legacy snapshot and buffered running transitions exactly once", async () => {
-    const host = makeHost({ serverId: "srv_legacy_transitions" });
+    const host = makeHost({
+      serverId: "srv_legacy_transitions",
+      connections: [{ id: "direct:lan:6767", type: "directTcp", endpoint: "lan:6767" }],
+    });
     const fakeClient = new FakeDaemonClient();
     fakeClient.setConnectionState({ status: "connected" });
     const pageTwo = new Deferred<Awaited<ReturnType<DaemonClient["fetchAgents"]>>>();
@@ -1757,7 +1764,10 @@ describe("HostRuntimeStore", () => {
   });
 
   it("replays agent updates received while a later bootstrap page is loading", async () => {
-    const host = makeHost({ serverId: "srv_paged_delta" });
+    const host = makeHost({
+      serverId: "srv_paged_delta",
+      connections: [{ id: "direct:lan:6767", type: "directTcp", endpoint: "lan:6767" }],
+    });
     const fakeClient = new FakeDaemonClient();
     fakeClient.setConnectionState({ status: "connected" });
     let finishPageTwo!: (payload: Awaited<ReturnType<DaemonClient["fetchAgents"]>>) => void;
@@ -1909,7 +1919,10 @@ describe("HostRuntimeStore", () => {
   });
 
   it("rejects a superseded refresh without overwriting the newer replica", async () => {
-    const host = makeHost({ serverId: "srv_overlap" });
+    const host = makeHost({
+      serverId: "srv_overlap",
+      connections: [{ id: "direct:lan:6767", type: "directTcp", endpoint: "lan:6767" }],
+    });
     const fakeClient = new FakeDaemonClient();
     fakeClient.setConnectionState({ status: "connected" });
     fakeClient.fetchAgentsResponses.push(makeFetchAgentsPayload({ entries: [] }));
@@ -1974,7 +1987,10 @@ describe("HostRuntimeStore", () => {
   });
 
   it("replays inherited deltas when a superseding refresh fails", async () => {
-    const host = makeHost({ serverId: "srv_overlap_failure" });
+    const host = makeHost({
+      serverId: "srv_overlap_failure",
+      connections: [{ id: "direct:lan:6767", type: "directTcp", endpoint: "lan:6767" }],
+    });
     const fakeClient = new FakeDaemonClient();
     fakeClient.setConnectionState({ status: "connected" });
     fakeClient.fetchAgentsResponses.push(makeFetchAgentsPayload({ entries: [] }));
@@ -2026,7 +2042,10 @@ describe("HostRuntimeStore", () => {
   });
 
   it("rejects a refresh when the session generation changes before commit", async () => {
-    const host = makeHost({ serverId: "srv_stale_generation" });
+    const host = makeHost({
+      serverId: "srv_stale_generation",
+      connections: [{ id: "direct:lan:6767", type: "directTcp", endpoint: "lan:6767" }],
+    });
     const fakeClient = new FakeDaemonClient();
     fakeClient.setConnectionState({ status: "connected" });
     const existingEntry = makeFetchAgentsEntry({
@@ -2079,7 +2098,10 @@ describe("HostRuntimeStore", () => {
   });
 
   it("drains queued messages once for snapshot and buffered running transitions", async () => {
-    const host = makeHost({ serverId: "srv_queued_transitions" });
+    const host = makeHost({
+      serverId: "srv_queued_transitions",
+      connections: [{ id: "direct:lan:6767", type: "directTcp", endpoint: "lan:6767" }],
+    });
     const fakeClient = new FakeDaemonClient();
     fakeClient.setConnectionState({ status: "connected" });
     const pageTwo = new Deferred<Awaited<ReturnType<DaemonClient["fetchAgents"]>>>();
@@ -2211,6 +2233,43 @@ describe("HostRuntimeStore", () => {
     useSessionStore.getState().clearSession(host.serverId);
   });
 
+  it("serializes queued-message drains for the same agent", async () => {
+    const host = makeHost({ serverId: "srv_serialized_queue_drain" });
+    const fakeClient = new FakeDaemonClient();
+    const send = new Deferred<void>();
+    fakeClient.sendAgentMessageResponses.push(send.promise);
+    const store = new HostRuntimeStore({
+      deps: {
+        createClient: () => fakeClient as unknown as DaemonClient,
+        connectToDaemon: async () => ({
+          client: fakeClient as unknown as DaemonClient,
+          serverId: host.serverId,
+          hostname: null,
+        }),
+        getClientId: async () => "cid_serialized_queue_drain",
+      },
+    });
+    const sessionStore = useSessionStore.getState();
+    sessionStore.initializeSession(host.serverId, fakeClient as unknown as DaemonClient, 1);
+    sessionStore.setQueuedMessages(
+      host.serverId,
+      new Map([["agent", [{ id: "first", text: "send once", attachments: [] }]]]),
+    );
+
+    store.drainQueuedAgentMessage(host.serverId, "agent");
+    store.drainQueuedAgentMessage(host.serverId, "agent");
+    await fakeClient.waitForSentMessages(1);
+    expect(fakeClient.sentAgentMessages).toHaveLength(1);
+
+    send.resolve();
+    await vi.waitFor(() => {
+      expect(
+        useSessionStore.getState().sessions[host.serverId]?.queuedMessages.get("agent"),
+      ).toEqual([]);
+    });
+    useSessionStore.getState().clearSession(host.serverId);
+  });
+
   it("uses legacy GitHub attachments when draining a queue for an old daemon", async () => {
     const host = makeHost({ serverId: "srv_legacy_queue_attachment" });
     const fakeClient = new FakeDaemonClient();
@@ -2283,7 +2342,10 @@ describe("HostRuntimeStore", () => {
   });
 
   it("applies buffered stale side effects from the accepted page agent", async () => {
-    const host = makeHost({ serverId: "srv_buffered_stale_side_effects" });
+    const host = makeHost({
+      serverId: "srv_buffered_stale_side_effects",
+      connections: [{ id: "direct:lan:6767", type: "directTcp", endpoint: "lan:6767" }],
+    });
     const fakeClient = new FakeDaemonClient();
     fakeClient.setConnectionState({ status: "connected" });
     const pageTwo = new Deferred<Awaited<ReturnType<DaemonClient["fetchAgents"]>>>();

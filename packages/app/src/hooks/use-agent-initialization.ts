@@ -10,7 +10,7 @@ import {
   rejectInitDeferred,
   refreshInitTimeout,
 } from "@/utils/agent-initialization";
-import { fetchAgentTimelineOnce } from "@/timeline/fetch-agent-timeline-once";
+import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { planInitialAgentTimelineSync, planTimelineTailFetch } from "@/timeline/timeline-sync-plan";
 import { i18n } from "@/i18n/i18next";
 
@@ -69,10 +69,12 @@ export function ensureAgentIsInitialized(input: EnsureAgentIsInitializedInput): 
     return deferred.promise;
   }
 
-  fetchAgentTimelineOnce(client, agentId, timelineRequest).catch((error) => {
-    setAgentInitializing(agentId, false);
-    rejectInitDeferred(key, error instanceof Error ? error : new Error(String(error)));
-  });
+  getHostRuntimeStore()
+    .fetchAgentTimeline(serverId, agentId, timelineRequest)
+    .catch((error) => {
+      setAgentInitializing(agentId, false);
+      rejectInitDeferred(key, error instanceof Error ? error : new Error(String(error)));
+    });
 
   return deferred.promise;
 }
@@ -93,7 +95,11 @@ export async function refreshAgent(input: RefreshAgentInput): Promise<void> {
 
   try {
     await client.refreshAgent(agentId);
-    await client.fetchAgentTimeline(agentId, planTimelineTailFetch());
+    const serverId = Object.entries(useSessionStore.getState().sessions).find(
+      ([, session]) => session.client === client,
+    )?.[0];
+    if (!serverId) throw new Error("Agent session is no longer connected");
+    await getHostRuntimeStore().fetchAgentTimeline(serverId, agentId, planTimelineTailFetch());
   } catch (error) {
     setAgentInitializing(agentId, false);
     throw error;
