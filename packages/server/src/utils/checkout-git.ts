@@ -1,6 +1,6 @@
-import { resolve, dirname, basename } from "path";
+import { resolve, dirname, basename, relative, sep } from "path";
 import { existsSync, realpathSync } from "fs";
-import { open as openFile, readFile, stat as statFile } from "fs/promises";
+import { open as openFile, readFile, readdir, stat as statFile } from "fs/promises";
 import { TTLCache } from "@isaacs/ttlcache";
 import type { CheckoutCommit, CheckoutCommitFile } from "@getpaseo/protocol/messages";
 import type { Logger } from "pino";
@@ -52,6 +52,25 @@ const DEFAULT_PULL_REQUEST_STATUS_CACHE_TTL_MS = 30_000;
 const PULL_REQUEST_STATUS_CACHE_MAX = 1_000;
 const DEFAULT_SHORTSTAT_CACHE_TTL_MS = 15_000;
 const SHORTSTAT_CACHE_MAX = 1_000;
+const NESTED_GIT_REPO_ROOT_CACHE_TTL_MS = 15_000;
+const NESTED_GIT_REPO_ROOT_CACHE_MAX = 256;
+const NESTED_GIT_REPO_SEARCH_MAX_DEPTH = 8;
+const NESTED_GIT_REPO_SEARCH_MAX_REPOS = 128;
+const NESTED_GIT_REPO_PRUNED_DIR_NAMES = new Set([
+  ".git",
+  ".paseo",
+  ".expo",
+  ".next",
+  ".turbo",
+  ".cache",
+  ".gradle",
+  "DerivedData",
+  "Pods",
+  "build",
+  "coverage",
+  "dist",
+  "node_modules",
+]);
 
 let pullRequestStatusCacheTtlMs = DEFAULT_PULL_REQUEST_STATUS_CACHE_TTL_MS;
 let pullRequestStatusCache = createPullRequestStatusCache(pullRequestStatusCacheTtlMs);
@@ -60,6 +79,10 @@ const lastSuccessfulPullRequestStatus = new Map<string, PullRequestStatusResult>
 let shortstatCacheTtlMs = DEFAULT_SHORTSTAT_CACHE_TTL_MS;
 let shortstatCache = createShortstatCache(shortstatCacheTtlMs);
 const shortstatInFlight = new Map<string, Promise<CheckoutShortstat | null>>();
+const nestedGitRepoRootCache = new TTLCache<string, string[]>({
+  max: NESTED_GIT_REPO_ROOT_CACHE_MAX,
+  ttl: NESTED_GIT_REPO_ROOT_CACHE_TTL_MS,
+});
 
 interface CheckoutReadCacheOptions {
   force?: boolean;
@@ -805,6 +828,191 @@ export type CheckoutSnapshotFacts =
       branchMergeRef: string | null;
       pullRequestLookupTarget: PullRequestStatusLookupTarget | null;
     };
+
+function checkoutContextWithoutFacts(
+  context: CheckoutContext | undefined,
+): CheckoutContext | undefined {
+  if (!context) {
+    return undefined;
+  }
+  return {
+    paseoHome: context.paseoHome,
+    worktreesRoot: context.worktreesRoot,
+    logger: context.logger,
+  };
+}
+
+function toGitRelativePath(repoRoot: string, nestedRoot: string): string | null {
+  const relativePath = relative(repoRoot, nestedRoot).split(sep).join("/");
+  if (
+    !relativePath ||
+    relativePath === "." ||
+    relativePath === ".." ||
+    relativePath.startsWith("../")
+  ) {
+    return null;
+  }
+  return relativePath;
+}
+
+function prefixGitPath(prefix: string, path: string): string {
+  return `${prefix}/${path}`.replace(/\/+/g, "/");
+}
+
+function prefixParsedDiffFiles(files: ParsedDiffFile[], prefix: string): ParsedDiffFile[] {
+  return files.map((file) => ({
+    ...file,
+    path: prefixGitPath(prefix, file.path),
+  }));
+}
+
+function prefixGitDiffText(diff: string, prefix: string): string {
+  if (!diff) {
+    return "";
+  }
+
+  const prefixed = diff
+    .replace(/^diff --git a\/(.+) b\/(.+)$/gm, (_line, oldPath: string, newPath: string) => {
+      return `diff --git a/${prefixGitPath(prefix, oldPath)} b/${prefixGitPath(prefix, newPath)}`;
+    })
+    .replace(/^--- a\/(.+)$/gm, (_line, path: string) => `--- a/${prefixGitPath(prefix, path)}`)
+    .replace(/^\+\+\+ b\/(.+)$/gm, (_line, path: string) => `+++ b/${prefixGitPath(prefix, path)}`)
+    .replace(/^rename from (.+)$/gm, (_line, path: string) => {
+      return `rename from ${prefixGitPath(prefix, path)}`;
+    })
+    .replace(/^rename to (.+)$/gm, (_line, path: string) => {
+      return `rename to ${prefixGitPath(prefix, path)}`;
+    })
+    .replace(/^copy from (.+)$/gm, (_line, path: string) => {
+      return `copy from ${prefixGitPath(prefix, path)}`;
+    })
+    .replace(/^copy to (.+)$/gm, (_line, path: string) => {
+      return `copy to ${prefixGitPath(prefix, path)}`;
+    });
+
+  return prefixed.endsWith("\n") ? prefixed : `${prefixed}\n`;
+}
+
+async function collectNestedGitRepoRoots(input: {
+  repoRoot: string;
+  dir: string;
+  depth: number;
+  roots: string[];
+}): Promise<void> {
+  if (
+    input.depth > NESTED_GIT_REPO_SEARCH_MAX_DEPTH ||
+    input.roots.length >= NESTED_GIT_REPO_SEARCH_MAX_REPOS
+  ) {
+    return;
+  }
+
+  let entries;
+  try {
+    entries = await readdir(input.dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+
+  if (input.dir !== input.repoRoot && entries.some((entry) => entry.name === ".git")) {
+    input.roots.push(input.dir);
+    return;
+  }
+
+  for (const entry of entries) {
+    if (input.roots.length >= NESTED_GIT_REPO_SEARCH_MAX_REPOS) {
+      return;
+    }
+    if (!entry.isDirectory() || NESTED_GIT_REPO_PRUNED_DIR_NAMES.has(entry.name)) {
+      continue;
+    }
+    await collectNestedGitRepoRoots({
+      repoRoot: input.repoRoot,
+      dir: resolve(input.dir, entry.name),
+      depth: input.depth + 1,
+      roots: input.roots,
+    });
+  }
+}
+
+async function listNestedGitRepoRoots(repoRoot: string): Promise<string[]> {
+  const normalizedRepoRoot = resolve(repoRoot);
+  const cached = nestedGitRepoRootCache.get(normalizedRepoRoot);
+  if (cached) {
+    return cached;
+  }
+
+  const roots: string[] = [];
+  await collectNestedGitRepoRoots({
+    repoRoot: normalizedRepoRoot,
+    dir: normalizedRepoRoot,
+    depth: 0,
+    roots,
+  });
+  roots.sort((a, b) => {
+    if (a === b) return 0;
+    return a < b ? -1 : 1;
+  });
+  nestedGitRepoRootCache.set(normalizedRepoRoot, roots);
+  return roots;
+}
+
+async function hasDirtyNestedGitRepo(
+  repoRoot: string,
+  context: CheckoutContext | undefined,
+): Promise<boolean> {
+  const nestedContext = checkoutContextWithoutFacts(context);
+  for (const nestedRoot of await listNestedGitRepoRoots(repoRoot)) {
+    try {
+      if (await isWorkingTreeDirty(nestedRoot, nestedContext)) {
+        return true;
+      }
+    } catch {
+      continue;
+    }
+  }
+  return false;
+}
+
+function buildNestedCheckoutDiffCompare(compare: CheckoutDiffCompare): CheckoutDiffCompare {
+  const common = {
+    ...(compare.ignoreWhitespace === true ? { ignoreWhitespace: true } : {}),
+    ...(compare.includeStructured === true ? { includeStructured: true } : {}),
+  };
+  if (compare.mode === "uncommitted") {
+    return { mode: "uncommitted", ...common };
+  }
+  return { mode: "base", ...common };
+}
+
+async function appendNestedCheckoutDiffs(input: {
+  repoRoot: string;
+  compare: CheckoutDiffCompare;
+  context: CheckoutContext | undefined;
+  structured: ParsedDiffFile[];
+  appendDiff: (text: string) => void;
+}): Promise<void> {
+  const nestedContext = checkoutContextWithoutFacts(input.context);
+  const nestedCompare = buildNestedCheckoutDiffCompare(input.compare);
+  for (const nestedRoot of await listNestedGitRepoRoots(input.repoRoot)) {
+    const prefix = toGitRelativePath(input.repoRoot, nestedRoot);
+    if (!prefix) {
+      continue;
+    }
+
+    try {
+      const diff = await getCheckoutDiff(nestedRoot, nestedCompare, nestedContext);
+      input.appendDiff(prefixGitDiffText(diff.diff, prefix));
+      if (input.compare.includeStructured === true && diff.structured) {
+        input.structured.push(...prefixParsedDiffFiles(diff.structured, prefix));
+      }
+    } catch (error) {
+      input.context?.logger?.trace?.(
+        { repoRoot: input.repoRoot, nestedRoot, error },
+        "Skipping nested git repository diff",
+      );
+    }
+  }
+}
 
 function isGitError(error: unknown): boolean {
   if (!(error instanceof Error)) {
@@ -1873,7 +2081,11 @@ export async function getCheckoutStatus(
   const currentBranch = facts.currentBranch;
   const remoteUrl = facts.remoteUrl;
   const paseoWorktree = facts.paseoWorktree;
-  const isDirty = await isWorkingTreeDirty(cwd, context);
+  const [ownDirty, nestedDirty] = await Promise.all([
+    isWorkingTreeDirty(cwd, context),
+    hasDirtyNestedGitRepo(worktreeRoot, context),
+  ]);
+  const isDirty = ownDirty || nestedDirty;
   const hasRemote = remoteUrl !== null;
   const baseRef = facts.resolvedBaseRef;
   const mainRepoRoot = facts.mainRepoRoot;
@@ -2731,30 +2943,11 @@ export async function getCheckoutDiff(
   compare: CheckoutDiffCompare,
   context?: CheckoutContext,
 ): Promise<CheckoutDiffResult> {
-  await requireGitRepo(cwd);
-
-  const refsForDiff = await resolveCheckoutDiffRefs(cwd, compare, context);
-  if (!refsForDiff) {
-    return { diff: "" };
+  const facts = await getCheckoutSnapshotFacts(cwd, context);
+  if (!facts.isGit) {
+    throw new NotGitRepoError(cwd);
   }
-
-  const ignoreWhitespace = compare.ignoreWhitespace === true;
-  let effectiveRefsForDiff = refsForDiff;
-  let changes: CheckoutFileChange[];
-  try {
-    changes = await listCheckoutFileChanges(cwd, effectiveRefsForDiff, ignoreWhitespace);
-  } catch (error) {
-    if (!isUnbornHeadDiffError(error)) {
-      throw error;
-    }
-    effectiveRefsForDiff = { ...refsForDiff, baseRef: EMPTY_TREE_OBJECT_ID };
-    changes = await listCheckoutFileChanges(cwd, effectiveRefsForDiff, ignoreWhitespace);
-  }
-  changes.sort((a, b) => {
-    if (a.path === b.path) return 0;
-    return a.path < b.path ? -1 : 1;
-  });
-
+  const factsContext: CheckoutContext = { ...context, facts };
   const structured: ParsedDiffFile[] = [];
   let diffText = "";
   let diffBytes = 0;
@@ -2774,63 +2967,91 @@ export async function getCheckoutDiff(
     }
   };
 
-  const trackedChanges = changes.filter((change) => !change.isUntracked);
-  const untrackedChanges = changes.filter((change) => change.isUntracked === true);
-  const trackedDiff = await processTrackedChanges({
-    cwd,
-    refsForDiff: effectiveRefsForDiff,
-    trackedChanges,
-    ignoreWhitespace,
-    appendDiff,
-  });
-
-  const appendTrackedPlaceholderComment = (
-    change: CheckoutFileChange,
-    status: "binary" | "too_large",
-  ) => {
-    if (status === "binary") {
-      appendDiff(`# ${change.path}: binary diff omitted\n`);
-      return;
+  const refsForDiff = await resolveCheckoutDiffRefs(cwd, compare, factsContext);
+  if (refsForDiff) {
+    const ignoreWhitespace = compare.ignoreWhitespace === true;
+    let effectiveRefsForDiff = refsForDiff;
+    let changes: CheckoutFileChange[];
+    try {
+      changes = await listCheckoutFileChanges(cwd, effectiveRefsForDiff, ignoreWhitespace);
+    } catch (error) {
+      if (!isUnbornHeadDiffError(error)) {
+        throw error;
+      }
+      effectiveRefsForDiff = { ...refsForDiff, baseRef: EMPTY_TREE_OBJECT_ID };
+      changes = await listCheckoutFileChanges(cwd, effectiveRefsForDiff, ignoreWhitespace);
     }
-    appendDiff(`# ${change.path}: diff too large omitted\n`);
-  };
-
-  if (compare.includeStructured) {
-    await appendStructuredTrackedDiffs({
-      cwd,
-      trackedChanges,
-      trackedChangeByPath: trackedDiff.trackedChangeByPath,
-      trackedNumstatByPath: trackedDiff.trackedNumstatByPath,
-      trackedPlaceholderByPath: trackedDiff.trackedPlaceholderByPath,
-      trackedDiffText: trackedDiff.trackedDiffText,
-      refsForDiff: effectiveRefsForDiff,
-      ignoreWhitespace,
-      structured,
-      appendDiff,
-      appendTrackedPlaceholderComment,
+    changes.sort((a, b) => {
+      if (a.path === b.path) return 0;
+      return a.path < b.path ? -1 : 1;
     });
-  } else {
-    for (const change of trackedChanges) {
-      const placeholder = trackedDiff.trackedPlaceholderByPath.get(change.path);
-      if (placeholder) {
-        appendTrackedPlaceholderComment(change, placeholder.status);
+
+    const trackedChanges = changes.filter((change) => !change.isUntracked);
+    const untrackedChanges = changes.filter((change) => change.isUntracked === true);
+    const trackedDiff = await processTrackedChanges({
+      cwd,
+      refsForDiff: effectiveRefsForDiff,
+      trackedChanges,
+      ignoreWhitespace,
+      appendDiff,
+    });
+
+    const appendTrackedPlaceholderComment = (
+      change: CheckoutFileChange,
+      status: "binary" | "too_large",
+    ) => {
+      if (status === "binary") {
+        appendDiff(`# ${change.path}: binary diff omitted\n`);
+        return;
+      }
+      appendDiff(`# ${change.path}: diff too large omitted\n`);
+    };
+
+    if (compare.includeStructured) {
+      await appendStructuredTrackedDiffs({
+        cwd,
+        trackedChanges,
+        trackedChangeByPath: trackedDiff.trackedChangeByPath,
+        trackedNumstatByPath: trackedDiff.trackedNumstatByPath,
+        trackedPlaceholderByPath: trackedDiff.trackedPlaceholderByPath,
+        trackedDiffText: trackedDiff.trackedDiffText,
+        refsForDiff: effectiveRefsForDiff,
+        ignoreWhitespace,
+        structured,
+        appendDiff,
+        appendTrackedPlaceholderComment,
+      });
+    } else {
+      for (const change of trackedChanges) {
+        const placeholder = trackedDiff.trackedPlaceholderByPath.get(change.path);
+        if (placeholder) {
+          appendTrackedPlaceholderComment(change, placeholder.status);
+        }
       }
     }
+
+    for (const change of untrackedChanges) {
+      if (diffBytes >= TOTAL_DIFF_MAX_BYTES) {
+        break;
+      }
+      await processUntrackedChange({
+        cwd,
+        change,
+        ignoreWhitespace,
+        includeStructured: compare.includeStructured === true,
+        structured,
+        appendDiff,
+      });
+    }
   }
 
-  for (const change of untrackedChanges) {
-    if (diffBytes >= TOTAL_DIFF_MAX_BYTES) {
-      break;
-    }
-    await processUntrackedChange({
-      cwd,
-      change,
-      ignoreWhitespace,
-      includeStructured: compare.includeStructured === true,
-      structured,
-      appendDiff,
-    });
-  }
+  await appendNestedCheckoutDiffs({
+    repoRoot: facts.worktreeRoot,
+    compare,
+    context: factsContext,
+    structured,
+    appendDiff,
+  });
 
   if (compare.includeStructured) {
     return { diff: diffText, structured };
