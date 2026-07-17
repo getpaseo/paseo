@@ -28,7 +28,9 @@ export function reconcileAgentDirectory(input: {
     }
     const previousEntry = entries.get(delta.agent.id);
     const acceptedAgent = acceptAgentDirectoryUpdate(previousEntry?.agent, delta.agent);
-    if (statuses.get(delta.agent.id) === "running" && acceptedAgent.status !== "running") {
+    if (acceptedAgent.status === "running") {
+      stoppedRunningAgentIds.delete(delta.agent.id);
+    } else if (statuses.get(delta.agent.id) === "running") {
       stoppedRunningAgentIds.add(delta.agent.id);
     }
     statuses.set(delta.agent.id, acceptedAgent.status);

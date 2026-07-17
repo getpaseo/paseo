@@ -76,6 +76,7 @@ import {
   backfillLegacyDaemonWorkspaceDirectoryIfEmpty,
 } from "@/workspace/legacy-daemon-workspaces";
 import { useProviderSubagentStore } from "@/subagents/provider-store";
+import { revalidateSessionAfterResume } from "@/contexts/session-resume-revalidation";
 
 // Re-export types from session-store and draft-store for backward compatibility
 export type { DraftInput } from "@/stores/draft-store";
@@ -89,8 +90,6 @@ export type {
   ExplorerEncoding,
   AgentFileExplorerState,
 } from "@/stores/session-store";
-
-const HISTORY_STALE_AFTER_MS = 60_000;
 
 function hasAgentUsageChanged(
   incomingUsage: Agent["lastUsage"] | undefined,
@@ -755,12 +754,20 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
 
   const handleAppResumed = useCallback(
     (awayMs: number) => {
-      if (awayMs < HISTORY_STALE_AFTER_MS) {
-        return;
-      }
-      bumpHistorySyncGeneration(serverId);
+      void revalidateSessionAfterResume({
+        awayMs,
+        serverId,
+        bumpHistorySyncGeneration,
+        refreshAgentDirectory: () => getHostRuntimeStore().refreshAgentDirectory({ serverId }),
+        hydrateWorkspaces,
+      }).catch((error) => {
+        console.error("[SessionProvider] resume revalidation failed", {
+          serverId,
+          error: toErrorMessage(error),
+        });
+      });
     },
-    [bumpHistorySyncGeneration, serverId],
+    [bumpHistorySyncGeneration, hydrateWorkspaces, serverId],
   );
 
   // Client activity tracking (heartbeat, push token registration)

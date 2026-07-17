@@ -6568,6 +6568,64 @@ test("subscribed fetch_workspaces includes git enrichment in the initial snapsho
   );
 });
 
+test("a workspace leaving a filtered subscription after bootstrap emits a removal", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const session = asTestSession(
+    createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) }),
+  );
+  const descriptor = {
+    id: "ws-buffered",
+    projectId: "proj-buffered",
+    projectDisplayName: "repo",
+    projectRootPath: REPO_CWD,
+    workspaceDirectory: REPO_CWD,
+    projectKind: "git" as const,
+    workspaceKind: "local_checkout" as const,
+    name: "repo work",
+    status: "done" as const,
+    activityAt: null,
+    diffStat: null,
+  };
+  let currentDescriptor: typeof descriptor | null = descriptor;
+  let finishListing: (result: ListFetchResult) => void = () => {};
+  const listing = new Promise<ListFetchResult>((resolve) => {
+    finishListing = resolve;
+  });
+  session.listFetchWorkspacesEntries = async () => listing;
+  session.buildWorkspaceDescriptorMap = async () =>
+    new Map(currentDescriptor ? [[currentDescriptor.id, currentDescriptor]] : []);
+  session.reconcileAndEmitWorkspaceUpdates = async () => undefined;
+
+  const bootstrap = session.handleMessage({
+    type: "fetch_workspaces_request",
+    requestId: "req-buffered-filter",
+    filter: { query: "repo" },
+    subscribe: { subscriptionId: "sub-buffered-filter" },
+  });
+  await session.emitWorkspaceUpdatesForWorkspaceIds([descriptor.id], { skipReconcile: true });
+  finishListing({
+    entries: [],
+    emptyProjects: [],
+    pageInfo: { nextCursor: null, prevCursor: null, hasMore: false },
+  });
+  await bootstrap;
+
+  expect(filterByType(emitted, "workspace_update")).toEqual([
+    { type: "workspace_update", payload: { kind: "upsert", workspace: descriptor } },
+  ]);
+
+  emitted.length = 0;
+  currentDescriptor = { ...descriptor, name: "other work" };
+  await session.emitWorkspaceUpdatesForWorkspaceIds([descriptor.id], { skipReconcile: true });
+
+  expect(filterByType(emitted, "workspace_update")).toEqual([
+    {
+      type: "workspace_update",
+      payload: { kind: "remove", id: descriptor.id },
+    },
+  ]);
+});
+
 test("project.rename.request stores customName and emits an updated workspace descriptor", async () => {
   const emitted: SessionOutboundMessage[] = [];
   const session = asTestSession(

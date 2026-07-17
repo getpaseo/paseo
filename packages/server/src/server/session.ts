@@ -4067,6 +4067,8 @@ export class Session {
           continue;
         }
       }
+      const workspaceId = payload.kind === "upsert" ? payload.workspace.id : payload.id;
+      subscription.lastEmittedByWorkspaceId.set(workspaceId, payload);
       this.emit({
         type: "workspace_update",
         payload,

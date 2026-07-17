@@ -151,6 +151,26 @@ describe("agent directory reconciliation", () => {
     }).toEqual({ title: "newer page", status: "running", projectName: "repo", stopped: [] });
   });
 
+  it("clears a snapshot stop when a newer buffered upsert is running", () => {
+    const result = reconcileAgentDirectory({
+      previous: new Map([["agent", replica("agent", "running")]]),
+      snapshot: [entry("agent", "idle")],
+      deltas: [
+        {
+          kind: "upsert",
+          agent: {
+            ...snapshot("agent", "running"),
+            updatedAt: "2026-07-12T11:00:00.000Z",
+          },
+          project: entry("agent", "running").project,
+        },
+      ],
+    });
+
+    expect(result.entries[0]?.agent.status).toBe("running");
+    expect(result.stoppedRunningAgentIds).toEqual([]);
+  });
+
   it("accepts usage from a stale buffered upsert without regressing metadata", () => {
     const result = reconcileAgentDirectory({
       previous: new Map(),
