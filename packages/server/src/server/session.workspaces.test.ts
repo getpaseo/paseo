@@ -6568,6 +6568,64 @@ test("subscribed fetch_workspaces includes git enrichment in the initial snapsho
   );
 });
 
+test("a workspace leaving a filtered subscription after bootstrap emits a removal", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const session = asTestSession(
+    createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) }),
+  );
+  const descriptor = {
+    id: "ws-buffered",
+    projectId: "proj-buffered",
+    projectDisplayName: "repo",
+    projectRootPath: REPO_CWD,
+    workspaceDirectory: REPO_CWD,
+    projectKind: "git" as const,
+    workspaceKind: "local_checkout" as const,
+    name: "repo work",
+    status: "done" as const,
+    activityAt: null,
+    diffStat: null,
+  };
+  let currentDescriptor: typeof descriptor | null = descriptor;
+  let finishListing: (result: ListFetchResult) => void = () => {};
+  const listing = new Promise<ListFetchResult>((resolve) => {
+    finishListing = resolve;
+  });
+  session.listFetchWorkspacesEntries = async () => listing;
+  session.buildWorkspaceDescriptorMap = async () =>
+    new Map(currentDescriptor ? [[currentDescriptor.id, currentDescriptor]] : []);
+  session.reconcileAndEmitWorkspaceUpdates = async () => undefined;
+
+  const bootstrap = session.handleMessage({
+    type: "fetch_workspaces_request",
+    requestId: "req-buffered-filter",
+    filter: { query: "repo" },
+    subscribe: { subscriptionId: "sub-buffered-filter" },
+  });
+  await session.emitWorkspaceUpdatesForWorkspaceIds([descriptor.id], { skipReconcile: true });
+  finishListing({
+    entries: [],
+    emptyProjects: [],
+    pageInfo: { nextCursor: null, prevCursor: null, hasMore: false },
+  });
+  await bootstrap;
+
+  expect(filterByType(emitted, "workspace_update")).toEqual([
+    { type: "workspace_update", payload: { kind: "upsert", workspace: descriptor } },
+  ]);
+
+  emitted.length = 0;
+  currentDescriptor = { ...descriptor, name: "other work" };
+  await session.emitWorkspaceUpdatesForWorkspaceIds([descriptor.id], { skipReconcile: true });
+
+  expect(filterByType(emitted, "workspace_update")).toEqual([
+    {
+      type: "workspace_update",
+      payload: { kind: "remove", id: descriptor.id },
+    },
+  ]);
+});
+
 test("project.rename.request stores customName and emits an updated workspace descriptor", async () => {
   const emitted: SessionOutboundMessage[] = [];
   const session = asTestSession(
@@ -7827,4 +7885,75 @@ test("workspace.create.response persists the first prompt as the initial title",
   expect(workspaceId).toBeDefined();
   const persisted = await session.workspaceRegistry.get(workspaceId as string);
   expect(persisted?.title).toBe("Add retries to the payments flow");
+  expect(filterByType(emitted, "workspace_update")).toHaveLength(1);
+});
+
+test("workspace create emits through a matching workspace subscription", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const workspaces = new Map<string, ReturnType<typeof createPersistedWorkspaceRecord>>();
+  const session = createSessionForWorkspaceTests({
+    onMessage: (message) => emitted.push(message),
+    workspaceRegistry: {
+      initialize: async () => {},
+      existsOnDisk: async () => true,
+      list: async () => Array.from(workspaces.values()),
+      get: async (workspaceId) => workspaces.get(workspaceId) ?? null,
+      upsert: async (workspace) => {
+        workspaces.set(workspace.workspaceId, workspace);
+      },
+      archive: async () => {},
+      remove: async () => {},
+    },
+  });
+  session.listAgentPayloads = async () => [];
+
+  await session.handleMessage({
+    type: "fetch_workspaces_request",
+    requestId: "req-subscribe-create-match",
+    filter: { query: "repo" },
+    subscribe: { subscriptionId: "sub-create-match" },
+  });
+  emitted.length = 0;
+  await session.handleMessage({
+    type: "workspace.create.request",
+    requestId: "req-create-match",
+    source: { kind: "directory", path: REPO_CWD },
+  });
+
+  expect(filterByType(emitted, "workspace_update")).toHaveLength(1);
+});
+
+test("workspace create stays out of a non-matching workspace subscription", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const workspaces = new Map<string, ReturnType<typeof createPersistedWorkspaceRecord>>();
+  const session = createSessionForWorkspaceTests({
+    onMessage: (message) => emitted.push(message),
+    workspaceRegistry: {
+      initialize: async () => {},
+      existsOnDisk: async () => true,
+      list: async () => Array.from(workspaces.values()),
+      get: async (workspaceId) => workspaces.get(workspaceId) ?? null,
+      upsert: async (workspace) => {
+        workspaces.set(workspace.workspaceId, workspace);
+      },
+      archive: async () => {},
+      remove: async () => {},
+    },
+  });
+  session.listAgentPayloads = async () => [];
+
+  await session.handleMessage({
+    type: "fetch_workspaces_request",
+    requestId: "req-subscribe-create-filtered",
+    filter: { query: "definitely-not-this-workspace" },
+    subscribe: { subscriptionId: "sub-create-filtered" },
+  });
+  emitted.length = 0;
+  await session.handleMessage({
+    type: "workspace.create.request",
+    requestId: "req-create-filtered",
+    source: { kind: "directory", path: REPO_CWD },
+  });
+
+  expect(filterByType(emitted, "workspace_update")).toEqual([]);
 });

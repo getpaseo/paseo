@@ -52,6 +52,10 @@ const sessionMock = vi.hoisted(() => {
     handleMessage = vi.fn(async () => {});
     handleBinaryFrame = vi.fn((_frame: unknown) => {});
     supports = vi.fn((capability: string) => this.args.clientCapabilities?.[capability] === true);
+    updateClientCapabilities = vi.fn((capabilities: Record<string, unknown> | null) => {
+      this.args.clientCapabilities = capabilities;
+    });
+    clearAgentTimelineSubscription = vi.fn();
     getClientActivity = vi.fn(() => null);
     getSessionId = vi.fn(() => "mock-session-id");
     resetPeakInflight = vi.fn(() => {});

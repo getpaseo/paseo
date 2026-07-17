@@ -10,6 +10,7 @@ import {
   assertPullRequestAutoMergeEnableReady,
 } from "../services/github-service.js";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
+import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
 import type { WorkspaceDescriptorPayload } from "@getpaseo/protocol/messages";
 import {
   decodeFileTransferFrame,
@@ -21,6 +22,7 @@ import { Session } from "./session.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
 import { StructuredAgentFallbackError } from "./agent/agent-response-loop.js";
 import type { StoredAgentRecord } from "./agent/agent-storage.js";
+import type { AgentManagerEvent } from "./agent/agent-manager.js";
 import type { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import type { SessionOptions } from "./session.js";
 import type { SessionInboundMessage, SessionOutboundMessage } from "./messages.js";
@@ -309,6 +311,7 @@ interface SessionForTestOptions {
   daemonRuntimeConfig?: SessionOptions["daemonRuntimeConfig"];
   downloadTokenStore?: SessionOptions["downloadTokenStore"];
   messages?: unknown[];
+  targetedMessages?: Array<{ source: object; message: SessionOutboundMessage }>;
   binaryMessages?: Uint8Array[];
 }
 
@@ -346,6 +349,12 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
   return new Session({
     clientId: "test-client",
     onMessage: (message) => messages.push(message),
+    ...(options.targetedMessages
+      ? {
+          onMessageToSource: (source: object, message: SessionOutboundMessage) =>
+            options.targetedMessages?.push({ source, message }),
+        }
+      : {}),
     onBinaryMessage: createBinaryMessageHandler(options.binaryMessages),
     logger,
     downloadTokenStore: options.downloadTokenStore ?? asDownloadTokenStore(),
@@ -4552,6 +4561,216 @@ describe("chat/schedule/loop dispatch routing (behavior preservation)", () => {
     expect(routed, `${msg.type} did not route to a handler (silent no-op)`).toBeDefined();
     expect(routed?.payload.code).toBe(code);
   });
+});
+
+test("replaces a capable session's complete viewed timeline set", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const session = createSessionForTest({ messages });
+  session.updateClientCapabilities({ selective_agent_timeline: true });
+
+  await session.handleMessage({
+    type: "agent.timeline.set_subscription.request",
+    agentIds: ["agent-b", "agent-a", "agent-a"],
+    requestId: "timeline-subscription-1",
+  });
+
+  expect(messages).toEqual([
+    {
+      type: "agent.timeline.set_subscription.response",
+      payload: {
+        agentIds: ["agent-a", "agent-b"],
+        requestId: "timeline-subscription-1",
+      },
+    },
+  ]);
+});
+
+test("acknowledges a timeline subscription only to its socket source", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const targetedMessages: Array<{ source: object; message: SessionOutboundMessage }> = [];
+  const session = createSessionForTest({ messages, targetedMessages });
+  const capableSocket = {};
+  session.updateClientCapabilities({ selective_agent_timeline: true }, capableSocket);
+
+  await session.handleMessage(
+    {
+      type: "agent.timeline.set_subscription.request",
+      agentIds: ["agent-a"],
+      requestId: "timeline-subscription-targeted",
+    },
+    capableSocket,
+  );
+
+  expect(messages).toEqual([]);
+  expect(targetedMessages).toEqual([
+    {
+      source: capableSocket,
+      message: {
+        type: "agent.timeline.set_subscription.response",
+        payload: {
+          agentIds: ["agent-a"],
+          requestId: "timeline-subscription-targeted",
+        },
+      },
+    },
+  ]);
+});
+
+test("unions viewed timelines across socket sources and removes detached sources", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const agentEventListeners: Array<(event: AgentManagerEvent) => void> = [];
+  const session = createSessionForTest({
+    messages,
+    agentManager: {
+      subscribe: vi.fn((listener: (event: AgentManagerEvent) => void) => {
+        agentEventListeners.push(listener);
+        return () => {};
+      }),
+    },
+  });
+  session.updateClientCapabilities({ selective_agent_timeline: true });
+  const firstSocket = {};
+  const secondSocket = {};
+  session.updateClientCapabilities({ selective_agent_timeline: true }, firstSocket);
+  session.updateClientCapabilities({ selective_agent_timeline: true }, secondSocket);
+
+  await session.handleMessage(
+    {
+      type: "agent.timeline.set_subscription.request",
+      agentIds: ["agent-a"],
+      requestId: "timeline-subscription-a",
+    },
+    firstSocket,
+  );
+  await session.handleMessage(
+    {
+      type: "agent.timeline.set_subscription.request",
+      agentIds: ["agent-b"],
+      requestId: "timeline-subscription-b",
+    },
+    secondSocket,
+  );
+  messages.length = 0;
+
+  if (agentEventListeners.length === 0) throw new Error("Agent event listener was not installed");
+  const forward = (event: AgentManagerEvent) => {
+    for (const listener of agentEventListeners) listener(event);
+  };
+  forward({
+    type: "agent_stream",
+    agentId: "agent-a",
+    event: {
+      type: "timeline",
+      provider: "mock",
+      item: { type: "assistant_message", messageId: "message-a", text: "A" },
+    },
+  });
+  forward({
+    type: "agent_stream",
+    agentId: "agent-b",
+    event: {
+      type: "timeline",
+      provider: "mock",
+      item: { type: "assistant_message", messageId: "message-b", text: "B" },
+    },
+  });
+  expect(messages.filter((message) => message.type === "agent_stream")).toHaveLength(2);
+
+  const legacySocket = {};
+  session.updateClientCapabilities(null, legacySocket);
+  expect(session.supportsForSource(CLIENT_CAPS.selectiveAgentTimeline, legacySocket)).toBe(false);
+  expect(session.supportsForSource(CLIENT_CAPS.selectiveAgentTimeline, firstSocket)).toBe(true);
+  messages.length = 0;
+  forward({
+    type: "agent_stream",
+    agentId: "agent-not-viewed",
+    event: {
+      type: "timeline",
+      provider: "mock",
+      item: { type: "assistant_message", messageId: "message-legacy", text: "legacy" },
+    },
+  });
+  expect(messages.some((message) => message.type === "agent_stream")).toBe(true);
+
+  session.clearAgentTimelineSubscription(legacySocket);
+
+  session.clearAgentTimelineSubscription(firstSocket);
+  messages.length = 0;
+  forward({
+    type: "agent_stream",
+    agentId: "agent-a",
+    event: {
+      type: "timeline",
+      provider: "mock",
+      item: { type: "assistant_message", messageId: "message-a-2", text: "detached A" },
+    },
+  });
+  forward({
+    type: "agent_stream",
+    agentId: "agent-b",
+    event: {
+      type: "timeline",
+      provider: "mock",
+      item: { type: "assistant_message", messageId: "message-b-2", text: "retained B" },
+    },
+  });
+  expect(
+    messages.flatMap((message) =>
+      message.type === "agent_stream" ? [message.payload.agentId] : [],
+    ),
+  ).toEqual(["agent-b"]);
+});
+
+test("keeps selective delivery scoped per socket when a retained session also has a legacy socket", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const targetedMessages: Array<{ source: object; message: SessionOutboundMessage }> = [];
+  const agentEventListeners: Array<(event: AgentManagerEvent) => void> = [];
+  const session = createSessionForTest({
+    messages,
+    targetedMessages,
+    agentManager: {
+      subscribe: vi.fn((listener: (event: AgentManagerEvent) => void) => {
+        agentEventListeners.push(listener);
+        return () => {};
+      }),
+    },
+  });
+  const legacySocket = {};
+  const selectiveSocket = {};
+  session.updateClientCapabilities(null, legacySocket);
+  session.updateClientCapabilities({ selective_agent_timeline: true }, selectiveSocket);
+  await session.handleMessage(
+    {
+      type: "agent.timeline.set_subscription.request",
+      agentIds: ["viewed-agent"],
+      requestId: "timeline-subscription-selective",
+    },
+    selectiveSocket,
+  );
+  targetedMessages.length = 0;
+
+  const listener = agentEventListeners[0];
+  if (!listener) throw new Error("Agent event listener was not installed");
+  listener({
+    type: "agent_stream",
+    agentId: "not-viewed-agent",
+    event: {
+      type: "timeline",
+      provider: "mock",
+      item: { type: "assistant_message", messageId: "message-global", text: "global" },
+    },
+  });
+
+  expect(messages).toEqual([]);
+  expect(targetedMessages).toEqual([
+    {
+      source: legacySocket,
+      message: expect.objectContaining({
+        type: "agent_stream",
+        payload: expect.objectContaining({ agentId: "not-viewed-agent" }),
+      }),
+    },
+  ]);
 });
 
 describe("agent config setters", () => {

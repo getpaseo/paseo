@@ -437,3 +437,35 @@ describe("daemon update messages", () => {
     });
   });
 });
+
+describe("viewed timeline subscription messages", () => {
+  test("parses a complete viewed-agent set and its acknowledgement", () => {
+    const request = SessionInboundMessageSchema.parse({
+      type: "agent.timeline.set_subscription.request",
+      agentIds: ["agent-a", "agent-b"],
+      requestId: "timeline-subscription-1",
+    });
+    const response = SessionOutboundMessageSchema.parse({
+      type: "agent.timeline.set_subscription.response",
+      payload: {
+        agentIds: ["agent-a", "agent-b"],
+        requestId: "timeline-subscription-1",
+      },
+    });
+
+    expect({ request, response }).toEqual({
+      request: {
+        type: "agent.timeline.set_subscription.request",
+        agentIds: ["agent-a", "agent-b"],
+        requestId: "timeline-subscription-1",
+      },
+      response: {
+        type: "agent.timeline.set_subscription.response",
+        payload: {
+          agentIds: ["agent-a", "agent-b"],
+          requestId: "timeline-subscription-1",
+        },
+      },
+    });
+  });
+});

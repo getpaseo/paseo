@@ -429,6 +429,7 @@ export interface SessionOptions {
   appVersion?: string | null;
   clientCapabilities?: Record<string, unknown> | null;
   onMessage: (msg: SessionOutboundMessage) => void;
+  onMessageToSource?: (source: object, msg: SessionOutboundMessage) => void;
   onBinaryMessage?: (frame: Uint8Array) => void;
   getTransportBufferedAmount?: () => number | null;
   onLifecycleIntent?: (intent: SessionLifecycleIntent) => void;
@@ -558,6 +559,9 @@ export class Session {
   private clientCapabilities: ReadonlySet<ClientCapability>;
   private readonly sessionId: string;
   private readonly onMessage: (msg: SessionOutboundMessage) => void;
+  private readonly onMessageToSource:
+    | ((source: object, msg: SessionOutboundMessage) => void)
+    | null;
   private readonly onBinaryMessage: ((frame: Uint8Array) => void) | null;
   private readonly getTransportBufferedAmount: () => number | null;
   private readonly onLifecycleIntent: ((intent: SessionLifecycleIntent) => void) | null;
@@ -583,6 +587,10 @@ export class Session {
   private readonly daemonConfigStore: DaemonConfigStore;
   private readonly pushTokenStore: PushTokenStore;
   private unsubscribeAgentEvents: (() => void) | null = null;
+  private viewedTimelineAgentIds = new Set<string>();
+  private readonly viewedTimelineAgentIdsBySource = new Map<object, Set<string>>();
+  private readonly selectiveTimelineCapabilityBySource = new Map<object, boolean>();
+  private readonly defaultTimelineSubscriptionSource = {};
   private unsubscribeTerminalWorkspaceContributionEvents: (() => void) | null = null;
   private readonly agentUpdates: AgentUpdatesService;
   private workspaceUpdatesSubscription: WorkspaceUpdatesSubscriptionState | null = null;
@@ -625,6 +633,7 @@ export class Session {
       appVersion,
       clientCapabilities,
       onMessage,
+      onMessageToSource,
       onBinaryMessage,
       getTransportBufferedAmount,
       onLifecycleIntent,
@@ -675,6 +684,7 @@ export class Session {
     this.clientCapabilities = parseClientCapabilities(clientCapabilities);
     this.sessionId = uuidv4();
     this.onMessage = onMessage;
+    this.onMessageToSource = onMessageToSource ?? null;
     this.onBinaryMessage = onBinaryMessage ?? null;
     this.getTransportBufferedAmount = getTransportBufferedAmount ?? (() => 0);
     this.onLifecycleIntent = onLifecycleIntent ?? null;
@@ -963,12 +973,116 @@ export class Session {
     }
   }
 
-  updateClientCapabilities(capabilities: Record<string, unknown> | null): void {
+  updateClientCapabilities(capabilities: Record<string, unknown> | null, source?: object): void {
     this.clientCapabilities = parseClientCapabilities(capabilities);
+    if (source) {
+      this.selectiveTimelineCapabilityBySource.set(
+        source,
+        this.supports(CLIENT_CAPS.selectiveAgentTimeline),
+      );
+    }
+    if (!source && !this.supports(CLIENT_CAPS.selectiveAgentTimeline)) {
+      this.viewedTimelineAgentIdsBySource.clear();
+      this.viewedTimelineAgentIds.clear();
+    }
+  }
+
+  clearAgentTimelineSubscription(source: object): void {
+    this.selectiveTimelineCapabilityBySource.delete(source);
+    if (this.viewedTimelineAgentIdsBySource.delete(source)) {
+      this.rebuildViewedTimelineAgentIds();
+    }
+  }
+
+  private replaceAgentTimelineSubscription(source: object | undefined, agentIds: string[]): void {
+    const subscriptionSource = source ?? this.defaultTimelineSubscriptionSource;
+    if (agentIds.length === 0) this.viewedTimelineAgentIdsBySource.delete(subscriptionSource);
+    else this.viewedTimelineAgentIdsBySource.set(subscriptionSource, new Set(agentIds));
+    this.rebuildViewedTimelineAgentIds();
+  }
+
+  private rebuildViewedTimelineAgentIds(): void {
+    const viewedAgentIds = new Set<string>();
+    for (const agentIds of this.viewedTimelineAgentIdsBySource.values()) {
+      for (const agentId of agentIds) viewedAgentIds.add(agentId);
+    }
+    this.viewedTimelineAgentIds = viewedAgentIds;
+  }
+
+  private usesSelectiveTimelineDelivery(): boolean {
+    if (this.selectiveTimelineCapabilityBySource.size === 0) {
+      return this.supports(CLIENT_CAPS.selectiveAgentTimeline);
+    }
+    for (const capable of this.selectiveTimelineCapabilityBySource.values()) {
+      if (!capable) return false;
+    }
+    return true;
+  }
+
+  private forwardAgentStream(
+    event: Extract<AgentManagerEvent, { type: "agent_stream" }>,
+    serializedEvent: Extract<SessionOutboundMessage, { type: "agent_stream" }>["payload"]["event"],
+  ): void {
+    if (this.selectiveTimelineCapabilityBySource.size === 0 || !this.onMessageToSource) {
+      if (this.usesSelectiveTimelineDelivery() && serializedEvent.type === "attention_required") {
+        this.emit({
+          type: "agent_attention_required",
+          payload: {
+            agentId: event.agentId,
+            reason: serializedEvent.reason,
+            timestamp: serializedEvent.timestamp,
+            shouldNotify: serializedEvent.shouldNotify,
+            ...(serializedEvent.notification ? { notification: serializedEvent.notification } : {}),
+          },
+        });
+      } else if (
+        !this.usesSelectiveTimelineDelivery() ||
+        this.viewedTimelineAgentIds.has(event.agentId)
+      ) {
+        this.emit({
+          type: "agent_stream",
+          payload: this.buildAgentStreamPayload(event, serializedEvent),
+        });
+      }
+      return;
+    }
+
+    for (const [source, supportsSelectiveDelivery] of this.selectiveTimelineCapabilityBySource) {
+      if (supportsSelectiveDelivery && serializedEvent.type === "attention_required") {
+        this.onMessageToSource(source, {
+          type: "agent_attention_required",
+          payload: {
+            agentId: event.agentId,
+            reason: serializedEvent.reason,
+            timestamp: serializedEvent.timestamp,
+            shouldNotify: serializedEvent.shouldNotify,
+            ...(serializedEvent.notification ? { notification: serializedEvent.notification } : {}),
+          },
+        });
+        continue;
+      }
+      if (
+        supportsSelectiveDelivery &&
+        !this.viewedTimelineAgentIdsBySource.get(source)?.has(event.agentId)
+      ) {
+        continue;
+      }
+      this.onMessageToSource(source, {
+        type: "agent_stream",
+        payload: this.buildAgentStreamPayload(event, serializedEvent),
+      });
+    }
   }
 
   supports(capability: ClientCapability): boolean {
     return this.clientCapabilities.has(capability);
+  }
+
+  supportsForSource(capability: ClientCapability, source: object): boolean {
+    if (capability === CLIENT_CAPS.selectiveAgentTimeline) {
+      return this.selectiveTimelineCapabilityBySource.get(source) ?? this.supports(capability);
+    }
+    return this.supports(capability);
   }
 
   async syncWorkspaceGitObserverForWorkspace(workspace: PersistedWorkspaceRecord): Promise<void> {
@@ -977,6 +1091,16 @@ export class Session {
 
   async emitWorkspaceUpdateForWorkspaceId(workspaceId: string): Promise<void> {
     await this.emitWorkspaceUpdatesForWorkspaceIds([workspaceId], { skipReconcile: true });
+  }
+
+  private async emitCreatedWorkspaceUpdate(workspace: WorkspaceDescriptorPayload): Promise<void> {
+    if (this.workspaceUpdatesSubscription) {
+      await this.emitWorkspaceUpdateForWorkspaceId(workspace.id);
+      return;
+    }
+    // COMPAT(workspaceCreateCausalUpdate): added in v0.1.106, remove after 2027-01-12.
+    // Older clients create before subscribing and require the causal update beside the response.
+    this.emit({ type: "workspace_update", payload: { kind: "upsert", workspace } });
   }
 
   async archiveWorkspaceRecordForExternalMutation(workspaceId: string): Promise<void> {
@@ -1271,10 +1395,7 @@ export class Session {
           "agent.session.forward_stream",
         );
 
-        this.emit({
-          type: "agent_stream",
-          payload: this.buildAgentStreamPayload(event, serializedEvent),
-        });
+        this.forwardAgentStream(event, serializedEvent);
 
         if (event.event.type === "permission_requested") {
           this.emit({
@@ -1377,7 +1498,7 @@ export class Session {
   /**
    * Main entry point for processing session messages
    */
-  public async handleMessage(msg: SessionInboundMessage): Promise<void> {
+  public async handleMessage(msg: SessionInboundMessage, source?: object): Promise<void> {
     this.inflightRequests++;
     if (this.inflightRequests > this.peakInflightRequests) {
       this.peakInflightRequests = this.inflightRequests;
@@ -1391,7 +1512,7 @@ export class Session {
         "agent.session.inbound",
       );
       try {
-        await this.dispatchInboundMessage(msg);
+        await this.dispatchInboundMessage(msg, source);
       } catch (error) {
         const err = error instanceof Error ? error : new Error(String(error));
         this.sessionLogger.error({ err }, "Error handling message");
@@ -1429,12 +1550,12 @@ export class Session {
     }
   }
 
-  private async dispatchInboundMessage(msg: SessionInboundMessage): Promise<void> {
+  private async dispatchInboundMessage(msg: SessionInboundMessage, source?: object): Promise<void> {
     const promise =
       this.dispatchVoiceAndControlMessage(msg) ??
       this.dispatchAgentRewindMessage(msg) ??
       this.dispatchAgentRelationshipMessage(msg) ??
-      this.dispatchAgentTimelineMessage(msg) ??
+      this.dispatchAgentTimelineMessage(msg, source) ??
       this.dispatchAgentLifecycleMessage(msg) ??
       this.dispatchAgentConfigMessage(msg) ??
       this.dispatchCheckoutMessage(msg) ??
@@ -1516,7 +1637,10 @@ export class Session {
     }
   }
 
-  private dispatchAgentTimelineMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+  private dispatchAgentTimelineMessage(
+    msg: SessionInboundMessage,
+    source?: object,
+  ): Promise<void> | undefined {
     switch (msg.type) {
       case "fetch_agent_timeline_request":
         return this.handleFetchAgentTimelineRequest(msg);
@@ -1524,6 +1648,24 @@ export class Session {
         return this.handleProviderSubagentListRequest(msg);
       case "agent.provider_subagents.timeline.get.request":
         return this.handleProviderSubagentTimelineRequest(msg);
+      case "agent.timeline.set_subscription.request": {
+        const agentIds = [...new Set(msg.agentIds)].sort();
+        if (
+          source
+            ? (this.selectiveTimelineCapabilityBySource.get(source) ??
+              this.supports(CLIENT_CAPS.selectiveAgentTimeline))
+            : this.supports(CLIENT_CAPS.selectiveAgentTimeline)
+        ) {
+          this.replaceAgentTimelineSubscription(source, agentIds);
+        }
+        const response: SessionOutboundMessage = {
+          type: "agent.timeline.set_subscription.response",
+          payload: { agentIds, requestId: msg.requestId },
+        };
+        if (source && this.onMessageToSource) this.onMessageToSource(source, response);
+        else this.emit(response);
+        return undefined;
+      }
       case "agent.fork_context.request":
         return this.handleAgentForkContextRequest(msg);
       default:
@@ -3967,6 +4109,8 @@ export class Session {
           continue;
         }
       }
+      const workspaceId = payload.kind === "upsert" ? payload.workspace.id : payload.id;
+      subscription.lastEmittedByWorkspaceId.set(workspaceId, payload);
       this.emit({
         type: "workspace_update",
         payload,
@@ -4259,6 +4403,9 @@ export class Session {
       this.workspaceGitObserver.recordDescriptorState(workspaceId, nextWorkspace);
 
       if (!nextWorkspace) {
+        if (workspace && !subscription.lastEmittedByWorkspaceId.has(workspaceId)) {
+          continue;
+        }
         subscription.lastEmittedByWorkspaceId.delete(workspaceId);
         this.bufferOrEmitWorkspaceUpdate(
           subscription,
@@ -4515,6 +4662,7 @@ export class Session {
         "fetch_workspaces_response_ready",
       );
       const snapshot = this.buildBootstrapSnapshot(payload.entries);
+      this.seedWorkspaceSubscriptionSnapshot(subscriptionId, request.filter, payload.entries);
 
       this.emit({
         type: "fetch_workspaces_response",
@@ -4573,6 +4721,23 @@ export class Session {
       });
     }
     return { snapshotByWorkspaceId };
+  }
+
+  private seedWorkspaceSubscriptionSnapshot(
+    subscriptionId: string | null,
+    filter: FetchWorkspacesRequestFilter | undefined,
+    entries: FetchWorkspacesResponseEntry[],
+  ): void {
+    const subscription = this.workspaceUpdatesSubscription;
+    if (!subscription) return;
+    if (subscriptionId && subscription.subscriptionId !== subscriptionId) return;
+    if (!subscriptionId && !equal(subscription.filter, filter)) return;
+    for (const entry of entries) {
+      subscription.lastEmittedByWorkspaceId.set(entry.id, {
+        kind: "upsert",
+        workspace: entry,
+      });
+    }
   }
 
   private async registerWorkspaceForImportedAgent(
@@ -4661,7 +4826,7 @@ export class Session {
         error: null,
       },
     });
-    await this.emitWorkspaceUpdateForWorkspaceId(workspace.workspaceId);
+    await this.emitCreatedWorkspaceUpdate(descriptor);
     void this.workspaceGitService
       .getSnapshot(workspace.cwd, { force: true, includeForge: true, reason: "open_project" })
       .catch((error) => {
@@ -4746,10 +4911,7 @@ export class Session {
         error: null,
       },
     });
-    this.emit({
-      type: "workspace_update",
-      payload: { kind: "upsert", workspace: descriptor },
-    });
+    await this.emitCreatedWorkspaceUpdate(descriptor);
   }
 
   private async resolveWorktreeSourceCwd(input: {

@@ -988,6 +988,12 @@ export class VoiceAssistantWebSocketServer {
         }
         this.sendToConnection(connection, wrapSessionMessage(msg));
       },
+      onMessageToSource: (source, msg) => {
+        if (!connection || !connection.sockets.has(source as WebSocketLike)) {
+          return;
+        }
+        this.sendToClient(source as WebSocketLike, wrapSessionMessage(msg));
+      },
       onBinaryMessage: (frame) => {
         if (!connection) {
           return;
@@ -1093,6 +1099,7 @@ export class VoiceAssistantWebSocketServer {
       sockets: new Set([ws]),
       externalDisconnectCleanupTimeout: null,
     };
+    session.updateClientCapabilities(clientCapabilities, ws);
     return connection;
   }
 
@@ -1163,12 +1170,15 @@ export class VoiceAssistantWebSocketServer {
         existing.session.updateAppVersion(newAppVersion);
       }
       const newClientCapabilities = message.capabilities ?? null;
+      // COMPAT(selectiveAgentTimeline): added in v0.1.106. Every capable resumed
+      // hello resets membership before server_info so stale retained-session
+      // state cannot leak. Remove after 2027-01-12.
+      existing.session.updateClientCapabilities(newClientCapabilities, ws);
       if (
         JSON.stringify(existing.clientCapabilities ?? null) !==
         JSON.stringify(newClientCapabilities ?? null)
       ) {
         existing.clientCapabilities = newClientCapabilities;
-        existing.session.updateClientCapabilities(newClientCapabilities);
         this.syncBrowserToolsClientRegistration(existing);
       }
       existing.sockets.add(ws);
@@ -1281,6 +1291,8 @@ export class VoiceAssistantWebSocketServer {
         importSessionWorkspaceTarget: true,
         // COMPAT(forgeProviders): added in v0.1.106, drop the gate when daemon floor >= v0.1.106.
         forgeProviders: true,
+        // COMPAT(selectiveAgentTimeline): added in v0.1.106, remove after 2027-01-12.
+        selectiveAgentTimeline: true,
       },
     };
   }
@@ -1390,6 +1402,7 @@ export class VoiceAssistantWebSocketServer {
 
     this.sessions.delete(ws);
     connection.sockets.delete(ws);
+    connection.session.clearAgentTimelineSubscription(ws);
     this.socketIdentities.delete(ws);
 
     if (connection.sockets.size === 0) {
@@ -1758,7 +1771,7 @@ export class VoiceAssistantWebSocketServer {
     }
 
     const startMs = performance.now();
-    await activeConnection.session.handleMessage(message.message);
+    await activeConnection.session.handleMessage(message.message, ws);
     const durationMs = performance.now() - startMs;
     this.recordRequestLatency(message.message.type, durationMs);
 
@@ -2009,21 +2022,36 @@ export class VoiceAssistantWebSocketServer {
     for (const [clientIndex, { ws }] of clientEntries.entries()) {
       const shouldNotify = clientIndex === plan.inAppRecipientIndex;
       const timestamp = new Date().toISOString();
-      const message = wrapSessionMessage({
-        type: "agent_stream",
-        payload: {
-          agentId: params.agentId,
-          event: {
-            type: "attention_required",
-            provider: params.provider,
-            reason: params.reason,
-            timestamp,
-            shouldNotify,
-            notification,
-          },
-          timestamp,
-        },
-      });
+      const connection = this.sessions.get(ws);
+      const attentionPayload = {
+        agentId: params.agentId,
+        reason: params.reason,
+        timestamp,
+        shouldNotify,
+        notification,
+      };
+      const message = wrapSessionMessage(
+        connection?.session.supportsForSource(CLIENT_CAPS.selectiveAgentTimeline, ws)
+          ? {
+              type: "agent_attention_required",
+              payload: attentionPayload,
+            }
+          : {
+              type: "agent_stream",
+              payload: {
+                agentId: params.agentId,
+                event: {
+                  type: "attention_required",
+                  provider: params.provider,
+                  reason: params.reason,
+                  timestamp,
+                  shouldNotify,
+                  notification,
+                },
+                timestamp,
+              },
+            },
+      );
 
       this.sendToClient(ws, message);
     }
