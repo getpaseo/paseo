@@ -3063,6 +3063,117 @@ test("persists live mode, model, and thinking changes without an external snapsh
   expect(persisted?.runtimeInfo?.model).toBe("gpt-5.4");
 });
 
+test("setAgentMode surfaces the agent-bound model into runtimeInfo on a mode switch", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-mode-bound-model-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+
+  // A session whose bound model follows the selected mode/agent, mirroring
+  // OpenCode plugins that bind e.g. atlas→kimi. Selecting the mode must switch
+  // the effective model, which setAgentMode reads via getRuntimeInfo().
+  const MODEL_BY_MODE: Record<string, string> = {
+    atlas: "moonshot/kimi",
+    sisyphus: "anthropic/claude",
+  };
+
+  class BoundModelSession implements AgentSession {
+    readonly provider = "codex" as const;
+    readonly capabilities = TEST_CAPABILITIES;
+    readonly id = randomUUID();
+    private currentMode: string | null;
+    private effectiveModel: string | null;
+
+    constructor(private readonly config: AgentSessionConfig) {
+      this.currentMode = config.modeId ?? null;
+      this.effectiveModel = config.model ?? null;
+    }
+
+    async run(): Promise<AgentRunResult> {
+      return { sessionId: this.id, finalText: "", timeline: [] };
+    }
+
+    async startTurn(): Promise<{ turnId: string }> {
+      return { turnId: "turn-1" };
+    }
+
+    subscribe(): () => void {
+      return () => {};
+    }
+
+    async *streamHistory(): AsyncGenerator<AgentStreamEvent> {}
+
+    async getRuntimeInfo() {
+      return {
+        provider: this.provider,
+        sessionId: this.id,
+        model: this.effectiveModel,
+        modeId: this.currentMode,
+      };
+    }
+
+    async getAvailableModes() {
+      return [];
+    }
+
+    async getCurrentMode() {
+      return this.currentMode;
+    }
+
+    async setMode(modeId: string): Promise<void> {
+      this.currentMode = modeId;
+      const bound = MODEL_BY_MODE[modeId];
+      if (bound) {
+        this.effectiveModel = bound;
+      }
+    }
+
+    getPendingPermissions() {
+      return [];
+    }
+
+    async respondToPermission(): Promise<void> {}
+
+    describePersistence() {
+      return { provider: this.provider, sessionId: this.id };
+    }
+
+    async interrupt(): Promise<void> {}
+    async close(): Promise<void> {}
+  }
+
+  class BoundModelClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new BoundModelSession(config);
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: {
+      codex: new BoundModelClient(),
+    },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000401",
+  });
+
+  const snapshot = await manager.createAgent(
+    {
+      provider: "codex",
+      cwd: workdir,
+      modeId: "sisyphus",
+    },
+    undefined,
+    { workspaceId: undefined },
+  );
+
+  await manager.setAgentMode(snapshot.id, "atlas");
+
+  const agent = manager.getAgent(snapshot.id);
+  expect(agent?.currentModeId).toBe("atlas");
+  expect(agent?.runtimeInfo?.model).toBe("moonshot/kimi");
+  expect(agent?.config.model).toBe("moonshot/kimi");
+});
+
 test("session config drift events update state through the stream channel", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-session-config-events-"));
   let capturedSession: TestAgentSession | null = null;

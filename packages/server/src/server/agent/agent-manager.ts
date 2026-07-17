@@ -1470,9 +1470,14 @@ export class AgentManager {
     const currentMode = (await agent.session.getCurrentMode()) ?? modeId;
     agent.config.modeId = currentMode ?? undefined;
     agent.currentModeId = currentMode;
-    // Update runtimeInfo to reflect the new mode
+    // A mode switch may re-bind the effective model (e.g. OpenCode plugins
+    // binding an agent to a specific model). Read the session's resulting
+    // effective model and surface it so the client model picker updates.
+    const effectiveModel = (await agent.session.getRuntimeInfo()).model ?? null;
+    agent.config.model = effectiveModel ?? undefined;
+    // Update runtimeInfo to reflect the new mode and effective model
     if (agent.runtimeInfo) {
-      agent.runtimeInfo = { ...agent.runtimeInfo, modeId: currentMode };
+      agent.runtimeInfo = { ...agent.runtimeInfo, modeId: currentMode, model: effectiveModel };
     }
     this.touchUpdatedAt(agent);
     this.emitState(agent);
