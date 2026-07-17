@@ -103,12 +103,6 @@ export async function fetchAgentArchivedAt(
   return result?.agent.archivedAt ?? null;
 }
 
-export function getWorktreeRestoreFeature(client: {
-  getLastServerInfoMessage(): { features?: { worktreeRestore?: boolean } | null } | null;
-}): boolean {
-  return client.getLastServerInfoMessage()?.features?.worktreeRestore === true;
-}
-
 export async function primeAdditionalPage(page: Page): Promise<void> {
   const seedNonce = randomUUID();
   const { daemon, preferences } = buildSeededStoragePayload();

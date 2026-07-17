@@ -1,17 +1,25 @@
 import { Text, View } from "react-native";
 import { ArrowLeftToLine, RotateCw, Settings } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { Button } from "@/components/ui/button";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { formatConnectionStatus } from "@/utils/daemons";
 import type { WorkspaceRouteState } from "@/screens/workspace/workspace-route-state";
+import type { Theme } from "@/styles/theme";
+
+const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
+const foregroundMutedColorMapping = (theme: Theme) => ({
+  color: theme.colors.foregroundMuted,
+});
 
 interface WorkspaceRouteStateActions {
   onRetryHost: () => void;
   onManageHost: () => void;
   onDismissMissingWorkspace: () => void;
+  onRecoverWorkspace: () => void;
+  onRetryRecoveryInspection: () => void;
 }
 
 export function renderWorkspaceRouteGate(input: {
@@ -21,8 +29,21 @@ export function renderWorkspaceRouteGate(input: {
   switch (input.state.kind) {
     case "loading":
       return <WorkspaceConnecting hostName={input.state.hostName} />;
-    case "restoring":
-      return <WorkspaceRestoring hostName={input.state.hostName} />;
+    case "missing":
+      return (
+        <WorkspaceEmptyState
+          titleKey="workspace.route.recovery.unavailableTitle"
+          hostName={input.state.hostName}
+          onDismiss={input.actions.onDismissMissingWorkspace}
+        />
+      );
+    case "archived":
+      return (
+        <ArchivedWorkspaceRecovery
+          state={input.state}
+          onRecover={input.actions.onRecoverWorkspace}
+        />
+      );
     case "needsHostUpgrade":
       return (
         <WorkspaceEmptyState
@@ -39,13 +60,19 @@ export function renderWorkspaceRouteGate(input: {
           onManageHost={input.actions.onManageHost}
         />
       );
-    case "missing":
+    case "recoveryUnavailable":
       return (
         <WorkspaceEmptyState
-          titleKey={
-            input.state.restoreFailed ? "workspace.route.restoreFailed" : "workspace.route.missing"
-          }
-          hostName={input.state.hostName}
+          titleKey="workspace.route.recovery.unavailableTitle"
+          description={input.state.message}
+          onDismiss={input.actions.onDismissMissingWorkspace}
+        />
+      );
+    case "recoveryInspectionFailed":
+      return (
+        <WorkspaceRecoveryInspectionFailed
+          state={input.state}
+          onRetry={input.actions.onRetryRecoveryInspection}
           onDismiss={input.actions.onDismissMissingWorkspace}
         />
       );
@@ -69,12 +96,11 @@ function getWorkspaceHostStateTitle(
 }
 
 function WorkspaceConnecting({ hostName }: { hostName: string }) {
-  const { theme } = useUnistyles();
   const { t } = useTranslation();
 
   return (
     <View style={styles.emptyState}>
-      <LoadingSpinner size="small" color={theme.colors.foregroundMuted} />
+      <ThemedLoadingSpinner size="small" uniProps={foregroundMutedColorMapping} />
       <View style={styles.textStack}>
         <Text style={styles.title}>{t("workspace.route.loading")}</Text>
         <Text style={styles.description}>{hostName}</Text>
@@ -83,16 +109,90 @@ function WorkspaceConnecting({ hostName }: { hostName: string }) {
   );
 }
 
-function WorkspaceRestoring({ hostName }: { hostName: string }) {
-  const { theme } = useUnistyles();
+function ArchivedWorkspaceRecovery({
+  state,
+  onRecover,
+}: {
+  state: Extract<WorkspaceRouteState, { kind: "archived" }>;
+  onRecover: () => void;
+}) {
   const { t } = useTranslation();
+  const { recovery } = state;
+  const isRestoring = recovery.phase === "restoring";
+  let actionLabel = t("workspace.route.recovery.unarchiveAction");
+  if (recovery.recovery.action === "restore") {
+    actionLabel = t("workspace.route.recovery.restoreAction");
+  }
+  if (recovery.phase === "failed") {
+    actionLabel = t("common.actions.retry");
+  }
+  const description =
+    recovery.recovery.action === "restore"
+      ? t("workspace.route.recovery.restoreDescription", {
+          workspaceName: recovery.recovery.workspaceName,
+          branch: recovery.recovery.branch,
+        })
+      : t("workspace.route.recovery.unarchiveDescription", {
+          workspaceName: recovery.recovery.workspaceName,
+        });
 
   return (
     <View style={styles.emptyState}>
-      <LoadingSpinner size="small" color={theme.colors.foregroundMuted} />
+      {isRestoring ? (
+        <ThemedLoadingSpinner size="small" uniProps={foregroundMutedColorMapping} />
+      ) : null}
       <View style={styles.textStack}>
-        <Text style={styles.title}>{t("workspace.route.restoring")}</Text>
-        <Text style={styles.description}>{hostName}</Text>
+        <Text style={styles.title}>
+          {isRestoring
+            ? t("workspace.route.recovery.restoringTitle")
+            : t("workspace.route.recovery.archivedTitle")}
+        </Text>
+        <Text style={styles.description}>{description}</Text>
+        {recovery.error ? (
+          <Text style={styles.error} testID="workspace-recovery-error">
+            {recovery.error}
+          </Text>
+        ) : null}
+      </View>
+      <View style={styles.actions}>
+        <Button
+          size="sm"
+          variant="default"
+          leftIcon={isRestoring ? undefined : RotateCw}
+          onPress={onRecover}
+          disabled={isRestoring}
+          testID="workspace-recovery-action"
+        >
+          {isRestoring ? t("workspace.route.recovery.restoringAction") : actionLabel}
+        </Button>
+      </View>
+    </View>
+  );
+}
+
+function WorkspaceRecoveryInspectionFailed({
+  state,
+  onRetry,
+  onDismiss,
+}: {
+  state: Extract<WorkspaceRouteState, { kind: "recoveryInspectionFailed" }>;
+  onRetry: () => void;
+  onDismiss: () => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <View style={styles.emptyState}>
+      <View style={styles.textStack}>
+        <Text style={styles.title}>{t("workspace.route.recovery.checkFailedTitle")}</Text>
+        <Text style={styles.error}>{state.error}</Text>
+      </View>
+      <View style={styles.actions}>
+        <Button size="sm" variant="default" leftIcon={RotateCw} onPress={onRetry}>
+          {t("common.actions.retry")}
+        </Button>
+        <Button size="sm" variant="outline" leftIcon={ArrowLeftToLine} onPress={onDismiss}>
+          {t("common.actions.back")}
+        </Button>
       </View>
     </View>
   );
@@ -107,14 +207,13 @@ function WorkspaceUnreachable({
   onRetry: () => void;
   onManageHost: () => void;
 }) {
-  const { theme } = useUnistyles();
   const { t } = useTranslation();
   const canRetry = state.connectionStatus === "offline" || state.connectionStatus === "error";
 
   return (
     <View style={styles.emptyState}>
       {state.connectionStatus === "connecting" || state.connectionStatus === "idle" ? (
-        <LoadingSpinner size="small" color={theme.colors.foregroundMuted} />
+        <ThemedLoadingSpinner size="small" uniProps={foregroundMutedColorMapping} />
       ) : null}
       <View style={styles.textStack}>
         <Text style={styles.title}>{getWorkspaceHostStateTitle(state, t)}</Text>
@@ -155,13 +254,12 @@ function WorkspaceUnreachable({
 function WorkspaceEmptyState({
   titleKey,
   hostName,
+  description,
   onDismiss,
 }: {
-  titleKey:
-    | "workspace.route.missing"
-    | "workspace.route.restoreFailed"
-    | "workspace.route.needsHostUpgrade";
-  hostName: string;
+  titleKey: "workspace.route.needsHostUpgrade" | "workspace.route.recovery.unavailableTitle";
+  hostName?: string;
+  description?: string;
   onDismiss: () => void;
 }) {
   const { t } = useTranslation();
@@ -170,7 +268,7 @@ function WorkspaceEmptyState({
     <View style={styles.emptyState}>
       <View style={styles.textStack}>
         <Text style={styles.title}>{t(titleKey)}</Text>
-        <Text style={styles.description}>{hostName}</Text>
+        <Text style={styles.description}>{description ?? hostName}</Text>
       </View>
       <View style={styles.actions}>
         <Button size="sm" variant="default" leftIcon={ArrowLeftToLine} onPress={onDismiss}>

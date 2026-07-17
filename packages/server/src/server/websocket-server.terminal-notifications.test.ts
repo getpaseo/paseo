@@ -198,6 +198,7 @@ function createOpenSocket() {
 function connectClient(server: VoiceAssistantWebSocketServer) {
   const ws = createOpenSocket();
   asInternals<{ sessions: Map<unknown, unknown> }>(server).sessions.set(ws, {
+    kind: "trusted",
     session: {
       getClientActivity: vi.fn(() => null),
     },

@@ -8,10 +8,61 @@ import {
   buildSidebarWorkspacePlacementModel,
   buildSidebarProjectsFromStructure,
   computeSidebarOrderUpdates,
+  createSidebarWorkspaceEntry,
   deriveSidebarLoadingState,
   shouldShowSidebarHostLabels,
   type SidebarProjectEntry,
 } from "./sidebar-workspaces-view-model";
+
+function workspaceWithForge(forge: string | undefined, prUrl: string): WorkspaceDescriptor {
+  return {
+    id: "ws-1",
+    projectId: "proj",
+    projectDisplayName: "repo",
+    projectRootPath: "/repo",
+    workspaceDirectory: "/repo",
+    projectKind: "git",
+    workspaceKind: "worktree",
+    name: "feature",
+    title: null,
+    status: "done",
+    statusEnteredAt: null,
+    archivingAt: null,
+    diffStat: null,
+    scripts: [],
+    forge,
+    githubRuntime: {
+      featuresEnabled: true,
+      pullRequest: {
+        url: prUrl,
+        title: "Change",
+        state: "open",
+        baseRefName: "main",
+        headRefName: "feature",
+        isMerged: false,
+      },
+      error: null,
+    },
+  };
+}
+
+describe("createSidebarWorkspaceEntry forge threading", () => {
+  it("threads a gitlab summary forge onto the prHint", () => {
+    const entry = createSidebarWorkspaceEntry({
+      serverId: "srv",
+      workspace: workspaceWithForge("gitlab", "https://gitlab.com/group/proj/-/merge_requests/7"),
+    });
+    expect(entry.prHint).toMatchObject({ number: 7, forge: "gitlab" });
+  });
+
+  it("falls back to github when the summary omits forge (old daemon)", () => {
+    const entry = createSidebarWorkspaceEntry({
+      serverId: "srv",
+      workspace: workspaceWithForge(undefined, "https://github.com/acme/repo/pull/42"),
+    });
+    expect(entry.prHint).toMatchObject({ number: 42, forge: "github" });
+  });
+});
 
 interface OrderedItem {
   key: string;

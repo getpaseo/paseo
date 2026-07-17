@@ -121,7 +121,7 @@ export async function backfillLegacyDaemonWorkspaceDirectoryIfEmpty(
   return true;
 }
 
-async function readLegacyDaemonWorkspaceDirectory(input: {
+export async function readLegacyDaemonWorkspaceDirectory(input: {
   client: Pick<DaemonClient, "fetchAgents">;
   subscribe?: FetchAgentsOptions["subscribe"];
   page?: FetchAgentsOptions["page"];
@@ -193,7 +193,7 @@ export function applyLegacyDaemonWorkspaceOwnership(input: {
   };
 }
 
-function replaceLegacyDaemonWorkspaceDirectory(input: {
+export function replaceLegacyDaemonWorkspaceDirectory(input: {
   serverId: string;
   entries: FetchAgentsEntry[];
 }): LegacyDaemonWorkspaceSnapshot {
@@ -242,7 +242,7 @@ function readFetchAgentsNextCursor(
   return null;
 }
 
-function stampLegacyWorkspaceIds(entries: FetchAgentsEntry[]): FetchAgentsEntry[] {
+export function stampLegacyWorkspaceIds(entries: FetchAgentsEntry[]): FetchAgentsEntry[] {
   return entries.map((entry) => {
     const workspaceId = resolveLegacyWorkspaceId(entry);
     return {
@@ -255,7 +255,9 @@ function stampLegacyWorkspaceIds(entries: FetchAgentsEntry[]): FetchAgentsEntry[
   });
 }
 
-function buildLegacyWorkspaces(entries: FetchAgentsEntry[]): Map<string, WorkspaceDescriptor> {
+export function buildLegacyWorkspaces(
+  entries: FetchAgentsEntry[],
+): Map<string, WorkspaceDescriptor> {
   const workspaces = new Map<string, WorkspaceDescriptor>();
   for (const entry of entries) {
     const workspaceId = entry.agent.workspaceId ?? resolveLegacyWorkspaceId(entry);

@@ -14,6 +14,8 @@ import { createTestAgentClients } from "./fake-agent-client.js";
 import type { PushNotificationSender } from "../push/notifications.js";
 
 interface TestPaseoDaemonOptions {
+  daemonVersion?: string;
+  desktopManaged?: boolean;
   downloadTokenTtlMs?: number;
   corsAllowedOrigins?: string[];
   listen?: string;
@@ -157,6 +159,8 @@ async function prepareTestDaemonConfig(
   const config: PaseoDaemonConfig = {
     listen: `${listenHost}:0`,
     paseoHome,
+    daemonVersion: options.daemonVersion,
+    desktopManaged: options.desktopManaged,
     corsAllowedOrigins: options.corsAllowedOrigins ?? [],
     hostnames: true,
     mcpEnabled: options.mcpEnabled ?? true,

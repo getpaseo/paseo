@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, it, test } from "vitest";
 import {
   buildDeterministicWorkspaceTabId,
   normalizeWorkspaceTabTarget,
@@ -41,5 +41,58 @@ describe("provider subagent tab identity", () => {
     });
 
     expect(first).not.toBe(second);
+  });
+});
+
+describe("commit diff tab identity", () => {
+  it("keys a commit diff tab by its sha", () => {
+    expect(buildDeterministicWorkspaceTabId({ kind: "commit_diff", sha: "abc123" })).toBe(
+      "commit_diff_abc123",
+    );
+  });
+
+  it("does not collide a commit diff tab id with a file tab id", () => {
+    const diffId = buildDeterministicWorkspaceTabId({ kind: "commit_diff", sha: "abc123" });
+    const fileId = buildDeterministicWorkspaceTabId({
+      kind: "file",
+      path: "abc123",
+    });
+    expect(diffId).not.toBe(fileId);
+  });
+
+  it("treats two commit diff targets with the same sha as equal", () => {
+    expect(
+      workspaceTabTargetsEqual(
+        { kind: "commit_diff", sha: "abc123" },
+        { kind: "commit_diff", sha: "abc123" },
+      ),
+    ).toBe(true);
+  });
+
+  it("treats commit diff targets with different shas as unequal", () => {
+    expect(
+      workspaceTabTargetsEqual(
+        { kind: "commit_diff", sha: "abc123" },
+        { kind: "commit_diff", sha: "def456" },
+      ),
+    ).toBe(false);
+  });
+
+  it("normalizes a commit diff target", () => {
+    expect(
+      normalizeWorkspaceTabTarget({
+        kind: "commit_diff",
+        sha: "abc123",
+      }),
+    ).toEqual({ kind: "commit_diff", sha: "abc123" });
+  });
+
+  it("rejects a commit diff target with a blank sha", () => {
+    expect(
+      normalizeWorkspaceTabTarget({
+        kind: "commit_diff",
+        sha: "   ",
+      }),
+    ).toBeNull();
   });
 });

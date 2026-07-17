@@ -4,13 +4,26 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, test } from "vitest";
 
-import { resolveBundledWebUiDistDir } from "./config.js";
+import { loadConfig, resolveBundledWebUiDistDir } from "./config.js";
 
 const roots: string[] = [];
 
 describe("server config", () => {
   afterEach(async () => {
     await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  });
+
+  test("records when the daemon is managed by Paseo Desktop", async () => {
+    const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-config-desktop-managed-"));
+    roots.push(paseoHome);
+
+    const desktopConfig = loadConfig(paseoHome, {
+      env: { PASEO_DESKTOP_MANAGED: "1" },
+    });
+    const standaloneConfig = loadConfig(paseoHome, { env: {} });
+
+    expect(desktopConfig.desktopManaged).toBe(true);
+    expect(standaloneConfig.desktopManaged).toBe(false);
   });
 
   test("resolves bundled web UI path from source-tree modules", () => {

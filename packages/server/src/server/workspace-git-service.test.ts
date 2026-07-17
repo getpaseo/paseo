@@ -3,7 +3,7 @@ import os from "node:os";
 import path, { join } from "node:path";
 import type { FSWatcher } from "node:fs";
 import type pino from "pino";
-import type { GitHubService } from "../services/github-service.js";
+import type { ForgeService } from "../services/forge-service.js";
 import type {
   CheckoutSnapshotFacts,
   CheckoutStatusGit,
@@ -30,7 +30,7 @@ function createSnapshot(
   cwd: string,
   overrides?: {
     git?: Partial<WorkspaceGitRuntimeSnapshot["git"]>;
-    github?: Partial<WorkspaceGitRuntimeSnapshot["github"]>;
+    forge?: Partial<WorkspaceGitRuntimeSnapshot["forge"]>;
   },
 ): WorkspaceGitRuntimeSnapshot {
   const base: WorkspaceGitRuntimeSnapshot = {
@@ -50,7 +50,7 @@ function createSnapshot(
       hasRemote: true,
       diffStat: { additions: 1, deletions: 0 },
     },
-    github: {
+    forge: {
       featuresEnabled: true,
       pullRequest: {
         url: "https://github.com/acme/repo/pull/123",
@@ -64,25 +64,63 @@ function createSnapshot(
     },
   };
 
+  const featuresEnabled = overrides?.forge?.featuresEnabled ?? base.forge.featuresEnabled;
+  const authState =
+    overrides?.forge?.authState ?? (featuresEnabled ? "authenticated" : "no_remote");
+  const forgeName = resolveSnapshotForgeName(featuresEnabled, overrides);
   return {
     cwd,
     git: {
       ...base.git,
       ...overrides?.git,
     },
-    github: {
-      ...base.github,
-      ...overrides?.github,
-      pullRequest:
-        overrides?.github && "pullRequest" in overrides.github
-          ? (overrides.github.pullRequest ?? null)
-          : base.github.pullRequest,
-      error:
-        overrides?.github && "error" in overrides.github
-          ? (overrides.github.error ?? null)
-          : base.github.error,
+    forge: {
+      ...base.forge,
+      ...overrides?.forge,
+      featuresEnabled,
+      authState,
+      ...(forgeName ? { forge: forgeName } : {}),
+      pullRequest: resolveSnapshotPullRequest(base, overrides),
+      error: resolveSnapshotError(base, overrides),
     },
   };
+}
+
+function hasForgeOverride(
+  overrides: { forge?: Partial<WorkspaceGitRuntimeSnapshot["forge"]> } | undefined,
+  key: keyof WorkspaceGitRuntimeSnapshot["forge"],
+): boolean {
+  return Boolean(overrides?.forge && key in overrides.forge);
+}
+
+function resolveSnapshotForgeName(
+  featuresEnabled: boolean,
+  overrides: { forge?: Partial<WorkspaceGitRuntimeSnapshot["forge"]> } | undefined,
+): string | undefined {
+  if (hasForgeOverride(overrides, "forge")) {
+    return overrides?.forge?.forge;
+  }
+  return featuresEnabled ? "github" : undefined;
+}
+
+function resolveSnapshotPullRequest(
+  base: WorkspaceGitRuntimeSnapshot,
+  overrides: { forge?: Partial<WorkspaceGitRuntimeSnapshot["forge"]> } | undefined,
+): WorkspaceGitRuntimeSnapshot["forge"]["pullRequest"] {
+  if (hasForgeOverride(overrides, "pullRequest")) {
+    return overrides?.forge?.pullRequest ?? null;
+  }
+  return base.forge.pullRequest;
+}
+
+function resolveSnapshotError(
+  base: WorkspaceGitRuntimeSnapshot,
+  overrides: { forge?: Partial<WorkspaceGitRuntimeSnapshot["forge"]> } | undefined,
+): WorkspaceGitRuntimeSnapshot["forge"]["error"] {
+  if (hasForgeOverride(overrides, "error")) {
+    return overrides?.forge?.error ?? null;
+  }
+  return base.forge.error;
 }
 
 function createCheckoutStatus(
@@ -137,6 +175,8 @@ function createPullRequestStatusResult(
       headRefName: "feature",
       isMerged: false,
     },
+    authState: "authenticated",
+    featuresEnabled: true,
     githubFeaturesEnabled: true,
     ...overrides,
   };
@@ -173,11 +213,15 @@ function createDeferred<T>() {
   return { promise, resolve, reject };
 }
 
-function createGitHubServiceStub(): GitHubService {
+function createGitHubServiceStub(): ForgeService {
   return {
     listPullRequests: vi.fn(async () => []),
     listIssues: vi.fn(async () => []),
-    searchIssuesAndPrs: vi.fn(async () => ({ items: [], githubFeaturesEnabled: true })),
+    searchIssuesAndPrs: vi.fn(async () => ({
+      items: [],
+      featuresEnabled: true,
+      githubFeaturesEnabled: true,
+    })),
     getPullRequest: vi.fn(async () => ({
       number: 1,
       title: "PR",
@@ -189,6 +233,15 @@ function createGitHubServiceStub(): GitHubService {
       labels: [],
     })),
     getPullRequestHeadRef: vi.fn(async () => "feature"),
+    getPullRequestCheckoutTarget: vi.fn(async ({ number }) => ({
+      number,
+      baseRefName: "main",
+      headRefName: "feature",
+      headOwnerLogin: null,
+      headRepositorySshUrl: null,
+      headRepositoryUrl: null,
+      isCrossRepository: false,
+    })),
     getCurrentPullRequestStatus: vi.fn(async () => null),
     createPullRequest: vi.fn(async () => ({
       url: "https://github.com/acme/repo/pull/1",
@@ -196,6 +249,7 @@ function createGitHubServiceStub(): GitHubService {
     })),
     mergePullRequest: vi.fn(async () => ({ success: true })),
     isAuthenticated: vi.fn(async () => true),
+    authProbeCanThrow: true,
     invalidate: vi.fn(),
   };
 }
@@ -205,7 +259,7 @@ interface CreateServiceTestOptions {
   getCheckoutSnapshotFacts?: ReturnType<typeof vi.fn>;
   getCheckoutShortstat?: ReturnType<typeof vi.fn>;
   getPullRequestStatus?: ReturnType<typeof vi.fn>;
-  github?: GitHubService;
+  github?: ForgeService;
   resolveAbsoluteGitDir?: ReturnType<typeof vi.fn>;
   hasOriginRemote?: ReturnType<typeof vi.fn>;
   runGitFetch?: ReturnType<typeof vi.fn>;
@@ -226,7 +280,7 @@ function buildDefaultTestServiceDeps() {
       deletions: 0,
     })),
     getPullRequestStatus: vi.fn(async () => createPullRequestStatusResult()),
-    github: createGitHubServiceStub(),
+    forgeOverrides: { github: createGitHubServiceStub() },
     resolveAbsoluteGitDir: vi.fn(async () => join(REPO_CWD, ".git")),
     hasOriginRemote: vi.fn(async () => false),
     runGitFetch: vi.fn(async () => {}),
@@ -318,7 +372,7 @@ describe("WorkspaceGitServiceImpl", () => {
 
     await expect(service.getSnapshot(REPO_CWD)).resolves.toEqual(
       createSnapshot(REPO_CWD, {
-        github: {
+        forge: {
           pullRequest: {
             url: "https://github.com/acme/repo/pull/999",
             title: "Ship runtime centralization",
@@ -330,6 +384,31 @@ describe("WorkspaceGitServiceImpl", () => {
         },
       }),
     );
+    expect(getPullRequestStatus).toHaveBeenCalledTimes(1);
+
+    service.dispose();
+  });
+
+  test("getSnapshot does not probe isAuthenticated for a forge adapter that never throws from it", async () => {
+    const gitlabIsAuthenticated = vi.fn(async () => false);
+    const gitlabStub: ForgeService = {
+      ...createGitHubServiceStub(),
+      isAuthenticated: gitlabIsAuthenticated,
+      authProbeCanThrow: undefined,
+    };
+    const getPullRequestStatus = vi.fn(async () => createPullRequestStatusResult());
+
+    const service = createService({
+      getCheckoutStatus: vi.fn(async (cwd: string) =>
+        createCheckoutStatus(cwd, { remoteUrl: "https://gitlab.com/acme/repo.git" }),
+      ),
+      getPullRequestStatus,
+      forgeOverrides: { gitlab: gitlabStub },
+    });
+
+    await service.getSnapshot(REPO_CWD);
+
+    expect(gitlabIsAuthenticated).not.toHaveBeenCalled();
     expect(getPullRequestStatus).toHaveBeenCalledTimes(1);
 
     service.dispose();
@@ -562,7 +641,7 @@ describe("WorkspaceGitServiceImpl", () => {
     const initialSnapshot = await service.getSnapshot(REPO_CWD);
     const subscription = service.registerWorkspace({ cwd: REPO_CWD }, listener);
 
-    expect(initialSnapshot.github.pullRequest?.title).toBe("Before refresh");
+    expect(initialSnapshot.forge.pullRequest?.title).toBe("Before refresh");
 
     await service.getSnapshot(REPO_CWD, {
       force: true,
@@ -574,7 +653,7 @@ describe("WorkspaceGitServiceImpl", () => {
     expect(listener).toHaveBeenCalledTimes(1);
     expect(listener).toHaveBeenCalledWith(
       createSnapshot(REPO_CWD, {
-        github: {
+        forge: {
           pullRequest: {
             url: "https://github.com/acme/repo/pull/123",
             title: "After refresh",
@@ -654,7 +733,7 @@ describe("WorkspaceGitServiceImpl", () => {
           aheadBehind: { ahead: 2, behind: 0 },
           aheadOfOrigin: 2,
         },
-        github: {
+        forge: {
           featuresEnabled: false,
           pullRequest: null,
         },

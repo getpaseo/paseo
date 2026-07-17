@@ -4,6 +4,7 @@ export type KeyboardFocusScope =
   | "command-center"
   | "find-input"
   | "editable"
+  | "browser"
   | "other";
 
 export type MessageInputKeyboardActionKind =

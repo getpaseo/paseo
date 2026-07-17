@@ -135,7 +135,8 @@ describe("planWorkspaceOpenTargets", () => {
 
     expect(blobTargets).toEqual([
       {
-        source: "github",
+        source: "forge",
+        forge: "github",
         id: "github",
         label: "GitHub",
         url: "https://github.com/getpaseo/paseo/blob/main/src/app.ts#L3-L5",
@@ -143,10 +144,37 @@ describe("planWorkspaceOpenTargets", () => {
     ]);
     expect(treeTargets).toEqual([
       {
-        source: "github",
+        source: "forge",
+        forge: "github",
         id: "github",
         label: "GitHub",
         url: "https://github.com/getpaseo/paseo/tree/main",
+      },
+    ]);
+  });
+
+  it("infers the forge from the remote URL when the forge input is null", () => {
+    const targets = planWorkspaceOpenTargets({
+      workspaceDirectory: "/repo",
+      activeFile: { path: "src/app.ts", lineStart: 3, lineEnd: 5 },
+      desktopTargets: [],
+      canUseDesktopBridge: false,
+      isLocalExecution: false,
+      checkoutStatus: {
+        isGit: true,
+        remoteUrl: "git@gitlab.com:group/project.git",
+        currentBranch: "main",
+      },
+      forge: null,
+    });
+
+    expect(targets).toEqual([
+      {
+        source: "forge",
+        forge: "gitlab",
+        id: "gitlab",
+        label: "GitLab",
+        url: "https://gitlab.com/group/project/-/blob/main/src/app.ts#L3-5",
       },
     ]);
   });

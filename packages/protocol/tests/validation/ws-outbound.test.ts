@@ -142,4 +142,58 @@ const SourceSchema = z.object({
     const generated = await readFile(generatedWSOutboundPath, "utf8");
     expect(generated).toContain('from "../../validation/ws-outbound-schema-metadata.js"');
   });
+
+  it("accepts a forge.search.response envelope", () => {
+    const result = GeneratedWSOutboundMessageSchema.safeParse({
+      type: "session",
+      message: {
+        type: "forge.search.response",
+        payload: {
+          items: [
+            {
+              kind: "change_request",
+              number: 17,
+              title: "Fix search",
+              url: "https://gitlab.com/acme/repo/-/merge_requests/17",
+              state: "open",
+              body: null,
+              labels: [],
+            },
+          ],
+          authState: "authenticated",
+          error: null,
+          requestId: "search-forge",
+        },
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts a legacy github_search_response envelope", () => {
+    const result = GeneratedWSOutboundMessageSchema.safeParse({
+      type: "session",
+      message: {
+        type: "github_search_response",
+        payload: {
+          items: [
+            {
+              kind: "pr",
+              number: 42,
+              title: "Legacy PR",
+              url: "https://github.com/acme/repo/pull/42",
+              state: "open",
+              body: null,
+              labels: [],
+            },
+          ],
+          featuresEnabled: true,
+          githubFeaturesEnabled: true,
+          authState: "authenticated",
+          error: null,
+          requestId: "search-github",
+        },
+      },
+    });
+    expect(result.success).toBe(true);
+  });
 });

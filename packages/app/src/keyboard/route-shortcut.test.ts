@@ -48,6 +48,7 @@ describe("routeKeyboardShortcut — dispatch passthroughs", () => {
     ["workspace.pane.move-tab.down", { id: "workspace.pane.move-tab.down", scope: "workspace" }],
     ["workspace.pane.close", { id: "workspace.pane.close", scope: "workspace" }],
     ["workspace.find.open", { id: "workspace.find.open", scope: "workspace" }],
+    ["view.toggle.focus", { id: "workspace.focus.toggle", scope: "workspace" }],
   ])("%s → dispatch %j", (action, expected) => {
     expect(routeKeyboardShortcut({ action, payload: null }, makeCtx())).toEqual({
       kind: "dispatch",
@@ -334,7 +335,6 @@ describe("routeKeyboardShortcut — callbacks and pickers", () => {
   it.each([
     ["sidebar.toggle.left", "toggle-agent-list"],
     ["sidebar.toggle.both", "toggle-both-sidebars"],
-    ["view.toggle.focus", "toggle-focus-mode"],
     ["theme.cycle", "cycle-theme"],
   ] as const)("%s → callback %s", (action, name) => {
     expect(routeKeyboardShortcut({ action, payload: null }, makeCtx())).toEqual<ShortcutAction>({

@@ -160,9 +160,28 @@ jobs:
       - name: Run desktop tests
         run: npm run test --workspace=@getpaseo/desktop
 
+      - name: Build app dependencies for desktop E2E
+        if: matrix.os == 'ubuntu-latest'
+        run: npm run build:app-deps
+
       - name: Install virtual display
-        if: matrix.os == 'ubuntu-latest' && steps.desktop_changes.outputs.desktop == 'true'
+        if: matrix.os == 'ubuntu-latest'
         run: sudo apt-get update && sudo apt-get install -y xvfb xauth
+
+      - name: Run real Electron browser tab bridge E2E
+        if: matrix.os == 'ubuntu-latest'
+        run: npm run test:e2e:browser-tab-bridge --workspace=@getpaseo/desktop
+        env:
+          PASEO_TAB_BRIDGE_E2E_ARTIFACT_DIR: ${{ runner.temp }}/browser-tab-bridge-e2e
+
+      - name: Upload browser tab bridge diagnostics
+        uses: actions/upload-artifact@v4
+        if: failure() && matrix.os == 'ubuntu-latest'
+        with:
+          name: browser-tab-bridge-e2e
+          path: ${{ runner.temp }}/browser-tab-bridge-e2e
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Build and smoke unpacked desktop app
         if: matrix.os == 'ubuntu-latest' && steps.desktop_changes.outputs.desktop == 'true'

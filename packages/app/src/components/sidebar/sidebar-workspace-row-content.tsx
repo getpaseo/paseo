@@ -1,4 +1,5 @@
 import { memo, useCallback, useMemo, useState, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import {
   ActivityIndicator,
   Pressable,
@@ -18,13 +19,14 @@ import {
   Monitor,
   SquareTerminal,
 } from "lucide-react-native";
-import { GitHubIcon } from "@/components/icons/github-icon";
 import { WorkspaceHoverCard } from "@/components/workspace-hover-card";
 import { SyncedLoader } from "@/components/synced-loader";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import { useAppSettings } from "@/hooks/use-settings";
 import type { Theme } from "@/styles/theme";
 import type { PrHint } from "@/git/use-pr-status-query";
+import { getForgePresentation, normalizeForge } from "@/git/forge";
+import { ForgeBrandIcon } from "@/git/forge-icon";
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { isEmphasizedStatusDotBucket } from "@/utils/status-dot-color";
 import { shouldRenderSyncedStatusLoader } from "@/utils/status-loader";
@@ -52,7 +54,6 @@ const purpleColorMapping = (theme: Theme) => ({ color: theme.colors.palette.purp
 
 const ThemedExternalLink = withUnistyles(ExternalLink);
 const ThemedGitPullRequest = withUnistyles(GitPullRequest);
-const ThemedGitHubIcon = withUnistyles(GitHubIcon);
 const ThemedActivityIndicator = withUnistyles(ActivityIndicator);
 const ThemedCircleAlert = withUnistyles(CircleAlert);
 const ThemedSyncedLoader = withUnistyles(SyncedLoader);
@@ -61,6 +62,10 @@ const ThemedFolder = withUnistyles(Folder);
 const ThemedFolderGit2 = withUnistyles(FolderGit2);
 const ThemedGlobe = withUnistyles(Globe);
 const ThemedSquareTerminal = withUnistyles(SquareTerminal);
+
+function renderChecksBadgeForgeIcon(icon: string) {
+  return <ForgeBrandIcon iconKind={icon} size={10} uniProps={redColorMapping} />;
+}
 
 type SidebarWorkspaceScriptIconKind = "service" | "command";
 
@@ -156,7 +161,7 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
           {workspace.prHint ? (
             <View style={styles.workspacePrBadgeRow}>
               <PrBadge hint={workspace.prHint} />
-              <ChecksBadge checks={workspace.prHint.checks} />
+              <ChecksBadge checks={workspace.prHint.checks} forge={workspace.prHint.forge} />
             </View>
           ) : null}
         </View>
@@ -290,6 +295,7 @@ function StatusDotOverlay({
 }
 
 function PrBadge({ hint }: { hint: PrHint }) {
+  const { t } = useTranslation();
   const [isHovered, setIsHovered] = useState(false);
   const handlePress = useCallback(
     (event: GestureResponderEvent) => {
@@ -303,6 +309,7 @@ function PrBadge({ hint }: { hint: PrHint }) {
     [isHovered],
   );
   const iconUniProps = isHovered ? foregroundColorMapping : getPrIconUniMapping(hint.state);
+  const presentation = getForgePresentation(normalizeForge(hint.forge));
 
   const handlePressIn = useCallback((event: GestureResponderEvent) => event.stopPropagation(), []);
   const handleHoverIn = useCallback(() => setIsHovered(true), []);
@@ -316,7 +323,10 @@ function PrBadge({ hint }: { hint: PrHint }) {
   return (
     <Pressable
       accessibilityRole="link"
-      accessibilityLabel={`Pull request #${hint.number}`}
+      accessibilityLabel={t("workspace.git.pr.accessibility.pullRequest", {
+        number: hint.number,
+        context: presentation.changeRequestContext,
+      })}
       hitSlop={4}
       onPressIn={handlePressIn}
       onPress={handlePress}
@@ -330,19 +340,21 @@ function PrBadge({ hint }: { hint: PrHint }) {
         <ThemedGitPullRequest size={12} uniProps={iconUniProps} />
       )}
       <Text style={textStyle} numberOfLines={1}>
+        {presentation.numberPrefix}
         {hint.number}
       </Text>
     </Pressable>
   );
 }
 
-function ChecksBadge({ checks }: { checks: PrHint["checks"] }) {
+function ChecksBadge({ checks, forge }: { checks: PrHint["checks"]; forge: PrHint["forge"] }) {
   if (!checks || checks.length === 0) return null;
   const failed = checks.filter((check) => check.status === "failure").length;
   if (failed === 0) return null;
+  const icon = getForgePresentation(normalizeForge(forge)).icon;
   return (
     <View style={checksBadgeStyles.badge}>
-      <ThemedGitHubIcon size={10} uniProps={redColorMapping} />
+      {renderChecksBadgeForgeIcon(icon)}
       <Text style={checksBadgeStyles.text}>{failed} failed</Text>
     </View>
   );

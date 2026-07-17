@@ -1,4 +1,4 @@
-import { useEffect, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
 import { AppState } from "react-native";
 import { getIsAppActivelyVisible } from "@/utils/app-visibility";
 import { isWeb } from "@/constants/platform";
@@ -17,6 +17,18 @@ function notify(): void {
   }
 }
 
+// Track visibility for the app's whole lifetime, not per consumer: transitions that happen while
+// no consumer is mounted must still be reflected in the snapshot the next consumer reads, or a
+// component mounting right after a focus change acts on stale visibility.
+// AppState needs no environment guard of its own — react-native-web's implementation already
+// no-ops when there is no DOM, unlike the raw document/window listeners below.
+AppState.addEventListener("change", notify);
+if (isWeb && typeof document !== "undefined") {
+  document.addEventListener("visibilitychange", notify);
+  window.addEventListener("focus", notify);
+  window.addEventListener("blur", notify);
+}
+
 function subscribe(listener: () => void): () => void {
   listeners.add(listener);
   return () => listeners.delete(listener);
@@ -27,24 +39,5 @@ function getSnapshot(): boolean {
 }
 
 export function useAppVisible(): boolean {
-  useEffect(() => {
-    const appStateSubscription = AppState.addEventListener("change", notify);
-
-    if (isWeb && typeof document !== "undefined") {
-      document.addEventListener("visibilitychange", notify);
-      window.addEventListener("focus", notify);
-      window.addEventListener("blur", notify);
-    }
-
-    return () => {
-      appStateSubscription.remove();
-      if (isWeb && typeof document !== "undefined") {
-        document.removeEventListener("visibilitychange", notify);
-        window.removeEventListener("focus", notify);
-        window.removeEventListener("blur", notify);
-      }
-    };
-  }, []);
-
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }

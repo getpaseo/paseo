@@ -1,6 +1,14 @@
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 
-import { areEquivalentPaths, createPathEquivalenceMatcher, isPathInsideRoot } from "./path.js";
+import {
+  areEquivalentPaths,
+  createPathEquivalenceMatcher,
+  getRealpathAwareRelativePath,
+  isPathInsideRoot,
+} from "./path.js";
 
 describe("path equivalence", () => {
   test.each([
@@ -33,4 +41,23 @@ describe("path equivalence", () => {
       false,
     );
   });
+
+  test.skipIf(process.platform === "win32")(
+    "derives the contained suffix from a realpath-equivalent root",
+    () => {
+      const tempDir = mkdtempSync(join(tmpdir(), "paseo-path-"));
+      try {
+        const realRoot = join(tempDir, "real-root");
+        const nestedPath = join(realRoot, "packages", "app");
+        const aliasRoot = join(tempDir, "root-alias");
+        mkdirSync(nestedPath, { recursive: true });
+        symlinkSync(realRoot, aliasRoot, "dir");
+
+        expect(getRealpathAwareRelativePath(aliasRoot, nestedPath)).toBe(join("packages", "app"));
+        expect(getRealpathAwareRelativePath(aliasRoot, tempDir)).toBeNull();
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    },
+  );
 });

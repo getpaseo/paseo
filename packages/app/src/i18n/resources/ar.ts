@@ -102,6 +102,7 @@ export const ar: TranslationResources = {
       addImage: "أضف صورة",
       addFile: "Upload file",
       addIssueOrPr: "أضف مشكلة أو PR",
+      addIssueOrPr_mr: "أضف مشكلة أو MR",
       dropImagesHere: "إسقاط الصور هنا",
       dropFilesHere: "Drop files here",
       editQueuedMessage: "تحرير الرسالة في قائمة الانتظار",
@@ -109,8 +110,8 @@ export const ar: TranslationResources = {
       openImage: "فتح مرفق الصورة",
       removeImage: "إزالة مرفق الصورة",
       removeFile: "Remove file attachment",
-      openGithub: "افتح{{kind}}#{{number}}",
-      removeGithub: "إزالة{{kind}}#{{number}}",
+      openGithub: "افتح {{kind}} {{number}}",
+      removeGithub: "إزالة {{kind}} {{number}}",
       element: "عنصر",
       openBrowserElement: "افتح مرفق عنصر المتصفح",
       removeBrowserElement: "إزالة مرفق عنصر المتصفح",
@@ -134,7 +135,9 @@ export const ar: TranslationResources = {
       searching: "جارٍ البحث...",
       noResults: "لم يتم العثور على نتائج.",
       searchPlaceholder: "بحث القضايا والعلاقات العامة...",
+      searchPlaceholder_mr: "بحث القضايا و MR...",
       title: "إرفاق المشكلة أو PR",
+      title_mr: "إرفاق المشكلة أو MR",
     },
   },
   agentControls: {
@@ -335,15 +338,24 @@ export const ar: TranslationResources = {
   workspace: {
     route: {
       loading: "جارٍ تحميل مساحة العمل",
-      restoring: "جارٍ استعادة مساحة العمل",
-      restoreFailed: "تعذّر استعادة مساحة العمل هذه — ربما تم نقل المجلد أو حذفه",
       connecting: "الاتصال",
       hostOffline: "{{hostName}}غير متواجد حالياً",
       cannotReachHost: "لا يمكن الوصول إلى{{hostName}}",
       hostStatus: "حالة Host:{{status}}",
-      missing: "لم يتم العثور على Workspace",
       needsHostUpgrade: "قم بتحديث مضيفك لاستعادة مساحة العمل هذه",
       manageHost: "إدارة المضيف",
+      recovery: {
+        archivedTitle: "مساحة العمل مؤرشفة",
+        restoreDescription:
+          "تمت أرشفة {{workspaceName}} وإزالة شجرة العمل الخاصة بها. استعد الفرع {{branch}} لفتحها مجددًا.",
+        unarchiveDescription: "{{workspaceName}} مؤرشفة. ألغِ أرشفتها لفتحها مجددًا.",
+        restoreAction: "استعادة",
+        unarchiveAction: "إلغاء الأرشفة",
+        restoringTitle: "جارٍ استعادة مساحة العمل",
+        restoringAction: "جارٍ الاستعادة...",
+        unavailableTitle: "مساحة العمل غير متاحة",
+        checkFailedTitle: "تعذر التحقق من مساحة العمل",
+      },
     },
     hoverCard: {
       scriptsAccessibility: "البرامج النصية Workspace",
@@ -490,6 +502,7 @@ export const ar: TranslationResources = {
         preparingTerminal: "إعداد علامة التبويب المحطة الطرفية",
         preparingTerminalTooltip: "جارٍ تحضير المحطة...",
         newBrowser: "متصفح جديد",
+        exitFocusMode: "إنهاء وضع التركيز",
         splitRight: "تقسيم الجزء الأيمن",
         splitDown: "تقسيم الجزء لأسفل",
         terminalProfilesMenu: "Terminal profiles",
@@ -608,6 +621,9 @@ export const ar: TranslationResources = {
           label: "إنشاء PR",
           pending: "إنشاء PR...",
           success: "تم إنشاء PR",
+          label_mr: "إنشاء MR",
+          pending_mr: "إنشاء MR...",
+          success_mr: "تم إنشاء MR",
         },
         mergeBranch: {
           label: "دمج محليا",
@@ -630,7 +646,13 @@ export const ar: TranslationResources = {
           rebase: "دمج PR (rebase)",
           pending: "دمج PR...",
           success: "تم دمج PR",
+          squash_mr: "دمج MR (squash)",
+          merge_mr: "دمج MR (merge)",
+          rebase_mr: "دمج MR (rebase)",
+          pending_mr: "دمج MR...",
+          success_mr: "تم دمج MR",
         },
+        viewPr_mr: "عرض MR",
         autoMerge: {
           enableSquash: "دمج تلقائي (squash)",
           enableMerge: "دمج تلقائي (merge)",
@@ -641,7 +663,7 @@ export const ar: TranslationResources = {
           disabled: "تم تعطيل الدمج التلقائي",
         },
         unavailable: {
-          viewPrNoGithub: "عرض PR غير متاح الآن لأن GitHub غير متصل",
+          viewPrNoForge: "عرض {{noun}} غير متاح الآن لأن {{brand}} غير متصل",
           pullNoRemote: "السحب غير متاح هنا لأن هذا الفرع غير متصل بجهاز التحكم عن بعد بعد",
           pullDirty: "السحب غير متاح أثناء وجود تغييرات محلية، لذا قم بتنفيذها أو تخزينها أولاً",
           pullUpToDate: "السحب غير متاح لأن هذا الفرع محدث بالفعل",
@@ -652,8 +674,10 @@ export const ar: TranslationResources = {
             "السحب والدفع غير متاح هنا لأن هذا الفرع غير متصل بجهاز التحكم عن بعد بعد",
           pullAndPushDirty:
             "لا يتوفر السحب والدفع أثناء وجود تغييرات محلية، لذا قم بتنفيذها أو تخزينها أولاً",
+          pullAndPushNoIncoming: "السحب والدفع غير متاحين لأنه لا توجد تغييرات واردة للسحب أولاً",
           pullAndPushInSync: "السحب والدفع غير متاح لأن هذا الفرع متزامن بالفعل",
-          createPrNoGithub: "إنشاء PR غير متاح حاليًا لأن GitHub غير متصل",
+          pullAndPushNothingToPush: "السحب والدفع غير متاحين لأنه لا يوجد شيء جديد لإرساله بعد السحب",
+          createPrNoForge: "إنشاء {{noun}} غير متاح حاليًا لأن {{brand}} غير متصل",
           createPrNoCommits: "إنشاء PR غير متاح لأن هذا الفرع ليس لديه أي التزامات جديدة حتى الآن",
           mergeNoBase: "الدمج غير متاح لأننا لم نتمكن من تحديد الفرع الأساسي",
           mergeDirty:
@@ -663,13 +687,16 @@ export const ar: TranslationResources = {
           updateDirty: "التحديث غير متاح أثناء وجود تغييرات محلية، لذا قم بتنفيذها أو تخزينها أولاً",
           updateCurrent: "التحديث غير متاح لأن هذا الفرع محدث بالفعل باستخدام{{baseRef}}",
           mergePrNoGithub: "دمج PR غير متاح الآن لأن GitHub غير متصل",
+          archiveNotWorktree:
+            "الأرشيف غير متاح هنا لأنه لم يتم إنشاء مساحة العمل هذه كشجرة عمل Paseo",
+          mergePrNoForge: "دمج {{noun}} غير متاح الآن لأن {{brand}} غير متصل",
           mergePrMissing: "دمج PR غير متاح لأنه لا يوجد طلب سحب حتى الآن",
           mergePrDraft: "دمج PR غير متاح لأن طلب السحب لا يزال مسودة",
           mergePrMerged: "دمج PR غير متاح لأن طلب السحب مدمج بالفعل",
           mergePrClosed: "دمج PR غير متاح لأن طلب السحب مغلق",
           mergePrConflicts: "دمج PR غير متاح لأن طلب السحب به تعارضات",
           mergePrQueue: "دمج PR غير متاح هنا لأن هذا المستودع يستخدم قائمة انتظار دمج",
-          mergePrNotReady: "دمج PR غير متاح حتى يبلغ GitHub أن طلب السحب جاهز للدمج",
+          mergePrNotReady: "دمج {{noun}} غير متاح حتى يبلغ {{brand}} أن {{noun}} جاهز للدمج",
           autoMergeCannotDisable: "تم تمكين الدمج التلقائي، ولكن لا يمكن لهذا الحساب تعطيله",
         },
         toasts: {
@@ -719,7 +746,7 @@ export const ar: TranslationResources = {
         expandAllFolders: "توسيع كافة المجلدات",
         refreshing: "منعش",
         refresh: "ينعش",
-        refreshState: "تحديث بوابة وحالة GitHub",
+        refreshState: "تحديث حالة git و{{brand}}",
         failedRefresh: "فشل تحديث حالة git.",
         emptyHiddenWhitespace: "لا توجد تغييرات مرئية بعد إخفاء المسافة البيضاء",
         emptyUncommitted: "لا توجد تغييرات غير ملتزم بها",
@@ -733,6 +760,17 @@ export const ar: TranslationResources = {
         base: "قاعدة",
         newFile: "جديد",
         deletedFile: "تم الحذف",
+        commits: {
+          title: "الإيداعات",
+          legendLocal: "محلي",
+          legendRemote: "على المستودع البعيد",
+          countLabel: "{{count}} إيداعات قبل الأساس",
+          fileDiffEmpty: "لا توجد تغييرات لعرضها",
+          fileDiffError: "تعذّر تحميل فروق الملف",
+          loading: "جارٍ تحميل الإيداعات…",
+          loadError: "تعذّر تحميل الإيداعات",
+          empty: "لا توجد إيداعات قبل الأساس",
+        },
       },
       openInEditor: {
         open: "يفتح",
@@ -744,13 +782,23 @@ export const ar: TranslationResources = {
       pr: {
         actions: {
           viewPullRequest: "عرض",
+          openOn: "فتح على {{brand}}",
         },
         sections: {
           checks: "الشيكات",
+          pipeline: "خط المعالجة",
           reviews: "التعليقات",
         },
+        empty: {
+          noJobs: "لا توجد مهام",
+          loadingPipeline: "جارٍ تحميل خط المعالجة...",
+          pipelineJobsLoadFailed: "تعذر تحميل مهام خط المعالجة",
+          allowedToFail: "مسموح بالفشل",
+        },
+        approvals: "{{given}} من {{required}} موافقات",
         accessibility: {
           pullRequest: "سحب الطلب #{{number}}",
+          pullRequest_mr: "طلب دمج !{{number}}",
         },
         states: {
           draft: "مسودة",
@@ -767,10 +815,18 @@ export const ar: TranslationResources = {
         time: {
           justNow: "الآن",
         },
+        thread: {
+          discussion: "سلسلة المناقشة",
+        },
         errors: {
           statusLoadFailed: "غير قادر على تحميل حالة طلب السحب",
           activityLoadFailed: "غير قادر على تحميل نشاط طلب السحب",
         },
+      },
+      forgeSetup: {
+        installCli: "ثبّت واجهة سطر الأوامر {{cli}} لاستخدام ميزات {{brand}}.",
+        signIn: "نفّذ {{command}} لاستخدام ميزات {{brand}}.",
+        generic: "قم بإعداد {{brand}} على هذا المضيف لاستخدام ميزاته.",
       },
     },
   },
@@ -903,10 +959,10 @@ export const ar: TranslationResources = {
     refPicker: {
       startingRef: "بدء المرجع",
       chooseStart: "اختر من أين تبدأ",
-      checkoutHint: "تحقق من PR#{{number}}؟",
-      checkoutPr: "تحقق من PR#{{number}}",
-      dismissCheckoutHint: "تجاهل تلميح الخروج PR#{{number}}",
-      intoBase: "إلى{{baseRef}}",
+      checkoutHint: "تحقق من {{noun}} {{numberPrefix}}{{number}}؟",
+      checkoutPr: "تحقق من {{noun}} {{numberPrefix}}{{number}}",
+      dismissCheckoutHint: "تجاهل تلميح الخروج {{noun}} {{numberPrefix}}{{number}}",
+      intoBase: "إلى {{baseRef}}",
       searching: "جارٍ البحث...",
       noMatchingRefs: "لا توجد مراجع مطابقة.",
       searchPlaceholder: "بحث الفروع والعلاقات العامة",
@@ -1387,6 +1443,15 @@ export const ar: TranslationResources = {
       failedToLoad: "فشل تحميل الملف",
       failedToLoadPreview: "فشل تحميل معاينة الملف",
     },
+    diff: {
+      changesLabel: "التغييرات",
+      changesSubtitle: "فروقات شجرة العمل",
+      commitSubtitle: "فروقات الالتزام",
+      directoryMissing: "لم يتم العثور على دليل Workspace.",
+      empty: "لا توجد تغييرات",
+      loadError: "فشل تحميل الفروقات",
+      capabilityMissing: "حدّث المضيف لعرض فروقات الالتزامات.",
+    },
   },
   toolCallDetails: {
     error: "خطأ",
@@ -1860,6 +1925,8 @@ export const ar: TranslationResources = {
           dialogFailedMessage: "غير قادر على فتح مربع حوار تأكيد إعادة التشغيل.",
         },
         update: {
+          desktopManagedHint:
+            "يدير Paseo Desktop هذا البرنامج الخفي. حدّث Paseo Desktop على المضيف.",
           title: "Update daemon",
           hint: "Update the daemon to the latest version and restart it",
           confirm: "Update",
@@ -1908,6 +1975,17 @@ export const ar: TranslationResources = {
       loading: "تحميل...",
       addErrorTitle: "Unable to add provider",
       updateErrorTitle: "غير قادر على تحديث الموفر",
+      actions: {
+        menu: "{{name}} actions",
+        remove: "Remove provider",
+        removing: "Removing...",
+      },
+      remove: {
+        confirmTitle: "Remove {{name}}?",
+        confirmMessage: "This deletes the provider entry from config.json. It cannot be undone.",
+        confirm: "Remove",
+        errorTitle: "Unable to remove provider",
+      },
       statuses: {
         disabled: "عاجز",
         loading: "تحميل",
