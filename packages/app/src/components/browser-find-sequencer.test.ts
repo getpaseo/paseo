@@ -84,6 +84,22 @@ describe("createBrowserFindSequencer", () => {
     expect(results).toEqual([result(2)]);
   });
 
+  it("accepts a result emitted before the latest request id resolves", async () => {
+    const port = new FakeBrowserFindPort();
+    const results: BrowserFindResult[] = [];
+    const sequencer = createBrowserFindSequencer(port, {
+      onUnavailable: () => {},
+      onResult: (nextResult) => results.push(nextResult),
+    });
+
+    sequencer.request("foo", { findNext: false, forward: true });
+    sequencer.receive(result(1));
+    port.pendingRequests[0]?.resolve(1);
+    await flushPromises();
+
+    expect(results).toEqual([result(1)]);
+  });
+
   it("clears state when the latest request is unavailable or fails", async () => {
     const port = new FakeBrowserFindPort();
     let unavailableCount = 0;

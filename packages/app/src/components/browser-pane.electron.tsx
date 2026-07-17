@@ -1757,7 +1757,7 @@ export function BrowserPane({
 
   return (
     <View style={styles.container}>
-      {isInteractive ? <PaneFindBar /> : null}
+      {isInteractive ? <PaneFindBar placement="inline" /> : null}
       <View style={styles.chromeRow}>
         <View style={styles.chromeLeft}>
           <ToolbarButton

@@ -31,10 +31,12 @@ export function createBrowserFindSequencer(
 ) {
   let requestSequence = 0;
   let activeRequestId: number | null = null;
+  let pendingResult: BrowserFindResult | null = null;
 
   function invalidate() {
     requestSequence += 1;
     activeRequestId = null;
+    pendingResult = null;
   }
 
   function request(query: string, options: BrowserFindOptions) {
@@ -48,14 +50,20 @@ export function createBrowserFindSequencer(
           return null;
         }
         if (requestId === null) {
+          pendingResult = null;
           handlers.onUnavailable();
           return null;
         }
         activeRequestId = requestId;
+        if (pendingResult?.requestId === requestId) {
+          handlers.onResult(pendingResult);
+        }
+        pendingResult = null;
         return null;
       },
       () => {
         if (requestSequence === sequence) {
+          pendingResult = null;
           handlers.onUnavailable();
         }
         return null;
@@ -64,6 +72,13 @@ export function createBrowserFindSequencer(
   }
 
   function receive(result: BrowserFindResult) {
+    if (activeRequestId === null) {
+      // Electron can dispatch found-in-page before the IPC invoke promise
+      // delivers its request id to the renderer. Hold that single update until
+      // the latest request has an identity, rather than treating it as stale.
+      pendingResult = result;
+      return;
+    }
     if (result.requestId !== activeRequestId) {
       return;
     }
