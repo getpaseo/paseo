@@ -8,6 +8,7 @@ import {
 } from "react-native";
 import { ScrollView as GHScrollView } from "react-native-gesture-handler";
 import { StyleSheet } from "react-native-unistyles";
+import { useCallback, useRef } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { AppearanceStyleBoundary } from "@/components/appearance-style-boundary";
@@ -20,6 +21,8 @@ import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { extensionFromPath, highlightToKeyedLines } from "@/utils/highlight-cache";
 import { HighlightedLines } from "./highlighted-content";
 import { HighlightedText } from "@/timeline-search/highlighted-text";
+import { useTimelineSearchOccurrenceAnchor } from "@/timeline-search/occurrence-anchor";
+import { useTimelineSearchTarget } from "@/timeline-search/search-target";
 import { DiffViewer } from "./diff-viewer";
 import { getCodeInsets } from "./code-insets";
 import { isWeb } from "@/constants/platform";
@@ -769,6 +772,25 @@ function ToolCallDetailsContentInner({
   showLoadingSkeleton = false,
 }: ToolCallDetailsContentProps) {
   const { t } = useTranslation();
+  const searchTarget = useTimelineSearchTarget();
+  const isSearchTarget =
+    timelineSearchItemId != null &&
+    searchTarget?.itemId === timelineSearchItemId &&
+    searchTarget.field === timelineSearchField;
+  const searchAnchorRef = useRef<View>(null);
+  const measureSearchAnchor = useCallback((report: (centerY: number) => void) => {
+    searchAnchorRef.current?.measureInWindow?.((_x, y, _width, height) => {
+      report(y + height / 2);
+    });
+  }, []);
+  // Some detail renderers transform the source into a diff, JSON or a nested
+  // scroll surface. Their exact text span cannot be mapped safely, so this is
+  // a lower-priority block fallback behind HighlightedText's exact anchor.
+  useTimelineSearchOccurrenceAnchor(
+    isSearchTarget ? (searchTarget ?? null) : null,
+    measureSearchAnchor,
+    1,
+  );
   const resolvedMaxHeight = fillAvailableHeight ? undefined : (maxHeight ?? 300);
   const ds = useDetailStyles(detail, resolvedMaxHeight, fillAvailableHeight);
   const diffLines = useDiffLines(detail);
@@ -793,7 +815,11 @@ function ToolCallDetailsContentInner({
     return <Text style={styles.emptyStateText}>{t("toolCallDetails.empty")}</Text>;
   }
 
-  return <View style={ds.fullBleedContainerStyle}>{sections}</View>;
+  return (
+    <View ref={searchAnchorRef} style={ds.fullBleedContainerStyle}>
+      {sections}
+    </View>
+  );
 }
 
 // ---- Styles ----

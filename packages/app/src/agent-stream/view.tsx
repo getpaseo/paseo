@@ -18,6 +18,7 @@ import {
   Pressable,
   Platform,
   ActivityIndicator,
+  useWindowDimensions,
   type PressableStateCallbackType,
   type StyleProp,
   type ViewStyle,
@@ -106,6 +107,7 @@ import {
   useTimelineSearchTargetValue,
   type TimelineSearchTarget,
 } from "@/timeline-search/search-target";
+import { TimelineSearchOccurrenceAnchorProvider } from "@/timeline-search/occurrence-anchor";
 import { useTimelineSearchModel } from "@/timeline-search/use-timeline-search-model";
 import { useTimelineSearchHistoryPaging } from "@/timeline-search/use-timeline-search-history-paging";
 import { useTimelineSearchScroll } from "@/timeline-search/use-timeline-search-scroll";
@@ -122,15 +124,27 @@ import { useWorkspaceDraftSubmissionStore } from "@/stores/workspace-draft-submi
 function TimelineSearchProviders({
   highlight,
   target,
+  scrollBy,
+  targetCenterY,
   children,
 }: {
   highlight: TimelineHighlightState;
   target: TimelineSearchTarget | null;
+  scrollBy: (deltaY: number) => void;
+  targetCenterY: number;
   children: ReactNode;
 }) {
   return (
     <TimelineHighlightProvider value={highlight}>
-      <TimelineSearchTargetProvider value={target}>{children}</TimelineSearchTargetProvider>
+      <TimelineSearchTargetProvider value={target}>
+        <TimelineSearchOccurrenceAnchorProvider
+          target={target}
+          scrollBy={scrollBy}
+          targetCenterY={targetCenterY}
+        >
+          {children}
+        </TimelineSearchOccurrenceAnchorProvider>
+      </TimelineSearchTargetProvider>
     </TimelineHighlightProvider>
   );
 }
@@ -373,6 +387,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const toolCallDetailLevel = useSettings((settings) => settings.toolCallDetailLevel);
     const viewportRef = useRef<StreamViewportHandle | null>(null);
     const isMobile = useIsCompactFormFactor();
+    const { height: windowHeight } = useWindowDimensions();
     const streamRenderStrategy = useMemo(
       () =>
         resolveStreamRenderStrategy({
@@ -812,6 +827,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             toast={toast}
           >
             <AssistantMessage
+              streamItemId={item.id}
               message={item.text}
               timestamp={item.timestamp.getTime()}
               workspaceRoot={workspaceRoot}
@@ -833,6 +849,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             onInlineDetailsExpandedChangeByItemId={setInlineDetailsExpanded}
             toolName="thinking"
             args={item.text}
+            timelineSearchField="text"
             status={item.status === "ready" ? "completed" : "executing"}
             isLastInSequence={layoutItem.isLastInToolSequence}
             defaultExpanded={autoExpandReasoning}
@@ -1151,10 +1168,19 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       }),
       [timelineSearchState.isOpen, timelineSearchState.query, timelineSearchTarget],
     );
+    const scrollTimelineSearchAnchorBy = useCallback(
+      (deltaY: number) => viewportRef.current?.scrollBy(deltaY),
+      [],
+    );
 
     return (
       <ToolCallSheetProvider>
-        <TimelineSearchProviders highlight={timelineHighlight} target={timelineSearchTarget}>
+        <TimelineSearchProviders
+          highlight={timelineHighlight}
+          target={timelineSearchTarget}
+          scrollBy={scrollTimelineSearchAnchorBy}
+          targetCenterY={windowHeight * 0.6}
+        >
           <View style={stylesheet.container}>
             {timelineSearchState.isOpen && (
               <TimelineSearchPanel

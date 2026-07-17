@@ -51,6 +51,7 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { Theme } from "@/styles/theme";
 import { splitHighlightSegments, useTimelineHighlightQuery } from "@/timeline-search/highlight";
 import { HighlightedText, timelineHighlightStyles } from "@/timeline-search/highlighted-text";
+import { useTimelineSearchOccurrenceAnchor } from "@/timeline-search/occurrence-anchor";
 import { useTimelineSearchTarget } from "@/timeline-search/search-target";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import Animated, {
@@ -731,6 +732,8 @@ export const LiveElapsed = memo(function LiveElapsed({
 });
 
 interface AssistantMessageProps {
+  /** Used for block-level timeline-search anchoring when Markdown leaf offsets are unsafe. */
+  streamItemId?: string;
   message: string;
   timestamp: number;
   workspaceRoot?: string;
@@ -1626,6 +1629,7 @@ function MarkdownListView({ baseStyle, spacing, children }: MarkdownListViewProp
 }
 
 export const AssistantMessage = memo(function AssistantMessage({
+  streamItemId,
   message,
   timestamp: _timestamp,
   workspaceRoot,
@@ -1633,6 +1637,21 @@ export const AssistantMessage = memo(function AssistantMessage({
   client,
   spacing = "default",
 }: AssistantMessageProps) {
+  const searchTarget = useTimelineSearchTarget();
+  const isSearchTarget = streamItemId != null && searchTarget?.itemId === streamItemId;
+  const searchAnchorRef = useRef<View>(null);
+  const measureSearchAnchor = useCallback((report: (centerY: number) => void) => {
+    searchAnchorRef.current?.measureInWindow?.((_x, y, _width, height) => {
+      report(y + height / 2);
+    });
+  }, []);
+  // Markdown's rendered leaves can reorder or transform source text. Anchor the
+  // containing rendered message instead of pretending a source offset maps to
+  // a particular inline leaf; plain text still registers the exact span.
+  useTimelineSearchOccurrenceAnchor(
+    isSearchTarget ? (searchTarget ?? null) : null,
+    measureSearchAnchor,
+  );
   const markdownParser = useMemo(() => {
     const parser = MarkdownIt({ typographer: true, linkify: true });
     const defaultValidateLink = parser.validateLink.bind(parser);
@@ -1974,7 +1993,7 @@ export const AssistantMessage = memo(function AssistantMessage({
   );
 
   return (
-    <View testID="assistant-message" style={assistantContainerStyle}>
+    <View ref={searchAnchorRef} testID="assistant-message" style={assistantContainerStyle}>
       {keyedBlocks.map(({ key, block }, index) => (
         <AssistantMessageBlockContainer
           key={key}

@@ -1,4 +1,4 @@
-import React, { useMemo, type ReactNode } from "react";
+import React, { useCallback, useMemo, useRef, type ReactNode } from "react";
 import { Text } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import {
@@ -6,6 +6,8 @@ import {
   useTimelineHighlightQuery,
   useTimelineHighlightTarget,
 } from "./highlight";
+import { useTimelineSearchOccurrenceAnchor } from "./occurrence-anchor";
+import type { TimelineSearchTarget } from "./search-target";
 
 export const timelineHighlightStyles = StyleSheet.create((theme) => ({
   match: {
@@ -20,6 +22,27 @@ export const timelineHighlightStyles = StyleSheet.create((theme) => ({
     textDecorationColor: theme.colors.accentForeground,
   },
 }));
+
+function ActiveHighlightedText({
+  target,
+  children,
+}: {
+  target: TimelineSearchTarget;
+  children: string;
+}) {
+  const ref = useRef<Text>(null);
+  const measure = useCallback((report: (centerY: number) => void) => {
+    ref.current?.measureInWindow?.((_x, y, _width, height) => {
+      report(y + height / 2);
+    });
+  }, []);
+  useTimelineSearchOccurrenceAnchor(target, measure, 2);
+  return (
+    <Text ref={ref} style={timelineHighlightStyles.activeMatch}>
+      {children}
+    </Text>
+  );
+}
 
 /**
  * Wraps occurrences of the active timeline-search query in `text` with an
@@ -48,23 +71,26 @@ export function HighlightedText({
   if (segments.length === 1 && !segments[0]?.isMatch) {
     return text;
   }
-  return segments.map((segment) =>
-    segment.isMatch ? (
-      <Text
-        key={segment.offset}
-        style={
-          itemId === target?.itemId &&
-          field === target.field &&
-          segment.offset === target.matchOffset &&
-          segment.text.length === target.matchLength
-            ? timelineHighlightStyles.activeMatch
-            : timelineHighlightStyles.match
-        }
-      >
+  return segments.map((segment) => {
+    const isActive =
+      segment.isMatch &&
+      itemId === target?.itemId &&
+      field === target.field &&
+      segment.offset === target.matchOffset &&
+      segment.text.length === target.matchLength;
+    if (isActive && target) {
+      return (
+        <ActiveHighlightedText key={segment.offset} target={target}>
+          {segment.text}
+        </ActiveHighlightedText>
+      );
+    }
+    return segment.isMatch ? (
+      <Text key={segment.offset} style={timelineHighlightStyles.match}>
         {segment.text}
       </Text>
     ) : (
       <React.Fragment key={segment.offset}>{segment.text}</React.Fragment>
-    ),
-  );
+    );
+  });
 }
