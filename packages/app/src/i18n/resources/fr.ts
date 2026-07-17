@@ -557,6 +557,7 @@ export const fr: TranslationResources = {
         copyPath: "Copier le chemin de l'espace de travail",
         copyBranchName: "Copier le nom de la branche",
         showSetup: "Afficher la configuration",
+        findInChat: "Rechercher dans le chat",
       },
       toasts: {
         workspacePathUnavailable: "Le cheminWorkspacen'est pas encore disponible",

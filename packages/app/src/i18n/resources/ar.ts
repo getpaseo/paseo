@@ -552,6 +552,7 @@ export const ar: TranslationResources = {
         copyPath: "نسخ مسار مساحة العمل",
         copyBranchName: "انسخ اسم الفرع",
         showSetup: "إظهار الإعداد",
+        findInChat: "البحث في المحادثة",
       },
       toasts: {
         workspacePathUnavailable: "مسار Workspace غير متاح بعد",

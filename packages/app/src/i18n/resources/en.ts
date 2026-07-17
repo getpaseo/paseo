@@ -551,6 +551,7 @@ export const en = {
         copyPath: "Copy workspace path",
         copyBranchName: "Copy branch name",
         showSetup: "Show setup",
+        findInChat: "Find in chat",
       },
       toasts: {
         workspacePathUnavailable: "Workspace path is not available yet",

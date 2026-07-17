@@ -1094,7 +1094,7 @@ function WorkspaceHeaderMenu({
             leading={MENU_FIND_ICON}
             onSelect={handleOpenFind}
           >
-            Find in chat
+            {t("workspace.header.actions.findInChat")}
           </DropdownMenuItem>
         ) : null}
         {showCreateBrowserTab ? (
