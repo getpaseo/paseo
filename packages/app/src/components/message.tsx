@@ -11,11 +11,7 @@ import {
   type TextStyle,
 } from "react-native";
 import { useTranslation } from "react-i18next";
-import {
-  MarkdownParagraphView,
-  MarkdownTextSpan,
-  type MarkdownTextSpanHandle,
-} from "@/components/markdown-text";
+import { MarkdownParagraphView, MarkdownTextSpan } from "@/components/markdown-text";
 import { MarkdownTableCellText } from "@/components/markdown-text-selection";
 import * as React from "react";
 import {
@@ -31,7 +27,7 @@ import {
   Children,
   cloneElement,
 } from "react";
-import type { ComponentType, ReactNode, Ref } from "react";
+import type { ComponentType, ReactNode } from "react";
 import { MarkdownIt, type ASTNode, type RenderRules } from "react-native-markdown-display";
 import { useQuery } from "@tanstack/react-query";
 import MaskedView from "@react-native-masked-view/masked-view";
@@ -1587,7 +1583,6 @@ interface MarkdownInheritedTextProps {
   style?: StyleProp<TextStyle>;
   monoSurface?: boolean;
   children: ReactNode;
-  spanRef?: Ref<MarkdownTextSpanHandle>;
 }
 
 /**
@@ -1646,11 +1641,13 @@ function MarkdownHighlightedTextRun({
       }
       if (isActive) {
         return (
-          <ActiveMarkdownHighlight
+          <MarkdownInheritedText
             inheritedStyles={inheritedStyles}
             textStyle={textStyle}
-            text={segment.text}
-          />
+            style={timelineHighlightStyles.activeMatch}
+          >
+            {segment.text}
+          </MarkdownInheritedText>
         );
       }
       return (
@@ -1666,41 +1663,12 @@ function MarkdownHighlightedTextRun({
   });
 }
 
-function ActiveMarkdownHighlight({
-  inheritedStyles,
-  textStyle,
-  text,
-}: {
-  inheritedStyles: TextStyle;
-  textStyle: TextStyle;
-  text: string;
-}) {
-  const target = useTimelineSearchTarget();
-  const spanRef = useRef<MarkdownTextSpanHandle>(null);
-  const measure = useCallback((report: (centerY: number) => void) => {
-    spanRef.current?.measureInWindow((_x, y, _width, height) => report(y + height / 2));
-  }, []);
-  useTimelineSearchOccurrenceAnchor(target, measure, 2);
-
-  return (
-    <MarkdownInheritedText
-      spanRef={spanRef}
-      inheritedStyles={inheritedStyles}
-      textStyle={textStyle}
-      style={timelineHighlightStyles.activeMatch}
-    >
-      {text}
-    </MarkdownInheritedText>
-  );
-}
-
 function MarkdownInheritedText({
   inheritedStyles,
   textStyle,
   style: overrideStyle,
   monoSurface,
   children,
-  spanRef,
 }: MarkdownInheritedTextProps) {
   const style = useMemo(
     () => [inheritedStyles, textStyle, overrideStyle],
@@ -1714,7 +1682,6 @@ function MarkdownInheritedText({
   const linkPress = useAssistantLinkPress();
   return (
     <MarkdownTextSpan
-      ref={spanRef}
       monoSurface={monoSurface}
       style={style}
       onPress={linkPress?.onPress}

@@ -1,4 +1,4 @@
-import { forwardRef, useImperativeHandle, useMemo, useRef, type ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 import {
   Text,
   View,
@@ -16,40 +16,22 @@ interface MarkdownTextSpanProps {
   accessibilityRole?: TextProps["accessibilityRole"];
 }
 
-export interface MarkdownTextSpanHandle {
-  measureInWindow: (
-    callback: (x: number, y: number, width: number, height: number) => void,
-  ) => void;
-}
-
 // Android's <Text selectable> enables per-text-node selection natively. Each
 // sibling Text is its own selection scope — drag can't span across siblings
 // (that requires a single UITextView ancestor and is iOS-only). onPress works
 // natively here, so links routed through this span stay tappable on Android.
-export const MarkdownTextSpan = forwardRef<MarkdownTextSpanHandle, MarkdownTextSpanProps>(
-  function MarkdownTextSpan({ style, children, onPress, accessibilityRole }, forwardedRef) {
-    const textRef = useRef<Text>(null);
-    useImperativeHandle(
-      forwardedRef,
-      () => ({
-        measureInWindow: (callback) => textRef.current?.measureInWindow(callback),
-      }),
-      [],
-    );
-
-    return (
-      <Text
-        ref={textRef}
-        selectable
-        style={style}
-        onPress={onPress}
-        accessibilityRole={accessibilityRole}
-      >
-        {children}
-      </Text>
-    );
-  },
-);
+export function MarkdownTextSpan({
+  style,
+  children,
+  onPress,
+  accessibilityRole,
+}: MarkdownTextSpanProps) {
+  return (
+    <Text selectable style={style} onPress={onPress} accessibilityRole={accessibilityRole}>
+      {children}
+    </Text>
+  );
+}
 
 interface MarkdownParagraphViewProps {
   paragraphStyle: ViewStyle;
