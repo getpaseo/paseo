@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "./fixtures";
 import { TerminalE2EHarness } from "./helpers/terminal-dsl";
+import { getTerminalBufferText } from "./helpers/terminal-perf";
 import { buildHostWorkspaceRoute } from "../src/utils/host-routes";
 import { getServerId } from "./helpers/server-id";
 
@@ -8,18 +9,14 @@ import { getServerId } from "./helpers/server-id";
  * once focus returns.
  *
  * The PTY is only ever resized by an explicit client claim (`terminal_input` resize). A freshly
- * mounted terminal produces exactly one claim, from terminal-pane's pane-focus reflow effect. If
- * that claim is emitted while the app is not actively visible (window blurred / document hidden),
- * `handleTerminalResize` drops it — and nothing used to re-send it, leaving the PTY at 80x24
- * while xterm renders the real pane size: vim/top squeezed into a corner until the user resizes
- * the window.
+ * mounted terminal starts its claim from terminal-pane's pane-focus reflow effect. Previously, if
+ * that claim was emitted while the app was not actively visible, `handleTerminalResize` dropped
+ * it without a retry, leaving the PTY at 80x24 while xterm rendered the real pane size.
  *
  * The repro is the mundane user flow: with a workspace already showing a terminal, open another
  * one and switch to a different app while it spawns. We stage the blur deterministically by
  * stubbing `document.hasFocus()` (which `useAppVisible` consults on window focus/blur events)
- * instead of racing real OS focus. The first terminal matters: `useAppVisible` only observes
- * focus events while a consumer is mounted, so it is what makes the blur visible to the app —
- * exactly as in the real flow.
+ * instead of racing real OS focus.
  *
  * The assertion reads the PTY's own opinion of its size (`stty size`) with input written
  * daemon-side — clicking or typing in the pane would fire the focus-claim path and mask the bug.
@@ -58,31 +55,6 @@ async function readRenderedTerminalSize(page: Page): Promise<RenderedTerminalSiz
   });
 }
 
-async function readTerminalBufferText(page: Page): Promise<string> {
-  return await page.evaluate(() => {
-    const terminal = (
-      window as Window & {
-        __paseoTerminal?: {
-          buffer: {
-            active: {
-              length: number;
-              getLine(index: number): { translateToString(trim: boolean): string } | undefined;
-            };
-          };
-        };
-      }
-    ).__paseoTerminal;
-    if (!terminal) {
-      return "";
-    }
-    const lines: string[] = [];
-    for (let index = 0; index < terminal.buffer.active.length; index += 1) {
-      lines.push(terminal.buffer.active.getLine(index)?.translateToString(true) ?? "");
-    }
-    return lines.join("\n");
-  });
-}
-
 async function createTerminalViaMenu(page: Page): Promise<void> {
   await page.getByTestId("workspace-new-tab-menu-trigger").click();
   await page.getByTestId("workspace-new-tab-menu-terminal").click();
@@ -112,116 +84,10 @@ function requireTerminalSize(size: RenderedTerminalSize | null): RenderedTermina
   return size;
 }
 
-function claimsFor(frames: ResizeClaim[], terminalId: string): ResizeClaim[] {
-  return frames.filter((frame) => frame.terminalId === terminalId);
-}
-
-function parseSttySize(bufferText: string): RenderedTerminalSize {
-  const match = /S=(\d+) (\d+)=/.exec(bufferText);
-  if (!match?.[1] || !match[2]) {
-    throw new Error(`stty size did not print in the terminal buffer:\n${bufferText}`);
-  }
-  return { rows: Number(match[1]), cols: Number(match[2]) };
-}
-
-interface ResizeClaim {
-  terminalId: string;
-  rows: number;
-  cols: number;
-}
-
-/**
- * Records every resize claim the app puts on the wire. Claims travel two ways: as a JSON
- * `terminal_input` before the stream has a binary slot, and as a binary frame
- * ([opcode 0x03][slot][JSON {rows, cols}]) once subscribed. The slot -> terminal mapping comes
- * from subscribe_terminal_response on the receive side.
- */
-function captureResizeClaims(page: Page): ResizeClaim[] {
-  const resizeFrames: ResizeClaim[] = [];
-  const slotTerminals = new Map<number, string>();
-  const unmappedBinaryResizes: Array<{ slot: number; rows: number; cols: number }> = [];
-
-  const recordBinaryResize = (slot: number, size: { rows: number; cols: number }) => {
-    const terminalId = slotTerminals.get(slot);
-    if (terminalId) {
-      resizeFrames.push({ terminalId, ...size });
-    } else {
-      unmappedBinaryResizes.push({ slot, ...size });
-    }
-  };
-
-  const handleSentFrame = (frame: { payload: string | Buffer }) => {
-    const payload = frame.payload;
-    if (typeof payload !== "string") {
-      if (payload.length >= 2 && payload[0] === 0x03) {
-        try {
-          const parsed = JSON.parse(payload.subarray(2).toString("utf8")) as {
-            rows?: number;
-            cols?: number;
-          };
-          if (parsed.rows !== undefined && parsed.cols !== undefined) {
-            recordBinaryResize(payload[1] ?? -1, { rows: parsed.rows, cols: parsed.cols });
-          }
-        } catch {
-          // not a terminal resize frame — ignore
-        }
-      }
-      return;
-    }
-    if (!payload.includes("resize")) {
-      return;
-    }
-    try {
-      const outer = JSON.parse(payload) as { message?: Record<string, unknown> };
-      const message = outer.message ?? {};
-      if (message.type !== "terminal_input") {
-        return;
-      }
-      const inner = message.message as { type?: string; rows?: number; cols?: number };
-      if (inner?.type === "resize" && inner.rows !== undefined && inner.cols !== undefined) {
-        resizeFrames.push({
-          terminalId: String(message.terminalId ?? ""),
-          rows: inner.rows,
-          cols: inner.cols,
-        });
-      }
-    } catch {
-      // not JSON — ignore
-    }
-  };
-
-  const handleReceivedFrame = (frame: { payload: string | Buffer }) => {
-    const payload = frame.payload;
-    if (typeof payload !== "string" || !payload.includes("subscribe_terminal_response")) {
-      return;
-    }
-    try {
-      const outer = JSON.parse(payload) as { message?: Record<string, unknown> };
-      const message = outer.message ?? {};
-      if (message.type !== "subscribe_terminal_response") {
-        return;
-      }
-      const responsePayload = (message.payload ?? {}) as { terminalId?: string; slot?: number };
-      if (
-        typeof responsePayload.terminalId === "string" &&
-        typeof responsePayload.slot === "number"
-      ) {
-        slotTerminals.set(responsePayload.slot, responsePayload.terminalId);
-        for (const entry of unmappedBinaryResizes.splice(0)) {
-          recordBinaryResize(entry.slot, { rows: entry.rows, cols: entry.cols });
-        }
-      }
-    } catch {
-      // not JSON — ignore
-    }
-  };
-
-  page.on("websocket", (ws) => {
-    ws.on("framesent", handleSentFrame);
-    ws.on("framereceived", handleReceivedFrame);
-  });
-
-  return resizeFrames;
+function parseLatestSttySize(bufferText: string): RenderedTerminalSize | null {
+  const matches = [...bufferText.matchAll(/S\d+=(\d+) (\d+)=/g)];
+  const match = matches.at(-1);
+  return match?.[1] && match[2] ? { rows: Number(match[1]), cols: Number(match[2]) } : null;
 }
 
 test.describe("terminal PTY size claim under lost window focus", () => {
@@ -239,16 +105,14 @@ test.describe("terminal PTY size claim under lost window focus", () => {
     page,
   }) => {
     await page.setViewportSize({ width: 1280, height: 900 });
-    const resizeFrames = captureResizeClaims(page);
 
     await page.goto(buildHostWorkspaceRoute(getServerId(), harness.workspaceId));
     await expect(page.getByTestId("workspace-new-tab-menu-trigger")).toBeVisible({
       timeout: 30_000,
     });
 
-    // A terminal is already open — this also keeps useAppVisible's listeners mounted so the
-    // upcoming blur is actually observed by the app. Wait for the daemon to know about it rather
-    // than sleeping: if it were missing from this snapshot it would be misread as "new" below.
+    // Wait for the daemon to know about the first terminal rather than sleeping: if it were
+    // missing from this snapshot it would be misread as "new" below.
     await createTerminalViaMenu(page);
     await expect(harness.terminalSurface(page).first()).toBeVisible({ timeout: 30_000 });
     const countTerminals = async () => (await listTerminalIds(harness)).length;
@@ -265,14 +129,19 @@ test.describe("terminal PTY size claim under lost window focus", () => {
     await expect.poll(async () => (await findNewTerminalIds()).length, { timeout: 15_000 }).toBe(1);
     const newTerminalId = exactlyOne(await findNewTerminalIds(), "new terminal");
 
-    // Let every mount-time refit run (the ladder goes out to 2s) while the window stays blurred.
-    // This one has to be a wait, not a poll: the assertion is that nothing happens.
+    // Keep the app blurred through the complete mount-time refit ladder, which runs out to 2s.
     await page.waitForTimeout(2_500);
 
-    // Nothing may reach the daemon while the app is hidden — handleTerminalResize drops claims
-    // that fire while !isAppVisible. Without this, deleting that gate would still leave the test
-    // green: the claim would simply arrive early instead of after focus returns.
-    expect(claimsFor(resizeFrames, newTerminalId)).toEqual([]);
+    await harness.client.subscribeTerminal(newTerminalId);
+
+    // Confirm the PTY is still at its spawn size before focus returns.
+    harness.client.sendTerminalInput(newTerminalId, {
+      type: "input",
+      data: 'echo "S0=$(stty size)="\n',
+    });
+    await expect
+      .poll(async () => getTerminalBufferText(page), { timeout: 15_000 })
+      .toMatch(/S0=24 80=/);
 
     // ...and comes back.
     await setWindowFocused(page, true);
@@ -282,29 +151,20 @@ test.describe("terminal PTY size claim under lost window focus", () => {
     // Sanity: the pane really rendered at a desktop size, not the PTY default.
     expect(rendered.cols).toBeGreaterThan(80);
 
-    // The claim must reach the wire once focus is back. Poll for it rather than sleeping: this
-    // is the behavior under test, so waiting a fixed duration would trade a real assertion for
-    // a timing bet.
-    const claimsForNewTerminal = () => claimsFor(resizeFrames, newTerminalId);
-    await expect
-      .poll(claimsForNewTerminal, { timeout: 15_000 })
-      .toContainEqual({ terminalId: newTerminalId, rows: rendered.rows, cols: rendered.cols });
-
-    // And the PTY itself must agree. Ask it via the daemon, never via the page: focusing or
+    // The PTY itself must agree. Ask it via the daemon, never via the page: focusing or
     // typing in the pane triggers the focus-claim path and would mask the bug.
-    await harness.client.subscribeTerminal(newTerminalId);
-    harness.client.sendTerminalInput(newTerminalId, {
-      type: "input",
-      data: 'echo "S=$(stty size)="\n',
-    });
-
+    let probe = 1;
     await expect
-      .poll(async () => readTerminalBufferText(page), { timeout: 15_000 })
-      .toMatch(/S=\d+ \d+=/);
-
-    const ptySize = parseSttySize(await readTerminalBufferText(page));
-
-    // The PTY must match what xterm rendered — not the daemon's 80x24 spawn default.
-    expect(ptySize).toEqual({ rows: rendered.rows, cols: rendered.cols });
+      .poll(
+        async () => {
+          harness.client.sendTerminalInput(newTerminalId, {
+            type: "input",
+            data: `echo "S${probe++}=$(stty size)="\n`,
+          });
+          return parseLatestSttySize(await getTerminalBufferText(page));
+        },
+        { timeout: 15_000, intervals: [100, 250, 500] },
+      )
+      .toEqual({ rows: rendered.rows, cols: rendered.cols });
   });
 });
