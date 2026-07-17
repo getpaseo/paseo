@@ -877,6 +877,7 @@ export const es: TranslationResources = {
         copyPath: "Copiar ruta",
         copyBranchName: "Copiar nombre de sucursal",
         rename: "Cambiar nombre del espacio de trabajo",
+        markAsRead: "Marcar como leído",
         pin: "Anclar arriba",
         unpin: "Desanclar",
         archive: "Archivo",

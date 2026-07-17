@@ -562,7 +562,7 @@ function StatusWorkspaceRowInner({
   archiveLabel?: string;
   archiveStatus?: "idle" | "pending" | "success";
   archivePendingLabel?: string;
-  onArchive?: () => void;
+  onArchive: () => void;
   onCopyBranchName?: () => void;
   onCopyPath?: () => void;
   onRename?: () => void;
@@ -592,9 +592,8 @@ function StatusWorkspaceRowInner({
       <SidebarWorkspaceRowFrame workspace={workspace} isContextMenuOpen={isContextMenuOpen}>
         {({ isActive, hoverHandlers }) => {
           const showShortcut = showShortcutBadge && shortcutNumber !== null;
-          const showKebab = Boolean(onArchive && (isActive || isTouchPlatform));
+          const showKebab = isActive || isTouchPlatform;
           const showKebabInSlot = showKebab && !showShortcut;
-          const shouldRenderActionSlot = Boolean(onArchive || workspace.diffStat);
           const workspaceRowStyle = getStatusWorkspaceRowStyle({
             selected,
             isHovered: isActive,
@@ -620,46 +619,42 @@ function StatusWorkspaceRowInner({
                   showShortcutBadge={showShortcutBadge}
                   reserveIdleStatusIndicatorSpace={reserveIdleStatusIndicatorSpace}
                 >
-                  {shouldRenderActionSlot ? (
-                    <StatusWorkspaceActionSlot
-                      workspace={workspace}
-                      showBase={Boolean(workspace.diffStat && !showKebabInSlot && !showShortcut)}
-                      showKebab={showKebabInSlot}
-                      isPinned={isPinned}
-                      onTogglePin={onTogglePin}
-                      onCopyPath={onCopyPath}
-                      onCopyBranchName={onCopyBranchName}
-                      onRename={onRename}
-                      onMarkAsRead={onMarkAsRead}
-                      onArchive={onArchive}
-                      archiveLabel={archiveLabel}
-                      archiveStatus={archiveStatus}
-                      archivePendingLabel={archivePendingLabel}
-                      archiveShortcutKeys={archiveShortcutKeys}
-                    />
-                  ) : null}
+                  <StatusWorkspaceActionSlot
+                    workspace={workspace}
+                    showBase={Boolean(workspace.diffStat && !showKebabInSlot && !showShortcut)}
+                    showKebab={showKebabInSlot}
+                    isPinned={isPinned}
+                    onTogglePin={onTogglePin}
+                    onCopyPath={onCopyPath}
+                    onCopyBranchName={onCopyBranchName}
+                    onRename={onRename}
+                    onMarkAsRead={onMarkAsRead}
+                    onArchive={onArchive}
+                    archiveLabel={archiveLabel}
+                    archiveStatus={archiveStatus}
+                    archivePendingLabel={archivePendingLabel}
+                    archiveShortcutKeys={archiveShortcutKeys}
+                  />
                 </SidebarWorkspaceRowContent>
               </ContextMenuTrigger>
             </View>
           );
         }}
       </SidebarWorkspaceRowFrame>
-      {onArchive ? (
-        <SidebarWorkspaceContextMenu
-          workspaceKey={workspace.workspaceKey}
-          onCopyPath={onCopyPath}
-          onCopyBranchName={onCopyBranchName}
-          onRename={onRename}
-          onMarkAsRead={onMarkAsRead}
-          onArchive={onArchive}
-          archiveLabel={archiveLabel}
-          archiveStatus={archiveStatus}
-          archivePendingLabel={archivePendingLabel}
-          archiveShortcutKeys={archiveShortcutKeys}
-          isPinned={isPinned}
-          onTogglePin={onTogglePin}
-        />
-      ) : null}
+      <SidebarWorkspaceContextMenu
+        workspaceKey={workspace.workspaceKey}
+        onCopyPath={onCopyPath}
+        onCopyBranchName={onCopyBranchName}
+        onRename={onRename}
+        onMarkAsRead={onMarkAsRead}
+        onArchive={onArchive}
+        archiveLabel={archiveLabel}
+        archiveStatus={archiveStatus}
+        archivePendingLabel={archivePendingLabel}
+        archiveShortcutKeys={archiveShortcutKeys}
+        isPinned={isPinned}
+        onTogglePin={onTogglePin}
+      />
     </ContextMenu>
   );
 }
@@ -689,7 +684,7 @@ function StatusWorkspaceActionSlot({
   onCopyBranchName?: () => void;
   onRename?: () => void;
   onMarkAsRead?: () => void;
-  onArchive?: () => void;
+  onArchive: () => void;
   archiveLabel?: string;
   archiveStatus?: "idle" | "pending" | "success";
   archivePendingLabel?: string;
@@ -706,7 +701,7 @@ function StatusWorkspaceActionSlot({
         ) : null}
       </SidebarWorkspaceTrailingActionBase>
       <SidebarWorkspaceTrailingActionOverlay visible={showKebab}>
-        {showKebab && onArchive ? (
+        {showKebab ? (
           <SidebarWorkspaceMenu
             workspaceKey={workspace.workspaceKey}
             onCopyPath={onCopyPath}

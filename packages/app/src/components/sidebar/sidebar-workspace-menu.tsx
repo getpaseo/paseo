@@ -127,7 +127,7 @@ function SidebarWorkspaceMenuItems({
           leading={markAsReadLeadingIcon}
           onSelect={onMarkAsRead}
         >
-          Mark as read
+          {t("sidebar.workspace.actions.markAsRead")}
         </Item>
       ) : null}
       {onTogglePin ? (

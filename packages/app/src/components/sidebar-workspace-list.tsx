@@ -290,7 +290,7 @@ interface WorkspaceRowInnerProps {
   archiveLabel?: string;
   archiveStatus?: "idle" | "pending" | "success";
   archivePendingLabel?: string;
-  onArchive?: () => void;
+  onArchive: () => void;
   onCopyBranchName?: () => void;
   onCopyPath?: () => void;
   onRename?: () => void;
@@ -652,7 +652,7 @@ function WorkspaceRowRightGroup({
   archiveStatus?: "idle" | "pending" | "success";
   archivePendingLabel?: string;
   archiveShortcutKeys?: ShortcutKey[][] | null;
-  onArchive?: () => void;
+  onArchive: () => void;
   onMarkAsRead?: () => void;
   onCopyBranchName?: () => void;
   onCopyPath?: () => void;
@@ -662,47 +662,42 @@ function WorkspaceRowRightGroup({
 }) {
   const { t } = useTranslation();
   const showShortcut = showShortcutBadge && shortcutNumber !== null;
-  const showKebab = Boolean(onArchive && (isHovered || isTouchPlatform));
+  const showKebab = isHovered || isTouchPlatform;
   const showKebabInSlot = showKebab && !showShortcut;
-  const shouldRenderActionSlot = Boolean(onArchive || workspace.diffStat);
 
   return (
     <>
       {isCreating ? (
         <Text style={styles.workspaceCreatingText}>{t("sidebar.workspace.status.creating")}</Text>
       ) : null}
-      {shouldRenderActionSlot ? (
-        <SidebarWorkspaceTrailingActionSlot>
-          <SidebarWorkspaceTrailingActionBase
-            visible={Boolean(workspace.diffStat && !showKebabInSlot && !showShortcut)}
-          >
-            {workspace.diffStat ? (
-              <DiffStat
-                additions={workspace.diffStat.additions}
-                deletions={workspace.diffStat.deletions}
-              />
-            ) : null}
-          </SidebarWorkspaceTrailingActionBase>
-          <SidebarWorkspaceTrailingActionOverlay visible={showKebabInSlot}>
-            {onArchive ? (
-              <SidebarWorkspaceMenu
-                workspaceKey={workspace.workspaceKey}
-                onCopyPath={onCopyPath}
-                onCopyBranchName={onCopyBranchName}
-                onRename={onRename}
-                onMarkAsRead={onMarkAsRead}
-                onArchive={onArchive}
-                archiveLabel={archiveLabel}
-                archiveStatus={archiveStatus}
-                archivePendingLabel={archivePendingLabel}
-                archiveShortcutKeys={archiveShortcutKeys}
-                isPinned={isPinned}
-                onTogglePin={onTogglePin}
-              />
-            ) : null}
-          </SidebarWorkspaceTrailingActionOverlay>
-        </SidebarWorkspaceTrailingActionSlot>
-      ) : null}
+      <SidebarWorkspaceTrailingActionSlot>
+        <SidebarWorkspaceTrailingActionBase
+          visible={Boolean(workspace.diffStat && !showKebabInSlot && !showShortcut)}
+        >
+          {workspace.diffStat ? (
+            <DiffStat
+              additions={workspace.diffStat.additions}
+              deletions={workspace.diffStat.deletions}
+            />
+          ) : null}
+        </SidebarWorkspaceTrailingActionBase>
+        <SidebarWorkspaceTrailingActionOverlay visible={showKebabInSlot}>
+          <SidebarWorkspaceMenu
+            workspaceKey={workspace.workspaceKey}
+            onCopyPath={onCopyPath}
+            onCopyBranchName={onCopyBranchName}
+            onRename={onRename}
+            onMarkAsRead={onMarkAsRead}
+            onArchive={onArchive}
+            archiveLabel={archiveLabel}
+            archiveStatus={archiveStatus}
+            archivePendingLabel={archivePendingLabel}
+            archiveShortcutKeys={archiveShortcutKeys}
+            isPinned={isPinned}
+            onTogglePin={onTogglePin}
+          />
+        </SidebarWorkspaceTrailingActionOverlay>
+      </SidebarWorkspaceTrailingActionSlot>
     </>
   );
 }
@@ -1450,22 +1445,20 @@ function WorkspaceRowInner({
           );
         }}
       </SidebarWorkspaceRowFrame>
-      {onArchive ? (
-        <SidebarWorkspaceContextMenu
-          workspaceKey={workspace.workspaceKey}
-          onCopyPath={onCopyPath}
-          onCopyBranchName={onCopyBranchName}
-          onRename={onRename}
-          onMarkAsRead={onMarkAsRead}
-          onArchive={onArchive}
-          archiveLabel={archiveLabel}
-          archiveStatus={archiveStatus}
-          archivePendingLabel={archivePendingLabel}
-          archiveShortcutKeys={archiveShortcutKeys}
-          isPinned={isPinned}
-          onTogglePin={onTogglePin}
-        />
-      ) : null}
+      <SidebarWorkspaceContextMenu
+        workspaceKey={workspace.workspaceKey}
+        onCopyPath={onCopyPath}
+        onCopyBranchName={onCopyBranchName}
+        onRename={onRename}
+        onMarkAsRead={onMarkAsRead}
+        onArchive={onArchive}
+        archiveLabel={archiveLabel}
+        archiveStatus={archiveStatus}
+        archivePendingLabel={archivePendingLabel}
+        archiveShortcutKeys={archiveShortcutKeys}
+        isPinned={isPinned}
+        onTogglePin={onTogglePin}
+      />
     </ContextMenu>
   );
 }

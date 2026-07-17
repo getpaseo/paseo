@@ -857,6 +857,7 @@ export const en = {
         copyPath: "Copy path",
         copyBranchName: "Copy branch name",
         rename: "Rename workspace",
+        markAsRead: "Mark as read",
         pin: "Pin to top",
         unpin: "Unpin",
         archive: "Archive",

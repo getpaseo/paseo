@@ -869,6 +869,7 @@ export const ru: TranslationResources = {
         copyPath: "Копировать путь",
         copyBranchName: "Скопировать название ветки",
         rename: "Переименовать рабочую область",
+        markAsRead: "Отметить как прочитанное",
         pin: "Закрепить вверху",
         unpin: "Открепить",
         archive: "Архив",
