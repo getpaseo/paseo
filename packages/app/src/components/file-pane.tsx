@@ -47,7 +47,7 @@ import {
 import { PaneFindBar } from "@/pane-find/pane-find-bar";
 import { usePaneFindRegistration } from "@/pane-find/use-pane-find-registration";
 import { usePaneFindKey, usePaneFocus } from "@/panels/pane-context";
-import { splitHighlightSegments } from "@/timeline-search/highlight";
+import { findAllMatches, splitHighlightSegments } from "@/timeline-search/highlight";
 import type { ASTNode, RenderRules } from "react-native-markdown-display";
 
 interface CodeLineProps {
@@ -364,26 +364,35 @@ function MarkdownFindText({
   query,
   textStyle,
   inheritedStyles,
+  activeMatchIndex,
+  matchIndexBase,
 }: {
   content: string;
   query: string;
   textStyle: TextStyle;
   inheritedStyles: TextStyle;
+  activeMatchIndex: number;
+  matchIndexBase: number;
 }) {
   const segments = useMemo(() => splitHighlightSegments(content, query), [content, query]);
   const style = useMemo(() => [inheritedStyles, textStyle], [inheritedStyles, textStyle]);
+  let matchIndex = matchIndexBase;
 
   return (
     <MarkdownTextSpan style={style}>
-      {segments.map((segment) =>
-        segment.isMatch ? (
-          <MarkdownTextSpan key={segment.offset} style={codeLineStyles.findMatch}>
+      {segments.map((segment) => {
+        if (!segment.isMatch) return segment.text;
+        const isActive = matchIndex === activeMatchIndex;
+        matchIndex += 1;
+        return (
+          <MarkdownTextSpan
+            key={segment.offset}
+            style={isActive ? codeLineStyles.currentFindMatch : codeLineStyles.findMatch}
+          >
             {segment.text}
           </MarkdownTextSpan>
-        ) : (
-          segment.text
-        ),
-      )}
+        );
+      })}
     </MarkdownTextSpan>
   );
 }
@@ -430,6 +439,8 @@ function MarkdownFileView({
   const renderedMarkdownRules = useMemo<RenderRules | undefined>(() => {
     const query = findState.query;
     if (query.length === 0) return undefined;
+    const matchBasesByNodeKey = new Map<string, number>();
+    let nextMatchIndex = 0;
     return {
       ...createSharedMarkdownRules(),
       text: (
@@ -438,17 +449,27 @@ function MarkdownFileView({
         _parent: ASTNode[],
         markdownStyles: MarkdownStyles,
         inheritedStyles: TextStyle = {},
-      ) => (
-        <MarkdownFindText
-          key={node.key}
-          content={node.content}
-          query={query}
-          textStyle={markdownStyles.text}
-          inheritedStyles={inheritedStyles}
-        />
-      ),
+      ) => {
+        let matchIndexBase = matchBasesByNodeKey.get(node.key);
+        if (matchIndexBase === undefined) {
+          matchIndexBase = nextMatchIndex;
+          matchBasesByNodeKey.set(node.key, matchIndexBase);
+          nextMatchIndex += findAllMatches(node.content, query).length;
+        }
+        return (
+          <MarkdownFindText
+            key={node.key}
+            content={node.content}
+            query={query}
+            textStyle={markdownStyles.text}
+            inheritedStyles={inheritedStyles}
+            activeMatchIndex={findState.selectedIndex}
+            matchIndexBase={matchIndexBase}
+          />
+        );
+      },
     };
-  }, [findState.query]);
+  }, [findState.query, findState.selectedIndex]);
 
   return <MarkdownRenderer text={content} rules={renderedMarkdownRules} />;
 }
