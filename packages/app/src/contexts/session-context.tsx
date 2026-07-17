@@ -78,6 +78,8 @@ import {
 } from "@/workspace/legacy-daemon-workspaces";
 import { useProviderSubagentStore } from "@/subagents/provider-store";
 import { revalidateSessionAfterResume } from "@/contexts/session-resume-revalidation";
+import { inheritBufferedDirectoryDeltas } from "@/utils/buffered-directory-transaction";
+import { shouldApplyTimelineAgentSnapshot } from "@/utils/agent-directory-sync";
 
 // Re-export types from session-store and draft-store for backward compatibility
 export type { DraftInput } from "@/stores/draft-store";
@@ -592,7 +594,10 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         id: Symbol("workspace hydration"),
         client,
         workspaces: new Map(),
-        deltas: [],
+        deltas: inheritBufferedDirectoryDeltas({
+          client,
+          previous: workspaceHydrationRef.current,
+        }),
       };
       workspaceHydrationRef.current = transaction;
       let snapshot: WorkspaceHydrationSnapshot | null;
@@ -978,7 +983,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         return next;
       });
 
-      if (payload.agent) {
+      if (payload.agent && shouldApplyTimelineAgentSnapshot(serverId, agentId)) {
         const normalized = normalizeAgentSnapshot(payload.agent, serverId);
         applyAuthoritativeAgentSnapshot(
           applyLegacyDaemonWorkspaceOwnership({

@@ -24,6 +24,11 @@ export function applyAgentDirectoryDelta(input: { serverId: string; delta: Agent
   return upsertAgentDirectoryReplica(input.serverId, input.delta);
 }
 
+export function shouldApplyTimelineAgentSnapshot(serverId: string, agentId: string): boolean {
+  const session = useSessionStore.getState().sessions[serverId];
+  return session?.agents.has(agentId) === true || session?.initializingAgents.get(agentId) === true;
+}
+
 type AgentUpsertDelta = Extract<AgentDirectoryDelta, { kind: "upsert" }>;
 
 function upsertAgentDirectoryReplica(
@@ -100,6 +105,7 @@ function removeAgentDirectoryReplica(serverId: string, agentId: string): void {
   store.setAgentDetails(serverId, removeKey);
   store.setQueuedMessages(serverId, removeKey);
   store.setAgentTimelineCursor(serverId, removeKey);
+  store.setInitializingAgents(serverId, removeKey);
   store.setPendingPermissions(serverId, (current) => {
     const next = new Map(current);
     for (const [key, pending] of next) {

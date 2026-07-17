@@ -67,6 +67,7 @@ import {
   splitComposerAttachmentsForSubmit,
 } from "@/composer/attachments/submit";
 import { encodeImages } from "@/utils/encode-images";
+import { inheritBufferedDirectoryDeltas } from "@/utils/buffered-directory-transaction";
 
 export type HostRuntimeConnectionStatus = "idle" | "connecting" | "online" | "offline" | "error";
 export type HostRegistryStatus = "loading" | "ready";
@@ -2245,12 +2246,16 @@ export class HostRuntimeStore {
       throw new Error(`Host ${input.serverId} is not connected`);
     }
 
+    const previousTransaction = this.agentDirectoryTransactions.get(input.serverId);
     const transaction: AgentDirectoryTransaction = {
       id: Symbol("agent directory refresh"),
       client,
       clientGeneration: snapshot.clientGeneration,
       entries: [],
-      deltas: [],
+      deltas:
+        previousTransaction?.clientGeneration === snapshot.clientGeneration
+          ? inheritBufferedDirectoryDeltas({ client, previous: previousTransaction })
+          : [],
     };
     this.agentDirectoryTransactions.set(input.serverId, transaction);
 

@@ -7,7 +7,11 @@ import { useSessionStore } from "@/stores/session-store";
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { isAgentArchiving, setAgentArchiving } from "@/hooks/use-archive-agent";
 import { queryClient } from "@/data/query-client";
-import { applyAgentDirectoryDelta, replaceFetchedAgentDirectory } from "./agent-directory-sync";
+import {
+  applyAgentDirectoryDelta,
+  replaceFetchedAgentDirectory,
+  shouldApplyTimelineAgentSnapshot,
+} from "./agent-directory-sync";
 
 function createAgentPayload(
   input: Partial<Omit<AgentSnapshotPayload, "labels">> & {
@@ -141,6 +145,7 @@ describe("replaceFetchedAgentDirectory", () => {
       serverId,
       new Map([["permission", { key: "permission", agentId, request: null as never }]]),
     );
+    store.setInitializingAgents(serverId, new Map([[agentId, true]]));
     setAgentArchiving({ queryClient, serverId, agentId, isArchiving: true });
 
     applyAgentDirectoryDelta({ serverId, delta: { kind: "remove", agentId } });
@@ -152,6 +157,8 @@ describe("replaceFetchedAgentDirectory", () => {
       queued: session?.queuedMessages.has(agentId),
       cursor: session?.agentTimelineCursor.has(agentId),
       permissions: session?.pendingPermissions.size,
+      initializing: session?.initializingAgents.has(agentId),
+      acceptsStaleTimelineSnapshot: shouldApplyTimelineAgentSnapshot(serverId, agentId),
       archivePending: isAgentArchiving({ queryClient, serverId, agentId }),
     }).toEqual({
       agents: false,
@@ -159,6 +166,8 @@ describe("replaceFetchedAgentDirectory", () => {
       queued: false,
       cursor: false,
       permissions: 0,
+      initializing: false,
+      acceptsStaleTimelineSnapshot: false,
       archivePending: false,
     });
 

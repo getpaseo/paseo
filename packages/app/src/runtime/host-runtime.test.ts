@@ -229,15 +229,21 @@ function makeFetchAgentsPayload(input: {
 class Deferred<T> {
   readonly promise: Promise<T>;
   private resolvePromise!: (value: T) => void;
+  private rejectPromise!: (error: Error) => void;
 
   constructor() {
-    this.promise = new Promise((resolve) => {
+    this.promise = new Promise((resolve, reject) => {
       this.resolvePromise = resolve;
+      this.rejectPromise = reject;
     });
   }
 
   resolve(value: T): void {
     this.resolvePromise(value);
+  }
+
+  reject(error: Error): void {
+    this.rejectPromise(error);
   }
 }
 
@@ -1963,6 +1969,58 @@ describe("HostRuntimeStore", () => {
       ),
     ).toEqual([["newer", "after cleanup"]]);
 
+    store.syncHosts([]);
+    useSessionStore.getState().clearSession(host.serverId);
+  });
+
+  it("replays inherited deltas when a superseding refresh fails", async () => {
+    const host = makeHost({ serverId: "srv_overlap_failure" });
+    const fakeClient = new FakeDaemonClient();
+    fakeClient.setConnectionState({ status: "connected" });
+    fakeClient.fetchAgentsResponses.push(makeFetchAgentsPayload({ entries: [] }));
+    const store = new HostRuntimeStore({
+      deps: {
+        createClient: () => fakeClient as unknown as DaemonClient,
+        connectToDaemon: async () => ({
+          client: fakeClient as unknown as DaemonClient,
+          serverId: host.serverId,
+          hostname: null,
+        }),
+        getClientId: async () => "cid_overlap_failure",
+      },
+    });
+    useSessionStore
+      .getState()
+      .initializeSession(host.serverId, fakeClient as unknown as DaemonClient, 1);
+    store.syncHosts([host]);
+    await fakeClient.waitForFetches(1);
+    await waitForDirectoryReady(store, host.serverId);
+
+    const olderPage = new Deferred<Awaited<ReturnType<DaemonClient["fetchAgents"]>>>();
+    fakeClient.fetchAgentsResponses.push(olderPage.promise);
+    const olderRefresh = store.refreshAgentDirectory({ serverId: host.serverId });
+    await fakeClient.waitForFetches(2);
+    const liveEntry = makeFetchAgentsEntry({
+      id: "live-delta",
+      cwd: "/repo",
+      updatedAt: "2026-07-17T10:00:00.000Z",
+      title: "preserved",
+    });
+    fakeClient.agentUpdate({ kind: "upsert", agent: liveEntry.agent, project: liveEntry.project });
+
+    const newerPage = new Deferred<Awaited<ReturnType<DaemonClient["fetchAgents"]>>>();
+    fakeClient.fetchAgentsResponses.push(newerPage.promise);
+    const newerRefresh = store.refreshAgentDirectory({ serverId: host.serverId });
+    await fakeClient.waitForFetches(3);
+    newerPage.reject(new Error("newer refresh failed"));
+    await expect(newerRefresh).rejects.toThrow("newer refresh failed");
+
+    expect(
+      useSessionStore.getState().sessions[host.serverId]?.agents.get("live-delta")?.title,
+    ).toBe("preserved");
+
+    olderPage.resolve(makeFetchAgentsPayload({ entries: [] }));
+    await expect(olderRefresh).rejects.toThrow();
     store.syncHosts([]);
     useSessionStore.getState().clearSession(host.serverId);
   });
