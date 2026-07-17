@@ -7,10 +7,16 @@ import {
   ScrollView as RNScrollView,
   Text,
   View,
+  type TextStyle,
 } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
-import { MarkdownRenderer } from "@/components/markdown/renderer";
+import {
+  createSharedMarkdownRules,
+  MarkdownRenderer,
+  type MarkdownStyles,
+} from "@/components/markdown/renderer";
+import { MarkdownTextSpan } from "@/components/markdown-text";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useSessionStore, type ExplorerFile } from "@/stores/session-store";
 import { highlightCode, type HighlightToken } from "@getpaseo/highlight";
@@ -41,6 +47,8 @@ import {
 import { PaneFindBar } from "@/pane-find/pane-find-bar";
 import { usePaneFindRegistration } from "@/pane-find/use-pane-find-registration";
 import { usePaneFindKey, usePaneFocus } from "@/panels/pane-context";
+import { splitHighlightSegments } from "@/timeline-search/highlight";
+import type { ASTNode, RenderRules } from "react-native-markdown-display";
 
 interface CodeLineProps {
   segments: FilePaneFindTokenSegment[];
@@ -345,33 +353,50 @@ interface MarkdownFileViewProps {
   content: string;
   paneKey: string | null;
   isPaneFocused: boolean;
-  isMobile: boolean;
   lineHeight: number;
-  gutterFontSize: number;
   previewScrollRef: React.RefObject<RNScrollView | null>;
 }
 
-// Rendered-markdown files bypass the code find path entirely (no source lines/tokens are ever
-// mounted), so Ctrl/Cmd+F previously had nothing to register with and did nothing. Teaching
-// MarkdownRenderer to highlight matches inside arbitrary rendered nodes (tables, lists, inline
-// code, etc.) is invasive; instead this registers the same plain-text find model/adapter code
-// files use against the raw markdown source, and swaps to that monospace source view (with
-// highlights) only while a find query is active — restoring the normal rendered view once the
-// query is cleared or the pane loses find focus.
+function MarkdownFindText({
+  content,
+  query,
+  textStyle,
+  inheritedStyles,
+}: {
+  content: string;
+  query: string;
+  textStyle: TextStyle;
+  inheritedStyles: TextStyle;
+}) {
+  const segments = useMemo(() => splitHighlightSegments(content, query), [content, query]);
+  const style = useMemo(() => [inheritedStyles, textStyle], [inheritedStyles, textStyle]);
+
+  return (
+    <MarkdownTextSpan style={style}>
+      {segments.map((segment) =>
+        segment.isMatch ? (
+          <MarkdownTextSpan key={segment.offset} style={codeLineStyles.findMatch}>
+            {segment.text}
+          </MarkdownTextSpan>
+        ) : (
+          segment.text
+        ),
+      )}
+    </MarkdownTextSpan>
+  );
+}
+
+// Keep Markdown files rendered while find is active. Source-line matching still
+// drives the pane-find count and navigation, while this rule highlights matches
+// in parsed text leaves instead of replacing the preview with raw source.
 function MarkdownFileView({
   content,
   paneKey,
   isPaneFocused,
-  isMobile,
   lineHeight,
-  gutterFontSize,
   previewScrollRef,
 }: MarkdownFileViewProps) {
   const textModel = useMemo(() => createFilePaneTextModel(markdownSourceLines(content)), [content]);
-  const gutterWidth = useMemo(
-    () => lineNumberGutterWidth(textModel.lines.length, gutterFontSize),
-    [textModel.lines.length, gutterFontSize],
-  );
   const findModel = useMemo(
     () =>
       createFilePaneFindModel({
@@ -400,24 +425,30 @@ function MarkdownFileView({
     return undefined;
   }, [findModel, isPaneFocused]);
 
-  const highlightsByLine = useMemo(
-    () => createFilePaneHighlightMap(findModel.getMatches(), findState.selectedIndex),
-    [findModel, findState],
-  );
+  const renderedMarkdownRules = useMemo<RenderRules | undefined>(() => {
+    const query = findState.query;
+    if (query.length === 0) return undefined;
+    return {
+      ...createSharedMarkdownRules(),
+      text: (
+        node: ASTNode,
+        _children: React.ReactNode[],
+        _parent: ASTNode[],
+        markdownStyles: MarkdownStyles,
+        inheritedStyles: TextStyle = {},
+      ) => (
+        <MarkdownFindText
+          key={node.key}
+          content={node.content}
+          query={query}
+          textStyle={markdownStyles.text}
+          inheritedStyles={inheritedStyles}
+        />
+      ),
+    };
+  }, [findState.query]);
 
-  if (findState.query.length > 0) {
-    return (
-      <TextFindView
-        textModel={textModel}
-        highlightsByLine={highlightsByLine}
-        gutterWidth={gutterWidth}
-        isMobile={isMobile}
-        lineSelection={null}
-      />
-    );
-  }
-
-  return <MarkdownRenderer text={content} />;
+  return <MarkdownRenderer text={content} rules={renderedMarkdownRules} />;
 }
 
 function FilePreviewBody({
@@ -511,9 +542,7 @@ function FilePreviewBody({
               content={preview.content ?? ""}
               paneKey={paneKey}
               isPaneFocused={isPaneFocused}
-              isMobile={isMobile}
               lineHeight={lineHeight}
-              gutterFontSize={theme.fontSize.code}
               previewScrollRef={previewScrollRef}
             />
           </RNScrollView>
