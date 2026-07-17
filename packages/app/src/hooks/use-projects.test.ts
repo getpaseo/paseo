@@ -86,6 +86,31 @@ function emptyProject(input: {
 }
 
 describe("deriveProjectsFromReplica", () => {
+  it("derives the custom project name from a renamed workspace descriptor", () => {
+    const base = workspace({
+      id: "main",
+      projectKey: "remote:github.com/acme/app",
+      projectName: "acme/app",
+      cwd: "/repo/app",
+      remoteUrl: "https://github.com/acme/app.git",
+    });
+    const renamed: WorkspaceDescriptor = {
+      ...base,
+      projectCustomName: "My Project",
+      projectDisplayName: "My Project",
+    };
+
+    const result = deriveProjectsFromReplica({
+      replicas: [
+        { serverId: "local", serverName: "Local", workspaces: [renamed], emptyProjects: [] },
+      ],
+      runtimeStates: [runtimeState({ serverId: "local", isOnline: true })],
+    });
+
+    expect(result.projects[0]?.projectName).toBe("My Project");
+    expect(result.projects[0]?.projectCustomName).toBe("My Project");
+  });
+
   it("aggregates store workspaces and empty projects sorted by display name", () => {
     const replicas: ProjectHostReplica[] = [
       {

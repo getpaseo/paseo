@@ -46,6 +46,7 @@ import {
 } from "@/utils/project-config-form";
 import { buildProjectsSettingsRoute } from "@/utils/host-routes";
 import type { ProjectHostEntry, ProjectSummary } from "@/utils/projects";
+import { useSessionStore } from "@/stores/session-store";
 
 const SCRIPT_SERVICE_TYPE = "service";
 
@@ -241,7 +242,7 @@ function ProjectSettingsBody({
             projectName={project.projectName}
             projectKey={project.projectKey}
           />
-          <ProjectNameEditor project={project} client={client} />
+          <ProjectNameEditor project={project} client={client} serverId={selectedHost.serverId} />
         </View>
         <HostContext hosts={hosts} selectedHost={selectedHost} onSelectHost={onSelectHost} />
       </View>
@@ -791,18 +792,24 @@ function ResolveSpinnerColor(): string {
 interface ProjectNameEditorProps {
   project: ProjectSummary;
   client: DaemonClient;
+  serverId: string;
 }
 
-function ProjectNameEditor({ project, client }: ProjectNameEditorProps) {
+function ProjectNameEditor({ project, client, serverId }: ProjectNameEditorProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const toast = useToast();
+  const applyProjectCustomName = useSessionStore((state) => state.applyProjectCustomName);
   const [isEditing, setIsEditing] = useState(false);
   const [value, setValue] = useState(project.projectCustomName ?? "");
 
   const renameMutation = useMutation({
     mutationFn: (customName: string | null) => client.renameProject(project.projectKey, customName),
-    onSuccess: () => {
+    // Snapshot the issuing host/project so a host switch while the RPC is in
+    // flight cannot redirect the optimistic update to the wrong session.
+    onMutate: () => ({ serverId, projectKey: project.projectKey }),
+    onSuccess: (_result, customName, context) => {
+      applyProjectCustomName(context.serverId, context.projectKey, customName);
       queryClient.invalidateQueries({ queryKey: ["projects"] });
       setIsEditing(false);
       toast.show(t("settings.project.rename.renamedToast"), { variant: "success" });

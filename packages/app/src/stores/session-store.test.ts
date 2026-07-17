@@ -446,6 +446,90 @@ describe("removeEmptyProject", () => {
   });
 });
 
+describe("applyProjectCustomName", () => {
+  const PROJECT_KEY = "remote:github.com/acme/app";
+
+  function seedWorkspace(
+    id: string,
+    overrides: Partial<WorkspaceDescriptor> = {},
+  ): WorkspaceDescriptor {
+    return {
+      ...createWorkspace({ id, projectId: PROJECT_KEY, projectDisplayName: "acme/app" }),
+      projectCustomName: null,
+      ...overrides,
+    };
+  }
+
+  it("sets the custom name and display name on every matching workspace and empty project", () => {
+    const store = useSessionStore.getState();
+    initializeTestSession();
+    store.setWorkspaces(
+      "test-server",
+      new Map([
+        ["/repo/a", seedWorkspace("/repo/a")],
+        ["/repo/b", seedWorkspace("/repo/b")],
+      ]),
+    );
+    store.setEmptyProjects("test-server", [
+      {
+        projectId: PROJECT_KEY,
+        projectDisplayName: "acme/app",
+        projectCustomName: null,
+        projectRootPath: "/repo/app",
+        projectKind: "git",
+      },
+    ]);
+
+    store.applyProjectCustomName("test-server", PROJECT_KEY, "My Project");
+
+    const refs = getTestSessionReferences();
+    for (const id of ["/repo/a", "/repo/b"]) {
+      expect(refs.workspaces.get(id)?.projectCustomName).toBe("My Project");
+      expect(refs.workspaces.get(id)?.projectDisplayName).toBe("My Project");
+    }
+    expect(refs.emptyProjects.get(PROJECT_KEY)?.projectCustomName).toBe("My Project");
+    expect(refs.emptyProjects.get(PROJECT_KEY)?.projectDisplayName).toBe("My Project");
+  });
+
+  it("reverts to the repository-derived display name when the custom name is cleared", () => {
+    const store = useSessionStore.getState();
+    initializeTestSession();
+    store.setWorkspaces(
+      "test-server",
+      new Map([
+        [
+          "/repo/a",
+          seedWorkspace("/repo/a", {
+            projectCustomName: "My Project",
+            projectDisplayName: "My Project",
+          }),
+        ],
+      ]),
+    );
+
+    store.applyProjectCustomName("test-server", PROJECT_KEY, null);
+
+    const refs = getTestSessionReferences();
+    expect(refs.workspaces.get("/repo/a")?.projectCustomName).toBeNull();
+    expect(refs.workspaces.get("/repo/a")?.projectDisplayName).toBe("acme/app");
+  });
+
+  it("preserves state identity when no descriptor matches the project", () => {
+    const store = useSessionStore.getState();
+    initializeTestSession();
+    store.setWorkspaces("test-server", new Map([["/repo/a", seedWorkspace("/repo/a")]]));
+    const before = getTestSessionReferences();
+
+    store.applyProjectCustomName("test-server", "remote:github.com/other/repo", "Ignored");
+    const after = getTestSessionReferences();
+
+    expect(after.sessions).toBe(before.sessions);
+    expect(after.session).toBe(before.session);
+    expect(after.workspaces).toBe(before.workspaces);
+    expect(after.emptyProjects).toBe(before.emptyProjects);
+  });
+});
+
 describe("patchWorkspaceScripts", () => {
   it("preserves workspace entry identity when scripts are content-equal", () => {
     const script = {

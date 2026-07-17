@@ -40,6 +40,7 @@ import {
   buildWorkspaceAgentActivityIndex,
   type WorkspaceAgentActivity,
 } from "@/utils/workspace-agent-activity";
+import { projectDisplayNameFromProjectId } from "@/utils/project-display-name";
 
 // Re-export types that were in session-context
 export type MessageEntry =
@@ -483,6 +484,7 @@ interface SessionStoreActions {
   setEmptyProjects: (serverId: string, emptyProjects: Iterable<EmptyProjectDescriptor>) => void;
   addEmptyProject: (serverId: string, emptyProject: EmptyProjectDescriptor) => void;
   removeEmptyProject: (serverId: string, projectId: string) => void;
+  applyProjectCustomName: (serverId: string, projectKey: string, customName: string | null) => void;
   // Agent activity timestamps
   setAgentLastActivity: (agentId: string, timestamp: Date) => void;
   setAgentLastActivityBatch: (
@@ -1313,6 +1315,74 @@ export const useSessionStore = create<SessionStore>()(
             sessions: {
               ...prev.sessions,
               [serverId]: { ...session, emptyProjects: next },
+            },
+          };
+        });
+      },
+
+      applyProjectCustomName: (serverId, projectKey, customName) => {
+        set((prev) => {
+          const session = prev.sessions[serverId];
+          if (!session) {
+            return prev;
+          }
+          const trimmed = customName?.trim() ?? "";
+          const nextCustomName = trimmed.length > 0 ? trimmed : null;
+          const nextDisplayName = nextCustomName ?? projectDisplayNameFromProjectId(projectKey);
+
+          let workspacesChanged = false;
+          const nextWorkspaces = new Map(session.workspaces);
+          for (const [id, workspace] of session.workspaces) {
+            if (workspace.projectId !== projectKey) {
+              continue;
+            }
+            if (
+              workspace.projectCustomName === nextCustomName &&
+              workspace.projectDisplayName === nextDisplayName
+            ) {
+              continue;
+            }
+            nextWorkspaces.set(id, {
+              ...workspace,
+              projectCustomName: nextCustomName,
+              projectDisplayName: nextDisplayName,
+            });
+            workspacesChanged = true;
+          }
+
+          let emptyProjectsChanged = false;
+          const nextEmptyProjects = new Map(session.emptyProjects);
+          for (const [id, emptyProject] of session.emptyProjects) {
+            if (emptyProject.projectId !== projectKey) {
+              continue;
+            }
+            if (
+              emptyProject.projectCustomName === nextCustomName &&
+              emptyProject.projectDisplayName === nextDisplayName
+            ) {
+              continue;
+            }
+            nextEmptyProjects.set(id, {
+              ...emptyProject,
+              projectCustomName: nextCustomName,
+              projectDisplayName: nextDisplayName,
+            });
+            emptyProjectsChanged = true;
+          }
+
+          if (!workspacesChanged && !emptyProjectsChanged) {
+            return prev;
+          }
+
+          return {
+            ...prev,
+            sessions: {
+              ...prev.sessions,
+              [serverId]: {
+                ...session,
+                workspaces: workspacesChanged ? nextWorkspaces : session.workspaces,
+                emptyProjects: emptyProjectsChanged ? nextEmptyProjects : session.emptyProjects,
+              },
             },
           };
         });
