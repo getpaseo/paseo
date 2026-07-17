@@ -1962,14 +1962,15 @@ export class HostRuntimeStore {
       return;
     }
     const snapshot = controller.getSnapshot();
-    this.directorySyncByServer.get(serverId)?.connectionChanged({
-      client: snapshot.client,
-      status: snapshot.connectionStatus === "online" ? "online" : "offline",
-      source: {
-        clientGeneration: snapshot.clientGeneration,
-        connectionEpoch: snapshot.connectionEpoch,
-      },
-    });
+    const directorySourceChanged =
+      this.directorySyncByServer.get(serverId)?.connectionChanged({
+        client: snapshot.client,
+        status: snapshot.connectionStatus === "online" ? "online" : "offline",
+        source: {
+          clientGeneration: snapshot.clientGeneration,
+          connectionEpoch: snapshot.connectionEpoch,
+        },
+      }) ?? false;
     const previousStatus = this.lastConnectionStatusByServer.get(serverId);
     this.lastConnectionStatusByServer.set(serverId, snapshot.connectionStatus);
     const didTransitionOnline =
@@ -1992,7 +1993,7 @@ export class HostRuntimeStore {
     if (!didTransitionOnline && snapshot.hasEverLoadedAgentDirectory) {
       return;
     }
-    if (this.agentDirectoryBootstrapInFlight.has(serverId)) {
+    if (this.agentDirectoryBootstrapInFlight.has(serverId) && !directorySourceChanged) {
       return;
     }
 

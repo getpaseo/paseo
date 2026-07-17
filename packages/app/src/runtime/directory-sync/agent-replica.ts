@@ -40,10 +40,15 @@ export class AgentDirectoryReplica {
     ) {
       return false;
     }
-    const normalized = applyLegacyDaemonWorkspaceOwnership({
+    const existing = useSessionStore.getState().sessions[this.serverId]?.agents.get(token.agentId);
+    const timelineAgent = applyLegacyDaemonWorkspaceOwnership({
       serverId: this.serverId,
       agent: normalizeAgentSnapshot(payload, this.serverId),
     });
+    const normalized: Agent = {
+      ...timelineAgent,
+      projectPlacement: timelineAgent.projectPlacement ?? existing?.projectPlacement,
+    };
     const accepted = upsertAgentReplica(this.serverId, normalized);
     replaceAgentPendingPermissions(this.serverId, accepted);
     useSessionStore.getState().setAgentLastActivity(accepted.id, accepted.lastActivityAt);

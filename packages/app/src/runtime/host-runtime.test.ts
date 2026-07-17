@@ -1875,7 +1875,10 @@ describe("HostRuntimeStore", () => {
   });
 
   it("buffers updates until the matching session generation exists", async () => {
-    const host = makeHost({ serverId: "srv_pre_session" });
+    const host = makeHost({
+      serverId: "srv_pre_session",
+      connections: [{ id: "direct:lan:6767", type: "directTcp", endpoint: "lan:6767" }],
+    });
     const fakeClient = new FakeDaemonClient();
     fakeClient.setConnectionState({ status: "connected" });
     const snapshotEntry = makeFetchAgentsEntry({
@@ -1904,9 +1907,15 @@ describe("HostRuntimeStore", () => {
       agent: { ...snapshotEntry.agent, title: "before-session" },
       project: snapshotEntry.project,
     });
+    const generation = store.getSnapshot(host.serverId)?.clientGeneration ?? 0;
     useSessionStore
       .getState()
-      .initializeSession(host.serverId, fakeClient as unknown as DaemonClient, 1);
+      .initializeSession(host.serverId, fakeClient as unknown as DaemonClient, generation);
+    useSessionStore.getState().updateSessionServerInfo(host.serverId, {
+      serverId: host.serverId,
+      hostname: null,
+      version: "test",
+    });
     await fakeClient.waitForFetches(1);
     await waitForDirectoryReady(store, host.serverId);
 
@@ -1916,6 +1925,50 @@ describe("HostRuntimeStore", () => {
 
     store.syncHosts([]);
     useSessionStore.getState().clearSession(host.serverId);
+  });
+
+  it("restarts directory bootstrap when reconnect supersedes a pending session wait", async () => {
+    const host = makeHost({
+      serverId: "srv_session_wait_reconnect",
+      connections: [{ id: "direct:lan:6767", type: "directTcp", endpoint: "lan:6767" }],
+    });
+    const fakeClient = new FakeDaemonClient();
+    fakeClient.setConnectionState({ status: "connected" });
+    const store = new HostRuntimeStore({
+      deps: {
+        createClient: () => fakeClient as unknown as DaemonClient,
+        connectToDaemon: async () => ({
+          client: fakeClient as unknown as DaemonClient,
+          serverId: host.serverId,
+          hostname: null,
+        }),
+        getClientId: async () => "cid_session_wait_reconnect",
+      },
+    });
+
+    store.syncHosts([host]);
+    await fakeClient.waitForAgentUpdates();
+    fakeClient.setConnectionState({ status: "disconnected", reason: "network" });
+    fakeClient.setConnectionState({ status: "connected" });
+
+    const generation = store.getSnapshot(host.serverId)?.clientGeneration ?? 0;
+    const sessionStore = useSessionStore.getState();
+    sessionStore.initializeSession(
+      host.serverId,
+      fakeClient as unknown as DaemonClient,
+      generation,
+    );
+    sessionStore.updateSessionServerInfo(host.serverId, {
+      serverId: host.serverId,
+      hostname: null,
+      version: "test",
+    });
+    await fakeClient.waitForFetches(1);
+    await waitForDirectoryReady(store, host.serverId);
+
+    expect(fakeClient.fetchAgentsCalls).toHaveLength(1);
+    store.syncHosts([]);
+    sessionStore.clearSession(host.serverId);
   });
 
   it("rejects a superseded refresh without overwriting the newer replica", async () => {

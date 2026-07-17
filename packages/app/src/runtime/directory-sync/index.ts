@@ -74,6 +74,7 @@ export class DirectorySync {
     source: { clientGeneration: 0, connectionEpoch: 0 },
   };
   private unsubscribe: (() => void) | null = null;
+  private readonly abortSessionWaits = new Set<() => void>();
 
   constructor(
     private readonly serverId: string,
@@ -88,7 +89,7 @@ export class DirectorySync {
     this.workspaces = new WorkspaceDirectoryReplica(serverId);
   }
 
-  connectionChanged(connection: DirectoryConnection): void {
+  connectionChanged(connection: DirectoryConnection): boolean {
     const changed =
       this.connection.client !== connection.client ||
       this.connection.source.clientGeneration !== connection.source.clientGeneration ||
@@ -96,13 +97,14 @@ export class DirectorySync {
     const wentOffline = this.connection.status === "online" && connection.status === "offline";
     if (!changed && !wentOffline) {
       this.connection = connection;
-      return;
+      return false;
     }
     this.flushAbortedTransactions();
     this.unsubscribe?.();
     this.unsubscribe = null;
     this.connection = connection;
-    if (!connection.client || connection.status !== "online") return;
+    this.abortPendingSessionWaits();
+    if (!connection.client || connection.status !== "online") return true;
     const client = connection.client;
     const source = connection.source;
     const subscriptions = [
@@ -131,10 +133,12 @@ export class DirectorySync {
     this.unsubscribe = () => {
       for (const unsubscribe of subscriptions) unsubscribe();
     };
+    return true;
   }
 
   dispose(): void {
     this.flushAbortedTransactions();
+    this.abortPendingSessionWaits();
     this.unsubscribe?.();
     this.unsubscribe = null;
   }
@@ -216,14 +220,19 @@ export class DirectorySync {
   }
 
   async refreshWorkspaces(input?: { subscribe?: boolean }): Promise<void> {
-    const serverInfo = useSessionStore.getState().sessions[this.serverId]?.serverInfo;
-    if (serverInfo?.features?.workspaceMultiplicity !== true) return;
     const { client, source } = this.requireOnline();
     const transaction = this.workspaceTransactions.begin(source, () => ({
       workspaces: new Map(),
       emptyProjects: new Map(),
     }));
     try {
+      await this.waitForSessionMetadata(client, source);
+      const serverInfo = useSessionStore.getState().sessions[this.serverId]?.serverInfo;
+      if (serverInfo?.features?.workspaceMultiplicity !== true) {
+        const deltas = this.workspaceTransactions.fail(transaction);
+        if (deltas) for (const delta of deltas) this.workspaces.applyDelta(delta);
+        return;
+      }
       await this.fetchWorkspaceSnapshot(client, source, transaction, input?.subscribe === true);
       if (!this.isCurrent(client, source) || !this.hasMatchingSession(client, source)) {
         throw new DirectoryRefreshSupersededError("workspace completion no longer current");
@@ -343,18 +352,47 @@ export class DirectorySync {
   }
 
   private async waitForSession(client: DaemonClient, source: DirectorySourceToken): Promise<void> {
-    const matches = () => this.hasMatchingSession(client, source);
+    await this.waitForSessionState(client, source, () => this.hasMatchingSession(client, source));
+  }
+
+  private async waitForSessionMetadata(
+    client: DaemonClient,
+    source: DirectorySourceToken,
+  ): Promise<void> {
+    await this.waitForSessionState(client, source, () => {
+      const session = useSessionStore.getState().sessions[this.serverId];
+      return this.hasMatchingSession(client, source) && session?.serverInfo !== null;
+    });
+  }
+
+  private async waitForSessionState(
+    client: DaemonClient,
+    source: DirectorySourceToken,
+    matches: () => boolean,
+  ): Promise<void> {
     if (matches()) return;
     await new Promise<void>((resolve, reject) => {
-      const unsubscribe = useSessionStore.subscribe(() => {
+      let settled = false;
+      let unsubscribe: () => void = () => undefined;
+      const finish = (result: "ready" | "aborted") => {
+        if (settled) return;
+        settled = true;
+        unsubscribe();
+        this.abortSessionWaits.delete(abort);
+        if (result === "ready") resolve();
+        else reject(new DirectoryRefreshSupersededError("session wait no longer current"));
+      };
+      const abort = () => finish("aborted");
+      const check = () => {
         if (matches()) {
-          unsubscribe();
-          resolve();
+          finish("ready");
         } else if (!this.isCurrent(client, source)) {
-          unsubscribe();
-          reject(new DirectoryRefreshSupersededError("session wait no longer current"));
+          finish("aborted");
         }
-      });
+      };
+      this.abortSessionWaits.add(abort);
+      unsubscribe = useSessionStore.subscribe(check);
+      check();
     });
   }
 
@@ -366,6 +404,10 @@ export class DirectorySync {
   private flushAbortedTransactions(): void {
     for (const delta of this.agentTransactions.abort()) this.agents.applyDelta(delta);
     for (const delta of this.workspaceTransactions.abort()) this.workspaces.applyDelta(delta);
+  }
+
+  private abortPendingSessionWaits(): void {
+    for (const abort of this.abortSessionWaits) abort();
   }
 }
 

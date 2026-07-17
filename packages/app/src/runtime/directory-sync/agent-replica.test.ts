@@ -57,6 +57,10 @@ describe("AgentDirectoryReplica", () => {
     store.initializeSession(serverId, null as unknown as DaemonClient);
     const replica = new AgentDirectoryReplica(serverId, () => undefined);
     replica.commitSnapshot([entry(payload("directory"))], []);
+    const directoryPlacement = useSessionStore
+      .getState()
+      .sessions[serverId]?.agents.get("agent")?.projectPlacement;
+    expect(directoryPlacement).toBeDefined();
     const staleToken = replica.captureTimeline("agent");
 
     replica.remove("agent");
@@ -74,6 +78,9 @@ describe("AgentDirectoryReplica", () => {
     expect(useSessionStore.getState().sessions[serverId]?.agents.get("agent")?.title).toBe(
       "current",
     );
+    expect(
+      useSessionStore.getState().sessions[serverId]?.agents.get("agent")?.projectPlacement,
+    ).toEqual(directoryPlacement);
     store.clearSession(serverId);
   });
 });
