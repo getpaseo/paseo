@@ -353,6 +353,7 @@ describe("archiveByScope", () => {
     const paseoHome = path.join(tempDir, ".paseo");
     const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "nested-teardown");
     const workspaceCwd = path.join(worktree.worktreePath, nestedRelative);
+    const matchesWorkspaceCwd = createRealpathAwarePathMatcher(workspaceCwd);
     const workspaceId = "ws-nested-teardown";
 
     const result = await archiveByScope(
@@ -381,9 +382,7 @@ describe("archiveByScope", () => {
     });
     expect(existsSync(worktree.worktreePath)).toBe(false);
     expect(
-      createRealpathAwarePathMatcher(workspaceCwd)(
-        readFileSync(path.join(repoDir, "nested-teardown.log"), "utf8"),
-      ),
+      matchesWorkspaceCwd(readFileSync(path.join(repoDir, "nested-teardown.log"), "utf8")),
     ).toBe(true);
   });
 
