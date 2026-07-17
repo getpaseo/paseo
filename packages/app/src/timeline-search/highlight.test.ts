@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { splitHighlightSegments, textMatchesQuery } from "./highlight";
+import { findAllMatches, splitHighlightSegments, textMatchesQuery } from "./highlight";
 
 describe("splitHighlightSegments", () => {
   it("returns a single non-match segment when the query is empty", () => {
@@ -51,6 +51,43 @@ describe("splitHighlightSegments", () => {
       { offset: 0, text: "İ", isMatch: false },
       { offset: 1, text: "a", isMatch: true },
     ]);
+  });
+});
+
+describe("compiled-regex cache", () => {
+  it("does not leak lastIndex state between calls for the same query (textMatchesQuery)", () => {
+    // A global ("g") regex retains lastIndex across calls when reused. If the
+    // single-entry cache in buildMatchExpression didn't reset lastIndex on
+    // every hand-out, a later call for the SAME query starting its search
+    // past a previous match would silently miss it.
+    expect(textMatchesQuery("needle", "needle")).toBe(true);
+    expect(textMatchesQuery("needle", "needle")).toBe(true);
+    expect(textMatchesQuery("needle", "needle")).toBe(true);
+  });
+
+  it("does not leak lastIndex state across DIFFERENT queries sharing the cache slot", () => {
+    expect(textMatchesQuery("aaa bbb", "bbb")).toBe(true);
+    // Switching queries evicts and rebuilds the single cached entry; the new
+    // entry must start scanning from the beginning of the next `text`, not
+    // from whatever `lastIndex` the previous query's regex was left at.
+    expect(textMatchesQuery("ccc", "ccc")).toBe(true);
+  });
+
+  it("finds every occurrence via matchAll even when the cache was warmed by a prior test() call", () => {
+    // test() advances a global regex's lastIndex; matchAll() clones the
+    // regex and seeds the clone's lastIndex from the source regex's current
+    // lastIndex per spec — so a stale nonzero lastIndex on the cached regex
+    // would make a subsequent findAllMatches() silently skip leading matches.
+    textMatchesQuery("wall wall wall", "wall");
+    expect(findAllMatches("wall wall wall", "wall")).toHaveLength(3);
+  });
+
+  it("reuses one compiled expression across many items without losing per-call correctness", () => {
+    // Simulates searching many stream items for the same query in a row (the
+    // hot path this cache targets) interleaved with different match shapes.
+    const texts = ["needle here", "no match", "needle needle", "NEEDLE upper"];
+    const counts = texts.map((text) => findAllMatches(text, "needle").length);
+    expect(counts).toEqual([1, 0, 2, 1]);
   });
 });
 

@@ -18,6 +18,28 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/** A single located occurrence of a query within a text — named once and reused
+ * across every match-locating function below instead of an inline object
+ * shape at each call site. */
+export interface TextMatchOccurrence {
+  index: number;
+  length: number;
+}
+
+// Single-entry cache: the timeline search panel re-evaluates the same query
+// against many items in a row (once per stream item, per keystroke), so the
+// overwhelmingly common case is "build this exact RegExp again". Caching only
+// the LAST query keeps this a one-line lookup with no eviction policy, while
+// still avoiding a fresh `RegExp` allocation (and its internal compile step)
+// for every item. Safe to share the compiled RegExp across `.test()` and
+// `.matchAll()` callers: `.matchAll()` operates on an internal clone (per
+// spec) seeded from the current `lastIndex`, and `.test()` advances
+// `lastIndex` on a global regex — so `lastIndex` is reset to 0 every time this
+// function hands out the (possibly cached) RegExp, before the caller can
+// observe or use it.
+let cachedQuery: string | null = null;
+let cachedExpression: RegExp | null = null;
+
 /**
  * Builds the case-insensitive, Unicode-aware regex used to both detect and
  * highlight matches of `query` as a literal substring of `text`. Shared by
@@ -27,7 +49,12 @@ function escapeRegExp(value: string): string {
  * "İ".toLowerCase() contains "i", but /i/giu does not match "İ").
  */
 function buildMatchExpression(trimmedQuery: string): RegExp {
-  return new RegExp(escapeRegExp(trimmedQuery), "giu");
+  if (cachedQuery !== trimmedQuery || !cachedExpression) {
+    cachedExpression = new RegExp(escapeRegExp(trimmedQuery), "giu");
+    cachedQuery = trimmedQuery;
+  }
+  cachedExpression.lastIndex = 0;
+  return cachedExpression;
 }
 
 /**
@@ -43,23 +70,6 @@ export function textMatchesQuery(text: string, query: string): boolean {
 }
 
 /**
- * Locates the first case-insensitive, Unicode-aware match of `query` in
- * `text` — same matching semantics as `textMatchesQuery`/
- * `splitHighlightSegments`. Returns null when the trimmed query is empty or
- * there is no match. Used by `makeSnippet` to center a snippet on the match.
- */
-export function findFirstMatch(
-  text: string,
-  query: string,
-): { index: number; length: number } | null {
-  const trimmed = query.trim();
-  if (trimmed.length === 0 || text.length === 0) return null;
-  const match = buildMatchExpression(trimmed).exec(text);
-  if (!match) return null;
-  return { index: match.index, length: match[0].length };
-}
-
-/**
  * Locates EVERY case-insensitive, Unicode-aware occurrence of `query` in
  * `text`, in order — same matching semantics as `textMatchesQuery`/
  * `splitHighlightSegments`, so every occurrence counted here also highlights.
@@ -70,10 +80,10 @@ export function findAllMatches(
   text: string,
   query: string,
   limit = Number.POSITIVE_INFINITY,
-): Array<{ index: number; length: number }> {
+): TextMatchOccurrence[] {
   const trimmed = query.trim();
   if (trimmed.length === 0 || text.length === 0 || limit <= 0) return [];
-  const results: Array<{ index: number; length: number }> = [];
+  const results: TextMatchOccurrence[] = [];
   for (const match of text.matchAll(buildMatchExpression(trimmed))) {
     results.push({ index: match.index, length: match[0].length });
     if (results.length >= limit) break;

@@ -37,7 +37,7 @@
 
 import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
 import type { StreamItem } from "@/types/stream";
-import { findAllMatches } from "./highlight";
+import { findAllMatches, type TextMatchOccurrence } from "./highlight";
 
 // ---- Filter types ----
 
@@ -50,13 +50,71 @@ export type TimelineSearchFilter =
   | "toolOutput"
   | "errors";
 
+// ---- Field-span registry ----
+
+/**
+ * Identifies WHICH rendered surface within a stream item a match belongs to.
+ * The model searches one concatenated string per item (see
+ * `extractSearchSpans`), but renderers display individual fields — a
+ * `matchOffset` into that concatenated string is meaningless to a component
+ * that only has one field's own text on hand. `TimelineSearchField` plus a
+ * field-relative offset (`TimelineSearchMatch.fieldOffset`) is what lets a
+ * renderer map a match back onto the text it actually owns.
+ *
+ * "text" / "tool" / "other" are the original coarse, per-item-kind values
+ * (kept so existing call sites that hardcode one of them as a default/prop
+ * type still compile); "toolInput" / "toolOutput" / "toolError" subdivide a
+ * tool call's own detail into its input, output, and error surfaces; a
+ * `todo:${index}` field is stamped per todo-list entry so a per-row surface
+ * can map a match onto the specific row it occurred in.
+ */
+export type TimelineSearchField =
+  | "text"
+  | "tool"
+  | "toolInput"
+  | "toolOutput"
+  | "toolError"
+  | "other"
+  | `todo:${number}`;
+
+/** One field's contribution to an item's concatenated searchable text. */
+export interface TimelineSearchFieldSpan {
+  field: TimelineSearchField;
+  /** Inclusive start offset of this field's text within the concatenated string. */
+  start: number;
+  /** Exclusive end offset of this field's text within the concatenated string. */
+  end: number;
+}
+
+/** An ordered field part, before it's joined into the concatenated searchable string. */
+interface TimelineSearchFieldPart {
+  field: TimelineSearchField;
+  text: string;
+}
+
+/** Result of extracting an item's searchable text, with per-field span boundaries. */
+export interface TimelineSearchExtraction {
+  text: string;
+  spans: TimelineSearchFieldSpan[];
+}
+
 // ---- Match types ----
 
 export interface TimelineSearchMatch {
   /** The stream item that matched. */
   item: StreamItem;
-  /** Rendered source field when the item has a direct text surface. */
-  field: "text" | "tool" | "other";
+  /** The field-span this occurrence's start offset falls within (see `TimelineSearchField`). */
+  field: TimelineSearchField;
+  /**
+   * Character offset of this occurrence within its OWN field's text — i.e.
+   * `matchOffset` minus the containing span's `start`. This is what a
+   * renderer that owns a single field's raw text should slice against.
+   * A match spanning two fields is attributed to whichever field contains
+   * its START offset (the simplest well-defined rule); if no span contains
+   * the start (e.g. the match falls on the space joining two fields), this
+   * falls back to the unadjusted `matchOffset`.
+   */
+  fieldOffset: number;
   /** Snippet for display (truncated to ~80 chars), centered on this occurrence. */
   snippet: string;
   /** Character offset of this occurrence within `snippet`. */
@@ -101,55 +159,60 @@ export interface TimelineSearchState {
 // ---- Text extraction helpers ----
 
 /**
- * Extract the INPUT portion of a ToolCallDetail: the name + input arguments.
- * This is what `toolCalls` filter searches.
+ * Builds the INPUT portion of a ToolCallDetail as ordered field parts: the
+ * tool name (field "tool") followed by its detail-specific input arguments
+ * (field "toolInput"). This is what the `toolCalls` filter searches.
  */
 // oxlint-disable-next-line complexity
-function extractDetailInput(name: string, detail: ToolCallDetail): string {
-  const parts: string[] = [name];
+function buildDetailInputParts(name: string, detail: ToolCallDetail): TimelineSearchFieldPart[] {
+  const parts: TimelineSearchFieldPart[] = [{ field: "tool", text: name }];
   switch (detail.type) {
     case "shell":
-      parts.push(detail.command);
-      if (detail.cwd) parts.push(detail.cwd);
+      parts.push({ field: "toolInput", text: detail.command });
+      if (detail.cwd) parts.push({ field: "toolInput", text: detail.cwd });
       break;
     case "read":
-      parts.push(detail.filePath);
+      parts.push({ field: "toolInput", text: detail.filePath });
       break;
     case "edit":
-      parts.push(detail.filePath);
-      if (detail.oldString) parts.push(detail.oldString);
-      if (detail.newString) parts.push(detail.newString);
+      parts.push({ field: "toolInput", text: detail.filePath });
+      if (detail.oldString) parts.push({ field: "toolInput", text: detail.oldString });
+      if (detail.newString) parts.push({ field: "toolInput", text: detail.newString });
       break;
     case "write":
-      parts.push(detail.filePath);
-      if (detail.content) parts.push(detail.content);
+      parts.push({ field: "toolInput", text: detail.filePath });
+      if (detail.content) parts.push({ field: "toolInput", text: detail.content });
       break;
     case "search":
-      parts.push(detail.query);
-      if (detail.filePaths) parts.push(detail.filePaths.join(" "));
+      parts.push({ field: "toolInput", text: detail.query });
+      if (detail.filePaths) parts.push({ field: "toolInput", text: detail.filePaths.join(" ") });
       break;
     case "fetch":
-      parts.push(detail.url);
-      if (detail.prompt) parts.push(detail.prompt);
+      parts.push({ field: "toolInput", text: detail.url });
+      if (detail.prompt) parts.push({ field: "toolInput", text: detail.prompt });
       break;
     case "sub_agent":
-      if (detail.description) parts.push(detail.description);
+      if (detail.description) parts.push({ field: "toolInput", text: detail.description });
       break;
     case "plan":
-      parts.push(detail.text);
+      parts.push({ field: "toolInput", text: detail.text });
       break;
     case "plain_text":
-      if (detail.label) parts.push(detail.label);
-      if (detail.text) parts.push(detail.text);
+      if (detail.label) parts.push({ field: "toolInput", text: detail.label });
+      if (detail.text) parts.push({ field: "toolInput", text: detail.text });
       break;
     case "worktree_setup":
-      parts.push(detail.worktreePath, detail.branchName);
+      parts.push({ field: "toolInput", text: detail.worktreePath });
+      parts.push({ field: "toolInput", text: detail.branchName });
       break;
     case "unknown":
-      if (detail.input != null) parts.push(safeStringify(detail.input) ?? "");
+      if (detail.input != null) {
+        const stringified = safeStringify(detail.input);
+        if (stringified) parts.push({ field: "toolInput", text: stringified });
+      }
       break;
   }
-  return parts.filter(Boolean).join(" ");
+  return parts.filter((part) => part.text.length > 0);
 }
 
 /**
@@ -186,7 +249,7 @@ function extractDetailOutput(detail: ToolCallDetail): string | null {
 }
 
 /** Stable identity for a single occurrence-level match (item + occurrence). */
-function matchKey(match: TimelineSearchMatch): string {
+export function matchKey(match: TimelineSearchMatch): string {
   return `${match.item.id}:${match.matchOffset}`;
 }
 
@@ -225,17 +288,24 @@ const SNIPPET_HEAD_ANCHOR_THRESHOLD = 80;
 const SNIPPET_CONTEXT_BEFORE = 30;
 
 /**
- * Builds a display snippet centered on a SPECIFIC occurrence (`occurrenceIndex`)
- * given the pre-computed whitespace-collapsed text and its match positions, so
+ * Builds a display snippet centered on a SPECIFIC occurrence, given the
+ * pre-computed whitespace-collapsed text and that occurrence's position
+ * ALREADY MAPPED into cleaned-text coordinates (see `collapseWhitespace`), so
  * each per-occurrence result shows its own surrounding context rather than
  * repeating the first match. A match that starts within the first
  * `SNIPPET_HEAD_ANCHOR_THRESHOLD` chars keeps the head-anchored behavior
  * (truncate from the start); a deeper match instead takes a window of
  * `SNIPPET_CONTEXT_BEFORE` chars before the match, filled out to
  * ~`SNIPPET_MAX_LENGTH` chars total, with a leading "…" (and trailing "…" if
- * the window doesn't reach the end of the text). Occurrence order is stable
- * between the original and whitespace-collapsed text, so the Nth cleaned match
- * lines up with the Nth occurrence used for navigation.
+ * the window doesn't reach the end of the text).
+ *
+ * The caller must pass the occurrence's OWN mapped position, not re-locate it
+ * by searching `cleaned` independently: whitespace-collapsing is lossy for a
+ * query that itself contains whitespace (e.g. collapsing "foo\nbar" produces
+ * the same "foo bar" text as a literal "foo bar" occurrence elsewhere), so a
+ * second independent search of `cleaned` can find a DIFFERENT number of
+ * matches, in a different order, than the original text — pairing results by
+ * index would then silently center the wrong occurrence.
  */
 interface TimelineSearchSnippet {
   text: string;
@@ -245,29 +315,73 @@ interface TimelineSearchSnippet {
 
 function makeSnippetFromCleaned(
   cleaned: string,
-  cleanedMatches: ReadonlyArray<{ index: number; length: number }>,
-  occurrenceIndex: number,
+  cleanedMatch: TextMatchOccurrence,
 ): TimelineSearchSnippet {
-  const match = cleanedMatches[occurrenceIndex] ?? cleanedMatches[0];
-  if (!match) {
-    return { text: `${cleaned.slice(0, SNIPPET_MAX_LENGTH - 3)}…`, matchOffset: 0, matchLength: 0 };
-  }
-  if (match.index < SNIPPET_HEAD_ANCHOR_THRESHOLD) {
+  if (cleanedMatch.index < SNIPPET_HEAD_ANCHOR_THRESHOLD) {
     return {
       text: `${cleaned.slice(0, SNIPPET_MAX_LENGTH - 3)}…`,
-      matchOffset: match.index,
-      matchLength: match.length,
+      matchOffset: cleanedMatch.index,
+      matchLength: cleanedMatch.length,
     };
   }
 
-  const start = Math.max(0, match.index - SNIPPET_CONTEXT_BEFORE);
+  const start = Math.max(0, cleanedMatch.index - SNIPPET_CONTEXT_BEFORE);
   const end = Math.min(cleaned.length, start + SNIPPET_MAX_LENGTH);
   const prefix = start > 0 ? "…" : "";
   const suffix = end < cleaned.length ? "…" : "";
   return {
     text: `${prefix}${cleaned.slice(start, end)}${suffix}`,
-    matchOffset: prefix.length + match.index - start,
-    matchLength: match.length,
+    matchOffset: prefix.length + cleanedMatch.index - start,
+    matchLength: cleanedMatch.length,
+  };
+}
+
+const WHITESPACE_CHAR_RE = /\s/;
+
+/**
+ * Whitespace-collapses `text` the same way `computeItemMatches` always has
+ * (`text.replace(/\s+/g, " ").trim()`), while building an offset table that
+ * maps any offset in the ORIGINAL text to its corresponding offset in the
+ * cleaned text. This is what lets an occurrence located in the original text
+ * (the only frame matches are ever found in — see `computeItemMatches`) be
+ * placed correctly in the cleaned snippet WITHOUT re-running the query
+ * against the cleaned text, which is unsound for whitespace-containing
+ * queries (see `makeSnippetFromCleaned`'s doc comment).
+ */
+function collapseWhitespace(text: string): {
+  cleaned: string;
+  toCleanedOffset: (originalOffset: number) => number;
+} {
+  const originalToCleaned: number[] = Array.from({ length: text.length + 1 });
+  let cleaned = "";
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i] as string;
+    if (WHITESPACE_CHAR_RE.test(ch)) {
+      const runStart = i;
+      while (i < text.length && WHITESPACE_CHAR_RE.test(text[i] as string)) i++;
+      const isLeading = cleaned.length === 0;
+      const isTrailing = i === text.length;
+      const collapsedOffset = cleaned.length;
+      if (!isLeading && !isTrailing) {
+        cleaned += " ";
+      }
+      for (let k = runStart; k < i; k++) {
+        originalToCleaned[k] = collapsedOffset;
+      }
+    } else {
+      originalToCleaned[i] = cleaned.length;
+      cleaned += ch;
+      i++;
+    }
+  }
+  originalToCleaned[text.length] = cleaned.length;
+  return {
+    cleaned,
+    toCleanedOffset: (originalOffset) => {
+      const clamped = Math.max(0, Math.min(originalOffset, text.length));
+      return originalToCleaned[clamped] ?? cleaned.length;
+    },
   };
 }
 
@@ -283,7 +397,10 @@ interface ComputedItemMatches {
   isMatchLimitExceeded: boolean;
 }
 
-function getTimelineSearchMatchField(item: StreamItem): TimelineSearchMatch["field"] {
+/** Coarse per-item-kind fallback field, used only when a match's start offset
+ * doesn't land inside any known field span (e.g. it falls on the space that
+ * joins two fields together). */
+function fallbackFieldForItem(item: StreamItem): TimelineSearchField {
   switch (item.kind) {
     case "user_message":
     case "assistant_message":
@@ -296,7 +413,25 @@ function getTimelineSearchMatchField(item: StreamItem): TimelineSearchMatch["fie
   }
 }
 
-function computeItemMatches(item: StreamItem, text: string, query: string): ComputedItemMatches {
+/**
+ * Finds the field-span containing `offset`. A match is attributed to a field
+ * by its START offset only (the simplest well-defined rule for a match that
+ * might straddle two fields' text, per `TimelineSearchMatch.fieldOffset`'s
+ * doc comment) — this never inspects the match's end offset.
+ */
+function findSpanForOffset(
+  spans: readonly TimelineSearchFieldSpan[],
+  offset: number,
+): TimelineSearchFieldSpan | undefined {
+  return spans.find((span) => offset >= span.start && offset < span.end);
+}
+
+function computeItemMatches(
+  item: StreamItem,
+  text: string,
+  spans: readonly TimelineSearchFieldSpan[],
+  query: string,
+): ComputedItemMatches {
   const occurrences = findAllMatches(text, query, MAX_TIMELINE_SEARCH_MATCHES + 1);
   if (occurrences.length === 0) {
     return { matches: [], isMatchLimitExceeded: false };
@@ -304,22 +439,29 @@ function computeItemMatches(item: StreamItem, text: string, query: string): Comp
   const isMatchLimitExceeded = occurrences.length > MAX_TIMELINE_SEARCH_MATCHES;
   const boundedOccurrences = occurrences.slice(0, MAX_TIMELINE_SEARCH_MATCHES);
 
-  const cleaned = text.replace(/\s+/g, " ").trim();
+  const { cleaned, toCleanedOffset } = collapseWhitespace(text);
   const isShort = cleaned.length <= SNIPPET_MAX_LENGTH;
-  const cleanedMatches = findAllMatches(cleaned, query, boundedOccurrences.length);
 
   return {
     matches: boundedOccurrences.map((occurrence, occurrenceIndex) => {
+      const cleanedStart = toCleanedOffset(occurrence.index);
+      const cleanedEnd = toCleanedOffset(occurrence.index + occurrence.length);
+      const cleanedMatch: TextMatchOccurrence = {
+        index: cleanedStart,
+        length: Math.max(0, cleanedEnd - cleanedStart),
+      };
       const snippet = isShort
-        ? {
-            text: cleaned,
-            matchOffset: cleanedMatches[occurrenceIndex]?.index ?? 0,
-            matchLength: cleanedMatches[occurrenceIndex]?.length ?? 0,
-          }
-        : makeSnippetFromCleaned(cleaned, cleanedMatches, occurrenceIndex);
+        ? { text: cleaned, matchOffset: cleanedMatch.index, matchLength: cleanedMatch.length }
+        : makeSnippetFromCleaned(cleaned, cleanedMatch);
+
+      const span = findSpanForOffset(spans, occurrence.index);
+      const field = span?.field ?? fallbackFieldForItem(item);
+      const fieldOffset = span ? occurrence.index - span.start : occurrence.index;
+
       return {
         item,
-        field: getTimelineSearchMatchField(item),
+        field,
+        fieldOffset,
         snippet: snippet.text,
         snippetMatchOffset: snippet.matchOffset,
         snippetMatchLength: snippet.matchLength,
@@ -337,127 +479,211 @@ type ToolCallPayload = ToolCallStreamItem["payload"];
 type AgentToolCallData = Extract<ToolCallPayload, { source: "agent" }>["data"];
 type OrchestratorToolCallData = Extract<ToolCallPayload, { source: "orchestrator" }>["data"];
 
-function extractAgentToolCallSearchText(
+function buildAgentToolCallParts(
   data: AgentToolCallData,
   filter: TimelineSearchFilter,
-): string | null {
+): TimelineSearchFieldPart[] | null {
   const isFailed = data.status === "failed" || data.status === "canceled";
   const isCompleted = data.status === "completed";
 
   if (filter === "errors") {
     if (!isFailed) return null;
     // For errors: name + input + any error message
-    const base = extractDetailInput(data.name, data.detail);
+    const parts = buildDetailInputParts(data.name, data.detail);
     const err = safeStringify(data.error);
-    return [base, err].filter(Boolean).join(" ") || null;
+    if (err) parts.push({ field: "toolError", text: err });
+    return parts;
   }
   if (filter === "toolCalls") {
     // Input fields only — never output
-    return extractDetailInput(data.name, data.detail) || null;
+    return buildDetailInputParts(data.name, data.detail);
   }
   if (filter === "toolOutput") {
     // Output of successfully completed calls only
     if (!isCompleted) return null;
-    return extractDetailOutput(data.detail);
+    const output = extractDetailOutput(data.detail);
+    return output ? [{ field: "toolOutput", text: output }] : null;
   }
   if (filter === "messages" || filter === "prompts") {
     return null; // tool calls are neither prompts nor messages
   }
   // filter === "all": name + input + output (if completed) + error (if failed)
-  const input = extractDetailInput(data.name, data.detail);
-  const output = isCompleted ? extractDetailOutput(data.detail) : null;
-  const error = isFailed ? safeStringify(data.error) : null;
-  return [input, output, error].filter(Boolean).join(" ") || null;
+  const parts = buildDetailInputParts(data.name, data.detail);
+  if (isCompleted) {
+    const output = extractDetailOutput(data.detail);
+    if (output) parts.push({ field: "toolOutput", text: output });
+  }
+  if (isFailed) {
+    const err = safeStringify(data.error);
+    if (err) parts.push({ field: "toolError", text: err });
+  }
+  return parts;
 }
 
-function extractOrchestratorToolCallSearchText(
+function buildOrchestratorToolCallParts(
   data: OrchestratorToolCallData,
   filter: TimelineSearchFilter,
-): string | null {
+): TimelineSearchFieldPart[] | null {
   const isFailed = data.status === "failed";
   const isCompleted = data.status === "completed";
 
   if (filter === "errors") {
     if (!isFailed) return null;
-    return [data.toolName, safeStringify(data.error)].filter(Boolean).join(" ") || null;
+    const parts: TimelineSearchFieldPart[] = [{ field: "tool", text: data.toolName }];
+    const err = safeStringify(data.error);
+    if (err) parts.push({ field: "toolError", text: err });
+    return parts;
   }
   if (filter === "toolCalls") {
-    return [data.toolName, safeStringify(data.arguments)].filter(Boolean).join(" ") || null;
+    const parts: TimelineSearchFieldPart[] = [{ field: "tool", text: data.toolName }];
+    const args = safeStringify(data.arguments);
+    if (args) parts.push({ field: "toolInput", text: args });
+    return parts;
   }
   if (filter === "toolOutput") {
     if (!isCompleted) return null;
-    return safeStringify(data.result);
+    const result = safeStringify(data.result);
+    return result ? [{ field: "toolOutput", text: result }] : null;
   }
   if (filter === "messages" || filter === "prompts") {
     return null;
   }
   // all
-  return (
-    [
-      data.toolName,
-      safeStringify(data.arguments),
-      isCompleted ? safeStringify(data.result) : null,
-      isFailed ? safeStringify(data.error) : null,
-    ]
-      .filter(Boolean)
-      .join(" ") || null
-  );
+  const parts: TimelineSearchFieldPart[] = [{ field: "tool", text: data.toolName }];
+  const args = safeStringify(data.arguments);
+  if (args) parts.push({ field: "toolInput", text: args });
+  if (isCompleted) {
+    const result = safeStringify(data.result);
+    if (result) parts.push({ field: "toolOutput", text: result });
+  }
+  if (isFailed) {
+    const err = safeStringify(data.error);
+    if (err) parts.push({ field: "toolError", text: err });
+  }
+  return parts;
 }
 
-function extractToolCallSearchText(
+function buildToolCallParts(
   item: ToolCallStreamItem,
   filter: TimelineSearchFilter,
-): string | null {
+): TimelineSearchFieldPart[] | null {
   if (item.payload.source === "agent") {
-    return extractAgentToolCallSearchText(item.payload.data, filter);
+    return buildAgentToolCallParts(item.payload.data, filter);
   }
   if (item.payload.source === "orchestrator") {
-    return extractOrchestratorToolCallSearchText(item.payload.data, filter);
+    return buildOrchestratorToolCallParts(item.payload.data, filter);
   }
   return null;
 }
 
 /**
- * Returns text to match against for a given item + filter combination.
- * Returns null if this item should not be searched under this filter.
+ * Joins ordered field parts into one concatenated searchable string (parts
+ * are space-separated, matching the original `.filter(Boolean).join(" ")`
+ * behavior), recording each surviving part's span boundaries as it goes.
+ * Empty-text parts are dropped and contribute no span. Returns null when
+ * every part was empty, matching the old `|| null` behavior of the
+ * string-only extraction this replaces.
+ */
+function buildFieldSpans(
+  parts: readonly TimelineSearchFieldPart[],
+): TimelineSearchExtraction | null {
+  const nonEmpty = parts.filter((part) => part.text.length > 0);
+  if (nonEmpty.length === 0) return null;
+  const spans: TimelineSearchFieldSpan[] = [];
+  let text = "";
+  for (const part of nonEmpty) {
+    if (text.length > 0) text += " ";
+    const start = text.length;
+    text += part.text;
+    spans.push({ field: part.field, start, end: text.length });
+  }
+  return { text, spans };
+}
+
+/**
+ * Returns the ordered field parts to match against for a given item + filter
+ * combination. Returns null if this item should not be searched under this
+ * filter, or an empty array if the filter applies but nothing is present to
+ * search (e.g. a todo list whose entries are all blank).
  */
 // oxlint-disable-next-line complexity
-export function extractSearchText(item: StreamItem, filter: TimelineSearchFilter): string | null {
+function buildSearchParts(
+  item: StreamItem,
+  filter: TimelineSearchFilter,
+): TimelineSearchFieldPart[] | null {
   switch (item.kind) {
     case "user_message": {
       // User prompts belong to the "prompts" filter, not "messages".
       if (filter !== "all" && filter !== "prompts") return null;
-      return item.text || null;
+      const text = item.text;
+      return text ? [{ field: "text", text }] : null;
     }
 
     case "assistant_message": {
       if (filter !== "all" && filter !== "messages") return null;
-      return item.text || null;
+      const text = item.text;
+      return text ? [{ field: "text", text }] : null;
     }
 
     case "thought": {
       if (filter !== "all" && filter !== "thinking") return null;
-      return item.text || null;
+      const text = item.text;
+      return text ? [{ field: "text", text }] : null;
     }
 
     case "todo_list": {
+      // Each entry is its own field span (`todo:${index}`) so a per-row
+      // surface can map a match back onto the specific row it occurred in.
       if (filter !== "all" && filter !== "messages") return null;
-      const text = item.items.map((e) => e.text).join(" ");
-      return text || null;
+      const parts = item.items.map(
+        (entry, index): TimelineSearchFieldPart => ({
+          field: `todo:${index}` as TimelineSearchField,
+          text: entry.text,
+        }),
+      );
+      return parts;
     }
 
     case "tool_call":
-      return extractToolCallSearchText(item, filter);
+      return buildToolCallParts(item, filter);
 
     case "activity_log": {
       if (filter !== "all" && filter !== "errors") return null;
       if (filter === "errors" && item.activityType !== "error") return null;
-      return item.message || null;
+      const message = item.message;
+      return message ? [{ field: "text", text: message }] : null;
     }
 
     case "compaction":
       return null;
   }
+}
+
+/**
+ * Extracts an item's searchable text for a given filter, WITH per-field span
+ * boundaries — the field-span registry that lets a match's offset be mapped
+ * back onto the specific rendered field it occurred in (see
+ * `TimelineSearchField`/`TimelineSearchMatch.fieldOffset`). Returns null if
+ * this item should not be searched under this filter, or has nothing to
+ * search.
+ */
+export function extractSearchSpans(
+  item: StreamItem,
+  filter: TimelineSearchFilter,
+): TimelineSearchExtraction | null {
+  const parts = buildSearchParts(item, filter);
+  if (!parts) return null;
+  return buildFieldSpans(parts);
+}
+
+/**
+ * Returns text to match against for a given item + filter combination.
+ * Returns null if this item should not be searched under this filter. Thin
+ * wrapper over `extractSearchSpans` for callers that only need the
+ * concatenated text, not the field boundaries.
+ */
+export function extractSearchText(item: StreamItem, filter: TimelineSearchFilter): string | null {
+  return extractSearchSpans(item, filter)?.text ?? null;
 }
 
 // ---- Core search ----
@@ -484,6 +710,7 @@ export const MAX_TIMELINE_SEARCH_MATCHES = 999;
 interface ItemMatchCacheEntry {
   filter: TimelineSearchFilter;
   text: string | null;
+  spans: TimelineSearchFieldSpan[];
   query: string;
   matches: TimelineSearchMatch[];
   isMatchLimitExceeded: boolean;
@@ -495,6 +722,7 @@ export function createTimelineSearchItemCache(): TimelineSearchItemCache {
 }
 
 const EMPTY_ITEM_MATCHES: TimelineSearchMatch[] = [];
+const EMPTY_SPANS: TimelineSearchFieldSpan[] = [];
 
 interface TimelineSearchResult {
   matches: TimelineSearchMatch[];
@@ -521,16 +749,21 @@ function searchItemsWithMetadata(
       itemMatches = cached.matches;
       itemLimitExceeded = cached.isMatchLimitExceeded;
     } else {
-      const text =
-        cached && cached.filter === filter ? cached.text : extractSearchText(item, filter);
+      const extraction =
+        cached && cached.filter === filter
+          ? { text: cached.text, spans: cached.spans }
+          : extractSearchSpans(item, filter);
+      const text = extraction?.text ?? null;
+      const spans = extraction?.spans ?? EMPTY_SPANS;
       const computed = text
-        ? computeItemMatches(item, text, trimmed)
+        ? computeItemMatches(item, text, spans, trimmed)
         : { matches: EMPTY_ITEM_MATCHES, isMatchLimitExceeded: false };
       itemMatches = computed.matches;
       itemLimitExceeded = computed.isMatchLimitExceeded;
       cache?.set(item, {
         filter,
-        text: text ?? null,
+        text,
+        spans,
         query: trimmed,
         matches: itemMatches,
         isMatchLimitExceeded: itemLimitExceeded,
@@ -630,10 +863,11 @@ export function createTimelineSearchModel(
       notify();
     },
     refresh() {
-      const previousSelectedKey =
-        state.selectedIndex >= 0 && state.matches[state.selectedIndex]
-          ? matchKey(state.matches[state.selectedIndex] as TimelineSearchMatch)
-          : undefined;
+      const previousSelectedMatch =
+        state.selectedIndex >= 0 ? state.matches[state.selectedIndex] : undefined;
+      const previousSelectedKey = previousSelectedMatch
+        ? matchKey(previousSelectedMatch)
+        : undefined;
       const { matches: newMatches, isMatchLimitExceeded } = searchItemsWithMetadata(
         getItems(),
         state.query,

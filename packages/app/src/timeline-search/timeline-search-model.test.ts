@@ -3,8 +3,10 @@ import type { StreamItem } from "@/types/stream";
 import {
   searchItems,
   extractSearchText,
+  extractSearchSpans,
   createTimelineSearchModel,
   createTimelineSearchItemCache,
+  matchKey,
   MAX_TIMELINE_SEARCH_MATCHES,
 } from "./timeline-search-model";
 
@@ -826,5 +828,145 @@ describe("createTimelineSearchModel", () => {
       model.selectIndex(currentIndex);
       expect(callCount).toBe(1);
     });
+  });
+});
+
+// ---- extractSearchSpans (field-span registry) tests ----
+
+describe("extractSearchSpans", () => {
+  it("gives a single 'text' span covering the whole message, with a matching text output", () => {
+    const item = makeUserMessage("hello world", "u1");
+    const extraction = extractSearchSpans(item, "all");
+    expect(extraction?.text).toBe("hello world");
+    expect(extraction?.spans).toEqual([{ field: "text", start: 0, end: 11 }]);
+  });
+
+  it("accounts for the tool-name-prefix offset in a shell tool call's spans", () => {
+    // extractDetailInput-style extraction always prepends `name + " "` before
+    // the rest of the input — the historical source of matchOffset being
+    // meaningless to renderers. The "toolInput" span for the command must
+    // start AFTER "Bash " (5 chars), not at 0.
+    const item = makeShellToolCall("Bash", "npm test", undefined, "completed");
+    const extraction = extractSearchSpans(item, "toolCalls");
+    expect(extraction?.text).toBe("Bash npm test");
+    expect(extraction?.spans).toEqual([
+      { field: "tool", start: 0, end: 4 }, // "Bash"
+      { field: "toolInput", start: 5, end: 13 }, // "npm test"
+    ]);
+  });
+
+  it("gives every todo entry its own index-suffixed field span", () => {
+    const item = makeTodo(["Step one", "Step two", "Step three"]);
+    const extraction = extractSearchSpans(item, "messages");
+    expect(extraction?.text).toBe("Step one Step two Step three");
+    expect(extraction?.spans).toEqual([
+      { field: "todo:0", start: 0, end: 8 }, // "Step one"
+      { field: "todo:1", start: 9, end: 17 }, // "Step two"
+      { field: "todo:2", start: 18, end: 28 }, // "Step three"
+    ]);
+  });
+
+  it("separates a tool call's input, output, and error into distinct fields under 'all'", () => {
+    const item = makeShellToolCall("Bash", "bad-cmd", undefined, "failed");
+    const extraction = extractSearchSpans(item, "all");
+    const fields = extraction?.spans.map((span) => span.field);
+    expect(fields).toEqual(["tool", "toolInput", "toolError"]);
+  });
+
+  it("returns null for a filter the item kind doesn't participate in", () => {
+    expect(extractSearchSpans(makeUserMessage("hi"), "toolCalls")).toBeNull();
+  });
+});
+
+// ---- fieldOffset stamping tests ----
+
+describe("TimelineSearchMatch field/fieldOffset stamping", () => {
+  it("stamps a message match with field 'text' and fieldOffset equal to matchOffset", () => {
+    const results = searchItems([makeUserMessage("hello world", "u1")], "world", "all");
+    expect(results).toHaveLength(1);
+    expect(results[0]?.field).toBe("text");
+    // Single-span item: the field-relative offset equals the raw matchOffset
+    // (the span starts at 0).
+    expect(results[0]?.fieldOffset).toBe(results[0]?.matchOffset);
+  });
+
+  it("attributes a match in the tool name to field 'tool' with a fieldOffset relative to the name", () => {
+    const item = makeShellToolCall("Bash", "npm test", undefined, "completed", "tc1");
+    const results = searchItems([item], "ash", "toolCalls");
+    expect(results).toHaveLength(1);
+    expect(results[0]?.field).toBe("tool");
+    expect(results[0]?.fieldOffset).toBe(1); // "ash" starts at index 1 of "Bash"
+  });
+
+  it("attributes a match in the command to field 'toolInput' with an offset past the name prefix", () => {
+    const item = makeShellToolCall("Bash", "npm test", undefined, "completed", "tc1");
+    const results = searchItems([item], "test", "toolCalls");
+    expect(results).toHaveLength(1);
+    // matchOffset is relative to "Bash npm test" (offset 9); fieldOffset is
+    // relative to "npm test" alone (offset 4) — this is exactly the
+    // distinction that makes fieldOffset meaningful to a renderer that only
+    // has the raw command string, not the concatenated searchable text.
+    expect(results[0]?.matchOffset).toBe(9);
+    expect(results[0]?.field).toBe("toolInput");
+    expect(results[0]?.fieldOffset).toBe(4);
+  });
+
+  it("attributes a match inside a specific todo entry to that entry's own field", () => {
+    const item = makeTodo(["Buy milk", "Walk the dog", "Buy bread"]);
+    const results = searchItems([item], "Buy", "messages");
+    expect(results).toHaveLength(2);
+    expect(results.map((r) => r.field)).toEqual(["todo:0", "todo:2"]);
+    // Both occurrences start at the beginning of their own entry text.
+    expect(results.every((r) => r.fieldOffset === 0)).toBe(true);
+  });
+});
+
+// ---- whitespace-collapse alignment tests ----
+
+describe("whitespace-containing queries and snippet alignment", () => {
+  it("centers the snippet on the literal occurrence, not a collapsing-induced spurious earlier match", () => {
+    // Collapsing "foo\nbar" (a newline, not a space) produces the same
+    // "foo bar" text as a REAL later literal "foo bar" occurrence. A query
+    // containing whitespace must not be re-searched against the cleaned text
+    // independently — doing so finds the spurious "foo\nbar" collapse first
+    // and centers on the wrong location.
+    const padding = "x".repeat(100);
+    const text = `foo\nbar ${padding} literal foo bar occurrence here`;
+    const item = makeUserMessage(text, "u1");
+    const results = searchItems([item], "foo bar", "all");
+
+    // Only ONE literal "foo bar" (with an actual space) exists in the raw
+    // text — "foo\nbar" does not match a query containing a literal space.
+    expect(results).toHaveLength(1);
+    const match = results[0];
+    expect(match).toBeDefined();
+    // The snippet must contain the literal matched text, and the marked
+    // snippet offset must actually point at "foo bar" within the snippet.
+    const snippetMatch = match!.snippet.slice(
+      match!.snippetMatchOffset,
+      match!.snippetMatchOffset + match!.snippetMatchLength,
+    );
+    expect(snippetMatch.toLowerCase()).toBe("foo bar");
+  });
+
+  it("keeps matchOffset/fieldOffset anchored to the real (uncollapsed) source text", () => {
+    const text = "foo\nbar and also foo bar";
+    const item = makeUserMessage(text, "u1");
+    const results = searchItems([item], "foo bar", "all");
+    expect(results).toHaveLength(1);
+    // The real occurrence starts at index 17 in the original text ("foo\nbar and also " has length 17).
+    expect(results[0]?.matchOffset).toBe(17);
+    expect(results[0]?.fieldOffset).toBe(17);
+  });
+});
+
+// ---- matchKey export ----
+
+describe("matchKey", () => {
+  it("is stable for the same item id + matchOffset and distinct across occurrences", () => {
+    const results = searchItems([makeAssistantMessage("wall wall", "a1")], "wall", "all");
+    expect(results).toHaveLength(2);
+    expect(matchKey(results[0]!)).not.toBe(matchKey(results[1]!));
+    expect(matchKey(results[0]!)).toBe(`a1:${results[0]!.matchOffset}`);
   });
 });

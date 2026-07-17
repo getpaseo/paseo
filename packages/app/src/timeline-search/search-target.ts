@@ -1,4 +1,5 @@
 import { createContext, useContext, useMemo } from "react";
+import type { TimelineSearchField } from "./timeline-search-model";
 
 /**
  * The stream item currently targeted by timeline-search navigation.
@@ -16,9 +17,26 @@ import { createContext, useContext, useMemo } from "react";
  */
 export interface TimelineSearchTarget {
   itemId: string;
-  /** The source field that produced this match, when it maps to a rendered text surface. */
-  field: "text" | "tool" | "other";
-  /** Offset/length within the source field; used to distinguish one occurrence from another. */
+  /**
+   * The specific field-span that produced this match (e.g. "text", "tool",
+   * "toolInput", "toolOutput", "toolError", or a per-entry `todo:N`) — see
+   * `TimelineSearchField` in timeline-search-model.ts. This is what a
+   * renderer that owns a single field's own text should compare against
+   * before trusting `fieldOffset`.
+   */
+  field: TimelineSearchField;
+  /**
+   * Offset/length of this occurrence within its OWN field's text (i.e.
+   * relative to the start of the field-span, not the concatenated
+   * cross-field searchable string). This is the offset a renderer should
+   * slice against when it only has that one field's raw text on hand.
+   */
+  fieldOffset: number;
+  /**
+   * Offset within the item's full concatenated searchable text (all fields
+   * joined). Kept for occurrence identity/back-compat — NOT meaningful as an
+   * index into any single rendered field's text; use `fieldOffset` for that.
+   */
   matchOffset: number;
   matchLength: number;
   navigationRevision: number;
@@ -46,6 +64,7 @@ export function useTimelineSearchTargetValue(state: {
   matches: readonly {
     item: { id: string };
     field: TimelineSearchTarget["field"];
+    fieldOffset: number;
     matchOffset: number;
     matchLength: number;
   }[];
@@ -53,6 +72,7 @@ export function useTimelineSearchTargetValue(state: {
   const match = state.isOpen ? (state.matches[state.selectedIndex] ?? null) : null;
   const itemId = match?.item.id ?? null;
   const field = match?.field ?? "other";
+  const fieldOffset = match?.fieldOffset ?? 0;
   const matchOffset = match?.matchOffset ?? 0;
   const matchLength = match?.matchLength ?? 0;
   const { navigationRevision } = state;
@@ -62,11 +82,12 @@ export function useTimelineSearchTargetValue(state: {
         ? {
             itemId,
             field,
+            fieldOffset,
             matchOffset,
             matchLength,
             navigationRevision,
           }
         : null,
-    [itemId, field, matchOffset, matchLength, navigationRevision],
+    [itemId, field, fieldOffset, matchOffset, matchLength, navigationRevision],
   );
 }
