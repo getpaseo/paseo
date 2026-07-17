@@ -19,6 +19,7 @@ import {
   Platform,
   ActivityIndicator,
   useWindowDimensions,
+  type LayoutChangeEvent,
   type PressableStateCallbackType,
   type StyleProp,
   type ViewStyle,
@@ -407,6 +408,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       [isMobile],
     );
     const [isNearBottom, setIsNearBottom] = useState(true);
+    const [timelineSearchPanelHeight, setTimelineSearchPanelHeight] = useState(0);
     const [expandedInlineToolCallIds, setExpandedInlineToolCallIds] = useState<Set<string>>(
       new Set(),
     );
@@ -1230,12 +1232,19 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       (deltaY: number) => viewportRef.current?.scrollBy(deltaY),
       [],
     );
-    const getTimelineSearchTargetCenterY = useCallback(
-      () =>
+    const handleTimelineSearchPanelLayout = useCallback((event: LayoutChangeEvent) => {
+      const nextHeight = event.nativeEvent.layout.height;
+      setTimelineSearchPanelHeight((height) => (height === nextHeight ? height : nextHeight));
+    }, []);
+    const getTimelineSearchTargetCenterY = useCallback(() => {
+      const viewportCenter =
         viewportRef.current?.getWindowCenterY() ??
-        windowHeight * TIMELINE_SEARCH_SCROLL_CENTER_FRACTION,
-      [windowHeight],
-    );
+        windowHeight * TIMELINE_SEARCH_SCROLL_CENTER_FRACTION;
+      // The search panel occupies the top of the chat pane while it is open.
+      // Place the exact occurrence at the center of the remaining visible
+      // region, rather than the center of the obscured full viewport.
+      return viewportCenter + timelineSearchPanelHeight / 2;
+    }, [timelineSearchPanelHeight, windowHeight]);
     // Chain the fine occurrence correction behind the coarse stage: only
     // hand the occurrence-anchor provider a real target once the coarse
     // scroll (row scroll → group expand → group offset scroll) has actually
@@ -1261,18 +1270,20 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         >
           <View style={stylesheet.container}>
             {timelineSearchState.isOpen && (
-              <TimelineSearchPanel
-                state={timelineSearchState}
-                isPaging={isTimelineSearchPaging}
-                historyLoadFailed={timelineSearchLoadFailed}
-                onQueryChange={timelineSearchModel.setQuery}
-                onFilterChange={timelineSearchModel.setFilter}
-                onSelectNext={timelineSearchModel.selectNext}
-                onSelectPrev={timelineSearchModel.selectPrev}
-                onSelectIndex={timelineSearchModel.selectIndex}
-                onClose={timelineSearchModel.close}
-                testID="timeline-search-panel"
-              />
+              <View onLayout={handleTimelineSearchPanelLayout}>
+                <TimelineSearchPanel
+                  state={timelineSearchState}
+                  isPaging={isTimelineSearchPaging}
+                  historyLoadFailed={timelineSearchLoadFailed}
+                  onQueryChange={timelineSearchModel.setQuery}
+                  onFilterChange={timelineSearchModel.setFilter}
+                  onSelectNext={timelineSearchModel.selectNext}
+                  onSelectPrev={timelineSearchModel.selectPrev}
+                  onSelectIndex={timelineSearchModel.selectIndex}
+                  onClose={timelineSearchModel.close}
+                  testID="timeline-search-panel"
+                />
+              </View>
             )}
             <MessageOuterSpacingProvider disableOuterSpacing>
               {streamRenderStrategy.render({

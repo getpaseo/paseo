@@ -21,6 +21,7 @@ import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { extensionFromPath, highlightToKeyedLines } from "@/utils/highlight-cache";
 import { HighlightedLines } from "./highlighted-content";
 import { HighlightedText } from "@/timeline-search/highlighted-text";
+import { useTimelineHighlightQuery } from "@/timeline-search/highlight";
 import { useTimelineSearchOccurrenceAnchor } from "@/timeline-search/occurrence-anchor";
 import { useTimelineSearchTarget } from "@/timeline-search/search-target";
 import type { TimelineSearchField } from "@/timeline-search/timeline-search-model";
@@ -480,6 +481,8 @@ interface ScrollableContentProps {
   // Drives syntax highlighting (extension only) and, with startLine, a gutter.
   filePath?: string | null;
   startLine?: number;
+  itemId?: string;
+  field?: TimelineSearchField;
 }
 
 function ScrollableTextSection({
@@ -488,7 +491,10 @@ function ScrollableTextSection({
   wrapInSectionFill = true,
   filePath,
   startLine,
+  itemId,
+  field,
 }: ScrollableContentProps) {
+  const highlightQuery = useTimelineHighlightQuery();
   const keyedLines = useMemo(
     () => (filePath ? highlightToKeyedLines(content, extensionFromPath(filePath)) : null),
     [content, filePath],
@@ -501,11 +507,11 @@ function ScrollableTextSection({
       showsVerticalScrollIndicator={true}
     >
       <ScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator={true}>
-        {keyedLines ? (
+        {keyedLines && highlightQuery.length === 0 ? (
           <HighlightedLines lines={keyedLines} startLine={startLine} />
         ) : (
           <Text selectable style={styles.scrollText} dataSet={CODE_SURFACE_DATASET}>
-            {content}
+            <HighlightedText text={content} itemId={itemId} field={field} />
           </Text>
         )}
       </ScrollView>
@@ -519,9 +525,10 @@ interface FetchDetailProps {
   url: string;
   result: string | null | undefined;
   ds: DetailStyles;
+  itemId?: string;
 }
 
-function FetchDetailSection({ url, result, ds }: FetchDetailProps) {
+function FetchDetailSection({ url, result, ds, itemId }: FetchDetailProps) {
   return (
     <View style={ds.sectionFillStyle}>
       <ScrollView
@@ -532,7 +539,13 @@ function FetchDetailSection({ url, result, ds }: FetchDetailProps) {
       >
         <ScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator>
           <Text selectable style={styles.scrollText} dataSet={CODE_SURFACE_DATASET}>
-            {result ? `${url}\n\n${result}` : url}
+            <HighlightedText text={url} itemId={itemId} field="toolInput" />
+            {result
+              ? [
+                  "\n\n",
+                  <HighlightedText key="result" text={result} itemId={itemId} field="toolOutput" />,
+                ]
+              : null}
           </Text>
         </ScrollView>
       </ScrollView>
@@ -560,7 +573,7 @@ interface SearchDetail {
   annotations?: string[];
 }
 
-function buildSearchSections(detail: SearchDetail, ds: DetailStyles): ReactNode[] {
+function buildSearchSections(detail: SearchDetail, ds: DetailStyles, itemId?: string): ReactNode[] {
   const out: ReactNode[] = [];
   if (detail.content) {
     out.push(
@@ -573,7 +586,7 @@ function buildSearchSections(detail: SearchDetail, ds: DetailStyles): ReactNode[
         >
           <ScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator>
             <Text selectable style={styles.scrollText} dataSet={CODE_SURFACE_DATASET}>
-              {detail.content}
+              <HighlightedText text={detail.content} itemId={itemId} field="toolOutput" />
             </Text>
           </ScrollView>
         </ScrollView>
@@ -584,7 +597,7 @@ function buildSearchSections(detail: SearchDetail, ds: DetailStyles): ReactNode[
     out.push(
       <View key="search-files" style={styles.section}>
         <Text selectable style={styles.scrollText} dataSet={CODE_SURFACE_DATASET}>
-          {detail.filePaths.join("\n")}
+          <HighlightedText text={detail.filePaths.join("\n")} />
         </Text>
       </View>,
     );
@@ -593,7 +606,9 @@ function buildSearchSections(detail: SearchDetail, ds: DetailStyles): ReactNode[
     out.push(
       <View key="search-web-results" style={styles.section}>
         <Text selectable style={styles.scrollText} dataSet={CODE_SURFACE_DATASET}>
-          {detail.webResults.map((entry) => `${entry.title}\n${entry.url}`).join("\n\n")}
+          <HighlightedText
+            text={detail.webResults.map((entry) => `${entry.title}\n${entry.url}`).join("\n\n")}
+          />
         </Text>
       </View>,
     );
@@ -602,7 +617,7 @@ function buildSearchSections(detail: SearchDetail, ds: DetailStyles): ReactNode[
     out.push(
       <View key="search-annotations" style={styles.section}>
         <Text selectable style={styles.scrollText} dataSet={CODE_SURFACE_DATASET}>
-          {detail.annotations.join("\n\n")}
+          <HighlightedText text={detail.annotations.join("\n\n")} />
         </Text>
       </View>,
     );
@@ -679,7 +694,7 @@ function buildUnknownSections(
           showsHorizontalScrollIndicator={true}
         >
           <Text selectable style={styles.scrollText} dataSet={CODE_SURFACE_DATASET}>
-            {value}
+            <HighlightedText text={value} />
           </Text>
         </ScrollView>
       </View>,
@@ -745,6 +760,8 @@ function buildDetailSections(
             ds={ds}
             wrapInSectionFill={false}
             filePath={detail.filePath}
+            itemId={timelineSearchItemId}
+            field="toolInput"
           />
         ) : null}
       </View>,
@@ -759,14 +776,24 @@ function buildDetailSections(
         ds={ds}
         filePath={detail.filePath}
         startLine={detail.offset ?? 1}
+        itemId={timelineSearchItemId}
+        field="toolOutput"
       />,
     ];
   }
   if (detail.type === "search") {
-    return buildSearchSections(detail, ds);
+    return buildSearchSections(detail, ds, timelineSearchItemId);
   }
   if (detail.type === "fetch") {
-    return [<FetchDetailSection key="fetch" url={detail.url} result={detail.result} ds={ds} />];
+    return [
+      <FetchDetailSection
+        key="fetch"
+        url={detail.url}
+        result={detail.result}
+        ds={ds}
+        itemId={timelineSearchItemId}
+      />,
+    ];
   }
   if (detail.type === "plain_text") {
     if (!detail.text) return [];

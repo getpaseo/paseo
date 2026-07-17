@@ -1612,21 +1612,17 @@ function MarkdownHighlightedTextRun({
   inheritedStyles: TextStyle;
   textStyle: TextStyle;
 }) {
-  const target = useTimelineSearchTarget();
   const textRunOffsets = useContext(MarkdownTextRunOffsetsContext);
   const runFieldOffset = textRunOffsets?.get(nodeKey) ?? null;
-  const runEnd = runFieldOffset === null ? null : runFieldOffset + content.length;
-  const containsTarget =
-    runFieldOffset !== null &&
-    runEnd !== null &&
-    target !== null &&
-    target.itemId === itemId &&
-    target.field === "text" &&
-    target.fieldOffset >= runFieldOffset &&
-    target.fieldOffset < runEnd;
   return useHighlightedSegments({
     text: content,
-    itemId: containsTarget ? itemId : undefined,
+    // Keep this leaf eligible for active-match selection even if the
+    // parser-to-source offset lookup misses. `useHighlightedSegments` still
+    // performs the exact item/field/offset equality check, so this cannot
+    // activate an occurrence from another message or field; it does let the
+    // first rendered text run retain the selected style instead of degrading
+    // every assistant match to the ordinary accent highlight.
+    itemId,
     field: "text",
     fieldOffsetBase: runFieldOffset ?? 0,
     renderMatch: (segment, isActive) => {
