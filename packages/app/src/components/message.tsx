@@ -11,7 +11,11 @@ import {
   type TextStyle,
 } from "react-native";
 import { useTranslation } from "react-i18next";
-import { MarkdownParagraphView, MarkdownTextSpan } from "@/components/markdown-text";
+import {
+  MarkdownParagraphView,
+  MarkdownTextSpan,
+  type MarkdownTextSpanHandle,
+} from "@/components/markdown-text";
 import { MarkdownTableCellText } from "@/components/markdown-text-selection";
 import * as React from "react";
 import {
@@ -27,7 +31,7 @@ import {
   Children,
   cloneElement,
 } from "react";
-import type { ComponentType, ReactNode } from "react";
+import type { ComponentType, ReactNode, Ref } from "react";
 import { MarkdownIt, type ASTNode, type RenderRules } from "react-native-markdown-display";
 import { useQuery } from "@tanstack/react-query";
 import MaskedView from "@react-native-masked-view/masked-view";
@@ -52,6 +56,7 @@ import type { Theme } from "@/styles/theme";
 import { useTimelineHighlightQuery } from "@/timeline-search/highlight";
 import {
   HighlightedText,
+  findNextTextRunFieldOffset,
   timelineHighlightStyles,
   useHighlightedSegments,
 } from "@/timeline-search/highlighted-text";
@@ -1516,22 +1521,58 @@ function AssistantMessageBlockContainer({
 
 interface MemoizedMarkdownBlockProps {
   text: string;
+  fieldOffset: number;
   rules: RenderRules;
   parser: MarkdownIt;
   onLinkPress: (url: string) => boolean;
 }
 
+const MarkdownSourceFieldOffsetContext = createContext<number | null>(null);
+
 const MemoizedMarkdownBlock = React.memo(function MemoizedMarkdownBlock({
   text,
+  fieldOffset,
   rules,
   parser,
   onLinkPress,
 }: MemoizedMarkdownBlockProps) {
+  const renderText = rules.text;
+  const blockRules = useMemo<RenderRules>(() => {
+    if (!renderText) {
+      throw new Error("Assistant markdown rules must define a text renderer");
+    }
+    let searchFrom = 0;
+    return {
+      ...rules,
+      text: (
+        node: ASTNode,
+        children: ReactNode[],
+        parent: ASTNode[],
+        styles: MarkdownStyles,
+        inheritedStyles: TextStyle = {},
+      ) => {
+        const runFieldOffset = findNextTextRunFieldOffset({
+          sourceText: text,
+          sourceFieldOffset: fieldOffset,
+          runText: node.content,
+          searchFrom,
+        });
+        if (runFieldOffset !== null) {
+          searchFrom = runFieldOffset - fieldOffset + node.content.length;
+        }
+        return (
+          <MarkdownSourceFieldOffsetContext.Provider key={node.key} value={runFieldOffset}>
+            {renderText(node, children, parent, styles, inheritedStyles)}
+          </MarkdownSourceFieldOffsetContext.Provider>
+        );
+      },
+    };
+  }, [fieldOffset, renderText, rules, text]);
   return (
     <MarkdownRenderer
       text={text}
       enableHtmlish={false}
-      rules={rules}
+      rules={blockRules}
       markdownit={parser}
       onLinkPress={onLinkPress}
       allowedImageHandlers={MARKDOWN_ALLOWED_IMAGE_HANDLERS}
@@ -1546,6 +1587,7 @@ interface MarkdownInheritedTextProps {
   style?: StyleProp<TextStyle>;
   monoSurface?: boolean;
   children: ReactNode;
+  spanRef?: Ref<MarkdownTextSpanHandle>;
 }
 
 /**
@@ -1576,19 +1618,46 @@ function MarkdownHighlightedTextRun({
   inheritedStyles: TextStyle;
   textStyle: TextStyle;
 }) {
+  const target = useTimelineSearchTarget();
+  const sourceFieldOffset = useContext(MarkdownSourceFieldOffsetContext);
+  const fieldOffsetBase = useMemo(() => {
+    if (
+      sourceFieldOffset === null ||
+      !target ||
+      target.itemId !== itemId ||
+      target.field !== "text"
+    ) {
+      return null;
+    }
+    const runEnd = sourceFieldOffset + content.length;
+    const targetIsInsideRun =
+      target.fieldOffset >= sourceFieldOffset && target.fieldOffset < runEnd;
+    return targetIsInsideRun ? sourceFieldOffset : null;
+  }, [content, itemId, sourceFieldOffset, target]);
+
   return useHighlightedSegments({
     text: content,
-    itemId,
+    itemId: fieldOffsetBase === null ? undefined : itemId,
     field: "text",
+    fieldOffsetBase: fieldOffsetBase ?? 0,
     renderMatch: (segment, isActive) => {
       if (!segment.isMatch) {
         return segment.text;
+      }
+      if (isActive) {
+        return (
+          <ActiveMarkdownHighlight
+            inheritedStyles={inheritedStyles}
+            textStyle={textStyle}
+            text={segment.text}
+          />
+        );
       }
       return (
         <MarkdownInheritedText
           inheritedStyles={inheritedStyles}
           textStyle={textStyle}
-          style={isActive ? timelineHighlightStyles.activeMatch : timelineHighlightStyles.match}
+          style={timelineHighlightStyles.match}
         >
           {segment.text}
         </MarkdownInheritedText>
@@ -1597,12 +1666,41 @@ function MarkdownHighlightedTextRun({
   });
 }
 
+function ActiveMarkdownHighlight({
+  inheritedStyles,
+  textStyle,
+  text,
+}: {
+  inheritedStyles: TextStyle;
+  textStyle: TextStyle;
+  text: string;
+}) {
+  const target = useTimelineSearchTarget();
+  const spanRef = useRef<MarkdownTextSpanHandle>(null);
+  const measure = useCallback((report: (centerY: number) => void) => {
+    spanRef.current?.measureInWindow((_x, y, _width, height) => report(y + height / 2));
+  }, []);
+  useTimelineSearchOccurrenceAnchor(target, measure, 2);
+
+  return (
+    <MarkdownInheritedText
+      spanRef={spanRef}
+      inheritedStyles={inheritedStyles}
+      textStyle={textStyle}
+      style={timelineHighlightStyles.activeMatch}
+    >
+      {text}
+    </MarkdownInheritedText>
+  );
+}
+
 function MarkdownInheritedText({
   inheritedStyles,
   textStyle,
   style: overrideStyle,
   monoSurface,
   children,
+  spanRef,
 }: MarkdownInheritedTextProps) {
   const style = useMemo(
     () => [inheritedStyles, textStyle, overrideStyle],
@@ -1616,6 +1714,7 @@ function MarkdownInheritedText({
   const linkPress = useAssistantLinkPress();
   return (
     <MarkdownTextSpan
+      ref={spanRef}
       monoSurface={monoSurface}
       style={style}
       onPress={linkPress?.onPress}
@@ -1998,10 +2097,14 @@ export const AssistantMessage = memo(function AssistantMessage({
   }, [client, fileLinkActions, markdownParser, serverId, streamItemId, workspaceRoot]);
 
   const blocks = useMemo(() => splitMarkdownBlocks(message), [message]);
-  const keyedBlocks = useMemo(
-    () => blocks.map((block, index) => ({ key: `${index}:${block.slice(0, 32)}`, block })),
-    [blocks],
-  );
+  const keyedBlocks = useMemo(() => {
+    let searchFrom = 0;
+    return blocks.map((block, index) => {
+      const fieldOffset = message.indexOf(block, searchFrom);
+      searchFrom = fieldOffset + block.length;
+      return { key: `${index}:${block.slice(0, 32)}`, block, fieldOffset };
+    });
+  }, [blocks, message]);
 
   const assistantContainerStyle = useMemo(
     () => [
@@ -2016,7 +2119,7 @@ export const AssistantMessage = memo(function AssistantMessage({
 
   return (
     <View ref={searchAnchorRef} testID="assistant-message" style={assistantContainerStyle}>
-      {keyedBlocks.map(({ key, block }, index) => (
+      {keyedBlocks.map(({ key, block, fieldOffset }, index) => (
         <AssistantMessageBlockContainer
           key={key}
           block={block}
@@ -2024,6 +2127,7 @@ export const AssistantMessage = memo(function AssistantMessage({
         >
           <MemoizedMarkdownBlock
             text={block}
+            fieldOffset={fieldOffset}
             rules={markdownRules}
             parser={markdownParser}
             onLinkPress={handleMarkdownLinkPress}

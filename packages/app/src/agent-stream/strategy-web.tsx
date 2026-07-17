@@ -474,7 +474,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     (itemId: string): boolean => {
       const virtualizedIndex = segments.historyVirtualized.findIndex((row) => row.id === itemId);
       if (virtualizedIndex !== -1) {
-        rowVirtualizer.scrollToIndex(virtualizedIndex, { align: "center", behavior: "smooth" });
+        rowVirtualizer.scrollToIndex(virtualizedIndex, { align: "center", behavior: "auto" });
         return true;
       }
       const container = contentRef.current;
@@ -482,7 +482,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         `[data-stream-item-id="${escapeAttributeSelectorValue(itemId)}"]`,
       );
       if (target) {
-        target.scrollIntoView({ behavior: "smooth", block: "center" });
+        target.scrollIntoView({ behavior: "auto", block: "center" });
         return true;
       }
       return false;
@@ -505,7 +505,13 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       },
       scrollToItem,
       scrollBy: (deltaY) => {
-        scrollContainerRef.current?.scrollBy({ top: deltaY, behavior: "smooth" });
+        scrollContainerRef.current?.scrollBy({ top: deltaY, behavior: "auto" });
+      },
+      getWindowCenterY: () => {
+        const scrollContainer = scrollContainerRef.current;
+        if (!scrollContainer) return null;
+        const bounds = scrollContainer.getBoundingClientRect();
+        return bounds.top + bounds.height / 2;
       },
     };
     viewportRef.current = handle;

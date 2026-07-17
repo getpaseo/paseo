@@ -34,6 +34,30 @@ export interface HighlightSegmentMatchContext {
   itemId?: string;
   field: TimelineSearchField;
   target: TimelineSearchTarget | null;
+  /** Offset of this rendered text run within its owning search field. */
+  fieldOffsetBase?: number;
+}
+
+export interface FindNextTextRunFieldOffsetInput {
+  sourceText: string;
+  sourceFieldOffset: number;
+  runText: string;
+  searchFrom: number;
+}
+
+/** Maps the next rendered text run to its monotonic occurrence in the markdown source. */
+export function findNextTextRunFieldOffset({
+  sourceText,
+  sourceFieldOffset,
+  runText,
+  searchFrom,
+}: FindNextTextRunFieldOffsetInput): number | null {
+  if (runText.length === 0) {
+    return null;
+  }
+
+  const runOffset = sourceText.indexOf(runText, searchFrom);
+  return runOffset === -1 ? null : sourceFieldOffset + runOffset;
 }
 
 /**
@@ -48,14 +72,14 @@ export function isActiveHighlightSegment(
   segment: HighlightSegment,
   context: HighlightSegmentMatchContext,
 ): boolean {
-  const { itemId, field, target } = context;
+  const { itemId, field, target, fieldOffsetBase = 0 } = context;
   return (
     segment.isMatch &&
     target !== null &&
     itemId !== undefined &&
     itemId === target.itemId &&
     field === target.field &&
-    segment.offset === target.fieldOffset
+    fieldOffsetBase + segment.offset === target.fieldOffset
   );
 }
 
@@ -80,6 +104,8 @@ export interface RenderHighlightedSegmentsOptions {
   /** Identify the stream source so one selected occurrence can receive active styling. */
   itemId?: string;
   field: TimelineSearchField;
+  /** Offset of `text` within the complete owning field. Defaults to zero. */
+  fieldOffsetBase?: number;
   /** Renders one segment (match or non-match). `isActive` is only ever true for a match segment. */
   renderMatch: (segment: HighlightSegment, isActive: boolean) => ReactNode;
 }
@@ -98,6 +124,7 @@ export function useHighlightedSegments({
   text,
   itemId,
   field,
+  fieldOffsetBase = 0,
   renderMatch,
 }: RenderHighlightedSegmentsOptions): ReactNode {
   const query = useTimelineHighlightQuery();
@@ -108,7 +135,10 @@ export function useHighlightedSegments({
   }
   return segments.map((segment) => (
     <React.Fragment key={segment.offset}>
-      {renderMatch(segment, isActiveHighlightSegment(segment, { itemId, field, target }))}
+      {renderMatch(
+        segment,
+        isActiveHighlightSegment(segment, { itemId, field, target, fieldOffsetBase }),
+      )}
     </React.Fragment>
   ));
 }

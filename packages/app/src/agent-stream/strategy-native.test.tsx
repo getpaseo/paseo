@@ -5,16 +5,36 @@ import React, { forwardRef, useImperativeHandle } from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { LayoutChangeEvent } from "react-native";
 import type { StreamItem } from "@/types/stream";
 import type { StreamSegmentRenderers, StreamViewportHandle } from "./strategy";
 
 const scrollToIndex = vi.fn();
 const scrollToOffset = vi.fn();
+const measureInWindow = vi.fn(
+  (callback: (x: number, y: number, width: number, height: number) => void) => {
+    callback(0, 120, 320, 400);
+  },
+);
+interface MockFlatListProps {
+  data: unknown[];
+  onLayout?: (event: LayoutChangeEvent) => void;
+}
+let latestFlatListProps: MockFlatListProps | null = null;
 
 vi.mock("react-native", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react-native")>();
-  const MockFlatList = forwardRef<unknown, { data: unknown[] }>(function MockFlatList(props, ref) {
-    useImperativeHandle(ref, () => ({ scrollToIndex, scrollToOffset }), []);
+  const MockFlatList = forwardRef<unknown, MockFlatListProps>(function MockFlatList(props, ref) {
+    latestFlatListProps = props;
+    useImperativeHandle(
+      ref,
+      () => ({
+        getNativeScrollRef: () => ({ measureInWindow }),
+        scrollToIndex,
+        scrollToOffset,
+      }),
+      [],
+    );
     return React.createElement("div", { "data-testid": "mock-flat-list" }, props.data.length);
   });
   return { ...actual, FlatList: MockFlatList };
@@ -51,6 +71,8 @@ describe("createNativeStreamStrategy scrollToItem", () => {
     });
     scrollToIndex.mockClear();
     scrollToOffset.mockClear();
+    measureInWindow.mockClear();
+    latestFlatListProps = null;
   });
 
   afterEach(() => {
@@ -103,8 +125,54 @@ describe("createNativeStreamStrategy scrollToItem", () => {
 
     expect(didScroll).toBe(true);
     expect(scrollToIndex).toHaveBeenCalledWith(
-      expect.objectContaining({ index: 1, viewPosition: 0.5 }),
+      expect.objectContaining({ animated: false, index: 1, viewPosition: 0.5 }),
     );
+    viewportRef.current?.scrollBy(36);
+    expect(scrollToOffset).toHaveBeenCalledWith({ animated: false, offset: 36 });
+  });
+
+  it("reports the measured FlatList center in window coordinates", async () => {
+    const strategy = createNativeStreamStrategy();
+    const viewportRef = React.createRef<StreamViewportHandle>();
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    act(() => {
+      root?.render(
+        strategy.render({
+          agentId: "agent",
+          segments: { historyVirtualized: [], historyMounted: [], liveHead: [] },
+          boundary: { hasVirtualizedHistory: false, hasMountedHistory: false, hasLiveHead: false },
+          renderers: createRenderers(),
+          listEmptyComponent: null,
+          viewportRef,
+          routeBottomAnchorRequest: null,
+          isAuthoritativeHistoryReady: true,
+          onNearBottomChange: vi.fn(),
+          onNearHistoryStart: vi.fn(),
+          isLoadingOlderHistory: false,
+          hasOlderHistory: false,
+          scrollEnabled: true,
+          listStyle: null,
+          baseListContentContainerStyle: null,
+          forwardListContentContainerStyle: null,
+        }),
+      );
+    });
+
+    expect(viewportRef.current?.getWindowCenterY()).toBeNull();
+    act(() => {
+      latestFlatListProps?.onLayout?.({
+        nativeEvent: { layout: { height: 400, width: 320, x: 0, y: 120 } },
+      } as LayoutChangeEvent);
+    });
+    await act(async () => {
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    });
+
+    expect(measureInWindow).toHaveBeenCalledTimes(1);
+    expect(viewportRef.current?.getWindowCenterY()).toBe(320);
   });
 
   it("returns false for an item id that isn't in the rendered history rows", () => {

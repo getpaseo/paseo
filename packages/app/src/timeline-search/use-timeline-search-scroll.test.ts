@@ -33,6 +33,7 @@ function makeViewportHandle(): StreamViewportHandle {
     prepareForViewportChange: vi.fn(),
     scrollToItem: vi.fn().mockReturnValue(true),
     scrollBy: vi.fn(),
+    getWindowCenterY: vi.fn().mockReturnValue(400),
   };
 }
 

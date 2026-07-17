@@ -51,6 +51,11 @@ export interface StreamViewportHandle {
   scrollToItem: (itemId: string) => boolean;
   /** Adjust the current viewport position after a mounted search anchor is measured. */
   scrollBy: (deltaY: number) => void;
+  /**
+   * Returns the vertical center of the visible stream viewport in window
+   * coordinates. Null means the viewport has not been measured yet.
+   */
+  getWindowCenterY: () => number | null;
 }
 
 export interface StreamSegmentRenderers {
@@ -151,7 +156,7 @@ const NATIVE_SETTLING_VERIFICATION_DELAY_FRAMES = 4;
  * search scroll target. Shared by the coarse row-centering stage
  * (`viewPosition` passed to FlatList#scrollToIndex in strategy-native's
  * scrollToItem) and the fine occurrence-anchor correction stage
- * (`targetCenterY` computed in agent-stream/view.tsx and consumed by
+ * (the viewport window center read in agent-stream/view.tsx and consumed by
  * timeline-search/occurrence-anchor.tsx) so both stages agree on where
  * "centered" means instead of fighting each other with different targets.
  */

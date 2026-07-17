@@ -192,24 +192,24 @@ const TimelineSearchOccurrenceAnchorContext =
 export function TimelineSearchOccurrenceAnchorProvider({
   target,
   scrollBy,
-  targetCenterY,
+  getTargetCenterY,
   children,
 }: {
   target: TimelineSearchTarget | null;
   scrollBy: (deltaY: number) => void;
-  targetCenterY: number;
+  getTargetCenterY: () => number;
   children: ReactNode;
 }) {
   const scrollByRef = useRef(scrollBy);
-  const targetCenterYRef = useRef(targetCenterY);
+  const getTargetCenterYRef = useRef(getTargetCenterY);
   scrollByRef.current = scrollBy;
-  targetCenterYRef.current = targetCenterY;
+  getTargetCenterYRef.current = getTargetCenterY;
 
   const controller = useMemo(
     () =>
       createTimelineSearchOccurrenceAnchorController({
         scrollBy: (deltaY) => scrollByRef.current(deltaY),
-        getTargetCenterY: () => targetCenterYRef.current,
+        getTargetCenterY: () => getTargetCenterYRef.current(),
       }),
     [],
   );

@@ -130,7 +130,7 @@ function TimelineSearchProviders({
   target,
   occurrenceTarget,
   scrollBy,
-  targetCenterY,
+  getTargetCenterY,
   children,
 }: {
   highlight: TimelineHighlightState;
@@ -141,7 +141,7 @@ function TimelineSearchProviders({
    * `timelineSearchCoarseSettledRevision` at the call site. */
   occurrenceTarget: TimelineSearchTarget | null;
   scrollBy: (deltaY: number) => void;
-  targetCenterY: number;
+  getTargetCenterY: () => number;
   children: ReactNode;
 }) {
   return (
@@ -150,7 +150,7 @@ function TimelineSearchProviders({
         <TimelineSearchOccurrenceAnchorProvider
           target={occurrenceTarget}
           scrollBy={scrollBy}
-          targetCenterY={targetCenterY}
+          getTargetCenterY={getTargetCenterY}
         >
           {children}
         </TimelineSearchOccurrenceAnchorProvider>
@@ -1230,6 +1230,12 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       (deltaY: number) => viewportRef.current?.scrollBy(deltaY),
       [],
     );
+    const getTimelineSearchTargetCenterY = useCallback(
+      () =>
+        viewportRef.current?.getWindowCenterY() ??
+        windowHeight * TIMELINE_SEARCH_SCROLL_CENTER_FRACTION,
+      [windowHeight],
+    );
     // Chain the fine occurrence correction behind the coarse stage: only
     // hand the occurrence-anchor provider a real target once the coarse
     // scroll (row scroll → group expand → group offset scroll) has actually
@@ -1251,7 +1257,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           target={timelineSearchTarget}
           occurrenceTarget={timelineSearchOccurrenceTarget}
           scrollBy={scrollTimelineSearchAnchorBy}
-          targetCenterY={windowHeight * TIMELINE_SEARCH_SCROLL_CENTER_FRACTION}
+          getTargetCenterY={getTimelineSearchTargetCenterY}
         >
           <View style={stylesheet.container}>
             {timelineSearchState.isOpen && (

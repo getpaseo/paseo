@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isActiveHighlightSegment } from "./highlighted-text";
+import { findNextTextRunFieldOffset, isActiveHighlightSegment } from "./highlighted-text";
 import type { HighlightSegment } from "./highlight";
 import type { TimelineSearchTarget } from "./search-target";
 
@@ -98,6 +98,17 @@ describe("isActiveHighlightSegment", () => {
     ).toBe(false);
   });
 
+  it("accounts for a rendered run's offset within the owning field", () => {
+    expect(
+      isActiveHighlightSegment(makeMatchSegment({ offset: 4 }), {
+        itemId: "item-1",
+        field: "text",
+        target: makeTarget({ fieldOffset: 34 }),
+        fieldOffsetBase: 30,
+      }),
+    ).toBe(true);
+  });
+
   it("compares against fieldOffset, not matchOffset — a field-relative offset must not be", () => {
     // Regression guard for the original bug: matchOffset is the offset into
     // the item's cross-field CONCATENATED text, which is meaningless to a
@@ -121,5 +132,48 @@ describe("isActiveHighlightSegment", () => {
         target,
       }),
     ).toBe(true);
+  });
+});
+
+describe("findNextTextRunFieldOffset", () => {
+  it("maps repeated leaves monotonically instead of always selecting the first", () => {
+    expect(
+      findNextTextRunFieldOffset({
+        sourceText: "**foo** then foo",
+        sourceFieldOffset: 40,
+        runText: "foo",
+        searchFrom: 4,
+      }),
+    ).toBe(53);
+  });
+
+  it("maps a match inside markdown syntax to the rendered leaf", () => {
+    expect(
+      findNextTextRunFieldOffset({
+        sourceText: "before **foo** after",
+        sourceFieldOffset: 0,
+        runText: "foo",
+        searchFrom: 0,
+      }),
+    ).toBe(9);
+  });
+
+  it("distinguishes a link label from the same text in its URL", () => {
+    expect(
+      findNextTextRunFieldOffset({
+        sourceText: "[foo](https://foo.test) and foo",
+        sourceFieldOffset: 0,
+        runText: "foo",
+        searchFrom: 0,
+      }),
+    ).toBe(1);
+    expect(
+      findNextTextRunFieldOffset({
+        sourceText: "[foo](https://foo.test) and foo",
+        sourceFieldOffset: 0,
+        runText: " and foo",
+        searchFrom: 4,
+      }),
+    ).toBe(23);
   });
 });

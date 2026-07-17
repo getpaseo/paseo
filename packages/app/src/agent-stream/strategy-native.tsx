@@ -29,6 +29,21 @@ import {
   TIMELINE_SEARCH_SCROLL_CENTER_FRACTION,
 } from "./strategy";
 
+interface WindowMeasurable {
+  measureInWindow: (
+    callback: (x: number, y: number, width: number, height: number) => void,
+  ) => void;
+}
+
+function isWindowMeasurable(value: unknown): value is WindowMeasurable {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "measureInWindow" in value &&
+    typeof value.measureInWindow === "function"
+  );
+}
+
 /**
  * Wraps FlatList#scrollToIndex with a try/catch — RN can throw synchronously
  * for an index outside the currently measured range. Shared by the direct
@@ -118,6 +133,8 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   const scrollOffsetYRef = useRef(0);
   const programmaticScrollEventBudgetRef = useRef(0);
   const scrollToIndexRecoveryFrameRef = useRef<number | null>(null);
+  const viewportMeasurementFrameRef = useRef<number | null>(null);
+  const viewportWindowCenterYRef = useRef<number | null>(null);
   const [isNativeViewportSettling, setIsNativeViewportSettling] = useState(false);
   const nativeViewportSettlingFrameIdRef = useRef<number | null>(null);
   const historyStartReadyRef = useRef(false);
@@ -233,6 +250,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       viewportMeasuredForKey: null,
       contentMeasuredForKey: null,
     };
+    viewportWindowCenterYRef.current = null;
     scrollOffsetYRef.current = 0;
     clearNativeViewportSettling();
     setIsNativeViewportSettling(false);
@@ -292,15 +310,16 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
           // that isn't part of the list's own index space.
           return false;
         }
-        tryScrollToIndex(flatListRef, index, true);
+        tryScrollToIndex(flatListRef, index, false);
         return true;
       },
       scrollBy: (deltaY) => {
         flatListRef.current?.scrollToOffset({
           offset: Math.max(0, scrollOffsetYRef.current + deltaY),
-          animated: true,
+          animated: false,
         });
       },
+      getWindowCenterY: () => viewportWindowCenterYRef.current,
     };
     viewportRef.current = handle;
     return () => {
@@ -319,7 +338,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       flatListRef.current?.scrollToOffset({ offset: estimatedOffset, animated: false });
       scrollToIndexRecoveryFrameRef.current = requestAnimationFrame(() => {
         scrollToIndexRecoveryFrameRef.current = null;
-        tryScrollToIndex(flatListRef, info.index, true);
+        tryScrollToIndex(flatListRef, info.index, false);
       });
     },
   );
@@ -329,6 +348,10 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       if (scrollToIndexRecoveryFrameRef.current !== null) {
         cancelAnimationFrame(scrollToIndexRecoveryFrameRef.current);
         scrollToIndexRecoveryFrameRef.current = null;
+      }
+      if (viewportMeasurementFrameRef.current !== null) {
+        cancelAnimationFrame(viewportMeasurementFrameRef.current);
+        viewportMeasurementFrameRef.current = null;
       }
     };
   }, []);
@@ -402,6 +425,17 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       viewportWidth,
       previousViewportHeight,
       viewportHeight,
+    });
+    if (viewportMeasurementFrameRef.current !== null) {
+      cancelAnimationFrame(viewportMeasurementFrameRef.current);
+    }
+    viewportMeasurementFrameRef.current = requestAnimationFrame(() => {
+      viewportMeasurementFrameRef.current = null;
+      const nativeScrollRef = flatListRef.current?.getNativeScrollRef();
+      if (!isWindowMeasurable(nativeScrollRef)) return;
+      nativeScrollRef.measureInWindow((_x, y, _width, height) => {
+        viewportWindowCenterYRef.current = y + height * TIMELINE_SEARCH_SCROLL_CENTER_FRACTION;
+      });
     });
   });
 

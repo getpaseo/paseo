@@ -1,7 +1,15 @@
-import { useMemo, type ReactNode } from "react";
+import {
+  forwardRef,
+  useCallback,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  type ReactNode,
+} from "react";
 import {
   Text,
   View,
+  type LayoutChangeEvent,
   type StyleProp,
   type TextProps,
   type TextStyle,
@@ -29,46 +37,67 @@ interface MarkdownTextSpanProps {
   accessibilityRole?: TextProps["accessibilityRole"];
 }
 
+export interface MarkdownTextSpanHandle {
+  measureInWindow: (
+    callback: (x: number, y: number, width: number, height: number) => void,
+  ) => void;
+}
+
 // Inline span backed by UITextView so iOS gets native word-selection handles.
 // Used inside MarkdownParagraphView (which is also a UITextView on iOS); the
 // library's TextAncestorContext hoists these into UITextViewChild nodes so
 // selection drags can cross sibling spans (e.g. plain text → **bold** → code).
-export function MarkdownTextSpan({
-  style,
-  children,
-  onPress,
-  accessibilityRole,
-}: MarkdownTextSpanProps) {
-  const plainStyle = useMemo(() => resolvePlainMarkdownTextStyle(style), [style]);
-  const surface = useMarkdownTextSurface();
+export const MarkdownTextSpan = forwardRef<MarkdownTextSpanHandle, MarkdownTextSpanProps>(
+  function MarkdownTextSpan({ style, children, onPress, accessibilityRole }, forwardedRef) {
+    const plainStyle = useMemo(() => resolvePlainMarkdownTextStyle(style), [style]);
+    const surface = useMarkdownTextSurface();
+    const nativeTargetRef = useRef<LayoutChangeEvent["target"] | null>(null);
+    const captureNativeTarget = useCallback((event: LayoutChangeEvent) => {
+      nativeTargetRef.current = event.target;
+    }, []);
+    useImperativeHandle(
+      forwardedRef,
+      () => ({
+        measureInWindow: (callback) => {
+          const nativeTarget = nativeTargetRef.current;
+          if (nativeTarget !== null) {
+            nativeTarget.measureInWindow(callback);
+          }
+        },
+      }),
+      [],
+    );
 
-  // Each selectable span creates a UIKit UITextView with a window-level tap recognizer.
-  // A large table would create one per cell and make every app touch fan out across them.
-  if (!iosMarkdownTextIsSelectable(surface)) {
+    // Each selectable span creates a UIKit UITextView with a window-level tap recognizer.
+    // A large table would create one per cell and make every app touch fan out across them.
+    if (!iosMarkdownTextIsSelectable(surface)) {
+      return (
+        <Text
+          selectable={false}
+          style={plainStyle}
+          onPress={onPress}
+          accessibilityRole={accessibilityRole}
+          onLayout={captureNativeTarget}
+        >
+          {children}
+        </Text>
+      );
+    }
+
     return (
-      <Text
-        selectable={false}
+      <UITextView
+        uiTextView
+        selectable
         style={plainStyle}
         onPress={onPress}
         accessibilityRole={accessibilityRole}
+        onLayout={captureNativeTarget}
       >
         {children}
-      </Text>
+      </UITextView>
     );
-  }
-
-  return (
-    <UITextView
-      uiTextView
-      selectable
-      style={plainStyle}
-      onPress={onPress}
-      accessibilityRole={accessibilityRole}
-    >
-      {children}
-    </UITextView>
-  );
-}
+  },
+);
 
 interface MarkdownParagraphViewProps {
   paragraphStyle: ViewStyle;

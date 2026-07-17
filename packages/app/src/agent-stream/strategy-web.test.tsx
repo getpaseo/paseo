@@ -240,6 +240,60 @@ describe("createWebStreamStrategy", () => {
 
     expect(didScroll).toBe(true);
     expect(scrollTo).toHaveBeenCalled();
+    expect(scrollTo).toHaveBeenCalledWith(expect.objectContaining({ behavior: "auto" }));
+  });
+
+  it("reports the actual scroll viewport center in window coordinates", () => {
+    const strategy = createWebStreamStrategy({ isMobileBreakpoint: true });
+    const viewportRef = React.createRef<StreamViewportHandle>();
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    act(() => {
+      root?.render(
+        strategy.render({
+          agentId: "agent",
+          segments: { historyVirtualized: [], historyMounted: [], liveHead: [] },
+          boundary: { hasVirtualizedHistory: false, hasMountedHistory: false, hasLiveHead: false },
+          renderers: createRenderers(vi.fn()),
+          listEmptyComponent: null,
+          viewportRef,
+          routeBottomAnchorRequest: null,
+          isAuthoritativeHistoryReady: true,
+          onNearBottomChange: vi.fn(),
+          onNearHistoryStart: vi.fn(),
+          isLoadingOlderHistory: false,
+          hasOlderHistory: false,
+          scrollEnabled: true,
+          listStyle: null,
+          baseListContentContainerStyle: null,
+          forwardListContentContainerStyle: null,
+        }),
+      );
+    });
+
+    const scrollContainer = container.querySelector('[data-testid="agent-chat-scroll"]');
+    if (!(scrollContainer instanceof HTMLElement)) {
+      throw new Error("Expected agent chat scroll container");
+    }
+    scrollContainer.getBoundingClientRect = vi.fn(() => ({
+      bottom: 650,
+      height: 500,
+      left: 0,
+      right: 320,
+      top: 150,
+      width: 320,
+      x: 0,
+      y: 150,
+      toJSON: () => ({}),
+    }));
+    const scrollBy = vi.fn();
+    scrollContainer.scrollBy = scrollBy;
+
+    expect(viewportRef.current?.getWindowCenterY()).toBe(400);
+    viewportRef.current?.scrollBy(36);
+    expect(scrollBy).toHaveBeenCalledWith({ behavior: "auto", top: 36 });
   });
 
   it("fires near-history-start when the user scrolls near the top", async () => {
@@ -750,7 +804,7 @@ describe("createWebStreamStrategy", () => {
     });
 
     expect(didScroll).toBe(true);
-    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: "smooth", block: "center" });
+    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: "auto", block: "center" });
   });
 
   it("returns false and does not scroll for an item id that isn't rendered", () => {

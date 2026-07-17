@@ -65,6 +65,30 @@ describe("timeline search occurrence anchor controller", () => {
     expect(scrollBy).toHaveBeenCalledWith(300);
   });
 
+  it("reads the current viewport center when the anchor measurement reports", () => {
+    const frames = createFrames();
+    const scrollBy = vi.fn();
+    let targetCenterY = 400;
+    const controller = createTimelineSearchOccurrenceAnchorController({
+      scrollBy,
+      getTargetCenterY: () => targetCenterY,
+      requestFrame: frames.requestFrame,
+      cancelFrame: frames.cancelFrame,
+    });
+    const target = makeTarget();
+    controller.register({
+      key: getTimelineSearchOccurrenceAnchorKey(target),
+      measure: (report) => report(700),
+    });
+    controller.setTarget(target);
+
+    frames.flushOne();
+    targetCenterY = 520;
+    frames.flushOne();
+
+    expect(scrollBy).toHaveBeenCalledWith(180);
+  });
+
   it("ignores a stale measurement when navigation changes before it completes", () => {
     const frames = createFrames();
     const scrollBy = vi.fn();

@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from "react";
+import { forwardRef, useImperativeHandle, useMemo, useRef, type ReactNode } from "react";
 import {
   Text,
   View,
@@ -20,29 +20,44 @@ interface MarkdownTextSpanProps {
   accessibilityRole?: TextProps["accessibilityRole"];
 }
 
+export interface MarkdownTextSpanHandle {
+  measureInWindow: (
+    callback: (x: number, y: number, width: number, height: number) => void,
+  ) => void;
+}
+
 // react-native-web renders Text as <span>/<div> with `user-select: text`
 // already applied via markdownStyleMapping. The web bundle must not import
 // react-native-uitextview: its transitive import of codegenNativeComponent
 // pulls in setUpReactDevTools, which doesn't resolve under Metro's web
 // target in dev mode.
-export function MarkdownTextSpan({
-  style,
-  monoSurface,
-  children,
-  onPress,
-  accessibilityRole,
-}: MarkdownTextSpanProps) {
-  return (
-    <Text
-      dataSet={monoSurface ? CODE_SURFACE_DATASET : undefined}
-      style={style}
-      onPress={onPress}
-      accessibilityRole={accessibilityRole}
-    >
-      {children}
-    </Text>
-  );
-}
+export const MarkdownTextSpan = forwardRef<MarkdownTextSpanHandle, MarkdownTextSpanProps>(
+  function MarkdownTextSpan(
+    { style, monoSurface, children, onPress, accessibilityRole },
+    forwardedRef,
+  ) {
+    const textRef = useRef<Text>(null);
+    useImperativeHandle(
+      forwardedRef,
+      () => ({
+        measureInWindow: (callback) => textRef.current?.measureInWindow(callback),
+      }),
+      [],
+    );
+
+    return (
+      <Text
+        ref={textRef}
+        dataSet={monoSurface ? CODE_SURFACE_DATASET : undefined}
+        style={style}
+        onPress={onPress}
+        accessibilityRole={accessibilityRole}
+      >
+        {children}
+      </Text>
+    );
+  },
+);
 
 interface MarkdownParagraphViewProps {
   paragraphStyle: ViewStyle;
