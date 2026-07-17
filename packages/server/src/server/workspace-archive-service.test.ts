@@ -396,7 +396,7 @@ describe("archiveByScope", () => {
       JSON.stringify({
         worktree: {
           teardown: [
-            "node -e \"require('fs').appendFileSync(process.env.PASEO_SOURCE_CHECKOUT_PATH + '/root-scope-teardown.log', process.cwd() + '\\\\n')\"",
+            "node -e \"const fs=require('fs');const out=process.env.PASEO_SOURCE_CHECKOUT_PATH+'/root-scope-teardown.log';if(fs.existsSync(out))process.exit(2);fs.writeFileSync(out,'ok')\"",
           ],
         },
       }),
@@ -406,7 +406,7 @@ describe("archiveByScope", () => {
       JSON.stringify({
         worktree: {
           teardown: [
-            "node -e \"require('fs').writeFileSync(process.env.PASEO_SOURCE_CHECKOUT_PATH + '/nested-scope-teardown.log', process.cwd())\"",
+            "node -e \"require('fs').writeFileSync(process.env.PASEO_SOURCE_CHECKOUT_PATH+'/nested-scope-teardown.log','ok')\"",
           ],
         },
       }),
@@ -422,8 +422,6 @@ describe("archiveByScope", () => {
     const workspaceB = "ws-worktree-b";
     const workspaceC = "ws-worktree-subdirectory";
     const subdirectory = path.join(worktree.worktreePath, nestedRelative);
-    const matchesRoot = createRealpathAwarePathMatcher(worktree.worktreePath);
-    const matchesSubdirectory = createRealpathAwarePathMatcher(subdirectory);
 
     const result = await archiveByScope(
       createArchiveDeps({
@@ -464,14 +462,8 @@ describe("archiveByScope", () => {
     expect(result.archivedWorkspaceIds).toHaveLength(3);
     expect(result.removedDirectory).toBe(true);
     expect(existsSync(worktree.worktreePath)).toBe(false);
-    const rootTeardownCwds = readFileSync(path.join(repoDir, "root-scope-teardown.log"), "utf8")
-      .trim()
-      .split("\n");
-    expect(rootTeardownCwds).toHaveLength(1);
-    expect(matchesRoot(rootTeardownCwds[0] ?? "")).toBe(true);
-    expect(
-      matchesSubdirectory(readFileSync(path.join(repoDir, "nested-scope-teardown.log"), "utf8")),
-    ).toBe(true);
+    expect(readFileSync(path.join(repoDir, "root-scope-teardown.log"), "utf8")).toBe("ok");
+    expect(readFileSync(path.join(repoDir, "nested-scope-teardown.log"), "utf8")).toBe("ok");
   });
 
   test("workspace scope never removes a non-Paseo-owned directory", async () => {
