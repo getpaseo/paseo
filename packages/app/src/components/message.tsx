@@ -52,7 +52,6 @@ import type { Theme } from "@/styles/theme";
 import { useTimelineHighlightQuery } from "@/timeline-search/highlight";
 import {
   HighlightedText,
-  findNextTextRunFieldOffset,
   timelineHighlightStyles,
   useHighlightedSegments,
 } from "@/timeline-search/highlighted-text";
@@ -1517,58 +1516,22 @@ function AssistantMessageBlockContainer({
 
 interface MemoizedMarkdownBlockProps {
   text: string;
-  fieldOffset: number;
   rules: RenderRules;
   parser: MarkdownIt;
   onLinkPress: (url: string) => boolean;
 }
 
-const MarkdownSourceFieldOffsetContext = createContext<number | null>(null);
-
 const MemoizedMarkdownBlock = React.memo(function MemoizedMarkdownBlock({
   text,
-  fieldOffset,
   rules,
   parser,
   onLinkPress,
 }: MemoizedMarkdownBlockProps) {
-  const renderText = rules.text;
-  const blockRules = useMemo<RenderRules>(() => {
-    if (!renderText) {
-      throw new Error("Assistant markdown rules must define a text renderer");
-    }
-    let searchFrom = 0;
-    return {
-      ...rules,
-      text: (
-        node: ASTNode,
-        children: ReactNode[],
-        parent: ASTNode[],
-        styles: MarkdownStyles,
-        inheritedStyles: TextStyle = {},
-      ) => {
-        const runFieldOffset = findNextTextRunFieldOffset({
-          sourceText: text,
-          sourceFieldOffset: fieldOffset,
-          runText: node.content,
-          searchFrom,
-        });
-        if (runFieldOffset !== null) {
-          searchFrom = runFieldOffset - fieldOffset + node.content.length;
-        }
-        return (
-          <MarkdownSourceFieldOffsetContext.Provider key={node.key} value={runFieldOffset}>
-            {renderText(node, children, parent, styles, inheritedStyles)}
-          </MarkdownSourceFieldOffsetContext.Provider>
-        );
-      },
-    };
-  }, [fieldOffset, renderText, rules, text]);
   return (
     <MarkdownRenderer
       text={text}
       enableHtmlish={false}
-      rules={blockRules}
+      rules={rules}
       markdownit={parser}
       onLinkPress={onLinkPress}
       allowedImageHandlers={MARKDOWN_ALLOWED_IMAGE_HANDLERS}
@@ -1613,28 +1576,10 @@ function MarkdownHighlightedTextRun({
   inheritedStyles: TextStyle;
   textStyle: TextStyle;
 }) {
-  const target = useTimelineSearchTarget();
-  const sourceFieldOffset = useContext(MarkdownSourceFieldOffsetContext);
-  const fieldOffsetBase = useMemo(() => {
-    if (
-      sourceFieldOffset === null ||
-      !target ||
-      target.itemId !== itemId ||
-      target.field !== "text"
-    ) {
-      return null;
-    }
-    const runEnd = sourceFieldOffset + content.length;
-    const targetIsInsideRun =
-      target.fieldOffset >= sourceFieldOffset && target.fieldOffset < runEnd;
-    return targetIsInsideRun ? sourceFieldOffset : null;
-  }, [content, itemId, sourceFieldOffset, target]);
-
   return useHighlightedSegments({
     text: content,
-    itemId: fieldOffsetBase === null ? undefined : itemId,
+    itemId,
     field: "text",
-    fieldOffsetBase: fieldOffsetBase ?? 0,
     renderMatch: (segment, isActive) => {
       if (!segment.isMatch) {
         return segment.text;
@@ -2064,14 +2009,10 @@ export const AssistantMessage = memo(function AssistantMessage({
   }, [client, fileLinkActions, markdownParser, serverId, streamItemId, workspaceRoot]);
 
   const blocks = useMemo(() => splitMarkdownBlocks(message), [message]);
-  const keyedBlocks = useMemo(() => {
-    let searchFrom = 0;
-    return blocks.map((block, index) => {
-      const fieldOffset = message.indexOf(block, searchFrom);
-      searchFrom = fieldOffset + block.length;
-      return { key: `${index}:${block.slice(0, 32)}`, block, fieldOffset };
-    });
-  }, [blocks, message]);
+  const keyedBlocks = useMemo(
+    () => blocks.map((block, index) => ({ key: `${index}:${block.slice(0, 32)}`, block })),
+    [blocks],
+  );
 
   const assistantContainerStyle = useMemo(
     () => [
@@ -2086,7 +2027,7 @@ export const AssistantMessage = memo(function AssistantMessage({
 
   return (
     <View ref={searchAnchorRef} testID="assistant-message" style={assistantContainerStyle}>
-      {keyedBlocks.map(({ key, block, fieldOffset }, index) => (
+      {keyedBlocks.map(({ key, block }, index) => (
         <AssistantMessageBlockContainer
           key={key}
           block={block}
@@ -2094,7 +2035,6 @@ export const AssistantMessage = memo(function AssistantMessage({
         >
           <MemoizedMarkdownBlock
             text={block}
-            fieldOffset={fieldOffset}
             rules={markdownRules}
             parser={markdownParser}
             onLinkPress={handleMarkdownLinkPress}
