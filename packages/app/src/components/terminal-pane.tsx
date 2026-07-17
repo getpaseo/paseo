@@ -950,7 +950,7 @@ export function TerminalPane({
             <ActivityIndicator size="small" color={theme.colors.foregroundMuted} />
           </View>
         ) : null}
-        {isFindFocused ? <PaneFindBar testID="terminal-find-bar" /> : null}
+        {isFindFocused ? <PaneFindBar placement="inline" testID="terminal-find-bar" /> : null}
       </View>
 
       {streamError ? (
