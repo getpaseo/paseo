@@ -32,6 +32,7 @@ describe("transcribe-local-wav CLI", () => {
 
     expect(result.error).toBeUndefined();
     expect(result.status).not.toBe(0);
+    // The worker client is lazy, so reaching the missing WAV proves provider initialization completed first.
     expect(result.stderr).toContain("ENOENT");
     expect(result.stderr).toContain(missingWav);
     expect(result.stderr).not.toContain("Cannot read properties of undefined");
