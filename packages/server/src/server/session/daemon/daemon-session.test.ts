@@ -10,6 +10,7 @@ import {
 } from "./daemon-session.js";
 import type { DaemonWebSocketRuntimeDiagnosticSnapshot } from "./diagnostics.js";
 import type { ProviderAvailability } from "../../agent/agent-manager.js";
+import type { HubRelationshipManagement } from "../../hub/relationship-controller.js";
 import type { SessionOutboundMessage } from "../../messages.js";
 
 const tempDirs: string[] = [];
@@ -40,6 +41,7 @@ function makeSubsystem(overrides: {
   daemonRuntimeConfig?: DaemonRuntimeConfig;
   listProviderAvailability?: () => Promise<ProviderAvailability[]>;
   getWebSocketRuntimeMetrics?: () => DaemonWebSocketRuntimeDiagnosticSnapshot | null;
+  hubRelationships?: HubRelationshipManagement;
 }) {
   const emitted: SessionOutboundMessage[] = [];
   const restartIntents: Parameters<DaemonSessionHost["emitLifecycleIntent"]>[0][] = [];
@@ -60,12 +62,67 @@ function makeSubsystem(overrides: {
     listWorkspaces: async () => [],
     listProviderAvailability: overrides.listProviderAvailability ?? (async () => []),
     getWebSocketRuntimeMetrics: overrides.getWebSocketRuntimeMetrics,
+    hubRelationships: overrides.hubRelationships,
     logger: pino({ level: "silent" }),
   });
   return { subsystem, emitted, paseoHome, restartIntents };
 }
 
 describe("DaemonSession", () => {
+  test("Hub relationship command failures return correlated RPC errors", async () => {
+    const { subsystem, emitted } = makeSubsystem({
+      hubRelationships: {
+        connect: async () => {
+          throw new Error("Hub rejected enrollment (401)");
+        },
+        status: () => ({
+          state: "not_connected",
+          daemonId: null,
+          hubOrigin: null,
+          scopes: [],
+          connectedAt: null,
+          lastError: null,
+        }),
+        disconnect: async () => {
+          throw new Error("Hub revocation failed (503)");
+        },
+      },
+    });
+
+    await subsystem.handleHubRelationshipRequest({
+      type: "hub.management.daemon.connect.request",
+      requestId: "connect-1",
+      hubUrl: "https://hub.test",
+      token: "token",
+    });
+    await subsystem.handleHubRelationshipRequest({
+      type: "hub.management.daemon.disconnect.request",
+      requestId: "disconnect-1",
+      force: false,
+    });
+
+    expect(emitted).toEqual([
+      {
+        type: "rpc_error",
+        payload: {
+          requestId: "connect-1",
+          requestType: "hub.management.daemon.connect.request",
+          error: "Hub rejected enrollment (401)",
+          code: "handler_error",
+        },
+      },
+      {
+        type: "rpc_error",
+        payload: {
+          requestId: "disconnect-1",
+          requestType: "hub.management.daemon.disconnect.request",
+          error: "Hub revocation failed (503)",
+          code: "handler_error",
+        },
+      },
+    ]);
+  });
+
   test("status reports identity, runtime config, and providers with errors normalized to null", async () => {
     const { subsystem, emitted } = makeSubsystem({
       serverId: "srv-1",

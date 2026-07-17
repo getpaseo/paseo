@@ -8,6 +8,7 @@ import { useRewindComposerRestore } from "./composer-restore";
 import { useSessionStore } from "@/stores/session-store";
 import { shouldRestoreComposerForRewindMode } from "./rewind-mode";
 import { clearOptimisticUserMessages } from "@/types/stream";
+import { getHostRuntimeStore } from "@/runtime/host-runtime";
 
 interface UseRewindAgentMutationInput {
   serverId?: string;
@@ -47,7 +48,8 @@ export function useRewindAgentMutation(input: UseRewindAgentMutationInput): {
               .getState()
               .sessions[input.serverId]?.agentTimelineCursor.get(input.agentId)
           : undefined;
-        await input.client.fetchAgentTimeline(input.agentId, {
+        if (!input.serverId) throw new Error(t("common.errors.daemonClientUnavailable"));
+        await getHostRuntimeStore().fetchAgentTimeline(input.serverId, input.agentId, {
           direction: "tail",
           projection: "projected",
           ...(cursor ? { cursor: { epoch: cursor.epoch, seq: cursor.endSeq } } : {}),

@@ -10,6 +10,7 @@ const changesPreferencesSchema = z.object({
   viewMode: z.enum(["flat", "tree"]).optional(),
   wrapLines: z.boolean().optional(),
   hideWhitespace: z.boolean().optional(),
+  commitsCollapsed: z.boolean().optional(),
 });
 
 export interface ChangesPreferences {
@@ -17,6 +18,7 @@ export interface ChangesPreferences {
   viewMode: "flat" | "tree";
   wrapLines: boolean;
   hideWhitespace: boolean;
+  commitsCollapsed: boolean;
 }
 
 export const DEFAULT_CHANGES_PREFERENCES: ChangesPreferences = {
@@ -24,6 +26,7 @@ export const DEFAULT_CHANGES_PREFERENCES: ChangesPreferences = {
   viewMode: "flat",
   wrapLines: false,
   hideWhitespace: false,
+  commitsCollapsed: true,
 };
 
 export interface KeyValueStorage {

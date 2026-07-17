@@ -971,6 +971,52 @@ export function collectAllPanes(root: SplitNode): SplitPane[] {
   return internalRoot.group.children.flatMap((child) => collectAllPanes(child));
 }
 
+function isEphemeralTab(tab: WorkspaceTab): boolean {
+  // Commit diff tabs are ephemeral: their SHA may be rebased away before the next
+  // load, so a restored tab could point at a dead commit.
+  return tab.target.kind === "commit_diff";
+}
+
+function stripEphemeralTabsFromNode(node: SplitNodeInternal): SplitNodeInternal {
+  if (node.kind === "pane") {
+    const nextTabs = node.pane.tabs.filter((tab) => !isEphemeralTab(tab));
+    if (nextTabs.length === node.pane.tabs.length) {
+      return node;
+    }
+    // createPaneNode repoints focusedTabId to a surviving tab (or null) when the
+    // previously focused tab was an ephemeral one that we just removed.
+    return createPaneNode({
+      id: node.pane.id,
+      tabs: nextTabs,
+      focusedTabId: node.pane.focusedTabId,
+    });
+  }
+  return createGroupNode({
+    id: node.group.id,
+    direction: node.group.direction,
+    children: node.group.children.map((child) => stripEphemeralTabsFromNode(child)),
+    sizes: node.group.sizes,
+  });
+}
+
+/**
+ * Returns a copy of `layout` with every ephemeral tab (commit diff tabs) removed
+ * from each pane. Applied in the layout store's `partialize` so commit diff tabs
+ * are never written to storage — they're dropped on the next reload rather than
+ * restored pointing at a possibly-rebased SHA. Working diff tabs and all other
+ * tab kinds are left intact. Panes (and their ids/structure) are preserved even
+ * when emptied; the parent-tab map is renormalized against the surviving tabs.
+ */
+export function stripEphemeralTabsFromLayout(layout: WorkspaceLayout): WorkspaceLayout {
+  const internalLayout = asInternalLayout(layout);
+  const nextRoot = stripEphemeralTabsFromNode(internalLayout.root);
+  return withNormalizedParentTabMap({
+    root: nextRoot,
+    focusedPaneId: internalLayout.focusedPaneId,
+    parentTabIdByTabId: layout.parentTabIdByTabId,
+  });
+}
+
 export function getFocusedBrowserId(layout: WorkspaceLayout | null | undefined): string | null {
   if (!layout) {
     return null;

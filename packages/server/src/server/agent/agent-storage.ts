@@ -1,4 +1,4 @@
-import { promises as fs } from "node:fs";
+import { promises as fs, type Dirent } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import type { Logger } from "pino";
@@ -8,6 +8,7 @@ import { AgentFeatureSchema, AgentStatusSchema } from "../messages.js";
 import { toStoredAgentRecord } from "./agent-projections.js";
 import type { ManagedAgent } from "./agent-manager.js";
 import type { AgentSessionConfig } from "./agent-sdk-types.js";
+import { AgentOwnerSchema, daemonExecutionKey, type DaemonAgentOwner } from "./agent-owner.js";
 
 const SERIALIZABLE_CONFIG_SCHEMA = z
   .object({
@@ -64,6 +65,7 @@ const STORED_AGENT_SCHEMA = z.object({
   attentionTimestamp: z.string().nullable().optional(),
   internal: z.boolean().optional(),
   archivedAt: z.string().nullable().optional(),
+  owner: AgentOwnerSchema.optional(),
 });
 
 export type SerializableAgentConfig = Pick<
@@ -88,6 +90,8 @@ export class AgentStorage {
   private pathsById: Map<string, Set<string>> = new Map();
   private pendingWrites: Map<string, Promise<void>> = new Map();
   private deleting: Set<string> = new Set();
+  private daemonAgentIdsByExecution: Map<string, string> = new Map();
+  private daemonExecutionKeysByAgentId: Map<string, string> = new Map();
   private loaded = false;
   private baseDir: string;
   private loadPromise: Promise<StoredAgentRecord[]> | null = null;
@@ -110,6 +114,12 @@ export class AgentStorage {
   async get(agentId: string): Promise<StoredAgentRecord | null> {
     await this.load();
     return this.cache.get(agentId) ?? null;
+  }
+
+  async findByDaemonExecution(owner: DaemonAgentOwner): Promise<StoredAgentRecord | null> {
+    await this.load();
+    const agentId = this.daemonAgentIdsByExecution.get(daemonExecutionKey(owner));
+    return agentId ? (this.cache.get(agentId) ?? null) : null;
   }
 
   async upsert(record: StoredAgentRecord): Promise<void> {
@@ -157,6 +167,7 @@ export class AgentStorage {
     }
 
     this.cache.set(agentId, record);
+    this.indexOwner(record);
     this.pathById.set(agentId, nextPath);
   }
 
@@ -186,6 +197,7 @@ export class AgentStorage {
     );
 
     this.cache.delete(agentId);
+    this.removeOwnerIndex(agentId);
     this.pathById.delete(agentId);
     this.pathsById.delete(agentId);
   }
@@ -248,6 +260,8 @@ export class AgentStorage {
     this.cache.clear();
     this.pathById.clear();
     this.pathsById.clear();
+    this.daemonAgentIdsByExecution.clear();
+    this.daemonExecutionKeysByAgentId.clear();
 
     try {
       const records = await this.scanDisk();
@@ -266,7 +280,7 @@ export class AgentStorage {
 
   private async scanDisk(): Promise<StoredAgentRecord[]> {
     const records: StoredAgentRecord[] = [];
-    let entries: Array<import("node:fs").Dirent> = [];
+    let entries: Dirent[] = [];
     try {
       entries = await fs.readdir(this.baseDir, { withFileTypes: true });
     } catch (error) {
@@ -310,6 +324,7 @@ export class AgentStorage {
       const { record, filePath } = item;
       records.push(record);
       this.cache.set(record.id, record);
+      this.indexOwner(record);
       this.pathById.set(record.id, filePath);
       this.addIndexedPath(record.id, filePath);
     }
@@ -348,6 +363,28 @@ export class AgentStorage {
     if (paths.size === 0) {
       this.pathsById.delete(agentId);
     }
+  }
+
+  private indexOwner(record: StoredAgentRecord): void {
+    this.removeOwnerIndex(record.id);
+    if (record.owner?.kind === "daemon") {
+      const key = daemonExecutionKey(record.owner);
+      const previousAgentId = this.daemonAgentIdsByExecution.get(key);
+      if (previousAgentId && previousAgentId !== record.id) {
+        this.daemonExecutionKeysByAgentId.delete(previousAgentId);
+      }
+      this.daemonAgentIdsByExecution.set(key, record.id);
+      this.daemonExecutionKeysByAgentId.set(record.id, key);
+    }
+  }
+
+  private removeOwnerIndex(agentId: string): void {
+    const key = this.daemonExecutionKeysByAgentId.get(agentId);
+    if (!key) return;
+    if (this.daemonAgentIdsByExecution.get(key) === agentId) {
+      this.daemonAgentIdsByExecution.delete(key);
+    }
+    this.daemonExecutionKeysByAgentId.delete(agentId);
   }
 
   private async waitForPendingWrite(agentId: string): Promise<void> {

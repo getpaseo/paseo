@@ -8,13 +8,15 @@ vi.mock("electron", () => ({
 }));
 
 import {
+  BROWSER_FOUND_IN_PAGE_EVENT,
   getPaseoBrowserIdForWebContents,
+  getPaseoBrowserWebContentsForHostWindow,
   getPaseoBrowserWorkspaceId,
   isPaseoBrowserWebviewAttach,
+  preparePaseoBrowserWebContents,
   registerAttachedPaseoBrowser,
   unregisterPaseoBrowser,
-  getPaseoBrowserOwnerWebContentsId,
-  BROWSER_FOUND_IN_PAGE_EVENT,
+  unregisterPaseoBrowserFromHost,
 } from "./index.js";
 
 class FakeOwnerWebContents {
@@ -155,6 +157,7 @@ describe("browser webview attachment", () => {
     expect(registered).toBe(true);
     expect(getPaseoBrowserIdForWebContents(guest)).toBe("browser-a");
     expect(getPaseoBrowserWorkspaceId("browser-a")).toBe("workspace-a");
+    unregisterPaseoBrowser("browser-a");
   });
 
   test("rejects a guest hosted by another renderer", () => {
@@ -164,7 +167,7 @@ describe("browser webview attachment", () => {
     const guest = new FakeBrowserGuest(201, owner, profileSession);
 
     const registered = registerAttachedPaseoBrowser({
-      browserId: "browser-a",
+      browserId: "browser-rejected-owner",
       workspaceId: "workspace-a",
       webContentsId: guest.id,
       sender: claimant,
@@ -182,7 +185,7 @@ describe("browser webview attachment", () => {
     const guest = new FakeBrowserGuest(301, renderer, {});
 
     const registered = registerAttachedPaseoBrowser({
-      browserId: "browser-a",
+      browserId: "browser-rejected-profile",
       workspaceId: "workspace-a",
       webContentsId: guest.id,
       sender: renderer,
@@ -224,13 +227,44 @@ describe("browser webview attachment", () => {
 
     expect(getPaseoBrowserIdForWebContents(firstGuest)).toBe("browser-first");
     expect(getPaseoBrowserIdForWebContents(secondGuest)).toBe("browser-second");
+    unregisterPaseoBrowser("browser-first");
+    unregisterPaseoBrowser("browser-second");
+  });
+
+  test("unregisters the same browser only from its requesting host", () => {
+    const profileSession = {};
+    const firstRenderer = new FakeOwnerWebContents(11);
+    const secondRenderer = new FakeOwnerWebContents(22);
+    const firstGuest = new FakeBrowserGuest(501, firstRenderer, profileSession);
+    const secondGuest = new FakeBrowserGuest(502, secondRenderer, profileSession);
+
+    for (const [renderer, guest] of [
+      [firstRenderer, firstGuest],
+      [secondRenderer, secondGuest],
+    ] as const) {
+      registerAttachedPaseoBrowser({
+        browserId: "browser-shared-hosts",
+        workspaceId: "workspace-shared",
+        webContentsId: guest.id,
+        sender: renderer,
+        profileSession,
+        findWebContents: () => guest,
+      });
+    }
+
+    unregisterPaseoBrowserFromHost(firstRenderer.id, "browser-shared-hosts");
+
+    expect(getPaseoBrowserIdForWebContents(firstGuest)).toBeNull();
+    expect(getPaseoBrowserIdForWebContents(secondGuest)).toBe("browser-shared-hosts");
+    expect(getPaseoBrowserWorkspaceId("browser-shared-hosts")).toBe("workspace-shared");
+    unregisterPaseoBrowser("browser-shared-hosts");
   });
 
   test("prepares throttling once and removes registration when the guest is destroyed", () => {
     const profileSession = {};
-    const renderer = new FakeOwnerWebContents(1);
-    const guest = new FakeBrowserGuest(501, renderer, profileSession);
-
+    const renderer = new FakeOwnerWebContents(31);
+    const guest = new FakeBrowserGuest(601, renderer, profileSession);
+    preparePaseoBrowserWebContents(guest);
     registerAttachedPaseoBrowser({
       browserId: "browser-cleanup",
       workspaceId: "workspace-cleanup",
@@ -247,26 +281,6 @@ describe("browser webview attachment", () => {
 
     expect(getPaseoBrowserIdForWebContents(guest)).toBeNull();
     expect(guest.backgroundThrottlingCalls).toEqual([false]);
-  });
-
-  test("tracks owner WebContents ID and supports verification", () => {
-    const profileSession = {};
-    const owner = new FakeOwnerWebContents(43);
-    const contents = new FakeBrowserGuest(9002, owner, profileSession);
-
-    registerAttachedPaseoBrowser({
-      browserId: "browser-owner-test",
-      workspaceId: "workspace-owner-test",
-      webContentsId: contents.id,
-      sender: owner,
-      profileSession,
-      findWebContents: () => contents,
-    });
-
-    expect(getPaseoBrowserOwnerWebContentsId("browser-owner-test")).toBe(43);
-
-    contents.destroy();
-    expect(getPaseoBrowserOwnerWebContentsId("browser-owner-test")).toBeNull();
   });
 
   test("sends found-in-page result to owner with browserId", () => {
@@ -306,6 +320,7 @@ describe("browser webview attachment", () => {
     const owner = new FakeOwnerWebContents(45);
     const contents = new FakeBrowserGuest(9004, owner, profileSession);
 
+    preparePaseoBrowserWebContents(contents);
     registerAttachedPaseoBrowser({
       browserId: "browser-clean-guest",
       workspaceId: "workspace-clean-guest",
@@ -335,7 +350,7 @@ describe("browser webview attachment", () => {
     owner.navigate("https://another.com", true);
 
     expect(contents.removedListeners).toContain("found-in-page");
-    expect(getPaseoBrowserOwnerWebContentsId("browser-clean-owner")).toBeNull();
+    expect(getPaseoBrowserWebContentsForHostWindow("browser-clean-owner", owner.id)).toBeNull();
   });
 
   test("does not add a second find listener when the same guest re-registers", () => {
@@ -364,53 +379,57 @@ describe("browser webview attachment", () => {
     expect(owner.sentEvents).toHaveLength(1);
   });
 
-  test("stops forwarding from the old owner when another window re-registers the browser", () => {
+  test("keeps forwarding to each host window when the same browser is attached in several windows", () => {
     const profileSession = {};
-    const oldOwner = new FakeOwnerWebContents(48);
-    const newOwner = new FakeOwnerWebContents(49);
-    const oldGuest = new FakeBrowserGuest(9007, oldOwner, profileSession);
-    const newGuest = new FakeBrowserGuest(9008, newOwner, profileSession);
+    const firstOwner = new FakeOwnerWebContents(48);
+    const secondOwner = new FakeOwnerWebContents(49);
+    const firstGuest = new FakeBrowserGuest(9007, firstOwner, profileSession);
+    const secondGuest = new FakeBrowserGuest(9008, secondOwner, profileSession);
     const guests = new Map([
-      [oldGuest.id, oldGuest],
-      [newGuest.id, newGuest],
+      [firstGuest.id, firstGuest],
+      [secondGuest.id, secondGuest],
     ]);
 
     expect(
       registerAttachedPaseoBrowser({
-        browserId: "browser-reassigned",
+        browserId: "browser-multi-window",
         workspaceId: "workspace-a",
-        webContentsId: oldGuest.id,
-        sender: oldOwner,
+        webContentsId: firstGuest.id,
+        sender: firstOwner,
         profileSession,
         findWebContents: (id) => guests.get(id) ?? null,
       }),
     ).toBe(true);
     expect(
       registerAttachedPaseoBrowser({
-        browserId: "browser-reassigned",
+        browserId: "browser-multi-window",
         workspaceId: "workspace-b",
-        webContentsId: newGuest.id,
-        sender: newOwner,
+        webContentsId: secondGuest.id,
+        sender: secondOwner,
         profileSession,
         findWebContents: (id) => guests.get(id) ?? null,
       }),
     ).toBe(true);
 
-    oldGuest.triggerFoundInPage({
+    firstGuest.triggerFoundInPage({
       requestId: 1,
       activeMatchOrdinal: 1,
       matches: 1,
       finalUpdate: true,
     });
-    newGuest.triggerFoundInPage({
+    secondGuest.triggerFoundInPage({
       requestId: 2,
       activeMatchOrdinal: 1,
       matches: 1,
       finalUpdate: true,
     });
 
-    expect(oldOwner.sentEvents).toHaveLength(0);
-    expect(newOwner.sentEvents).toHaveLength(1);
+    // Both host windows have their own independent registration of the same browserId, so
+    // each keeps receiving find-in-page results for its own guest.
+    expect(firstOwner.sentEvents).toHaveLength(1);
+    expect(secondOwner.sentEvents).toHaveLength(1);
+
+    unregisterPaseoBrowser("browser-multi-window");
   });
 
   test("disposes the find listener when the browser unregisters", () => {

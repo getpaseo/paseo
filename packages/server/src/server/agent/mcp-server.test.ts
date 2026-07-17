@@ -22,9 +22,12 @@ import {
   AgentSnapshotPayloadSchema,
 } from "@getpaseo/protocol/messages";
 import {
+  createPersistedProjectRecord,
   createPersistedWorkspaceRecord,
   type PersistedProjectRecord,
   type PersistedWorkspaceRecord,
+  type ProjectRegistry,
+  type WorkspaceRegistry,
 } from "../workspace-registry.js";
 import type {
   CreateScheduleInput,
@@ -45,12 +48,14 @@ import { WorkspaceGitServiceImpl } from "../workspace-git-service.js";
 import { WorkspaceAutoName } from "../workspace-auto-name.js";
 import { createGitMutationService } from "../session/git-mutation/git-mutation-service.js";
 import type { GeneratedWorkspaceName } from "../worktree-branch-name-generator.js";
-import type { GitHubService } from "../../services/github-service.js";
+import type { ForgeService } from "../../services/forge-service.js";
+import { areEquivalentPaths } from "../../utils/path.js";
 import type { TerminalManager } from "../../terminal/terminal-manager.js";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import type { BrowserToolsBroker, BrowserToolsExecuteInput } from "../browser-tools/broker.js";
 import type { BrowserToolsResponsePayload } from "../browser-tools/errors.js";
 import { readPaseoWorktreeMetadata } from "../../utils/worktree-metadata.js";
+import { createWorkspaceProvisioningService } from "../session/workspace-provisioning/workspace-provisioning-service.js";
 
 const REPO_CWD = resolvePath("/tmp/repo");
 const TARGET_CWD = resolvePath("/tmp/target");
@@ -505,11 +510,15 @@ function createManagedAgent(overrides: Partial<ManagedAgent> = {}): ManagedAgent
   } as ManagedAgent;
 }
 
-function createGitHubServiceStub(): GitHubService {
+function createGitHubServiceStub(): ForgeService {
   return {
     listPullRequests: async () => [],
     listIssues: async () => [],
-    searchIssuesAndPrs: async () => ({ items: [], githubFeaturesEnabled: true }),
+    searchIssuesAndPrs: async () => ({
+      items: [],
+      featuresEnabled: true,
+      githubFeaturesEnabled: true,
+    }),
     getPullRequest: async ({ number }) => ({
       number,
       title: `PR ${number}`,
@@ -521,6 +530,15 @@ function createGitHubServiceStub(): GitHubService {
       labels: [],
     }),
     getPullRequestHeadRef: async ({ number }) => `pr-${number}`,
+    getPullRequestCheckoutTarget: async ({ number }) => ({
+      number,
+      baseRefName: "main",
+      headRefName: `pr-${number}`,
+      headOwnerLogin: null,
+      headRepositorySshUrl: null,
+      headRepositoryUrl: null,
+      isCrossRepository: false,
+    }),
     getCurrentPullRequestStatus: async () => null,
     createPullRequest: async () => ({
       number: 1,
@@ -655,15 +673,70 @@ function createPaseoWorktreeForMcpTest(options: {
   const workspaceGitService = new WorkspaceGitServiceImpl({
     logger: createTestLogger(),
     paseoHome: options.paseoHome,
-    deps: { github },
+    deps: { forgeOverrides: { github } },
   });
-  const workspaceRegistry = {
+  const projectRegistry: ProjectRegistry = {
+    initialize: async () => {},
+    existsOnDisk: async () => true,
+    list: async () => Array.from(projects.values()),
+    get: async (projectId) => projects.get(projectId) ?? null,
+    getOrCreateActiveByRoot: async (allocation) => {
+      const existing = Array.from(projects.values()).find(
+        (project) =>
+          areEquivalentPaths(project.rootPath, allocation.rootPath) && !project.archivedAt,
+      );
+      if (existing) return existing;
+      const project = createPersistedProjectRecord({
+        projectId: `prj_test_${projects.size + 1}`,
+        rootPath: allocation.rootPath,
+        kind: allocation.kind,
+        displayName: allocation.displayName,
+        createdAt: allocation.timestamp,
+        updatedAt: allocation.timestamp,
+      });
+      projects.set(project.projectId, project);
+      return project;
+    },
+    upsert: async (record) => {
+      projects.set(record.projectId, record);
+    },
+    archive: async (projectId, archivedAt) => {
+      const project = projects.get(projectId);
+      if (project) projects.set(projectId, { ...project, archivedAt });
+    },
+    remove: async (projectId) => {
+      projects.delete(projectId);
+    },
+  };
+  const workspaceRegistry: WorkspaceRegistry = {
+    initialize: async () => {},
+    existsOnDisk: async () => true,
     get: async (workspaceId: string) => workspaces.get(workspaceId) ?? null,
     list: async () => Array.from(workspaces.values()),
+    update: async (workspaceId, updater) => {
+      const workspace = workspaces.get(workspaceId);
+      if (!workspace) return null;
+      const updated = updater(workspace);
+      workspaces.set(workspaceId, updated);
+      return updated;
+    },
     upsert: async (record: PersistedWorkspaceRecord) => {
       workspaces.set(record.workspaceId, record);
     },
+    archive: async (workspaceId, archivedAt) => {
+      const workspace = workspaces.get(workspaceId);
+      if (workspace) workspaces.set(workspaceId, { ...workspace, archivedAt });
+    },
+    remove: async (workspaceId) => {
+      workspaces.delete(workspaceId);
+    },
   };
+  const workspaceProvisioning = createWorkspaceProvisioningService({
+    projectRegistry,
+    workspaceRegistry,
+    workspaceGitService,
+    logger: createTestLogger(),
+  });
   const workspaceAutoName = new WorkspaceAutoName({
     agentManager: buildAgentManagerSpies() as unknown as AgentManager,
     workspaceRegistry,
@@ -697,14 +770,8 @@ function createPaseoWorktreeForMcpTest(options: {
             ...(workflowOptions?.resolveDefaultBranch
               ? { resolveDefaultBranch: workflowOptions.resolveDefaultBranch }
               : {}),
-            projectRegistry: {
-              get: async (projectId) => projects.get(projectId) ?? null,
-              upsert: async (record) => {
-                projects.set(record.projectId, record);
-              },
-            },
-            workspaceRegistry,
             workspaceGitService,
+            workspaceProvisioning,
           }),
         warmWorkspaceGitData: async () => {},
         autoNameWorkspaceBranchForFirstAgent: (autoNameInput) =>

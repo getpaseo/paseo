@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
-// The review draft store persists through AsyncStorage's web shim, which needs window.
-import "@/test/window-local-storage";
 import { QueryClient } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CheckoutStatusUpdate } from "@getpaseo/protocol/messages";
 import { checkoutPrStatusQueryKey, checkoutStatusQueryKey } from "@/git/query-keys";
-import { prPaneTimelineQueryKey } from "@/git/pull-request-panel/query-keys";
+import {
+  prPanePipelineQueryKey,
+  prPaneTimelineQueryKey,
+} from "@/git/pull-request-panel/query-keys";
 import { resetReviewDraftStore, useReviewDraftStore } from "@/review/store";
 import {
   applyCheckoutStatusUpdateFromEvent,
@@ -13,6 +14,14 @@ import {
   type CheckoutStatusPayload,
   fetchCheckoutStatus,
 } from "./checkout-status-cache";
+
+vi.mock("@react-native-async-storage/async-storage", () => ({
+  default: {
+    getItem: vi.fn(async () => null),
+    setItem: vi.fn(async () => undefined),
+    removeItem: vi.fn(async () => undefined),
+  },
+}));
 
 const serverId = "server-1";
 const cwd = "/repo";
@@ -41,6 +50,7 @@ function prStatus(overrides: Partial<CheckoutPrStatusPayload> = {}): CheckoutPrS
   return {
     cwd,
     status: {
+      forge: "github",
       url: "https://github.com/getpaseo/paseo/pull/42",
       title: "My PR",
       state: "open",
@@ -54,6 +64,8 @@ function prStatus(overrides: Partial<CheckoutPrStatusPayload> = {}): CheckoutPrS
       reviewDecision: null,
     },
     githubFeaturesEnabled: true,
+    authState: "authenticated",
+    forge: "github",
     error: null,
     requestId: "pr-status-1",
     ...overrides,
@@ -62,7 +74,7 @@ function prStatus(overrides: Partial<CheckoutPrStatusPayload> = {}): CheckoutPrS
 
 function checkoutStatusUpdate(
   payload: CheckoutStatusPayload,
-  extraPrStatus?: CheckoutPrStatusPayload,
+  extraPrStatus?: NonNullable<CheckoutStatusUpdate["payload"]["prStatus"]>,
 ): CheckoutStatusUpdate {
   return {
     type: "checkout_status_update",
@@ -140,6 +152,29 @@ describe("applyCheckoutStatusUpdateFromEvent", () => {
     expect(queryClient.getQueryData(checkoutPrStatusQueryKey(serverId, otherCwd))).toBeUndefined();
   });
 
+  it("normalizes legacy PR auth state at the pushed-cache boundary", () => {
+    const queryClient = createQueryClient();
+    const { authState: _authState, ...legacyPrStatus } = prStatus({
+      githubFeaturesEnabled: false,
+    });
+
+    applyCheckoutStatusUpdateFromEvent({
+      queryClient,
+      serverId,
+      message: checkoutStatusUpdate(checkoutStatus(), legacyPrStatus),
+    });
+
+    expect(
+      queryClient.getQueryData<CheckoutPrStatusPayload>(checkoutPrStatusQueryKey(serverId, cwd))
+        ?.authState,
+    ).toBe("unauthenticated");
+    expect(
+      queryClient.getQueryData<CheckoutStatusUpdate["payload"]>(
+        checkoutStatusQueryKey(serverId, cwd),
+      )?.prStatus?.authState,
+    ).toBe("unauthenticated");
+  });
+
   it("expires a manual diff-mode override when the pushed dirty state flipped", () => {
     const queryClient = createQueryClient();
     setDiffModeOverride(false);
@@ -166,14 +201,21 @@ describe("applyCheckoutStatusUpdateFromEvent", () => {
     expect(useReviewDraftStore.getState().diffModeOverrides["review:scope"]).toBeDefined();
   });
 
-  it("invalidates the PR timeline when the prStatus changes, ignoring the volatile requestId", () => {
+  it("invalidates PR detail queries when the prStatus changes, ignoring the volatile requestId", () => {
     const queryClient = createQueryClient();
     queryClient.setQueryData(
       checkoutPrStatusQueryKey(serverId, cwd),
       prStatus({ requestId: "pr-v1" }),
     );
     const timelineKey = prPaneTimelineQueryKey({ serverId, cwd, prNumber: 42 });
+    const pipelineKey = prPanePipelineQueryKey({
+      serverId,
+      cwd,
+      pipelineId: 9001,
+      changeRequestNumber: 1,
+    });
     queryClient.setQueryData(timelineKey, { items: [] });
+    queryClient.setQueryData(pipelineKey, { stages: [] });
 
     applyCheckoutStatusUpdateFromEvent({
       queryClient,
@@ -181,6 +223,7 @@ describe("applyCheckoutStatusUpdateFromEvent", () => {
       message: checkoutStatusUpdate(checkoutStatus(), prStatus({ requestId: "pr-v2" })),
     });
     expect(queryClient.getQueryState(timelineKey)?.isInvalidated).toBe(false);
+    expect(queryClient.getQueryState(pipelineKey)?.isInvalidated).toBe(false);
 
     applyCheckoutStatusUpdateFromEvent({
       queryClient,
@@ -194,14 +237,29 @@ describe("applyCheckoutStatusUpdateFromEvent", () => {
       ),
     });
     expect(queryClient.getQueryState(timelineKey)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(pipelineKey)?.isInvalidated).toBe(true);
   });
 
-  it("invalidates the PR timeline on the first prStatus emission, scoped to its cwd", () => {
+  it("invalidates PR detail queries on the first prStatus emission, scoped to its cwd", () => {
     const queryClient = createQueryClient();
     const timelineKey = prPaneTimelineQueryKey({ serverId, cwd, prNumber: 42 });
     const otherTimelineKey = prPaneTimelineQueryKey({ serverId, cwd: "/repo2", prNumber: 42 });
+    const pipelineKey = prPanePipelineQueryKey({
+      serverId,
+      cwd,
+      pipelineId: 9001,
+      changeRequestNumber: 1,
+    });
+    const otherPipelineKey = prPanePipelineQueryKey({
+      serverId,
+      cwd: "/repo2",
+      pipelineId: 9001,
+      changeRequestNumber: 1,
+    });
     queryClient.setQueryData(timelineKey, { items: [] });
     queryClient.setQueryData(otherTimelineKey, { items: [] });
+    queryClient.setQueryData(pipelineKey, { stages: [] });
+    queryClient.setQueryData(otherPipelineKey, { stages: [] });
 
     applyCheckoutStatusUpdateFromEvent({
       queryClient,
@@ -211,5 +269,7 @@ describe("applyCheckoutStatusUpdateFromEvent", () => {
 
     expect(queryClient.getQueryState(timelineKey)?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(otherTimelineKey)?.isInvalidated).toBe(false);
+    expect(queryClient.getQueryState(pipelineKey)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(otherPipelineKey)?.isInvalidated).toBe(false);
   });
 });

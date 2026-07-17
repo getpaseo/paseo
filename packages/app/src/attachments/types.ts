@@ -1,6 +1,6 @@
 import type {
   AgentAttachment,
-  GitHubSearchItem,
+  ForgeSearchItem,
   UploadedFileAttachment,
 } from "@getpaseo/protocol/messages";
 
@@ -54,6 +54,9 @@ export interface BrowserElementAttachment {
 }
 
 export type PullRequestContextAttachmentKind =
+  | "forge.change_request_comment"
+  | "forge.change_request_review"
+  | "forge.change_request_check"
   | "github.pull_request_comment"
   | "github.pull_request_review"
   | "github.pull_request_check";
@@ -67,6 +70,9 @@ interface PullRequestContextAttachmentFields {
 }
 
 export type PullRequestContextAttachment =
+  | ({ kind: "forge.change_request_comment" } & PullRequestContextAttachmentFields)
+  | ({ kind: "forge.change_request_review" } & PullRequestContextAttachmentFields)
+  | ({ kind: "forge.change_request_check" } & PullRequestContextAttachmentFields)
   | ({ kind: "github.pull_request_comment" } & PullRequestContextAttachmentFields)
   | ({ kind: "github.pull_request_review" } & PullRequestContextAttachmentFields)
   | ({ kind: "github.pull_request_check" } & PullRequestContextAttachmentFields);
@@ -89,10 +95,13 @@ export const NEW_WORKSPACE_PICKER_ATTACHMENT_OWNER = "new-workspace-picker";
 export type UserComposerAttachment =
   | { kind: "image"; metadata: AttachmentMetadata }
   | { kind: "file"; attachment: UploadedFileAttachment }
-  | { kind: "github_issue"; item: GitHubSearchItem }
+  | { kind: "forge_issue"; item: ForgeSearchItem }
+  | { kind: "forge_change_request"; item: ForgeSearchItem }
+  // COMPAT(githubAttachmentKinds): added in v0.1.106, remove after 2026-12-28 once daemon floor >= v0.1.106
+  | { kind: "github_issue"; item: ForgeSearchItem }
   | {
       kind: "github_pr";
-      item: GitHubSearchItem;
+      item: ForgeSearchItem;
       owner?: typeof NEW_WORKSPACE_PICKER_ATTACHMENT_OWNER;
     };
 

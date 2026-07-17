@@ -2,7 +2,7 @@ import { webContents as allWebContents, type WebContents } from "electron";
 import { PASEO_BROWSER_PROFILE_PARTITION } from "../browser-profile.js";
 import {
   BROWSER_NEW_TAB_REQUEST_EVENT,
-  handleBrowserWindowOpenRequest,
+  decideBrowserWindowOpenRequest,
   isAllowedBrowserWebviewUrl,
   PendingBrowserWindowOpenRequests,
 } from "./window-open.js";
@@ -10,7 +10,7 @@ import { PaseoBrowserWebviewRegistry } from "./registry.js";
 
 export {
   BROWSER_NEW_TAB_REQUEST_EVENT,
-  handleBrowserWindowOpenRequest,
+  decideBrowserWindowOpenRequest,
   PendingBrowserWindowOpenRequests,
 };
 
@@ -63,9 +63,11 @@ export function isPaseoBrowserWebviewAttach(input: { src?: string; partition?: s
 }
 
 export function listRegisteredPaseoBrowserIds(): string[] {
-  return browserRegistry
-    .listBrowserIds()
-    .filter((browserId) => getPaseoBrowserWebContents(browserId));
+  return browserRegistry.listBrowserIds();
+}
+
+export function getPaseoBrowserWebviewRegistry(): PaseoBrowserWebviewRegistry {
+  return browserRegistry;
 }
 
 export const BROWSER_FOUND_IN_PAGE_EVENT = "paseo:event:browser-found-in-page";
@@ -76,8 +78,9 @@ interface BrowserGuestFindInPageWire {
   cleanup(): void;
 }
 
+// Keyed by the guest webContentsId only: main's registry allows the same browserId to be
+// attached in several host windows at once, so a browserId no longer identifies a single wire.
 const browserGuestFindInPageWiresByWebContentsId = new Map<number, BrowserGuestFindInPageWire>();
-const browserGuestFindInPageWiresByBrowserId = new Map<string, BrowserGuestFindInPageWire>();
 
 function disposePaseoBrowserGuestFindInPageWire(
   wire: BrowserGuestFindInPageWire | undefined,
@@ -85,20 +88,36 @@ function disposePaseoBrowserGuestFindInPageWire(
   wire?.cleanup();
 }
 
+function disposePaseoBrowserGuestFindInPageWiresForBrowser(browserId: string): void {
+  for (const wire of Array.from(browserGuestFindInPageWiresByWebContentsId.values())) {
+    if (wire.browserId === browserId) {
+      disposePaseoBrowserGuestFindInPageWire(wire);
+    }
+  }
+}
+
+function disposePaseoBrowserGuestFindInPageWiresForHost(hostWebContentsId: number): void {
+  for (const wire of Array.from(browserGuestFindInPageWiresByWebContentsId.values())) {
+    const registration = browserRegistry.getRegistrationForWebContents(wire.webContentsId);
+    if (registration?.hostWebContentsId === hostWebContentsId) {
+      disposePaseoBrowserGuestFindInPageWire(wire);
+    }
+  }
+}
+
 function wirePaseoBrowserGuestFindInPage(
   contents: RegisteredBrowserWebContents,
   browserId: string,
   ownerContents: BrowserOwnerWebContents,
 ): BrowserGuestFindInPageWire {
-  contents.setBackgroundThrottling(false);
-
   let cleaned = false;
   const handleFoundInPage = (_event: unknown, result: unknown): void => {
     if (ownerContents.isDestroyed()) {
       cleanup();
       return;
     }
-    if (browserRegistry.getOwnerWebContentsId(browserId) !== ownerContents.id) {
+    const registration = browserRegistry.getRegistrationForWebContents(contents.id);
+    if (!registration || registration.hostWebContentsId !== ownerContents.id) {
       return;
     }
     const res = result as {
@@ -122,18 +141,10 @@ function wirePaseoBrowserGuestFindInPage(
     }
     cleaned = true;
     contents.removeListener("found-in-page", handleFoundInPage);
-    (
-      contents as unknown as {
-        removeListener: (event: string, listener: () => void) => void;
-      }
-    ).removeListener("destroyed", cleanup);
     ownerContents.removeListener("destroyed", cleanup);
     ownerContents.removeListener("did-start-navigation", handleOwnerNavigate);
     if (browserGuestFindInPageWiresByWebContentsId.get(contents.id)?.cleanup === cleanup) {
       browserGuestFindInPageWiresByWebContentsId.delete(contents.id);
-    }
-    if (browserGuestFindInPageWiresByBrowserId.get(browserId)?.cleanup === cleanup) {
-      browserGuestFindInPageWiresByBrowserId.delete(browserId);
     }
     browserRegistry.unregisterWebContents(contents.id);
   };
@@ -155,18 +166,23 @@ function wirePaseoBrowserGuestFindInPage(
     cleanup,
   };
   contents.on("found-in-page", handleFoundInPage);
-  contents.once("destroyed", cleanup);
 
   // Guard against window closed or reloaded
   ownerContents.once("destroyed", cleanup);
   ownerContents.on("did-start-navigation", handleOwnerNavigate);
   browserGuestFindInPageWiresByWebContentsId.set(contents.id, wire);
-  browserGuestFindInPageWiresByBrowserId.set(browserId, wire);
   return wire;
 }
 
-export function getPaseoBrowserOwnerWebContentsId(browserId: string): number | null {
-  return browserRegistry.getOwnerWebContentsId(browserId);
+export function preparePaseoBrowserWebContents(contents: RegisteredBrowserWebContents): void {
+  const webContentsId = contents.id;
+  contents.setBackgroundThrottling(false);
+  contents.once("destroyed", () => {
+    disposePaseoBrowserGuestFindInPageWire(
+      browserGuestFindInPageWiresByWebContentsId.get(webContentsId),
+    );
+    browserRegistry.unregisterWebContents(webContentsId);
+  });
 }
 
 export function registerAttachedPaseoBrowser(input: RegisterAttachedBrowserInput): boolean {
@@ -183,14 +199,11 @@ export function registerAttachedPaseoBrowser(input: RegisterAttachedBrowserInput
   disposePaseoBrowserGuestFindInPageWire(
     browserGuestFindInPageWiresByWebContentsId.get(input.webContentsId),
   );
-  disposePaseoBrowserGuestFindInPageWire(
-    browserGuestFindInPageWiresByBrowserId.get(input.browserId),
-  );
 
   browserRegistry.registerWebContents({
     webContentsId: input.webContentsId,
     browserId: input.browserId,
-    ownerWebContentsId: input.sender.id,
+    hostWebContentsId: input.sender.id,
   });
   browserRegistry.registerWorkspace({
     browserId: input.browserId,
@@ -210,8 +223,26 @@ export function getPaseoBrowserIdForWebContents(
 }
 
 export function unregisterPaseoBrowser(browserId: string): void {
-  disposePaseoBrowserGuestFindInPageWire(browserGuestFindInPageWiresByBrowserId.get(browserId));
+  disposePaseoBrowserGuestFindInPageWiresForBrowser(browserId);
   browserRegistry.unregisterBrowser(browserId);
+}
+
+export function unregisterPaseoBrowserFromHost(hostWebContentsId: number, browserId: string): void {
+  const webContentsId = browserRegistry.getWebContentsIdForBrowserInHostWindow(
+    hostWebContentsId,
+    browserId,
+  );
+  if (webContentsId !== null) {
+    disposePaseoBrowserGuestFindInPageWire(
+      browserGuestFindInPageWiresByWebContentsId.get(webContentsId),
+    );
+  }
+  browserRegistry.unregisterBrowserFromHost(hostWebContentsId, browserId);
+}
+
+export function unregisterPaseoBrowserHost(hostWebContentsId: number): void {
+  disposePaseoBrowserGuestFindInPageWiresForHost(hostWebContentsId);
+  browserRegistry.unregisterHostWebContents(hostWebContentsId);
 }
 
 export function getPaseoBrowserWorkspaceId(browserId: string): string | null {
@@ -219,12 +250,11 @@ export function getPaseoBrowserWorkspaceId(browserId: string): string | null {
 }
 
 export function listRegisteredPaseoBrowserIdsForWorkspace(workspaceId: string): string[] {
-  return browserRegistry
-    .listBrowserIdsForWorkspace(workspaceId)
-    .filter((browserId) => getPaseoBrowserWebContents(browserId));
+  return browserRegistry.listBrowserIdsForWorkspace(workspaceId);
 }
 
 export function setWorkspaceActivePaseoBrowserId(input: {
+  hostWebContentsId: number;
   workspaceId: string;
   browserId: string | null;
 }): void {
@@ -232,11 +262,24 @@ export function setWorkspaceActivePaseoBrowserId(input: {
 }
 
 export function getWorkspaceActivePaseoBrowserId(workspaceId: string): string | null {
-  return browserRegistry.getWorkspaceActiveBrowserId(workspaceId);
+  return browserRegistry.getMostRecentActiveBrowserIdForWorkspace(workspaceId);
 }
 
-export function getPaseoBrowserWebContents(browserId: string): WebContents | null {
-  const contentsId = browserRegistry.getWebContentsIdForBrowser(browserId);
+export function getWorkspaceActivePaseoBrowserIdForHostWindow(
+  workspaceId: string,
+  hostWebContentsId: number,
+): string | null {
+  return browserRegistry.getActiveBrowserIdForWorkspaceInHostWindow(hostWebContentsId, workspaceId);
+}
+
+export function getPaseoBrowserWebContentsForHostWindow(
+  browserId: string,
+  hostWebContentsId: number,
+): WebContents | null {
+  const contentsId = browserRegistry.getWebContentsIdForBrowserInHostWindow(
+    hostWebContentsId,
+    browserId,
+  );
   if (contentsId === null) {
     return null;
   }
@@ -248,9 +291,26 @@ export function getPaseoBrowserWebContents(browserId: string): WebContents | nul
   return null;
 }
 
-export function getMostRecentWorkspaceActivePaseoBrowserWebContents(): WebContents | null {
-  const browserId = browserRegistry.getMostRecentWorkspaceActiveBrowserId();
-  return browserId ? getPaseoBrowserWebContents(browserId) : null;
+export function getActivePaseoBrowserWebContentsForHostWindow(
+  hostWebContentsId: number,
+): WebContents | null {
+  const browserId = browserRegistry.getActiveBrowserIdForHostWindow(hostWebContentsId);
+  if (!browserId) {
+    return null;
+  }
+  const contentsId = browserRegistry.getWebContentsIdForBrowserInHostWindow(
+    hostWebContentsId,
+    browserId,
+  );
+  if (contentsId === null) {
+    return null;
+  }
+  const contents = allWebContents.fromId(contentsId);
+  if (contents && !contents.isDestroyed()) {
+    return contents;
+  }
+  browserRegistry.unregisterWebContents(contentsId);
+  return null;
 }
 
 function preventUnsafeBrowserWebviewNavigation(

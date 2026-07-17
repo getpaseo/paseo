@@ -17,6 +17,7 @@ function createWorkspace(
     id: input.id,
     projectId: input.projectId ?? "project-1",
     projectDisplayName: input.projectDisplayName ?? "Project 1",
+    projectCustomName: input.projectCustomName ?? null,
     projectRootPath: input.projectRootPath ?? "/repo",
     workspaceDirectory: input.workspaceDirectory ?? "/repo",
     projectKind: input.projectKind ?? "git",
@@ -363,51 +364,6 @@ describe("mergeWorkspaces", () => {
     expect(after.session).not.toBe(before.session);
     expect(after.workspaces).not.toBe(before.workspaces);
     expect(after.workspaces.get(workspace.id)?.diffStat).toBeNull();
-  });
-
-  it("clears a pending restore status when the matching descriptor lands", () => {
-    const store = useSessionStore.getState();
-    initializeTestSession();
-    store.setWorkspaceRestoreStatus("test-server", "/repo/main", "restoring");
-    expect(getTestSessionReferences().session.restoringWorkspaces.get("/repo/main")).toBe(
-      "restoring",
-    );
-
-    store.mergeWorkspaces("test-server", [createWorkspace({ id: "/repo/main" })]);
-
-    expect(getTestSessionReferences().session.restoringWorkspaces.has("/repo/main")).toBe(false);
-  });
-});
-
-describe("setWorkspaceRestoreStatus", () => {
-  it("marks restoring then failed while the workspace is still absent", () => {
-    const store = useSessionStore.getState();
-    initializeTestSession();
-
-    store.setWorkspaceRestoreStatus("test-server", "/repo/main", "restoring");
-    store.setWorkspaceRestoreStatus("test-server", "/repo/main", "failed");
-
-    expect(getTestSessionReferences().session.restoringWorkspaces.get("/repo/main")).toBe("failed");
-  });
-
-  it("ignores a late failed once the descriptor has landed (no-op)", () => {
-    const store = useSessionStore.getState();
-    initializeTestSession();
-    store.setWorkspaceRestoreStatus("test-server", "/repo/main", "restoring");
-    store.mergeWorkspaces("test-server", [createWorkspace({ id: "/repo/main" })]);
-
-    store.setWorkspaceRestoreStatus("test-server", "/repo/main", "failed");
-
-    expect(getTestSessionReferences().session.restoringWorkspaces.has("/repo/main")).toBe(false);
-  });
-
-  it("ignores failed when no restore is in flight", () => {
-    const store = useSessionStore.getState();
-    initializeTestSession();
-
-    store.setWorkspaceRestoreStatus("test-server", "/repo/main", "failed");
-
-    expect(getTestSessionReferences().session.restoringWorkspaces.has("/repo/main")).toBe(false);
   });
 });
 

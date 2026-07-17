@@ -20,7 +20,7 @@ import {
   View,
   type PressableStateCallbackType,
 } from "react-native";
-import { Gesture, GestureDetector } from "react-native-gesture-handler";
+import { Gesture } from "react-native-gesture-handler";
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -30,10 +30,10 @@ import { HostPicker } from "@/components/hosts/host-picker";
 import { SidebarHeaderRow } from "@/components/sidebar/sidebar-header-row";
 import { SidebarDisplayPreferencesMenu } from "@/components/sidebar/sidebar-display-preferences-menu";
 import { SidebarHelpMenu } from "@/components/sidebar/sidebar-help-menu";
+import { SidebarResizeHandle } from "@/components/sidebar-resize-handle";
 import { Shortcut } from "@/components/ui/shortcut";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { HEADER_INNER_HEIGHT, useIsCompactFormFactor } from "@/constants/layout";
-import { isWeb } from "@/constants/platform";
 import { useOpenAddProject } from "@/hooks/use-open-add-project";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { canCreateWorktreeForProjectKind } from "@/projects/host-projects";
@@ -765,11 +765,6 @@ function DesktopSidebar({
     () => [styles.sidebarHeaderGroup, ownsTopLeft && styles.sidebarHeaderGroupBelowChrome],
     [ownsTopLeft],
   );
-  const resizeHandleStyle = useMemo(
-    () => [styles.resizeHandle, isWeb && ({ cursor: "col-resize" } as object)],
-    [],
-  );
-
   return (
     <Animated.View
       accessibilityElementsHidden={!active}
@@ -844,10 +839,11 @@ function DesktopSidebar({
           handleOpenHostSettings={handleOpenHostSettings}
         />
 
-        {/* Resize handle - absolutely positioned over right border */}
-        <GestureDetector gesture={resizeGesture}>
-          <View style={resizeHandleStyle} />
-        </GestureDetector>
+        <SidebarResizeHandle
+          edge="right"
+          gesture={resizeGesture}
+          testID="left-sidebar-resize-handle"
+        />
       </View>
     </Animated.View>
   );
@@ -997,14 +993,6 @@ const styles = StyleSheet.create((theme) => ({
     borderRightWidth: 1,
     borderRightColor: theme.colors.border,
     backgroundColor: theme.colors.surfaceSidebar,
-  },
-  resizeHandle: {
-    position: "absolute",
-    right: -5,
-    top: 0,
-    bottom: 0,
-    width: 10,
-    zIndex: 10,
   },
   sidebarDragArea: {
     position: "relative",

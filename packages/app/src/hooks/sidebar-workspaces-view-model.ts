@@ -164,7 +164,10 @@ export function createSidebarWorkspaceEntry(input: {
     statusEnteredAt: effectiveStatus.enteredAt,
     archivingAt: input.workspace.archivingAt,
     diffStat: input.workspace.diffStat,
-    prHint: selectPrHintFromStatus(input.workspace.githubRuntime?.pullRequest),
+    prHint: selectPrHintFromStatus(
+      input.workspace.githubRuntime?.pullRequest,
+      input.workspace.forge,
+    ),
     archiveHasUncommittedChanges: input.workspace.gitRuntime?.isDirty ?? null,
     archiveUnpushedCommitCount: input.workspace.gitRuntime?.aheadOfOrigin ?? null,
     scripts: input.workspace.scripts,

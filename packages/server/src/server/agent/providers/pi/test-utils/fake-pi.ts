@@ -15,11 +15,42 @@ import type {
 } from "../rpc-types.js";
 import { buildPiLaunch } from "../runtime.js";
 
+type FakePiSubagentSubscriptionLevel = "off" | "progress" | "events";
+type FakePiSubagentStatus = "pending" | "running" | "completed" | "failed" | "aborted";
+
+export interface FakePiSubagentSnapshot {
+  id: string;
+  index: number;
+  agent: string;
+  description?: string;
+  status: FakePiSubagentStatus;
+  task?: string;
+  assignment?: string;
+  sessionFile?: string;
+  parentToolCallId?: string;
+  lastUpdate?: number;
+}
+
+export interface FakePiSubagentMessagesSelector {
+  subagentId?: string;
+  sessionFile?: string;
+  fromByte?: number;
+}
+
+export interface FakePiSubagentMessagesResult {
+  sessionFile: string;
+  fromByte: number;
+  nextByte: number;
+  reset: boolean;
+  messages: PiAgentMessage[];
+}
+
 export class FakePi implements PiRuntime {
   readonly recordedLaunches: PiRuntimeLaunch[] = [];
   private readonly sessions: FakePiSession[] = [];
   private readonly command: [string, ...string[]];
   private readonly queuedCommands: PiRpcSlashCommand[][] = [];
+  private readonly queuedSessionSetups: Array<(session: FakePiSession) => void> = [];
 
   constructor(command: [string, ...string[]] = ["pi"]) {
     this.command = command;
@@ -33,12 +64,17 @@ export class FakePi implements PiRuntime {
     this.recordedLaunches.push(launch);
     const session = new FakePiSession(launch);
     session.commands = this.queuedCommands.shift() ?? [];
+    this.queuedSessionSetups.shift()?.(session);
     this.sessions.push(session);
     return session;
   }
 
   queueCommands(commands: PiRpcSlashCommand[]): void {
     this.queuedCommands.push(commands);
+  }
+
+  queueSessionSetup(setup: (session: FakePiSession) => void): void {
+    this.queuedSessionSetups.push(setup);
   }
 
   latestSession(): FakePiSession {
@@ -54,9 +90,14 @@ export class FakePiSession implements PiRuntimeSession {
   readonly prompts: Array<{ message: string; imageCount: number }> = [];
   readonly compactRequests: Array<{ customInstructions?: string }> = [];
   readonly setAutoCompactionRequests: boolean[] = [];
+  readonly subagentSubscriptionRequests: FakePiSubagentSubscriptionLevel[] = [];
+  readonly subagentMessageRequests: FakePiSubagentMessagesSelector[] = [];
   readonly setModelRequests: Array<{ provider: string; modelId: string }> = [];
   readonly setThinkingLevelRequests: string[] = [];
   readonly treeNavigationRequests: string[] = [];
+  readonly handoffRequests: Array<{ customInstructions?: string }> = [];
+  readonly sessionNameRequests: string[] = [];
+  readonly rawFrames: Array<object & { type: string }> = [];
   capturedUserEntries: Array<{ id: string; parentId: string | null; text: string }> = [];
   abortRequested = false;
   readonly canceledExtensionUiRequests: string[] = [];
@@ -72,13 +113,19 @@ export class FakePiSession implements PiRuntimeSession {
     cost: 0,
   };
   commands: PiRpcSlashCommand[] = [];
+  subagents: FakePiSubagentSnapshot[] = [];
+  subagentSubscriptionError: Error | null = null;
+  setSessionNameError: Error | null = null;
   compactError: Error | null = null;
   emitCompactEnd = true;
   getStateError: Error | null = null;
   promptAck: PiPromptAck = {};
+  branchResponse: { text?: string; cancelled?: boolean } = { text: "" };
+  readonly branchRequests: string[] = [];
   state: PiSessionState;
 
   private readonly subscribers = new Set<(event: PiRuntimeEvent) => void>();
+  private readonly subagentMessageResults = new Map<string, FakePiSubagentMessagesResult[]>();
   private nextHeldPrompt: { promise: Promise<void>; reject: (error: Error) => void } | null = null;
   private activeHeldPrompt: { promise: Promise<void>; reject: (error: Error) => void } | null =
     null;
@@ -200,8 +247,81 @@ export class FakePiSession implements PiRuntimeSession {
     return this.stats;
   }
 
+  async setSubagentSubscription(level: FakePiSubagentSubscriptionLevel): Promise<void> {
+    this.subagentSubscriptionRequests.push(level);
+    if (this.subagentSubscriptionError) {
+      throw this.subagentSubscriptionError;
+    }
+  }
+
+  async getSubagents(): Promise<FakePiSubagentSnapshot[]> {
+    return this.subagents;
+  }
+
+  async getSubagentMessages(
+    selector: FakePiSubagentMessagesSelector,
+  ): Promise<FakePiSubagentMessagesResult> {
+    this.subagentMessageRequests.push(selector);
+    const key = selector.sessionFile ?? selector.subagentId;
+    if (!key) {
+      throw new Error("FakePi getSubagentMessages requires a selector");
+    }
+    const results = this.subagentMessageResults.get(key);
+    const result = results?.shift();
+    if (!result) {
+      throw new Error(`FakePi has no subagent messages queued for ${key}`);
+    }
+    return result;
+  }
+
+  queueSubagentMessages(result: FakePiSubagentMessagesResult): void {
+    const results = this.subagentMessageResults.get(result.sessionFile) ?? [];
+    results.push(result);
+    this.subagentMessageResults.set(result.sessionFile, results);
+  }
+
   async getCommands(): Promise<PiRpcSlashCommand[]> {
     return this.commands;
+  }
+
+  sendRawFrame(frame: object & { type: string }): void {
+    this.rawFrames.push(frame);
+  }
+
+  async request(command: { type: string; [key: string]: unknown }): Promise<unknown> {
+    switch (command.type) {
+      case "set_subagent_subscription":
+        await this.setSubagentSubscription(command.level as FakePiSubagentSubscriptionLevel);
+        return {};
+      case "get_subagents":
+        return { subagents: await this.getSubagents() };
+      case "get_subagent_messages":
+        return await this.getSubagentMessages({
+          ...(typeof command.subagentId === "string" ? { subagentId: command.subagentId } : {}),
+          ...(typeof command.sessionFile === "string" ? { sessionFile: command.sessionFile } : {}),
+          ...(typeof command.fromByte === "number" ? { fromByte: command.fromByte } : {}),
+        });
+      case "branch": {
+        const entryId = typeof command.entryId === "string" ? command.entryId : "";
+        this.branchRequests.push(entryId);
+        return this.branchResponse;
+      }
+      case "handoff":
+        this.handoffRequests.push(
+          typeof command.customInstructions === "string"
+            ? { customInstructions: command.customInstructions }
+            : {},
+        );
+        return {};
+      case "set_session_name":
+        this.sessionNameRequests.push(typeof command.name === "string" ? command.name : "");
+        if (this.setSessionNameError) {
+          throw this.setSessionNameError;
+        }
+        return {};
+      default:
+        throw new Error(`FakePi request does not implement ${command.type}`);
+    }
   }
 
   respondToExtensionUiRequest(
