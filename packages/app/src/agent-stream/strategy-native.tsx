@@ -267,6 +267,12 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
         }
         return true;
       },
+      scrollBy: (deltaY) => {
+        flatListRef.current?.scrollToOffset({
+          offset: Math.max(0, scrollOffsetYRef.current + deltaY),
+          animated: true,
+        });
+      },
     };
     viewportRef.current = handle;
     return () => {

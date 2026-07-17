@@ -504,6 +504,9 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         scheduleStickToBottom();
       },
       scrollToItem,
+      scrollBy: (deltaY) => {
+        scrollContainerRef.current?.scrollBy({ top: deltaY, behavior: "smooth" });
+      },
     };
     viewportRef.current = handle;
     return () => {

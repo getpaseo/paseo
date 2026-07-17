@@ -49,6 +49,8 @@ export interface StreamViewportHandle {
    * should not report a scroll as having happened in that case.
    */
   scrollToItem: (itemId: string) => boolean;
+  /** Adjust the current viewport position after a mounted search anchor is measured. */
+  scrollBy: (deltaY: number) => void;
 }
 
 export interface StreamSegmentRenderers {

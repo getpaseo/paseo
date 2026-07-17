@@ -31,6 +31,7 @@ function makeViewportHandle(): StreamViewportHandle {
     scrollToBottom: vi.fn(),
     prepareForViewportChange: vi.fn(),
     scrollToItem: vi.fn().mockReturnValue(true),
+    scrollBy: vi.fn(),
   };
 }
 
