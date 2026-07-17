@@ -2,6 +2,7 @@ import React, { useCallback, useMemo, useRef, type ReactNode } from "react";
 import { Text } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import {
+  findAllMatches,
   splitHighlightSegments,
   useTimelineHighlightFieldQuery,
   useTimelineHighlightTarget,
@@ -36,6 +37,35 @@ export interface HighlightSegmentMatchContext {
   target: TimelineSearchTarget | null;
   /** Offset of this rendered text run within its owning search field. */
   fieldOffsetBase?: number;
+  /** Selected offset in this rendered text frame, if it differs from the canonical field. */
+  targetFieldOffset?: number | null;
+}
+
+export interface MapSourceOccurrenceToDisplayedOffsetInput {
+  sourceText: string;
+  displayedText: string;
+  query: string;
+  sourceFieldOffset: number;
+}
+
+/**
+ * Maps a selected occurrence from canonical source to a transformed display
+ * string. Mapping is intentionally refused unless every query occurrence is
+ * retained in order; raw renderers omit sourceText and keep direct offsets.
+ */
+export function mapSourceOccurrenceToDisplayedOffset({
+  sourceText,
+  displayedText,
+  query,
+  sourceFieldOffset,
+}: MapSourceOccurrenceToDisplayedOffsetInput): number | null {
+  const sourceMatches = findAllMatches(sourceText, query);
+  const sourceOrdinal = sourceMatches.findIndex((match) => match.index === sourceFieldOffset);
+  if (sourceOrdinal === -1) return null;
+
+  const displayedMatches = findAllMatches(displayedText, query);
+  if (displayedMatches.length !== sourceMatches.length) return null;
+  return displayedMatches[sourceOrdinal]?.index ?? null;
 }
 
 export interface FindNextTextRunFieldOffsetInput {
@@ -107,14 +137,14 @@ export function isActiveHighlightSegment(
   segment: HighlightSegment,
   context: HighlightSegmentMatchContext,
 ): boolean {
-  const { itemId, field, target, fieldOffsetBase = 0 } = context;
+  const { itemId, field, target, fieldOffsetBase = 0, targetFieldOffset } = context;
   return (
     segment.isMatch &&
     target !== null &&
     itemId !== undefined &&
     itemId === target.itemId &&
     field === target.field &&
-    fieldOffsetBase + segment.offset === target.fieldOffset
+    fieldOffsetBase + segment.offset === (targetFieldOffset ?? target.fieldOffset)
   );
 }
 
@@ -141,6 +171,8 @@ export interface RenderHighlightedSegmentsOptions {
   field: TimelineSearchField;
   /** Offset of `text` within the complete owning field. Defaults to zero. */
   fieldOffsetBase?: number;
+  /** Canonical source when `text` is a display-only transformation of that field. */
+  sourceText?: string;
   /** Renders one segment (match or non-match). `isActive` is only ever true for a match segment. */
   renderMatch: (segment: HighlightSegment, isActive: boolean) => ReactNode;
 }
@@ -160,11 +192,23 @@ export function useHighlightedSegments({
   itemId,
   field,
   fieldOffsetBase = 0,
+  sourceText,
   renderMatch,
 }: RenderHighlightedSegmentsOptions): ReactNode {
   const query = useTimelineHighlightFieldQuery(itemId, field);
   const target = useTimelineHighlightTarget();
   const segments = useMemo(() => splitHighlightSegments(text, query), [text, query]);
+  const targetFieldOffset = useMemo(() => {
+    if (!sourceText || !target || target.itemId !== itemId || target.field !== field) {
+      return null;
+    }
+    return mapSourceOccurrenceToDisplayedOffset({
+      sourceText,
+      displayedText: text,
+      query,
+      sourceFieldOffset: target.fieldOffset - fieldOffsetBase,
+    });
+  }, [field, fieldOffsetBase, itemId, query, sourceText, target, text]);
   if (segments.length === 1 && !segments[0]?.isMatch) {
     return text;
   }
@@ -172,7 +216,13 @@ export function useHighlightedSegments({
     <React.Fragment key={segment.offset}>
       {renderMatch(
         segment,
-        isActiveHighlightSegment(segment, { itemId, field, target, fieldOffsetBase }),
+        isActiveHighlightSegment(segment, {
+          itemId,
+          field,
+          target,
+          fieldOffsetBase,
+          targetFieldOffset,
+        }),
       )}
     </React.Fragment>
   ));
@@ -193,16 +243,19 @@ export function HighlightedText({
   text,
   itemId,
   field = "text",
+  sourceText,
 }: {
   text: string;
   /** Identify the stream source so one selected occurrence can receive active styling. */
   itemId?: string;
   field?: TimelineSearchField;
+  sourceText?: string;
 }): ReactNode {
   return useHighlightedSegments({
     text,
     itemId,
     field,
+    sourceText,
     renderMatch: (segment, isActive) => {
       if (!segment.isMatch) {
         return segment.text;

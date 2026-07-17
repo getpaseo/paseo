@@ -3,6 +3,7 @@ import {
   findNextTextRunFieldOffset,
   isActiveHighlightSegment,
   mapMarkdownTextRunOffsets,
+  mapSourceOccurrenceToDisplayedOffset,
 } from "./highlighted-text";
 import type { HighlightSegment } from "./highlight";
 import type { TimelineSearchTarget } from "./search-target";
@@ -208,5 +209,33 @@ describe("mapMarkdownTextRunOffsets", () => {
     });
     expect(offsets.get("label")).toBe(1);
     expect(offsets.get("tail")).toBe(23);
+  });
+});
+
+describe("mapSourceOccurrenceToDisplayedOffset", () => {
+  it("maps a selected compact JSON occurrence to its pretty-rendered ordinal", () => {
+    const sourceText = '{"url":"https://paseo.sh","nested":{"url":"https://paseo.sh"}}';
+    const displayedText = JSON.stringify(JSON.parse(sourceText), null, 2);
+    const secondSourceOffset = sourceText.lastIndexOf("url");
+
+    expect(
+      mapSourceOccurrenceToDisplayedOffset({
+        sourceText,
+        displayedText,
+        query: "url",
+        sourceFieldOffset: secondSourceOffset,
+      }),
+    ).toBe(displayedText.lastIndexOf("url"));
+  });
+
+  it("refuses transformed text that adds or removes query occurrences", () => {
+    expect(
+      mapSourceOccurrenceToDisplayedOffset({
+        sourceText: "first needle",
+        displayedText: "first needle then needle",
+        query: "needle",
+        sourceFieldOffset: 6,
+      }),
+    ).toBeNull();
   });
 });

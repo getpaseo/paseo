@@ -20,7 +20,10 @@ import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { extensionFromPath, highlightToKeyedLines } from "@/utils/highlight-cache";
 import { HighlightedLines } from "./highlighted-content";
-import { HighlightedText } from "@/timeline-search/highlighted-text";
+import {
+  HighlightedText,
+  mapSourceOccurrenceToDisplayedOffset,
+} from "@/timeline-search/highlighted-text";
 import { useTimelineHighlightQuery } from "@/timeline-search/highlight";
 import { useTimelineSearchOccurrenceAnchor } from "@/timeline-search/occurrence-anchor";
 import { useTimelineSearchTarget } from "@/timeline-search/search-target";
@@ -65,6 +68,8 @@ interface ToolDetailScrollHandle {
 interface ActiveToolDetailField {
   field: TimelineSearchField;
   text: string;
+  /** Canonical source when text is a display-only transformation of it. */
+  sourceText?: string;
   /** The rendered line on which this field begins. */
   startLine?: number;
 }
@@ -87,6 +92,7 @@ function useRevealActiveToolDetailLine({
   fields: readonly ActiveToolDetailField[];
 }) {
   const target = useTimelineSearchTarget();
+  const query = useTimelineHighlightQuery();
   useEffect(() => {
     if (!itemId || target?.itemId !== itemId) {
       return;
@@ -95,8 +101,17 @@ function useRevealActiveToolDetailLine({
     if (!field || target.fieldOffset < 0 || target.fieldOffset > field.text.length) {
       return;
     }
+    const displayFieldOffset = field.sourceText
+      ? mapSourceOccurrenceToDisplayedOffset({
+          sourceText: field.sourceText,
+          displayedText: field.text,
+          query,
+          sourceFieldOffset: target.fieldOffset,
+        })
+      : target.fieldOffset;
+    if (displayFieldOffset === null) return;
     const line =
-      (field.startLine ?? 0) + field.text.slice(0, target.fieldOffset).split("\n").length - 1;
+      (field.startLine ?? 0) + field.text.slice(0, displayFieldOffset).split("\n").length - 1;
     const frame = requestAnimationFrame(() => {
       scrollRef.current?.scrollTo({
         y: Math.max(0, (line - TOOL_DETAIL_REVEAL_CONTEXT_LINES) * TOOL_DETAIL_LINE_HEIGHT),
@@ -104,7 +119,7 @@ function useRevealActiveToolDetailLine({
       });
     });
     return () => cancelAnimationFrame(frame);
-  }, [fields, itemId, scrollRef, target]);
+  }, [fields, itemId, query, scrollRef, target]);
 }
 
 function resolveIsFullBleed(detail: ToolCallDetail | undefined): boolean {
@@ -745,6 +760,15 @@ function serializeUnknownValue(value: unknown): string {
   }
 }
 
+/** Mirrors the compact serialization used by the timeline search model. */
+function serializeUnknownSearchSource(value: unknown): string {
+  try {
+    return typeof value === "string" ? value : (JSON.stringify(value) ?? String(value));
+  } catch {
+    return String(value);
+  }
+}
+
 interface UnknownDetail {
   input: unknown;
   output: unknown;
@@ -783,6 +807,7 @@ function buildUnknownSections(
   const out: ReactNode[] = [];
   for (const section of sectionsFromTopLevel) {
     const value = serializeUnknownValue(section.value);
+    const sourceText = serializeUnknownSearchSource(section.value);
     if (!value.length) {
       continue;
     }
@@ -801,10 +826,12 @@ function buildUnknownSections(
           showsHorizontalScrollIndicator={true}
         >
           <Text selectable style={styles.scrollText} dataSet={CODE_SURFACE_DATASET}>
-            {/* JSON is pretty-printed here but compactly stringified by the
-                search model. Keep field-scoped ordinary highlighting; the
-                parent block anchor handles exact reveal when offsets differ. */}
-            <HighlightedText text={value} itemId={timelineSearchItemId} field={section.field} />
+            <HighlightedText
+              text={value}
+              sourceText={sourceText}
+              itemId={timelineSearchItemId}
+              field={section.field}
+            />
           </Text>
         </ScrollView>
       </View>,
