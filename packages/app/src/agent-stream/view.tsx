@@ -61,11 +61,13 @@ import { resolveStreamRenderStrategy } from "./strategy-resolver";
 import { type StreamSegmentRenderers, type StreamViewportHandle } from "./strategy";
 import { CompletedTurnFooterRow, TurnFooter, type TurnContentStrategy } from "./turn-footer";
 import { layoutStream, type StreamLayoutItem } from "./layout";
+import type { TurnTiming } from "@/timeline/turn-time";
 import {
   deriveTurnWorkTraceLayout,
   shouldHideCompletedTurnTraceFromMainList,
   shouldShowTurnWorkTracesHeader,
   completedTurnFooterShowsTimestampOnly,
+  type TurnWorkTraceLayout,
 } from "./turn-work-traces";
 import { TurnWorkTracesPanel } from "./turn-work-traces-panel";
 import {
@@ -187,30 +189,6 @@ function renderListEmptyComponent(input: {
   );
 }
 
-function renderHistoryStreamItem(input: {
-  item: StreamItem;
-  layoutItemById: Map<string, StreamLayoutItem>;
-  renderStreamItem: (layoutItem: StreamLayoutItem) => ReactNode;
-}): ReactNode {
-  const layoutItem = input.layoutItemById.get(input.item.id);
-  if (!layoutItem) {
-    return null;
-  }
-  return input.renderStreamItem(layoutItem);
-}
-
-function renderLiveHeadStreamItem(input: {
-  item: StreamItem;
-  layoutItemById: Map<string, StreamLayoutItem>;
-  renderStreamItem: (layoutItem: StreamLayoutItem) => ReactNode;
-}): ReactNode {
-  const layoutItem = input.layoutItemById.get(input.item.id);
-  if (!layoutItem) {
-    return null;
-  }
-  return input.renderStreamItem(layoutItem);
-}
-
 export interface AgentStreamViewHandle {
   scrollToBottom(reason?: BottomAnchorLocalRequest["reason"]): void;
   prepareForViewportChange(): void;
@@ -241,9 +219,12 @@ const AGENT_CAPABILITY_FLAG_KEYS: (keyof AgentCapabilityFlags)[] = [
 ];
 
 const EMPTY_STREAM_HEAD: StreamItem[] = [];
+const EMPTY_TRACE_LAYOUT_ITEMS: StreamLayoutItem[] = [];
 
-function filterStreamItemsForMainList(items: StreamItem[], agentStatus: string): StreamItem[] {
-  const layout = deriveTurnWorkTraceLayout({ items, agentStatus });
+function filterStreamItemsForMainList(
+  items: StreamItem[],
+  layout: TurnWorkTraceLayout,
+): StreamItem[] {
   return items.filter(
     (item) =>
       !shouldHideCompletedTurnTraceFromMainList({
@@ -253,6 +234,70 @@ function filterStreamItemsForMainList(items: StreamItem[], agentStatus: string):
       }),
   );
 }
+
+const CompletedTurnWorkTraces = memo(function CompletedTurnWorkTraces({
+  turnKey,
+  timing,
+  isExpanded,
+  onToggleTurn,
+  gapBelow,
+  chronologicalStreamItems,
+  traceItemIds,
+  layoutHistoryItemById,
+  layoutLiveHeadItemById,
+  renderTraceLayoutItem,
+}: {
+  turnKey: string;
+  timing: TurnTiming | null;
+  isExpanded: boolean;
+  onToggleTurn: (turnKey: string) => void;
+  gapBelow: number;
+  chronologicalStreamItems: StreamItem[];
+  traceItemIds: ReadonlySet<string>;
+  layoutHistoryItemById: Map<string, StreamLayoutItem>;
+  layoutLiveHeadItemById: Map<string, StreamLayoutItem>;
+  renderTraceLayoutItem: (layoutItem: StreamLayoutItem) => ReactNode;
+}) {
+  const onToggle = useCallback(() => {
+    onToggleTurn(turnKey);
+  }, [onToggleTurn, turnKey]);
+
+  const traceLayoutItems = useMemo(() => {
+    if (!isExpanded) {
+      return EMPTY_TRACE_LAYOUT_ITEMS;
+    }
+    const items: StreamLayoutItem[] = [];
+    for (const candidate of chronologicalStreamItems) {
+      if (!traceItemIds.has(candidate.id)) {
+        continue;
+      }
+      const layoutItem =
+        layoutHistoryItemById.get(candidate.id) ?? layoutLiveHeadItemById.get(candidate.id);
+      if (layoutItem) {
+        items.push(layoutItem);
+      }
+    }
+    return items;
+  }, [
+    chronologicalStreamItems,
+    isExpanded,
+    layoutHistoryItemById,
+    layoutLiveHeadItemById,
+    traceItemIds,
+  ]);
+
+  return (
+    <StreamItemWrapper gapBelow={gapBelow}>
+      <TurnWorkTracesPanel
+        timing={timing}
+        isExpanded={isExpanded}
+        onToggle={onToggle}
+        traceItems={traceLayoutItems}
+        renderTraceLayoutItem={renderTraceLayoutItem}
+      />
+    </StreamItemWrapper>
+  );
+});
 
 const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamViewProps>(
   function AgentStreamView(
@@ -427,31 +472,36 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       ],
     );
 
-    const orderedFullStreamItems = useMemo(
-      () => [...baseRenderModel.history, ...baseRenderModel.segments.liveHead],
-      [baseRenderModel.history, baseRenderModel.segments.liveHead],
+    // Turn semantics must use chronological tail/head. baseRenderModel.history/liveHead are
+    // already strategy-ordered for display (native reverses for inverted FlatList).
+    const chronologicalStreamItems = useMemo(
+      () => [...effectiveStreamItems, ...(effectiveStreamHead ?? EMPTY_STREAM_HEAD)],
+      [effectiveStreamHead, effectiveStreamItems],
     );
     const turnWorkTraceLayout = useMemo(
       () =>
         deriveTurnWorkTraceLayout({
-          items: orderedFullStreamItems,
+          items: chronologicalStreamItems,
           agentStatus: agent.status,
         }),
-      [agent.status, orderedFullStreamItems],
+      [agent.status, chronologicalStreamItems],
     );
     const filteredStreamSegments = useMemo(
       () => ({
         historyVirtualized: filterStreamItemsForMainList(
           baseRenderModel.segments.historyVirtualized,
-          agent.status,
+          turnWorkTraceLayout,
         ),
         historyMounted: filterStreamItemsForMainList(
           baseRenderModel.segments.historyMounted,
-          agent.status,
+          turnWorkTraceLayout,
         ),
-        liveHead: filterStreamItemsForMainList(baseRenderModel.segments.liveHead, agent.status),
+        liveHead: filterStreamItemsForMainList(
+          baseRenderModel.segments.liveHead,
+          turnWorkTraceLayout,
+        ),
       }),
-      [agent.status, baseRenderModel.segments],
+      [baseRenderModel.segments, turnWorkTraceLayout],
     );
     const filteredStreamBoundary = useMemo(
       () => ({
@@ -690,9 +740,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         if (!content) {
           return null;
         }
-        return (
-          <StreamItemWrapper gapBelow={layoutItem.gapBelow}>{content}</StreamItemWrapper>
-        );
+        return <StreamItemWrapper gapBelow={layoutItem.gapBelow}>{content}</StreamItemWrapper>;
       },
       [renderStreamItemContent],
     );
@@ -705,6 +753,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           completedTurnFooterShowsTimestampOnly({
             assistantMessageId: layoutItem.item.id,
             bundlesByTurnKey: turnWorkTraceLayout.bundlesByTurnKey,
+            assistantMessageIdToBundle: turnWorkTraceLayout.assistantMessageIdToBundle,
           });
         return renderStreamItemWithTurnFooter({
           content,
@@ -713,10 +762,8 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           completedFooterShowsTimestampOnly,
         });
       },
-      [renderStreamItemContent, streamRenderStrategy, turnWorkTraceLayout.bundlesByTurnKey],
+      [renderStreamItemContent, streamRenderStrategy, turnWorkTraceLayout],
     );
-
-    const renderStreamItem = renderLayoutItemForStream;
 
     const renderRow = useCallback(
       (item: StreamItem) => {
@@ -725,46 +772,40 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         if (!layoutItem) {
           return null;
         }
-        let streamNode = renderLayoutItemForStream(layoutItem);
         if (item.kind !== "user_message") {
-          return streamNode;
+          return renderLayoutItemForStream(layoutItem);
         }
         const bundle = turnWorkTraceLayout.userMessageIdToBundle.get(item.id);
-        if (!shouldShowTurnWorkTracesHeader({ bundle })) {
-          return streamNode;
+        if (!shouldShowTurnWorkTracesHeader({ bundle }) || !bundle) {
+          return renderLayoutItemForStream(layoutItem);
         }
-        streamNode = (
-          <StreamItemWrapper gapBelow={0}>{renderStreamItemContent(layoutItem)}</StreamItemWrapper>
-        );
-        const traceLayoutItems = orderedFullStreamItems
-          .filter((candidate) => bundle?.traceItemIds.has(candidate.id))
-          .map((traceItem) => layoutHistoryItemById.get(traceItem.id) ?? layoutLiveHeadItemById.get(traceItem.id))
-          .filter((candidate): candidate is StreamLayoutItem => candidate !== undefined);
-        const turnKey = item.id;
-        const panel = (
-          <StreamItemWrapper gapBelow={layoutItem.gapBelow}>
-            <TurnWorkTracesPanel
-              timing={bundle?.timing ?? null}
-              isExpanded={expandedTurnWorkTraceKeys.has(turnKey)}
-              onToggle={() => toggleTurnWorkTraces(turnKey)}
-              traceItems={traceLayoutItems}
-              renderTraceLayoutItem={renderTraceLayoutItemOnly}
-            />
-          </StreamItemWrapper>
-        );
         return (
           <>
-            {streamNode}
-            {panel}
+            <StreamItemWrapper gapBelow={0}>
+              {renderStreamItemContent(layoutItem)}
+            </StreamItemWrapper>
+            <CompletedTurnWorkTraces
+              turnKey={item.id}
+              timing={bundle.timing}
+              isExpanded={expandedTurnWorkTraceKeys.has(item.id)}
+              onToggleTurn={toggleTurnWorkTraces}
+              gapBelow={layoutItem.gapBelow}
+              chronologicalStreamItems={chronologicalStreamItems}
+              traceItemIds={bundle.traceItemIds}
+              layoutHistoryItemById={layoutHistoryItemById}
+              layoutLiveHeadItemById={layoutLiveHeadItemById}
+              renderTraceLayoutItem={renderTraceLayoutItemOnly}
+            />
           </>
         );
       },
       [
+        chronologicalStreamItems,
         expandedTurnWorkTraceKeys,
         layoutHistoryItemById,
         layoutLiveHeadItemById,
-        orderedFullStreamItems,
         renderLayoutItemForStream,
+        renderStreamItemContent,
         renderTraceLayoutItemOnly,
         toggleTurnWorkTraces,
         turnWorkTraceLayout.userMessageIdToBundle,
@@ -792,32 +833,30 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       return completedTurnFooterShowsTimestampOnly({
         assistantMessageId: bottomTurnFooterHost.itemId,
         bundlesByTurnKey: turnWorkTraceLayout.bundlesByTurnKey,
+        assistantMessageIdToBundle: turnWorkTraceLayout.assistantMessageIdToBundle,
       });
-    }, [bottomTurnFooterHost, turnWorkTraceLayout.bundlesByTurnKey]);
+    }, [bottomTurnFooterHost, turnWorkTraceLayout]);
 
-    const turnFooterNode = useMemo(
-      () => {
-        if (!showRunningTurnFooter && !bottomTurnFooterHost) {
-          return null;
-        }
-        return (
-          <TurnFooter
-            isRunning={showRunningTurnFooter}
-            inFlightTurnStartedAt={baseRenderModel.turnTiming.runningStartedAt}
-            host={bottomTurnFooterHost}
-            strategy={streamRenderStrategy}
-            showCompletedTimestampOnly={bottomFooterShowsTimestampOnly}
-          />
-        );
-      },
-      [
-        showRunningTurnFooter,
-        baseRenderModel.turnTiming.runningStartedAt,
-        bottomTurnFooterHost,
-        bottomFooterShowsTimestampOnly,
-        streamRenderStrategy,
-      ],
-    );
+    const turnFooterNode = useMemo(() => {
+      if (!showRunningTurnFooter && !bottomTurnFooterHost) {
+        return null;
+      }
+      return (
+        <TurnFooter
+          isRunning={showRunningTurnFooter}
+          inFlightTurnStartedAt={baseRenderModel.turnTiming.runningStartedAt}
+          host={bottomTurnFooterHost}
+          strategy={streamRenderStrategy}
+          showCompletedTimestampOnly={bottomFooterShowsTimestampOnly}
+        />
+      );
+    }, [
+      showRunningTurnFooter,
+      baseRenderModel.turnTiming.runningStartedAt,
+      bottomTurnFooterHost,
+      bottomFooterShowsTimestampOnly,
+      streamRenderStrategy,
+    ]);
     const renderModel = useMemo<AgentStreamRenderModel>(() => {
       return {
         ...baseRenderModel,
