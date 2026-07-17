@@ -12,6 +12,7 @@ interface FocusClaimReadiness {
   isWorkspaceFocused: boolean;
   isAppVisible: boolean;
   isClientReady: boolean;
+  isConnected: boolean;
   isRendererReady: boolean;
 }
 
@@ -22,7 +23,11 @@ export const EMPTY_FOCUS_CLAIM_STATE: FocusClaimState = {
 
 export function canRequestFocusClaim(input: FocusClaimReadiness): boolean {
   return (
-    input.isWorkspaceFocused && input.isAppVisible && input.isClientReady && input.isRendererReady
+    input.isWorkspaceFocused &&
+    input.isAppVisible &&
+    input.isClientReady &&
+    input.isConnected &&
+    input.isRendererReady
   );
 }
 

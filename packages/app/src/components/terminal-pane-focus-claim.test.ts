@@ -20,16 +20,30 @@ describe("terminal pane focus claim", () => {
       isWorkspaceFocused: true,
       isAppVisible: true,
       isClientReady: false,
+      isConnected: true,
       isRendererReady: true,
     });
     const withoutRenderer = canRequestFocusClaim({
       isWorkspaceFocused: true,
       isAppVisible: true,
       isClientReady: true,
+      isConnected: true,
       isRendererReady: false,
     });
 
     expect([withoutClient, withoutRenderer]).toEqual([false, false]);
+  });
+
+  it("does not deliver a requested claim after the host disconnects", () => {
+    const disconnected = canRequestFocusClaim({
+      isWorkspaceFocused: true,
+      isAppVisible: true,
+      isClientReady: true,
+      isConnected: false,
+      isRendererReady: true,
+    });
+
+    expect(disconnected).toBe(false);
   });
 
   it("claims once per continuous pane-focus period after send", () => {

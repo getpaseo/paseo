@@ -284,7 +284,8 @@ export function TerminalPane({
     const canRequest = canRequestFocusClaim({
       isWorkspaceFocused,
       isAppVisible,
-      isClientReady: client !== null && isConnected,
+      isClientReady: client !== null,
+      isConnected,
       isRendererReady: rendererReadyStreamKey === terminalStreamKey,
     });
     const step = reconcileFocusClaim(paneFocusResizeClaimRef.current, {
@@ -651,7 +652,14 @@ export function TerminalPane({
         return;
       }
       let sent = false;
-      if (client && terminalId && isWorkspaceFocused && isAppVisible) {
+      const canSend = canRequestFocusClaim({
+        isWorkspaceFocused,
+        isAppVisible,
+        isClientReady: client !== null,
+        isConnected,
+        isRendererReady: true,
+      });
+      if (client && terminalId && canSend) {
         const previousSent = lastSentTerminalSizeRef.current;
         if (
           !previousSent ||
