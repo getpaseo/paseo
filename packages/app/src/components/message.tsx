@@ -733,41 +733,51 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
     ? Boolean(timestampLabel)
     : Boolean(primaryDurationLabel);
 
+  const endedAccessibilityLabel = t("message.turnFooter.endedAccessibility", {
+    duration: primaryDurationLabel || timestampLabel,
+    timestamp: timestampLabel,
+  });
+
+  let metadataNode: ReactNode = null;
+  if (showMetadata) {
+    if (showCompletedTimestampOnly) {
+      metadataNode = (
+        <Text
+          style={assistantTurnFooterStylesheet.timestampOnly}
+          accessibilityLabel={endedAccessibilityLabel}
+        >
+          {timestampLabel}
+        </Text>
+      );
+    } else {
+      metadataNode = (
+        <Pressable
+          onPress={handlePress}
+          onHoverIn={handleHoverIn}
+          onHoverOut={handleHoverOut}
+          accessibilityRole={canSwap ? "button" : undefined}
+          accessibilityLabel={canSwap ? endedAccessibilityLabel : primaryDurationLabel}
+        >
+          <View style={assistantTurnFooterStylesheet.labelWrapper}>
+            <Text style={assistantTurnFooterStylesheet.labelSizer} aria-hidden>
+              {primaryDurationLabel.length >= timestampLabel.length
+                ? primaryDurationLabel
+                : timestampLabel}
+            </Text>
+            <Text style={assistantTurnFooterStylesheet.labelOverlay}>{visibleLabel}</Text>
+          </View>
+        </Pressable>
+      );
+    }
+  }
+
   return (
     <View style={assistantTurnFooterStylesheet.container}>
       <TurnCopyButton
         getContent={getContent}
         containerStyle={assistantTurnFooterStylesheet.copyButton}
       />
-      {showMetadata ? (
-        showCompletedTimestampOnly ? (
-          <Text style={assistantTurnFooterStylesheet.timestampOnly}>{timestampLabel}</Text>
-        ) : (
-          <Pressable
-            onPress={handlePress}
-            onHoverIn={handleHoverIn}
-            onHoverOut={handleHoverOut}
-            accessibilityRole={canSwap ? "button" : undefined}
-            accessibilityLabel={
-              canSwap
-                ? t("message.turnFooter.endedAccessibility", {
-                    duration: primaryDurationLabel,
-                    timestamp: timestampLabel,
-                  })
-                : primaryDurationLabel
-            }
-          >
-            <View style={assistantTurnFooterStylesheet.labelWrapper}>
-              <Text style={assistantTurnFooterStylesheet.labelSizer} aria-hidden>
-                {primaryDurationLabel.length >= timestampLabel.length
-                  ? primaryDurationLabel
-                  : timestampLabel}
-              </Text>
-              <Text style={assistantTurnFooterStylesheet.labelOverlay}>{visibleLabel}</Text>
-            </View>
-          </Pressable>
-        )
-      ) : null}
+      {metadataNode}
     </View>
   );
 });
