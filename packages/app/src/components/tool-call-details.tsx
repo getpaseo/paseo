@@ -674,7 +674,11 @@ function buildSearchSections(detail: SearchDetail, ds: DetailStyles, itemId?: st
     out.push(
       <View key="search-files" style={styles.section}>
         <Text selectable style={styles.scrollText} dataSet={CODE_SURFACE_DATASET}>
-          <HighlightedText text={detail.filePaths.join("\n")} />
+          {/* `filePaths` is part of the tool-input search span (joined with
+              spaces by the model). The rendered separator differs, so this
+              can provide the ordinary filtered highlight but must not claim an
+              exact active occurrence. */}
+          <HighlightedText text={detail.filePaths.join("\n")} itemId={itemId} field="toolInput" />
         </Text>
       </View>,
     );
@@ -751,7 +755,6 @@ function buildUnknownSections(
   ds: DetailStyles,
   t: TFunction,
   timelineSearchItemId?: string,
-  timelineSearchField?: TimelineSearchField,
 ): ReactNode[] {
   const plainInputText =
     typeof detail.input === "string" && detail.output === null ? detail.input : null;
@@ -760,19 +763,15 @@ function buildUnknownSections(
     return [
       <View key="unknown-plain-text" style={styles.plainTextSection}>
         <Text selectable style={styles.plainText}>
-          <HighlightedText
-            text={plainInputText}
-            itemId={timelineSearchItemId}
-            field={timelineSearchField}
-          />
+          <HighlightedText text={plainInputText} itemId={timelineSearchItemId} field="toolInput" />
         </Text>
       </View>,
     ];
   }
 
   const sectionsFromTopLevel = [
-    { title: t("toolCallDetails.input"), value: detail.input },
-    { title: t("toolCallDetails.output"), value: detail.output },
+    { title: t("toolCallDetails.input"), value: detail.input, field: "toolInput" as const },
+    { title: t("toolCallDetails.output"), value: detail.output, field: "toolOutput" as const },
   ].filter((entry) =>
     hasMeaningfulToolCallDetail({
       type: "unknown",
@@ -802,7 +801,10 @@ function buildUnknownSections(
           showsHorizontalScrollIndicator={true}
         >
           <Text selectable style={styles.scrollText} dataSet={CODE_SURFACE_DATASET}>
-            <HighlightedText text={value} />
+            {/* JSON is pretty-printed here but compactly stringified by the
+                search model. Keep field-scoped ordinary highlighting; the
+                parent block anchor handles exact reveal when offsets differ. */}
+            <HighlightedText text={value} itemId={timelineSearchItemId} field={section.field} />
           </Text>
         </ScrollView>
       </View>,
@@ -817,7 +819,6 @@ function buildDetailSections(
   ds: DetailStyles,
   t: TFunction,
   timelineSearchItemId?: string,
-  timelineSearchField?: TimelineSearchField,
 ): ReactNode[] {
   if (!detail) return [];
   if (detail.type === "shell") {
@@ -908,7 +909,7 @@ function buildDetailSections(
     return [<PlainTextSection key="plain-text" text={detail.text} itemId={timelineSearchItemId} />];
   }
   if (detail.type === "unknown") {
-    return buildUnknownSections(detail, ds, t, timelineSearchItemId, timelineSearchField);
+    return buildUnknownSections(detail, ds, t, timelineSearchItemId);
   }
   return [];
 }
@@ -966,7 +967,7 @@ export function ToolCallDetailsContent({ ...props }: ToolCallDetailsContentProps
 function ToolCallDetailsContentInner({
   detail,
   timelineSearchItemId,
-  timelineSearchField,
+  timelineSearchField: _timelineSearchField,
   errorText,
   maxHeight,
   fillAvailableHeight = false,
@@ -1002,14 +1003,7 @@ function ToolCallDetailsContentInner({
   const ds = useDetailStyles(detail, resolvedMaxHeight, fillAvailableHeight);
   const diffLines = useDiffLines(detail);
 
-  const sections: ReactNode[] = buildDetailSections(
-    detail,
-    diffLines,
-    ds,
-    t,
-    timelineSearchItemId,
-    timelineSearchField,
-  );
+  const sections: ReactNode[] = buildDetailSections(detail, diffLines, ds, t, timelineSearchItemId);
 
   if (errorText) {
     sections.push(

@@ -93,10 +93,13 @@ export function useTimelineSearchScroll(input: UseTimelineSearchScrollInput): nu
   // The navigationRevision this hook has actually finished a coarse scroll
   // for. `null` until the first scrollToItem/scrollToBottom is issued.
   const [settledRevision, setSettledRevision] = useState<number | null>(null);
-  // A second result within the same message or expanded tool-call group only
-  // needs the occurrence-anchor correction. Re-centering the containing row
-  // first produces a visible flash (row centre -> exact match) even when both
-  // results are already in the viewport.
+  // Coarse positioning is keyed to the selected occurrence, not only its
+  // containing row/group. The fine anchor is best-effort (some rendered
+  // surfaces have no measurable text span), so skipping the row scroll for a
+  // different match in the same large output left it wherever the previous
+  // result happened to be — often hidden behind the find pane. Keeping the
+  // occurrence in this key guarantees every selection gets a fresh reveal;
+  // repeated renders of the exact same selection still do no work.
   const lastCoarseTargetKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -108,13 +111,14 @@ export function useTimelineSearchScroll(input: UseTimelineSearchScrollInput): nu
       return;
     }
 
+    const occurrenceKey = `${selectedItemId}:${matches[selectedIndex]?.field}:${matches[selectedIndex]?.fieldOffset}:${matches[selectedIndex]?.matchLength}`;
     let coarseTargetKey: string;
     if (resolvedTarget.kind === "group") {
-      coarseTargetKey = `group:${resolvedTarget.groupId}`;
+      coarseTargetKey = `group:${resolvedTarget.groupId}:${occurrenceKey}`;
     } else if (resolvedTarget.kind === "bottom") {
-      coarseTargetKey = `bottom:${selectedItemId}`;
+      coarseTargetKey = `bottom:${occurrenceKey}`;
     } else {
-      coarseTargetKey = `item:${resolvedTarget.itemId}`;
+      coarseTargetKey = `item:${occurrenceKey}`;
     }
 
     if (lastCoarseTargetKeyRef.current === coarseTargetKey) {

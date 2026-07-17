@@ -7,7 +7,7 @@ import type { StreamViewportHandle } from "@/agent-stream/strategy";
 import type { TimelineSearchMatch } from "./timeline-search-model";
 import { useTimelineSearchScroll } from "./use-timeline-search-scroll";
 
-function makeMatch(id: string): TimelineSearchMatch {
+function makeMatch(id: string, fieldOffset = 0): TimelineSearchMatch {
   const item: StreamItem = {
     kind: "user_message",
     id,
@@ -17,11 +17,11 @@ function makeMatch(id: string): TimelineSearchMatch {
   return {
     item,
     field: "text",
-    fieldOffset: 0,
+    fieldOffset,
     snippet: id,
     snippetMatchOffset: 0,
     snippetMatchLength: id.length,
-    matchOffset: 0,
+    matchOffset: fieldOffset,
     matchLength: id.length,
     occurrenceIndex: 0,
   };
@@ -206,15 +206,15 @@ describe("useTimelineSearchScroll", () => {
     expect(viewportRef.current.scrollToItem).toHaveBeenCalledTimes(1);
   });
 
-  it("skips the coarse row scroll when navigation stays within the same item", () => {
+  it("repositions the row when navigation selects another occurrence in the same item", () => {
     const viewportRef = { current: makeViewportHandle() };
 
     const { rerender } = renderHook(
-      (props: { navigationRevision: number }) =>
+      (props: { navigationRevision: number; selectedIndex: number }) =>
         useTimelineSearchScroll({
           isOpen: true,
-          matches: [makeMatch("message-1")],
-          selectedIndex: 0,
+          matches: [makeMatch("message-1"), makeMatch("message-1", 24)],
+          selectedIndex: props.selectedIndex,
           navigationRevision: props.navigationRevision,
           isLiveHeadItem: () => false,
           findGroupIdForItem: () => null,
@@ -224,16 +224,16 @@ describe("useTimelineSearchScroll", () => {
           requestFrame: syncRequestFrame,
           cancelFrame: noopCancelFrame,
         }),
-      { initialProps: { navigationRevision: 1 } },
+      { initialProps: { navigationRevision: 1, selectedIndex: 0 } },
     );
 
     expect(viewportRef.current.scrollToItem).toHaveBeenCalledTimes(1);
 
     act(() => {
-      rerender({ navigationRevision: 2 });
+      rerender({ navigationRevision: 2, selectedIndex: 1 });
     });
 
-    expect(viewportRef.current.scrollToItem).toHaveBeenCalledTimes(1);
+    expect(viewportRef.current.scrollToItem).toHaveBeenCalledTimes(2);
   });
 
   it("does not re-fire when isLiveHeadItem/findGroupIdForItem/isGroupExpanded/expandGroup get fresh closures on every render without navigation (the scroll-hijack regression)", () => {
