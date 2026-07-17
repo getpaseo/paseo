@@ -141,7 +141,7 @@ export const OmpRpcSlashCommandSchema = z
   .object({
     name: z.string(),
     description: z.string().optional(),
-    source: z.enum(["extension", "prompt", "skill", "builtin"]),
+    source: z.string().optional(),
     sourceInfo: z.record(z.string(), z.unknown()).optional(),
     input: z.object({ hint: z.string().optional() }).passthrough().nullable().optional(),
   })
