@@ -535,7 +535,7 @@ export const UserMessage = memo(function UserMessage({
           ) : null}
           {hasText ? (
             <Text selectable style={userMessageStylesheet.text}>
-              <HighlightedText text={message} />
+              <HighlightedText text={message} itemId={messageId} />
             </Text>
           ) : null}
         </View>
@@ -3138,6 +3138,9 @@ function areExpandableBadgePropsEqual(previous: ExpandableBadgeProps, next: Expa
 }
 
 interface ToolCallProps {
+  /** Stream identity lets timeline search reveal a collapsed detail body. */
+  streamItemId?: string;
+  timelineSearchField?: "text" | "tool" | "other";
   toolName: string;
   args?: unknown;
   result?: unknown;
@@ -3157,6 +3160,8 @@ interface ToolCallProps {
 }
 
 export const ToolCall = memo(function ToolCall({
+  streamItemId,
+  timelineSearchField = "tool",
   toolName,
   args,
   result,
@@ -3176,9 +3181,21 @@ export const ToolCall = memo(function ToolCall({
 }: ToolCallProps) {
   const { openToolCall } = useToolCallSheet();
   const [isExpanded, setIsExpanded] = useState(defaultExpanded ?? false);
+  const searchTarget = useTimelineSearchTarget();
+  const isSearchTarget = streamItemId != null && searchTarget?.itemId === streamItemId;
+  const searchTargetRevision = searchTarget?.navigationRevision;
 
   const isMobile = useIsCompactFormFactor();
   const shouldRenderInline = !isMobile || forceInline;
+
+  // Search matches can live inside a collapsed detail (including reasoning,
+  // which is represented as a tool-call style detail). Reveal that body before
+  // the row-level search scroll runs so the match can be seen.
+  useEffect(() => {
+    if (isSearchTarget && shouldRenderInline) {
+      setIsExpanded(true);
+    }
+  }, [isSearchTarget, searchTargetRevision, shouldRenderInline]);
 
   const effectiveDetail = useMemo<ToolCallDetail | undefined>(() => {
     if (detail) {
@@ -3272,6 +3289,8 @@ export const ToolCall = memo(function ToolCall({
     return (
       <ToolCallDetailsContent
         detail={effectiveDetail}
+        timelineSearchItemId={streamItemId}
+        timelineSearchField={timelineSearchField}
         errorText={presentation.errorText}
         maxHeight={maxDetailHeight}
         showLoadingSkeleton={presentation.isLoadingDetails}
@@ -3283,6 +3302,8 @@ export const ToolCall = memo(function ToolCall({
     presentation.errorText,
     presentation.isLoadingDetails,
     maxDetailHeight,
+    streamItemId,
+    timelineSearchField,
   ]);
 
   if (presentation.isPlan && effectiveDetail?.type === "plan") {
@@ -3315,6 +3336,8 @@ export const ToolCall = memo(function ToolCall({
 }, areToolCallPropsEqual);
 
 function areToolCallPropsEqual(previous: ToolCallProps, next: ToolCallProps) {
+  if (previous.streamItemId !== next.streamItemId) return false;
+  if (previous.timelineSearchField !== next.timelineSearchField) return false;
   if (previous.toolName !== next.toolName) return false;
   if (previous.args !== next.args) return false;
   if (previous.result !== next.result) return false;

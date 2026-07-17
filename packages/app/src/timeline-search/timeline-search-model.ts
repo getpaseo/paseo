@@ -55,6 +55,8 @@ export type TimelineSearchFilter =
 export interface TimelineSearchMatch {
   /** The stream item that matched. */
   item: StreamItem;
+  /** Rendered source field when the item has a direct text surface. */
+  field: "text" | "tool" | "other";
   /** Snippet for display (truncated to ~80 chars), centered on this occurrence. */
   snippet: string;
   /** Character offset of this occurrence within `snippet`. */
@@ -67,6 +69,8 @@ export interface TimelineSearchMatch {
    * query twice produces two navigable matches (distinguished by this offset).
    */
   matchOffset: number;
+  /** Character length of this occurrence in the searchable source text. */
+  matchLength: number;
   /** 0-based index of this occurrence among all matches within the same item. */
   occurrenceIndex: number;
 }
@@ -279,6 +283,19 @@ interface ComputedItemMatches {
   isMatchLimitExceeded: boolean;
 }
 
+function getTimelineSearchMatchField(item: StreamItem): TimelineSearchMatch["field"] {
+  switch (item.kind) {
+    case "user_message":
+    case "assistant_message":
+    case "thought":
+      return "text";
+    case "tool_call":
+      return "tool";
+    default:
+      return "other";
+  }
+}
+
 function computeItemMatches(item: StreamItem, text: string, query: string): ComputedItemMatches {
   const occurrences = findAllMatches(text, query, MAX_TIMELINE_SEARCH_MATCHES + 1);
   if (occurrences.length === 0) {
@@ -302,10 +319,12 @@ function computeItemMatches(item: StreamItem, text: string, query: string): Comp
         : makeSnippetFromCleaned(cleaned, cleanedMatches, occurrenceIndex);
       return {
         item,
+        field: getTimelineSearchMatchField(item),
         snippet: snippet.text,
         snippetMatchOffset: snippet.matchOffset,
         snippetMatchLength: snippet.matchLength,
         matchOffset: occurrence.index,
+        matchLength: occurrence.length,
         occurrenceIndex,
       };
     }),

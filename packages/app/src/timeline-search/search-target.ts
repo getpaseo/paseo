@@ -16,6 +16,11 @@ import { createContext, useContext, useMemo } from "react";
  */
 export interface TimelineSearchTarget {
   itemId: string;
+  /** The source field that produced this match, when it maps to a rendered text surface. */
+  field: "text" | "tool" | "other";
+  /** Offset/length within the source field; used to distinguish one occurrence from another. */
+  matchOffset: number;
+  matchLength: number;
   navigationRevision: number;
 }
 
@@ -38,12 +43,30 @@ export function useTimelineSearchTargetValue(state: {
   isOpen: boolean;
   selectedIndex: number;
   navigationRevision: number;
-  matches: readonly { item: { id: string } }[];
+  matches: readonly {
+    item: { id: string };
+    field: TimelineSearchTarget["field"];
+    matchOffset: number;
+    matchLength: number;
+  }[];
 }): TimelineSearchTarget | null {
-  const itemId = state.isOpen ? (state.matches[state.selectedIndex]?.item.id ?? null) : null;
+  const match = state.isOpen ? (state.matches[state.selectedIndex] ?? null) : null;
+  const itemId = match?.item.id ?? null;
+  const field = match?.field ?? "other";
+  const matchOffset = match?.matchOffset ?? 0;
+  const matchLength = match?.matchLength ?? 0;
   const { navigationRevision } = state;
   return useMemo(
-    () => (itemId ? { itemId, navigationRevision } : null),
-    [itemId, navigationRevision],
+    () =>
+      itemId
+        ? {
+            itemId,
+            field,
+            matchOffset,
+            matchLength,
+            navigationRevision,
+          }
+        : null,
+    [itemId, field, matchOffset, matchLength, navigationRevision],
   );
 }

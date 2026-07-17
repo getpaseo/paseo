@@ -97,7 +97,10 @@ import { usePaneFindKey } from "@/panels/pane-context";
 import { usePaneFindRegistration } from "@/pane-find/use-pane-find-registration";
 import type { PaneFindAdapter } from "@/pane-find/pane-find-types";
 import { TimelineSearchPanel } from "@/timeline-search/timeline-search-panel";
-import { TimelineHighlightProvider } from "@/timeline-search/highlight";
+import {
+  TimelineHighlightProvider,
+  type TimelineHighlightState,
+} from "@/timeline-search/highlight";
 import {
   TimelineSearchTargetProvider,
   useTimelineSearchTargetValue,
@@ -117,16 +120,16 @@ import { toErrorMessage } from "@/utils/error-messages";
 import { useWorkspaceDraftSubmissionStore } from "@/stores/workspace-draft-submission-store";
 
 function TimelineSearchProviders({
-  highlightQuery,
+  highlight,
   target,
   children,
 }: {
-  highlightQuery: string;
+  highlight: TimelineHighlightState;
   target: TimelineSearchTarget | null;
   children: ReactNode;
 }) {
   return (
-    <TimelineHighlightProvider value={highlightQuery}>
+    <TimelineHighlightProvider value={highlight}>
       <TimelineSearchTargetProvider value={target}>{children}</TimelineSearchTargetProvider>
     </TimelineHighlightProvider>
   );
@@ -865,6 +868,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           return (
             <ToolCallSlot
               itemId={item.id}
+              timelineSearchField="text"
               onInlineDetailsExpandedChangeByItemId={setInlineDetailsExpanded}
               toolName={data.name}
               error={data.error}
@@ -1139,13 +1143,18 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       [expandedToolCallGroupIds, isMobile, projectedToolCalls.historyGroupUpdatesByHostId],
     );
 
-    const highlightQuery = timelineSearchState.isOpen ? timelineSearchState.query : "";
-
     const timelineSearchTarget = useTimelineSearchTargetValue(timelineSearchState);
+    const timelineHighlight = useMemo<TimelineHighlightState>(
+      () => ({
+        query: timelineSearchState.isOpen ? timelineSearchState.query : "",
+        target: timelineSearchTarget,
+      }),
+      [timelineSearchState.isOpen, timelineSearchState.query, timelineSearchTarget],
+    );
 
     return (
       <ToolCallSheetProvider>
-        <TimelineSearchProviders highlightQuery={highlightQuery} target={timelineSearchTarget}>
+        <TimelineSearchProviders highlight={timelineHighlight} target={timelineSearchTarget}>
           <View style={stylesheet.container}>
             {timelineSearchState.isOpen && (
               <TimelineSearchPanel
@@ -1340,7 +1349,13 @@ function ToolCallSlot({
     (expanded: boolean) => onInlineDetailsExpandedChangeByItemId(itemId, expanded),
     [onInlineDetailsExpandedChangeByItemId, itemId],
   );
-  return <ToolCall {...rest} onInlineDetailsExpandedChange={handleExpandedChange} />;
+  return (
+    <ToolCall
+      {...rest}
+      streamItemId={itemId}
+      onInlineDetailsExpandedChange={handleExpandedChange}
+    />
+  );
 }
 
 const ThemedActivityIndicator = withUnistyles(ActivityIndicator);

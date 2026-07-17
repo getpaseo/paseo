@@ -30,6 +30,8 @@ const ScrollView = isWeb ? RNScrollView : GHScrollView;
 
 interface ToolCallDetailsContentProps {
   detail?: ToolCallDetail;
+  timelineSearchItemId?: string;
+  timelineSearchField?: "text" | "tool" | "other";
   errorText?: string;
   maxHeight?: number;
   fillAvailableHeight?: boolean;
@@ -572,7 +574,13 @@ interface UnknownDetail {
   output: unknown;
 }
 
-function buildUnknownSections(detail: UnknownDetail, ds: DetailStyles, t: TFunction): ReactNode[] {
+function buildUnknownSections(
+  detail: UnknownDetail,
+  ds: DetailStyles,
+  t: TFunction,
+  timelineSearchItemId?: string,
+  timelineSearchField?: "text" | "tool" | "other",
+): ReactNode[] {
   const plainInputText =
     typeof detail.input === "string" && detail.output === null ? detail.input : null;
 
@@ -580,7 +588,11 @@ function buildUnknownSections(detail: UnknownDetail, ds: DetailStyles, t: TFunct
     return [
       <View key="unknown-plain-text" style={styles.plainTextSection}>
         <Text selectable style={styles.plainText}>
-          <HighlightedText text={plainInputText} />
+          <HighlightedText
+            text={plainInputText}
+            itemId={timelineSearchItemId}
+            field={timelineSearchField}
+          />
         </Text>
       </View>,
     ];
@@ -632,6 +644,8 @@ function buildDetailSections(
   diffLines: DiffLine[] | undefined,
   ds: DetailStyles,
   t: TFunction,
+  timelineSearchItemId?: string,
+  timelineSearchField?: "text" | "tool" | "other",
 ): ReactNode[] {
   if (!detail) return [];
   if (detail.type === "shell") {
@@ -702,7 +716,7 @@ function buildDetailSections(
     return [<PlainTextSection key="plain-text" text={detail.text} />];
   }
   if (detail.type === "unknown") {
-    return buildUnknownSections(detail, ds, t);
+    return buildUnknownSections(detail, ds, t, timelineSearchItemId, timelineSearchField);
   }
   return [];
 }
@@ -747,6 +761,8 @@ export function ToolCallDetailsContent({ ...props }: ToolCallDetailsContentProps
 
 function ToolCallDetailsContentInner({
   detail,
+  timelineSearchItemId,
+  timelineSearchField,
   errorText,
   maxHeight,
   fillAvailableHeight = false,
@@ -757,7 +773,14 @@ function ToolCallDetailsContentInner({
   const ds = useDetailStyles(detail, resolvedMaxHeight, fillAvailableHeight);
   const diffLines = useDiffLines(detail);
 
-  const sections: ReactNode[] = buildDetailSections(detail, diffLines, ds, t);
+  const sections: ReactNode[] = buildDetailSections(
+    detail,
+    diffLines,
+    ds,
+    t,
+    timelineSearchItemId,
+    timelineSearchField,
+  );
 
   if (errorText) {
     sections.push(<ErrorSection key="error" errorText={errorText} ds={ds} />);

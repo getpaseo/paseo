@@ -16,10 +16,12 @@ function makeMatch(id: string): TimelineSearchMatch {
   };
   return {
     item,
+    field: "text",
     snippet: id,
     snippetMatchOffset: 0,
     snippetMatchLength: id.length,
     matchOffset: 0,
+    matchLength: id.length,
     occurrenceIndex: 0,
   };
 }

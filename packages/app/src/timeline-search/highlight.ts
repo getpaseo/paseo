@@ -1,4 +1,5 @@
 import { createContext, useContext } from "react";
+import type { TimelineSearchTarget } from "./search-target";
 
 /**
  * Shared "highlight the matched query" primitives used by both the timeline
@@ -117,10 +118,23 @@ export function splitHighlightSegments(text: string, query: string): HighlightSe
  * message components can highlight occurrences. Empty string when the search
  * panel is closed, so highlighting is a no-op and adds no render cost.
  */
-const TimelineHighlightContext = createContext<string>("");
+export interface TimelineHighlightState {
+  query: string;
+  target: TimelineSearchTarget | null;
+}
+
+const EMPTY_TIMELINE_HIGHLIGHT_STATE: TimelineHighlightState = { query: "", target: null };
+const TimelineHighlightContext = createContext<TimelineHighlightState>(
+  EMPTY_TIMELINE_HIGHLIGHT_STATE,
+);
 
 export const TimelineHighlightProvider = TimelineHighlightContext.Provider;
 
 export function useTimelineHighlightQuery(): string {
-  return useContext(TimelineHighlightContext);
+  return useContext(TimelineHighlightContext).query;
+}
+
+/** The selected occurrence, if any. Kept separate from the query for exact active styling. */
+export function useTimelineHighlightTarget(): TimelineSearchTarget | null {
+  return useContext(TimelineHighlightContext).target;
 }
