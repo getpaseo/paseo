@@ -79,13 +79,12 @@ export function buildSelfNodeCommand(
   args: string[];
   env: ExternalProcessEnv;
 } {
-  const env = buildExternalProcessEnv(process.env, []);
-  Object.assign(env, { [ELECTRON_RUN_AS_NODE]: "1" }, envOverlay);
-  for (const [key, value] of Object.entries(env)) {
-    if (value === undefined) {
-      delete env[key];
-    }
-  }
+  // Route the overlay through buildExternalProcessEnv so the UTF-8 locale guard
+  // observes the caller's locale choice, keeping this consistent with
+  // createExternalProcessEnv. Electron node mode is forced afterward because the
+  // runtime-control scrub inside buildExternalProcessEnv strips it.
+  const env = buildExternalProcessEnv(process.env, envOverlay ? [envOverlay] : []);
+  env[ELECTRON_RUN_AS_NODE] = "1";
   return {
     command: process.execPath,
     args,

@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
   buildSelfNodeCommand,
   createExternalCommandProcessEnv,
@@ -145,5 +145,54 @@ describe("external process env UTF-8 locale default", () => {
 
     expect(env.LANG).toBeUndefined();
     expect(env.LC_CTYPE).toBe("en_US.UTF-8");
+  });
+});
+
+describe("buildSelfNodeCommand UTF-8 locale default", () => {
+  const localeKeys = ["LANG", "LC_ALL", "LC_CTYPE"] as const;
+  const savedLocale: Record<string, string | undefined> = {};
+
+  beforeEach(() => {
+    for (const key of localeKeys) {
+      savedLocale[key] = process.env[key];
+      delete process.env[key];
+    }
+  });
+
+  afterEach(() => {
+    for (const key of localeKeys) {
+      if (savedLocale[key] === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = savedLocale[key];
+      }
+    }
+  });
+
+  test("injects a UTF-8 LANG when neither the daemon env nor the overlay set a locale", () => {
+    const command = buildSelfNodeCommand(["script.js"]);
+
+    expect(command.env.LANG).toBe("en_US.UTF-8");
+  });
+
+  test("does not inject a stray LANG when the overlay selects a locale via LC_ALL", () => {
+    const command = buildSelfNodeCommand(["script.js"], { LC_ALL: "C" });
+
+    expect(command.env.LC_ALL).toBe("C");
+    expect(command.env.LANG).toBeUndefined();
+  });
+
+  test("preserves an explicit LANG overlay instead of overriding it", () => {
+    const command = buildSelfNodeCommand(["script.js"], { LANG: "C.UTF-8" });
+
+    expect(command.env.LANG).toBe("C.UTF-8");
+  });
+
+  test("preserves a locale already present in the daemon environment", () => {
+    process.env.LANG = "fr_FR.UTF-8";
+
+    const command = buildSelfNodeCommand(["script.js"]);
+
+    expect(command.env.LANG).toBe("fr_FR.UTF-8");
   });
 });
