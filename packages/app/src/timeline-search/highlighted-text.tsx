@@ -74,7 +74,8 @@ export function HighlightedText({
   return segments.map((segment) => {
     const isActive =
       segment.isMatch &&
-      itemId === target?.itemId &&
+      target !== null &&
+      itemId === target.itemId &&
       field === target.field &&
       segment.offset === target.matchOffset &&
       segment.text.length === target.matchLength;
