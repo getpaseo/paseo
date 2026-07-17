@@ -622,12 +622,32 @@ function readOpenCodeAgentHexColor(agent: { color?: unknown }): string | undefin
     : undefined;
 }
 
+function readOpenCodeAgentBoundModel(agent: { model?: unknown }): string | undefined {
+  const model = agent.model;
+  if (!model || typeof model !== "object") {
+    return undefined;
+  }
+  const providerID = (model as { providerID?: unknown }).providerID;
+  const modelID = (model as { modelID?: unknown }).modelID;
+  if (
+    typeof providerID !== "string" ||
+    providerID.trim().length === 0 ||
+    typeof modelID !== "string" ||
+    modelID.trim().length === 0
+  ) {
+    return undefined;
+  }
+  return buildOpenCodeModelLookupKey(providerID.trim(), modelID.trim());
+}
+
 function mapOpenCodeAgentToMode(agent: {
   name: string;
   description?: unknown;
   color?: unknown;
+  model?: unknown;
 }): AgentMode {
   const colorTier = readOpenCodeAgentHexColor(agent);
+  const model = readOpenCodeAgentBoundModel(agent);
   return {
     id: agent.name,
     label: agent.name.charAt(0).toUpperCase() + agent.name.slice(1),
@@ -637,6 +657,7 @@ function mapOpenCodeAgentToMode(agent: {
         ? agent.description.trim()
         : DEFAULT_MODES.find((mode) => mode.id === agent.name)?.description,
     ...(colorTier ? { colorTier } : {}),
+    ...(model ? { model } : {}),
   };
 }
 
@@ -2860,6 +2881,13 @@ class OpenCodeAgentSession implements AgentSession {
   private readonly logger: Logger;
   private readonly modelContextWindowsByModelKey: ReadonlyMap<string, number>;
   private currentMode: string | null = null;
+  /**
+   * The model bound to the currently selected OpenCode agent/mode (as
+   * `providerID/modelID`), if any. OpenCode plugins can bind an agent to a
+   * specific model (e.g. `atlas`→`kimi`); selecting that agent must switch the
+   * effective model like the OpenCode TUI does.
+   */
+  private agentBoundModel: string | undefined;
   private autoAcceptEnabled = false;
   private pendingPermissions = new Map<string, AgentPermissionRequest>();
   private abortController: AbortController | null = null;
@@ -2952,7 +2980,10 @@ class OpenCodeAgentSession implements AgentSession {
   async setModel(modelId: string | null): Promise<void> {
     const normalizedModelId =
       typeof modelId === "string" && modelId.trim().length > 0 ? modelId : null;
-    this.config.model = normalizedModelId ?? undefined;
+    // Explicit user choice wins over the current agent's bound model until the
+    // next setMode() starts a fresh selection. Clearing it reverts to the
+    // agent-bound model (if any).
+    this.config.model = normalizedModelId ?? this.agentBoundModel ?? undefined;
     this.selectedModelContextWindowMaxTokens = this.resolveConfiguredModelContextWindowMaxTokens(
       this.config.model,
     );
@@ -3778,13 +3809,42 @@ class OpenCodeAgentSession implements AgentSession {
   async setMode(modeId: string): Promise<void> {
     const normalizedModeId = normalizeOpenCodeModeId(modeId);
     if (normalizedModeId === OPENCODE_LEGACY_FULL_ACCESS_MODE_ID) {
+      await this.applyAgentBoundModelForModeSelection(OPENCODE_BUILD_MODE_ID);
       this.currentMode = OPENCODE_BUILD_MODE_ID;
       await this.setFeature(OPENCODE_AUTO_ACCEPT_FEATURE_ID, true);
       return;
     }
 
+    await this.applyAgentBoundModelForModeSelection(normalizedModeId);
     this.currentMode = normalizedModeId;
     this.config.modeId = normalizedModeId ?? undefined;
+  }
+
+  /**
+   * Resolves and applies the target agent's bound model as the effective
+   * prompt model. A mode selection is a fresh start: any prior explicit
+   * `setModel()` override does not persist across a mode switch (B4). If the
+   * newly selected agent has no bound model, the current model is left as-is.
+   */
+  private async applyAgentBoundModelForModeSelection(modeId: string | null): Promise<void> {
+    const boundModel = await this.resolveAgentBoundModel(modeId);
+    this.agentBoundModel = boundModel;
+    if (!boundModel) {
+      return;
+    }
+    this.config.model = boundModel;
+    this.selectedModelContextWindowMaxTokens =
+      this.resolveConfiguredModelContextWindowMaxTokens(boundModel);
+  }
+
+  private async resolveAgentBoundModel(modeId: string | null): Promise<string | undefined> {
+    if (modeId === null) {
+      return undefined;
+    }
+    const runtimeAgentId = resolveOpenCodeRuntimeAgentId(modeId);
+    const modes = await this.getAvailableModes();
+    const match = modes.find((mode) => mode.id === modeId || mode.id === runtimeAgentId);
+    return match?.model;
   }
 
   async setFeature(featureId: string, value: unknown): Promise<void> {
