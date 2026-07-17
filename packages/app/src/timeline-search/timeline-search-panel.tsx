@@ -13,6 +13,7 @@ import {
 } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { ChevronDown, ChevronUp, Search, X } from "lucide-react-native";
+import { FIND_INPUT_FOCUS_SCOPE } from "@/keyboard/focus-scope";
 import {
   MAX_TIMELINE_SEARCH_MATCHES,
   type TimelineSearchFilter,
@@ -157,6 +158,7 @@ export function TimelineSearchPanel({
   // debounce (or immediately on clear/Enter), so typing doesn't re-search the
   // whole thread and re-render every message's highlight per keystroke.
   const [draftQuery, setDraftQuery] = useState(state.query);
+  const findInputDataSet = useMemo(() => ({ paseoKeyboardFocusScope: FIND_INPUT_FOCUS_SCOPE }), []);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSentQueryRef = useRef(state.query);
 
@@ -374,6 +376,7 @@ export function TimelineSearchPanel({
             autoFocus
             returnKeyType="search"
             accessibilityLabel={t("timelineSearch.placeholder")}
+            dataSet={findInputDataSet}
             testID="timeline-search-input"
           />
         </View>
