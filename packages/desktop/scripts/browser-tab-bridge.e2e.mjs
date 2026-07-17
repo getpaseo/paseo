@@ -135,9 +135,15 @@ function spawnLogged(name, command, args, options, logDir) {
     detached: process.platform !== "win32",
     stdio: ["ignore", "pipe", "pipe"],
   });
-  child.stdout.pipe(log);
-  child.stderr.pipe(log);
-  child.once("exit", () => log.end());
+  let openStreams = 2;
+  const closeLogStream = () => {
+    openStreams -= 1;
+    if (openStreams === 0) log.end();
+  };
+  child.stdout.pipe(log, { end: false });
+  child.stderr.pipe(log, { end: false });
+  child.stdout.once("end", closeLogStream);
+  child.stderr.once("end", closeLogStream);
   return { child, logPath };
 }
 
