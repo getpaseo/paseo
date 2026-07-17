@@ -59,7 +59,7 @@ async function closeTopSheet(page: Page) {
 
 async function closeSheetByHeaderButton(page: Page, testId: string) {
   const sheet = page.getByTestId(testId);
-  await sheet.getByLabel("Close", { exact: true }).click({ force: true });
+  await sheet.getByLabel("Close", { exact: true }).click();
   await expect(sheet).not.toBeVisible({ timeout: 10_000 });
 }
 

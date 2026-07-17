@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import type { Logger } from "pino";
 import {
   checkoutLiteFromGitSnapshot,
   classifyDirectoryForProjectMembership,
@@ -14,6 +15,7 @@ import {
 } from "../../workspace-registry.js";
 import type { WorkspaceGitService } from "../../workspace-git-service.js";
 import type { CreatePaseoWorktreeWorkflowResult } from "../../worktree-session.js";
+import { createRealpathAwarePathMatcher } from "../../../utils/path.js";
 
 /**
  * Resolves which workspace and project records a directory belongs to, creating,
@@ -34,7 +36,21 @@ export interface ResolveOrCreateWorkspaceIdInput {
   initialTitle: string | null;
 }
 
+export interface ImportWorkspaceInput {
+  cwd: string;
+  requestedWorkspaceId?: string;
+}
+
+export interface ImportWorkspaceResult<T> {
+  value: T;
+  createdWorkspace: PersistedWorkspaceRecord | null;
+}
+
 export interface WorkspaceProvisioningService {
+  runInImportWorkspace<T>(
+    input: ImportWorkspaceInput,
+    operation: (workspace: PersistedWorkspaceRecord) => Promise<T>,
+  ): Promise<ImportWorkspaceResult<T>>;
   findOrCreateWorkspaceForDirectory(cwd: string): Promise<PersistedWorkspaceRecord>;
   resolveOrCreateWorkspaceIdForCreateAgent(input: ResolveOrCreateWorkspaceIdInput): Promise<string>;
   createWorkspaceForDirectory(
@@ -51,8 +67,72 @@ export function createWorkspaceProvisioningService(deps: {
   workspaceRegistry: WorkspaceRegistry;
   projectRegistry: ProjectRegistry;
   workspaceGitService: Pick<WorkspaceGitService, "getCheckout" | "peekSnapshot">;
+  logger: Logger;
 }): WorkspaceProvisioningService {
-  const { workspaceRegistry, projectRegistry, workspaceGitService } = deps;
+  const { workspaceRegistry, projectRegistry, workspaceGitService, logger } = deps;
+
+  async function runInImportWorkspace<T>(
+    input: ImportWorkspaceInput,
+    operation: (workspace: PersistedWorkspaceRecord) => Promise<T>,
+  ): Promise<ImportWorkspaceResult<T>> {
+    if (input.requestedWorkspaceId) {
+      const workspace = await workspaceRegistry.get(input.requestedWorkspaceId);
+      if (!workspace || workspace.archivedAt) {
+        throw new Error(`Workspace not found: ${input.requestedWorkspaceId}`);
+      }
+      const project = await projectRegistry.get(workspace.projectId);
+      if (!project || project.archivedAt) {
+        throw new Error(`Project not found: ${workspace.projectId}`);
+      }
+      if (!createRealpathAwarePathMatcher(workspace.cwd)(input.cwd)) {
+        throw new Error(`Import cwd does not match workspace: ${workspace.workspaceId}`);
+      }
+      return {
+        value: await operation(workspace),
+        createdWorkspace: null,
+      };
+    }
+
+    const projectsBeforeImport = await projectRegistry.list();
+    const workspace = await createWorkspaceForDirectory(input.cwd);
+    const previousProject =
+      projectsBeforeImport.find((project) => project.projectId === workspace.projectId) ?? null;
+
+    try {
+      return {
+        value: await operation(workspace),
+        createdWorkspace: workspace,
+      };
+    } catch (error) {
+      await rollbackFailedImportWorkspace(workspace, previousProject);
+      throw error;
+    }
+  }
+
+  async function rollbackFailedImportWorkspace(
+    workspace: PersistedWorkspaceRecord,
+    previousProject: PersistedProjectRecord | null,
+  ): Promise<void> {
+    try {
+      await workspaceRegistry.remove(workspace.workspaceId);
+      const projectHasActiveWorkspace = (await workspaceRegistry.list()).some(
+        (candidate) => candidate.projectId === workspace.projectId && !candidate.archivedAt,
+      );
+      if (projectHasActiveWorkspace) {
+        return;
+      }
+      if (previousProject?.archivedAt) {
+        await projectRegistry.upsert(previousProject);
+      } else if (!previousProject) {
+        await projectRegistry.remove(workspace.projectId);
+      }
+    } catch (error) {
+      logger.error(
+        { err: error, workspaceId: workspace.workspaceId, projectId: workspace.projectId },
+        "Failed to restore workspace state after provider import failure",
+      );
+    }
+  }
 
   async function resolveWorkspaceDirectory(
     cwd: string,
@@ -275,6 +355,7 @@ export function createWorkspaceProvisioningService(deps: {
   }
 
   return {
+    runInImportWorkspace,
     findOrCreateWorkspaceForDirectory,
     resolveOrCreateWorkspaceIdForCreateAgent,
     createWorkspaceForDirectory,

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type pino from "pino";
 
-import type { GitHubService } from "../../services/github-service.js";
+import type { ForgeService } from "../../services/forge-service.js";
 import { isPaseoOwnedWorktreeCwd } from "../../utils/worktree.js";
 import {
   archiveByScope,
@@ -26,7 +26,7 @@ interface CreateAgentLifecycleDispatchDependencies {
   worktreesRoot?: string;
   agentManager: AgentManager;
   agentStorage: AgentStorage;
-  github: GitHubService;
+  github: ForgeService;
   workspaceGitService: WorkspaceGitService;
   createPaseoWorktreeWorkflow: CreatePaseoWorktreeWorkflowFn;
   archiveAgentForClose: (agentId: string) => Promise<unknown>;

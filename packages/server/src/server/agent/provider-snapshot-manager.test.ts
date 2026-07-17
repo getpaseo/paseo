@@ -952,6 +952,32 @@ describe("ProviderSnapshotManager applyMutableProviderConfig", () => {
       expect(manager.hasProvider("zai-claude")).toBe(true);
       expect(state.providerDefinitions["zai-claude"]).toMatchObject({ enabled: true });
       expect(manager.listRegisteredProviderIds()).toContain("zai-claude");
+      expect(manager.getSnapshot().find((entry) => entry.provider === "zai-claude")?.source).toBe(
+        "custom",
+      );
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test("removes startup provider overrides from the live registry", () => {
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: {
+        "zai-claude": { extends: "claude", label: "ZAI", enabled: true },
+      },
+    });
+    try {
+      expect(manager.hasProvider("zai-claude")).toBe(true);
+
+      const state = manager.applyMutableProviderConfig({}, { removeProviders: ["zai-claude"] });
+
+      expect(manager.hasProvider("zai-claude")).toBe(false);
+      expect(state.providerDefinitions["zai-claude"]).toBeUndefined();
+      expect(manager.getSnapshot().some((entry) => entry.provider === "zai-claude")).toBe(false);
+
+      manager.applyMutableProviderConfig({ codex: { enabled: false } });
+      expect(manager.hasProvider("zai-claude")).toBe(false);
     } finally {
       manager.destroy();
     }

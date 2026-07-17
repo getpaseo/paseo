@@ -20,11 +20,7 @@ export interface ShortcutRoutingInput {
   payload: KeyboardShortcutPayload;
 }
 
-export type ShortcutCallbackName =
-  | "toggle-agent-list"
-  | "toggle-both-sidebars"
-  | "toggle-focus-mode"
-  | "cycle-theme";
+export type ShortcutCallbackName = "toggle-agent-list" | "toggle-both-sidebars" | "cycle-theme";
 
 export type ShortcutAction =
   | { kind: "none" }
@@ -63,12 +59,12 @@ const PASSTHROUGH_DISPATCH: Record<string, KeyboardActionDefinition> = {
   "workspace.pane.move-tab.up": { id: "workspace.pane.move-tab.up", scope: "workspace" },
   "workspace.pane.move-tab.down": { id: "workspace.pane.move-tab.down", scope: "workspace" },
   "workspace.pane.close": { id: "workspace.pane.close", scope: "workspace" },
+  "view.toggle.focus": { id: "workspace.focus.toggle", scope: "workspace" },
 };
 
 const SIMPLE_CALLBACKS: Record<string, ShortcutCallbackName> = {
   "sidebar.toggle.left": "toggle-agent-list",
   "sidebar.toggle.both": "toggle-both-sidebars",
-  "view.toggle.focus": "toggle-focus-mode",
   "theme.cycle": "cycle-theme",
 };
 

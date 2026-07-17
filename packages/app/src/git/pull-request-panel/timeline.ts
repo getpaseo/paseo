@@ -5,7 +5,14 @@ export type PrThreadLocation = NonNullable<PrPaneActivity["location"]>;
 export interface PrThreadEntry {
   kind: "thread";
   id: string;
-  location: PrThreadLocation;
+  /** Absent for general (non-file) discussion threads that carry no position. */
+  location?: PrThreadLocation;
+  /**
+   * Thread resolution state, unified across file threads (`location.isResolved`)
+   * and general discussions (`threadIsResolved`). Absent when the forge exposes no
+   * resolution for the thread.
+   */
+  isResolved?: boolean;
   comments: PrPaneActivity[];
 }
 
@@ -23,8 +30,10 @@ export type PrTimelineEntry =
 
 /**
  * Builds the GitHub-style nested timeline:
- * - comments sharing a `location.threadId` collapse into one thread entry
- *   (root comment + replies), placed at the first comment's position;
+ * - comments sharing a thread id collapse into one thread entry (root comment +
+ *   replies), placed at the first comment's position. The id is the top-level
+ *   `threadId` (forge-neutral, used by GitLab general discussions) falling back
+ *   to `location.threadId` (file-position threads);
  * - threads whose root comment carries a `reviewId` nest under that review
  *   (GitHub's explicit signal: PullRequestReviewComment.pullRequestReview);
  * - everything else stays a standalone entry in original order.
@@ -39,8 +48,8 @@ function groupThreads(activities: readonly PrPaneActivity[]): PrTimelineEntry[] 
   const threadsById = new Map<string, PrThreadEntry>();
 
   for (const activity of activities) {
-    const threadId = activity.location?.threadId;
-    if (!activity.location || !threadId) {
+    const threadId = activity.threadId ?? activity.location?.threadId;
+    if (!threadId) {
       entries.push({ kind: "single", id: activity.id, activity });
       continue;
     }
@@ -51,10 +60,12 @@ function groupThreads(activities: readonly PrPaneActivity[]): PrTimelineEntry[] 
       continue;
     }
 
+    const resolved = activity.location?.isResolved ?? activity.threadIsResolved;
     const thread: PrThreadEntry = {
       kind: "thread",
       id: `thread:${threadId}`,
-      location: activity.location,
+      ...(activity.location ? { location: activity.location } : {}),
+      ...(resolved !== undefined ? { isResolved: resolved } : {}),
       comments: [activity],
     };
     threadsById.set(threadId, thread);

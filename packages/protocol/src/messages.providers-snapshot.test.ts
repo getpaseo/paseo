@@ -38,6 +38,18 @@ describe("provider snapshot message schemas", () => {
     expect(parsed.enabled).toBe(true);
   });
 
+  test("preserves provider snapshot entry source", () => {
+    const parsed = ProviderSnapshotEntrySchema.parse({
+      provider: "gemini",
+      status: "ready",
+      enabled: true,
+      source: "custom",
+      label: "Gemini",
+    });
+
+    expect(parsed.source).toBe("custom");
+  });
+
   test("defaults missing enabled state in providers snapshot response entries", () => {
     const parsed = GetProvidersSnapshotResponseMessageSchema.parse({
       type: "get_providers_snapshot_response",

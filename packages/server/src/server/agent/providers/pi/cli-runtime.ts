@@ -1,9 +1,8 @@
-import { type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import type { Logger } from "pino";
 
-import { spawnProcess } from "../../../../utils/spawn.js";
-import { terminateWithTreeKill } from "../../../../utils/tree-kill.js";
 import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
+import { JsonlRpcProcess, type JsonlRpcLaunch } from "../jsonl-rpc-process.js";
 import {
   buildPiLaunch,
   type PiRuntime,
@@ -13,11 +12,9 @@ import {
 } from "./runtime.js";
 import type {
   PiAgentMessage,
-  PiCommandsRpcType,
   PiModel,
   PiPromptAck,
   PiRpcCommand,
-  PiRpcResponse,
   PiRpcSlashCommand,
   PiRuntimeEvent,
   PiSessionState,
@@ -27,54 +24,25 @@ import type {
 const DEFAULT_PI_COMMAND: [string, ...string[]] = [
   process.env.PI_COMMAND ?? process.env.PI_ACP_PI_COMMAND ?? "pi",
 ];
-const DEFAULT_TIMEOUT_MS = 30_000;
-const DEFAULT_COMMANDS_RPC_TYPE: PiCommandsRpcType = "get_commands";
-const STDERR_BUFFER_LIMIT = 8192;
-const GRACEFUL_SHUTDOWN_TIMEOUT_MS = 2_000;
-const FORCE_SHUTDOWN_TIMEOUT_MS = 1_000;
-
-function assertChildWithPipes(
-  child: ChildProcess,
-): asserts child is ChildProcessWithoutNullStreams {
-  if (!child.stdin || !child.stdout || !child.stderr) {
-    throw new Error("Pi process was spawned without stdio streams");
-  }
-}
-
-interface PendingRequest {
-  resolve: (value: unknown) => void;
-  reject: (error: Error) => void;
-  timer: NodeJS.Timeout;
-}
+const DEFAULT_COMMANDS_RPC_NAME = "get_commands";
 
 export interface PiCliRuntimeOptions {
   logger: Logger;
   runtimeSettings?: ProviderRuntimeSettings;
   command?: [string, ...string[]];
-  commandsRpcType?: PiCommandsRpcType;
+  commandsRpcName?: string;
   spawnProcess?: (launch: PiRuntimeLaunch) => ChildProcessWithoutNullStreams;
 }
 
 export class PiCliRuntime implements PiRuntime {
   private readonly command: [string, ...string[]];
-  private readonly commandsRpcType: PiCommandsRpcType;
-  private readonly spawnProcess: (launch: PiRuntimeLaunch) => ChildProcessWithoutNullStreams;
+  private readonly commandsRpcName: string;
+  private readonly spawnProcess?: (launch: PiRuntimeLaunch) => ChildProcessWithoutNullStreams;
 
   constructor(private readonly options: PiCliRuntimeOptions) {
     this.command = options.command ?? DEFAULT_PI_COMMAND;
-    this.commandsRpcType = options.commandsRpcType ?? DEFAULT_COMMANDS_RPC_TYPE;
-    this.spawnProcess =
-      options.spawnProcess ??
-      ((launch) => {
-        const [command, ...args] = launch.argv;
-        const child = spawnProcess(command, args, {
-          cwd: launch.cwd,
-          envOverlay: launch.env,
-          stdio: ["pipe", "pipe", "pipe"],
-        });
-        assertChildWithPipes(child);
-        return child;
-      });
+    this.commandsRpcName = options.commandsRpcName ?? DEFAULT_COMMANDS_RPC_NAME;
+    this.spawnProcess = options.spawnProcess;
   }
 
   async startSession(input: PiStartSessionInput): Promise<PiRuntimeSession> {
@@ -83,47 +51,37 @@ export class PiCliRuntime implements PiRuntime {
       runtimeSettings: this.options.runtimeSettings,
       session: input,
     });
-    return new PiCliRuntimeSession(
-      launch,
-      this.spawnProcess(launch),
-      this.options.logger,
-      this.commandsRpcType,
-    );
+    const [command, ...args] = launch.argv;
+    const processLaunch: JsonlRpcLaunch = {
+      command,
+      args,
+      cwd: launch.cwd,
+      env: launch.env,
+    };
+    const spawn = this.spawnProcess;
+    const processOptions = {
+      launch: processLaunch,
+      logger: this.options.logger,
+      diagnosticName: "Pi RPC",
+      ...(spawn ? { spawn: () => spawn(launch) } : {}),
+    };
+    const process = new JsonlRpcProcess(processOptions);
+    return new PiCliRuntimeSession(process, this.commandsRpcName);
   }
 }
 
 class PiCliRuntimeSession implements PiRuntimeSession {
-  private readonly pending = new Map<string, PendingRequest>();
   private readonly subscribers = new Set<(event: PiRuntimeEvent) => void>();
-  private stderrBuffer = "";
-  private nextRequestId = 1;
-  private disposed = false;
-  private stdoutBuffer = "";
 
   constructor(
-    _launch: PiRuntimeLaunch,
-    private readonly child: ChildProcessWithoutNullStreams,
-    private readonly logger: Logger,
-    private readonly commandsRpcType: PiCommandsRpcType,
+    private readonly process: JsonlRpcProcess,
+    private readonly commandsRpcName: string,
   ) {
-    child.stdout.on("data", (chunk) => {
-      this.handleStdoutChunk(chunk.toString());
+    process.onMessage((message) => {
+      this.emit(message as PiRuntimeEvent);
     });
-    child.stderr.on("data", (chunk) => {
-      this.stderrBuffer += chunk.toString();
-      if (this.stderrBuffer.length > STDERR_BUFFER_LIMIT) {
-        this.stderrBuffer = this.stderrBuffer.slice(-STDERR_BUFFER_LIMIT);
-      }
-    });
-    child.on("error", (error) => {
-      this.failAll(error instanceof Error ? error : new Error(String(error)));
-    });
-    child.on("exit", (code, signal) => {
-      const error = new Error(
-        `Pi RPC process exited with code ${code ?? "null"} and signal ${signal ?? "null"}\n${this.stderrBuffer}`.trim(),
-      );
+    process.onExit(({ error }) => {
       this.emit({ type: "process_exit", error: error.message });
-      this.failAll(error);
     });
   }
 
@@ -138,18 +96,19 @@ class PiCliRuntimeSession implements PiRuntimeSession {
     message: string,
     images?: Array<{ type: "image"; data: string; mimeType: string }>,
   ): Promise<PiPromptAck> {
-    const data = await this.request({
+    const { id: requestId, promise } = this.process.startRequest({
       type: "prompt",
       message,
       ...(images?.length ? { images } : {}),
     });
+    const data = await promise;
     if (typeof data === "object" && data !== null && !Array.isArray(data)) {
       const { agentInvoked } = data as Record<string, unknown>;
       if (typeof agentInvoked === "boolean") {
-        return { agentInvoked };
+        return { requestId, agentInvoked };
       }
     }
-    return {};
+    return { requestId };
   }
 
   async compact(customInstructions?: string): Promise<void> {
@@ -224,17 +183,21 @@ class PiCliRuntimeSession implements PiRuntimeSession {
   }
 
   async getCommands(): Promise<PiRpcSlashCommand[]> {
-    const data = (await this.request({ type: this.commandsRpcType })) as {
+    const data = (await this.request({ type: this.commandsRpcName })) as {
       commands?: PiRpcSlashCommand[];
     };
     return data.commands ?? [];
+  }
+
+  sendRawFrame(frame: object & { type: string }): void {
+    this.process.send(frame);
   }
 
   respondToExtensionUiRequest(
     id: string,
     response: { value?: string; confirmed?: boolean; cancelled?: boolean },
   ): void {
-    this.writeJsonLine({ type: "extension_ui_response", id, ...response });
+    this.process.send({ type: "extension_ui_response", id, ...response });
   }
 
   cancelExtensionUiRequest(id: string): void {
@@ -242,123 +205,16 @@ class PiCliRuntimeSession implements PiRuntimeSession {
   }
 
   async close(): Promise<void> {
-    if (this.disposed) return;
-    this.disposed = true;
-    try {
-      this.child.stdin.end();
-    } catch {
-      // ignore
-    }
-    const result = await terminateWithTreeKill(this.child, {
-      gracefulTimeoutMs: GRACEFUL_SHUTDOWN_TIMEOUT_MS,
-      forceTimeoutMs: FORCE_SHUTDOWN_TIMEOUT_MS,
-      onForceSignal: () => {
-        this.logger.warn(
-          { timeoutMs: GRACEFUL_SHUTDOWN_TIMEOUT_MS },
-          "Pi RPC process did not exit after SIGTERM; sending SIGKILL",
-        );
-      },
-    });
-    if (result === "kill-timeout") {
-      this.logger.warn(
-        { timeoutMs: FORCE_SHUTDOWN_TIMEOUT_MS },
-        "Pi RPC process did not report exit after SIGKILL",
-      );
-    }
+    await this.process.close(new Error("Pi RPC session is closed"));
   }
 
-  private request(command: PiRpcCommand, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<unknown> {
-    if (this.disposed) {
-      return Promise.reject(new Error("Pi RPC session is closed"));
-    }
-    const id = `req_${this.nextRequestId}`;
-    this.nextRequestId += 1;
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(id);
-        reject(
-          new Error(`Pi RPC request timed out for ${command.type}\n${this.stderrBuffer}`.trim()),
-        );
-      }, timeoutMs);
-      this.pending.set(id, { resolve, reject, timer });
-      this.writeJsonLine({ ...command, id });
-    });
-  }
-
-  private writeJsonLine(value: unknown): void {
-    if (this.disposed || this.child.stdin.destroyed || !this.child.stdin.writable) {
-      return;
-    }
-    this.child.stdin.write(`${JSON.stringify(value)}\n`);
-  }
-
-  private handleStdoutChunk(chunk: string): void {
-    this.stdoutBuffer += chunk;
-    for (;;) {
-      const newlineIndex = this.stdoutBuffer.indexOf("\n");
-      if (newlineIndex === -1) {
-        break;
-      }
-      const line = this.stdoutBuffer.slice(0, newlineIndex).replace(/\r$/, "");
-      this.stdoutBuffer = this.stdoutBuffer.slice(newlineIndex + 1);
-      if (line.trim()) {
-        this.handleLine(line);
-      }
-    }
-  }
-
-  private handleLine(line: string): void {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(line);
-    } catch (error) {
-      this.logger.warn({ error, line }, "Ignoring non-JSON Pi RPC stdout line");
-      return;
-    }
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return;
-    }
-    const message = parsed as Record<string, unknown>;
-    if (message.type === "response") {
-      this.handleResponse(message as unknown as PiRpcResponse);
-      return;
-    }
-    this.emit(message as PiRuntimeEvent);
-  }
-
-  private handleResponse(response: PiRpcResponse): void {
-    const id = response.id;
-    if (!id) {
-      return;
-    }
-    const pending = this.pending.get(id);
-    if (!pending) {
-      return;
-    }
-    clearTimeout(pending.timer);
-    this.pending.delete(id);
-    if (!response.success) {
-      pending.reject(new Error(response.error ?? `Pi RPC ${response.command} failed`));
-      return;
-    }
-    pending.resolve(response.data);
+  request(command: PiRpcCommand, timeoutMs?: number): Promise<unknown> {
+    return this.process.request(command, timeoutMs);
   }
 
   private emit(event: PiRuntimeEvent): void {
     for (const subscriber of this.subscribers) {
       subscriber(event);
     }
-  }
-
-  private failAll(error: Error): void {
-    if (this.disposed) {
-      return;
-    }
-    this.disposed = true;
-    for (const pending of this.pending.values()) {
-      clearTimeout(pending.timer);
-      pending.reject(error);
-    }
-    this.pending.clear();
   }
 }
