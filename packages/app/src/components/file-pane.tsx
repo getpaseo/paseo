@@ -521,6 +521,14 @@ function FilePreviewBody({
       );
     }
 
+    if (!highlightedLines) {
+      return (
+        <View style={styles.centerState}>
+          <Text style={styles.emptyText}>{t("panels.file.noPreview")}</Text>
+        </View>
+      );
+    }
+
     return (
       <View style={styles.previewScrollContainer}>
         {/*
@@ -536,7 +544,7 @@ function FilePreviewBody({
           showsVerticalScrollIndicator
         >
           <SearchableCode
-            highlightedLines={highlightedLines!}
+            highlightedLines={highlightedLines}
             gutterWidth={gutterWidth}
             isMobile={isMobile}
             lineHeight={lineHeight}

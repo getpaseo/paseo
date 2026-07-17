@@ -4,6 +4,7 @@ import { Pressable, Text, TextInput, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { ChevronDown, ChevronUp, Search, X } from "lucide-react-native";
 import { paneFindController } from "./pane-find-controller";
+import { handlePaneFindInputKey, normalizePaneFindQuery } from "./pane-find-helpers";
 import {
   useActivePaneFindAdapter,
   usePaneFindAdapterState,
@@ -51,23 +52,18 @@ export function PaneFindBarView({
 
   const handleKeyPress = useCallback(
     (event: { nativeEvent: { key: string; shiftKey?: boolean } }) => {
-      if (event.nativeEvent.key === "Escape") {
-        onClose();
-        return;
-      }
-      if (event.nativeEvent.key === "Enter") {
-        // Shift+Enter navigates backwards, matching native browser find bars.
-        if (event.nativeEvent.shiftKey) {
-          onSelectPrev();
-        } else {
-          onSelectNext();
-        }
-      }
+      handlePaneFindInputKey({
+        key: event.nativeEvent.key,
+        shiftKey: event.nativeEvent.shiftKey,
+        onClose,
+        onSelectNext,
+        onSelectPrev,
+      });
     },
     [onClose, onSelectNext, onSelectPrev],
   );
   const handleQueryChange = useCallback(
-    (query: string) => onQueryChange(query.trim()),
+    (query: string) => onQueryChange(normalizePaneFindQuery(query)),
     [onQueryChange],
   );
 
@@ -77,6 +73,7 @@ export function PaneFindBarView({
     () => [styles.iconButton, !hasMatches && styles.iconButtonDisabled],
     [hasMatches],
   );
+  const findInputDataSet = useMemo(() => ({ paseoKeyboardFocusScope: "find-input" }), []);
 
   return (
     <View style={styles.container} testID={testID}>
@@ -92,6 +89,7 @@ export function PaneFindBarView({
           autoFocus
           returnKeyType="search"
           accessibilityLabel={t("common.placeholders.search")}
+          dataSet={findInputDataSet}
           testID="pane-find-input"
         />
       </View>

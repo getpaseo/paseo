@@ -2,6 +2,7 @@ import { useCallback } from "react";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import type { KeyboardActionId } from "@/keyboard/keyboard-action-dispatcher";
 import { paneFindController } from "./pane-find-controller";
+import { toggleActivePaneFind } from "./pane-find-helpers";
 
 const PANE_FIND_ACTIONS: readonly KeyboardActionId[] = ["workspace.find.open"];
 
@@ -12,13 +13,7 @@ const PANE_FIND_ACTIONS: readonly KeyboardActionId[] = ["workspace.find.open"];
  */
 export function useGlobalPaneFindAction() {
   const handle = useCallback(() => {
-    const state = paneFindController.getActiveState();
-    if (!state) return false;
-    if (state.isOpen) {
-      paneFindController.closeActive();
-      return true;
-    }
-    return paneFindController.openActive();
+    return toggleActivePaneFind(paneFindController);
   }, []);
 
   useKeyboardActionHandler({

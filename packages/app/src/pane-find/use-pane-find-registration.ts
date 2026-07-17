@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { paneFindController } from "./pane-find-controller";
+import { registerPaneFindAdapter } from "./pane-find-helpers";
 import type { PaneFindAdapter } from "./pane-find-types";
 
 export interface UsePaneFindRegistrationInput {
@@ -23,9 +24,6 @@ export function usePaneFindRegistration(input: UsePaneFindRegistrationInput): vo
   const { paneKey, adapter } = input;
 
   useEffect(() => {
-    if (!paneKey) {
-      return;
-    }
-    return paneFindController.register(paneKey, adapter);
+    return registerPaneFindAdapter({ controller: paneFindController, paneKey, adapter });
   }, [paneKey, adapter]);
 }

@@ -1041,7 +1041,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     help: {
       id: "workspace-find-open",
       section: "panels",
-      label: "Toggle timeline search",
+      label: "Find in pane",
       keys: ["mod", "F"],
     },
   },
@@ -1058,7 +1058,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     help: {
       id: "workspace-find-open",
       section: "panels",
-      label: "Toggle timeline search",
+      label: "Find in pane",
       keys: ["mod", "F"],
     },
   },
