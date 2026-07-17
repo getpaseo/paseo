@@ -566,19 +566,21 @@ export function useCommandCenter() {
       if (item.isActive || !activeClient || !item.agentId) {
         return;
       }
-      void updatePreferences((current) =>
-        mergeProviderPreferences({
-          preferences: current,
-          provider: item.provider,
-          updates: { model: item.modelId },
-        }),
-      ).catch((error) => {
-        console.warn("[CommandCenter] persist model preference failed", error);
-      });
-      void activeClient.setAgentModel(item.agentId, item.modelId).catch((error) => {
-        console.warn("[CommandCenter] setAgentModel failed", error);
-        toast.error(toErrorMessage(error));
-      });
+      void activeClient
+        .setAgentModel(item.agentId, item.modelId)
+        .then(() =>
+          updatePreferences((current) =>
+            mergeProviderPreferences({
+              preferences: current,
+              provider: item.provider,
+              updates: { model: item.modelId },
+            }),
+          ),
+        )
+        .catch((error) => {
+          console.warn("[CommandCenter] setAgentModel or preference update failed", error);
+          toast.error(toErrorMessage(error));
+        });
     },
     [activeClient, setOpen, toast, updatePreferences],
   );
