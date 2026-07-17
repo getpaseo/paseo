@@ -1,3 +1,4 @@
+import type { PaneFindAdapter, PaneFindState } from "@/pane-find/pane-find-types";
 import { findAllMatches } from "@/timeline-search/highlight";
 
 export interface MarkdownFindTextRun {
@@ -28,4 +29,84 @@ export function createMarkdownFindMatchBases(input: {
   }
 
   return matchBases;
+}
+
+export interface MarkdownFindModel {
+  adapter: PaneFindAdapter;
+}
+
+function countFindMatchesInRuns(runs: readonly MarkdownFindTextRun[], query: string): number {
+  const seenKeys = new Set<string>();
+  let matchCount = 0;
+
+  for (const run of runs) {
+    if (seenKeys.has(run.key)) {
+      continue;
+    }
+    seenKeys.add(run.key);
+    matchCount += countMarkdownFindMatches(run.content, query);
+  }
+
+  return matchCount;
+}
+
+export function createMarkdownFindModel(input: {
+  getRuns: () => readonly MarkdownFindTextRun[];
+  onSelectMatch: (matchIndex: number) => void;
+}): MarkdownFindModel {
+  const listeners = new Set<() => void>();
+  let state: PaneFindState = {
+    isOpen: false,
+    query: "",
+    isPending: false,
+    matchCount: 0,
+    selectedIndex: -1,
+  };
+
+  function emit(nextState: PaneFindState): void {
+    state = nextState;
+    for (const listener of listeners) {
+      listener();
+    }
+  }
+
+  function select(index: number): void {
+    if (state.matchCount === 0) {
+      return;
+    }
+    const selectedIndex = (index + state.matchCount) % state.matchCount;
+    emit({ ...state, selectedIndex });
+    input.onSelectMatch(selectedIndex);
+  }
+
+  return {
+    adapter: {
+      hasCustomUI: false,
+      getState: () => state,
+      subscribe(listener) {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      open() {
+        emit({ ...state, isOpen: true });
+      },
+      close() {
+        emit({ isOpen: false, query: "", isPending: false, matchCount: 0, selectedIndex: -1 });
+      },
+      setQuery(query) {
+        const matchCount = countFindMatchesInRuns(input.getRuns(), query);
+        const selectedIndex = matchCount > 0 ? 0 : -1;
+        emit({ ...state, query, matchCount, selectedIndex });
+        if (selectedIndex >= 0) {
+          select(selectedIndex);
+        }
+      },
+      selectNext() {
+        select(state.selectedIndex + 1);
+      },
+      selectPrev() {
+        select(state.selectedIndex - 1);
+      },
+    },
+  };
 }

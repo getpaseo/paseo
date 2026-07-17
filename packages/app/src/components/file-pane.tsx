@@ -26,7 +26,11 @@ import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { lineNumberGutterWidth } from "@/components/code-insets";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { isRenderedMarkdownFile } from "@/components/file-pane-render-mode";
-import { countMarkdownFindMatches } from "@/components/file-pane-markdown-find-data";
+import {
+  countMarkdownFindMatches,
+  createMarkdownFindMatchBases,
+  createMarkdownFindModel,
+} from "@/components/file-pane-markdown-find-data";
 import type { AttachmentMetadata } from "@/attachments/types";
 import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
 import { persistAttachmentFromBytes } from "@/attachments/service";
@@ -349,10 +353,6 @@ function SearchableCode({
   );
 }
 
-function markdownSourceLines(content: string): HighlightToken[][] {
-  return content.split("\n").map((text) => [{ text, style: null }]);
-}
-
 interface MarkdownFileViewProps {
   content: string;
   paneKey: string | null;
@@ -400,20 +400,30 @@ function MarkdownFindText({
   );
 }
 
-// Keep Markdown files rendered while find is active. Source-line matching still
-// drives the pane-find count and navigation, while this rule highlights matches
-// in parsed text leaves instead of replacing the preview with raw source.
+// Keep Markdown files rendered while find is active. The pane-find model and
+// rendered highlights both derive their occurrence order from parsed text leaves.
 function MarkdownFileView({
   content,
   paneKey,
   isPaneFocused,
   previewScrollRef,
 }: MarkdownFileViewProps) {
-  const textModel = useMemo(() => createFilePaneTextModel(markdownSourceLines(content)), [content]);
+  const { runs: markdownTextRuns } = useMemo(
+    () => ({ source: content, runs: new Map<string, string>() }),
+    [content],
+  );
   const matchNodeKeysRef = useRef(new Map<number, string>());
   const nodeOffsetsRef = useRef(new Map<string, number>());
   const selectedMatchIndexRef = useRef(-1);
 
+  const getMarkdownTextRuns = useCallback(
+    () =>
+      Array.from(markdownTextRuns, ([key, runContent]) => ({
+        key,
+        content: runContent,
+      })),
+    [markdownTextRuns],
+  );
   const scrollToSelectedMatch = useCallback(() => {
     const nodeKey = matchNodeKeysRef.current.get(selectedMatchIndexRef.current);
     if (!nodeKey) {
@@ -427,13 +437,13 @@ function MarkdownFileView({
 
   const findModel = useMemo(
     () =>
-      createFilePaneFindModel({
-        textModel,
-        onSelectLine() {
+      createMarkdownFindModel({
+        getRuns: getMarkdownTextRuns,
+        onSelectMatch() {
           scrollToSelectedMatch();
         },
       }),
-    [scrollToSelectedMatch, textModel],
+    [getMarkdownTextRuns, scrollToSelectedMatch],
   );
   const findState = useSyncExternalStore(
     findModel.adapter.subscribe,
@@ -466,12 +476,13 @@ function MarkdownFileView({
     [previewScrollRef],
   );
 
-  const renderedMarkdownRules = useMemo<RenderRules | undefined>(() => {
+  const renderedMarkdownRules = useMemo<RenderRules>(() => {
     const query = findState.query;
-    if (query.length === 0) return undefined;
-    const matchBasesByNodeKey = new Map<string, number>();
-    let nextMatchIndex = 0;
+    const runs = getMarkdownTextRuns();
+    const matchBasesByNodeKey = createMarkdownFindMatchBases({ query, runs });
     matchNodeKeysRef.current.clear();
+    let nextTextRunIndex = 0;
+
     return {
       ...createSharedMarkdownRules(),
       text: (
@@ -481,16 +492,16 @@ function MarkdownFileView({
         markdownStyles: MarkdownStyles,
         inheritedStyles: TextStyle = {},
       ) => {
-        let matchIndexBase = matchBasesByNodeKey.get(node.key);
-        if (matchIndexBase === undefined) {
-          matchIndexBase = nextMatchIndex;
-          matchBasesByNodeKey.set(node.key, matchIndexBase);
-          const matchCount = countMarkdownFindMatches(node.content, query);
-          for (let index = 0; index < matchCount; index += 1) {
-            matchNodeKeysRef.current.set(matchIndexBase + index, node.key);
-          }
-          nextMatchIndex += matchCount;
+        const runKey = `text-${nextTextRunIndex}`;
+        nextTextRunIndex += 1;
+        markdownTextRuns.set(runKey, node.content);
+
+        const matchIndexBase = matchBasesByNodeKey.get(runKey) ?? 0;
+        const matchCount = countMarkdownFindMatches(node.content, query);
+        for (let index = 0; index < matchCount; index += 1) {
+          matchNodeKeysRef.current.set(matchIndexBase + index, node.key);
         }
+
         return (
           <MarkdownFindText
             key={node.key}
@@ -505,7 +516,13 @@ function MarkdownFileView({
         );
       },
     };
-  }, [findState.query, findState.selectedIndex, handleMarkdownNodeLayout]);
+  }, [
+    findState.query,
+    findState.selectedIndex,
+    getMarkdownTextRuns,
+    handleMarkdownNodeLayout,
+    markdownTextRuns,
+  ]);
 
   return <MarkdownRenderer text={content} rules={renderedMarkdownRules} />;
 }

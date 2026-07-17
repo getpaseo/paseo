@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   countMarkdownFindMatches,
   createMarkdownFindMatchBases,
+  createMarkdownFindModel,
 } from "./file-pane-markdown-find-data";
 
 describe("rendered Markdown find match ordinals", () => {
@@ -44,5 +45,24 @@ describe("rendered Markdown find match ordinals", () => {
 
   it("counts only rendered text occurrences for a text leaf", () => {
     expect(countMarkdownFindMatches("url then url", "url")).toBe(2);
+  });
+
+  it("navigates only rendered text runs", () => {
+    const selectedMatchIndices: number[] = [];
+    const model = createMarkdownFindModel({
+      getRuns: () => [
+        { key: "text", content: "find token then find token" },
+        { key: "text", content: "find token then find token" },
+      ],
+      onSelectMatch(matchIndex) {
+        selectedMatchIndices.push(matchIndex);
+      },
+    });
+
+    model.adapter.setQuery("find");
+    model.adapter.selectNext();
+
+    expect(model.adapter.getState()).toMatchObject({ matchCount: 2, selectedIndex: 1 });
+    expect(selectedMatchIndices).toEqual([0, 1]);
   });
 });
