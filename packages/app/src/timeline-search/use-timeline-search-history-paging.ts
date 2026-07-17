@@ -17,6 +17,19 @@ export interface TimelineSearchHistoryPagingInput {
   itemCount: number;
   /** Loads the next older page of history into the timeline. */
   loadOlder: () => void | Promise<void>;
+  /**
+   * True when the panel is retained but currently inactive (e.g. a
+   * backgrounded/non-selected pane keeping its component mounted). While
+   * frozen, `itemCount` may be pinned at a stale value even though
+   * `loadOlder` keeps succeeding elsewhere — an inactive caller has no reason
+   * to keep re-rendering this hook with a live count. Without this flag, that
+   * stale count reads as fruitless-load after fruitless-load and trips
+   * `historyLoadFailed` even though nothing actually failed (see the
+   * "Freezing" section of this hook's doc comment). Defaults to `false` so
+   * existing call sites compile unchanged; the caller must wire this to its
+   * own retained-but-inactive signal (e.g. `!isActive`).
+   */
+  isFrozen?: boolean;
 }
 
 export interface TimelineSearchHistoryPagingResult {
@@ -59,6 +72,18 @@ const MAX_FRUITLESS_LOADS = 3;
  * was swallowed upstream. After `MAX_FRUITLESS_LOADS` consecutive fruitless
  * loads the loop stops and reports `historyLoadFailed` instead of retrying
  * (and re-toasting) forever. Changing the query re-arms the loop.
+ *
+ * Freezing: a retained-but-inactive caller (e.g. a backgrounded pane that
+ * keeps this hook mounted so state survives reactivation) may stop passing a
+ * live `itemCount` while `loadOlder` keeps succeeding elsewhere. Without a
+ * way to signal that, the load-completion tracker below sees the same
+ * (stale) `itemCount` after every completed load and misreads each one as
+ * fruitless, eventually tripping `historyLoadFailed` for no real failure.
+ * `isFrozen` opts a caller out of this: while frozen, the loop makes no
+ * `loadOlder` calls and counts no fruitless loads at all; unfreezing resets
+ * the fruitless counter and in-flight marker so the loop resumes cleanly
+ * against a (now current) `itemCount`, without forcing a full re-arm of a
+ * genuinely `stalled` state (only a query change or reopen does that).
  */
 export function useTimelineSearchHistoryPaging({
   isOpen,
@@ -67,9 +92,10 @@ export function useTimelineSearchHistoryPaging({
   isLoadingOlder,
   itemCount,
   loadOlder,
+  isFrozen = false,
 }: TimelineSearchHistoryPagingInput): TimelineSearchHistoryPagingResult {
   const trimmedQuery = query.trim();
-  const active = isOpen && trimmedQuery.length > 0;
+  const active = isOpen && trimmedQuery.length > 0 && !isFrozen;
 
   const [stalled, setStalled] = useState(false);
   const fruitlessLoadsRef = useRef(0);
@@ -84,8 +110,20 @@ export function useTimelineSearchHistoryPaging({
     setStalled(false);
   }, [trimmedQuery, isOpen]);
 
-  // Track load completions and whether they made progress.
+  // Unfreezing resets the fruitless-load bookkeeping (but NOT `stalled`
+  // itself — a real stall from before freezing should stay reported until
+  // the query changes or the panel reopens, per the doc comment above).
   useEffect(() => {
+    if (!isFrozen) {
+      fruitlessLoadsRef.current = 0;
+      inFlightStartCountRef.current = null;
+    }
+  }, [isFrozen]);
+
+  // Track load completions and whether they made progress. Skipped entirely
+  // while frozen: `itemCount` may be stale, so growth can't be judged.
+  useEffect(() => {
+    if (isFrozen) return;
     if (isLoadingOlder) return;
     if (inFlightStartCountRef.current === null) {
       return;
@@ -100,7 +138,7 @@ export function useTimelineSearchHistoryPaging({
     if (fruitlessLoadsRef.current >= MAX_FRUITLESS_LOADS) {
       setStalled(true);
     }
-  }, [isLoadingOlder, itemCount, hasOlder]);
+  }, [isFrozen, isLoadingOlder, itemCount, hasOlder]);
 
   useEffect(() => {
     if (!active || !hasOlder || isLoadingOlder || stalled) {

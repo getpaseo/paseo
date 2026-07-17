@@ -119,6 +119,54 @@ describe("useTimelineSearchHistoryPaging", () => {
     expect(loadOlder.mock.calls.length).toBe(callsAfterStall);
   });
 
+  it("does not page while frozen, even with an open panel and a query", () => {
+    const loadOlder = vi.fn();
+    const { result } = renderHook(() =>
+      useTimelineSearchHistoryPaging(baseInput({ isFrozen: true, loadOlder })),
+    );
+
+    expect(loadOlder).not.toHaveBeenCalled();
+    expect(result.current.isPaging).toBe(false);
+    expect(result.current.historyLoadFailed).toBe(false);
+  });
+
+  it("pauses the loop and drops fruitless-load counting while frozen, then resumes cleanly on unfreeze", () => {
+    const loadOlder = vi.fn();
+    const { result, rerender } = renderHook(
+      (props: { isFrozen: boolean; isLoadingOlder: boolean; itemCount: number }) =>
+        useTimelineSearchHistoryPaging(baseInput({ ...props, loadOlder })),
+      { initialProps: { isFrozen: false, isLoadingOlder: false, itemCount: 10 } },
+    );
+
+    expect(loadOlder).toHaveBeenCalledTimes(1);
+
+    // Panel goes inactive (e.g. backgrounded) while that first load is still
+    // in flight.
+    rerender({ isFrozen: true, isLoadingOlder: true, itemCount: 10 });
+
+    // Several loads "complete" while frozen with itemCount pinned at a stale
+    // value — as if loadOlder kept succeeding elsewhere but this retained,
+    // inactive caller never received the growth. None of this may be counted
+    // as a fruitless load, and no further loadOlder calls may be made.
+    for (let i = 0; i < 3; i++) {
+      rerender({ isFrozen: true, isLoadingOlder: false, itemCount: 10 });
+      rerender({ isFrozen: true, isLoadingOlder: true, itemCount: 10 });
+    }
+    rerender({ isFrozen: true, isLoadingOlder: false, itemCount: 10 });
+
+    expect(loadOlder).toHaveBeenCalledTimes(1);
+    expect(result.current.historyLoadFailed).toBe(false);
+    expect(result.current.isPaging).toBe(false);
+
+    // Unfreezing with a now-current item count resumes the loop rather than
+    // staying stuck or reporting a stall that never actually happened.
+    rerender({ isFrozen: false, isLoadingOlder: false, itemCount: 60 });
+
+    expect(loadOlder).toHaveBeenCalledTimes(2);
+    expect(result.current.historyLoadFailed).toBe(false);
+    expect(result.current.isPaging).toBe(true);
+  });
+
   it("re-arms a stalled loop when the query changes", () => {
     const loadOlder = vi.fn();
     const { result, rerender } = renderHook(

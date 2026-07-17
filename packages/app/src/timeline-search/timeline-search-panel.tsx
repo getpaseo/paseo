@@ -16,6 +16,7 @@ import { ChevronDown, ChevronUp, Search, X } from "lucide-react-native";
 import { FIND_INPUT_FOCUS_SCOPE } from "@/keyboard/focus-scope";
 import {
   MAX_TIMELINE_SEARCH_MATCHES,
+  matchKey,
   type TimelineSearchFilter,
   type TimelineSearchMatch,
   type TimelineSearchState,
@@ -160,19 +161,23 @@ export function TimelineSearchPanel({
   const [draftQuery, setDraftQuery] = useState(state.query);
   const findInputDataSet = useMemo(() => ({ paseoKeyboardFocusScope: FIND_INPUT_FOCUS_SCOPE }), []);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastSentQueryRef = useRef(state.query);
 
   // External query changes (persisted restore, adapter setQuery) sync into the
-  // draft; changes we sent ourselves are already reflected there.
+  // draft; changes we make ourselves already leave draftQuery === state.query,
+  // so this only fires for a genuinely external update. draftQuery is read
+  // here intentionally without being a listed dependency — depending on it
+  // would re-run this effect (and clobber the in-flight debounce) on every
+  // keystroke, since draftQuery changes on every keystroke but state.query
+  // does not.
   useEffect(() => {
-    if (state.query !== lastSentQueryRef.current) {
+    if (state.query !== draftQuery) {
       if (debounceRef.current) {
         clearTimeout(debounceRef.current);
         debounceRef.current = null;
       }
-      lastSentQueryRef.current = state.query;
       setDraftQuery(state.query);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.query]);
 
   useEffect(
@@ -190,10 +195,8 @@ export function TimelineSearchPanel({
         clearTimeout(debounceRef.current);
         debounceRef.current = null;
       }
-      if (query === lastSentQueryRef.current) {
-        return;
-      }
-      lastSentQueryRef.current = query;
+      // The model's own setQuery already no-ops on an identical value, so
+      // there's no need to track what we last sent ourselves.
       onQueryChange(query);
     },
     [onQueryChange],
@@ -221,19 +224,17 @@ export function TimelineSearchPanel({
 
   /** Commits a pending (debounced) draft immediately. True if it committed. */
   const flushPendingQuery = useCallback((): boolean => {
-    const wasPending = debounceRef.current !== null;
-    if (!wasPending) {
+    if (debounceRef.current === null) {
       return false;
     }
-    clearTimeout(debounceRef.current as ReturnType<typeof setTimeout>);
+    clearTimeout(debounceRef.current);
     debounceRef.current = null;
-    if (draftQuery === lastSentQueryRef.current) {
+    if (draftQuery === state.query) {
       return false;
     }
-    lastSentQueryRef.current = draftQuery;
     onQueryChange(draftQuery);
     return true;
-  }, [draftQuery, onQueryChange]);
+  }, [draftQuery, state.query, onQueryChange]);
 
   const handleKeyPress = useCallback(
     (event: NativeSyntheticEvent<TextInputKeyPressEventData>) => {
@@ -241,25 +242,33 @@ export function TimelineSearchPanel({
         onClose();
         return;
       }
-      if (event.nativeEvent.key === "Enter") {
-        // Enter with an uncommitted draft searches it now (landing on the
-        // first match) rather than stepping through stale results.
-        if (flushPendingQuery()) {
-          return;
-        }
-        // Shift+Enter steps backwards, matching native find bars and the shared
-        // PaneFindBar. `shiftKey` is present on the web nativeEvent but not in
-        // the RN TextInputKeyPressEventData type.
-        if ((event.nativeEvent as { shiftKey?: boolean }).shiftKey) {
+      // Shift+Enter steps backwards, matching native find bars and the shared
+      // PaneFindBar. Plain Enter is deliberately NOT handled here — it's left
+      // entirely to onSubmitEditing (see handleSelectNext below): RN-Web's
+      // TextInput fires onSubmitEditing for a plain Enter keydown IN ADDITION
+      // TO onKeyPress, so also stepping forward from here would double-navigate
+      // on a single Enter press. Shift+Enter never triggers onSubmitEditing
+      // (RN-Web explicitly excludes it), so it still needs handling here.
+      // `shiftKey` is present on the web nativeEvent but not in the RN
+      // TextInputKeyPressEventData type, so it's read via an `in` narrow.
+      if (
+        event.nativeEvent.key === "Enter" &&
+        "shiftKey" in event.nativeEvent &&
+        event.nativeEvent.shiftKey
+      ) {
+        if (!flushPendingQuery()) {
           onSelectPrev();
-        } else {
-          onSelectNext();
         }
       }
     },
-    [onClose, onSelectNext, onSelectPrev, flushPendingQuery],
+    [onClose, onSelectPrev, flushPendingQuery],
   );
 
+  // Flushes a pending draft then steps to the next match — shared by the
+  // "next" nav button and onSubmitEditing, which fires both for a plain
+  // Enter press (web hardware keyboard, and native hardware/software
+  // keyboards) and, critically, for the Android soft-keyboard search key,
+  // which does NOT fire onKeyPress at all.
   const handleSelectNext = useCallback(() => {
     if (!flushPendingQuery()) onSelectNext();
   }, [flushPendingQuery, onSelectNext]);
@@ -276,7 +285,7 @@ export function TimelineSearchPanel({
 
   const hasQuery = state.query.trim().length > 0;
   const hasMatches = state.matches.length > 0;
-  const hasPendingQuery = draftQuery !== lastSentQueryRef.current;
+  const hasPendingQuery = draftQuery !== state.query;
   const canNavigate = hasMatches || hasPendingQuery;
   const navButtonStyle = useMemo(
     () => [styles.iconButton, !canNavigate && styles.iconButtonDisabled],
@@ -314,10 +323,7 @@ export function TimelineSearchPanel({
     ),
     [state.selectedIndex, onSelectIndex],
   );
-  const keyExtractor = useCallback(
-    (match: TimelineSearchMatch) => `${match.item.id}:${match.matchOffset}`,
-    [],
-  );
+  const keyExtractor = useCallback((match: TimelineSearchMatch) => matchKey(match), []);
   const handleScrollToIndexFailed = useCallback(
     (info: { index: number; averageItemLength: number }) => {
       // Row not rendered yet — jump near it; FlatList fills in around it.
@@ -371,10 +377,15 @@ export function TimelineSearchPanel({
             value={draftQuery}
             onChangeText={handleChangeText}
             onKeyPress={handleKeyPress}
+            onSubmitEditing={handleSelectNext}
             placeholder={t("timelineSearch.placeholder")}
             style={styles.input}
             autoFocus
             returnKeyType="search"
+            // Keep the keyboard open across repeated submits so the Android
+            // soft-keyboard search key can be used to step through matches
+            // like Enter does on web/hardware keyboards.
+            blurOnSubmit={false}
             accessibilityLabel={t("timelineSearch.placeholder")}
             dataSet={findInputDataSet}
             testID="timeline-search-input"

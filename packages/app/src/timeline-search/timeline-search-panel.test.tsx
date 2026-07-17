@@ -246,6 +246,89 @@ describe("TimelineSearchPanel", () => {
     expect(model.getState().selectedIndex).toBe(1);
   });
 
+  it("navigates on submit (onSubmitEditing) — the path the Android soft-keyboard search key uses", () => {
+    // react-native-web's TextInput fires onSubmitEditing for a plain Enter
+    // keydown in addition to onKeyPress, which is how this exercises
+    // onSubmitEditing under jsdom. onKeyPress no longer handles plain Enter
+    // (see timeline-search-panel.tsx) specifically so this only passes if
+    // onSubmitEditing is wired — the same wiring the Android search key relies
+    // on, since Android never sends a corresponding onKeyPress event at all.
+    const { model } = renderPanel([
+      makeUserMessage("hello world", "u1"),
+      makeAssistantMessage("goodbye world", "a1"),
+    ]);
+    expect(model.getState().selectedIndex).toBe(0);
+    fireEvent.keyDown(screen.getByTestId("timeline-search-input"), { key: "Enter" });
+    expect(model.getState().selectedIndex).toBe(1);
+  });
+
+  it("flushes a pending debounced query on submit before navigating", () => {
+    vi.useFakeTimers();
+    const { model } = renderPanel([makeUserMessage("hello world", "u1")], "");
+    fireEvent.change(screen.getByTestId("timeline-search-input"), {
+      target: { value: "hello" },
+    });
+    // Submitted before the debounce timer fires — the pending draft must be
+    // committed immediately rather than stepping through stale matches.
+    fireEvent.keyDown(screen.getByTestId("timeline-search-input"), { key: "Enter" });
+    expect(model.getState().query).toBe("hello");
+    expect(model.getState().selectedIndex).toBe(0);
+  });
+
+  it("keeps the input focused after submitting so search-key navigation can repeat", () => {
+    const { model } = renderPanel([
+      makeUserMessage("hello world", "u1"),
+      makeAssistantMessage("goodbye world", "a1"),
+    ]);
+    const input = screen.getByTestId("timeline-search-input");
+    input.focus();
+    expect(document.activeElement).toBe(input);
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(model.getState().selectedIndex).toBe(1);
+    // blurOnSubmit={false} — repeated submits must not blur the field.
+    expect(document.activeElement).toBe(input);
+  });
+
+  it("derives the pending-query state from draft vs. committed query, not a separate tracked ref", () => {
+    vi.useFakeTimers();
+    const { model } = renderPanel([makeUserMessage("hello world", "u1")], "");
+    const nextButton = screen.getByTestId("timeline-search-next");
+
+    // No committed query and no pending draft: next is a no-op (disabled).
+    fireEvent.click(nextButton);
+    expect(model.getState().selectedIndex).toBe(-1);
+
+    fireEvent.change(screen.getByTestId("timeline-search-input"), {
+      target: { value: "hello" },
+    });
+    expect(model.getState().query).toBe("");
+    // A pending (not-yet-committed) draft alone must already make navigation
+    // available — clicking commits it immediately rather than being a no-op,
+    // proving canNavigate reflects draftQuery !== state.query directly
+    // (previously it read a separately tracked lastSentQueryRef).
+    fireEvent.click(nextButton);
+    expect(model.getState().query).toBe("hello");
+    expect(model.getState().selectedIndex).toBe(0);
+  });
+
+  it("gives every occurrence-level match a unique row key via matchKey", () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { model } = renderPanel(
+      [makeAssistantMessage("the alpha, the beta, the gamma", "a1")],
+      "the",
+    );
+    expect(model.getState().matches).toHaveLength(3);
+    // React logs a "duplicate key" warning via console.error when
+    // keyExtractor produces colliding keys for a list — asserting none were
+    // logged is what proves each of the 3 same-item occurrences got a
+    // distinct key (item id + matchOffset, from the shared matchKey helper).
+    const duplicateKeyWarnings = errorSpy.mock.calls.filter((call) =>
+      String(call[0]).includes("Encountered two children with the same key"),
+    );
+    expect(duplicateKeyWarnings).toHaveLength(0);
+    errorSpy.mockRestore();
+  });
+
   it("closes on Escape from the input", () => {
     const { onClose } = renderPanel([makeUserMessage("hello world", "u1")]);
     fireEvent.keyDown(screen.getByTestId("timeline-search-input"), { key: "Escape" });
