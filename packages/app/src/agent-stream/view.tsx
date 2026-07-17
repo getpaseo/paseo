@@ -105,6 +105,8 @@ import type { PaneFindAdapter } from "@/pane-find/pane-find-types";
 import { TimelineSearchPanel } from "@/timeline-search/timeline-search-panel";
 import {
   TimelineHighlightProvider,
+  EMPTY_TIMELINE_HIGHLIGHT_MATCH_FIELD_KEYS,
+  timelineHighlightFieldKey,
   type TimelineHighlightState,
 } from "@/timeline-search/highlight";
 import {
@@ -1221,12 +1223,28 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     );
 
     const timelineSearchTarget = useTimelineSearchTargetValue(timelineSearchState);
+    const timelineHighlightMatchFieldKeys = useMemo(() => {
+      if (!timelineSearchState.isOpen) {
+        return EMPTY_TIMELINE_HIGHLIGHT_MATCH_FIELD_KEYS;
+      }
+      return new Set(
+        timelineSearchState.matches.map((match) =>
+          timelineHighlightFieldKey(match.item.id, match.field),
+        ),
+      );
+    }, [timelineSearchState.isOpen, timelineSearchState.matches]);
     const timelineHighlight = useMemo<TimelineHighlightState>(
       () => ({
         query: timelineSearchState.isOpen ? timelineSearchState.query : "",
         target: timelineSearchTarget,
+        matchFieldKeys: timelineHighlightMatchFieldKeys,
       }),
-      [timelineSearchState.isOpen, timelineSearchState.query, timelineSearchTarget],
+      [
+        timelineHighlightMatchFieldKeys,
+        timelineSearchState.isOpen,
+        timelineSearchState.query,
+        timelineSearchTarget,
+      ],
     );
     const scrollTimelineSearchAnchorBy = useCallback(
       (deltaY: number) => viewportRef.current?.scrollBy(deltaY),

@@ -1,5 +1,6 @@
 import { createContext, useContext } from "react";
 import type { TimelineSearchTarget } from "./search-target";
+import type { TimelineSearchField } from "./timeline-search-model";
 
 /**
  * Shared "highlight the matched query" primitives used by both the timeline
@@ -131,9 +132,17 @@ export function splitHighlightSegments(text: string, query: string): HighlightSe
 export interface TimelineHighlightState {
   query: string;
   target: TimelineSearchTarget | null;
+  /** Fields that produced a result under the current filter. */
+  matchFieldKeys: ReadonlySet<string>;
 }
 
-const EMPTY_TIMELINE_HIGHLIGHT_STATE: TimelineHighlightState = { query: "", target: null };
+export const EMPTY_TIMELINE_HIGHLIGHT_MATCH_FIELD_KEYS: ReadonlySet<string> = new Set();
+
+const EMPTY_TIMELINE_HIGHLIGHT_STATE: TimelineHighlightState = {
+  query: "",
+  target: null,
+  matchFieldKeys: EMPTY_TIMELINE_HIGHLIGHT_MATCH_FIELD_KEYS,
+};
 const TimelineHighlightContext = createContext<TimelineHighlightState>(
   EMPTY_TIMELINE_HIGHLIGHT_STATE,
 );
@@ -147,4 +156,20 @@ export function useTimelineHighlightQuery(): string {
 /** The selected occurrence, if any. Kept separate from the query for exact active styling. */
 export function useTimelineHighlightTarget(): TimelineSearchTarget | null {
   return useContext(TimelineHighlightContext).target;
+}
+
+export function timelineHighlightFieldKey(itemId: string, field: TimelineSearchField): string {
+  return `${itemId}:${field}`;
+}
+
+/** Returns the active query only when this rendered field is in the filtered result set. */
+export function useTimelineHighlightFieldQuery(
+  itemId: string | undefined,
+  field: TimelineSearchField,
+): string {
+  const state = useContext(TimelineHighlightContext);
+  if (!itemId || !state.matchFieldKeys.has(timelineHighlightFieldKey(itemId, field))) {
+    return "";
+  }
+  return state.query;
 }

@@ -3,7 +3,7 @@ import { Text } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import {
   splitHighlightSegments,
-  useTimelineHighlightQuery,
+  useTimelineHighlightFieldQuery,
   useTimelineHighlightTarget,
   type HighlightSegment,
 } from "./highlight";
@@ -162,7 +162,7 @@ export function useHighlightedSegments({
   fieldOffsetBase = 0,
   renderMatch,
 }: RenderHighlightedSegmentsOptions): ReactNode {
-  const query = useTimelineHighlightQuery();
+  const query = useTimelineHighlightFieldQuery(itemId, field);
   const target = useTimelineHighlightTarget();
   const segments = useMemo(() => splitHighlightSegments(text, query), [text, query]);
   if (segments.length === 1 && !segments[0]?.isMatch) {

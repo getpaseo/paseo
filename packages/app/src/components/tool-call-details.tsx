@@ -1,4 +1,4 @@
-import React, { useMemo, type ReactNode } from "react";
+import React, { useEffect, useMemo, type ReactNode } from "react";
 import {
   View,
   Text,
@@ -56,6 +56,55 @@ interface DetailStyles {
   resolvedMaxHeight: number | undefined;
   shouldFill: boolean;
   isFullBleed: boolean;
+}
+
+interface ToolDetailScrollHandle {
+  scrollTo: (options: { x?: number; y?: number; animated?: boolean }) => void;
+}
+
+interface ActiveToolDetailField {
+  field: TimelineSearchField;
+  text: string;
+  /** The rendered line on which this field begins. */
+  startLine?: number;
+}
+
+const TOOL_DETAIL_LINE_HEIGHT = 18;
+const TOOL_DETAIL_REVEAL_CONTEXT_LINES = 4;
+
+/**
+ * The outer timeline can reveal a tool-call card, but a long tool output is
+ * itself a capped ScrollView. Keep that inner viewport aligned to the selected
+ * field before the shared occurrence anchor measures the exact text span.
+ */
+function useRevealActiveToolDetailLine({
+  scrollRef,
+  itemId,
+  fields,
+}: {
+  scrollRef: React.RefObject<ToolDetailScrollHandle | null>;
+  itemId?: string;
+  fields: readonly ActiveToolDetailField[];
+}) {
+  const target = useTimelineSearchTarget();
+  useEffect(() => {
+    if (!itemId || target?.itemId !== itemId) {
+      return;
+    }
+    const field = fields.find((candidate) => candidate.field === target.field);
+    if (!field || target.fieldOffset < 0 || target.fieldOffset > field.text.length) {
+      return;
+    }
+    const line =
+      (field.startLine ?? 0) + field.text.slice(0, target.fieldOffset).split("\n").length - 1;
+    const frame = requestAnimationFrame(() => {
+      scrollRef.current?.scrollTo({
+        y: Math.max(0, (line - TOOL_DETAIL_REVEAL_CONTEXT_LINES) * TOOL_DETAIL_LINE_HEIGHT),
+        animated: false,
+      });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [fields, itemId, scrollRef, target]);
 }
 
 function resolveIsFullBleed(detail: ToolCallDetail | undefined): boolean {
@@ -170,10 +219,28 @@ function ShellDetailSection({ command, output, ds, itemId }: ShellDetailProps) {
   // every match's offset left and break `fieldOffset` alignment.
   const outputText = output ?? "";
   const hasOutput = outputText.replace(/^\n+/, "").length > 0;
+  const scrollRef = useRef<RNScrollView>(null);
+  const fields = useMemo(
+    () => [
+      { field: "toolInput" as const, text: normalizedCommand },
+      {
+        field: "toolOutput" as const,
+        text: outputText,
+        startLine: normalizedCommand.split("\n").length + 1,
+      },
+    ],
+    [normalizedCommand, outputText],
+  );
+  useRevealActiveToolDetailLine({
+    scrollRef,
+    itemId,
+    fields,
+  });
   return (
     <View style={ds.sectionFillStyle}>
       <View style={ds.codeBlockFillStyle}>
         <ScrollView
+          ref={scrollRef}
           style={ds.codeVerticalScrollStyle}
           contentContainerStyle={styles.codeVerticalContent}
           nestedScrollEnabled
@@ -499,8 +566,16 @@ function ScrollableTextSection({
     () => (filePath ? highlightToKeyedLines(content, extensionFromPath(filePath)) : null),
     [content, filePath],
   );
+  const scrollRef = useRef<RNScrollView>(null);
+  const fields = useMemo(() => (field ? [{ field, text: content }] : []), [content, field]);
+  useRevealActiveToolDetailLine({
+    scrollRef,
+    itemId,
+    fields,
+  });
   const body = (
     <ScrollView
+      ref={scrollRef}
       style={ds.scrollAreaFillStyle}
       contentContainerStyle={styles.scrollContent}
       nestedScrollEnabled
@@ -529,9 +604,19 @@ interface FetchDetailProps {
 }
 
 function FetchDetailSection({ url, result, ds, itemId }: FetchDetailProps) {
+  const scrollRef = useRef<RNScrollView>(null);
+  const fields = useMemo(
+    () => [
+      { field: "toolInput" as const, text: url },
+      { field: "toolOutput" as const, text: result ?? "", startLine: 2 },
+    ],
+    [result, url],
+  );
+  useRevealActiveToolDetailLine({ scrollRef, itemId, fields });
   return (
     <View style={ds.sectionFillStyle}>
       <ScrollView
+        ref={scrollRef}
         style={ds.scrollAreaFillStyle}
         contentContainerStyle={styles.scrollContent}
         nestedScrollEnabled
@@ -577,20 +662,12 @@ function buildSearchSections(detail: SearchDetail, ds: DetailStyles, itemId?: st
   const out: ReactNode[] = [];
   if (detail.content) {
     out.push(
-      <View key="search-content" style={styles.section}>
-        <ScrollView
-          style={ds.scrollAreaStyle}
-          contentContainerStyle={styles.scrollContent}
-          nestedScrollEnabled
-          showsVerticalScrollIndicator
-        >
-          <ScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator>
-            <Text selectable style={styles.scrollText} dataSet={CODE_SURFACE_DATASET}>
-              <HighlightedText text={detail.content} itemId={itemId} field="toolOutput" />
-            </Text>
-          </ScrollView>
-        </ScrollView>
-      </View>,
+      <SearchContentSection
+        key="search-content"
+        content={detail.content}
+        ds={ds}
+        itemId={itemId}
+      />,
     );
   }
   if (detail.filePaths && detail.filePaths.length > 0) {
@@ -623,6 +700,37 @@ function buildSearchSections(detail: SearchDetail, ds: DetailStyles, itemId?: st
     );
   }
   return out;
+}
+
+function SearchContentSection({
+  content,
+  ds,
+  itemId,
+}: {
+  content: string;
+  ds: DetailStyles;
+  itemId?: string;
+}) {
+  const scrollRef = useRef<RNScrollView>(null);
+  const fields = useMemo(() => [{ field: "toolOutput" as const, text: content }], [content]);
+  useRevealActiveToolDetailLine({ scrollRef, itemId, fields });
+  return (
+    <View key="search-content" style={styles.section}>
+      <ScrollView
+        ref={scrollRef}
+        style={ds.scrollAreaStyle}
+        contentContainerStyle={styles.scrollContent}
+        nestedScrollEnabled
+        showsVerticalScrollIndicator
+      >
+        <ScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator>
+          <Text selectable style={styles.scrollText} dataSet={CODE_SURFACE_DATASET}>
+            <HighlightedText text={content} itemId={itemId} field="toolOutput" />
+          </Text>
+        </ScrollView>
+      </ScrollView>
+    </View>
+  );
 }
 
 function serializeUnknownValue(value: unknown): string {

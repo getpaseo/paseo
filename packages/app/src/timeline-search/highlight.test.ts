@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { findAllMatches, splitHighlightSegments, textMatchesQuery } from "./highlight";
+import {
+  EMPTY_TIMELINE_HIGHLIGHT_MATCH_FIELD_KEYS,
+  findAllMatches,
+  splitHighlightSegments,
+  textMatchesQuery,
+  timelineHighlightFieldKey,
+} from "./highlight";
 
 describe("splitHighlightSegments", () => {
   it("returns a single non-match segment when the query is empty", () => {
@@ -111,5 +117,18 @@ describe("textMatchesQuery", () => {
 
   it("returns false for an empty text", () => {
     expect(textMatchesQuery("", "hello")).toBe(false);
+  });
+});
+
+describe("timelineHighlightFieldKey", () => {
+  it("keeps filters scoped to the owning item and field", () => {
+    const matchedFields = new Set([timelineHighlightFieldKey("item-1", "toolOutput")]);
+    expect(matchedFields.has(timelineHighlightFieldKey("item-1", "toolOutput"))).toBe(true);
+    expect(matchedFields.has(timelineHighlightFieldKey("item-1", "toolInput"))).toBe(false);
+    expect(matchedFields.has(timelineHighlightFieldKey("item-2", "toolOutput"))).toBe(false);
+  });
+
+  it("uses one stable empty set while no search is active", () => {
+    expect(EMPTY_TIMELINE_HIGHLIGHT_MATCH_FIELD_KEYS.size).toBe(0);
   });
 });

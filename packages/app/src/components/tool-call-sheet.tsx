@@ -17,7 +17,9 @@ import {
 import type { ToolCallIconComponent } from "@/utils/tool-call-icon";
 import { ToolCallDetailsContent } from "./tool-call-details";
 import {
+  EMPTY_TIMELINE_HIGHLIGHT_MATCH_FIELD_KEYS,
   TimelineHighlightProvider,
+  timelineHighlightFieldKey,
   type TimelineHighlightState,
 } from "@/timeline-search/highlight";
 import {
@@ -174,8 +176,15 @@ function ToolCallSheetContent({ data, onClose }: ToolCallSheetContentProps) {
   } = data;
 
   const highlightState = useMemo<TimelineHighlightState>(
-    () => ({ query: timelineHighlightQuery ?? "", target: timelineSearchTarget ?? null }),
-    [timelineHighlightQuery, timelineSearchTarget],
+    () => ({
+      query: timelineHighlightQuery ?? "",
+      target: timelineSearchTarget ?? null,
+      matchFieldKeys:
+        streamItemId && timelineSearchTarget?.itemId === streamItemId
+          ? new Set([timelineHighlightFieldKey(streamItemId, timelineSearchTarget.field)])
+          : EMPTY_TIMELINE_HIGHLIGHT_MATCH_FIELD_KEYS,
+    }),
+    [streamItemId, timelineHighlightQuery, timelineSearchTarget],
   );
 
   return (
