@@ -2,6 +2,7 @@ import { useImperativeHandle, useMemo, useRef, type ReactNode, type Ref } from "
 import {
   Text,
   View,
+  type LayoutChangeEvent,
   type StyleProp,
   type TextProps,
   type TextStyle,
@@ -15,6 +16,7 @@ interface MarkdownTextSpanProps {
   onPress?: TextProps["onPress"];
   accessibilityRole?: TextProps["accessibilityRole"];
   measureRef?: Ref<MarkdownTextSpanMeasureHandle>;
+  onLayout?: (event: LayoutChangeEvent) => void;
 }
 
 export interface MarkdownTextSpanMeasureHandle {
@@ -33,6 +35,7 @@ export function MarkdownTextSpan({
   onPress,
   accessibilityRole,
   measureRef,
+  onLayout,
 }: MarkdownTextSpanProps) {
   const textRef = useRef<Text>(null);
   useImperativeHandle(
@@ -47,6 +50,7 @@ export function MarkdownTextSpan({
       style={style}
       onPress={onPress}
       accessibilityRole={accessibilityRole}
+      onLayout={onLayout}
     >
       {children}
     </Text>

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { FileReadResult } from "@getpaseo/client/internal/daemon-client";
 import {
@@ -7,6 +7,7 @@ import {
   ScrollView as RNScrollView,
   Text,
   View,
+  type LayoutChangeEvent,
   type TextStyle,
 } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -356,7 +357,6 @@ interface MarkdownFileViewProps {
   content: string;
   paneKey: string | null;
   isPaneFocused: boolean;
-  lineHeight: number;
   previewScrollRef: React.RefObject<RNScrollView | null>;
 }
 
@@ -367,6 +367,7 @@ function MarkdownFindText({
   inheritedStyles,
   activeMatchIndex,
   matchIndexBase,
+  onLayout,
 }: {
   content: string;
   query: string;
@@ -374,13 +375,14 @@ function MarkdownFindText({
   inheritedStyles: TextStyle;
   activeMatchIndex: number;
   matchIndexBase: number;
+  onLayout: (event: LayoutChangeEvent) => void;
 }) {
   const segments = useMemo(() => splitHighlightSegments(content, query), [content, query]);
   const style = useMemo(() => [inheritedStyles, textStyle], [inheritedStyles, textStyle]);
   let matchIndex = matchIndexBase;
 
   return (
-    <MarkdownTextSpan style={style}>
+    <MarkdownTextSpan style={style} onLayout={onLayout}>
       {segments.map((segment) => {
         if (!segment.isMatch) return segment.text;
         const isActive = matchIndex === activeMatchIndex;
@@ -405,28 +407,40 @@ function MarkdownFileView({
   content,
   paneKey,
   isPaneFocused,
-  lineHeight,
   previewScrollRef,
 }: MarkdownFileViewProps) {
   const textModel = useMemo(() => createFilePaneTextModel(markdownSourceLines(content)), [content]);
+  const matchNodeKeysRef = useRef(new Map<number, string>());
+  const nodeOffsetsRef = useRef(new Map<string, number>());
+  const selectedMatchIndexRef = useRef(-1);
+
+  const scrollToSelectedMatch = useCallback(() => {
+    const nodeKey = matchNodeKeysRef.current.get(selectedMatchIndexRef.current);
+    if (!nodeKey) {
+      return;
+    }
+    const y = nodeOffsetsRef.current.get(nodeKey);
+    if (y != null) {
+      previewScrollRef.current?.scrollTo({ y: Math.max(0, y), animated: true });
+    }
+  }, [previewScrollRef]);
+
   const findModel = useMemo(
     () =>
       createFilePaneFindModel({
         textModel,
-        onSelectLine(lineNumber) {
-          previewScrollRef.current?.scrollTo({
-            y: Math.max(0, (lineNumber - 1) * lineHeight),
-            animated: true,
-          });
+        onSelectLine() {
+          scrollToSelectedMatch();
         },
       }),
-    [lineHeight, previewScrollRef, textModel],
+    [scrollToSelectedMatch, textModel],
   );
   const findState = useSyncExternalStore(
     findModel.adapter.subscribe,
     findModel.adapter.getState,
     findModel.adapter.getState,
   );
+  selectedMatchIndexRef.current = findState.selectedIndex;
   usePaneFindRegistration({ paneKey, adapter: findModel.adapter });
 
   useEffect(() => {
@@ -437,11 +451,27 @@ function MarkdownFileView({
     return undefined;
   }, [findModel, isPaneFocused]);
 
+  useEffect(() => {
+    scrollToSelectedMatch();
+  }, [findState.selectedIndex, scrollToSelectedMatch]);
+
+  const handleMarkdownNodeLayout = useCallback(
+    (nodeKey: string) => (event: LayoutChangeEvent) => {
+      const y = event.nativeEvent.layout.y;
+      nodeOffsetsRef.current.set(nodeKey, y);
+      if (nodeKey === matchNodeKeysRef.current.get(selectedMatchIndexRef.current)) {
+        previewScrollRef.current?.scrollTo({ y: Math.max(0, y), animated: true });
+      }
+    },
+    [previewScrollRef],
+  );
+
   const renderedMarkdownRules = useMemo<RenderRules | undefined>(() => {
     const query = findState.query;
     if (query.length === 0) return undefined;
     const matchBasesByNodeKey = new Map<string, number>();
     let nextMatchIndex = 0;
+    matchNodeKeysRef.current.clear();
     return {
       ...createSharedMarkdownRules(),
       text: (
@@ -455,7 +485,11 @@ function MarkdownFileView({
         if (matchIndexBase === undefined) {
           matchIndexBase = nextMatchIndex;
           matchBasesByNodeKey.set(node.key, matchIndexBase);
-          nextMatchIndex += countMarkdownFindMatches(node.content, query);
+          const matchCount = countMarkdownFindMatches(node.content, query);
+          for (let index = 0; index < matchCount; index += 1) {
+            matchNodeKeysRef.current.set(matchIndexBase + index, node.key);
+          }
+          nextMatchIndex += matchCount;
         }
         return (
           <MarkdownFindText
@@ -466,11 +500,12 @@ function MarkdownFileView({
             inheritedStyles={inheritedStyles}
             activeMatchIndex={findState.selectedIndex}
             matchIndexBase={matchIndexBase}
+            onLayout={handleMarkdownNodeLayout(node.key)}
           />
         );
       },
     };
-  }, [findState.query, findState.selectedIndex]);
+  }, [findState.query, findState.selectedIndex, handleMarkdownNodeLayout]);
 
   return <MarkdownRenderer text={content} rules={renderedMarkdownRules} />;
 }
@@ -566,7 +601,6 @@ function FilePreviewBody({
               content={preview.content ?? ""}
               paneKey={paneKey}
               isPaneFocused={isPaneFocused}
-              lineHeight={lineHeight}
               previewScrollRef={previewScrollRef}
             />
           </RNScrollView>

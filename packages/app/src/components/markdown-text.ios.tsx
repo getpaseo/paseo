@@ -29,6 +29,7 @@ interface MarkdownTextSpanProps {
   onPress?: TextProps["onPress"];
   accessibilityRole?: TextProps["accessibilityRole"];
   measureRef?: Ref<MarkdownTextSpanMeasureHandle>;
+  onLayout?: (event: LayoutChangeEvent) => void;
 }
 
 export interface MarkdownTextSpanMeasureHandle {
@@ -47,13 +48,18 @@ export function MarkdownTextSpan({
   onPress,
   accessibilityRole,
   measureRef,
+  onLayout,
 }: MarkdownTextSpanProps) {
   const plainStyle = useMemo(() => resolvePlainMarkdownTextStyle(style), [style]);
   const surface = useMarkdownTextSurface();
   const nativeTargetRef = useRef<LayoutChangeEvent["target"] | null>(null);
-  const captureNativeTarget = useCallback((event: LayoutChangeEvent) => {
-    nativeTargetRef.current = event.target;
-  }, []);
+  const captureNativeTarget = useCallback(
+    (event: LayoutChangeEvent) => {
+      nativeTargetRef.current = event.target;
+      onLayout?.(event);
+    },
+    [onLayout],
+  );
   useImperativeHandle(
     measureRef,
     () => ({
