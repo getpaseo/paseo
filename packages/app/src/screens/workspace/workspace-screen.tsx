@@ -30,6 +30,7 @@ import {
   PanelRight,
   Pencil,
   RotateCw,
+  Search,
   Settings,
   SquarePen,
   SquareTerminal,
@@ -86,7 +87,11 @@ import {
 } from "@/stores/workspace-layout-store";
 import type { WorkspaceTab, WorkspaceTabTarget } from "@/stores/workspace-tabs-store";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
-import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
+import {
+  keyboardActionDispatcher,
+  type KeyboardActionDefinition,
+} from "@/keyboard/keyboard-action-dispatcher";
+import { useActivePaneFindAdapter } from "@/pane-find/use-pane-find-active-state";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
 import {
   buildDeterministicWorkspaceTabId,
@@ -240,6 +245,7 @@ const ThemedEllipsisVertical = withUnistyles(EllipsisVertical);
 const ThemedChevronDown = withUnistyles(ChevronDown);
 const ThemedCopy = withUnistyles(Copy);
 const ThemedRotateCw = withUnistyles(RotateCw);
+const ThemedSearch = withUnistyles(Search);
 const ThemedArrowLeftToLine = withUnistyles(ArrowLeftToLine);
 const ThemedArrowRightToLine = withUnistyles(ArrowRightToLine);
 const ThemedCopyX = withUnistyles(CopyX);
@@ -277,6 +283,7 @@ const MENU_NEW_BROWSER_ICON = <ThemedGlobe size={16} uniProps={mutedColorMapping
 const MENU_IMPORT_ICON = <ThemedImport size={16} uniProps={mutedColorMapping} />;
 const MENU_COPY_ICON = <ThemedCopy size={16} uniProps={mutedColorMapping} />;
 const MENU_SETTINGS_ICON = <ThemedSettings size={16} uniProps={mutedColorMapping} />;
+const MENU_FIND_ICON = <ThemedSearch size={16} uniProps={mutedColorMapping} />;
 const GATED_WORKSPACE_HEADER_LEFT = <SidebarMenuToggle />;
 
 interface WorkspaceScreenProps {
@@ -1041,6 +1048,7 @@ function WorkspaceHeaderMenu({
 }: WorkspaceHeaderMenuProps) {
   const { t } = useTranslation();
   const router = useRouter();
+  const activePaneFindAdapter = useActivePaneFindAdapter();
   const { config } = useDaemonConfig(normalizedServerId);
   const profiles = useMemo(
     () => resolveTerminalProfiles(config?.terminalProfiles),
@@ -1050,6 +1058,10 @@ function WorkspaceHeaderMenu({
   const handleEditProfiles = useCallback(() => {
     router.push(buildSettingsHostSectionRoute(normalizedServerId, "terminals") as Href);
   }, [normalizedServerId, router]);
+
+  const handleOpenFind = useCallback(() => {
+    keyboardActionDispatcher.dispatch({ id: "workspace.find.open", scope: "workspace" });
+  }, []);
 
   const renderTriggerIcon = useCallback(
     ({ hovered, open }: { hovered: boolean; open: boolean }) => (
@@ -1076,6 +1088,15 @@ function WorkspaceHeaderMenu({
         >
           {t("workspace.header.actions.newAgent")}
         </DropdownMenuItem>
+        {activePaneFindAdapter ? (
+          <DropdownMenuItem
+            testID="timeline-search-open"
+            leading={MENU_FIND_ICON}
+            onSelect={handleOpenFind}
+          >
+            Find in chat
+          </DropdownMenuItem>
+        ) : null}
         {showCreateBrowserTab ? (
           <DropdownMenuItem
             testID="workspace-header-new-browser"
