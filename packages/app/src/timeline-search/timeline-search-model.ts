@@ -284,7 +284,10 @@ function safeStringify(value: unknown): string | null {
 }
 
 const SNIPPET_MAX_LENGTH = 80;
-const SNIPPET_HEAD_ANCHOR_THRESHOLD = 80;
+// Head-anchored snippets render `cleaned.slice(0, SNIPPET_MAX_LENGTH - 3) + "…"`,
+// so a match must start before that same cutoff or its offset would point past
+// the rendered text (see makeSnippetFromCleaned).
+const SNIPPET_HEAD_ANCHOR_THRESHOLD = SNIPPET_MAX_LENGTH - 3;
 const SNIPPET_CONTEXT_BEFORE = 30;
 
 /**
