@@ -67,6 +67,11 @@ export interface AgentMode {
   description?: string;
   icon?: string;
   colorTier?: string;
+  /**
+   * Model bound to this mode/agent as `"providerID/modelID"`, if the provider
+   * binds one. Selecting the mode switches the effective model to this.
+   */
+  model?: string;
   isUnattended?: boolean;
 }
 
