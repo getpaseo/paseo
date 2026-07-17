@@ -60,6 +60,41 @@ export function findNextTextRunFieldOffset({
   return runOffset === -1 ? null : sourceFieldOffset + runOffset;
 }
 
+export interface MarkdownTextRun {
+  key: string;
+  text: string;
+}
+
+export interface MapMarkdownTextRunOffsetsInput {
+  sourceText: string;
+  sourceFieldOffset: number;
+  runs: readonly MarkdownTextRun[];
+}
+
+/** Maps rendered markdown text-node keys to monotonically aligned source offsets. */
+export function mapMarkdownTextRunOffsets({
+  sourceText,
+  sourceFieldOffset,
+  runs,
+}: MapMarkdownTextRunOffsetsInput): ReadonlyMap<string, number> {
+  const offsets = new Map<string, number>();
+  let searchFrom = 0;
+  for (const run of runs) {
+    const fieldOffset = findNextTextRunFieldOffset({
+      sourceText,
+      sourceFieldOffset,
+      runText: run.text,
+      searchFrom,
+    });
+    if (fieldOffset === null) {
+      continue;
+    }
+    offsets.set(run.key, fieldOffset);
+    searchFrom = fieldOffset - sourceFieldOffset + run.text.length;
+  }
+  return offsets;
+}
+
 /**
  * Whether `segment` is the exact occurrence the timeline-search model has
  * currently selected. `target.fieldOffset` is relative to the OWNING field's

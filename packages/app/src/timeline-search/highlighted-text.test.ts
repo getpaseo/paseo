@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { findNextTextRunFieldOffset, isActiveHighlightSegment } from "./highlighted-text";
+import {
+  findNextTextRunFieldOffset,
+  isActiveHighlightSegment,
+  mapMarkdownTextRunOffsets,
+} from "./highlighted-text";
 import type { HighlightSegment } from "./highlight";
 import type { TimelineSearchTarget } from "./search-target";
 
@@ -175,5 +179,34 @@ describe("findNextTextRunFieldOffset", () => {
         searchFrom: 4,
       }),
     ).toBe(23);
+  });
+});
+
+describe("mapMarkdownTextRunOffsets", () => {
+  it("maps repeated rendered leaves to distinct source occurrences", () => {
+    const offsets = mapMarkdownTextRunOffsets({
+      sourceText: "**foo** then foo",
+      sourceFieldOffset: 40,
+      runs: [
+        { key: "first", text: "foo" },
+        { key: "middle", text: " then " },
+        { key: "second", text: "foo" },
+      ],
+    });
+    expect(offsets.get("first")).toBe(42);
+    expect(offsets.get("second")).toBe(53);
+  });
+
+  it("does not align trailing rendered text to matching URL text", () => {
+    const offsets = mapMarkdownTextRunOffsets({
+      sourceText: "[foo](https://foo.test) and foo",
+      sourceFieldOffset: 0,
+      runs: [
+        { key: "label", text: "foo" },
+        { key: "tail", text: " and foo" },
+      ],
+    });
+    expect(offsets.get("label")).toBe(1);
+    expect(offsets.get("tail")).toBe(23);
   });
 });

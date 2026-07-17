@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from "react";
+import { useImperativeHandle, useMemo, useRef, type ReactNode, type Ref } from "react";
 import {
   Text,
   View,
@@ -18,6 +18,13 @@ interface MarkdownTextSpanProps {
   // harmlessly.
   onPress?: TextProps["onPress"];
   accessibilityRole?: TextProps["accessibilityRole"];
+  measureRef?: Ref<MarkdownTextSpanMeasureHandle>;
+}
+
+export interface MarkdownTextSpanMeasureHandle {
+  measureInWindow: (
+    callback: (x: number, y: number, width: number, height: number) => void,
+  ) => void;
 }
 
 // react-native-web renders Text as <span>/<div> with `user-select: text`
@@ -31,9 +38,17 @@ export function MarkdownTextSpan({
   children,
   onPress,
   accessibilityRole,
+  measureRef,
 }: MarkdownTextSpanProps) {
+  const textRef = useRef<Text>(null);
+  useImperativeHandle(
+    measureRef,
+    () => ({ measureInWindow: (callback) => textRef.current?.measureInWindow(callback) }),
+    [],
+  );
   return (
     <Text
+      ref={textRef}
       dataSet={monoSurface ? CODE_SURFACE_DATASET : undefined}
       style={style}
       onPress={onPress}

@@ -11,7 +11,11 @@ import {
   type TextStyle,
 } from "react-native";
 import { useTranslation } from "react-i18next";
-import { MarkdownParagraphView, MarkdownTextSpan } from "@/components/markdown-text";
+import {
+  MarkdownParagraphView,
+  MarkdownTextSpan,
+  type MarkdownTextSpanMeasureHandle,
+} from "@/components/markdown-text";
 import { MarkdownTableCellText } from "@/components/markdown-text-selection";
 import * as React from "react";
 import {
@@ -27,8 +31,14 @@ import {
   Children,
   cloneElement,
 } from "react";
-import type { ComponentType, ReactNode } from "react";
-import { MarkdownIt, type ASTNode, type RenderRules } from "react-native-markdown-display";
+import type { ComponentType, ReactNode, Ref } from "react";
+import {
+  MarkdownIt,
+  stringToTokens,
+  tokensToAST,
+  type ASTNode,
+  type RenderRules,
+} from "react-native-markdown-display";
 import { useQuery } from "@tanstack/react-query";
 import MaskedView from "@react-native-masked-view/masked-view";
 import {
@@ -52,8 +62,10 @@ import type { Theme } from "@/styles/theme";
 import { useTimelineHighlightQuery } from "@/timeline-search/highlight";
 import {
   HighlightedText,
+  mapMarkdownTextRunOffsets,
   timelineHighlightStyles,
   useHighlightedSegments,
+  type MarkdownTextRun,
 } from "@/timeline-search/highlighted-text";
 import { useTimelineSearchOccurrenceAnchor } from "@/timeline-search/occurrence-anchor";
 import { useTimelineSearchTarget } from "@/timeline-search/search-target";
@@ -1516,27 +1528,48 @@ function AssistantMessageBlockContainer({
 
 interface MemoizedMarkdownBlockProps {
   text: string;
+  fieldOffset: number;
   rules: RenderRules;
   parser: MarkdownIt;
   onLinkPress: (url: string) => boolean;
 }
 
+const MarkdownTextRunOffsetsContext = createContext<ReadonlyMap<string, number> | null>(null);
+
+function collectMarkdownTextRuns(nodes: readonly ASTNode[], runs: MarkdownTextRun[]): void {
+  for (const node of nodes) {
+    if (node.type === "text") {
+      runs.push({ key: node.key, text: node.content });
+    }
+    collectMarkdownTextRuns(node.children, runs);
+  }
+}
+
 const MemoizedMarkdownBlock = React.memo(function MemoizedMarkdownBlock({
   text,
+  fieldOffset,
   rules,
   parser,
   onLinkPress,
 }: MemoizedMarkdownBlockProps) {
+  const textRunOffsets = useMemo(() => {
+    const nodes = tokensToAST(stringToTokens(text, parser));
+    const runs: MarkdownTextRun[] = [];
+    collectMarkdownTextRuns(nodes, runs);
+    return mapMarkdownTextRunOffsets({ sourceText: text, sourceFieldOffset: fieldOffset, runs });
+  }, [fieldOffset, parser, text]);
   return (
-    <MarkdownRenderer
-      text={text}
-      enableHtmlish={false}
-      rules={rules}
-      markdownit={parser}
-      onLinkPress={onLinkPress}
-      allowedImageHandlers={MARKDOWN_ALLOWED_IMAGE_HANDLERS}
-      topLevelMaxExceededItem={MARKDOWN_TOP_LEVEL_MAX_EXCEEDED_ITEM}
-    />
+    <MarkdownTextRunOffsetsContext.Provider value={textRunOffsets}>
+      <MarkdownRenderer
+        text={text}
+        enableHtmlish={false}
+        rules={rules}
+        markdownit={parser}
+        onLinkPress={onLinkPress}
+        allowedImageHandlers={MARKDOWN_ALLOWED_IMAGE_HANDLERS}
+        topLevelMaxExceededItem={MARKDOWN_TOP_LEVEL_MAX_EXCEEDED_ITEM}
+      />
+    </MarkdownTextRunOffsetsContext.Provider>
   );
 });
 
@@ -1546,6 +1579,7 @@ interface MarkdownInheritedTextProps {
   style?: StyleProp<TextStyle>;
   monoSurface?: boolean;
   children: ReactNode;
+  measureRef?: Ref<MarkdownTextSpanMeasureHandle>;
 }
 
 /**
@@ -1567,32 +1601,45 @@ interface MarkdownInheritedTextProps {
  */
 function MarkdownHighlightedTextRun({
   content,
+  nodeKey,
   itemId,
   inheritedStyles,
   textStyle,
 }: {
   content: string;
+  nodeKey: string;
   itemId?: string;
   inheritedStyles: TextStyle;
   textStyle: TextStyle;
 }) {
+  const target = useTimelineSearchTarget();
+  const textRunOffsets = useContext(MarkdownTextRunOffsetsContext);
+  const runFieldOffset = textRunOffsets?.get(nodeKey) ?? null;
+  const runEnd = runFieldOffset === null ? null : runFieldOffset + content.length;
+  const containsTarget =
+    runFieldOffset !== null &&
+    runEnd !== null &&
+    target !== null &&
+    target.itemId === itemId &&
+    target.field === "text" &&
+    target.fieldOffset >= runFieldOffset &&
+    target.fieldOffset < runEnd;
   return useHighlightedSegments({
     text: content,
-    itemId,
+    itemId: containsTarget ? itemId : undefined,
     field: "text",
+    fieldOffsetBase: runFieldOffset ?? 0,
     renderMatch: (segment, isActive) => {
       if (!segment.isMatch) {
         return segment.text;
       }
       if (isActive) {
         return (
-          <MarkdownInheritedText
+          <ActiveMarkdownHighlight
             inheritedStyles={inheritedStyles}
             textStyle={textStyle}
-            style={timelineHighlightStyles.activeMatch}
-          >
-            {segment.text}
-          </MarkdownInheritedText>
+            text={segment.text}
+          />
         );
       }
       return (
@@ -1608,12 +1655,40 @@ function MarkdownHighlightedTextRun({
   });
 }
 
+function ActiveMarkdownHighlight({
+  inheritedStyles,
+  textStyle,
+  text,
+}: {
+  inheritedStyles: TextStyle;
+  textStyle: TextStyle;
+  text: string;
+}) {
+  const target = useTimelineSearchTarget();
+  const measureRef = useRef<MarkdownTextSpanMeasureHandle>(null);
+  const measure = useCallback((report: (centerY: number) => void) => {
+    measureRef.current?.measureInWindow((_x, y, _width, height) => report(y + height / 2));
+  }, []);
+  useTimelineSearchOccurrenceAnchor(target, measure, 2);
+  return (
+    <MarkdownInheritedText
+      measureRef={measureRef}
+      inheritedStyles={inheritedStyles}
+      textStyle={textStyle}
+      style={timelineHighlightStyles.activeMatch}
+    >
+      {text}
+    </MarkdownInheritedText>
+  );
+}
+
 function MarkdownInheritedText({
   inheritedStyles,
   textStyle,
   style: overrideStyle,
   monoSurface,
   children,
+  measureRef,
 }: MarkdownInheritedTextProps) {
   const style = useMemo(
     () => [inheritedStyles, textStyle, overrideStyle],
@@ -1627,6 +1702,7 @@ function MarkdownInheritedText({
   const linkPress = useAssistantLinkPress();
   return (
     <MarkdownTextSpan
+      measureRef={measureRef}
       monoSurface={monoSurface}
       style={style}
       onPress={linkPress?.onPress}
@@ -1721,6 +1797,7 @@ export const AssistantMessage = memo(function AssistantMessage({
         >
           <MarkdownHighlightedTextRun
             content={node.content}
+            nodeKey={node.key}
             itemId={streamItemId}
             inheritedStyles={inheritedStyles}
             textStyle={styles.text}
@@ -2009,10 +2086,14 @@ export const AssistantMessage = memo(function AssistantMessage({
   }, [client, fileLinkActions, markdownParser, serverId, streamItemId, workspaceRoot]);
 
   const blocks = useMemo(() => splitMarkdownBlocks(message), [message]);
-  const keyedBlocks = useMemo(
-    () => blocks.map((block, index) => ({ key: `${index}:${block.slice(0, 32)}`, block })),
-    [blocks],
-  );
+  const keyedBlocks = useMemo(() => {
+    let searchFrom = 0;
+    return blocks.map((block, index) => {
+      const fieldOffset = message.indexOf(block, searchFrom);
+      searchFrom = fieldOffset + block.length;
+      return { key: `${index}:${block.slice(0, 32)}`, block, fieldOffset };
+    });
+  }, [blocks, message]);
 
   const assistantContainerStyle = useMemo(
     () => [
@@ -2027,7 +2108,7 @@ export const AssistantMessage = memo(function AssistantMessage({
 
   return (
     <View ref={searchAnchorRef} testID="assistant-message" style={assistantContainerStyle}>
-      {keyedBlocks.map(({ key, block }, index) => (
+      {keyedBlocks.map(({ key, block, fieldOffset }, index) => (
         <AssistantMessageBlockContainer
           key={key}
           block={block}
@@ -2035,6 +2116,7 @@ export const AssistantMessage = memo(function AssistantMessage({
         >
           <MemoizedMarkdownBlock
             text={block}
+            fieldOffset={fieldOffset}
             rules={markdownRules}
             parser={markdownParser}
             onLinkPress={handleMarkdownLinkPress}
