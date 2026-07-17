@@ -27,6 +27,15 @@ function findMatchSpans(query: string): MatchSpan[] {
     });
 }
 
+async function openTimelineSearch(page: Page): Promise<void> {
+  // Direct navigation restores the agent tab but does not make its pane the
+  // focused pane. Ctrl+F is routed through that focus state, so activate the
+  // chat pane exactly as a user would before sending the shortcut.
+  await page.getByTestId("agent-chat-scroll").click();
+  await page.keyboard.press("Control+f");
+  await expect(page.getByTestId("timeline-search-panel")).toBeVisible();
+}
+
 /**
  * Asserts exactly one rendered match for `query` carries the active (amber)
  * highlight, and that it sits below the find panel and within the chat
@@ -70,7 +79,7 @@ test.describe("Timeline search", () => {
       await expectAgentIdle(page);
       await awaitToolCall(page, "bash");
 
-      await page.keyboard.press("Control+f");
+      await openTimelineSearch(page);
       const panel = page.getByTestId("timeline-search-panel");
       const input = page.getByTestId("timeline-search-input");
       await expect(panel).toBeVisible();
@@ -123,7 +132,7 @@ test.describe("Timeline search", () => {
       await expectAgentIdle(page);
       await awaitToolCall(page, "read");
 
-      await page.keyboard.press("Control+f");
+      await openTimelineSearch(page);
       const panel = page.getByTestId("timeline-search-panel");
       const input = page.getByTestId("timeline-search-input");
       await expect(panel).toBeVisible();
@@ -162,7 +171,7 @@ test.describe("Timeline search", () => {
       await expectAgentIdle(page);
       await awaitToolCall(page, "bash");
 
-      await page.keyboard.press("Control+f");
+      await openTimelineSearch(page);
       const input = page.getByTestId("timeline-search-input");
       await input.fill(OUTPUT_QUERY);
       await page.getByTestId("timeline-search-filter-toolOutput").click();
@@ -206,7 +215,7 @@ test.describe("Timeline search", () => {
       await expectAgentIdle(page);
       await awaitToolCall(page, "bash");
 
-      await page.keyboard.press("Control+f");
+      await openTimelineSearch(page);
       const input = page.getByTestId("timeline-search-input");
       await input.fill(OUTPUT_QUERY);
 
