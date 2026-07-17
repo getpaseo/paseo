@@ -36,6 +36,8 @@ import {
   createPersistedProjectRecord,
   type PersistedProjectRecord,
   type PersistedWorkspaceRecord,
+  type ProjectRegistry,
+  type WorkspaceRegistry,
 } from "./workspace-registry.js";
 import type { ForgeService } from "../services/forge-service.js";
 import { areEquivalentPaths } from "../utils/path.js";
@@ -46,6 +48,7 @@ import {
 import { WorkspaceGitServiceImpl } from "./workspace-git-service.js";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
 import { isPlatform } from "../test-utils/platform.js";
+import { createWorkspaceProvisioningService } from "./session/workspace-provisioning/workspace-provisioning-service.js";
 
 interface LegacyCreateWorktreeTestOptions {
   branchName: string;
@@ -299,6 +302,70 @@ function createPaseoWorktreeForTest(options: {
       forgeOverrides: { github: createGitHubServiceStub() },
     },
   });
+  const projectRegistry: ProjectRegistry = {
+    initialize: async () => {},
+    existsOnDisk: async () => true,
+    list: async () => Array.from(projects.values()),
+    get: async (projectId) => projects.get(projectId) ?? null,
+    getOrCreateActiveByRoot: async (allocation) => {
+      const existing = Array.from(projects.values()).find(
+        (project) =>
+          areEquivalentPaths(project.rootPath, allocation.rootPath) && !project.archivedAt,
+      );
+      if (existing) return existing;
+      const project = createPersistedProjectRecord({
+        projectId: `prj_test_${projects.size + 1}`,
+        rootPath: allocation.rootPath,
+        kind: allocation.kind,
+        displayName: allocation.displayName,
+        createdAt: allocation.timestamp,
+        updatedAt: allocation.timestamp,
+      });
+      projects.set(project.projectId, project);
+      return project;
+    },
+    upsert: async (record) => {
+      options.events?.push(`project:${record.projectId}`);
+      projects.set(record.projectId, record);
+    },
+    archive: async (projectId, archivedAt) => {
+      const project = projects.get(projectId);
+      if (project) projects.set(projectId, { ...project, archivedAt });
+    },
+    remove: async (projectId) => {
+      projects.delete(projectId);
+    },
+  };
+  const workspaceRegistry: WorkspaceRegistry = {
+    initialize: async () => {},
+    existsOnDisk: async () => true,
+    list: async () => Array.from(workspaces.values()),
+    get: async (workspaceId) => workspaces.get(workspaceId) ?? null,
+    update: async (workspaceId, updater) => {
+      const workspace = workspaces.get(workspaceId);
+      if (!workspace) return null;
+      const updated = updater(workspace);
+      workspaces.set(workspaceId, updated);
+      return updated;
+    },
+    upsert: async (record) => {
+      options.events?.push(`workspace:${record.workspaceId}`);
+      workspaces.set(record.workspaceId, record);
+    },
+    archive: async (workspaceId, archivedAt) => {
+      const workspace = workspaces.get(workspaceId);
+      if (workspace) workspaces.set(workspaceId, { ...workspace, archivedAt });
+    },
+    remove: async (workspaceId) => {
+      workspaces.delete(workspaceId);
+    },
+  };
+  const workspaceProvisioning = createWorkspaceProvisioningService({
+    projectRegistry,
+    workspaceRegistry,
+    workspaceGitService,
+    logger: createLogger(),
+  });
 
   return (input, serviceOptions) => {
     return createPaseoWorktreeService(input, {
@@ -306,39 +373,8 @@ function createPaseoWorktreeForTest(options: {
       ...(serviceOptions?.resolveDefaultBranch
         ? { resolveDefaultBranch: serviceOptions.resolveDefaultBranch }
         : {}),
-      projectRegistry: {
-        get: async (projectId) => projects.get(projectId) ?? null,
-        getOrCreateActiveByRoot: async (allocation) => {
-          const existing = Array.from(projects.values()).find(
-            (project) =>
-              areEquivalentPaths(project.rootPath, allocation.rootPath) && !project.archivedAt,
-          );
-          if (existing) return existing;
-          const project = createPersistedProjectRecord({
-            projectId: `prj_test_${projects.size + 1}`,
-            rootPath: allocation.rootPath,
-            kind: allocation.kind,
-            displayName: allocation.displayName,
-            createdAt: allocation.timestamp,
-            updatedAt: allocation.timestamp,
-          });
-          projects.set(project.projectId, project);
-          return project;
-        },
-        upsert: async (record) => {
-          options.events?.push(`project:${record.projectId}`);
-          projects.set(record.projectId, record);
-        },
-      },
-      workspaceRegistry: {
-        get: async (workspaceId) => workspaces.get(workspaceId) ?? null,
-        list: async () => Array.from(workspaces.values()),
-        upsert: async (record) => {
-          options.events?.push(`workspace:${record.workspaceId}`);
-          workspaces.set(record.workspaceId, record);
-        },
-      },
       workspaceGitService,
+      workspaceProvisioning,
     });
   };
 }

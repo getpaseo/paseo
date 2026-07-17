@@ -179,7 +179,7 @@ export function checkoutFromPersistedWorkspacePlacement(input: {
     ...checkout,
     isGit: true,
     isPaseoOwnedWorktree: false,
-    mainRepoRoot: workspace.mainRepoRoot,
+    mainRepoRoot: workspace.mainRepoRoot ?? null,
   };
 }
 
