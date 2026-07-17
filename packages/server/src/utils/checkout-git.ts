@@ -805,13 +805,6 @@ export type CheckoutSnapshotFacts =
       pullRequestLookupTarget: PullRequestStatusLookupTarget | null;
     };
 
-function isNotGitRepositoryError(error: unknown): boolean {
-  if (!(error instanceof Error)) {
-    return false;
-  }
-  return /not a git repository \(or any of the parent directories\): \.git/i.test(error.message);
-}
-
 async function requireGitRepo(cwd: string): Promise<void> {
   try {
     await runGitCommand(["rev-parse", "--git-dir"], { cwd, envOverlay: READ_ONLY_GIT_ENV });
@@ -859,19 +852,19 @@ async function getRebaseHeadBranch(cwd: string): Promise<string | null> {
 }
 
 async function getWorktreeRoot(cwd: string, context?: CheckoutContext): Promise<string | null> {
-  try {
-    const { stdout } = await runGitCommand(["rev-parse", "--show-toplevel"], {
-      cwd,
-      envOverlay: READ_ONLY_GIT_ENV,
-      logger: context?.logger,
-    });
-    return parseGitRevParsePath(stdout);
-  } catch (error) {
-    if (isNotGitRepositoryError(error)) {
-      return null;
-    }
-    throw error;
+  // git rev-parse --show-toplevel exits 128 when the cwd is not inside a git
+  // repository. Accept that exit code and check it programmatically rather than
+  // matching against git's stderr text, which changed between git versions.
+  const result = await runGitCommand(["rev-parse", "--show-toplevel"], {
+    cwd,
+    envOverlay: READ_ONLY_GIT_ENV,
+    logger: context?.logger,
+    acceptExitCodes: [0, 128],
+  });
+  if (result.exitCode !== 0) {
+    return null;
   }
+  return parseGitRevParsePath(result.stdout);
 }
 
 export async function getMainRepoRoot(cwd: string): Promise<string> {
