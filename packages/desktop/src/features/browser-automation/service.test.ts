@@ -10,6 +10,7 @@ import type {
 import { BrowserSnapshotEngine } from "./snapshot-engine.js";
 import type { BrowserRegistry, TabContents, TabImage } from "./service.js";
 import { executeAutomationCommand } from "./service.js";
+import type { IsolatedKeyboardInputEvent } from "./trusted-input.js";
 
 const BROWSER_A = "11111111-1111-4111-8111-111111111111";
 const BROWSER_B = "22222222-2222-4222-8222-222222222222";
@@ -37,6 +38,7 @@ class FakeTab implements TabContents {
   public readonly actions: string[] = [];
   public readonly capturedViewports: Array<{ stayHidden?: boolean }> = [];
   public readonly debugCommands: Array<{ command: string; params?: Record<string, unknown> }> = [];
+  public readonly inputEvents: IsolatedKeyboardInputEvent[] = [];
   private readonly captureStartWaiters: Array<() => void> = [];
   private readonly deferredCaptures: Array<(image: TabImage) => void> = [];
 
@@ -221,6 +223,10 @@ class FakeTab implements TabContents {
       return { node: { backendNodeId: this.queriedNodeId, nodeName: "INPUT" } };
     }
     return {};
+  }
+
+  public sendInputEvent(event: IsolatedKeyboardInputEvent): void {
+    this.inputEvents.push(event);
   }
 
   public waitForCaptureStart(count: number): Promise<void> {
@@ -1120,30 +1126,19 @@ describe("executeAutomationCommand", () => {
       ok: true,
       result: { command: "keypress", browserId: BROWSER_A, key: "Enter" },
     });
-    expect(browser.tab.debugCommands).toEqual([
+    expect(browser.tab.inputEvents).toEqual([
       {
-        command: "Input.dispatchKeyEvent",
-        params: {
-          type: "keyDown",
-          key: "Enter",
-          code: "Enter",
-          windowsVirtualKeyCode: 13,
-          nativeVirtualKeyCode: 13,
-          text: "\r",
-          unmodifiedText: "\r",
-        },
+        type: "keyDown",
+        keyCode: "Enter",
+        skipIfUnhandled: true,
       },
       {
-        command: "Input.dispatchKeyEvent",
-        params: {
-          type: "keyUp",
-          key: "Enter",
-          code: "Enter",
-          windowsVirtualKeyCode: 13,
-          nativeVirtualKeyCode: 13,
-        },
+        type: "keyUp",
+        keyCode: "Enter",
+        skipIfUnhandled: true,
       },
     ]);
+    expect(browser.tab.debugCommands).toEqual([]);
   });
 
   test("keypress focuses a non-editable ref without clicking before the trusted key", async () => {
@@ -1163,22 +1158,44 @@ describe("executeAutomationCommand", () => {
       result: { command: "keypress", browserId: BROWSER_A, key: "Enter", ref: "@e4", x: 40, y: 30 },
     });
     expect(containsScript(browser.tab, "element.focus({ preventScroll: true })")).toBe(true);
-    expect(browser.tab.debugCommands.map((entry) => entry.command)).toEqual([
-      "Input.dispatchKeyEvent",
-      "Input.dispatchKeyEvent",
-    ]);
-    expect(browser.tab.debugCommands.at(-2)).toEqual({
-      command: "Input.dispatchKeyEvent",
-      params: {
+    expect(browser.tab.inputEvents).toEqual([
+      {
         type: "keyDown",
-        key: "Enter",
-        code: "Enter",
-        windowsVirtualKeyCode: 13,
-        nativeVirtualKeyCode: 13,
-        text: "\r",
-        unmodifiedText: "\r",
+        keyCode: "Enter",
+        skipIfUnhandled: true,
+      },
+      {
+        type: "keyUp",
+        keyCode: "Enter",
+        skipIfUnhandled: true,
+      },
+    ]);
+    expect(browser.tab.debugCommands).toEqual([]);
+  });
+
+  test("keypress reports unsupported when focusing an editable ref requires unavailable CDP", async () => {
+    const browser = new BrowserAutomationHarness();
+    browser.tab.snapshotNodes = formElements();
+    browser.tab.keypressTargetEditable = true;
+
+    requireSnapshotRefs(await browser.snapshot());
+    Object.defineProperty(browser.tab, "sendDebugCommand", { value: undefined });
+
+    await expect(
+      browser.execute({
+        command: "keypress",
+        args: { browserId: BROWSER_A, ref: "@e1", key: "Enter" },
+      }),
+    ).resolves.toEqual({
+      requestId: "req-keypress",
+      ok: false,
+      error: {
+        code: "browser_unsupported",
+        message: "browser_keypress requires trusted browser input",
+        retryable: false,
       },
     });
+    expect(browser.tab.inputEvents).toEqual([]);
   });
 
   test("navigate loads the requested HTTP URL in the explicit tab", async () => {

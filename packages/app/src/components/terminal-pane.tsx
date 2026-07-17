@@ -21,7 +21,12 @@ import {
   resolvePendingModifierDataInput,
 } from "@/utils/terminal-keys";
 import { getWorkspaceTerminalSession } from "@/terminal/runtime/workspace-terminal-session";
-import { resolveFocusLatchStep } from "./terminal-pane-focus-latch";
+import {
+  EMPTY_FOCUS_CLAIM_STATE,
+  canRequestFocusClaim,
+  reconcileFocusClaim,
+  settleFocusClaim,
+} from "./terminal-pane-focus-claim";
 import {
   TerminalStreamController,
   type TerminalStreamControllerStatus,
@@ -222,7 +227,7 @@ export function TerminalPane({
   const pendingTerminalInputRef = useRef<PendingTerminalInput[]>([]);
   const keyboardRefitTimeoutsRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
   const lastAutoFocusKeyRef = useRef<string | null>(null);
-  const lastPaneFocusResizeKeyRef = useRef<string | null>(null);
+  const paneFocusResizeClaimRef = useRef(EMPTY_FOCUS_CLAIM_STATE);
   const initialSnapshot = workspaceTerminalSession.snapshots.get({ terminalId });
 
   useEffect(() => {
@@ -261,40 +266,48 @@ export function TerminalPane({
   );
 
   useEffect(() => {
-    // Latch only when the focus actually ran: latching before the workspace-focus gate would
-    // permanently disarm this effect for panes that mount before their workspace has focus.
-    const step = resolveFocusLatchStep({
-      key: isMobile || !isPaneFocused || !terminalId ? null : `${scopeKey}:${terminalId}`,
-      latchedKey: lastAutoFocusKeyRef.current,
-      canFire: isWorkspaceFocused,
-    });
-    lastAutoFocusKeyRef.current = step.latchedKey;
-    if (step.fire) {
+    if (isMobile || !isPaneFocused || !terminalId) {
+      lastAutoFocusKeyRef.current = null;
+      return;
+    }
+    if (!isWorkspaceFocused) {
+      return;
+    }
+    const focusKey = `${scopeKey}:${terminalId}`;
+    if (lastAutoFocusKeyRef.current !== focusKey) {
+      lastAutoFocusKeyRef.current = focusKey;
       requestTerminalFocus();
     }
   }, [isMobile, isPaneFocused, isWorkspaceFocused, requestTerminalFocus, scopeKey, terminalId]);
 
   useEffect(() => {
-    // This reflow produces the one resize claim a freshly mounted terminal ever sends; defer it
-    // (without burning the latch) until the claim can land — handleTerminalResize drops claims
-    // while the workspace is unfocused or the app is hidden, and nothing re-sends a dropped one.
-    const step = resolveFocusLatchStep({
-      key: !isPaneFocused || !terminalId ? null : `${scopeKey}:${terminalId}`,
-      latchedKey: lastPaneFocusResizeKeyRef.current,
-      canFire: isWorkspaceFocused && isAppVisible,
+    const canRequest = canRequestFocusClaim({
+      isWorkspaceFocused,
+      isAppVisible,
+      isClientReady: client !== null,
+      isConnected,
+      isRendererReady: rendererReadyStreamKey === terminalStreamKey,
     });
-    lastPaneFocusResizeKeyRef.current = step.latchedKey;
-    if (step.fire) {
+    const step = reconcileFocusClaim(paneFocusResizeClaimRef.current, {
+      key: !isPaneFocused || !terminalId ? null : `${scopeKey}:${terminalId}`,
+      canRequest,
+    });
+    paneFocusResizeClaimRef.current = step.state;
+    if (step.shouldRequest) {
       lastSentTerminalSizeRef.current = null;
       requestTerminalReflow();
     }
   }, [
+    client,
     isAppVisible,
+    isConnected,
     isPaneFocused,
     isWorkspaceFocused,
+    rendererReadyStreamKey,
     requestTerminalReflow,
     scopeKey,
     terminalId,
+    terminalStreamKey,
   ]);
 
   const handleTerminalFocus = useCallback(() => {
@@ -635,23 +648,40 @@ export function TerminalPane({
       const normalizedCols = Math.floor(cols);
       const nextSize = { rows: normalizedRows, cols: normalizedCols };
       measuredTerminalSizeRef.current = nextSize;
-      if (!input.shouldClaim || !client || !terminalId || !isWorkspaceFocused || !isAppVisible) {
+      if (!input.shouldClaim) {
         return;
       }
-      const previousSent = lastSentTerminalSizeRef.current;
-      if (
-        previousSent &&
-        previousSent.rows === normalizedRows &&
-        previousSent.cols === normalizedCols
-      ) {
-        return;
-      }
-      lastSentTerminalSizeRef.current = nextSize;
-      client.sendTerminalInput(terminalId, {
-        type: "resize",
-        rows: normalizedRows,
-        cols: normalizedCols,
+      let sent = false;
+      const canSend = canRequestFocusClaim({
+        isWorkspaceFocused,
+        isAppVisible,
+        isClientReady: client !== null,
+        isConnected,
+        isRendererReady: true,
       });
+      if (client && terminalId && canSend) {
+        const previousSent = lastSentTerminalSizeRef.current;
+        if (
+          !previousSent ||
+          previousSent.rows !== normalizedRows ||
+          previousSent.cols !== normalizedCols
+        ) {
+          lastSentTerminalSizeRef.current = nextSize;
+          client.sendTerminalInput(terminalId, {
+            type: "resize",
+            rows: normalizedRows,
+            cols: normalizedCols,
+          });
+        }
+        sent = true;
+      }
+      const requestedKey = paneFocusResizeClaimRef.current.requestedKey;
+      if (requestedKey) {
+        paneFocusResizeClaimRef.current = settleFocusClaim(paneFocusResizeClaimRef.current, {
+          key: requestedKey,
+          sent,
+        });
+      }
     },
   );
 

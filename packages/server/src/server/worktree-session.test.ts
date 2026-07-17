@@ -33,7 +33,7 @@ import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type { TerminalSession } from "../terminal/terminal.js";
 import type { AgentStorage, StoredAgentRecord } from "./agent/agent-storage.js";
 import type { PersistedProjectRecord, PersistedWorkspaceRecord } from "./workspace-registry.js";
-import type { GitHubService } from "../services/github-service.js";
+import type { ForgeService } from "../services/forge-service.js";
 import {
   createPaseoWorktree as createPaseoWorktreeService,
   type CreatePaseoWorktreeFn,
@@ -127,11 +127,15 @@ function createWorkflowForRequestTest(options: {
   };
 }
 
-function createGitHubServiceStub(): GitHubService {
+function createGitHubServiceStub(): ForgeService {
   return {
     listPullRequests: async () => [],
     listIssues: async () => [],
-    searchIssuesAndPrs: async () => ({ items: [], githubFeaturesEnabled: true }),
+    searchIssuesAndPrs: async () => ({
+      items: [],
+      featuresEnabled: true,
+      githubFeaturesEnabled: true,
+    }),
     getPullRequest: async ({ number }) => ({
       number,
       title: `PR ${number}`,
@@ -143,6 +147,25 @@ function createGitHubServiceStub(): GitHubService {
       labels: [],
     }),
     getPullRequestHeadRef: async ({ number }) => `pr-${number}`,
+    defaultCheckoutRefs: ({ changeRequestNumber }) => [
+      { remoteName: "origin", remoteRef: `refs/pull/${changeRequestNumber}/head` },
+    ],
+    buildPrLocalBranchName: ({ headRef, checkoutTarget }) => {
+      const normalized = checkoutTarget.headOwnerLogin?.trim().toLowerCase() ?? "";
+      const owner =
+        checkoutTarget.isCrossRepository && /^[a-z0-9-]+$/.test(normalized) ? normalized : null;
+      return owner ? `${owner}/${headRef}` : headRef;
+    },
+    supportsCrossRepoCheckoutWithoutRefs: true,
+    getPullRequestCheckoutTarget: async ({ number }) => ({
+      number,
+      baseRefName: "main",
+      headRefName: `pr-${number}`,
+      headOwnerLogin: null,
+      headRepositorySshUrl: null,
+      headRepositoryUrl: null,
+      isCrossRepository: false,
+    }),
     getCurrentPullRequestStatus: async () => null,
     createPullRequest: async () => ({
       number: 1,
@@ -268,7 +291,7 @@ function createPaseoWorktreeForTest(options: {
     logger: createLogger(),
     paseoHome: options.paseoHome,
     deps: {
-      github: createGitHubServiceStub(),
+      forgeOverrides: { github: createGitHubServiceStub() },
     },
   });
 
@@ -1376,7 +1399,7 @@ describe("handleCreatePaseoWorktreeRequest", () => {
         createPaseoWorktree,
         checkoutExistingBranch,
         createBranchFromBase,
-        github: { invalidate },
+        workspaceGitService: { invalidateForge: invalidate } as unknown as WorkspaceGitService,
       },
       {
         provider: "codex",
@@ -1394,7 +1417,7 @@ describe("handleCreatePaseoWorktreeRequest", () => {
       baseBranch: "main",
       newBranchName: "feature-x",
     });
-    expect(invalidate).toHaveBeenCalledWith({ cwd: "/tmp/repo" });
+    expect(invalidate).toHaveBeenCalledWith("/tmp/repo");
 
     invalidate.mockClear();
 
@@ -1404,7 +1427,7 @@ describe("handleCreatePaseoWorktreeRequest", () => {
         createPaseoWorktree,
         checkoutExistingBranch,
         createBranchFromBase,
-        github: { invalidate },
+        workspaceGitService: { invalidateForge: invalidate } as unknown as WorkspaceGitService,
       },
       {
         provider: "codex",
@@ -1416,7 +1439,7 @@ describe("handleCreatePaseoWorktreeRequest", () => {
     );
 
     expect(checkoutExistingBranch).toHaveBeenCalledWith("/tmp/repo", "release");
-    expect(invalidate).toHaveBeenCalledWith({ cwd: "/tmp/repo" });
+    expect(invalidate).toHaveBeenCalledWith("/tmp/repo");
   });
 
   test("createPaseoWorktreeForTest forwards the default branch resolver for branch-off intents", async () => {
@@ -1625,7 +1648,7 @@ describe("handleCreatePaseoWorktreeRequest", () => {
           message.type === "create_paseo_worktree_response",
       );
       expect(response?.payload.workspace).toBeNull();
-      expect(response?.payload.error).toBe('action "checkout" requires refName or githubPrNumber');
+      expect(response?.payload.error).toBe('action "checkout" requires refName or checkoutSource');
       expect(response?.payload.errorCode).toBe("missing_checkout_target");
     } finally {
       rmSync(tempDir, { recursive: true, force: true });

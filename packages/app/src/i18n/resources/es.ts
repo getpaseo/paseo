@@ -102,6 +102,7 @@ export const es: TranslationResources = {
       addImage: "Agregar imagen",
       addFile: "Upload file",
       addIssueOrPr: "Agregar problema oPR",
+      addIssueOrPr_mr: "Agregar problema o MR",
       dropImagesHere: "Suelta imágenes aquí",
       dropFilesHere: "Drop files here",
       editQueuedMessage: "Editar mensaje en cola",
@@ -109,8 +110,8 @@ export const es: TranslationResources = {
       openImage: "Abrir imagen adjunta",
       removeImage: "Quitar imagen adjunta",
       removeFile: "Remove file attachment",
-      openGithub: "Abrir{{kind}}#{{number}}",
-      removeGithub: "Quitar{{kind}}#{{number}}",
+      openGithub: "Abrir {{kind}} {{number}}",
+      removeGithub: "Quitar {{kind}} {{number}}",
       element: "Elemento",
       openBrowserElement: "Abrir archivo adjunto de elemento del navegador",
       removeBrowserElement: "Eliminar el archivo adjunto del elemento del navegador",
@@ -134,7 +135,9 @@ export const es: TranslationResources = {
       searching: "Búsqueda...",
       noResults: "No se encontraron resultados.",
       searchPlaceholder: "Problemas de búsqueda y relaciones públicas...",
+      searchPlaceholder_mr: "Problemas de búsqueda y MRs...",
       title: "Adjuntar problema oPR",
+      title_mr: "Adjuntar problema o MR",
     },
   },
   agentControls: {
@@ -624,6 +627,9 @@ export const es: TranslationResources = {
           label: "CrearPR",
           pending: "CreandoPR...",
           success: "PRcreado",
+          label_mr: "Crear MR",
+          pending_mr: "Creando MR...",
+          success_mr: "MR creado",
         },
         mergeBranch: {
           label: "Fusionar localmente",
@@ -646,7 +652,13 @@ export const es: TranslationResources = {
           rebase: "Fusionar PR (rebase)",
           pending: "Fusionando PR...",
           success: "PR fusionado",
+          squash_mr: "Fusionar MR (squash)",
+          merge_mr: "Fusionar MR (merge)",
+          rebase_mr: "Fusionar MR (rebase)",
+          pending_mr: "Fusionando MR...",
+          success_mr: "MR fusionado",
         },
+        viewPr_mr: "Ver MR",
         autoMerge: {
           enableSquash: "Fusión automática (squash)",
           enableMerge: "Fusión automática (merge)",
@@ -657,7 +669,8 @@ export const es: TranslationResources = {
           disabled: "Fusión automática deshabilitada",
         },
         unavailable: {
-          viewPrNoGithub: "VerPRno está disponible en este momento porqueGitHubno está conectado",
+          viewPrNoForge:
+            "Ver {{noun}} no está disponible en este momento porque {{brand}} no está conectado",
           pullNoRemote:
             "Pull no está disponible aquí porque esta rama aún no está conectada a un control remoto",
           pullDirty:
@@ -672,10 +685,14 @@ export const es: TranslationResources = {
             "Tirar y empujar no está disponible aquí porque esta rama aún no está conectada a un control remoto",
           pullAndPushDirty:
             "Tirar y empujar no está disponible mientras tenga cambios locales, así que confírmelos o guárdelos primero",
+          pullAndPushNoIncoming:
+            "Pull and push no está disponible porque no hay cambios entrantes que traer primero",
           pullAndPushInSync:
             "Pull and push no está disponible porque esta rama ya está sincronizada",
-          createPrNoGithub:
-            "CrearPRno está disponible en este momento porqueGitHubno está conectado",
+          pullAndPushNothingToPush:
+            "Pull and push no está disponible porque no hay nada nuevo que enviar después de pull",
+          createPrNoForge:
+            "Crear {{noun}} no está disponible en este momento porque {{brand}} no está conectado",
           createPrNoCommits:
             "CrearPRno está disponible porque esta rama aún no tiene nuevas confirmaciones",
           mergeNoBase:
@@ -692,6 +709,10 @@ export const es: TranslationResources = {
             "La actualización no está disponible porque esta rama ya está actualizada con{{baseRef}}",
           mergePrNoGithub:
             "FusionarPRno está disponible en este momento porqueGitHubno está conectado",
+          archiveNotWorktree:
+            "El archivo no está disponible aquí porque este espacio de trabajo no se creó como un árbol de trabajoPaseo",
+          mergePrNoForge:
+            "Fusionar {{noun}} no está disponible en este momento porque {{brand}} no está conectado",
           mergePrMissing:
             "FusionarPRno está disponible porque aún no hay una solicitud de extracción",
           mergePrDraft:
@@ -705,7 +726,7 @@ export const es: TranslationResources = {
           mergePrQueue:
             "FusionarPRno está disponible aquí porque este repositorio utiliza una cola de fusión",
           mergePrNotReady:
-            "FusionarPRno está disponible hasta queGitHubinforme que la solicitud de extracción está lista para fusionarse",
+            "Fusionar {{noun}} no está disponible hasta que {{brand}} informe que {{noun}} está listo para fusionarse",
           autoMergeCannotDisable:
             "La combinación automática está habilitada, pero esta cuenta no puede deshabilitarla",
         },
@@ -756,7 +777,7 @@ export const es: TranslationResources = {
         expandAllFolders: "Expandir todas las carpetas",
         refreshing: "Refrescante",
         refresh: "Refrescar",
-        refreshState: "Actualizar el estado de git yGitHub",
+        refreshState: "Actualizar el estado de git y {{brand}}",
         failedRefresh: "No se pudo actualizar el estado de git.",
         emptyHiddenWhitespace: "No hay cambios visibles después de ocultar espacios en blanco",
         emptyUncommitted: "Sin cambios no confirmados",
@@ -792,13 +813,23 @@ export const es: TranslationResources = {
       pr: {
         actions: {
           viewPullRequest: "Ver",
+          openOn: "Abrir en {{brand}}",
         },
         sections: {
           checks: "cheques",
+          pipeline: "Pipeline",
           reviews: "Reseñas",
         },
+        empty: {
+          noJobs: "Sin trabajos",
+          loadingPipeline: "Cargando pipeline...",
+          pipelineJobsLoadFailed: "No se pudieron cargar los trabajos del pipeline",
+          allowedToFail: "permitido fallar",
+        },
+        approvals: "{{given}} de {{required}} aprobaciones",
         accessibility: {
           pullRequest: "Solicitud de extracción n.°{{number}}",
+          pullRequest_mr: "Solicitud de fusión !{{number}}",
         },
         states: {
           draft: "Borrador",
@@ -815,10 +846,18 @@ export const es: TranslationResources = {
         time: {
           justNow: "En este momento",
         },
+        thread: {
+          discussion: "Hilo de discusión",
+        },
         errors: {
           statusLoadFailed: "No se puede cargar el estado de la solicitud de extracción",
           activityLoadFailed: "No se puede cargar la actividad de solicitud de extracción",
         },
+      },
+      forgeSetup: {
+        installCli: "Instala la CLI de {{cli}} para usar las funciones de {{brand}}.",
+        signIn: "Ejecuta {{command}} para usar las funciones de {{brand}}.",
+        generic: "Configura {{brand}} en este host para usar sus funciones.",
       },
     },
   },
@@ -951,10 +990,10 @@ export const es: TranslationResources = {
     refPicker: {
       startingRef: "Árbitro inicial",
       chooseStart: "Elige por dónde empezar",
-      checkoutHint: "¿MiraPR#{{number}}?",
-      checkoutPr: "Echa un vistazo aPR#{{number}}",
-      dismissCheckoutHint: "Descartar la sugerencia de pago dePR#{{number}}",
-      intoBase: "en{{baseRef}}",
+      checkoutHint: "¿Mira {{noun}} {{numberPrefix}}{{number}}?",
+      checkoutPr: "Echa un vistazo a {{noun}} {{numberPrefix}}{{number}}",
+      dismissCheckoutHint: "Descartar la sugerencia de pago de {{noun}} {{numberPrefix}}{{number}}",
+      intoBase: "en {{baseRef}}",
       searching: "Búsqueda...",
       noMatchingRefs: "No hay árbitros coincidentes.",
       searchPlaceholder: "Buscar sucursales y relaciones públicas",

@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
+import type { BrowserKeyboardPolicy } from "./features/browser-keyboard/index.js";
 
 // This preload runs in Electron's sandbox and is tsc-compiled (not bundled), so it MUST
 // NOT emit any runtime module load other than "electron" — a require() of a local or
@@ -94,6 +95,8 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
       ipcRenderer.invoke("paseo:menu:set-capturing-shortcut", capturing),
   },
   browser: {
+    setShortcutPolicy: (input: BrowserKeyboardPolicy) =>
+      ipcRenderer.invoke("paseo:browser:set-shortcut-policy", input),
     profilePartition: PASEO_BROWSER_PROFILE_PARTITION,
     registerAttachedBrowser: (input: AttachedBrowserRegistration) =>
       ipcRenderer.invoke("paseo:browser:register-attached", input),

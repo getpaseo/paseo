@@ -194,7 +194,10 @@ describe("translation resources", () => {
     expect(en.composer.input.sendMessage).toBe("Send message");
     expect(en.composer.voice.startDictation).toBe("Start dictation");
     expect(en.composer.attachments.addIssueOrPr).toBe("Add issue or PR");
+    expect(en.composer.attachments.addIssueOrPr_mr).toBe("Add issue or MR");
     expect(en.composer.github.title).toBe("Attach issue or PR");
+    expect(en.composer.github.title_mr).toBe("Attach issue or MR");
+    expect(en.composer.github.searchPlaceholder_mr).toBe("Search issues and MRs...");
     expect(en.agentControls.provider.fallback).toBe("Provider");
     expect(en.agentControls.hints.model).toBe("Change model");
     expect(en.agentControls.hints.mode).toBe("Change mode");
@@ -258,7 +261,14 @@ describe("translation resources", () => {
     expect(en.workspace.git.actions.commit.label).toBe("Commit");
     expect(en.workspace.git.diff.binaryFile).toBe("Binary file");
     expect(en.workspace.git.pr.sections.checks).toBe("Checks");
+    expect(en.workspace.git.pr.sections.pipeline).toBe("Pipeline");
     expect(en.workspace.git.pr.actions.viewPullRequest).toBe("View");
+    expect(en.workspace.git.pr.actions.openOn).toBe("Open on {{brand}}");
+    expect(en.workspace.git.pr.empty.noJobs).toBe("No jobs");
+    expect(en.workspace.git.pr.empty.loadingPipeline).toBe("Loading pipeline…");
+    expect(en.workspace.git.pr.empty.pipelineJobsLoadFailed).toBe("Could not load pipeline jobs");
+    expect(en.workspace.git.pr.empty.allowedToFail).toBe("allowed to fail");
+    expect(en.workspace.git.pr.approvals).toBe("{{given}} of {{required}} approvals");
     expect(en.review.comment.placeholder).toBe("Leave a comment");
   });
 

@@ -102,6 +102,7 @@ export const ru: TranslationResources = {
       addImage: "Добавить изображение",
       addFile: "Upload file",
       addIssueOrPr: "Добавить проблему или PR",
+      addIssueOrPr_mr: "Добавить проблему или MR",
       dropImagesHere: "Скиньте изображения сюда",
       dropFilesHere: "Drop files here",
       editQueuedMessage: "Изменить сообщение в очереди",
@@ -109,8 +110,8 @@ export const ru: TranslationResources = {
       openImage: "Открыть прикрепленное изображение",
       removeImage: "Удалить прикрепленное изображение",
       removeFile: "Remove file attachment",
-      openGithub: "Открыть{{kind}}#{{number}}",
-      removeGithub: "Удалить{{kind}}#{{number}}",
+      openGithub: "Открыть {{kind}} {{number}}",
+      removeGithub: "Удалить {{kind}} {{number}}",
       element: "Элемент",
       openBrowserElement: "Открыть вложение элемента браузера",
       removeBrowserElement: "Удалить вложение элемента браузера",
@@ -134,7 +135,9 @@ export const ru: TranslationResources = {
       searching: "Идет поиск...",
       noResults: "Результаты не найдены.",
       searchPlaceholder: "Поиск проблем и пиар...",
+      searchPlaceholder_mr: "Поиск проблем и MR...",
       title: "Прикрепите проблему или PR",
+      title_mr: "Прикрепите проблему или MR",
     },
   },
   agentControls: {
@@ -623,6 +626,9 @@ export const ru: TranslationResources = {
           label: "Создать PR",
           pending: "Создание PR...",
           success: "PR создано",
+          label_mr: "Создать MR",
+          pending_mr: "Создание MR...",
+          success_mr: "MR создано",
         },
         mergeBranch: {
           label: "Объединить локально",
@@ -645,7 +651,13 @@ export const ru: TranslationResources = {
           rebase: "Объединить PR (rebase)",
           pending: "Объединение PR...",
           success: "PR объединен",
+          squash_mr: "Объединить MR (squash)",
+          merge_mr: "Объединить MR (merge)",
+          rebase_mr: "Объединить MR (rebase)",
+          pending_mr: "Объединение MR...",
+          success_mr: "MR объединен",
         },
+        viewPr_mr: "Посмотреть MR",
         autoMerge: {
           enableSquash: "Автообъединение (squash)",
           enableMerge: "Автообъединение (merge)",
@@ -656,7 +668,7 @@ export const ru: TranslationResources = {
           disabled: "Автоматическое объединение отключено",
         },
         unavailable: {
-          viewPrNoGithub: "Просмотр PR сейчас недоступен, поскольку GitHub не подключен.",
+          viewPrNoForge: "Просмотр {{noun}} сейчас недоступен, поскольку {{brand}} не подключен.",
           pullNoRemote:
             "Функция Pull здесь недоступна, поскольку эта ветка еще не подключена к удаленному серверу.",
           pullDirty:
@@ -670,10 +682,14 @@ export const ru: TranslationResources = {
             "Функция Pull and Push здесь недоступна, поскольку эта ветка еще не подключена к удаленному устройству.",
           pullAndPushDirty:
             "Функция извлечения и отправки недоступна, пока у вас есть локальные изменения, поэтому сначала зафиксируйте или сохраните их.",
+          pullAndPushNoIncoming:
+            "Функция Pull and Push недоступна, поскольку сначала нечего получать.",
           pullAndPushInSync:
             "Функция Pull and Push недоступна, поскольку эта ветвь уже синхронизирована.",
-          createPrNoGithub:
-            "Функция «Создать PR» сейчас недоступна, поскольку GitHub не подключен.",
+          pullAndPushNothingToPush:
+            "Функция Pull and Push недоступна, поскольку после pull нечего отправлять.",
+          createPrNoForge:
+            "Функция «Создать {{noun}}» сейчас недоступна, поскольку {{brand}} не подключен.",
           createPrNoCommits:
             "Функция «Создать PR» недоступна, поскольку в этой ветке еще нет новых коммитов.",
           mergeNoBase: "Объединение недоступно, поскольку нам не удалось определить базовую ветку.",
@@ -687,6 +703,10 @@ export const ru: TranslationResources = {
           updateCurrent:
             "Обновление недоступно, поскольку эта ветка уже обновлена ​​до версии{{baseRef}}.",
           mergePrNoGithub: "Объединение PR сейчас недоступно, поскольку GitHub не подключен.",
+          archiveNotWorktree:
+            "Архив здесь недоступен, поскольку это рабочее пространство не было создано как рабочее дерево Paseo.",
+          mergePrNoForge:
+            "Объединение {{noun}} сейчас недоступно, поскольку {{brand}} не подключен.",
           mergePrMissing: "Объединение PR недоступно, поскольку еще нет запроса на включение",
           mergePrDraft:
             "Объединение PR недоступно, поскольку запрос на включение все еще находится на стадии черновика.",
@@ -697,7 +717,7 @@ export const ru: TranslationResources = {
           mergePrQueue:
             "Слияние PR здесь недоступно, поскольку этот репозиторий использует очередь слияния.",
           mergePrNotReady:
-            "Функция слияния PR недоступна до тех пор, пока GitHub не сообщит, что запрос на включение готов к слиянию.",
+            "Функция слияния {{noun}} недоступна до тех пор, пока {{brand}} не сообщит, что {{noun}} готов к слиянию.",
           autoMergeCannotDisable:
             "Автоматическое объединение включено, но этот аккаунт не может его отключить.",
         },
@@ -748,7 +768,7 @@ export const ru: TranslationResources = {
         expandAllFolders: "Развернуть все папки",
         refreshing: "Освежающий",
         refresh: "Обновить",
-        refreshState: "Обновить состояние git и GitHub.",
+        refreshState: "Обновить состояние git и {{brand}}",
         failedRefresh: "Не удалось обновить состояние git.",
         emptyHiddenWhitespace: "Никаких видимых изменений после скрытия пробелов",
         emptyUncommitted: "Нет незафиксированных изменений",
@@ -784,13 +804,23 @@ export const ru: TranslationResources = {
       pr: {
         actions: {
           viewPullRequest: "Открыть",
+          openOn: "Открыть на {{brand}}",
         },
         sections: {
           checks: "Чеки",
+          pipeline: "Пайплайн",
           reviews: "Отзывы",
         },
+        empty: {
+          noJobs: "Нет задач",
+          loadingPipeline: "Загрузка пайплайна...",
+          pipelineJobsLoadFailed: "Не удалось загрузить задачи пайплайна",
+          allowedToFail: "допускается сбой",
+        },
+        approvals: "{{given}} из {{required}} одобрений",
         accessibility: {
           pullRequest: "Запрос на извлечение №{{number}}",
+          pullRequest_mr: "Запрос на слияние !{{number}}",
         },
         states: {
           draft: "Черновик",
@@ -807,10 +837,18 @@ export const ru: TranslationResources = {
         time: {
           justNow: "прямо сейчас",
         },
+        thread: {
+          discussion: "Обсуждение",
+        },
         errors: {
           statusLoadFailed: "Невозможно загрузить статус запроса на включение",
           activityLoadFailed: "Невозможно загрузить активность запроса на включение",
         },
+      },
+      forgeSetup: {
+        installCli: "Установите CLI {{cli}}, чтобы использовать возможности {{brand}}.",
+        signIn: "Выполните {{command}}, чтобы использовать возможности {{brand}}.",
+        generic: "Настройте {{brand}} на этом хосте, чтобы использовать его функции.",
       },
     },
   },
@@ -943,10 +981,11 @@ export const ru: TranslationResources = {
     refPicker: {
       startingRef: "Начальная ссылка",
       chooseStart: "Выберите, с чего начать",
-      checkoutHint: "Проверьте PR#{{number}}?",
-      checkoutPr: "Проверьте PR#{{number}}",
-      dismissCheckoutHint: "Отклонить подсказку по оформлению заказа PR#{{number}}",
-      intoBase: "в{{baseRef}}",
+      checkoutHint: "Проверьте {{noun}} {{numberPrefix}}{{number}}?",
+      checkoutPr: "Проверьте {{noun}} {{numberPrefix}}{{number}}",
+      dismissCheckoutHint:
+        "Отклонить подсказку по оформлению заказа {{noun}} {{numberPrefix}}{{number}}",
+      intoBase: "в {{baseRef}}",
       searching: "Идет поиск...",
       noMatchingRefs: "Нет подходящих ссылок.",
       searchPlaceholder: "Поиск филиалов и PR",

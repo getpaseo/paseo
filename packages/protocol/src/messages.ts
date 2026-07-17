@@ -870,6 +870,19 @@ export const GitHubPrAttachmentSchema = z.object({
   headRefName: z.string().nullable().optional(),
 });
 
+export const ForgeChangeRequestAttachmentSchema = z.object({
+  type: z.literal("forge_change_request"),
+  mimeType: z.literal("application/paseo-forge-change-request"),
+  forge: z.string().optional().default("github"),
+  number: z.number().int().positive(),
+  title: z.string(),
+  url: z.string(),
+  body: z.string().nullable().optional(),
+  projectPath: z.string().optional(),
+  baseRefName: z.string().nullable().optional(),
+  headRefName: z.string().nullable().optional(),
+});
+
 export const GitHubIssueAttachmentSchema = z.object({
   type: z.literal("github_issue"),
   mimeType: z.literal("application/github-issue"),
@@ -877,6 +890,17 @@ export const GitHubIssueAttachmentSchema = z.object({
   title: z.string(),
   url: z.string(),
   body: z.string().nullable().optional(),
+});
+
+export const ForgeIssueAttachmentSchema = z.object({
+  type: z.literal("forge_issue"),
+  mimeType: z.literal("application/paseo-forge-issue"),
+  forge: z.string().optional().default("github"),
+  number: z.number().int().positive(),
+  title: z.string(),
+  url: z.string(),
+  body: z.string().nullable().optional(),
+  projectPath: z.string().optional(),
 });
 
 export const TextAttachmentSchema = z
@@ -930,6 +954,8 @@ export const UploadedFileAttachmentSchema = z.object({
 });
 
 export const AgentAttachmentSchema = z.discriminatedUnion("type", [
+  ForgeChangeRequestAttachmentSchema,
+  ForgeIssueAttachmentSchema,
   GitHubPrAttachmentSchema,
   GitHubIssueAttachmentSchema,
   TextAttachmentSchema,
@@ -952,6 +978,13 @@ function normalizeAgentAttachments(input: unknown): AgentAttachment[] {
 }
 
 const AgentAttachmentsSchema = z.unknown().transform(normalizeAgentAttachments).optional();
+
+export const ChangeRequestCheckoutSourceSchema = z.object({
+  kind: z.literal("change_request"),
+  forge: z.string().optional().default("github"),
+  number: z.number().int().positive(),
+  projectPath: z.string().optional(),
+});
 
 const ImageAttachmentSchema = z.object({
   data: z.string(), // base64 encoded image
@@ -1169,6 +1202,9 @@ const GitSetupOptionsSchema = z.object({
   worktreeSlug: z.string().optional(),
   refName: z.string().min(1).optional(),
   action: z.enum(["branch-off", "checkout"]).optional(),
+  checkoutSource: ChangeRequestCheckoutSourceSchema.optional(),
+  // COMPAT(githubPrNumber): added in v0.1.106, remove after 2026-12-28 once
+  // clients send checkoutSource.
   githubPrNumber: z.number().int().positive().optional(),
 });
 
@@ -1637,6 +1673,16 @@ export const CheckoutPrMergeRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const CheckoutForgeSetAutoMergeRequestSchema = z.object({
+  type: z.literal("checkout.forge.set_auto_merge.request"),
+  cwd: z.string(),
+  enabled: z.boolean(),
+  mergeMethod: z.enum(["merge", "squash", "rebase"]).optional(),
+  requestId: z.string(),
+});
+
+// COMPAT(githubAutoMergeRpc): added in v0.1.106, remove after 2026-12-28 once
+// all supported clients use checkout.forge.set_auto_merge.*.
 export const CheckoutGithubSetAutoMergeRequestSchema = z.object({
   type: z.literal("checkout.github.set_auto_merge.request"),
   cwd: z.string(),
@@ -1678,15 +1724,37 @@ export const CheckoutCommitFileDiffRequestSchema = z.object({
 
 const GitHubRepoSegmentSchema = z.string().regex(/^[A-Za-z0-9._-]+$/);
 
-export const CheckoutGithubGetCheckDetailsRequestSchema = z.object({
-  type: z.literal("checkout.github.get_check_details.request"),
+const CheckoutCheckDetailsRequestPayloadSchema = z.object({
   cwd: z.string(),
-  repoOwner: GitHubRepoSegmentSchema,
-  repoName: GitHubRepoSegmentSchema,
-  checkRunId: z.number().int().positive(),
+  // GitHub addresses check runs by owner/name. GitLab resolves the project from
+  // cwd and omits these GitHub-only single-segment fields.
+  repoOwner: GitHubRepoSegmentSchema.optional(),
+  repoName: GitHubRepoSegmentSchema.optional(),
+  // Permanently optional: a check addressed only by workflowRunId (Gitea
+  // Actions runs carry no check-run id) is fetchable. Callers send at least one
+  // of checkRunId/workflowRunId; the gated forge RPC only reaches daemons that
+  // understand this.
+  checkRunId: z.number().int().positive().optional(),
   workflowRunId: z.number().int().positive().optional(),
+  // Permanent forge-routing field, optional because only some forges need it:
+  // GitLab routes the check-details fetch to the change request's head pipeline
+  // by iid, so a fork/detached MR pipeline (which lives in the source project,
+  // not the checkout's target project) resolves correctly. GitHub ignores it.
+  changeRequestNumber: z.number().int().positive().optional(),
   requestId: z.string(),
 });
+
+export const CheckoutForgeGetCheckDetailsRequestSchema =
+  CheckoutCheckDetailsRequestPayloadSchema.extend({
+    type: z.literal("checkout.forge.get_check_details.request"),
+  });
+
+// COMPAT(githubCheckDetailsRpc): added in v0.1.106, remove after 2026-12-28 once
+// all supported clients use checkout.forge.get_check_details.*.
+export const CheckoutGithubGetCheckDetailsRequestSchema =
+  CheckoutCheckDetailsRequestPayloadSchema.extend({
+    type: z.literal("checkout.github.get_check_details.request"),
+  });
 
 export const CheckoutPrStatusRequestSchema = z.object({
   type: z.literal("checkout_pr_status_request"),
@@ -1758,19 +1826,46 @@ export const BranchSuggestionsRequestSchema = z.object({
 
 export const GitHubSearchItemSchema = z.object({
   kind: z.enum(["issue", "pr"]),
+  forge: z.string().optional(),
   number: z.number(),
   title: z.string(),
   url: z.string(),
   state: z.string(),
   body: z.string().nullable(),
   labels: z.array(z.string()),
+  projectPath: z.string().optional(),
   baseRefName: z.string().nullable().optional(),
   headRefName: z.string().nullable().optional(),
   updatedAt: z.string().optional(),
 });
 
-export const GitHubSearchKindSchema = z.enum(["github-issue", "github-pr"]);
+export const ForgeSearchItemSchema = GitHubSearchItemSchema.extend({
+  kind: z.enum(["issue", "change_request"]),
+});
 
+// COMPAT(githubSearchKind): added in v0.1.106, remove with the legacy
+// github_search_request RPC after 2026-12-28.
+export const ForgeSearchKindSchema = z.enum([
+  "issue",
+  "change_request",
+  "github-issue",
+  "github-pr",
+  "pr",
+]);
+
+export const GitHubSearchKindSchema = ForgeSearchKindSchema;
+
+export const ForgeSearchRequestSchema = z.object({
+  type: z.literal("forge.search.request"),
+  cwd: z.string(),
+  query: z.string(),
+  limit: z.number().int().min(1).max(50).optional(),
+  kinds: z.array(ForgeSearchKindSchema).optional(),
+  requestId: z.string(),
+});
+
+// COMPAT(githubSearchRpc): added in v0.1.106, remove after 2026-12-28 once
+// clients use forge.search.*.
 export const GitHubSearchRequestSchema = z.object({
   type: z.literal("github_search_request"),
   cwd: z.string(),
@@ -1837,6 +1932,9 @@ export const CreatePaseoWorktreeRequestSchema = z.object({
   firstAgentContext: FirstAgentContextSchema.optional(),
   refName: z.string().min(1).optional(),
   action: z.enum(["branch-off", "checkout"]).optional(),
+  checkoutSource: ChangeRequestCheckoutSourceSchema.optional(),
+  // COMPAT(githubPrNumber): added in v0.1.106, remove after 2026-12-28 once
+  // clients send checkoutSource: { kind: "change_request", forge, number }.
   githubPrNumber: z.number().int().positive().optional(),
   requestId: z.string(),
 });
@@ -1944,6 +2042,9 @@ export const WorkspaceCreateRequestSchema = z.object({
       // Target branch name for checkout, or new branch name for branch-off.
       refName: z.string().min(1).optional(),
       baseBranch: z.string().optional(),
+      checkoutSource: ChangeRequestCheckoutSourceSchema.optional(),
+      // COMPAT(githubPrNumber): added in v0.1.106, remove after 2026-12-28 once
+      // clients send checkoutSource.
       githubPrNumber: z.number().int().positive().optional(),
       worktreeSlug: z.string().optional(),
     }),
@@ -2277,9 +2378,11 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   CheckoutRefreshRequestSchema,
   CheckoutPrCreateRequestSchema,
   CheckoutPrMergeRequestSchema,
+  CheckoutForgeSetAutoMergeRequestSchema,
   CheckoutGithubSetAutoMergeRequestSchema,
   CheckoutCommitsListRequestSchema,
   CheckoutCommitFileDiffRequestSchema,
+  CheckoutForgeGetCheckDetailsRequestSchema,
   CheckoutGithubGetCheckDetailsRequestSchema,
   CheckoutPrStatusRequestSchema,
   PullRequestTimelineRequestSchema,
@@ -2290,6 +2393,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   StashListRequestSchema,
   ValidateBranchRequestSchema,
   BranchSuggestionsRequestSchema,
+  ForgeSearchRequestSchema,
   GitHubSearchRequestSchema,
   DirectorySuggestionsRequestSchema,
   PaseoWorktreeListRequestSchema,
@@ -2514,9 +2618,16 @@ export const ServerInfoStatusPayloadSchema = z
     features: z
       .object({
         providersSnapshot: z.boolean().optional(),
+        // COMPAT(checkoutForgeSetAutoMerge): added in v0.1.106, remove old
+        // checkoutGithubSetAutoMerge fallback after 2026-12-28.
+        checkoutForgeSetAutoMerge: z.boolean().optional(),
         checkoutGithubSetAutoMerge: z.boolean().optional(),
         // COMPAT(githubCheckDetails): added in v0.1.92, remove gate after 2026-12-08.
         githubCheckDetails: z.boolean().optional(),
+        // COMPAT(forgeCheckDetails): added in v0.1.106, remove githubCheckDetails fallback after 2026-12-28.
+        forgeCheckDetails: z.boolean().optional(),
+        // COMPAT(forgeSearch): added in v0.1.106, remove github_search fallback after 2026-12-28.
+        forgeSearch: z.boolean().optional(),
         // COMPAT(daemonStatusRpc): added in v0.1.76, remove gate after 2026-11-18.
         daemonStatusRpc: z.boolean().optional(),
         // COMPAT(terminalRestoreModes): added in v0.1.81, remove gate after 2026-11-23.
@@ -2563,6 +2674,10 @@ export const ServerInfoStatusPayloadSchema = z
         providerRemoval: z.boolean().optional(),
         // COMPAT(importSessionWorkspaceTarget): added in v0.1.110, remove gate after 2027-01-16.
         importSessionWorkspaceTarget: z.boolean().optional(),
+        // COMPAT(forgeProviders): added in v0.1.106, drop the gate when daemon floor >= v0.1.106.
+        // Daemon advertises pluggable non-GitHub forge support (the forge registry);
+        // the client gates non-GitHub setup UI on it.
+        forgeProviders: z.boolean().optional(),
       })
       .optional(),
   })
@@ -2864,6 +2979,10 @@ export const WorkspaceDescriptorPayloadSchema = z
     scripts: z.array(WorkspaceScriptPayloadSchema).default([]),
     gitRuntime: WorkspaceGitRuntimePayloadSchema,
     githubRuntime: WorkspaceGitHubRuntimePayloadSchema,
+    // COMPAT(forge): added in v0.1.106, remove after 2026-12-27. The forge resolved
+    // for this workspace, so the sidebar/hover-card render the right brand mark.
+    // Old daemons omit it; absent means the client falls back to GitHub.
+    forge: z.string().optional(),
     project: ProjectPlacementPayloadSchema.optional(),
   })
   .transform((workspace) => ({
@@ -3649,21 +3768,36 @@ const CheckoutPrGithubRepositoryPolicySchema = z
     viewerDefaultMergeMethod: null,
   });
 
-const CheckoutPrGithubStatusSchema = z
-  .object({
-    mergeStateStatus: z.string().nullable().optional().default(null),
-    autoMergeRequest: CheckoutPrGithubAutoMergeRequestSchema,
-    viewerCanEnableAutoMerge: z.boolean().optional().default(false),
-    viewerCanDisableAutoMerge: z.boolean().optional().default(false),
-    viewerCanMergeAsAdmin: z.boolean().optional().default(false),
-    viewerCanUpdateBranch: z.boolean().optional().default(false),
-    repository: CheckoutPrGithubRepositoryPolicySchema,
-    isMergeQueueEnabled: z.boolean().optional().default(false),
-    isInMergeQueue: z.boolean().optional().default(false),
-  })
-  .optional();
+const CheckoutPrGithubStatusObjectSchema = z.object({
+  mergeStateStatus: z.string().nullable().optional().default(null),
+  autoMergeRequest: CheckoutPrGithubAutoMergeRequestSchema,
+  viewerCanEnableAutoMerge: z.boolean().optional().default(false),
+  viewerCanDisableAutoMerge: z.boolean().optional().default(false),
+  viewerCanMergeAsAdmin: z.boolean().optional().default(false),
+  viewerCanUpdateBranch: z.boolean().optional().default(false),
+  repository: CheckoutPrGithubRepositoryPolicySchema,
+  isMergeQueueEnabled: z.boolean().optional().default(false),
+  isInMergeQueue: z.boolean().optional().default(false),
+});
+
+const CheckoutPrGithubStatusSchema = CheckoutPrGithubStatusObjectSchema.optional();
+
+// The open facts envelope for forge-specific PR facts. Permanent — non-GitHub
+// forges deliver their native facts through it. The transitional piece is the
+// `github` mirror above, which stays populated for clients predating this
+// envelope; see COMPAT(forgeSpecific) in status-projection.ts for the shim.
+//
+// NOTE: `forgeSpecific.forge` is a FACTS-FAMILY tag, not the workspace brand id.
+// The whole Gitea family (gitea, forgejo, codeberg) emits `forge: "gitea"` here
+// because they share one facts shape, while the top-level `forge` above carries
+// the specific brand. Validation of family-specific payloads happens at runtime
+// in the consumer that knows that forge family.
+const CheckoutPrForgeSpecificSchema = z.unknown().optional();
 
 export const CheckoutPrStatusSchema = z.object({
+  // COMPAT(forge): added in v0.1.106, remove the default after 2026-12-27 once daemon floor >= v0.1.106.
+  forge: z.string().optional().default("github"),
+  projectPath: z.string().optional(),
   number: z.number().optional(),
   url: z.string(),
   title: z.string(),
@@ -3696,12 +3830,32 @@ export const CheckoutPrStatusSchema = z.object({
   repoOwner: z.string().optional(),
   repoName: z.string().optional(),
   github: CheckoutPrGithubStatusSchema,
+  forgeSpecific: CheckoutPrForgeSpecificSchema,
 });
+
+// Why a forge's PR/MR features are (un)available, so the client can offer the
+// precise next step instead of a generic dead-end. Kept open on the wire so
+// feature consumers can ignore values introduced by newer daemons.
+export type ForgeAuthState =
+  | "authenticated"
+  | "unauthenticated"
+  | "cli_missing"
+  | "no_remote"
+  | "error";
+
+export const ForgeAuthStateSchema = z.unknown().optional();
 
 const CheckoutPrStatusPayloadSchema = z.object({
   cwd: z.string(),
   status: CheckoutPrStatusSchema.nullable(),
   githubFeaturesEnabled: z.boolean(),
+  // COMPAT(forgeAuthState): added in v0.1.106, remove after 2026-12-27. Optional richer
+  // signal that supersedes githubFeaturesEnabled. The legacy boolean stays for old clients
+  // and may remain true for non-auth error payloads so old clients still show the error.
+  // Drop the boolean once the daemon floor >= v0.1.106.
+  authState: ForgeAuthStateSchema,
+  // COMPAT(forge): added in v0.1.106, remove the default after 2026-12-27 once daemon floor >= v0.1.106.
+  forge: z.string().optional().default("github"),
   error: CheckoutErrorSchema.nullable(),
   requestId: z.string(),
 });
@@ -3821,6 +3975,19 @@ export const CheckoutPrMergeResponseSchema = z.object({
   }),
 });
 
+export const CheckoutForgeSetAutoMergeResponseSchema = z.object({
+  type: z.literal("checkout.forge.set_auto_merge.response"),
+  payload: z.object({
+    cwd: z.string(),
+    enabled: z.boolean(),
+    success: z.boolean(),
+    error: CheckoutErrorSchema.nullable(),
+    requestId: z.string(),
+  }),
+});
+
+// COMPAT(githubAutoMergeRpc): added in v0.1.106, remove after 2026-12-28 once
+// all supported clients use checkout.forge.set_auto_merge.*.
 export const CheckoutGithubSetAutoMergeResponseSchema = z.object({
   type: z.literal("checkout.github.set_auto_merge.response"),
   payload: z.object({
@@ -3877,6 +4044,34 @@ const CheckoutGithubCheckJobSchema = z.object({
   logTruncated: z.boolean().optional(),
 });
 
+// Statuses stay open strings so future forge values cannot break parsing.
+const CheckoutPipelineJobSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  stage: z.string(),
+  status: z.string(),
+  rawStatus: z.string(),
+  url: z.string().nullable().optional().default(null),
+  allowFailure: z.boolean().optional().default(false),
+  durationSeconds: z.number().nullable().optional().default(null),
+});
+
+const CheckoutPipelineStageSchema = z.object({
+  name: z.string(),
+  status: z.string(),
+  jobs: z.array(CheckoutPipelineJobSchema).optional().default([]),
+});
+
+const CheckoutPipelineSchema = z.object({
+  id: z.number(),
+  status: z.string(),
+  rawStatus: z.string(),
+  url: z.string().nullable().optional().default(null),
+  ref: z.string().nullable().optional().default(null),
+  sha: z.string().nullable().optional().default(null),
+  stages: z.array(CheckoutPipelineStageSchema).optional().default([]),
+});
+
 export const CheckoutGithubCheckDetailsSchema = z.object({
   checkRunId: z.number(),
   workflowRunId: z.number().nullable().optional(),
@@ -3896,14 +4091,31 @@ export const CheckoutGithubCheckDetailsSchema = z.object({
   annotations: z.array(CheckoutGithubCheckAnnotationSchema).optional().default([]),
   failedJobs: z.array(CheckoutGithubCheckJobSchema).optional().default([]),
   truncated: z.boolean().optional().default(false),
+  // No default: server CheckDetails keeps this optional and GitHub leaves it absent.
+  pipeline: CheckoutPipelineSchema.nullable().optional(),
 });
 
+export const CheckoutCheckDetailsSchema = CheckoutGithubCheckDetailsSchema;
+
+export const CheckoutForgeGetCheckDetailsResponseSchema = z.object({
+  type: z.literal("checkout.forge.get_check_details.response"),
+  payload: z.object({
+    cwd: z.string(),
+    success: z.boolean(),
+    details: CheckoutCheckDetailsSchema.nullable().optional().default(null),
+    error: CheckoutErrorSchema.nullable(),
+    requestId: z.string(),
+  }),
+});
+
+// COMPAT(githubCheckDetailsRpc): added in v0.1.106, remove after 2026-12-28 once
+// all supported clients use checkout.forge.get_check_details.*.
 export const CheckoutGithubGetCheckDetailsResponseSchema = z.object({
   type: z.literal("checkout.github.get_check_details.response"),
   payload: z.object({
     cwd: z.string(),
     success: z.boolean(),
-    details: CheckoutGithubCheckDetailsSchema.nullable().optional().default(null),
+    details: CheckoutCheckDetailsSchema.nullable().optional().default(null),
     error: CheckoutErrorSchema.nullable(),
     requestId: z.string(),
   }),
@@ -3968,6 +4180,16 @@ const PullRequestTimelineCommentItemSchema = z.object({
   // threads under their parent review. Absent on issue comments and on
   // timelines from daemons that predate the field.
   reviewId: z.string().optional(),
+  // Forge-neutral discussion/thread id this comment belongs to, independent of a
+  // file position. GitLab maps its discussion id here so general (non-file)
+  // reply chains group into one thread; file-position threads also carry it.
+  // Absent on standalone comments and on timelines from daemons that predate it.
+  threadId: z.string().optional(),
+  // Forge-neutral resolution state for a thread that has no file position, e.g. a
+  // GitLab general (non-file) discussion that is resolvable. File-position threads
+  // carry their resolution under `location.isResolved` instead. Absent on ordinary
+  // comments, on forges that expose no thread resolution, and on older timelines.
+  threadIsResolved: z.boolean().optional(),
   location: z
     .object({
       path: z.string(),
@@ -4008,6 +4230,10 @@ export const PullRequestTimelineResponseSchema = z.object({
       error: PullRequestTimelineErrorSchema.nullable().optional().default(null),
       requestId: z.string().optional().default(""),
       githubFeaturesEnabled: z.boolean().optional().default(true),
+      // COMPAT(forgeAuthState): added in v0.1.106, remove after 2026-12-27. Optional richer
+      // signal that supersedes githubFeaturesEnabled, mirroring CheckoutPrStatusPayloadSchema.
+      // Drop the boolean once the daemon floor >= v0.1.106.
+      authState: ForgeAuthStateSchema,
     })
     .optional()
     .prefault({}),
@@ -4103,14 +4329,32 @@ export const BranchSuggestionsResponseSchema = z.object({
   }),
 });
 
+const ForgeSearchResponsePayloadSchema = z.object({
+  items: z.array(z.unknown()),
+  authState: z.unknown().optional(),
+  error: z.string().nullable(),
+  requestId: z.string(),
+});
+
+const GitHubSearchResponsePayloadSchema = z.object({
+  items: z.array(z.unknown()),
+  featuresEnabled: z.boolean().optional(),
+  authState: z.unknown().optional(),
+  githubFeaturesEnabled: z.boolean().optional(),
+  error: z.string().nullable(),
+  requestId: z.string(),
+});
+
+export const ForgeSearchResponseSchema = z.object({
+  type: z.literal("forge.search.response"),
+  payload: ForgeSearchResponsePayloadSchema,
+});
+
+// COMPAT(githubSearchRpc): added in v0.1.106, remove after 2026-12-28 once
+// clients use forge.search.*.
 export const GitHubSearchResponseSchema = z.object({
   type: z.literal("github_search_response"),
-  payload: z.object({
-    items: z.array(GitHubSearchItemSchema),
-    githubFeaturesEnabled: z.boolean(),
-    error: z.string().nullable(),
-    requestId: z.string(),
-  }),
+  payload: GitHubSearchResponsePayloadSchema,
 });
 
 export const DirectorySuggestionsResponseSchema = z.object({
@@ -4633,9 +4877,11 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   CheckoutRefreshResponseSchema,
   CheckoutPrCreateResponseSchema,
   CheckoutPrMergeResponseSchema,
+  CheckoutForgeSetAutoMergeResponseSchema,
   CheckoutGithubSetAutoMergeResponseSchema,
   CheckoutCommitsListResponseSchema,
   CheckoutCommitFileDiffResponseSchema,
+  CheckoutForgeGetCheckDetailsResponseSchema,
   CheckoutGithubGetCheckDetailsResponseSchema,
   CheckoutPrStatusResponseSchema,
   PullRequestTimelineResponseSchema,
@@ -4646,6 +4892,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   StashListResponseSchema,
   ValidateBranchResponseSchema,
   BranchSuggestionsResponseSchema,
+  ForgeSearchResponseSchema,
   GitHubSearchResponseSchema,
   DirectorySuggestionsResponseSchema,
   PaseoWorktreeListResponseSchema,
@@ -4871,6 +5118,8 @@ export type DictationStreamFinishMessage = z.infer<typeof DictationStreamFinishM
 export type DictationStreamCancelMessage = z.infer<typeof DictationStreamCancelMessageSchema>;
 export type CreateAgentRequestMessage = z.infer<typeof CreateAgentRequestMessageSchema>;
 export type AgentAttachment = z.infer<typeof AgentAttachmentSchema>;
+export type ForgeChangeRequestAttachment = z.infer<typeof ForgeChangeRequestAttachmentSchema>;
+export type ForgeIssueAttachment = z.infer<typeof ForgeIssueAttachmentSchema>;
 export type UploadedFileAttachment = z.infer<typeof UploadedFileAttachmentSchema>;
 export type FirstAgentContext = z.infer<typeof FirstAgentContextSchema>;
 export type ReviewAttachment = z.infer<typeof ReviewAttachmentSchema>;
@@ -4960,16 +5209,32 @@ export type CheckoutPrCreateResponse = z.infer<typeof CheckoutPrCreateResponseSc
 export type CheckoutPrMergeRequest = z.infer<typeof CheckoutPrMergeRequestSchema>;
 export type CheckoutPrMergeResponse = z.infer<typeof CheckoutPrMergeResponseSchema>;
 export type CheckoutPrMergeMethod = z.infer<typeof CheckoutPrMergeRequestSchema>["mergeMethod"];
+export type CheckoutForgeSetAutoMergeRequest = z.infer<
+  typeof CheckoutForgeSetAutoMergeRequestSchema
+>;
+export type CheckoutForgeSetAutoMergeResponse = z.infer<
+  typeof CheckoutForgeSetAutoMergeResponseSchema
+>;
 export type CheckoutGithubSetAutoMergeRequest = z.infer<
   typeof CheckoutGithubSetAutoMergeRequestSchema
 >;
 export type CheckoutGithubSetAutoMergeResponse = z.infer<
   typeof CheckoutGithubSetAutoMergeResponseSchema
 >;
+export type CheckoutForgeGetCheckDetailsRequest = z.infer<
+  typeof CheckoutForgeGetCheckDetailsRequestSchema
+>;
 export type CheckoutGithubGetCheckDetailsRequest = z.infer<
   typeof CheckoutGithubGetCheckDetailsRequestSchema
 >;
+export type CheckoutCheckDetails = z.infer<typeof CheckoutCheckDetailsSchema>;
 export type CheckoutGithubCheckDetails = z.infer<typeof CheckoutGithubCheckDetailsSchema>;
+export type CheckoutPipeline = z.infer<typeof CheckoutPipelineSchema>;
+export type CheckoutPipelineStage = z.infer<typeof CheckoutPipelineStageSchema>;
+export type CheckoutPipelineJob = z.infer<typeof CheckoutPipelineJobSchema>;
+export type CheckoutForgeGetCheckDetailsResponse = z.infer<
+  typeof CheckoutForgeGetCheckDetailsResponseSchema
+>;
 export type CheckoutGithubGetCheckDetailsResponse = z.infer<
   typeof CheckoutGithubGetCheckDetailsResponseSchema
 >;
@@ -4994,10 +5259,15 @@ export type ValidateBranchRequest = z.infer<typeof ValidateBranchRequestSchema>;
 export type ValidateBranchResponse = z.infer<typeof ValidateBranchResponseSchema>;
 export type BranchSuggestionsRequest = z.infer<typeof BranchSuggestionsRequestSchema>;
 export type BranchSuggestionsResponse = z.infer<typeof BranchSuggestionsResponseSchema>;
+export type ForgeSearchItem = z.infer<typeof ForgeSearchItemSchema>;
+export type ForgeSearchKind = "issue" | "change_request";
+export type ForgeSearchRequest = z.infer<typeof ForgeSearchRequestSchema>;
+export type ForgeSearchResponse = z.infer<typeof ForgeSearchResponseSchema>;
 export type GitHubSearchItem = z.infer<typeof GitHubSearchItemSchema>;
 export type GitHubSearchKind = z.infer<typeof GitHubSearchKindSchema>;
 export type GitHubSearchRequest = z.infer<typeof GitHubSearchRequestSchema>;
 export type GitHubSearchResponse = z.infer<typeof GitHubSearchResponseSchema>;
+export type ChangeRequestCheckoutSource = z.infer<typeof ChangeRequestCheckoutSourceSchema>;
 export type CreatePaseoWorktreeRequest = z.infer<typeof CreatePaseoWorktreeRequestSchema>;
 export type DirectorySuggestionsRequest = z.infer<typeof DirectorySuggestionsRequestSchema>;
 export type DirectorySuggestionsResponse = z.infer<typeof DirectorySuggestionsResponseSchema>;

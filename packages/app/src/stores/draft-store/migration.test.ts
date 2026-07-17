@@ -42,7 +42,7 @@ function githubPrAttachment(
   return {
     kind: "github_pr",
     item: {
-      kind: "pr",
+      kind: "change_request",
       number,
       title: `Review item ${number}`,
       url: `https://example.com/pulls/${number}`,

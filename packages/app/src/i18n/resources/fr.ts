@@ -103,6 +103,7 @@ export const fr: TranslationResources = {
       addImage: "Ajouter une image",
       addFile: "Upload file",
       addIssueOrPr: "Ajouter un problème ouPR",
+      addIssueOrPr_mr: "Ajouter un problème ou MR",
       dropImagesHere: "Déposez des images ici",
       dropFilesHere: "Drop files here",
       editQueuedMessage: "Modifier le message en file d'attente",
@@ -110,8 +111,8 @@ export const fr: TranslationResources = {
       openImage: "Ouvrir la pièce jointe de l'image",
       removeImage: "Supprimer l'image jointe",
       removeFile: "Remove file attachment",
-      openGithub: "Ouvrir{{kind}}#{{number}}",
-      removeGithub: "Supprimer{{kind}}#{{number}}",
+      openGithub: "Ouvrir {{kind}} {{number}}",
+      removeGithub: "Supprimer {{kind}} {{number}}",
       element: "Élément",
       openBrowserElement: "Ouvrir la pièce jointe de l'élément de navigateur",
       removeBrowserElement: "Supprimer la pièce jointe d'un élément de navigateur",
@@ -135,7 +136,9 @@ export const fr: TranslationResources = {
       searching: "Recherche...",
       noResults: "Aucun résultat trouvé.",
       searchPlaceholder: "Problèmes de recherche et PR...",
+      searchPlaceholder_mr: "Problèmes de recherche et MR...",
       title: "Joindre le problème ouPR",
+      title_mr: "Joindre le problème ou MR",
     },
   },
   agentControls: {
@@ -623,6 +626,9 @@ export const fr: TranslationResources = {
           label: "CréerPR",
           pending: "Création dePR...",
           success: "PRcréé",
+          label_mr: "Créer MR",
+          pending_mr: "Création de MR...",
+          success_mr: "MR créé",
         },
         mergeBranch: {
           label: "Fusionner localement",
@@ -645,7 +651,13 @@ export const fr: TranslationResources = {
           rebase: "Fusionner PR (rebase)",
           pending: "Fusion de PR...",
           success: "PR fusionné",
+          squash_mr: "Fusionner MR (squash)",
+          merge_mr: "Fusionner MR (merge)",
+          rebase_mr: "Fusionner MR (rebase)",
+          pending_mr: "Fusion de MR...",
+          success_mr: "MR fusionné",
         },
+        viewPr_mr: "Voir MR",
         autoMerge: {
           enableSquash: "Fusion automatique (squash)",
           enableMerge: "Fusion automatique (merge)",
@@ -656,7 +668,8 @@ export const fr: TranslationResources = {
           disabled: "Fusion automatique désactivée",
         },
         unavailable: {
-          viewPrNoGithub: "ViewPRn'est pas disponible pour le moment carGitHubn'est pas connecté",
+          viewPrNoForge:
+            "Voir {{noun}} n'est pas disponible pour le moment car {{brand}} n'est pas connecté",
           pullNoRemote:
             "Pull n'est pas disponible ici car cette branche n'est pas encore connectée à une télécommande",
           pullDirty:
@@ -671,10 +684,14 @@ export const fr: TranslationResources = {
             "Le pull et le push ne sont pas disponibles ici car cette branche n'est pas encore connectée à une télécommande",
           pullAndPushDirty:
             "Pull et push ne sont pas disponibles tant que vous avez des modifications locales, alors validez-les ou cachez-les d'abord",
+          pullAndPushNoIncoming:
+            "Pull et push ne sont pas disponibles car il n'y a aucun changement entrant à récupérer d'abord",
           pullAndPushInSync:
             "Les fonctions Pull et Push ne sont pas disponibles car cette branche est déjà synchronisée",
-          createPrNoGithub:
-            "CréerPRn'est pas disponible pour le moment carGitHubn'est pas connecté",
+          pullAndPushNothingToPush:
+            "Pull et push ne sont pas disponibles car il n'y a rien de nouveau à envoyer après le pull",
+          createPrNoForge:
+            "Créer {{noun}} n'est pas disponible pour le moment car {{brand}} n'est pas connecté",
           createPrNoCommits:
             "CréerPRn'est pas disponible car cette branche n'a pas encore de nouveaux commits",
           mergeNoBase:
@@ -691,6 +708,10 @@ export const fr: TranslationResources = {
             "La mise à jour n'est pas disponible car cette branche est déjà à jour avec{{baseRef}}",
           mergePrNoGithub:
             "La fusionPRn'est pas disponible pour le moment carGitHubn'est pas connecté",
+          archiveNotWorktree:
+            "L'archive n'est pas disponible ici car cet espace de travail n'a pas été créé en tant qu'arbre de travailPaseo",
+          mergePrNoForge:
+            "La fusion {{noun}} n'est pas disponible pour le moment car {{brand}} n'est pas connecté",
           mergePrMissing:
             "La fusionPRn'est pas disponible car il n'y a pas encore de demande d'extraction",
           mergePrDraft:
@@ -703,7 +724,7 @@ export const fr: TranslationResources = {
           mergePrQueue:
             "MergePRn'est pas disponible ici car ce référentiel utilise une file d'attente de fusion",
           mergePrNotReady:
-            "La fusionPRn'est pas disponible jusqu'à ce queGitHubsignale que la demande d'extraction est prête à fusionner",
+            "La fusion {{noun}} n'est pas disponible jusqu'à ce que {{brand}} signale que {{noun}} est prête à fusionner",
           autoMergeCannotDisable:
             "La fusion automatique est activée, mais ce compte ne peut pas la désactiver",
         },
@@ -754,7 +775,7 @@ export const fr: TranslationResources = {
         expandAllFolders: "Développer tous les dossiers",
         refreshing: "Rafraîchissant",
         refresh: "Rafraîchir",
-        refreshState: "Actualiser l'état de git etGitHub",
+        refreshState: "Actualiser l'état de git et de {{brand}}",
         failedRefresh: "Échec de l'actualisation de l'état git.",
         emptyHiddenWhitespace: "Aucun changement visible après avoir masqué les espaces",
         emptyUncommitted: "Aucune modification non validée",
@@ -790,13 +811,23 @@ export const fr: TranslationResources = {
       pr: {
         actions: {
           viewPullRequest: "Voir",
+          openOn: "Ouvrir sur {{brand}}",
         },
         sections: {
           checks: "Chèques",
+          pipeline: "Pipeline",
           reviews: "Avis",
         },
+        empty: {
+          noJobs: "Aucune tâche",
+          loadingPipeline: "Chargement du pipeline...",
+          pipelineJobsLoadFailed: "Impossible de charger les tâches du pipeline",
+          allowedToFail: "autorisé à échouer",
+        },
+        approvals: "{{given}} sur {{required}} approbations",
         accessibility: {
           pullRequest: "Demande de tirage #{{number}}",
+          pullRequest_mr: "Demande de fusion !{{number}}",
         },
         states: {
           draft: "Brouillon",
@@ -813,10 +844,18 @@ export const fr: TranslationResources = {
         time: {
           justNow: "tout à l' heure",
         },
+        thread: {
+          discussion: "Fil de discussion",
+        },
         errors: {
           statusLoadFailed: "Impossible de charger le statut de la demande d'extraction",
           activityLoadFailed: "Impossible de charger l'activité de demande d'extraction",
         },
+      },
+      forgeSetup: {
+        installCli: "Installez la CLI {{cli}} pour utiliser les fonctionnalités {{brand}}.",
+        signIn: "Exécutez {{command}} pour utiliser les fonctionnalités {{brand}}.",
+        generic: "Configurez {{brand}} sur cet hôte pour utiliser ses fonctionnalités.",
       },
     },
   },
@@ -949,10 +988,10 @@ export const fr: TranslationResources = {
     refPicker: {
       startingRef: "Réf de départ",
       chooseStart: "Choisissez par où commencer",
-      checkoutHint: "DécouvrezPR#{{number}}?",
-      checkoutPr: "DécouvrezPR#{{number}}",
-      dismissCheckoutHint: "Ignorer l'indice de paiementPR#{{number}}",
-      intoBase: "dans{{baseRef}}",
+      checkoutHint: "Découvrez {{noun}} {{numberPrefix}}{{number}} ?",
+      checkoutPr: "Découvrez {{noun}} {{numberPrefix}}{{number}}",
+      dismissCheckoutHint: "Ignorer l'indice de paiement {{noun}} {{numberPrefix}}{{number}}",
+      intoBase: "dans {{baseRef}}",
       searching: "Recherche...",
       noMatchingRefs: "Aucune référence correspondante.",
       searchPlaceholder: "Rechercher des succursales et des PR",

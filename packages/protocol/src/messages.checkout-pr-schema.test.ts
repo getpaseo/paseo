@@ -7,10 +7,57 @@ import {
   CheckoutGithubSetAutoMergeResponseSchema,
   CheckoutPrMergeRequestSchema,
   CheckoutPrStatusSchema,
+  ForgeSearchResponseSchema,
+  GitHubSearchResponseSchema,
   ServerInfoStatusPayloadSchema,
 } from "./messages.js";
 
 describe("checkout PR schemas", () => {
+  test("defaults missing forge identity for old daemon payloads", () => {
+    const parsed = CheckoutPrStatusSchema.parse({
+      url: "https://github.com/getpaseo/paseo/pull/42",
+      title: "Ship it",
+      state: "open",
+      baseRefName: "main",
+      headRefName: "feature/ship-it",
+      isMerged: false,
+    });
+
+    expect(parsed.forge).toBe("github");
+  });
+
+  test("round-trips forge and neutral project identity", () => {
+    const payload = {
+      forge: "github",
+      projectPath: "getpaseo/paseo",
+      url: "https://github.com/getpaseo/paseo/pull/42",
+      title: "Ship it",
+      state: "open",
+      baseRefName: "main",
+      headRefName: "feature/ship-it",
+      isMerged: false,
+      isDraft: false,
+      mergeable: "UNKNOWN" as const,
+      checks: [],
+    };
+
+    expect(CheckoutPrStatusSchema.parse(payload)).toEqual(payload);
+  });
+
+  test("accepts unknown future forge identities", () => {
+    const parsed = CheckoutPrStatusSchema.parse({
+      forge: "someforge",
+      url: "https://someforge.example/getpaseo/paseo/pulls/42",
+      title: "Ship it",
+      state: "open",
+      baseRefName: "main",
+      headRefName: "feature/ship-it",
+      isMerged: false,
+    });
+
+    expect(parsed.forge).toBe("someforge");
+  });
+
   test("parses PR status payloads without mergeability", () => {
     expect(
       CheckoutPrStatusSchema.parse({
@@ -86,6 +133,248 @@ describe("checkout PR schemas", () => {
           viewerDefaultMergeMethod: "SQUASH",
         },
       },
+    });
+  });
+
+  test("keeps forgeSpecific absent for old daemons that only send github facts", () => {
+    const parsed = CheckoutPrStatusSchema.parse({
+      number: 42,
+      url: "https://github.com/getpaseo/paseo/pull/42",
+      title: "Ship it",
+      state: "open",
+      baseRefName: "main",
+      headRefName: "feature/ship-it",
+      isMerged: false,
+      github: {
+        mergeStateStatus: "CLEAN",
+        autoMergeRequest: null,
+        repository: {
+          autoMergeAllowed: false,
+          mergeCommitAllowed: true,
+          squashMergeAllowed: true,
+          rebaseMergeAllowed: false,
+          viewerDefaultMergeMethod: "MERGE",
+        },
+      },
+    });
+    expect(parsed.github?.mergeStateStatus).toBe("CLEAN");
+    expect(parsed.forgeSpecific).toBeUndefined();
+  });
+
+  test("preserves a github forgeSpecific envelope", () => {
+    const parsed = CheckoutPrStatusSchema.parse({
+      number: 7,
+      url: "https://github.com/getpaseo/paseo/pull/7",
+      title: "Ship it",
+      state: "open",
+      baseRefName: "main",
+      headRefName: "feature/ship-it",
+      isMerged: false,
+      github: {
+        mergeStateStatus: "CLEAN",
+        autoMergeRequest: null,
+        repository: {
+          autoMergeAllowed: false,
+          mergeCommitAllowed: true,
+          squashMergeAllowed: true,
+          rebaseMergeAllowed: false,
+          viewerDefaultMergeMethod: "MERGE",
+        },
+      },
+      forgeSpecific: {
+        forge: "github",
+        mergeStateStatus: "CLEAN",
+        autoMergeRequest: null,
+        repository: {
+          autoMergeAllowed: false,
+          mergeCommitAllowed: true,
+          squashMergeAllowed: true,
+          rebaseMergeAllowed: false,
+          viewerDefaultMergeMethod: "MERGE",
+        },
+      },
+    });
+    expect(parsed.forgeSpecific).toMatchObject({ forge: "github", mergeStateStatus: "CLEAN" });
+  });
+
+  test("preserves a gitlab forgeSpecific envelope without protocol-side defaults", () => {
+    const parsed = CheckoutPrStatusSchema.parse({
+      number: 1,
+      url: "https://gitlab.com/group/subgroup/repo/-/merge_requests/1",
+      title: "Add sample change",
+      state: "open",
+      baseRefName: "main",
+      headRefName: "feat/sample-change",
+      isMerged: false,
+      projectPath: "group/subgroup/repo",
+      forgeSpecific: {
+        forge: "gitlab",
+        detailedMergeStatus: "mergeable",
+        hasConflicts: false,
+        blockingDiscussionsResolved: true,
+        approvalsRequired: 1,
+        approvalsGiven: 1,
+        pipelineStatus: "success",
+        mergeWhenPipelineSucceeds: false,
+      },
+    });
+    expect(parsed.forgeSpecific).toEqual({
+      forge: "gitlab",
+      detailedMergeStatus: "mergeable",
+      hasConflicts: false,
+      blockingDiscussionsResolved: true,
+      approvalsRequired: 1,
+      approvalsGiven: 1,
+      pipelineStatus: "success",
+      mergeWhenPipelineSucceeds: false,
+    });
+    expect(parsed.github).toBeUndefined();
+  });
+
+  test("preserves a gitea forgeSpecific envelope", () => {
+    const parsed = CheckoutPrStatusSchema.parse({
+      number: 5,
+      url: "https://codeberg.org/example/repo/pulls/5",
+      title: "Add sample change",
+      state: "open",
+      baseRefName: "main",
+      headRefName: "feat/sample-change",
+      isMerged: false,
+      forgeSpecific: {
+        forge: "gitea",
+        mergeable: true,
+        hasMerged: false,
+        ciStatus: "success",
+      },
+    });
+    expect(parsed.forgeSpecific).toEqual({
+      forge: "gitea",
+      mergeable: true,
+      hasMerged: false,
+      ciStatus: "success",
+    });
+  });
+
+  test("preserves an unknown forgeSpecific envelope without failing the parse", () => {
+    const parsed = CheckoutPrStatusSchema.parse({
+      number: 9,
+      url: "https://example.com/forge/9",
+      title: "Future forge",
+      state: "open",
+      baseRefName: "main",
+      headRefName: "feature/future",
+      isMerged: false,
+      forgeSpecific: { forge: "bitbucket", somethingNew: true },
+    });
+    expect(parsed.forgeSpecific).toEqual({ forge: "bitbucket", somethingNew: true });
+  });
+
+  test("preserves forgejo-specific facts as runtime-owned facts", () => {
+    const parsed = CheckoutPrStatusSchema.parse({
+      number: 10,
+      url: "https://codeberg.org/example/repo/pulls/10",
+      title: "Future Forgejo facts",
+      state: "open",
+      baseRefName: "main",
+      headRefName: "feature/forgejo",
+      isMerged: false,
+      forgeSpecific: { forge: "forgejo", approvalsRequired: 2 },
+    });
+    expect(parsed.forgeSpecific).toEqual({ forge: "forgejo", approvalsRequired: 2 });
+  });
+
+  test("preserves malformed known-family facts for runtime validation", () => {
+    const parsed = CheckoutPrStatusSchema.parse({
+      number: 11,
+      url: "https://gitlab.com/group/repo/-/merge_requests/11",
+      title: "Runtime facts",
+      state: "open",
+      baseRefName: "main",
+      headRefName: "feature/runtime-facts",
+      isMerged: false,
+      forgeSpecific: {
+        forge: "gitlab",
+        pipelineId: "not-a-number",
+        approvalsRequired: "also-runtime-owned",
+      },
+    });
+    expect(parsed.forgeSpecific).toEqual({
+      forge: "gitlab",
+      pipelineId: "not-a-number",
+      approvalsRequired: "also-runtime-owned",
+    });
+  });
+
+  test("keeps forge-specific facts structural for feature-owned interpretation", () => {
+    const parsed = CheckoutPrStatusSchema.parse({
+      number: 12,
+      url: "https://example.com/forge/12",
+      title: "Missing facts tag",
+      state: "open",
+      baseRefName: "main",
+      headRefName: "feature/missing-tag",
+      isMerged: false,
+      forgeSpecific: { approvalsRequired: 2 },
+    });
+
+    expect(parsed.forgeSpecific).toEqual({ approvalsRequired: 2 });
+  });
+
+  test("keeps forge search responses structural", () => {
+    expect(
+      ForgeSearchResponseSchema.parse({
+        type: "forge.search.response",
+        payload: {
+          items: [
+            {
+              kind: "change_request",
+              number: 17,
+              title: "Fix search",
+              url: "https://gitlab.com/acme/repo/-/merge_requests/17",
+              state: "open",
+              body: null,
+              labels: [],
+            },
+            { kind: "future_kind", futureField: true },
+          ],
+          authState: "future_auth_state",
+          error: null,
+          requestId: "search-2",
+        },
+      }).payload,
+    ).toEqual({
+      items: [
+        {
+          kind: "change_request",
+          number: 17,
+          title: "Fix search",
+          url: "https://gitlab.com/acme/repo/-/merge_requests/17",
+          state: "open",
+          body: null,
+          labels: [],
+        },
+        { kind: "future_kind", futureField: true },
+      ],
+      authState: "future_auth_state",
+      error: null,
+      requestId: "search-2",
+    });
+
+    expect(
+      GitHubSearchResponseSchema.parse({
+        type: "github_search_response",
+        payload: {
+          items: [],
+          githubFeaturesEnabled: false,
+          error: null,
+          requestId: "search-legacy",
+        },
+      }).payload,
+    ).toEqual({
+      items: [],
+      githubFeaturesEnabled: false,
+      error: null,
+      requestId: "search-legacy",
     });
   });
 
@@ -287,6 +576,83 @@ describe("checkout PR schemas", () => {
     });
   });
 
+  test("accepts a GitLab pipeline through the existing check-details response", () => {
+    expect(
+      CheckoutGithubGetCheckDetailsRequestSchema.parse({
+        type: "checkout.github.get_check_details.request",
+        cwd: "/tmp/repo",
+        checkRunId: 306,
+        requestId: "request-pipeline",
+      }),
+    ).toEqual({
+      type: "checkout.github.get_check_details.request",
+      cwd: "/tmp/repo",
+      checkRunId: 306,
+      requestId: "request-pipeline",
+    });
+
+    const details = CheckoutGithubGetCheckDetailsResponseSchema.parse({
+      type: "checkout.github.get_check_details.response",
+      payload: {
+        cwd: "/tmp/repo",
+        success: true,
+        details: {
+          checkRunId: 306,
+          name: "Pipeline (feat/x)",
+          annotations: [],
+          failedJobs: [],
+          truncated: false,
+          pipeline: {
+            id: 306,
+            status: "future_pipeline_status",
+            rawStatus: "future_pipeline_status",
+            stages: [
+              {
+                name: "test",
+                status: "future_stage_status",
+                jobs: [
+                  {
+                    id: 929,
+                    name: "unit",
+                    stage: "test",
+                    status: "future_job_status",
+                    rawStatus: "future_job_status",
+                  },
+                ],
+              },
+            ],
+          },
+        },
+        error: null,
+        requestId: "request-pipeline",
+      },
+    }).payload.details;
+
+    expect(details?.pipeline).toMatchObject({
+      id: 306,
+      status: "future_pipeline_status",
+      stages: [{ jobs: [{ status: "future_job_status", allowFailure: false }] }],
+    });
+  });
+
+  test("keeps pipeline absent for legacy and GitHub check-details responses", () => {
+    const details = CheckoutGithubGetCheckDetailsResponseSchema.parse({
+      type: "checkout.github.get_check_details.response",
+      payload: {
+        cwd: "/tmp/repo",
+        success: true,
+        details: {
+          checkRunId: 12345,
+          name: "server tests",
+        },
+        error: null,
+        requestId: "legacy-check-details",
+      },
+    }).payload.details;
+
+    expect(details).not.toHaveProperty("pipeline");
+  });
+
   test("rejects invalid GitHub check details request identities", () => {
     const request = {
       type: "checkout.github.get_check_details.request",
@@ -338,6 +704,20 @@ describe("checkout PR schemas", () => {
       }).features,
     ).toEqual({
       githubCheckDetails: true,
+    });
+  });
+
+  test("accepts the forgeProviders server_info feature flag", () => {
+    expect(
+      ServerInfoStatusPayloadSchema.parse({
+        status: "server_info",
+        serverId: "srv_test",
+        features: {
+          forgeProviders: true,
+        },
+      }).features,
+    ).toEqual({
+      forgeProviders: true,
     });
   });
 

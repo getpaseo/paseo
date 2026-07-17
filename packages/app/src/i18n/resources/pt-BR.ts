@@ -102,6 +102,7 @@ export const ptBR: TranslationResources = {
       addImage: "Adicionar imagem",
       addFile: "Enviar arquivo",
       addIssueOrPr: "Adicionar issue ou PR",
+      addIssueOrPr_mr: "Adicionar issue ou MR",
       dropImagesHere: "Solte imagens aqui",
       dropFilesHere: "Solte arquivos aqui",
       editQueuedMessage: "Editar mensagem na fila",
@@ -109,8 +110,8 @@ export const ptBR: TranslationResources = {
       openImage: "Abrir anexo de imagem",
       removeImage: "Remover anexo de imagem",
       removeFile: "Remover anexo de arquivo",
-      openGithub: "Abrir {{kind}} #{{number}}",
-      removeGithub: "Remover {{kind}} #{{number}}",
+      openGithub: "Abrir {{kind}} {{number}}",
+      removeGithub: "Remover {{kind}} {{number}}",
       element: "Elemento",
       openBrowserElement: "Abrir anexo de elemento do navegador",
       removeBrowserElement: "Remover anexo de elemento do navegador",
@@ -134,7 +135,9 @@ export const ptBR: TranslationResources = {
       searching: "Buscando...",
       noResults: "Nenhum resultado encontrado.",
       searchPlaceholder: "Buscar issues e PRs...",
+      searchPlaceholder_mr: "Buscar issues e MRs...",
       title: "Anexar issue ou PR",
+      title_mr: "Anexar issue ou MR",
     },
   },
   agentControls: {
@@ -622,6 +625,9 @@ export const ptBR: TranslationResources = {
           label: "Criar PR",
           pending: "Criando PR...",
           success: "PR criada",
+          label_mr: "Criar MR",
+          pending_mr: "Criando MR...",
+          success_mr: "MR criada",
         },
         mergeBranch: {
           label: "Fazer merge localmente",
@@ -644,7 +650,13 @@ export const ptBR: TranslationResources = {
           rebase: "Merge",
           pending: "Fazendo merge da PR...",
           success: "PR mergeada",
+          squash_mr: "Merge",
+          merge_mr: "Merge",
+          rebase_mr: "Merge",
+          pending_mr: "Fazendo merge da MR...",
+          success_mr: "MR mergeada",
         },
+        viewPr_mr: "Ver MR",
         autoMerge: {
           enableSquash: "Merge automático",
           enableMerge: "Merge automático",
@@ -655,7 +667,8 @@ export const ptBR: TranslationResources = {
           disabled: "Merge automático desativado",
         },
         unavailable: {
-          viewPrNoGithub: "Ver PR não está disponível agora porque o GitHub não está conectado",
+          viewPrNoForge:
+            "Ver {{noun}} não está disponível agora porque o {{brand}} não está conectado",
           pullNoRemote:
             "Pull não está disponível aqui porque esta branch ainda não está conectada a um remoto",
           pullDirty:
@@ -670,9 +683,14 @@ export const ptBR: TranslationResources = {
             "Pull e push não estão disponíveis aqui porque esta branch ainda não está conectada a um remoto",
           pullAndPushDirty:
             "Pull e push não estão disponíveis enquanto há alterações locais. Faça commit ou stash primeiro",
+          pullAndPushNoIncoming:
+            "Pull e push não estão disponíveis porque não há alterações de entrada para puxar primeiro",
           pullAndPushInSync:
             "Pull e push não estão disponíveis porque esta branch já está sincronizada",
-          createPrNoGithub: "Criar PR não está disponível agora porque o GitHub não está conectado",
+          pullAndPushNothingToPush:
+            "Pull e push não estão disponíveis porque não há nada novo para enviar depois do pull",
+          createPrNoForge:
+            "Criar {{noun}} não está disponível agora porque o {{brand}} não está conectado",
           createPrNoCommits:
             "Criar PR não está disponível porque esta branch ainda não tem commits novos",
           mergeNoBase: "Merge não está disponível porque não foi possível determinar a branch base",
@@ -688,6 +706,10 @@ export const ptBR: TranslationResources = {
             "Atualizar não está disponível porque esta branch já está atualizada com {{baseRef}}",
           mergePrNoGithub:
             "Merge da PR não está disponível agora porque o GitHub não está conectado",
+          archiveNotWorktree:
+            "Arquivar não está disponível aqui porque este workspace não foi criado como um worktree do Paseo",
+          mergePrNoForge:
+            "Merge da {{noun}} não está disponível agora porque o {{brand}} não está conectado",
           mergePrMissing: "Merge da PR não está disponível porque ainda não há uma pull request",
           mergePrDraft: "Merge da PR não está disponível porque a pull request ainda é um rascunho",
           mergePrMerged: "Merge da PR não está disponível porque a pull request já foi mergeada",
@@ -696,7 +718,7 @@ export const ptBR: TranslationResources = {
           mergePrQueue:
             "Merge da PR não está disponível aqui porque este repositório usa uma merge queue",
           mergePrNotReady:
-            "Merge da PR não está disponível até o GitHub informar que a pull request está pronta para merge",
+            "Merge da {{noun}} não está disponível até o {{brand}} informar que a {{noun}} está pronta para merge",
           autoMergeCannotDisable:
             "O merge automático está ativado, mas esta conta não pode desativá-lo",
         },
@@ -747,7 +769,7 @@ export const ptBR: TranslationResources = {
         expandAllFolders: "Expandir todas as pastas",
         refreshing: "Atualizando",
         refresh: "Atualizar",
-        refreshState: "Atualizar estado do git e do GitHub",
+        refreshState: "Atualizar estado do git e do {{brand}}",
         failedRefresh: "Falha ao atualizar estado do git.",
         emptyHiddenWhitespace: "Nenhuma alteração visível após ocultar espaços em branco",
         emptyUncommitted: "Nenhuma alteração sem commit",
@@ -783,13 +805,23 @@ export const ptBR: TranslationResources = {
       pr: {
         actions: {
           viewPullRequest: "Ver",
+          openOn: "Abrir no {{brand}}",
         },
         sections: {
           checks: "Verificações",
+          pipeline: "Pipeline",
           reviews: "Revisões",
         },
+        empty: {
+          noJobs: "Sem jobs",
+          loadingPipeline: "Carregando pipeline...",
+          pipelineJobsLoadFailed: "Não foi possível carregar os jobs do pipeline",
+          allowedToFail: "permitido falhar",
+        },
+        approvals: "{{given}} de {{required}} aprovações",
         accessibility: {
           pullRequest: "Pull request #{{number}}",
+          pullRequest_mr: "Merge request !{{number}}",
         },
         states: {
           draft: "Rascunho",
@@ -806,10 +838,18 @@ export const ptBR: TranslationResources = {
         time: {
           justNow: "agora mesmo",
         },
+        thread: {
+          discussion: "Tópico de discussão",
+        },
         errors: {
           statusLoadFailed: "Não foi possível carregar o status da pull request",
           activityLoadFailed: "Não foi possível carregar a atividade da pull request",
         },
+      },
+      forgeSetup: {
+        installCli: "Instale a CLI {{cli}} para usar os recursos do {{brand}}.",
+        signIn: "Execute {{command}} para usar os recursos do {{brand}}.",
+        generic: "Configure o {{brand}} neste host para usar seus recursos.",
       },
     },
   },
@@ -942,9 +982,9 @@ export const ptBR: TranslationResources = {
     refPicker: {
       startingRef: "Ref inicial",
       chooseStart: "Escolha de onde começar",
-      checkoutHint: "Fazer checkout da PR #{{number}}?",
-      checkoutPr: "Fazer checkout da PR #{{number}}",
-      dismissCheckoutHint: "Dispensar dica de checkout da PR #{{number}}",
+      checkoutHint: "Fazer checkout da {{noun}} {{numberPrefix}}{{number}}?",
+      checkoutPr: "Fazer checkout da {{noun}} {{numberPrefix}}{{number}}",
+      dismissCheckoutHint: "Dispensar dica de checkout da {{noun}} {{numberPrefix}}{{number}}",
       intoBase: "em {{baseRef}}",
       searching: "Buscando...",
       noMatchingRefs: "Nenhuma ref correspondente.",
