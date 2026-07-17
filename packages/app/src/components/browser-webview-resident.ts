@@ -54,22 +54,20 @@ function registerBrowserWhenAttached(
   identity: BrowserWebviewIdentity,
   browser: BrowserWebviewProfileHost,
 ): void {
-  webview.addEventListener(
-    "did-attach",
-    () => {
-      const webContentsId = webview.getWebContentsId();
-      void browser
-        .registerAttachedBrowser({
-          browserId: identity.browserId,
-          workspaceId: identity.workspaceId,
-          webContentsId,
-        })
-        .catch((error) => {
-          console.error("[browser-webview] attached registration failed", error);
-        });
-    },
-    { once: true },
-  );
+  // Reparenting a webview can replace its guest WebContents without replacing
+  // this DOM element, so every attachment needs a fresh main-process registration.
+  webview.addEventListener("did-attach", () => {
+    const webContentsId = webview.getWebContentsId();
+    void browser
+      .registerAttachedBrowser({
+        browserId: identity.browserId,
+        workspaceId: identity.workspaceId,
+        webContentsId,
+      })
+      .catch((error) => {
+        console.error("[browser-webview] attached registration failed", error);
+      });
+  });
 }
 
 function trimNonEmpty(value: string | null | undefined): string | null {
