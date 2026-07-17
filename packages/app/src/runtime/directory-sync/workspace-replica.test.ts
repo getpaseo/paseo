@@ -60,7 +60,10 @@ it("applies project updates through the directory synchronization owner", () => 
   const serverId = "project-update-replica";
   const store = useSessionStore.getState();
   store.initializeSession(serverId, null as unknown as DaemonClient);
-  store.setWorkspaces(serverId, [normalizeWorkspaceDescriptor(workspace("attached"))]);
+  store.setWorkspaces(
+    serverId,
+    new Map([["attached", normalizeWorkspaceDescriptor(workspace("attached"))]]),
+  );
   const replica = new WorkspaceDirectoryReplica(serverId);
 
   replica.applyDelta({
@@ -73,12 +76,12 @@ it("applies project updates through the directory synchronization owner", () => 
     },
   });
 
-  expect(store.sessions[serverId]?.workspaces.get("attached")).toMatchObject({
+  expect(useSessionStore.getState().sessions[serverId]?.workspaces.get("attached")).toMatchObject({
     projectDisplayName: "Renamed project",
     projectKind: "directory",
   });
 
   replica.applyDelta({ kind: "remove", projectId: "project" });
-  expect(store.sessions[serverId]?.workspaces.size).toBe(0);
+  expect(useSessionStore.getState().sessions[serverId]?.workspaces.size).toBe(0);
   store.clearSession(serverId);
 });

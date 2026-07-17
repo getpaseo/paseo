@@ -16,10 +16,40 @@ export type WorkspaceDirectoryDelta = Extract<
   SessionOutboundMessage,
   { type: "workspace_update" | "project.update" }
 >["payload"];
+type ProjectDirectoryDelta = Extract<SessionOutboundMessage, { type: "project.update" }>["payload"];
 
 export interface WorkspaceDirectorySnapshot {
   workspaces: Map<string, WorkspaceDescriptor>;
   emptyProjects: Map<string, EmptyProjectDescriptor>;
+}
+
+function applyProjectDelta(
+  snapshot: WorkspaceDirectorySnapshot,
+  delta: ProjectDirectoryDelta,
+): void {
+  if (delta.kind === "remove") {
+    snapshot.emptyProjects.delete(delta.projectId);
+    for (const [workspaceId, workspace] of snapshot.workspaces) {
+      if (workspace.projectId === delta.projectId) snapshot.workspaces.delete(workspaceId);
+    }
+    return;
+  }
+
+  const project = normalizeEmptyProjectDescriptor(delta.project);
+  let hasAttachedWorkspace = false;
+  for (const [workspaceId, workspace] of snapshot.workspaces) {
+    if (workspace.projectId !== project.projectId) continue;
+    hasAttachedWorkspace = true;
+    snapshot.workspaces.set(workspaceId, {
+      ...workspace,
+      projectDisplayName: project.projectDisplayName,
+      projectCustomName: project.projectCustomName,
+      projectRootPath: project.projectRootPath,
+      projectKind: project.projectKind,
+    });
+  }
+  if (hasAttachedWorkspace) snapshot.emptyProjects.delete(project.projectId);
+  else snapshot.emptyProjects.set(project.projectId, project);
 }
 
 export class WorkspaceDirectoryReplica {
@@ -61,28 +91,7 @@ export class WorkspaceDirectoryReplica {
     }
     for (const delta of deltas) {
       if ("projectId" in delta || "project" in delta) {
-        if (delta.kind === "remove") {
-          emptyProjects.delete(delta.projectId);
-          for (const [workspaceId, workspace] of workspaces) {
-            if (workspace.projectId === delta.projectId) workspaces.delete(workspaceId);
-          }
-          continue;
-        }
-        const project = normalizeEmptyProjectDescriptor(delta.project);
-        let hasAttachedWorkspace = false;
-        for (const [workspaceId, workspace] of workspaces) {
-          if (workspace.projectId !== project.projectId) continue;
-          hasAttachedWorkspace = true;
-          workspaces.set(workspaceId, {
-            ...workspace,
-            projectDisplayName: project.projectDisplayName,
-            projectCustomName: project.projectCustomName,
-            projectRootPath: project.projectRootPath,
-            projectKind: project.projectKind,
-          });
-        }
-        if (hasAttachedWorkspace) emptyProjects.delete(project.projectId);
-        else emptyProjects.set(project.projectId, project);
+        applyProjectDelta({ workspaces, emptyProjects }, delta);
         continue;
       }
       if (delta.kind === "remove") {
