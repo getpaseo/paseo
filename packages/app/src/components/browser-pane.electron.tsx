@@ -72,6 +72,8 @@ type ElectronWebview = HTMLElement & {
   loadURL?: (url: string) => Promise<void>;
   getURL?: () => string;
   executeJavaScript?: (code: string) => Promise<unknown>;
+  findInPage?: (text: string, options: { findNext: boolean; forward: boolean }) => number;
+  stopFindInPage?: (action: "clearSelection") => void;
   focus?: () => void;
   addEventListener: (type: string, listener: EventListenerOrEventListenerObject) => void;
   removeEventListener: (type: string, listener: EventListenerOrEventListenerObject) => void;
@@ -308,6 +310,24 @@ function executeWebviewJavaScript(webview: ElectronWebview, code: string): Promi
 }
 
 function ignoreWebviewJavaScriptError() {}
+
+function isBrowserFindResult(value: unknown): value is {
+  requestId: number;
+  activeMatchOrdinal: number;
+  matches: number;
+  finalUpdate: boolean;
+} {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const result = value as Record<string, unknown>;
+  return (
+    typeof result.requestId === "number" &&
+    typeof result.activeMatchOrdinal === "number" &&
+    typeof result.matches === "number" &&
+    typeof result.finalUpdate === "boolean"
+  );
+}
 
 function destroyWebviewSelector(webview: ElectronWebview): void {
   void executeWebviewJavaScript(
@@ -646,17 +666,40 @@ export function BrowserPane({
   const browserFindSequencerRef = useRef<ReturnType<typeof createBrowserFindSequencer> | null>(
     null,
   );
+  const isUsingDirectBrowserFindRef = useRef(false);
   if (!browserFindSequencerRef.current) {
     browserFindSequencerRef.current = createBrowserFindSequencer(
       {
         findInPage(query, options) {
+          const findDirectly = () => {
+            const webview = webviewRef.current;
+            if (!webview?.findInPage) {
+              return Promise.resolve(null);
+            }
+            isUsingDirectBrowserFindRef.current = true;
+            try {
+              return Promise.resolve(webview.findInPage(query, options));
+            } catch {
+              return Promise.resolve(null);
+            }
+          };
+
+          isUsingDirectBrowserFindRef.current = false;
           const desktopHost = getDesktopHost();
           if (!desktopHost?.browser?.findInPage) {
-            return Promise.resolve(null);
+            return findDirectly();
           }
-          return desktopHost.browser.findInPage(browserIdRef.current, query, options);
+          return desktopHost.browser
+            .findInPage(browserIdRef.current, query, options)
+            .then((requestId) => requestId ?? findDirectly(), findDirectly);
         },
         stopFindInPage(action) {
+          isUsingDirectBrowserFindRef.current = false;
+          try {
+            webviewRef.current?.stopFindInPage?.(action);
+          } catch {
+            // The guest can be torn down while the pane is closing.
+          }
           const desktopHost = getDesktopHost();
           if (!desktopHost?.browser?.stopFindInPage) {
             return;
@@ -791,14 +834,25 @@ export function BrowserPane({
     if (!isElectronRuntime() || !findState.isOpen) {
       return;
     }
+    const webview = webviewRef.current;
+    const handleDirectFindResult: EventListener = (event) => {
+      if (!isUsingDirectBrowserFindRef.current) {
+        return;
+      }
+      const payload = (event as Event & { result?: unknown }).result ?? event;
+      if (isBrowserFindResult(payload)) {
+        browserFindSequencer.receive(payload);
+      }
+    };
+    webview?.addEventListener("found-in-page", handleDirectFindResult);
     const desktopHost = getDesktopHost();
-    if (!desktopHost?.browser?.onFoundInPage) {
-      return;
-    }
-    const unsubscribe = desktopHost.browser.onFoundInPage(browserId, (result) => {
+    const unsubscribe = desktopHost?.browser?.onFoundInPage?.(browserId, (result) => {
       browserFindSequencer.receive(result);
     });
-    return unsubscribe;
+    return () => {
+      webview?.removeEventListener("found-in-page", handleDirectFindResult);
+      unsubscribe?.();
+    };
   }, [browserFindSequencer, browserId, findState.isOpen]);
 
   useEffect(() => {
