@@ -30,9 +30,7 @@ buildNpmPackage rec {
         relPath = lib.removePrefix (toString ./..) path;
       in
       # Exclude non-daemon workspace contents (keep package.json for workspace resolution)
-      !(lib.hasPrefix "/packages/app/src" relPath)
-      && !(lib.hasPrefix "/packages/app/assets" relPath)
-      && !(lib.hasPrefix "/packages/app/android" relPath)
+      !(lib.hasPrefix "/packages/app/android" relPath)
       && !(lib.hasPrefix "/packages/app/ios" relPath)
       && !(lib.hasPrefix "/packages/website/src" relPath)
       && !(lib.hasPrefix "/packages/website/public" relPath)
@@ -81,6 +79,7 @@ buildNpmPackage rec {
 
     # Build all server packages in dependency order (defined in package.json)
     npm run build:server
+    npm run build:daemon-web-ui
 
     runHook postBuild
   '';
@@ -106,6 +105,9 @@ buildNpmPackage rec {
     # Root package.json lets node resolve the workspace layout when the
     # CLI/server bin starts from $out.
     cp package.json $out/lib/paseo/
+
+    # Web UI Assets
+    cp -r packages/server/dist/server/web-ui $out/lib/paseo/packages/server/dist/server/
 
     # Create wrapper for the server entry point (for systemd / direct use)
     mkdir -p $out/bin

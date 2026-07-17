@@ -150,6 +150,7 @@ function createHarness(input: {
       }),
       scheduleRefreshForCwd: () => {},
       onWorkspaceStateMayHaveChanged: () => {},
+      invalidateForge: () => {},
       getMetrics: () => ({
         checkoutDiffTargetCount: 0,
         checkoutDiffSubscriptionCount: 0,

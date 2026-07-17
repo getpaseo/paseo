@@ -1,4 +1,5 @@
 import { expect, it, test, vi } from "vitest";
+import pino, { type Logger } from "pino";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { AgentManager } from "./agent-manager.js";
@@ -11,8 +12,34 @@ import {
 } from "./agent-prompt.js";
 import type { AgentManagerEvent, ManagedAgent } from "./agent-manager.js";
 
+interface CapturedLogger {
+  logger: Logger;
+  records: Array<Record<string, unknown>>;
+  nextRecord: Promise<void>;
+}
+
+function createCapturedLogger(): CapturedLogger {
+  const records: Array<Record<string, unknown>> = [];
+  let resolveNextRecord!: () => void;
+  const nextRecord = new Promise<void>((resolve) => {
+    resolveNextRecord = resolve;
+  });
+  const logger = pino(
+    { level: "error" },
+    {
+      write(line: string) {
+        records.push(JSON.parse(line) as Record<string, unknown>);
+        resolveNextRecord();
+      },
+    },
+  );
+  return { logger, records, nextRecord };
+}
+
 interface FinishNotificationScenarioOptions {
   childLastAssistantMessage?: string | null;
+  parentPromptError?: Error;
+  logger?: Logger;
 }
 
 interface FinishNotificationScenario {
@@ -56,10 +83,14 @@ function createFinishNotificationScenario(
     return options?.childLastAssistantMessage ?? null;
   });
   Reflect.set(agentManager, "tryRunOutOfBand", () => false);
-  Reflect.set(agentManager, "hasInFlightRun", () => false);
+  Reflect.set(agentManager, "hasInFlightRun", () => Boolean(options?.parentPromptError));
   Reflect.set(agentManager, "streamAgent", (_agentId: string, prompt: string) => {
     resolveParentPrompt?.(prompt);
     return (async function* noop() {})();
+  });
+  Reflect.set(agentManager, "replaceAgentRun", async (_agentId: string, prompt: string) => {
+    resolveParentPrompt?.(prompt);
+    throw options?.parentPromptError;
   });
 
   const agentStorage: AgentStorage = Object.create(AgentStorage.prototype);
@@ -77,7 +108,7 @@ function createFinishNotificationScenario(
         agentStorage,
         childAgentId: "child-agent",
         callerAgentId: "caller-agent",
-        logger: createTestLogger(),
+        logger: options?.logger ?? createTestLogger(),
       });
     },
     async finishChildAndReadParentPrompt() {
@@ -159,6 +190,28 @@ test("finish notifications tell the parent the child's last assistant message", 
       "Agent child-agent (Child Agent) finished.\n\n<agent-response>\nImplemented the cleanup and all checks pass.\n</agent-response>",
     ),
   );
+});
+
+test("finish notifications log a rejected parent prompt without an unhandled rejection", async () => {
+  const captured = createCapturedLogger();
+  const scenario = createFinishNotificationScenario({
+    parentPromptError: new Error("parent provider rejected replacement"),
+    logger: captured.logger,
+  });
+
+  scenario.startWatchingChild();
+  await scenario.finishChildAndReadParentPrompt();
+  await captured.nextRecord;
+
+  expect(captured.records).toEqual([
+    expect.objectContaining({
+      msg: "Failed to notify caller agent",
+      childAgentId: "child-agent",
+      callerAgentId: "caller-agent",
+      reason: "finished",
+      err: expect.objectContaining({ message: "parent provider rejected replacement" }),
+    }),
+  ]);
 });
 
 it("does not notify archived callers", async () => {

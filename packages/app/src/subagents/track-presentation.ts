@@ -48,6 +48,10 @@ export function formatHeaderLabel(rows: readonly SubagentRow[]): string {
   return parts.join(" · ");
 }
 
+export function countFinishedSubagents(rows: readonly SubagentRow[]): number {
+  return rows.filter((row) => row.kind === "provider" && row.status !== "running").length;
+}
+
 export function resolveRowLabel(title: SubagentRow["title"]): string | null {
   if (typeof title !== "string") {
     return null;

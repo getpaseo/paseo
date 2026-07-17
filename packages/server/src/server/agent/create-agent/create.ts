@@ -13,16 +13,12 @@ import type {
 } from "../../worktree-session.js";
 import type { AgentAttachment, FirstAgentContext, GitSetupOptions } from "../../messages.js";
 import type { AgentManager, CreateAgentOptions, ManagedAgent } from "../agent-manager.js";
-import type {
-  AgentPromptContentBlock,
-  AgentPromptInput,
-  AgentRunOptions,
-  AgentSessionConfig,
-} from "../agent-sdk-types.js";
+import type { AgentPromptInput, AgentRunOptions, AgentSessionConfig } from "../agent-sdk-types.js";
 import type { AgentStorage } from "../agent-storage.js";
 import type { ProviderSnapshotManager } from "../provider-snapshot-manager.js";
 import { setupFinishNotification, startCreatedAgentInitialPrompt } from "../agent-prompt.js";
 import { resolveCreateAgentTitles } from "../create-agent-title.js";
+import { buildAgentPrompt } from "../prompt-attachments.js";
 import { normalizeClientMessageId, resolveClientMessageId } from "../../client-message-id.js";
 import { resolveRequiredProviderModel, type ResolvedProviderModel } from "../mcp-shared.js";
 import {
@@ -217,12 +213,42 @@ async function resolveSessionCreateAgent(
   input: CreateAgentFromSessionInput,
 ): Promise<ResolvedCreateAgent> {
   const trimmedPrompt = input.initialPrompt?.trim();
-  const { sessionConfig, setupContinuation, createdWorkspaceId } = await input.buildSessionConfig(
+  const {
+    sessionConfig: builtSessionConfig,
+    setupContinuation,
+    createdWorkspaceId,
+  } = await input.buildSessionConfig(
     input.config,
     input.git,
     input.worktreeName,
     input.firstAgentContext,
   );
+  // Validate the requested mode against the provider's modes for the resolved
+  // cwd. The app remembers mode preferences globally, so a saved mode can be
+  // stale for a workspace whose provider config no longer defines it — reject
+  // it here instead of letting the provider fail mid-turn.
+  //
+  // This runs after buildSessionConfig, which may already have created a
+  // worktree and/or workspace record — cwd (required to resolve modes) is
+  // only known once that step completes. If validation throws, any
+  // worktree/workspace buildSessionConfig created is the caller's
+  // responsibility to clean up (session.ts's handleCreateAgentRequest does
+  // this for the worktree path via cleanupCreatedWorktreeAfterFailedAgentCreate;
+  // this is a pre-existing gap for directory-only workspace creates, not
+  // introduced by this validation).
+  const resolvedCreateConfig = await dependencies.providerSnapshotManager.resolveCreateConfig({
+    cwd: builtSessionConfig.cwd,
+    provider: builtSessionConfig.provider,
+    requestedMode: builtSessionConfig.modeId,
+    featureValues: builtSessionConfig.featureValues,
+    parent: null,
+    unattended: false,
+  });
+  const sessionConfig: AgentSessionConfig = {
+    ...builtSessionConfig,
+    modeId: resolvedCreateConfig.modeId,
+    featureValues: resolvedCreateConfig.featureValues,
+  };
   const prompt = buildAgentPrompt(trimmedPrompt ?? "", input.images, input.attachments);
   const hasPromptContent = Array.isArray(prompt) ? prompt.length > 0 : prompt.length > 0;
   const clientMessageId = normalizeClientMessageId(input.clientMessageId);
@@ -454,30 +480,6 @@ async function sendInitialPrompt(
     dependencies.logger.error({ err: error, agentId: snapshot.id }, "Failed to run initial prompt");
     return { started: false, liveSnapshot: snapshot };
   }
-}
-
-function buildAgentPrompt(
-  text: string,
-  images?: Array<{ data: string; mimeType: string }>,
-  attachments?: AgentAttachment[],
-): AgentPromptInput {
-  const normalized = text.trim();
-  const hasImages = (images?.length ?? 0) > 0;
-  const hasAttachments = (attachments?.length ?? 0) > 0;
-  if (!hasImages && !hasAttachments) {
-    return normalized;
-  }
-  const blocks: AgentPromptContentBlock[] = [];
-  if (normalized.length > 0) {
-    blocks.push({ type: "text", text: normalized });
-  }
-  for (const image of images ?? []) {
-    blocks.push({ type: "image", data: image.data, mimeType: image.mimeType });
-  }
-  for (const attachment of attachments ?? []) {
-    blocks.push(attachment);
-  }
-  return blocks;
 }
 
 function requireParentAgent(agentManager: AgentManager, parentAgentId: string): ManagedAgent {

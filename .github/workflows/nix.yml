@@ -9,12 +9,15 @@ on:
       - "flake.lock"
       - "package.json"
       - "package-lock.json"
+      - "packages/app/**"
+      - "packages/expo-two-way-audio/**"
       - "packages/highlight/**"
       - "packages/protocol/**"
       - "packages/client/**"
       - "packages/server/**"
       - "packages/relay/**"
       - "packages/cli/**"
+      - "scripts/build-daemon-web-ui.mjs"
       - "scripts/update-nix.sh"
       - "scripts/fix-lockfile.mjs"
       - ".github/workflows/nix.yml"
@@ -64,7 +67,7 @@ jobs:
           }
           trap cleanup EXIT
 
-          ./result/bin/paseo-server --no-relay >"$WRAPPER_LOG" 2>&1 &
+          PASEO_WEB_UI_ENABLED=true ./result/bin/paseo-server --no-relay >"$WRAPPER_LOG" 2>&1 &
           DAEMON_PID=$!
 
           deadline=$((SECONDS + 30))
@@ -72,6 +75,8 @@ jobs:
             if STATUS_JSON="$(./result/bin/paseo daemon status --json)" \
               && jq -e '.connectedDaemon == "reachable"' <<<"$STATUS_JSON" >/dev/null; then
               echo "$STATUS_JSON"
+              curl --fail --silent --show-error http://127.0.0.1:6767/ >"$PASEO_HOME/web-ui.html"
+              [[ -s "$PASEO_HOME/web-ui.html" ]]
               exit 0
             fi
 

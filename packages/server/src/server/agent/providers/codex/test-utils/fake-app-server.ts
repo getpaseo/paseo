@@ -58,6 +58,12 @@ export interface FakeCodexAppServer {
     agentPath: string;
     parentThreadId?: string;
   }): void;
+  startsLegacyOnlySubAgent(params: {
+    callId: string;
+    threadId: string;
+    agentPath: string;
+    parentThreadId?: string;
+  }): void;
   beginsSubAgentActivity(params: FakeSubAgentActivity): void;
   completesSubAgentActivity(params: FakeSubAgentActivity): void;
   completesCompaction(params: { threadId: string; itemId: string }): void;
@@ -324,6 +330,18 @@ export function createFakeCodexAppServer(
     startsSubAgent(params) {
       writeSubAgentActivity("item/completed", { ...params, kind: "started" });
     },
+    startsLegacyOnlySubAgent(params) {
+      writeLegacyEvent(params.parentThreadId ?? "thread-1", "codex/event/item_completed", {
+        type: "item_completed",
+        item: {
+          type: "subAgentActivity",
+          id: params.callId,
+          kind: "started",
+          agentThreadId: params.threadId,
+          agentPath: params.agentPath,
+        },
+      });
+    },
     beginsSubAgentActivity(params) {
       writeSubAgentActivity("item/started", params);
     },
@@ -534,6 +552,7 @@ function waitForNextEvent<TType extends StreamEventType>(
 }
 
 type TimelineEvent = StreamEventOfType<"timeline">;
+type ProviderSubagentEvent = StreamEventOfType<"provider_subagent">;
 
 export function waitForNextPermission(
   session: AgentSession,
@@ -554,4 +573,11 @@ export function waitForTimelineToolCall(
     "timeline",
     (event) => event.item.type === "tool_call" && event.item.callId === callId,
   );
+}
+
+export function waitForProviderSubagent(
+  session: AgentSession,
+  id: string,
+): Promise<ProviderSubagentEvent> {
+  return waitForNextEvent(session, "provider_subagent", (event) => event.event.id === id);
 }

@@ -2258,6 +2258,136 @@ test("sends project.add.request without creating a workspace", async () => {
   });
 });
 
+test("searches GitHub repositories through the dotted RPC", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const searchPromise = client.searchGithubRepositories(
+    { query: "paseo", limit: 10 },
+    "req-repositories",
+  );
+  expect(parseSentFrame(mock.sent[0])).toEqual({
+    type: "workspace.github.search_repositories.request",
+    query: "paseo",
+    limit: 10,
+    requestId: "req-repositories",
+  });
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "workspace.github.search_repositories.response",
+      payload: {
+        status: "success",
+        requestId: "req-repositories",
+        repositories: [
+          {
+            id: "R_paseo",
+            name: "paseo",
+            nameWithOwner: "getpaseo/paseo",
+            description: "Development environment in your pocket",
+            visibility: "public",
+            updatedAt: "2026-07-15T10:00:00Z",
+            cloneUrl: "git@github.com:getpaseo/paseo.git",
+          },
+        ],
+        available: true,
+        error: null,
+      },
+    }),
+  );
+
+  await expect(searchPromise).resolves.toEqual({
+    status: "success",
+    requestId: "req-repositories",
+    repositories: [
+      {
+        id: "R_paseo",
+        name: "paseo",
+        nameWithOwner: "getpaseo/paseo",
+        description: "Development environment in your pocket",
+        visibility: "public",
+        updatedAt: "2026-07-15T10:00:00Z",
+        cloneUrl: "git@github.com:getpaseo/paseo.git",
+      },
+    ],
+    available: true,
+    error: null,
+  });
+});
+
+test("creates and registers a project directory through the dotted RPC", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const createPromise = client.createProjectDirectory(
+    { parentPath: "/tmp/projects", name: "new-project" },
+    "req-create-project-directory",
+  );
+  expect(parseSentFrame(mock.sent[0])).toEqual({
+    type: "project.create_directory.request",
+    parentPath: "/tmp/projects",
+    name: "new-project",
+    requestId: "req-create-project-directory",
+  });
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "project.create_directory.response",
+      payload: {
+        requestId: "req-create-project-directory",
+        directoryPath: "/tmp/projects/new-project",
+        project: {
+          projectId: "directory:/tmp/projects/new-project",
+          projectDisplayName: "new-project",
+          projectCustomName: null,
+          projectRootPath: "/tmp/projects/new-project",
+          projectKind: "non_git",
+        },
+        error: null,
+        errorCode: null,
+      },
+    }),
+  );
+
+  await expect(createPromise).resolves.toEqual({
+    requestId: "req-create-project-directory",
+    directoryPath: "/tmp/projects/new-project",
+    project: {
+      projectId: "directory:/tmp/projects/new-project",
+      projectDisplayName: "new-project",
+      projectCustomName: null,
+      projectRootPath: "/tmp/projects/new-project",
+      projectKind: "non_git",
+    },
+    error: null,
+    errorCode: null,
+  });
+});
+
 test("sends first-agent prompt context with workspace.create.request", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();
@@ -4817,9 +4947,13 @@ test("parses canonical fetch_agent_timeline_response payloads without crashing",
   expect(logger.warn).not.toHaveBeenCalled();
 });
 
-test("drops invalid fetch_agent_timeline_response tool_call payloads and logs validation warning", async () => {
-  const logger = createMockLogger();
+test("rejects and logs a correlated response that violates the protocol schema", async () => {
   const mock = createMockTransport();
+  const warnings: string[] = [];
+  const logger: Logger = {
+    ...noopLogger,
+    warn: (_fields, message) => warnings.push(message ?? ""),
+  };
 
   const client = new DaemonClient({
     url: "ws://test",
@@ -4834,9 +4968,9 @@ test("drops invalid fetch_agent_timeline_response tool_call payloads and logs va
   mock.triggerOpen();
   await connectPromise;
 
-  const received: unknown[] = [];
-  const unsubscribe = client.on("fetch_agent_timeline_response", (msg) => {
-    received.push(msg);
+  const response = client.fetchAgentTimeline("agent_cli", {
+    requestId: "req-invalid",
+    timeout: 1,
   });
 
   mock.triggerMessage(
@@ -4883,10 +5017,56 @@ test("drops invalid fetch_agent_timeline_response tool_call payloads and logs va
     }),
   );
 
-  unsubscribe();
+  await expect(response).rejects.toMatchObject({
+    requestId: "req-invalid",
+    message: expect.stringMatching(/validation/i),
+  });
+  expect(warnings).toEqual(["Message validation failed"]);
+});
 
-  expect(received).toHaveLength(0);
-  expect(logger.warn).toHaveBeenCalled();
+test("does not reject a request for an invalid correlated progress event", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger: noopLogger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const response = client.updateDaemon("req-update");
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "daemon.update.progress",
+      payload: {
+        requestId: "req-update",
+        phase: "verifying",
+      },
+    }),
+  );
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "daemon.update.response",
+      payload: {
+        requestId: "req-update",
+        success: true,
+        error: null,
+        previousVersion: "0.1.106",
+        newVersion: "0.1.107",
+      },
+    }),
+  );
+
+  await expect(response).resolves.toMatchObject({
+    requestId: "req-update",
+    success: true,
+  });
 });
 
 test("sends subscribe/unsubscribe terminals messages", async () => {

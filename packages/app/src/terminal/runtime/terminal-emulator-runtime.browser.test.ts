@@ -66,6 +66,10 @@ async function waitFor(input: { predicate: () => boolean; timeoutMs?: number }):
   }
 }
 
+function settleMountRefits(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 2_600));
+}
+
 function createTerminalHost(input: {
   width: number;
   height: number;
@@ -204,8 +208,17 @@ describe("terminal emulator runtime in a real browser", () => {
     const mounted = createTerminalHost({ width: 720, height: 360 });
 
     await waitFor({ predicate: () => mounted.sizes.length > 0 });
+    await settleMountRefits();
 
-    expect(mounted.sizes[0]?.shouldClaim).toBe(false);
+    expect(mounted.sizes.length).toBeGreaterThan(1);
+    expect(mounted.sizes.filter((size) => size.shouldClaim)).toEqual([]);
+
+    const settledSize = latestSize(mounted.sizes);
+    mounted.runtime.resize({ force: true, shouldClaim: true });
+
+    expect(mounted.sizes.filter((size) => size.shouldClaim)).toEqual([
+      { ...settledSize, shouldClaim: true },
+    ]);
   });
 
   it("reports a larger PTY size when the terminal container grows", async () => {

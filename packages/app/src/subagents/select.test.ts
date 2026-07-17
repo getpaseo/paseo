@@ -59,7 +59,11 @@ function setAgents(agents: Agent[]): void {
 
 afterEach(() => {
   useSessionStore.getState().clearSession(SERVER_ID);
-  useProviderSubagentStore.setState({ descriptors: new Map(), timelines: new Map() });
+  useProviderSubagentStore.setState({
+    descriptors: new Map(),
+    timelines: new Map(),
+    hiddenFromTrack: new Set(),
+  });
 });
 
 describe("selectSubagentsForParent", () => {
@@ -88,6 +92,34 @@ describe("selectSubagentsForParent", () => {
         (row) => row.id,
       ),
     ).toEqual(["provider-child"]);
+  });
+
+  it("hides locally dismissed provider children while retaining their descriptor", () => {
+    const store = useProviderSubagentStore.getState();
+    store.applyUpdate(SERVER_ID, {
+      kind: "upsert",
+      subagent: {
+        id: "provider-child",
+        parentAgentId: "parent-a",
+        provider: "codex",
+        title: "Provider child",
+        description: null,
+        status: "completed",
+        createdAt: "2026-03-08T10:01:00.000Z",
+        updatedAt: "2026-03-08T10:02:00.000Z",
+        toolCallId: "call-1",
+      },
+    });
+    store.hideFinishedForParent(SERVER_ID, "parent-a");
+
+    expect(
+      selectProviderSubagentsForParent(
+        useProviderSubagentStore.getState(),
+        { serverId: SERVER_ID, parentAgentId: "parent-a" },
+        true,
+      ),
+    ).toEqual([]);
+    expect(useProviderSubagentStore.getState().descriptors.size).toBe(1);
   });
 
   it("returns only non-archived children for the requested parent", () => {

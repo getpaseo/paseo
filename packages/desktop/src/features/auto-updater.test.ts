@@ -19,15 +19,15 @@ import {
   resolveStagingUserId,
   rolloutManifestSchema,
   shouldAdmitToRollout,
-  shouldAutoInstallOnQuit,
+  shouldInstallAppUpdateOnQuit,
 } from "./auto-updater";
 
-describe("shouldAutoInstallOnQuit", () => {
-  it("auto-installs on quit everywhere except Linux AppImage", () => {
-    expect(shouldAutoInstallOnQuit({ platform: "linux", isAppImage: true })).toBe(false);
-    expect(shouldAutoInstallOnQuit({ platform: "linux", isAppImage: false })).toBe(true);
-    expect(shouldAutoInstallOnQuit({ platform: "darwin", isAppImage: false })).toBe(true);
-    expect(shouldAutoInstallOnQuit({ platform: "win32", isAppImage: false })).toBe(true);
+describe("shouldInstallAppUpdateOnQuit", () => {
+  it("keeps Linux AppImage updates on the manual install path", () => {
+    expect(shouldInstallAppUpdateOnQuit({ platform: "linux", isAppImage: true })).toBe(false);
+    expect(shouldInstallAppUpdateOnQuit({ platform: "linux", isAppImage: false })).toBe(true);
+    expect(shouldInstallAppUpdateOnQuit({ platform: "darwin", isAppImage: false })).toBe(true);
+    expect(shouldInstallAppUpdateOnQuit({ platform: "win32", isAppImage: false })).toBe(true);
   });
 });
 

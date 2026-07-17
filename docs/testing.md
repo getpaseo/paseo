@@ -21,6 +21,18 @@ WRONG (horizontal):
 
 Writing all tests first then all implementation produces bad tests — you end up testing imagined behavior instead of actual behavior.
 
+## Fallible user actions
+
+Every user action that can fail must expose the complete operation state in the UI:
+
+- **Pending:** show immediate progress and prevent accidental duplicate submissions.
+- **Success:** show the requested result, or a clear success acknowledgement when the result is not otherwise visible.
+- **Failure:** keep an actionable error visible in the same context until the user retries or dismisses it.
+
+Logs, console output, and a reset button are not user feedback. Neither is a platform API unless it is verified on every supported platform: React Native Web's `Alert.alert()` is a no-op, so browser and Electron failures must use rendered app UI such as the shared alert component.
+
+Every fallible action needs behavioral coverage for success and failure. RPC-backed UI should use an app Playwright test with a real browser, network, and daemon whenever feasible. The failure test must assert what the user can see and do after the failure, not an internal response, state field, or log line. Add distinct timeout or disconnect cases when they produce distinct recovery behavior.
+
 ## Determinism first
 
 Tests must produce the same result every run:
@@ -90,6 +102,37 @@ function createTestEmailSender() {
 ## End-to-end means end-to-end
 
 When a test is labeled end-to-end, it calls the real service. No environment variable gates, no conditional skipping, no mocking the external dependency.
+
+### Packaged desktop smoke
+
+The packaged desktop smoke is an external observer of the production launch path. It must not add a smoke-only branch to Electron main or start the daemon itself.
+
+The harness launches the unpacked packaged app with isolated user data and daemon state, connects to the real renderer over Chromium's debugging protocol, and requires all of these outcomes:
+
+- the `paseo://app/` renderer mounts into `#root`;
+- the sandboxed preload exposes the desktop bridge;
+- the renderer starts a fresh desktop-managed daemon through the normal startup bootstrap;
+- the bundled CLI can query that daemon and run a terminal command.
+
+Pull-request CI runs the Linux x64 smoke under Xvfb when the cumulative PR diff changes `packages/desktop/**`. The desktop release matrix runs the harness against each host-native packaged app before publishing. All smoke jobs upload renderer, desktop, and daemon diagnostics on failure.
+
+To exercise the smoke locally on Linux:
+
+```bash
+PASEO_DESKTOP_SMOKE=1 \
+PASEO_DESKTOP_SMOKE_ARTIFACT_DIR=/tmp/paseo-desktop-smoke \
+npm run build:desktop -- --publish never --linux --x64 --dir
+```
+
+### Browser tab bridge regression
+
+The desktop browser tab bridge E2E launches an isolated real daemon, Metro, and Electron app. It forces workspace LRU eviction to reparent the original tab and replace its guest `WebContents`, then makes one MCP call each for tab listing, snapshot, and click against that original browser id. A final MCP wait proves the real target page received the click.
+
+Run it locally with the same command owned by the Ubuntu leg of the existing `desktop-tests` CI check:
+
+```bash
+npm run test:e2e:browser-tab-bridge --workspace=@getpaseo/desktop
+```
 
 ## Test organization
 

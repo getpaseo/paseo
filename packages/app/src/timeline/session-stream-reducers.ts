@@ -510,6 +510,7 @@ function mergePrependedCanonicalTail(olderTail: StreamItem[], currentTail: Strea
       ...olderLast,
       text: `${olderLast.text}${currentFirst.text}`,
       timestamp: currentFirst.timestamp,
+      ...(currentFirst.timelineCursor ? { timelineCursor: currentFirst.timelineCursor } : {}),
     },
     ...currentTail.slice(1),
   ];
@@ -519,8 +520,9 @@ function replaceLiveAssistantWithProjectedText(params: {
   head: StreamItem[];
   event: AgentStreamEventPayload;
   timestamp: Date;
+  timelineCursor: { epoch: string; seq: number };
 }): StreamItem[] | null {
-  const { head, event, timestamp } = params;
+  const { head, event, timestamp, timelineCursor } = params;
   if (event.type !== "timeline" || event.item.type !== "assistant_message") {
     return null;
   }
@@ -537,6 +539,7 @@ function replaceLiveAssistantWithProjectedText(params: {
     ...current,
     text: event.item.text,
     timestamp,
+    timelineCursor,
   };
   return next;
 }
@@ -575,19 +578,22 @@ function applyTimelineIncrementalPath(args: {
   if (acceptedUnits.length > 0) {
     if (payload.direction === "before") {
       const olderTail = hydrateStreamState(
-        acceptedUnits.map(({ event, timestamp }) => ({
+        acceptedUnits.map(({ event, timestamp, seqEnd }) => ({
           event,
           timestamp,
+          timelineCursor: { epoch: payload.epoch, seq: seqEnd },
         })),
         { source: "canonical" },
       );
       nextTail = mergePrependedCanonicalTail(olderTail, currentTail);
     } else if (currentHead.length > 0) {
-      for (const { event, timestamp } of acceptedUnits) {
+      for (const { event, timestamp, seqEnd } of acceptedUnits) {
+        const timelineCursor = { epoch: payload.epoch, seq: seqEnd };
         const replacedHead = replaceLiveAssistantWithProjectedText({
           head: nextHead,
           event,
           timestamp,
+          timelineCursor,
         });
         if (replacedHead) {
           nextHead = replacedHead;
@@ -599,15 +605,17 @@ function applyTimelineIncrementalPath(args: {
           event,
           timestamp,
           source: "canonical",
+          timelineCursor,
         });
         nextTail = applied.tail;
         nextHead = applied.head;
       }
     } else {
       nextTail = acceptedUnits.reduce<StreamItem[]>(
-        (state, { event, timestamp }) =>
+        (state, { event, timestamp, seqEnd }) =>
           reduceStreamUpdate(state, event, timestamp, {
             source: "canonical",
+            timelineCursor: { epoch: payload.epoch, seq: seqEnd },
           }),
         currentTail,
       );
@@ -681,8 +689,16 @@ export function processTimelineResponse(
 
   const toHydratedEvents = (
     units: TimelineUnit[],
-  ): Array<{ event: AgentStreamEventPayload; timestamp: Date }> =>
-    units.map(({ event, timestamp }) => ({ event, timestamp }));
+  ): Array<{
+    event: AgentStreamEventPayload;
+    timestamp: Date;
+    timelineCursor: { epoch: string; seq: number };
+  }> =>
+    units.map(({ event, timestamp, seqEnd }) => ({
+      event,
+      timestamp,
+      timelineCursor: { epoch: payload.epoch, seq: seqEnd },
+    }));
 
   // ------------------------------------------------------------------
   // Derive bootstrap policy (replace vs incremental)
@@ -934,6 +950,10 @@ export function processAgentStreamEvent(
     input;
 
   const sequencing = processTimelineSequencingGate({ event, seq, epoch, currentCursor });
+  const timelineCursor =
+    event.type === "timeline" && seq !== undefined && epoch !== undefined
+      ? { epoch, seq }
+      : undefined;
 
   // ------------------------------------------------------------------
   // Apply stream event to tail/head
@@ -945,6 +965,7 @@ export function processAgentStreamEvent(
         event,
         timestamp,
         source: "live",
+        timelineCursor,
       })
     : {
         tail: currentTail,

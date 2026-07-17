@@ -6,7 +6,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { StreamItem } from "@/types/stream";
-import type { StreamSegmentRenderers, StreamViewportHandle } from "./strategy";
+import type { StreamRenderInput, StreamSegmentRenderers, StreamViewportHandle } from "./strategy";
 import { createWebStreamStrategy } from "./strategy-web";
 
 vi.hoisted(() => {
@@ -24,8 +24,6 @@ vi.hoisted(() => {
     }),
   });
 });
-
-vi.mock("@/components/use-web-scrollbar", () => ({ useWebElementScrollbar: () => null }));
 
 function userMessage(index: number): StreamItem {
   return {
@@ -146,6 +144,59 @@ describe("createWebStreamStrategy", () => {
 
     expect(rowRenderCount.mock.calls.length).toBeGreaterThan(0);
     expect(rowRenderCount.mock.calls.length).toBeLessThanOrEqual(historyVirtualized.length);
+  });
+
+  it("rerenders a stable live-head row when its revision changes", () => {
+    const strategy = createWebStreamStrategy({ isMobileBreakpoint: false });
+    const viewportRef = React.createRef<StreamViewportHandle>();
+    const liveHead = [userMessage(1)];
+    let label = "collapsed";
+    const renderLiveHeadRow = vi.fn(() => <div>{label}</div>);
+    const renderInput: StreamRenderInput = {
+      agentId: "agent",
+      segments: {
+        historyVirtualized: [],
+        historyMounted: [],
+        liveHead,
+      },
+      boundary: {
+        hasVirtualizedHistory: false,
+        hasMountedHistory: false,
+        hasLiveHead: true,
+      },
+      renderers: {
+        ...createRenderers(vi.fn()),
+        renderLiveHeadRow,
+      },
+      listEmptyComponent: null,
+      viewportRef,
+      routeBottomAnchorRequest: null,
+      isAuthoritativeHistoryReady: true,
+      onNearBottomChange: vi.fn(),
+      onNearHistoryStart: vi.fn(),
+      isLoadingOlderHistory: false,
+      hasOlderHistory: false,
+      scrollEnabled: true,
+      listStyle: null,
+      baseListContentContainerStyle: null,
+      forwardListContentContainerStyle: null,
+    };
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    act(() => {
+      root?.render(strategy.render({ ...renderInput, liveHeadRowRevision: 0 }));
+    });
+    expect(container.textContent).toContain("collapsed");
+
+    label = "expanded";
+    act(() => {
+      root?.render(strategy.render({ ...renderInput, liveHeadRowRevision: 1 }));
+    });
+
+    expect(container.textContent).toContain("expanded");
+    expect(renderLiveHeadRow).toHaveBeenCalledTimes(2);
   });
 
   it("fires near-history-start when the user scrolls near the top", async () => {

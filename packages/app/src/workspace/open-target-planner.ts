@@ -1,4 +1,4 @@
-import { buildGitHubBlobUrl, buildGitHubBranchTreeUrl } from "@/git/github-url";
+import { type Forge, forgeFromRemoteUrl, getForgePresentation } from "@/git/forge";
 import type { DesktopOpenTarget, OpenDesktopTargetInput } from "@/workspace/desktop-open-targets";
 import {
   type ResolvedWorkspaceFilePaths,
@@ -17,17 +17,19 @@ export interface PlannedDesktopOpenTarget {
   id: string;
   label: string;
   editorId: string;
+  icon: DesktopOpenTarget["icon"];
   openInput: OpenDesktopTargetInput;
 }
 
-export interface PlannedGitHubOpenTarget {
-  source: "github";
-  id: "github";
-  label: "GitHub";
+export interface PlannedForgeOpenTarget {
+  source: "forge";
+  forge: Forge;
+  id: Forge;
+  label: string;
   url: string;
 }
 
-export type PlannedWorkspaceOpenTarget = PlannedDesktopOpenTarget | PlannedGitHubOpenTarget;
+export type PlannedWorkspaceOpenTarget = PlannedDesktopOpenTarget | PlannedForgeOpenTarget;
 
 export interface PlanWorkspaceOpenTargetsInput {
   workspaceDirectory: string;
@@ -37,6 +39,7 @@ export interface PlanWorkspaceOpenTargetsInput {
   canUseDesktopBridge: boolean;
   isLocalExecution: boolean;
   checkoutStatus?: CheckoutStatusForOpenTarget | null;
+  forge?: Forge | null;
 }
 
 function resolveActiveFileForOpenTargets(
@@ -58,6 +61,7 @@ function resolveActiveFileForOpenTargets(
 
 function planDesktopOpenTargets(input: {
   workspaceDirectory: string;
+  activeFile?: WorkspaceFileLocation | null;
   resolvedFile: ResolvedWorkspaceFilePaths | null;
   desktopTargets: readonly DesktopOpenTarget[];
   canUseDesktopBridge: boolean;
@@ -74,20 +78,8 @@ function planDesktopOpenTargets(input: {
         id: target.id,
         label: target.label,
         editorId: target.id,
-        openInput: { editorId: target.id, path: input.workspaceDirectory },
-      };
-    }
-    if (target.kind === "editor") {
-      return {
-        source: "desktop",
-        id: target.id,
-        label: target.label,
-        editorId: target.id,
-        openInput: {
-          editorId: target.id,
-          path: input.resolvedFile.absolutePath,
-          cwd: input.workspaceDirectory,
-        },
+        icon: target.icon,
+        openInput: { editorId: target.id, workspacePath: input.workspaceDirectory },
       };
     }
     return {
@@ -95,43 +87,75 @@ function planDesktopOpenTargets(input: {
       id: target.id,
       label: target.label,
       editorId: target.id,
+      icon: target.icon,
       openInput: {
         editorId: target.id,
-        path: input.resolvedFile.absolutePath,
-        mode: "reveal",
+        workspacePath: input.workspaceDirectory,
+        filePath: input.resolvedFile.absolutePath,
+        ...(input.activeFile?.lineStart ? { line: input.activeFile.lineStart } : {}),
       },
     };
   });
 }
 
-function planGitHubOpenTarget(input: {
+function buildForgeWebUrl(
+  forge: Forge,
+  input: {
+    remoteUrl: string | null | undefined;
+    branch: string | null | undefined;
+    path: string | null;
+    lineStart?: number;
+    lineEnd?: number;
+  },
+): string | null {
+  const presentation = getForgePresentation(forge);
+  if (input.path) {
+    return (
+      presentation.buildBlobUrl?.({
+        remoteUrl: input.remoteUrl,
+        branch: input.branch,
+        path: input.path,
+        lineStart: input.lineStart,
+        lineEnd: input.lineEnd,
+      }) ?? null
+    );
+  }
+  return (
+    presentation.buildBranchTreeUrl?.({
+      remoteUrl: input.remoteUrl,
+      branch: input.branch,
+    }) ?? null
+  );
+}
+
+function planForgeOpenTarget(input: {
   activeFile?: WorkspaceFileLocation | null;
   resolvedFile: ResolvedWorkspaceFilePaths | null;
   checkoutStatus?: CheckoutStatusForOpenTarget | null;
-}): PlannedGitHubOpenTarget | null {
+  forge?: Forge | null;
+}): PlannedForgeOpenTarget | null {
   if (!input.checkoutStatus?.isGit) {
     return null;
   }
-  const url = input.resolvedFile?.relativePath
-    ? buildGitHubBlobUrl({
-        remoteUrl: input.checkoutStatus.remoteUrl,
-        branch: input.checkoutStatus.currentBranch,
-        path: input.resolvedFile.relativePath,
-        lineStart: input.activeFile?.lineStart,
-        lineEnd: input.activeFile?.lineEnd,
-      })
-    : buildGitHubBranchTreeUrl({
-        remoteUrl: input.checkoutStatus.remoteUrl,
-        branch: input.checkoutStatus.currentBranch,
-      });
-
+  const forge = input.forge ?? forgeFromRemoteUrl(input.checkoutStatus.remoteUrl) ?? null;
+  if (!forge) {
+    return null;
+  }
+  const url = buildForgeWebUrl(forge, {
+    remoteUrl: input.checkoutStatus.remoteUrl,
+    branch: input.checkoutStatus.currentBranch,
+    path: input.resolvedFile?.relativePath ?? null,
+    lineStart: input.activeFile?.lineStart,
+    lineEnd: input.activeFile?.lineEnd,
+  });
   if (!url) {
     return null;
   }
   return {
-    source: "github",
-    id: "github",
-    label: "GitHub",
+    source: "forge",
+    forge,
+    id: forge,
+    label: getForgePresentation(forge).brandLabel,
     url,
   };
 }
@@ -141,6 +165,6 @@ export function planWorkspaceOpenTargets(
 ): PlannedWorkspaceOpenTarget[] {
   const resolvedFile = resolveActiveFileForOpenTargets(input);
   const desktopTargets = planDesktopOpenTargets({ ...input, resolvedFile });
-  const githubTarget = planGitHubOpenTarget({ ...input, resolvedFile });
-  return githubTarget ? [...desktopTargets, githubTarget] : desktopTargets;
+  const forgeTarget = planForgeOpenTarget({ ...input, resolvedFile });
+  return forgeTarget ? [...desktopTargets, forgeTarget] : desktopTargets;
 }

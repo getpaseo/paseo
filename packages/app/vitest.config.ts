@@ -105,6 +105,22 @@ export default defineConfig({
         find: /^@xterm\/addon-ligatures$/,
         replacement: path.resolve(__dirname, "test-stubs/xterm-addon-ligatures.ts"),
       },
+      {
+        find: /^react-native-unistyles$/,
+        replacement: path.resolve(__dirname, "test-stubs/react-native-unistyles.ts"),
+      },
+      {
+        find: /^react-native-svg$/,
+        replacement: path.resolve(__dirname, "test-stubs/react-native-svg.ts"),
+      },
+      {
+        find: /^expo-linking$/,
+        replacement: path.resolve(__dirname, "test-stubs/expo-linking.ts"),
+      },
+      {
+        find: /^lucide-react-native$/,
+        replacement: path.resolve(__dirname, "test-stubs/lucide-react-native.ts"),
+      },
     ],
   },
 });

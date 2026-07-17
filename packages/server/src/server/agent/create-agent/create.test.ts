@@ -58,9 +58,7 @@ test("session create forwards clientMessageId to the initial prompt run options"
     } as unknown as Parameters<typeof createAgentCommand>[0]["agentManager"],
     agentStorage: {} as Parameters<typeof createAgentCommand>[0]["agentStorage"],
     logger: createTestLogger(),
-    providerSnapshotManager: {} as Parameters<
-      typeof createAgentCommand
-    >[0]["providerSnapshotManager"],
+    providerSnapshotManager: createProviderSnapshotManagerStub().manager,
   };
 
   await createAgentCommand(dependencies, {
@@ -78,6 +76,92 @@ test("session create forwards clientMessageId to the initial prompt run options"
   expect(streamAgent).toHaveBeenCalledWith("agent-1", "hello from create", {
     messageId: "msg-create-1",
   });
+});
+
+test("session create validates the requested mode against the provider's modes", async () => {
+  const snapshot = {
+    id: "agent-1",
+    provider: "opencode",
+    cwd: "/tmp/paseo-create-test",
+    runtimeInfo: null,
+  } as ManagedAgent;
+  const createAgent = vi.fn(async () => snapshot);
+  const stub = createProviderSnapshotManagerStub();
+  stub.resolveCreateConfig.mockRejectedValue(
+    new Error("Invalid mode 'plan' for provider 'opencode'. Available modes: build, myplan"),
+  );
+  const dependencies: Parameters<typeof createAgentCommand>[0] = {
+    agentManager: {
+      createAgent,
+    } as unknown as Parameters<typeof createAgentCommand>[0]["agentManager"],
+    agentStorage: {} as Parameters<typeof createAgentCommand>[0]["agentStorage"],
+    logger: createTestLogger(),
+    providerSnapshotManager: stub.manager,
+  };
+
+  await expect(
+    createAgentCommand(dependencies, {
+      kind: "session",
+      config: { provider: "opencode", cwd: "/tmp/paseo-create-test", modeId: "plan" },
+      workspaceId: "ws-create-test",
+      labels: {},
+      provisionalTitle: null,
+      firstAgentContext: { attachments: [] },
+      buildSessionConfig: async (config) => ({ sessionConfig: config }),
+    }),
+  ).rejects.toThrow("Invalid mode 'plan'");
+
+  expect(stub.resolveCreateConfig).toHaveBeenCalledWith(
+    expect.objectContaining({
+      provider: "opencode",
+      cwd: "/tmp/paseo-create-test",
+      requestedMode: "plan",
+    }),
+  );
+  expect(createAgent).not.toHaveBeenCalled();
+});
+
+test("session create applies the resolved mode from the provider create config", async () => {
+  const snapshot = {
+    id: "agent-1",
+    provider: "opencode",
+    cwd: "/tmp/paseo-create-test",
+    runtimeInfo: null,
+  } as ManagedAgent;
+  const createAgent = vi.fn(async () => snapshot);
+  const stub = createProviderSnapshotManagerStub();
+  stub.resolveCreateConfig.mockResolvedValue({
+    modeId: "build",
+    featureValues: { auto_accept: true },
+  });
+  const dependencies: Parameters<typeof createAgentCommand>[0] = {
+    agentManager: {
+      createAgent,
+      getAgent: vi.fn(() => snapshot),
+    } as unknown as Parameters<typeof createAgentCommand>[0]["agentManager"],
+    agentStorage: {} as Parameters<typeof createAgentCommand>[0]["agentStorage"],
+    logger: createTestLogger(),
+    providerSnapshotManager: stub.manager,
+  };
+
+  await createAgentCommand(dependencies, {
+    kind: "session",
+    config: { provider: "opencode", cwd: "/tmp/paseo-create-test", modeId: "build" },
+    workspaceId: "ws-create-test",
+    labels: {},
+    provisionalTitle: null,
+    firstAgentContext: { attachments: [] },
+    buildSessionConfig: async (config) => ({ sessionConfig: config }),
+  });
+
+  expect(createAgent).toHaveBeenCalledWith(
+    expect.objectContaining({
+      modeId: "build",
+      featureValues: { auto_accept: true },
+    }),
+    undefined,
+    expect.anything(),
+  );
 });
 
 test("mcp create accepts provider-only internal input and leaves model undefined", async () => {

@@ -9,12 +9,9 @@ import {
   type SetStateAction,
 } from "react";
 import type { ComposerAttachment, UserComposerAttachment } from "@/attachments/types";
-import {
-  buildGithubSearchQueryOptions,
-  type GitHubSearchClient,
-} from "@/git/use-github-search-query";
+import { buildForgeSearchQueryOptions, type ForgeSearchClient } from "@/git/use-forge-search-query";
 import { extractGithubRefs, type GithubRef } from "@/utils/github-refs";
-import type { GitHubSearchItem } from "@getpaseo/protocol/messages";
+import type { ForgeSearchItem } from "@getpaseo/protocol/messages";
 import { isAttachmentSelectedForGithubItem, toggleGithubAttachment } from "../actions";
 
 const AUTO_ATTACH_DEBOUNCE_MS = 300;
@@ -23,10 +20,11 @@ interface ComposerGithubAutoAttachInput {
   text: string;
   remoteUrl: string | null | undefined;
   attachments: UserComposerAttachment[];
-  client: GitHubSearchClient | null;
+  client: ForgeSearchClient | null;
   isConnected: boolean;
   serverId: string;
   cwd: string;
+  supportsForgeSearch?: boolean;
   setAttachments: Dispatch<SetStateAction<UserComposerAttachment[]>>;
 }
 
@@ -75,6 +73,7 @@ export function useComposerGithubAutoAttach(
     params.isConnected,
     params.serverId,
     params.cwd,
+    params.supportsForgeSearch,
     queryClient,
   ]);
 
@@ -193,11 +192,12 @@ async function fetchGithubRefSearch({
 
   try {
     return await queryClient.fetchQuery(
-      buildGithubSearchQueryOptions({
+      buildForgeSearchQueryOptions({
         client: snapshot.client,
         serverId: snapshot.serverId,
         cwd: snapshot.cwd,
         query: String(ref.number),
+        supportsForgeSearch: snapshot.supportsForgeSearch,
         enabled: true,
       }),
     );
@@ -216,12 +216,12 @@ function hasGithubAttachment(attachments: UserComposerAttachment[], ref: GithubR
   return attachments.some((attachment) => attachmentKey(attachment) === githubRefKey(ref));
 }
 
-function githubItemMatchesRef(item: GitHubSearchItem, ref: GithubRef): boolean {
+function githubItemMatchesRef(item: ForgeSearchItem, ref: GithubRef): boolean {
   return item.kind === githubItemKind(ref) && item.number === ref.number;
 }
 
-function githubItemKind(ref: GithubRef): GitHubSearchItem["kind"] {
-  return ref.kind === "pull" ? "pr" : "issue";
+function githubItemKind(ref: GithubRef): ForgeSearchItem["kind"] {
+  return ref.kind === "pull" ? "change_request" : "issue";
 }
 
 function githubRefKey(ref: GithubRef): string {
@@ -232,7 +232,10 @@ function attachmentKey(attachment: ComposerAttachment | undefined): string | nul
   if (
     !attachment ||
     attachment.kind === "image" ||
-    (attachment.kind !== "github_pr" && attachment.kind !== "github_issue")
+    (attachment.kind !== "forge_change_request" &&
+      attachment.kind !== "forge_issue" &&
+      attachment.kind !== "github_pr" &&
+      attachment.kind !== "github_issue")
   ) {
     return null;
   }

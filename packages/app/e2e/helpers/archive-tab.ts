@@ -40,6 +40,7 @@ export interface IdleAgentSeedClient {
     provider: string;
     model: string;
     modeId: string;
+    featureValues?: Record<string, unknown>;
     cwd: string;
     workspaceId: string;
     title: string;
@@ -58,7 +59,11 @@ export async function createIdleAgent(
   const created = await client.createAgent({
     provider: "opencode",
     model: "opencode/gpt-5-nano",
-    modeId: "bypassPermissions",
+    // OpenCode has no "bypassPermissions" mode (that's Claude's). Use build with
+    // auto_accept for unattended full access — mode validation now rejects modes
+    // the provider doesn't define.
+    modeId: "build",
+    featureValues: { auto_accept: true },
     cwd: input.cwd,
     workspaceId: input.workspaceId,
     title: input.title,
@@ -96,12 +101,6 @@ export async function fetchAgentArchivedAt(
 ): Promise<string | null> {
   const result = await client.fetchAgent({ agentId });
   return result?.agent.archivedAt ?? null;
-}
-
-export function getWorktreeRestoreFeature(client: {
-  getLastServerInfoMessage(): { features?: { worktreeRestore?: boolean } | null } | null;
-}): boolean {
-  return client.getLastServerInfoMessage()?.features?.worktreeRestore === true;
 }
 
 export async function primeAdditionalPage(page: Page): Promise<void> {

@@ -66,7 +66,7 @@ import {
   normalizeClientRestartRpcReason,
 } from "./lifecycle-reasons.js";
 
-import { AgentManager } from "./agent/agent-manager.js";
+import { AgentManager, AgentRunCancellationError } from "./agent/agent-manager.js";
 import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import type {
   AgentManagerEvent,
@@ -100,13 +100,12 @@ import {
   type TimelineProjectionMode,
 } from "./agent/timeline-projection.js";
 import { buildAgentForkContextAttachment } from "./agent/activity-curator.js";
+import { buildAgentPrompt } from "./agent/prompt-attachments.js";
 import type { StructuredGenerationDaemonConfig } from "./agent/structured-generation-providers.js";
 import {
   getAgentStreamEventTurnId,
   type AgentPersistenceHandle,
   type AgentPermissionResponse,
-  type AgentPromptContentBlock,
-  type AgentPromptInput,
   type AgentRunOptions,
   type AgentSessionConfig,
 } from "./agent/agent-sdk-types.js";
@@ -169,12 +168,19 @@ import {
   type WorkspaceProvisioningService,
 } from "./session/workspace-provisioning/workspace-provisioning-service.js";
 import {
+  createWorkspaceRecoveryService,
+  type WorkspaceRecoveryService,
+} from "./session/workspace-recovery/workspace-recovery-service.js";
+import {
   createAgentUpdatesService,
   matchesAgentUpdatesFilter,
   type AgentUpdatesService,
 } from "./session/agent-updates/agent-updates-service.js";
 import { expandTilde } from "../utils/path.js";
-import { searchDirectoryEntries } from "../utils/directory-suggestions.js";
+import {
+  searchDirectoryEntries,
+  WORKSPACE_SEARCH_HIDDEN_DIRECTORIES,
+} from "../utils/directory-suggestions.js";
 import type { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import type { Resolvable } from "./speech/provider-resolver.js";
 import type { SpeechReadinessSnapshot } from "./speech/speech-runtime.js";
@@ -182,7 +188,14 @@ import type pino from "pino";
 import { FileBackedChatService } from "./chat/chat-service.js";
 import { LoopService } from "./loop-service.js";
 import { ScheduleService } from "./schedule/service.js";
-import { createGitHubService, type GitHubService } from "../services/github-service.js";
+import {
+  createGitHubService,
+  GitHubAuthenticationError,
+  GitHubCliMissingError,
+  GitHubCommandError,
+  type GitHubService,
+} from "../services/github-service.js";
+import type { ForgeService } from "../services/forge-service.js";
 import type { ProviderUsageService } from "../services/quota-fetcher/service.js";
 import {
   summarizeFetchWorkspacesEntries,
@@ -215,6 +228,10 @@ import {
   toWorktreeWireError,
 } from "./worktree-errors.js";
 import { parseGitRemoteLocation } from "@getpaseo/protocol/git-remote";
+import {
+  createProjectDirectory,
+  ProjectDirectoryRequestError,
+} from "./project-directory-service.js";
 import { type WorktreeConfig, createWorktree } from "../utils/worktree.js";
 import { runGitCommand } from "../utils/run-git-command.js";
 import { CreateAgentLifecycleDispatch } from "./agent/create-agent-lifecycle-dispatch.js";
@@ -224,15 +241,7 @@ import { CreateAgentLifecycleDispatch } from "./agent/create-agent-lifecycle-dis
 // the entire session message if they encounter an unknown provider.
 const LEGACY_PROVIDER_IDS = new Set(["claude", "codex", "opencode"]);
 const MIN_VERSION_ALL_PROVIDERS = "0.1.45";
-const WORKSPACE_SEARCH_HIDDEN_DIRECTORIES = [
-  ".agents",
-  ".claude",
-  ".codex",
-  ".github",
-  ".paseo",
-  ".vscode",
-];
-
+const MIN_VERSION_EXPLICIT_WORKSPACE_RECOVERY = "0.1.105";
 function errorToFriendlyMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (typeof error === "string") return error;
@@ -312,6 +321,12 @@ function clientSupportsAllProviders(appVersion: string | null): boolean {
   return isAppVersionAtLeast(appVersion, MIN_VERSION_ALL_PROVIDERS);
 }
 
+function clientUsesLegacyWorkspaceRestore(appVersion: string | null): boolean {
+  return (
+    appVersion !== null && !isAppVersionAtLeast(appVersion, MIN_VERSION_EXPLICIT_WORKSPACE_RECOVERY)
+  );
+}
+
 type DeleteFencedAgentStorage = AgentStorage & {
   beginDelete(agentId: string): void;
 };
@@ -369,6 +384,10 @@ type FetchWorkspacesResponsePayload = Extract<
 type FetchWorkspacesResponseEntry = FetchWorkspacesResponsePayload["entries"][number];
 type FetchWorkspacesResponsePageInfo = FetchWorkspacesResponsePayload["pageInfo"];
 type WorkspaceProjectDescriptorPayload = FetchWorkspacesResponsePayload["emptyProjects"][number];
+type WorkspaceGithubSearchRepositoriesResponsePayload = Extract<
+  SessionOutboundMessage,
+  { type: "workspace.github.search_repositories.response" }
+>["payload"];
 type WorkspaceUpdatePayload = Extract<
   SessionOutboundMessage,
   { type: "workspace_update" }
@@ -413,6 +432,7 @@ export interface SessionOptions {
   onBinaryMessage?: (frame: Uint8Array) => void;
   getTransportBufferedAmount?: () => number | null;
   onLifecycleIntent?: (intent: SessionLifecycleIntent) => void;
+  onWorkspaceRecovered?: (workspace: PersistedWorkspaceRecord) => Promise<void>;
   logger: pino.Logger;
   downloadTokenStore: DownloadTokenStore;
   pushTokenStore: PushTokenStore;
@@ -427,7 +447,7 @@ export interface SessionOptions {
   scheduleService: ScheduleService;
   loopService: LoopService;
   checkoutDiffManager: CheckoutDiffManager;
-  github?: GitHubService;
+  github?: ForgeService;
   createAgentMcpTransport?: AgentMcpTransportFactory;
   // Injected so tests can substitute the git branch rename without module mocks;
   // defaults to the real checkout-git implementation.
@@ -541,6 +561,9 @@ export class Session {
   private readonly onBinaryMessage: ((frame: Uint8Array) => void) | null;
   private readonly getTransportBufferedAmount: () => number | null;
   private readonly onLifecycleIntent: ((intent: SessionLifecycleIntent) => void) | null;
+  private readonly onWorkspaceRecovered:
+    | ((workspace: PersistedWorkspaceRecord) => Promise<void>)
+    | null;
   private readonly sessionLogger: pino.Logger;
   private readonly paseoHome: string;
   private readonly worktreesRoot: string | undefined;
@@ -550,12 +573,13 @@ export class Session {
   private readonly projectRegistry: ProjectRegistry;
   private readonly workspaceRegistry: WorkspaceRegistry;
   private readonly filesystem: SessionFileSystem;
-  private readonly github: GitHubService;
+  private readonly github: ForgeService;
   private readonly renameCurrentBranch: typeof renameCurrentBranchDefault;
   private readonly workspaceGitService: WorkspaceGitService;
   private readonly workspaceAutoName: WorkspaceAutoName;
   private readonly gitMutation: GitMutationService;
   private readonly workspaceProvisioning: WorkspaceProvisioningService;
+  private readonly workspaceRecovery: WorkspaceRecoveryService;
   private readonly daemonConfigStore: DaemonConfigStore;
   private readonly pushTokenStore: PushTokenStore;
   private unsubscribeAgentEvents: (() => void) | null = null;
@@ -604,6 +628,7 @@ export class Session {
       onBinaryMessage,
       getTransportBufferedAmount,
       onLifecycleIntent,
+      onWorkspaceRecovered,
       logger,
       downloadTokenStore,
       pushTokenStore,
@@ -653,6 +678,7 @@ export class Session {
     this.onBinaryMessage = onBinaryMessage ?? null;
     this.getTransportBufferedAmount = getTransportBufferedAmount ?? (() => 0);
     this.onLifecycleIntent = onLifecycleIntent ?? null;
+    this.onWorkspaceRecovered = onWorkspaceRecovered ?? null;
     this.pushTokenStore = pushTokenStore;
     this.paseoHome = paseoHome;
     this.worktreesRoot = worktreesRoot;
@@ -681,7 +707,6 @@ export class Session {
     this.workspaceGitService = workspaceGitService;
     this.gitMutation = createGitMutationService({
       workspaceGitService: this.workspaceGitService,
-      github: this.github,
       logger: this.sessionLogger,
     });
     this.workspaceAutoName = workspaceAutoName;
@@ -689,6 +714,16 @@ export class Session {
       workspaceRegistry: this.workspaceRegistry,
       projectRegistry: this.projectRegistry,
       workspaceGitService: this.workspaceGitService,
+      logger: this.sessionLogger,
+    });
+    this.workspaceRecovery = createWorkspaceRecoveryService({
+      getWorkspace: (workspaceId) => this.workspaceRegistry.get(workspaceId),
+      getProject: (projectId) => this.projectRegistry.get(projectId),
+      isDirectory: (path) => this.filesystem.isDirectory(path),
+      recreateWorktree: (workspace) => this.recreateArchivedWorktree(workspace),
+      unarchiveWorkspace: async (workspace) => {
+        await this.workspaceProvisioning.ensureWorkspaceRecordUnarchived(workspace);
+      },
     });
     this.checkoutSession = new CheckoutSession({
       host: {
@@ -967,6 +1002,27 @@ export class Session {
     await this.workspaceGitObserver.warmGitData(workspace);
   }
 
+  async refreshRecoveredWorkspaceForExternalMutation(
+    workspace: PersistedWorkspaceRecord,
+  ): Promise<void> {
+    try {
+      await this.workspaceGitObserver.warmGitData(workspace);
+    } catch (error) {
+      this.sessionLogger.warn(
+        { err: error, workspaceId: workspace.workspaceId },
+        "Failed to warm git observer after workspace recovery",
+      );
+      try {
+        await this.emitWorkspaceUpdateForWorkspaceId(workspace.workspaceId);
+      } catch (emitError) {
+        this.sessionLogger.warn(
+          { err: emitError, workspaceId: workspace.workspaceId },
+          "Failed to emit workspace update after recovery",
+        );
+      }
+    }
+  }
+
   /**
    * Get the client's current activity state
    */
@@ -1034,33 +1090,6 @@ export class Session {
   }
 
   /**
-   * Normalize a user prompt (with optional image metadata) for AgentManager
-   */
-  private buildAgentPrompt(
-    text: string,
-    images?: Array<{ data: string; mimeType: string }>,
-    attachments?: AgentAttachment[],
-  ): AgentPromptInput {
-    const normalized = text?.trim() ?? "";
-    const hasImages = Boolean(images && images.length > 0);
-    const hasAttachments = Boolean(attachments && attachments.length > 0);
-    if (!hasImages && !hasAttachments) {
-      return normalized;
-    }
-    const blocks: AgentPromptContentBlock[] = [];
-    if (normalized.length > 0) {
-      blocks.push({ type: "text", text: normalized });
-    }
-    for (const image of images ?? []) {
-      blocks.push({ type: "image", data: image.data, mimeType: image.mimeType });
-    }
-    for (const attachment of attachments ?? []) {
-      blocks.push(attachment);
-    }
-    return blocks;
-  }
-
-  /**
    * Interrupt the agent's active run so the next prompt starts a fresh turn.
    * Returns once the manager confirms the stream has been cancelled.
    */
@@ -1091,16 +1120,17 @@ export class Session {
     );
 
     const t0 = Date.now();
-    const cancelled = await this.agentManager.cancelAgentRun(agentId);
+    const cancellation = await this.agentManager.cancelAgentRun(agentId);
     this.sessionLogger.debug(
-      { agentId, cancelled, durationMs: Date.now() - t0 },
+      { agentId, cancellation: cancellation.status, durationMs: Date.now() - t0 },
       "interruptAgentIfRunning: cancelAgentRun completed",
     );
-    if (!cancelled) {
+    if (cancellation.status === "refused") {
       this.sessionLogger.warn(
         { agentId },
         "interruptAgentIfRunning: reported running but no active run was cancelled",
       );
+      throw new AgentRunCancellationError(agentId, "stop");
     }
   }
 
@@ -1408,6 +1438,7 @@ export class Session {
       this.dispatchAgentLifecycleMessage(msg) ??
       this.dispatchAgentConfigMessage(msg) ??
       this.dispatchCheckoutMessage(msg) ??
+      this.dispatchWorkspaceRecoveryMessage(msg) ??
       this.dispatchWorkspaceAndProjectMessage(msg) ??
       this.dispatchWorkspaceFileMessage(msg) ??
       this.dispatchProviderMessage(msg) ??
@@ -1590,6 +1621,10 @@ export class Session {
     switch (msg.type) {
       case "checkout_status_request":
         return this.checkoutSession.handleStatusRequest(msg);
+      case "checkout.commits.list.request":
+        return this.checkoutSession.handleCommitsListRequest(msg);
+      case "checkout.commits.file_diff.request":
+        return this.checkoutSession.handleCommitFileDiffRequest(msg);
       case "validate_branch_request":
         return this.checkoutSession.handleValidateBranchRequest(msg);
       case "branch_suggestions_request":
@@ -1621,16 +1656,19 @@ export class Session {
         return this.checkoutSession.handleCheckoutPrCreateRequest(msg);
       case "checkout_pr_merge_request":
         return this.checkoutSession.handleCheckoutPrMergeRequest(msg);
+      case "checkout.forge.set_auto_merge.request":
       case "checkout.github.set_auto_merge.request":
-        return this.checkoutSession.handleCheckoutGithubSetAutoMergeRequest(msg);
+        return this.checkoutSession.handleCheckoutForgeSetAutoMergeRequest(msg);
+      case "checkout.forge.get_check_details.request":
       case "checkout.github.get_check_details.request":
-        return this.checkoutSession.handleCheckoutGithubGetCheckDetailsRequest(msg);
+        return this.checkoutSession.handleCheckoutForgeGetCheckDetailsRequest(msg);
       case "checkout_pr_status_request":
         return this.checkoutSession.handleCheckoutPrStatusRequest(msg);
       case "pull_request_timeline_request":
         return this.checkoutSession.handlePullRequestTimelineRequest(msg);
+      case "forge.search.request":
       case "github_search_request":
-        return this.checkoutSession.handleGitHubSearchRequest(msg);
+        return this.checkoutSession.handleForgeSearchRequest(msg);
       case "stash_save_request":
         return this.checkoutSession.handleStashSaveRequest(msg);
       case "stash_pop_request":
@@ -1665,8 +1703,12 @@ export class Session {
         return this.handleOpenProjectRequest(msg);
       case "project.add.request":
         return this.handleProjectAddRequest(msg);
-      case "workspace.github.clone.request":
-        return this.handleWorkspaceGithubCloneRequest(msg);
+      case "project.create_directory.request":
+        return this.handleProjectCreateDirectoryRequest(msg);
+      case "workspace.github.search_repositories.request":
+        return this.handleWorkspaceGithubSearchRepositoriesRequest(msg);
+      case "project.github.clone.request":
+        return this.handleProjectGithubCloneRequest(msg);
       case "archive_workspace_request":
         return this.handleArchiveWorkspaceRequest(msg);
       case "project.remove.request":
@@ -1695,6 +1737,17 @@ export class Session {
       case "file.upload.request":
         this.workspaceFilesSession.handleFileUploadRequest(msg);
         return undefined;
+      default:
+        return undefined;
+    }
+  }
+
+  private dispatchWorkspaceRecoveryMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    switch (msg.type) {
+      case "workspace.recovery.inspect.request":
+        return this.handleWorkspaceRecoveryInspectRequest(msg);
+      case "workspace.recovery.restore.request":
+        return this.handleWorkspaceRecoveryRestoreRequest(msg);
       default:
         return undefined;
     }
@@ -2415,6 +2468,51 @@ export class Session {
     }
   }
 
+  private async handleWorkspaceRecoveryInspectRequest(
+    request: Extract<SessionInboundMessage, { type: "workspace.recovery.inspect.request" }>,
+  ): Promise<void> {
+    const state = await this.workspaceRecovery.inspect(request.workspaceId);
+    this.emit({
+      type: "workspace.recovery.inspect.response",
+      payload: {
+        requestId: request.requestId,
+        state,
+      },
+    });
+  }
+
+  private async handleWorkspaceRecoveryRestoreRequest(
+    request: Extract<SessionInboundMessage, { type: "workspace.recovery.restore.request" }>,
+  ): Promise<void> {
+    try {
+      await this.restoreWorkspaceAndEmit(request.workspaceId);
+      this.emit({
+        type: "workspace.recovery.restore.response",
+        payload: {
+          requestId: request.requestId,
+          workspaceId: request.workspaceId,
+          accepted: true,
+          error: null,
+        },
+      });
+    } catch (error) {
+      const message = getErrorMessageOr(error, "Failed to recover workspace");
+      this.sessionLogger.warn(
+        { err: error, workspaceId: request.workspaceId, requestId: request.requestId },
+        "session: workspace.recovery.restore.request rejected",
+      );
+      this.emit({
+        type: "workspace.recovery.restore.response",
+        payload: {
+          requestId: request.requestId,
+          workspaceId: request.workspaceId,
+          accepted: false,
+          error: message,
+        },
+      });
+    }
+  }
+
   /**
    * Handle text message to agent (with optional image attachments)
    */
@@ -2444,7 +2542,7 @@ export class Session {
     );
 
     const promptText = options?.spokenInput ? wrapSpokenInput(text) : text;
-    const prompt = this.buildAgentPrompt(promptText, images, attachments);
+    const prompt = buildAgentPrompt(promptText, images, attachments);
 
     try {
       await sendPromptToAgent({
@@ -2723,19 +2821,16 @@ export class Session {
       if (!normalized.cwd) {
         throw new Error("Import requires cwd from the selected provider session");
       }
-      // An imported agent mints its own workspace; ownership is its workspaceId,
-      // never an existing same-cwd workspace resolved by path.
-      const workspace = await this.workspaceProvisioning.createWorkspaceForDirectory(
-        normalized.cwd,
-      );
-      const { snapshot, timelineSize } = await importProviderSession({
+      const { snapshot, timelineSize, createdWorkspace } = await importProviderSession({
         request: normalized,
-        workspaceId: workspace.workspaceId,
+        workspaceProvisioning: this.workspaceProvisioning,
         agentManager: this.agentManager,
         agentStorage: this.agentStorage,
         logger: this.sessionLogger,
       });
-      await this.registerWorkspaceForImportedAgent(workspace);
+      if (createdWorkspace) {
+        await this.registerWorkspaceForImportedAgent(createdWorkspace);
+      }
       const agentPayload = await this.buildAgentPayload(snapshot);
       this.emit({
         type: "status",
@@ -2777,8 +2872,8 @@ export class Session {
     this.sessionLogger.info({ agentId }, `Refreshing agent ${agentId} from persistence`);
 
     try {
+      await this.restoreOwningWorkspaceForLegacyAgentRefresh(agentId);
       await unarchiveAgentState(this.agentStorage, this.agentManager, agentId);
-      await this.unarchiveOwningWorkspaceForAgent(agentId);
       let snapshot: ManagedAgent;
       const existing = this.agentManager.getAgent(agentId);
       if (existing) {
@@ -2863,11 +2958,30 @@ export class Session {
             requestId,
             agentId,
             agent: payload,
+            error: null,
           },
         });
       }
     } catch (error) {
-      this.handleAgentRunError(agentId, error, "Failed to cancel running agent on request");
+      if (requestId) {
+        this.sessionLogger.error(
+          { err: error, agentId },
+          `Failed to cancel running agent on request for agent ${agentId}`,
+        );
+        const agent = this.agentManager.getAgent(agentId);
+        const payload = agent ? await this.buildAgentPayload(agent) : null;
+        this.emit({
+          type: "cancel_agent_response",
+          payload: {
+            requestId,
+            agentId,
+            agent: payload,
+            error: errorToFriendlyMessage(error),
+          },
+        });
+      } else {
+        this.handleAgentRunError(agentId, error, "Failed to cancel running agent on request");
+      }
     }
   }
 
@@ -2938,7 +3052,6 @@ export class Session {
         checkoutExistingBranch: (cwd, branch) =>
           this.gitMutation.checkoutExistingBranch(cwd, branch),
         createBranchFromBase: (params) => this.gitMutation.createBranchFromBase(params),
-        github: this.github,
       },
       config,
       gitOptions,
@@ -3667,9 +3780,9 @@ export class Session {
     snapshot: WorkspaceGitRuntimeSnapshot,
   ): NonNullable<WorkspaceDescriptorPayload["githubRuntime"]> {
     return {
-      featuresEnabled: snapshot.github.featuresEnabled,
-      pullRequest: snapshot.github.pullRequest,
-      error: snapshot.github.error,
+      featuresEnabled: snapshot.forge.featuresEnabled,
+      pullRequest: snapshot.forge.pullRequest,
+      error: snapshot.forge.error,
     };
   }
 
@@ -3692,6 +3805,10 @@ export class Session {
       diffStat: snapshot.git.diffStat ?? null,
       gitRuntime: this.buildWorkspaceGitRuntimePayload(snapshot) ?? undefined,
       githubRuntime: this.buildWorkspaceGitHubRuntimePayload(snapshot),
+      // Reuse the forge already resolved on the snapshot (probe-aware; GitHub-only
+      // resolves to "github") so the sidebar/hover-card brand mark matches the
+      // status projection without a second resolve.
+      forge: snapshot.forge.forge,
     };
   }
 
@@ -3869,35 +3986,14 @@ export class Session {
     };
   }
 
-  private async unarchiveOwningWorkspaceForAgent(agentId: string): Promise<void> {
-    const record = await this.agentStorage.get(agentId);
-    if (!record?.workspaceId) {
-      return;
+  private async recreateArchivedWorktree(workspace: PersistedWorkspaceRecord): Promise<void> {
+    const branch = workspace.branch;
+    if (!branch) {
+      throw new WorktreeRequestError({
+        code: "unknown",
+        message: `Workspace ${workspace.workspaceId} has no branch to restore`,
+      });
     }
-    const workspace = await this.workspaceRegistry.get(record.workspaceId);
-    if (!workspace?.archivedAt) {
-      return;
-    }
-
-    const directoryExists = await this.filesystem.isDirectory(record.cwd).catch(() => false);
-    if (!directoryExists) {
-      if (workspace.kind !== "worktree" || !workspace.branch) {
-        return;
-      }
-      // Recreate the worktree directory from its kept branch BEFORE clearing
-      // archivedAt — the reconciler re-archives workspaces whose directory is
-      // missing, so the record must point at a real directory first.
-      await this.recreateOwningWorktreeForRestore(workspace, workspace.branch);
-    }
-
-    await this.workspaceProvisioning.ensureWorkspaceRecordUnarchived(workspace);
-    await this.emitWorkspaceUpdatesForWorkspaceIds([workspace.workspaceId]);
-  }
-
-  private async recreateOwningWorktreeForRestore(
-    workspace: PersistedWorkspaceRecord,
-    branch: string,
-  ): Promise<void> {
     const project = await this.projectRegistry.get(workspace.projectId);
     if (!project) {
       throw new WorktreeRequestError({
@@ -3947,6 +4043,43 @@ export class Session {
         message: `Recreated worktree diverged from ${workspace.cwd}: ${result.worktreePath}`,
       });
     }
+  }
+
+  private async restoreWorkspaceAndEmit(workspaceId: string): Promise<void> {
+    await this.workspaceRecovery.restore(workspaceId);
+    const workspace = await this.workspaceRegistry.get(workspaceId);
+    if (!workspace) {
+      throw new Error(`Recovered workspace record not found: ${workspaceId}`);
+    }
+    if (this.onWorkspaceRecovered) {
+      try {
+        await this.onWorkspaceRecovered(workspace);
+        return;
+      } catch (error) {
+        this.sessionLogger.warn(
+          { err: error, workspaceId },
+          "Failed to publish workspace recovery to active sessions",
+        );
+      }
+    }
+    await this.refreshRecoveredWorkspaceForExternalMutation(workspace);
+  }
+
+  private async restoreOwningWorkspaceForLegacyAgentRefresh(agentId: string): Promise<void> {
+    // COMPAT(worktreeRestore): clients older than v0.1.105 used refresh_agent_request
+    // as their explicit recovery RPC. Remove after 2027-01-11.
+    if (!clientUsesLegacyWorkspaceRestore(this.appVersion)) {
+      return;
+    }
+    const record = await this.agentStorage.get(agentId);
+    if (!record?.workspaceId) {
+      return;
+    }
+    const recovery = await this.workspaceRecovery.inspect(record.workspaceId);
+    if (recovery.kind !== "recoverable") {
+      return;
+    }
+    await this.restoreWorkspaceAndEmit(record.workspaceId);
   }
 
   private async createPaseoWorktree(
@@ -4530,7 +4663,7 @@ export class Session {
     });
     await this.emitWorkspaceUpdateForWorkspaceId(workspace.workspaceId);
     void this.workspaceGitService
-      .getSnapshot(workspace.cwd, { force: true, includeGitHub: true, reason: "open_project" })
+      .getSnapshot(workspace.cwd, { force: true, includeForge: true, reason: "open_project" })
       .catch((error) => {
         this.sessionLogger.warn(
           { err: error, cwd: workspace.cwd },
@@ -4585,6 +4718,7 @@ export class Session {
         worktreeSlug: source.worktreeSlug,
         action: source.action,
         refName: source.refName,
+        checkoutSource: source.checkoutSource,
         githubPrNumber: source.githubPrNumber,
         firstAgentContext: request.firstAgentContext,
       },
@@ -4698,7 +4832,7 @@ export class Session {
       void this.workspaceGitService
         .getSnapshot(workspace.cwd, {
           force: true,
-          includeGitHub: true,
+          includeForge: true,
           reason: "open_project",
         })
         .catch((error) => {
@@ -4784,8 +4918,134 @@ export class Session {
     }
   }
 
-  private async handleWorkspaceGithubCloneRequest(
-    request: Extract<SessionInboundMessage, { type: "workspace.github.clone.request" }>,
+  private async handleProjectCreateDirectoryRequest(
+    request: Extract<SessionInboundMessage, { type: "project.create_directory.request" }>,
+  ): Promise<void> {
+    try {
+      const result = await createProjectDirectory(
+        { parentPath: request.parentPath, name: request.name },
+        {
+          registerProject: (directoryPath) =>
+            this.workspaceProvisioning.findOrCreateProjectForDirectory(directoryPath),
+        },
+      );
+      this.emit({
+        type: "project.create_directory.response",
+        payload: {
+          requestId: request.requestId,
+          directoryPath: result.directoryPath,
+          project: this.buildProjectDescriptor(result.project),
+          error: null,
+          errorCode: null,
+        },
+      });
+    } catch (error) {
+      const requestError =
+        error instanceof ProjectDirectoryRequestError
+          ? error
+          : new ProjectDirectoryRequestError(
+              "registration_failed",
+              error instanceof Error ? error.message : "Failed to create project directory",
+            );
+      this.sessionLogger.error(
+        {
+          err: error,
+          parentPath: request.parentPath,
+          name: request.name,
+          errorCode: requestError.code,
+        },
+        "Failed to create project directory",
+      );
+      this.emit({
+        type: "project.create_directory.response",
+        payload: {
+          requestId: request.requestId,
+          directoryPath: requestError.directoryPath,
+          project: null,
+          error: requestError.message,
+          errorCode: requestError.code,
+        },
+      });
+    }
+  }
+
+  private async handleWorkspaceGithubSearchRepositoriesRequest(
+    request: Extract<
+      SessionInboundMessage,
+      { type: "workspace.github.search_repositories.request" }
+    >,
+  ): Promise<void> {
+    try {
+      const searchRepositories = (this.github as Partial<GitHubService>).searchRepositories;
+      if (!searchRepositories) {
+        throw new Error("GitHub repository search is unavailable");
+      }
+      const repositories = await searchRepositories.call(this.github, {
+        cwd: homedir(),
+        query: request.query,
+        limit: request.limit,
+      });
+      this.emit({
+        type: "workspace.github.search_repositories.response",
+        payload: {
+          requestId: request.requestId,
+          repositories,
+          status: "success",
+          available: true,
+          error: null,
+        },
+      });
+    } catch (error) {
+      const missing = error instanceof GitHubCliMissingError;
+      const unauthenticated = error instanceof GitHubAuthenticationError;
+      const commandError = error instanceof GitHubCommandError ? error.stderr.trim() : "";
+      let message: string;
+      if (missing) {
+        message = "GitHub CLI (gh) is not installed or not in PATH";
+      } else if (unauthenticated) {
+        message = "GitHub CLI is not authenticated. Run gh auth login on the host.";
+      } else if (commandError) {
+        message = commandError;
+      } else {
+        message = error instanceof Error ? error.message : "GitHub search failed";
+      }
+      let payload: WorkspaceGithubSearchRepositoriesResponsePayload;
+      if (missing) {
+        payload = {
+          status: "unavailable",
+          requestId: request.requestId,
+          repositories: [],
+          reason: "gh_missing",
+          available: false,
+          error: message,
+        };
+      } else if (unauthenticated) {
+        payload = {
+          status: "unauthenticated",
+          requestId: request.requestId,
+          repositories: [],
+          available: false,
+          error: message,
+        };
+      } else {
+        payload = {
+          status: "error",
+          requestId: request.requestId,
+          repositories: [],
+          available: true,
+          error: message,
+        };
+      }
+      this.sessionLogger.warn({ err: error }, "GitHub repository search failed");
+      this.emit({
+        type: "workspace.github.search_repositories.response",
+        payload,
+      });
+    }
+  }
+
+  private async handleProjectGithubCloneRequest(
+    request: Extract<SessionInboundMessage, { type: "project.github.clone.request" }>,
   ): Promise<void> {
     let normalizedRepo = request.repo;
     let checkoutPath: string | null = null;
@@ -4830,31 +5090,16 @@ export class Session {
         throw error;
       }
 
-      const workspace =
-        await this.workspaceProvisioning.findOrCreateWorkspaceForDirectory(checkoutPath);
-      await this.syncWorkspaceGitObserverForWorkspace(workspace);
-      const descriptor = await this.describeWorkspaceRecord(workspace);
-      await this.emitWorkspaceUpdateForWorkspaceId(workspace.workspaceId);
-      void this.workspaceGitService
-        .getSnapshot(workspace.cwd, {
-          force: true,
-          includeGitHub: true,
-          reason: "open_project",
-        })
-        .catch((error) => {
-          this.sessionLogger.warn(
-            { err: error, cwd: workspace.cwd },
-            "Background snapshot refresh failed after workspace.github.clone",
-          );
-        });
+      const project =
+        await this.workspaceProvisioning.findOrCreateProjectForDirectory(checkoutPath);
 
       this.emit({
-        type: "workspace.github.clone.response",
+        type: "project.github.clone.response",
         payload: {
           requestId: request.requestId,
           repo: repo.displayName,
           checkoutPath,
-          workspace: descriptor,
+          project: this.buildProjectDescriptor(project),
           error: null,
         },
       });
@@ -4862,15 +5107,15 @@ export class Session {
       const message = error instanceof Error ? error.message : "Failed to clone GitHub repo";
       this.sessionLogger.error(
         { err: error, repo: request.repo, targetDirectory: request.targetDirectory },
-        "Failed to clone GitHub workspace",
+        "Failed to clone GitHub project",
       );
       this.emit({
-        type: "workspace.github.clone.response",
+        type: "project.github.clone.response",
         payload: {
           requestId: request.requestId,
           repo: normalizedRepo,
           checkoutPath,
-          workspace: null,
+          project: null,
           error: message,
         },
       });
@@ -5508,12 +5753,15 @@ export class Session {
         logger: this.sessionLogger,
       });
       const agentPayload = await this.buildAgentPayload(snapshot);
-      const rows = this.agentManager.fetchTimeline(msg.agentId, {
+      const timeline = this.agentManager.fetchTimeline(msg.agentId, {
         direction: "tail",
         limit: 0,
-      }).rows;
+      });
       const forkContext = buildAgentForkContextAttachment({
-        rows,
+        rows: timeline.rows,
+        cursorBoundary: msg.boundaryCursor
+          ? { timelineEpoch: timeline.epoch, cursor: msg.boundaryCursor }
+          : null,
         boundaryMessageId: msg.boundaryMessageId,
         agentTitle: agentPayload.title,
         cwd: snapshot.cwd,
@@ -5526,6 +5774,7 @@ export class Session {
           agentId: msg.agentId,
           attachment: forkContext.attachment,
           itemCount: forkContext.itemCount,
+          boundaryCursor: forkContext.boundaryCursor,
           boundaryMessageId: forkContext.boundaryMessageId,
           error: null,
         },
@@ -5542,6 +5791,7 @@ export class Session {
           agentId: msg.agentId,
           attachment: null,
           itemCount: 0,
+          boundaryCursor: msg.boundaryCursor ?? null,
           boundaryMessageId: msg.boundaryMessageId ?? null,
           error: error instanceof Error ? error.message : String(error),
         },
@@ -5569,7 +5819,7 @@ export class Session {
     try {
       const agentId = resolved.agentId;
 
-      const prompt = this.buildAgentPrompt(msg.text, msg.images, msg.attachments);
+      const prompt = buildAgentPrompt(msg.text, msg.images, msg.attachments);
       this.sessionLogger.trace(
         {
           agentId,

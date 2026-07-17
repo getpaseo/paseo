@@ -180,7 +180,10 @@ function resolveOpenCodeCreateConfig(
       : input.featureValues;
 
   if (inheritsUnattended && requestedMode === undefined) {
-    return { modeId: OPENCODE_BUILD_MODE_ID, featureValues };
+    // Unattendedness for OpenCode is carried by auto_accept (set above), not
+    // by any particular agent. Leave the mode unset so OpenCode uses its own
+    // default agent — `build` may not exist in the user's OpenCode config.
+    return { modeId: undefined, featureValues };
   }
 
   const resolved = resolveDefaultAgentCreateConfig({
@@ -570,16 +573,23 @@ function matchesHydratedFingerprint(
   return hydratedFingerprint === JSON.stringify(value);
 }
 
-function normalizeOpenCodeModeId(modeId: string | null | undefined): string {
+// `null` = no explicit mode. The `agent` field is then omitted from OpenCode
+// prompt/command calls so OpenCode falls back to its own configured default
+// agent — never assume any particular agent (even `build`) exists, since
+// OpenCode users can define or delete agents at will.
+function normalizeOpenCodeModeId(modeId: string | null | undefined): string | null {
   const trimmed = typeof modeId === "string" ? modeId.trim() : "";
   if (!trimmed || trimmed === "default") {
-    return OPENCODE_BUILD_MODE_ID;
+    return null;
   }
   return trimmed;
 }
 
-function resolveOpenCodeRuntimeAgentId(modeId: string | null | undefined): string {
+function resolveOpenCodeRuntimeAgentId(modeId: string | null | undefined): string | undefined {
   const normalizedModeId = normalizeOpenCodeModeId(modeId);
+  if (normalizedModeId === null) {
+    return undefined;
+  }
   return normalizedModeId === OPENCODE_LEGACY_FULL_ACCESS_MODE_ID
     ? OPENCODE_BUILD_MODE_ID
     : normalizedModeId;
@@ -636,11 +646,10 @@ function mergeOpenCodeModes(discoveredModes: AgentMode[]): AgentMode[] {
   );
   // When discovery returns results, trust them exactly — don't inject hardcoded
   // defaults that the user may have intentionally disabled in their OpenCode config.
-  // Fall back to DEFAULT_MODES only when discovery produced nothing.
-  if (filtered.length > 0) {
-    return sortOpenCodeModes(filtered);
-  }
-  return sortOpenCodeModes([...DEFAULT_MODES]);
+  // When discovery produced nothing, return empty rather than fabricating modes:
+  // OpenCode users can rename or delete any agent, so a hardcoded fallback can
+  // validate a mode that does not actually exist (failing later at prompt time).
+  return sortOpenCodeModes(filtered);
 }
 
 function sortOpenCodeModes(modes: AgentMode[]): AgentMode[] {
@@ -1152,7 +1161,7 @@ function resolveOpenCodePersistedSessionModeId(
   messages: ReadonlyArray<OpenCodeSessionMessage>,
 ): string | undefined {
   const agent = session.agent ?? messages.map(readOpenCodeMessageAgent).find(Boolean);
-  return agent ? normalizeOpenCodeModeId(agent) : undefined;
+  return agent ? (normalizeOpenCodeModeId(agent) ?? undefined) : undefined;
 }
 
 function readOpenCodeMessageAgent(message: OpenCodeSessionMessage): string | undefined {
@@ -1635,7 +1644,11 @@ export class OpenCodeAgentClient implements AgentClient {
     );
 
     if (response.error || !response.data) {
-      return DEFAULT_MODES;
+      // Discovery failed — return an empty list rather than fabricating
+      // modes. OpenCode users can rename or delete any agent (including
+      // "build"/"plan"), so a hardcoded fallback can validate a mode that
+      // does not actually exist, which then fails at prompt time.
+      return [];
     }
 
     const discovered = response.data.filter(isSelectableOpenCodeAgent).map(mapOpenCodeAgentToMode);
@@ -2846,7 +2859,7 @@ class OpenCodeAgentSession implements AgentSession {
   private readonly sessionId: string;
   private readonly logger: Logger;
   private readonly modelContextWindowsByModelKey: ReadonlyMap<string, number>;
-  private currentMode: string = "default";
+  private currentMode: string | null = null;
   private autoAcceptEnabled = false;
   private pendingPermissions = new Map<string, AgentPermissionRequest>();
   private abortController: AbortController | null = null;
@@ -3771,7 +3784,7 @@ class OpenCodeAgentSession implements AgentSession {
     }
 
     this.currentMode = normalizedModeId;
-    this.config.modeId = normalizedModeId;
+    this.config.modeId = normalizedModeId ?? undefined;
   }
 
   async setFeature(featureId: string, value: unknown): Promise<void> {

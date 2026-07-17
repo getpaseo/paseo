@@ -3,48 +3,79 @@ export interface BrowserWorkspaceRegistration {
   workspaceId: string;
 }
 
-export class PaseoBrowserWebviewRegistry {
-  private readonly browserIdsByWebContentsId = new Map<number, string>();
-  private readonly webContentsIdsByBrowserId = new Map<string, number>();
-  private readonly workspaceIdsByBrowserId = new Map<string, string>();
-  private readonly activeBrowserIdsByWorkspaceId = new Map<string, string>();
+export interface BrowserWebContentsRegistration {
+  browserId: string;
+  hostWebContentsId: number;
+}
 
-  public registerWebContents(input: { webContentsId: number; browserId: string }): void {
-    const previousWebContentsId = this.webContentsIdsByBrowserId.get(input.browserId) ?? null;
-    if (previousWebContentsId !== null && previousWebContentsId !== input.webContentsId) {
-      this.browserIdsByWebContentsId.delete(previousWebContentsId);
+export class PaseoBrowserWebviewRegistry {
+  private readonly registrationsByWebContentsId = new Map<number, BrowserWebContentsRegistration>();
+  private readonly webContentsIdsByHostAndBrowserId = new Map<string, number>();
+  private readonly workspaceIdsByBrowserId = new Map<string, string>();
+  private readonly activeBrowserIdsByHostWindow = new Map<number, Map<string, string>>();
+
+  public registerWebContents(input: {
+    webContentsId: number;
+    browserId: string;
+    hostWebContentsId: number;
+  }): void {
+    const hostBrowserKey = this.hostBrowserKey(input.hostWebContentsId, input.browserId);
+    const replacedWebContentsId = this.webContentsIdsByHostAndBrowserId.get(hostBrowserKey);
+    const existingRegistration = this.registrationsByWebContentsId.get(input.webContentsId);
+    if (
+      replacedWebContentsId === input.webContentsId &&
+      existingRegistration?.browserId === input.browserId &&
+      existingRegistration.hostWebContentsId === input.hostWebContentsId
+    ) {
+      return;
+    }
+    if (replacedWebContentsId !== undefined && replacedWebContentsId !== input.webContentsId) {
+      this.removeWebContents(replacedWebContentsId, { preserveActiveBrowser: true });
+    }
+    if (this.registrationsByWebContentsId.has(input.webContentsId)) {
+      this.removeWebContents(input.webContentsId);
     }
 
-    this.browserIdsByWebContentsId.set(input.webContentsId, input.browserId);
-    this.webContentsIdsByBrowserId.set(input.browserId, input.webContentsId);
+    this.registrationsByWebContentsId.set(input.webContentsId, {
+      browserId: input.browserId,
+      hostWebContentsId: input.hostWebContentsId,
+    });
+    this.webContentsIdsByHostAndBrowserId.set(hostBrowserKey, input.webContentsId);
   }
 
   public unregisterWebContents(webContentsId: number): void {
-    const browserId = this.browserIdsByWebContentsId.get(webContentsId) ?? null;
-    if (!browserId) {
+    if (!this.registrationsByWebContentsId.has(webContentsId)) {
       return;
     }
 
-    this.browserIdsByWebContentsId.delete(webContentsId);
-    if (this.webContentsIdsByBrowserId.get(browserId) !== webContentsId) {
-      return;
-    }
-
-    this.webContentsIdsByBrowserId.delete(browserId);
-    this.workspaceIdsByBrowserId.delete(browserId);
-    this.deleteActiveBrowserReferences(browserId);
+    this.removeWebContents(webContentsId);
   }
 
   public getBrowserIdForWebContents(webContentsId: number): string | null {
-    return this.browserIdsByWebContentsId.get(webContentsId) ?? null;
+    return this.registrationsByWebContentsId.get(webContentsId)?.browserId ?? null;
   }
 
-  public getWebContentsIdForBrowser(browserId: string): number | null {
-    return this.webContentsIdsByBrowserId.get(browserId) ?? null;
+  public getRegistrationForWebContents(
+    webContentsId: number,
+  ): BrowserWebContentsRegistration | null {
+    return this.registrationsByWebContentsId.get(webContentsId) ?? null;
+  }
+
+  public getWebContentsIdForBrowserInHostWindow(
+    hostWebContentsId: number,
+    browserId: string,
+  ): number | null {
+    return (
+      this.webContentsIdsByHostAndBrowserId.get(
+        this.hostBrowserKey(hostWebContentsId, browserId),
+      ) ?? null
+    );
   }
 
   public listBrowserIds(): string[] {
-    return Array.from(this.webContentsIdsByBrowserId.keys()).sort();
+    return Array.from(
+      new Set(Array.from(this.registrationsByWebContentsId.values(), ({ browserId }) => browserId)),
+    ).sort();
   }
 
   public registerWorkspace(input: BrowserWorkspaceRegistration): void {
@@ -52,17 +83,48 @@ export class PaseoBrowserWebviewRegistry {
   }
 
   public unregisterBrowser(browserId: string): void {
-    const webContentsId = this.webContentsIdsByBrowserId.get(browserId) ?? null;
-    if (webContentsId !== null) {
-      this.browserIdsByWebContentsId.delete(webContentsId);
-      this.webContentsIdsByBrowserId.delete(browserId);
+    for (const [webContentsId, registration] of this.registrationsByWebContentsId) {
+      if (registration.browserId === browserId) {
+        this.registrationsByWebContentsId.delete(webContentsId);
+        this.webContentsIdsByHostAndBrowserId.delete(
+          this.hostBrowserKey(registration.hostWebContentsId, browserId),
+        );
+      }
     }
     this.workspaceIdsByBrowserId.delete(browserId);
     this.deleteActiveBrowserReferences(browserId);
   }
 
+  public unregisterBrowserFromHost(hostWebContentsId: number, browserId: string): void {
+    const webContentsId = this.getWebContentsIdForBrowserInHostWindow(hostWebContentsId, browserId);
+    if (webContentsId !== null) {
+      this.unregisterWebContents(webContentsId);
+    }
+  }
+
   public getWorkspaceId(browserId: string): string | null {
     return this.workspaceIdsByBrowserId.get(browserId) ?? null;
+  }
+
+  public hasBrowserInOtherHostWindow(hostWebContentsId: number, browserId: string): boolean {
+    for (const registration of this.registrationsByWebContentsId.values()) {
+      if (
+        registration.browserId === browserId &&
+        registration.hostWebContentsId !== hostWebContentsId
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  public unregisterHostWebContents(hostWebContentsId: number): void {
+    for (const [webContentsId, registration] of this.registrationsByWebContentsId) {
+      if (registration.hostWebContentsId === hostWebContentsId) {
+        this.unregisterWebContents(webContentsId);
+      }
+    }
+    this.activeBrowserIdsByHostWindow.delete(hostWebContentsId);
   }
 
   public listBrowserIdsForWorkspace(workspaceId: string): string[] {
@@ -71,29 +133,126 @@ export class PaseoBrowserWebviewRegistry {
     );
   }
 
-  public setWorkspaceActiveBrowser(input: { workspaceId: string; browserId: string | null }): void {
-    if (input.browserId) {
-      this.workspaceIdsByBrowserId.set(input.browserId, input.workspaceId);
-      this.activeBrowserIdsByWorkspaceId.delete(input.workspaceId);
-      this.activeBrowserIdsByWorkspaceId.set(input.workspaceId, input.browserId);
+  public setWorkspaceActiveBrowser(input: {
+    hostWebContentsId: number;
+    workspaceId: string;
+    browserId: string | null;
+  }): void {
+    if (input.browserId === null) {
+      const activeBrowserIdsByWorkspace = this.activeBrowserIdsByHostWindow.get(
+        input.hostWebContentsId,
+      );
+      if (!activeBrowserIdsByWorkspace) {
+        return;
+      }
+      activeBrowserIdsByWorkspace.delete(input.workspaceId);
+      if (activeBrowserIdsByWorkspace.size === 0) {
+        this.activeBrowserIdsByHostWindow.delete(input.hostWebContentsId);
+      }
       return;
     }
-    this.activeBrowserIdsByWorkspaceId.delete(input.workspaceId);
+    if (this.hasBrowser(input.browserId)) {
+      this.workspaceIdsByBrowserId.set(input.browserId, input.workspaceId);
+    }
+    const activeBrowserIdsByWorkspace =
+      this.activeBrowserIdsByHostWindow.get(input.hostWebContentsId) ?? new Map<string, string>();
+    activeBrowserIdsByWorkspace.delete(input.workspaceId);
+    activeBrowserIdsByWorkspace.set(input.workspaceId, input.browserId);
+    this.activeBrowserIdsByHostWindow.delete(input.hostWebContentsId);
+    this.activeBrowserIdsByHostWindow.set(input.hostWebContentsId, activeBrowserIdsByWorkspace);
   }
 
-  public getWorkspaceActiveBrowserId(workspaceId: string): string | null {
-    return this.activeBrowserIdsByWorkspaceId.get(workspaceId) ?? null;
+  public getActiveBrowserIdForHostWindow(hostWebContentsId: number): string | null {
+    return (
+      Array.from(this.activeBrowserIdsByHostWindow.get(hostWebContentsId)?.values() ?? []).at(-1) ??
+      null
+    );
   }
 
-  public getMostRecentWorkspaceActiveBrowserId(): string | null {
-    return Array.from(this.activeBrowserIdsByWorkspaceId.values()).at(-1) ?? null;
+  public getActiveBrowserIdForWorkspaceInHostWindow(
+    hostWebContentsId: number,
+    workspaceId: string,
+  ): string | null {
+    return this.activeBrowserIdsByHostWindow.get(hostWebContentsId)?.get(workspaceId) ?? null;
+  }
+
+  public getMostRecentActiveBrowserIdForWorkspace(workspaceId: string): string | null {
+    const activeBrowserIdsByHostWindow = Array.from(this.activeBrowserIdsByHostWindow.values());
+    for (let index = activeBrowserIdsByHostWindow.length - 1; index >= 0; index -= 1) {
+      const browserId = activeBrowserIdsByHostWindow[index].get(workspaceId);
+      if (browserId) {
+        return browserId;
+      }
+    }
+    return null;
   }
 
   private deleteActiveBrowserReferences(browserId: string): void {
-    for (const [workspaceId, activeBrowserId] of this.activeBrowserIdsByWorkspaceId) {
-      if (activeBrowserId === browserId) {
-        this.activeBrowserIdsByWorkspaceId.delete(workspaceId);
+    for (const [hostWebContentsId, activeBrowserIdsByWorkspace] of this
+      .activeBrowserIdsByHostWindow) {
+      for (const [workspaceId, activeBrowserId] of activeBrowserIdsByWorkspace) {
+        if (activeBrowserId === browserId) {
+          activeBrowserIdsByWorkspace.delete(workspaceId);
+        }
+      }
+      if (activeBrowserIdsByWorkspace.size === 0) {
+        this.activeBrowserIdsByHostWindow.delete(hostWebContentsId);
       }
     }
+  }
+
+  private deleteActiveBrowserReferencesInHostWindow(
+    browserId: string,
+    hostWebContentsId: number,
+  ): void {
+    const activeBrowserIdsByWorkspace = this.activeBrowserIdsByHostWindow.get(hostWebContentsId);
+    if (!activeBrowserIdsByWorkspace) {
+      return;
+    }
+    for (const [workspaceId, activeBrowserId] of activeBrowserIdsByWorkspace) {
+      if (activeBrowserId === browserId) {
+        activeBrowserIdsByWorkspace.delete(workspaceId);
+      }
+    }
+    if (activeBrowserIdsByWorkspace.size === 0) {
+      this.activeBrowserIdsByHostWindow.delete(hostWebContentsId);
+    }
+  }
+
+  private removeWebContents(
+    webContentsId: number,
+    options: { preserveActiveBrowser?: boolean } = {},
+  ): void {
+    const registration = this.registrationsByWebContentsId.get(webContentsId);
+    if (!registration) {
+      return;
+    }
+    const { browserId, hostWebContentsId } = registration;
+
+    this.registrationsByWebContentsId.delete(webContentsId);
+    this.webContentsIdsByHostAndBrowserId.delete(this.hostBrowserKey(hostWebContentsId, browserId));
+
+    if (
+      !options.preserveActiveBrowser &&
+      !this.hasBrowserInHostWindow(browserId, hostWebContentsId)
+    ) {
+      this.deleteActiveBrowserReferencesInHostWindow(browserId, hostWebContentsId);
+    }
+  }
+
+  private hasBrowser(browserId: string): boolean {
+    return Array.from(this.registrationsByWebContentsId.values()).some(
+      (registration) => registration.browserId === browserId,
+    );
+  }
+
+  private hasBrowserInHostWindow(browserId: string, hostWebContentsId: number): boolean {
+    return this.webContentsIdsByHostAndBrowserId.has(
+      this.hostBrowserKey(hostWebContentsId, browserId),
+    );
+  }
+
+  private hostBrowserKey(hostWebContentsId: number, browserId: string): string {
+    return `${hostWebContentsId}:${browserId}`;
   }
 }

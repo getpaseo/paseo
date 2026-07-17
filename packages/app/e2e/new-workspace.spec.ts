@@ -36,6 +36,7 @@ import {
 } from "./helpers/github-fixtures";
 import { getServerId } from "./helpers/server-id";
 import { getE2EDaemonPort } from "./helpers/daemon-port";
+import { chooseAddProjectMethod, expectAddProjectPage } from "./helpers/add-project-flow";
 import { seedSavedSettingsHosts } from "./helpers/settings";
 import {
   expectSidebarWorkspaceSelected,
@@ -252,7 +253,8 @@ test.describe("New workspace flow", () => {
       await expect(addProject).toContainText(/(?:⌘|Ctrl\+)O/);
       await addProject.click();
 
-      await expect(page.getByTestId("project-picker-input")).toBeVisible();
+      await expectAddProjectPage(page, "method");
+      await chooseAddProjectMethod(page, "directory-search");
     } finally {
       await repo.cleanup();
     }

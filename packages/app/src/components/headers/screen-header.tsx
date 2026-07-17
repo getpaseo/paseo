@@ -9,7 +9,7 @@ import {
   HEADER_TOP_PADDING_MOBILE,
   useIsCompactFormFactor,
 } from "@/constants/layout";
-import { useWindowControlsPadding } from "@/utils/desktop-window";
+import { WindowChromeSafeArea } from "@/utils/desktop-window";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 
 interface ScreenHeaderProps {
@@ -18,7 +18,6 @@ interface ScreenHeaderProps {
   leftStyle?: StyleProp<ViewStyle>;
   rightStyle?: StyleProp<ViewStyle>;
   borderless?: boolean;
-  windowControlsPaddingRole?: "header" | "detailHeader";
   onRowLayout?: (event: LayoutChangeEvent) => void;
 }
 
@@ -32,43 +31,36 @@ export function ScreenHeader({
   leftStyle,
   rightStyle,
   borderless,
-  windowControlsPaddingRole = "header",
   onRowLayout,
 }: ScreenHeaderProps) {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const isMobile = useIsCompactFormFactor();
-  const padding = useWindowControlsPadding(windowControlsPaddingRole);
   // Only add extra padding on mobile for better touch targets; on desktop, only use safe area insets
   const topPadding = isMobile ? HEADER_TOP_PADDING_MOBILE : 0;
-  const baseHorizontalPadding = theme.spacing[2];
+  const baseHorizontalPadding = isMobile ? theme.spacing[2] : theme.spacing[3];
 
   const innerStyle = useMemo(
     () => [styles.inner, { paddingTop: insets.top + topPadding }],
     [insets.top, topPadding],
   );
-  const rowStyle = useMemo(
-    () => [
-      styles.row,
-      {
-        paddingLeft: baseHorizontalPadding + padding.left,
-        paddingRight: baseHorizontalPadding + padding.right,
-      },
-      borderless && styles.borderless,
-    ],
-    [baseHorizontalPadding, padding.left, padding.right, borderless],
-  );
+  const rowStyle = useMemo(() => [styles.row, borderless && styles.borderless], [borderless]);
   const leftCombinedStyle = useMemo(() => [styles.left, leftStyle], [leftStyle]);
   const rightCombinedStyle = useMemo(() => [styles.right, rightStyle], [rightStyle]);
 
   return (
     <View style={styles.header}>
       <View style={innerStyle}>
-        <View onLayout={onRowLayout} style={rowStyle}>
+        <WindowChromeSafeArea
+          placement="inline"
+          horizontalPadding={baseHorizontalPadding}
+          onLayout={onRowLayout}
+          style={rowStyle}
+        >
           <TitlebarDragRegion />
           <View style={leftCombinedStyle}>{left}</View>
           <View style={rightCombinedStyle}>{right}</View>
-        </View>
+        </WindowChromeSafeArea>
       </View>
     </View>
   );
@@ -88,7 +80,6 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: theme.spacing[2],
     borderBottomWidth: theme.borderWidth[1],
     borderBottomColor: theme.colors.border,
     userSelect: "none",

@@ -54,6 +54,28 @@ async function expectChatHistoryPill(page: Page): Promise<void> {
 test.describe("Assistant fork menu", () => {
   test.describe.configure({ timeout: 180_000 });
 
+  test("forks a failed assistant turn that has no provider message id", async ({
+    page,
+    seedForkWorkspace,
+  }) => {
+    const session = await seedForkWorkspace({
+      repoPrefix: "assistant-fork-failed-turn-",
+      title: "Assistant fork failed turn",
+      model: "ten-second-stream",
+    });
+
+    await openAgentRoute(page, session);
+    await expectComposerVisible(page);
+    await submitMessage(page, "Emit a synthetic turn failure.");
+    await expect(page.getByText("[System Error] Requested mock provider failure")).toBeVisible({
+      timeout: 30_000,
+    });
+
+    await openAssistantForkMenu(page);
+    await page.getByTestId("assistant-fork-menu-new-tab").click();
+    await expectChatHistoryPill(page);
+  });
+
   test("focuses a forked assistant turn in a new workspace draft tab", async ({
     page,
     seedForkWorkspace,

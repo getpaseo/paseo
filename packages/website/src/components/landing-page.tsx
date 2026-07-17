@@ -84,7 +84,7 @@ export function LandingPage({ title, subtitle }: LandingPageProps) {
       <PhoneShowcase />
 
       {/* Content section */}
-      <div className="bg-background">
+      <div className="landing-content bg-background">
         <main className="p-6 md:p-20 md:pt-40 max-w-5xl mx-auto">
           <div className="space-y-24">
             <SocialProofWall />

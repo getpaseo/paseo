@@ -31,6 +31,11 @@ import {
   unblockPaseoConfigWrites,
 } from "./helpers/project-settings";
 import { gotoAppShell } from "./helpers/app";
+import {
+  addProjectFlowInput,
+  chooseAddProjectMethod,
+  openAddProjectFlow,
+} from "./helpers/add-project-flow";
 import { createTempGitRepo } from "./helpers/workspace";
 
 const updatedSetup = ["npm install", "npm run build"];
@@ -134,10 +139,10 @@ async function readProjectConfigFile(project: ProjectsSettingsProject): Promise<
 }
 
 async function addProjectFromSidebar(page: Page, projectPath: string): Promise<string> {
-  await page.getByTestId("sidebar-add-project").click();
+  await openAddProjectFlow(page);
+  await chooseAddProjectMethod(page, "directory-search");
 
-  const input = page.getByTestId("project-picker-input");
-  await expect(input).toBeVisible({ timeout: 30_000 });
+  const input = addProjectFlowInput(page);
   await input.fill(projectPath);
   await page.keyboard.press("Enter");
 

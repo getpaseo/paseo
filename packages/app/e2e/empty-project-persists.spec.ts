@@ -2,6 +2,11 @@ import path from "node:path";
 import { existsSync } from "node:fs";
 import { test, expect, type Page } from "./fixtures";
 import { gotoAppShell } from "./helpers/app";
+import {
+  addProjectFlowInput,
+  chooseAddProjectMethod,
+  openAddProjectFlow,
+} from "./helpers/add-project-flow";
 import { expectOpenedProject } from "./helpers/project-picker-ui";
 import { connectSeedClient, seedWorkspace } from "./helpers/seed-client";
 import { getServerId } from "./helpers/server-id";
@@ -46,10 +51,10 @@ async function removeProjectFromSidebar(page: Page, projectId: string): Promise<
 }
 
 async function addProjectFromPicker(page: Page, projectPath: string): Promise<string> {
-  await page.getByTestId("sidebar-add-project").click();
+  await openAddProjectFlow(page);
+  await chooseAddProjectMethod(page, "directory-search");
 
-  const input = page.getByTestId("project-picker-input");
-  await expect(input).toBeVisible({ timeout: 30_000 });
+  const input = addProjectFlowInput(page);
   await input.fill(projectPath);
   await page.keyboard.press("Enter");
 
@@ -78,10 +83,10 @@ test.describe("Project picker search", () => {
   }) => {
     await gotoAppShell(page);
     await waitForSidebarProjectListReady(page);
-    await page.getByTestId("sidebar-add-project").click();
+    await openAddProjectFlow(page);
+    await chooseAddProjectMethod(page, "directory-search");
 
-    const input = page.getByTestId("project-picker-input");
-    await expect(input).toBeVisible({ timeout: 30_000 });
+    const input = addProjectFlowInput(page);
     await input.fill(projectPickerFixture.fuzzyQuery);
 
     const suggestion = page.getByText(projectPickerFixture.projectName, { exact: false }).first();
@@ -97,14 +102,14 @@ test.describe("Project picker search", () => {
   }) => {
     await gotoAppShell(page);
     await waitForSidebarProjectListReady(page);
-    await page.getByTestId("sidebar-add-project").click();
+    await openAddProjectFlow(page);
+    await chooseAddProjectMethod(page, "directory-search");
 
-    const input = page.getByTestId("project-picker-input");
-    await expect(input).toBeVisible({ timeout: 30_000 });
+    const input = addProjectFlowInput(page);
     await input.fill("paseo-loading-state-no-match");
 
     await expect(page.getByText("Start typing a path", { exact: true })).toHaveCount(0);
-    await expect(page.getByText("Searching...", { exact: true })).toBeVisible();
+    await expect(page.getByText("Loading...", { exact: true })).toBeVisible();
   });
 });
 

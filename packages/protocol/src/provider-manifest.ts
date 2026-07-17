@@ -142,6 +142,24 @@ const OPENCODE_MODES: AgentProviderModeDefinition[] = [
   },
 ];
 
+export const OMP_MODES: AgentProviderModeDefinition[] = [
+  {
+    id: "full",
+    label: "Full Access",
+    description: "Launches OMP with yolo approval mode so tools run without prompts.",
+    icon: "ShieldOff",
+    colorTier: "dangerous",
+    isUnattended: true,
+  },
+  {
+    id: "ask",
+    label: "Always Ask",
+    description: "Launches OMP with always-ask approval mode for write and exec tools.",
+    icon: "ShieldCheck",
+    colorTier: "safe",
+  },
+];
+
 const MOCK_LOAD_TEST_MODES: AgentProviderModeDefinition[] = [
   {
     id: "load-test",
@@ -198,7 +216,10 @@ export const AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [
     id: "opencode",
     label: "OpenCode",
     description: "Open-source coding assistant with multi-provider model support",
-    defaultModeId: "build",
+    // No static default: OpenCode users can rename or delete any agent,
+    // including "build". Leaving this unset means the daemon and OpenCode
+    // itself decide (see normalizeOpenCodeModeId in opencode-agent.ts).
+    defaultModeId: null,
     modes: OPENCODE_MODES,
     voice: {
       enabled: true,
@@ -214,11 +235,11 @@ export const AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [
   },
   {
     id: "omp",
-    label: "OMP",
-    description: "Pi-compatible coding agent distributed as Oh My Pi",
+    label: "Oh My Pi",
+    description: "Multi-provider coding agent with native approvals, host tools, and subagents",
     enabledByDefault: false,
-    defaultModeId: null,
-    modes: [],
+    defaultModeId: "full",
+    modes: OMP_MODES,
   },
 ];
 

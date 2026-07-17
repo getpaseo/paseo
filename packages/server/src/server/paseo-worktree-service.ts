@@ -205,6 +205,8 @@ function resolveIntentBaseBranch(intent: WorktreeCreationIntent): string | null 
   switch (intent.kind) {
     case "branch-off":
       return normalizeBaseRefName(intent.baseBranch);
+    case "checkout-change-request":
+      return normalizeBaseRefName(intent.baseRefName);
     case "checkout-github-pr":
       return normalizeBaseRefName(intent.baseRefName);
     case "checkout-branch":

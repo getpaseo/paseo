@@ -14,7 +14,7 @@ Paseo runs your coding agents on your machine and gives you a mobile, desktop, w
 
 Download from [paseo.sh/download](https://paseo.sh/download) or the [GitHub releases page](https://github.com/getpaseo/paseo/releases). Open it and you're done.
 
-The desktop app bundles its own daemon and starts it automatically, no separate install required. On first launch you'll see a brief startup screen, then connect from your phone by scanning the QR code in Settings.
+The desktop app bundles its own daemon and starts it automatically, no separate install required. On first launch you'll see a brief startup screen, then connect from your phone using **Settings → your host → Connections → Pair a device**.
 
 ## Server / CLI
 
@@ -53,6 +53,7 @@ The image runs the daemon and serves the bundled web UI. It does not bundle agen
 - [Docker](/docs/docker), run the daemon and bundled web UI in a container.
 - [Workspaces](/docs/workspaces), the project, workspace, and session model Paseo is built around.
 - [Providers](/docs/providers), what a provider is and how Paseo wraps existing CLIs.
+- [Orchestration](/docs/orchestration), let one agent delegate work to other providers and models.
 - [CLI reference](/docs/cli), every command.
 - [Self-hosting the web UI](/docs/web-ui), serve the browser app from your own daemon.
 - [GitHub repo](https://github.com/getpaseo/paseo)

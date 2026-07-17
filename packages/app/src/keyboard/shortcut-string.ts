@@ -42,9 +42,13 @@ KEY_MAP["9"].shiftedKey = "(";
 KEY_MAP["0"].shiftedKey = ")";
 
 KEY_MAP["Digit"] = { code: "Digit" };
+KEY_MAP["-"] = { code: "Minus", key: "-", shiftedKey: "_" };
+KEY_MAP["="] = { code: "Equal", key: "=", shiftedKey: "+" };
 KEY_MAP["\\"] = { code: "Backslash", key: "\\", shiftedKey: "|" };
 KEY_MAP["["] = { code: "BracketLeft", key: "[", shiftedKey: "{" };
 KEY_MAP["]"] = { code: "BracketRight", key: "]", shiftedKey: "}" };
+KEY_MAP[";"] = { code: "Semicolon", key: ";", shiftedKey: ":" };
+KEY_MAP["'"] = { code: "Quote", key: "'", shiftedKey: '"' };
 KEY_MAP[","] = { code: "Comma", key: ",", shiftedKey: "<" };
 KEY_MAP["."] = { code: "Period", key: ".", shiftedKey: ">" };
 KEY_MAP["`"] = { code: "Backquote", key: "`", shiftedKey: "~" };
