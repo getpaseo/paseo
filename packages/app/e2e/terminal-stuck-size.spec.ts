@@ -84,12 +84,10 @@ function requireTerminalSize(size: RenderedTerminalSize | null): RenderedTermina
   return size;
 }
 
-function parseSttySize(bufferText: string): RenderedTerminalSize {
-  const match = /S=(\d+) (\d+)=/.exec(bufferText);
-  if (!match?.[1] || !match[2]) {
-    throw new Error(`stty size did not print in the terminal buffer:\n${bufferText}`);
-  }
-  return { rows: Number(match[1]), cols: Number(match[2]) };
+function parseLatestSttySize(bufferText: string): RenderedTerminalSize | null {
+  const matches = [...bufferText.matchAll(/S\d+=(\d+) (\d+)=/g)];
+  const match = matches.at(-1);
+  return match?.[1] && match[2] ? { rows: Number(match[1]), cols: Number(match[2]) } : null;
 }
 
 test.describe("terminal PTY size claim under lost window focus", () => {
@@ -134,6 +132,17 @@ test.describe("terminal PTY size claim under lost window focus", () => {
     // Keep the app blurred through the complete mount-time refit ladder, which runs out to 2s.
     await page.waitForTimeout(2_500);
 
+    await harness.client.subscribeTerminal(newTerminalId);
+
+    // Confirm the PTY is still at its spawn size before focus returns.
+    harness.client.sendTerminalInput(newTerminalId, {
+      type: "input",
+      data: 'echo "S0=$(stty size)="\n',
+    });
+    await expect
+      .poll(async () => getTerminalBufferText(page), { timeout: 15_000 })
+      .toMatch(/S0=24 80=/);
+
     // ...and comes back.
     await setWindowFocused(page, true);
 
@@ -144,19 +153,18 @@ test.describe("terminal PTY size claim under lost window focus", () => {
 
     // The PTY itself must agree. Ask it via the daemon, never via the page: focusing or
     // typing in the pane triggers the focus-claim path and would mask the bug.
-    await harness.client.subscribeTerminal(newTerminalId);
-    harness.client.sendTerminalInput(newTerminalId, {
-      type: "input",
-      data: 'echo "S=$(stty size)="\n',
-    });
-
+    let probe = 1;
     await expect
-      .poll(async () => getTerminalBufferText(page), { timeout: 15_000 })
-      .toMatch(/S=\d+ \d+=/);
-
-    const ptySize = parseSttySize(await getTerminalBufferText(page));
-
-    // The PTY must match what xterm rendered — not the daemon's 80x24 spawn default.
-    expect(ptySize).toEqual({ rows: rendered.rows, cols: rendered.cols });
+      .poll(
+        async () => {
+          harness.client.sendTerminalInput(newTerminalId, {
+            type: "input",
+            data: `echo "S${probe++}=$(stty size)="\n`,
+          });
+          return parseLatestSttySize(await getTerminalBufferText(page));
+        },
+        { timeout: 15_000, intervals: [100, 250, 500] },
+      )
+      .toEqual({ rows: rendered.rows, cols: rendered.cols });
   });
 });
