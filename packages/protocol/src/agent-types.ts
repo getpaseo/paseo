@@ -67,6 +67,7 @@ export interface AgentMode {
   description?: string;
   icon?: string;
   colorTier?: string;
+  model?: string;
 }
 
 export type ProviderStatus = "ready" | "loading" | "error" | "unavailable";
