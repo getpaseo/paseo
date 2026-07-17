@@ -423,6 +423,9 @@ function applyCheckoutDiffUpdate(input: {
       requestId: `subscription:${input.message.payload.subscriptionId}`,
     },
   });
+  void input.queryClient.invalidateQueries({
+    queryKey: ["checkoutImageDiff", input.serverId, input.message.payload.cwd],
+  });
 }
 
 function applyCheckoutDiffSubscribeResponse(input: {

@@ -503,6 +503,25 @@ const x = 1;
     ]);
   });
 
+  it("marks binary image files in structured diffs", async () => {
+    writeFileSync(join(repoDir, "baseline.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0]));
+    execFileSync("git", ["add", "baseline.png"], { cwd: repoDir });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "add png"], {
+      cwd: repoDir,
+    });
+
+    writeFileSync(join(repoDir, "baseline.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47, 1]));
+
+    const diff = await getCheckoutDiff(repoDir, { mode: "uncommitted", includeStructured: true });
+    const file = diff.structured?.find((entry) => entry.path === "baseline.png");
+
+    expect(file).toMatchObject({
+      path: "baseline.png",
+      status: "binary",
+      binaryKind: "image",
+    });
+  });
+
   it("returns checkout root metadata for normal repos", async () => {
     const status = await getCheckoutStatus(repoDir);
     expect(status.isGit).toBe(true);

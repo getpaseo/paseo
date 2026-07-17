@@ -525,6 +525,92 @@ describe("CheckoutSession", () => {
     });
   });
 
+  describe("image diff", () => {
+    it("emits checkout image diff response from workspace git service", async () => {
+      let receivedInput: { path: string; oldPath?: string } | null = null;
+      const { checkout, emitted } = makeCheckoutSession({
+        git: {
+          getCheckoutImageDiff: async (cwd, input) => {
+            receivedInput = input;
+            return {
+              cwd,
+              path: input.path,
+              oldImage: { status: "missing" },
+              newImage: {
+                status: "available",
+                mimeType: "image/png",
+                encoding: "base64",
+                content: "aGVsbG8=",
+                size: 5,
+                width: 1,
+                height: 1,
+              },
+              diffImage: { status: "missing" },
+            };
+          },
+        },
+      });
+
+      await checkout.handleCheckoutDiffGetImageRequest({
+        type: "checkout.diff.get_image.request",
+        cwd: "/repo",
+        path: "after.png",
+        oldPath: "before.png",
+        compare: { mode: "uncommitted" },
+        requestId: "req-image",
+      });
+
+      expect(receivedInput).toMatchObject({ path: "after.png", oldPath: "before.png" });
+      expect(emitted).toEqual([
+        {
+          type: "checkout.diff.get_image.response",
+          payload: {
+            cwd: "/repo",
+            path: "after.png",
+            oldImage: { status: "missing" },
+            newImage: expect.objectContaining({ status: "available", mimeType: "image/png" }),
+            diffImage: { status: "missing" },
+            error: null,
+            requestId: "req-image",
+          },
+        },
+      ]);
+    });
+
+    it("emits checkout image diff errors as checkout errors", async () => {
+      const { checkout, emitted } = makeCheckoutSession({
+        git: {
+          getCheckoutImageDiff: async () => {
+            throw new Error("boom");
+          },
+        },
+      });
+
+      await checkout.handleCheckoutDiffGetImageRequest({
+        type: "checkout.diff.get_image.request",
+        cwd: "/repo",
+        path: "bad.png",
+        compare: { mode: "uncommitted" },
+        requestId: "req-image",
+      });
+
+      expect(emitted).toEqual([
+        {
+          type: "checkout.diff.get_image.response",
+          payload: {
+            cwd: "/repo",
+            path: "bad.png",
+            oldImage: { status: "missing" },
+            newImage: { status: "missing" },
+            diffImage: { status: "missing" },
+            error: expect.objectContaining({ message: expect.stringContaining("boom") }),
+            requestId: "req-image",
+          },
+        },
+      ]);
+    });
+  });
+
   describe("status updates", () => {
     it("emits a checkout status update for a workspace git snapshot", () => {
       const { checkout, emitted } = makeCheckoutSession();

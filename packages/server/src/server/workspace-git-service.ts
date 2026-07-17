@@ -12,7 +12,10 @@ import {
   type CheckoutSnapshotFacts,
   type CheckoutDiffCompare,
   type CheckoutDiffResult,
+  type CheckoutImageDiffInput,
+  type CheckoutImageDiffResult,
   getCheckoutDiff,
+  getCheckoutImageDiff,
   getCheckoutSnapshotFacts,
   getCheckoutShortstat,
   getCheckoutStatus,
@@ -50,6 +53,8 @@ const WORKSPACE_GIT_AUXILIARY_READ_TTL_MS = 15_000;
 const WORKSPACE_GIT_INTERNAL_MIN_GAP_MS = 2_000;
 // Heavy values (multi-MB highlighted diffs); cap aggressively. Ephemeral worktree cwds would otherwise pile up forever.
 const WORKSPACE_GIT_CHECKOUT_DIFF_CACHE_MAX = 64;
+const WORKSPACE_GIT_IMAGE_DIFF_CACHE_MAX = 16;
+const WORKSPACE_GIT_IMAGE_DIFF_CACHE_MAX_SIZE = 64 * 1024 * 1024;
 // Small values (booleans, short strings, small arrays); generous cap.
 const WORKSPACE_GIT_AUXILIARY_CACHE_MAX = 256;
 const WORKSPACE_GIT_FACTS_REUSE_TTL_MS = 1_000;
@@ -125,6 +130,11 @@ export interface WorkspaceGitService {
     options: CheckoutDiffCompare,
     readOptions?: WorkspaceGitReadOptions,
   ): Promise<CheckoutDiffResult>;
+  getCheckoutImageDiff(
+    cwd: string,
+    input: CheckoutImageDiffInput,
+    readOptions?: WorkspaceGitReadOptions,
+  ): Promise<CheckoutImageDiffResult>;
   validateBranchRef(
     cwd: string,
     ref: string,
@@ -243,6 +253,7 @@ interface WorkspaceGitServiceDependencies {
   getCheckoutStatus: typeof getCheckoutStatus;
   getCheckoutShortstat: typeof getCheckoutShortstat;
   getCheckoutDiff: typeof getCheckoutDiff;
+  getCheckoutImageDiff: typeof getCheckoutImageDiff;
   getPullRequestStatus: typeof getPullRequestStatus;
   resolveBranchCheckout: typeof resolveBranchCheckout;
   resolveRepositoryDefaultBranch: typeof resolveRepositoryDefaultBranch;
@@ -318,6 +329,35 @@ interface WorkspaceGitAuxiliaryReadCacheEntry<T> {
   inFlight: Promise<T> | null;
 }
 
+type CheckoutImageDiffPayload =
+  | CheckoutImageDiffResult["oldImage"]
+  | CheckoutImageDiffResult["newImage"]
+  | CheckoutImageDiffResult["diffImage"];
+
+function imageDiffCacheEntrySize(
+  entry: WorkspaceGitAuxiliaryReadCacheEntry<CheckoutImageDiffResult>,
+): number {
+  const value = entry.value;
+  if (!value) {
+    return 1;
+  }
+
+  return Math.max(
+    1,
+    imageDiffPayloadCacheSize(value.oldImage) +
+      imageDiffPayloadCacheSize(value.newImage) +
+      imageDiffPayloadCacheSize(value.diffImage),
+  );
+}
+
+function imageDiffPayloadCacheSize(payload: CheckoutImageDiffPayload): number {
+  if (payload.status !== "available") {
+    return 128;
+  }
+
+  return payload.content.length + 128;
+}
+
 interface WorkspaceGitHubPollTarget {
   headRef: string;
   headRepositoryOwner?: string;
@@ -331,6 +371,7 @@ function buildDefaultWorkspaceGitServiceDeps(): WorkspaceGitServiceDependencies 
     getCheckoutStatus,
     getCheckoutShortstat,
     getCheckoutDiff,
+    getCheckoutImageDiff,
     getPullRequestStatus,
     resolveBranchCheckout,
     resolveRepositoryDefaultBranch,
@@ -390,6 +431,14 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     string,
     WorkspaceGitAuxiliaryReadCacheEntry<CheckoutDiffResult>
   >({ max: WORKSPACE_GIT_CHECKOUT_DIFF_CACHE_MAX });
+  private readonly checkoutImageDiffCache = new LRUCache<
+    string,
+    WorkspaceGitAuxiliaryReadCacheEntry<CheckoutImageDiffResult>
+  >({
+    max: WORKSPACE_GIT_IMAGE_DIFF_CACHE_MAX,
+    maxSize: WORKSPACE_GIT_IMAGE_DIFF_CACHE_MAX_SIZE,
+    sizeCalculation: imageDiffCacheEntrySize,
+  });
   constructor(options: WorkspaceGitServiceOptions) {
     this.logger = options.logger.child({ module: "workspace-git-service" });
     this.paseoHome = options.paseoHome;
@@ -493,11 +542,38 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     const normalizedCwd = resolve(cwd);
     const normalizedOptions = this.normalizeCheckoutDiffOptions(options);
     const key = this.buildCheckoutDiffCacheKey(normalizedCwd, normalizedOptions);
+    if (readOptions?.force) {
+      this.invalidateCheckoutImageDiffCache(normalizedCwd);
+    }
     return this.readAuxiliaryCache(this.checkoutDiffCache, key, readOptions, () =>
       this.deps.getCheckoutDiff(normalizedCwd, normalizedOptions, {
         paseoHome: this.paseoHome,
         worktreesRoot: this.worktreesRoot,
       }),
+    );
+  }
+
+  getCheckoutImageDiff(
+    cwd: string,
+    input: CheckoutImageDiffInput,
+    readOptions?: WorkspaceGitReadOptions,
+  ): Promise<CheckoutImageDiffResult> {
+    const normalizedCwd = resolve(cwd);
+    const normalizedCompare = this.normalizeCheckoutDiffOptions(input.compare);
+    const key = JSON.stringify([normalizedCwd, input.path, input.oldPath ?? "", normalizedCompare]);
+    return this.readAuxiliaryCache(this.checkoutImageDiffCache, key, readOptions, () =>
+      this.deps.getCheckoutImageDiff(
+        normalizedCwd,
+        {
+          path: input.path,
+          ...(input.oldPath ? { oldPath: input.oldPath } : {}),
+          compare: normalizedCompare,
+        },
+        {
+          paseoHome: this.paseoHome,
+          worktreesRoot: this.worktreesRoot,
+        },
+      ),
     );
   }
 
@@ -510,6 +586,15 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       ...(options.ignoreWhitespace === true ? { ignoreWhitespace: true } : {}),
       ...(options.includeStructured === true ? { includeStructured: true } : {}),
     };
+  }
+
+  private invalidateCheckoutImageDiffCache(cwd: string): void {
+    const keyPrefix = `[${JSON.stringify(cwd)},`;
+    for (const key of this.checkoutImageDiffCache.keys()) {
+      if (key.startsWith(keyPrefix)) {
+        this.checkoutImageDiffCache.delete(key);
+      }
+    }
   }
 
   private buildCheckoutDiffCacheKey(cwd: string, options: CheckoutDiffCompare): string {
@@ -762,6 +847,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       .then((value) => {
         entry.value = value;
         entry.loadedAtMs = this.deps.now().getTime();
+        cache.set(key, entry);
         return value;
       })
       .finally(() => {

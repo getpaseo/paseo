@@ -1,9 +1,10 @@
-import { resolve, dirname, basename } from "path";
-import { existsSync, realpathSync } from "fs";
-import { open as openFile, readFile, stat as statFile } from "fs/promises";
+import { resolve, dirname, basename, extname, isAbsolute, normalize, sep, win32 } from "path";
+import { constants, existsSync, realpathSync } from "fs";
+import { lstat, open as openFile, readFile, realpath, stat as statFile } from "fs/promises";
 import { TTLCache } from "@isaacs/ttlcache";
 import type { CheckoutCommit, CheckoutCommitFile } from "@getpaseo/protocol/messages";
 import type { Logger } from "pino";
+import sharp from "sharp";
 import type { ParsedDiffFile } from "../server/utils/diff-highlighter.js";
 import { parseAndHighlightDiff } from "../server/utils/diff-highlighter.js";
 import { parseGitHubRepoFromRemote } from "../server/workspace-git-metadata.js";
@@ -20,8 +21,10 @@ import {
 } from "../services/github-service.js";
 import { parseGitRevParsePath, resolveGitRevParsePath } from "./git-rev-parse-path.js";
 import { runGitCommand } from "./run-git-command.js";
+import { spawnProcess } from "./spawn.js";
 import { isPaseoOwnedWorktreeCwd, resolvePaseoWorktreesBaseRoot } from "./worktree.js";
 import { readPaseoWorktreeMetadata } from "./worktree-metadata.js";
+import type { CheckoutDiffGetImageResponse } from "@getpaseo/protocol/messages";
 const READ_ONLY_GIT_ENV = {
   GIT_OPTIONAL_LOCKS: "0",
 } as const;
@@ -765,6 +768,26 @@ export interface CheckoutDiffCompare {
   baseRef?: string;
   ignoreWhitespace?: boolean;
   includeStructured?: boolean;
+}
+
+export const IMAGE_DIFF_MAX_SIDE_BYTES = 10 * 1024 * 1024;
+export const IMAGE_DIFF_MAX_PIXELS = 8 * 1024 * 1024;
+
+export type CheckoutImagePayload = CheckoutDiffGetImageResponse["payload"]["oldImage"];
+export type CheckoutImageDiffPayload = CheckoutDiffGetImageResponse["payload"]["diffImage"];
+
+export interface CheckoutImageDiffResult {
+  cwd: string;
+  path: string;
+  oldImage: CheckoutImagePayload;
+  newImage: CheckoutImagePayload;
+  diffImage: CheckoutImageDiffPayload;
+}
+
+export interface CheckoutImageDiffInput {
+  path: string;
+  oldPath?: string;
+  compare: CheckoutDiffCompare;
 }
 
 export interface MergeToBaseOptions {
@@ -1816,14 +1839,17 @@ function buildPlaceholderParsedDiffFile(
   change: CheckoutFileChange,
   options: { status: "too_large" | "binary"; stat?: FileStat },
 ): ParsedDiffFile {
+  const isImage = options.status === "binary" && imageMimeTypeForPath(change.path) !== null;
   return {
     path: change.path,
+    ...(change.oldPath && change.oldPath !== change.path ? { oldPath: change.oldPath } : null),
     isNew: change.isNew,
     isDeleted: change.isDeleted,
     additions: options.stat?.additions ?? 0,
     deletions: options.stat?.deletions ?? 0,
     hunks: [],
     status: options.status,
+    ...(isImage ? { binaryKind: "image" as const } : null),
   };
 }
 
@@ -2528,6 +2554,7 @@ async function appendStructuredTrackedDiffs(
       structured.push({
         ...parsedFile,
         path: change.path,
+        ...(change.oldPath && change.oldPath !== change.path ? { oldPath: change.oldPath } : null),
         isNew: change.isNew,
         isDeleted: change.isDeleted,
         status: "ok",
@@ -2723,6 +2750,422 @@ async function resolveCheckoutDiffRefs(
     baseRef: (await tryResolveMergeBase(cwd, bestBaseRef)) ?? bestBaseRef,
     targetRef: "HEAD",
     includeUntracked: false,
+  };
+}
+
+const IMAGE_MIME_TYPES_BY_EXTENSION: Record<string, string> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".webp": "image/webp",
+  ".gif": "image/gif",
+  ".svg": "image/svg+xml",
+};
+
+const DIFFABLE_IMAGE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
+
+function imageMimeTypeForPath(filePath: string): string | null {
+  return IMAGE_MIME_TYPES_BY_EXTENSION[extname(filePath).toLowerCase()] ?? null;
+}
+
+function assertSafeRelativeGitPath(relativePath: string): void {
+  if (
+    relativePath.trim().length === 0 ||
+    isAbsolute(relativePath) ||
+    win32.isAbsolute(relativePath) ||
+    relativePath.includes("\0")
+  ) {
+    throw new Error("Image diff path must be a repository-relative file path");
+  }
+  const normalized = normalize(relativePath);
+  const windowsNormalized = win32.normalize(relativePath);
+  if (
+    normalized === ".." ||
+    normalized.startsWith(`..${sep}`) ||
+    windowsNormalized === ".." ||
+    windowsNormalized.startsWith(`..${win32.sep}`)
+  ) {
+    throw new Error("Image diff path must stay inside the repository");
+  }
+}
+
+function isMissingGitBlobError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    message.includes("exists on disk, but not in") ||
+    message.includes("fatal: invalid object name 'HEAD'.") ||
+    /fatal: path '.+' does not exist in '.+'/.test(message)
+  );
+}
+
+async function readGitBlobSize(cwd: string, ref: string, path: string): Promise<number | null> {
+  try {
+    const result = await runGitCommand(["cat-file", "-s", `${ref}:${path}`], {
+      cwd,
+      envOverlay: READ_ONLY_GIT_ENV,
+      maxOutputBytes: 1024,
+    });
+    const size = Number.parseInt(result.stdout.trim(), 10);
+    return Number.isFinite(size) ? size : null;
+  } catch (error) {
+    if (isMissingGitBlobError(error)) {
+      return null;
+    }
+    throw error;
+  }
+}
+
+async function runGitCommandBytes(
+  args: string[],
+  options: { cwd: string; maxOutputBytes: number; timeout?: number },
+): Promise<Buffer> {
+  return new Promise((resolvePromise, reject) => {
+    const child = spawnProcess("git", ["-c", "core.quotepath=false", ...args], {
+      cwd: options.cwd,
+      envOverlay: READ_ONLY_GIT_ENV,
+      shell: false,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const chunks: Buffer[] = [];
+    let totalBytes = 0;
+    let stderr = "";
+    let settled = false;
+
+    const timer = setTimeout(() => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      child.kill("SIGKILL");
+      reject(new Error("Git image blob read timed out"));
+    }, options.timeout ?? 30_000);
+
+    const settle = (callback: () => void) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      callback();
+    };
+
+    child.stdout?.on("data", (chunk: Buffer) => {
+      totalBytes += chunk.length;
+      if (totalBytes > options.maxOutputBytes) {
+        child.kill("SIGKILL");
+        settle(() => reject(new Error("Git image blob exceeded byte limit")));
+        return;
+      }
+      chunks.push(chunk);
+    });
+
+    child.stderr?.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString("utf8");
+    });
+
+    child.on("error", (error) => {
+      settle(() => reject(error));
+    });
+
+    child.on("close", (code) => {
+      settle(() => {
+        if (code === 0) {
+          resolvePromise(Buffer.concat(chunks));
+          return;
+        }
+        reject(new Error(stderr.trim() || `git show exited with code ${code}`));
+      });
+    });
+  });
+}
+
+async function readGitBlobBytes(cwd: string, ref: string, path: string): Promise<Buffer | null> {
+  try {
+    return await runGitCommandBytes(["show", `${ref}:${path}`], {
+      cwd,
+      maxOutputBytes: IMAGE_DIFF_MAX_SIDE_BYTES,
+    });
+  } catch (error) {
+    if (isMissingGitBlobError(error)) {
+      return null;
+    }
+    throw error;
+  }
+}
+
+interface ImageSide {
+  payload: CheckoutImagePayload;
+  bytes: Buffer | null;
+}
+
+async function availableImageSide(bytes: Buffer, mimeType: string): Promise<ImageSide> {
+  try {
+    const metadata = await sharp(bytes, { animated: false }).metadata();
+    if (!metadata.width || !metadata.height) {
+      return {
+        payload: { status: "invalid", message: "Image dimensions are unavailable" },
+        bytes: null,
+      };
+    }
+    return {
+      payload: {
+        status: "available",
+        mimeType,
+        encoding: "base64",
+        content: bytes.toString("base64"),
+        size: bytes.length,
+        width: metadata.width,
+        height: metadata.height,
+      },
+      bytes,
+    };
+  } catch (error) {
+    return {
+      payload: {
+        status: "invalid",
+        message: error instanceof Error ? error.message : String(error),
+      },
+      bytes: null,
+    };
+  }
+}
+
+function missingImageSide(): ImageSide {
+  return { payload: { status: "missing" }, bytes: null };
+}
+
+async function readImageSideFromGitRef(
+  cwd: string,
+  ref: string,
+  path: string,
+  mimeType: string,
+): Promise<ImageSide> {
+  try {
+    const size = await readGitBlobSize(cwd, ref, path);
+    if (size === null) {
+      return missingImageSide();
+    }
+    if (size > IMAGE_DIFF_MAX_SIDE_BYTES) {
+      return {
+        payload: { status: "too_large", size, maxSize: IMAGE_DIFF_MAX_SIDE_BYTES },
+        bytes: null,
+      };
+    }
+    const bytes = await readGitBlobBytes(cwd, ref, path);
+    return bytes ? availableImageSide(bytes, mimeType) : missingImageSide();
+  } catch (error) {
+    return {
+      payload: {
+        status: "read_error",
+        message: error instanceof Error ? error.message : String(error),
+      },
+      bytes: null,
+    };
+  }
+}
+
+async function readImageSideFromWorkingTree(
+  cwd: string,
+  path: string,
+  mimeType: string,
+): Promise<ImageSide> {
+  const worktreeRoot = (await getWorktreeRoot(cwd)) ?? cwd;
+  const absolutePath = resolve(worktreeRoot, path);
+  try {
+    await assertSafeWorkingTreeFile(worktreeRoot, path);
+    const handle = await openImageFileNoFollow(absolutePath);
+    try {
+      const stats = await handle.stat();
+      if (!stats.isFile()) {
+        return missingImageSide();
+      }
+      if (stats.size > IMAGE_DIFF_MAX_SIDE_BYTES) {
+        return {
+          payload: {
+            status: "too_large",
+            size: stats.size,
+            maxSize: IMAGE_DIFF_MAX_SIDE_BYTES,
+          },
+          bytes: null,
+        };
+      }
+      return availableImageSide(await handle.readFile(), mimeType);
+    } finally {
+      await handle.close();
+    }
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+      return missingImageSide();
+    }
+    return {
+      payload: {
+        status: "read_error",
+        message: error instanceof Error ? error.message : String(error),
+      },
+      bytes: null,
+    };
+  }
+}
+
+async function openImageFileNoFollow(absolutePath: string) {
+  try {
+    return await openFile(absolutePath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "ELOOP") {
+      throw new Error("Image diff path must not be a symlink", { cause: error });
+    }
+    throw error;
+  }
+}
+
+async function assertSafeWorkingTreeFile(
+  worktreeRoot: string,
+  relativePath: string,
+): Promise<void> {
+  const absolutePath = resolve(worktreeRoot, relativePath);
+  const linkStats = await lstat(absolutePath);
+  if (linkStats.isSymbolicLink()) {
+    throw new Error("Image diff path must not be a symlink");
+  }
+
+  const [realRoot, realFile] = await Promise.all([realpath(worktreeRoot), realpath(absolutePath)]);
+  if (realFile !== realRoot && !isDescendantPath(realFile, realRoot)) {
+    throw new Error("Image diff path must stay inside the repository");
+  }
+}
+
+function isAvailableDiffableImage(
+  image: CheckoutImagePayload,
+): image is Extract<CheckoutImagePayload, { status: "available" }> {
+  return image.status === "available" && DIFFABLE_IMAGE_MIME_TYPES.has(image.mimeType);
+}
+
+async function buildImageDiff(
+  oldSide: ImageSide,
+  newSide: ImageSide,
+): Promise<CheckoutImageDiffPayload> {
+  const { payload: oldImage, bytes: oldBytes } = oldSide;
+  const { payload: newImage, bytes: newBytes } = newSide;
+  if (oldImage.status !== "available" || newImage.status !== "available") {
+    return { status: "missing" };
+  }
+  if (!isAvailableDiffableImage(oldImage) || !isAvailableDiffableImage(newImage)) {
+    return { status: "unsupported", mimeType: newImage.mimeType };
+  }
+  if (oldBytes === null || newBytes === null) {
+    return { status: "read_error", message: "Image bytes are unavailable for diff" };
+  }
+  if (oldImage.width !== newImage.width || oldImage.height !== newImage.height) {
+    return {
+      status: "dimension_mismatch",
+      oldWidth: oldImage.width,
+      oldHeight: oldImage.height,
+      newWidth: newImage.width,
+      newHeight: newImage.height,
+    };
+  }
+  const decodedPixels = oldImage.width * oldImage.height;
+  if (decodedPixels > IMAGE_DIFF_MAX_PIXELS) {
+    return {
+      status: "too_large",
+      size: decodedPixels,
+      maxSize: IMAGE_DIFF_MAX_PIXELS,
+    };
+  }
+
+  try {
+    const [oldRaw, newRaw] = await Promise.all([
+      sharp(oldBytes).ensureAlpha().raw().toBuffer(),
+      sharp(newBytes).ensureAlpha().raw().toBuffer(),
+    ]);
+    const changed = Buffer.alloc(oldRaw.length);
+    for (let i = 0; i < oldRaw.length; i += 4) {
+      const different =
+        oldRaw[i] !== newRaw[i] ||
+        oldRaw[i + 1] !== newRaw[i + 1] ||
+        oldRaw[i + 2] !== newRaw[i + 2] ||
+        oldRaw[i + 3] !== newRaw[i + 3];
+      changed[i] = different ? 255 : 0;
+      changed[i + 1] = 0;
+      changed[i + 2] = different ? 255 : 0;
+      changed[i + 3] = different ? 255 : 32;
+    }
+    const png = await sharp(changed, {
+      raw: { width: oldImage.width, height: oldImage.height, channels: 4 },
+    })
+      .png()
+      .toBuffer();
+
+    return {
+      status: "available",
+      mimeType: "image/png",
+      encoding: "base64",
+      content: png.toString("base64"),
+      size: png.length,
+      width: oldImage.width,
+      height: oldImage.height,
+    };
+  } catch (error) {
+    return {
+      status: "invalid",
+      message: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+export async function getCheckoutImageDiff(
+  cwd: string,
+  input: CheckoutImageDiffInput,
+  context?: CheckoutContext,
+): Promise<CheckoutImageDiffResult> {
+  await requireGitRepo(cwd);
+  assertSafeRelativeGitPath(input.path);
+  if (input.oldPath) {
+    assertSafeRelativeGitPath(input.oldPath);
+  }
+
+  const newMimeType = imageMimeTypeForPath(input.path);
+  if (!newMimeType) {
+    return {
+      cwd,
+      path: input.path,
+      oldImage: { status: "unsupported", mimeType: null },
+      newImage: { status: "unsupported", mimeType: null },
+      diffImage: { status: "unsupported", mimeType: null },
+    };
+  }
+
+  const refs = await resolveCheckoutDiffRefs(cwd, input.compare, context);
+  if (!refs) {
+    return {
+      cwd,
+      path: input.path,
+      oldImage: { status: "missing" },
+      newImage: { status: "missing" },
+      diffImage: { status: "missing" },
+    };
+  }
+
+  const oldPath = input.oldPath ?? input.path;
+  const oldMimeType = imageMimeTypeForPath(oldPath);
+  const oldSidePromise: Promise<ImageSide> = oldMimeType
+    ? readImageSideFromGitRef(cwd, refs.baseRef, oldPath, oldMimeType)
+    : Promise.resolve({
+        payload: { status: "unsupported", mimeType: null },
+        bytes: null,
+      });
+  const newSidePromise = refs.targetRef
+    ? readImageSideFromGitRef(cwd, refs.targetRef, input.path, newMimeType)
+    : readImageSideFromWorkingTree(cwd, input.path, newMimeType);
+  const [oldSide, newSide] = await Promise.all([oldSidePromise, newSidePromise]);
+  const diffImage = await buildImageDiff(oldSide, newSide);
+
+  return {
+    cwd,
+    path: input.path,
+    oldImage: oldSide.payload,
+    newImage: newSide.payload,
+    diffImage,
   };
 }
 

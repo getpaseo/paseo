@@ -31,6 +31,25 @@ export function checkoutDiffQueryKey(
   return ["checkoutDiff", serverId, cwd, mode, baseRef ?? "", ignoreWhitespace === true] as const;
 }
 
+export function checkoutImageDiffQueryKey(input: {
+  serverId: string;
+  cwd: string;
+  path: string;
+  oldPath?: string;
+  mode: "uncommitted" | "base";
+  baseRef?: string;
+}) {
+  return [
+    "checkoutImageDiff",
+    input.serverId,
+    input.cwd,
+    input.path,
+    input.oldPath ?? "",
+    input.mode,
+    input.baseRef ?? "",
+  ] as const;
+}
+
 export function checkoutPrStatusQueryKey(serverId: string, cwd: string) {
   return ["checkoutPrStatus", serverId, cwd] as const;
 }

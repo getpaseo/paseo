@@ -1,5 +1,5 @@
 import { basename } from "node:path";
-import type { CheckoutDiffResult } from "../../utils/checkout-git.js";
+import type { CheckoutDiffResult, CheckoutImageDiffResult } from "../../utils/checkout-git.js";
 import {
   buildWorkspaceGitMetadataFromSnapshot,
   type WorkspaceGitMetadata,
@@ -51,6 +51,13 @@ export function createNoopWorkspaceGitService(
     }),
     getSnapshot: async (cwd: string) => createNoGitWorkspaceRuntimeSnapshot(cwd),
     getCheckoutDiff: async (): Promise<CheckoutDiffResult> => ({ diff: "" }),
+    getCheckoutImageDiff: async (cwd, input): Promise<CheckoutImageDiffResult> => ({
+      cwd,
+      path: input.path,
+      oldImage: { status: "missing" },
+      newImage: { status: "missing" },
+      diffImage: { status: "missing" },
+    }),
     validateBranchRef: async () => ({ kind: "not-found" }),
     hasLocalBranch: async () => false,
     suggestBranchesForCwd: async () => [],

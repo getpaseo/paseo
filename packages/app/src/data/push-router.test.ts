@@ -1,7 +1,7 @@
 import { QueryClient, QueryObserver, skipToken } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
 import type { MutableDaemonConfig, SessionOutboundMessage } from "@getpaseo/protocol/messages";
-import { checkoutDiffQueryKey } from "@/git/query-keys";
+import { checkoutDiffQueryKey, checkoutImageDiffQueryKey } from "@/git/query-keys";
 import { buildTerminalsQueryKey } from "@/screens/workspace/terminals/state";
 import { daemonConfigQueryKey } from "@/data/daemon-config";
 import { providersSnapshotQueryKey } from "@/data/providers-snapshot";
@@ -176,6 +176,13 @@ describe("server data push router", () => {
     const serverId = "server-1";
     const cwd = "/repo";
     const queryKey = checkoutDiffQueryKey(serverId, cwd, "base", "main", true);
+    const imageQueryKey = checkoutImageDiffQueryKey({
+      serverId,
+      cwd,
+      path: "image.png",
+      mode: "base",
+      baseRef: "main",
+    });
     const subscriptionId = `checkoutDiff:${JSON.stringify(queryKey)}`;
     const observer = new QueryObserver(queryClient, {
       queryKey,
@@ -213,6 +220,7 @@ describe("server data push router", () => {
       error: null,
       requestId: "diff-1",
     });
+    queryClient.setQueryData(imageQueryKey, { path: "image.png" });
 
     fake.emit({
       type: "checkout_diff_update",
@@ -225,6 +233,7 @@ describe("server data push router", () => {
       error: null,
       requestId: `subscription:${subscriptionId}`,
     });
+    expect(queryClient.getQueryState(imageQueryKey)?.isInvalidated).toBe(true);
 
     unsubscribeObserver();
 

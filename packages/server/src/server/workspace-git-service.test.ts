@@ -201,6 +201,8 @@ function createGitHubServiceStub(): GitHubService {
 }
 
 interface CreateServiceTestOptions {
+  getCheckoutDiff?: ReturnType<typeof vi.fn>;
+  getCheckoutImageDiff?: ReturnType<typeof vi.fn>;
   getCheckoutStatus?: ReturnType<typeof vi.fn>;
   getCheckoutSnapshotFacts?: ReturnType<typeof vi.fn>;
   getCheckoutShortstat?: ReturnType<typeof vi.fn>;
@@ -920,6 +922,33 @@ describe("WorkspaceGitServiceImpl", () => {
     await service.getCheckoutDiff("/tmp/repo-0", { mode: "uncommitted" });
     expect(getCheckoutDiff).toHaveBeenCalledTimes(CACHE_MAX + OVERFLOW + 1);
 
+    service.dispose();
+  });
+
+  test("a forced checkout diff refresh invalidates cached image diffs for the checkout", async () => {
+    const getCheckoutDiff = vi.fn(async () => ({ diff: "" }));
+    const getCheckoutImageDiff = vi.fn(async (cwd: string, input: { path: string }) => ({
+      cwd,
+      path: input.path,
+      oldImage: { status: "missing" as const },
+      newImage: { status: "missing" as const },
+      diffImage: { status: "missing" as const },
+    }));
+    const service = createService({ getCheckoutDiff, getCheckoutImageDiff });
+
+    const input = { path: "image.png", compare: { mode: "uncommitted" as const } };
+    await service.getCheckoutImageDiff(REPO_CWD, input);
+    await service.getCheckoutImageDiff(REPO_CWD, input);
+    expect(getCheckoutImageDiff).toHaveBeenCalledTimes(1);
+
+    await service.getCheckoutDiff(
+      REPO_CWD,
+      { mode: "uncommitted" },
+      { force: true, reason: "working-tree-watch" },
+    );
+    await service.getCheckoutImageDiff(REPO_CWD, input);
+
+    expect(getCheckoutImageDiff).toHaveBeenCalledTimes(2);
     service.dispose();
   });
 });

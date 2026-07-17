@@ -18,12 +18,14 @@ export interface DiffHunk {
 
 export interface ParsedDiffFile {
   path: string;
+  oldPath?: string;
   isNew: boolean;
   isDeleted: boolean;
   additions: number;
   deletions: number;
   hunks: DiffHunk[];
   status?: "ok" | "too_large" | "binary";
+  binaryKind?: "image";
 }
 
 interface HighlightDiffWithFileContentOptions {
@@ -75,6 +77,16 @@ function extractPathFromDiffHeader(lines: string[]): string {
     return usesDiffPathPrefixes(oldPath, newPath) ? path.slice(2) : path;
   }
   return "unknown";
+}
+
+function extractOldPathFromDiffHeader(lines: string[]): string | null {
+  const firstLine = lines[0] ?? "";
+  const prefixedPathMatch = firstLine.match(/^a\/(.+) b\/(.+)$/);
+  if (prefixedPathMatch) {
+    return prefixedPathMatch[1] ?? null;
+  }
+
+  return extractPathFromMetadata(lines, "--- ");
 }
 
 function isMetadataLine(line: string): boolean {
@@ -157,10 +169,19 @@ export function parseDiff(diffText: string): ParsedDiffFile[] {
     const isNew = section.includes("new file mode") || section.includes("--- /dev/null");
     const isDeleted = section.includes("deleted file mode") || section.includes("+++ /dev/null");
     const path = extractPathFromDiffHeader(lines);
+    const oldPath = extractOldPathFromDiffHeader(lines);
 
     const { hunks, additions, deletions } = parseSectionBody(lines);
 
-    files.push({ path, isNew, isDeleted, additions, deletions, hunks });
+    files.push({
+      path,
+      ...(oldPath && oldPath !== path ? { oldPath } : {}),
+      isNew,
+      isDeleted,
+      additions,
+      deletions,
+      hunks,
+    });
   }
 
   return files;

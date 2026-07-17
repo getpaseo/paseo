@@ -6,6 +6,7 @@ import type {
   BranchSuggestionsRequest,
   CheckoutCommitsListRequest,
   CheckoutCommitFileDiffRequest,
+  CheckoutDiffGetImageRequest,
   CheckoutRefreshRequest,
   CheckoutRenameBranchRequest,
   CheckoutStatusRequest,
@@ -341,6 +342,39 @@ export class CheckoutSession {
   handleUnsubscribeDiffRequest(msg: UnsubscribeCheckoutDiffRequest): void {
     this.diffSubscriptions.get(msg.subscriptionId)?.();
     this.diffSubscriptions.delete(msg.subscriptionId);
+  }
+
+  async handleCheckoutDiffGetImageRequest(msg: CheckoutDiffGetImageRequest): Promise<void> {
+    const cwd = expandTilde(msg.cwd);
+    try {
+      const result = await this.workspaceGitService.getCheckoutImageDiff(cwd, {
+        path: msg.path,
+        ...(msg.oldPath ? { oldPath: msg.oldPath } : {}),
+        compare: msg.compare,
+      });
+      this.host.emit({
+        type: "checkout.diff.get_image.response",
+        payload: {
+          ...result,
+          cwd: msg.cwd,
+          error: null,
+          requestId: msg.requestId,
+        },
+      });
+    } catch (error) {
+      this.host.emit({
+        type: "checkout.diff.get_image.response",
+        payload: {
+          cwd: msg.cwd,
+          path: msg.path,
+          oldImage: { status: "missing" },
+          newImage: { status: "missing" },
+          diffImage: { status: "missing" },
+          error: toCheckoutError(error),
+          requestId: msg.requestId,
+        },
+      });
+    }
   }
 
   async handleRefreshRequest(msg: CheckoutRefreshRequest): Promise<void> {

@@ -182,6 +182,13 @@ function createFallbackWorkspaceGitService(): WorkspaceGitService {
     }),
     getSnapshot: async (cwd: string) => createFallbackWorkspaceGitSnapshot(cwd),
     getCheckoutDiff: async () => ({ diff: "" }),
+    getCheckoutImageDiff: async (cwd, input) => ({
+      cwd,
+      path: input.path,
+      oldImage: { status: "missing" },
+      newImage: { status: "missing" },
+      diffImage: { status: "missing" },
+    }),
     validateBranchRef: async () => ({ kind: "not-found" }),
     hasLocalBranch: async () => false,
     suggestBranchesForCwd: async () => [],
@@ -1268,6 +1275,8 @@ export class VoiceAssistantWebSocketServer {
         providerRemoval: true,
         // COMPAT(importSessionWorkspaceTarget): added in v0.1.110, remove gate after 2027-01-16.
         importSessionWorkspaceTarget: true,
+        // COMPAT(imageDiffs): added in v0.1.103, drop the gate when floor >= v0.2.0.
+        imageDiffs: true,
       },
     };
   }

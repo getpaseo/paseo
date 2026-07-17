@@ -1633,6 +1633,8 @@ export class Session {
         return this.handleDirectorySuggestionsRequest(msg);
       case "subscribe_checkout_diff_request":
         return this.checkoutSession.handleSubscribeDiffRequest(msg);
+      case "checkout.diff.get_image.request":
+        return this.checkoutSession.handleCheckoutDiffGetImageRequest(msg);
       case "unsubscribe_checkout_diff_request":
         this.checkoutSession.handleUnsubscribeDiffRequest(msg);
         return undefined;

@@ -3582,6 +3582,74 @@ test("returns renameBranch business failures", async () => {
   });
 });
 
+test("checkoutGetImageDiff sends correlated image diff request", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const responsePromise = client.checkoutGetImageDiff(
+    "/tmp/project",
+    {
+      path: "after.png",
+      oldPath: "before.png",
+      compare: { mode: "uncommitted" },
+    },
+    "req-image",
+  );
+
+  expect(JSON.parse(assertStr(mock.sent[0]))).toEqual({
+    type: "session",
+    message: {
+      type: "checkout.diff.get_image.request",
+      cwd: "/tmp/project",
+      path: "after.png",
+      oldPath: "before.png",
+      compare: { mode: "uncommitted" },
+      requestId: "req-image",
+    },
+  });
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "checkout.diff.get_image.response",
+      payload: {
+        cwd: "/tmp/project",
+        path: "after.png",
+        oldImage: { status: "missing" },
+        newImage: {
+          status: "available",
+          mimeType: "image/png",
+          encoding: "base64",
+          content: "aGVsbG8=",
+          size: 5,
+          width: 1,
+          height: 1,
+        },
+        diffImage: { status: "missing" },
+        error: null,
+        requestId: "req-image",
+      },
+    }),
+  );
+
+  await expect(responsePromise).resolves.toMatchObject({
+    path: "after.png",
+    newImage: { status: "available" },
+  });
+});
+
 test("resubscribes checkout diff streams after reconnect", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();

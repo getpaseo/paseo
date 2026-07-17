@@ -91,6 +91,7 @@
     "pino-pretty": "^13.1.3",
     "qrcode": "^1.5.4",
     "rotating-file-stream": "^3.2.9",
+    "sharp": "^0.34.5",
     "sherpa-onnx-node": "1.12.28",
     "strip-ansi": "^7.1.2",
     "tree-kill": "^1.2.2",

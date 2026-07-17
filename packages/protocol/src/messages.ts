@@ -1573,6 +1573,15 @@ export const SubscribeCheckoutDiffRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const CheckoutDiffGetImageRequestSchema = z.object({
+  type: z.literal("checkout.diff.get_image.request"),
+  cwd: z.string(),
+  path: z.string(),
+  oldPath: z.string().optional(),
+  compare: CheckoutDiffCompareSchema,
+  requestId: z.string(),
+});
+
 export const UnsubscribeCheckoutDiffRequestSchema = z.object({
   type: z.literal("unsubscribe_checkout_diff_request"),
   subscriptionId: z.string(),
@@ -1979,12 +1988,14 @@ const DiffHunkSchema = z.object({
 
 const ParsedDiffFileSchema = z.object({
   path: z.string(),
+  oldPath: z.string().optional(),
   isNew: z.boolean(),
   isDeleted: z.boolean(),
   additions: z.number(),
   deletions: z.number(),
   hunks: z.array(DiffHunkSchema),
   status: z.enum(["ok", "too_large", "binary"]).optional(),
+  binaryKind: z.enum(["image"]).optional(),
 });
 
 const FileExplorerEntrySchema = z.object({
@@ -2268,6 +2279,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   AgentPermissionResponseMessageSchema,
   CheckoutStatusRequestSchema,
   SubscribeCheckoutDiffRequestSchema,
+  CheckoutDiffGetImageRequestSchema,
   UnsubscribeCheckoutDiffRequestSchema,
   CheckoutCommitRequestSchema,
   CheckoutMergeRequestSchema,
@@ -2563,6 +2575,8 @@ export const ServerInfoStatusPayloadSchema = z
         providerRemoval: z.boolean().optional(),
         // COMPAT(importSessionWorkspaceTarget): added in v0.1.110, remove gate after 2027-01-16.
         importSessionWorkspaceTarget: z.boolean().optional(),
+        // COMPAT(imageDiffs): added in v0.1.103, drop the gate when floor >= v0.2.0.
+        imageDiffs: z.boolean().optional(),
       })
       .optional(),
   })
@@ -3740,6 +3754,60 @@ export const CheckoutDiffUpdateSchema = z.object({
   payload: CheckoutDiffSubscriptionPayloadSchema,
 });
 
+const CheckoutImagePayloadSchema = z.discriminatedUnion("status", [
+  z.object({
+    status: z.literal("available"),
+    mimeType: z.string(),
+    encoding: z.literal("base64"),
+    content: z.string(),
+    size: z.number(),
+    width: z.number(),
+    height: z.number(),
+  }),
+  z.object({ status: z.literal("missing") }),
+  z.object({ status: z.literal("too_large"), size: z.number(), maxSize: z.number() }),
+  z.object({ status: z.literal("unsupported"), mimeType: z.string().nullable() }),
+  z.object({ status: z.literal("invalid"), message: z.string() }),
+  z.object({ status: z.literal("read_error"), message: z.string() }),
+]);
+
+const CheckoutImageDiffPayloadSchema = z.discriminatedUnion("status", [
+  z.object({
+    status: z.literal("available"),
+    mimeType: z.literal("image/png"),
+    encoding: z.literal("base64"),
+    content: z.string(),
+    size: z.number(),
+    width: z.number(),
+    height: z.number(),
+  }),
+  z.object({ status: z.literal("missing") }),
+  z.object({ status: z.literal("too_large"), size: z.number(), maxSize: z.number() }),
+  z.object({
+    status: z.literal("dimension_mismatch"),
+    oldWidth: z.number(),
+    oldHeight: z.number(),
+    newWidth: z.number(),
+    newHeight: z.number(),
+  }),
+  z.object({ status: z.literal("unsupported"), mimeType: z.string().nullable() }),
+  z.object({ status: z.literal("invalid"), message: z.string() }),
+  z.object({ status: z.literal("read_error"), message: z.string() }),
+]);
+
+export const CheckoutDiffGetImageResponseSchema = z.object({
+  type: z.literal("checkout.diff.get_image.response"),
+  payload: z.object({
+    cwd: z.string(),
+    path: z.string(),
+    oldImage: CheckoutImagePayloadSchema,
+    newImage: CheckoutImagePayloadSchema,
+    diffImage: CheckoutImageDiffPayloadSchema,
+    error: CheckoutErrorSchema.nullable(),
+    requestId: z.string(),
+  }),
+});
+
 export const CheckoutCommitResponseSchema = z.object({
   type: z.literal("checkout_commit_response"),
   payload: z.object({
@@ -4625,6 +4693,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   CheckoutStatusUpdateSchema,
   SubscribeCheckoutDiffResponseSchema,
   CheckoutDiffUpdateSchema,
+  CheckoutDiffGetImageResponseSchema,
   CheckoutCommitResponseSchema,
   CheckoutMergeResponseSchema,
   CheckoutMergeFromBaseResponseSchema,
@@ -4933,9 +5002,11 @@ export type CheckoutStatusRequest = z.infer<typeof CheckoutStatusRequestSchema>;
 export type CheckoutStatusResponse = z.infer<typeof CheckoutStatusResponseSchema>;
 export type CheckoutStatusUpdate = z.infer<typeof CheckoutStatusUpdateSchema>;
 export type SubscribeCheckoutDiffRequest = z.infer<typeof SubscribeCheckoutDiffRequestSchema>;
+export type CheckoutDiffGetImageRequest = z.infer<typeof CheckoutDiffGetImageRequestSchema>;
 export type UnsubscribeCheckoutDiffRequest = z.infer<typeof UnsubscribeCheckoutDiffRequestSchema>;
 export type SubscribeCheckoutDiffResponse = z.infer<typeof SubscribeCheckoutDiffResponseSchema>;
 export type CheckoutDiffUpdate = z.infer<typeof CheckoutDiffUpdateSchema>;
+export type CheckoutDiffGetImageResponse = z.infer<typeof CheckoutDiffGetImageResponseSchema>;
 export type CheckoutCommitRequest = z.infer<typeof CheckoutCommitRequestSchema>;
 export type CheckoutCommitResponse = z.infer<typeof CheckoutCommitResponseSchema>;
 export type CheckoutMergeRequest = z.infer<typeof CheckoutMergeRequestSchema>;

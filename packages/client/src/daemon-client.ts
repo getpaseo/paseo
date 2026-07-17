@@ -32,6 +32,8 @@ import type {
   CheckoutCommit,
   ParsedDiffFile,
   CheckoutCommitResponse,
+  CheckoutDiffGetImageRequest,
+  CheckoutDiffGetImageResponse,
   CheckoutMergeResponse,
   CheckoutMergeFromBaseResponse,
   CheckoutPullResponse,
@@ -352,6 +354,7 @@ type SubscribeCheckoutDiffPayload = Extract<
 >["payload"];
 type CheckoutDiffPayload = Omit<SubscribeCheckoutDiffPayload, "subscriptionId">;
 type CheckoutCommitPayload = CheckoutCommitResponse["payload"];
+type CheckoutDiffGetImagePayload = CheckoutDiffGetImageResponse["payload"];
 type CheckoutMergePayload = CheckoutMergeResponse["payload"];
 type CheckoutMergeFromBasePayload = CheckoutMergeFromBaseResponse["payload"];
 type CheckoutPullPayload = CheckoutPullResponse["payload"];
@@ -3543,6 +3546,29 @@ export class DaemonClient {
       throw new Error(payload.error.message);
     }
     return { file: payload.file };
+  }
+
+  async checkoutGetImageDiff(
+    cwd: string,
+    input: {
+      path: string;
+      oldPath?: string;
+      compare: CheckoutDiffGetImageRequest["compare"];
+    },
+    requestId?: string,
+  ): Promise<CheckoutDiffGetImagePayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "checkout.diff.get_image.request",
+        cwd,
+        path: input.path,
+        ...(input.oldPath ? { oldPath: input.oldPath } : {}),
+        compare: this.normalizeCheckoutDiffCompare(input.compare),
+      },
+      responseType: "checkout.diff.get_image.response",
+      timeout: 60000,
+    });
   }
 
   async checkoutPrCreate(
