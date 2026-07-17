@@ -137,6 +137,20 @@ async function connect(input: { clientId: string; selective: boolean }): Promise
   return connected;
 }
 
+test("subscription acknowledgements stay on the requesting socket of a retained session", async () => {
+  const legacy = await connect({ clientId: "shared-client", selective: false });
+  const capable = await connect({ clientId: "shared-client", selective: true });
+  legacy.clear();
+  capable.clear();
+
+  await capable.client.setAgentTimelineSubscription(["agent-a"]);
+  await capable.barrier("targeted-subscription-ack");
+
+  expect(
+    legacy.messages.some((message) => message.type === "agent.timeline.set_subscription.response"),
+  ).toBe(false);
+});
+
 test("real WebSocket sessions enforce selective delivery, retained resets, downgrade, and dedicated attention", async () => {
   const legacy = await connect({ clientId: "legacy-client", selective: false });
   let capable = await connect({ clientId: "capable-client", selective: true });

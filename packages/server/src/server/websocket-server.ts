@@ -988,6 +988,12 @@ export class VoiceAssistantWebSocketServer {
         }
         this.sendToConnection(connection, wrapSessionMessage(msg));
       },
+      onMessageToSource: (source, msg) => {
+        if (!connection || !connection.sockets.has(source as WebSocketLike)) {
+          return;
+        }
+        this.sendToClient(source as WebSocketLike, wrapSessionMessage(msg));
+      },
       onBinaryMessage: (frame) => {
         if (!connection) {
           return;

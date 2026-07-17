@@ -65,6 +65,23 @@ function permission(id: string): AgentPermissionRequest {
 }
 
 describe("replaceFetchedAgentDirectory", () => {
+  it("preserves timeline initialization while replacing directory state", () => {
+    const serverId = "server-initializing";
+    const store = useSessionStore.getState();
+    store.initializeSession(serverId, null as unknown as DaemonClient);
+    store.setInitializingAgents(serverId, new Map([["agent", true]]));
+
+    replaceFetchedAgentDirectory({
+      serverId,
+      entries: [createEntry(createAgentPayload({ id: "agent" }))],
+    });
+
+    expect(useSessionStore.getState().sessions[serverId]?.initializingAgents.get("agent")).toBe(
+      true,
+    );
+    store.clearSession(serverId);
+  });
+
   it("re-derives parentAgentId every time an agent snapshot is ingested", () => {
     const serverId = "server-1";
     const store = useSessionStore.getState();

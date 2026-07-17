@@ -21,6 +21,7 @@ import {
 } from "@/timeline/session-stream-reducers";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
 import { isTimelineCatchUpComplete } from "@/timeline/timeline-sync-plan";
+import { fetchAgentTimelineOnce } from "@/timeline/fetch-agent-timeline-once";
 import { createViewedTimelineSync, type ViewedTimelineSync } from "@/timeline/viewed-timeline-sync";
 import type { AgentAttachment, SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { parseServerInfoStatusPayload } from "@getpaseo/protocol/messages";
@@ -1071,7 +1072,8 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         const initKey = getInitKey(serverId, agentId);
         if (session?.agentAuthoritativeHistoryApplied.get(agentId) !== true) {
           if (!getInitDeferred(initKey)) {
-            createInitDeferred(initKey, request.direction ?? "tail");
+            const deferred = createInitDeferred(initKey, request.direction ?? "tail");
+            void deferred.promise.catch(() => undefined);
           }
           refreshAgentInitializationTimeout({
             key: initKey,
@@ -1081,7 +1083,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
           setAgentInitializing(agentId, true);
         }
         try {
-          const page = await client.fetchAgentTimeline(agentId, request);
+          const page = await fetchAgentTimelineOnce(client, agentId, request);
           if (getInitDeferred(initKey)) {
             refreshAgentInitializationTimeout({ key: initKey, agentId, setAgentInitializing });
           }

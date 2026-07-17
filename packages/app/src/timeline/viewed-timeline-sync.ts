@@ -39,7 +39,32 @@ type CatchUpStatus = "running" | "complete" | "error";
 interface CatchUpState {
   generation: number;
   status: CatchUpStatus;
+  request?: ProjectedTimelineForwardFetchPlan;
   cancelRetry?: () => void;
+}
+
+function isSameCatchUpRequest(
+  left: ProjectedTimelineForwardFetchPlan | undefined,
+  right: ProjectedTimelineForwardFetchPlan | undefined,
+): boolean {
+  if (!left || !right || left.direction !== right.direction) return false;
+  if (left.direction !== "after" || right.direction !== "after") return true;
+  return left.cursor.epoch === right.cursor.epoch && left.cursor.seq === right.cursor.seq;
+}
+
+function shouldKeepCurrentCatchUp(input: {
+  current: CatchUpState | undefined;
+  request: ProjectedTimelineForwardFetchPlan | undefined;
+  supersede: boolean;
+}): boolean {
+  if (!input.current) return false;
+  if (input.supersede) {
+    return (
+      input.current.status === "running" &&
+      isSameCatchUpRequest(input.current.request, input.request)
+    );
+  }
+  return input.current.status === "running" || input.current.status === "complete";
 }
 
 function normalizeAgentIds(agentIds: string[]): string[] {
@@ -138,13 +163,13 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
       return;
     }
     const current = catchUps.get(agentId);
-    if (!supersede && (current?.status === "running" || current?.status === "complete")) {
+    if (shouldKeepCurrentCatchUp({ current, request, supersede })) {
       return;
     }
     current?.cancelRetry?.();
     const generation = (catchUpGenerations.get(agentId) ?? 0) + 1;
     catchUpGenerations.set(agentId, generation);
-    catchUps.set(agentId, { generation, status: "running" });
+    catchUps.set(agentId, { generation, status: "running", request });
     pendingGaps.delete(agentId);
     const cursor = ports.readCursor(agentId);
     const nextRequest =

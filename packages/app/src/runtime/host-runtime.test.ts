@@ -2153,6 +2153,77 @@ describe("HostRuntimeStore", () => {
     useSessionStore.getState().clearSession(host.serverId);
   });
 
+  it("uses legacy GitHub attachments when draining a queue for an old daemon", async () => {
+    const host = makeHost({ serverId: "srv_legacy_queue_attachment" });
+    const fakeClient = new FakeDaemonClient();
+    const store = new HostRuntimeStore({
+      deps: {
+        createClient: () => fakeClient as unknown as DaemonClient,
+        connectToDaemon: async () => ({
+          client: fakeClient as unknown as DaemonClient,
+          serverId: host.serverId,
+          hostname: null,
+        }),
+        getClientId: async () => "cid_legacy_queue_attachment",
+      },
+    });
+    const sessionStore = useSessionStore.getState();
+    sessionStore.initializeSession(host.serverId, fakeClient as unknown as DaemonClient, 1);
+    sessionStore.updateSessionServerInfo(host.serverId, {
+      serverId: host.serverId,
+      hostname: null,
+      version: "0.1.105",
+      features: { forgeSearch: false },
+    });
+    sessionStore.setQueuedMessages(
+      host.serverId,
+      new Map([
+        [
+          "agent",
+          [
+            {
+              id: "queued-legacy-attachment",
+              text: "review this",
+              attachments: [
+                {
+                  kind: "github_pr" as const,
+                  item: {
+                    kind: "change_request" as const,
+                    number: 42,
+                    title: "Compatibility fix",
+                    url: "https://github.com/acme/repo/pull/42",
+                    state: "open" as const,
+                    body: "Details",
+                    labels: [],
+                    baseRefName: "main",
+                    headRefName: "fix",
+                  },
+                },
+              ],
+            },
+          ],
+        ],
+      ]),
+    );
+
+    store.drainQueuedAgentMessage(host.serverId, "agent");
+    await fakeClient.waitForSentMessages(1);
+
+    expect(fakeClient.sentAgentMessages[0]?.[2]?.attachments).toEqual([
+      {
+        type: "github_pr",
+        mimeType: "application/github-pr",
+        number: 42,
+        title: "Compatibility fix",
+        url: "https://github.com/acme/repo/pull/42",
+        body: "Details",
+        baseRefName: "main",
+        headRefName: "fix",
+      },
+    ]);
+    sessionStore.clearSession(host.serverId);
+  });
+
   it("applies buffered stale side effects from the accepted page agent", async () => {
     const host = makeHost({ serverId: "srv_buffered_stale_side_effects" });
     const fakeClient = new FakeDaemonClient();

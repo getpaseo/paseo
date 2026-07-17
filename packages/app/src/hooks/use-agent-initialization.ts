@@ -10,6 +10,7 @@ import {
   rejectInitDeferred,
   refreshInitTimeout,
 } from "@/utils/agent-initialization";
+import { fetchAgentTimelineOnce } from "@/timeline/fetch-agent-timeline-once";
 import { planInitialAgentTimelineSync, planTimelineTailFetch } from "@/timeline/timeline-sync-plan";
 import { i18n } from "@/i18n/i18next";
 
@@ -68,7 +69,7 @@ export function ensureAgentIsInitialized(input: EnsureAgentIsInitializedInput): 
     return deferred.promise;
   }
 
-  client.fetchAgentTimeline(agentId, timelineRequest).catch((error) => {
+  fetchAgentTimelineOnce(client, agentId, timelineRequest).catch((error) => {
     setAgentInitializing(agentId, false);
     rejectInitDeferred(key, error instanceof Error ? error : new Error(String(error)));
   });

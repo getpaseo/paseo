@@ -345,6 +345,24 @@ test("gap recovery supersedes completed catch-up and pages through the current t
   ]);
 });
 
+test("repeated recovery for the same running gap reuses the in-flight fetch", async () => {
+  const world = new TimelineWorld();
+  world.sync.setConnected(true);
+  world.sync.replaceVisibleAgentIds("workspace", ["agent-a"]);
+  const membership = await world.nextMembership();
+  membership.succeed();
+  const initial = await world.nextFetch("agent-a");
+  initial.respond({ hasNewer: false });
+
+  const cursor = { epoch: "epoch-agent-a", endSeq: 10 };
+  world.sync.recoverGap("agent-a", cursor);
+  const gapPage = await world.nextFetch("agent-a");
+  world.sync.recoverGap("agent-a", cursor);
+
+  world.expectNoPendingFetch();
+  gapPage.respond({ hasNewer: false });
+});
+
 test("membership failure autonomously retries without another visibility declaration", async () => {
   const world = new TimelineWorld();
   world.sync.setConnected(true);

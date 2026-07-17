@@ -429,6 +429,7 @@ export interface SessionOptions {
   appVersion?: string | null;
   clientCapabilities?: Record<string, unknown> | null;
   onMessage: (msg: SessionOutboundMessage) => void;
+  onMessageToSource?: (source: object, msg: SessionOutboundMessage) => void;
   onBinaryMessage?: (frame: Uint8Array) => void;
   getTransportBufferedAmount?: () => number | null;
   onLifecycleIntent?: (intent: SessionLifecycleIntent) => void;
@@ -558,6 +559,9 @@ export class Session {
   private clientCapabilities: ReadonlySet<ClientCapability>;
   private readonly sessionId: string;
   private readonly onMessage: (msg: SessionOutboundMessage) => void;
+  private readonly onMessageToSource:
+    | ((source: object, msg: SessionOutboundMessage) => void)
+    | null;
   private readonly onBinaryMessage: ((frame: Uint8Array) => void) | null;
   private readonly getTransportBufferedAmount: () => number | null;
   private readonly onLifecycleIntent: ((intent: SessionLifecycleIntent) => void) | null;
@@ -629,6 +633,7 @@ export class Session {
       appVersion,
       clientCapabilities,
       onMessage,
+      onMessageToSource,
       onBinaryMessage,
       getTransportBufferedAmount,
       onLifecycleIntent,
@@ -679,6 +684,7 @@ export class Session {
     this.clientCapabilities = parseClientCapabilities(clientCapabilities);
     this.sessionId = uuidv4();
     this.onMessage = onMessage;
+    this.onMessageToSource = onMessageToSource ?? null;
     this.onBinaryMessage = onBinaryMessage ?? null;
     this.getTransportBufferedAmount = getTransportBufferedAmount ?? (() => 0);
     this.onLifecycleIntent = onLifecycleIntent ?? null;
@@ -1618,10 +1624,12 @@ export class Session {
         ) {
           this.replaceAgentTimelineSubscription(source, agentIds);
         }
-        this.emit({
+        const response: SessionOutboundMessage = {
           type: "agent.timeline.set_subscription.response",
           payload: { agentIds, requestId: msg.requestId },
-        });
+        };
+        if (source && this.onMessageToSource) this.onMessageToSource(source, response);
+        else this.emit(response);
         return undefined;
       }
       case "agent.fork_context.request":

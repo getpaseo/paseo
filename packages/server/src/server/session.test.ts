@@ -311,6 +311,7 @@ interface SessionForTestOptions {
   daemonRuntimeConfig?: SessionOptions["daemonRuntimeConfig"];
   downloadTokenStore?: SessionOptions["downloadTokenStore"];
   messages?: unknown[];
+  targetedMessages?: Array<{ source: object; message: SessionOutboundMessage }>;
   binaryMessages?: Uint8Array[];
 }
 
@@ -348,6 +349,12 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
   return new Session({
     clientId: "test-client",
     onMessage: (message) => messages.push(message),
+    ...(options.targetedMessages
+      ? {
+          onMessageToSource: (source: object, message: SessionOutboundMessage) =>
+            options.targetedMessages?.push({ source, message }),
+        }
+      : {}),
     onBinaryMessage: createBinaryMessageHandler(options.binaryMessages),
     logger,
     downloadTokenStore: options.downloadTokenStore ?? asDownloadTokenStore(),
@@ -4573,6 +4580,37 @@ test("replaces a capable session's complete viewed timeline set", async () => {
       payload: {
         agentIds: ["agent-a", "agent-b"],
         requestId: "timeline-subscription-1",
+      },
+    },
+  ]);
+});
+
+test("acknowledges a timeline subscription only to its socket source", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const targetedMessages: Array<{ source: object; message: SessionOutboundMessage }> = [];
+  const session = createSessionForTest({ messages, targetedMessages });
+  const capableSocket = {};
+  session.updateClientCapabilities({ selective_agent_timeline: true }, capableSocket);
+
+  await session.handleMessage(
+    {
+      type: "agent.timeline.set_subscription.request",
+      agentIds: ["agent-a"],
+      requestId: "timeline-subscription-targeted",
+    },
+    capableSocket,
+  );
+
+  expect(messages).toEqual([]);
+  expect(targetedMessages).toEqual([
+    {
+      source: capableSocket,
+      message: {
+        type: "agent.timeline.set_subscription.response",
+        payload: {
+          agentIds: ["agent-a"],
+          requestId: "timeline-subscription-targeted",
+        },
       },
     },
   ]);

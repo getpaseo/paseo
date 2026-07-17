@@ -62,7 +62,10 @@ import {
 import { mountBrowserAutomationDaemonClientHandler } from "@/browser-automation/handler";
 import { schedulesQueryBaseKey } from "@/schedules/aggregated-schedules";
 import { sendQueuedComposerMessageNow } from "@/composer/actions";
-import { splitComposerAttachmentsForSubmit } from "@/composer/attachments/submit";
+import {
+  resolveComposerAttachmentSubmitFormat,
+  splitComposerAttachmentsForSubmit,
+} from "@/composer/attachments/submit";
 import { encodeImages } from "@/utils/encode-images";
 
 export type HostRuntimeConnectionStatus = "idle" | "connecting" | "online" | "offline" | "error";
@@ -2141,7 +2144,11 @@ export class HostRuntimeStore {
         write: (update) => useSessionStore.getState().setQueuedMessages(serverId, update),
       },
       submitMessage: async ({ text, attachments }) => {
-        const wirePayload = splitComposerAttachmentsForSubmit(attachments);
+        const supportsForgeAttachments =
+          useSessionStore.getState().sessions[serverId]?.serverInfo?.features?.forgeSearch === true;
+        const wirePayload = splitComposerAttachmentsForSubmit(attachments, {
+          format: resolveComposerAttachmentSubmitFormat({ supportsForgeAttachments }),
+        });
         const images = await encodeImages(wirePayload.images);
         await client.sendAgentMessage(agentId, text, {
           messageId: next.id,

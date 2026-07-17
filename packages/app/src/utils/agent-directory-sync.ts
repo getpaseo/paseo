@@ -180,7 +180,6 @@ export function replaceFetchedAgentDirectory(input: {
   store.setAgentLastActivityBatch(lastActivityByAgentId);
 
   store.setPendingPermissions(input.serverId, new Map(pendingPermissions));
-  store.setInitializingAgents(input.serverId, new Map());
   store.setHasHydratedAgents(input.serverId, true);
   return { agents: fetchedAgents };
 }
