@@ -16,6 +16,7 @@ import { useWorkspaceArchive } from "@/workspace/use-workspace-archive";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import { useClearWorkspaceAttention } from "@/hooks/use-clear-workspace-attention";
+import { useMarkWorkspaceAttention } from "@/hooks/use-mark-workspace-attention";
 import { redirectIfArchivingActiveWorkspace } from "@/utils/sidebar-workspace-archive-redirect";
 import { requireWorkspaceDirectory } from "@/utils/workspace-directory";
 import { isNative as platformIsNative } from "@/constants/platform";
@@ -151,11 +152,22 @@ export function SidebarWorkspaceRow({
     serverId: workspace.serverId,
     workspaceId: workspace.workspaceId,
   });
+  const { hasMarkableAttention, markAttention } = useMarkWorkspaceAttention({
+    serverId: workspace.serverId,
+    workspaceId: workspace.workspaceId,
+  });
   const handleMarkAsRead = useCallback(() => {
     void clearAttention().catch((error) => {
       toast.error(error instanceof Error ? error.message : "Failed to mark workspace as read");
     });
   }, [clearAttention, toast]);
+  const handleMarkAsReadyToReview = useCallback(() => {
+    void markAttention().catch((error) => {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to mark workspace as ready to review",
+      );
+    });
+  }, [markAttention, toast]);
 
   useKeyboardActionHandler({
     handlerId: `workspace-archive-${workspace.workspaceKey}`,
@@ -190,6 +202,7 @@ export function SidebarWorkspaceRow({
         onCopyPath={handleCopyPath}
         onRename={handleOpenRename}
         onMarkAsRead={hasClearableAttention ? handleMarkAsRead : undefined}
+        onMarkAsReadyToReview={hasMarkableAttention ? handleMarkAsReadyToReview : undefined}
         archiveShortcutKeys={selected ? archiveShortcutKeys : null}
       />
       <AdaptiveRenameModal
@@ -226,6 +239,7 @@ interface WorkspaceRowBodyProps {
   onCopyPath?: () => void;
   onRename?: () => void;
   onMarkAsRead?: () => void;
+  onMarkAsReadyToReview?: () => void;
   archiveShortcutKeys?: ShortcutKey[][] | null;
 }
 
@@ -249,6 +263,7 @@ function WorkspaceRowBody({
   onCopyPath,
   onRename,
   onMarkAsRead,
+  onMarkAsReadyToReview,
   archiveShortcutKeys,
 }: WorkspaceRowBodyProps) {
   const isTouchPlatform = platformIsNative;
@@ -335,6 +350,7 @@ function WorkspaceRowBody({
                   onCopyPath={onCopyPath}
                   onRename={onRename}
                   onMarkAsRead={onMarkAsRead}
+                  onMarkAsReadyToReview={onMarkAsReadyToReview}
                 />
               </SidebarWorkspaceRowContent>
             </Pressable>
@@ -358,6 +374,7 @@ function WorkspaceRowTrailingActions({
   archiveShortcutKeys,
   onArchive,
   onMarkAsRead,
+  onMarkAsReadyToReview,
   onCopyBranchName,
   onCopyPath,
   onRename,
@@ -374,6 +391,7 @@ function WorkspaceRowTrailingActions({
   archiveShortcutKeys?: ShortcutKey[][] | null;
   onArchive?: () => void;
   onMarkAsRead?: () => void;
+  onMarkAsReadyToReview?: () => void;
   onCopyBranchName?: () => void;
   onCopyPath?: () => void;
   onRename?: () => void;
@@ -409,6 +427,7 @@ function WorkspaceRowTrailingActions({
                 onCopyBranchName={onCopyBranchName}
                 onRename={onRename}
                 onMarkAsRead={onMarkAsRead}
+                onMarkAsReadyToReview={onMarkAsReadyToReview}
                 onArchive={onArchive}
                 archiveLabel={archiveLabel}
                 archiveStatus={archiveStatus}

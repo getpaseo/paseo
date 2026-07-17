@@ -1779,6 +1779,32 @@ export class DaemonClient {
     }
   }
 
+  async markWorkspaceAttention(workspaceId: string | string[]): Promise<void> {
+    const requestId = this.createRequestId();
+    const message = SessionInboundMessageSchema.parse({
+      type: "workspace.set_attention.request",
+      workspaceId,
+      requestId,
+    });
+    const response = await this.sendRequest({
+      requestId,
+      message,
+      options: { skipQueue: true },
+      select: (msg) => {
+        if (msg.type !== "workspace.set_attention.response") {
+          return null;
+        }
+        if (msg.payload.requestId !== requestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+    });
+    if (!response.success) {
+      throw new Error(response.error ?? "Failed to set workspace attention");
+    }
+  }
+
   sendHeartbeat(params: {
     deviceType: "web" | "mobile";
     focusedAgentId: string | null;

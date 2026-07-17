@@ -898,6 +898,8 @@ export const zhCN: TranslationResources = {
         copyPath: "复制路径",
         copyBranchName: "复制分支名称",
         rename: "重命名 workspace",
+        markAsRead: "标记为已读",
+        markAsReadyToReview: "标记为准备审查",
         pin: "置顶",
         unpin: "取消置顶",
         archive: "归档",

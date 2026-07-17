@@ -10,6 +10,7 @@ import {
   isDelegatedAgent,
   PARENT_AGENT_ID_LABEL,
 } from "@getpaseo/protocol/agent-labels";
+import type { AgentAttentionReason } from "@getpaseo/protocol/agent-state-bucket";
 import type { Logger } from "pino";
 import { z } from "zod";
 import type { TerminalManager } from "../../terminal/terminal-manager.js";
@@ -272,7 +273,7 @@ type AttentionState =
   | { requiresAttention: false }
   | {
       requiresAttention: true;
-      attentionReason: "finished" | "error" | "permission";
+      attentionReason: "finished" | "error" | "permission" | "manual";
       attentionTimestamp: Date;
     };
 
@@ -1637,6 +1638,23 @@ export class AgentManager {
       await this.persistSnapshot(agent);
       this.emitState(agent, { persist: false });
     }
+  }
+
+  async markAgentAttention(
+    agentId: string,
+    reason: Exclude<AgentAttentionReason, null | undefined>,
+  ): Promise<void> {
+    if (!reason) {
+      throw new Error("Cannot mark agent attention without a reason");
+    }
+    const agent = this.requireAgent(agentId);
+    agent.attention = {
+      requiresAttention: true,
+      attentionReason: reason,
+      attentionTimestamp: new Date(),
+    };
+    await this.persistSnapshot(agent);
+    this.emitState(agent, { persist: false });
   }
 
   async archiveSnapshot(agentId: string, archivedAt: string): Promise<StoredAgentRecord> {

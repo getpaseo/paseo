@@ -4,7 +4,7 @@ interface ShouldClearAgentAttentionInput {
   agentId: string | null | undefined;
   isConnected: boolean;
   requiresAttention: boolean | null | undefined;
-  attentionReason?: "finished" | "error" | "permission" | null | undefined;
+  attentionReason?: "finished" | "error" | "permission" | "manual" | null | undefined;
   trigger?: AgentAttentionClearTrigger;
   hasDeferredFocusEntryClear?: boolean;
 }
@@ -19,6 +19,7 @@ const ATTENTION_REASON_PRIORITY = {
   permission: 0,
   error: 1,
   finished: 2,
+  manual: 3,
 } as const;
 
 function getAttentionPriority(reason: Agent["attentionReason"]): number | null {
