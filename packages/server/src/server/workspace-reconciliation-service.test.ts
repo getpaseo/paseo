@@ -951,6 +951,102 @@ describe("WorkspaceReconciliationService", () => {
     expect(workspaces.get(workspace.workspaceId)).toEqual(workspace);
   });
 
+  test("archives non-directory workspaces without blocking sibling reconciliation", async () => {
+    const projectRoot = mkdtempSync(path.join(tmpdir(), "reconcile-file-workspace-"));
+    const replacedWorkspace = path.join(projectRoot, "replaced-workspace");
+    const siblingWorkspace = path.join(projectRoot, "sibling-workspace");
+    writeFileSync(replacedWorkspace, "not a directory\n");
+    mkdirSync(siblingWorkspace);
+    tempDirs.push(projectRoot);
+
+    const { projects, workspaces, projectRegistry, workspaceRegistry } = createTestRegistries();
+    projects.set(
+      "p1",
+      createPersistedProjectRecord({
+        projectId: "p1",
+        rootPath: projectRoot,
+        kind: "non_git",
+        displayName: "project",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      }),
+    );
+    workspaces.set(
+      "replaced",
+      createPersistedWorkspaceRecord({
+        workspaceId: "replaced",
+        projectId: "p1",
+        cwd: replacedWorkspace,
+        kind: "directory",
+        displayName: "replaced-workspace",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      }),
+    );
+    workspaces.set(
+      "sibling",
+      createPersistedWorkspaceRecord({
+        workspaceId: "sibling",
+        projectId: "p1",
+        cwd: siblingWorkspace,
+        kind: "directory",
+        displayName: "sibling-workspace",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      }),
+    );
+
+    const service = new WorkspaceReconciliationService({
+      projectRegistry,
+      workspaceRegistry,
+      logger: createTestLogger(),
+      workspaceGitService: {
+        getCheckout: async (cwd) => {
+          if (cwd === replacedWorkspace) {
+            throw new Error("Git cannot use a regular file as cwd");
+          }
+          return createCheckout(cwd, {
+            isGit: true,
+            currentBranch: cwd === siblingWorkspace ? "feature/sibling" : "main",
+            worktreeRoot: cwd,
+          });
+        },
+      },
+    });
+
+    const result = await service.runOnce();
+
+    expect(result.changesApplied).toEqual([
+      {
+        kind: "workspace_archived",
+        workspaceId: "replaced",
+        directory: replacedWorkspace,
+        reason: "directory_missing",
+      },
+      {
+        kind: "project_updated",
+        projectId: "p1",
+        directory: projectRoot,
+        fields: { kind: "git" },
+      },
+      {
+        kind: "workspace_updated",
+        workspaceId: "sibling",
+        directory: siblingWorkspace,
+        fields: {
+          kind: "local_checkout",
+          branch: "feature/sibling",
+          worktreeRoot: siblingWorkspace,
+        },
+      },
+    ]);
+    expect(workspaces.get("replaced")?.archivedAt).toEqual(expect.any(String));
+    expect(workspaces.get("sibling")).toMatchObject({
+      kind: "local_checkout",
+      branch: "feature/sibling",
+    });
+  });
+
   test("updates workspace branch metadata without clobbering the workspace name", async () => {
     const dir = createTempGitRepo("reconcile-branch-");
     tempDirs.push(dir);

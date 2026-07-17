@@ -724,11 +724,15 @@ export async function resolveWorktreeRuntimeEnv(options: {
 
 export async function runWorktreeTeardownCommands(options: {
   worktreePath: string;
+  teardownCwd?: string;
   branchName?: string;
   repoRootPath?: string;
 }): Promise<WorktreeTeardownCommandResult[]> {
-  // Read paseo.json from the worktree (it will have the same content as the source repo)
-  const teardownCommands = getWorktreeTeardownCommands(options.worktreePath);
+  const teardownCwd = options.teardownCwd ?? options.worktreePath;
+  if (getRealpathAwareRelativePath(options.worktreePath, teardownCwd) === null) {
+    throw new Error(`Worktree teardown cwd is outside the worktree: ${teardownCwd}`);
+  }
+  const teardownCommands = getWorktreeTeardownCommands(teardownCwd);
   if (teardownCommands.length === 0) {
     return [];
   }
@@ -756,7 +760,7 @@ export async function runWorktreeTeardownCommands(options: {
   const results: WorktreeTeardownCommandResult[] = [];
   for (const cmd of teardownCommands) {
     const result = await execSetupCommand(cmd, {
-      cwd: options.worktreePath,
+      cwd: teardownCwd,
       env: teardownEnv,
     });
     results.push(result);
@@ -1106,6 +1110,7 @@ export async function resolvePaseoWorktreeRootForCwd(
 export async function deletePaseoWorktree({
   cwd,
   worktreePath,
+  teardownCwd,
   worktreeSlug,
   worktreesRoot,
   paseoHome,
@@ -1113,6 +1118,7 @@ export async function deletePaseoWorktree({
 }: {
   cwd: string | null;
   worktreePath?: string;
+  teardownCwd?: string;
   worktreeSlug?: string;
   worktreesRoot?: string;
   paseoHome?: string;
@@ -1152,6 +1158,7 @@ export async function deletePaseoWorktree({
   if (await pathExists(resolvedWorktree)) {
     await runWorktreeTeardownCommands({
       worktreePath: resolvedWorktree,
+      teardownCwd,
     });
   }
 

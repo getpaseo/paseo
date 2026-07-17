@@ -216,8 +216,6 @@ export class CreateAgentLifecycleDispatch {
       },
       {
         scope: { kind: "workspace", workspaceId: createdWorktree.workspace.workspaceId },
-        repoRoot: createdWorktree.repoRoot ?? ownership.repoRoot ?? null,
-        paseoWorktreesBaseRoot: this.dependencies.worktreesRoot,
         requestId: randomUUID(),
       },
     );

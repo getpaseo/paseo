@@ -138,7 +138,6 @@ function createScheduleService(options: TestScheduleServiceOptions): ScheduleSer
         },
         {
           scope: { kind: "workspace", workspaceId },
-          repoRoot: null,
           requestId: "schedule-service-test",
         },
       );
@@ -242,7 +241,6 @@ async function createRegistryBackedScheduleWorkspaceDeps(rootDir: string): Promi
             },
             {
               scope: { kind: "workspace", workspaceId },
-              repoRoot: null,
               requestId: "schedule-service-test",
             },
           );
@@ -1906,7 +1904,7 @@ describe("ScheduleService", () => {
       ],
     }));
 
-    const archiveCalls: Array<{ workspaceId: string; repoRoot: string }> = [];
+    const archiveCalls: string[] = [];
     now = new Date("2026-01-01T00:10:00.000Z");
     const service2 = createScheduleService({
       paseoHome: tempDir,
@@ -1916,13 +1914,13 @@ describe("ScheduleService", () => {
       providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
       now: () => now,
       runner: async () => ({ agentId: null, output: "ok" }),
-      archiveWorkspace: async (archivedWorkspaceId, repoRoot) => {
-        archiveCalls.push({ workspaceId: archivedWorkspaceId, repoRoot });
+      archiveWorkspace: async (archivedWorkspaceId) => {
+        archiveCalls.push(archivedWorkspaceId);
       },
     });
     await service2.start();
 
-    expect(archiveCalls).toEqual([{ workspaceId, repoRoot: tempDir }]);
+    expect(archiveCalls).toEqual([workspaceId]);
     const inspected = await service2.inspect(created.id);
     expect(inspected.runs[0]).toMatchObject({
       status: "failed",
@@ -1974,7 +1972,7 @@ describe("ScheduleService", () => {
       ],
     }));
 
-    const archiveCalls: Array<{ workspaceId: string; repoRoot: string }> = [];
+    const archiveCalls: string[] = [];
     now = new Date("2026-01-01T00:10:00.000Z");
     const service2 = createScheduleService({
       paseoHome: tempDir,
@@ -1984,13 +1982,13 @@ describe("ScheduleService", () => {
       providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
       now: () => now,
       runner: async () => ({ agentId: null, output: "ok" }),
-      archiveWorkspace: async (archivedWorkspaceId, repoRoot) => {
-        archiveCalls.push({ workspaceId: archivedWorkspaceId, repoRoot });
+      archiveWorkspace: async (archivedWorkspaceId) => {
+        archiveCalls.push(archivedWorkspaceId);
       },
     });
     await service2.start();
 
-    expect(archiveCalls).toEqual([{ workspaceId, repoRoot: tempDir }]);
+    expect(archiveCalls).toEqual([workspaceId]);
     const inspected = await service2.inspect(created.id);
     expect(inspected.runs[0]).toMatchObject({
       status: "failed",

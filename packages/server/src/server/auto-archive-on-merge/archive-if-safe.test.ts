@@ -486,8 +486,6 @@ describe("archiveIfSafe", () => {
       }),
       {
         scope: { kind: "workspace", workspaceId: "ws-auto-archive" },
-        repoRoot: "/tmp/repo",
-        paseoWorktreesBaseRoot: undefined,
         requestId: "auto-archive-on-merge",
       },
     );

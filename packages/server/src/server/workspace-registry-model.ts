@@ -9,11 +9,6 @@ import type { PersistedWorkspaceRecord } from "./workspace-registry.js";
 export type PersistedProjectKind = "git" | "non_git";
 export type PersistedWorkspaceKind = "local_checkout" | "worktree" | "directory";
 
-export interface DetectStaleWorkspacesInput {
-  activeWorkspaces: PersistedWorkspaceRecord[];
-  checkDirectoryExists: (cwd: string) => Promise<boolean>;
-}
-
 export function generateWorkspaceId(): string {
   return `wks_${randomBytes(8).toString("hex")}`;
 }
@@ -230,24 +225,4 @@ export function checkoutLiteFromGitSnapshot(
     isPaseoOwnedWorktree: false,
     mainRepoRoot: git.mainRepoRoot,
   };
-}
-
-export async function detectStaleWorkspaces(
-  input: DetectStaleWorkspacesInput,
-): Promise<Set<string>> {
-  const staleWorkspaceIds = new Set<string>();
-
-  const existenceChecks = await Promise.all(
-    input.activeWorkspaces.map(async (workspace) => ({
-      workspace,
-      exists: await input.checkDirectoryExists(workspace.cwd),
-    })),
-  );
-  for (const { workspace, exists } of existenceChecks) {
-    if (!exists) {
-      staleWorkspaceIds.add(workspace.workspaceId);
-    }
-  }
-
-  return staleWorkspaceIds;
 }

@@ -224,7 +224,7 @@ export interface ScheduleServiceOptions {
   createPaseoWorktreeWorkspace: (
     input: ScheduleWorkspaceCreateInput,
   ) => Promise<CreatePaseoWorktreeWorkflowResult>;
-  archiveWorkspace: (workspaceId: string, repoRoot: string) => Promise<void>;
+  archiveWorkspace: (workspaceId: string) => Promise<void>;
   now?: () => Date;
   runner?: (schedule: StoredSchedule, runId: string) => Promise<ScheduleExecutionResult>;
 }
@@ -241,7 +241,7 @@ export class ScheduleService {
   private readonly createPaseoWorktreeWorkspace: (
     input: ScheduleWorkspaceCreateInput,
   ) => Promise<CreatePaseoWorktreeWorkflowResult>;
-  private readonly archiveWorkspace: (workspaceId: string, repoRoot: string) => Promise<void>;
+  private readonly archiveWorkspace: (workspaceId: string) => Promise<void>;
   private readonly now: () => Date;
   private readonly runner: (
     schedule: StoredSchedule,
@@ -579,7 +579,6 @@ export class ScheduleService {
   private async recoverInterruptedSchedule(scheduleId: string, now: Date): Promise<void> {
     const interruptedWorkspaces: Array<{
       workspaceId: string;
-      repoRoot: string;
       agentId: string | null;
       runId: string;
     }> = [];
@@ -601,7 +600,6 @@ export class ScheduleService {
         ) {
           interruptedWorkspaces.push({
             workspaceId: runningRun.workspaceId,
-            repoRoot: updated.target.config.cwd,
             agentId: runningRun.agentId,
             runId: runningRun.id,
           });
@@ -639,7 +637,7 @@ export class ScheduleService {
       return;
     }
     try {
-      await this.archiveWorkspace(interruptedWorkspace.workspaceId, interruptedWorkspace.repoRoot);
+      await this.archiveWorkspace(interruptedWorkspace.workspaceId);
     } catch (error) {
       this.logger.warn(
         {
@@ -930,7 +928,7 @@ export class ScheduleService {
         shouldArchiveScheduleRunWorkspace({ agentId, archiveOnFinish: config.archiveOnFinish })
       ) {
         try {
-          await this.archiveWorkspace(workspace.workspaceId, config.cwd);
+          await this.archiveWorkspace(workspace.workspaceId);
         } catch (error) {
           this.logger.warn(
             {

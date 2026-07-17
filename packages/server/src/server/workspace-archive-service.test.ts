@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import pino, { type Logger } from "pino";
@@ -205,7 +205,6 @@ describe("archiveByScope", () => {
       }),
       {
         scope: { kind: "workspace", workspaceId },
-        repoRoot: repoDir,
         requestId: "req-last-ref-workspace",
       },
     );
@@ -234,7 +233,6 @@ describe("archiveByScope", () => {
       }),
       {
         scope: { kind: "workspace", workspaceId: workspaceA },
-        repoRoot: repoDir,
         requestId: "req-sibling-workspace",
       },
     );
@@ -277,7 +275,6 @@ describe("archiveByScope", () => {
       }),
       {
         scope: { kind: "workspace", workspaceId: sourceWorkspaceId },
-        repoRoot: repoDir,
         requestId: "req-subdirectory-sibling",
       },
     );
@@ -320,7 +317,6 @@ describe("archiveByScope", () => {
       }),
       {
         scope: { kind: "workspace", workspaceId: subdirectoryWorkspaceId },
-        repoRoot: repoDir,
         requestId: "req-subdirectory-target",
       },
     );
@@ -330,6 +326,60 @@ describe("archiveByScope", () => {
       removedDirectory: false,
     });
     expect(existsSync(worktree.worktreePath)).toBe(true);
+  });
+
+  test("workspace scope runs teardown from the exact nested workspace before deleting its worktree", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const nestedRelative = path.join("packages", "app");
+    const sourceNested = path.join(repoDir, nestedRelative);
+    mkdirSync(sourceNested, { recursive: true });
+    writeFileSync(
+      path.join(sourceNested, "paseo.json"),
+      JSON.stringify({
+        worktree: {
+          teardown: [
+            "node -e \"require('fs').writeFileSync(process.env.PASEO_SOURCE_CHECKOUT_PATH + '/nested-teardown.log', process.cwd())\"",
+          ],
+        },
+      }),
+    );
+    execFileSync("git", ["add", "."], { cwd: repoDir, stdio: "pipe" });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "nested teardown"], {
+      cwd: repoDir,
+      stdio: "pipe",
+    });
+
+    const paseoHome = path.join(tempDir, ".paseo");
+    const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "nested-teardown");
+    const workspaceCwd = path.join(worktree.worktreePath, nestedRelative);
+    const workspaceId = "ws-nested-teardown";
+
+    const result = await archiveByScope(
+      createArchiveDeps({
+        paseoHome,
+        activeWorkspaces: [
+          {
+            workspaceId,
+            cwd: workspaceCwd,
+            kind: "worktree",
+            worktreeRoot: worktree.worktreePath,
+            isPaseoOwnedWorktree: true,
+            mainRepoRoot: repoDir,
+          },
+        ],
+      }),
+      {
+        scope: { kind: "workspace", workspaceId },
+        requestId: "req-nested-teardown",
+      },
+    );
+
+    assertArchiveResult(result, {
+      archivedWorkspaceIds: [workspaceId],
+      removedDirectory: true,
+    });
+    expect(existsSync(worktree.worktreePath)).toBe(false);
+    expect(readFileSync(path.join(repoDir, "nested-teardown.log"), "utf8")).toBe(workspaceCwd);
   });
 
   test("worktree scope archives root and subdirectory workspaces before removing the backing worktree", async () => {
@@ -371,7 +421,6 @@ describe("archiveByScope", () => {
       }),
       {
         scope: { kind: "worktree", targetPath: worktree.worktreePath },
-        repoRoot: repoDir,
         requestId: "req-worktree-scope",
       },
     );
@@ -396,7 +445,6 @@ describe("archiveByScope", () => {
       }),
       {
         scope: { kind: "workspace", workspaceId },
-        repoRoot: null,
         requestId: "req-local-checkout",
       },
     );
@@ -432,7 +480,6 @@ describe("archiveByScope", () => {
 
     const result = await archiveByScope(deps, {
       scope: { kind: "worktree", targetPath: worktree.worktreePath },
-      repoRoot: repoDir,
       requestId: "req-partial-failure",
     });
 
@@ -457,7 +504,6 @@ describe("archiveByScope", () => {
 
     const result = await archiveByScope(deps, {
       scope: { kind: "workspace", workspaceId: "ws-does-not-exist" },
-      repoRoot: null,
       requestId: "req-unknown-workspace",
     });
 
@@ -482,7 +528,6 @@ describe("archiveByScope", () => {
       }),
       {
         scope: { kind: "worktree", targetPath: worktree.worktreePath },
-        repoRoot: repoDir,
         requestId: "req-zero-records",
       },
     );
@@ -562,7 +607,6 @@ describe("archiveByScope", () => {
 
     await archiveByScope(deps, {
       scope: { kind: "workspace", workspaceId },
-      repoRoot: repoDir,
       requestId: "req-lifecycle",
     });
 
@@ -616,7 +660,6 @@ describe("archiveByScope", () => {
 
     const result = await archiveByScope(deps, {
       scope: { kind: "workspace", workspaceId: targetWorkspaceId },
-      repoRoot: repoDir,
       requestId: "req-snapshot-scope",
     });
 
@@ -650,7 +693,6 @@ describe("archiveByScope", () => {
       }),
       {
         scope: { kind: "worktree", targetPath: worktree.worktreePath },
-        repoRoot: repoDir,
         requestId: "req-worktree-scope-n3",
       },
     );

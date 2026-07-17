@@ -39,7 +39,6 @@ import {
   writePaseoWorktreeFirstAgentBranchAutoNameMetadata,
   writePaseoWorktreeMetadata,
 } from "../utils/worktree-metadata.js";
-import { WorktreeRequestError } from "./worktree-errors.js";
 import type { WorkspaceGitRuntimeSnapshot } from "./workspace-git-service.js";
 import type { GeneratedWorkspaceName } from "./worktree-branch-name-generator.js";
 import { WorkspaceAutoName } from "./workspace-auto-name.js";
@@ -129,7 +128,6 @@ interface SessionTestAccess {
   agentUpdates: AgentUpdatesService;
   workspaceUpdatesSubscription: unknown;
   interruptAgentIfRunning(agentId: string): unknown;
-  recreateArchivedWorktree(workspace: PersistedWorkspaceRecord): Promise<void>;
   reconcileActiveWorkspaceRecords(...args: unknown[]): Promise<Set<string>>;
   reconcileWorkspaceRecord(workspaceId: string): Promise<{
     changed: boolean;
@@ -5389,127 +5387,6 @@ test("legacy refresh_agent_request restores a real deleted worktree", async () =
   expect(workspaces.get(workspaceId)?.workspaceId).toBe(workspaceId);
   expect(workspaces.get(workspaceId)?.cwd).toBe(worktreePath);
   expect(workspaces.get(workspaceId)?.archivedAt).toBeNull();
-
-  rmSync(tempDir, { recursive: true, force: true });
-});
-
-test("recreateArchivedWorktree restores an archived exact subdirectory", async () => {
-  const { tempDir, repoDir } = createRecreateWorktreeRepo();
-  const sourceSubdirectory = path.join(repoDir, "packages", "app");
-  mkdirSync(sourceSubdirectory, { recursive: true });
-  writeFileSync(path.join(sourceSubdirectory, "README.md"), "app\n");
-  execFileSync("git", ["add", "."], { cwd: repoDir, stdio: "pipe" });
-  execFileSync("git", ["commit", "-m", "add app"], { cwd: repoDir, stdio: "pipe" });
-  const branch = "feature/subdirectory";
-  execFileSync("git", ["branch", branch], { cwd: repoDir, stdio: "pipe" });
-
-  const worktreesRoot = path.join(tempDir, "worktrees");
-  const paseoHome = path.join(tempDir, "paseo-home");
-  const created = await createWorktree({
-    cwd: repoDir,
-    worktreeSlug: "subdirectory",
-    source: { kind: "checkout-branch", branchName: branch },
-    runSetup: false,
-    paseoHome,
-    worktreesRoot,
-  });
-  const worktreeRoot = realpathSync(created.worktreePath);
-  const workspaceCwd = path.join(worktreeRoot, "packages", "app");
-  rmSync(worktreeRoot, { recursive: true, force: true });
-  execFileSync("git", ["worktree", "prune"], { cwd: repoDir, stdio: "pipe" });
-
-  const session = createSessionForWorkspaceTests({ paseoHome, worktreesRoot });
-  const project = createPersistedProjectRecord({
-    projectId: repoDir,
-    rootPath: repoDir,
-    kind: "git",
-    displayName: "worktree-project",
-    createdAt: "2026-03-01T12:00:00.000Z",
-    updatedAt: "2026-03-10T00:00:00.000Z",
-    archivedAt: "2026-03-10T00:00:00.000Z",
-  });
-  session.projectRegistry.get = async () => project;
-
-  await session.recreateArchivedWorktree(
-    createPersistedWorkspaceRecord({
-      workspaceId: "ws-subdirectory-recreate",
-      projectId: project.projectId,
-      cwd: workspaceCwd,
-      kind: "worktree",
-      branch,
-      worktreeRoot,
-      isPaseoOwnedWorktree: true,
-      mainRepoRoot: repoDir,
-      displayName: branch,
-      createdAt: "2026-03-01T12:00:00.000Z",
-      updatedAt: "2026-03-10T00:00:00.000Z",
-      archivedAt: "2026-03-10T00:00:00.000Z",
-    }),
-  );
-
-  expect(existsSync(worktreeRoot)).toBe(true);
-  expect(existsSync(workspaceCwd)).toBe(true);
-  rmSync(tempDir, { recursive: true, force: true });
-});
-
-test("recreateArchivedWorktree throws a typed WorktreeRequestError when the project root is missing", async () => {
-  const { tempDir, repoDir } = createRecreateWorktreeRepo();
-  const branch = "feature/keep";
-  execFileSync("git", ["branch", branch], { cwd: repoDir, stdio: "pipe" });
-
-  const worktreesRoot = path.join(tempDir, "worktrees");
-  const paseoHome = path.join(tempDir, "paseo-home");
-  const created = await createWorktree({
-    cwd: repoDir,
-    worktreeSlug: "keep",
-    source: { kind: "checkout-branch", branchName: branch },
-    runSetup: false,
-    paseoHome,
-    worktreesRoot,
-  });
-  const worktreePath = realpathSync(created.worktreePath);
-
-  const session = createSessionForWorkspaceTests({ paseoHome, worktreesRoot });
-  const projects = new Map<string, ReturnType<typeof createPersistedProjectRecord>>();
-  const workspaces = new Map<string, ReturnType<typeof createPersistedWorkspaceRecord>>();
-  const workspaceId = "ws-missing-root";
-  const projectId = repoDir;
-  const missingRoot = path.join(tempDir, "does-not-exist");
-  projects.set(
-    projectId,
-    createPersistedProjectRecord({
-      projectId,
-      rootPath: missingRoot,
-      kind: "git",
-      displayName: "worktree-project",
-      createdAt: "2026-03-01T12:00:00.000Z",
-      updatedAt: "2026-03-10T00:00:00.000Z",
-      archivedAt: "2026-03-10T00:00:00.000Z",
-    }),
-  );
-  const workspaceRecord = createPersistedWorkspaceRecord({
-    workspaceId,
-    projectId,
-    cwd: worktreePath,
-    kind: "worktree",
-    branch,
-    displayName: branch,
-    createdAt: "2026-03-01T12:00:00.000Z",
-    updatedAt: "2026-03-10T00:00:00.000Z",
-    archivedAt: "2026-03-10T00:00:00.000Z",
-  });
-  workspaces.set(workspaceId, workspaceRecord);
-
-  session.projectRegistry.get = async (id: string) => projects.get(id) ?? null;
-  session.workspaceRegistry.get = async (id: string) => workspaces.get(id) ?? null;
-  session.filesystem.isDirectory = async (target: string) =>
-    existsSync(target) && statSync(target).isDirectory();
-
-  await expect(session.recreateArchivedWorktree(workspaceRecord)).rejects.toBeInstanceOf(
-    WorktreeRequestError,
-  );
-  // Guard fires before createWorktree, so archivedAt is untouched.
-  expect(workspaces.get(workspaceId)?.archivedAt).toBe("2026-03-10T00:00:00.000Z");
 
   rmSync(tempDir, { recursive: true, force: true });
 });

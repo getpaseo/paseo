@@ -1,4 +1,4 @@
-import { existsSync, watch as watchPath } from "node:fs";
+import { statSync, watch as watchPath } from "node:fs";
 import type { ProjectCheckoutLitePayload } from "@getpaseo/protocol/messages";
 import type pino from "pino";
 import type {
@@ -107,6 +107,8 @@ interface CachedCheckoutRead {
   checkout: Promise<ProjectCheckoutLitePayload>;
 }
 
+type DirectoryState = "directory" | "missing" | "unreadable";
+
 export class WorkspaceReconciliationService {
   private readonly projectRegistry: ProjectRegistry;
   private readonly workspaceRegistry: WorkspaceRegistry;
@@ -189,13 +191,15 @@ export class WorkspaceReconciliationService {
     ]);
     const workspacesByProject = new Map<string, PersistedWorkspaceRecord[]>();
     for (const workspace of workspaces) {
-      if (workspace.archivedAt) continue;
+      if (workspace.archivedAt || this.inspectDirectory(workspace.cwd) !== "directory") continue;
       const siblings = workspacesByProject.get(workspace.projectId) ?? [];
       siblings.push(workspace);
       workspacesByProject.set(workspace.projectId, siblings);
     }
     await this.reconcileGitMetadataForProjects(
-      projects.filter((project) => !project.archivedAt && existsSync(project.rootPath)),
+      projects.filter(
+        (project) => !project.archivedAt && this.inspectDirectory(project.rootPath) === "directory",
+      ),
       workspacesByProject,
       changes,
     );
@@ -212,16 +216,23 @@ export class WorkspaceReconciliationService {
 
     const activeProjects = allProjects.filter((p) => !p.archivedAt);
     const activeWorkspaces = allWorkspaces.filter((w) => !w.archivedAt);
+    const workspaceDirectoryStates = activeWorkspaces.map((workspace) => ({
+      workspace,
+      state: this.inspectDirectory(workspace.cwd),
+    }));
 
     const workspacesByProject = new Map<string, PersistedWorkspaceRecord[]>();
-    for (const workspace of activeWorkspaces) {
+    for (const { workspace, state } of workspaceDirectoryStates) {
+      if (state !== "directory") continue;
       const list = workspacesByProject.get(workspace.projectId) ?? [];
       list.push(workspace);
       workspacesByProject.set(workspace.projectId, list);
     }
 
     // 1. Archive workspaces whose directories no longer exist
-    const missingWorkspaces = activeWorkspaces.filter((workspace) => !existsSync(workspace.cwd));
+    const missingWorkspaces = workspaceDirectoryStates
+      .filter(({ state }) => state === "missing")
+      .map(({ workspace }) => workspace);
     await Promise.all(
       missingWorkspaces.map(async (workspace) => {
         const timestamp = new Date().toISOString();
@@ -246,7 +257,7 @@ export class WorkspaceReconciliationService {
     //    Projects persist until explicitly removed, even when they currently have
     //    zero active workspaces, so they still reconcile their own metadata.
     await this.reconcileGitMetadataForProjects(
-      activeProjects.filter((project) => existsSync(project.rootPath)),
+      activeProjects.filter((project) => this.inspectDirectory(project.rootPath) === "directory"),
       workspacesByProject,
       changes,
     );
@@ -313,9 +324,8 @@ export class WorkspaceReconciliationService {
 
   private async reconcileProject(input: ProjectReconciliationInput): Promise<void> {
     const { project, siblings, currentGit, readCheckout, changes } = input;
-    const existingSiblings = siblings.filter((workspace) => existsSync(workspace.cwd));
     const workspaceCheckouts = await Promise.all(
-      existingSiblings.map(async (workspace) => ({
+      siblings.map(async (workspace) => ({
         workspace,
         checkout: await readCheckout(workspace.cwd),
       })),
@@ -476,4 +486,22 @@ export class WorkspaceReconciliationService {
     }
     return this.workspaceGitService.getCheckout(cwd);
   }
+
+  private inspectDirectory(targetPath: string): DirectoryState {
+    try {
+      return statSync(targetPath).isDirectory() ? "directory" : "missing";
+    } catch (error) {
+      if (isMissingPathError(error)) return "missing";
+      this.logger.warn(
+        { err: error, targetPath },
+        "Skipped workspace reconciliation after directory inspection failed",
+      );
+      return "unreadable";
+    }
+  }
+}
+
+function isMissingPathError(error: unknown): boolean {
+  if (typeof error !== "object" || error === null || !("code" in error)) return false;
+  return error.code === "ENOENT" || error.code === "ENOTDIR";
 }
