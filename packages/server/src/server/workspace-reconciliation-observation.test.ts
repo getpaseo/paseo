@@ -169,6 +169,7 @@ class ObservedPlacements {
   private readonly failedWatchRoots = new Set<string>();
   private readonly projectEvents: ProjectUpdate[] = [];
   private readonly workspaceEvents: string[][] = [];
+  private readonly workspaceEventWaiters: Array<() => void> = [];
   private readonly lifecycleEvents: string[] = [];
   private readonly service: WorkspaceReconciliationService;
   private started = false;
@@ -206,7 +207,10 @@ class ObservedPlacements {
             : `project published:remove:${update.projectId}`,
         );
       },
-      onWorkspacesChanged: async (workspaceIds) => void this.workspaceEvents.push(workspaceIds),
+      onWorkspacesChanged: async (workspaceIds) => {
+        this.workspaceEvents.push(workspaceIds);
+        this.workspaceEventWaiters.shift()?.();
+      },
     });
   }
 
@@ -305,6 +309,10 @@ class ObservedPlacements {
 
   get workspaceBatches(): string[][] {
     return this.workspaceEvents.map((batch) => [...batch]);
+  }
+
+  waitForWorkspaceBatch(): Promise<void> {
+    return new Promise((resolve) => this.workspaceEventWaiters.push(resolve));
   }
 
   get lifecycle(): string[] {
@@ -471,6 +479,28 @@ describe("observed workspace placement", () => {
     await observed.deleteWorkspaceDirectory("workspace-one");
 
     await observed.advanceBy(RESCAN_INTERVAL_MS);
+
+    expect((await observed.placement("workspace-one"))?.archivedAt).toEqual(expect.any(String));
+    expect(observed.workspaceBatches).toEqual([["workspace-one"]]);
+    observed.dispose();
+  });
+
+  test("preserves a periodic full pass queued behind metadata reconciliation", async () => {
+    const observed = new ObservedPlacements([
+      { id: "project-one", root: "repo", workspaces: [{ id: "workspace-one", cwd: "repo" }] },
+    ]);
+    await observed.start();
+    const metadataRead = observed.holdNextReconciliation();
+    observed.change("repo", ".git");
+    const metadataPass = observed.advanceBy(DEBOUNCE_MS);
+    await metadataRead.started;
+    await observed.deleteWorkspaceDirectory("workspace-one");
+    const workspaceBatch = observed.waitForWorkspaceBatch();
+
+    await observed.advanceBy(RESCAN_INTERVAL_MS);
+    metadataRead.release();
+    await metadataPass;
+    await workspaceBatch;
 
     expect((await observed.placement("workspace-one"))?.archivedAt).toEqual(expect.any(String));
     expect(observed.workspaceBatches).toEqual([["workspace-one"]]);

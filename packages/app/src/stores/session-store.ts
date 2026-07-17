@@ -494,12 +494,6 @@ interface SessionStoreActions {
   setEmptyProjects: (serverId: string, emptyProjects: Iterable<EmptyProjectDescriptor>) => void;
   addEmptyProject: (serverId: string, emptyProject: EmptyProjectDescriptor) => void;
   removeEmptyProject: (serverId: string, projectId: string) => void;
-  applyProjectUpdate: (
-    serverId: string,
-    update:
-      | { kind: "upsert"; project: EmptyProjectDescriptor }
-      | { kind: "remove"; projectId: string },
-  ) => void;
   setWorkspaceRestoreStatus: (
     serverId: string,
     workspaceId: string,
@@ -1362,67 +1356,6 @@ export const useSessionStore = create<SessionStore>()(
               ...prev.sessions,
               [serverId]: { ...session, emptyProjects: next },
             },
-          };
-        });
-      },
-
-      applyProjectUpdate: (serverId, update) => {
-        set((prev) => {
-          const session = prev.sessions[serverId];
-          if (!session) return prev;
-          if (update.kind === "remove") {
-            const workspaces = new Map(session.workspaces);
-            let changed = session.emptyProjects.has(update.projectId);
-            const emptyProjects = new Map(session.emptyProjects);
-            emptyProjects.delete(update.projectId);
-            for (const [workspaceId, workspace] of workspaces) {
-              if (workspace.projectId === update.projectId) {
-                workspaces.delete(workspaceId);
-                changed = true;
-              }
-            }
-            if (!changed) return prev;
-            return {
-              ...prev,
-              sessions: { ...prev.sessions, [serverId]: { ...session, workspaces, emptyProjects } },
-            };
-          }
-          const project = update.project;
-          let changed = false;
-          const workspaces = new Map(session.workspaces);
-          const hasAttachedWorkspace = [...workspaces.values()].some(
-            (workspace) => workspace.projectId === project.projectId,
-          );
-          for (const [workspaceId, workspace] of workspaces) {
-            if (workspace.projectId !== project.projectId) continue;
-            const next = {
-              ...workspace,
-              projectDisplayName: project.projectDisplayName,
-              projectCustomName: project.projectCustomName,
-              projectRootPath: project.projectRootPath,
-              projectKind: project.projectKind,
-            };
-            const preserved = preserveWorkspaceDescriptorIdentity(next, workspace);
-            if (preserved !== workspace) {
-              workspaces.set(workspaceId, preserved);
-              changed = true;
-            }
-          }
-          const existingEmpty = session.emptyProjects.get(project.projectId);
-          let emptyProjects = session.emptyProjects;
-          if (hasAttachedWorkspace && existingEmpty) {
-            emptyProjects = new Map(session.emptyProjects);
-            emptyProjects.delete(project.projectId);
-            changed = true;
-          } else if (!hasAttachedWorkspace && (!existingEmpty || !equal(existingEmpty, project))) {
-            emptyProjects = new Map(session.emptyProjects);
-            emptyProjects.set(project.projectId, project);
-            changed = true;
-          }
-          if (!changed) return prev;
-          return {
-            ...prev,
-            sessions: { ...prev.sessions, [serverId]: { ...session, workspaces, emptyProjects } },
           };
         });
       },
