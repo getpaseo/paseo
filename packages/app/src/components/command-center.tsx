@@ -400,7 +400,7 @@ function ModelItemsSection({
         const rowIndex = startIndex + index;
         return (
           <CommandCenterRowContainer
-            key={`${item.serverId}:${item.agentId}:${item.modelId}`}
+            key={`${item.serverId}:${item.agentId ?? "draft"}:${item.provider}:${item.modelId}`}
             item={item}
             rowIndex={rowIndex}
             active={rowIndex === activeIndex}
