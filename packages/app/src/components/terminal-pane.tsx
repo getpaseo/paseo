@@ -911,6 +911,7 @@ export function TerminalPane({
 
   return (
     <Animated.View style={containerStyle}>
+      {isFindFocused ? <PaneFindBar placement="inline" testID="terminal-find-bar" /> : null}
       <View style={styles.outputContainer}>
         {isWorkspaceFocused ? (
           <View style={styles.terminalGestureContainer}>
@@ -950,7 +951,6 @@ export function TerminalPane({
             <ActivityIndicator size="small" color={theme.colors.foregroundMuted} />
           </View>
         ) : null}
-        {isFindFocused ? <PaneFindBar placement="inline" testID="terminal-find-bar" /> : null}
       </View>
 
       {streamError ? (
