@@ -959,6 +959,7 @@ test("create_agent_request launches from an exact subdirectory in a created work
     const emitted: SessionOutboundMessage[] = [];
     const session = new Session({
       clientId: "test-client",
+      scopes: ["*"],
       appVersion: null,
       onMessage: (message) => emitted.push(message),
       logger: asSessionLogger(logger),
