@@ -1582,9 +1582,14 @@ export class AgentManager {
     const currentMode = (await agent.session.getCurrentMode()) ?? modeId;
     agent.config.modeId = currentMode ?? undefined;
     agent.currentModeId = currentMode;
-    // Update runtimeInfo to reflect the new mode
+    // A mode switch may re-bind the effective model when a provider binds a
+    // model to an agent/mode. Read the session's resulting effective model and
+    // surface it so the client model picker updates.
+    const effectiveModel = (await agent.session.getRuntimeInfo()).model ?? null;
+    agent.config.model = effectiveModel ?? undefined;
+    // Update runtimeInfo to reflect the new mode and effective model
     if (agent.runtimeInfo) {
-      agent.runtimeInfo = { ...agent.runtimeInfo, modeId: currentMode };
+      agent.runtimeInfo = { ...agent.runtimeInfo, modeId: currentMode, model: effectiveModel };
     }
     this.touchUpdatedAt(agent);
     this.emitState(agent);
@@ -1596,13 +1601,18 @@ export class AgentManager {
     const normalizedModelId =
       typeof modelId === "string" && modelId.trim().length > 0 ? modelId : null;
 
+    // A provider may resolve the request to a different effective model (e.g.
+    // clearing an override reverts to the agent's bound model), so read the
+    // resolved model back from the session instead of assuming the requested one.
+    let effectiveModel = normalizedModelId;
     if (agent.session.setModel) {
       await agent.session.setModel(normalizedModelId);
+      effectiveModel = (await agent.session.getRuntimeInfo()).model ?? null;
     }
 
-    agent.config.model = normalizedModelId ?? undefined;
+    agent.config.model = effectiveModel ?? undefined;
     if (agent.runtimeInfo) {
-      agent.runtimeInfo = { ...agent.runtimeInfo, model: normalizedModelId };
+      agent.runtimeInfo = { ...agent.runtimeInfo, model: effectiveModel };
     }
     this.touchUpdatedAt(agent);
     this.emitState(agent);
