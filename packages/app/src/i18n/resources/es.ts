@@ -259,6 +259,7 @@ export const es: TranslationResources = {
       forkInNewTab: "Bifurcar en una pestaña nueva",
       forkInNewWorkspace: "Bifurcar en un espacio de trabajo nuevo",
       forkUnavailable: "Actualiza el host para usar esto.",
+      sessionDiffUnavailable: "Actualiza el host para ver los cambios de la sesión.",
       forkMissingWorkspace: "Este agente no está en un espacio de trabajo.",
       forkFailed: "No se pudo bifurcar el chat",
       openFile: "Abrir archivo",

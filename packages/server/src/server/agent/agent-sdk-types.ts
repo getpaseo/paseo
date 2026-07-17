@@ -554,6 +554,19 @@ export interface ForkProviderSessionContext {
   launchContext?: AgentLaunchContext;
 }
 
+/**
+ * A single changed file in a provider session's working-tree diff, as produced
+ * by providers that expose a native per-session diff endpoint (e.g. OpenCode's
+ * `session.diff()`). `path` is the file path relative to the workspace; the
+ * `additions`/`deletions` counts summarize the change size.
+ */
+export interface SessionChangedFile {
+  path: string;
+  additions: number;
+  deletions: number;
+  status?: "added" | "deleted" | "modified";
+}
+
 export interface ImportProviderSessionContext {
   config: AgentSessionConfig;
   storedConfig: AgentSessionConfig;
@@ -666,6 +679,13 @@ export interface AgentSession {
   revertConversation?(input: { messageId: string }): Promise<void>;
   revertFiles?(input: { messageId: string }): Promise<void>;
   revertBoth?(input: { messageId: string }): Promise<void>;
+  /**
+   * Produce a per-session changed-files view for providers that expose a native
+   * session diff endpoint (e.g. OpenCode's `session.diff()`). Returns the list
+   * of files changed in the session's working tree with per-file add/delete
+   * counts. Providers without a native session diff do not implement this.
+   */
+  diffSession?(): Promise<SessionChangedFile[]>;
   /**
    * Out-of-band prompt handler. When non-null, the manager runs the returned
    * handler instead of allocating a turn. The handler emits stream events

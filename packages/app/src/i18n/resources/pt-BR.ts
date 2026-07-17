@@ -259,6 +259,7 @@ export const ptBR: TranslationResources = {
       forkInNewTab: "Bifurcar em uma nova aba",
       forkInNewWorkspace: "Bifurcar em um novo workspace",
       forkUnavailable: "Atualize o host para usar isto.",
+      sessionDiffUnavailable: "Atualize o host para ver as alterações da sessão.",
       forkMissingWorkspace: "Este agente não está em um workspace.",
       forkFailed: "Falha ao bifurcar o chat",
       openFile: "Abrir arquivo",

@@ -51,6 +51,7 @@ import {
   type ResolveAgentCreateConfigResult,
   type McpServerConfig,
   type ProviderCatalog,
+  type SessionChangedFile,
   type ToolCallDetail,
   type ToolCallTimelineItem,
 } from "../agent-sdk-types.js";
@@ -3096,6 +3097,32 @@ class OpenCodeAgentSession implements AgentSession {
       sessionId: this.sessionId,
       cwd: this.config.cwd,
       messageId: input.messageId,
+    });
+  }
+
+  async diffSession(): Promise<SessionChangedFile[]> {
+    // Native per-session diff: OpenCode returns the session's working-tree
+    // changes as a list of FileDiff entries. We map them to the provider-
+    // agnostic SessionChangedFile shape (path + add/delete counts).
+    const response = await this.client.session.diff({
+      sessionID: this.sessionId,
+      directory: this.config.cwd,
+    });
+    if (response.error || !response.data) {
+      throw new Error(
+        `Failed to diff OpenCode session ${this.sessionId}: ${JSON.stringify(response.error)}`,
+      );
+    }
+    return response.data.map((file) => {
+      const changed: SessionChangedFile = {
+        path: file.file ?? "",
+        additions: file.additions,
+        deletions: file.deletions,
+      };
+      if (file.status) {
+        changed.status = file.status;
+      }
+      return changed;
     });
   }
 

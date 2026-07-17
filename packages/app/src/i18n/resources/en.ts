@@ -255,6 +255,7 @@ export const en = {
       forkInNewTab: "Fork in a new tab",
       forkInNewWorkspace: "Fork in a new workspace",
       forkUnavailable: "Update the host to use this.",
+      sessionDiffUnavailable: "Update the host to view session changes.",
       forkMissingWorkspace: "This agent is not in a workspace.",
       forkFailed: "Failed to fork chat",
       openFile: "Open file",

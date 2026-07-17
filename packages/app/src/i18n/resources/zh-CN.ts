@@ -256,6 +256,7 @@ export const zhCN: TranslationResources = {
       forkInNewTab: "分叉到新标签页",
       forkInNewWorkspace: "分叉到新工作区",
       forkUnavailable: "请更新主机以使用此功能。",
+      sessionDiffUnavailable: "请更新主机以查看会话更改。",
       forkMissingWorkspace: "此 Agent 不在工作区中。",
       forkFailed: "分叉聊天失败",
       openFile: "打开文件",

@@ -256,6 +256,7 @@ export const ar: TranslationResources = {
       forkInNewTab: "تفريع في تبويب جديد",
       forkInNewWorkspace: "تفريع في مساحة عمل جديدة",
       forkUnavailable: "حدّث المضيف لاستخدام هذا.",
+      sessionDiffUnavailable: "حدّث المضيف لعرض تغييرات الجلسة.",
       forkMissingWorkspace: "هذا الوكيل ليس في مساحة عمل.",
       forkFailed: "فشل تفريع المحادثة",
       openFile: "افتح الملف",

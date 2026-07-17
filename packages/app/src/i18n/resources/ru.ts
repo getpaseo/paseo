@@ -258,6 +258,7 @@ export const ru: TranslationResources = {
       forkInNewTab: "Форкнуть в новой вкладке",
       forkInNewWorkspace: "Форкнуть в новом рабочем пространстве",
       forkUnavailable: "Обновите хост, чтобы использовать это.",
+      sessionDiffUnavailable: "Обновите хост, чтобы просматривать изменения сессии.",
       forkMissingWorkspace: "Этот агент не находится в рабочем пространстве.",
       forkFailed: "Не удалось форкнуть чат",
       openFile: "Открыть файл",

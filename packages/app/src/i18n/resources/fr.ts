@@ -260,6 +260,7 @@ export const fr: TranslationResources = {
       forkInNewTab: "Dupliquer dans un nouvel onglet",
       forkInNewWorkspace: "Dupliquer dans un nouvel espace de travail",
       forkUnavailable: "Mettez l'hôte à jour pour utiliser ceci.",
+      sessionDiffUnavailable: "Mettez l'hôte à jour pour voir les modifications de la session.",
       forkMissingWorkspace: "Cet agent n'est pas dans un espace de travail.",
       forkFailed: "Impossible de dupliquer le chat",
       openFile: "Ouvrir le fichier",

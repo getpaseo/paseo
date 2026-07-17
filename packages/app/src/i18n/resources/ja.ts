@@ -259,6 +259,7 @@ export const ja: TranslationResources = {
       forkInNewTab: "新しいタブにフォーク",
       forkInNewWorkspace: "新しいワークスペースにフォーク",
       forkUnavailable: "これを使用するにはホストを更新してください。",
+      sessionDiffUnavailable: "セッションの変更を表示するにはホストを更新してください。",
       forkMissingWorkspace: "このエージェントはワークスペース内にありません。",
       forkFailed: "チャットのフォークに失敗しました",
       openFile: "ファイルを開く",

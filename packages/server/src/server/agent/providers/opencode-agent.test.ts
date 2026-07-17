@@ -2536,6 +2536,62 @@ describe("OpenCode persisted sessions", () => {
     });
   });
 
+  test("diffSession maps the native session diff to a changed-files view", async () => {
+    const cwd = tmpCwd();
+    const runtime = new TestOpenCodeHarness();
+    const openCodeClient = new TestOpenCodeClient();
+    openCodeClient.sessionCreateResponse = { data: { id: "ses_diff" } };
+    openCodeClient.sessionDiffResponse = {
+      data: [
+        { file: "src/added.ts", patch: "@@", additions: 12, deletions: 0, status: "added" },
+        { file: "src/edited.ts", patch: "@@", additions: 3, deletions: 4, status: "modified" },
+        { file: "src/removed.ts", patch: "@@", additions: 0, deletions: 9, status: "deleted" },
+      ],
+    };
+    runtime.enqueueClient(openCodeClient);
+
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const session = await client.createSession({ provider: "opencode", cwd, model: TEST_MODEL });
+
+    const changed = await session.diffSession?.();
+
+    // Native session.diff endpoint is called with the session + workspace dir.
+    expect(openCodeClient.calls.sessionDiff).toEqual([{ sessionID: "ses_diff", directory: cwd }]);
+    // FileDiff entries are mapped to the provider-agnostic changed-files shape
+    // (path + add/delete counts + status), preserving order.
+    expect(changed).toEqual([
+      { path: "src/added.ts", additions: 12, deletions: 0, status: "added" },
+      { path: "src/edited.ts", additions: 3, deletions: 4, status: "modified" },
+      { path: "src/removed.ts", additions: 0, deletions: 9, status: "deleted" },
+    ]);
+
+    await session.close();
+    rmSync(cwd, { recursive: true, force: true });
+  }, 60_000);
+
+  test("diffSession throws when the native session diff endpoint errors", async () => {
+    const cwd = tmpCwd();
+    const runtime = new TestOpenCodeHarness();
+    const openCodeClient = new TestOpenCodeClient();
+    openCodeClient.sessionCreateResponse = { data: { id: "ses_diff_err" } };
+    openCodeClient.sessionDiffResponse = { error: { message: "boom" } };
+    runtime.enqueueClient(openCodeClient);
+
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const session = await client.createSession({ provider: "opencode", cwd, model: TEST_MODEL });
+
+    await expect(session.diffSession?.()).rejects.toThrow(/Failed to diff OpenCode session/);
+
+    await session.close();
+    rmSync(cwd, { recursive: true, force: true });
+  }, 60_000);
+
   test("listImportableSessions matches Windows cwd paths with forward slashes", async () => {
     const runtime = new TestOpenCodeHarness();
     const openCodeClient = new TestOpenCodeClient();
