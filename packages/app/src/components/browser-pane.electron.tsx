@@ -55,6 +55,7 @@ import {
   releaseResidentBrowserWebview,
   takeResidentBrowserWebview,
 } from "./browser-webview-resident";
+import { createBrowserFindSequencer } from "./browser-find-sequencer";
 import { usePaneFindRegistration } from "@/pane-find/use-pane-find-registration";
 import { paneFindController } from "@/pane-find/pane-find-controller";
 import { usePaneFindKey } from "@/panels/pane-context";
@@ -641,51 +642,49 @@ export function BrowserPane({
   findStateRef.current = findState;
 
   const listenersRef = useRef(new Set<() => void>());
-  const lastFindRequestIdRef = useRef<number | null>(null);
-  const findRequestSequenceRef = useRef(0);
   const wasPaneFindFocusedRef = useRef(false);
-
-  const requestFindInPage = useCallback(
-    (query: string, options: { findNext: boolean; forward: boolean }) => {
-      const desktopHost = getDesktopHost();
-      if (!desktopHost?.browser?.findInPage) {
-        return;
-      }
-      const requestSequence = ++findRequestSequenceRef.current;
-      lastFindRequestIdRef.current = null;
-      void desktopHost.browser.findInPage(browserId, query, options).then(
-        (requestId) => {
-          if (findRequestSequenceRef.current !== requestSequence) {
-            return null;
+  const browserFindSequencerRef = useRef<ReturnType<typeof createBrowserFindSequencer> | null>(
+    null,
+  );
+  if (!browserFindSequencerRef.current) {
+    browserFindSequencerRef.current = createBrowserFindSequencer(
+      {
+        findInPage(query, options) {
+          const desktopHost = getDesktopHost();
+          if (!desktopHost?.browser?.findInPage) {
+            return Promise.resolve(null);
           }
-          if (requestId === null) {
-            setFindState((prev) => ({
-              ...prev,
-              isPending: false,
-              matchCount: 0,
-              selectedIndex: -1,
-            }));
-            return null;
-          }
-          lastFindRequestIdRef.current = requestId;
-          return null;
+          return desktopHost.browser.findInPage(browserIdRef.current, query, options);
         },
-        () => {
-          if (findRequestSequenceRef.current !== requestSequence) {
-            return null;
+        stopFindInPage(action) {
+          const desktopHost = getDesktopHost();
+          if (!desktopHost?.browser?.stopFindInPage) {
+            return;
           }
+          return desktopHost.browser.stopFindInPage(browserIdRef.current, action);
+        },
+      },
+      {
+        onUnavailable() {
           setFindState((prev) => ({
             ...prev,
             isPending: false,
             matchCount: 0,
             selectedIndex: -1,
           }));
-          return null;
         },
-      );
-    },
-    [browserId],
-  );
+        onResult(result) {
+          setFindState((prev) => ({
+            ...prev,
+            isPending: !result.finalUpdate,
+            matchCount: result.matches,
+            selectedIndex: result.activeMatchOrdinal - 1,
+          }));
+        },
+      },
+    );
+  }
+  const browserFindSequencer = browserFindSequencerRef.current;
 
   useEffect(() => {
     for (const listener of listenersRef.current) {
@@ -694,8 +693,7 @@ export function BrowserPane({
   }, [findState]);
 
   const resetFindState = useCallback(() => {
-    findRequestSequenceRef.current += 1;
-    lastFindRequestIdRef.current = null;
+    browserFindSequencer.clear();
     setFindState({
       isOpen: false,
       query: "",
@@ -703,11 +701,7 @@ export function BrowserPane({
       matchCount: 0,
       selectedIndex: -1,
     });
-    const desktopHost = getDesktopHost();
-    if (desktopHost?.browser?.stopFindInPage) {
-      void desktopHost.browser.stopFindInPage(browserId, "clearSelection");
-    }
-  }, [browserId]);
+  }, [browserFindSequencer]);
 
   const adapter = useMemo<PaneFindAdapter>(
     () => ({
@@ -732,57 +726,47 @@ export function BrowserPane({
           matchCount: 0,
           selectedIndex: -1,
         }));
-        const desktopHost = getDesktopHost();
-        if (desktopHost?.browser?.stopFindInPage) {
-          void desktopHost.browser.stopFindInPage(browserId, "clearSelection");
-        }
+        browserFindSequencer.clear();
       },
       setQuery(query) {
         setFindState((prev) => ({ ...prev, query, isPending: query.length > 0 }));
-        const desktopHost = getDesktopHost();
-        if (desktopHost?.browser?.findInPage) {
-          if (query.length > 0) {
-            requestFindInPage(query, {
-              findNext: false,
-              forward: true,
-            });
-          } else {
-            setFindState((prev) => ({
-              ...prev,
-              isPending: false,
-              matchCount: 0,
-              selectedIndex: -1,
-            }));
-            if (desktopHost.browser.stopFindInPage) {
-              void desktopHost.browser.stopFindInPage(browserId, "clearSelection");
-            }
-          }
+        if (query.length > 0) {
+          browserFindSequencer.request(query, {
+            findNext: false,
+            forward: true,
+          });
+        } else {
+          setFindState((prev) => ({
+            ...prev,
+            isPending: false,
+            matchCount: 0,
+            selectedIndex: -1,
+          }));
+          browserFindSequencer.clear();
         }
       },
       selectNext() {
-        const desktopHost = getDesktopHost();
         const currentQuery = findStateRef.current.query;
-        if (desktopHost?.browser?.findInPage && currentQuery.length > 0) {
+        if (currentQuery.length > 0) {
           setFindState((prev) => ({ ...prev, isPending: true }));
-          requestFindInPage(currentQuery, {
+          browserFindSequencer.request(currentQuery, {
             findNext: true,
             forward: true,
           });
         }
       },
       selectPrev() {
-        const desktopHost = getDesktopHost();
         const currentQuery = findStateRef.current.query;
-        if (desktopHost?.browser?.findInPage && currentQuery.length > 0) {
+        if (currentQuery.length > 0) {
           setFindState((prev) => ({ ...prev, isPending: true }));
-          requestFindInPage(currentQuery, {
+          browserFindSequencer.request(currentQuery, {
             findNext: true,
             forward: false,
           });
         }
       },
     }),
-    [browserId, requestFindInPage],
+    [browserFindSequencer],
   );
 
   const paneFindKey = usePaneFindKey();
@@ -812,27 +796,16 @@ export function BrowserPane({
       return;
     }
     const unsubscribe = desktopHost.browser.onFoundInPage(browserId, (result) => {
-      if (result.requestId !== lastFindRequestIdRef.current) {
-        return;
-      }
-      setFindState((prev) => ({
-        ...prev,
-        isPending: !result.finalUpdate,
-        matchCount: result.matches,
-        selectedIndex: result.activeMatchOrdinal - 1,
-      }));
+      browserFindSequencer.receive(result);
     });
     return unsubscribe;
-  }, [browserId, findState.isOpen]);
+  }, [browserFindSequencer, browserId, findState.isOpen]);
 
   useEffect(() => {
     return () => {
-      const desktopHost = getDesktopHost();
-      if (desktopHost?.browser?.stopFindInPage) {
-        void desktopHost.browser.stopFindInPage(browserId, "clearSelection");
-      }
+      browserFindSequencer.clear();
     };
-  }, [browserId]);
+  }, [browserFindSequencer]);
   // Which action the active selector performs on click: open the annotation card
   // ("annotate") or copy a screenshot of the element to the clipboard ("screenshot").
   const selectorModeRef = useRef<"annotate" | "screenshot">("annotate");
