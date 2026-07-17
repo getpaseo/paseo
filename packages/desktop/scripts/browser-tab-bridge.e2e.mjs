@@ -164,6 +164,27 @@ async function waitForAppPage(browser, expoPort) {
   throw new Error("Timed out waiting for the real Electron app renderer");
 }
 
+async function waitForDesktopStatus(page) {
+  const deadline = Date.now() + timeoutMs;
+  let lastError;
+  while (Date.now() < deadline) {
+    try {
+      const status = await page.evaluate(async () => {
+        if (typeof window.paseoDesktop?.invoke !== "function") return null;
+        return await window.paseoDesktop.invoke("desktop_daemon_status");
+      });
+      if (typeof status?.serverId === "string") return status;
+    } catch (error) {
+      // Metro may replace the renderer execution context during its initial load.
+      lastError = error;
+    }
+    await delay(250);
+  }
+  throw new Error(
+    `Timed out waiting for the Electron desktop bridge${lastError ? `: ${String(lastError)}` : ""}`,
+  );
+}
+
 async function startTargetPage() {
   const server = createServer((_request, response) => {
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
@@ -405,11 +426,7 @@ async function main() {
 
     browser = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`);
     const page = await waitForAppPage(browser, expoPort);
-    await page.waitForLoadState("domcontentloaded");
-    const status = await page.evaluate(async () =>
-      window.paseoDesktop.invoke("desktop_daemon_status"),
-    );
-    assert(typeof status?.serverId === "string", "Desktop bridge returned no daemon serverId");
+    const status = await waitForDesktopStatus(page);
 
     const callerAgentId = await createCallerAgent(daemonPort);
     const transport = new StreamableHTTPClientTransport(
