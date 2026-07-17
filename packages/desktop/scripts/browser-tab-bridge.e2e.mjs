@@ -47,9 +47,17 @@ async function reservePort() {
   });
 }
 
-async function waitForPort(port, label) {
+async function waitForPort(port, label, processInfo) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
+    if (
+      processInfo &&
+      (processInfo.child.exitCode !== null || processInfo.child.signalCode !== null)
+    ) {
+      throw new Error(
+        `${label} process exited before opening its port; see ${processInfo.logPath}`,
+      );
+    }
     const connected = await new Promise((resolve) => {
       const socket = net.createConnection({ host: "127.0.0.1", port });
       socket.setTimeout(500);
@@ -190,8 +198,7 @@ function mcpPayload(result, command) {
   return payload.result;
 }
 
-async function callBrowserTool(client, calls, name, args = {}) {
-  calls.push(name);
+async function callBrowserTool(client, name, args = {}) {
   return mcpPayload(await client.callTool({ name, args }), name);
 }
 
@@ -243,7 +250,6 @@ async function readGuest(page, browserId) {
 }
 
 async function runRegression({ page, client, serverId, targetUrl }) {
-  const calls = [];
   const originalWorkspaceId = workspaceIds[0];
   const originalWorkspaceRow = page.getByTestId(
     `sidebar-workspace-row-${serverId}:${originalWorkspaceId}`,
@@ -251,16 +257,20 @@ async function runRegression({ page, client, serverId, targetUrl }) {
   await originalWorkspaceRow.waitFor({ state: "visible", timeout: timeoutMs });
   await originalWorkspaceRow.click();
 
-  const created = await callBrowserTool(client, calls, "browser_new_tab", { url: targetUrl });
+  const created = await callBrowserTool(client, "browser_new_tab", { url: targetUrl });
   const browserId = created.browserId;
   assert(typeof browserId === "string", "browser_new_tab returned no browserId");
 
   const originalDeck = page.getByTestId(`workspace-deck-entry-${serverId}:${originalWorkspaceId}`);
   await originalDeck.getByTestId(`workspace-tab-browser_${browserId}`).click();
-  await page.waitForFunction((id) => {
-    const webview = document.querySelector(`[data-paseo-browser-id="${id}"]`);
-    return webview && webview.parentElement?.id !== "paseo-browser-resident-webviews";
-  }, browserId);
+  await page.waitForFunction(
+    (id) => {
+      const webview = document.querySelector(`[data-paseo-browser-id="${id}"]`);
+      return webview && webview.parentElement?.id !== "paseo-browser-resident-webviews";
+    },
+    browserId,
+    { timeout: timeoutMs },
+  );
   const firstGuest = await readGuest(page, browserId);
   assert(firstGuest, "Original browser guest was not attached to its workspace pane");
 
@@ -281,41 +291,31 @@ async function runRegression({ page, client, serverId, targetUrl }) {
       );
     },
     { id: browserId, previousWebContentsId: firstGuest.webContentsId },
+    { timeout: timeoutMs },
   );
   const replacementGuest = await readGuest(page, browserId);
   assert(replacementGuest, "Replacement browser guest was not parked after workspace eviction");
 
-  const listed = await callBrowserTool(client, calls, "browser_list_tabs");
+  const listed = await callBrowserTool(client, "browser_list_tabs");
   assert(
     listed.tabs.some((tab) => tab.browserId === browserId),
     "browser_list_tabs lost the original tab after guest replacement",
   );
 
-  const snapshot = await callBrowserTool(client, calls, "browser_snapshot", { browserId });
+  const snapshot = await callBrowserTool(client, "browser_snapshot", { browserId });
   const ref = snapshot.snapshot.match(/button "Bridge target" \[ref=(@e\d+)\]/)?.[1];
   assert(ref, `browser_snapshot did not expose the target button: ${snapshot.snapshot}`);
 
-  const clicked = await callBrowserTool(client, calls, "browser_click", { browserId, ref });
+  const clicked = await callBrowserTool(client, "browser_click", { browserId, ref });
   assert(
     clicked.browserId === browserId && clicked.ref === ref,
     "browser_click targeted another tab",
   );
-  await callBrowserTool(client, calls, "browser_wait", {
+  await callBrowserTool(client, "browser_wait", {
     browserId,
     text: "Clicked",
     timeoutMs: 5_000,
   });
-  assert(
-    JSON.stringify(calls) ===
-      JSON.stringify([
-        "browser_new_tab",
-        "browser_list_tabs",
-        "browser_snapshot",
-        "browser_click",
-        "browser_wait",
-      ]),
-    `Browser tool calls were retried or reordered: ${JSON.stringify(calls)}`,
-  );
 
   return {
     browserId,
@@ -324,7 +324,6 @@ async function runRegression({ page, client, serverId, targetUrl }) {
     list: "passed",
     snapshot: "passed",
     click: "passed",
-    calls,
   };
 }
 
@@ -372,9 +371,13 @@ async function main() {
       artifactDir,
     );
     children.push(daemon.child);
-    await waitForPort(daemonPort, "daemon");
+    await waitForPort(daemonPort, "daemon", daemon);
 
-    const desktopArgs = [process.execPath, devRunner];
+    const desktopArgs = [
+      process.execPath,
+      devRunner,
+      ...(process.platform === "linux" ? ["--no-sandbox"] : []),
+    ];
     const desktopCommand = process.platform === "linux" ? "xvfb-run" : desktopArgs.shift();
     const desktopCommandArgs =
       process.platform === "linux"
@@ -398,7 +401,7 @@ async function main() {
       artifactDir,
     );
     children.push(desktop.child);
-    await waitForPort(cdpPort, "Electron CDP");
+    await waitForPort(cdpPort, "Electron CDP", desktop);
 
     browser = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`);
     const page = await waitForAppPage(browser, expoPort);
