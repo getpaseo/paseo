@@ -93,14 +93,38 @@ export function useTimelineSearchScroll(input: UseTimelineSearchScrollInput): nu
   // The navigationRevision this hook has actually finished a coarse scroll
   // for. `null` until the first scrollToItem/scrollToBottom is issued.
   const [settledRevision, setSettledRevision] = useState<number | null>(null);
+  // A second result within the same message or expanded tool-call group only
+  // needs the occurrence-anchor correction. Re-centering the containing row
+  // first produces a visible flash (row centre -> exact match) even when both
+  // results are already in the viewport.
+  const lastCoarseTargetKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!isOpen || !selectedItemId || !resolvedTarget) {
+    if (!isOpen) {
+      lastCoarseTargetKeyRef.current = null;
+      return;
+    }
+    if (!selectedItemId || !resolvedTarget) {
+      return;
+    }
+
+    let coarseTargetKey: string;
+    if (resolvedTarget.kind === "group") {
+      coarseTargetKey = `group:${resolvedTarget.groupId}`;
+    } else if (resolvedTarget.kind === "bottom") {
+      coarseTargetKey = `bottom:${selectedItemId}`;
+    } else {
+      coarseTargetKey = `item:${resolvedTarget.itemId}`;
+    }
+
+    if (lastCoarseTargetKeyRef.current === coarseTargetKey) {
+      setSettledRevision(navigationRevision);
       return;
     }
 
     if (resolvedTarget.kind === "bottom") {
       viewportRef.current?.scrollToBottom("jump-to-bottom");
+      lastCoarseTargetKeyRef.current = coarseTargetKey;
       setSettledRevision(navigationRevision);
       return;
     }
@@ -122,6 +146,7 @@ export function useTimelineSearchScroll(input: UseTimelineSearchScrollInput): nu
         // bottom of the stream.
         viewportRef.current?.scrollToBottom("jump-to-bottom");
       }
+      lastCoarseTargetKeyRef.current = coarseTargetKey;
       setSettledRevision(navigationRevision);
     });
     return () => cancelFrame(frame);

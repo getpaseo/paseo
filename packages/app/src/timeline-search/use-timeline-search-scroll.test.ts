@@ -206,7 +206,7 @@ describe("useTimelineSearchScroll", () => {
     expect(viewportRef.current.scrollToItem).toHaveBeenCalledTimes(1);
   });
 
-  it("re-scrolls when navigationRevision bumps even though selectedIndex and the matched item are unchanged (same-index Enter)", () => {
+  it("skips the coarse row scroll when navigation stays within the same item", () => {
     const viewportRef = { current: makeViewportHandle() };
 
     const { rerender } = renderHook(
@@ -233,7 +233,7 @@ describe("useTimelineSearchScroll", () => {
       rerender({ navigationRevision: 2 });
     });
 
-    expect(viewportRef.current.scrollToItem).toHaveBeenCalledTimes(2);
+    expect(viewportRef.current.scrollToItem).toHaveBeenCalledTimes(1);
   });
 
   it("does not re-fire when isLiveHeadItem/findGroupIdForItem/isGroupExpanded/expandGroup get fresh closures on every render without navigation (the scroll-hijack regression)", () => {
