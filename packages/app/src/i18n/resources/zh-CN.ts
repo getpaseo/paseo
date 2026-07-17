@@ -563,7 +563,7 @@ export const zhCN: TranslationResources = {
         copyPath: "复制 workspace 路径",
         copyBranchName: "复制分支名称",
         showSetup: "显示 setup",
-        findInChat: "在对话中查找",
+        findInTab: "在标签页中查找",
       },
       toasts: {
         workspacePathUnavailable: "Workspace 路径尚不可用",

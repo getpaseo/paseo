@@ -570,7 +570,7 @@ export const ru: TranslationResources = {
         copyPath: "Копировать путь к рабочей области",
         copyBranchName: "Скопировать название ветки",
         showSetup: "Показать настройки",
-        findInChat: "Найти в чате",
+        findInTab: "Найти на вкладке",
       },
       toasts: {
         workspacePathUnavailable: "Путь Workspace пока недоступен.",

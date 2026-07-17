@@ -570,7 +570,7 @@ export const es: TranslationResources = {
         copyPath: "Copiar ruta del espacio de trabajo",
         copyBranchName: "Copiar nombre de sucursal",
         showSetup: "Mostrar configuración",
-        findInChat: "Buscar en el chat",
+        findInTab: "Buscar en la pestaña",
       },
       toasts: {
         workspacePathUnavailable: "La rutaWorkspaceaún no está disponible",

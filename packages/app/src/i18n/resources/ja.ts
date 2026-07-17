@@ -569,7 +569,7 @@ export const ja: TranslationResources = {
         copyPath: "ワークスペースパスをコピー",
         copyBranchName: "ブランチ名をコピー",
         showSetup: "セットアップを表示",
-        findInChat: "チャット内を検索",
+        findInTab: "タブ内を検索",
       },
       toasts: {
         workspacePathUnavailable: "ワークスペースパスはまだ利用できません",
