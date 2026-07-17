@@ -13,7 +13,7 @@ import {
 
 const pendingAgentInitializations = new Map<string, Promise<ManagedAgent>>();
 
-type AgentLoaderManager = Pick<
+export type AgentLoaderManager = Pick<
   AgentManager,
   | "createAgent"
   | "getAgent"

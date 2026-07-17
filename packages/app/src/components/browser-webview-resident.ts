@@ -225,6 +225,19 @@ export function ensureResidentBrowserWebview(input: {
   return webview;
 }
 
+export function getResidentBrowserWebview(browserId: string): HTMLElement | null {
+  const normalizedBrowserId = trimNonEmpty(browserId);
+  if (!normalizedBrowserId) {
+    return null;
+  }
+  const resident = residentWebviewsByBrowserId.get(normalizedBrowserId) ?? null;
+  if (resident?.isConnected) {
+    return resident;
+  }
+  const ownerDocument = readDocument();
+  return ownerDocument ? findBrowserWebview(normalizedBrowserId, ownerDocument) : null;
+}
+
 export function takeResidentBrowserWebview(browserId: string): HTMLElement | null {
   const normalizedBrowserId = trimNonEmpty(browserId);
   if (!normalizedBrowserId) {

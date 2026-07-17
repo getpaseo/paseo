@@ -896,6 +896,7 @@ describe("PiRpcAgentSession", () => {
       error: "Pi exited",
     });
   });
+
   test("completes locally handled slash commands when agentInvoked is false", async () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();

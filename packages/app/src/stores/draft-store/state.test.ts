@@ -76,7 +76,7 @@ describe("draft-store normalization", () => {
       kind: "github_pr" as const,
       owner: "new-workspace-picker" as const,
       item: {
-        kind: "pr" as const,
+        kind: "change_request" as const,
         number: 202,
         title: "Persist picker ownership",
         url: "https://example.com/pull/202",

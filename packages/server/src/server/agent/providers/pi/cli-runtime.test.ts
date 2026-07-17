@@ -5,7 +5,6 @@ import pino from "pino";
 import { describe, expect, test } from "vitest";
 
 import { PiCliRuntime } from "./cli-runtime.js";
-import type { PiCommandsRpcType } from "./rpc-types.js";
 import type { PiRuntimeLaunch } from "./runtime.js";
 
 type PiChild = ChildProcessWithoutNullStreams & {
@@ -35,12 +34,12 @@ function createPiChild(): PiChild {
 function createRuntime(
   child: PiChild,
   launches: PiRuntimeLaunch[] = [],
-  options?: { commandsRpcType?: PiCommandsRpcType },
+  options?: { commandsRpcName?: string },
 ): PiCliRuntime {
   return new PiCliRuntime({
     logger: pino({ level: "silent" }),
     command: ["pi"],
-    commandsRpcType: options?.commandsRpcType,
+    commandsRpcName: options?.commandsRpcName,
     spawnProcess: (launch) => {
       launches.push(launch);
       return child;
@@ -150,7 +149,7 @@ describe("PiCliRuntime", () => {
       runtimeSettings: {
         command: {
           mode: "replace",
-          argv: ["omp"],
+          argv: ["custom-pi"],
         },
       },
       spawnProcess: (launch) => {
@@ -159,13 +158,42 @@ describe("PiCliRuntime", () => {
       },
     });
 
-    await runtime.startSession({ cwd: "/workspace/project", session: "/tmp/omp-session.jsonl" });
+    await runtime.startSession({ cwd: "/workspace/project", session: "/tmp/pi-session.jsonl" });
 
     expect(launches).toEqual([
       expect.objectContaining({
         cwd: "/workspace/project",
-        session: "/tmp/omp-session.jsonl",
-        argv: ["omp", "--mode", "rpc", "--session", "/tmp/omp-session.jsonl"],
+        session: "/tmp/pi-session.jsonl",
+        argv: ["custom-pi", "--mode", "rpc", "--session", "/tmp/pi-session.jsonl"],
+      }),
+    ]);
+  });
+
+  test("does not append rpc mode when the configured command already includes a mode flag", async () => {
+    const child = createPiChild();
+    replyToCommands(child, () => ({}));
+    const launches: PiRuntimeLaunch[] = [];
+    const runtime = new PiCliRuntime({
+      logger: pino({ level: "silent" }),
+      command: ["pi"],
+      runtimeSettings: {
+        command: {
+          mode: "replace",
+          argv: ["custom-pi", "--mode", "json"],
+        },
+      },
+      spawnProcess: (launch) => {
+        launches.push(launch);
+        return child;
+      },
+    });
+
+    await runtime.startSession({ cwd: "/workspace/project" });
+
+    expect(launches).toEqual([
+      expect.objectContaining({
+        cwd: "/workspace/project",
+        argv: ["custom-pi", "--mode", "json"],
       }),
     ]);
   });
@@ -220,25 +248,6 @@ describe("PiCliRuntime", () => {
     expect(commandTypes).toEqual(["get_commands"]);
   });
 
-  test("lists commands through the OMP-compatible get_available_commands RPC", async () => {
-    const child = createPiChild();
-    const commandTypes: string[] = [];
-    replyToCommands(child, (command) => {
-      commandTypes.push(String(command.type));
-      return {
-        commands: [{ name: "skill:ctx-stats", description: "Show context stats", source: "skill" }],
-      };
-    });
-    const session = await createRuntime(child, [], {
-      commandsRpcType: "get_available_commands",
-    }).startSession({ cwd: "/workspace/project" });
-
-    await expect(session.getCommands()).resolves.toEqual([
-      { name: "skill:ctx-stats", description: "Show context stats", source: "skill" },
-    ]);
-    expect(commandTypes).toEqual(["get_available_commands"]);
-  });
-
   test("keeps unicode line separators inside one JSONL record", async () => {
     const child = createPiChild();
     replyToCommands(child, () => ({}));
@@ -260,6 +269,17 @@ describe("PiCliRuntime", () => {
     child.emit("exit", 1, null);
 
     await expect(state).rejects.toThrow("boom");
+  });
+
+  test("rejects pending commands when the Pi session closes", async () => {
+    const child = createPiChild();
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    const state = session.getState();
+    const rejection = expect(state).rejects.toThrow("Pi RPC session is closed");
+    await session.close();
+
+    await rejection;
   });
 
   test("disposes the Pi process", async () => {

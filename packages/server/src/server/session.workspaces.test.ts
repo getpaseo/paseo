@@ -32,17 +32,17 @@ import type {
   AgentSessionConfig,
   AgentStreamEvent,
 } from "./agent/agent-sdk-types.js";
-import { createWorktree, UnknownBranchError } from "../utils/worktree.js";
+import { createWorktree } from "../utils/worktree.js";
 import {
   readPaseoWorktreeMetadata,
   writePaseoWorktreeFirstAgentBranchAutoNameMetadata,
   writePaseoWorktreeMetadata,
 } from "../utils/worktree-metadata.js";
-import { WorktreeRequestError, toWorktreeRequestError } from "./worktree-errors.js";
+import { WorktreeRequestError } from "./worktree-errors.js";
 import type { WorkspaceGitRuntimeSnapshot } from "./workspace-git-service.js";
 import type { GeneratedWorkspaceName } from "./worktree-branch-name-generator.js";
 import { WorkspaceAutoName } from "./workspace-auto-name.js";
-import type { GitHubService } from "../services/github-service.js";
+import type { ForgeService } from "../services/forge-service.js";
 import { createNoopWorkspaceGitService } from "./test-utils/workspace-git-service-stub.js";
 import {
   asSessionLogger,
@@ -128,10 +128,7 @@ interface SessionTestAccess {
   agentUpdates: AgentUpdatesService;
   workspaceUpdatesSubscription: unknown;
   interruptAgentIfRunning(agentId: string): unknown;
-  recreateOwningWorktreeForRestore(
-    workspace: PersistedWorkspaceRecord,
-    branch: string,
-  ): Promise<void>;
+  recreateArchivedWorktree(workspace: PersistedWorkspaceRecord): Promise<void>;
   reconcileActiveWorkspaceRecords(...args: unknown[]): Promise<Set<string>>;
   reconcileWorkspaceRecord(workspaceId: string): Promise<{
     changed: boolean;
@@ -373,7 +370,7 @@ function createWorkspaceRuntimeSnapshot(
   cwd: string,
   overrides?: {
     git?: Partial<WorkspaceGitRuntimeSnapshot["git"]>;
-    github?: Partial<WorkspaceGitRuntimeSnapshot["github"]>;
+    forge?: Partial<WorkspaceGitRuntimeSnapshot["forge"]>;
   },
 ): WorkspaceGitRuntimeSnapshot {
   const base: WorkspaceGitRuntimeSnapshot = {
@@ -393,7 +390,7 @@ function createWorkspaceRuntimeSnapshot(
       hasRemote: true,
       diffStat: { additions: 1, deletions: 0 },
     },
-    github: {
+    forge: {
       featuresEnabled: true,
       pullRequest: {
         url: "https://github.com/acme/repo/pull/123",
@@ -413,17 +410,17 @@ function createWorkspaceRuntimeSnapshot(
       ...base.git,
       ...overrides?.git,
     },
-    github: {
-      ...base.github,
-      ...overrides?.github,
+    forge: {
+      ...base.forge,
+      ...overrides?.forge,
       pullRequest:
-        overrides?.github && "pullRequest" in overrides.github
-          ? (overrides.github.pullRequest ?? null)
-          : base.github.pullRequest,
+        overrides?.forge && "pullRequest" in overrides.forge
+          ? (overrides.forge.pullRequest ?? null)
+          : base.forge.pullRequest,
       error:
-        overrides?.github && "error" in overrides.github
-          ? (overrides.github.error ?? null)
-          : base.github.error,
+        overrides?.forge && "error" in overrides.forge
+          ? (overrides.forge.error ?? null)
+          : base.forge.error,
     },
   };
 }
@@ -530,11 +527,12 @@ function createSessionForWorkspaceTests(
   options: {
     appVersion?: string | null;
     onMessage?: (message: SessionOutboundMessage) => void;
+    onWorkspaceRecovered?: SessionOptions["onWorkspaceRecovered"];
     workspaceGitService?: ReturnType<typeof createNoopWorkspaceGitService>;
     terminalManager?: TerminalManager | null;
     projectRegistry?: SessionOptions["projectRegistry"];
     workspaceRegistry?: SessionOptions["workspaceRegistry"];
-    github?: GitHubService;
+    github?: ForgeService;
     paseoHome?: string;
     worktreesRoot?: string;
     renameCurrentBranch?: (
@@ -616,6 +614,7 @@ function createSessionForWorkspaceTests(
       clientId: "test-client",
       appVersion: options.appVersion ?? null,
       onMessage: options.onMessage ?? vi.fn(),
+      onWorkspaceRecovered: options.onWorkspaceRecovered,
       logger: asSessionLogger(logger),
       downloadTokenStore: asDownloadTokenStore(),
       pushTokenStore: asPushTokenStore(),
@@ -669,6 +668,7 @@ function createSessionForWorkspaceTests(
         }),
         scheduleRefreshForCwd: () => {},
         onWorkspaceStateMayHaveChanged: () => {},
+        invalidateForge: () => {},
         getMetrics: () => ({
           checkoutDiffTargetCount: 0,
           checkoutDiffSubscriptionCount: 0,
@@ -823,6 +823,7 @@ test("create_agent_request keeps requested child cwd when grouped under an exist
           }),
           scheduleRefreshForCwd: () => {},
           onWorkspaceStateMayHaveChanged: () => {},
+          invalidateForge: () => {},
           getMetrics: () => ({
             checkoutDiffTargetCount: 0,
             checkoutDiffSubscriptionCount: 0,
@@ -946,6 +947,7 @@ test("create_agent_request does not title an existing workspace from the agent p
           }),
           scheduleRefreshForCwd: () => {},
           onWorkspaceStateMayHaveChanged: () => {},
+          invalidateForge: () => {},
           getMetrics: () => ({
             checkoutDiffTargetCount: 0,
             checkoutDiffSubscriptionCount: 0,
@@ -1328,6 +1330,7 @@ test("archive emits an authoritative agent_update upsert for subscribed clients"
         }),
         scheduleRefreshForCwd: () => {},
         onWorkspaceStateMayHaveChanged: () => {},
+        invalidateForge: () => {},
         getMetrics: () => ({
           checkoutDiffTargetCount: 0,
           checkoutDiffSubscriptionCount: 0,
@@ -1688,6 +1691,7 @@ test("close_items_request archives agents and kills terminals in one batch", asy
         }),
         scheduleRefreshForCwd: () => {},
         onWorkspaceStateMayHaveChanged: () => {},
+        invalidateForge: () => {},
         getMetrics: () => ({
           checkoutDiffTargetCount: 0,
           checkoutDiffSubscriptionCount: 0,
@@ -1873,6 +1877,7 @@ test("close_items_request archives stored agents that are not currently loaded",
         }),
         scheduleRefreshForCwd: () => {},
         onWorkspaceStateMayHaveChanged: () => {},
+        invalidateForge: () => {},
         getMetrics: () => ({
           checkoutDiffTargetCount: 0,
           checkoutDiffSubscriptionCount: 0,
@@ -2020,6 +2025,7 @@ test("close_items_request continues after an archive failure", async () => {
         }),
         scheduleRefreshForCwd: () => {},
         onWorkspaceStateMayHaveChanged: () => {},
+        invalidateForge: () => {},
         getMetrics: () => ({
           checkoutDiffTargetCount: 0,
           checkoutDiffSubscriptionCount: 0,
@@ -3014,6 +3020,7 @@ test("workspace update stream keeps persisted workspace visible after agents sto
         }),
         scheduleRefreshForCwd: () => {},
         onWorkspaceStateMayHaveChanged: () => {},
+        invalidateForge: () => {},
         getMetrics: () => ({
           checkoutDiffTargetCount: 0,
           checkoutDiffSubscriptionCount: 0,
@@ -3691,6 +3698,88 @@ test("import_agent_request registers a workspace for a never-seen cwd", async ()
         update.payload.workspace.workspaceDirectory === importedCwd,
     ),
   ).toBe(true);
+});
+
+test("import_agent_request imports into the workspace that opened the import sheet", async () => {
+  const session = createSessionForWorkspaceTests();
+  const workspaceId = "ws-repo-running";
+  let importedWorkspaceId: string | undefined;
+  let workspaceCreated = false;
+
+  session.projectRegistry.get = async () =>
+    createPersistedProjectRecord({
+      projectId: "proj-repo-running",
+      rootPath: REPO_CWD,
+      kind: "non_git",
+      displayName: "repo",
+      createdAt: "2026-03-01T12:00:00.000Z",
+      updatedAt: "2026-03-01T12:00:00.000Z",
+    });
+  session.workspaceRegistry.upsert = async () => {
+    workspaceCreated = true;
+  };
+
+  session.agentManager.importProviderSession = async (input: unknown) => {
+    importedWorkspaceId = (input as { workspaceId: string }).workspaceId;
+    return makeManagedAgent({
+      id: "imported-agent",
+      cwd: REPO_CWD,
+      workspaceId: importedWorkspaceId,
+      lifecycle: "idle",
+      updatedAt: "2026-05-21T00:00:00.000Z",
+    });
+  };
+  session.agentManager.getTimeline = () => [];
+  session.agentStorage.list = async () => [];
+  session.agentStorage.get = async () => null;
+  session.agentUpdates.forwardLiveAgent = async () => undefined;
+
+  await session.handleMessage({
+    type: "import_agent_request",
+    requestId: "req-import-current-workspace",
+    providerId: "codex",
+    providerHandleId: "session-xyz",
+    cwd: REPO_CWD,
+    workspaceId,
+  });
+
+  expect(importedWorkspaceId).toBe(workspaceId);
+  expect(workspaceCreated).toBe(false);
+});
+
+test("import_agent_request maps an import failure to agent_create_failed", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const session = createSessionForWorkspaceTests({
+    onMessage: (message) => emitted.push(message),
+  });
+  session.projectRegistry.get = async () =>
+    createPersistedProjectRecord({
+      projectId: "proj-repo-running",
+      rootPath: REPO_CWD,
+      kind: "non_git",
+      displayName: "repo",
+      createdAt: "2026-03-01T12:00:00.000Z",
+      updatedAt: "2026-03-01T12:00:00.000Z",
+    });
+  session.agentStorage.list = async () => [];
+  session.agentManager.importProviderSession = async () => {
+    throw new Error("provider session is unavailable");
+  };
+
+  await session.handleMessage({
+    type: "import_agent_request",
+    requestId: "req-failed-import",
+    providerId: "codex",
+    providerHandleId: "stale-session",
+    cwd: REPO_CWD,
+    workspaceId: "ws-repo-running",
+  });
+
+  expect(findByType(emitted, "status")?.payload).toMatchObject({
+    status: "agent_create_failed",
+    requestId: "req-failed-import",
+    error: "provider session is unavailable",
+  });
 });
 
 test("open_project_response returns immediately even when the GitHub fetch is slow", async () => {
@@ -4422,7 +4511,84 @@ test("open_project_request recreates a missing project record when unarchiving i
   expect(response?.payload.workspace?.projectDisplayName).toBe("repo");
 });
 
-test("refresh_agent_request unarchives the owning workspace when its directory exists", async () => {
+test("workspace recovery stays accepted when git observer warming fails", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const workspaceGitService = createNoopWorkspaceGitService({
+    registerWorkspace: () => {
+      throw new Error("git watcher unavailable");
+    },
+  });
+  const session = createSessionForWorkspaceTests({
+    appVersion: "0.1.105",
+    workspaceGitService,
+    onMessage: (message) => {
+      if (isSessionOutboundMessage(message)) emitted.push(message);
+    },
+  });
+  const archivedAt = "2026-03-10T00:00:00.000Z";
+  let project = createPersistedProjectRecord({
+    projectId: REPO_CWD,
+    rootPath: REPO_CWD,
+    kind: "git",
+    displayName: "repo",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: archivedAt,
+    archivedAt,
+  });
+  let workspace = createPersistedWorkspaceRecord({
+    workspaceId: "ws-recovery-warm-failure",
+    projectId: project.projectId,
+    cwd: REPO_CWD,
+    kind: "directory",
+    displayName: "repo",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: archivedAt,
+    archivedAt,
+  });
+
+  session.filesystem.isDirectory = async () => true;
+  session.projectRegistry.get = async (projectId: string) =>
+    projectId === project.projectId ? project : null;
+  session.projectRegistry.list = async () => [project];
+  session.projectRegistry.upsert = async (record: PersistedProjectRecord) => {
+    project = record;
+  };
+  session.workspaceRegistry.get = async (workspaceId: string) =>
+    workspaceId === workspace.workspaceId ? workspace : null;
+  session.workspaceRegistry.list = async () => [workspace];
+  session.workspaceRegistry.upsert = async (record: PersistedWorkspaceRecord) => {
+    workspace = record;
+  };
+  session.workspaceUpdatesSubscription = {
+    subscriptionId: "sub-recovery-warm-failure",
+    filter: undefined,
+    isBootstrapping: false,
+    pendingUpdatesByWorkspaceId: new Map(),
+    lastEmittedByWorkspaceId: new Map(),
+  };
+  session.reconcileActiveWorkspaceRecords = async () => new Set();
+  session.listAgentPayloads = async () => [];
+
+  await session.handleMessage({
+    type: "workspace.recovery.restore.request",
+    requestId: "req-recovery-warm-failure",
+    workspaceId: workspace.workspaceId,
+  });
+
+  expect(workspace.archivedAt).toBeNull();
+  expect(findByType(emitted, "workspace.recovery.restore.response")?.payload).toEqual({
+    requestId: "req-recovery-warm-failure",
+    workspaceId: workspace.workspaceId,
+    accepted: true,
+    error: null,
+  });
+  expect(findByType(emitted, "workspace_update")?.payload).toMatchObject({
+    kind: "upsert",
+    workspace: { id: workspace.workspaceId },
+  });
+});
+
+test("refresh_agent_request leaves workspace archival independent when its directory exists", async () => {
   const emitted: SessionOutboundMessage[] = [];
   const session = createSessionForWorkspaceTests({
     onMessage: (message) => {
@@ -4514,13 +4680,13 @@ test("refresh_agent_request unarchives the owning workspace when its directory e
     requestId: "req-refresh-unarchive",
   });
 
-  expect(workspaces.get(workspaceId)?.archivedAt).toBeNull();
-  expect(projects.get(cwd)?.archivedAt).toBeNull();
-  expect(unarchivedWorkspaceIds).toContainEqual([workspaceId]);
+  expect(workspaces.get(workspaceId)?.archivedAt).toBe("2026-03-10T00:00:00.000Z");
+  expect(projects.get(cwd)?.archivedAt).toBe("2026-03-10T00:00:00.000Z");
+  expect(unarchivedWorkspaceIds).toEqual([]);
   expect(findByType(emitted, "rpc_error")).toBeUndefined();
 });
 
-test("refresh_agent_request leaves the owning workspace archived when its directory is missing", async () => {
+test("refresh_agent_request leaves workspace archival independent when its directory is missing", async () => {
   const emitted: SessionOutboundMessage[] = [];
   const session = createSessionForWorkspaceTests({
     onMessage: (message) => {
@@ -4609,9 +4775,10 @@ test("refresh_agent_request leaves the owning workspace archived when its direct
   expect(projects.get(cwd)?.archivedAt).toBe("2026-03-10T00:00:00.000Z");
 });
 
-test("refresh_agent_request recreates a deleted worktree directory and unarchives the same workspace", async () => {
+test("refresh_agent_request does not recreate or unarchive a deleted worktree", async () => {
   const emitted: SessionOutboundMessage[] = [];
   const session = createSessionForWorkspaceTests({
+    appVersion: "0.1.105",
     onMessage: (message) => {
       if (isSessionOutboundMessage(message)) emitted.push(message);
     },
@@ -4675,13 +4842,6 @@ test("refresh_agent_request recreates a deleted worktree directory and unarchive
   session.agentStorage.get = async (id: string) => (id === agentId ? storedAgent : null);
   session.agentStorage.upsert = async () => {};
 
-  const recreateCalls: string[] = [];
-  session.recreateOwningWorktreeForRestore = async (
-    workspace: PersistedWorkspaceRecord,
-  ): Promise<void> => {
-    recreateCalls.push(workspace.workspaceId);
-  };
-
   const managed = makeManagedAgent({
     id: agentId,
     cwd,
@@ -4709,14 +4869,13 @@ test("refresh_agent_request recreates a deleted worktree directory and unarchive
     requestId: "req-refresh-recreate-worktree",
   });
 
-  expect(recreateCalls).toEqual([workspaceId]);
-  expect(workspaces.get(workspaceId)?.archivedAt).toBeNull();
+  expect(workspaces.get(workspaceId)?.archivedAt).toBe("2026-03-10T00:00:00.000Z");
   expect(workspaces.get(workspaceId)?.workspaceId).toBe(workspaceId);
-  expect(unarchivedWorkspaceIds).toContainEqual([workspaceId]);
+  expect(unarchivedWorkspaceIds).toEqual([]);
   expect(findByType(emitted, "rpc_error")).toBeUndefined();
 });
 
-test("refresh_agent_request leaves the worktree archived and surfaces a typed error when recreation fails", async () => {
+test("refresh_agent_request does not inspect an archived worktree branch", async () => {
   const emitted: SessionOutboundMessage[] = [];
   const session = createSessionForWorkspaceTests({
     onMessage: (message) => {
@@ -4782,10 +4941,6 @@ test("refresh_agent_request leaves the worktree archived and surfaces a typed er
   session.agentStorage.get = async (id: string) => (id === agentId ? storedAgent : null);
   session.agentStorage.upsert = async () => {};
 
-  session.recreateOwningWorktreeForRestore = async (): Promise<void> => {
-    throw toWorktreeRequestError(new UnknownBranchError({ branchName: "feature/gone", cwd }));
-  };
-
   const managed = makeManagedAgent({
     id: agentId,
     cwd,
@@ -4807,9 +4962,7 @@ test("refresh_agent_request leaves the worktree archived and surfaces a typed er
   });
 
   expect(workspaces.get(workspaceId)?.archivedAt).toBe("2026-03-10T00:00:00.000Z");
-  const rpcError = findByType(emitted, "rpc_error");
-  expect(rpcError).toBeDefined();
-  expect((rpcError?.payload as { code?: string } | undefined)?.code).toBe("unknown_branch");
+  expect(findByType(emitted, "rpc_error")).toBeUndefined();
 });
 
 function createRecreateWorktreeRepo(): { tempDir: string; repoDir: string } {
@@ -4828,7 +4981,7 @@ function createRecreateWorktreeRepo(): { tempDir: string; repoDir: string } {
   return { tempDir, repoDir };
 }
 
-test("refresh_agent_request recreates a real deleted worktree against a temp git repo and unarchives the same workspace", async () => {
+test("legacy refresh_agent_request restores a real deleted worktree", async () => {
   const { tempDir, repoDir } = createRecreateWorktreeRepo();
   const branch = "feature/keep";
   execFileSync("git", ["branch", branch], { cwd: repoDir, stdio: "pipe" });
@@ -4851,6 +5004,7 @@ test("refresh_agent_request recreates a real deleted worktree against a temp git
 
   const emitted: SessionOutboundMessage[] = [];
   const session = createSessionForWorkspaceTests({
+    appVersion: "0.1.104",
     paseoHome,
     worktreesRoot,
     onMessage: (message) => {
@@ -4938,13 +5092,6 @@ test("refresh_agent_request recreates a real deleted worktree against a temp git
 
   expect(findByType(emitted, "rpc_error")).toBeUndefined();
   expect(existsSync(worktreePath)).toBe(true);
-  const headBranch = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
-    cwd: worktreePath,
-    stdio: "pipe",
-  })
-    .toString()
-    .trim();
-  expect(headBranch).toBe(branch);
   expect(workspaces.get(workspaceId)?.workspaceId).toBe(workspaceId);
   expect(workspaces.get(workspaceId)?.cwd).toBe(worktreePath);
   expect(workspaces.get(workspaceId)?.archivedAt).toBeNull();
@@ -4952,7 +5099,7 @@ test("refresh_agent_request recreates a real deleted worktree against a temp git
   rmSync(tempDir, { recursive: true, force: true });
 });
 
-test("recreateOwningWorktreeForRestore throws a typed WorktreeRequestError and leaves the workspace archived when the project root is missing", async () => {
+test("recreateArchivedWorktree throws a typed WorktreeRequestError when the project root is missing", async () => {
   const { tempDir, repoDir } = createRecreateWorktreeRepo();
   const branch = "feature/keep";
   execFileSync("git", ["branch", branch], { cwd: repoDir, stdio: "pipe" });
@@ -5005,9 +5152,9 @@ test("recreateOwningWorktreeForRestore throws a typed WorktreeRequestError and l
   session.filesystem.isDirectory = async (target: string) =>
     existsSync(target) && statSync(target).isDirectory();
 
-  await expect(
-    session.recreateOwningWorktreeForRestore(workspaceRecord, branch),
-  ).rejects.toBeInstanceOf(WorktreeRequestError);
+  await expect(session.recreateArchivedWorktree(workspaceRecord)).rejects.toBeInstanceOf(
+    WorktreeRequestError,
+  );
   // Guard fires before createWorktree, so archivedAt is untouched.
   expect(workspaces.get(workspaceId)?.archivedAt).toBe("2026-03-10T00:00:00.000Z");
 
@@ -5199,7 +5346,7 @@ test("archive_workspace_request archives a worktree-kind workspace and removes t
           hasRemote: false,
           diffStat: null,
         },
-        github: {
+        forge: {
           featuresEnabled: false,
           pullRequest: null,
           error: null,
@@ -6051,7 +6198,7 @@ test("fetch_workspaces_response reads runtime fields from passive workspace git 
       aheadOfOrigin: 3,
       behindOfOrigin: 1,
     },
-    github: {
+    forge: {
       pullRequest: {
         url: "https://github.com/acme/repo/pull/456",
         title: "Ship runtime payloads",
@@ -6218,7 +6365,7 @@ test("workspace_update includes updated runtime fields", async () => {
       currentBranch: "feature/runtime-payloads",
       isDirty: true,
     },
-    github: {
+    forge: {
       pullRequest: {
         url: "https://github.com/acme/repo/pull/789",
         title: "Updated runtime payloads",
@@ -7211,7 +7358,7 @@ function createWorkspaceCreatePrRepo(): WorkspaceCreatePrRepoFixture {
   return { tempDir, repoDir, paseoHome, headRef, prFileName, prNumber };
 }
 
-function createPrCheckoutGitHubService(params: { headRef: string }): GitHubService {
+function createPrCheckoutGitHubService(params: { headRef: string }): ForgeService {
   return {
     listPullRequests: async () => [],
     listIssues: async () => [],
@@ -7236,6 +7383,10 @@ function createPrCheckoutGitHubService(params: { headRef: string }): GitHubServi
       headRepositoryUrl: null,
       isCrossRepository: false,
     }),
+    defaultCheckoutRefs: ({ changeRequestNumber }) => [
+      { remoteName: "origin", remoteRef: `refs/pull/${changeRequestNumber}/head` },
+    ],
+    buildPrLocalBranchName: ({ headRef }) => headRef,
     getCurrentPullRequestStatus: async () => null,
     getPullRequestTimeline: async ({ prNumber }) => ({
       prNumber,
@@ -7245,7 +7396,7 @@ function createPrCheckoutGitHubService(params: { headRef: string }): GitHubServi
       truncated: false,
       error: null,
     }),
-    getGitHubCheckDetails: async ({ checkRunId, workflowRunId }) => ({
+    getCheckDetails: async ({ checkRunId, workflowRunId }) => ({
       checkRunId,
       workflowRunId: workflowRunId ?? null,
       name: "test",
@@ -7258,7 +7409,11 @@ function createPrCheckoutGitHubService(params: { headRef: string }): GitHubServi
       failedJobs: [],
       truncated: false,
     }),
-    searchIssuesAndPrs: async () => ({ items: [], githubFeaturesEnabled: true }),
+    searchIssuesAndPrs: async () => ({
+      items: [],
+      featuresEnabled: true,
+      githubFeaturesEnabled: true,
+    }),
     createPullRequest: async () => ({ number: 1, url: "https://github.com/acme/repo/pull/1" }),
     mergePullRequest: async () => ({ success: true }),
     enablePullRequestAutoMerge: async () => ({ success: true }),

@@ -24,7 +24,7 @@ export function createNoGitWorkspaceRuntimeSnapshot(cwd: string): WorkspaceGitRu
       hasRemote: false,
       diffStat: null,
     },
-    github: {
+    forge: {
       featuresEnabled: false,
       pullRequest: null,
       error: null,
@@ -68,6 +68,7 @@ export function createNoopWorkspaceGitService(
         remoteUrl: snapshot.git.remoteUrl,
       });
     },
+    resolveForge: async () => null,
     resolveRepoRoot: async (cwd: string) => cwd,
     resolveDefaultBranch: async () => "main",
     resolveRepoRemoteUrl: async () => null,
@@ -78,6 +79,7 @@ export function createNoopWorkspaceGitService(
     }),
     scheduleRefreshForCwd: () => {},
     onWorkspaceStateMayHaveChanged: () => {},
+    invalidateForge: () => {},
     dispose: () => {},
     ...overrides,
   };

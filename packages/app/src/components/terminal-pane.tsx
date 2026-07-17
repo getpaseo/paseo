@@ -21,7 +21,7 @@ import {
   resolvePendingModifierDataInput,
 } from "@/utils/terminal-keys";
 import { getWorkspaceTerminalSession } from "@/terminal/runtime/workspace-terminal-session";
-import { rememberTerminalViewportSize } from "@/terminal/runtime/terminal-size-cache";
+import { resolveFocusLatchStep } from "./terminal-pane-focus-latch";
 import {
   TerminalStreamController,
   type TerminalStreamControllerStatus,
@@ -261,42 +261,41 @@ export function TerminalPane({
   );
 
   useEffect(() => {
-    if (isMobile || !isPaneFocused || !terminalId) {
-      lastAutoFocusKeyRef.current = null;
-      return;
+    // Latch only when the focus actually ran: latching before the workspace-focus gate would
+    // permanently disarm this effect for panes that mount before their workspace has focus.
+    const step = resolveFocusLatchStep({
+      key: isMobile || !isPaneFocused || !terminalId ? null : `${scopeKey}:${terminalId}`,
+      latchedKey: lastAutoFocusKeyRef.current,
+      canFire: isWorkspaceFocused,
+    });
+    lastAutoFocusKeyRef.current = step.latchedKey;
+    if (step.fire) {
+      requestTerminalFocus();
     }
-
-    const nextFocusKey = `${scopeKey}:${terminalId}`;
-    if (lastAutoFocusKeyRef.current === nextFocusKey) {
-      return;
-    }
-
-    lastAutoFocusKeyRef.current = nextFocusKey;
-    if (!isWorkspaceFocused) {
-      return;
-    }
-
-    requestTerminalFocus();
   }, [isMobile, isPaneFocused, isWorkspaceFocused, requestTerminalFocus, scopeKey, terminalId]);
 
   useEffect(() => {
-    if (!isPaneFocused || !terminalId) {
-      lastPaneFocusResizeKeyRef.current = null;
-      return;
+    // This reflow produces the one resize claim a freshly mounted terminal ever sends; defer it
+    // (without burning the latch) until the claim can land — handleTerminalResize drops claims
+    // while the workspace is unfocused or the app is hidden, and nothing re-sends a dropped one.
+    const step = resolveFocusLatchStep({
+      key: !isPaneFocused || !terminalId ? null : `${scopeKey}:${terminalId}`,
+      latchedKey: lastPaneFocusResizeKeyRef.current,
+      canFire: isWorkspaceFocused && isAppVisible,
+    });
+    lastPaneFocusResizeKeyRef.current = step.latchedKey;
+    if (step.fire) {
+      lastSentTerminalSizeRef.current = null;
+      requestTerminalReflow();
     }
-
-    const focusResizeKey = `${scopeKey}:${terminalId}`;
-    if (lastPaneFocusResizeKeyRef.current === focusResizeKey) {
-      return;
-    }
-    lastPaneFocusResizeKeyRef.current = focusResizeKey;
-    if (!isWorkspaceFocused) {
-      return;
-    }
-
-    lastSentTerminalSizeRef.current = null;
-    requestTerminalReflow();
-  }, [isPaneFocused, isWorkspaceFocused, requestTerminalReflow, scopeKey, terminalId]);
+  }, [
+    isAppVisible,
+    isPaneFocused,
+    isWorkspaceFocused,
+    requestTerminalReflow,
+    scopeKey,
+    terminalId,
+  ]);
 
   const handleTerminalFocus = useCallback(() => {
     if (isWorkspaceFocused && isPaneFocused) {
@@ -636,9 +635,6 @@ export function TerminalPane({
       const normalizedCols = Math.floor(cols);
       const nextSize = { rows: normalizedRows, cols: normalizedCols };
       measuredTerminalSizeRef.current = nextSize;
-      // Seed future terminals in this workspace with the current pane size so they are born at
-      // the right size instead of the daemon's 80x24 default (see terminal-size-cache).
-      rememberTerminalViewportSize({ serverId, cwd, size: nextSize });
       if (!input.shouldClaim || !client || !terminalId || !isWorkspaceFocused || !isAppVisible) {
         return;
       }

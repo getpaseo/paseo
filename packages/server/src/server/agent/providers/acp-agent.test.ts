@@ -2208,8 +2208,7 @@ describe("ACPAgentSession", () => {
     expect(assistantMessages[2].messageId).not.toBe(assistantMessages[0].messageId);
   });
 
-  test("starts an autonomous turn for spontaneous session updates outside a foreground turn", async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
+  test("keeps ACP configuration notifications outside the turn lifecycle", async () => {
     const session = createSession();
     asInternals<ACPSessionInternals>(session).sessionId = "session-1";
 
@@ -2221,49 +2220,26 @@ describe("ACPAgentSession", () => {
     await session.sessionUpdate({
       sessionId: "session-1",
       update: {
-        sessionUpdate: "agent_message_chunk",
-        messageId: "autonomous-msg",
-        content: { type: "text", text: "Autonomous update" },
+        sessionUpdate: "config_option_update",
+        configOptions: [
+          selectConfigOption("mode", ["plan", "yolo"], "yolo"),
+          selectConfigOption("model", ["kimi-code/kimi-for-coding"]),
+          selectConfigOption("thought_level", ["off", "on"], "on"),
+        ],
       } as SessionUpdate,
     });
 
-    // Should emit turn_started before the timeline item.
-    const turnStartedIndex = events.findIndex((e) => e.type === "turn_started");
-    expect(turnStartedIndex).toBeGreaterThanOrEqual(0);
-    const timelineIndex = events.findIndex(
-      (e) =>
-        e.type === "timeline" &&
-        e.item.type === "assistant_message" &&
-        e.item.text === "Autonomous update",
-    );
-    expect(timelineIndex).toBeGreaterThan(turnStartedIndex);
-
-    const turnStarted = events[turnStartedIndex];
-    expect(turnStarted.type).toBe("turn_started");
-    const autonomousTurnId = (turnStarted as { turnId?: string }).turnId;
-    expect(autonomousTurnId).toEqual(expect.any(String));
-
-    // Timeline item should be tagged with the autonomous turn id.
-    const timelineEvent = events[timelineIndex];
-    expect(timelineEvent.type).toBe("timeline");
-    expect((timelineEvent as { turnId?: string }).turnId).toBe(autonomousTurnId);
-
-    // Advance timers to complete the autonomous turn.
-    await vi.advanceTimersByTimeAsync(ACPAgentSession["AUTONOMOUS_TURN_TIMEOUT_MS"] + 10);
-    const turnCompleted = events.find((e) => e.type === "turn_completed");
-    expect(turnCompleted).toBeDefined();
-    expect((turnCompleted as { turnId?: string }).turnId).toBe(autonomousTurnId);
-
-    vi.useRealTimers();
+    expect(events.map((event) => event.type)).toEqual([
+      "thread_started",
+      "mode_changed",
+      "model_changed",
+      "thinking_option_changed",
+    ]);
   });
 
-  test("completes an existing autonomous turn before starting a foreground turn", async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
+  test("forwards out-of-prompt ACP content without inventing a turn", async () => {
     const session = createSession();
     asInternals<ACPSessionInternals>(session).sessionId = "session-1";
-    asInternals<ACPSessionInternals>(session).connection = {
-      prompt: vi.fn(() => new Promise(() => {})),
-    };
 
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => {
@@ -2274,25 +2250,27 @@ describe("ACPAgentSession", () => {
       sessionId: "session-1",
       update: {
         sessionUpdate: "agent_message_chunk",
-        messageId: "autonomous-msg",
-        content: { type: "text", text: "Autonomous update" },
+        messageId: "unscoped-message",
+        content: { type: "text", text: "Unscoped ACP update" },
       } as SessionUpdate,
     });
 
-    const turnStarted = events.find((e) => e.type === "turn_started");
-    expect(turnStarted).toBeDefined();
-    const autonomousTurnId = (turnStarted as { turnId?: string }).turnId;
-
-    // Starting a foreground turn should complete the autonomous turn first.
-    void session.startTurn("user prompt");
-    await vi.runOnlyPendingTimersAsync();
-
-    const turnCompleted = events.find(
-      (e) => e.type === "turn_completed" && (e as { turnId?: string }).turnId === autonomousTurnId,
-    );
-    expect(turnCompleted).toBeDefined();
-
-    vi.useRealTimers();
+    expect(events).toEqual([
+      {
+        type: "thread_started",
+        provider: "claude-acp",
+        sessionId: "session-1",
+      },
+      {
+        type: "timeline",
+        provider: "claude-acp",
+        item: {
+          type: "assistant_message",
+          text: "Unscoped ACP update",
+          messageId: "unscoped-message",
+        },
+      },
+    ]);
   });
 
   test("startTurn returns before the ACP prompt settles and completes later via subscribers", async () => {
