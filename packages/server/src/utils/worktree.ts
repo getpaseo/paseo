@@ -1101,7 +1101,7 @@ export async function resolvePaseoWorktreeRootForCwd(
   }
 
   return {
-    repoRoot: gitCommonDir,
+    repoRoot: resolveRepoRootFromGitCommonDir(gitCommonDir),
     worktreeRoot: worktreesRoot,
     worktreePath: match.path,
   };
