@@ -203,7 +203,6 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
     if (this.currentServer === server) {
       this.currentServer = null;
       server.retired = true;
-      this.retiredServers.add(server);
     }
     if (!server.retired) {
       return;

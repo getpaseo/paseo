@@ -1380,10 +1380,6 @@ export class AgentManager {
       closeError = error;
     }
 
-    for (const event of this.providerSubagents.deleteParent(agentId)) {
-      this.dispatch({ type: "provider_subagent", event });
-    }
-
     let persistError: unknown;
     try {
       await this.persistSnapshot(closedAgent);
@@ -1470,6 +1466,7 @@ export class AgentManager {
     const { archivedAt } = await this.markRecordArchived(stored);
     agent.updatedAt = new Date(archivedAt);
     await this.closeAgent(agentId);
+    this.discardRetainedAgentState(agentId);
 
     await this.cascadeArchiveChildren(agentId);
 
@@ -1496,8 +1493,7 @@ export class AgentManager {
       if (this.agents.has(record.id)) {
         await this.archiveAgent(record.id);
       } else {
-        await this.markRecordArchived(record);
-        await this.cascadeArchiveChildren(record.id);
+        await this.archiveSnapshot(record.id, new Date().toISOString());
       }
     }
   }
@@ -1784,11 +1780,15 @@ export class AgentManager {
 
     if (this.agents.has(agentId)) {
       this.notifyAgentState(agentId);
-    } else if (!nextRecord.internal) {
-      this.dispatchArchivedStoredAgent(nextRecord);
+    } else {
+      this.discardRetainedAgentState(agentId);
+      if (!nextRecord.internal) {
+        this.dispatchArchivedStoredAgent(nextRecord);
+      }
     }
 
     await this.fireAgentArchived(agentId);
+    await this.cascadeArchiveChildren(agentId);
 
     return nextRecord;
   }
@@ -2439,6 +2439,11 @@ export class AgentManager {
     await this.durableTimelineStore.deleteAgent(agentId);
   }
 
+  async deleteAgentState(agentId: string): Promise<void> {
+    this.discardRetainedAgentState(agentId);
+    await this.deleteCommittedTimeline(agentId);
+  }
+
   async getLastAssistantMessage(agentId: string): Promise<string | null> {
     const agent = this.agents.get(agentId);
     if (!agent) {
@@ -2924,6 +2929,13 @@ export class AgentManager {
       finalizedForegroundTurnIds: new Set(),
       unsubscribeSession: null,
     };
+  }
+
+  private discardRetainedAgentState(agentId: string): void {
+    this.timelineStore.delete(agentId);
+    for (const event of this.providerSubagents.deleteParent(agentId)) {
+      this.dispatch({ type: "provider_subagent", event });
+    }
   }
 
   private emitClosedAgent(agent: ManagedAgentClosed, options?: { persist?: boolean }): void {

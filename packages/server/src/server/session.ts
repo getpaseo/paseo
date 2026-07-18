@@ -2164,7 +2164,7 @@ export class Session {
 
     try {
       await this.agentStorage.remove(agentId);
-      await this.agentManager.deleteCommittedTimeline(agentId);
+      await this.agentManager.deleteAgentState(agentId);
     } catch (error) {
       this.sessionLogger.error({ err: error, agentId }, `Failed to fully delete agent ${agentId}`);
     }

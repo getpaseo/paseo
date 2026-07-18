@@ -7163,7 +7163,13 @@ test("closeAgent persists one final closed snapshot", async () => {
 test("collectIdleAgents releases an idle runtime and resumes the same agent and timeline", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-idle-collection-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);
-  const client = new NativeArchiveRecordingClient();
+  let activeSession: TestAgentSession | null = null;
+  const client = new (class extends NativeArchiveRecordingClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      activeSession = new TestAgentSession(config);
+      return activeSession;
+    }
+  })();
   const manager = new AgentManager({
     clients: { codex: client },
     registry: storage,
@@ -7179,6 +7185,17 @@ test("collectIdleAgents releases an idle runtime and resumes the same agent and 
       type: "user_message",
       text: "Keep this timeline",
     });
+    activeSession?.pushEvent({
+      type: "provider_subagent",
+      provider: "codex",
+      event: {
+        type: "upsert",
+        id: "retained-provider-child",
+        title: "Retained provider child",
+        status: "completed",
+      },
+    });
+    await manager.flush();
     const timelineBeforeCollection = manager.getTimeline(created.id);
 
     const collection = await manager.collectIdleAgents({
@@ -7215,6 +7232,13 @@ test("collectIdleAgents releases an idle runtime and resumes the same agent and 
     expect(resumed.id).toBe(created.id);
     expect(resumed.persistence).toEqual(created.persistence);
     expect(manager.getTimeline(created.id)).toEqual(timelineBeforeCollection);
+    expect(manager.listProviderSubagents(created.id)).toEqual([
+      expect.objectContaining({
+        id: "retained-provider-child",
+        title: "Retained provider child",
+        status: "completed",
+      }),
+    ]);
     const idleBeforeOpen = resumed.updatedAt;
     await ensureAgentLoaded(created.id, {
       agentManager: manager,
@@ -7229,6 +7253,46 @@ test("collectIdleAgents releases an idle runtime and resumes the same agent and 
       canceled: false,
     });
     expect(manager.getAgent(created.id)?.id).toBe(created.id);
+  } finally {
+    await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("archiving an idle-collected parent still cascades to its managed children", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-collected-parent-archive-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+
+  try {
+    const parent = await manager.createAgent(
+      { provider: "codex", cwd: workdir, title: "Collected parent" },
+      undefined,
+      { workspaceId: undefined },
+    );
+    const child = await manager.createAgent(
+      { provider: "codex", cwd: workdir, title: "Managed child" },
+      undefined,
+      {
+        labels: { [PARENT_AGENT_ID_LABEL]: parent.id },
+        workspaceId: undefined,
+      },
+    );
+
+    await manager.collectIdleAgents({
+      cutoff: new Date(Date.now() + 1_000),
+      protectedAgentIds: new Set([child.id]),
+    });
+    await manager.archiveSnapshot(parent.id, new Date().toISOString());
+
+    expect((await storage.get(parent.id))?.archivedAt).toEqual(expect.any(String));
+    expect((await storage.get(child.id))?.archivedAt).toEqual(expect.any(String));
+    expect(manager.getAgent(child.id)).toBeNull();
   } finally {
     await manager.flush().catch(() => undefined);
     await storage.flush().catch(() => undefined);

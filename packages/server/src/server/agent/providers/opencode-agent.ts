@@ -1515,14 +1515,17 @@ export class OpenCodeAgentClient implements AgentClient {
     try {
       // OpenCode accepts null to clear the archive timestamp, but this SDK
       // release's generated request type still exposes only number.
+      const updateSession = client.session.update.bind(client.session) as (parameters: {
+        sessionID: string;
+        directory?: string;
+        time?: { archived?: number | null };
+      }) => ReturnType<typeof client.session.update>;
       const response = readOpenCodeRecord(
-        await Reflect.apply(client.session.update, client.session, [
-          {
-            sessionID: handle.sessionId,
-            directory: metadata.cwd,
-            time: { archived: archivedAt },
-          },
-        ]),
+        await updateSession({
+          sessionID: handle.sessionId,
+          directory: metadata.cwd,
+          time: { archived: archivedAt },
+        }),
       );
       if (response?.error) {
         throw new Error(
