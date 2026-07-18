@@ -544,6 +544,287 @@ function replaceLiveAssistantWithProjectedText(params: {
   return next;
 }
 
+function detachOptimisticUserMessages(params: { tail: StreamItem[]; head: StreamItem[] }): {
+  tail: StreamItem[];
+  head: StreamItem[];
+  optimistic: UserMessageItem[];
+} {
+  const optimistic: UserMessageItem[] = [];
+  const withoutOptimistic = (items: StreamItem[]) =>
+    items.filter((item) => {
+      if (item.kind !== "user_message" || !item.optimistic) return true;
+      optimistic.push(item);
+      return false;
+    });
+
+  return {
+    tail: withoutOptimistic(params.tail),
+    head: withoutOptimistic(params.head),
+    optimistic,
+  };
+}
+
+function appendOptimisticUserMessages(params: {
+  tail: StreamItem[];
+  head: StreamItem[];
+  optimistic: UserMessageItem[];
+}): { tail: StreamItem[]; head: StreamItem[] } {
+  if (params.optimistic.length === 0) {
+    return { tail: params.tail, head: params.head };
+  }
+  if (params.head.length > 0) {
+    return { tail: params.tail, head: [...params.head, ...params.optimistic] };
+  }
+  return { tail: [...params.tail, ...params.optimistic], head: params.head };
+}
+
+function reconcileOverlappingProjectedAssistant(params: {
+  tail: StreamItem[];
+  head: StreamItem[];
+  unit: TimelineUnit;
+  epoch: string;
+  currentEndSeq: number;
+}): { tail: StreamItem[]; head: StreamItem[]; reconciled: boolean } {
+  const { unit } = params;
+  if (
+    unit.event.type !== "timeline" ||
+    unit.event.item.type !== "assistant_message" ||
+    !unit.sourceSeqRanges.some(
+      (range) => range.startSeq <= params.currentEndSeq && range.endSeq > params.currentEndSeq,
+    )
+  ) {
+    return { tail: params.tail, head: params.head, reconciled: false };
+  }
+
+  const projectedText = unit.event.item.text;
+  const projectedMessageId = unit.event.item.messageId;
+  const matches = (item: StreamItem) => {
+    if (item.kind !== "assistant_message") return false;
+    if (projectedMessageId && item.messageId) return item.messageId === projectedMessageId;
+    return projectedText.startsWith(item.text);
+  };
+  const replaceIn = (items: StreamItem[]): StreamItem[] | null => {
+    const index = items.findLastIndex(matches);
+    const current = items[index];
+    if (!current || current.kind !== "assistant_message") return null;
+    const next = [...items];
+    next[index] = {
+      ...current,
+      ...(projectedMessageId ? { messageId: projectedMessageId } : {}),
+      text: projectedText,
+      timestamp: unit.timestamp,
+      timelineCursor: { epoch: params.epoch, seq: unit.seqEnd },
+    };
+    return next;
+  };
+
+  const nextHead = replaceIn(params.head);
+  if (nextHead) {
+    return { tail: params.tail, head: nextHead, reconciled: true };
+  }
+  const nextTail = replaceIn(params.tail);
+  return nextTail
+    ? { tail: nextTail, head: params.head, reconciled: true }
+    : { tail: params.tail, head: params.head, reconciled: false };
+}
+
+function reconcileOverlappingProjectedReasoning(params: {
+  tail: StreamItem[];
+  head: StreamItem[];
+  unit: TimelineUnit;
+  currentEndSeq: number;
+}): { tail: StreamItem[]; head: StreamItem[]; reconciled: boolean } {
+  const { unit } = params;
+  if (
+    unit.event.type !== "timeline" ||
+    unit.event.item.type !== "reasoning" ||
+    !unit.sourceSeqRanges.some(
+      (range) => range.startSeq <= params.currentEndSeq && range.endSeq > params.currentEndSeq,
+    )
+  ) {
+    return { tail: params.tail, head: params.head, reconciled: false };
+  }
+
+  const projectedText = unit.event.item.text;
+  const replaceIn = (items: StreamItem[]): StreamItem[] | null => {
+    const index = items.findLastIndex(
+      (item) => item.kind === "thought" && projectedText.startsWith(item.text),
+    );
+    const current = items[index];
+    if (!current || current.kind !== "thought") return null;
+    const next = [...items];
+    next[index] = {
+      ...current,
+      text: projectedText,
+      timestamp: unit.timestamp,
+      status: "loading",
+    };
+    return next;
+  };
+
+  const nextHead = replaceIn(params.head);
+  if (nextHead) return { tail: params.tail, head: nextHead, reconciled: true };
+  const nextTail = replaceIn(params.tail);
+  return nextTail
+    ? { tail: nextTail, head: params.head, reconciled: true }
+    : { tail: params.tail, head: params.head, reconciled: false };
+}
+
+function reconcileOverlappingProjectedStreamItems(params: {
+  tail: StreamItem[];
+  head: StreamItem[];
+  units: TimelineUnit[];
+  epoch: string;
+  currentEndSeq: number | undefined;
+}): { tail: StreamItem[]; head: StreamItem[]; reconciledUnits: Set<TimelineUnit> } {
+  let tail = params.tail;
+  let head = params.head;
+  const reconciledUnits = new Set<TimelineUnit>();
+  if (params.currentEndSeq === undefined) return { tail, head, reconciledUnits };
+
+  for (const unit of params.units) {
+    let reconciled = reconcileOverlappingProjectedAssistant({
+      tail,
+      head,
+      unit,
+      epoch: params.epoch,
+      currentEndSeq: params.currentEndSeq,
+    });
+    if (!reconciled.reconciled) {
+      reconciled = reconcileOverlappingProjectedReasoning({
+        tail,
+        head,
+        unit,
+        currentEndSeq: params.currentEndSeq,
+      });
+    }
+    tail = reconciled.tail;
+    head = reconciled.head;
+    if (reconciled.reconciled) reconciledUnits.add(unit);
+  }
+  return { tail, head, reconciledUnits };
+}
+
+function stageOptimisticUserForCanonicalEvent(params: {
+  tail: StreamItem[];
+  head: StreamItem[];
+  event: AgentStreamEventPayload;
+  optimistic: UserMessageItem[];
+}): { tail: StreamItem[]; head: StreamItem[] } {
+  if (
+    params.event.type !== "timeline" ||
+    params.event.item.type !== "user_message" ||
+    params.optimistic.length === 0
+  ) {
+    return { tail: params.tail, head: params.head };
+  }
+  const pending = params.optimistic.shift();
+  if (!pending) return { tail: params.tail, head: params.head };
+  if (params.head.length > 0) {
+    return { tail: params.tail, head: [...params.head, pending] };
+  }
+  return { tail: [...params.tail, pending], head: params.head };
+}
+
+function applyCanonicalForwardUnit(params: {
+  tail: StreamItem[];
+  head: StreamItem[];
+  unit: TimelineUnit;
+  epoch: string;
+  applyThroughHead: boolean;
+  optimisticPromptSeparatesHistory: boolean;
+}): { tail: StreamItem[]; head: StreamItem[] } {
+  const { event, timestamp, seqEnd } = params.unit;
+  const timelineCursor = { epoch: params.epoch, seq: seqEnd };
+  if (!params.applyThroughHead) {
+    return {
+      tail: reduceStreamUpdate(params.tail, event, timestamp, {
+        source: "canonical",
+        timelineCursor,
+      }),
+      head: params.head,
+    };
+  }
+  if (
+    params.optimisticPromptSeparatesHistory &&
+    params.head.length === 0 &&
+    event.type === "timeline" &&
+    event.item.type === "assistant_message"
+  ) {
+    return {
+      tail: params.tail,
+      head: reduceStreamUpdate(params.head, event, timestamp, {
+        source: "canonical",
+        timelineCursor,
+      }),
+    };
+  }
+  const replacedHead = replaceLiveAssistantWithProjectedText({
+    head: params.head,
+    event,
+    timestamp,
+    timelineCursor,
+  });
+  if (replacedHead) return { tail: params.tail, head: replacedHead };
+
+  const applied = applyStreamEvent({
+    tail: params.tail,
+    head: params.head,
+    event,
+    timestamp,
+    source: "canonical",
+    timelineCursor,
+  });
+  return { tail: applied.tail, head: applied.head };
+}
+
+function applyAcceptedForwardTimelineUnits(params: {
+  units: TimelineUnit[];
+  epoch: string;
+  currentTail: StreamItem[];
+  currentHead: StreamItem[];
+  currentEndSeq: number | undefined;
+}): { tail: StreamItem[]; head: StreamItem[] } {
+  const detached = detachOptimisticUserMessages({
+    tail: params.currentTail,
+    head: params.currentHead,
+  });
+  const optimistic = [...detached.optimistic];
+  const optimisticPromptSeparatesHistory = optimistic.length > 0;
+  const applyThroughHead = params.currentHead.length > 0 || optimisticPromptSeparatesHistory;
+  const reconciled = reconcileOverlappingProjectedStreamItems({
+    tail: detached.tail,
+    head: detached.head,
+    units: params.units,
+    epoch: params.epoch,
+    currentEndSeq: params.currentEndSeq,
+  });
+  let tail = reconciled.tail;
+  let head = reconciled.head;
+
+  for (const unit of params.units) {
+    if (reconciled.reconciledUnits.has(unit)) continue;
+    const staged = stageOptimisticUserForCanonicalEvent({
+      tail,
+      head,
+      event: unit.event,
+      optimistic,
+    });
+    const applied = applyCanonicalForwardUnit({
+      tail: staged.tail,
+      head: staged.head,
+      unit,
+      epoch: params.epoch,
+      applyThroughHead,
+      optimisticPromptSeparatesHistory,
+    });
+    tail = applied.tail;
+    head = applied.head;
+  }
+
+  return appendOptimisticUserMessages({ tail, head, optimistic });
+}
+
 function applyTimelineIncrementalPath(args: {
   timelineUnits: TimelineUnit[];
   payload: ProcessTimelineResponseInput["payload"];
@@ -586,39 +867,16 @@ function applyTimelineIncrementalPath(args: {
         { source: "canonical" },
       );
       nextTail = mergePrependedCanonicalTail(olderTail, currentTail);
-    } else if (currentHead.length > 0) {
-      for (const { event, timestamp, seqEnd } of acceptedUnits) {
-        const timelineCursor = { epoch: payload.epoch, seq: seqEnd };
-        const replacedHead = replaceLiveAssistantWithProjectedText({
-          head: nextHead,
-          event,
-          timestamp,
-          timelineCursor,
-        });
-        if (replacedHead) {
-          nextHead = replacedHead;
-          continue;
-        }
-        const applied = applyStreamEvent({
-          tail: nextTail,
-          head: nextHead,
-          event,
-          timestamp,
-          source: "canonical",
-          timelineCursor,
-        });
-        nextTail = applied.tail;
-        nextHead = applied.head;
-      }
     } else {
-      nextTail = acceptedUnits.reduce<StreamItem[]>(
-        (state, { event, timestamp, seqEnd }) =>
-          reduceStreamUpdate(state, event, timestamp, {
-            source: "canonical",
-            timelineCursor: { epoch: payload.epoch, seq: seqEnd },
-          }),
-        currentTail,
-      );
+      const applied = applyAcceptedForwardTimelineUnits({
+        units: acceptedUnits,
+        epoch: payload.epoch,
+        currentTail: nextTail,
+        currentHead: nextHead,
+        currentEndSeq: currentCursor?.endSeq,
+      });
+      nextTail = applied.tail;
+      nextHead = applied.head;
     }
   }
 

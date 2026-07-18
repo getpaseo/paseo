@@ -597,6 +597,158 @@ describe("processTimelineResponse", () => {
     });
   });
 
+  it("does not replay an assistant prefix when catch-up completes an earlier tool call", () => {
+    const live = processAgentStreamEvents({
+      events: [
+        makeStreamReducerEvent(makeToolCallTimelineEvent("call-1"), 1),
+        makeStreamReducerEvent(makeAssistantTimelineEvent("Hel", "answer-1"), 2),
+      ],
+      currentTail: [],
+      currentHead: [],
+      currentCursor: undefined,
+      currentAgent: null,
+    });
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail: live.tail,
+      currentHead: live.head,
+      currentCursor: live.cursor ?? undefined,
+      payload: {
+        ...baseTimelineInput.payload,
+        epoch: "epoch-1",
+        startCursor: { seq: 3 },
+        endCursor: { seq: 4 },
+        entries: [
+          {
+            ...makeToolCallTimelineEntry(1, "call-1", "completed", {
+              type: "read",
+              filePath: "/tmp/example.ts",
+            }),
+            seqEnd: 4,
+            sourceSeqRanges: [
+              { startSeq: 1, endSeq: 1 },
+              { startSeq: 4, endSeq: 4 },
+            ],
+          },
+          {
+            ...makeTimelineEntry(2, "Hello", "assistant_message", 3),
+            sourceSeqRanges: [{ startSeq: 2, endSeq: 3 }],
+            item: {
+              type: "assistant_message",
+              text: "Hello",
+              messageId: "answer-1",
+            },
+          },
+        ],
+      },
+    });
+
+    expect(getAssistantTexts([...result.tail, ...result.head])).toEqual(["Hello"]);
+  });
+
+  it("reconciles an identified projection with an overlapping anonymous live prefix", () => {
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentHead: [makeAssistantItem("Hel")],
+      currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 2 },
+      payload: {
+        ...baseTimelineInput.payload,
+        epoch: "epoch-1",
+        startCursor: { seq: 3 },
+        endCursor: { seq: 3 },
+        entries: [
+          {
+            ...makeTimelineEntry(2, "Hello", "assistant_message", 3),
+            sourceSeqRanges: [{ startSeq: 2, endSeq: 3 }],
+            item: {
+              type: "assistant_message",
+              text: "Hello",
+              messageId: "answer-1",
+            },
+          },
+        ],
+      },
+    });
+
+    const assistants = [...result.tail, ...result.head].filter(
+      (item) => item.kind === "assistant_message",
+    );
+    expect(assistants).toHaveLength(1);
+    expect(assistants[0]).toMatchObject({ text: "Hello", messageId: "answer-1" });
+  });
+
+  it("does not replay a reasoning prefix when catch-up completes an earlier tool call", () => {
+    const live = processAgentStreamEvents({
+      events: [
+        makeStreamReducerEvent(makeToolCallTimelineEvent("call-1"), 1),
+        makeStreamReducerEvent(makeTimelineEvent("Thi", "reasoning"), 2),
+      ],
+      currentTail: [],
+      currentHead: [],
+      currentCursor: undefined,
+      currentAgent: null,
+    });
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail: live.tail,
+      currentHead: live.head,
+      currentCursor: live.cursor ?? undefined,
+      payload: {
+        ...baseTimelineInput.payload,
+        epoch: "epoch-1",
+        startCursor: { seq: 3 },
+        endCursor: { seq: 4 },
+        entries: [
+          {
+            ...makeToolCallTimelineEntry(1, "call-1", "completed", {
+              type: "read",
+              filePath: "/tmp/example.ts",
+            }),
+            seqEnd: 4,
+            sourceSeqRanges: [
+              { startSeq: 1, endSeq: 1 },
+              { startSeq: 4, endSeq: 4 },
+            ],
+          },
+          {
+            ...makeTimelineEntry(2, "Thinking", "reasoning", 3),
+            sourceSeqRanges: [{ startSeq: 2, endSeq: 3 }],
+          },
+        ],
+      },
+    });
+
+    const thoughts = [...result.tail, ...result.head].filter((item) => item.kind === "thought");
+    expect(thoughts).toHaveLength(1);
+    expect(thoughts[0]?.text).toBe("Thinking");
+  });
+
+  it("keeps delayed catch-up history before a newly submitted prompt", () => {
+    const prompt = makeOptimisticUserMessage("New prompt", "new-prompt");
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail: [makeAssistantItem("Earlier answer", "earlier-answer"), prompt],
+      currentHead: [],
+      currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 2 },
+      payload: {
+        ...baseTimelineInput.payload,
+        epoch: "epoch-1",
+        startCursor: { seq: 3 },
+        endCursor: { seq: 3 },
+        entries: [makeTimelineEntry(3, "Missed answer")],
+      },
+    });
+
+    expect(
+      [...result.tail, ...result.head]
+        .filter((item) => item.kind === "assistant_message" || item.kind === "user_message")
+        .map((item) => item.text),
+    ).toEqual(["Earlier answer", "Missed answer", "New prompt"]);
+  });
+
   it("hydrates a fetched in-progress tool call as one item and streams the next update on top", () => {
     const fetched = processTimelineResponse({
       ...baseTimelineInput,

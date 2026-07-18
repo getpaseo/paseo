@@ -20,7 +20,11 @@ import {
 } from "@/timeline/session-stream-reducers";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
 import { isTimelineCatchUpComplete } from "@/timeline/timeline-sync-plan";
-import { createViewedTimelineSync, type ViewedTimelineSync } from "@/timeline/viewed-timeline-sync";
+import {
+  createViewedTimelineSync,
+  type TimelineDeliveryMode,
+  type ViewedTimelineSync,
+} from "@/timeline/viewed-timeline-sync";
 import type { AgentAttachment, SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { parseServerInfoStatusPayload } from "@getpaseo/protocol/messages";
 import {
@@ -77,6 +81,11 @@ interface BufferedAudioChunk {
   audio: string;
   format: string;
   id: string;
+}
+
+// COMPAT(selectiveAgentTimeline): added in v0.1.106, remove after 2027-01-12.
+function getTimelineDeliveryMode(selectiveAgentTimeline?: boolean): TimelineDeliveryMode {
+  return selectiveAgentTimeline ? "selective" : "legacy";
 }
 
 function decodeBase64Chunk(base64: string): Uint8Array {
@@ -712,7 +721,11 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
 
   useEffect(() => {
     const setAgentInitializing = createSetAgentInitializing(serverId, setInitializingAgents);
+    const initialDeliveryMode = getTimelineDeliveryMode(
+      client.getLastServerInfoMessage()?.features?.selectiveAgentTimeline,
+    );
     const sync = createViewedTimelineSync({
+      initialDeliveryMode,
       setSubscription: (agentIds) => client.setAgentTimelineSubscription(agentIds),
       readCursor: (agentId) =>
         useSessionStore.getState().sessions[serverId]?.agentTimelineCursor.get(agentId),
@@ -721,20 +734,17 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
           .getState()
           .sessions[serverId]?.agentAuthoritativeHistoryApplied.get(agentId) === true,
       fetchPage: async (agentId, request) => {
-        const session = useSessionStore.getState().sessions[serverId];
         const initKey = getInitKey(serverId, agentId);
-        if (session?.agentAuthoritativeHistoryApplied.get(agentId) !== true) {
-          if (!getInitDeferred(initKey)) {
-            const deferred = createInitDeferred(initKey, request.direction ?? "tail");
-            void deferred.promise.catch(() => undefined);
-          }
-          refreshAgentInitializationTimeout({
-            key: initKey,
-            agentId,
-            setAgentInitializing,
-          });
-          setAgentInitializing(agentId, true);
+        if (!getInitDeferred(initKey)) {
+          const deferred = createInitDeferred(initKey, request.direction ?? "tail");
+          void deferred.promise.catch(() => undefined);
         }
+        refreshAgentInitializationTimeout({
+          key: initKey,
+          agentId,
+          setAgentInitializing,
+        });
+        setAgentInitializing(agentId, true);
         try {
           const page = await getHostRuntimeStore().fetchAgentTimeline(serverId, agentId, request);
           if (getInitDeferred(initKey)) {
@@ -750,8 +760,8 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       reportError: (error) => {
         console.warn("[Session] viewed timeline synchronization failed", { serverId, error });
       },
-      scheduleRetry: (retry) => {
-        const timeout = setTimeout(retry, 1_000);
+      schedule: (task, delayMs) => {
+        const timeout = setTimeout(task, delayMs);
         return () => clearTimeout(timeout);
       },
     });
@@ -855,6 +865,9 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       if (message.type !== "status") return;
       const serverInfo = parseServerInfoStatusPayload(message.payload);
       if (serverInfo) {
+        viewedTimelineSyncRef.current?.setDeliveryMode(
+          getTimelineDeliveryMode(serverInfo.features?.selectiveAgentTimeline),
+        );
         updateSessionServerInfo(serverId, {
           serverId: serverInfo.serverId,
           hostname: serverInfo.hostname,
