@@ -8,6 +8,10 @@ import {
   type SessionStateResponse,
 } from "./acp-agent.js";
 import { GenericACPAgentClient } from "./generic-acp-agent.js";
+import {
+  isGrokHiddenFromScrollbackUserChunk,
+  mapGrokExtensionNotificationToTimelineItems,
+} from "./grok-background-tasks.js";
 
 /** Ask before tool executions — Grok's interactive default (`permission_mode = "ask"`). */
 export const GROK_ASK_MODE_ID = "ask";
@@ -65,6 +69,10 @@ interface GrokACPAgentClientOptions {
  * Paseo surfaces Ask / Always Approve in the mode picker, drives Grok through those
  * native paths, and keeps a client-side auto-approve fallback if Grok still emits
  * `session/request_permission` while Always Approve is selected.
+ *
+ * Background-task UX (issue #2182): suppress model-only wake-up chunks marked
+ * `_meta.hideFromScrollback === true`, and map `_x.ai/session/update` task events
+ * to synthetic `tool_call` timeline items keyed by `task_id`.
  */
 export class GrokACPAgentClient extends GenericACPAgentClient {
   constructor(options: GrokACPAgentClientOptions) {
@@ -82,6 +90,8 @@ export class GrokACPAgentClient extends GenericACPAgentClient {
       // Fallback only: when Grok is correctly in always-approve it does not call
       // session/request_permission. This covers races / older Grok builds.
       autoApproveModeIds: [GROK_ALWAYS_APPROVE_MODE_ID],
+      shouldSuppressUserMessageChunk: isGrokHiddenFromScrollbackUserChunk,
+      extensionNotificationHandler: mapGrokExtensionNotificationToTimelineItems,
     });
   }
 }

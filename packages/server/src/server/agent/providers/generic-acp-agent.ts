@@ -8,8 +8,10 @@ import {
   type ACPBeforeModeWriteResult,
   type ACPClientCapabilityMeta,
   type ACPConfigFeatureOption,
+  type ACPExtensionNotificationHandler,
   type ACPProviderModeWriteResult,
   type ACPProviderModeWriterContext,
+  type ACPUserMessageChunkFilter,
   DEFAULT_ACP_CAPABILITIES,
   type ACPExtensionCommandsParser,
   type SessionStateResponse,
@@ -53,6 +55,8 @@ interface GenericACPAgentClientOptions {
   clientCapabilityMeta?: ACPClientCapabilityMeta;
   configFeatureOptions?: ACPConfigFeatureOption[];
   extensionCommandsParser?: ACPExtensionCommandsParser;
+  shouldSuppressUserMessageChunk?: ACPUserMessageChunkFilter;
+  extensionNotificationHandler?: ACPExtensionNotificationHandler;
   defaultModes?: AgentMode[];
   sessionResponseTransformer?: (
     response: SessionStateResponse,
@@ -97,6 +101,8 @@ export class GenericACPAgentClient extends ACPAgentClient {
       clientCapabilityMeta: options.clientCapabilityMeta,
       configFeatureOptions: options.configFeatureOptions,
       extensionCommandsParser: options.extensionCommandsParser,
+      shouldSuppressUserMessageChunk: options.shouldSuppressUserMessageChunk,
+      extensionNotificationHandler: options.extensionNotificationHandler,
     });
 
     this.command = options.command;

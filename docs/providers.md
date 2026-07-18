@@ -8,7 +8,9 @@ This guide walks through adding a new agent provider end-to-end. There are two i
 
 Extend `ACPAgentClient` from `packages/server/src/server/agent/providers/acp-agent.ts`. The base class handles process spawning, stdio transport, session lifecycle, streaming, permissions, and model discovery. You provide configuration (command, modes, capabilities) and optionally override `isAvailable()` for auth checks.
 
-The only built-in ACP provider today is `copilot` (`copilot-acp-agent.ts`). `GenericACPAgentClient` (`generic-acp-agent.ts`) is also ACP-based but is used for user-defined custom providers configured via `extends: "acp"` overrides — see [docs/custom-providers.md](custom-providers.md).
+Built-in ACP providers include `copilot` (`copilot-acp-agent.ts`), `cursor` (`cursor-acp-agent.ts`), `kiro` (`kiro-acp-agent.ts`), `trae` (`trae-acp-agent.ts`), and `grok` (`grok-acp-agent.ts`). `GenericACPAgentClient` (`generic-acp-agent.ts`) is also ACP-based and is used for user-defined custom providers configured via `extends: "acp"` overrides — see [docs/custom-providers.md](custom-providers.md).
+
+Grok-specific ACP behavior stays in the Grok adapter (and small adjacent modules such as `grok-background-tasks.ts`): mode mapping for Always Approve, suppression of `user_message_chunk` when `_meta.hideFromScrollback === true`, and structured `_x.ai/session/update` task events rendered as synthetic `tool_call` timeline items. Shared ACP only exposes narrow hooks (`shouldSuppressUserMessageChunk`, `extensionNotificationHandler`) so other providers remain unaffected.
 
 Copilot custom agents are exposed through ACP session config, not the slash-command list. When custom agents are available, Copilot returns a select config option with `id: "agent"` and `category: "_agent"`; Paseo maps that to the `agent` provider feature. Copilot uses the agent display name as the option value, and the blank value means the default Copilot agent.
 
