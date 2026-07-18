@@ -289,4 +289,11 @@ describe("mapGrokExtensionNotificationToTimelineItems", () => {
       status: "completed",
     });
   });
+
+  test("callIds for task IDs that only differ by normalized characters do not collide", () => {
+    expect(buildGrokBackgroundTaskCallId("task/1")).not.toBe(
+      buildGrokBackgroundTaskCallId("task_1"),
+    );
+    expect(buildGrokBackgroundTaskCallId("task/1")).toBe(buildGrokBackgroundTaskCallId("task/1"));
+  });
 });

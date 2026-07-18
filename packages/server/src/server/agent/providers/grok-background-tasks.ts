@@ -1,7 +1,9 @@
+import { createHash } from "node:crypto";
+import type { SessionUpdate } from "@agentclientprotocol/sdk";
 import { z } from "zod";
 
 import type { AgentTimelineItem, ToolCallTimelineItem } from "../agent-sdk-types.js";
-import type { SessionUpdate } from "@agentclientprotocol/sdk";
+import type { ACPExtensionNotificationContext } from "./acp-agent.js";
 
 /** Grok vendor extension method for structured session/task updates. */
 export const GROK_SESSION_UPDATE_METHOD = "_x.ai/session/update";
@@ -46,10 +48,6 @@ const GrokExtensionNotificationParamsSchema = z
 export type GrokTaskSnapshot = z.infer<typeof GrokTaskSnapshotSchema>;
 export type GrokSessionUpdate = z.infer<typeof GrokSessionUpdateSchema>;
 
-export interface GrokExtensionNotificationContext {
-  sessionId: string | null;
-}
-
 /**
  * True when a Grok user_message_chunk is model-only and must not enter scrollback.
  * Check happens before message assembly so a hidden chunk without messageId cannot
@@ -75,7 +73,7 @@ export function isGrokHiddenFromScrollbackUserChunk(
 export function mapGrokExtensionNotificationToTimelineItems(
   method: string,
   params: Record<string, unknown>,
-  context: GrokExtensionNotificationContext,
+  context: ACPExtensionNotificationContext,
 ): AgentTimelineItem[] | null {
   if (method !== GROK_SESSION_UPDATE_METHOD) {
     return null;
@@ -97,9 +95,13 @@ export function mapGrokExtensionNotificationToTimelineItems(
   return [toGrokBackgroundTaskToolCall(parsed.data.update)];
 }
 
+/**
+ * Stable call ID from the raw task_id. Hash the original string so IDs that only
+ * differ by normalized characters (e.g. `task/1` vs `task_1`) never collide.
+ */
 export function buildGrokBackgroundTaskCallId(taskId: string): string {
-  const normalized = taskId.trim().replace(/[^a-zA-Z0-9._:-]+/g, "_");
-  return `grok_task_${normalized.length > 0 ? normalized : "unknown"}`;
+  const digest = createHash("sha1").update(taskId.trim()).digest("hex").slice(0, 16);
+  return `grok_task_${digest}`;
 }
 
 function toGrokBackgroundTaskToolCall(update: GrokSessionUpdate): ToolCallTimelineItem {
@@ -107,30 +109,26 @@ function toGrokBackgroundTaskToolCall(update: GrokSessionUpdate): ToolCallTimeli
   const callId = buildGrokBackgroundTaskCallId(snapshot.task_id);
   const detailText = buildGrokTaskDetailText(snapshot);
   const label = buildGrokTaskLabel(update.sessionUpdate, snapshot);
+  const detail =
+    detailText === undefined
+      ? {
+          type: "plain_text" as const,
+          label,
+          icon: "wrench" as const,
+        }
+      : {
+          type: "plain_text" as const,
+          label,
+          icon: "wrench" as const,
+          text: detailText,
+        };
+  const metadata = buildGrokTaskMetadata(snapshot, update.sessionUpdate);
   const base = {
     type: "tool_call" as const,
     callId,
     name: "background_task",
-    detail: {
-      type: "plain_text" as const,
-      label,
-      icon: "wrench" as const,
-      ...(detailText ? { text: detailText } : {}),
-    },
-    metadata: {
-      synthetic: true,
-      source: "grok_background_task",
-      taskId: snapshot.task_id,
-      sessionUpdate: update.sessionUpdate,
-      ...(snapshot.kind ? { kind: snapshot.kind } : {}),
-      ...(snapshot.command ? { command: snapshot.command } : {}),
-      ...(snapshot.cwd ? { cwd: snapshot.cwd } : {}),
-      ...(snapshot.exit_code !== undefined && snapshot.exit_code !== null
-        ? { exitCode: snapshot.exit_code }
-        : {}),
-      ...(snapshot.signal ? { signal: snapshot.signal } : {}),
-      ...(snapshot.truncated ? { truncated: true } : {}),
-    },
+    detail,
+    metadata,
   };
 
   if (update.sessionUpdate === "task_backgrounded") {
@@ -161,6 +159,37 @@ function toGrokBackgroundTaskToolCall(update: GrokSessionUpdate): ToolCallTimeli
     status: "completed",
     error: null,
   };
+}
+
+function buildGrokTaskMetadata(
+  snapshot: GrokTaskSnapshot,
+  sessionUpdate: GrokSessionUpdate["sessionUpdate"],
+): Record<string, unknown> {
+  const metadata: Record<string, unknown> = {
+    synthetic: true,
+    source: "grok_background_task",
+    taskId: snapshot.task_id,
+    sessionUpdate,
+  };
+  if (snapshot.kind) {
+    metadata.kind = snapshot.kind;
+  }
+  if (snapshot.command) {
+    metadata.command = snapshot.command;
+  }
+  if (snapshot.cwd) {
+    metadata.cwd = snapshot.cwd;
+  }
+  if (snapshot.exit_code !== undefined && snapshot.exit_code !== null) {
+    metadata.exitCode = snapshot.exit_code;
+  }
+  if (snapshot.signal) {
+    metadata.signal = snapshot.signal;
+  }
+  if (snapshot.truncated) {
+    metadata.truncated = true;
+  }
+  return metadata;
 }
 
 function resolveGrokTaskCompletionLifecycle(

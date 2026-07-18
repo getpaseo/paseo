@@ -357,6 +357,29 @@ test("writeGrokProviderMode leaves unknown ACP modes to the generic path", async
   ).resolves.toEqual({ handled: false });
 });
 
+test("writeGrokProviderMode does not claim Ask when leaving an upstream ACP mode", async () => {
+  const recording = createRecordingGrokConnection();
+
+  await expect(
+    writeGrokProviderMode({
+      connection: recording.connection as never,
+      sessionId: "session-1",
+      requestedModeId: GROK_ASK_MODE_ID,
+      currentModeId: "plan",
+      selection: {
+        availableMode: GROK_MODES[0] ?? null,
+        configOption: null,
+        configChoice: null,
+        hasAvailableModes: true,
+      },
+      configOptions: [],
+      logger: createTestLogger(),
+    }),
+  ).resolves.toEqual({ handled: false });
+
+  expect(recording.prompts).toEqual([]);
+});
+
 test("Always Approve fallback auto-approves ACP permission requests without UI events", async () => {
   const session = new ACPAgentSession(
     {

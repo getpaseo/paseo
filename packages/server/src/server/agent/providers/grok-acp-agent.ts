@@ -208,11 +208,20 @@ export async function writeGrokProviderMode(
         sessionId: context.sessionId,
         prompt: [{ type: "text", text: "/always-approve off" }],
       });
+      return {
+        handled: true,
+        currentModeId: GROK_ASK_MODE_ID,
+      };
     }
-    return {
-      handled: true,
-      currentModeId: GROK_ASK_MODE_ID,
-    };
+    if (context.currentModeId === GROK_ASK_MODE_ID) {
+      return {
+        handled: true,
+        currentModeId: GROK_ASK_MODE_ID,
+      };
+    }
+    // Leaving an upstream ACP mode (e.g. plan): do not claim handled so the
+    // generic setSessionMode path can switch Grok out of that mode.
+    return { handled: false };
   }
 
   return { handled: false };
