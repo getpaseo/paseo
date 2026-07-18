@@ -1442,25 +1442,25 @@ export const AgentControls = memo(function AgentControls({
   const activeModelId = modelSelection.activeModelId;
 
   const handleSelectModel = useCallback(
-    (modelId: string) => {
+    async (modelId: string) => {
       if (!client || !agentProvider) {
         return;
       }
-      void updatePreferences((current) =>
-        mergeProviderPreferences({
-          preferences: current,
-          provider: agentProvider,
-          updates: {
-            model: modelId,
-          },
-        }),
-      ).catch((error) => {
-        console.warn("[AgentControls] persist model preference failed", error);
-      });
-      void client.setAgentModel(agentId, modelId).catch((error) => {
-        console.warn("[AgentControls] setAgentModel failed", error);
+      try {
+        await client.setAgentModel(agentId, modelId);
+        await updatePreferences((current) =>
+          mergeProviderPreferences({
+            preferences: current,
+            provider: agentProvider,
+            updates: {
+              model: modelId,
+            },
+          }),
+        );
+      } catch (error) {
+        console.warn("[AgentControls] setAgentModel or persist preference failed", error);
         toast.error(toErrorMessage(error));
-      });
+      }
     },
     [agentId, agentProvider, client, toast, updatePreferences],
   );
