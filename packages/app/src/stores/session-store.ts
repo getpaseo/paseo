@@ -320,6 +320,20 @@ export interface AgentTimelineCursorState {
   endSeq: number;
 }
 
+export interface SessionReplicaTimeline {
+  agentId: string;
+  items: StreamItem[];
+  cursor: AgentTimelineCursorState | null;
+  hasOlder: boolean;
+}
+
+export interface SessionReplica {
+  agents: Map<string, Agent>;
+  workspaces: Map<string, WorkspaceDescriptor>;
+  emptyProjects: Map<string, EmptyProjectDescriptor>;
+  timeline: SessionReplicaTimeline | null;
+}
+
 export type WorkspaceRestoreStatus = "restoring" | "failed" | "needs-host-upgrade";
 
 // Per-session state
@@ -398,7 +412,12 @@ interface SessionStoreState {
 // Action types
 interface SessionStoreActions {
   // Session management
-  initializeSession: (serverId: string, client: DaemonClient, clientGeneration?: number) => void;
+  initializeSession: (
+    serverId: string,
+    client: DaemonClient | null,
+    clientGeneration?: number,
+  ) => void;
+  restoreSessionReplica: (serverId: string, replica: SessionReplica) => void;
   clearSession: (serverId: string) => void;
   getSession: (serverId: string) => SessionState | undefined;
   updateSessionClient: (serverId: string, client: DaemonClient, clientGeneration?: number) => void;
@@ -549,7 +568,7 @@ const agentLastActivityCoalescer = createAgentLastActivityCoalescer();
 // Helper to create initial session state
 function createInitialSessionState(
   serverId: string,
-  client: DaemonClient,
+  client: DaemonClient | null,
   clientGeneration = 0,
 ): SessionState {
   return {
@@ -671,6 +690,51 @@ export const useSessionStore = create<SessionStore>()(
               ...prev.sessions,
               [serverId]: createInitialSessionState(serverId, client, clientGeneration),
             },
+          };
+        });
+      },
+
+      restoreSessionReplica: (serverId, replica) => {
+        set((prev) => {
+          if (prev.sessions[serverId]) {
+            return prev;
+          }
+          const session = createInitialSessionState(serverId, null);
+          const timeline = replica.timeline;
+          const agentStreamTail = new Map<string, StreamItem[]>();
+          const agentTimelineCursor = new Map<string, AgentTimelineCursorState>();
+          const agentTimelineHasOlder = new Map<string, boolean>();
+          const agentAuthoritativeHistoryApplied = new Map<string, boolean>();
+          const agentHistorySyncGeneration = new Map<string, number>();
+          if (timeline) {
+            agentStreamTail.set(timeline.agentId, timeline.items);
+            agentTimelineHasOlder.set(timeline.agentId, timeline.hasOlder);
+            agentAuthoritativeHistoryApplied.set(timeline.agentId, true);
+            agentHistorySyncGeneration.set(timeline.agentId, session.historySyncGeneration);
+            if (timeline.cursor) agentTimelineCursor.set(timeline.agentId, timeline.cursor);
+          }
+          const agentLastActivity = new Map(prev.agentLastActivity);
+          for (const agent of replica.agents.values()) {
+            agentLastActivity.set(agent.id, agent.lastActivityAt);
+          }
+          return {
+            ...prev,
+            sessions: {
+              ...prev.sessions,
+              [serverId]: {
+                ...session,
+                agents: replica.agents,
+                workspaceAgentActivity: buildWorkspaceAgentActivityIndex(replica.agents),
+                workspaces: replica.workspaces,
+                emptyProjects: replica.emptyProjects,
+                agentStreamTail,
+                agentTimelineCursor,
+                agentTimelineHasOlder,
+                agentAuthoritativeHistoryApplied,
+                agentHistorySyncGeneration,
+              },
+            },
+            agentLastActivity,
           };
         });
       },

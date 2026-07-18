@@ -55,6 +55,7 @@ import {
 } from "@/composer/attachments/submit";
 import { encodeImages } from "@/utils/encode-images";
 import { DirectorySync, type RefreshAgentDirectoryResult } from "@/runtime/directory-sync";
+import { ReplicaCache } from "@/runtime/replica-cache";
 
 export type HostRuntimeConnectionStatus = "idle" | "connecting" | "online" | "offline" | "error";
 export type HostRegistryStatus = "loading" | "ready";
@@ -1355,10 +1356,12 @@ export class HostRuntimeStore {
   private configuredOverrideBootstrapInFlight: Promise<void> | null = null;
   private bootStarted = false;
   private storage: HostRuntimeStorage;
+  private replicaCache: ReplicaCache;
 
   constructor(input?: { deps?: HostRuntimeControllerDeps; storage?: HostRuntimeStorage }) {
     this.deps = input?.deps ?? createDefaultDeps();
     this.storage = input?.storage ?? AsyncStorage;
+    this.replicaCache = new ReplicaCache(this.storage);
   }
 
   // --- Host registry ---
@@ -1432,27 +1435,29 @@ export class HostRuntimeStore {
 
   private async loadFromStorage(): Promise<void> {
     let shouldPersistHosts = false;
+    let profiles: HostProfile[] = [];
     try {
       const stored = await this.storage.getItem(REGISTRY_STORAGE_KEY);
-      if (!stored) {
-        return;
+      if (stored) {
+        const parsed = JSON.parse(stored) as unknown;
+        if (Array.isArray(parsed)) {
+          const normalizedProfiles = parsed
+            .map((entry) => normalizeStoredHostProfile(entry))
+            .filter((entry): entry is HostProfile => entry !== null);
+          profiles = normalizedProfiles.filter((entry) => !isPlaceholderServerId(entry.serverId));
+          if (profiles.length !== normalizedProfiles.length) {
+            shouldPersistHosts = true;
+          }
+        }
       }
-      const parsed = JSON.parse(stored) as unknown;
-      if (!Array.isArray(parsed)) {
-        return;
-      }
-      const normalizedProfiles = parsed
-        .map((entry) => normalizeStoredHostProfile(entry))
-        .filter((entry): entry is HostProfile => entry !== null);
-      const profiles = normalizedProfiles.filter((entry) => !isPlaceholderServerId(entry.serverId));
       this.hosts = profiles;
+      this.replicaCache.setHosts(profiles.map((profile) => profile.serverId));
+      await this.replicaCache.restore();
       this.syncHosts(profiles);
-      if (profiles.length !== normalizedProfiles.length) {
-        shouldPersistHosts = true;
-      }
     } catch (error) {
       console.error("[HostRuntime] Failed to load host registry from storage", error);
     } finally {
+      this.replicaCache.start();
       this.hostRegistryStatus = "ready";
       this.emitHostList();
       if (shouldPersistHosts) {
@@ -1582,6 +1587,7 @@ export class HostRuntimeStore {
 
     rekeyMap(this.lastConnectionStatusByServer, oldServerId, newServerId);
     rekeyMap(this.agentDirectoryBootstrapInFlight, oldServerId, newServerId);
+    this.replicaCache.reconcileServerId(oldServerId, newServerId);
     this.directorySyncByServer.get(oldServerId)?.dispose();
     this.directorySyncByServer.delete(oldServerId);
     const directory = new DirectorySync(newServerId, {
@@ -1885,6 +1891,7 @@ export class HostRuntimeStore {
       >;
     },
   ): void {
+    this.replicaCache.setHosts(hosts.map((host) => host.serverId));
     const nextIds = new Set(hosts.map((host) => host.serverId));
     for (const [serverId, controller] of this.controllers) {
       if (nextIds.has(serverId)) {
