@@ -102,7 +102,7 @@ function buildPullRequestCheckoutSource(
     action: "checkout" as const,
     checkoutSource: {
       kind: "change_request" as const,
-      forge: options.forge ?? "github",
+      ...(options.forge ? { forge: options.forge } : {}),
       number: prNumber,
     },
   };

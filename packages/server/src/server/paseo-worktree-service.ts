@@ -31,6 +31,7 @@ import type { FirstAgentContext } from "@getpaseo/protocol/messages";
 
 export interface CreatePaseoWorktreeInput extends CreateWorktreeCoreInput {
   projectId?: string;
+  title?: string;
 }
 
 export interface CreatePaseoWorktreeResult {
@@ -89,7 +90,7 @@ export async function createPaseoWorktree(
       worktreeRoot: createdWorktree.worktree.worktreePath,
       branch: createdWorktree.worktree.branchName || null,
       baseBranch: resolveIntentBaseBranch(createdWorktree.intent),
-      title: resolveFirstAgentPromptTitle(input.firstAgentContext),
+      title: input.title?.trim() || resolveFirstAgentPromptTitle(input.firstAgentContext),
     });
 
     deps.github.invalidate({ cwd: createdWorktree.worktree.worktreePath });

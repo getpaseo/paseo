@@ -981,7 +981,7 @@ const AgentAttachmentsSchema = z.unknown().transform(normalizeAgentAttachments).
 
 export const ChangeRequestCheckoutSourceSchema = z.object({
   kind: z.literal("change_request"),
-  forge: z.string().optional().default("github"),
+  forge: z.string().optional(),
   number: z.number().int().positive(),
   projectPath: z.string().optional(),
 });

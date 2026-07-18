@@ -81,6 +81,25 @@ describe("workspace create source", () => {
     });
   });
 
+  it("lets the source checkout select the forge when it is omitted", () => {
+    expect(
+      buildWorkspaceSource({
+        isolation: "worktree",
+        path: "/tmp/project",
+        mode: "checkout-pr",
+        prNumber: "42",
+      }),
+    ).toEqual({
+      kind: "worktree",
+      cwd: "/tmp/project",
+      action: "checkout",
+      checkoutSource: {
+        kind: "change_request",
+        number: 42,
+      },
+    });
+  });
+
   it("requires the mode-specific checkout target", () => {
     expect(() => buildWorkspaceSource({ isolation: "worktree", mode: "checkout-branch" })).toThrow(
       "--branch is required",

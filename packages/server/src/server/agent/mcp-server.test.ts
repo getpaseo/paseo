@@ -2550,6 +2550,7 @@ describe("create_agent MCP tool", () => {
           cwd: TARGET_CWD,
           kind: "worktree",
           displayName: "project-worktree",
+          title: input.title ?? null,
           createdAt: "2026-07-18T00:00:00.000Z",
           updatedAt: "2026-07-18T00:00:00.000Z",
         }),
@@ -2572,11 +2573,16 @@ describe("create_agent MCP tool", () => {
       isolation: "worktree",
       projectId: project.projectId,
       worktreeSlug: "project-worktree",
+      title: "Project workspace",
     });
 
     expect(response.structuredContent.workspaceId).toBe("ws-project-source");
     expect(receivedInputs).toEqual([
-      expect.objectContaining({ cwd: REPO_CWD, projectId: project.projectId }),
+      expect.objectContaining({
+        cwd: REPO_CWD,
+        projectId: project.projectId,
+        title: "Project workspace",
+      }),
     ]);
   });
 
@@ -2626,6 +2632,12 @@ describe("create_agent MCP tool", () => {
       prNumber: 42,
       forge: "gitlab",
     });
+    await invokeToolWithParsedInput(tool, {
+      isolation: "worktree",
+      path: REPO_CWD,
+      mode: "checkout-pr",
+      prNumber: 43,
+    });
 
     expect(createPaseoWorktree).toHaveBeenNthCalledWith(
       1,
@@ -2643,6 +2655,16 @@ describe("create_agent MCP tool", () => {
           kind: "change_request",
           forge: "gitlab",
           number: 42,
+        },
+      }),
+    );
+    expect(createPaseoWorktree).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({
+        action: "checkout",
+        checkoutSource: {
+          kind: "change_request",
+          number: 43,
         },
       }),
     );

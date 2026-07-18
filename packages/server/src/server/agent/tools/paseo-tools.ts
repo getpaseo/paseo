@@ -260,7 +260,7 @@ function resolveWorkspaceWorktreeTarget(input: WorkspaceWorktreeOptions): Worksp
         action: "checkout",
         checkoutSource: {
           kind: "change_request",
-          forge: input.forge ?? "github",
+          ...(input.forge ? { forge: input.forge } : {}),
           number: input.prNumber,
         },
       };
@@ -1241,7 +1241,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           .trim()
           .min(1)
           .optional()
-          .describe("Forge for checkout-pr mode. Defaults to github."),
+          .describe("Forge for checkout-pr mode. Defaults to the source checkout."),
       },
       outputSchema: WorkspaceAutomationSummarySchema.shape,
     },
@@ -1306,7 +1306,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
             ...(projectId ? { projectId } : {}),
             ...(worktreeSlug ? { worktreeSlug } : {}),
             ...worktreeTarget,
-            ...(title ? { firstAgentContext: { prompt: title } } : {}),
+            ...(title ? { title } : {}),
           },
         );
         if (!result.ok) {

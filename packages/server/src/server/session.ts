@@ -4942,20 +4942,12 @@ export class Session {
         checkoutSource: source.checkoutSource,
         githubPrNumber: source.githubPrNumber,
         firstAgentContext: request.firstAgentContext,
+        title: request.title,
       },
       source.baseBranch
         ? { resolveDefaultBranch: async () => source.baseBranch as string }
         : undefined,
     );
-
-    if (request.title?.trim()) {
-      await this.workspaceRegistry.upsert({
-        ...result.workspace,
-        title: request.title.trim(),
-        updatedAt: new Date().toISOString(),
-      });
-      result.workspace.title = request.title.trim();
-    }
 
     const descriptor = await this.describeCreatedWorktreeWorkspace(result);
     this.emit({
