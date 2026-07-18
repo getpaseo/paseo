@@ -1084,9 +1084,8 @@ export class OmpAgentSession implements AgentSession {
       throw new Error(`Invalid OMP mode '${modeId}'`);
     }
     return {
-      type: "info",
-      message:
-        "OMP approval mode is set when the agent launches. Start a new OMP session to use a different mode.",
+      type: "warning",
+      message: "Start a new OMP session to change approval mode",
     };
   }
 

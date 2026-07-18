@@ -6,7 +6,7 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
-import { AlertTriangle, CheckCircle2 } from "lucide-react-native";
+import { AlertTriangle, CheckCircle2, Info } from "lucide-react-native";
 import { getOverlayRoot, OVERLAY_Z } from "@/lib/overlay-root";
 import {
   HEADER_INNER_HEIGHT,
@@ -14,7 +14,7 @@ import {
   HEADER_TOP_PADDING_MOBILE,
 } from "@/constants/layout";
 
-export type ToastVariant = "default" | "success" | "error";
+export type ToastVariant = "default" | "info" | "success" | "warning" | "error";
 
 export interface ToastShowOptions {
   icon?: ReactNode;
@@ -230,7 +230,9 @@ export function ToastViewport({
   const toastAnimatedStyle = useMemo(
     () => [
       styles.toast,
+      toastVariant === "info" ? styles.toastInfo : null,
       toastVariant === "success" ? styles.toastSuccess : null,
+      toastVariant === "warning" ? styles.toastWarning : null,
       toastVariant === "error" ? styles.toastError : null,
       {
         marginTop: topOffset,
@@ -250,8 +252,12 @@ export function ToastViewport({
   }
 
   let defaultIcon: ReactNode = null;
-  if (toast.variant === "success") {
+  if (toast.variant === "info") {
+    defaultIcon = <Info size={18} color={theme.colors.palette.blue[300]} />;
+  } else if (toast.variant === "success") {
     defaultIcon = <CheckCircle2 size={18} color={theme.colors.primary} />;
+  } else if (toast.variant === "warning") {
+    defaultIcon = <AlertTriangle size={18} color={theme.colors.palette.amber[500]} />;
   } else if (toast.variant === "error") {
     defaultIcon = <AlertTriangle size={18} color={theme.colors.destructive} />;
   }
@@ -312,6 +318,12 @@ const styles = StyleSheet.create((theme) => ({
   },
   toastSuccess: {
     borderColor: theme.colors.border,
+  },
+  toastInfo: {
+    borderColor: theme.colors.palette.blue[300],
+  },
+  toastWarning: {
+    borderColor: theme.colors.palette.amber[500],
   },
   toastError: {
     borderColor: theme.colors.destructive,

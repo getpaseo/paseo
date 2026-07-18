@@ -232,7 +232,10 @@ describe("OMP agent client and session", () => {
         expect.objectContaining({ name: "review", kind: "skill" }),
       ]),
     );
-    await expect(omp.setMode("ask")).resolves.toEqual(expect.objectContaining({ type: "info" }));
+    await expect(omp.setMode("ask")).resolves.toEqual({
+      type: "warning",
+      message: "Start a new OMP session to change approval mode",
+    });
   });
 
   test("rewinds natively, interrupts, and shuts down", async () => {
