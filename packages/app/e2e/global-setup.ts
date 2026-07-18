@@ -663,6 +663,10 @@ function startMetro(input: {
     },
     stdio: ["ignore", "pipe", "pipe"],
     detached: false,
+    // On Windows `npx` is a `.cmd` shim, which Node's bare `spawn` can't resolve
+    // (spawn npx ENOENT). Route through the shell there so local e2e can start;
+    // POSIX/CI is unaffected.
+    shell: process.platform === "win32",
   });
 
   child.stdout?.on("data", (data: Buffer) => {
@@ -702,7 +706,14 @@ interface DaemonSpawnArgs {
 
 function startDaemon(args: DaemonSpawnArgs): ChildProcess {
   const serverDir = path.resolve(__dirname, "../../..", "packages/server");
-  const tsxBin = execSync("which tsx").toString().trim();
+  // The daemon spawn below runs through a shell on Windows, so let the shell
+  // resolve `tsx` from PATH by name. This avoids `which` (which doesn't exist
+  // on Windows) and, importantly, avoids passing a `where`-resolved absolute
+  // path into `spawn(..., { shell: true })` — Node builds `cmd.exe /d /s /c
+  // "<cmd> <args>"`, and an unquoted path containing spaces (e.g.
+  // C:\Program Files\...) would split. POSIX resolves the absolute path via
+  // `which` and spawns without a shell.
+  const tsxBin = process.platform === "win32" ? "tsx" : execSync("which tsx").toString().trim();
   const env = withDisabledE2ESpeechEnv({
     ...process.env,
     PATH: `${args.fakeEditorBinDir}${path.delimiter}${process.env.PATH ?? ""}`,
@@ -721,6 +732,9 @@ function startDaemon(args: DaemonSpawnArgs): ChildProcess {
     env,
     stdio: ["ignore", "pipe", "pipe"],
     detached: false,
+    // On Windows `tsx` resolves to a `.cmd` shim that bare `spawn` can't
+    // launch; route through the shell there. POSIX/CI is unaffected.
+    shell: process.platform === "win32",
   });
 
   let stdoutBuffer = "";
@@ -830,6 +844,9 @@ export default async function globalSetup() {
       label: "Paseo daemon",
       childProcess: daemonProcess,
       getRecentOutput: daemonLineBuffer.dump,
+      // A cold `tsx` start on Windows can exceed the 15s default; CI starts
+      // fast so this longer ceiling is never reached there.
+      timeoutMs: 120000,
     });
 
     const offer = await waitForPairingOfferFromDaemon({
