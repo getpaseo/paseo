@@ -981,7 +981,7 @@ const AgentAttachmentsSchema = z.unknown().transform(normalizeAgentAttachments).
 
 export const ChangeRequestCheckoutSourceSchema = z.object({
   kind: z.literal("change_request"),
-  forge: z.string().optional().default("github"),
+  forge: z.string().optional(),
   number: z.number().int().positive(),
   projectPath: z.string().optional(),
 });
@@ -1249,6 +1249,9 @@ export const CreateAgentRequestMessageSchema = z.object({
   config: AgentSessionConfigSchema,
   env: z.record(z.string(), z.string()).optional(),
   workspaceId: z.string().optional(),
+  // Optional caller context lets managed CLI invocations use the same daemon-owned
+  // workspace and parentage policy as agent-scoped MCP creation.
+  callerAgentId: z.string().optional(),
   worktreeName: z.string().optional(),
   initialPrompt: z.string().optional(),
   clientMessageId: z.string().optional(),
@@ -1759,9 +1762,9 @@ const CheckoutCheckDetailsRequestPayloadSchema = z.object({
   checkRunId: z.number().int().positive().optional(),
   workflowRunId: z.number().int().positive().optional(),
   // Permanent forge-routing field, optional because only some forges need it:
-  // GitLab routes the check-details fetch to the change request's head pipeline
-  // by iid, so a fork/detached MR pipeline (which lives in the source project,
-  // not the checkout's target project) resolves correctly. GitHub ignores it.
+  // GitLab routes check details to the MR's head pipeline; Gitea-family adapters
+  // resolve the PR head SHA by number, including after merge/close. GitHub
+  // ignores it.
   changeRequestNumber: z.number().int().positive().optional(),
   requestId: z.string(),
 });
@@ -2061,9 +2064,11 @@ export const WorkspaceCreateRequestSchema = z.object({
       cwd: z.string().optional(),
       projectId: z.string().optional(),
       action: z.enum(["branch-off", "checkout"]).optional(),
-      // Target branch name for checkout, or new branch name for branch-off.
+      // Target branch for checkout, or base ref for branch-off.
       refName: z.string().min(1).optional(),
       baseBranch: z.string().optional(),
+      // New branch name for branch-off. The worktree path may use a different slug.
+      branchName: z.string().min(1).optional(),
       checkoutSource: ChangeRequestCheckoutSourceSchema.optional(),
       // COMPAT(githubPrNumber): added in v0.1.106, remove after 2026-12-28 once
       // clients send checkoutSource.

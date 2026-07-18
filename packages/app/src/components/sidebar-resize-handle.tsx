@@ -21,7 +21,10 @@ const webResizeCursorStyle = isWeb
 export function SidebarResizeHandle({ edge, gesture, testID }: SidebarResizeHandleProps) {
   const [highlighted, setHighlighted] = useState(false);
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const hitAreaStyle = edge === "left" ? LEFT_HIT_AREA_STYLE : RIGHT_HIT_AREA_STYLE;
+  const hitAreaStyle =
+    edge === "left"
+      ? [styles.hitArea, styles.leftEdge, webResizeCursorStyle]
+      : [styles.hitArea, styles.rightEdge, webResizeCursorStyle];
 
   const cancelHighlightTimer = useCallback(() => {
     if (highlightTimerRef.current === null) return;
@@ -84,6 +87,3 @@ const styles = StyleSheet.create((theme) => ({
     opacity: 0.25,
   },
 }));
-
-const LEFT_HIT_AREA_STYLE = [styles.hitArea, styles.leftEdge, webResizeCursorStyle];
-const RIGHT_HIT_AREA_STYLE = [styles.hitArea, styles.rightEdge, webResizeCursorStyle];

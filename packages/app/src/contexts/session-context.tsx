@@ -20,7 +20,11 @@ import {
 } from "@/timeline/session-stream-reducers";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
 import { isTimelineCatchUpComplete } from "@/timeline/timeline-sync-plan";
-import { createViewedTimelineSync, type ViewedTimelineSync } from "@/timeline/viewed-timeline-sync";
+import {
+  createViewedTimelineSync,
+  type TimelineDeliveryMode,
+  type ViewedTimelineSync,
+} from "@/timeline/viewed-timeline-sync";
 import type { AgentAttachment, SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { parseServerInfoStatusPayload } from "@getpaseo/protocol/messages";
 import {
@@ -38,7 +42,7 @@ import type { AudioPlaybackSource } from "@/voice/audio-engine-types";
 import { useSessionStore, type MessageEntry, type SessionState } from "@/stores/session-store";
 import { useWorkspaceSetupStore } from "@/stores/workspace-setup-store";
 import { sendOsNotification } from "@/utils/os-notifications";
-import { getIsAppActivelyVisible } from "@/utils/app-visibility";
+import { getIsAppActivelyVisible, getIsAppVisible } from "@/utils/app-visibility";
 import {
   getInitKey,
   getInitDeferred,
@@ -77,6 +81,11 @@ interface BufferedAudioChunk {
   audio: string;
   format: string;
   id: string;
+}
+
+// COMPAT(selectiveAgentTimeline): added in v0.1.106, remove after 2027-01-12.
+function getTimelineDeliveryMode(selectiveAgentTimeline?: boolean): TimelineDeliveryMode {
+  return selectiveAgentTimeline ? "selective" : "legacy";
 }
 
 function decodeBase64Chunk(base64: string): Uint8Array {
@@ -712,7 +721,11 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
 
   useEffect(() => {
     const setAgentInitializing = createSetAgentInitializing(serverId, setInitializingAgents);
+    const initialDeliveryMode = getTimelineDeliveryMode(
+      client.getLastServerInfoMessage()?.features?.selectiveAgentTimeline,
+    );
     const sync = createViewedTimelineSync({
+      initialDeliveryMode,
       setSubscription: (agentIds) => client.setAgentTimelineSubscription(agentIds),
       readCursor: (agentId) =>
         useSessionStore.getState().sessions[serverId]?.agentTimelineCursor.get(agentId),
@@ -723,7 +736,8 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       fetchPage: async (agentId, request) => {
         const session = useSessionStore.getState().sessions[serverId];
         const initKey = getInitKey(serverId, agentId);
-        if (session?.agentAuthoritativeHistoryApplied.get(agentId) !== true) {
+        const shouldInitialize = session?.agentAuthoritativeHistoryApplied.get(agentId) !== true;
+        if (shouldInitialize) {
           if (!getInitDeferred(initKey)) {
             const deferred = createInitDeferred(initKey, request.direction ?? "tail");
             void deferred.promise.catch(() => undefined);
@@ -737,27 +751,29 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         }
         try {
           const page = await getHostRuntimeStore().fetchAgentTimeline(serverId, agentId, request);
-          if (getInitDeferred(initKey)) {
+          if (shouldInitialize && getInitDeferred(initKey)) {
             refreshAgentInitializationTimeout({ key: initKey, agentId, setAgentInitializing });
           }
           return page;
         } catch (error) {
-          setAgentInitializing(agentId, false);
-          rejectInitDeferred(initKey, error instanceof Error ? error : new Error(String(error)));
+          if (shouldInitialize) {
+            setAgentInitializing(agentId, false);
+            rejectInitDeferred(initKey, error instanceof Error ? error : new Error(String(error)));
+          }
           throw error;
         }
       },
       reportError: (error) => {
         console.warn("[Session] viewed timeline synchronization failed", { serverId, error });
       },
-      scheduleRetry: (retry) => {
-        const timeout = setTimeout(retry, 1_000);
+      schedule: (task, delayMs) => {
+        const timeout = setTimeout(task, delayMs);
         return () => clearTimeout(timeout);
       },
     });
     viewedTimelineSyncRef.current = sync;
     setViewedTimelineSync(serverId, sync);
-    sync.setActive(getIsAppActivelyVisible(appStateRef.current));
+    sync.setActive(getIsAppVisible(appStateRef.current));
 
     return () => {
       if (viewedTimelineSyncRef.current === sync) {
@@ -855,6 +871,9 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       if (message.type !== "status") return;
       const serverInfo = parseServerInfoStatusPayload(message.payload);
       if (serverInfo) {
+        viewedTimelineSyncRef.current?.setDeliveryMode(
+          getTimelineDeliveryMode(serverInfo.features?.selectiveAgentTimeline),
+        );
         updateSessionServerInfo(serverId, {
           serverId: serverInfo.serverId,
           hostname: serverInfo.hostname,

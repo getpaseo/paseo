@@ -230,7 +230,6 @@ const styles = StyleSheet.create((theme) => ({
   },
 }));
 
-const SEARCH_INPUT_STYLE = [styles.searchInput, isWeb && { outlineStyle: "none" }];
 const WEB_EXIT_DURATION_MS = 160;
 
 function SheetBackground({ style }: BottomSheetBackgroundProps) {
@@ -373,7 +372,7 @@ export function SheetHeaderView({
           <Search size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
           <AdaptiveTextInput
             // @ts-expect-error - outlineStyle is web-only
-            style={SEARCH_INPUT_STYLE}
+            style={[styles.searchInput, isWeb && { outlineStyle: "none" }]}
             placeholder={search.placeholder ?? t("common.actions.search")}
             resetKey={search.resetKey}
             onChangeText={handleSearchChange}
@@ -430,7 +429,7 @@ export function InlineHeaderView({ header }: { header: SheetHeader }) {
           <Search size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
           <AdaptiveTextInput
             // @ts-expect-error - outlineStyle is web-only
-            style={SEARCH_INPUT_STYLE}
+            style={[styles.searchInput, isWeb && { outlineStyle: "none" }]}
             placeholder={header.search.placeholder ?? t("common.actions.search")}
             resetKey={header.search.resetKey}
             onChangeText={header.search.onChange}

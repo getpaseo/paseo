@@ -199,7 +199,7 @@ export function SearchInput({
         <AdaptiveTextInput
           ref={inputRef}
           // @ts-expect-error - outlineStyle is web-only
-          style={SEARCH_INPUT_STYLE}
+          style={[styles.searchInput, IS_WEB && { outlineStyle: "none" }]}
           placeholder={placeholder}
           resetKey={resetKey}
           onChangeText={onChangeText}
@@ -212,7 +212,7 @@ export function SearchInput({
           key={resetKey}
           ref={inputRef}
           // @ts-expect-error - outlineStyle is web-only
-          style={SEARCH_INPUT_STYLE}
+          style={[styles.searchInput, IS_WEB && { outlineStyle: "none" }]}
           placeholder={placeholder}
           placeholderTextColor={theme.colors.foregroundMuted}
           onChangeText={onChangeText}
@@ -1711,5 +1711,3 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "flex-end",
   },
 }));
-
-const SEARCH_INPUT_STYLE = [styles.searchInput, IS_WEB && { outlineStyle: "none" }];

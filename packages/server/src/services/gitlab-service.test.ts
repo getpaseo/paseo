@@ -33,6 +33,24 @@ function makeService(responder: Responder, overrides: Partial<CreateGitLabServic
   return { service, calls };
 }
 
+function currentMrListArgs(headRef: string): string[] {
+  return [
+    "mr",
+    "list",
+    "--all",
+    "--source-branch",
+    headRef,
+    "--order",
+    "updated_at",
+    "--sort",
+    "desc",
+    "--per-page",
+    "100",
+    "-F",
+    "json",
+  ];
+}
+
 function gitlabAutoMergeStatus(
   overrides: Partial<GitLabStatusFacts> = {},
 ): PullRequestCommandStatus {
@@ -60,6 +78,7 @@ const OPEN_MR = {
   state: "opened",
   source_branch: "release/v0.4.0",
   target_branch: "main",
+  sha: "1111111111111111111111111111111111111111",
   source_project_id: 101,
   target_project_id: 101,
   draft: false,
@@ -231,7 +250,9 @@ const DISCUSSIONS = [
 
 describe("createGitLabService", () => {
   it("maps a glab merge request view to the neutral current PR status", async () => {
-    const { service, calls } = makeService(() => ok(JSON.stringify(OPEN_MR)));
+    const { service, calls } = makeService((args) =>
+      ok(JSON.stringify(args[1] === "list" ? [OPEN_MR] : OPEN_MR)),
+    );
 
     const status = await service.getCurrentPullRequestStatus({
       cwd: "/repo",
@@ -261,28 +282,86 @@ describe("createGitLabService", () => {
       pipelineStatus: "success",
       mergeWhenPipelineSucceeds: false,
     });
-    expect(calls[0]).toEqual(["mr", "view", "release/v0.4.0", "-F", "json"]);
+    expect(calls[0]).toEqual(currentMrListArgs("release/v0.4.0"));
+    expect(calls[1]).toEqual(["mr", "view", "14", "-F", "json"]);
   });
 
   it("reports a conflicting merge request as CONFLICTING", async () => {
-    const { service } = makeService(() =>
-      ok(
-        JSON.stringify({ ...OPEN_MR, has_conflicts: true, detailed_merge_status: "broken_status" }),
-      ),
+    const conflicting = {
+      ...OPEN_MR,
+      source_branch: "x",
+      has_conflicts: true,
+      detailed_merge_status: "broken_status",
+    };
+    const { service } = makeService((args) =>
+      ok(JSON.stringify(args[1] === "list" ? [conflicting] : conflicting)),
     );
     const status = await service.getCurrentPullRequestStatus({ cwd: "/repo", headRef: "x" });
     expect(status?.mergeable).toBe("CONFLICTING");
   });
 
   it("returns null when no merge request exists for the branch", async () => {
-    const { service } = makeService(() => {
-      throw { code: 1, stderr: "no open merge request available for 'feature/x'" };
-    });
+    const { service } = makeService(() => ok("[]"));
     const status = await service.getCurrentPullRequestStatus({
       cwd: "/repo",
       headRef: "feature/x",
     });
     expect(status).toBeNull();
+  });
+
+  it("selects a terminal merge request only when its head SHA matches the checkout", async () => {
+    const branch = "dev";
+    const checkoutSha = "2222222222222222222222222222222222222222";
+    const newestStale = {
+      ...OPEN_MR,
+      iid: 271,
+      state: "merged",
+      source_branch: branch,
+      sha: "1111111111111111111111111111111111111111",
+      updated_at: "2026-07-17T12:00:00.000Z",
+    };
+    const exactOlder = {
+      ...OPEN_MR,
+      iid: 270,
+      state: "merged",
+      source_branch: branch,
+      sha: checkoutSha,
+      updated_at: "2026-07-16T12:00:00.000Z",
+    };
+    const { service, calls } = makeService((args) => {
+      if (args[1] === "list") return ok(JSON.stringify([newestStale, exactOlder]));
+      if (args[1] === "view" && args[2] === "270") return ok(JSON.stringify(exactOlder));
+      if (args[0] === "api") return ok("{}");
+      throw new Error(`unexpected call: ${args.join(" ")}`);
+    });
+
+    const status = await service.getCurrentPullRequestStatus({
+      cwd: "/repo",
+      headRef: branch,
+      headSha: checkoutSha,
+    });
+
+    expect(status?.number).toBe(270);
+    expect(calls[1]).toEqual(["mr", "view", "270", "-F", "json"]);
+  });
+
+  it("does not attach the latest historical merge request after a reused branch advances", async () => {
+    const stale = {
+      ...OPEN_MR,
+      state: "merged",
+      source_branch: "dev",
+      sha: "1111111111111111111111111111111111111111",
+    };
+    const { service, calls } = makeService(() => ok(JSON.stringify([stale])));
+
+    await expect(
+      service.getCurrentPullRequestStatus({
+        cwd: "/repo",
+        headRef: "dev",
+        headSha: "2222222222222222222222222222222222222222",
+      }),
+    ).resolves.toBeNull();
+    expect(calls).toEqual([currentMrListArgs("dev")]);
   });
 
   it("looks up a numeric current branch through the source-branch list filter", async () => {
@@ -313,6 +392,7 @@ describe("createGitLabService", () => {
     const status = await service.getCurrentPullRequestStatus({
       cwd: "/repo",
       headRef: "1234",
+      headSha: "2222222222222222222222222222222222222222",
     });
 
     expect(status).toMatchObject({
@@ -320,7 +400,7 @@ describe("createGitLabService", () => {
       title: "Fix numeric branch",
       headRefName: "1234",
     });
-    expect(calls[0]).toEqual(["mr", "list", "--source-branch", "1234", "-F", "json"]);
+    expect(calls[0]).toEqual(currentMrListArgs("1234"));
     expect(calls[1]).toEqual(["mr", "view", "21", "-F", "json"]);
     expect(calls).not.toContainEqual(["mr", "view", "1234", "-F", "json"]);
   });
@@ -342,7 +422,7 @@ describe("createGitLabService", () => {
     });
 
     expect(status).toBeNull();
-    expect(calls).toEqual([["mr", "list", "--source-branch", "1234", "-F", "json"]]);
+    expect(calls).toEqual([currentMrListArgs("1234")]);
   });
 
   it("lists merge requests as neutral PR summaries", async () => {
@@ -549,17 +629,16 @@ describe("createGitLabService", () => {
   });
 
   it("surfaces the head pipeline id and url on the gitlab status facts", async () => {
-    const { service } = makeService(() =>
-      ok(
-        JSON.stringify({
-          ...OPEN_MR,
-          head_pipeline: {
-            id: 306,
-            status: "running",
-            web_url: "https://gitlab.example.com/example-group/example-project/-/pipelines/306",
-          },
-        }),
-      ),
+    const pipelineMr = {
+      ...OPEN_MR,
+      head_pipeline: {
+        id: 306,
+        status: "running",
+        web_url: "https://gitlab.example.com/example-group/example-project/-/pipelines/306",
+      },
+    };
+    const { service } = makeService((args) =>
+      ok(JSON.stringify(args[1] === "list" ? [pipelineMr] : pipelineMr)),
     );
 
     const status = await service.getCurrentPullRequestStatus({
@@ -682,6 +761,7 @@ describe("createGitLabService", () => {
 
   it("populates approval counts from the approvals endpoint", async () => {
     const { service, calls } = makeService((args) => {
+      if (args[0] === "mr" && args[1] === "list") return ok(JSON.stringify([OPEN_MR]));
       if (args[0] === "mr" && args[1] === "view") return ok(JSON.stringify(OPEN_MR));
       if (args[0] === "api" && args[1].endsWith("/approvals")) return ok(JSON.stringify(APPROVALS));
       throw new Error(`unexpected call: ${args.join(" ")}`);
@@ -697,7 +777,7 @@ describe("createGitLabService", () => {
       approvalsRequired: 2,
       approvalsGiven: 1,
     });
-    expect(calls[1]).toEqual([
+    expect(calls[2]).toEqual([
       "api",
       "projects/example-group%2Fexample-project/merge_requests/14/approvals",
     ]);
@@ -705,6 +785,7 @@ describe("createGitLabService", () => {
 
   it("falls back to zero approvals when the approvals endpoint returns an error", async () => {
     const { service } = makeService((args) => {
+      if (args[0] === "mr" && args[1] === "list") return ok(JSON.stringify([OPEN_MR]));
       if (args[0] === "mr" && args[1] === "view") return ok(JSON.stringify(OPEN_MR));
       throw { code: 1, stderr: "500 Internal Server Error" };
     });

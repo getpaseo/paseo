@@ -47,7 +47,9 @@ import { checkoutLiteFromGitSnapshot } from "./workspace-registry-model.js";
 const WORKSPACE_GIT_WATCH_DEBOUNCE_MS = 1_000;
 const BACKGROUND_GIT_FETCH_INTERVAL_MS = 180_000;
 export const WORKSPACE_GIT_SELF_HEAL_INTERVAL_MS = 60_000;
-const FORGE_PR_STATUS_POLL_INTERVAL_MS = 60_000;
+const FORGE_PR_STATUS_POLL_FAST_INTERVAL_MS = 20_000;
+const FORGE_PR_STATUS_POLL_SLOW_INTERVAL_MS = 120_000;
+const FORGE_PR_STATUS_POLL_ERROR_BACKOFF_CAP_MS = 300_000;
 const WORKING_TREE_WATCH_FALLBACK_REFRESH_MS = 5_000;
 // Auxiliary reads may reuse cached values within this window; snapshots do not expire on read.
 const WORKSPACE_GIT_AUXILIARY_READ_TTL_MS = 15_000;
@@ -336,6 +338,7 @@ interface WorkspaceGitAuxiliaryReadCacheEntry<T> {
 
 interface WorkspaceForgePrStatusPollTarget {
   headRef: string;
+  headSha?: string;
   headRepositoryOwner?: string;
 }
 
@@ -1206,9 +1209,11 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       remoteUrl,
       target: pollTarget,
     });
+    const previousPollKey = target.forgePrStatusPollKey;
     if (target.forgePrStatusPollKey === pollKey && target.forgePrStatusPollSubscription) {
       return;
     }
+    const pollImmediately = previousPollKey !== null && previousPollKey !== pollKey;
 
     this.stopForgePrStatusPollForTarget(target);
     target.forgePrStatusPollKey = pollKey;
@@ -1216,6 +1221,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       target.forgePrStatusPollSubscription = resolution.service.retainCurrentPullRequestStatusPoll({
         cwd: target.cwd,
         headRef: pollTarget.headRef,
+        ...(pollTarget.headSha ? { headSha: pollTarget.headSha } : {}),
         ...(pollTarget.headRepositoryOwner
           ? { headRepositoryOwner: pollTarget.headRepositoryOwner }
           : {}),
@@ -1253,6 +1259,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       forge: resolution.forge,
       service: resolution.service,
       pollTarget,
+      pollImmediately,
     });
   }
 
@@ -1261,23 +1268,28 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     forge,
     service,
     pollTarget,
+    pollImmediately,
   }: {
     target: WorkspaceGitTarget;
     forge: string;
     service: ForgeService;
     pollTarget: WorkspaceForgePrStatusPollTarget;
+    pollImmediately: boolean;
   }): { unsubscribe: () => void } {
     let closed = false;
     let timer: NodeJS.Timeout | null = null;
+    let latestStatus: WorkspaceGitRuntimeSnapshot["forge"]["pullRequest"] =
+      target.latestForge?.pullRequest ?? null;
+    let consecutiveErrors = 0;
 
-    const schedule = () => {
+    const schedule = (delayMs: number) => {
       if (closed) {
         return;
       }
       timer = setTimeout(() => {
         timer = null;
         void poll();
-      }, FORGE_PR_STATUS_POLL_INTERVAL_MS);
+      }, delayMs);
     };
 
     const poll = async () => {
@@ -1288,17 +1300,21 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         const status = await service.getCurrentPullRequestStatus({
           cwd: target.cwd,
           headRef: pollTarget.headRef,
+          ...(pollTarget.headSha ? { headSha: pollTarget.headSha } : {}),
           ...(pollTarget.headRepositoryOwner
             ? { headRepositoryOwner: pollTarget.headRepositoryOwner }
             : {}),
           reason: "self-heal-forge-pr-status",
         });
         if (!closed && this.isActiveObservedWorkspaceTarget(target)) {
+          latestStatus = status;
+          consecutiveErrors = 0;
           this.rememberForgePrStatusSnapshot(target, buildForgeSnapshotFromStatus(status, forge), {
             notify: true,
           });
         }
       } catch (error) {
+        consecutiveErrors += 1;
         this.logger.warn(
           {
             err: error,
@@ -1311,11 +1327,16 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
           "Failed to run forge PR status self-heal refresh",
         );
       } finally {
-        schedule();
+        schedule(computeGenericForgeNextInterval(latestStatus, consecutiveErrors));
       }
     };
 
-    schedule();
+    // A git-only refresh clears forge state when the commit-aware poll identity
+    // changes. Revalidate that new identity immediately instead of leaving the
+    // PR panel empty for the full stable polling interval.
+    schedule(
+      pollImmediately ? 0 : computeGenericForgeNextInterval(latestStatus, consecutiveErrors),
+    );
     return {
       unsubscribe: () => {
         closed = true;
@@ -2171,7 +2192,32 @@ function buildWorkspaceForgePrStatusPollKey({
   remoteUrl: string;
   target: WorkspaceForgePrStatusPollTarget;
 }): string {
-  return JSON.stringify([forge, remoteUrl, target.headRef, target.headRepositoryOwner ?? null]);
+  return JSON.stringify([
+    forge,
+    remoteUrl,
+    target.headRef,
+    target.headSha ?? null,
+    target.headRepositoryOwner ?? null,
+  ]);
+}
+
+function computeGenericForgeNextInterval(
+  status: WorkspaceGitRuntimeSnapshot["forge"]["pullRequest"],
+  consecutiveErrors: number,
+): number {
+  const isPending =
+    status?.checksStatus === "pending" ||
+    status?.checks?.some((check) => check.status === "pending") === true;
+  const baseInterval = isPending
+    ? FORGE_PR_STATUS_POLL_FAST_INTERVAL_MS
+    : FORGE_PR_STATUS_POLL_SLOW_INTERVAL_MS;
+  if (consecutiveErrors <= 1) {
+    return baseInterval;
+  }
+  return Math.min(
+    baseInterval * 2 ** (consecutiveErrors - 1),
+    FORGE_PR_STATUS_POLL_ERROR_BACKOFF_CAP_MS,
+  );
 }
 
 async function runGitFetch(cwd: string): Promise<void> {

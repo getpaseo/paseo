@@ -67,6 +67,19 @@ export interface ArchiveByScopeRequest {
   requestId: string;
 }
 
+export async function requireActiveWorkspaceForArchive(
+  dependencies: Pick<ArchiveDependencies, "listActiveWorkspaces">,
+  workspaceId: string,
+): Promise<ActiveWorkspaceRef> {
+  const workspace = (await dependencies.listActiveWorkspaces()).find(
+    (candidate) => candidate.workspaceId === workspaceId,
+  );
+  if (!workspace) {
+    throw new Error(`Workspace not found: ${workspaceId}`);
+  }
+  return workspace;
+}
+
 interface BackingDirectory {
   path: string;
   isPaseoOwnedWorktree: boolean;

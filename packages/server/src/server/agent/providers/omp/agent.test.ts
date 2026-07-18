@@ -67,6 +67,13 @@ describe("OMP agent client and session", () => {
     });
   });
 
+  test("preserves max as the selected thinking option", async () => {
+    const omp = new OmpHarness();
+    await omp.start({ thinkingOptionId: "max" });
+
+    expect(omp.launchConfiguration().argv).toEqual(expect.arrayContaining(["--thinking", "max"]));
+  });
+
   test("streams a prompt through completion", async () => {
     const omp = new OmpHarness();
     await omp.start();
@@ -225,7 +232,10 @@ describe("OMP agent client and session", () => {
         expect.objectContaining({ name: "review", kind: "skill" }),
       ]),
     );
-    await expect(omp.setMode("ask")).resolves.toEqual(expect.objectContaining({ type: "info" }));
+    await expect(omp.setMode("ask")).resolves.toEqual({
+      type: "warning",
+      message: "Start a new OMP session to change approval mode",
+    });
   });
 
   test("rewinds natively, interrupts, and shuts down", async () => {

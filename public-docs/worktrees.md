@@ -16,12 +16,12 @@ This page covers the git-specific details: where worktrees live, how branches ar
 
 ## Layout and workflow
 
-Worktrees live under `$PASEO_HOME/worktrees/` by default, grouped by a hash of the source checkout path. You can change the base directory with `worktrees.root` in `config.json`. Each worktree gets a random slug; the branch name is chosen when you first launch an agent.
+Worktrees live under `$PASEO_HOME/worktrees/` by default, grouped by a hash of the source checkout path. You can change the base directory with `worktrees.root` in `config.json`. Each worktree gets a slug and a branch when its workspace is created.
 
 ```
 ~/.paseo/worktrees/
 └── 1vnnm9k3/               # hash of source checkout path
-    ├── tidy-fox/           # worktree slug (branch set on first agent)
+    ├── tidy-fox/           # worktree slug
     └── bold-owl/
 ```
 
@@ -35,10 +35,46 @@ With a custom root, Paseo keeps the same hashed layout under that directory:
 }
 ```
 
-1. Create a worktree, Paseo runs your setup hooks
-2. Launch an agent, a branch is created or assigned
+1. Create a workspace with worktree isolation, Paseo creates the worktree and runs your setup hooks
+2. Launch one or more agents in that workspace
 3. Review the diff against the base branch
-4. Merge or archive, archive runs teardown and removes the directory
+4. Merge or archive the workspace; after the last workspace using it is archived, Paseo runs teardown and removes the worktree
+
+## Create a worktree-backed workspace
+
+The examples below use the current directory as the source checkout. Pass `--path ~/dev/my-app` to create the workspace from another checkout.
+
+Branch off from a base branch:
+
+```bash
+paseo workspace create \
+  --isolation worktree \
+  --mode branch-off \
+  --new-branch feature/auth \
+  --worktree-slug feature-auth \
+  --base main
+```
+
+Check out an existing branch:
+
+```bash
+paseo workspace create \
+  --isolation worktree \
+  --mode checkout-branch \
+  --branch feature/existing \
+  --worktree-slug existing-copy
+```
+
+Or open a pull request in its own workspace:
+
+```bash
+paseo workspace create \
+  --isolation worktree \
+  --mode checkout-pr \
+  --pr-number 2186
+```
+
+Add `--forge <name>` when Paseo cannot infer the forge from the source checkout.
 
 ## paseo.json
 
@@ -169,10 +205,12 @@ Services additionally get:
 - `$PASEO_SERVICE_<NAME>_PORT` / `_URL`, peer service ports and URLs
 - `$HOST`, `127.0.0.1` for local-only daemons, `0.0.0.0` when the daemon binds all interfaces
 
-## CLI
+## Manage the workspace
 
 ```bash
-paseo run --worktree feature-auth --base main "implement auth"
-paseo worktree ls
-paseo worktree archive feature-auth
+paseo workspace ls
+paseo run --workspace <workspace-id> "implement auth"
+paseo workspace archive <workspace-id>
 ```
+
+For the common case, `paseo run --isolation worktree --base main "implement auth"` creates both the workspace and its first agent.

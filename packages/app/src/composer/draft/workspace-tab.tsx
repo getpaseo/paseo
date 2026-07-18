@@ -24,6 +24,9 @@ import { useCreateFlowStore } from "@/stores/create-flow-store";
 import type { Agent } from "@/stores/session-store";
 import { useWorkspaceFields } from "@/stores/session-store-hooks";
 import { useWorkspaceDraftSubmissionStore } from "@/stores/workspace-draft-submission-store";
+import { useCommandCenterActions } from "@/command-center/provider";
+import { buildModelChoiceContributions } from "@/command-center/model-contributions";
+import { getCommandCenterProviderIcon } from "@/command-center/provider-icon";
 import { encodeImages } from "@/utils/encode-images";
 import type { WorkspaceFileOpenRequest } from "@/workspace/file-open";
 import { shouldAutoFocusWorkspaceDraftComposer } from "@/screens/workspace/workspace-draft-pane-focus";
@@ -375,6 +378,28 @@ export function WorkspaceDraftAgentTab({
   if (!composerState) {
     throw new Error("Workspace draft composer state is required");
   }
+
+  const draftModelActions = useMemo(
+    () =>
+      buildModelChoiceContributions({
+        serverId,
+        providers: composerState.modelSelectorProviders,
+        selectedProvider: composerState.selectedProvider,
+        selectedModelId: composerState.effectiveModelId || null,
+        groupLabel: t("shell.commandCenter.modelGroupLabel"),
+        searchKeywords: t("shell.commandCenter.modelSearchKeywords"),
+        getIcon: getCommandCenterProviderIcon,
+        select: composerState.setProviderAndModelFromUser,
+      }),
+    [
+      composerState.effectiveModelId,
+      composerState.modelSelectorProviders,
+      composerState.selectedProvider,
+      composerState.setProviderAndModelFromUser,
+      serverId,
+      t,
+    ],
+  );
   const clearDraftInput = draftInput.clear;
   const setDraftText = draftInput.setText;
   const setDraftAttachments = draftInput.setAttachments;
@@ -516,6 +541,11 @@ export function WorkspaceDraftAgentTab({
       useWorkspaceDraftSubmissionStore.getState().clearDraftSetup({ draftId });
       onCreated(result);
     },
+  });
+  useCommandCenterActions({
+    sourceId: `draft:${serverId}:${tabId}`,
+    enabled: isPaneFocused && !isSubmitting,
+    actions: draftModelActions,
   });
 
   const isReadyForPendingAutoSubmit = Boolean(

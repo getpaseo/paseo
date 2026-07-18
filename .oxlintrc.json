@@ -87,6 +87,9 @@
     {
       "files": ["packages/app/src/**/*.{ts,tsx}"],
       "rules": {
+        // React Native style arrays must read Unistyles proxies during render. Hoisting them to
+        // satisfy this allocation rule captures the temporary startup theme instead.
+        "react-perf/jsx-no-new-array-as-prop": "off",
         "no-restricted-imports": [
           "error",
           {

@@ -13,7 +13,7 @@ Paseo asks a language model to write short pieces of text for you so you don't h
 Paseo generates these kinds of metadata:
 
 - **Workspace titles** — a short, task-shaped label for a workspace, shown in the sidebar.
-- **Worktree branch names** — a slug for the branch a new worktree agent runs on.
+- **Worktree branch names** — a slug for a new worktree-isolated workspace's branch.
 - **Commit messages** — a concise message for the changes you're committing.
 - **Pull request title and body** — drafted from the diff when you open a PR.
 

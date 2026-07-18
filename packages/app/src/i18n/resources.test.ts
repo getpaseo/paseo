@@ -184,6 +184,10 @@ describe("translation resources", () => {
     expect(en.shell.commandCenter.newAgent).toBe("New agent");
     expect(en.shell.commandCenter.addProject).toBe("Add project");
     expect(en.shell.commandCenter.home).toBe("Home");
+    expect(en.shell.commandCenter.modelGroupLabel).toBe("Model");
+    expect(en.shell.commandCenter.modelSearchKeywords).toBe(
+      "switch model change model set model select model",
+    );
   });
 
   it("includes composer and agent workflow keys for the Batch 2 migration", () => {

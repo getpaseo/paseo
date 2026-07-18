@@ -57,6 +57,7 @@ test("creates a worktree and registers it in the source workspace project withou
     {
       cwd: repoDir,
       worktreeSlug: "feature-one",
+      title: "Feature One",
       runSetup: false,
       paseoHome: path.join(tempDir, ".paseo"),
     },
@@ -70,6 +71,7 @@ test("creates a worktree and registers it in the source workspace project withou
   expect(result.workspace.projectId).toBe("remote:github.com/acme/repo");
   expect(result.workspace.displayName).toBe("feature-one");
   expect(result.workspace.baseBranch).toBe("main");
+  expect(result.workspace.title).toBe("Feature One");
   expect(deps.workspaceGitService.getSnapshot).not.toHaveBeenCalled();
   expect(deps.projects.get(sourceProject.projectId)).toEqual(sourceProject);
   expect(events).toEqual([`workspace:${result.workspace.workspaceId}`]);

@@ -155,7 +155,7 @@ export function ProviderCatalogList({
           accessibilityLabel={t("providerCatalog.search")}
           placeholder={t("providerCatalog.search")}
           // @ts-expect-error - outlineStyle is web-only
-          style={SEARCH_INPUT_STYLE}
+          style={[styles.searchInput, isWeb && { outlineStyle: "none" }]}
           autoCapitalize="none"
           autoCorrect={false}
         />
@@ -284,5 +284,3 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
   },
 }));
-
-const SEARCH_INPUT_STYLE = [styles.searchInput, isWeb && { outlineStyle: "none" }];

@@ -347,12 +347,12 @@ describe("Codex app-server provider", () => {
     const session = createSession({ modeId: "auto", thinkingOptionId: "medium" });
 
     await expect(session.setMode("full-access")).resolves.toEqual({
-      type: "info",
-      message: "This change applies next turn.",
+      type: "warning",
+      message: "Permission mode applies next turn",
     });
     await expect(session.setThinkingOption?.("high")).resolves.toEqual({
-      type: "info",
-      message: "This change applies next turn.",
+      type: "warning",
+      message: "Thinking level applies next turn",
     });
 
     session.activeForegroundTurnId = null;

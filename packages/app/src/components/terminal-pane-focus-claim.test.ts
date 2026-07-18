@@ -18,14 +18,14 @@ describe("terminal pane focus claim", () => {
   it("waits for both the client and renderer before requesting a claim", () => {
     const withoutClient = canRequestFocusClaim({
       isWorkspaceFocused: true,
-      isAppVisible: true,
+      isAppActivelyVisible: true,
       isClientReady: false,
       isConnected: true,
       isRendererReady: true,
     });
     const withoutRenderer = canRequestFocusClaim({
       isWorkspaceFocused: true,
-      isAppVisible: true,
+      isAppActivelyVisible: true,
       isClientReady: true,
       isConnected: true,
       isRendererReady: false,
@@ -37,7 +37,7 @@ describe("terminal pane focus claim", () => {
   it("does not deliver a requested claim after the host disconnects", () => {
     const disconnected = canRequestFocusClaim({
       isWorkspaceFocused: true,
-      isAppVisible: true,
+      isAppActivelyVisible: true,
       isClientReady: true,
       isConnected: false,
       isRendererReady: true,

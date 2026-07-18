@@ -976,7 +976,7 @@ function ErrorSection({
   const { t } = useTranslation();
   return (
     <View style={styles.section}>
-      <Text style={SECTION_TITLE_ERROR_STYLE}>{t("toolCallDetails.error")}</Text>
+      <Text style={[styles.sectionTitle, styles.errorText]}>{t("toolCallDetails.error")}</Text>
       <ScrollView
         horizontal
         nestedScrollEnabled
@@ -984,7 +984,11 @@ function ErrorSection({
         contentContainerStyle={styles.jsonContent}
         showsHorizontalScrollIndicator={true}
       >
-        <Text selectable style={SCROLL_TEXT_ERROR_STYLE} dataSet={CODE_SURFACE_DATASET}>
+        <Text
+          selectable
+          style={[styles.scrollText, styles.errorText]}
+          dataSet={CODE_SURFACE_DATASET}
+        >
           {/* errorText comes from buildToolCallPresentation, which may format
               the raw error differently than the model's own safeStringify —
               highlight the query, but exact active-match alignment isn't
@@ -1250,6 +1254,3 @@ const styles = StyleSheet.create((theme) => {
     },
   };
 });
-
-const SECTION_TITLE_ERROR_STYLE = [styles.sectionTitle, styles.errorText];
-const SCROLL_TEXT_ERROR_STYLE = [styles.scrollText, styles.errorText];
