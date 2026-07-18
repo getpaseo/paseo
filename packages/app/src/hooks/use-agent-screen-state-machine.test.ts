@@ -366,7 +366,7 @@ describe("deriveAgentScreenViewState", () => {
     expect(result.memory.lastReadyAgent).toBeNull();
   });
 
-  it("still allows optimistic create flow to render before authoritative history arrives", () => {
+  it("keeps optimistic create non-blocking while timeline and authoritative history catch up", () => {
     const memory = createBaseMemory();
     const input: AgentScreenMachineInput = {
       ...createBaseInput(),
@@ -374,6 +374,7 @@ describe("deriveAgentScreenViewState", () => {
       continuity: { kind: "optimistic-create", agent: createAgent("agent-1") },
       needsAuthoritativeSync: true,
       isHistorySyncing: true,
+      visibilityCatchUpStatus: "pending",
       hasHydratedHistoryBefore: false,
     };
 
