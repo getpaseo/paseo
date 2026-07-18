@@ -167,7 +167,8 @@ interface SelectorContentProps {
   providers: ProviderSelectorProvider[];
   selectedProvider: string;
   selectedModel: string;
-  searchQuery: string;
+  normalizedQuery: string;
+  displayRows: ProviderSelectionModelRow[];
   favoriteKeys: Set<string>;
   onSelect: (provider: string, modelId: string) => void;
   onToggleFavorite?: (provider: string, modelId: string) => void;
@@ -197,8 +198,8 @@ function sortFavoritesFirst(
 }
 
 // Single source of truth for the rows a view displays, in display order. The
-// Enter-to-select-first-match handler resolves its target through this same
-// function so keyboard selection can never diverge from what's on screen.
+// rendered list and the Enter-to-select-first-match handler share one result of
+// this function, so keyboard selection can never diverge from what's on screen.
 function getDisplayRowsForView(
   view: SelectorView,
   providers: ProviderSelectorProvider[],
@@ -520,7 +521,8 @@ function SelectorContent({
   providers,
   selectedProvider,
   selectedModel,
-  searchQuery,
+  normalizedQuery,
+  displayRows,
   favoriteKeys,
   onSelect,
   onToggleFavorite,
@@ -529,7 +531,6 @@ function SelectorContent({
   isRetryingProvider,
 }: SelectorContentProps) {
   const { t } = useTranslation();
-  const normalizedQuery = useMemo(() => normalizeSearchQuery(searchQuery), [searchQuery]);
   const selectedViewProvider = useMemo(
     () =>
       view.kind === "provider"
@@ -537,11 +538,9 @@ function SelectorContent({
         : null,
     [providers, view],
   );
-  const displayRows = useMemo(
-    () => getDisplayRowsForView(view, providers, favoriteKeys, normalizedQuery),
-    [favoriteKeys, normalizedQuery, providers, view],
-  );
-  const hasResults = displayRows.length > 0 || providers.length > 0;
+  const hasResults = normalizedQuery
+    ? displayRows.length > 0
+    : displayRows.length > 0 || providers.length > 0;
   const emptyState = (
     <View style={styles.emptyState}>
       <ThemedSearch size={ICON_SIZE.md} uniProps={foregroundMutedMapping} />
@@ -590,38 +589,35 @@ function SelectorContent({
     );
   }
 
-  // Active search in the top-level view searches across every provider's
-  // models (favorites ranked first), not just the favorites list.
-  if (normalizedQuery) {
-    if (displayRows.length === 0) {
-      return emptyState;
-    }
-    return (
-      <ProviderModelRows
-        rows={displayRows}
-        selectedProvider={selectedProvider}
-        selectedModel={selectedModel}
-        favoriteKeys={favoriteKeys}
-        onSelect={onSelect}
-        onToggleFavorite={onToggleFavorite}
-      />
-    );
-  }
-
   return (
     <View>
-      <FavoritesSection
-        favoriteRows={displayRows}
-        selectedProvider={selectedProvider}
-        selectedModel={selectedModel}
-        favoriteKeys={favoriteKeys}
-        onSelect={onSelect}
-        onToggleFavorite={onToggleFavorite}
-      />
+      {normalizedQuery ? (
+        // Active search in the top-level view searches across every provider's
+        // models (favorites ranked first), not just the favorites list.
+        <ProviderModelRows
+          rows={displayRows}
+          selectedProvider={selectedProvider}
+          selectedModel={selectedModel}
+          favoriteKeys={favoriteKeys}
+          onSelect={onSelect}
+          onToggleFavorite={onToggleFavorite}
+        />
+      ) : (
+        <>
+          <FavoritesSection
+            favoriteRows={displayRows}
+            selectedProvider={selectedProvider}
+            selectedModel={selectedModel}
+            favoriteKeys={favoriteKeys}
+            onSelect={onSelect}
+            onToggleFavorite={onToggleFavorite}
+          />
 
-      {providers.length > 0 ? (
-        <GroupedProviderRows providers={providers} onDrillDown={onDrillDown} />
-      ) : null}
+          {providers.length > 0 ? (
+            <GroupedProviderRows providers={providers} onDrillDown={onDrillDown} />
+          ) : null}
+        </>
+      )}
 
       {!hasResults ? emptyState : null}
     </View>
@@ -654,10 +650,11 @@ export function CombinedModelSelector({
   const [view, setView] = useState<SelectorView>({ kind: "all" });
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResetKey, bumpSearchResetKey] = useReducer((key: number) => key + 1, 0);
-  // Mirror of searchQuery so the Enter handler (embedded in the memoized sheet
-  // header) doesn't have to depend on the query and rebuild the header per
-  // keystroke.
-  const searchQueryRef = useRef("");
+  const normalizedQuery = useMemo(() => normalizeSearchQuery(searchQuery), [searchQuery]);
+  const displayRows = useMemo(
+    () => getDisplayRowsForView(view, providers, favoriteKeys, normalizedQuery),
+    [favoriteKeys, normalizedQuery, providers, view],
+  );
 
   // Single-provider mode: only one provider → skip Level 1 entirely
   const singleProviderView = useMemo<SelectorView | null>(() => {
@@ -688,7 +685,6 @@ export function CombinedModelSelector({
         onOpen?.();
       } else {
         setSearchQuery("");
-        searchQueryRef.current = "";
         bumpSearchResetKey();
         onClose?.();
       }
@@ -701,7 +697,6 @@ export function CombinedModelSelector({
       onSelect(provider, modelId);
       setIsOpen(false);
       setSearchQuery("");
-      searchQueryRef.current = "";
       bumpSearchResetKey();
     },
     [onSelect],
@@ -794,7 +789,6 @@ export function CombinedModelSelector({
   const handleBackToAll = useCallback(() => {
     setView({ kind: "all" });
     setSearchQuery("");
-    searchQueryRef.current = "";
     bumpSearchResetKey();
   }, []);
 
@@ -803,18 +797,16 @@ export function CombinedModelSelector({
   }, []);
 
   const handleSearchQueryChange = useCallback((value: string) => {
-    searchQueryRef.current = value;
     setSearchQuery(value);
   }, []);
 
   const handleSearchSubmit = useCallback(() => {
-    const normalized = normalizeSearchQuery(searchQueryRef.current);
-    if (!normalized) return;
-    const [firstMatch] = getDisplayRowsForView(view, providers, favoriteKeys, normalized);
+    if (!normalizedQuery) return;
+    const [firstMatch] = displayRows;
     if (firstMatch) {
       handleSelect(firstMatch.provider, firstMatch.modelId);
     }
-  }, [favoriteKeys, handleSelect, providers, view]);
+  }, [displayRows, handleSelect, normalizedQuery]);
 
   const openProviderSettings = useCallback(() => {
     if (!serverId || view.kind !== "provider") return;
@@ -931,7 +923,7 @@ export function CombinedModelSelector({
         desktopFixedHeight={desktopFixedHeight}
         header={sheetHeader}
         mobileChildrenScrollEnabled={
-          !isNative || (view.kind !== "provider" && normalizeSearchQuery(searchQuery).length === 0)
+          !isNative || (view.kind !== "provider" && normalizedQuery.length === 0)
         }
       >
         {isContentReady ? (
@@ -940,7 +932,8 @@ export function CombinedModelSelector({
             providers={providers}
             selectedProvider={selectedProvider}
             selectedModel={selectedModel}
-            searchQuery={searchQuery}
+            normalizedQuery={normalizedQuery}
+            displayRows={displayRows}
             favoriteKeys={favoriteKeys}
             onSelect={handleSelect}
             onToggleFavorite={onToggleFavorite}
