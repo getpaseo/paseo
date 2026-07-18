@@ -3436,8 +3436,16 @@ export class Session {
     );
 
     try {
-      const agents = this.agentManager.listAgents();
-      const agent = agents.find((a) => a.id === agentId);
+      const existing = this.agentManager.getAgent(agentId);
+      const stored = existing ? null : await this.agentStorage.get(agentId);
+      const agent =
+        existing || (stored && !stored.archivedAt)
+          ? await ensureAgentLoaded(agentId, {
+              agentManager: this.agentManager,
+              agentStorage: this.agentStorage,
+              logger: this.sessionLogger,
+            })
+          : null;
 
       if (agent?.session?.listCommands) {
         const commands = await agent.session.listCommands();
