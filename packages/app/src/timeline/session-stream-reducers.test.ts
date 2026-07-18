@@ -912,6 +912,77 @@ describe("processTimelineResponse", () => {
     ).toEqual(["Earlier answer", "Missed answer", "New prompt"]);
   });
 
+  it("keeps delayed catch-up history between a live head and its unmatched head prompt", () => {
+    const prompt = makeOptimisticUserMessage("New prompt", "new-prompt");
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail: [],
+      currentHead: [makeAssistantItem("Live answer", "live-answer"), prompt],
+      currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 2 },
+      payload: {
+        ...baseTimelineInput.payload,
+        epoch: "epoch-1",
+        startCursor: { seq: 3 },
+        endCursor: { seq: 3 },
+        entries: [
+          makeToolCallTimelineEntry(3, "missed-call", "completed", {
+            type: "read",
+            filePath: "/tmp/missed.ts",
+          }),
+        ],
+      },
+    });
+
+    expect([...result.tail, ...result.head].map((item) => item.kind)).toEqual([
+      "assistant_message",
+      "tool_call",
+      "user_message",
+    ]);
+  });
+
+  it("keeps delayed catch-up history between a live head and its acknowledged head prompt", () => {
+    const prompt = makeOptimisticUserMessage("New prompt", "new-prompt");
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail: [],
+      currentHead: [makeAssistantItem("Live answer", "live-answer"), prompt],
+      currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 2 },
+      payload: {
+        ...baseTimelineInput.payload,
+        epoch: "epoch-1",
+        startCursor: { seq: 3 },
+        endCursor: { seq: 4 },
+        entries: [
+          makeToolCallTimelineEntry(3, "missed-call", "completed", {
+            type: "read",
+            filePath: "/tmp/missed.ts",
+          }),
+          {
+            ...makeTimelineEntry(4, "New prompt", "user_message"),
+            item: {
+              type: "user_message",
+              text: "New prompt",
+              messageId: "new-prompt",
+            },
+          },
+        ],
+      },
+    });
+
+    expect([...result.tail, ...result.head].map((item) => item.kind)).toEqual([
+      "assistant_message",
+      "tool_call",
+      "user_message",
+    ]);
+    expect(
+      [...result.tail, ...result.head]
+        .filter((item) => item.kind === "user_message")
+        .map((item) => item.optimistic),
+    ).toEqual([undefined]);
+  });
+
   it("keeps unrelated delayed history before the prompt and its live response", () => {
     const prompt = makeOptimisticUserMessage("New prompt", "new-prompt");
 
