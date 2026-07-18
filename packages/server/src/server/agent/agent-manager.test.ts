@@ -17,7 +17,7 @@ import { AgentStorage } from "./agent-storage.js";
 import { toAgentPayload } from "./agent-projections.js";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { formatSystemNotificationPrompt } from "./agent-prompt.js";
-import { ensureAgentLoaded } from "./agent-loading.js";
+import { ensureAgentLoaded, ensureUnarchivedAgentLoaded } from "./agent-loading.js";
 import type { StoredAgentRecord } from "./agent-storage.js";
 import type {
   AgentClient,
@@ -7295,6 +7295,39 @@ test("archiving an idle-collected parent still cascades to its managed children"
     expect(manager.getAgent(child.id)).toBeNull();
   } finally {
     await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("ensureUnarchivedAgentLoaded does not resume an archived agent", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-archived-load-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await manager.collectIdleAgents({
+      cutoff: new Date(Date.now() + 1_000),
+      protectedAgentIds: new Set(),
+    });
+    await manager.archiveSnapshot(agent.id, new Date().toISOString());
+
+    await expect(
+      ensureUnarchivedAgentLoaded(agent.id, {
+        agentManager: manager,
+        agentStorage: storage,
+        logger,
+      }),
+    ).rejects.toThrow(`Agent is archived: ${agent.id}`);
+    expect(manager.getAgent(agent.id)).toBeNull();
+  } finally {
     await storage.flush().catch(() => undefined);
     rmSync(workdir, { recursive: true, force: true });
   }

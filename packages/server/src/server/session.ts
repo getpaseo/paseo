@@ -36,7 +36,7 @@ import {
   isStoredAgentProviderAvailable,
   toAgentPersistenceHandle,
 } from "./persistence-hooks.js";
-import { ensureAgentLoaded } from "./agent/agent-loading.js";
+import { ensureAgentLoaded, ensureUnarchivedAgentLoaded } from "./agent/agent-loading.js";
 import {
   formatSystemNotificationPrompt,
   sendPromptToAgent,
@@ -816,6 +816,13 @@ export class Session {
         emit: (msg) => this.emit(msg),
       },
       operations: {
+        ensureLoaded: async (agentId) => {
+          await ensureUnarchivedAgentLoaded(agentId, {
+            agentManager,
+            agentStorage,
+            logger: this.sessionLogger,
+          });
+        },
         setMode: async (agentId, modeId) =>
           (await setAgentModeCommand({ agentManager }, { agentId, modeId })).notice,
         setModel: (agentId, modelId) => agentManager.setAgentModel(agentId, modelId),
@@ -5864,7 +5871,7 @@ export class Session {
     msg: Extract<SessionInboundMessage, { type: "agent.provider_subagents.list.request" }>,
   ): Promise<void> {
     try {
-      await ensureAgentLoaded(msg.parentAgentId, {
+      await ensureUnarchivedAgentLoaded(msg.parentAgentId, {
         agentManager: this.agentManager,
         agentStorage: this.agentStorage,
         logger: this.sessionLogger,
@@ -5896,7 +5903,7 @@ export class Session {
   ): Promise<void> {
     const direction: AgentTimelineFetchDirection = msg.direction ?? (msg.cursor ? "after" : "tail");
     try {
-      await ensureAgentLoaded(msg.parentAgentId, {
+      await ensureUnarchivedAgentLoaded(msg.parentAgentId, {
         agentManager: this.agentManager,
         agentStorage: this.agentStorage,
         logger: this.sessionLogger,

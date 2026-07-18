@@ -30,6 +30,18 @@ export interface EnsureAgentLoadedDeps {
   logger: Logger;
 }
 
+export async function ensureUnarchivedAgentLoaded(
+  agentId: string,
+  deps: EnsureAgentLoadedDeps,
+): Promise<ManagedAgent> {
+  const record = await deps.agentStorage.get(agentId);
+  if (record?.archivedAt) {
+    throw new Error(`Agent is archived: ${agentId}`);
+  }
+
+  return ensureAgentLoaded(agentId, deps);
+}
+
 export async function ensureAgentLoaded(
   agentId: string,
   deps: EnsureAgentLoadedDeps,
