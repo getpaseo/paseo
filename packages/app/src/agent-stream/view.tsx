@@ -1255,13 +1255,19 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       setTimelineSearchPanelHeight((height) => (height === nextHeight ? height : nextHeight));
     }, []);
     const getTimelineSearchTargetCenterY = useCallback(() => {
-      const viewportCenter =
-        viewportRef.current?.getWindowCenterY() ??
-        windowHeight * TIMELINE_SEARCH_SCROLL_CENTER_FRACTION;
-      // The search panel occupies the top of the chat pane while it is open.
-      // Place the exact occurrence at the center of the remaining visible
-      // region, rather than the center of the obscured full viewport.
-      return viewportCenter + timelineSearchPanelHeight / 2;
+      // The stream scroll viewport is laid out BELOW the search panel (they are
+      // in-flow siblings), so getWindowCenterY already reports the center of the
+      // visible region below the panel — use it directly. Adding panelHeight/2
+      // on top double-counts the panel and pushes the target past the visible
+      // fold, leaving a revealed match off-screen (e.g. the deepest occurrence
+      // in a large, internally-scrolled tool result — regressed by
+      // timeline-search.spec.ts). Only the fallback measures the FULL window,
+      // so it alone still needs the panel offset to land below the panel.
+      const scrollViewportCenter = viewportRef.current?.getWindowCenterY();
+      if (scrollViewportCenter != null) {
+        return scrollViewportCenter;
+      }
+      return windowHeight * TIMELINE_SEARCH_SCROLL_CENTER_FRACTION + timelineSearchPanelHeight / 2;
     }, [timelineSearchPanelHeight, windowHeight]);
     // Chain the fine occurrence correction behind the coarse stage: only
     // hand the occurrence-anchor provider a real target once the coarse
