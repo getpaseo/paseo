@@ -218,6 +218,21 @@ test("rejects auto mode when Claude Code uses Bedrock", async () => {
   }
 });
 
+test.each([
+  { env: {}, expected: "auto" },
+  { env: { CLAUDE_CODE_USE_BEDROCK: "1" }, expected: "default" },
+  { env: { CLAUDE_CODE_USE_VERTEX: "true" }, expected: "default" },
+])("defaults to $expected for transport environment $env", async ({ env, expected }) => {
+  const client = new ClaudeAgentClient({
+    logger: createTestLogger(),
+    runtimeSettings: { env },
+  });
+
+  await expect(
+    client.resolveDefaultModeId({ provider: "claude", cwd: process.cwd() }),
+  ).resolves.toBe(expected);
+});
+
 test("allows launch env to disable inherited Bedrock transport for auto mode", async () => {
   const previousBedrock = process.env.CLAUDE_CODE_USE_BEDROCK;
   process.env.CLAUDE_CODE_USE_BEDROCK = "1";

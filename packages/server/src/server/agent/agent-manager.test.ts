@@ -959,7 +959,7 @@ test("normalizeConfig injects Claude's automatic approval default when omitted",
 test("normalizeConfig uses a capability-aware provider mode default", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-mode-default-test-"));
   class CapabilityAwareClient extends TestAgentClient {
-    override async resolveDefaultModeId(): Promise<string> {
+    override async resolveDefaultModeId(_config: AgentSessionConfig): Promise<string> {
       return "auto";
     }
   }

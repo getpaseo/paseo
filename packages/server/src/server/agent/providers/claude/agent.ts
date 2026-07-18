@@ -1472,7 +1472,21 @@ export class ClaudeAgentClient implements AgentClient {
   async fetchCatalog(_options: FetchCatalogOptions): Promise<ProviderCatalog> {
     // Claude exposes a global catalog here; cwd/force are intentionally irrelevant.
     const models = await getClaudeModelsWithSettings(this.logger, this.configDir);
-    return { models, modes: DEFAULT_MODES };
+    const modes = detectIneligibleAutoModeTransport(
+      createProviderEnv({ baseEnv: process.env, runtimeSettings: this.runtimeSettings }),
+    )
+      ? DEFAULT_MODES.filter((mode) => mode.id !== "auto")
+      : DEFAULT_MODES;
+    return { models, modes };
+  }
+
+  async resolveDefaultModeId(config: AgentSessionConfig): Promise<string> {
+    const env = createProviderEnv({
+      baseEnv: process.env,
+      runtimeSettings: this.runtimeSettings,
+      overlays: [config.extra?.claude?.env],
+    });
+    return detectIneligibleAutoModeTransport(env) ? "default" : "auto";
   }
 
   async listFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {
