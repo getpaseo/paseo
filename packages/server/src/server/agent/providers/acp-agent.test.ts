@@ -719,6 +719,97 @@ describe("deriveModesFromACP", () => {
     });
   });
 
+  test("re-attaches fallback icon, colorTier, and isUnattended by mode id", () => {
+    const result = deriveModesFromACP(
+      [
+        {
+          id: "ask",
+          label: "Ask fallback",
+          icon: "ShieldCheck",
+          colorTier: "safe",
+        },
+        {
+          id: "always-approve",
+          label: "Always Approve fallback",
+          icon: "ShieldOff",
+          colorTier: "dangerous",
+          isUnattended: true,
+        },
+      ],
+      {
+        availableModes: [
+          { id: "ask", name: "Ask", description: "Prompt before tools" },
+          {
+            id: "always-approve",
+            name: "Always Approve",
+            description: "Skip permission prompts",
+          },
+        ],
+        currentModeId: "always-approve",
+      },
+      [],
+    );
+
+    expect(result.currentModeId).toBe("always-approve");
+    expect(result.modes).toEqual([
+      {
+        id: "ask",
+        label: "Ask",
+        description: "Prompt before tools",
+        icon: "ShieldCheck",
+        colorTier: "safe",
+      },
+      {
+        id: "always-approve",
+        label: "Always Approve",
+        description: "Skip permission prompts",
+        icon: "ShieldOff",
+        colorTier: "dangerous",
+        isUnattended: true,
+      },
+    ]);
+  });
+
+  test("re-attaches fallback metadata when modes come from config options", () => {
+    const result = deriveModesFromACP(
+      [
+        {
+          id: "full-access",
+          label: "Full Access fallback",
+          icon: "ShieldOff",
+          colorTier: "dangerous",
+          isUnattended: true,
+        },
+      ],
+      null,
+      [
+        {
+          id: "mode",
+          name: "Mode",
+          category: "mode",
+          type: "select",
+          currentValue: "full-access",
+          options: [
+            { value: "auto", name: "Default" },
+            { value: "full-access", name: "Full Access" },
+          ],
+        },
+      ],
+    );
+
+    expect(result.modes).toEqual([
+      { id: "auto", label: "Default", description: undefined },
+      {
+        id: "full-access",
+        label: "Full Access",
+        description: undefined,
+        icon: "ShieldOff",
+        colorTier: "dangerous",
+        isUnattended: true,
+      },
+    ]);
+  });
+
   test("falls back to config options when explicit mode state is absent", () => {
     const result = deriveModesFromACP([{ id: "fallback", label: "Fallback" }], null, [
       {

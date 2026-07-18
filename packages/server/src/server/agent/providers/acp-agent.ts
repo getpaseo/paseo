@@ -628,6 +628,29 @@ export function resolveACPModelSelection({
   };
 }
 
+/**
+ * ACP SessionMode only carries id/name/description. Re-attach provider-declared
+ * metadata (icon, colorTier, isUnattended) from fallbackModes by id so session
+ * availableModes keep unattended semantics and UI visuals.
+ */
+function attachFallbackModeMetadata(
+  mode: Pick<AgentMode, "id" | "label" | "description">,
+  fallbackModes: AgentMode[],
+): AgentMode {
+  const fallback = fallbackModes.find((entry) => entry.id === mode.id);
+  if (!fallback) {
+    return mode;
+  }
+  return {
+    id: mode.id,
+    label: mode.label,
+    description: mode.description,
+    ...(fallback.icon !== undefined ? { icon: fallback.icon } : {}),
+    ...(fallback.colorTier !== undefined ? { colorTier: fallback.colorTier } : {}),
+    ...(fallback.isUnattended !== undefined ? { isUnattended: fallback.isUnattended } : {}),
+  };
+}
+
 export function deriveModesFromACP(
   fallbackModes: AgentMode[],
   modeState?: { availableModes?: SessionMode[] | null; currentModeId?: string | null } | null,
@@ -635,11 +658,16 @@ export function deriveModesFromACP(
 ): { modes: AgentMode[]; currentModeId: string | null } {
   if (modeState?.availableModes?.length) {
     return {
-      modes: modeState.availableModes.map((mode) => ({
-        id: mode.id,
-        label: mode.name,
-        description: mode.description ?? undefined,
-      })),
+      modes: modeState.availableModes.map((mode) =>
+        attachFallbackModeMetadata(
+          {
+            id: mode.id,
+            label: mode.name,
+            description: mode.description ?? undefined,
+          },
+          fallbackModes,
+        ),
+      ),
       currentModeId: modeState.currentModeId ?? null,
     };
   }
@@ -648,11 +676,16 @@ export function deriveModesFromACP(
   if (modeOption) {
     const flatOptions = flattenSelectOptions(modeOption.options);
     return {
-      modes: flatOptions.map((option) => ({
-        id: option.value,
-        label: option.name,
-        description: option.description ?? undefined,
-      })),
+      modes: flatOptions.map((option) =>
+        attachFallbackModeMetadata(
+          {
+            id: option.value,
+            label: option.name,
+            description: option.description ?? undefined,
+          },
+          fallbackModes,
+        ),
+      ),
       currentModeId: modeOption.currentValue,
     };
   }

@@ -21,17 +21,26 @@ export const GROK_ALWAYS_APPROVE_MODE_ID = "always-approve";
 
 const GROK_ALWAYS_APPROVE_LAUNCH_FLAGS = new Set(["--always-approve", "--yolo"]);
 
+/**
+ * Single source of truth for Grok session + provider-definition modes.
+ * Keep icon/colorTier/isUnattended here so registry definition and runtime
+ * availableModes stay aligned after ACP mode derivation.
+ */
 export const GROK_MODES: AgentMode[] = [
   {
     id: GROK_ASK_MODE_ID,
     label: "Ask",
     description: "Prompt before shell and tool executions",
+    icon: "ShieldCheck",
+    colorTier: "safe",
   },
   {
     id: GROK_ALWAYS_APPROVE_MODE_ID,
     label: "Always Approve",
     description:
       "Auto-approve all tool executions for this session via Grok's native always-approve mode. Allows potentially destructive shell commands and file operations.",
+    icon: "ShieldOff",
+    colorTier: "dangerous",
     isUnattended: true,
   },
 ];
