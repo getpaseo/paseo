@@ -2525,9 +2525,16 @@ class ClaudeAgentSession implements AgentSession {
     this.sidechainTracker.clear();
     this.taskProtocolSource.reset();
     this.input?.end();
-    this.query?.close?.();
-    await this.awaitWithTimeout(this.query?.interrupt?.(), "close query interrupt");
-    await this.awaitWithTimeout(this.query?.return?.(), "close query return");
+    // Capture the query before teardown. return() can complete the async
+    // iterator and the pump may clear this.query before we finish close.
+    // Interrupt/return while the process transport is still writable. Closing the
+    // query first shuts ProcessTransport and makes interrupt() fail with
+    // "ProcessTransport is not ready for writing", which then races the 3s
+    // refresh rescue timeout in AgentManager.closeReloadedSession (#2034).
+    const query = this.query;
+    await this.awaitWithTimeout(query?.interrupt?.(), "close query interrupt");
+    await this.awaitWithTimeout(query?.return?.(), "close query return");
+    query?.close?.();
     this.query = null;
     this.input = null;
     // Terminate the entire process tree (claude + MCP children) to prevent

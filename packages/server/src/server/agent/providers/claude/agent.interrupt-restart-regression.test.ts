@@ -708,3 +708,104 @@ test("auto-completes an open autonomous turn when a foreground prompt starts", a
   subscribedEvents.close();
   await session.close();
 });
+
+test("close interrupts and returns before closing the query transport", async () => {
+  const logger = createTestLogger();
+  const callOrder: string[] = [];
+  let queryRef: ScriptedQuery | null = null;
+
+  queryFactory.mockImplementation(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
+    const scriptedQuery = createScriptedQuery({
+      prompt,
+      sessionId: "close-order-session",
+      async handlePrompt({ query }) {
+        query.emit({
+          type: "assistant",
+          message: { content: [{ type: "text", text: "ok" }] },
+          session_id: "close-order-session",
+        });
+        query.emit(buildSuccessResult("close-order-session"));
+      },
+    });
+    scriptedQuery.interrupt = vi.fn(async () => {
+      callOrder.push("interrupt");
+    });
+    scriptedQuery.return = vi.fn(async () => {
+      callOrder.push("return");
+      scriptedQuery.end();
+    });
+    scriptedQuery.close = vi.fn(() => {
+      callOrder.push("close");
+    });
+    queryRef = scriptedQuery;
+    return scriptedQuery;
+  });
+
+  const client = new ClaudeAgentClient({
+    logger,
+    queryFactory,
+    resolveBinary: async () => "/test/claude/bin",
+  });
+  const session = await client.createSession({
+    provider: "claude",
+    cwd: process.cwd(),
+  });
+
+  const events = await collectUntilTerminal(streamSession(session, "close order prompt"));
+  expect(events.some((event) => event.type === "turn_completed")).toBe(true);
+  expect(queryRef).not.toBeNull();
+
+  await session.close();
+
+  expect(callOrder).toEqual(["interrupt", "return", "close"]);
+  expect(queryRef?.interrupt).toHaveBeenCalledTimes(1);
+  expect(queryRef?.return).toHaveBeenCalledTimes(1);
+  expect(queryRef?.close).toHaveBeenCalledTimes(1);
+});
+
+test("close does not wait the full rescue timeout when interrupt rejects after a closed transport", async () => {
+  const logger = createTestLogger();
+  let queryRef: ScriptedQuery | null = null;
+
+  queryFactory.mockImplementation(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
+    const scriptedQuery = createScriptedQuery({
+      prompt,
+      sessionId: "close-transport-race-session",
+      async handlePrompt({ query }) {
+        query.emit({
+          type: "assistant",
+          message: { content: [{ type: "text", text: "ok" }] },
+          session_id: "close-transport-race-session",
+        });
+        query.emit(buildSuccessResult("close-transport-race-session"));
+      },
+    });
+    scriptedQuery.interrupt = vi.fn(async () => {
+      throw new Error("ProcessTransport is not ready for writing");
+    });
+    queryRef = scriptedQuery;
+    return scriptedQuery;
+  });
+
+  const client = new ClaudeAgentClient({
+    logger,
+    queryFactory,
+    resolveBinary: async () => "/test/claude/bin",
+  });
+  const session = await client.createSession({
+    provider: "claude",
+    cwd: process.cwd(),
+  });
+
+  await collectUntilTerminal(streamSession(session, "transport race prompt"));
+
+  const startedAt = Date.now();
+  await session.close();
+  const elapsedMs = Date.now() - startedAt;
+
+  expect(queryRef?.interrupt).toHaveBeenCalledTimes(1);
+  expect(queryRef?.return).toHaveBeenCalledTimes(1);
+  expect(queryRef?.close).toHaveBeenCalledTimes(1);
+  // Must not sit on the 3s query-operation timeout for an already-closed transport.
+  expect(elapsedMs).toBeLessThan(1_500);
+});
