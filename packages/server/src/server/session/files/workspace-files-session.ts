@@ -7,6 +7,10 @@ import {
 } from "@getpaseo/protocol/binary-frames/index";
 import type {
   FileDownloadTokenRequest,
+  FileExplorerCreateRequest,
+  FileExplorerDeleteRequest,
+  FileExplorerDuplicateRequest,
+  FileExplorerRenameRequest,
   FileExplorerRequest,
   FileUploadRequest,
   SessionInboundMessage,
@@ -15,10 +19,14 @@ import type {
 import { FileUploadStore } from "../../file-upload/index.js";
 import type { DownloadTokenStore } from "../../file-download/token-store.js";
 import {
+  createExplorerEntry,
+  deleteExplorerEntry,
+  duplicateExplorerEntry,
   getDownloadableFileInfo,
   listDirectoryEntries,
   readExplorerFile,
   readExplorerFileBytes,
+  renameExplorerEntry,
 } from "../../file-explorer/service.js";
 import { getProjectIcon } from "../../../utils/project-icon.js";
 
@@ -164,6 +172,200 @@ export class WorkspaceFilesSession {
           mode,
           directory: null,
           file: null,
+          error: getErrorMessage(error),
+          requestId,
+        },
+      });
+    }
+  }
+
+  async handleFileExplorerCreateRequest(request: FileExplorerCreateRequest): Promise<void> {
+    const { cwd: workspaceCwd, parentPath, name, kind, requestId } = request;
+    const cwd = workspaceCwd.trim();
+    if (!cwd) {
+      this.host.emit({
+        type: "file.explorer.create.response",
+        payload: {
+          cwd: workspaceCwd,
+          entry: null,
+          error: "cwd is required",
+          requestId,
+        },
+      });
+      return;
+    }
+
+    try {
+      const entry = await createExplorerEntry({
+        root: cwd,
+        parentPath,
+        name,
+        kind,
+      });
+      this.host.emit({
+        type: "file.explorer.create.response",
+        payload: {
+          cwd,
+          entry,
+          error: null,
+          requestId,
+        },
+      });
+    } catch (error) {
+      this.logger.error(
+        { err: error, cwd, parentPath, name, kind },
+        `Failed to create explorer entry for workspace ${cwd}`,
+      );
+      this.host.emit({
+        type: "file.explorer.create.response",
+        payload: {
+          cwd,
+          entry: null,
+          error: getErrorMessage(error),
+          requestId,
+        },
+      });
+    }
+  }
+
+  async handleFileExplorerRenameRequest(request: FileExplorerRenameRequest): Promise<void> {
+    const { cwd: workspaceCwd, path: entryPath, newName, requestId } = request;
+    const cwd = workspaceCwd.trim();
+    if (!cwd) {
+      this.host.emit({
+        type: "file.explorer.rename.response",
+        payload: {
+          cwd: workspaceCwd,
+          entry: null,
+          error: "cwd is required",
+          requestId,
+        },
+      });
+      return;
+    }
+
+    try {
+      const entry = await renameExplorerEntry({
+        root: cwd,
+        path: entryPath,
+        newName,
+      });
+      this.host.emit({
+        type: "file.explorer.rename.response",
+        payload: {
+          cwd,
+          entry,
+          error: null,
+          requestId,
+        },
+      });
+    } catch (error) {
+      this.logger.error(
+        { err: error, cwd, path: entryPath, newName },
+        `Failed to rename explorer entry for workspace ${cwd}`,
+      );
+      this.host.emit({
+        type: "file.explorer.rename.response",
+        payload: {
+          cwd,
+          entry: null,
+          error: getErrorMessage(error),
+          requestId,
+        },
+      });
+    }
+  }
+
+  async handleFileExplorerDeleteRequest(request: FileExplorerDeleteRequest): Promise<void> {
+    const { cwd: workspaceCwd, path: entryPath, requestId } = request;
+    const cwd = workspaceCwd.trim();
+    if (!cwd) {
+      this.host.emit({
+        type: "file.explorer.delete.response",
+        payload: {
+          cwd: workspaceCwd,
+          path: entryPath,
+          success: false,
+          error: "cwd is required",
+          requestId,
+        },
+      });
+      return;
+    }
+
+    try {
+      await deleteExplorerEntry({
+        root: cwd,
+        path: entryPath,
+      });
+      this.host.emit({
+        type: "file.explorer.delete.response",
+        payload: {
+          cwd,
+          path: entryPath,
+          success: true,
+          error: null,
+          requestId,
+        },
+      });
+    } catch (error) {
+      this.logger.error(
+        { err: error, cwd, path: entryPath },
+        `Failed to delete explorer entry for workspace ${cwd}`,
+      );
+      this.host.emit({
+        type: "file.explorer.delete.response",
+        payload: {
+          cwd,
+          path: entryPath,
+          success: false,
+          error: getErrorMessage(error),
+          requestId,
+        },
+      });
+    }
+  }
+
+  async handleFileExplorerDuplicateRequest(request: FileExplorerDuplicateRequest): Promise<void> {
+    const { cwd: workspaceCwd, path: entryPath, requestId } = request;
+    const cwd = workspaceCwd.trim();
+    if (!cwd) {
+      this.host.emit({
+        type: "file.explorer.duplicate.response",
+        payload: {
+          cwd: workspaceCwd,
+          entry: null,
+          error: "cwd is required",
+          requestId,
+        },
+      });
+      return;
+    }
+
+    try {
+      const entry = await duplicateExplorerEntry({
+        root: cwd,
+        path: entryPath,
+      });
+      this.host.emit({
+        type: "file.explorer.duplicate.response",
+        payload: {
+          cwd,
+          entry,
+          error: null,
+          requestId,
+        },
+      });
+    } catch (error) {
+      this.logger.error(
+        { err: error, cwd, path: entryPath },
+        `Failed to duplicate explorer entry for workspace ${cwd}`,
+      );
+      this.host.emit({
+        type: "file.explorer.duplicate.response",
+        payload: {
+          cwd,
+          entry: null,
           error: getErrorMessage(error),
           requestId,
         },

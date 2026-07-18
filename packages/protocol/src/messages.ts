@@ -2115,7 +2115,7 @@ const ParsedDiffFileSchema = z.object({
   status: z.enum(["ok", "too_large", "binary"]).optional(),
 });
 
-const FileExplorerEntrySchema = z.object({
+export const FileExplorerEntrySchema = z.object({
   name: z.string(),
   path: z.string(),
   kind: z.enum(["file", "directory"]),
@@ -2145,6 +2145,37 @@ export const FileExplorerRequestSchema = z.object({
   mode: z.enum(["list", "file"]),
   requestId: z.string(),
   acceptBinary: z.boolean().optional(),
+});
+
+export const FileExplorerCreateRequestSchema = z.object({
+  type: z.literal("file.explorer.create.request"),
+  cwd: z.string(),
+  parentPath: z.string(),
+  name: z.string(),
+  kind: z.enum(["file", "directory"]),
+  requestId: z.string(),
+});
+
+export const FileExplorerRenameRequestSchema = z.object({
+  type: z.literal("file.explorer.rename.request"),
+  cwd: z.string(),
+  path: z.string(),
+  newName: z.string(),
+  requestId: z.string(),
+});
+
+export const FileExplorerDeleteRequestSchema = z.object({
+  type: z.literal("file.explorer.delete.request"),
+  cwd: z.string(),
+  path: z.string(),
+  requestId: z.string(),
+});
+
+export const FileExplorerDuplicateRequestSchema = z.object({
+  type: z.literal("file.explorer.duplicate.request"),
+  cwd: z.string(),
+  path: z.string(),
+  requestId: z.string(),
 });
 
 export const ProjectIconRequestSchema = z.object({
@@ -2462,6 +2493,10 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   WorkspaceCreateRequestSchema,
   WorkspaceClearAttentionRequestSchema,
   FileExplorerRequestSchema,
+  FileExplorerCreateRequestSchema,
+  FileExplorerRenameRequestSchema,
+  FileExplorerDeleteRequestSchema,
+  FileExplorerDuplicateRequestSchema,
   ProjectIconRequestSchema,
   FileDownloadTokenRequestSchema,
   FileUploadRequestSchema,
@@ -2723,6 +2758,8 @@ export const ServerInfoStatusPayloadSchema = z
         projectCreateDirectory: z.boolean().optional(),
         // COMPAT(commitsList): added in v0.1.110, remove gate after 2027-01-16.
         commitsList: z.boolean().optional(),
+        // COMPAT(fileExplorerMutate): added in v0.1.111, remove gate after 2027-01-18.
+        fileExplorerMutate: z.boolean().optional(),
         // COMPAT(providerRemoval): added in v0.1.105, drop the gate when floor >= v0.1.105.
         providerRemoval: z.boolean().optional(),
         // COMPAT(importSessionWorkspaceTarget): added in v0.1.110, remove gate after 2027-01-16.
@@ -4551,6 +4588,47 @@ export const FileExplorerResponseSchema = z.object({
   }),
 });
 
+export const FileExplorerCreateResponseSchema = z.object({
+  type: z.literal("file.explorer.create.response"),
+  payload: z.object({
+    cwd: z.string(),
+    entry: FileExplorerEntrySchema.nullable(),
+    error: z.string().nullable(),
+    requestId: z.string(),
+  }),
+});
+
+export const FileExplorerRenameResponseSchema = z.object({
+  type: z.literal("file.explorer.rename.response"),
+  payload: z.object({
+    cwd: z.string(),
+    entry: FileExplorerEntrySchema.nullable(),
+    error: z.string().nullable(),
+    requestId: z.string(),
+  }),
+});
+
+export const FileExplorerDeleteResponseSchema = z.object({
+  type: z.literal("file.explorer.delete.response"),
+  payload: z.object({
+    cwd: z.string(),
+    path: z.string(),
+    success: z.boolean(),
+    error: z.string().nullable(),
+    requestId: z.string(),
+  }),
+});
+
+export const FileExplorerDuplicateResponseSchema = z.object({
+  type: z.literal("file.explorer.duplicate.response"),
+  payload: z.object({
+    cwd: z.string(),
+    entry: FileExplorerEntrySchema.nullable(),
+    error: z.string().nullable(),
+    requestId: z.string(),
+  }),
+});
+
 const ProjectIconSchema = z.object({
   data: z.string(),
   mimeType: z.string(),
@@ -5098,6 +5176,10 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   PaseoWorktreeArchiveResponseSchema,
   CreatePaseoWorktreeResponseSchema,
   FileExplorerResponseSchema,
+  FileExplorerCreateResponseSchema,
+  FileExplorerRenameResponseSchema,
+  FileExplorerDeleteResponseSchema,
+  FileExplorerDuplicateResponseSchema,
   ProjectIconResponseSchema,
   FileDownloadTokenResponseSchema,
   FileUploadResponseSchema,
@@ -5490,8 +5572,17 @@ export type ProjectGithubCloneRequest = z.infer<typeof ProjectGithubCloneRequest
 export type ProjectGithubCloneProtocol = z.infer<typeof ProjectGithubCloneProtocolSchema>;
 export type ArchiveWorkspaceRequest = z.infer<typeof ArchiveWorkspaceRequestSchema>;
 export type WorkspaceClearAttentionRequest = z.infer<typeof WorkspaceClearAttentionRequestSchema>;
+export type FileExplorerEntry = z.infer<typeof FileExplorerEntrySchema>;
 export type FileExplorerRequest = z.infer<typeof FileExplorerRequestSchema>;
 export type FileExplorerResponse = z.infer<typeof FileExplorerResponseSchema>;
+export type FileExplorerCreateRequest = z.infer<typeof FileExplorerCreateRequestSchema>;
+export type FileExplorerCreateResponse = z.infer<typeof FileExplorerCreateResponseSchema>;
+export type FileExplorerRenameRequest = z.infer<typeof FileExplorerRenameRequestSchema>;
+export type FileExplorerRenameResponse = z.infer<typeof FileExplorerRenameResponseSchema>;
+export type FileExplorerDeleteRequest = z.infer<typeof FileExplorerDeleteRequestSchema>;
+export type FileExplorerDeleteResponse = z.infer<typeof FileExplorerDeleteResponseSchema>;
+export type FileExplorerDuplicateRequest = z.infer<typeof FileExplorerDuplicateRequestSchema>;
+export type FileExplorerDuplicateResponse = z.infer<typeof FileExplorerDuplicateResponseSchema>;
 export type ProjectIconRequest = z.infer<typeof ProjectIconRequestSchema>;
 export type ProjectIconResponse = z.infer<typeof ProjectIconResponseSchema>;
 export type ProjectIcon = z.infer<typeof ProjectIconSchema>;

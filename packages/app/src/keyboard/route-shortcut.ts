@@ -60,6 +60,13 @@ const PASSTHROUGH_DISPATCH: Record<string, KeyboardActionDefinition> = {
   "workspace.pane.move-tab.down": { id: "workspace.pane.move-tab.down", scope: "workspace" },
   "workspace.pane.close": { id: "workspace.pane.close", scope: "workspace" },
   "view.toggle.focus": { id: "workspace.focus.toggle", scope: "workspace" },
+  "file-explorer.copy-path": { id: "file-explorer.copy-path", scope: "workspace" },
+  "file-explorer.copy-relative-path": {
+    id: "file-explorer.copy-relative-path",
+    scope: "workspace",
+  },
+  "file-explorer.rename": { id: "file-explorer.rename", scope: "workspace" },
+  "file-explorer.delete": { id: "file-explorer.delete", scope: "workspace" },
 };
 
 const SIMPLE_CALLBACKS: Record<string, ShortcutCallbackName> = {

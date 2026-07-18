@@ -31,7 +31,11 @@ export type KeyboardActionId =
   | "workspace.new"
   | "worktree.new"
   | "workspace.archive"
-  | "workspace.pin";
+  | "workspace.pin"
+  | "file-explorer.copy-path"
+  | "file-explorer.copy-relative-path"
+  | "file-explorer.rename"
+  | "file-explorer.delete";
 
 export type KeyboardActionDefinition =
   | { id: "agent.interrupt"; scope: KeyboardActionScope }
@@ -64,7 +68,11 @@ export type KeyboardActionDefinition =
   | { id: "workspace.new"; scope: KeyboardActionScope }
   | { id: "worktree.new"; scope: KeyboardActionScope }
   | { id: "workspace.archive"; scope: KeyboardActionScope }
-  | { id: "workspace.pin"; scope: KeyboardActionScope };
+  | { id: "workspace.pin"; scope: KeyboardActionScope }
+  | { id: "file-explorer.copy-path"; scope: KeyboardActionScope }
+  | { id: "file-explorer.copy-relative-path"; scope: KeyboardActionScope }
+  | { id: "file-explorer.rename"; scope: KeyboardActionScope }
+  | { id: "file-explorer.delete"; scope: KeyboardActionScope };
 
 export interface KeyboardActionHandler {
   handlerId: string;

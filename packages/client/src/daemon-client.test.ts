@@ -1678,6 +1678,70 @@ test("listDirectory sends a list file explorer request and returns directory ent
   });
 });
 
+test("createExplorerEntry sends a create request and returns the entry", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const responsePromise = client.createExplorerEntry({
+    cwd: "/tmp/project",
+    parentPath: "src",
+    name: "notes.txt",
+    kind: "file",
+    requestId: "req-create",
+  });
+
+  expect(JSON.parse(assertStr(mock.sent[0]))).toEqual({
+    type: "session",
+    message: {
+      type: "file.explorer.create.request",
+      cwd: "/tmp/project",
+      parentPath: "src",
+      name: "notes.txt",
+      kind: "file",
+      requestId: "req-create",
+    },
+  });
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "file.explorer.create.response",
+      payload: {
+        cwd: "/tmp/project",
+        entry: {
+          name: "notes.txt",
+          path: "src/notes.txt",
+          kind: "file",
+          size: 0,
+          modifiedAt: "2026-07-18T00:00:00.000Z",
+        },
+        error: null,
+        requestId: "req-create",
+      },
+    }),
+  );
+
+  await expect(responsePromise).resolves.toEqual({
+    name: "notes.txt",
+    path: "src/notes.txt",
+    kind: "file",
+    size: 0,
+    modifiedAt: "2026-07-18T00:00:00.000Z",
+  });
+});
+
 test("readFile hides legacy base64 behind bytes", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();

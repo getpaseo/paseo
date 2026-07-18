@@ -230,6 +230,162 @@ export async function readExplorerFileBytes({
   }
 }
 
+export interface CreateExplorerEntryParams {
+  root: string;
+  parentPath?: string;
+  name: string;
+  kind: ExplorerEntryKind;
+}
+
+export interface RenameExplorerEntryParams {
+  root: string;
+  path: string;
+  newName: string;
+}
+
+export interface DeleteExplorerEntryParams {
+  root: string;
+  path: string;
+}
+
+export interface DuplicateExplorerEntryParams {
+  root: string;
+  path: string;
+}
+
+export async function createExplorerEntry({
+  root,
+  parentPath = ".",
+  name,
+  kind,
+}: CreateExplorerEntryParams): Promise<FileExplorerEntry> {
+  assertValidEntryName(name);
+
+  const parent = await resolveScopedPath({ root, relativePath: parentPath });
+  const parentStats = await fs.stat(parent.resolvedPath);
+  if (!parentStats.isDirectory()) {
+    throw new Error("Parent path is not a directory");
+  }
+
+  const targetPath = path.join(parent.requestedPath, name);
+  const scopedTarget = await resolveScopedPath({
+    root,
+    relativePath: normalizeRelativePath({ root, targetPath }),
+  });
+
+  if (await pathExists(scopedTarget.resolvedPath)) {
+    throw new Error("An entry with that name already exists");
+  }
+
+  if (kind === "directory") {
+    await fs.mkdir(scopedTarget.resolvedPath);
+  } else {
+    await fs.writeFile(scopedTarget.resolvedPath, "", { flag: "wx" });
+  }
+
+  return buildEntryPayload({
+    root,
+    targetPath: scopedTarget.requestedPath,
+    name,
+    kind,
+  });
+}
+
+export async function renameExplorerEntry({
+  root,
+  path: relativePath,
+  newName,
+}: RenameExplorerEntryParams): Promise<FileExplorerEntry> {
+  assertValidEntryName(newName);
+
+  const source = await resolveScopedPath({ root, relativePath });
+  const normalizedSource = normalizeRelativePath({ root, targetPath: source.requestedPath });
+  if (normalizedSource === ".") {
+    throw new Error("Cannot rename the workspace root");
+  }
+
+  const sourceStats = await fs.stat(source.resolvedPath);
+  const kind: ExplorerEntryKind = sourceStats.isDirectory() ? "directory" : "file";
+
+  const parentRequestedPath = path.dirname(source.requestedPath);
+  const destinationPath = path.join(parentRequestedPath, newName);
+  const destination = await resolveScopedPath({
+    root,
+    relativePath: normalizeRelativePath({ root, targetPath: destinationPath }),
+  });
+
+  if (await pathExists(destination.resolvedPath)) {
+    throw new Error("An entry with that name already exists");
+  }
+
+  await fs.rename(source.resolvedPath, destination.resolvedPath);
+
+  return buildEntryPayload({
+    root,
+    targetPath: destination.requestedPath,
+    name: newName,
+    kind,
+  });
+}
+
+export async function deleteExplorerEntry({
+  root,
+  path: relativePath,
+}: DeleteExplorerEntryParams): Promise<void> {
+  const target = await resolveScopedPath({ root, relativePath });
+  const normalized = normalizeRelativePath({ root, targetPath: target.requestedPath });
+  if (normalized === ".") {
+    throw new Error("Cannot delete the workspace root");
+  }
+
+  const stats = await fs.lstat(target.resolvedPath);
+  if (stats.isDirectory()) {
+    await fs.rm(target.resolvedPath, { recursive: true, force: false });
+  } else {
+    await fs.unlink(target.resolvedPath);
+  }
+}
+
+export async function duplicateExplorerEntry({
+  root,
+  path: relativePath,
+}: DuplicateExplorerEntryParams): Promise<FileExplorerEntry> {
+  const source = await resolveScopedPath({ root, relativePath });
+  const normalizedSource = normalizeRelativePath({ root, targetPath: source.requestedPath });
+  if (normalizedSource === ".") {
+    throw new Error("Cannot duplicate the workspace root");
+  }
+
+  const sourceStats = await fs.stat(source.resolvedPath);
+  const kind: ExplorerEntryKind = sourceStats.isDirectory() ? "directory" : "file";
+  const parentRequestedPath = path.dirname(source.requestedPath);
+  const parent = await resolveScopedPath({
+    root,
+    relativePath: normalizeRelativePath({ root, targetPath: parentRequestedPath }),
+  });
+
+  const siblingNames = new Set(await fs.readdir(parent.resolvedPath));
+  const duplicateName = allocateDuplicateName(path.basename(source.requestedPath), siblingNames);
+  const destinationPath = path.join(parent.requestedPath, duplicateName);
+  const destination = await resolveScopedPath({
+    root,
+    relativePath: normalizeRelativePath({ root, targetPath: destinationPath }),
+  });
+
+  if (kind === "directory") {
+    await fs.cp(source.resolvedPath, destination.resolvedPath, { recursive: true });
+  } else {
+    await fs.copyFile(source.resolvedPath, destination.resolvedPath);
+  }
+
+  return buildEntryPayload({
+    root,
+    targetPath: destination.requestedPath,
+    name: duplicateName,
+    kind,
+  });
+}
+
 export async function getDownloadableFileInfo({ root, relativePath }: ReadFileParams): Promise<{
   path: string;
   absolutePath: string;
@@ -332,6 +488,48 @@ function isMissingEntryError(error: unknown): boolean {
 
 function isOutsideWorkspaceError(error: unknown): boolean {
   return error instanceof Error && error.message === ACCESS_OUTSIDE_WORKSPACE_MESSAGE;
+}
+
+function assertValidEntryName(name: string): void {
+  if (name.length === 0) {
+    throw new Error("Name is required");
+  }
+  if (name === "." || name === "..") {
+    throw new Error("Invalid entry name");
+  }
+  if (name.includes("/") || name.includes("\\") || name.includes("\0")) {
+    throw new Error("Invalid entry name");
+  }
+}
+
+async function pathExists(targetPath: string): Promise<boolean> {
+  try {
+    await fs.lstat(targetPath);
+    return true;
+  } catch (error) {
+    if (isMissingEntryError(error)) {
+      return false;
+    }
+    throw error;
+  }
+}
+
+function allocateDuplicateName(originalName: string, existingNames: Set<string>): string {
+  const extension = path.extname(originalName);
+  const baseName = path.basename(originalName, extension);
+  const firstCandidate = `${baseName} copy${extension}`;
+  if (!existingNames.has(firstCandidate)) {
+    return firstCandidate;
+  }
+
+  let copyIndex = 2;
+  while (true) {
+    const candidate = `${baseName} copy ${copyIndex}${extension}`;
+    if (!existingNames.has(candidate)) {
+      return candidate;
+    }
+    copyIndex += 1;
+  }
 }
 
 function normalizeRelativePath({ root, targetPath }: { root: string; targetPath: string }): string {

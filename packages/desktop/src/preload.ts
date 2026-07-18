@@ -85,6 +85,10 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
       column?: number;
     }) => ipcRenderer.invoke("paseo:editor:openTarget", input),
   },
+  shell: {
+    revealItem: (input: { path: string }) => ipcRenderer.invoke("paseo:shell:revealItem", input),
+    copyPaths: (input: { paths: string[] }) => ipcRenderer.invoke("paseo:shell:copyPaths", input),
+  },
   webUtils: {
     getPathForFile: (file: File) => webUtils.getPathForFile(file),
   },

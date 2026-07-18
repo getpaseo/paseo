@@ -25,6 +25,7 @@ import type {
   CreatePaseoWorktreeRequest,
   FileDownloadTokenResponse,
   FileUploadResponse,
+  FileExplorerEntry,
   FileExplorerResponse,
   FetchAgentTimelineResponseMessage,
   AgentForkContextResponseMessage,
@@ -4049,6 +4050,103 @@ export class DaemonClient {
       throw new Error("Directory listing unavailable.");
     }
     return payload.directory;
+  }
+
+  async createExplorerEntry(input: {
+    cwd: string;
+    parentPath: string;
+    name: string;
+    kind: "file" | "directory";
+    requestId?: string;
+  }): Promise<FileExplorerEntry> {
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"file.explorer.create.response">({
+        requestId: input.requestId,
+        message: {
+          type: "file.explorer.create.request",
+          cwd: input.cwd,
+          parentPath: input.parentPath,
+          name: input.name,
+          kind: input.kind,
+        },
+      });
+    if (payload.error) {
+      throw new Error(payload.error);
+    }
+    if (!payload.entry) {
+      throw new Error("Created entry unavailable.");
+    }
+    return payload.entry;
+  }
+
+  async renameExplorerEntry(input: {
+    cwd: string;
+    path: string;
+    newName: string;
+    requestId?: string;
+  }): Promise<FileExplorerEntry> {
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"file.explorer.rename.response">({
+        requestId: input.requestId,
+        message: {
+          type: "file.explorer.rename.request",
+          cwd: input.cwd,
+          path: input.path,
+          newName: input.newName,
+        },
+      });
+    if (payload.error) {
+      throw new Error(payload.error);
+    }
+    if (!payload.entry) {
+      throw new Error("Renamed entry unavailable.");
+    }
+    return payload.entry;
+  }
+
+  async deleteExplorerEntry(input: {
+    cwd: string;
+    path: string;
+    requestId?: string;
+  }): Promise<void> {
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"file.explorer.delete.response">({
+        requestId: input.requestId,
+        message: {
+          type: "file.explorer.delete.request",
+          cwd: input.cwd,
+          path: input.path,
+        },
+      });
+    if (payload.error) {
+      throw new Error(payload.error);
+    }
+    if (!payload.success) {
+      throw new Error("Failed to delete explorer entry.");
+    }
+  }
+
+  async duplicateExplorerEntry(input: {
+    cwd: string;
+    path: string;
+    requestId?: string;
+  }): Promise<FileExplorerEntry> {
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"file.explorer.duplicate.response">({
+        requestId: input.requestId,
+        message: {
+          type: "file.explorer.duplicate.request",
+          cwd: input.cwd,
+          path: input.path,
+        },
+      });
+    if (payload.error) {
+      throw new Error(payload.error);
+    }
+    if (!payload.entry) {
+      throw new Error("Duplicated entry unavailable.");
+    }
+    return payload.entry;
   }
 
   async readFile(cwd: string, path: string, requestId?: string): Promise<FileReadResult> {

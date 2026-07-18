@@ -45,6 +45,16 @@ import { usePanelStore, type SortOption } from "@/stores/panel-store";
 import { formatTimeAgo } from "@/utils/time";
 import { buildAbsoluteExplorerPath } from "@/utils/explorer-paths";
 import { filterVisibleExplorerEntries, isHiddenExplorerPath } from "@/file-explorer/visibility";
+import { AdaptiveRenameModal } from "@/components/rename-modal";
+import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
+import { useFileExplorerCommands } from "@/file-explorer/use-file-explorer-commands";
+import {
+  ExplorerBackgroundContextMenu,
+  ExplorerItemContextMenu,
+} from "@/file-explorer/explorer-context-menu";
+import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
+import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
+import { getIsElectron } from "@/constants/platform";
 
 const SORT_OPTIONS: { value: SortOption }[] = [
   { value: "name" },
@@ -71,6 +81,7 @@ interface TreeRowItemProps {
   onEntryPress: (entry: ExplorerEntry) => void;
   onCopyPath: (path: string) => void;
   onDownloadEntry: (entry: ExplorerEntry) => void;
+  commands: ReturnType<typeof useFileExplorerCommands>;
 }
 
 function stopPressInPropagation(event: { stopPropagation?: () => void }) {
@@ -112,6 +123,7 @@ function TreeRowItem({
   onEntryPress,
   onCopyPath,
   onDownloadEntry,
+  commands,
 }: TreeRowItemProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
@@ -148,57 +160,63 @@ function TreeRowItem({
   );
 
   return (
-    <Pressable onPress={handlePress} style={pressableStyle}>
-      <TreeIndentGuides depth={depth} />
-      <View style={styles.entryInfo}>
-        <View style={styles.entryIcon}>
-          {(() => {
-            if (!isDirectory) {
-              return <SvgXml xml={getFileIconSvg(entry.name)} width={16} height={16} />;
-            }
-            if (loading) return <ActivityIndicator size="small" />;
-            return <TreeChevron expanded={isExpanded} />;
-          })()}
-        </View>
-        <Text style={styles.entryName} numberOfLines={1}>
-          {entry.name}
-        </Text>
-      </View>
-      <DropdownMenu>
-        <DropdownMenuTrigger hitSlop={8} onPressIn={stopPressInPropagation} style={menuButtonStyle}>
-          <MoreVertical size={16} color={theme.colors.foregroundMuted} />
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" width={220}>
-          <View style={styles.contextMetaBlock}>
-            <View style={styles.contextMetaRow}>
-              <Text style={styles.contextMetaLabel} numberOfLines={1}>
-                {t("workspace.fileExplorer.context.size")}
-              </Text>
-              <Text style={styles.contextMetaValue} numberOfLines={1} ellipsizeMode="tail">
-                {formatFileSize({ size: entry.size })}
-              </Text>
-            </View>
-            <View style={styles.contextMetaRow}>
-              <Text style={styles.contextMetaLabel} numberOfLines={1}>
-                {t("workspace.fileExplorer.context.modified")}
-              </Text>
-              <Text style={styles.contextMetaValue} numberOfLines={1} ellipsizeMode="tail">
-                {formatTimeAgo(new Date(entry.modifiedAt))}
-              </Text>
-            </View>
+    <ExplorerItemContextMenu entry={entry} commands={commands} onDownloadEntry={onDownloadEntry}>
+      <Pressable onPress={handlePress} style={pressableStyle}>
+        <TreeIndentGuides depth={depth} />
+        <View style={styles.entryInfo}>
+          <View style={styles.entryIcon}>
+            {(() => {
+              if (!isDirectory) {
+                return <SvgXml xml={getFileIconSvg(entry.name)} width={16} height={16} />;
+              }
+              if (loading) return <ActivityIndicator size="small" />;
+              return <TreeChevron expanded={isExpanded} />;
+            })()}
           </View>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem leading={copyLeading} onSelect={handleCopy}>
-            {t("workspace.fileExplorer.context.copyPath")}
-          </DropdownMenuItem>
-          {entry.kind === "file" ? (
-            <DropdownMenuItem leading={downloadLeading} onSelect={handleDownload}>
-              {t("workspace.fileExplorer.context.download")}
+          <Text style={styles.entryName} numberOfLines={1}>
+            {entry.name}
+          </Text>
+        </View>
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            hitSlop={8}
+            onPressIn={stopPressInPropagation}
+            style={menuButtonStyle}
+          >
+            <MoreVertical size={16} color={theme.colors.foregroundMuted} />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" width={220}>
+            <View style={styles.contextMetaBlock}>
+              <View style={styles.contextMetaRow}>
+                <Text style={styles.contextMetaLabel} numberOfLines={1}>
+                  {t("workspace.fileExplorer.context.size")}
+                </Text>
+                <Text style={styles.contextMetaValue} numberOfLines={1} ellipsizeMode="tail">
+                  {formatFileSize({ size: entry.size })}
+                </Text>
+              </View>
+              <View style={styles.contextMetaRow}>
+                <Text style={styles.contextMetaLabel} numberOfLines={1}>
+                  {t("workspace.fileExplorer.context.modified")}
+                </Text>
+                <Text style={styles.contextMetaValue} numberOfLines={1} ellipsizeMode="tail">
+                  {formatTimeAgo(new Date(entry.modifiedAt))}
+                </Text>
+              </View>
+            </View>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem leading={copyLeading} onSelect={handleCopy}>
+              {t("workspace.fileExplorer.context.copyPath")}
             </DropdownMenuItem>
-          ) : null}
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </Pressable>
+            {entry.kind === "file" ? (
+              <DropdownMenuItem leading={downloadLeading} onSelect={handleDownload}>
+                {t("workspace.fileExplorer.context.download")}
+              </DropdownMenuItem>
+            ) : null}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </Pressable>
+    </ExplorerItemContextMenu>
   );
 }
 
@@ -253,6 +271,31 @@ export function FileExplorerPane({
       workspaceId,
       workspaceRoot: normalizedWorkspaceRoot,
     });
+  const isLocalDaemon = useIsLocalDaemon(serverId);
+  const canMutate = useSessionStore(
+    // COMPAT(fileExplorerMutate): added in v0.1.111, remove gate after 2027-01-18.
+    (state) => state.sessions[serverId]?.serverInfo?.features?.fileExplorerMutate === true,
+  );
+  const refreshPaths = useCallback(
+    async (paths: string[]) => {
+      const unique = [...new Set(paths.map((path) => path.trim() || "."))];
+      await Promise.all(
+        unique.map((path) =>
+          requestDirectoryListing(path, { recordHistory: false, setCurrentPath: false }),
+        ),
+      );
+    },
+    [requestDirectoryListing],
+  );
+  const commands = useFileExplorerCommands({
+    serverId,
+    workspaceRoot: normalizedWorkspaceRoot,
+    canMutate,
+    isLocalDaemon,
+    onOpenFile,
+    refreshPaths,
+    selectExplorerEntry,
+  });
   const sortOption = usePanelStore((state) => state.explorerSortOption);
   const showHiddenFiles = usePanelStore((state) => state.explorerShowHiddenFiles);
   const setSortOption = usePanelStore((state) => state.setExplorerSortOption);
@@ -427,6 +470,7 @@ export function FileExplorerPane({
         onEntryPress={handleEntryPress}
         onCopyPath={handleCopyPath}
         onDownloadEntry={handleDownloadEntry}
+        commands={commands}
       />
     ),
     [
@@ -436,6 +480,7 @@ export function FileExplorerPane({
       handleDownloadEntry,
       isDirectoryLoading,
       selectedEntryPath,
+      commands,
     ],
   );
 
@@ -456,6 +501,75 @@ export function FileExplorerPane({
       setCurrentPath: false,
     });
   }, [requestDirectoryListing]);
+
+  const selectedEntry = useMemo(() => {
+    if (!selectedEntryPath) {
+      return null;
+    }
+    for (const directory of directories.values()) {
+      const match = directory.entries.find((entry) => entry.path === selectedEntryPath);
+      if (match) {
+        return match;
+      }
+    }
+    return null;
+  }, [directories, selectedEntryPath]);
+
+  const handleExplorerKeyboardAction = useCallback(
+    (action: KeyboardActionDefinition): boolean => {
+      if (!getIsElectron()) {
+        return false;
+      }
+      switch (action.id) {
+        case "file-explorer.copy-path":
+          if (!selectedEntryPath) return false;
+          void commands.copyAbsolutePath(selectedEntryPath);
+          return true;
+        case "file-explorer.copy-relative-path":
+          if (!selectedEntryPath) return false;
+          void commands.copyRelativePath(selectedEntryPath);
+          return true;
+        case "file-explorer.rename":
+          if (!selectedEntry || !commands.canMutate) return false;
+          commands.openRenamePrompt(selectedEntry);
+          return true;
+        case "file-explorer.delete":
+          if (!selectedEntry || !commands.canMutate) return false;
+          void commands.deleteEntry(selectedEntry);
+          return true;
+        default:
+          return false;
+      }
+    },
+    [commands, selectedEntry, selectedEntryPath],
+  );
+
+  useKeyboardActionHandler({
+    handlerId: `file-explorer:${serverId}:${workspaceScopeId}`,
+    actions: [
+      "file-explorer.copy-path",
+      "file-explorer.copy-relative-path",
+      "file-explorer.rename",
+      "file-explorer.delete",
+    ] as const,
+    enabled: Boolean(hasWorkspaceScope && getIsElectron()),
+    priority: 80,
+    isActive: () => Boolean(selectedEntryPath),
+    handle: handleExplorerKeyboardAction,
+  });
+
+  const namePromptTitle = useMemo(() => {
+    if (!commands.namePrompt) {
+      return "";
+    }
+    if (commands.namePrompt.kind === "new-file") {
+      return t("workspace.fileExplorer.prompts.newFileTitle");
+    }
+    if (commands.namePrompt.kind === "new-folder") {
+      return t("workspace.fileExplorer.prompts.newFolderTitle");
+    }
+    return t("workspace.fileExplorer.prompts.renameTitle");
+  }, [commands.namePrompt, t]);
 
   if (!hasWorkspaceScope) {
     return (
@@ -483,6 +597,20 @@ export function FileExplorerPane({
         handleRetry={handleRetry}
         sortTriggerStyle={sortTriggerStyle}
         iconButtonStyle={iconButtonStyle}
+        commands={commands}
+      />
+      <AdaptiveRenameModal
+        visible={commands.namePrompt !== null}
+        title={namePromptTitle}
+        initialValue={commands.namePrompt?.initialValue ?? ""}
+        onClose={commands.closeNamePrompt}
+        onSubmit={commands.submitNamePrompt}
+        submitLabel={
+          commands.namePrompt?.kind === "rename"
+            ? t("renameModal.rename")
+            : t("workspace.fileExplorer.prompts.create")
+        }
+        testID="file-explorer-name-prompt"
       />
     </View>
   );
@@ -504,6 +632,7 @@ interface FileExplorerPaneContentProps {
   handleRetry: () => void;
   sortTriggerStyle: (state: PressableStateCallbackType) => StyleProp<ViewStyle>;
   iconButtonStyle: (state: PressableStateCallbackType) => StyleProp<ViewStyle>;
+  commands: ReturnType<typeof useFileExplorerCommands>;
 }
 
 function FileExplorerPaneContent(props: FileExplorerPaneContentProps) {
@@ -525,6 +654,7 @@ function FileExplorerPaneContent(props: FileExplorerPaneContentProps) {
     handleRetry,
     sortTriggerStyle: sortTriggerStyleProp,
     iconButtonStyle: iconButtonStyleProp,
+    commands,
   } = props;
 
   const showHiddenFiles = usePanelStore((state) => state.explorerShowHiddenFiles);
@@ -575,69 +705,71 @@ function FileExplorerPaneContent(props: FileExplorerPaneContentProps) {
   }
 
   return (
-    <View style={[styles.treePane, styles.treePaneFill]}>
-      <View style={styles.paneHeader} testID="files-pane-header">
-        <Pressable onPress={handleSortCycle} style={sortTriggerStyleProp}>
-          <Text style={styles.sortTriggerText}>{currentSortLabel}</Text>
-          <ChevronDown size={12} color={theme.colors.foregroundMuted} />
-        </Pressable>
-        <View style={styles.headerActions}>
-          <Pressable
-            onPress={handleToggleHiddenFiles}
-            hitSlop={8}
-            style={hiddenFilesToggleStyle}
-            accessibilityRole="button"
-            accessibilityLabel={hiddenFilesToggleAccessibilityLabel}
-            accessibilityState={hiddenFilesToggleAccessibilityState}
-          >
-            {showHiddenFiles ? (
-              <Eye size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-            ) : (
-              <EyeOff size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-            )}
+    <ExplorerBackgroundContextMenu commands={commands}>
+      <View style={[styles.treePane, styles.treePaneFill]}>
+        <View style={styles.paneHeader} testID="files-pane-header">
+          <Pressable onPress={handleSortCycle} style={sortTriggerStyleProp}>
+            <Text style={styles.sortTriggerText}>{currentSortLabel}</Text>
+            <ChevronDown size={12} color={theme.colors.foregroundMuted} />
           </Pressable>
-          <Pressable
-            onPress={handleRefresh}
-            disabled={isRefreshFetching}
-            hitSlop={8}
-            style={iconButtonStyleProp}
-            accessibilityRole="button"
-            accessibilityLabel={
-              isRefreshFetching
-                ? t("workspace.fileExplorer.actions.refreshing")
-                : t("workspace.fileExplorer.actions.refresh")
-            }
-          >
-            <View style={styles.refreshIcon}>
-              {isRefreshFetching ? (
-                <LoadingSpinner size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+          <View style={styles.headerActions}>
+            <Pressable
+              onPress={handleToggleHiddenFiles}
+              hitSlop={8}
+              style={hiddenFilesToggleStyle}
+              accessibilityRole="button"
+              accessibilityLabel={hiddenFilesToggleAccessibilityLabel}
+              accessibilityState={hiddenFilesToggleAccessibilityState}
+            >
+              {showHiddenFiles ? (
+                <Eye size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
               ) : (
-                <RotateCw size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+                <EyeOff size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
               )}
-            </View>
-          </Pressable>
+            </Pressable>
+            <Pressable
+              onPress={handleRefresh}
+              disabled={isRefreshFetching}
+              hitSlop={8}
+              style={iconButtonStyleProp}
+              accessibilityRole="button"
+              accessibilityLabel={
+                isRefreshFetching
+                  ? t("workspace.fileExplorer.actions.refreshing")
+                  : t("workspace.fileExplorer.actions.refresh")
+              }
+            >
+              <View style={styles.refreshIcon}>
+                {isRefreshFetching ? (
+                  <LoadingSpinner size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+                ) : (
+                  <RotateCw size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+                )}
+              </View>
+            </Pressable>
+          </View>
         </View>
+        {treeRows.length === 0 ? (
+          <View style={styles.centerState}>
+            <Text style={styles.emptyText}>{emptyLabel}</Text>
+          </View>
+        ) : (
+          <FlatList
+            ref={treeListRef}
+            style={styles.treeList}
+            data={treeRows}
+            renderItem={renderTreeRow}
+            keyExtractor={treeRowKeyExtractor}
+            testID="file-explorer-tree-scroll"
+            contentContainerStyle={styles.entriesContent}
+            showsVerticalScrollIndicator
+            initialNumToRender={24}
+            maxToRenderPerBatch={40}
+            windowSize={12}
+          />
+        )}
       </View>
-      {treeRows.length === 0 ? (
-        <View style={styles.centerState}>
-          <Text style={styles.emptyText}>{emptyLabel}</Text>
-        </View>
-      ) : (
-        <FlatList
-          ref={treeListRef}
-          style={styles.treeList}
-          data={treeRows}
-          renderItem={renderTreeRow}
-          keyExtractor={treeRowKeyExtractor}
-          testID="file-explorer-tree-scroll"
-          contentContainerStyle={styles.entriesContent}
-          showsVerticalScrollIndicator
-          initialNumToRender={24}
-          maxToRenderPerBatch={40}
-          windowSize={12}
-        />
-      )}
-    </View>
+    </ExplorerBackgroundContextMenu>
   );
 }
 
@@ -858,6 +990,7 @@ function TreeRowDispatcher({
   onEntryPress,
   onCopyPath,
   onDownloadEntry,
+  commands,
 }: {
   info: ListRenderItemInfo<TreeRow>;
   expandedPaths: Set<string>;
@@ -866,6 +999,7 @@ function TreeRowDispatcher({
   onEntryPress: (entry: ExplorerEntry) => void;
   onCopyPath: (path: string) => void | Promise<void>;
   onDownloadEntry: (entry: ExplorerEntry) => void;
+  commands: ReturnType<typeof useFileExplorerCommands>;
 }) {
   const entry = info.item.entry;
   const depth = info.item.depth;
@@ -884,6 +1018,7 @@ function TreeRowDispatcher({
       onEntryPress={onEntryPress}
       onCopyPath={onCopyPath}
       onDownloadEntry={onDownloadEntry}
+      commands={commands}
     />
   );
 }

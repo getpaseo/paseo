@@ -44,7 +44,13 @@ export interface KeyboardShortcutHelpRow {
   noteKey?: string;
 }
 
-export type ShortcutSectionId = "navigation" | "tabs-panes" | "projects" | "panels" | "agent-input";
+export type ShortcutSectionId =
+  | "navigation"
+  | "tabs-panes"
+  | "projects"
+  | "panels"
+  | "files"
+  | "agent-input";
 
 export interface KeyboardShortcutHelpSection {
   id: ShortcutSectionId;
@@ -117,6 +123,7 @@ const SHORTCUT_HELP_SECTION_TITLES: Record<ShortcutSectionId, string> = {
   "tabs-panes": "Tabs & Panes",
   projects: "Projects",
   panels: "Panels",
+  files: "Files",
   "agent-input": "Agent Input",
 };
 
@@ -125,6 +132,7 @@ const SHORTCUT_HELP_SECTION_LABEL_KEYS: Record<ShortcutSectionId, string> = {
   "tabs-panes": "settings.shortcuts.sections.tabsPanes",
   projects: "settings.shortcuts.sections.projects",
   panels: "settings.shortcuts.sections.panels",
+  files: "settings.shortcuts.sections.files",
   "agent-input": "settings.shortcuts.sections.agentInput",
 };
 
@@ -166,6 +174,10 @@ const SHORTCUT_HELP_LABEL_KEYS: Record<string, string> = {
   "dictation-toggle": "settings.shortcuts.help.startStopDictation",
   "agent-interrupt": "settings.shortcuts.help.interruptAgent",
   "voice-mute-toggle": "settings.shortcuts.help.muteUnmuteVoiceMode",
+  "file-explorer-copy-path": "settings.shortcuts.help.copyFilePath",
+  "file-explorer-copy-relative-path": "settings.shortcuts.help.copyRelativeFilePath",
+  "file-explorer-rename": "settings.shortcuts.help.renameFile",
+  "file-explorer-delete": "settings.shortcuts.help.deleteFile",
 };
 
 const SHORTCUT_HELP_NOTE_KEYS: Record<string, string> = {
@@ -738,6 +750,80 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       label: "Show keyboard shortcuts",
       keys: ["?"],
       note: "Available when focus is not in a text field or terminal.",
+    },
+  },
+
+  // --- File explorer ---
+  {
+    id: "file-explorer-copy-path-mac",
+    action: "file-explorer.copy-path",
+    combo: "Cmd+Alt+C",
+    when: { mac: true, desktop: true, commandCenter: false, editable: false, terminal: false },
+    help: {
+      id: "file-explorer-copy-path",
+      section: "files",
+      label: "Copy path",
+      keys: ["mod", "alt", "C"],
+    },
+  },
+  {
+    id: "file-explorer-copy-path-non-mac",
+    action: "file-explorer.copy-path",
+    combo: "Ctrl+Alt+C",
+    when: { mac: false, desktop: true, commandCenter: false, editable: false, terminal: false },
+    help: {
+      id: "file-explorer-copy-path",
+      section: "files",
+      label: "Copy path",
+      keys: ["mod", "alt", "C"],
+    },
+  },
+  {
+    id: "file-explorer-copy-relative-path-mac",
+    action: "file-explorer.copy-relative-path",
+    combo: "Cmd+Shift+Alt+C",
+    when: { mac: true, desktop: true, commandCenter: false, editable: false, terminal: false },
+    help: {
+      id: "file-explorer-copy-relative-path",
+      section: "files",
+      label: "Copy relative path",
+      keys: ["mod", "shift", "alt", "C"],
+    },
+  },
+  {
+    id: "file-explorer-copy-relative-path-non-mac",
+    action: "file-explorer.copy-relative-path",
+    combo: "Ctrl+Shift+Alt+C",
+    when: { mac: false, desktop: true, commandCenter: false, editable: false, terminal: false },
+    help: {
+      id: "file-explorer-copy-relative-path",
+      section: "files",
+      label: "Copy relative path",
+      keys: ["mod", "shift", "alt", "C"],
+    },
+  },
+  {
+    id: "file-explorer-rename",
+    action: "file-explorer.rename",
+    combo: "F2",
+    when: { desktop: true, commandCenter: false, editable: false, terminal: false },
+    help: {
+      id: "file-explorer-rename",
+      section: "files",
+      label: "Rename",
+      keys: ["F2"],
+    },
+  },
+  {
+    id: "file-explorer-delete",
+    action: "file-explorer.delete",
+    combo: "Delete",
+    when: { desktop: true, commandCenter: false, editable: false, terminal: false },
+    help: {
+      id: "file-explorer-delete",
+      section: "files",
+      label: "Delete",
+      keys: ["Delete"],
     },
   },
 
@@ -1404,6 +1490,7 @@ export function buildKeyboardShortcutHelpSections(
     ["tabs-panes", []],
     ["projects", []],
     ["panels", []],
+    ["files", []],
     ["agent-input", []],
   ]);
 
@@ -1440,6 +1527,7 @@ export function buildKeyboardShortcutHelpSections(
     "tabs-panes",
     "projects",
     "panels",
+    "files",
     "agent-input",
   ];
 

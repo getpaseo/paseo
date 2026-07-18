@@ -1952,6 +1952,14 @@ export class Session {
     switch (msg.type) {
       case "file_explorer_request":
         return this.workspaceFilesSession.handleFileExplorerRequest(msg);
+      case "file.explorer.create.request":
+        return this.workspaceFilesSession.handleFileExplorerCreateRequest(msg);
+      case "file.explorer.rename.request":
+        return this.workspaceFilesSession.handleFileExplorerRenameRequest(msg);
+      case "file.explorer.delete.request":
+        return this.workspaceFilesSession.handleFileExplorerDeleteRequest(msg);
+      case "file.explorer.duplicate.request":
+        return this.workspaceFilesSession.handleFileExplorerDuplicateRequest(msg);
       case "project_icon_request":
         return this.workspaceFilesSession.handleProjectIconRequest(msg);
       case "file_download_token_request":

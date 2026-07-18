@@ -83,6 +83,11 @@ export interface DesktopEditorBridge {
   openTarget?: (input: DesktopEditorOpenTargetInput) => Promise<void>;
 }
 
+export interface DesktopShellBridge {
+  revealItem?: (input: { path: string }) => Promise<void>;
+  copyPaths?: (input: { paths: string[] }) => Promise<boolean>;
+}
+
 export interface DesktopWebUtilsBridge {
   getPathForFile?: (file: File) => string;
 }
@@ -175,6 +180,7 @@ export interface DesktopHostBridge {
   notification?: DesktopNotificationBridge;
   opener?: DesktopOpenerBridge;
   editor?: DesktopEditorBridge;
+  shell?: DesktopShellBridge;
   webUtils?: DesktopWebUtilsBridge;
   menu?: DesktopMenuBridge;
   browser?: DesktopBrowserBridge;
