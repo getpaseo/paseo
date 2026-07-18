@@ -24,7 +24,9 @@ import { useCreateFlowStore } from "@/stores/create-flow-store";
 import type { Agent } from "@/stores/session-store";
 import { useWorkspaceFields } from "@/stores/session-store-hooks";
 import { useWorkspaceDraftSubmissionStore } from "@/stores/workspace-draft-submission-store";
-import { useFocusedDraftControllerStore } from "@/stores/focused-draft-controller-store";
+import { useCommandCenterActions } from "@/command-center/provider";
+import { buildModelChoiceContributions } from "@/command-center/model-contributions";
+import { getCommandCenterProviderIcon } from "@/command-center/provider-icon";
 import { encodeImages } from "@/utils/encode-images";
 import type { WorkspaceFileOpenRequest } from "@/workspace/file-open";
 import { shouldAutoFocusWorkspaceDraftComposer } from "@/screens/workspace/workspace-draft-pane-focus";
@@ -377,39 +379,27 @@ export function WorkspaceDraftAgentTab({
     throw new Error("Workspace draft composer state is required");
   }
 
-  // Publish this draft's live provider/model selection + setter to a global slot while it is
-  // the focused pane, so the global Command Center can switch the model of a not-yet-started
-  // agent. See @/stores/focused-draft-controller-store.
-  const setProviderAndModelFromUser = composerState.setProviderAndModelFromUser;
-  const draftSelectedProvider = composerState.selectedProvider;
-  const draftEffectiveModelId = composerState.effectiveModelId;
-  const draftWorkingDir = composerState.workingDir;
-  useEffect(() => {
-    if (!isPaneFocused) {
-      return;
-    }
-    useFocusedDraftControllerStore.getState().setController({
+  const draftModelActions = useMemo(
+    () =>
+      buildModelChoiceContributions({
+        serverId,
+        providers: composerState.modelSelectorProviders,
+        selectedProvider: composerState.selectedProvider,
+        selectedModelId: composerState.effectiveModelId || null,
+        groupLabel: t("shell.commandCenter.modelGroupLabel"),
+        searchKeywords: t("shell.commandCenter.modelSearchKeywords"),
+        getIcon: getCommandCenterProviderIcon,
+        select: composerState.setProviderAndModelFromUser,
+      }),
+    [
+      composerState.effectiveModelId,
+      composerState.modelSelectorProviders,
+      composerState.selectedProvider,
+      composerState.setProviderAndModelFromUser,
       serverId,
-      workspaceId,
-      tabId,
-      cwd: draftWorkingDir,
-      provider: draftSelectedProvider,
-      selectedModelId: draftEffectiveModelId || null,
-      setProviderAndModel: setProviderAndModelFromUser,
-    });
-    return () => {
-      useFocusedDraftControllerStore.getState().clearController(tabId);
-    };
-  }, [
-    isPaneFocused,
-    serverId,
-    workspaceId,
-    tabId,
-    draftWorkingDir,
-    draftSelectedProvider,
-    draftEffectiveModelId,
-    setProviderAndModelFromUser,
-  ]);
+      t,
+    ],
+  );
   const clearDraftInput = draftInput.clear;
   const setDraftText = draftInput.setText;
   const setDraftAttachments = draftInput.setAttachments;
@@ -551,6 +541,11 @@ export function WorkspaceDraftAgentTab({
       useWorkspaceDraftSubmissionStore.getState().clearDraftSetup({ draftId });
       onCreated(result);
     },
+  });
+  useCommandCenterActions({
+    sourceId: `draft:${serverId}:${tabId}`,
+    enabled: isPaneFocused && !isSubmitting,
+    actions: draftModelActions,
   });
 
   const isReadyForPendingAutoSubmit = Boolean(

@@ -258,10 +258,11 @@ interface RenderLeftContentArgs {
   serverId: string;
   focusInput: () => void;
   isCompactLayout: boolean;
+  isPaneFocused: boolean;
 }
 
 function renderLeftContent(args: RenderLeftContentArgs): ReactElement {
-  const { agentControls, agentId, serverId, focusInput, isCompactLayout } = args;
+  const { agentControls, agentId, serverId, focusInput, isCompactLayout, isPaneFocused } = args;
   if (resolveAgentControlsMode(agentControls) === "draft" && agentControls) {
     return <DraftAgentControls {...agentControls} isCompactLayout={isCompactLayout} />;
   }
@@ -269,6 +270,7 @@ function renderLeftContent(args: RenderLeftContentArgs): ReactElement {
     <AgentControls
       agentId={agentId}
       serverId={serverId}
+      isPaneFocused={isPaneFocused}
       onDropdownClose={focusInput}
       isCompactLayout={isCompactLayout}
     />
@@ -1845,8 +1847,9 @@ export function Composer({
         serverId,
         focusInput,
         isCompactLayout,
+        isPaneFocused,
       }),
-    [agentControls, agentId, focusInput, isCompactLayout, serverId],
+    [agentControls, agentId, focusInput, isCompactLayout, isPaneFocused, serverId],
   );
 
   const handleAttachButtonRef = useCallback((node: View | null) => {
