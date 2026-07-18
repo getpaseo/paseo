@@ -3503,7 +3503,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     rootRoutes: readonly PersistedSubAgentRoute[],
   ): Promise<void> {
     const queue = rootRoutes.map((route) => ({ route, parentCallId: null as string | null }));
-    const visitedThreadIds = new Set<string>();
+    const visitedThreadIds = new Set(this.currentThreadId ? [this.currentThreadId] : []);
     while (queue.length > 0 && visitedThreadIds.size < 100) {
       const next = queue.shift();
       if (!next || visitedThreadIds.has(next.route.childThreadId)) {
@@ -4831,7 +4831,7 @@ export class CodexAppServerAgentSession implements AgentSession {
         : null;
     const childThreadIds = Array.from(
       new Set(agentThreadId ? [...receiverThreadIds, agentThreadId] : receiverThreadIds),
-    );
+    ).filter((threadId) => threadId !== this.currentThreadId);
     for (const receiverThreadId of childThreadIds) {
       this.subAgentCallIdByChildThreadId.set(receiverThreadId, timelineItem.callId);
       state.childThreadIds.add(receiverThreadId);
