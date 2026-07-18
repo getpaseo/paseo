@@ -1,15 +1,33 @@
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { i18n } from "@/i18n/i18next";
 
+export type OriginDefaultRelationState =
+  | "exact"
+  | "included"
+  | "ahead"
+  | "patch_equivalent_not_included"
+  | "diverged_with_unique_commits"
+  | "unverifiable";
+
+export interface OriginDefaultRelation {
+  state: OriginDefaultRelationState;
+  resolvedRef: string | null;
+  ahead: number | null;
+  behind: number | null;
+  uniquePatchCount: number | null;
+}
+
 export interface WorktreeArchiveRisk {
   isDirty?: boolean | null;
   aheadOfOrigin?: number | null;
+  originDefaultRelation?: OriginDefaultRelation | null;
   diffStat?: { additions: number; deletions: number } | null;
 }
 
 export interface WorktreeArchiveRiskInput {
   archiveHasUncommittedChanges?: boolean | null;
   archiveUnpushedCommitCount?: number | null;
+  archiveOriginDefaultRelation?: OriginDefaultRelation | null;
   diffStat?: WorktreeArchiveRisk["diffStat"];
 }
 
@@ -26,6 +44,12 @@ export interface WorktreeArchiveWarningLabels {
   addedLine: (count: number) => string;
   deletedLine: (count: number) => string;
   unpushedCommit: (count: number) => string;
+  includedInOriginDefault: (resolvedRef: string) => string;
+  patchEquivalentToOriginDefault: (resolvedRef: string) => string;
+}
+
+function defaultResolvedRefLabel(resolvedRef: string | null | undefined): string {
+  return resolvedRef && resolvedRef.length > 0 ? resolvedRef : "origin/default";
 }
 
 export const DEFAULT_WORKTREE_ARCHIVE_WARNING_LABELS: WorktreeArchiveWarningLabels = {
@@ -47,14 +71,48 @@ export const DEFAULT_WORKTREE_ARCHIVE_WARNING_LABELS: WorktreeArchiveWarningLabe
     count === 1
       ? i18n.t("workspace.git.actions.archiveWarning.unpushedCommit", { count })
       : i18n.t("workspace.git.actions.archiveWarning.unpushedCommits", { count }),
+  includedInOriginDefault: (resolvedRef) =>
+    i18n.t("workspace.git.actions.archiveWarning.includedInOriginDefault", {
+      resolvedRef: defaultResolvedRefLabel(resolvedRef),
+    }),
+  patchEquivalentToOriginDefault: (resolvedRef) =>
+    i18n.t("workspace.git.actions.archiveWarning.patchEquivalentToOriginDefault", {
+      resolvedRef: defaultResolvedRefLabel(resolvedRef),
+    }),
 };
 
 export function toWorktreeArchiveRisk(input: WorktreeArchiveRiskInput): WorktreeArchiveRisk {
   return {
     isDirty: input.archiveHasUncommittedChanges,
     aheadOfOrigin: input.archiveUnpushedCommitCount,
+    originDefaultRelation: input.archiveOriginDefaultRelation,
     diffStat: input.diffStat,
   };
+}
+
+/**
+ * Classify how origin-default relation affects archive push risk messaging.
+ * Missing relation (old daemon) preserves legacy aheadOfOrigin behavior.
+ */
+export function classifyOriginDefaultArchivePushRisk(
+  relation: OriginDefaultRelation | null | undefined,
+): "included" | "patch_equivalent" | "risky" | "unknown" {
+  if (!relation) {
+    return "unknown";
+  }
+  switch (relation.state) {
+    case "exact":
+    case "included":
+      return "included";
+    case "patch_equivalent_not_included":
+      return "patch_equivalent";
+    case "ahead":
+    case "diverged_with_unique_commits":
+    case "unverifiable":
+      return "risky";
+    default:
+      return "unknown";
+  }
 }
 
 function formatDiffStat(
@@ -93,12 +151,60 @@ export function buildWorktreeArchiveRiskReasons(
     );
   }
 
-  if ((input.aheadOfOrigin ?? 0) > 0) {
-    const aheadOfOrigin = input.aheadOfOrigin ?? 0;
+  const aheadOfOrigin = input.aheadOfOrigin ?? 0;
+  const pushRisk = classifyOriginDefaultArchivePushRisk(input.originDefaultRelation);
+
+  if (pushRisk === "included") {
+    // Already landed on origin default — encode inclusion instead of unpushed risk.
+    // Do not add a protective unpushed reason; optional explicit inclusion label is
+    // available via formatOriginDefaultRelationLabel for status UIs.
+  } else if (pushRisk === "patch_equivalent") {
+    // Visibly distinct and still protected: branch tip is not ancestral inclusion.
+    reasons.push(
+      labels.patchEquivalentToOriginDefault(
+        defaultResolvedRefLabel(input.originDefaultRelation?.resolvedRef),
+      ),
+    );
+  } else if (aheadOfOrigin > 0) {
+    // Risky / unknown (missing field from old daemon): legacy unpushed warning.
     reasons.push(labels.unpushedCommit(aheadOfOrigin));
   }
 
   return reasons;
+}
+
+/** Status/label helper for sidebar and fallbacks — not used as archive land authority. */
+export function formatOriginDefaultRelationLabel(
+  relation: OriginDefaultRelation | null | undefined,
+  labels: Pick<
+    WorktreeArchiveWarningLabels,
+    "includedInOriginDefault" | "patchEquivalentToOriginDefault" | "unpushedCommit"
+  > = DEFAULT_WORKTREE_ARCHIVE_WARNING_LABELS,
+  fallbackAheadOfOrigin?: number | null,
+): string | null {
+  if (!relation) {
+    if ((fallbackAheadOfOrigin ?? 0) > 0) {
+      return labels.unpushedCommit(fallbackAheadOfOrigin ?? 0);
+    }
+    return null;
+  }
+
+  switch (relation.state) {
+    case "exact":
+    case "included":
+      return labels.includedInOriginDefault(defaultResolvedRefLabel(relation.resolvedRef));
+    case "patch_equivalent_not_included":
+      return labels.patchEquivalentToOriginDefault(defaultResolvedRefLabel(relation.resolvedRef));
+    case "ahead":
+    case "diverged_with_unique_commits":
+    case "unverifiable":
+      if ((fallbackAheadOfOrigin ?? relation.ahead ?? 0) > 0) {
+        return labels.unpushedCommit(fallbackAheadOfOrigin ?? relation.ahead ?? 0);
+      }
+      return null;
+    default:
+      return null;
+  }
 }
 
 export function buildWorktreeArchiveConfirmationMessage(

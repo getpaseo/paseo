@@ -30,6 +30,7 @@ function ws(
     prHint: null,
     archiveHasUncommittedChanges: null,
     archiveUnpushedCommitCount: null,
+    archiveOriginDefaultRelation: null,
     scripts: [],
     hasRunningScripts: false,
     workspaceKey: input.workspaceKey,

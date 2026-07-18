@@ -6,7 +6,7 @@ import pLimit from "p-limit";
 import type pino from "pino";
 import type { ProjectCheckoutLitePayload } from "@getpaseo/protocol/messages";
 import { parseGitRemoteLocation } from "@getpaseo/protocol/git-remote";
-import type { CheckoutContext } from "../utils/checkout-git.js";
+import type { CheckoutContext, OriginDefaultRelation } from "../utils/checkout-git.js";
 import {
   type BranchCheckoutResolution,
   type BranchSuggestion,
@@ -80,6 +80,8 @@ export interface WorkspaceGitRuntimeSnapshot {
     aheadBehind: { ahead: number; behind: number } | null;
     aheadOfOrigin: number | null;
     behindOfOrigin: number | null;
+    /** COMPAT(originDefaultRelation): optional; absent means old-shape / unknown. */
+    originDefaultRelation?: OriginDefaultRelation;
     hasRemote: boolean;
     diffStat: { additions: number; deletions: number } | null;
   };
@@ -1755,6 +1757,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       aheadBehind: checkoutStatus.aheadBehind,
       aheadOfOrigin: checkoutStatus.aheadOfOrigin,
       behindOfOrigin: checkoutStatus.behindOfOrigin,
+      originDefaultRelation: checkoutStatus.originDefaultRelation,
       hasRemote: checkoutStatus.hasRemote,
       diffStat,
     };

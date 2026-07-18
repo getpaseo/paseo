@@ -28,6 +28,7 @@ function makeWorkspace(id: string, statusBucket: SidebarWorkspaceEntry["statusBu
     prHint: null,
     archiveHasUncommittedChanges: null,
     archiveUnpushedCommitCount: null,
+    archiveOriginDefaultRelation: null,
     scripts: [],
     hasRunningScripts: false,
   };

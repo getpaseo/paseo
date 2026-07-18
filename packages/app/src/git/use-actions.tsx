@@ -24,7 +24,10 @@ import {
   type ActiveWorkspaceSelection,
 } from "@/stores/navigation-active-workspace-store";
 import { redirectIfArchivingActiveWorkspace } from "@/utils/sidebar-workspace-archive-redirect";
-import { type WorktreeArchiveWarningLabels } from "@/git/worktree-archive-warning";
+import {
+  type OriginDefaultRelation,
+  type WorktreeArchiveWarningLabels,
+} from "@/git/worktree-archive-warning";
 import { useWorkspaceArchive } from "@/workspace/use-workspace-archive";
 import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
 
@@ -220,10 +223,17 @@ function resolveArchiveWorkspaceDescriptor(input: {
 function resolveWorkspaceArchiveRisk(
   workspace: WorkspaceDescriptor | null,
   gitStatus: CheckoutStatusPayload | null,
-): { isDirty: boolean | null | undefined; aheadOfOrigin: number | null | undefined } {
+): {
+  isDirty: boolean | null | undefined;
+  aheadOfOrigin: number | null | undefined;
+  originDefaultRelation: OriginDefaultRelation | null | undefined;
+} {
+  const statusRelation =
+    gitStatus && gitStatus.isGit ? (gitStatus.originDefaultRelation ?? undefined) : undefined;
   return {
     isDirty: gitStatus?.isDirty ?? workspace?.gitRuntime?.isDirty,
     aheadOfOrigin: gitStatus?.aheadOfOrigin ?? workspace?.gitRuntime?.aheadOfOrigin,
+    originDefaultRelation: statusRelation ?? workspace?.gitRuntime?.originDefaultRelation ?? null,
   };
 }
 
@@ -266,6 +276,7 @@ function useWorkspaceScreenArchiveController({
     name: workspaceDescriptor?.name ?? branchLabel,
     isDirty: archiveRisk.isDirty,
     aheadOfOrigin: archiveRisk.aheadOfOrigin,
+    originDefaultRelation: archiveRisk.originDefaultRelation,
     diffStat: workspaceDescriptor?.diffStat ?? null,
     warningLabels: getWorktreeArchiveWarningLabels(t),
     onSetHiding: setIsHidingWorkspace,
@@ -1100,5 +1111,13 @@ function getWorktreeArchiveWarningLabels(
           : "workspace.git.actions.archiveWarning.unpushedCommits",
         { count },
       ),
+    includedInOriginDefault: (resolvedRef) =>
+      t("workspace.git.actions.archiveWarning.includedInOriginDefault", {
+        resolvedRef: resolvedRef || "origin/default",
+      }),
+    patchEquivalentToOriginDefault: (resolvedRef) =>
+      t("workspace.git.actions.archiveWarning.patchEquivalentToOriginDefault", {
+        resolvedRef: resolvedRef || "origin/default",
+      }),
   };
 }

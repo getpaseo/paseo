@@ -1,3 +1,4 @@
+import type { OriginDefaultRelation } from "@/git/worktree-archive-warning";
 import type { PrHint } from "@/git/pr-hint";
 import { selectPrHintFromStatus } from "@/git/pr-hint";
 import { type HostProjectListItem } from "@/projects/host-project-model";
@@ -45,6 +46,7 @@ export interface SidebarWorkspaceEntry extends SidebarStatusWorkspacePlacement {
   prHint: PrHint | null;
   archiveHasUncommittedChanges: boolean | null;
   archiveUnpushedCommitCount: number | null;
+  archiveOriginDefaultRelation: OriginDefaultRelation | null;
   scripts: WorkspaceDescriptor["scripts"];
   hasRunningScripts: boolean;
 }
@@ -170,6 +172,7 @@ export function createSidebarWorkspaceEntry(input: {
     ),
     archiveHasUncommittedChanges: input.workspace.gitRuntime?.isDirty ?? null,
     archiveUnpushedCommitCount: input.workspace.gitRuntime?.aheadOfOrigin ?? null,
+    archiveOriginDefaultRelation: input.workspace.gitRuntime?.originDefaultRelation ?? null,
     scripts: input.workspace.scripts,
     hasRunningScripts: input.workspace.scripts.some((script) => script.lifecycle === "running"),
   };

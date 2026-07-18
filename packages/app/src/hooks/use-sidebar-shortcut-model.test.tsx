@@ -33,6 +33,7 @@ function workspace(projectKey: string, workspaceId: string): SidebarWorkspaceEnt
     prHint: null,
     archiveHasUncommittedChanges: null,
     archiveUnpushedCommitCount: null,
+    archiveOriginDefaultRelation: null,
     scripts: [],
     hasRunningScripts: false,
   };

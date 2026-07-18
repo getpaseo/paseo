@@ -5,6 +5,7 @@ import { useToast } from "@/contexts/toast-context";
 import {
   confirmRiskyWorktreeArchive,
   DEFAULT_WORKTREE_ARCHIVE_WARNING_LABELS,
+  type OriginDefaultRelation,
   type WorktreeArchiveWarningLabels,
 } from "@/git/worktree-archive-warning";
 import type { WorkspaceDescriptor } from "@/stores/session-store";
@@ -30,6 +31,7 @@ export interface ArchiveWorkspaceInput {
   name: string;
   isDirty?: boolean | null;
   aheadOfOrigin?: number | null;
+  originDefaultRelation?: OriginDefaultRelation | null;
   diffStat?: { additions: number; deletions: number } | null;
   warningLabels?: WorktreeArchiveWarningLabels;
   onArchiveStarted: () => void;
@@ -48,6 +50,7 @@ export function useWorkspaceArchive(input: ArchiveWorkspaceInput): WorkspaceArch
     name,
     isDirty,
     aheadOfOrigin,
+    originDefaultRelation,
     diffStat,
     warningLabels = DEFAULT_WORKTREE_ARCHIVE_WARNING_LABELS,
     onArchiveStarted,
@@ -90,6 +93,7 @@ export function useWorkspaceArchive(input: ArchiveWorkspaceInput): WorkspaceArch
             workspaceName: name,
             isDirty,
             aheadOfOrigin,
+            originDefaultRelation,
             diffStat,
           },
           warningLabels,
@@ -106,6 +110,7 @@ export function useWorkspaceArchive(input: ArchiveWorkspaceInput): WorkspaceArch
     diffStat,
     isDirty,
     name,
+    originDefaultRelation,
     warningLabels,
     workspaceKind,
   ]);

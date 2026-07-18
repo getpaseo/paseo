@@ -746,6 +746,11 @@ export const ru: TranslationResources = {
           deletedLines: "{{count}}удалил строки",
           unpushedCommit: "Неотправленная фиксация{{count}}",
           unpushedCommits: "Неотправленные коммиты{{count}}",
+
+          includedInOriginDefault: "Included in {{resolvedRef}}",
+
+          patchEquivalentToOriginDefault:
+            "Patch-equivalent to {{resolvedRef}} (not ancestral; still protected)",
         },
       },
       diff: {

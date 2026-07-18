@@ -716,6 +716,27 @@ export interface AheadBehind {
   behind: number;
 }
 
+/**
+ * HEAD relation to the resolved origin default tip.
+ * Ancestral inclusion is authoritative; patch equivalence is a weaker signal and
+ * never treated as inclusion for land/archive authority.
+ */
+export type OriginDefaultRelationState =
+  | "exact"
+  | "included"
+  | "ahead"
+  | "patch_equivalent_not_included"
+  | "diverged_with_unique_commits"
+  | "unverifiable";
+
+export interface OriginDefaultRelation {
+  state: OriginDefaultRelationState;
+  resolvedRef: string | null;
+  ahead: number | null;
+  behind: number | null;
+  uniquePatchCount: number | null;
+}
+
 export interface CheckoutStatus {
   isGit: false;
 }
@@ -730,6 +751,7 @@ export interface CheckoutStatusGitNonPaseo {
   aheadBehind: AheadBehind | null;
   aheadOfOrigin: number | null;
   behindOfOrigin: number | null;
+  originDefaultRelation?: OriginDefaultRelation;
   hasRemote: boolean;
   remoteUrl: string | null;
   isPaseoOwnedWorktree: false;
@@ -745,6 +767,7 @@ export interface CheckoutStatusGitPaseo {
   aheadBehind: AheadBehind | null;
   aheadOfOrigin: number | null;
   behindOfOrigin: number | null;
+  originDefaultRelation?: OriginDefaultRelation;
   hasRemote: boolean;
   remoteUrl: string | null;
   isPaseoOwnedWorktree: true;
@@ -1524,6 +1547,268 @@ async function getBehindOfOrigin(
   }
 }
 
+// Bound how many unique commits we enumerate for stable patch-id comparison.
+// Larger ranges are reported as unverifiable rather than burning unbounded git work.
+const MAX_ORIGIN_DEFAULT_PATCH_COMMITS = 64;
+
+function unverifiableOriginDefaultRelation(
+  resolvedRef: string | null = null,
+  ahead: number | null = null,
+  behind: number | null = null,
+): OriginDefaultRelation {
+  return {
+    state: "unverifiable",
+    resolvedRef,
+    ahead,
+    behind,
+    uniquePatchCount: null,
+  };
+}
+
+/**
+ * Resolve the origin default tip for landed-truth comparison.
+ * Prefer `refs/remotes/origin/HEAD`; fall back to the same default-branch
+ * resolution used for baseRef, then `origin/<name>` when that remote-tracking
+ * ref exists.
+ */
+export async function resolveOriginDefaultRef(
+  cwd: string,
+  context?: CheckoutContext,
+): Promise<string | null> {
+  try {
+    const { stdout } = await runGitCommand(
+      ["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"],
+      {
+        cwd,
+        envOverlay: READ_ONLY_GIT_ENV,
+        logger: context?.logger,
+      },
+    );
+    const ref = stdout.trim();
+    if (ref.startsWith("refs/remotes/")) {
+      return ref.slice("refs/remotes/".length);
+    }
+    if (ref.length > 0) {
+      return ref;
+    }
+  } catch {
+    // fall through
+  }
+
+  const defaultBranch = await resolveRepositoryDefaultBranch(cwd);
+  if (!defaultBranch) {
+    return null;
+  }
+
+  const localName = normalizeLocalBranchRefName(defaultBranch);
+  if (await doesGitRefExist(cwd, `refs/remotes/origin/${localName}`, context)) {
+    return `origin/${localName}`;
+  }
+  if (defaultBranch.startsWith("origin/")) {
+    return defaultBranch;
+  }
+  // Local-only default with no origin tracking ref is not a usable origin default tip.
+  return null;
+}
+
+async function isAncestorRef(
+  cwd: string,
+  maybeAncestor: string,
+  maybeDescendant: string,
+  context?: CheckoutContext,
+): Promise<boolean> {
+  const result = await runGitCommand(
+    ["merge-base", "--is-ancestor", maybeAncestor, maybeDescendant],
+    {
+      cwd,
+      envOverlay: READ_ONLY_GIT_ENV,
+      acceptExitCodes: [0, 1],
+      logger: context?.logger,
+    },
+  );
+  return result.exitCode === 0;
+}
+
+async function revParseOid(
+  cwd: string,
+  ref: string,
+  context?: CheckoutContext,
+): Promise<string | null> {
+  try {
+    const { stdout } = await runGitCommand(["rev-parse", `${ref}^{commit}`], {
+      cwd,
+      envOverlay: READ_ONLY_GIT_ENV,
+      logger: context?.logger,
+    });
+    const oid = stdout.trim();
+    return oid.length > 0 ? oid : null;
+  } catch {
+    return null;
+  }
+}
+
+async function revParseTreeOid(
+  cwd: string,
+  ref: string,
+  context?: CheckoutContext,
+): Promise<string | null> {
+  try {
+    const { stdout } = await runGitCommand(["rev-parse", `${ref}^{tree}`], {
+      cwd,
+      envOverlay: READ_ONLY_GIT_ENV,
+      logger: context?.logger,
+    });
+    const oid = stdout.trim();
+    return oid.length > 0 ? oid : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Count commits reachable from HEAD but not from originDefault whose stable
+ * patch-id is not already present on the origin-default side (`git cherry`).
+ * Returns null when the proof cannot be completed safely.
+ */
+async function countUniquePatchesVsOriginDefault(
+  cwd: string,
+  originDefaultRef: string,
+  context?: CheckoutContext,
+): Promise<number | null> {
+  try {
+    const { stdout } = await runGitCommand(["cherry", originDefaultRef, "HEAD"], {
+      cwd,
+      envOverlay: READ_ONLY_GIT_ENV,
+      logger: context?.logger,
+    });
+    let unique = 0;
+    for (const line of stdout.split("\n")) {
+      const trimmed = line.trim();
+      // `+ <sha>` = unique patch; `- <sha>` = equivalent patch already on upstream.
+      if (trimmed.startsWith("+")) {
+        unique += 1;
+      }
+    }
+    return unique;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Compare HEAD to the resolved origin default tip.
+ * Never treats patch equivalence as ancestral inclusion.
+ */
+export async function getOriginDefaultRelation(
+  cwd: string,
+  context?: CheckoutContext,
+): Promise<OriginDefaultRelation> {
+  const resolvedRef = await resolveOriginDefaultRef(cwd, context);
+  if (!resolvedRef) {
+    return unverifiableOriginDefaultRelation(null);
+  }
+
+  const [headOid, defaultOid] = await Promise.all([
+    revParseOid(cwd, "HEAD", context),
+    revParseOid(cwd, resolvedRef, context),
+  ]);
+  if (!headOid || !defaultOid) {
+    return unverifiableOriginDefaultRelation(resolvedRef);
+  }
+
+  if (headOid === defaultOid) {
+    return {
+      state: "exact",
+      resolvedRef,
+      ahead: 0,
+      behind: 0,
+      uniquePatchCount: 0,
+    };
+  }
+
+  let ahead: number;
+  let behind: number;
+  try {
+    const { stdout } = await runGitCommand(
+      ["rev-list", "--left-right", "--count", `${resolvedRef}...HEAD`],
+      { cwd, envOverlay: READ_ONLY_GIT_ENV, logger: context?.logger },
+    );
+    const [behindRaw, aheadRaw] = stdout.trim().split(/\s+/);
+    behind = Number.parseInt(behindRaw ?? "", 10);
+    ahead = Number.parseInt(aheadRaw ?? "", 10);
+    if (Number.isNaN(behind) || Number.isNaN(ahead)) {
+      return unverifiableOriginDefaultRelation(resolvedRef);
+    }
+  } catch {
+    return unverifiableOriginDefaultRelation(resolvedRef);
+  }
+
+  const headIsAncestorOfDefault = await isAncestorRef(cwd, "HEAD", resolvedRef, context);
+  if (headIsAncestorOfDefault) {
+    return {
+      state: "included",
+      resolvedRef,
+      ahead: 0,
+      behind,
+      uniquePatchCount: 0,
+    };
+  }
+
+  const defaultIsAncestorOfHead = await isAncestorRef(cwd, resolvedRef, "HEAD", context);
+  if (defaultIsAncestorOfHead) {
+    return {
+      state: "ahead",
+      resolvedRef,
+      ahead,
+      behind: 0,
+      uniquePatchCount: ahead,
+    };
+  }
+
+  // Diverged ancestrally. Same tree (e.g. squash tip matches) is patch-equivalent,
+  // not inclusion. Bound commit work before cherry/patch-id proof.
+  if (ahead > MAX_ORIGIN_DEFAULT_PATCH_COMMITS || behind > MAX_ORIGIN_DEFAULT_PATCH_COMMITS) {
+    return unverifiableOriginDefaultRelation(resolvedRef, ahead, behind);
+  }
+
+  const [headTree, defaultTree] = await Promise.all([
+    revParseTreeOid(cwd, "HEAD", context),
+    revParseTreeOid(cwd, resolvedRef, context),
+  ]);
+  if (headTree && defaultTree && headTree === defaultTree) {
+    return {
+      state: "patch_equivalent_not_included",
+      resolvedRef,
+      ahead,
+      behind,
+      uniquePatchCount: 0,
+    };
+  }
+
+  const uniquePatchCount = await countUniquePatchesVsOriginDefault(cwd, resolvedRef, context);
+  if (uniquePatchCount === null) {
+    return unverifiableOriginDefaultRelation(resolvedRef, ahead, behind);
+  }
+
+  if (uniquePatchCount === 0) {
+    return {
+      state: "patch_equivalent_not_included",
+      resolvedRef,
+      ahead,
+      behind,
+      uniquePatchCount: 0,
+    };
+  }
+
+  return {
+    state: "diverged_with_unique_commits",
+    resolvedRef,
+    ahead,
+    behind,
+    uniquePatchCount,
+  };
+}
+
 interface CheckoutInspectionContext {
   worktreeRoot: string;
   currentBranch: string | null;
@@ -1913,7 +2198,7 @@ export async function getCheckoutStatus(
   const baseRef = facts.resolvedBaseRef;
   const mainRepoRoot = facts.mainRepoRoot;
   const factsContext = { ...context, facts };
-  const [aheadBehind, aheadOfOrigin, behindOfOrigin] = await Promise.all([
+  const [aheadBehind, aheadOfOrigin, behindOfOrigin, originDefaultRelation] = await Promise.all([
     baseRef && currentBranch
       ? getAheadBehind(cwd, baseRef, currentBranch, factsContext)
       : Promise.resolve(null),
@@ -1923,6 +2208,7 @@ export async function getCheckoutStatus(
     hasRemote && currentBranch
       ? getBehindOfOrigin(cwd, currentBranch, factsContext)
       : Promise.resolve(null),
+    getOriginDefaultRelation(cwd, factsContext),
   ]);
 
   if (paseoWorktree.isPaseoOwnedWorktree && baseRef) {
@@ -1936,6 +2222,7 @@ export async function getCheckoutStatus(
       aheadBehind,
       aheadOfOrigin,
       behindOfOrigin,
+      originDefaultRelation,
       hasRemote,
       remoteUrl,
       isPaseoOwnedWorktree: true,
@@ -1953,6 +2240,7 @@ export async function getCheckoutStatus(
     aheadBehind,
     aheadOfOrigin,
     behindOfOrigin,
+    originDefaultRelation,
     hasRemote,
     remoteUrl,
     isPaseoOwnedWorktree: false,

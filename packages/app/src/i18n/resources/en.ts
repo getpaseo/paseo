@@ -735,6 +735,9 @@ export const en = {
           deletedLines: "{{count}} deleted lines",
           unpushedCommit: "{{count}} unpushed commit",
           unpushedCommits: "{{count}} unpushed commits",
+          includedInOriginDefault: "Included in {{resolvedRef}}",
+          patchEquivalentToOriginDefault:
+            "Patch-equivalent to {{resolvedRef}} (not ancestral; still protected)",
         },
       },
       diff: {
