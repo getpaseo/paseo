@@ -217,6 +217,8 @@ import { DaemonExecutions } from "./hub/daemon-executions.js";
 
 const MAX_MCP_DEBUG_BATCH_ITEMS = 10;
 const REDACTED_LOG_VALUE = "[redacted]";
+const IDLE_AGENT_RUNTIME_TTL_MS = 2 * 60 * 1000;
+const IDLE_AGENT_RUNTIME_SWEEP_INTERVAL_MS = 15 * 1000;
 const DOWNLOAD_OPEN_FLAGS =
   process.platform === "win32" ? constants.O_RDONLY : constants.O_RDONLY | constants.O_NOFOLLOW;
 
@@ -1175,6 +1177,39 @@ export async function createPaseoDaemon(
     archiveWorkspace: archiveScheduleWorkspaceExternal,
   });
   await scheduleService.start();
+  let inFlightIdleAgentCollection: Promise<void> | null = null;
+  const collectIdleAgentRuntimes = async () => {
+    const protectedAgentIds = await scheduleService.listActiveAgentTargetIds();
+    const cutoff = new Date(Date.now() - IDLE_AGENT_RUNTIME_TTL_MS);
+    const result = await agentManager.collectIdleAgents({ cutoff, protectedAgentIds });
+    for (const collected of result.collected) {
+      logger.info(collected, "Collected idle agent runtime");
+    }
+    for (const failure of result.failures) {
+      const { error, ...context } = failure;
+      logger.warn({ ...context, err: error }, "Failed to collect idle agent runtime");
+    }
+  };
+  const runIdleAgentCollection = () => {
+    if (inFlightIdleAgentCollection) {
+      return;
+    }
+    const collection = collectIdleAgentRuntimes()
+      .catch((error) => {
+        logger.warn({ err: error }, "Idle agent runtime sweep failed");
+      })
+      .finally(() => {
+        if (inFlightIdleAgentCollection === collection) {
+          inFlightIdleAgentCollection = null;
+        }
+      });
+    inFlightIdleAgentCollection = collection;
+  };
+  const idleAgentCollectionTimer = setInterval(
+    runIdleAgentCollection,
+    IDLE_AGENT_RUNTIME_SWEEP_INTERVAL_MS,
+  );
+  idleAgentCollectionTimer.unref();
   agentManager.setAgentArchivedCallback(async (agentId) => {
     try {
       await scheduleService.completeForAgent(agentId);
@@ -1564,6 +1599,8 @@ export async function createPaseoDaemon(
     await hubRelationships.stop();
     workspaceReconciliation.dispose();
     scriptHealthMonitor.stop();
+    clearInterval(idleAgentCollectionTimer);
+    await inFlightIdleAgentCollection;
     // Freeze both ingress and registration before taking the agent closure snapshot.
     wsServer?.prepareForShutdown();
     agentManager.prepareForShutdown();

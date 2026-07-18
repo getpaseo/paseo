@@ -10,7 +10,26 @@ initializing → idle → running → idle (or error → closed)
                  └────────┘  (agent completes a turn, awaits next prompt)
 ```
 
-Each agent in `AgentManager` carries a `lastStatus` of `initializing`, `idle`, `running`, `error`, or `closed`. State transitions persist to disk and stream to subscribed clients via WebSocket.
+Each live agent in `AgentManager` carries a `lastStatus` of `initializing`, `idle`, `running`, or `error`. `closed` is the persisted, resumable state for an agent record that has no live provider runtime. State transitions persist to disk and stream to subscribed clients via WebSocket.
+
+## Runtime residency
+
+An unarchived agent may be `closed` without being deleted or archived. Closing releases its provider
+processes and subscriptions while retaining its Paseo identity, persistence handle, timeline,
+workspace, labels, title, usage, attention, timestamps, and parent relationship. Opening or prompting
+the agent runs through `ensureAgentLoaded()`, which resumes the durable provider session under the
+same Paseo agent ID. Provider history is not appended again when the canonical timeline is already
+primed.
+
+The daemon collects an eligible idle runtime after two minutes and sweeps every 15 seconds. Only
+unarchived, non-internal agents that are exactly `idle`, have no active or pending run, replacement,
+or permission, and have not been activated during the idle window are eligible. `running`,
+`initializing`, and `error` agents stay resident. Subagents are considered independently; collection
+does not cascade or change parentage.
+
+Active schedules targeting an existing agent protect that agent from collection. Paused, completed,
+and new-agent schedules do not. A pane may remain open after collection; its next prompt resumes the
+runtime.
 
 ### Cancellation
 
@@ -38,6 +57,10 @@ The provider still owns the underlying runtime. Paseo keeps an agent record so t
 ## Archive
 
 Archive is a **soft delete**: the agent record stays on disk with `archivedAt` set, the runtime is closed, and the agent disappears from active lists. Archive is **global** — it lives on the server and propagates to every connected client.
+
+Archive is distinct from runtime collection. Archive sets `archivedAt`, invokes the provider's native
+archive hook, and cascades to managed children. Runtime collection does none of those things; it only
+releases the live runtime and writes `lastStatus: closed` on the still-active record.
 
 `create_agent_request` can opt an agent into `autoArchive`. In that mode the daemon archives the agent after the first terminal turn event (`turn_completed`, `turn_failed`, or `turn_canceled`). When the agent owns an isolated workspace, auto-archive archives that workspace too; the managed worktree is removed when its final workspace reference is gone.
 

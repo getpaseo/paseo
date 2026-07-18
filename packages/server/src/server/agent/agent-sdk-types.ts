@@ -630,6 +630,7 @@ export interface AgentSession {
   ): Promise<AgentPermissionResult | void>;
   describePersistence(): AgentPersistenceHandle | null;
   interrupt(): Promise<void>;
+  /** Release live runtime resources without archiving or deleting the durable native session. */
   close(): Promise<void>;
   listCommands?(): Promise<AgentSlashCommand[]>;
   setModel?(modelId: string | null): Promise<void>;
@@ -707,12 +708,12 @@ export interface AgentClient {
   isAvailable(): Promise<boolean>;
   getDiagnostic?(): Promise<{ diagnostic: string }>;
   /**
-   * Archive a persisted session in the native provider (best-effort).
+   * Archive a durable native session (best-effort). Runtime release belongs to AgentSession.close().
    * Called when Paseo archives an agent so the provider's own UI reflects the same state.
    */
   archiveNativeSession?(handle: AgentPersistenceHandle): Promise<void>;
   /**
-   * Unarchive a persisted session in the native provider.
+   * Unarchive a durable native session in the provider.
    * Called before Paseo clears its archived flag so provider resume can succeed.
    */
   unarchiveNativeSession?(handle: AgentPersistenceHandle): Promise<void>;

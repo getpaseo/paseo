@@ -177,7 +177,11 @@ export class DaemonExecutions implements HubExecutionAgents {
       try {
         await autoArchiveRegistration.cancel();
         if (createdAgentId && this.agentManager.getAgent(createdAgentId)) {
-          await this.agentManager.closeAgent(createdAgentId);
+          try {
+            await this.agentManager.closeAgent(createdAgentId);
+          } finally {
+            await this.agentManager.deleteAgentState(createdAgentId);
+          }
         }
       } finally {
         try {
