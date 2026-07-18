@@ -67,6 +67,13 @@ describe("OMP agent client and session", () => {
     });
   });
 
+  test("preserves max as the selected thinking option", async () => {
+    const omp = new OmpHarness();
+    await omp.start({ thinkingOptionId: "max" });
+
+    expect(omp.launchConfiguration().argv).toEqual(expect.arrayContaining(["--thinking", "max"]));
+  });
+
   test("streams a prompt through completion", async () => {
     const omp = new OmpHarness();
     await omp.start();
