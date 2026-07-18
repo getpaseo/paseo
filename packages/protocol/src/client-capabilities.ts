@@ -18,6 +18,8 @@ export const CLIENT_CAPS = {
   // COMPAT(providerSubagents): added in v0.1.107. The daemon emits provider-owned
   // child descriptors and timelines only to clients that understand the new messages.
   providerSubagents: "provider_subagents",
+  // COMPAT(projectUpdates): added in v0.1.109, remove gate after 2027-01-15.
+  projectUpdates: "project_updates",
   browserHost: "browser_host",
 } as const;
 

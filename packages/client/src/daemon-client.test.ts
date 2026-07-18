@@ -221,6 +221,25 @@ test("advertises consumer-provided browser automation capabilities", async () =>
   });
 });
 
+test("Hub management requires daemon support before dispatching requests", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "hub_feature_gate_unit_test",
+    transportFactory: () => mock.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connecting = client.connect();
+  mock.triggerOpen();
+  await connecting;
+
+  await expect(client.getHubStatus()).rejects.toThrow(
+    "Update the host to use Hub relationship management.",
+  );
+  expect(mock.sent).toEqual([]);
+});
+
 test("sets the complete viewed timeline subscription only when the daemon supports it", async () => {
   const supportedTransport = createMockTransport();
   const supportedClient = new DaemonClient({
@@ -646,6 +665,7 @@ test("advertises client capabilities in hello", async () => {
     protocolVersion: 1,
     capabilities: {
       custom_mode_icons: true,
+      project_updates: true,
       provider_subagents: true,
       reasoning_merge_enum: true,
       terminal_reflowable_snapshot: true,
@@ -655,6 +675,32 @@ test("advertises client capabilities in hello", async () => {
       },
     },
   });
+});
+
+test("allows callers to disable default client capabilities", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_capability_override_test",
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+    capabilities: {
+      [CLIENT_CAPS.projectUpdates]: false,
+    },
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen({ preserveSent: true });
+  await connectPromise;
+
+  const hello = z
+    .object({
+      type: z.literal("hello"),
+      capabilities: z.record(z.unknown()),
+    })
+    .parse(JSON.parse(assertStr(mock.sent[0])));
+  expect(hello.capabilities[CLIENT_CAPS.projectUpdates]).toBe(false);
 });
 
 test("sends new-agent run options when creating schedules", async () => {

@@ -390,6 +390,18 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
     vi.useRealTimers();
   });
 
+  test("getCheckout surfaces an unexpected Git read failure", async () => {
+    const service = createService({
+      getCheckoutStatus: vi.fn(async () => {
+        throw new Error("Git read failed");
+      }),
+    });
+
+    await expect(service.getCheckout(REPO_CWD)).rejects.toThrow("Git read failed");
+
+    service.dispose();
+  });
+
   test("getSnapshot returns the current snapshot without shelling out", async () => {
     let nowMs = Date.parse("2026-04-12T00:00:00.000Z");
     const getCheckoutStatus = vi.fn(async (cwd: string) => createCheckoutStatus(cwd));
@@ -1735,7 +1747,7 @@ describe("WorkspaceGitServiceImpl D2 read methods", () => {
     service.dispose();
   });
 
-  test("getWorkspaceGitMetadata derives reconciliation metadata from the snapshot cache", async () => {
+  test("getProjectSlug derives the slug from the snapshot cache", async () => {
     let nowMs = 0;
     const getCheckoutStatus = vi.fn(async (cwd: string) =>
       createCheckoutStatus(cwd, {
@@ -1749,22 +1761,10 @@ describe("WorkspaceGitServiceImpl D2 read methods", () => {
       now: () => new Date(nowMs),
     });
 
-    await expect(
-      service.getWorkspaceGitMetadata(REPO_CWD, { directoryName: "Local Repo" }),
-    ).resolves.toEqual({
-      projectKind: "git",
-      projectDisplayName: "getpaseo/paseo",
-      workspaceDisplayName: "feature/service-metadata",
-      gitRemote: "https://github.com/getpaseo/paseo.git",
-      isWorktree: false,
-      projectSlug: "paseo",
-      repoRoot: REPO_CWD,
-      currentBranch: "feature/service-metadata",
-      remoteUrl: "https://github.com/getpaseo/paseo.git",
-    });
+    await expect(service.getProjectSlug(REPO_CWD)).resolves.toBe("paseo");
 
     nowMs = 1_000;
-    await service.getWorkspaceGitMetadata(join(REPO_CWD, "."), { directoryName: "Local Repo" });
+    await service.getProjectSlug(join(REPO_CWD, "."));
     expect(getCheckoutStatus).toHaveBeenCalledTimes(1);
 
     service.dispose();

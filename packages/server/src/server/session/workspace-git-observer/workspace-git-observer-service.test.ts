@@ -24,6 +24,7 @@ function makeDescriptor(overrides: {
   id: string;
   workspaceDirectory: string;
   projectKind?: string;
+  workspaceKind?: "directory" | "local_checkout" | "worktree";
   name?: string | null;
   diffStat?: { additions: number; deletions: number } | null;
 }): WorkspaceDescriptorPayload {
@@ -31,6 +32,7 @@ function makeDescriptor(overrides: {
     id: overrides.id,
     workspaceDirectory: overrides.workspaceDirectory,
     projectKind: overrides.projectKind ?? "git",
+    workspaceKind: overrides.workspaceKind ?? "local_checkout",
     name: overrides.name ?? null,
     diffStat: overrides.diffStat ?? null,
   } as unknown as WorkspaceDescriptorPayload;
@@ -135,9 +137,22 @@ describe("syncObservers", () => {
   test("does not register a non-git workspace", () => {
     const h = buildHarness();
     h.service.syncObservers([
-      makeDescriptor({ id: "ws1", workspaceDirectory: WS1, projectKind: "directory" }),
+      makeDescriptor({
+        id: "ws1",
+        workspaceDirectory: WS1,
+        projectKind: "directory",
+        workspaceKind: "directory",
+      }),
     ]);
     expect(h.registerCalls).toEqual([]);
+  });
+
+  test("registers a Git workspace even when its owning project is non-Git", () => {
+    const h = buildHarness();
+    h.service.syncObservers([
+      makeDescriptor({ id: "ws1", workspaceDirectory: WS1, projectKind: "non_git" }),
+    ]);
+    expect(h.registerCalls).toEqual([WS1]);
   });
 
   test("is idempotent — re-syncing the same git workspace does not re-register", () => {
@@ -148,13 +163,45 @@ describe("syncObservers", () => {
     expect(h.registerCalls).toEqual([WS1]);
   });
 
+  test("shares one cwd subscription across distinct workspace identities", () => {
+    const h = buildHarness();
+    h.service.syncObservers([
+      makeDescriptor({ id: "ws1", workspaceDirectory: WS1 }),
+      makeDescriptor({ id: "ws2", workspaceDirectory: WS1 }),
+    ]);
+    expect(h.registerCalls).toEqual([WS1]);
+  });
+
   test("tears down the subscription when a git workspace becomes non-git", () => {
     const h = buildHarness();
     h.service.syncObservers([makeDescriptor({ id: "ws1", workspaceDirectory: WS1 })]);
     h.service.syncObservers([
-      makeDescriptor({ id: "ws1", workspaceDirectory: WS1, projectKind: "directory" }),
+      makeDescriptor({
+        id: "ws1",
+        workspaceDirectory: WS1,
+        projectKind: "directory",
+        workspaceKind: "directory",
+      }),
     ]);
     expect(h.unsubscribeCalls).toEqual([WS1]);
+  });
+
+  test("keeps a shared subscription when one sibling becomes non-git", () => {
+    const h = buildHarness();
+    h.service.syncObservers([
+      makeDescriptor({ id: "ws1", workspaceDirectory: WS1 }),
+      makeDescriptor({ id: "ws2", workspaceDirectory: WS1 }),
+    ]);
+    h.service.syncObservers([
+      makeDescriptor({
+        id: "ws1",
+        workspaceDirectory: WS1,
+        workspaceKind: "directory",
+      }),
+    ]);
+    expect(h.unsubscribeCalls).toEqual([]);
+    h.emitSnapshot(WS1, "feature");
+    expect(h.branchChanges).toEqual([["ws2", null, "feature"]]);
   });
 });
 
@@ -202,6 +249,13 @@ describe("shouldSkipUpdate", () => {
     expect(h.service.shouldSkipUpdate("ws1", a)).toBe(true);
     expect(h.service.shouldSkipUpdate("ws1", b)).toBe(false);
   });
+
+  test("starts from the descriptor state recorded during observer sync", () => {
+    const h = buildHarness();
+    const descriptor = makeDescriptor({ id: "ws1", workspaceDirectory: WS1, name: "main" });
+    h.service.syncObservers([descriptor]);
+    expect(h.service.shouldSkipUpdate("ws1", descriptor)).toBe(true);
+  });
 });
 
 describe("recordDescriptorState", () => {
@@ -239,10 +293,25 @@ describe("teardown", () => {
     expect(h.unsubscribeCalls).toEqual([]);
   });
 
-  test("removeForCwd unsubscribes and stops the observer", () => {
+  test("keeps a shared cwd subscription until its last workspace is removed", () => {
     const h = buildHarness();
-    h.service.syncObservers([makeDescriptor({ id: "ws1", workspaceDirectory: WS1 })]);
-    h.service.removeForCwd(WS1);
+    h.service.syncObservers([
+      makeDescriptor({ id: "ws1", workspaceDirectory: WS1, name: "main" }),
+      makeDescriptor({ id: "ws2", workspaceDirectory: WS1, name: "main" }),
+    ]);
+
+    h.emitSnapshot(WS1, "feature");
+    h.service.removeForWorkspaceId("ws1");
+    expect(h.unsubscribeCalls).toEqual([]);
+
+    h.emitSnapshot(WS1, "next");
+    expect(h.branchChanges).toEqual([
+      ["ws1", "main", "feature"],
+      ["ws2", "main", "feature"],
+      ["ws2", "feature", "next"],
+    ]);
+
+    h.service.removeForWorkspaceId("ws2");
     expect(h.unsubscribeCalls).toEqual([WS1]);
     expect(() => h.emitSnapshot(WS1, "x")).toThrow();
   });

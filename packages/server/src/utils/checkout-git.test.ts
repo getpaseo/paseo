@@ -307,6 +307,13 @@ describe("checkout git utilities", () => {
     });
   });
 
+  it("reports a real non-git directory as non-git", async () => {
+    const nonGitDir = join(tempDir, "not-git-status");
+    mkdirSync(nonGitDir, { recursive: true });
+
+    await expect(getCheckoutStatus(nonGitDir)).resolves.toEqual({ isGit: false });
+  });
+
   it("returns null for getCurrentBranch in a repo with no commits", async () => {
     const emptyRepo = join(tempDir, "empty-repo");
     mkdirSync(emptyRepo, { recursive: true });

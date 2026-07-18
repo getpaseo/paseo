@@ -138,8 +138,6 @@ export async function archiveIfSafe(input: {
         },
         {
           scope: { kind: "workspace", workspaceId },
-          repoRoot: ownership.repoRoot ?? null,
-          paseoWorktreesBaseRoot: options.paseoWorktreesBaseRoot,
           requestId: "auto-archive-on-merge",
         },
       );

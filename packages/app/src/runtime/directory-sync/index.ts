@@ -107,6 +107,10 @@ export class DirectorySync {
     if (!connection.client || connection.status !== "online") return true;
     const client = connection.client;
     const source = connection.source;
+    this.workspaceTransactions.begin(source, () => ({
+      workspaces: new Map(),
+      emptyProjects: new Map(),
+    }));
     const subscriptions = [
       client.on("agent_update", (message) => {
         if (message.type !== "agent_update" || !this.isCurrent(client, source)) return;
@@ -115,6 +119,12 @@ export class DirectorySync {
       }),
       client.on("workspace_update", (message) => {
         if (message.type !== "workspace_update" || !this.isCurrent(client, source)) return;
+        if (!this.workspaceTransactions.record(source, message.payload)) {
+          this.workspaces.applyDelta(message.payload);
+        }
+      }),
+      client.on("project.update", (message) => {
+        if (message.type !== "project.update" || !this.isCurrent(client, source)) return;
         if (!this.workspaceTransactions.record(source, message.payload)) {
           this.workspaces.applyDelta(message.payload);
         }

@@ -14,12 +14,42 @@ import {
 
 export type WorkspaceDirectoryDelta = Extract<
   SessionOutboundMessage,
-  { type: "workspace_update" }
+  { type: "workspace_update" | "project.update" }
 >["payload"];
+type ProjectDirectoryDelta = Extract<SessionOutboundMessage, { type: "project.update" }>["payload"];
 
 export interface WorkspaceDirectorySnapshot {
   workspaces: Map<string, WorkspaceDescriptor>;
   emptyProjects: Map<string, EmptyProjectDescriptor>;
+}
+
+function applyProjectDelta(
+  snapshot: WorkspaceDirectorySnapshot,
+  delta: ProjectDirectoryDelta,
+): void {
+  if (delta.kind === "remove") {
+    snapshot.emptyProjects.delete(delta.projectId);
+    for (const [workspaceId, workspace] of snapshot.workspaces) {
+      if (workspace.projectId === delta.projectId) snapshot.workspaces.delete(workspaceId);
+    }
+    return;
+  }
+
+  const project = normalizeEmptyProjectDescriptor(delta.project);
+  let hasAttachedWorkspace = false;
+  for (const [workspaceId, workspace] of snapshot.workspaces) {
+    if (workspace.projectId !== project.projectId) continue;
+    hasAttachedWorkspace = true;
+    snapshot.workspaces.set(workspaceId, {
+      ...workspace,
+      projectDisplayName: project.projectDisplayName,
+      projectCustomName: project.projectCustomName,
+      projectRootPath: project.projectRootPath,
+      projectKind: project.projectKind,
+    });
+  }
+  if (hasAttachedWorkspace) snapshot.emptyProjects.delete(project.projectId);
+  else snapshot.emptyProjects.set(project.projectId, project);
 }
 
 export class WorkspaceDirectoryReplica {
@@ -27,7 +57,7 @@ export class WorkspaceDirectoryReplica {
 
   applyDelta(delta: WorkspaceDirectoryDelta): void {
     const state = this.reconcile(this.read(), [delta]);
-    this.commit(state, delta.kind === "remove" ? [delta.id] : []);
+    this.commit(state, delta.kind === "remove" && "id" in delta ? [delta.id] : []);
   }
 
   commitSnapshot(
@@ -35,9 +65,10 @@ export class WorkspaceDirectoryReplica {
     deltas: readonly WorkspaceDirectoryDelta[],
   ): void {
     const removedWorkspaceIds = deltas.flatMap((delta) =>
-      delta.kind === "remove" ? [delta.id] : [],
+      delta.kind === "remove" && "id" in delta ? [delta.id] : [],
     );
     this.commit(this.reconcile(snapshot, deltas), removedWorkspaceIds);
+    useSessionStore.getState().setHasHydratedWorkspaces(this.serverId, true);
   }
 
   private read(): WorkspaceDirectorySnapshot {
@@ -60,6 +91,10 @@ export class WorkspaceDirectoryReplica {
       }
     }
     for (const delta of deltas) {
+      if ("projectId" in delta || "project" in delta) {
+        applyProjectDelta({ workspaces, emptyProjects }, delta);
+        continue;
+      }
       if (delta.kind === "remove") {
         workspaces.delete(delta.id);
         if (delta.emptyProject) {
@@ -84,7 +119,6 @@ export class WorkspaceDirectoryReplica {
     const store = useSessionStore.getState();
     store.setWorkspaces(this.serverId, snapshot.workspaces);
     store.setEmptyProjects(this.serverId, snapshot.emptyProjects.values());
-    store.setHasHydratedWorkspaces(this.serverId, true);
     for (const workspaceId of removedWorkspaceIds) {
       clearWorkspaceArchivePending({ serverId: this.serverId, workspaceId });
       useWorkspaceSetupStore.getState().removeWorkspace({ serverId: this.serverId, workspaceId });
