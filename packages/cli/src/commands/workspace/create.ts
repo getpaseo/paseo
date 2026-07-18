@@ -1,0 +1,172 @@
+import type { Command } from "commander";
+import { connectToDaemon, getDaemonHost } from "../../utils/client.js";
+import type { CommandError, CommandOptions, SingleResult } from "../../output/index.js";
+import { toWorkspaceRow, workspaceSchema, type WorkspaceRow } from "./shared.js";
+
+export interface WorkspaceCreateOptions extends CommandOptions {
+  isolation?: string;
+  path?: string;
+  project?: string;
+  title?: string;
+  mode?: string;
+  worktreeSlug?: string;
+  newBranch?: string;
+  base?: string;
+  branch?: string;
+  prNumber?: string;
+  forge?: string;
+  projectPath?: string;
+}
+
+interface WorktreeSourceBase {
+  kind: "worktree";
+  cwd: string;
+  projectId?: string;
+  worktreeSlug?: string;
+}
+
+function assertOptionsAbsent(values: unknown[], message: string): void {
+  if (values.some((value) => value !== undefined)) {
+    throw new Error(message);
+  }
+}
+
+function buildLocalWorkspaceSource(options: WorkspaceCreateOptions, path: string) {
+  assertOptionsAbsent(
+    [
+      options.mode,
+      options.worktreeSlug,
+      options.newBranch,
+      options.base,
+      options.branch,
+      options.prNumber,
+      options.forge,
+      options.projectPath,
+    ],
+    "Worktree options require --isolation worktree",
+  );
+  return {
+    kind: "directory" as const,
+    path,
+    ...(options.project ? { projectId: options.project } : {}),
+  };
+}
+
+function buildBranchOffSource(options: WorkspaceCreateOptions, source: WorktreeSourceBase) {
+  assertOptionsAbsent(
+    [options.branch, options.prNumber, options.forge, options.projectPath],
+    "--branch, --pr-number, --forge, and --project-path require a checkout mode",
+  );
+  const branchName = options.newBranch ?? options.worktreeSlug;
+  if (
+    options.newBranch !== undefined &&
+    options.worktreeSlug !== undefined &&
+    options.newBranch !== options.worktreeSlug
+  ) {
+    throw new Error("--new-branch and --worktree-slug must match for branch-off workspaces");
+  }
+  return {
+    ...source,
+    action: "branch-off" as const,
+    ...(branchName ? { worktreeSlug: branchName } : {}),
+    ...(options.base ? { baseBranch: options.base } : {}),
+  };
+}
+
+function buildBranchCheckoutSource(options: WorkspaceCreateOptions, source: WorktreeSourceBase) {
+  if (!options.branch) {
+    throw new Error("--branch is required for --mode checkout-branch");
+  }
+  assertOptionsAbsent(
+    [options.newBranch, options.base, options.prNumber, options.forge, options.projectPath],
+    "--new-branch, --base, --pr-number, --forge, and --project-path are not valid for --mode checkout-branch",
+  );
+  return { ...source, action: "checkout" as const, refName: options.branch };
+}
+
+function buildPullRequestCheckoutSource(
+  options: WorkspaceCreateOptions,
+  source: WorktreeSourceBase,
+) {
+  if (options.prNumber === undefined || options.prNumber === "") {
+    throw new Error("--pr-number is required for --mode checkout-pr");
+  }
+  const prNumber = Number(options.prNumber);
+  if (!Number.isInteger(prNumber) || prNumber <= 0) {
+    throw new Error("--pr-number must be a positive integer");
+  }
+  assertOptionsAbsent(
+    [options.newBranch, options.base, options.branch],
+    "--new-branch, --base, and --branch are not valid for --mode checkout-pr",
+  );
+  return {
+    ...source,
+    action: "checkout" as const,
+    checkoutSource: {
+      kind: "change_request" as const,
+      forge: options.forge ?? "github",
+      number: prNumber,
+      ...(options.projectPath ? { projectPath: options.projectPath } : {}),
+    },
+  };
+}
+
+function buildWorktreeWorkspaceSource(options: WorkspaceCreateOptions, path: string) {
+  const source: WorktreeSourceBase = {
+    kind: "worktree",
+    cwd: path,
+    ...(options.project ? { projectId: options.project } : {}),
+    ...(options.worktreeSlug ? { worktreeSlug: options.worktreeSlug } : {}),
+  };
+  switch (options.mode ?? "branch-off") {
+    case "branch-off":
+      return buildBranchOffSource(options, source);
+    case "checkout-branch":
+      return buildBranchCheckoutSource(options, source);
+    case "checkout-pr":
+      return buildPullRequestCheckoutSource(options, source);
+    default:
+      throw new Error(`Unsupported worktree mode: ${String(options.mode)}`);
+  }
+}
+
+export function buildWorkspaceSource(options: WorkspaceCreateOptions) {
+  const path = options.path ?? process.cwd();
+  if (options.isolation === "local") {
+    return buildLocalWorkspaceSource(options, path);
+  }
+  if (options.isolation === "worktree") {
+    return buildWorktreeWorkspaceSource(options, path);
+  }
+  throw new Error(`Unsupported workspace isolation: ${String(options.isolation)}`);
+}
+
+export async function runCreateCommand(
+  options: WorkspaceCreateOptions,
+  _command: Command,
+): Promise<SingleResult<WorkspaceRow>> {
+  const host = getDaemonHost({ host: options.host });
+  const client = await connectToDaemon({ host: options.host }).catch((error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    throw {
+      code: "DAEMON_NOT_RUNNING",
+      message: `Cannot connect to daemon at ${host}: ${message}`,
+    } satisfies CommandError;
+  });
+
+  try {
+    const payload = await client.createWorkspace({
+      source: buildWorkspaceSource(options),
+      ...(options.title ? { title: options.title } : {}),
+    });
+    if (!payload.workspace) {
+      throw new Error(payload.error ?? "Workspace creation failed");
+    }
+    return { type: "single", data: toWorkspaceRow(payload.workspace), schema: workspaceSchema };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw { code: "WORKSPACE_CREATE_FAILED", message } satisfies CommandError;
+  } finally {
+    await client.close().catch(() => undefined);
+  }
+}

@@ -1210,6 +1210,15 @@ export async function createPaseoDaemon(
     archiveWorkspaceRecord: archiveWorkspaceRecordExternal,
     emitWorkspaceUpdatesForWorkspaceIds: emitWorkspaceUpdatesExternal,
     workspaceRegistry,
+    createDirectoryWorkspace: async (cwd, title, projectId) => {
+      const workspace = await workspaceProvisioning.createWorkspaceForDirectory(
+        cwd,
+        title,
+        projectId,
+      );
+      await emitWorkspaceUpdatesExternal([workspace.workspaceId]);
+      return workspace;
+    },
     markWorkspaceArchiving: markWorkspaceArchivingExternal,
     clearWorkspaceArchiving: clearWorkspaceArchivingExternal,
     ensureWorkspaceForCreate: createAgentCommandDependencies.ensureWorkspaceForCreate,

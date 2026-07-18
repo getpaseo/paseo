@@ -1,0 +1,90 @@
+import { describe, expect, it } from "vitest";
+import { buildWorkspaceSource } from "./create.js";
+
+describe("workspace create source", () => {
+  it("maps local isolation to a directory workspace", () => {
+    expect(
+      buildWorkspaceSource({ isolation: "local", path: "/tmp/project", project: "project-1" }),
+    ).toEqual({ kind: "directory", path: "/tmp/project", projectId: "project-1" });
+  });
+
+  it("maps branch-off worktree isolation", () => {
+    expect(
+      buildWorkspaceSource({
+        isolation: "worktree",
+        path: "/tmp/project",
+        mode: "branch-off",
+        newBranch: "fix-x",
+        base: "main",
+      }),
+    ).toEqual({
+      kind: "worktree",
+      cwd: "/tmp/project",
+      action: "branch-off",
+      worktreeSlug: "fix-x",
+      baseBranch: "main",
+    });
+  });
+
+  it("checks out an existing branch into a worktree workspace", () => {
+    expect(
+      buildWorkspaceSource({
+        isolation: "worktree",
+        path: "/tmp/project",
+        mode: "checkout-branch",
+        branch: "existing-work",
+        worktreeSlug: "existing-work-copy",
+      }),
+    ).toEqual({
+      kind: "worktree",
+      cwd: "/tmp/project",
+      action: "checkout",
+      refName: "existing-work",
+      worktreeSlug: "existing-work-copy",
+    });
+  });
+
+  it("checks out a pull request into a worktree workspace", () => {
+    expect(
+      buildWorkspaceSource({
+        isolation: "worktree",
+        path: "/tmp/project",
+        mode: "checkout-pr",
+        prNumber: "42",
+        forge: "gitlab",
+        projectPath: "team/project",
+      }),
+    ).toEqual({
+      kind: "worktree",
+      cwd: "/tmp/project",
+      action: "checkout",
+      checkoutSource: {
+        kind: "change_request",
+        forge: "gitlab",
+        number: 42,
+        projectPath: "team/project",
+      },
+    });
+  });
+
+  it("requires the mode-specific checkout target", () => {
+    expect(() => buildWorkspaceSource({ isolation: "worktree", mode: "checkout-branch" })).toThrow(
+      "--branch is required",
+    );
+    expect(() => buildWorkspaceSource({ isolation: "worktree", mode: "checkout-pr" })).toThrow(
+      "--pr-number is required",
+    );
+  });
+
+  it("rejects worktree options for local isolation", () => {
+    expect(() => buildWorkspaceSource({ isolation: "local", mode: "branch-off" })).toThrow(
+      "Worktree options require --isolation worktree",
+    );
+  });
+
+  it("rejects unknown isolation", () => {
+    expect(() => buildWorkspaceSource({ isolation: "container" })).toThrow(
+      "Unsupported workspace isolation",
+    );
+  });
+});

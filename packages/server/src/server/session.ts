@@ -77,6 +77,7 @@ import type {
   ManagedAgent,
 } from "./agent/agent-manager.js";
 import { createAgentCommand } from "./agent/create-agent/create.js";
+import { resolveCreateAgentIntent, type CreateAgentIntent } from "./agent/create-agent/intent.js";
 import {
   archiveAgentCommand,
   cancelAgentRunCommand,
@@ -330,6 +331,14 @@ type FetchAgentsResponsePayload = Extract<
 type FetchAgentsResponseEntry = FetchAgentsResponsePayload["entries"][number];
 type FetchAgentsResponsePageInfo = FetchAgentsResponsePayload["pageInfo"];
 type AgentUpdatesFilter = FetchAgentsRequestFilter;
+type CreateAgentRequestMessage = Extract<SessionInboundMessage, { type: "create_agent_request" }>;
+
+interface ResolvedSessionCreateAgentIntent {
+  config: AgentSessionConfig;
+  intent: CreateAgentIntent;
+  createdDirectoryWorkspace: boolean;
+}
+
 type FetchWorkspacesRequestMessage = Extract<
   SessionInboundMessage,
   { type: "fetch_workspaces_request" }
@@ -2778,9 +2787,7 @@ export class Session {
   /**
    * Handle create agent request
    */
-  private async handleCreateAgentRequest(
-    msg: Extract<SessionInboundMessage, { type: "create_agent_request" }>,
-  ): Promise<void> {
+  private async handleCreateAgentRequest(msg: CreateAgentRequestMessage): Promise<void> {
     const {
       config,
       worktreeName,
@@ -2793,7 +2800,6 @@ export class Session {
       autoArchive,
       images,
       attachments,
-      labels,
       env,
     } = msg;
     this.sessionLogger.info(
@@ -2828,18 +2834,11 @@ export class Session {
         hasLegacyGitOptions: Boolean(git),
       });
       createdWorktreeForCleanup = createdWorktree;
-      const createAgentConfig: AgentSessionConfig = createdWorktree
-        ? { ...config, cwd: createdWorktree.workspace.cwd }
-        : config;
-      const workspaceId = await this.workspaceProvisioning.resolveOrCreateWorkspaceIdForCreateAgent(
-        {
-          createdWorktree,
-          requestedWorkspaceId: msg.workspaceId,
-          cwd: createAgentConfig.cwd,
-          initialTitle: workspacePromptTitle,
-        },
-      );
-      const createdDirectoryWorkspaceForAgent = !createdWorktree && !msg.workspaceId;
+      const resolvedIntent = await this.resolveSessionCreateAgentIntent({
+        request: msg,
+        createdWorktree,
+        workspacePromptTitle,
+      });
 
       const { snapshot, liveSnapshot } = await createAgentCommand(
         {
@@ -2852,8 +2851,8 @@ export class Session {
         },
         {
           kind: "session",
-          config: createAgentConfig,
-          workspaceId,
+          config: resolvedIntent.config,
+          workspaceId: resolvedIntent.intent.workspaceId,
           worktreeName,
           initialPrompt,
           clientMessageId,
@@ -2861,7 +2860,7 @@ export class Session {
           images,
           attachments,
           git,
-          labels,
+          labels: resolvedIntent.intent.labels,
           env,
           provisionalTitle,
           firstAgentContext,
@@ -2871,14 +2870,14 @@ export class Session {
       );
       createdAgentId = snapshot.id;
       await this.agentUpdates.forwardLiveAgent(snapshot);
-      if (createdDirectoryWorkspaceForAgent && trimmedPrompt) {
+      if (resolvedIntent.createdDirectoryWorkspace && trimmedPrompt) {
         this.workspaceAutoName.scheduleForDirectory(
           {
-            workspaceId,
-            cwd: createAgentConfig.cwd,
+            workspaceId: resolvedIntent.intent.workspaceId,
+            cwd: resolvedIntent.config.cwd,
             firstAgentContext,
           },
-          { currentSelection: this.getFocusedAgentSelectionForCwd(createAgentConfig.cwd) },
+          { currentSelection: this.getFocusedAgentSelectionForCwd(resolvedIntent.config.cwd) },
         );
       }
       this.createAgentLifecycleDispatch.registerAutoArchiveIfRequested({
@@ -2931,6 +2930,55 @@ export class Session {
         },
       });
     }
+  }
+
+  private async resolveSessionCreateAgentIntent(input: {
+    request: CreateAgentRequestMessage;
+    createdWorktree: CreatePaseoWorktreeWorkflowResult | null;
+    workspacePromptTitle: string | null;
+  }): Promise<ResolvedSessionCreateAgentIntent> {
+    const { request, createdWorktree } = input;
+    const callerAgent = request.callerAgentId
+      ? this.agentManager.getAgent(request.callerAgentId)
+      : null;
+    if (request.callerAgentId && !callerAgent) {
+      throw new Error(`Caller agent ${request.callerAgentId} not found`);
+    }
+
+    let config = request.config;
+
+    const intent = await resolveCreateAgentIntent({
+      explicitWorkspaceId: createdWorktree?.workspace.workspaceId ?? request.workspaceId,
+      caller: callerAgent
+        ? { id: callerAgent.id, cwd: callerAgent.cwd, workspaceId: callerAgent.workspaceId }
+        : null,
+      labels: request.labels,
+      resolveWorkspace: async (workspaceId) => {
+        if (createdWorktree?.workspace.workspaceId === workspaceId) {
+          return { workspaceId, cwd: createdWorktree.workspace.cwd };
+        }
+        const workspace = await this.workspaceRegistry.get(workspaceId);
+        if (!workspace || workspace.archivedAt) {
+          throw new Error(`Workspace ${workspaceId} not found`);
+        }
+        return { workspaceId, cwd: workspace.cwd };
+      },
+      createWorkspace: async () => ({
+        workspaceId: await this.workspaceProvisioning.resolveOrCreateWorkspaceIdForCreateAgent({
+          createdWorktree: null,
+          cwd: config.cwd,
+          initialTitle: input.workspacePromptTitle,
+        }),
+        cwd: config.cwd,
+      }),
+    });
+    config = { ...config, cwd: intent.cwd };
+
+    return {
+      config,
+      intent,
+      createdDirectoryWorkspace: !createdWorktree && !request.workspaceId && !callerAgent,
+    };
   }
 
   private async handleResumeAgentRequest(

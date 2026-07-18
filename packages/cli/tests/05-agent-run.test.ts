@@ -53,7 +53,8 @@ try {
     const result = await $`npx paseo run --help`.nothrow();
     assert.strictEqual(result.exitCode, 0, "run --help should exit 0");
     assert(result.stdout.includes("-d"), "help should mention -d flag");
-    assert(result.stdout.includes("--detach"), "help should mention --detach flag");
+    assert(result.stdout.includes("--background"), "help should mention --background flag");
+    assert(!result.stdout.includes("--detach"), "help should hide legacy --detach syntax");
     assert(result.stdout.includes("--title"), "help should mention --title option");
     assert(result.stdout.includes("--provider"), "help should mention --provider option");
     assert(result.stdout.includes("--mode"), "help should mention --mode option");
@@ -174,18 +175,18 @@ try {
     console.log("✓ run --output-schema flag is accepted\n");
   }
 
-  // Test 10: run --output-schema cannot be used with --detach
+  // Test 10: run --output-schema cannot be used with --background
   {
-    console.log("Test 10: run --output-schema cannot be used with --detach");
+    console.log("Test 10: run --output-schema cannot be used with --background");
     const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo run -d --output-schema ${schemaPath} "test prompt"`.nothrow();
-    assert.notStrictEqual(result.exitCode, 0, "should fail with --detach and --output-schema");
+      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo run --background --output-schema ${schemaPath} "test prompt"`.nothrow();
+    assert.notStrictEqual(result.exitCode, 0, "should fail with --background and --output-schema");
     const output = result.stdout + result.stderr;
     assert(
-      output.includes("--output-schema cannot be used with --detach"),
-      "error should explain detach incompatibility",
+      output.includes("--output-schema cannot be used with --background"),
+      "error should explain background incompatibility",
     );
-    console.log("✓ run --output-schema cannot be used with --detach\n");
+    console.log("✓ run --output-schema cannot be used with --background\n");
   }
 
   // Test 11: -q (quiet) flag is accepted with run

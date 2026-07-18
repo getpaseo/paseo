@@ -64,20 +64,20 @@ not retain non-Git directories.
 
 **Key modules:**
 
-| Module                          | Responsibility                                                               |
-| ------------------------------- | ---------------------------------------------------------------------------- |
-| `server/bootstrap.ts`           | Daemon initialization: HTTP server, WS server, agent manager, storage, relay |
-| `server/websocket-server.ts`    | WebSocket connection management, hello handshake, binary frame routing       |
-| `server/session.ts`             | Per-client session state, timeline subscriptions, terminal operations        |
-| `server/agent/agent-manager.ts` | Agent lifecycle state machine, timeline tracking, subscriber management      |
-| `server/agent/agent-storage.ts` | File-backed JSON persistence at `$PASEO_HOME/agents/`                        |
-| `server/agent/tools/`           | Transport-neutral Paseo tool catalog for subagents, permissions, worktrees   |
-| `server/agent/mcp-server.ts`    | Thin MCP adapter that registers the Paseo tool catalog with the MCP SDK      |
-| `server/agent/providers/`       | Provider adapters (see "Agent providers" below)                              |
-| `server/relay-transport.ts`     | Outbound relay connection with E2E encryption                                |
-| `server/schedule/`              | Cron-based scheduled agents                                                  |
-| `server/loop-service.ts`        | Looping agent runs that retry until an exit condition                        |
-| `server/chat/`                  | Chat rooms for agent-to-agent and human-to-agent messaging                   |
+| Module                          | Responsibility                                                                |
+| ------------------------------- | ----------------------------------------------------------------------------- |
+| `server/bootstrap.ts`           | Daemon initialization: HTTP server, WS server, agent manager, storage, relay  |
+| `server/websocket-server.ts`    | WebSocket connection management, hello handshake, binary frame routing        |
+| `server/session.ts`             | Per-client session state, timeline subscriptions, terminal operations         |
+| `server/agent/agent-manager.ts` | Agent lifecycle state machine, timeline tracking, subscriber management       |
+| `server/agent/agent-storage.ts` | File-backed JSON persistence at `$PASEO_HOME/agents/`                         |
+| `server/agent/tools/`           | Transport-neutral catalog for workspaces, agents, permissions, and automation |
+| `server/agent/mcp-server.ts`    | Thin MCP adapter that registers the Paseo tool catalog with the MCP SDK       |
+| `server/agent/providers/`       | Provider adapters (see "Agent providers" below)                               |
+| `server/relay-transport.ts`     | Outbound relay connection with E2E encryption                                 |
+| `server/schedule/`              | Cron-based scheduled agents                                                   |
+| `server/loop-service.ts`        | Looping agent runs that retry until an exit condition                         |
+| `server/chat/`                  | Chat rooms for agent-to-agent and human-to-agent messaging                    |
 
 ### `packages/protocol` — Wire schemas and shared protocol types
 
@@ -115,9 +115,11 @@ Commander.js CLI with Docker-style commands. Common agent operations are also ex
 - `paseo terminal ls/create/capture/send-keys/kill`
 - `paseo loop run/ls/inspect/logs/stop`
 - `paseo schedule create/ls/inspect/update/pause/resume/run-once/logs/delete`
+- `paseo heartbeat create/update/delete`
+- `paseo workspace create/ls/archive`
 - `paseo permit allow/deny/ls`
 - `paseo provider ls/models`
-- `paseo worktree create/ls/archive`
+- hidden legacy `paseo worktree create/ls/archive` compatibility alias
 - `paseo speech …`
 
 Communicates with the daemon via the same WebSocket protocol as the app.

@@ -4,6 +4,7 @@ import type { AgentPromptInput, AgentRunOptions } from "./agent-sdk-types.js";
 import type { AgentManager, ManagedAgent } from "./agent-manager.js";
 import type { AgentStorage } from "./agent-storage.js";
 import { ensureAgentLoaded } from "./agent-loading.js";
+import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
 
 export type AgentUnarchiveController = Pick<AgentManager, "notifyAgentState" | "unarchiveSnapshot">;
 
@@ -282,6 +283,9 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
     }
 
     const record = await agentStorage.get(childAgentId);
+    if (getParentAgentIdFromLabels(record?.labels) !== callerAgentId) {
+      return;
+    }
     const title = record?.title ?? childAgentId;
     const lastAssistantMessage = await agentManager.getLastAssistantMessage(childAgentId);
     const body = formatFinishNotificationBody({

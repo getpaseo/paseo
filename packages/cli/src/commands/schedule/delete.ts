@@ -3,6 +3,7 @@ import type { SingleResult } from "../../output/index.js";
 import type { OutputSchema } from "../../output/index.js";
 import {
   connectScheduleClient,
+  requireNewAgentSchedule,
   toScheduleCommandError,
   type ScheduleCommandOptions,
 } from "./shared.js";
@@ -27,6 +28,7 @@ export async function runDeleteCommand(
 ): Promise<SingleResult<ScheduleDeleteRow>> {
   const { client } = await connectScheduleClient(options.host);
   try {
+    await requireNewAgentSchedule(client, id);
     const payload = await client.scheduleDelete({ id });
     if (payload.error) {
       throw new Error(payload.error);
