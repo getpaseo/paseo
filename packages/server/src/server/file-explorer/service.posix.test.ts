@@ -1,10 +1,27 @@
 // POSIX-only: symlink fixtures
 /* eslint-disable max-nested-callbacks */
-import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdtemp,
+  mkdir,
+  readFile,
+  readlink,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { getDownloadableFileInfo, listDirectoryEntries, readExplorerFile } from "./service.js";
+import {
+  deleteExplorerEntry,
+  duplicateExplorerEntry,
+  getDownloadableFileInfo,
+  listDirectoryEntries,
+  readExplorerFile,
+  renameExplorerEntry,
+} from "./service.js";
 import { isPlatform } from "../../test-utils/platform.js";
 
 async function createTempDir(prefix: string): Promise<string> {
@@ -100,6 +117,63 @@ describe.skipIf(isPlatform("win32"))("service POSIX-only", () => {
       expect(info.path).toBe("safe-link.txt");
       expect(info.fileName).toBe("safe-link.txt");
       expect(info.absolutePath).toBe(await realpath(target));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("deletes an in-workspace symlink without removing the referent", async () => {
+    const root = await createTempDir("paseo-file-explorer-");
+
+    try {
+      const target = path.join(root, "nested", "target.txt");
+      await mkdir(path.dirname(target), { recursive: true });
+      await writeFile(target, "keep me\n", "utf-8");
+      await symlink("nested/target.txt", path.join(root, "alias.txt"));
+
+      await deleteExplorerEntry({ root, path: "alias.txt" });
+
+      await expect(access(path.join(root, "alias.txt"))).rejects.toThrow();
+      expect(await readFile(target, "utf-8")).toBe("keep me\n");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("renames an in-workspace symlink without touching the referent", async () => {
+    const root = await createTempDir("paseo-file-explorer-");
+
+    try {
+      await writeFile(path.join(root, "target.txt"), "data\n", "utf-8");
+      await symlink("target.txt", path.join(root, "alias.txt"));
+
+      const renamed = await renameExplorerEntry({
+        root,
+        path: "alias.txt",
+        newName: "alias-renamed.txt",
+      });
+
+      expect(renamed.path).toBe("alias-renamed.txt");
+      expect(await readlink(path.join(root, "alias-renamed.txt"))).toBe("target.txt");
+      expect(await readFile(path.join(root, "target.txt"), "utf-8")).toBe("data\n");
+      await expect(access(path.join(root, "alias.txt"))).rejects.toThrow();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("duplicates an in-workspace symlink as another symlink", async () => {
+    const root = await createTempDir("paseo-file-explorer-");
+
+    try {
+      await writeFile(path.join(root, "target.txt"), "data\n", "utf-8");
+      await symlink("target.txt", path.join(root, "alias.txt"));
+
+      const duplicated = await duplicateExplorerEntry({ root, path: "alias.txt" });
+
+      expect(duplicated.path).toBe("alias copy.txt");
+      expect(await readlink(path.join(root, "alias copy.txt"))).toBe("target.txt");
+      expect(await readFile(path.join(root, "target.txt"), "utf-8")).toBe("data\n");
     } finally {
       await rm(root, { recursive: true, force: true });
     }

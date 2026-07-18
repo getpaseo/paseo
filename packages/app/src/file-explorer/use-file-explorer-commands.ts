@@ -183,44 +183,67 @@ export function useFileExplorerCommands(input: UseFileExplorerCommandsInput) {
 
   const submitNamePrompt = useCallback(
     async (name: string) => {
-      if (!namePrompt) {
+      if (!namePrompt || pendingAction) {
         return;
       }
       const trimmed = name.trim();
-      await runAction(`name-prompt:${namePrompt.kind}`, async () => {
+      const actionId = `name-prompt:${namePrompt.kind}`;
+      setPendingAction(actionId);
+      try {
         const daemon = requireMutateClient();
         if (namePrompt.kind === "new-file" || namePrompt.kind === "new-folder") {
+          const parentPath = namePrompt.parentPath;
           const entry = await daemon.createExplorerEntry({
             cwd,
-            parentPath: namePrompt.parentPath,
+            parentPath,
             name: trimmed,
             kind: namePrompt.kind === "new-file" ? "file" : "directory",
           });
-          await input.refreshPaths([namePrompt.parentPath]);
+          setNamePrompt(null);
           input.selectExplorerEntry(entry.path);
           if (namePrompt.kind === "new-file") {
             input.onOpenFile?.(entry.path);
           }
           toast.show(t("workspace.fileExplorer.toasts.created"), { variant: "success" });
-          setNamePrompt(null);
+          try {
+            await input.refreshPaths([parentPath]);
+          } catch (refreshError) {
+            toast.error(
+              refreshError instanceof Error
+                ? refreshError.message
+                : t("common.errors.unableToSave"),
+            );
+          }
           return;
         }
 
         if (!namePrompt.targetPath) {
           throw new Error(t("common.errors.unableToSave"));
         }
+        const parentPath = namePrompt.parentPath;
         const entry = await daemon.renameExplorerEntry({
           cwd,
           path: namePrompt.targetPath,
           newName: trimmed,
         });
-        await input.refreshPaths([namePrompt.parentPath, getExplorerParentPath(entry.path)]);
+        setNamePrompt(null);
         input.selectExplorerEntry(entry.path);
         toast.show(t("workspace.fileExplorer.toasts.renamed"), { variant: "success" });
-        setNamePrompt(null);
-      });
+        try {
+          await input.refreshPaths([parentPath, getExplorerParentPath(entry.path)]);
+        } catch (refreshError) {
+          toast.error(
+            refreshError instanceof Error ? refreshError.message : t("common.errors.unableToSave"),
+          );
+        }
+      } catch (error) {
+        // Rethrow so AdaptiveRenameModal keeps the prompt open with an inline error.
+        throw error instanceof Error ? error : new Error(t("common.errors.unableToSave"));
+      } finally {
+        setPendingAction(null);
+      }
     },
-    [cwd, input, namePrompt, requireMutateClient, runAction, t, toast],
+    [cwd, input, namePrompt, pendingAction, requireMutateClient, t, toast],
   );
 
   const duplicate = useCallback(

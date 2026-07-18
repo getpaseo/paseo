@@ -826,6 +826,19 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       keys: ["Delete"],
     },
   },
+  {
+    // Mac keyboards label Backspace as Delete; bind both so the advertised shortcut works.
+    id: "file-explorer-delete-backspace",
+    action: "file-explorer.delete",
+    combo: "Backspace",
+    when: { mac: true, desktop: true, commandCenter: false, editable: false, terminal: false },
+    help: {
+      id: "file-explorer-delete",
+      section: "files",
+      label: "Delete",
+      keys: ["Backspace"],
+    },
+  },
 
   // --- Sidebar toggles ---
   {

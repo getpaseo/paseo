@@ -229,4 +229,30 @@ describe("file explorer mutations", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  it("allows case-only renames", async () => {
+    const root = await createTempDir("paseo-file-explorer-mutate-");
+
+    try {
+      await writeFile(path.join(root, "alpha.txt"), "hello\n", "utf-8");
+
+      const renamed = await renameExplorerEntry({
+        root,
+        path: "alpha.txt",
+        newName: "Alpha.txt",
+      });
+
+      expect(renamed).toMatchObject({
+        name: "Alpha.txt",
+        path: "Alpha.txt",
+        kind: "file",
+      });
+      expect(await readFile(path.join(root, "Alpha.txt"), "utf-8")).toBe("hello\n");
+      const names = await readdir(root);
+      expect(names).toContain("Alpha.txt");
+      expect(names).not.toContain("alpha.txt");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });
