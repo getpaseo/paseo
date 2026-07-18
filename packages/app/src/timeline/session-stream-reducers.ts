@@ -904,6 +904,7 @@ function applyAcceptedForwardTimelineUnits(params: {
   });
   let tail = reconciled.tail;
   let head = reconciled.head;
+  let delayedHistoryTail: StreamItem[] = [];
   let delayedHistoryHead: StreamItem[] = [];
   let optimisticIndex = 0;
 
@@ -911,7 +912,8 @@ function applyAcceptedForwardTimelineUnits(params: {
     if (reconciled.reconciledUnits.has(unit)) continue;
     const nextOptimistic = optimistic[optimisticIndex];
     if (nextOptimistic && matchesOptimisticUserMessage({ unit, optimistic: nextOptimistic })) {
-      const precedingItems = flushHeadToTail([], delayedHistoryHead);
+      const precedingItems = flushHeadToTail(delayedHistoryTail, delayedHistoryHead);
+      delayedHistoryTail = [];
       delayedHistoryHead = [];
       const applied = acknowledgeOptimisticUserMessage({
         tail,
@@ -939,18 +941,20 @@ function applyAcceptedForwardTimelineUnits(params: {
         continue;
       }
       const applied = applyStreamEvent({
-        tail,
+        tail: delayedHistoryTail,
         head: delayedHistoryHead,
         event: unit.event,
         timestamp: unit.timestamp,
         source: "canonical",
         timelineCursor: { epoch: params.epoch, seq: unit.seqEnd },
       });
-      tail = applied.tail;
+      delayedHistoryTail = applied.tail;
       delayedHistoryHead = applied.head;
       continue;
     }
-    tail = flushHeadToTail(tail, delayedHistoryHead);
+    const precedingItems = flushHeadToTail(delayedHistoryTail, delayedHistoryHead);
+    tail = flushHeadToTail(tail, precedingItems);
+    delayedHistoryTail = [];
     delayedHistoryHead = [];
     const applied = applyCanonicalForwardUnit({ tail, head, unit, epoch: params.epoch });
     tail = applied.tail;
@@ -962,7 +966,7 @@ function applyAcceptedForwardTimelineUnits(params: {
     head,
     optimistic: optimistic.slice(optimisticIndex),
     previousHead: params.currentHead,
-    precedingItems: flushHeadToTail([], delayedHistoryHead),
+    precedingItems: flushHeadToTail(delayedHistoryTail, delayedHistoryHead),
   });
 }
 

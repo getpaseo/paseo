@@ -987,6 +987,48 @@ describe("processTimelineResponse", () => {
     ).toEqual(["Missed answer", "New prompt", "First paragraph.", "Second paragraph"]);
   });
 
+  it("keeps delayed tool history before a prompt whose live answer has promoted blocks", () => {
+    const prompt = makeOptimisticUserMessage("New prompt", "new-prompt");
+    const live = processAgentStreamEvents({
+      events: [
+        makeStreamReducerEvent(
+          makeAssistantTimelineEvent("First paragraph.\n\nSecond paragraph", "live-response"),
+          2,
+        ),
+      ],
+      currentTail: [prompt],
+      currentHead: [],
+      currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 1 },
+      currentAgent: null,
+    });
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail: live.tail,
+      currentHead: live.head,
+      currentCursor: live.cursor ?? undefined,
+      payload: {
+        ...baseTimelineInput.payload,
+        epoch: "epoch-1",
+        startCursor: { seq: 3 },
+        endCursor: { seq: 3 },
+        entries: [
+          makeToolCallTimelineEntry(3, "missed-call", "completed", {
+            type: "read",
+            filePath: "/tmp/missed.ts",
+          }),
+        ],
+      },
+    });
+
+    expect([...result.tail, ...result.head].map((item) => item.kind)).toEqual([
+      "tool_call",
+      "user_message",
+      "assistant_message",
+      "assistant_message",
+    ]);
+  });
+
   it("matches a local optimistic prompt after an unrelated remote user row", () => {
     const prompt = makeOptimisticUserMessage("Local prompt", "local-prompt");
 
