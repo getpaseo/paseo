@@ -6,6 +6,7 @@ import {
   expectMobileAgentSidebarHidden,
   expectMobileAgentSidebarVisible,
   openMobileAgentSidebar,
+  pinWorkspaceFromSidebar,
 } from "./helpers/sidebar";
 import { seedWorkspace } from "./helpers/seed-client";
 import { expectWorkspaceHeader } from "./helpers/workspace-ui";
@@ -179,12 +180,9 @@ test.describe("Mobile sidebar panelState transition", () => {
       await openMobileAgentSidebar(page);
       await expectMobileAgentSidebarVisible(page);
 
-      const workspaceKey = `${getServerId()}:${workspace.workspaceId}`;
-      const row = page.getByTestId(`sidebar-workspace-row-${workspaceKey}`);
+      const row = page.getByTestId(getWorkspaceRowTestId(workspace.workspaceId));
       await expect(row).toBeVisible({ timeout: 30_000 });
-      await row.hover();
-      await page.getByTestId(`sidebar-workspace-kebab-${workspaceKey}`).click();
-      await page.getByTestId(`sidebar-workspace-menu-pin-${workspaceKey}`).click();
+      await pinWorkspaceFromSidebar(page, workspace.workspaceId);
       await expect(page.getByTestId("sidebar-pinned-section")).toBeVisible();
 
       await closeMobileAgentSidebar(page);
