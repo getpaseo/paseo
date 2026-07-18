@@ -22,6 +22,7 @@ import { AgentStreamView, type AgentStreamViewHandle } from "@/agent-stream/view
 import { ArchivedAgentCallout } from "@/components/archived-agent-callout";
 import { FileDropZone } from "@/components/file-drop/file-drop-zone";
 import { useRetainedPanelActive } from "@/components/retained-panel";
+import { SidebarCallout } from "@/components/sidebar-callout";
 import { Composer } from "@/composer";
 import { AgentModeControl } from "@/composer/agent-controls/mode-control";
 import { RewindComposerRestoreProvider } from "@/components/rewind/composer-restore";
@@ -1033,6 +1034,7 @@ function ChatAgentContent({
     viewState.tag === "ready" &&
     viewState.sync.status === "catching_up" &&
     viewState.sync.ui === "overlay";
+  const showHistorySyncError = viewState.tag === "ready" && viewState.sync.status === "sync_error";
 
   return (
     <ChatAgentReadyContent
@@ -1052,6 +1054,7 @@ function ChatAgentContent({
       handleComposerHeightChange={handleComposerHeightChange}
       handleMessageSent={handleMessageSent}
       showHistorySyncOverlay={showHistorySyncOverlay}
+      showHistorySyncError={showHistorySyncError}
       cwd={agentCwd}
       onAttentionInputFocus={attentionController.clearOnInputFocus}
       onAttentionPromptSend={attentionController.clearOnPromptSend}
@@ -1077,6 +1080,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
   handleComposerHeightChange,
   handleMessageSent,
   showHistorySyncOverlay,
+  showHistorySyncError,
   cwd,
   onAttentionInputFocus,
   onAttentionPromptSend,
@@ -1098,6 +1102,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
   handleComposerHeightChange: (height: number) => void;
   handleMessageSent: () => void;
   showHistorySyncOverlay: boolean;
+  showHistorySyncError: boolean;
   cwd: string;
   onAttentionInputFocus: () => void;
   onAttentionPromptSend: () => void;
@@ -1168,6 +1173,14 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
       <View style={styles.root}>
         <FileDropZone style={styles.container} disabled={isArchivingCurrentAgent}>
           {contentContainer}
+
+          {showHistorySyncError ? (
+            <SidebarCallout
+              title={t("agentPanel.states.timelineSyncFailed")}
+              variant="error"
+              testID="agent-timeline-sync-error"
+            />
+          ) : null}
 
           {composerSection}
 

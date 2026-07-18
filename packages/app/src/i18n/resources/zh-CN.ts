@@ -190,6 +190,7 @@ export const zhCN: TranslationResources = {
       notFound: "未找到 Agent",
       failedToLoad: "加载 Agent 失败",
       reconnecting: "正在重连...",
+      timelineSyncFailed: "无法刷新代理历史记录。正在重试…",
       archivingTitle: "正在归档 Agent...",
       archivingSubtitle: "请稍候，我们正在归档这个 Agent。",
     },
