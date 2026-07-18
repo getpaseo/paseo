@@ -598,7 +598,11 @@ function insertBeforePreviousHead(params: {
   const tailAnchorIndex = params.tail.findIndex(matchesPreviousHead);
   if (tailAnchorIndex >= 0) {
     return {
-      tail: params.tail.toSpliced(tailAnchorIndex, 0, ...params.items),
+      tail: [
+        ...params.tail.slice(0, tailAnchorIndex),
+        ...params.items,
+        ...params.tail.slice(tailAnchorIndex),
+      ],
       head: params.head,
     };
   }
@@ -609,7 +613,11 @@ function insertBeforePreviousHead(params: {
     if (headAnchorIndex >= 0) insertionIndex = headAnchorIndex;
     return {
       tail: params.tail,
-      head: params.head.toSpliced(insertionIndex, 0, ...params.items),
+      head: [
+        ...params.head.slice(0, insertionIndex),
+        ...params.items,
+        ...params.head.slice(insertionIndex),
+      ],
     };
   }
   return { tail: [...params.tail, ...params.items], head: params.head };
