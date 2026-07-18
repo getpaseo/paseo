@@ -32,6 +32,7 @@ export const SHEET_HORIZONTAL_PADDING_SCALE = 6;
 
 export interface SheetHeaderSearch {
   onChange: (value: string) => void;
+  onSubmitEditing?: () => void;
   resetKey?: string | number;
   placeholder?: string;
   autoFocus?: boolean;
@@ -377,6 +378,7 @@ export function SheetHeaderView({
             placeholder={search.placeholder ?? t("common.actions.search")}
             resetKey={search.resetKey}
             onChangeText={handleSearchChange}
+            onSubmitEditing={search.onSubmitEditing}
             autoCapitalize="none"
             autoCorrect={false}
             autoFocus={search.autoFocus}
@@ -434,6 +436,7 @@ export function InlineHeaderView({ header }: { header: SheetHeader }) {
             placeholder={header.search.placeholder ?? t("common.actions.search")}
             resetKey={header.search.resetKey}
             onChangeText={header.search.onChange}
+            onSubmitEditing={header.search.onSubmitEditing}
             autoCapitalize="none"
             autoCorrect={false}
             autoFocus={header.search.autoFocus}

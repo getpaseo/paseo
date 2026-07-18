@@ -196,6 +196,30 @@ function sortFavoritesFirst(
   return [...favorites, ...rest];
 }
 
+// Single source of truth for the rows a view displays, in display order. The
+// Enter-to-select-first-match handler resolves its target through this same
+// function so keyboard selection can never diverge from what's on screen.
+function getDisplayRowsForView(
+  view: SelectorView,
+  providers: ProviderSelectorProvider[],
+  favoriteKeys: Set<string>,
+  normalizedQuery: string,
+): ProviderSelectionModelRow[] {
+  if (view.kind === "provider") {
+    const provider = providers.find((entry) => entry.id === view.providerId);
+    if (!provider) return [];
+    const rows = filterAndRankModelRows(getProviderModelRows(provider), normalizedQuery);
+    return normalizedQuery ? rows : sortFavoritesFirst(rows, favoriteKeys);
+  }
+  if (!normalizedQuery) {
+    return getAllProviderModelRows(providers).filter((row) => favoriteKeys.has(row.favoriteKey));
+  }
+  return sortFavoritesFirst(
+    filterAndRankModelRows(getAllProviderModelRows(providers), normalizedQuery),
+    favoriteKeys,
+  );
+}
+
 function ModelRow({
   row,
   isSelected,
@@ -416,7 +440,6 @@ function ProviderModelRows({
   favoriteKeys,
   onSelect,
   onToggleFavorite,
-  normalizedQuery,
 }: {
   rows: ProviderSelectionModelRow[];
   selectedProvider: string;
@@ -424,14 +447,9 @@ function ProviderModelRows({
   favoriteKeys: Set<string>;
   onSelect: (provider: string, modelId: string) => void;
   onToggleFavorite?: (provider: string, modelId: string) => void;
-  normalizedQuery: string;
 }) {
   const isMobile = useIsCompactFormFactor();
   const useVirtualizedList = isMobile && isNative;
-  const displayRows = useMemo(
-    () => (normalizedQuery ? rows : sortFavoritesFirst(rows, favoriteKeys)),
-    [favoriteKeys, normalizedQuery, rows],
-  );
   const renderItem = useCallback(
     ({ item }: { item: ProviderSelectionModelRow }) => (
       <SelectableModelRow
@@ -449,7 +467,7 @@ function ProviderModelRows({
   if (useVirtualizedList) {
     return (
       <BottomSheetFlatList
-        data={displayRows}
+        data={rows}
         renderItem={renderItem}
         keyExtractor={keyExtractor}
         style={styles.virtualizedModelList}
@@ -462,7 +480,7 @@ function ProviderModelRows({
 
   return (
     <View>
-      {displayRows.map((row) => (
+      {rows.map((row) => (
         <View key={row.favoriteKey}>{renderItem({ item: row })}</View>
       ))}
     </View>
@@ -519,18 +537,11 @@ function SelectorContent({
         : null,
     [providers, view],
   );
-  const visibleRows = useMemo(
-    () =>
-      selectedViewProvider
-        ? filterAndRankModelRows(getProviderModelRows(selectedViewProvider), normalizedQuery)
-        : [],
-    [normalizedQuery, selectedViewProvider],
+  const displayRows = useMemo(
+    () => getDisplayRowsForView(view, providers, favoriteKeys, normalizedQuery),
+    [favoriteKeys, normalizedQuery, providers, view],
   );
-  const favoriteRows = useMemo(
-    () => getAllProviderModelRows(providers).filter((row) => favoriteKeys.has(row.favoriteKey)),
-    [favoriteKeys, providers],
-  );
-  const hasResults = favoriteRows.length > 0 || providers.length > 0;
+  const hasResults = displayRows.length > 0 || providers.length > 0;
   const emptyState = (
     <View style={styles.emptyState}>
       <ThemedSearch size={ICON_SIZE.md} uniProps={foregroundMutedMapping} />
@@ -563,19 +574,36 @@ function SelectorContent({
         />
       );
     }
-    if (visibleRows.length === 0) {
+    if (displayRows.length === 0) {
       return emptyState;
     }
 
     return (
       <ProviderModelRows
-        rows={visibleRows}
+        rows={displayRows}
         selectedProvider={selectedProvider}
         selectedModel={selectedModel}
         favoriteKeys={favoriteKeys}
         onSelect={onSelect}
         onToggleFavorite={onToggleFavorite}
-        normalizedQuery={normalizedQuery}
+      />
+    );
+  }
+
+  // Active search in the top-level view searches across every provider's
+  // models (favorites ranked first), not just the favorites list.
+  if (normalizedQuery) {
+    if (displayRows.length === 0) {
+      return emptyState;
+    }
+    return (
+      <ProviderModelRows
+        rows={displayRows}
+        selectedProvider={selectedProvider}
+        selectedModel={selectedModel}
+        favoriteKeys={favoriteKeys}
+        onSelect={onSelect}
+        onToggleFavorite={onToggleFavorite}
       />
     );
   }
@@ -583,7 +611,7 @@ function SelectorContent({
   return (
     <View>
       <FavoritesSection
-        favoriteRows={favoriteRows}
+        favoriteRows={displayRows}
         selectedProvider={selectedProvider}
         selectedModel={selectedModel}
         favoriteKeys={favoriteKeys}
@@ -626,6 +654,10 @@ export function CombinedModelSelector({
   const [view, setView] = useState<SelectorView>({ kind: "all" });
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResetKey, bumpSearchResetKey] = useReducer((key: number) => key + 1, 0);
+  // Mirror of searchQuery so the Enter handler (embedded in the memoized sheet
+  // header) doesn't have to depend on the query and rebuild the header per
+  // keystroke.
+  const searchQueryRef = useRef("");
 
   // Single-provider mode: only one provider → skip Level 1 entirely
   const singleProviderView = useMemo<SelectorView | null>(() => {
@@ -656,6 +688,7 @@ export function CombinedModelSelector({
         onOpen?.();
       } else {
         setSearchQuery("");
+        searchQueryRef.current = "";
         bumpSearchResetKey();
         onClose?.();
       }
@@ -668,6 +701,7 @@ export function CombinedModelSelector({
       onSelect(provider, modelId);
       setIsOpen(false);
       setSearchQuery("");
+      searchQueryRef.current = "";
       bumpSearchResetKey();
     },
     [onSelect],
@@ -760,6 +794,7 @@ export function CombinedModelSelector({
   const handleBackToAll = useCallback(() => {
     setView({ kind: "all" });
     setSearchQuery("");
+    searchQueryRef.current = "";
     bumpSearchResetKey();
   }, []);
 
@@ -768,8 +803,18 @@ export function CombinedModelSelector({
   }, []);
 
   const handleSearchQueryChange = useCallback((value: string) => {
+    searchQueryRef.current = value;
     setSearchQuery(value);
   }, []);
+
+  const handleSearchSubmit = useCallback(() => {
+    const normalized = normalizeSearchQuery(searchQueryRef.current);
+    if (!normalized) return;
+    const [firstMatch] = getDisplayRowsForView(view, providers, favoriteKeys, normalized);
+    if (firstMatch) {
+      handleSelect(firstMatch.provider, firstMatch.modelId);
+    }
+  }, [favoriteKeys, handleSelect, providers, view]);
 
   const openProviderSettings = useCallback(() => {
     if (!serverId || view.kind !== "provider") return;
@@ -778,7 +823,17 @@ export function CombinedModelSelector({
 
   const sheetHeader = useMemo<SheetHeader>(() => {
     if (view.kind === "all") {
-      return { title: t("modelSelector.title") };
+      return {
+        title: t("modelSelector.title"),
+        search: {
+          onChange: handleSearchQueryChange,
+          onSubmitEditing: handleSearchSubmit,
+          resetKey: `all:${searchResetKey}`,
+          placeholder: t("modelSelector.searchPlaceholder"),
+          autoFocus: platformIsWeb,
+          testID: "model-search-input",
+        },
+      };
     }
     const headerActions = (
       <Pressable
@@ -802,6 +857,7 @@ export function CombinedModelSelector({
       actions: headerActions,
       search: {
         onChange: handleSearchQueryChange,
+        onSubmitEditing: handleSearchSubmit,
         resetKey: `${view.providerId}:${searchResetKey}`,
         placeholder: t("modelSelector.searchPlaceholder"),
         autoFocus: platformIsWeb,
@@ -815,6 +871,7 @@ export function CombinedModelSelector({
     openProviderSettings,
     handleBackToAll,
     handleSearchQueryChange,
+    handleSearchSubmit,
     searchResetKey,
     t,
   ]);
@@ -873,7 +930,9 @@ export function CombinedModelSelector({
         desktopMinWidth={desktopMinWidth}
         desktopFixedHeight={desktopFixedHeight}
         header={sheetHeader}
-        mobileChildrenScrollEnabled={view.kind !== "provider" || !isNative}
+        mobileChildrenScrollEnabled={
+          !isNative || (view.kind !== "provider" && normalizeSearchQuery(searchQuery).length === 0)
+        }
       >
         {isContentReady ? (
           <SelectorContent
