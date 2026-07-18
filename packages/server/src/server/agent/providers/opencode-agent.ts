@@ -3114,8 +3114,13 @@ class OpenCodeAgentSession implements AgentSession {
       );
     }
     return response.data.map((file) => {
+      if (!file.file) {
+        throw new Error(
+          `OpenCode session ${this.sessionId} returned a diff entry with no file path: ${JSON.stringify(file)}`,
+        );
+      }
       const changed: SessionChangedFile = {
-        path: file.file ?? "",
+        path: file.file,
         additions: file.additions,
         deletions: file.deletions,
       };

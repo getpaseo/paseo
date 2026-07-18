@@ -7,7 +7,11 @@ import pino from "pino";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createMessageCollector } from "../test-utils/message-collector.js";
-import { canRunRealProvider, createRealProviderClients } from "./real-provider-test-config.js";
+import {
+  canRunRealProvider,
+  createRealProviderClients,
+  getRealProviderConfig,
+} from "./real-provider-test-config.js";
 
 function tmpCwd(): string {
   return mkdtempSync(path.join(tmpdir(), "daemon-real-opencode-remember-"));
@@ -60,12 +64,13 @@ describe("daemon E2E (real opencode) - permission remember", () => {
     const collector = createMessageCollector(client);
 
     try {
+      const opencodeConfig = getRealProviderConfig("opencode");
       const agent = await client.createAgent({
         provider: "opencode",
         cwd,
         title: "OpenCode permission remember",
-        model: "opencode/big-pickle",
-        modeId: "build",
+        model: opencodeConfig.model,
+        modeId: opencodeConfig.modeId,
       });
 
       // First turn: ask it to read the file via bash `cat`. Bash is "ask", so we
