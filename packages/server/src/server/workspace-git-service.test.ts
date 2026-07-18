@@ -603,6 +603,161 @@ describe("WorkspaceGitServiceImpl", () => {
     service.dispose();
   });
 
+  test("shared common-dir ref watchers refresh every registered worktree and avoid watcher storms", async () => {
+    const commonDir = join(REPO_CWD, ".git");
+    const worktreeA = join(REPO_CWD, "worktrees", "feature-a");
+    const worktreeB = join(REPO_CWD, "worktrees", "feature-b");
+    const gitDirA = join(commonDir, "worktrees", "feature-a");
+    const gitDirB = join(commonDir, "worktrees", "feature-b");
+
+    const watchCallbacks = new Map<string, Array<() => void>>();
+    const watch = vi.fn(
+      (watchPath: string, _options: { recursive: boolean }, callback: () => void) => {
+        const list = watchCallbacks.get(watchPath) ?? [];
+        list.push(callback);
+        watchCallbacks.set(watchPath, list);
+        return createWatcher();
+      },
+    );
+
+    let relationState: "ahead" | "included" = "ahead";
+    const getCheckoutStatus = vi.fn(async (cwd: string) =>
+      createCheckoutStatus(cwd, {
+        currentBranch: cwd === worktreeA ? "feature-a" : "feature-b",
+        aheadOfOrigin: relationState === "ahead" ? 2 : 0,
+        originDefaultRelation: {
+          state: relationState,
+          resolvedRef: "origin/main",
+          ahead: relationState === "ahead" ? 2 : 0,
+          behind: relationState === "ahead" ? 0 : 3,
+          uniquePatchCount: relationState === "ahead" ? 2 : 0,
+        },
+      }),
+    );
+    const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) => {
+      const absoluteGitDir = cwd === worktreeA ? gitDirA : gitDirB;
+      return {
+        ...createCheckoutSnapshotFacts(cwd),
+        worktreeRoot: cwd,
+        absoluteGitDir,
+        gitCommonDir: commonDir,
+        currentBranch: cwd === worktreeA ? "feature-a" : "feature-b",
+      };
+    });
+
+    let nowMs = Date.parse("2026-04-12T00:00:00.000Z");
+    const service = createService({
+      watch,
+      getCheckoutStatus,
+      getCheckoutSnapshotFacts,
+      resolveAbsoluteGitDir: vi.fn(async (cwd: string) => (cwd === worktreeA ? gitDirA : gitDirB)),
+      now: () => new Date(nowMs),
+    });
+
+    const listenerA = vi.fn();
+    const listenerB = vi.fn();
+    const subA = service.registerWorkspace({ cwd: worktreeA }, listenerA);
+    const subB = service.registerWorkspace({ cwd: worktreeB }, listenerB);
+    await flushPromises();
+    await vi.waitFor(() => {
+      expect(watchCallbacks.has(join(commonDir, "refs", "remotes", "origin"))).toBe(true);
+      expect(watchCallbacks.has(join(commonDir, "packed-refs"))).toBe(true);
+    });
+
+    // Shared common-dir paths: exactly one watcher callback registration each.
+    expect(watchCallbacks.get(join(commonDir, "refs", "heads"))).toHaveLength(1);
+    expect(watchCallbacks.get(join(commonDir, "refs", "remotes", "origin"))).toHaveLength(1);
+    expect(watchCallbacks.get(join(commonDir, "packed-refs"))).toHaveLength(1);
+    // Per-checkout HEAD remains private to each worktree.
+    expect(watchCallbacks.get(join(gitDirA, "HEAD"))).toHaveLength(1);
+    expect(watchCallbacks.get(join(gitDirB, "HEAD"))).toHaveLength(1);
+
+    const statusCallsBeforeRemote = getCheckoutStatus.mock.calls.length;
+    relationState = "included";
+    // Burst of remote-default updates should debounce, not storm.
+    for (const callback of watchCallbacks.get(join(commonDir, "refs", "remotes", "origin")) ?? []) {
+      callback();
+      callback();
+    }
+    nowMs += 3_000;
+    await vi.advanceTimersByTimeAsync(1_000);
+    await flushPromises();
+
+    expect(getCheckoutStatus.mock.calls.length).toBeGreaterThanOrEqual(statusCallsBeforeRemote + 2);
+    const remoteRefreshCwds = getCheckoutStatus.mock.calls
+      .slice(statusCallsBeforeRemote)
+      .map((call) => call[0]);
+    expect(remoteRefreshCwds).toEqual(expect.arrayContaining([worktreeA, worktreeB]));
+    expect(listenerA).toHaveBeenCalled();
+    expect(listenerB).toHaveBeenCalled();
+    expect(listenerA.mock.calls.at(-1)?.[0].git.originDefaultRelation?.state).toBe("included");
+    expect(listenerB.mock.calls.at(-1)?.[0].git.originDefaultRelation?.state).toBe("included");
+
+    listenerA.mockClear();
+    listenerB.mockClear();
+    const statusCallsBeforePacked = getCheckoutStatus.mock.calls.length;
+    // Change relation again so fingerprint changes and listeners re-emit.
+    relationState = "ahead";
+    for (const callback of watchCallbacks.get(join(commonDir, "packed-refs")) ?? []) {
+      callback();
+    }
+    nowMs += 3_000;
+    await vi.advanceTimersByTimeAsync(1_000);
+    await flushPromises();
+
+    const packedRefreshCwds = getCheckoutStatus.mock.calls
+      .slice(statusCallsBeforePacked)
+      .map((call) => call[0]);
+    expect(packedRefreshCwds).toEqual(expect.arrayContaining([worktreeA, worktreeB]));
+    expect(listenerA).toHaveBeenCalled();
+    expect(listenerB).toHaveBeenCalled();
+    expect(listenerA.mock.calls.at(-1)?.[0].git.originDefaultRelation?.state).toBe("ahead");
+    expect(listenerB.mock.calls.at(-1)?.[0].git.originDefaultRelation?.state).toBe("ahead");
+
+    subA.unsubscribe();
+    subB.unsubscribe();
+    service.dispose();
+  });
+
+  test("common-dir watcher setup tolerates missing remotes and packed-refs paths", async () => {
+    const commonDir = join(REPO_CWD, ".git");
+    const watch = vi.fn((watchPath: string) => {
+      if (
+        watchPath === join(commonDir, "packed-refs") ||
+        watchPath === join(commonDir, "refs", "remotes", "origin")
+      ) {
+        throw new Error(`ENOENT: ${watchPath}`);
+      }
+      return createWatcher();
+    });
+    const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) => ({
+      ...createCheckoutSnapshotFacts(cwd),
+      gitCommonDir: commonDir,
+      absoluteGitDir: commonDir,
+    }));
+
+    const service = createService({
+      watch,
+      getCheckoutSnapshotFacts,
+    });
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+    await flushPromises();
+    await vi.waitFor(() => {
+      expect(watch).toHaveBeenCalled();
+    });
+
+    // Parent paths still watched so a later origin/packed-refs creation is visible.
+    expect(watch).toHaveBeenCalledWith(
+      join(commonDir, "refs", "remotes"),
+      expect.any(Object),
+      expect.any(Function),
+    );
+    expect(watch).toHaveBeenCalledWith(commonDir, expect.any(Object), expect.any(Function));
+
+    subscription.unsubscribe();
+    service.dispose();
+  });
+
   test("explicit forced snapshot refresh recomputes github state and notifies listeners", async () => {
     const getPullRequestStatus = vi
       .fn<() => Promise<PullRequestStatusResult>>()

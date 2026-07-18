@@ -3,6 +3,7 @@ import type { WorkspaceDescriptor } from "@/stores/session-store";
 import type { WorkspaceStructureProject } from "@/projects/workspace-structure";
 import {
   appendMissingOrderKeys,
+  appendSidebarRelationLabel,
   applyStoredOrdering,
   buildSidebarWorkspaceEntries,
   buildSidebarWorkspacePlacementModel,
@@ -61,6 +62,115 @@ describe("createSidebarWorkspaceEntry forge threading", () => {
       workspace: workspaceWithForge(undefined, "https://github.com/acme/repo/pull/42"),
     });
     expect(entry.prHint).toMatchObject({ number: 42, forge: "github" });
+  });
+});
+
+describe("createSidebarWorkspaceEntry originDefaultRelation labels", () => {
+  function workspaceWithRelation(
+    relation: NonNullable<WorkspaceDescriptor["gitRuntime"]>["originDefaultRelation"],
+    aheadOfOrigin: number | null = 3,
+  ): WorkspaceDescriptor {
+    return {
+      ...workspaceWithForge("github", "https://github.com/acme/repo/pull/1"),
+      gitRuntime: {
+        currentBranch: "fix/shab-grounded-recovery-safeguards",
+        isDirty: false,
+        aheadOfOrigin,
+        originDefaultRelation: relation,
+      },
+    };
+  }
+
+  it("labels exact and included as Included in origin/default rather than unpushed", () => {
+    for (const state of ["exact", "included"] as const) {
+      const entry = createSidebarWorkspaceEntry({
+        serverId: "srv",
+        workspace: workspaceWithRelation({
+          state,
+          resolvedRef: "origin/master",
+          ahead: 0,
+          behind: state === "included" ? 4 : 0,
+          uniquePatchCount: 0,
+        }),
+      });
+      expect(entry.originDefaultRelationLabel).toBe("Included in origin/master");
+      expect(entry.archiveUnpushedCommitCount).toBe(3);
+    }
+  });
+
+  it("labels patch-equivalent as not ancestral and still protected", () => {
+    const entry = createSidebarWorkspaceEntry({
+      serverId: "srv",
+      workspace: workspaceWithRelation({
+        state: "patch_equivalent_not_included",
+        resolvedRef: "origin/master",
+        ahead: 1,
+        behind: 1,
+        uniquePatchCount: 0,
+      }),
+    });
+    expect(entry.originDefaultRelationLabel).toBe(
+      "Patch-equivalent to origin/master (not ancestral; still protected)",
+    );
+  });
+
+  it("labels ahead with the unpushed count", () => {
+    const entry = createSidebarWorkspaceEntry({
+      serverId: "srv",
+      workspace: workspaceWithRelation(
+        {
+          state: "ahead",
+          resolvedRef: "origin/master",
+          ahead: 2,
+          behind: 0,
+          uniquePatchCount: 2,
+        },
+        2,
+      ),
+    });
+    expect(entry.originDefaultRelationLabel).toBe("2 unpushed commits");
+  });
+
+  it("labels unverifiable with the unpushed count when present", () => {
+    const entry = createSidebarWorkspaceEntry({
+      serverId: "srv",
+      workspace: workspaceWithRelation({
+        state: "unverifiable",
+        resolvedRef: null,
+        ahead: null,
+        behind: null,
+        uniquePatchCount: null,
+      }),
+    });
+    expect(entry.originDefaultRelationLabel).toBe("3 unpushed commits");
+  });
+
+  it("falls back to legacy unpushed labeling when relation is missing (old daemon)", () => {
+    const entry = createSidebarWorkspaceEntry({
+      serverId: "srv",
+      workspace: {
+        ...workspaceWithForge("github", "https://github.com/acme/repo/pull/1"),
+        gitRuntime: {
+          currentBranch: "feature",
+          isDirty: false,
+          aheadOfOrigin: 4,
+        },
+      },
+    });
+    expect(entry.archiveOriginDefaultRelation).toBeNull();
+    expect(entry.originDefaultRelationLabel).toBe("4 unpushed commits");
+  });
+});
+
+describe("appendSidebarRelationLabel", () => {
+  it("appends relation labels to project/host subtitles", () => {
+    expect(appendSidebarRelationLabel("paseo", "Included in origin/master")).toBe(
+      "paseo · Included in origin/master",
+    );
+    expect(appendSidebarRelationLabel(null, "Included in origin/master")).toBe(
+      "Included in origin/master",
+    );
+    expect(appendSidebarRelationLabel("paseo", null)).toBe("paseo");
   });
 });
 

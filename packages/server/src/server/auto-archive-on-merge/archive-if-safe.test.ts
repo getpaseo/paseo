@@ -35,10 +35,26 @@ function createPullRequest(
   };
 }
 
+function createIncludedRelation(
+  overrides?: Partial<NonNullable<WorkspaceGitRuntimeSnapshot["git"]["originDefaultRelation"]>>,
+): NonNullable<WorkspaceGitRuntimeSnapshot["git"]["originDefaultRelation"]> {
+  return {
+    state: "included",
+    resolvedRef: "origin/main",
+    ahead: 0,
+    behind: 1,
+    uniquePatchCount: 0,
+    ...overrides,
+  };
+}
+
 function createSnapshot(overrides?: {
   git?: Partial<WorkspaceGitRuntimeSnapshot["git"]>;
   pullRequest?: WorkspaceGitRuntimeSnapshot["forge"]["pullRequest"];
 }): WorkspaceGitRuntimeSnapshot {
+  const gitOverrides = overrides?.git;
+  const hasRelationOverride =
+    gitOverrides !== undefined && Object.hasOwn(gitOverrides, "originDefaultRelation");
   return {
     cwd: CWD,
     git: {
@@ -55,7 +71,9 @@ function createSnapshot(overrides?: {
       behindOfOrigin: 0,
       hasRemote: true,
       diffStat: { additions: 0, deletions: 0 },
-      ...overrides?.git,
+      // Default safe for auto-archive: verifiably included in origin default.
+      ...(hasRelationOverride ? {} : { originDefaultRelation: createIncludedRelation() }),
+      ...gitOverrides,
     },
     github: {
       featuresEnabled: true,
@@ -287,6 +305,7 @@ function createRealOutcomeHarness(input: {
             behindOfOrigin: 0,
             hasRemote: true,
             diffStat: { additions: 0, deletions: 0 },
+            originDefaultRelation: createIncludedRelation(),
           },
           github: {
             featuresEnabled: true,
@@ -425,10 +444,138 @@ describe("archiveIfSafe", () => {
     expect(harness.deps.archiveByScope).not.toHaveBeenCalled();
   });
 
-  test("archives when the PR is merged and the upstream branch was deleted", async () => {
+  test("does nothing when originDefaultRelation is missing (old-shape snapshot)", async () => {
+    const harness = createHarness({
+      getSnapshot: async () => createSnapshot({ git: { originDefaultRelation: undefined } }),
+    });
+
+    await runArchiveIfSafe(harness);
+
+    expect(harness.deps.archiveByScope).not.toHaveBeenCalled();
+  });
+
+  test("does nothing when HEAD is detached", async () => {
+    const harness = createHarness({
+      getSnapshot: async () => createSnapshot({ git: { currentBranch: null } }),
+    });
+
+    await runArchiveIfSafe(harness);
+
+    expect(harness.deps.archiveByScope).not.toHaveBeenCalled();
+  });
+
+  test("does nothing when relation ahead is null", async () => {
     const harness = createHarness({
       getSnapshot: async () =>
-        createSnapshot({ git: { aheadOfOrigin: null, behindOfOrigin: null } }),
+        createSnapshot({
+          git: {
+            originDefaultRelation: createIncludedRelation({ ahead: null }),
+          },
+        }),
+    });
+
+    await runArchiveIfSafe(harness);
+
+    expect(harness.deps.archiveByScope).not.toHaveBeenCalled();
+  });
+
+  test.each([
+    "ahead",
+    "patch_equivalent_not_included",
+    "diverged_with_unique_commits",
+    "unverifiable",
+  ] as const)("does nothing when originDefaultRelation state is %s", async (state) => {
+    const harness = createHarness({
+      getSnapshot: async () =>
+        createSnapshot({
+          git: {
+            originDefaultRelation: createIncludedRelation({
+              state,
+              ahead: state === "unverifiable" ? null : 1,
+              behind: state === "unverifiable" ? null : 1,
+              uniquePatchCount: state === "diverged_with_unique_commits" ? 1 : 0,
+            }),
+          },
+        }),
+    });
+
+    await runArchiveIfSafe(harness);
+
+    expect(harness.deps.archiveByScope).not.toHaveBeenCalled();
+  });
+
+  test("does nothing when uniquePatchCount indicates unique patch risk", async () => {
+    const harness = createHarness({
+      getSnapshot: async () =>
+        createSnapshot({
+          git: {
+            originDefaultRelation: createIncludedRelation({
+              state: "exact",
+              ahead: 0,
+              behind: 0,
+              uniquePatchCount: 2,
+            }),
+          },
+        }),
+    });
+
+    await runArchiveIfSafe(harness);
+
+    expect(harness.deps.archiveByScope).not.toHaveBeenCalled();
+  });
+
+  test("archives when the PR is merged, upstream deleted, and origin default includes HEAD", async () => {
+    const harness = createHarness({
+      getSnapshot: async () =>
+        createSnapshot({
+          git: {
+            aheadOfOrigin: null,
+            behindOfOrigin: null,
+            originDefaultRelation: createIncludedRelation({ state: "exact", behind: 0 }),
+          },
+        }),
+    });
+
+    await runArchiveIfSafe(harness);
+
+    expect(harness.deps.archiveByScope).toHaveBeenCalledTimes(1);
+  });
+
+  test("does not archive on merged PR alone when upstream is deleted without inclusion", async () => {
+    const harness = createHarness({
+      getSnapshot: async () =>
+        createSnapshot({
+          git: {
+            aheadOfOrigin: null,
+            behindOfOrigin: null,
+            originDefaultRelation: createIncludedRelation({
+              state: "unverifiable",
+              ahead: null,
+              behind: null,
+              uniquePatchCount: null,
+            }),
+          },
+        }),
+    });
+
+    await runArchiveIfSafe(harness);
+
+    expect(harness.deps.archiveByScope).not.toHaveBeenCalled();
+  });
+
+  test("archives when relation is exact", async () => {
+    const harness = createHarness({
+      getSnapshot: async () =>
+        createSnapshot({
+          git: {
+            originDefaultRelation: createIncludedRelation({
+              state: "exact",
+              ahead: 0,
+              behind: 0,
+              uniquePatchCount: 0,
+            }),
+          },
+        }),
     });
 
     await runArchiveIfSafe(harness);

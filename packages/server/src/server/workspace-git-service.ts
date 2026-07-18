@@ -317,6 +317,18 @@ interface RepoGitTarget {
   fetchInFlight: boolean;
 }
 
+/**
+ * Shared watchers for one git common directory. Multiple worktree checkouts share
+ * the same refs/remotes, packed-refs, and refs/heads; one watcher set fans out
+ * invalidation to every registered workspace for that common dir.
+ */
+interface CommonGitDirWatchTarget {
+  commonDir: string;
+  workspaceKeys: Set<string>;
+  watchers: FSWatcher[];
+  watchedPaths: Set<string>;
+}
+
 interface WorkingTreeWatchTarget {
   cwd: string;
   repoRoot: string | null;
@@ -377,6 +389,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   private readonly snapshotUpdatedListeners = new Set<WorkspaceGitSnapshotUpdatedListener>();
   private readonly workspaceTargets = new Map<string, WorkspaceGitTarget>();
   private readonly repoTargets = new Map<string, RepoGitTarget>();
+  private readonly commonGitDirWatchTargets = new Map<string, CommonGitDirWatchTarget>();
   private readonly workingTreeWatchTargets = new Map<string, WorkingTreeWatchTarget>();
   private readonly workingTreeWatchSetups = new Map<string, Promise<WorkingTreeWatchTarget>>();
   private readonly linuxIgnoredDirsCache = new Map<string, { ignored: Set<string>; ts: number }>();
@@ -722,6 +735,11 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     }
     this.repoTargets.clear();
 
+    for (const target of this.commonGitDirWatchTargets.values()) {
+      this.closeCommonGitDirWatchTarget(target);
+    }
+    this.commonGitDirWatchTargets.clear();
+
     for (const target of this.workingTreeWatchTargets.values()) {
       this.closeWorkingTreeWatchTarget(target);
     }
@@ -1056,28 +1074,149 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     gitDir: string,
     repoGitRoot: string,
   ): void {
-    for (const watchPath of new Set([join(gitDir, "HEAD"), join(repoGitRoot, "refs", "heads")])) {
-      let watcher: FSWatcher | null = null;
-      try {
-        watcher = this.deps.watch(watchPath, { recursive: false }, () => {
-          this.scheduleWorkspaceRefresh(target);
-        });
-      } catch (error) {
-        this.logger.warn(
-          { err: error, cwd: target.cwd, watchPath },
-          "Failed to start workspace git watcher",
-        );
-      }
+    // Per-checkout HEAD only. Shared common-dir refs (local default, origin/*,
+    // packed-refs) are watched once per common dir so sibling worktrees refresh
+    // together without duplicate watcher storms.
+    this.addWorkspacePathWatcher(target, join(gitDir, "HEAD"), () => {
+      this.scheduleWorkspaceRefresh(target);
+    });
+    this.ensureCommonGitDirWatchTarget(repoGitRoot, target.cwd);
+  }
 
-      if (!watcher) {
+  private addWorkspacePathWatcher(
+    target: WorkspaceGitTarget,
+    watchPath: string,
+    onChange: () => void,
+  ): void {
+    let watcher: FSWatcher | null = null;
+    try {
+      watcher = this.deps.watch(watchPath, { recursive: false }, onChange);
+    } catch (error) {
+      this.logger.warn(
+        { err: error, cwd: target.cwd, watchPath },
+        "Failed to start workspace git watcher",
+      );
+    }
+
+    if (!watcher) {
+      return;
+    }
+
+    watcher.on("error", (error) => {
+      this.logger.warn({ err: error, cwd: target.cwd, watchPath }, "Workspace git watcher error");
+    });
+    target.watchers.push(watcher);
+  }
+
+  /**
+   * Register this workspace under the shared common-dir watcher. Observes local
+   * default branch tips, refs/remotes/origin (including HEAD and default), and
+   * packed-refs so a main-sync or Queue publish in any sibling worktree refreshes
+   * every registered snapshot for that common dir.
+   */
+  private ensureCommonGitDirWatchTarget(commonDir: string, workspaceKey: string): void {
+    const existing = this.commonGitDirWatchTargets.get(commonDir);
+    if (existing) {
+      existing.workspaceKeys.add(workspaceKey);
+      return;
+    }
+
+    const target: CommonGitDirWatchTarget = {
+      commonDir,
+      workspaceKeys: new Set([workspaceKey]),
+      watchers: [],
+      watchedPaths: new Set(),
+    };
+    this.commonGitDirWatchTargets.set(commonDir, target);
+
+    // Prefer concrete paths when present; always also watch parent dirs so
+    // missing origin/ remotes or packed-refs still become visible once created
+    // (Queue publish, first fetch, pack-refs).
+    const watchPaths = [
+      join(commonDir, "refs", "heads"),
+      join(commonDir, "refs", "remotes"),
+      join(commonDir, "refs", "remotes", "origin"),
+      join(commonDir, "packed-refs"),
+      commonDir,
+    ];
+
+    for (const watchPath of watchPaths) {
+      this.addCommonGitDirPathWatcher(target, watchPath);
+    }
+  }
+
+  private addCommonGitDirPathWatcher(target: CommonGitDirWatchTarget, watchPath: string): void {
+    if (target.watchedPaths.has(watchPath)) {
+      return;
+    }
+
+    let watcher: FSWatcher | null = null;
+    try {
+      watcher = this.deps.watch(watchPath, { recursive: false }, () => {
+        this.scheduleRefreshForCommonGitDir(target.commonDir);
+      });
+    } catch (error) {
+      // Missing dirs/files are expected (no remotes yet, no packed-refs). Parent
+      // paths in the candidate list cover creation; do not escalate to warn spam.
+      this.logger.debug(
+        { err: error, commonDir: target.commonDir, watchPath },
+        "Common-dir git watcher path unavailable",
+      );
+    }
+
+    if (!watcher) {
+      return;
+    }
+
+    watcher.on("error", (error) => {
+      this.logger.warn(
+        { err: error, commonDir: target.commonDir, watchPath },
+        "Common-dir git watcher error",
+      );
+    });
+    target.watchers.push(watcher);
+    target.watchedPaths.add(watchPath);
+  }
+
+  private scheduleRefreshForCommonGitDir(commonDir: string): void {
+    const commonTarget = this.commonGitDirWatchTargets.get(commonDir);
+    if (!commonTarget) {
+      return;
+    }
+
+    for (const workspaceKey of commonTarget.workspaceKeys) {
+      const workspaceTarget = this.workspaceTargets.get(workspaceKey);
+      if (!workspaceTarget || workspaceTarget.closed) {
         continue;
       }
-
-      watcher.on("error", (error) => {
-        this.logger.warn({ err: error, cwd: target.cwd, watchPath }, "Workspace git watcher error");
+      this.scheduleWorkspaceRefresh(workspaceTarget, {
+        force: false,
+        includeForge: false,
+        reason: "common-dir-refs",
       });
-      target.watchers.push(watcher);
     }
+  }
+
+  private releaseCommonGitDirWatchMembership(commonDir: string, workspaceKey: string): void {
+    const target = this.commonGitDirWatchTargets.get(commonDir);
+    if (!target) {
+      return;
+    }
+    target.workspaceKeys.delete(workspaceKey);
+    if (target.workspaceKeys.size > 0) {
+      return;
+    }
+    this.closeCommonGitDirWatchTarget(target);
+    this.commonGitDirWatchTargets.delete(commonDir);
+  }
+
+  private closeCommonGitDirWatchTarget(target: CommonGitDirWatchTarget): void {
+    for (const watcher of target.watchers) {
+      watcher.close();
+    }
+    target.watchers = [];
+    target.watchedPaths.clear();
+    target.workspaceKeys.clear();
   }
 
   private async ensureRepoTarget(workspaceTarget: WorkspaceGitTarget): Promise<void> {
@@ -1951,6 +2090,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         this.closeRepoTarget(repoTarget);
         this.repoTargets.delete(target.repoGitRoot);
       }
+      this.releaseCommonGitDirWatchMembership(target.repoGitRoot, target.cwd);
     }
 
     this.closeWorkspaceTarget(target);

@@ -4142,8 +4142,9 @@ export function commandMayHaveChangedExternalState(command: string): boolean {
     // Pushes to remote — local refs unchanged, but remote state (PR checks,
     // mergeable status) may shift immediately after.
     /\bgit\s+push\b/.test(normalized) ||
-    // Fetches update refs/remotes/ which our watchers do not watch, so
-    // ahead/behind counts can drift stale until the next refresh.
+    // Fetches update refs/remotes (and often packed-refs). WorkspaceGitService
+    // watches common-dir remotes/packed-refs, but command-driven refresh still
+    // catches forge-side drift that file watchers alone may miss.
     /\bgit\s+fetch\b/.test(normalized)
   );
 }

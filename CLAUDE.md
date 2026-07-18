@@ -53,6 +53,7 @@ At the start of non-trivial work, list `docs/` and skim anything relevant to the
 | [docs/docker.md](docs/docker.md)                                   | Running the daemon and bundled web UI in Docker, volumes, agent images, security                                               |
 | [docs/release.md](docs/release.md)                                 | Release playbook, draft releases, completion checklist                                                                         |
 | [docs/terminal-activity.md](docs/terminal-activity.md)             | Terminal activity indicators — source-agnostic tracker, agent hook reporting, adding a new hook provider                       |
+| [docs/origin-default-relation.md](docs/origin-default-relation.md) | HEAD vs origin default: ancestry vs patch equivalence, fail-closed auto-archive, common-dir ref refresh                        |
 | [SECURITY.md](SECURITY.md)                                         | Relay threat model, E2E encryption, DNS rebinding, agent auth                                                                  |
 
 ## Quick start

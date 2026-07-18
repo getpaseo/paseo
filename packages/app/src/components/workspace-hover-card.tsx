@@ -306,6 +306,15 @@ function WorkspaceHoverCardContent({
               testID="hover-card-workspace-cwd"
             />
           ) : null}
+          {workspace.originDefaultRelationLabel ? (
+            <Text
+              style={styles.relationLabel}
+              numberOfLines={2}
+              testID="hover-card-origin-default-relation"
+            >
+              {workspace.originDefaultRelationLabel}
+            </Text>
+          ) : null}
           {prHint || workspace.diffStat ? (
             <View style={styles.cardMetaRow}>
               {workspace.diffStat ? (
@@ -594,6 +603,13 @@ const styles = StyleSheet.create((theme) => ({
     fontWeight: theme.fontWeight.normal,
     flex: 1,
     minWidth: 0,
+  },
+  relationLabel: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.normal,
+    paddingHorizontal: theme.spacing[3],
+    paddingBottom: theme.spacing[2],
   },
   cardMetaRow: {
     flexDirection: "row",

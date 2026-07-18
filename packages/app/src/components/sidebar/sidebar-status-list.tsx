@@ -6,6 +6,7 @@ import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store"
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { type SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import type { StatusGroup } from "@/hooks/sidebar-status-view-model";
+import { appendSidebarRelationLabel } from "@/hooks/sidebar-workspaces-view-model";
 import { isWeb as platformIsWeb, isNative as platformIsNative } from "@/constants/platform";
 import { StyleSheet } from "react-native-unistyles";
 import type { Theme } from "@/styles/theme";
@@ -111,6 +112,7 @@ export function SidebarStatusWorkspaceList({
                     hostLabel: showHostLabels
                       ? (hostLabelByServerId.get(workspace.serverId) ?? workspace.serverId)
                       : null,
+                    originDefaultRelationLabel: workspace.originDefaultRelationLabel,
                   })}
                   shortcutNumber={statusShortcutIndex.get(workspace.workspaceKey) ?? null}
                   showShortcutBadge={showShortcutBadges}
@@ -205,6 +207,7 @@ function StatusGroupList({
                     hostLabel: showHostLabels
                       ? (hostLabelByServerId.get(workspace.serverId) ?? workspace.serverId)
                       : null,
+                    originDefaultRelationLabel: workspace.originDefaultRelationLabel,
                   })}
                   shortcutNumber={shortcutIndex.get(workspace.workspaceKey) ?? null}
                   showShortcutBadge={showShortcutBadges}
@@ -222,19 +225,26 @@ function StatusGroupList({
 }
 
 // Status mode breaks the project grouping, so the row needs the project name to stay
-// legible; the host is appended after a middle dot once labels are active.
+// legible; the host is appended after a middle dot once labels are active. When the
+// branch is already on origin default (or still has unique work), surface that relation
+// instead of a misleading unpushed count.
 function buildStatusRowSubtitle({
   projectName,
   hostLabel,
+  originDefaultRelationLabel,
 }: {
   projectName: string;
   hostLabel: string | null;
+  originDefaultRelationLabel?: string | null;
 }): string {
-  if (!hostLabel) {
-    return projectName;
+  let base = projectName;
+  if (hostLabel) {
+    base = projectName ? `${projectName} · ${hostLabel}` : hostLabel;
   }
-  return projectName ? `${projectName} · ${hostLabel}` : hostLabel;
+  return appendSidebarRelationLabel(base, originDefaultRelationLabel) ?? "";
 }
+
+export { buildStatusRowSubtitle as buildStatusRowSubtitleForTests };
 
 function StatusGroupHeader({ group, collapsed }: { group: StatusGroup; collapsed: boolean }) {
   const [isHovered, setIsHovered] = useState(false);

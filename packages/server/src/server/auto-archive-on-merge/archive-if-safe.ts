@@ -48,6 +48,39 @@ const defaultDependencies: ArchiveIfSafeDependencies = {
   killTerminalsForWorkspace,
 };
 
+/**
+ * Fail-closed snapshot gates for auto-archive. Inclusion (exact/included) is
+ * evidence for safety only after the explicit autoArchiveAfterMerge setting —
+ * never initiates archive by itself. See docs/origin-default-relation.md.
+ */
+export function isSnapshotSafeForAutoArchive(snapshot: WorkspaceGitRuntimeSnapshot): boolean {
+  if (snapshot.git.isDirty === true) {
+    return false;
+  }
+  // Detached / ambiguous HEAD is not a named worktree tip we will auto-delete.
+  if (!snapshot.git.currentBranch) {
+    return false;
+  }
+  const relation = snapshot.git.originDefaultRelation;
+  if (!relation) {
+    return false;
+  }
+  if (relation.state !== "exact" && relation.state !== "included") {
+    return false;
+  }
+  if (relation.ahead === null) {
+    return false;
+  }
+  if (typeof relation.uniquePatchCount === "number" && relation.uniquePatchCount > 0) {
+    return false;
+  }
+  // Legacy push risk: still refuse when the branch is ahead of its upstream.
+  if (typeof snapshot.git.aheadOfOrigin === "number" && snapshot.git.aheadOfOrigin > 0) {
+    return false;
+  }
+  return true;
+}
+
 export async function archiveIfSafe(input: {
   cwd: string;
   pullRequest: WorkspaceGitRuntimeSnapshot["forge"]["pullRequest"];
@@ -80,14 +113,7 @@ export async function archiveIfSafe(input: {
       log.warn({ err: error, cwd }, "Failed to read snapshot for auto-archive; skipping");
       return;
     }
-    if (!snapshot) {
-      return;
-    }
-
-    if (snapshot.git.isDirty === true) {
-      return;
-    }
-    if (typeof snapshot.git.aheadOfOrigin === "number" && snapshot.git.aheadOfOrigin > 0) {
+    if (!snapshot || !isSnapshotSafeForAutoArchive(snapshot)) {
       return;
     }
 

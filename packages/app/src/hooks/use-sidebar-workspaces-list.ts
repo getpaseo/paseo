@@ -19,6 +19,7 @@ import {
 
 export {
   appendMissingOrderKeys,
+  appendSidebarRelationLabel,
   applyStoredOrdering,
   buildSidebarProjectsFromHostProjects,
   buildSidebarProjectsFromStructure,

@@ -34,6 +34,7 @@ function workspace(projectKey: string, workspaceId: string): SidebarWorkspaceEnt
     archiveHasUncommittedChanges: null,
     archiveUnpushedCommitCount: null,
     archiveOriginDefaultRelation: null,
+    originDefaultRelationLabel: null,
     scripts: [],
     hasRunningScripts: false,
   };

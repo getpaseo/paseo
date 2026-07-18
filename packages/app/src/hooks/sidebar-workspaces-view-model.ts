@@ -1,4 +1,7 @@
-import type { OriginDefaultRelation } from "@/git/worktree-archive-warning";
+import {
+  formatOriginDefaultRelationLabel,
+  type OriginDefaultRelation,
+} from "@/git/worktree-archive-warning";
 import type { PrHint } from "@/git/pr-hint";
 import { selectPrHintFromStatus } from "@/git/pr-hint";
 import { type HostProjectListItem } from "@/projects/host-project-model";
@@ -47,6 +50,11 @@ export interface SidebarWorkspaceEntry extends SidebarStatusWorkspacePlacement {
   archiveHasUncommittedChanges: boolean | null;
   archiveUnpushedCommitCount: number | null;
   archiveOriginDefaultRelation: OriginDefaultRelation | null;
+  /**
+   * Concise origin-default relation label for sidebar/hover completion UX.
+   * Prefer inclusion over a stale unpushed count when HEAD is already on origin default.
+   */
+  originDefaultRelationLabel: string | null;
   scripts: WorkspaceDescriptor["scripts"];
   hasRunningScripts: boolean;
 }
@@ -140,6 +148,22 @@ function normalizeCurrentBranch(currentBranch: string | null | undefined): strin
   return trimmed.length === 0 || trimmed === "HEAD" ? null : trimmed;
 }
 
+/** Append a concise origin-default relation label to a sidebar subtitle line. */
+export function appendSidebarRelationLabel(
+  base: string | null | undefined,
+  relationLabel: string | null | undefined,
+): string | null {
+  const baseTrimmed = base?.trim() ?? "";
+  const relation = relationLabel?.trim() ?? "";
+  if (!relation) {
+    return baseTrimmed.length > 0 ? baseTrimmed : null;
+  }
+  if (!baseTrimmed) {
+    return relation;
+  }
+  return `${baseTrimmed} · ${relation}`;
+}
+
 export function createSidebarWorkspaceEntry(input: {
   serverId: string;
   workspace: WorkspaceDescriptor;
@@ -148,6 +172,8 @@ export function createSidebarWorkspaceEntry(input: {
 }): SidebarWorkspaceEntry {
   const projectKey = input.workspace.project?.projectKey ?? input.workspace.projectId;
   const effectiveStatus = deriveEffectiveWorkspaceStatus(input);
+  const archiveUnpushedCommitCount = input.workspace.gitRuntime?.aheadOfOrigin ?? null;
+  const archiveOriginDefaultRelation = input.workspace.gitRuntime?.originDefaultRelation ?? null;
   return {
     workspaceKey: `${input.serverId}:${input.workspace.id}`,
     serverId: input.serverId,
@@ -171,8 +197,13 @@ export function createSidebarWorkspaceEntry(input: {
       input.workspace.forge,
     ),
     archiveHasUncommittedChanges: input.workspace.gitRuntime?.isDirty ?? null,
-    archiveUnpushedCommitCount: input.workspace.gitRuntime?.aheadOfOrigin ?? null,
-    archiveOriginDefaultRelation: input.workspace.gitRuntime?.originDefaultRelation ?? null,
+    archiveUnpushedCommitCount,
+    archiveOriginDefaultRelation,
+    originDefaultRelationLabel: formatOriginDefaultRelationLabel(
+      archiveOriginDefaultRelation,
+      undefined,
+      archiveUnpushedCommitCount,
+    ),
     scripts: input.workspace.scripts,
     hasRunningScripts: input.workspace.scripts.some((script) => script.lifecycle === "running"),
   };

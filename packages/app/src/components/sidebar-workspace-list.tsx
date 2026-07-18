@@ -64,6 +64,7 @@ import {
   parseHostWorkspaceRouteFromPathname,
 } from "@/utils/host-routes";
 import {
+  appendSidebarRelationLabel,
   shouldShowSidebarHostLabels,
   type SidebarProjectEntry,
   type SidebarWorkspaceEntry,
@@ -1657,13 +1658,15 @@ function ProjectBlock({
         dragHandleProps?: DraggableListDragHandleProps;
       },
     ) => {
+      const workspaceEntry = workspaceEntriesByKey.get(item.workspaceKey) ?? null;
       return (
         <MemoWorkspaceRowItem
           workspace={item}
-          workspaceEntry={workspaceEntriesByKey.get(item.workspaceKey) ?? null}
-          subtitle={
-            showHostLabels ? (hostLabelByServerId.get(item.serverId) ?? item.serverId) : null
-          }
+          workspaceEntry={workspaceEntry}
+          subtitle={appendSidebarRelationLabel(
+            showHostLabels ? (hostLabelByServerId.get(item.serverId) ?? item.serverId) : null,
+            workspaceEntry?.originDefaultRelationLabel,
+          )}
           shortcutNumber={shortcutIndexByWorkspaceKey.get(item.workspaceKey) ?? null}
           showShortcutBadge={showShortcutBadges}
           canCopyBranchName={project.projectKind === "git"}
@@ -2292,12 +2295,19 @@ function ProjectModeList({
       const hostLabel = showHostLabels
         ? (hostLabelByServerId.get(workspace.serverId) ?? workspace.serverId)
         : null;
+      const workspaceEntry = workspaceEntriesByKey.get(workspace.workspaceKey) ?? null;
+      const projectSubtitle = hostLabel
+        ? `${workspace.projectName} · ${hostLabel}`
+        : workspace.projectName;
       return (
         <MemoWorkspaceRowItem
           key={workspace.workspaceKey}
           workspace={workspace}
-          workspaceEntry={workspaceEntriesByKey.get(workspace.workspaceKey) ?? null}
-          subtitle={hostLabel ? `${workspace.projectName} · ${hostLabel}` : workspace.projectName}
+          workspaceEntry={workspaceEntry}
+          subtitle={appendSidebarRelationLabel(
+            projectSubtitle,
+            workspaceEntry?.originDefaultRelationLabel,
+          )}
           shortcutNumber={shortcutIndexByWorkspaceKey.get(workspace.workspaceKey) ?? null}
           showShortcutBadge={showShortcutBadges}
           canCopyBranchName={workspace.projectKind === "git"}
