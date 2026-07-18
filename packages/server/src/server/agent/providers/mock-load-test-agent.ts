@@ -156,6 +156,10 @@ function shouldEmitTurnFailure(prompt: AgentPromptInput): boolean {
   return /emit\s+(?:a\s+)?synthetic\s+turn\s+failure/i.test(promptToText(prompt));
 }
 
+function shouldEmitDeterministicToolSequence(prompt: AgentPromptInput): boolean {
+  return /deterministic\s+mock\s+tool\s+sequence/i.test(promptToText(prompt));
+}
+
 function parseMockQuestionPrompt(prompt: AgentPromptInput): MockQuestionPromptRequest | null {
   const text = promptToText(prompt);
   if (!/emit\s+(?:a\s+)?synthetic\s+questions?/i.test(text)) {
@@ -658,6 +662,8 @@ export class MockLoadTestAgentSession implements AgentSession {
     const structuredBranchName = parseStructuredBranchNamePrompt(prompt);
     if (shouldEmitTurnFailure(prompt)) {
       this.scheduleFailedTurn(turn);
+    } else if (shouldEmitDeterministicToolSequence(prompt)) {
+      this.scheduleDeterministicToolSequenceTurn(turn);
     } else if (structuredBranchName) {
       this.scheduleStructuredJsonTurn(turn, structuredBranchName);
     } else if (shouldEmitPlanApprovalPrompt(prompt)) {
@@ -848,6 +854,93 @@ export class MockLoadTestAgentSession implements AgentSession {
       });
     }, 0);
     turn.timer.unref?.();
+  }
+
+  private scheduleDeterministicToolSequenceTurn(turn: ActiveTurn): void {
+    turn.timer = setTimeout(() => {
+      this.emitDeterministicToolSequenceTurn(turn);
+    }, 0);
+    turn.timer.unref?.();
+  }
+
+  // A short, fully deterministic turn for the timeline-search e2e: one completed
+  // read followed by one completed shell call, then immediate completion. Unlike
+  // the generic cycle stream this emits a BOUNDED number of tool calls, so the
+  // suite's exact "2 matches" assertion holds and the tool badges land in a
+  // short, un-virtualized timeline that awaitToolCall can see.
+  private emitDeterministicToolSequenceTurn(turn: ActiveTurn): void {
+    if (this.activeTurn !== turn) {
+      return;
+    }
+
+    this.clearTurnTimer(turn);
+    this.emit({
+      type: "turn_started",
+      provider: this.provider,
+      turnId: turn.turnId,
+    });
+
+    // A read above the shell call gives the search vertical content to scroll
+    // past and proves the "toolOutput" filter scopes to shell output only — this
+    // read content deliberately contains none of the query text.
+    this.emitTimeline(
+      turn.turnId,
+      createToolCall({
+        callId: `${turn.turnId}:read:deterministic`,
+        name: "read",
+        status: "completed",
+        detail: {
+          type: "read",
+          filePath: "packages/app/src/components/conversation-list.tsx",
+          content:
+            "export function ConversationList() {\n  const ref = useRef<FlatList>(null);\n  // ...\n}",
+        },
+      }),
+    );
+
+    // Exactly two "userIsAtBottom" occurrences, both inside this single shell
+    // output: the e2e asserts "2 matches" under the toolOutput filter and steps
+    // between two occurrences WITHIN THE SAME tool item. The command starts with
+    // "bash" so the rendered badge summary is matchable by awaitToolCall(page,
+    // "bash") — the shell detail's canonical display name is "Shell", not the
+    // tool name.
+    this.emitTimeline(
+      turn.turnId,
+      createToolCall({
+        callId: `${turn.turnId}:bash:deterministic`,
+        name: "bash",
+        status: "completed",
+        detail: {
+          type: "shell",
+          command: "bash scripts/simulate-stream-burst.sh",
+          cwd: "/tmp/paseo-mock-load",
+          output:
+            "[burst] tick 1 userIsAtBottom=true\n[burst] tick 2 userIsAtBottom=true\n[burst] drag-start isDragging=true\n[burst] tick 3 suppressed\n[burst] drag-end isDragging=false\n",
+          exitCode: 0,
+        },
+      }),
+    );
+
+    this.activeTurn = null;
+    const usage = {
+      inputTokens: 1,
+      outputTokens: 8,
+      contextWindowUsedTokens: 8,
+      contextWindowMaxTokens: 128_000,
+    };
+    this.emit({
+      type: "turn_completed",
+      provider: this.provider,
+      turnId: turn.turnId,
+      usage,
+    });
+    turn.resolve({
+      sessionId: this.id,
+      finalText: "Synthetic deterministic tool sequence complete",
+      usage,
+      timeline: [],
+      canceled: false,
+    });
   }
 
   private scheduleStressTurn(turn: ActiveTurn, stress: AgentStreamStressRequest): void {
