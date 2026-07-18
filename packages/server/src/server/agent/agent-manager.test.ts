@@ -111,10 +111,14 @@ function expectArchivedAgentRecord(
 }
 
 class TestAgentClient implements AgentClient {
-  readonly provider = "codex" as const;
+  readonly provider: AgentProvider;
   readonly capabilities = TEST_CAPABILITIES;
   readonly createdConfigs: AgentSessionConfig[] = [];
   readonly resumeOverrides: Array<Partial<AgentSessionConfig> | undefined> = [];
+
+  constructor(provider: AgentProvider = "codex") {
+    this.provider = provider;
+  }
 
   async isAvailable(): Promise<boolean> {
     return true;
@@ -129,18 +133,18 @@ class TestAgentClient implements AgentClient {
     return {
       models: [
         {
-          provider: "codex",
+          provider: this.provider,
           id: "gpt-5.4",
           label: "GPT-5.4",
           isDefault: true,
         },
         {
-          provider: "codex",
+          provider: this.provider,
           id: "gpt-5.4-mini",
           label: "GPT-5.4 Mini",
         },
         {
-          provider: "codex",
+          provider: this.provider,
           id: "gpt-5.2-codex",
           label: "GPT-5.2 Codex",
         },
@@ -156,7 +160,7 @@ class TestAgentClient implements AgentClient {
   ): Promise<AgentSession> {
     this.resumeOverrides.push(config);
     return new TestAgentSession({
-      provider: "codex",
+      provider: this.provider,
       cwd: config?.cwd ?? process.cwd(),
       daemonAppendSystemPrompt: config?.daemonAppendSystemPrompt,
     });
@@ -936,6 +940,20 @@ test("normalizeConfig injects the provider default model when omitted", async ()
 
   expect(snapshot.config.model).toBe("gpt-5.4");
   expect(snapshot.config.modeId).toBe("auto-review");
+});
+
+test("normalizeConfig injects Claude's automatic approval default when omitted", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-claude-default-test-"));
+  const manager = new AgentManager({
+    clients: { claude: new TestAgentClient("claude") },
+    logger,
+  });
+
+  const snapshot = await manager.createAgent({ provider: "claude", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+
+  expect(snapshot.config.modeId).toBe("auto");
 });
 
 test("normalizeConfig uses a capability-aware provider mode default", async () => {
