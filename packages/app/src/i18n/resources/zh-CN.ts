@@ -1696,10 +1696,12 @@ export const zhCN: TranslationResources = {
       dialogTitle: "快捷键",
       unavailableOnMobile: "键盘快捷键仅在桌面端可用",
       capturePrompt: "按下快捷键...",
+      unbound: "未设置",
       actions: {
         done: "完成",
         cancel: "取消",
         rebind: "重新绑定",
+        unbind: "取消绑定",
         reset: "重置",
         resetAll: "全部重置",
       },

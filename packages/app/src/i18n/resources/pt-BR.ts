@@ -1747,10 +1747,12 @@ export const ptBR: TranslationResources = {
       dialogTitle: "Atalhos",
       unavailableOnMobile: "Atalhos de teclado estão disponíveis apenas no desktop",
       capturePrompt: "Pressione o atalho...",
+      unbound: "Não definido",
       actions: {
         done: "Concluído",
         cancel: "Cancelar",
         rebind: "Reatribuir",
+        unbind: "Desvincular",
         reset: "Redefinir",
         resetAll: "Redefinir tudo",
       },

@@ -136,7 +136,10 @@ function resolveActionShortcutKeys(
   const bindingId = getBindingIdForAction(actionId, platform);
   if (!bindingId) return undefined;
   const override = overrides[bindingId];
-  if (override) return chordStringToShortcutKeys(override);
+  if (override !== undefined) {
+    // An empty override means the shortcut was explicitly unbound.
+    return override === "" ? undefined : chordStringToShortcutKeys(override);
+  }
   const defaultKeys = getDefaultKeysForAction(actionId, platform);
   return defaultKeys ? [defaultKeys] : undefined;
 }

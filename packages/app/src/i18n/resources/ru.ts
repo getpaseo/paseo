@@ -1754,10 +1754,12 @@ export const ru: TranslationResources = {
       dialogTitle: "Ярлыки",
       unavailableOnMobile: "Сочетания клавиш доступны только на рабочем столе.",
       capturePrompt: "Нажмите ярлык...",
+      unbound: "Не задано",
       actions: {
         done: "Сделанный",
         cancel: "Отмена",
         rebind: "Перепривязка",
+        unbind: "Отвязать",
         reset: "Перезагрузить",
         resetAll: "Сбросить все",
       },

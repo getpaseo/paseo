@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { View, Text } from "react-native";
 import { useIsFocused } from "@react-navigation/native";
@@ -61,6 +61,7 @@ interface ShortcutRowContainerProps {
   onSaveCapture: () => void;
   onCancelCapture: () => void;
   onRemoveOverride: (bindingId: string) => void;
+  onUnbind: (bindingId: string) => void;
 }
 
 function ShortcutRowContainer({
@@ -74,6 +75,7 @@ function ShortcutRowContainer({
   onSaveCapture,
   onCancelCapture,
   onRemoveOverride,
+  onUnbind,
 }: ShortcutRowContainerProps) {
   const handleRebind = useCallback(() => {
     if (bindingId) onStartCapture(bindingId);
@@ -82,6 +84,10 @@ function ShortcutRowContainer({
   const handleReset = useCallback(() => {
     if (bindingId) onRemoveOverride(bindingId);
   }, [bindingId, onRemoveOverride]);
+
+  const handleUnbind = useCallback(() => {
+    if (bindingId) onUnbind(bindingId);
+  }, [bindingId, onUnbind]);
 
   return (
     <ShortcutRow
@@ -95,6 +101,7 @@ function ShortcutRowContainer({
       onDone={onSaveCapture}
       onCancel={onCancelCapture}
       onReset={handleReset}
+      onUnbind={handleUnbind}
     />
   );
 }
@@ -110,6 +117,7 @@ function ShortcutRow({
   onDone,
   onCancel,
   onReset,
+  onUnbind,
 }: {
   row: KeyboardShortcutHelpRow;
   bindingId: string | null;
@@ -121,23 +129,32 @@ function ShortcutRow({
   onDone: () => void;
   onCancel: () => void;
   onReset: () => void;
+  onUnbind: () => void;
 }) {
   const { t } = useTranslation();
-  const displayChord = useMemo(
-    () => (overrideCombo ? chordStringToShortcutKeys(overrideCombo) : [row.keys]),
-    [overrideCombo, row.keys],
-  );
+  const displayChord = useMemo(() => {
+    if (overrideCombo !== undefined) {
+      // An empty override means the shortcut was explicitly unbound.
+      return overrideCombo === "" ? [] : chordStringToShortcutKeys(overrideCombo);
+    }
+    return row.keys.length > 0 ? [row.keys] : [];
+  }, [overrideCombo, row.keys]);
   const rowStyle = useMemo(() => [styles.row, isCapturing && styles.rowCapturing], [isCapturing]);
+
+  let shortcutDisplay: ReactNode;
+  if (isCapturing) {
+    shortcutDisplay = <ShortcutSequence chord={capturedCombos} heldModifiers={heldModifiers} />;
+  } else if (displayChord.length > 0) {
+    shortcutDisplay = <Shortcut chord={displayChord} />;
+  } else {
+    shortcutDisplay = <Text style={styles.unboundText}>{t("settings.shortcuts.unbound")}</Text>;
+  }
 
   return (
     <View style={rowStyle}>
       <Text style={styles.rowLabel}>{t(row.labelKey)}</Text>
       <View style={styles.rowActions}>
-        {isCapturing ? (
-          <ShortcutSequence chord={capturedCombos} heldModifiers={heldModifiers} />
-        ) : (
-          <Shortcut chord={displayChord} />
-        )}
+        {shortcutDisplay}
         {bindingId !== null && (
           <>
             {isCapturing && capturedCombos.length > 0 ? (
@@ -150,6 +167,11 @@ function ShortcutRow({
                 ? t("settings.shortcuts.actions.cancel")
                 : t("settings.shortcuts.actions.rebind")}
             </Button>
+            {!isCapturing && displayChord.length > 0 ? (
+              <Button variant="ghost" size="sm" onPress={onUnbind}>
+                <Text style={styles.resetText}>{t("settings.shortcuts.actions.unbind")}</Text>
+              </Button>
+            ) : null}
           </>
         )}
         {overrideCombo !== undefined && !isCapturing && (
@@ -260,6 +282,11 @@ export function KeyboardShortcutsSection() {
     (bindingId: string) => void removeOverride(bindingId),
     [removeOverride],
   );
+  // An empty override disables the binding entirely (see buildEffectiveBindings).
+  const handleUnbind = useCallback(
+    (bindingId: string) => void setOverride(bindingId, ""),
+    [setOverride],
+  );
 
   if (isNative) {
     return (
@@ -309,6 +336,7 @@ export function KeyboardShortcutsSection() {
                       onSaveCapture={saveCapture}
                       onCancelCapture={cancelCapture}
                       onRemoveOverride={handleRemoveOverride}
+                      onUnbind={handleUnbind}
                     />
                     {index < section.rows.length - 1 && <View style={styles.separator} />}
                   </View>
@@ -344,6 +372,10 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
   },
   capturingText: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foregroundMuted,
+  },
+  unboundText: {
     fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
   },

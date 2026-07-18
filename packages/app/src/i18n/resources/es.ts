@@ -1763,10 +1763,12 @@ export const es: TranslationResources = {
       dialogTitle: "Atajos",
       unavailableOnMobile: "Los atajos de teclado solo están disponibles en el escritorio",
       capturePrompt: "Presione el acceso directo...",
+      unbound: "Sin asignar",
       actions: {
         done: "Hecho",
         cancel: "Cancelar",
         rebind: "Reencuadernar",
+        unbind: "Desasignar",
         reset: "Reiniciar",
         resetAll: "Restablecer todo",
       },
