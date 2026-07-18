@@ -1,6 +1,7 @@
 import type { Logger } from "pino";
+import type { AgentProviderModeDefinition } from "@getpaseo/protocol/provider-manifest";
 
-import type { AgentMode, AgentSessionConfig } from "../agent-sdk-types.js";
+import type { AgentSessionConfig } from "../agent-sdk-types.js";
 import {
   type ACPProviderModeWriteResult,
   type ACPProviderModeWriterContext,
@@ -23,10 +24,10 @@ const GROK_ALWAYS_APPROVE_LAUNCH_FLAGS = new Set(["--always-approve", "--yolo"])
 
 /**
  * Single source of truth for Grok session + provider-definition modes.
- * Keep icon/colorTier/isUnattended here so registry definition and runtime
- * availableModes stay aligned after ACP mode derivation.
+ * Typed as AgentProviderModeDefinition so registry.modes (required icon/colorTier)
+ * and session defaultModes stay one list.
  */
-export const GROK_MODES: AgentMode[] = [
+export const GROK_MODES: AgentProviderModeDefinition[] = [
   {
     id: GROK_ASK_MODE_ID,
     label: "Ask",
