@@ -25,6 +25,7 @@ import { isStoredAgentProviderAvailable } from "../../persistence-hooks.js";
 import {
   archiveByScope,
   killTerminalsForWorkspace,
+  requireActiveWorkspaceForArchive,
   type ArchiveDependencies,
 } from "../../workspace-archive-service.js";
 import { createAgentCommand, type CreateAgentFromMcpInput } from "../create-agent/create.js";
@@ -67,7 +68,12 @@ import {
 } from "../lifecycle-command.js";
 import type { ForgeService } from "../../../services/forge-service.js";
 import type { WorkspaceGitService } from "../../workspace-git-service.js";
-import type { PersistedWorkspaceRecord, WorkspaceRegistry } from "../../workspace-registry.js";
+import type {
+  PersistedWorkspaceRecord,
+  ProjectRegistry,
+  WorkspaceRegistry,
+} from "../../workspace-registry.js";
+import { resolveWorktreeSourceCwd } from "../../workspace-source.js";
 import {
   type ArchiveCommandDependencies,
   type CreatePaseoWorktreeCommandInput,
@@ -100,6 +106,7 @@ export interface PaseoToolHostDependencies {
   archiveWorkspaceRecord?: ArchiveDependencies["archiveWorkspaceRecord"];
   emitWorkspaceUpdatesForWorkspaceIds?: ArchiveDependencies["emitWorkspaceUpdatesForWorkspaceIds"];
   workspaceRegistry?: Pick<WorkspaceRegistry, "get" | "list" | "upsert">;
+  projectRegistry?: Pick<ProjectRegistry, "get">;
   createDirectoryWorkspace?: (
     cwd: string,
     title?: string | null,
@@ -1251,9 +1258,9 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       prNumber,
       forge,
     }) => {
-      const cwd = resolveScopedCwd(path, { required: true });
       let workspace: PersistedWorkspaceRecord;
       if (isolation === "local") {
+        const cwd = resolveScopedCwd(path, { required: true });
         assertOptionsAbsent(
           [
             ["mode", mode],
@@ -1271,6 +1278,14 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         }
         workspace = await options.createDirectoryWorkspace(cwd, title, projectId);
       } else {
+        let cwd =
+          path !== undefined || !projectId ? resolveScopedCwd(path, { required: true }) : null;
+        if (!cwd) {
+          if (!options.projectRegistry) {
+            throw new Error("Project registry is not configured");
+          }
+          cwd = await resolveWorktreeSourceCwd({ projectId }, options.projectRegistry);
+        }
         const worktreeTarget = resolveWorkspaceWorktreeTarget({
           mode,
           worktreeSlug,
@@ -1342,6 +1357,13 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       },
     },
     async ({ workspaceId }) => {
+      if (!options.listActiveWorkspaces) {
+        throw new Error("Active workspace lister is required to archive workspaces");
+      }
+      const workspace = await requireActiveWorkspaceForArchive(
+        { listActiveWorkspaces: options.listActiveWorkspaces },
+        workspaceId,
+      );
       const result = await archiveByScope(
         archiveWorktreeDependencies(options, {
           agentManager,
@@ -1351,7 +1373,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         }),
         {
           requestId: "mcp:archive_workspace",
-          scope: { kind: "workspace", workspaceId },
+          scope: { kind: "workspace", workspaceId: workspace.workspaceId },
         },
       );
       return {

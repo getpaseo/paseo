@@ -161,6 +161,7 @@ import { PushTokenStore } from "./push/token-store.js";
 import {
   archivePersistedWorkspaceRecord,
   archiveWorkspaceContents,
+  requireActiveWorkspaceForArchive,
 } from "./workspace-archive-service.js";
 import { WorkspaceReconciliationService } from "./workspace-reconciliation-service.js";
 import type { ServiceProxySubsystem } from "./service-proxy.js";
@@ -237,6 +238,7 @@ import {
 } from "./project-directory-service.js";
 import { runGitCommand } from "../utils/run-git-command.js";
 import { CreateAgentLifecycleDispatch } from "./agent/create-agent-lifecycle-dispatch.js";
+import { resolveWorktreeSourceCwd } from "./workspace-source.js";
 
 // TODO: Remove once all app store clients are on >=0.1.45 and understand arbitrary provider strings.
 // Clients before 0.1.45 validate providers with z.enum(["claude", "codex", "opencode"]) and reject
@@ -4928,10 +4930,7 @@ export class Session {
       return;
     }
 
-    const sourceCwd = await this.resolveWorktreeSourceCwd({
-      cwd: source.cwd,
-      projectId: source.projectId,
-    });
+    const sourceCwd = await resolveWorktreeSourceCwd(source, this.projectRegistry);
 
     const result = await this.createPaseoWorktreeWorkflow(
       {
@@ -4969,20 +4968,6 @@ export class Session {
       },
     });
     await this.emitCreatedWorkspaceUpdate(descriptor);
-  }
-
-  private async resolveWorktreeSourceCwd(input: {
-    cwd?: string;
-    projectId?: string;
-  }): Promise<string> {
-    if (input.cwd) {
-      return expandTilde(input.cwd);
-    }
-    const project = await this.projectRegistry.get(input.projectId as string);
-    if (!project || project.archivedAt) {
-      throw new Error(`Project not found: ${input.projectId}`);
-    }
-    return project.rootPath;
   }
 
   private async handleOpenProjectRequest(
@@ -5453,10 +5438,10 @@ export class Session {
     request: Extract<SessionInboundMessage, { type: "archive_workspace_request" }>,
   ): Promise<void> {
     try {
-      const existing = await this.workspaceRegistry.get(request.workspaceId);
-      if (!existing) {
-        throw new Error(`Workspace not found: ${request.workspaceId}`);
-      }
+      const existing = await requireActiveWorkspaceForArchive(
+        { listActiveWorkspaces: () => this.listActiveWorkspaceRefs() },
+        request.workspaceId,
+      );
 
       await archiveByScope(
         {
