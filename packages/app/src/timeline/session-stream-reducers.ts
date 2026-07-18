@@ -5,6 +5,7 @@ import { useSessionStore } from "@/stores/session-store";
 import type { AssistantMessageItem, StreamItem, UserMessageItem } from "@/types/stream";
 import {
   applyStreamEvent,
+  flushHeadToTail,
   hydrateStreamState,
   isAgentToolCallItem,
   mergeAgentToolCallItem,
@@ -784,31 +785,36 @@ function reconcileOverlappingProjectedStreamItems(params: {
   return { tail, head, reconciledUnits };
 }
 
-function stageOptimisticUserForCanonicalEvent(params: {
+function matchesOptimisticUserMessage(params: {
+  unit: TimelineUnit;
+  optimistic: DetachedOptimisticUserMessage;
+}): boolean {
+  const { event } = params.unit;
+  if (event.type !== "timeline" || event.item.type !== "user_message") {
+    return false;
+  }
+  return (
+    event.item.messageId === params.optimistic.item.id ||
+    event.item.text === params.optimistic.item.text
+  );
+}
+
+function acknowledgeOptimisticUserMessage(params: {
   tail: StreamItem[];
   head: StreamItem[];
-  event: AgentStreamEventPayload;
-  optimistic: DetachedOptimisticUserMessage | undefined;
-}): { tail: StreamItem[]; head: StreamItem[]; consumed: boolean } {
-  if (
-    params.event.type !== "timeline" ||
-    params.event.item.type !== "user_message" ||
-    !params.optimistic
-  ) {
-    return { tail: params.tail, head: params.head, consumed: false };
-  }
-  if (params.optimistic.placement === "head") {
-    return {
-      tail: params.tail,
-      head: [...params.head, params.optimistic.item],
-      consumed: true,
-    };
-  }
-  return {
-    tail: [...params.tail, params.optimistic.item],
-    head: params.head,
-    consumed: true,
-  };
+  unit: TimelineUnit;
+  epoch: string;
+  optimistic: DetachedOptimisticUserMessage;
+}): { tail: StreamItem[]; head: StreamItem[] } {
+  const { event, timestamp, seqEnd } = params.unit;
+  const timelineCursor = { epoch: params.epoch, seq: seqEnd };
+  const acknowledged = reduceStreamUpdate([params.optimistic.item], event, timestamp, {
+    source: "canonical",
+    timelineCursor,
+  });
+  return params.optimistic.placement === "head"
+    ? { tail: params.tail, head: [...params.head, ...acknowledged] }
+    : { tail: [...params.tail, ...acknowledged], head: params.head };
 }
 
 function applyCanonicalForwardUnit(params: {
@@ -816,32 +822,16 @@ function applyCanonicalForwardUnit(params: {
   head: StreamItem[];
   unit: TimelineUnit;
   epoch: string;
-  applyThroughHead: boolean;
-  optimisticPromptSeparatesHistory: boolean;
 }): { tail: StreamItem[]; head: StreamItem[] } {
   const { event, timestamp, seqEnd } = params.unit;
   const timelineCursor = { epoch: params.epoch, seq: seqEnd };
-  if (!params.applyThroughHead) {
+  if (params.head.length === 0) {
     return {
       tail: reduceStreamUpdate(params.tail, event, timestamp, {
         source: "canonical",
         timelineCursor,
       }),
       head: params.head,
-    };
-  }
-  if (
-    params.optimisticPromptSeparatesHistory &&
-    params.head.length === 0 &&
-    event.type === "timeline" &&
-    event.item.type === "assistant_message"
-  ) {
-    return {
-      tail: params.tail,
-      head: reduceStreamUpdate(params.head, event, timestamp, {
-        source: "canonical",
-        timelineCursor,
-      }),
     };
   }
   const replacedHead = replaceLiveAssistantWithProjectedText({
@@ -875,8 +865,6 @@ function applyAcceptedForwardTimelineUnits(params: {
     head: params.currentHead,
   });
   const optimistic = [...detached.optimistic];
-  const optimisticPromptSeparatesHistory = optimistic.length > 0;
-  const applyThroughHead = params.currentHead.length > 0 || optimisticPromptSeparatesHistory;
   const reconciled = reconcileOverlappingProjectedStreamItems({
     tail: detached.tail,
     head: detached.head,
@@ -886,33 +874,63 @@ function applyAcceptedForwardTimelineUnits(params: {
   });
   let tail = reconciled.tail;
   let head = reconciled.head;
-  let consumedOptimisticCount = 0;
+  let delayedHistoryHead: StreamItem[] = [];
+  let optimisticIndex = 0;
 
   for (const unit of params.units) {
     if (reconciled.reconciledUnits.has(unit)) continue;
-    const staged = stageOptimisticUserForCanonicalEvent({
-      tail,
-      head,
-      event: unit.event,
-      optimistic: optimistic[consumedOptimisticCount],
-    });
-    if (staged.consumed) consumedOptimisticCount += 1;
-    const applied = applyCanonicalForwardUnit({
-      tail: staged.tail,
-      head: staged.head,
-      unit,
-      epoch: params.epoch,
-      applyThroughHead,
-      optimisticPromptSeparatesHistory,
-    });
+    const nextOptimistic = optimistic[optimisticIndex];
+    if (nextOptimistic && matchesOptimisticUserMessage({ unit, optimistic: nextOptimistic })) {
+      tail = flushHeadToTail(tail, delayedHistoryHead);
+      delayedHistoryHead = [];
+      const applied = acknowledgeOptimisticUserMessage({
+        tail,
+        head,
+        unit,
+        epoch: params.epoch,
+        optimistic: nextOptimistic,
+      });
+      tail = applied.tail;
+      head = applied.head;
+      optimisticIndex += 1;
+      continue;
+    }
+    if (nextOptimistic) {
+      if (
+        unit.event.type === "timeline" &&
+        (unit.event.item.type === "assistant_message" || unit.event.item.type === "reasoning")
+      ) {
+        delayedHistoryHead = reduceStreamUpdate(delayedHistoryHead, unit.event, unit.timestamp, {
+          source: "canonical",
+          timelineCursor: { epoch: params.epoch, seq: unit.seqEnd },
+        });
+        continue;
+      }
+      const applied = applyStreamEvent({
+        tail,
+        head: delayedHistoryHead,
+        event: unit.event,
+        timestamp: unit.timestamp,
+        source: "canonical",
+        timelineCursor: { epoch: params.epoch, seq: unit.seqEnd },
+      });
+      tail = applied.tail;
+      delayedHistoryHead = applied.head;
+      continue;
+    }
+    tail = flushHeadToTail(tail, delayedHistoryHead);
+    delayedHistoryHead = [];
+    const applied = applyCanonicalForwardUnit({ tail, head, unit, epoch: params.epoch });
     tail = applied.tail;
     head = applied.head;
   }
 
+  tail = flushHeadToTail(tail, delayedHistoryHead);
+
   return restoreOptimisticUserMessages({
     tail,
     head,
-    optimistic: optimistic.slice(consumedOptimisticCount),
+    optimistic: optimistic.slice(optimisticIndex),
     previousHead: params.currentHead,
   });
 }

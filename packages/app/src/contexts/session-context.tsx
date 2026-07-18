@@ -734,26 +734,32 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
           .getState()
           .sessions[serverId]?.agentAuthoritativeHistoryApplied.get(agentId) === true,
       fetchPage: async (agentId, request) => {
+        const session = useSessionStore.getState().sessions[serverId];
         const initKey = getInitKey(serverId, agentId);
-        if (!getInitDeferred(initKey)) {
-          const deferred = createInitDeferred(initKey, request.direction ?? "tail");
-          void deferred.promise.catch(() => undefined);
+        const shouldInitialize = session?.agentAuthoritativeHistoryApplied.get(agentId) !== true;
+        if (shouldInitialize) {
+          if (!getInitDeferred(initKey)) {
+            const deferred = createInitDeferred(initKey, request.direction ?? "tail");
+            void deferred.promise.catch(() => undefined);
+          }
+          refreshAgentInitializationTimeout({
+            key: initKey,
+            agentId,
+            setAgentInitializing,
+          });
+          setAgentInitializing(agentId, true);
         }
-        refreshAgentInitializationTimeout({
-          key: initKey,
-          agentId,
-          setAgentInitializing,
-        });
-        setAgentInitializing(agentId, true);
         try {
           const page = await getHostRuntimeStore().fetchAgentTimeline(serverId, agentId, request);
-          if (getInitDeferred(initKey)) {
+          if (shouldInitialize && getInitDeferred(initKey)) {
             refreshAgentInitializationTimeout({ key: initKey, agentId, setAgentInitializing });
           }
           return page;
         } catch (error) {
-          setAgentInitializing(agentId, false);
-          rejectInitDeferred(initKey, error instanceof Error ? error : new Error(String(error)));
+          if (shouldInitialize) {
+            setAgentInitializing(agentId, false);
+            rejectInitDeferred(initKey, error instanceof Error ? error : new Error(String(error)));
+          }
           throw error;
         }
       },

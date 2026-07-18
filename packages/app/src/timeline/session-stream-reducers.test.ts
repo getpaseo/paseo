@@ -912,6 +912,123 @@ describe("processTimelineResponse", () => {
     ).toEqual(["Earlier answer", "Missed answer", "New prompt"]);
   });
 
+  it("keeps unrelated delayed history before the prompt and its live response", () => {
+    const prompt = makeOptimisticUserMessage("New prompt", "new-prompt");
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail: [makeAssistantItem("Earlier answer", "earlier-answer"), prompt],
+      currentHead: [
+        {
+          ...makeAssistantItem("Live response", "live-response"),
+          messageId: "live-response",
+        },
+      ],
+      currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 2 },
+      payload: {
+        ...baseTimelineInput.payload,
+        epoch: "epoch-1",
+        startCursor: { seq: 3 },
+        endCursor: { seq: 4 },
+        entries: [
+          makeTimelineEntry(3, "Missed answer"),
+          {
+            ...makeTimelineEntry(4, "Remote prompt", "user_message"),
+            item: {
+              type: "user_message",
+              text: "Remote prompt",
+              messageId: "remote-prompt",
+            },
+          },
+        ],
+      },
+    });
+
+    expect(
+      [...result.tail, ...result.head]
+        .filter((item) => item.kind === "assistant_message" || item.kind === "user_message")
+        .map((item) => item.text),
+    ).toEqual(["Earlier answer", "Missed answer", "Remote prompt", "New prompt", "Live response"]);
+  });
+
+  it("matches a local optimistic prompt after an unrelated remote user row", () => {
+    const prompt = makeOptimisticUserMessage("Local prompt", "local-prompt");
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail: [prompt],
+      currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 1 },
+      payload: {
+        ...baseTimelineInput.payload,
+        epoch: "epoch-1",
+        startCursor: { seq: 2 },
+        endCursor: { seq: 3 },
+        entries: [
+          {
+            ...makeTimelineEntry(2, "Remote prompt", "user_message"),
+            item: {
+              type: "user_message",
+              text: "Remote prompt",
+              messageId: "remote-prompt",
+            },
+          },
+          {
+            ...makeTimelineEntry(3, "Local prompt", "user_message"),
+            item: {
+              type: "user_message",
+              text: "Local prompt",
+              messageId: "provider-local-prompt",
+            },
+          },
+        ],
+      },
+    });
+
+    expect(
+      result.tail
+        .filter((item) => item.kind === "user_message")
+        .map((item) => ({ text: item.text, optimistic: item.optimistic })),
+    ).toEqual([
+      { text: "Remote prompt", optimistic: undefined },
+      { text: "Local prompt", optimistic: undefined },
+    ]);
+  });
+
+  it("keeps an unmatched optimistic prompt when catch-up contains only a remote user row", () => {
+    const prompt = makeOptimisticUserMessage("Local prompt", "local-prompt");
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail: [prompt],
+      currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 1 },
+      payload: {
+        ...baseTimelineInput.payload,
+        epoch: "epoch-1",
+        startCursor: { seq: 2 },
+        endCursor: { seq: 2 },
+        entries: [
+          {
+            ...makeTimelineEntry(2, "Remote prompt", "user_message"),
+            item: {
+              type: "user_message",
+              text: "Remote prompt",
+              messageId: "remote-prompt",
+            },
+          },
+        ],
+      },
+    });
+
+    expect(
+      result.tail
+        .filter((item) => item.kind === "user_message")
+        .map((item) => ({ text: item.text, optimistic: item.optimistic })),
+    ).toEqual([
+      { text: "Remote prompt", optimistic: undefined },
+      { text: "Local prompt", optimistic: true },
+    ]);
+  });
+
   it("hydrates a fetched in-progress tool call as one item and streams the next update on top", () => {
     const fetched = processTimelineResponse({
       ...baseTimelineInput,
