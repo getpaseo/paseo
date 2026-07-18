@@ -249,7 +249,7 @@ function buildOpenCodePermissionActions(): AgentPermissionAction[] {
 
 // OpenCode models permission persistence entirely through the `reply` field on
 // POST /permission/{id}/reply — there is no separate `remember` boolean in the
-// server API (verified against @opencode-ai/sdk v1.14.46 `PermissionReplyData`
+// server API (verified against @opencode-ai/sdk v1.18.3 `PermissionReplyData`
 // and https://opencode.ai/docs/permissions). `"always"` is OpenCode's
 // server-side "remember" — it approves future requests matching the tool's
 // suggested patterns for the rest of the session, so an "Allow always" reply
