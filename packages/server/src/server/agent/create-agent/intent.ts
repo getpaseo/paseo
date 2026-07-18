@@ -37,6 +37,7 @@ export async function resolveCreateAgentIntent(input: {
 
   // COMPAT(detachedCreate): legacy callers may still request detached creation.
   // Added in v0.2.0; remove after 2027-01-17 once detached creation is outside the floor.
+  // The delete also strips a parent label injected through input.labels.
   if (input.legacyDetached) {
     delete labels[PARENT_AGENT_ID_LABEL];
   }

@@ -409,7 +409,7 @@ describe("schedule form model", () => {
     });
   });
 
-  it("normalizes interval cadences to cron cadences when opening the form", () => {
+  it("displays a representable legacy interval without submitting a cadence change", () => {
     const form = open({
       mode: "edit",
       schedule: scheduleOnHost({
@@ -432,7 +432,9 @@ describe("schedule form model", () => {
       expression: "* * * * *",
       timezone: "Europe/Madrid",
     });
-    expect(form.getState().submitCadence).toEqual(form.getState().cadence);
+    form.setName("Renamed without touching cadence");
+
+    expect(form.getState().submitCadence).toBeUndefined();
   });
 
   it("does not rewrite an unrepresentable legacy interval until cadence changes", () => {

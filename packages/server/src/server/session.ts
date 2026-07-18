@@ -2813,7 +2813,9 @@ export class Session {
     let createdAgentId: string | null = null;
     try {
       const requestedCwd = resolve(config.cwd);
-      if (!(await this.filesystem.isDirectory(requestedCwd))) {
+      const needsRequestedDirectory =
+        Boolean(worktreeName || git || worktree) || (!msg.workspaceId && !msg.callerAgentId);
+      if (needsRequestedDirectory && !(await this.filesystem.isDirectory(requestedCwd))) {
         throw new Error(`Working directory does not exist or is not a directory: ${requestedCwd}`);
       }
       const trimmedPrompt = initialPrompt?.trim();
@@ -2839,6 +2841,10 @@ export class Session {
         createdWorktree,
         workspacePromptTitle,
       });
+      const resolvedCwd = resolve(resolvedIntent.config.cwd);
+      if (!(await this.filesystem.isDirectory(resolvedCwd))) {
+        throw new Error(`Working directory does not exist or is not a directory: ${resolvedCwd}`);
+      }
 
       const { snapshot, liveSnapshot } = await createAgentCommand(
         {

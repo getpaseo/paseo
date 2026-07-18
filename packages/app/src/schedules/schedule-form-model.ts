@@ -5,7 +5,6 @@ import type {
   ProviderSnapshotEntry,
 } from "@getpaseo/protocol/agent-types";
 import type { ScheduleCadence, ScheduleSummary } from "@getpaseo/protocol/schedule/types";
-import { everyMsToFiveFieldCron } from "@getpaseo/protocol/schedule/cadence";
 import type { FormPreferences } from "@/create-agent-preferences/preferences";
 import { formatThinkingOptionLabel } from "@/composer/agent-controls/utils";
 import {
@@ -441,10 +440,7 @@ function resolveInitialSubmitCadence(
   schedule: ScheduleFormSnapshot["schedule"],
   initialCadence: CronCadence,
 ): CronCadence | undefined {
-  if (schedule?.cadence.type !== "every") {
-    return initialCadence;
-  }
-  return everyMsToFiveFieldCron(schedule.cadence.everyMs) ? initialCadence : undefined;
+  return schedule ? undefined : initialCadence;
 }
 
 function resolveInitialIsolation(input: {

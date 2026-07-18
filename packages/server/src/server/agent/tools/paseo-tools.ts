@@ -191,7 +191,6 @@ interface WorkspaceWorktreeOptions {
   branch?: string;
   prNumber?: number;
   forge?: string;
-  projectPath?: string;
 }
 
 type WorkspaceWorktreeTarget = Pick<
@@ -216,9 +215,8 @@ function resolveWorkspaceWorktreeTarget(input: WorkspaceWorktreeOptions): Worksp
           ["branch", input.branch],
           ["prNumber", input.prNumber],
           ["forge", input.forge],
-          ["projectPath", input.projectPath],
         ],
-        "branch, prNumber, forge, and projectPath require a checkout mode",
+        "branch, prNumber, and forge require a checkout mode",
       );
       return {
         action: "branch-off",
@@ -235,9 +233,8 @@ function resolveWorkspaceWorktreeTarget(input: WorkspaceWorktreeOptions): Worksp
           ["baseBranch", input.baseBranch],
           ["prNumber", input.prNumber],
           ["forge", input.forge],
-          ["projectPath", input.projectPath],
         ],
-        "branchName, baseBranch, prNumber, forge, and projectPath are not valid for checkout-branch mode",
+        "branchName, baseBranch, prNumber, and forge are not valid for checkout-branch mode",
       );
       return { action: "checkout", refName: input.branch };
     case "checkout-pr":
@@ -258,7 +255,6 @@ function resolveWorkspaceWorktreeTarget(input: WorkspaceWorktreeOptions): Worksp
           kind: "change_request",
           forge: input.forge ?? "github",
           number: input.prNumber,
-          ...(input.projectPath ? { projectPath: input.projectPath } : {}),
         },
       };
   }
@@ -1239,12 +1235,6 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           .min(1)
           .optional()
           .describe("Forge for checkout-pr mode. Defaults to github."),
-        projectPath: z
-          .string()
-          .trim()
-          .min(1)
-          .optional()
-          .describe("Optional forge project path for checkout-pr mode."),
       },
       outputSchema: WorkspaceAutomationSummarySchema.shape,
     },
@@ -1260,7 +1250,6 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       branch,
       prNumber,
       forge,
-      projectPath,
     }) => {
       const cwd = resolveScopedCwd(path, { required: true });
       let workspace: PersistedWorkspaceRecord;
@@ -1274,7 +1263,6 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
             ["branch", branch],
             ["prNumber", prNumber],
             ["forge", forge],
-            ["projectPath", projectPath],
           ],
           "Worktree options require isolation worktree",
         );
@@ -1291,7 +1279,6 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           branch,
           prNumber,
           forge,
-          projectPath,
         });
         const result = await createPaseoWorktreeCommand(
           {
@@ -2429,7 +2416,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           "Provider, or provider/model (for example: codex or codex/gpt-5.4). Defaults to the caller's provider in an agent-scoped session.",
         ),
         cwd: z.string().optional(),
-        isolation: z.enum(["local", "worktree"]).optional().default("local"),
+        isolation: z.enum(["local", "worktree"]).optional(),
         maxRuns: z.number().int().positive().optional(),
         expiresIn: z.string().optional(),
       },

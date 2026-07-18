@@ -436,7 +436,7 @@ interface RunWorkspace {
 }
 
 export interface RunWorkspaceLookupClient {
-  fetchWorkspaces(options: { page: { limit: number; cursor?: string } }): Promise<{
+  fetchWorkspaces(options: { filter: { query: string }; page: { limit: number } }): Promise<{
     entries: Array<{ id: string; workspaceDirectory: string }>;
     pageInfo: { nextCursor: string | null };
   }>;
@@ -446,17 +446,14 @@ export async function resolveExistingRunWorkspace(
   client: RunWorkspaceLookupClient,
   workspaceId: string,
 ): Promise<RunWorkspace> {
-  let cursor: string | undefined;
-  do {
-    const page = await client.fetchWorkspaces({
-      page: { limit: 200, ...(cursor ? { cursor } : {}) },
-    });
-    const workspace = page.entries.find((entry) => entry.id === workspaceId);
-    if (workspace) {
-      return { id: workspace.id, cwd: workspace.workspaceDirectory };
-    }
-    cursor = page.pageInfo.nextCursor ?? undefined;
-  } while (cursor);
+  const result = await client.fetchWorkspaces({
+    filter: { query: workspaceId },
+    page: { limit: 200 },
+  });
+  const workspace = result.entries.find((entry) => entry.id === workspaceId);
+  if (workspace) {
+    return { id: workspace.id, cwd: workspace.workspaceDirectory };
+  }
 
   throw {
     code: "WORKSPACE_NOT_FOUND",

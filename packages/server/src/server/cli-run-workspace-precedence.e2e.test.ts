@@ -81,7 +81,7 @@ test("daemon resolves human and managed CLI workspace ownership", async () => {
     const idsBeforeAttach = await workspaceIds(client);
     const attachedAgent = await client.createAgent({
       ...getFullAccessConfig("codex"),
-      cwd: otherCwd,
+      cwd: path.join(otherCwd, "stale-client-directory"),
       workspaceId: firstWorkspaceId,
       title: "Attached agent",
     });

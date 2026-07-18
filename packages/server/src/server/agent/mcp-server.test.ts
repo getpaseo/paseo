@@ -2573,7 +2573,6 @@ describe("create_agent MCP tool", () => {
       mode: "checkout-pr",
       prNumber: 42,
       forge: "gitlab",
-      projectPath: "team/project",
     });
 
     expect(createPaseoWorktree).toHaveBeenNthCalledWith(
@@ -2592,7 +2591,6 @@ describe("create_agent MCP tool", () => {
           kind: "change_request",
           forge: "gitlab",
           number: 42,
-          projectPath: "team/project",
         },
       }),
     );
@@ -3889,7 +3887,7 @@ describe("create_schedule MCP tool", () => {
     expect(createOrReplace).not.toHaveBeenCalled();
   });
 
-  it("keeps create_schedule provider overrides compatible with provider and provider/model forms", async () => {
+  it("keeps provider forms compatible without materializing default schedule isolation", async () => {
     const { agentManager, agentStorage } = createTestDeps();
     const createOrReplace = vi.fn(async (input: CreateScheduleInput) =>
       createStoredSchedule(input),
@@ -3913,6 +3911,12 @@ describe("create_schedule MCP tool", () => {
       cron: "*/10 * * * *",
       provider: "codex/gpt-5.4",
     });
+    await tool.handler({
+      prompt: "say hello in a worktree",
+      cron: "*/15 * * * *",
+      provider: "codex",
+      isolation: "worktree",
+    });
 
     expect(createOrReplace).toHaveBeenNthCalledWith(
       1,
@@ -3922,7 +3926,6 @@ describe("create_schedule MCP tool", () => {
           config: {
             provider: "codex",
             cwd: process.cwd(),
-            isolation: "local",
           },
         },
       }),
@@ -3936,7 +3939,19 @@ describe("create_schedule MCP tool", () => {
             provider: "codex",
             cwd: process.cwd(),
             model: "gpt-5.4",
-            isolation: "local",
+          },
+        },
+      }),
+    );
+    expect(createOrReplace).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({
+        target: {
+          type: "new-agent",
+          config: {
+            provider: "codex",
+            cwd: process.cwd(),
+            isolation: "worktree",
           },
         },
       }),

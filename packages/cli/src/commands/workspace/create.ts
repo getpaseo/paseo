@@ -15,7 +15,6 @@ export interface WorkspaceCreateOptions extends CommandOptions {
   branch?: string;
   prNumber?: string;
   forge?: string;
-  projectPath?: string;
 }
 
 interface WorktreeSourceBase {
@@ -41,7 +40,6 @@ function buildLocalWorkspaceSource(options: WorkspaceCreateOptions, path: string
       options.branch,
       options.prNumber,
       options.forge,
-      options.projectPath,
     ],
     "Worktree options require --isolation worktree",
   );
@@ -54,8 +52,8 @@ function buildLocalWorkspaceSource(options: WorkspaceCreateOptions, path: string
 
 function buildBranchOffSource(options: WorkspaceCreateOptions, source: WorktreeSourceBase) {
   assertOptionsAbsent(
-    [options.branch, options.prNumber, options.forge, options.projectPath],
-    "--branch, --pr-number, --forge, and --project-path require a checkout mode",
+    [options.branch, options.prNumber, options.forge],
+    "--branch, --pr-number, and --forge require a checkout mode",
   );
   const branchName = options.newBranch ?? options.worktreeSlug;
   if (
@@ -78,8 +76,8 @@ function buildBranchCheckoutSource(options: WorkspaceCreateOptions, source: Work
     throw new Error("--branch is required for --mode checkout-branch");
   }
   assertOptionsAbsent(
-    [options.newBranch, options.base, options.prNumber, options.forge, options.projectPath],
-    "--new-branch, --base, --pr-number, --forge, and --project-path are not valid for --mode checkout-branch",
+    [options.newBranch, options.base, options.prNumber, options.forge],
+    "--new-branch, --base, --pr-number, and --forge are not valid for --mode checkout-branch",
   );
   return { ...source, action: "checkout" as const, refName: options.branch };
 }
@@ -106,7 +104,6 @@ function buildPullRequestCheckoutSource(
       kind: "change_request" as const,
       forge: options.forge ?? "github",
       number: prNumber,
-      ...(options.projectPath ? { projectPath: options.projectPath } : {}),
     },
   };
 }

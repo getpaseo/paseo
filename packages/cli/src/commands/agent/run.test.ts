@@ -17,24 +17,19 @@ describe("managed agent caller context", () => {
 });
 
 describe("existing run workspace resolution", () => {
-  it("finds a workspace across daemon pages and uses its directory", async () => {
-    const fetchWorkspaces = vi
-      .fn()
-      .mockResolvedValueOnce({
-        entries: [],
-        pageInfo: { nextCursor: "next" },
-      })
-      .mockResolvedValueOnce({
-        entries: [{ id: "workspace-2", workspaceDirectory: "/workspace/two" }],
-        pageInfo: { nextCursor: null },
-      });
+  it("queries the daemon for an exact workspace id and uses its directory", async () => {
+    const fetchWorkspaces = vi.fn().mockResolvedValue({
+      entries: [{ id: "workspace-2", workspaceDirectory: "/workspace/two" }],
+      pageInfo: { nextCursor: null },
+    });
 
     await expect(resolveExistingRunWorkspace({ fetchWorkspaces }, "workspace-2")).resolves.toEqual({
       id: "workspace-2",
       cwd: "/workspace/two",
     });
-    expect(fetchWorkspaces).toHaveBeenNthCalledWith(2, {
-      page: { limit: 200, cursor: "next" },
+    expect(fetchWorkspaces).toHaveBeenCalledWith({
+      filter: { query: "workspace-2" },
+      page: { limit: 200 },
     });
   });
 

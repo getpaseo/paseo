@@ -52,7 +52,6 @@ describe("workspace create source", () => {
         mode: "checkout-pr",
         prNumber: "42",
         forge: "gitlab",
-        projectPath: "team/project",
       }),
     ).toEqual({
       kind: "worktree",
@@ -62,7 +61,6 @@ describe("workspace create source", () => {
         kind: "change_request",
         forge: "gitlab",
         number: 42,
-        projectPath: "team/project",
       },
     });
   });
