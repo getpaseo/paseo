@@ -130,7 +130,20 @@ describe("AgentConfigSession", () => {
 
     expect(operations.loadedAgentIds).toEqual(["agent-1"]);
     expect(operations.modeCalls).toEqual([]);
-    expect(emitted.at(-1)).toEqual({
+    expect(emitted.map((message) => message.type)).toEqual([
+      "activity_log",
+      "set_agent_mode_response",
+    ]);
+    expect(emitted[0]).toEqual({
+      type: "activity_log",
+      payload: {
+        id: expect.any(String),
+        timestamp: expect.any(Date),
+        type: "error",
+        content: "Failed to set agent mode: agent is archived",
+      },
+    });
+    expect(emitted[1]).toEqual({
       type: "set_agent_mode_response",
       payload: {
         requestId: "req-1",
