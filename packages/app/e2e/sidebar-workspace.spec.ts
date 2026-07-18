@@ -168,6 +168,33 @@ test.describe("Mobile sidebar panelState transition", () => {
     await closeMobileAgentSidebar(page);
     await expectMobileAgentSidebarHidden(page);
   });
+
+  test("keeps a pinned workspace rendered while the retained sidebar is closed", async ({
+    page,
+  }) => {
+    const workspace = await seedWorkspace({ repoPrefix: "sidebar-retained-pin-" });
+
+    try {
+      await gotoAppShell(page);
+      await openMobileAgentSidebar(page);
+      await expectMobileAgentSidebarVisible(page);
+
+      const workspaceKey = `${getServerId()}:${workspace.workspaceId}`;
+      const row = page.getByTestId(`sidebar-workspace-row-${workspaceKey}`);
+      await expect(row).toBeVisible({ timeout: 30_000 });
+      await row.hover();
+      await page.getByTestId(`sidebar-workspace-kebab-${workspaceKey}`).click();
+      await page.getByTestId(`sidebar-workspace-menu-pin-${workspaceKey}`).click();
+      await expect(page.getByTestId("sidebar-pinned-section")).toBeVisible();
+
+      await closeMobileAgentSidebar(page);
+      await expectMobileAgentSidebarHidden(page);
+
+      await expect(row).toHaveCount(1);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
 });
 
 test.describe("Half-screen desktop layout", () => {
