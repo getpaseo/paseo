@@ -8,20 +8,22 @@ describe("workspace create source", () => {
     ).toEqual({ kind: "directory", path: "/tmp/project", projectId: "project-1" });
   });
 
-  it("maps branch-off worktree isolation", () => {
+  it("keeps branch names separate from managed worktree slugs", () => {
     expect(
       buildWorkspaceSource({
         isolation: "worktree",
         path: "/tmp/project",
         mode: "branch-off",
-        newBranch: "fix-x",
+        newBranch: "feature/auth",
+        worktreeSlug: "feature-auth",
         base: "main",
       }),
     ).toEqual({
       kind: "worktree",
       cwd: "/tmp/project",
       action: "branch-off",
-      worktreeSlug: "fix-x",
+      branchName: "feature/auth",
+      worktreeSlug: "feature-auth",
       baseBranch: "main",
     });
   });
@@ -38,7 +40,7 @@ describe("workspace create source", () => {
       kind: "worktree",
       projectId: "project-1",
       action: "branch-off",
-      worktreeSlug: "fix-x",
+      branchName: "fix-x",
     });
   });
 

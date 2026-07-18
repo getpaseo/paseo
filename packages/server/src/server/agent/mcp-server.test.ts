@@ -4080,10 +4080,12 @@ describe("create_schedule MCP tool", () => {
       cron: "*/5 * * * *",
     });
 
-    expect(response.structuredContent.target).toMatchObject({
+    expect(response.structuredContent.target).toEqual({
       type: "new-agent",
       config: {
         provider: "opencode",
+        cwd: REPO_CWD,
+        modeId: "build",
         model: "openai/gpt-5.5",
         featureValues: { auto_accept: true },
       },

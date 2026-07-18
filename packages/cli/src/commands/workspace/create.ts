@@ -55,18 +55,10 @@ function buildBranchOffSource(options: WorkspaceCreateOptions, source: WorktreeS
     [options.branch, options.prNumber, options.forge],
     "--branch, --pr-number, and --forge require a checkout mode",
   );
-  const branchName = options.newBranch ?? options.worktreeSlug;
-  if (
-    options.newBranch !== undefined &&
-    options.worktreeSlug !== undefined &&
-    options.newBranch !== options.worktreeSlug
-  ) {
-    throw new Error("--new-branch and --worktree-slug must match for branch-off workspaces");
-  }
   return {
     ...source,
     action: "branch-off" as const,
-    ...(branchName ? { worktreeSlug: branchName } : {}),
+    ...(options.newBranch ? { branchName: options.newBranch } : {}),
     ...(options.base ? { baseBranch: options.base } : {}),
   };
 }

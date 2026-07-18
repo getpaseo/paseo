@@ -2064,9 +2064,11 @@ export const WorkspaceCreateRequestSchema = z.object({
       cwd: z.string().optional(),
       projectId: z.string().optional(),
       action: z.enum(["branch-off", "checkout"]).optional(),
-      // Target branch name for checkout, or new branch name for branch-off.
+      // Target branch for checkout, or base ref for branch-off.
       refName: z.string().min(1).optional(),
       baseBranch: z.string().optional(),
+      // New branch name for branch-off. The worktree path may use a different slug.
+      branchName: z.string().min(1).optional(),
       checkoutSource: ChangeRequestCheckoutSourceSchema.optional(),
       // COMPAT(githubPrNumber): added in v0.1.106, remove after 2026-12-28 once
       // clients send checkoutSource.

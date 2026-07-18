@@ -702,7 +702,6 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       ...(typeof callerAgent.config.webSearch === "boolean"
         ? { webSearch: callerAgent.config.webSearch }
         : {}),
-      ...(callerAgent.config.title ? { title: callerAgent.config.title } : {}),
       ...(callerAgent.config.extra ? { extra: callerAgent.config.extra } : {}),
       ...(callerAgent.config.featureValues
         ? { featureValues: callerAgent.config.featureValues }
