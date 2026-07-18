@@ -1353,15 +1353,27 @@ describe("ACPAgentSession Zed parity", () => {
     const setSessionConfigOption = vi.fn(async () => ({ configOptions: [] }));
     const session = createSyntheticModeSessionWithConfig();
     const internals = asInternals<
-      ACPConfiguredOverrideInternals & { availableModes: AgentStreamEvent[] }
+      ACPConfiguredOverrideInternals & {
+        applySessionState(response: SessionStateResponse): void;
+      }
     >(session);
     internals.sessionId = "session-1";
     internals.connection = { setSessionMode, setSessionConfigOption };
-    asInternals<{ availableModes: unknown[] }>(session).availableModes = [
-      { id: "agent", label: "Agent" },
-      { id: "plan", label: "Plan" },
-      { id: SYNTHETIC_ALLOW_ALL_MODE.id, label: "Allow All", isUnattended: true },
-    ];
+    internals.applySessionState({
+      sessionId: "session-1",
+      modes: {
+        currentModeId: "agent",
+        availableModes: [
+          { id: "agent", name: "Agent", description: null },
+          { id: "plan", name: "Plan", description: null },
+        ],
+      },
+      configOptions: [],
+    });
+
+    await expect(session.getAvailableModes()).resolves.toContainEqual(
+      expect.objectContaining({ id: SYNTHETIC_ALLOW_ALL_MODE.id, isUnattended: true }),
+    );
 
     await session.setMode(SYNTHETIC_ALLOW_ALL_MODE.id);
     expect(setSessionMode).not.toHaveBeenCalled();
@@ -1390,11 +1402,16 @@ describe("ACPAgentSession Zed parity", () => {
     const internals = asInternals<ACPSessionInternals>(session);
     internals.sessionId = "session-1";
 
-    internals.translateSessionUpdate({
+    const events = internals.translateSessionUpdate({
       sessionUpdate: "current_mode_update",
       currentModeId: "plan",
     } as SessionUpdate);
 
+    // The switch out of the synthetic mode is announced immediately so the
+    // mode picker cannot keep showing it while auto-approve is inactive.
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: "mode_changed", currentModeId: "plan" }),
+    );
     await expect(session.getCurrentMode()).resolves.toBe("plan");
   });
 
