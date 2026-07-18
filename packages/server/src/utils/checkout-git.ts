@@ -780,7 +780,7 @@ export interface MergeFromBaseOptions {
 export interface CheckoutContext {
   paseoHome?: string;
   worktreesRoot?: string;
-  logger?: Pick<Logger, "trace">;
+  logger?: Pick<Logger, "trace" | "warn">;
   facts?: CheckoutSnapshotFacts | null;
 }
 
@@ -804,13 +804,6 @@ export type CheckoutSnapshotFacts =
       branchMergeRef: string | null;
       pullRequestLookupTarget: PullRequestStatusLookupTarget | null;
     };
-
-function isNotGitRepositoryError(error: unknown): boolean {
-  if (!(error instanceof Error)) {
-    return false;
-  }
-  return /not a git repository \(or any of the parent directories\): \.git/i.test(error.message);
-}
 
 async function requireGitRepo(cwd: string): Promise<void> {
   try {
@@ -867,10 +860,12 @@ async function getWorktreeRoot(cwd: string, context?: CheckoutContext): Promise<
     });
     return parseGitRevParsePath(stdout);
   } catch (error) {
-    if (isNotGitRepositoryError(error)) {
-      return null;
-    }
-    throw error;
+    // Git discovery is fail-open: keep the directory usable as non-Git and retain the diagnostic.
+    context?.logger?.warn(
+      { err: error, cwd },
+      "Git worktree discovery failed; treating directory as non-Git",
+    );
+    return null;
   }
 }
 

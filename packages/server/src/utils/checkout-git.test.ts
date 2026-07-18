@@ -8,10 +8,12 @@ import {
   readFileSync,
   realpathSync,
   mkdirSync,
+  statSync,
 } from "fs";
 import { join } from "path";
 import { win32 } from "node:path";
 import { tmpdir } from "os";
+import pino from "pino";
 import {
   __resetCheckoutShortstatCacheForTests,
   __resetPullRequestStatusCacheForTests,
@@ -312,6 +314,38 @@ describe("checkout git utilities", () => {
     mkdirSync(nonGitDir, { recursive: true });
 
     await expect(getCheckoutStatus(nonGitDir)).resolves.toEqual({ isGit: false });
+  });
+
+  it.runIf(
+    process.platform !== "win32" &&
+      existsSync("/dev/shm") &&
+      statSync("/dev").dev !== statSync("/dev/shm").dev,
+  )("warns and reports a non-git directory at a filesystem boundary as non-git", async () => {
+    const nonGitDir = realpathSync.native(mkdtempSync("/dev/shm/checkout-git-boundary-test-"));
+    const records: unknown[] = [];
+    const logger = pino(
+      { level: "warn" },
+      {
+        write(line: string) {
+          records.push(JSON.parse(line));
+        },
+      },
+    );
+    try {
+      await expect(getCheckoutStatus(nonGitDir, { logger })).resolves.toEqual({ isGit: false });
+      expect(records).toEqual([
+        expect.objectContaining({
+          level: 40,
+          cwd: nonGitDir,
+          msg: "Git worktree discovery failed; treating directory as non-Git",
+          err: expect.objectContaining({
+            message: expect.stringContaining("Stopping at filesystem boundary"),
+          }),
+        }),
+      ]);
+    } finally {
+      rmSync(nonGitDir, { recursive: true, force: true });
+    }
   });
 
   it("returns null for getCurrentBranch in a repo with no commits", async () => {
