@@ -1,12 +1,14 @@
 import type { Logger } from "pino";
 import { z } from "zod";
 
-import type { AgentCapabilityFlags } from "../agent-sdk-types.js";
+import type { AgentCapabilityFlags, AgentMode } from "../agent-sdk-types.js";
 import { checkProviderLaunchAvailable, resolveProviderLaunch } from "../provider-launch-config.js";
 import {
   ACPAgentClient,
   type ACPClientCapabilityMeta,
   type ACPConfigFeatureOption,
+  type ACPProviderModeWriterContext,
+  type ACPProviderModeWriteResult,
   DEFAULT_ACP_CAPABILITIES,
   type ACPExtensionCommandsParser,
 } from "./acp-agent.js";
@@ -49,6 +51,11 @@ interface GenericACPAgentClientOptions {
   clientCapabilityMeta?: ACPClientCapabilityMeta;
   configFeatureOptions?: ACPConfigFeatureOption[];
   extensionCommandsParser?: ACPExtensionCommandsParser;
+  syntheticModes?: AgentMode[];
+  autoApprovePermissionModeIds?: string[];
+  providerModeWriter?: (
+    context: ACPProviderModeWriterContext,
+  ) => Promise<ACPProviderModeWriteResult>;
 }
 
 export class GenericACPAgentClient extends ACPAgentClient {
@@ -73,6 +80,9 @@ export class GenericACPAgentClient extends ACPAgentClient {
       clientCapabilityMeta: options.clientCapabilityMeta,
       configFeatureOptions: options.configFeatureOptions,
       extensionCommandsParser: options.extensionCommandsParser,
+      syntheticModes: options.syntheticModes,
+      autoApprovePermissionModeIds: options.autoApprovePermissionModeIds,
+      providerModeWriter: options.providerModeWriter,
     });
 
     this.command = options.command;

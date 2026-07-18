@@ -372,6 +372,14 @@ interface ACPAgentClientOptions {
   runtimeSettings?: ProviderRuntimeSettings;
   defaultCommand: [string, ...string[]];
   defaultModes?: AgentMode[];
+  // Paseo-owned modes appended to the agent-reported mode list (only when the
+  // agent reports any). Selection must be handled locally via providerModeWriter.
+  // An active synthetic mode survives config-option echoes of the native mode,
+  // but an explicit current_mode_update from the agent still switches out of it.
+  syntheticModes?: AgentMode[];
+  // Mode ids whose permission requests Paseo auto-approves client-side, for
+  // agents (e.g. cursor-agent) with no native ACP allow-all mode or config.
+  autoApprovePermissionModeIds?: string[];
   modelTransformer?: (models: AgentModelDefinition[]) => AgentModelDefinition[];
   sessionResponseTransformer?: (response: SessionStateResponse) => SessionStateResponse;
   configOptionsTransformer?: (configOptions: SessionConfigOption[]) => SessionConfigOption[];
@@ -402,6 +410,8 @@ interface ACPAgentSessionOptions {
   runtimeSettings?: ProviderRuntimeSettings;
   defaultCommand: [string, ...string[]];
   defaultModes: AgentMode[];
+  syntheticModes?: AgentMode[];
+  autoApprovePermissionModeIds?: string[];
   modelTransformer?: (models: AgentModelDefinition[]) => AgentModelDefinition[];
   sessionResponseTransformer?: (response: SessionStateResponse) => SessionStateResponse;
   configOptionsTransformer?: (configOptions: SessionConfigOption[]) => SessionConfigOption[];
@@ -606,6 +616,17 @@ export function resolveACPModelSelection({
   };
 }
 
+// Synthetic modes only extend a non-empty agent-reported list: with no native
+// modes there is no mode picker, and a picker offering only synthetic entries
+// would have no way back to normal operation.
+function appendSyntheticModes(modes: AgentMode[], syntheticModes: AgentMode[]): AgentMode[] {
+  if (syntheticModes.length === 0 || modes.length === 0) {
+    return modes;
+  }
+  const existingIds = new Set(modes.map((mode) => mode.id));
+  return [...modes, ...syntheticModes.filter((mode) => !existingIds.has(mode.id))];
+}
+
 export function deriveModesFromACP(
   fallbackModes: AgentMode[],
   modeState?: { availableModes?: SessionMode[] | null; currentModeId?: string | null } | null,
@@ -707,6 +728,8 @@ export class ACPAgentClient implements AgentClient {
   protected readonly runtimeSettings?: ProviderRuntimeSettings;
   protected readonly defaultCommand: [string, ...string[]];
   protected readonly defaultModes: AgentMode[];
+  private readonly syntheticModes: AgentMode[];
+  private readonly autoApprovePermissionModeIds: string[];
   private readonly modelTransformer?: (models: AgentModelDefinition[]) => AgentModelDefinition[];
   private readonly sessionResponseTransformer?: (
     response: SessionStateResponse,
@@ -746,6 +769,8 @@ export class ACPAgentClient implements AgentClient {
     this.runtimeSettings = options.runtimeSettings;
     this.defaultCommand = options.defaultCommand;
     this.defaultModes = options.defaultModes ?? [];
+    this.syntheticModes = options.syntheticModes ?? [];
+    this.autoApprovePermissionModeIds = options.autoApprovePermissionModeIds ?? [];
     this.modelTransformer = options.modelTransformer;
     this.sessionResponseTransformer = options.sessionResponseTransformer;
     this.configOptionsTransformer = options.configOptionsTransformer;
@@ -775,6 +800,8 @@ export class ACPAgentClient implements AgentClient {
         runtimeSettings: this.runtimeSettings,
         defaultCommand: this.defaultCommand,
         defaultModes: this.defaultModes,
+        syntheticModes: this.syntheticModes,
+        autoApprovePermissionModeIds: this.autoApprovePermissionModeIds,
         modelTransformer: this.modelTransformer,
         sessionResponseTransformer: this.sessionResponseTransformer,
         configOptionsTransformer: this.configOptionsTransformer,
@@ -825,6 +852,8 @@ export class ACPAgentClient implements AgentClient {
       runtimeSettings: this.runtimeSettings,
       defaultCommand: this.defaultCommand,
       defaultModes: this.defaultModes,
+      syntheticModes: this.syntheticModes,
+      autoApprovePermissionModeIds: this.autoApprovePermissionModeIds,
       modelTransformer: this.modelTransformer,
       sessionResponseTransformer: this.sessionResponseTransformer,
       configOptionsTransformer: this.configOptionsTransformer,
@@ -880,7 +909,7 @@ export class ACPAgentClient implements AgentClient {
         );
         return {
           models: this.modelTransformer ? this.modelTransformer(models) : models,
-          modes: modeInfo.modes,
+          modes: appendSyntheticModes(modeInfo.modes, this.syntheticModes),
         };
       })();
 
@@ -1275,6 +1304,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private readonly runtimeSettings?: ProviderRuntimeSettings;
   private readonly defaultCommand: [string, ...string[]];
   private readonly defaultModes: AgentMode[];
+  private readonly syntheticModes: AgentMode[];
+  private readonly autoApprovePermissionModeIds: string[];
   protected readonly modelTransformer?: (models: AgentModelDefinition[]) => AgentModelDefinition[];
   private readonly sessionResponseTransformer?: (
     response: SessionStateResponse,
@@ -1346,6 +1377,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.runtimeSettings = options.runtimeSettings;
     this.defaultCommand = options.defaultCommand;
     this.defaultModes = options.defaultModes;
+    this.syntheticModes = options.syntheticModes ?? [];
+    this.autoApprovePermissionModeIds = options.autoApprovePermissionModeIds ?? [];
     this.modelTransformer = options.modelTransformer;
     this.sessionResponseTransformer = options.sessionResponseTransformer;
     this.configOptionsTransformer = options.configOptionsTransformer;
@@ -1638,8 +1671,13 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       this.currentMode = providerResult.currentModeId ?? modeId;
       if (providerResult.configOptions) {
         this.configOptions = this.transformConfigOptions(providerResult.configOptions);
+        // Only re-derive from config options when the writer returned them;
+        // locally-handled synthetic modes must not clobber ACP-reported modes.
+        this.availableModes = appendSyntheticModes(
+          deriveModesFromACP(this.defaultModes, null, this.configOptions).modes,
+          this.syntheticModes,
+        );
       }
-      this.availableModes = deriveModesFromACP(this.defaultModes, null, this.configOptions).modes;
       this.pushEvent({
         type: "mode_changed",
         provider: this.provider,
@@ -1713,7 +1751,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       requestedValue: modeId,
       label: "mode",
     });
-    this.availableModes = deriveModesFromACP(this.defaultModes, null, this.configOptions).modes;
+    this.availableModes = appendSyntheticModes(
+      deriveModesFromACP(this.defaultModes, null, this.configOptions).modes,
+      this.syntheticModes,
+    );
     this.pushEvent({
       type: "mode_changed",
       provider: this.provider,
@@ -2066,6 +2107,26 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   async requestPermission(params: RequestPermissionRequest): Promise<RequestPermissionResponse> {
+    // Paseo-enforced allow-all: when the current mode opts into client-side
+    // auto-approval, answer immediately without surfacing a prompt. This covers
+    // agents (e.g. cursor-agent) whose own permission config still prompts over
+    // ACP for some tool kinds (web search, MCP).
+    if (this.currentMode !== null && this.autoApprovePermissionModeIds.includes(this.currentMode)) {
+      const allowOption = selectPermissionOption(params.options, { behavior: "allow" });
+      if (allowOption) {
+        this.logger.info(
+          {
+            agentId: this.agentId,
+            toolCallId: params.toolCall.toolCallId,
+            optionId: allowOption.optionId,
+            modeId: this.currentMode,
+          },
+          "Auto-approving ACP permission request (allow-all mode)",
+        );
+        return { outcome: { outcome: "selected", optionId: allowOption.optionId } };
+      }
+    }
+
     // Match Zed acp.rs:3189-3220: generic ACP permission requests stay pure pass-through.
     const requestId = randomUUID();
     let toolSnapshot =
@@ -2369,8 +2430,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.configOptions = this.transformConfigOptions(transformed.configOptions ?? []);
 
     const modeInfo = deriveModesFromACP(this.defaultModes, transformed.modes, this.configOptions);
-    this.availableModes = modeInfo.modes;
-    this.currentMode = modeInfo.currentModeId ?? this.currentMode;
+    this.availableModes = appendSyntheticModes(modeInfo.modes, this.syntheticModes);
+    if (!this.isSyntheticMode(this.currentMode)) {
+      this.currentMode = modeInfo.currentModeId ?? this.currentMode;
+    }
 
     this.availableModels = transformed.models?.availableModels ?? null;
     this.currentModel =
@@ -2383,6 +2446,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     return this.configOptionsTransformer
       ? this.configOptionsTransformer(configOptions)
       : configOptions;
+  }
+
+  private isSyntheticMode(modeId: string | null): boolean {
+    return modeId !== null && this.syntheticModes.some((mode) => mode.id === modeId);
   }
 
   private transformModeId(modeId: string): string | null {
@@ -2576,6 +2643,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   private handleCurrentModeUpdate(update: CurrentModeUpdate): void {
+    // An explicit current_mode_update is a genuine agent-side mode change (e.g.
+    // a slash command switching to plan), so it may also switch out of a
+    // synthetic mode.
     this.currentMode = this.transformModeId(update.currentModeId);
   }
 
@@ -2586,8 +2656,13 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     const nextModel = deriveCurrentConfigValue(this.configOptions, "model");
     const nextThinkingOptionId = deriveCurrentConfigValue(this.configOptions, "thought_level");
 
-    this.availableModes = modeInfo.modes;
-    this.currentMode = nextMode ?? this.currentMode;
+    this.availableModes = appendSyntheticModes(modeInfo.modes, this.syntheticModes);
+    // Unlike current_mode_update, config option updates merely echo the native
+    // mode value alongside unrelated changes (e.g. a feature toggle), so they
+    // must not silently drop an active synthetic mode.
+    if (!this.isSyntheticMode(this.currentMode)) {
+      this.currentMode = nextMode ?? this.currentMode;
+    }
     this.currentModel = nextModel ?? this.currentModel;
     this.thinkingOptionId = nextThinkingOptionId ?? this.thinkingOptionId;
 

@@ -1,6 +1,11 @@
 import type { Logger } from "pino";
 
-import type { ACPConfigFeatureOption } from "./acp-agent.js";
+import type { AgentMode } from "../agent-sdk-types.js";
+import type {
+  ACPConfigFeatureOption,
+  ACPProviderModeWriterContext,
+  ACPProviderModeWriteResult,
+} from "./acp-agent.js";
 import { GenericACPAgentClient } from "./generic-acp-agent.js";
 
 interface CursorACPAgentClientOptions {
@@ -26,6 +31,34 @@ export const CURSOR_FAST_FEATURE_OPTION: ACPConfigFeatureOption = {
   icon: "zap",
 };
 
+export const CURSOR_ALLOW_ALL_MODE_ID = "allow-all";
+
+// Paseo-owned synthetic mode: cursor-agent has no native allow-all, and its own
+// permission config (approvalMode, --force) still prompts over ACP for some
+// tool kinds (web search, MCP). Selecting it makes the daemon auto-approve
+// every permission request client-side; nothing is written to cursor-agent. It
+// is appended to the modes cursor-agent reports (Agent/Plan/Ask on current
+// builds; older builds report none and keep no mode picker at all).
+export const CURSOR_ALLOW_ALL_MODE: AgentMode = {
+  id: CURSOR_ALLOW_ALL_MODE_ID,
+  label: "Allow All",
+  description: "Automatically approves all Cursor permission requests (use with caution)",
+  icon: "ShieldOff",
+  colorTier: "dangerous",
+  isUnattended: true,
+};
+
+// The synthetic mode resolves locally (there is nothing to write to
+// cursor-agent); native mode ids fall through to the normal ACP path.
+export async function writeCursorProviderMode(
+  context: ACPProviderModeWriterContext,
+): Promise<ACPProviderModeWriteResult> {
+  if (context.requestedModeId !== CURSOR_ALLOW_ALL_MODE_ID) {
+    return { handled: false };
+  }
+  return { handled: true, currentModeId: context.requestedModeId };
+}
+
 export class CursorACPAgentClient extends GenericACPAgentClient {
   constructor(options: CursorACPAgentClientOptions) {
     super({
@@ -40,6 +73,9 @@ export class CursorACPAgentClient extends GenericACPAgentClient {
       initialCommandsWaitTimeoutMs: CURSOR_INITIAL_COMMANDS_WAIT_TIMEOUT_MS,
       clientCapabilityMeta: CURSOR_CLIENT_CAPABILITY_META,
       configFeatureOptions: [CURSOR_FAST_FEATURE_OPTION],
+      syntheticModes: [CURSOR_ALLOW_ALL_MODE],
+      autoApprovePermissionModeIds: [CURSOR_ALLOW_ALL_MODE_ID],
+      providerModeWriter: writeCursorProviderMode,
     });
   }
 }

@@ -124,6 +124,41 @@ describe("CursorACPAgentClient model discovery", () => {
     });
   });
 
+  test("appends Allow All to natively reported Cursor modes", async () => {
+    const client = new TestCursorACPAgentClient({
+      sessionId: "session-1",
+      models: null,
+      configOptions: [],
+      modes: {
+        currentModeId: "agent",
+        availableModes: [
+          { id: "agent", name: "Agent", description: null },
+          { id: "plan", name: "Plan", description: null },
+          { id: "ask", name: "Ask", description: null },
+        ],
+      },
+    });
+
+    await expect(
+      client.fetchCatalog({ scope: "workspace", cwd: "/tmp/cursor", force: false }),
+    ).resolves.toEqual({
+      models: [],
+      modes: [
+        { id: "agent", label: "Agent", description: undefined },
+        { id: "plan", label: "Plan", description: undefined },
+        { id: "ask", label: "Ask", description: undefined },
+        {
+          id: "allow-all",
+          label: "Allow All",
+          description: "Automatically approves all Cursor permission requests (use with caution)",
+          icon: "ShieldOff",
+          colorTier: "dangerous",
+          isUnattended: true,
+        },
+      ],
+    });
+  });
+
   test("exposes Cursor fast mode through provider features", async () => {
     const client = new TestCursorACPAgentClient({
       sessionId: "session-1",

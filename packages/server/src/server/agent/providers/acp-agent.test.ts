@@ -18,6 +18,8 @@ import {
 import {
   ACPAgentClient,
   ACPAgentSession,
+  type ACPProviderModeWriterContext,
+  type ACPProviderModeWriteResult,
   type SpawnedACPProcess,
   type SessionStateResponse,
   buildACPClientCapabilities,
@@ -45,7 +47,11 @@ import { GenericACPAgentClient } from "./generic-acp-agent.js";
 import { parseKiroExtensionCommands } from "./kiro-acp-agent.js";
 import { transformPiModels } from "./pi/agent.js";
 import type { AgentStreamEvent } from "../agent-sdk-types.js";
-import type { AgentCapabilityFlags, AgentPersistenceHandle } from "../agent-sdk-types.js";
+import type {
+  AgentCapabilityFlags,
+  AgentMode,
+  AgentPersistenceHandle,
+} from "../agent-sdk-types.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { buildStringCommandShellInvocation } from "../../../utils/string-command-shell.js";
 import { asInternals } from "../../test-utils/class-mocks.js";
@@ -294,6 +300,48 @@ function createCopilotSessionWithConfig(
       modeIdTransformer: transformCopilotModeId,
       providerModeWriter: writeCopilotProviderMode,
       beforeModeWriter: beforeCopilotModeWriter,
+      capabilities: {
+        supportsStreaming: true,
+        supportsSessionPersistence: true,
+        supportsDynamicModes: true,
+        supportsMcpServers: true,
+        supportsReasoningStream: true,
+        supportsToolInvocations: true,
+      },
+    },
+  );
+}
+
+const SYNTHETIC_ALLOW_ALL_MODE: AgentMode = {
+  id: "synthetic-allow-all",
+  label: "Allow All",
+  isUnattended: true,
+};
+
+async function writeSyntheticProviderMode(
+  context: ACPProviderModeWriterContext,
+): Promise<ACPProviderModeWriteResult> {
+  if (context.requestedModeId !== SYNTHETIC_ALLOW_ALL_MODE.id) {
+    return { handled: false };
+  }
+  return { handled: true, currentModeId: context.requestedModeId };
+}
+
+function createSyntheticModeSessionWithConfig(modeId?: string | null): ACPAgentSession {
+  return new ACPAgentSession(
+    {
+      provider: "acp",
+      cwd: "/tmp/paseo-acp-test",
+      modeId: modeId ?? undefined,
+    },
+    {
+      provider: "acp",
+      logger: createTestLogger(),
+      defaultCommand: ["mock-acp-agent", "acp"],
+      defaultModes: [],
+      syntheticModes: [SYNTHETIC_ALLOW_ALL_MODE],
+      autoApprovePermissionModeIds: [SYNTHETIC_ALLOW_ALL_MODE.id],
+      providerModeWriter: writeSyntheticProviderMode,
       capabilities: {
         supportsStreaming: true,
         supportsSessionPersistence: true,
@@ -1150,6 +1198,204 @@ describe("ACPAgentSession Zed parity", () => {
     await expect(permission).resolves.toEqual({
       outcome: { outcome: "selected", optionId: "allow-once" },
     });
+  });
+
+  test("auto-approves permission requests in an auto-approve synthetic mode without prompting", async () => {
+    const session = createSyntheticModeSessionWithConfig(SYNTHETIC_ALLOW_ALL_MODE.id);
+    const events: Array<{ type: string }> = [];
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    session.subscribe((event) => events.push(event as { type: string }));
+
+    await expect(
+      session.requestPermission({
+        sessionId: "session-1",
+        toolCall: {
+          toolCallId: "tool-1",
+          title: "Web search",
+          kind: "search",
+          status: "pending",
+        },
+        options: [
+          { optionId: "allow-once", name: "Allow", kind: "allow_once" },
+          { optionId: "reject-once", name: "Reject", kind: "reject_once" },
+        ],
+      } satisfies RequestPermissionRequest),
+    ).resolves.toEqual({
+      outcome: { outcome: "selected", optionId: "allow-once" },
+    });
+
+    expect(events.some((event) => event.type === "permission_requested")).toBe(false);
+  });
+
+  test("keeps prompting in a native agent-reported mode", async () => {
+    const session = createSyntheticModeSessionWithConfig("agent");
+    const events: Array<{ type: string; request?: { id: string } }> = [];
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    session.subscribe((event) => {
+      events.push(event as { type: string; request?: { id: string } });
+    });
+
+    const permission = session.requestPermission({
+      sessionId: "session-1",
+      toolCall: {
+        toolCallId: "tool-1",
+        title: "Run command",
+        kind: "execute",
+        status: "pending",
+      },
+      options: [
+        { optionId: "allow-once", name: "Allow", kind: "allow_once" },
+        { optionId: "reject-once", name: "Reject", kind: "reject_once" },
+      ],
+    } satisfies RequestPermissionRequest);
+    let settled = false;
+    void permission.finally(() => {
+      settled = true;
+    });
+
+    // Flush a full macrotask so a wrongly auto-resolved promise's .finally
+    // would have fired before the settled assertion below.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const requested = events.find((event) => event.type === "permission_requested");
+    expect(requested?.request?.id).toEqual(expect.any(String));
+    expect(settled).toBe(false);
+    expect(session.getPendingPermissions()).toHaveLength(1);
+
+    await session.respondToPermission(requested!.request!.id, { behavior: "allow" });
+    await expect(permission).resolves.toEqual({
+      outcome: { outcome: "selected", optionId: "allow-once" },
+    });
+  });
+
+  test("falls back to prompting when the auto-approve mode has no allow option", async () => {
+    const session = createSyntheticModeSessionWithConfig(SYNTHETIC_ALLOW_ALL_MODE.id);
+    const events: Array<{ type: string; request?: { id: string } }> = [];
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    session.subscribe((event) => {
+      events.push(event as { type: string; request?: { id: string } });
+    });
+
+    const permission = session.requestPermission({
+      sessionId: "session-1",
+      toolCall: {
+        toolCallId: "tool-1",
+        title: "Run command",
+        kind: "execute",
+        status: "pending",
+      },
+      options: [{ optionId: "reject-once", name: "Reject", kind: "reject_once" }],
+    } satisfies RequestPermissionRequest);
+    let settled = false;
+    void permission.finally(() => {
+      settled = true;
+    });
+
+    // Flush a full macrotask so a wrongly auto-resolved promise's .finally
+    // would have fired before the settled assertion below.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const requested = events.find((event) => event.type === "permission_requested");
+    expect(requested?.request?.id).toEqual(expect.any(String));
+    expect(settled).toBe(false);
+    expect(session.getPendingPermissions()).toHaveLength(1);
+
+    await session.respondToPermission(requested!.request!.id, { behavior: "deny" });
+    await expect(permission).resolves.toEqual({
+      outcome: { outcome: "selected", optionId: "reject-once" },
+    });
+  });
+
+  test("switches synthetic modes locally without ACP writes", async () => {
+    const setSessionMode = vi.fn(async () => undefined);
+    const setSessionConfigOption = vi.fn(async () => ({ configOptions: [] }));
+    const session = createSyntheticModeSessionWithConfig();
+    const internals = asInternals<ACPConfiguredOverrideInternals>(session);
+    internals.sessionId = "session-1";
+    internals.connection = { setSessionMode, setSessionConfigOption };
+    const events: AgentStreamEvent[] = [];
+    const unsubscribe = session.subscribe((event) => events.push(event));
+
+    await session.setMode(SYNTHETIC_ALLOW_ALL_MODE.id);
+    unsubscribe();
+
+    expect(setSessionMode).not.toHaveBeenCalled();
+    expect(setSessionConfigOption).not.toHaveBeenCalled();
+    await expect(session.getCurrentMode()).resolves.toBe(SYNTHETIC_ALLOW_ALL_MODE.id);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "mode_changed",
+        currentModeId: SYNTHETIC_ALLOW_ALL_MODE.id,
+      }),
+    );
+
+    await expect(
+      session.requestPermission({
+        sessionId: "session-1",
+        toolCall: {
+          toolCallId: "tool-2",
+          title: "Edit file",
+          kind: "edit",
+          status: "pending",
+        },
+        options: [
+          { optionId: "allow-once", name: "Allow", kind: "allow_once" },
+          { optionId: "reject-once", name: "Reject", kind: "reject_once" },
+        ],
+      } satisfies RequestPermissionRequest),
+    ).resolves.toEqual({
+      outcome: { outcome: "selected", optionId: "allow-once" },
+    });
+  });
+
+  test("keeps native mode switching on the ACP path alongside a synthetic mode", async () => {
+    const setSessionMode = vi.fn(async () => undefined);
+    const setSessionConfigOption = vi.fn(async () => ({ configOptions: [] }));
+    const session = createSyntheticModeSessionWithConfig();
+    const internals = asInternals<
+      ACPConfiguredOverrideInternals & { availableModes: AgentStreamEvent[] }
+    >(session);
+    internals.sessionId = "session-1";
+    internals.connection = { setSessionMode, setSessionConfigOption };
+    asInternals<{ availableModes: unknown[] }>(session).availableModes = [
+      { id: "agent", label: "Agent" },
+      { id: "plan", label: "Plan" },
+      { id: SYNTHETIC_ALLOW_ALL_MODE.id, label: "Allow All", isUnattended: true },
+    ];
+
+    await session.setMode(SYNTHETIC_ALLOW_ALL_MODE.id);
+    expect(setSessionMode).not.toHaveBeenCalled();
+    await expect(session.getCurrentMode()).resolves.toBe(SYNTHETIC_ALLOW_ALL_MODE.id);
+
+    await session.setMode("plan");
+    expect(setSessionMode).toHaveBeenCalledWith({ sessionId: "session-1", modeId: "plan" });
+    await expect(session.getCurrentMode()).resolves.toBe("plan");
+  });
+
+  test("keeps a synthetic mode active across config-option echoes of the native mode", async () => {
+    const session = createSyntheticModeSessionWithConfig(SYNTHETIC_ALLOW_ALL_MODE.id);
+    const internals = asInternals<ACPSessionInternals>(session);
+    internals.sessionId = "session-1";
+
+    internals.translateSessionUpdate({
+      sessionUpdate: "config_option_update",
+      configOptions: [selectConfigOption("mode", ["agent", "plan"], "agent")],
+    } as SessionUpdate);
+
+    await expect(session.getCurrentMode()).resolves.toBe(SYNTHETIC_ALLOW_ALL_MODE.id);
+  });
+
+  test("lets an explicit agent mode change switch out of a synthetic mode", async () => {
+    const session = createSyntheticModeSessionWithConfig(SYNTHETIC_ALLOW_ALL_MODE.id);
+    const internals = asInternals<ACPSessionInternals>(session);
+    internals.sessionId = "session-1";
+
+    internals.translateSessionUpdate({
+      sessionUpdate: "current_mode_update",
+      currentModeId: "plan",
+    } as SessionUpdate);
+
+    await expect(session.getCurrentMode()).resolves.toBe("plan");
   });
 
   test("maps Copilot Allow All mode to allow_all ACP config on session start", async () => {
