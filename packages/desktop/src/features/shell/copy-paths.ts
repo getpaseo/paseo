@@ -1,6 +1,11 @@
 import { clipboard } from "electron";
 import { pathToFileURL } from "node:url";
 
+export interface FilePathClipboard {
+  writeBuffer(type: string, buffer: Buffer): void;
+  writeText(text: string): void;
+}
+
 function buildMacFilenamesPlist(paths: readonly string[]): Buffer {
   const escaped = paths.map((filePath) =>
     filePath
@@ -37,6 +42,7 @@ function buildWindowsDropFiles(paths: readonly string[]): Buffer {
 export function copyFilePathsToClipboard(
   paths: readonly string[],
   platform: NodeJS.Platform = process.platform,
+  fileClipboard: FilePathClipboard = clipboard,
 ): boolean {
   const normalized = paths.map((value) => value.trim()).filter((value) => value.length > 0);
   if (normalized.length === 0) {
@@ -44,17 +50,17 @@ export function copyFilePathsToClipboard(
   }
 
   if (platform === "darwin") {
-    clipboard.writeBuffer("NSFilenamesPboardType", buildMacFilenamesPlist(normalized));
+    fileClipboard.writeBuffer("NSFilenamesPboardType", buildMacFilenamesPlist(normalized));
     return true;
   }
 
   if (platform === "win32") {
-    clipboard.writeBuffer("CF_HDROP", buildWindowsDropFiles(normalized));
+    fileClipboard.writeBuffer("CF_HDROP", buildWindowsDropFiles(normalized));
     return true;
   }
 
   const uriList = normalized.map((filePath) => pathToFileURL(filePath).href).join("\n");
-  clipboard.writeBuffer("text/uri-list", Buffer.from(uriList, "utf8"));
-  clipboard.writeText(normalized.join("\n"));
+  fileClipboard.writeBuffer("text/uri-list", Buffer.from(uriList, "utf8"));
+  fileClipboard.writeText(normalized.join("\n"));
   return true;
 }
