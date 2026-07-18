@@ -10,12 +10,6 @@ export interface TestOpenCodeServerAcquisition {
 export class TestOpenCodeServerManager implements OpenCodeServerManagerLike {
   readonly acquisitions: TestOpenCodeServerAcquisition[] = [];
   readonly server = { port: 1234, url: "http://127.0.0.1:1234" };
-  ensureRunningCount = 0;
-
-  async ensureRunning(): Promise<{ port: number; url: string }> {
-    this.ensureRunningCount += 1;
-    return this.server;
-  }
 
   async acquireCurrent(): Promise<OpenCodeServerAcquisition> {
     return this.recordAcquisition({ kind: "current" });
@@ -47,7 +41,7 @@ export class TestOpenCodeServerManager implements OpenCodeServerManagerLike {
     this.acquisitions.push(acquisition);
     return {
       server: this.server,
-      release: () => {
+      release: async () => {
         acquisition.released = true;
       },
     };

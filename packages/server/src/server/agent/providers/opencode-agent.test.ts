@@ -194,7 +194,8 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
   test("creates a session with valid id and provider", async () => {
     const cwd = tmpCwd();
     const runtime = new TestOpenCodeHarness();
-    runtime.enqueueClient(new TestOpenCodeClient());
+    const openCode = new TestOpenCodeClient();
+    runtime.enqueueClient(openCode);
     const client = new OpenCodeAgentClient(logger, undefined, {
       serverManager: runtime,
       createClient: runtime.createClient,
@@ -206,8 +207,48 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
     expect(session.provider).toBe("opencode");
 
     await session.close();
+    expect(openCode.calls.sessionAbort).toEqual([{ sessionID: "session-1", directory: cwd }]);
+    expect(openCode.calls.sessionUpdate).toEqual([]);
     rmSync(cwd, { recursive: true, force: true });
   }, 60_000);
+
+  test("archives and unarchives the durable native session through client hooks", async () => {
+    const cwd = tmpCwd();
+    const runtime = new TestOpenCodeHarness();
+    const archiveClient = new TestOpenCodeClient();
+    const unarchiveClient = new TestOpenCodeClient();
+    runtime.enqueueClient(archiveClient);
+    runtime.enqueueClient(unarchiveClient);
+    const client = new OpenCodeAgentClient(logger, undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const handle = {
+      provider: "opencode" as const,
+      sessionId: "session-1",
+      metadata: { cwd },
+    };
+
+    await client.archiveNativeSession(handle);
+    await client.unarchiveNativeSession(handle);
+
+    expect(archiveClient.calls.sessionUpdate).toEqual([
+      {
+        sessionID: "session-1",
+        directory: cwd,
+        time: { archived: expect.any(Number) },
+      },
+    ]);
+    expect(unarchiveClient.calls.sessionUpdate).toEqual([
+      {
+        sessionID: "session-1",
+        directory: cwd,
+        time: { archived: null },
+      },
+    ]);
+    expect(runtime.acquisitions.every((acquisition) => acquisition.releaseCount === 1)).toBe(true);
+    rmSync(cwd, { recursive: true, force: true });
+  });
 
   test("single turn completes with streaming deltas", async () => {
     const cwd = tmpCwd();
@@ -713,65 +754,6 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
 });
 
 describe("OpenCode adapter context-window normalization", () => {
-  test("close reconciliation aborts then archives upstream session", async () => {
-    const abort = vi.fn().mockResolvedValue({ data: true, error: undefined });
-    const update = vi.fn().mockResolvedValue({
-      data: { id: "session-1", time: { archived: Date.now() } },
-      error: undefined,
-    });
-
-    await __openCodeInternals.reconcileOpenCodeSessionClose({
-      client: {
-        session: {
-          abort,
-          update,
-        },
-      } as never,
-      sessionId: "session-1",
-      directory: "/tmp/project",
-      logger: createTestLogger(),
-    });
-
-    expect(abort).toHaveBeenCalledWith({
-      sessionID: "session-1",
-      directory: "/tmp/project",
-    });
-    expect(update).toHaveBeenCalledTimes(1);
-    expect(update).toHaveBeenCalledWith({
-      sessionID: "session-1",
-      directory: "/tmp/project",
-      time: {
-        archived: expect.any(Number),
-      },
-    });
-  });
-
-  test("close reconciliation still archives when abort returns an error", async () => {
-    const abort = vi.fn().mockResolvedValue({
-      data: undefined,
-      error: { data: {}, errors: [], success: false },
-    });
-    const update = vi.fn().mockResolvedValue({
-      data: { id: "session-1", time: { archived: Date.now() } },
-      error: undefined,
-    });
-
-    await __openCodeInternals.reconcileOpenCodeSessionClose({
-      client: {
-        session: {
-          abort,
-          update,
-        },
-      } as never,
-      sessionId: "session-1",
-      directory: "/tmp/project",
-      logger: createTestLogger(),
-    });
-
-    expect(abort).toHaveBeenCalledTimes(1);
-    expect(update).toHaveBeenCalledTimes(1);
-  });
-
   test("builds OpenCode file parts for image prompt blocks", () => {
     expect(
       __openCodeInternals.buildOpenCodePromptParts([

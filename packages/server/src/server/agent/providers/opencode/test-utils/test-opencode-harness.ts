@@ -53,14 +53,10 @@ export class TestOpenCodeHarness implements OpenCodeServerManagerLike {
     this.acquisitions.push(acquisition);
     return {
       server: this.server,
-      release: () => {
+      release: async () => {
         acquisition.releaseCount += 1;
       },
     };
-  }
-
-  async ensureRunning(): Promise<{ port: number; url: string }> {
-    return this.server;
   }
 
   readonly createClient = (options: { baseUrl: string; directory: string }): OpencodeClient => {

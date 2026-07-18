@@ -376,6 +376,47 @@ describe("ScheduleService", () => {
     expect(resumed.nextRunAt).toBe("2026-01-01T00:04:00.000Z");
   });
 
+  test("lists only active schedules that target existing agents", async () => {
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+      runner: async () => ({ agentId: null, output: "ok" }),
+    });
+    const activeAgentId = "00000000-0000-4000-8000-000000000201";
+    const pausedAgentId = "00000000-0000-4000-8000-000000000202";
+    const completedAgentId = "00000000-0000-4000-8000-000000000203";
+    const cadence = { type: "every" as const, everyMs: 60_000 };
+
+    await service.create({
+      prompt: "Keep active agent resident",
+      cadence,
+      target: { type: "agent", agentId: activeAgentId },
+    });
+    const paused = await service.create({
+      prompt: "Paused heartbeat",
+      cadence,
+      target: { type: "agent", agentId: pausedAgentId },
+    });
+    await service.pause(paused.id);
+    await service.create({
+      prompt: "Completed heartbeat",
+      cadence,
+      target: { type: "agent", agentId: completedAgentId },
+    });
+    await service.completeForAgent(completedAgentId);
+    await service.create({
+      prompt: "Fresh agent each run",
+      cadence,
+      target: { type: "new-agent", config: { provider: "claude", cwd: tempDir } },
+    });
+
+    await expect(service.listActiveAgentTargetIds()).resolves.toEqual(new Set([activeAgentId]));
+  });
+
   test("completes schedules when max runs is reached", async () => {
     const service = createScheduleService({
       paseoHome: tempDir,
