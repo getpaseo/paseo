@@ -1056,7 +1056,7 @@ export function buildEffectiveBindings(overrides: Record<string, string>): Parse
     }
     // An empty override unbinds the shortcut entirely; the matcher skips
     // bindings with an empty chord.
-    if (override.trim() === "") {
+    if (override === "") {
       return { ...binding, combo: "", parsedChord: [] };
     }
     let parsedChord: KeyCombo[];

@@ -137,7 +137,7 @@ function ShortcutRow({
       // An empty override means the shortcut was explicitly unbound.
       return overrideCombo === "" ? [] : chordStringToShortcutKeys(overrideCombo);
     }
-    return [row.keys];
+    return row.keys.length > 0 ? [row.keys] : [];
   }, [overrideCombo, row.keys]);
   const rowStyle = useMemo(() => [styles.row, isCapturing && styles.rowCapturing], [isCapturing]);
 
