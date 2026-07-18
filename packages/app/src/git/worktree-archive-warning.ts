@@ -173,6 +173,44 @@ export function buildWorktreeArchiveRiskReasons(
   return reasons;
 }
 
+/**
+ * Local branch name for the origin-default tip, e.g. `origin/main` → `main`.
+ * Returns null when the resolved ref is missing or not an origin/* short ref.
+ */
+function originDefaultBranchName(resolvedRef: string | null | undefined): string | null {
+  if (!resolvedRef || resolvedRef.length === 0) {
+    return null;
+  }
+  if (resolvedRef.startsWith("origin/")) {
+    const name = resolvedRef.slice("origin/".length);
+    return name.length > 0 ? name : null;
+  }
+  if (resolvedRef.startsWith("refs/remotes/origin/")) {
+    const name = resolvedRef.slice("refs/remotes/origin/".length);
+    return name.length > 0 ? name : null;
+  }
+  return null;
+}
+
+/**
+ * Ordinary default-branch checkout at the tip: "Included in origin/main" while
+ * already on `main` is a tautology. Scope is display-only — classification and
+ * archive safety are unchanged.
+ */
+function isOrdinaryExactDefaultCheckout(
+  relation: OriginDefaultRelation,
+  currentBranch: string | null | undefined,
+): boolean {
+  if (relation.state !== "exact") {
+    return false;
+  }
+  if (!currentBranch) {
+    return false;
+  }
+  const defaultBranch = originDefaultBranchName(relation.resolvedRef);
+  return defaultBranch !== null && currentBranch === defaultBranch;
+}
+
 /** Status/label helper for sidebar and fallbacks — not used as archive land authority. */
 export function formatOriginDefaultRelationLabel(
   relation: OriginDefaultRelation | null | undefined,
@@ -181,6 +219,7 @@ export function formatOriginDefaultRelationLabel(
     "includedInOriginDefault" | "patchEquivalentToOriginDefault" | "unpushedCommit"
   > = DEFAULT_WORKTREE_ARCHIVE_WARNING_LABELS,
   fallbackAheadOfOrigin?: number | null,
+  currentBranch?: string | null,
 ): string | null {
   if (!relation) {
     if ((fallbackAheadOfOrigin ?? 0) > 0) {
@@ -191,7 +230,13 @@ export function formatOriginDefaultRelationLabel(
 
   switch (relation.state) {
     case "exact":
+      // Suppress tautology on ordinary default-branch checkouts only.
+      if (isOrdinaryExactDefaultCheckout(relation, currentBranch)) {
+        return null;
+      }
+      return labels.includedInOriginDefault(defaultResolvedRefLabel(relation.resolvedRef));
     case "included":
+      // Feature worktrees/branches included in origin default still show the label.
       return labels.includedInOriginDefault(defaultResolvedRefLabel(relation.resolvedRef));
     case "patch_equivalent_not_included":
       return labels.patchEquivalentToOriginDefault(defaultResolvedRefLabel(relation.resolvedRef));

@@ -93,12 +93,51 @@ describe("createSidebarWorkspaceEntry originDefaultRelation labels", () => {
           uniquePatchCount: 0,
         }),
       });
+      // Feature branch currentBranch in workspaceWithRelation — not a tautology.
       expect(entry.originDefaultRelationLabel).toBe("Included in origin/master");
       expect(entry.archiveUnpushedCommitCount).toBe(3);
     }
   });
 
-  it("labels patch-equivalent as not ancestral and still protected", () => {
+  it("suppresses exact label on ordinary default-branch checkout", () => {
+    const entry = createSidebarWorkspaceEntry({
+      serverId: "srv",
+      workspace: {
+        ...workspaceWithForge("github", "https://github.com/acme/repo/pull/1"),
+        gitRuntime: {
+          currentBranch: "master",
+          isDirty: false,
+          aheadOfOrigin: 0,
+          originDefaultRelation: {
+            state: "exact",
+            resolvedRef: "origin/master",
+            ahead: 0,
+            behind: 0,
+            uniquePatchCount: 0,
+          },
+        },
+      },
+    });
+    expect(entry.originDefaultRelationLabel).toBeNull();
+    // Safety classification inputs are still present for archive flows.
+    expect(entry.archiveOriginDefaultRelation?.state).toBe("exact");
+  });
+
+  it("still labels included feature worktrees on the default tip", () => {
+    const entry = createSidebarWorkspaceEntry({
+      serverId: "srv",
+      workspace: workspaceWithRelation({
+        state: "included",
+        resolvedRef: "origin/master",
+        ahead: 0,
+        behind: 2,
+        uniquePatchCount: 0,
+      }),
+    });
+    expect(entry.originDefaultRelationLabel).toBe("Included in origin/master");
+  });
+
+  it("labels patch-equivalent with short plain copy", () => {
     const entry = createSidebarWorkspaceEntry({
       serverId: "srv",
       workspace: workspaceWithRelation({
@@ -110,7 +149,7 @@ describe("createSidebarWorkspaceEntry originDefaultRelation labels", () => {
       }),
     });
     expect(entry.originDefaultRelationLabel).toBe(
-      "Patch-equivalent to origin/master (not ancestral; still protected)",
+      "Changes landed in origin/master (branch not merged)",
     );
   });
 

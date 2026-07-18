@@ -753,11 +753,9 @@ export const fr: TranslationResources = {
           deletedLines: "{{count}}lignes supprimées",
           unpushedCommit: "Validation non poussée{{count}}",
           unpushedCommits: "Validations non poussées{{count}}",
-
-          includedInOriginDefault: "Included in {{resolvedRef}}",
-
+          includedInOriginDefault: "Inclus dans {{resolvedRef}}",
           patchEquivalentToOriginDefault:
-            "Patch-equivalent to {{resolvedRef}} (not ancestral; still protected)",
+            "Modifications présentes dans {{resolvedRef}} (branche non fusionnée)",
         },
       },
       diff: {

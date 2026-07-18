@@ -149,7 +149,26 @@ describe("workspace archive warning for worktree backing", () => {
 
   it("labels exact/included as Included in origin/<default>", () => {
     expect(formatOriginDefaultRelationLabel(included)).toBe("Included in origin/main");
+    // Without currentBranch, exact still labels (display helper is opt-in suppress).
     expect(formatOriginDefaultRelationLabel(exact)).toBe("Included in origin/main");
+    // Feature branch at exact tip still shows inclusion (not a default-branch tautology).
+    expect(formatOriginDefaultRelationLabel(exact, undefined, undefined, "feature")).toBe(
+      "Included in origin/main",
+    );
+  });
+
+  it("suppresses exact label for ordinary default-branch checkout (display only)", () => {
+    expect(formatOriginDefaultRelationLabel(exact, undefined, undefined, "main")).toBeNull();
+    // Classification / archive risk path remains included — only the status label is scoped.
+    expect(classifyOriginDefaultArchivePushRisk(exact)).toBe("included");
+    expect(
+      buildWorktreeArchiveRiskReasons({
+        isDirty: false,
+        aheadOfOrigin: 1,
+        originDefaultRelation: exact,
+        diffStat: null,
+      }),
+    ).toEqual([]);
   });
 
   it("keeps patch-equivalent visibly distinct and still protected", () => {
@@ -160,9 +179,9 @@ describe("workspace archive warning for worktree backing", () => {
         originDefaultRelation: patchEquivalent,
         diffStat: null,
       }),
-    ).toEqual(["Patch-equivalent to origin/main (not ancestral; still protected)"]);
+    ).toEqual(["Changes landed in origin/main (branch not merged)"]);
     expect(formatOriginDefaultRelationLabel(patchEquivalent)).toBe(
-      "Patch-equivalent to origin/main (not ancestral; still protected)",
+      "Changes landed in origin/main (branch not merged)",
     );
     expect(classifyOriginDefaultArchivePushRisk(patchEquivalent)).toBe("patch_equivalent");
   });

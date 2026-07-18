@@ -718,11 +718,8 @@ export const zhCN: TranslationResources = {
           deletedLines: "删除 {{count}} 行",
           unpushedCommit: "{{count}} 个未 push 的 commit",
           unpushedCommits: "{{count}} 个未 push 的 commit",
-
-          includedInOriginDefault: "Included in {{resolvedRef}}",
-
-          patchEquivalentToOriginDefault:
-            "Patch-equivalent to {{resolvedRef}} (not ancestral; still protected)",
+          includedInOriginDefault: "已包含在 {{resolvedRef}}",
+          patchEquivalentToOriginDefault: "变更已进入 {{resolvedRef}}（分支未合并）",
         },
       },
       diff: {

@@ -724,11 +724,8 @@ export const ar: TranslationResources = {
           deletedLines: "الخطوط المحذوفة{{count}}",
           unpushedCommit: "التزام{{count}}غير المدفوعة",
           unpushedCommits: "التزامات{{count}}غير المدفوعة",
-
-          includedInOriginDefault: "Included in {{resolvedRef}}",
-
-          patchEquivalentToOriginDefault:
-            "Patch-equivalent to {{resolvedRef}} (not ancestral; still protected)",
+          includedInOriginDefault: "مضمّن في {{resolvedRef}}",
+          patchEquivalentToOriginDefault: "التغييرات وصلت إلى {{resolvedRef}} (الفرع غير مدمج)",
         },
       },
       diff: {

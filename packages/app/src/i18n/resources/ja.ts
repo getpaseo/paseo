@@ -737,11 +737,8 @@ export const ja: TranslationResources = {
           deletedLines: "{{count}}行削除",
           unpushedCommit: "{{count}}件の未プッシュコミット",
           unpushedCommits: "{{count}}件の未プッシュコミット",
-
-          includedInOriginDefault: "Included in {{resolvedRef}}",
-
-          patchEquivalentToOriginDefault:
-            "Patch-equivalent to {{resolvedRef}} (not ancestral; still protected)",
+          includedInOriginDefault: "{{resolvedRef}} に含まれています",
+          patchEquivalentToOriginDefault: "{{resolvedRef}} に変更は反映済み（ブランチは未マージ）",
         },
       },
       diff: {

@@ -719,6 +719,95 @@ describe("WorkspaceGitServiceImpl", () => {
     service.dispose();
   });
 
+  test("common-dir ref invalidation refreshes siblings inside the 2s throttle window", async () => {
+    const commonDir = join(REPO_CWD, ".git");
+    const worktreeA = join(REPO_CWD, "worktrees", "feature-a");
+    const worktreeB = join(REPO_CWD, "worktrees", "feature-b");
+    const gitDirA = join(commonDir, "worktrees", "feature-a");
+    const gitDirB = join(commonDir, "worktrees", "feature-b");
+
+    const watchCallbacks = new Map<string, Array<() => void>>();
+    const watch = vi.fn(
+      (watchPath: string, _options: { recursive: boolean }, callback: () => void) => {
+        const list = watchCallbacks.get(watchPath) ?? [];
+        list.push(callback);
+        watchCallbacks.set(watchPath, list);
+        return createWatcher();
+      },
+    );
+
+    let relationState: "ahead" | "included" = "ahead";
+    const getCheckoutStatus = vi.fn(async (cwd: string) =>
+      createCheckoutStatus(cwd, {
+        currentBranch: cwd === worktreeA ? "feature-a" : "feature-b",
+        aheadOfOrigin: relationState === "ahead" ? 2 : 0,
+        originDefaultRelation: {
+          state: relationState,
+          resolvedRef: "origin/main",
+          ahead: relationState === "ahead" ? 2 : 0,
+          behind: relationState === "ahead" ? 0 : 3,
+          uniquePatchCount: relationState === "ahead" ? 2 : 0,
+        },
+      }),
+    );
+    const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) => {
+      const absoluteGitDir = cwd === worktreeA ? gitDirA : gitDirB;
+      return {
+        ...createCheckoutSnapshotFacts(cwd),
+        worktreeRoot: cwd,
+        absoluteGitDir,
+        gitCommonDir: commonDir,
+        currentBranch: cwd === worktreeA ? "feature-a" : "feature-b",
+      };
+    });
+
+    // Stay inside the 2s non-forced throttle window for the whole test.
+    let nowMs = Date.parse("2026-04-12T00:00:00.000Z");
+    const service = createService({
+      watch,
+      getCheckoutStatus,
+      getCheckoutSnapshotFacts,
+      resolveAbsoluteGitDir: vi.fn(async (cwd: string) => (cwd === worktreeA ? gitDirA : gitDirB)),
+      now: () => new Date(nowMs),
+    });
+
+    const listenerA = vi.fn();
+    const listenerB = vi.fn();
+    const subA = service.registerWorkspace({ cwd: worktreeA }, listenerA);
+    const subB = service.registerWorkspace({ cwd: worktreeB }, listenerB);
+    await flushPromises();
+    await vi.waitFor(() => {
+      expect(watchCallbacks.has(join(commonDir, "refs", "remotes", "origin"))).toBe(true);
+    });
+
+    const statusCallsBefore = getCheckoutStatus.mock.calls.length;
+    relationState = "included";
+    // Burst inside the throttle window: debounce should coalesce, force should still refresh.
+    nowMs += 200;
+    for (const callback of watchCallbacks.get(join(commonDir, "refs", "remotes", "origin")) ?? []) {
+      callback();
+      callback();
+      callback();
+    }
+    // Advance only debounce (~1s), not the 2s min gap.
+    await vi.advanceTimersByTimeAsync(1_000);
+    await flushPromises();
+
+    const refreshCwds = getCheckoutStatus.mock.calls
+      .slice(statusCallsBefore)
+      .map((call) => call[0]);
+    expect(refreshCwds).toEqual(expect.arrayContaining([worktreeA, worktreeB]));
+    // Coalesced: one refresh per sibling, not one per watcher fire.
+    expect(refreshCwds.filter((cwd) => cwd === worktreeA).length).toBe(1);
+    expect(refreshCwds.filter((cwd) => cwd === worktreeB).length).toBe(1);
+    expect(listenerA.mock.calls.at(-1)?.[0].git.originDefaultRelation?.state).toBe("included");
+    expect(listenerB.mock.calls.at(-1)?.[0].git.originDefaultRelation?.state).toBe("included");
+
+    subA.unsubscribe();
+    subB.unsubscribe();
+    service.dispose();
+  });
+
   test("common-dir watcher setup tolerates missing remotes and packed-refs paths", async () => {
     const commonDir = join(REPO_CWD, ".git");
     const watch = vi.fn((watchPath: string) => {

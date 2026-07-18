@@ -161,7 +161,7 @@ describe("originDefaultRelation", () => {
   });
 
   it("reports unverifiable when origin default cannot be resolved", async () => {
-    // No remote configured.
+    // No remote configured — no refs/remotes/origin/HEAD.
     const relation = await getOriginDefaultRelation(repoDir);
     expect(relation).toEqual({
       state: "unverifiable",
@@ -180,5 +180,71 @@ describe("originDefaultRelation", () => {
     // ensure symbolic-ref is the resolution source.
     const resolved = await resolveOriginDefaultRef(repoDir);
     expect(resolved).toBe("origin/main");
+  });
+
+  it("reports unverifiable when refs/remotes/origin/HEAD is missing even if origin/main exists", async () => {
+    setupOrigin(repoDir, tempDir);
+    // Drop only the symbolic default; leave origin/main in place.
+    execFileSync("git", ["update-ref", "-d", "refs/remotes/origin/HEAD"], { cwd: repoDir });
+
+    expect(await resolveOriginDefaultRef(repoDir)).toBeNull();
+    const relation = await getOriginDefaultRelation(repoDir);
+    expect(relation).toEqual({
+      state: "unverifiable",
+      resolvedRef: null,
+      ahead: null,
+      behind: null,
+      uniquePatchCount: null,
+    });
+  });
+
+  it("reports unverifiable when origin/HEAD target is outside refs/remotes/origin/*", async () => {
+    setupOrigin(repoDir, tempDir);
+    // Malformed / wrong-namespace: point at a local heads ref instead of origin/*.
+    execFileSync("git", ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/heads/main"], {
+      cwd: repoDir,
+    });
+
+    expect(await resolveOriginDefaultRef(repoDir)).toBeNull();
+    expect(await getOriginDefaultRelation(repoDir)).toEqual({
+      state: "unverifiable",
+      resolvedRef: null,
+      ahead: null,
+      behind: null,
+      uniquePatchCount: null,
+    });
+  });
+
+  it("reports unverifiable when origin/HEAD target ref is missing", async () => {
+    setupOrigin(repoDir, tempDir);
+    execFileSync(
+      "git",
+      ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/does-not-exist"],
+      { cwd: repoDir },
+    );
+
+    expect(await resolveOriginDefaultRef(repoDir)).toBeNull();
+    expect(await getOriginDefaultRelation(repoDir)).toEqual({
+      state: "unverifiable",
+      resolvedRef: null,
+      ahead: null,
+      behind: null,
+      uniquePatchCount: null,
+    });
+  });
+
+  it("does not fall back to local main/master for originDefaultRelation safety", async () => {
+    // Local main exists (from init) but no origin remote / origin/HEAD.
+    writeFileSync(join(repoDir, "local-only.txt"), "local\n");
+    execFileSync("git", ["add", "local-only.txt"], { cwd: repoDir });
+    execFileSync("git", ["commit", "-m", "local only"], { cwd: repoDir });
+
+    expect(await resolveOriginDefaultRef(repoDir)).toBeNull();
+    const relation = await getOriginDefaultRelation(repoDir);
+    expect(relation.state).toBe("unverifiable");
+    expect(relation.resolvedRef).toBeNull();
+    expect(relation.ahead).toBeNull();
+    expect(relation.behind).toBeNull();
+    expect(relation.uniquePatchCount).toBeNull();
   });
 });

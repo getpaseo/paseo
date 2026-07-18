@@ -203,6 +203,7 @@ export function createSidebarWorkspaceEntry(input: {
       archiveOriginDefaultRelation,
       undefined,
       archiveUnpushedCommitCount,
+      normalizeCurrentBranch(input.workspace.gitRuntime?.currentBranch),
     ),
     scripts: input.workspace.scripts,
     hasRunningScripts: input.workspace.scripts.some((script) => script.lifecycle === "running"),

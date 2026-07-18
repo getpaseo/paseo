@@ -736,8 +736,7 @@ export const en = {
           unpushedCommit: "{{count}} unpushed commit",
           unpushedCommits: "{{count}} unpushed commits",
           includedInOriginDefault: "Included in {{resolvedRef}}",
-          patchEquivalentToOriginDefault:
-            "Patch-equivalent to {{resolvedRef}} (not ancestral; still protected)",
+          patchEquivalentToOriginDefault: "Changes landed in {{resolvedRef}} (branch not merged)",
         },
       },
       diff: {

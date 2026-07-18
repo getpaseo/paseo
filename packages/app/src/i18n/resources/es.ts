@@ -755,11 +755,8 @@ export const es: TranslationResources = {
           deletedLines: "{{count}}líneas eliminadas",
           unpushedCommit: "Confirmación no enviada de{{count}}",
           unpushedCommits: "Confirmaciones no enviadas de{{count}}",
-
-          includedInOriginDefault: "Included in {{resolvedRef}}",
-
-          patchEquivalentToOriginDefault:
-            "Patch-equivalent to {{resolvedRef}} (not ancestral; still protected)",
+          includedInOriginDefault: "Incluido en {{resolvedRef}}",
+          patchEquivalentToOriginDefault: "Cambios ya en {{resolvedRef}} (rama no fusionada)",
         },
       },
       diff: {

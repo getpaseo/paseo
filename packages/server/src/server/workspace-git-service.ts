@@ -1189,8 +1189,11 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       if (!workspaceTarget || workspaceTarget.closed) {
         continue;
       }
+      // Force so authoritative common-dir ref invalidation is not swallowed by
+      // the 2s non-forced refresh throttle. Still debounced (coalesced) above;
+      // includeForge stays false — no network/forge work on ref watchers.
       this.scheduleWorkspaceRefresh(workspaceTarget, {
-        force: false,
+        force: true,
         includeForge: false,
         reason: "common-dir-refs",
       });

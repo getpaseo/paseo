@@ -109,7 +109,11 @@ export async function archiveIfSafe(input: {
   try {
     let snapshot: Awaited<ReturnType<typeof options.workspaceGitService.getSnapshot>> | null;
     try {
+      // Force a fresh git snapshot so auto-archive never gates on a stale
+      // cached "safe" relation/dirty state. No forge/network work.
       snapshot = await options.workspaceGitService.getSnapshot(cwd, {
+        force: true,
+        includeForge: false,
         reason: "auto-archive-on-merge",
       });
     } catch (error) {

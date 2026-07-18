@@ -787,6 +787,11 @@ describe("archiveIfSafe", () => {
       },
       CWD,
     );
+    expect(harness.getSnapshot).toHaveBeenCalledWith(CWD, {
+      force: true,
+      includeForge: false,
+      reason: "auto-archive-on-merge",
+    });
     expect(harness.deps.archiveByScope).toHaveBeenCalledTimes(1);
     expect(harness.deps.archiveByScope).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -803,6 +808,54 @@ describe("archiveIfSafe", () => {
       "Auto-archived worktree after PR merge",
     );
     expect(harness.inFlight.has(CWD)).toBe(false);
+  });
+
+  test("refuses archive when forced fresh snapshot shows dirty after a previously safe cache", async () => {
+    // Simulates: cache would still look safe, but force refresh sees a real
+    // uncommitted edit (or unique commit) and fail-closes.
+    const getSnapshot = vi.fn(async (_cwd: string, options?: { force?: boolean }) => {
+      expect(options).toEqual({
+        force: true,
+        includeForge: false,
+        reason: "auto-archive-on-merge",
+      });
+      return createSnapshot({ git: { isDirty: true } });
+    });
+    const harness = createHarness({
+      getSnapshot: getSnapshot as unknown as () => Promise<WorkspaceGitRuntimeSnapshot | null>,
+    });
+
+    await runArchiveIfSafe(harness);
+
+    expect(getSnapshot).toHaveBeenCalledTimes(1);
+    expect(harness.deps.archiveByScope).not.toHaveBeenCalled();
+  });
+
+  test("refuses archive when forced fresh snapshot shows unique commits after a previously safe cache", async () => {
+    const getSnapshot = vi.fn(async () =>
+      createSnapshot({
+        git: {
+          originDefaultRelation: createIncludedRelation({
+            state: "ahead",
+            ahead: 1,
+            uniquePatchCount: 1,
+          }),
+          aheadOfOrigin: 1,
+        },
+      }),
+    );
+    const harness = createHarness({
+      getSnapshot: getSnapshot as unknown as () => Promise<WorkspaceGitRuntimeSnapshot | null>,
+    });
+
+    await runArchiveIfSafe(harness);
+
+    expect(getSnapshot).toHaveBeenCalledWith(CWD, {
+      force: true,
+      includeForge: false,
+      reason: "auto-archive-on-merge",
+    });
+    expect(harness.deps.archiveByScope).not.toHaveBeenCalled();
   });
 
   test("resolves the merged cwd to a single workspace and does not iterate siblings", async () => {

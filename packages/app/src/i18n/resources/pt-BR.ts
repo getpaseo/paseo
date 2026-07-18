@@ -747,11 +747,8 @@ export const ptBR: TranslationResources = {
           deletedLines: "{{count}} linhas removidas",
           unpushedCommit: "{{count}} commit não enviado",
           unpushedCommits: "{{count}} commits não enviados",
-
-          includedInOriginDefault: "Included in {{resolvedRef}}",
-
-          patchEquivalentToOriginDefault:
-            "Patch-equivalent to {{resolvedRef}} (not ancestral; still protected)",
+          includedInOriginDefault: "Incluído em {{resolvedRef}}",
+          patchEquivalentToOriginDefault: "Alterações em {{resolvedRef}} (branch não mesclado)",
         },
       },
       diff: {

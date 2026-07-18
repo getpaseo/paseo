@@ -1566,15 +1566,23 @@ function unverifiableOriginDefaultRelation(
 }
 
 /**
- * Resolve the origin default tip for landed-truth comparison.
- * Prefer `refs/remotes/origin/HEAD`; fall back to the same default-branch
- * resolution used for baseRef, then `origin/<name>` when that remote-tracking
- * ref exists.
+ * Resolve the origin default tip for landed-truth / safety comparison.
+ *
+ * Requires authoritative `refs/remotes/origin/HEAD` evidence only:
+ * - symbolic-ref must resolve
+ * - target must be under `refs/remotes/origin/*`
+ * - the target ref must exist
+ *
+ * Missing, malformed, wrong-namespace, or dangling targets return null so
+ * callers report `unverifiable`. Does **not** fall back to local main/master
+ * heuristics — those remain in `resolveRepositoryDefaultBranch` for non-safety
+ * base operations only.
  */
 export async function resolveOriginDefaultRef(
   cwd: string,
   context?: CheckoutContext,
 ): Promise<string | null> {
+  let symbolicTarget: string;
   try {
     const { stdout } = await runGitCommand(
       ["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"],
@@ -1584,31 +1592,26 @@ export async function resolveOriginDefaultRef(
         logger: context?.logger,
       },
     );
-    const ref = stdout.trim();
-    if (ref.startsWith("refs/remotes/")) {
-      return ref.slice("refs/remotes/".length);
-    }
-    if (ref.length > 0) {
-      return ref;
-    }
+    symbolicTarget = stdout.trim();
   } catch {
-    // fall through
-  }
-
-  const defaultBranch = await resolveRepositoryDefaultBranch(cwd);
-  if (!defaultBranch) {
     return null;
   }
 
-  const localName = normalizeLocalBranchRefName(defaultBranch);
-  if (await doesGitRefExist(cwd, `refs/remotes/origin/${localName}`, context)) {
-    return `origin/${localName}`;
+  if (!symbolicTarget.startsWith("refs/remotes/origin/")) {
+    // Missing, empty, or target outside origin/* (e.g. refs/heads/main).
+    return null;
   }
-  if (defaultBranch.startsWith("origin/")) {
-    return defaultBranch;
+
+  const branchUnderOrigin = symbolicTarget.slice("refs/remotes/origin/".length);
+  if (!branchUnderOrigin || branchUnderOrigin.includes("..") || branchUnderOrigin.endsWith("/")) {
+    return null;
   }
-  // Local-only default with no origin tracking ref is not a usable origin default tip.
-  return null;
+
+  if (!(await doesGitRefExist(cwd, symbolicTarget, context))) {
+    return null;
+  }
+
+  return `origin/${branchUnderOrigin}`;
 }
 
 async function isAncestorRef(
