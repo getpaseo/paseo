@@ -42,6 +42,8 @@ With a custom root, Paseo keeps the same hashed layout under that directory:
 
 ## Create a worktree-backed workspace
 
+The examples below use the current directory as the source checkout. Pass `--path ~/dev/my-app` to create the workspace from another checkout.
+
 Branch off from a base branch:
 
 ```bash

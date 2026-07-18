@@ -64,7 +64,8 @@ paseo workspace create \
   --isolation worktree \
   --path ~/dev/my-app \
   --mode checkout-branch \
-  --branch feature/existing
+  --branch feature/existing \
+  --worktree-slug existing-copy
 
 paseo workspace create \
   --isolation worktree \
@@ -201,9 +202,9 @@ The CLI is designed to be used by agents themselves. You can instruct an agent t
 
 ```bash
 # Agent A spawns Agent B and waits for it
-paseo run --background --title api-agent "implement the API"
-paseo wait <agent-id>
-paseo logs <agent-id> --tail 5
+agent_id=$(paseo run --background --quiet --title api-agent "implement the API")
+paseo wait "$agent_id"
+paseo logs "$agent_id" --tail 5
 ```
 
 Because Agent A's ID is present in the environment, Agent B is created as its subagent in the same workspace unless `--workspace` is specified.
