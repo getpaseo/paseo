@@ -547,6 +547,21 @@ function SelectorContent({
       <Text style={styles.emptyStateText}>{t("modelSelector.noMatches")}</Text>
     </View>
   );
+  // Active search in the top-level view searches across every provider's
+  // models (favorites ranked first), not just the favorites list. Rendered
+  // only when non-empty so native doesn't mount an empty BottomSheetFlatList
+  // next to the empty state.
+  const searchResults =
+    displayRows.length > 0 ? (
+      <ProviderModelRows
+        rows={displayRows}
+        selectedProvider={selectedProvider}
+        selectedModel={selectedModel}
+        favoriteKeys={favoriteKeys}
+        onSelect={onSelect}
+        onToggleFavorite={onToggleFavorite}
+      />
+    ) : null;
 
   if (view.kind === "provider") {
     if (!selectedViewProvider) {
@@ -592,16 +607,7 @@ function SelectorContent({
   return (
     <View>
       {normalizedQuery ? (
-        // Active search in the top-level view searches across every provider's
-        // models (favorites ranked first), not just the favorites list.
-        <ProviderModelRows
-          rows={displayRows}
-          selectedProvider={selectedProvider}
-          selectedModel={selectedModel}
-          favoriteKeys={favoriteKeys}
-          onSelect={onSelect}
-          onToggleFavorite={onToggleFavorite}
-        />
+        searchResults
       ) : (
         <>
           <FavoritesSection
