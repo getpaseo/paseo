@@ -1733,10 +1733,12 @@ export const ja: TranslationResources = {
       dialogTitle: "ショートカット",
       unavailableOnMobile: "キーボードショートカットはデスクトップでのみ利用できます",
       capturePrompt: "ショートカットを押してください...",
+      unbound: "未設定",
       actions: {
         done: "完了",
         cancel: "キャンセル",
         rebind: "再割り当て",
+        unbind: "割り当て解除",
         reset: "リセット",
         resetAll: "すべてリセット",
       },

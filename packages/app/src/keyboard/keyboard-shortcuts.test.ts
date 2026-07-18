@@ -665,6 +665,40 @@ describe("keyboard-shortcut help sections", () => {
     expect(showShortcuts?.noteKey).toBe("settings.shortcuts.helpNotes.showKeyboardShortcuts");
   });
 
+  it("deactivates default-bound shortcuts when an empty override unbinds them", () => {
+    const bindings = buildEffectiveBindings({
+      "workspace-terminal-new-ctrl-shift-t-non-mac": "",
+    });
+    const terminalBinding = bindings.find(
+      (binding) => binding.id === "workspace-terminal-new-ctrl-shift-t-non-mac",
+    );
+    expect(terminalBinding?.combo).toBe("");
+    expect(terminalBinding?.parsedChord).toHaveLength(0);
+
+    const result = resolveKeyboardShortcut({
+      event: {
+        key: "T",
+        code: "KeyT",
+        metaKey: false,
+        ctrlKey: true,
+        altKey: false,
+        shiftKey: true,
+        repeat: false,
+      },
+      context: {
+        isMac: false,
+        isDesktop: true,
+        focusScope: "other",
+        commandCenterOpen: false,
+      },
+      chordState: { candidateIndices: [], step: 0, timeoutId: null },
+      onChordReset: () => {},
+      bindings,
+    });
+
+    expect(result.match).toBeNull();
+  });
+
   it("does not expose Enter send behavior as rebindable shortcut rows", () => {
     const sections = buildKeyboardShortcutHelpSections({ isMac: true, isDesktop: true });
 

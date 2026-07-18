@@ -1715,10 +1715,12 @@ export const ar: TranslationResources = {
       dialogTitle: "الاختصارات",
       unavailableOnMobile: "اختصارات لوحة المفاتيح متاحة فقط على سطح المكتب",
       capturePrompt: "اضغط على الاختصار...",
+      unbound: "غير معيّن",
       actions: {
         done: "منتهي",
         cancel: "يلغي",
         rebind: "إعادة ربط",
+        unbind: "إلغاء التعيين",
         reset: "إعادة ضبط",
         resetAll: "إعادة ضبط الكل",
       },

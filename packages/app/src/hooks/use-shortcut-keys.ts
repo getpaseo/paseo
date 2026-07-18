@@ -17,8 +17,9 @@ export function useShortcutKeys(actionId: string): ShortcutKey[][] | null {
     if (!bindingId) return null;
 
     const override = overrides[bindingId];
-    if (override) {
-      return chordStringToShortcutKeys(override);
+    if (override !== undefined) {
+      // An empty override means the shortcut was explicitly unbound.
+      return override === "" ? null : chordStringToShortcutKeys(override);
     }
 
     const defaultKeys = getDefaultKeysForAction(actionId, platform);

@@ -1764,10 +1764,12 @@ export const fr: TranslationResources = {
       dialogTitle: "Raccourcis",
       unavailableOnMobile: "Les raccourcis clavier ne sont disponibles que sur le bureau",
       capturePrompt: "Appuyez sur le raccourci...",
+      unbound: "Non défini",
       actions: {
         done: "Fait",
         cancel: "Annuler",
         rebind: "Relier",
+        unbind: "Dissocier",
         reset: "Réinitialiser",
         resetAll: "Tout réinitialiser",
       },

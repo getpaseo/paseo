@@ -1726,10 +1726,12 @@ export const en = {
       dialogTitle: "Shortcuts",
       unavailableOnMobile: "Keyboard shortcuts are only available on desktop",
       capturePrompt: "Press shortcut...",
+      unbound: "Not set",
       actions: {
         done: "Done",
         cancel: "Cancel",
         rebind: "Rebind",
+        unbind: "Unbind",
         reset: "Reset",
         resetAll: "Reset all",
       },
