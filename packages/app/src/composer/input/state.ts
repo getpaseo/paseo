@@ -3,6 +3,32 @@ import type { MessagePayload } from "@/composer/types";
 
 export type SendBehavior = "interrupt" | "queue";
 
+interface ComposerSurfaceState {
+  opacity: 0 | 1;
+  pointerEvents: "auto" | "none";
+}
+
+export interface ComposerSurfacePresentation {
+  input: ComposerSurfaceState;
+  overlay: ComposerSurfaceState;
+}
+
+const INPUT_PRESENTATION: ComposerSurfacePresentation = {
+  input: { opacity: 1, pointerEvents: "auto" },
+  overlay: { opacity: 0, pointerEvents: "none" },
+};
+
+const OVERLAY_PRESENTATION: ComposerSurfacePresentation = {
+  input: { opacity: 0, pointerEvents: "none" },
+  overlay: { opacity: 1, pointerEvents: "auto" },
+};
+
+export function resolveComposerSurfacePresentation(
+  showOverlay: boolean,
+): ComposerSurfacePresentation {
+  return showOverlay ? OVERLAY_PRESENTATION : INPUT_PRESENTATION;
+}
+
 interface StopRealtimeVoiceContext {
   voice: { stopVoice: () => Promise<unknown> } | null | undefined;
   isRealtimeVoiceForCurrentAgent: boolean;
