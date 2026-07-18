@@ -1,5 +1,4 @@
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
-import contentDisposition from "content-disposition";
 import { mkdtempSync, writeFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
@@ -93,11 +92,20 @@ describe("daemon E2E", () => {
       expect(response.headers.get("content-type")).toBe(tokenResponse.mimeType);
 
       const disposition = response.headers.get("content-disposition") ?? "";
-      // Same package the server uses (ASCII fallback + RFC 5987 filename*).
-      // content-disposition is always ASCII-safe for Node setHeader.
-      expect(disposition).toBe(contentDisposition(fileName));
+      // Independent RFC 6266/5987 contract — do not assert via content-disposition()
+      // itself (that would only prove the server and the test share a library).
+      expect(disposition).toMatch(/^attachment;/i);
+      expect(disposition).toMatch(/filename=/i);
       expect(disposition).toMatch(/filename\*=UTF-8''/i);
+      // Header bytes must be ASCII-safe for Node setHeader (no raw CJK/emoji).
       expect(disposition).not.toContain("中");
+      for (let i = 0; i < disposition.length; i++) {
+        expect(disposition.charCodeAt(i)).toBeLessThan(128);
+      }
+      // filename* must decode back to the original Unicode basename.
+      const encodedName = disposition.match(/filename\*=UTF-8''([^;\s]+)/i)?.[1];
+      expect(encodedName).toBeTruthy();
+      expect(decodeURIComponent(encodedName!)).toBe(fileName);
 
       const body = await response.text();
       expect(body).toBe(fileContents);
