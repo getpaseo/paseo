@@ -53,7 +53,7 @@ try {
     assert.strictEqual(created.exitCode, 0, created.stderr);
     const createdJson = JSON.parse(created.stdout);
     assert.strictEqual(createdJson.name, "review-prs");
-    assert.strictEqual(createdJson.cadence, "every:5m");
+    assert.strictEqual(createdJson.cadence, "cron:*/5 * * * *");
     assert(
       typeof createdJson.target === "string" &&
         (createdJson.target.startsWith("agent:") || createdJson.target === "new-agent:claude"),
