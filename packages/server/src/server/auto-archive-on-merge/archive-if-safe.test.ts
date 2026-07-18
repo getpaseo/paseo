@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import {
   archiveIfSafe,
+  isSnapshotSafeForAutoArchive,
   type ArchiveIfSafeDependencies,
   type AutoArchiveArchiveOptions,
 } from "./archive-if-safe.js";
@@ -360,6 +361,88 @@ afterEach(() => {
   }
 });
 
+describe("isSnapshotSafeForAutoArchive", () => {
+  test("accepts exact known-zero state", () => {
+    expect(
+      isSnapshotSafeForAutoArchive(
+        createSnapshot({
+          git: {
+            isDirty: false,
+            aheadOfOrigin: 0,
+            originDefaultRelation: createIncludedRelation({
+              state: "exact",
+              ahead: 0,
+              behind: 0,
+              uniquePatchCount: 0,
+            }),
+          },
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  test("accepts included known-zero state", () => {
+    expect(isSnapshotSafeForAutoArchive(createSnapshot())).toBe(true);
+  });
+
+  test("rejects isDirty null", () => {
+    expect(isSnapshotSafeForAutoArchive(createSnapshot({ git: { isDirty: null } }))).toBe(false);
+  });
+
+  test("rejects isDirty undefined when constructible", () => {
+    const snapshot = createSnapshot();
+    // Runtime unknown: coerce past the typed boolean|null field.
+    (snapshot.git as { isDirty: boolean | null | undefined }).isDirty = undefined;
+    expect(isSnapshotSafeForAutoArchive(snapshot)).toBe(false);
+  });
+
+  test("rejects relation uniquePatchCount null", () => {
+    expect(
+      isSnapshotSafeForAutoArchive(
+        createSnapshot({
+          git: {
+            originDefaultRelation: createIncludedRelation({ uniquePatchCount: null }),
+          },
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  test("rejects relation ahead null", () => {
+    expect(
+      isSnapshotSafeForAutoArchive(
+        createSnapshot({
+          git: {
+            originDefaultRelation: createIncludedRelation({ ahead: null }),
+          },
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  test("rejects relation ahead nonzero", () => {
+    expect(
+      isSnapshotSafeForAutoArchive(
+        createSnapshot({
+          git: {
+            originDefaultRelation: createIncludedRelation({ ahead: 1 }),
+          },
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  test("rejects aheadOfOrigin null", () => {
+    expect(isSnapshotSafeForAutoArchive(createSnapshot({ git: { aheadOfOrigin: null } }))).toBe(
+      false,
+    );
+  });
+
+  test("rejects aheadOfOrigin nonzero", () => {
+    expect(isSnapshotSafeForAutoArchive(createSnapshot({ git: { aheadOfOrigin: 1 } }))).toBe(false);
+  });
+});
+
 describe("archiveIfSafe", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -433,6 +516,16 @@ describe("archiveIfSafe", () => {
     expect(harness.deps.archiveByScope).not.toHaveBeenCalled();
   });
 
+  test("does nothing when isDirty is unknown (null)", async () => {
+    const harness = createHarness({
+      getSnapshot: async () => createSnapshot({ git: { isDirty: null } }),
+    });
+
+    await runArchiveIfSafe(harness);
+
+    expect(harness.deps.archiveByScope).not.toHaveBeenCalled();
+  });
+
   test("does nothing when the worktree is ahead of origin", async () => {
     const harness = createHarness({
       getSnapshot: async () => createSnapshot({ git: { aheadOfOrigin: 1 } }),
@@ -441,6 +534,16 @@ describe("archiveIfSafe", () => {
     await runArchiveIfSafe(harness);
 
     expect(harness.deps.isPaseoOwnedWorktreeCwd).not.toHaveBeenCalled();
+    expect(harness.deps.archiveByScope).not.toHaveBeenCalled();
+  });
+
+  test("does nothing when aheadOfOrigin is unknown (null)", async () => {
+    const harness = createHarness({
+      getSnapshot: async () => createSnapshot({ git: { aheadOfOrigin: null } }),
+    });
+
+    await runArchiveIfSafe(harness);
+
     expect(harness.deps.archiveByScope).not.toHaveBeenCalled();
   });
 
@@ -470,6 +573,21 @@ describe("archiveIfSafe", () => {
         createSnapshot({
           git: {
             originDefaultRelation: createIncludedRelation({ ahead: null }),
+          },
+        }),
+    });
+
+    await runArchiveIfSafe(harness);
+
+    expect(harness.deps.archiveByScope).not.toHaveBeenCalled();
+  });
+
+  test("does nothing when relation ahead is nonzero", async () => {
+    const harness = createHarness({
+      getSnapshot: async () =>
+        createSnapshot({
+          git: {
+            originDefaultRelation: createIncludedRelation({ ahead: 2 }),
           },
         }),
     });
@@ -524,7 +642,27 @@ describe("archiveIfSafe", () => {
     expect(harness.deps.archiveByScope).not.toHaveBeenCalled();
   });
 
-  test("archives when the PR is merged, upstream deleted, and origin default includes HEAD", async () => {
+  test("does nothing when uniquePatchCount is unknown (null)", async () => {
+    const harness = createHarness({
+      getSnapshot: async () =>
+        createSnapshot({
+          git: {
+            originDefaultRelation: createIncludedRelation({
+              state: "exact",
+              ahead: 0,
+              behind: 0,
+              uniquePatchCount: null,
+            }),
+          },
+        }),
+    });
+
+    await runArchiveIfSafe(harness);
+
+    expect(harness.deps.archiveByScope).not.toHaveBeenCalled();
+  });
+
+  test("does not archive when origin default includes HEAD but aheadOfOrigin is unknown", async () => {
     const harness = createHarness({
       getSnapshot: async () =>
         createSnapshot({
@@ -538,7 +676,7 @@ describe("archiveIfSafe", () => {
 
     await runArchiveIfSafe(harness);
 
-    expect(harness.deps.archiveByScope).toHaveBeenCalledTimes(1);
+    expect(harness.deps.archiveByScope).not.toHaveBeenCalled();
   });
 
   test("does not archive on merged PR alone when upstream is deleted without inclusion", async () => {
@@ -563,15 +701,39 @@ describe("archiveIfSafe", () => {
     expect(harness.deps.archiveByScope).not.toHaveBeenCalled();
   });
 
-  test("archives when relation is exact", async () => {
+  test("archives when relation is exact with known-zero counts", async () => {
     const harness = createHarness({
       getSnapshot: async () =>
         createSnapshot({
           git: {
+            isDirty: false,
+            aheadOfOrigin: 0,
             originDefaultRelation: createIncludedRelation({
               state: "exact",
               ahead: 0,
               behind: 0,
+              uniquePatchCount: 0,
+            }),
+          },
+        }),
+    });
+
+    await runArchiveIfSafe(harness);
+
+    expect(harness.deps.archiveByScope).toHaveBeenCalledTimes(1);
+  });
+
+  test("archives when relation is included with known-zero counts", async () => {
+    const harness = createHarness({
+      getSnapshot: async () =>
+        createSnapshot({
+          git: {
+            isDirty: false,
+            aheadOfOrigin: 0,
+            originDefaultRelation: createIncludedRelation({
+              state: "included",
+              ahead: 0,
+              behind: 3,
               uniquePatchCount: 0,
             }),
           },

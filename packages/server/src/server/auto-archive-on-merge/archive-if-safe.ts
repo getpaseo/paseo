@@ -54,7 +54,8 @@ const defaultDependencies: ArchiveIfSafeDependencies = {
  * never initiates archive by itself. See docs/origin-default-relation.md.
  */
 export function isSnapshotSafeForAutoArchive(snapshot: WorkspaceGitRuntimeSnapshot): boolean {
-  if (snapshot.git.isDirty === true) {
+  // Unknown dirty state is not known-safe — require an explicit clean tree.
+  if (snapshot.git.isDirty !== false) {
     return false;
   }
   // Detached / ambiguous HEAD is not a named worktree tip we will auto-delete.
@@ -68,14 +69,16 @@ export function isSnapshotSafeForAutoArchive(snapshot: WorkspaceGitRuntimeSnapsh
   if (relation.state !== "exact" && relation.state !== "included") {
     return false;
   }
-  if (relation.ahead === null) {
+  // Null/undefined ahead is unknown; only exact zero is known-safe.
+  if (relation.ahead !== 0) {
     return false;
   }
-  if (typeof relation.uniquePatchCount === "number" && relation.uniquePatchCount > 0) {
+  // Null/undefined uniquePatchCount is unknown; only exact zero is known-safe.
+  if (relation.uniquePatchCount !== 0) {
     return false;
   }
-  // Legacy push risk: still refuse when the branch is ahead of its upstream.
-  if (typeof snapshot.git.aheadOfOrigin === "number" && snapshot.git.aheadOfOrigin > 0) {
+  // Legacy push risk: null/undefined is unknown; only exact zero is known-safe.
+  if (snapshot.git.aheadOfOrigin !== 0) {
     return false;
   }
   return true;

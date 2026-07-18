@@ -42,18 +42,21 @@ Auto-archive is **fail closed**. All of the following are required:
 
 1. Explicit setting `autoArchiveAfterMerge === true`
 2. Merged pull request observed for that checkout
-3. Clean working tree
+3. Clean working tree — `isDirty === false` (null/undefined is unknown and fails)
 4. Named branch (not detached)
 5. Verifiable `originDefaultRelation` with state `exact` or `included`
-6. Non-null relation `ahead` and no unique-patch risk (`uniquePatchCount` not `> 0`)
-7. Not ahead of the branch upstream when `aheadOfOrigin` is a positive number
-8. Paseo-owned worktree (founder / non-Paseo checkouts are never auto-archived)
-9. Successful workspace resolution and archive path (errors skip, never force)
+6. Relation `ahead === 0` (null/undefined/nonzero fail)
+7. Relation `uniquePatchCount === 0` (null/undefined/nonzero fail)
+8. Branch upstream `aheadOfOrigin === 0` (null/undefined/nonzero fail)
+9. Paseo-owned worktree (founder / non-Paseo checkouts are never auto-archived)
+10. Successful workspace resolution and archive path (errors skip, never force)
 
-Missing relation (old daemon shape), `null` ahead, `ahead`,
-`patch_equivalent_not_included`, `diverged_with_unique_commits`, `unverifiable`,
-dirty trees, or archive failures **skip**. Inclusion is evidence used **only after**
-the explicit auto-archive setting; it never initiates archive by itself.
+Unknown fields never pass: missing relation (old daemon shape), `null`/`undefined`
+counts, non-zero ahead, non-safe relation states (`ahead`,
+`patch_equivalent_not_included`, `diverged_with_unique_commits`, `unverifiable`),
+dirty or unknown dirty trees, or archive failures **skip**. Inclusion is evidence
+used **only after** the explicit auto-archive setting; it never initiates archive
+by itself.
 
 ## Cross-worktree refresh
 
