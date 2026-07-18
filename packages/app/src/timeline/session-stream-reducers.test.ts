@@ -107,7 +107,10 @@ function makeStreamReducerEvent(
   };
 }
 
-function makeAssistantItem(text: string, id = `assistant-${text.length}`): StreamItem {
+function makeAssistantItem(
+  text: string,
+  id = `assistant-${text.length}`,
+): Extract<StreamItem, { kind: "assistant_message" }> {
   return {
     kind: "assistant_message",
     id,
@@ -609,6 +612,81 @@ describe("processTimelineResponse", () => {
     ]);
   });
 
+  it("keeps a tail optimistic prompt before a reconciled live assistant head", () => {
+    const prompt = makeOptimisticUserMessage("new prompt", "optimistic-new-prompt");
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail: [prompt],
+      currentHead: [
+        {
+          ...makeAssistantItem("Hel", "answer-1"),
+          messageId: "answer-1",
+        },
+      ],
+      currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 2 },
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "after",
+        epoch: "epoch-1",
+        startCursor: { seq: 3 },
+        endCursor: { seq: 3 },
+        entries: [
+          {
+            ...makeTimelineEntry(2, "Hello", "assistant_message", 3),
+            sourceSeqRanges: [{ startSeq: 2, endSeq: 3 }],
+            item: {
+              type: "assistant_message",
+              text: "Hello",
+              messageId: "answer-1",
+            },
+          },
+        ],
+      },
+    });
+
+    expect(
+      [...result.tail, ...result.head]
+        .filter((item) => item.kind === "assistant_message" || item.kind === "user_message")
+        .map((item) => item.text),
+    ).toEqual(["new prompt", "Hello"]);
+  });
+
+  it("keeps a tail optimistic prompt before a live head flushed by catch-up", () => {
+    const prompt = makeOptimisticUserMessage("new prompt", "optimistic-new-prompt");
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail: [prompt],
+      currentHead: [
+        {
+          ...makeAssistantItem("Live response", "answer-1"),
+          messageId: "answer-1",
+        },
+      ],
+      currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 2 },
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "after",
+        epoch: "epoch-1",
+        startCursor: { seq: 3 },
+        endCursor: { seq: 3 },
+        entries: [
+          makeToolCallTimelineEntry(3, "call-1", "running", {
+            type: "read",
+            filePath: "/tmp/example.ts",
+          }),
+        ],
+      },
+    });
+
+    expect(
+      [...result.tail, ...result.head]
+        .filter((item) => item.kind === "assistant_message" || item.kind === "user_message")
+        .map((item) => item.text),
+    ).toEqual(["new prompt", "Live response"]);
+  });
+
   it("keeps an active assistant head live when an incremental fetch accepts same-turn assistant text", () => {
     const existingCursor: TimelineCursor = {
       epoch: "epoch-1",
@@ -716,6 +794,51 @@ describe("processTimelineResponse", () => {
     );
     expect(assistants).toHaveLength(1);
     expect(assistants[0]).toMatchObject({ text: "Hello", messageId: "answer-1" });
+  });
+
+  it("replaces every promoted assistant block when reconciling a projected message", () => {
+    const live = processAgentStreamEvents({
+      events: [makeStreamReducerEvent(makeAssistantTimelineEvent("First paragraph.\n\nSec"), 2)],
+      currentTail: [],
+      currentHead: [],
+      currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 1 },
+      currentAgent: null,
+    });
+    expect(getAssistantTexts(live.tail)).toHaveLength(1);
+    expect(getAssistantTexts(live.head)).toHaveLength(1);
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail: live.tail,
+      currentHead: live.head,
+      currentCursor: live.cursor ?? undefined,
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "after",
+        epoch: "epoch-1",
+        startCursor: { seq: 3 },
+        endCursor: { seq: 3 },
+        entries: [
+          {
+            ...makeTimelineEntry(
+              2,
+              "First paragraph.\n\nSecond paragraph.",
+              "assistant_message",
+              3,
+            ),
+            sourceSeqRanges: [{ startSeq: 2, endSeq: 3 }],
+            item: {
+              type: "assistant_message",
+              text: "First paragraph.\n\nSecond paragraph.",
+            },
+          },
+        ],
+      },
+    });
+
+    expect(getAssistantTexts([...result.tail, ...result.head])).toEqual([
+      "First paragraph.\n\nSecond paragraph.",
+    ]);
   });
 
   it("does not replay a reasoning prefix when catch-up completes an earlier tool call", () => {

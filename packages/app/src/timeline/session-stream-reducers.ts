@@ -2,7 +2,7 @@ import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
 import type { AgentLifecycleStatus } from "@getpaseo/protocol/agent-lifecycle";
 import type { Agent } from "@/stores/session-store";
 import { useSessionStore } from "@/stores/session-store";
-import type { StreamItem, UserMessageItem } from "@/types/stream";
+import type { AssistantMessageItem, StreamItem, UserMessageItem } from "@/types/stream";
 import {
   applyStreamEvent,
   hydrateStreamState,
@@ -544,38 +544,80 @@ function replaceLiveAssistantWithProjectedText(params: {
   return next;
 }
 
+interface DetachedOptimisticUserMessage {
+  item: UserMessageItem;
+  placement: "tail" | "head";
+}
+
 function detachOptimisticUserMessages(params: { tail: StreamItem[]; head: StreamItem[] }): {
   tail: StreamItem[];
   head: StreamItem[];
-  optimistic: UserMessageItem[];
+  optimistic: DetachedOptimisticUserMessage[];
 } {
-  const optimistic: UserMessageItem[] = [];
-  const withoutOptimistic = (items: StreamItem[]) =>
+  const optimistic: DetachedOptimisticUserMessage[] = [];
+  const withoutOptimistic = (items: StreamItem[], placement: "tail" | "head") =>
     items.filter((item) => {
       if (item.kind !== "user_message" || !item.optimistic) return true;
-      optimistic.push(item);
+      optimistic.push({ item, placement });
       return false;
     });
 
   return {
-    tail: withoutOptimistic(params.tail),
-    head: withoutOptimistic(params.head),
+    tail: withoutOptimistic(params.tail, "tail"),
+    head: withoutOptimistic(params.head, "head"),
     optimistic,
   };
 }
 
-function appendOptimisticUserMessages(params: {
+function restoreOptimisticUserMessages(params: {
   tail: StreamItem[];
   head: StreamItem[];
-  optimistic: UserMessageItem[];
+  optimistic: DetachedOptimisticUserMessage[];
+  previousHead: StreamItem[];
 }): { tail: StreamItem[]; head: StreamItem[] } {
   if (params.optimistic.length === 0) {
     return { tail: params.tail, head: params.head };
   }
-  if (params.head.length > 0) {
-    return { tail: params.tail, head: [...params.head, ...params.optimistic] };
+  const tailOptimistic = params.optimistic
+    .filter(({ placement }) => placement === "tail")
+    .map(({ item }) => item);
+  const headOptimistic = params.optimistic
+    .filter(({ placement }) => placement === "head")
+    .map(({ item }) => item);
+  let tail = params.tail;
+  let head = params.head;
+  if (tailOptimistic.length > 0) {
+    const matchesPreviousHead = (item: StreamItem) =>
+      params.previousHead.some((existing) => {
+        if (item.id === existing.id) return true;
+        if (item.kind !== "assistant_message" || existing.kind !== "assistant_message") {
+          return false;
+        }
+        const existingGroupId = existing.blockGroupId ?? existing.id;
+        return (
+          item.blockGroupId === existingGroupId ||
+          item.id === existingGroupId ||
+          (item.messageId !== undefined && item.messageId === existing.messageId)
+        );
+      });
+    const tailAnchorIndex = tail.findIndex(matchesPreviousHead);
+    const headAnchorIndex = head.findIndex(matchesPreviousHead);
+    if (tailAnchorIndex >= 0) {
+      tail = [...tail.slice(0, tailAnchorIndex), ...tailOptimistic, ...tail.slice(tailAnchorIndex)];
+    } else if (headAnchorIndex >= 0) {
+      head = [...head.slice(0, headAnchorIndex), ...tailOptimistic, ...head.slice(headAnchorIndex)];
+    } else if (params.previousHead.length > 0 && head.length > 0) {
+      head = [...tailOptimistic, ...head];
+    } else if (head.length > 0) {
+      head = [...head, ...tailOptimistic];
+    } else {
+      tail = [...tail, ...tailOptimistic];
+    }
   }
-  return { tail: [...params.tail, ...params.optimistic], head: params.head };
+  return {
+    tail,
+    head: [...head, ...headOptimistic],
+  };
 }
 
 function reconcileOverlappingProjectedAssistant(params: {
@@ -603,29 +645,66 @@ function reconcileOverlappingProjectedAssistant(params: {
     if (projectedMessageId && item.messageId) return item.messageId === projectedMessageId;
     return projectedText.startsWith(item.text);
   };
-  const replaceIn = (items: StreamItem[]): StreamItem[] | null => {
+  const findMatch = (items: StreamItem[]) => {
     const index = items.findLastIndex(matches);
     const current = items[index];
-    if (!current || current.kind !== "assistant_message") return null;
-    const next = [...items];
-    next[index] = {
-      ...current,
-      ...(projectedMessageId ? { messageId: projectedMessageId } : {}),
-      text: projectedText,
-      timestamp: unit.timestamp,
-      timelineCursor: { epoch: params.epoch, seq: unit.seqEnd },
-    };
+    return current?.kind === "assistant_message" ? { current, index } : null;
+  };
+
+  const headMatch = findMatch(params.head);
+  const tailMatch = headMatch ? null : findMatch(params.tail);
+  const match = headMatch ?? tailMatch;
+  if (!match) {
+    return { tail: params.tail, head: params.head, reconciled: false };
+  }
+
+  const blockGroupId = match.current.blockGroupId;
+  const messageId = projectedMessageId ?? match.current.messageId;
+  const replacement: AssistantMessageItem = {
+    kind: "assistant_message",
+    id: blockGroupId ?? match.current.id,
+    ...(messageId !== undefined ? { messageId } : {}),
+    text: projectedText,
+    timestamp: unit.timestamp,
+    timelineCursor: { epoch: params.epoch, seq: unit.seqEnd },
+  };
+  const belongsToBlockGroup = (item: StreamItem) =>
+    blockGroupId !== undefined &&
+    item.kind === "assistant_message" &&
+    item.blockGroupId === blockGroupId;
+  const removeBlockGroup = (items: StreamItem[]) =>
+    blockGroupId !== undefined ? items.filter((item) => !belongsToBlockGroup(item)) : items;
+  const replaceMatch = (items: StreamItem[], index: number) => {
+    if (!blockGroupId) {
+      const next = [...items];
+      next[index] = replacement;
+      return next;
+    }
+    const next: StreamItem[] = [];
+    let inserted = false;
+    for (const item of items) {
+      if (!belongsToBlockGroup(item)) {
+        next.push(item);
+      } else if (!inserted) {
+        next.push(replacement);
+        inserted = true;
+      }
+    }
     return next;
   };
 
-  const nextHead = replaceIn(params.head);
-  if (nextHead) {
-    return { tail: params.tail, head: nextHead, reconciled: true };
+  if (headMatch) {
+    return {
+      tail: removeBlockGroup(params.tail),
+      head: replaceMatch(params.head, headMatch.index),
+      reconciled: true,
+    };
   }
-  const nextTail = replaceIn(params.tail);
-  return nextTail
-    ? { tail: nextTail, head: params.head, reconciled: true }
-    : { tail: params.tail, head: params.head, reconciled: false };
+  return {
+    tail: replaceMatch(params.tail, match.index),
+    head: removeBlockGroup(params.head),
+    reconciled: true,
+  };
 }
 
 function reconcileOverlappingProjectedReasoning(params: {
@@ -709,7 +788,7 @@ function stageOptimisticUserForCanonicalEvent(params: {
   tail: StreamItem[];
   head: StreamItem[];
   event: AgentStreamEventPayload;
-  optimistic: UserMessageItem | undefined;
+  optimistic: DetachedOptimisticUserMessage | undefined;
 }): { tail: StreamItem[]; head: StreamItem[]; consumed: boolean } {
   if (
     params.event.type !== "timeline" ||
@@ -718,10 +797,18 @@ function stageOptimisticUserForCanonicalEvent(params: {
   ) {
     return { tail: params.tail, head: params.head, consumed: false };
   }
-  if (params.head.length > 0) {
-    return { tail: params.tail, head: [...params.head, params.optimistic], consumed: true };
+  if (params.optimistic.placement === "head") {
+    return {
+      tail: params.tail,
+      head: [...params.head, params.optimistic.item],
+      consumed: true,
+    };
   }
-  return { tail: [...params.tail, params.optimistic], head: params.head, consumed: true };
+  return {
+    tail: [...params.tail, params.optimistic.item],
+    head: params.head,
+    consumed: true,
+  };
 }
 
 function applyCanonicalForwardUnit(params: {
@@ -822,10 +909,11 @@ function applyAcceptedForwardTimelineUnits(params: {
     head = applied.head;
   }
 
-  return appendOptimisticUserMessages({
+  return restoreOptimisticUserMessages({
     tail,
     head,
     optimistic: optimistic.slice(consumedOptimisticCount),
+    previousHead: params.currentHead,
   });
 }
 
