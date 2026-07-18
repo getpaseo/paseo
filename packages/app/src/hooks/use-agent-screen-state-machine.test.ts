@@ -190,6 +190,25 @@ describe("deriveAgentScreenViewState", () => {
     expect(sync.ui).toBe("silent");
   });
 
+  it("keeps hydrated history visible while reconnect revalidation and visibility catch-up overlap", () => {
+    const memory = createBaseMemory({
+      hasRenderedReady: true,
+      lastReadyAgent: createAgent("agent-1"),
+    });
+    const input: AgentScreenMachineInput = {
+      ...createBaseInput(),
+      hasHydratedHistoryBefore: true,
+      needsAuthoritativeSync: true,
+      visibilityCatchUpStatus: "pending",
+    };
+
+    const result = deriveAgentScreenViewState({ input, memory });
+    const ready = expectReadyState(result.state);
+    const sync = expectCatchingUpSync(ready);
+
+    expect(sync.ui).toBe("silent");
+  });
+
   it("covers already-hydrated history while a newly visible agent catches up", () => {
     const memory = createBaseMemory({
       hasRenderedReady: true,

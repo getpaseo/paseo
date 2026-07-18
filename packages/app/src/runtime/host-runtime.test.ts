@@ -20,6 +20,7 @@ import {
   type HostRuntimeControllerDeps,
   type HostRuntimeStorage,
 } from "./host-runtime";
+import { ReplicaCache } from "./replica-cache";
 
 class FakeDaemonClient {
   private state: ConnectionState = { status: "idle" };
@@ -1364,6 +1365,74 @@ describe("HostRuntimeController", () => {
 });
 
 describe("HostRuntimeStore", () => {
+  it("restores the display replica before declaring the host registry loaded", async () => {
+    const host = makeHost();
+    const storage = createMemoryHostRuntimeStorage();
+    await storage.setItem("@paseo:daemon-registry", JSON.stringify([host]));
+    await storage.setItem("@paseo:e2e", "1");
+
+    const cachedAgent = replicaAgent(
+      makeFetchAgentsEntry({
+        id: "cached-agent",
+        cwd: "/repo/paseo",
+        updatedAt: "2026-07-18T08:00:00.000Z",
+        title: "Cached agent",
+      }).agent,
+      host.serverId,
+    );
+    const session = useSessionStore.getState();
+    session.initializeSession(host.serverId, null);
+    session.setAgents(host.serverId, new Map([[cachedAgent.id, cachedAgent]]));
+    session.setFocusedAgentId(host.serverId, cachedAgent.id);
+    session.setAgentStreamTail(
+      host.serverId,
+      new Map([
+        [
+          cachedAgent.id,
+          [
+            {
+              kind: "assistant_message",
+              id: "cached-message",
+              text: "Already painted",
+              timestamp: new Date("2026-07-18T08:01:00.000Z"),
+            },
+          ],
+        ],
+      ]),
+    );
+    const cache = new ReplicaCache(storage);
+    cache.setHosts([host.serverId]);
+    await cache.flush();
+    session.clearSession(host.serverId);
+
+    const store = new HostRuntimeStore({
+      storage,
+      deps: {
+        createClient: () => {
+          throw new Error("createClient should not be called");
+        },
+        connectToDaemon: async () => {
+          throw new Error("connectToDaemon should not be called");
+        },
+        getClientId: async () => "cid_test_runtime",
+      },
+    });
+    const registryLoaded = onceHostListMatches(store, () => store.isHostRegistryLoaded());
+    store.boot();
+    await registryLoaded;
+
+    const restored = useSessionStore.getState().sessions[host.serverId];
+    expect(restored?.agents.get(cachedAgent.id)?.title).toBe("Cached agent");
+    expect(restored?.agentStreamTail.get(cachedAgent.id)?.[0]).toMatchObject({
+      text: "Already painted",
+      timestamp: new Date("2026-07-18T08:01:00.000Z"),
+    });
+    expect(restored?.hasHydratedAgents).toBe(false);
+
+    store.syncHosts([]);
+    session.clearSession(host.serverId);
+  });
+
   it("marks the host registry loaded after boot reads storage", async () => {
     const previousOverride = process.env.EXPO_PUBLIC_LOCAL_DAEMON;
     process.env.EXPO_PUBLIC_LOCAL_DAEMON = "not-an-endpoint";
