@@ -431,7 +431,7 @@ function isOpenCodeNotFoundError(error: unknown): boolean {
   );
 }
 
-async function reconcileOpenCodeSessionClose(params: {
+async function abortOpenCodeSession(params: {
   client: Pick<OpencodeClient, "session">;
   sessionId: string;
   directory: string;
@@ -460,31 +460,6 @@ async function reconcileOpenCodeSessionClose(params: {
         error: toDiagnosticErrorMessage(error),
       },
       "Failed to abort OpenCode session during close",
-    );
-  }
-
-  try {
-    const response = await client.session.update({
-      sessionID: sessionId,
-      directory,
-      time: { archived: Date.now() },
-    });
-    if (response.error && !isOpenCodeNotFoundError(response.error)) {
-      logger.warn(
-        {
-          sessionId,
-          error: toDiagnosticErrorMessage(response.error),
-        },
-        "Failed to archive OpenCode session during close",
-      );
-    }
-  } catch (error) {
-    logger.warn(
-      {
-        sessionId,
-        error: toDiagnosticErrorMessage(error),
-      },
-      "Failed to archive OpenCode session during close",
     );
   }
 }
@@ -1254,7 +1229,6 @@ export const __openCodeInternals = {
   hasNormalizedOpenCodeUsage,
   mergeOpenCodeStepFinishUsage,
   parseOpenCodeModelLookupKey,
-  reconcileOpenCodeSessionClose,
   resolveOpenCodeModelLookupKeyFromAssistantMessage,
   resolveOpenCodeSelectedModelContextWindow,
   isSelectableOpenCodeAgent,
@@ -1353,7 +1327,7 @@ export class OpenCodeAgentClient implements AgentClient {
         url,
       );
     } catch (error) {
-      acquisition.release();
+      await acquisition.release();
       throw error;
     }
   }
@@ -1407,7 +1381,7 @@ export class OpenCodeAgentClient implements AgentClient {
         registeredAcquisition !== null,
       );
     } catch (error) {
-      acquisition.release();
+      await acquisition.release();
       throw error;
     }
   }
@@ -1439,7 +1413,7 @@ export class OpenCodeAgentClient implements AgentClient {
       ]);
       return { models, modes };
     } finally {
-      acquisition.release();
+      await acquisition.release();
     }
   }
 
@@ -1455,7 +1429,7 @@ export class OpenCodeAgentClient implements AgentClient {
     try {
       return await listOpenCodeCommandsFromSdk(client, openCodeConfig.cwd);
     } finally {
-      acquisition.release();
+      await acquisition.release();
     }
   }
 
@@ -1476,7 +1450,7 @@ export class OpenCodeAgentClient implements AgentClient {
     try {
       return await collectOpenCodeImportableSessionsFromSdk(client, options);
     } finally {
-      acquisition.release();
+      await acquisition.release();
     }
   }
 
@@ -1512,7 +1486,57 @@ export class OpenCodeAgentClient implements AgentClient {
         },
       });
     } finally {
-      acquisition.release();
+      await acquisition.release();
+    }
+  }
+
+  async archiveNativeSession(handle: AgentPersistenceHandle): Promise<void> {
+    await this.setNativeSessionArchived(handle, Date.now());
+  }
+
+  async unarchiveNativeSession(handle: AgentPersistenceHandle): Promise<void> {
+    await this.setNativeSessionArchived(handle, null);
+  }
+
+  private async setNativeSessionArchived(
+    handle: AgentPersistenceHandle,
+    archivedAt: number | null,
+  ): Promise<void> {
+    const metadata = (handle.metadata ?? {}) as Partial<AgentSessionConfig>;
+    if (!metadata.cwd) {
+      throw new Error("OpenCode native archive update requires the original working directory");
+    }
+
+    const registeredServerUrl = getOpenCodeChildSessionServerUrl(handle.sessionId);
+    const acquisition =
+      (registeredServerUrl ? this.serverManager.acquireExisting(registeredServerUrl) : null) ??
+      (await this.serverManager.acquireCurrent());
+    const client = this.createOpenCodeClient({
+      baseUrl: acquisition.server.url,
+      directory: metadata.cwd,
+    });
+    try {
+      // OpenCode accepts null to clear the archive timestamp, but this SDK
+      // release's generated request type still exposes only number.
+      const updateSession = client.session.update.bind(client.session) as (parameters: {
+        sessionID: string;
+        directory?: string;
+        time?: { archived?: number | null };
+      }) => ReturnType<typeof client.session.update>;
+      const response = readOpenCodeRecord(
+        await updateSession({
+          sessionID: handle.sessionId,
+          directory: metadata.cwd,
+          time: { archived: archivedAt },
+        }),
+      );
+      if (response?.error) {
+        throw new Error(
+          `Failed to ${archivedAt === null ? "unarchive" : "archive"} OpenCode session: ${toDiagnosticErrorMessage(response.error)}`,
+        );
+      }
+    } finally {
+      await acquisition.release();
     }
   }
 
@@ -2897,7 +2921,7 @@ class OpenCodeAgentSession implements AgentSession {
   private childHydrationCompleted = false;
   private readonly unrelatedSessionIds = new Set<string>();
   private selectedModelContextWindowMaxTokens: number | undefined;
-  private releaseServer: (() => void) | null;
+  private releaseServer: (() => Promise<void>) | null;
   private eventStreamAbortController: AbortController | null = null;
   private eventStreamReady: Deferred<void> | null = null;
   private eventStreamTask: Promise<void> | null = null;
@@ -2911,7 +2935,7 @@ class OpenCodeAgentSession implements AgentSession {
     sessionId: string,
     logger: Logger,
     modelContextWindowsByModelKey: ReadonlyMap<string, number> = new Map(),
-    releaseServer?: () => void,
+    releaseServer?: () => Promise<void>,
     persistSession = true,
     private readonly agentId?: string,
     private readonly serverUrl?: string,
@@ -3891,7 +3915,7 @@ class OpenCodeAgentSession implements AgentSession {
       this.eventStreamReady = null;
       this.eventStreamTask = null;
       this.subscribers.clear();
-      await reconcileOpenCodeSessionClose({
+      await abortOpenCodeSession({
         client: this.client,
         sessionId: this.sessionId,
         directory: this.config.cwd,
@@ -3900,7 +3924,7 @@ class OpenCodeAgentSession implements AgentSession {
       await this.deleteProviderSessionIfEphemeral();
       this.activeForegroundTurnId = null;
     } finally {
-      this.releaseServer?.();
+      await this.releaseServer?.();
       this.releaseServer = null;
     }
   }

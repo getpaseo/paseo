@@ -51,12 +51,15 @@ export interface PiRuntimeSession {
   abort(): Promise<void>;
   getState(): Promise<PiSessionState>;
   getMessages(): Promise<PiAgentMessage[]>;
-  getAvailableModels(timeoutMs?: number): Promise<PiModel[]>;
+  getAvailableModels(timeoutMs?: number | null): Promise<PiModel[]>;
   setModel(provider: string, modelId: string): Promise<PiModel>;
   setThinkingLevel(level: string): Promise<void>;
   getSessionStats(): Promise<PiSessionStats>;
   getCommands(): Promise<PiRpcSlashCommand[]>;
-  request(command: { type: string; [key: string]: unknown }, timeoutMs?: number): Promise<unknown>;
+  request(
+    command: { type: string; [key: string]: unknown },
+    timeoutMs?: number | null,
+  ): Promise<unknown>;
   sendRawFrame(frame: object & { type: string }): void;
   respondToExtensionUiRequest(
     id: string,

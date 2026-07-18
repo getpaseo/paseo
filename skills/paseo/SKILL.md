@@ -1,48 +1,29 @@
 ---
 name: paseo
-description: Paseo reference for managing agents and worktrees. Load whenever you need to create agents, send them prompts, or manage worktrees.
+description: Paseo reference for managing workspaces, agents, schedules, and heartbeats.
 ---
 
 Paseo is a daemon that supervises AI coding agents on your machine. Control it through tools or a CLI.
 
-## Worktrees
+## Workspaces
 
-**`create_worktree`** — same target union as `create_agent.workspace.source.worktree.target`:
+**`create_workspace`** — create a workspace independently of any agent. Required: `isolation` (`local` or `worktree`). Worktree isolation supports `mode: "branch-off" | "checkout-branch" | "checkout-pr"`: use `branchName`/`baseBranch` for a new branch, `branch` for an existing branch, or `prNumber` plus optional `forge`/`projectPath` for a change request. `worktreeSlug` controls the managed path. Returns the workspace descriptor centered on `workspaceId`.
 
-- From a PR: `{ target: { kind: "checkout-pr", githubPrNumber: 503 } }`.
-- Branch off a base: `{ target: { kind: "branch-off", worktreeSlug: "foo", branchName: "fix/foo", baseBranch: "main" } }`.
-- Checkout an existing branch: `{ target: { kind: "checkout-branch", branch: "feat/bar" } }`.
+**`list_workspaces`** — list active workspaces.
 
-Returns `{ branchName, worktreePath, workspaceId }`. Pass `cwd` to target a specific repo.
+**`archive_workspace`** — `{ workspaceId }`. Archives the workspace, its agents, and its terminals. Local directories remain; Paseo removes an owned worktree only after its final active workspace reference is archived.
 
-In `branch-off`, `worktreeSlug` controls the worktree path slug and `branchName` controls the git branch. If `branchName` is omitted, Paseo defaults it from `worktreeSlug`. The returned `branchName` is authoritative; checkout and PR flows may return a branch name that differs from any requested slug.
-
-**`list_worktrees`** — current repo (or pass `cwd`).
-**`archive_worktree`** — `{ worktreePath }` or `{ worktreeSlug }`. Removes worktree and branch.
+Worktree creation and reference accounting are implementation details of `isolation: "worktree"`.
 
 ## Agents
 
-**`create_agent`** — required: `relationship`, `workspace`, `title`, `provider` (`claude/opus`, `codex/gpt-5.4`, …), `initialPrompt`. Common: `notifyOnFinish`, `settings`, `labels`. Returns `{ agentId, … }`.
+**`create_agent`** — required: `title`, `provider` (`claude/opus`, `codex/gpt-5.4`, …), `initialPrompt`. Optional: `workspaceId`, `notifyOnFinish`, `settings`, `labels`. Returns `{ agentId, workspaceId, … }`.
 
 Initial runtime settings live under `settings`: `modeId`, `thinkingOptionId`, and provider-specific `features`. For Codex fast mode, pass `settings: { features: { "fast_mode": true } }` when creating the agent.
 
-To create a new worktree and launch an agent in it, use `create_agent.workspace.source.kind = "worktree"`. Use `create_worktree` separately only when you need a worktree without launching an agent, or when you need a split flow; in a split flow, pass the returned `workspaceId` to `create_agent` with `workspace: { kind: "existing", workspaceId }`.
+Agent-scoped creation always creates your subagent. Omit `workspaceId` to use your current workspace; pass a workspace returned by `create_workspace` for isolated delegation. Placement never changes parentage.
 
-### Agent relationships
-
-`relationship` controls parentage only:
-
-- `{ kind: "subagent" }` — child under your subagents track. Use for advisors, committee members, planners, implementers, auditors, loop workers, and any agent whose lifetime belongs to your task.
-- `{ kind: "detached" }` — root/sibling agent. Use for handoffs and fire-and-forget delegations the user may continue after you are archived.
-
-`workspace` controls placement only:
-
-- `{ kind: "current" }` — same workspace as the caller, with optional `cwd`.
-- `{ kind: "existing", workspaceId: string, cwd?: string }` — attach to an existing workspace, usually from `create_worktree`.
-- `{ kind: "create", source: { kind: "directory", path?: string } }` — new workspace rooted at a directory.
-- `{ kind: "create", source: { kind: "worktree", cwd?: string, target: { kind: "branch-off", worktreeSlug?: string, branchName?: string, baseBranch?: string } } }`
-- `{ kind: "create", source: { kind: "worktree", cwd?: string, target: { kind: "checkout-branch", branch: string } } }`
-- `{ kind: "create", source: { kind: "worktree", cwd?: string, target: { kind: "checkout-pr", githubPrNumber: number } } }`
+Detach is an explicit user action in the subagents track, not an agent tool. A cross-workspace child remains your subagent even though it also appears as a normal tab in its workspace.
 
 Agent-scoped `create_agent` defaults `notifyOnFinish` to true. Set it to `false` only for truly fire-and-forget agents.
 
@@ -69,6 +50,10 @@ Only set feature IDs returned by `inspect_provider`. For Codex fast mode, look f
 **`create_schedule`** — starts a new agent on a cron cadence. Required: `prompt`, `cron`, `provider`. Optional: `timezone`, `name`, `cwd`, `maxRuns`, `expiresIn`. Use when the recurring work should live in fresh agents.
 
 **`create_heartbeat`** — sends you a prompt on a cron cadence. Required: `prompt`, `cron`. Optional: `timezone`, `name`, `maxRuns`, `expiresIn`. Use for reminders, PR/build babysitting, and status checks that should return to this conversation.
+
+**`delete_heartbeat`** stops it. MCP intentionally exposes no heartbeat update tool; delete and recreate when its task or cadence changes.
+
+Schedules have the full list/inspect/update/pause/resume/run-once/log/delete surface. Heartbeats deliberately do not.
 
 ## Models
 
@@ -110,16 +95,19 @@ For agent-scoped `create_agent` and background `send_agent_prompt`, leave `notif
 
 Don't poll `list_agents` or `get_agent_status` to "check on" a running agent. The notification will tell you.
 
-## CLI parity
+## CLI semantics
 
-The `paseo` CLI is a thin wrapper over the same daemon. Same surface:
+The CLI and tools use the same ownership semantics even where their syntax differs:
 
 ```bash
-paseo run --provider codex/gpt-5.4 --mode full-access --worktree feat/x "<prompt>"
+paseo workspace create --isolation worktree --mode branch-off --new-branch fix-x --base main
+paseo workspace create --isolation worktree --mode checkout-branch --branch existing-work
+paseo workspace create --isolation worktree --mode checkout-pr --pr-number 42
+paseo run --provider codex/gpt-5.4 --mode full-access --workspace <workspace-id> "<prompt>"
 paseo send <agent-id> "<follow-up>"
 paseo ls
-paseo worktree ls
 paseo schedule create --cron "*/15 * * * *" "ping main build"
+paseo heartbeat create --cron "*/15 * * * *" "check the build"
 ```
 
 Discover with `paseo --help` and `paseo <cmd> --help`.

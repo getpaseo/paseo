@@ -10,7 +10,26 @@ initializing → idle → running → idle (or error → closed)
                  └────────┘  (agent completes a turn, awaits next prompt)
 ```
 
-Each agent in `AgentManager` carries a `lastStatus` of `initializing`, `idle`, `running`, `error`, or `closed`. State transitions persist to disk and stream to subscribed clients via WebSocket.
+Each live agent in `AgentManager` carries a `lastStatus` of `initializing`, `idle`, `running`, or `error`. `closed` is the persisted, resumable state for an agent record that has no live provider runtime. State transitions persist to disk and stream to subscribed clients via WebSocket.
+
+## Runtime residency
+
+An unarchived agent may be `closed` without being deleted or archived. Closing releases its provider
+processes and subscriptions while retaining its Paseo identity, persistence handle, timeline,
+workspace, labels, title, usage, attention, timestamps, and parent relationship. Opening or prompting
+the agent runs through `ensureAgentLoaded()`, which resumes the durable provider session under the
+same Paseo agent ID. Provider history is not appended again when the canonical timeline is already
+primed.
+
+The daemon collects an eligible idle runtime after two minutes and sweeps every 15 seconds. Only
+unarchived, non-internal agents that are exactly `idle`, have no active or pending run, replacement,
+or permission, and have not been activated during the idle window are eligible. `running`,
+`initializing`, and `error` agents stay resident. Subagents are considered independently; collection
+does not cascade or change parentage.
+
+Active schedules targeting an existing agent protect that agent from collection. Paused, completed,
+and new-agent schedules do not. A pane may remain open after collection; its next prompt resumes the
+runtime.
 
 ### Cancellation
 
@@ -18,21 +37,14 @@ Cancellation changes lifecycle state only after the provider acknowledges the in
 
 ## Relationships
 
-Agents can launch other agents via the agent-scoped `create_agent` MCP tool. Agent-scoped creation is always asynchronous. `relationship` and `workspace` are separate decisions:
-
-- `relationship` decides whether the new agent belongs under the caller.
-- `workspace` decides where the new agent lives and whether a new workspace/worktree is created.
-
-`relationship: { kind: "subagent" }` stamps the created agent with `paseo.parent-agent-id`, pointing back at the creating agent. The client surfaces that as `agent.parentAgentId`. This requires an agent-scoped MCP session.
-
-`relationship: { kind: "detached" }` creates a sibling/root agent (e.g. handoffs, fire-and-forget delegations). The daemon may still use the creating agent for cwd/config inheritance, but it does not write `paseo.parent-agent-id`.
+Agents can launch other agents via the agent-scoped `create_agent` MCP tool. Agent-scoped creation is always asynchronous and always stamps `paseo.parent-agent-id`, pointing back at the caller. Omit `workspaceId` to use the caller's workspace, or pass an existing workspace ID returned by `create_workspace`. Placement never changes parentage.
 
 - **Subagents** — exist as part of the creating agent's work, appear in that agent's subagent track, and are archived with it.
-- **Detached agents** — stand on their own, do not appear in the creating agent's subagent track, and are not archived with it.
+- **Detached agents** — stand on their own after an explicit detach transition, do not appear in the former parent's subagent track, and are not archived with it.
 
-`workspace: { kind: "current" }` uses the caller's workspace and can optionally override the runtime cwd. It requires an agent-scoped MCP session. `workspace: { kind: "create", source: { kind: "directory" | "worktree", ... } }` creates a new workspace for the new agent; worktree creation goes through the Paseo worktree workflow and stamps the agent with that fresh workspace id.
+Runtime ownership is resolved from explicit workspace ID and caller context, never from `cwd`. Workspace creation is a separate operation with `local | worktree` isolation; agent creation only selects an existing workspace.
 
-Users can also detach an existing subagent from the subagents track. Detach removes the `paseo.parent-agent-id` label only: it does not stop, archive, move, or restart the agent. The agent keeps its current `cwd` and `workspaceId`, leaves the former parent's track, and behaves like a root agent for tab close, workspace activity, and future parent archive.
+Users can also detach an existing subagent from the subagents track. Detach is deliberately a manual lifecycle gesture, not an agent-facing MCP tool. It removes the `paseo.parent-agent-id` label only: it does not stop, archive, move, or restart the agent. The agent keeps its current `cwd` and `workspaceId`, leaves the former parent's track, and behaves like a root agent for tab close, workspace activity, and future parent archive.
 
 `notifyOnFinish` defaults to `true` for agent-scoped creation and background prompt follow-ups because most delegated work needs to report back to the creating agent. Set it to `false` only for truly fire-and-forget agents or prompts.
 
@@ -46,7 +58,11 @@ The provider still owns the underlying runtime. Paseo keeps an agent record so t
 
 Archive is a **soft delete**: the agent record stays on disk with `archivedAt` set, the runtime is closed, and the agent disappears from active lists. Archive is **global** — it lives on the server and propagates to every connected client.
 
-`create_agent_request` can opt an agent into `autoArchive`. In that mode the daemon archives the agent after the first terminal turn event (`turn_completed`, `turn_failed`, or `turn_canceled`). If the same request created a Paseo worktree through its `worktree` field, auto-archive archives that worktree too, which removes the agent records inside the worktree.
+Archive is distinct from runtime collection. Archive sets `archivedAt`, invokes the provider's native
+archive hook, and cascades to managed children. Runtime collection does none of those things; it only
+releases the live runtime and writes `lastStatus: closed` on the still-active record.
+
+`create_agent_request` can opt an agent into `autoArchive`. In that mode the daemon archives the agent after the first terminal turn event (`turn_completed`, `turn_failed`, or `turn_canceled`). When the agent owns an isolated workspace, auto-archive archives that workspace too; the managed worktree is removed when its final workspace reference is gone.
 
 Archiving runs through `AgentManager.archiveAgent` (`packages/server/src/server/agent/agent-manager.ts`):
 
@@ -139,11 +155,11 @@ $PASEO_HOME/agents/{cwd-with-dashes}/{agent-id}.json
 
 Each agent is a single JSON file. Fields relevant to this doc:
 
-| Field                             | Type          | Meaning                                                                                      |
-| --------------------------------- | ------------- | -------------------------------------------------------------------------------------------- |
-| `id`                              | `string`      | Stable identifier                                                                            |
-| `archivedAt`                      | `string?`     | Soft-delete timestamp (ISO 8601)                                                             |
-| `labels["paseo.parent-agent-id"]` | `string?`     | Parent agent ID, set automatically by `create_agent` when `relationship.kind === "subagent"` |
-| `lastStatus`                      | `AgentStatus` | `initializing` / `idle` / `running` / `error` / `closed`                                     |
+| Field                             | Type          | Meaning                                                                            |
+| --------------------------------- | ------------- | ---------------------------------------------------------------------------------- |
+| `id`                              | `string`      | Stable identifier                                                                  |
+| `archivedAt`                      | `string?`     | Soft-delete timestamp (ISO 8601)                                                   |
+| `labels["paseo.parent-agent-id"]` | `string?`     | Parent agent ID, set automatically for agent-scoped creation and removed by detach |
+| `lastStatus`                      | `AgentStatus` | `initializing` / `idle` / `running` / `error` / `closed`                           |
 
 See [`docs/data-model.md`](./data-model.md) for the full agent record.

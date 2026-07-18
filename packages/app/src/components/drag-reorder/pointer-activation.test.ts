@@ -1,14 +1,21 @@
 import { describe, expect, it } from "vitest";
-import { getPointerActivationConstraint } from "./pointer-activation";
+import { getDragActivationConstraints } from "./pointer-activation";
 
-const config = { defaultDistance: 6, holdDelayMs: 250, holdTolerance: 8 };
+const config = { movementDistance: 6, touchHoldDelayMs: 180, touchHoldTolerance: 8 };
 
-describe("getPointerActivationConstraint", () => {
-  it("uses distance activation for default draggable rows", () => {
-    expect(getPointerActivationConstraint(false, config)).toEqual({ distance: 6 });
+describe("getDragActivationConstraints", () => {
+  it("starts mouse drags after deliberate pointer movement", () => {
+    expect(getDragActivationConstraints(true, config).mouse).toEqual({ distance: 6 });
   });
 
-  it("requires a held pointer before activating handle-based drags", () => {
-    expect(getPointerActivationConstraint(true, config)).toEqual({ delay: 250, tolerance: 8 });
+  it("requires a short hold before starting touch drags", () => {
+    expect(getDragActivationConstraints(true, config).touch).toEqual({
+      delay: 180,
+      tolerance: 8,
+    });
+  });
+
+  it("starts ordinary touch rows after deliberate movement", () => {
+    expect(getDragActivationConstraints(false, config).touch).toEqual({ distance: 6 });
   });
 });

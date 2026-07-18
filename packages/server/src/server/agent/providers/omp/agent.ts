@@ -136,7 +136,8 @@ const OMP_THINKING_OPTIONS: ReadonlyArray<{
   { id: "low", label: "Low", description: "Faster reasoning" },
   { id: "medium", label: "Medium", description: "Balanced reasoning", isDefault: true },
   { id: "high", label: "High", description: "Deeper reasoning" },
-  { id: "xhigh", label: "XHigh", description: "Maximum reasoning" },
+  { id: "xhigh", label: "XHigh", description: "Extra-high reasoning" },
+  { id: "max", label: "Max", description: "Maximum reasoning" },
 ] as const;
 
 export interface OmpAgentClientOptions {
@@ -269,7 +270,8 @@ function isOmpThinkingLevel(value: string | null | undefined): value is OmpThink
     value === "low" ||
     value === "medium" ||
     value === "high" ||
-    value === "xhigh"
+    value === "xhigh" ||
+    value === "max"
   );
 }
 
@@ -1082,9 +1084,8 @@ export class OmpAgentSession implements AgentSession {
       throw new Error(`Invalid OMP mode '${modeId}'`);
     }
     return {
-      type: "info",
-      message:
-        "OMP approval mode is set when the agent launches. Start a new OMP session to use a different mode.",
+      type: "warning",
+      message: "Start a new OMP session to change approval mode",
     };
   }
 

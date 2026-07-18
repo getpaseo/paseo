@@ -249,7 +249,7 @@ test.describe("Worktree restore", () => {
     try {
       await page.getByTestId("workspace-recovery-action").click();
       await expect(page.getByTestId("workspace-recovery-error")).toHaveText(
-        "The project directory needed to restore this worktree no longer exists.",
+        "The source repository needed to restore this worktree no longer exists.",
       );
       await expect(page.getByTestId("workspace-recovery-action")).toHaveText("Retry");
       expect(existsSync(worktree.workspaceDirectory)).toBe(false);

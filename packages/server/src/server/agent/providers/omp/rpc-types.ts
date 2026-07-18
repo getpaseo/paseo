@@ -1,6 +1,14 @@
 import { z } from "zod";
 
-export const OmpThinkingLevelSchema = z.enum(["off", "minimal", "low", "medium", "high", "xhigh"]);
+export const OmpThinkingLevelSchema = z.enum([
+  "off",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+]);
 
 export const OmpImageContentSchema = z
   .object({ type: z.literal("image"), data: z.string(), mimeType: z.string() })

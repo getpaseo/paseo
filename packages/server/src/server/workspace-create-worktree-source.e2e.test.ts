@@ -8,7 +8,7 @@ import { DaemonClient } from "./test-utils/index.js";
 import { createTestPaseoDaemon } from "./test-utils/paseo-daemon.js";
 
 // The reshaped workspace.create.request forwards its worktree `source`
-// (action/refName/githubPrNumber/worktreeSlug) verbatim into createWorktreeCore.
+// (action/refName/branchName/githubPrNumber/worktreeSlug) into createWorktreeCore.
 // The regression these tests guard against is the daemon dropping action/refName
 // while subsetting the request. We prove forwarding through the real workflow:
 // the created worktree's observable branch is the only honest evidence the
@@ -64,7 +64,7 @@ test("workspace.create worktree source forwards action=checkout + refName into t
   }
 }, 180000);
 
-test("workspace.create worktree source forwards branch-off + refName as the new branch", async () => {
+test("workspace.create keeps a branch-off name separate from its worktree slug", async () => {
   const daemon = await createTestPaseoDaemon();
   const { repoDir, tempRoot } = createGitRepoWithBranch();
   const client = new DaemonClient({
@@ -80,15 +80,15 @@ test("workspace.create worktree source forwards branch-off + refName as the new 
         kind: "worktree",
         cwd: repoDir,
         action: "branch-off",
-        worktreeSlug: "brand-new-branch",
+        branchName: "feature/auth",
+        worktreeSlug: "feature-auth",
         baseBranch: "main",
       },
     });
 
     expect(result.error).toBeNull();
-    // branch-off cuts a new branch named after worktreeSlug from baseBranch; the
-    // worktree landing on that branch proves worktreeSlug/baseBranch forwarded.
-    expect(result.workspace?.gitRuntime?.currentBranch).toBe("brand-new-branch");
+    expect(result.workspace?.gitRuntime?.currentBranch).toBe("feature/auth");
+    expect(path.basename(result.workspace?.workspaceDirectory ?? "")).toBe("feature-auth");
   } finally {
     await client.close().catch(() => undefined);
     await daemon.close();

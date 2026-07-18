@@ -4,7 +4,14 @@ import type { Logger } from "pino";
 import { spawnProcess } from "../../../utils/spawn.js";
 import { terminateWithTreeKill } from "../../../utils/tree-kill.js";
 
-const DEFAULT_TIMEOUT_MS = 30_000;
+/** Default wall-clock timeout for control-plane / short RPC calls. */
+export const JSONL_RPC_DEFAULT_TIMEOUT_MS = 30_000;
+/**
+ * Pass as `timeoutMs` to wait only for a response, process death, or `close()`.
+ * Use for long-running blocking RPCs (e.g. LLM-backed compact).
+ */
+export const JSONL_RPC_NO_TIMEOUT = null;
+
 const STDERR_BUFFER_LIMIT = 8192;
 const GRACEFUL_SHUTDOWN_TIMEOUT_MS = 2_000;
 const FORCE_SHUTDOWN_TIMEOUT_MS = 1_000;
@@ -28,7 +35,7 @@ interface JsonlRpcResponse {
 interface PendingRequest {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
-  timer: NodeJS.Timeout;
+  timer: NodeJS.Timeout | null;
 }
 
 export interface JsonlRpcExit {
@@ -116,7 +123,7 @@ export class JsonlRpcProcess {
 
   startRequest(
     command: { type: string; [key: string]: unknown },
-    timeoutMs = DEFAULT_TIMEOUT_MS,
+    timeoutMs: number | null = JSONL_RPC_DEFAULT_TIMEOUT_MS,
   ): { id: string; promise: Promise<unknown> } {
     if (this.disposed) {
       return {
@@ -127,14 +134,14 @@ export class JsonlRpcProcess {
     const id = `req_${this.nextRequestId}`;
     this.nextRequestId += 1;
     const promise = new Promise<unknown>((resolve, reject) => {
-      const timer = setTimeout(() => {
+      const timer = createRequestTimeout(timeoutMs, () => {
         this.pending.delete(id);
         reject(
           new Error(
             `${this.diagnosticName} request timed out for ${command.type}\n${this.stderrBuffer}`.trim(),
           ),
         );
-      }, timeoutMs);
+      });
       this.pending.set(id, { resolve, reject, timer });
       this.send({ ...command, id });
     });
@@ -143,7 +150,7 @@ export class JsonlRpcProcess {
 
   request(
     command: { type: string; [key: string]: unknown },
-    timeoutMs = DEFAULT_TIMEOUT_MS,
+    timeoutMs: number | null = JSONL_RPC_DEFAULT_TIMEOUT_MS,
   ): Promise<unknown> {
     return this.startRequest(command, timeoutMs).promise;
   }
@@ -228,7 +235,9 @@ export class JsonlRpcProcess {
     if (!pending) {
       return;
     }
-    clearTimeout(pending.timer);
+    if (pending.timer) {
+      clearTimeout(pending.timer);
+    }
     this.pending.delete(response.id);
     if (!response.success) {
       pending.reject(
@@ -247,9 +256,25 @@ export class JsonlRpcProcess {
     }
     this.disposed = true;
     for (const pending of this.pending.values()) {
-      clearTimeout(pending.timer);
+      if (pending.timer) {
+        clearTimeout(pending.timer);
+      }
       pending.reject(error);
     }
     this.pending.clear();
   }
+}
+
+/**
+ * Schedule a request timeout, or return null when the call should wait
+ * indefinitely for a response, process exit, or close().
+ */
+function createRequestTimeout(
+  timeoutMs: number | null,
+  onTimeout: () => void,
+): NodeJS.Timeout | null {
+  if (timeoutMs == null || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    return null;
+  }
+  return setTimeout(onTimeout, timeoutMs);
 }

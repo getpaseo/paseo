@@ -15,7 +15,7 @@ import { getServerId } from "./helpers/server-id";
  *
  * The repro is the mundane user flow: with a workspace already showing a terminal, open another
  * one and switch to a different app while it spawns. We stage the blur deterministically by
- * stubbing `document.hasFocus()` (which `useAppVisible` consults on window focus/blur events)
+ * stubbing `document.hasFocus()` (which `useAppActivelyVisible` consults on focus/blur events)
  * instead of racing real OS focus.
  *
  * The assertion reads the PTY's own opinion of its size (`stty size`) with input written
@@ -23,7 +23,7 @@ import { getServerId } from "./helpers/server-id";
  */
 
 /**
- * Simulates the window losing/regaining OS focus, which is what `useAppVisible` reads through
+ * Simulates the window losing/regaining OS focus, which is what `useAppActivelyVisible` reads through
  * `document.hasFocus()` plus the window focus/blur events.
  *
  * This has to be stubbed: headless Chromium never actually blurs. Opening a second page and

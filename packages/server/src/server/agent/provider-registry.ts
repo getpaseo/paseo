@@ -14,6 +14,7 @@ import type {
   ProviderCatalog,
   ResolveAgentCreateConfigInput,
   ResolveAgentCreateConfigResult,
+  ResolveAgentDefaultModeInput,
 } from "./agent-sdk-types.js";
 import {
   isDefaultAgentCreateConfigUnattended,
@@ -427,12 +428,20 @@ function wrapClientProvider(
     fetchCatalog: async (options) => {
       const catalog = await inner.fetchCatalog(options);
       return {
+        ...catalog,
         models: mergeModels(provider, profileModels, additionalModels, catalog.models, {
           profileModelsAreAdditive,
         }),
         modes: catalog.modes,
       };
     },
+    resolveDefaultModeId: inner.resolveDefaultModeId
+      ? async ({ config, env }: ResolveAgentDefaultModeInput) =>
+          await inner.resolveDefaultModeId?.({
+            config: { ...config, provider: inner.provider },
+            env,
+          })
+      : undefined,
     resolveCreateConfig: inner.resolveCreateConfig?.bind(inner),
     isCreateConfigUnattended: inner.isCreateConfigUnattended?.bind(inner),
     listFeatures: listFeatures
@@ -516,17 +525,25 @@ function createRegistryEntry(
         // the single catalog API; otherwise use static/empty modes with no runtime.
         const models = mergeModelAdditions(provider, replacementModels, resolved.additionalModels);
         if (hasStaticModes) {
+          const defaultModeId = await catalogClient.resolveDefaultModeId?.({
+            config: {
+              provider,
+              cwd: options.scope === "workspace" ? options.cwd : process.cwd(),
+            },
+          });
           return {
             models,
             modes: decorateModes(resolved.definition.modes),
+            defaultModeId,
           };
         }
         const catalog = await catalogClient.fetchCatalog(options);
-        return { models, modes: decorateModes(catalog.modes) };
+        return { ...catalog, models, modes: decorateModes(catalog.modes) };
       }
 
       const catalog = await catalogClient.fetchCatalog(options);
       return {
+        ...catalog,
         models: mergeModels(
           provider,
           resolved.profileModels,

@@ -1,6 +1,6 @@
 {
   "name": "@getpaseo/desktop",
-  "version": "0.1.110",
+  "version": "0.2.0-beta.1",
   "private": true,
   "description": "Paseo desktop app (Electron wrapper)",
   "homepage": "https://paseo.sh",
@@ -20,6 +20,7 @@
     "capture-harness": "./capture-harness/run.sh",
     "dev": "./scripts/dev.sh",
     "dev:win": "powershell ./scripts/dev.ps1",
+    "test:e2e:browser-tab-bridge": "npm run build:main && node ./scripts/browser-tab-bridge.e2e.mjs",
     "verify:electron-cdp": "node ./scripts/verify-electron-cdp.mjs",
     "test": "vitest run",
     "typecheck": "tsgo --noEmit -p tsconfig.json"

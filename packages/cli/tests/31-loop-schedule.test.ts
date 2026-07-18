@@ -53,7 +53,7 @@ try {
     assert.strictEqual(created.exitCode, 0, created.stderr);
     const createdJson = JSON.parse(created.stdout);
     assert.strictEqual(createdJson.name, "review-prs");
-    assert.strictEqual(createdJson.cadence, "every:5m");
+    assert.strictEqual(createdJson.cadence, "cron:*/5 * * * *");
     assert(
       typeof createdJson.target === "string" &&
         (createdJson.target.startsWith("agent:") || createdJson.target === "new-agent:claude"),
@@ -142,6 +142,31 @@ try {
       "should explain provider target mismatch",
     );
     console.log("schedule rejects provider with self target\n");
+  }
+
+  {
+    console.log("Test 1d: compatibility agent-target schedules remain deletable");
+    const created = await ctx.paseo(
+      [
+        "schedule",
+        "create",
+        "Legacy heartbeat",
+        "--cron",
+        "0 0 1 1 *",
+        "--target",
+        "00000000-0000-4000-8000-000000000001",
+        "--json",
+      ],
+      { timeout: 30000 },
+    );
+    assert.strictEqual(created.exitCode, 0, created.stderr);
+    const createdJson = JSON.parse(created.stdout);
+    assert.strictEqual(createdJson.target, "agent:0000000");
+
+    const deleted = await ctx.paseo(["schedule", "delete", createdJson.id, "--json"]);
+    assert.strictEqual(deleted.exitCode, 0, deleted.stderr);
+    assert.strictEqual(JSON.parse(deleted.stdout).id, createdJson.id);
+    console.log("compatibility agent-target schedules remain deletable\n");
   }
 
   {

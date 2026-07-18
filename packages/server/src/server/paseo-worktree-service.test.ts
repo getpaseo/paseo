@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
@@ -10,17 +10,19 @@ import type {
   PersistedProjectRecord,
   PersistedWorkspaceRecord,
   ProjectRegistry,
+  WorkspaceRegistry,
 } from "./workspace-registry.js";
+import { createWorkspaceProvisioningService } from "./session/workspace-provisioning/workspace-provisioning-service.js";
+import { createTestLogger } from "../test-utils/test-logger.js";
 import {
   attemptFirstAgentBranchAutoName,
-  createLocalCheckoutWorkspace,
   createPaseoWorktree,
   type CreatePaseoWorktreeDeps,
 } from "./paseo-worktree-service.js";
 import { readPaseoWorktreeMetadata } from "../utils/worktree-metadata.js";
-import { createWorktree } from "../utils/worktree.js";
+import { createWorktree, getPaseoWorktreesRoot } from "../utils/worktree.js";
 import { isPlatform } from "../test-utils/platform.js";
-import { existsSync } from "node:fs";
+import { areEquivalentPaths, createRealpathAwarePathMatcher } from "../utils/path.js";
 
 const cleanupPaths: string[] = [];
 
@@ -55,6 +57,7 @@ test("creates a worktree and registers it in the source workspace project withou
     {
       cwd: repoDir,
       worktreeSlug: "feature-one",
+      title: "Feature One",
       runSetup: false,
       paseoHome: path.join(tempDir, ".paseo"),
     },
@@ -68,11 +71,309 @@ test("creates a worktree and registers it in the source workspace project withou
   expect(result.workspace.projectId).toBe("remote:github.com/acme/repo");
   expect(result.workspace.displayName).toBe("feature-one");
   expect(result.workspace.baseBranch).toBe("main");
+  expect(result.workspace.title).toBe("Feature One");
   expect(deps.workspaceGitService.getSnapshot).not.toHaveBeenCalled();
-  expect(events).toEqual([
-    "project:remote:github.com/acme/repo",
-    `workspace:${result.workspace.workspaceId}`,
-  ]);
+  expect(deps.projects.get(sourceProject.projectId)).toEqual(sourceProject);
+  expect(events).toEqual([`workspace:${result.workspace.workspaceId}`]);
+});
+
+test("refreshes a source project that became Git while creating a worktree", async () => {
+  const { repoDir, tempDir } = createGitRepo();
+  cleanupPaths.push(tempDir);
+  const deps = createDeps();
+  const sourceProject = {
+    ...createPersistedProjectRecordForTest({
+      projectId: "prj_existing-source",
+      rootPath: repoDir,
+      displayName: "Repository",
+    }),
+    kind: "non_git" as const,
+    customName: "My project",
+  };
+  const sourceWorkspace = createPersistedWorkspaceRecordForTest({
+    workspaceId: "ws-main-checkout",
+    projectId: sourceProject.projectId,
+    cwd: repoDir,
+    kind: "local_checkout",
+    displayName: "main",
+  });
+  deps.projects.set(sourceProject.projectId, sourceProject);
+  deps.workspaces.set(sourceWorkspace.workspaceId, sourceWorkspace);
+
+  const result = await createPaseoWorktree(
+    {
+      cwd: repoDir,
+      worktreeSlug: "project-became-git",
+      runSetup: false,
+      paseoHome: path.join(tempDir, ".paseo"),
+    },
+    deps,
+  );
+
+  expect(result.workspace.projectId).toBe(sourceProject.projectId);
+  expect(deps.projects.get(sourceProject.projectId)).toMatchObject({
+    projectId: sourceProject.projectId,
+    rootPath: repoDir,
+    kind: "git",
+    displayName: "Repository",
+    customName: "My project",
+    archivedAt: null,
+  });
+});
+
+test("repairs a legacy source workspace whose project record is missing", async () => {
+  const { repoDir, tempDir } = createGitRepo();
+  cleanupPaths.push(tempDir);
+  const deps = createDeps();
+  const sourceWorkspace = createPersistedWorkspaceRecordForTest({
+    workspaceId: "ws-missing-project",
+    projectId: "project-missing",
+    cwd: repoDir,
+    kind: "local_checkout",
+    displayName: "main",
+  });
+  deps.workspaces.set(sourceWorkspace.workspaceId, sourceWorkspace);
+
+  const result = await createPaseoWorktree(
+    {
+      cwd: repoDir,
+      worktreeSlug: "repaired-source",
+      runSetup: false,
+      paseoHome: path.join(tempDir, ".paseo"),
+    },
+    deps,
+  );
+
+  expect(result.workspace.projectId).toMatch(/^prj_[0-9a-f]{16}$/);
+  expect(result.workspace.projectId).not.toBe(sourceWorkspace.projectId);
+  const repairedProject = deps.projects.get(result.workspace.projectId);
+  expect(repairedProject).toMatchObject({
+    projectId: result.workspace.projectId,
+    kind: "git",
+    archivedAt: null,
+  });
+  expect(createRealpathAwarePathMatcher(repoDir)(repairedProject?.rootPath ?? "")).toBe(true);
+});
+
+test("uses an equivalent source workspace path when creating a worktree", async () => {
+  const { repoDir, tempDir } = createGitRepo();
+  cleanupPaths.push(tempDir);
+  const sourceDir = path.join(repoDir, "app");
+  mkdirSync(sourceDir);
+  writeFileSync(path.join(repoDir, "app", ".gitkeep"), "");
+  commitAll(repoDir, "add app");
+  const deps = createDeps();
+  const sourceProject = createPersistedProjectRecordForTest({
+    projectId: "prj_source-folder",
+    rootPath: sourceDir,
+    displayName: "app",
+  });
+  const sourceWorkspace = createPersistedWorkspaceRecordForTest({
+    workspaceId: "ws-source-folder",
+    projectId: sourceProject.projectId,
+    cwd: `${sourceDir}${path.sep}`,
+    kind: "local_checkout",
+    displayName: "app",
+  });
+  deps.projects.set(sourceProject.projectId, sourceProject);
+  deps.workspaces.set(sourceWorkspace.workspaceId, sourceWorkspace);
+
+  const result = await createPaseoWorktree(
+    {
+      cwd: sourceDir,
+      worktreeSlug: "equivalent-source",
+      runSetup: false,
+      paseoHome: path.join(tempDir, ".paseo"),
+    },
+    deps,
+  );
+
+  expect(result.workspace.projectId).toBe(sourceProject.projectId);
+});
+
+test("creates a worktree workspace at the selected project subdirectory", async () => {
+  const { repoDir, tempDir } = createGitRepo();
+  cleanupPaths.push(tempDir);
+  const sourceDir = path.join(repoDir, "packages", "app");
+  mkdirSync(sourceDir, { recursive: true });
+  writeFileSync(path.join(sourceDir, "package.json"), "{}\n");
+  commitAll(repoDir, "add subproject");
+  const deps = createDeps();
+  const project = createPersistedProjectRecordForTest({
+    projectId: "prj_selected-subdirectory",
+    rootPath: sourceDir,
+    displayName: "app",
+  });
+  deps.projects.set(project.projectId, project);
+
+  const result = await createPaseoWorktree(
+    {
+      cwd: sourceDir,
+      projectId: project.projectId,
+      worktreeSlug: "selected-subdirectory",
+      runSetup: false,
+      paseoHome: path.join(tempDir, ".paseo"),
+    },
+    deps,
+  );
+
+  expect(result.workspace).toMatchObject({
+    projectId: project.projectId,
+    cwd: path.join(result.worktree.worktreePath, "packages", "app"),
+    worktreeRoot: result.worktree.worktreePath,
+    kind: "worktree",
+  });
+});
+
+test("seeds an uncommitted exact-project config into the mapped worktree directory", async () => {
+  const { repoDir, tempDir } = createGitRepo();
+  cleanupPaths.push(tempDir);
+  const sourceDir = path.join(repoDir, "packages", "app");
+  mkdirSync(sourceDir, { recursive: true });
+  writeFileSync(path.join(sourceDir, "package.json"), "{}\n");
+  commitAll(repoDir, "add subproject");
+  const config = JSON.stringify({ worktree: { setup: ["npm install"] } });
+  writeFileSync(path.join(sourceDir, "paseo.json"), config);
+
+  const result = await createPaseoWorktree(
+    {
+      cwd: sourceDir,
+      worktreeSlug: "seed-nested-config",
+      runSetup: false,
+      paseoHome: path.join(tempDir, ".paseo"),
+    },
+    createDeps(),
+  );
+
+  expect(readFileSync(path.join(result.workspace.cwd, "paseo.json"), "utf8")).toBe(config);
+  expect(existsSync(path.join(result.worktree.worktreePath, "paseo.json"))).toBe(false);
+});
+
+test("removes a new worktree when its ref does not contain the selected project directory", async () => {
+  const { repoDir, tempDir } = createGitRepo();
+  cleanupPaths.push(tempDir);
+  execFileSync("git", ["branch", "without-subproject"], { cwd: repoDir, stdio: "pipe" });
+  const sourceDir = path.join(repoDir, "packages", "app");
+  mkdirSync(sourceDir, { recursive: true });
+  writeFileSync(path.join(sourceDir, "package.json"), "{}\n");
+  commitAll(repoDir, "add subproject");
+  const deps = createDeps();
+  const paseoHome = path.join(tempDir, ".paseo");
+  const worktreePath = path.join(
+    await getPaseoWorktreesRoot(repoDir, paseoHome),
+    "missing-subproject",
+  );
+
+  await expect(
+    createPaseoWorktree(
+      {
+        cwd: sourceDir,
+        action: "checkout",
+        refName: "without-subproject",
+        worktreeSlug: "missing-subproject",
+        runSetup: false,
+        paseoHome,
+      },
+      deps,
+    ),
+  ).rejects.toThrow("Selected project directory is missing from the worktree");
+
+  expect(deps.workspaces.size).toBe(0);
+  expect(existsSync(worktreePath)).toBe(false);
+  expect(
+    execFileSync("git", ["worktree", "list", "--porcelain"], { cwd: repoDir, stdio: "pipe" })
+      .toString()
+      .includes("missing-subproject"),
+  ).toBe(false);
+});
+
+test("removes a new worktree when workspace persistence fails", async () => {
+  const { repoDir, tempDir } = createGitRepo();
+  cleanupPaths.push(tempDir);
+  const paseoHome = path.join(tempDir, ".paseo");
+  const worktreePath = path.join(
+    await getPaseoWorktreesRoot(repoDir, paseoHome),
+    "persistence-failure",
+  );
+
+  await expect(
+    createPaseoWorktree(
+      {
+        cwd: repoDir,
+        projectId: "missing-project",
+        worktreeSlug: "persistence-failure",
+        runSetup: false,
+        paseoHome,
+      },
+      createDeps(),
+    ),
+  ).rejects.toThrow("Unknown project: missing-project");
+
+  expect(existsSync(worktreePath)).toBe(false);
+  expect(
+    execFileSync("git", ["worktree", "list", "--porcelain"], { cwd: repoDir, stdio: "pipe" })
+      .toString()
+      .includes("persistence-failure"),
+  ).toBe(false);
+});
+
+test("maps a nested cwd from an existing Paseo worktree into the next worktree", async () => {
+  const { repoDir, tempDir } = createGitRepo();
+  cleanupPaths.push(tempDir);
+  const paseoHome = path.join(tempDir, ".paseo");
+  const projectDir = path.join(repoDir, "packages", "app");
+  mkdirSync(projectDir, { recursive: true });
+  writeFileSync(path.join(projectDir, "package.json"), "{}\n");
+  commitAll(repoDir, "add subproject");
+  const deps = createDeps();
+  const source = await createPaseoWorktree(
+    {
+      cwd: repoDir,
+      worktreeSlug: "source-worktree",
+      runSetup: false,
+      paseoHome,
+    },
+    deps,
+  );
+  const sourceCwd = path.join(source.worktree.worktreePath, "packages", "app");
+
+  const created = await createPaseoWorktree(
+    {
+      cwd: sourceCwd,
+      worktreeSlug: "nested-worktree",
+      runSetup: false,
+      paseoHome,
+    },
+    deps,
+  );
+
+  expect(created.workspace.cwd).toBe(path.join(created.worktree.worktreePath, "packages", "app"));
+  expect(deps.workspaces.get(created.workspace.workspaceId)).toEqual(created.workspace);
+});
+
+test("rejects source checkout planning before creating a worktree", async () => {
+  const { repoDir, tempDir } = createGitRepo();
+  cleanupPaths.push(tempDir);
+  const paseoHome = path.join(tempDir, ".paseo");
+  const deps = createDeps();
+  deps.workspaceGitService.getCheckout = async () => {
+    throw new Error("source checkout unavailable");
+  };
+
+  await expect(
+    createPaseoWorktree(
+      {
+        cwd: repoDir,
+        worktreeSlug: "must-not-create",
+        runSetup: false,
+        paseoHome,
+      },
+      deps,
+    ),
+  ).rejects.toThrow("source checkout unavailable");
+
+  expect(existsSync(path.join(paseoHome, "worktrees"))).toBe(false);
+  expect(Array.from(deps.workspaces.values())).toEqual([]);
 });
 
 test("registers a new worktree in the existing root project after the main checkout workspace is removed", async () => {
@@ -107,6 +408,35 @@ test("registers a new worktree in the existing root project after the main check
 
   expect(result.workspace.projectId).toBe("remote:github.com/acme/repo");
   expect(Array.from(deps.projects.keys()).sort()).toEqual(["remote:github.com/acme/repo"]);
+});
+
+test("an explicit project FK remains unchanged when its worktree comes from another checkout", async () => {
+  const { repoDir, tempDir } = createGitRepo();
+  cleanupPaths.push(tempDir);
+  const deps = createDeps();
+  const project = {
+    ...createPersistedProjectRecordForTest({
+      projectId: "prj_explicitproject",
+      rootPath: path.join(tempDir, "unrelated"),
+      displayName: "unrelated",
+    }),
+    kind: "non_git" as const,
+  };
+  deps.projects.set(project.projectId, project);
+
+  const result = await createPaseoWorktree(
+    {
+      cwd: repoDir,
+      projectId: project.projectId,
+      worktreeSlug: "attached-worktree",
+      runSetup: false,
+      paseoHome: path.join(tempDir, ".paseo"),
+    },
+    deps,
+  );
+
+  expect(result.workspace.projectId).toBe(project.projectId);
+  expect(deps.projects.get(project.projectId)).toEqual(project);
 });
 
 // POSIX-only: Windows git worktree paths need separate canonicalization coverage.
@@ -151,19 +481,6 @@ test.skipIf(isPlatform("win32"))(
     expect(second.workspace.workspaceId).not.toBe(first.workspace.workspaceId);
   },
 );
-
-test("creates a distinct local checkout workspace for the same cwd on every call", async () => {
-  const { repoDir, tempDir } = createGitRepo();
-  cleanupPaths.push(tempDir);
-  const deps = createDeps();
-
-  const first = await createLocalCheckoutWorkspace({ cwd: repoDir }, deps);
-  const second = await createLocalCheckoutWorkspace({ cwd: repoDir }, deps);
-
-  expect(first.cwd).toBe(second.cwd);
-  expect(first.workspaceId).not.toBe(second.workspaceId);
-  expect(deps.workspaces.size).toBe(2);
-});
 
 test("renames an eligible unnamed branch-off worktree once on first agent context", async () => {
   const { repoDir, tempDir } = createGitRepo();
@@ -679,7 +996,6 @@ test.skipIf(isPlatform("win32"))(
 );
 
 interface TestDeps extends CreatePaseoWorktreeDeps {
-  projectRegistry: Pick<ProjectRegistry, "get" | "list" | "upsert">;
   projects: Map<string, PersistedProjectRecord>;
   workspaces: Map<string, PersistedWorkspaceRecord>;
 }
@@ -692,28 +1008,73 @@ function createDeps(options?: {
   const events = options?.events ?? [];
   const projects = options?.projects ?? new Map<string, PersistedProjectRecord>();
   const workspaces = options?.workspaces ?? new Map<string, PersistedWorkspaceRecord>();
+  const projectRegistry: ProjectRegistry = {
+    initialize: async () => {},
+    existsOnDisk: async () => true,
+    list: async () => Array.from(projects.values()),
+    get: async (projectId) => projects.get(projectId) ?? null,
+    getOrCreateActiveByRoot: async (input) => {
+      const existing = Array.from(projects.values()).find(
+        (project) => !project.archivedAt && areEquivalentPaths(project.rootPath, input.rootPath),
+      );
+      if (existing) return existing;
+      const project = createPersistedProjectRecordForTest({
+        projectId: `prj_${projects.size.toString().padStart(16, "0")}`,
+        rootPath: input.rootPath,
+        displayName: input.displayName,
+      });
+      projects.set(project.projectId, project);
+      return project;
+    },
+    upsert: async (project) => {
+      projects.set(project.projectId, project);
+    },
+    archive: async (projectId, archivedAt) => {
+      const project = projects.get(projectId);
+      if (project) projects.set(projectId, { ...project, archivedAt });
+    },
+    remove: async (projectId) => {
+      projects.delete(projectId);
+    },
+  };
+  const workspaceRegistry: WorkspaceRegistry = {
+    initialize: async () => {},
+    existsOnDisk: async () => true,
+    list: async () => Array.from(workspaces.values()),
+    get: async (workspaceId) => workspaces.get(workspaceId) ?? null,
+    update: async (workspaceId, updater) => {
+      const workspace = workspaces.get(workspaceId);
+      if (!workspace) return null;
+      const updated = updater(workspace);
+      workspaces.set(workspaceId, updated);
+      return updated;
+    },
+    upsert: async (record) => {
+      events.push(`workspace:${record.workspaceId}`);
+      workspaces.set(record.workspaceId, record);
+    },
+    archive: async (workspaceId, archivedAt) => {
+      const workspace = workspaces.get(workspaceId);
+      if (workspace) workspaces.set(workspaceId, { ...workspace, archivedAt });
+    },
+    remove: async (workspaceId) => {
+      workspaces.delete(workspaceId);
+    },
+  };
+  const workspaceGitService = createWorkspaceGitServiceStub();
+  const workspaceProvisioning = createWorkspaceProvisioningService({
+    projectRegistry,
+    workspaceRegistry,
+    workspaceGitService,
+    logger: createTestLogger(),
+  });
 
   return {
     github: createGitHubServiceStub(),
     projects,
     workspaces,
-    projectRegistry: {
-      get: async (projectId) => projects.get(projectId) ?? null,
-      list: async () => Array.from(projects.values()),
-      upsert: async (record) => {
-        events.push(`project:${record.projectId}`);
-        projects.set(record.projectId, record);
-      },
-    },
-    workspaceRegistry: {
-      get: async (workspaceId) => workspaces.get(workspaceId) ?? null,
-      list: async () => Array.from(workspaces.values()),
-      upsert: async (record) => {
-        events.push(`workspace:${record.workspaceId}`);
-        workspaces.set(record.workspaceId, record);
-      },
-    },
-    workspaceGitService: createWorkspaceGitServiceStub(),
+    workspaceGitService,
+    workspaceProvisioning,
   };
 }
 
@@ -808,15 +1169,30 @@ function createWorkspaceGitServiceStub(): WorkspaceGitService {
       unsubscribe: () => {},
     }),
     peekSnapshot: (cwd) => createWorkspaceGitSnapshot(cwd),
-    getCheckout: async (cwd) => ({
-      cwd,
-      isGit: false,
-      currentBranch: null,
-      remoteUrl: null,
-      worktreeRoot: null,
-      isPaseoOwnedWorktree: false,
-      mainRepoRoot: null,
-    }),
+    getCheckout: async (cwd) => {
+      try {
+        const snapshot = createWorkspaceGitSnapshot(cwd);
+        return {
+          cwd,
+          isGit: snapshot.git.isGit,
+          currentBranch: snapshot.git.currentBranch,
+          remoteUrl: snapshot.git.remoteUrl,
+          worktreeRoot: snapshot.git.repoRoot,
+          isPaseoOwnedWorktree: snapshot.git.isPaseoOwnedWorktree,
+          mainRepoRoot: snapshot.git.mainRepoRoot,
+        };
+      } catch {
+        return {
+          cwd,
+          isGit: false,
+          currentBranch: null,
+          remoteUrl: null,
+          worktreeRoot: null,
+          isPaseoOwnedWorktree: false,
+          mainRepoRoot: null,
+        };
+      }
+    },
     getSnapshot: async (cwd) => createWorkspaceGitSnapshot(cwd),
     resolveForge: async () => null,
     resolveRepoRoot: async (cwd) => {
@@ -900,6 +1276,11 @@ function createGitRepo(): { tempDir: string; repoDir: string } {
   execFileSync("git", ["commit", "-m", "init"], { cwd: repoDir, stdio: "pipe" });
   execFileSync("git", ["branch", "-M", "main"], { cwd: repoDir, stdio: "pipe" });
   return { tempDir, repoDir };
+}
+
+function commitAll(repoDir: string, message: string): void {
+  execFileSync("git", ["add", "."], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["commit", "-m", message], { cwd: repoDir, stdio: "pipe" });
 }
 
 function createGitHubPrRemoteRepo(): { tempDir: string; repoDir: string } {

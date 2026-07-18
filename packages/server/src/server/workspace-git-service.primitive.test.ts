@@ -390,6 +390,18 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
     vi.useRealTimers();
   });
 
+  test("getCheckout surfaces an unexpected Git read failure", async () => {
+    const service = createService({
+      getCheckoutStatus: vi.fn(async () => {
+        throw new Error("Git read failed");
+      }),
+    });
+
+    await expect(service.getCheckout(REPO_CWD)).rejects.toThrow("Git read failed");
+
+    service.dispose();
+  });
+
   test("getSnapshot returns the current snapshot without shelling out", async () => {
     let nowMs = Date.parse("2026-04-12T00:00:00.000Z");
     const getCheckoutStatus = vi.fn(async (cwd: string) => createCheckoutStatus(cwd));
@@ -1132,7 +1144,10 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
       createCheckoutFacts(cwd, {
         currentBranch: "feature",
         remoteUrl: "https://forge-self-heal.test/acme/repo.git",
-        pullRequestLookupTarget: { headRef: "feature" },
+        pullRequestLookupTarget: {
+          headRef: "feature",
+          headSha: "1111111111111111111111111111111111111111",
+        },
       }),
     );
     const getCheckoutStatus = vi.fn(async (cwd: string) =>
@@ -1151,12 +1166,13 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
       const subscription = service.registerWorkspace({ cwd: REPO_CWD }, listener);
       await flushPromises();
 
-      await vi.advanceTimersByTimeAsync(60_000);
+      await vi.advanceTimersByTimeAsync(120_000);
       await flushPromises();
 
       expect(forge.getCurrentPullRequestStatus).toHaveBeenCalledWith({
         cwd: REPO_CWD,
         headRef: "feature",
+        headSha: "1111111111111111111111111111111111111111",
         reason: "self-heal-forge-pr-status",
       });
       expect(listener).toHaveBeenCalledWith(
@@ -1170,6 +1186,108 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
         }),
       );
 
+      subscription.unsubscribe();
+    } finally {
+      service.dispose();
+      unregister();
+    }
+  });
+
+  test("generic forge self-heal uses the fast poll window while checks are pending", async () => {
+    const forge = {
+      ...createGitHubServiceStub(),
+      retainCurrentPullRequestStatusPoll: undefined,
+      getCurrentPullRequestStatus: vi.fn(async () =>
+        createCurrentPullRequestStatus({ checksStatus: "pending" }),
+      ),
+    };
+    const unregister = defaultForgeRegistry.register("forge-pending-test", {
+      createService: () => forge,
+      matchesHost: (host) => host === "forge-pending.test",
+    });
+    const pendingResult = createPullRequestStatusResult();
+    if (pendingResult.status) {
+      pendingResult.status.checksStatus = "pending";
+      pendingResult.status.checks = [{ name: "ci", status: "pending" }];
+    }
+    const service = createService({
+      getCheckoutSnapshotFacts: vi.fn(async (cwd: string) =>
+        createCheckoutFacts(cwd, {
+          currentBranch: "feature",
+          remoteUrl: "https://forge-pending.test/acme/repo.git",
+          pullRequestLookupTarget: { headRef: "feature" },
+        }),
+      ),
+      getCheckoutStatus: vi.fn(async (cwd: string) =>
+        createCheckoutStatus(cwd, {
+          currentBranch: "feature",
+          remoteUrl: "https://forge-pending.test/acme/repo.git",
+        }),
+      ),
+      getPullRequestStatus: vi.fn(async () => pendingResult),
+    });
+
+    try {
+      const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+      await flushPromises();
+      await vi.advanceTimersByTimeAsync(20_000);
+      await flushPromises();
+
+      expect(forge.getCurrentPullRequestStatus).toHaveBeenCalledTimes(1);
+      subscription.unsubscribe();
+    } finally {
+      service.dispose();
+      unregister();
+    }
+  });
+
+  test("generic forge poll refreshes immediately when checkout HEAD changes", async () => {
+    let nowMs = 0;
+    let headSha = "1111111111111111111111111111111111111111";
+    const forge = {
+      ...createGitHubServiceStub(),
+      retainCurrentPullRequestStatusPoll: undefined,
+      getCurrentPullRequestStatus: vi.fn(async () => createCurrentPullRequestStatus()),
+    };
+    const unregister = defaultForgeRegistry.register("forge-head-change-test", {
+      createService: () => forge,
+      matchesHost: (host) => host === "forge-head-change.test",
+    });
+    const service = createService({
+      now: () => new Date(nowMs),
+      getCheckoutSnapshotFacts: vi.fn(async (cwd: string) =>
+        createCheckoutFacts(cwd, {
+          currentBranch: "feature",
+          remoteUrl: "https://forge-head-change.test/acme/repo.git",
+          pullRequestLookupTarget: { headRef: "feature", headSha },
+        }),
+      ),
+      getCheckoutStatus: vi.fn(async (cwd: string) =>
+        createCheckoutStatus(cwd, {
+          currentBranch: "feature",
+          remoteUrl: "https://forge-head-change.test/acme/repo.git",
+        }),
+      ),
+      getPullRequestStatus: vi.fn(async () => createPullRequestStatusResult("Visible PR")),
+    });
+
+    try {
+      await service.getSnapshot(REPO_CWD);
+      const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+      expect(service.peekSnapshot(REPO_CWD)?.forge.pullRequest?.title).toBe("Visible PR");
+
+      headSha = "2222222222222222222222222222222222222222";
+      nowMs = 3_000;
+      await service.refresh(REPO_CWD);
+
+      expect(service.peekSnapshot(REPO_CWD)?.forge.pullRequest).toBeNull();
+      expect(forge.getCurrentPullRequestStatus).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(0);
+      await flushPromises();
+
+      expect(forge.getCurrentPullRequestStatus).toHaveBeenCalledTimes(1);
+      expect(service.peekSnapshot(REPO_CWD)?.forge.pullRequest?.title).toBe("MR self-healed");
       subscription.unsubscribe();
     } finally {
       service.dispose();
@@ -1209,7 +1327,7 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
       await flushPromises();
       subscription.unsubscribe();
 
-      await vi.advanceTimersByTimeAsync(60_000);
+      await vi.advanceTimersByTimeAsync(120_000);
       await flushPromises();
 
       expect(forge.getCurrentPullRequestStatus).not.toHaveBeenCalled();
@@ -1735,7 +1853,7 @@ describe("WorkspaceGitServiceImpl D2 read methods", () => {
     service.dispose();
   });
 
-  test("getWorkspaceGitMetadata derives reconciliation metadata from the snapshot cache", async () => {
+  test("getProjectSlug derives the slug from the snapshot cache", async () => {
     let nowMs = 0;
     const getCheckoutStatus = vi.fn(async (cwd: string) =>
       createCheckoutStatus(cwd, {
@@ -1749,22 +1867,10 @@ describe("WorkspaceGitServiceImpl D2 read methods", () => {
       now: () => new Date(nowMs),
     });
 
-    await expect(
-      service.getWorkspaceGitMetadata(REPO_CWD, { directoryName: "Local Repo" }),
-    ).resolves.toEqual({
-      projectKind: "git",
-      projectDisplayName: "getpaseo/paseo",
-      workspaceDisplayName: "feature/service-metadata",
-      gitRemote: "https://github.com/getpaseo/paseo.git",
-      isWorktree: false,
-      projectSlug: "paseo",
-      repoRoot: REPO_CWD,
-      currentBranch: "feature/service-metadata",
-      remoteUrl: "https://github.com/getpaseo/paseo.git",
-    });
+    await expect(service.getProjectSlug(REPO_CWD)).resolves.toBe("paseo");
 
     nowMs = 1_000;
-    await service.getWorkspaceGitMetadata(join(REPO_CWD, "."), { directoryName: "Local Repo" });
+    await service.getProjectSlug(join(REPO_CWD, "."));
     expect(getCheckoutStatus).toHaveBeenCalledTimes(1);
 
     service.dispose();

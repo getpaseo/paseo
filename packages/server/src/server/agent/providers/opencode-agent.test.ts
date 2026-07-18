@@ -194,7 +194,8 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
   test("creates a session with valid id and provider", async () => {
     const cwd = tmpCwd();
     const runtime = new TestOpenCodeHarness();
-    runtime.enqueueClient(new TestOpenCodeClient());
+    const openCode = new TestOpenCodeClient();
+    runtime.enqueueClient(openCode);
     const client = new OpenCodeAgentClient(logger, undefined, {
       serverManager: runtime,
       createClient: runtime.createClient,
@@ -206,8 +207,48 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
     expect(session.provider).toBe("opencode");
 
     await session.close();
+    expect(openCode.calls.sessionAbort).toEqual([{ sessionID: "session-1", directory: cwd }]);
+    expect(openCode.calls.sessionUpdate).toEqual([]);
     rmSync(cwd, { recursive: true, force: true });
   }, 60_000);
+
+  test("archives and unarchives the durable native session through client hooks", async () => {
+    const cwd = tmpCwd();
+    const runtime = new TestOpenCodeHarness();
+    const archiveClient = new TestOpenCodeClient();
+    const unarchiveClient = new TestOpenCodeClient();
+    runtime.enqueueClient(archiveClient);
+    runtime.enqueueClient(unarchiveClient);
+    const client = new OpenCodeAgentClient(logger, undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const handle = {
+      provider: "opencode" as const,
+      sessionId: "session-1",
+      metadata: { cwd },
+    };
+
+    await client.archiveNativeSession(handle);
+    await client.unarchiveNativeSession(handle);
+
+    expect(archiveClient.calls.sessionUpdate).toEqual([
+      {
+        sessionID: "session-1",
+        directory: cwd,
+        time: { archived: expect.any(Number) },
+      },
+    ]);
+    expect(unarchiveClient.calls.sessionUpdate).toEqual([
+      {
+        sessionID: "session-1",
+        directory: cwd,
+        time: { archived: null },
+      },
+    ]);
+    expect(runtime.acquisitions.every((acquisition) => acquisition.releaseCount === 1)).toBe(true);
+    rmSync(cwd, { recursive: true, force: true });
+  });
 
   test("single turn completes with streaming deltas", async () => {
     const cwd = tmpCwd();
@@ -713,65 +754,6 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
 });
 
 describe("OpenCode adapter context-window normalization", () => {
-  test("close reconciliation aborts then archives upstream session", async () => {
-    const abort = vi.fn().mockResolvedValue({ data: true, error: undefined });
-    const update = vi.fn().mockResolvedValue({
-      data: { id: "session-1", time: { archived: Date.now() } },
-      error: undefined,
-    });
-
-    await __openCodeInternals.reconcileOpenCodeSessionClose({
-      client: {
-        session: {
-          abort,
-          update,
-        },
-      } as never,
-      sessionId: "session-1",
-      directory: "/tmp/project",
-      logger: createTestLogger(),
-    });
-
-    expect(abort).toHaveBeenCalledWith({
-      sessionID: "session-1",
-      directory: "/tmp/project",
-    });
-    expect(update).toHaveBeenCalledTimes(1);
-    expect(update).toHaveBeenCalledWith({
-      sessionID: "session-1",
-      directory: "/tmp/project",
-      time: {
-        archived: expect.any(Number),
-      },
-    });
-  });
-
-  test("close reconciliation still archives when abort returns an error", async () => {
-    const abort = vi.fn().mockResolvedValue({
-      data: undefined,
-      error: { data: {}, errors: [], success: false },
-    });
-    const update = vi.fn().mockResolvedValue({
-      data: { id: "session-1", time: { archived: Date.now() } },
-      error: undefined,
-    });
-
-    await __openCodeInternals.reconcileOpenCodeSessionClose({
-      client: {
-        session: {
-          abort,
-          update,
-        },
-      } as never,
-      sessionId: "session-1",
-      directory: "/tmp/project",
-      logger: createTestLogger(),
-    });
-
-    expect(abort).toHaveBeenCalledTimes(1);
-    expect(update).toHaveBeenCalledTimes(1);
-  });
-
   test("builds OpenCode file parts for image prompt blocks", () => {
     expect(
       __openCodeInternals.buildOpenCodePromptParts([
@@ -2345,6 +2327,7 @@ describe("OpenCode persisted sessions", () => {
 describe("OpenCode provider subagent contract", () => {
   async function createAdoptedChildSession(): Promise<{
     readonly runtime: TestOpenCodeHarness;
+    readonly provider: OpenCodeAgentClient;
     readonly parent: Awaited<ReturnType<OpenCodeAgentClient["createSession"]>>;
     readonly child: Awaited<ReturnType<OpenCodeAgentClient["resumeSession"]>>;
     readonly childClient: TestOpenCodeClient;
@@ -2387,8 +2370,35 @@ describe("OpenCode provider subagent contract", () => {
       undefined,
       { env: { PASEO_AGENT_ID: "child-agent" } },
     );
-    return { runtime, parent, child, childClient };
+    return { runtime, provider: client, parent, child, childClient };
   }
+
+  test("archives an adopted child on the parent's registered OpenCode server", async () => {
+    const { runtime, provider, parent, child } = await createAdoptedChildSession();
+    const archiveClient = new TestOpenCodeClient();
+    runtime.enqueueClient(archiveClient);
+
+    await provider.archiveNativeSession({
+      provider: "opencode",
+      sessionId: "ses_child_external",
+      metadata: { cwd: "/workspace/repo" },
+    });
+
+    expect(archiveClient.calls.sessionUpdate).toEqual([
+      {
+        sessionID: "ses_child_external",
+        directory: "/workspace/repo",
+        time: { archived: expect.any(Number) },
+      },
+    ]);
+    expect(runtime.acquisitions.at(-1)).toEqual({
+      kind: "existing",
+      url: runtime.server.url,
+      releaseCount: 1,
+    });
+    await child.close();
+    await parent.close();
+  });
 
   test("resumes an adopted child on the parent's registered OpenCode server", async () => {
     const runtime = new TestOpenCodeHarness();
@@ -3033,11 +3043,11 @@ describe("OpenCode provider subagent contract", () => {
         event: {
           type: "timeline",
           id: "ses_child_with_history",
-          item: {
+          item: expect.objectContaining({
             type: "assistant_message",
             text: "Persisted child result.",
             messageId: "msg_child_history",
-          },
+          }),
           timestamp: "1970-01-01T00:00:02.000Z",
         },
       }),
@@ -3111,11 +3121,11 @@ describe("OpenCode provider subagent contract", () => {
           event: expect.objectContaining({
             type: "timeline",
             id: "ses_child_hydrating",
-            item: {
+            item: expect.objectContaining({
               type: "assistant_message",
               text: "Hydration did not lose this.",
               messageId: "msg_child_hydrating",
-            },
+            }),
           }),
         }),
       ),

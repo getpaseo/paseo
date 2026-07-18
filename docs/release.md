@@ -12,6 +12,8 @@ A release has exactly two steps. The agent does the first, the user authorizes t
 - ACP provider catalog drift checked with `npm run acp:version-drift:check`;
   if stale package-runner pins are intentional, say so explicitly, otherwise run
   `npm run acp:version-drift:update` and commit the updated catalog
+- classify the previous-stable-to-`HEAD` diff as patch or minor, then show the
+  target version and rationale to the user
 - draft the changelog, show it to the user, wait for review
 - run the pre-release sanity check, surface findings to the user
 - confirm CI is green
@@ -36,16 +38,40 @@ There are two supported ways to ship from `main`:
 1. **Direct stable release**: you are ready to ship the current `main` commit to everyone immediately.
 2. **Beta flow**: release candidates on the `beta` channel. Betas carry an in-place changelog entry (beta users check it), publish npm only on the explicit `beta` dist-tag, and never move the website download target off the latest stable.
 
-## Standard release (patch)
+## Release version decision
 
-Before running any stable patch release command:
+Every fresh release starts by classifying the full previous-stable-to-`HEAD`
+diff. The highest-impact change determines the version:
+
+- **Minor** — a user would experience the release as a significant upgrade. This
+  includes substantial new workflows, providers, forges, platforms, integrations,
+  or meaningful expansions of existing capabilities. Foundational internal work
+  also qualifies when it materially changes reliability, performance,
+  compatibility, deployment, or operation; diff size alone does not.
+- **Patch** — fixes, polish, small enhancements, and reliability or performance
+  improvements within existing capabilities. Follow-up corrections to a minor
+  release are patches.
+
+The release agent selects patch or minor during preparation and presents the
+target version with the changelog for approval. Agents never select a major
+version autonomously. A major release requires an explicit user instruction and
+approval; Paseo remains on major version zero until that deliberate decision.
+
+Version bumps are never used to retry a failed build. Retry the existing version
+as described in **Fixing a failed release build**.
+
+## Standard release (stable)
+
+Before running any stable release command:
 
 - Make sure the intended release commit is already committed to `main` and the working tree is clean.
 - **Run `npm run format`, `npm run lint`, and `npm run typecheck` and commit any resulting changes BEFORE you start any `release:*` command.** `release:check` runs `npm install --workspaces --include-workspace-root` as part of `release:prepare`, which can mutate `package-lock.json` (e.g. churning `"dev": true` markers on optional deps). The next step, `version:all:*`, runs `npm version` which aborts when the working tree is dirty. If this happens mid-flight you have to commit the lockfile churn before retrying — and the pre-commit format hook will reject a lockfile-only commit because oxfmt internally skips `package-lock.json` while lefthook's glob still matches it. Avoid the whole mess by running format/lint/typecheck first, then `release:prepare` once on its own to absorb any lockfile churn into a normal commit, then start the release.
-- Do not use `npm run release:patch` as a substitute for checking whether the current commit is actually ready.
+- Do not use a release command as a substitute for checking whether the current commit is actually ready.
 
 ```bash
+# Run exactly one, matching the approved decision:
 npm run release:patch
+npm run release:minor
 ```
 
 This bumps the version across all workspaces, runs checks, publishes to npm, and pushes the branch + tag. The tag push triggers `Desktop Release`, `Android APK Release`, `Docker`, and `Release Notes Sync` on GitHub Actions. EAS picks up the same tag via the EAS GitHub app and starts the iOS + Android store builds in parallel (see "Mobile builds (EAS)" below) — there is no `release-mobile.yml` in this repo.
@@ -54,8 +80,6 @@ The Docker workflow builds images from the checked-out source tree on pull reque
 
 Relay deployment is manual-only while `relay.paseo.sh` bridges traffic to the Fly deployment. Releases and pushes to `main` do not deploy the Cloudflare relay worker. Deploy it explicitly with `gh workflow run deploy-relay.yml` only when the production bridge should change.
 
-**Releases are always patch.** "Release paseo", "release stable", "ship stable", and similar always mean a patch bump from the previous stable. Never bump minor or major to trigger a build, ever — minor and major bumps are reserved for genuinely larger product cuts and require an explicit user instruction with the word "minor" or "major". If you find yourself reaching for `release:minor` to retrigger a failed build, you are doing the wrong thing — push a retry tag instead (see "Fixing a failed release build" below).
-
 **Stable means stable.** If the user says "stable" or "ship stable", do not ask whether they want a beta first. They picked stable; treat it as a direct stable release. Only run the beta flow when the user explicitly says "beta".
 
 ## Manual step-by-step
@@ -63,7 +87,9 @@ Relay deployment is manual-only while `relay.paseo.sh` bridges traffic to the Fl
 ```bash
 npm run typecheck            # Verify the exact commit you intend to release
 npm run release:check        # Typecheck, build, dry-run pack
-npm run version:all:patch    # Bump version, create commit + tag
+# Run exactly one approved version command:
+npm run version:all:patch
+npm run version:all:minor
 npm run release:publish      # Publish to npm
 npm run release:push         # Push HEAD + tag (triggers CI workflows)
 ```
@@ -71,7 +97,8 @@ npm run release:push         # Push HEAD + tag (triggers CI workflows)
 ## Beta flow
 
 ```bash
-npm run release:beta:patch       # Bump to X.Y.Z-beta.1, publish npm beta, push commit + tag
+npm run release:beta:patch       # Start the next patch beta line
+npm run release:beta:minor       # Start the next minor beta line
 # ... test desktop and APK prerelease assets from GitHub Releases ...
 npm run release:beta:next        # Optional: cut X.Y.Z-beta.2, beta.3, ...
 npm run release:promote          # Promote X.Y.Z-beta.N to stable X.Y.Z
@@ -107,7 +134,7 @@ Updater clients only discover a release through those `.yml` manifests, so there
 
 ### Default behavior
 
-`npm run release:patch` → tag push → 36h ramp. No extra action needed.
+`npm run release:patch` or `npm run release:minor` → tag push → 36h ramp. No extra action needed.
 
 The `rollout_hours` input on `desktop-release.yml` is **only read on `workflow_dispatch`** — tag-push runs always default to 36. To get any other rollout duration on a fresh release, use the post-publish flip below.
 
@@ -127,7 +154,7 @@ gh workflow run desktop-rollout.yml \
 
 **Why this is gap-free:** `desktop-release.yml`'s `finalize-rollout` job and `desktop-rollout.yml` share the concurrency group `desktop-rollout-<tag>`. Dispatching `desktop-rollout.yml` while the tag-push pipeline is still running queues it safely behind `finalize-rollout`. The first public manifests already carry `rolloutHours=36`, then `desktop-rollout.yml` flips them to `rolloutHours=0` shortly afterward. The renderer polls every 30 minutes, so active stable users pick up the new manifest on their next check.
 
-Run the dispatch right after `release:patch` returns. Don't wait for the tag-push CI to finish.
+Run the dispatch right after `release:patch` or `release:minor` returns. Don't wait for the tag-push CI to finish.
 
 ### Adjusting an already-published release
 
@@ -165,7 +192,7 @@ gh workflow run desktop-release.yml \
   -f rollout_hours=6
 ```
 
-This does **not** apply to fresh releases cut via `npm run release:patch` — that path always tag-pushes and stamps 36. For a fresh release with a custom ramp, cut normally and then dispatch `desktop-rollout.yml` (same pattern as the instant-admit flow above, with your chosen `rollout_hours`).
+This does **not** apply to fresh releases cut via `npm run release:patch` or `npm run release:minor` — those paths always tag-push and stamp 36. For a fresh release with a custom ramp, cut normally and then dispatch `desktop-rollout.yml` (same pattern as the instant-admit flow above, with your chosen `rollout_hours`).
 
 ### Releasing during an active rollout
 
@@ -463,7 +490,8 @@ Betas are checkpoints along the way; the entry is the single record for the jump
 
 - [ ] Working tree is clean and the intended commit is on `main`
 - [ ] Update the in-place beta entry in `CHANGELOG.md` (heading `## X.Y.Z-beta.N - YYYY-MM-DD`), review it against the changelog policy, get approval, and commit it before cutting the release
-- [ ] `npm run release:beta:patch` (or `:next`) completes successfully
+- [ ] The previous-stable-to-`HEAD` diff is classified as patch or minor, with the target version and rationale approved
+- [ ] `npm run release:beta:patch`, `npm run release:beta:minor`, or `npm run release:beta:next` completes successfully
 - [ ] npm shows the version under the `beta` dist-tag, not `latest`
 - [ ] GitHub `Desktop Release` workflow for the `v*-beta.N` tag is green
 - [ ] GitHub `Android APK Release` workflow for the same tag is green
@@ -472,11 +500,12 @@ Betas are checkpoints along the way; the entry is the single record for the jump
 ### Stable release (or promotion)
 
 - [ ] Run the pre-release sanity check (see above) and address any findings
-- [ ] Ensure the intended release commit is already committed and the git worktree is clean before running any `release:*` patch/promote command
-- [ ] Ensure local `npm run typecheck` passes on that exact commit before running any `release:*` patch/promote command
+- [ ] The previous-stable-to-`HEAD` diff is classified as patch or minor, with the target version and rationale approved
+- [ ] Ensure the intended release commit is already committed and the git worktree is clean before running any release command
+- [ ] Ensure local `npm run typecheck` passes on that exact commit before running any release command
 - [ ] Update `CHANGELOG.md` with user-facing release notes (features, fixes — not refactors). When promoting from beta, overwrite the existing `## X.Y.Z-beta.N` heading in place (heading → `X.Y.Z`, date → promotion day) — do not add a new entry on top of the beta one
 - [ ] Verify the changelog heading follows strict `## X.Y.Z - YYYY-MM-DD` format
-- [ ] `npm run release:patch` or `npm run release:promote` completes successfully
+- [ ] `npm run release:patch`, `npm run release:minor`, or `npm run release:promote` completes successfully
 - [ ] GitHub `Desktop Release` workflow for the `v*` tag is green
 - [ ] GitHub `Android APK Release` workflow for the same tag is green
 - [ ] EAS `Release Mobile` workflow for the same tag is green

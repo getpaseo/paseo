@@ -38,13 +38,17 @@ function createCapturedLogger(): CapturedLogger {
 
 interface FinishNotificationScenarioOptions {
   childLastAssistantMessage?: string | null;
+  childParentAgentId?: string | null;
+  requireParentOwnership?: boolean;
   parentPromptError?: Error;
   logger?: Logger;
 }
 
 interface FinishNotificationScenario {
   startWatchingChild(): void;
+  finishChild(): void;
   finishChildAndReadParentPrompt(): Promise<string>;
+  wasParentPrompted(): boolean;
 }
 
 function createFinishNotificationScenario(
@@ -52,6 +56,7 @@ function createFinishNotificationScenario(
 ): FinishNotificationScenario {
   let subscriber: ((event: AgentManagerEvent) => void) | null = null;
   let resolveParentPrompt: ((prompt: string) => void) | null = null;
+  let parentPrompted = false;
 
   const childAgent: ManagedAgent = Object.create(null);
   Reflect.set(childAgent, "id", "child-agent");
@@ -85,6 +90,7 @@ function createFinishNotificationScenario(
   Reflect.set(agentManager, "tryRunOutOfBand", () => false);
   Reflect.set(agentManager, "hasInFlightRun", () => Boolean(options?.parentPromptError));
   Reflect.set(agentManager, "streamAgent", (_agentId: string, prompt: string) => {
+    parentPrompted = true;
     resolveParentPrompt?.(prompt);
     return (async function* noop() {})();
   });
@@ -96,7 +102,12 @@ function createFinishNotificationScenario(
   const agentStorage: AgentStorage = Object.create(AgentStorage.prototype);
   Reflect.set(agentStorage, "get", async (agentId: string) => {
     if (agentId === "child-agent") {
-      return { title: "Child Agent" };
+      const parentAgentId =
+        options?.childParentAgentId === undefined ? "caller-agent" : options.childParentAgentId;
+      return {
+        title: "Child Agent",
+        labels: parentAgentId ? { "paseo.parent-agent-id": parentAgentId } : {},
+      };
     }
     return null;
   });
@@ -108,14 +119,11 @@ function createFinishNotificationScenario(
         agentStorage,
         childAgentId: "child-agent",
         callerAgentId: "caller-agent",
+        requireParentOwnership: options?.requireParentOwnership,
         logger: options?.logger ?? createTestLogger(),
       });
     },
-    async finishChildAndReadParentPrompt() {
-      const parentPrompt = new Promise<string>((resolve) => {
-        resolveParentPrompt = resolve;
-      });
-
+    finishChild() {
       childAgent.lifecycle = "running";
       subscriber?.({
         type: "agent_state",
@@ -127,8 +135,17 @@ function createFinishNotificationScenario(
         type: "agent_state",
         agent: childAgent,
       });
+    },
+    async finishChildAndReadParentPrompt() {
+      const parentPrompt = new Promise<string>((resolve) => {
+        resolveParentPrompt = resolve;
+      });
+      this.finishChild();
 
       return parentPrompt;
+    },
+    wasParentPrompted() {
+      return parentPrompted;
     },
   };
 }
@@ -190,6 +207,26 @@ test("finish notifications tell the parent the child's last assistant message", 
       "Agent child-agent (Child Agent) finished.\n\n<agent-response>\nImplemented the cleanup and all checks pass.\n</agent-response>",
     ),
   );
+});
+
+test("detaching a child ends its parent-owned finish notification", async () => {
+  const scenario = createFinishNotificationScenario({
+    childParentAgentId: null,
+    requireParentOwnership: true,
+  });
+  scenario.startWatchingChild();
+  scenario.finishChild();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(scenario.wasParentPrompted()).toBe(false);
+});
+
+test("follow-up finish notifications do not require a parent relationship", async () => {
+  const scenario = createFinishNotificationScenario({ childParentAgentId: "another-agent" });
+
+  scenario.startWatchingChild();
+  const parentPrompt = await scenario.finishChildAndReadParentPrompt();
+
+  expect(parentPrompt).toContain("Agent child-agent (Child Agent) finished.");
 });
 
 test("finish notifications log a rejected parent prompt without an unhandled rejection", async () => {

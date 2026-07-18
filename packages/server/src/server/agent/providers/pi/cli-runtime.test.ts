@@ -2,7 +2,7 @@ import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import pino from "pino";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 
 import { PiCliRuntime } from "./cli-runtime.js";
 import type { PiRuntimeLaunch } from "./runtime.js";
@@ -47,10 +47,7 @@ function createRuntime(
   });
 }
 
-function replyToCommands(
-  child: PiChild,
-  handler: (command: Record<string, unknown>) => unknown,
-): void {
+function onPiCommand(child: PiChild, handler: (command: Record<string, unknown>) => void): void {
   let buffer = "";
   child.stdin.on("data", (chunk) => {
     buffer += chunk.toString();
@@ -59,32 +56,66 @@ function replyToCommands(
       if (newlineIndex === -1) break;
       const line = buffer.slice(0, newlineIndex);
       buffer = buffer.slice(newlineIndex + 1);
-      const command = JSON.parse(line) as Record<string, unknown>;
-      try {
-        const result = handler(command);
-        child.stdout.write(
-          `${JSON.stringify({
-            id: command.id,
-            type: "response",
-            command: command.type,
-            success: true,
-            data: result,
-          })}\n`,
-        );
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        child.stdout.write(
-          `${JSON.stringify({
-            id: command.id,
-            type: "response",
-            command: command.type,
-            success: false,
-            error: message,
-          })}\n`,
-        );
-      }
+      handler(JSON.parse(line) as Record<string, unknown>);
     }
   });
+}
+
+function replyToCommands(
+  child: PiChild,
+  handler: (command: Record<string, unknown>) => unknown,
+): void {
+  onPiCommand(child, (command) => {
+    try {
+      const result = handler(command);
+      child.stdout.write(
+        `${JSON.stringify({
+          id: command.id,
+          type: "response",
+          command: command.type,
+          success: true,
+          data: result,
+        })}\n`,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      child.stdout.write(
+        `${JSON.stringify({
+          id: command.id,
+          type: "response",
+          command: command.type,
+          success: false,
+          error: message,
+        })}\n`,
+      );
+    }
+  });
+}
+
+function capturePendingCommand(child: PiChild, type: string): Promise<Record<string, unknown>> {
+  return new Promise((resolve) => {
+    onPiCommand(child, (command) => {
+      if (command.type === type) {
+        resolve(command);
+      }
+    });
+  });
+}
+
+function writePiResponse(
+  child: PiChild,
+  command: Record<string, unknown>,
+  data: unknown = {},
+): void {
+  child.stdout.write(
+    `${JSON.stringify({
+      id: command.id,
+      type: "response",
+      command: command.type,
+      success: true,
+      data,
+    })}\n`,
+  );
 }
 
 describe("PiCliRuntime", () => {
@@ -277,6 +308,51 @@ describe("PiCliRuntime", () => {
 
     const state = session.getState();
     const rejection = expect(state).rejects.toThrow("Pi RPC session is closed");
+    await session.close();
+
+    await rejection;
+  });
+
+  test("compact waits beyond the default control-plane timeout for a late response", async () => {
+    vi.useFakeTimers();
+    const child = createPiChild();
+    const pendingCompact = capturePendingCommand(child, "compact");
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    try {
+      const compactPromise = session.compact("focus on tests");
+      const compactCommand = await pendingCompact;
+      await vi.advanceTimersByTimeAsync(35_000);
+
+      expect(compactCommand).toMatchObject({
+        type: "compact",
+        customInstructions: "focus on tests",
+        id: expect.any(String),
+      });
+
+      writePiResponse(child, compactCommand, {
+        summary: "done",
+        firstKeptEntryId: "entry-1",
+        tokensBefore: 120_000,
+        estimatedTokensAfter: 20_000,
+      });
+
+      await expect(compactPromise).resolves.toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+      await session.close();
+    }
+  });
+
+  test("compact without a wall-clock timeout rejects when the session closes", async () => {
+    const child = createPiChild();
+    const pendingCompact = capturePendingCommand(child, "compact");
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    const compactPromise = session.compact();
+    await pendingCompact;
+
+    const rejection = expect(compactPromise).rejects.toThrow("Pi RPC session is closed");
     await session.close();
 
     await rejection;

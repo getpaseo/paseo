@@ -212,7 +212,6 @@ function AutoExpandReasoningRow({ value, onChange }: AutoExpandReasoningRowProps
   );
 }
 
-const TOOL_CALL_DETAIL_ROW_STYLE = [settingsStyles.row, settingsStyles.rowBorder];
 const TOOL_CALL_DETAIL_LEVELS: readonly AppSettings["toolCallDetailLevel"][] = [
   "detailed",
   "overview",
@@ -250,7 +249,7 @@ function ToolCallDetailRow({ value, onChange }: ToolCallDetailRowProps) {
   const { t } = useTranslation();
   const selectedLabel = getToolCallDetailLevelLabel(t, value);
   return (
-    <View style={TOOL_CALL_DETAIL_ROW_STYLE}>
+    <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
       <View style={settingsStyles.rowContent}>
         <Text style={settingsStyles.rowTitle}>{t("settings.general.toolCallDetail.label")}</Text>
         <Text style={settingsStyles.rowHint}>

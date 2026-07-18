@@ -21,6 +21,14 @@ export class PaseoBrowserWebviewRegistry {
   }): void {
     const hostBrowserKey = this.hostBrowserKey(input.hostWebContentsId, input.browserId);
     const replacedWebContentsId = this.webContentsIdsByHostAndBrowserId.get(hostBrowserKey);
+    const existingRegistration = this.registrationsByWebContentsId.get(input.webContentsId);
+    if (
+      replacedWebContentsId === input.webContentsId &&
+      existingRegistration?.browserId === input.browserId &&
+      existingRegistration.hostWebContentsId === input.hostWebContentsId
+    ) {
+      return;
+    }
     if (replacedWebContentsId !== undefined && replacedWebContentsId !== input.webContentsId) {
       this.removeWebContents(replacedWebContentsId, { preserveActiveBrowser: true });
     }

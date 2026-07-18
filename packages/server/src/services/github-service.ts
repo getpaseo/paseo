@@ -325,6 +325,7 @@ const CurrentPullRequestStatusSchema = z.object({
   isDraft: z.boolean().optional().catch(false),
   baseRefName: z.string().catch(""),
   headRefName: z.string().catch(""),
+  headRefOid: z.string().optional(),
   mergedAt: z.string().nullable().optional(),
   statusCheckRollup: z.unknown().optional(),
   reviewDecision: z.unknown().optional(),
@@ -493,7 +494,7 @@ query PullRequestCheckoutTarget($owner: String!, $name: String!, $number: Int!) 
 }`;
 
 const CURRENT_PR_STATUS_BASE_FIELDS =
-  "number,url,title,state,isDraft,baseRefName,headRefName,mergedAt,reviewDecision,mergeable,headRepositoryOwner";
+  "number,url,title,state,isDraft,baseRefName,headRefName,headRefOid,mergedAt,reviewDecision,mergeable,headRepositoryOwner";
 const CURRENT_PR_STATUS_FIELDS = `${CURRENT_PR_STATUS_BASE_FIELDS},statusCheckRollup`;
 
 const PULL_REQUEST_STATUS_FACTS_QUERY = `
@@ -716,6 +717,7 @@ interface InFlightCacheEntry {
 interface GitHubPollTarget {
   cwd: string;
   headRef: string;
+  headSha?: string;
   headRepositoryOwner?: string;
   retainCount: number;
   timer: NodeJS.Timeout | null;
@@ -727,6 +729,7 @@ interface GitHubPollTarget {
 
 interface ResolvedPullRequestCandidate {
   status: CurrentPullRequestStatus;
+  headSha?: string;
   headRepositoryOwner?: string;
 }
 
@@ -868,6 +871,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
   function getPollTargetKey(target: {
     cwd: string;
     headRef: string;
+    headSha?: string;
     headRepositoryOwner?: string;
   }): string {
     return buildCacheKey({
@@ -875,6 +879,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
       method: "getCurrentPullRequestStatus",
       args: {
         headRef: target.headRef,
+        headSha: target.headSha,
         headRepositoryOwner: target.headRepositoryOwner,
       },
     });
@@ -883,6 +888,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
   function updatePollTargetAfterSuccess(update: {
     cwd: string;
     headRef: string;
+    headSha?: string;
     headRepositoryOwner?: string;
     status: CurrentPullRequestStatus | null;
     notify: boolean;
@@ -932,6 +938,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
       await api.getCurrentPullRequestStatus({
         cwd: target.cwd,
         headRef: target.headRef,
+        headSha: target.headSha,
         headRepositoryOwner: target.headRepositoryOwner,
         reason: "self-heal-github",
       });
@@ -1095,6 +1102,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
         method: "getCurrentPullRequestStatus",
         args: {
           headRef: input.headRef,
+          headSha: input.headSha,
           headRepositoryOwner: input.headRepositoryOwner,
         },
         readOptions: input,
@@ -1102,6 +1110,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
           const status = await resolveCurrentPullRequestView({
             cwd: input.cwd,
             headRef: input.headRef,
+            headSha: input.headSha,
             headRepositoryOwner: input.headRepositoryOwner,
             run,
           });
@@ -1111,6 +1120,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
         updatePollTargetAfterSuccess({
           cwd: input.cwd,
           headRef: input.headRef,
+          headSha: input.headSha,
           headRepositoryOwner: input.headRepositoryOwner,
           status,
           notify: input.reason === "self-heal-github",
@@ -1502,6 +1512,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
         target = {
           cwd: input.cwd,
           headRef: input.headRef,
+          headSha: input.headSha,
           headRepositoryOwner: input.headRepositoryOwner,
           retainCount: 0,
           timer: null,
@@ -1869,6 +1880,7 @@ function isStatusCheckRollupPermissionError(error: unknown): boolean {
 async function resolveCurrentPullRequestView(options: {
   cwd: string;
   headRef: string;
+  headSha?: string;
   headRepositoryOwner?: string;
   run: (args: string[], options: GitHubCommandRunnerOptions) => Promise<string>;
 }): Promise<CurrentPullRequestStatus | null> {
@@ -1877,6 +1889,7 @@ async function resolveCurrentPullRequestView(options: {
     ? pickPullRequestCandidate({
         candidates: [viewCandidate],
         headRef: options.headRef,
+        headSha: options.headSha,
         headRepositoryOwner: options.headRepositoryOwner,
       })
     : null;
@@ -1893,12 +1906,13 @@ async function resolveCurrentPullRequestView(options: {
     const forkOwner = repo?.owner?.login;
     const parentOwner = repo?.parent?.owner?.login;
     const parentName = repo?.parent?.name;
-    if (!forkOwner || !parentOwner || !parentName) {
+    if (!forkOwner) {
       return null;
     }
-
-    listHeadRef = `${forkOwner}:${options.headRef}`;
-    listRepo = `${parentOwner}/${parentName}`;
+    if (parentOwner && parentName) {
+      listHeadRef = `${forkOwner}:${options.headRef}`;
+      listRepo = `${parentOwner}/${parentName}`;
+    }
     headRepositoryOwner = forkOwner;
   }
 
@@ -1911,6 +1925,7 @@ async function resolveCurrentPullRequestView(options: {
   const match = pickPullRequestCandidate({
     candidates,
     headRef: options.headRef,
+    headSha: options.headSha,
     headRepositoryOwner,
   });
   return match?.status ?? null;
@@ -2173,8 +2188,10 @@ function toCurrentPullRequestCandidate(
     return null;
   }
   const headRepositoryOwner = item.headRepositoryOwner?.login;
+  const headSha = item.headRefOid;
   return {
     status,
+    ...(headSha ? { headSha } : {}),
     ...(headRepositoryOwner ? { headRepositoryOwner } : {}),
   };
 }
@@ -2190,10 +2207,17 @@ function hasResolvedRepoIdentity(status: CurrentPullRequestStatus): boolean {
 function pickPullRequestCandidate(options: {
   candidates: ResolvedPullRequestCandidate[];
   headRef: string;
+  headSha?: string;
   headRepositoryOwner?: string;
 }): ResolvedPullRequestCandidate | null {
   const matching = options.candidates.filter((candidate) => {
     if (!isCandidateForHeadRef(candidate, options.headRef)) {
+      return false;
+    }
+    if (
+      candidate.status.state !== "open" &&
+      (!options.headSha || candidate.headSha !== options.headSha)
+    ) {
       return false;
     }
     if (!options.headRepositoryOwner) {
@@ -2201,15 +2225,27 @@ function pickPullRequestCandidate(options: {
     }
     return candidate.headRepositoryOwner === options.headRepositoryOwner;
   });
-  matching.sort(comparePullRequestCandidatePreference);
+  matching.sort((left, right) =>
+    comparePullRequestCandidatePreference(left, right, options.headSha),
+  );
   return matching[0] ?? null;
 }
 
 function comparePullRequestCandidatePreference(
   left: ResolvedPullRequestCandidate,
   right: ResolvedPullRequestCandidate,
+  headSha?: string,
 ): number {
-  return getPullRequestStateRank(left.status) - getPullRequestStateRank(right.status);
+  const stateRank = getPullRequestStateRank(left.status) - getPullRequestStateRank(right.status);
+  if (stateRank !== 0) {
+    return stateRank;
+  }
+  const leftExact = headSha !== undefined && left.headSha === headSha;
+  const rightExact = headSha !== undefined && right.headSha === headSha;
+  if (leftExact !== rightExact) {
+    return leftExact ? -1 : 1;
+  }
+  return 0;
 }
 
 function getPullRequestStateRank(status: CurrentPullRequestStatus): number {

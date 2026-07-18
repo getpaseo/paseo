@@ -19,6 +19,7 @@ if (!Number.isInteger(expoPort) || expoPort <= 0) {
 }
 
 const expoDevUrl = process.env.EXPO_DEV_URL || `http://localhost:${expoPort}`;
+const electronArgs = process.argv.slice(2);
 const colorEnv = {
   FORCE_COLOR: process.env.FORCE_COLOR || "1",
   npm_config_color: process.env.npm_config_color || "always",
@@ -175,7 +176,7 @@ try {
 }
 
 if (!stopping) {
-  spawnChild("electron", electron, [desktopDir], {
+  spawnChild("electron", electron, [...electronArgs, desktopDir], {
     detached: true,
     env: {
       ...process.env,

@@ -4,14 +4,24 @@ import {
   deriveWorktreeProjectHash,
   deletePaseoWorktree,
   isPaseoOwnedWorktreeCwd,
+  mapWorkspaceCwdToWorktree,
   slugify,
   type CreateWorktreeOptions,
   type WorktreeConfig,
 } from "./worktree";
 import { execFileSync } from "child_process";
-import { mkdtempSync, mkdirSync, rmSync, existsSync, realpathSync, writeFileSync } from "fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  rmSync,
+  existsSync,
+  realpathSync,
+  symlinkSync,
+  writeFileSync,
+} from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
+import { createRealpathAwarePathMatcher } from "./path";
 
 interface LegacyCreateWorktreeTestOptions {
   branchName: string;
@@ -86,6 +96,12 @@ describe("paseo worktree manager", () => {
 
     const ownership = await isPaseoOwnedWorktreeCwd(created.worktreePath, { paseoHome });
     expect(ownership.allowed).toBe(true);
+    await expect(
+      isPaseoOwnedWorktreeCwd(join(created.worktreePath, "packages", "app"), { paseoHome }),
+    ).resolves.toMatchObject({
+      allowed: true,
+      worktreePath: created.worktreePath,
+    });
   });
 
   it("rejects paths that are not under the paseo worktrees root", async () => {
@@ -96,6 +112,72 @@ describe("paseo worktree manager", () => {
 
     expect(ownership.allowed).toBe(false);
   });
+
+  it("reports the source checkout root separately from Git's common directory", async () => {
+    const created = await createLegacyWorktreeForTest({
+      branchName: "placement-root-branch",
+      cwd: repoDir,
+      baseBranch: "main",
+      worktreeSlug: "placement-root",
+      paseoHome,
+    });
+
+    const ownership = await isPaseoOwnedWorktreeCwd(created.worktreePath, { paseoHome });
+
+    expect(ownership.allowed).toBe(true);
+    expect(createRealpathAwarePathMatcher(repoDir)(ownership.repoRoot ?? "")).toBe(true);
+    expect(createRealpathAwarePathMatcher(created.worktreePath)(ownership.worktreePath ?? "")).toBe(
+      true,
+    );
+  });
+
+  it("maps only root-contained workspace paths into a replacement worktree", () => {
+    const sourceWorktreePath = join(tempDir, "source-worktree");
+    const targetWorktreePath = join(tempDir, "target-worktree");
+    const nestedWorkspaceCwd = join(sourceWorktreePath, "packages", "app");
+
+    expect(
+      mapWorkspaceCwdToWorktree({
+        sourceWorktreePath,
+        workspaceCwd: sourceWorktreePath,
+        targetWorktreePath,
+      }),
+    ).toBe(targetWorktreePath);
+    expect(
+      mapWorkspaceCwdToWorktree({
+        sourceWorktreePath,
+        workspaceCwd: nestedWorkspaceCwd,
+        targetWorktreePath,
+      }),
+    ).toBe(join(targetWorktreePath, "packages", "app"));
+    expect(() =>
+      mapWorkspaceCwdToWorktree({
+        sourceWorktreePath,
+        workspaceCwd: join(tempDir, "outside-worktree"),
+        targetWorktreePath,
+      }),
+    ).toThrow("outside its source worktree");
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "maps a realpath-equivalent source workspace into the matching target subdirectory",
+    () => {
+      const sourceWorktreePath = join(tempDir, "source-worktree");
+      const workspaceCwd = join(sourceWorktreePath, "packages", "app");
+      const sourceAlias = join(tempDir, "source-alias");
+      const targetWorktreePath = join(tempDir, "target-worktree");
+      mkdirSync(workspaceCwd, { recursive: true });
+      symlinkSync(sourceWorktreePath, sourceAlias, "dir");
+
+      expect(
+        mapWorkspaceCwdToWorktree({
+          sourceWorktreePath: sourceAlias,
+          workspaceCwd,
+          targetWorktreePath,
+        }),
+      ).toBe(join(targetWorktreePath, "packages", "app"));
+    },
+  );
 
   it("rejects the worktrees root itself and the per-repo hash dir", async () => {
     const projectHash = await deriveWorktreeProjectHash(repoDir);

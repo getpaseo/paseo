@@ -173,6 +173,8 @@ function createSessionWithActivity(
 ) {
   return {
     getClientActivity: vi.fn(() => activity),
+    supports: () => false,
+    supportsForSource: () => false,
   };
 }
 
@@ -188,6 +190,7 @@ function connectClient(
 ) {
   const ws = createOpenSocket();
   asInternals<WebSocketServerInternals>(server).sessions.set(ws, {
+    kind: "trusted",
     session: createSessionWithActivity(activity),
     clientId: "client-test",
     appVersion: null,

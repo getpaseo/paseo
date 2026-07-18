@@ -2,7 +2,11 @@ import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import type { Logger } from "pino";
 
 import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
-import { JsonlRpcProcess, type JsonlRpcLaunch } from "../jsonl-rpc-process.js";
+import {
+  JSONL_RPC_NO_TIMEOUT,
+  JsonlRpcProcess,
+  type JsonlRpcLaunch,
+} from "../jsonl-rpc-process.js";
 import {
   buildPiLaunch,
   type PiRuntime,
@@ -25,6 +29,14 @@ const DEFAULT_PI_COMMAND: [string, ...string[]] = [
   process.env.PI_COMMAND ?? process.env.PI_ACP_PI_COMMAND ?? "pi",
 ];
 const DEFAULT_COMMANDS_RPC_NAME = "get_commands";
+
+/**
+ * Pi RPC timeout policy:
+ * - Control-plane / accept-and-stream (`prompt`, `get_state`, `abort`, …): default 30s
+ * - Long-running blocking LLM jobs (`compact`): no wall-clock timeout — complete on
+ *   response, process death, or session close (`JsonlRpcProcess.failAll` / `close`).
+ */
+const PI_COMPACT_REQUEST_TIMEOUT_MS = JSONL_RPC_NO_TIMEOUT;
 
 export interface PiCliRuntimeOptions {
   logger: Logger;
@@ -112,10 +124,16 @@ class PiCliRuntimeSession implements PiRuntimeSession {
   }
 
   async compact(customInstructions?: string): Promise<void> {
-    await this.request({
-      type: "compact",
-      ...(customInstructions ? { customInstructions } : {}),
-    });
+    // Compact is a blocking LLM summarization job; Pi only returns the RPC
+    // response after the summary is written. A control-plane 30s timeout falsely
+    // fails long sessions while the real compact continues (issue #1946).
+    await this.request(
+      {
+        type: "compact",
+        ...(customInstructions ? { customInstructions } : {}),
+      },
+      PI_COMPACT_REQUEST_TIMEOUT_MS,
+    );
   }
 
   async setAutoCompaction(enabled: boolean): Promise<void> {
@@ -135,7 +153,7 @@ class PiCliRuntimeSession implements PiRuntimeSession {
     return data.messages ?? [];
   }
 
-  async getAvailableModels(timeoutMs?: number): Promise<PiModel[]> {
+  async getAvailableModels(timeoutMs?: number | null): Promise<PiModel[]> {
     const data = (await this.request({ type: "get_available_models" }, timeoutMs)) as {
       models?: PiModel[];
     };
@@ -208,7 +226,7 @@ class PiCliRuntimeSession implements PiRuntimeSession {
     await this.process.close(new Error("Pi RPC session is closed"));
   }
 
-  request(command: PiRpcCommand, timeoutMs?: number): Promise<unknown> {
+  request(command: PiRpcCommand, timeoutMs?: number | null): Promise<unknown> {
     return this.process.request(command, timeoutMs);
   }
 

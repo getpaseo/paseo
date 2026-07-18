@@ -168,13 +168,13 @@ export interface PaseoAgentCreateOptions extends PaseoAgentConfigOverrides {
   provider?: CreateAgentRequestMessage["config"]["provider"];
   cwd?: string;
   workspaceId?: string;
+  callerAgentId?: string;
   initialPrompt?: string;
   clientMessageId?: string;
   outputSchema?: Record<string, unknown>;
   images?: CreateAgentRequestMessage["images"];
   attachments?: CreateAgentRequestMessage["attachments"];
   git?: CreateAgentRequestMessage["git"];
-  worktreeName?: string;
   requestId?: string;
   labels?: Record<string, string>;
 }

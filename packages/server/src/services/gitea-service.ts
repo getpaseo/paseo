@@ -234,6 +234,36 @@ const GiteaPullRequestApiSchema = z
   })
   .passthrough();
 
+const GiteaCurrentPullRequestApiSchema = z
+  .object({
+    number: z.number(),
+    html_url: z.string(),
+    title: z.string(),
+    body: z.string().nullable().optional(),
+    state: z.string(),
+    merged: z.boolean().optional(),
+    mergeable: z.boolean().nullable().optional(),
+    updated_at: z.string().optional(),
+    labels: z
+      .array(z.object({ name: z.string() }).passthrough())
+      .optional()
+      .default([]),
+    head: z
+      .object({
+        ref: z.string(),
+        sha: z.string(),
+        repo: GiteaPullRequestRepoSchema.nullable().optional(),
+      })
+      .passthrough(),
+    base: z
+      .object({
+        ref: z.string(),
+        repo: GiteaPullRequestRepoSchema.nullable().optional(),
+      })
+      .passthrough(),
+  })
+  .passthrough();
+
 const GiteaCommitStatusSchema = z
   .object({
     id: z.number(),
@@ -324,6 +354,7 @@ const GiteaReviewCommentSchema = z
 type GiteaPrListItem = z.infer<typeof GiteaPrListItemSchema>;
 type GiteaIssueListItem = z.infer<typeof GiteaIssueListItemSchema>;
 type GiteaPullRequestView = z.infer<typeof GiteaPullRequestViewSchema>;
+type GiteaCurrentPullRequestApi = z.infer<typeof GiteaCurrentPullRequestApiSchema>;
 type GiteaCommitStatus = z.infer<typeof GiteaCommitStatusSchema>;
 type GiteaCombinedCommitStatus = z.infer<typeof GiteaCombinedCommitStatusSchema>;
 type GiteaActionsRun = z.infer<typeof GiteaActionsRunSchema>;
@@ -799,6 +830,25 @@ function parseGiteaRepoFromUrl(url: string): { owner?: string; name?: string } {
     // fall through
   }
   return {};
+}
+
+function currentPullRequestApiToListItem(item: GiteaCurrentPullRequestApi): GiteaPrListItem {
+  const headOwner = item.head.repo?.owner?.login;
+  const baseOwner = item.base.repo?.owner?.login;
+  const head =
+    headOwner && headOwner !== baseOwner ? `${headOwner}:${item.head.ref}` : item.head.ref;
+  return {
+    index: String(item.number),
+    state: item.merged ? "merged" : item.state,
+    url: item.html_url,
+    title: item.title,
+    body: item.body ?? "",
+    ...(item.mergeable != null ? { mergeable: String(item.mergeable) } : {}),
+    base: item.base.ref,
+    head,
+    updated: item.updated_at,
+    labels: item.labels.map((label) => label.name).join(","),
+  };
 }
 
 function toPullRequestSummary(item: GiteaPrListItem): PullRequestSummary {
@@ -1347,6 +1397,7 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
   async function loadCurrentPullRequestStatus(input: {
     cwd: string;
     headRef: string;
+    headSha?: string;
   }): Promise<CurrentPullRequestStatus | null> {
     const match = await findCurrentPullRequestForHeadRef(input);
     if (!match) {
@@ -1356,7 +1407,9 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
     return loadCurrentPullRequestChecks(input.cwd, match, status);
   }
 
-  async function resolveExpectedHeadOwner(cwd: string): Promise<string | null> {
+  async function resolveCurrentRepoIdentity(
+    cwd: string,
+  ): Promise<{ owner: string; name: string } | null> {
     const remoteUrl = await resolveRemoteUrl(cwd);
     if (!remoteUrl) {
       return null;
@@ -1365,34 +1418,60 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
     if (!location) {
       return null;
     }
-    return parseGitHubRemoteIdentity(location.path)?.owner ?? null;
+    const identity = parseGitHubRemoteIdentity(location.path);
+    return identity ? { owner: identity.owner, name: identity.name } : null;
   }
 
   async function findCurrentPullRequestForHeadRef(input: {
     cwd: string;
     headRef: string;
+    headSha?: string;
   }): Promise<GiteaPrListItem | null> {
-    const expectedHeadOwner = await resolveExpectedHeadOwner(input.cwd);
+    const repoIdentity = await resolveCurrentRepoIdentity(input.cwd);
+    const expectedHeadOwner = repoIdentity?.owner ?? null;
     const openMatch = await findOpenPullRequestForHeadRef(input, expectedHeadOwner);
     if (openMatch) {
       return openMatch;
     }
 
-    const recentItems = await listPullRequestItems({
-      cwd: input.cwd,
-      state: "all",
-      limit: CURRENT_PR_LOOKUP_PAGE_SIZE,
-    });
-    return (
-      recentItems.find((item) => matchesCurrentHeadRef(item, input.headRef, expectedHeadOwner)) ??
-      null
+    // tea discovers repository context from any configured git remote, while
+    // the default remote resolver reads origin only. Preserve that broader
+    // discovery for repositories whose primary remote has another name.
+    const repoPath = repoIdentity
+      ? `repos/${encodeURIComponent(repoIdentity.owner)}/${encodeURIComponent(repoIdentity.name)}`
+      : "repos/{owner}/{repo}";
+    const recentItems = await runJsonArray(
+      [
+        "api",
+        `${repoPath}/pulls?state=all&sort=recentupdate&page=1&limit=${CURRENT_PR_LOOKUP_PAGE_SIZE}`,
+      ],
+      { cwd: input.cwd },
+      GiteaCurrentPullRequestApiSchema,
     );
+    const candidates = recentItems.filter((item) =>
+      matchesCurrentHeadRef(
+        currentPullRequestApiToListItem(item),
+        input.headRef,
+        expectedHeadOwner,
+      ),
+    );
+    const match =
+      candidates.find((item) => mapGiteaState(item.state) === "open") ??
+      candidates.find(
+        (item) =>
+          mapGiteaState(item.state) !== "open" &&
+          input.headSha !== undefined &&
+          item.head.sha === input.headSha,
+      ) ??
+      null;
+    return match ? currentPullRequestApiToListItem(match) : null;
   }
 
   async function findOpenPullRequestForHeadRef(
     input: {
       cwd: string;
       headRef: string;
+      headSha?: string;
     },
     expectedHeadOwner: string | null,
   ): Promise<GiteaPrListItem | null> {
@@ -1668,7 +1747,11 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
     },
 
     getCurrentPullRequestStatus(input): Promise<CurrentPullRequestStatus | null> {
-      return loadCurrentPullRequestStatus({ cwd: input.cwd, headRef: input.headRef });
+      return loadCurrentPullRequestStatus({
+        cwd: input.cwd,
+        headRef: input.headRef,
+        headSha: input.headSha,
+      });
     },
 
     async getPullRequest(input: GetPullRequestOptions): Promise<PullRequestSummary> {

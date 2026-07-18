@@ -575,7 +575,7 @@ function FileExplorerPaneContent(props: FileExplorerPaneContentProps) {
   }
 
   return (
-    <View style={TREE_PANE_CONTAINER_STYLE}>
+    <View style={[styles.treePane, styles.treePaneFill]}>
       <View style={styles.paneHeader} testID="files-pane-header">
         <Pressable onPress={handleSortCycle} style={sortTriggerStyleProp}>
           <Text style={styles.sortTriggerText}>{currentSortLabel}</Text>
@@ -1253,5 +1253,3 @@ const styles = StyleSheet.create((theme) => ({
     padding: theme.spacing[4],
   },
 }));
-
-const TREE_PANE_CONTAINER_STYLE = [styles.treePane, styles.treePaneFill];

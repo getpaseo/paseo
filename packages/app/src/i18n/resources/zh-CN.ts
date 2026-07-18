@@ -62,6 +62,8 @@ export const zhCN: TranslationResources = {
       newAgent: "新建 Agent",
       addProject: "添加 project",
       home: "首页",
+      modelGroupLabel: "模型",
+      modelSearchKeywords: "切换模型 更改模型 设置模型 选择模型",
     },
   },
   composer: {
@@ -190,6 +192,7 @@ export const zhCN: TranslationResources = {
       notFound: "未找到 Agent",
       failedToLoad: "加载 Agent 失败",
       reconnecting: "正在重连...",
+      timelineSyncFailed: "无法刷新代理历史记录。正在重试…",
       archivingTitle: "正在归档 Agent...",
       archivingSubtitle: "请稍候，我们正在归档这个 Agent。",
     },
@@ -1694,6 +1697,7 @@ export const zhCN: TranslationResources = {
     },
     shortcuts: {
       dialogTitle: "快捷键",
+      searchPlaceholder: "搜索快捷键",
       unavailableOnMobile: "键盘快捷键仅在桌面端可用",
       capturePrompt: "按下快捷键...",
       actions: {

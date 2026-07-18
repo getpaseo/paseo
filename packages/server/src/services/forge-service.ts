@@ -271,10 +271,10 @@ export type GetCheckDetailsOptions = {
   checkRunId?: number;
   workflowRunId?: number;
   /**
-   * GitLab-only: the change request iid. GitLab routes the fetch to the change
-   * request's head pipeline (`glab ci get --merge-request`), so a fork/detached
-   * MR pipeline living in the source project resolves instead of 404ing against
-   * the checkout's target project. GitHub ignores it.
+   * Change request number used when check details must resolve against a
+   * specific request rather than the current branch. GitLab routes the fetch to
+   * the MR's head pipeline; Gitea-family adapters resolve the PR head SHA by
+   * number, including for terminal PRs. GitHub ignores it.
    */
   changeRequestNumber?: number;
 } & ForgeReadOptions;
@@ -456,6 +456,7 @@ export interface ForgeService {
     options: {
       cwd: string;
       headRef: string;
+      headSha?: string;
       headRepositoryOwner?: string;
     } & ForgeReadOptions,
   ): Promise<CurrentPullRequestStatus | null>;
@@ -496,6 +497,7 @@ export interface ForgeService {
   retainCurrentPullRequestStatusPoll?(options: {
     cwd: string;
     headRef: string;
+    headSha?: string;
     headRepositoryOwner?: string;
     onStatus?: (status: CurrentPullRequestStatus | null) => void;
     onError?: (error: unknown) => void;

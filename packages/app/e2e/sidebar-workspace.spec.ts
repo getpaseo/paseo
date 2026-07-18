@@ -6,6 +6,7 @@ import {
   expectMobileAgentSidebarHidden,
   expectMobileAgentSidebarVisible,
   openMobileAgentSidebar,
+  pinWorkspaceFromSidebar,
 } from "./helpers/sidebar";
 import { seedWorkspace } from "./helpers/seed-client";
 import { expectWorkspaceHeader } from "./helpers/workspace-ui";
@@ -46,24 +47,25 @@ async function waitForSidebarWorkspace(page: import("@playwright/test").Page, wo
 }
 
 test.describe("Sidebar workspace list", () => {
-  test("project with GitHub remote shows owner/repo name in sidebar", async ({ page }) => {
+  test("project with GitHub remote shows its selected folder name in sidebar", async ({ page }) => {
     const workspace = await seedWorkspace({
       repoPrefix: "sidebar-remote-",
       repo: { withRemote: true, originUrl: GITHUB_REMOTE_URL },
     });
 
     try {
+      const projectName = path.basename(workspace.repoPath);
       await gotoAppShell(page);
-      await waitForSidebarProject(page, "test-owner/test-repo");
+      await waitForSidebarProject(page, projectName);
       await waitForSidebarWorkspace(page, workspace.workspaceId);
 
       const projectRow = page
         .locator('[data-testid^="sidebar-project-row-"]')
-        .filter({ hasText: "test-owner/test-repo" })
+        .filter({ hasText: projectName })
         .first();
 
       await expect(projectRow).toBeVisible({ timeout: 30_000 });
-      await expect(projectRow).not.toContainText(path.basename(workspace.repoPath));
+      await expect(projectRow).not.toContainText("test-owner/test-repo");
     } finally {
       await workspace.cleanup();
     }
@@ -96,21 +98,24 @@ test.describe("Sidebar workspace list", () => {
     }
   });
 
-  test("workspace header shows correct title and subtitle", async ({ page }) => {
+  test("workspace header uses the selected folder name instead of its GitHub remote", async ({
+    page,
+  }) => {
     const workspace = await seedWorkspace({
       repoPrefix: "sidebar-header-",
       repo: { withRemote: true, originUrl: GITHUB_REMOTE_URL },
     });
 
     try {
+      const projectName = path.basename(workspace.repoPath);
       await gotoAppShell(page);
-      await waitForSidebarProject(page, "test-owner/test-repo");
+      await waitForSidebarProject(page, projectName);
       await waitForSidebarWorkspace(page, workspace.workspaceId);
       await openWorkspaceFromSidebar(page, workspace.workspaceId);
 
       await expectWorkspaceHeader(page, {
         title: workspace.workspaceName,
-        subtitle: "test-owner/test-repo",
+        subtitle: projectName,
       });
     } finally {
       await workspace.cleanup();
@@ -163,6 +168,30 @@ test.describe("Mobile sidebar panelState transition", () => {
     await expectMobileAgentSidebarVisible(page);
     await closeMobileAgentSidebar(page);
     await expectMobileAgentSidebarHidden(page);
+  });
+
+  test("keeps a pinned workspace rendered while the retained sidebar is closed", async ({
+    page,
+  }) => {
+    const workspace = await seedWorkspace({ repoPrefix: "sidebar-retained-pin-" });
+
+    try {
+      await gotoAppShell(page);
+      await openMobileAgentSidebar(page);
+      await expectMobileAgentSidebarVisible(page);
+
+      const row = page.getByTestId(getWorkspaceRowTestId(workspace.workspaceId));
+      await expect(row).toBeVisible({ timeout: 30_000 });
+      await pinWorkspaceFromSidebar(page, workspace.workspaceId);
+      await expect(page.getByTestId("sidebar-pinned-section")).toBeVisible();
+
+      await closeMobileAgentSidebar(page);
+      await expectMobileAgentSidebarHidden(page);
+
+      await expect(row).toHaveCount(1);
+    } finally {
+      await workspace.cleanup();
+    }
   });
 });
 

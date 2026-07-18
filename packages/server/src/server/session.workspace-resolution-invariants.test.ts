@@ -88,6 +88,7 @@ function createHarness(input: {
 
   const session = new Session({
     clientId: "test",
+    scopes: ["*"],
     appVersion: null,
     onMessage: (m) => emitted.push(m),
     logger: createStub<SessionOptions["logger"]>(logger),
@@ -112,6 +113,22 @@ function createHarness(input: {
       existsOnDisk: async () => true,
       list: async () => Array.from(projects.values()),
       get: async (id: string) => projects.get(id) ?? null,
+      getOrCreateActiveByRoot: async (allocation) => {
+        const existing = Array.from(projects.values()).find(
+          (project) => !project.archivedAt && project.rootPath === allocation.rootPath,
+        );
+        if (existing) return existing;
+        const project = createPersistedProjectRecord({
+          projectId: `prj_${projects.size.toString().padStart(16, "0")}`,
+          rootPath: allocation.rootPath,
+          kind: allocation.kind,
+          displayName: allocation.displayName,
+          createdAt: allocation.timestamp,
+          updatedAt: allocation.timestamp,
+        });
+        projects.set(project.projectId, project);
+        return project;
+      },
       upsert: async (record: PersistedProjectRecord) => {
         projects.set(record.projectId, record);
       },
@@ -310,10 +327,9 @@ test("S3: re-open active workspace by exact path returns the same record", async
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// S4. Open a subdir of an active git workspace: canonicalizes UP to the repo
-//     root, returns the existing workspace. (Per "always go to the nearest git".)
+// S4. Every selected path is an exact lexical root, even inside a Git checkout.
 // ─────────────────────────────────────────────────────────────────────────────
-test("S4: open subdir of active git workspace returns the repo-root workspace", async () => {
+test("S4: open subdir of active git workspace creates an independent exact-root workspace", async () => {
   const h = createHarness({
     workspaces: [gitWorkspace(FOO)],
     projects: [gitProject(FOO)],
@@ -321,8 +337,9 @@ test("S4: open subdir of active git workspace returns the repo-root workspace", 
   });
   await openProject(h.session, FOO_SUB);
   const resp = getOpenResponse(h.emitted, "req-1");
-  expect(resp?.workspace?.id).toBe(workspaceByCwd(h.workspaces, FOO)?.workspaceId);
-  expect(h.workspaces.size).toBe(1);
+  expect(resp?.workspace?.workspaceDirectory).toBe(FOO_SUB);
+  expect(resp?.workspace?.projectId).not.toBe(workspaceByCwd(h.workspaces, FOO)?.projectId);
+  expect(h.workspaces.size).toBe(2);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -343,10 +360,10 @@ test("S5: open subdir of active non-git directory creates a SEPARATE workspace",
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// S6. Open the EXACT path of an archived git workspace: this IS explicit user
-//     intent to re-open what they archived. Unarchive is correct here.
+// S6. Explicit project opening allocates a fresh identity when only archived
+//     records exist. Agent restore is the separate path that restores ownership.
 // ─────────────────────────────────────────────────────────────────────────────
-test("S6: re-opening an archived git workspace by exact path UNARCHIVES it", async () => {
+test("S6: re-opening an archived git workspace by exact path creates a fresh project and workspace", async () => {
   const archivedAt = "2026-04-22T13:08:05.400Z";
   const h = createHarness({
     workspaces: [gitWorkspace(TOOLBOX, archivedAt)],
@@ -354,8 +371,12 @@ test("S6: re-opening an archived git workspace by exact path UNARCHIVES it", asy
     gitRoots: [TOOLBOX],
   });
   await openProject(h.session, TOOLBOX);
-  expect(workspaceByCwd(h.workspaces, TOOLBOX)?.archivedAt).toBeNull();
-  expect(h.projects.get(TOOLBOX)?.archivedAt).toBeNull();
+  const fresh = Array.from(h.workspaces.values()).find(
+    (workspace) => workspace.cwd === TOOLBOX && !workspace.archivedAt,
+  );
+  expect(fresh?.workspaceId).not.toBe("ws-toolbox");
+  expect(fresh?.projectId).toMatch(/^prj_[0-9a-f]{16}$/);
+  expect(h.projects.get(TOOLBOX)?.archivedAt).toBe(archivedAt);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -433,11 +454,10 @@ test("S10: opening a git repo nested inside an archived non-git directory create
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// S11. Archive then re-add round-trip (project-level): opening the exact path
-//      of an archived project unarchives both the project and its workspace,
-//      reusing the same path-derived ids.
+// S11. Archive then re-add produces a fresh opaque identity; it never reuses
+//      archived compatibility IDs.
 // ─────────────────────────────────────────────────────────────────────────────
-test("S11: re-opening an archived project by exact path unarchives project + workspace and reuses ids", async () => {
+test("S11: re-opening an archived project by exact path keeps archived records and allocates fresh ids", async () => {
   const archivedAt = "2026-04-22T13:08:05.400Z";
   const h = createHarness({
     workspaces: [gitWorkspace(TOOLBOX, archivedAt)],
@@ -447,12 +467,11 @@ test("S11: re-opening an archived project by exact path unarchives project + wor
   await openProject(h.session, TOOLBOX);
   const resp = getOpenResponse(h.emitted, "req-1");
   expect(resp?.error).toBeNull();
-  expect(resp?.workspace?.id).toBe(workspaceByCwd(h.workspaces, TOOLBOX)?.workspaceId);
-  expect(resp?.workspace?.projectId).toBe(TOOLBOX);
-  expect(h.workspaces.size).toBe(1);
-  expect(h.projects.size).toBe(1);
-  expect(workspaceByCwd(h.workspaces, TOOLBOX)?.archivedAt).toBeNull();
-  expect(h.projects.get(TOOLBOX)?.archivedAt).toBeNull();
+  expect(resp?.workspace?.id).not.toBe("ws-toolbox");
+  expect(resp?.workspace?.projectId).toMatch(/^prj_[0-9a-f]{16}$/);
+  expect(h.workspaces.size).toBe(2);
+  expect(h.projects.size).toBe(2);
+  expect(h.projects.get(TOOLBOX)?.archivedAt).toBe(archivedAt);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -482,7 +501,7 @@ test("S12: resolveWorkspaceIdForPath does not return archived ancestor via prefi
 // being explicit. To get git features back the user unarchives the parent
 // (S6/S11).
 // ─────────────────────────────────────────────────────────────────────────────
-test("S13: subfolder of an archived git repo opens as a directory workspace", async () => {
+test("S13: subfolder of an archived git repo opens as its own git-backed workspace", async () => {
   const archivedAt = "2026-04-22T13:08:05.400Z";
   const h = createHarness({
     workspaces: [gitWorkspace(TOOLBOX, archivedAt)],
@@ -492,5 +511,5 @@ test("S13: subfolder of an archived git repo opens as a directory workspace", as
   await openProject(h.session, TOOLBOX_FLOMO);
   const resp = getOpenResponse(h.emitted, "req-1");
   expect(resp?.error).toBeNull();
-  expect(resp?.workspace?.workspaceKind).toBe("directory");
+  expect(resp?.workspace?.workspaceKind).toBe("local_checkout");
 });

@@ -62,6 +62,8 @@ export const ar: TranslationResources = {
       newAgent: "وكيل جديد",
       addProject: "إضافة مشروع",
       home: "بيت",
+      modelGroupLabel: "النموذج",
+      modelSearchKeywords: "تبديل النموذج تغيير النموذج تعيين النموذج اختيار النموذج",
     },
   },
   composer: {
@@ -190,6 +192,7 @@ export const ar: TranslationResources = {
       notFound: "لم يتم العثور على Agent",
       failedToLoad: "فشل تحميل الوكيل",
       reconnecting: "جارٍ إعادة الاتصال...",
+      timelineSyncFailed: "تعذر تحديث سجل الوكيل. جارٍ إعادة المحاولة…",
       archivingTitle: "وكيل الارشيف...",
       archivingSubtitle: "الرجاء الانتظار بينما نقوم بأرشفة هذا الوكيل.",
     },
@@ -1713,6 +1716,7 @@ export const ar: TranslationResources = {
     },
     shortcuts: {
       dialogTitle: "الاختصارات",
+      searchPlaceholder: "البحث في الاختصارات",
       unavailableOnMobile: "اختصارات لوحة المفاتيح متاحة فقط على سطح المكتب",
       capturePrompt: "اضغط على الاختصار...",
       actions: {

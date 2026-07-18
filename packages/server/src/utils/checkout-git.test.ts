@@ -8,10 +8,12 @@ import {
   readFileSync,
   realpathSync,
   mkdirSync,
+  statSync,
 } from "fs";
 import { join } from "path";
 import { win32 } from "node:path";
 import { tmpdir } from "os";
+import pino from "pino";
 import {
   __resetCheckoutShortstatCacheForTests,
   __resetPullRequestStatusCacheForTests,
@@ -46,7 +48,11 @@ import { startGitCommandMetrics, stopGitCommandMetrics } from "./run-git-command
 import { createForgeResolver } from "../services/forge-resolver.js";
 import { GitHubCommandError, GitHubCliMissingError } from "../services/github-service.js";
 import type { CurrentPullRequestStatus, ForgeService } from "../services/forge-service.js";
-import { TeaAuthenticationError, TeaCliMissingError } from "../services/gitea-service.js";
+import {
+  TeaAuthenticationError,
+  TeaCliMissingError,
+  TeaCommandError,
+} from "../services/gitea-service.js";
 import {
   createWorktree as createWorktreePrimitive,
   type CreateWorktreeOptions,
@@ -159,6 +165,7 @@ function createPullRequestStatus(overrides?: Partial<CurrentPullRequestStatus>) 
 
 interface RequestedPullRequestTarget {
   headRef: string;
+  headSha?: string;
   headRepositoryOwner?: string;
 }
 
@@ -174,6 +181,7 @@ function createGitHubServiceRecordingPullRequestTargets(
   github.getCurrentPullRequestStatus = async (request) => {
     options.requestedTargets.push({
       headRef: request.headRef,
+      ...(request.headSha ? { headSha: request.headSha } : {}),
       ...(request.headRepositoryOwner ? { headRepositoryOwner: request.headRepositoryOwner } : {}),
     });
     return createPullRequestStatus({
@@ -305,6 +313,45 @@ describe("checkout git utilities", () => {
       url: "https://gitlab.com/group/proj/-/merge_requests/9",
       number: 9,
     });
+  });
+
+  it("reports a real non-git directory as non-git", async () => {
+    const nonGitDir = join(tempDir, "not-git-status");
+    mkdirSync(nonGitDir, { recursive: true });
+
+    await expect(getCheckoutStatus(nonGitDir)).resolves.toEqual({ isGit: false });
+  });
+
+  it.runIf(
+    process.platform !== "win32" &&
+      existsSync("/dev/shm") &&
+      statSync("/dev").dev !== statSync("/dev/shm").dev,
+  )("warns and reports a non-git directory at a filesystem boundary as non-git", async () => {
+    const nonGitDir = realpathSync.native(mkdtempSync("/dev/shm/checkout-git-boundary-test-"));
+    const records: unknown[] = [];
+    const logger = pino(
+      { level: "warn" },
+      {
+        write(line: string) {
+          records.push(JSON.parse(line));
+        },
+      },
+    );
+    try {
+      await expect(getCheckoutStatus(nonGitDir, { logger })).resolves.toEqual({ isGit: false });
+      expect(records).toEqual([
+        expect.objectContaining({
+          level: 40,
+          cwd: nonGitDir,
+          msg: "Git worktree discovery failed; treating directory as non-Git",
+          err: expect.objectContaining({
+            message: expect.stringContaining("Stopping at filesystem boundary"),
+          }),
+        }),
+      ]);
+    } finally {
+      rmSync(nonGitDir, { recursive: true, force: true });
+    }
   });
 
   it("returns null for getCurrentBranch in a repo with no commits", async () => {
@@ -2300,7 +2347,8 @@ const x = 1;
 
     const lookupTarget = await readPullRequestLookupTargetFromFacts(repoDir, paseoHome);
 
-    expect(lookupTarget).toEqual({ headRef: "refactor/workspace-scripts" });
+    expect(lookupTarget).toMatchObject({ headRef: "refactor/workspace-scripts" });
+    expect(lookupTarget?.headSha).toMatch(/^[0-9a-f]{40}$/);
   });
 
   it("keeps the local branch lookup when origin tracking uses the same head name", async () => {
@@ -2315,7 +2363,8 @@ const x = 1;
 
     const lookupTarget = await readPullRequestLookupTargetFromFacts(repoDir, paseoHome);
 
-    expect(lookupTarget).toEqual({ headRef: "feature" });
+    expect(lookupTarget).toMatchObject({ headRef: "feature" });
+    expect(lookupTarget?.headSha).toMatch(/^[0-9a-f]{40}$/);
   });
 
   it("does not attach an owner when the tracked remote is the same GitHub repository", async () => {
@@ -2337,7 +2386,8 @@ const x = 1;
 
     const lookupTarget = await readPullRequestLookupTargetFromFacts(repoDir, paseoHome);
 
-    expect(lookupTarget).toEqual({ headRef: "refactor/workspace-scripts" });
+    expect(lookupTarget).toMatchObject({ headRef: "refactor/workspace-scripts" });
+    expect(lookupTarget?.headSha).toMatch(/^[0-9a-f]{40}$/);
   });
 
   it("keeps the fork owner when same-repo comparison is indeterminate", async () => {
@@ -2355,7 +2405,8 @@ const x = 1;
 
     const lookupTarget = await readPullRequestLookupTargetFromFacts(repoDir, paseoHome);
 
-    expect(lookupTarget).toEqual({ headRef: "main", headRepositoryOwner: "chethanuk" });
+    expect(lookupTarget).toMatchObject({ headRef: "main", headRepositoryOwner: "chethanuk" });
+    expect(lookupTarget?.headSha).toMatch(/^[0-9a-f]{40}$/);
   });
 
   it("uses the configured push remote for fork PR lookup when upstream is absent", async () => {
@@ -2384,8 +2435,11 @@ const x = 1;
     );
 
     expect(getBranchUpstream(repoDir)).toBeNull();
-    expect(factsTarget).toEqual({ headRef: "main", headRepositoryOwner: "chethanuk" });
-    expect(requestedTargets).toEqual([{ headRef: "main", headRepositoryOwner: "chethanuk" }]);
+    expect(factsTarget).toMatchObject({ headRef: "main", headRepositoryOwner: "chethanuk" });
+    expect(factsTarget?.headSha).toMatch(/^[0-9a-f]{40}$/);
+    expect(requestedTargets).toEqual([
+      expect.objectContaining({ headRef: "main", headRepositoryOwner: "chethanuk" }),
+    ]);
   });
 
   it("keeps the local branch lookup when same-repo tracking points at the base branch", async () => {
@@ -2400,7 +2454,8 @@ const x = 1;
 
     const lookupTarget = await readPullRequestLookupTargetFromFacts(repoDir, paseoHome);
 
-    expect(lookupTarget).toEqual({ headRef: "tender-parrot" });
+    expect(lookupTarget).toMatchObject({ headRef: "tender-parrot" });
+    expect(lookupTarget?.headSha).toMatch(/^[0-9a-f]{40}$/);
   });
 
   it("derives the same origin tracked head for on-demand PR status reads", async () => {
@@ -2454,7 +2509,9 @@ const x = 1;
 
     const status = await getPullRequestStatus(repoDir, github);
 
-    expect(requestedTargets).toEqual([{ headRef: "main", headRepositoryOwner: "chethanuk" }]);
+    expect(requestedTargets).toEqual([
+      expect.objectContaining({ headRef: "main", headRepositoryOwner: "chethanuk" }),
+    ]);
     expect(status.status?.number).toBe(345);
     expect(status.status?.headRefName).toBe("main");
   });
@@ -2501,6 +2558,33 @@ const x = 1;
     expect(first).toEqual(second);
     expect(first.status?.url).toContain("/pull/123");
     expect(callCount).toBe(1);
+  });
+
+  it("does not reuse a PR status cache entry after HEAD changes on the same branch", async () => {
+    execFileSync("git", ["checkout", "-b", "feature"], { cwd: repoDir });
+    execFileSync("git", ["remote", "add", "origin", "https://github.com/getpaseo/paseo.git"], {
+      cwd: repoDir,
+    });
+
+    const requestedShas: string[] = [];
+    const github = createGitHubServiceForStatus(null);
+    github.getCurrentPullRequestStatus = async (options) => {
+      if (options.headSha) requestedShas.push(options.headSha);
+      return createPullRequestStatus({
+        url: `https://github.com/getpaseo/paseo/pull/${requestedShas.length}`,
+      });
+    };
+
+    const first = await getPullRequestStatus(repoDir, github);
+    writeFileSync(join(repoDir, "next.txt"), "next\n");
+    execFileSync("git", ["add", "next.txt"], { cwd: repoDir });
+    execFileSync("git", ["commit", "-m", "next commit"], { cwd: repoDir });
+    const second = await getPullRequestStatus(repoDir, github);
+
+    expect(first.status?.url).toContain("/pull/1");
+    expect(second.status?.url).toContain("/pull/2");
+    expect(requestedShas).toHaveLength(2);
+    expect(requestedShas[0]).not.toBe(requestedShas[1]);
   });
 
   it("passes forced PR status reads through to the GitHub service", async () => {
@@ -2590,6 +2674,41 @@ const x = 1;
       expect(stale).toEqual(fresh);
       expect(stale.githubFeaturesEnabled).toBe(true);
       expect(stale.status?.url).toContain("/pull/123");
+      expect(callCount).toBe(2);
+    } finally {
+      __resetPullRequestStatusCacheForTests();
+    }
+  });
+
+  it("keeps stale PR status when a Gitea-family refresh hits a transient command error", async () => {
+    execFileSync("git", ["checkout", "-b", "feature"], { cwd: repoDir });
+    execFileSync("git", ["remote", "add", "origin", "https://gitea.example.com/acme/repo.git"], {
+      cwd: repoDir,
+    });
+
+    __setPullRequestStatusCacheTtlForTests(50);
+    try {
+      let callCount = 0;
+      const service = createGitHubServiceForStatus(null);
+      service.getCurrentPullRequestStatus = async () => {
+        callCount += 1;
+        if (callCount === 1) {
+          return createPullRequestStatus({ url: "https://gitea.example.com/acme/repo/pulls/7" });
+        }
+        throw new TeaCommandError({
+          args: ["pr", "list"],
+          cwd: repoDir,
+          exitCode: 1,
+          stderr: "request timed out",
+        });
+      };
+
+      const fresh = await getPullRequestStatus(repoDir, service);
+      await sleep(80);
+      const stale = await getPullRequestStatus(repoDir, service);
+
+      expect(stale).toEqual(fresh);
+      expect(stale.status?.url).toContain("/pulls/7");
       expect(callCount).toBe(2);
     } finally {
       __resetPullRequestStatusCacheForTests();

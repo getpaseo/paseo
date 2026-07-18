@@ -1220,7 +1220,8 @@ export class CheckoutSession {
 
     try {
       // The payload schema keeps checkRunId and workflowRunId optional (a Gitea
-      // Actions run has no check-run id; GitLab routes by changeRequestNumber),
+      // Actions run has no check-run id; forge adapters may also route by
+      // changeRequestNumber),
       // but a request that addresses no check at all is not actionable — reject
       // it here with a clear message instead of failing deep in an adapter. The
       // schema itself cannot enforce this: it is a discriminated-union member, so

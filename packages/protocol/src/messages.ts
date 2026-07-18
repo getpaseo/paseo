@@ -981,7 +981,7 @@ const AgentAttachmentsSchema = z.unknown().transform(normalizeAgentAttachments).
 
 export const ChangeRequestCheckoutSourceSchema = z.object({
   kind: z.literal("change_request"),
-  forge: z.string().optional().default("github"),
+  forge: z.string().optional(),
   number: z.number().int().positive(),
   projectPath: z.string().optional(),
 });
@@ -1135,6 +1135,22 @@ export const DaemonGetPairingOfferRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const HubManagementDaemonConnectRequestSchema = z.object({
+  type: z.literal("hub.management.daemon.connect.request"),
+  requestId: z.string(),
+  hubUrl: z.string(),
+  token: z.string(),
+});
+export const HubManagementDaemonGetStatusRequestSchema = z.object({
+  type: z.literal("hub.management.daemon.get_status.request"),
+  requestId: z.string(),
+});
+export const HubManagementDaemonDisconnectRequestSchema = z.object({
+  type: z.literal("hub.management.daemon.disconnect.request"),
+  requestId: z.string(),
+  force: z.boolean().optional(),
+});
+
 export const DiagnosticsRequestSchema = z.object({
   type: z.literal("diagnostics.request"),
   requestId: z.string(),
@@ -1233,6 +1249,9 @@ export const CreateAgentRequestMessageSchema = z.object({
   config: AgentSessionConfigSchema,
   env: z.record(z.string(), z.string()).optional(),
   workspaceId: z.string().optional(),
+  // Optional caller context lets managed CLI invocations use the same daemon-owned
+  // workspace and parentage policy as agent-scoped MCP creation.
+  callerAgentId: z.string().optional(),
   worktreeName: z.string().optional(),
   initialPrompt: z.string().optional(),
   clientMessageId: z.string().optional(),
@@ -1367,6 +1386,12 @@ export const ProviderSubagentTimelineRequestMessageSchema = z.object({
   direction: z.enum(["tail", "before", "after"]).optional(),
   cursor: AgentTimelineCursorSchema.optional(),
   limit: z.number().int().nonnegative().optional(),
+});
+
+export const SetAgentTimelineSubscriptionRequestMessageSchema = z.object({
+  type: z.literal("agent.timeline.set_subscription.request"),
+  agentIds: z.array(z.string()),
+  requestId: z.string(),
 });
 
 export const AgentForkContextRequestMessageSchema = z.object({
@@ -1737,9 +1762,9 @@ const CheckoutCheckDetailsRequestPayloadSchema = z.object({
   checkRunId: z.number().int().positive().optional(),
   workflowRunId: z.number().int().positive().optional(),
   // Permanent forge-routing field, optional because only some forges need it:
-  // GitLab routes the check-details fetch to the change request's head pipeline
-  // by iid, so a fork/detached MR pipeline (which lives in the source project,
-  // not the checkout's target project) resolves correctly. GitHub ignores it.
+  // GitLab routes check details to the MR's head pipeline; Gitea-family adapters
+  // resolve the PR head SHA by number, including after merge/close. GitHub
+  // ignores it.
   changeRequestNumber: z.number().int().positive().optional(),
   requestId: z.string(),
 });
@@ -2039,9 +2064,11 @@ export const WorkspaceCreateRequestSchema = z.object({
       cwd: z.string().optional(),
       projectId: z.string().optional(),
       action: z.enum(["branch-off", "checkout"]).optional(),
-      // Target branch name for checkout, or new branch name for branch-off.
+      // Target branch for checkout, or base ref for branch-off.
       refName: z.string().min(1).optional(),
       baseBranch: z.string().optional(),
+      // New branch name for branch-off. The worktree path may use a different slug.
+      branchName: z.string().min(1).optional(),
       checkoutSource: ChangeRequestCheckoutSourceSchema.optional(),
       // COMPAT(githubPrNumber): added in v0.1.106, remove after 2026-12-28 once
       // clients send checkoutSource.
@@ -2306,7 +2333,27 @@ export const CaptureTerminalRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const HubExecutionAgentCreateRequestSchema = z.object({
+  type: z.literal("hub.execution.agent.create.request"),
+  requestId: z.string(),
+  executionId: z.string(),
+  provider: z.string(),
+  cwd: z.string(),
+  prompt: z.string(),
+  workspaceId: z.string().optional(),
+  model: z.string().optional(),
+  modeId: z.string().optional(),
+  thinkingOptionId: z.string().optional(),
+  featureValues: z.record(z.string(), z.unknown()).optional(),
+  env: z.record(z.string(), z.string()).optional(),
+  worktree: CreateAgentWorktreeTargetSchema.optional(),
+  autoArchive: z.boolean().optional(),
+});
+
+export type HubExecutionAgentCreateRequest = z.infer<typeof HubExecutionAgentCreateRequestSchema>;
+
 export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
+  HubExecutionAgentCreateRequestSchema,
   BrowserAutomationExecuteResponseSchema,
   VoiceAudioChunkMessageSchema,
   AbortRequestMessageSchema,
@@ -2331,6 +2378,9 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   WaitForFinishRequestSchema,
   DaemonGetStatusRequestSchema,
   DaemonGetPairingOfferRequestSchema,
+  HubManagementDaemonConnectRequestSchema,
+  HubManagementDaemonGetStatusRequestSchema,
+  HubManagementDaemonDisconnectRequestSchema,
   DiagnosticsRequestSchema,
   GetDaemonConfigRequestMessageSchema,
   SetDaemonConfigRequestMessageSchema,
@@ -2359,6 +2409,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   FetchAgentTimelineRequestMessageSchema,
   ProviderSubagentListRequestMessageSchema,
   ProviderSubagentTimelineRequestMessageSchema,
+  SetAgentTimelineSubscriptionRequestMessageSchema,
   AgentForkContextRequestMessageSchema,
   SetAgentModeRequestMessageSchema,
   SetAgentModelRequestMessageSchema,
@@ -2662,6 +2713,8 @@ export const ServerInfoStatusPayloadSchema = z
         providerSubagents: z.boolean().optional(),
         // COMPAT(workspacePinning): added in v0.1.107, remove gate after 2027-01-12.
         workspacePinning: z.boolean().optional(),
+        // COMPAT(hubRelationship): added in v0.1.X, drop the gate when floor >= v0.1.X.
+        hubRelationship: z.boolean().optional(),
         // COMPAT(projectGithubClone): added in v0.1.108, remove gate after 2027-01-15.
         projectGithubClone: z.boolean().optional(),
         // COMPAT(workspaceGithubRepositorySearch): added in v0.1.108, remove gate after 2027-01-15.
@@ -2678,6 +2731,10 @@ export const ServerInfoStatusPayloadSchema = z
         // Daemon advertises pluggable non-GitHub forge support (the forge registry);
         // the client gates non-GitHub setup UI on it.
         forgeProviders: z.boolean().optional(),
+        // COMPAT(selectiveAgentTimeline): added in v0.1.106, remove after 2027-01-12.
+        selectiveAgentTimeline: z.boolean().optional(),
+        // COMPAT(stableProjectIdentity): added in v0.1.109, remove gate after 2027-01-15.
+        stableProjectIdentity: z.boolean().optional(),
       })
       .optional(),
   })
@@ -3126,6 +3183,14 @@ export const WorkspaceUpdateMessageSchema = z.object({
   ]),
 });
 
+export const ProjectUpdateMessageSchema = z.object({
+  type: z.literal("project.update"),
+  payload: z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("upsert"), project: WorkspaceProjectDescriptorPayloadSchema }),
+    z.object({ kind: z.literal("remove"), projectId: z.string() }),
+  ]),
+});
+
 export const ScriptStatusUpdateMessageSchema = z.object({
   type: z.literal("script_status_update"),
   payload: z.object({
@@ -3425,6 +3490,35 @@ export const ProviderSubagentUpdateMessageSchema = z.object({
   ]),
 });
 
+export const SetAgentTimelineSubscriptionResponseMessageSchema = z.object({
+  type: z.literal("agent.timeline.set_subscription.response"),
+  payload: z.object({
+    agentIds: z.array(z.string()),
+    requestId: z.string(),
+  }),
+});
+
+export const AgentAttentionRequiredMessageSchema = z.object({
+  type: z.literal("agent_attention_required"),
+  payload: z.object({
+    agentId: z.string(),
+    reason: z.enum(["finished", "error", "permission"]),
+    timestamp: z.string(),
+    shouldNotify: z.boolean(),
+    notification: z
+      .object({
+        title: z.string(),
+        body: z.string(),
+        data: z.object({
+          serverId: z.string(),
+          agentId: z.string(),
+          reason: z.enum(["finished", "error", "permission"]),
+        }),
+      })
+      .optional(),
+  }),
+});
+
 export const AgentForkContextResponseMessageSchema = z.object({
   type: z.literal("agent.fork_context.response"),
   payload: z.object({
@@ -3548,6 +3642,38 @@ export const DaemonGetStatusResponseSchema = z.object({
       ),
     })
     .passthrough(),
+});
+
+export const HubRelationshipStatusSchema = z.object({
+  state: z.enum([
+    "not_connected",
+    "connecting",
+    "connected",
+    "reconnecting",
+    "disconnecting",
+    "revoked",
+  ]),
+  daemonId: z.string().nullable(),
+  hubOrigin: z.string().nullable(),
+  scopes: z.array(z.string()),
+  connectedAt: z.string().nullable(),
+  lastError: z.string().nullable(),
+});
+export const HubManagementDaemonConnectResponseSchema = z.object({
+  type: z.literal("hub.management.daemon.connect.response"),
+  payload: z.object({ requestId: z.string(), status: HubRelationshipStatusSchema }),
+});
+export const HubManagementDaemonGetStatusResponseSchema = z.object({
+  type: z.literal("hub.management.daemon.get_status.response"),
+  payload: z.object({ requestId: z.string(), status: HubRelationshipStatusSchema }),
+});
+export const HubManagementDaemonDisconnectResponseSchema = z.object({
+  type: z.literal("hub.management.daemon.disconnect.response"),
+  payload: z.object({
+    requestId: z.string(),
+    status: HubRelationshipStatusSchema,
+    warning: z.string().optional(),
+  }),
 });
 
 export const DaemonGetPairingOfferResponseSchema = z.object({
@@ -4789,9 +4915,76 @@ export const DaemonUpdateProgressMessageSchema = z.object({
   }),
 });
 
+export const HubExecutionAgentCreateResponseSchema = z.object({
+  type: z.literal("hub.execution.agent.create.response"),
+  payload: z.object({
+    requestId: z.string(),
+    executionId: z.string(),
+    agentId: z.string().nullable(),
+    agent: AgentSnapshotPayloadSchema.nullable(),
+    success: z.boolean(),
+    error: z.string().nullable(),
+  }),
+});
+
+export const HubExecutionAgentUpdateSchema = z.object({
+  type: z.literal("hub.execution.agent.update"),
+  payload: z.object({
+    executionId: z.string(),
+    agentId: z.string(),
+    agent: AgentSnapshotPayloadSchema,
+  }),
+});
+
+export const HubExecutionAgentStreamSchema = z.object({
+  type: z.literal("hub.execution.agent.stream"),
+  payload: z.object({
+    executionId: z.string(),
+    agentId: z.string(),
+    event: AgentStreamEventPayloadSchema,
+  }),
+});
+
+export type HubExecutionAgentCreateResponse = z.infer<typeof HubExecutionAgentCreateResponseSchema>;
+export type HubExecutionAgentUpdate = z.infer<typeof HubExecutionAgentUpdateSchema>;
+export type HubExecutionAgentStream = z.infer<typeof HubExecutionAgentStreamSchema>;
+
+export const HubExecutionOutboundMessageSchema = z.discriminatedUnion("type", [
+  HubExecutionAgentCreateResponseSchema,
+  HubExecutionAgentUpdateSchema,
+  HubExecutionAgentStreamSchema,
+]);
+
+export type HubExecutionOutboundMessage = z.infer<typeof HubExecutionOutboundMessageSchema>;
+
+export class HubMessageCorrelationError extends Error {
+  constructor(messageType: HubExecutionOutboundMessage["type"]) {
+    super(`Hub message ${messageType} has mismatched agent correlation`);
+    this.name = "HubMessageCorrelationError";
+  }
+}
+
+export function parseHubExecutionOutboundMessage(value: unknown): HubExecutionOutboundMessage {
+  const message = HubExecutionOutboundMessageSchema.parse(value);
+  const payload = message.payload;
+  if (
+    "agent" in payload &&
+    payload.agent !== null &&
+    "agentId" in payload &&
+    payload.agentId !== null &&
+    payload.agent.id !== payload.agentId
+  ) {
+    throw new HubMessageCorrelationError(message.type);
+  }
+  return message;
+}
+
 export type DaemonUpdateProgressMessage = z.infer<typeof DaemonUpdateProgressMessageSchema>;
 
 export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
+  HubExecutionAgentCreateResponseSchema,
+  HubExecutionAgentUpdateSchema,
+  HubExecutionAgentStreamSchema,
   BrowserAutomationExecuteRequestSchema,
   ActivityLogMessageSchema,
   AssistantChunkMessageSchema,
@@ -4809,6 +5002,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ArtifactMessageSchema,
   AgentUpdateMessageSchema,
   WorkspaceUpdateMessageSchema,
+  ProjectUpdateMessageSchema,
   ScriptStatusUpdateMessageSchema,
   WorkspaceSetupProgressMessageSchema,
   WorkspaceSetupStatusResponseMessageSchema,
@@ -4832,6 +5026,8 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ProviderSubagentListResponseMessageSchema,
   ProviderSubagentTimelineResponseMessageSchema,
   ProviderSubagentUpdateMessageSchema,
+  SetAgentTimelineSubscriptionResponseMessageSchema,
+  AgentAttentionRequiredMessageSchema,
   AgentForkContextResponseMessageSchema,
   CancelAgentResponseMessageSchema,
   ClearAgentAttentionResponseMessageSchema,
@@ -4841,6 +5037,9 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   SetVoiceModeResponseMessageSchema,
   DaemonGetStatusResponseSchema,
   DaemonGetPairingOfferResponseSchema,
+  HubManagementDaemonConnectResponseSchema,
+  HubManagementDaemonGetStatusResponseSchema,
+  HubManagementDaemonDisconnectResponseSchema,
   DiagnosticsResponseSchema,
   GetDaemonConfigResponseMessageSchema,
   SetDaemonConfigResponseMessageSchema,
@@ -5365,9 +5564,11 @@ export const WSHelloMessageSchema = z.object({
       voice: z.boolean().optional(),
       pushNotifications: z.boolean().optional(),
       [CLIENT_CAPS.reasoningMergeEnum]: z.boolean().optional(),
+      [CLIENT_CAPS.selectiveAgentTimeline]: z.boolean().optional(),
       [CLIENT_CAPS.customModeIcons]: z.boolean().optional(),
       [CLIENT_CAPS.terminalReflowableSnapshot]: z.boolean().optional(),
       [CLIENT_CAPS.providerSubagents]: z.boolean().optional(),
+      [CLIENT_CAPS.projectUpdates]: z.boolean().optional(),
       [CLIENT_CAPS.browserHost]: BrowserAutomationHostCapabilitySchema.optional(),
     })
     .passthrough()

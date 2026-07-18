@@ -84,6 +84,20 @@ Register the adapter in `defaultForgeRegistry` with:
 - `matchesHost` from manifest `cloudHosts`
 - `probeHost` when self-hosted/Enterprise detection is supported
 
+Current change-request lookup uses two identities deliberately:
+
+- An open PR/MR belongs to the checkout when its head branch and head repository
+  match. Its remote head SHA may differ because the checkout can be ahead,
+  behind, or contain commits that have not been pushed yet.
+- A merged or closed PR/MR belongs to the checkout only when its recorded head
+  SHA exactly matches the checkout's current `HEAD`. Branch names are reusable;
+  selecting the newest terminal request by branch alone can silently attach an
+  old promotion or feature request to new work.
+
+Thread the checkout head SHA through adapter cache and poll identities as well
+as the lookup itself. Otherwise a commit made on the same branch can inherit the
+previous commit's cached terminal status until the cache expires.
+
 Cloud hosts in the manifest are a bounded public-host list, not a self-host
 allowlist. Self-hosted detection is a trust gate: Paseo only talks to a forge
 host that is either a known cloud host or one the CLI is already authenticated

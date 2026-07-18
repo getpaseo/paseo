@@ -21,7 +21,7 @@ const EXPECTED_GITHUB_FAST_POLL_MS = 20_000;
 const EXPECTED_GITHUB_SLOW_POLL_MS = 120_000;
 const EXPECTED_GITHUB_ERROR_BACKOFF_CAP_MS = 300_000;
 const CURRENT_PR_STATUS_BASE_FIELDS =
-  "number,url,title,state,isDraft,baseRefName,headRefName,mergedAt,reviewDecision,mergeable,headRepositoryOwner";
+  "number,url,title,state,isDraft,baseRefName,headRefName,headRefOid,mergedAt,reviewDecision,mergeable,headRepositoryOwner";
 const CURRENT_PR_STATUS_FIELDS = `${CURRENT_PR_STATUS_BASE_FIELDS},statusCheckRollup`;
 
 interface RunnerCall {
@@ -207,6 +207,7 @@ function currentPullRequestJson(overrides: Record<string, unknown> = {}): string
     isDraft: false,
     baseRefName: "main",
     headRefName: "feature/fork",
+    headRefOid: "1111111111111111111111111111111111111111",
     mergedAt: null,
     statusCheckRollup: [],
     reviewDecision: "REVIEW_REQUIRED",
@@ -2246,6 +2247,26 @@ describe("ForgeService", () => {
     expect(status?.mergeable).toBe("UNKNOWN");
   });
 
+  it("keeps an open PR when its remote head SHA differs from the checkout HEAD", async () => {
+    const runner = createRunner([
+      currentPullRequestJson({
+        headRefOid: "1111111111111111111111111111111111111111",
+      }),
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+    });
+
+    const status = await service.getCurrentPullRequestStatus({
+      cwd: "/repo",
+      headRef: "feature/fork",
+      headSha: "2222222222222222222222222222222222222222",
+    });
+
+    expect(status).toMatchObject({ number: 42, state: "open" });
+  });
+
   it("loads GitHub merge, auto-merge, permission, policy, and queue facts for PR 993 shape", async () => {
     const runner = createScriptedRunner([
       currentPullRequestJson({
@@ -2311,6 +2332,100 @@ describe("ForgeService", () => {
         isInMergeQueue: false,
       },
     });
+  });
+
+  it("keeps a merged PR only when headRefOid matches the checkout HEAD", async () => {
+    const headSha = "2222222222222222222222222222222222222222";
+    const runner = createRunner([
+      currentPullRequestJson({
+        state: "MERGED",
+        mergedAt: "2026-07-17T12:00:00Z",
+        headRefOid: headSha,
+      }),
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+    });
+
+    const status = await service.getCurrentPullRequestStatus({
+      cwd: "/repo",
+      headRef: "feature/fork",
+      headSha,
+    });
+
+    expect(status?.number).toBe(42);
+    expect(status?.state).toBe("merged");
+  });
+
+  it("does not attach a stale merged PR after a same-name branch advances", async () => {
+    const stale = currentPullRequestJson({
+      state: "MERGED",
+      mergedAt: "2026-07-17T12:00:00Z",
+      headRefOid: "1111111111111111111111111111111111111111",
+    });
+    const runner = createScriptedRunner([
+      stale,
+      JSON.stringify({ owner: { login: "parentOwner" }, name: "parentRepo", parent: null }),
+      JSON.stringify([JSON.parse(stale)]),
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+    });
+
+    await expect(
+      service.getCurrentPullRequestStatus({
+        cwd: "/repo",
+        headRef: "feature/fork",
+        headSha: "2222222222222222222222222222222222222222",
+      }),
+    ).resolves.toBeNull();
+    expect(runner.calls.some((call) => call.args[0] === "pr" && call.args[1] === "list")).toBe(
+      true,
+    );
+  });
+
+  it("prefers an open PR over an exact-SHA merged PR for the same head", async () => {
+    const checkoutSha = "2222222222222222222222222222222222222222";
+    const owner = { login: "forkOwner" };
+    const staleView = currentPullRequestJson({
+      state: "MERGED",
+      mergedAt: "2026-07-15T12:00:00Z",
+      headRefOid: "0000000000000000000000000000000000000000",
+      headRepositoryOwner: owner,
+    });
+    const open = JSON.parse(
+      currentPullRequestJson({
+        number: 43,
+        state: "OPEN",
+        headRefOid: "3333333333333333333333333333333333333333",
+        headRepositoryOwner: owner,
+      }),
+    );
+    const exactMerged = JSON.parse(
+      currentPullRequestJson({
+        number: 42,
+        state: "MERGED",
+        mergedAt: "2026-07-16T12:00:00Z",
+        headRefOid: checkoutSha,
+        headRepositoryOwner: owner,
+      }),
+    );
+    const runner = createScriptedRunner([staleView, JSON.stringify([exactMerged, open])]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+    });
+
+    const status = await service.getCurrentPullRequestStatus({
+      cwd: "/repo",
+      headRef: "feature/fork",
+      headSha: checkoutSha,
+      headRepositoryOwner: "forkOwner",
+    });
+
+    expect(status).toMatchObject({ number: 43, state: "open" });
   });
 
   it("resolves fork PR heads to the parent repository when gh pr view returns a stale branch match", async () => {
@@ -2541,6 +2656,18 @@ describe("ForgeService", () => {
     expect(calls.map((call) => call.args)).toEqual([
       ["pr", "view", "--json", CURRENT_PR_STATUS_FIELDS],
       ["repo", "view", "--json", "owner,name,parent"],
+      [
+        "pr",
+        "list",
+        "--state",
+        "all",
+        "--head",
+        "main",
+        "--limit",
+        "10",
+        "--json",
+        CURRENT_PR_STATUS_FIELDS,
+      ],
     ]);
   });
 

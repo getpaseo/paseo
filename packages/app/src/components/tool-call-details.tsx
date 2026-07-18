@@ -490,12 +490,19 @@ function FetchDetailSection({ url, result, ds }: FetchDetailProps) {
   );
 }
 
-function PlainTextSection({ text }: { text: string }) {
+function ScrollablePlainTextSection({ text, ds }: { text: string; ds: DetailStyles }) {
   return (
-    <View style={styles.plainTextSection}>
-      <Text selectable style={styles.plainText}>
-        {text}
-      </Text>
+    <View style={styles.section}>
+      <ScrollView
+        style={ds.scrollAreaStyle}
+        contentContainerStyle={styles.scrollContent}
+        nestedScrollEnabled
+        showsVerticalScrollIndicator
+      >
+        <Text selectable style={styles.plainText}>
+          {text}
+        </Text>
+      </ScrollView>
     </View>
   );
 }
@@ -576,13 +583,7 @@ function buildUnknownSections(detail: UnknownDetail, ds: DetailStyles, t: TFunct
     typeof detail.input === "string" && detail.output === null ? detail.input : null;
 
   if (plainInputText !== null) {
-    return [
-      <View key="unknown-plain-text" style={styles.plainTextSection}>
-        <Text selectable style={styles.plainText}>
-          {plainInputText}
-        </Text>
-      </View>,
-    ];
+    return [<ScrollablePlainTextSection key="unknown-plain-text" text={plainInputText} ds={ds} />];
   }
 
   const sectionsFromTopLevel = [
@@ -698,7 +699,7 @@ function buildDetailSections(
   }
   if (detail.type === "plain_text") {
     if (!detail.text) return [];
-    return [<PlainTextSection key="plain-text" text={detail.text} />];
+    return [<ScrollablePlainTextSection key="plain-text" text={detail.text} ds={ds} />];
   }
   if (detail.type === "unknown") {
     return buildUnknownSections(detail, ds, t);
@@ -710,7 +711,7 @@ function ErrorSection({ errorText, ds }: { errorText: string; ds: DetailStyles }
   const { t } = useTranslation();
   return (
     <View style={styles.section}>
-      <Text style={SECTION_TITLE_ERROR_STYLE}>{t("toolCallDetails.error")}</Text>
+      <Text style={[styles.sectionTitle, styles.errorText]}>{t("toolCallDetails.error")}</Text>
       <ScrollView
         horizontal
         nestedScrollEnabled
@@ -718,7 +719,11 @@ function ErrorSection({ errorText, ds }: { errorText: string; ds: DetailStyles }
         contentContainerStyle={styles.jsonContent}
         showsHorizontalScrollIndicator={true}
       >
-        <Text selectable style={SCROLL_TEXT_ERROR_STYLE} dataSet={CODE_SURFACE_DATASET}>
+        <Text
+          selectable
+          style={[styles.scrollText, styles.errorText]}
+          dataSet={CODE_SURFACE_DATASET}
+        >
           {errorText}
         </Text>
       </ScrollView>
@@ -806,10 +811,6 @@ const styles = StyleSheet.create((theme) => {
     fillHeight: {
       flex: 1,
       minHeight: 0,
-    },
-    plainTextSection: {
-      gap: theme.spacing[2],
-      padding: theme.spacing[3],
     },
     plainText: {
       fontFamily: theme.fontFamily.ui,
@@ -951,6 +952,3 @@ const styles = StyleSheet.create((theme) => {
     },
   };
 });
-
-const SECTION_TITLE_ERROR_STYLE = [styles.sectionTitle, styles.errorText];
-const SCROLL_TEXT_ERROR_STYLE = [styles.scrollText, styles.errorText];

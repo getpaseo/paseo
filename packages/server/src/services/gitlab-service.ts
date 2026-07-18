@@ -149,6 +149,7 @@ const GitLabMergeRequestSchema = z
     state: z.string(),
     source_branch: z.string(),
     target_branch: z.string(),
+    sha: z.string().optional(),
     source_project_id: z.number().nullable().optional(),
     target_project_id: z.number().nullable().optional(),
     draft: z.boolean().optional(),
@@ -861,16 +862,26 @@ export function createGitLabService(options: CreateGitLabServiceOptions = {}): F
     return runJson(["mr", "view", ref, "-F", "json"], { cwd }, GitLabMergeRequestSchema);
   }
 
-  function isNumericBranchRef(ref: string): boolean {
-    return /^[0-9]+$/.test(ref);
-  }
-
-  async function listOpenMergeRequestsBySourceBranch(
+  async function listMergeRequestsBySourceBranch(
     cwd: string,
     sourceBranch: string,
   ): Promise<GitLabMergeRequest[]> {
     return runJson(
-      ["mr", "list", "--source-branch", sourceBranch, "-F", "json"],
+      [
+        "mr",
+        "list",
+        "--all",
+        "--source-branch",
+        sourceBranch,
+        "--order",
+        "updated_at",
+        "--sort",
+        "desc",
+        "--per-page",
+        "100",
+        "-F",
+        "json",
+      ],
       { cwd },
       z.array(GitLabMergeRequestSchema),
     );
@@ -879,16 +890,17 @@ export function createGitLabService(options: CreateGitLabServiceOptions = {}): F
   async function resolveCurrentMergeRequest(
     cwd: string,
     headRef: string,
+    headSha?: string,
   ): Promise<GitLabMergeRequest | null> {
-    if (!isNumericBranchRef(headRef)) {
-      return viewMergeRequest(cwd, headRef);
-    }
-
-    const mergeRequests = await listOpenMergeRequestsBySourceBranch(cwd, headRef);
+    const mergeRequests = await listMergeRequestsBySourceBranch(cwd, headRef);
+    const candidates = mergeRequests.filter((mr) => mr.source_branch === headRef);
     const match =
-      mergeRequests.find(
-        (mr) => mr.source_branch === headRef && mapMergeRequestState(mr.state) === "open",
-      ) ?? null;
+      candidates.find((mr) => mapMergeRequestState(mr.state) === "open") ??
+      candidates.find(
+        (mr) =>
+          mapMergeRequestState(mr.state) !== "open" && headSha !== undefined && mr.sha === headSha,
+      ) ??
+      null;
     return match ? viewMergeRequest(cwd, String(match.iid)) : null;
   }
 
@@ -1004,7 +1016,7 @@ export function createGitLabService(options: CreateGitLabServiceOptions = {}): F
 
     async getCurrentPullRequestStatus(input): Promise<CurrentPullRequestStatus | null> {
       try {
-        const mr = await resolveCurrentMergeRequest(input.cwd, input.headRef);
+        const mr = await resolveCurrentMergeRequest(input.cwd, input.headRef, input.headSha);
         if (!mr) {
           return null;
         }

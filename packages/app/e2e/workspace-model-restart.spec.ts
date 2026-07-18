@@ -20,7 +20,7 @@ import {
 import { waitForSidebarHydration } from "./helpers/workspace-ui";
 import { getVisibleWorkspaceAgentTabIds } from "./helpers/workspace-tabs";
 
-const LEGACY_AGENT_ID = "legacy-cwd-only-agent";
+const LEGACY_AGENT_ID = "10000000-0000-4000-8000-000000000001";
 const SERVER_ID = `srv_restart_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
 
 interface RestartDaemonClient {

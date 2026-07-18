@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   computeCanStartDictation,
+  resolveComposerSurfacePresentation,
   runAlternateSendAction,
   runDefaultSendAction,
   stopRealtimeVoice,
@@ -8,6 +9,22 @@ import {
 
 const connected = { isConnected: true } as never;
 const disconnected = { isConnected: false } as never;
+
+describe("composer surface presentation", () => {
+  it("shows only the input when no voice overlay is active", () => {
+    expect(resolveComposerSurfacePresentation(false)).toEqual({
+      input: { opacity: 1, pointerEvents: "auto" },
+      overlay: { opacity: 0, pointerEvents: "none" },
+    });
+  });
+
+  it("shows only the voice overlay while voice UI is active", () => {
+    expect(resolveComposerSurfacePresentation(true)).toEqual({
+      input: { opacity: 0, pointerEvents: "none" },
+      overlay: { opacity: 1, pointerEvents: "auto" },
+    });
+  });
+});
 
 describe("computeCanStartDictation", () => {
   it("returns false when socket is disconnected", () => {

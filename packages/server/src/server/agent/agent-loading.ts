@@ -20,7 +20,8 @@ export type AgentLoaderManager = Pick<
   | "getRegisteredProviderIds"
   | "hydrateTimelineFromProvider"
   | "resumeAgentFromPersistence"
->;
+> &
+  Partial<Pick<AgentManager, "touchAgentActivity" | "waitForAgentClose">>;
 
 export interface EnsureAgentLoadedDeps {
   agentManager: AgentLoaderManager;
@@ -29,14 +30,44 @@ export interface EnsureAgentLoadedDeps {
   logger: Logger;
 }
 
+export async function ensureUnarchivedAgentLoaded(
+  agentId: string,
+  deps: EnsureAgentLoadedDeps & {
+    agentManager: AgentLoaderManager & Pick<AgentManager, "closeAgent">;
+  },
+): Promise<ManagedAgent> {
+  const record = await deps.agentStorage.get(agentId);
+  if (record?.archivedAt) {
+    throw new Error(`Agent is archived: ${agentId}`);
+  }
+
+  const agent = await ensureAgentLoaded(agentId, deps);
+  const latestRecord = await deps.agentStorage.get(agentId);
+  if (latestRecord?.archivedAt) {
+    await deps.agentManager.closeAgent(agentId).catch((error: unknown) => {
+      deps.logger.warn({ err: error, agentId }, "Failed to close concurrently archived agent");
+    });
+    throw new Error(`Agent is archived: ${agentId}`);
+  }
+
+  return agent;
+}
+
 export async function ensureAgentLoaded(
   agentId: string,
   deps: EnsureAgentLoadedDeps,
 ): Promise<ManagedAgent> {
-  const existing = deps.agentManager.getAgent(agentId);
+  await deps.agentManager.waitForAgentClose?.(agentId);
+  const existing =
+    deps.agentManager.touchAgentActivity?.(agentId) ?? deps.agentManager.getAgent(agentId);
   if (existing) {
     return existing;
   }
+
+  // A close may have started after the first barrier observed no in-flight
+  // work. Once the live lookup is empty, this second barrier closes that gap
+  // before storage-backed resume begins.
+  await deps.agentManager.waitForAgentClose?.(agentId);
 
   const inflight = pendingAgentInitializations.get(agentId);
   if (inflight) {
@@ -75,6 +106,7 @@ export async function ensureAgentLoaded(
       snapshot = await deps.agentManager.createAgent(config, agentId, {
         labels: record.labels,
         workspaceId: record.workspaceId,
+        owner: record.owner,
       });
       deps.logger.info({ agentId, provider: record.provider }, "Agent created from stored config");
     }

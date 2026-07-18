@@ -60,6 +60,8 @@ export const en = {
       newAgent: "New agent",
       addProject: "Add project",
       home: "Home",
+      modelGroupLabel: "Model",
+      modelSearchKeywords: "switch model change model set model select model",
     },
   },
   composer: {
@@ -188,6 +190,7 @@ export const en = {
       notFound: "Agent not found",
       failedToLoad: "Failed to load agent",
       reconnecting: "Reconnecting...",
+      timelineSyncFailed: "Couldn't refresh agent history. Retrying…",
       archivingTitle: "Archiving agent...",
       archivingSubtitle: "Please wait while we archive this agent.",
     },
@@ -1724,6 +1727,7 @@ export const en = {
     },
     shortcuts: {
       dialogTitle: "Shortcuts",
+      searchPlaceholder: "Search shortcuts",
       unavailableOnMobile: "Keyboard shortcuts are only available on desktop",
       capturePrompt: "Press shortcut...",
       actions: {

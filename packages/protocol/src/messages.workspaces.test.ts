@@ -1031,6 +1031,25 @@ describe("workspace message schemas", () => {
     expect(newWorktree.type).toBe("workspace.create.request");
     expect(newWorktree.source.kind).toBe("worktree");
 
+    const branchOff = WorkspaceCreateRequestSchema.parse({
+      type: "workspace.create.request",
+      requestId: "req-branch-off",
+      source: {
+        kind: "worktree",
+        cwd: "/tmp/repo",
+        action: "branch-off",
+        branchName: "feature/auth",
+        worktreeSlug: "feature-auth",
+      },
+    });
+    expect(branchOff.source).toEqual({
+      kind: "worktree",
+      cwd: "/tmp/repo",
+      action: "branch-off",
+      branchName: "feature/auth",
+      worktreeSlug: "feature-auth",
+    });
+
     // Directory source must also be accepted.
     const newDirectory = WorkspaceCreateRequestSchema.parse({
       type: "workspace.create.request",

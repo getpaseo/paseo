@@ -7,13 +7,17 @@ import {
   AgentSnapshotPayloadSchema,
   AgentTimelineItemPayloadSchema,
   FetchAgentTimelineResponseMessageSchema,
+  ServerInfoStatusPayloadSchema,
   SessionInboundMessageSchema,
+  SessionOutboundMessageSchema,
   type SessionOutboundMessage,
+  WSHelloMessageSchema,
 } from "@getpaseo/protocol/messages";
 import { Session, type SessionOptions } from "./session.js";
 import { createProviderSnapshotManagerStub } from "./test-utils/session-stubs.js";
 import type { AgentTimelineRow } from "./agent/agent-manager.js";
 import { handleCreatePaseoWorktreeRequest } from "./worktree-session.js";
+import { createPersistedProjectRecord } from "./workspace-registry.js";
 
 const LegacyTimelineEntryPayloadSchema = z.object({
   provider: z.enum(["claude", "codex", "opencode"]),
@@ -236,6 +240,7 @@ function createSessionForWireCompatTest(options?: {
 
   const session = new Session({
     clientId: "wire-compat-client",
+    scopes: ["*"],
     clientCapabilities: options?.clientCapabilities ?? null,
     onMessage: (message) => messages.push(message),
     logger: pino({ level: "silent" }),
@@ -288,8 +293,8 @@ function createSessionForWireCompatTest(options?: {
       async resolveRepoRemoteUrl() {
         return null;
       },
-      async getWorkspaceGitMetadata() {
-        return null;
+      async getProjectSlug() {
+        return "project";
       },
     } as unknown as SessionOptions["workspaceGitService"],
     daemonConfigStore:
@@ -326,6 +331,99 @@ async function emitTimelineResponse(
 }
 
 describe("wire compatibility", () => {
+  test("sends project updates only to clients that declare support", () => {
+    const project = createPersistedProjectRecord({
+      projectId: "project-1",
+      rootPath: "/tmp/project",
+      kind: "git",
+      displayName: "project",
+      customName: "Favorite project",
+      createdAt: "2026-07-15T00:00:00.000Z",
+      updatedAt: "2026-07-15T00:00:00.000Z",
+    });
+    const legacyMessages: SessionOutboundMessage[] = [];
+    const capableMessages: SessionOutboundMessage[] = [];
+    const legacy = createSessionForWireCompatTest({ messages: legacyMessages });
+    const capable = createSessionForWireCompatTest({
+      clientCapabilities: { [CLIENT_CAPS.projectUpdates]: true },
+      messages: capableMessages,
+    });
+
+    legacy.emitProjectUpdate({ kind: "upsert", project });
+    legacy.emitProjectUpdate({ kind: "remove", projectId: project.projectId });
+    capable.emitProjectUpdate({ kind: "upsert", project });
+    capable.emitProjectUpdate({ kind: "remove", projectId: project.projectId });
+
+    expect(legacyMessages).toEqual([]);
+    expect(capableMessages.map((message) => SessionOutboundMessageSchema.parse(message))).toEqual([
+      {
+        type: "project.update",
+        payload: {
+          kind: "upsert",
+          project: {
+            projectId: "project-1",
+            projectDisplayName: "Favorite project",
+            projectCustomName: "Favorite project",
+            projectRootPath: "/tmp/project",
+            projectKind: "git",
+          },
+        },
+      },
+      {
+        type: "project.update",
+        payload: { kind: "remove", projectId: "project-1" },
+      },
+    ]);
+  });
+
+  test("hello parses with and without the project update capability", () => {
+    const legacy = WSHelloMessageSchema.parse({
+      type: "hello",
+      clientId: "legacy-client",
+      clientType: "mobile",
+      protocolVersion: 1,
+    });
+    const capable = WSHelloMessageSchema.parse({
+      type: "hello",
+      clientId: "capable-client",
+      clientType: "mobile",
+      protocolVersion: 1,
+      capabilities: { [CLIENT_CAPS.projectUpdates]: true },
+    });
+
+    expect([legacy, capable]).toEqual([
+      {
+        type: "hello",
+        clientId: "legacy-client",
+        clientType: "mobile",
+        protocolVersion: 1,
+      },
+      {
+        type: "hello",
+        clientId: "capable-client",
+        clientType: "mobile",
+        protocolVersion: 1,
+        capabilities: { project_updates: true },
+      },
+    ]);
+  });
+
+  test("server info accepts legacy feature payloads without stable project identity", () => {
+    const parsed = ServerInfoStatusPayloadSchema.parse({
+      status: "server_info",
+      serverId: "legacy-server",
+      features: { workspaceGithubClone: true },
+    });
+
+    expect(parsed).toEqual({
+      status: "server_info",
+      serverId: "legacy-server",
+      hostname: null,
+      version: null,
+      features: {},
+    });
+  });
+
   test("assistant timeline message ids are optional on the wire", () => {
     expect(
       AgentTimelineItemPayloadSchema.parse({

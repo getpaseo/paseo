@@ -1,6 +1,6 @@
 ---
 title: Workspaces
-description: Understand Paseo's project, workspace, and session model before setting up agents or git worktrees.
+description: Understand how Paseo groups working directories, agents, terminals, and browsers into workspaces.
 nav: Workspaces
 order: 10
 category: Workspaces
@@ -35,13 +35,29 @@ That matters because real development rarely fits into one long chat. You might 
 
 In Paseo, the workspace is the stable container. The sessions are what you run inside it.
 
+## Choose the isolation
+
+Every workspace has an isolation mode:
+
+- **Local** uses an existing directory, such as your main checkout. Use it when sessions should share the files already on disk.
+- **Worktree** creates or opens a managed git worktree. Use it when a task needs its own directory and branch.
+
+The workspace is the product concept; a git worktree is one way to isolate its files. More than one workspace can refer to the same managed worktree, and Paseo removes that worktree after its last workspace is archived.
+
 ## Creating a workspace
 
-When you create a new workspace, Paseo creates a working directory for it. If you are using git, this is an isolated git worktree on its own branch, so agents can work in parallel without touching your main checkout. Paseo names the branch from your first prompt.
+You can create a workspace in the app or from the CLI:
+
+```bash
+paseo workspace create --isolation local --path ~/dev/my-app --title main
+paseo workspace create --isolation worktree --path ~/dev/my-app --base main
+```
 
 You can also create a workspace without starting an agent right away. The workspace is still there with its working directory ready; you can open terminals, run services, or browse files, then start an agent later.
 
 Either way, once the workspace exists you can add more sessions to it. Open a terminal alongside an agent, start a second agent to review changes, or open a browser tab to check a local service. Every session lives as a tab inside the same workspace.
+
+Creating an agent and creating a workspace are separate actions. Pass a workspace ID when you want an agent in a specific existing workspace. A bare `paseo run` from a human shell creates a new local workspace; when one agent runs it, Paseo recognizes the caller and creates a subagent in the caller's workspace.
 
 ## Worktrees
 

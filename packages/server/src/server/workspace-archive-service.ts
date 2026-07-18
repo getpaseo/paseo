@@ -9,22 +9,21 @@ import type { ForgeService } from "../services/forge-service.js";
 import {
   deletePaseoWorktree,
   isPaseoOwnedWorktreeCwd,
-  resolvePaseoWorktreeRootForCwd,
+  runWorktreeTeardownCommands,
   WorktreeTeardownError,
 } from "../utils/worktree.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type { PersistedWorkspaceRecord, WorkspaceRegistry } from "./workspace-registry.js";
+import { createRealpathAwarePathMatcher } from "../utils/path.js";
 
-export interface ActiveWorkspaceRef {
-  workspaceId: string;
-  cwd: string;
-  kind?: "local_checkout" | "worktree" | "directory";
-}
+export type ActiveWorkspaceRef = Pick<
+  PersistedWorkspaceRecord,
+  "workspaceId" | "cwd" | "kind" | "worktreeRoot" | "isPaseoOwnedWorktree" | "mainRepoRoot"
+>;
 
 export interface ArchiveDependencies {
   paseoHome?: string;
-  // Base directory that may hold worktrees across repositories. Used as a fallback
-  // when the request does not supply a per-repo root.
+  // Base directory that may hold worktrees across repositories.
   paseoWorktreesBaseRoot?: string;
   github: ForgeService;
   workspaceGitService: Pick<WorkspaceGitService, "getSnapshot">;
@@ -65,22 +64,42 @@ export interface ArchiveResult {
 
 export interface ArchiveByScopeRequest {
   scope: ArchiveScope;
-  repoRoot: string | null;
-  // Per-repository worktree root, used to remove the actual directory.
-  repoWorktreesRoot?: string;
-  // Base directory that may hold worktrees across repositories; falls back to the
-  // dependency's base root for ownership checks and path resolution.
-  paseoWorktreesBaseRoot?: string;
   requestId: string;
+}
+
+export async function requireActiveWorkspaceForArchive(
+  dependencies: Pick<ArchiveDependencies, "listActiveWorkspaces">,
+  workspaceId: string,
+): Promise<ActiveWorkspaceRef> {
+  const workspace = (await dependencies.listActiveWorkspaces()).find(
+    (candidate) => candidate.workspaceId === workspaceId,
+  );
+  if (!workspace) {
+    throw new Error(`Workspace not found: ${workspaceId}`);
+  }
+  return workspace;
+}
+
+interface BackingDirectory {
+  path: string;
+  isPaseoOwnedWorktree: boolean;
+  mainRepoRoot: string | null;
+  paseoWorktreesRoot: string | null;
+}
+
+interface ArchiveTarget {
+  backing: BackingDirectory | null;
+  teardownTargets: Array<{ workspaceId: string | null; cwd: string }>;
+  workspaceIds: string[];
 }
 
 export async function resolveWorkspaceIdAtPath(
   dependencies: Pick<ArchiveDependencies, "findWorkspaceIdForCwd" | "listActiveWorkspaces">,
   targetPath: string,
 ): Promise<string | null> {
-  const targetDir = resolve(targetPath);
+  const matchesTarget = createRealpathAwarePathMatcher(targetPath);
   const activeWorkspaces = await dependencies.listActiveWorkspaces();
-  const exactMatches = activeWorkspaces.filter((workspace) => resolve(workspace.cwd) === targetDir);
+  const exactMatches = activeWorkspaces.filter((workspace) => matchesTarget(workspace.cwd));
   const worktreeMatch = exactMatches.find((workspace) => workspace.kind === "worktree");
   if (worktreeMatch) {
     return worktreeMatch.workspaceId;
@@ -88,18 +107,15 @@ export async function resolveWorkspaceIdAtPath(
   return dependencies.findWorkspaceIdForCwd(targetPath);
 }
 
-// THE single archive entry. Resolves the in-scope record set, tears each down
+// Resolves the in-scope record set, tears each down
 // (agents + terminals + record), then removes the backing directory iff it is
 // Paseo-owned AND no active workspace still references it.
 export async function archiveByScope(
   dependencies: ArchiveDependencies,
   request: ArchiveByScopeRequest,
 ): Promise<ArchiveResult> {
-  const { targetDir, targetWorkspaceIds } = await resolveArchiveTargets(
-    dependencies,
-    request.scope,
-    request.paseoWorktreesBaseRoot,
-  );
+  const target = await resolveArchiveTarget(dependencies, request.scope);
+  const targetWorkspaceIds = target.workspaceIds;
 
   if (targetWorkspaceIds.length > 0) {
     dependencies.markWorkspaceArchiving(targetWorkspaceIds, new Date().toISOString());
@@ -118,25 +134,25 @@ export async function archiveByScope(
       request.requestId,
     );
 
-    if (request.repoRoot) {
+    if (target.backing?.mainRepoRoot) {
       try {
-        await dependencies.workspaceGitService.getSnapshot(request.repoRoot, {
+        await dependencies.workspaceGitService.getSnapshot(target.backing.mainRepoRoot, {
           force: true,
           reason: "archive-worktree",
         });
       } catch (error) {
         dependencies.sessionLogger?.warn(
-          { err: error, cwd: request.repoRoot, requestId: request.requestId },
+          { err: error, cwd: target.backing.mainRepoRoot, requestId: request.requestId },
           "Failed to force-refresh workspace git snapshot after archiving",
         );
       }
     }
 
-    if (targetDir !== null) {
+    if (target.backing !== null) {
       removedDirectory = await maybeRemoveDirectory(
         dependencies,
         request,
-        targetDir,
+        target,
         archivedWorkspaceIds,
       );
     }
@@ -154,11 +170,10 @@ export async function archiveByScope(
   }
 }
 
-async function resolveArchiveTargets(
+async function resolveArchiveTarget(
   dependencies: ArchiveDependencies,
   scope: ArchiveScope,
-  paseoWorktreesBaseRoot?: string,
-): Promise<{ targetDir: string | null; targetWorkspaceIds: string[] }> {
+): Promise<ArchiveTarget> {
   const activeWorkspaces = await dependencies.listActiveWorkspaces();
 
   if (scope.kind === "workspace") {
@@ -169,24 +184,89 @@ async function resolveArchiveTargets(
         { workspaceId },
         "Workspace not found for archive-by-scope; skipping",
       );
-      return { targetDir: null, targetWorkspaceIds: [] };
+      return { backing: null, teardownTargets: [], workspaceIds: [] };
     }
-    return { targetDir: resolve(record.cwd), targetWorkspaceIds: [workspaceId] };
+    return {
+      backing: await resolveWorkspaceBackingDirectory(record, dependencies),
+      teardownTargets: [{ workspaceId, cwd: record.cwd }],
+      workspaceIds: [workspaceId],
+    };
   }
 
-  let targetPath = scope.targetPath;
-  const resolvedWorktree = await resolvePaseoWorktreeRootForCwd(targetPath, {
-    paseoHome: dependencies.paseoHome,
-    worktreesRoot: paseoWorktreesBaseRoot ?? dependencies.paseoWorktreesBaseRoot,
-  });
-  if (resolvedWorktree) {
-    targetPath = resolvedWorktree.worktreePath;
+  const backing = await resolveBackingDirectory(scope.targetPath, dependencies);
+  const matchesBackingDirectory = createRealpathAwarePathMatcher(backing.path);
+  const targetWorkspaces = (
+    await Promise.all(
+      activeWorkspaces.map(async (workspace) => {
+        const backingDirectory = await resolveWorkspaceBackingDirectory(workspace, dependencies);
+        return matchesBackingDirectory(backingDirectory.path) ? workspace : null;
+      }),
+    )
+  ).filter((workspace): workspace is ActiveWorkspaceRef => workspace !== null);
+  const persistedMainRepoRoot = targetWorkspaces.find(
+    (workspace) => workspace.mainRepoRoot,
+  )?.mainRepoRoot;
+  return {
+    backing: {
+      ...backing,
+      mainRepoRoot: persistedMainRepoRoot ?? backing.mainRepoRoot,
+    },
+    teardownTargets:
+      targetWorkspaces.length > 0
+        ? targetWorkspaces.map((workspace) => ({
+            workspaceId: workspace.workspaceId,
+            cwd: workspace.cwd,
+          }))
+        : [{ workspaceId: null, cwd: scope.targetPath }],
+    workspaceIds: targetWorkspaces.map((workspace) => workspace.workspaceId),
+  };
+}
+
+async function resolveWorkspaceBackingDirectory(
+  workspace: ActiveWorkspaceRef,
+  dependencies: Pick<ArchiveDependencies, "paseoHome" | "paseoWorktreesBaseRoot">,
+): Promise<BackingDirectory> {
+  if (workspace.isPaseoOwnedWorktree && workspace.worktreeRoot && workspace.mainRepoRoot) {
+    return {
+      path: resolve(workspace.worktreeRoot),
+      isPaseoOwnedWorktree: true,
+      mainRepoRoot: workspace.mainRepoRoot,
+      paseoWorktreesRoot: null,
+    };
   }
-  const targetDir = resolve(targetPath);
-  const targetWorkspaceIds = activeWorkspaces
-    .filter((workspace) => resolve(workspace.cwd) === targetDir)
-    .map((workspace) => workspace.workspaceId);
-  return { targetDir, targetWorkspaceIds };
+  if (workspace.kind !== "worktree") {
+    return {
+      path: resolve(workspace.cwd),
+      isPaseoOwnedWorktree: false,
+      mainRepoRoot: workspace.mainRepoRoot ?? null,
+      paseoWorktreesRoot: null,
+    };
+  }
+
+  // COMPAT(archiveMissingWorkspacePlacement): worktree records created before v0.1.110
+  // lack durable backing ownership; remove filesystem discovery after 2027-01-17.
+  const backing = await resolveBackingDirectory(
+    workspace.worktreeRoot ?? workspace.cwd,
+    dependencies,
+  );
+  return { ...backing, mainRepoRoot: workspace.mainRepoRoot ?? backing.mainRepoRoot };
+}
+
+async function resolveBackingDirectory(
+  cwd: string,
+  dependencies: Pick<ArchiveDependencies, "paseoHome" | "paseoWorktreesBaseRoot">,
+): Promise<BackingDirectory> {
+  const options = {
+    paseoHome: dependencies.paseoHome,
+    worktreesRoot: dependencies.paseoWorktreesBaseRoot,
+  };
+  const ownership = await isPaseoOwnedWorktreeCwd(cwd, options);
+  return {
+    path: resolve(ownership.allowed && ownership.worktreePath ? ownership.worktreePath : cwd),
+    isPaseoOwnedWorktree: ownership.allowed,
+    mainRepoRoot: ownership.repoRoot ?? null,
+    paseoWorktreesRoot: ownership.worktreeRoot ?? null,
+  };
 }
 
 async function archiveTargetRecords(
@@ -224,43 +304,88 @@ async function archiveTargetRecords(
 
 async function maybeRemoveDirectory(
   dependencies: ArchiveDependencies,
-  request: Omit<ArchiveByScopeRequest, "scope">,
-  targetDir: string,
+  request: Pick<ArchiveByScopeRequest, "requestId">,
+  target: ArchiveTarget,
   archivedWorkspaceIds: string[],
 ): Promise<boolean> {
-  const ownership = await isPaseoOwnedWorktreeCwd(targetDir, {
-    paseoHome: dependencies.paseoHome,
-    worktreesRoot: request.paseoWorktreesBaseRoot ?? dependencies.paseoWorktreesBaseRoot,
-  });
-  if (!ownership.allowed) {
+  const backing = target.backing;
+  if (!backing?.isPaseoOwnedWorktree) {
     return false;
   }
 
+  const archivedWorkspaceIdSet = new Set(archivedWorkspaceIds);
+  const teardownCwds = uniqueFilesystemPaths(
+    target.teardownTargets
+      .filter(
+        (teardownTarget) =>
+          teardownTarget.workspaceId === null ||
+          archivedWorkspaceIdSet.has(teardownTarget.workspaceId),
+      )
+      .map((teardownTarget) => teardownTarget.cwd),
+  );
+
+  try {
+    for (const teardownCwd of teardownCwds) {
+      await runWorktreeTeardownCommands({
+        worktreePath: backing.path,
+        teardownCwd,
+        repoRootPath: backing.mainRepoRoot ?? undefined,
+      });
+    }
+  } catch (error) {
+    if (error instanceof WorktreeTeardownError) {
+      dependencies.sessionLogger?.warn(
+        { err: error, targetPath: backing.path, requestId: request.requestId },
+        "Worktree teardown failed during archive; workspace already archived",
+      );
+      return false;
+    }
+    throw error;
+  }
+
   const remainingActive = await dependencies.listActiveWorkspaces();
-  if (!isDirectoryUnreferenced(remainingActive, targetDir, new Set(archivedWorkspaceIds))) {
+  if (
+    !(await isDirectoryUnreferenced(
+      remainingActive,
+      backing.path,
+      new Set(archivedWorkspaceIds),
+      dependencies,
+    ))
+  ) {
     return false;
   }
 
   try {
     await deletePaseoWorktree({
-      cwd: request.repoRoot,
-      worktreePath: targetDir,
-      worktreesRoot: request.repoWorktreesRoot ?? ownership.worktreeRoot,
+      cwd: backing.mainRepoRoot,
+      worktreePath: backing.path,
+      teardownCwds: [],
+      worktreesRoot: backing.paseoWorktreesRoot ?? undefined,
       paseoHome: dependencies.paseoHome,
-      worktreesBaseRoot: request.paseoWorktreesBaseRoot ?? dependencies.paseoWorktreesBaseRoot,
+      worktreesBaseRoot: dependencies.paseoWorktreesBaseRoot,
     });
-    dependencies.github.invalidate({ cwd: targetDir });
+    dependencies.github.invalidate({ cwd: backing.path });
     return true;
   } catch (error) {
     if (error instanceof WorktreeTeardownError) {
       dependencies.sessionLogger?.warn(
-        { err: error, targetPath: targetDir, requestId: request.requestId },
+        { err: error, targetPath: backing.path, requestId: request.requestId },
         "Worktree disk removal failed during archive; workspace already archived",
       );
       return false;
     }
     throw error;
   }
+}
+
+function uniqueFilesystemPaths(paths: string[]): string[] {
+  const unique: string[] = [];
+  for (const candidate of paths) {
+    if (!unique.some((existing) => createRealpathAwarePathMatcher(existing)(candidate))) {
+      unique.push(candidate);
+    }
+  }
+  return unique;
 }
 
 export type ArchiveWorkspaceContentsDependencies = Pick<
@@ -323,19 +448,23 @@ export async function archiveWorkspaceContents(
   return archivedAgents;
 }
 
-// EXACTLY one last-reference predicate in the module. True when, after archiving
+// True when, after archiving
 // the in-scope records, no active workspace still points at targetDir. Derived
 // from records each call — no stored counter.
-function isDirectoryUnreferenced(
+async function isDirectoryUnreferenced(
   activeWorkspaces: ActiveWorkspaceRef[],
   targetDir: string,
   archivedWorkspaceIds: ReadonlySet<string>,
-): boolean {
+  dependencies: Pick<ArchiveDependencies, "paseoHome" | "paseoWorktreesBaseRoot">,
+): Promise<boolean> {
   const target = resolve(targetDir);
-  return !activeWorkspaces.some(
-    (workspace) =>
-      !archivedWorkspaceIds.has(workspace.workspaceId) && resolve(workspace.cwd) === target,
-  );
+  const matchesTarget = createRealpathAwarePathMatcher(target);
+  for (const workspace of activeWorkspaces) {
+    if (archivedWorkspaceIds.has(workspace.workspaceId)) continue;
+    const backingDirectory = await resolveWorkspaceBackingDirectory(workspace, dependencies);
+    if (matchesTarget(backingDirectory.path)) return false;
+  }
+  return true;
 }
 
 export async function killTerminalsForWorkspace(

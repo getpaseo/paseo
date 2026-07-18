@@ -62,6 +62,8 @@ export const es: TranslationResources = {
       newAgent: "Nuevo agente",
       addProject: "Agregar proyecto",
       home: "Hogar",
+      modelGroupLabel: "Modelo",
+      modelSearchKeywords: "cambiar modelo modificar modelo establecer modelo seleccionar modelo",
     },
   },
   composer: {
@@ -190,6 +192,7 @@ export const es: TranslationResources = {
       notFound: "Agentno encontrado",
       failedToLoad: "No se pudo cargar el agente",
       reconnecting: "Reconectando...",
+      timelineSyncFailed: "No se pudo actualizar el historial del agente. Reintentando…",
       archivingTitle: "Agente de archivo...",
       archivingSubtitle: "Espere mientras archivamos este agente.",
     },
@@ -1761,6 +1764,7 @@ export const es: TranslationResources = {
     },
     shortcuts: {
       dialogTitle: "Atajos",
+      searchPlaceholder: "Buscar atajos",
       unavailableOnMobile: "Los atajos de teclado solo están disponibles en el escritorio",
       capturePrompt: "Presione el acceso directo...",
       actions: {

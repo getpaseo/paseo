@@ -411,6 +411,7 @@ export function PullRequestPane({
               repoName: data.repoName,
               checkRunId: ref.checkRunId,
               workflowRunId: ref.workflowRunId,
+              changeRequestNumber: data.number,
             };
             // COMPAT(githubCheckDetailsRpc): added in v0.1.106, remove after 2026-12-28 once
             // all supported clients use checkout.forge.get_check_details.*.
