@@ -966,7 +966,7 @@ export class AgentManager {
   }
 
   touchAgentActivity(id: string): ManagedAgent | null {
-    const agent = this.agents.get(id);
+    const agent = this.agents?.get(id);
     if (!agent) {
       return null;
     }
@@ -975,7 +975,7 @@ export class AgentManager {
   }
 
   async waitForAgentClose(agentId: string): Promise<void> {
-    await this.inFlightAgentCloses.get(agentId)?.catch(() => undefined);
+    await this.inFlightAgentCloses?.get(agentId)?.catch(() => undefined);
   }
 
   getTimeline(id: string): AgentTimelineItem[] {
@@ -1033,6 +1033,7 @@ export class AgentManager {
   ): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
     const resolvedAgentId = validateAgentId(agentId ?? this.idFactory(), "createAgent");
+    await this.deleteAgentState(resolvedAgentId);
     const { storedConfig, launchConfig } = await this.prepareSessionConfig(config, resolvedAgentId);
     this.requireEnabledProvider(storedConfig.provider);
     const client = await this.requireAvailableClient({

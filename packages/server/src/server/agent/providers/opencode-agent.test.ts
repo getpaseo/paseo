@@ -2327,6 +2327,7 @@ describe("OpenCode persisted sessions", () => {
 describe("OpenCode provider subagent contract", () => {
   async function createAdoptedChildSession(): Promise<{
     readonly runtime: TestOpenCodeHarness;
+    readonly provider: OpenCodeAgentClient;
     readonly parent: Awaited<ReturnType<OpenCodeAgentClient["createSession"]>>;
     readonly child: Awaited<ReturnType<OpenCodeAgentClient["resumeSession"]>>;
     readonly childClient: TestOpenCodeClient;
@@ -2369,8 +2370,35 @@ describe("OpenCode provider subagent contract", () => {
       undefined,
       { env: { PASEO_AGENT_ID: "child-agent" } },
     );
-    return { runtime, parent, child, childClient };
+    return { runtime, provider: client, parent, child, childClient };
   }
+
+  test("archives an adopted child on the parent's registered OpenCode server", async () => {
+    const { runtime, provider, parent, child } = await createAdoptedChildSession();
+    const archiveClient = new TestOpenCodeClient();
+    runtime.enqueueClient(archiveClient);
+
+    await provider.archiveNativeSession({
+      provider: "opencode",
+      sessionId: "ses_child_external",
+      metadata: { cwd: "/workspace/repo" },
+    });
+
+    expect(archiveClient.calls.sessionUpdate).toEqual([
+      {
+        sessionID: "ses_child_external",
+        directory: "/workspace/repo",
+        time: { archived: expect.any(Number) },
+      },
+    ]);
+    expect(runtime.acquisitions.at(-1)).toEqual({
+      kind: "existing",
+      url: runtime.server.url,
+      releaseCount: 1,
+    });
+    await child.close();
+    await parent.close();
+  });
 
   test("resumes an adopted child on the parent's registered OpenCode server", async () => {
     const runtime = new TestOpenCodeHarness();

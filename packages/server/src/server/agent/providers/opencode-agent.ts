@@ -1507,7 +1507,10 @@ export class OpenCodeAgentClient implements AgentClient {
       throw new Error("OpenCode native archive update requires the original working directory");
     }
 
-    const acquisition = await this.serverManager.acquireCurrent();
+    const registeredServerUrl = getOpenCodeChildSessionServerUrl(handle.sessionId);
+    const acquisition =
+      (registeredServerUrl ? this.serverManager.acquireExisting(registeredServerUrl) : null) ??
+      (await this.serverManager.acquireCurrent());
     const client = this.createOpenCodeClient({
       baseUrl: acquisition.server.url,
       directory: metadata.cwd,
