@@ -91,6 +91,7 @@ import {
   type ListImportableSessionsOptions,
   type McpServerConfig,
   type ProviderCatalog,
+  type ResolveAgentDefaultModeInput,
 } from "../../agent-sdk-types.js";
 import { importSessionFromPersistence } from "../../provider-session-import.js";
 import {
@@ -1477,14 +1478,21 @@ export class ClaudeAgentClient implements AgentClient {
     )
       ? DEFAULT_MODES.filter((mode) => mode.id !== "auto")
       : DEFAULT_MODES;
-    return { models, modes };
+    return {
+      models,
+      modes,
+      defaultModeId: modes.some((mode) => mode.id === "auto") ? "auto" : "default",
+    };
   }
 
-  async resolveDefaultModeId(config: AgentSessionConfig): Promise<string> {
+  async resolveDefaultModeId({
+    config,
+    env: launchEnv,
+  }: ResolveAgentDefaultModeInput): Promise<string> {
     const env = createProviderEnv({
       baseEnv: process.env,
       runtimeSettings: this.runtimeSettings,
-      overlays: [config.extra?.claude?.env],
+      overlays: [config.extra?.claude?.env, launchEnv],
     });
     return detectIneligibleAutoModeTransport(env) ? "default" : "auto";
   }

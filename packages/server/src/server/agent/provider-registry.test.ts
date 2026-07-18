@@ -1487,6 +1487,31 @@ describe("fetchCatalog", () => {
     expect(catalog.models.map((model) => model.id)).toEqual(["profile-model", "extra-model"]);
   });
 
+  test("replacement models still resolve the provider's capability-aware default mode", async () => {
+    const resolveDefaultModeId = vi.fn(async () => "default");
+    const injectedClient = {
+      provider: "codex",
+      capabilities: {},
+      resolveDefaultModeId,
+      isAvailable: vi.fn(async () => true),
+    } satisfies Partial<AgentClient> as AgentClient;
+    const registry = buildProviderRegistry(logger, {
+      providerOverrides: {
+        codex: { models: [{ id: "profile-model", label: "Profile Model" }] },
+      },
+    });
+
+    const catalog = await registry.codex.fetchCatalog(
+      { scope: "workspace", cwd: "/tmp/catalog", force: false },
+      injectedClient,
+    );
+
+    expect(catalog.defaultModeId).toBe("default");
+    expect(resolveDefaultModeId).toHaveBeenCalledWith({
+      config: { provider: "codex", cwd: "/tmp/catalog" },
+    });
+  });
+
   test("additionalModels can override replacement model fields", async () => {
     const registry = buildProviderRegistry(logger, {
       providerOverrides: {

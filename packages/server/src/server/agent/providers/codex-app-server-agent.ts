@@ -6385,6 +6385,7 @@ export class CodexAppServerAgentClient implements AgentClient {
     ]);
     return {
       models,
+      defaultModeId: autoReviewEnabled ? "auto-review" : DEFAULT_CODEX_MODE_ID,
       modes: autoReviewEnabled
         ? CODEX_MODES
         : CODEX_MODES.filter((mode) => mode.id !== "auto-review"),

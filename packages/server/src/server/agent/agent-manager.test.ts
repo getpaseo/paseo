@@ -35,6 +35,7 @@ import type {
   AgentStreamEvent,
   AgentTimelineItem,
   ImportProviderSessionInput,
+  ResolveAgentDefaultModeInput,
 } from "./agent-sdk-types.js";
 import type { PaseoToolCatalog } from "./tools/types.js";
 import type { ProviderDefinition } from "./provider-registry.js";
@@ -959,8 +960,8 @@ test("normalizeConfig injects Claude's automatic approval default when omitted",
 test("normalizeConfig uses a capability-aware provider mode default", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-mode-default-test-"));
   class CapabilityAwareClient extends TestAgentClient {
-    override async resolveDefaultModeId(_config: AgentSessionConfig): Promise<string> {
-      return "auto";
+    override async resolveDefaultModeId(input: ResolveAgentDefaultModeInput): Promise<string> {
+      return input.env?.CLAUDE_CODE_USE_BEDROCK === "1" ? "default" : "auto";
     }
   }
   const manager = new AgentManager({
@@ -970,9 +971,10 @@ test("normalizeConfig uses a capability-aware provider mode default", async () =
 
   const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
     workspaceId: undefined,
+    env: { CLAUDE_CODE_USE_BEDROCK: "1" },
   });
 
-  expect(snapshot.config.modeId).toBe("auto");
+  expect(snapshot.config.modeId).toBe("default");
 });
 
 test("createAgent forwards request env into the spawned provider process", async () => {

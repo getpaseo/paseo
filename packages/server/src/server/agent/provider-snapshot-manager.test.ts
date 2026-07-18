@@ -222,6 +222,34 @@ describe("ProviderSnapshotManager public surface", () => {
     }
   });
 
+  test("ready snapshots publish the catalog's capability-aware default mode", async () => {
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      extraClients: {
+        codex: createExtraClient("codex", {
+          isAvailable: async () => true,
+          fetchCatalog: async () => ({
+            models: [],
+            modes: [{ id: "default", label: "Default", description: "Ask before running tools" }],
+            defaultModeId: "default",
+          }),
+        }),
+      },
+    });
+
+    try {
+      const entry = await manager.getProvider({
+        cwd: "/tmp/project",
+        provider: "codex",
+        wait: true,
+      });
+
+      expect(entry).toMatchObject({ status: "ready", defaultModeId: "default" });
+    } finally {
+      manager.destroy();
+    }
+  });
+
   test("explicit refresh re-probes only the requested warm provider", async () => {
     const cwd = "/tmp/project";
     const isAvailableCodex = vi.fn(async () => true);

@@ -229,8 +229,24 @@ test.each([
   });
 
   await expect(
-    client.resolveDefaultModeId({ provider: "claude", cwd: process.cwd() }),
+    client.resolveDefaultModeId({
+      config: { provider: "claude", cwd: process.cwd() },
+    }),
   ).resolves.toBe(expected);
+});
+
+test("launch environment participates in the Claude default mode", async () => {
+  const client = new ClaudeAgentClient({
+    logger: createTestLogger(),
+    runtimeSettings: { env: {} },
+  });
+
+  await expect(
+    client.resolveDefaultModeId({
+      config: { provider: "claude", cwd: process.cwd() },
+      env: { CLAUDE_CODE_USE_BEDROCK: "1" },
+    }),
+  ).resolves.toBe("default");
 });
 
 test("allows launch env to disable inherited Bedrock transport for auto mode", async () => {
