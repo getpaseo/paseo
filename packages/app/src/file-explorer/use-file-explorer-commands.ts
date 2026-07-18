@@ -65,11 +65,16 @@ export function useFileExplorerCommands(input: UseFileExplorerCommandsInput) {
     if (!client) {
       throw new Error(t("workspace.terminal.hostDisconnected"));
     }
+    return client;
+  }, [client, t]);
+
+  const requireMutateClient = useCallback(() => {
+    const daemon = requireClient();
     if (!input.canMutate) {
       throw new Error(t("workspace.fileExplorer.toasts.updateHostToMutate"));
     }
-    return client;
-  }, [client, input.canMutate, t]);
+    return daemon;
+  }, [input.canMutate, requireClient, t]);
 
   const runAction = useCallback(
     async (actionId: string, run: () => Promise<void>) => {
@@ -183,7 +188,7 @@ export function useFileExplorerCommands(input: UseFileExplorerCommandsInput) {
       }
       const trimmed = name.trim();
       await runAction(`name-prompt:${namePrompt.kind}`, async () => {
-        const daemon = requireClient();
+        const daemon = requireMutateClient();
         if (namePrompt.kind === "new-file" || namePrompt.kind === "new-folder") {
           const entry = await daemon.createExplorerEntry({
             cwd,
@@ -215,20 +220,20 @@ export function useFileExplorerCommands(input: UseFileExplorerCommandsInput) {
         setNamePrompt(null);
       });
     },
-    [cwd, input, namePrompt, requireClient, runAction, t, toast],
+    [cwd, input, namePrompt, requireMutateClient, runAction, t, toast],
   );
 
   const duplicate = useCallback(
     async (entry: ExplorerEntry) => {
       await runAction(`duplicate:${entry.path}`, async () => {
-        const daemon = requireClient();
+        const daemon = requireMutateClient();
         const created = await daemon.duplicateExplorerEntry({ cwd, path: entry.path });
         await input.refreshPaths([getExplorerParentPath(entry.path)]);
         input.selectExplorerEntry(created.path);
         toast.show(t("workspace.fileExplorer.toasts.duplicated"), { variant: "success" });
       });
     },
-    [cwd, input, requireClient, runAction, t, toast],
+    [cwd, input, requireMutateClient, runAction, t, toast],
   );
 
   const deleteEntry = useCallback(
@@ -244,7 +249,7 @@ export function useFileExplorerCommands(input: UseFileExplorerCommandsInput) {
         return;
       }
       await runAction(`delete:${entry.path}`, async () => {
-        const daemon = requireClient();
+        const daemon = requireMutateClient();
         const parentPath = getExplorerParentPath(entry.path);
         await daemon.deleteExplorerEntry({ cwd, path: entry.path });
         await input.refreshPaths([parentPath]);
@@ -252,7 +257,7 @@ export function useFileExplorerCommands(input: UseFileExplorerCommandsInput) {
         toast.show(t("workspace.fileExplorer.toasts.deleted"), { variant: "success" });
       });
     },
-    [cwd, input, requireClient, runAction, t, toast],
+    [cwd, input, requireMutateClient, runAction, t, toast],
   );
 
   const viewFile = useCallback(
@@ -273,25 +278,48 @@ export function useFileExplorerCommands(input: UseFileExplorerCommandsInput) {
     return getExplorerParentPath(entry.path);
   }, []);
 
-  return {
-    namePrompt,
-    pendingAction,
-    canMutate: input.canMutate,
-    canUseLocalShell,
-    revealLabel,
-    copyAbsolutePath,
-    copyRelativePath,
-    copyContents,
-    copyAsFilesystemItem,
-    reveal,
-    openNewFilePrompt,
-    openNewFolderPrompt,
-    openRenamePrompt,
-    closeNamePrompt,
-    submitNamePrompt,
-    duplicate,
-    deleteEntry,
-    viewFile,
-    createParentForTarget,
-  };
+  return useMemo(
+    () => ({
+      namePrompt,
+      pendingAction,
+      canMutate: input.canMutate,
+      canUseLocalShell,
+      revealLabel,
+      copyAbsolutePath,
+      copyRelativePath,
+      copyContents,
+      copyAsFilesystemItem,
+      reveal,
+      openNewFilePrompt,
+      openNewFolderPrompt,
+      openRenamePrompt,
+      closeNamePrompt,
+      submitNamePrompt,
+      duplicate,
+      deleteEntry,
+      viewFile,
+      createParentForTarget,
+    }),
+    [
+      namePrompt,
+      pendingAction,
+      input.canMutate,
+      canUseLocalShell,
+      revealLabel,
+      copyAbsolutePath,
+      copyRelativePath,
+      copyContents,
+      copyAsFilesystemItem,
+      reveal,
+      openNewFilePrompt,
+      openNewFolderPrompt,
+      openRenamePrompt,
+      closeNamePrompt,
+      submitNamePrompt,
+      duplicate,
+      deleteEntry,
+      viewFile,
+      createParentForTarget,
+    ],
+  );
 }
