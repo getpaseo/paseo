@@ -1,9 +1,13 @@
-import { expect, test, vi } from "vitest";
+import { expect, test } from "vitest";
 import type { PermissionOption, RequestPermissionRequest } from "@agentclientprotocol/sdk";
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { asInternals } from "../../test-utils/class-mocks.js";
-import { ACPAgentSession } from "./acp-agent.js";
+import {
+  isDefaultAgentCreateConfigUnattended,
+  resolveDefaultAgentCreateConfig,
+} from "../create-agent-mode.js";
+import { ACPAgentSession, deriveModesFromACP } from "./acp-agent.js";
 import {
   GROK_ALWAYS_APPROVE_MODE_ID,
   GROK_ASK_MODE_ID,
@@ -13,6 +17,55 @@ import {
   withGrokAlwaysApproveLaunchFlag,
   writeGrokProviderMode,
 } from "./grok-acp-agent.js";
+
+function createRecordingGrokConnection() {
+  const prompts: Array<{ sessionId: string; prompt: Array<{ type: string; text: string }> }> = [];
+  const sessionModeCalls: unknown[] = [];
+  const configOptionCalls: unknown[] = [];
+
+  return {
+    prompts,
+    sessionModeCalls,
+    configOptionCalls,
+    connection: {
+      prompt: async (params: {
+        sessionId: string;
+        prompt: Array<{ type: string; text: string }>;
+      }) => {
+        prompts.push(params);
+        return { stopReason: "end_turn" };
+      },
+      setSessionMode: async (params: unknown) => {
+        sessionModeCalls.push(params);
+      },
+      setSessionConfigOption: async (params: unknown) => {
+        configOptionCalls.push(params);
+        return { configOptions: [] };
+      },
+    },
+  };
+}
+
+test("GROK_MODES is the full canonical definition including visuals and unattended", () => {
+  expect(GROK_MODES).toEqual([
+    {
+      id: GROK_ASK_MODE_ID,
+      label: "Ask",
+      description: "Prompt before shell and tool executions",
+      icon: "ShieldCheck",
+      colorTier: "safe",
+    },
+    {
+      id: GROK_ALWAYS_APPROVE_MODE_ID,
+      label: "Always Approve",
+      description:
+        "Auto-approve all tool executions for this session via Grok's native always-approve mode. Allows potentially destructive shell commands and file operations.",
+      icon: "ShieldOff",
+      colorTier: "dangerous",
+      isUnattended: true,
+    },
+  ]);
+});
 
 test("withGrokAlwaysApproveLaunchFlag injects flag after agent subcommand", () => {
   expect(withGrokAlwaysApproveLaunchFlag(["grok", "agent", "stdio"], true)).toEqual([
@@ -103,14 +156,93 @@ test("transformGrokSessionResponse appends Always Approve without dropping upstr
   expect(transformed.modes?.currentModeId).toBe("plan");
 });
 
+test("transform + deriveModesFromACP keeps Always Approve unattended and visual metadata", () => {
+  const transformed = transformGrokSessionResponse(
+    {
+      sessionId: "session-1",
+      modes: null,
+    },
+    {
+      provider: "acp",
+      cwd: "/tmp",
+      modeId: GROK_ALWAYS_APPROVE_MODE_ID,
+    },
+  );
+
+  const derived = deriveModesFromACP(GROK_MODES, transformed.modes);
+
+  expect(derived.currentModeId).toBe(GROK_ALWAYS_APPROVE_MODE_ID);
+  expect(derived.modes).toEqual([
+    {
+      id: GROK_ASK_MODE_ID,
+      label: "Ask",
+      description: "Prompt before shell and tool executions",
+      icon: "ShieldCheck",
+      colorTier: "safe",
+    },
+    {
+      id: GROK_ALWAYS_APPROVE_MODE_ID,
+      label: "Always Approve",
+      description:
+        "Auto-approve all tool executions for this session via Grok's native always-approve mode. Allows potentially destructive shell commands and file operations.",
+      icon: "ShieldOff",
+      colorTier: "dangerous",
+      isUnattended: true,
+    },
+  ]);
+});
+
+test("derived session modes mark Always Approve as unattended for create-config inheritance", () => {
+  const transformed = transformGrokSessionResponse({
+    sessionId: "session-1",
+    modes: null,
+  });
+  const availableModes = deriveModesFromACP(GROK_MODES, transformed.modes).modes;
+
+  expect(
+    isDefaultAgentCreateConfigUnattended({
+      modeId: GROK_ALWAYS_APPROVE_MODE_ID,
+      availableModes,
+      config: {
+        provider: "acp",
+        cwd: "/tmp",
+        modeId: GROK_ALWAYS_APPROVE_MODE_ID,
+      },
+      features: [],
+    }),
+  ).toBe(true);
+
+  expect(
+    isDefaultAgentCreateConfigUnattended({
+      modeId: GROK_ASK_MODE_ID,
+      availableModes,
+      config: {
+        provider: "acp",
+        cwd: "/tmp",
+        modeId: GROK_ASK_MODE_ID,
+      },
+      features: [],
+    }),
+  ).toBe(false);
+
+  // Unattended create needs the unattended mode id from availableModes.
+  const resolved = resolveDefaultAgentCreateConfig({
+    provider: "acp",
+    requestedMode: undefined,
+    unattended: true,
+    availableModes,
+    parent: null,
+    featureValues: undefined,
+  });
+  expect(resolved.modeId).toBe(GROK_ALWAYS_APPROVE_MODE_ID);
+});
+
 test("writeGrokProviderMode enables native always-approve via slash command", async () => {
-  const prompt = vi.fn(async () => ({ stopReason: "end_turn" }));
-  const setSessionMode = vi.fn(async () => undefined);
-  const setSessionConfigOption = vi.fn(async () => ({ configOptions: [] }));
+  const recording = createRecordingGrokConnection();
 
   await expect(
     writeGrokProviderMode({
-      connection: { prompt, setSessionMode, setSessionConfigOption } as never,
+      connection: recording.connection as never,
       sessionId: "session-1",
       requestedModeId: GROK_ALWAYS_APPROVE_MODE_ID,
       currentModeId: GROK_ASK_MODE_ID,
@@ -128,20 +260,22 @@ test("writeGrokProviderMode enables native always-approve via slash command", as
     currentModeId: GROK_ALWAYS_APPROVE_MODE_ID,
   });
 
-  expect(prompt).toHaveBeenCalledWith({
-    sessionId: "session-1",
-    prompt: [{ type: "text", text: "/always-approve on" }],
-  });
-  expect(setSessionMode).not.toHaveBeenCalled();
-  expect(setSessionConfigOption).not.toHaveBeenCalled();
+  expect(recording.prompts).toEqual([
+    {
+      sessionId: "session-1",
+      prompt: [{ type: "text", text: "/always-approve on" }],
+    },
+  ]);
+  expect(recording.sessionModeCalls).toEqual([]);
+  expect(recording.configOptionCalls).toEqual([]);
 });
 
 test("writeGrokProviderMode disables native always-approve when switching to Ask", async () => {
-  const prompt = vi.fn(async () => ({ stopReason: "end_turn" }));
+  const recording = createRecordingGrokConnection();
 
   await expect(
     writeGrokProviderMode({
-      connection: { prompt } as never,
+      connection: recording.connection as never,
       sessionId: "session-1",
       requestedModeId: GROK_ASK_MODE_ID,
       currentModeId: GROK_ALWAYS_APPROVE_MODE_ID,
@@ -159,18 +293,20 @@ test("writeGrokProviderMode disables native always-approve when switching to Ask
     currentModeId: GROK_ASK_MODE_ID,
   });
 
-  expect(prompt).toHaveBeenCalledWith({
-    sessionId: "session-1",
-    prompt: [{ type: "text", text: "/always-approve off" }],
-  });
+  expect(recording.prompts).toEqual([
+    {
+      sessionId: "session-1",
+      prompt: [{ type: "text", text: "/always-approve off" }],
+    },
+  ]);
 });
 
 test("writeGrokProviderMode does not re-prompt when already in the requested mode", async () => {
-  const prompt = vi.fn(async () => ({ stopReason: "end_turn" }));
+  const recording = createRecordingGrokConnection();
 
   await expect(
     writeGrokProviderMode({
-      connection: { prompt } as never,
+      connection: recording.connection as never,
       sessionId: "session-1",
       requestedModeId: GROK_ALWAYS_APPROVE_MODE_ID,
       currentModeId: GROK_ALWAYS_APPROVE_MODE_ID,
@@ -188,7 +324,7 @@ test("writeGrokProviderMode does not re-prompt when already in the requested mod
     currentModeId: GROK_ALWAYS_APPROVE_MODE_ID,
   });
 
-  expect(prompt).not.toHaveBeenCalled();
+  expect(recording.prompts).toEqual([]);
 });
 
 test("writeGrokProviderMode leaves unknown ACP modes to the generic path", async () => {

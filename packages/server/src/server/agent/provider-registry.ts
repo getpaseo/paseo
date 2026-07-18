@@ -34,11 +34,7 @@ import { CodexAppServerAgentClient } from "./providers/codex-app-server-agent.js
 import { CopilotACPAgentClient } from "./providers/copilot-acp-agent.js";
 import { CursorACPAgentClient } from "./providers/cursor-acp-agent.js";
 import { GenericACPAgentClient } from "./providers/generic-acp-agent.js";
-import {
-  GROK_ASK_MODE_ID,
-  GROK_ALWAYS_APPROVE_MODE_ID,
-  GrokACPAgentClient,
-} from "./providers/grok-acp-agent.js";
+import { GROK_ASK_MODE_ID, GROK_MODES, GrokACPAgentClient } from "./providers/grok-acp-agent.js";
 import { KiroACPAgentClient } from "./providers/kiro-acp-agent.js";
 import { OpenCodeAgentClient } from "./providers/opencode-agent.js";
 import { OmpAgentClient } from "./providers/omp/agent.js";
@@ -660,26 +656,8 @@ function addDerivedProviders(
             label: override.label ?? providerId,
             description: override.description ?? "Custom ACP provider",
             defaultModeId: isGrok ? GROK_ASK_MODE_ID : null,
-            modes: isGrok
-              ? [
-                  {
-                    id: GROK_ASK_MODE_ID,
-                    label: "Ask",
-                    description: "Prompt before shell and tool executions",
-                    icon: "ShieldCheck",
-                    colorTier: "safe",
-                  },
-                  {
-                    id: GROK_ALWAYS_APPROVE_MODE_ID,
-                    label: "Always Approve",
-                    description:
-                      "Auto-approve all tool executions for this session via Grok's native always-approve mode. Allows potentially destructive shell commands and file operations.",
-                    icon: "ShieldOff",
-                    colorTier: "dangerous",
-                    isUnattended: true,
-                  },
-                ]
-              : [],
+            // Canonical Grok modes live in grok-acp-agent.ts (icons, colorTier, isUnattended).
+            modes: isGrok ? GROK_MODES : [],
           },
           override,
         ),
