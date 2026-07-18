@@ -569,6 +569,46 @@ describe("processTimelineResponse", () => {
     expect(userMessages[0]?.optimistic).toBeUndefined();
   });
 
+  it("reconciles multiple optimistic user messages in canonical order", () => {
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail: [
+        makeOptimisticUserMessage("first prompt", "optimistic-first"),
+        makeOptimisticUserMessage("second prompt", "optimistic-second"),
+      ],
+      currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 1 },
+      payload: {
+        ...baseTimelineInput.payload,
+        epoch: "epoch-1",
+        startCursor: { seq: 2 },
+        endCursor: { seq: 3 },
+        entries: [
+          {
+            ...makeTimelineEntry(2, "first prompt", "user_message"),
+            item: { type: "user_message", text: "first prompt", messageId: "canonical-first" },
+          },
+          {
+            ...makeTimelineEntry(3, "second prompt", "user_message"),
+            item: {
+              type: "user_message",
+              text: "second prompt",
+              messageId: "canonical-second",
+            },
+          },
+        ],
+      },
+    });
+
+    expect(
+      result.tail
+        .filter((item) => item.kind === "user_message")
+        .map((item) => ({ id: item.id, text: item.text, optimistic: item.optimistic })),
+    ).toEqual([
+      { id: "canonical-first", text: "first prompt", optimistic: undefined },
+      { id: "canonical-second", text: "second prompt", optimistic: undefined },
+    ]);
+  });
+
   it("keeps an active assistant head live when an incremental fetch accepts same-turn assistant text", () => {
     const existingCursor: TimelineCursor = {
       epoch: "epoch-1",

@@ -709,21 +709,19 @@ function stageOptimisticUserForCanonicalEvent(params: {
   tail: StreamItem[];
   head: StreamItem[];
   event: AgentStreamEventPayload;
-  optimistic: UserMessageItem[];
-}): { tail: StreamItem[]; head: StreamItem[] } {
+  optimistic: UserMessageItem | undefined;
+}): { tail: StreamItem[]; head: StreamItem[]; consumed: boolean } {
   if (
     params.event.type !== "timeline" ||
     params.event.item.type !== "user_message" ||
-    params.optimistic.length === 0
+    !params.optimistic
   ) {
-    return { tail: params.tail, head: params.head };
+    return { tail: params.tail, head: params.head, consumed: false };
   }
-  const pending = params.optimistic.shift();
-  if (!pending) return { tail: params.tail, head: params.head };
   if (params.head.length > 0) {
-    return { tail: params.tail, head: [...params.head, pending] };
+    return { tail: params.tail, head: [...params.head, params.optimistic], consumed: true };
   }
-  return { tail: [...params.tail, pending], head: params.head };
+  return { tail: [...params.tail, params.optimistic], head: params.head, consumed: true };
 }
 
 function applyCanonicalForwardUnit(params: {
@@ -801,6 +799,7 @@ function applyAcceptedForwardTimelineUnits(params: {
   });
   let tail = reconciled.tail;
   let head = reconciled.head;
+  let consumedOptimisticCount = 0;
 
   for (const unit of params.units) {
     if (reconciled.reconciledUnits.has(unit)) continue;
@@ -808,8 +807,9 @@ function applyAcceptedForwardTimelineUnits(params: {
       tail,
       head,
       event: unit.event,
-      optimistic,
+      optimistic: optimistic[consumedOptimisticCount],
     });
+    if (staged.consumed) consumedOptimisticCount += 1;
     const applied = applyCanonicalForwardUnit({
       tail: staged.tail,
       head: staged.head,
@@ -822,7 +822,11 @@ function applyAcceptedForwardTimelineUnits(params: {
     head = applied.head;
   }
 
-  return appendOptimisticUserMessages({ tail, head, optimistic });
+  return appendOptimisticUserMessages({
+    tail,
+    head,
+    optimistic: optimistic.slice(consumedOptimisticCount),
+  });
 }
 
 function applyTimelineIncrementalPath(args: {
