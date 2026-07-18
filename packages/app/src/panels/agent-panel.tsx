@@ -1,7 +1,15 @@
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { TFunction } from "i18next";
 import { SquarePen } from "lucide-react-native";
-import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { ActivityIndicator, Text, View } from "react-native";
 import ReanimatedAnimated from "react-native-reanimated";
@@ -751,6 +759,23 @@ function ChatAgentContent({
   const agentHistorySyncGeneration = useSessionStore((state) =>
     agentId ? (state.sessions[serverId]?.agentHistorySyncGeneration?.get(agentId) ?? -1) : -1,
   );
+  const viewedTimelineSync = useSessionStore(
+    (state) => state.sessions[serverId]?.viewedTimelineSync ?? null,
+  );
+  const subscribeToVisibilityCatchUp = useCallback(
+    (listener: () => void) => viewedTimelineSync?.subscribe(listener) ?? (() => {}),
+    [viewedTimelineSync],
+  );
+  const readTimelineReady = useCallback(
+    () => !agentId || !viewedTimelineSync || viewedTimelineSync.isAgentTimelineReady(agentId),
+    [agentId, viewedTimelineSync],
+  );
+  const isTimelineReady = useSyncExternalStore(
+    subscribeToVisibilityCatchUp,
+    readTimelineReady,
+    readTimelineReady,
+  );
+  const isVisibilityCatchUpPending = isPaneVisible && !isTimelineReady;
   const hasActiveCreateHandoff = useCreateFlowStore((state) =>
     findActiveCreateHandoff({ pendingByDraftId: state.pendingByDraftId, serverId, agentId }),
   );
@@ -862,6 +887,7 @@ function ChatAgentContent({
       isArchivingCurrentAgent,
       isHistorySyncing,
       needsAuthoritativeSync,
+      isVisibilityCatchUpPending,
       continuity,
       hasHydratedHistoryBefore,
     },

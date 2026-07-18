@@ -2,6 +2,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -2027,7 +2028,7 @@ function WorkspaceScreenContent({
       }),
     [isFocusModeEnabled, isMobile, isRouteFocused, uiTabs, workspaceLayout],
   );
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!persistenceKey || !viewedTimelineSync) {
       return;
     }

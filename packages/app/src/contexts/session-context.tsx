@@ -42,7 +42,7 @@ import type { AudioPlaybackSource } from "@/voice/audio-engine-types";
 import { useSessionStore, type MessageEntry, type SessionState } from "@/stores/session-store";
 import { useWorkspaceSetupStore } from "@/stores/workspace-setup-store";
 import { sendOsNotification } from "@/utils/os-notifications";
-import { getIsAppActivelyVisible } from "@/utils/app-visibility";
+import { getIsAppActivelyVisible, getIsAppVisible } from "@/utils/app-visibility";
 import {
   getInitKey,
   getInitDeferred,
@@ -773,7 +773,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     });
     viewedTimelineSyncRef.current = sync;
     setViewedTimelineSync(serverId, sync);
-    sync.setActive(getIsAppActivelyVisible(appStateRef.current));
+    sync.setActive(getIsAppVisible(appStateRef.current));
 
     return () => {
       if (viewedTimelineSyncRef.current === sync) {
