@@ -570,54 +570,73 @@ function detachOptimisticUserMessages(params: { tail: StreamItem[]; head: Stream
   };
 }
 
+function belongsToPreviousHead(item: StreamItem, previousHead: StreamItem[]): boolean {
+  return previousHead.some((existing) => {
+    if (item.id === existing.id) return true;
+    if (item.kind !== "assistant_message" || existing.kind !== "assistant_message") {
+      return false;
+    }
+    const existingGroupId = existing.blockGroupId ?? existing.id;
+    return (
+      item.blockGroupId === existingGroupId ||
+      item.id === existingGroupId ||
+      (item.messageId !== undefined && item.messageId === existing.messageId)
+    );
+  });
+}
+
+function insertBeforePreviousHead(params: {
+  tail: StreamItem[];
+  head: StreamItem[];
+  items: StreamItem[];
+  previousHead: StreamItem[];
+}): { tail: StreamItem[]; head: StreamItem[] } {
+  if (params.items.length === 0) return { tail: params.tail, head: params.head };
+
+  const matchesPreviousHead = (item: StreamItem) =>
+    belongsToPreviousHead(item, params.previousHead);
+  const tailAnchorIndex = params.tail.findIndex(matchesPreviousHead);
+  if (tailAnchorIndex >= 0) {
+    return {
+      tail: params.tail.toSpliced(tailAnchorIndex, 0, ...params.items),
+      head: params.head,
+    };
+  }
+
+  const headAnchorIndex = params.head.findIndex(matchesPreviousHead);
+  if (params.head.length > 0) {
+    let insertionIndex = params.previousHead.length > 0 ? 0 : params.head.length;
+    if (headAnchorIndex >= 0) insertionIndex = headAnchorIndex;
+    return {
+      tail: params.tail,
+      head: params.head.toSpliced(insertionIndex, 0, ...params.items),
+    };
+  }
+  return { tail: [...params.tail, ...params.items], head: params.head };
+}
+
 function restoreOptimisticUserMessages(params: {
   tail: StreamItem[];
   head: StreamItem[];
   optimistic: DetachedOptimisticUserMessage[];
   previousHead: StreamItem[];
+  precedingItems: StreamItem[];
 }): { tail: StreamItem[]; head: StreamItem[] } {
-  if (params.optimistic.length === 0) {
-    return { tail: params.tail, head: params.head };
-  }
   const tailOptimistic = params.optimistic
     .filter(({ placement }) => placement === "tail")
     .map(({ item }) => item);
   const headOptimistic = params.optimistic
     .filter(({ placement }) => placement === "head")
     .map(({ item }) => item);
-  let tail = params.tail;
-  let head = params.head;
-  if (tailOptimistic.length > 0) {
-    const matchesPreviousHead = (item: StreamItem) =>
-      params.previousHead.some((existing) => {
-        if (item.id === existing.id) return true;
-        if (item.kind !== "assistant_message" || existing.kind !== "assistant_message") {
-          return false;
-        }
-        const existingGroupId = existing.blockGroupId ?? existing.id;
-        return (
-          item.blockGroupId === existingGroupId ||
-          item.id === existingGroupId ||
-          (item.messageId !== undefined && item.messageId === existing.messageId)
-        );
-      });
-    const tailAnchorIndex = tail.findIndex(matchesPreviousHead);
-    const headAnchorIndex = head.findIndex(matchesPreviousHead);
-    if (tailAnchorIndex >= 0) {
-      tail = [...tail.slice(0, tailAnchorIndex), ...tailOptimistic, ...tail.slice(tailAnchorIndex)];
-    } else if (headAnchorIndex >= 0) {
-      head = [...head.slice(0, headAnchorIndex), ...tailOptimistic, ...head.slice(headAnchorIndex)];
-    } else if (params.previousHead.length > 0 && head.length > 0) {
-      head = [...tailOptimistic, ...head];
-    } else if (head.length > 0) {
-      head = [...head, ...tailOptimistic];
-    } else {
-      tail = [...tail, ...tailOptimistic];
-    }
-  }
+  const restored = insertBeforePreviousHead({
+    tail: params.tail,
+    head: params.head,
+    items: [...params.precedingItems, ...tailOptimistic],
+    previousHead: params.previousHead,
+  });
   return {
-    tail,
-    head: [...head, ...headOptimistic],
+    tail: restored.tail,
+    head: [...restored.head, ...headOptimistic],
   };
 }
 
@@ -793,10 +812,10 @@ function matchesOptimisticUserMessage(params: {
   if (event.type !== "timeline" || event.item.type !== "user_message") {
     return false;
   }
-  return (
-    event.item.messageId === params.optimistic.item.id ||
-    event.item.text === params.optimistic.item.text
-  );
+  if (event.item.messageId !== undefined) {
+    return event.item.messageId === params.optimistic.item.id;
+  }
+  return event.item.text.length > 0 && event.item.text === params.optimistic.item.text;
 }
 
 function acknowledgeOptimisticUserMessage(params: {
@@ -805,6 +824,8 @@ function acknowledgeOptimisticUserMessage(params: {
   unit: TimelineUnit;
   epoch: string;
   optimistic: DetachedOptimisticUserMessage;
+  previousHead: StreamItem[];
+  precedingItems: StreamItem[];
 }): { tail: StreamItem[]; head: StreamItem[] } {
   const { event, timestamp, seqEnd } = params.unit;
   const timelineCursor = { epoch: params.epoch, seq: seqEnd };
@@ -812,9 +833,18 @@ function acknowledgeOptimisticUserMessage(params: {
     source: "canonical",
     timelineCursor,
   });
+  const restored = insertBeforePreviousHead({
+    tail: params.tail,
+    head: params.head,
+    items:
+      params.optimistic.placement === "tail"
+        ? [...params.precedingItems, ...acknowledged]
+        : params.precedingItems,
+    previousHead: params.previousHead,
+  });
   return params.optimistic.placement === "head"
-    ? { tail: params.tail, head: [...params.head, ...acknowledged] }
-    : { tail: [...params.tail, ...acknowledged], head: params.head };
+    ? { tail: restored.tail, head: [...restored.head, ...acknowledged] }
+    : restored;
 }
 
 function applyCanonicalForwardUnit(params: {
@@ -881,7 +911,7 @@ function applyAcceptedForwardTimelineUnits(params: {
     if (reconciled.reconciledUnits.has(unit)) continue;
     const nextOptimistic = optimistic[optimisticIndex];
     if (nextOptimistic && matchesOptimisticUserMessage({ unit, optimistic: nextOptimistic })) {
-      tail = flushHeadToTail(tail, delayedHistoryHead);
+      const precedingItems = flushHeadToTail([], delayedHistoryHead);
       delayedHistoryHead = [];
       const applied = acknowledgeOptimisticUserMessage({
         tail,
@@ -889,6 +919,8 @@ function applyAcceptedForwardTimelineUnits(params: {
         unit,
         epoch: params.epoch,
         optimistic: nextOptimistic,
+        previousHead: params.currentHead,
+        precedingItems,
       });
       tail = applied.tail;
       head = applied.head;
@@ -925,13 +957,12 @@ function applyAcceptedForwardTimelineUnits(params: {
     head = applied.head;
   }
 
-  tail = flushHeadToTail(tail, delayedHistoryHead);
-
   return restoreOptimisticUserMessages({
     tail,
     head,
     optimistic: optimistic.slice(optimisticIndex),
     previousHead: params.currentHead,
+    precedingItems: flushHeadToTail([], delayedHistoryHead),
   });
 }
 

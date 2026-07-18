@@ -559,7 +559,7 @@ describe("processTimelineResponse", () => {
             item: {
               type: "user_message",
               text: "sent while catching up",
-              messageId: "canonical-after",
+              messageId: "optimistic-after",
             },
           },
         ],
@@ -568,7 +568,7 @@ describe("processTimelineResponse", () => {
 
     const userMessages = result.tail.filter((item) => item.kind === "user_message");
     expect(userMessages).toHaveLength(1);
-    expect(userMessages[0]?.id).toBe("canonical-after");
+    expect(userMessages[0]?.id).toBe("optimistic-after");
     expect(userMessages[0]?.optimistic).toBeUndefined();
   });
 
@@ -588,14 +588,14 @@ describe("processTimelineResponse", () => {
         entries: [
           {
             ...makeTimelineEntry(2, "first prompt", "user_message"),
-            item: { type: "user_message", text: "first prompt", messageId: "canonical-first" },
+            item: { type: "user_message", text: "first prompt", messageId: "optimistic-first" },
           },
           {
             ...makeTimelineEntry(3, "second prompt", "user_message"),
             item: {
               type: "user_message",
               text: "second prompt",
-              messageId: "canonical-second",
+              messageId: "optimistic-second",
             },
           },
         ],
@@ -607,8 +607,8 @@ describe("processTimelineResponse", () => {
         .filter((item) => item.kind === "user_message")
         .map((item) => ({ id: item.id, text: item.text, optimistic: item.optimistic })),
     ).toEqual([
-      { id: "canonical-first", text: "first prompt", optimistic: undefined },
-      { id: "canonical-second", text: "second prompt", optimistic: undefined },
+      { id: "optimistic-first", text: "first prompt", optimistic: undefined },
+      { id: "optimistic-second", text: "second prompt", optimistic: undefined },
     ]);
   });
 
@@ -951,6 +951,42 @@ describe("processTimelineResponse", () => {
     ).toEqual(["Earlier answer", "Missed answer", "Remote prompt", "New prompt", "Live response"]);
   });
 
+  it("keeps delayed history before a prompt whose live answer has promoted blocks", () => {
+    const prompt = makeOptimisticUserMessage("New prompt", "new-prompt");
+    const live = processAgentStreamEvents({
+      events: [
+        makeStreamReducerEvent(
+          makeAssistantTimelineEvent("First paragraph.\n\nSecond paragraph", "live-response"),
+          2,
+        ),
+      ],
+      currentTail: [prompt],
+      currentHead: [],
+      currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 1 },
+      currentAgent: null,
+    });
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail: live.tail,
+      currentHead: live.head,
+      currentCursor: live.cursor ?? undefined,
+      payload: {
+        ...baseTimelineInput.payload,
+        epoch: "epoch-1",
+        startCursor: { seq: 3 },
+        endCursor: { seq: 3 },
+        entries: [makeTimelineEntry(3, "Missed answer")],
+      },
+    });
+
+    expect(
+      [...result.tail, ...result.head]
+        .filter((item) => item.kind === "assistant_message" || item.kind === "user_message")
+        .map((item) => item.text),
+    ).toEqual(["Missed answer", "New prompt", "First paragraph.", "Second paragraph"]);
+  });
+
   it("matches a local optimistic prompt after an unrelated remote user row", () => {
     const prompt = makeOptimisticUserMessage("Local prompt", "local-prompt");
 
@@ -977,7 +1013,7 @@ describe("processTimelineResponse", () => {
             item: {
               type: "user_message",
               text: "Local prompt",
-              messageId: "provider-local-prompt",
+              messageId: "local-prompt",
             },
           },
         ],
@@ -1026,6 +1062,41 @@ describe("processTimelineResponse", () => {
     ).toEqual([
       { text: "Remote prompt", optimistic: undefined },
       { text: "Local prompt", optimistic: true },
+    ]);
+  });
+
+  it("does not match equal prompt text when canonical message ids differ", () => {
+    const prompt = makeOptimisticUserMessage("continue", "local-prompt");
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail: [prompt],
+      currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 1 },
+      payload: {
+        ...baseTimelineInput.payload,
+        epoch: "epoch-1",
+        startCursor: { seq: 2 },
+        endCursor: { seq: 2 },
+        entries: [
+          {
+            ...makeTimelineEntry(2, "continue", "user_message"),
+            item: {
+              type: "user_message",
+              text: "continue",
+              messageId: "remote-prompt",
+            },
+          },
+        ],
+      },
+    });
+
+    expect(
+      result.tail
+        .filter((item) => item.kind === "user_message")
+        .map((item) => ({ id: item.id, optimistic: item.optimistic })),
+    ).toEqual([
+      { id: "remote-prompt", optimistic: undefined },
+      { id: "local-prompt", optimistic: true },
     ]);
   });
 
