@@ -1,14 +1,18 @@
 import type { Logger } from "pino";
 import { z } from "zod";
 
-import type { AgentCapabilityFlags } from "../agent-sdk-types.js";
+import type { AgentCapabilityFlags, AgentMode, AgentSessionConfig } from "../agent-sdk-types.js";
 import { checkProviderLaunchAvailable, resolveProviderLaunch } from "../provider-launch-config.js";
 import {
   ACPAgentClient,
+  type ACPBeforeModeWriteResult,
   type ACPClientCapabilityMeta,
   type ACPConfigFeatureOption,
+  type ACPProviderModeWriteResult,
+  type ACPProviderModeWriterContext,
   DEFAULT_ACP_CAPABILITIES,
   type ACPExtensionCommandsParser,
+  type SessionStateResponse,
 } from "./acp-agent.js";
 import {
   buildBinaryDiagnosticRows,
@@ -49,6 +53,20 @@ interface GenericACPAgentClientOptions {
   clientCapabilityMeta?: ACPClientCapabilityMeta;
   configFeatureOptions?: ACPConfigFeatureOption[];
   extensionCommandsParser?: ACPExtensionCommandsParser;
+  defaultModes?: AgentMode[];
+  sessionResponseTransformer?: (
+    response: SessionStateResponse,
+    sessionConfig?: AgentSessionConfig,
+  ) => SessionStateResponse;
+  resolveSessionCommand?: (
+    command: [string, ...string[]],
+    config: AgentSessionConfig,
+  ) => [string, ...string[]];
+  providerModeWriter?: (
+    context: ACPProviderModeWriterContext,
+  ) => Promise<ACPProviderModeWriteResult>;
+  beforeModeWriter?: (context: ACPProviderModeWriterContext) => Promise<ACPBeforeModeWriteResult>;
+  autoApproveModeIds?: string[];
 }
 
 export class GenericACPAgentClient extends ACPAgentClient {
@@ -66,6 +84,12 @@ export class GenericACPAgentClient extends ACPAgentClient {
         env: options.env,
       },
       defaultCommand: options.command,
+      defaultModes: options.defaultModes,
+      sessionResponseTransformer: options.sessionResponseTransformer,
+      resolveSessionCommand: options.resolveSessionCommand,
+      providerModeWriter: options.providerModeWriter,
+      beforeModeWriter: options.beforeModeWriter,
+      autoApproveModeIds: options.autoApproveModeIds,
       capabilities: buildGenericACPCapabilities(providerParams),
       waitForInitialCommands: options.waitForInitialCommands,
       initialCommandsWaitTimeoutMs: options.initialCommandsWaitTimeoutMs,
