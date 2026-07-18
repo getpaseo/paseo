@@ -36,25 +36,26 @@ export async function ensureUnarchivedAgentLoaded(
     agentManager: AgentLoaderManager & Pick<AgentManager, "closeAgent">;
   },
 ): Promise<ManagedAgent> {
-  return ensureAgentLoadedWithOptions(agentId, deps, {
-    requireUnarchived: true,
-    closeAgent: () => deps.agentManager.closeAgent(agentId),
-  });
+  const record = await deps.agentStorage.get(agentId);
+  if (record?.archivedAt) {
+    throw new Error(`Agent is archived: ${agentId}`);
+  }
+
+  const agent = await ensureAgentLoaded(agentId, deps);
+  const latestRecord = await deps.agentStorage.get(agentId);
+  if (latestRecord?.archivedAt) {
+    await deps.agentManager.closeAgent(agentId).catch((error: unknown) => {
+      deps.logger.warn({ err: error, agentId }, "Failed to close concurrently archived agent");
+    });
+    throw new Error(`Agent is archived: ${agentId}`);
+  }
+
+  return agent;
 }
 
 export async function ensureAgentLoaded(
   agentId: string,
   deps: EnsureAgentLoadedDeps,
-): Promise<ManagedAgent> {
-  return ensureAgentLoadedWithOptions(agentId, deps, { requireUnarchived: false });
-}
-
-async function ensureAgentLoadedWithOptions(
-  agentId: string,
-  deps: EnsureAgentLoadedDeps,
-  options:
-    | { requireUnarchived: false }
-    | { requireUnarchived: true; closeAgent: () => Promise<void> },
 ): Promise<ManagedAgent> {
   await deps.agentManager.waitForAgentClose?.(agentId);
   const existing =
@@ -77,9 +78,6 @@ async function ensureAgentLoadedWithOptions(
     const record = await deps.agentStorage.get(agentId);
     if (!record) {
       throw new Error(`Agent not found: ${agentId}`);
-    }
-    if (options.requireUnarchived && record.archivedAt) {
-      throw new Error(`Agent is archived: ${agentId}`);
     }
 
     const validProviders = deps.validProviders ?? deps.agentManager.getRegisteredProviderIds();
@@ -111,16 +109,6 @@ async function ensureAgentLoadedWithOptions(
         owner: record.owner,
       });
       deps.logger.info({ agentId, provider: record.provider }, "Agent created from stored config");
-    }
-
-    if (options.requireUnarchived) {
-      const latestRecord = await deps.agentStorage.get(agentId);
-      if (latestRecord?.archivedAt) {
-        await options.closeAgent().catch((error: unknown) => {
-          deps.logger.warn({ err: error, agentId }, "Failed to close concurrently archived agent");
-        });
-        throw new Error(`Agent is archived: ${agentId}`);
-      }
     }
 
     await deps.agentManager.hydrateTimelineFromProvider(agentId);
