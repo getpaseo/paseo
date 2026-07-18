@@ -517,9 +517,6 @@ export function FileExplorerPane({
 
   const handleExplorerKeyboardAction = useCallback(
     (action: KeyboardActionDefinition): boolean => {
-      if (!getIsElectron()) {
-        return false;
-      }
       switch (action.id) {
         case "file-explorer.copy-path":
           if (!selectedEntryPath) return false;

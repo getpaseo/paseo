@@ -98,8 +98,7 @@ export function useFileExplorerCommands(input: UseFileExplorerCommandsInput) {
 
   const copyRelativePath = useCallback(
     async (entryPath: string) => {
-      const relative = entryPath.trim() === "." ? "." : entryPath.trim();
-      await Clipboard.setStringAsync(relative);
+      await Clipboard.setStringAsync(entryPath.trim());
       toast.copied();
     },
     [toast],
@@ -267,10 +266,7 @@ export function useFileExplorerCommands(input: UseFileExplorerCommandsInput) {
     [input],
   );
 
-  const createParentForTarget = useCallback((entry: ExplorerEntry | null) => {
-    if (!entry) {
-      return ".";
-    }
+  const createParentForTarget = useCallback((entry: ExplorerEntry) => {
     if (entry.kind === "directory") {
       return entry.path;
     }

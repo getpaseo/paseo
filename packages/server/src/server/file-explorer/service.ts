@@ -338,12 +338,7 @@ export async function deleteExplorerEntry({
     throw new Error("Cannot delete the workspace root");
   }
 
-  const stats = await fs.lstat(target.resolvedPath);
-  if (stats.isDirectory()) {
-    await fs.rm(target.resolvedPath, { recursive: true, force: false });
-  } else {
-    await fs.unlink(target.resolvedPath);
-  }
+  await fs.rm(target.resolvedPath, { recursive: true, force: false });
 }
 
 export async function duplicateExplorerEntry({

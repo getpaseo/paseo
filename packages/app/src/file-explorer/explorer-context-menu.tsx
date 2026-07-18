@@ -1,4 +1,4 @@
-import { useCallback, useMemo, type ReactElement, type ReactNode } from "react";
+import { useMemo, type ReactElement, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -269,7 +269,7 @@ export function ExplorerItemContextMenu({
   commands,
   children,
   onDownloadEntry,
-}: ExplorerItemContextMenuProps): ReactElement {
+}: ExplorerItemContextMenuProps) {
   const { t } = useTranslation();
   const isDesktop = getIsElectron();
 
@@ -296,7 +296,7 @@ export function ExplorerItemContextMenu({
   );
 
   if (!isDesktop) {
-    return children as ReactElement;
+    return children;
   }
 
   return (
@@ -320,20 +320,10 @@ export function ExplorerItemContextMenu({
 export function ExplorerBackgroundContextMenu({
   commands,
   children,
-}: ExplorerBackgroundContextMenuProps): ReactElement {
+}: ExplorerBackgroundContextMenuProps) {
   const { t } = useTranslation();
   const isDesktop = getIsElectron();
   const disabled = Boolean(commands.pendingAction);
-
-  const openNewFile = useCallback(() => {
-    commands.openNewFilePrompt(".");
-  }, [commands]);
-  const openNewFolder = useCallback(() => {
-    commands.openNewFolderPrompt(".");
-  }, [commands]);
-  const revealRoot = useCallback(() => {
-    void commands.reveal(".");
-  }, [commands]);
 
   const menuEntries = useMemo((): MenuEntry[] => {
     const entries: MenuEntry[] = [];
@@ -345,7 +335,7 @@ export function ExplorerBackgroundContextMenu({
           label: t("workspace.fileExplorer.context.newFile"),
           leading: icons.newFile,
           disabled,
-          onSelect: openNewFile,
+          onSelect: () => commands.openNewFilePrompt("."),
         },
         {
           kind: "item",
@@ -353,7 +343,7 @@ export function ExplorerBackgroundContextMenu({
           label: t("workspace.fileExplorer.context.newFolder"),
           leading: icons.newFolder,
           disabled,
-          onSelect: openNewFolder,
+          onSelect: () => commands.openNewFolderPrompt("."),
         },
       );
     }
@@ -367,23 +357,16 @@ export function ExplorerBackgroundContextMenu({
         label: commands.revealLabel,
         leading: icons.reveal,
         disabled,
-        onSelect: revealRoot,
+        onSelect: () => {
+          void commands.reveal(".");
+        },
       });
     }
     return entries;
-  }, [
-    commands.canMutate,
-    commands.canUseLocalShell,
-    commands.revealLabel,
-    disabled,
-    openNewFile,
-    openNewFolder,
-    revealRoot,
-    t,
-  ]);
+  }, [commands, disabled, t]);
 
   if (!isDesktop) {
-    return children as ReactElement;
+    return children;
   }
 
   return (
