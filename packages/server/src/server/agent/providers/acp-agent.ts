@@ -373,13 +373,24 @@ interface ACPAgentClientOptions {
   defaultCommand: [string, ...string[]];
   defaultModes?: AgentMode[];
   modelTransformer?: (models: AgentModelDefinition[]) => AgentModelDefinition[];
-  sessionResponseTransformer?: (response: SessionStateResponse) => SessionStateResponse;
+  sessionResponseTransformer?: (
+    response: SessionStateResponse,
+    sessionConfig?: AgentSessionConfig,
+  ) => SessionStateResponse;
   configOptionsTransformer?: (configOptions: SessionConfigOption[]) => SessionConfigOption[];
   configFeatureOptions?: ACPConfigFeatureOption[];
   clientCapabilities?: ACPClientCapabilities;
   clientCapabilityMeta?: ACPClientCapabilityMeta;
   modeIdTransformer?: (modeId: string) => string | null;
   toolSnapshotTransformer?: (snapshot: ACPToolSnapshot) => ACPToolSnapshot;
+  /**
+   * Optional per-session rewrite of the provider launch command (e.g. inject
+   * Grok `--always-approve` when the session mode requires it).
+   */
+  resolveSessionCommand?: (
+    command: [string, ...string[]],
+    config: AgentSessionConfig,
+  ) => [string, ...string[]];
   providerModeWriter?: (
     context: ACPProviderModeWriterContext,
   ) => Promise<ACPProviderModeWriteResult>;
@@ -389,6 +400,14 @@ interface ACPAgentClientOptions {
     sessionId: string,
     thinkingOptionId: string,
   ) => Promise<void>;
+  /**
+   * Mode IDs that auto-approve ACP `session/request_permission` without UI.
+   * Use as a client-side fallback when the upstream provider still requests
+   * permission even though the session is in an unattended mode (e.g. Grok
+   * Always Approve race / older builds). Prefer driving the provider's native
+   * always-approve path first.
+   */
+  autoApproveModeIds?: string[];
   capabilities?: AgentCapabilityFlags;
   extensionCommandsParser?: ACPExtensionCommandsParser;
   waitForInitialCommands?: boolean;
@@ -403,13 +422,20 @@ interface ACPAgentSessionOptions {
   defaultCommand: [string, ...string[]];
   defaultModes: AgentMode[];
   modelTransformer?: (models: AgentModelDefinition[]) => AgentModelDefinition[];
-  sessionResponseTransformer?: (response: SessionStateResponse) => SessionStateResponse;
+  sessionResponseTransformer?: (
+    response: SessionStateResponse,
+    sessionConfig?: AgentSessionConfig,
+  ) => SessionStateResponse;
   configOptionsTransformer?: (configOptions: SessionConfigOption[]) => SessionConfigOption[];
   configFeatureOptions?: ACPConfigFeatureOption[];
   clientCapabilities?: ACPClientCapabilities;
   clientCapabilityMeta?: ACPClientCapabilityMeta;
   modeIdTransformer?: (modeId: string) => string | null;
   toolSnapshotTransformer?: (snapshot: ACPToolSnapshot) => ACPToolSnapshot;
+  resolveSessionCommand?: (
+    command: [string, ...string[]],
+    config: AgentSessionConfig,
+  ) => [string, ...string[]];
   providerModeWriter?: (
     context: ACPProviderModeWriterContext,
   ) => Promise<ACPProviderModeWriteResult>;
@@ -419,6 +445,7 @@ interface ACPAgentSessionOptions {
     sessionId: string,
     thinkingOptionId: string,
   ) => Promise<void>;
+  autoApproveModeIds?: string[];
   capabilities: AgentCapabilityFlags;
   extensionCommandsParser?: ACPExtensionCommandsParser;
   handle?: AgentPersistenceHandle;
@@ -705,6 +732,7 @@ export class ACPAgentClient implements AgentClient {
   private readonly modelTransformer?: (models: AgentModelDefinition[]) => AgentModelDefinition[];
   private readonly sessionResponseTransformer?: (
     response: SessionStateResponse,
+    sessionConfig?: AgentSessionConfig,
   ) => SessionStateResponse;
   private readonly configOptionsTransformer?: (
     configOptions: SessionConfigOption[],
@@ -714,6 +742,10 @@ export class ACPAgentClient implements AgentClient {
   private readonly clientCapabilityMeta?: ACPClientCapabilityMeta;
   private readonly modeIdTransformer?: (modeId: string) => string | null;
   private readonly toolSnapshotTransformer?: (snapshot: ACPToolSnapshot) => ACPToolSnapshot;
+  private readonly resolveSessionCommand?: (
+    command: [string, ...string[]],
+    config: AgentSessionConfig,
+  ) => [string, ...string[]];
   private readonly providerModeWriter?: (
     context: ACPProviderModeWriterContext,
   ) => Promise<ACPProviderModeWriteResult>;
@@ -725,6 +757,7 @@ export class ACPAgentClient implements AgentClient {
     sessionId: string,
     thinkingOptionId: string,
   ) => Promise<void>;
+  private readonly autoApproveModeIds: string[];
   private readonly waitForInitialCommands: boolean;
   private readonly initialCommandsWaitTimeoutMs: number;
   private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
@@ -749,9 +782,11 @@ export class ACPAgentClient implements AgentClient {
     this.clientCapabilityMeta = options.clientCapabilityMeta;
     this.modeIdTransformer = options.modeIdTransformer;
     this.toolSnapshotTransformer = options.toolSnapshotTransformer;
+    this.resolveSessionCommand = options.resolveSessionCommand;
     this.providerModeWriter = options.providerModeWriter;
     this.beforeModeWriter = options.beforeModeWriter;
     this.thinkingOptionWriter = options.thinkingOptionWriter;
+    this.autoApproveModeIds = options.autoApproveModeIds ?? [];
     this.waitForInitialCommands = options.waitForInitialCommands ?? false;
     this.initialCommandsWaitTimeoutMs = options.initialCommandsWaitTimeoutMs ?? 1500;
     this.extensionCommandsParser = options.extensionCommandsParser;
@@ -778,9 +813,11 @@ export class ACPAgentClient implements AgentClient {
         clientCapabilityMeta: this.clientCapabilityMeta,
         modeIdTransformer: this.modeIdTransformer,
         toolSnapshotTransformer: this.toolSnapshotTransformer,
+        resolveSessionCommand: this.resolveSessionCommand,
         providerModeWriter: this.providerModeWriter,
         beforeModeWriter: this.beforeModeWriter,
         thinkingOptionWriter: this.thinkingOptionWriter,
+        autoApproveModeIds: this.autoApproveModeIds,
         capabilities: this.capabilities,
         agentId: launchContext?.agentId,
         launchEnv: launchContext?.env,
@@ -828,9 +865,11 @@ export class ACPAgentClient implements AgentClient {
       clientCapabilityMeta: this.clientCapabilityMeta,
       modeIdTransformer: this.modeIdTransformer,
       toolSnapshotTransformer: this.toolSnapshotTransformer,
+      resolveSessionCommand: this.resolveSessionCommand,
       providerModeWriter: this.providerModeWriter,
       beforeModeWriter: this.beforeModeWriter,
       thinkingOptionWriter: this.thinkingOptionWriter,
+      autoApproveModeIds: this.autoApproveModeIds,
       capabilities: this.capabilities,
       handle,
       agentId: launchContext?.agentId,
@@ -1273,6 +1312,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   protected readonly modelTransformer?: (models: AgentModelDefinition[]) => AgentModelDefinition[];
   private readonly sessionResponseTransformer?: (
     response: SessionStateResponse,
+    sessionConfig?: AgentSessionConfig,
   ) => SessionStateResponse;
   private readonly configOptionsTransformer?: (
     configOptions: SessionConfigOption[],
@@ -1282,6 +1322,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private readonly clientCapabilityMeta?: ACPClientCapabilityMeta;
   private readonly modeIdTransformer?: (modeId: string) => string | null;
   private readonly toolSnapshotTransformer?: (snapshot: ACPToolSnapshot) => ACPToolSnapshot;
+  private readonly resolveSessionCommand?: (
+    command: [string, ...string[]],
+    config: AgentSessionConfig,
+  ) => [string, ...string[]];
   private readonly providerModeWriter?: (
     context: ACPProviderModeWriterContext,
   ) => Promise<ACPProviderModeWriteResult>;
@@ -1293,6 +1337,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     sessionId: string,
     thinkingOptionId: string,
   ) => Promise<void>;
+  private readonly autoApproveModeIds: ReadonlySet<string>;
   private readonly agentId?: string;
   private readonly launchEnv?: Record<string, string>;
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
@@ -1348,9 +1393,11 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.clientCapabilityMeta = options.clientCapabilityMeta;
     this.modeIdTransformer = options.modeIdTransformer;
     this.toolSnapshotTransformer = options.toolSnapshotTransformer;
+    this.resolveSessionCommand = options.resolveSessionCommand;
     this.providerModeWriter = options.providerModeWriter;
     this.beforeModeWriter = options.beforeModeWriter;
     this.thinkingOptionWriter = options.thinkingOptionWriter;
+    this.autoApproveModeIds = new Set(options.autoApproveModeIds ?? []);
     this.availableModes = options.defaultModes;
     this.agentId = options.agentId;
     this.launchEnv = options.launchEnv;
@@ -2083,7 +2130,42 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   async requestPermission(params: RequestPermissionRequest): Promise<RequestPermissionResponse> {
-    // Match Zed acp.rs:3189-3220: generic ACP permission requests stay pure pass-through.
+    // Client-side fallback for unattended modes. Prefer provider-native always-approve
+    // (e.g. Grok `--always-approve` / `/always-approve`) so requestPermission is never
+    // emitted; this path covers races and older builds that still ask the client.
+    // Generic ACP requests otherwise stay pure pass-through (match Zed acp.rs:3189-3220).
+    if (this.currentMode && this.autoApproveModeIds.has(this.currentMode)) {
+      const allowOption = selectPermissionOption(params.options, { behavior: "allow" });
+      if (allowOption) {
+        this.logger.debug(
+          {
+            agentId: this.agentId,
+            provider: this.provider,
+            modeId: this.currentMode,
+            toolCallId: params.toolCall.toolCallId,
+            optionId: allowOption.optionId,
+          },
+          "provider.acp.permission.auto_approved",
+        );
+        return {
+          outcome: {
+            outcome: "selected",
+            optionId: allowOption.optionId,
+          },
+        };
+      }
+      this.logger.warn(
+        {
+          agentId: this.agentId,
+          provider: this.provider,
+          modeId: this.currentMode,
+          toolCallId: params.toolCall.toolCallId,
+        },
+        "provider.acp.permission.auto_approve_missing_allow_option",
+      );
+      return { outcome: { outcome: "cancelled" } };
+    }
+
     const requestId = randomUUID();
     let toolSnapshot =
       this.toolCalls.get(params.toolCall.toolCallId) ??
@@ -2309,17 +2391,20 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   private async spawnProcess(): Promise<SpawnedACPProcess> {
+    const sessionCommand = this.resolveSessionCommand
+      ? this.resolveSessionCommand(this.defaultCommand, this.config)
+      : this.defaultCommand;
     const prefix = await resolveProviderLaunch({
       commandConfig: this.runtimeSettings?.command,
-      defaultBinary: this.defaultCommand[0],
+      defaultBinary: sessionCommand[0],
     });
     const availability = await checkProviderLaunchAvailable(prefix);
     if (!availability.available) {
-      throw new Error(`${this.provider} command '${this.defaultCommand[0]}' not found`);
+      throw new Error(`${this.provider} command '${sessionCommand[0]}' not found`);
     }
 
     const command = prefix.command;
-    const args = [...prefix.args, ...this.defaultCommand.slice(1)];
+    const args = [...prefix.args, ...sessionCommand.slice(1)];
     const child = spawnProcess(command, args, {
       cwd: this.config.cwd,
       ...createProviderEnvSpec({
@@ -2388,7 +2473,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
   private applySessionState(response: SessionStateResponse): void {
     const transformed = this.sessionResponseTransformer
-      ? this.sessionResponseTransformer(response)
+      ? this.sessionResponseTransformer(response, this.config)
       : response;
 
     this.configOptions = this.transformConfigOptions(transformed.configOptions ?? []);
