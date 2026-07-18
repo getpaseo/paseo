@@ -39,6 +39,7 @@ function createCapturedLogger(): CapturedLogger {
 interface FinishNotificationScenarioOptions {
   childLastAssistantMessage?: string | null;
   childParentAgentId?: string | null;
+  requireParentOwnership?: boolean;
   parentPromptError?: Error;
   logger?: Logger;
 }
@@ -118,6 +119,7 @@ function createFinishNotificationScenario(
         agentStorage,
         childAgentId: "child-agent",
         callerAgentId: "caller-agent",
+        requireParentOwnership: options?.requireParentOwnership,
         logger: options?.logger ?? createTestLogger(),
       });
     },
@@ -208,11 +210,23 @@ test("finish notifications tell the parent the child's last assistant message", 
 });
 
 test("detaching a child ends its parent-owned finish notification", async () => {
-  const scenario = createFinishNotificationScenario({ childParentAgentId: null });
+  const scenario = createFinishNotificationScenario({
+    childParentAgentId: null,
+    requireParentOwnership: true,
+  });
   scenario.startWatchingChild();
   scenario.finishChild();
   await new Promise((resolve) => setTimeout(resolve, 0));
   expect(scenario.wasParentPrompted()).toBe(false);
+});
+
+test("follow-up finish notifications do not require a parent relationship", async () => {
+  const scenario = createFinishNotificationScenario({ childParentAgentId: "another-agent" });
+
+  scenario.startWatchingChild();
+  const parentPrompt = await scenario.finishChildAndReadParentPrompt();
+
+  expect(parentPrompt).toContain("Agent child-agent (Child Agent) finished.");
 });
 
 test("finish notifications log a rejected parent prompt without an unhandled rejection", async () => {

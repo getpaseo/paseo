@@ -245,6 +245,7 @@ export interface SetupFinishNotificationParams {
   agentStorage: AgentStorage;
   childAgentId: string;
   callerAgentId: string;
+  requireParentOwnership?: boolean;
   logger: Logger;
 }
 
@@ -265,7 +266,14 @@ function formatFinishNotificationBody(params: FinishNotificationBodyInput): stri
 }
 
 export function setupFinishNotification(params: SetupFinishNotificationParams): void {
-  const { agentManager, agentStorage, childAgentId, callerAgentId, logger } = params;
+  const {
+    agentManager,
+    agentStorage,
+    childAgentId,
+    callerAgentId,
+    requireParentOwnership = false,
+    logger,
+  } = params;
   let hasSeenRunning = false;
   let fired = false;
   let unsubscribe: (() => void) | null = null;
@@ -283,7 +291,7 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
     }
 
     const record = await agentStorage.get(childAgentId);
-    if (getParentAgentIdFromLabels(record?.labels) !== callerAgentId) {
+    if (requireParentOwnership && getParentAgentIdFromLabels(record?.labels) !== callerAgentId) {
       return;
     }
     const title = record?.title ?? childAgentId;

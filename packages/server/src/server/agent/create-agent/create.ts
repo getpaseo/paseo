@@ -208,6 +208,7 @@ export async function createAgentCommand(
       agentStorage: dependencies.agentStorage,
       childAgentId: snapshot.id,
       callerAgentId: input.callerAgentId,
+      requireParentOwnership: true,
       logger: dependencies.logger,
     });
   }

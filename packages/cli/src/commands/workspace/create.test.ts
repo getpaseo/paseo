@@ -26,6 +26,22 @@ describe("workspace create source", () => {
     });
   });
 
+  it("uses a project as the worktree source without capturing the ambient directory", () => {
+    expect(
+      buildWorkspaceSource({
+        isolation: "worktree",
+        project: "project-1",
+        mode: "branch-off",
+        newBranch: "fix-x",
+      }),
+    ).toEqual({
+      kind: "worktree",
+      projectId: "project-1",
+      action: "branch-off",
+      worktreeSlug: "fix-x",
+    });
+  });
+
   it("checks out an existing branch into a worktree workspace", () => {
     expect(
       buildWorkspaceSource({

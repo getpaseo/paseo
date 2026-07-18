@@ -19,7 +19,7 @@ export interface WorkspaceCreateOptions extends CommandOptions {
 
 interface WorktreeSourceBase {
   kind: "worktree";
-  cwd: string;
+  cwd?: string;
   projectId?: string;
   worktreeSlug?: string;
 }
@@ -108,10 +108,10 @@ function buildPullRequestCheckoutSource(
   };
 }
 
-function buildWorktreeWorkspaceSource(options: WorkspaceCreateOptions, path: string) {
+function buildWorktreeWorkspaceSource(options: WorkspaceCreateOptions, path: string | undefined) {
   const source: WorktreeSourceBase = {
     kind: "worktree",
-    cwd: path,
+    ...(path ? { cwd: path } : {}),
     ...(options.project ? { projectId: options.project } : {}),
     ...(options.worktreeSlug ? { worktreeSlug: options.worktreeSlug } : {}),
   };
@@ -128,12 +128,12 @@ function buildWorktreeWorkspaceSource(options: WorkspaceCreateOptions, path: str
 }
 
 export function buildWorkspaceSource(options: WorkspaceCreateOptions) {
-  const path = options.path ?? process.cwd();
   if (options.isolation === "local") {
-    return buildLocalWorkspaceSource(options, path);
+    return buildLocalWorkspaceSource(options, options.path ?? process.cwd());
   }
   if (options.isolation === "worktree") {
-    return buildWorktreeWorkspaceSource(options, path);
+    const sourcePath = options.path ?? (options.project ? undefined : process.cwd());
+    return buildWorktreeWorkspaceSource(options, sourcePath);
   }
   throw new Error(`Unsupported workspace isolation: ${String(options.isolation)}`);
 }
