@@ -16,8 +16,8 @@ Keep a strong planner in the main chat and send implementation to a workhorse:
 
 ```text
 Stay as the orchestrator. Use Paseo to find the available Codex 5.6 model, then
-create a subagent in a new worktree. Ask it to implement the parser change and
-run the focused tests.
+create a worktree-isolated workspace and launch a subagent there. Ask it to
+implement the parser change and run the focused tests.
 ```
 
 Ask the orchestrator to inspect providers first when you are unsure of the exact model ID. Available models come from your own installed and authenticated CLIs.
@@ -36,12 +36,13 @@ Each worker appears in the Subagents track, and the orchestrator can keep workin
 
 ## Parallelize edits without collisions
 
-Give each independent implementation its own git worktree:
+Give each independent implementation its own worktree-isolated workspace:
 
 ```text
-Split these two issues between two Paseo subagents. Create a separate worktree
-from main for each issue, use the best available implementation model, and have
-each agent run the focused checks for its change. Summarize both diffs when done.
+Split these two issues between two Paseo subagents. Create a separate workspace
+with worktree isolation from main for each issue, use the best available
+implementation model, and have each agent run the focused checks for its change.
+Summarize both diffs when done.
 ```
 
 Use the current workspace for collaboration on the same files. Use worktrees when agents may edit independently.
@@ -51,9 +52,10 @@ Use the current workspace for collaboration on the same files. Use worktrees whe
 Use different models for making and judging the change:
 
 ```text
-Create a worker in a new worktree to implement this feature. When it finishes,
-create a second subagent on the same worktree to review the diff for correctness,
-missing tests, and unnecessary complexity. Bring the review back here.
+Create a worktree-isolated workspace and launch a worker there to implement this
+feature. When it finishes, create a second subagent in the same workspace to
+review the diff for correctness, missing tests, and unnecessary complexity.
+Bring the review back here.
 ```
 
 The second agent sees the worker's files without sharing its conversation context, which makes the review more independent.

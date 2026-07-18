@@ -23,22 +23,22 @@ When the desktop app finds installed Paseo skills, it keeps the bundled skills u
 
 ## `/paseo`, Paseo Reference
 
-The foundational skill. Paseo reference for managing agents and worktrees. Load it when an agent needs to create agents, send them prompts, or manage worktrees.
+The foundational skill. Paseo reference for managing agents and workspaces. Load it when an agent needs to create agents, send them prompts, or manage workspace isolation.
 
 Not typically invoked directly by users, it's a reference that other skills depend on.
 
 ```
-/paseo show me the Paseo CLI surface for creating an agent in a worktree
+/paseo show me the Paseo CLI surface for creating an agent in a worktree-isolated workspace
 ```
 
 ## `/paseo-handoff`, Task Handoff
 
 Hands off the current task to another agent with full context. Use it when you say "handoff", "hand off", "hand this to", or want to pass work to another agent.
 
-The receiving agent gets a self-contained briefing with the task, context, relevant files, current state, what's been tried, decisions, acceptance criteria, and constraints. Provider comes from orchestration preferences unless you name one. Supports worktrees when you ask for one.
+The receiving agent gets a self-contained briefing with the task, context, relevant files, current state, what's been tried, decisions, acceptance criteria, and constraints. Provider comes from orchestration preferences unless you name one. Supports worktree-isolated workspaces when you ask for one.
 
 ```
-/paseo-handoff hand off the auth fix to codex in a worktree
+/paseo-handoff hand off the auth fix to codex in a worktree-isolated workspace
 /paseo-handoff hand this to claude opus for review
 ```
 
