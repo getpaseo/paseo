@@ -63,7 +63,7 @@ function createBaseInput(): AgentScreenMachineInput {
     isArchivingCurrentAgent: false,
     isHistorySyncing: false,
     needsAuthoritativeSync: false,
-    isVisibilityCatchUpPending: false,
+    visibilityCatchUpStatus: "ready",
     hasHydratedHistoryBefore: false,
   };
 }
@@ -199,7 +199,7 @@ describe("deriveAgentScreenViewState", () => {
       ...createBaseInput(),
       agent: createAgent("agent-1"),
       hasHydratedHistoryBefore: true,
-      isVisibilityCatchUpPending: true,
+      visibilityCatchUpStatus: "pending",
     };
 
     const result = deriveAgentScreenViewState({ input, memory });
@@ -207,6 +207,24 @@ describe("deriveAgentScreenViewState", () => {
     const sync = expectCatchingUpSync(ready);
 
     expect(sync.ui).toBe("overlay");
+  });
+
+  it("keeps hydrated history readable after a visibility catch-up error", () => {
+    const memory = createBaseMemory({
+      hasRenderedReady: true,
+      lastReadyAgent: createAgent("agent-1"),
+    });
+    const input: AgentScreenMachineInput = {
+      ...createBaseInput(),
+      agent: createAgent("agent-1"),
+      hasHydratedHistoryBefore: true,
+      visibilityCatchUpStatus: "error",
+    };
+
+    const result = deriveAgentScreenViewState({ input, memory });
+    const ready = expectReadyState(result.state);
+
+    expectSyncErrorSync(ready);
   });
 
   it("keeps sync errors non-blocking once the screen was ready", () => {

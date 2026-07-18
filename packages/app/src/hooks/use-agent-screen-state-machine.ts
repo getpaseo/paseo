@@ -46,7 +46,7 @@ export interface AgentScreenMachineInput {
   isArchivingCurrentAgent: boolean;
   isHistorySyncing: boolean;
   needsAuthoritativeSync: boolean;
-  isVisibilityCatchUpPending: boolean;
+  visibilityCatchUpStatus: "ready" | "pending" | "error";
   continuity: AgentScreenContinuity;
   hasHydratedHistoryBefore: boolean;
 }
@@ -168,7 +168,10 @@ function resolveAgentScreenSync(args: {
   if (input.missingAgentState.kind === "error") {
     return { status: "sync_error" };
   }
-  if (input.isVisibilityCatchUpPending) {
+  if (input.visibilityCatchUpStatus === "error") {
+    return { status: "sync_error" };
+  }
+  if (input.visibilityCatchUpStatus === "pending") {
     return { status: "catching_up", ui: "overlay" };
   }
   if (input.needsAuthoritativeSync || input.isHistorySyncing) {

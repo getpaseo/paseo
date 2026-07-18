@@ -766,16 +766,19 @@ function ChatAgentContent({
     (listener: () => void) => viewedTimelineSync?.subscribe(listener) ?? (() => {}),
     [viewedTimelineSync],
   );
-  const readTimelineReady = useCallback(
-    () => !agentId || !viewedTimelineSync || viewedTimelineSync.isAgentTimelineReady(agentId),
+  const readTimelineStatus = useCallback(
+    () =>
+      !agentId || !viewedTimelineSync
+        ? ("ready" as const)
+        : viewedTimelineSync.getAgentTimelineStatus(agentId),
     [agentId, viewedTimelineSync],
   );
-  const isTimelineReady = useSyncExternalStore(
+  const timelineStatus = useSyncExternalStore(
     subscribeToVisibilityCatchUp,
-    readTimelineReady,
-    readTimelineReady,
+    readTimelineStatus,
+    readTimelineStatus,
   );
-  const isVisibilityCatchUpPending = isPaneVisible && !isTimelineReady;
+  const visibilityCatchUpStatus = isPaneVisible ? timelineStatus : "ready";
   const hasActiveCreateHandoff = useCreateFlowStore((state) =>
     findActiveCreateHandoff({ pendingByDraftId: state.pendingByDraftId, serverId, agentId }),
   );
@@ -887,7 +890,7 @@ function ChatAgentContent({
       isArchivingCurrentAgent,
       isHistorySyncing,
       needsAuthoritativeSync,
-      isVisibilityCatchUpPending,
+      visibilityCatchUpStatus,
       continuity,
       hasHydratedHistoryBefore,
     },
