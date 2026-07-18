@@ -6379,8 +6379,20 @@ export class CodexAppServerAgentClient implements AgentClient {
   }
 
   async fetchCatalog(_options: FetchCatalogOptions): Promise<ProviderCatalog> {
-    const models = await this.fetchModelsFromAppServer();
-    return { models, modes: CODEX_MODES };
+    const [models, autoReviewEnabled] = await Promise.all([
+      this.fetchModelsFromAppServer(),
+      this.resolveAutoReviewEnabled(),
+    ]);
+    return {
+      models,
+      modes: autoReviewEnabled
+        ? CODEX_MODES
+        : CODEX_MODES.filter((mode) => mode.id !== "auto-review"),
+    };
+  }
+
+  async resolveDefaultModeId(): Promise<string> {
+    return (await this.resolveAutoReviewEnabled()) ? "auto-review" : DEFAULT_CODEX_MODE_ID;
   }
 
   private async fetchModelsFromAppServer(): Promise<AgentModelDefinition[]> {

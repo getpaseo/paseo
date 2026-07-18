@@ -4075,15 +4075,20 @@ export class AgentManager {
     }
 
     if (!normalized.modeId) {
-      try {
-        normalized.modeId =
-          getAgentProviderDefinition(normalized.provider).defaultModeId ?? undefined;
-      } catch {
-        // Unknown provider
-      }
+      normalized.modeId = await this.resolveDefaultModeId(normalized.provider);
     }
 
     return normalized;
+  }
+
+  private async resolveDefaultModeId(provider: AgentProvider): Promise<string | undefined> {
+    const providerDefault = await this.clients.get(provider)?.resolveDefaultModeId?.();
+    if (providerDefault) return providerDefault;
+    try {
+      return getAgentProviderDefinition(provider).defaultModeId ?? undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   private async resolveDefaultModelId(config: AgentSessionConfig): Promise<string | undefined> {

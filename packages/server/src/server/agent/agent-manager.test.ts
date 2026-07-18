@@ -938,6 +938,25 @@ test("normalizeConfig injects the provider default model when omitted", async ()
   expect(snapshot.config.modeId).toBe("auto-review");
 });
 
+test("normalizeConfig uses a capability-aware provider mode default", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-mode-default-test-"));
+  class CapabilityAwareClient extends TestAgentClient {
+    override async resolveDefaultModeId(): Promise<string> {
+      return "auto";
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new CapabilityAwareClient() },
+    logger,
+  });
+
+  const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+
+  expect(snapshot.config.modeId).toBe("auto");
+});
+
 test("createAgent forwards request env into the spawned provider process", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-env-test-"));
   const client = new EnvProbeAgentClient();

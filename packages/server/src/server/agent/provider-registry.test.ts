@@ -814,7 +814,7 @@ test("enabled: false keeps provider metadata in registry", () => {
     id: "claude",
     label: "Claude",
     description: "Anthropic's multi-tool assistant with MCP support, streaming, and deep reasoning",
-    defaultModeId: "default",
+    defaultModeId: "auto",
     enabled: false,
   });
   expect(registry.claude.modes).toEqual(

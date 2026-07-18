@@ -433,6 +433,7 @@ function wrapClientProvider(
         modes: catalog.modes,
       };
     },
+    resolveDefaultModeId: inner.resolveDefaultModeId?.bind(inner),
     resolveCreateConfig: inner.resolveCreateConfig?.bind(inner),
     isCreateConfigUnattended: inner.isCreateConfigUnattended?.bind(inner),
     listFeatures: listFeatures

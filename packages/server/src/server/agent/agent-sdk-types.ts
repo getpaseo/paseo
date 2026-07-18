@@ -690,6 +690,7 @@ export interface AgentClient {
    * The registry is responsible for merging configured model overrides.
    */
   fetchCatalog(options: FetchCatalogOptions): Promise<ProviderCatalog>;
+  resolveDefaultModeId?(): Promise<string | undefined>;
   resolveCreateConfig?(input: ResolveAgentCreateConfigInput): ResolveAgentCreateConfigResult;
   isCreateConfigUnattended?(input: AgentCreateConfigUnattendedInput): boolean;
   listCommands?(config: AgentSessionConfig): Promise<AgentSlashCommand[]>;
