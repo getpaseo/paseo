@@ -18,7 +18,13 @@ interface MatchSpan {
 }
 
 function findMatchSpans(query: string): MatchSpan[] {
-  return Array.from(document.querySelectorAll("span"))
+  // Scope to the chat timeline: the find panel also renders each result's
+  // snippet with the matched substring in its own highlighted <span>, so a
+  // document-wide query would double-count every match (one panel row + one
+  // timeline occurrence). These assertions are about the rendered TIMELINE
+  // matches only.
+  const root = document.querySelector('[data-testid="agent-chat-scroll"]') ?? document;
+  return Array.from(root.querySelectorAll("span"))
     .filter((element) => element.textContent === query)
     .map((element) => {
       const { backgroundColor, color } = getComputedStyle(element);
