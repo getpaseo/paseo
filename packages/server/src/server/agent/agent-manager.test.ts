@@ -33,6 +33,7 @@ import type {
   AgentSlashCommand,
   AgentStreamEvent,
   AgentTimelineItem,
+  ForkProviderSessionInput,
   ImportProviderSessionInput,
 } from "./agent-sdk-types.js";
 import type { PaseoToolCatalog } from "./tools/types.js";
@@ -2597,6 +2598,84 @@ test("importProviderSession imports the selected session without listing and pub
     },
   });
   expect((await storage.get(imported.id))?.title).toBe("Trace provider imports");
+});
+
+test("forkProviderSession forks natively and registers a child agent tied to the parent", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-fork-session-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const forkedSession = new TestAgentSession({ provider: "codex", cwd: workdir });
+
+  class ForkClient extends TestAgentClient {
+    importCalls = 0;
+    forkInput: ForkProviderSessionInput | null = null;
+
+    override async importSession(): Promise<never> {
+      this.importCalls += 1;
+      throw new Error("fork path must not re-import the parent transcript");
+    }
+
+    async forkSession(input: ForkProviderSessionInput) {
+      this.forkInput = input;
+      return {
+        session: forkedSession,
+        config: { provider: "codex" as const, cwd: workdir },
+        persistence: {
+          provider: "codex" as const,
+          sessionId: "ses_fork",
+          nativeHandle: "ses_fork",
+          metadata: { provider: "codex", cwd: workdir },
+        },
+        parentSessionId: input.providerHandleId,
+        timeline: [
+          {
+            item: { type: "user_message" as const, text: "history preserved across the fork" },
+            timestamp: "2026-01-03T00:00:00.000Z",
+          },
+        ],
+      };
+    }
+  }
+
+  const client = new ForkClient();
+  const manager = new AgentManager({
+    clients: {
+      codex: client,
+    },
+    registry: storage,
+    logger,
+  });
+
+  const forked = await manager.forkProviderSession({
+    provider: "codex",
+    providerHandleId: "ses_parent",
+    cwd: workdir,
+    workspaceId: "ws-forked",
+    messageId: "msg_boundary",
+    labels: { [PARENT_AGENT_ID_LABEL]: "agent-parent" },
+  });
+
+  // Native fork endpoint is invoked with the source session + message point;
+  // the generic re-import path is never used.
+  expect(client.importCalls).toBe(0);
+  expect(client.forkInput).toEqual({
+    providerHandleId: "ses_parent",
+    cwd: workdir,
+    messageId: "msg_boundary",
+  });
+  // A real provider child session is registered as a new managed agent tied to
+  // the parent via the parent-agent label, with provider-side history primed.
+  expect(forked.lifecycle).toBe("idle");
+  expect(forked.historyPrimed).toBe(true);
+  expect(forked.labels[PARENT_AGENT_ID_LABEL]).toBe("agent-parent");
+  expect(forked.persistence).toMatchObject({
+    provider: "codex",
+    sessionId: "ses_fork",
+    nativeHandle: "ses_fork",
+  });
+  expect(manager.getTimeline(forked.id)).toEqual([
+    { type: "user_message", text: "history preserved across the fork" },
+  ]);
 });
 
 test("reloadAgentSession passes daemon launch env through the provider launch context", async () => {

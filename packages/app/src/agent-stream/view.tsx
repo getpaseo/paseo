@@ -87,6 +87,7 @@ import {
   type WorkspaceFileOpenRequest,
 } from "@/workspace/file-open";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
+import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { buildNewWorkspaceRoute } from "@/utils/host-routes";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { isWeb } from "@/constants/platform";
@@ -317,6 +318,24 @@ function buildForkDraftTabTarget(
   return setup ? { kind: "draft", draftId, setup } : { kind: "draft", draftId };
 }
 
+async function forkNativeProviderAgent(input: {
+  client: DaemonClient;
+  serverId: string;
+  agentId: string;
+  boundaryMessageId?: string;
+  workspaceId?: string;
+}): Promise<void> {
+  const forkedAgent = await input.client.forkAgent(input.agentId, {
+    ...(input.boundaryMessageId ? { boundaryMessageId: input.boundaryMessageId } : {}),
+    ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
+  });
+  navigateToAgent({
+    serverId: input.serverId,
+    agentId: forkedAgent.id,
+    workspaceId: forkedAgent.workspaceId ?? null,
+  });
+}
+
 const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamViewProps>(
   function AgentStreamView(
     {
@@ -375,6 +394,9 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const supportsAgentForkContextCursor = useSessionStore(
       (state) =>
         state.sessions[resolvedServerId]?.serverInfo?.features?.agentForkContextCursor === true,
+    );
+    const supportsAgentNativeFork = useSessionStore(
+      (state) => state.sessions[resolvedServerId]?.serverInfo?.features?.agentNativeFork === true,
     );
 
     const workspaceRoot = context.cwd?.trim() || "";
@@ -482,6 +504,22 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           if (!client) {
             throw new Error(t("workspace.terminal.hostDisconnected"));
           }
+
+          // OpenCode exposes a native provider fork that preserves provider-side
+          // history: route it through the daemon's native-fork RPC instead of
+          // re-importing a text transcript. Other providers keep the generic
+          // client-side fork flow below unchanged.
+          if (context.provider === "opencode" && supportsAgentNativeFork) {
+            await forkNativeProviderAgent({
+              client,
+              serverId: resolvedServerId,
+              agentId,
+              boundaryMessageId: boundary.boundaryMessageId,
+              workspaceId: target === "tab" ? context.workspaceId : undefined,
+            });
+            return;
+          }
+
           const draftSetup = buildForkDraftSetup(context);
           const prepareForkDraft = async () => {
             const draftId = generateDraftId();

@@ -610,6 +610,11 @@ export interface AgentForkContextOptions {
   requestId?: string;
 }
 
+export interface ForkAgentOptions {
+  boundaryMessageId?: string;
+  workspaceId?: string;
+}
+
 type AgentRefreshedStatusPayload = z.infer<typeof AgentRefreshedStatusPayloadSchema>;
 type RestartRequestedStatusPayload = z.infer<typeof RestartRequestedStatusPayloadSchema>;
 type ShutdownRequestedStatusPayload = z.infer<typeof ShutdownRequestedStatusPayloadSchema>;
@@ -2782,6 +2787,38 @@ export class DaemonClient {
     }
 
     return payload;
+  }
+
+  async forkAgent(agentId: string, options: ForkAgentOptions = {}): Promise<AgentSnapshotPayload> {
+    const requestId = this.createRequestId();
+    const message = SessionInboundMessageSchema.parse({
+      type: "agent.fork.request",
+      agentId,
+      requestId,
+      ...(options.boundaryMessageId ? { boundaryMessageId: options.boundaryMessageId } : {}),
+      ...(options.workspaceId ? { workspaceId: options.workspaceId } : {}),
+    });
+
+    const payload = await this.sendRequest({
+      requestId,
+      message,
+      options: { skipQueue: true },
+      select: (msg) => {
+        if (msg.type !== "agent.fork.response") {
+          return null;
+        }
+        if (msg.payload.requestId !== requestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+    });
+
+    if (payload.error || !payload.agent) {
+      throw new Error(payload.error ?? "Failed to fork agent");
+    }
+
+    return payload.agent;
   }
 
   // ============================================================================

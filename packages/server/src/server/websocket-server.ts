@@ -1418,6 +1418,8 @@ export class VoiceAssistantWebSocketServer {
         stableProjectIdentity: true,
         // COMPAT(opencodeSessionDiff): added in v0.2.0, remove gate after 2027-01-18.
         opencodeSessionDiff: true,
+        // COMPAT(agentNativeFork): added in v0.2.0, remove gate after 2027-01-18.
+        agentNativeFork: true,
       },
     };
   }

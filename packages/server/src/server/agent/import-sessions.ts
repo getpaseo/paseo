@@ -30,6 +30,7 @@ export type ImportSessionAgentManager = AgentLoaderManager &
     AgentManager,
     | "archiveSnapshot"
     | "closeAgent"
+    | "forkProviderSession"
     | "getTimeline"
     | "importProviderSession"
     | "notifyAgentState"
@@ -177,6 +178,45 @@ export async function importProviderSession(
     );
     return { ...placement.value, createdWorkspace: placement.createdWorkspace };
   });
+}
+
+export interface ForkProviderSessionInput {
+  provider: AgentProvider;
+  providerHandleId: string;
+  cwd: string;
+  messageId?: string;
+  workspaceId?: string;
+  labels?: Record<string, string>;
+  workspaceProvisioning: Pick<WorkspaceProvisioningService, "runInImportWorkspace">;
+  agentManager: ImportSessionAgentManager;
+  logger: Logger;
+}
+
+// Native provider fork orchestration mirroring importProviderSession: place the
+// forked child in the right workspace and register it as a managed agent. Unlike
+// import, fork always creates a brand-new provider child session, so there is no
+// archived-record restore path.
+export async function forkProviderSession(
+  input: ForkProviderSessionInput,
+): Promise<ImportProviderSessionResult> {
+  const placement = await input.workspaceProvisioning.runInImportWorkspace(
+    { cwd: input.cwd, requestedWorkspaceId: input.workspaceId },
+    async (workspace) => {
+      const snapshot = await input.agentManager.forkProviderSession({
+        provider: input.provider,
+        providerHandleId: input.providerHandleId,
+        cwd: input.cwd,
+        workspaceId: workspace.workspaceId,
+        ...(input.messageId ? { messageId: input.messageId } : {}),
+        labels: input.labels,
+      });
+      return {
+        snapshot,
+        timelineSize: input.agentManager.getTimeline(snapshot.id).length,
+      };
+    },
+  );
+  return { ...placement.value, createdWorkspace: placement.createdWorkspace };
 }
 
 async function importProviderSessionNow(
