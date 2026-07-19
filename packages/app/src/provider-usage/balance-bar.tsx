@@ -1,4 +1,6 @@
 import { useMemo } from "react";
+import type { TFunction } from "i18next";
+import { useTranslation } from "react-i18next";
 import { Text, View, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { clampPct, formatAmount, formatResetLabel } from "./format";
@@ -9,19 +11,28 @@ interface ResolvedBalance {
   usedPct: number | null;
 }
 
-function resolveBalance(balance: ProviderUsageBalance): ResolvedBalance {
+function resolveBalance(
+  balance: ProviderUsageBalance,
+  t: TFunction,
+  locale?: string,
+): ResolvedBalance {
   const { used, remaining, limit, unit } = balance;
   if (limit != null && limit > 0) {
     const usedAmount = used ?? (remaining != null ? limit - remaining : null);
     const usedPct = usedAmount != null ? (usedAmount / limit) * 100 : null;
-    const usedText = usedAmount != null ? formatAmount(usedAmount, unit) : "—";
-    return { amountText: `${usedText} / ${formatAmount(limit, unit)}`, usedPct };
+    const usedText = usedAmount != null ? formatAmount(usedAmount, unit, locale) : "—";
+    return { amountText: `${usedText} / ${formatAmount(limit, unit, locale)}`, usedPct };
   }
   if (remaining != null) {
-    return { amountText: `${formatAmount(remaining, unit)} left`, usedPct: null };
+    return {
+      amountText: t("providerUsage.values.remaining", {
+        amount: formatAmount(remaining, unit, locale),
+      }),
+      usedPct: null,
+    };
   }
   if (used != null) {
-    return { amountText: formatAmount(used, unit), usedPct: null };
+    return { amountText: formatAmount(used, unit, locale), usedPct: null };
   }
   return { amountText: "—", usedPct: null };
 }
@@ -40,7 +51,8 @@ function fillToneStyle(tone: ProviderUsageTone) {
 }
 
 export function ProviderUsageBalanceBar({ balance }: { balance: ProviderUsageBalance }) {
-  const { amountText, usedPct } = resolveBalance(balance);
+  const { t, i18n } = useTranslation();
+  const { amountText, usedPct } = resolveBalance(balance, t, i18n.resolvedLanguage);
   const tone = balance.tone ?? "default";
   const resetLabel = formatResetLabel(balance.resetsAt);
 
