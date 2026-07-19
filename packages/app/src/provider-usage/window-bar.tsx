@@ -46,7 +46,7 @@ export function ProviderUsageWindowBar({ window }: { window: ProviderUsageWindow
           {window.label}
         </Text>
         <Text style={styles.value}>
-          {usedPct != null ? formatPct(usedPct) : "—"}
+          {usedPct != null ? `${formatPct(usedPct)} used` : "—"}
           {trailing ? (
             <Text style={isAtRisk ? styles.atRisk : styles.reset}>{` · ${trailing}`}</Text>
           ) : null}
