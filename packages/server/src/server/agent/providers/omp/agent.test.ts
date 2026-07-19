@@ -78,7 +78,9 @@ describe("OMP agent client and session", () => {
     const omp = new OmpHarness();
     await omp.start({ modeId: "write" });
 
-    expect(omp.launchConfiguration()).toMatchObject({
+    expect(omp.launchConfiguration()).toEqual({
+      cwd: "/tmp/paseo-omp-agent-test",
+      protocolMode: "rpc-ui",
       modeId: "write",
       argv: ["omp", "--mode", "rpc-ui", "--approval-mode", "write", "--thinking", "medium"],
     });
