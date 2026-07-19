@@ -81,6 +81,6 @@ test.describe("compact appearance", () => {
     await expect(page.getByRole("button", { name: "Back", exact: true })).toBeVisible();
     await expect(page.getByText("Appearance", { exact: true }).first()).toBeVisible();
     await expect(page.getByLabel("Theme: Solarized Teal")).toBeVisible();
-    await expect(page.locator('[data-testid="settings-sidebar"]:visible')).toHaveCount(0);
+    await expect(page.getByTestId("settings-sidebar")).not.toBeVisible();
   });
 });
