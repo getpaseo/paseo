@@ -63,6 +63,8 @@ const lastSuccessfulPullRequestStatus = new Map<string, PullRequestStatusResult>
 let shortstatCacheTtlMs = DEFAULT_SHORTSTAT_CACHE_TTL_MS;
 let shortstatCache = createShortstatCache(shortstatCacheTtlMs);
 const shortstatInFlight = new Map<string, Promise<CheckoutShortstat | null>>();
+let uncommittedShortstatCache = createShortstatCache(shortstatCacheTtlMs);
+const uncommittedShortstatInFlight = new Map<string, Promise<CheckoutShortstat | null>>();
 
 interface CheckoutReadCacheOptions {
   force?: boolean;
@@ -164,6 +166,10 @@ export function __resetCheckoutShortstatCacheForTests(): void {
   shortstatCacheTtlMs = DEFAULT_SHORTSTAT_CACHE_TTL_MS;
   shortstatCache = createShortstatCache(shortstatCacheTtlMs);
   shortstatInFlight.clear();
+  uncommittedShortstatCache.clear();
+  uncommittedShortstatCache.cancelTimer();
+  uncommittedShortstatCache = createShortstatCache(shortstatCacheTtlMs);
+  uncommittedShortstatInFlight.clear();
 }
 
 export function __setCheckoutShortstatCacheTtlForTests(ttlMs: number): void {
@@ -172,6 +178,10 @@ export function __setCheckoutShortstatCacheTtlForTests(ttlMs: number): void {
   shortstatCacheTtlMs = ttlMs;
   shortstatCache = createShortstatCache(ttlMs);
   shortstatInFlight.clear();
+  uncommittedShortstatCache.clear();
+  uncommittedShortstatCache.cancelTimer();
+  uncommittedShortstatCache = createShortstatCache(ttlMs);
+  uncommittedShortstatInFlight.clear();
 }
 
 interface CheckoutFileChange {
@@ -2501,6 +2511,82 @@ export async function getCheckoutShortstat(
   options?: CheckoutReadCacheOptions,
 ): Promise<CheckoutShortstat | null> {
   return getOrLoadCheckoutShortstat(cwd, context, options);
+}
+
+async function getCheckoutUncommittedShortstatUncached(
+  cwd: string,
+  context?: CheckoutContext,
+): Promise<CheckoutShortstat | null> {
+  if (context?.facts?.isGit === false) {
+    return null;
+  }
+  if (!context?.facts?.isGit) {
+    try {
+      await requireGitRepo(cwd);
+    } catch {
+      return null;
+    }
+  }
+
+  try {
+    const [{ stdout }, untrackedAdditions] = await Promise.all([
+      runGitCommand(["diff", "--shortstat", "HEAD", "--"], {
+        cwd,
+        envOverlay: READ_ONLY_GIT_ENV,
+      }),
+      countUntrackedAdditions(cwd),
+    ]);
+
+    const tracked = parseCheckoutShortstat(stdout);
+    if (tracked) {
+      return { additions: tracked.additions + untrackedAdditions, deletions: tracked.deletions };
+    }
+    if (untrackedAdditions > 0) {
+      return { additions: untrackedAdditions, deletions: 0 };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function getOrLoadCheckoutUncommittedShortstat(
+  cwd: string,
+  context?: CheckoutContext,
+  options?: CheckoutReadCacheOptions,
+): Promise<CheckoutShortstat | null> {
+  const cacheKey = getShortstatCacheKey(cwd);
+  if (!options?.force) {
+    const cached = uncommittedShortstatCache.get(cacheKey);
+    if (cached !== undefined) {
+      return Promise.resolve(cached);
+    }
+
+    const existing = uncommittedShortstatInFlight.get(cacheKey);
+    if (existing) {
+      return existing;
+    }
+  }
+
+  const load = getCheckoutUncommittedShortstatUncached(cwd, context)
+    .then((shortstat) => {
+      uncommittedShortstatCache.set(cacheKey, shortstat);
+      return shortstat;
+    })
+    .finally(() => {
+      uncommittedShortstatInFlight.delete(cacheKey);
+    });
+
+  uncommittedShortstatInFlight.set(cacheKey, load);
+  return load;
+}
+
+export async function getCheckoutUncommittedShortstat(
+  cwd: string,
+  context?: CheckoutContext,
+  options?: CheckoutReadCacheOptions,
+): Promise<CheckoutShortstat | null> {
+  return getOrLoadCheckoutUncommittedShortstat(cwd, context, options);
 }
 
 export function getCachedCheckoutShortstat(cwd: string): CheckoutShortstat | null | undefined {

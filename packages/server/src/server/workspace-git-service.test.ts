@@ -257,7 +257,7 @@ function createGitHubServiceStub(): ForgeService {
 interface CreateServiceTestOptions {
   getCheckoutStatus?: ReturnType<typeof vi.fn>;
   getCheckoutSnapshotFacts?: ReturnType<typeof vi.fn>;
-  getCheckoutShortstat?: ReturnType<typeof vi.fn>;
+  getCheckoutUncommittedShortstat?: ReturnType<typeof vi.fn>;
   getPullRequestStatus?: ReturnType<typeof vi.fn>;
   github?: ForgeService;
   resolveAbsoluteGitDir?: ReturnType<typeof vi.fn>;
@@ -275,7 +275,7 @@ function buildDefaultTestServiceDeps() {
     readdir: vi.fn(async () => []),
     getCheckoutSnapshotFacts: vi.fn(async (cwd: string) => createCheckoutSnapshotFacts(cwd)),
     getCheckoutStatus: vi.fn(async (cwd: string) => createCheckoutStatus(cwd)),
-    getCheckoutShortstat: vi.fn(async () => ({
+    getCheckoutUncommittedShortstat: vi.fn(async () => ({
       additions: 1,
       deletions: 0,
     })),
@@ -414,8 +414,8 @@ describe("WorkspaceGitServiceImpl", () => {
     service.dispose();
   });
 
-  test("getSnapshot keeps plain git classification when shortstat lookup fails", async () => {
-    const getCheckoutShortstat = vi.fn(async () => {
+  test("getSnapshot keeps plain git classification when uncommitted shortstat lookup fails", async () => {
+    const getCheckoutUncommittedShortstat = vi.fn(async () => {
       throw new Error(
         "Missing Paseo worktree base metadata: /tmp/repo/.git/worktrees/feature/paseo/worktree.json",
       );
@@ -429,7 +429,7 @@ describe("WorkspaceGitServiceImpl", () => {
           mainRepoRoot: "/tmp/main-repo",
         }),
       ),
-      getCheckoutShortstat,
+      getCheckoutUncommittedShortstat,
     });
 
     await expect(service.getSnapshot(REPO_CWD)).resolves.toEqual(
@@ -941,11 +941,11 @@ describe("WorkspaceGitServiceImpl", () => {
         return createWatcher();
       },
     );
-    const getCheckoutShortstat = vi
+    const getCheckoutUncommittedShortstat = vi
       .fn()
       .mockResolvedValueOnce({ additions: 1, deletions: 0 })
       .mockResolvedValueOnce({ additions: 8, deletions: 3 });
-    const service = createService({ getCheckoutShortstat, watch });
+    const service = createService({ getCheckoutUncommittedShortstat, watch });
     const workspaceListener = vi.fn();
 
     const initialSnapshot = await service.getSnapshot(REPO_CWD);
@@ -960,7 +960,7 @@ describe("WorkspaceGitServiceImpl", () => {
     await vi.advanceTimersByTimeAsync(1_000);
     await flushPromises();
 
-    expect(getCheckoutShortstat).toHaveBeenLastCalledWith(
+    expect(getCheckoutUncommittedShortstat).toHaveBeenLastCalledWith(
       REPO_CWD,
       expect.objectContaining({ paseoHome: "/tmp/paseo-test" }),
       { force: true },

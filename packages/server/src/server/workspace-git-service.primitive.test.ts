@@ -315,7 +315,7 @@ function createGitHubServiceStub(): ForgeService {
 interface CreateServiceOptions {
   getCheckoutSnapshotFacts?: ReturnType<typeof vi.fn>;
   getCheckoutStatus?: ReturnType<typeof vi.fn>;
-  getCheckoutShortstat?: ReturnType<typeof vi.fn>;
+  getCheckoutUncommittedShortstat?: ReturnType<typeof vi.fn>;
   getPullRequestStatus?: ReturnType<typeof vi.fn>;
   getCheckoutDiff?: ReturnType<typeof vi.fn>;
   resolveBranchCheckout?: ReturnType<typeof vi.fn>;
@@ -338,7 +338,7 @@ function buildDefaultServiceDeps() {
     readdir: vi.fn(async () => []),
     getCheckoutSnapshotFacts: vi.fn(async (cwd: string) => createCheckoutFacts(cwd)),
     getCheckoutStatus: vi.fn(async (cwd: string) => createCheckoutStatus(cwd)),
-    getCheckoutShortstat: vi.fn(async () => ({
+    getCheckoutUncommittedShortstat: vi.fn(async () => ({
       additions: 1,
       deletions: 0,
     })),
@@ -421,18 +421,18 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
 
   test("getSnapshot cold-loads when no snapshot exists yet with one shell burst", async () => {
     const getCheckoutStatus = vi.fn(async (cwd: string) => createCheckoutStatus(cwd));
-    const getCheckoutShortstat = vi.fn(async () => ({ additions: 1, deletions: 0 }));
+    const getCheckoutUncommittedShortstat = vi.fn(async () => ({ additions: 1, deletions: 0 }));
     const getPullRequestStatus = vi.fn(async () => createPullRequestStatusResult());
     const service = createService({
       getCheckoutStatus,
-      getCheckoutShortstat,
+      getCheckoutUncommittedShortstat,
       getPullRequestStatus,
     });
 
     await expect(service.getSnapshot(REPO_CWD)).resolves.toEqual(createSnapshot(REPO_CWD));
 
     expect(getCheckoutStatus).toHaveBeenCalledTimes(1);
-    expect(getCheckoutShortstat).toHaveBeenCalledTimes(1);
+    expect(getCheckoutUncommittedShortstat).toHaveBeenCalledTimes(1);
     expect(getPullRequestStatus).toHaveBeenCalledTimes(1);
 
     service.dispose();
@@ -597,10 +597,10 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
         const status = await refreshStatus.promise;
         return { ...status, currentBranch: "feature" };
       });
-    const getCheckoutShortstat = vi.fn(async () => ({ additions: 4, deletions: 2 }));
+    const getCheckoutUncommittedShortstat = vi.fn(async () => ({ additions: 4, deletions: 2 }));
     const service = createService({
       getCheckoutStatus,
-      getCheckoutShortstat,
+      getCheckoutUncommittedShortstat,
       now: () => new Date(nowMs),
     });
 
@@ -620,7 +620,7 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
     const directRead = service.getSnapshot(REPO_CWD);
 
     expect(getCheckoutStatus).toHaveBeenCalledTimes(2);
-    expect(getCheckoutShortstat).toHaveBeenCalledTimes(1);
+    expect(getCheckoutUncommittedShortstat).toHaveBeenCalledTimes(1);
     await expect(directRead).resolves.toEqual(initialSnapshot);
 
     refreshStatus.resolve(createCheckoutStatus(REPO_CWD, { currentBranch: "feature" }));
@@ -639,7 +639,7 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
       }),
     );
     expect(getCheckoutStatus).toHaveBeenCalledTimes(2);
-    expect(getCheckoutShortstat).toHaveBeenCalledTimes(2);
+    expect(getCheckoutUncommittedShortstat).toHaveBeenCalledTimes(2);
 
     service.dispose();
   });
