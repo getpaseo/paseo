@@ -16,9 +16,16 @@ const mocks = vi.hoisted(() => ({
   },
   runExternalCliJsonCommand: vi.fn(),
   runExternalCliTextCommand: vi.fn(),
+  createNodeEntrypointInvocation: vi.fn(() => ({
+    command: "node",
+    args: [],
+    env: {},
+  })),
   spawnProcess: vi.fn(),
   logInfo: vi.fn(),
   logError: vi.fn(),
+  appLogPath: "/tmp/paseo-desktop-daemon-manager-test-main.log",
+  getElectronLogFile: vi.fn(),
 }));
 
 vi.mock("electron", () => ({
@@ -32,7 +39,15 @@ vi.mock("electron", () => ({
 }));
 
 vi.mock("electron-log/main", () => ({
-  default: { info: mocks.logInfo, error: mocks.logError },
+  default: {
+    info: mocks.logInfo,
+    error: mocks.logError,
+    transports: {
+      file: {
+        getFile: mocks.getElectronLogFile,
+      },
+    },
+  },
 }));
 
 vi.mock("@getpaseo/server", () => ({
@@ -49,11 +64,7 @@ vi.mock("../settings/desktop-settings-electron.js", () => ({
 }));
 
 vi.mock("./runtime-paths.js", () => ({
-  createNodeEntrypointInvocation: vi.fn(() => ({
-    command: "node",
-    args: [],
-    env: {},
-  })),
+  createNodeEntrypointInvocation: mocks.createNodeEntrypointInvocation,
   resolveDaemonRunnerEntrypoint: vi.fn(() => ({
     entryPath: "/tmp/daemon.js",
     execArgv: [],
@@ -102,14 +113,20 @@ describe("daemon-manager commands", () => {
     mocks.settings = DEFAULT_DESKTOP_SETTINGS;
     mocks.runExternalCliJsonCommand.mockReset();
     mocks.runExternalCliTextCommand.mockReset();
+    mocks.createNodeEntrypointInvocation.mockReset();
+    mocks.createNodeEntrypointInvocation.mockReturnValue({ command: "node", args: [], env: {} });
     mocks.spawnProcess.mockReset();
     mocks.logInfo.mockReset();
     mocks.logError.mockReset();
+    mocks.getElectronLogFile.mockReset();
+    mocks.getElectronLogFile.mockReturnValue({ path: mocks.appLogPath });
     rmSync(mocks.paseoHome, { recursive: true, force: true });
+    rmSync(mocks.appLogPath, { force: true });
   });
 
   afterEach(() => {
     rmSync(mocks.paseoHome, { recursive: true, force: true });
+    rmSync(mocks.appLogPath, { force: true });
   });
 
   it("refuses start and restart while built-in daemon management is disabled", async () => {
@@ -425,6 +442,9 @@ describe("daemon-manager commands", () => {
     expect(message).toContain("Daemon failed to start: exit code 1");
     expect(recentLogsLabel?.split(/[\\/]/).at(-1)).toBe("daemon.log");
     expect(message).toContain("recent daemon failure");
+    expect(mocks.createNodeEntrypointInvocation).toHaveBeenCalledWith(
+      expect.objectContaining({ args: [] }),
+    );
     expect(mocks.spawnProcess).toHaveBeenCalledWith(
       "node",
       [],
@@ -434,5 +454,61 @@ describe("daemon-manager commands", () => {
         envOverlay: expect.objectContaining({ PASEO_WEB_UI_ENABLED: "false" }),
       }),
     );
+  });
+
+  it("passes stale lock reclaim only after a live desktop daemon is confirmed unresponsive", async () => {
+    mocks.runExternalCliJsonCommand.mockResolvedValue({
+      localDaemon: "unresponsive",
+      connectedDaemon: "unreachable",
+      serverId: "",
+      pid: 7675,
+      listen: "127.0.0.1:6767",
+      desktopManaged: true,
+    });
+    mocks.spawnProcess.mockImplementation(() => {
+      const child = createMockChildProcess();
+      scheduleFailedStartup(child);
+      return child;
+    });
+
+    await expect(createDaemonCommandHandlers().start_desktop_daemon()).rejects.toThrow(
+      "Daemon failed to start: exit code 1",
+    );
+
+    expect(mocks.createNodeEntrypointInvocation).toHaveBeenCalledWith(
+      expect.objectContaining({ args: ["--reclaim-stale-pid-lock"] }),
+    );
+  });
+
+  it("does not pass stale lock reclaim when the status command fails", async () => {
+    mocks.runExternalCliJsonCommand.mockRejectedValue(new Error("status command failed"));
+    mocks.spawnProcess.mockImplementation(() => {
+      const child = createMockChildProcess();
+      scheduleFailedStartup(child);
+      return child;
+    });
+
+    await expect(createDaemonCommandHandlers().start_desktop_daemon()).rejects.toThrow(
+      "Daemon failed to start: exit code 1",
+    );
+
+    expect(mocks.createNodeEntrypointInvocation).toHaveBeenCalledWith(
+      expect.objectContaining({ args: [] }),
+    );
+  });
+
+  it("returns the Electron main-process log tail from electron-log", () => {
+    writeFileSync(
+      mocks.appLogPath,
+      Array.from({ length: 105 }, (_value, index) => `main log line ${index + 1}`).join("\n"),
+    );
+    const handlers = createDaemonCommandHandlers();
+
+    expect(handlers.desktop_app_logs()).toEqual({
+      logPath: mocks.appLogPath,
+      contents: Array.from({ length: 100 }, (_value, index) => `main log line ${index + 6}`).join(
+        "\n",
+      ),
+    });
   });
 });

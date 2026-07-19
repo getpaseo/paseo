@@ -13,7 +13,11 @@ import {
 } from "@/screens/workspace/workspace-tab-presentation";
 import type { Theme } from "@/styles/theme";
 import type { SubagentRow } from "./select";
-import { buildSubagentRowPresentationData, formatHeaderLabel } from "./track-presentation";
+import {
+  buildSubagentRowPresentationData,
+  countFinishedSubagents,
+  formatHeaderLabel,
+} from "./track-presentation";
 
 const ThemedArchive = withUnistyles(Archive);
 const ThemedChevronDown = withUnistyles(ChevronDown);
@@ -28,7 +32,9 @@ const foregroundMutedColorMapping = (theme: Theme) => ({
 export interface SubagentsTrackProps {
   rows: SubagentRow[];
   onOpenSubagent: (id: string) => void;
+  onOpenProviderSubagent: (parentAgentId: string, subagentId: string) => void;
   onArchiveSubagent: (id: string) => void;
+  onArchiveFinished?: () => void;
   onDetachSubagent?: (id: string) => void;
 }
 
@@ -44,9 +50,12 @@ function buildRowPresentation(row: SubagentRow): WorkspaceTabPresentation {
 export function SubagentsTrack({
   rows,
   onOpenSubagent,
+  onOpenProviderSubagent,
   onArchiveSubagent,
+  onArchiveFinished,
   onDetachSubagent,
 }: SubagentsTrackProps): ReactElement | null {
+  const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
 
   const toggleExpanded = useCallback(() => {
@@ -60,10 +69,13 @@ export function SubagentsTrack({
 
   const headerStyle = useCallback(
     ({ hovered, pressed }: PressableStateCallbackType) => [
-      styles.header,
-      expanded ? styles.headerDivider : styles.headerCollapsed,
+      styles.headerToggle,
       (hovered || pressed) && styles.headerActive,
     ],
+    [],
+  );
+  const headerContainerStyle = useMemo(
+    () => [styles.header, expanded ? styles.headerDivider : styles.headerCollapsed],
     [expanded],
   );
 
@@ -72,27 +84,42 @@ export function SubagentsTrack({
   }
 
   const headerLabel = formatHeaderLabel(rows);
+  const finishedCount = countFinishedSubagents(rows);
 
   return (
     <View style={styles.outer} testID="subagents-track">
       <View style={styles.track}>
         <View style={surfaceStyle}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={headerLabel}
-            testID="subagents-track-header"
-            onPress={toggleExpanded}
-            style={headerStyle}
-          >
-            {expanded ? (
-              <ThemedChevronDown size={12} uniProps={foregroundMutedColorMapping} />
-            ) : (
-              <ThemedChevronRight size={12} uniProps={foregroundMutedColorMapping} />
-            )}
-            <Text style={styles.headerLabel} numberOfLines={1}>
-              {headerLabel}
-            </Text>
-          </Pressable>
+          <View style={headerContainerStyle}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={headerLabel}
+              testID="subagents-track-header"
+              onPress={toggleExpanded}
+              style={headerStyle}
+            >
+              {expanded ? (
+                <ThemedChevronDown size={12} uniProps={foregroundMutedColorMapping} />
+              ) : (
+                <ThemedChevronRight size={12} uniProps={foregroundMutedColorMapping} />
+              )}
+              <Text style={styles.headerLabel} numberOfLines={1}>
+                {headerLabel}
+              </Text>
+            </Pressable>
+            {finishedCount > 0 && onArchiveFinished ? (
+              <View style={styles.headerAction}>
+                <SubagentActionButton
+                  accessibilityLabel={t("subagents.archiveFinishedAction")}
+                  testID="subagents-track-archive-finished"
+                  tooltipLabel={t("subagents.archiveFinishedTooltip")}
+                  icon="archive"
+                  visible
+                  onPress={onArchiveFinished}
+                />
+              </View>
+            ) : null}
+          </View>
           {expanded ? (
             <ScrollView
               style={styles.scroll}
@@ -105,6 +132,7 @@ export function SubagentsTrack({
                   key={row.id}
                   row={row}
                   onOpenSubagent={onOpenSubagent}
+                  onOpenProviderSubagent={onOpenProviderSubagent}
                   onArchiveSubagent={onArchiveSubagent}
                   onDetachSubagent={onDetachSubagent}
                 />
@@ -120,6 +148,7 @@ export function SubagentsTrack({
 interface SubagentsTrackRowProps {
   row: SubagentRow;
   onOpenSubagent: (id: string) => void;
+  onOpenProviderSubagent: (parentAgentId: string, subagentId: string) => void;
   onArchiveSubagent: (id: string) => void;
   onDetachSubagent?: (id: string) => void;
 }
@@ -127,6 +156,7 @@ interface SubagentsTrackRowProps {
 function SubagentsTrackRow({
   row,
   onOpenSubagent,
+  onOpenProviderSubagent,
   onArchiveSubagent,
   onDetachSubagent,
 }: SubagentsTrackRowProps): ReactElement {
@@ -137,8 +167,12 @@ function SubagentsTrackRow({
   const displayLabel =
     presentation.titleState === "loading" ? t("common.states.loading") : presentation.label;
   const handlePress = useCallback(() => {
-    onOpenSubagent(row.id);
-  }, [onOpenSubagent, row.id]);
+    if (row.kind === "provider") {
+      onOpenProviderSubagent(row.parentAgentId, row.id);
+    } else {
+      onOpenSubagent(row.id);
+    }
+  }, [onOpenProviderSubagent, onOpenSubagent, row]);
   const handleArchivePress = useCallback(() => {
     onArchiveSubagent(row.id);
   }, [onArchiveSubagent, row.id]);
@@ -167,13 +201,15 @@ function SubagentsTrackRow({
             <Text style={styles.rowLabel} numberOfLines={1}>
               {displayLabel}
             </Text>
-            <SubagentRowActions
-              rowId={row.id}
-              displayLabel={displayLabel}
-              visible={actionsVisible}
-              onDetachPress={onDetachSubagent ? handleDetachPress : undefined}
-              onArchivePress={handleArchivePress}
-            />
+            {row.kind === "paseo" ? (
+              <SubagentRowActions
+                rowId={row.id}
+                displayLabel={displayLabel}
+                visible={actionsVisible}
+                onDetachPress={onDetachSubagent ? handleDetachPress : undefined}
+                onArchivePress={handleArchivePress}
+              />
+            ) : null}
           </View>
         )}
       </Pressable>
@@ -295,12 +331,22 @@ const styles = StyleSheet.create((theme) => ({
   header: {
     flexDirection: "row",
     alignItems: "center",
+  },
+  headerToggle: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: "row",
+    alignItems: "center",
     gap: theme.spacing[2],
-    paddingHorizontal: theme.spacing[3],
+    paddingLeft: theme.spacing[3],
+    paddingRight: theme.spacing[1],
     paddingVertical: theme.spacing[2],
   },
+  headerAction: {
+    paddingRight: theme.spacing[2],
+  },
   headerCollapsed: {
-    paddingBottom: theme.spacing[6],
+    paddingBottom: theme.spacing[4],
   },
   headerActive: {
     backgroundColor: theme.colors.surface2,

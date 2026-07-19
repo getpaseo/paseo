@@ -1,7 +1,7 @@
 ---
 title: Troubleshooting
 description: Why Paseo can't find a provider you've installed, and how to fix the PATH and environment mismatches behind most setup issues.
-nav: Troubleshooting
+nav: Common problems
 order: 50
 category: Troubleshooting
 ---
@@ -81,7 +81,7 @@ Desktop app log location:
 paseo daemon restart
 ```
 
-Or in the app, open **Settings → your host → Host** and use **Restart daemon**. Running agents keep going, and clients reconnect automatically.
+Or in the app, open **Settings → your host → Overview** and use **Restart daemon**. Running agents keep going, and clients reconnect automatically.
 
 ## Still stuck?
 

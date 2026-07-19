@@ -43,7 +43,7 @@ export function pruneMountedWorkspaceSelections({
   maxMountedWorkspaces = WORKSPACE_DECK_MAX_MOUNTED_WORKSPACES,
 }: PruneMountedWorkspaceSelectionsInput): ActiveWorkspaceSelection[] {
   if (!activeSelection) {
-    return [];
+    return currentSelections;
   }
 
   const maxSelections = Math.max(1, maxMountedWorkspaces);
@@ -72,6 +72,14 @@ export function pruneMountedWorkspaceSelections({
   }
 
   return nextSelections;
+}
+
+export function orderWorkspaceSelectionsForStableRender(
+  selections: ActiveWorkspaceSelection[],
+): ActiveWorkspaceSelection[] {
+  return [...selections].sort((left, right) =>
+    getWorkspaceSelectionKey(left).localeCompare(getWorkspaceSelectionKey(right)),
+  );
 }
 
 export function shouldKeepWorkspaceDeckEntryMounted({

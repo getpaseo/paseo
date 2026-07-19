@@ -124,6 +124,111 @@ export async function scrollChatAwayFromBottom(
   return readScrollMetrics(page);
 }
 
+export async function clickToolCallBesideScrollToBottomButton(page: Page): Promise<{
+  outsideButton: boolean;
+  toolCallReceivesPointer: boolean;
+  withinButtonBand: boolean;
+}> {
+  await scrollChatAwayFromBottom(page, {
+    deltaY: -900,
+    minDistanceFromBottom: 300,
+  });
+
+  const scrollToBottomButton = page.getByRole("button", { name: "Scroll to bottom" });
+  await expect(scrollToBottomButton).toBeVisible();
+
+  const buttonBounds = await scrollToBottomButton.boundingBox();
+  expect(buttonBounds, "Expected visible scroll-to-bottom button bounds").not.toBeNull();
+  const visibleButtonBounds = buttonBounds!;
+
+  const toolCalls = page.locator('[data-testid="tool-call-badge"] [role="button"]');
+  const toolCallBounds = await Promise.all(
+    Array.from({ length: await toolCalls.count() }, async (_, index) => ({
+      index,
+      bounds: await toolCalls.nth(index).boundingBox(),
+    })),
+  );
+  const buttonCenterY = visibleButtonBounds.y + visibleButtonBounds.height / 2;
+  const candidate = toolCallBounds
+    .filter(
+      (entry): entry is { index: number; bounds: NonNullable<typeof entry.bounds> } =>
+        entry.bounds !== null && entry.bounds.width > 0,
+    )
+    .sort(
+      (left, right) =>
+        Math.abs(left.bounds.y + left.bounds.height / 2 - buttonCenterY) -
+        Math.abs(right.bounds.y + right.bounds.height / 2 - buttonCenterY),
+    )[0];
+  expect(
+    candidate,
+    `Expected at least one rendered tool-call badge: ${JSON.stringify({
+      buttonBounds,
+      scrollMetrics: await readScrollMetrics(page),
+      toolCallBounds,
+    })}`,
+  ).toBeDefined();
+  const visibleToolCall = candidate!;
+  const initialToolCallCenterY = visibleToolCall.bounds.y + visibleToolCall.bounds.height / 2;
+  await getVisibleChatScroll(page).evaluate((scroll, deltaY) => {
+    (scroll as HTMLElement).scrollTop += deltaY;
+  }, initialToolCallCenterY - buttonCenterY);
+
+  const alignedToolCall = toolCalls.nth(visibleToolCall.index);
+  await expect
+    .poll(async () => {
+      const [currentButtonBounds, currentToolCallBounds] = await Promise.all([
+        scrollToBottomButton.boundingBox(),
+        alignedToolCall.boundingBox(),
+      ]);
+      if (!currentButtonBounds || !currentToolCallBounds) {
+        return false;
+      }
+      const toolCallCenterY = currentToolCallBounds.y + currentToolCallBounds.height / 2;
+      return (
+        toolCallCenterY >= currentButtonBounds.y &&
+        toolCallCenterY <= currentButtonBounds.y + currentButtonBounds.height
+      );
+    })
+    .toBe(true);
+
+  const [alignedButtonBounds, visibleToolCallBounds] = await Promise.all([
+    scrollToBottomButton.boundingBox(),
+    alignedToolCall.boundingBox(),
+  ]);
+  expect(alignedButtonBounds, "Expected scroll-to-bottom button to remain visible").not.toBeNull();
+  expect(
+    visibleToolCallBounds,
+    "Expected aligned tool-call badge to remain visible",
+  ).not.toBeNull();
+  const finalButtonBounds = alignedButtonBounds!;
+  const finalToolCallBounds = visibleToolCallBounds!;
+
+  const clickPoint = {
+    x: finalToolCallBounds.x + 24,
+    y: finalToolCallBounds.y + finalToolCallBounds.height / 2,
+  };
+  const toolCallReceivesPointer = await alignedToolCall.evaluate((toolCall, point) => {
+    const hit = document.elementFromPoint(point.x, point.y);
+    return hit !== null && toolCall.contains(hit);
+  }, clickPoint);
+  const hitArea = {
+    clickPoint,
+    outsideButton:
+      clickPoint.x < finalButtonBounds.x ||
+      clickPoint.x > finalButtonBounds.x + finalButtonBounds.width,
+    toolCallReceivesPointer,
+    withinButtonBand:
+      clickPoint.y >= finalButtonBounds.y &&
+      clickPoint.y <= finalButtonBounds.y + finalButtonBounds.height,
+  };
+  await page.mouse.click(hitArea.clickPoint.x, hitArea.clickPoint.y);
+  return {
+    outsideButton: hitArea.outsideButton,
+    toolCallReceivesPointer: hitArea.toolCallReceivesPointer,
+    withinButtonBand: hitArea.withinButtonBand,
+  };
+}
+
 export async function expectScrollStaysFixed(
   page: Page,
   baseline: ScrollMetrics,

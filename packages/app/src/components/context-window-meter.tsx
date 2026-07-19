@@ -117,7 +117,7 @@ export function ContextWindowMeter({
     (nextOpen: boolean) => {
       setIsTooltipOpen(nextOpen);
       if (nextOpen) {
-        void refreshProviderUsage();
+        void refreshProviderUsage().catch(() => {});
       }
     },
     [refreshProviderUsage],

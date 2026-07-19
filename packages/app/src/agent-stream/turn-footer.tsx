@@ -9,7 +9,7 @@ import {
   collectAssistantTurnContentForStreamRenderStrategy,
   type StreamStrategy,
 } from "./strategy";
-import { resolveAssistantTurnBoundaryMessageId } from "./turn-boundary";
+import { resolveAssistantTurnForkBoundary, type AssistantTurnForkBoundary } from "./turn-boundary";
 import {
   AssistantTurnFooter,
   LiveElapsed,
@@ -18,6 +18,7 @@ import {
 } from "@/components/message";
 import type { TurnFooterHost } from "./layout";
 import { SyncedLoader } from "@/components/synced-loader";
+import { useRetainedPanelActive } from "@/components/retained-panel";
 
 const ThemedSyncedLoader = withUnistyles(SyncedLoader);
 const workingIndicatorColorMapping = (theme: Theme) => ({
@@ -30,7 +31,7 @@ const workingIndicatorColorMapping = (theme: Theme) => ({
 export type TurnContentStrategy = StreamStrategy;
 export type AssistantTurnForkHandler = (input: {
   target: AssistantForkTarget;
-  boundaryMessageId?: string;
+  boundary: AssistantTurnForkBoundary;
 }) => Promise<void> | void;
 
 export const TurnFooter = memo(function TurnFooter({
@@ -38,12 +39,14 @@ export const TurnFooter = memo(function TurnFooter({
   inFlightTurnStartedAt,
   host,
   strategy,
+  supportsTimelineCursor,
   onForkAssistantTurn,
 }: {
   isRunning: boolean;
   inFlightTurnStartedAt: Date | null;
   host: TurnFooterHost | null;
   strategy: TurnContentStrategy;
+  supportsTimelineCursor: boolean;
   onForkAssistantTurn?: AssistantTurnForkHandler;
 }) {
   if (isRunning) {
@@ -62,6 +65,7 @@ export const TurnFooter = memo(function TurnFooter({
       items={host.items}
       timing={host.timing}
       startIndex={host.startIndex}
+      supportsTimelineCursor={supportsTimelineCursor}
       onForkAssistantTurn={onForkAssistantTurn}
     />
   );
@@ -72,12 +76,14 @@ export const CompletedTurnFooterRow = memo(function CompletedTurnFooterRow({
   items,
   timing,
   startIndex,
+  supportsTimelineCursor,
   onForkAssistantTurn,
 }: {
   strategy: TurnContentStrategy;
   items: StreamItem[];
   timing?: TurnTiming;
   startIndex: number;
+  supportsTimelineCursor: boolean;
   onForkAssistantTurn?: AssistantTurnForkHandler;
 }) {
   return (
@@ -87,6 +93,7 @@ export const CompletedTurnFooterRow = memo(function CompletedTurnFooterRow({
         items={items}
         timing={timing}
         startIndex={startIndex}
+        supportsTimelineCursor={supportsTimelineCursor}
         onForkAssistantTurn={onForkAssistantTurn}
       />
     </TurnFooterRow>
@@ -98,6 +105,7 @@ const WorkingIndicator = memo(function WorkingIndicator({
 }: {
   inFlightTurnStartedAt?: Date | null;
 }) {
+  const active = useRetainedPanelActive();
   return (
     <View style={stylesheet.turnFooterContent}>
       <View style={stylesheet.workingLoader}>
@@ -106,6 +114,7 @@ const WorkingIndicator = memo(function WorkingIndicator({
       {inFlightTurnStartedAt ? (
         <LiveElapsed
           startedAt={inFlightTurnStartedAt}
+          active={active}
           style={stylesheet.workingElapsed}
           testID="turn-working-elapsed"
         />
@@ -127,12 +136,14 @@ function CompletedTurnFooter({
   items,
   timing,
   startIndex,
+  supportsTimelineCursor,
   onForkAssistantTurn,
 }: {
   strategy: TurnContentStrategy;
   items: StreamItem[];
   timing?: TurnTiming;
   startIndex: number;
+  supportsTimelineCursor: boolean;
   onForkAssistantTurn?: AssistantTurnForkHandler;
 }) {
   const getContent = useCallback(
@@ -144,18 +155,27 @@ function CompletedTurnFooter({
       }),
     [strategy, items, startIndex],
   );
-  const boundaryMessageId = resolveAssistantTurnBoundaryMessageId({
+  const boundary = resolveAssistantTurnForkBoundary({
     items,
     startIndex,
+    supportsTimelineCursor,
   });
+  const handleFork = useCallback(
+    (target: AssistantForkTarget) => {
+      if (!boundary) {
+        return;
+      }
+      return onForkAssistantTurn?.({ target, boundary });
+    },
+    [boundary, onForkAssistantTurn],
+  );
   return (
     <View style={stylesheet.turnFooterSlot}>
       <AssistantTurnFooter
         getContent={getContent}
         completedAt={timing?.completedAt}
         durationMs={timing?.durationMs}
-        forkBoundaryMessageId={boundaryMessageId}
-        onFork={onForkAssistantTurn}
+        onFork={boundary && onForkAssistantTurn ? handleFork : undefined}
       />
     </View>
   );

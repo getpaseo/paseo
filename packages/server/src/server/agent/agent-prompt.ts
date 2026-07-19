@@ -4,6 +4,9 @@ import type { AgentPromptInput, AgentRunOptions } from "./agent-sdk-types.js";
 import type { AgentManager, ManagedAgent } from "./agent-manager.js";
 import type { AgentStorage } from "./agent-storage.js";
 import { ensureAgentLoaded } from "./agent-loading.js";
+import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
+
+export type AgentUnarchiveController = Pick<AgentManager, "notifyAgentState" | "unarchiveSnapshot">;
 
 export type AgentRunController = Pick<
   AgentManager,
@@ -15,13 +18,13 @@ export interface StartAgentRunOptions {
   runOptions?: AgentRunOptions;
 }
 
-export function startAgentRun(
+export async function startAgentRun(
   agentManager: AgentRunController,
   agentId: string,
   prompt: AgentPromptInput,
   logger: Logger,
   options?: StartAgentRunOptions,
-): { outOfBand: boolean } {
+): Promise<{ outOfBand: boolean }> {
   const snapshot = agentManager.getAgent(agentId);
   logger.trace(
     {
@@ -44,7 +47,7 @@ export function startAgentRun(
   const shouldReplace = Boolean(options?.replaceRunning && agentManager.hasInFlightRun(agentId));
   const runOptions = options?.runOptions;
   const iterator = shouldReplace
-    ? agentManager.replaceAgentRun(agentId, prompt, runOptions)
+    ? await agentManager.replaceAgentRun(agentId, prompt, runOptions)
     : agentManager.streamAgent(agentId, prompt, runOptions);
   logger.trace(
     {
@@ -91,10 +94,11 @@ export function startAgentRun(
  */
 export async function unarchiveAgentState(
   _agentStorage: AgentStorage,
-  agentManager: AgentManager,
+  agentManager: AgentUnarchiveController,
   agentId: string,
+  updates?: { workspaceId?: string; labels?: Record<string, string | null> },
 ): Promise<boolean> {
-  const unarchived = await agentManager.unarchiveSnapshot(agentId);
+  const unarchived = await agentManager.unarchiveSnapshot(agentId, updates);
   if (!unarchived) return false;
   agentManager.notifyAgentState(agentId);
   return true;
@@ -197,7 +201,7 @@ export async function sendPromptToAgent(
     ? { ...params.runOptions, messageId: params.messageId }
     : params.runOptions;
 
-  return startAgentRun(params.agentManager, params.agentId, params.prompt, params.logger, {
+  return await startAgentRun(params.agentManager, params.agentId, params.prompt, params.logger, {
     replaceRunning: true,
     runOptions,
   });
@@ -215,7 +219,7 @@ export async function startCreatedAgentInitialPrompt(
     return currentSnapshot;
   }
 
-  const dispatchResult = startAgentRun(
+  const dispatchResult = await startAgentRun(
     params.agentManager,
     params.agentId,
     params.prompt,
@@ -241,6 +245,7 @@ export interface SetupFinishNotificationParams {
   agentStorage: AgentStorage;
   childAgentId: string;
   callerAgentId: string;
+  requireParentOwnership?: boolean;
   logger: Logger;
 }
 
@@ -261,7 +266,14 @@ function formatFinishNotificationBody(params: FinishNotificationBodyInput): stri
 }
 
 export function setupFinishNotification(params: SetupFinishNotificationParams): void {
-  const { agentManager, agentStorage, childAgentId, callerAgentId, logger } = params;
+  const {
+    agentManager,
+    agentStorage,
+    childAgentId,
+    callerAgentId,
+    requireParentOwnership = false,
+    logger,
+  } = params;
   let hasSeenRunning = false;
   let fired = false;
   let unsubscribe: (() => void) | null = null;
@@ -279,6 +291,9 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
     }
 
     const record = await agentStorage.get(childAgentId);
+    if (requireParentOwnership && getParentAgentIdFromLabels(record?.labels) !== callerAgentId) {
+      return;
+    }
     const title = record?.title ?? childAgentId;
     const lastAssistantMessage = await agentManager.getLastAssistantMessage(childAgentId);
     const body = formatFinishNotificationBody({
@@ -298,6 +313,15 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
     });
   }
 
+  function notifySafely(reason: "finished" | "errored" | "needs permission"): void {
+    void notify(reason).catch((error) => {
+      logger.error(
+        { err: error, childAgentId, callerAgentId, reason },
+        "Failed to notify caller agent",
+      );
+    });
+  }
+
   unsubscribe = agentManager.subscribe(
     (event) => {
       if (fired) {
@@ -310,11 +334,11 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
           return;
         }
         if (event.agent.lifecycle === "error") {
-          void notify("errored");
+          notifySafely("errored");
           return;
         }
         if (event.agent.lifecycle === "idle" && hasSeenRunning) {
-          void notify("finished");
+          notifySafely("finished");
           return;
         }
         if (event.agent.lifecycle === "closed") {
@@ -326,7 +350,7 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
       }
 
       if (event.event.type === "permission_requested") {
-        void notify("needs permission");
+        notifySafely("needs permission");
       }
     },
     { agentId: childAgentId, replayState: false },
@@ -345,6 +369,6 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
   if (childSnapshot.lifecycle === "running") {
     hasSeenRunning = true;
   } else if (childSnapshot.lifecycle === "error") {
-    void notify("errored");
+    notifySafely("errored");
   }
 }

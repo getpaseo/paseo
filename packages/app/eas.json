@@ -1,7 +1,7 @@
 {
   "cli": {
     "version": ">= 14.0.0",
-    "appVersionSource": "remote"
+    "appVersionSource": "local"
   },
   "build": {
     "development": {
@@ -19,15 +19,13 @@
       "channel": "production",
       "env": {
         "APP_VARIANT": "production"
-      },
-      "android": {
-        "autoIncrement": "versionCode"
       }
     },
     "production-apk": {
       "extends": "production",
       "distribution": "internal",
       "android": {
+        "resourceClass": "large",
         "buildType": "apk",
         "gradleCommand": ":app:assembleRelease -x lint -x lintVitalAnalyzeRelease -x lintVitalRelease -x generateReleaseLintModel -x generateReleaseLintVitalModel"
       }

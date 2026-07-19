@@ -21,6 +21,8 @@ extraResources:
     to: app-dist
   - from: ../../skills
     to: skills
+  - from: assets/editor-targets
+    to: editor-target-icons
 publish:
   provider: github
   owner: getpaseo

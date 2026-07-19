@@ -10,8 +10,7 @@ The image source lives in [`docker/`](../docker/).
 
 The official image:
 
-- installs `@getpaseo/server` and `@getpaseo/cli` from npm for stable images,
-  or from source-built workspace tarballs for beta images
+- builds `@getpaseo/server` and `@getpaseo/cli` from source-built workspace tarballs
 - runs the daemon as the non-root `paseo` user
 - listens on `0.0.0.0:6767` inside the container
 - enables the bundled daemon web UI with `PASEO_WEB_UI_ENABLED=true`
@@ -190,16 +189,17 @@ See [SECURITY.md](../SECURITY.md) for the daemon trust model.
 ## Building Locally
 
 ```bash
-docker build -t paseo:local docker/base
+docker build -f docker/base/Dockerfile -t paseo:local .
 ```
 
-To bake a specific published npm version:
+To assert the source tree version while building:
 
 ```bash
 docker build \
   --build-arg PASEO_VERSION=0.1.102 \
   -t paseo:0.1.102 \
-  docker/base
+  -f docker/base/Dockerfile \
+  .
 ```
 
 The Docker workflow builds the image on pull requests and on `main` as a
@@ -216,13 +216,12 @@ pushing a `v*` release tag:
 gh workflow run docker.yml \
   --ref main \
   -f paseo_version=0.1.102-beta.1 \
-  -f publish=true \
-  -f source_build=auto
+  -f publish=true
 ```
 
-Manual Docker publishes require an explicit `paseo_version`. Prerelease
-versions build from the checked-out source tree by default and publish only the
-exact prerelease image tag.
+Manual Docker publishes require an explicit `paseo_version`. The workflow builds
+from the checked-out source tree and publishes only the exact prerelease image
+tag for prerelease versions.
 
 The published image is multi-arch for `linux/amd64` and `linux/arm64`.
 

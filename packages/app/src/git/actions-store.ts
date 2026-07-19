@@ -1,19 +1,7 @@
-import type { QueryKey } from "@tanstack/react-query";
 import type { CheckoutPrMergeMethod } from "@getpaseo/protocol/messages";
 import { create } from "zustand";
-import { queryClient as appQueryClient } from "@/query/query-client";
-import {
-  buildWorkspaceTabPersistenceKey,
-  useWorkspaceLayoutStore,
-} from "@/stores/workspace-layout-store";
+import { queryClient as appQueryClient } from "@/data/query-client";
 import { useSessionStore } from "@/stores/session-store";
-import type { WorkspaceDescriptor } from "@/stores/session-store";
-import { useWorkspaceTabsStore } from "@/stores/workspace-tabs-store";
-import {
-  clearWorkspaceArchivePending,
-  markWorkspaceArchivePending,
-} from "@/contexts/session-workspace-upserts";
-import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
 import { invalidateCheckoutGitQueriesForClient } from "@/git/query-keys";
 import { i18n } from "@/i18n/i18next";
 
@@ -36,8 +24,7 @@ export type CheckoutGitAsyncActionId =
   | "enable-pr-auto-merge-rebase"
   | "disable-pr-auto-merge"
   | "merge-branch"
-  | "merge-from-base"
-  | "archive-worktree";
+  | "merge-from-base";
 
 type CheckoutKey = string;
 type StatusMap = Partial<Record<CheckoutGitAsyncActionId, CheckoutGitActionStatus>>;
@@ -55,11 +42,19 @@ function resolveClient(serverId: string) {
   return client;
 }
 
-function assertGitHubAutoMergeActionsSupported(serverId: string) {
+type AutoMergeActionsRpc = "forge" | "github";
+
+function resolveAutoMergeActionsRpc(serverId: string): AutoMergeActionsRpc {
   const session = useSessionStore.getState().sessions[serverId];
-  if (session?.serverInfo?.features?.checkoutGithubSetAutoMerge !== true) {
-    throw new Error("Update the host to use GitHub auto-merge actions.");
+  if (session?.serverInfo?.features?.checkoutForgeSetAutoMerge === true) {
+    return "forge";
   }
+  // COMPAT(githubAutoMergeRpc): added in v0.1.106, remove after 2026-12-28 once
+  // all supported clients use checkout.forge.set_auto_merge.*.
+  if (session?.serverInfo?.features?.checkoutGithubSetAutoMerge === true) {
+    return "github";
+  }
+  throw new Error("Update the host to use auto-merge actions.");
 }
 
 function setStatus(
@@ -89,134 +84,11 @@ function invalidateCheckoutGitQueries(serverId: string, cwd: string) {
   return invalidateCheckoutGitQueriesForClient(appQueryClient, { serverId, cwd });
 }
 
-function invalidateWorktreeList() {
-  void appQueryClient.invalidateQueries({
-    predicate: (query) =>
-      Array.isArray(query.queryKey) && query.queryKey[0] === "paseoWorktreeList",
-  });
-  void appQueryClient.invalidateQueries({
-    predicate: (query) =>
-      Array.isArray(query.queryKey) && query.queryKey[0] === "sidebarPaseoWorktreeList",
-  });
-}
-
-function removeWorktreeFromCachedLists(input: { serverId: string; worktreePath: string }): void {
-  const serverId = input.serverId.trim();
-  const worktreePath = input.worktreePath.trim();
-  if (!serverId || !worktreePath) {
-    return;
-  }
-
-  const removeFromList = (current: unknown) => {
-    if (!Array.isArray(current)) {
-      return current;
-    }
-    const filtered = current.filter((entry) => entry?.worktreePath !== worktreePath);
-    return filtered.length === current.length ? current : filtered;
-  };
-
-  appQueryClient.setQueriesData(
-    {
-      predicate: (query) =>
-        Array.isArray(query.queryKey) &&
-        query.queryKey[0] === "paseoWorktreeList" &&
-        query.queryKey[1] === serverId,
-    },
-    removeFromList,
-  );
-
-  appQueryClient.setQueriesData(
-    {
-      predicate: (query) =>
-        Array.isArray(query.queryKey) &&
-        query.queryKey[0] === "sidebarPaseoWorktreeList" &&
-        query.queryKey[1] === serverId,
-    },
-    removeFromList,
-  );
-}
-
-interface WorktreeArchiveSnapshot {
-  workspace: WorkspaceDescriptor | null;
-  worktreeLists: Array<[QueryKey, unknown]>;
-}
-
-function isWorktreeListQuery(input: { queryKey: QueryKey; serverId: string }): boolean {
-  return (
-    Array.isArray(input.queryKey) &&
-    (input.queryKey[0] === "paseoWorktreeList" ||
-      input.queryKey[0] === "sidebarPaseoWorktreeList") &&
-    input.queryKey[1] === input.serverId
-  );
-}
-
-function snapshotWorktreeArchiveState(input: {
-  serverId: string;
-  workspaceId: string | undefined;
-}): WorktreeArchiveSnapshot {
-  const workspaces = useSessionStore.getState().sessions[input.serverId]?.workspaces;
-  const workspaceKey = input.workspaceId
-    ? resolveWorkspaceMapKeyByIdentity({ workspaces, workspaceId: input.workspaceId })
-    : null;
-  return {
-    workspace: workspaceKey ? (workspaces?.get(workspaceKey) ?? null) : null,
-    worktreeLists: appQueryClient.getQueriesData({
-      predicate: (query) =>
-        isWorktreeListQuery({ queryKey: query.queryKey, serverId: input.serverId }),
-    }),
-  };
-}
-
-function removeWorktreeFromSessionStore(input: { serverId: string; workspaceId: string }): void {
-  const serverId = input.serverId.trim();
-  const workspaceId = input.workspaceId.trim();
-  if (!serverId || !workspaceId) {
-    return;
-  }
-  useSessionStore.getState().removeWorkspace(serverId, workspaceId);
-}
-
-function restoreWorktreeArchiveState(input: {
-  serverId: string;
-  snapshot: WorktreeArchiveSnapshot;
-}): void {
-  if (input.snapshot.workspace) {
-    useSessionStore.getState().mergeWorkspaces(input.serverId, [input.snapshot.workspace]);
-  }
-
-  for (const [queryKey, data] of input.snapshot.worktreeLists) {
-    appQueryClient.setQueryData(queryKey, data);
-  }
-}
-
-function purgeArchivedWorkspaceState(input: { serverId: string; workspaceId: string }): void {
-  const serverId = input.serverId.trim();
-  const workspaceId = input.workspaceId.trim();
-  if (!serverId || !workspaceId) {
-    return;
-  }
-  const workspaceKey = buildWorkspaceTabPersistenceKey({ serverId, workspaceId });
-  if (workspaceKey) {
-    useWorkspaceLayoutStore.getState().purgeWorkspace(workspaceKey);
-  }
-  useWorkspaceTabsStore.getState().purgeWorkspace({ serverId, workspaceId });
-}
-
 const successTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const inFlight = new Map<string, Promise<unknown>>();
 
 function inFlightKey(key: CheckoutKey, actionId: CheckoutGitAsyncActionId): string {
   return `${key}::${actionId}`;
-}
-
-export function isLocalWorktreeArchivePending(input: { serverId: string; cwd: string }): boolean {
-  return (
-    useCheckoutGitActionsStore.getState().getStatus({
-      serverId: input.serverId,
-      cwd: input.cwd,
-      actionId: "archive-worktree",
-    }) === "pending"
-  );
 }
 
 interface CheckoutGitActionsStoreState {
@@ -247,12 +119,6 @@ interface CheckoutGitActionsStoreState {
   disablePrAutoMerge: (params: { serverId: string; cwd: string }) => Promise<void>;
   mergeBranch: (params: { serverId: string; cwd: string; baseRef: string }) => Promise<void>;
   mergeFromBase: (params: { serverId: string; cwd: string; baseRef: string }) => Promise<void>;
-  archiveWorktree: (params: {
-    serverId: string;
-    cwd: string;
-    worktreePath: string;
-    workspaceId?: string;
-  }) => Promise<void>;
 }
 
 async function runCheckoutAction({
@@ -423,14 +289,19 @@ export const useCheckoutGitActionsStore = create<CheckoutGitActionsStoreState>()
   },
 
   enablePrAutoMerge: async ({ serverId, cwd, method }) => {
-    assertGitHubAutoMergeActionsSupported(serverId);
+    const rpc = resolveAutoMergeActionsRpc(serverId);
     await runCheckoutAction({
       serverId,
       cwd,
       actionId: `enable-pr-auto-merge-${method}`,
       run: async () => {
         const client = resolveClient(serverId);
-        const payload = await client.checkoutGithubSetAutoMerge(cwd, { enabled: true, method });
+        // COMPAT(githubAutoMergeRpc): added in v0.1.106, remove after 2026-12-28 once
+        // all supported clients use checkout.forge.set_auto_merge.*.
+        const payload =
+          rpc === "forge"
+            ? await client.checkoutForgeSetAutoMerge(cwd, { enabled: true, method })
+            : await client.checkoutGithubSetAutoMerge(cwd, { enabled: true, method });
         if (payload.error) {
           throw new Error(payload.error.message);
         }
@@ -439,14 +310,19 @@ export const useCheckoutGitActionsStore = create<CheckoutGitActionsStoreState>()
   },
 
   disablePrAutoMerge: async ({ serverId, cwd }) => {
-    assertGitHubAutoMergeActionsSupported(serverId);
+    const rpc = resolveAutoMergeActionsRpc(serverId);
     await runCheckoutAction({
       serverId,
       cwd,
       actionId: "disable-pr-auto-merge",
       run: async () => {
         const client = resolveClient(serverId);
-        const payload = await client.checkoutGithubSetAutoMerge(cwd, { enabled: false });
+        // COMPAT(githubAutoMergeRpc): added in v0.1.106, remove after 2026-12-28 once
+        // all supported clients use checkout.forge.set_auto_merge.*.
+        const payload =
+          rpc === "forge"
+            ? await client.checkoutForgeSetAutoMerge(cwd, { enabled: false })
+            : await client.checkoutGithubSetAutoMerge(cwd, { enabled: false });
         if (payload.error) {
           throw new Error(payload.error.message);
         }
@@ -486,50 +362,6 @@ export const useCheckoutGitActionsStore = create<CheckoutGitActionsStoreState>()
         });
         if (payload.error) {
           throw new Error(payload.error.message);
-        }
-      },
-    });
-  },
-
-  archiveWorktree: async ({ serverId, cwd, worktreePath, workspaceId }) => {
-    await runCheckoutAction({
-      serverId,
-      cwd,
-      actionId: "archive-worktree",
-      run: async () => {
-        const client = resolveClient(serverId);
-        const snapshot = snapshotWorktreeArchiveState({ serverId, workspaceId });
-        // The server archive is keyed by worktreePath and must always run. The
-        // optimistic client-side updates are keyed by workspace id, so they only
-        // apply when the caller passes the workspace id and it resolves in the
-        // local store.
-        const workspace = snapshot.workspace;
-        if (workspace) {
-          markWorkspaceArchivePending({
-            serverId,
-            workspaceId: workspace.id,
-          });
-          removeWorktreeFromSessionStore({ serverId, workspaceId: workspace.id });
-        }
-        removeWorktreeFromCachedLists({ serverId, worktreePath });
-        try {
-          const payload = await client.archivePaseoWorktree({
-            worktreePath,
-            ...(workspaceId !== undefined ? { workspaceId } : {}),
-          });
-          if (payload.error) {
-            throw new Error(payload.error.message);
-          }
-        } catch (error) {
-          if (workspace) {
-            clearWorkspaceArchivePending({ serverId, workspaceId: workspace.id });
-          }
-          restoreWorktreeArchiveState({ serverId, snapshot });
-          throw error;
-        }
-        invalidateWorktreeList();
-        if (workspace) {
-          purgeArchivedWorkspaceState({ serverId, workspaceId: workspace.id });
         }
       },
     });

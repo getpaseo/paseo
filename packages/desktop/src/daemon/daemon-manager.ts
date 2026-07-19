@@ -39,6 +39,8 @@ import {
 import type { DesktopSettings } from "../settings/desktop-settings.js";
 import { getDesktopSettingsStore } from "../settings/desktop-settings-electron.js";
 import { isRunningUnderARM64Translation } from "../system/arm64-translation.js";
+import { getDesktopAppLogs } from "../diagnostics/app-logs.js";
+import { tailFile } from "../diagnostics/tail-file.js";
 
 const DAEMON_LOG_FILENAME = "daemon.log";
 const STARTUP_POLL_INTERVAL_MS = 200;
@@ -209,15 +211,6 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
-}
-
-function tailFile(filePath: string, lines = 50): string {
-  try {
-    const content = readFileSync(filePath, "utf-8");
-    return content.split("\n").filter(Boolean).slice(-lines).join("\n");
-  } catch {
-    return "";
-  }
 }
 
 function logDesktopDaemonLifecycle(message: string, details?: Record<string, unknown>): void {
@@ -392,10 +385,12 @@ async function startDaemon(): Promise<DesktopDaemonStatus> {
   }
 
   const daemonRunner = resolveDaemonRunnerEntrypoint();
+  const reclaimStalePidLock =
+    current.status === "errored" && current.desktopManaged && current.error === null;
   const invocation = createNodeEntrypointInvocation({
     entrypoint: daemonRunner,
     argvMode: "node-script",
-    args: [],
+    args: reclaimStalePidLock ? ["--reclaim-stale-pid-lock"] : [],
     baseEnv: process.env,
   });
 
@@ -574,6 +569,7 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
     stop_desktop_daemon: (args) => stopDesktopDaemon(parseDesktopDaemonStopReason(args)),
     restart_desktop_daemon: () => restartDaemon(),
     desktop_daemon_logs: () => getDaemonLogs(),
+    desktop_app_logs: () => getDesktopAppLogs(),
     desktop_daemon_pairing: () => getDaemonPairing(),
     desktop_get_system_idle_time: () => powerMonitor.getSystemIdleTime() * 1000,
     cli_daemon_status: () => getCliDaemonStatus(),

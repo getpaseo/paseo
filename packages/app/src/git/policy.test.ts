@@ -3,11 +3,34 @@ import { CheckoutPrStatusSchema } from "@getpaseo/protocol/messages";
 import { i18n } from "@/i18n/i18next";
 
 import { buildGitActions, type BuildGitActionsInput } from "./policy";
+import { deriveMergeCapability, type ForgeSpecificStatusFacts } from "./merge-capability";
 
-function githubStatus(
-  overrides: Partial<NonNullable<BuildGitActionsInput["pullRequestGithub"]>> = {},
-): NonNullable<BuildGitActionsInput["pullRequestGithub"]> {
+type GithubMergeFactsFixture = ForgeSpecificStatusFacts & {
+  forge: "github";
+  mergeStateStatus: string | null;
+  autoMergeRequest: {
+    enabledAt: string | null;
+    mergeMethod: string | null;
+    enabledBy: string | null;
+  } | null;
+  viewerCanEnableAutoMerge: boolean;
+  viewerCanDisableAutoMerge: boolean;
+  viewerCanMergeAsAdmin: boolean;
+  viewerCanUpdateBranch: boolean;
+  repository: {
+    autoMergeAllowed: boolean;
+    mergeCommitAllowed: boolean;
+    squashMergeAllowed: boolean;
+    rebaseMergeAllowed: boolean;
+    viewerDefaultMergeMethod: string | null;
+  };
+  isMergeQueueEnabled: boolean;
+  isInMergeQueue: boolean;
+};
+
+function githubStatus(overrides: Partial<GithubMergeFactsFixture> = {}): GithubMergeFactsFixture {
   return {
+    forge: "github",
     mergeStateStatus: "CLEAN",
     autoMergeRequest: null,
     viewerCanEnableAutoMerge: false,
@@ -27,10 +50,17 @@ function githubStatus(
   };
 }
 
-function createInput(overrides: Partial<BuildGitActionsInput> = {}): BuildGitActionsInput {
+function createInput(
+  overrides: Partial<Omit<BuildGitActionsInput, "mergeCapability">> & {
+    pullRequestGithub?: unknown;
+  } = {},
+): BuildGitActionsInput {
+  const { pullRequestGithub = null, ...rest } = overrides;
   return {
     isGit: true,
     githubFeaturesEnabled: true,
+    forgeBrandLabel: "GitHub",
+    forgeChangeRequestNoun: "PR",
     githubAutoMergeActionsEnabled: true,
     hasPullRequest: false,
     pullRequestUrl: null,
@@ -38,7 +68,7 @@ function createInput(overrides: Partial<BuildGitActionsInput> = {}): BuildGitAct
     pullRequestIsDraft: false,
     pullRequestIsMerged: false,
     pullRequestMergeable: "UNKNOWN",
-    pullRequestGithub: null,
+    mergeCapability: deriveMergeCapability(pullRequestGithub),
     hasRemote: false,
     isPaseoOwnedWorktree: false,
     isOnBaseBranch: true,
@@ -122,13 +152,13 @@ function createInput(overrides: Partial<BuildGitActionsInput> = {}): BuildGitAct
         status: "idle",
         handler: () => undefined,
       },
-      "archive-worktree": {
+      "archive-workspace": {
         disabled: false,
         status: "idle",
         handler: () => undefined,
       },
     },
-    ...overrides,
+    ...rest,
   };
 }
 
@@ -140,7 +170,13 @@ describe("git-actions-policy", () => {
   it("shows only remote sync actions on the base branch", () => {
     const actions = buildGitActions(createInput({ hasRemote: true }));
 
-    expect(actions.secondary.map((action) => action.id)).toEqual(["pull", "push", "pull-and-push"]);
+    expect(actions.primary).toBeNull();
+    expect(actions.secondary.map((action) => action.id)).toEqual([
+      "pull",
+      "push",
+      "pull-and-push",
+      "archive-workspace",
+    ]);
   });
 
   it("prioritizes pull when the branch is behind origin", () => {
@@ -272,6 +308,7 @@ describe("git-actions-policy", () => {
       "merge-pr-squash",
       "merge-pr-merge",
       "merge-pr-rebase",
+      "archive-workspace",
     ]);
     expect(
       actions.secondary.some((action) => action.id === "pr" && action.label === "View PR"),
@@ -337,6 +374,28 @@ describe("git-actions-policy", () => {
     });
   });
 
+  it("explains why pull-and-push is unavailable when there is nothing to pull first", () => {
+    const actions = buildGitActions(
+      createInput({ hasRemote: true, aheadOfOrigin: 1, behindOfOrigin: 0 }),
+    );
+    const action = actions.secondary.find((entry) => entry.id === "pull-and-push");
+
+    expect(action?.unavailableMessage).toBe(
+      "Pull and push isn't available because there are no incoming changes to pull first",
+    );
+  });
+
+  it("explains why pull-and-push is unavailable when there is nothing to push after pulling", () => {
+    const actions = buildGitActions(
+      createInput({ hasRemote: true, aheadOfOrigin: 0, behindOfOrigin: 1 }),
+    );
+    const action = actions.secondary.find((entry) => entry.id === "pull-and-push");
+
+    expect(action?.unavailableMessage).toBe(
+      "Pull and push isn't available because there is nothing new to send after pulling",
+    );
+  });
+
   it("explains why pull-and-push is unavailable when there are uncommitted changes", () => {
     const actions = buildGitActions(
       createInput({
@@ -352,12 +411,33 @@ describe("git-actions-policy", () => {
     );
   });
 
-  it("only shows archive worktree for paseo worktrees", () => {
-    const hidden = buildGitActions(createInput());
-    const shown = buildGitActions(createInput({ isPaseoOwnedWorktree: true }));
+  it("hides Git actions for a non-Git workspace", () => {
+    const directory = buildGitActions(createInput({ isGit: false }));
 
-    expect(hidden.secondary.some((action) => action.id === "archive-worktree")).toBe(false);
-    expect(shown.secondary.some((action) => action.id === "archive-worktree")).toBe(true);
+    expect(directory).toEqual({ primary: null, secondary: [], menu: [] });
+  });
+
+  it("offers archive workspace for Git checkouts and worktrees", () => {
+    const localCheckout = buildGitActions(createInput({ hasUncommittedChanges: true }));
+    const worktree = buildGitActions(
+      createInput({ hasUncommittedChanges: true, isPaseoOwnedWorktree: true }),
+    );
+
+    expect(localCheckout.secondary.some((action) => action.id === "archive-workspace")).toBe(true);
+    expect(worktree.secondary.some((action) => action.id === "archive-workspace")).toBe(true);
+  });
+
+  it("does not promote archive to primary for an idle regular Git checkout", () => {
+    const actions = buildGitActions(createInput());
+
+    expect(actions.primary).toBeNull();
+    expect(actions.secondary.some((action) => action.id === "archive-workspace")).toBe(true);
+  });
+
+  it("still promotes archive as primary for an idle Paseo-owned worktree", () => {
+    const actions = buildGitActions(createInput({ isPaseoOwnedWorktree: true }));
+
+    expect(actions.primary).toMatchObject({ id: "archive-workspace" });
   });
 
   it("promotes squash-and-merge when an open PR is mergeable and the branch is in sync", () => {
@@ -479,6 +559,44 @@ describe("git-actions-policy", () => {
     });
   });
 
+  it("uses the forge change-request noun in unavailable no-forge copy", () => {
+    const createActions = buildGitActions(
+      createInput({
+        githubFeaturesEnabled: false,
+        forgeBrandLabel: "GitLab",
+        forgeChangeRequestNoun: "MR",
+        hasRemote: true,
+        isOnBaseBranch: false,
+        aheadCount: 1,
+      }),
+    );
+    const viewActions = buildGitActions(
+      createInput({
+        githubFeaturesEnabled: false,
+        forgeBrandLabel: "GitLab",
+        forgeChangeRequestNoun: "MR",
+        hasRemote: true,
+        isOnBaseBranch: false,
+        hasPullRequest: true,
+        pullRequestUrl: "https://gitlab.com/example/repo/-/merge_requests/1",
+      }),
+    );
+
+    const createPrAction = [...createActions.secondary, ...createActions.menu].find(
+      (action) => action.id === "pr",
+    );
+    const viewPrAction = [viewActions.primary, ...viewActions.secondary, ...viewActions.menu].find(
+      (action) => action?.id === "pr",
+    );
+
+    expect(createPrAction?.unavailableMessage).toBe(
+      "Create MR isn't available right now because GitLab isn't connected",
+    );
+    expect(viewPrAction?.unavailableMessage).toBe(
+      "View MR isn't available right now because GitLab isn't connected",
+    );
+  });
+
   it("uses local merge when merge is the stored ship default", () => {
     const actions = buildGitActions(
       createInput({
@@ -541,6 +659,7 @@ describe("git-actions-policy", () => {
       "merge-pr-squash",
       "merge-pr-merge",
       "merge-pr-rebase",
+      "archive-workspace",
     ]);
   });
 
@@ -697,12 +816,12 @@ describe("git-actions-policy", () => {
         pullRequestIsDraft: oldDaemonStatus.isDraft,
         pullRequestIsMerged: oldDaemonStatus.isMerged,
         pullRequestMergeable: oldDaemonStatus.mergeable,
-        pullRequestGithub: oldDaemonStatus.github,
+        pullRequestGithub: oldDaemonStatus.forgeSpecific,
         shipDefault: "pr",
       }),
     );
 
-    expect(oldDaemonStatus.github).toBeUndefined();
+    expect(oldDaemonStatus.forgeSpecific).toBeUndefined();
     expect(actions.primary).toMatchObject({
       id: "merge-pr-squash",
       label: "Merge PR (squash)",
@@ -717,6 +836,7 @@ describe("git-actions-policy", () => {
       "merge-pr-squash",
       "merge-pr-merge",
       "merge-pr-rebase",
+      "archive-workspace",
     ]);
   });
 
@@ -757,6 +877,7 @@ describe("git-actions-policy", () => {
       "merge-branch",
       "pr",
       "enable-pr-auto-merge-squash",
+      "archive-workspace",
     ]);
     expect(
       actions.secondary.some((action) =>
@@ -899,6 +1020,7 @@ describe("git-actions-policy", () => {
       "merge-branch",
       "pr",
       "merge-pr-merge",
+      "archive-workspace",
     ]);
   });
 
@@ -952,7 +1074,7 @@ describe("git-actions-policy", () => {
       .filter((action) => !action.startsGroup)
       .map((action) => action.id);
 
-    expect(groupStarters).toEqual(["merge-from-base", "merge-pr-squash", "archive-worktree"]);
+    expect(groupStarters).toEqual(["merge-from-base", "merge-pr-squash", "archive-workspace"]);
     expect(nonGroupStarters).toEqual([
       "pull",
       "push",

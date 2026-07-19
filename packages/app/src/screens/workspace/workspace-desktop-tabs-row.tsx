@@ -438,6 +438,8 @@ interface WorkspaceDesktopTabsRowProps {
   activeDragTabId?: string | null;
   tabDropPreviewIndex?: number | null;
   showPaneSplitActions?: boolean;
+  focusModeEnabled: boolean;
+  onExitFocusMode: () => void;
 }
 
 function getFallbackTabLabel(
@@ -758,15 +760,19 @@ export function WorkspaceDesktopTabsRow({
   activeDragTabId = null,
   tabDropPreviewIndex = null,
   showPaneSplitActions = true,
+  focusModeEnabled,
+  onExitFocusMode,
 }: WorkspaceDesktopTabsRowProps) {
   const { t } = useTranslation();
   const router = useRouter();
   const newTabKeys = useShortcutKeys("workspace-tab-new");
+  const focusModeKeys = useShortcutKeys("toggle-focus");
   const splitRightKeys = useShortcutKeys("workspace-pane-split-right");
   const splitDownKeys = useShortcutKeys("workspace-pane-split-down");
   const [tabsContainerWidth, setTabsContainerWidth] = useState<number>(0);
   const [tabsActionsWidth, setTabsActionsWidth] = useState<number>(0);
   const [inlineAddButtonWidth, setInlineAddButtonWidth] = useState<number>(0);
+  const [exitFocusModeWidth, setExitFocusModeWidth] = useState<number>(0);
 
   const handleTabsContainerLayout = useCallback((event: LayoutChangeEvent) => {
     updateMeasuredWidth(setTabsContainerWidth, event);
@@ -780,12 +786,18 @@ export function WorkspaceDesktopTabsRow({
     updateMeasuredWidth(setInlineAddButtonWidth, event);
   }, []);
 
+  const handleExitFocusModeLayout = useCallback((event: LayoutChangeEvent) => {
+    updateMeasuredWidth(setExitFocusModeWidth, event);
+  }, []);
+
   const layoutMetrics = useMemo(
     () => ({
       rowHorizontalInset: 0,
       actionsReservedWidth: Math.max(
         0,
-        tabsActionsWidth + (inlineAddButtonWidth || DEFAULT_INLINE_ADD_BUTTON_RESERVED_WIDTH),
+        tabsActionsWidth +
+          (inlineAddButtonWidth || DEFAULT_INLINE_ADD_BUTTON_RESERVED_WIDTH) +
+          (focusModeEnabled ? exitFocusModeWidth : 0),
       ),
       rowPaddingHorizontal: 0,
       tabGap: 0,
@@ -795,7 +807,7 @@ export function WorkspaceDesktopTabsRow({
       estimatedCharWidth: 7,
       closeButtonWidth: 22,
     }),
-    [inlineAddButtonWidth, tabsActionsWidth],
+    [exitFocusModeWidth, focusModeEnabled, inlineAddButtonWidth, tabsActionsWidth],
   );
 
   const fallbackTabLabels = useMemo(
@@ -968,6 +980,31 @@ export function WorkspaceDesktopTabsRow({
       testID="workspace-tabs-row"
       onLayout={handleTabsContainerLayout}
     >
+      {focusModeEnabled ? (
+        <View style={styles.exitFocusModeSlot} onLayout={handleExitFocusModeLayout}>
+          <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
+            <TooltipTrigger
+              testID="workspace-exit-focus-mode"
+              onPress={onExitFocusMode}
+              accessibilityRole="button"
+              accessibilityLabel={t("workspace.tabs.actions.exitFocusMode")}
+              style={inlineAddActionButtonStyle}
+            >
+              <ThemedX size={14} uniProps={mutedColorMapping} />
+            </TooltipTrigger>
+            <TooltipContent side="bottom" align="center" offset={8}>
+              <View style={styles.newTabTooltipRow}>
+                <Text style={styles.newTabTooltipText}>
+                  {t("workspace.tabs.actions.exitFocusMode")}
+                </Text>
+                {focusModeKeys ? (
+                  <Shortcut chord={focusModeKeys} style={styles.newTabTooltipShortcut} />
+                ) : null}
+              </View>
+            </TooltipContent>
+          </Tooltip>
+        </View>
+      ) : null}
       <ScrollView
         horizontal
         scrollEnabled={layout.requiresHorizontalScrollFallback}
@@ -1128,7 +1165,9 @@ function ResolvedDesktopTabChip({
 
         return (
           <View style={styles.tabSlot}>
-            {showDropIndicatorBefore ? <View style={TAB_DROP_INDICATOR_BEFORE_STYLE} /> : null}
+            {showDropIndicatorBefore ? (
+              <View style={[styles.tabDropIndicator, styles.tabDropIndicatorBefore]} />
+            ) : null}
             <TabChip
               tab={item.tab}
               isActive={item.isActive}
@@ -1147,7 +1186,9 @@ function ResolvedDesktopTabChip({
               onCloseTab={onCloseTab}
               dragHandleProps={dragHandleProps}
             />
-            {showDropIndicatorAfter ? <View style={TAB_DROP_INDICATOR_AFTER_STYLE} /> : null}
+            {showDropIndicatorAfter ? (
+              <View style={[styles.tabDropIndicator, styles.tabDropIndicatorAfter]} />
+            ) : null}
           </View>
         );
       }}
@@ -1183,6 +1224,14 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: theme.spacing[2],
+  },
+  exitFocusModeSlot: {
+    alignSelf: "stretch",
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: theme.spacing[1],
+    borderRightWidth: 1,
+    borderRightColor: theme.colors.border,
   },
   inlineAddButton: {
     flexDirection: "row",
@@ -1330,6 +1379,3 @@ const styles = StyleSheet.create((theme) => ({
     height: 14,
   },
 }));
-
-const TAB_DROP_INDICATOR_BEFORE_STYLE = [styles.tabDropIndicator, styles.tabDropIndicatorBefore];
-const TAB_DROP_INDICATOR_AFTER_STYLE = [styles.tabDropIndicator, styles.tabDropIndicatorAfter];

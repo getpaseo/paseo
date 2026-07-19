@@ -260,6 +260,25 @@ describe("combined model selector data", () => {
     ).toBe("Default");
   });
 
+  it("keeps a stored selected model visible when current snapshot rows no longer offer it", () => {
+    const providers = buildSelectableProviderSelectorProviders([
+      snapshotEntry({
+        provider: "codex",
+        label: "Codex",
+        models: [{ provider: "codex", id: "gpt-5.4", label: "GPT-5.4", isDefault: true }],
+      }),
+    ]);
+
+    expect(
+      resolveSelectedModelLabel({
+        providers,
+        selectedProvider: "codex",
+        selectedModel: "gpt-5.3",
+        isLoading: false,
+      }),
+    ).toBe("gpt-5.3");
+  });
+
   it("keeps provider snapshot errors visible in the selected trigger label", () => {
     const providers = buildSelectableProviderSelectorProviders([
       snapshotEntry({

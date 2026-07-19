@@ -71,6 +71,7 @@ export interface DesktopBridgeConfig {
    * false so tests that only assert copy don't inadvertently trigger state changes.
    */
   confirmShouldAccept?: boolean;
+  dialogOpenResult?: string | string[] | null;
   editorTargets?: DesktopEditorTargetConfig[];
   editorRecordPath?: string;
 }
@@ -79,13 +80,15 @@ interface DesktopEditorTargetConfig {
   id: string;
   label: string;
   kind: "editor" | "file-manager";
+  icon: { kind: "image"; dataUrl: string } | { kind: "symbol"; name: "folder" | "terminal" };
 }
 
 interface DesktopEditorOpenRecord {
   editorId: string;
-  path: string;
-  cwd?: string;
-  mode?: "open" | "reveal";
+  workspacePath: string;
+  filePath?: string;
+  line?: number;
+  column?: number;
 }
 
 export interface ConfirmDialogCall {
@@ -96,6 +99,7 @@ export interface ConfirmDialogCall {
 declare global {
   interface Window {
     __capturedDialogCall: ConfirmDialogCall | undefined;
+    __capturedDialogOpenCalls: Array<Record<string, unknown> | undefined>;
     __recordDesktopEditorOpen?: (input: DesktopEditorOpenRecord) => Promise<void>;
   }
 }
@@ -157,6 +161,7 @@ export async function injectDesktopBridge(page: Page, config: DesktopBridgeConfi
       invoke: (command: string, args?: Record<string, unknown>) => Promise<unknown>;
       dialog: {
         ask: (message: string, options?: Record<string, unknown>) => Promise<boolean>;
+        open: (options?: Record<string, unknown>) => Promise<string | string[] | null>;
       };
       getPendingOpenProject: () => Promise<string | null>;
       events: { on: () => Promise<() => void> };
@@ -249,6 +254,10 @@ export async function injectDesktopBridge(page: Page, config: DesktopBridgeConfi
           };
           return cfg.confirmShouldAccept ?? false;
         },
+        open: async (options?: Record<string, unknown>) => {
+          window.__capturedDialogOpenCalls.push(options);
+          return cfg.dialogOpenResult ?? null;
+        },
       },
       getPendingOpenProject: async () => null,
       events: { on: async () => () => undefined },
@@ -263,8 +272,16 @@ export async function injectDesktopBridge(page: Page, config: DesktopBridgeConfi
       };
     }
 
+    window.__capturedDialogOpenCalls = [];
     (window as unknown as { paseoDesktop: unknown }).paseoDesktop = desktopBridge;
   }, config);
+}
+
+export async function waitForDirectoryDialog(
+  page: Page,
+): Promise<Record<string, unknown> | undefined> {
+  await expect.poll(() => page.evaluate(() => window.__capturedDialogOpenCalls.length)).toBe(1);
+  return page.evaluate(() => window.__capturedDialogOpenCalls[0]);
 }
 
 export async function openDesktopSettings(page: Page, serverId: string): Promise<void> {

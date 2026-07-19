@@ -12,11 +12,11 @@ import type {
   UpdateScheduleOptions,
 } from "@getpaseo/client/internal/daemon-client";
 import type { ScheduleSummary } from "@getpaseo/protocol/schedule/types";
-import { schedulesQueryBaseKey } from "@/hooks/use-schedules";
 import type {
   AggregatedSchedule,
-  FetchAggregatedSchedulesResult,
+  FetchAggregatedSchedulesState,
 } from "@/schedules/aggregated-schedules";
+import { schedulesQueryBaseKey } from "@/schedules/aggregated-schedules";
 import { useSessionStore } from "@/stores/session-store";
 
 export type CreateScheduleInput = Omit<CreateScheduleOptions, "requestId">;
@@ -38,7 +38,17 @@ export interface UseScheduleMutationsResult {
 }
 
 interface ScheduleListSnapshot {
-  previous: Array<[QueryKey, FetchAggregatedSchedulesResult | undefined]>;
+  previous: Array<[QueryKey, FetchAggregatedSchedulesState | undefined]>;
+}
+
+export function updateAggregatedSchedulesData(
+  current: FetchAggregatedSchedulesState | undefined,
+  updateSchedules: (schedules: AggregatedSchedule[]) => AggregatedSchedule[],
+): FetchAggregatedSchedulesState | undefined {
+  if (!current || current.status !== "loaded") {
+    return current;
+  }
+  return { ...current, data: updateSchedules(current.data) };
 }
 
 function requireClient(serverId: string, unavailableMessage: string): DaemonClient {
@@ -51,7 +61,7 @@ function requireClient(serverId: string, unavailableMessage: string): DaemonClie
 
 function snapshotSchedules(queryClient: QueryClient): ScheduleListSnapshot {
   return {
-    previous: queryClient.getQueriesData<FetchAggregatedSchedulesResult>({
+    previous: queryClient.getQueriesData<FetchAggregatedSchedulesState>({
       queryKey: schedulesQueryBaseKey,
     }),
   };
@@ -67,14 +77,9 @@ function updateSchedulesData(
   queryClient: QueryClient,
   updateSchedules: (schedules: AggregatedSchedule[]) => AggregatedSchedule[],
 ): void {
-  queryClient.setQueriesData<FetchAggregatedSchedulesResult>(
+  queryClient.setQueriesData<FetchAggregatedSchedulesState>(
     { queryKey: schedulesQueryBaseKey },
-    (current) => {
-      if (!current) {
-        return current;
-      }
-      return { ...current, schedules: updateSchedules(current.schedules) };
-    },
+    (current) => updateAggregatedSchedulesData(current, updateSchedules),
   );
 }
 

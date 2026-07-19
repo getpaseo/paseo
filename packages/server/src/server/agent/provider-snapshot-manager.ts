@@ -27,6 +27,7 @@ import {
   shutdownAgentClients,
   type ProviderDefinition,
 } from "./provider-registry.js";
+import { BUILTIN_PROVIDER_IDS } from "@getpaseo/protocol/provider-manifest";
 import { applyMutableProviderConfigToOverrides } from "../daemon-config-store.js";
 import {
   formatProviderDiagnostic,
@@ -64,6 +65,22 @@ function resolveDiagnosticTimeoutMs(option: number | undefined, refreshTimeoutMs
   return Math.max(refreshTimeoutMs, DEFAULT_DIAGNOSTIC_TIMEOUT_MS);
 }
 
+function omitProviderOverrides(
+  overrides: Record<string, ProviderOverride> | undefined,
+  providers: readonly string[],
+): Record<string, ProviderOverride> | undefined {
+  if (!overrides || providers.length === 0) {
+    return overrides;
+  }
+
+  const nextOverrides = { ...overrides };
+  for (const provider of providers) {
+    delete nextOverrides[provider];
+  }
+
+  return Object.keys(nextOverrides).length > 0 ? nextOverrides : undefined;
+}
+
 type ProviderSnapshotChangeListener = (entries: ProviderSnapshotEntry[], cwd: string) => void;
 
 export interface ProviderSnapshotManagerOptions {
@@ -92,6 +109,10 @@ interface ProviderSnapshotReadOptions {
   cwd?: string | null;
   providers?: AgentProvider[];
   wait?: boolean;
+}
+
+interface ApplyMutableProviderConfigOptions {
+  removeProviders?: readonly string[];
 }
 
 interface ProviderSnapshotProviderOptions {
@@ -163,7 +184,7 @@ export class ProviderSnapshotManager {
   private readonly extraClients: Partial<Record<AgentProvider, AgentClient>>;
   private runtimeSettings: AgentProviderRuntimeSettingsMap | undefined;
   private providerOverrides: Record<string, ProviderOverride> | undefined;
-  private readonly baseProviderOverrides: Record<string, ProviderOverride> | undefined;
+  private baseProviderOverrides: Record<string, ProviderOverride> | undefined;
   private providerRegistry: Record<AgentProvider, ProviderDefinition>;
   private providerClients: Record<AgentProvider, AgentClient>;
 
@@ -369,7 +390,12 @@ export class ProviderSnapshotManager {
 
   applyMutableProviderConfig(
     mutableProviders: MutableDaemonConfig["providers"] | undefined,
+    options: ApplyMutableProviderConfigOptions = {},
   ): AgentManagerProviderState {
+    this.baseProviderOverrides = omitProviderOverrides(
+      this.baseProviderOverrides,
+      options.removeProviders ?? [],
+    );
     this.providerOverrides = applyMutableProviderConfigToOverrides(
       this.baseProviderOverrides,
       mutableProviders,
@@ -503,6 +529,7 @@ export class ProviderSnapshotManager {
         provider,
         status: "error",
         enabled: definition.enabled,
+        source: this.getProviderSource(provider),
         label: definition.label,
         description: definition.description,
         defaultModeId: definition.defaultModeId,
@@ -536,6 +563,11 @@ export class ProviderSnapshotManager {
     }
   }
 
+  private getProviderSource(provider: AgentProvider): ProviderSnapshotEntry["source"] {
+    const isBuiltin = BUILTIN_PROVIDER_IDS.includes(provider);
+    return !isBuiltin && this.providerOverrides?.[provider]?.extends ? "custom" : "builtin";
+  }
+
   private createLoadingEntries(): Map<AgentProvider, ProviderSnapshotEntry> {
     const entries = new Map<AgentProvider, ProviderSnapshotEntry>();
     for (const provider of this.getProviderIds()) {
@@ -544,6 +576,7 @@ export class ProviderSnapshotManager {
         provider,
         status: "loading",
         enabled: definition?.enabled ?? true,
+        source: this.getProviderSource(provider),
         label: definition?.label,
         description: definition?.description,
         defaultModeId: definition?.defaultModeId ?? null,
@@ -562,6 +595,7 @@ export class ProviderSnapshotManager {
       const metadata = {
         provider,
         enabled: definition?.enabled ?? true,
+        source: this.getProviderSource(provider),
         label: definition?.label,
         description: definition?.description,
         defaultModeId: definition?.defaultModeId ?? null,
@@ -725,6 +759,7 @@ export class ProviderSnapshotManager {
     const snapshot = this.getOrCreateSnapshot(snapshotCwd);
     const base = {
       provider,
+      source: this.getProviderSource(provider),
       label: definition.label,
       description: definition.description,
       defaultModeId: definition.defaultModeId,
@@ -764,6 +799,8 @@ export class ProviderSnapshotManager {
 
       setEntry({
         ...base,
+        defaultModeId:
+          catalog.defaultModeId === undefined ? definition.defaultModeId : catalog.defaultModeId,
         status: "ready",
         enabled: true,
         models: catalog.models,

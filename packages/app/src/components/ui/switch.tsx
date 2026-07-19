@@ -12,7 +12,9 @@ import Animated, {
   useDerivedValue,
   withTiming,
 } from "react-native-reanimated";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { createControlGeometry, switchGeometry } from "@/components/ui/control-geometry";
+import type { Theme } from "@/styles/theme";
 
 interface SwitchProps {
   value: boolean;
@@ -23,10 +25,53 @@ interface SwitchProps {
   style?: StyleProp<ViewStyle>;
 }
 
-const TRACK = { width: 34, height: 20 };
-const THUMB = 16;
-
 const TIMING = { duration: 180, easing: Easing.inOut(Easing.ease) };
+
+interface SwitchTrackProps {
+  value: boolean;
+  trackOffColor: string;
+  trackOnColor: string;
+  thumbOffColor: string;
+  thumbOnColor: string;
+}
+
+function SwitchTrack({
+  value,
+  trackOffColor,
+  trackOnColor,
+  thumbOffColor,
+  thumbOnColor,
+}: SwitchTrackProps) {
+  const progress = useDerivedValue(() => withTiming(value ? 1 : 0, TIMING));
+
+  const trackAnimatedStyle = useAnimatedStyle(() => ({
+    backgroundColor: interpolateColor(progress.value, [0, 1], [trackOffColor, trackOnColor]),
+  }));
+
+  const thumbAnimatedStyle = useAnimatedStyle(() => ({
+    backgroundColor: interpolateColor(progress.value, [0, 1], [thumbOffColor, thumbOnColor]),
+    transform: [{ translateX: progress.value * switchGeometry.thumbTravel }],
+  }));
+
+  const trackStyle = useMemo(() => [styles.switchTrack, trackAnimatedStyle], [trackAnimatedStyle]);
+  const thumbStyle = useMemo(
+    () => [styles.switchThumb, styles.thumb, thumbAnimatedStyle],
+    [thumbAnimatedStyle],
+  );
+
+  return (
+    <Animated.View style={trackStyle}>
+      <Animated.View style={thumbStyle} />
+    </Animated.View>
+  );
+}
+
+const ThemedSwitchTrack = withUnistyles(SwitchTrack, (theme: Theme) => ({
+  trackOffColor: theme.colors.surface3,
+  trackOnColor: theme.colors.accent,
+  thumbOffColor: theme.colors.palette.white,
+  thumbOnColor: theme.colors.accentForeground,
+}));
 
 export function Switch({
   value,
@@ -36,31 +81,6 @@ export function Switch({
   testID,
   style,
 }: SwitchProps) {
-  const { theme } = useUnistyles();
-  const track = TRACK;
-  const thumb = THUMB;
-  const padding = (track.height - thumb) / 2;
-  const thumbTravel = track.width - thumb - padding * 2;
-
-  const progress = useDerivedValue(() => withTiming(value ? 1 : 0, TIMING));
-
-  const trackAnimatedStyle = useAnimatedStyle(() => ({
-    backgroundColor: interpolateColor(
-      progress.value,
-      [0, 1],
-      [theme.colors.surface3, theme.colors.accent],
-    ),
-  }));
-
-  const thumbAnimatedStyle = useAnimatedStyle(() => ({
-    backgroundColor: interpolateColor(
-      progress.value,
-      [0, 1],
-      [theme.colors.palette.white, theme.colors.accentForeground],
-    ),
-    transform: [{ translateX: progress.value * thumbTravel }],
-  }));
-
   const handlePress = useCallback(
     (event: GestureResponderEvent) => {
       event.stopPropagation();
@@ -72,29 +92,8 @@ export function Switch({
 
   const accessibilityState = useMemo(() => ({ checked: value, disabled }), [value, disabled]);
   const pressableStyle = useMemo(
-    () => [disabled ? styles.disabled : null, style],
+    () => [styles.switchControl, disabled ? styles.disabled : null, style],
     [disabled, style],
-  );
-  const trackStyle = useMemo(
-    () => [
-      styles.track,
-      {
-        width: track.width,
-        height: track.height,
-        borderRadius: track.height / 2,
-        padding,
-      },
-      trackAnimatedStyle,
-    ],
-    [track.width, track.height, padding, trackAnimatedStyle],
-  );
-  const thumbStyle = useMemo(
-    () => [
-      styles.thumb,
-      { width: thumb, height: thumb, borderRadius: thumb / 2 },
-      thumbAnimatedStyle,
-    ],
-    [thumb, thumbAnimatedStyle],
   );
 
   return (
@@ -109,25 +108,39 @@ export function Switch({
       testID={testID}
       style={pressableStyle}
     >
-      <Animated.View style={trackStyle}>
-        <Animated.View style={thumbStyle} />
-      </Animated.View>
+      <ThemedSwitchTrack value={value} />
     </Pressable>
   );
 }
 
-const styles = StyleSheet.create((theme) => ({
-  track: {
-    justifyContent: "center",
-  },
-  thumb: {
-    shadowColor: "rgba(0, 0, 0, 0.25)",
-    shadowOffset: { width: 0, height: 1 },
-    shadowRadius: 2,
-    shadowOpacity: 1,
-    elevation: 2,
-  },
-  disabled: {
-    opacity: theme.opacity[50],
-  },
-}));
+const styles = StyleSheet.create((theme) => {
+  const geometry = createControlGeometry(theme);
+
+  return {
+    switchControl: {
+      ...geometry.switchControl,
+    },
+    switchTrack: {
+      width: switchGeometry.trackWidth,
+      height: switchGeometry.trackHeight,
+      borderRadius: switchGeometry.trackHeight / 2,
+      padding: (switchGeometry.trackHeight - switchGeometry.thumbSize) / 2,
+      justifyContent: "center",
+    },
+    switchThumb: {
+      width: switchGeometry.thumbSize,
+      height: switchGeometry.thumbSize,
+      borderRadius: switchGeometry.thumbSize / 2,
+    },
+    thumb: {
+      shadowColor: "rgba(0, 0, 0, 0.25)",
+      shadowOffset: { width: 0, height: 1 },
+      shadowRadius: 2,
+      shadowOpacity: 1,
+      elevation: 2,
+    },
+    disabled: {
+      opacity: theme.opacity[50],
+    },
+  };
+});

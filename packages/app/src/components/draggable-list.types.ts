@@ -34,7 +34,6 @@ export interface DraggableListProps<T> {
   ListHeaderComponent?: ReactElement | null;
   ListEmptyComponent?: ReactElement | null;
   showsVerticalScrollIndicator?: boolean;
-  enableDesktopWebScrollbar?: boolean;
   /** When false, disables internal scrolling (use outer list to scroll). */
   scrollEnabled?: boolean;
   /**

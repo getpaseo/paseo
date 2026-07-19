@@ -1,5 +1,5 @@
 import type { ToolCallTimelineItem } from "./agent-types.js";
-import { getPaseoToolLeafName, isPaseoToolName } from "@getpaseo/protocol/tool-name-normalization";
+import { getPaseoToolLeafName, isPaseoToolName } from "./tool-name-normalization.js";
 import { stripCwdPrefix } from "./path-utils.js";
 
 export type ToolCallDisplayInput = Pick<

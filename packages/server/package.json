@@ -1,6 +1,6 @@
 {
   "name": "@getpaseo/server",
-  "version": "0.1.103",
+  "version": "0.2.0-beta.1",
   "description": "Paseo backend server",
   "files": [
     "dist/server",
@@ -44,6 +44,7 @@
     "start": "node dist/scripts/supervisor-entrypoint.js",
     "typecheck": "tsgo -p tsconfig.server.typecheck.json --noEmit",
     "generate:config-schema": "tsx scripts/generate-config-schema.ts",
+    "measure:agent-tools": "tsx scripts/measure-agent-tools-context.ts",
     "speech:models": "tsx scripts/list-speech-models.ts",
     "speech:download": "tsx scripts/download-speech-models.ts",
     "speech:transcribe:local": "tsx scripts/transcribe-local-wav.ts",
@@ -59,16 +60,17 @@
     "test:e2e:all": "vitest run e2e.test.ts --maxWorkers=1",
     "test:e2e:real": "npm run test:integration:real",
     "test:e2e:local": "npm run test:integration:local",
+    "test:e2e:relay:live": "cross-env RUN_LIVE_RELAY_E2E=1 vitest run src/server/daemon-e2e/live-relay.real.e2e.test.ts --maxWorkers=1",
     "test:e2e:ui": "vitest --ui e2e.test.ts"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.17.1",
-    "@anthropic-ai/claude-agent-sdk": "^0.3.195",
+    "@anthropic-ai/claude-agent-sdk": "^0.3.214",
     "@anthropic-ai/sdk": "^0.104.2",
-    "@getpaseo/client": "0.1.103",
-    "@getpaseo/highlight": "0.1.103",
-    "@getpaseo/protocol": "0.1.103",
-    "@getpaseo/relay": "0.1.103",
+    "@getpaseo/client": "0.2.0-beta.1",
+    "@getpaseo/highlight": "0.2.0-beta.1",
+    "@getpaseo/protocol": "0.2.0-beta.1",
+    "@getpaseo/relay": "0.2.0-beta.1",
     "@isaacs/ttlcache": "^2.1.4",
     "@modelcontextprotocol/sdk": "^1.20.1",
     "@opencode-ai/sdk": "1.14.46",

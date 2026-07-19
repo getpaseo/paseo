@@ -33,7 +33,7 @@ interface PendingRequest {
   timer: NodeJS.Timeout;
 }
 
-type RequestHandler = (params: unknown) => unknown;
+type RequestHandler = (params: unknown, requestId: number) => unknown;
 type NotificationHandler = (method: string, params: unknown) => void;
 
 export interface CodexThreadForkParams {
@@ -321,7 +321,7 @@ export class CodexAppServerClient {
         this.traceRawEvent(request);
         const handler = this.requestHandlers.get(request.method);
         try {
-          const result = handler ? await handler(request.params) : {};
+          const result = handler ? await handler(request.params, request.id) : {};
           this.writeJsonRpcResponse({ id: request.id, result });
         } catch (error) {
           this.writeJsonRpcResponse({

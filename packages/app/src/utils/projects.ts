@@ -5,9 +5,11 @@ import { buildWorkspaceStructureProjects } from "@/projects/workspace-structure"
 export interface WorkspaceSummary {
   id: string;
   name: string;
+  title?: string;
   workspaceKind: WorkspaceDescriptor["workspaceKind"];
   status: WorkspaceDescriptor["status"];
   currentBranch: string | null;
+  archivingAt?: string;
 }
 
 export interface ProjectHostEntry {
@@ -116,12 +118,15 @@ function resolveHostRepoRoot(group: HostGroup): string {
 }
 
 function toWorkspaceSummary(workspace: WorkspaceDescriptor): WorkspaceSummary {
+  const currentBranch = workspace.gitRuntime?.currentBranch?.trim();
   return {
     id: workspace.id,
     name: workspace.name,
+    ...(workspace.title ? { title: workspace.title } : {}),
     workspaceKind: workspace.workspaceKind,
     status: workspace.status,
-    currentBranch: workspace.gitRuntime?.currentBranch ?? null,
+    currentBranch: currentBranch && currentBranch !== "HEAD" ? currentBranch : null,
+    ...(workspace.archivingAt ? { archivingAt: workspace.archivingAt } : {}),
   };
 }
 

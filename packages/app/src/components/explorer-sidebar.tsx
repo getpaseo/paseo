@@ -8,7 +8,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, { useAnimatedStyle, useSharedValue, runOnJS } from "react-native-reanimated";
-import { Gesture, GestureDetector } from "react-native-gesture-handler";
+import { Gesture } from "react-native-gesture-handler";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { X } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
@@ -22,27 +22,21 @@ import {
 } from "@/git/pull-request-panel";
 import { useCheckoutGitActionsStore } from "@/git/actions-store";
 import type { UsePrPaneDataResult } from "@/git/pull-request-panel/use-data";
-import {
-  usePanelStore,
-  selectIsFileExplorerOpen,
-  MIN_EXPLORER_SIDEBAR_WIDTH,
-  MAX_EXPLORER_SIDEBAR_WIDTH,
-  type ExplorerTab,
-} from "@/stores/panel-store";
-import { useExplorerSidebarAnimation } from "@/contexts/explorer-sidebar-animation-context";
-import { useSidebarAnimation } from "@/contexts/sidebar-animation-context";
+import { usePanelStore, selectIsFileExplorerOpen, type ExplorerTab } from "@/stores/panel-store";
 import { useToast } from "@/contexts/toast-context";
-import { canCloseRightSidebarGesture } from "@/utils/sidebar-animation-state";
+import { useCloseFileExplorerGesture } from "@/mobile-panels/gestures";
+import { MobilePanelOverlay } from "@/mobile-panels/presentation";
 import { HEADER_INNER_HEIGHT } from "@/constants/layout";
 import { GitDiffPane } from "@/git/diff-pane";
 import { FileExplorerPane } from "./file-explorer-pane";
 import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
-import { useWindowControlsPadding } from "@/utils/desktop-window";
+import { useHasOwnedWindowChromeObstruction, WindowChromeSafeArea } from "@/utils/desktop-window";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
-import { isWeb } from "@/constants/platform";
+import { RetainedPanelActivity } from "@/components/retained-panel";
+import { SidebarResizeHandle } from "@/components/sidebar-resize-handle";
 import { buildWorkspaceAttachmentScopeKey } from "@/attachments/workspace-attachments-store";
+import { resolveDesktopExplorerWidth } from "@/components/desktop-sidebar-layout";
 
-const MIN_CHAT_WIDTH = 400;
 function logExplorerSidebar(_event: string, _details: Record<string, unknown>): void {}
 
 interface ExplorerSidebarProps {
@@ -91,25 +85,11 @@ export function CompactExplorerSidebar({
     workspaceRoot,
     isGit,
   });
-  const closeTouchStartX = useSharedValue(0);
-  const closeTouchStartY = useSharedValue(0);
-  const { mobilePanelState, gestureAnimatingRef: mobilePanelGestureAnimatingRef } =
-    useSidebarAnimation();
   const { style: mobileKeyboardInsetStyle } = useKeyboardShiftStyle({
     mode: "padding",
     enabled: true,
   });
-  const {
-    translateX,
-    backdropOpacity,
-    windowWidth,
-    animateToOpen,
-    animateToClose,
-    overlayVisible,
-    isGesturing,
-    gestureAnimatingRef,
-    closeGestureRef,
-  } = useExplorerSidebarAnimation();
+  const { gesture: closeGesture } = useCloseFileExplorerGesture();
 
   const handleClose = useCallback(
     (reason: string) => {
@@ -122,184 +102,39 @@ export function CompactExplorerSidebar({
     [isOpen, showMobileAgent],
   );
 
-  const handleCloseFromGesture = useCallback(() => {
-    gestureAnimatingRef.current = true;
-    mobilePanelGestureAnimatingRef.current = true;
-    showMobileAgent();
-  }, [gestureAnimatingRef, mobilePanelGestureAnimatingRef, showMobileAgent]);
-
   const handleHeaderClose = useCallback(() => handleClose("header-close-button"), [handleClose]);
 
-  // Swipe gesture to close (swipe right on mobile)
-  const closeGesture = useMemo(
-    () =>
-      Gesture.Pan()
-        .withRef(closeGestureRef)
-        .enabled(true)
-        // Use manual activation so child views keep touch streams
-        // unless we detect an intentional right-swipe close.
-        .manualActivation(true)
-        .onTouchesDown((event) => {
-          const touch = event.changedTouches[0];
-          if (!touch) {
-            return;
-          }
-          closeTouchStartX.value = touch.absoluteX;
-          closeTouchStartY.value = touch.absoluteY;
-        })
-        .onTouchesMove((event, stateManager) => {
-          const touch = event.changedTouches[0];
-          if (!touch || event.numberOfTouches !== 1) {
-            stateManager.fail();
-            return;
-          }
-
-          const deltaX = touch.absoluteX - closeTouchStartX.value;
-          const deltaY = touch.absoluteY - closeTouchStartY.value;
-          const absDeltaX = Math.abs(deltaX);
-          const absDeltaY = Math.abs(deltaY);
-
-          if (!canCloseRightSidebarGesture(mobilePanelState.value)) {
-            stateManager.fail();
-            return;
-          }
-
-          // Fail quickly on clear leftward or vertical intent so child views keep control.
-          if (deltaX <= -10) {
-            stateManager.fail();
-            return;
-          }
-          if (absDeltaY > 10 && absDeltaY > absDeltaX) {
-            stateManager.fail();
-            return;
-          }
-
-          // Activate only on intentional rightward movement.
-          if (deltaX >= 15 && absDeltaX > absDeltaY) {
-            stateManager.activate();
-          }
-        })
-        .onStart(() => {
-          isGesturing.value = true;
-        })
-        .onUpdate((event) => {
-          // Right sidebar: swipe right to close (positive translationX)
-          const newTranslateX = Math.max(0, Math.min(windowWidth, event.translationX));
-          translateX.value = newTranslateX;
-          const progress = 1 - newTranslateX / windowWidth;
-          backdropOpacity.value = Math.max(0, Math.min(1, progress));
-        })
-        .onEnd((event) => {
-          isGesturing.value = false;
-          const shouldClose = event.translationX > windowWidth / 3 || event.velocityX > 500;
-          runOnJS(logExplorerSidebar)("closeGestureEnd", {
-            translationX: event.translationX,
-            velocityX: event.velocityX,
-            shouldClose,
-            windowWidth,
-          });
-          if (shouldClose) {
-            animateToClose();
-            runOnJS(handleCloseFromGesture)();
-          } else {
-            animateToOpen();
-          }
-        })
-        .onFinalize(() => {
-          isGesturing.value = false;
-        }),
-    [
-      windowWidth,
-      translateX,
-      backdropOpacity,
-      mobilePanelState,
-      animateToOpen,
-      animateToClose,
-      handleCloseFromGesture,
-      isGesturing,
-      closeGestureRef,
-      closeTouchStartX,
-      closeTouchStartY,
-    ],
-  );
-
-  const sidebarAnimatedStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: translateX.value }],
-  }));
-
-  const backdropAnimatedStyle = useAnimatedStyle(() => ({
-    opacity: backdropOpacity.value,
-  }));
-
-  const backdropCombinedStyle = useMemo(
-    () => [
-      explorerStaticStyles.backdrop,
-      backdropAnimatedStyle,
-      // pointerEvents is React-owned, not worklet-owned: Reanimated never
-      // touches it, so a stale animated-prop revert can't wedge an invisible
-      // tap-eating backdrop.
-      { pointerEvents: isOpen ? ("auto" as const) : ("none" as const) },
-    ],
-    [backdropAnimatedStyle, isOpen],
-  );
   const mobileSidebarStyle = useMemo(
     () => [
-      explorerStaticStyles.mobileSidebar,
       {
-        width: windowWidth,
         paddingTop: insets.top,
         backgroundColor: theme.colors.surfaceSidebar,
       },
-      sidebarAnimatedStyle,
       mobileKeyboardInsetStyle,
     ],
-    [
-      windowWidth,
-      insets.top,
-      theme.colors.surfaceSidebar,
-      sidebarAnimatedStyle,
-      mobileKeyboardInsetStyle,
-    ],
+    [insets.top, theme.colors.surfaceSidebar, mobileKeyboardInsetStyle],
   );
-  // display is React-owned on the plain wrapper View (no animated styles), so
-  // a hidden overlay stays hidden no matter what Reanimated's Fabric overlay
-  // reverts the panel transform to after a heavy commit (reanimated#9635).
-  const overlayStyle = useMemo(
-    () => [
-      StyleSheet.absoluteFillObject,
-      { display: overlayVisible ? ("flex" as const) : ("none" as const) },
-    ],
-    [overlayVisible],
-  );
-
-  // Mobile: full-screen overlay with gesture.
-  // On web, keep it interactive only while open so closed sidebars don't eat taps.
-  let overlayPointerEvents: "auto" | "none" | "box-none";
-  if (!isWeb) overlayPointerEvents = "box-none";
-  else if (isOpen) overlayPointerEvents = "auto";
-  else overlayPointerEvents = "none";
 
   return (
-    <View style={overlayStyle} pointerEvents={overlayPointerEvents}>
-      <Animated.View style={backdropCombinedStyle} />
-
-      <GestureDetector gesture={closeGesture} touchAction="pan-y">
-        <Animated.View style={mobileSidebarStyle} pointerEvents="auto">
-          <ExplorerSidebarContent
-            activeTab={explorerTab}
-            onTabPress={handleTabPress}
-            onClose={handleHeaderClose}
-            serverId={serverId}
-            workspaceId={workspaceId}
-            workspaceRoot={workspaceRoot}
-            isGit={isGit}
-            isMobile
-            isOpen={isOpen}
-            onOpenFile={onOpenFile}
-          />
-        </Animated.View>
-      </GestureDetector>
-    </View>
+    <RetainedPanelActivity active={isOpen}>
+      <MobilePanelOverlay
+        panel="file-explorer"
+        closeGesture={closeGesture}
+        panelStyle={mobileSidebarStyle}
+      >
+        <ExplorerSidebarContent
+          activeTab={explorerTab}
+          onTabPress={handleTabPress}
+          onClose={handleHeaderClose}
+          serverId={serverId}
+          workspaceId={workspaceId}
+          workspaceRoot={workspaceRoot}
+          isGit={isGit}
+          isOpen={isOpen}
+          onOpenFile={onOpenFile}
+        />
+      </MobilePanelOverlay>
+    </RetainedPanelActivity>
   );
 }
 
@@ -321,18 +156,16 @@ export function ExplorerSidebar({
     isGit,
   });
   const { width: viewportWidth } = useWindowDimensions();
-  const startWidthRef = useRef(explorerWidth);
-  const resizeWidth = useSharedValue(explorerWidth);
+  const visibleExplorerWidth = resolveDesktopExplorerWidth({
+    requestedWidth: explorerWidth,
+    viewportWidth,
+  });
+  const startWidthRef = useRef(visibleExplorerWidth);
+  const resizeWidth = useSharedValue(visibleExplorerWidth);
 
   useEffect(() => {
-    const maxWidth = Math.max(
-      MIN_EXPLORER_SIDEBAR_WIDTH,
-      Math.min(MAX_EXPLORER_SIDEBAR_WIDTH, viewportWidth - MIN_CHAT_WIDTH),
-    );
-    if (explorerWidth > maxWidth) {
-      setExplorerWidth(maxWidth);
-    }
-  }, [explorerWidth, setExplorerWidth, viewportWidth]);
+    resizeWidth.value = visibleExplorerWidth;
+  }, [resizeWidth, visibleExplorerWidth]);
 
   const handleDesktopClose = useCallback(() => {
     logExplorerSidebar("handleClose", {
@@ -348,22 +181,20 @@ export function ExplorerSidebar({
         .enabled(true)
         .hitSlop({ left: 8, right: 8, top: 0, bottom: 0 })
         .onStart(() => {
-          startWidthRef.current = explorerWidth;
-          resizeWidth.value = explorerWidth;
+          startWidthRef.current = visibleExplorerWidth;
+          resizeWidth.value = visibleExplorerWidth;
         })
         .onUpdate((event) => {
           const newWidth = startWidthRef.current - event.translationX;
-          const maxWidth = Math.max(
-            MIN_EXPLORER_SIDEBAR_WIDTH,
-            Math.min(MAX_EXPLORER_SIDEBAR_WIDTH, viewportWidth - MIN_CHAT_WIDTH),
-          );
-          const clampedWidth = Math.max(MIN_EXPLORER_SIDEBAR_WIDTH, Math.min(maxWidth, newWidth));
-          resizeWidth.value = clampedWidth;
+          resizeWidth.value = resolveDesktopExplorerWidth({
+            requestedWidth: newWidth,
+            viewportWidth,
+          });
         })
         .onEnd(() => {
           runOnJS(setExplorerWidth)(resizeWidth.value);
         }),
-    [explorerWidth, resizeWidth, setExplorerWidth, viewportWidth],
+    [resizeWidth, setExplorerWidth, viewportWidth, visibleExplorerWidth],
   );
 
   const resizeAnimatedStyle = useAnimatedStyle(() => ({
@@ -380,10 +211,12 @@ export function ExplorerSidebar({
 
   return (
     <Animated.View style={desktopSidebarStyle}>
-      <View style={DESKTOP_SIDEBAR_BORDER_STYLE}>
-        <GestureDetector gesture={resizeGesture}>
-          <View style={RESIZE_HANDLE_STYLE} />
-        </GestureDetector>
+      <View style={[styles.desktopSidebarBorder, { flex: 1 }]}>
+        <SidebarResizeHandle
+          edge="left"
+          gesture={resizeGesture}
+          testID="explorer-sidebar-resize-handle"
+        />
 
         <ExplorerSidebarContent
           activeTab={explorerTab}
@@ -393,7 +226,6 @@ export function ExplorerSidebar({
           workspaceId={workspaceId}
           workspaceRoot={workspaceRoot}
           isGit={isGit}
-          isMobile={false}
           isOpen={isOpen}
           onOpenFile={onOpenFile}
         />
@@ -438,7 +270,6 @@ interface SidebarContentProps {
   workspaceId?: string | null;
   workspaceRoot: string;
   isGit: boolean;
-  isMobile: boolean;
   isOpen: boolean;
   onOpenFile?: (filePath: string) => void;
 }
@@ -451,14 +282,13 @@ function ExplorerSidebarContent({
   workspaceId,
   workspaceRoot,
   isGit,
-  isMobile,
   isOpen,
   onOpenFile,
 }: SidebarContentProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
   const toast = useToast();
-  const padding = useWindowControlsPadding("explorerSidebar");
+  const hasRightWindowControls = useHasOwnedWindowChromeObstruction("top-right");
   const canQueryPullRequest = isGit && Boolean(workspaceRoot);
   const prPane = usePrPaneData({
     serverId,
@@ -483,15 +313,15 @@ function ExplorerSidebarContent({
     [serverId, workspaceId, workspaceRoot],
   );
 
-  const headerStyle = useMemo(
-    () => [styles.header, { paddingRight: padding.right }],
-    [padding.right],
-  );
-
   return (
     <View style={styles.sidebarContent} pointerEvents="auto">
       {/* Header with tabs and close button */}
-      <View style={headerStyle} testID="explorer-header">
+      <WindowChromeSafeArea
+        placement="inline"
+        horizontalPadding={theme.spacing[2]}
+        style={styles.header}
+        testID="explorer-header"
+      >
         <TitlebarDragRegion />
         <View style={styles.tabsContainer}>
           {isGit && (
@@ -519,6 +349,7 @@ function ExplorerSidebarContent({
               testID="explorer-tab-pr"
             >
               <PullRequestTabIcon
+                forge={prPane.forge}
                 size={13}
                 color={
                   resolvedTab === "pr" ? theme.colors.foreground : theme.colors.foregroundMuted
@@ -528,13 +359,29 @@ function ExplorerSidebarContent({
           )}
         </View>
         <View style={styles.headerRightSection}>
-          {isMobile && (
-            <Pressable onPress={onClose} style={styles.closeButton}>
-              <X size={18} color={theme.colors.foregroundMuted} />
+          {!hasRightWindowControls && (
+            <Pressable
+              onPress={onClose}
+              style={styles.closeButton}
+              testID="explorer-close"
+              nativeID="explorer-close"
+              accessible
+              accessibilityRole="button"
+              accessibilityLabel={t("workspace.tabs.explorer.close")}
+              hitSlop={8}
+            >
+              {({ hovered, pressed }) => (
+                <X
+                  size={18}
+                  color={
+                    hovered || pressed ? theme.colors.foreground : theme.colors.foregroundMuted
+                  }
+                />
+              )}
             </Pressable>
           )}
         </View>
-      </View>
+      </WindowChromeSafeArea>
 
       {/* Content based on active tab */}
       <View style={styles.contentArea} testID="explorer-content-area">
@@ -604,17 +451,6 @@ function PrTabContent({
 // avoid the "Unable to find node on an unmounted component" crash when Unistyles
 // tries to patch the native node that Reanimated also manages.
 const explorerStaticStyles = RNStyleSheet.create({
-  backdrop: {
-    ...RNStyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(0, 0, 0, 0.5)",
-  },
-  mobileSidebar: {
-    position: "absolute" as const,
-    top: 0,
-    right: 0,
-    bottom: 0,
-    overflow: "hidden" as const,
-  },
   desktopSidebar: {
     position: "relative" as const,
   },
@@ -625,14 +461,6 @@ const styles = StyleSheet.create((theme) => ({
     borderLeftWidth: 1,
     borderLeftColor: theme.colors.border,
     backgroundColor: theme.colors.surfaceSidebar,
-  },
-  resizeHandle: {
-    position: "absolute",
-    left: -5,
-    top: 0,
-    bottom: 0,
-    width: 10,
-    zIndex: 10,
   },
   sidebarContent: {
     flex: 1,
@@ -645,7 +473,6 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: theme.spacing[2],
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
   },
@@ -689,6 +516,3 @@ const styles = StyleSheet.create((theme) => ({
     minHeight: 0,
   },
 }));
-
-const DESKTOP_SIDEBAR_BORDER_STYLE = [styles.desktopSidebarBorder, { flex: 1 }];
-const RESIZE_HANDLE_STYLE = [styles.resizeHandle, isWeb && ({ cursor: "col-resize" } as object)];

@@ -165,7 +165,7 @@ export function upsertHostConnectionInProfiles(input: {
     input.connection,
   ]);
   const nextLifecycle = prev.lifecycle;
-  const nextLabel = labelTrimmed || (prev.label === prev.serverId ? derivedLabel : prev.label);
+  const nextLabel = prev.label === prev.serverId ? derivedLabel : prev.label;
   const nextPreferredConnectionId =
     prev.preferredConnectionId &&
     nextConnections.some((connection) => connection.id === prev.preferredConnectionId)

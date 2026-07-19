@@ -1,10 +1,5 @@
 import type { AgentFeature, AgentFeatureToggle } from "../../agent-sdk-types.js";
-
-const CLAUDE_FAST_MODE_SUPPORTED_MODEL_PREFIXES = [
-  "claude-opus-4-8",
-  "claude-opus-4-7",
-  "claude-opus-4-6",
-] as const;
+import { claudeManifestModelSupportsFastMode } from "./model-manifest.js";
 
 export const CLAUDE_FAST_MODE_FEATURE: Omit<AgentFeatureToggle, "value"> = {
   type: "toggle",
@@ -15,20 +10,8 @@ export const CLAUDE_FAST_MODE_FEATURE: Omit<AgentFeatureToggle, "value"> = {
   icon: "zap",
 };
 
-function normalizeClaudeModelId(modelId: string | null | undefined): string | null {
-  const normalized = typeof modelId === "string" ? modelId.trim() : "";
-  return normalized.length > 0 ? normalized : null;
-}
-
 export function claudeModelSupportsFastMode(modelId: string | null | undefined): boolean {
-  const normalizedModelId = normalizeClaudeModelId(modelId);
-  if (!normalizedModelId) {
-    return false;
-  }
-
-  return CLAUDE_FAST_MODE_SUPPORTED_MODEL_PREFIXES.some(
-    (prefix) => normalizedModelId === prefix || normalizedModelId.startsWith(`${prefix}[`),
-  );
+  return claudeManifestModelSupportsFastMode(modelId);
 }
 
 export function buildClaudeFeatures(input: {

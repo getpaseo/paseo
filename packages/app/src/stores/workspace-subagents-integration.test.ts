@@ -215,4 +215,38 @@ describe("workspace subagents integration", () => {
       ),
     ).toEqual([]);
   });
+
+  it("auto-opens a cross-workspace child while retaining it in the parent section", () => {
+    const workspaceKey = buildWorkspaceTabPersistenceKey({
+      serverId: SERVER_ID,
+      workspaceId: WORKSPACE_ID,
+    });
+    expect(workspaceKey).toBeTruthy();
+
+    const parent = makeAgent({
+      id: "parent-agent",
+      workspaceId: "ws-parent",
+      title: "Parent agent",
+    });
+    const child = makeAgent({
+      id: "child-agent",
+      parentAgentId: parent.id,
+      title: "Cross-workspace child",
+    });
+
+    initializeAgents([parent, child]);
+    reconcileWorkspaceTabs(workspaceKey!, deriveVisibilityFromSession());
+
+    expect(getWorkspaceTabIds(workspaceKey!)).toEqual(["agent_child-agent"]);
+    expect(
+      selectSubagentsForParent(
+        useSessionStore.getState(),
+        {
+          serverId: SERVER_ID,
+          parentAgentId: parent.id,
+        },
+        new Set(),
+      ).map((row) => row.id),
+    ).toEqual([child.id]);
+  });
 });

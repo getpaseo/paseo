@@ -3,6 +3,40 @@ import type { MessagePayload } from "@/composer/types";
 
 export type SendBehavior = "interrupt" | "queue";
 
+interface ComposerSurfaceState {
+  opacity: 0 | 1;
+  pointerEvents: "auto" | "none";
+}
+
+export interface ComposerSurfacePresentation {
+  input: ComposerSurfaceState;
+  overlay: ComposerSurfaceState;
+}
+
+const INPUT_PRESENTATION: ComposerSurfacePresentation = {
+  input: { opacity: 1, pointerEvents: "auto" },
+  overlay: { opacity: 0, pointerEvents: "none" },
+};
+
+const OVERLAY_PRESENTATION: ComposerSurfacePresentation = {
+  input: { opacity: 0, pointerEvents: "none" },
+  overlay: { opacity: 1, pointerEvents: "auto" },
+};
+
+export function resolveComposerSurfacePresentation(
+  showOverlay: boolean,
+): ComposerSurfacePresentation {
+  return showOverlay ? OVERLAY_PRESENTATION : INPUT_PRESENTATION;
+}
+
+interface StopRealtimeVoiceContext {
+  voice: { stopVoice: () => Promise<unknown> } | null | undefined;
+  isRealtimeVoiceForCurrentAgent: boolean;
+  isAgentRunning: boolean;
+  client: { cancelAgent: (agentId: string) => Promise<unknown> } | null;
+  voiceAgentId: string | undefined;
+}
+
 interface SendActionContext {
   defaultSendBehavior: SendBehavior;
   isAgentRunning: boolean;
@@ -40,4 +74,17 @@ export function runAlternateSendAction(ctx: SendActionContext): void {
   if (ctx.isAgentRunning && ctx.onQueue) {
     ctx.handleQueueMessage();
   }
+}
+
+export async function stopRealtimeVoice(ctx: StopRealtimeVoiceContext): Promise<void> {
+  if (!ctx.voice || !ctx.isRealtimeVoiceForCurrentAgent) return;
+
+  if (ctx.isAgentRunning) {
+    if (!ctx.client || !ctx.voiceAgentId) {
+      throw new Error("Cannot stop the running voice agent while the host is unavailable");
+    }
+    await ctx.client.cancelAgent(ctx.voiceAgentId);
+  }
+
+  await ctx.voice.stopVoice();
 }

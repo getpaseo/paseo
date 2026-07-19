@@ -152,6 +152,10 @@ function shouldEmitPlanApprovalPrompt(prompt: AgentPromptInput): boolean {
   return /emit\s+(?:a\s+)?synthetic\s+plan\s+approval/i.test(promptToText(prompt));
 }
 
+function shouldEmitTurnFailure(prompt: AgentPromptInput): boolean {
+  return /emit\s+(?:a\s+)?synthetic\s+turn\s+failure/i.test(promptToText(prompt));
+}
+
 function parseMockQuestionPrompt(prompt: AgentPromptInput): MockQuestionPromptRequest | null {
   const text = promptToText(prompt);
   if (!/emit\s+(?:a\s+)?synthetic\s+questions?/i.test(text)) {
@@ -652,7 +656,9 @@ export class MockLoadTestAgentSession implements AgentSession {
     const stress = parseAgentStreamStressPrompt(prompt);
     const questionPrompt = parseMockQuestionPrompt(prompt);
     const structuredBranchName = parseStructuredBranchNamePrompt(prompt);
-    if (structuredBranchName) {
+    if (shouldEmitTurnFailure(prompt)) {
+      this.scheduleFailedTurn(turn);
+    } else if (structuredBranchName) {
       this.scheduleStructuredJsonTurn(turn, structuredBranchName);
     } else if (shouldEmitPlanApprovalPrompt(prompt)) {
       this.schedulePlanApprovalTurn(turn);
@@ -812,6 +818,34 @@ export class MockLoadTestAgentSession implements AgentSession {
   ): void {
     turn.timer = setTimeout(() => {
       this.emitLargePayloadTurn(turn, largePayload);
+    }, 0);
+    turn.timer.unref?.();
+  }
+
+  private scheduleFailedTurn(turn: ActiveTurn): void {
+    turn.timer = setTimeout(() => {
+      if (this.activeTurn !== turn) {
+        return;
+      }
+      this.clearTurnTimer(turn);
+      this.emit({
+        type: "turn_started",
+        provider: this.provider,
+        turnId: turn.turnId,
+      });
+      this.activeTurn = null;
+      this.emit({
+        type: "turn_failed",
+        provider: this.provider,
+        turnId: turn.turnId,
+        error: "Requested mock provider failure",
+      });
+      turn.resolve({
+        sessionId: this.id,
+        finalText: "",
+        timeline: [],
+        canceled: false,
+      });
     }, 0);
     turn.timer.unref?.();
   }

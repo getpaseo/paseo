@@ -375,7 +375,16 @@ describe("WorkspaceDirectory", () => {
     });
   });
 
-  test("running delegated child contributes running to the parent workspace, not its worktree", async () => {
+  test("running same-workspace subagent contributes running to its parent workspace", async () => {
+    const workspace = new WorkspaceStatus();
+
+    workspace.hasRootAgent({ id: "parent-agent", status: "idle" });
+    workspace.hasDelegatedAgent({ id: "child-agent", status: "running" });
+
+    await expect(workspace.workspaceStatus()).resolves.toBe("running");
+  });
+
+  test("running cross-workspace subagent contributes to its own workspace", async () => {
     const workspace = new WorkspaceStatus();
 
     workspace.hasWorktreeWorkspace();
@@ -383,8 +392,25 @@ describe("WorkspaceDirectory", () => {
     workspace.hasDelegatedAgentInWorktree({ id: "child-agent", status: "running" });
 
     await expect(workspace.workspaceStatuses()).resolves.toEqual({
-      "workspace-1": "running",
-      "workspace-worktree": "done",
+      "workspace-1": "done",
+      "workspace-worktree": "running",
+    });
+  });
+
+  test("cross-workspace subagent contributes its full status bucket to its own workspace", async () => {
+    const workspace = new WorkspaceStatus();
+
+    workspace.hasWorktreeWorkspace();
+    workspace.hasRootAgent({ id: "parent-agent", status: "idle" });
+    workspace.hasDelegatedAgentInWorktree({
+      id: "child-agent",
+      status: "idle",
+      pendingPermissionCount: 1,
+    });
+
+    await expect(workspace.workspaceStatuses()).resolves.toEqual({
+      "workspace-1": "done",
+      "workspace-worktree": "needs_input",
     });
   });
 
@@ -523,6 +549,7 @@ describe("WorkspaceDirectory empty projects", () => {
       createdAt: NOW,
       updatedAt: NOW,
       archivedAt: null,
+      pinnedAt: null,
       ...input,
     } satisfies PersistedProjectRecord;
   }

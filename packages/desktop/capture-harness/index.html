@@ -16,13 +16,15 @@
 
       #paseo-browser-resident-webviews {
         position: fixed;
-        left: -20000px;
+        left: 0;
         top: 0;
-        width: 1280px;
-        height: 800px;
+        width: 1px;
+        height: 1px;
         overflow: hidden;
-        opacity: 0;
+        opacity: 1;
         pointer-events: none;
+        display: block;
+        visibility: visible;
       }
 
       .capture-harness-webview {
@@ -36,30 +38,112 @@
     </style>
   </head>
   <body>
+    <form id="host-composer-form">
+      <label for="host-composer">Host composer</label>
+      <input id="host-composer" name="host-composer" autocomplete="off" />
+    </form>
     <div id="paseo-browser-resident-webviews" aria-hidden="true"></div>
 
     <script>
       const RESIDENT_VIEWPORT_WIDTH = 1280;
       const RESIDENT_VIEWPORT_HEIGHT = 800;
       const host = document.getElementById("paseo-browser-resident-webviews");
+      const hostComposer = document.getElementById("host-composer");
+      const hostComposerForm = document.getElementById("host-composer-form");
+      let hostComposerEnterEvents = 0;
+      let hostComposerSubmissions = 0;
+      let hostBrowserShortcutEvents = 0;
+      hostComposer.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          hostComposerEnterEvents += 1;
+        }
+      });
+      hostComposerForm.addEventListener("submit", (event) => {
+        event.preventDefault();
+        hostComposerSubmissions += 1;
+      });
+      window.addEventListener("keydown", (event) => {
+        if (
+          (event.metaKey || event.ctrlKey) &&
+          !event.altKey &&
+          !event.shiftKey &&
+          event.key.toLowerCase() === "b"
+        ) {
+          hostBrowserShortcutEvents += 1;
+        }
+      });
       const params = new URLSearchParams(window.location.search);
-      const webviewCount = Math.max(2, Number(params.get("webviewCount")) || 2);
+      const requestedWebviewCount = params.has("webviewCount")
+        ? Number(params.get("webviewCount"))
+        : 2;
+      const webviewCount = Number.isFinite(requestedWebviewCount)
+        ? Math.max(0, requestedWebviewCount)
+        : 2;
       const webviews = [];
+      const profileAttachPromises = [];
       const activeTokens = new Set();
       let nextTokenId = 0;
+      let permanentParkingState = params.get("permanentParkingState") || "";
 
-      for (let index = 0; index < webviewCount; index += 1) {
+      function createHarnessWebview({ sourceUrl, browserId, partition }) {
+        const index = webviews.length;
         const webview = document.createElement("webview");
         webview.id = `target-webview-${index + 1}`;
         webview.className = "capture-harness-webview";
-        webview.setAttribute("data-paseo-browser-id", `capture-harness-${index + 1}`);
-        webview.setAttribute("partition", `persist:paseo-capture-harness-${index + 1}`);
+        webview.setAttribute("data-paseo-browser-id", browserId);
+        webview.setAttribute("partition", partition);
         webview.setAttribute("allowpopups", "true");
         webview.setAttribute("spellcheck", "false");
         webview.setAttribute("autosize", "on");
-        webview.src = params.get("targetUrl") || "bright.html";
+        webview.src = sourceUrl;
+        applyStackedWebviewStyle(webview);
+        return webview;
+      }
+
+      function appendHarnessWebview(sourceUrl) {
+        const index = webviews.length;
+        const webview = createHarnessWebview({
+          sourceUrl,
+          browserId: `capture-harness-${index + 1}`,
+          partition: `persist:paseo-capture-harness-${index + 1}`,
+        });
         host.appendChild(webview);
         webviews.push(webview);
+        return index;
+      }
+
+      function appendProfileHarnessWebview({ browserId, partition, sourceUrl }) {
+        const webview = createHarnessWebview({ browserId, partition, sourceUrl });
+        const attached = new Promise((resolve) => {
+          webview.addEventListener(
+            "did-attach",
+            () => resolve({ browserId, webContentsId: webview.getWebContentsId() }),
+            { once: true },
+          );
+        });
+        host.appendChild(webview);
+        webviews.push(webview);
+        profileAttachPromises.push(attached);
+        return attached;
+      }
+
+      const profilePartition = params.get("profilePartition");
+      const profileBrowserIds = (params.get("profileBrowserIds") || "").split(",").filter(Boolean);
+      let profileAttachSequence = Promise.resolve();
+      if (profilePartition && profileBrowserIds.length > 0) {
+        profileAttachSequence = (async () => {
+          for (const browserId of profileBrowserIds) {
+            await appendProfileHarnessWebview({
+              browserId,
+              partition: profilePartition,
+              sourceUrl: params.get("targetUrl") || "bright.html",
+            });
+          }
+        })();
+      } else {
+        for (let index = 0; index < webviewCount; index += 1) {
+          appendHarnessWebview(params.get("targetUrl") || "bright.html");
+        }
       }
 
       function applyHostParking() {
@@ -105,6 +189,7 @@
       }
 
       function applyParking() {
+        permanentParkingState = "";
         applyHostParking();
         webviews.forEach((webview) => {
           applyStackedWebviewStyle(webview);
@@ -119,6 +204,7 @@
       }
 
       function applyCapturePrep() {
+        permanentParkingState = "";
         host.style.position = "fixed";
         host.style.left = "0";
         host.style.top = "0";
@@ -131,6 +217,97 @@
         host.style.clipPath = "";
         host.style.visibility = "";
         host.style.transform = "";
+      }
+
+      function applyHostPermanentBase() {
+        host.style.position = "fixed";
+        host.style.left = "0";
+        host.style.top = "0";
+        host.style.width = "1px";
+        host.style.height = "1px";
+        host.style.overflow = "hidden";
+        host.style.opacity = "1";
+        host.style.pointerEvents = "none";
+        host.style.display = "block";
+        host.style.zIndex = "";
+        host.style.clipPath = "";
+        host.style.visibility = "visible";
+        host.style.transform = "";
+        host.style.transformOrigin = "";
+      }
+
+      function applyPermanentWebviewBase(webview, index) {
+        applyStackedWebviewStyle(webview);
+        webview.style.opacity = "";
+        webview.style.transform = "";
+        webview.style.pointerEvents = "";
+        webview.style.zIndex = "0";
+        webview.style.width = `${RESIDENT_VIEWPORT_WIDTH}px`;
+        webview.style.height = `${RESIDENT_VIEWPORT_HEIGHT}px`;
+        webview.style.left = "0";
+        webview.style.top = "0";
+      }
+
+      function applyPermanentParkingState(stateName) {
+        permanentParkingState = stateName;
+        activeTokens.clear();
+        applyHostPermanentBase();
+        webviews.forEach(applyPermanentWebviewBase);
+
+        if (stateName === "p1-overflow-1x1") {
+          return state();
+        }
+
+        if (stateName === "p2-clip-path-1x1") {
+          host.style.width = "1px";
+          host.style.height = "1px";
+          host.style.overflow = "visible";
+          host.style.clipPath = "inset(1px)";
+          return state();
+        }
+
+        if (stateName === "p3-opacity-0") {
+          host.style.opacity = "0";
+          return state();
+        }
+
+        if (stateName === "p4-transform-scale-0") {
+          host.style.transform = "scale(0)";
+          return state();
+        }
+
+        if (stateName === "p4-transform-scale-0001") {
+          host.style.transform = "scale(0.001)";
+          return state();
+        }
+
+        if (stateName === "p5-webview-0x0") {
+          webviews.forEach((webview) => {
+            webview.style.width = "0";
+            webview.style.height = "0";
+          });
+          return state();
+        }
+
+        if (stateName === "p5-webview-1x1") {
+          webviews.forEach((webview) => {
+            webview.style.width = "1px";
+            webview.style.height = "1px";
+          });
+          return state();
+        }
+
+        if (stateName === "p6-z-index-negative") {
+          host.style.zIndex = "-1";
+          return state();
+        }
+
+        if (stateName === "p7-opacity-001") {
+          host.style.opacity = "0.01";
+          return state();
+        }
+
+        throw new Error(`Unknown permanent parking state: ${stateName}`);
       }
 
       function applyTargetStacking(targetIndex) {
@@ -155,7 +332,7 @@
       function state(targetIndex = 0) {
         const hostRect = host.getBoundingClientRect();
         const targetWebview = webviews[targetIndex] || webviews[0];
-        const webviewRect = targetWebview.getBoundingClientRect();
+        const webviewRect = targetWebview?.getBoundingClientRect();
         return {
           hostStyle: {
             left: host.style.left,
@@ -165,6 +342,9 @@
             overflow: host.style.overflow,
             opacity: host.style.opacity,
             pointerEvents: host.style.pointerEvents,
+            zIndex: host.style.zIndex,
+            clipPath: host.style.clipPath,
+            transform: host.style.transform,
           },
           hostRect: {
             x: hostRect.x,
@@ -173,10 +353,10 @@
             height: hostRect.height,
           },
           webviewRect: {
-            x: webviewRect.x,
-            y: webviewRect.y,
-            width: webviewRect.width,
-            height: webviewRect.height,
+            x: webviewRect?.x ?? 0,
+            y: webviewRect?.y ?? 0,
+            width: webviewRect?.width ?? 0,
+            height: webviewRect?.height ?? 0,
           },
           webviews: webviews.map((webview) => {
             const rect = webview.getBoundingClientRect();
@@ -184,6 +364,7 @@
               id: webview.id,
               zIndex: webview.style.zIndex,
               position: webview.style.position,
+              opacity: webview.style.opacity,
               x: rect.x,
               y: rect.y,
               width: rect.width,
@@ -202,6 +383,40 @@
           return webviews.map((webview) =>
             typeof webview.getWebContentsId === "function" ? webview.getWebContentsId() : null,
           );
+        },
+        focusHostComposer() {
+          hostComposer.focus();
+          return document.activeElement?.id || null;
+        },
+        hostComposerState() {
+          return {
+            activeElementId: document.activeElement?.id || null,
+            enterEvents: hostComposerEnterEvents,
+            submissions: hostComposerSubmissions,
+          };
+        },
+        resetHostBrowserShortcutState() {
+          hostBrowserShortcutEvents = 0;
+        },
+        hostBrowserShortcutState() {
+          return { events: hostBrowserShortcutEvents };
+        },
+        addWebview(sourceUrl) {
+          return appendHarnessWebview(sourceUrl || params.get("targetUrl") || "bright.html");
+        },
+        async profileIdentities() {
+          await profileAttachSequence;
+          return await Promise.all(profileAttachPromises);
+        },
+        addPermanentWebview(sourceUrl, stateName) {
+          const index = appendHarnessWebview(sourceUrl || params.get("targetUrl") || "bright.html");
+          applyPermanentParkingState(stateName || permanentParkingState);
+          return index;
+        },
+        async applyPermanentParkingState(stateName) {
+          const nextState = applyPermanentParkingState(stateName);
+          await waitFrames(2);
+          return nextState;
         },
         async prepareForPixelCapture(targetIndex = 0) {
           const token = `capture-${++nextTokenId}`;
@@ -242,6 +457,10 @@
           return state();
         },
       };
+
+      if (permanentParkingState) {
+        applyPermanentParkingState(permanentParkingState);
+      }
     </script>
   </body>
 </html>

@@ -286,6 +286,76 @@ describe("workspace message schemas", () => {
     expect(parsed.type).toBe("open_project_request");
   });
 
+  test("parses a GitHub clone response that registers a project without a workspace", () => {
+    const request = SessionInboundMessageSchema.parse({
+      type: "project.github.clone.request",
+      repo: "a/b",
+      cloneProtocol: "https",
+      targetDirectory: "~/workspace",
+      requestId: "req-clone",
+    });
+    const response = SessionOutboundMessageSchema.parse({
+      type: "project.github.clone.response",
+      payload: {
+        requestId: "req-clone",
+        repo: "a/b",
+        checkoutPath: "/tmp/b",
+        project: {
+          projectId: "project-b",
+          projectDisplayName: "b",
+          projectRootPath: "/tmp/b",
+          projectKind: "git",
+        },
+        error: null,
+      },
+    });
+
+    expect(request.type).toBe("project.github.clone.request");
+    if (request.type !== "project.github.clone.request") {
+      throw new Error("expected project.github.clone.request");
+    }
+    expect(request.cloneProtocol).toBe("https");
+    expect(response.type).toBe("project.github.clone.response");
+    if (response.type !== "project.github.clone.response") {
+      throw new Error("expected project.github.clone.response");
+    }
+    expect(response.payload.project?.projectId).toBe("project-b");
+  });
+
+  test("rejects invalid project GitHub clone protocols", () => {
+    const request = SessionInboundMessageSchema.safeParse({
+      type: "project.github.clone.request",
+      repo: "a/b",
+      cloneProtocol: "ftp",
+      targetDirectory: "~/workspace",
+      requestId: "req-clone",
+    });
+
+    expect(request.success).toBe(false);
+  });
+
+  test("rejects project GitHub clone repo paths shorter than owner slash repo", () => {
+    const request = SessionInboundMessageSchema.safeParse({
+      type: "project.github.clone.request",
+      repo: "ab",
+      targetDirectory: "~/workspace",
+      requestId: "req-clone",
+    });
+    const response = SessionOutboundMessageSchema.safeParse({
+      type: "project.github.clone.response",
+      payload: {
+        requestId: "req-clone",
+        repo: "ab",
+        checkoutPath: null,
+        project: null,
+        error: "failed",
+      },
+    });
+
+    expect(request.success).toBe(false);
+    expect(response.success).toBe(false);
+  });
+
   test("parses legacy editor RPC messages for compatibility", () => {
     const listRequest = SessionInboundMessageSchema.parse({
       type: "list_available_editors_request",
@@ -912,6 +982,30 @@ describe("workspace message schemas", () => {
     expect(checkout?.worktreeRoot).toBe("C:\\repo");
   });
 
+  test("workspace summary parses without forge and round-trips forge when present", () => {
+    const baseWorkspace = {
+      id: "ws-forge",
+      projectId: "proj",
+      projectDisplayName: "repo",
+      projectRootPath: "/repo",
+      workspaceDirectory: "/repo",
+      projectKind: "git",
+      workspaceKind: "worktree",
+      name: "feature",
+      status: "done",
+      activityAt: null,
+      scripts: [],
+    } as const;
+
+    // Old daemon: forge omitted -> parses, field absent (client falls back to github).
+    expect(WorkspaceDescriptorPayloadSchema.parse(baseWorkspace).forge).toBeUndefined();
+
+    // New daemon: forge present -> round-trips (open string, like the PR-status forge).
+    expect(
+      WorkspaceDescriptorPayloadSchema.parse({ ...baseWorkspace, forge: "gitlab" }).forge,
+    ).toBe("gitlab");
+  });
+
   test("workspace.create.request rejects old flat backing shape and accepts new source envelope", () => {
     // Old flat shape with backing enum must be rejected.
     const oldFlat = WorkspaceCreateRequestSchema.safeParse({
@@ -936,6 +1030,25 @@ describe("workspace message schemas", () => {
     });
     expect(newWorktree.type).toBe("workspace.create.request");
     expect(newWorktree.source.kind).toBe("worktree");
+
+    const branchOff = WorkspaceCreateRequestSchema.parse({
+      type: "workspace.create.request",
+      requestId: "req-branch-off",
+      source: {
+        kind: "worktree",
+        cwd: "/tmp/repo",
+        action: "branch-off",
+        branchName: "feature/auth",
+        worktreeSlug: "feature-auth",
+      },
+    });
+    expect(branchOff.source).toEqual({
+      kind: "worktree",
+      cwd: "/tmp/repo",
+      action: "branch-off",
+      branchName: "feature/auth",
+      worktreeSlug: "feature-auth",
+    });
 
     // Directory source must also be accepted.
     const newDirectory = WorkspaceCreateRequestSchema.parse({

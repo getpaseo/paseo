@@ -20,6 +20,29 @@ input focused while its scrollable list lives in a Portal. There is no shared
 "floating panel" primitive yet — when a fifth use case shows up we can revisit;
 until then prefer copying the closest file and trimming.
 
+## Popover width contract
+
+Combobox desktop popovers are never narrower than their trigger, and they grow
+with content up to a ceiling that is never below the trigger:
+
+```ts
+const floor = Math.max(desktopMinWidth ?? 0, referenceWidth ?? 200);
+const frameStyle = { minWidth: floor, maxWidth: Math.max(400, floor) };
+```
+
+`desktopMinWidth` is an explicit floor-raiser. It does not cap width, and the
+trigger still wins when it is wider. Changing this default requires re-verifying
+every consumer listed here.
+
+Consumers: `composer/agent-controls/mode-control.tsx`,
+`composer/agent-controls/index.tsx`, `composer/index.tsx`,
+`components/combined-model-selector.tsx`, `components/hosts/host-picker.tsx`
+(including `components/hosts/host-filter.tsx`), `components/branch-switcher.tsx`,
+`components/left-sidebar.tsx`, `components/ui/select-field.tsx` (schedule form),
+`screens/new-workspace-screen.tsx` plus `screens/new-workspace/project-picker.ts`,
+`components/import-session-sheet.tsx`, `screens/workspace/workspace-screen.tsx`,
+`screens/settings-screen.tsx`, and `screens/project-settings-screen.tsx`.
+
 ## Gotcha 1 — Android touch hit-test by parent bounds
 
 On Android, a child View whose bounds fall outside its parent's bounds renders

@@ -1,7 +1,8 @@
 import type { Rectangle } from "electron";
 import { describe, expect, test, vi } from "vitest";
 import type { TabImage } from "./service.js";
-import { adaptWebContents } from "./ipc.js";
+import { adaptWebContents, HostSnapshotEngineRegistry } from "./ipc.js";
+import type { IsolatedKeyboardInputEvent } from "./trusted-input.js";
 
 class FakeImage implements TabImage {
   public toPNG(): Uint8Array {
@@ -14,79 +15,100 @@ class FakeImage implements TabImage {
 }
 
 class FakeDebugger {
+  public attachedProtocolVersions: string[] = [];
+  public commands: Array<{ command: string; params: Record<string, unknown> }> = [];
+  public blockCommands = false;
+  public readonly blockedCommandNames = new Set<string>();
+  public readonly failedCommandNames = new Set<string>();
+  public readonly promptDialogs: unknown[] = [];
+  public failPromptDrain = false;
+  private messageListener:
+    | ((event: unknown, method: string, params?: Record<string, unknown>) => void)
+    | null = null;
+  private readonly blockedCommands: Array<() => void> = [];
+
   public isAttached(): boolean {
-    return false;
+    return this.attachedProtocolVersions.length > 0;
   }
 
-  public attach(): void {}
-
-  public async sendCommand(): Promise<unknown> {
-    return {};
-  }
-}
-
-class FakeHostWebContents {
-  public readonly sentMessages: Array<{ channel: string; payload: unknown }> = [];
-  public destroyed = false;
-
-  public constructor(public readonly id: number) {}
-
-  public isDestroyed(): boolean {
-    return this.destroyed;
+  public attach(protocolVersion?: string): void {
+    this.attachedProtocolVersions.push(protocolVersion ?? "");
   }
 
-  public send(channel: string, payload: unknown): void {
-    this.sentMessages.push({ channel, payload });
-  }
-}
-
-interface FakeIpcEvent {
-  sender: {
-    id: number;
-  };
-}
-
-type IpcListener = (event: FakeIpcEvent, payload: unknown) => void;
-
-class FakeIpcBridge {
-  private readonly listeners = new Map<string, IpcListener[]>();
-
-  public on(channel: string, listener: IpcListener): void {
-    const listeners = this.listeners.get(channel) ?? [];
-    listeners.push(listener);
-    this.listeners.set(channel, listeners);
-  }
-
-  public removeListener(channel: string, listener: IpcListener): void {
-    const listeners = this.listeners.get(channel) ?? [];
-    this.listeners.set(
-      channel,
-      listeners.filter((candidate) => candidate !== listener),
-    );
-  }
-
-  public emit(channel: string, payload: unknown, input: { senderId?: number } = {}): void {
-    const event = { sender: { id: input.senderId ?? 10 } };
-    for (const listener of this.listeners.get(channel) ?? []) {
-      listener(event, payload);
+  public async sendCommand(command: string, params?: Record<string, unknown>): Promise<unknown> {
+    this.commands.push({ command, params: params ?? {} });
+    if (this.failedCommandNames.has(command)) {
+      throw new Error(`${command} failed`);
     }
+    if (this.blockCommands || this.blockedCommandNames.has(command)) {
+      await new Promise<void>((resolve) => {
+        this.blockedCommands.push(resolve);
+      });
+    }
+    if (command === "Runtime.evaluate" && typeof params?.expression === "string") {
+      if (params.expression.includes("state.prompts.splice(0)")) {
+        if (this.failPromptDrain) {
+          throw new Error("execution context destroyed");
+        }
+        return { result: { value: this.promptDialogs.splice(0) } };
+      }
+      return { result: { value: true } };
+    }
+    return { ok: true };
   }
 
-  public listenerCount(channel: string): number {
-    return this.listeners.get(channel)?.length ?? 0;
+  public on(
+    event: "message",
+    listener: (event: unknown, method: string, params?: Record<string, unknown>) => void,
+  ): void {
+    expect(event).toBe("message");
+    this.messageListener = listener;
+  }
+
+  public emitMessage(method: string, params?: Record<string, unknown>): void {
+    if (!this.messageListener) {
+      throw new Error("Debugger message listener was not registered");
+    }
+    this.messageListener({}, method, params);
+  }
+
+  public finishNextCommand(): void {
+    const resolve = this.blockedCommands.shift();
+    if (!resolve) {
+      throw new Error("No command is blocked");
+    }
+    resolve();
   }
 }
+
+type ConsoleMessageListener = (
+  event: unknown,
+  level: unknown,
+  message: unknown,
+  line: unknown,
+  sourceId: unknown,
+) => void;
 
 class FakeWebContents {
   public readonly debugger = new FakeDebugger();
-  public readonly consoleMessages: unknown[] = [];
-  public readonly destroyedListeners: Array<() => void> = [];
+  public readonly inputEvents: IsolatedKeyboardInputEvent[] = [];
+  public readonly captures: Array<{
+    rect: Rectangle | undefined;
+    options: { stayHidden?: boolean } | undefined;
+  }> = [];
+  public readonly invalidations: string[] = [];
+  private consoleMessageListener: ConsoleMessageListener | null = null;
+  private destroyedListener: (() => void) | null = null;
   public destroyed = false;
 
-  public constructor(
-    public readonly id: number,
-    public hostWebContents: FakeHostWebContents | null,
-  ) {}
+  public constructor(private readonly webContentsId: number) {}
+
+  public get id(): number {
+    if (this.destroyed) {
+      throw new TypeError("Object has been destroyed");
+    }
+    return this.webContentsId;
+  }
 
   public getURL(): string {
     return "https://example.com";
@@ -125,251 +147,458 @@ class FakeWebContents {
   public reload(): void {}
 
   public async capturePage(
-    _rect?: Rectangle,
-    _options?: { stayHidden?: boolean },
+    rect?: Rectangle,
+    options?: { stayHidden?: boolean },
   ): Promise<TabImage> {
+    this.captures.push({ rect, options });
     return new FakeImage();
   }
 
-  public invalidate(): void {}
-
-  public getBackgroundThrottling(): boolean {
-    return true;
+  public invalidate(): void {
+    this.invalidations.push("invalidate");
   }
 
-  public setBackgroundThrottling(): void {}
+  public sendInputEvent(event: IsolatedKeyboardInputEvent): void {
+    this.inputEvents.push(event);
+  }
 
-  public on(
-    event: "console-message",
-    listener: (
-      event: unknown,
-      level: unknown,
-      message: unknown,
-      line: unknown,
-      sourceId: unknown,
-    ) => void,
-  ): void {
-    this.consoleMessages.push({ event, listener });
+  public on(event: "console-message", listener: ConsoleMessageListener): void {
+    expect(event).toBe("console-message");
+    this.consoleMessageListener = listener;
   }
 
   public once(event: "destroyed", listener: () => void): void {
     expect(event).toBe("destroyed");
-    this.destroyedListeners.push(listener);
+    this.destroyedListener = listener;
+  }
+
+  public emitConsoleMessage(input: {
+    level: unknown;
+    message: unknown;
+    line: unknown;
+    sourceId: unknown;
+  }): void {
+    if (!this.consoleMessageListener) {
+      throw new Error("Console listener was not registered");
+    }
+    this.consoleMessageListener({}, input.level, input.message, input.line, input.sourceId);
+  }
+
+  public destroy(): void {
+    this.destroyed = true;
+    this.destroyedListener?.();
   }
 }
 
 describe("browser automation IPC adapter", () => {
-  test("prepareForPixelCapture asks the embedder renderer and resolves the ack token", async () => {
-    const host = new FakeHostWebContents(10);
-    const contents = new FakeWebContents(20, host);
-    const ipc = new FakeIpcBridge();
-    const tab = adaptWebContents(contents, "browser-a", {
-      ipc,
-      createRequestId: () => "prepare-1",
+  test("isolates snapshot refs by host window and releases them on destruction", () => {
+    const registry = new HostSnapshotEngineRegistry();
+    const firstHost = new FakeHostWebContents(1);
+    const secondHost = new FakeHostWebContents(2);
+
+    const firstEngine = registry.get(firstHost);
+    expect(registry.get(firstHost)).toBe(firstEngine);
+    expect(registry.get(secondHost)).not.toBe(firstEngine);
+
+    firstHost.destroy();
+    expect(registry.get(new FakeHostWebContents(1))).not.toBe(firstEngine);
+  });
+
+  test("sends contained keyboard input directly to the guest", () => {
+    const contents = new FakeWebContents(19);
+    const tab = adaptWebContents(contents);
+
+    tab.sendInputEvent({ type: "keyDown", keyCode: "Enter", skipIfUnhandled: true });
+
+    expect(contents.inputEvents).toEqual([
+      { type: "keyDown", keyCode: "Enter", skipIfUnhandled: true },
+    ]);
+  });
+
+  test("delegates viewport capture to the guest without a renderer prep bridge", async () => {
+    const contents = new FakeWebContents(20);
+    const tab = adaptWebContents(contents);
+
+    const image = await tab.capturePage({ stayHidden: false });
+    tab.invalidate();
+
+    expect(image.getSize()).toEqual({ width: 640, height: 480 });
+    expect(contents.captures).toEqual([{ rect: undefined, options: { stayHidden: false } }]);
+    expect(contents.invalidations).toEqual(["invalidate"]);
+  });
+
+  test("collects console messages until the guest is destroyed", () => {
+    const contents = new FakeWebContents(21);
+    const tab = adaptWebContents(contents);
+
+    contents.emitConsoleMessage({
+      level: "warning",
+      message: "hello",
+      line: 12,
+      sourceId: "https://example.com/app.js",
     });
 
-    const preparation = tab.prepareForPixelCapture();
-
-    expect(host.sentMessages).toEqual([
+    expect(tab.getConsoleMessages?.()).toEqual([
       {
-        channel: "paseo:browser:capture-prepare",
-        payload: { requestId: "prepare-1", browserId: "browser-a" },
+        level: "warning",
+        message: "hello",
+        line: 12,
+        source: "https://example.com/app.js",
+        timestamp: expect.any(Number),
       },
     ]);
-    ipc.emit("paseo:browser:capture-prepared", {
-      requestId: "other",
-      ok: true,
-      token: "wrong-token",
-    });
-    expect(ipc.listenerCount("paseo:browser:capture-prepared")).toBe(1);
 
-    ipc.emit("paseo:browser:capture-prepared", {
-      requestId: "prepare-1",
-      ok: true,
-      token: "token-a",
-    });
+    expect(() => contents.destroy()).not.toThrow();
 
-    await expect(preparation).resolves.toEqual({ token: "token-a" });
-    expect(ipc.listenerCount("paseo:browser:capture-prepared")).toBe(0);
+    expect(tab.getConsoleMessages?.()).toEqual([]);
   });
 
-  test("restorePixelCapture sends the capture token back to the embedder renderer", async () => {
-    const host = new FakeHostWebContents(10);
-    const contents = new FakeWebContents(20, host);
-    const ipc = new FakeIpcBridge();
-    const requestIds = ["prepare-1", "restore-1"];
-    const tab = adaptWebContents(contents, "browser-a", {
-      ipc,
-      createRequestId: () => {
-        const requestId = requestIds.shift();
-        if (!requestId) {
-          throw new Error("Missing request id");
-        }
-        return requestId;
-      },
+  test("attaches the debugger before sending a CDP command", async () => {
+    const contents = new FakeWebContents(22);
+    const tab = adaptWebContents(contents);
+
+    const result = await tab.sendDebugCommand?.("Page.captureScreenshot", {
+      format: "png",
     });
 
-    const preparation = tab.prepareForPixelCapture();
-    ipc.emit("paseo:browser:capture-prepared", {
-      requestId: "prepare-1",
-      ok: true,
-      token: "token-a",
-    });
-    await expect(preparation).resolves.toEqual({ token: "token-a" });
-
-    const restored = tab.restorePixelCapture({ token: "token-a" });
-
-    expect(host.sentMessages).toEqual([
-      {
-        channel: "paseo:browser:capture-prepare",
-        payload: { requestId: "prepare-1", browserId: "browser-a" },
-      },
-      {
-        channel: "paseo:browser:capture-restore",
-        payload: { requestId: "restore-1", browserId: "browser-a", token: "token-a" },
-      },
+    expect(result).toEqual({ ok: true });
+    expect(contents.debugger.attachedProtocolVersions).toEqual(["1.3"]);
+    expect(contents.debugger.commands).toEqual([
+      { command: "Page.captureScreenshot", params: { format: "png" } },
     ]);
-    ipc.emit("paseo:browser:capture-restored", { requestId: "restore-1", ok: true });
-
-    await expect(restored).resolves.toBeUndefined();
   });
 
-  test("restorePixelCapture uses the host captured during preparation when the guest detaches", async () => {
-    const host = new FakeHostWebContents(10);
-    const contents = new FakeWebContents(20, host);
-    const ipc = new FakeIpcBridge();
-    const requestIds = ["prepare-1", "restore-1"];
-    const tab = adaptWebContents(contents, "browser-a", {
-      ipc,
-      createRequestId: () => {
-        const requestId = requestIds.shift();
-        if (!requestId) {
-          throw new Error("Missing request id");
-        }
-        return requestId;
-      },
-    });
+  test("serializes CDP commands per guest contents", async () => {
+    const contents = new FakeWebContents(23);
+    contents.debugger.blockCommands = true;
+    const tab = adaptWebContents(contents);
 
-    const preparationPromise = tab.prepareForPixelCapture();
-    ipc.emit("paseo:browser:capture-prepared", {
-      requestId: "prepare-1",
-      ok: true,
-      token: "token-a",
-    });
-    const preparation = await preparationPromise;
-    contents.hostWebContents = null;
+    const first = tab.sendDebugCommand?.("Input.dispatchMouseEvent", { type: "mouseMoved" });
+    const second = tab.sendDebugCommand?.("Page.captureScreenshot", { format: "png" });
+    await flushMicrotasks();
 
-    const restored = tab.restorePixelCapture(preparation);
-
-    expect(host.sentMessages).toEqual([
-      {
-        channel: "paseo:browser:capture-prepare",
-        payload: { requestId: "prepare-1", browserId: "browser-a" },
-      },
-      {
-        channel: "paseo:browser:capture-restore",
-        payload: { requestId: "restore-1", browserId: "browser-a", token: "token-a" },
-      },
+    expect(contents.debugger.commands).toEqual([
+      { command: "Input.dispatchMouseEvent", params: { type: "mouseMoved" } },
     ]);
-    ipc.emit("paseo:browser:capture-restored", { requestId: "restore-1", ok: true });
 
-    await expect(restored).resolves.toBeUndefined();
-    await expect(tab.restorePixelCapture(preparation)).rejects.toThrow(
-      "Browser pixel capture preparation is no longer active.",
-    );
+    contents.debugger.finishNextCommand();
+    await flushMicrotasks();
+
+    expect(contents.debugger.commands).toEqual([
+      { command: "Input.dispatchMouseEvent", params: { type: "mouseMoved" } },
+      { command: "Page.captureScreenshot", params: { format: "png" } },
+    ]);
+
+    contents.debugger.finishNextCommand();
+    await expect(first).resolves.toEqual({ ok: true });
+    await expect(second).resolves.toEqual({ ok: true });
   });
 
-  test("prepareForPixelCapture rejects when the renderer reports preparation failure", async () => {
-    const host = new FakeHostWebContents(10);
-    const contents = new FakeWebContents(20, host);
-    const ipc = new FakeIpcBridge();
-    const tab = adaptWebContents(contents, "browser-a", {
-      ipc,
-      createRequestId: () => "prepare-1",
-    });
+  test("handles JavaScript dialogs through the per-tab CDP queue", async () => {
+    const contents = new FakeWebContents(24);
+    const tab = adaptWebContents(contents);
 
-    const preparation = tab.prepareForPixelCapture();
-    ipc.emit("paseo:browser:capture-prepared", {
-      requestId: "prepare-1",
-      ok: false,
-      message: "renderer could not prep",
-    });
+    const captured = tab.captureDialogs?.(async () => {
+      contents.debugger.blockCommands = true;
+      const input = tab.sendDebugCommand?.("Input.dispatchMouseEvent", { type: "mouseReleased" });
+      await flushMicrotasks();
 
-    await expect(preparation).rejects.toThrow("renderer could not prep");
-    expect(ipc.listenerCount("paseo:browser:capture-prepared")).toBe(0);
-  });
-
-  test("prepareForPixelCapture ignores matching responses from the wrong sender", async () => {
-    const host = new FakeHostWebContents(10);
-    const contents = new FakeWebContents(20, host);
-    const ipc = new FakeIpcBridge();
-    const tab = adaptWebContents(contents, "browser-a", {
-      ipc,
-      createRequestId: () => "prepare-1",
-    });
-
-    const preparation = tab.prepareForPixelCapture();
-    ipc.emit(
-      "paseo:browser:capture-prepared",
-      {
-        requestId: "prepare-1",
-        ok: true,
-        token: "spoofed-token",
-      },
-      { senderId: 99 },
-    );
-    expect(ipc.listenerCount("paseo:browser:capture-prepared")).toBe(1);
-
-    ipc.emit("paseo:browser:capture-prepared", {
-      requestId: "prepare-1",
-      ok: true,
-      token: "token-a",
-    });
-
-    await expect(preparation).resolves.toEqual({ token: "token-a" });
-  });
-
-  test("prepareForPixelCapture cancels the renderer request when the ack times out", async () => {
-    vi.useFakeTimers();
-    try {
-      const host = new FakeHostWebContents(10);
-      const contents = new FakeWebContents(20, host);
-      const ipc = new FakeIpcBridge();
-      const tab = adaptWebContents(contents, "browser-a", {
-        ipc,
-        createRequestId: () => "prepare-1",
-        timeoutMs: 25,
+      contents.debugger.emitMessage("Page.javascriptDialogOpening", {
+        type: "confirm",
+        message: "Delete item?",
       });
+      await flushMicrotasks();
 
-      const preparation = tab.prepareForPixelCapture();
-      const rejection = expect(preparation).rejects.toThrow(
-        "Browser pixel capture prepare timed out.",
-      );
-      await vi.advanceTimersByTimeAsync(25);
-
-      await rejection;
-      expect(host.sentMessages).toEqual([
+      expect(contents.debugger.commands).toEqual([
+        { command: "Page.enable", params: {} },
         {
-          channel: "paseo:browser:capture-prepare",
-          payload: { requestId: "prepare-1", browserId: "browser-a" },
+          command: "Runtime.evaluate",
+          params: { expression: expect.any(String), returnByValue: true },
         },
-        {
-          channel: "paseo:browser:capture-cancel",
-          payload: { requestId: "prepare-1", browserId: "browser-a" },
-        },
+        { command: "Input.dispatchMouseEvent", params: { type: "mouseReleased" } },
+        { command: "Page.handleJavaScriptDialog", params: { accept: false } },
       ]);
-      expect(ipc.listenerCount("paseo:browser:capture-prepared")).toBe(0);
-    } finally {
-      vi.useRealTimers();
-    }
+
+      contents.debugger.blockCommands = false;
+      contents.debugger.finishNextCommand();
+      await input;
+      await flushMicrotasks();
+      return "done";
+    });
+
+    await expect(captured).resolves.toEqual({
+      result: "done",
+      dialogs: [
+        {
+          type: "confirm",
+          message: "Delete item?",
+          action: "dismissed",
+          timestamp: expect.any(Number),
+        },
+      ],
+    });
+    expect(contents.debugger.commands).toEqual([
+      { command: "Page.enable", params: {} },
+      {
+        command: "Runtime.evaluate",
+        params: { expression: expect.any(String), returnByValue: true },
+      },
+      { command: "Input.dispatchMouseEvent", params: { type: "mouseReleased" } },
+      { command: "Page.handleJavaScriptDialog", params: { accept: false } },
+      {
+        command: "Runtime.evaluate",
+        params: { expression: expect.any(String), returnByValue: true },
+      },
+      {
+        command: "Runtime.evaluate",
+        params: { expression: expect.any(String), returnByValue: true },
+      },
+    ]);
   });
 
-  test("prepareForPixelCapture rejects when the guest has no embedder renderer", async () => {
-    const contents = new FakeWebContents(20, null);
-    const tab = adaptWebContents(contents, "browser-a");
+  test("handles JavaScript dialogs while the triggering CDP input command is still in flight", async () => {
+    const contents = new FakeWebContents(25);
+    const tab = adaptWebContents(contents);
 
-    await expect(tab.prepareForPixelCapture()).rejects.toThrow(
-      "Browser host renderer is not available.",
+    const captured = tab.captureDialogs?.(async () => {
+      contents.debugger.blockedCommandNames.add("Input.dispatchMouseEvent");
+      const input = tab.sendDebugCommand?.("Input.dispatchMouseEvent", { type: "mousePressed" });
+      await flushMicrotasks();
+
+      contents.debugger.emitMessage("Page.javascriptDialogOpening", {
+        type: "alert",
+        message: "Saved",
+      });
+      await flushMicrotasks();
+
+      expect(contents.debugger.commands).toEqual([
+        { command: "Page.enable", params: {} },
+        {
+          command: "Runtime.evaluate",
+          params: { expression: expect.any(String), returnByValue: true },
+        },
+        { command: "Input.dispatchMouseEvent", params: { type: "mousePressed" } },
+        { command: "Page.handleJavaScriptDialog", params: { accept: true } },
+      ]);
+
+      contents.debugger.blockedCommandNames.clear();
+      contents.debugger.finishNextCommand();
+      await input;
+      return "done";
+    });
+
+    await expect(captured).resolves.toEqual({
+      result: "done",
+      dialogs: [
+        {
+          type: "alert",
+          message: "Saved",
+          action: "accepted",
+          timestamp: expect.any(Number),
+        },
+      ],
+    });
+    expect(contents.debugger.commands.at(-1)).toEqual({
+      command: "Runtime.evaluate",
+      params: {
+        expression: expect.stringContaining("delete window[stateKey]"),
+        returnByValue: true,
+      },
+    });
+  });
+
+  test("keeps the prompt shim installed until overlapping captures finish", async () => {
+    const contents = new FakeWebContents(26);
+    const tab = adaptWebContents(contents);
+    const firstStarted = deferred<void>();
+    const secondStarted = deferred<void>();
+    const finishFirst = deferred<void>();
+    const finishSecond = deferred<void>();
+
+    const first = tab.captureDialogs?.(async () => {
+      firstStarted.resolve();
+      await finishFirst.promise;
+      return "first";
+    });
+    await firstStarted.promise;
+
+    const second = tab.captureDialogs?.(async () => {
+      secondStarted.resolve();
+      await finishSecond.promise;
+      return "second";
+    });
+    await secondStarted.promise;
+
+    contents.debugger.promptDialogs.push(
+      {
+        type: "prompt",
+        message: "First?",
+        defaultValue: "one",
+        action: "dismissed",
+        timestamp: 1,
+      },
+      {
+        type: "prompt",
+        message: "Second?",
+        defaultValue: "two",
+        action: "dismissed",
+        timestamp: 2,
+      },
     );
+
+    finishFirst.resolve();
+    await expect(first).resolves.toEqual({
+      result: "first",
+      dialogs: [
+        {
+          type: "prompt",
+          message: "First?",
+          defaultValue: "one",
+          action: "dismissed",
+          timestamp: 1,
+        },
+        {
+          type: "prompt",
+          message: "Second?",
+          defaultValue: "two",
+          action: "dismissed",
+          timestamp: 2,
+        },
+      ],
+    });
+    expect(
+      contents.debugger.commands.some(
+        (entry) =>
+          entry.command === "Runtime.evaluate" &&
+          typeof entry.params.expression === "string" &&
+          entry.params.expression.includes("delete window[stateKey]"),
+      ),
+    ).toBe(false);
+
+    finishSecond.resolve();
+    await expect(second).resolves.toEqual({
+      result: "second",
+      dialogs: [
+        {
+          type: "prompt",
+          message: "First?",
+          defaultValue: "one",
+          action: "dismissed",
+          timestamp: 1,
+        },
+        {
+          type: "prompt",
+          message: "Second?",
+          defaultValue: "two",
+          action: "dismissed",
+          timestamp: 2,
+        },
+      ],
+    });
+    expect(contents.debugger.commands.at(-1)).toEqual({
+      command: "Runtime.evaluate",
+      params: {
+        expression: expect.stringContaining("delete window[stateKey]"),
+        returnByValue: true,
+      },
+    });
+  });
+
+  test("leaves JavaScript dialogs alone when no capture is active", async () => {
+    const contents = new FakeWebContents(28);
+    const tab = adaptWebContents(contents);
+
+    await expect(tab.captureDialogs?.(async () => "done")).resolves.toEqual({
+      result: "done",
+      dialogs: [],
+    });
+    contents.debugger.emitMessage("Page.javascriptDialogOpening", {
+      type: "confirm",
+      message: "Unsaved changes?",
+    });
+    await flushMicrotasks();
+
+    expect(contents.debugger.commands).not.toContainEqual({
+      command: "Page.handleJavaScriptDialog",
+      params: { accept: false },
+    });
+  });
+
+  test("treats prompt shim drain failures after navigation as no dialogs", async () => {
+    const contents = new FakeWebContents(29);
+    contents.debugger.failPromptDrain = true;
+    const tab = adaptWebContents(contents);
+
+    await expect(tab.captureDialogs?.(async () => "navigated")).resolves.toEqual({
+      result: "navigated",
+      dialogs: [],
+    });
+
+    expect(contents.debugger.commands).toEqual([
+      { command: "Page.enable", params: {} },
+      {
+        command: "Runtime.evaluate",
+        params: { expression: expect.any(String), returnByValue: true },
+      },
+      {
+        command: "Runtime.evaluate",
+        params: { expression: expect.any(String), returnByValue: true },
+      },
+      {
+        command: "Runtime.evaluate",
+        params: {
+          expression: expect.stringContaining("delete window[stateKey]"),
+          returnByValue: true,
+        },
+      },
+    ]);
+  });
+
+  test("runs the command without dialog capture when CDP setup fails", async () => {
+    const contents = new FakeWebContents(30);
+    contents.debugger.failedCommandNames.add("Page.enable");
+    const tab = adaptWebContents(contents);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await expect(tab.captureDialogs?.(async () => "done")).resolves.toEqual({
+      result: "done",
+      dialogs: [],
+    });
+
+    expect(warn).toHaveBeenCalledWith(
+      "[browser-automation] Dialog capture unavailable; running command without it",
+      { contentsId: 30, error: expect.any(Error) },
+    );
+    warn.mockRestore();
   });
 });
+
+class FakeHostWebContents {
+  private destroyedListener: (() => void) | null = null;
+
+  public constructor(public readonly id: number) {}
+
+  public once(event: "destroyed", listener: () => void): void {
+    expect(event).toBe("destroyed");
+    this.destroyedListener = listener;
+  }
+
+  public destroy(): void {
+    this.destroyedListener?.();
+  }
+}
+
+async function flushMicrotasks(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}

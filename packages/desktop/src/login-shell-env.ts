@@ -9,14 +9,17 @@ import { userInfo as defaultUserInfo } from "node:os";
 import { basename } from "node:path";
 import defaultLog from "electron-log/main";
 
-const RESOLVE_TIMEOUT_MS = 10_000;
+const DEFAULT_RESOLVE_TIMEOUT_MS = 30_000;
+const TIMEOUT_ENV_KEY = "PASEO_SHELL_ENV_TIMEOUT_MS";
 const STDERR_LOG_LIMIT = 2000;
 
 type LoginShellEnvLogger = Pick<typeof defaultLog, "info" | "warn">;
+type ShellEnvAttemptKind = "interactive" | "non-interactive";
 
 interface LoginShellEnvDependencies {
   env?: NodeJS.ProcessEnv;
   logger?: LoginShellEnvLogger;
+  now?: () => number;
   platform?: NodeJS.Platform;
   spawnSync?: typeof defaultSpawnSync;
   userInfo?: typeof defaultUserInfo;
@@ -37,6 +40,8 @@ function pathEnv(env: NodeJS.ProcessEnv | Record<string, string>): string | null
 
 interface ShellEnvErrorDetails {
   reason: string;
+  attemptKind?: ShellEnvAttemptKind;
+  argv0?: string;
   shell?: string;
   shellArgs?: string[];
   status?: number | null;
@@ -57,19 +62,114 @@ class ShellEnvError extends Error {
   }
 }
 
-function throwIfShellFailed(
-  result: SpawnSyncReturns<string>,
-  regex: RegExp,
-  shell: string,
-  shellArgs: string[],
-): void {
+interface ShellEnvAttempt {
+  kind: ShellEnvAttemptKind;
+  argv0?: string;
+  shellArgs: string[];
+}
+
+interface ShellEnvCommand {
+  command: string;
+  attempts: ShellEnvAttempt[];
+}
+
+interface ResolvedShellEnv {
+  env: Record<string, string>;
+  attemptKind: ShellEnvAttemptKind;
+}
+
+interface AttemptTimeoutInput {
+  totalTimeoutMs: number;
+  attemptsStartedAt: number;
+  now: () => number;
+  attempts: ShellEnvAttempt[];
+  index: number;
+}
+
+interface ThrowIfShellFailedInput {
+  result: SpawnSyncReturns<string>;
+  regex: RegExp;
+  shell: string;
+  attempt: ShellEnvAttempt;
+}
+
+interface ShellEnvForAttemptInput {
+  deps: Required<LoginShellEnvDependencies>;
+  shellEnv: NodeJS.ProcessEnv;
+  shell: string;
+  command: string;
+  regex: RegExp;
+  attempt: ShellEnvAttempt;
+  timeoutMs: number;
+}
+
+interface ShellAttemptErrorDetailsInput {
+  error: unknown;
+  shell: string;
+  attempt: ShellEnvAttempt;
+}
+
+interface LogShellAttemptFailureInput {
+  deps: Required<LoginShellEnvDependencies>;
+  error: unknown;
+  details: ShellEnvErrorDetails;
+  durationMs: number;
+  timeoutMs: number;
+  willRetry: boolean;
+}
+
+interface RestoreElectronEnvInput {
+  env: Record<string, string>;
+  savedRunAsNode: string | undefined;
+  savedNoAttach: string | undefined;
+}
+
+interface ResolveShellEnvInput {
+  deps: Required<LoginShellEnvDependencies>;
+  timeoutMs: number;
+}
+
+function timeoutMsFromEnv(env: NodeJS.ProcessEnv): number {
+  const rawTimeoutMs = env[TIMEOUT_ENV_KEY];
+  if (!rawTimeoutMs) return DEFAULT_RESOLVE_TIMEOUT_MS;
+
+  const timeoutMs = Number.parseInt(rawTimeoutMs, 10);
+  return Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : DEFAULT_RESOLVE_TIMEOUT_MS;
+}
+
+function timeoutMsForAttempt({
+  totalTimeoutMs,
+  attemptsStartedAt,
+  now,
+  attempts,
+  index,
+}: AttemptTimeoutInput): number | null {
+  if (attempts.length === 1) return totalTimeoutMs;
+  if (index === 0) return Math.max(1, Math.floor(totalTimeoutMs / 2));
+
+  const remainingMs = totalTimeoutMs - (now() - attemptsStartedAt);
+  return remainingMs > 0 ? remainingMs : null;
+}
+
+function errorCode(error: unknown): string | null {
+  return error instanceof Error ? ((error as NodeJS.ErrnoException).code ?? null) : null;
+}
+
+function shellFailureReason(result: SpawnSyncReturns<string>): string {
+  if (errorCode(result.error) === "ETIMEDOUT") return "timeout";
+  return result.error ? "spawn-error" : "signal";
+}
+
+function throwIfShellFailed({ result, regex, shell, attempt }: ThrowIfShellFailedInput): void {
   if (result.error || result.signal) {
     throw new ShellEnvError(
       "login shell did not complete",
       {
-        reason: result.error ? "spawn-error" : "signal",
+        reason: shellFailureReason(result),
+        attemptKind: attempt.kind,
+        argv0: attempt.argv0,
         shell,
-        shellArgs,
+        shellArgs: attempt.shellArgs,
         status: result.status,
         signal: result.signal,
         stdoutLength: result.stdout?.length ?? 0,
@@ -82,8 +182,10 @@ function throwIfShellFailed(
   if (result.status !== 0 && result.status !== null) {
     throw new ShellEnvError("login shell exited non-zero", {
       reason: "non-zero-exit",
+      attemptKind: attempt.kind,
+      argv0: attempt.argv0,
       shell,
-      shellArgs,
+      shellArgs: attempt.shellArgs,
       status: result.status,
       signal: result.signal,
       stdoutLength: result.stdout?.length ?? 0,
@@ -96,8 +198,10 @@ function throwIfShellFailed(
       "login shell produced no stdout",
       {
         reason: "no-stdout",
+        attemptKind: attempt.kind,
+        argv0: attempt.argv0,
         shell,
-        shellArgs,
+        shellArgs: attempt.shellArgs,
         status: result.status,
         signal: result.signal,
         stdoutLength: result.stdout?.length ?? 0,
@@ -123,7 +227,171 @@ function getSystemShell(
   return deps.platform === "darwin" ? "/bin/zsh" : "/bin/bash";
 }
 
-function resolveShellEnv(deps: Required<LoginShellEnvDependencies>): Record<string, string> {
+function shellEnvCommand({ shell, mark }: { shell: string; mark: string }): ShellEnvCommand {
+  const name = basename(shell);
+
+  if (/^(?:pwsh|powershell)(?:-preview)?$/.test(name)) {
+    return {
+      command: `& '${process.execPath}' -p '''${mark}'' + JSON.stringify(process.env) + ''${mark}'''`,
+      attempts: [{ kind: "non-interactive", shellArgs: ["-Login", "-Command"] }],
+    };
+  }
+
+  if (name === "nu") {
+    return {
+      command: `^'${process.execPath}' -p '"${mark}" + JSON.stringify(process.env) + "${mark}"'`,
+      attempts: [
+        { kind: "interactive", shellArgs: ["-i", "-l", "-c"] },
+        { kind: "non-interactive", shellArgs: ["-l", "-c"] },
+      ],
+    };
+  }
+
+  if (name === "xonsh") {
+    return {
+      command: `import os, json; print("${mark}", json.dumps(dict(os.environ)), "${mark}")`,
+      attempts: [
+        { kind: "interactive", shellArgs: ["-i", "-l", "-c"] },
+        { kind: "non-interactive", shellArgs: ["-l", "-c"] },
+      ],
+    };
+  }
+
+  if (name === "tcsh" || name === "csh") {
+    return {
+      command: `'${process.execPath}' -p '"${mark}" + JSON.stringify(process.env) + "${mark}"'`,
+      attempts: [
+        { kind: "interactive", shellArgs: ["-ic"] },
+        { kind: "non-interactive", argv0: `-${name}`, shellArgs: ["-c"] },
+      ],
+    };
+  }
+
+  return {
+    command: `'${process.execPath}' -p '"${mark}" + JSON.stringify(process.env) + "${mark}"'`,
+    attempts: [
+      { kind: "interactive", shellArgs: ["-i", "-l", "-c"] },
+      { kind: "non-interactive", shellArgs: ["-l", "-c"] },
+    ],
+  };
+}
+
+function shellEnvForAttempt({
+  deps,
+  shellEnv,
+  shell,
+  command,
+  regex,
+  attempt,
+  timeoutMs,
+}: ShellEnvForAttemptInput): Record<string, string> {
+  const result = deps.spawnSync(shell, [...attempt.shellArgs, command], {
+    argv0: attempt.argv0,
+    encoding: "utf8",
+    timeout: timeoutMs,
+    windowsHide: true,
+    env: {
+      ...shellEnv,
+      ELECTRON_RUN_AS_NODE: "1",
+      ELECTRON_NO_ATTACH_CONSOLE: "1",
+    },
+  });
+
+  throwIfShellFailed({ result, regex, shell, attempt });
+
+  const match = regex.exec(result.stdout);
+  if (!match?.[1]) {
+    throw new ShellEnvError("login shell output did not contain environment marker", {
+      reason: "marker-missing",
+      attemptKind: attempt.kind,
+      argv0: attempt.argv0,
+      shell,
+      shellArgs: attempt.shellArgs,
+      status: result.status,
+      signal: result.signal,
+      stdoutLength: result.stdout.length,
+      markerFound: false,
+      stderr: result.stderr,
+    });
+  }
+
+  try {
+    return JSON.parse(match[1]) as Record<string, string>;
+  } catch (error) {
+    throw new ShellEnvError(
+      "failed to parse login shell environment JSON",
+      {
+        reason: "json-parse",
+        attemptKind: attempt.kind,
+        argv0: attempt.argv0,
+        shell,
+        shellArgs: attempt.shellArgs,
+        status: result.status,
+        signal: result.signal,
+        stdoutLength: result.stdout.length,
+        markerFound: true,
+        stderr: result.stderr,
+      },
+      { cause: error },
+    );
+  }
+}
+
+function shellAttemptErrorDetails({
+  error,
+  shell,
+  attempt,
+}: ShellAttemptErrorDetailsInput): ShellEnvErrorDetails {
+  return error instanceof ShellEnvError
+    ? error.details
+    : {
+        reason: "throw",
+        attemptKind: attempt.kind,
+        argv0: attempt.argv0,
+        shell,
+        shellArgs: attempt.shellArgs,
+      };
+}
+
+function logShellAttemptFailure({
+  deps,
+  error,
+  details,
+  durationMs,
+  timeoutMs,
+  willRetry,
+}: LogShellAttemptFailureInput): void {
+  const cause = error instanceof Error ? error.cause : undefined;
+  deps.logger.warn(
+    willRetry ? "[login-shell-env] attempt failed; retrying" : "[login-shell-env] attempt failed",
+    {
+      ...details,
+      durationMs,
+      timeoutMs,
+      error: error instanceof Error ? error.message : String(error),
+      errorCode: error instanceof ShellEnvError ? errorCode(cause) : errorCode(error),
+      stderr: truncateForLog(details.stderr),
+    },
+  );
+}
+
+function restoreElectronEnv({ env, savedRunAsNode, savedNoAttach }: RestoreElectronEnvInput): void {
+  if (savedRunAsNode) {
+    env.ELECTRON_RUN_AS_NODE = savedRunAsNode;
+  } else {
+    delete env.ELECTRON_RUN_AS_NODE;
+  }
+
+  if (savedNoAttach) {
+    env.ELECTRON_NO_ATTACH_CONSOLE = savedNoAttach;
+  } else {
+    delete env.ELECTRON_NO_ATTACH_CONSOLE;
+  }
+
+  delete env.XDG_RUNTIME_DIR;
+}
+
+function resolveShellEnv({ deps, timeoutMs }: ResolveShellEnvInput): ResolvedShellEnv {
   if (deps.platform === "win32") {
     throw new ShellEnvError("login shell env is not resolved on Windows", { reason: "win32" });
   }
@@ -135,28 +403,7 @@ function resolveShellEnv(deps: Required<LoginShellEnvDependencies>): Record<stri
   const regex = new RegExp(mark + "({.*})" + mark);
 
   const shell = getSystemShell(deps);
-  const name = basename(shell);
-
-  let command: string;
-  let shellArgs: string[];
-
-  if (/^(?:pwsh|powershell)(?:-preview)?$/.test(name)) {
-    command = `& '${process.execPath}' -p '''${mark}'' + JSON.stringify(process.env) + ''${mark}'''`;
-    shellArgs = ["-Login", "-Command"];
-  } else if (name === "nu") {
-    command = `^'${process.execPath}' -p '"${mark}" + JSON.stringify(process.env) + "${mark}"'`;
-    shellArgs = ["-i", "-l", "-c"];
-  } else if (name === "xonsh") {
-    command = `import os, json; print("${mark}", json.dumps(dict(os.environ)), "${mark}")`;
-    shellArgs = ["-i", "-l", "-c"];
-  } else {
-    command = `'${process.execPath}' -p '"${mark}" + JSON.stringify(process.env) + "${mark}"'`;
-    if (name === "tcsh" || name === "csh") {
-      shellArgs = ["-ic"];
-    } else {
-      shellArgs = ["-i", "-l", "-c"];
-    }
-  }
+  const { command, attempts } = shellEnvCommand({ shell, mark });
 
   const shellEnv = { ...deps.env };
   delete shellEnv.PASEO_NODE_ENV;
@@ -165,72 +412,80 @@ function resolveShellEnv(deps: Required<LoginShellEnvDependencies>): Record<stri
 
   deps.logger.info("[login-shell-env] start", {
     shell,
-    shellArgs,
-    timeoutMs: RESOLVE_TIMEOUT_MS,
+    shellArgs: attempts[0]?.shellArgs ?? [],
+    attempts: attempts.map((attempt) => ({
+      attemptKind: attempt.kind,
+      argv0: attempt.argv0,
+      shellArgs: attempt.shellArgs,
+    })),
+    timeoutMs,
     beforePath: pathEnv(deps.env),
   });
 
-  const result = deps.spawnSync(shell, [...shellArgs, command], {
-    encoding: "utf8",
-    timeout: RESOLVE_TIMEOUT_MS,
-    windowsHide: true,
-    env: {
-      ...shellEnv,
-      ELECTRON_RUN_AS_NODE: "1",
-      ELECTRON_NO_ATTACH_CONSOLE: "1",
-    },
-  });
+  let lastError: unknown;
+  const attemptsStartedAt = deps.now();
 
-  throwIfShellFailed(result, regex, shell, shellArgs);
-
-  const match = regex.exec(result.stdout);
-  if (!match?.[1]) {
-    throw new ShellEnvError("login shell output did not contain environment marker", {
-      reason: "marker-missing",
-      shell,
-      shellArgs,
-      status: result.status,
-      signal: result.signal,
-      stdoutLength: result.stdout.length,
-      markerFound: false,
-      stderr: result.stderr,
+  for (const [index, attempt] of attempts.entries()) {
+    const attemptTimeoutMs = timeoutMsForAttempt({
+      totalTimeoutMs: timeoutMs,
+      attemptsStartedAt,
+      now: deps.now,
+      attempts,
+      index,
     });
-  }
+    if (attemptTimeoutMs === null) break;
 
-  try {
-    const env = JSON.parse(match[1]) as Record<string, string>;
+    const attemptStartedAt = deps.now();
 
-    if (savedRunAsNode) {
-      env.ELECTRON_RUN_AS_NODE = savedRunAsNode;
-    } else {
-      delete env.ELECTRON_RUN_AS_NODE;
-    }
-
-    if (savedNoAttach) {
-      env.ELECTRON_NO_ATTACH_CONSOLE = savedNoAttach;
-    } else {
-      delete env.ELECTRON_NO_ATTACH_CONSOLE;
-    }
-
-    delete env.XDG_RUNTIME_DIR;
-
-    return env;
-  } catch (error) {
-    throw new ShellEnvError(
-      "failed to parse login shell environment JSON",
-      {
-        reason: "json-parse",
+    try {
+      const env = shellEnvForAttempt({
+        deps,
+        shellEnv,
         shell,
-        shellArgs,
-        status: result.status,
-        signal: result.signal,
-        stdoutLength: result.stdout.length,
-        markerFound: true,
-        stderr: result.stderr,
-      },
-      { cause: error },
-    );
+        command,
+        regex,
+        attempt,
+        timeoutMs: attemptTimeoutMs,
+      });
+      const durationMs = deps.now() - attemptStartedAt;
+      restoreElectronEnv({ env, savedRunAsNode, savedNoAttach });
+
+      deps.logger.info("[login-shell-env] attempt applied", {
+        attemptKind: attempt.kind,
+        argv0: attempt.argv0,
+        shell,
+        shellArgs: attempt.shellArgs,
+        reason: "success",
+        durationMs,
+        timeoutMs: attemptTimeoutMs,
+      });
+
+      return { env, attemptKind: attempt.kind };
+    } catch (error) {
+      const details = shellAttemptErrorDetails({ error, shell, attempt });
+      const durationMs = deps.now() - attemptStartedAt;
+      const willRetry =
+        index < attempts.length - 1 &&
+        timeoutMsForAttempt({
+          totalTimeoutMs: timeoutMs,
+          attemptsStartedAt,
+          now: deps.now,
+          attempts,
+          index: index + 1,
+        }) !== null;
+      lastError = error;
+      logShellAttemptFailure({
+        deps,
+        error,
+        details,
+        durationMs,
+        timeoutMs: attemptTimeoutMs,
+        willRetry,
+      });
+    }
   }
+
+  throw lastError;
 }
 
 /**
@@ -245,18 +500,22 @@ export function inheritLoginShellEnv(input: LoginShellEnvDependencies = {}): voi
   const deps: Required<LoginShellEnvDependencies> = {
     env: input.env ?? process.env,
     logger: input.logger ?? defaultLog,
+    now: input.now ?? Date.now,
     platform: input.platform ?? process.platform,
     spawnSync: input.spawnSync ?? defaultSpawnSync,
     userInfo: input.userInfo ?? defaultUserInfo,
   };
   const beforePath = pathEnv(deps.env);
-  const startedAt = Date.now();
+  const startedAt = deps.now();
+  const timeoutMs = timeoutMsFromEnv(deps.env);
 
   try {
-    const env = resolveShellEnv(deps);
+    const { env, attemptKind } = resolveShellEnv({ deps, timeoutMs });
     Object.assign(deps.env, env);
     deps.logger.info("[login-shell-env] applied", {
-      durationMs: Date.now() - startedAt,
+      attemptKind,
+      durationMs: deps.now() - startedAt,
+      timeoutMs,
       beforePath,
       afterPath: pathEnv(deps.env),
       pathChanged: beforePath !== pathEnv(deps.env),
@@ -270,8 +529,8 @@ export function inheritLoginShellEnv(input: LoginShellEnvDependencies = {}): voi
     const cause = error instanceof Error ? error.cause : undefined;
     deps.logger.warn("[login-shell-env] failed; keeping inherited env", {
       ...details,
-      durationMs: Date.now() - startedAt,
-      timeoutMs: RESOLVE_TIMEOUT_MS,
+      durationMs: deps.now() - startedAt,
+      timeoutMs,
       error: error instanceof Error ? error.message : String(error),
       errorCode: (cause as NodeJS.ErrnoException | undefined)?.code ?? null,
       stderr: truncateForLog(details.stderr),

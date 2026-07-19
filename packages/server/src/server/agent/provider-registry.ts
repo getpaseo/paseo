@@ -14,6 +14,7 @@ import type {
   ProviderCatalog,
   ResolveAgentCreateConfigInput,
   ResolveAgentCreateConfigResult,
+  ResolveAgentDefaultModeInput,
 } from "./agent-sdk-types.js";
 import {
   isDefaultAgentCreateConfigUnattended,
@@ -35,7 +36,10 @@ import { CursorACPAgentClient } from "./providers/cursor-acp-agent.js";
 import { GenericACPAgentClient } from "./providers/generic-acp-agent.js";
 import { KiroACPAgentClient } from "./providers/kiro-acp-agent.js";
 import { OpenCodeAgentClient } from "./providers/opencode-agent.js";
+import { OmpAgentClient } from "./providers/omp/agent.js";
+import type { OmpRuntime } from "./providers/omp/runtime.js";
 import { PiRpcAgentClient } from "./providers/pi/agent.js";
+import { TraeACPAgentClient } from "./providers/trae-acp-agent.js";
 import { MockLoadTestAgentClient } from "./providers/mock-load-test-agent.js";
 import { MockSlowProviderClient } from "./providers/mock-slow-provider.js";
 import {
@@ -78,11 +82,12 @@ export interface BuildProviderRegistryOptions {
   workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
   managedProcesses?: ManagedProcessRegistry;
   isDev?: boolean;
+  ompRuntime?: OmpRuntime;
 }
 
 interface ProviderClientFactoryOptions extends Pick<
   BuildProviderRegistryOptions,
-  "workspaceGitService" | "managedProcesses"
+  "workspaceGitService" | "managedProcesses" | "ompRuntime"
 > {
   providerParams?: unknown;
   customProvider?: {
@@ -143,21 +148,11 @@ const PROVIDER_CLIENT_FACTORIES: Record<string, ProviderClientFactory> = {
       providerParams: options?.providerParams,
     }),
   omp: (logger, runtimeSettings, options) =>
-    new PiRpcAgentClient({
+    new OmpAgentClient({
       logger,
-      runtimeSettings: mergeRuntimeSettings(
-        {
-          command: {
-            mode: "replace",
-            argv: ["omp"],
-          },
-        },
-        runtimeSettings,
-      ),
-      providerParams: options?.providerParams ?? {
-        sessionDir: "~/.omp/agent/sessions",
-      },
-      commandsRpcType: "get_available_commands",
+      runtimeSettings,
+      providerParams: options?.providerParams,
+      runtime: options?.ompRuntime,
     }),
   mock: (logger) => new MockLoadTestAgentClient(logger),
   "mock-slow": () => new MockSlowProviderClient(),
@@ -397,6 +392,7 @@ function wrapClientProvider(
 ): AgentClient {
   const listImportableSessions = inner.listImportableSessions?.bind(inner);
   const importSession = inner.importSession?.bind(inner);
+  const listFeatures = inner.listFeatures?.bind(inner);
 
   return {
     provider,
@@ -432,14 +428,25 @@ function wrapClientProvider(
     fetchCatalog: async (options) => {
       const catalog = await inner.fetchCatalog(options);
       return {
+        ...catalog,
         models: mergeModels(provider, profileModels, additionalModels, catalog.models, {
           profileModelsAreAdditive,
         }),
         modes: catalog.modes,
       };
     },
+    resolveDefaultModeId: inner.resolveDefaultModeId
+      ? async ({ config, env }: ResolveAgentDefaultModeInput) =>
+          await inner.resolveDefaultModeId?.({
+            config: { ...config, provider: inner.provider },
+            env,
+          })
+      : undefined,
     resolveCreateConfig: inner.resolveCreateConfig?.bind(inner),
     isCreateConfigUnattended: inner.isCreateConfigUnattended?.bind(inner),
+    listFeatures: listFeatures
+      ? async (config) => await listFeatures({ ...config, provider: inner.provider })
+      : undefined,
     listImportableSessions: listImportableSessions
       ? async (options) => await listImportableSessions(options)
       : undefined,
@@ -518,17 +525,25 @@ function createRegistryEntry(
         // the single catalog API; otherwise use static/empty modes with no runtime.
         const models = mergeModelAdditions(provider, replacementModels, resolved.additionalModels);
         if (hasStaticModes) {
+          const defaultModeId = await catalogClient.resolveDefaultModeId?.({
+            config: {
+              provider,
+              cwd: options.scope === "workspace" ? options.cwd : process.cwd(),
+            },
+          });
           return {
             models,
             modes: decorateModes(resolved.definition.modes),
+            defaultModeId,
           };
         }
         const catalog = await catalogClient.fetchCatalog(options);
-        return { models, modes: decorateModes(catalog.modes) };
+        return { ...catalog, models, modes: decorateModes(catalog.modes) };
       }
 
       const catalog = await catalogClient.fetchCatalog(options);
       return {
+        ...catalog,
         models: mergeModels(
           provider,
           resolved.profileModels,
@@ -567,7 +582,10 @@ function createResolvedProviderClient(
 function buildResolvedBuiltinProviders(
   providerOverrides: Record<string, ProviderOverride>,
   runtimeSettings: AgentProviderRuntimeSettingsMap | undefined,
-  options: Pick<BuildProviderRegistryOptions, "workspaceGitService" | "managedProcesses">,
+  options: Pick<
+    BuildProviderRegistryOptions,
+    "workspaceGitService" | "managedProcesses" | "ompRuntime"
+  >,
   isDev: boolean,
 ): Map<string, ResolvedProvider> {
   const resolvedProviders = new Map<string, ResolvedProvider>();
@@ -597,6 +615,7 @@ function buildResolvedBuiltinProviders(
         factory(logger, mergedRuntimeSettings, {
           workspaceGitService: options.workspaceGitService,
           managedProcesses: options.managedProcesses,
+          ompRuntime: options.ompRuntime,
           providerParams: override?.params,
         }),
     });
@@ -660,6 +679,9 @@ function addDerivedProviders(
           if (providerId === "kiro") {
             return new KiroACPAgentClient(acpOptions);
           }
+          if (providerId === "traecli") {
+            return new TraeACPAgentClient(acpOptions);
+          }
           return new GenericACPAgentClient(acpOptions);
         },
       });
@@ -717,6 +739,7 @@ export function buildProviderRegistry(
     {
       workspaceGitService: options?.workspaceGitService,
       managedProcesses: options?.managedProcesses,
+      ompRuntime: options?.ompRuntime,
     },
     options?.isDev === true,
   );

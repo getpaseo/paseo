@@ -70,5 +70,20 @@
     <div class="sub">LOCAL MAGENTA TARGET 1280x800 VIEWPORT</div>
     <div class="block"></div>
     <div class="bottom">FULL PAGE MARKER AT Y=1370</div>
+    <script>
+      const params = new URLSearchParams(window.location.search);
+      const label = params.get("label");
+      const sub = params.get("sub");
+      const bottom = params.get("bottom");
+      if (label) {
+        document.querySelector(".label").textContent = label;
+      }
+      if (sub) {
+        document.querySelector(".sub").textContent = sub;
+      }
+      if (bottom) {
+        document.querySelector(".bottom").textContent = bottom;
+      }
+    </script>
   </body>
 </html>

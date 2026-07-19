@@ -24,6 +24,9 @@ import { useCreateFlowStore } from "@/stores/create-flow-store";
 import type { Agent } from "@/stores/session-store";
 import { useWorkspaceFields } from "@/stores/session-store-hooks";
 import { useWorkspaceDraftSubmissionStore } from "@/stores/workspace-draft-submission-store";
+import { useCommandCenterActions } from "@/command-center/provider";
+import { buildModelChoiceContributions } from "@/command-center/model-contributions";
+import { getCommandCenterProviderIcon } from "@/command-center/provider-icon";
 import { encodeImages } from "@/utils/encode-images";
 import type { WorkspaceFileOpenRequest } from "@/workspace/file-open";
 import { shouldAutoFocusWorkspaceDraftComposer } from "@/screens/workspace/workspace-draft-pane-focus";
@@ -87,32 +90,46 @@ function resolveAutoSubmitConfig(
   };
 }
 
+// Reconcile the form's selected mode against the currently discovered modes.
+// The mode picker displays modeOptions[0] when the stored mode isn't in the
+// list (e.g. a globally-remembered "plan" that this workspace's OpenCode config
+// no longer defines), so the submitted mode must match that display — otherwise
+// we'd send a stale mode the provider rejects while the UI showed a valid one.
+function reconcileSelectedMode(modeOptionIds: readonly string[], selectedMode: string): string {
+  if (modeOptionIds.length === 0) {
+    return "";
+  }
+  return modeOptionIds.includes(selectedMode) ? selectedMode : (modeOptionIds[0] ?? "");
+}
+
 function resolveDraftModeIdOverride(input: {
   autoSubmitConfig: AutoSubmitConfig | null;
-  modeOptionsCount: number;
+  modeOptionIds: readonly string[];
   selectedMode: string;
 }): { modeId: string } | Record<string, never> {
-  const { autoSubmitConfig, modeOptionsCount, selectedMode } = input;
+  const { autoSubmitConfig, modeOptionIds, selectedMode } = input;
   if (autoSubmitConfig?.modeId) {
     return { modeId: autoSubmitConfig.modeId };
   }
-  if (modeOptionsCount > 0 && selectedMode !== "") {
-    return { modeId: selectedMode };
+  const reconciled = reconcileSelectedMode(modeOptionIds, selectedMode);
+  if (reconciled !== "") {
+    return { modeId: reconciled };
   }
   return {};
 }
 
 function resolveDraftModeId(input: {
   autoSubmitConfig: AutoSubmitConfig | null;
-  modeOptionsCount: number;
+  modeOptionIds: readonly string[];
   selectedMode: string;
 }): string | null {
-  const { autoSubmitConfig, modeOptionsCount, selectedMode } = input;
+  const { autoSubmitConfig, modeOptionIds, selectedMode } = input;
   if (autoSubmitConfig?.modeId !== undefined) {
     return autoSubmitConfig.modeId;
   }
-  if (modeOptionsCount > 0 && selectedMode !== "") {
-    return selectedMode;
+  const reconciled = reconcileSelectedMode(modeOptionIds, selectedMode);
+  if (reconciled !== "") {
+    return reconciled;
   }
   return null;
 }
@@ -130,7 +147,7 @@ async function submitDraftCreateRequest(input: {
   composerState: {
     selectedProvider: string | null;
     selectedMode: string;
-    modeOptions: unknown[];
+    modeOptions: readonly { id: string }[];
     effectiveModelId: string | null;
     effectiveThinkingOptionId: string | null;
     featureValues: Record<string, unknown> | undefined;
@@ -163,7 +180,7 @@ async function submitDraftCreateRequest(input: {
   }
   const modeIdOverride = resolveDraftModeIdOverride({
     autoSubmitConfig,
-    modeOptionsCount: composerState.modeOptions.length,
+    modeOptionIds: composerState.modeOptions.map((mode) => mode.id),
     selectedMode: composerState.selectedMode,
   });
   const config = buildWorkspaceDraftAgentConfig({
@@ -202,7 +219,7 @@ function buildDraftAgentSnapshot(input: {
   composerState: {
     effectiveModelId: string | null;
     effectiveThinkingOptionId: string | null;
-    modeOptions: unknown[];
+    modeOptions: readonly { id: string }[];
     selectedMode: string;
     selectedProvider: string | null;
     agentControls: { features?: Agent["features"] };
@@ -217,7 +234,7 @@ function buildDraftAgentSnapshot(input: {
     autoSubmitConfig?.thinkingOptionId ?? (composerState.effectiveThinkingOptionId || null);
   const modeId = resolveDraftModeId({
     autoSubmitConfig,
-    modeOptionsCount: composerState.modeOptions.length,
+    modeOptionIds: composerState.modeOptions.map((mode) => mode.id),
     selectedMode: composerState.selectedMode,
   });
   const provider = autoSubmitConfig?.provider ?? composerState.selectedProvider;
@@ -361,6 +378,28 @@ export function WorkspaceDraftAgentTab({
   if (!composerState) {
     throw new Error("Workspace draft composer state is required");
   }
+
+  const draftModelActions = useMemo(
+    () =>
+      buildModelChoiceContributions({
+        serverId,
+        providers: composerState.modelSelectorProviders,
+        selectedProvider: composerState.selectedProvider,
+        selectedModelId: composerState.effectiveModelId || null,
+        groupLabel: t("shell.commandCenter.modelGroupLabel"),
+        searchKeywords: t("shell.commandCenter.modelSearchKeywords"),
+        getIcon: getCommandCenterProviderIcon,
+        select: composerState.setProviderAndModelFromUser,
+      }),
+    [
+      composerState.effectiveModelId,
+      composerState.modelSelectorProviders,
+      composerState.selectedProvider,
+      composerState.setProviderAndModelFromUser,
+      serverId,
+      t,
+    ],
+  );
   const clearDraftInput = draftInput.clear;
   const setDraftText = draftInput.setText;
   const setDraftAttachments = draftInput.setAttachments;
@@ -502,6 +541,11 @@ export function WorkspaceDraftAgentTab({
       useWorkspaceDraftSubmissionStore.getState().clearDraftSetup({ draftId });
       onCreated(result);
     },
+  });
+  useCommandCenterActions({
+    sourceId: `draft:${serverId}:${tabId}`,
+    enabled: isPaneFocused && !isSubmitting,
+    actions: draftModelActions,
   });
 
   const isReadyForPendingAutoSubmit = Boolean(
@@ -673,7 +717,7 @@ export function WorkspaceDraftAgentTab({
             <AgentStreamView
               agentId={tabId}
               serverId={serverId}
-              agent={draftAgent}
+              context={draftAgent}
               streamItems={optimisticStreamItems}
               pendingPermissions={EMPTY_PENDING_PERMISSIONS}
               onOpenWorkspaceFile={onOpenWorkspaceFile}

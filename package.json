@@ -1,6 +1,6 @@
 {
   "name": "paseo",
-  "version": "0.1.103",
+  "version": "0.2.0-beta.1",
   "private": true,
   "description": "Paseo: voice-controlled development environment for local AI coding agents",
   "keywords": [
@@ -58,7 +58,7 @@
     "build:daemon-web-ui": "node scripts/build-daemon-web-ui.mjs",
     "build:app-deps": "npm run build:highlight && npm run build:client && npm run build --workspace=@getpaseo/expo-two-way-audio",
     "build:app-deps:clean": "npm run build:highlight:clean && npm run build:client:clean && npm run build --workspace=@getpaseo/expo-two-way-audio",
-    "watch:protocol": "tsc -p packages/protocol/tsconfig.json --watch --preserveWatchOutput",
+    "watch:protocol": "npm run watch --workspace=@getpaseo/protocol",
     "watch:client": "tsc -p packages/client/tsconfig.json --watch --preserveWatchOutput",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "typecheck:server": "npm run typecheck --workspace=@getpaseo/relay && npm run typecheck --workspace=@getpaseo/protocol && npm run typecheck --workspace=@getpaseo/client && npm run typecheck --workspace=@getpaseo/server && npm run typecheck --workspace=@getpaseo/cli",

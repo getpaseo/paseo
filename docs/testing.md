@@ -21,6 +21,18 @@ WRONG (horizontal):
 
 Writing all tests first then all implementation produces bad tests — you end up testing imagined behavior instead of actual behavior.
 
+## Fallible user actions
+
+Every user action that can fail must expose the complete operation state in the UI:
+
+- **Pending:** show immediate progress and prevent accidental duplicate submissions.
+- **Success:** show the requested result, or a clear success acknowledgement when the result is not otherwise visible.
+- **Failure:** keep an actionable error visible in the same context until the user retries or dismisses it.
+
+Logs, console output, and a reset button are not user feedback. Neither is a platform API unless it is verified on every supported platform: React Native Web's `Alert.alert()` is a no-op, so browser and Electron failures must use rendered app UI such as the shared alert component.
+
+Every fallible action needs behavioral coverage for success and failure. RPC-backed UI should use an app Playwright test with a real browser, network, and daemon whenever feasible. The failure test must assert what the user can see and do after the failure, not an internal response, state field, or log line. Add distinct timeout or disconnect cases when they produce distinct recovery behavior.
+
 ## Determinism first
 
 Tests must produce the same result every run:
@@ -91,6 +103,37 @@ function createTestEmailSender() {
 
 When a test is labeled end-to-end, it calls the real service. No environment variable gates, no conditional skipping, no mocking the external dependency.
 
+### Packaged desktop smoke
+
+The packaged desktop smoke is an external observer of the production launch path. It must not add a smoke-only branch to Electron main or start the daemon itself.
+
+The harness launches the unpacked packaged app with isolated user data and daemon state, connects to the real renderer over Chromium's debugging protocol, and requires all of these outcomes:
+
+- the `paseo://app/` renderer mounts into `#root`;
+- the sandboxed preload exposes the desktop bridge;
+- the renderer starts a fresh desktop-managed daemon through the normal startup bootstrap;
+- the bundled CLI can query that daemon and run a terminal command.
+
+Pull-request CI runs the Linux x64 smoke under Xvfb when the cumulative PR diff changes `packages/desktop/**`. The desktop release matrix runs the harness against each host-native packaged app before publishing. All smoke jobs upload renderer, desktop, and daemon diagnostics on failure.
+
+To exercise the smoke locally on Linux:
+
+```bash
+PASEO_DESKTOP_SMOKE=1 \
+PASEO_DESKTOP_SMOKE_ARTIFACT_DIR=/tmp/paseo-desktop-smoke \
+npm run build:desktop -- --publish never --linux --x64 --dir
+```
+
+### Browser tab bridge regression
+
+The desktop browser tab bridge E2E launches an isolated real daemon, Metro, and Electron app. It forces workspace LRU eviction to reparent the original tab and replace its guest `WebContents`, then makes one MCP call each for tab listing, snapshot, and click against that original browser id. A final MCP wait proves the real target page received the click.
+
+Run it locally with the same command owned by the Ubuntu leg of the existing `desktop-tests` CI check:
+
+```bash
+npm run test:e2e:browser-tab-bridge --workspace=@getpaseo/desktop
+```
+
 ## Test organization
 
 - Collocate tests with implementation: `thing.ts` + `thing.test.ts`
@@ -115,6 +158,8 @@ App-level Playwright browser E2E lives in `packages/app/e2e/*.spec.ts` and runs 
 
 Live provider smoke tests belong in `*.real.e2e.test.ts`, not `*.test.ts`, even when guarded by environment variables. Default unit suites must use deterministic provider adapters/fakes so missing credits, auth outages, and upstream model drift do not block normal CI.
 
+Codex MultiAgentV2 real tests use local Codex authentication rather than the OpenRouter-compatible test provider. OpenRouter does not accept Codex collaboration-history items on the parent follow-up request, so it cannot verify a complete native sub-agent turn.
+
 ### Test setup
 
 - Server: `packages/server/src/test-utils/vitest-setup.ts` loads `.env.test`, sets `PASEO_SUPERVISED=0`, and disables Git/SSH prompts. Add new global env shims here, not in individual tests.
@@ -132,6 +177,7 @@ Test suites in this repo are heavy. Running them in bulk freezes the machine, es
 - Never run the full Playwright E2E suite locally — defer whole-suite verification to CI. Targeted Playwright specs are allowed when you changed or need to prove that specific flow.
 - App Playwright specs share one isolated daemon per run. Helpers that create projects or workspaces must remove the daemon project record during cleanup, not only delete the temp directory. Agent helpers must pass the intended `workspaceId` through to agent creation; never infer ownership from `cwd`.
 - CI can shard app Playwright across multiple jobs; each shard still owns a full isolated daemon/relay/Metro stack from global setup. Helpers that restart the daemon must preserve the global setup environment, including disabled speech/local-model settings, so a restart does not change the tested surface or start background downloads.
+- Global setup starts Metro before Wrangler, assigns Wrangler explicit distinct relay and inspector ports, and accepts Metro as ready only when `/status` returns `packager-status:running`. A generic TCP listener is not sufficient readiness evidence.
 
 ## Agent authentication in tests
 

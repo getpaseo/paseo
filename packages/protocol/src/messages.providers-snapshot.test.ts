@@ -38,39 +38,16 @@ describe("provider snapshot message schemas", () => {
     expect(parsed.enabled).toBe(true);
   });
 
-  test("normalizes thinking option defaults on provider snapshot models", () => {
+  test("preserves provider snapshot entry source", () => {
     const parsed = ProviderSnapshotEntrySchema.parse({
-      provider: "claude",
+      provider: "gemini",
       status: "ready",
-      models: [
-        {
-          provider: "claude",
-          id: "MiniMax-M2.7",
-          label: "MiniMax-M2.7",
-          isDefault: true,
-          contextWindowMaxTokens: 1_000_000,
-          thinkingOptions: [
-            { id: "off", label: "Off" },
-            { id: "max", label: "Max", isDefault: true },
-          ],
-        },
-      ],
+      enabled: true,
+      source: "custom",
+      label: "Gemini",
     });
 
-    expect(parsed.models).toEqual([
-      {
-        provider: "claude",
-        id: "MiniMax-M2.7",
-        label: "MiniMax-M2.7",
-        isDefault: true,
-        contextWindowMaxTokens: 1_000_000,
-        thinkingOptions: [
-          { id: "off", label: "Off" },
-          { id: "max", label: "Max", isDefault: true },
-        ],
-        defaultThinkingOptionId: "max",
-      },
-    ]);
+    expect(parsed.source).toBe("custom");
   });
 
   test("defaults missing enabled state in providers snapshot response entries", () => {

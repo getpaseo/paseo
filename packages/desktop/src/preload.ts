@@ -1,117 +1,21 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
+import type { BrowserKeyboardPolicy } from "./features/browser-keyboard/index.js";
+
+// This preload runs in Electron's sandbox and is tsc-compiled (not bundled), so it MUST
+// NOT emit any runtime module load other than "electron" — a require() of a local or
+// third-party module throws and aborts the preload before exposeInMainWorld runs, leaving
+// window.paseoDesktop undefined (the 0.1.108 regression, #2103). Keep this literal in sync
+// with PASEO_BROWSER_PROFILE_PARTITION in features/browser-profile.ts; preload-sandbox.test.ts
+// guards both the no-local-import rule and this drift. Type-only imports are fine (erased at emit).
+const PASEO_BROWSER_PROFILE_PARTITION = "persist:paseo-browser";
 
 type EventHandler = (payload: unknown) => void;
-type BrowserPixelCapturePrepareHandler = (input: {
-  requestId: string;
+
+interface AttachedBrowserRegistration {
   browserId: string;
-}) => Promise<{ token: string }>;
-type BrowserPixelCaptureRestoreHandler = (input: { token: string }) => Promise<void>;
-type BrowserPixelCaptureCancelHandler = (input: {
-  requestId?: string;
-  token?: string;
-}) => Promise<void>;
-
-let prepareForPixelCaptureHandler: BrowserPixelCapturePrepareHandler | null = null;
-let restorePixelCaptureHandler: BrowserPixelCaptureRestoreHandler | null = null;
-let cancelPixelCaptureHandler: BrowserPixelCaptureCancelHandler | null = null;
-const canceledPixelCaptureRequestIds = new Set<string>();
-
-function readStringField(payload: unknown, key: string): string | null {
-  if (!isRecord(payload)) {
-    return null;
-  }
-  const value = payload[key];
-  return typeof value === "string" && value.length > 0 ? value : null;
+  workspaceId: string;
+  webContentsId: number;
 }
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-ipcRenderer.on("paseo:browser:capture-prepare", async (_event, payload: unknown) => {
-  const requestId = readStringField(payload, "requestId");
-  const browserId = readStringField(payload, "browserId");
-  if (!requestId || !browserId || !prepareForPixelCaptureHandler) {
-    ipcRenderer.send("paseo:browser:capture-prepared", {
-      requestId: requestId ?? "unknown",
-      ok: false,
-      message: "Browser pixel capture preparation is unavailable.",
-    });
-    return;
-  }
-
-  try {
-    const preparation = await prepareForPixelCaptureHandler({ requestId, browserId });
-    if (canceledPixelCaptureRequestIds.delete(requestId)) {
-      await restorePixelCaptureHandler?.({ token: preparation.token });
-      ipcRenderer.send("paseo:browser:capture-prepared", {
-        requestId,
-        ok: false,
-        message: "Browser pixel capture preparation was canceled.",
-      });
-      return;
-    }
-    ipcRenderer.send("paseo:browser:capture-prepared", {
-      requestId,
-      ok: true,
-      token: preparation.token,
-    });
-  } catch (error) {
-    canceledPixelCaptureRequestIds.delete(requestId);
-    ipcRenderer.send("paseo:browser:capture-prepared", {
-      requestId,
-      ok: false,
-      message: errorMessage(error),
-    });
-  }
-});
-
-ipcRenderer.on("paseo:browser:capture-cancel", async (_event, payload: unknown) => {
-  const requestId = readStringField(payload, "requestId");
-  const token = readStringField(payload, "token");
-  if (requestId) {
-    canceledPixelCaptureRequestIds.add(requestId);
-  }
-  if (!requestId && !token) {
-    return;
-  }
-  try {
-    await cancelPixelCaptureHandler?.({
-      ...(requestId ? { requestId } : {}),
-      ...(token ? { token } : {}),
-    });
-  } catch {
-    // The original prepare/restore request owns the user-visible error.
-  }
-});
-
-ipcRenderer.on("paseo:browser:capture-restore", async (_event, payload: unknown) => {
-  const requestId = readStringField(payload, "requestId");
-  const token = readStringField(payload, "token");
-  if (!requestId || !token || !restorePixelCaptureHandler) {
-    ipcRenderer.send("paseo:browser:capture-restored", {
-      requestId: requestId ?? "unknown",
-      ok: false,
-      message: "Browser pixel capture restore is unavailable.",
-    });
-    return;
-  }
-
-  try {
-    await restorePixelCaptureHandler({ token });
-    ipcRenderer.send("paseo:browser:capture-restored", { requestId, ok: true });
-  } catch (error) {
-    ipcRenderer.send("paseo:browser:capture-restored", {
-      requestId,
-      ok: false,
-      message: errorMessage(error),
-    });
-  }
-});
 
 contextBridge.exposeInMainWorld("paseoDesktop", {
   platform: process.platform,
@@ -135,11 +39,14 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
       ipcRenderer.invoke("paseo:window:openNew", options),
     getCurrentWindow: () => ({
       toggleMaximize: () => ipcRenderer.invoke("paseo:window:toggleMaximize"),
+      setFullscreen: (fullscreen: boolean) =>
+        ipcRenderer.invoke("paseo:window:setFullscreen", fullscreen),
       isFullscreen: () => ipcRenderer.invoke("paseo:window:isFullscreen"),
       updateWindowControls: (update: {
         height?: number;
         backgroundColor?: string;
         foregroundColor?: string;
+        trafficLightOffsetY?: number;
       }) => ipcRenderer.invoke("paseo:window:updateWindowControls", update),
       onResized: (handler: EventHandler): (() => void) => {
         const listener = (_ipcEvent: Electron.IpcRendererEvent, payload: unknown) => {
@@ -172,9 +79,10 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
     listTargets: () => ipcRenderer.invoke("paseo:editor:listTargets"),
     openTarget: (input: {
       editorId: string;
-      path: string;
-      cwd?: string;
-      mode?: "open" | "reveal";
+      workspacePath: string;
+      filePath?: string;
+      line?: number;
+      column?: number;
     }) => ipcRenderer.invoke("paseo:editor:openTarget", input),
   },
   webUtils: {
@@ -183,16 +91,23 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
   menu: {
     showContextMenu: (input?: Record<string, unknown>) =>
       ipcRenderer.invoke("paseo:menu:showContextMenu", input),
+    setCapturingShortcut: (capturing: boolean) =>
+      ipcRenderer.invoke("paseo:menu:set-capturing-shortcut", capturing),
   },
   browser: {
-    registerWorkspaceBrowser: (input: { browserId: string; workspaceId: string }) =>
-      ipcRenderer.invoke("paseo:browser:register-workspace-browser", input),
+    setShortcutPolicy: (input: BrowserKeyboardPolicy) =>
+      ipcRenderer.invoke("paseo:browser:set-shortcut-policy", input),
+    profilePartition: PASEO_BROWSER_PROFILE_PARTITION,
+    registerAttachedBrowser: (input: AttachedBrowserRegistration) =>
+      ipcRenderer.invoke("paseo:browser:register-attached", input),
+    unregisterWorkspaceBrowser: (browserId: string) =>
+      ipcRenderer.invoke("paseo:browser:unregister-workspace-browser", browserId),
     setWorkspaceActiveBrowser: (input: { workspaceId: string; browserId: string | null }) =>
       ipcRenderer.invoke("paseo:browser:set-workspace-active-browser", input),
     openDevTools: (browserId: string) =>
       ipcRenderer.invoke("paseo:browser:open-devtools", browserId),
-    clearPartition: (browserId: string) =>
-      ipcRenderer.invoke("paseo:browser:clear-partition", browserId),
+    clearProfile: (legacyBrowserIds: string[]) =>
+      ipcRenderer.invoke("paseo:browser:clear-profile", legacyBrowserIds),
     executeAutomationCommand: (request: Record<string, unknown>) =>
       ipcRenderer.invoke("paseo:browser:execute-automation-command", request),
     captureElement: (
@@ -201,29 +116,5 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
     ) => ipcRenderer.invoke("paseo:browser:capture-element", browserId, rect),
     copyElement: (payload: { text?: string; imageDataUrl?: string }) =>
       ipcRenderer.invoke("paseo:browser:copy-element", payload),
-    onPrepareForPixelCapture: (handler: BrowserPixelCapturePrepareHandler): (() => void) => {
-      prepareForPixelCaptureHandler = handler;
-      return () => {
-        if (prepareForPixelCaptureHandler === handler) {
-          prepareForPixelCaptureHandler = null;
-        }
-      };
-    },
-    onRestorePixelCapture: (handler: BrowserPixelCaptureRestoreHandler): (() => void) => {
-      restorePixelCaptureHandler = handler;
-      return () => {
-        if (restorePixelCaptureHandler === handler) {
-          restorePixelCaptureHandler = null;
-        }
-      };
-    },
-    onCancelPixelCapture: (handler: BrowserPixelCaptureCancelHandler): (() => void) => {
-      cancelPixelCaptureHandler = handler;
-      return () => {
-        if (cancelPixelCaptureHandler === handler) {
-          cancelPixelCaptureHandler = null;
-        }
-      };
-    },
   },
 });

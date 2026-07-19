@@ -4,7 +4,6 @@ import {
   isTimelineCatchUpComplete,
   planInitialAgentTimelineSync,
   planResumeTimelineSync,
-  planTimelineCatchUpFollowUp,
   planTimelineOlderFetch,
 } from "./timeline-sync-plan";
 
@@ -70,31 +69,7 @@ describe("timeline sync planning", () => {
     });
   });
 
-  test("catch-up keeps paging while the daemon reports newer rows", () => {
-    const plan = planTimelineCatchUpFollowUp({
-      direction: "after",
-      hasNewer: true,
-      endCursor: { epoch: "epoch-1", seq: 200 },
-      error: null,
-    });
-
-    expect(plan).toEqual({
-      direction: "after",
-      cursor: { epoch: "epoch-1", seq: 200 },
-      limit: TIMELINE_FETCH_PAGE_SIZE,
-      projection: "projected",
-    });
-  });
-
   test("catch-up finishes when the daemon reports no newer rows", () => {
-    const plan = planTimelineCatchUpFollowUp({
-      direction: "after",
-      hasNewer: false,
-      endCursor: { epoch: "epoch-1", seq: 200 },
-      error: null,
-    });
-
-    expect(plan).toBeNull();
     expect(isTimelineCatchUpComplete({ direction: "after", hasNewer: false, error: null })).toBe(
       true,
     );

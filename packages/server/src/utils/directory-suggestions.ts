@@ -1,85 +1,99 @@
-import type { Dirent } from "node:fs";
+import type { Dirent, Stats } from "node:fs";
 import { readdir, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { isPathInsideRoot } from "./path.js";
 
-export interface SearchHomeDirectoriesOptions {
-  homeDir: string;
-  query: string;
-  limit?: number;
-  maxDepth?: number;
-  maxDirectoriesScanned?: number;
-}
+export type DirectorySuggestionKind = "file" | "directory";
+export type DirectorySuggestionPathFormat = "absolute" | "relative";
+export type DirectorySuggestionMatchMode = "fuzzy" | "suffix";
+export type PathQueryPolicy = "rooted" | "slashes";
+export type BlankQueryBehavior = "none" | "children";
 
-export type WorkspaceSuggestionKind = "file" | "directory";
-
-export interface WorkspaceSuggestionEntry {
+export interface DirectorySuggestionEntry {
   path: string;
-  kind: WorkspaceSuggestionKind;
+  kind: DirectorySuggestionKind;
 }
 
-export interface SearchWorkspaceEntriesOptions {
-  cwd: string;
+export interface SearchDirectoryEntriesOptions {
+  root: string;
   query: string;
-  limit?: number;
+  pathFormat: DirectorySuggestionPathFormat;
   includeFiles?: boolean;
   includeDirectories?: boolean;
-  matchMode?: WorkspaceMatchMode;
+  matchMode?: DirectorySuggestionMatchMode;
+  pathQueryPolicy?: PathQueryPolicy;
+  rootAliases?: string[];
+  blankQueryBehavior?: BlankQueryBehavior;
+  traversableHiddenDirectoryNames?: readonly string[];
+  limit?: number;
   maxDepth?: number;
   maxEntriesScanned?: number;
+  confidentResultScanThreshold?: number;
 }
 
-export type WorkspaceMatchMode = "fuzzy" | "suffix";
-
-const DEFAULT_LIMIT = 30;
-const MAX_LIMIT = 100;
-const DEFAULT_MAX_DEPTH = 12;
-const DEFAULT_MAX_DIRECTORIES_SCANNED = 20000;
-const DIRECTORY_LIST_CACHE_TTL_MS = 8_000;
-const DIRECTORY_LIST_CACHE_MAX_ENTRIES = 4_000;
-
-interface QueryParts {
+interface QueryPlan {
   isPathQuery: boolean;
   parentPart: string;
   searchTerm: string;
+  normalizedQuery: string;
+  browseExactPath?: boolean;
 }
 
-interface RankedDirectory {
-  absolutePath: string;
-  matchTier: number;
-  segmentIndex: number;
-  matchOffset: number;
+interface ChildEntry {
+  name: string;
+  resolvedPath: string;
+  kind: DirectorySuggestionKind;
+}
+
+interface RawChildEntry {
+  name: string;
+  kind: DirectorySuggestionKind | "symlink";
+}
+
+interface TraversedEntry extends ChildEntry {
+  visiblePath: string;
   depth: number;
 }
 
-interface ChildDirectoryEntry {
-  name: string;
-  absolutePath: string;
-}
-
-interface ChildWorkspaceEntry {
-  name: string;
-  absolutePath: string;
-  kind: WorkspaceSuggestionKind;
+interface RankedEntry extends DirectorySuggestionEntry {
+  matchTier: number;
+  segmentIndex: number;
+  matchOffset: number;
+  fuzzyScore: number;
+  depth: number;
 }
 
 interface DirectoryListCacheEntry {
   expiresAt: number;
-  entries: ChildDirectoryEntry[];
+  modifiedAtMs: number;
+  changedAtMs: number;
+  entries: RawChildEntry[];
 }
 
-interface WorkspaceEntryListCacheEntry {
-  expiresAt: number;
-  entries: ChildWorkspaceEntry[];
-}
-
-const directoryListCache = new Map<string, DirectoryListCacheEntry>();
-const workspaceEntryListCache = new Map<string, WorkspaceEntryListCacheEntry>();
+const DEFAULT_LIMIT = 30;
+const MAX_LIMIT = 100;
+const DEFAULT_MAX_DEPTH = 12;
+const DEFAULT_MAX_ENTRIES_SCANNED = 20_000;
+const DIRECTORY_LIST_CACHE_TTL_MS = 8_000;
+const DIRECTORY_LIST_CACHE_MAX_ENTRIES = 4_000;
+// Windows does not reliably update directory mtime/ctime when children change,
+// so metadata cannot safely validate a cross-request listing cache there.
+const CAN_VALIDATE_DIRECTORY_CACHE_FROM_METADATA = process.platform !== "win32";
+const MAX_CONFIDENT_FUZZY_SKIPS_PER_CHARACTER = 2;
 const NO_SEGMENT_INDEX = Number.MAX_SAFE_INTEGER;
 const NO_MATCH_OFFSET = Number.MAX_SAFE_INTEGER;
 const NO_FUZZY_SCORE = Number.MAX_SAFE_INTEGER;
-const NO_WORKSPACE_MATCH_TIER = 5;
-const IGNORED_SUGGESTION_DIRECTORY_NAMES = new Set([
+const NO_MATCH_TIER = 5;
+export const WORKSPACE_SEARCH_HIDDEN_DIRECTORIES = [
+  ".agents",
+  ".claude",
+  ".codex",
+  ".github",
+  ".opencode",
+  ".paseo",
+  ".vscode",
+] as const;
+const IGNORED_DIRECTORY_NAMES = new Set([
   "node_modules",
   "venv",
   "env",
@@ -93,1034 +107,509 @@ const IGNORED_SUGGESTION_DIRECTORY_NAMES = new Set([
   "__pycache__",
   ".git",
 ]);
-const TRAVERSABLE_HIDDEN_WORKSPACE_DIRECTORY_NAMES = new Set([
-  ".agents",
-  ".claude",
-  ".codex",
-  ".github",
-  ".paseo",
-  ".vscode",
-]);
+const directoryListCache = new Map<string, DirectoryListCacheEntry>();
 
-export async function searchHomeDirectories(
-  options: SearchHomeDirectoriesOptions,
-): Promise<string[]> {
-  const query = options.query.trim();
-  if (!query) {
-    return [];
-  }
+export async function searchDirectoryEntries(
+  options: SearchDirectoryEntriesOptions,
+): Promise<DirectorySuggestionEntry[]> {
+  const root = await resolveDirectory(options.root);
+  if (!root) return [];
 
-  const limit = normalizeLimit(options.limit);
-  const homeRoot = await resolveDirectory(options.homeDir);
-  if (!homeRoot) {
-    return [];
-  }
+  const input = buildSearchInput(options, root);
+  if (!input) return [];
 
-  const queryParts = normalizeQueryParts(query, homeRoot);
-  if (!queryParts) {
-    return [];
-  }
+  const exact =
+    input.plan.browseExactPath || (input.matchMode === "suffix" && input.plan.isPathQuery)
+      ? await findExactEntry(input)
+      : null;
+  if (exact && input.limit === 1) return [exact];
 
-  if (queryParts.isPathQuery) {
-    return searchWithinParentDirectory({
-      homeRoot,
-      parentPart: queryParts.parentPart,
-      searchTerm: queryParts.searchTerm,
-      limit,
-    });
-  }
-
-  return searchAcrossHomeTree({
-    homeRoot,
-    searchTerm: queryParts.searchTerm,
-    limit,
-    maxDepth: options.maxDepth ?? DEFAULT_MAX_DEPTH,
-    maxDirectoriesScanned: options.maxDirectoriesScanned ?? DEFAULT_MAX_DIRECTORIES_SCANNED,
-  });
+  const browsesRoot = input.plan.isPathQuery && !input.plan.normalizedQuery;
+  const ranked =
+    input.plan.isPathQuery && (input.matchMode === "fuzzy" || browsesRoot)
+      ? await searchChildren(input)
+      : await searchTree(input);
+  const results = sortAndFormat(ranked, input.root, input.pathFormat).slice(0, input.limit);
+  return exact
+    ? [exact, ...results.filter((entry) => !sameEntry(entry, exact))].slice(0, input.limit)
+    : results;
 }
 
-interface RankedWorkspaceEntry {
-  relativePath: string;
-  kind: WorkspaceSuggestionKind;
-  matchTier: number;
-  segmentIndex: number;
-  matchOffset: number;
-  fuzzyScore: number;
-  depth: number;
-}
-
-export async function searchWorkspaceEntries(
-  options: SearchWorkspaceEntriesOptions,
-): Promise<WorkspaceSuggestionEntry[]> {
-  const limit = normalizeLimit(options.limit);
+function buildSearchInput(
+  options: SearchDirectoryEntriesOptions,
+  root: string,
+): SearchInput | null {
   const includeDirectories = options.includeDirectories ?? true;
   const includeFiles = options.includeFiles ?? false;
-  if (!includeDirectories && !includeFiles) {
-    return [];
-  }
+  if (!includeDirectories && !includeFiles) return null;
 
-  const workspaceRoot = await resolveDirectory(options.cwd);
-  if (!workspaceRoot) {
-    return [];
-  }
+  const plan = parseQuery({
+    query: options.query,
+    root,
+    configuredRoot: path.resolve(options.root),
+    policy: options.pathQueryPolicy ?? "slashes",
+    aliases: options.rootAliases ?? [],
+    blankBehavior: options.blankQueryBehavior ?? "none",
+  });
+  if (!plan) return null;
 
-  const queryParts = normalizeWorkspaceQueryParts(options.query, workspaceRoot);
-  if (!queryParts) {
-    return [];
-  }
-
-  const matchMode = options.matchMode ?? "fuzzy";
-  const exactEntry =
-    queryParts.isPathQuery && matchMode === "suffix"
-      ? await resolveWorkspaceExactEntry({
-          workspaceRoot,
-          query: options.query,
-          includeDirectories,
-          includeFiles,
-        })
-      : null;
-  if (exactEntry && limit <= 1) {
-    return [exactEntry];
-  }
-
-  if (queryParts.isPathQuery && matchMode !== "suffix") {
-    return searchWorkspaceWithinParentDirectory({
-      workspaceRoot,
-      parentPart: queryParts.parentPart,
-      searchTerm: queryParts.searchTerm,
-      limit,
-      includeDirectories,
-      includeFiles,
-    });
-  }
-
-  const searchTerm =
-    matchMode === "suffix"
-      ? [queryParts.parentPart, queryParts.searchTerm].filter(Boolean).join("/")
-      : queryParts.searchTerm;
-  const entries = await searchWorkspaceAcrossTree({
-    workspaceRoot,
-    searchTerm,
-    limit,
+  return {
+    root,
+    plan,
     includeDirectories,
     includeFiles,
-    matchMode,
+    matchMode: options.matchMode ?? "fuzzy",
+    pathFormat: options.pathFormat,
+    hiddenDirectoryNames: new Set(options.traversableHiddenDirectoryNames ?? []),
+    limit: normalizeLimit(options.limit),
     maxDepth: options.maxDepth ?? DEFAULT_MAX_DEPTH,
-    maxEntriesScanned: options.maxEntriesScanned ?? DEFAULT_MAX_DIRECTORIES_SCANNED,
-  });
-  return exactEntry ? prependWorkspaceEntry(exactEntry, entries).slice(0, limit) : entries;
+    maxEntriesScanned: options.maxEntriesScanned ?? DEFAULT_MAX_ENTRIES_SCANNED,
+    confidentResultScanThreshold: options.confidentResultScanThreshold,
+  };
 }
 
-async function resolveWorkspaceExactEntry(input: {
-  workspaceRoot: string;
-  query: string;
+async function findExactEntry(input: SearchInput): Promise<DirectorySuggestionEntry | null> {
+  if (!input.plan.normalizedQuery) return null;
+  const visiblePath = path.resolve(input.root, input.plan.normalizedQuery);
+  const resolvedPath = await realpath(visiblePath).catch(() => null);
+  if (!resolvedPath || !isPathInsideRoot(input.root, resolvedPath)) return null;
+  const info = await stat(resolvedPath).catch(() => null);
+  const kind = getEntryKind(info);
+  if (
+    !kind ||
+    (kind === "directory" && !input.includeDirectories) ||
+    (kind === "file" && !input.includeFiles)
+  )
+    return null;
+  return formatEntry({ path: visiblePath, kind }, input.root, input.pathFormat);
+}
+
+interface SearchInput {
+  root: string;
+  plan: QueryPlan;
   includeDirectories: boolean;
   includeFiles: boolean;
-}): Promise<WorkspaceSuggestionEntry | null> {
-  const normalized = input.query
-    .trim()
-    .replace(/\\/g, "/")
-    .replace(/^\.\/+/, "")
-    .replace(/\/{2,}/g, "/");
+  matchMode: DirectorySuggestionMatchMode;
+  pathFormat: DirectorySuggestionPathFormat;
+  hiddenDirectoryNames: Set<string>;
+  limit: number;
+  maxDepth: number;
+  maxEntriesScanned: number;
+  confidentResultScanThreshold: number | undefined;
+}
+
+async function searchChildren(input: SearchInput): Promise<RankedEntry[]> {
+  const visibleParent = path.resolve(input.root, input.plan.parentPart || ".");
+  const parent = await realpath(visibleParent).catch(() => null);
+  if (!parent || !isPathInsideRoot(input.root, parent)) return [];
+  const entries = await readChildren(parent);
+  return entries.flatMap((entry) => {
+    if (!isPathInsideRoot(input.root, entry.resolvedPath) || !shouldDiscover(entry, input))
+      return [];
+    const candidate: TraversedEntry = {
+      ...entry,
+      visiblePath: path.join(visibleParent, entry.name),
+      depth: 1,
+    };
+    return shouldSuggest(candidate, input) ? [rank(candidate, input)] : [];
+  });
+}
+
+async function searchTree(input: SearchInput): Promise<RankedEntry[]> {
+  if (!(input.maxEntriesScanned > 0)) return [];
+  const roots = (await readChildren(input.root)).filter((entry) =>
+    isPathInsideRoot(input.root, entry.resolvedPath),
+  );
+  const visited = new Set<string>([input.root]);
+  const branches = roots.flatMap((entry) =>
+    shouldDiscover(entry, input)
+      ? [
+          walkBranch(
+            { ...entry, visiblePath: path.join(input.root, entry.name), depth: 1 },
+            input,
+            visited,
+          ),
+        ]
+      : [],
+  );
+  const ranked: RankedEntry[] = [];
+  let scanned = 0;
+  const threshold = input.confidentResultScanThreshold;
+  for await (const entry of roundRobin(branches)) {
+    scanned += 1;
+    if (shouldSuggest(entry, input)) ranked.push(rank(entry, input));
+    if (
+      scanned >= input.maxEntriesScanned ||
+      (threshold && scanned >= threshold && hasConfidentResult(ranked, input.plan.searchTerm))
+    )
+      break;
+  }
+  return ranked;
+}
+
+async function* walkBranch(
+  entry: TraversedEntry,
+  input: SearchInput,
+  visited: Set<string>,
+): AsyncGenerator<TraversedEntry> {
+  yield entry;
+  if (
+    entry.kind !== "directory" ||
+    visited.has(entry.resolvedPath) ||
+    entry.depth >= input.maxDepth
+  )
+    return;
+  visited.add(entry.resolvedPath);
+  const children = (await readChildren(entry.resolvedPath)).filter((child) =>
+    isPathInsideRoot(input.root, child.resolvedPath),
+  );
+  const branches = children.flatMap((child) =>
+    shouldDiscover(child, input)
+      ? [
+          walkBranch(
+            {
+              ...child,
+              visiblePath: path.join(entry.visiblePath, child.name),
+              depth: entry.depth + 1,
+            },
+            input,
+            visited,
+          ),
+        ]
+      : [],
+  );
+  yield* roundRobin(branches);
+}
+
+async function* roundRobin<T>(branches: Array<AsyncGenerator<T>>): AsyncGenerator<T> {
+  let active = branches;
+  while (active.length) {
+    const nextRound: Array<AsyncGenerator<T>> = [];
+    for (const branch of active) {
+      const next = await branch.next();
+      if (!next.done) {
+        nextRound.push(branch);
+        yield next.value;
+      }
+    }
+    active = nextRound;
+  }
+}
+
+function shouldDiscover(entry: ChildEntry, input: SearchInput): boolean {
+  if (entry.kind === "file") {
+    return input.includeFiles && !entry.name.startsWith(".");
+  }
+  if (IGNORED_DIRECTORY_NAMES.has(entry.name)) return false;
+  if (!entry.name.startsWith(".")) return true;
+  return input.hiddenDirectoryNames.has(entry.name);
+}
+
+function shouldSuggest(entry: TraversedEntry, input: SearchInput): boolean {
+  if (entry.name.startsWith(".")) return false;
+  if (entry.kind === "directory" && !input.includeDirectories) return false;
+  if (entry.kind === "file" && !input.includeFiles) return false;
+  if (!input.plan.normalizedQuery) return true;
+  if (input.matchMode === "suffix")
+    return suffixMatches(entry.visiblePath, input.root, input.plan.normalizedQuery);
+  return !input.plan.searchTerm || rank(entry, input).matchTier !== NO_MATCH_TIER;
+}
+
+function rank(entry: TraversedEntry, input: SearchInput): RankedEntry {
+  const relativePath = normalizeRelativePath(input.root, entry.visiblePath);
+  const lowerPath = relativePath.toLowerCase();
+  const query = input.plan.searchTerm.toLowerCase();
+  const segments = lowerPath === "." ? [] : lowerPath.split("/");
+  const exact = findSegmentMatchIndex(segments, (segment) => segment === query);
+  const prefix = findSegmentMatchIndex(segments, (segment) => segment.startsWith(query));
+  const substring = findSegmentMatchIndex(segments, (segment) => segment.includes(query));
+  const offset = lowerPath.indexOf(query);
+  const fuzzyScore = scoreFuzzySubsequence(query, segments.at(-1) ?? "");
+  let matchTier = NO_MATCH_TIER;
+  let segmentIndex = NO_SEGMENT_INDEX;
+  if (!query) matchTier = 3;
+  else if (exact >= 0) {
+    matchTier = 0;
+    segmentIndex = exact;
+  } else if (prefix >= 0) {
+    matchTier = 1;
+    segmentIndex = prefix;
+  } else if (substring >= 0) {
+    matchTier = 2;
+    segmentIndex = substring;
+  } else if (input.pathFormat === "relative" ? lowerPath.startsWith(query) : offset >= 0)
+    matchTier = 3;
+  else if (fuzzyScore !== null) matchTier = 4;
+  return {
+    path: entry.visiblePath,
+    kind: entry.kind,
+    matchTier,
+    segmentIndex,
+    matchOffset: offset >= 0 ? offset : NO_MATCH_OFFSET,
+    fuzzyScore: fuzzyScore ?? NO_FUZZY_SCORE,
+    depth: relativePath === "." ? 0 : segments.length,
+  };
+}
+
+function sortAndFormat(
+  entries: RankedEntry[],
+  root: string,
+  format: DirectorySuggestionPathFormat,
+): DirectorySuggestionEntry[] {
+  const unique = new Map<string, RankedEntry>();
+  for (const entry of entries) {
+    const key = `${entry.kind}:${entry.path}`;
+    const existing = unique.get(key);
+    if (!existing || compareRank(entry, existing) < 0) unique.set(key, entry);
+  }
+  return [...unique.values()].sort(compareRank).map((entry) => formatEntry(entry, root, format));
+}
+
+function formatEntry(
+  entry: DirectorySuggestionEntry,
+  root: string,
+  format: DirectorySuggestionPathFormat,
+): DirectorySuggestionEntry {
+  return {
+    path: format === "absolute" ? entry.path : normalizeRelativePath(root, entry.path),
+    kind: entry.kind,
+  };
+}
+
+function compareRank(left: RankedEntry, right: RankedEntry): number {
+  return (
+    left.matchTier - right.matchTier ||
+    left.segmentIndex - right.segmentIndex ||
+    left.matchOffset - right.matchOffset ||
+    left.fuzzyScore - right.fuzzyScore ||
+    left.depth - right.depth ||
+    compareKinds(left.kind, right.kind) ||
+    left.path.localeCompare(right.path)
+  );
+}
+
+function compareKinds(left: DirectorySuggestionKind, right: DirectorySuggestionKind): number {
+  if (left === right) return 0;
+  return left === "directory" ? -1 : 1;
+}
+
+function hasConfidentResult(entries: RankedEntry[], query: string): boolean {
+  const maxFuzzyScore = query.length * MAX_CONFIDENT_FUZZY_SKIPS_PER_CHARACTER;
+  return entries.some(
+    (entry) => entry.matchTier < 4 || (entry.matchTier === 4 && entry.fuzzyScore <= maxFuzzyScore),
+  );
+}
+
+function suffixMatches(visiblePath: string, root: string, query: string): boolean {
+  const querySegments = query.toLowerCase().split("/").filter(Boolean);
+  if (querySegments.length === 0) return false;
+  const pathSegments = normalizeRelativePath(root, visiblePath)
+    .toLowerCase()
+    .split("/")
+    .filter(Boolean);
+  const offset = pathSegments.length - querySegments.length;
+  return (
+    offset >= 0 && querySegments.every((segment, index) => pathSegments[offset + index] === segment)
+  );
+}
+
+function parseQuery(input: {
+  query: string;
+  root: string;
+  configuredRoot: string;
+  policy: PathQueryPolicy;
+  aliases: string[];
+  blankBehavior: BlankQueryBehavior;
+}): QueryPlan | null {
+  const normalizedInput = normalizeQueryInput(input);
+  if (!normalizedInput) return null;
+  const { typed, rooted } = normalizedInput;
+  const normalized = normalizedInput.normalized;
+
   if (!normalized) {
-    return null;
+    const explicitlyBrowseRoot = rooted || typed === ".";
+    if (!explicitlyBrowseRoot && input.blankBehavior !== "children") return null;
+    return { isPathQuery: true, parentPart: "", searchTerm: "", normalizedQuery: "" };
   }
-
-  const candidatePath = path.isAbsolute(normalized)
-    ? path.resolve(normalized)
-    : path.resolve(input.workspaceRoot, normalized);
-  let resolvedPath: string;
-  try {
-    resolvedPath = await realpath(candidatePath);
-  } catch {
-    return null;
-  }
-  if (!isPathInsideRoot(input.workspaceRoot, resolvedPath)) {
-    return null;
-  }
-
-  const stats = await stat(resolvedPath).catch(() => null);
-  if (!stats) {
-    return null;
-  }
-  if (stats.isFile() && input.includeFiles) {
+  if (normalizedInput.isAbsolute && isFilesystemRoot(input.root) && !normalized.includes("/")) {
     return {
-      path: normalizeRelativePath(input.workspaceRoot, resolvedPath),
-      kind: "file",
+      isPathQuery: true,
+      parentPart: normalized,
+      searchTerm: "",
+      normalizedQuery: normalized,
+      browseExactPath: true,
     };
   }
-  if (stats.isDirectory() && input.includeDirectories) {
-    return {
-      path: normalizeRelativePath(input.workspaceRoot, resolvedPath),
-      kind: "directory",
-    };
+  const isPathQuery = rooted || (input.policy === "slashes" && normalized.includes("/"));
+  const slash = normalized.lastIndexOf("/");
+  return {
+    isPathQuery,
+    parentPart: isPathQuery && slash >= 0 ? normalized.slice(0, slash) : "",
+    searchTerm: isPathQuery && slash >= 0 ? normalized.slice(slash + 1) : normalized,
+    normalizedQuery: normalized,
+  };
+}
+
+function normalizeQueryInput(input: {
+  query: string;
+  root: string;
+  configuredRoot: string;
+  aliases: string[];
+}): { typed: string; normalized: string; rooted: boolean; isAbsolute: boolean } | null {
+  const typed = input.query.trim().replace(/\\/g, "/");
+  let normalized = typed;
+  let rooted = false;
+  let isAbsolute = false;
+  for (const alias of input.aliases) {
+    if (normalized === alias || normalized.startsWith(`${alias}/`)) {
+      rooted = true;
+      normalized = normalized.slice(alias.length).replace(/^\/+/, "");
+      break;
+    }
   }
+  if (path.isAbsolute(normalized)) {
+    isAbsolute = true;
+    const browseAbsoluteDirectory = normalized.endsWith("/");
+    const absolutePath = path.resolve(normalized);
+    let queryRoot: string | null = null;
+    if (isPathInsideRoot(input.root, absolutePath)) {
+      queryRoot = input.root;
+    } else if (isPathInsideRoot(input.configuredRoot, absolutePath)) {
+      queryRoot = input.configuredRoot;
+    }
+    if (!queryRoot) return null;
+    rooted = true;
+    normalized = normalizeRelativePath(queryRoot, absolutePath);
+    if (browseAbsoluteDirectory && normalized !== ".") {
+      normalized = `${normalized}/`;
+    }
+  }
+  if (normalized.startsWith("./")) rooted = true;
+  normalized = normalized.replace(/^\.\/+/, "").replace(/\/{2,}/g, "/");
+  if (normalized === "." && (rooted || typed === ".")) {
+    normalized = "";
+  }
+  return { typed, normalized, rooted, isAbsolute };
+}
+
+function isFilesystemRoot(inputPath: string): boolean {
+  return path.relative(path.parse(inputPath).root, inputPath) === "";
+}
+
+async function resolveDirectory(inputPath: string): Promise<string | null> {
+  const resolved = await realpath(path.resolve(inputPath)).catch(() => null);
+  if (!resolved) return null;
+  const info = await stat(resolved).catch(() => null);
+  return info?.isDirectory() ? resolved : null;
+}
+
+async function readChildren(directory: string): Promise<ChildEntry[]> {
+  const directoryInfo = await stat(directory).catch(() => null);
+  if (!directoryInfo?.isDirectory()) return [];
+
+  const cached = CAN_VALIDATE_DIRECTORY_CACHE_FROM_METADATA
+    ? directoryListCache.get(directory)
+    : undefined;
+  let rawEntries: RawChildEntry[];
+  if (
+    cached &&
+    cached.expiresAt > Date.now() &&
+    cached.modifiedAtMs === directoryInfo.mtimeMs &&
+    cached.changedAtMs === directoryInfo.ctimeMs
+  ) {
+    rawEntries = cached.entries;
+  } else {
+    const dirents = await readdir(directory, { withFileTypes: true }).catch(() => [] as Dirent[]);
+    rawEntries = dirents
+      .map(toRawChildEntry)
+      .filter((entry): entry is RawChildEntry => entry !== null)
+      .sort((left, right) => left.name.localeCompare(right.name));
+    if (CAN_VALIDATE_DIRECTORY_CACHE_FROM_METADATA) {
+      directoryListCache.set(directory, {
+        expiresAt: Date.now() + DIRECTORY_LIST_CACHE_TTL_MS,
+        modifiedAtMs: directoryInfo.mtimeMs,
+        changedAtMs: directoryInfo.ctimeMs,
+        entries: rawEntries,
+      });
+      pruneCache();
+    }
+  }
+
+  return (await Promise.all(rawEntries.map((entry) => resolveChild(directory, entry))))
+    .filter((entry): entry is ChildEntry => entry !== null)
+    .sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function toRawChildEntry(dirent: Dirent): RawChildEntry | null {
+  if (dirent.isDirectory()) return { name: dirent.name, kind: "directory" };
+  if (dirent.isFile()) return { name: dirent.name, kind: "file" };
+  if (dirent.isSymbolicLink()) return { name: dirent.name, kind: "symlink" };
   return null;
 }
 
-function prependWorkspaceEntry(
-  entry: WorkspaceSuggestionEntry,
-  entries: WorkspaceSuggestionEntry[],
-): WorkspaceSuggestionEntry[] {
-  return [
-    entry,
-    ...entries.filter(
-      (candidate) => candidate.kind !== entry.kind || candidate.path !== entry.path,
-    ),
-  ];
+async function resolveChild(directory: string, entry: RawChildEntry): Promise<ChildEntry | null> {
+  const visiblePath = path.join(directory, entry.name);
+  if (entry.kind !== "symlink") {
+    return { name: entry.name, resolvedPath: visiblePath, kind: entry.kind };
+  }
+
+  const resolvedPath = await realpath(visiblePath).catch(() => null);
+  if (!resolvedPath) return null;
+  const info = await stat(resolvedPath).catch(() => null);
+  const kind = getEntryKind(info);
+  return kind ? { name: entry.name, resolvedPath, kind } : null;
+}
+
+function getEntryKind(info: Stats | null): DirectorySuggestionKind | null {
+  if (info?.isDirectory()) return "directory";
+  if (info?.isFile()) return "file";
+  return null;
+}
+
+function pruneCache(): void {
+  if (directoryListCache.size <= DIRECTORY_LIST_CACHE_MAX_ENTRIES) return;
+  for (const [key, entry] of directoryListCache)
+    if (entry.expiresAt <= Date.now()) directoryListCache.delete(key);
+  while (directoryListCache.size > DIRECTORY_LIST_CACHE_MAX_ENTRIES) {
+    const key = directoryListCache.keys().next().value;
+    if (!key) return;
+    directoryListCache.delete(key);
+  }
 }
 
 function normalizeLimit(limit: number | undefined): number {
-  const candidate = limit ?? DEFAULT_LIMIT;
-  if (!Number.isFinite(candidate)) {
-    return DEFAULT_LIMIT;
-  }
-  const bounded = Math.trunc(candidate);
-  return Math.max(1, Math.min(MAX_LIMIT, bounded));
+  const candidate =
+    typeof limit === "number" && Number.isFinite(limit) ? Math.trunc(limit) : DEFAULT_LIMIT;
+  return Math.max(1, Math.min(MAX_LIMIT, candidate));
 }
 
-async function searchWithinParentDirectory(input: {
-  homeRoot: string;
-  parentPart: string;
-  searchTerm: string;
-  limit: number;
-}): Promise<string[]> {
-  const parentPath = path.resolve(input.homeRoot, input.parentPart || ".");
-  const parentRoot = await resolveDirectory(parentPath);
-  if (!parentRoot || !isPathInsideRoot(input.homeRoot, parentRoot)) {
-    return [];
-  }
-
-  const searchLower = input.searchTerm.toLowerCase();
-  const ranked: RankedDirectory[] = [];
-  const entries = await listChildDirectories({
-    directory: parentRoot,
-    homeRoot: input.homeRoot,
-  });
-
-  for (const entry of entries) {
-    if (searchLower && !entry.name.toLowerCase().includes(searchLower)) {
-      continue;
-    }
-
-    ranked.push(
-      rankDirectory({
-        absolutePath: entry.absolutePath,
-        homeRoot: input.homeRoot,
-        searchLower,
-      }),
-    );
-  }
-
-  return dedupeAndSort(ranked).slice(0, input.limit);
-}
-
-async function searchAcrossHomeTree(input: {
-  homeRoot: string;
-  searchTerm: string;
-  limit: number;
-  maxDepth: number;
-  maxDirectoriesScanned: number;
-}): Promise<string[]> {
-  const queue: Array<{ directory: string; depth: number }> = [
-    { directory: input.homeRoot, depth: 0 },
-  ];
-  const visited = new Set<string>([input.homeRoot]);
-  const ranked: RankedDirectory[] = [];
-  let scanned = 0;
-  const searchLower = input.searchTerm.toLowerCase();
-
-  for (
-    let queueIndex = 0;
-    queueIndex < queue.length && scanned < input.maxDirectoriesScanned;
-    queueIndex += 1
-  ) {
-    const current = queue[queueIndex];
-    if (!current) continue;
-    const entries = await listChildDirectories({
-      directory: current.directory,
-      homeRoot: input.homeRoot,
-    });
-
-    for (const entry of entries) {
-      const resolvedCandidate = entry.absolutePath;
-      if (visited.has(resolvedCandidate)) {
-        continue;
-      }
-      visited.add(resolvedCandidate);
-      scanned += 1;
-
-      const relativePath = normalizeRelativePath(input.homeRoot, resolvedCandidate);
-      if (
-        relativePath.toLowerCase().includes(searchLower) ||
-        entry.name.toLowerCase().includes(searchLower)
-      ) {
-        ranked.push(
-          rankDirectory({
-            absolutePath: resolvedCandidate,
-            homeRoot: input.homeRoot,
-            searchLower,
-          }),
-        );
-      }
-
-      if (current.depth < input.maxDepth && scanned < input.maxDirectoriesScanned) {
-        queue.push({ directory: resolvedCandidate, depth: current.depth + 1 });
-      }
-    }
-  }
-
-  return dedupeAndSort(ranked).slice(0, input.limit);
-}
-
-async function searchWorkspaceWithinParentDirectory(input: {
-  workspaceRoot: string;
-  parentPart: string;
-  searchTerm: string;
-  limit: number;
-  includeDirectories: boolean;
-  includeFiles: boolean;
-}): Promise<WorkspaceSuggestionEntry[]> {
-  const parentPath = path.resolve(input.workspaceRoot, input.parentPart || ".");
-  const parentRoot = await resolveDirectory(parentPath);
-  if (!parentRoot || !isPathInsideRoot(input.workspaceRoot, parentRoot)) {
-    return [];
-  }
-
-  const searchLower = input.searchTerm.toLowerCase();
-  const ranked: RankedWorkspaceEntry[] = [];
-  const entries = await listWorkspaceChildEntries({
-    directory: parentRoot,
-    workspaceRoot: input.workspaceRoot,
-  });
-
-  for (const entry of entries) {
-    if (entry.kind === "directory" && !input.includeDirectories) {
-      continue;
-    }
-    if (entry.kind === "file" && !input.includeFiles) {
-      continue;
-    }
-    if (isHiddenWorkspaceSuggestion(entry)) {
-      continue;
-    }
-    const rankedEntry = rankWorkspaceEntry({
-      absolutePath: entry.absolutePath,
-      kind: entry.kind,
-      workspaceRoot: input.workspaceRoot,
-      searchLower,
-    });
-    if (searchLower && rankedEntry.matchTier === NO_WORKSPACE_MATCH_TIER) {
-      continue;
-    }
-
-    ranked.push(rankedEntry);
-  }
-
-  return dedupeAndSortWorkspaceEntries(ranked).slice(0, input.limit);
-}
-
-async function searchWorkspaceAcrossTree(input: {
-  workspaceRoot: string;
-  searchTerm: string;
-  limit: number;
-  includeDirectories: boolean;
-  includeFiles: boolean;
-  matchMode: WorkspaceMatchMode;
-  maxDepth: number;
-  maxEntriesScanned: number;
-}): Promise<WorkspaceSuggestionEntry[]> {
-  const queue: Array<{ directory: string; depth: number }> = [
-    { directory: input.workspaceRoot, depth: 0 },
-  ];
-  const visited = new Set<string>([input.workspaceRoot]);
-  const ranked: RankedWorkspaceEntry[] = [];
-  let scanned = 0;
-  const searchLower = input.searchTerm.toLowerCase();
-
-  for (
-    let queueIndex = 0;
-    queueIndex < queue.length && scanned < input.maxEntriesScanned;
-    queueIndex += 1
-  ) {
-    const current = queue[queueIndex];
-    if (!current) continue;
-
-    const entries = await listWorkspaceChildEntries({
-      directory: current.directory,
-      workspaceRoot: input.workspaceRoot,
-    });
-
-    for (const entry of entries) {
-      scanned += 1;
-
-      if (entry.kind === "directory") {
-        if (
-          !visited.has(entry.absolutePath) &&
-          current.depth < input.maxDepth &&
-          scanned < input.maxEntriesScanned
-        ) {
-          visited.add(entry.absolutePath);
-          queue.push({
-            directory: entry.absolutePath,
-            depth: current.depth + 1,
-          });
-        }
-      }
-
-      if (entry.kind === "directory" && !input.includeDirectories) {
-        continue;
-      }
-      // Hidden directories are traversed, but not offered as suggestions.
-      if (isHiddenWorkspaceSuggestion(entry)) {
-        continue;
-      }
-      if (entry.kind === "file" && !input.includeFiles) {
-        continue;
-      }
-      if (
-        input.matchMode === "suffix" &&
-        !workspaceEntryMatchesSuffixQuery({
-          absolutePath: entry.absolutePath,
-          workspaceRoot: input.workspaceRoot,
-          query: input.searchTerm,
-        })
-      ) {
-        continue;
-      }
-
-      const rankedEntry = rankWorkspaceEntry({
-        absolutePath: entry.absolutePath,
-        kind: entry.kind,
-        workspaceRoot: input.workspaceRoot,
-        searchLower,
-      });
-      if (
-        input.matchMode !== "suffix" &&
-        searchLower &&
-        rankedEntry.matchTier === NO_WORKSPACE_MATCH_TIER
-      ) {
-        continue;
-      }
-
-      ranked.push(rankedEntry);
-    }
-  }
-
-  return dedupeAndSortWorkspaceEntries(ranked).slice(0, input.limit);
-}
-
-function workspaceEntryMatchesSuffixQuery(input: {
-  absolutePath: string;
-  workspaceRoot: string;
-  query: string;
-}): boolean {
-  const querySegments = input.query
-    .trim()
-    .replace(/\\/g, "/")
-    .replace(/^\.\/+/, "")
-    .split("/")
-    .filter(Boolean)
-    .map((segment) => segment.toLowerCase());
-  if (querySegments.length === 0) {
-    return false;
-  }
-
-  const pathSegments = normalizeRelativePath(input.workspaceRoot, input.absolutePath)
-    .split("/")
-    .filter(Boolean)
-    .map((segment) => segment.toLowerCase());
-  if (querySegments.length > pathSegments.length) {
-    return false;
-  }
-
-  const offset = pathSegments.length - querySegments.length;
-  return querySegments.every((segment, index) => pathSegments[offset + index] === segment);
-}
-
-function dedupeAndSortWorkspaceEntries(
-  rankedEntries: RankedWorkspaceEntry[],
-): WorkspaceSuggestionEntry[] {
-  const byPath = new Map<string, RankedWorkspaceEntry>();
-  for (const entry of rankedEntries) {
-    const key = `${entry.kind}:${entry.relativePath}`;
-    const existing = byPath.get(key);
-    if (!existing || compareRankedWorkspaceEntries(entry, existing) < 0) {
-      byPath.set(key, entry);
-    }
-  }
-
-  return Array.from(byPath.values())
-    .sort(compareRankedWorkspaceEntries)
-    .map((entry) => ({
-      path: entry.relativePath,
-      kind: entry.kind,
-    }));
-}
-
-function compareRankedWorkspaceEntries(
-  left: RankedWorkspaceEntry,
-  right: RankedWorkspaceEntry,
-): number {
-  if (left.matchTier !== right.matchTier) {
-    return left.matchTier - right.matchTier;
-  }
-  if (left.segmentIndex !== right.segmentIndex) {
-    return left.segmentIndex - right.segmentIndex;
-  }
-  if (left.matchOffset !== right.matchOffset) {
-    return left.matchOffset - right.matchOffset;
-  }
-  if (left.fuzzyScore !== right.fuzzyScore) {
-    return left.fuzzyScore - right.fuzzyScore;
-  }
-  if (left.depth !== right.depth) {
-    return left.depth - right.depth;
-  }
-  if (left.kind !== right.kind) {
-    return left.kind === "directory" ? -1 : 1;
-  }
-  return left.relativePath.localeCompare(right.relativePath);
-}
-
-function dedupeAndSort(ranked: RankedDirectory[]): string[] {
-  const byPath = new Map<string, RankedDirectory>();
-  for (const entry of ranked) {
-    const existing = byPath.get(entry.absolutePath);
-    if (!existing || compareRankedDirectories(entry, existing) < 0) {
-      byPath.set(entry.absolutePath, entry);
-    }
-  }
-
-  return Array.from(byPath.values())
-    .sort(compareRankedDirectories)
-    .map((entry) => entry.absolutePath);
-}
-
-function compareRankedDirectories(left: RankedDirectory, right: RankedDirectory): number {
-  if (left.matchTier !== right.matchTier) {
-    return left.matchTier - right.matchTier;
-  }
-  if (left.segmentIndex !== right.segmentIndex) {
-    return left.segmentIndex - right.segmentIndex;
-  }
-  if (left.matchOffset !== right.matchOffset) {
-    return left.matchOffset - right.matchOffset;
-  }
-  if (left.depth !== right.depth) {
-    return left.depth - right.depth;
-  }
-  return left.absolutePath.localeCompare(right.absolutePath);
-}
-
-function rankDirectory(input: {
-  absolutePath: string;
-  homeRoot: string;
-  searchLower: string;
-}): RankedDirectory {
-  const relative = normalizeRelativePath(input.homeRoot, input.absolutePath);
-  const relativeLower = relative.toLowerCase();
-  const depth = relative === "." ? 0 : relative.split("/").length;
-  const searchLower = input.searchLower;
-  if (!searchLower) {
-    return {
-      absolutePath: input.absolutePath,
-      matchTier: 3,
-      segmentIndex: NO_SEGMENT_INDEX,
-      matchOffset: 0,
-      depth,
-    };
-  }
-  const segments = relativeLower === "." ? [] : relativeLower.split("/");
-  const exactSegmentIndex = findSegmentMatchIndex(segments, (segment) => segment === searchLower);
-  const prefixSegmentIndex = findSegmentMatchIndex(segments, (segment) =>
-    segment.startsWith(searchLower),
-  );
-  const partialSegmentIndex = findSegmentMatchIndex(segments, (segment) =>
-    segment.includes(searchLower),
-  );
-  const matchOffset = relativeLower.indexOf(searchLower);
-  let matchTier = 4;
-  let segmentIndex = NO_SEGMENT_INDEX;
-
-  if (exactSegmentIndex >= 0) {
-    matchTier = 0;
-    segmentIndex = exactSegmentIndex;
-  } else if (prefixSegmentIndex >= 0) {
-    matchTier = 1;
-    segmentIndex = prefixSegmentIndex;
-  } else if (partialSegmentIndex >= 0) {
-    matchTier = 2;
-    segmentIndex = partialSegmentIndex;
-  } else if (relativeLower.startsWith(searchLower)) {
-    matchTier = 3;
-  }
-
-  return {
-    absolutePath: input.absolutePath,
-    matchTier,
-    segmentIndex,
-    matchOffset: matchOffset >= 0 ? matchOffset : NO_MATCH_OFFSET,
-    depth,
-  };
-}
-
-function rankWorkspaceEntry(input: {
-  absolutePath: string;
-  kind: WorkspaceSuggestionKind;
-  workspaceRoot: string;
-  searchLower: string;
-}): RankedWorkspaceEntry {
-  const relativePath = normalizeRelativePath(input.workspaceRoot, input.absolutePath);
-  const relativeLower = relativePath.toLowerCase();
-  const depth = relativePath === "." ? 0 : relativePath.split("/").length;
-  const searchLower = input.searchLower;
-  if (!searchLower) {
-    return {
-      relativePath,
-      kind: input.kind,
-      matchTier: 3,
-      segmentIndex: NO_SEGMENT_INDEX,
-      matchOffset: 0,
-      fuzzyScore: NO_FUZZY_SCORE,
-      depth,
-    };
-  }
-
-  const segments = relativeLower === "." ? [] : relativeLower.split("/");
-  const exactSegmentIndex = findSegmentMatchIndex(segments, (segment) => segment === searchLower);
-  const prefixSegmentIndex = findSegmentMatchIndex(segments, (segment) =>
-    segment.startsWith(searchLower),
-  );
-  const partialSegmentIndex = findSegmentMatchIndex(segments, (segment) =>
-    segment.includes(searchLower),
-  );
-  const matchOffset = relativeLower.indexOf(searchLower);
-  const basename = segments.at(-1) ?? "";
-  const fuzzyScore = scoreFuzzySubsequence(searchLower, basename);
-  let matchTier = NO_WORKSPACE_MATCH_TIER;
-  let segmentIndex = NO_SEGMENT_INDEX;
-
-  if (exactSegmentIndex >= 0) {
-    matchTier = 0;
-    segmentIndex = exactSegmentIndex;
-  } else if (prefixSegmentIndex >= 0) {
-    matchTier = 1;
-    segmentIndex = prefixSegmentIndex;
-  } else if (partialSegmentIndex >= 0) {
-    matchTier = 2;
-    segmentIndex = partialSegmentIndex;
-  } else if (relativeLower.startsWith(searchLower)) {
-    matchTier = 3;
-  } else if (fuzzyScore !== null) {
-    matchTier = 4;
-  }
-
-  return {
-    relativePath,
-    kind: input.kind,
-    matchTier,
-    segmentIndex,
-    matchOffset: matchOffset >= 0 ? matchOffset : NO_MATCH_OFFSET,
-    fuzzyScore: fuzzyScore ?? NO_FUZZY_SCORE,
-    depth,
-  };
+function normalizeRelativePath(root: string, absolutePath: string): string {
+  const relative = path.relative(root, absolutePath);
+  return relative ? relative.split(path.sep).join("/") : ".";
 }
 
 function scoreFuzzySubsequence(query: string, candidate: string): number | null {
-  if (!query) {
-    return 0;
-  }
-
   let queryIndex = 0;
-  let firstMatchIndex = -1;
-  let previousMatchIndex = -1;
-  let gapScore = 0;
-
-  for (
-    let candidateIndex = 0;
-    candidateIndex < candidate.length && queryIndex < query.length;
-    candidateIndex += 1
-  ) {
-    if (candidate[candidateIndex] !== query[queryIndex]) {
-      continue;
-    }
-
-    if (firstMatchIndex === -1) {
-      firstMatchIndex = candidateIndex;
-    }
-    if (previousMatchIndex >= 0) {
-      gapScore += candidateIndex - previousMatchIndex - 1;
-    }
-    previousMatchIndex = candidateIndex;
+  let first = -1;
+  let previous = -1;
+  let gaps = 0;
+  for (let index = 0; index < candidate.length && queryIndex < query.length; index += 1) {
+    if (candidate[index] !== query[queryIndex]) continue;
+    if (first < 0) first = index;
+    if (previous >= 0) gaps += index - previous - 1;
+    previous = index;
     queryIndex += 1;
   }
-
-  if (queryIndex !== query.length || firstMatchIndex === -1) {
-    return null;
-  }
-
-  return firstMatchIndex + gapScore;
+  return queryIndex === query.length && first >= 0 ? first + gaps : null;
 }
 
 function findSegmentMatchIndex(
   segments: string[],
   predicate: (segment: string) => boolean,
 ): number {
-  for (let index = 0; index < segments.length; index += 1) {
-    const segment = segments[index];
-    if (!segment) {
-      continue;
-    }
-    if (predicate(segment)) {
-      return index;
-    }
-  }
-  return -1;
+  return segments.findIndex((segment) => predicate(segment));
 }
 
-function normalizeRelativePath(homeRoot: string, absolutePath: string): string {
-  const relative = path.relative(homeRoot, absolutePath);
-  if (!relative) {
-    return ".";
-  }
-  return relative.split(path.sep).join("/");
-}
-
-function normalizeQueryParts(query: string, homeRoot: string): QueryParts | null {
-  const typedQuery = query.trim().replace(/\\/g, "/");
-  let normalized = typedQuery;
-  if (!normalized) {
-    return null;
-  }
-
-  // Only treat the query as a literal path when the user explicitly roots it
-  // with ~, ~/, ./, or an absolute path. Bare queries like "faro/main" are
-  // search terms, not paths.
-  let isRooted = false;
-
-  if (normalized.startsWith("~")) {
-    isRooted = true;
-    normalized = normalized.slice(1);
-    if (normalized.startsWith("/")) {
-      normalized = normalized.slice(1);
-    }
-  }
-
-  if (path.isAbsolute(normalized)) {
-    isRooted = true;
-    const absolute = path.resolve(normalized);
-    if (!isPathInsideRoot(homeRoot, absolute)) {
-      return null;
-    }
-    normalized = normalizeRelativePath(homeRoot, absolute);
-  }
-
-  if (normalized.startsWith("./")) {
-    isRooted = true;
-  }
-  normalized = normalized.replace(/^\.\/+/, "").replace(/\/{2,}/g, "/");
-  if (!normalized) {
-    // Treat "~" and "~/" as a request to browse the home root.
-    if (typedQuery === "~" || typedQuery === "~/") {
-      return {
-        isPathQuery: true,
-        parentPart: "",
-        searchTerm: "",
-      };
-    }
-    return null;
-  }
-
-  const isPathQuery = isRooted && normalized.includes("/");
-  if (!isPathQuery) {
-    return {
-      isPathQuery: false,
-      parentPart: "",
-      searchTerm: normalized,
-    };
-  }
-
-  const slashIndex = normalized.lastIndexOf("/");
-  const parentPart = normalized.slice(0, slashIndex);
-  const searchTerm = normalized.slice(slashIndex + 1);
-
-  return {
-    isPathQuery: true,
-    parentPart,
-    searchTerm,
-  };
-}
-
-function normalizeWorkspaceQueryParts(query: string, workspaceRoot: string): QueryParts | null {
-  let normalized = query.trim().replace(/\\/g, "/");
-
-  if (path.isAbsolute(normalized)) {
-    const absolute = path.resolve(normalized);
-    if (!isPathInsideRoot(workspaceRoot, absolute)) {
-      return null;
-    }
-    normalized = normalizeRelativePath(workspaceRoot, absolute);
-  }
-
-  normalized = normalized.replace(/^\.\/+/, "").replace(/\/{2,}/g, "/");
-  if (!normalized) {
-    return {
-      isPathQuery: true,
-      parentPart: "",
-      searchTerm: "",
-    };
-  }
-
-  const isPathQuery = normalized.includes("/");
-  const slashIndex = normalized.lastIndexOf("/");
-  const parentPart = slashIndex >= 0 ? normalized.slice(0, slashIndex) : "";
-  const searchTerm = slashIndex >= 0 ? normalized.slice(slashIndex + 1) : normalized;
-
-  return {
-    isPathQuery,
-    parentPart,
-    searchTerm,
-  };
-}
-
-async function resolveDirectory(inputPath: string): Promise<string | null> {
-  try {
-    const resolved = await realpath(path.resolve(inputPath));
-    const stats = await stat(resolved);
-    if (!stats.isDirectory()) {
-      return null;
-    }
-    return resolved;
-  } catch {
-    return null;
-  }
-}
-
-async function listChildDirectories(input: {
-  directory: string;
-  homeRoot: string;
-}): Promise<ChildDirectoryEntry[]> {
-  const now = Date.now();
-  const cached = directoryListCache.get(input.directory);
-  if (cached && cached.expiresAt > now) {
-    return cached.entries;
-  }
-
-  const dirents = await readdir(input.directory, { withFileTypes: true }).catch(
-    () => [] as Dirent[],
-  );
-  const candidates = dirents.filter(
-    (dirent) =>
-      !isHiddenDirectoryName(dirent.name) &&
-      !isIgnoredSuggestionDirectoryName(dirent.name) &&
-      (dirent.isDirectory() || dirent.isSymbolicLink()),
-  );
-  const resolved = await Promise.all(
-    candidates.map(async (dirent) => {
-      const candidatePath = path.join(input.directory, dirent.name);
-      const absolutePath = await resolveDirectoryCandidate({
-        candidatePath,
-        dirent,
-        homeRoot: input.homeRoot,
-      });
-      return absolutePath ? { name: dirent.name, absolutePath } : null;
-    }),
-  );
-  const entries: ChildDirectoryEntry[] = resolved.filter(
-    (entry): entry is ChildDirectoryEntry => entry !== null,
-  );
-
-  setDirectoryListCache(input.directory, {
-    expiresAt: now + DIRECTORY_LIST_CACHE_TTL_MS,
-    entries,
-  });
-
-  return entries;
-}
-
-async function listWorkspaceChildEntries(input: {
-  directory: string;
-  workspaceRoot: string;
-}): Promise<ChildWorkspaceEntry[]> {
-  const now = Date.now();
-  const cached = workspaceEntryListCache.get(input.directory);
-  if (cached && cached.expiresAt > now) {
-    return cached.entries;
-  }
-
-  const dirents = await readdir(input.directory, { withFileTypes: true }).catch(
-    () => [] as Dirent[],
-  );
-  const candidates = dirents.filter((dirent) => {
-    if (isIgnoredSuggestionDirectoryName(dirent.name)) {
-      return false;
-    }
-    if (
-      isHiddenDirectoryName(dirent.name) &&
-      !dirent.isFile() &&
-      !isTraversableHiddenWorkspaceDirectoryName(dirent.name)
-    ) {
-      return false;
-    }
-    // Allowlisted hidden directories remain traversable so file links like
-    // `.claude/settings.local.json` can resolve, but hidden files (e.g.
-    // `.DS_Store`) should never be suggested.
-    if (dirent.isFile() && isHiddenDirectoryName(dirent.name)) {
-      return false;
-    }
-    return true;
-  });
-
-  const resolved = await Promise.all(
-    candidates.map(async (dirent) => {
-      const candidatePath = path.join(input.directory, dirent.name);
-      const entry = await resolveWorkspaceCandidate({
-        candidatePath,
-        dirent,
-        workspaceRoot: input.workspaceRoot,
-      });
-      return entry
-        ? { name: dirent.name, absolutePath: entry.absolutePath, kind: entry.kind }
-        : null;
-    }),
-  );
-  const entries: ChildWorkspaceEntry[] = resolved.filter(
-    (entry): entry is ChildWorkspaceEntry => entry !== null,
-  );
-
-  setWorkspaceEntryListCache(input.directory, {
-    expiresAt: now + DIRECTORY_LIST_CACHE_TTL_MS,
-    entries,
-  });
-
-  return entries;
-}
-
-async function resolveDirectoryCandidate(input: {
-  candidatePath: string;
-  dirent: Dirent;
-  homeRoot: string;
-}): Promise<string | null> {
-  if (input.dirent.isDirectory()) {
-    const resolved = path.resolve(input.candidatePath);
-    return isPathInsideRoot(input.homeRoot, resolved) ? resolved : null;
-  }
-
-  const resolved = await resolveDirectory(input.candidatePath);
-  if (!resolved || !isPathInsideRoot(input.homeRoot, resolved)) {
-    return null;
-  }
-  return resolved;
-}
-
-async function resolveWorkspaceCandidate(input: {
-  candidatePath: string;
-  dirent: Dirent;
-  workspaceRoot: string;
-}): Promise<{ absolutePath: string; kind: WorkspaceSuggestionKind } | null> {
-  if (input.dirent.isDirectory()) {
-    const resolved = path.resolve(input.candidatePath);
-    if (!isPathInsideRoot(input.workspaceRoot, resolved)) {
-      return null;
-    }
-    return { absolutePath: resolved, kind: "directory" };
-  }
-
-  if (input.dirent.isFile()) {
-    const resolved = path.resolve(input.candidatePath);
-    if (!isPathInsideRoot(input.workspaceRoot, resolved)) {
-      return null;
-    }
-    return { absolutePath: resolved, kind: "file" };
-  }
-
-  if (!input.dirent.isSymbolicLink()) {
-    return null;
-  }
-
-  try {
-    const resolved = await realpath(input.candidatePath);
-    if (!isPathInsideRoot(input.workspaceRoot, resolved)) {
-      return null;
-    }
-    const stats = await stat(resolved);
-    if (stats.isDirectory()) {
-      return { absolutePath: resolved, kind: "directory" };
-    }
-    if (stats.isFile()) {
-      return { absolutePath: resolved, kind: "file" };
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-function isHiddenDirectoryName(name: string): boolean {
-  return name.startsWith(".");
-}
-
-function isHiddenWorkspaceSuggestion(entry: ChildWorkspaceEntry): boolean {
-  return isHiddenDirectoryName(entry.name);
-}
-
-function isIgnoredSuggestionDirectoryName(name: string): boolean {
-  return IGNORED_SUGGESTION_DIRECTORY_NAMES.has(name);
-}
-
-function isTraversableHiddenWorkspaceDirectoryName(name: string): boolean {
-  return TRAVERSABLE_HIDDEN_WORKSPACE_DIRECTORY_NAMES.has(name);
-}
-
-function setDirectoryListCache(cacheKey: string, entry: DirectoryListCacheEntry): void {
-  directoryListCache.set(cacheKey, entry);
-  pruneDirectoryListCache();
-}
-
-function setWorkspaceEntryListCache(cacheKey: string, entry: WorkspaceEntryListCacheEntry): void {
-  workspaceEntryListCache.set(cacheKey, entry);
-  pruneWorkspaceEntryListCache();
-}
-
-function pruneDirectoryListCache(): void {
-  if (directoryListCache.size <= DIRECTORY_LIST_CACHE_MAX_ENTRIES) {
-    return;
-  }
-
-  const now = Date.now();
-  for (const [cacheKey, entry] of directoryListCache) {
-    if (entry.expiresAt <= now) {
-      directoryListCache.delete(cacheKey);
-    }
-  }
-
-  while (directoryListCache.size > DIRECTORY_LIST_CACHE_MAX_ENTRIES) {
-    const oldestKey = directoryListCache.keys().next().value;
-    if (!oldestKey) {
-      return;
-    }
-    directoryListCache.delete(oldestKey);
-  }
-}
-
-function pruneWorkspaceEntryListCache(): void {
-  if (workspaceEntryListCache.size <= DIRECTORY_LIST_CACHE_MAX_ENTRIES) {
-    return;
-  }
-
-  const now = Date.now();
-  for (const [cacheKey, entry] of workspaceEntryListCache) {
-    if (entry.expiresAt <= now) {
-      workspaceEntryListCache.delete(cacheKey);
-    }
-  }
-
-  while (workspaceEntryListCache.size > DIRECTORY_LIST_CACHE_MAX_ENTRIES) {
-    const oldestKey = workspaceEntryListCache.keys().next().value;
-    if (!oldestKey) {
-      return;
-    }
-    workspaceEntryListCache.delete(oldestKey);
-  }
+function sameEntry(left: DirectorySuggestionEntry, right: DirectorySuggestionEntry): boolean {
+  return left.path === right.path && left.kind === right.kind;
 }

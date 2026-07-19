@@ -68,7 +68,7 @@ describe("resolveStructuredGenerationProviders", () => {
         status: READY,
         enabled: true,
         models: [
-          { provider: "router", id: "minimax-m2.5-free", label: "MiniMax M2.5", isDefault: true },
+          { provider: "router", id: "minimax-m3-free", label: "MiniMax M3", isDefault: true },
           { provider: "router", id: "nemotron-3-super-free", label: "Nemotron 3 Super" },
         ],
       },
@@ -87,7 +87,7 @@ describe("resolveStructuredGenerationProviders", () => {
     expect(providers).toEqual([
       { provider: "work-claude", model: "claude-haiku-2026" },
       { provider: "work-codex", model: "gpt-5.4-mini-2026", thinkingOptionId: "low" },
-      { provider: "router", model: "minimax-m2.5-free" },
+      { provider: "router", model: "minimax-m3-free" },
       { provider: "router", model: "nemotron-3-super-free" },
       { provider: "focused-provider", model: "focused-model", thinkingOptionId: "high" },
     ]);

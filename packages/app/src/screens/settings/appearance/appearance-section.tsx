@@ -16,6 +16,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Switch } from "@/components/ui/switch";
 import { SettingsSection } from "@/screens/settings/settings-section";
 import {
   MAX_CODE_FONT_SIZE,
@@ -180,6 +181,97 @@ function ThemeRow({ value, onChange }: ThemeRowProps) {
               key={themeValue}
               themeValue={themeValue}
               selected={value === themeValue}
+              onChange={onChange}
+            />
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </View>
+  );
+}
+
+interface AutoExpandReasoningRowProps {
+  value: boolean;
+  onChange: (value: boolean) => void;
+}
+
+function AutoExpandReasoningRow({ value, onChange }: AutoExpandReasoningRowProps) {
+  const { t } = useTranslation();
+  return (
+    <View style={settingsStyles.row}>
+      <View style={settingsStyles.rowContent}>
+        <Text style={settingsStyles.rowTitle}>
+          {t("settings.general.autoExpandReasoning.label")}
+        </Text>
+        <Text style={settingsStyles.rowHint}>
+          {t("settings.general.autoExpandReasoning.description")}
+        </Text>
+      </View>
+      <Switch value={value} onValueChange={onChange} />
+    </View>
+  );
+}
+
+const TOOL_CALL_DETAIL_LEVELS: readonly AppSettings["toolCallDetailLevel"][] = [
+  "detailed",
+  "overview",
+];
+
+function getToolCallDetailLevelLabel(
+  t: TFunction,
+  value: AppSettings["toolCallDetailLevel"],
+): string {
+  return t(`settings.general.toolCallDetail.options.${value}`);
+}
+
+interface ToolCallDetailMenuItemProps {
+  value: AppSettings["toolCallDetailLevel"];
+  selected: boolean;
+  onChange: (value: AppSettings["toolCallDetailLevel"]) => void;
+}
+
+function ToolCallDetailMenuItem({ value, selected, onChange }: ToolCallDetailMenuItemProps) {
+  const { t } = useTranslation();
+  const handleSelect = useCallback(() => onChange(value), [onChange, value]);
+  return (
+    <DropdownMenuItem selected={selected} onSelect={handleSelect}>
+      {getToolCallDetailLevelLabel(t, value)}
+    </DropdownMenuItem>
+  );
+}
+
+interface ToolCallDetailRowProps {
+  value: AppSettings["toolCallDetailLevel"];
+  onChange: (value: AppSettings["toolCallDetailLevel"]) => void;
+}
+
+function ToolCallDetailRow({ value, onChange }: ToolCallDetailRowProps) {
+  const { t } = useTranslation();
+  const selectedLabel = getToolCallDetailLevelLabel(t, value);
+  return (
+    <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
+      <View style={settingsStyles.rowContent}>
+        <Text style={settingsStyles.rowTitle}>{t("settings.general.toolCallDetail.label")}</Text>
+        <Text style={settingsStyles.rowHint}>
+          {t("settings.general.toolCallDetail.description")}
+        </Text>
+      </View>
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          style={dropdownTriggerStyle}
+          accessibilityLabel={t("settings.general.toolCallDetail.accessibilityLabel", {
+            value: selectedLabel,
+          })}
+        >
+          <Text style={styles.triggerText}>{selectedLabel}</Text>
+          <ThemedChevronDown size={ICON_SIZE.sm} uniProps={mutedColorMapping} />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent side="bottom" align="end" width={200}>
+          {TOOL_CALL_DETAIL_LEVELS.map((option) => (
+            <ToolCallDetailMenuItem
+              key={option}
+              value={option}
+              selected={value === option}
               onChange={onChange}
             />
           ))}
@@ -397,6 +489,20 @@ export function AppearanceSection() {
     [updateSettings],
   );
 
+  const handleAutoExpandReasoningChange = useCallback(
+    (autoExpandReasoning: boolean) => {
+      void updateSettings({ autoExpandReasoning });
+    },
+    [updateSettings],
+  );
+
+  const handleToolCallDetailLevelChange = useCallback(
+    (toolCallDetailLevel: AppSettings["toolCallDetailLevel"]) => {
+      void updateSettings({ toolCallDetailLevel });
+    },
+    [updateSettings],
+  );
+
   const commitUiFontFamily = useCallback(
     (value: string) => {
       const sanitized = sanitizeFontFamily(value);
@@ -475,6 +581,18 @@ export function AppearanceSection() {
       <SettingsSection title={t("settings.appearance.theme.title")}>
         <View style={settingsStyles.card}>
           <ThemeRow value={settings.theme} onChange={handleThemeChange} />
+        </View>
+      </SettingsSection>
+      <SettingsSection title={t("settings.appearance.detailLevel.title")}>
+        <View style={settingsStyles.card}>
+          <AutoExpandReasoningRow
+            value={settings.autoExpandReasoning}
+            onChange={handleAutoExpandReasoningChange}
+          />
+          <ToolCallDetailRow
+            value={settings.toolCallDetailLevel}
+            onChange={handleToolCallDetailLevelChange}
+          />
         </View>
       </SettingsSection>
       <SettingsSection title={t("settings.appearance.fonts.title")}>

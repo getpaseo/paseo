@@ -14,6 +14,8 @@ import { createTestAgentClients } from "./fake-agent-client.js";
 import type { PushNotificationSender } from "../push/notifications.js";
 
 interface TestPaseoDaemonOptions {
+  daemonVersion?: string;
+  desktopManaged?: boolean;
   downloadTokenTtlMs?: number;
   corsAllowedOrigins?: string[];
   listen?: string;
@@ -23,6 +25,8 @@ interface TestPaseoDaemonOptions {
   isDev?: boolean;
   relayEnabled?: boolean;
   relayEndpoint?: string;
+  relayUseTls?: boolean;
+  relayPublicUseTls?: boolean;
   agentClients?: Partial<Record<AgentProvider, AgentClient>>;
   providerOverrides?: PaseoDaemonConfig["providerOverrides"];
   paseoHomeRoot?: string;
@@ -155,6 +159,8 @@ async function prepareTestDaemonConfig(
   const config: PaseoDaemonConfig = {
     listen: `${listenHost}:0`,
     paseoHome,
+    daemonVersion: options.daemonVersion,
+    desktopManaged: options.desktopManaged,
     corsAllowedOrigins: options.corsAllowedOrigins ?? [],
     hostnames: true,
     mcpEnabled: options.mcpEnabled ?? true,
@@ -166,6 +172,8 @@ async function prepareTestDaemonConfig(
     agentStoragePath: path.join(paseoHome, "agents"),
     relayEnabled: options.relayEnabled ?? false,
     relayEndpoint: options.relayEndpoint ?? "relay.paseo.sh:443",
+    relayUseTls: options.relayUseTls,
+    relayPublicUseTls: options.relayPublicUseTls,
     appBaseUrl: "https://app.paseo.sh",
     auth: options.auth,
     pushNotificationSender: options.pushNotificationSender,

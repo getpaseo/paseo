@@ -7,20 +7,26 @@ export const CHANGES_PREFERENCES_QUERY_KEY = ["changes-preferences"];
 
 const changesPreferencesSchema = z.object({
   layout: z.enum(["unified", "split"]).optional(),
+  viewMode: z.enum(["flat", "tree"]).optional(),
   wrapLines: z.boolean().optional(),
   hideWhitespace: z.boolean().optional(),
+  commitsCollapsed: z.boolean().optional(),
 });
 
 export interface ChangesPreferences {
   layout: "unified" | "split";
+  viewMode: "flat" | "tree";
   wrapLines: boolean;
   hideWhitespace: boolean;
+  commitsCollapsed: boolean;
 }
 
 export const DEFAULT_CHANGES_PREFERENCES: ChangesPreferences = {
   layout: "unified",
+  viewMode: "flat",
   wrapLines: false,
   hideWhitespace: false,
+  commitsCollapsed: true,
 };
 
 export interface KeyValueStorage {

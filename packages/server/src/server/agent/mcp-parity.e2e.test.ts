@@ -358,12 +358,16 @@ describe("Suite A: Core Fixes", () => {
       expect(listenTarget?.type).toBe("tcp");
       const cwd = await makeCwd("manager-direct-agent-cwd");
 
-      const snapshot = await daemonHandle.daemon.agentManager.createAgent({
-        provider: "claude",
-        cwd,
-        title: "Manager direct parity agent",
-        modeId: "bypassPermissions",
-      });
+      const snapshot = await daemonHandle.daemon.agentManager.createAgent(
+        {
+          provider: "claude",
+          cwd,
+          title: "Manager direct parity agent",
+          modeId: "bypassPermissions",
+        },
+        undefined,
+        { workspaceId: undefined },
+      );
       agentId = snapshot.id;
 
       const expectedUrl = buildExpectedAgentMcpUrl({

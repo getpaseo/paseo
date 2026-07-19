@@ -62,6 +62,9 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import { useToast } from "@/contexts/toast-context";
 import { toErrorMessage } from "@/utils/error-messages";
 import { showProviderNoticeToast } from "@/utils/provider-notice-toast";
+import { useCommandCenterActions } from "@/command-center/provider";
+import { buildModelChoiceContributions } from "@/command-center/model-contributions";
+import { getCommandCenterProviderIcon } from "@/command-center/provider-icon";
 
 interface AgentControlOption {
   id: string;
@@ -130,6 +133,7 @@ export interface DraftAgentControlsProps {
 interface AgentControlsProps {
   agentId: string;
   serverId: string;
+  isPaneFocused: boolean;
   onDropdownClose?: () => void;
   isCompactLayout?: boolean;
 }
@@ -805,6 +809,8 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
                 onRetryProvider={onRetryModelProvider}
                 isRetryingProvider={isRetryingModelProvider}
                 serverId={modelSelectorServerId}
+                desktopPlacement="top-start"
+                desktopMinWidth={360}
               />
             </View>
           </TooltipTrigger>
@@ -1012,6 +1018,8 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
           isRetryingProvider={isRetryingModelProvider}
           renderTrigger={renderModelTrigger}
           serverId={modelSelectorServerId}
+          desktopPlacement="top-start"
+          desktopMinWidth={360}
         />
       ) : null}
 
@@ -1358,9 +1366,11 @@ function ThinkingComboboxOption({
 export const AgentControls = memo(function AgentControls({
   agentId,
   serverId,
+  isPaneFocused,
   onDropdownClose,
   isCompactLayout,
 }: AgentControlsProps) {
+  const { t } = useTranslation();
   const { preferences, updatePreferences } = useFormPreferences();
   const agent = useSessionStore(
     useShallow((state) => selectAgentControlsSlice(state, serverId, agentId)),
@@ -1432,28 +1442,48 @@ export const AgentControls = memo(function AgentControls({
   const activeModelId = modelSelection.activeModelId;
 
   const handleSelectModel = useCallback(
-    (modelId: string) => {
+    async (modelId: string) => {
       if (!client || !agentProvider) {
         return;
       }
-      void updatePreferences((current) =>
-        mergeProviderPreferences({
-          preferences: current,
-          provider: agentProvider,
-          updates: {
-            model: modelId,
-          },
-        }),
-      ).catch((error) => {
-        console.warn("[AgentControls] persist model preference failed", error);
-      });
-      void client.setAgentModel(agentId, modelId).catch((error) => {
-        console.warn("[AgentControls] setAgentModel failed", error);
+      try {
+        await client.setAgentModel(agentId, modelId);
+        await updatePreferences((current) =>
+          mergeProviderPreferences({
+            preferences: current,
+            provider: agentProvider,
+            updates: {
+              model: modelId,
+            },
+          }),
+        );
+      } catch (error) {
+        console.warn("[AgentControls] setAgentModel or persist preference failed", error);
         toast.error(toErrorMessage(error));
-      });
+      }
     },
     [agentId, agentProvider, client, toast, updatePreferences],
   );
+
+  const commandCenterModelActions = useMemo(
+    () =>
+      buildModelChoiceContributions({
+        serverId,
+        providers: agentModelSelectorProviders,
+        selectedProvider: agentProvider ?? null,
+        selectedModelId: activeModelId,
+        groupLabel: t("shell.commandCenter.modelGroupLabel"),
+        searchKeywords: t("shell.commandCenter.modelSearchKeywords"),
+        getIcon: getCommandCenterProviderIcon,
+        select: (_provider, modelId) => handleSelectModel(modelId),
+      }),
+    [activeModelId, agentModelSelectorProviders, agentProvider, handleSelectModel, serverId, t],
+  );
+  useCommandCenterActions({
+    sourceId: `agent:${serverId}:${agentId}`,
+    enabled: isPaneFocused && Boolean(client),
+    actions: commandCenterModelActions,
+  });
 
   const handleToggleFavoriteModel = useCallback(
     (provider: string, modelId: string) => {
@@ -1684,6 +1714,8 @@ export function DraftAgentControls({
           onRetryProvider={onRetryModelProvider}
           isRetryingProvider={isRetryingModelProvider}
           serverId={modelSelectorServerId}
+          desktopPlacement="top-start"
+          desktopMinWidth={360}
         />
         {selectedProvider ? (
           <ControlledAgentControls

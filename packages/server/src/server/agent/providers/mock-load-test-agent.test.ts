@@ -179,6 +179,38 @@ describe("MockLoadTestAgentClient", () => {
     expect(events).toHaveLength(eventCountAfterInterrupt);
   });
 
+  test("emits a terminal failure without an assistant provider message", async () => {
+    vi.useFakeTimers();
+    const client = new MockLoadTestAgentClient();
+    const session = await client.createSession({
+      provider: "mock",
+      cwd: process.cwd(),
+      model: "ten-second-stream",
+    });
+    const events: AgentStreamEvent[] = [];
+    const unsubscribe = session.subscribe((event) => events.push(event));
+
+    await session.startTurn("Emit a synthetic turn failure.");
+    await vi.advanceTimersByTimeAsync(0);
+    unsubscribe();
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "timeline",
+        item: expect.objectContaining({ type: "user_message" }),
+      }),
+    );
+    expect(
+      events.filter(
+        (event) => event.type === "timeline" && event.item.type === "assistant_message",
+      ),
+    ).toHaveLength(0);
+    expect(events.at(-1)).toMatchObject({
+      type: "turn_failed",
+      error: "Requested mock provider failure",
+    });
+  });
+
   test("emits the free-write question scenario selected by prompt", async () => {
     vi.useFakeTimers();
     const client = new MockLoadTestAgentClient();
@@ -250,6 +282,7 @@ describe("MockLoadTestAgentClient", () => {
           model: "ten-second-stream",
         },
         "00000000-0000-4000-8000-000000000001",
+        { workspaceId: undefined },
       );
 
       const resultPromise = manager.runAgent(

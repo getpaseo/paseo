@@ -1,4 +1,8 @@
-import { getDesktopHost } from "@/desktop/host";
+import {
+  getDesktopHost,
+  type DesktopAttachedBrowserRegistration,
+  type DesktopBrowserBridge,
+} from "@/desktop/host";
 
 const RESIDENT_BROWSER_HOST_ID = "paseo-browser-resident-webviews";
 const BROWSER_ID_ATTRIBUTE = "data-paseo-browser-id";
@@ -6,21 +10,64 @@ const RESIDENT_VIEWPORT_WIDTH = 1280;
 const RESIDENT_VIEWPORT_HEIGHT = 800;
 
 const residentWebviewsByBrowserId = new Map<string, HTMLElement>();
-const activeCapturePreparations = new Map<string, ActiveCapturePreparation>();
-
-let captureBridgeInstallCount = 0;
-let captureBridgeDisposer: (() => void) | null = null;
-let nextCapturePreparationId = 0;
+const residentWebviewSizesByBrowserId = new Map<string, { width: number; height: number }>();
 
 interface BrowserWebviewElement extends HTMLElement {
   src: string;
+  getWebContentsId(): number;
 }
 
-interface ActiveCapturePreparation {
+interface BrowserWebviewIdentity {
   browserId: string;
-  requestId?: string;
-  preparesResidentHost: boolean;
-  webview: HTMLElement;
+  workspaceId: string;
+}
+
+export interface BrowserWebviewProfileHost {
+  profilePartition: string;
+  registerAttachedBrowser(input: DesktopAttachedBrowserRegistration): Promise<void>;
+}
+
+function isAttachedBrowserBridge(
+  browser: DesktopBrowserBridge | undefined,
+): browser is BrowserWebviewProfileHost {
+  return (
+    browser !== undefined &&
+    typeof browser.profilePartition === "string" &&
+    browser.profilePartition.startsWith("persist:") &&
+    typeof browser.registerAttachedBrowser === "function"
+  );
+}
+
+function getBrowserBridge(override?: BrowserWebviewProfileHost): BrowserWebviewProfileHost {
+  if (override) {
+    return override;
+  }
+  const browser = getDesktopHost()?.browser;
+  if (!isAttachedBrowserBridge(browser)) {
+    throw new Error("Electron browser profile bridge is unavailable");
+  }
+  return browser;
+}
+
+function registerBrowserWhenAttached(
+  webview: BrowserWebviewElement,
+  identity: BrowserWebviewIdentity,
+  browser: BrowserWebviewProfileHost,
+): void {
+  // Reparenting a webview can replace its guest WebContents without replacing
+  // this DOM element, so every attachment needs a fresh main-process registration.
+  webview.addEventListener("did-attach", () => {
+    const webContentsId = webview.getWebContentsId();
+    void browser
+      .registerAttachedBrowser({
+        browserId: identity.browserId,
+        workspaceId: identity.workspaceId,
+        webContentsId,
+      })
+      .catch((error) => {
+        console.error("[browser-webview] attached registration failed", error);
+      });
+  });
 }
 
 function trimNonEmpty(value: string | null | undefined): string | null {
@@ -36,22 +83,8 @@ function readDocument(): Document | null {
 }
 
 function applyResidentHostParkingStyle(host: HTMLElement): void {
-  host.setAttribute("aria-hidden", "true");
-  host.style.position = "fixed";
-  host.style.left = "-20000px";
-  host.style.top = "0";
-  host.style.width = `${RESIDENT_VIEWPORT_WIDTH}px`;
-  host.style.height = `${RESIDENT_VIEWPORT_HEIGHT}px`;
-  host.style.overflow = "hidden";
-  host.style.opacity = "0";
-  host.style.pointerEvents = "none";
-  host.style.zIndex = "";
-  host.style.clipPath = "";
-  host.style.visibility = "";
-  host.style.transform = "";
-}
-
-function applyResidentHostCaptureStyle(host: HTMLElement): void {
+  // Parked browser webviews must remain paintable at all times; screenshot
+  // correctness depends on the proven states in docs/browser-capture-harness.md.
   host.setAttribute("aria-hidden", "true");
   host.style.position = "fixed";
   host.style.left = "0";
@@ -61,15 +94,17 @@ function applyResidentHostCaptureStyle(host: HTMLElement): void {
   host.style.overflow = "hidden";
   host.style.opacity = "1";
   host.style.pointerEvents = "none";
-  host.style.zIndex = "1";
+  host.style.display = "block";
+  host.style.zIndex = "";
   host.style.clipPath = "";
-  host.style.visibility = "";
+  host.style.visibility = "visible";
   host.style.transform = "";
 }
 
 function getResidentBrowserHost(ownerDocument: Document): HTMLElement {
   const existing = ownerDocument.getElementById(RESIDENT_BROWSER_HOST_ID);
   if (existing) {
+    applyResidentHostParkingStyle(existing);
     return existing;
   }
 
@@ -92,11 +127,24 @@ function findBrowserWebview(browserId: string, ownerDocument: Document): HTMLEle
   return null;
 }
 
-function applyResidentWebviewStyle(webview: HTMLElement): void {
+function dimensionsForBrowser(browserId: string | null): { width: number; height: number } {
+  if (!browserId) {
+    return { width: RESIDENT_VIEWPORT_WIDTH, height: RESIDENT_VIEWPORT_HEIGHT };
+  }
+  return (
+    residentWebviewSizesByBrowserId.get(browserId) ?? {
+      width: RESIDENT_VIEWPORT_WIDTH,
+      height: RESIDENT_VIEWPORT_HEIGHT,
+    }
+  );
+}
+
+function applyResidentWebviewStyle(webview: HTMLElement, browserId: string | null): void {
+  const dimensions = dimensionsForBrowser(browserId);
   webview.style.display = "inline-flex";
   webview.style.flex = "0 0 auto";
-  webview.style.width = `${RESIDENT_VIEWPORT_WIDTH}px`;
-  webview.style.height = `${RESIDENT_VIEWPORT_HEIGHT}px`;
+  webview.style.width = `${dimensions.width}px`;
+  webview.style.height = `${dimensions.height}px`;
   webview.style.border = "0";
   webview.style.background = "transparent";
   webview.style.position = "absolute";
@@ -114,130 +162,32 @@ function clearResidentWebviewParkingStyle(webview: HTMLElement): void {
   webview.style.zIndex = "";
 }
 
-function residentWebviewChildren(host: HTMLElement): HTMLElement[] {
-  const webviews: HTMLElement[] = [];
-  for (const element of host.querySelectorAll(`[${BROWSER_ID_ATTRIBUTE}]`)) {
-    if (element instanceof HTMLElement) {
-      webviews.push(element);
-    }
-  }
-  return webviews;
-}
-
-function raiseResidentWebviewForCapture(host: HTMLElement, target: HTMLElement): void {
-  for (const webview of residentWebviewChildren(host)) {
-    applyResidentWebviewStyle(webview);
-  }
-  applyResidentWebviewStyle(target);
-  target.style.zIndex = "2";
-}
-
-function nextAnimationFrame(): Promise<void> {
-  if (typeof requestAnimationFrame !== "function") {
-    return Promise.resolve();
-  }
-  return new Promise((resolve) => {
-    requestAnimationFrame(() => {
-      resolve();
-    });
-  });
-}
-
-async function waitForCapturePaint(webview: HTMLElement): Promise<void> {
-  await nextAnimationFrame();
-  await nextAnimationFrame();
-  webview.getBoundingClientRect();
-}
-
-function activeCaptureTokenFor(input: { token?: string; requestId?: string }): string | null {
-  const token = trimNonEmpty(input.token);
-  if (token && activeCapturePreparations.has(token)) {
-    return token;
-  }
-  const requestId = trimNonEmpty(input.requestId);
-  if (!requestId) {
-    return null;
-  }
-  for (const [candidateToken, preparation] of activeCapturePreparations.entries()) {
-    if (preparation.requestId === requestId) {
-      return candidateToken;
-    }
-  }
-  return null;
-}
-
-function latestActiveResidentHostPreparation(): ActiveCapturePreparation | null {
-  let latest: ActiveCapturePreparation | null = null;
-  for (const preparation of activeCapturePreparations.values()) {
-    if (preparation.preparesResidentHost) {
-      latest = preparation;
-    }
-  }
-  return latest;
-}
-
-function syncResidentHostCaptureState(): void {
-  const host = readDocument()?.getElementById(RESIDENT_BROWSER_HOST_ID);
-  if (!(host instanceof HTMLElement)) {
-    return;
-  }
-
-  const latest = latestActiveResidentHostPreparation();
-  if (latest) {
-    applyResidentHostCaptureStyle(host);
-    raiseResidentWebviewForCapture(host, latest.webview);
-    return;
-  }
-
-  applyResidentHostParkingStyle(host);
-  for (const webview of residentWebviewChildren(host)) {
-    applyResidentWebviewStyle(webview);
-  }
-}
-
-function releaseCapturePreparationToken(token: string): void {
-  const preparation = activeCapturePreparations.get(token);
-  if (!preparation) {
-    return;
-  }
-  activeCapturePreparations.delete(token);
-  if (preparation.preparesResidentHost) {
-    applyResidentWebviewStyle(preparation.webview);
-    syncResidentHostCaptureState();
-  }
-}
-
-function releaseCapturePreparationsForBrowser(browserId: string): void {
-  for (const [token, preparation] of activeCapturePreparations.entries()) {
-    if (preparation.browserId === browserId) {
-      activeCapturePreparations.delete(token);
-    }
-  }
-  syncResidentHostCaptureState();
-}
-
-function releaseAllCapturePreparations(): void {
-  activeCapturePreparations.clear();
-  syncResidentHostCaptureState();
-}
-
 export function prepareBrowserWebview(
   webview: HTMLElement,
-  input: { browserId: string; initialUrl?: string | null },
+  input: {
+    browserId: string;
+    workspaceId: string;
+    initialUrl?: string | null;
+    profileHost?: BrowserWebviewProfileHost;
+  },
 ): void {
+  const browser = getBrowserBridge(input.profileHost);
   webview.setAttribute(BROWSER_ID_ATTRIBUTE, input.browserId);
-  webview.setAttribute("partition", `persist:paseo-browser-${input.browserId}`);
+  webview.setAttribute("partition", browser.profilePartition);
   webview.setAttribute("allowpopups", "true");
   webview.setAttribute("spellcheck", "false");
   webview.setAttribute("autosize", "on");
   if (input.initialUrl) {
     (webview as BrowserWebviewElement).src = input.initialUrl;
   }
+  registerBrowserWhenAttached(webview as BrowserWebviewElement, input, browser);
 }
 
 export function ensureResidentBrowserWebview(input: {
   browserId: string;
+  workspaceId: string;
   url: string;
+  profileHost?: BrowserWebviewProfileHost;
 }): HTMLElement | null {
   const browserId = trimNonEmpty(input.browserId);
   if (!browserId) {
@@ -250,18 +200,40 @@ export function ensureResidentBrowserWebview(input: {
 
   const resident = residentWebviewsByBrowserId.get(browserId) ?? null;
   if (resident?.isConnected) {
+    releaseResidentBrowserWebview(browserId, resident);
     return resident;
   }
 
   const existing = findBrowserWebview(browserId, ownerDocument);
   if (existing) {
+    if (existing.parentElement?.id === RESIDENT_BROWSER_HOST_ID) {
+      releaseResidentBrowserWebview(browserId, existing);
+    }
     return existing;
   }
 
   const webview = ownerDocument.createElement("webview") as BrowserWebviewElement;
-  prepareBrowserWebview(webview, { browserId, initialUrl: input.url });
+  prepareBrowserWebview(webview, {
+    browserId,
+    workspaceId: input.workspaceId,
+    initialUrl: input.url,
+    profileHost: input.profileHost,
+  });
   releaseResidentBrowserWebview(browserId, webview);
   return webview;
+}
+
+export function getResidentBrowserWebview(browserId: string): HTMLElement | null {
+  const normalizedBrowserId = trimNonEmpty(browserId);
+  if (!normalizedBrowserId) {
+    return null;
+  }
+  const resident = residentWebviewsByBrowserId.get(normalizedBrowserId) ?? null;
+  if (resident?.isConnected) {
+    return resident;
+  }
+  const ownerDocument = readDocument();
+  return ownerDocument ? findBrowserWebview(normalizedBrowserId, ownerDocument) : null;
 }
 
 export function takeResidentBrowserWebview(browserId: string): HTMLElement | null {
@@ -292,100 +264,31 @@ export function releaseResidentBrowserWebview(browserId: string, webview: HTMLEl
   }
 
   residentWebviewsByBrowserId.set(normalizedBrowserId, webview);
-  applyResidentWebviewStyle(webview);
+  applyResidentWebviewStyle(webview, normalizedBrowserId);
   getResidentBrowserHost(ownerDocument).appendChild(webview);
 }
 
-export async function prepareResidentBrowserWebviewForPixelCapture(input: {
+export function resizeResidentBrowserWebview(input: {
   browserId: string;
-  requestId?: string;
-}): Promise<{ token: string }> {
-  const browserId = trimNonEmpty(input.browserId);
-  if (!browserId) {
-    throw new Error("Browser id is required for pixel capture preparation.");
+  width: number;
+  height: number;
+}): { width: number; height: number } | null {
+  const normalizedBrowserId = trimNonEmpty(input.browserId);
+  if (!normalizedBrowserId) {
+    return null;
   }
+  const width = Math.max(1, Math.round(input.width));
+  const height = Math.max(1, Math.round(input.height));
+  residentWebviewSizesByBrowserId.set(normalizedBrowserId, { width, height });
+
   const ownerDocument = readDocument();
-  if (!ownerDocument) {
-    throw new Error("Browser pixel capture preparation requires a document.");
+  const webview = ownerDocument ? findBrowserWebview(normalizedBrowserId, ownerDocument) : null;
+  if (webview) {
+    webview.style.width = `${width}px`;
+    webview.style.height = `${height}px`;
   }
 
-  const host = getResidentBrowserHost(ownerDocument);
-  const webview = findBrowserWebview(browserId, ownerDocument);
-  if (!webview) {
-    throw new Error(`Browser webview ${browserId} is not mounted.`);
-  }
-
-  const token = `capture-${++nextCapturePreparationId}`;
-  const preparesResidentHost = webview.parentElement === host;
-  const requestId = trimNonEmpty(input.requestId);
-  activeCapturePreparations.set(token, {
-    browserId,
-    ...(requestId ? { requestId } : {}),
-    preparesResidentHost,
-    webview,
-  });
-  try {
-    if (preparesResidentHost) {
-      applyResidentHostCaptureStyle(host);
-      raiseResidentWebviewForCapture(host, webview);
-    }
-    await waitForCapturePaint(webview);
-    if (!activeCapturePreparations.has(token)) {
-      throw new Error("Browser pixel capture preparation was canceled.");
-    }
-    return { token };
-  } catch (error) {
-    releaseCapturePreparationToken(token);
-    throw error;
-  }
-}
-
-export async function restoreResidentBrowserWebviewAfterPixelCapture(input: {
-  token: string;
-}): Promise<void> {
-  releaseCapturePreparationToken(input.token);
-}
-
-export async function cancelResidentBrowserWebviewPixelCapture(input: {
-  requestId?: string;
-  token?: string;
-}): Promise<void> {
-  const token = activeCaptureTokenFor(input);
-  if (!token) {
-    return;
-  }
-  releaseCapturePreparationToken(token);
-}
-
-export function installResidentBrowserCaptureBridge(): () => void {
-  captureBridgeInstallCount += 1;
-  if (!captureBridgeDisposer) {
-    const browserBridge = getDesktopHost()?.browser;
-    const disposePrepare = browserBridge?.onPrepareForPixelCapture?.(
-      prepareResidentBrowserWebviewForPixelCapture,
-    );
-    const disposeRestore = browserBridge?.onRestorePixelCapture?.(
-      restoreResidentBrowserWebviewAfterPixelCapture,
-    );
-    const disposeCancel = browserBridge?.onCancelPixelCapture?.(
-      cancelResidentBrowserWebviewPixelCapture,
-    );
-    captureBridgeDisposer = () => {
-      disposePrepare?.();
-      disposeRestore?.();
-      disposeCancel?.();
-    };
-  }
-
-  return () => {
-    captureBridgeInstallCount = Math.max(0, captureBridgeInstallCount - 1);
-    if (captureBridgeInstallCount > 0) {
-      return;
-    }
-    captureBridgeDisposer?.();
-    captureBridgeDisposer = null;
-    releaseAllCapturePreparations();
-  };
+  return { width, height };
 }
 
 export function removeResidentBrowserWebview(browserId: string): void {
@@ -396,7 +299,7 @@ export function removeResidentBrowserWebview(browserId: string): void {
 
   const resident = residentWebviewsByBrowserId.get(normalizedBrowserId) ?? null;
   residentWebviewsByBrowserId.delete(normalizedBrowserId);
-  releaseCapturePreparationsForBrowser(normalizedBrowserId);
+  residentWebviewSizesByBrowserId.delete(normalizedBrowserId);
   resident?.remove();
 }
 
@@ -405,7 +308,6 @@ export function clearResidentBrowserWebviewsForTests(): void {
     webview.remove();
   }
   residentWebviewsByBrowserId.clear();
-  releaseAllCapturePreparations();
-  nextCapturePreparationId = 0;
+  residentWebviewSizesByBrowserId.clear();
   readDocument()?.getElementById(RESIDENT_BROWSER_HOST_ID)?.remove();
 }

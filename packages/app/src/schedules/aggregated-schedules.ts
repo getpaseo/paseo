@@ -2,6 +2,8 @@ import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { ScheduleSummary } from "@getpaseo/protocol/schedule/types";
 import { toErrorMessage } from "@/utils/error-messages";
 
+export const schedulesQueryBaseKey = ["schedules"] as const;
+
 export const ALL_SCHEDULE_HOSTS_FAILED_MESSAGE = "No connected hosts could load schedules";
 
 export interface ScheduleHostInput {
@@ -31,10 +33,24 @@ export interface ScheduleHostError {
   message: string;
 }
 
+export interface FetchAggregatedSchedulesConnectingResult {
+  status: "connecting";
+}
+
 export interface FetchAggregatedSchedulesResult {
-  schedules: AggregatedSchedule[];
+  status: "loaded";
+  data: AggregatedSchedule[];
   hostErrors: ScheduleHostError[];
 }
+
+export type FetchAggregatedSchedulesState =
+  | FetchAggregatedSchedulesConnectingResult
+  | FetchAggregatedSchedulesResult;
+
+export type AggregateLoadState<T> =
+  | { status: "connecting" }
+  | { status: "loading" }
+  | { status: "loaded"; data: T[] };
 
 export interface FetchAggregatedSchedulesInput {
   hosts: readonly ScheduleHostInput[];
@@ -43,9 +59,8 @@ export interface FetchAggregatedSchedulesInput {
 
 /**
  * Fetch schedules across connected hosts and merge them into one flat list.
- * Connectivity is checked here at execution time (not pre-filtered by the hook)
- * so the query — retried as the runtime version changes — reliably picks a host
- * up the moment it comes online, including on a cold deep-link.
+ * Connectivity is checked here at execution time, so explicit query refreshes
+ * pick up the currently connected host set.
  *
  * Offline hosts are skipped. A connected host that fails contributes to
  * `hostErrors` (surfaced as a banner) while the rest still render; only when
@@ -53,7 +68,19 @@ export interface FetchAggregatedSchedulesInput {
  */
 export async function fetchAggregatedSchedules(
   input: FetchAggregatedSchedulesInput,
-): Promise<FetchAggregatedSchedulesResult> {
+): Promise<FetchAggregatedSchedulesState> {
+  const hasSettlingHost = input.hosts.some((host) =>
+    isScheduleHostConnectionSettling(input.runtime.getSnapshot(host.serverId)),
+  );
+  const hasAskableHost = input.hosts.some((host) => {
+    const snapshot = input.runtime.getSnapshot(host.serverId);
+    return snapshot?.connectionStatus === "online" && input.runtime.getClient(host.serverId);
+  });
+
+  if (!hasAskableHost && hasSettlingHost) {
+    return { status: "connecting" };
+  }
+
   const schedules: AggregatedSchedule[] = [];
   const hostErrors: ScheduleHostError[] = [];
   let connectedAttempts = 0;
@@ -89,5 +116,18 @@ export async function fetchAggregatedSchedules(
     throw new Error(ALL_SCHEDULE_HOSTS_FAILED_MESSAGE);
   }
 
-  return { schedules, hostErrors };
+  if (schedules.length === 0 && hasSettlingHost) {
+    return { status: "connecting" };
+  }
+
+  return { status: "loaded", data: schedules, hostErrors };
+}
+
+function isScheduleHostConnectionSettling(
+  snapshot: ScheduleRuntimeSnapshot | null | undefined,
+): boolean {
+  if (!snapshot) {
+    return true;
+  }
+  return snapshot.connectionStatus === "connecting" || snapshot.connectionStatus === "idle";
 }

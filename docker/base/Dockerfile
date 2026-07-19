@@ -1,9 +1,32 @@
 # syntax=docker/dockerfile:1
 
 ARG NODE_IMAGE=node:22-bookworm-slim
-FROM ${NODE_IMAGE}
+FROM --platform=$BUILDPLATFORM ${NODE_IMAGE} AS source-pack
 
-ARG PASEO_VERSION=latest
+ARG PASEO_VERSION
+
+ENV ONNXRUNTIME_NODE_INSTALL=skip
+
+WORKDIR /tmp/paseo-src
+COPY . .
+
+RUN set -eux; \
+    if [ -n "${PASEO_VERSION:-}" ]; then \
+      test "$(node -p "require('./package.json').version")" = "${PASEO_VERSION}"; \
+    fi; \
+    node -e 'const fs=require("node:fs"); const pkg=JSON.parse(fs.readFileSync("package.json","utf8")); delete pkg.scripts.prepare; fs.writeFileSync("package.json", `${JSON.stringify(pkg)}\n`);'; \
+    npm ci
+
+RUN set -eux; \
+    mkdir -p /tmp/paseo-packs; \
+    npm pack --workspace=@getpaseo/highlight --pack-destination /tmp/paseo-packs; \
+    npm pack --workspace=@getpaseo/relay --pack-destination /tmp/paseo-packs; \
+    npm pack --workspace=@getpaseo/protocol --pack-destination /tmp/paseo-packs; \
+    npm pack --workspace=@getpaseo/client --pack-destination /tmp/paseo-packs; \
+    npm pack --workspace=@getpaseo/server --pack-destination /tmp/paseo-packs; \
+    npm pack --workspace=@getpaseo/cli --pack-destination /tmp/paseo-packs
+
+FROM ${NODE_IMAGE}
 
 ENV HOME=/home/paseo \
     PASEO_HOME=/home/paseo/.paseo \
@@ -29,13 +52,14 @@ RUN set -eux; \
       gosu \
       lbzip2 \
       openssh-client \
+      procps \
       tini; \
     rm -rf /var/lib/apt/lists/*
 
+COPY --from=source-pack /tmp/paseo-packs /tmp/paseo-packs
 RUN set -eux; \
-    npm install -g --omit=optional \
-      "@getpaseo/server@${PASEO_VERSION}" \
-      "@getpaseo/cli@${PASEO_VERSION}"; \
+	npm install -g /tmp/paseo-packs/*.tgz; \
+    rm -rf /tmp/paseo-packs; \
     npm cache clean --force; \
     server_entry="$(npm root -g)/@getpaseo/server/dist/scripts/supervisor-entrypoint.js"; \
     test -f "$server_entry"; \
@@ -66,7 +90,7 @@ RUN set -eux; \
       "$XDG_CACHE_HOME"; \
     chown -R paseo:paseo /home/paseo /workspace
 
-COPY rootfs/ /
+COPY docker/base/rootfs/ /
 RUN chmod +x /usr/local/bin/paseo-docker-entrypoint
 
 WORKDIR /workspace

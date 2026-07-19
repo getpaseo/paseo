@@ -1,17 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import { queryClient as appQueryClient } from "@/query/query-client";
+import { queryClient as appQueryClient } from "@/data/query-client";
 import { useSessionStore } from "@/stores/session-store";
-import type { WorkspaceDescriptor } from "@/stores/session-store";
 import {
   __resetCheckoutGitActionsStoreForTests,
-  isLocalWorktreeArchivePending,
   useCheckoutGitActionsStore,
 } from "@/git/actions-store";
-import {
-  clearWorkspaceArchivePending,
-  isWorkspaceArchivePending,
-} from "@/contexts/session-workspace-upserts";
 
 vi.mock("@react-native-async-storage/async-storage", () => ({
   default: {
@@ -31,33 +25,13 @@ function createDeferred<T>() {
   return { promise, resolve, reject };
 }
 
-function workspace(input: Partial<WorkspaceDescriptor> & Pick<WorkspaceDescriptor, "id">) {
-  return {
-    id: input.id,
-    projectId: input.projectId ?? "project-1",
-    projectDisplayName: input.projectDisplayName ?? "Project",
-    projectRootPath: input.projectRootPath ?? "/tmp/repo",
-    workspaceDirectory: input.workspaceDirectory ?? "/tmp/repo/worktrees/feature",
-    projectKind: input.projectKind ?? "git",
-    workspaceKind: input.workspaceKind ?? "worktree",
-    name: input.name ?? input.id,
-    status: input.status ?? "done",
-    archivingAt: input.archivingAt ?? null,
-    statusEnteredAt: null,
-    diffStat: input.diffStat ?? null,
-    scripts: input.scripts ?? [],
-  } satisfies WorkspaceDescriptor;
-}
-
 describe("checkout-git-actions-store", () => {
   const serverId = "server-1";
   const cwd = "/tmp/repo/worktrees/feature";
-  const workspaceId = "ws-feature";
 
   beforeEach(() => {
     vi.useFakeTimers();
     __resetCheckoutGitActionsStoreForTests();
-    clearWorkspaceArchivePending({ serverId, workspaceId });
     appQueryClient.clear();
     useSessionStore.setState((state) => ({ ...state, sessions: {} }));
   });
@@ -65,7 +39,6 @@ describe("checkout-git-actions-store", () => {
   afterEach(() => {
     vi.useRealTimers();
     __resetCheckoutGitActionsStoreForTests();
-    clearWorkspaceArchivePending({ serverId, workspaceId });
     appQueryClient.clear();
     useSessionStore.setState((state) => ({ ...state, sessions: {} }));
   });
@@ -210,66 +183,77 @@ describe("checkout-git-actions-store", () => {
     ).toBe("idle");
   });
 
-  it("enables PR auto-merge when the daemon advertises auto-merge actions", async () => {
-    const client = {
-      checkoutGithubSetAutoMerge: vi.fn(async () => ({
+  for (const rpc of [
+    {
+      label: "forge",
+      method: "checkoutForgeSetAutoMerge",
+      feature: "checkoutForgeSetAutoMerge",
+    },
+    {
+      label: "legacy GitHub",
+      method: "checkoutGithubSetAutoMerge",
+      feature: "checkoutGithubSetAutoMerge",
+    },
+  ] as const) {
+    it(`enables PR auto-merge through the ${rpc.label} RPC`, async () => {
+      const setAutoMerge = vi.fn(async () => ({
         enabled: true,
         success: true,
         error: null,
-      })),
-    };
-    useSessionStore.getState().initializeSession(serverId, client as unknown as DaemonClient);
-    useSessionStore.getState().updateSessionServerInfo(serverId, {
-      serverId,
-      hostname: null,
-      version: null,
-      features: { checkoutGithubSetAutoMerge: true },
-    });
+      }));
+      const client = { [rpc.method]: setAutoMerge };
+      useSessionStore.getState().initializeSession(serverId, client as unknown as DaemonClient);
+      useSessionStore.getState().updateSessionServerInfo(serverId, {
+        serverId,
+        hostname: null,
+        version: null,
+        features: { [rpc.feature]: true },
+      });
 
-    await useCheckoutGitActionsStore
-      .getState()
-      .enablePrAutoMerge({ serverId, cwd, method: "squash" });
-
-    expect(client.checkoutGithubSetAutoMerge).toHaveBeenCalledWith(cwd, {
-      enabled: true,
-      method: "squash",
-    });
-    expect(
-      useCheckoutGitActionsStore
+      await useCheckoutGitActionsStore
         .getState()
-        .getStatus({ serverId, cwd, actionId: "enable-pr-auto-merge-squash" }),
-    ).toBe("success");
-  });
+        .enablePrAutoMerge({ serverId, cwd, method: "squash" });
 
-  it("disables PR auto-merge when the daemon advertises auto-merge actions", async () => {
-    const client = {
-      checkoutGithubSetAutoMerge: vi.fn(async () => ({
+      expect(setAutoMerge).toHaveBeenCalledWith(cwd, {
+        enabled: true,
+        method: "squash",
+      });
+      expect(
+        useCheckoutGitActionsStore
+          .getState()
+          .getStatus({ serverId, cwd, actionId: "enable-pr-auto-merge-squash" }),
+      ).toBe("success");
+    });
+
+    it(`disables PR auto-merge through the ${rpc.label} RPC`, async () => {
+      const setAutoMerge = vi.fn(async () => ({
         enabled: false,
         success: true,
         error: null,
-      })),
-    };
-    useSessionStore.getState().initializeSession(serverId, client as unknown as DaemonClient);
-    useSessionStore.getState().updateSessionServerInfo(serverId, {
-      serverId,
-      hostname: null,
-      version: null,
-      features: { checkoutGithubSetAutoMerge: true },
+      }));
+      const client = { [rpc.method]: setAutoMerge };
+      useSessionStore.getState().initializeSession(serverId, client as unknown as DaemonClient);
+      useSessionStore.getState().updateSessionServerInfo(serverId, {
+        serverId,
+        hostname: null,
+        version: null,
+        features: { [rpc.feature]: true },
+      });
+
+      await useCheckoutGitActionsStore.getState().disablePrAutoMerge({ serverId, cwd });
+
+      expect(setAutoMerge).toHaveBeenCalledWith(cwd, { enabled: false });
+      expect(
+        useCheckoutGitActionsStore
+          .getState()
+          .getStatus({ serverId, cwd, actionId: "disable-pr-auto-merge" }),
+      ).toBe("success");
     });
-
-    await useCheckoutGitActionsStore.getState().disablePrAutoMerge({ serverId, cwd });
-
-    expect(client.checkoutGithubSetAutoMerge).toHaveBeenCalledWith(cwd, { enabled: false });
-    expect(
-      useCheckoutGitActionsStore
-        .getState()
-        .getStatus({ serverId, cwd, actionId: "disable-pr-auto-merge" }),
-    ).toBe("success");
-  });
+  }
 
   it("does not call PR auto-merge RPCs when the daemon lacks the feature flag", async () => {
     const client = {
-      checkoutGithubSetAutoMerge: vi.fn(async () => ({
+      checkoutForgeSetAutoMerge: vi.fn(async () => ({
         enabled: true,
         success: true,
         error: null,
@@ -285,127 +269,13 @@ describe("checkout-git-actions-store", () => {
 
     await expect(
       useCheckoutGitActionsStore.getState().enablePrAutoMerge({ serverId, cwd, method: "merge" }),
-    ).rejects.toThrow("Update the host to use GitHub auto-merge actions.");
+    ).rejects.toThrow("Update the host to use auto-merge actions.");
 
-    expect(client.checkoutGithubSetAutoMerge).not.toHaveBeenCalled();
+    expect(client.checkoutForgeSetAutoMerge).not.toHaveBeenCalled();
     expect(
       useCheckoutGitActionsStore
         .getState()
         .getStatus({ serverId, cwd, actionId: "enable-pr-auto-merge-merge" }),
     ).toBe("idle");
-  });
-
-  it("hides an archived worktree optimistically while the archive RPC is in flight", async () => {
-    const deferred = createDeferred<Record<string, never>>();
-    const client = {
-      archivePaseoWorktree: vi.fn(() => deferred.promise),
-    };
-    const featureWorkspace = workspace({
-      id: workspaceId,
-      name: "feature",
-      workspaceDirectory: cwd,
-    });
-    useSessionStore.getState().initializeSession(serverId, client as unknown as DaemonClient);
-    useSessionStore.getState().setWorkspaces(serverId, new Map([[workspaceId, featureWorkspace]]));
-    appQueryClient.setQueryData(
-      ["sidebarPaseoWorktreeList", serverId, "/tmp"],
-      [{ worktreePath: cwd }, { worktreePath: "/tmp/other" }],
-    );
-
-    const archive = useCheckoutGitActionsStore
-      .getState()
-      .archiveWorktree({ serverId, cwd, worktreePath: cwd, workspaceId });
-
-    expect(useSessionStore.getState().sessions[serverId]?.workspaces.has(workspaceId)).toBe(false);
-    expect(useSessionStore.getState().sessions[serverId]?.workspaces.has(cwd)).toBe(false);
-    expect(appQueryClient.getQueryData(["sidebarPaseoWorktreeList", serverId, "/tmp"])).toEqual([
-      { worktreePath: "/tmp/other" },
-    ]);
-    expect(isLocalWorktreeArchivePending({ serverId, cwd })).toBe(true);
-
-    deferred.resolve({});
-    await archive;
-
-    expect(
-      isWorkspaceArchivePending({
-        serverId,
-        workspaceId,
-      }),
-    ).toBe(true);
-    expect(
-      isWorkspaceArchivePending({
-        serverId,
-        workspaceId: cwd,
-      }),
-    ).toBe(false);
-  });
-
-  it("archives on the server even when its workspace cannot be resolved", async () => {
-    const client = {
-      archivePaseoWorktree: vi.fn(async () => ({})),
-    };
-    useSessionStore.getState().initializeSession(serverId, client as unknown as DaemonClient);
-
-    await useCheckoutGitActionsStore
-      .getState()
-      .archiveWorktree({ serverId, cwd, worktreePath: cwd });
-
-    // The server archive is keyed by worktreePath and must run regardless.
-    expect(client.archivePaseoWorktree).toHaveBeenCalledWith({ worktreePath: cwd });
-    // The optimistic client-side mark is never keyed by the path.
-    expect(isWorkspaceArchivePending({ serverId, workspaceId: cwd })).toBe(false);
-  });
-
-  it("restores an optimistically hidden worktree when archive fails", async () => {
-    const client = {
-      archivePaseoWorktree: vi.fn(async () => ({ error: { message: "archive failed" } })),
-    };
-    const featureWorkspace = workspace({
-      id: workspaceId,
-      name: "feature",
-      workspaceDirectory: cwd,
-    });
-    const listSnapshot = [{ worktreePath: cwd }, { worktreePath: "/tmp/other" }];
-    useSessionStore.getState().initializeSession(serverId, client as unknown as DaemonClient);
-    useSessionStore.getState().setWorkspaces(serverId, new Map([[workspaceId, featureWorkspace]]));
-    appQueryClient.setQueryData(["sidebarPaseoWorktreeList", serverId, "/tmp"], listSnapshot);
-
-    await expect(
-      useCheckoutGitActionsStore
-        .getState()
-        .archiveWorktree({ serverId, cwd, worktreePath: cwd, workspaceId }),
-    ).rejects.toThrow("archive failed");
-
-    expect(useSessionStore.getState().sessions[serverId]?.workspaces.get(workspaceId)).toEqual(
-      featureWorkspace,
-    );
-    expect(appQueryClient.getQueryData(["sidebarPaseoWorktreeList", serverId, "/tmp"])).toEqual(
-      listSnapshot,
-    );
-  });
-
-  it("reports local archive pending only while the archive action is in flight", async () => {
-    const deferred = createDeferred<Record<string, never>>();
-    const client = {
-      archivePaseoWorktree: vi.fn(() => deferred.promise),
-    };
-    const featureWorkspace = workspace({
-      id: workspaceId,
-      name: "feature",
-      workspaceDirectory: cwd,
-    });
-    useSessionStore.getState().initializeSession(serverId, client as unknown as DaemonClient);
-    useSessionStore.getState().setWorkspaces(serverId, new Map([[workspaceId, featureWorkspace]]));
-
-    const archive = useCheckoutGitActionsStore
-      .getState()
-      .archiveWorktree({ serverId, cwd, worktreePath: cwd });
-
-    expect(isLocalWorktreeArchivePending({ serverId, cwd })).toBe(true);
-
-    deferred.resolve({});
-    await archive;
-
-    expect(isLocalWorktreeArchivePending({ serverId, cwd })).toBe(false);
   });
 });

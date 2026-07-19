@@ -10,6 +10,7 @@ export interface ScheduleProjectTarget {
   projectKey: string;
   projectName: string;
   cwd: string;
+  isGit: boolean;
 }
 
 export function buildProjectOptionId(serverId: string, projectKey: string): string {
@@ -38,6 +39,7 @@ export function buildScheduleProjectTargets(
         projectKey: project.projectKey,
         projectName: project.projectName,
         cwd,
+        isGit: Boolean(host.gitRuntime),
       });
     }
   }

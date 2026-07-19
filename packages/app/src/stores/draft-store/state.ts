@@ -1,7 +1,11 @@
-import type { AttachmentMetadata, UserComposerAttachment } from "@/attachments/types";
-import { GitHubSearchItemSchema } from "@getpaseo/protocol/messages";
+import {
+  NEW_WORKSPACE_PICKER_ATTACHMENT_OWNER,
+  type AttachmentMetadata,
+  type UserComposerAttachment,
+} from "@/attachments/types";
+import { ForgeSearchItemSchema, GitHubSearchItemSchema } from "@getpaseo/protocol/messages";
 
-export const DRAFT_STORE_VERSION = 4;
+export const DRAFT_STORE_VERSION = 5;
 export const FINALIZED_DRAFT_TTL_MS = 5 * 60 * 1000;
 
 export interface LegacyDraftImage {
@@ -79,10 +83,25 @@ export function isUserComposerAttachment(value: unknown): value is UserComposerA
     const metadata = record.metadata;
     return isAttachmentMetadata(metadata);
   }
-  if (record.kind !== "github_issue" && record.kind !== "github_pr") {
+  if (
+    record.kind !== "forge_issue" &&
+    record.kind !== "forge_change_request" &&
+    record.kind !== "github_issue" &&
+    record.kind !== "github_pr"
+  ) {
     return false;
   }
-  return GitHubSearchItemSchema.safeParse(record.item).success;
+  if (
+    record.kind === "github_pr" &&
+    record.owner !== undefined &&
+    record.owner !== NEW_WORKSPACE_PICKER_ATTACHMENT_OWNER
+  ) {
+    return false;
+  }
+  return (
+    ForgeSearchItemSchema.safeParse(record.item).success ||
+    GitHubSearchItemSchema.safeParse(record.item).success
+  );
 }
 
 export function normalizeComposerAttachment(
@@ -92,6 +111,19 @@ export function normalizeComposerAttachment(
     return {
       kind: "image",
       metadata: normalizeAttachmentMetadata(attachment.metadata),
+    };
+  }
+  if (attachment.kind === "github_pr") {
+    const item =
+      (attachment.item as { kind: string }).kind === "pr"
+        ? { ...attachment.item, kind: "change_request" as const }
+        : attachment.item;
+    return {
+      kind: "github_pr",
+      item,
+      ...(attachment.owner === NEW_WORKSPACE_PICKER_ATTACHMENT_OWNER
+        ? { owner: attachment.owner }
+        : {}),
     };
   }
   return attachment;

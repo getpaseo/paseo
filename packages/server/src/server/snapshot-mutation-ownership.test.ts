@@ -29,11 +29,15 @@ describe("snapshot mutation ownership boundary", () => {
     const cwd = mkdtempSync(path.join(os.tmpdir(), "snapshot-owner-live-"));
 
     try {
-      const snapshot = await daemonHandle.daemon.agentManager.createAgent({
-        provider: "codex",
-        cwd,
-        model: "gpt-5.2-codex",
-      });
+      const snapshot = await daemonHandle.daemon.agentManager.createAgent(
+        {
+          provider: "codex",
+          cwd,
+          model: "gpt-5.2-codex",
+        },
+        undefined,
+        { workspaceId: undefined },
+      );
       await daemonHandle.daemon.agentManager.flush();
 
       const applySnapshotSpy = vi.spyOn(daemonHandle.daemon.agentStorage, "applySnapshot");
@@ -95,6 +99,7 @@ describe("snapshot mutation ownership boundary", () => {
     const session = asInternals<SessionInternals>(
       new Session({
         clientId: "test-client",
+        scopes: ["*"],
         onMessage,
         logger: createStub<SessionOptions["logger"]>(logger),
         downloadTokenStore: createStub<SessionOptions["downloadTokenStore"]>({}),

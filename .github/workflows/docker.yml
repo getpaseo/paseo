@@ -5,7 +5,22 @@ on:
     branches: [main]
     paths:
       - "docker/**"
+      - ".dockerignore"
       - ".github/workflows/docker.yml"
+      - "package.json"
+      - "package-lock.json"
+      - "patches/**"
+      - "scripts/**"
+      - "tsconfig.json"
+      - "tsconfig.base.json"
+      - "packages/app/**"
+      - "packages/cli/**"
+      - "packages/client/**"
+      - "packages/expo-two-way-audio/**"
+      - "packages/highlight/**"
+      - "packages/protocol/**"
+      - "packages/relay/**"
+      - "packages/server/**"
   push:
     branches: [main]
     tags:
@@ -13,7 +28,7 @@ on:
   workflow_dispatch:
     inputs:
       paseo_version:
-        description: "Paseo version to build. Required when publish is true."
+        description: "Expected source version to build. Required when publish is true."
         required: false
         default: ""
       publish:
@@ -22,15 +37,6 @@ on:
         default: "false"
         type: choice
         options:
-          - "false"
-          - "true"
-      source_build:
-        description: "Build from the checked-out source tree instead of npm."
-        required: false
-        default: "auto"
-        type: choice
-        options:
-          - auto
           - "false"
           - "true"
       publish_latest:
@@ -57,7 +63,6 @@ jobs:
       image: ${{ steps.values.outputs.image }}
       install_version: ${{ steps.values.outputs.install_version }}
       publish: ${{ steps.values.outputs.publish }}
-      source_build: ${{ steps.values.outputs.source_build }}
       check_tag: ${{ steps.values.outputs.check_tag }}
       publish_tags: ${{ steps.values.outputs.publish_tags }}
     steps:
@@ -68,7 +73,6 @@ jobs:
           INPUT_PASEO_VERSION: ${{ inputs.paseo_version }}
           INPUT_PUBLISH: ${{ inputs.publish }}
           INPUT_PUBLISH_LATEST: ${{ inputs.publish_latest }}
-          INPUT_SOURCE_BUILD: ${{ inputs.source_build }}
           REPO_OWNER: ${{ github.repository_owner }}
           REF_NAME: ${{ github.ref_name }}
         run: |
@@ -76,9 +80,9 @@ jobs:
 
           owner="$(printf '%s' "${REPO_OWNER}" | tr '[:upper:]' '[:lower:]')"
           image="ghcr.io/${owner}/paseo"
-          install_version="${INPUT_PASEO_VERSION:-latest}"
+          package_version="$(node -p "require('./package.json').version")"
+          install_version="${INPUT_PASEO_VERSION:-${package_version}}"
           publish=false
-          source_build=false
           publish_latest=false
           prerelease=false
 
@@ -87,7 +91,6 @@ jobs:
             publish=true
             if [[ "${REF_NAME}" == *-* ]]; then
               prerelease=true
-              source_build=true
             else
               publish_latest=true
             fi
@@ -104,24 +107,6 @@ jobs:
               prerelease=true
             fi
 
-            case "${INPUT_SOURCE_BUILD:-auto}" in
-              true)
-                source_build=true
-                ;;
-              false)
-                source_build=false
-                ;;
-              auto)
-                if [[ "${prerelease}" == "true" ]]; then
-                  source_build=true
-                fi
-                ;;
-              *)
-                echo "::error::source_build must be auto, true, or false."
-                exit 1
-                ;;
-            esac
-
             if [[ "${INPUT_PUBLISH_LATEST:-false}" == "true" && "${prerelease}" != "true" ]]; then
               publish_latest=true
             fi
@@ -137,14 +122,13 @@ jobs:
             echo "image=${image}"
             echo "install_version=${install_version}"
             echo "publish=${publish}"
-            echo "source_build=${source_build}"
             echo "check_tag=${check_tag}"
             echo "publish_tags<<EOF"
             echo "${publish_tags}"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
-          echo "Resolved image=${image} install_version=${install_version} publish=${publish} source_build=${source_build}"
+          echo "Resolved image=${image} install_version=${install_version} publish=${publish}"
 
   build:
     needs: setup
@@ -160,8 +144,8 @@ jobs:
 
       - uses: docker/build-push-action@v7
         with:
-          context: ${{ needs.setup.outputs.source_build == 'true' && '.' || 'docker/base' }}
-          file: ${{ needs.setup.outputs.source_build == 'true' && 'docker/base/Dockerfile.source' || 'docker/base/Dockerfile' }}
+          context: .
+          file: docker/base/Dockerfile
           platforms: ${{ env.PLATFORMS }}
           build-args: |
             PASEO_VERSION=${{ needs.setup.outputs.install_version }}
@@ -193,8 +177,8 @@ jobs:
 
       - uses: docker/build-push-action@v7
         with:
-          context: ${{ needs.setup.outputs.source_build == 'true' && '.' || 'docker/base' }}
-          file: ${{ needs.setup.outputs.source_build == 'true' && 'docker/base/Dockerfile.source' || 'docker/base/Dockerfile' }}
+          context: .
+          file: docker/base/Dockerfile
           platforms: ${{ env.PLATFORMS }}
           build-args: |
             PASEO_VERSION=${{ needs.setup.outputs.install_version }}

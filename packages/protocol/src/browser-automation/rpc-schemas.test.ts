@@ -15,7 +15,39 @@ const commandParseCases = [
   {
     name: "click",
     command: { command: "click", args: { browserId: BROWSER_ID, ref: "@e1" } },
-    expected: { command: "click", args: { browserId: BROWSER_ID, ref: "@e1" } },
+    expected: {
+      command: "click",
+      args: {
+        browserId: BROWSER_ID,
+        ref: "@e1",
+        button: "left",
+        doubleClick: false,
+        modifiers: [],
+      },
+    },
+  },
+  {
+    name: "click options",
+    command: {
+      command: "click",
+      args: {
+        browserId: BROWSER_ID,
+        ref: "@e1",
+        button: "right",
+        doubleClick: true,
+        modifiers: ["Meta", "Shift"],
+      },
+    },
+    expected: {
+      command: "click",
+      args: {
+        browserId: BROWSER_ID,
+        ref: "@e1",
+        button: "right",
+        doubleClick: true,
+        modifiers: ["Meta", "Shift"],
+      },
+    },
   },
   {
     name: "fill",
@@ -123,6 +155,72 @@ const commandParseCases = [
     command: { command: "logs", args: { browserId: BROWSER_ID } },
     expected: { command: "logs", args: { browserId: BROWSER_ID, maxEntries: 50 } },
   },
+  {
+    name: "evaluate",
+    command: {
+      command: "evaluate",
+      args: { browserId: BROWSER_ID, function: "() => document.title" },
+    },
+    expected: {
+      command: "evaluate",
+      args: { browserId: BROWSER_ID, function: "() => document.title" },
+    },
+  },
+  {
+    name: "evaluate with ref",
+    command: {
+      command: "evaluate",
+      args: { browserId: BROWSER_ID, function: "(element) => element.textContent", ref: "@e1" },
+    },
+    expected: {
+      command: "evaluate",
+      args: { browserId: BROWSER_ID, function: "(element) => element.textContent", ref: "@e1" },
+    },
+  },
+  {
+    name: "scroll",
+    command: {
+      command: "scroll",
+      args: { browserId: BROWSER_ID, deltaX: 0, deltaY: 400 },
+    },
+    expected: {
+      command: "scroll",
+      args: { browserId: BROWSER_ID, deltaX: 0, deltaY: 400 },
+    },
+  },
+  {
+    name: "scroll with ref",
+    command: {
+      command: "scroll",
+      args: { browserId: BROWSER_ID, ref: "@e1", deltaX: 10, deltaY: -20 },
+    },
+    expected: {
+      command: "scroll",
+      args: { browserId: BROWSER_ID, ref: "@e1", deltaX: 10, deltaY: -20 },
+    },
+  },
+  {
+    name: "resize",
+    command: {
+      command: "resize",
+      args: { browserId: BROWSER_ID, width: 1024, height: 768 },
+    },
+    expected: {
+      command: "resize",
+      args: { browserId: BROWSER_ID, width: 1024, height: 768 },
+    },
+  },
+  {
+    name: "close_tab",
+    command: {
+      command: "close_tab",
+      args: { browserId: BROWSER_ID },
+    },
+    expected: {
+      command: "close_tab",
+      args: { browserId: BROWSER_ID },
+    },
+  },
 ] as const;
 
 const resultParseCases = [
@@ -134,16 +232,10 @@ const resultParseCases = [
       workspaceId: "workspace-1",
       url: "https://example.com/form",
       title: "Fixture",
-      elements: [
-        {
-          ref: "@e1",
-          role: "textbox",
-          tagName: "input",
-          text: "Name",
-          selector: "#name",
-          attributes: { id: "name", type: "text" },
-        },
-      ],
+      format: "aria-yaml",
+      snapshot: '- document "Fixture"\n  - textbox "Name" [ref=@e1]',
+      truncated: false,
+      stats: { nodeCount: 2, refCount: 1, textLength: 52, iframeCount: 0, maxDepth: 1 },
     },
     expected: {
       command: "snapshot",
@@ -151,16 +243,10 @@ const resultParseCases = [
       workspaceId: "workspace-1",
       url: "https://example.com/form",
       title: "Fixture",
-      elements: [
-        {
-          ref: "@e1",
-          role: "textbox",
-          tagName: "input",
-          text: "Name",
-          selector: "#name",
-          attributes: { id: "name", type: "text" },
-        },
-      ],
+      format: "aria-yaml",
+      snapshot: '- document "Fixture"\n  - textbox "Name" [ref=@e1]',
+      truncated: false,
+      stats: { nodeCount: 2, refCount: 1, textLength: 52, iframeCount: 0, maxDepth: 1 },
     },
   },
   {
@@ -303,6 +389,68 @@ const resultParseCases = [
           duration: 2,
         },
       ],
+    },
+  },
+  {
+    name: "evaluate",
+    result: {
+      command: "evaluate",
+      browserId: BROWSER_ID,
+      resultJson: '{"title":"Fixture"}',
+      truncated: false,
+    },
+    expected: {
+      command: "evaluate",
+      browserId: BROWSER_ID,
+      resultJson: '{"title":"Fixture"}',
+      truncated: false,
+    },
+  },
+  {
+    name: "scroll",
+    result: {
+      command: "scroll",
+      browserId: BROWSER_ID,
+      ref: "@e1",
+      deltaX: 10,
+      deltaY: 400,
+      x: 40,
+      y: 30,
+    },
+    expected: {
+      command: "scroll",
+      browserId: BROWSER_ID,
+      ref: "@e1",
+      deltaX: 10,
+      deltaY: 400,
+      x: 40,
+      y: 30,
+    },
+  },
+  {
+    name: "resize",
+    result: {
+      command: "resize",
+      browserId: BROWSER_ID,
+      width: 1024,
+      height: 768,
+    },
+    expected: {
+      command: "resize",
+      browserId: BROWSER_ID,
+      width: 1024,
+      height: 768,
+    },
+  },
+  {
+    name: "close_tab",
+    result: {
+      command: "close_tab",
+      browserId: BROWSER_ID,
+    },
+    expected: {
+      command: "close_tab",
+      browserId: BROWSER_ID,
     },
   },
 ] as const;
@@ -526,7 +674,10 @@ describe("browser automation execute RPC schemas", () => {
           workspaceId: "workspace-1",
           url: "https://example.com",
           title: "Example",
-          elements: [],
+          format: "aria-yaml",
+          snapshot: "- document",
+          truncated: false,
+          stats: { nodeCount: 1, refCount: 0, textLength: 10 },
         },
       },
     });
@@ -557,6 +708,53 @@ describe("browser automation execute RPC schemas", () => {
     },
   );
 
+  test("success responses can report handled dialogs", () => {
+    const parsed = BrowserAutomationExecuteResponseSchema.parse({
+      type: "browser.automation.execute.response",
+      payload: {
+        requestId: "req-click",
+        ok: true,
+        result: { command: "click", browserId: BROWSER_ID, ref: "@e1" },
+        dialogs: [
+          {
+            type: "alert",
+            message: "Saved",
+            action: "accepted",
+            timestamp: 123,
+          },
+          {
+            type: "prompt",
+            message: "Name?",
+            defaultValue: "Maya",
+            action: "dismissed",
+            timestamp: 124,
+          },
+        ],
+      },
+    });
+
+    expect(parsed.payload).toEqual({
+      requestId: "req-click",
+      ok: true,
+      result: { command: "click", browserId: BROWSER_ID, ref: "@e1" },
+      dialogs: [
+        {
+          type: "alert",
+          message: "Saved",
+          action: "accepted",
+          timestamp: 123,
+        },
+        {
+          type: "prompt",
+          message: "Name?",
+          defaultValue: "Maya",
+          action: "dismissed",
+          timestamp: 124,
+        },
+      ],
+    });
+  });
+
   test("error responses keep stable codes, messages, and retry defaults", () => {
     const parsed = BrowserAutomationExecuteResponseSchema.parse({
       type: "browser.automation.execute.response",
@@ -564,8 +762,8 @@ describe("browser automation execute RPC schemas", () => {
         requestId: "req-error",
         ok: false,
         error: {
-          code: "browser_no_desktop",
-          message: "No desktop browser automation client is connected.",
+          code: "browser_no_host",
+          message: "No browser automation host is connected.",
         },
       },
     });
@@ -574,10 +772,50 @@ describe("browser automation execute RPC schemas", () => {
       requestId: "req-error",
       ok: false,
       error: {
-        code: "browser_no_desktop",
-        message: "No desktop browser automation client is connected.",
+        code: "browser_no_host",
+        message: "No browser automation host is connected.",
         retryable: false,
       },
+    });
+  });
+
+  test("failure responses can report handled dialogs", () => {
+    const parsed = BrowserAutomationExecuteResponseSchema.parse({
+      type: "browser.automation.execute.response",
+      payload: {
+        requestId: "req-navigate",
+        ok: false,
+        error: {
+          code: "browser_timeout",
+          message: "Timed out waiting for browser URL: /next",
+        },
+        dialogs: [
+          {
+            type: "beforeunload",
+            message: "Leave site?",
+            action: "dismissed",
+            timestamp: 200,
+          },
+        ],
+      },
+    });
+
+    expect(parsed.payload).toEqual({
+      requestId: "req-navigate",
+      ok: false,
+      error: {
+        code: "browser_timeout",
+        message: "Timed out waiting for browser URL: /next",
+        retryable: false,
+      },
+      dialogs: [
+        {
+          type: "beforeunload",
+          message: "Leave site?",
+          action: "dismissed",
+          timestamp: 200,
+        },
+      ],
     });
   });
 });

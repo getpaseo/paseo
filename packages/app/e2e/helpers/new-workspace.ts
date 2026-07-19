@@ -17,6 +17,8 @@ type NewWorkspaceDaemonClient = Pick<
   | "fetchWorkspaces"
   | "getPaseoWorktreeList"
   | "getDaemonConfig"
+  | "inspectWorkspaceRecovery"
+  | "on"
   | "patchDaemonConfig"
   | "removeProject"
 >;
@@ -87,9 +89,12 @@ function parseWorkspaceIdFromPageUrl(page: Page, serverId: string): string | nul
   return decodeWorkspaceIdFromPathSegment(match[1]);
 }
 
-export async function connectNewWorkspaceDaemonClient(): Promise<NewWorkspaceDaemonClient> {
+export async function connectNewWorkspaceDaemonClient(options?: {
+  port?: number;
+}): Promise<NewWorkspaceDaemonClient> {
   return connectDaemonClient<NewWorkspaceDaemonClient>({
     clientIdPrefix: "app-e2e-new-workspace",
+    port: options?.port,
   });
 }
 
@@ -179,6 +184,21 @@ export async function expectNewWorkspaceProjectSelected(
   const projectPicker = page.getByRole("button", { name: "Workspace project" });
   await expect(projectPicker).toBeVisible({ timeout: 30_000 });
   await expect(projectPicker).toContainText(projectDisplayName);
+}
+
+export async function fillNewWorkspaceDraft(page: Page, draft: string): Promise<void> {
+  const composer = page.getByRole("textbox", { name: "Message agent..." });
+  await expect(composer).toBeVisible({ timeout: 30_000 });
+  await composer.fill(draft);
+}
+
+export async function expectNewWorkspaceDraft(page: Page, draft: string): Promise<void> {
+  await expect(page.getByRole("textbox", { name: "Message agent..." })).toHaveValue(draft);
+}
+
+export async function selectNewWorkspaceHost(page: Page, hostLabel: string): Promise<void> {
+  await page.getByTestId("host-picker-trigger").click();
+  await page.getByText(hostLabel, { exact: true }).click();
 }
 
 export async function submitNewWorkspacePrompt(

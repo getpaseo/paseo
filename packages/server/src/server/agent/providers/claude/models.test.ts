@@ -5,6 +5,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import { ClaudeAgentClient } from "./agent.js";
+import {
+  CLAUDE_ULTRACODE_THINKING_OPTION_ID,
+  claudeManifestModelSupportsFastMode,
+  normalizeClaudeManifestModelId,
+} from "./model-manifest.js";
 import { findClaudeModel, getClaudeModels, normalizeClaudeRuntimeModelId } from "./models.js";
 
 const createdClaudeConfigDirs: string[] = [];
@@ -76,6 +81,41 @@ describe("getClaudeModels", () => {
         ["claude-haiku-4-5", 200_000],
       ]),
     );
+  });
+
+  it("derives thinking options from model effort capabilities", () => {
+    const models = new Map(getClaudeModels().map((model) => [model.id, model]));
+
+    expect(models.get("claude-sonnet-5")?.thinkingOptions?.map((option) => option.id)).toEqual([
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+      CLAUDE_ULTRACODE_THINKING_OPTION_ID,
+    ]);
+    expect(
+      models
+        .get("claude-sonnet-5")
+        ?.thinkingOptions?.find((option) => option.id === CLAUDE_ULTRACODE_THINKING_OPTION_ID)
+        ?.label,
+    ).toBe("Ultra Code");
+
+    expect(models.get("claude-opus-4-7")?.thinkingOptions?.map((option) => option.id)).toEqual([
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+      CLAUDE_ULTRACODE_THINKING_OPTION_ID,
+    ]);
+    expect(models.get("claude-sonnet-4-6")?.thinkingOptions?.map((option) => option.id)).toEqual([
+      "low",
+      "medium",
+      "high",
+      "max",
+    ]);
+    expect(models.get("claude-haiku-4-5")?.thinkingOptions).toBeUndefined();
   });
 
   it("returns fresh copies each call", () => {
@@ -254,11 +294,34 @@ describe("normalizeClaudeRuntimeModelId", () => {
     expect(normalizeClaudeRuntimeModelId("gpt-5")).toBeNull();
     expect(normalizeClaudeRuntimeModelId("random")).toBeNull();
   });
+
+  it("normalizes provider-form runtime model strings", () => {
+    expect(normalizeClaudeRuntimeModelId("openrouter/anthropic/claude-opus-4-8")).toBe(
+      "claude-opus-4-8",
+    );
+    expect(normalizeClaudeRuntimeModelId("us.anthropic.claude-opus-4-8[1m]")).toBe(
+      "claude-opus-4-8[1m]",
+    );
+    expect(normalizeClaudeRuntimeModelId("us.anthropic.claude-opus-4-8-20260101")).toBe(
+      "claude-opus-4-8",
+    );
+  });
 });
 
 describe("findClaudeModel", () => {
   it("resolves runtime model IDs to catalog entries", () => {
     expect(findClaudeModel("claude-sonnet-5-20260101")?.id).toBe("claude-sonnet-5");
     expect(findClaudeModel("claude-sonnet-5[1m]")?.contextWindowMaxTokens).toBe(1_000_000);
+    expect(findClaudeModel("us.anthropic.claude-opus-4-8[1m]")?.contextWindowMaxTokens).toBe(
+      1_000_000,
+    );
+  });
+});
+
+describe("claudeManifestModelSupportsFastMode", () => {
+  it("keeps fast mode strict to first-party manifest model IDs", () => {
+    expect(normalizeClaudeManifestModelId("openrouter/anthropic/claude-opus-4-8")).toBeNull();
+    expect(claudeManifestModelSupportsFastMode("openrouter/anthropic/claude-opus-4-8")).toBe(false);
+    expect(claudeManifestModelSupportsFastMode("claude-opus-4-8-20260101")).toBe(true);
   });
 });

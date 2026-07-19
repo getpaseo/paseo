@@ -3,12 +3,24 @@ import { isAbsolute, relative, resolve as resolvePath } from "node:path";
 import type {
   BrowserAutomationCommand,
   BrowserAutomationConsoleLogEntry,
+  BrowserAutomationDialogEvent,
   BrowserAutomationErrorCode,
   BrowserAutomationExecuteResponse,
   BrowserAutomationExecuteRequest,
   BrowserAutomationNetworkLogEntry,
 } from "@getpaseo/protocol/browser-automation/rpc-schemas";
+import { waitForActionableTarget, type ActionabilityResult } from "./actionability.js";
 import { BrowserSnapshotEngine } from "./snapshot-engine.js";
+import {
+  dispatchTrustedClick,
+  dispatchTrustedDrag,
+  dispatchTrustedHover,
+  dispatchTrustedKey,
+  dispatchTrustedScroll,
+  dispatchTrustedText,
+  type ClickInputOptions,
+  type IsolatedKeyboardInputEvent,
+} from "./trusted-input.js";
 
 export interface TabContents {
   readonly id: number;
@@ -24,17 +36,13 @@ export interface TabContents {
   goForward(): void;
   reload(): void;
   capturePage(options?: TabCapturePageOptions): Promise<TabImage>;
-  prepareForPixelCapture(): Promise<TabPixelCapturePreparation>;
-  restorePixelCapture(preparation: TabPixelCapturePreparation): Promise<void>;
   invalidate(): void;
-  isBackgroundThrottlingAllowed(): boolean;
-  setBackgroundThrottling(allowed: boolean): void;
+  sendInputEvent(event: IsolatedKeyboardInputEvent): void;
   getConsoleMessages?(): BrowserAutomationConsoleLogEntry[];
+  captureDialogs?<T>(
+    task: () => Promise<T>,
+  ): Promise<{ result: T; dialogs: BrowserAutomationDialogEvent[] }>;
   sendDebugCommand?(command: string, params?: Record<string, unknown>): Promise<unknown>;
-}
-
-export interface TabPixelCapturePreparation {
-  token: string;
 }
 
 export interface TabImage {
@@ -61,10 +69,13 @@ const defaultSnapshotEngine = new BrowserSnapshotEngine();
 const DEFAULT_WAIT_TIMEOUT_MS = 5_000;
 const WAIT_POLL_INTERVAL_MS = 25;
 const PIXEL_CAPTURE_TIMEOUT_MS = 5_000;
-const SCREENSHOT_NO_FRAME_MESSAGE =
-  "The browser tab has no painted frame. Focus the tab in the app, then try again.";
+const PIXEL_CAPTURE_RETRY_INTERVAL_MS = 200;
+const SCREENSHOT_NO_FRAME_MESSAGE = "The tab has not painted yet. Retry the screenshot.";
 const ALLOWED_PAGE_URL_PROTOCOLS = new Set(["http:", "https:"]);
-const pixelCaptureQueuesByContentsId = new Map<number, Promise<void>>();
+const MAX_EVALUATE_RESULT_JSON_LENGTH = 80_000;
+const MAX_EVALUATE_RESULT_PREVIEW_LENGTH = 79_000;
+const MAX_EVALUATE_ERROR_MESSAGE_LENGTH = 2_000;
+let pixelCaptureQueue: Promise<void> = Promise.resolve();
 
 function fail(
   requestId: string,
@@ -75,9 +86,20 @@ function fail(
   return { requestId, ok: false, error: { code, message, retryable } };
 }
 
+async function withDialogCapture(
+  contents: TabContents,
+  task: () => Promise<AutomationCommandPayload>,
+): Promise<AutomationCommandPayload> {
+  if (!contents.captureDialogs) {
+    return task();
+  }
+  const { result, dialogs } = await contents.captureDialogs(task);
+  return dialogs.length > 0 ? { ...result, dialogs } : result;
+}
+
 class ScreenshotNoFrameError extends Error {
-  public constructor() {
-    super(SCREENSHOT_NO_FRAME_MESSAGE);
+  public constructor(message = SCREENSHOT_NO_FRAME_MESSAGE) {
+    super(message);
     this.name = "ScreenshotNoFrameError";
   }
 }
@@ -86,16 +108,25 @@ function isScreenshotNoFrameError(error: unknown): error is ScreenshotNoFrameErr
   return error instanceof ScreenshotNoFrameError;
 }
 
-function screenshotNoFrameFailure(requestId: string): FailurePayload {
-  return fail(requestId, "screenshot_no_frame", SCREENSHOT_NO_FRAME_MESSAGE);
+function screenshotNoFrameFailure(
+  requestId: string,
+  error: ScreenshotNoFrameError,
+): FailurePayload {
+  return fail(requestId, "screenshot_no_frame", error.message, true);
 }
 
-async function withPixelCaptureTimeout<T>(capture: Promise<T>): Promise<T> {
+async function withPixelCaptureTimeout<T>(
+  capture: Promise<T>,
+  timeoutMs = PIXEL_CAPTURE_TIMEOUT_MS,
+): Promise<T> {
+  if (timeoutMs <= 0) {
+    throw new ScreenshotNoFrameError();
+  }
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timeoutId = setTimeout(() => {
       reject(new ScreenshotNoFrameError());
-    }, PIXEL_CAPTURE_TIMEOUT_MS);
+    }, timeoutMs);
   });
 
   try {
@@ -107,88 +138,66 @@ async function withPixelCaptureTimeout<T>(capture: Promise<T>): Promise<T> {
   }
 }
 
-async function runSerializedPixelCapture<T>(
-  contents: TabContents,
-  capture: () => Promise<T>,
-): Promise<T> {
-  const previous = pixelCaptureQueuesByContentsId.get(contents.id) ?? Promise.resolve();
+async function runSerializedPixelCapture<T>(capture: () => Promise<T>): Promise<T> {
+  const previous = pixelCaptureQueue;
   let releaseCurrent = () => {};
   const current = new Promise<void>((resolve) => {
     releaseCurrent = resolve;
   });
   const tail = previous.catch(() => {}).then(() => current);
-  pixelCaptureQueuesByContentsId.set(contents.id, tail);
+  pixelCaptureQueue = tail;
 
   await previous.catch(() => {});
   try {
     return await capture();
   } finally {
     releaseCurrent();
-    if (pixelCaptureQueuesByContentsId.get(contents.id) === tail) {
-      pixelCaptureQueuesByContentsId.delete(contents.id);
+    if (pixelCaptureQueue === tail) {
+      pixelCaptureQueue = Promise.resolve();
     }
   }
 }
 
-async function prepareForPixelCapture(contents: TabContents): Promise<TabPixelCapturePreparation> {
-  try {
-    return await withPixelCaptureTimeout(contents.prepareForPixelCapture());
-  } catch {
-    throw new ScreenshotNoFrameError();
-  }
-}
-
-async function restorePixelCapture(
-  contents: TabContents,
-  preparation: TabPixelCapturePreparation,
-): Promise<void> {
-  try {
-    await withPixelCaptureTimeout(contents.restorePixelCapture(preparation));
-  } catch {
-    throw new ScreenshotNoFrameError();
-  }
-}
-
-async function capturePreparedPixelFrame<T>(capture: () => Promise<T>): Promise<T> {
-  try {
-    return await withPixelCaptureTimeout(capture());
-  } catch (error) {
-    if (isScreenshotNoFrameError(error)) {
-      throw error;
-    }
-    throw new ScreenshotNoFrameError();
-  }
-}
-
-async function runPreparedPixelCapture<T>(
+async function capturePixelFrameWithRetry<T>(
   contents: TabContents,
   capture: () => Promise<T>,
 ): Promise<T> {
-  return runSerializedPixelCapture(contents, async () => {
-    const previousBackgroundThrottling = contents.isBackgroundThrottlingAllowed();
-    let preparation: TabPixelCapturePreparation | null = null;
+  const deadline = Date.now() + PIXEL_CAPTURE_TIMEOUT_MS;
+  while (Date.now() < deadline) {
     try {
-      // Offscreen-parked webview guests have no compositor surface for
-      // capturePage/CDP to copy. The renderer must briefly make the host
-      // paintable before capture; see docs/browser-capture-harness.md.
-      preparation = await prepareForPixelCapture(contents);
-      contents.setBackgroundThrottling(false);
       contents.invalidate();
-      return await capturePreparedPixelFrame(capture);
-    } finally {
-      try {
-        if (preparation) {
-          await restorePixelCapture(contents, preparation);
-        }
-      } finally {
-        contents.setBackgroundThrottling(previousBackgroundThrottling);
+      return await withPixelCaptureTimeout(capture(), deadline - Date.now());
+    } catch (error) {
+      if (isScreenshotNoFrameError(error)) {
+        throw error;
       }
+      if (!isKnownNoFrameCaptureError(error)) {
+        throw error;
+      }
+      await delay(Math.min(PIXEL_CAPTURE_RETRY_INTERVAL_MS, Math.max(0, deadline - Date.now())));
     }
-  });
+  }
+  throw new ScreenshotNoFrameError();
+}
+
+function isKnownNoFrameCaptureError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    message.includes("UnknownVizError") ||
+    message.includes("No frame") ||
+    message.includes("no painted frame")
+  );
+}
+
+async function runPaintedPixelCapture<T>(
+  contents: TabContents,
+  capture: () => Promise<T>,
+): Promise<T> {
+  return runSerializedPixelCapture(() => capturePixelFrameWithRetry(contents, capture));
 }
 
 async function capturePaintedViewport(contents: TabContents): Promise<TabImage> {
-  return runPreparedPixelCapture(contents, () => contents.capturePage({ stayHidden: false }));
+  return runPaintedPixelCapture(contents, () => contents.capturePage({ stayHidden: false }));
 }
 
 function tabInfoFromContents(
@@ -257,6 +266,11 @@ const commandHandlers: Record<BrowserAutomationCommand["command"], CommandHandle
       workspaceId,
       clickCommand.args.browserId,
       clickCommand.args.ref,
+      {
+        button: clickCommand.args.button,
+        doubleClick: clickCommand.args.doubleClick,
+        modifiers: clickCommand.args.modifiers,
+      },
       registry,
       snapshotEngine,
     );
@@ -311,7 +325,7 @@ const commandHandlers: Record<BrowserAutomationCommand["command"], CommandHandle
       snapshotEngine,
     );
   },
-  navigate: ({ command, requestId, workspaceId, registry }) => {
+  navigate: ({ command, requestId, workspaceId, registry, snapshotEngine }) => {
     const navigateCommand = command as Extract<BrowserAutomationCommand, { command: "navigate" }>;
     return executeNavigate(
       requestId,
@@ -319,9 +333,10 @@ const commandHandlers: Record<BrowserAutomationCommand["command"], CommandHandle
       navigateCommand.args.browserId,
       navigateCommand.args.url,
       registry,
+      snapshotEngine,
     );
   },
-  back: ({ command, requestId, workspaceId, registry }) => {
+  back: ({ command, requestId, workspaceId, registry, snapshotEngine }) => {
     const backCommand = command as Extract<BrowserAutomationCommand, { command: "back" }>;
     return executeNavigationAction(
       requestId,
@@ -329,9 +344,10 @@ const commandHandlers: Record<BrowserAutomationCommand["command"], CommandHandle
       backCommand.args.browserId,
       "back",
       registry,
+      snapshotEngine,
     );
   },
-  forward: ({ command, requestId, workspaceId, registry }) => {
+  forward: ({ command, requestId, workspaceId, registry, snapshotEngine }) => {
     const forwardCommand = command as Extract<BrowserAutomationCommand, { command: "forward" }>;
     return executeNavigationAction(
       requestId,
@@ -339,9 +355,10 @@ const commandHandlers: Record<BrowserAutomationCommand["command"], CommandHandle
       forwardCommand.args.browserId,
       "forward",
       registry,
+      snapshotEngine,
     );
   },
-  reload: ({ command, requestId, workspaceId, registry }) => {
+  reload: ({ command, requestId, workspaceId, registry, snapshotEngine }) => {
     const reloadCommand = command as Extract<BrowserAutomationCommand, { command: "reload" }>;
     return executeNavigationAction(
       requestId,
@@ -349,6 +366,7 @@ const commandHandlers: Record<BrowserAutomationCommand["command"], CommandHandle
       reloadCommand.args.browserId,
       "reload",
       registry,
+      snapshotEngine,
     );
   },
   screenshot: ({ command, requestId, workspaceId, registry }) => {
@@ -421,6 +439,35 @@ const commandHandlers: Record<BrowserAutomationCommand["command"], CommandHandle
       registry,
     );
   },
+  evaluate: ({ command, requestId, workspaceId, registry, snapshotEngine }) => {
+    const evaluateCommand = command as Extract<BrowserAutomationCommand, { command: "evaluate" }>;
+    return executeEvaluate(
+      requestId,
+      workspaceId,
+      evaluateCommand.args.browserId,
+      evaluateCommand.args.function,
+      evaluateCommand.args.ref,
+      registry,
+      snapshotEngine,
+    );
+  },
+  scroll: ({ command, requestId, workspaceId, registry, snapshotEngine }) => {
+    const scrollCommand = command as Extract<BrowserAutomationCommand, { command: "scroll" }>;
+    return executeScroll(
+      requestId,
+      workspaceId,
+      scrollCommand.args.browserId,
+      scrollCommand.args.ref,
+      scrollCommand.args.deltaX,
+      scrollCommand.args.deltaY,
+      registry,
+      snapshotEngine,
+    );
+  },
+  resize: ({ requestId }) =>
+    fail(requestId, "browser_unsupported", "browser_resize is handled by the app runtime."),
+  close_tab: ({ requestId }) =>
+    fail(requestId, "browser_unsupported", "browser_close_tab is handled by the app runtime."),
 };
 
 interface ResolvedTabTarget {
@@ -473,25 +520,27 @@ async function executeSnapshot(
     return target;
   }
 
-  const elements = await snapshotEngine.snapshot({
-    browserId: target.browserId,
-    page: target.contents,
-  });
-
-  return {
-    requestId,
-    ok: true,
-    result: {
-      command: "snapshot",
+  return withDialogCapture(target.contents, async () => {
+    const snapshot = await snapshotEngine.snapshot({
       browserId: target.browserId,
-      ...(registry.getBrowserWorkspaceId(target.browserId)
-        ? { workspaceId: registry.getBrowserWorkspaceId(target.browserId) ?? undefined }
-        : {}),
-      url: target.contents.getURL(),
-      title: target.contents.getTitle(),
-      elements,
-    },
-  };
+      page: target.contents,
+    });
+
+    return {
+      requestId,
+      ok: true,
+      result: {
+        command: "snapshot",
+        browserId: target.browserId,
+        ...(registry.getBrowserWorkspaceId(target.browserId)
+          ? { workspaceId: registry.getBrowserWorkspaceId(target.browserId) ?? undefined }
+          : {}),
+        url: target.contents.getURL(),
+        title: target.contents.getTitle(),
+        ...snapshot,
+      },
+    };
+  });
 }
 
 async function executeClick(
@@ -499,6 +548,7 @@ async function executeClick(
   workspaceId: string | undefined,
   browserId: string,
   ref: string,
+  options: ClickInputOptions,
   registry: BrowserRegistry,
   snapshotEngine: BrowserSnapshotEngine,
 ): Promise<AutomationCommandPayload> {
@@ -506,15 +556,37 @@ async function executeClick(
   if ("ok" in target) {
     return target;
   }
-  const result = await snapshotEngine.click({
-    browserId: target.browserId,
-    page: target.contents,
-    ref,
+  return withDialogCapture(target.contents, async () => {
+    if (!target.contents.sendDebugCommand) {
+      return fail(requestId, "browser_unsupported", "browser_click requires trusted browser input");
+    }
+    const elementExpression = snapshotEngine.runtimeElementExpression({
+      browserId: target.browserId,
+      ref,
+    });
+    if (typeof elementExpression !== "string") {
+      return staleRefFailure(requestId, ref);
+    }
+    const actionable = await waitForActionableTarget({
+      page: target.contents,
+      elementExpression,
+    });
+    if (!actionable.ok) {
+      return actionabilityFailure(requestId, ref, actionable);
+    }
+    await dispatchTrustedClick(cdpSender(target.contents), actionable.target.point, options);
+    return {
+      requestId,
+      ok: true,
+      result: {
+        command: "click",
+        browserId: target.browserId,
+        ref,
+        x: actionable.target.point.x,
+        y: actionable.target.point.y,
+      },
+    };
   });
-  if (!result.ok) {
-    return staleRefFailure(requestId, ref);
-  }
-  return { requestId, ok: true, result: { command: "click", browserId: target.browserId, ref } };
 }
 
 async function executeFill(
@@ -530,16 +602,18 @@ async function executeFill(
   if ("ok" in target) {
     return target;
   }
-  const result = await snapshotEngine.fill({
-    browserId: target.browserId,
-    page: target.contents,
-    ref,
-    value,
+  return withDialogCapture(target.contents, async () => {
+    const result = await snapshotEngine.fill({
+      browserId: target.browserId,
+      page: target.contents,
+      ref,
+      value,
+    });
+    if (!result.ok) {
+      return staleRefFailure(requestId, ref);
+    }
+    return { requestId, ok: true, result: { command: "fill", browserId: target.browserId, ref } };
   });
-  if (!result.ok) {
-    return staleRefFailure(requestId, ref);
-  }
-  return { requestId, ok: true, result: { command: "fill", browserId: target.browserId, ref } };
 }
 
 async function executeSelect(
@@ -555,20 +629,22 @@ async function executeSelect(
   if ("ok" in target) {
     return target;
   }
-  const result = await snapshotEngine.select({
-    browserId: target.browserId,
-    page: target.contents,
-    ref,
-    value,
+  return withDialogCapture(target.contents, async () => {
+    const result = await snapshotEngine.select({
+      browserId: target.browserId,
+      page: target.contents,
+      ref,
+      value,
+    });
+    if (!result.ok) {
+      return staleRefFailure(requestId, ref);
+    }
+    return {
+      requestId,
+      ok: true,
+      result: { command: "select", browserId: target.browserId, ref, value },
+    };
   });
-  if (!result.ok) {
-    return staleRefFailure(requestId, ref);
-  }
-  return {
-    requestId,
-    ok: true,
-    result: { command: "select", browserId: target.browserId, ref, value },
-  };
 }
 
 async function executeHover(
@@ -583,15 +659,37 @@ async function executeHover(
   if ("ok" in target) {
     return target;
   }
-  const result = await snapshotEngine.hover({
-    browserId: target.browserId,
-    page: target.contents,
-    ref,
+  return withDialogCapture(target.contents, async () => {
+    if (!target.contents.sendDebugCommand) {
+      return fail(requestId, "browser_unsupported", "browser_hover requires trusted browser input");
+    }
+    const elementExpression = snapshotEngine.runtimeElementExpression({
+      browserId: target.browserId,
+      ref,
+    });
+    if (typeof elementExpression !== "string") {
+      return staleRefFailure(requestId, ref);
+    }
+    const actionable = await waitForActionableTarget({
+      page: target.contents,
+      elementExpression,
+    });
+    if (!actionable.ok) {
+      return actionabilityFailure(requestId, ref, actionable);
+    }
+    await dispatchTrustedHover(cdpSender(target.contents), actionable.target.point);
+    return {
+      requestId,
+      ok: true,
+      result: {
+        command: "hover",
+        browserId: target.browserId,
+        ref,
+        x: actionable.target.point.x,
+        y: actionable.target.point.y,
+      },
+    };
   });
-  if (!result.ok) {
-    return staleRefFailure(requestId, ref);
-  }
-  return { requestId, ok: true, result: { command: "hover", browserId: target.browserId, ref } };
 }
 
 async function executeDrag(
@@ -607,20 +705,55 @@ async function executeDrag(
   if ("ok" in target) {
     return target;
   }
-  const result = await snapshotEngine.drag({
-    browserId: target.browserId,
-    page: target.contents,
-    sourceRef,
-    targetRef,
+  return withDialogCapture(target.contents, async () => {
+    if (!target.contents.sendDebugCommand) {
+      return fail(requestId, "browser_unsupported", "browser_drag requires trusted browser input");
+    }
+    const sourceExpression = snapshotEngine.runtimeElementExpression({
+      browserId: target.browserId,
+      ref: sourceRef,
+    });
+    const targetExpression = snapshotEngine.runtimeElementExpression({
+      browserId: target.browserId,
+      ref: targetRef,
+    });
+    if (typeof sourceExpression !== "string" || typeof targetExpression !== "string") {
+      return staleRefFailure(requestId, `${sourceRef}/${targetRef}`);
+    }
+    const source = await waitForActionableTarget({
+      page: target.contents,
+      elementExpression: sourceExpression,
+    });
+    if (!source.ok) {
+      return actionabilityFailure(requestId, sourceRef, source);
+    }
+    const dropTarget = await waitForActionableTarget({
+      page: target.contents,
+      elementExpression: targetExpression,
+    });
+    if (!dropTarget.ok) {
+      return actionabilityFailure(requestId, targetRef, dropTarget);
+    }
+    await dispatchTrustedDrag(
+      cdpSender(target.contents),
+      source.target.point,
+      dropTarget.target.point,
+    );
+    return {
+      requestId,
+      ok: true,
+      result: {
+        command: "drag",
+        browserId: target.browserId,
+        sourceRef,
+        targetRef,
+        sourceX: source.target.point.x,
+        sourceY: source.target.point.y,
+        targetX: dropTarget.target.point.x,
+        targetY: dropTarget.target.point.y,
+      },
+    };
   });
-  if (!result.ok) {
-    return staleRefFailure(requestId, `${sourceRef}/${targetRef}`);
-  }
-  return {
-    requestId,
-    ok: true,
-    result: { command: "drag", browserId: target.browserId, sourceRef, targetRef },
-  };
 }
 
 async function executeLogs(
@@ -634,19 +767,153 @@ async function executeLogs(
   if ("ok" in target) {
     return target;
   }
-  const consoleMessages = target.contents.getConsoleMessages?.() ?? [];
-  const networkEntries = parseNetworkEntries(
-    await target.contents.executeJavaScript(NETWORK_PERFORMANCE_SCRIPT),
+  return withDialogCapture(target.contents, async () => {
+    const consoleMessages = target.contents.getConsoleMessages?.() ?? [];
+    const networkEntries = parseNetworkEntries(
+      await target.contents.executeJavaScript(NETWORK_PERFORMANCE_SCRIPT),
+    );
+    return {
+      requestId,
+      ok: true,
+      result: {
+        command: "logs",
+        browserId: target.browserId,
+        console: consoleMessages.slice(-maxEntries),
+        network: networkEntries.slice(-maxEntries),
+      },
+    };
+  });
+}
+
+async function executeEvaluate(
+  requestId: string,
+  workspaceId: string | undefined,
+  browserId: string,
+  functionSource: string,
+  ref: string | undefined,
+  registry: BrowserRegistry,
+  snapshotEngine: BrowserSnapshotEngine,
+): Promise<AutomationCommandPayload> {
+  const target = resolveTabTarget({ requestId, workspaceId, browserId, registry });
+  if ("ok" in target) {
+    return target;
+  }
+  return withDialogCapture(target.contents, async () => {
+    let elementExpression: string | undefined;
+    if (ref) {
+      const expression = snapshotEngine.runtimeElementExpression({
+        browserId: target.browserId,
+        ref,
+      });
+      if (typeof expression !== "string") {
+        return staleRefFailure(requestId, ref);
+      }
+      elementExpression = expression;
+    }
+
+    let rawResult: unknown;
+    try {
+      rawResult = await target.contents.executeJavaScript(
+        buildEvaluateScript(functionSource, elementExpression),
+      );
+    } catch (error) {
+      return fail(requestId, "browser_unknown_error", evaluateErrorMessage(error));
+    }
+
+    const result = readEvaluateScriptResult(rawResult);
+    if (result.status === "stale_ref") {
+      return staleRefFailure(requestId, ref ?? "unknown");
+    }
+    if (result.status === "error") {
+      return fail(requestId, "browser_unknown_error", capEvaluateErrorMessage(result.message));
+    }
+
+    const capped = capEvaluateResultJson(result.resultJson);
+    return {
+      requestId,
+      ok: true,
+      result: {
+        command: "evaluate",
+        browserId: target.browserId,
+        resultJson: capped.resultJson,
+        truncated: result.truncated || capped.truncated,
+      },
+    };
+  });
+}
+
+async function executeScroll(
+  requestId: string,
+  workspaceId: string | undefined,
+  browserId: string,
+  ref: string | undefined,
+  deltaX: number,
+  deltaY: number,
+  registry: BrowserRegistry,
+  snapshotEngine: BrowserSnapshotEngine,
+): Promise<AutomationCommandPayload> {
+  const target = resolveTabTarget({ requestId, workspaceId, browserId, registry });
+  if ("ok" in target) {
+    return target;
+  }
+  return withDialogCapture(target.contents, async () => {
+    if (!target.contents.sendDebugCommand) {
+      return fail(
+        requestId,
+        "browser_unsupported",
+        "browser_scroll requires trusted browser input",
+      );
+    }
+
+    let point: { x: number; y: number };
+    if (ref) {
+      const elementExpression = snapshotEngine.runtimeElementExpression({
+        browserId: target.browserId,
+        ref,
+      });
+      if (typeof elementExpression !== "string") {
+        return staleRefFailure(requestId, ref);
+      }
+      const actionable = await waitForActionableTarget({
+        page: target.contents,
+        elementExpression,
+      });
+      if (!actionable.ok) {
+        return actionabilityFailure(requestId, ref, actionable);
+      }
+      point = actionable.target.point;
+    } else {
+      point = await readViewportCenter(target.contents);
+    }
+
+    await dispatchTrustedScroll(cdpSender(target.contents), point, deltaX, deltaY);
+    return {
+      requestId,
+      ok: true,
+      result: {
+        command: "scroll",
+        browserId: target.browserId,
+        ...(ref ? { ref } : {}),
+        deltaX,
+        deltaY,
+        x: point.x,
+        y: point.y,
+      },
+    };
+  });
+}
+
+async function readViewportCenter(contents: TabContents): Promise<{ x: number; y: number }> {
+  const value = await contents.executeJavaScript(
+    "({ x: Math.max(0, (window.innerWidth || 1) / 2), y: Math.max(0, (window.innerHeight || 1) / 2) })",
   );
+  if (!value || typeof value !== "object") {
+    return { x: 0, y: 0 };
+  }
+  const record = value as Record<string, unknown>;
   return {
-    requestId,
-    ok: true,
-    result: {
-      command: "logs",
-      browserId: target.browserId,
-      console: consoleMessages.slice(-maxEntries),
-      network: networkEntries.slice(-maxEntries),
-    },
+    x: readNumber(record.x) ?? 0,
+    y: readNumber(record.y) ?? 0,
   };
 }
 
@@ -656,6 +923,26 @@ function staleRefFailure(requestId: string, ref: string): FailurePayload {
     "browser_stale_ref",
     `Browser element reference ${ref} is stale. Take a new snapshot and try again.`,
   );
+}
+
+function actionabilityFailure(
+  requestId: string,
+  ref: string,
+  result: Exclude<ActionabilityResult, { ok: true }>,
+): FailurePayload {
+  if (result.reason === "stale_ref") {
+    return staleRefFailure(requestId, ref);
+  }
+  return fail(
+    requestId,
+    "browser_timeout",
+    `Timed out waiting for browser element ${ref} to become actionable.`,
+    true,
+  );
+}
+
+function cdpSender(contents: TabContents): NonNullable<TabContents["sendDebugCommand"]> {
+  return contents.sendDebugCommand?.bind(contents) as NonNullable<TabContents["sendDebugCommand"]>;
 }
 
 async function executeWait(
@@ -669,51 +956,52 @@ async function executeWait(
   if ("ok" in target) {
     return target;
   }
-
-  if (!condition.text && !condition.url) {
-    return fail(requestId, "browser_unsupported", "browser_wait requires text or url");
-  }
-
-  const timeoutMs = condition.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS;
-  const deadline = Date.now() + timeoutMs;
-  do {
-    if (condition.url && target.contents.getURL().includes(condition.url)) {
-      return {
-        requestId,
-        ok: true,
-        result: { command: "wait", browserId: target.browserId, matched: "url" },
-      };
+  return withDialogCapture(target.contents, async () => {
+    if (!condition.text && !condition.url) {
+      return fail(requestId, "browser_unsupported", "browser_wait requires text or url");
     }
-    if (condition.text) {
-      const pageText = await target.contents.executeJavaScript("document.body.innerText || ''");
-      if (typeof pageText === "string" && pageText.includes(condition.text)) {
+
+    const timeoutMs = condition.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS;
+    const deadline = Date.now() + timeoutMs;
+    do {
+      if (condition.url && target.contents.getURL().includes(condition.url)) {
         return {
           requestId,
           ok: true,
-          result: { command: "wait", browserId: target.browserId, matched: "text" },
+          result: { command: "wait", browserId: target.browserId, matched: "url" },
         };
       }
-    }
-    await delay(WAIT_POLL_INTERVAL_MS);
-  } while (Date.now() < deadline);
+      if (condition.text) {
+        const pageText = await target.contents.executeJavaScript("document.body.innerText || ''");
+        if (typeof pageText === "string" && pageText.includes(condition.text)) {
+          return {
+            requestId,
+            ok: true,
+            result: { command: "wait", browserId: target.browserId, matched: "text" },
+          };
+        }
+      }
+      await delay(WAIT_POLL_INTERVAL_MS);
+    } while (Date.now() < deadline);
 
-  if (condition.text) {
-    return fail(
-      requestId,
-      "browser_timeout",
-      `Timed out waiting for browser text: ${condition.text}`,
-      true,
-    );
-  }
-  if (condition.url) {
-    return fail(
-      requestId,
-      "browser_timeout",
-      `Timed out waiting for browser URL: ${condition.url}`,
-      true,
-    );
-  }
-  return fail(requestId, "browser_unsupported", "browser_wait requires text or url");
+    if (condition.text) {
+      return fail(
+        requestId,
+        "browser_timeout",
+        `Timed out waiting for browser text: ${condition.text}`,
+        true,
+      );
+    }
+    if (condition.url) {
+      return fail(
+        requestId,
+        "browser_timeout",
+        `Timed out waiting for browser URL: ${condition.url}`,
+        true,
+      );
+    }
+    return fail(requestId, "browser_unsupported", "browser_wait requires text or url");
+  });
 }
 
 async function executeType(
@@ -729,20 +1017,41 @@ async function executeType(
   if ("ok" in target) {
     return target;
   }
-  const result = await snapshotEngine.typeText({
-    browserId: target.browserId,
-    page: target.contents,
-    ...(ref ? { ref } : {}),
-    text,
+  return withDialogCapture(target.contents, async () => {
+    if (!target.contents.sendDebugCommand) {
+      return fail(requestId, "browser_unsupported", "browser_type requires trusted browser input");
+    }
+    let actionable: ActionabilityResult | null = null;
+    if (ref) {
+      const elementExpression = snapshotEngine.runtimeElementExpression({
+        browserId: target.browserId,
+        ref,
+      });
+      if (typeof elementExpression !== "string") {
+        return staleRefFailure(requestId, ref);
+      }
+      actionable = await waitForActionableTarget({
+        page: target.contents,
+        elementExpression,
+        editable: true,
+      });
+      if (!actionable.ok) {
+        return actionabilityFailure(requestId, ref, actionable);
+      }
+      await dispatchTrustedClick(cdpSender(target.contents), actionable.target.point);
+    }
+    await dispatchTrustedText(cdpSender(target.contents), text);
+    return {
+      requestId,
+      ok: true,
+      result: {
+        command: "type",
+        browserId: target.browserId,
+        ...(ref ? { ref } : {}),
+        ...(actionable?.ok ? { x: actionable.target.point.x, y: actionable.target.point.y } : {}),
+      },
+    };
   });
-  if (!result.ok) {
-    return staleRefFailure(requestId, ref ?? "@e0");
-  }
-  return {
-    requestId,
-    ok: true,
-    result: { command: "type", browserId: target.browserId, ...(ref ? { ref } : {}) },
-  };
 }
 
 async function executeKeypress(
@@ -758,20 +1067,51 @@ async function executeKeypress(
   if ("ok" in target) {
     return target;
   }
-  const result = await snapshotEngine.keypress({
-    browserId: target.browserId,
-    page: target.contents,
-    ...(ref ? { ref } : {}),
-    key,
+  return withDialogCapture(target.contents, async () => {
+    let actionable: ActionabilityResult | null = null;
+    if (ref) {
+      const elementExpression = snapshotEngine.runtimeElementExpression({
+        browserId: target.browserId,
+        ref,
+      });
+      if (typeof elementExpression !== "string") {
+        return staleRefFailure(requestId, ref);
+      }
+      actionable = await waitForActionableTarget({
+        page: target.contents,
+        elementExpression,
+      });
+      if (!actionable.ok) {
+        return actionabilityFailure(requestId, ref, actionable);
+      }
+      const focused = await focusKeypressTarget(target.contents, elementExpression);
+      if (focused === "stale_ref") {
+        return staleRefFailure(requestId, ref);
+      }
+      if (focused === "editable") {
+        if (!target.contents.sendDebugCommand) {
+          return fail(
+            requestId,
+            "browser_unsupported",
+            "browser_keypress requires trusted browser input",
+          );
+        }
+        await dispatchTrustedClick(cdpSender(target.contents), actionable.target.point);
+      }
+    }
+    dispatchTrustedKey((event) => target.contents.sendInputEvent(event), key);
+    return {
+      requestId,
+      ok: true,
+      result: {
+        command: "keypress",
+        browserId: target.browserId,
+        key,
+        ...(ref ? { ref } : {}),
+        ...(actionable?.ok ? { x: actionable.target.point.x, y: actionable.target.point.y } : {}),
+      },
+    };
   });
-  if (!result.ok) {
-    return staleRefFailure(requestId, ref ?? "@e0");
-  }
-  return {
-    requestId,
-    ok: true,
-    result: { command: "keypress", browserId: target.browserId, key, ...(ref ? { ref } : {}) },
-  };
 }
 
 async function executeNavigate(
@@ -780,43 +1120,63 @@ async function executeNavigate(
   browserId: string,
   url: string,
   registry: BrowserRegistry,
+  snapshotEngine: BrowserSnapshotEngine,
 ): Promise<AutomationCommandPayload> {
   const target = resolveTabTarget({ requestId, workspaceId, browserId, registry });
   if ("ok" in target) {
     return target;
   }
-  if (!isAllowedPageUrl(url)) {
-    return fail(
+  return withDialogCapture(target.contents, async () => {
+    if (!isAllowedPageUrl(url)) {
+      return fail(
+        requestId,
+        "browser_denied",
+        "Browser navigation only supports http and https URLs.",
+      );
+    }
+    snapshotEngine.clearBrowser(browserId);
+    await target.contents.loadURL(url);
+    return {
       requestId,
-      "browser_denied",
-      "Browser navigation only supports http and https URLs.",
-    );
-  }
-  await target.contents.loadURL(url);
-  return { requestId, ok: true, result: { command: "navigate", browserId: target.browserId, url } };
+      ok: true,
+      result: { command: "navigate", browserId: target.browserId, url },
+    };
+  });
 }
 
-function executeNavigationAction(
+async function executeNavigationAction(
   requestId: string,
   workspaceId: string | undefined,
   browserId: string,
   action: "back" | "forward" | "reload",
   registry: BrowserRegistry,
-): AutomationCommandPayload {
+  snapshotEngine: BrowserSnapshotEngine,
+): Promise<AutomationCommandPayload> {
   const target = resolveTabTarget({ requestId, workspaceId, browserId, registry });
   if ("ok" in target) {
     return target;
   }
-  if (action === "back") {
-    target.contents.goBack();
-    return { requestId, ok: true, result: { command: "back", browserId: target.browserId } };
-  }
-  if (action === "forward") {
-    target.contents.goForward();
-    return { requestId, ok: true, result: { command: "forward", browserId: target.browserId } };
-  }
-  target.contents.reload();
-  return { requestId, ok: true, result: { command: "reload", browserId: target.browserId } };
+  return withDialogCapture(target.contents, async () => {
+    if (action === "back") {
+      if (!target.contents.canGoBack()) {
+        return fail(requestId, "browser_denied", "There is nothing to go back to.");
+      }
+      snapshotEngine.clearBrowser(browserId);
+      target.contents.goBack();
+      return { requestId, ok: true, result: { command: "back", browserId: target.browserId } };
+    }
+    if (action === "forward") {
+      if (!target.contents.canGoForward()) {
+        return fail(requestId, "browser_denied", "There is nothing to go forward to.");
+      }
+      snapshotEngine.clearBrowser(browserId);
+      target.contents.goForward();
+      return { requestId, ok: true, result: { command: "forward", browserId: target.browserId } };
+    }
+    snapshotEngine.clearBrowser(browserId);
+    target.contents.reload();
+    return { requestId, ok: true, result: { command: "reload", browserId: target.browserId } };
+  });
 }
 
 async function executeScreenshot(
@@ -834,28 +1194,30 @@ async function executeScreenshot(
   if ("ok" in target) {
     return target;
   }
-  let image: TabImage;
-  try {
-    image = await capturePaintedViewport(target.contents);
-  } catch (error) {
-    if (isScreenshotNoFrameError(error)) {
-      return screenshotNoFrameFailure(requestId);
+  return withDialogCapture(target.contents, async () => {
+    let image: TabImage;
+    try {
+      image = await capturePaintedViewport(target.contents);
+    } catch (error) {
+      if (isScreenshotNoFrameError(error)) {
+        return screenshotNoFrameFailure(requestId, error);
+      }
+      throw error;
     }
-    throw error;
-  }
-  const size = image.getSize();
-  return {
-    requestId,
-    ok: true,
-    result: {
-      command: "screenshot",
-      browserId: target.browserId,
-      mimeType: "image/png",
-      dataBase64: Buffer.from(image.toPNG()).toString("base64"),
-      width: size.width,
-      height: size.height,
-    },
-  };
+    const size = image.getSize();
+    return {
+      requestId,
+      ok: true,
+      result: {
+        command: "screenshot",
+        browserId: target.browserId,
+        mimeType: "image/png",
+        dataBase64: Buffer.from(image.toPNG()).toString("base64"),
+        width: size.width,
+        height: size.height,
+      },
+    };
+  });
 }
 
 interface CdpLayoutMetrics {
@@ -879,6 +1241,21 @@ interface CdpLayoutMetrics {
 
 interface CdpCaptureScreenshotResult {
   data?: string;
+}
+
+interface CdpRuntimeEvaluateResult {
+  result?: {
+    objectId?: string;
+    subtype?: string;
+  };
+}
+
+interface CdpDescribeNodeResult {
+  node?: {
+    backendNodeId?: number;
+    nodeId?: number;
+    nodeName?: string;
+  };
 }
 
 async function getCdpLayoutMetrics(contents: TabContents): Promise<{
@@ -911,45 +1288,47 @@ async function executeFullPageScreenshot(
   if ("ok" in target) {
     return target;
   }
-  if (!target.contents.sendDebugCommand) {
-    return fail(requestId, "browser_unsupported", "browser_screenshot fullPage requires CDP");
-  }
-  const sendDebugCommand = target.contents.sendDebugCommand.bind(target.contents);
-  let screenshot: CdpCaptureScreenshotResult;
-  let width = 0;
-  let height = 0;
-  try {
-    screenshot = await runPreparedPixelCapture(target.contents, async () => {
-      const metrics = await getCdpLayoutMetrics(target.contents);
-      width = metrics.contentWidth;
-      height = metrics.contentHeight;
-      return (await sendDebugCommand("Page.captureScreenshot", {
-        format: "png",
-        captureBeyondViewport: true,
-        clip: { x: 0, y: 0, width, height, scale: 1 },
-      })) as CdpCaptureScreenshotResult;
-    });
-  } catch (error) {
-    if (isScreenshotNoFrameError(error)) {
-      return screenshotNoFrameFailure(requestId);
+  return withDialogCapture(target.contents, async () => {
+    if (!target.contents.sendDebugCommand) {
+      return fail(requestId, "browser_unsupported", "browser_screenshot fullPage requires CDP");
     }
-    throw error;
-  }
-  if (!screenshot.data) {
-    return fail(requestId, "browser_unsupported", "browser_screenshot fullPage returned no data");
-  }
-  return {
-    requestId,
-    ok: true,
-    result: {
-      command: "screenshot",
-      browserId: target.browserId,
-      mimeType: "image/png",
-      dataBase64: screenshot.data,
-      width,
-      height,
-    },
-  };
+    const sendDebugCommand = target.contents.sendDebugCommand.bind(target.contents);
+    let screenshot: CdpCaptureScreenshotResult;
+    let width = 0;
+    let height = 0;
+    try {
+      screenshot = await runPaintedPixelCapture(target.contents, async () => {
+        const metrics = await getCdpLayoutMetrics(target.contents);
+        width = metrics.contentWidth;
+        height = metrics.contentHeight;
+        return (await sendDebugCommand("Page.captureScreenshot", {
+          format: "png",
+          captureBeyondViewport: true,
+          clip: { x: 0, y: 0, width, height, scale: 1 },
+        })) as CdpCaptureScreenshotResult;
+      });
+    } catch (error) {
+      if (isScreenshotNoFrameError(error)) {
+        return screenshotNoFrameFailure(requestId, error);
+      }
+      throw error;
+    }
+    if (!screenshot.data) {
+      return fail(requestId, "browser_unsupported", "browser_screenshot fullPage returned no data");
+    }
+    return {
+      requestId,
+      ok: true,
+      result: {
+        command: "screenshot",
+        browserId: target.browserId,
+        mimeType: "image/png",
+        dataBase64: screenshot.data,
+        width,
+        height,
+      },
+    };
+  });
 }
 
 function isAllowedPageUrl(value: string): boolean {
@@ -973,59 +1352,61 @@ async function executeUpload(
   if ("ok" in target) {
     return target;
   }
-  if (!target.contents.sendDebugCommand) {
-    return fail(requestId, "browser_unsupported", "browser_upload requires CDP");
-  }
-  const resolved = snapshotEngine.selectorForRef({
-    browserId: target.browserId,
-    page: target.contents,
-    ref: input.ref,
-  });
-  if (!resolved.ok) {
-    return staleRefFailure(requestId, input.ref);
-  }
-  const document = (await target.contents.sendDebugCommand("DOM.getDocument", {
-    depth: -1,
-    pierce: true,
-  })) as { root?: { nodeId?: number } };
-  const rootNodeId = document.root?.nodeId;
-  if (typeof rootNodeId !== "number") {
-    return fail(requestId, "browser_unsupported", "browser_upload could not read DOM");
-  }
-  const queried = (await target.contents.sendDebugCommand("DOM.querySelector", {
-    nodeId: rootNodeId,
-    selector: resolved.selector,
-  })) as { nodeId?: number };
-  if (typeof queried.nodeId !== "number" || queried.nodeId <= 0) {
-    return staleRefFailure(requestId, input.ref);
-  }
-  const workspaceRoot = resolveUploadWorkspaceRoot(cwd);
-  if (!workspaceRoot) {
-    return fail(requestId, "browser_unsupported", "browser_upload requires request cwd");
-  }
-  const filePaths = resolveWorkspaceFilePaths(input.filePaths, workspaceRoot);
-  if (!filePaths) {
-    return fail(
-      requestId,
-      "browser_unsupported",
-      "browser_upload only accepts files inside the agent workspace.",
-    );
-  }
-
-  await target.contents.sendDebugCommand("DOM.setFileInputFiles", {
-    nodeId: queried.nodeId,
-    files: filePaths,
-  });
-  return {
-    requestId,
-    ok: true,
-    result: {
-      command: "upload",
+  return withDialogCapture(target.contents, async () => {
+    if (!target.contents.sendDebugCommand) {
+      return fail(requestId, "browser_unsupported", "browser_upload requires CDP");
+    }
+    const expression = snapshotEngine.runtimeElementExpression({
       browserId: target.browserId,
       ref: input.ref,
-      filePaths,
-    },
-  };
+    });
+    if (typeof expression !== "string") {
+      return staleRefFailure(requestId, input.ref);
+    }
+    const evaluated = (await target.contents.sendDebugCommand("Runtime.evaluate", {
+      expression,
+      objectGroup: "paseo-browser-automation",
+      returnByValue: false,
+    })) as CdpRuntimeEvaluateResult;
+    const objectId = evaluated.result?.objectId;
+    if (!objectId || evaluated.result?.subtype === "null") {
+      return staleRefFailure(requestId, input.ref);
+    }
+    const described = (await target.contents.sendDebugCommand("DOM.describeNode", {
+      objectId,
+    })) as CdpDescribeNodeResult;
+    const backendNodeId = described.node?.backendNodeId;
+    if (typeof backendNodeId !== "number" || backendNodeId <= 0) {
+      return staleRefFailure(requestId, input.ref);
+    }
+    const workspaceRoot = resolveUploadWorkspaceRoot(cwd);
+    if (!workspaceRoot) {
+      return fail(requestId, "browser_unsupported", "browser_upload requires request cwd");
+    }
+    const filePaths = resolveWorkspaceFilePaths(input.filePaths, workspaceRoot);
+    if (!filePaths) {
+      return fail(
+        requestId,
+        "browser_unsupported",
+        "browser_upload only accepts files inside the agent workspace.",
+      );
+    }
+
+    await target.contents.sendDebugCommand("DOM.setFileInputFiles", {
+      backendNodeId,
+      files: filePaths,
+    });
+    return {
+      requestId,
+      ok: true,
+      result: {
+        command: "upload",
+        browserId: target.browserId,
+        ref: input.ref,
+        filePaths,
+      },
+    };
+  });
 }
 
 function resolveUploadWorkspaceRoot(cwd: string | undefined): string | null {
@@ -1083,6 +1464,111 @@ function parseNetworkEntries(value: unknown): BrowserAutomationNetworkLogEntry[]
       },
     ];
   });
+}
+
+type EvaluateScriptResult =
+  | { status: "ok"; resultJson: string; truncated: boolean }
+  | { status: "stale_ref" }
+  | { status: "error"; message: string };
+
+function readEvaluateScriptResult(value: unknown): EvaluateScriptResult {
+  if (!value || typeof value !== "object") {
+    return { status: "error", message: "Browser evaluate returned an invalid result." };
+  }
+  const record = value as Record<string, unknown>;
+  if (record.ok === true && typeof record.resultJson === "string") {
+    return { status: "ok", resultJson: record.resultJson, truncated: record.truncated === true };
+  }
+  if (record.staleRef === true) {
+    return { status: "stale_ref" };
+  }
+  if (typeof record.error === "string") {
+    return { status: "error", message: record.error };
+  }
+  return { status: "error", message: "Browser evaluate returned an invalid result." };
+}
+
+function capEvaluateResultJson(resultJson: string): { resultJson: string; truncated: boolean } {
+  if (resultJson.length <= MAX_EVALUATE_RESULT_JSON_LENGTH) {
+    return { resultJson, truncated: false };
+  }
+  return {
+    resultJson: JSON.stringify(resultJson.slice(0, MAX_EVALUATE_RESULT_PREVIEW_LENGTH)),
+    truncated: true,
+  };
+}
+
+function evaluateErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return capEvaluateErrorMessage(message);
+}
+
+function capEvaluateErrorMessage(message: string): string {
+  return message.length <= MAX_EVALUATE_ERROR_MESSAGE_LENGTH
+    ? message
+    : message.slice(0, MAX_EVALUATE_ERROR_MESSAGE_LENGTH);
+}
+
+function buildEvaluateScript(
+  functionSource: string,
+  elementExpression: string | undefined,
+): string {
+  return String.raw`(async () => {
+    const __PASEO_BROWSER_EVALUATE__ = true;
+    try {
+      const userFunction = (0, eval)(${JSON.stringify(`(${functionSource})`)});
+      if (typeof userFunction !== 'function') {
+        throw new Error('browser_evaluate input must evaluate to a function.');
+      }
+      const args = [];
+      ${
+        elementExpression
+          ? `const element = ${elementExpression};
+      if (!element) return { staleRef: true };
+      args.push(element);`
+          : ""
+      }
+	      const value = await userFunction(...args);
+	      const resultJson = JSON.stringify(value) ?? 'null';
+	      if (resultJson.length <= ${MAX_EVALUATE_RESULT_JSON_LENGTH}) {
+	        return { ok: true, resultJson, truncated: false };
+	      }
+	      return {
+	        ok: true,
+	        resultJson: JSON.stringify(resultJson.slice(0, ${MAX_EVALUATE_RESULT_PREVIEW_LENGTH})),
+	        truncated: true
+	      };
+	    } catch (error) {
+	      return { error: error instanceof Error ? error.message : String(error) };
+	    }
+	  })()`;
+}
+
+async function focusKeypressTarget(
+  contents: TabContents,
+  elementExpression: string,
+): Promise<"editable" | "focused" | "stale_ref"> {
+  const result = await contents.executeJavaScript(String.raw`(() => {
+    const element = ${elementExpression};
+    if (!element) return { staleRef: true };
+    const tagName = element.tagName ? element.tagName.toLowerCase() : '';
+    const inputType = tagName === 'input' ? String(element.getAttribute('type') || 'text').toLowerCase() : '';
+    const editableInput = tagName === 'textarea' ||
+      (tagName === 'input' && !['button', 'checkbox', 'color', 'file', 'hidden', 'image', 'radio', 'range', 'reset', 'submit'].includes(inputType));
+    const editable = editableInput || element.isContentEditable === true;
+    if (!editable && typeof element.focus === 'function') {
+      element.focus({ preventScroll: true });
+    }
+    return { editable };
+  })()`);
+  if (!result || typeof result !== "object") {
+    return "stale_ref";
+  }
+  const record = result as Record<string, unknown>;
+  if (record.staleRef === true) {
+    return "stale_ref";
+  }
+  return record.editable === true ? "editable" : "focused";
 }
 
 function readString(value: unknown): string | null {

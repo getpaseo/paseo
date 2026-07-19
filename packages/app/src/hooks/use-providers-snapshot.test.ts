@@ -4,14 +4,13 @@ import { beforeEach, describe, expect, it } from "vitest";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
 import { draftAgentCommandsQueryKey } from "@/hooks/agent-commands-query";
+import { applyProvidersSnapshotUpdate, type ProvidersSnapshotUpdate } from "@/data/push-router";
 import {
-  applyProvidersSnapshotUpdate,
   fetchProvidersSnapshot,
   providersSnapshotQueryKey,
   refreshAndApplyProvidersSnapshot,
   selectorOpenRefetchDecision,
   type ProvidersSnapshotClient,
-  type ProvidersSnapshotUpdateMessage,
 } from "./use-providers-snapshot";
 
 type GetProvidersSnapshotResult = Awaited<ReturnType<DaemonClient["getProvidersSnapshot"]>>;
@@ -223,10 +222,7 @@ describe("applyProvidersSnapshotUpdate", () => {
     queryClient = new QueryClient();
   });
 
-  function updateMessage(
-    entries: ProviderSnapshotEntry[],
-    cwd?: string,
-  ): ProvidersSnapshotUpdateMessage {
+  function updateMessage(entries: ProviderSnapshotEntry[], cwd?: string): ProvidersSnapshotUpdate {
     return {
       type: "providers_snapshot_update",
       payload: {

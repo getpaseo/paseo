@@ -133,7 +133,10 @@ function snapshotPayload(): Extract<BrowserToolsResponsePayload, { ok: true }> {
       workspaceId: "wks_workspace_a",
       url: "https://example.com",
       title: "Example",
-      elements: [],
+      format: "aria-yaml",
+      snapshot: '- document "Example"\n  - button "Save" [ref=@e1]',
+      truncated: false,
+      stats: { nodeCount: 2, refCount: 1, textLength: 50 },
     },
   };
 }
@@ -158,7 +161,43 @@ const routedToolCases = [
     name: "click",
     toolName: "browser_click",
     input: { browserId: BROWSER_ID, ref: "@e2" },
-    command: { command: "click", args: { browserId: BROWSER_ID, ref: "@e2" } },
+    command: {
+      command: "click",
+      args: {
+        browserId: BROWSER_ID,
+        ref: "@e2",
+        button: "left",
+        doubleClick: false,
+        modifiers: [],
+      },
+    },
+    payload: {
+      requestId: "req-click",
+      ok: true,
+      result: { command: "click", browserId: BROWSER_ID, ref: "@e2" },
+    },
+    content: [{ type: "text", text: "Clicked browser element @e2." }],
+  },
+  {
+    name: "click options",
+    toolName: "browser_click",
+    input: {
+      browserId: BROWSER_ID,
+      ref: "@e2",
+      button: "right",
+      doubleClick: true,
+      modifiers: ["Control", "Shift"],
+    },
+    command: {
+      command: "click",
+      args: {
+        browserId: BROWSER_ID,
+        ref: "@e2",
+        button: "right",
+        doubleClick: true,
+        modifiers: ["Control", "Shift"],
+      },
+    },
     payload: {
       requestId: "req-click",
       ok: true,
@@ -344,6 +383,85 @@ const routedToolCases = [
     },
     content: [{ type: "text", text: "Dragged browser element @e4 to @e5." }],
   },
+  {
+    name: "evaluate",
+    toolName: "browser_evaluate",
+    input: { browserId: BROWSER_ID, function: "(element) => element.textContent", ref: "@e1" },
+    command: {
+      command: "evaluate",
+      args: { browserId: BROWSER_ID, function: "(element) => element.textContent", ref: "@e1" },
+    },
+    payload: {
+      requestId: "req-evaluate",
+      ok: true,
+      result: {
+        command: "evaluate",
+        browserId: BROWSER_ID,
+        resultJson: '"Save"',
+        truncated: false,
+      },
+    },
+    content: [{ type: "text", text: 'Browser evaluate returned:\n"Save"' }],
+  },
+  {
+    name: "scroll",
+    toolName: "browser_scroll",
+    input: { browserId: BROWSER_ID, ref: "@e1", deltaX: 0, deltaY: 400 },
+    command: {
+      command: "scroll",
+      args: { browserId: BROWSER_ID, ref: "@e1", deltaX: 0, deltaY: 400 },
+    },
+    payload: {
+      requestId: "req-scroll",
+      ok: true,
+      result: {
+        command: "scroll",
+        browserId: BROWSER_ID,
+        ref: "@e1",
+        deltaX: 0,
+        deltaY: 400,
+      },
+    },
+    content: [{ type: "text", text: "Scrolled browser element @e1 by 0, 400." }],
+  },
+  {
+    name: "resize",
+    toolName: "browser_resize",
+    input: { browserId: BROWSER_ID, width: 1024, height: 768 },
+    command: {
+      command: "resize",
+      args: { browserId: BROWSER_ID, width: 1024, height: 768 },
+    },
+    payload: {
+      requestId: "req-resize",
+      ok: true,
+      result: {
+        command: "resize",
+        browserId: BROWSER_ID,
+        width: 1024,
+        height: 768,
+      },
+    },
+    content: [{ type: "text", text: "Resized browser viewport to 1024x768." }],
+  },
+  {
+    name: "close_tab",
+    toolName: "browser_close_tab",
+    input: { browserId: BROWSER_ID },
+    command: {
+      command: "close_tab",
+      args: { browserId: BROWSER_ID },
+    },
+    payload: {
+      requestId: "req-close-tab",
+      ok: true,
+      result: {
+        command: "close_tab",
+        browserId: BROWSER_ID,
+      },
+    },
+    content: [{ type: "text", text: `Closed browser tab ${BROWSER_ID}.` }],
+  },
 ] satisfies Array<{
   name: string;
   toolName: string;
@@ -354,27 +472,6 @@ const routedToolCases = [
 }>;
 
 const brokerErrorCases = [
-  {
-    name: "disabled browser tools",
-    toolName: "browser_list_tabs",
-    input: {},
-    payload: {
-      requestId: "req-disabled",
-      ok: false,
-      error: {
-        code: "browser_disabled",
-        message: "Browser tools are disabled. Enable daemon.browserTools.enabled to use them.",
-        retryable: false,
-      },
-    },
-    content: [
-      {
-        type: "text",
-        text: "Browser tools are disabled. Enable desktop browser tools on the host, then try again.",
-      },
-    ],
-    context: { agentId: "agent-1", cwd: "/repo", workspaceId: "wks_workspace_a" },
-  },
   {
     name: "typed timeout errors",
     toolName: "browser_snapshot",
@@ -391,7 +488,7 @@ const brokerErrorCases = [
     content: [
       {
         type: "text",
-        text: "The browser did not respond before the timeout. Try again or check the desktop app.",
+        text: "The browser did not respond before the timeout. Try again or check the browser host.",
       },
     ],
     context: {
@@ -410,14 +507,14 @@ const brokerErrorCases = [
       ok: false,
       error: {
         code: "screenshot_no_frame",
-        message: "The browser tab has no painted frame. Focus the tab in the app, then try again.",
-        retryable: false,
+        message: "The tab has not painted yet. Retry the screenshot.",
+        retryable: true,
       },
     },
     content: [
       {
         type: "text",
-        text: "The browser tab has no painted frame. Focus the tab in the app, then try again.",
+        text: "The tab has not painted yet. Retry the screenshot.",
       },
     ],
     context: {
@@ -459,6 +556,10 @@ describe("registerBrowserTools", () => {
       "browser_select",
       "browser_drag",
       "browser_logs",
+      "browser_evaluate",
+      "browser_scroll",
+      "browser_resize",
+      "browser_close_tab",
     ]);
   });
 
@@ -668,7 +769,10 @@ describe("registerBrowserTools", () => {
         workspaceId: "wks_workspace_a",
         url: "https://example.com",
         title: "Example",
-        elements: [],
+        format: "aria-yaml",
+        snapshot: '- document "Example"\n  - button "Save" [ref=@e1]',
+        truncated: false,
+        stats: { nodeCount: 2, refCount: 1, textLength: 50 },
       },
       context: {
         agentId: "agent-1",
@@ -725,6 +829,89 @@ describe("registerBrowserTools", () => {
       });
     },
   );
+
+  test("success responses include handled dialog metadata and a text note", async () => {
+    const harness = new BrowserToolHarness();
+    const payload: Extract<BrowserToolsResponsePayload, { ok: true }> = {
+      requestId: "req-click",
+      ok: true,
+      result: { command: "click", browserId: BROWSER_ID, ref: "@e1" },
+      dialogs: [
+        {
+          type: "confirm",
+          message: "Delete item?",
+          action: "dismissed",
+          timestamp: 123,
+        },
+      ],
+    };
+    harness.broker.setResponse(payload);
+
+    const response = await harness.execute("browser_click", { browserId: BROWSER_ID, ref: "@e1" });
+
+    expect(response.content).toEqual([
+      {
+        type: "text",
+        text: 'Clicked browser element @e1.\nHandled browser dialog: dismissed confirm "Delete item?".',
+      },
+    ]);
+    expect(response.structuredContent).toEqual({
+      ok: true,
+      result: payload.result,
+      dialogs: payload.dialogs,
+      context: {
+        agentId: "agent-1",
+        cwd: "/repo",
+        workspaceId: "wks_workspace_a",
+        browserId: BROWSER_ID,
+      },
+    });
+  });
+
+  test("failure responses include handled dialog metadata and a text note", async () => {
+    const harness = new BrowserToolHarness();
+    const payload: Extract<BrowserToolsResponsePayload, { ok: false }> = {
+      requestId: "req-wait",
+      ok: false,
+      error: {
+        code: "browser_timeout",
+        message: "Timed out waiting for browser URL: /next",
+        retryable: true,
+      },
+      dialogs: [
+        {
+          type: "beforeunload",
+          message: "Leave site?",
+          action: "dismissed",
+          timestamp: 124,
+        },
+      ],
+    };
+    harness.broker.setResponse(payload);
+
+    const response = await harness.execute("browser_wait", {
+      browserId: BROWSER_ID,
+      url: "/next",
+    });
+
+    expect(response.content).toEqual([
+      {
+        type: "text",
+        text: 'The browser did not respond before the timeout. Try again or check the browser host.\nHandled browser dialog: dismissed beforeunload "Leave site?".',
+      },
+    ]);
+    expect(response.structuredContent).toEqual({
+      ok: false,
+      error: payload.error,
+      dialogs: payload.dialogs,
+      context: {
+        agentId: "agent-1",
+        cwd: "/repo",
+        workspaceId: "wks_workspace_a",
+        browserId: BROWSER_ID,
+      },
+    });
+  });
 
   test("wait rejects calls without a condition", () => {
     const harness = new BrowserToolHarness();

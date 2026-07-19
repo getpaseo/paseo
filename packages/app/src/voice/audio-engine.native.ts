@@ -116,6 +116,21 @@ export function createAudioEngine(
       callbacks.onVolumeLevel(level);
     },
   );
+  const interruptionSubscription = native.addExpoTwoWayAudioEventListener(
+    "onAudioInterruption",
+    (event: { data: string }) => {
+      if (event.data !== "blocked") {
+        return;
+      }
+      const wasCaptureActive = refs.captureActive;
+      refs.captureActive = false;
+      refs.muted = false;
+      callbacks.onVolumeLevel(0);
+      if (wasCaptureActive) {
+        callbacks.onInterruption?.();
+      }
+    },
+  );
 
   async function ensureInitialized(): Promise<void> {
     if (refs.initialized) {
@@ -234,6 +249,7 @@ export function createAudioEngine(
       }
       microphoneSubscription.remove();
       volumeSubscription.remove();
+      interruptionSubscription.remove();
     },
 
     async startCapture() {
@@ -244,7 +260,12 @@ export function createAudioEngine(
       try {
         await ensureMicrophonePermission();
         await ensureInitialized();
-        native.toggleRecording(true);
+        const isRecording = native.toggleRecording(true);
+        if (!isRecording) {
+          throw new Error(
+            "Microphone capture could not start because Android audio focus is unavailable.",
+          );
+        }
         refs.captureActive = true;
       } catch (error) {
         const wrapped = error instanceof Error ? error : new Error(String(error));

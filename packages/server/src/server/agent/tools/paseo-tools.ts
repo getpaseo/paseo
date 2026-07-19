@@ -3,7 +3,7 @@ import { ensureValidJson } from "../../json-utils.js";
 import type { Logger } from "pino";
 
 import type { AgentMode, AgentProvider } from "../agent-sdk-types.js";
-import type { AgentManager, WaitForAgentResult } from "../agent-manager.js";
+import type { AgentManager } from "../agent-manager.js";
 import {
   AgentFeatureSchema,
   AgentPermissionRequestPayloadSchema,
@@ -23,12 +23,15 @@ import type { AgentStorage } from "../agent-storage.js";
 import { ensureAgentLoaded } from "../agent-loading.js";
 import { isStoredAgentProviderAvailable } from "../../persistence-hooks.js";
 import {
+  archiveByScope,
   killTerminalsForWorkspace,
+  requireActiveWorkspaceForArchive,
   type ArchiveDependencies,
 } from "../../workspace-archive-service.js";
-import { WaitForAgentTracker } from "../wait-for-agent-tracker.js";
 import { createAgentCommand, type CreateAgentFromMcpInput } from "../create-agent/create.js";
 import type { VoiceCallerContext, VoiceSpeakHandler } from "../../voice-types.js";
+import type { FirstAgentContext } from "../../messages.js";
+import { everyMsToFiveFieldCron } from "@getpaseo/protocol/schedule/cadence";
 import { expandUserPath, isSameOrDescendantPath, resolvePathFromBase } from "../../path-utils.js";
 import type { TerminalManager } from "../../../terminal/terminal-manager.js";
 import type { CreatePaseoWorktreeWorkflowFn } from "../../worktree-session.js";
@@ -63,15 +66,18 @@ import {
   setAgentModeCommand,
   updateAgentCommand,
 } from "../lifecycle-command.js";
-import type { GitHubService } from "../../../services/github-service.js";
+import type { ForgeService } from "../../../services/forge-service.js";
 import type { WorkspaceGitService } from "../../workspace-git-service.js";
-import { WorktreeRequestError } from "../../worktree-errors.js";
+import type {
+  PersistedWorkspaceRecord,
+  ProjectRegistry,
+  WorkspaceRegistry,
+} from "../../workspace-registry.js";
+import { resolveWorktreeSourceCwd } from "../../workspace-source.js";
 import {
-  archiveCommand,
   type ArchiveCommandDependencies,
-  createPaseoWorktreeCommand,
   type CreatePaseoWorktreeCommandInput,
-  listPaseoWorktreesCommand,
+  createPaseoWorktreeCommand,
 } from "../../worktree/commands.js";
 import { registerBrowserTools } from "../../browser-tools/tools.js";
 import type { BrowserToolsBroker } from "../../browser-tools/broker.js";
@@ -90,7 +96,7 @@ export interface PaseoToolHostDependencies {
   getDaemonTcpPort?: () => number | null;
   scheduleService?: ScheduleService | null;
   providerSnapshotManager: ProviderSnapshotManager;
-  github?: GitHubService;
+  github?: ForgeService;
   workspaceGitService?: Pick<
     WorkspaceGitService,
     "getSnapshot" | "listWorktrees" | "resolveRepoRoot"
@@ -99,11 +105,22 @@ export interface PaseoToolHostDependencies {
   listActiveWorkspaces?: ArchiveDependencies["listActiveWorkspaces"];
   archiveWorkspaceRecord?: ArchiveDependencies["archiveWorkspaceRecord"];
   emitWorkspaceUpdatesForWorkspaceIds?: ArchiveDependencies["emitWorkspaceUpdatesForWorkspaceIds"];
+  workspaceRegistry?: Pick<WorkspaceRegistry, "get" | "list" | "upsert">;
+  projectRegistry?: Pick<ProjectRegistry, "get">;
+  createDirectoryWorkspace?: (
+    cwd: string,
+    title?: string | null,
+    projectId?: string,
+  ) => Promise<PersistedWorkspaceRecord>;
   markWorkspaceArchiving?: ArchiveDependencies["markWorkspaceArchiving"];
   clearWorkspaceArchiving?: ArchiveDependencies["clearWorkspaceArchiving"];
   createPaseoWorktree?: CreatePaseoWorktreeWorkflowFn;
   // Mints a fresh directory workspace for a cwd and returns its id.
-  ensureWorkspaceForCreate?: (cwd: string) => Promise<string>;
+  ensureWorkspaceForCreate?: (
+    cwd: string,
+    firstAgentContext?: FirstAgentContext,
+  ) => Promise<string>;
+  browserToolsEnabled?: boolean;
   browserToolsBroker?: BrowserToolsBroker | null;
   paseoHome?: string;
   worktreesRoot?: string;
@@ -149,6 +166,105 @@ interface ProviderSummary {
   modes: AgentMode[];
   status: string;
   error?: string;
+}
+
+const WorkspaceAutomationSummarySchema = z.object({
+  workspaceId: z.string(),
+  projectId: z.string(),
+  cwd: z.string(),
+  isolation: z.enum(["local", "worktree"]),
+  kind: z.enum(["directory", "local_checkout", "worktree"]),
+  title: z.string().nullable(),
+});
+
+function toWorkspaceAutomationSummary(workspace: PersistedWorkspaceRecord) {
+  return {
+    workspaceId: workspace.workspaceId,
+    projectId: workspace.projectId,
+    cwd: workspace.cwd,
+    isolation: workspace.kind === "worktree" ? ("worktree" as const) : ("local" as const),
+    kind: workspace.kind,
+    title: workspace.title,
+  };
+}
+
+type WorkspaceWorktreeMode = "branch-off" | "checkout-branch" | "checkout-pr";
+
+interface WorkspaceWorktreeOptions {
+  mode?: WorkspaceWorktreeMode;
+  worktreeSlug?: string;
+  branchName?: string;
+  baseBranch?: string;
+  branch?: string;
+  prNumber?: number;
+  forge?: string;
+}
+
+type WorkspaceWorktreeTarget = Pick<
+  CreatePaseoWorktreeCommandInput,
+  "action" | "branchName" | "refName" | "checkoutSource"
+>;
+
+function assertOptionsAbsent(
+  options: Array<[name: string, value: unknown]>,
+  message: string,
+): void {
+  if (options.some(([, value]) => value !== undefined)) {
+    throw new Error(message);
+  }
+}
+
+function resolveWorkspaceWorktreeTarget(input: WorkspaceWorktreeOptions): WorkspaceWorktreeTarget {
+  switch (input.mode ?? "branch-off") {
+    case "branch-off":
+      assertOptionsAbsent(
+        [
+          ["branch", input.branch],
+          ["prNumber", input.prNumber],
+          ["forge", input.forge],
+        ],
+        "branch, prNumber, and forge require a checkout mode",
+      );
+      return {
+        action: "branch-off",
+        ...(input.branchName ? { branchName: input.branchName } : {}),
+        ...(input.baseBranch ? { refName: input.baseBranch } : {}),
+      };
+    case "checkout-branch":
+      if (!input.branch) {
+        throw new Error("branch is required for checkout-branch mode");
+      }
+      assertOptionsAbsent(
+        [
+          ["branchName", input.branchName],
+          ["baseBranch", input.baseBranch],
+          ["prNumber", input.prNumber],
+          ["forge", input.forge],
+        ],
+        "branchName, baseBranch, prNumber, and forge are not valid for checkout-branch mode",
+      );
+      return { action: "checkout", refName: input.branch };
+    case "checkout-pr":
+      if (input.prNumber === undefined) {
+        throw new Error("prNumber is required for checkout-pr mode");
+      }
+      assertOptionsAbsent(
+        [
+          ["branchName", input.branchName],
+          ["baseBranch", input.baseBranch],
+          ["branch", input.branch],
+        ],
+        "branchName, baseBranch, and branch are not valid for checkout-pr mode",
+      );
+      return {
+        action: "checkout",
+        checkoutSource: {
+          kind: "change_request",
+          ...(input.forge ? { forge: input.forge } : {}),
+          number: input.prNumber,
+        },
+      };
+  }
 }
 
 function toProviderSummary(entry: {
@@ -301,7 +417,14 @@ function resolveScheduleUpdateCadence(input: ScheduleUpdateToolInput): ScheduleC
     throw new Error("timezone can only be used with cron");
   }
   if (every !== undefined) {
-    return { type: "every", everyMs: parseDurationString(every) };
+    // COMPAT(scheduleEveryInput): accept the old hidden field and canonicalize it before write.
+    // Added in v0.2.0; remove after 2027-01-17.
+    const everyMs = parseDurationString(every);
+    const expression = everyMsToFiveFieldCron(everyMs);
+    if (expression) {
+      return { type: "cron", expression };
+    }
+    throw new Error(`${every} cannot be represented faithfully by five-field cron`);
   }
   if (cron !== undefined) {
     return {
@@ -376,13 +499,6 @@ const TerminalSummarySchema = z.object({
   cwd: z.string(),
 });
 
-const WorktreeSummarySchema = z.object({
-  path: z.string(),
-  createdAt: z.string(),
-  branchName: z.string().optional(),
-  head: z.string().optional(),
-});
-
 function resolveTerminalKeyToken(key: string, literal: boolean): string {
   if (literal) {
     return key;
@@ -429,7 +545,6 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     logger,
   } = options;
   const childLogger = logger.child({ module: "agent", component: "paseo-tool-catalog" });
-  const waitTracker = new WaitForAgentTracker(logger);
   const callerContext = callerAgentId ? (resolveCallerContext?.(callerAgentId) ?? null) : null;
 
   const parseToolInput = async (tool: PaseoToolDefinition, input: unknown): Promise<unknown> => {
@@ -554,6 +669,22 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     return options.ensureWorkspaceForCreate(resolvedCwd);
   }
 
+  function resolveWorkspaceIdForRename(requestedWorkspaceId?: string): string {
+    const explicitWorkspaceId = requestedWorkspaceId?.trim();
+    if (explicitWorkspaceId) {
+      return explicitWorkspaceId;
+    }
+
+    if (callerAgentId) {
+      const callerAgent = resolveCallerAgent();
+      if (!callerAgent?.workspaceId) {
+        throw new Error(`Caller agent ${callerAgentId} has no current workspace`);
+      }
+      return callerAgent.workspaceId;
+    }
+    throw new Error("workspaceId is required outside an agent-scoped session");
+  }
+
   const buildCallerAgentScheduleConfigExtras = (
     callerAgent: NonNullable<ReturnType<typeof resolveCallerAgent>>,
   ): Record<string, unknown> => {
@@ -571,7 +702,6 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       ...(typeof callerAgent.config.webSearch === "boolean"
         ? { webSearch: callerAgent.config.webSearch }
         : {}),
-      ...(callerAgent.config.title ? { title: callerAgent.config.title } : {}),
       ...(callerAgent.config.extra ? { extra: callerAgent.config.extra } : {}),
       ...(callerAgent.config.featureValues
         ? { featureValues: callerAgent.config.featureValues }
@@ -612,17 +742,24 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     };
   };
 
-  const resolveNewAgentScheduleTarget = (params?: { provider?: string; cwd?: string }) => {
-    if (!params?.provider?.trim()) {
-      throw new Error("provider is required when target is new-agent");
-    }
-
+  const resolveNewAgentScheduleTarget = (params?: {
+    provider?: string;
+    cwd?: string;
+    isolation?: "local" | "worktree";
+  }) => {
     const callerAgent = resolveCallerAgent();
     if (callerAgent) {
       return {
         type: "new-agent" as const,
-        config: buildCallerAgentScheduleConfig(callerAgent, params),
+        config: {
+          ...buildCallerAgentScheduleConfig(callerAgent, params),
+          ...(params?.isolation ? { isolation: params.isolation } : {}),
+        },
       };
+    }
+
+    if (!params?.provider?.trim()) {
+      throw new Error("provider is required when target is new-agent");
     }
 
     const resolvedProviderModel = resolveScheduleProviderAndModel({
@@ -635,9 +772,34 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         provider: resolvedProviderModel.provider,
         cwd: params?.cwd?.trim() ? expandUserPath(params.cwd) : process.cwd(),
         ...(resolvedProviderModel.model ? { model: resolvedProviderModel.model } : {}),
+        ...(params?.isolation ? { isolation: params.isolation } : {}),
       },
     };
   };
+
+  async function requireScheduleTarget(id: string, type: "agent" | "new-agent") {
+    if (!scheduleService) {
+      throw new Error("Schedule service is not configured");
+    }
+    const schedule = await scheduleService.inspect(id);
+    if (schedule.target.type !== type) {
+      throw new Error(
+        type === "agent" ? `Heartbeat not found: ${id}` : `Schedule not found: ${id}`,
+      );
+    }
+    return schedule;
+  }
+
+  async function requireCallerHeartbeat(id: string) {
+    if (!callerAgentId) {
+      throw new Error("Heartbeat operations require an agent-scoped session");
+    }
+    const schedule = await requireScheduleTarget(id, "agent");
+    if (schedule.target.type !== "agent" || schedule.target.agentId !== callerAgentId) {
+      throw new Error(`Heartbeat ${id} does not belong to caller ${callerAgentId}`);
+    }
+    return schedule;
+  }
   const ProviderModelInputSchema = AgentProviderEnum.trim()
     .refine((value) => value.includes("/"), {
       message: "provider must be provider/model, for example codex/gpt-5.4",
@@ -799,13 +961,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       .strict()
       .describe("Create a new workspace for the agent."),
   ]);
-  const commonCreateAgentInputSchema = {
-    relationship: AgentRelationshipInputSchema.describe(
-      "Whether the created agent is a subagent under you or a detached root agent.",
-    ),
-    workspace: AgentWorkspaceInputSchema.describe(
-      "Workspace ownership/location for the created agent.",
-    ),
+  const commonCreateAgentFields = {
     title: z
       .string()
       .trim()
@@ -825,8 +981,26 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       .min(1, "initialPrompt is required")
       .describe("Required first task to run immediately after creation."),
   };
+  const legacyCreateAgentPlacementFields = {
+    relationship: AgentRelationshipInputSchema.describe(
+      "Whether the created agent is a subagent under you or a detached root agent.",
+    ),
+    workspace: AgentWorkspaceInputSchema.describe(
+      "Workspace ownership/location for the created agent.",
+    ),
+  };
+  const canonicalCreateAgentFields = {
+    ...commonCreateAgentFields,
+    workspaceId: z
+      .string()
+      .min(1)
+      .optional()
+      .describe(
+        "Existing workspace id. Agent-scoped calls default to the caller workspace; top-level calls create a new local workspace when omitted.",
+      ),
+  };
   const agentToAgentInputSchema = {
-    ...commonCreateAgentInputSchema,
+    ...canonicalCreateAgentFields,
     notifyOnFinish: z
       .boolean()
       .optional()
@@ -836,7 +1010,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       ),
   };
   const canonicalTopLevelInputSchema = {
-    ...commonCreateAgentInputSchema,
+    ...canonicalCreateAgentFields,
     background: z
       .boolean()
       .optional()
@@ -852,9 +1026,17 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         "Agent-scoped only: get notified when the created agent finishes, errors, or needs permission.",
       ),
   };
+  const legacyAgentToAgentInputSchema = {
+    ...commonCreateAgentFields,
+    ...legacyCreateAgentPlacementFields,
+    notifyOnFinish: agentToAgentInputSchema.notifyOnFinish,
+  };
   const legacyTopLevelCreateAgentInputSchema = {
-    relationship: commonCreateAgentInputSchema.relationship.optional(),
-    workspace: commonCreateAgentInputSchema.workspace.optional(),
+    ...commonCreateAgentFields,
+    relationship: legacyCreateAgentPlacementFields.relationship.optional(),
+    workspace: legacyCreateAgentPlacementFields.workspace.optional(),
+    background: canonicalTopLevelInputSchema.background,
+    notifyOnFinish: canonicalTopLevelInputSchema.notifyOnFinish,
     cwd: z
       .string()
       .optional()
@@ -895,15 +1077,15 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       .optional()
       .describe("Legacy GitHub PR number. Prefer workspace.source.target.githubPrNumber."),
   };
-  const topLevelInputSchema = {
-    ...canonicalTopLevelInputSchema,
-    ...legacyTopLevelCreateAgentInputSchema,
-  };
-
-  const createAgentInputSchema = callerAgentId ? agentToAgentInputSchema : topLevelInputSchema;
+  const createAgentInputSchema = z
+    .object(callerAgentId ? agentToAgentInputSchema : canonicalTopLevelInputSchema)
+    .passthrough();
   const agentToAgentCreateAgentArgsSchema = z.object(agentToAgentInputSchema).strict();
+  const legacyAgentToAgentCreateAgentArgsSchema = z.object(legacyAgentToAgentInputSchema).strict();
   const canonicalTopLevelCreateAgentArgsSchema = z.object(canonicalTopLevelInputSchema).strict();
-  const topLevelCreateAgentArgsSchema = z.object(topLevelInputSchema).strict();
+  const legacyTopLevelCreateAgentArgsSchema = z
+    .object(legacyTopLevelCreateAgentInputSchema)
+    .strict();
   const commonSendAgentPromptInputSchema = {
     agentId: z.string(),
     prompt: z.string(),
@@ -959,8 +1141,9 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     ),
   };
   type AgentToAgentCreateAgentArgs = z.infer<typeof agentToAgentCreateAgentArgsSchema>;
+  type LegacyAgentToAgentCreateAgentArgs = z.infer<typeof legacyAgentToAgentCreateAgentArgsSchema>;
   type TopLevelCreateAgentArgs = z.infer<typeof canonicalTopLevelCreateAgentArgsSchema>;
-  type TopLevelCreateAgentToolArgs = z.infer<typeof topLevelCreateAgentArgsSchema>;
+  type LegacyTopLevelCreateAgentArgs = z.infer<typeof legacyTopLevelCreateAgentArgsSchema>;
 
   if (options.voiceOnly || options.enableVoiceTools || callerContext?.enableVoiceTools) {
     registerTool(
@@ -1005,7 +1188,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     return toCatalog();
   }
 
-  if (options.browserToolsBroker) {
+  if (options.browserToolsEnabled && options.browserToolsBroker) {
     registerBrowserTools({
       registerTool,
       broker: options.browserToolsBroker,
@@ -1015,11 +1198,200 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
   }
 
   registerTool(
+    "create_workspace",
+    {
+      title: "Create workspace",
+      description:
+        "Create a workspace using an existing local checkout or a new Paseo-managed worktree.",
+      inputSchema: {
+        isolation: z.enum(["local", "worktree"]),
+        path: z
+          .string()
+          .optional()
+          .describe("Local directory or source checkout. Defaults to your current workspace."),
+        projectId: z.string().optional().describe("Existing project id to own the workspace."),
+        title: z.string().trim().min(1).optional(),
+        mode: z
+          .enum(["branch-off", "checkout-branch", "checkout-pr"])
+          .optional()
+          .describe("Worktree creation mode. Defaults to branch-off."),
+        worktreeSlug: z.string().trim().min(1).optional(),
+        branchName: z
+          .string()
+          .trim()
+          .min(1)
+          .optional()
+          .describe("New branch name for branch-off mode."),
+        baseBranch: z.string().trim().min(1).optional().describe("Base ref for branch-off mode."),
+        branch: z
+          .string()
+          .trim()
+          .min(1)
+          .optional()
+          .describe("Existing branch for checkout-branch mode."),
+        prNumber: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe("Pull request or change request number for checkout-pr mode."),
+        forge: z
+          .string()
+          .trim()
+          .min(1)
+          .optional()
+          .describe("Forge for checkout-pr mode. Defaults to the source checkout."),
+      },
+      outputSchema: WorkspaceAutomationSummarySchema.shape,
+    },
+    async ({
+      isolation,
+      path,
+      projectId,
+      title,
+      mode,
+      worktreeSlug,
+      branchName,
+      baseBranch,
+      branch,
+      prNumber,
+      forge,
+    }) => {
+      let workspace: PersistedWorkspaceRecord;
+      if (isolation === "local") {
+        const cwd = resolveScopedCwd(path, { required: true });
+        assertOptionsAbsent(
+          [
+            ["mode", mode],
+            ["worktreeSlug", worktreeSlug],
+            ["branchName", branchName],
+            ["baseBranch", baseBranch],
+            ["branch", branch],
+            ["prNumber", prNumber],
+            ["forge", forge],
+          ],
+          "Worktree options require isolation worktree",
+        );
+        if (!options.createDirectoryWorkspace) {
+          throw new Error("Workspace provisioning is not configured");
+        }
+        workspace = await options.createDirectoryWorkspace(cwd, title, projectId);
+      } else {
+        let cwd =
+          path !== undefined || !projectId ? resolveScopedCwd(path, { required: true }) : null;
+        if (!cwd) {
+          if (!options.projectRegistry) {
+            throw new Error("Project registry is not configured");
+          }
+          cwd = await resolveWorktreeSourceCwd({ projectId }, options.projectRegistry);
+        }
+        const worktreeTarget = resolveWorkspaceWorktreeTarget({
+          mode,
+          worktreeSlug,
+          branchName,
+          baseBranch,
+          branch,
+          prNumber,
+          forge,
+        });
+        const result = await createPaseoWorktreeCommand(
+          {
+            paseoHome: options.paseoHome,
+            worktreesRoot: options.worktreesRoot,
+            createPaseoWorktreeWorkflow: options.createPaseoWorktree,
+          },
+          {
+            cwd,
+            ...(projectId ? { projectId } : {}),
+            ...(worktreeSlug ? { worktreeSlug } : {}),
+            ...worktreeTarget,
+            ...(title ? { title } : {}),
+          },
+        );
+        if (!result.ok) {
+          throw result.cause;
+        }
+        workspace = result.createdWorktree.workspace;
+      }
+
+      return {
+        content: [],
+        structuredContent: ensureValidJson(toWorkspaceAutomationSummary(workspace)),
+      };
+    },
+  );
+
+  registerTool(
+    "list_workspaces",
+    {
+      title: "List workspaces",
+      description: "List active workspaces.",
+      inputSchema: {},
+      outputSchema: { workspaces: z.array(WorkspaceAutomationSummarySchema) },
+    },
+    async () => {
+      if (!options.workspaceRegistry) {
+        throw new Error("Workspace registry is not configured");
+      }
+      const workspaces = (await options.workspaceRegistry.list())
+        .filter((workspace) => !workspace.archivedAt)
+        .map(toWorkspaceAutomationSummary);
+      return {
+        content: [],
+        structuredContent: ensureValidJson({ workspaces }),
+      };
+    },
+  );
+
+  registerTool(
+    "archive_workspace",
+    {
+      title: "Archive workspace",
+      description: "Archive a workspace and everything it owns.",
+      inputSchema: { workspaceId: z.string().min(1) },
+      outputSchema: {
+        workspaceId: z.string(),
+        archivedAgentIds: z.array(z.string()),
+        removedDirectory: z.boolean(),
+      },
+    },
+    async ({ workspaceId }) => {
+      if (!options.listActiveWorkspaces) {
+        throw new Error("Active workspace lister is required to archive workspaces");
+      }
+      const workspace = await requireActiveWorkspaceForArchive(
+        { listActiveWorkspaces: options.listActiveWorkspaces },
+        workspaceId,
+      );
+      const result = await archiveByScope(
+        archiveWorktreeDependencies(options, {
+          agentManager,
+          agentStorage,
+          terminalManager: terminalManager ?? null,
+          logger: childLogger,
+        }),
+        {
+          requestId: "mcp:archive_workspace",
+          scope: { kind: "workspace", workspaceId: workspace.workspaceId },
+        },
+      );
+      return {
+        content: [],
+        structuredContent: ensureValidJson({
+          workspaceId,
+          archivedAgentIds: result.archivedAgentIds,
+          removedDirectory: result.removedDirectory,
+        }),
+      };
+    },
+  );
+
+  registerTool(
     "create_agent",
     {
       title: "Create agent",
       description:
-        "Create an agent. Requires relationship, workspace, provider/model (for example codex/gpt-5.4), and an initial prompt. Do not guess; call list_providers and list_models first if uncertain.",
+        "Create an agent. Agent-scoped creation defaults to your workspace and creates your subagent. Top-level creation without workspaceId creates a new local workspace. Requires provider/model (for example codex/gpt-5.4) and an initial prompt. Do not guess; call list_providers and list_models first if uncertain.",
       inputSchema: createAgentInputSchema,
       outputSchema: {
         agentId: z.string(),
@@ -1039,15 +1411,12 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       const { parsedArgs, worktree } = resolvedArgs;
       let requestedBackground: boolean;
       let notifyOnFinish: boolean;
-      let detached: boolean;
       if (resolvedArgs.kind === "agent-scoped") {
         requestedBackground = true;
         notifyOnFinish = parsedArgs.notifyOnFinish;
-        detached = resolvedArgs.relationship.kind === "detached";
       } else {
         requestedBackground = resolvedArgs.parsedArgs.background;
         notifyOnFinish = resolvedArgs.parsedArgs.notifyOnFinish ?? false;
-        detached = resolvedArgs.parsedArgs.relationship.kind === "detached";
       }
       const {
         snapshot,
@@ -1080,7 +1449,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           mode: parsedArgs.settings?.modeId,
           background: requestedBackground,
           notifyOnFinish,
-          detached,
+          detached: resolvedArgs.detached,
           callerAgentId,
           callerContext,
           worktree,
@@ -1122,7 +1491,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       const currentSnapshot = agentManager.getAgent(snapshot.id) ?? snapshot;
       const guidance =
         callerAgentId && notifyOnFinish && initialPromptStarted
-          ? "You will get notified when the created agent finishes, errors, or needs permission. Do not call wait_for_agent or poll for status; continue with other work until the notification arrives."
+          ? "You will get notified when the created agent finishes, errors, or needs permission. Do not poll for status; continue with other work until the notification arrives."
           : undefined;
       const response = {
         content: [],
@@ -1146,15 +1515,16 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
   type ResolvedCreateAgentToolArgs =
     | {
         kind: "agent-scoped";
-        parsedArgs: AgentToAgentCreateAgentArgs;
-        relationship: AgentToAgentCreateAgentArgs["relationship"];
+        parsedArgs: AgentToAgentCreateAgentArgs | LegacyAgentToAgentCreateAgentArgs;
+        detached: boolean;
         cwd: string | undefined;
         workspaceId: string | undefined;
         worktree: CreateAgentFromMcpInput["worktree"];
       }
     | {
         kind: "top-level";
-        parsedArgs: TopLevelCreateAgentArgs;
+        parsedArgs: TopLevelCreateAgentArgs | LegacyTopLevelCreateAgentArgs;
+        detached: boolean;
         cwd: string | undefined;
         workspaceId: string | undefined;
         worktree: CreateAgentFromMcpInput["worktree"];
@@ -1162,34 +1532,125 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
 
   async function resolveCreateAgentToolArgs(args: unknown): Promise<ResolvedCreateAgentToolArgs> {
     if (callerAgentId) {
+      if (hasLegacyCreateAgentPlacement(args)) {
+        // COMPAT(nestedCreateAgentPlacement): accept the old relationship/workspace shape without
+        // advertising it to models. Added in v0.2.0; remove after 2027-01-17.
+        const parsed = legacyAgentToAgentCreateAgentArgsSchema.parse(args);
+        const { cwd, workspaceId, worktree } = await resolveCreateAgentWorkspace(parsed.workspace, {
+          prompt: parsed.initialPrompt,
+        });
+        return {
+          kind: "agent-scoped",
+          parsedArgs: parsed,
+          detached: parsed.relationship.kind === "detached",
+          cwd,
+          workspaceId,
+          worktree,
+        };
+      }
       const parsed = agentToAgentCreateAgentArgsSchema.parse(args);
-      const { cwd, workspaceId, worktree } = await resolveCreateAgentWorkspace(parsed.workspace);
+      const { cwd, workspaceId } = await resolveCanonicalCreateAgentWorkspace(parsed.workspaceId, {
+        prompt: parsed.initialPrompt,
+      });
       return {
         kind: "agent-scoped",
         parsedArgs: parsed,
-        relationship: parsed.relationship,
+        detached: false,
+        cwd,
+        workspaceId,
+        worktree: undefined,
+      };
+    }
+    if (hasLegacyCreateAgentPlacement(args)) {
+      // COMPAT(nestedCreateAgentPlacement): see the agent-scoped branch above.
+      const parsedArgs = normalizeTopLevelCreateAgentArgs(
+        legacyTopLevelCreateAgentArgsSchema.parse(args),
+      );
+      if (parsedArgs.relationship?.kind === "subagent") {
+        throw new Error("relationship subagent requires an agent-scoped tool session");
+      }
+      if (!parsedArgs.workspace) {
+        throw new Error("Legacy create_agent placement could not be resolved");
+      }
+      const { cwd, workspaceId, worktree } = await resolveCreateAgentWorkspace(
+        parsedArgs.workspace,
+        { prompt: parsedArgs.initialPrompt },
+      );
+      return {
+        kind: "top-level",
+        parsedArgs,
+        detached: true,
         cwd,
         workspaceId,
         worktree,
       };
     }
-    const parsedArgs = normalizeTopLevelCreateAgentArgs(topLevelCreateAgentArgsSchema.parse(args));
-    if (parsedArgs.relationship.kind === "subagent") {
-      throw new Error("relationship subagent requires an agent-scoped tool session");
-    }
-    const { cwd, workspaceId, worktree } = await resolveCreateAgentWorkspace(parsedArgs.workspace);
+    const parsedArgs = canonicalTopLevelCreateAgentArgsSchema.parse(args);
+    const { cwd, workspaceId } = await resolveCanonicalCreateAgentWorkspace(
+      parsedArgs.workspaceId,
+      { prompt: parsedArgs.initialPrompt },
+    );
     return {
       kind: "top-level",
       parsedArgs,
+      detached: false,
       cwd,
       workspaceId,
-      worktree,
+      worktree: undefined,
     };
   }
 
+  function hasLegacyCreateAgentPlacement(args: unknown): boolean {
+    if (!args || typeof args !== "object") {
+      return false;
+    }
+    const input = args as Record<string, unknown>;
+    return [
+      "relationship",
+      "workspace",
+      "cwd",
+      "worktreeName",
+      "branchName",
+      "baseBranch",
+      "refName",
+      "githubPrNumber",
+    ].some((key) => input[key] !== undefined);
+  }
+
+  async function resolveCanonicalCreateAgentWorkspace(
+    workspaceId?: string,
+    firstAgentContext?: FirstAgentContext,
+  ): Promise<{
+    cwd: string | undefined;
+    workspaceId: string;
+  }> {
+    if (workspaceId) {
+      const resolved = await resolveCreateAgentWorkspace(
+        { kind: "existing", workspaceId },
+        undefined,
+      );
+      return { cwd: resolved.cwd, workspaceId };
+    }
+    if (!callerAgentId) {
+      if (!options.ensureWorkspaceForCreate) {
+        throw new Error("Workspace creation is not configured");
+      }
+      const cwd = process.cwd();
+      return {
+        cwd,
+        workspaceId: await options.ensureWorkspaceForCreate(cwd, firstAgentContext),
+      };
+    }
+    const caller = resolveCallerAgent();
+    if (!caller?.workspaceId) {
+      throw new Error(`Caller agent ${callerAgentId} has no current workspace`);
+    }
+    return { cwd: undefined, workspaceId: caller.workspaceId };
+  }
+
   function normalizeTopLevelCreateAgentArgs(
-    args: TopLevelCreateAgentToolArgs,
-  ): TopLevelCreateAgentArgs {
+    args: LegacyTopLevelCreateAgentArgs,
+  ): LegacyTopLevelCreateAgentArgs {
     const {
       cwd,
       mode,
@@ -1210,7 +1671,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     };
 
     if (canonicalCandidate.relationship && canonicalCandidate.workspace) {
-      return canonicalTopLevelCreateAgentArgsSchema.parse({
+      return legacyTopLevelCreateAgentArgsSchema.parse({
         ...canonicalCandidate,
         ...(Object.keys(settings).length > 0 ? { settings } : {}),
       });
@@ -1248,7 +1709,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           },
         };
 
-    return canonicalTopLevelCreateAgentArgsSchema.parse({
+    return legacyTopLevelCreateAgentArgsSchema.parse({
       ...canonicalCandidate,
       relationship: { kind: "detached" },
       workspace,
@@ -1290,7 +1751,10 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
   }
 
   async function resolveCreateAgentWorkspace(
-    workspace: AgentToAgentCreateAgentArgs["workspace"] | TopLevelCreateAgentArgs["workspace"],
+    workspace:
+      | LegacyAgentToAgentCreateAgentArgs["workspace"]
+      | NonNullable<LegacyTopLevelCreateAgentArgs["workspace"]>,
+    firstAgentContext: FirstAgentContext | undefined,
   ): Promise<{
     cwd: string | undefined;
     workspaceId: string | undefined;
@@ -1342,7 +1806,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       }
       return {
         cwd,
-        workspaceId: await options.ensureWorkspaceForCreate(cwd),
+        workspaceId: await options.ensureWorkspaceForCreate(cwd, firstAgentContext),
         worktree: undefined,
       };
     }
@@ -1382,83 +1846,6 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
   }
 
   registerTool(
-    "wait_for_agent",
-    {
-      title: "Wait for agent",
-      description:
-        "Block until the agent requests permission or the current run completes. Returns the pending permission (if any) and recent activity summary.",
-      inputSchema: {
-        agentId: z.string().describe("Agent identifier returned by the create_agent tool"),
-      },
-      outputSchema: {
-        agentId: z.string(),
-        status: AgentStatusEnum,
-        permission: AgentPermissionRequestPayloadSchema.nullable(),
-        lastMessage: z.string().nullable(),
-      },
-    },
-    async ({ agentId }, { signal }) => {
-      const abortController = new AbortController();
-      const cleanupFns: Array<() => void> = [];
-
-      const cleanup = () => {
-        while (cleanupFns.length) {
-          const fn = cleanupFns.pop();
-          try {
-            fn?.();
-          } catch {
-            // ignore cleanup errors
-          }
-        }
-      };
-
-      const forwardExternalAbort = () => {
-        if (!abortController.signal.aborted) {
-          const reason = signal?.reason ?? new Error("wait_for_agent aborted");
-          abortController.abort(reason);
-        }
-      };
-
-      if (signal) {
-        if (signal.aborted) {
-          forwardExternalAbort();
-        } else {
-          signal.addEventListener("abort", forwardExternalAbort, { once: true });
-          cleanupFns.push(() => signal.removeEventListener("abort", forwardExternalAbort));
-        }
-      }
-
-      const unregister = waitTracker.register(agentId, (reason) => {
-        if (!abortController.signal.aborted) {
-          abortController.abort(new Error(reason ?? "wait_for_agent cancelled"));
-        }
-      });
-      cleanupFns.push(unregister);
-
-      try {
-        const result: WaitForAgentResult = await waitForAgentWithTimeout(agentManager, agentId, {
-          signal: abortController.signal,
-        });
-
-        const validJson = ensureValidJson({
-          agentId,
-          status: result.status,
-          permission: sanitizePermissionRequest(result.permission),
-          lastMessage: result.lastMessage,
-        });
-
-        const response = {
-          content: [],
-          structuredContent: validJson,
-        };
-        return response;
-      } finally {
-        cleanup();
-      }
-    },
-  );
-
-  registerTool(
     "send_agent_prompt",
     {
       title: "Send agent prompt",
@@ -1480,9 +1867,6 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       background = Boolean(callerAgentId),
       notifyOnFinish = Boolean(callerAgentId),
     }) => {
-      if (agentManager.hasInFlightRun(agentId)) {
-        waitTracker.cancel(agentId, "Agent run interrupted by new prompt");
-      }
       const shouldNotifyOnFinish = Boolean(callerAgentId && notifyOnFinish && background);
 
       await sendPromptToAgent({
@@ -1537,7 +1921,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         ...(shouldNotifyOnFinish
           ? {
               guidance:
-                "You will get notified when the prompted agent finishes, errors, or needs permission. Do not call wait_for_agent or poll for status; continue with other work until the notification arrives.",
+                "You will get notified when the prompted agent finishes, errors, or needs permission. Do not poll for status; continue with other work until the notification arrives.",
             }
           : {}),
       };
@@ -1677,9 +2061,6 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         { agentManager, logger: childLogger },
         agentId,
       );
-      if (cancelled) {
-        waitTracker.cancel(agentId, "Agent run cancelled");
-      }
       return {
         content: [],
         structuredContent: ensureValidJson({ success: cancelled }),
@@ -1709,7 +2090,6 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         },
         agentId,
       );
-      waitTracker.cancel(agentId, "Agent archived");
       return {
         content: [],
         structuredContent: ensureValidJson({ success: true }),
@@ -1731,7 +2111,6 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     },
     async ({ agentId }) => {
       await closeAgentCommand({ agentManager }, agentId);
-      waitTracker.cancel(agentId, "Agent terminated");
       return {
         content: [],
         structuredContent: ensureValidJson({ success: true }),
@@ -1777,6 +2156,66 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       return {
         content: [],
         structuredContent: ensureValidJson({ success: true }),
+      };
+    },
+  );
+
+  registerTool(
+    "rename_workspace",
+    {
+      title: "Rename workspace",
+      description:
+        "Rename a workspace by setting its user-visible title. Omit workspaceId to rename your current workspace.",
+      inputSchema: {
+        workspaceId: z
+          .string()
+          .trim()
+          .min(1)
+          .optional()
+          .describe("Workspace id to rename. Omit to rename your current workspace."),
+        title: z
+          .string()
+          .trim()
+          .min(1, "title is required")
+          .describe("New user-visible workspace title."),
+      },
+      outputSchema: {
+        success: z.boolean(),
+        workspaceId: z.string(),
+        title: z.string(),
+      },
+    },
+    async ({ workspaceId: requestedWorkspaceId, title }) => {
+      if (!options.workspaceRegistry) {
+        throw new Error("Workspace registry is required to rename workspaces");
+      }
+      if (!options.emitWorkspaceUpdatesForWorkspaceIds) {
+        throw new Error("Workspace update emitter is required to rename workspaces");
+      }
+
+      const workspaceId = resolveWorkspaceIdForRename(requestedWorkspaceId);
+      const existing = await options.workspaceRegistry.get(workspaceId);
+      if (!existing) {
+        throw new Error(`Workspace ${workspaceId} not found`);
+      }
+      if (existing.archivedAt) {
+        throw new Error(`Workspace ${workspaceId} is archived`);
+      }
+
+      await options.workspaceRegistry.upsert({
+        ...existing,
+        title,
+        updatedAt: new Date().toISOString(),
+      });
+      await options.emitWorkspaceUpdatesForWorkspaceIds([workspaceId]);
+
+      return {
+        content: [],
+        structuredContent: ensureValidJson({
+          success: true,
+          workspaceId,
+          title,
+        }),
       };
     },
   );
@@ -1994,16 +2433,17 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           .optional()
           .describe("IANA time zone for the cron cadence. For example: America/New_York."),
         name: z.string().optional(),
-        provider: AgentProviderEnum.optional().describe(
-          "Provider, or provider/model (for example: codex or codex/gpt-5.4).",
+        provider: (callerAgentId ? AgentProviderEnum.optional() : AgentProviderEnum).describe(
+          "Provider, or provider/model (for example: codex or codex/gpt-5.4). Defaults to the caller's provider in an agent-scoped session.",
         ),
         cwd: z.string().optional(),
+        isolation: z.enum(["local", "worktree"]).optional(),
         maxRuns: z.number().int().positive().optional(),
         expiresIn: z.string().optional(),
       },
       outputSchema: ScheduleSummarySchema.shape,
     },
-    async ({ prompt, cron, timezone, name, provider, cwd, maxRuns, expiresIn }) => {
+    async ({ prompt, cron, timezone, name, provider, cwd, isolation, maxRuns, expiresIn }) => {
       if (!scheduleService) {
         throw new Error("Schedule service is not configured");
       }
@@ -2015,7 +2455,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           cron,
           ...(timezone !== undefined ? { timezone } : {}),
         }),
-        target: resolveNewAgentScheduleTarget({ provider, cwd }),
+        target: resolveNewAgentScheduleTarget({ provider, cwd, isolation }),
         ...(name?.trim() ? { name: name.trim() } : {}),
         ...(maxRuns === undefined ? {} : { maxRuns }),
         ...(expiresAt === undefined ? {} : { expiresAt }),
@@ -2078,6 +2518,27 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
   );
 
   registerTool(
+    "delete_heartbeat",
+    {
+      title: "Delete heartbeat",
+      description: "Delete one of your heartbeats.",
+      inputSchema: { id: z.string().min(1) },
+      outputSchema: { success: z.boolean() },
+    },
+    async ({ id }) => {
+      if (!scheduleService) {
+        throw new Error("Schedule service is not configured");
+      }
+      await requireCallerHeartbeat(id);
+      await scheduleService.delete(id);
+      return {
+        content: [],
+        structuredContent: ensureValidJson({ success: true }),
+      };
+    },
+  );
+
+  registerTool(
     "list_schedules",
     {
       title: "List schedules",
@@ -2092,9 +2553,9 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         throw new Error("Schedule service is not configured");
       }
 
-      const schedules = (await scheduleService.list()).map((schedule) =>
-        toScheduleSummary(schedule),
-      );
+      const schedules = (await scheduleService.list())
+        .filter((schedule) => schedule.target.type === "new-agent")
+        .map((schedule) => toScheduleSummary(schedule));
       return {
         content: [],
         structuredContent: ensureValidJson({ schedules }),
@@ -2117,7 +2578,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         throw new Error("Schedule service is not configured");
       }
 
-      const schedule = await scheduleService.inspect(id);
+      const schedule = await requireScheduleTarget(id, "new-agent");
       return {
         content: [],
         structuredContent: ensureValidJson(schedule),
@@ -2142,6 +2603,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         throw new Error("Schedule service is not configured");
       }
 
+      await requireScheduleTarget(id, "new-agent");
       await scheduleService.pause(id);
       return {
         content: [],
@@ -2167,6 +2629,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         throw new Error("Schedule service is not configured");
       }
 
+      await requireScheduleTarget(id, "new-agent");
       await scheduleService.resume(id);
       return {
         content: [],
@@ -2192,6 +2655,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         throw new Error("Schedule service is not configured");
       }
 
+      await requireScheduleTarget(id, "new-agent");
       await scheduleService.delete(id);
       return {
         content: [],
@@ -2206,54 +2670,55 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       title: "Update schedule",
       description:
         "Update an existing schedule. Only provided fields are changed; omitted fields remain unchanged.",
-      inputSchema: {
-        id: z.string(),
-        every: z.string().optional().describe("New interval duration string (e.g. 5m, 1h)."),
-        cron: z.string().optional().describe("New cron expression."),
-        timezone: z
-          .string()
-          .trim()
-          .min(1)
-          .optional()
-          .describe(
-            "IANA time zone for cron cadence; requires cron. For example: America/New_York.",
-          ),
-        name: z.string().nullable().optional().describe("New name (null to clear)."),
-        prompt: z.string().trim().min(1).optional().describe("New prompt text."),
-        maxRuns: z
-          .number()
-          .int()
-          .positive()
-          .nullable()
-          .optional()
-          .describe("New max runs limit (null to clear)."),
-        provider: z
-          .string()
-          .trim()
-          .min(1)
-          .optional()
-          .describe("New provider for new-agent target."),
-        model: z
-          .string()
-          .trim()
-          .min(1)
-          .nullable()
-          .optional()
-          .describe("New model for new-agent target (null to clear)."),
-        mode: z
-          .string()
-          .trim()
-          .min(1)
-          .nullable()
-          .optional()
-          .describe("New mode for new-agent target (null to clear)."),
-        cwd: z.string().trim().min(1).optional().describe("New cwd for new-agent target."),
-        expiresIn: z
-          .string()
-          .optional()
-          .describe("New relative expiry duration (for example: 1h, 2d)."),
-        clearExpires: z.boolean().optional().describe("Clear any schedule expiry."),
-      },
+      inputSchema: z
+        .object({
+          id: z.string(),
+          cron: z.string().optional().describe("New cron expression."),
+          timezone: z
+            .string()
+            .trim()
+            .min(1)
+            .optional()
+            .describe(
+              "IANA time zone for cron cadence; requires cron. For example: America/New_York.",
+            ),
+          name: z.string().nullable().optional().describe("New name (null to clear)."),
+          prompt: z.string().trim().min(1).optional().describe("New prompt text."),
+          maxRuns: z
+            .number()
+            .int()
+            .positive()
+            .nullable()
+            .optional()
+            .describe("New max runs limit (null to clear)."),
+          provider: z
+            .string()
+            .trim()
+            .min(1)
+            .optional()
+            .describe("New provider for new-agent target."),
+          model: z
+            .string()
+            .trim()
+            .min(1)
+            .nullable()
+            .optional()
+            .describe("New model for new-agent target (null to clear)."),
+          mode: z
+            .string()
+            .trim()
+            .min(1)
+            .nullable()
+            .optional()
+            .describe("New mode for new-agent target (null to clear)."),
+          cwd: z.string().trim().min(1).optional().describe("New cwd for new-agent target."),
+          expiresIn: z
+            .string()
+            .optional()
+            .describe("New relative expiry duration (for example: 1h, 2d)."),
+          clearExpires: z.boolean().optional().describe("Clear any schedule expiry."),
+        })
+        .passthrough(),
       outputSchema: StoredScheduleSchema.shape,
     },
     async (input) => {
@@ -2261,6 +2726,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         throw new Error("Schedule service is not configured");
       }
 
+      await requireScheduleTarget(input.id, "new-agent");
       const schedule = await scheduleService.update(buildScheduleUpdateInput(input));
 
       return {
@@ -2287,10 +2753,32 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         throw new Error("Schedule service is not configured");
       }
 
+      await requireScheduleTarget(id, "new-agent");
       const runs = await scheduleService.logs(id);
       return {
         content: [],
         structuredContent: ensureValidJson({ runs }),
+      };
+    },
+  );
+
+  registerTool(
+    "run_schedule_once",
+    {
+      title: "Run schedule once",
+      description: "Run a schedule immediately without changing its cron cadence.",
+      inputSchema: { id: z.string().min(1) },
+      outputSchema: StoredScheduleSchema.shape,
+    },
+    async ({ id }) => {
+      if (!scheduleService) {
+        throw new Error("Schedule service is not configured");
+      }
+      await requireScheduleTarget(id, "new-agent");
+      const schedule = await scheduleService.runOnce(id);
+      return {
+        content: [],
+        structuredContent: ensureValidJson(schedule),
       };
     },
   );
@@ -2402,146 +2890,6 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           selectedModel: selectedModel ?? null,
           features,
         }),
-      };
-    },
-  );
-
-  registerTool(
-    "list_worktrees",
-    {
-      title: "List worktrees",
-      description: "List Paseo-managed git worktrees for a repository.",
-      inputSchema: {
-        cwd: z
-          .string()
-          .optional()
-          .describe("Optional repository cwd. Defaults to your current working directory."),
-      },
-      outputSchema: {
-        worktrees: z.array(WorktreeSummarySchema),
-      },
-    },
-    async ({ cwd }) => {
-      const resolvedCwd = resolveScopedCwd(cwd, { required: true });
-      if (!options.workspaceGitService) {
-        throw new Error("WorkspaceGitService is required to list worktrees");
-      }
-      const worktrees = await listPaseoWorktreesCommand(
-        { workspaceGitService: options.workspaceGitService },
-        {
-          cwd: resolvedCwd,
-          reason: "mcp:list-worktrees",
-        },
-      );
-
-      return {
-        content: [],
-        structuredContent: ensureValidJson({ worktrees }),
-      };
-    },
-  );
-
-  registerTool(
-    "create_worktree",
-    {
-      title: "Create worktree",
-      description:
-        "Create a Paseo-managed git worktree. Branch off a new branch, check out an existing branch, or check out a GitHub PR.",
-      inputSchema: {
-        cwd: z.string().optional().describe("Repository directory. Defaults to the agent's cwd."),
-        target: AgentCreateWorktreeTargetInputSchema.describe("What the worktree should contain."),
-      },
-      outputSchema: {
-        branchName: z.string(),
-        worktreePath: z.string(),
-        workspaceId: z.string(),
-      },
-    },
-    async ({ cwd, target }) => {
-      const repoRoot = resolveScopedCwd(cwd, { required: true });
-      const commandResult = await createPaseoWorktreeCommand(
-        {
-          paseoHome: options.paseoHome,
-          worktreesRoot: options.worktreesRoot,
-          createPaseoWorktreeWorkflow: options.createPaseoWorktree,
-        },
-        createMcpWorktreeCommandInput(repoRoot, target),
-      );
-      if (!commandResult.ok) {
-        throw new WorktreeRequestError(commandResult.error);
-      }
-      const { worktree, workspace } = commandResult.createdWorktree;
-      await options.workspaceGitService?.listWorktrees?.(repoRoot, {
-        force: true,
-        reason: "mcp:create-worktree",
-      });
-
-      return {
-        content: [],
-        structuredContent: ensureValidJson({
-          branchName: worktree.branchName,
-          worktreePath: worktree.worktreePath,
-          workspaceId: workspace.workspaceId,
-        }),
-      };
-    },
-  );
-
-  registerTool(
-    "archive_worktree",
-    {
-      title: "Archive worktree",
-      description: "Delete a Paseo-managed git worktree.",
-      inputSchema: {
-        cwd: z
-          .string()
-          .optional()
-          .describe("Optional repository cwd. Defaults to your current working directory."),
-        worktreePath: z.string().optional(),
-        worktreeSlug: z.string().optional(),
-      },
-      outputSchema: {
-        success: z.boolean(),
-      },
-    },
-    async ({ cwd, worktreePath, worktreeSlug }) => {
-      const resolvedCwd = resolveScopedCwd(cwd, { required: true });
-      if (!worktreePath && !worktreeSlug) {
-        throw new Error("worktreePath or worktreeSlug is required");
-      }
-      if (!options.workspaceGitService) {
-        throw new Error("WorkspaceGitService is required to archive worktrees");
-      }
-      const repoRoot = await options.workspaceGitService.resolveRepoRoot(resolvedCwd);
-
-      const result = await archiveCommand(
-        archiveWorktreeDependencies(options, {
-          agentManager,
-          agentStorage,
-          terminalManager: terminalManager ?? null,
-          logger: childLogger,
-        }),
-        {
-          requestId: "mcp:archive_worktree",
-          repoRoot,
-          worktreePath,
-          worktreeSlug,
-          // This tool archives every workspace on the directory, then removes the
-          // directory. Disk removal is derived from scope + last-reference.
-          scope: "worktree",
-        },
-      );
-      if (!result.ok) {
-        throw new Error(result.message);
-      }
-      await options.workspaceGitService.listWorktrees(repoRoot, {
-        force: true,
-        reason: "mcp:archive-worktree",
-      });
-
-      return {
-        content: [],
-        structuredContent: ensureValidJson({ success: true }),
       };
     },
   );
@@ -2693,11 +3041,6 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
   return toCatalog();
 }
 
-type McpCreateWorktreeTarget =
-  | { kind: "branch-off"; worktreeSlug?: string; branchName?: string; baseBranch?: string }
-  | { kind: "checkout-branch"; branch: string }
-  | { kind: "checkout-pr"; githubPrNumber: number };
-
 interface ArchiveWorktreeCommandContext {
   agentManager: AgentManager;
   agentStorage: AgentStorage;
@@ -2756,27 +3099,4 @@ function archiveWorktreeDependencies(
       ),
     sessionLogger: context.logger,
   };
-}
-
-function createMcpWorktreeCommandInput(
-  repoRoot: string,
-  target: McpCreateWorktreeTarget,
-): CreatePaseoWorktreeCommandInput {
-  const base = { cwd: repoRoot } as const;
-  switch (target.kind) {
-    case "branch-off":
-      return {
-        ...base,
-        worktreeSlug: target.worktreeSlug,
-        branchName: target.branchName,
-        action: "branch-off",
-        ...(target.baseBranch ? { refName: target.baseBranch } : {}),
-      };
-    case "checkout-branch":
-      return { ...base, action: "checkout", refName: target.branch };
-    case "checkout-pr":
-      return { ...base, action: "checkout", githubPrNumber: target.githubPrNumber };
-    default:
-      throw new Error("unreachable");
-  }
 }

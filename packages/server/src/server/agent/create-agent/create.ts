@@ -1,6 +1,5 @@
 import type { Logger } from "pino";
 
-import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import type { TerminalManager } from "../../../terminal/terminal-manager.js";
 import type { CreatePaseoWorktreeInput } from "../../paseo-worktree-service.js";
 import { expandUserPath, resolvePathFromBase } from "../../path-utils.js";
@@ -12,22 +11,21 @@ import type {
   CreatePaseoWorktreeWorkflowResult,
 } from "../../worktree-session.js";
 import type { AgentAttachment, FirstAgentContext, GitSetupOptions } from "../../messages.js";
-import type { AgentManager, ManagedAgent } from "../agent-manager.js";
-import type {
-  AgentPromptContentBlock,
-  AgentPromptInput,
-  AgentRunOptions,
-  AgentSessionConfig,
-} from "../agent-sdk-types.js";
+import type { AgentManager, CreateAgentOptions, ManagedAgent } from "../agent-manager.js";
+import type { AgentPromptInput, AgentRunOptions, AgentSessionConfig } from "../agent-sdk-types.js";
 import type { AgentStorage } from "../agent-storage.js";
+import type { AgentOwner } from "../agent-owner.js";
 import type { ProviderSnapshotManager } from "../provider-snapshot-manager.js";
 import { setupFinishNotification, startCreatedAgentInitialPrompt } from "../agent-prompt.js";
+import { resolveCreateAgentTitles } from "../create-agent-title.js";
+import { buildAgentPrompt } from "../prompt-attachments.js";
 import { normalizeClientMessageId, resolveClientMessageId } from "../../client-message-id.js";
-import { resolveRequiredProviderModel } from "../mcp-shared.js";
+import { resolveRequiredProviderModel, type ResolvedProviderModel } from "../mcp-shared.js";
 import {
   appendTimelineItemIfAgentKnown,
   emitLiveTimelineItemIfAgentKnown,
 } from "../timeline-append.js";
+import { resolveCreateAgentIntent } from "./intent.js";
 
 export interface CreateAgentSessionWorktreeResult {
   sessionConfig: AgentSessionConfig;
@@ -37,23 +35,28 @@ export interface CreateAgentSessionWorktreeResult {
   createdWorkspaceId?: string;
 }
 
-interface CreateAgentCommandDependencies {
+export interface CreateAgentCommandDependencies {
   agentManager: AgentManager;
   agentStorage: AgentStorage;
   logger: Logger;
   paseoHome?: string;
   worktreesRoot?: string;
   terminalManager?: TerminalManager | null;
-  providerSnapshotManager: ProviderSnapshotManager;
+  providerSnapshotManager: Pick<ProviderSnapshotManager, "resolveCreateConfig">;
   createPaseoWorktree?: CreatePaseoWorktreeWorkflowFn;
   // Mints a fresh directory workspace for a cwd and returns its id.
-  ensureWorkspaceForCreate?: (cwd: string) => Promise<string>;
+  ensureWorkspaceForCreate?: EnsureWorkspaceForCreate;
 }
+
+export type EnsureWorkspaceForCreate = (
+  cwd: string,
+  firstAgentContext?: FirstAgentContext,
+) => Promise<string>;
 
 export interface CreateAgentFromSessionInput {
   kind: "session";
   config: AgentSessionConfig;
-  workspaceId?: string;
+  workspaceId: string;
   worktreeName?: string;
   initialPrompt?: string;
   clientMessageId?: string;
@@ -77,16 +80,27 @@ export interface CreateAgentFromMcpInput {
   kind: "mcp";
   provider: string;
   title: string;
-  initialPrompt: string;
+  initialPrompt?: string;
+  config?: Partial<AgentSessionConfig>;
   cwd?: string;
   workspaceId?: string;
   thinking?: string;
   features?: Record<string, unknown>;
   labels?: Record<string, string>;
   mode?: string;
+  unattended?: boolean;
+  promptFailure?: CreateAgentPromptFailureMode;
   background: boolean;
   notifyOnFinish: boolean;
+  internal?: boolean;
   detached?: boolean;
+  owner?: AgentOwner;
+  env?: Record<string, string>;
+  onCreated?: (created: {
+    agentId: string;
+    createdWorktree: CreatePaseoWorktreeWorkflowResult | null;
+  }) => void;
+  onWorktreeCreated?: (createdWorktree: CreatePaseoWorktreeWorkflowResult) => void;
   callerAgentId?: string;
   callerContext?: {
     lockedCwd?: string;
@@ -104,31 +118,56 @@ export interface CreateAgentFromMcpInput {
 }
 
 export type CreateAgentCommandInput = CreateAgentFromSessionInput | CreateAgentFromMcpInput;
+export type CreateAgentPromptFailureMode = "throw" | "log" | "return-error";
 
 export interface CreateAgentCommandResult {
   snapshot: ManagedAgent;
   liveSnapshot: ManagedAgent;
   background: boolean;
   initialPromptStarted: boolean;
+  initialPromptError: unknown | null;
+  createdWorktree?: CreatePaseoWorktreeWorkflowResult;
+}
+
+export type BoundCreateAgentCommand = (
+  input: CreateAgentCommandInput,
+) => Promise<CreateAgentCommandResult>;
+
+function requireResolvedWorkspaceId(workspaceId: string | undefined): string {
+  if (!workspaceId) {
+    throw new Error("createAgentCommand requires a resolved workspaceId");
+  }
+  return workspaceId;
+}
+
+export function formatProviderModel(provider: string, model: string | null | undefined): string {
+  if (!model || provider.includes("/")) {
+    return provider;
+  }
+  return `${provider}/${model}`;
+}
+
+function resolveProviderModel(providerValue: string): ResolvedProviderModel {
+  const providerInput = providerValue.trim();
+  if (providerInput.includes("/")) {
+    return resolveRequiredProviderModel(providerInput);
+  }
+  if (!providerInput) {
+    throw new Error("provider is required");
+  }
+  return { provider: providerInput, model: undefined };
 }
 
 interface ResolvedCreateAgent {
   config: AgentSessionConfig;
-  createOptions?: AgentCreateOptions;
+  createOptions: CreateAgentOptions;
   prompt?: AgentPromptInput;
   runOptions?: AgentRunOptions;
   setupContinuation?: AgentWorktreeSetupContinuation;
   background: boolean;
-  promptFailure: "throw" | "log";
+  promptFailure: CreateAgentPromptFailureMode;
   promptLogger?: Logger;
-}
-
-interface AgentCreateOptions {
-  labels?: Record<string, string>;
-  initialPrompt?: string;
-  env?: Record<string, string>;
-  initialTitle?: string | null;
-  workspaceId?: string;
+  createdWorktree?: CreatePaseoWorktreeWorkflowResult;
 }
 
 export async function createAgentCommand(
@@ -152,10 +191,15 @@ export async function createAgentCommand(
 
   let liveSnapshot = snapshot;
   let initialPromptStarted = false;
+  let initialPromptError: unknown | null = null;
+  if (input.kind === "mcp") {
+    input.onCreated?.({ agentId: snapshot.id, createdWorktree: resolved.createdWorktree ?? null });
+  }
   if (resolved.prompt !== undefined) {
     const sendResult = await sendInitialPrompt(dependencies, resolved, snapshot);
     initialPromptStarted = sendResult.started;
     liveSnapshot = sendResult.liveSnapshot;
+    initialPromptError = sendResult.error ?? null;
   }
 
   if (input.kind === "mcp" && input.notifyOnFinish && input.callerAgentId && initialPromptStarted) {
@@ -164,6 +208,7 @@ export async function createAgentCommand(
       agentStorage: dependencies.agentStorage,
       childAgentId: snapshot.id,
       callerAgentId: input.callerAgentId,
+      requireParentOwnership: true,
       logger: dependencies.logger,
     });
   }
@@ -173,6 +218,8 @@ export async function createAgentCommand(
     liveSnapshot,
     background: resolved.background,
     initialPromptStarted,
+    initialPromptError,
+    ...(resolved.createdWorktree ? { createdWorktree: resolved.createdWorktree } : {}),
   };
 }
 
@@ -181,12 +228,42 @@ async function resolveSessionCreateAgent(
   input: CreateAgentFromSessionInput,
 ): Promise<ResolvedCreateAgent> {
   const trimmedPrompt = input.initialPrompt?.trim();
-  const { sessionConfig, setupContinuation, createdWorkspaceId } = await input.buildSessionConfig(
+  const {
+    sessionConfig: builtSessionConfig,
+    setupContinuation,
+    createdWorkspaceId,
+  } = await input.buildSessionConfig(
     input.config,
     input.git,
     input.worktreeName,
     input.firstAgentContext,
   );
+  // Validate the requested mode against the provider's modes for the resolved
+  // cwd. The app remembers mode preferences globally, so a saved mode can be
+  // stale for a workspace whose provider config no longer defines it — reject
+  // it here instead of letting the provider fail mid-turn.
+  //
+  // This runs after buildSessionConfig, which may already have created a
+  // worktree and/or workspace record — cwd (required to resolve modes) is
+  // only known once that step completes. If validation throws, any
+  // worktree/workspace buildSessionConfig created is the caller's
+  // responsibility to clean up (session.ts's handleCreateAgentRequest does
+  // this for the worktree path via cleanupCreatedWorktreeAfterFailedAgentCreate;
+  // this is a pre-existing gap for directory-only workspace creates, not
+  // introduced by this validation).
+  const resolvedCreateConfig = await dependencies.providerSnapshotManager.resolveCreateConfig({
+    cwd: builtSessionConfig.cwd,
+    provider: builtSessionConfig.provider,
+    requestedMode: builtSessionConfig.modeId,
+    featureValues: builtSessionConfig.featureValues,
+    parent: null,
+    unattended: false,
+  });
+  const sessionConfig: AgentSessionConfig = {
+    ...builtSessionConfig,
+    modeId: resolvedCreateConfig.modeId,
+    featureValues: resolvedCreateConfig.featureValues,
+  };
   const prompt = buildAgentPrompt(trimmedPrompt ?? "", input.images, input.attachments);
   const hasPromptContent = Array.isArray(prompt) ? prompt.length > 0 : prompt.length > 0;
   const clientMessageId = normalizeClientMessageId(input.clientMessageId);
@@ -197,6 +274,7 @@ async function resolveSessionCreateAgent(
           ...(clientMessageId ? { messageId: clientMessageId } : {}),
         }
       : undefined;
+  const workspaceId = setupContinuation ? createdWorkspaceId : input.workspaceId;
 
   return {
     config: sessionConfig,
@@ -206,9 +284,9 @@ async function resolveSessionCreateAgent(
       env: input.env,
       initialTitle: input.provisionalTitle,
       // A legacy git/worktreeName worktree creates a fresh workspace, so the
-      // agent belongs to that workspace, not the source one (mirrors the MCP
-      // path). createdWorkspaceId is the freshly created worktree's workspace.
-      workspaceId: setupContinuation ? createdWorkspaceId : input.workspaceId,
+      // agent belongs to that workspace, not the source one. createdWorkspaceId
+      // is the freshly created worktree's workspace.
+      workspaceId: requireResolvedWorkspaceId(workspaceId),
     },
     prompt: hasPromptContent ? prompt : undefined,
     runOptions,
@@ -225,93 +303,152 @@ async function resolveMcpCreateAgent(
   dependencies: CreateAgentCommandDependencies,
   input: CreateAgentFromMcpInput,
 ): Promise<ResolvedCreateAgent> {
-  const resolvedProviderModel = resolveRequiredProviderModel(input.provider);
+  const resolvedProviderModel = resolveProviderModel(input.provider);
   const provider = resolvedProviderModel.provider;
   const parentAgent = input.callerAgentId
     ? requireParentAgent(dependencies.agentManager, input.callerAgentId)
     : null;
-  const cwd = parentAgent
-    ? resolveChildAgentCwd({
-        parentCwd: parentAgent.cwd,
-        requestedCwd: input.cwd,
-        lockedCwd: input.callerContext?.lockedCwd,
-        allowCustomCwd: input.callerContext?.allowCustomCwd ?? true,
-      })
-    : expandUserPath(input.cwd ?? process.cwd());
-  const { resolvedCwd, setupContinuation, createdWorkspaceId } = await resolveMcpCwd({
-    dependencies,
-    cwd,
-    worktree: input.worktree,
-    initialPrompt: input.initialPrompt,
-  });
-
-  // MCP callers resolve workspace ownership before this point. Worktree
-  // creation wins because the new agent lives in the fresh worktree workspace.
-  // Otherwise use the explicit workspace id, then the parent workspace for
-  // direct internal callers. Ownership is never resolved from cwd.
-  const workspaceId = setupContinuation
-    ? createdWorkspaceId
-    : (input.workspaceId ??
-      parentAgent?.workspaceId ??
-      (await ensureWorkspaceForMcpCreate(dependencies, resolvedCwd)));
-
-  const { modeId: resolvedMode, featureValues: resolvedFeatures } =
-    await dependencies.providerSnapshotManager.resolveCreateConfig({
-      cwd: resolvedCwd,
-      provider,
-      requestedMode: input.mode,
-      featureValues: input.features,
-      parent: parentAgent,
-      unattended: false,
+  const cwd = resolveMcpInitialCwd(input, parentAgent);
+  const { resolvedCwd, setupContinuation, createdWorkspaceId, createdWorktree } =
+    await resolveMcpCwd({
+      dependencies,
+      cwd,
+      worktree: input.worktree,
+      initialPrompt: input.initialPrompt ?? "",
     });
+  if (createdWorktree) input.onWorktreeCreated?.(createdWorktree);
 
-  const labels = mergeLabels({
-    callerAgentId: input.callerAgentId,
-    detached: input.detached ?? false,
-    childAgentDefaultLabels: input.callerContext?.childAgentDefaultLabels,
+  const intent = await resolveCreateAgentIntent({
+    explicitWorkspaceId: setupContinuation ? createdWorkspaceId : input.workspaceId,
+    caller: parentAgent
+      ? { id: parentAgent.id, cwd: parentAgent.cwd, workspaceId: parentAgent.workspaceId }
+      : null,
     labels: input.labels,
+    childAgentDefaultLabels: input.callerContext?.childAgentDefaultLabels,
+    legacyDetached: input.detached ?? false,
+    resolveWorkspace: async (workspaceId) => ({ workspaceId, cwd: resolvedCwd }),
+    createWorkspace: async () => ({
+      workspaceId: requireResolvedWorkspaceId(
+        await ensureWorkspaceForMcpCreate(dependencies, resolvedCwd, input.initialPrompt ?? ""),
+      ),
+      cwd: resolvedCwd,
+    }),
+  });
+  const resolvedCreateConfig = await resolveMcpProviderCreateConfig({
+    dependencies,
+    input,
+    provider,
+    resolvedCwd,
+    parentAgent,
   });
 
-  const trimmedPrompt = input.initialPrompt.trim();
+  const trimmedPrompt = input.initialPrompt?.trim() ?? "";
   return {
-    config: {
+    config: buildMcpSessionConfig({
+      input,
+      resolvedProviderModel,
       provider,
-      cwd: resolvedCwd,
-      modeId: resolvedMode,
-      title: input.title.trim(),
-      model: resolvedProviderModel.model,
-      thinkingOptionId: input.thinking,
-      ...(resolvedFeatures ? { featureValues: resolvedFeatures } : {}),
+      resolvedCwd: intent.cwd,
+      trimmedPrompt,
+      resolvedMode: resolvedCreateConfig.modeId,
+      resolvedFeatures: resolvedCreateConfig.featureValues,
+    }),
+    createOptions: {
+      ...(Object.keys(intent.labels).length > 0 ? { labels: intent.labels } : {}),
+      workspaceId: intent.workspaceId,
+      owner: input.owner,
+      env: input.env,
     },
-    createOptions:
-      labels || workspaceId
-        ? {
-            ...(labels ? { labels } : {}),
-            ...(workspaceId ? { workspaceId } : {}),
-          }
-        : undefined,
-    prompt: trimmedPrompt,
+    prompt: trimmedPrompt ? trimmedPrompt : undefined,
     setupContinuation,
+    createdWorktree,
     background: input.background,
-    promptFailure: "log",
+    promptFailure: input.promptFailure ?? "log",
   };
+}
+
+function resolveMcpInitialCwd(
+  input: CreateAgentFromMcpInput,
+  parentAgent: ManagedAgent | null,
+): string {
+  if (!parentAgent) {
+    return expandUserPath(input.cwd ?? process.cwd());
+  }
+  return resolveChildAgentCwd({
+    parentCwd: parentAgent.cwd,
+    requestedCwd: input.cwd,
+    lockedCwd: input.callerContext?.lockedCwd,
+    allowCustomCwd: input.callerContext?.allowCustomCwd ?? true,
+  });
+}
+
+async function resolveMcpProviderCreateConfig(params: {
+  dependencies: CreateAgentCommandDependencies;
+  input: CreateAgentFromMcpInput;
+  provider: string;
+  resolvedCwd: string;
+  parentAgent: ManagedAgent | null;
+}): Promise<{ modeId?: string; featureValues?: Record<string, unknown> }> {
+  const passthroughConfig = params.input.config;
+  return params.dependencies.providerSnapshotManager.resolveCreateConfig({
+    cwd: params.resolvedCwd,
+    provider: params.provider,
+    requestedMode: params.input.mode ?? passthroughConfig?.modeId,
+    featureValues: params.input.features ?? passthroughConfig?.featureValues,
+    parent: params.parentAgent,
+    unattended: params.input.unattended ?? false,
+  });
+}
+
+function buildMcpSessionConfig(params: {
+  input: CreateAgentFromMcpInput;
+  resolvedProviderModel: ResolvedProviderModel;
+  provider: string;
+  resolvedCwd: string;
+  trimmedPrompt: string;
+  resolvedMode?: string;
+  resolvedFeatures?: Record<string, unknown>;
+}): AgentSessionConfig {
+  const passthroughConfig = params.input.config;
+  const { provisionalTitle } = resolveCreateAgentTitles({
+    configTitle: passthroughConfig?.title ?? params.input.title,
+    initialPrompt: params.trimmedPrompt,
+  });
+  const featureValues = params.resolvedFeatures ?? passthroughConfig?.featureValues;
+  const config: AgentSessionConfig = {
+    ...passthroughConfig,
+    provider: params.provider,
+    cwd: params.resolvedCwd,
+    modeId: params.resolvedMode ?? passthroughConfig?.modeId,
+    model: params.resolvedProviderModel.model ?? passthroughConfig?.model,
+    thinkingOptionId: params.input.thinking ?? passthroughConfig?.thinkingOptionId,
+    internal: params.input.internal ?? passthroughConfig?.internal,
+  };
+  if (provisionalTitle) {
+    config.title = provisionalTitle;
+  }
+  if (featureValues) {
+    config.featureValues = featureValues;
+  }
+  return config;
 }
 
 async function ensureWorkspaceForMcpCreate(
   dependencies: CreateAgentCommandDependencies,
   cwd: string,
+  initialPrompt: string,
 ): Promise<string | undefined> {
   if (!dependencies.ensureWorkspaceForCreate) {
     return undefined;
   }
-  return dependencies.ensureWorkspaceForCreate(cwd);
+  return dependencies.ensureWorkspaceForCreate(cwd, { prompt: initialPrompt });
 }
 
 async function sendInitialPrompt(
   dependencies: CreateAgentCommandDependencies,
   resolved: ResolvedCreateAgent,
   snapshot: ManagedAgent,
-): Promise<{ started: boolean; liveSnapshot: ManagedAgent }> {
+): Promise<{ started: boolean; liveSnapshot: ManagedAgent; error?: unknown }> {
   try {
     const prompt = resolved.prompt;
     if (prompt === undefined) {
@@ -330,33 +467,12 @@ async function sendInitialPrompt(
     if (resolved.promptFailure === "throw") {
       throw error;
     }
+    if (resolved.promptFailure === "return-error") {
+      return { started: false, liveSnapshot: snapshot, error };
+    }
     dependencies.logger.error({ err: error, agentId: snapshot.id }, "Failed to run initial prompt");
     return { started: false, liveSnapshot: snapshot };
   }
-}
-
-function buildAgentPrompt(
-  text: string,
-  images?: Array<{ data: string; mimeType: string }>,
-  attachments?: AgentAttachment[],
-): AgentPromptInput {
-  const normalized = text.trim();
-  const hasImages = (images?.length ?? 0) > 0;
-  const hasAttachments = (attachments?.length ?? 0) > 0;
-  if (!hasImages && !hasAttachments) {
-    return normalized;
-  }
-  const blocks: AgentPromptContentBlock[] = [];
-  if (normalized.length > 0) {
-    blocks.push({ type: "text", text: normalized });
-  }
-  for (const image of images ?? []) {
-    blocks.push({ type: "image", data: image.data, mimeType: image.mimeType });
-  }
-  for (const attachment of attachments ?? []) {
-    blocks.push(attachment);
-  }
-  return blocks;
 }
 
 function requireParentAgent(agentManager: AgentManager, parentAgentId: string): ManagedAgent {
@@ -395,6 +511,7 @@ async function resolveMcpCwd(params: {
   resolvedCwd: string;
   setupContinuation?: AgentWorktreeSetupContinuation;
   createdWorkspaceId?: string;
+  createdWorktree?: CreatePaseoWorktreeWorkflowResult;
 }> {
   const { dependencies, worktree } = params;
   if (!worktree) {
@@ -424,7 +541,7 @@ async function resolveMcpCwd(params: {
       refName: worktree.refName,
       action: worktree.action,
       githubPrNumber: worktree.githubPrNumber,
-      ...(params.initialPrompt ? { firstAgentContext: { prompt: params.initialPrompt } } : {}),
+      firstAgentContext: { prompt: params.initialPrompt },
       runSetup: false,
       paseoHome: dependencies.paseoHome,
       worktreesRoot: dependencies.worktreesRoot,
@@ -450,9 +567,10 @@ async function resolveMcpCwd(params: {
     },
   });
   return {
-    resolvedCwd: createdWorktree.worktree.worktreePath,
+    resolvedCwd: createdWorktree.workspace.cwd,
     setupContinuation: createdWorktree.setupContinuation,
     createdWorkspaceId: createdWorktree.workspace.workspaceId,
+    createdWorktree,
   };
 }
 
@@ -479,23 +597,4 @@ async function createMcpWorktree(
   } catch (error) {
     throw toWorktreeRequestError(error);
   }
-}
-
-function mergeLabels(params: {
-  callerAgentId: string | undefined;
-  detached: boolean;
-  childAgentDefaultLabels: Record<string, string> | undefined;
-  labels: Record<string, string> | undefined;
-}): Record<string, string> | undefined {
-  const mergedLabels = {
-    ...(!params.detached && params.callerAgentId
-      ? { [PARENT_AGENT_ID_LABEL]: params.callerAgentId }
-      : {}),
-    ...params.childAgentDefaultLabels,
-    ...params.labels,
-  };
-  if (params.detached) {
-    delete mergedLabels[PARENT_AGENT_ID_LABEL];
-  }
-  return Object.keys(mergedLabels).length > 0 ? mergedLabels : undefined;
 }

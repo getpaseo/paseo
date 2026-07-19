@@ -76,7 +76,7 @@ async function clickArchiveAndAnswerWarning(
   return warning;
 }
 
-test.describe("Worktree archive risk warning", () => {
+test.describe("Workspace archive risk warning for worktree backing", () => {
   let client: Awaited<ReturnType<typeof connectNewWorkspaceDaemonClient>>;
   let tempRepo: { path: string; cleanup: () => Promise<void> };
   const createdWorktreeDirectories = new Set<string>();
@@ -97,7 +97,7 @@ test.describe("Worktree archive risk warning", () => {
     await tempRepo?.cleanup().catch(() => undefined);
   });
 
-  test("a risky worktree archive is gated by confirmation and removes the directory after acceptance", async ({
+  test("a risky workspace archive is gated by confirmation and removes its worktree after acceptance", async ({
     page,
   }) => {
     const serverId = getServerId();

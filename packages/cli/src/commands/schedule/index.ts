@@ -1,4 +1,4 @@
-import { Command } from "commander";
+import { Command, Option } from "commander";
 import { withOutput } from "../../output/index.js";
 import { addJsonAndDaemonHostOptions } from "../../utils/command-options.js";
 import { runCreateCommand } from "./create.js";
@@ -19,11 +19,11 @@ export function createScheduleCommand(): Command {
       .command("create")
       .description("Create a schedule")
       .argument("<prompt>", "Prompt to run on the schedule")
-      .option("--every <duration>", "Fixed interval cadence (for example: 5m, 1h)")
+      .option("--every <duration>", "Cron-compatible cadence preset (for example: 5m, 1h)")
       .option("--cron <expr>", "Cron cadence expression")
       .option("--timezone <iana>", "IANA time zone for cron cadence (default: UTC)")
       .option("--name <name>", "Optional schedule name")
-      .option("--target <self|new-agent|agent-id>", "Run target")
+      .addOption(new Option("--target <target>", "Legacy schedule target").hideHelp())
       .option(
         "--provider <provider>",
         "Agent provider, or provider/model (e.g. codex or codex/gpt-5.4)",
@@ -33,8 +33,7 @@ export function createScheduleCommand(): Command {
         "Provider-specific mode (e.g. claude bypassPermissions, opencode build)",
       )
       .option("--cwd <path>", "Working directory (default: current; required with --host)")
-      .option("--run-now", "Fire one immediate run on creation (only with --cron)")
-      .option("--no-run-now", "Wait the full interval before the first run (only with --every)")
+      .option("--run-now", "Fire one immediate run on creation")
       .option("--max-runs <n>", "Maximum number of runs")
       .option("--expires-in <duration>", "Time to live for the schedule"),
   ).action(withOutput(runCreateCommand));
@@ -81,7 +80,7 @@ export function createScheduleCommand(): Command {
       .command("update")
       .description("Update an existing schedule in place")
       .argument("<id>", "Schedule ID")
-      .option("--every <duration>", "Switch to fixed interval cadence (for example: 5m, 1h)")
+      .option("--every <duration>", "Cron-compatible cadence preset (for example: 5m, 1h)")
       .option("--cron <expr>", "Switch to cron cadence expression")
       .option("--timezone <iana>", "IANA time zone for cron cadence (requires --cron)")
       .option("--name <name>", "Rename the schedule (empty string clears the name)")

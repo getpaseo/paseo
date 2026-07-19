@@ -3,6 +3,7 @@ import type {
   SidebarProjectEntry,
   SidebarWorkspaceEntry,
 } from "@/hooks/use-sidebar-workspaces-list";
+import { buildStatusGroups } from "@/hooks/sidebar-status-view-model";
 
 import {
   buildSidebarShortcutModel,
@@ -202,11 +203,13 @@ describe("buildStatusSidebarShortcutModel", () => {
     ];
 
     const model = buildStatusSidebarShortcutModel({
-      workspaces,
-      projectNamesByKey: new Map([
-        ["p1", "Project 1"],
-        ["p2", "Project 2"],
-      ]),
+      groups: buildStatusGroups(
+        workspaces,
+        new Map([
+          ["p1", "Project 1"],
+          ["p2", "Project 2"],
+        ]),
+      ),
     });
 
     expect(model.shortcutTargets).toEqual([
@@ -242,8 +245,7 @@ describe("buildStatusSidebarShortcutModel", () => {
     ];
 
     const model = buildStatusSidebarShortcutModel({
-      workspaces,
-      projectNamesByKey: new Map([["p1", "Project 1"]]),
+      groups: buildStatusGroups(workspaces, new Map([["p1", "Project 1"]])),
       collapsedStatusGroupKeys: new Set(["needs_input"]),
     });
 

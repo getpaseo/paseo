@@ -4,14 +4,65 @@ import type { WorkspaceStructureProject } from "@/projects/workspace-structure";
 import {
   appendMissingOrderKeys,
   applyStoredOrdering,
-  buildSidebarStatusWorkspacePlacements,
+  buildSidebarWorkspaceEntries,
   buildSidebarWorkspacePlacementModel,
   buildSidebarProjectsFromStructure,
   computeSidebarOrderUpdates,
+  createSidebarWorkspaceEntry,
   deriveSidebarLoadingState,
   shouldShowSidebarHostLabels,
   type SidebarProjectEntry,
 } from "./sidebar-workspaces-view-model";
+
+function workspaceWithForge(forge: string | undefined, prUrl: string): WorkspaceDescriptor {
+  return {
+    id: "ws-1",
+    projectId: "proj",
+    projectDisplayName: "repo",
+    projectRootPath: "/repo",
+    workspaceDirectory: "/repo",
+    projectKind: "git",
+    workspaceKind: "worktree",
+    name: "feature",
+    title: null,
+    status: "done",
+    statusEnteredAt: null,
+    archivingAt: null,
+    diffStat: null,
+    scripts: [],
+    forge,
+    githubRuntime: {
+      featuresEnabled: true,
+      pullRequest: {
+        url: prUrl,
+        title: "Change",
+        state: "open",
+        baseRefName: "main",
+        headRefName: "feature",
+        isMerged: false,
+      },
+      error: null,
+    },
+  };
+}
+
+describe("createSidebarWorkspaceEntry forge threading", () => {
+  it("threads a gitlab summary forge onto the prHint", () => {
+    const entry = createSidebarWorkspaceEntry({
+      serverId: "srv",
+      workspace: workspaceWithForge("gitlab", "https://gitlab.com/group/proj/-/merge_requests/7"),
+    });
+    expect(entry.prHint).toMatchObject({ number: 7, forge: "gitlab" });
+  });
+
+  it("falls back to github when the summary omits forge (old daemon)", () => {
+    const entry = createSidebarWorkspaceEntry({
+      serverId: "srv",
+      workspace: workspaceWithForge(undefined, "https://github.com/acme/repo/pull/42"),
+    });
+    expect(entry.prHint).toMatchObject({ number: 42, forge: "github" });
+  });
+});
 
 interface OrderedItem {
   key: string;
@@ -226,11 +277,12 @@ describe("shared sidebar workspace model", () => {
         }),
       ],
     });
-    const statusRows = buildSidebarStatusWorkspacePlacements({
+    const workspaceEntries = buildSidebarWorkspaceEntries({
       placements: model.workspaces,
       sessions: [
         {
           serverId: "host-a",
+          workspaceAgentActivity: new Map(),
           workspaces: new Map([
             [
               "main",
@@ -246,6 +298,7 @@ describe("shared sidebar workspace model", () => {
         },
         {
           serverId: "host-b",
+          workspaceAgentActivity: new Map(),
           workspaces: new Map([
             [
               "feature",
@@ -288,13 +341,65 @@ describe("shared sidebar workspace model", () => {
         ],
       }),
     ]);
-    expect(statusRows.map((entry) => [entry.workspaceKey, entry.statusBucket, entry.name])).toEqual(
-      [
-        ["host-a:main", "done", "main"],
-        ["host-b:feature", "running", "feature/status-flow"],
-      ],
-    );
+    expect(
+      Array.from(workspaceEntries.values()).map((entry) => [
+        entry.workspaceKey,
+        entry.statusBucket,
+        entry.name,
+      ]),
+    ).toEqual([
+      ["host-a:main", "done", "main"],
+      ["host-b:feature", "running", "feature/status-flow"],
+    ]);
     expect(model.projectNamesByKey).toEqual(new Map([["getpaseo/paseo", "getpaseo/paseo"]]));
+  });
+
+  it("preserves unchanged row identities when another workspace updates", () => {
+    const model = buildSidebarWorkspacePlacementModel({
+      projects: [project({ projectKey: "project", workspaceKeys: ["srv:one", "srv:two"] })],
+    });
+    const one = workspace({
+      id: "one",
+      name: "one",
+      projectId: "project",
+      projectDisplayName: "project",
+    });
+    const two = workspace({
+      id: "two",
+      name: "two",
+      projectId: "project",
+      projectDisplayName: "project",
+    });
+    const previousEntries = buildSidebarWorkspaceEntries({
+      placements: model.workspaces,
+      sessions: [
+        {
+          serverId: "srv",
+          workspaceAgentActivity: new Map(),
+          workspaces: new Map([
+            ["one", one],
+            ["two", two],
+          ]),
+        },
+      ],
+    });
+    const nextEntries = buildSidebarWorkspaceEntries({
+      placements: model.workspaces,
+      sessions: [
+        {
+          serverId: "srv",
+          workspaceAgentActivity: new Map(),
+          workspaces: new Map([
+            ["one", one],
+            ["two", { ...two, status: "running" }],
+          ]),
+        },
+      ],
+      previousEntries,
+    });
+
+    expect(nextEntries.get("srv:one")).toBe(previousEntries.get("srv:one"));
+    expect(nextEntries.get("srv:two")).not.toBe(previousEntries.get("srv:two"));
   });
 });
 

@@ -171,7 +171,7 @@ For pay-as-you-go, use `ANTHROPIC_API_KEY` with a standard Model Studio key (`sk
 | `qwen3-coder-next` | Optimized for coding        |
 | `kimi-k2.5`        | Vision capable              |
 | `glm-5`            | Zhipu GLM                   |
-| `MiniMax-M2.5`     | MiniMax                     |
+| `MiniMax-M3`       | MiniMax                     |
 
 **Additional models (pay-as-you-go):**
 `qwen3-max`, `qwen3.5-flash`, `qwen3-coder-plus`, `qwen3-coder-flash`, `qwen3-vl-plus`, `qwen3-vl-flash`
@@ -347,9 +347,9 @@ Override the command used to launch any provider with the `command` field. This 
 
 The `command` array completely replaces the default command for that provider. The binary must exist on the system — Paseo checks for its availability and will mark the provider as unavailable if not found.
 
-### Pi-compatible forks with their own session directory
+### OMP profiles and Pi-compatible forks
 
-OMP already ships as a built-in provider option. It is disabled by default; enable it with:
+OMP ships as a first-class built-in provider option. It is disabled by default; enable it with:
 
 ```json
 {
@@ -360,6 +360,34 @@ OMP already ships as a built-in provider option. It is disabled by default; enab
   }
 }
 ```
+
+Custom OMP profiles should extend `omp`. They inherit the OMP adapter's `rpc-ui` approvals, native Paseo host tools, provider-managed subagents, and import behavior:
+
+```json
+{
+  "agents": {
+    "providers": {
+      "omp-work": {
+        "extends": "omp",
+        "label": "Oh My Pi (Work)",
+        "command": ["omp"],
+        "env": {
+          "XDG_CONFIG_HOME": "~/.config/omp-work",
+          "XDG_STATE_HOME": "~/.local/state/omp-work"
+        },
+        "params": {
+          "sessionDir": "~/.local/state/omp-work/omp/agent/sessions",
+          "smolModel": "openai/gpt-5-mini",
+          "slowModel": "anthropic/claude-opus-4-1",
+          "planModel": "openai/o3"
+        }
+      }
+    }
+  }
+}
+```
+
+`params.sessionDir` is used only for importing sessions that were started outside Paseo. If `command` or XDG env vars move OMP's state directory, set `params.sessionDir` to the resulting OMP JSONL session directory; launching and resuming still go through the configured command.
 
 For other providers that keep Pi's `--mode rpc` API but write sessions somewhere else, extend `pi`, replace the command, and provide the JSONL session directory:
 
@@ -380,7 +408,7 @@ For other providers that keep Pi's `--mode rpc` API but write sessions somewhere
 }
 ```
 
-The session directory is used only for importing sessions that were started outside Paseo. Launching and resuming still go through the configured command, so this example resumes with `my-pi-fork --mode rpc --session <session-file>`.
+This session directory is also import-only. Launching and resuming still go through the configured command, so this example resumes with `my-pi-fork --mode rpc --session <session-file>`.
 
 ---
 
@@ -456,6 +484,37 @@ Paseo tools such as subagent creation come from the shared internal tool catalog
   }
 }
 ```
+
+ACP agents execute filesystem and terminal operations in their own environment
+by default. To let a compliant agent delegate those operations to Paseo instead,
+enable the corresponding client capabilities:
+
+```json
+{
+  "agents": {
+    "providers": {
+      "local-agent": {
+        "extends": "acp",
+        "label": "Local Agent",
+        "command": ["local-agent", "acp"],
+        "params": {
+          "clientCapabilities": {
+            "fs": {
+              "readTextFile": true,
+              "writeTextFile": true
+            },
+            "terminal": true
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+Only enable capabilities Paseo should execute. When the agent and Paseo run in
+different environments, configure equivalent absolute workspace paths before
+delegating filesystem or terminal operations to Paseo.
 
 ### Generic ACP diagnostics
 

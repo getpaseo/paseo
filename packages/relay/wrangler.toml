@@ -8,6 +8,9 @@ routes = [{ pattern = "relay.paseo.sh", custom_domain = true }]
 [observability]
 enabled = true
 
+[vars]
+PASEO_RELAY_UPSTREAM = "https://paseo-relay-next.fly.dev"
+
 [[durable_objects.bindings]]
 name = "RELAY"
 class_name = "RelayDurableObject"

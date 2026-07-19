@@ -2,7 +2,7 @@ import { z } from "zod";
 
 export const BrowserAutomationErrorCodeSchema = z.enum([
   "browser_disabled",
-  "browser_no_desktop",
+  "browser_no_host",
   "browser_tab_not_found",
   "browser_tab_closed",
   "browser_timeout",
@@ -20,6 +20,33 @@ const BROWSER_AUTOMATION_BROWSER_ID_MESSAGE =
 const BROWSER_AUTOMATION_WAIT_CONDITION_MESSAGE =
   "browser_wait requires exactly one of text or url";
 
+export const BROWSER_AUTOMATION_COMMAND_NAMES = [
+  "list_tabs",
+  "new_tab",
+  "snapshot",
+  "click",
+  "fill",
+  "wait",
+  "type",
+  "keypress",
+  "navigate",
+  "back",
+  "forward",
+  "reload",
+  "screenshot",
+  "upload",
+  "select",
+  "hover",
+  "drag",
+  "logs",
+  "evaluate",
+  "scroll",
+  "resize",
+  "close_tab",
+] as const;
+
+export const BrowserAutomationCommandNameSchema = z.enum(BROWSER_AUTOMATION_COMMAND_NAMES);
+
 export const BrowserAutomationBrowserIdSchema = z
   .string({ error: () => BROWSER_AUTOMATION_BROWSER_ID_MESSAGE })
   .min(1, BROWSER_AUTOMATION_BROWSER_ID_MESSAGE)
@@ -32,6 +59,8 @@ const BrowserAutomationTabTargetSchema = z
   .strict();
 
 const BrowserAutomationRefSchema = z.string().regex(/^@e\d+$/);
+const BrowserAutomationMouseButtonSchema = z.enum(["left", "right", "middle"]);
+const BrowserAutomationInputModifierSchema = z.enum(["Alt", "Control", "Meta", "Shift"]);
 const BrowserAutomationHttpUrlSchema = z
   .string()
   .url()
@@ -64,6 +93,9 @@ export const BrowserAutomationClickCommandSchema = z.object({
   command: z.literal("click"),
   args: BrowserAutomationTabTargetSchema.extend({
     ref: BrowserAutomationRefSchema,
+    button: BrowserAutomationMouseButtonSchema.default("left"),
+    doubleClick: z.boolean().default(false),
+    modifiers: z.array(BrowserAutomationInputModifierSchema).default([]),
   }),
 });
 
@@ -169,6 +201,36 @@ export const BrowserAutomationLogsCommandSchema = z.object({
   }),
 });
 
+export const BrowserAutomationEvaluateCommandSchema = z.object({
+  command: z.literal("evaluate"),
+  args: BrowserAutomationTabTargetSchema.extend({
+    function: z.string().min(1),
+    ref: BrowserAutomationRefSchema.optional(),
+  }),
+});
+
+export const BrowserAutomationScrollCommandSchema = z.object({
+  command: z.literal("scroll"),
+  args: BrowserAutomationTabTargetSchema.extend({
+    ref: BrowserAutomationRefSchema.optional(),
+    deltaX: z.number(),
+    deltaY: z.number(),
+  }),
+});
+
+export const BrowserAutomationResizeCommandSchema = z.object({
+  command: z.literal("resize"),
+  args: BrowserAutomationTabTargetSchema.extend({
+    width: z.number().int().positive(),
+    height: z.number().int().positive(),
+  }),
+});
+
+export const BrowserAutomationCloseTabCommandSchema = z.object({
+  command: z.literal("close_tab"),
+  args: BrowserAutomationTabTargetSchema,
+});
+
 export const BrowserAutomationCommandSchema = z.discriminatedUnion("command", [
   BrowserAutomationListTabsCommandSchema,
   BrowserAutomationNewTabCommandSchema,
@@ -188,6 +250,10 @@ export const BrowserAutomationCommandSchema = z.discriminatedUnion("command", [
   BrowserAutomationHoverCommandSchema,
   BrowserAutomationDragCommandSchema,
   BrowserAutomationLogsCommandSchema,
+  BrowserAutomationEvaluateCommandSchema,
+  BrowserAutomationScrollCommandSchema,
+  BrowserAutomationResizeCommandSchema,
+  BrowserAutomationCloseTabCommandSchema,
 ]);
 
 export const BrowserAutomationTabInfoSchema = z.object({
@@ -213,14 +279,15 @@ export const BrowserAutomationNewTabResultSchema = z.object({
   url: z.string().min(1),
 });
 
-export const BrowserAutomationSnapshotElementSchema = z.object({
-  ref: z.string().regex(/^@e\d+$/),
-  role: z.string(),
-  tagName: z.string(),
-  text: z.string(),
-  selector: z.string(),
-  attributes: z.record(z.string(), z.string()).default({}),
-});
+export const BrowserAutomationSnapshotStatsSchema = z
+  .object({
+    nodeCount: z.number().int().nonnegative(),
+    refCount: z.number().int().nonnegative(),
+    textLength: z.number().int().nonnegative(),
+    iframeCount: z.number().int().nonnegative().optional(),
+    maxDepth: z.number().int().nonnegative().optional(),
+  })
+  .strict();
 
 export const BrowserAutomationSnapshotResultSchema = z.object({
   command: z.literal("snapshot"),
@@ -228,13 +295,18 @@ export const BrowserAutomationSnapshotResultSchema = z.object({
   workspaceId: z.string().min(1).optional(),
   url: z.string(),
   title: z.string(),
-  elements: z.array(BrowserAutomationSnapshotElementSchema),
+  format: z.literal("aria-yaml"),
+  snapshot: z.string(),
+  truncated: z.boolean(),
+  stats: BrowserAutomationSnapshotStatsSchema,
 });
 
 export const BrowserAutomationClickResultSchema = z.object({
   command: z.literal("click"),
   browserId: BrowserAutomationBrowserIdSchema,
   ref: BrowserAutomationRefSchema,
+  x: z.number().optional(),
+  y: z.number().optional(),
 });
 
 export const BrowserAutomationFillResultSchema = z.object({
@@ -253,6 +325,8 @@ export const BrowserAutomationTypeResultSchema = z.object({
   command: z.literal("type"),
   browserId: BrowserAutomationBrowserIdSchema,
   ref: BrowserAutomationRefSchema.optional(),
+  x: z.number().optional(),
+  y: z.number().optional(),
 });
 
 export const BrowserAutomationKeypressResultSchema = z.object({
@@ -260,6 +334,8 @@ export const BrowserAutomationKeypressResultSchema = z.object({
   browserId: BrowserAutomationBrowserIdSchema,
   key: z.string().min(1),
   ref: BrowserAutomationRefSchema.optional(),
+  x: z.number().optional(),
+  y: z.number().optional(),
 });
 
 export const BrowserAutomationNavigateResultSchema = z.object({
@@ -310,6 +386,8 @@ export const BrowserAutomationHoverResultSchema = z.object({
   command: z.literal("hover"),
   browserId: BrowserAutomationBrowserIdSchema,
   ref: BrowserAutomationRefSchema,
+  x: z.number().optional(),
+  y: z.number().optional(),
 });
 
 export const BrowserAutomationDragResultSchema = z.object({
@@ -317,6 +395,10 @@ export const BrowserAutomationDragResultSchema = z.object({
   browserId: BrowserAutomationBrowserIdSchema,
   sourceRef: BrowserAutomationRefSchema,
   targetRef: BrowserAutomationRefSchema,
+  sourceX: z.number().optional(),
+  sourceY: z.number().optional(),
+  targetX: z.number().optional(),
+  targetY: z.number().optional(),
 });
 
 export const BrowserAutomationConsoleLogEntrySchema = z.object({
@@ -344,6 +426,35 @@ export const BrowserAutomationLogsResultSchema = z.object({
   network: z.array(BrowserAutomationNetworkLogEntrySchema),
 });
 
+export const BrowserAutomationEvaluateResultSchema = z.object({
+  command: z.literal("evaluate"),
+  browserId: BrowserAutomationBrowserIdSchema,
+  resultJson: z.string(),
+  truncated: z.boolean(),
+});
+
+export const BrowserAutomationScrollResultSchema = z.object({
+  command: z.literal("scroll"),
+  browserId: BrowserAutomationBrowserIdSchema,
+  ref: BrowserAutomationRefSchema.optional(),
+  deltaX: z.number(),
+  deltaY: z.number(),
+  x: z.number().optional(),
+  y: z.number().optional(),
+});
+
+export const BrowserAutomationResizeResultSchema = z.object({
+  command: z.literal("resize"),
+  browserId: BrowserAutomationBrowserIdSchema,
+  width: z.number().int().positive(),
+  height: z.number().int().positive(),
+});
+
+export const BrowserAutomationCloseTabResultSchema = z.object({
+  command: z.literal("close_tab"),
+  browserId: BrowserAutomationBrowserIdSchema,
+});
+
 export const BrowserAutomationResultSchema = z.discriminatedUnion("command", [
   BrowserAutomationListTabsResultSchema,
   BrowserAutomationNewTabResultSchema,
@@ -363,12 +474,25 @@ export const BrowserAutomationResultSchema = z.discriminatedUnion("command", [
   BrowserAutomationHoverResultSchema,
   BrowserAutomationDragResultSchema,
   BrowserAutomationLogsResultSchema,
+  BrowserAutomationEvaluateResultSchema,
+  BrowserAutomationScrollResultSchema,
+  BrowserAutomationResizeResultSchema,
+  BrowserAutomationCloseTabResultSchema,
 ]);
 
 export const BrowserAutomationErrorSchema = z.object({
   code: BrowserAutomationErrorCodeSchema,
   message: z.string().min(1),
   retryable: z.boolean().default(false),
+});
+
+export const BrowserAutomationDialogEventSchema = z.object({
+  type: z.enum(["alert", "confirm", "prompt", "beforeunload"]),
+  message: z.string(),
+  defaultValue: z.string().optional(),
+  action: z.enum(["accepted", "dismissed"]),
+  promptText: z.string().optional(),
+  timestamp: z.number(),
 });
 
 export const BrowserAutomationExecuteRequestSchema = z
@@ -389,16 +513,19 @@ export const BrowserAutomationExecuteResponseSchema = z.object({
       requestId: z.string().min(1),
       ok: z.literal(true),
       result: BrowserAutomationResultSchema,
+      dialogs: z.array(BrowserAutomationDialogEventSchema).optional(),
     }),
     z.object({
       requestId: z.string().min(1),
       ok: z.literal(false),
       error: BrowserAutomationErrorSchema,
+      dialogs: z.array(BrowserAutomationDialogEventSchema).optional(),
     }),
   ]),
 });
 
 export type BrowserAutomationErrorCode = z.infer<typeof BrowserAutomationErrorCodeSchema>;
+export type BrowserAutomationCommandName = z.infer<typeof BrowserAutomationCommandNameSchema>;
 export type BrowserAutomationCommand = z.infer<typeof BrowserAutomationCommandSchema>;
 export type BrowserAutomationResult = z.infer<typeof BrowserAutomationResultSchema>;
 export type BrowserAutomationConsoleLogEntry = z.infer<
@@ -407,6 +534,7 @@ export type BrowserAutomationConsoleLogEntry = z.infer<
 export type BrowserAutomationNetworkLogEntry = z.infer<
   typeof BrowserAutomationNetworkLogEntrySchema
 >;
+export type BrowserAutomationDialogEvent = z.infer<typeof BrowserAutomationDialogEventSchema>;
 export type BrowserAutomationExecuteRequest = z.infer<typeof BrowserAutomationExecuteRequestSchema>;
 export type BrowserAutomationExecuteResponse = z.infer<
   typeof BrowserAutomationExecuteResponseSchema

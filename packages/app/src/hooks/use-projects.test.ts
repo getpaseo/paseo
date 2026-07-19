@@ -1,70 +1,25 @@
 import { describe, expect, it } from "vitest";
-import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import type { WorkspaceDescriptorPayload } from "@getpaseo/protocol/messages";
+import type { EmptyProjectDescriptor, WorkspaceDescriptor } from "@/stores/session-store";
 import {
-  fetchAggregatedProjects,
-  type ProjectsHostInput,
-  type ProjectsRuntime,
-  type ProjectsRuntimeSnapshot,
-} from "@/projects/aggregated-projects";
+  deriveProjectsFromReplica,
+  type ProjectHostReplica,
+  type ProjectHostRuntimeState,
+} from "@/hooks/use-projects";
 
-type FetchWorkspaces = DaemonClient["fetchWorkspaces"];
-type FetchWorkspacesResult = Awaited<ReturnType<FetchWorkspaces>>;
-
-interface HostFixture {
+function runtimeState(input: {
   serverId: string;
-  serverName: string;
-  status: "online" | "offline" | "missing-snapshot";
-  workspaces?: WorkspaceDescriptorPayload[] | Error;
-}
-
-interface RuntimeAdapter extends ProjectsRuntime {
-  fetchCalls: Map<string, number>;
-}
-
-function createRuntime(hosts: HostFixture[]): RuntimeAdapter {
-  const snapshots = new Map<string, ProjectsRuntimeSnapshot | null>();
-  const clients = new Map<string, Pick<DaemonClient, "fetchWorkspaces"> | null>();
-  const fetchCalls = new Map<string, number>();
-
-  for (const host of hosts) {
-    if (host.status === "missing-snapshot") {
-      snapshots.set(host.serverId, null);
-    } else {
-      snapshots.set(host.serverId, { connectionStatus: host.status });
-    }
-
-    if (host.workspaces === undefined) {
-      clients.set(host.serverId, null);
-      continue;
-    }
-
-    const workspaces = host.workspaces;
-    const fetchWorkspaces: FetchWorkspaces = async () => {
-      fetchCalls.set(host.serverId, (fetchCalls.get(host.serverId) ?? 0) + 1);
-      if (workspaces instanceof Error) {
-        throw workspaces;
-      }
-      return {
-        requestId: `req-${host.serverId}`,
-        entries: workspaces,
-        emptyProjects: [],
-        pageInfo: { nextCursor: null, prevCursor: null, hasMore: false },
-      } satisfies FetchWorkspacesResult;
-    };
-
-    clients.set(host.serverId, { fetchWorkspaces });
-  }
-
+  isOnline: boolean;
+  isLoading?: boolean;
+  isFetching?: boolean;
+  error?: string | null;
+}): ProjectHostRuntimeState {
   return {
-    getClient: (serverId) => clients.get(serverId) ?? null,
-    getSnapshot: (serverId) => snapshots.get(serverId),
-    fetchCalls,
+    serverId: input.serverId,
+    isOnline: input.isOnline,
+    isLoading: input.isLoading ?? false,
+    isFetching: input.isFetching ?? false,
+    error: input.error ?? null,
   };
-}
-
-function hostInputs(hosts: HostFixture[]): ProjectsHostInput[] {
-  return hosts.map((host) => ({ serverId: host.serverId, serverName: host.serverName }));
 }
 
 function workspace(input: {
@@ -73,20 +28,21 @@ function workspace(input: {
   projectName: string;
   cwd: string;
   remoteUrl: string | null;
-}): WorkspaceDescriptorPayload {
+}): WorkspaceDescriptor {
   return {
     id: input.id,
     projectId: input.projectKey,
     projectDisplayName: input.projectName,
+    projectCustomName: null,
     projectRootPath: input.cwd,
     workspaceDirectory: input.cwd,
     projectKind: "git",
     workspaceKind: "local_checkout",
     name: input.id,
+    title: null,
     archivingAt: null,
     status: "done",
     statusEnteredAt: null,
-    activityAt: null,
     diffStat: null,
     scripts: [],
     gitRuntime: {
@@ -115,13 +71,26 @@ function workspace(input: {
   };
 }
 
-describe("fetchAggregatedProjects", () => {
-  it("calls every online host's client and aggregates projects sorted by display name", async () => {
-    const hosts: HostFixture[] = [
+function emptyProject(input: {
+  projectKey: string;
+  projectName: string;
+  cwd: string;
+}): EmptyProjectDescriptor {
+  return {
+    projectId: input.projectKey,
+    projectDisplayName: input.projectName,
+    projectCustomName: null,
+    projectRootPath: input.cwd,
+    projectKind: "git",
+  };
+}
+
+describe("deriveProjectsFromReplica", () => {
+  it("aggregates store workspaces and empty projects sorted by display name", () => {
+    const replicas: ProjectHostReplica[] = [
       {
         serverId: "local",
         serverName: "Local",
-        status: "online",
         workspaces: [
           workspace({
             id: "z-main",
@@ -131,41 +100,50 @@ describe("fetchAggregatedProjects", () => {
             remoteUrl: "https://github.com/acme/zeta.git",
           }),
         ],
+        emptyProjects: [],
       },
       {
         serverId: "laptop",
         serverName: "Laptop",
-        status: "online",
-        workspaces: [
-          workspace({
-            id: "a-main",
+        workspaces: [],
+        emptyProjects: [
+          emptyProject({
             projectKey: "remote:github.com/acme/alpha",
             projectName: "acme/alpha",
             cwd: "/repo/alpha",
-            remoteUrl: "https://github.com/acme/alpha.git",
           }),
         ],
       },
     ];
-    const runtime = createRuntime(hosts);
 
-    const result = await fetchAggregatedProjects({ hosts: hostInputs(hosts), runtime });
+    const result = deriveProjectsFromReplica({
+      replicas,
+      runtimeStates: [
+        runtimeState({ serverId: "local", isOnline: true }),
+        runtimeState({ serverId: "laptop", isOnline: false }),
+      ],
+    });
 
-    expect(runtime.fetchCalls.get("local")).toBe(1);
-    expect(runtime.fetchCalls.get("laptop")).toBe(1);
     expect(result.projects.map((project) => project.projectName)).toEqual([
       "acme/alpha",
       "acme/zeta",
     ]);
+    expect(result.projects[0]?.hosts).toEqual([
+      expect.objectContaining({
+        serverId: "laptop",
+        isOnline: false,
+        repoRoot: "/repo/alpha",
+        workspaceCount: 0,
+      }),
+    ]);
     expect(result.hostErrors).toEqual([]);
   });
 
-  it("surfaces per-host fetch failures without dropping successful hosts", async () => {
-    const hosts: HostFixture[] = [
+  it("maps runtime directory status into loading and host errors", () => {
+    const replicas: ProjectHostReplica[] = [
       {
         serverId: "local",
         serverName: "Local",
-        status: "online",
         workspaces: [
           workspace({
             id: "main",
@@ -175,17 +153,28 @@ describe("fetchAggregatedProjects", () => {
             remoteUrl: "https://github.com/acme/app.git",
           }),
         ],
+        emptyProjects: [],
       },
       {
         serverId: "laptop",
         serverName: "Laptop",
-        status: "online",
-        workspaces: new Error("laptop unavailable"),
+        workspaces: [],
+        emptyProjects: [],
       },
     ];
-    const runtime = createRuntime(hosts);
 
-    const result = await fetchAggregatedProjects({ hosts: hostInputs(hosts), runtime });
+    const result = deriveProjectsFromReplica({
+      replicas,
+      runtimeStates: [
+        runtimeState({ serverId: "local", isOnline: true, isFetching: true }),
+        runtimeState({
+          serverId: "laptop",
+          isOnline: true,
+          isLoading: true,
+          error: "laptop unavailable",
+        }),
+      ],
+    });
 
     expect(result.projects).toEqual([
       expect.objectContaining({ projectKey: "remote:github.com/acme/app" }),
@@ -197,61 +186,30 @@ describe("fetchAggregatedProjects", () => {
         message: "laptop unavailable",
       },
     ]);
+    expect(result.isLoading).toBe(true);
+    expect(result.isFetching).toBe(true);
   });
 
-  it("skips disconnected hosts silently without surfacing them as failures", async () => {
-    const hosts: HostFixture[] = [
-      {
-        serverId: "local",
-        serverName: "Local",
-        status: "online",
-        workspaces: [
-          workspace({
-            id: "main",
-            projectKey: "remote:github.com/acme/app",
-            projectName: "acme/app",
-            cwd: "/repo/app",
-            remoteUrl: "https://github.com/acme/app.git",
-          }),
-        ],
-      },
-      {
-        serverId: "laptop",
-        serverName: "Laptop",
-        status: "offline",
-      },
-    ];
-    const runtime = createRuntime(hosts);
-
-    const result = await fetchAggregatedProjects({ hosts: hostInputs(hosts), runtime });
-
-    expect(result.hostErrors).toEqual([]);
-    expect(result.projects).toEqual([
-      expect.objectContaining({ projectKey: "remote:github.com/acme/app" }),
-    ]);
-    expect(runtime.fetchCalls.get("laptop")).toBeUndefined();
-  });
-
-  it("returns only the stable public project and host entry shapes", async () => {
-    const hosts: HostFixture[] = [
-      {
-        serverId: "local",
-        serverName: "Local",
-        status: "online",
-        workspaces: [
-          workspace({
-            id: "main",
-            projectKey: "remote:github.com/acme/app",
-            projectName: "acme/app",
-            cwd: "/repo/app",
-            remoteUrl: "https://github.com/acme/app.git",
-          }),
-        ],
-      },
-    ];
-    const runtime = createRuntime(hosts);
-
-    const result = await fetchAggregatedProjects({ hosts: hostInputs(hosts), runtime });
+  it("returns only the stable public project and host entry shapes", () => {
+    const result = deriveProjectsFromReplica({
+      replicas: [
+        {
+          serverId: "local",
+          serverName: "Local",
+          workspaces: [
+            workspace({
+              id: "main",
+              projectKey: "remote:github.com/acme/app",
+              projectName: "acme/app",
+              cwd: "/repo/app",
+              remoteUrl: "https://github.com/acme/app.git",
+            }),
+          ],
+          emptyProjects: [],
+        },
+      ],
+      runtimeStates: [runtimeState({ serverId: "local", isOnline: true })],
+    });
 
     expect(Object.keys(result.projects[0] ?? {}).sort()).toEqual([
       "githubUrl",

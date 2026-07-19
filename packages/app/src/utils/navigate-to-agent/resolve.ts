@@ -1,6 +1,6 @@
 import { buildHostAgentDetailRoute } from "@/utils/host-routes";
 import { normalizeWorkspaceOpaqueId } from "@/utils/workspace-identity";
-import type { NavigateToPreparedWorkspaceTabInput } from "@/utils/prepare-workspace-tab";
+import type { NavigateToWorkspaceInput } from "@/stores/navigation-active-workspace-store";
 
 export interface NavigateToAgentInput {
   serverId: string;
@@ -18,12 +18,7 @@ export interface AgentNavTarget {
 export interface NavigateToAgentDeps {
   readAgentNavTarget: (input: { serverId: string; agentId: string }) => AgentNavTarget;
   navigateToHostAgent: (route: string) => void;
-  navigateToPreparedWorkspaceTab: (input: NavigateToPreparedWorkspaceTabInput) => string;
-  restoreArchivedWorkspace: (input: {
-    serverId: string;
-    agentId: string;
-    workspaceId: string;
-  }) => void;
+  navigateToWorkspace: (input: NavigateToWorkspaceInput) => string;
 }
 
 export function resolveNavigateToAgent(
@@ -41,15 +36,7 @@ export function resolveNavigateToAgent(
     return route;
   }
 
-  // Restore self-gates on the agent being archived with its workspace absent, so
-  // ordinary navigations are a cheap no-op.
-  deps.restoreArchivedWorkspace({
-    serverId: input.serverId,
-    agentId: input.agentId,
-    workspaceId,
-  });
-
-  return deps.navigateToPreparedWorkspaceTab({
+  return deps.navigateToWorkspace({
     serverId: input.serverId,
     workspaceId,
     target: { kind: "agent", agentId: input.agentId },

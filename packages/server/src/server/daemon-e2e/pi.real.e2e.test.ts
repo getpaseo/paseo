@@ -24,7 +24,11 @@ process.env.PASEO_SUPERVISED = "0";
 
 const PI_TEST_TIMEOUT_MS = 240_000;
 const PI_REAL_TEST_MODEL = getRealProviderConfig("pi").model;
-const PI_FREE_COMPACTION_TEST_MODEL = "openrouter/openai/gpt-oss-20b:free";
+const PI_COMPACTION_TEST_MODEL = PI_REAL_TEST_MODEL.startsWith("openai-codex/")
+  ? "openai-codex/gpt-5.4-mini"
+  : PI_REAL_TEST_MODEL;
+const PI_COMPACTION_RESERVE_TOKENS =
+  PI_COMPACTION_TEST_MODEL === PI_REAL_TEST_MODEL ? 126_000 : 270_000;
 
 type ToolCallItem = Extract<AgentTimelineItem, { type: "tool_call" }>;
 
@@ -146,7 +150,7 @@ test(
           cwd,
           title: "pi-compact-commands",
           provider: "pi",
-          model: PI_FREE_COMPACTION_TEST_MODEL,
+          model: PI_REAL_TEST_MODEL,
         });
 
         const result = await client.listCommands({ agentId: agent.id });
@@ -186,7 +190,7 @@ test(
           cwd,
           title: "pi-manual-compact",
           provider: "pi",
-          model: PI_FREE_COMPACTION_TEST_MODEL,
+          model: PI_COMPACTION_TEST_MODEL,
         });
 
         await client.sendMessage(agent.id, "Reply exactly: compact-ready");
@@ -219,10 +223,11 @@ test(
           items.some((item) => item.type === "user_message" && item.text.includes("/compact")),
         ).toBe(false);
         expect(
-          items.some(
-            (item) => item.type === "assistant_message" && item.text.includes("Failed to compact"),
-          ),
-        ).toBe(false);
+          items
+            .filter((item) => item.type === "assistant_message")
+            .map((item) => item.text)
+            .filter((text) => text.includes("Failed to compact")),
+        ).toEqual([]);
       });
     } finally {
       rmSync(cwd, { recursive: true, force: true });
@@ -242,7 +247,7 @@ test(
           cwd,
           title: "pi-autocompact-toggle",
           provider: "pi",
-          model: PI_FREE_COMPACTION_TEST_MODEL,
+          model: PI_COMPACTION_TEST_MODEL,
         });
 
         await client.sendMessage(agent.id, "/autocompact off");
@@ -279,7 +284,7 @@ test(
     try {
       writePiCompactionSettings(cwd, {
         enabled: true,
-        reserveTokens: 126_000,
+        reserveTokens: PI_COMPACTION_RESERVE_TOKENS,
         keepRecentTokens: 1,
       });
 
@@ -288,7 +293,7 @@ test(
           cwd,
           title: "pi-auto-compact",
           provider: "pi",
-          model: PI_FREE_COMPACTION_TEST_MODEL,
+          model: PI_COMPACTION_TEST_MODEL,
         });
 
         await client.sendMessage(agent.id, "Reply exactly: auto-compact-ready");
@@ -524,7 +529,7 @@ test(
 
         await client.sendMessage(
           agent.id,
-          "Think step by step about what 7 * 13 equals, and give the final answer at the end.",
+          "Work out 37 * 43 carefully, then answer with only the number.",
         );
 
         const finish = await client.waitForFinish(agent.id, PI_TEST_TIMEOUT_MS);
@@ -535,7 +540,14 @@ test(
           (item): item is Extract<AgentTimelineItem, { type: "reasoning" }> =>
             item.type === "reasoning" && item.text.trim().length > 0,
         );
+        const assistantTexts = items
+          .filter(
+            (item): item is Extract<AgentTimelineItem, { type: "assistant_message" }> =>
+              item.type === "assistant_message",
+          )
+          .map((item) => item.text);
 
+        expect(assistantTexts.join("\n")).toContain("1591");
         expect(reasoningItems.length).toBeGreaterThan(0);
       });
     } finally {

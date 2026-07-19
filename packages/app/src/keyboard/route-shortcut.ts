@@ -20,11 +20,7 @@ export interface ShortcutRoutingInput {
   payload: KeyboardShortcutPayload;
 }
 
-export type ShortcutCallbackName =
-  | "toggle-agent-list"
-  | "toggle-both-sidebars"
-  | "toggle-focus-mode"
-  | "cycle-theme";
+export type ShortcutCallbackName = "toggle-agent-list" | "toggle-both-sidebars" | "cycle-theme";
 
 export type ShortcutAction =
   | { kind: "none" }
@@ -46,7 +42,8 @@ const PASSTHROUGH_DISPATCH: Record<string, KeyboardActionDefinition> = {
   "agent.interrupt": { id: "agent.interrupt", scope: "global" },
   "workspace.tab.new": { id: "workspace.tab.new", scope: "workspace" },
   "workspace.new": { id: "workspace.new", scope: "sidebar" },
-  "worktree.archive": { id: "worktree.archive", scope: "sidebar" },
+  "workspace.archive": { id: "workspace.archive", scope: "sidebar" },
+  "workspace.pin": { id: "workspace.pin", scope: "sidebar" },
   "worktree.new": { id: "worktree.new", scope: "sidebar" },
   "workspace.terminal.new": { id: "workspace.terminal.new", scope: "workspace" },
   "workspace.tab.close.current": { id: "workspace.tab.close-current", scope: "workspace" },
@@ -62,12 +59,12 @@ const PASSTHROUGH_DISPATCH: Record<string, KeyboardActionDefinition> = {
   "workspace.pane.move-tab.up": { id: "workspace.pane.move-tab.up", scope: "workspace" },
   "workspace.pane.move-tab.down": { id: "workspace.pane.move-tab.down", scope: "workspace" },
   "workspace.pane.close": { id: "workspace.pane.close", scope: "workspace" },
+  "view.toggle.focus": { id: "workspace.focus.toggle", scope: "workspace" },
 };
 
 const SIMPLE_CALLBACKS: Record<string, ShortcutCallbackName> = {
   "sidebar.toggle.left": "toggle-agent-list",
   "sidebar.toggle.both": "toggle-both-sidebars",
-  "view.toggle.focus": "toggle-focus-mode",
   "theme.cycle": "cycle-theme",
 };
 

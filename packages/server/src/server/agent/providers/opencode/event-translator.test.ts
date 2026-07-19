@@ -124,7 +124,11 @@ describe("translateOpenCodeEvent", () => {
       {
         type: "timeline",
         provider: "opencode",
-        item: { type: "assistant_message", text: "hey! what can I help with?" },
+        item: {
+          type: "assistant_message",
+          text: "hey! what can I help with?",
+          messageId: "message-1",
+        },
       },
     ]);
   });
@@ -167,7 +171,7 @@ describe("translateOpenCodeEvent", () => {
       {
         type: "timeline",
         provider: "opencode",
-        item: { type: "assistant_message", text: "final text" },
+        item: { type: "assistant_message", text: "final text", messageId: "message-2" },
       },
     ]);
   });
@@ -269,14 +273,64 @@ describe("translateOpenCodeEvent", () => {
       {
         type: "timeline",
         provider: "opencode",
-        item: { type: "assistant_message", text: "hey! " },
+        item: { type: "assistant_message", text: "hey! ", messageId: "msg-d1" },
       },
       {
         type: "timeline",
         provider: "opencode",
-        item: { type: "assistant_message", text: "what's up?" },
+        item: { type: "assistant_message", text: "what's up?", messageId: "msg-d1" },
       },
     ]);
+  });
+
+  it("uses the part id when an assistant delta omits its message id", () => {
+    const state = createState();
+
+    const events = translateOpenCodeEvent(
+      {
+        type: "message.part.delta",
+        properties: {
+          sessionID: "session-1",
+          partID: "part-without-message",
+          field: "text",
+          delta: "still visible",
+        },
+      },
+      state,
+    );
+
+    expect(events).toEqual([
+      {
+        type: "timeline",
+        provider: "opencode",
+        item: {
+          type: "assistant_message",
+          text: "still visible",
+          messageId: "part-without-message",
+        },
+      },
+    ]);
+  });
+
+  it("suppresses part-id-only assistant deltas by their resolved identity", () => {
+    const state = createState();
+    state.suppressAssistantMessagesUntilIdle = { active: true };
+
+    const events = translateOpenCodeEvent(
+      {
+        type: "message.part.delta",
+        properties: {
+          sessionID: "session-1",
+          partID: "compaction-part",
+          field: "text",
+          delta: "hidden summary",
+        },
+      },
+      state,
+    );
+
+    expect(events).toEqual([]);
+    expect(state.compactionSummaryMessageIds).toEqual(new Set(["compaction-part"]));
   });
 
   it("humanizes permission requests and includes shell detail when command metadata exists", () => {
@@ -1073,7 +1127,7 @@ describe("translateOpenCodeEvent", () => {
       {
         type: "timeline",
         provider: "opencode",
-        item: { type: "assistant_message", text: "hello there" },
+        item: { type: "assistant_message", text: "hello there", messageId: "msg-dd1" },
       },
     ]);
   });
@@ -1274,7 +1328,11 @@ describe("translateOpenCodeEvent", () => {
       {
         type: "timeline",
         provider: "opencode",
-        item: { type: "assistant_message", text: '{"summary":"hello"}' },
+        item: {
+          type: "assistant_message",
+          text: '{"summary":"hello"}',
+          messageId: "message-structured-1",
+        },
       },
     ]);
     expect(second).toEqual([]);

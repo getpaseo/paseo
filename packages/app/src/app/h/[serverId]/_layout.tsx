@@ -2,6 +2,7 @@ import { Redirect, Stack, useLocalSearchParams } from "expo-router";
 import { useHostRuntimeBootstrapState } from "@/app/_layout";
 import { HostRouteProvider } from "@/navigation/host-route-context";
 import { resolveStartupRoute } from "@/navigation/host-runtime-bootstrap";
+import { ThemedStack } from "@/navigation/themed-stack";
 import { useHostRegistryStatus, useHosts } from "@/runtime/host-runtime";
 
 const HOST_STACK_SCREEN_OPTIONS = {
@@ -33,14 +34,14 @@ function KnownHostRoute() {
   }
 
   const stack = (
-    <Stack screenOptions={HOST_STACK_SCREEN_OPTIONS}>
+    <ThemedStack screenOptions={HOST_STACK_SCREEN_OPTIONS}>
       <Stack.Screen name="index" />
       <Stack.Screen name="workspace/[workspaceId]/index" />
       <Stack.Screen name="agent/[agentId]" options={AGENT_SCREEN_OPTIONS} />
       <Stack.Screen name="sessions" />
       <Stack.Screen name="open-project" />
       <Stack.Screen name="settings" />
-    </Stack>
+    </ThemedStack>
   );
 
   if (!routeServerId) {

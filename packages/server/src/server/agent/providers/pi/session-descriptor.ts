@@ -1,3 +1,4 @@
+import type { Dirent } from "node:fs";
 import { open, readdir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -12,9 +13,14 @@ import { createRealpathAwarePathMatcher } from "../../../../utils/path.js";
 const PI_CONFIG_DIR_NAME = ".pi";
 const PI_AGENT_DIR_ENV = "PI_CODING_AGENT_DIR";
 const PI_SESSION_DIR_ENV = "PI_CODING_AGENT_SESSION_DIR";
+// Import listing intentionally bounds header parsing to this window. Sessions
+// with unusually large preambles may omit their first-prompt preview.
 const HEAD_BYTES = 64 * 1024;
 const TAIL_BYTES = 256 * 1024;
 const FULL_SCAN_LINE_LIMIT = 2_000;
+// Rank all discovered files cheaply, then parse only a bounded recent window.
+const IMPORT_CANDIDATE_OVERSCAN = 40;
+const IMPORT_CANDIDATE_MIN = 400;
 
 interface PiSessionDescriptorOptions extends ListImportableSessionsOptions {
   sessionDir?: string;
@@ -53,6 +59,10 @@ interface PiSessionDescriptor {
   model: string | null;
   thinkingOptionId: string | null;
 }
+interface RankedSessionFile {
+  file: string;
+  mtime: Date;
+}
 
 export interface PiImportSessionConfig {
   model?: string;
@@ -66,18 +76,23 @@ export async function listPiImportableSessions(
   const files = await walkJsonlFiles(sessionsDir);
   const matchesCwd = options.cwd ? createRealpathAwarePathMatcher(options.cwd) : null;
   const limit = options.limit ?? 20;
+  const ranked = await rankSessionFilesByMtime(files);
+  const candidateLimit = Math.max(limit * IMPORT_CANDIDATE_OVERSCAN, IMPORT_CANDIDATE_MIN);
   const sessions: ImportableProviderSession[] = [];
 
-  for (const file of files) {
-    const session = await readPiImportableSession(file);
+  for (const entry of ranked.slice(0, candidateLimit)) {
+    const session = await readPiImportableSession(entry.file);
     if (!session) continue;
     if (matchesCwd && !matchesCwd(session.cwd)) continue;
     sessions.push(session);
+    if (sessions.length >= limit) {
+      break;
+    }
   }
 
-  return sessions
-    .sort((left, right) => right.lastActivityAt.getTime() - left.lastActivityAt.getTime())
-    .slice(0, limit);
+  return sessions.sort(
+    (left, right) => right.lastActivityAt.getTime() - left.lastActivityAt.getTime(),
+  );
 }
 
 export async function readPiImportSessionConfig(filePath: string): Promise<PiImportSessionConfig> {
@@ -163,7 +178,7 @@ function resolveConfigPath(value: string, options: { baseDir: string; homeDir: s
 }
 
 async function walkJsonlFiles(root: string): Promise<string[]> {
-  let entries: import("node:fs").Dirent[];
+  let entries: Dirent[];
   try {
     entries = await readdir(root, { withFileTypes: true });
   } catch {
@@ -180,6 +195,18 @@ async function walkJsonlFiles(root: string): Promise<string[]> {
     }),
   );
   return files.flat();
+}
+
+async function rankSessionFilesByMtime(files: string[]): Promise<RankedSessionFile[]> {
+  const ranked = await Promise.all(
+    files.map(async (file) => {
+      const mtime = await readFileMtime(file);
+      return mtime ? { file, mtime } : null;
+    }),
+  );
+  return ranked
+    .filter((entry): entry is RankedSessionFile => entry !== null)
+    .sort((left, right) => right.mtime.getTime() - left.mtime.getTime());
 }
 
 async function readPiImportableSession(
@@ -201,14 +228,14 @@ async function readPiImportableSession(
 }
 
 async function readPiSessionDescriptor(filePath: string): Promise<PiSessionDescriptor | null> {
-  const firstLine = await readFirstLine(filePath);
-  if (!firstLine) return null;
-  const header = parseSessionHeader(firstLine);
+  const headChunk = await readHeadChunk(filePath);
+  if (!headChunk) return null;
+  const header = parseSessionHeader(headChunk.split(/\r?\n/u, 1)[0]?.trim() ?? "");
   if (!header) return null;
 
   const tail = await readTail(filePath).catch(() => "");
   const tailInfo = parseSessionTail(tail);
-  const headInfo = await scanSessionHead(filePath);
+  const headInfo = parseSessionHeadFromChunk(headChunk);
   const title = tailInfo.title ?? headInfo.title ?? headInfo.firstUserMessage;
   const model = tailInfo.model ?? headInfo.model;
   const thinkingOptionId = tailInfo.thinkingOptionId ?? headInfo.thinkingOptionId;
@@ -233,19 +260,52 @@ function toPiImportSessionConfig(descriptor: PiSessionDescriptor): PiImportSessi
   };
 }
 
-async function readFirstLine(filePath: string): Promise<string | null> {
+async function readHeadChunk(filePath: string): Promise<string | null> {
   const handle = await open(filePath, "r").catch(() => null);
   if (!handle) return null;
   try {
     const buffer = Buffer.alloc(HEAD_BYTES);
     const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
     if (bytesRead <= 0) return null;
-    const chunk = buffer.subarray(0, bytesRead).toString("utf8");
-    const newlineIndex = chunk.indexOf("\n");
-    return (newlineIndex === -1 ? chunk : chunk.slice(0, newlineIndex)).trim();
+    return buffer.subarray(0, bytesRead).toString("utf8");
   } finally {
     await handle.close().catch(() => undefined);
   }
+}
+
+function parseSessionHeadFromChunk(chunk: string): PiSessionHead {
+  let title: string | null = null;
+  let firstUserMessage: string | null = null;
+  let model: string | null = null;
+  let thinkingOptionId: string | null = null;
+  let lineCount = 0;
+
+  for (const rawLine of chunk.split(/\r?\n/u)) {
+    lineCount += 1;
+    const entry = parseJsonRecord(rawLine.trim());
+    if (!entry) continue;
+
+    if (entry.type === "session_info") {
+      title = readNonEmptyString(entry.name) ?? title;
+    }
+    model = extractModel(entry) ?? model;
+    thinkingOptionId = extractThinkingOptionId(entry) ?? thinkingOptionId;
+
+    if (!firstUserMessage && entry.type === "message" && isRecord(entry.message)) {
+      if (entry.message.role === "user") {
+        firstUserMessage = extractMessageText(entry.message.content);
+      }
+    }
+
+    if (title && firstUserMessage && model && thinkingOptionId) {
+      break;
+    }
+    if (lineCount >= FULL_SCAN_LINE_LIMIT && firstUserMessage) {
+      break;
+    }
+  }
+
+  return { title, firstUserMessage, model, thinkingOptionId };
 }
 
 async function readTail(filePath: string): Promise<string> {
@@ -296,7 +356,6 @@ function parseSessionTail(tail: string): PiSessionTail {
     if (!title && entry.type === "session_info") {
       title = readNonEmptyString(entry.name);
     }
-
     if (!model) {
       model = extractModel(entry);
     }
@@ -328,49 +387,6 @@ function parseSessionTail(tail: string): PiSessionTail {
     model,
     thinkingOptionId,
   };
-}
-
-async function scanSessionHead(filePath: string): Promise<PiSessionHead> {
-  let content: string;
-  try {
-    content = await readFile(filePath, "utf8");
-  } catch {
-    return { title: null, firstUserMessage: null, model: null, thinkingOptionId: null };
-  }
-
-  let title: string | null = null;
-  let firstUserMessage: string | null = null;
-  let model: string | null = null;
-  let thinkingOptionId: string | null = null;
-  let lineCount = 0;
-
-  for (const rawLine of content.split(/\r?\n/u)) {
-    lineCount += 1;
-    const entry = parseJsonRecord(rawLine.trim());
-    if (!entry) continue;
-
-    if (entry.type === "session_info") {
-      title = readNonEmptyString(entry.name) ?? title;
-    }
-
-    model = extractModel(entry) ?? model;
-    thinkingOptionId = extractThinkingOptionId(entry) ?? thinkingOptionId;
-
-    if (!firstUserMessage && entry.type === "message" && isRecord(entry.message)) {
-      if (entry.message.role === "user") {
-        firstUserMessage = extractMessageText(entry.message.content);
-      }
-    }
-
-    if (title && firstUserMessage && model && thinkingOptionId) {
-      break;
-    }
-    if (lineCount >= FULL_SCAN_LINE_LIMIT && firstUserMessage) {
-      break;
-    }
-  }
-
-  return { title, firstUserMessage, model, thinkingOptionId };
 }
 
 function extractModel(entry: Record<string, unknown>): string | null {

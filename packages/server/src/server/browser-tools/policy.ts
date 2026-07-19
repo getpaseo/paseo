@@ -4,14 +4,6 @@ export interface BrowserToolsPolicy {
   isEnabled(): boolean;
 }
 
-export class StaticBrowserToolsPolicy implements BrowserToolsPolicy {
-  public constructor(private readonly enabled: boolean) {}
-
-  public isEnabled(): boolean {
-    return this.enabled;
-  }
-}
-
 export class DaemonConfigBrowserToolsPolicy implements BrowserToolsPolicy {
   public constructor(private readonly configStore: Pick<DaemonConfigStore, "get">) {}
 

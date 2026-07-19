@@ -1,13 +1,11 @@
 import { mkdir, mkdtemp, writeFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, test } from "vitest";
 
-import { loadConfig, resolveBundledWebUiDistDir } from "./config.js";
+import { loadConfig } from "./config.js";
 
 const roots: string[] = [];
-
 async function createPaseoHome(config: unknown): Promise<string> {
   const root = await mkdtemp(path.join(os.tmpdir(), "paseo-config-web-ui-"));
   roots.push(root);
@@ -47,24 +45,6 @@ describe("daemon web UI config", () => {
 
     expect(config.webUi.enabled).toBe(true);
     expectBundledWebUiDistDir(config.webUi.distDir);
-  });
-
-  test("resolves bundled web UI dist dir from TypeScript source modules", () => {
-    const packageRoot = path.join(os.tmpdir(), "paseo-config-web-ui-source-package");
-    const moduleUrl = pathToFileURL(path.join(packageRoot, "src", "server", "config.ts"));
-
-    expect(resolveBundledWebUiDistDir(moduleUrl)).toBe(
-      path.join(packageRoot, "dist", "server", "web-ui"),
-    );
-  });
-
-  test("resolves bundled web UI dist dir from compiled server modules", () => {
-    const packageRoot = path.join(os.tmpdir(), "paseo-config-web-ui-dist-package");
-    const moduleUrl = pathToFileURL(path.join(packageRoot, "dist", "server", "config.js"));
-
-    expect(resolveBundledWebUiDistDir(moduleUrl)).toBe(
-      path.join(packageRoot, "dist", "server", "web-ui"),
-    );
   });
 
   test("PASEO_WEB_UI_ENABLED overrides persisted setting", async () => {

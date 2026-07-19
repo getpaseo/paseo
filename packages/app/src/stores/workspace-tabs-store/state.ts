@@ -19,10 +19,12 @@ export interface WorkspaceDraftTabSetup {
 export type WorkspaceTabTarget =
   | { kind: "draft"; draftId: string; setup?: WorkspaceDraftTabSetup }
   | { kind: "agent"; agentId: string }
+  | { kind: "provider_subagent"; parentAgentId: string; subagentId: string }
   | { kind: "terminal"; terminalId: string }
   | { kind: "browser"; browserId: string }
   | WorkspaceFileTabTarget
-  | { kind: "setup"; workspaceId: string };
+  | { kind: "setup"; workspaceId: string }
+  | { kind: "commit_diff"; sha: string };
 
 export interface WorkspaceTab {
   tabId: string;
@@ -508,6 +510,17 @@ function coerceWorkspaceTabTarget(raw: Record<string, unknown>): WorkspaceTabTar
   if (kind === "agent" && typeof raw.agentId === "string") {
     return normalizeWorkspaceTabTarget({ kind: "agent", agentId: raw.agentId });
   }
+  if (
+    kind === "provider_subagent" &&
+    typeof raw.parentAgentId === "string" &&
+    typeof raw.subagentId === "string"
+  ) {
+    return normalizeWorkspaceTabTarget({
+      kind: "provider_subagent",
+      parentAgentId: raw.parentAgentId,
+      subagentId: raw.subagentId,
+    });
+  }
   if (kind === "terminal" && typeof raw.terminalId === "string") {
     return normalizeWorkspaceTabTarget({ kind: "terminal", terminalId: raw.terminalId });
   }
@@ -525,7 +538,35 @@ function coerceWorkspaceTabTarget(raw: Record<string, unknown>): WorkspaceTabTar
   if (kind === "setup" && typeof raw.workspaceId === "string") {
     return normalizeWorkspaceTabTarget({ kind: "setup", workspaceId: raw.workspaceId });
   }
-  return null;
+  return coercePersistedDiffTabTargetByKind(kind, raw);
+}
+
+function coercePersistedDiffTabTargetByKind(
+  kind: string | null,
+  raw: Record<string, unknown>,
+): WorkspaceTabTarget | null {
+  if (kind === "commit_diff" && typeof raw.sha === "string") {
+    return normalizeWorkspaceTabTarget({ kind: "commit_diff", sha: raw.sha });
+  }
+  return kind === "diff" ? coercePersistedDiffTabTarget(raw) : null;
+}
+
+// NOTE: This legacy store no longer persists diff tabs — live tab persistence is
+// owned by the workspace-layout store, which is where the "commit diff tabs are
+// ephemeral on reload" guarantee is enforced (see stripEphemeralTabsFromLayout).
+// This coercion exists only so this store's migration stays type-complete for any
+// old diff-shaped entries left in `workspace-tabs-state` blobs. Working-tree diff
+// tabs are dropped because they no longer exist as workspace targets; commit diff
+// tabs migrate to the dedicated `commit_diff` target shape.
+function coercePersistedDiffTabTarget(raw: Record<string, unknown>): WorkspaceTabTarget | null {
+  const diffTarget = toObjectRecord(raw.diffTarget);
+  if (!diffTarget || diffTarget.kind !== "commit" || typeof diffTarget.sha !== "string") {
+    return null;
+  }
+  return normalizeWorkspaceTabTarget({
+    kind: "commit_diff",
+    sha: diffTarget.sha,
+  });
 }
 
 function migrateSingleTab(rawTab: unknown, now: number): WorkspaceTab | null {

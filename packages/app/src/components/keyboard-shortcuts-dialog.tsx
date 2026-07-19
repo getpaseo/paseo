@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
@@ -6,25 +6,91 @@ import { getIsElectronRuntime } from "@/constants/layout";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { Shortcut } from "@/components/ui/shortcut";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
+import { formatShortcut } from "@/utils/format-shortcut";
 import { getShortcutOs } from "@/utils/shortcut-platform";
 import { buildKeyboardShortcutHelpSections } from "@/keyboard/keyboard-shortcuts";
 
 const SNAP_POINTS: string[] = ["70%", "92%"];
 
+function shortcutSearchAliases(keys: string[], shortcutOs: "mac" | "non-mac"): string {
+  const aliases = keys.map((key) => {
+    if (shortcutOs === "mac") {
+      if (key === "mod" || key === "meta") return ["cmd", "command"];
+      if (key === "alt") return ["alt", "option"];
+    } else {
+      if (key === "mod" || key === "ctrl") return ["ctrl", "control"];
+      if (key === "meta") return ["win", "windows"];
+    }
+    return [key];
+  });
+  const combinations = aliases.reduce<string[][]>(
+    (prefixes, choices) =>
+      prefixes.flatMap((prefix) => choices.map((choice) => [...prefix, choice])),
+    [[]],
+  );
+  return combinations
+    .flatMap((combination) => [combination.join(" "), combination.join("+")])
+    .join(" ");
+}
+
 export function KeyboardShortcutsDialog() {
   const { t } = useTranslation();
   const open = useKeyboardShortcutsStore((s) => s.shortcutsDialogOpen);
   const setOpen = useKeyboardShortcutsStore((s) => s.setShortcutsDialogOpen);
+  const [query, setQuery] = useState("");
 
-  const isMac = getShortcutOs() === "mac";
+  const shortcutOs = getShortcutOs();
+  const isMac = shortcutOs === "mac";
   const isDesktopApp = getIsElectronRuntime();
   const sections = useMemo(
     () => buildKeyboardShortcutHelpSections({ isMac, isDesktop: isDesktopApp }),
     [isDesktopApp, isMac],
   );
+  const visibleSections = useMemo(() => {
+    const normalizedQuery = query.trim().toLocaleLowerCase();
+    if (!normalizedQuery) return sections;
+
+    return sections.flatMap((section) => {
+      const sectionTitle = t(section.titleKey);
+      if (sectionTitle.toLocaleLowerCase().includes(normalizedQuery)) {
+        return [section];
+      }
+
+      const rows = section.rows.filter((row) => {
+        const searchText = [
+          t(row.labelKey),
+          row.noteKey ? t(row.noteKey) : row.note,
+          row.keys.join(" "),
+          formatShortcut(row.keys, shortcutOs),
+          shortcutSearchAliases(row.keys, shortcutOs),
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLocaleLowerCase();
+        return searchText.includes(normalizedQuery);
+      });
+
+      return rows.length > 0 ? [{ ...section, rows }] : [];
+    });
+  }, [query, sections, shortcutOs, t]);
+
+  useEffect(() => {
+    if (!open) setQuery("");
+  }, [open]);
 
   const handleClose = useCallback(() => setOpen(false), [setOpen]);
-  const header = useMemo<SheetHeader>(() => ({ title: t("settings.shortcuts.dialogTitle") }), [t]);
+  const header = useMemo<SheetHeader>(
+    () => ({
+      title: t("settings.shortcuts.dialogTitle"),
+      search: {
+        onChange: setQuery,
+        resetKey: Number(open),
+        placeholder: t("settings.shortcuts.searchPlaceholder"),
+        autoFocus: true,
+      },
+    }),
+    [open, t],
+  );
 
   return (
     <AdaptiveModalSheet
@@ -35,7 +101,7 @@ export function KeyboardShortcutsDialog() {
       snapPoints={SNAP_POINTS}
     >
       <View testID="keyboard-shortcuts-dialog-content" style={styles.content}>
-        {sections.map((section) => (
+        {visibleSections.map((section) => (
           <View key={section.title} style={styles.section}>
             <Text style={styles.sectionTitle}>{t(section.titleKey)}</Text>
             <View style={styles.rows}>
@@ -53,6 +119,9 @@ export function KeyboardShortcutsDialog() {
             </View>
           </View>
         ))}
+        {visibleSections.length === 0 ? (
+          <Text style={styles.empty}>{t("common.empty.noResults")}</Text>
+        ) : null}
       </View>
     </AdaptiveModalSheet>
   );
@@ -101,5 +170,11 @@ const styles = StyleSheet.create((theme) => ({
   },
   rowShortcut: {
     alignSelf: "flex-start",
+  },
+  empty: {
+    paddingVertical: theme.spacing[6],
+    textAlign: "center",
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foregroundMuted,
   },
 }));

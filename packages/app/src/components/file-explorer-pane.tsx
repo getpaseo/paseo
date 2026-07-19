@@ -13,13 +13,11 @@ import {
   type ViewStyle,
 } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { useIsCompactFormFactor } from "@/constants/layout";
 import { WORKSPACE_SECONDARY_HEADER_HEIGHT } from "@/constants/layout";
 import * as Clipboard from "expo-clipboard";
 import { SvgXml } from "react-native-svg";
 import {
   ChevronDown,
-  ChevronRight,
   Copy,
   Download,
   Eye,
@@ -28,6 +26,7 @@ import {
   RotateCw,
 } from "lucide-react-native";
 import { getFileIconSvg } from "@/components/material-file-icons";
+import { TreeChevron, TreeIndentGuides, TREE_INDENT_PER_LEVEL } from "@/components/tree-primitives";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import type { AgentFileExplorerState, ExplorerEntry } from "@/stores/session-store";
 import { useHosts } from "@/runtime/host-runtime";
@@ -46,16 +45,12 @@ import { usePanelStore, type SortOption } from "@/stores/panel-store";
 import { formatTimeAgo } from "@/utils/time";
 import { buildAbsoluteExplorerPath } from "@/utils/explorer-paths";
 import { filterVisibleExplorerEntries, isHiddenExplorerPath } from "@/file-explorer/visibility";
-import { useWebScrollViewScrollbar } from "@/components/use-web-scrollbar";
-import { isWeb } from "@/constants/platform";
 
 const SORT_OPTIONS: { value: SortOption }[] = [
   { value: "name" },
   { value: "modified" },
   { value: "size" },
 ];
-
-const INDENT_PER_LEVEL = 16;
 
 function formatFileSize({ size }: { size: number }): string {
   if (size < 1024) {
@@ -129,7 +124,7 @@ function TreeRowItem({
   const pressableStyle = useCallback(
     ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.entryRow,
-      { paddingLeft: theme.spacing[2] + depth * INDENT_PER_LEVEL },
+      { paddingLeft: theme.spacing[2] + depth * TREE_INDENT_PER_LEVEL },
       (Boolean(hovered) || pressed || isSelected) && styles.entryRowActive,
     ],
     [depth, isSelected, theme.spacing],
@@ -143,11 +138,6 @@ function TreeRowItem({
     onDownloadEntry(entry);
   }, [onDownloadEntry, entry]);
 
-  const chevronStyle = useMemo(
-    () => [styles.chevron, isExpanded && styles.chevronExpanded],
-    [isExpanded],
-  );
-
   const copyLeading = useMemo(
     () => <Copy size={14} color={theme.colors.foregroundMuted} />,
     [theme.colors.foregroundMuted],
@@ -159,7 +149,7 @@ function TreeRowItem({
 
   return (
     <Pressable onPress={handlePress} style={pressableStyle}>
-      {depth > 0 && Array.from({ length: depth }, (_, i) => <IndentGuide key={i} index={i} />)}
+      <TreeIndentGuides depth={depth} />
       <View style={styles.entryInfo}>
         <View style={styles.entryIcon}>
           {(() => {
@@ -167,11 +157,7 @@ function TreeRowItem({
               return <SvgXml xml={getFileIconSvg(entry.name)} width={16} height={16} />;
             }
             if (loading) return <ActivityIndicator size="small" />;
-            return (
-              <View style={chevronStyle}>
-                <ChevronRight size={16} color={theme.colors.foregroundMuted} />
-              </View>
-            );
+            return <TreeChevron expanded={isExpanded} />;
           })()}
         </View>
         <Text style={styles.entryName} numberOfLines={1}>
@@ -235,8 +221,6 @@ export function FileExplorerPane({
   onOpenFile,
 }: FileExplorerPaneProps) {
   const { t } = useTranslation();
-  const isMobile = useIsCompactFormFactor();
-  const showDesktopWebScrollbar = isWeb && !isMobile;
 
   const daemons = useHosts();
   const daemonProfile = useMemo(
@@ -294,9 +278,6 @@ export function FileExplorerPane({
   );
 
   const treeListRef = useRef<FlatList<TreeRow>>(null);
-  const scrollbar = useWebScrollViewScrollbar(treeListRef, {
-    enabled: showDesktopWebScrollbar,
-  });
 
   const hasInitializedRef = useRef(false);
 
@@ -493,9 +474,7 @@ export function FileExplorerPane({
         treeRows={treeRows}
         currentSortLabel={currentSortLabel}
         isRefreshFetching={isRefreshFetching}
-        showDesktopWebScrollbar={showDesktopWebScrollbar}
         treeListRef={treeListRef}
-        scrollbar={scrollbar}
         renderTreeRow={renderTreeRow}
         handleSortCycle={handleSortCycle}
         handleToggleHiddenFiles={handleToggleHiddenFiles}
@@ -516,9 +495,7 @@ interface FileExplorerPaneContentProps {
   treeRows: TreeRow[];
   currentSortLabel: string;
   isRefreshFetching: boolean;
-  showDesktopWebScrollbar: boolean;
   treeListRef: RefObject<FlatList<TreeRow> | null>;
-  scrollbar: ReturnType<typeof useWebScrollViewScrollbar>;
   renderTreeRow: (info: ListRenderItemInfo<TreeRow>) => ReactElement;
   handleSortCycle: () => void;
   handleToggleHiddenFiles: () => void;
@@ -539,9 +516,7 @@ function FileExplorerPaneContent(props: FileExplorerPaneContentProps) {
     treeRows,
     currentSortLabel,
     isRefreshFetching,
-    showDesktopWebScrollbar,
     treeListRef,
-    scrollbar,
     renderTreeRow,
     handleSortCycle,
     handleToggleHiddenFiles,
@@ -600,7 +575,7 @@ function FileExplorerPaneContent(props: FileExplorerPaneContentProps) {
   }
 
   return (
-    <View style={TREE_PANE_CONTAINER_STYLE}>
+    <View style={[styles.treePane, styles.treePaneFill]}>
       <View style={styles.paneHeader} testID="files-pane-header">
         <Pressable onPress={handleSortCycle} style={sortTriggerStyleProp}>
           <Text style={styles.sortTriggerText}>{currentSortLabel}</Text>
@@ -656,17 +631,12 @@ function FileExplorerPaneContent(props: FileExplorerPaneContentProps) {
           keyExtractor={treeRowKeyExtractor}
           testID="file-explorer-tree-scroll"
           contentContainerStyle={styles.entriesContent}
-          onLayout={scrollbar.onLayout}
-          onScroll={scrollbar.onScroll}
-          onContentSizeChange={scrollbar.onContentSizeChange}
-          scrollEventThrottle={16}
-          showsVerticalScrollIndicator={!showDesktopWebScrollbar}
+          showsVerticalScrollIndicator
           initialNumToRender={24}
           maxToRenderPerBatch={40}
           windowSize={12}
         />
       )}
-      {treeRows.length > 0 ? scrollbar.overlay : null}
     </View>
   );
 }
@@ -1149,29 +1119,12 @@ const styles = StyleSheet.create((theme) => ({
   entryRowActive: {
     backgroundColor: theme.colors.surfaceSidebarHover,
   },
-  indentGuide: {
-    position: "absolute",
-    top: 0,
-    bottom: 0,
-    width: 1,
-    backgroundColor: theme.colors.surface2,
-  },
   entryInfo: {
     flex: 1,
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
     minWidth: 0,
-  },
-  chevron: {
-    width: 16,
-    height: 16,
-    alignItems: "center",
-    justifyContent: "center",
-    flexShrink: 0,
-  },
-  chevronExpanded: {
-    transform: [{ rotate: "90deg" }],
   },
   entryIcon: {
     flexShrink: 0,
@@ -1300,18 +1253,3 @@ const styles = StyleSheet.create((theme) => ({
     padding: theme.spacing[4],
   },
 }));
-
-const TREE_PANE_CONTAINER_STYLE = [styles.treePane, styles.treePaneFill];
-
-interface IndentGuideProps {
-  index: number;
-}
-
-function IndentGuide({ index }: IndentGuideProps) {
-  const { theme } = useUnistyles();
-  const guideStyle = useMemo(
-    () => [styles.indentGuide, { left: theme.spacing[3] + index * INDENT_PER_LEVEL + 4 }],
-    [index, theme.spacing],
-  );
-  return <View style={guideStyle} />;
-}

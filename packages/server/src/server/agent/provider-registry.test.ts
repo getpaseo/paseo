@@ -3,8 +3,10 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import type {
   AgentClient,
+  AgentFeature,
   AgentModelDefinition,
   AgentMode,
+  AgentSessionConfig,
   ProviderCatalog,
 } from "./agent-sdk-types.js";
 
@@ -25,6 +27,11 @@ const mockState = vi.hoisted(() => {
         env?: Record<string, string>;
         providerParams?: unknown;
       }>,
+      trae: [] as Array<{
+        command: string[];
+        env?: Record<string, string>;
+        providerParams?: unknown;
+      }>,
       pi: [] as ConstructorEntry[],
       genericAcp: [] as Array<{
         command: string[];
@@ -36,16 +43,19 @@ const mockState = vi.hoisted(() => {
     },
     isCommandAvailable: vi.fn(async (_command: string) => false),
     runtimeModels: new Map<string, AgentModelDefinition[]>(),
+    cursorListFeaturesConfigs: [] as AgentSessionConfig[],
     reset() {
       this.constructorArgs.claude = [];
       this.constructorArgs.codex = [];
       this.constructorArgs.copilot = [];
       this.constructorArgs.cursor = [];
+      this.constructorArgs.trae = [];
       this.constructorArgs.pi = [];
       this.constructorArgs.genericAcp = [];
       this.isCommandAvailable.mockReset();
       this.isCommandAvailable.mockImplementation(async (_command: string) => false);
       this.runtimeModels.clear();
+      this.cursorListFeaturesConfigs = [];
     },
   };
 });
@@ -372,6 +382,72 @@ vi.mock("./providers/cursor-acp-agent.js", () => ({
     async isAvailable(): Promise<boolean> {
       return true;
     }
+
+    async listFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {
+      mockState.cursorListFeaturesConfigs.push(config);
+      return [
+        {
+          type: "select",
+          id: "fast",
+          label: "Fast",
+          value: "false",
+          options: [{ id: "false", label: "Off" }],
+        },
+      ];
+    }
+  },
+}));
+
+vi.mock("./providers/trae-acp-agent.js", () => ({
+  TraeACPAgentClient: class TraeACPAgentClient {
+    readonly capabilities = {
+      supportsStreaming: true,
+      supportsSessionPersistence: true,
+      supportsDynamicModes: true,
+      supportsMcpServers: true,
+      supportsReasoningStream: true,
+      supportsToolInvocations: true,
+    };
+    readonly provider = "acp";
+    readonly runtimeSettings?: unknown;
+
+    constructor(options: {
+      command: string[];
+      env?: Record<string, string>;
+      providerParams?: unknown;
+    }) {
+      this.runtimeSettings = {
+        command: {
+          mode: "replace",
+          argv: options.command,
+        },
+        env: options.env,
+      };
+      mockState.constructorArgs.trae.push({
+        command: options.command,
+        env: options.env,
+        providerParams: options.providerParams,
+      });
+    }
+
+    async createSession(): Promise<never> {
+      throw new Error("not implemented");
+    }
+
+    async resumeSession(): Promise<never> {
+      throw new Error("not implemented");
+    }
+
+    async fetchCatalog(): Promise<ProviderCatalog> {
+      return {
+        models: mockState.runtimeModels.get(this.provider) ?? [],
+        modes: [],
+      };
+    }
+
+    async isAvailable(): Promise<boolean> {
+      return true;
+    }
   },
 }));
 
@@ -380,6 +456,7 @@ import {
   buildProviderRegistry,
   createAllClients,
 } from "./provider-registry.js";
+import { FakeOmp } from "./providers/omp/test-utils/fake-omp.js";
 
 const logger = createTestLogger();
 
@@ -447,28 +524,27 @@ test("built-in override applies env", () => {
   });
 });
 
-test("OMP is a disabled built-in backed by the Pi adapter", () => {
-  const registry = buildProviderRegistry(logger);
+test("OMP is a disabled built-in backed by the real OMP adapter", async () => {
+  const omp = new FakeOmp();
+  const registry = buildProviderRegistry(logger, { ompRuntime: omp });
 
   expect(registry.omp).toMatchObject({
     id: "omp",
-    label: "OMP",
+    label: "Oh My Pi",
     enabled: false,
     derivedFromProviderId: null,
   });
-  expect(registry.omp.createClient(logger).provider).toBe("omp");
-  expect(mockState.constructorArgs.pi.at(-1)).toEqual({
-    runtimeSettings: {
-      command: {
-        mode: "replace",
-        argv: ["omp"],
-      },
-    },
-    providerParams: {
-      sessionDir: "~/.omp/agent/sessions",
-    },
-    commandsRpcType: "get_available_commands",
-  });
+  const client = registry.omp.createClient(logger);
+  expect(client.provider).toBe("omp");
+  const session = await client.createSession({ provider: "omp", cwd: "/tmp/registry-omp" });
+  expect(omp.recordedLaunches).toEqual([
+    expect.objectContaining({
+      cwd: "/tmp/registry-omp",
+      protocolMode: "rpc-ui",
+      argv: ["omp", "--mode", "rpc-ui", "--approval-mode", "yolo", "--thinking", "medium"],
+    }),
+  ]);
+  await session.close();
 });
 
 test("OMP can be enabled without custom provider boilerplate", () => {
@@ -498,8 +574,10 @@ test("new provider extending claude appears in registry", () => {
   expect(registry.zai.createClient(logger).provider).toBe("zai");
 });
 
-test("built-in OMP override passes params to the Pi adapter constructor", () => {
+test("built-in OMP override keeps the real OMP adapter enabled and launchable", async () => {
+  const omp = new FakeOmp(["custom-omp"]);
   const registry = buildProviderRegistry(logger, {
+    ompRuntime: omp,
     providerOverrides: {
       omp: {
         label: "OMP",
@@ -511,21 +589,19 @@ test("built-in OMP override passes params to the Pi adapter constructor", () => 
     },
   });
 
-  expect(registry.omp.createClient(logger).provider).toBe("omp");
-  expect(mockState.constructorArgs.pi.at(-1)).toEqual({
-    runtimeSettings: {
-      command: {
-        mode: "replace",
-        argv: ["omp"],
-      },
-      env: undefined,
-      disallowedTools: undefined,
-    },
-    providerParams: {
-      sessionDir: "~/.omp/agent/sessions",
-    },
-    commandsRpcType: "get_available_commands",
-  });
+  const client = registry.omp.createClient(logger);
+  const session = await client.createSession({ provider: "omp", cwd: "/tmp/registry-override" });
+  expect(client.provider).toBe("omp");
+  expect(omp.recordedLaunches[0]?.argv).toEqual([
+    "custom-omp",
+    "--mode",
+    "rpc-ui",
+    "--approval-mode",
+    "yolo",
+    "--thinking",
+    "medium",
+  ]);
+  await session.close();
 });
 
 test("new provider extending acp uses GenericACPAgentClient", () => {
@@ -638,6 +714,68 @@ test("cursor provider extending acp uses CursorACPAgentClient", () => {
   expect(mockState.constructorArgs.genericAcp).toEqual([]);
 });
 
+test("wrapped cursor client lists ACP features through the inner provider", async () => {
+  const registry = buildProviderRegistry(logger, {
+    providerOverrides: {
+      cursor: {
+        extends: "acp",
+        label: "Cursor",
+        command: ["cursor-agent", "acp"],
+      },
+    },
+  });
+
+  const client = registry.cursor.createClient(logger);
+
+  await expect(
+    client.listFeatures?.({
+      provider: "cursor",
+      cwd: "/tmp/cursor",
+    }),
+  ).resolves.toEqual([
+    {
+      type: "select",
+      id: "fast",
+      label: "Fast",
+      value: "false",
+      options: [{ id: "false", label: "Off" }],
+    },
+  ]);
+  expect(mockState.cursorListFeaturesConfigs).toEqual([
+    {
+      provider: "acp",
+      cwd: "/tmp/cursor",
+    },
+  ]);
+});
+
+test("traecli provider extending acp uses TraeACPAgentClient", () => {
+  const registry = buildProviderRegistry(logger, {
+    providerOverrides: {
+      traecli: {
+        extends: "acp",
+        label: "TRAE CLI",
+        command: ["traecli", "acp", "serve"],
+      },
+    },
+  });
+
+  expect(registry.traecli.createClient(logger).provider).toBe("traecli");
+  expect(mockState.constructorArgs.trae).toEqual([
+    {
+      command: ["traecli", "acp", "serve"],
+      env: undefined,
+      providerParams: undefined,
+    },
+    {
+      command: ["traecli", "acp", "serve"],
+      env: undefined,
+      providerParams: undefined,
+    },
+  ]);
+  expect(mockState.constructorArgs.genericAcp).toEqual([]);
+});
+
 test('extends: "acp" without command throws', () => {
   expect(() =>
     buildProviderRegistry(logger, {
@@ -676,7 +814,7 @@ test("enabled: false keeps provider metadata in registry", () => {
     id: "claude",
     label: "Claude",
     description: "Anthropic's multi-tool assistant with MCP support, streaming, and deep reasoning",
-    defaultModeId: "default",
+    defaultModeId: "auto",
     enabled: false,
   });
   expect(registry.claude.modes).toEqual(
@@ -1347,6 +1485,31 @@ describe("fetchCatalog", () => {
     });
 
     expect(catalog.models.map((model) => model.id)).toEqual(["profile-model", "extra-model"]);
+  });
+
+  test("replacement models still resolve the provider's capability-aware default mode", async () => {
+    const resolveDefaultModeId = vi.fn(async () => "default");
+    const injectedClient = {
+      provider: "codex",
+      capabilities: {},
+      resolveDefaultModeId,
+      isAvailable: vi.fn(async () => true),
+    } satisfies Partial<AgentClient> as AgentClient;
+    const registry = buildProviderRegistry(logger, {
+      providerOverrides: {
+        codex: { models: [{ id: "profile-model", label: "Profile Model" }] },
+      },
+    });
+
+    const catalog = await registry.codex.fetchCatalog(
+      { scope: "workspace", cwd: "/tmp/catalog", force: false },
+      injectedClient,
+    );
+
+    expect(catalog.defaultModeId).toBe("default");
+    expect(resolveDefaultModeId).toHaveBeenCalledWith({
+      config: { provider: "codex", cwd: "/tmp/catalog" },
+    });
   });
 
   test("additionalModels can override replacement model fields", async () => {

@@ -18,6 +18,39 @@ export interface MaterializedProviderImage {
 }
 
 const PROVIDER_IMAGE_ATTACHMENT_DIR = "paseo-attachments";
+const PROVIDER_IMAGE_ATTACHMENT_DIR_PREFIX = `${PROVIDER_IMAGE_ATTACHMENT_DIR}-`;
+const PRIVATE_ATTACHMENT_DIR_MODE = 0o700;
+const MATERIALIZED_IMAGE_FILE_MODE = 0o600;
+
+let materializedImageAttachmentDir: string | null = null;
+
+function canReuseMaterializedImageAttachmentDir(dir: string): boolean {
+  try {
+    const stats = fsSync.lstatSync(dir);
+    if (!stats.isDirectory()) {
+      return false;
+    }
+    fsSync.chmodSync(dir, PRIVATE_ATTACHMENT_DIR_MODE);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function getMaterializedImageAttachmentDir(): string {
+  if (
+    materializedImageAttachmentDir &&
+    canReuseMaterializedImageAttachmentDir(materializedImageAttachmentDir)
+  ) {
+    return materializedImageAttachmentDir;
+  }
+
+  materializedImageAttachmentDir = fsSync.mkdtempSync(
+    path.join(os.tmpdir(), PROVIDER_IMAGE_ATTACHMENT_DIR_PREFIX),
+  );
+  fsSync.chmodSync(materializedImageAttachmentDir, PRIVATE_ATTACHMENT_DIR_MODE);
+  return materializedImageAttachmentDir;
+}
 
 function getImageExtension(mimeType: string): string {
   switch (mimeType) {
@@ -49,20 +82,20 @@ function normalizeImageData(mimeType: string, data: string): { mimeType: string;
 }
 
 // Filenames are a content hash of the bytes so re-materializing the same image
-// is idempotent: history replay reuses the existing temp file instead of leaking
-// a fresh one on every load.
+// within a process reuses the existing temp file instead of leaking a fresh one
+// for repeated image blocks or history replay.
 export function materializeProviderImage(image: {
   data: string;
   mimeType: string | null;
 }): MaterializedProviderImage {
-  const attachmentsDir = path.join(os.tmpdir(), PROVIDER_IMAGE_ATTACHMENT_DIR);
-  fsSync.mkdirSync(attachmentsDir, { recursive: true });
+  const attachmentsDir = getMaterializedImageAttachmentDir();
   const normalized = normalizeImageData(image.mimeType ?? "image/png", image.data);
   const bytes = Buffer.from(normalized.data, "base64");
   const extension = getImageExtension(normalized.mimeType);
   const hash = createHash("sha256").update(bytes).digest("hex");
   const filePath = path.join(attachmentsDir, `${hash}.${extension}`);
-  fsSync.writeFileSync(filePath, bytes);
+  fsSync.writeFileSync(filePath, bytes, { mode: MATERIALIZED_IMAGE_FILE_MODE });
+  fsSync.chmodSync(filePath, MATERIALIZED_IMAGE_FILE_MODE);
   return { path: filePath };
 }
 
@@ -71,7 +104,7 @@ export function materializeProviderImage(image: {
 // keeps user-authored text from being mistaken for a provider image during history replay. The
 // separator still accepts old doubled-backslash Windows history; new Windows output uses file URIs.
 const PROVIDER_IMAGE_MARKDOWN = new RegExp(
-  `^!\\[[^\\]]*\\]\\([^)]*${PROVIDER_IMAGE_ATTACHMENT_DIR}[/\\\\]+[0-9a-f]{64}\\.[a-z0-9]+\\)`,
+  `^!\\[[^\\]]*\\]\\([^)]*${PROVIDER_IMAGE_ATTACHMENT_DIR}(?:-[^/\\\\)]+)?[/\\\\]+(?:[^/\\\\)]+[/\\\\]+)?[0-9a-f]{64}\\.[a-z0-9]+\\)`,
 );
 
 export function isProviderImageMarkdown(text: string): boolean {
@@ -95,9 +128,39 @@ function escapeMarkdownImageAlt(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/\]/g, "\\]");
 }
 
+function encodeFilePath(value: string): string {
+  return value
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+}
+
+function windowsFileUri(value: string): string | null {
+  const isWindowsNetworkPath = value.startsWith("\\\\");
+  let normalizedPath = value.replace(/\\/g, "/");
+  if (/^\/\/\?\/UNC\//i.test(normalizedPath)) {
+    normalizedPath = `//${normalizedPath.slice(8)}`;
+  } else if (/^\/\/\?\/[A-Za-z]:\//.test(normalizedPath)) {
+    normalizedPath = normalizedPath.slice(4);
+  }
+
+  if (/^[A-Za-z]:\//.test(normalizedPath)) {
+    const drive = normalizedPath.slice(0, 2);
+    return `file:///${drive}${encodeFilePath(normalizedPath.slice(2))}`;
+  }
+  if (isWindowsNetworkPath && normalizedPath.startsWith("//")) {
+    return `file:${encodeFilePath(normalizedPath)}`;
+  }
+  return null;
+}
+
 function markdownImageSource(value: string): string {
-  if (/^[A-Za-z]:[\\/]/.test(value)) {
-    return `file:///${value.replace(/\\/g, "/")}`;
+  const windowsUri = windowsFileUri(value);
+  if (windowsUri) {
+    return windowsUri;
+  }
+  if (value.startsWith("/")) {
+    return `file://${encodeFilePath(value)}`;
   }
   return value;
 }

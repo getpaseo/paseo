@@ -19,8 +19,6 @@ import { useCliInstall, useSkillsStatus } from "@/desktop/hooks/use-install-stat
 
 const CLI_DOCS_URL = "https://paseo.sh/docs/cli";
 const SKILLS_DOCS_URL = "https://paseo.sh/docs/skills";
-const ROW_WITH_BORDER_STYLE = [settingsStyles.row, settingsStyles.rowBorder];
-
 const OP_KIND_ORDER: Record<SkillOp["kind"], number> = { add: 0, update: 1, delete: 2 };
 const OP_KIND_LABEL_KEY: Record<SkillOp["kind"], string> = {
   add: "settings.integrations.operations.add",
@@ -183,7 +181,7 @@ export function IntegrationsSection() {
             </Button>
           )}
         </View>
-        <View style={ROW_WITH_BORDER_STYLE}>
+        <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
           <View style={settingsStyles.rowContent}>
             <View style={styles.rowTitleRow}>
               <Blocks size={theme.iconSize.md} color={theme.colors.foreground} />

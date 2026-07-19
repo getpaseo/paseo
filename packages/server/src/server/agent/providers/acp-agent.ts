@@ -102,7 +102,11 @@ import {
 } from "../provider-launch-config.js";
 import { renderPromptAttachmentAsText } from "../prompt-attachments.js";
 import { appendOrReplaceGrowingAssistantMessage, runProviderTurn } from "./provider-runner.js";
-import { platformShell, spawnProcess } from "../../../utils/spawn.js";
+import {
+  buildStringCommandShellInvocation,
+  createStringCommandShellEnvOverlay,
+} from "../../../utils/string-command-shell.js";
+import { spawnProcess } from "../../../utils/spawn.js";
 import {
   type DiagnosticEntry,
   toDiagnosticErrorMessage,
@@ -181,7 +185,7 @@ function toACPRequestError(error: unknown): Error {
 function resolveTerminalCommand(
   command: string,
   args?: string[],
-): { command: string; args: string[] } {
+): { command: string; args: string[]; shell?: boolean } {
   if (args && args.length > 0) {
     return { command, args };
   }
@@ -190,8 +194,8 @@ function resolveTerminalCommand(
     return { command, args: [] };
   }
 
-  const shell = platformShell();
-  return { command: shell.command, args: [...shell.flag, command] };
+  const shell = buildStringCommandShellInvocation({ command, windowsShell: "cmd" });
+  return { command: shell.shell, args: shell.args, shell: false };
 }
 
 function formatDurationMs(startedAt: number): string {
@@ -225,13 +229,30 @@ export const DEFAULT_ACP_CAPABILITIES: AgentCapabilityFlags = {
   supportsRewindBoth: false,
 };
 
-const ACP_CLIENT_CAPABILITIES: ACPClientCapabilities = {
+const BASE_ACP_CLIENT_CAPABILITIES: ACPClientCapabilities = {
   fs: {
-    readTextFile: true,
-    writeTextFile: true,
+    readTextFile: false,
+    writeTextFile: false,
   },
-  terminal: true,
+  terminal: false,
 };
+
+export type ACPClientCapabilityMeta = Record<string, unknown>;
+
+export function buildACPClientCapabilities(
+  meta?: ACPClientCapabilityMeta,
+  override?: ACPClientCapabilities,
+): ACPClientCapabilities {
+  const capabilities: ACPClientCapabilities = {
+    ...BASE_ACP_CLIENT_CAPABILITIES,
+    ...override,
+    fs: {
+      ...BASE_ACP_CLIENT_CAPABILITIES.fs,
+      ...override?.fs,
+    },
+  };
+  return meta && Object.keys(meta).length > 0 ? { ...capabilities, _meta: meta } : capabilities;
+}
 
 // Suppress interactive auth side-effects (e.g. Gemini CLI opening a Google
 // sign-in URL in the browser) when probing an ACP agent for models/modes.
@@ -355,6 +376,8 @@ interface ACPAgentClientOptions {
   sessionResponseTransformer?: (response: SessionStateResponse) => SessionStateResponse;
   configOptionsTransformer?: (configOptions: SessionConfigOption[]) => SessionConfigOption[];
   configFeatureOptions?: ACPConfigFeatureOption[];
+  clientCapabilities?: ACPClientCapabilities;
+  clientCapabilityMeta?: ACPClientCapabilityMeta;
   modeIdTransformer?: (modeId: string) => string | null;
   toolSnapshotTransformer?: (snapshot: ACPToolSnapshot) => ACPToolSnapshot;
   providerModeWriter?: (
@@ -383,6 +406,8 @@ interface ACPAgentSessionOptions {
   sessionResponseTransformer?: (response: SessionStateResponse) => SessionStateResponse;
   configOptionsTransformer?: (configOptions: SessionConfigOption[]) => SessionConfigOption[];
   configFeatureOptions?: ACPConfigFeatureOption[];
+  clientCapabilities?: ACPClientCapabilities;
+  clientCapabilityMeta?: ACPClientCapabilityMeta;
   modeIdTransformer?: (modeId: string) => string | null;
   toolSnapshotTransformer?: (snapshot: ACPToolSnapshot) => ACPToolSnapshot;
   providerModeWriter?: (
@@ -482,7 +507,7 @@ interface ConfigOptionSelector {
 export interface ACPConfigFeatureOption {
   id: string;
   configId: string;
-  category: string;
+  category?: string;
   label: string;
   description?: string;
   tooltip?: string;
@@ -690,6 +715,8 @@ export class ACPAgentClient implements AgentClient {
     configOptions: SessionConfigOption[],
   ) => SessionConfigOption[];
   private readonly configFeatureOptions: ACPConfigFeatureOption[];
+  private readonly clientCapabilities?: ACPClientCapabilities;
+  private readonly clientCapabilityMeta?: ACPClientCapabilityMeta;
   private readonly modeIdTransformer?: (modeId: string) => string | null;
   private readonly toolSnapshotTransformer?: (snapshot: ACPToolSnapshot) => ACPToolSnapshot;
   private readonly providerModeWriter?: (
@@ -723,6 +750,8 @@ export class ACPAgentClient implements AgentClient {
     this.sessionResponseTransformer = options.sessionResponseTransformer;
     this.configOptionsTransformer = options.configOptionsTransformer;
     this.configFeatureOptions = options.configFeatureOptions ?? [];
+    this.clientCapabilities = options.clientCapabilities;
+    this.clientCapabilityMeta = options.clientCapabilityMeta;
     this.modeIdTransformer = options.modeIdTransformer;
     this.toolSnapshotTransformer = options.toolSnapshotTransformer;
     this.providerModeWriter = options.providerModeWriter;
@@ -750,6 +779,8 @@ export class ACPAgentClient implements AgentClient {
         sessionResponseTransformer: this.sessionResponseTransformer,
         configOptionsTransformer: this.configOptionsTransformer,
         configFeatureOptions: this.configFeatureOptions,
+        clientCapabilities: this.clientCapabilities,
+        clientCapabilityMeta: this.clientCapabilityMeta,
         modeIdTransformer: this.modeIdTransformer,
         toolSnapshotTransformer: this.toolSnapshotTransformer,
         providerModeWriter: this.providerModeWriter,
@@ -798,6 +829,8 @@ export class ACPAgentClient implements AgentClient {
       sessionResponseTransformer: this.sessionResponseTransformer,
       configOptionsTransformer: this.configOptionsTransformer,
       configFeatureOptions: this.configFeatureOptions,
+      clientCapabilities: this.clientCapabilities,
+      clientCapabilityMeta: this.clientCapabilityMeta,
       modeIdTransformer: this.modeIdTransformer,
       toolSnapshotTransformer: this.toolSnapshotTransformer,
       providerModeWriter: this.providerModeWriter,
@@ -1035,7 +1068,10 @@ export class ACPAgentClient implements AgentClient {
         Promise.race([
           transport.connection.initialize({
             protocolVersion: PROTOCOL_VERSION,
-            clientCapabilities: ACP_CLIENT_CAPABILITIES,
+            clientCapabilities: buildACPClientCapabilities(
+              this.clientCapabilityMeta,
+              this.clientCapabilities,
+            ),
             clientInfo: { name: "Paseo", version: "dev" },
           }),
           transport.spawnError,
@@ -1247,6 +1283,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     configOptions: SessionConfigOption[],
   ) => SessionConfigOption[];
   private readonly configFeatureOptions: ACPConfigFeatureOption[];
+  private readonly clientCapabilities?: ACPClientCapabilities;
+  private readonly clientCapabilityMeta?: ACPClientCapabilityMeta;
   private readonly modeIdTransformer?: (modeId: string) => string | null;
   private readonly toolSnapshotTransformer?: (snapshot: ACPToolSnapshot) => ACPToolSnapshot;
   private readonly providerModeWriter?: (
@@ -1293,6 +1331,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
   private currentTurnUsage: AgentUsage | undefined;
   private activeForegroundTurnId: string | null = null;
+  private fallbackAssistantMessageId: string | null = null;
   private closed = false;
   private historyPending = false;
   private replayingHistory = false;
@@ -1311,6 +1350,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.sessionResponseTransformer = options.sessionResponseTransformer;
     this.configOptionsTransformer = options.configOptionsTransformer;
     this.configFeatureOptions = options.configFeatureOptions ?? [];
+    this.clientCapabilities = options.clientCapabilities;
+    this.clientCapabilityMeta = options.clientCapabilityMeta;
     this.modeIdTransformer = options.modeIdTransformer;
     this.toolSnapshotTransformer = options.toolSnapshotTransformer;
     this.providerModeWriter = options.providerModeWriter;
@@ -1435,6 +1476,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     const turnId = randomUUID();
     const messageId = options?.messageId ?? randomUUID();
     this.activeForegroundTurnId = turnId;
+    this.fallbackAssistantMessageId = null;
     this.activeSubmittedUserMessage = null;
     this.emitBootstrapThreadEvent();
     this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
@@ -1886,16 +1928,19 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }: {
     response: { configOptions: SessionConfigOption[] };
     configId: string;
-    category: string;
+    category?: string;
     requestedValue: string;
     label: string;
   }): string {
     this.configOptions = this.transformConfigOptions(response.configOptions);
-    const responseOption = findSelectConfigOption({
-      configOptions: this.configOptions,
-      category,
-      id: configId,
-    });
+    const responseOption =
+      category === undefined
+        ? findSelectConfigOptionById({ configOptions: this.configOptions, id: configId })
+        : findSelectConfigOption({
+            configOptions: this.configOptions,
+            category,
+            id: configId,
+          });
     if (responseOption?.currentValue != null) {
       return responseOption.currentValue;
     }
@@ -2159,12 +2204,15 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       (params.env ?? []).map((entry: EnvVariable) => [entry.name, entry.value]),
     );
     const terminalCommand = resolveTerminalCommand(params.command, params.args);
+    const commandEnvOverlays =
+      terminalCommand.shell === false ? [env, createStringCommandShellEnvOverlay()] : [env];
     const child = spawnProcess(terminalCommand.command, terminalCommand.args, {
       cwd: params.cwd ?? this.config.cwd,
       ...createProviderEnvSpec({
         runtimeSettings: this.runtimeSettings,
-        overlays: [env],
+        overlays: commandEnvOverlays,
       }),
+      shell: terminalCommand.shell,
       stdio: ["ignore", "pipe", "pipe"],
     });
 
@@ -2290,7 +2338,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     const initialize = await this.runACPRequest(() =>
       connection.initialize({
         protocolVersion: PROTOCOL_VERSION,
-        clientCapabilities: ACP_CLIENT_CAPABILITIES,
+        clientCapabilities: buildACPClientCapabilities(
+          this.clientCapabilityMeta,
+          this.clientCapabilities,
+        ),
         clientInfo: { name: "Paseo", version: "dev" },
       }),
     );
@@ -2394,6 +2445,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private translateSessionUpdate(update: SessionUpdate): AgentStreamEvent[] {
     switch (update.sessionUpdate) {
       case "user_message_chunk": {
+        this.fallbackAssistantMessageId = null;
         const item = this.createMessageTimelineItem("user_message", update);
         if (!item) {
           return [];
@@ -2411,10 +2463,12 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         return item ? [this.wrapTimeline(item)] : [];
       }
       case "agent_thought_chunk": {
+        this.fallbackAssistantMessageId = null;
         const item = this.createMessageTimelineItem("reasoning", update);
         return item ? [this.wrapTimeline(item)] : [];
       }
       case "tool_call":
+        this.fallbackAssistantMessageId = null;
         return this.handleToolCallUpdate(update.toolCallId, update, undefined);
       case "tool_call_update":
         return this.handleToolCallUpdate(
@@ -2423,6 +2477,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
           this.toolCalls.get(update.toolCallId),
         );
       case "plan":
+        this.fallbackAssistantMessageId = null;
         return [this.wrapTimeline(mapPlanToTimeline(update))];
       case "current_mode_update":
         this.handleCurrentModeUpdate(update);
@@ -2477,7 +2532,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     >,
   ):
     | { type: "user_message"; text: string; messageId?: string }
-    | { type: "assistant_message"; text: string }
+    | { type: "assistant_message"; text: string; messageId: string }
     | { type: "reasoning"; text: string }
     | null {
     const chunkText = contentBlockToText(update.content);
@@ -2493,9 +2548,22 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       return { type: "user_message", text: state.text, messageId: update.messageId ?? undefined };
     }
     if (type === "assistant_message") {
-      return { type: "assistant_message", text: chunkText };
+      return {
+        type: "assistant_message",
+        text: chunkText,
+        messageId: this.resolveAssistantMessageId(update.messageId),
+      };
     }
     return { type: "reasoning", text: chunkText };
+  }
+
+  private resolveAssistantMessageId(messageId: string | null | undefined): string {
+    if (messageId) {
+      this.fallbackAssistantMessageId = null;
+      return messageId;
+    }
+    this.fallbackAssistantMessageId ??= randomUUID();
+    return this.fallbackAssistantMessageId;
   }
 
   private messageAssemblyKey(
@@ -2652,6 +2720,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     event: Extract<AgentStreamEvent, { type: "turn_completed" | "turn_failed" | "turn_canceled" }>,
   ): void {
     this.activeForegroundTurnId = null;
+    this.fallbackAssistantMessageId = null;
     if (this.activeSubmittedUserMessage?.turnId === event.turnId) {
       this.activeSubmittedUserMessage = null;
     }
@@ -2736,6 +2805,19 @@ function findSelectConfigOption({
   return option ?? null;
 }
 
+function findSelectConfigOptionById({
+  configOptions,
+  id,
+}: {
+  configOptions: SessionConfigOption[] | null | undefined;
+  id: string;
+}): SelectConfigOption | null {
+  const option = configOptions?.find(
+    (entry): entry is SelectConfigOption => entry.type === "select" && entry.id === id,
+  );
+  return option ?? null;
+}
+
 function findSelectConfigFeatureOption(
   configOptions: SessionConfigOption[] | null | undefined,
   featureOption: ACPConfigFeatureOption,
@@ -2744,7 +2826,7 @@ function findSelectConfigFeatureOption(
     (entry): entry is SelectConfigOption =>
       entry.type === "select" &&
       entry.id === featureOption.configId &&
-      entry.category === featureOption.category,
+      (featureOption.category === undefined || entry.category === featureOption.category),
   );
   return option ?? null;
 }

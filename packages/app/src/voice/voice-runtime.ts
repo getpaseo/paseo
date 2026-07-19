@@ -730,6 +730,7 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
       const previousServerId = state.snapshot.activeServerId;
       const previousAgentId = state.snapshot.activeAgentId;
       const generation = state.generation + 1;
+      let enabledCurrentVoiceMode = false;
       state.generation = generation;
       state.transportReady = false;
       patchSnapshot((prev) => ({
@@ -759,6 +760,7 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
 
         await deps.engine.initialize();
         await session.adapter.setVoiceMode(true, agentId);
+        enabledCurrentVoiceMode = true;
         await deps.engine.startCapture();
         if (state.generation !== generation) {
           return;
@@ -776,6 +778,9 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
           isMuted: deps.engine.isMuted(),
         }));
       } catch (error) {
+        if (enabledCurrentVoiceMode) {
+          await session.adapter.setVoiceMode(false).catch(() => undefined);
+        }
         await performLocalStop();
         throw error;
       }
