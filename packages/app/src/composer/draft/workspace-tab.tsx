@@ -151,6 +151,7 @@ async function submitDraftCreateRequest(input: {
     effectiveModelId: string | null;
     effectiveThinkingOptionId: string | null;
     featureValues: Record<string, unknown> | undefined;
+    assistantId: string | null;
   };
   hostDisconnectedMessage: string;
   selectModelMessage: string;
@@ -199,6 +200,7 @@ async function submitDraftCreateRequest(input: {
     config,
     workspaceId,
     ...(text ? { initialPrompt: text } : {}),
+    ...(composerState.assistantId ? { assistantId: composerState.assistantId } : {}),
     clientMessageId: attempt.clientMessageId,
     ...(imagesData && imagesData.length > 0 ? { images: imagesData } : {}),
     ...(attachmentsArray && attachmentsArray.length > 0 ? { attachments: attachmentsArray } : {}),
@@ -373,6 +375,7 @@ export function WorkspaceDraftAgentTab({
       onlineServerIds,
       lockedWorkingDir: draftWorkingDirectory ?? undefined,
     },
+    initialAssistantId: draftSetup?.assistantId ?? null,
   });
   const composerState = draftInput.composerState;
   if (!composerState) {
@@ -766,6 +769,8 @@ export function WorkspaceDraftAgentTab({
           agentControls={composerAgentControls}
           footer={composerFooter}
           isCompactLayout={isCompactComposerLayout}
+          assistantId={draftInput.assistantId}
+          onAssistantSelect={draftInput.setAssistantId}
         />
       </ReanimatedAnimated.View>
     </FileDropZone>

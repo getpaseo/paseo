@@ -1579,8 +1579,10 @@ export const ptBR: TranslationResources = {
     hostSections: {
       connections: "Conexões",
       agents: "Agentes",
+      assistants: "Assistentes",
       workspaces: "Workspaces",
       providers: "Provedores",
+      channels: "Canais",
       usage: "Uso",
       terminals: "Terminais",
       host: "Visão geral",

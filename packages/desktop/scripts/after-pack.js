@@ -73,10 +73,10 @@ function pruneSharpLibvips(nodeModules, platform, arch) {
   }
 }
 
-function pruneNativeModules(appOutDir, platform, arch) {
+function pruneNativeModules(appOutDir, platform, arch, executableName = EXECUTABLE_NAME) {
   const resourcesDir =
     platform === "darwin"
-      ? path.join(appOutDir, `${EXECUTABLE_NAME}.app`, "Contents", "Resources")
+      ? path.join(appOutDir, `${executableName}.app`, "Contents", "Resources")
       : path.join(appOutDir, "resources");
 
   const nodeModules = path.join(resourcesDir, "app.asar.unpacked", "node_modules");
@@ -112,8 +112,9 @@ function fmtMB(bytes) {
 exports.default = async function afterPack(context) {
   const platform = context.electronPlatformName;
   const arch = ARCH_MAP[context.arch] || process.arch;
+  const executableName = context.packager?.appInfo?.productFilename || EXECUTABLE_NAME;
 
-  pruneNativeModules(context.appOutDir, platform, arch);
+  pruneNativeModules(context.appOutDir, platform, arch, executableName);
 
   if (platform === "linux" || platform === "win32") {
     if (arch !== process.arch) {

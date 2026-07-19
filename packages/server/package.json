@@ -72,6 +72,7 @@
     "@getpaseo/protocol": "0.2.0-beta.1",
     "@getpaseo/relay": "0.2.0-beta.1",
     "@isaacs/ttlcache": "^2.1.4",
+    "@larksuiteoapi/node-sdk": "^1.71.0",
     "@modelcontextprotocol/sdk": "^1.20.1",
     "@opencode-ai/sdk": "1.14.46",
     "@xterm/headless": "^6.0.0",

@@ -12,6 +12,7 @@ export const pidLockInfoSchema = z.object({
   uid: z.number(),
   listen: z.string().nullable(),
   desktopManaged: z.boolean().optional(),
+  desktopBuildId: z.string().optional(),
   heartbeat: z.literal(true).optional(),
 });
 
@@ -199,6 +200,9 @@ export async function acquirePidLock(
     listen,
     heartbeat: true,
     ...(process.env.PASEO_DESKTOP_MANAGED === "1" ? { desktopManaged: true } : {}),
+    ...(process.env.PASEO_DESKTOP_BUILD_ID
+      ? { desktopBuildId: process.env.PASEO_DESKTOP_BUILD_ID }
+      : {}),
   };
 
   await writeNewPidLock(pidPath, lockInfo);

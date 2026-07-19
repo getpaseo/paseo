@@ -1595,8 +1595,10 @@ export const fr: TranslationResources = {
     hostSections: {
       connections: "Relations",
       agents: "Agents",
+      assistants: "Assistants",
       workspaces: "Workspaces",
       providers: "Fournisseurs",
+      channels: "Canaux",
       usage: "Utilisation",
       terminals: "Terminals",
       host: "Aperçu",

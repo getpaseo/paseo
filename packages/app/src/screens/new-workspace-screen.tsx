@@ -955,6 +955,7 @@ function buildWorkspaceDraftSetupFromComposer(input: {
     model: input.composerState.effectiveModelId || null,
     thinkingOptionId: input.composerState.effectiveThinkingOptionId || null,
     featureValues: input.composerState.featureValues ?? {},
+    assistantId: input.composerState.assistantId ?? null,
   };
 }
 
@@ -1139,7 +1140,19 @@ function resolveWorkspaceDraftSubmissionConfig(input: {
     model: composerState.effectiveModelId || null,
     thinkingOptionId: composerState.effectiveThinkingOptionId || null,
     featureValues: composerState.featureValues,
-    target: { kind: "draft", draftId },
+    target: {
+      kind: "draft",
+      draftId,
+      setup: {
+        provider,
+        cwd: workspaceDirectory,
+        modeId: composerState.selectedMode || null,
+        model: composerState.effectiveModelId || null,
+        thinkingOptionId: composerState.effectiveThinkingOptionId || null,
+        featureValues: composerState.featureValues ?? {},
+        assistantId: composerState.assistantId ?? null,
+      },
+    },
   };
 }
 
@@ -2307,6 +2320,8 @@ export function NewWorkspaceScreen({
             commandDraftConfig={composerState?.commandDraftConfig}
             agentControls={agentControlsWithDisabled}
             footer={composerFooter}
+            assistantId={chatDraft.assistantId}
+            onAssistantSelect={chatDraft.setAssistantId}
           />
           {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
         </ReanimatedAnimated.View>

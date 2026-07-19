@@ -21,17 +21,24 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd)
 RESOURCES_DIR=$(CDPATH= cd -- "${SCRIPT_DIR}/.." && pwd)
 
 MACOS_DIR="${RESOURCES_DIR}/../MacOS"
-MACOS_HELPER_EXECUTABLE="${RESOURCES_DIR}/../Frameworks/Paseo Helper.app/Contents/MacOS/Paseo Helper"
+APP_BUNDLE_DIR=$(CDPATH= cd -- "${RESOURCES_DIR}/../.." && pwd)
+APP_BUNDLE_NAME=$(basename -- "${APP_BUNDLE_DIR}")
+APP_EXECUTABLE_NAME=${APP_BUNDLE_NAME%.app}
+MACOS_HELPER_EXECUTABLE="${RESOURCES_DIR}/../Frameworks/${APP_EXECUTABLE_NAME} Helper.app/Contents/MacOS/${APP_EXECUTABLE_NAME} Helper"
+LEGACY_MACOS_HELPER_EXECUTABLE="${RESOURCES_DIR}/../Frameworks/Paseo Helper.app/Contents/MacOS/Paseo Helper"
 
 # macOS CLI invocations must enter Electron through the agent Helper. Launching
 # the main APPL executable here makes later daemon supervision inherit app UI
 # lifecycle behavior.
 if [ -d "${MACOS_DIR}" ]; then
-  if [ ! -x "${MACOS_HELPER_EXECUTABLE}" ]; then
-    echo "Bundled Paseo Helper executable not found at ${MACOS_HELPER_EXECUTABLE}" >&2
+  if [ -x "${MACOS_HELPER_EXECUTABLE}" ]; then
+    APP_EXECUTABLE="${MACOS_HELPER_EXECUTABLE}"
+  elif [ -x "${LEGACY_MACOS_HELPER_EXECUTABLE}" ]; then
+    APP_EXECUTABLE="${LEGACY_MACOS_HELPER_EXECUTABLE}"
+  else
+    echo "Bundled Paseo Helper executable not found at ${MACOS_HELPER_EXECUTABLE} or ${LEGACY_MACOS_HELPER_EXECUTABLE}" >&2
     exit 1
   fi
-  APP_EXECUTABLE="${MACOS_HELPER_EXECUTABLE}"
 elif [ -x "${RESOURCES_DIR}/../Paseo.bin" ]; then
   APP_EXECUTABLE="${RESOURCES_DIR}/../Paseo.bin"
 elif [ -x "${RESOURCES_DIR}/../Paseo" ]; then

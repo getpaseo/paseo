@@ -16,6 +16,7 @@
   "main": "dist/main.js",
   "scripts": {
     "build": "npm --prefix ../.. run build:server:clean && npm run build:main && electron-builder --config electron-builder.yml",
+    "build:test": "npm --prefix ../.. run build:app-deps:clean && cd ../app && cross-env PASEO_WEB_PLATFORM=electron npx expo export --platform web && cd ../desktop && npm --prefix ../.. run build:server:clean && npm run build:main && electron-builder --config electron-builder-test.yml",
     "build:main": "tsc -p tsconfig.json",
     "capture-harness": "./capture-harness/run.sh",
     "dev": "./scripts/dev.sh",

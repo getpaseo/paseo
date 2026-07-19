@@ -1549,8 +1549,10 @@ export const ar: TranslationResources = {
     hostSections: {
       connections: "اتصالات",
       agents: "Agents",
+      assistants: "Assistants",
       workspaces: "Workspaces",
       providers: "مقدمي الخدمات",
+      channels: "القنوات",
       usage: "الاستخدام",
       terminals: "Terminals",
       host: "نظرة عامة",

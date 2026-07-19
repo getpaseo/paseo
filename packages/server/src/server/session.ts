@@ -156,6 +156,17 @@ import type { DaemonWebSocketRuntimeDiagnosticSnapshot } from "./session/daemon/
 import type { HubRelationshipManagement } from "./hub/relationship-controller.js";
 import { HubExecutionController } from "./hub/execution-controller.js";
 import type { HubExecutionAgents } from "./hub/daemon-executions.js";
+import { LarkChannelSession } from "./channels/lark/lark-channel-session.js";
+import type { LarkChannelService } from "./channels/lark/lark-channel-service.js";
+import { AssistantSession } from "./assistants/assistant-session.js";
+import type { AssistantStore } from "./assistants/assistant-store.js";
+import { buildAssistantInitialPrompt } from "./assistants/assistant-prompt.js";
+import { TeamStore } from "./team/team-store.js";
+import { TeamSession } from "./team/team-session.js";
+import { McpStore } from "./mcp/mcp-store.js";
+import { McpSession } from "./mcp/mcp-session.js";
+import { SkillStore } from "./skill/skill-store.js";
+import { SkillSession } from "./skill/skill-session.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
 import { PushTokenStore } from "./push/token-store.js";
 import {
@@ -466,6 +477,11 @@ export interface SessionOptions {
   daemonVersion?: string;
   daemonRuntimeConfig?: DaemonRuntimeConfig;
   getWebSocketRuntimeMetrics?: () => DaemonWebSocketRuntimeDiagnosticSnapshot | null;
+  larkChannelService?: LarkChannelService | null;
+  assistantStore?: AssistantStore | null;
+  teamStore?: TeamStore | null;
+  mcpStore?: McpStore | null;
+  skillStore?: SkillStore | null;
 }
 
 export type SessionLifecycleIntent =
@@ -548,6 +564,12 @@ function describeRegistryTransition(record: ArchivedRecordSnapshot | null): Regi
   return record.archivedAt ? "unarchived" : "existing";
 }
 
+interface AssistantCreateContext {
+  effectiveConfig: AgentSessionConfig;
+  effectiveInitialPrompt: string | undefined;
+  effectiveLabels: Record<string, string>;
+}
+
 /**
  * Session represents a single connected client session.
  * It owns all state management, orchestration logic, and message processing.
@@ -626,9 +648,16 @@ export class Session {
   private readonly projectConfigSession: ProjectConfigSession;
   private readonly daemonSession: DaemonSession;
   private readonly hubExecutionController: HubExecutionController | null;
+  private readonly larkChannelSession: LarkChannelSession | null;
+  private readonly assistantSession: AssistantSession | null;
+  private readonly assistantStore: AssistantStore | null;
+  private readonly teamSession: TeamSession | null;
+  private readonly mcpSession: McpSession | null;
+  private readonly skillSession: SkillSession | null;
   private readonly workspaceScripts: WorkspaceScriptsService;
   private readonly createAgentLifecycleDispatch: CreateAgentLifecycleDispatch;
 
+  // oxlint-disable-next-line complexity
   constructor(options: SessionOptions) {
     const {
       clientId,
@@ -681,6 +710,11 @@ export class Session {
       daemonVersion,
       daemonRuntimeConfig,
       getWebSocketRuntimeMetrics,
+      larkChannelService,
+      assistantStore,
+      teamStore,
+      mcpStore,
+      skillStore,
     } = options;
     this.clientId = clientId;
     this.scopes = [...scopes];
@@ -862,6 +896,47 @@ export class Session {
       ? new HubExecutionController({
           agents: options.hubExecutionAgents,
           send: (message) => this.emit(message),
+        })
+      : null;
+    this.larkChannelSession = larkChannelService
+      ? new LarkChannelSession({
+          host: {
+            emit: (msg) => this.emit(msg),
+          },
+          service: larkChannelService,
+          logger: this.sessionLogger,
+        })
+      : null;
+    this.assistantSession = assistantStore
+      ? new AssistantSession({
+          host: {
+            emit: (msg) => this.emit(msg),
+          },
+          store: assistantStore,
+          logger: this.sessionLogger,
+        })
+      : null;
+    this.assistantStore = assistantStore ?? null;
+
+    this.teamSession = teamStore
+      ? new TeamSession({
+          host: { emit: (msg) => this.emit(msg) },
+          store: teamStore,
+          logger: this.sessionLogger,
+        })
+      : null;
+    this.mcpSession = mcpStore
+      ? new McpSession({
+          host: { emit: (msg) => this.emit(msg) },
+          store: mcpStore,
+          logger: this.sessionLogger,
+        })
+      : null;
+    this.skillSession = skillStore
+      ? new SkillSession({
+          host: { emit: (msg) => this.emit(msg) },
+          store: skillStore,
+          logger: this.sessionLogger,
         })
       : null;
     this.daemonConfigStore = daemonConfigStore;
@@ -1627,6 +1702,7 @@ export class Session {
     this.scopes = [...scopes];
   }
 
+  // oxlint-disable-next-line complexity
   private async dispatchInboundMessage(msg: SessionInboundMessage, source?: object): Promise<void> {
     const promise =
       this.dispatchVoiceAndControlMessage(msg) ??
@@ -1643,6 +1719,11 @@ export class Session {
       this.dispatchProviderMessage(msg) ??
       this.dispatchTerminalMessage(msg) ??
       this.dispatchChatScheduleLoopMessage(msg) ??
+      this.dispatchAssistantMessage(msg) ??
+      this.dispatchChannelMessage(msg) ??
+      this.dispatchTeamMessage(msg) ??
+      this.dispatchMcpMessage(msg) ??
+      this.dispatchSkillMessage(msg) ??
       this.dispatchMiscMessage(msg);
     if (promise) await promise;
   }
@@ -2057,6 +2138,74 @@ export class Session {
         return this.chatScheduleLoopSession.handleScheduleRunOnceRequest(msg);
       case "schedule/update":
         return this.chatScheduleLoopSession.handleScheduleUpdateRequest(msg);
+      default:
+        return undefined;
+    }
+  }
+
+  private dispatchAssistantMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    switch (msg.type) {
+      case "assistant.list.request":
+      case "assistant.create.request":
+      case "assistant.update.request":
+      case "assistant.delete.request":
+        return this.assistantSession?.handleRequest(msg);
+      default:
+        return undefined;
+    }
+  }
+
+  private dispatchChannelMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    switch (msg.type) {
+      case "channel.lark.get_status.request":
+      case "channel.lark.configure.request":
+      case "channel.lark.delete_bot.request":
+      case "channel.lark.test_connection.request":
+      case "channel.lark.set_enabled.request":
+      case "channel.lark.approve_pairing.request":
+      case "channel.lark.reject_pairing.request":
+      case "channel.lark.revoke_user.request":
+        return this.larkChannelSession?.handleRequest(msg);
+      default:
+        return undefined;
+    }
+  }
+
+  private dispatchTeamMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    switch (msg.type) {
+      case "team.list.request":
+      case "team.create.request":
+      case "team.update.request":
+      case "team.delete.request":
+      case "team.get.request":
+      case "team.send_run.request":
+      case "team.run_state.request":
+        return this.teamSession?.handleRequest(msg);
+      default:
+        return undefined;
+    }
+  }
+
+  private dispatchMcpMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    switch (msg.type) {
+      case "mcp.list.request":
+      case "mcp.create.request":
+      case "mcp.update.request":
+      case "mcp.delete.request":
+      case "mcp.test_connection.request":
+        return this.mcpSession?.handleRequest(msg);
+      default:
+        return undefined;
+    }
+  }
+
+  private dispatchSkillMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    switch (msg.type) {
+      case "skill.list.request":
+      case "skill.create.request":
+      case "skill.update.request":
+      case "skill.delete.request":
+        return this.skillSession?.handleRequest(msg);
       default:
         return undefined;
     }
@@ -2793,6 +2942,34 @@ export class Session {
     }
   }
 
+  private resolveAssistantCreateContext(input: {
+    assistantId?: string;
+    config: AgentSessionConfig;
+    initialPrompt?: string;
+    labels: Record<string, string>;
+  }): AssistantCreateContext {
+    const assistant = input.assistantId ? this.assistantStore?.get(input.assistantId) : null;
+    if (input.assistantId && !assistant) {
+      throw new Error(`Assistant ${input.assistantId} not found`);
+    }
+    if (!assistant) {
+      return {
+        effectiveConfig: input.config,
+        effectiveInitialPrompt: input.initialPrompt,
+        effectiveLabels: input.labels,
+      };
+    }
+    return {
+      effectiveConfig: input.config,
+      effectiveInitialPrompt: buildAssistantInitialPrompt(assistant, input.initialPrompt ?? ""),
+      effectiveLabels: {
+        ...input.labels,
+        assistantId: assistant.id,
+        assistantName: assistant.name,
+      },
+    };
+  }
+
   /**
    * Handle create agent request
    */
@@ -2821,15 +2998,28 @@ export class Session {
     let createdWorktreeForCleanup: CreatePaseoWorktreeWorkflowResult | null = null;
     let createdAgentId: string | null = null;
     try {
-      const requestedCwd = resolve(config.cwd);
+      const { effectiveConfig, effectiveInitialPrompt, effectiveLabels } =
+        this.resolveAssistantCreateContext({
+          assistantId: msg.assistantId,
+          config,
+          initialPrompt,
+          labels: msg.labels,
+        });
+      const effectiveRequest: CreateAgentRequestMessage = {
+        ...msg,
+        config: effectiveConfig,
+        labels: effectiveLabels,
+      };
+      const requestedCwd = resolve(effectiveConfig.cwd);
       const needsRequestedDirectory =
-        Boolean(worktreeName || git || worktree) || (!msg.workspaceId && !msg.callerAgentId);
+        Boolean(worktreeName || git || worktree) ||
+        (!effectiveRequest.workspaceId && !effectiveRequest.callerAgentId);
       if (needsRequestedDirectory && !(await this.filesystem.isDirectory(requestedCwd))) {
         throw new Error(`Working directory does not exist or is not a directory: ${requestedCwd}`);
       }
-      const trimmedPrompt = initialPrompt?.trim();
+      const trimmedPrompt = effectiveInitialPrompt?.trim();
       const { provisionalTitle } = resolveCreateAgentTitles({
-        configTitle: config.title,
+        configTitle: effectiveConfig.title,
         initialPrompt: trimmedPrompt,
       });
 
@@ -2839,14 +3029,14 @@ export class Session {
       };
       const workspacePromptTitle = resolveFirstAgentPromptTitle(firstAgentContext);
       const createdWorktree = await this.createAgentLifecycleDispatch.createWorktreeForRequest({
-        cwd: config.cwd,
+        cwd: effectiveConfig.cwd,
         target: worktree,
         firstAgentContext,
         hasLegacyGitOptions: Boolean(git),
       });
       createdWorktreeForCleanup = createdWorktree;
       const resolvedIntent = await this.resolveSessionCreateAgentIntent({
-        request: msg,
+        request: effectiveRequest,
         createdWorktree,
         workspacePromptTitle,
       });
@@ -2869,7 +3059,7 @@ export class Session {
           config: resolvedIntent.config,
           workspaceId: resolvedIntent.intent.workspaceId,
           worktreeName,
-          initialPrompt,
+          initialPrompt: effectiveInitialPrompt,
           clientMessageId,
           outputSchema,
           images,

@@ -22,12 +22,17 @@ type SubscribeCheckoutDiffResponseMessage = Extract<
   { type: "subscribe_checkout_diff_response" }
 >;
 type StatusMessage = Extract<SessionOutboundMessage, { type: "status" }>;
+type LarkChannelStatusChangedMessage = Extract<
+  SessionOutboundMessage,
+  { type: "channel.lark.status_changed" }
+>;
 type TerminalsChangedMessage = Extract<SessionOutboundMessage, { type: "terminals_changed" }>;
 type RouterMessage =
   | ProvidersSnapshotUpdateMessage
   | CheckoutDiffUpdateMessage
   | SubscribeCheckoutDiffResponseMessage
   | StatusMessage
+  | LarkChannelStatusChangedMessage
   | TerminalsChangedMessage;
 type RouterMessageType = RouterMessage["type"];
 type RouterHandler = (message: RouterMessage) => void;
@@ -60,6 +65,7 @@ function createFakeClient(config: { rejectCheckoutDiffSubscribe?: boolean } = {}
     checkout_diff_update: [],
     subscribe_checkout_diff_response: [],
     status: [],
+    "channel.lark.status_changed": [],
     terminals_changed: [],
   };
   const subscribeCheckoutDiffCalls: Array<{

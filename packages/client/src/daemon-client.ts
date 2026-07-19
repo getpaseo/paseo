@@ -14,6 +14,15 @@ import {
   DaemonUpdateResponseSchema,
   SessionInboundMessageSchema,
   type ServerInfoStatusPayload,
+  Team,
+  TeamCreateInput,
+  TeamUpdateInput,
+  McpServer,
+  McpServerCreateInput,
+  McpServerUpdateInput,
+  Skill,
+  SkillCreateInput,
+  SkillUpdateInput,
 } from "@getpaseo/protocol/messages";
 import { validateWSOutboundMessage } from "@getpaseo/protocol/validation/ws-outbound";
 import type {
@@ -97,6 +106,8 @@ import type {
   PaseoConfigRevision,
   WorkspaceCreateRequest,
   WorkspaceRecoveryState,
+  AssistantCreateInput,
+  AssistantUpdateInput,
 } from "@getpaseo/protocol/messages";
 import type {
   AgentPermissionRequest,
@@ -283,6 +294,14 @@ export type DaemonEvent =
       type: "providers_snapshot_update";
       payload: Extract<SessionOutboundMessage, { type: "providers_snapshot_update" }>["payload"];
     }
+  | {
+      type: "assistant.changed";
+      payload: Extract<SessionOutboundMessage, { type: "assistant.changed" }>["payload"];
+    }
+  | {
+      type: "channel.lark.status_changed";
+      payload: Extract<SessionOutboundMessage, { type: "channel.lark.status_changed" }>["payload"];
+    }
   | { type: "error"; message: string };
 
 export type DaemonEventHandler = (event: DaemonEvent) => void;
@@ -339,6 +358,7 @@ export interface CreateAgentRequestOptions extends AgentConfigOverrides {
   env?: CreateAgentRequestMessage["env"];
   workspaceId?: string;
   callerAgentId?: string;
+  assistantId?: string;
   initialPrompt?: string;
   clientMessageId?: string;
   outputSchema?: Record<string, unknown>;
@@ -496,6 +516,54 @@ type ChatDeletePayload = Extract<
 type ChatPostPayload = Extract<SessionOutboundMessage, { type: "chat/post/response" }>["payload"];
 type ChatReadPayload = Extract<SessionOutboundMessage, { type: "chat/read/response" }>["payload"];
 type ChatWaitPayload = Extract<SessionOutboundMessage, { type: "chat/wait/response" }>["payload"];
+type AssistantListPayload = Extract<
+  SessionOutboundMessage,
+  { type: "assistant.list.response" }
+>["payload"];
+type AssistantCreatePayload = Extract<
+  SessionOutboundMessage,
+  { type: "assistant.create.response" }
+>["payload"];
+type AssistantUpdatePayload = Extract<
+  SessionOutboundMessage,
+  { type: "assistant.update.response" }
+>["payload"];
+type AssistantDeletePayload = Extract<
+  SessionOutboundMessage,
+  { type: "assistant.delete.response" }
+>["payload"];
+type LarkChannelGetStatusPayload = Extract<
+  SessionOutboundMessage,
+  { type: "channel.lark.get_status.response" }
+>["payload"];
+type LarkChannelConfigurePayload = Extract<
+  SessionOutboundMessage,
+  { type: "channel.lark.configure.response" }
+>["payload"];
+type LarkChannelDeleteBotPayload = Extract<
+  SessionOutboundMessage,
+  { type: "channel.lark.delete_bot.response" }
+>["payload"];
+type LarkChannelTestConnectionPayload = Extract<
+  SessionOutboundMessage,
+  { type: "channel.lark.test_connection.response" }
+>["payload"];
+type LarkChannelSetEnabledPayload = Extract<
+  SessionOutboundMessage,
+  { type: "channel.lark.set_enabled.response" }
+>["payload"];
+type LarkChannelApprovePairingPayload = Extract<
+  SessionOutboundMessage,
+  { type: "channel.lark.approve_pairing.response" }
+>["payload"];
+type LarkChannelRejectPairingPayload = Extract<
+  SessionOutboundMessage,
+  { type: "channel.lark.reject_pairing.response" }
+>["payload"];
+type LarkChannelRevokeUserPayload = Extract<
+  SessionOutboundMessage,
+  { type: "channel.lark.revoke_user.response" }
+>["payload"];
 type LoopRunPayload = Extract<SessionOutboundMessage, { type: "loop/run/response" }>["payload"];
 type LoopListPayload = Extract<SessionOutboundMessage, { type: "loop/list/response" }>["payload"];
 type LoopInspectPayload = Extract<
@@ -707,6 +775,57 @@ export interface WaitForChatMessagesOptions {
   room: string;
   afterMessageId?: string | null;
   timeoutMs?: number;
+  requestId?: string;
+}
+export interface AssistantRequestOptions {
+  requestId?: string;
+}
+export interface CreateAssistantOptions extends AssistantCreateInput {
+  requestId?: string;
+}
+export interface UpdateAssistantOptions extends AssistantUpdateInput {
+  requestId?: string;
+}
+export interface DeleteAssistantOptions {
+  id: string;
+  requestId?: string;
+}
+type ConfigureLarkChannelRequest = Extract<
+  SessionInboundMessage,
+  { type: "channel.lark.configure.request" }
+>;
+export type ConfigureLarkChannelOptions = Omit<
+  ConfigureLarkChannelRequest,
+  "type" | "requestId"
+> & {
+  requestId?: string;
+};
+export interface SetLarkChannelEnabledOptions {
+  botId?: string;
+  enabled: boolean;
+  requestId?: string;
+}
+export interface ApproveLarkPairingOptions {
+  botId?: string;
+  code: string;
+  requestId?: string;
+}
+export interface RejectLarkPairingOptions {
+  botId?: string;
+  code: string;
+  requestId?: string;
+}
+export interface RevokeLarkUserOptions {
+  botId?: string;
+  userId: string;
+  requestId?: string;
+}
+export interface LarkChannelRequestOptions {
+  botId?: string;
+  requestId?: string;
+}
+export interface DeleteLarkBotOptions {
+  botId: string;
   requestId?: string;
 }
 export interface RunLoopOptions {
@@ -2284,6 +2403,7 @@ export class DaemonClient {
       ...(options.env ? { env: options.env } : {}),
       ...(options.workspaceId !== undefined ? { workspaceId: options.workspaceId } : {}),
       ...(options.callerAgentId !== undefined ? { callerAgentId: options.callerAgentId } : {}),
+      ...(options.assistantId ? { assistantId: options.assistantId } : {}),
       ...(options.initialPrompt ? { initialPrompt: options.initialPrompt } : {}),
       ...(options.clientMessageId ? { clientMessageId: options.clientMessageId } : {}),
       ...(options.outputSchema ? { outputSchema: options.outputSchema } : {}),
@@ -4888,6 +5008,227 @@ export class DaemonClient {
     });
   }
 
+  async listAssistants(options?: AssistantRequestOptions): Promise<AssistantListPayload> {
+    return this.sendNamespacedCorrelatedSessionRequest<"assistant.list.response">({
+      requestId: options?.requestId,
+      message: { type: "assistant.list.request" },
+    });
+  }
+
+  async createAssistant(options: CreateAssistantOptions): Promise<AssistantCreatePayload> {
+    const { requestId, ...assistant } = options;
+    return this.sendNamespacedCorrelatedSessionRequest<"assistant.create.response">({
+      requestId,
+      message: { type: "assistant.create.request", assistant },
+    });
+  }
+
+  async updateAssistant(options: UpdateAssistantOptions): Promise<AssistantUpdatePayload> {
+    const { requestId, ...assistant } = options;
+    return this.sendNamespacedCorrelatedSessionRequest<"assistant.update.response">({
+      requestId,
+      message: { type: "assistant.update.request", assistant },
+    });
+  }
+
+  async deleteAssistant(options: DeleteAssistantOptions): Promise<AssistantDeletePayload> {
+    return this.sendNamespacedCorrelatedSessionRequest<"assistant.delete.response">({
+      requestId: options.requestId,
+      message: { type: "assistant.delete.request", id: options.id },
+    });
+  }
+
+  // Team methods
+  async listTeams(): Promise<{ teams: Team[]; error: string | null }> {
+    const result = await this.sendNamespacedCorrelatedSessionRequest<"team.list.response">({
+      message: { type: "team.list.request" },
+    });
+    return { teams: result.teams, error: result.error };
+  }
+
+  async createTeam(input: TeamCreateInput): Promise<{ team: Team | null; error: string | null }> {
+    const result = await this.sendNamespacedCorrelatedSessionRequest<"team.create.response">({
+      message: { type: "team.create.request", team: input },
+    });
+    return { team: result.team, error: result.error };
+  }
+
+  async updateTeam(input: TeamUpdateInput): Promise<{ team: Team | null; error: string | null }> {
+    const result = await this.sendNamespacedCorrelatedSessionRequest<"team.update.response">({
+      message: { type: "team.update.request", team: input },
+    });
+    return { team: result.team, error: result.error };
+  }
+
+  async deleteTeam(id: string): Promise<{ ok: boolean; error: string | null }> {
+    const result = await this.sendNamespacedCorrelatedSessionRequest<"team.delete.response">({
+      message: { type: "team.delete.request", id },
+    });
+    return { ok: result.ok, error: result.error };
+  }
+
+  // MCP methods
+  async listMcpServers(): Promise<{ servers: McpServer[]; error: string | null }> {
+    const result = await this.sendNamespacedCorrelatedSessionRequest<"mcp.list.response">({
+      message: { type: "mcp.list.request" },
+    });
+    return { servers: result.servers, error: result.error };
+  }
+
+  async createMcpServer(
+    input: McpServerCreateInput,
+  ): Promise<{ server: McpServer | null; error: string | null }> {
+    const result = await this.sendNamespacedCorrelatedSessionRequest<"mcp.create.response">({
+      message: { type: "mcp.create.request", server: input },
+    });
+    return { server: result.server, error: result.error };
+  }
+
+  async updateMcpServer(
+    input: McpServerUpdateInput,
+  ): Promise<{ server: McpServer | null; error: string | null }> {
+    const result = await this.sendNamespacedCorrelatedSessionRequest<"mcp.update.response">({
+      message: { type: "mcp.update.request", server: input },
+    });
+    return { server: result.server, error: result.error };
+  }
+
+  async deleteMcpServer(id: string): Promise<{ ok: boolean; error: string | null }> {
+    const result = await this.sendNamespacedCorrelatedSessionRequest<"mcp.delete.response">({
+      message: { type: "mcp.delete.request", id },
+    });
+    return { ok: result.ok, error: result.error };
+  }
+
+  // Skill methods
+  async listSkills(): Promise<{ skills: Skill[]; error: string | null }> {
+    const result = await this.sendNamespacedCorrelatedSessionRequest<"skill.list.response">({
+      message: { type: "skill.list.request" },
+    });
+    return { skills: result.skills, error: result.error };
+  }
+
+  async createSkill(
+    input: SkillCreateInput,
+  ): Promise<{ skill: Skill | null; error: string | null }> {
+    const result = await this.sendNamespacedCorrelatedSessionRequest<"skill.create.response">({
+      message: { type: "skill.create.request", skill: input },
+    });
+    return { skill: result.skill, error: result.error };
+  }
+
+  async updateSkill(
+    input: SkillUpdateInput,
+  ): Promise<{ skill: Skill | null; error: string | null }> {
+    const result = await this.sendNamespacedCorrelatedSessionRequest<"skill.update.response">({
+      message: { type: "skill.update.request", skill: input },
+    });
+    return { skill: result.skill, error: result.error };
+  }
+
+  async deleteSkill(id: string): Promise<{ ok: boolean; error: string | null }> {
+    const result = await this.sendNamespacedCorrelatedSessionRequest<"skill.delete.response">({
+      message: { type: "skill.delete.request", id },
+    });
+    return { ok: result.ok, error: result.error };
+  }
+
+  async getLarkChannelStatus(
+    options?: LarkChannelRequestOptions,
+  ): Promise<LarkChannelGetStatusPayload> {
+    return this.sendNamespacedCorrelatedSessionRequest<"channel.lark.get_status.response">({
+      requestId: options?.requestId,
+      message: {
+        type: "channel.lark.get_status.request",
+      },
+    });
+  }
+
+  async configureLarkChannel(
+    options: ConfigureLarkChannelOptions,
+  ): Promise<LarkChannelConfigurePayload> {
+    const { requestId, ...messageOptions } = options;
+    return this.sendNamespacedCorrelatedSessionRequest<"channel.lark.configure.response">({
+      requestId,
+      message: {
+        type: "channel.lark.configure.request",
+        ...messageOptions,
+      },
+    });
+  }
+
+  async testLarkChannel(
+    options?: LarkChannelRequestOptions,
+  ): Promise<LarkChannelTestConnectionPayload> {
+    return this.sendNamespacedCorrelatedSessionRequest<"channel.lark.test_connection.response">({
+      requestId: options?.requestId,
+      message: {
+        type: "channel.lark.test_connection.request",
+        botId: options?.botId,
+      },
+    });
+  }
+
+  async deleteLarkChannelBot(options: DeleteLarkBotOptions): Promise<LarkChannelDeleteBotPayload> {
+    return this.sendNamespacedCorrelatedSessionRequest<"channel.lark.delete_bot.response">({
+      requestId: options.requestId,
+      message: {
+        type: "channel.lark.delete_bot.request",
+        botId: options.botId,
+      },
+    });
+  }
+
+  async setLarkChannelEnabled(
+    options: SetLarkChannelEnabledOptions,
+  ): Promise<LarkChannelSetEnabledPayload> {
+    return this.sendNamespacedCorrelatedSessionRequest<"channel.lark.set_enabled.response">({
+      requestId: options.requestId,
+      message: {
+        type: "channel.lark.set_enabled.request",
+        botId: options.botId,
+        enabled: options.enabled,
+      },
+    });
+  }
+
+  async approveLarkPairing(
+    options: ApproveLarkPairingOptions,
+  ): Promise<LarkChannelApprovePairingPayload> {
+    return this.sendNamespacedCorrelatedSessionRequest<"channel.lark.approve_pairing.response">({
+      requestId: options.requestId,
+      message: {
+        type: "channel.lark.approve_pairing.request",
+        botId: options.botId,
+        code: options.code,
+      },
+    });
+  }
+
+  async rejectLarkPairing(
+    options: RejectLarkPairingOptions,
+  ): Promise<LarkChannelRejectPairingPayload> {
+    return this.sendNamespacedCorrelatedSessionRequest<"channel.lark.reject_pairing.response">({
+      requestId: options.requestId,
+      message: {
+        type: "channel.lark.reject_pairing.request",
+        botId: options.botId,
+        code: options.code,
+      },
+    });
+  }
+
+  async revokeLarkUser(options: RevokeLarkUserOptions): Promise<LarkChannelRevokeUserPayload> {
+    return this.sendNamespacedCorrelatedSessionRequest<"channel.lark.revoke_user.response">({
+      requestId: options.requestId,
+      message: {
+        type: "channel.lark.revoke_user.request",
+        botId: options.botId,
+        userId: options.userId,
+      },
+    });
+  }
+
   async scheduleCreate(options: CreateScheduleOptions): Promise<ScheduleCreatePayload> {
     return this.sendCorrelatedSessionRequest({
       requestId: options.requestId,
@@ -5651,6 +5992,16 @@ export class DaemonClient {
       case "providers_snapshot_update":
         return {
           type: "providers_snapshot_update",
+          payload: msg.payload,
+        };
+      case "assistant.changed":
+        return {
+          type: "assistant.changed",
+          payload: msg.payload,
+        };
+      case "channel.lark.status_changed":
+        return {
+          type: "channel.lark.status_changed",
           payload: msg.payload,
         };
       default:

@@ -84,6 +84,46 @@ function createConfig(overrides: Partial<AgentSessionConfig> = {}): AgentSession
   };
 }
 
+describe("CodexAppServerAgentClient resolveCreateConfig", () => {
+  test("defaults new root agents to auto mode", () => {
+    const provider = new CodexAppServerAgentClient(createTestLogger());
+    const result = provider.resolveCreateConfig({
+      provider: "aiden-codex",
+      requestedMode: undefined,
+      featureValues: undefined,
+      parent: null,
+      unattended: false,
+      availableModes: [
+        { id: "auto", label: "Default Permissions" },
+        { id: "full-access", label: "Full Access" },
+      ],
+    });
+
+    expect(result).toEqual({ modeId: "auto", featureValues: undefined });
+  });
+
+  test("inherits mode from same-provider parents", () => {
+    const provider = new CodexAppServerAgentClient(createTestLogger());
+    const result = provider.resolveCreateConfig({
+      provider: "aiden-codex",
+      requestedMode: undefined,
+      featureValues: undefined,
+      parent: {
+        provider: "aiden-codex",
+        modeId: "full-access",
+        isUnattended: false,
+      },
+      unattended: false,
+      availableModes: [
+        { id: "auto", label: "Default Permissions" },
+        { id: "full-access", label: "Full Access" },
+      ],
+    });
+
+    expect(result).toEqual({ modeId: "full-access", featureValues: undefined });
+  });
+});
+
 function createSession(
   configOverrides: Partial<AgentSessionConfig> = {},
   options: { goalsEnabled?: boolean; autoReviewEnabled?: boolean } = {},
