@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { Text, View, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
@@ -10,7 +11,11 @@ interface ResolvedBalance {
   usedPct: number | null;
 }
 
-function resolveBalance(balance: UsageBalance, locale: string): ResolvedBalance {
+function resolveBalance(
+  balance: UsageBalance,
+  t: TFunction,
+  locale?: string,
+): ResolvedBalance {
   const { used, remaining, limit, unit } = balance;
   const format = (value: number) => formatAmount(value, unit, locale);
   if (limit != null && limit > 0) {
@@ -20,7 +25,10 @@ function resolveBalance(balance: UsageBalance, locale: string): ResolvedBalance 
     return { amountText: `${usedText} / ${format(limit)}`, usedPct };
   }
   if (remaining != null) {
-    return { amountText: `${format(remaining)} left`, usedPct: null };
+    return {
+      amountText: t("providerUsage.values.remaining", { amount: format(remaining) }),
+      usedPct: null,
+    };
   }
   if (used != null) {
     return { amountText: format(used), usedPct: null };
@@ -42,8 +50,8 @@ function fillToneStyle(tone: UsageTone) {
 }
 
 export function UsageBalanceBar({ balance }: { balance: UsageBalance }) {
-  const { i18n } = useTranslation();
-  const { amountText, usedPct } = resolveBalance(balance, i18n.language);
+  const { t, i18n } = useTranslation();
+  const { amountText, usedPct } = resolveBalance(balance, t, i18n.resolvedLanguage);
   const tone = balance.tone ?? "default";
   const resetLabel = formatResetLabel(balance.resetsAt);
 
@@ -58,7 +66,7 @@ export function UsageBalanceBar({ balance }: { balance: UsageBalance }) {
         <Text style={styles.label} numberOfLines={1}>
           {balance.label}
         </Text>
-        <Text style={styles.value}>
+        <Text style={styles.value} numberOfLines={1} ellipsizeMode="tail">
           {amountText}
           {resetLabel ? <Text style={styles.reset}>{` · ${resetLabel}`}</Text> : null}
         </Text>
@@ -88,6 +96,7 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
   },
   value: {
+    flexShrink: 1,
     color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.medium,
