@@ -1,7 +1,7 @@
+import { useTranslation } from "react-i18next";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { ProviderUsageCard } from "./card";
-import { providerUsageCopy } from "./copy";
 import type { ProviderUsage, ProviderUsageView } from "./types";
 
 function matchProvider(
@@ -23,11 +23,12 @@ export function ProviderUsageTooltipSection({
   view: ProviderUsageView;
   activeProviderId: string | null | undefined;
 }) {
+  const { t } = useTranslation();
   if (view.kind === "loading") {
     return (
       <>
         <View style={styles.divider} />
-        <Text style={styles.detail}>{providerUsageCopy.tooltipLoading}</Text>
+        <Text style={styles.detail}>{t("providerUsage.tooltipLoading")}</Text>
       </>
     );
   }
