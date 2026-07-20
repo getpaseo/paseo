@@ -1900,6 +1900,95 @@ describe("OpenCode adapter startTurn error handling", () => {
     await session.interrupt();
     vi.useRealTimers();
   });
+
+  test("starts the next prompt when an interrupt abort rejects", async () => {
+    const promptAsync = vi.fn().mockResolvedValue({ data: {}, error: undefined });
+    const abort = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("abort transport failed"))
+      .mockResolvedValue({ data: true, error: undefined });
+    const fakeClient = {
+      global: {
+        event: vi.fn().mockImplementation(
+          async (options: {
+            signal: AbortSignal;
+          }): Promise<{ stream: AsyncIterable<OpenCodeEvent> }> => ({
+            stream: abortableOpenCodeStream(options.signal),
+          }),
+        ),
+      },
+      session: {
+        promptAsync,
+        abort,
+      },
+    } as never;
+
+    const session = new __openCodeInternals.OpenCodeAgentSession(
+      { provider: "opencode", cwd: "/tmp/test" },
+      fakeClient,
+      "ses_unit_test",
+      createTestLogger(),
+    );
+
+    await session.startTurn("first");
+    await session.interrupt();
+    await expect(session.startTurn("second")).resolves.toEqual({ turnId: "opencode-turn-1" });
+    expect(promptAsync).toHaveBeenCalledTimes(2);
+
+    await session.interrupt();
+  });
+
+  test("caps how long a pending interrupt abort can block the next prompt", async () => {
+    vi.useFakeTimers();
+    const abortDeferred = createTestDeferred<{ data: boolean; error: undefined }>();
+    const promptAsync = vi.fn().mockResolvedValue({ data: {}, error: undefined });
+    const abort = vi
+      .fn()
+      .mockReturnValueOnce(abortDeferred.promise)
+      .mockResolvedValue({ data: true, error: undefined });
+    const fakeClient = {
+      global: {
+        event: vi.fn().mockImplementation(
+          async (options: {
+            signal: AbortSignal;
+          }): Promise<{ stream: AsyncIterable<OpenCodeEvent> }> => ({
+            stream: abortableOpenCodeStream(options.signal),
+          }),
+        ),
+      },
+      session: {
+        promptAsync,
+        abort,
+      },
+    } as never;
+
+    const session = new __openCodeInternals.OpenCodeAgentSession(
+      { provider: "opencode", cwd: "/tmp/test" },
+      fakeClient,
+      "ses_unit_test",
+      createTestLogger(),
+    );
+
+    try {
+      await session.startTurn("first");
+      const interruptPromise = session.interrupt();
+      await vi.advanceTimersByTimeAsync(2_000);
+      await interruptPromise;
+
+      const secondTurnPromise = session.startTurn("second");
+      await vi.advanceTimersByTimeAsync(9_999);
+      expect(promptAsync).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(1);
+      await secondTurnPromise;
+      expect(promptAsync).toHaveBeenCalledTimes(2);
+
+      abortDeferred.resolve({ data: true, error: undefined });
+      await session.interrupt();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("OpenCodeAgentClient env", () => {
@@ -2726,6 +2815,69 @@ describe("OpenCode provider subagent contract", () => {
         expect(turnEventSignatures(events)).toEqual([
           ["turn_started", "opencode-turn-0"],
           ["timeline", "opencode-turn-0"],
+          ["turn_canceled", "opencode-turn-0"],
+          ["turn_started", "opencode-turn-1"],
+          ["timeline", "opencode-turn-1"],
+          ["timeline", "opencode-turn-1"],
+          ["turn_completed", "opencode-turn-1"],
+        ]);
+      });
+    } finally {
+      await parent.close();
+    }
+  });
+
+  test("cancels an autonomous turn and starts the direct prompt when abort rejects", async () => {
+    const runtime = new TestOpenCodeHarness();
+    const openCode = new TestOpenCodeClient();
+    openCode.sessionCreateResponse = { data: { id: "ses_parent_failed_handoff" } };
+    openCode.sessionAbortImplementation = async () => {
+      throw new Error("abort transport failed");
+    };
+    openCode.sessionPromptAsyncEvents = [
+      {
+        type: "message.updated",
+        properties: {
+          info: {
+            id: "msg_paseo_user",
+            sessionID: "ses_parent_failed_handoff",
+            role: "user",
+          },
+        },
+      },
+      ...assistantTurnEvents({
+        sessionId: "ses_parent_failed_handoff",
+        text: "Paseo response.",
+      }),
+    ];
+    runtime.enqueueClient(openCode);
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const parent = await client.createSession({
+      provider: "opencode",
+      cwd: "/workspace/repo",
+    });
+    const events: AgentStreamEvent[] = [];
+    parent.subscribe((event) => events.push(event));
+
+    try {
+      openCode.emitEvent({
+        type: "session.status",
+        properties: { sessionID: "ses_parent_failed_handoff", status: { type: "busy" } },
+      });
+      await vi.waitFor(() => {
+        expect(events).toEqual([
+          { type: "turn_started", provider: "opencode", turnId: "opencode-turn-0" },
+        ]);
+      });
+
+      await parent.startTurn("Continue from Paseo");
+
+      await vi.waitFor(() => {
+        expect(turnEventSignatures(events)).toEqual([
+          ["turn_started", "opencode-turn-0"],
           ["turn_canceled", "opencode-turn-0"],
           ["turn_started", "opencode-turn-1"],
           ["timeline", "opencode-turn-1"],

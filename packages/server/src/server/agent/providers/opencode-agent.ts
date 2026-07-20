@@ -106,6 +106,7 @@ const OPENCODE_CHILD_SESSION_HYDRATION_LIMIT = 100;
 const OPENCODE_CHILD_SESSION_SERVER_REGISTRY_LIMIT = 500;
 const OPENCODE_PERMISSION_ACTION_ALLOW_ONCE = "allow_once";
 const OPENCODE_PERMISSION_ACTION_ALLOW_ALWAYS = "allow_always";
+const OPENCODE_PENDING_ABORT_START_TIMEOUT_MS = 10_000;
 
 // OpenCode child sessions run on the server process that spawned them. Adoption
 // resumes must attach to that same helper server to receive live global events.
@@ -3060,7 +3061,16 @@ class OpenCodeAgentSession implements AgentSession {
     }
 
     try {
-      await pendingAbortPromise;
+      await withTimeout(
+        pendingAbortPromise,
+        OPENCODE_PENDING_ABORT_START_TIMEOUT_MS,
+        "OpenCode pending session.abort",
+      ).catch((error) => {
+        this.logger.warn(
+          { err: error, sessionId: this.sessionId },
+          "OpenCode session.abort did not settle before starting the next turn",
+        );
+      });
     } finally {
       if (this.pendingAbortPromise === pendingAbortPromise) {
         this.pendingAbortPromise = null;
@@ -3075,12 +3085,16 @@ class OpenCodeAgentSession implements AgentSession {
     if (this.activeForegroundTurnId) {
       if (this.activeForegroundTurnSource === "autonomous") {
         const autonomousTurnId = this.activeForegroundTurnId;
-        await this.beginSessionAbort(autonomousTurnId, "direct_prompt_handoff");
-        if (this.activeForegroundTurnId === autonomousTurnId) {
-          this.finishForegroundTurn(
-            { type: "turn_canceled", provider: "opencode", reason: "interrupted" },
-            autonomousTurnId,
-          );
+        this.beginSessionAbort(autonomousTurnId, "direct_prompt_handoff");
+        try {
+          await this.awaitPendingAbortBeforeStartingTurn();
+        } finally {
+          if (this.activeForegroundTurnId === autonomousTurnId) {
+            this.finishForegroundTurn(
+              { type: "turn_canceled", provider: "opencode", reason: "interrupted" },
+              autonomousTurnId,
+            );
+          }
         }
       } else {
         throw new Error("A foreground turn is already active");
