@@ -470,6 +470,7 @@ export const fr: TranslationResources = {
     },
     tabs: {
       loading: "Chargement...",
+      modified: "Modifications non enregistrées",
       loadingAgentTitle: "Titre d'agent de chargement",
       emptyPane: "Aucun onglet dans ce volet.",
       fallback: {
@@ -537,6 +538,13 @@ export const fr: TranslationResources = {
         failedToReloadAgent: "Échec du rechargement de l'agent",
       },
       confirmations: {
+        unsavedTitle: "Modifications non enregistrées",
+        unsavedMessage:
+          "Cet onglet contient des modifications non enregistrées. Le fermer supprimera le brouillon.",
+        closeWithoutSaving: "Fermer sans enregistrer",
+        closePaneTitle: "Fermer le volet?",
+        bulkUnsaved:
+          "{{count}} onglet(s) contiennent des modifications non enregistrées. Les fermer supprimera ces brouillons.",
         close: "Fermer",
         cancel: "Annuler",
         archive: "Archive",

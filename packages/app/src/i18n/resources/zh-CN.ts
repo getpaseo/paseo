@@ -466,6 +466,7 @@ export const zhCN: TranslationResources = {
     },
     tabs: {
       loading: "正在加载...",
+      modified: "未保存的更改",
       loadingAgentTitle: "正在加载 Agent 标题",
       emptyPane: "此窗格中没有标签。",
       fallback: {
@@ -532,6 +533,11 @@ export const zhCN: TranslationResources = {
         failedToReloadAgent: "重新加载 Agent 失败",
       },
       confirmations: {
+        unsavedTitle: "未保存的更改",
+        unsavedMessage: "此标签页有尚未保存的更改。关闭将丢弃草稿。",
+        closeWithoutSaving: "不保存并关闭",
+        closePaneTitle: "关闭面板？",
+        bulkUnsaved: "{{count}} 个标签页有未保存的更改。关闭将丢弃这些草稿。",
         close: "关闭",
         cancel: "取消",
         archive: "归档",

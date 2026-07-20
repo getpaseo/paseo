@@ -470,6 +470,7 @@ export const ru: TranslationResources = {
     },
     tabs: {
       loading: "Загрузка...",
+      modified: "Несохранённые изменения",
       loadingAgentTitle: "Название агента загрузки",
       emptyPane: "На этой панели нет вкладок.",
       fallback: {
@@ -536,6 +537,13 @@ export const ru: TranslationResources = {
         failedToReloadAgent: "Не удалось перезагрузить агент",
       },
       confirmations: {
+        unsavedTitle: "Несохранённые изменения",
+        unsavedMessage:
+          "В этой вкладке есть несохранённые изменения. При закрытии черновик будет удалён.",
+        closeWithoutSaving: "Закрыть без сохранения",
+        closePaneTitle: "Закрыть панель?",
+        bulkUnsaved:
+          "В {{count}} вкладках есть несохранённые изменения. При закрытии черновики будут удалены.",
         close: "Закрывать",
         cancel: "Отмена",
         archive: "Архив",

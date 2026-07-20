@@ -43,6 +43,7 @@ import { FilePanelBar } from "./bar";
 import { FileEditorModel, type FileEditorFile } from "./editor/model";
 import { FileEditorView } from "./editor/view";
 import { confirmDialog } from "@/utils/confirm-dialog";
+import { usePublishPanelInstanceAttributes } from "@/panels/panel-instance-attributes";
 
 interface CodeLineProps {
   tokens: HighlightToken[];
@@ -58,6 +59,8 @@ interface FilePreviewBodyProps {
   location: WorkspaceFileLocation;
   imagePreviewUri: string | null;
 }
+
+type TextExplorerFile = ExplorerFile & { kind: "text" };
 
 function trimNonEmpty(value: string | null | undefined): string | null {
   if (typeof value !== "string") {
@@ -448,11 +451,9 @@ export function FilePane({
     resolvedPreview.key === previewKey ? resolvedPreview.imageAttachment : null,
   );
   const isMarkdown = isMarkdownPreview(preview, location.path);
-  const eligible = isEligibleSource({
+  const editable = isEditableTextFile({
     preview,
     supportsEditing,
-    isMarkdown,
-    markdownMode,
   });
   const lineCount =
     preview?.kind === "text" ? (preview.content ?? "").split("\n").length : undefined;
@@ -469,7 +470,7 @@ export function FilePane({
       markdownMode={isMarkdown ? markdownMode : undefined}
       onMarkdownModeChange={isMarkdown ? setMarkdownMode : undefined}
       lineCount={lineCount}
-      eligible={eligible}
+      editable={editable}
       disconnectedMessage={t("workspace.terminal.hostDisconnected")}
       errorMessage={errorMessage}
       isLoading={query.isFetching}
@@ -489,18 +490,15 @@ function getFileErrorMessage(error: unknown, fallback: string): string | null {
   return error instanceof Error ? error.message : fallback;
 }
 
-function isEligibleSource(input: {
+function isEditableTextFile(input: {
   preview: ExplorerFile | null;
   supportsEditing: boolean;
-  isMarkdown: boolean;
-  markdownMode: "preview" | "source";
 }): boolean {
   return Boolean(
     isWeb &&
     input.supportsEditing &&
     input.preview?.kind === "text" &&
-    input.preview.size <= 1024 * 1024 &&
-    (!input.isMarkdown || input.markdownMode === "source"),
+    input.preview.size <= 1024 * 1024,
   );
 }
 
@@ -514,7 +512,7 @@ function FilePanePresentation({
   markdownMode,
   onMarkdownModeChange,
   lineCount,
-  eligible,
+  editable,
   disconnectedMessage,
   errorMessage,
   isLoading,
@@ -531,7 +529,7 @@ function FilePanePresentation({
   markdownMode?: "preview" | "source";
   onMarkdownModeChange?: (mode: "preview" | "source") => void;
   lineCount?: number;
-  eligible: boolean;
+  editable: boolean;
   disconnectedMessage: string;
   errorMessage: string | null;
   isLoading: boolean;
@@ -549,18 +547,21 @@ function FilePanePresentation({
     );
   }
 
-  if (eligible && client && readTarget && preview?.kind === "text") {
+  if (editable && client && readTarget && preview?.kind === "text") {
     return (
-      <SourceEditor
+      <EditableFilePane
         key={`${serverId}:${readTarget.cwd}:${readTarget.path}`}
         client={client}
         cwd={readTarget.cwd}
         path={readTarget.path}
-        preview={preview}
+        preview={preview as TextExplorerFile}
         version={version}
         filename={filename}
         mode={markdownMode}
         onModeChange={onMarkdownModeChange}
+        isLoading={isLoading}
+        isMobile={isMobile}
+        location={location}
       />
     );
   }
@@ -592,7 +593,7 @@ function FilePanePresentation({
   );
 }
 
-function SourceEditor({
+function EditableFilePane({
   client,
   cwd,
   path,
@@ -601,15 +602,21 @@ function SourceEditor({
   filename,
   mode,
   onModeChange,
+  isLoading,
+  isMobile,
+  location,
 }: {
   client: DaemonClient;
   cwd: string;
   path: string;
-  preview: ExplorerFile;
+  preview: TextExplorerFile;
   version: FileVersion | null;
   filename: string;
   mode?: "preview" | "source";
   onModeChange?: (mode: "preview" | "source") => void;
+  isLoading: boolean;
+  isMobile: boolean;
+  location: WorkspaceFileLocation;
 }) {
   const { settings } = useAppSettings();
   const [cursor, setCursor] = useState({ line: 1, column: 1 });
@@ -653,6 +660,7 @@ function SourceEditor({
       }),
   );
   const snapshot = useSyncExternalStore(model.subscribe, model.getSnapshot, model.getSnapshot);
+  usePublishPanelInstanceAttributes({ modified: snapshot.modified });
   const theme = UnistylesRuntime.getTheme();
   const visualTheme = useMemo(
     () => ({
@@ -699,6 +707,17 @@ function SourceEditor({
   }, [model]);
   const handleOverwrite = useCallback(() => void model.overwrite(), [model]);
   const handleVimModeChange = useCallback((nextMode: string | null) => setVimMode(nextMode), []);
+  const renderedPreview = useMemo<ExplorerFile>(
+    () => ({
+      ...preview,
+      content: snapshot.content,
+      size: snapshot.version.status === "ready" ? snapshot.version.size : preview.size,
+      modifiedAt:
+        snapshot.version.status === "ready" ? snapshot.version.modifiedAt : preview.modifiedAt,
+    }),
+    [preview, snapshot.content, snapshot.version],
+  );
+  const showSource = mode !== "preview";
 
   return (
     <View style={styles.container} testID="workspace-file-pane">
@@ -708,22 +727,32 @@ function SourceEditor({
         }
         lineCount={snapshot.content.split("\n").length}
         editorStatus={snapshot.status}
-        cursor={cursor}
-        vimMode={vimMode}
+        cursor={showSource ? cursor : undefined}
+        vimMode={showSource ? vimMode : null}
         conflictUnavailable={snapshot.observedVersion.status !== "ready"}
         onOverwrite={handleOverwrite}
         onReload={handleReload}
         mode={mode}
         onModeChange={onModeChange}
       />
-      <FileEditorView
-        model={model}
-        filename={filename}
-        vimEnabled={settings.vimKeybindings}
-        theme={visualTheme}
-        onCursorChange={setCursor}
-        onVimModeChange={handleVimModeChange}
-      />
+      {showSource ? (
+        <FileEditorView
+          model={model}
+          filename={filename}
+          vimEnabled={settings.vimKeybindings}
+          theme={visualTheme}
+          onCursorChange={setCursor}
+          onVimModeChange={handleVimModeChange}
+        />
+      ) : (
+        <FilePreviewBody
+          preview={renderedPreview}
+          isLoading={isLoading}
+          isMobile={isMobile}
+          location={location}
+          imagePreviewUri={null}
+        />
+      )}
     </View>
   );
 }

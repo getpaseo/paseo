@@ -5,6 +5,7 @@ export type FileEditorStatus = "loading" | "clean" | "dirty" | "saving" | "confl
 export interface FileEditorSnapshot {
   status: FileEditorStatus;
   content: string;
+  modified: boolean;
   version: FileVersion;
   observedVersion: FileVersion;
   error: string | null;
@@ -43,6 +44,7 @@ export class FileEditorModel {
   private saveSequence = 0;
   private disposed = false;
   private observedWhileSaving: FileVersion | null = null;
+  private persistedContent: string;
 
   constructor(input: {
     file: FileEditorFile;
@@ -51,9 +53,11 @@ export class FileEditorModel {
   }) {
     this.session = input.session;
     this.clock = input.clock ?? systemClock;
+    this.persistedContent = input.file.content;
     this.snapshot = {
       status: "clean",
       content: input.file.content,
+      modified: false,
       version: input.file.version,
       observedVersion: input.file.version,
       error: null,
@@ -69,9 +73,12 @@ export class FileEditorModel {
 
   edit(content: string): void {
     if (this.disposed || content === this.snapshot.content) return;
-    const status = this.snapshot.status === "conflict" ? "conflict" : "dirty";
-    this.setSnapshot({ ...this.snapshot, status, content, error: null });
+    const modified = content !== this.persistedContent;
+    let status: FileEditorStatus = modified ? "dirty" : "clean";
+    if (this.snapshot.status === "conflict") status = "conflict";
+    this.setSnapshot({ ...this.snapshot, status, content, modified, error: null });
     if (status === "dirty") this.scheduleAutosave();
+    else this.clearAutosave();
   }
 
   async save(): Promise<void> {
@@ -154,23 +161,28 @@ export class FileEditorModel {
     };
     const pending = this.observedWhileSaving;
     this.observedWhileSaving = null;
+    this.persistedContent = content;
     if (pending && !sameVersion(pending, writtenVersion)) {
       this.setSnapshot({
         ...this.snapshot,
         status: "conflict",
+        modified: this.snapshot.content !== this.persistedContent,
         version: writtenVersion,
         observedVersion: pending,
         error: null,
       });
       return;
     }
+    const modified = this.snapshot.content !== this.persistedContent;
     this.setSnapshot({
       ...this.snapshot,
-      status: "clean",
+      status: modified ? "dirty" : "clean",
+      modified,
       version: writtenVersion,
       observedVersion: writtenVersion,
       error: null,
     });
+    if (modified) this.scheduleAutosave();
   }
 
   private async reloadFromDisk(version: FileVersion): Promise<void> {
@@ -184,9 +196,11 @@ export class FileEditorModel {
     try {
       const file = await this.session.read();
       if (this.disposed || sequence !== this.saveSequence) return;
+      this.persistedContent = file.content;
       this.setSnapshot({
         status: "clean",
         content: file.content,
+        modified: false,
         version: file.version,
         observedVersion: file.version,
         error: null,
@@ -206,6 +220,7 @@ export class FileEditorModel {
     this.setSnapshot({
       ...this.snapshot,
       status: "conflict",
+      modified: this.snapshot.content !== this.persistedContent,
       observedVersion: version,
       error: version.status === "error" ? version.error : null,
     });

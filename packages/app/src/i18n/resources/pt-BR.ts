@@ -470,6 +470,7 @@ export const ptBR: TranslationResources = {
     },
     tabs: {
       loading: "Carregando...",
+      modified: "Alterações não salvas",
       loadingAgentTitle: "Carregando título do agente",
       emptyPane: "Nenhuma aba neste painel.",
       fallback: {
@@ -536,6 +537,12 @@ export const ptBR: TranslationResources = {
         failedToReloadAgent: "Falha ao recarregar agente",
       },
       confirmations: {
+        unsavedTitle: "Alterações não salvas",
+        unsavedMessage: "Esta aba tem alterações não salvas. Fechá-la descartará o rascunho.",
+        closeWithoutSaving: "Fechar sem salvar",
+        closePaneTitle: "Fechar painel?",
+        bulkUnsaved:
+          "{{count}} aba(s) têm alterações não salvas. Fechar descartará esses rascunhos.",
         close: "Fechar",
         cancel: "Cancelar",
         archive: "Arquivar",

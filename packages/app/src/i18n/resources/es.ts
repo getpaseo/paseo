@@ -470,6 +470,7 @@ export const es: TranslationResources = {
     },
     tabs: {
       loading: "Cargando...",
+      modified: "Cambios sin guardar",
       loadingAgentTitle: "Título del agente de carga",
       emptyPane: "No hay pestañas en este panel.",
       fallback: {
@@ -537,6 +538,13 @@ export const es: TranslationResources = {
         failedToReloadAgent: "No se pudo recargar el agente",
       },
       confirmations: {
+        unsavedTitle: "Cambios sin guardar",
+        unsavedMessage:
+          "Esta pestaña tiene cambios sin guardar. Al cerrarla se descartará el borrador.",
+        closeWithoutSaving: "Cerrar sin guardar",
+        closePaneTitle: "¿Cerrar panel?",
+        bulkUnsaved:
+          "{{count}} pestaña(s) tienen cambios sin guardar. Al cerrar se descartarán esos borradores.",
         close: "Cerca",
         cancel: "Cancelar",
         archive: "Archivo",

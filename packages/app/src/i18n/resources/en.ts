@@ -465,6 +465,7 @@ export const en = {
     },
     tabs: {
       loading: "Loading...",
+      modified: "Unsaved changes",
       loadingAgentTitle: "Loading agent title",
       emptyPane: "No tabs in this pane.",
       fallback: {
@@ -534,6 +535,12 @@ export const en = {
         close: "Close",
         cancel: "Cancel",
         archive: "Archive",
+        unsavedTitle: "Unsaved changes",
+        unsavedMessage:
+          "This tab has changes that have not been saved. Closing it will discard the draft.",
+        closeWithoutSaving: "Close without saving",
+        closePaneTitle: "Close pane?",
+        bulkUnsaved: "{{count}} tab(s) have unsaved changes. Closing will discard those drafts.",
         closeTerminalTitle: "Close terminal?",
         closeTerminalMessage: "Any running process in this terminal will be stopped immediately.",
         archiveRunningAgentTitle: "Archive running agent?",

@@ -116,12 +116,11 @@ const styles = StyleSheet.create((theme) => ({
     borderBottomColor: theme.colors.border,
   },
   row: {
-    minHeight: 40,
+    minHeight: 32,
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[3],
     paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[1],
   },
   metadata: {
     flex: 1,

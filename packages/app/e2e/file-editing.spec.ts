@@ -107,8 +107,10 @@ test.describe("CodeMirror workspace file editing", () => {
     await expect(page.getByLabel(/lines/)).toBeVisible();
 
     await replaceEditorText(page, "const autosaved = 2;\n");
+    await expect(page.getByTestId("workspace-tab-modified-file_source.ts")).toBeVisible();
     await expect(page.getByLabel("Editor status dirty")).toBeVisible();
     await expect(page.getByLabel("Editor status clean")).toBeVisible({ timeout: 5_000 });
+    await expect(page.getByTestId("workspace-tab-modified-file_source.ts")).not.toBeVisible();
     await expect.poll(() => readFile(sourcePath, "utf8")).toBe("const autosaved = 2;\n");
 
     await replaceEditorText(page, "const immediate = 3;\n");
@@ -140,6 +142,38 @@ test.describe("CodeMirror workspace file editing", () => {
       .toBeGreaterThan(subscriptionCount);
     await writeFile(sourcePath, "const afterReconnect = 9;\n", "utf8");
     await expect(editor(page)).toContainText("const afterReconnect = 9;");
+  });
+
+  test("warns before closing a panel with an unsaved draft", async ({ page, withWorkspace }) => {
+    const workspace = await withWorkspace({ prefix: "file-editing-draft-" });
+    const sourcePath = path.join(workspace.repoPath, "draft.ts");
+    await writeFile(sourcePath, "const initial = 1;\n", "utf8");
+    await workspace.navigateTo();
+    await openWorkspaceFile(page, "draft.ts");
+
+    await replaceEditorText(page, "const local = 2;\n");
+    await writeFile(sourcePath, "const external = 3;\n", "utf8");
+    await expect(page.getByTestId("file-conflict-alert")).toBeVisible();
+    await expect(page.getByTestId("workspace-tab-modified-file_draft.ts")).toBeVisible();
+
+    let closePrompt = "";
+    page.once("dialog", async (dialog) => {
+      closePrompt = dialog.message();
+      await dialog.dismiss();
+    });
+    await page
+      .getByTestId("workspace-tab-file_draft.ts")
+      .filter({ visible: true })
+      .first()
+      .click({ button: "right" });
+    await page
+      .getByTestId("workspace-tab-context-file_draft.ts-close")
+      .filter({ visible: true })
+      .click();
+    expect(closePrompt).toContain("Closing it will discard the draft.");
+
+    await expect(page.getByTestId("file-source-editor")).toBeVisible();
+    await expect(page.getByTestId("workspace-tab-modified-file_draft.ts")).toBeVisible();
   });
 
   test("refreshes Markdown and images while preserving Preview and Source behavior", async ({

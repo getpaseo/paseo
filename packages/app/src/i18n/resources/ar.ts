@@ -466,6 +466,7 @@ export const ar: TranslationResources = {
     },
     tabs: {
       loading: "تحميل...",
+      modified: "تغييرات غير محفوظة",
       loadingAgentTitle: "جارٍ تحميل عنوان الوكيل",
       emptyPane: "لا توجد علامات تبويب في هذا الجزء.",
       fallback: {
@@ -532,6 +533,13 @@ export const ar: TranslationResources = {
         failedToReloadAgent: "فشل في إعادة تحميل الوكيل",
       },
       confirmations: {
+        unsavedTitle: "تغييرات غير محفوظة",
+        unsavedMessage:
+          "تحتوي علامة التبويب هذه على تغييرات غير محفوظة. سيؤدي إغلاقها إلى تجاهل المسودة.",
+        closeWithoutSaving: "إغلاق بدون حفظ",
+        closePaneTitle: "إغلاق اللوحة؟",
+        bulkUnsaved:
+          "تحتوي {{count}} علامة تبويب على تغييرات غير محفوظة. سيؤدي الإغلاق إلى تجاهل المسودات.",
         close: "يغلق",
         cancel: "يلغي",
         archive: "أرشيف",

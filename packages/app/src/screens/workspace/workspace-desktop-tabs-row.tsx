@@ -553,12 +553,14 @@ function TabChip({
   onCloseTab: (tabId: string) => Promise<void> | void;
   dragHandleProps: DraggableListDragHandleProps | undefined;
 }) {
+  const { t } = useTranslation();
   const { closeButtonTestId, contextMenuTestId, menuEntries } = resolvedTab;
   const middleClickRef = useMiddleClickClose(
     useCallback(() => void onCloseTab(tab.tabId), [onCloseTab, tab.tabId]),
   );
   const [hovered, setHovered] = useState(false);
   const isHighlighted = isActive || hovered || isCloseHovered;
+  const showTrailingAffordance = showCloseButton || presentation.modified;
   const closeButtonDragBlockers = isWeb
     ? ({
         onPointerDown: (event: { stopPropagation?: () => void }) => {
@@ -630,16 +632,19 @@ function TabChip({
     [isFocused],
   );
   const tabLabelSkeletonStyle = useMemo(
-    () => [styles.tabLabelSkeleton, showCloseButton && styles.tabLabelSkeletonWithCloseButton],
-    [showCloseButton],
+    () => [
+      styles.tabLabelSkeleton,
+      showTrailingAffordance && styles.tabLabelSkeletonWithCloseButton,
+    ],
+    [showTrailingAffordance],
   );
   const tabLabelStyle = useMemo(
     () => [
       styles.tabLabel,
       isHighlighted && styles.tabLabelActive,
-      showCloseButton && styles.tabLabelWithCloseButton,
+      showTrailingAffordance && styles.tabLabelWithCloseButton,
     ],
-    [isHighlighted, showCloseButton],
+    [isHighlighted, showTrailingAffordance],
   );
 
   return (
@@ -672,7 +677,7 @@ function TabChip({
                 tabLabelStyle={tabLabelStyle}
               />
 
-              {showCloseButton ? (
+              {showTrailingAffordance ? (
                 <Pressable
                   {...(closeButtonDragBlockers as object | undefined)}
                   testID={closeButtonTestId}
@@ -683,23 +688,32 @@ function TabChip({
                   onPress={handleCloseButtonPress}
                   style={closeButtonStyle}
                 >
-                  {({ hovered: closeHovered, pressed }) =>
-                    isClosingTab ? (
-                      <ThemedActivityIndicator
-                        size={12}
-                        uniProps={
-                          closeHovered || pressed ? foregroundColorMapping : mutedColorMapping
-                        }
+                  {({ hovered: closeHovered, pressed }) => {
+                    const highlighted = closeHovered || pressed;
+                    if (isClosingTab) {
+                      return (
+                        <ThemedActivityIndicator
+                          size={12}
+                          uniProps={highlighted ? foregroundColorMapping : mutedColorMapping}
+                        />
+                      );
+                    }
+                    if (highlighted || !presentation.modified) {
+                      return (
+                        <ThemedX
+                          size={12}
+                          uniProps={highlighted ? foregroundColorMapping : mutedColorMapping}
+                        />
+                      );
+                    }
+                    return (
+                      <View
+                        style={styles.tabModifiedDot}
+                        accessibilityLabel={t("workspace.tabs.modified")}
+                        testID={`workspace-tab-modified-${buildDeterministicWorkspaceTabId(tab.target)}`}
                       />
-                    ) : (
-                      <ThemedX
-                        size={12}
-                        uniProps={
-                          closeHovered || pressed ? foregroundColorMapping : mutedColorMapping
-                        }
-                      />
-                    )
-                  }
+                    );
+                  }}
                 </Pressable>
               ) : null}
             </ContextMenuTrigger>
@@ -708,7 +722,7 @@ function TabChip({
             side="bottom"
             align="center"
             offset={8}
-            maxWidth={tab.target.kind === "file" ? 720 : 280}
+            maxWidth={720}
             testID={`workspace-tab-tooltip-${buildDeterministicWorkspaceTabId(tab.target)}`}
           >
             {tab.target.kind === "agent" ? (
@@ -1164,12 +1178,10 @@ function ResolvedDesktopTabChip({
       workspaceId={normalizedWorkspaceId}
     >
       {(presentation) => {
-        let tooltipLabel = presentation.label;
-        if (item.tab.target.kind === "file") {
-          tooltipLabel = item.tab.target.path;
-        } else if (presentation.titleState === "loading") {
-          tooltipLabel = t("workspace.tabs.loadingAgentTitle");
-        }
+        const tooltipLabel =
+          presentation.titleState === "loading"
+            ? t("workspace.tabs.loadingAgentTitle")
+            : presentation.tooltip;
 
         return (
           <View style={styles.tabSlot}>
@@ -1338,6 +1350,12 @@ const styles = StyleSheet.create((theme) => ({
   },
   tabCloseButtonActive: {
     backgroundColor: theme.colors.surface3,
+  },
+  tabModifiedDot: {
+    width: 8,
+    height: 8,
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.foregroundMuted,
   },
   newTabActionButton: {
     width: 22,

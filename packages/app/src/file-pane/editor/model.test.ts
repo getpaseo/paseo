@@ -30,6 +30,8 @@ class FileSession implements FileEditorSession {
   file: FileEditorFile;
   writes: Array<{ content: string; expectedModifiedAt: string }> = [];
   nextWrite: FileWriteResult | Error | null = null;
+  private pendingWrite: Promise<FileWriteResult> | null = null;
+  private resolvePendingWrite: ((result: FileWriteResult) => void) | null = null;
 
   constructor(file: FileEditorFile) {
     this.file = file;
@@ -41,6 +43,7 @@ class FileSession implements FileEditorSession {
 
   async write(input: { content: string; expectedModifiedAt: string }): Promise<FileWriteResult> {
     this.writes.push(input);
+    if (this.pendingWrite) return this.pendingWrite;
     if (this.nextWrite instanceof Error) throw this.nextWrite;
     if (this.nextWrite) return this.nextWrite;
     return {
@@ -48,6 +51,18 @@ class FileSession implements FileEditorSession {
       modifiedAt: "2026-07-18T00:00:01.000Z",
       size: input.content.length,
     };
+  }
+
+  holdNextWrite(): void {
+    this.pendingWrite = new Promise((resolve) => {
+      this.resolvePendingWrite = resolve;
+    });
+  }
+
+  finishHeldWrite(result: FileWriteResult): void {
+    this.resolvePendingWrite?.(result);
+    this.pendingWrite = null;
+    this.resolvePendingWrite = null;
   }
 }
 
@@ -63,6 +78,41 @@ function makeModel() {
 }
 
 describe("FileEditorModel", () => {
+  test("tracks whether the current buffer differs from persisted content", async () => {
+    const { model } = makeModel();
+
+    expect(model.getSnapshot().modified).toBe(false);
+    model.edit("two");
+    expect(model.getSnapshot().modified).toBe(true);
+    model.edit("one");
+    expect(model.getSnapshot()).toMatchObject({ status: "clean", modified: false });
+
+    model.edit("saved");
+    await model.save();
+    expect(model.getSnapshot()).toMatchObject({ status: "clean", modified: false });
+  });
+
+  test("keeps a newer edit modified when an older save finishes", async () => {
+    const { model, session } = makeModel();
+    session.holdNextWrite();
+    model.edit("saving");
+
+    const save = model.save();
+    model.edit("newer edit");
+    session.finishHeldWrite({
+      status: "written",
+      modifiedAt: "2026-07-18T00:00:01.000Z",
+      size: 6,
+    });
+    await save;
+
+    expect(model.getSnapshot()).toMatchObject({
+      status: "dirty",
+      content: "newer edit",
+      modified: true,
+    });
+  });
+
   test("autosaves the latest edit after inactivity", async () => {
     const { model, session, clock } = makeModel();
 

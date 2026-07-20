@@ -470,6 +470,7 @@ export const ja: TranslationResources = {
     },
     tabs: {
       loading: "読み込み中...",
+      modified: "未保存の変更",
       loadingAgentTitle: "エージェントタイトルを読み込み中",
       emptyPane: "このペインにタブがありません。",
       fallback: {
@@ -537,6 +538,11 @@ export const ja: TranslationResources = {
         failedToReloadAgent: "エージェントの再読み込みに失敗しました",
       },
       confirmations: {
+        unsavedTitle: "未保存の変更",
+        unsavedMessage: "このタブには未保存の変更があります。閉じると下書きが破棄されます。",
+        closeWithoutSaving: "保存せずに閉じる",
+        closePaneTitle: "ペインを閉じますか？",
+        bulkUnsaved: "{{count}} 個のタブに未保存の変更があります。閉じると下書きが破棄されます。",
         close: "閉じる",
         cancel: "キャンセル",
         archive: "アーカイブ",
