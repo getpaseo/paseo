@@ -1378,7 +1378,6 @@ export class OpenCodeAgentClient implements AgentClient {
         undefined,
         launchContext?.agentId,
         url,
-        registeredAcquisition !== null,
       );
     } catch (error) {
       await acquisition.release();
@@ -2916,7 +2915,7 @@ class OpenCodeAgentSession implements AgentSession {
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private nextTurnOrdinal = 0;
   private activeForegroundTurnId: string | null = null;
-  private activeForegroundTurnSource: "paseo" | "external" | null = null;
+  private activeForegroundTurnSource: "paseo" | "autonomous" | null = null;
   private readonly runningToolCalls = new Map<string, ToolCallTimelineItem>();
   private subAgentsByCallId = new Map<string, OpenCodeSubAgentActivityState>();
   private subAgentCallIdByChildSessionId = new Map<string, string>();
@@ -2946,7 +2945,6 @@ class OpenCodeAgentSession implements AgentSession {
     persistSession = true,
     private readonly agentId?: string,
     private readonly serverUrl?: string,
-    private readonly externallyDriven = false,
   ) {
     this.config = config;
     this.client = client;
@@ -3087,8 +3085,8 @@ class OpenCodeAgentSession implements AgentSession {
     options?: AgentRunOptions,
   ): Promise<{ turnId: string }> {
     if (this.activeForegroundTurnId) {
-      if (this.activeForegroundTurnSource === "external") {
-        // A direct Paseo prompt owns the foreground; close the adopted child run first.
+      if (this.activeForegroundTurnSource === "autonomous") {
+        // A direct Paseo prompt owns the foreground; close the autonomous run first.
         this.finishForegroundTurn(
           { type: "turn_completed", provider: "opencode", usage: undefined },
           this.activeForegroundTurnId,
@@ -3564,8 +3562,8 @@ class OpenCodeAgentSession implements AgentSession {
         foregroundEvents.push(translatedEvent);
       }
     }
-    if (!turnId && this.shouldStartExternalDrivenTurn(event, foregroundEvents)) {
-      turnId = this.startExternalDrivenTurn();
+    if (!turnId && this.shouldStartAutonomousTurn(event, foregroundEvents)) {
+      turnId = this.startAutonomousTurn();
     }
     if (!turnId) {
       this.emitBackgroundPermissionRequests(foregroundEvents);
@@ -3625,17 +3623,22 @@ class OpenCodeAgentSession implements AgentSession {
     }
   }
 
-  private shouldStartExternalDrivenTurn(
+  private shouldStartAutonomousTurn(
     event: OpenCodeEvent,
     foregroundEvents: readonly AgentStreamEvent[],
   ): boolean {
-    if (!this.externallyDriven) {
-      return false;
-    }
     if (this.activeForegroundTurnId) {
       return false;
     }
-    if (foregroundEvents.some((foregroundEvent) => !toTerminalTurnEvent(foregroundEvent))) {
+    if (getOpenCodeEventSessionId(event) !== this.sessionId) {
+      return false;
+    }
+    if (
+      foregroundEvents.some(
+        (foregroundEvent) =>
+          foregroundEvent.type !== "thread_started" && !toTerminalTurnEvent(foregroundEvent),
+      )
+    ) {
       return true;
     }
     return (
@@ -3645,10 +3648,10 @@ class OpenCodeAgentSession implements AgentSession {
     );
   }
 
-  private startExternalDrivenTurn(): string {
+  private startAutonomousTurn(): string {
     const turnId = this.createTurnId();
     this.activeForegroundTurnId = turnId;
-    this.activeForegroundTurnSource = "external";
+    this.activeForegroundTurnSource = "autonomous";
     this.runningToolCalls.clear();
     this.subAgentsByCallId.clear();
     this.subAgentCallIdByChildSessionId.clear();

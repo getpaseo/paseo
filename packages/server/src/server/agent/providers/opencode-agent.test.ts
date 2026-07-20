@@ -91,6 +91,12 @@ function providerAssistantMessages(events: AgentStreamEvent[], text: string): Ag
   );
 }
 
+type TurnEventSignature = [type: AgentStreamEvent["type"], turnId: string | undefined];
+
+function turnEventSignatures(events: AgentStreamEvent[]): TurnEventSignature[] {
+  return events.map((event) => [event.type, "turnId" in event ? event.turnId : undefined]);
+}
+
 function assistantTurnEvents({
   sessionId = "session-1",
   text = "Hello from OpenCode",
@@ -2464,7 +2470,7 @@ describe("OpenCode provider subagent contract", () => {
     ]);
   });
 
-  test("synthesizes a turn for externally driven adopted child timeline events", async () => {
+  test("synthesizes an autonomous turn for adopted child timeline events", async () => {
     const { child, childClient, parent } = await createAdoptedChildSession();
     const completed = createTestDeferred<void>();
     const events: AgentStreamEvent[] = [];
@@ -2515,7 +2521,185 @@ describe("OpenCode provider subagent contract", () => {
     );
   });
 
-  test("synthesizes a turn for externally driven adopted child permissions", async () => {
+  test("surfaces an autonomous OpenCode wake as a new parent turn", async () => {
+    const runtime = new TestOpenCodeHarness();
+    const openCode = new TestOpenCodeClient();
+    openCode.sessionCreateResponse = { data: { id: "ses_parent_plugin_wake" } };
+    runtime.enqueueClient(openCode);
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const parent = await client.createSession({
+      provider: "opencode",
+      cwd: "/workspace/repo",
+    });
+    const events: AgentStreamEvent[] = [];
+    parent.subscribe((event) => events.push(event));
+
+    try {
+      openCode.emitEvent({
+        type: "session.status",
+        properties: { sessionID: "ses_parent_plugin_wake", status: { type: "busy" } },
+      });
+      openCode.emitEvent({
+        type: "message.updated",
+        properties: {
+          info: {
+            id: "msg_plugin_wake",
+            sessionID: "ses_parent_plugin_wake",
+            role: "user",
+          },
+        },
+      });
+      openCode.emitEvent({
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "prt_plugin_wake",
+            sessionID: "ses_parent_plugin_wake",
+            messageID: "msg_plugin_wake",
+            type: "text",
+            text: "<system-reminder>All background tasks are complete.</system-reminder>",
+            time: { start: 1, end: 2 },
+          },
+        },
+      });
+      for (const event of assistantTurnEvents({
+        sessionId: "ses_parent_plugin_wake",
+        text: "Parent consumed the background result.",
+      })) {
+        openCode.emitEvent(event);
+      }
+
+      await vi.waitFor(() => {
+        expect(events).toEqual([
+          { type: "turn_started", provider: "opencode", turnId: "opencode-turn-0" },
+          {
+            type: "timeline",
+            provider: "opencode",
+            turnId: "opencode-turn-0",
+            item: {
+              type: "user_message",
+              text: "<system-reminder>All background tasks are complete.</system-reminder>",
+              messageId: "msg_plugin_wake",
+            },
+          },
+          {
+            type: "timeline",
+            provider: "opencode",
+            turnId: "opencode-turn-0",
+            item: {
+              type: "assistant_message",
+              text: "Parent consumed the background result.",
+              messageId: "msg_assistant",
+            },
+          },
+          {
+            type: "turn_completed",
+            provider: "opencode",
+            usage: undefined,
+            turnId: "opencode-turn-0",
+          },
+        ]);
+      });
+    } finally {
+      await parent.close();
+    }
+  });
+
+  test("does not mistake OpenCode session metadata for an autonomous turn", async () => {
+    const runtime = new TestOpenCodeHarness();
+    const openCode = new TestOpenCodeClient();
+    openCode.sessionCreateResponse = { data: { id: "ses_parent_metadata" } };
+    runtime.enqueueClient(openCode);
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const parent = await client.createSession({
+      provider: "opencode",
+      cwd: "/workspace/repo",
+    });
+    const events: AgentStreamEvent[] = [];
+    parent.subscribe((event) => events.push(event));
+
+    try {
+      openCode.emitEvent({
+        type: "session.created",
+        properties: { info: { id: "ses_parent_metadata" } },
+      });
+      openCode.emitEvent({
+        type: "session.idle",
+        properties: { sessionID: "ses_parent_metadata" },
+      });
+      for (const event of assistantTurnEvents({
+        sessionId: "ses_parent_metadata",
+        text: "Autonomous response.",
+      })) {
+        openCode.emitEvent(event);
+      }
+
+      await vi.waitFor(() => {
+        expect(turnEventSignatures(events)).toEqual([
+          ["turn_started", "opencode-turn-0"],
+          ["timeline", "opencode-turn-0"],
+          ["turn_completed", "opencode-turn-0"],
+        ]);
+      });
+    } finally {
+      await parent.close();
+    }
+  });
+
+  test("hands an autonomous OpenCode turn off to a direct Paseo prompt", async () => {
+    const runtime = new TestOpenCodeHarness();
+    const openCode = new TestOpenCodeClient();
+    openCode.sessionCreateResponse = { data: { id: "ses_parent_handoff" } };
+    openCode.sessionPromptAsyncEvents = assistantTurnEvents({
+      sessionId: "ses_parent_handoff",
+      text: "Paseo response.",
+    });
+    runtime.enqueueClient(openCode);
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const parent = await client.createSession({
+      provider: "opencode",
+      cwd: "/workspace/repo",
+    });
+    const events: AgentStreamEvent[] = [];
+    parent.subscribe((event) => events.push(event));
+
+    try {
+      openCode.emitEvent({
+        type: "session.status",
+        properties: { sessionID: "ses_parent_handoff", status: { type: "busy" } },
+      });
+      await vi.waitFor(() => {
+        expect(events).toEqual([
+          { type: "turn_started", provider: "opencode", turnId: "opencode-turn-0" },
+        ]);
+      });
+
+      await parent.startTurn("Continue from Paseo");
+
+      await vi.waitFor(() => {
+        expect(turnEventSignatures(events)).toEqual([
+          ["turn_started", "opencode-turn-0"],
+          ["turn_completed", "opencode-turn-0"],
+          ["turn_started", "opencode-turn-1"],
+          ["timeline", "opencode-turn-1"],
+          ["turn_completed", "opencode-turn-1"],
+        ]);
+      });
+    } finally {
+      await parent.close();
+    }
+  });
+
+  test("synthesizes an autonomous turn for adopted child permissions", async () => {
     const { child, childClient, parent } = await createAdoptedChildSession();
     const completed = createTestDeferred<void>();
     const events: AgentStreamEvent[] = [];
@@ -2617,6 +2801,13 @@ describe("OpenCode provider subagent contract", () => {
         }),
       );
     });
+    expect(events.some((event) => event.type === "turn_started")).toBe(false);
+    expect(
+      events.find(
+        (event) =>
+          event.type === "permission_requested" && event.request.id === "perm_provider_child",
+      ),
+    ).not.toHaveProperty("turnId");
     expect(
       events.filter(
         (event) =>
