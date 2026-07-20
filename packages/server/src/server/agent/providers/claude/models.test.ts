@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import { ClaudeAgentClient } from "./agent.js";
 import {
+  CLAUDE_DISABLED_THINKING_OPTION_ID,
   CLAUDE_ULTRACODE_THINKING_OPTION_ID,
   claudeManifestModelSupportsFastMode,
   normalizeClaudeManifestModelId,
@@ -87,6 +88,7 @@ describe("getClaudeModels", () => {
     const models = new Map(getClaudeModels().map((model) => [model.id, model]));
 
     expect(models.get("claude-sonnet-5")?.thinkingOptions?.map((option) => option.id)).toEqual([
+      CLAUDE_DISABLED_THINKING_OPTION_ID,
       "low",
       "medium",
       "high",
@@ -100,8 +102,10 @@ describe("getClaudeModels", () => {
         ?.thinkingOptions?.find((option) => option.id === CLAUDE_ULTRACODE_THINKING_OPTION_ID)
         ?.label,
     ).toBe("Ultra Code");
+    expect(models.get("claude-sonnet-5")?.defaultThinkingOptionId).toBe("low");
 
     expect(models.get("claude-opus-4-7")?.thinkingOptions?.map((option) => option.id)).toEqual([
+      CLAUDE_DISABLED_THINKING_OPTION_ID,
       "low",
       "medium",
       "high",
@@ -110,11 +114,15 @@ describe("getClaudeModels", () => {
       CLAUDE_ULTRACODE_THINKING_OPTION_ID,
     ]);
     expect(models.get("claude-sonnet-4-6")?.thinkingOptions?.map((option) => option.id)).toEqual([
+      CLAUDE_DISABLED_THINKING_OPTION_ID,
       "low",
       "medium",
       "high",
       "max",
     ]);
+    expect(models.get("claude-fable-5")?.thinkingOptions?.map((option) => option.id)).not.toContain(
+      CLAUDE_DISABLED_THINKING_OPTION_ID,
+    );
     expect(models.get("claude-haiku-4-5")?.thinkingOptions).toBeUndefined();
   });
 

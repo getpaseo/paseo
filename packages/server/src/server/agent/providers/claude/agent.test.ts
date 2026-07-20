@@ -583,8 +583,12 @@ describe("ClaudeAgentSession features", () => {
         };
       },
     };
-    const queryFactory = vi.fn(() => queryMock);
-    return { queryFactory, queryMock };
+    const launches: Array<{ options: Record<string, unknown> }> = [];
+    const queryFactory = vi.fn((input) => {
+      launches.push(input);
+      return queryMock;
+    });
+    return { queryFactory, queryMock, launches };
   }
 
   test("lists fast mode only for supported Opus models", async () => {
@@ -682,6 +686,30 @@ describe("ClaudeAgentSession features", () => {
       thinking: { type: "adaptive" },
       settings: { ultracode: true },
     });
+
+    await session.close();
+  });
+
+  test("turns Claude thinking off without retaining an effort level", async () => {
+    const { queryFactory, launches } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      model: "claude-sonnet-5",
+      thinkingOptionId: "off",
+    });
+
+    await expect(session.startTurn("hello")).resolves.toEqual({
+      turnId: expect.stringMatching(/^foreground-turn-/),
+    });
+
+    expect(launches[0]?.options.thinking).toEqual({ type: "disabled" });
+    expect(launches[0]?.options).not.toHaveProperty("effort");
 
     await session.close();
   });
