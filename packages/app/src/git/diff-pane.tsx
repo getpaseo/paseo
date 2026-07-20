@@ -86,12 +86,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuTrigger,
-} from "@/components/ui/context-menu";
 import * as Clipboard from "expo-clipboard";
 import { FileActionsMenu, type FileAction } from "@/components/file-actions-menu";
 import { useFileDownload } from "@/hooks/use-file-download";
@@ -922,38 +916,6 @@ function SplitDiffColumn({
   );
 }
 
-function DiffFileHeaderContextMenu({
-  enabled,
-  actions,
-  testID,
-  children,
-}: {
-  enabled: boolean;
-  actions: FileAction[];
-  testID?: string;
-  children: ReactElement;
-}): ReactElement {
-  if (!enabled) {
-    return children;
-  }
-  return (
-    <ContextMenu>
-      {children}
-      <ContextMenuContent
-        align="start"
-        minWidth={160}
-        testID={testID ? `${testID}-context-menu` : undefined}
-      >
-        {actions.map((action) => (
-          <ContextMenuItem key={action.key} onSelect={action.onSelect} testID={action.testID}>
-            {action.label}
-          </ContextMenuItem>
-        ))}
-      </ContextMenuContent>
-    </ContextMenu>
-  );
-}
-
 const DiffFileHeader = memo(function DiffFileHeader({
   file,
   workspaceFileDragScope,
@@ -1112,7 +1074,6 @@ const DiffFileHeader = memo(function DiffFileHeader({
     t,
     testID,
   ]);
-  const hasContextMenu = actions.length > 0;
   const headerContent = (
     <>
       <View ref={dragSourceRef} style={styles.fileHeaderLeft}>
@@ -1162,21 +1123,6 @@ const DiffFileHeader = memo(function DiffFileHeader({
     trigger = (
       <View style={headerPressableStyle({ hovered: false, pressed: false })}>{headerContent}</View>
     );
-  } else if (hasContextMenu) {
-    trigger = (
-      <ContextMenuTrigger
-        testID={testID ? `${testID}-toggle` : undefined}
-        style={headerPressableStyle}
-        enabledOnMobile={false}
-        // Android: prevent parent pan/scroll gestures from canceling the tap release.
-        cancelable={false}
-        onPressIn={handlePressIn}
-        onPressOut={handlePressOut}
-        onPress={toggleExpanded}
-      >
-        {headerContent}
-      </ContextMenuTrigger>
-    );
   } else {
     trigger = (
       <Pressable
@@ -1192,22 +1138,10 @@ const DiffFileHeader = memo(function DiffFileHeader({
       </Pressable>
     );
   }
-  const tooltip = (
-    <Tooltip delayDuration={300} enabledOnDesktop enabledOnMobile={false}>
-      <TooltipTrigger asChild triggerRefProp={hasContextMenu ? "triggerRef" : undefined}>
-        {trigger}
-      </TooltipTrigger>
-      <TooltipContent side="bottom" align="start" offset={6} maxWidth={520}>
-        <Text style={styles.tooltipText}>{file.path}</Text>
-      </TooltipContent>
-    </Tooltip>
-  );
   return (
     <View style={containerStyle} onLayout={handleLayout} testID={testID}>
       <TreeIndentGuides depth={depth} />
-      <DiffFileHeaderContextMenu enabled={hasContextMenu} actions={actions} testID={testID}>
-        {tooltip}
-      </DiffFileHeaderContextMenu>
+      {trigger}
     </View>
   );
 });

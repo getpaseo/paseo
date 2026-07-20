@@ -222,22 +222,18 @@ test("changes diff keeps code rows aligned with the gutter", async ({ page }) =>
   });
 });
 
-test("changes file context menu opens existing files and excludes deleted files", async ({
-  page,
-}) => {
+test("changes file actions open existing files and exclude deleted files", async ({ page }) => {
   const workspace = await createWorkspaceWithMountedTabDiff({ includeDeletedFile: true });
   await useUnwrappedDiffLines(page);
   await openWorkspaceChanges(page, workspace);
 
-  await page.getByTestId("diff-file-0-toggle").hover();
-  await expect(page.getByText("src/use-mounted-tab-set.ts", { exact: true })).toBeVisible();
-
   await expect(page.getByTestId("diff-file-1")).toContainText("zz-deleted.ts");
-  await page.getByTestId("diff-file-1-toggle").click({ button: "right" });
-  await expect(page.getByTestId("diff-file-1-context-menu")).toHaveCount(0);
+  await page.getByTestId("diff-file-1-actions").click();
+  await expect(page.getByTestId("diff-file-1-open-file")).toHaveCount(0);
+  await page.keyboard.press("Escape");
 
-  await page.getByTestId("diff-file-0-toggle").click({ button: "right" });
-  await expect(page.getByTestId("diff-file-0-context-menu")).toBeVisible();
+  await page.getByTestId("diff-file-0-actions").click();
+  await expect(page.getByTestId("diff-file-0-open-file")).toBeVisible();
   await page.getByTestId("diff-file-0-open-file").click();
 
   await expect(page.getByTestId("workspace-file-pane")).toBeVisible();
