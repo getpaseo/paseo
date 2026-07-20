@@ -19,7 +19,7 @@ async function openMockAgent(page: Page) {
 }
 
 test.describe("provider usage tooltip", () => {
-  test("fetches usage when the context tooltip opens and renders the active provider", async ({
+  test("shows the active provider's session usage below the mobile context meter", async ({
     page,
   }) => {
     test.setTimeout(180_000);
@@ -47,23 +47,20 @@ test.describe("provider usage tooltip", () => {
     ]);
     const session = await openMockAgent(page);
     try {
-      expect(usageFixture.requestCount()).toBe(0);
-
-      await page.getByTestId("context-window-meter").hover();
       await usageFixture.waitForRequestCount(1);
 
-      await expect(page.getByText("Mock provider", { exact: true })).toBeVisible({
+      const sessionUsage = page.getByTestId("provider-usage-mobile-session");
+      await expect(sessionUsage).toBeVisible({
         timeout: 10_000,
       });
-      await expect(page.getByText("Test plan")).toBeVisible();
-      await expect(page.getByText("Session", { exact: true })).toBeVisible();
-      await expect(page.getByText("42%")).toBeVisible();
+      await expect(sessionUsage.getByText("Session", { exact: true })).toBeVisible();
+      await expect(sessionUsage.getByText("42% used", { exact: true })).toBeVisible();
     } finally {
       await session.cleanup();
     }
   });
 
-  test("refreshes usage again each time the tooltip is shown", async ({ page }) => {
+  test("refreshes usage when the context meter is opened", async ({ page }) => {
     test.setTimeout(180_000);
     const usageFixture = await installProviderUsageFixture(page, [
       {
@@ -95,17 +92,15 @@ test.describe("provider usage tooltip", () => {
     try {
       const meter = page.getByTestId("context-window-meter");
 
-      await meter.hover();
       await usageFixture.waitForRequestCount(1);
-      await expect(page.getByText("41%")).toBeVisible({ timeout: 10_000 });
+      await expect(page.getByTestId("provider-usage-mobile-session")).toContainText("41% used", {
+        timeout: 10_000,
+      });
 
-      await page.mouse.move(0, 0);
-      await expect(page.getByText("Mock provider", { exact: true })).toHaveCount(0);
-
-      await meter.hover();
+      await meter.click();
       await usageFixture.waitForRequestCount(2);
       expect(usageFixture.requestCount()).toBe(2);
-      await expect(page.getByText("64%")).toBeVisible();
+      await expect(page.getByTestId("provider-usage-mobile-session")).toContainText("64% used");
     } finally {
       await session.cleanup();
     }
