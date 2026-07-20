@@ -222,17 +222,18 @@ test("changes diff keeps code rows aligned with the gutter", async ({ page }) =>
   });
 });
 
-test("changes file actions open existing files and exclude deleted files", async ({ page }) => {
+test("changes file actions open from the kebab and right-click", async ({ page }) => {
   const workspace = await createWorkspaceWithMountedTabDiff({ includeDeletedFile: true });
   await useUnwrappedDiffLines(page);
   await openWorkspaceChanges(page, workspace);
 
   await expect(page.getByTestId("diff-file-1")).toContainText("zz-deleted.ts");
   await page.getByTestId("diff-file-1-actions").click();
+  await expect(page.getByText("Copy path")).toBeVisible();
   await expect(page.getByTestId("diff-file-1-open-file")).toHaveCount(0);
   await page.keyboard.press("Escape");
 
-  await page.getByTestId("diff-file-0-actions").click();
+  await page.getByTestId("diff-file-0-toggle").click({ button: "right" });
   await expect(page.getByTestId("diff-file-0-open-file")).toBeVisible();
   await page.getByTestId("diff-file-0-open-file").click();
 

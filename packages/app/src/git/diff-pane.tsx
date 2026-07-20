@@ -942,6 +942,7 @@ const DiffFileHeader = memo(function DiffFileHeader({
   const layoutYRef = useRef<number | null>(null);
   const pressHandledRef = useRef(false);
   const pressInRef = useRef<{ ts: number; pageX: number; pageY: number } | null>(null);
+  const [isActionsOpen, setIsActionsOpen] = useState(false);
 
   const toggleExpanded = useCallback(() => {
     if (!interactive) {
@@ -966,6 +967,15 @@ const DiffFileHeader = memo(function DiffFileHeader({
   const handleDownload = useCallback(() => {
     onDownload?.(file.path);
   }, [file.path, onDownload]);
+
+  const handleContextMenu = useCallback(
+    (event: { preventDefault: () => void; stopPropagation: () => void }) => {
+      event.preventDefault();
+      event.stopPropagation();
+      setIsActionsOpen(true);
+    },
+    [],
+  );
 
   const handleLayout = useCallback(
     (event: LayoutChangeEvent) => {
@@ -1110,6 +1120,8 @@ const DiffFileHeader = memo(function DiffFileHeader({
         {interactive ? (
           <FileActionsMenu
             actions={actions}
+            open={isActionsOpen}
+            onOpenChange={setIsActionsOpen}
             accessibilityLabel={t("workspace.fileActions.moreActions")}
             testID={testID ? `${testID}-actions` : undefined}
           />
@@ -1133,6 +1145,8 @@ const DiffFileHeader = memo(function DiffFileHeader({
         onPressIn={handlePressIn}
         onPressOut={handlePressOut}
         onPress={toggleExpanded}
+        // @ts-ignore - onContextMenu is web-only and not in RN types.
+        onContextMenu={handleContextMenu}
       >
         {headerContent}
       </Pressable>

@@ -28,6 +28,8 @@ interface FileActionsMenuProps {
   actions: FileAction[];
   /** Optional metadata block rendered above the actions (e.g. size/modified). */
   header?: ReactNode;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
   hitSlop?: number;
   accessibilityLabel: string;
   testID?: string;
@@ -56,6 +58,8 @@ function triggerStyle({
 export function FileActionsMenu({
   actions,
   header,
+  open,
+  onOpenChange,
   hitSlop = 12,
   accessibilityLabel,
   testID,
@@ -64,7 +68,7 @@ export function FileActionsMenu({
     return null;
   }
   return (
-    <DropdownMenu>
+    <DropdownMenu open={open} onOpenChange={onOpenChange}>
       <DropdownMenuTrigger
         hitSlop={hitSlop}
         onPressIn={stopTriggerPropagation}
