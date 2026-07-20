@@ -3058,13 +3058,54 @@ class OpenCodeAgentSession implements AgentSession {
     const stopping = this.turnState;
     // OpenCode creates prompts before joining its single session runner. Sending
     // while that runner is stopping can strand the new prompt behind the old
-    // run, so only the provider's idle event makes the session reusable.
-    void this.abortSession(null, "turn_start_boundary");
+    // run, so only provider-confirmed idle makes the session reusable.
     await withTimeout(
-      stopping.idle.promise,
+      this.observeProviderStopBoundary(stopping),
       OPENCODE_PENDING_ABORT_START_TIMEOUT_MS,
       "OpenCode previous turn to stop",
     );
+  }
+
+  private async observeProviderStopBoundary(
+    stopping: Extract<OpenCodeTurnState, { status: "stopping" }>,
+  ): Promise<void> {
+    while (this.turnState === stopping) {
+      void this.abortSession(null, "turn_start_boundary");
+      const eventStreamTask = this.eventStreamTask;
+      const boundary = await (eventStreamTask
+        ? Promise.race([
+            stopping.idle.promise.then(() => "idle" as const),
+            eventStreamTask.then(
+              () => "stream_ended" as const,
+              () => "stream_ended" as const,
+            ),
+          ])
+        : Promise.resolve("stream_ended" as const));
+      if (boundary === "idle") {
+        return;
+      }
+
+      await this.ensureEventStreamReady();
+      const response = await this.client.session.status({ directory: this.config.cwd });
+      if (response.error) {
+        throw new Error(
+          `Failed to confirm OpenCode session status: ${toDiagnosticErrorMessage(response.error)}`,
+        );
+      }
+      const statuses = readOpenCodeRecord(response.data);
+      if (!statuses) {
+        throw new Error("OpenCode returned an invalid session status response");
+      }
+      const status = readOpenCodeRecord(statuses[this.sessionId]);
+      const statusType = readNonEmptyString(status?.type);
+      if (!status || statusType === "idle") {
+        this.finishStoppingTurn();
+        return;
+      }
+      if (statusType !== "busy" && statusType !== "retry") {
+        throw new Error(`OpenCode returned an unknown session status '${statusType ?? "missing"}'`);
+      }
+    }
   }
 
   async startTurn(

@@ -157,13 +157,17 @@ function assistantTurnEvents({
   ];
 }
 
-async function createParentSession(sessionId: string): Promise<{
+async function createParentSession(
+  sessionId: string,
+  configure?: (openCode: TestOpenCodeClient) => void,
+): Promise<{
   readonly parent: Awaited<ReturnType<OpenCodeAgentClient["createSession"]>>;
   readonly openCode: TestOpenCodeClient;
 }> {
   const runtime = new TestOpenCodeHarness();
   const openCode = new TestOpenCodeClient();
   openCode.sessionCreateResponse = { data: { id: sessionId } };
+  configure?.(openCode);
   runtime.enqueueClient(openCode);
   const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
     serverManager: runtime,
@@ -1943,6 +1947,45 @@ describe("OpenCode adapter startTurn error handling", () => {
       await session.close();
     }
   });
+
+  test("reconnects and confirms provider idle when the event stream ends while stopping", async () => {
+    const firstStreamEnd = createTestDeferred<void>();
+    let subscriptionCount = 0;
+    const { parent: session, openCode } = await createParentSession(
+      "ses_stream_reconnect",
+      (client) => {
+        client.globalEventImplementation = async (options) => {
+          subscriptionCount += 1;
+          const signal = (options as { signal: AbortSignal }).signal;
+          const end = subscriptionCount === 1 ? firstStreamEnd.promise : waitForAbort(signal);
+          return {
+            stream: {
+              async *[Symbol.asyncIterator]() {
+                yield { type: "server.connected", properties: {} };
+                await end;
+              },
+            },
+          };
+        };
+      },
+    );
+    openCode.sessionPromptAsyncEvents = [];
+
+    try {
+      await session.startTurn("first");
+      await session.interrupt();
+
+      const secondTurn = session.startTurn("second");
+      firstStreamEnd.resolve();
+
+      await expect(secondTurn).resolves.toEqual({ turnId: "opencode-turn-1" });
+      expect(openCode.calls.globalEvent).toHaveLength(2);
+      expect(openCode.calls.sessionStatus).toEqual([{ directory: "/workspace/repo" }]);
+      expect(openCode.calls.sessionPromptAsync).toHaveLength(2);
+    } finally {
+      await session.close();
+    }
+  }, 15_000);
 });
 
 describe("OpenCodeAgentClient env", () => {
