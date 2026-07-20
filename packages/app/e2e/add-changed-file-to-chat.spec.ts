@@ -7,7 +7,7 @@ function visibleComposer(page: Page) {
   return page.locator("textarea[data-composer-input]").filter({ visible: true }).first();
 }
 
-test("adds a changed file to an open chat without replacing its composer draft", async ({
+test("adds a changed file to the focused chat without replacing its composer draft", async ({
   page,
 }) => {
   const workspace = await seedMockAgentWorkspace({
@@ -31,13 +31,6 @@ test("adds a changed file to an open chat without replacing its composer draft",
     await expect(agentComposer).toBeEditable({ timeout: 30_000 });
     await agentComposer.fill("Preserve this thought");
 
-    await page
-      .getByTestId("workspace-new-agent-tab-inline")
-      .filter({ visible: true })
-      .first()
-      .click();
-    await expect(visibleComposer(page)).toBeEditable({ timeout: 30_000 });
-
     await page.getByRole("button", { name: "Open explorer" }).click();
     await page.getByTestId("explorer-tab-changes").click();
     const changedFile = page.getByText("changed file.ts", { exact: true }).first();
@@ -45,13 +38,10 @@ test("adds a changed file to an open chat without replacing its composer draft",
     await page.getByTestId("diff-file-0-toggle").click({ button: "right" });
     await page.getByTestId("diff-file-0-add-to-chat").click();
 
-    const picker = page.getByTestId("add-file-to-chat-picker");
-    await expect(picker).toBeVisible();
-    await expect(picker.getByText("Target chat", { exact: true })).toBeVisible();
-    await expect(picker.getByText("New Agent", { exact: true })).toBeVisible();
-    await picker.getByText("Target chat", { exact: true }).click();
-
-    await expect(agentComposer).toHaveValue('Preserve this thought\n"src/changed file.ts"');
+    const attachment = page.getByTestId("composer-workspace-file-attachment-pill");
+    await expect(attachment).toContainText("changed file.ts");
+    await expect(attachment).toContainText(relativePath);
+    await expect(agentComposer).toHaveValue("Preserve this thought");
     await expect(agentComposer).toBeFocused();
   } finally {
     await workspace.cleanup();
