@@ -2230,7 +2230,7 @@ class ClaudeAgentSession implements AgentSession {
 
   private reconcileThinkingOptionForModel(modelId: string | null): void {
     const thinkingOptionId = this.config.thinkingOptionId;
-    if (!modelId || !thinkingOptionId || thinkingOptionId === "default") {
+    if (!thinkingOptionId || thinkingOptionId === "default") {
       return;
     }
 
