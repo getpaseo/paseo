@@ -267,20 +267,20 @@ function installWireCapture(trace: SmokeTrace): void {
     },
   );
 
-  const originalSetModel = ClientSideConnection.prototype.unstable_setSessionModel;
-  vi.spyOn(ClientSideConnection.prototype, "unstable_setSessionModel").mockImplementation(
-    async function (params) {
-      trace.rpc.push({ direction: "out", method: "session/setModel", payload: params });
+  const originalRequest = ClientSideConnection.prototype.request;
+  vi.spyOn(ClientSideConnection.prototype, "request").mockImplementation(
+    async function (method, params, options) {
+      if (method !== "session/set_model") {
+        return originalRequest.call(this, method, params, options);
+      }
+
+      trace.rpc.push({ direction: "out", method, payload: params });
       try {
-        const response = await originalSetModel.call(this, params);
-        trace.rpc.push({ direction: "in", method: "session/setModel", payload: response });
+        const response = await originalRequest.call(this, method, params, options);
+        trace.rpc.push({ direction: "in", method, payload: response });
         return response;
       } catch (error) {
-        trace.rpc.push({
-          direction: "error",
-          method: "session/setModel",
-          payload: formatError(error),
-        });
+        trace.rpc.push({ direction: "error", method, payload: formatError(error) });
         throw error;
       }
     },
@@ -462,7 +462,7 @@ for (const config of wrappers) {
   wrapperDescribe(`real ${config.id} ACP wrapper smoke`, () => {
     let toolPromptTraceForEvidence: SmokeTrace | null = null;
 
-    test("(a) session/new exposes modes/models and applySessionState derives runtime state", async () => {
+    test("(a) session/new exposes modes/models and derives runtime state", async () => {
       const trace = createTrace(config);
       installWireCapture(trace);
       let session: ACPAgentSession | null = null;
@@ -472,11 +472,10 @@ for (const config of wrappers) {
         const modes = await session.getAvailableModes();
         const modelIds = getModelIds(session);
         const modelOption = getSelectOption(session, "model");
+        const modelValues = modelOption ? flattenSelectValues(modelOption) : [];
 
         expect(modes.length).toBeGreaterThan(0);
-        expect(
-          modelIds.length + (modelOption ? flattenSelectValues(modelOption).length : 0),
-        ).toBeGreaterThan(0);
+        expect(modelIds.length + modelValues.length).toBeGreaterThan(0);
         expect((await session.getRuntimeInfo()).sessionId).toBeTruthy();
         expect(
           trace.rpc.some((entry) => entry.method === "session/new" && entry.direction === "in"),
@@ -555,7 +554,8 @@ for (const config of wrappers) {
           trace.rpc.some(
             (entry) =>
               entry.direction === "out" &&
-              (entry.method === "session/setModel" || entry.method === "session/setConfigOption") &&
+              (entry.method === "session/set_model" ||
+                entry.method === "session/setConfigOption") &&
               JSON.stringify(entry.payload).includes(modelId),
           ),
         ).toBe(true);
