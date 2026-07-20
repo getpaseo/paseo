@@ -1755,6 +1755,7 @@ export const zhCN: TranslationResources = {
         sendMessage: "发送消息",
         queueMessage: "消息排队",
         muteUnmuteVoiceMode: "静音/取消静音语音模式",
+        toggleTimelineSearch: "在窗格中查找",
       },
       helpNotes: {
         showKeyboardShortcuts: "焦点不在文本输入框或终端内时可用。",
@@ -2095,5 +2096,12 @@ export const zhCN: TranslationResources = {
         cancel: "取消",
       },
     },
+  },
+  paneFind: {
+    noMatches: "没有匹配项",
+    matchCount_one: "{{count}} 个匹配项",
+    matchCount_other: "{{count}} 个匹配项",
+    next: "下一个结果",
+    prev: "上一个结果",
   },
 };

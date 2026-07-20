@@ -95,6 +95,45 @@ interface RuntimeFitProbe {
   fitAndEmitResize: (input?: { force?: boolean; shouldClaim?: boolean }) => void;
 }
 
+interface FindAddonProbe {
+  findNext: ReturnType<typeof vi.fn>;
+  findPrevious: ReturnType<typeof vi.fn>;
+  clearDecorations: ReturnType<typeof vi.fn>;
+  onDidChangeResults: (listener: (event: { resultCount: number; resultIndex: number }) => void) => {
+    dispose: () => void;
+  };
+}
+
+function attachFindAddon(runtime: TerminalEmulatorRuntime): {
+  addon: FindAddonProbe;
+  emitResult: (event: { resultCount: number; resultIndex: number }) => void;
+  dispose: ReturnType<typeof vi.fn>;
+} {
+  let listener: ((event: { resultCount: number; resultIndex: number }) => void) | null = null;
+  const dispose = vi.fn();
+  const addon: FindAddonProbe = {
+    findNext: vi.fn(() => true),
+    findPrevious: vi.fn(() => true),
+    clearDecorations: vi.fn(),
+    onDidChangeResults: (nextListener) => {
+      listener = nextListener;
+      return { dispose };
+    },
+  };
+  (runtime as unknown as { searchAddon: FindAddonProbe }).searchAddon = addon;
+  (runtime as unknown as { findTheme: object }).findTheme = {
+    foreground: "#eeeeee",
+    cursor: "#ffffff",
+    selectionBackground: "#225588",
+    selectionInactiveBackground: "#334455",
+  };
+  return {
+    addon,
+    emitResult: (event) => listener?.(event),
+    dispose,
+  };
+}
+
 function createRuntimeWithTerminal(): {
   runtime: TerminalEmulatorRuntime;
   terminal: StubTerminal & {
@@ -182,6 +221,43 @@ describe("terminal-emulator-runtime", () => {
   afterEach(() => {
     (globalThis as { window?: unknown }).window = originalWindow;
     vi.useRealTimers();
+  });
+
+  it("finds literal text case-insensitively with themed decorations", () => {
+    const runtime = new TerminalEmulatorRuntime();
+    const { addon } = attachFindAddon(runtime);
+
+    expect(runtime.findNext({ query: "Build [1]" })).toBe(true);
+    expect(runtime.findPrevious({ query: "Build [1]" })).toBe(true);
+    expect(addon.findNext).toHaveBeenCalledWith("Build [1]", {
+      caseSensitive: false,
+      regex: false,
+      wholeWord: false,
+      decorations: {
+        matchBackground: "#334455",
+        matchBorder: "#eeeeee",
+        matchOverviewRuler: "#334455",
+        activeMatchBackground: "#225588",
+        activeMatchBorder: "#ffffff",
+        activeMatchColorOverviewRuler: "#225588",
+      },
+    });
+    expect(addon.findPrevious).toHaveBeenCalledWith("Build [1]", expect.any(Object));
+  });
+
+  it("subscribes to result counts and disposes the subscription", () => {
+    const runtime = new TerminalEmulatorRuntime();
+    const { addon, emitResult, dispose } = attachFindAddon(runtime);
+    const results: Array<{ matchCount: number; selectedIndex: number }> = [];
+    const unsubscribe = runtime.onFindResult((result) => results.push(result));
+
+    emitResult({ resultCount: 4, resultIndex: 2 });
+    runtime.clearFind();
+    unsubscribe();
+
+    expect(results).toEqual([{ matchCount: 4, selectedIndex: 2 }]);
+    expect(addon.clearDecorations).toHaveBeenCalledTimes(1);
+    expect(dispose).toHaveBeenCalledTimes(1);
   });
 
   it("drains contiguous plain writes without waiting for each commit, gating a clear behind them", () => {

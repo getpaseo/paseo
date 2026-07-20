@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef } from "react";
+import React, { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { FileReadResult } from "@getpaseo/client/internal/daemon-client";
 import {
@@ -29,9 +29,21 @@ import type { WorkspaceFileLocation } from "@/workspace/file-open";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useAppActivelyVisible } from "@/hooks/use-app-visible";
 import { isFileQueryEnabled } from "@/components/file-pane-enabled";
+import {
+  createFilePaneFindModel,
+  createFilePaneHighlightMap,
+  createFilePaneTextModel,
+  splitFilePaneTokens,
+  type FilePaneFindHighlight,
+  type FilePaneFindTokenSegment,
+  type FilePaneTextModel,
+} from "@/components/file-pane-text-render-data";
+import { PaneFindBar } from "@/pane-find/pane-find-bar";
+import { usePaneFindRegistration } from "@/pane-find/use-pane-find-registration";
+import { usePaneFindKey, usePaneFocus } from "@/panels/pane-context";
 
 interface CodeLineProps {
-  tokens: HighlightToken[];
+  segments: FilePaneFindTokenSegment[];
   lineNumber: number;
   gutterWidth: number;
   highlighted: boolean;
@@ -43,6 +55,8 @@ interface FilePreviewBodyProps {
   isMobile: boolean;
   location: WorkspaceFileLocation;
   imagePreviewUri: string | null;
+  paneKey: string | null;
+  isPaneFocused: boolean;
 }
 
 function trimNonEmpty(value: string | null | undefined): string | null {
@@ -116,7 +130,7 @@ function clampLineSelection(input: {
 }
 
 const CodeLine = React.memo(function CodeLine({
-  tokens,
+  segments,
   lineNumber,
   gutterWidth,
   highlighted,
@@ -130,8 +144,8 @@ const CodeLine = React.memo(function CodeLine({
     [highlighted],
   );
   const keyedTokens = useMemo(
-    () => tokens.map((token, index) => ({ key: `${index}-${token.text}`, token })),
-    [tokens],
+    () => segments.map((segment, index) => ({ key: `${index}-${segment.text}`, segment })),
+    [segments],
   );
   return (
     <View style={lineStyle}>
@@ -141,8 +155,8 @@ const CodeLine = React.memo(function CodeLine({
         </Text>
       </View>
       <Text selectable style={codeLineStyles.lineText}>
-        {keyedTokens.map(({ key, token }) => (
-          <CodeLineToken key={key} token={token} />
+        {keyedTokens.map(({ key, segment }) => (
+          <CodeLineToken key={key} segment={segment} />
         ))}
       </Text>
     </View>
@@ -150,11 +164,20 @@ const CodeLine = React.memo(function CodeLine({
 });
 
 interface CodeLineTokenProps {
-  token: HighlightToken;
+  segment: FilePaneFindTokenSegment;
 }
 
-function CodeLineToken({ token }: CodeLineTokenProps) {
-  return <Text style={syntaxTokenStyleFor(token.style)}>{token.text}</Text>;
+function CodeLineToken({ segment }: CodeLineTokenProps) {
+  const tokenStyle = useMemo(() => {
+    if (segment.match === "current") {
+      return [syntaxTokenStyleFor(segment.style), codeLineStyles.currentFindMatch];
+    }
+    if (segment.match === "ordinary") {
+      return [syntaxTokenStyleFor(segment.style), codeLineStyles.findMatch];
+    }
+    return syntaxTokenStyleFor(segment.style);
+  }, [segment.match, segment.style]);
+  return <Text style={tokenStyle}>{segment.text}</Text>;
 }
 
 const codeLineStyles = StyleSheet.create((theme) => ({
@@ -163,6 +186,12 @@ const codeLineStyles = StyleSheet.create((theme) => ({
   },
   highlightedLine: {
     backgroundColor: theme.colors.accentBorder,
+  },
+  findMatch: {
+    backgroundColor: "rgba(250, 204, 21, 0.38)",
+  },
+  currentFindMatch: {
+    backgroundColor: "rgba(251, 146, 60, 0.58)",
   },
   gutter: {
     alignItems: "flex-end",
@@ -185,12 +214,220 @@ const codeLineStyles = StyleSheet.create((theme) => ({
   },
 }));
 
+interface TextFindViewProps {
+  textModel: FilePaneTextModel;
+  highlightsByLine: Map<number, FilePaneFindHighlight[]>;
+  gutterWidth: number;
+  isMobile: boolean;
+  lineSelection: FileLineSelection | null;
+}
+
+// Shared read-only rendering for a line-numbered, find-highlighted monospace text block.
+// Used both for syntax-highlighted code files and (see the markdown find fix below) the raw
+// markdown source view shown while a find query is active over a rendered-markdown file.
+function TextFindView({
+  textModel,
+  highlightsByLine,
+  gutterWidth,
+  isMobile,
+  lineSelection,
+}: TextFindViewProps) {
+  const codeLines = (
+    <View dataSet={CODE_SURFACE_DATASET}>
+      {textModel.lines.map((line) => {
+        const isSelected =
+          Boolean(lineSelection) &&
+          line.lineNumber >= (lineSelection?.lineStart ?? 0) &&
+          line.lineNumber <= (lineSelection?.lineEnd ?? 0);
+        return (
+          <CodeLine
+            key={`line-${line.lineNumber}`}
+            segments={splitFilePaneTokens(line, highlightsByLine.get(line.lineNumber) ?? [])}
+            lineNumber={line.lineNumber}
+            gutterWidth={gutterWidth}
+            highlighted={isSelected}
+          />
+        );
+      })}
+    </View>
+  );
+
+  if (isMobile) {
+    return <View style={styles.previewCodeScrollContent}>{codeLines}</View>;
+  }
+
+  return (
+    <RNScrollView
+      horizontal
+      nestedScrollEnabled
+      showsHorizontalScrollIndicator
+      contentContainerStyle={styles.previewCodeScrollContent}
+    >
+      {codeLines}
+    </RNScrollView>
+  );
+}
+
+interface SearchableCodeProps {
+  highlightedLines: HighlightToken[][];
+  gutterWidth: number;
+  isMobile: boolean;
+  lineHeight: number;
+  lineSelection: FileLineSelection | null;
+  paneKey: string | null;
+  isPaneFocused: boolean;
+  previewScrollRef: React.RefObject<RNScrollView | null>;
+}
+
+function SearchableCode({
+  highlightedLines,
+  gutterWidth,
+  isMobile,
+  lineHeight,
+  lineSelection,
+  paneKey,
+  isPaneFocused,
+  previewScrollRef,
+}: SearchableCodeProps) {
+  const textModel = useMemo(() => createFilePaneTextModel(highlightedLines), [highlightedLines]);
+  const findModel = useMemo(
+    () =>
+      createFilePaneFindModel({
+        textModel,
+        onSelectLine(lineNumber) {
+          previewScrollRef.current?.scrollTo({
+            y: Math.max(0, (lineNumber - 1) * lineHeight),
+            animated: true,
+          });
+        },
+      }),
+    [lineHeight, previewScrollRef, textModel],
+  );
+  const findState = useSyncExternalStore(
+    findModel.adapter.subscribe,
+    findModel.adapter.getState,
+    findModel.adapter.getState,
+  );
+  usePaneFindRegistration({ paneKey, adapter: findModel.adapter });
+
+  // Policy (matches terminal-pane.tsx): when this pane loses find focus, clear the find
+  // state entirely (query + matches + bar) rather than merely hiding the bar while
+  // highlights linger from a stale query.
+  useEffect(() => {
+    if (isPaneFocused) {
+      return undefined;
+    }
+    findModel.adapter.close();
+    return undefined;
+  }, [findModel, isPaneFocused]);
+
+  const highlightsByLine = useMemo(
+    () => createFilePaneHighlightMap(findModel.getMatches(), findState.selectedIndex),
+    [findModel, findState],
+  );
+
+  return (
+    <TextFindView
+      textModel={textModel}
+      highlightsByLine={highlightsByLine}
+      gutterWidth={gutterWidth}
+      isMobile={isMobile}
+      lineSelection={lineSelection}
+    />
+  );
+}
+
+function markdownSourceLines(content: string): HighlightToken[][] {
+  return content.split("\n").map((text) => [{ text, style: null }]);
+}
+
+interface MarkdownFileViewProps {
+  content: string;
+  paneKey: string | null;
+  isPaneFocused: boolean;
+  isMobile: boolean;
+  lineHeight: number;
+  gutterFontSize: number;
+  previewScrollRef: React.RefObject<RNScrollView | null>;
+}
+
+// Rendered-markdown files bypass the code find path entirely (no source lines/tokens are ever
+// mounted), so Ctrl/Cmd+F previously had nothing to register with and did nothing. Teaching
+// MarkdownRenderer to highlight matches inside arbitrary rendered nodes (tables, lists, inline
+// code, etc.) is invasive; instead this registers the same plain-text find model/adapter code
+// files use against the raw markdown source, and swaps to that monospace source view (with
+// highlights) only while a find query is active — restoring the normal rendered view once the
+// query is cleared or the pane loses find focus.
+function MarkdownFileView({
+  content,
+  paneKey,
+  isPaneFocused,
+  isMobile,
+  lineHeight,
+  gutterFontSize,
+  previewScrollRef,
+}: MarkdownFileViewProps) {
+  const textModel = useMemo(() => createFilePaneTextModel(markdownSourceLines(content)), [content]);
+  const gutterWidth = useMemo(
+    () => lineNumberGutterWidth(textModel.lines.length, gutterFontSize),
+    [textModel.lines.length, gutterFontSize],
+  );
+  const findModel = useMemo(
+    () =>
+      createFilePaneFindModel({
+        textModel,
+        onSelectLine(lineNumber) {
+          previewScrollRef.current?.scrollTo({
+            y: Math.max(0, (lineNumber - 1) * lineHeight),
+            animated: true,
+          });
+        },
+      }),
+    [lineHeight, previewScrollRef, textModel],
+  );
+  const findState = useSyncExternalStore(
+    findModel.adapter.subscribe,
+    findModel.adapter.getState,
+    findModel.adapter.getState,
+  );
+  usePaneFindRegistration({ paneKey, adapter: findModel.adapter });
+
+  useEffect(() => {
+    if (isPaneFocused) {
+      return undefined;
+    }
+    findModel.adapter.close();
+    return undefined;
+  }, [findModel, isPaneFocused]);
+
+  const highlightsByLine = useMemo(
+    () => createFilePaneHighlightMap(findModel.getMatches(), findState.selectedIndex),
+    [findModel, findState],
+  );
+
+  if (findState.query.length > 0) {
+    return (
+      <TextFindView
+        textModel={textModel}
+        highlightsByLine={highlightsByLine}
+        gutterWidth={gutterWidth}
+        isMobile={isMobile}
+        lineSelection={null}
+      />
+    );
+  }
+
+  return <MarkdownRenderer text={content} />;
+}
+
 function FilePreviewBody({
   preview,
   isLoading,
   isMobile,
   location,
   imagePreviewUri,
+  paneKey,
+  isPaneFocused,
 }: FilePreviewBodyProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
@@ -263,61 +500,59 @@ function FilePreviewBody({
     if (isMarkdownFile) {
       return (
         <View style={styles.previewScrollContainer}>
+          {isPaneFocused ? <PaneFindBar testID="file-pane-find-bar" /> : null}
           <RNScrollView
             ref={previewScrollRef}
             style={styles.previewContent}
             contentContainerStyle={styles.previewMarkdownScrollContent}
             showsVerticalScrollIndicator
           >
-            <MarkdownRenderer text={preview.content ?? ""} />
+            <MarkdownFileView
+              content={preview.content ?? ""}
+              paneKey={paneKey}
+              isPaneFocused={isPaneFocused}
+              isMobile={isMobile}
+              lineHeight={lineHeight}
+              gutterFontSize={theme.fontSize.code}
+              previewScrollRef={previewScrollRef}
+            />
           </RNScrollView>
         </View>
       );
     }
 
-    const lines = highlightedLines ?? [[{ text: preview.content ?? "", style: null }]];
-    const keyedLines = lines.map((tokens, index) => ({
-      key: `line-${index}`,
-      tokens,
-      lineNumber: index + 1,
-    }));
-    const codeLines = (
-      <View dataSet={CODE_SURFACE_DATASET}>
-        {keyedLines.map(({ key, tokens, lineNumber }) => (
-          <CodeLine
-            key={key}
-            tokens={tokens}
-            lineNumber={lineNumber}
-            gutterWidth={gutterWidth}
-            highlighted={
-              Boolean(lineSelection) &&
-              lineNumber >= (lineSelection?.lineStart ?? 0) &&
-              lineNumber <= (lineSelection?.lineEnd ?? 0)
-            }
-          />
-        ))}
-      </View>
-    );
+    if (!highlightedLines) {
+      return (
+        <View style={styles.centerState}>
+          <Text style={styles.emptyText}>{t("panels.file.noPreview")}</Text>
+        </View>
+      );
+    }
 
     return (
       <View style={styles.previewScrollContainer}>
+        {/*
+          The find bar must live in this non-scrolling container, not inside
+          the RNScrollView below — otherwise jumping to a match scrolls the
+          bar itself out of view while its input keeps keyboard focus.
+          Mirrors the pattern in terminal-pane.tsx (outputContainer).
+        */}
+        {isPaneFocused ? <PaneFindBar testID="file-pane-find-bar" /> : null}
         <RNScrollView
           ref={previewScrollRef}
           style={styles.previewContent}
           showsVerticalScrollIndicator
         >
-          {isMobile ? (
-            <View style={styles.previewCodeScrollContent}>{codeLines}</View>
-          ) : (
-            <RNScrollView
-              horizontal
-              nestedScrollEnabled
-              showsHorizontalScrollIndicator
-              contentContainerStyle={styles.previewCodeScrollContent}
-            >
-              {codeLines}
-            </RNScrollView>
-          )}
+          <SearchableCode
+            highlightedLines={highlightedLines}
+            gutterWidth={gutterWidth}
+            isMobile={isMobile}
+            lineHeight={lineHeight}
+            lineSelection={lineSelection}
+            paneKey={paneKey}
+            isPaneFocused={isPaneFocused}
+            previewScrollRef={previewScrollRef}
+          />
         </RNScrollView>
       </View>
     );
@@ -369,6 +604,8 @@ export function FilePane({
   location: WorkspaceFileLocation;
 }) {
   const { t } = useTranslation();
+  const paneFocus = usePaneFocus();
+  const paneFindKey = usePaneFindKey();
   const isMobile = useIsCompactFormFactor();
 
   const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
@@ -440,6 +677,8 @@ export function FilePane({
         isMobile={isMobile}
         location={location}
         imagePreviewUri={imagePreviewUri}
+        paneKey={paneFindKey}
+        isPaneFocused={paneFocus.isInteractive}
       />
     </View>
   );
@@ -480,6 +719,7 @@ const styles = StyleSheet.create((theme) => ({
   previewScrollContainer: {
     flex: 1,
     minHeight: 0,
+    position: "relative",
   },
   previewContent: {
     flex: 1,

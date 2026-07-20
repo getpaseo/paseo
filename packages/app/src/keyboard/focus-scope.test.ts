@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { resolveKeyboardFocusScope } from "./focus-scope";
+import {
+  FIND_INPUT_FOCUS_SCOPE,
+  KEYBOARD_FOCUS_SCOPE_ATTRIBUTE,
+  resolveKeyboardFocusScope,
+} from "./focus-scope";
 
 class FakeNode {
   parentElement: FakeElement | null = null;
@@ -76,5 +80,15 @@ describe("resolveKeyboardFocusScope", () => {
       commandCenterOpen: false,
     });
     expect(scope).toBe("editable");
+  });
+
+  it("detects find input scope from the production focus marker", () => {
+    const selector = `[${KEYBOARD_FOCUS_SCOPE_ATTRIBUTE}='${FIND_INPUT_FOCUS_SCOPE}']`;
+    const target = new FakeElement({ tagName: "input", selectors: [selector] });
+    const scope = resolveKeyboardFocusScope({
+      target: target as unknown as EventTarget,
+      commandCenterOpen: false,
+    });
+    expect(scope).toBe("find-input");
   });
 });

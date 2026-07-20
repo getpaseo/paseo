@@ -1,7 +1,11 @@
 import { ClipboardAddon } from "@xterm/addon-clipboard";
 import { FitAddon } from "@xterm/addon-fit";
 import { ImageAddon } from "@xterm/addon-image";
-import { SearchAddon } from "@xterm/addon-search";
+import {
+  SearchAddon,
+  type ISearchOptions,
+  type ISearchResultChangeEvent,
+} from "@xterm/addon-search";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
@@ -30,6 +34,11 @@ import {
 } from "../local-links/terminal-local-link-provider";
 
 export type TerminalOutputData = Uint8Array;
+
+export interface TerminalFindResult {
+  matchCount: number;
+  selectedIndex: number;
+}
 
 export interface TerminalEmulatorRuntimeMountInput {
   root: HTMLDivElement;
@@ -177,6 +186,8 @@ export class TerminalEmulatorRuntime {
   };
   private terminal: Terminal | null = null;
   private fitAddon: FitAddon | null = null;
+  private searchAddon: SearchAddon | null = null;
+  private findTheme: ITheme | null = null;
   private fitAndEmitResize: ((input?: { force?: boolean; shouldClaim?: boolean }) => void) | null =
     null;
   private lastSize: { rows: number; cols: number } | null = null;
@@ -268,7 +279,8 @@ export class TerminalEmulatorRuntime {
         },
       }),
     );
-    terminal.loadAddon(new SearchAddon({ highlightLimit: 20_000 }));
+    const searchAddon = new SearchAddon({ highlightLimit: 20_000 });
+    terminal.loadAddon(searchAddon);
     terminal.loadAddon(new ClipboardAddon());
     try {
       terminal.loadAddon(new LigaturesAddon());
@@ -357,6 +369,8 @@ export class TerminalEmulatorRuntime {
 
     this.terminal = terminal;
     this.fitAddon = fitAddon;
+    this.searchAddon = searchAddon;
+    this.findTheme = input.theme;
     window.__paseoTerminal = terminal;
 
     const fitAndEmitResize = (resizeInput?: { force?: boolean; shouldClaim?: boolean }): void => {
@@ -672,6 +686,7 @@ export class TerminalEmulatorRuntime {
     }
 
     this.applyThemeBackground(input.theme);
+    this.findTheme = input.theme;
     this.refreshVisibleRows();
   }
 
@@ -722,6 +737,42 @@ export class TerminalEmulatorRuntime {
 
   blur(): void {
     this.terminal?.blur();
+  }
+
+  findNext(input: { query: string }): boolean {
+    return this.searchAddon?.findNext(input.query, this.getFindOptions()) ?? false;
+  }
+
+  findPrevious(input: { query: string }): boolean {
+    return this.searchAddon?.findPrevious(input.query, this.getFindOptions()) ?? false;
+  }
+
+  clearFind(): void {
+    this.searchAddon?.clearDecorations();
+  }
+
+  onFindResult(listener: (result: TerminalFindResult) => void): () => void {
+    const disposable = this.searchAddon?.onDidChangeResults((event: ISearchResultChangeEvent) => {
+      listener({ matchCount: event.resultCount, selectedIndex: event.resultIndex });
+    });
+    return () => disposable?.dispose();
+  }
+
+  private getFindOptions(): ISearchOptions {
+    const theme = this.findTheme;
+    return {
+      caseSensitive: false,
+      regex: false,
+      wholeWord: false,
+      decorations: {
+        matchBackground: theme?.selectionInactiveBackground ?? "#515c6a80",
+        matchBorder: theme?.foreground ?? "#e6e6e6",
+        matchOverviewRuler: theme?.selectionInactiveBackground ?? "#515c6a",
+        activeMatchBackground: theme?.selectionBackground ?? "#264f78",
+        activeMatchBorder: theme?.cursor ?? theme?.foreground ?? "#ffffff",
+        activeMatchColorOverviewRuler: theme?.selectionBackground ?? "#264f78",
+      },
+    };
   }
 
   private refreshVisibleRows(): void {
@@ -780,6 +831,8 @@ export class TerminalEmulatorRuntime {
     }
     this.terminal = null;
     this.fitAddon = null;
+    this.searchAddon = null;
+    this.findTheme = null;
     this.fitAndEmitResize = null;
     this.lastSize = null;
     this.themeBackgroundElements = [];

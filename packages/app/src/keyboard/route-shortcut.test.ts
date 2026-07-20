@@ -47,6 +47,7 @@ describe("routeKeyboardShortcut — dispatch passthroughs", () => {
     ["workspace.pane.move-tab.up", { id: "workspace.pane.move-tab.up", scope: "workspace" }],
     ["workspace.pane.move-tab.down", { id: "workspace.pane.move-tab.down", scope: "workspace" }],
     ["workspace.pane.close", { id: "workspace.pane.close", scope: "workspace" }],
+    ["workspace.find.open", { id: "workspace.find.open", scope: "workspace" }],
     ["view.toggle.focus", { id: "workspace.focus.toggle", scope: "workspace" }],
   ])("%s → dispatch %j", (action, expected) => {
     expect(routeKeyboardShortcut({ action, payload: null }, makeCtx())).toEqual({
@@ -390,5 +391,16 @@ describe("routeKeyboardShortcut — unknown actions", () => {
     expect(
       routeKeyboardShortcut({ action: "totally.made.up", payload: null }, makeCtx()),
     ).toEqual<ShortcutAction>({ kind: "none" });
+  });
+});
+
+describe("routeKeyboardShortcut — workspace.find.open", () => {
+  it("routes workspace.find.open to a workspace-scoped dispatch", () => {
+    expect(
+      routeKeyboardShortcut({ action: "workspace.find.open", payload: null }, makeCtx()),
+    ).toEqual<ShortcutAction>({
+      kind: "dispatch",
+      action: { id: "workspace.find.open", scope: "workspace" },
+    });
   });
 });

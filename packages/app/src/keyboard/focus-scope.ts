@@ -1,5 +1,8 @@
 import type { KeyboardFocusScope } from "@/keyboard/actions";
 
+export const KEYBOARD_FOCUS_SCOPE_ATTRIBUTE = "data-paseo-keyboard-focus-scope";
+export const FIND_INPUT_FOCUS_SCOPE = "find-input";
+
 function isElement(value: unknown): value is Element {
   return typeof Element !== "undefined" && value instanceof Element;
 }
@@ -62,6 +65,14 @@ export function resolveKeyboardFocusScope(input: {
     candidates.some((element) => Boolean(element.closest("[data-testid='message-input-root']")))
   ) {
     return "message-input";
+  }
+
+  if (
+    candidates.some((element) =>
+      Boolean(element.closest(`[${KEYBOARD_FOCUS_SCOPE_ATTRIBUTE}='${FIND_INPUT_FOCUS_SCOPE}']`)),
+    )
+  ) {
+    return "find-input";
   }
 
   if (

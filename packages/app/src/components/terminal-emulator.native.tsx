@@ -21,6 +21,7 @@ import type { ITheme } from "@xterm/xterm";
 import type { TerminalState } from "@getpaseo/protocol/messages";
 import type { TerminalInputModeState } from "@getpaseo/protocol/terminal-input-mode";
 import type { TerminalOutputData } from "../terminal/runtime/terminal-emulator-runtime";
+import type { TerminalFindResult } from "../terminal/runtime/terminal-emulator-runtime";
 import type {
   TerminalLocalFileLinkSource,
   TerminalLocalFileLinkTarget,
@@ -36,6 +37,10 @@ export interface TerminalEmulatorHandle {
   renderSnapshot: (state: TerminalState | null) => void;
   clear: () => void;
   blur: () => void;
+  findNext: (query: string) => boolean;
+  findPrevious: (query: string) => boolean;
+  clearFind: () => void;
+  subscribeFindResult: (listener: (result: TerminalFindResult) => void) => () => void;
 }
 
 interface TerminalEmulatorProps {
@@ -374,6 +379,10 @@ export default function TerminalEmulator({
         );
         Keyboard.dismiss();
       },
+      findNext: () => false,
+      findPrevious: () => false,
+      clearFind: () => undefined,
+      subscribeFindResult: () => () => undefined,
     }),
     [sendToWebView, streamKey],
   );
