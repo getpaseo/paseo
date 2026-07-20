@@ -245,6 +245,111 @@ describe("OMP agent client and session", () => {
     await expect(completion).resolves.toMatchObject({ finalText: "first done" });
   });
 
+  // Repro/regression for https://github.com/getpaseo/paseo/issues/2232:
+  // OMP can end the parent model turn (agent_end + isStreaming=false) while
+  // internal `task` subagents are still writing. Paseo must not complete the
+  // turn / flip idle until those children finish.
+  test("stays active while OMP internal task subagents are still running", async () => {
+    const scheduler = new ManualIdleScheduler();
+    const omp = new OmpHarness({ providerIdleScheduler: scheduler });
+    await omp.start();
+
+    await omp.requireStartTurn("critically audit the entire repo");
+    const runtime = omp.runtime();
+    runtime.beginTurn();
+    runtime.acceptPrompt("critically audit the entire repo", "user-audit");
+    runtime.streamAssistantText("spawning fan-out workers");
+    runtime.emit({
+      type: "subagent_lifecycle",
+      payload: {
+        id: "ApiBudgetAudit",
+        agent: "ApiBudgetAudit",
+        description: "audit API budget",
+        status: "started",
+        parentToolCallId: "task-1",
+        index: 0,
+      },
+    });
+    // Parent model loop is idle; child work continues (issue #2232 shape).
+    runtime.state = { ...runtime.state, isStreaming: false, isCompacting: false };
+    runtime.finishTurn({
+      role: "assistant",
+      content: [{ type: "text", text: "spawning fan-out workers" }],
+    });
+
+    await omp.waitForProviderStateChecks(1);
+    await scheduler.waitForWaits(1);
+    expect(omp.completedTurnCount()).toBe(0);
+    expect(omp.subagentUpserts()).toContainEqual({ id: "ApiBudgetAudit", status: "running" });
+
+    // Still busy after another idle poll while the child is running.
+    scheduler.retry();
+    await omp.waitForProviderStateChecks(2);
+    await scheduler.waitForWaits(2);
+    expect(omp.completedTurnCount()).toBe(0);
+
+    runtime.emit({
+      type: "subagent_lifecycle",
+      payload: {
+        id: "ApiBudgetAudit",
+        agent: "ApiBudgetAudit",
+        status: "completed",
+        parentToolCallId: "task-1",
+        index: 0,
+      },
+    });
+    scheduler.retry();
+    await omp.waitForProviderStateChecks(3);
+    // getState waiters resolve before completeTurn runs on the same tick.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(omp.completedTurnCount()).toBe(1);
+    expect(omp.subagentUpserts()).toContainEqual({ id: "ApiBudgetAudit", status: "completed" });
+  });
+
+  test("stays active when get_subagents reports running children without prior events", async () => {
+    const scheduler = new ManualIdleScheduler();
+    const omp = new OmpHarness({ providerIdleScheduler: scheduler });
+    await omp.start();
+
+    await omp.requireStartTurn("fan out");
+    const runtime = omp.runtime();
+    runtime.beginTurn();
+    runtime.acceptPrompt("fan out", "user-fanout");
+    runtime.streamAssistantText("delegating");
+    runtime.subagents = [
+      {
+        id: "PipelineFeedAudit",
+        index: 0,
+        agent: "PipelineFeedAudit",
+        status: "running",
+        parentToolCallId: "task-2",
+      },
+    ];
+    runtime.state = { ...runtime.state, isStreaming: false, isCompacting: false };
+    runtime.finishTurn({
+      role: "assistant",
+      content: [{ type: "text", text: "delegating" }],
+    });
+
+    await omp.waitForProviderStateChecks(1);
+    await scheduler.waitForWaits(1);
+    expect(omp.completedTurnCount()).toBe(0);
+
+    runtime.subagents = [
+      {
+        id: "PipelineFeedAudit",
+        index: 0,
+        agent: "PipelineFeedAudit",
+        status: "completed",
+        parentToolCallId: "task-2",
+      },
+    ];
+    scheduler.retry();
+    await omp.waitForProviderStateChecks(2);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(omp.completedTurnCount()).toBe(1);
+  });
+
   test("stays active when OMP state checks fail", async () => {
     const scheduler = new ManualIdleScheduler();
     const omp = new OmpHarness({ providerIdleScheduler: scheduler });

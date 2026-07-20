@@ -2166,7 +2166,11 @@ export class OmpAgentSession implements AgentSession {
       try {
         const state = await this.runtimeSession.getState();
         this.state = state;
-        if (!state.isStreaming && !state.isCompacting) {
+        // Parent model loop idle is not enough: OMP-internal `task` children can
+        // keep running after agent_end / isStreaming=false (hub waits, fan-out).
+        // Completing the Paseo turn here marks the agent idle while work continues
+        // (https://github.com/getpaseo/paseo/issues/2232).
+        if (!state.isStreaming && !state.isCompacting && !(await this.hasRunningOmpSubagents())) {
           this.completeTurn(turnId, messages);
           return;
         }
@@ -2175,6 +2179,24 @@ export class OmpAgentSession implements AgentSession {
       }
       await this.providerIdleScheduler.waitForRetry();
     }
+  }
+
+  /**
+   * Keep the event index in sync with OMP's `get_subagents` while waiting for
+   * idle. Events alone can miss frames; the index alone can go stale without a
+   * terminal lifecycle event. Reconcile every poll so either path can settle.
+   */
+  private async hasRunningOmpSubagents(): Promise<boolean> {
+    try {
+      const snapshots = await this.runtimeSession.getSubagents();
+      for (const event of this.subagentIndex.reconcileSnapshots(this.runtimeSession, snapshots)) {
+        this.emit(event);
+      }
+    } catch (error) {
+      // Older OMP binaries may not expose get_subagents; event index is best-effort.
+      this.logger.debug({ err: error }, "OMP get_subagents unavailable during idle gate");
+    }
+    return this.subagentIndex.hasRunning(this.runtimeSession);
   }
 
   private async refreshState(): Promise<void> {

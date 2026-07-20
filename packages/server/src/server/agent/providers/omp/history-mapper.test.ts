@@ -644,4 +644,57 @@ describe("OMP history mapper", () => {
       ]),
     );
   });
+
+  test("discovers child transcripts when parent session file is missing", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "omp-orphan-parent-"));
+    const parentFile = join(dir, "parent.jsonl");
+    const parentStem = parentFile.slice(0, -".jsonl".length);
+    const childFile = join(parentStem, "ApiBudgetAudit.jsonl");
+    mkdirSync(parentStem, { recursive: true });
+    writeFileSync(
+      childFile,
+      [
+        { type: "session", id: "child-root", parentId: null, timestamp: "2026-07-19T20:00:00Z" },
+        {
+          type: "message",
+          id: "child-answer",
+          parentId: "child-root",
+          timestamp: "2026-07-19T20:00:01Z",
+          message: { role: "assistant", content: [{ type: "text", text: "audit ok" }] },
+        },
+      ]
+        .map((entry) => JSON.stringify(entry))
+        .join("\n"),
+    );
+
+    const events: AgentStreamEvent[] = [];
+    for await (const event of streamOmpHistory({ sessionFile: parentFile, provider: "omp" })) {
+      events.push(event);
+    }
+    const subagentEvents = events.flatMap((event) =>
+      event.type === "provider_subagent" ? [event.event] : [],
+    );
+    expect(subagentEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "upsert",
+          id: "ApiBudgetAudit",
+          status: "running",
+        }),
+        expect.objectContaining({
+          type: "timeline",
+          id: "ApiBudgetAudit",
+          item: expect.objectContaining({
+            type: "assistant_message",
+            text: "audit ok",
+          }),
+        }),
+        expect.objectContaining({
+          type: "upsert",
+          id: "ApiBudgetAudit",
+          status: "completed",
+        }),
+      ]),
+    );
+  });
 });

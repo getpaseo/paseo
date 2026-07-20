@@ -114,4 +114,52 @@ describe("OMP provider subagent mapper", () => {
       })[0],
     ).toMatchObject({ event: { id: "child-1", status: "canceled" } });
   });
+
+  test("hasRunning tracks in-flight OMP task children", () => {
+    const index = new OmpSubagentIndex();
+    const parent = {};
+    expect(index.hasRunning(parent)).toBe(false);
+
+    index.handleLifecycle(parent, {
+      id: "child-1",
+      agent: "explore",
+      status: "started",
+      index: 0,
+    });
+    expect(index.hasRunning(parent)).toBe(true);
+
+    index.handleLifecycle(parent, {
+      id: "child-1",
+      agent: "explore",
+      status: "completed",
+      index: 0,
+    });
+    expect(index.hasRunning(parent)).toBe(false);
+  });
+
+  test("reconcileSnapshots brings missed get_subagents state into the index", () => {
+    const index = new OmpSubagentIndex();
+    const parent = {};
+    expect(
+      index.reconcileSnapshots(parent, [
+        {
+          id: "child-2",
+          agent: "audit",
+          status: "running",
+          parentToolCallId: "task-9",
+        },
+      ]),
+    ).toMatchObject([{ event: { id: "child-2", status: "running" } }]);
+    expect(index.hasRunning(parent)).toBe(true);
+
+    index.reconcileSnapshots(parent, [
+      {
+        id: "child-2",
+        agent: "audit",
+        status: "completed",
+        parentToolCallId: "task-9",
+      },
+    ]);
+    expect(index.hasRunning(parent)).toBe(false);
+  });
 });

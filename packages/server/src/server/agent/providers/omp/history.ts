@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readdir, readFile, stat } from "node:fs/promises";
 import { basename, extname, join } from "node:path";
 import type { AgentProvider, AgentStreamEvent } from "../../agent-sdk-types.js";
 import { normalizeProviderReplayTimestamp } from "../../provider-history-timestamps.js";
@@ -63,6 +63,12 @@ export async function* streamOmpHistory(input: {
     );
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      // Parent `.jsonl` can be missing while OMP still keeps child transcripts under
+      // the stem artifacts directory (issue #2232). Surface those children instead
+      // of returning an empty history.
+      for (const transcript of await discoverOrphanSubagentTranscripts(input.sessionFile)) {
+        yield* replaySubagentTranscript(transcript, input.provider, visitedSessionFiles);
+      }
       return;
     }
     throw error;
@@ -288,6 +294,38 @@ function taskResultText(message: Extract<OmpAgentMessage, { role: "toolResult" }
 function stripExtension(filePath: string): string {
   const extension = extname(filePath);
   return extension ? filePath.slice(0, -extension.length) : filePath;
+}
+
+/**
+ * When the parent session file is gone but `<stem>/` still holds child
+ * `*.jsonl` files, treat those as completed provider subagent transcripts.
+ */
+async function discoverOrphanSubagentTranscripts(
+  parentSessionFile: string,
+): Promise<OmpSubagentTranscript[]> {
+  const artifactsDir = stripExtension(parentSessionFile);
+  let names: string[];
+  try {
+    const dirStat = await stat(artifactsDir);
+    if (!dirStat.isDirectory()) {
+      return [];
+    }
+    names = await readdir(artifactsDir);
+  } catch {
+    return [];
+  }
+  return names
+    .filter((name) => name.endsWith(".jsonl") && !name.startsWith("."))
+    .map((name) => {
+      const id = basename(name, ".jsonl");
+      return {
+        id,
+        title: id,
+        toolCallId: "",
+        sessionFile: join(artifactsDir, name),
+        status: "completed" as const,
+      };
+    });
 }
 
 export async function readActiveOmpEntryChain(

@@ -80,6 +80,49 @@ export class OmpSubagentIndex {
     return events;
   }
 
+  /**
+   * True while any OMP-internal task child is still in-flight for this parent.
+   * Used to keep the Paseo turn non-idle after parent `agent_end` while tasks run.
+   */
+  hasRunning(parent: object): boolean {
+    const states = this.statesByParent.get(parent);
+    if (!states) {
+      return false;
+    }
+    for (const state of states.values()) {
+      if (state.status === "running") {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Merge a `get_subagents` snapshot into local state so missed event frames
+   * do not leave idle detection blind.
+   */
+  reconcileSnapshots(
+    parent: object,
+    snapshots: ReadonlyArray<{
+      id: string;
+      agent: string;
+      description?: string;
+      status: "pending" | "running" | "completed" | "failed" | "aborted";
+      parentToolCallId?: string;
+    }>,
+  ): AgentStreamEvent[] {
+    const events: AgentStreamEvent[] = [];
+    for (const snapshot of snapshots) {
+      const state = this.stateFor(parent, snapshot.id, snapshot.agent);
+      state.title = snapshot.agent || state.title;
+      state.description = snapshot.description ?? state.description;
+      state.toolCallId = snapshot.parentToolCallId ?? state.toolCallId;
+      state.status = mapSnapshotStatus(snapshot.status);
+      events.push(this.upsert(snapshot.id, state.status, state));
+    }
+    return events;
+  }
+
   clear(parent: object): void {
     this.statesByParent.delete(parent);
   }
@@ -135,6 +178,13 @@ function mapLifecycleStatus(
 
 function mapProgressStatus(
   status: OmpSubagentProgressPayload["progress"]["status"],
+): "running" | "completed" | "failed" | "canceled" {
+  if (status === "completed" || status === "failed") return status;
+  return status === "aborted" ? "canceled" : "running";
+}
+
+function mapSnapshotStatus(
+  status: "pending" | "running" | "completed" | "failed" | "aborted",
 ): "running" | "completed" | "failed" | "canceled" {
   if (status === "completed" || status === "failed") return status;
   return status === "aborted" ? "canceled" : "running";

@@ -15,25 +15,14 @@ import type {
   OmpRuntimeEvent,
   OmpSessionState,
   OmpSessionStats,
+  OmpSubagentSnapshot,
   OmpThinkingLevel,
 } from "../rpc-types.js";
 import { buildOmpLaunch } from "../runtime.js";
 
 type FakeOmpSubagentSubscriptionLevel = "off" | "progress" | "events";
-type FakeOmpSubagentStatus = "pending" | "running" | "completed" | "failed" | "aborted";
 
-export interface FakeOmpSubagentSnapshot {
-  id: string;
-  index: number;
-  agent: string;
-  description?: string;
-  status: FakeOmpSubagentStatus;
-  task?: string;
-  assignment?: string;
-  sessionFile?: string;
-  parentToolCallId?: string;
-  lastUpdate?: number;
-}
+export type FakeOmpSubagentSnapshot = OmpSubagentSnapshot;
 
 export interface FakeOmpSubagentMessagesSelector {
   subagentId?: string;
@@ -352,7 +341,7 @@ export class FakeOmpSession implements OmpRuntimeSession {
     return new Promise((resolve) => this.hostToolResultWaiters.push(resolve));
   }
 
-  async getSubagents(): Promise<FakeOmpSubagentSnapshot[]> {
+  async getSubagents(): Promise<OmpSubagentSnapshot[]> {
     return this.subagents;
   }
 
