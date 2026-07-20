@@ -44,7 +44,7 @@ interface ExplorerSidebarProps {
   workspaceId?: string | null;
   workspaceRoot: string;
   isGit: boolean;
-  onOpenFile?: (filePath: string) => void;
+  onOpenFile: (filePath: string) => void;
 }
 
 interface ExplorerSidebarSharedState {
@@ -271,7 +271,7 @@ interface SidebarContentProps {
   workspaceRoot: string;
   isGit: boolean;
   isOpen: boolean;
-  onOpenFile?: (filePath: string) => void;
+  onOpenFile: (filePath: string) => void;
 }
 
 function ExplorerSidebarContent({

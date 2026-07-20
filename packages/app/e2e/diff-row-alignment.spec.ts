@@ -229,14 +229,28 @@ test("changes file context menu opens existing files and excludes deleted files"
   await useUnwrappedDiffLines(page);
   await openWorkspaceChanges(page, workspace);
 
-  await page.getByTestId("diff-file-0-toggle").hover();
+  const existingFileToggle = page.getByTestId("diff-file-0-toggle");
+  await existingFileToggle.hover();
   await expect(page.getByText("src/use-mounted-tab-set.ts", { exact: true })).toBeVisible();
+
+  const toggleBounds = await existingFileToggle.boundingBox();
+  if (!toggleBounds) {
+    throw new Error("Existing changed-file toggle is not visible");
+  }
+  await page.mouse.move(
+    toggleBounds.x + toggleBounds.width / 2,
+    toggleBounds.y + toggleBounds.height / 2,
+  );
+  await page.mouse.down();
+  await page.waitForTimeout(600);
+  await page.mouse.up();
+  await expect(page.getByTestId("diff-file-0-body")).toHaveCount(0);
 
   await expect(page.getByTestId("diff-file-1")).toContainText("zz-deleted.ts");
   await page.getByTestId("diff-file-1-toggle").click({ button: "right" });
   await expect(page.getByTestId("diff-file-1-context-menu")).toHaveCount(0);
 
-  await page.getByTestId("diff-file-0-toggle").click({ button: "right" });
+  await existingFileToggle.click({ button: "right" });
   await expect(page.getByTestId("diff-file-0-context-menu")).toBeVisible();
   await page.getByTestId("diff-file-0-open-file").click();
 

@@ -1041,7 +1041,7 @@ const DiffFileHeader = memo(function DiffFileHeader({
       <ContextMenuTrigger
         testID={testID ? `${testID}-toggle` : undefined}
         style={headerPressableStyle}
-        enabledOnMobile={false}
+        enabledOnMobile
         // Android: prevent parent pan/scroll gestures from canceling the tap release.
         cancelable={false}
         onPressIn={handlePressIn}
@@ -1297,7 +1297,7 @@ interface GitDiffPaneProps {
   workspaceId?: string | null;
   cwd: string;
   enabled?: boolean;
-  onOpenFile?: (path: string) => void;
+  onOpenFile: (path: string) => void;
 }
 
 type PressableStyleFn = (
@@ -1695,7 +1695,7 @@ interface SharedDiffViewProps {
         expandedPaths: string[];
         collapsedFolders: string[];
         reviewActions?: InlineReviewActions;
-        onOpenFile?: (path: string) => void;
+        onOpenFile: (path: string) => void;
         onExpandedPathsChange: (paths: string[]) => void;
         onCollapsedFoldersChange: (paths: string[]) => void;
       }
