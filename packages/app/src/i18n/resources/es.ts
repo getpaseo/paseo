@@ -370,6 +370,13 @@ export const es: TranslationResources = {
       copyBranchName: "Copiar nombre de rama",
       copied: "Copiado",
     },
+    fileActions: {
+      openFile: "Abrir archivo",
+      copyPath: "Copiar ruta",
+      download: "Descargar",
+      addToChat: "Añadir al chat…",
+      moreActions: "Más acciones",
+    },
     fileExplorer: {
       sort: {
         name: "Nombre",
@@ -379,8 +386,6 @@ export const es: TranslationResources = {
       context: {
         size: "Tamaño",
         modified: "Modificado",
-        copyPath: "Copiar ruta",
-        download: "Descargar",
       },
       actions: {
         back: "Atrás",
@@ -794,8 +799,6 @@ export const es: TranslationResources = {
         base: "base",
         newFile: "Nuevo",
         deletedFile: "Eliminado",
-        openFile: "Abrir archivo",
-        addToChat: "Añadir al chat…",
         addToChatPickerTitle: "Añadir archivo al chat",
         noOpenChats: "No hay chats abiertos en este espacio de trabajo.",
         commits: {

@@ -35,13 +35,16 @@ import {
   ArrowDownUp,
   ChevronDown,
   Columns2,
+  Copy,
   Download,
+  FileText,
   FolderTree,
   GitCommitHorizontal,
   GitMerge,
   List,
   ListChevronsDownUp,
   ListChevronsUpDown,
+  MessageSquarePlus,
   Pilcrow,
   RefreshCcw,
   RotateCw,
@@ -89,6 +92,10 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
+import * as Clipboard from "expo-clipboard";
+import { FileActionsMenu, type FileAction } from "@/components/file-actions-menu";
+import { useFileDownload } from "@/hooks/use-file-download";
+import { buildAbsoluteExplorerPath } from "@/utils/explorer-paths";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { lineNumberGutterWidth } from "@/components/code-insets";
 import { GitActionsSplitButton } from "@/git/actions-split-button";
@@ -217,6 +224,8 @@ interface DiffFileSectionProps {
   onToggle?: (path: string) => void;
   onOpenFile?: (path: string) => void;
   onAddToChat?: (path: string) => void;
+  onCopyPath?: (path: string) => void;
+  onDownload?: (path: string) => void;
   onHeaderHeightChange?: (path: string, height: number) => void;
   testID?: string;
 }
@@ -913,22 +922,15 @@ function SplitDiffColumn({
 
 function DiffFileHeaderContextMenu({
   enabled,
-  canOpenFile,
-  canAddToChat,
-  onOpenFile,
-  onAddToChat,
+  actions,
   testID,
   children,
 }: {
   enabled: boolean;
-  canOpenFile: boolean;
-  canAddToChat: boolean;
-  onOpenFile: () => void;
-  onAddToChat: () => void;
+  actions: FileAction[];
   testID?: string;
   children: ReactElement;
 }): ReactElement {
-  const { t } = useTranslation();
   if (!enabled) {
     return children;
   }
@@ -940,22 +942,11 @@ function DiffFileHeaderContextMenu({
         minWidth={160}
         testID={testID ? `${testID}-context-menu` : undefined}
       >
-        {canOpenFile ? (
-          <ContextMenuItem
-            onSelect={onOpenFile}
-            testID={testID ? `${testID}-open-file` : undefined}
-          >
-            {t("workspace.git.diff.openFile")}
+        {actions.map((action) => (
+          <ContextMenuItem key={action.key} onSelect={action.onSelect} testID={action.testID}>
+            {action.label}
           </ContextMenuItem>
-        ) : null}
-        {canAddToChat ? (
-          <ContextMenuItem
-            onSelect={onAddToChat}
-            testID={testID ? `${testID}-add-to-chat` : undefined}
-          >
-            {t("workspace.git.diff.addToChat")}
-          </ContextMenuItem>
-        ) : null}
+        ))}
       </ContextMenuContent>
     </ContextMenu>
   );
@@ -970,6 +961,8 @@ const DiffFileHeader = memo(function DiffFileHeader({
   onToggle,
   onOpenFile,
   onAddToChat,
+  onCopyPath,
+  onDownload,
   onHeaderHeightChange,
   testID,
 }: DiffFileSectionProps) {
@@ -993,6 +986,14 @@ const DiffFileHeader = memo(function DiffFileHeader({
   const handleAddToChat = useCallback(() => {
     onAddToChat?.(file.path);
   }, [file.path, onAddToChat]);
+
+  const handleCopyPath = useCallback(() => {
+    onCopyPath?.(file.path);
+  }, [file.path, onCopyPath]);
+
+  const handleDownload = useCallback(() => {
+    onDownload?.(file.path);
+  }, [file.path, onDownload]);
 
   const handleLayout = useCallback(
     (event: LayoutChangeEvent) => {
@@ -1051,7 +1052,57 @@ const DiffFileHeader = memo(function DiffFileHeader({
   const fileName = file.path.split("/").pop() ?? file.path;
   const canOpenFile = Boolean(onOpenFile) && !file.isDeleted;
   const canAddToChat = Boolean(onAddToChat) && !file.isDeleted;
-  const hasContextMenu = canOpenFile || canAddToChat;
+  const canDownload = Boolean(onDownload) && !file.isDeleted;
+  const actions = useMemo<FileAction[]>(() => {
+    const list: FileAction[] = [];
+    if (canOpenFile) {
+      list.push({
+        key: "open-file",
+        label: t("workspace.fileActions.openFile"),
+        icon: FileText,
+        onSelect: handleOpenFile,
+        testID: testID ? `${testID}-open-file` : undefined,
+      });
+    }
+    if (onCopyPath) {
+      list.push({
+        key: "copy-path",
+        label: t("workspace.fileActions.copyPath"),
+        icon: Copy,
+        onSelect: handleCopyPath,
+      });
+    }
+    if (canDownload) {
+      list.push({
+        key: "download",
+        label: t("workspace.fileActions.download"),
+        icon: Download,
+        onSelect: handleDownload,
+      });
+    }
+    if (canAddToChat) {
+      list.push({
+        key: "add-to-chat",
+        label: t("workspace.fileActions.addToChat"),
+        icon: MessageSquarePlus,
+        onSelect: handleAddToChat,
+        testID: testID ? `${testID}-add-to-chat` : undefined,
+      });
+    }
+    return list;
+  }, [
+    canAddToChat,
+    canDownload,
+    canOpenFile,
+    handleAddToChat,
+    handleCopyPath,
+    handleDownload,
+    handleOpenFile,
+    onCopyPath,
+    t,
+    testID,
+  ]);
+  const hasContextMenu = actions.length > 0;
   const headerContent = (
     <>
       <View style={styles.fileHeaderLeft}>
@@ -1085,6 +1136,13 @@ const DiffFileHeader = memo(function DiffFileHeader({
       </View>
       <View style={styles.fileHeaderRight}>
         <DiffStat additions={file.additions} deletions={file.deletions} />
+        {interactive ? (
+          <FileActionsMenu
+            actions={actions}
+            accessibilityLabel={t("workspace.fileActions.moreActions")}
+            testID={testID ? `${testID}-actions` : undefined}
+          />
+        ) : null}
       </View>
     </>
   );
@@ -1137,14 +1195,7 @@ const DiffFileHeader = memo(function DiffFileHeader({
   return (
     <View style={containerStyle} onLayout={handleLayout} testID={testID}>
       <TreeIndentGuides depth={depth} />
-      <DiffFileHeaderContextMenu
-        enabled={hasContextMenu}
-        canOpenFile={canOpenFile}
-        canAddToChat={canAddToChat}
-        onOpenFile={handleOpenFile}
-        onAddToChat={handleAddToChat}
-        testID={testID}
-      >
+      <DiffFileHeaderContextMenu enabled={hasContextMenu} actions={actions} testID={testID}>
         {tooltip}
       </DiffFileHeaderContextMenu>
     </View>
@@ -1745,6 +1796,8 @@ interface SharedDiffViewProps {
         reviewActions?: InlineReviewActions;
         onOpenFile?: (path: string) => void;
         onAddToChat?: (path: string) => void;
+        onCopyPath?: (path: string) => void;
+        onDownload?: (path: string) => void;
         onExpandedPathsChange: (paths: string[]) => void;
         onCollapsedFoldersChange: (paths: string[]) => void;
       }
@@ -1779,6 +1832,8 @@ export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffVi
   const reviewActions = mode.kind === "working_tree" ? mode.reviewActions : undefined;
   const onOpenFile = mode.kind === "working_tree" ? mode.onOpenFile : undefined;
   const onAddToChat = mode.kind === "working_tree" ? mode.onAddToChat : undefined;
+  const onCopyPath = mode.kind === "working_tree" ? mode.onCopyPath : undefined;
+  const onDownload = mode.kind === "working_tree" ? mode.onDownload : undefined;
   const compressedTree = useMemo(() => compressSingleChildChains(buildDiffTree(files)), [files]);
   const allFolderPaths = useMemo(() => collectDirPaths(compressedTree), [compressedTree]);
   const allFolderPathSet = useMemo(() => new Set(allFolderPaths), [allFolderPaths]);
@@ -2032,6 +2087,8 @@ export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffVi
             onToggle={interactive ? handleToggleExpanded : undefined}
             onOpenFile={onOpenFile}
             onAddToChat={onAddToChat}
+            onCopyPath={onCopyPath}
+            onDownload={onDownload}
             onHeaderHeightChange={handleHeaderHeightChange}
             testID={`diff-file-${item.fileIndex}`}
           />
@@ -2065,6 +2122,8 @@ export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffVi
       interactive,
       onOpenFile,
       onAddToChat,
+      onCopyPath,
+      onDownload,
     ],
   );
 
@@ -2580,6 +2639,21 @@ export function GitDiffPane({
     },
     [setDiffCollapsedFoldersForWorkspace, workspaceStateKey],
   );
+  const downloadFile = useFileDownload({ serverId, workspaceId, workspaceRoot: cwd });
+  const handleCopyPath = useCallback(
+    (path: string) => {
+      void Clipboard.setStringAsync(
+        buildAbsoluteExplorerPath({ workspaceRoot: cwd, entryPath: path }),
+      );
+    },
+    [cwd],
+  );
+  const handleDownloadPath = useCallback(
+    (path: string) => {
+      downloadFile({ fileName: path.split("/").pop() ?? path, path });
+    },
+    [downloadFile],
+  );
   const workingTreeMode = useMemo(
     () => ({
       kind: "working_tree" as const,
@@ -2589,6 +2663,8 @@ export function GitDiffPane({
       reviewActions,
       onOpenFile,
       onAddToChat,
+      onCopyPath: handleCopyPath,
+      onDownload: handleDownloadPath,
       onExpandedPathsChange: handleExpandedPathsChange,
       onCollapsedFoldersChange: handleCollapsedFoldersChange,
     }),
@@ -2599,6 +2675,8 @@ export function GitDiffPane({
       reviewActions,
       onOpenFile,
       onAddToChat,
+      handleCopyPath,
+      handleDownloadPath,
       handleExpandedPathsChange,
       handleCollapsedFoldersChange,
     ],
@@ -2954,7 +3032,7 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     paddingLeft: theme.spacing[3],
     paddingRight: theme.spacing[2],
-    paddingVertical: theme.spacing[2],
+    paddingVertical: theme.spacing[1],
     gap: theme.spacing[1],
     minWidth: 0,
     zIndex: 2,

@@ -397,7 +397,7 @@ function ExplorerSidebarContent({
           />
         )}
         {resolvedTab === "files" && (
-          <FileExplorerPane
+          <FilesPane
             serverId={serverId}
             workspaceId={workspaceId}
             workspaceRoot={workspaceRoot}
@@ -418,6 +418,23 @@ function ExplorerSidebarContent({
   );
 }
 
+/**
+ * Shared picker state for the changes/files panes: both expose an "add file to
+ * chat" action that opens one {@link AddFileToChatPicker}. Web-only, and only
+ * when a workspace is bound.
+ */
+function useAddFileToChat(workspaceId: string | null | undefined) {
+  const [pendingChatFilePath, setPendingChatFilePath] = useState<string | null>(null);
+  const openForFile = useCallback((filePath: string) => {
+    setPendingChatFilePath(filePath);
+  }, []);
+  const closePicker = useCallback(() => {
+    setPendingChatFilePath(null);
+  }, []);
+  const canAddToChat = isWeb && Boolean(workspaceId);
+  return { pendingChatFilePath, openForFile, closePicker, canAddToChat };
+}
+
 function ChangedFilesPane({
   serverId,
   workspaceId,
@@ -428,15 +445,8 @@ function ChangedFilesPane({
   SidebarContentProps,
   "serverId" | "workspaceId" | "workspaceRoot" | "isOpen" | "onOpenFile"
 >) {
-  const [pendingChatFilePath, setPendingChatFilePath] = useState<string | null>(null);
-  const handleAddToChat = useCallback((filePath: string) => {
-    setPendingChatFilePath(filePath);
-  }, []);
-  const closeAddToChatPicker = useCallback(() => {
-    setPendingChatFilePath(null);
-  }, []);
-  const canAddToChat = isWeb && Boolean(workspaceId);
-
+  const { pendingChatFilePath, openForFile, closePicker, canAddToChat } =
+    useAddFileToChat(workspaceId);
   return (
     <>
       <GitDiffPane
@@ -445,14 +455,43 @@ function ChangedFilesPane({
         cwd={workspaceRoot}
         enabled={isOpen}
         onOpenFile={onOpenFile}
-        onAddToChat={canAddToChat ? handleAddToChat : undefined}
+        onAddToChat={canAddToChat ? openForFile : undefined}
       />
       {canAddToChat && workspaceId ? (
         <AddFileToChatPicker
           serverId={serverId}
           workspaceId={workspaceId}
           filePath={pendingChatFilePath}
-          onClose={closeAddToChatPicker}
+          onClose={closePicker}
+        />
+      ) : null}
+    </>
+  );
+}
+
+function FilesPane({
+  serverId,
+  workspaceId,
+  workspaceRoot,
+  onOpenFile,
+}: Pick<SidebarContentProps, "serverId" | "workspaceId" | "workspaceRoot" | "onOpenFile">) {
+  const { pendingChatFilePath, openForFile, closePicker, canAddToChat } =
+    useAddFileToChat(workspaceId);
+  return (
+    <>
+      <FileExplorerPane
+        serverId={serverId}
+        workspaceId={workspaceId}
+        workspaceRoot={workspaceRoot}
+        onOpenFile={onOpenFile}
+        onAddToChat={canAddToChat ? openForFile : undefined}
+      />
+      {canAddToChat && workspaceId ? (
+        <AddFileToChatPicker
+          serverId={serverId}
+          workspaceId={workspaceId}
+          filePath={pendingChatFilePath}
+          onClose={closePicker}
         />
       ) : null}
     </>

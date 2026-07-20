@@ -366,6 +366,13 @@ export const zhCN: TranslationResources = {
       copyBranchName: "复制分支名称",
       copied: "已复制",
     },
+    fileActions: {
+      openFile: "打开文件",
+      copyPath: "复制路径",
+      download: "下载",
+      addToChat: "添加到聊天…",
+      moreActions: "更多操作",
+    },
     fileExplorer: {
       sort: {
         name: "名称",
@@ -375,8 +382,6 @@ export const zhCN: TranslationResources = {
       context: {
         size: "大小",
         modified: "修改时间",
-        copyPath: "复制路径",
-        download: "下载",
       },
       actions: {
         back: "返回",
@@ -757,8 +762,6 @@ export const zhCN: TranslationResources = {
         base: "base",
         newFile: "新增",
         deletedFile: "已删除",
-        openFile: "打开文件",
-        addToChat: "添加到聊天…",
         addToChatPickerTitle: "将文件添加到聊天",
         noOpenChats: "此工作区中没有打开的聊天。",
         commits: {

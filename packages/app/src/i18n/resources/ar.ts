@@ -366,6 +366,13 @@ export const ar: TranslationResources = {
       copyBranchName: "نسخ اسم الفرع",
       copied: "تم النسخ",
     },
+    fileActions: {
+      openFile: "افتح الملف",
+      copyPath: "نسخ المسار",
+      download: "تحميل",
+      addToChat: "إضافة إلى الدردشة…",
+      moreActions: "المزيد من الإجراءات",
+    },
     fileExplorer: {
       sort: {
         name: "اسم",
@@ -375,8 +382,6 @@ export const ar: TranslationResources = {
       context: {
         size: "مقاس",
         modified: "معدل",
-        copyPath: "نسخ المسار",
-        download: "تحميل",
       },
       actions: {
         back: "خلف",
@@ -763,8 +768,6 @@ export const ar: TranslationResources = {
         base: "قاعدة",
         newFile: "جديد",
         deletedFile: "تم الحذف",
-        openFile: "فتح الملف",
-        addToChat: "إضافة إلى الدردشة…",
         addToChatPickerTitle: "إضافة ملف إلى الدردشة",
         noOpenChats: "لا توجد دردشات مفتوحة في مساحة العمل هذه.",
         commits: {

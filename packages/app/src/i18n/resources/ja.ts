@@ -370,6 +370,13 @@ export const ja: TranslationResources = {
       copyBranchName: "ブランチ名をコピー",
       copied: "コピーしました",
     },
+    fileActions: {
+      openFile: "ファイルを開く",
+      copyPath: "パスをコピー",
+      download: "ダウンロード",
+      addToChat: "チャットに追加…",
+      moreActions: "その他のアクション",
+    },
     fileExplorer: {
       sort: {
         name: "名前",
@@ -379,8 +386,6 @@ export const ja: TranslationResources = {
       context: {
         size: "サイズ",
         modified: "更新日時",
-        copyPath: "パスをコピー",
-        download: "ダウンロード",
       },
       actions: {
         back: "戻る",
@@ -776,8 +781,6 @@ export const ja: TranslationResources = {
         base: "ベース",
         newFile: "新規",
         deletedFile: "削除済み",
-        openFile: "ファイルを開く",
-        addToChat: "チャットに追加…",
         addToChatPickerTitle: "ファイルをチャットに追加",
         noOpenChats: "このワークスペースに開いているチャットはありません。",
         commits: {

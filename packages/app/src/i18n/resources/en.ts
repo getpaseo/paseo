@@ -365,6 +365,13 @@ export const en = {
       copyBranchName: "Copy branch name",
       copied: "Copied",
     },
+    fileActions: {
+      openFile: "Open file",
+      copyPath: "Copy path",
+      download: "Download",
+      addToChat: "Add to chat…",
+      moreActions: "More actions",
+    },
     fileExplorer: {
       sort: {
         name: "Name",
@@ -374,8 +381,6 @@ export const en = {
       context: {
         size: "Size",
         modified: "Modified",
-        copyPath: "Copy path",
-        download: "Download",
       },
       actions: {
         back: "Back",
@@ -774,8 +779,6 @@ export const en = {
         base: "base",
         newFile: "New",
         deletedFile: "Deleted",
-        openFile: "Open file",
-        addToChat: "Add to chat…",
         addToChatPickerTitle: "Add file to chat",
         noOpenChats: "No open chats in this workspace.",
         commits: {

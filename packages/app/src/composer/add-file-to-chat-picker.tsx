@@ -2,12 +2,15 @@ import { useCallback, useMemo, type ReactElement } from "react";
 import { Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
+import { SvgXml } from "react-native-svg";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
+import { getFileIconSvg } from "@/components/material-file-icons";
 import {
-  WorkspaceTabOptionRow,
+  WorkspaceTabIcon,
   WorkspaceTabPresentationResolver,
   type WorkspaceTabPresentation,
 } from "@/screens/workspace/workspace-tab-presentation";
+import { ComboboxItem } from "@/components/ui/combobox";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 import {
   collectAllTabs,
@@ -34,6 +37,31 @@ interface ChatTabOptionProps {
   onSelect: (tab: WorkspaceTab) => void;
 }
 
+function ChatTabRow({
+  presentation,
+  active,
+  onPress,
+}: {
+  presentation: WorkspaceTabPresentation;
+  active: boolean;
+  onPress: () => void;
+}): ReactElement {
+  const leadingSlot = useMemo(
+    () => <WorkspaceTabIcon presentation={presentation} active={active} size={16} />,
+    [presentation, active],
+  );
+  return (
+    <ComboboxItem
+      label={presentation.label}
+      description={presentation.subtitle || undefined}
+      leadingSlot={leadingSlot}
+      active={active}
+      elevated
+      onPress={onPress}
+    />
+  );
+}
+
 function ChatTabOption({
   tab,
   serverId,
@@ -53,12 +81,7 @@ function ChatTabOption({
   const handlePress = useCallback(() => onSelect(tab), [onSelect, tab]);
   const renderPresentation = useCallback(
     (presentation: WorkspaceTabPresentation) => (
-      <WorkspaceTabOptionRow
-        presentation={presentation}
-        selected={false}
-        active={active}
-        onPress={handlePress}
-      />
+      <ChatTabRow presentation={presentation} active={active} onPress={handlePress} />
     ),
     [active, handlePress],
   );
@@ -95,6 +118,28 @@ function getDraftStoreKey(input: { serverId: string; tab: WorkspaceTab }): strin
   throw new Error("Add to chat requires an agent or draft tab");
 }
 
+function FileIdentity({ filePath }: { filePath: string }): ReactElement {
+  const lastSlash = filePath.lastIndexOf("/");
+  const fileName = lastSlash >= 0 ? filePath.slice(lastSlash + 1) : filePath;
+  const dir = lastSlash >= 0 ? filePath.slice(0, lastSlash) : "";
+
+  return (
+    <View style={styles.fileIdentity}>
+      <View style={styles.fileIcon}>
+        <SvgXml xml={getFileIconSvg(fileName)} width={16} height={16} />
+      </View>
+      <Text style={styles.fileName} numberOfLines={1}>
+        {fileName}
+      </Text>
+      {dir ? (
+        <Text style={styles.fileDir} numberOfLines={1}>
+          {` ${dir}`}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
 export function AddFileToChatPicker({
   serverId,
   workspaceId,
@@ -123,7 +168,7 @@ export function AddFileToChatPicker({
   const header = useMemo<SheetHeader>(
     () => ({
       title: t("workspace.git.diff.addToChatPickerTitle"),
-      subtitle: filePath,
+      subtitle: filePath ? <FileIdentity filePath={filePath} /> : undefined,
     }),
     [filePath, t],
   );
@@ -173,6 +218,31 @@ export function AddFileToChatPicker({
 }
 
 const styles = StyleSheet.create((theme) => ({
+  fileIdentity: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    minWidth: 0,
+  },
+  fileIcon: {
+    flexShrink: 0,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  fileName: {
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.normal,
+    color: theme.colors.foreground,
+    flexShrink: 1,
+    minWidth: 0,
+  },
+  fileDir: {
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.normal,
+    color: theme.colors.foregroundMuted,
+    flex: 1,
+    minWidth: 0,
+  },
   emptyState: {
     paddingVertical: theme.spacing[6],
     alignItems: "center",
