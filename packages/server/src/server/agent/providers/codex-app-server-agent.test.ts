@@ -1014,6 +1014,30 @@ describe("Codex app-server provider", () => {
     await session.close();
   });
 
+  test("correlates a Codex user message with the submitting client message", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+
+    await session.startTurn("remember this", { clientMessageId: "client-message" });
+    const userMessage = waitForNextTimelineItem(session, "user_message");
+    emitCodexUserMessage(appServer, { id: "codex-message", text: "remember this" });
+
+    await expect(userMessage).resolves.toMatchObject({
+      item: {
+        type: "user_message",
+        messageId: "codex-message",
+        clientMessageId: "client-message",
+      },
+    });
+    appServer.completeTurn();
+    await session.close();
+  });
+
   test("configures Codex app-server to use a custom provider base URL", async () => {
     const capturedRequests = await runCustomCodexProviderTurn(
       "codex-iisb",
