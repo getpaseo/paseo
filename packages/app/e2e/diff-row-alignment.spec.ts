@@ -218,6 +218,19 @@ test("changes diff keeps code rows aligned with the gutter", async ({ page }) =>
   });
 });
 
+test("changes file context menu opens the file in a workspace tab", async ({ page }) => {
+  const workspace = await createWorkspaceWithMountedTabDiff();
+  await useUnwrappedDiffLines(page);
+  await openWorkspaceChanges(page, workspace);
+
+  await page.getByTestId("diff-file-0-toggle").click({ button: "right" });
+  await expect(page.getByTestId("diff-file-0-context-menu")).toBeVisible();
+  await page.getByTestId("diff-file-0-open-file").click();
+
+  await expect(page.getByTestId("workspace-file-pane")).toBeVisible();
+  await expect(page.getByTestId("workspace-tab-file_src/use-mounted-tab-set.ts")).toBeVisible();
+});
+
 test("changes diff switches between flat and tree file lists", async ({ page }) => {
   const workspace = await createWorkspaceWithMountedTabDiff();
   await useUnwrappedDiffLines(page);

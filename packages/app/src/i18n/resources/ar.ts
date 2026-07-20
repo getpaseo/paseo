@@ -763,6 +763,7 @@ export const ar: TranslationResources = {
         base: "قاعدة",
         newFile: "جديد",
         deletedFile: "تم الحذف",
+        openFile: "فتح الملف",
         commits: {
           title: "الإيداعات",
           legendLocal: "محلي",

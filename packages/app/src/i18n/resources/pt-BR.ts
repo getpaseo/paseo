@@ -786,6 +786,7 @@ export const ptBR: TranslationResources = {
         base: "base",
         newFile: "Novo",
         deletedFile: "Excluído",
+        openFile: "Abrir arquivo",
         commits: {
           title: "Commits",
           legendLocal: "local",

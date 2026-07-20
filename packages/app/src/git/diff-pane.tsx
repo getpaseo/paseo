@@ -83,6 +83,12 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { lineNumberGutterWidth } from "@/components/code-insets";
 import { GitActionsSplitButton } from "@/git/actions-split-button";
@@ -209,6 +215,7 @@ interface DiffFileSectionProps {
   showDir?: boolean;
   interactive?: boolean;
   onToggle?: (path: string) => void;
+  onOpenFile?: (path: string) => void;
   onHeaderHeightChange?: (path: string, height: number) => void;
   testID?: string;
 }
@@ -903,6 +910,38 @@ function SplitDiffColumn({
   );
 }
 
+function DiffFileHeaderTooltip({ path, children }: { path: string; children: ReactElement }) {
+  return (
+    <Tooltip delayDuration={300} enabledOnDesktop enabledOnMobile={false}>
+      <TooltipTrigger asChild>{children}</TooltipTrigger>
+      <TooltipContent side="bottom" align="start" offset={6} maxWidth={520}>
+        <Text style={styles.tooltipText}>{path}</Text>
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+function DiffFileContextMenuContent({
+  testID,
+  onSelect,
+}: {
+  testID?: string;
+  onSelect: () => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <ContextMenuContent
+      align="start"
+      minWidth={160}
+      testID={testID ? `${testID}-context-menu` : undefined}
+    >
+      <ContextMenuItem onSelect={onSelect} testID={testID ? `${testID}-open-file` : undefined}>
+        {t("workspace.git.diff.openFile")}
+      </ContextMenuItem>
+    </ContextMenuContent>
+  );
+}
+
 const DiffFileHeader = memo(function DiffFileHeader({
   file,
   isExpanded,
@@ -910,6 +949,7 @@ const DiffFileHeader = memo(function DiffFileHeader({
   showDir = true,
   interactive = true,
   onToggle,
+  onOpenFile,
   onHeaderHeightChange,
   testID,
 }: DiffFileSectionProps) {
@@ -925,6 +965,10 @@ const DiffFileHeader = memo(function DiffFileHeader({
     pressHandledRef.current = true;
     onToggle?.(file.path);
   }, [file.path, interactive, onToggle]);
+
+  const handleOpenFile = useCallback(() => {
+    onOpenFile?.(file.path);
+  }, [file.path, onOpenFile]);
 
   const handleLayout = useCallback(
     (event: LayoutChangeEvent) => {
@@ -981,6 +1025,7 @@ const DiffFileHeader = memo(function DiffFileHeader({
   );
 
   const fileName = file.path.split("/").pop() ?? file.path;
+  const canOpenFile = Boolean(onOpenFile) && !file.isDeleted;
   const headerContent = (
     <>
       <View style={styles.fileHeaderLeft}>
@@ -1018,33 +1063,38 @@ const DiffFileHeader = memo(function DiffFileHeader({
     </>
   );
 
+  const interactiveTrigger = (
+    <ContextMenuTrigger
+      testID={testID ? `${testID}-toggle` : undefined}
+      style={headerPressableStyle}
+      enabled={canOpenFile}
+      enabledOnMobile={false}
+      // Android: prevent parent pan/scroll gestures from canceling the tap release.
+      cancelable={false}
+      onPressIn={handlePressIn}
+      onPressOut={handlePressOut}
+      onPress={toggleExpanded}
+    >
+      {headerContent}
+    </ContextMenuTrigger>
+  );
+  const renderedHeader = interactive ? (
+    <ContextMenu>
+      <DiffFileHeaderTooltip path={file.path}>{interactiveTrigger}</DiffFileHeaderTooltip>
+      {canOpenFile ? (
+        <DiffFileContextMenuContent testID={testID} onSelect={handleOpenFile} />
+      ) : null}
+    </ContextMenu>
+  ) : (
+    <DiffFileHeaderTooltip path={file.path}>
+      <View style={headerPressableStyle({ hovered: false, pressed: false })}>{headerContent}</View>
+    </DiffFileHeaderTooltip>
+  );
+
   return (
     <View style={containerStyle} onLayout={handleLayout} testID={testID}>
       <TreeIndentGuides depth={depth} />
-      <Tooltip delayDuration={300} enabledOnDesktop enabledOnMobile={false}>
-        <TooltipTrigger asChild>
-          {interactive ? (
-            <Pressable
-              testID={testID ? `${testID}-toggle` : undefined}
-              style={headerPressableStyle}
-              // Android: prevent parent pan/scroll gestures from canceling the tap release.
-              cancelable={false}
-              onPressIn={handlePressIn}
-              onPressOut={handlePressOut}
-              onPress={toggleExpanded}
-            >
-              {headerContent}
-            </Pressable>
-          ) : (
-            <View style={headerPressableStyle({ hovered: false, pressed: false })}>
-              {headerContent}
-            </View>
-          )}
-        </TooltipTrigger>
-        <TooltipContent side="bottom" align="start" offset={6} maxWidth={520}>
-          <Text style={styles.tooltipText}>{file.path}</Text>
-        </TooltipContent>
-      </Tooltip>
+      {renderedHeader}
     </View>
   );
 });
@@ -1242,6 +1292,7 @@ interface GitDiffPaneProps {
   workspaceId?: string | null;
   cwd: string;
   enabled?: boolean;
+  onOpenFile?: (path: string) => void;
 }
 
 type PressableStyleFn = (
@@ -1639,6 +1690,7 @@ interface SharedDiffViewProps {
         expandedPaths: string[];
         collapsedFolders: string[];
         reviewActions?: InlineReviewActions;
+        onOpenFile?: (path: string) => void;
         onExpandedPathsChange: (paths: string[]) => void;
         onCollapsedFoldersChange: (paths: string[]) => void;
       }
@@ -1671,6 +1723,7 @@ export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffVi
   const stickyHeaders = mode.kind === "working_tree";
   const interactive = mode.kind === "working_tree";
   const reviewActions = mode.kind === "working_tree" ? mode.reviewActions : undefined;
+  const onOpenFile = mode.kind === "working_tree" ? mode.onOpenFile : undefined;
   const compressedTree = useMemo(() => compressSingleChildChains(buildDiffTree(files)), [files]);
   const allFolderPaths = useMemo(() => collectDirPaths(compressedTree), [compressedTree]);
   const allFolderPathSet = useMemo(() => new Set(allFolderPaths), [allFolderPaths]);
@@ -1922,6 +1975,7 @@ export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffVi
             showDir={viewMode === "flat"}
             interactive={interactive}
             onToggle={interactive ? handleToggleExpanded : undefined}
+            onOpenFile={onOpenFile}
             onHeaderHeightChange={handleHeaderHeightChange}
             testID={`diff-file-${item.fileIndex}`}
           />
@@ -1953,6 +2007,7 @@ export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffVi
       viewMode,
       wrapLines,
       interactive,
+      onOpenFile,
     ],
   );
 
@@ -2174,7 +2229,7 @@ function shouldEnableCheckoutDiff(input: { paneEnabled: boolean; isGit: boolean 
   return input.paneEnabled && input.isGit;
 }
 
-export function GitDiffPane({ serverId, workspaceId, cwd, enabled }: GitDiffPaneProps) {
+export function GitDiffPane({ serverId, workspaceId, cwd, enabled, onOpenFile }: GitDiffPaneProps) {
   const { settings: appSettings } = useAppSettings();
   const { t } = useTranslation();
   const isMobile = useIsCompactFormFactor();
@@ -2468,6 +2523,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, enabled }: GitDiffPane
       expandedPaths: stableExpandedPathsArray,
       collapsedFolders: stableCollapsedFoldersArray,
       reviewActions,
+      onOpenFile,
       onExpandedPathsChange: handleExpandedPathsChange,
       onCollapsedFoldersChange: handleCollapsedFoldersChange,
     }),
@@ -2476,6 +2532,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, enabled }: GitDiffPane
       stableExpandedPathsArray,
       stableCollapsedFoldersArray,
       reviewActions,
+      onOpenFile,
       handleExpandedPathsChange,
       handleCollapsedFoldersChange,
     ],

@@ -793,6 +793,7 @@ export const fr: TranslationResources = {
         base: "base",
         newFile: "Nouveau",
         deletedFile: "Supprimé",
+        openFile: "Ouvrir le fichier",
         commits: {
           title: "Commits",
           legendLocal: "local",

@@ -391,6 +391,7 @@ function ExplorerSidebarContent({
             workspaceId={workspaceId}
             cwd={workspaceRoot}
             enabled={isOpen}
+            onOpenFile={onOpenFile}
           />
         )}
         {resolvedTab === "files" && (
