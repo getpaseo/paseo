@@ -233,17 +233,7 @@ test("changes file context menu opens existing files and excludes deleted files"
   await existingFileToggle.hover();
   await expect(page.getByText("src/use-mounted-tab-set.ts", { exact: true })).toBeVisible();
 
-  const toggleBounds = await existingFileToggle.boundingBox();
-  if (!toggleBounds) {
-    throw new Error("Existing changed-file toggle is not visible");
-  }
-  await page.mouse.move(
-    toggleBounds.x + toggleBounds.width / 2,
-    toggleBounds.y + toggleBounds.height / 2,
-  );
-  await page.mouse.down();
-  await page.waitForTimeout(600);
-  await page.mouse.up();
+  await holdMousePress(page);
   await expect(page.getByTestId("diff-file-0-body")).toHaveCount(0);
 
   await expect(page.getByTestId("diff-file-1")).toContainText("zz-deleted.ts");
@@ -257,6 +247,12 @@ test("changes file context menu opens existing files and excludes deleted files"
   await expect(page.getByTestId("workspace-file-pane")).toBeVisible();
   await expect(page.getByTestId("workspace-tab-file_src/use-mounted-tab-set.ts")).toBeVisible();
 });
+
+async function holdMousePress(page: Page): Promise<void> {
+  await page.mouse.down();
+  await page.waitForTimeout(750);
+  await page.mouse.up();
+}
 
 test("changes diff switches between flat and tree file lists", async ({ page }) => {
   const workspace = await createWorkspaceWithMountedTabDiff();
