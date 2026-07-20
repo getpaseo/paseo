@@ -13,6 +13,7 @@ import {
   normalizeClaudeAskUserQuestionUpdatedInput,
   toClaudeSdkMcpConfig,
 } from "./agent.js";
+import { claudeProjectDirSync } from "./project-dir.js";
 import { streamSession } from "../test-utils/session-stream-adapter.js";
 import type { AgentSession, AgentTimelineItem, AgentStreamEvent } from "../../agent-sdk-types.js";
 
@@ -987,6 +988,75 @@ describe("normalizeClaudeAskUserQuestionUpdatedInput", () => {
 });
 
 describe("ClaudeAgentClient.listImportableSessions", () => {
+  test("scopes candidates to the requested cwd before applying the limit", async () => {
+    const tmpConfigDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-import-"));
+    const previousConfigDir = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = tmpConfigDir;
+
+    try {
+      const requestedCwd = path.join(tmpConfigDir, "requested-project");
+      const busyCwd = path.join(tmpConfigDir, "busy-project");
+      await fs.mkdir(requestedCwd, { recursive: true });
+      await fs.mkdir(busyCwd, { recursive: true });
+      const requestedProjectDir = claudeProjectDirSync(requestedCwd, { configDir: tmpConfigDir });
+      const busyProjectDir = claudeProjectDirSync(busyCwd, { configDir: tmpConfigDir });
+      await fs.mkdir(requestedProjectDir, { recursive: true });
+      await fs.mkdir(busyProjectDir, { recursive: true });
+
+      const writeSession = async (
+        projectDir: string,
+        sessionId: string,
+        cwd: string,
+        day: number,
+      ) => {
+        const file = path.join(projectDir, `${sessionId}.jsonl`);
+        await fs.writeFile(
+          file,
+          `${JSON.stringify({
+            isSidechain: false,
+            type: "user",
+            message: { role: "user", content: `Prompt for ${sessionId}` },
+            cwd,
+            sessionId,
+          })}\n`,
+          "utf-8",
+        );
+        const timestamp = new Date(`2026-06-${String(day).padStart(2, "0")}T12:00:00.000Z`);
+        await fs.utimes(file, timestamp, timestamp);
+      };
+
+      await writeSession(requestedProjectDir, "requested-session", requestedCwd, 1);
+      await writeSession(busyProjectDir, "newer-session-1", busyCwd, 2);
+      await writeSession(busyProjectDir, "newer-session-2", busyCwd, 3);
+      await writeSession(busyProjectDir, "newer-session-3", busyCwd, 4);
+
+      const client = new ClaudeAgentClient({
+        logger: createTestLogger(),
+        resolveBinary: async () => "/test/claude/bin",
+      });
+
+      await expect(client.listImportableSessions({ limit: 1, cwd: requestedCwd })).resolves.toEqual(
+        [
+          {
+            providerHandleId: "requested-session",
+            cwd: requestedCwd,
+            title: "Prompt for requested-session",
+            firstPromptPreview: "Prompt for requested-session",
+            lastPromptPreview: "Prompt for requested-session",
+            lastActivityAt: new Date("2026-06-01T12:00:00.000Z"),
+          },
+        ],
+      );
+    } finally {
+      if (previousConfigDir === undefined) {
+        delete process.env.CLAUDE_CONFIG_DIR;
+      } else {
+        process.env.CLAUDE_CONFIG_DIR = previousConfigDir;
+      }
+      await fs.rm(tmpConfigDir, { recursive: true, force: true });
+    }
+  });
+
   test("shows Claude slash command prompts without transcript tags", async () => {
     const tmpConfigDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-import-"));
     const previousConfigDir = process.env.CLAUDE_CONFIG_DIR;
@@ -1141,7 +1211,7 @@ describe("ClaudeAgentSession context window usage", () => {
       }
 
       void (async () => {
-        for await (const _prompt of prompt) {
+        for await (const _ of prompt) {
           const turnMessages = turns[turnIndex] ?? [];
           turnIndex += 1;
           for (const message of turnMessages) {

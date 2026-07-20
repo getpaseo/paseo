@@ -1509,12 +1509,16 @@ export class ClaudeAgentClient implements AgentClient {
     options?: ListImportableSessionsOptions,
   ): Promise<ImportableProviderSession[]> {
     const configDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
-    const projectsRoot = path.join(configDir, "projects");
-    if (!(await pathExists(projectsRoot))) {
+    const sessionsRoot = options?.cwd
+      ? claudeProjectDirSync(options.cwd, { configDir })
+      : path.join(configDir, "projects");
+    if (!(await pathExists(sessionsRoot))) {
       return [];
     }
     const limit = options?.limit ?? 20;
-    const candidates = await collectRecentClaudeSessions(projectsRoot, limit * 3);
+    const candidates = await collectRecentClaudeSessions(sessionsRoot, limit * 3, {
+      rootIsProjectDir: Boolean(options?.cwd),
+    });
     const parsed = await Promise.all(
       candidates.map((candidate) => parseClaudeSessionDescriptor(candidate.path, candidate.mtime)),
     );
@@ -5412,29 +5416,33 @@ async function pathExists(target: string): Promise<boolean> {
 async function collectRecentClaudeSessions(
   root: string,
   limit: number,
+  options?: { rootIsProjectDir?: boolean },
 ): Promise<ClaudeSessionCandidate[]> {
-  let projectDirs: string[];
+  let rootEntries: string[];
   try {
-    projectDirs = await fsPromises.readdir(root);
+    rootEntries = await fsPromises.readdir(root);
   } catch {
     return [];
   }
-  const projectFileLists = await Promise.all(
-    projectDirs.map(async (dirName) => {
-      const projectPath = path.join(root, dirName);
-      try {
-        const stats = await fsPromises.stat(projectPath);
-        if (!stats.isDirectory()) return { projectPath, files: [] as string[] };
-        const files = await fsPromises.readdir(projectPath);
-        return { projectPath, files };
-      } catch {
-        return { projectPath, files: [] as string[] };
-      }
-    }),
-  );
-  const fileEntries = projectFileLists.flatMap(({ projectPath, files }) =>
-    files.filter((f) => f.endsWith(".jsonl")).map((f) => path.join(projectPath, f)),
-  );
+  const fileEntries = options?.rootIsProjectDir
+    ? rootEntries.filter((file) => file.endsWith(".jsonl")).map((file) => path.join(root, file))
+    : (
+        await Promise.all(
+          rootEntries.map(async (dirName) => {
+            const projectPath = path.join(root, dirName);
+            try {
+              const stats = await fsPromises.stat(projectPath);
+              if (!stats.isDirectory()) return [] as string[];
+              const files = await fsPromises.readdir(projectPath);
+              return files
+                .filter((file) => file.endsWith(".jsonl"))
+                .map((file) => path.join(projectPath, file));
+            } catch {
+              return [] as string[];
+            }
+          }),
+        )
+      ).flat();
   const statResults = await Promise.all(
     fileEntries.map(async (fullPath) => {
       try {
