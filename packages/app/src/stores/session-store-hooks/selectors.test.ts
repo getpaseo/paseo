@@ -4,6 +4,7 @@ import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import {
   composeWorkspaceStructure,
   selectHasWorkspaces,
+  selectHydratedWorkspaceServerIds,
   selectProjectOrder,
   selectRecommendedProjectPaths,
   selectWorkspace,
@@ -99,6 +100,75 @@ function selectWorkspaceStructureProjectKeys(
 
 afterEach(() => {
   useSessionStore.getState().clearSession(SERVER_ID);
+});
+
+describe("workspace replica authority", () => {
+  it("keeps a cached workspace addressable without publishing it as an authoritative directory", () => {
+    const cachedWorkspace = createWorkspace({ id: "cached-workspace" });
+    initializeWorkspaces([cachedWorkspace]);
+
+    const cachedServerIds = selectHydratedWorkspaceServerIds(useSessionStore.getState(), [
+      SERVER_ID,
+    ]);
+
+    expect(selectWorkspace(useSessionStore.getState(), SERVER_ID, cachedWorkspace.id)).toBe(
+      cachedWorkspace,
+    );
+    expect(selectWorkspaceStructureProjects(useSessionStore.getState(), cachedServerIds)).toEqual(
+      [],
+    );
+
+    const authoritativeWorkspace = createWorkspace({
+      id: "authoritative-workspace",
+      projectId: "authoritative-project",
+    });
+    useSessionStore
+      .getState()
+      .setWorkspaces(SERVER_ID, new Map([[authoritativeWorkspace.id, authoritativeWorkspace]]));
+    useSessionStore.getState().setHasHydratedWorkspaces(SERVER_ID, true);
+    const hydratedServerIds = selectHydratedWorkspaceServerIds(useSessionStore.getState(), [
+      SERVER_ID,
+    ]);
+
+    expect(
+      selectWorkspaceStructureProjects(useSessionStore.getState(), hydratedServerIds).map(
+        (project) => project.workspaceKeys,
+      ),
+    ).toEqual([[`${SERVER_ID}:${authoritativeWorkspace.id}`]]);
+  });
+
+  it("publishes each host to the workspace directory independently", () => {
+    const loadingServerId = "loading-server";
+    const hydratedServerId = "hydrated-server";
+    const loadingWorkspace = createWorkspace({ id: "loading-workspace" });
+    const hydratedWorkspace = createWorkspace({
+      id: "hydrated-workspace",
+      projectId: "hydrated-project",
+    });
+    const state = {
+      sessions: {
+        [loadingServerId]: {
+          hasHydratedWorkspaces: false,
+          workspaces: new Map([[loadingWorkspace.id, loadingWorkspace]]),
+        },
+        [hydratedServerId]: {
+          hasHydratedWorkspaces: true,
+          workspaces: new Map([[hydratedWorkspace.id, hydratedWorkspace]]),
+        },
+      },
+    };
+
+    const directoryServerIds = selectHydratedWorkspaceServerIds(state, [
+      loadingServerId,
+      hydratedServerId,
+    ]);
+    const directoryProjects = selectWorkspaceStructureProjects(state, directoryServerIds);
+
+    expect(directoryServerIds).toEqual([hydratedServerId]);
+    expect(directoryProjects.map((project) => project.workspaceKeys)).toEqual([
+      [`${hydratedServerId}:${hydratedWorkspace.id}`],
+    ]);
+  });
 });
 
 describe("selectWorkspace", () => {

@@ -572,6 +572,61 @@ describe("selectProjectedTimelinePage", () => {
     expect(page.hasNewer).toBe(true);
   });
 
+  test("after limit counts projected entries while preserving their canonical sequence coverage", () => {
+    const rows: AgentTimelineRow[] = [
+      ...Array.from({ length: 200 }, (_, index) => ({
+        seq: index + 1,
+        timestamp: new Date(1000 + index).toISOString(),
+        item: { type: "assistant_message" as const, text: "x" },
+      })),
+      ...Array.from({ length: 150 }, (_, index) => ({
+        seq: index + 201,
+        timestamp: new Date(2000 + index).toISOString(),
+        item: { type: "user_message" as const, text: `message ${index + 1}` },
+      })),
+    ];
+
+    const page = selectProjectedTimelinePage({
+      rows,
+      direction: "after",
+      cursorSeq: 0,
+      limit: 100,
+    });
+
+    expect({
+      entryCount: page.entries.length,
+      firstEntry: page.entries[0],
+      lastEntry: page.entries.at(-1),
+      startSeq: page.startSeq,
+      endSeq: page.endSeq,
+      hasNewer: page.hasNewer,
+    }).toEqual({
+      entryCount: 100,
+      firstEntry: {
+        item: {
+          type: "assistant_message",
+          text: "x".repeat(200),
+        },
+        timestamp: new Date(1199).toISOString(),
+        seqStart: 1,
+        seqEnd: 200,
+        sourceSeqRanges: [{ startSeq: 1, endSeq: 200 }],
+        collapsed: ["assistant_merge"],
+      },
+      lastEntry: {
+        item: { type: "user_message", text: "message 99" },
+        timestamp: new Date(2098).toISOString(),
+        seqStart: 299,
+        seqEnd: 299,
+        sourceSeqRanges: [{ startSeq: 299, endSeq: 299 }],
+        collapsed: [],
+      },
+      startSeq: 1,
+      endSeq: 299,
+      hasNewer: true,
+    });
+  });
+
   test("before page includes a wide tool whose earlier source range is before the cursor", () => {
     const rows: AgentTimelineRow[] = [
       toolRow(1, "running"),
