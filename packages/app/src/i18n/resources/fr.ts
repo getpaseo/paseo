@@ -1824,6 +1824,7 @@ export const fr: TranslationResources = {
         sendMessage: "Envoyer un message",
         queueMessage: "Message de file d'attente",
         muteUnmuteVoiceMode: "Mode vocal/unmutemuet",
+        toggleTimelineSearch: "Rechercher dans le volet",
       },
       helpNotes: {
         showKeyboardShortcuts:
@@ -2177,5 +2178,12 @@ export const fr: TranslationResources = {
         cancel: "Annuler",
       },
     },
+  },
+  paneFind: {
+    noMatches: "Aucune correspondance",
+    matchCount_one: "{{count}} correspondance",
+    matchCount_other: "{{count}} correspondances",
+    next: "Résultat suivant",
+    prev: "Résultat précédent",
   },
 };

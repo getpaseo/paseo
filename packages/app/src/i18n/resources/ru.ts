@@ -1813,6 +1813,7 @@ export const ru: TranslationResources = {
         sendMessage: "Отправить сообщение",
         queueMessage: "Сообщение в очереди",
         muteUnmuteVoiceMode: "Отключить голосовой режим /unmute",
+        toggleTimelineSearch: "Найти в панели",
       },
       helpNotes: {
         showKeyboardShortcuts: "Доступно, когда фокус находится не в текстовом поле или терминале.",
@@ -2164,5 +2165,12 @@ export const ru: TranslationResources = {
         cancel: "Отмена",
       },
     },
+  },
+  paneFind: {
+    noMatches: "Нет совпадений",
+    matchCount_one: "{{count}} совпадение",
+    matchCount_other: "{{count}} совпадений",
+    next: "Следующий результат",
+    prev: "Предыдущий результат",
   },
 };

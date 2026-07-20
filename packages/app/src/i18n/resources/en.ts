@@ -1785,6 +1785,7 @@ export const en = {
         sendMessage: "Send message",
         queueMessage: "Queue message",
         muteUnmuteVoiceMode: "Mute/unmute voice mode",
+        toggleTimelineSearch: "Find in pane",
       },
       helpNotes: {
         showKeyboardShortcuts: "Available when focus is not in a text field or terminal.",
@@ -2133,6 +2134,13 @@ export const en = {
         cancel: "Cancel",
       },
     },
+  },
+  paneFind: {
+    noMatches: "No matches",
+    matchCount_one: "{{count}} match",
+    matchCount_other: "{{count}} matches",
+    next: "Next result",
+    prev: "Previous result",
   },
 } as const;
 

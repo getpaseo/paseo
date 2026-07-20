@@ -55,6 +55,12 @@ import {
   releaseResidentBrowserWebview,
   takeResidentBrowserWebview,
 } from "./browser-webview-resident";
+import { createBrowserFindSequencer } from "./browser-find-sequencer";
+import { usePaneFindRegistration } from "@/pane-find/use-pane-find-registration";
+import { paneFindController } from "@/pane-find/pane-find-controller";
+import { usePaneFindKey } from "@/panels/pane-context";
+import type { PaneFindAdapter, PaneFindState } from "@/pane-find/pane-find-types";
+import { PaneFindBar } from "@/pane-find/pane-find-bar";
 
 type ElectronWebview = HTMLElement & {
   canGoBack?: () => boolean;
@@ -623,6 +629,183 @@ export function BrowserPane({
   const annotationMarkersRef = useRef<BrowserAnnotationMarker[]>([]);
   const [selectorMode, setSelectorMode] = useState<"annotate" | "screenshot" | null>(null);
   const selectorActive = selectorMode !== null;
+
+  const [findState, setFindState] = useState<PaneFindState>({
+    isOpen: false,
+    query: "",
+    isPending: false,
+    matchCount: 0,
+    selectedIndex: -1,
+  });
+
+  const findStateRef = useRef(findState);
+  findStateRef.current = findState;
+
+  const listenersRef = useRef(new Set<() => void>());
+  const wasPaneFindFocusedRef = useRef(false);
+  const browserFindSequencerRef = useRef<ReturnType<typeof createBrowserFindSequencer> | null>(
+    null,
+  );
+  if (!browserFindSequencerRef.current) {
+    browserFindSequencerRef.current = createBrowserFindSequencer(
+      {
+        findInPage(query, options) {
+          const desktopHost = getDesktopHost();
+          if (!desktopHost?.browser?.findInPage) {
+            return Promise.resolve(null);
+          }
+          return desktopHost.browser.findInPage(browserIdRef.current, query, options);
+        },
+        stopFindInPage(action) {
+          const desktopHost = getDesktopHost();
+          if (!desktopHost?.browser?.stopFindInPage) {
+            return;
+          }
+          return desktopHost.browser.stopFindInPage(browserIdRef.current, action);
+        },
+      },
+      {
+        onUnavailable() {
+          setFindState((prev) => ({
+            ...prev,
+            isPending: false,
+            matchCount: 0,
+            selectedIndex: -1,
+          }));
+        },
+        onResult(result) {
+          setFindState((prev) => ({
+            ...prev,
+            isPending: !result.finalUpdate,
+            matchCount: result.matches,
+            selectedIndex: result.activeMatchOrdinal - 1,
+          }));
+        },
+      },
+    );
+  }
+  const browserFindSequencer = browserFindSequencerRef.current;
+
+  useEffect(() => {
+    for (const listener of listenersRef.current) {
+      listener();
+    }
+  }, [findState]);
+
+  const resetFindState = useCallback(() => {
+    browserFindSequencer.clear();
+    setFindState({
+      isOpen: false,
+      query: "",
+      isPending: false,
+      matchCount: 0,
+      selectedIndex: -1,
+    });
+  }, [browserFindSequencer]);
+
+  const adapter = useMemo<PaneFindAdapter>(
+    () => ({
+      hasCustomUI: false,
+      getState() {
+        return findStateRef.current;
+      },
+      subscribe(listener) {
+        listenersRef.current.add(listener);
+        return () => {
+          listenersRef.current.delete(listener);
+        };
+      },
+      open() {
+        setFindState((prev) => ({ ...prev, isOpen: true }));
+      },
+      close() {
+        setFindState((prev) => ({
+          ...prev,
+          isOpen: false,
+          query: "",
+          matchCount: 0,
+          selectedIndex: -1,
+        }));
+        browserFindSequencer.clear();
+      },
+      setQuery(query) {
+        setFindState((prev) => ({ ...prev, query, isPending: query.length > 0 }));
+        if (query.length > 0) {
+          browserFindSequencer.request(query, {
+            findNext: false,
+            forward: true,
+          });
+        } else {
+          setFindState((prev) => ({
+            ...prev,
+            isPending: false,
+            matchCount: 0,
+            selectedIndex: -1,
+          }));
+          browserFindSequencer.clear();
+        }
+      },
+      selectNext() {
+        const currentQuery = findStateRef.current.query;
+        if (currentQuery.length > 0) {
+          setFindState((prev) => ({ ...prev, isPending: true }));
+          browserFindSequencer.request(currentQuery, {
+            findNext: true,
+            forward: true,
+          });
+        }
+      },
+      selectPrev() {
+        const currentQuery = findStateRef.current.query;
+        if (currentQuery.length > 0) {
+          setFindState((prev) => ({ ...prev, isPending: true }));
+          browserFindSequencer.request(currentQuery, {
+            findNext: true,
+            forward: false,
+          });
+        }
+      },
+    }),
+    [browserFindSequencer],
+  );
+
+  const paneFindKey = usePaneFindKey();
+  usePaneFindRegistration({ paneKey: paneFindKey, adapter });
+
+  useEffect(() => {
+    if (!paneFindKey) {
+      return;
+    }
+    const syncFocus = () => {
+      const isFocused = paneFindController.getFocusedPane() === paneFindKey;
+      if (wasPaneFindFocusedRef.current && !isFocused) {
+        resetFindState();
+      }
+      wasPaneFindFocusedRef.current = isFocused;
+    };
+    syncFocus();
+    return paneFindController.subscribe(syncFocus);
+  }, [paneFindKey, resetFindState]);
+
+  useEffect(() => {
+    if (!isElectronRuntime() || !findState.isOpen) {
+      return;
+    }
+    const desktopHost = getDesktopHost();
+    if (!desktopHost?.browser?.onFoundInPage) {
+      return;
+    }
+    const unsubscribe = desktopHost.browser.onFoundInPage(browserId, (result) => {
+      browserFindSequencer.receive(result);
+    });
+    return unsubscribe;
+  }, [browserFindSequencer, browserId, findState.isOpen]);
+
+  useEffect(() => {
+    return () => {
+      browserFindSequencer.clear();
+    };
+  }, [browserFindSequencer]);
   // Which action the active selector performs on click: open the annotation card
   // ("annotate") or copy a screenshot of the element to the clipboard ("screenshot").
   const selectorModeRef = useRef<"annotate" | "screenshot">("annotate");
@@ -757,15 +940,17 @@ export function BrowserPane({
     const handleStartLoading = () => {
       updateBrowser(browserId, { isLoading: true, lastError: null });
       syncNavigationState({ syncUrl: false });
+      resetFindState();
     };
     const handleStopLoading = () => {
       updateBrowser(browserId, { isLoading: false });
       syncNavigationState();
     };
     const handleNavigate = (event: Event) => {
+      const urlProp = (event as unknown as Record<string, unknown>).url;
       const nextUrl =
-        typeof (event as Event & { url?: unknown }).url === "string"
-          ? ((event as Event & { url?: string }).url ?? "")
+        typeof urlProp === "string"
+          ? urlProp
           : (webview.getURL?.() ?? webview.getAttribute("src") ?? "");
       const normalized = normalizeWorkspaceBrowserUrl(nextUrl);
       const previousUrl = browserRef.current?.url ?? initialUrlRef.current;
@@ -781,10 +966,8 @@ export function BrowserPane({
       syncNavigationState();
     };
     const handleWillNavigate = (event: Event) => {
-      const nextUrl =
-        typeof (event as Event & { url?: unknown }).url === "string"
-          ? ((event as Event & { url?: string }).url ?? "")
-          : "";
+      const urlProp = (event as unknown as Record<string, unknown>).url;
+      const nextUrl = typeof urlProp === "string" ? urlProp : "";
       if (!nextUrl) {
         return;
       }
@@ -798,16 +981,13 @@ export function BrowserPane({
       setDraftUrl((current) => (current === normalized ? current : normalized));
     };
     const handleTitleUpdated = (event: Event) => {
-      const title =
-        typeof (event as Event & { title?: unknown }).title === "string"
-          ? ((event as Event & { title?: string }).title ?? "")
-          : "";
+      const titleProp = (event as unknown as Record<string, unknown>).title;
+      const title = typeof titleProp === "string" ? titleProp : "";
       updateBrowserRef.current(browserIdRef.current, { title });
     };
     const handleFaviconUpdated = (event: Event) => {
-      const favicons = Array.isArray((event as Event & { favicons?: unknown[] }).favicons)
-        ? ((event as Event & { favicons?: string[] }).favicons ?? [])
-        : [];
+      const faviconsProp = (event as unknown as Record<string, unknown>).favicons;
+      const favicons = Array.isArray(faviconsProp) ? faviconsProp : [];
       updateBrowserRef.current(browserIdRef.current, { faviconUrl: favicons[0] ?? null });
     };
     const handleLoadFailed = (event: Event) => {
@@ -882,7 +1062,7 @@ export function BrowserPane({
       domReadyRef.current = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [browserId, onFocusPane]);
+  }, [browserId, onFocusPane, resetFindState]);
 
   const navigate = useCallback(
     (nextUrl: string) => {
@@ -1577,6 +1757,7 @@ export function BrowserPane({
 
   return (
     <View style={styles.container}>
+      {isInteractive ? <PaneFindBar /> : null}
       <View style={styles.chromeRow}>
         <View style={styles.chromeLeft}>
           <ToolbarButton

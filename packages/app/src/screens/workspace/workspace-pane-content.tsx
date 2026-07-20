@@ -1,11 +1,13 @@
-import React, { useMemo, type ComponentType } from "react";
+import React, { useEffect, useMemo, type ComponentType } from "react";
 import invariant from "tiny-invariant";
 import {
+  createPaneFindPaneId,
   createPaneFocusContextValue,
   PaneFocusProvider,
   PaneProvider,
   type PaneContextValue,
 } from "@/panels/pane-context";
+import { paneFindController } from "@/pane-find/pane-find-controller";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { getPanelRegistration } from "@/panels/panel-registry";
 import { ensurePanelsRegistered } from "@/panels/register-panels";
@@ -50,6 +52,11 @@ export function buildWorkspacePaneContentModel({
       serverId: normalizedServerId,
       workspaceId: normalizedWorkspaceId,
       tabId: tab.tabId,
+      paneInstanceId: createPaneFindPaneId({
+        serverId: normalizedServerId,
+        workspaceId: normalizedWorkspaceId,
+        tabId: tab.tabId,
+      }),
       target: tab.target,
       openTab: onOpenTab,
       closeCurrentTab: onCloseCurrentTab,
@@ -84,6 +91,7 @@ export function WorkspacePaneContent({
       serverId: paneContextValue.serverId,
       workspaceId: paneContextValue.workspaceId,
       tabId: paneContextValue.tabId,
+      paneInstanceId: paneContextValue.paneInstanceId,
       target: paneContextValue.target,
       openTab,
       closeCurrentTab,
@@ -98,11 +106,28 @@ export function WorkspacePaneContent({
       openTab,
       paneContextValue.serverId,
       paneContextValue.tabId,
+      paneContextValue.paneInstanceId,
       paneContextValue.target,
       paneContextValue.workspaceId,
       retargetCurrentTab,
     ],
   );
+
+  // Central find-focus authority: exactly the focused pane (workspace focused
+  // AND this pane focused) owns Ctrl/Cmd+F. Every pane renders through this
+  // wrapper, so routing lives here in one place with one uniform condition —
+  // instead of each pane component registering its own (previously
+  // inconsistent) focus signal into a last-writer-wins registry.
+  const paneInstanceId = paneContextValue.paneInstanceId;
+  useEffect(() => {
+    if (!isWorkspaceFocused || !isPaneFocused) {
+      return;
+    }
+    paneFindController.setFocusedPane(paneInstanceId);
+    return () => {
+      paneFindController.clearFocusedPaneIfCurrent(paneInstanceId);
+    };
+  }, [isPaneFocused, isWorkspaceFocused, paneInstanceId]);
   const paneFocusValue = useMemo(
     () =>
       createPaneFocusContextValue({

@@ -1806,6 +1806,7 @@ export const ptBR: TranslationResources = {
         sendMessage: "Enviar mensagem",
         queueMessage: "Enfileirar mensagem",
         muteUnmuteVoiceMode: "Silenciar/ativar modo de voz",
+        toggleTimelineSearch: "Localizar no painel",
       },
       helpNotes: {
         showKeyboardShortcuts:
@@ -2157,5 +2158,12 @@ export const ptBR: TranslationResources = {
         cancel: "Cancelar",
       },
     },
+  },
+  paneFind: {
+    noMatches: "Nenhuma correspondência",
+    matchCount_one: "{{count}} correspondência",
+    matchCount_other: "{{count}} correspondências",
+    next: "Próximo resultado",
+    prev: "Resultado anterior",
   },
 };

@@ -1822,6 +1822,7 @@ export const es: TranslationResources = {
         sendMessage: "enviar mensaje",
         queueMessage: "mensaje de cola",
         muteUnmuteVoiceMode: "Silenciar el modo de voz/unmute",
+        toggleTimelineSearch: "Buscar en el panel",
       },
       helpNotes: {
         showKeyboardShortcuts: "Disponible cuando el foco no está en un campo de texto o terminal.",
@@ -2172,5 +2173,12 @@ export const es: TranslationResources = {
         cancel: "Cancelar",
       },
     },
+  },
+  paneFind: {
+    noMatches: "Sin coincidencias",
+    matchCount_one: "{{count}} coincidencia",
+    matchCount_other: "{{count}} coincidencias",
+    next: "Siguiente resultado",
+    prev: "Resultado anterior",
   },
 };
