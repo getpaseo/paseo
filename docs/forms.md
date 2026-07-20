@@ -23,8 +23,10 @@ Every non-trivial form gets a **plain TypeScript model** — zero React imports:
 - **Commands** mutate (`setHost`, `setProject(value, display)`, `setModel`, …).
   Derived state (disclosure, canSubmit, displays) is recomputed inside the
   model on every publish.
-- `close()` destroys the instance. `subscribe`/`getState` feed one
-  `useSyncExternalStore` in the component.
+- `subscribe`/`getState` feed one `useSyncExternalStore` in the component.
+  Models that accept late inputs or own post-unmount work expose `close()` so
+  their lifetime adapter can invalidate that work. Resource-free models omit
+  it; subscription cleanup is sufficient and remains safe under Strict Effects.
 
 The component renders state and dispatches intent. That is all it does.
 
@@ -71,6 +73,33 @@ complete`), keyed off the opened snapshot's serverId. Waiting for data is a
   exact string; validation errors are the exception. State a fact (like the
   timezone) once — never in a preview line AND a helper line.
 - `useUnistyles` is banned (see docs/unistyles.md); lint enforces.
+
+## Question form contract
+
+The shared question renderer is backed by the plain TypeScript model in
+`packages/app/src/components/question-form-model.ts`. Its normalized contract
+keeps display text and submitted values separate:
+
+- `question.key` is the stable machine key used in the answer record;
+  `question.header` is only the displayed tab label.
+- `option.value` is the submitted machine value; `option.label` and
+  `option.description` are display-only.
+- single-select and text-question answers are strings; multi-select answers are
+  string arrays in definition order. Free text entered for a multi-select
+  question is therefore returned as a one-item string array. Never join a
+  multi-select answer into a comma-delimited string in the form layer.
+
+Provider payload parsing is the only normalization boundary. Existing payloads
+that only have `header`/`label`, and provider payloads that expose a question
+`id`, are converted to the explicit `key`/`value` model there. Renderers consume
+only the normalized model. The existing question permission flow remains
+header-and-label based on the wire, so its submit adapter converts typed answers
+back to header-keyed strings at that boundary. It uses model state only to
+preserve the existing transport semantics: selected values become labels in
+selection order, while Other text is sent unchanged. Empty optional Other
+answers stay omitted, matching the existing permission wire. Future form
+consumers can use the typed answer record directly without inheriting that
+transport shape.
 
 ## Data gating
 
