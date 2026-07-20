@@ -635,6 +635,7 @@ function EditableFilePane({
             path,
             size: file.size,
             modifiedAt: file.modifiedAt,
+            revision: file.revision,
           },
         };
       },
@@ -661,7 +662,8 @@ function EditableFilePane({
       }),
   );
   const snapshot = useSyncExternalStore(model.subscribe, model.getSnapshot, model.getSnapshot);
-  usePublishPanelInstanceAttributes({ modified: snapshot.modified });
+  const suspendPendingSave = useCallback(() => model.suspendAutosave(), [model]);
+  usePublishPanelInstanceAttributes({ modified: snapshot.modified, suspendPendingSave });
   const theme = UnistylesRuntime.getTheme();
   const visualTheme = useMemo(
     () => ({

@@ -2131,6 +2131,7 @@ const FileExplorerFileSchema = z.object({
   mimeType: z.string().optional(),
   size: z.number(),
   modifiedAt: z.string(),
+  revision: z.string().optional(),
 });
 
 const FileExplorerDirectorySchema = z.object({

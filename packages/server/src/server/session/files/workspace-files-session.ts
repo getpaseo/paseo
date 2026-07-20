@@ -190,6 +190,7 @@ export class WorkspaceFilesSession {
                 size: file.size,
                 encoding: file.encoding,
                 modifiedAt: file.modifiedAt,
+                revision: file.revision,
               },
             }),
           );

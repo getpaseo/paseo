@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -36,6 +36,34 @@ describe("file explorer service", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  it.skipIf(process.platform === "win32")(
+    "preserves the original file permissions across atomic replacement",
+    async () => {
+      const root = await createTempDir("paseo-file-mode-");
+      try {
+        const filePath = path.join(root, "script.sh");
+        await writeFile(filePath, "before", "utf8");
+        await chmod(filePath, 0o764);
+        const current = await getExplorerFileVersion({ root, relativePath: "script.sh" });
+        expect(current.status).toBe("ready");
+        if (current.status !== "ready") return;
+
+        const result = await writeExplorerFile({
+          root,
+          relativePath: "script.sh",
+          content: "after",
+          expectedModifiedAt: current.modifiedAt,
+          expectedRevision: current.revision,
+        });
+
+        expect(result.status).toBe("written");
+        expect((await stat(filePath)).mode & 0o7777).toBe(0o764);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("preserves a newer disk revision instead of overwriting it", async () => {
     const root = await createTempDir("paseo-file-conflict-");

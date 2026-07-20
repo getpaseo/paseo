@@ -26,7 +26,7 @@ interface ObservedFile {
   cwd: string;
   path: string;
   basename: string;
-  listeners: Set<(version: FileVersion) => void>;
+  listeners: Map<(version: FileVersion) => void, { cwd: string; path: string }>;
   fingerprint: string;
   watcher: FileWatch | null;
   debounce: ReturnType<typeof setTimeout> | null;
@@ -69,7 +69,7 @@ export class FileObserver {
           cwd: input.cwd,
           path: input.path,
           basename: path.basename(target),
-          listeners: new Set(),
+          listeners: new Map(),
           fingerprint: fingerprint(initial),
           watcher: null,
           debounce: null,
@@ -79,11 +79,11 @@ export class FileObserver {
         this.startWatching(target, path.dirname(target), observed);
       }
     }
-    observed.listeners.add(listener);
     const initial = await getExplorerFileVersion({
-      root: observed.cwd,
-      relativePath: observed.path,
+      root: input.cwd,
+      relativePath: input.path,
     });
+    observed.listeners.set(listener, { cwd: initial.cwd, path: initial.path });
     observed.fingerprint = fingerprint(initial);
 
     let active = true;
@@ -150,8 +150,8 @@ export class FileObserver {
     const nextFingerprint = fingerprint(version);
     if (nextFingerprint === observed.fingerprint) return;
     observed.fingerprint = nextFingerprint;
-    for (const listener of observed.listeners) {
-      listener(version);
+    for (const [listener, identity] of observed.listeners) {
+      listener({ ...version, ...identity });
     }
   }
 
@@ -166,8 +166,8 @@ export class FileObserver {
 }
 
 function fingerprint(version: FileVersion): string {
-  if (version.status !== "ready") return `${version.status}:${version.path}`;
-  return `${version.status}:${version.path}:${version.revision ?? `${version.size}:${version.modifiedAt}`}`;
+  if (version.status !== "ready") return version.status;
+  return `${version.status}:${version.revision ?? `${version.size}:${version.modifiedAt}`}`;
 }
 
 export const workspaceFileObserver = new FileObserver();

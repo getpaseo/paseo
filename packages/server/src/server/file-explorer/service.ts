@@ -62,6 +62,7 @@ export interface FileExplorerFile {
   mimeType?: string;
   size: number;
   modifiedAt: string;
+  revision: string;
 }
 
 export interface FileExplorerFileBytes {
@@ -72,6 +73,7 @@ export interface FileExplorerFileBytes {
   mimeType: string;
   size: number;
   modifiedAt: string;
+  revision: string;
 }
 
 const TEXT_MIME_TYPES: Record<string, string> = {
@@ -190,6 +192,7 @@ export async function readExplorerFile({
       mimeType: file.mimeType,
       size: file.size,
       modifiedAt: file.modifiedAt,
+      revision: file.revision,
     };
   }
 
@@ -201,6 +204,7 @@ export async function readExplorerFile({
       mimeType: file.mimeType,
       size: file.size,
       modifiedAt: file.modifiedAt,
+      revision: file.revision,
     };
   }
 
@@ -212,6 +216,7 @@ export async function readExplorerFile({
     mimeType: file.mimeType,
     size: file.size,
     modifiedAt: file.modifiedAt,
+    revision: file.revision,
   };
 }
 
@@ -223,7 +228,7 @@ export async function readExplorerFileBytes({
   const handle = await openFileForRead(filePath.resolvedPath);
 
   try {
-    const stats = await handle.stat();
+    const stats = await handle.stat({ bigint: true });
 
     if (!stats.isFile()) {
       throw new Error("Requested path is not a file");
@@ -232,8 +237,9 @@ export async function readExplorerFileBytes({
     const ext = path.extname(filePath.resolvedPath).toLowerCase();
     const basePayload = {
       path: normalizeRelativePath({ root, targetPath: filePath.requestedPath }),
-      size: stats.size,
+      size: Number(stats.size),
       modifiedAt: stats.mtime.toISOString(),
+      revision: fileRevision(stats),
     };
 
     const buffer = await handle.readFile();
@@ -372,6 +378,9 @@ export async function writeExplorerFile({
   let temporaryHandle: FileHandle | null = null;
   try {
     temporaryHandle = await fs.open(temporaryPath, "wx", currentMode);
+    if (process.platform !== "win32") {
+      await temporaryHandle.chmod(currentMode & 0o7777);
+    }
     await temporaryHandle.writeFile(encoded);
     await temporaryHandle.sync();
     await temporaryHandle.close();

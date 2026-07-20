@@ -2683,13 +2683,16 @@ function WorkspaceScreenContent({
         tabId,
       });
       if (!attributes.modified) return true;
-      return confirmDialog({
+      const resumePendingSave = attributes.suspendPendingSave?.();
+      const confirmed = await confirmDialog({
         title: t("workspace.tabs.confirmations.unsavedTitle"),
         message: t("workspace.tabs.confirmations.unsavedMessage"),
         confirmLabel: t("workspace.tabs.confirmations.closeWithoutSaving"),
         cancelLabel: t("workspace.tabs.confirmations.cancel"),
         destructive: true,
       });
+      if (!confirmed) resumePendingSave?.();
+      return confirmed;
     },
     [normalizedServerId, normalizedWorkspaceId, t],
   );

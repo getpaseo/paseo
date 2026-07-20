@@ -155,6 +155,23 @@ describe("FileEditorModel", () => {
     expect(model.getSnapshot()).toMatchObject({ status: "clean", content: "external" });
   });
 
+  test("coalesces consecutive clean disk updates onto the latest reload", async () => {
+    const { model, session } = makeModel();
+    const reads: Array<(file: FileEditorFile) => void> = [];
+    session.read = () => new Promise((resolve) => reads.push(resolve));
+    const firstVersion = ready("2026-07-18T00:00:02.000Z", 5);
+    const latestVersion = ready("2026-07-18T00:00:03.000Z", 6);
+
+    model.receiveFileVersion(firstVersion);
+    model.receiveFileVersion(latestVersion);
+    reads[0]?.({ content: "first", version: firstVersion });
+    await Promise.resolve();
+    reads[1]?.({ content: "latest", version: latestVersion });
+    await Promise.resolve();
+
+    expect(model.getSnapshot()).toMatchObject({ status: "clean", content: "latest" });
+  });
+
   test("preserves a dirty buffer and overwrites against the newest disk revision", async () => {
     const { model, session } = makeModel();
     model.edit("local");
@@ -217,5 +234,19 @@ describe("FileEditorModel", () => {
     clock.fire();
 
     expect(session.writes).toEqual([]);
+  });
+
+  test("suspends a pending autosave while close confirmation is active", async () => {
+    const { model, session, clock } = makeModel();
+    model.edit("local");
+
+    const resume = model.suspendAutosave();
+    clock.fire();
+    expect(session.writes).toEqual([]);
+
+    resume();
+    clock.fire();
+    await Promise.resolve();
+    expect(session.writes).toHaveLength(1);
   });
 });

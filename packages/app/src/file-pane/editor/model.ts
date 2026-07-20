@@ -79,7 +79,9 @@ export class FileEditorModel {
     if (this.disposed || content === this.snapshot.content) return;
     const modified = content !== this.persistedContent;
     let status: FileEditorStatus = modified ? "dirty" : "clean";
-    if (this.snapshot.status === "conflict") status = "conflict";
+    if (this.snapshot.status === "conflict" || this.snapshot.status === "loading") {
+      status = "conflict";
+    }
     this.setSnapshot({ ...this.snapshot, status, content, modified, error: null });
     if (status === "dirty") this.scheduleAutosave();
     else this.clearAutosave();
@@ -121,7 +123,7 @@ export class FileEditorModel {
       this.observedWhileSaving = version;
       return;
     }
-    if (this.snapshot.status === "clean") {
+    if (this.snapshot.status === "clean" || this.snapshot.status === "loading") {
       void this.reloadFromDisk(version);
       return;
     }
@@ -144,6 +146,17 @@ export class FileEditorModel {
     this.saveSequence += 1;
     this.clearAutosave();
     this.listeners.clear();
+  }
+
+  suspendAutosave(): () => void {
+    const wasScheduled = this.autosave !== null;
+    this.clearAutosave();
+    let resumed = false;
+    return () => {
+      if (resumed || this.disposed) return;
+      resumed = true;
+      if (wasScheduled && this.snapshot.status === "dirty") this.scheduleAutosave();
+    };
   }
 
   private async performWrite(
@@ -224,7 +237,9 @@ export class FileEditorModel {
     this.setSnapshot({ ...this.snapshot, status: "loading", error: null });
     try {
       const file = await this.session.read();
-      if (this.disposed || sequence !== this.saveSequence) return;
+      if (this.disposed || sequence !== this.saveSequence || this.snapshot.status !== "loading") {
+        return;
+      }
       this.persistedContent = file.content;
       this.setSnapshot({
         status: "clean",

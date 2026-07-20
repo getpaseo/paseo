@@ -418,6 +418,7 @@ export interface FileReadResult {
   path: string;
   kind: LegacyFileExplorerFilePayload["kind"];
   modifiedAt: string;
+  revision?: string;
 }
 export interface FileUploadInput {
   fileName: string;
@@ -877,6 +878,7 @@ interface BinaryFileTransferState extends PendingBinaryFileRead {
     { opcode: typeof FileTransferOpcode.FileBegin }
   >["metadata"]["encoding"];
   modifiedAt: string;
+  revision?: string;
   chunks: Uint8Array[];
 }
 
@@ -997,6 +999,7 @@ function legacyExplorerFileToBytes(file: LegacyFileExplorerFilePayload): FileRea
     path: file.path,
     kind: file.kind,
     modifiedAt: file.modifiedAt,
+    revision: file.revision,
   };
 }
 
@@ -5389,6 +5392,7 @@ export class DaemonClient {
         size: frame.metadata.size,
         encoding: frame.metadata.encoding,
         modifiedAt: frame.metadata.modifiedAt,
+        revision: frame.metadata.revision,
         chunks: [],
       });
       return;
@@ -5413,6 +5417,7 @@ export class DaemonClient {
       path: transfer.path,
       kind: binaryFileKind(transfer.mime, transfer.encoding),
       modifiedAt: transfer.modifiedAt,
+      revision: transfer.revision,
     });
     this.handleSessionMessage({
       type: "file_explorer_response",

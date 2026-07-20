@@ -1,4 +1,4 @@
-import { mkdtemp, rm, unlink, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -96,6 +96,29 @@ describe("FileObserver", () => {
     first.unsubscribe();
     second.unsubscribe();
     expect(controls.closes).toBe(1);
+  });
+
+  test("publishes shared watcher updates in each subscriber's path coordinates", async () => {
+    const root = await workspace();
+    const aliasParent = await mkdtemp(path.join(os.tmpdir(), "paseo-file-observer-alias-"));
+    roots.push(aliasParent);
+    const aliasRoot = path.join(aliasParent, "workspace-link");
+    await symlink(root, aliasRoot, "dir");
+    const controls = new ObservationControls();
+    const observer = new FileObserver(controls);
+    const updates: Array<{ cwd: string; path: string }> = [];
+    const direct = await observer.subscribe({ cwd: root, path: "file.txt" }, () => undefined);
+    const alias = await observer.subscribe({ cwd: aliasRoot, path: "file.txt" }, (version) =>
+      updates.push({ cwd: version.cwd, path: version.path }),
+    );
+
+    await writeFile(path.join(root, "file.txt"), "changed content", "utf8");
+    await controls.fileChanged("file.txt");
+
+    expect(controls.watches).toBe(1);
+    expect(updates).toEqual([{ cwd: aliasRoot, path: "file.txt" }]);
+    direct.unsubscribe();
+    alias.unsubscribe();
   });
 
   test("publishes deletion without dropping the subscription", async () => {
