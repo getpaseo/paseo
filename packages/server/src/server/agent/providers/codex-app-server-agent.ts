@@ -3171,7 +3171,6 @@ export class CodexAppServerAgentSession implements AgentSession {
     mode?: string | null;
     model?: string | null;
     reasoning_effort?: string | null;
-    developer_instructions?: string | null;
   }> = [];
   private resolvedCollaborationMode: {
     mode: string;
@@ -3349,10 +3348,6 @@ export class CodexAppServerAgentSession implements AgentSession {
           model: typeof record?.model === "string" ? record.model : null,
           reasoning_effort:
             typeof record?.reasoning_effort === "string" ? record.reasoning_effort : null,
-          developer_instructions:
-            typeof record?.developer_instructions === "string"
-              ? record.developer_instructions
-              : null,
         };
       });
     } catch (error) {
@@ -3418,7 +3413,6 @@ export class CodexAppServerAgentSession implements AgentSession {
     mode?: string | null;
     model?: string | null;
     reasoning_effort?: string | null;
-    developer_instructions?: string | null;
   } | null {
     if (this.collaborationModes.length === 0) return null;
     const findByName = (predicate: (name: string) => boolean) =>
@@ -3451,15 +3445,9 @@ export class CodexAppServerAgentSession implements AgentSession {
     const match = this.findCollaborationMode(this.planModeEnabled ? "plan" : "code");
     if (!match) return null;
 
-    const settings: Record<string, unknown> = {};
+    const settings: Record<string, unknown> = { developer_instructions: null };
     if (match.model) settings.model = match.model;
     if (match.reasoning_effort) settings.reasoning_effort = match.reasoning_effort;
-    const developerInstructions = composeSystemPromptParts(
-      match.developer_instructions,
-      this.config.systemPrompt,
-      this.config.daemonAppendSystemPrompt,
-    );
-    if (developerInstructions) settings.developer_instructions = developerInstructions;
     if (this.config.model) settings.model = this.config.model;
     const thinkingOptionId = normalizeCodexThinkingOptionId(this.config.thinkingOptionId);
     if (thinkingOptionId) settings.reasoning_effort = thinkingOptionId;
@@ -3754,7 +3742,6 @@ export class CodexAppServerAgentSession implements AgentSession {
     approvalPolicy: string;
     sandboxPolicyType: string;
     hasOutputSchema: boolean;
-    hasDeveloperInstructions: boolean;
     hasCodexConfig: boolean;
   }> {
     const input = await this.buildUserInput(prompt);
@@ -3797,13 +3784,6 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (options?.outputSchema) {
       params.outputSchema = normalizeCodexOutputSchema(options.outputSchema);
     }
-    const developerInstructions = composeSystemPromptParts(
-      this.config.systemPrompt,
-      this.config.daemonAppendSystemPrompt,
-    );
-    if (developerInstructions) {
-      params.developerInstructions = developerInstructions;
-    }
     const codexConfig = this.buildCodexInnerConfig();
     if (codexConfig) {
       params.config = codexConfig;
@@ -3815,7 +3795,6 @@ export class CodexAppServerAgentSession implements AgentSession {
       approvalPolicy,
       sandboxPolicyType,
       hasOutputSchema: Boolean(options?.outputSchema),
-      hasDeveloperInstructions: Boolean(developerInstructions),
       hasCodexConfig: Boolean(codexConfig),
     };
   }
@@ -3826,7 +3805,6 @@ export class CodexAppServerAgentSession implements AgentSession {
     approvalPolicy,
     sandboxPolicyType,
     hasOutputSchema,
-    hasDeveloperInstructions,
     hasCodexConfig,
   }: {
     turnId: string;
@@ -3834,7 +3812,6 @@ export class CodexAppServerAgentSession implements AgentSession {
     approvalPolicy: string;
     sandboxPolicyType: string;
     hasOutputSchema: boolean;
-    hasDeveloperInstructions: boolean;
     hasCodexConfig: boolean;
   }): void {
     this.logger.info(
@@ -3850,7 +3827,6 @@ export class CodexAppServerAgentSession implements AgentSession {
         sandboxPolicyType,
         hasCollaborationMode: Boolean(this.resolvedCollaborationMode),
         hasOutputSchema,
-        hasDeveloperInstructions,
         hasCodexConfig,
       },
       "Starting Codex app-server turn",
@@ -3950,7 +3926,6 @@ export class CodexAppServerAgentSession implements AgentSession {
         approvalPolicy: turnStart.approvalPolicy,
         sandboxPolicyType: turnStart.sandboxPolicyType,
         hasOutputSchema: turnStart.hasOutputSchema,
-        hasDeveloperInstructions: turnStart.hasDeveloperInstructions,
         hasCodexConfig: turnStart.hasCodexConfig,
       });
       await this.client.request("turn/start", turnStart.params, TURN_START_TIMEOUT_MS);

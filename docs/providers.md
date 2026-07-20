@@ -22,6 +22,8 @@ Existing direct providers: `claude` (in `providers/claude/agent.ts`), `codex` (`
 
 Claude first-party model metadata lives in `packages/server/src/server/agent/providers/claude/model-manifest.ts`. When adding or updating a Claude model, update that manifest only; the model picker thinking options and Claude-specific feature gates are derived from the manifest. Do not add model-specific Claude capability lists in feature code.
 
+Codex collaboration modes and Paseo's additional instructions use separate app-server surfaces. `collaborationMode/list` intentionally omits built-in developer instructions, so mode selection must send `settings.developer_instructions: null` and let Codex resolve the selected mode's built-in instructions. Pass the composed per-agent and daemon-wide instructions only through `thread/start.developerInstructions` or `thread/resume.developerInstructions`; do not copy them into collaboration-mode settings or `turn/start`.
+
 Paseo tools are not implemented as MCP tools internally. They live in a shared tool catalog under `packages/server/src/server/agent/tools/`; MCP is only the fallback adapter. A provider that can register runtime tools directly should set `supportsNativePaseoTools: true` and consume `launchContext.paseoTools` in `createSession`/`resumeSession`. When native tools are present, `AgentManager` strips the internal Paseo MCP server from the provider launch config so the provider does not receive the same tools twice. Providers that only know MCP should keep `supportsMcpServers: true` and let the daemon inject `/mcp/agents`.
 
 Pi is a process-backed provider. Paseo requires the user to have the `pi` binary installed and talks to it through `pi --mode rpc`; the server package does not embed Pi's SDK/runtime packages.

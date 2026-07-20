@@ -44,7 +44,6 @@ interface CollaborationModeRecord {
   mode?: string | null;
   model?: string | null;
   reasoning_effort?: string | null;
-  developer_instructions?: string | null;
 }
 
 interface CodexSessionTestAccess {
@@ -3727,6 +3726,73 @@ describe("Codex app-server provider", () => {
     ]);
   });
 
+  test.each([
+    {
+      name: "without appended instructions",
+      config: {},
+      expectedInstructions: undefined,
+    },
+    {
+      name: "with systemPrompt",
+      config: { systemPrompt: "Agent instructions." },
+      expectedInstructions: "Agent instructions.",
+    },
+    {
+      name: "with daemonAppendSystemPrompt",
+      config: { daemonAppendSystemPrompt: "Daemon instructions." },
+      expectedInstructions: "Daemon instructions.",
+    },
+    {
+      name: "with both appended instruction sources",
+      config: {
+        systemPrompt: "Agent instructions.",
+        daemonAppendSystemPrompt: "Daemon instructions.",
+      },
+      expectedInstructions: "Agent instructions.\n\nDaemon instructions.",
+    },
+  ])(
+    "passes thread instructions once on resume $name",
+    async ({ config, expectedInstructions }) => {
+      const session = createSession(config);
+      session.currentThreadId = "archived-thread-id";
+      session.activeForegroundTurnId = null;
+      let threadLoaded = false;
+      const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
+      session.client = {
+        request: vi.fn(async (method: string, params: unknown) => {
+          requests.push({ method, params: params as Record<string, unknown> });
+          if (method === "thread/loaded/list") {
+            return { data: threadLoaded ? ["archived-thread-id"] : [] };
+          }
+          if (method === "thread/resume") {
+            threadLoaded = true;
+            return {};
+          }
+          if (method === "turn/start") {
+            return {};
+          }
+          throw new Error(`Unexpected request: ${method}`);
+        }),
+      };
+
+      await asInternals(session).ensureThreadLoaded();
+      await session.startTurn("continue the implementation");
+
+      const resumes = requests.filter((request) => request.method === "thread/resume");
+      const turnStarts = requests.filter((request) => request.method === "turn/start");
+      expect(resumes).toHaveLength(1);
+      expect(turnStarts).toHaveLength(1);
+      const resume = resumes[0];
+      const turnStart = turnStarts[0];
+      if (expectedInstructions === undefined) {
+        expect(resume.params).not.toHaveProperty("developerInstructions");
+      } else {
+        expect(resume.params).toMatchObject({ developerInstructions: expectedInstructions });
+      }
+      expect(turnStart.params).not.toHaveProperty("developerInstructions");
+    },
+  );
+
   test("appends blank-line spacing to /goal status messages", async () => {
     const requests: Array<{ method: string; params: unknown }> = [];
     const session = createSession({}, { goalsEnabled: true });
@@ -4831,12 +4897,11 @@ describe("Codex app-server provider", () => {
       {
         name: "Code",
         mode: "code",
-        developer_instructions: "Built-in code mode",
       },
       {
         name: "Plan",
         mode: "plan",
-        developer_instructions: "Built-in plan mode",
+        reasoning_effort: "medium",
       },
     ];
     asInternals(session).refreshResolvedCollaborationMode();

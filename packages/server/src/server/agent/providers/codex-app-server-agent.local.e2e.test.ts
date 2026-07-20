@@ -215,6 +215,60 @@ function waitForEvent<TEvent extends AgentStreamEvent>(params: {
 
 describe("Codex app-server provider (local e2e)", () => {
   test.runIf(isCodexInstalled())(
+    "keeps built-in plan instructions alongside appended thread instructions exactly once",
+    async () => {
+      const cwd = mkdtempSync(path.join(os.tmpdir(), "codex-app-server-plan-cwd-"));
+      const codexHome = mkdtempSync(path.join(os.tmpdir(), "codex-app-server-plan-home-"));
+      const mockServer = await startMockResponsesServer([assistantMessageSse("done")]);
+      const agentInstruction = "PASEO_AGENT_INSTRUCTION_SENTINEL";
+      const daemonInstruction = "PASEO_DAEMON_INSTRUCTION_SENTINEL";
+
+      try {
+        writeMockCodexConfig(codexHome, mockServer.url);
+
+        const client = new CodexAppServerAgentClient(createTestLogger());
+        const session = await client.createSession(
+          {
+            provider: "codex",
+            cwd,
+            modeId: "auto",
+            model: "mock-model",
+            thinkingOptionId: "medium",
+            systemPrompt: agentInstruction,
+            daemonAppendSystemPrompt: daemonInstruction,
+          },
+          {
+            env: {
+              CODEX_HOME: codexHome,
+            },
+          },
+        );
+
+        try {
+          await session.setFeature?.("plan_mode", true);
+          await session.run("Implement a file change requested by the user.");
+
+          expect(mockServer.requestBodies).toHaveLength(1);
+          const body = JSON.parse(mockServer.requestBodies[0]) as { input?: unknown };
+          const input = JSON.stringify(body.input);
+          expect(input.split("<collaboration_mode>")).toHaveLength(2);
+          expect(input.split("</collaboration_mode>")).toHaveLength(2);
+          expect(input).toContain("<proposed_plan>");
+          expect(input.split(agentInstruction)).toHaveLength(2);
+          expect(input.split(daemonInstruction)).toHaveLength(2);
+        } finally {
+          await session.close();
+        }
+      } finally {
+        await mockServer.close();
+        rmSync(cwd, { recursive: true, force: true });
+        rmSync(codexHome, { recursive: true, force: true });
+      }
+    },
+    30_000,
+  );
+
+  test.runIf(isCodexInstalled())(
     "surfaces request_user_input from the app-server as question permissions and timeline tool calls",
     async () => {
       const cwd = mkdtempSync(path.join(os.tmpdir(), "codex-app-server-question-cwd-"));
