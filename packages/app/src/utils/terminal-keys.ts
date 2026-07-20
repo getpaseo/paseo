@@ -226,19 +226,22 @@ export interface TerminalShortcutInput {
   meta: boolean;
 }
 
-// macOS-standard terminal shortcuts that xterm.js's built-in translation does not
-// emit in a form readline understands. For modifier + arrow keys, xterm always
-// produces the CSI modifier-encoded form (Alt+Left -> `\x1b[1;3D`, Meta+Left ->
-// `\x1b[1;9D`), but the default bash/zsh readline on macOS binds word/line motion
-// to the legacy Esc-prefix and control forms instead:
-//   backward-word  = `\eb`   forward-word = `\ef`
-//   beginning-of-line = `\C-a` (\x01)   end-of-line = `\C-e` (\x05)
-// We intercept the modifier+arrow combos and return the readline-default bytes so
-// Option / Cmd + arrows jump by word / line out of the box.
+// macOS-standard terminal shortcuts that xterm.js does not emit in a form
+// readline understands. Mirrors iTerm2's "Natural Text Editing" preset: for
+// modifier + arrow keys xterm produces the CSI modifier-encoded form
+// (Alt+Left -> `\x1b[1;3D`, Meta+Left -> `\x1b[1;9D`), but the default bash/zsh
+// readline binds word/line motion and word/line deletion to the legacy
+// Esc-prefix and control forms instead:
+//   backward-word      = `\eb`     forward-word      = `\ef`
+//   backward-kill-word = `\e\x7f`  kill-word         = `\ed`
+//   beginning-of-line  = `\x01`    end-of-line       = `\x05`
+//   unix-line-discard  = `\x15` (delete to line start; whole line when at end)
+// We intercept the modifier + arrow/backspace/delete combos and return the
+// readline-default bytes so these shortcuts behave like a native terminal.
 //
-// `macOptionIsMeta: true` already covers Option + letter (Option+B -> `\x1bb`), so
-// this only fills the arrow-key gap. Returns null when the combo is not one we
-// remap, so the caller can let xterm handle it normally.
+// `macOptionIsMeta: true` already covers Option + letter (Option+B -> `\x1bb`),
+// so this only fills the motion/deletion gap. Returns null when the combo is
+// not one we remap, so the caller can let xterm handle it normally.
 export function resolveMacTerminalShortcut(input: TerminalShortcutInput): string | null {
   // Require exactly one of alt/meta and no shift/ctrl, so we don't clobber
   // selection (shift) or other modifier combos.
@@ -252,6 +255,8 @@ export function resolveMacTerminalShortcut(input: TerminalShortcutInput): string
         return "\x01"; // Ctrl-A: beginning-of-line
       case "ArrowRight":
         return "\x05"; // Ctrl-E: end-of-line
+      case "Backspace":
+        return "\x15"; // Ctrl-U: unix-line-discard (delete to line start)
     }
   } else {
     switch (input.key) {
@@ -259,6 +264,10 @@ export function resolveMacTerminalShortcut(input: TerminalShortcutInput): string
         return "\x1bb"; // Esc+b: backward-word
       case "ArrowRight":
         return "\x1bf"; // Esc+f: forward-word
+      case "Backspace":
+        return "\x1b\x7f"; // Esc+DEL: backward-kill-word
+      case "Delete":
+        return "\x1bd"; // Esc+d: kill-word (forward)
     }
   }
 

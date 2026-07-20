@@ -395,9 +395,23 @@ describe("resolveMacTerminalShortcut", () => {
     ).toBeNull();
   });
 
-  it("ignores non-arrow keys even with Option or Cmd", () => {
+  it("maps Option+Backspace/Delete to readline word-kill sequences", () => {
+    expect(resolveMacTerminalShortcut({ ...none, key: "Backspace", alt: true })).toBe("\x1b\x7f");
+    expect(resolveMacTerminalShortcut({ ...none, key: "Delete", alt: true })).toBe("\x1bd");
+  });
+
+  it("maps Cmd+Backspace to unix-line-discard", () => {
+    expect(resolveMacTerminalShortcut({ ...none, key: "Backspace", meta: true })).toBe("\x15");
+  });
+
+  it("leaves plain Backspace/Delete to the terminal", () => {
+    expect(resolveMacTerminalShortcut({ ...none, key: "Backspace" })).toBeNull();
+    expect(resolveMacTerminalShortcut({ ...none, key: "Delete" })).toBeNull();
+  });
+
+  it("ignores non-remapped keys even with Option or Cmd", () => {
     expect(resolveMacTerminalShortcut({ ...none, key: "b", alt: true })).toBeNull();
     expect(resolveMacTerminalShortcut({ ...none, key: "c", meta: true })).toBeNull();
-    expect(resolveMacTerminalShortcut({ ...none, key: "Backspace", meta: true })).toBeNull();
+    expect(resolveMacTerminalShortcut({ ...none, key: "Tab", meta: true })).toBeNull();
   });
 });
