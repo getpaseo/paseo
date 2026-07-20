@@ -82,6 +82,7 @@ export const ja: TranslationResources = {
       sendMessage: "メッセージを送信",
       queue: "キュー",
       send: "送信",
+      sendWithNewline: "送信（Shift+Enter または Alt+Enter で改行）",
     },
     cancel: {
       cancelingAgent: "エージェントをキャンセル中",

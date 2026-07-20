@@ -82,6 +82,7 @@ export const ru: TranslationResources = {
       sendMessage: "Отправить сообщение",
       queue: "Очередь",
       send: "Отправлять",
+      sendWithNewline: "Отправить (Shift+Enter или Alt+Enter для новой строки)",
     },
     cancel: {
       cancelingAgent: "Отменяющий агент",

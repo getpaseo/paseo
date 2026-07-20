@@ -82,6 +82,7 @@ export const es: TranslationResources = {
       sendMessage: "enviar mensaje",
       queue: "Cola",
       send: "Enviar",
+      sendWithNewline: "Enviar (Shift+Enter o Alt+Enter para nueva línea)",
     },
     cancel: {
       cancelingAgent: "Agente de cancelación",

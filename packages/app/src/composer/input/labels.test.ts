@@ -13,6 +13,7 @@ const translations: Record<string, string> = {
   "composer.input.sendMessage": "Send message",
   "composer.input.queue": "Queue",
   "composer.input.send": "Send",
+  "composer.input.sendWithNewline": "Send (Shift+Enter or Alt+Enter for new line)",
   "composer.voice.unmuteVoiceMode": "Unmute Voice mode",
   "composer.voice.muteVoiceMode": "Mute Voice mode",
   "composer.voice.stopDictation": "Stop dictation",
@@ -123,6 +124,7 @@ describe("composer input labels", () => {
       resolveSendTooltipLabel({
         submitButtonAccessibilityLabel: undefined,
         defaultActionQueues: true,
+        showNewlineHint: true,
         t,
       }),
     ).toBe("Queue");
@@ -130,6 +132,15 @@ describe("composer input labels", () => {
       resolveSendTooltipLabel({
         submitButtonAccessibilityLabel: undefined,
         defaultActionQueues: false,
+        showNewlineHint: true,
+        t,
+      }),
+    ).toBe("Send (Shift+Enter or Alt+Enter for new line)");
+    expect(
+      resolveSendTooltipLabel({
+        submitButtonAccessibilityLabel: undefined,
+        defaultActionQueues: false,
+        showNewlineHint: false,
         t,
       }),
     ).toBe("Send");

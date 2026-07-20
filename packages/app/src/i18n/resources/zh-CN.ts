@@ -82,6 +82,7 @@ export const zhCN: TranslationResources = {
       sendMessage: "发送消息",
       queue: "排队",
       send: "发送",
+      sendWithNewline: "发送（Shift+Enter 或 Alt+Enter 换行）",
     },
     cancel: {
       cancelingAgent: "正在取消 Agent",

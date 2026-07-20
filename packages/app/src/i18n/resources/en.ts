@@ -80,6 +80,7 @@ export const en = {
       sendMessage: "Send message",
       queue: "Queue",
       send: "Send",
+      sendWithNewline: "Send (Shift+Enter or Alt+Enter for new line)",
     },
     cancel: {
       cancelingAgent: "Canceling agent",

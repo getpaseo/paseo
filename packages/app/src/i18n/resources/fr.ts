@@ -84,6 +84,7 @@ export const fr: TranslationResources = {
       sendMessage: "Envoyer un message",
       queue: "File d'attente",
       send: "Envoyer",
+      sendWithNewline: "Envoyer (Shift+Entrée ou Alt+Entrée pour un saut de ligne)",
     },
     cancel: {
       cancelingAgent: "Agent d'annulation",
