@@ -74,6 +74,29 @@ export function normalizeAttachmentMetadata(image: AttachmentMetadata): Attachme
   };
 }
 
+function isWorkspaceFileComposerAttachment(record: Record<string, unknown>): boolean {
+  if (typeof record.path !== "string" || record.path.trim().length === 0) {
+    return false;
+  }
+  const selection = record.selection;
+  if (!selection || typeof selection !== "object") {
+    return false;
+  }
+  const { kind, startLine, endLine } = selection as Record<string, unknown>;
+  if (kind === "whole_file") {
+    return true;
+  }
+  return (
+    kind === "line_range" &&
+    typeof startLine === "number" &&
+    Number.isInteger(startLine) &&
+    typeof endLine === "number" &&
+    Number.isInteger(endLine) &&
+    startLine > 0 &&
+    endLine >= startLine
+  );
+}
+
 export function isUserComposerAttachment(value: unknown): value is UserComposerAttachment {
   if (!value || typeof value !== "object") {
     return false;
@@ -82,6 +105,9 @@ export function isUserComposerAttachment(value: unknown): value is UserComposerA
   if (record.kind === "image") {
     const metadata = record.metadata;
     return isAttachmentMetadata(metadata);
+  }
+  if (record.kind === "workspace_file") {
+    return isWorkspaceFileComposerAttachment(record);
   }
   if (
     record.kind !== "forge_issue" &&
@@ -111,6 +137,13 @@ export function normalizeComposerAttachment(
     return {
       kind: "image",
       metadata: normalizeAttachmentMetadata(attachment.metadata),
+    };
+  }
+  if (attachment.kind === "workspace_file") {
+    return {
+      kind: "workspace_file",
+      path: attachment.path.trim().replace(/^\.\//, ""),
+      selection: attachment.selection,
     };
   }
   if (attachment.kind === "github_pr") {

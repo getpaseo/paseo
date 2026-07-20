@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import {
   View,
   Text,
@@ -36,8 +36,14 @@ import { RetainedPanelActivity } from "@/components/retained-panel";
 import { SidebarResizeHandle } from "@/components/sidebar-resize-handle";
 import { buildWorkspaceAttachmentScopeKey } from "@/attachments/workspace-attachments-store";
 import { resolveDesktopExplorerWidth } from "@/components/desktop-sidebar-layout";
-import { AddFileToChatPicker } from "@/composer/add-file-to-chat-picker";
 import { isWeb } from "@/constants/platform";
+import {
+  buildWorkspaceTabPersistenceKey,
+  useWorkspaceLayoutStore,
+} from "@/stores/workspace-layout-store";
+import { resolveFocusedChatTarget } from "@/composer/focused-chat-target";
+import { createWorkspaceFileAttachment } from "@/attachments/workspace-file";
+import { enqueueComposerAttachment } from "@/composer/draft/attachment-command-queue";
 
 function logExplorerSidebar(_event: string, _details: Record<string, unknown>): void {}
 
@@ -419,20 +425,39 @@ function ExplorerSidebarContent({
 }
 
 /**
- * Shared picker state for the changes/files panes: both expose an "add file to
- * chat" action that opens one {@link AddFileToChatPicker}. Web-only, and only
- * when a workspace is bound.
+ * Shared add-to-chat state for the changes/files panes: both expose an "add file
+ * to chat" action that attaches the file to the focused chat's composer.
+ * Web-only, and only when a workspace with a focused chat is available.
  */
-function useAddFileToChat(workspaceId: string | null | undefined) {
-  const [pendingChatFilePath, setPendingChatFilePath] = useState<string | null>(null);
-  const openForFile = useCallback((filePath: string) => {
-    setPendingChatFilePath(filePath);
-  }, []);
-  const closePicker = useCallback(() => {
-    setPendingChatFilePath(null);
-  }, []);
-  const canAddToChat = isWeb && Boolean(workspaceId);
-  return { pendingChatFilePath, openForFile, closePicker, canAddToChat };
+function useAddFileToChat({
+  serverId,
+  workspaceId,
+}: Pick<SidebarContentProps, "serverId" | "workspaceId">) {
+  const workspaceKey = workspaceId
+    ? buildWorkspaceTabPersistenceKey({ serverId, workspaceId })
+    : null;
+  const layout = useWorkspaceLayoutStore((state) =>
+    workspaceKey ? state.layoutByWorkspace[workspaceKey] : undefined,
+  );
+  const focusTab = useWorkspaceLayoutStore((state) => state.focusTab);
+  const focusedChat = useMemo(
+    () => resolveFocusedChatTarget({ serverId, layout }),
+    [serverId, layout],
+  );
+  const addFile = useCallback(
+    (filePath: string) => {
+      if (!focusedChat || !workspaceKey) {
+        return;
+      }
+      enqueueComposerAttachment({
+        draftKey: focusedChat.draftKey,
+        attachment: createWorkspaceFileAttachment({ path: filePath }),
+      });
+      focusTab(workspaceKey, focusedChat.tabId);
+    },
+    [focusTab, focusedChat, workspaceKey],
+  );
+  return { addFile, canAddToChat: isWeb && focusedChat !== null };
 }
 
 function ChangedFilesPane({
@@ -445,27 +470,16 @@ function ChangedFilesPane({
   SidebarContentProps,
   "serverId" | "workspaceId" | "workspaceRoot" | "isOpen" | "onOpenFile"
 >) {
-  const { pendingChatFilePath, openForFile, closePicker, canAddToChat } =
-    useAddFileToChat(workspaceId);
+  const { addFile, canAddToChat } = useAddFileToChat({ serverId, workspaceId });
   return (
-    <>
-      <GitDiffPane
-        serverId={serverId}
-        workspaceId={workspaceId}
-        cwd={workspaceRoot}
-        enabled={isOpen}
-        onOpenFile={onOpenFile}
-        onAddToChat={canAddToChat ? openForFile : undefined}
-      />
-      {canAddToChat && workspaceId ? (
-        <AddFileToChatPicker
-          serverId={serverId}
-          workspaceId={workspaceId}
-          filePath={pendingChatFilePath}
-          onClose={closePicker}
-        />
-      ) : null}
-    </>
+    <GitDiffPane
+      serverId={serverId}
+      workspaceId={workspaceId}
+      cwd={workspaceRoot}
+      enabled={isOpen}
+      onOpenFile={onOpenFile}
+      onAddToChat={canAddToChat ? addFile : undefined}
+    />
   );
 }
 
@@ -475,26 +489,15 @@ function FilesPane({
   workspaceRoot,
   onOpenFile,
 }: Pick<SidebarContentProps, "serverId" | "workspaceId" | "workspaceRoot" | "onOpenFile">) {
-  const { pendingChatFilePath, openForFile, closePicker, canAddToChat } =
-    useAddFileToChat(workspaceId);
+  const { addFile, canAddToChat } = useAddFileToChat({ serverId, workspaceId });
   return (
-    <>
-      <FileExplorerPane
-        serverId={serverId}
-        workspaceId={workspaceId}
-        workspaceRoot={workspaceRoot}
-        onOpenFile={onOpenFile}
-        onAddToChat={canAddToChat ? openForFile : undefined}
-      />
-      {canAddToChat && workspaceId ? (
-        <AddFileToChatPicker
-          serverId={serverId}
-          workspaceId={workspaceId}
-          filePath={pendingChatFilePath}
-          onClose={closePicker}
-        />
-      ) : null}
-    </>
+    <FileExplorerPane
+      serverId={serverId}
+      workspaceId={workspaceId}
+      workspaceRoot={workspaceRoot}
+      onOpenFile={onOpenFile}
+      onAddToChat={canAddToChat ? addFile : undefined}
+    />
   );
 }
 

@@ -799,8 +799,6 @@ export const es: TranslationResources = {
         base: "base",
         newFile: "Nuevo",
         deletedFile: "Eliminado",
-        addToChatPickerTitle: "Añadir archivo al chat",
-        noOpenChats: "No hay chats abiertos en este espacio de trabajo.",
         commits: {
           title: "Commits",
           legendLocal: "local",

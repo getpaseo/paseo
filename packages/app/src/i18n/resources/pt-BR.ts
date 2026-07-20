@@ -791,8 +791,6 @@ export const ptBR: TranslationResources = {
         base: "base",
         newFile: "Novo",
         deletedFile: "Excluído",
-        addToChatPickerTitle: "Adicionar arquivo ao chat",
-        noOpenChats: "Não há chats abertos neste workspace.",
         commits: {
           title: "Commits",
           legendLocal: "local",

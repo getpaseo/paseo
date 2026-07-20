@@ -23,10 +23,10 @@ import {
 } from "@/provider-selection/provider-selection";
 import { useDraftStore } from "@/stores/draft-store";
 import {
-  appendComposerInsertion,
-  drainComposerInsertions,
-  useComposerInsertionRevision,
-} from "@/composer/draft/insertion-queue";
+  drainComposerAttachmentCommands,
+  useComposerAttachmentCommandRevision,
+} from "@/composer/draft/attachment-command-queue";
+import { appendWorkspaceFileAttachment } from "@/attachments/workspace-file";
 
 type AttachmentUpdater =
   | UserComposerAttachment[]
@@ -62,7 +62,7 @@ export interface AgentInputDraft {
   setAttachments: (updater: AttachmentUpdater) => void;
   clear: (lifecycle: "sent" | "abandoned") => void;
   isHydrated: boolean;
-  insertionFocusRequestId: number;
+  attachmentFocusRequestId: number;
   composerState: DraftComposerState | null;
 }
 
@@ -86,8 +86,8 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
   const [text, setText] = useState("");
   const [attachments, setAttachmentsState] = useState<UserComposerAttachment[]>([]);
   const [isHydrated, setIsHydrated] = useState(false);
-  const [insertionFocusRequestId, setInsertionFocusRequestId] = useState(0);
-  const insertionRevision = useComposerInsertionRevision(draftKey);
+  const [attachmentFocusRequestId, setAttachmentFocusRequestId] = useState(0);
+  const attachmentCommandRevision = useComposerAttachmentCommandRevision(draftKey);
   const draftGenerationRef = useRef(0);
   const hydratedGenerationRef = useRef(0);
 
@@ -157,22 +157,22 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     if (!isHydrated) {
       return;
     }
-    const commands = drainComposerInsertions(draftKey);
+    const commands = drainComposerAttachmentCommands(draftKey);
     if (commands.length === 0) {
       return;
     }
-    setText((currentText) =>
+    setAttachmentsState((currentAttachments) =>
       commands.reduce(
-        (nextText, command) =>
-          appendComposerInsertion({ currentText: nextText, insertionText: command.text }),
-        currentText,
+        (nextAttachments, command) =>
+          appendWorkspaceFileAttachment(nextAttachments, command.attachment),
+        currentAttachments,
       ),
     );
     const finalCommand = commands[commands.length - 1];
     if (finalCommand) {
-      setInsertionFocusRequestId(finalCommand.id);
+      setAttachmentFocusRequestId(finalCommand.id);
     }
-  }, [draftKey, insertionRevision, isHydrated]);
+  }, [attachmentCommandRevision, draftKey, isHydrated]);
 
   useEffect(() => {
     const currentGeneration = draftGenerationRef.current;
@@ -333,7 +333,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     setAttachments,
     clear,
     isHydrated,
-    insertionFocusRequestId,
+    attachmentFocusRequestId,
     composerState,
   };
 }

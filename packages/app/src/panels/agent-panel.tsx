@@ -1131,7 +1131,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
     setAttachments,
     clear,
     isHydrated,
-    insertionFocusRequestId,
+    attachmentFocusRequestId,
     composerState,
   } = rawAgentInputDraft;
   const agentInputDraft = useMemo(
@@ -1142,7 +1142,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
       setAttachments,
       clear,
       isHydrated,
-      insertionFocusRequestId,
+      attachmentFocusRequestId,
       composerState,
     }),
     [
@@ -1152,7 +1152,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
       setAttachments,
       clear,
       isHydrated,
-      insertionFocusRequestId,
+      attachmentFocusRequestId,
       composerState,
     ],
   );
@@ -1526,7 +1526,7 @@ function ActiveAgentComposer({
         cwd={cwd}
         clearDraft={agentInputDraft.clear}
         autoFocus={isPaneFocused}
-        autoFocusKey={String(agentInputDraft.insertionFocusRequestId)}
+        autoFocusKey={String(agentInputDraft.attachmentFocusRequestId)}
         isSubmitLoading={isSubmitLoading}
         onAttentionInputFocus={onAttentionInputFocus}
         onAttentionPromptSend={onAttentionPromptSend}
