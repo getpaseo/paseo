@@ -44,6 +44,9 @@ function shouldOmitEmptyOtherFromPermissionWire(
  * Adapts typed form answers to the existing question permission response shape.
  * The reusable form model stays independent from provider display labels, while
  * the established permission flow continues to submit header-keyed strings.
+ * Multi-select answers remain in definition order in `getAnswers()`, but this
+ * legacy wire adapter emits selected labels in selection order to preserve the
+ * existing question flow.
  */
 export function buildQuestionPermissionAnswers(
   state: QuestionFormState,
