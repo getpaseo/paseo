@@ -217,3 +217,50 @@ export function resolvePendingModifierDataInput(args: {
     clearPendingModifiers: true,
   };
 }
+
+export interface TerminalShortcutInput {
+  key: string;
+  ctrl: boolean;
+  shift: boolean;
+  alt: boolean;
+  meta: boolean;
+}
+
+// macOS-standard terminal shortcuts that xterm.js's built-in translation does not
+// emit in a form readline understands. For modifier + arrow keys, xterm always
+// produces the CSI modifier-encoded form (Alt+Left -> `\x1b[1;3D`, Meta+Left ->
+// `\x1b[1;9D`), but the default bash/zsh readline on macOS binds word/line motion
+// to the legacy Esc-prefix and control forms instead:
+//   backward-word  = `\eb`   forward-word = `\ef`
+//   beginning-of-line = `\C-a` (\x01)   end-of-line = `\C-e` (\x05)
+// We intercept the modifier+arrow combos and return the readline-default bytes so
+// Option / Cmd + arrows jump by word / line out of the box.
+//
+// `macOptionIsMeta: true` already covers Option + letter (Option+B -> `\x1bb`), so
+// this only fills the arrow-key gap. Returns null when the combo is not one we
+// remap, so the caller can let xterm handle it normally.
+export function resolveMacTerminalShortcut(input: TerminalShortcutInput): string | null {
+  // Require exactly one of alt/meta and no shift/ctrl, so we don't clobber
+  // selection (shift) or other modifier combos.
+  if (input.shift || input.ctrl || (input.alt && input.meta) || (!input.alt && !input.meta)) {
+    return null;
+  }
+
+  if (input.meta) {
+    switch (input.key) {
+      case "ArrowLeft":
+        return "\x01"; // Ctrl-A: beginning-of-line
+      case "ArrowRight":
+        return "\x05"; // Ctrl-E: end-of-line
+    }
+  } else {
+    switch (input.key) {
+      case "ArrowLeft":
+        return "\x1bb"; // Esc+b: backward-word
+      case "ArrowRight":
+        return "\x1bf"; // Esc+f: forward-word
+    }
+  }
+
+  return null;
+}

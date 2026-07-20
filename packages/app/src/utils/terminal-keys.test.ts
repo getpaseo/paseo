@@ -7,6 +7,7 @@ import {
   mergeTerminalModifiers,
   normalizeDomTerminalKey,
   normalizeTerminalTransportKey,
+  resolveMacTerminalShortcut,
   resolvePendingModifierDataInput,
   shouldInterceptDomTerminalKey,
 } from "./terminal-keys";
@@ -349,5 +350,54 @@ describe("terminal key helpers", () => {
       mode: "raw",
       clearPendingModifiers: false,
     });
+  });
+});
+
+describe("resolveMacTerminalShortcut", () => {
+  const none = { ctrl: false, shift: false, alt: false, meta: false };
+
+  it("maps Option+Left/Right to readline word-jump sequences", () => {
+    expect(resolveMacTerminalShortcut({ ...none, key: "ArrowLeft", alt: true })).toBe("\x1bb");
+    expect(resolveMacTerminalShortcut({ ...none, key: "ArrowRight", alt: true })).toBe("\x1bf");
+  });
+
+  it("maps Cmd+Left/Right to readline line-edge sequences", () => {
+    expect(resolveMacTerminalShortcut({ ...none, key: "ArrowLeft", meta: true })).toBe("\x01");
+    expect(resolveMacTerminalShortcut({ ...none, key: "ArrowRight", meta: true })).toBe("\x05");
+  });
+
+  it("returns null for plain arrows without a mac modifier", () => {
+    expect(resolveMacTerminalShortcut({ ...none, key: "ArrowLeft" })).toBeNull();
+    expect(resolveMacTerminalShortcut({ ...none, key: "ArrowRight" })).toBeNull();
+  });
+
+  it("ignores Shift so selection and other shift combos stay with xterm", () => {
+    expect(
+      resolveMacTerminalShortcut({ ...none, key: "ArrowLeft", alt: true, shift: true }),
+    ).toBeNull();
+    expect(
+      resolveMacTerminalShortcut({ ...none, key: "ArrowLeft", meta: true, shift: true }),
+    ).toBeNull();
+  });
+
+  it("ignores Ctrl so Ctrl+arrow stays with xterm", () => {
+    expect(
+      resolveMacTerminalShortcut({ ...none, key: "ArrowLeft", alt: true, ctrl: true }),
+    ).toBeNull();
+    expect(
+      resolveMacTerminalShortcut({ ...none, key: "ArrowLeft", meta: true, ctrl: true }),
+    ).toBeNull();
+  });
+
+  it("ignores combined Cmd+Option arrows", () => {
+    expect(
+      resolveMacTerminalShortcut({ ...none, key: "ArrowLeft", alt: true, meta: true }),
+    ).toBeNull();
+  });
+
+  it("ignores non-arrow keys even with Option or Cmd", () => {
+    expect(resolveMacTerminalShortcut({ ...none, key: "b", alt: true })).toBeNull();
+    expect(resolveMacTerminalShortcut({ ...none, key: "c", meta: true })).toBeNull();
+    expect(resolveMacTerminalShortcut({ ...none, key: "Backspace", meta: true })).toBeNull();
   });
 });

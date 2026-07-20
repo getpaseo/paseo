@@ -20,6 +20,7 @@ import {
   mergeTerminalModifiers,
   normalizeDomTerminalKey,
   normalizeTerminalTransportKey,
+  resolveMacTerminalShortcut,
   shouldInterceptDomTerminalKey,
 } from "@/utils/terminal-keys";
 import { renderTerminalSnapshotToAnsi } from "./terminal-snapshot";
@@ -438,6 +439,13 @@ export class TerminalEmulatorRuntime {
         return true;
       }
 
+      // macOS Option/Cmd + arrows: xterm emits CSI modifier forms (\x1b[1;3D etc.)
+      // that macOS default readline doesn't bind. Remap to the readline-default
+      // word/line motion bytes so these shortcuts behave like a native terminal.
+      if (this.handleMacShortcut(event, normalizedKey)) {
+        return false;
+      }
+
       if (
         !shouldInterceptDomTerminalKey({
           key: normalizedKey,
@@ -722,6 +730,28 @@ export class TerminalEmulatorRuntime {
 
   blur(): void {
     this.terminal?.blur();
+  }
+
+  // macOS Option/Cmd + arrows remap. Returns true when the event was consumed
+  // (shortcut matched and the readline-default bytes were sent to the PTY).
+  private handleMacShortcut(event: KeyboardEvent, normalizedKey: string): boolean {
+    if (!isMac) {
+      return false;
+    }
+    const sequence = resolveMacTerminalShortcut({
+      key: normalizedKey,
+      ctrl: event.ctrlKey,
+      shift: event.shiftKey,
+      alt: event.altKey,
+      meta: event.metaKey,
+    });
+    if (sequence === null) {
+      return false;
+    }
+    this.callbacks.onInput?.(sequence);
+    event.preventDefault();
+    event.stopPropagation();
+    return true;
   }
 
   private refreshVisibleRows(): void {
