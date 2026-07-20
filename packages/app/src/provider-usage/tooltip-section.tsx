@@ -1,17 +1,10 @@
 import { useTranslation } from "react-i18next";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
+import { findActiveProviderSessionWindow, findActiveProviderUsage } from "./active-provider";
 import { ProviderUsageCard } from "./card";
-import type { ProviderUsage, ProviderUsageView } from "./types";
-
-function matchProvider(
-  providers: ProviderUsage[],
-  activeProviderId: string | null | undefined,
-): ProviderUsage | null {
-  if (!activeProviderId) return null;
-  const target = activeProviderId.toLowerCase();
-  return providers.find((usage) => usage.providerId.toLowerCase() === target) ?? null;
-}
+import { ProviderUsageWindowBar } from "./window-bar";
+import type { ProviderUsageView } from "./types";
 
 // Renders the active agent's provider usage inside the context-meter tooltip.
 // Returns nothing when the active provider has no usage entry, so the meter's
@@ -42,7 +35,7 @@ export function ProviderUsageTooltipSection({
     );
   }
 
-  const usage = matchProvider(view.payload.providers, activeProviderId);
+  const usage = findActiveProviderUsage(view.payload.providers, activeProviderId);
   if (!usage) return null;
 
   return (
@@ -50,6 +43,27 @@ export function ProviderUsageTooltipSection({
       <View style={styles.divider} />
       <ProviderUsageCard usage={usage} compact />
     </>
+  );
+}
+
+// Compact composer layouts show the active provider's session limit inline so
+// users do not need to open the context-window tooltip to compare the two.
+export function ProviderUsageMobileSession({
+  view,
+  activeProviderId,
+}: {
+  view: ProviderUsageView;
+  activeProviderId: string | null | undefined;
+}) {
+  if (view.kind !== "ready") return null;
+
+  const sessionWindow = findActiveProviderSessionWindow(view.payload.providers, activeProviderId);
+  if (!sessionWindow) return null;
+
+  return (
+    <View style={styles.mobileSession} testID="provider-usage-mobile-session">
+      <ProviderUsageWindowBar window={sessionWindow} />
+    </View>
   );
 }
 
@@ -72,5 +86,8 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.palette.red[300],
     fontSize: theme.fontSize.sm,
     lineHeight: theme.fontSize.sm * 1.4,
+  },
+  mobileSession: {
+    width: 120,
   },
 }));

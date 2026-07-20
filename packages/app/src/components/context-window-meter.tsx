@@ -4,7 +4,10 @@ import Svg, { Circle } from "react-native-svg";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { ProviderUsageTooltipSection } from "@/provider-usage/tooltip-section";
+import {
+  ProviderUsageMobileSession,
+  ProviderUsageTooltipSection,
+} from "@/provider-usage/tooltip-section";
 import { useProviderUsage } from "@/provider-usage/use-provider-usage";
 import { formatTokenCount } from "./context-window-meter.utils";
 
@@ -109,9 +112,10 @@ export function ContextWindowMeter({
   const { theme } = useUnistyles();
   const { t } = useTranslation();
   const [isTooltipOpen, setIsTooltipOpen] = useState(false);
+  const shouldFetchProviderUsage = isTooltipOpen || (showPercentage && provider != null);
   const { view: providerUsageView, refresh: refreshProviderUsage } = useProviderUsage(
     serverId ?? null,
-    { enabled: isTooltipOpen },
+    { enabled: shouldFetchProviderUsage },
   );
   const percentage =
     maxTokens !== null && usedTokens !== null ? getUsagePercentage(maxTokens, usedTokens) : null;
@@ -174,48 +178,53 @@ export function ContextWindowMeter({
       enabledOnDesktop
       enabledOnMobile
     >
-      <TooltipTrigger asChild triggerRefProp="ref">
-        <Pressable
-          style={containerStyle}
-          testID="context-window-meter"
-          accessibilityRole="image"
-          accessibilityLabel={t("contextWindow.accessibility", {
-            percentage: roundedPercentage,
-          })}
-        >
-          <Svg
-            width={svgSize}
-            height={svgSize}
-            viewBox={`0 0 ${svgSize} ${svgSize}`}
-            style={styles.svg}
-            accessibilityElementsHidden
-            importantForAccessibility="no-hide-descendants"
+      <View style={showPercentage ? styles.mobileUsage : undefined}>
+        <TooltipTrigger asChild triggerRefProp="ref">
+          <Pressable
+            style={containerStyle}
+            testID="context-window-meter"
+            accessibilityRole="image"
+            accessibilityLabel={t("contextWindow.accessibility", {
+              percentage: roundedPercentage,
+            })}
           >
-            <Circle
-              cx={center}
-              cy={center}
-              r={radius}
-              fill="none"
-              stroke={colors.track}
-              strokeWidth={strokeWidth}
-            />
-            <Circle
-              cx={center}
-              cy={center}
-              r={radius}
-              fill="none"
-              stroke={colors.progress}
-              strokeWidth={strokeWidth}
-              strokeLinecap="round"
-              strokeDasharray={circumference}
-              strokeDashoffset={dashOffset}
-            />
-          </Svg>
-          {showPercentage ? (
-            <Text style={styles.percentageLabel}>{`${roundedPercentage}%`}</Text>
-          ) : null}
-        </Pressable>
-      </TooltipTrigger>
+            <Svg
+              width={svgSize}
+              height={svgSize}
+              viewBox={`0 0 ${svgSize} ${svgSize}`}
+              style={styles.svg}
+              accessibilityElementsHidden
+              importantForAccessibility="no-hide-descendants"
+            >
+              <Circle
+                cx={center}
+                cy={center}
+                r={radius}
+                fill="none"
+                stroke={colors.track}
+                strokeWidth={strokeWidth}
+              />
+              <Circle
+                cx={center}
+                cy={center}
+                r={radius}
+                fill="none"
+                stroke={colors.progress}
+                strokeWidth={strokeWidth}
+                strokeLinecap="round"
+                strokeDasharray={circumference}
+                strokeDashoffset={dashOffset}
+              />
+            </Svg>
+            {showPercentage ? (
+              <Text style={styles.percentageLabel}>{`${roundedPercentage}%`}</Text>
+            ) : null}
+          </Pressable>
+        </TooltipTrigger>
+        {showPercentage ? (
+          <ProviderUsageMobileSession view={providerUsageView} activeProviderId={provider} />
+        ) : null}
+      </View>
       <TooltipContent side="top" align="center" offset={8}>
         <View style={styles.tooltipContent}>
           <Text style={styles.tooltipTitle}>{t("contextWindow.title")}</Text>
@@ -263,6 +272,10 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,
+  },
+  mobileUsage: {
+    alignItems: "stretch",
+    gap: theme.spacing[1],
   },
   skeletonLabel: {
     width: 22,
