@@ -2738,6 +2738,65 @@ describe("OpenCode provider subagent contract", () => {
     }
   });
 
+  test("does not adopt late output from an interrupted Paseo turn", async () => {
+    const runtime = new TestOpenCodeHarness();
+    const openCode = new TestOpenCodeClient();
+    openCode.sessionCreateResponse = { data: { id: "ses_parent_interrupted" } };
+    openCode.sessionPromptAsyncEvents = [];
+    runtime.enqueueClient(openCode);
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const parent = await client.createSession({
+      provider: "opencode",
+      cwd: "/workspace/repo",
+    });
+    const events: AgentStreamEvent[] = [];
+    const permissionRequested = createTestDeferred<void>();
+    parent.subscribe((event) => {
+      events.push(event);
+      if (event.type === "permission_requested") {
+        permissionRequested.resolve();
+      }
+    });
+
+    try {
+      await parent.startTurn("Start from Paseo");
+      await parent.interrupt();
+
+      for (const event of assistantTurnEvents({
+        sessionId: "ses_parent_interrupted",
+        text: "Late interrupted response.",
+      })) {
+        openCode.emitEvent(event);
+      }
+      openCode.emitEvent({
+        type: "permission.asked",
+        properties: {
+          id: "perm_after_interrupted_output",
+          sessionID: "ses_parent_interrupted",
+          permission: "bash",
+          patterns: ["npm test"],
+          metadata: { command: "npm test", cwd: "/workspace/repo" },
+        },
+      });
+
+      await permissionRequested.promise;
+      expect(events.filter((event) => event.type !== "permission_requested")).toEqual([
+        { type: "turn_started", provider: "opencode", turnId: "opencode-turn-0" },
+        {
+          type: "turn_canceled",
+          provider: "opencode",
+          reason: "interrupted",
+          turnId: "opencode-turn-0",
+        },
+      ]);
+    } finally {
+      await parent.close();
+    }
+  });
+
   test("synthesizes an autonomous turn for adopted child permissions", async () => {
     const { child, childClient, parent } = await createAdoptedChildSession();
     const completed = createTestDeferred<void>();

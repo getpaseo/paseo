@@ -3567,6 +3567,9 @@ class OpenCodeAgentSession implements AgentSession {
         foregroundEvents.push(translatedEvent);
       }
     }
+    if (this.shouldSuppressStaleInterruptedEvent(event, eventCount)) {
+      return;
+    }
     if (!turnId && this.shouldStartAutonomousTurn(event, foregroundEvents)) {
       turnId = this.startAutonomousTurn();
     }
@@ -3578,18 +3581,6 @@ class OpenCodeAgentSession implements AgentSession {
         type: event.type,
       });
       return;
-    }
-    if (this.suppressTerminalUntilNextUserMessage) {
-      if (isOpenCodeUserMessageEvent(event, this.sessionId)) {
-        this.suppressTerminalUntilNextUserMessage = false;
-      } else if (isOpenCodeTerminalEvent(event, this.sessionId)) {
-        this.traceOpenCode("provider.opencode.event.skip", {
-          n: eventCount,
-          reason: "stale_interrupt_terminal",
-          type: event.type,
-        });
-        return;
-      }
     }
     this.traceOpenCode("provider.opencode.parsed_event", {
       turnId,
@@ -3620,6 +3611,25 @@ class OpenCodeAgentSession implements AgentSession {
     }
   }
 
+  private shouldSuppressStaleInterruptedEvent(event: OpenCodeEvent, eventCount: number): boolean {
+    if (!this.suppressTerminalUntilNextUserMessage) {
+      return false;
+    }
+    if (isOpenCodeUserMessageEvent(event, this.sessionId)) {
+      this.suppressTerminalUntilNextUserMessage = false;
+      return false;
+    }
+    if (!isOpenCodeTerminalEvent(event, this.sessionId)) {
+      return false;
+    }
+    this.traceOpenCode("provider.opencode.event.skip", {
+      n: eventCount,
+      reason: "stale_interrupt_terminal",
+      type: event.type,
+    });
+    return true;
+  }
+
   private emitBackgroundPermissionRequests(events: readonly AgentStreamEvent[]): void {
     for (const event of events) {
       if (event.type === "permission_requested") {
@@ -3632,7 +3642,7 @@ class OpenCodeAgentSession implements AgentSession {
     event: OpenCodeEvent,
     foregroundEvents: readonly AgentStreamEvent[],
   ): boolean {
-    if (this.activeForegroundTurnId) {
+    if (this.activeForegroundTurnId || this.suppressTerminalUntilNextUserMessage) {
       return false;
     }
     if (getOpenCodeEventSessionId(event) !== this.sessionId) {
