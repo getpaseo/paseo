@@ -86,6 +86,12 @@ async function* waitForEventStreamEnd(signal: Promise<void>): AsyncGenerator<Ope
   yield* [];
 }
 
+async function flushMicrotasks(rounds = 20): Promise<void> {
+  for (let i = 0; i < rounds; i += 1) {
+    await Promise.resolve();
+  }
+}
+
 function hasCompletedTurn(events: AgentStreamEvent[]): boolean {
   return events.some((event) => event.type === "turn_completed");
 }
@@ -1453,7 +1459,10 @@ describe("OpenCode adapter startTurn error handling", () => {
     expect(turn.turnFailed).toBe(false);
     expect(turn.assistantMessages.map((message) => message.text).join("")).toBe("Hello world");
     expect(globalEvent).toHaveBeenCalledTimes(2);
-    expect(status).toHaveBeenCalledWith({ directory: "/tmp/test" });
+    expect(status).toHaveBeenCalledWith(
+      { directory: "/tmp/test" },
+      { signal: expect.any(AbortSignal) },
+    );
     await session.close();
   });
 
@@ -1863,6 +1872,505 @@ describe("OpenCode adapter startTurn error handling", () => {
       }),
     ]);
     await session.close();
+  });
+
+  test("does not re-emit a live-delivered permission re-listed during stream recovery", async () => {
+    const eventsGate = createTestDeferred<void>();
+    const permission = {
+      id: "perm_dup",
+      sessionID: "ses_unit_test",
+      permission: "bash",
+      patterns: ["npm test"],
+      metadata: { command: "npm test", cwd: "/tmp/test" },
+    };
+    const globalEvent = vi
+      .fn()
+      .mockResolvedValueOnce({
+        stream: (async function* () {
+          await eventsGate.promise;
+          yield { type: "permission.asked", properties: permission };
+        })(),
+      })
+      .mockResolvedValueOnce({
+        stream: (async function* () {
+          yield {
+            type: "session.status",
+            properties: { sessionID: "ses_unit_test", status: { type: "idle" } },
+          };
+        })(),
+      });
+    const fakeClient = {
+      global: { event: globalEvent },
+      permission: { list: vi.fn().mockResolvedValue({ data: [permission], error: undefined }) },
+      question: { list: vi.fn().mockResolvedValue({ data: [], error: undefined }) },
+      session: {
+        abort: vi.fn().mockResolvedValue({ data: true, error: undefined }),
+        messages: vi.fn().mockResolvedValue({ data: [], error: undefined }),
+        promptAsync: vi.fn().mockImplementation(async () => {
+          eventsGate.resolve();
+          return { data: {}, error: undefined };
+        }),
+        status: vi.fn().mockResolvedValue({
+          data: { ses_unit_test: { type: "busy" } },
+          error: undefined,
+        }),
+      },
+    } as never;
+    const session = new __openCodeInternals.OpenCodeAgentSession(
+      { provider: "opencode", cwd: "/tmp/test" },
+      fakeClient,
+      "ses_unit_test",
+      createTestLogger(),
+    );
+
+    const turn = await collectTurnEvents(streamSession(session, "hello"));
+
+    expect(turn.turnCompleted).toBe(true);
+    expect(turn.events.filter((event) => event.type === "permission_requested")).toEqual([
+      expect.objectContaining({ request: expect.objectContaining({ id: "perm_dup" }) }),
+    ]);
+    await session.close();
+  });
+
+  test("fails the turn when the recovered assistant message carries a provider error", async () => {
+    const eventsGate = createTestDeferred<void>();
+    const globalEvent = vi.fn().mockResolvedValue({
+      stream: (async function* () {
+        await eventsGate.promise;
+        yield {
+          type: "message.updated",
+          properties: {
+            info: { id: "msg_err", sessionID: "ses_unit_test", role: "assistant" },
+          },
+        };
+      })(),
+    });
+    const messages = vi
+      .fn()
+      .mockResolvedValueOnce({ data: [], error: undefined })
+      .mockResolvedValue({
+        data: [
+          {
+            info: {
+              id: "msg_err",
+              sessionID: "ses_unit_test",
+              role: "assistant",
+              time: { created: Date.now(), completed: Date.now() + 1 },
+              error: { name: "ProviderError", data: { message: "boom" } },
+            },
+            parts: [],
+          },
+        ],
+        error: undefined,
+      });
+    const fakeClient = {
+      global: { event: globalEvent },
+      permission: { list: vi.fn().mockResolvedValue({ data: [], error: undefined }) },
+      question: { list: vi.fn().mockResolvedValue({ data: [], error: undefined }) },
+      session: {
+        abort: vi.fn().mockResolvedValue({ data: true, error: undefined }),
+        messages,
+        promptAsync: vi.fn().mockImplementation(async () => {
+          eventsGate.resolve();
+          return { data: {}, error: undefined };
+        }),
+        status: vi.fn().mockResolvedValue({ data: {}, error: undefined }),
+      },
+    } as never;
+    const session = new __openCodeInternals.OpenCodeAgentSession(
+      { provider: "opencode", cwd: "/tmp/test" },
+      fakeClient,
+      "ses_unit_test",
+      createTestLogger(),
+    );
+
+    const turn = await collectTurnEvents(streamSession(session, "hello"));
+
+    expect(turn.turnFailed).toBe(true);
+    expect(turn.error).toContain("boom");
+    await session.close();
+  });
+
+  test("recovers reasoning and tool parts missing from the streamed timeline", async () => {
+    const eventsGate = createTestDeferred<void>();
+    const globalEvent = vi.fn().mockResolvedValue({
+      stream: (async function* () {
+        await eventsGate.promise;
+        yield {
+          type: "message.updated",
+          properties: {
+            info: { id: "msg_rich", sessionID: "ses_unit_test", role: "assistant" },
+          },
+        };
+      })(),
+    });
+    const messages = vi
+      .fn()
+      .mockResolvedValueOnce({ data: [], error: undefined })
+      .mockResolvedValue({
+        data: [
+          {
+            info: {
+              id: "msg_rich",
+              sessionID: "ses_unit_test",
+              role: "assistant",
+              time: { created: Date.now(), completed: Date.now() + 1 },
+            },
+            parts: [
+              {
+                id: "prt_reason",
+                sessionID: "ses_unit_test",
+                messageID: "msg_rich",
+                type: "reasoning",
+                text: "Thinking harder",
+              },
+              {
+                id: "prt_tool",
+                sessionID: "ses_unit_test",
+                messageID: "msg_rich",
+                type: "tool",
+                tool: "bash",
+                callID: "call_bash",
+                state: { status: "completed", input: { command: "ls" }, output: "ok" },
+              },
+              {
+                id: "prt_done",
+                sessionID: "ses_unit_test",
+                messageID: "msg_rich",
+                type: "text",
+                text: "Done.",
+              },
+            ],
+          },
+        ],
+        error: undefined,
+      });
+    const fakeClient = {
+      global: { event: globalEvent },
+      permission: { list: vi.fn().mockResolvedValue({ data: [], error: undefined }) },
+      question: { list: vi.fn().mockResolvedValue({ data: [], error: undefined }) },
+      session: {
+        abort: vi.fn().mockResolvedValue({ data: true, error: undefined }),
+        messages,
+        promptAsync: vi.fn().mockImplementation(async () => {
+          eventsGate.resolve();
+          return { data: {}, error: undefined };
+        }),
+        status: vi.fn().mockResolvedValue({ data: {}, error: undefined }),
+      },
+    } as never;
+    const session = new __openCodeInternals.OpenCodeAgentSession(
+      { provider: "opencode", cwd: "/tmp/test" },
+      fakeClient,
+      "ses_unit_test",
+      createTestLogger(),
+    );
+
+    const turn = await collectTurnEvents(streamSession(session, "hello"));
+
+    expect(turn.turnCompleted).toBe(true);
+    expect(
+      turn.allTimelineItems.filter((item) => item.type === "reasoning").map((item) => item.text),
+    ).toEqual(["Thinking harder"]);
+    expect(turn.toolCalls).toEqual([expect.objectContaining({ callId: "call_bash" })]);
+    expect(turn.assistantMessages.map((item) => item.text)).toEqual(["Done."]);
+    await session.close();
+  });
+
+  test("suppresses buffered stream deltas that replay recovered assistant text", async () => {
+    const eventsGate = createTestDeferred<void>();
+    const globalEvent = vi
+      .fn()
+      .mockResolvedValueOnce({
+        stream: (async function* () {
+          await eventsGate.promise;
+          yield {
+            type: "message.updated",
+            properties: {
+              info: { id: "msg_assistant", sessionID: "ses_unit_test", role: "assistant" },
+            },
+          };
+          yield {
+            type: "message.part.delta",
+            properties: {
+              sessionID: "ses_unit_test",
+              messageID: "msg_assistant",
+              partID: "prt_text",
+              field: "text",
+              delta: "Hello ",
+            },
+          };
+        })(),
+      })
+      .mockResolvedValueOnce({
+        stream: (async function* () {
+          // Buffered replay of text the recovery pass already bridged.
+          yield {
+            type: "message.part.delta",
+            properties: {
+              sessionID: "ses_unit_test",
+              messageID: "msg_assistant",
+              partID: "prt_text",
+              field: "text",
+              delta: "world",
+            },
+          };
+          yield {
+            type: "session.status",
+            properties: { sessionID: "ses_unit_test", status: { type: "idle" } },
+          };
+        })(),
+      });
+    const messages = vi
+      .fn()
+      .mockResolvedValueOnce({ data: [], error: undefined })
+      .mockResolvedValue({
+        data: [
+          {
+            info: {
+              id: "msg_assistant",
+              sessionID: "ses_unit_test",
+              role: "assistant",
+              time: { created: Date.now() },
+            },
+            parts: [
+              {
+                id: "prt_text",
+                sessionID: "ses_unit_test",
+                messageID: "msg_assistant",
+                type: "text",
+                text: "Hello world",
+              },
+            ],
+          },
+        ],
+        error: undefined,
+      });
+    const fakeClient = {
+      global: { event: globalEvent },
+      permission: { list: vi.fn().mockResolvedValue({ data: [], error: undefined }) },
+      question: { list: vi.fn().mockResolvedValue({ data: [], error: undefined }) },
+      session: {
+        abort: vi.fn().mockResolvedValue({ data: true, error: undefined }),
+        messages,
+        promptAsync: vi.fn().mockImplementation(async () => {
+          eventsGate.resolve();
+          return { data: {}, error: undefined };
+        }),
+        status: vi.fn().mockResolvedValue({
+          data: { ses_unit_test: { type: "busy" } },
+          error: undefined,
+        }),
+      },
+    } as never;
+    const session = new __openCodeInternals.OpenCodeAgentSession(
+      { provider: "opencode", cwd: "/tmp/test" },
+      fakeClient,
+      "ses_unit_test",
+      createTestLogger(),
+    );
+
+    const turn = await collectTurnEvents(streamSession(session, "hello"));
+
+    expect(turn.turnCompleted).toBe(true);
+    expect(turn.assistantMessages.map((item) => item.text).join("")).toBe("Hello world");
+    await session.close();
+  });
+
+  test("bridges every assistant message when a recovered turn spans several", async () => {
+    const eventsGate = createTestDeferred<void>();
+    const globalEvent = vi.fn().mockResolvedValue({
+      stream: (async function* () {
+        await eventsGate.promise;
+        yield {
+          type: "message.updated",
+          properties: {
+            info: { id: "msg_first", sessionID: "ses_unit_test", role: "assistant" },
+          },
+        };
+        yield {
+          type: "message.part.delta",
+          properties: {
+            sessionID: "ses_unit_test",
+            messageID: "msg_first",
+            partID: "prt_first",
+            field: "text",
+            delta: "First. ",
+          },
+        };
+      })(),
+    });
+    const messages = vi
+      .fn()
+      .mockResolvedValueOnce({ data: [], error: undefined })
+      .mockResolvedValue({
+        data: [
+          {
+            info: {
+              id: "msg_first",
+              sessionID: "ses_unit_test",
+              role: "assistant",
+              time: { created: Date.now() },
+            },
+            parts: [
+              {
+                id: "prt_first",
+                sessionID: "ses_unit_test",
+                messageID: "msg_first",
+                type: "text",
+                text: "First. ",
+              },
+            ],
+          },
+          {
+            info: {
+              id: "msg_second",
+              sessionID: "ses_unit_test",
+              role: "assistant",
+              time: { created: Date.now(), completed: Date.now() + 1 },
+            },
+            parts: [
+              {
+                id: "prt_second",
+                sessionID: "ses_unit_test",
+                messageID: "msg_second",
+                type: "text",
+                text: "Second.",
+              },
+            ],
+          },
+        ],
+        error: undefined,
+      });
+    const fakeClient = {
+      global: { event: globalEvent },
+      permission: { list: vi.fn().mockResolvedValue({ data: [], error: undefined }) },
+      question: { list: vi.fn().mockResolvedValue({ data: [], error: undefined }) },
+      session: {
+        abort: vi.fn().mockResolvedValue({ data: true, error: undefined }),
+        messages,
+        promptAsync: vi.fn().mockImplementation(async () => {
+          eventsGate.resolve();
+          return { data: {}, error: undefined };
+        }),
+        status: vi.fn().mockResolvedValue({ data: {}, error: undefined }),
+      },
+    } as never;
+    const session = new __openCodeInternals.OpenCodeAgentSession(
+      { provider: "opencode", cwd: "/tmp/test" },
+      fakeClient,
+      "ses_unit_test",
+      createTestLogger(),
+    );
+
+    const turn = await collectTurnEvents(streamSession(session, "hello"));
+
+    expect(turn.turnCompleted).toBe(true);
+    expect(turn.assistantMessages.map((item) => item.text)).toEqual(["First. ", "Second."]);
+    await session.close();
+  });
+
+  test("close resolves promptly while the reconnect loop is sleeping between attempts", async () => {
+    vi.useFakeTimers();
+    try {
+      const streamGate = createTestDeferred<void>();
+      const promptStarted = createTestDeferred<void>();
+      const globalEvent = vi
+        .fn()
+        .mockResolvedValueOnce({ stream: waitForEventStreamEnd(streamGate.promise) })
+        .mockRejectedValue(new Error("connect ECONNREFUSED 127.0.0.1:1"));
+      const fakeClient = {
+        global: { event: globalEvent },
+        permission: { list: vi.fn().mockResolvedValue({ data: [], error: undefined }) },
+        question: { list: vi.fn().mockResolvedValue({ data: [], error: undefined }) },
+        session: {
+          abort: vi.fn().mockResolvedValue({ data: true, error: undefined }),
+          messages: vi.fn().mockResolvedValue({ data: [], error: undefined }),
+          promptAsync: vi.fn().mockImplementation(() => {
+            promptStarted.resolve();
+            return new Promise(() => {});
+          }),
+          status: vi.fn().mockResolvedValue({ data: {}, error: undefined }),
+        },
+      } as never;
+      const session = new __openCodeInternals.OpenCodeAgentSession(
+        { provider: "opencode", cwd: "/tmp/test" },
+        fakeClient,
+        "ses_unit_test",
+        createTestLogger(),
+      );
+
+      void collectTurnEvents(streamSession(session, "hello")).catch(() => null);
+      await promptStarted.promise;
+      streamGate.resolve();
+      await flushMicrotasks();
+      expect(globalEvent).toHaveBeenCalledTimes(1);
+
+      let closeSettled = false;
+      const closePromise = session.close().then(() => {
+        closeSettled = true;
+        return undefined;
+      });
+      // No timer advance: the abort signal alone must wake the backoff sleep.
+      await flushMicrotasks();
+      expect(closeSettled).toBe(true);
+      await closePromise;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("reconnect delays double after zero-event cycles", async () => {
+    vi.useFakeTimers();
+    try {
+      const streamGate = createTestDeferred<void>();
+      const promptStarted = createTestDeferred<void>();
+      const globalEvent = vi
+        .fn()
+        .mockResolvedValueOnce({ stream: waitForEventStreamEnd(streamGate.promise) })
+        .mockRejectedValue(new Error("connect ECONNREFUSED 127.0.0.1:1"));
+      const fakeClient = {
+        global: { event: globalEvent },
+        permission: { list: vi.fn().mockResolvedValue({ data: [], error: undefined }) },
+        question: { list: vi.fn().mockResolvedValue({ data: [], error: undefined }) },
+        session: {
+          abort: vi.fn().mockResolvedValue({ data: true, error: undefined }),
+          messages: vi.fn().mockResolvedValue({ data: [], error: undefined }),
+          promptAsync: vi.fn().mockImplementation(() => {
+            promptStarted.resolve();
+            return new Promise(() => {});
+          }),
+          status: vi.fn().mockResolvedValue({ data: {}, error: undefined }),
+        },
+      } as never;
+      const session = new __openCodeInternals.OpenCodeAgentSession(
+        { provider: "opencode", cwd: "/tmp/test" },
+        fakeClient,
+        "ses_unit_test",
+        createTestLogger(),
+      );
+
+      void collectTurnEvents(streamSession(session, "hello")).catch(() => null);
+      await promptStarted.promise;
+      streamGate.resolve();
+      // Cycle 1 ends with zero events -> delay 200ms before the next connect.
+      await flushMicrotasks();
+      expect(globalEvent).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(199);
+      expect(globalEvent).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      await flushMicrotasks();
+      // Cycle 2 failed instantly -> delay 400ms.
+      expect(globalEvent).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(399);
+      expect(globalEvent).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(1);
+      await flushMicrotasks();
+      expect(globalEvent).toHaveBeenCalledTimes(3);
+      await session.close();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test("does not recover a compaction summary as assistant output", async () => {
