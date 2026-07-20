@@ -105,6 +105,7 @@ export class TestOpenCodeClient {
   questionRejectResponse: OpenCodeResponse = {};
   questionReplyResponse: OpenCodeResponse = {};
   sessionAbortResponse: OpenCodeResponse = {};
+  sessionAbortImplementation: ((parameters: unknown) => Promise<OpenCodeResponse>) | null = null;
   sessionCommandError: unknown = null;
   sessionCommandEvents: unknown[] = [idleEvent()];
   sessionCommandResponse: OpenCodeResponse = {};
@@ -205,7 +206,9 @@ export class TestOpenCodeClient {
       session: {
         abort: async (parameters: unknown) => {
           this.calls.sessionAbort.push(parameters);
-          return this.sessionAbortResponse;
+          return this.sessionAbortImplementation
+            ? await this.sessionAbortImplementation(parameters)
+            : this.sessionAbortResponse;
         },
         command: async (parameters: unknown) => {
           this.calls.sessionCommand.push(parameters);

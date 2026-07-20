@@ -2652,14 +2652,28 @@ describe("OpenCode provider subagent contract", () => {
     }
   });
 
-  test("hands an autonomous OpenCode turn off to a direct Paseo prompt", async () => {
+  test("aborts an autonomous OpenCode turn before starting a direct Paseo prompt", async () => {
     const runtime = new TestOpenCodeHarness();
     const openCode = new TestOpenCodeClient();
+    const abortDeferred = createTestDeferred<{ data: boolean }>();
     openCode.sessionCreateResponse = { data: { id: "ses_parent_handoff" } };
-    openCode.sessionPromptAsyncEvents = assistantTurnEvents({
-      sessionId: "ses_parent_handoff",
-      text: "Paseo response.",
-    });
+    openCode.sessionAbortImplementation = async () => abortDeferred.promise;
+    openCode.sessionPromptAsyncEvents = [
+      {
+        type: "message.updated",
+        properties: {
+          info: {
+            id: "msg_paseo_user",
+            sessionID: "ses_parent_handoff",
+            role: "user",
+          },
+        },
+      },
+      ...assistantTurnEvents({
+        sessionId: "ses_parent_handoff",
+        text: "Paseo response.",
+      }),
+    ];
     runtime.enqueueClient(openCode);
     const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
       serverManager: runtime,
@@ -2683,13 +2697,38 @@ describe("OpenCode provider subagent contract", () => {
         ]);
       });
 
-      await parent.startTurn("Continue from Paseo");
+      const directTurnPromise = parent.startTurn("Continue from Paseo");
+      await vi.waitFor(() => {
+        expect(openCode.calls.sessionAbort).toEqual([
+          { sessionID: "ses_parent_handoff", directory: "/workspace/repo" },
+        ]);
+      });
+      expect(openCode.calls.sessionPromptAsync).toEqual([]);
+
+      for (const event of assistantTurnEvents({
+        sessionId: "ses_parent_handoff",
+        text: "Late autonomous response.",
+      }).slice(0, -1)) {
+        openCode.emitEvent(event);
+      }
+      await vi.waitFor(() => {
+        expect(turnEventSignatures(events)).toEqual([
+          ["turn_started", "opencode-turn-0"],
+          ["timeline", "opencode-turn-0"],
+        ]);
+      });
+      expect(openCode.calls.sessionPromptAsync).toEqual([]);
+
+      abortDeferred.resolve({ data: true });
+      await directTurnPromise;
 
       await vi.waitFor(() => {
         expect(turnEventSignatures(events)).toEqual([
           ["turn_started", "opencode-turn-0"],
-          ["turn_completed", "opencode-turn-0"],
+          ["timeline", "opencode-turn-0"],
+          ["turn_canceled", "opencode-turn-0"],
           ["turn_started", "opencode-turn-1"],
+          ["timeline", "opencode-turn-1"],
           ["timeline", "opencode-turn-1"],
           ["turn_completed", "opencode-turn-1"],
         ]);
