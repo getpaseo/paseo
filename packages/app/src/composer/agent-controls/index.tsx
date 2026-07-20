@@ -68,6 +68,7 @@ import { showProviderNoticeToast } from "@/utils/provider-notice-toast";
 import { useCommandCenterActions } from "@/command-center/provider";
 import { buildModelChoiceContributions } from "@/command-center/model-contributions";
 import { getCommandCenterProviderIcon } from "@/command-center/provider-icon";
+import { useAgentSettingCommandCenterActions } from "@/command-center/use-agent-setting-actions";
 import { isNative } from "@/constants/platform";
 import {
   resolveComposerControlDensity,
@@ -1605,6 +1606,18 @@ export const AgentControls = memo(function AgentControls({
     },
     [agentId, agentProvider, client, toast, updatePreferences],
   );
+
+  useAgentSettingCommandCenterActions({
+    serverId,
+    agentId,
+    isPaneFocused,
+    provider: agentProvider,
+    providerDefinitions: agentProviderDefinitions,
+    thinkingOptions: modelSelection.thinkingOptions,
+    selectedThinkingId: modelSelection.selectedThinkingId,
+    onSelectThinkingOption: handleSelectThinkingOption,
+    onSetFeature: handleSetFeature,
+  });
 
   const handleModelSelectorOpen = useCallback(() => {
     refetchSnapshotIfStale(agentProvider);

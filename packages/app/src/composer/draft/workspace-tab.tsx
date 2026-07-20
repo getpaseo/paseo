@@ -26,6 +26,17 @@ import { useWorkspaceDraftSubmissionStore } from "@/stores/workspace-draft-submi
 import { useCommandCenterActions } from "@/command-center/provider";
 import { buildModelChoiceContributions } from "@/command-center/model-contributions";
 import { getCommandCenterProviderIcon } from "@/command-center/provider-icon";
+import type { CommandCenterContribution } from "@/command-center/contributions";
+import {
+  buildAgentSettingContributions,
+  buildAgentSettingLabels,
+} from "@/command-center/agent-setting-contributions";
+import {
+  CommandCenterFastModeIcon,
+  CommandCenterPlanModeIcon,
+  CommandCenterThinkingIcon,
+  getCommandCenterModeIcon,
+} from "@/command-center/setting-icon";
 import { encodeImages } from "@/utils/encode-images";
 import type { WorkspaceFileOpenRequest } from "@/workspace/file-open";
 import { shouldAutoFocusWorkspaceDraftComposer } from "@/screens/workspace/workspace-draft-pane-focus";
@@ -90,6 +101,8 @@ function resolveAutoSubmitConfig(
 }
 
 // Reconcile the form's selected mode against the currently discovered modes.
+const EMPTY_COMMAND_CENTER_CONTRIBUTIONS: CommandCenterContribution[] = [];
+
 // The mode picker displays modeOptions[0] when the stored mode isn't in the
 // list (e.g. a globally-remembered "plan" that this workspace's OpenCode config
 // no longer defines), so the submitted mode must match that display — otherwise
@@ -399,6 +412,70 @@ export function WorkspaceDraftAgentTab({
       t,
     ],
   );
+
+  const draftProvider = composerState.selectedProvider;
+  const draftProviderDefinitions = composerState.providerDefinitions;
+  const draftThinkingOptions = composerState.availableThinkingOptions;
+  const draftSelectedThinkingId = composerState.selectedThinkingOptionId;
+  const draftSetThinkingOption = composerState.setThinkingOptionFromUser;
+  const draftModeOptions = composerState.modeOptions;
+  const draftSelectedMode = composerState.selectedMode;
+  const draftSetMode = composerState.setModeFromUser;
+  const draftFeatures = composerState.agentControls.features;
+  const draftOnSetFeature = composerState.agentControls.onSetFeature;
+  const draftFeatureValues = composerState.featureValues;
+  const draftSettingActions = useMemo(() => {
+    if (!draftProvider) {
+      return EMPTY_COMMAND_CENTER_CONTRIBUTIONS;
+    }
+    const featureValues = draftFeatureValues ?? {};
+    return buildAgentSettingContributions({
+      serverId,
+      ownerKey: tabId,
+      provider: draftProvider,
+      labels: buildAgentSettingLabels(t),
+      icons: {
+        thinking: CommandCenterThinkingIcon,
+        planMode: CommandCenterPlanModeIcon,
+        fast: CommandCenterFastModeIcon,
+        mode: (modeId) => getCommandCenterModeIcon(draftProvider, modeId, draftProviderDefinitions),
+      },
+      thinking: {
+        options: draftThinkingOptions,
+        selectedId: draftSelectedThinkingId || null,
+        select: draftSetThinkingOption,
+      },
+      modes: {
+        options: draftModeOptions,
+        selectedId: draftSelectedMode || null,
+        defaultModeId:
+          draftProviderDefinitions.find((definition) => definition.id === draftProvider)
+            ?.defaultModeId ?? null,
+        select: draftSetMode,
+      },
+      features: {
+        list: draftFeatures ?? [],
+        value: (featureId) => featureValues[featureId],
+        set: (featureId, value) => draftOnSetFeature?.(featureId, value),
+      },
+    });
+  }, [
+    serverId,
+    tabId,
+    t,
+    draftProvider,
+    draftProviderDefinitions,
+    draftThinkingOptions,
+    draftSelectedThinkingId,
+    draftSetThinkingOption,
+    draftModeOptions,
+    draftSelectedMode,
+    draftSetMode,
+    draftFeatures,
+    draftOnSetFeature,
+    draftFeatureValues,
+  ]);
+
   const clearDraftInput = draftInput.clear;
   const setDraftText = draftInput.setText;
   const setDraftAttachments = draftInput.setAttachments;
@@ -545,6 +622,11 @@ export function WorkspaceDraftAgentTab({
     sourceId: `draft:${serverId}:${tabId}`,
     enabled: isPaneFocused && !isSubmitting,
     actions: draftModelActions,
+  });
+  useCommandCenterActions({
+    sourceId: `draft-settings:${serverId}:${tabId}`,
+    enabled: isPaneFocused && !isSubmitting,
+    actions: draftSettingActions,
   });
 
   const isReadyForPendingAutoSubmit = Boolean(

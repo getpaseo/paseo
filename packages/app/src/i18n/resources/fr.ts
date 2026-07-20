@@ -66,6 +66,16 @@ export const fr: TranslationResources = {
       modelGroupLabel: "Modèle",
       modelSearchKeywords:
         "changer de modèle modifier le modèle définir le modèle sélectionner le modèle",
+      thinkingGroupLabel: "Raisonnement",
+      thinkingSearchKeywords: "raisonnement effort réflexion",
+      modeGroupLabel: "Mode",
+      modeSearchKeywords: "accès permission approbation mode",
+      planModeGroupLabel: "Mode plan",
+      planModeSearchKeywords: "plan planification mode plan",
+      fastModeGroupLabel: "Rapide",
+      fastModeSearchKeywords: "rapide vitesse faible latence",
+      settingOn: "Activé",
+      settingOff: "Désactivé",
     },
   },
   composer: {
