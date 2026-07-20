@@ -174,6 +174,7 @@ const PI_THINKING_OPTIONS: ReadonlyArray<{
   { id: "medium", label: "Medium", description: "Balanced reasoning", isDefault: true },
   { id: "high", label: "High", description: "Deeper reasoning" },
   { id: "xhigh", label: "XHigh", description: "Maximum reasoning" },
+  { id: "max", label: "Max", description: "Extreme reasoning" },
 ] as const;
 
 export interface PiRpcAgentClientOptions {
@@ -329,7 +330,8 @@ function isPiThinkingLevel(value: string | null | undefined): value is PiThinkin
     value === "low" ||
     value === "medium" ||
     value === "high" ||
-    value === "xhigh"
+    value === "xhigh" ||
+    value === "max"
   );
 }
 
