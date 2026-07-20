@@ -1,7 +1,8 @@
-import { useMemo, type ReactNode } from "react";
+import { useImperativeHandle, useMemo, useRef, type ReactNode, type Ref } from "react";
 import {
   Text,
   View,
+  type LayoutChangeEvent,
   type StyleProp,
   type TextProps,
   type TextStyle,
@@ -14,6 +15,14 @@ interface MarkdownTextSpanProps {
   children: ReactNode;
   onPress?: TextProps["onPress"];
   accessibilityRole?: TextProps["accessibilityRole"];
+  measureRef?: Ref<MarkdownTextSpanMeasureHandle>;
+  onLayout?: (event: LayoutChangeEvent) => void;
+}
+
+export interface MarkdownTextSpanMeasureHandle {
+  measureInWindow: (
+    callback: (x: number, y: number, width: number, height: number) => void,
+  ) => void;
 }
 
 // Android's <Text selectable> enables per-text-node selection natively. Each
@@ -25,9 +34,24 @@ export function MarkdownTextSpan({
   children,
   onPress,
   accessibilityRole,
+  measureRef,
+  onLayout,
 }: MarkdownTextSpanProps) {
+  const textRef = useRef<Text>(null);
+  useImperativeHandle(
+    measureRef,
+    () => ({ measureInWindow: (callback) => textRef.current?.measureInWindow(callback) }),
+    [],
+  );
   return (
-    <Text selectable style={style} onPress={onPress} accessibilityRole={accessibilityRole}>
+    <Text
+      ref={textRef}
+      selectable
+      style={style}
+      onPress={onPress}
+      accessibilityRole={accessibilityRole}
+      onLayout={onLayout}
+    >
       {children}
     </Text>
   );

@@ -573,6 +573,7 @@ export const ru: TranslationResources = {
         copyPath: "Копировать путь к рабочей области",
         copyBranchName: "Скопировать название ветки",
         showSetup: "Показать настройки",
+        findInTab: "Найти на вкладке",
       },
       toasts: {
         workspacePathUnavailable: "Путь Workspace пока недоступен.",
@@ -1813,6 +1814,7 @@ export const ru: TranslationResources = {
         sendMessage: "Отправить сообщение",
         queueMessage: "Сообщение в очереди",
         muteUnmuteVoiceMode: "Отключить голосовой режим /unmute",
+        toggleTimelineSearch: "Найти в панели",
       },
       helpNotes: {
         showKeyboardShortcuts: "Доступно, когда фокус находится не в текстовом поле или терминале.",
@@ -2164,5 +2166,35 @@ export const ru: TranslationResources = {
         cancel: "Отмена",
       },
     },
+  },
+  timelineSearch: {
+    placeholder: "Поиск по хронологии...",
+    noResults: "Нет результатов в загруженной истории",
+    matchCount_one: "{{count}} совпадение",
+    matchCount_other: "{{count}} совпадений",
+    matchCountCapped: "{{count}}+ совпадений",
+    historyLoadFailed:
+      "Не удалось загрузить более старую историю — результаты могут быть неполными",
+    next: "Следующий результат",
+    prev: "Предыдущий результат",
+    close: "Закрыть",
+    searchingHistory: "Поиск по истории…",
+    loadingOlderHistory: "Загрузка более старой истории…",
+    filters: {
+      all: "Все",
+      prompts: "Запросы",
+      messages: "Сообщения",
+      thinking: "Размышления",
+      toolCalls: "Вызовы инструментов",
+      toolOutput: "Вывод инструментов",
+      errors: "Ошибки",
+    },
+  },
+  paneFind: {
+    noMatches: "Нет совпадений",
+    matchCount_one: "{{count}} совпадение",
+    matchCount_other: "{{count}} совпадений",
+    next: "Следующий результат",
+    prev: "Предыдущий результат",
   },
 };

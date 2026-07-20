@@ -1,7 +1,8 @@
-import { useMemo, type ReactNode } from "react";
+import { useCallback, useImperativeHandle, useMemo, useRef, type ReactNode, type Ref } from "react";
 import {
   Text,
   View,
+  type LayoutChangeEvent,
   type StyleProp,
   type TextProps,
   type TextStyle,
@@ -27,6 +28,14 @@ interface MarkdownTextSpanProps {
   // AssistantLinkPressProvider (see assistant-file-links/link-press-context).
   onPress?: TextProps["onPress"];
   accessibilityRole?: TextProps["accessibilityRole"];
+  measureRef?: Ref<MarkdownTextSpanMeasureHandle>;
+  onLayout?: (event: LayoutChangeEvent) => void;
+}
+
+export interface MarkdownTextSpanMeasureHandle {
+  measureInWindow: (
+    callback: (x: number, y: number, width: number, height: number) => void,
+  ) => void;
 }
 
 // Inline span backed by UITextView so iOS gets native word-selection handles.
@@ -38,9 +47,26 @@ export function MarkdownTextSpan({
   children,
   onPress,
   accessibilityRole,
+  measureRef,
+  onLayout,
 }: MarkdownTextSpanProps) {
   const plainStyle = useMemo(() => resolvePlainMarkdownTextStyle(style), [style]);
   const surface = useMarkdownTextSurface();
+  const nativeTargetRef = useRef<LayoutChangeEvent["target"] | null>(null);
+  const captureNativeTarget = useCallback(
+    (event: LayoutChangeEvent) => {
+      nativeTargetRef.current = event.target;
+      onLayout?.(event);
+    },
+    [onLayout],
+  );
+  useImperativeHandle(
+    measureRef,
+    () => ({
+      measureInWindow: (callback) => nativeTargetRef.current?.measureInWindow(callback),
+    }),
+    [],
+  );
 
   // Each selectable span creates a UIKit UITextView with a window-level tap recognizer.
   // A large table would create one per cell and make every app touch fan out across them.
@@ -51,6 +77,7 @@ export function MarkdownTextSpan({
         style={plainStyle}
         onPress={onPress}
         accessibilityRole={accessibilityRole}
+        onLayout={captureNativeTarget}
       >
         {children}
       </Text>
@@ -64,6 +91,7 @@ export function MarkdownTextSpan({
       style={plainStyle}
       onPress={onPress}
       accessibilityRole={accessibilityRole}
+      onLayout={captureNativeTarget}
     >
       {children}
     </UITextView>

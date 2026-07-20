@@ -502,6 +502,57 @@ ipcMain.handle("paseo:browser:clear-profile", async (_event, rawLegacyBrowserIds
   });
 });
 
+function validateBrowserOwner(event: Electron.IpcMainInvokeEvent, browserId: string): boolean {
+  return getPaseoBrowserWebContentsForHostWindow(browserId, event.sender.id) !== null;
+}
+
+ipcMain.handle(
+  "paseo:browser:find-in-page",
+  (event, browserId: unknown, text: unknown, options: unknown): number | null => {
+    if (typeof browserId !== "string" || typeof text !== "string" || text.length === 0) {
+      return null;
+    }
+    if (!validateBrowserOwner(event, browserId)) {
+      log.warn("[browser-find] unauthorized find-in-page attempt blocked", {
+        browserId,
+        senderId: event.sender.id,
+      });
+      return null;
+    }
+    const contents = getPaseoBrowserWebContentsForHostWindow(browserId, event.sender.id);
+    if (!contents) {
+      return null;
+    }
+    const inputOptions =
+      options && typeof options === "object"
+        ? (options as { forward?: unknown; findNext?: unknown; matchCase?: unknown })
+        : {};
+    return contents.findInPage(text, {
+      forward: inputOptions.forward !== false,
+      findNext: inputOptions.findNext === true,
+      matchCase: inputOptions.matchCase === true,
+    });
+  },
+);
+
+ipcMain.handle(
+  "paseo:browser:stop-find-in-page",
+  (event, browserId: unknown, action: unknown): null => {
+    if (typeof browserId !== "string" || !validateBrowserOwner(event, browserId)) {
+      return null;
+    }
+    if (
+      action !== "clearSelection" &&
+      action !== "keepSelection" &&
+      action !== "activateSelection"
+    ) {
+      return null;
+    }
+    getPaseoBrowserWebContentsForHostWindow(browserId, event.sender.id)?.stopFindInPage(action);
+    return null;
+  },
+);
+
 ipcMain.handle(
   "paseo:browser:capture-element",
   async (event, browserId: unknown, rect: unknown) => {

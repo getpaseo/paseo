@@ -1,5 +1,4 @@
 import React, {
-  Fragment,
   type CSSProperties,
   useCallback,
   useEffect,
@@ -89,6 +88,13 @@ function isScrollContainerOverscrolledPastBottom(
   scrollContainer: Pick<HTMLElement, "scrollTop" | "clientHeight" | "scrollHeight">,
 ): boolean {
   return getScrollContainerDistanceFromBottom(scrollContainer) < 0;
+}
+
+// Escapes a value for use inside a double-quoted CSS attribute-selector string
+// (not a general CSS.escape replacement — jsdom doesn't implement CSS.escape,
+// and this narrower rule is all a quoted attribute value needs).
+function escapeAttributeSelectorValue(value: string): string {
+  return value.replace(/["\\]/g, (match) => `\\${match}`);
 }
 
 function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: boolean }) {
@@ -464,6 +470,26 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     };
   }, [cancelPendingStickToBottom, handleDomScroll]);
 
+  const scrollToItem = useCallback(
+    (itemId: string): boolean => {
+      const virtualizedIndex = segments.historyVirtualized.findIndex((row) => row.id === itemId);
+      if (virtualizedIndex !== -1) {
+        rowVirtualizer.scrollToIndex(virtualizedIndex, { align: "center", behavior: "auto" });
+        return true;
+      }
+      const container = contentRef.current;
+      const target = container?.querySelector<HTMLElement>(
+        `[data-stream-item-id="${escapeAttributeSelectorValue(itemId)}"]`,
+      );
+      if (target) {
+        target.scrollIntoView({ behavior: "auto", block: "center" });
+        return true;
+      }
+      return false;
+    },
+    [rowVirtualizer, segments.historyVirtualized],
+  );
+
   useEffect(() => {
     const handle: StreamViewportHandle = {
       scrollToBottom: () => {
@@ -477,6 +503,16 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         }
         scheduleStickToBottom();
       },
+      scrollToItem,
+      scrollBy: (deltaY) => {
+        scrollContainerRef.current?.scrollBy({ top: deltaY, behavior: "auto" });
+      },
+      getWindowCenterY: () => {
+        const scrollContainer = scrollContainerRef.current;
+        if (!scrollContainer) return null;
+        const bounds = scrollContainer.getBoundingClientRect();
+        return bounds.top + bounds.height / 2;
+      },
     };
     viewportRef.current = handle;
     return () => {
@@ -485,7 +521,13 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       }
       cancelPendingStickToBottom();
     };
-  }, [cancelPendingStickToBottom, forceStickToBottom, scheduleStickToBottom, viewportRef]);
+  }, [
+    cancelPendingStickToBottom,
+    forceStickToBottom,
+    scheduleStickToBottom,
+    scrollToItem,
+    viewportRef,
+  ]);
 
   const contentContainerStyle = useMemo((): CSSProperties => {
     return {
@@ -529,15 +571,17 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   );
   const mountedHistoryRows = useMemo(() => {
     return segments.historyMounted.map((item, index) => (
-      <Fragment key={item.id}>
+      <div key={item.id} data-stream-item-id={item.id}>
         {renderHistoryMountedRow(item, index, segments.historyMounted)}
-      </Fragment>
+      </div>
     ));
   }, [renderHistoryMountedRow, segments.historyMounted]);
   const liveHeadRows = useMemo(() => {
     void liveHeadRowRevision;
     return segments.liveHead.map((item, index) => (
-      <Fragment key={item.id}>{renderLiveHeadRow(item, index, segments.liveHead)}</Fragment>
+      <div key={item.id} data-stream-item-id={item.id}>
+        {renderLiveHeadRow(item, index, segments.liveHead)}
+      </div>
     ));
   }, [liveHeadRowRevision, renderLiveHeadRow, segments.liveHead]);
   const liveAuxiliary = useMemo(() => {

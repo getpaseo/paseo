@@ -1,6 +1,7 @@
-import {
+import React, {
   Fragment,
   type ReactElement,
+  type RefObject,
   useCallback,
   useEffect,
   useMemo,
@@ -25,7 +26,49 @@ import {
   createStreamStrategy,
   isNearBottomForStreamRenderStrategy,
   resolveBottomAnchorTransportBehavior,
+  TIMELINE_SEARCH_SCROLL_CENTER_FRACTION,
 } from "./strategy";
+
+interface WindowMeasurable {
+  measureInWindow: (
+    callback: (x: number, y: number, width: number, height: number) => void,
+  ) => void;
+}
+
+function isWindowMeasurable(value: unknown): value is WindowMeasurable {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "measureInWindow" in value &&
+    typeof value.measureInWindow === "function"
+  );
+}
+
+/**
+ * Wraps FlatList#scrollToIndex with a try/catch — RN can throw synchronously
+ * for an index outside the currently measured range. Shared by the direct
+ * scrollToItem call below and by the async onScrollToIndexFailed retry,
+ * which is otherwise the one call site in this file that previously had no
+ * guard and could crash if the rows shrank between the failure callback
+ * firing and the retry running.
+ */
+function tryScrollToIndex(
+  flatListRef: RefObject<FlatList<StreamItem> | null>,
+  index: number,
+  animated: boolean,
+): void {
+  try {
+    flatListRef.current?.scrollToIndex({
+      index,
+      animated,
+      viewPosition: TIMELINE_SEARCH_SCROLL_CENTER_FRACTION,
+    });
+  } catch {
+    // Swallow synchronous out-of-range errors. If this call IS itself the
+    // onScrollToIndexFailed retry, there's nothing further to recover with —
+    // RN will fire onScrollToIndexFailed again if it detects another one.
+  }
+}
 
 const DEFAULT_MAINTAIN_VISIBLE_CONTENT_POSITION = Object.freeze({
   minIndexForVisible: 0,
@@ -89,6 +132,9 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   });
   const scrollOffsetYRef = useRef(0);
   const programmaticScrollEventBudgetRef = useRef(0);
+  const scrollToIndexRecoveryFrameRef = useRef<number | null>(null);
+  const viewportMeasurementFrameRef = useRef<number | null>(null);
+  const viewportWindowCenterYRef = useRef<number | null>(null);
   const [isNativeViewportSettling, setIsNativeViewportSettling] = useState(false);
   const nativeViewportSettlingFrameIdRef = useRef<number | null>(null);
   const historyStartReadyRef = useRef(false);
@@ -120,6 +166,10 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       ),
     [displayStateHistoryRows, historyRowRevision?.contentById],
   );
+  // Read from the handle's scrollToItem, which must not go stale between the
+  // renders that rebuild `historyRows` and the effect that registers the handle.
+  const historyRowsRef = useRef(historyRows);
+  historyRowsRef.current = historyRows;
 
   const clearNativeViewportSettling = useCallback(() => {
     if (nativeViewportSettlingFrameIdRef.current !== null) {
@@ -200,6 +250,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       viewportMeasuredForKey: null,
       contentMeasuredForKey: null,
     };
+    viewportWindowCenterYRef.current = null;
     scrollOffsetYRef.current = 0;
     clearNativeViewportSettling();
     setIsNativeViewportSettling(false);
@@ -250,6 +301,25 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
         bottomAnchorController.prepareForStickyViewportChange();
         markNativeViewportSettling();
       },
+      scrollToItem: (itemId) => {
+        const index = historyRowsRef.current.findIndex((row) => row.id === itemId);
+        if (index === -1) {
+          // Not reachable in the virtualized FlatList `data` — e.g. a row
+          // that's still only in the live head. Unlike web's DOM-wide
+          // querySelector fallback, native has no way to scroll to a row
+          // that isn't part of the list's own index space.
+          return false;
+        }
+        tryScrollToIndex(flatListRef, index, false);
+        return true;
+      },
+      scrollBy: (deltaY) => {
+        flatListRef.current?.scrollToOffset({
+          offset: Math.max(0, scrollOffsetYRef.current + deltaY),
+          animated: false,
+        });
+      },
+      getWindowCenterY: () => viewportWindowCenterYRef.current,
     };
     viewportRef.current = handle;
     return () => {
@@ -258,6 +328,33 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       }
     };
   }, [agentId, bottomAnchorController, markNativeViewportSettling, viewportRef]);
+
+  const handleScrollToIndexFailed = useStableEvent(
+    (info: { index: number; highestMeasuredFrameIndex: number; averageItemLength: number }) => {
+      if (scrollToIndexRecoveryFrameRef.current !== null) {
+        cancelAnimationFrame(scrollToIndexRecoveryFrameRef.current);
+      }
+      const estimatedOffset = info.averageItemLength * info.index;
+      flatListRef.current?.scrollToOffset({ offset: estimatedOffset, animated: false });
+      scrollToIndexRecoveryFrameRef.current = requestAnimationFrame(() => {
+        scrollToIndexRecoveryFrameRef.current = null;
+        tryScrollToIndex(flatListRef, info.index, false);
+      });
+    },
+  );
+
+  useEffect(() => {
+    return () => {
+      if (scrollToIndexRecoveryFrameRef.current !== null) {
+        cancelAnimationFrame(scrollToIndexRecoveryFrameRef.current);
+        scrollToIndexRecoveryFrameRef.current = null;
+      }
+      if (viewportMeasurementFrameRef.current !== null) {
+        cancelAnimationFrame(viewportMeasurementFrameRef.current);
+        viewportMeasurementFrameRef.current = null;
+      }
+    };
+  }, []);
 
   const handleScroll = useStableEvent((event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
@@ -328,6 +425,17 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       viewportWidth,
       previousViewportHeight,
       viewportHeight,
+    });
+    if (viewportMeasurementFrameRef.current !== null) {
+      cancelAnimationFrame(viewportMeasurementFrameRef.current);
+    }
+    viewportMeasurementFrameRef.current = requestAnimationFrame(() => {
+      viewportMeasurementFrameRef.current = null;
+      const nativeScrollRef = flatListRef.current?.getNativeScrollRef();
+      if (!isWindowMeasurable(nativeScrollRef)) return;
+      nativeScrollRef.measureInWindow((_x, y, _width, height) => {
+        viewportWindowCenterYRef.current = y + height * TIMELINE_SEARCH_SCROLL_CENTER_FRACTION;
+      });
     });
   });
 
@@ -414,6 +522,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       onScroll={handleScroll}
       scrollEventThrottle={16}
       onContentSizeChange={handleContentSizeChange}
+      onScrollToIndexFailed={handleScrollToIndexFailed}
       maintainVisibleContentPosition={DEFAULT_MAINTAIN_VISIBLE_CONTENT_POSITION}
       initialNumToRender={40}
       maxToRenderPerBatch={40}

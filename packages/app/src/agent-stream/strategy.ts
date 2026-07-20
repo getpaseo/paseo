@@ -42,6 +42,20 @@ export interface StreamEdgeSlotProps {
 export interface StreamViewportHandle {
   scrollToBottom: (reason?: BottomAnchorLocalRequest["reason"]) => void;
   prepareForViewportChange: () => void;
+  /**
+   * Scrolls the given stream item into view, if it is currently reachable in
+   * this strategy's rendered rows (history — virtualized or mounted). Returns
+   * false without side effects when the item isn't found there; callers
+   * should not report a scroll as having happened in that case.
+   */
+  scrollToItem: (itemId: string) => boolean;
+  /** Adjust the current viewport position after a mounted search anchor is measured. */
+  scrollBy: (deltaY: number) => void;
+  /**
+   * Returns the vertical center of the visible stream viewport in window
+   * coordinates. Null means the viewport has not been measured yet.
+   */
+  getWindowCenterY: () => number | null;
 }
 
 export interface StreamSegmentRenderers {
@@ -136,6 +150,17 @@ interface StreamStrategyConfig {
 }
 
 const NATIVE_SETTLING_VERIFICATION_DELAY_FRAMES = 4;
+
+/**
+ * Fraction of the viewport height used to vertically center a timeline-
+ * search scroll target. Shared by the coarse row-centering stage
+ * (`viewPosition` passed to FlatList#scrollToIndex in strategy-native's
+ * scrollToItem) and the fine occurrence-anchor correction stage
+ * (the viewport window center read in agent-stream/view.tsx and consumed by
+ * timeline-search/occurrence-anchor.tsx) so both stages agree on where
+ * "centered" means instead of fighting each other with different targets.
+ */
+export const TIMELINE_SEARCH_SCROLL_CENTER_FRACTION = 0.5;
 
 export function createStreamStrategy(config: StreamStrategyConfig): StreamStrategy {
   return {

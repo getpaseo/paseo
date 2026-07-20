@@ -166,6 +166,7 @@ const SHORTCUT_HELP_LABEL_KEYS: Record<string, string> = {
   "dictation-toggle": "settings.shortcuts.help.startStopDictation",
   "agent-interrupt": "settings.shortcuts.help.interruptAgent",
   "voice-mute-toggle": "settings.shortcuts.help.muteUnmuteVoiceMode",
+  "workspace-find-open": "settings.shortcuts.help.toggleTimelineSearch",
 };
 
 const SHORTCUT_HELP_NOTE_KEYS: Record<string, string> = {
@@ -1030,6 +1031,45 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       section: "agent-input",
       label: "Mute/unmute voice mode",
       keys: ["Space"],
+    },
+  },
+
+  // --- Pane find (Ctrl/Cmd+F) ---
+  {
+    id: "workspace-find-open-cmd-f-mac",
+    action: "workspace.find.open",
+    combo: "Cmd+F",
+    // No `terminal` gate: like PR #675, Cmd/Ctrl+F must open find even when the
+    // terminal (xterm) is focused. The capture-phase keydown listener +
+    // preventDefault/stopPropagation below open the focused pane's find before
+    // xterm forwards ^F to the shell. `editable: false` still suppresses find
+    // inside plain text inputs (the terminal is its own "terminal" scope, not
+    // "editable", so it is unaffected).
+    when: { mac: true, commandCenter: false, editable: false },
+    preventDefault: true,
+    stopPropagation: true,
+    help: {
+      id: "workspace-find-open",
+      section: "panels",
+      label: "Find in pane",
+      keys: ["mod", "F"],
+    },
+  },
+  {
+    id: "workspace-find-open-ctrl-f-non-mac",
+    action: "workspace.find.open",
+    combo: "Ctrl+F",
+    // See the mac binding above: no `terminal` gate so Ctrl+F opens find while
+    // the terminal is focused (capture-phase handler intercepts it before xterm
+    // sends ^F to the shell).
+    when: { mac: false, commandCenter: false, editable: false },
+    preventDefault: true,
+    stopPropagation: true,
+    help: {
+      id: "workspace-find-open",
+      section: "panels",
+      label: "Find in pane",
+      keys: ["mod", "F"],
     },
   },
 ];

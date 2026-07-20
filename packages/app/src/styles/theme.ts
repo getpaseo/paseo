@@ -167,6 +167,15 @@ const lightSemanticColors = {
   accentBright: "#239956",
   accentForeground: "#ffffff",
 
+  // Timeline search — dedicated tokens (not a live reference to `accent`) so
+  // the inactive-match color can diverge from the brand accent later without
+  // touching every accent call site. Currently mirrors the accent pair for
+  // the inactive match; the active (selected) occurrence gets its own amber
+  // pair so it reads as distinct from the general "matches" highlight.
+  searchHighlight: "#20744A",
+  searchHighlightActive: "#d97706",
+  searchHighlightActiveForeground: "#ffffff",
+
   // Semantic
   destructive: "#b04138", // dark warm red on white — calm but unambiguously red
   destructiveForeground: "#ffffff",
@@ -283,6 +292,14 @@ function buildDarkSemanticColors(tint: DarkThemeConfig) {
     accent: tint.accent,
     accentBright: tint.accentBright,
     accentForeground: tint.accentForeground ?? "#ffffff",
+
+    // See the light-theme comment on these tokens — same intent, one default
+    // shared by every dark tint (zinc/midnight/claude/ghostty) since a single
+    // amber active-match color reads consistently regardless of the theme's
+    // own accent hue.
+    searchHighlight: tint.accent,
+    searchHighlightActive: "#f59e0b",
+    searchHighlightActiveForeground: "#1a1a1e",
 
     destructive: tint.destructive,
     destructiveForeground: "#ffffff",

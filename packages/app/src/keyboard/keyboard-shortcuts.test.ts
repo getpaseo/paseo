@@ -693,3 +693,39 @@ describe("getWorkspaceIndexJumpModifierKey", () => {
     expect(getWorkspaceIndexJumpModifierKey({ isMac: false, isDesktop: true })).toBe("Control");
   });
 });
+
+describe("workspace.find.open — terminal scope", () => {
+  // Regression: find must open even when the terminal (xterm) is focused. The
+  // binding must NOT be gated on the "terminal" focus scope (matching PR #675),
+  // otherwise Ctrl/Cmd+F is swallowed and xterm forwards ^F to the shell.
+  it("opens find when Ctrl+F is pressed with the terminal focused (non-mac)", () => {
+    expectShortcutResolution({
+      event: { key: "f", ctrlKey: true },
+      context: { isMac: false, focusScope: "terminal" },
+      action: "workspace.find.open",
+    });
+  });
+
+  it("opens find when Cmd+F is pressed with the terminal focused (mac)", () => {
+    expectShortcutResolution({
+      event: { key: "f", metaKey: true },
+      context: { isMac: true, focusScope: "terminal" },
+      action: "workspace.find.open",
+    });
+  });
+
+  it("still does NOT open find from a plain editable text input", () => {
+    expectNoShortcutResolution({
+      event: { key: "f", ctrlKey: true },
+      context: { isMac: false, focusScope: "editable" },
+    });
+  });
+
+  it("toggles find when Ctrl+F is pressed from the find input", () => {
+    expectShortcutResolution({
+      event: { key: "f", ctrlKey: true },
+      context: { isMac: false, focusScope: "find-input" },
+      action: "workspace.find.open",
+    });
+  });
+});

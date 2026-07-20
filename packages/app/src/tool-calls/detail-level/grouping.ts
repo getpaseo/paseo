@@ -33,6 +33,7 @@ export interface ToolCallGroupLookup<TGroup> {
   readonly size: number;
   get(id: string): TGroup | undefined;
   has(id: string): boolean;
+  values(): IterableIterator<TGroup>;
 }
 
 const EMPTY_GROUPS = new Map<string, never>();

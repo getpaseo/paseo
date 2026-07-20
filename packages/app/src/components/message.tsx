@@ -11,7 +11,11 @@ import {
   type TextStyle,
 } from "react-native";
 import { useTranslation } from "react-i18next";
-import { MarkdownParagraphView, MarkdownTextSpan } from "@/components/markdown-text";
+import {
+  MarkdownParagraphView,
+  MarkdownTextSpan,
+  type MarkdownTextSpanMeasureHandle,
+} from "@/components/markdown-text";
 import { MarkdownTableCellText } from "@/components/markdown-text-selection";
 import * as React from "react";
 import {
@@ -27,8 +31,14 @@ import {
   Children,
   cloneElement,
 } from "react";
-import type { ComponentType, ReactNode } from "react";
-import { MarkdownIt, type ASTNode, type RenderRules } from "react-native-markdown-display";
+import type { ComponentType, ReactNode, Ref } from "react";
+import {
+  MarkdownIt,
+  stringToTokens,
+  tokensToAST,
+  type ASTNode,
+  type RenderRules,
+} from "react-native-markdown-display";
 import { useQuery } from "@tanstack/react-query";
 import MaskedView from "@react-native-masked-view/masked-view";
 import {
@@ -49,6 +59,17 @@ import {
 } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { Theme } from "@/styles/theme";
+import { useTimelineHighlightQuery } from "@/timeline-search/highlight";
+import {
+  HighlightedText,
+  mapMarkdownTextRunOffsets,
+  timelineHighlightStyles,
+  useHighlightedSegments,
+  type MarkdownTextRun,
+} from "@/timeline-search/highlighted-text";
+import { useTimelineSearchOccurrenceAnchor } from "@/timeline-search/occurrence-anchor";
+import { useTimelineSearchTarget } from "@/timeline-search/search-target";
+import type { TimelineSearchField } from "@/timeline-search/timeline-search-model";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import Animated, {
   Easing,
@@ -447,6 +468,24 @@ export const UserMessage = memo(function UserMessage({
   );
   const rewindMutation = useRewindAgentMutation({ serverId, agentId, client, messageId });
 
+  const searchTarget = useTimelineSearchTarget();
+  const isSearchTarget = messageId != null && searchTarget?.itemId === messageId;
+  const searchAnchorRef = useRef<View>(null);
+  const measureSearchAnchor = useCallback((report: (centerY: number) => void) => {
+    searchAnchorRef.current?.measureInWindow?.((_x, y, _width, height) => {
+      report(y + height / 2);
+    });
+  }, []);
+  // HighlightedText already registers an exact-span anchor for the matched
+  // occurrence (via ActiveHighlightedText, priority 2). This is a lower-
+  // priority block-level fallback covering the rest of the row (image/
+  // attachment pills, or a match that for any reason didn't register its own
+  // span) — same pattern as AssistantMessage/ToolCallDetailsContent.
+  useTimelineSearchOccurrenceAnchor(
+    isSearchTarget ? (searchTarget ?? null) : null,
+    measureSearchAnchor,
+  );
+
   const handlePointerEnter = useCallback(() => setIsHovered(true), []);
   const handlePointerLeave = useCallback(() => setIsHovered(false), []);
   const getMessageContent = useCallback(() => message, [message]);
@@ -493,7 +532,7 @@ export const UserMessage = memo(function UserMessage({
   );
 
   return (
-    <View style={containerStyle} testID="user-message">
+    <View ref={searchAnchorRef} style={containerStyle} testID="user-message">
       <View
         style={userMessageStylesheet.content}
         onPointerEnter={handlePointerEnter}
@@ -532,7 +571,7 @@ export const UserMessage = memo(function UserMessage({
           ) : null}
           {hasText ? (
             <Text selectable style={userMessageStylesheet.text}>
-              {message}
+              <HighlightedText text={message} itemId={messageId} />
             </Text>
           ) : null}
         </View>
@@ -728,6 +767,8 @@ export const LiveElapsed = memo(function LiveElapsed({
 });
 
 interface AssistantMessageProps {
+  /** Used for block-level timeline-search anchoring when Markdown leaf offsets are unsafe. */
+  streamItemId?: string;
   message: string;
   timestamp: number;
   workspaceRoot?: string;
@@ -1487,27 +1528,48 @@ function AssistantMessageBlockContainer({
 
 interface MemoizedMarkdownBlockProps {
   text: string;
+  fieldOffset: number;
   rules: RenderRules;
   parser: MarkdownIt;
   onLinkPress: (url: string) => boolean;
 }
 
+const MarkdownTextRunOffsetsContext = createContext<ReadonlyMap<string, number> | null>(null);
+
+function collectMarkdownTextRuns(nodes: readonly ASTNode[], runs: MarkdownTextRun[]): void {
+  for (const node of nodes) {
+    if (node.type === "text") {
+      runs.push({ key: node.key, text: node.content });
+    }
+    collectMarkdownTextRuns(node.children, runs);
+  }
+}
+
 const MemoizedMarkdownBlock = React.memo(function MemoizedMarkdownBlock({
   text,
+  fieldOffset,
   rules,
   parser,
   onLinkPress,
 }: MemoizedMarkdownBlockProps) {
+  const textRunOffsets = useMemo(() => {
+    const nodes = tokensToAST(stringToTokens(text, parser));
+    const runs: MarkdownTextRun[] = [];
+    collectMarkdownTextRuns(nodes, runs);
+    return mapMarkdownTextRunOffsets({ sourceText: text, sourceFieldOffset: fieldOffset, runs });
+  }, [fieldOffset, parser, text]);
   return (
-    <MarkdownRenderer
-      text={text}
-      enableHtmlish={false}
-      rules={rules}
-      markdownit={parser}
-      onLinkPress={onLinkPress}
-      allowedImageHandlers={MARKDOWN_ALLOWED_IMAGE_HANDLERS}
-      topLevelMaxExceededItem={MARKDOWN_TOP_LEVEL_MAX_EXCEEDED_ITEM}
-    />
+    <MarkdownTextRunOffsetsContext.Provider value={textRunOffsets}>
+      <MarkdownRenderer
+        text={text}
+        enableHtmlish={false}
+        rules={rules}
+        markdownit={parser}
+        onLinkPress={onLinkPress}
+        allowedImageHandlers={MARKDOWN_ALLOWED_IMAGE_HANDLERS}
+        topLevelMaxExceededItem={MARKDOWN_TOP_LEVEL_MAX_EXCEEDED_ITEM}
+      />
+    </MarkdownTextRunOffsetsContext.Provider>
   );
 });
 
@@ -1517,6 +1579,103 @@ interface MarkdownInheritedTextProps {
   style?: StyleProp<TextStyle>;
   monoSurface?: boolean;
   children: ReactNode;
+  measureRef?: Ref<MarkdownTextSpanMeasureHandle>;
+}
+
+/**
+ * Highlights the active search query inside a markdown text leaf, routed
+ * through the same `useHighlightedSegments` mapper the plain-`<Text>`
+ * surfaces use (see timeline-search/highlighted-text.tsx) so the split/
+ * active-match logic is defined exactly once. Matched substrings are wrapped
+ * in a nested MarkdownInheritedText (the same span path strong/em use) so
+ * they stay visible and selectable on every platform, including iOS
+ * UITextView. Reads the highlight query/target itself (via context) rather
+ * than taking them as props, so the markdown `rules` object never depends on
+ * them — a `rules` identity change re-renders every mounted markdown
+ * message, which made each search keystroke O(all messages). The context
+ * value changing re-renders only these leaves.
+ *
+ * `itemId` is the owning stream item — always field "text" here, since a
+ * markdown leaf only ever renders an assistant message's own "text" field
+ * (see `extractSearchSpans`'s `assistant_message` case).
+ */
+function MarkdownHighlightedTextRun({
+  content,
+  nodeKey,
+  itemId,
+  inheritedStyles,
+  textStyle,
+}: {
+  content: string;
+  nodeKey: string;
+  itemId?: string;
+  inheritedStyles: TextStyle;
+  textStyle: TextStyle;
+}) {
+  const textRunOffsets = useContext(MarkdownTextRunOffsetsContext);
+  const runFieldOffset = textRunOffsets?.get(nodeKey) ?? null;
+  return useHighlightedSegments({
+    text: content,
+    // Keep this leaf eligible for active-match selection even if the
+    // parser-to-source offset lookup misses. `useHighlightedSegments` still
+    // performs the exact item/field/offset equality check, so this cannot
+    // activate an occurrence from another message or field; it does let the
+    // first rendered text run retain the selected style instead of degrading
+    // every assistant match to the ordinary accent highlight.
+    itemId,
+    field: "text",
+    fieldOffsetBase: runFieldOffset ?? 0,
+    renderMatch: (segment, isActive) => {
+      if (!segment.isMatch) {
+        return segment.text;
+      }
+      if (isActive) {
+        return (
+          <ActiveMarkdownHighlight
+            inheritedStyles={inheritedStyles}
+            textStyle={textStyle}
+            text={segment.text}
+          />
+        );
+      }
+      return (
+        <MarkdownInheritedText
+          inheritedStyles={inheritedStyles}
+          textStyle={textStyle}
+          style={timelineHighlightStyles.match}
+        >
+          {segment.text}
+        </MarkdownInheritedText>
+      );
+    },
+  });
+}
+
+function ActiveMarkdownHighlight({
+  inheritedStyles,
+  textStyle,
+  text,
+}: {
+  inheritedStyles: TextStyle;
+  textStyle: TextStyle;
+  text: string;
+}) {
+  const target = useTimelineSearchTarget();
+  const measureRef = useRef<MarkdownTextSpanMeasureHandle>(null);
+  const measure = useCallback((report: (centerY: number) => void) => {
+    measureRef.current?.measureInWindow((_x, y, _width, height) => report(y + height / 2));
+  }, []);
+  useTimelineSearchOccurrenceAnchor(target, measure, 2);
+  return (
+    <MarkdownInheritedText
+      measureRef={measureRef}
+      inheritedStyles={inheritedStyles}
+      textStyle={textStyle}
+      style={timelineHighlightStyles.activeMatch}
+    >
+      {text}
+    </MarkdownInheritedText>
+  );
 }
 
 function MarkdownInheritedText({
@@ -1525,6 +1684,7 @@ function MarkdownInheritedText({
   style: overrideStyle,
   monoSurface,
   children,
+  measureRef,
 }: MarkdownInheritedTextProps) {
   const style = useMemo(
     () => [inheritedStyles, textStyle, overrideStyle],
@@ -1538,6 +1698,7 @@ function MarkdownInheritedText({
   const linkPress = useAssistantLinkPress();
   return (
     <MarkdownTextSpan
+      measureRef={measureRef}
       monoSurface={monoSurface}
       style={style}
       onPress={linkPress?.onPress}
@@ -1572,6 +1733,7 @@ function MarkdownListView({ baseStyle, spacing, children }: MarkdownListViewProp
 }
 
 export const AssistantMessage = memo(function AssistantMessage({
+  streamItemId,
   message,
   timestamp: _timestamp,
   workspaceRoot,
@@ -1579,6 +1741,21 @@ export const AssistantMessage = memo(function AssistantMessage({
   client,
   spacing = "default",
 }: AssistantMessageProps) {
+  const searchTarget = useTimelineSearchTarget();
+  const isSearchTarget = streamItemId != null && searchTarget?.itemId === streamItemId;
+  const searchAnchorRef = useRef<View>(null);
+  const measureSearchAnchor = useCallback((report: (centerY: number) => void) => {
+    searchAnchorRef.current?.measureInWindow?.((_x, y, _width, height) => {
+      report(y + height / 2);
+    });
+  }, []);
+  // Markdown's rendered leaves can reorder or transform source text. Anchor the
+  // containing rendered message instead of pretending a source offset maps to
+  // a particular inline leaf; plain text still registers the exact span.
+  useTimelineSearchOccurrenceAnchor(
+    isSearchTarget ? (searchTarget ?? null) : null,
+    measureSearchAnchor,
+  );
   const markdownParser = useMemo(() => {
     const parser = MarkdownIt({ typographer: true, linkify: true });
     const defaultValidateLink = parser.validateLink.bind(parser);
@@ -1614,7 +1791,13 @@ export const AssistantMessage = memo(function AssistantMessage({
           inheritedStyles={inheritedStyles}
           textStyle={styles.text}
         >
-          {node.content}
+          <MarkdownHighlightedTextRun
+            content={node.content}
+            nodeKey={node.key}
+            itemId={streamItemId}
+            inheritedStyles={inheritedStyles}
+            textStyle={styles.text}
+          />
         </MarkdownInheritedText>
       ),
       textgroup: (
@@ -1896,13 +2079,17 @@ export const AssistantMessage = memo(function AssistantMessage({
         );
       },
     };
-  }, [client, fileLinkActions, markdownParser, serverId, workspaceRoot]);
+  }, [client, fileLinkActions, markdownParser, serverId, streamItemId, workspaceRoot]);
 
   const blocks = useMemo(() => splitMarkdownBlocks(message), [message]);
-  const keyedBlocks = useMemo(
-    () => blocks.map((block, index) => ({ key: `${index}:${block.slice(0, 32)}`, block })),
-    [blocks],
-  );
+  const keyedBlocks = useMemo(() => {
+    let searchFrom = 0;
+    return blocks.map((block, index) => {
+      const fieldOffset = message.indexOf(block, searchFrom);
+      searchFrom = fieldOffset + block.length;
+      return { key: `${index}:${block.slice(0, 32)}`, block, fieldOffset };
+    });
+  }, [blocks, message]);
 
   const assistantContainerStyle = useMemo(
     () => [
@@ -1916,8 +2103,8 @@ export const AssistantMessage = memo(function AssistantMessage({
   );
 
   return (
-    <View testID="assistant-message" style={assistantContainerStyle}>
-      {keyedBlocks.map(({ key, block }, index) => (
+    <View ref={searchAnchorRef} testID="assistant-message" style={assistantContainerStyle}>
+      {keyedBlocks.map(({ key, block, fieldOffset }, index) => (
         <AssistantMessageBlockContainer
           key={key}
           block={block}
@@ -1925,6 +2112,7 @@ export const AssistantMessage = memo(function AssistantMessage({
         >
           <MemoizedMarkdownBlock
             text={block}
+            fieldOffset={fieldOffset}
             rules={markdownRules}
             parser={markdownParser}
             onLinkPress={handleMarkdownLinkPress}
@@ -2004,6 +2192,12 @@ interface ActivityLogProps {
   title?: string;
   onArtifactClick?: (artifactId: string) => void;
   disableOuterSpacing?: boolean;
+  /**
+   * Stream item id of the activity_log item, for timeline-search targeting
+   * (field "text" — see `extractSearchSpans`'s `activity_log` case). Optional
+   * because not every caller has plumbed it through yet.
+   */
+  streamItemId?: string;
 }
 
 const activityLogStylesheet = StyleSheet.create((theme) => ({
@@ -2087,6 +2281,7 @@ export const ActivityLog = memo(function ActivityLog({
   title,
   onArtifactClick,
   disableOuterSpacing,
+  streamItemId,
 }: ActivityLogProps) {
   const { t } = useTranslation();
   const resolvedDisableOuterSpacing = useDisableOuterSpacing(disableOuterSpacing);
@@ -2154,7 +2349,7 @@ export const ActivityLog = memo(function ActivityLog({
           </View>
           <View style={activityLogStylesheet.textContainer}>
             <Text style={messageTextStyle} selectable>
-              {displayMessage}
+              <HighlightedText text={displayMessage} itemId={streamItemId} field="text" />
             </Text>
             {metadata && (
               <View style={activityLogStylesheet.detailsRow}>
@@ -2239,14 +2434,19 @@ export const CompactionMarker = memo(function CompactionMarker({
 interface TodoListCardProps {
   items: TodoEntry[];
   disableOuterSpacing?: boolean;
+  /** Stream item id of the todo_list item, for timeline-search targeting. */
+  streamItemId?: string;
 }
 
 interface TodoListItemRowProps {
   text: string;
   completed: boolean;
+  /** Owning todo_list item id + this row's per-entry field, for timeline-search targeting. */
+  itemId?: string;
+  field?: TimelineSearchField;
 }
 
-function TodoListItemRow({ text, completed }: TodoListItemRowProps) {
+function TodoListItemRow({ text, completed, itemId, field }: TodoListItemRowProps) {
   const badgeStyle = useMemo(
     () => [
       todoListCardStylesheet.radioBadge,
@@ -2267,7 +2467,9 @@ function TodoListItemRow({ text, completed }: TodoListItemRowProps) {
           <ThemedTodoCheckIcon size={12} uniProps={primaryForegroundColorMapping} />
         ) : null}
       </View>
-      <Text style={textStyle}>{text}</Text>
+      <Text style={textStyle}>
+        <HighlightedText text={text} itemId={itemId} field={field ?? "text"} />
+      </Text>
     </View>
   );
 }
@@ -2316,9 +2518,24 @@ const todoListCardStylesheet = StyleSheet.create((theme) => ({
 export const TodoListCard = memo(function TodoListCard({
   items,
   disableOuterSpacing,
+  streamItemId,
 }: TodoListCardProps) {
   const { t } = useTranslation();
   const [isExpanded, setIsExpanded] = useState(false);
+
+  // When timeline search navigates to this todo item, the card must open —
+  // collapsed it shows only the next incomplete task, so a match on any other
+  // todo would stay invisible. Keyed off navigationRevision so re-selecting
+  // the same match (Enter on a single result) re-expands a card the user
+  // collapsed in between.
+  const searchTarget = useTimelineSearchTarget();
+  const isSearchTarget = streamItemId != null && searchTarget?.itemId === streamItemId;
+  const searchTargetRevision = searchTarget?.navigationRevision;
+  useEffect(() => {
+    if (isSearchTarget) {
+      setIsExpanded(true);
+    }
+  }, [isSearchTarget, searchTargetRevision]);
 
   const nextTask = useMemo(() => items.find((item) => !item.completed)?.text, [items]);
 
@@ -2333,14 +2550,20 @@ export const TodoListCard = memo(function TodoListCard({
           {items.length === 0 ? (
             <Text style={todoListCardStylesheet.emptyText}>{t("message.todo.empty")}</Text>
           ) : (
-            items.map((item) => (
-              <TodoListItemRow key={item.text} text={item.text} completed={item.completed} />
+            items.map((item, index) => (
+              <TodoListItemRow
+                key={item.text}
+                text={item.text}
+                completed={item.completed}
+                itemId={streamItemId}
+                field={`todo:${index}`}
+              />
             ))
           )}
         </View>
       </View>
     );
-  }, [items, t]);
+  }, [items, streamItemId, t]);
 
   return (
     <ExpandableBadge
@@ -3061,6 +3284,9 @@ function areExpandableBadgePropsEqual(previous: ExpandableBadgeProps, next: Expa
 }
 
 interface ToolCallProps {
+  /** Stream identity lets timeline search reveal a collapsed detail body. */
+  streamItemId?: string;
+  timelineSearchField?: TimelineSearchField;
   toolName: string;
   args?: unknown;
   result?: unknown;
@@ -3080,6 +3306,8 @@ interface ToolCallProps {
 }
 
 export const ToolCall = memo(function ToolCall({
+  streamItemId,
+  timelineSearchField = "tool",
   toolName,
   args,
   result,
@@ -3099,9 +3327,22 @@ export const ToolCall = memo(function ToolCall({
 }: ToolCallProps) {
   const { openToolCall } = useToolCallSheet();
   const [isExpanded, setIsExpanded] = useState(defaultExpanded ?? false);
+  const searchTarget = useTimelineSearchTarget();
+  const highlightQuery = useTimelineHighlightQuery();
+  const isSearchTarget = streamItemId != null && searchTarget?.itemId === streamItemId;
+  const searchTargetRevision = searchTarget?.navigationRevision;
 
   const isMobile = useIsCompactFormFactor();
   const shouldRenderInline = !isMobile || forceInline;
+
+  // Search matches can live inside a collapsed detail (including reasoning,
+  // which is represented as a tool-call style detail). Reveal that body before
+  // the row-level search scroll runs so the match can be seen.
+  useEffect(() => {
+    if (isSearchTarget && shouldRenderInline) {
+      setIsExpanded(true);
+    }
+  }, [isSearchTarget, searchTargetRevision, shouldRenderInline]);
 
   const effectiveDetail = useMemo<ToolCallDetail | undefined>(() => {
     if (detail) {
@@ -3147,6 +3388,15 @@ export const ToolCall = memo(function ToolCall({
         errorText: presentation.errorText,
         icon: presentation.icon,
         showLoadingSkeleton: presentation.isLoadingDetails,
+        streamItemId,
+        timelineSearchField,
+        // The sheet renders outside TimelineHighlightProvider/
+        // TimelineSearchTargetProvider (see tool-call-sheet.tsx), so it can't
+        // read the live query/target via context. Capture both here, at the
+        // moment the sheet opens, so ToolCallSheetContent can re-provide them
+        // locally around its own detail content.
+        timelineHighlightQuery: highlightQuery,
+        timelineSearchTarget: searchTarget,
       });
     } else {
       setIsExpanded((prev) => !prev);
@@ -3160,6 +3410,10 @@ export const ToolCall = memo(function ToolCall({
     presentation.icon,
     presentation.isLoadingDetails,
     effectiveDetail,
+    streamItemId,
+    timelineSearchField,
+    highlightQuery,
+    searchTarget,
   ]);
 
   useEffect(() => {
@@ -3195,6 +3449,8 @@ export const ToolCall = memo(function ToolCall({
     return (
       <ToolCallDetailsContent
         detail={effectiveDetail}
+        timelineSearchItemId={streamItemId}
+        timelineSearchField={timelineSearchField}
         errorText={presentation.errorText}
         maxHeight={maxDetailHeight}
         showLoadingSkeleton={presentation.isLoadingDetails}
@@ -3206,6 +3462,8 @@ export const ToolCall = memo(function ToolCall({
     presentation.errorText,
     presentation.isLoadingDetails,
     maxDetailHeight,
+    streamItemId,
+    timelineSearchField,
   ]);
 
   if (presentation.isPlan && effectiveDetail?.type === "plan") {
@@ -3238,6 +3496,8 @@ export const ToolCall = memo(function ToolCall({
 }, areToolCallPropsEqual);
 
 function areToolCallPropsEqual(previous: ToolCallProps, next: ToolCallProps) {
+  if (previous.streamItemId !== next.streamItemId) return false;
+  if (previous.timelineSearchField !== next.timelineSearchField) return false;
   if (previous.toolName !== next.toolName) return false;
   if (previous.args !== next.args) return false;
   if (previous.result !== next.result) return false;

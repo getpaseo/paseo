@@ -573,6 +573,7 @@ export const fr: TranslationResources = {
         copyPath: "Copier le chemin de l'espace de travail",
         copyBranchName: "Copier le nom de la branche",
         showSetup: "Afficher la configuration",
+        findInTab: "Rechercher dans l'onglet",
       },
       toasts: {
         workspacePathUnavailable: "Le cheminWorkspacen'est pas encore disponible",
@@ -1824,6 +1825,7 @@ export const fr: TranslationResources = {
         sendMessage: "Envoyer un message",
         queueMessage: "Message de file d'attente",
         muteUnmuteVoiceMode: "Mode vocal/unmutemuet",
+        toggleTimelineSearch: "Rechercher dans le volet",
       },
       helpNotes: {
         showKeyboardShortcuts:
@@ -2177,5 +2179,35 @@ export const fr: TranslationResources = {
         cancel: "Annuler",
       },
     },
+  },
+  timelineSearch: {
+    placeholder: "Rechercher dans la chronologie...",
+    noResults: "Aucun résultat dans l'historique chargé",
+    matchCount_one: "{{count}} correspondance",
+    matchCount_other: "{{count}} correspondances",
+    matchCountCapped: "{{count}}+ correspondances",
+    historyLoadFailed:
+      "Impossible de charger l'historique plus ancien — les résultats peuvent être incomplets",
+    next: "Résultat suivant",
+    prev: "Résultat précédent",
+    close: "Fermer",
+    searchingHistory: "Recherche dans l'historique…",
+    loadingOlderHistory: "Chargement de l'historique plus ancien…",
+    filters: {
+      all: "Tout",
+      prompts: "Invites",
+      messages: "Messages",
+      thinking: "R\u00e9flexion",
+      toolCalls: "Appels d’outils",
+      toolOutput: "Sortie d'outils",
+      errors: "Erreurs",
+    },
+  },
+  paneFind: {
+    noMatches: "Aucune correspondance",
+    matchCount_one: "{{count}} correspondance",
+    matchCount_other: "{{count}} correspondances",
+    next: "Résultat suivant",
+    prev: "Résultat précédent",
   },
 };

@@ -11,6 +11,7 @@ import {
 } from "@/screens/workspace/workspace-pane-content";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 import { usePaneContext, usePaneFocus, type PaneContextValue } from "@/panels/pane-context";
+import { paneFindController } from "@/pane-find/pane-find-controller";
 
 vi.mock("@/panels/register-panels", () => ({
   ensurePanelsRegistered: vi.fn(),
@@ -84,6 +85,43 @@ describe("WorkspacePaneContent", () => {
     snapshots.length = 0;
     mountCount.mockClear();
     unmountCount.mockClear();
+    const focused = paneFindController.getFocusedPane();
+    if (focused) {
+      paneFindController.clearFocusedPaneIfCurrent(focused);
+    }
+  });
+
+  it("centrally marks the pane find-focused only while workspace+pane focused", () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    const content = buildContent();
+    const paneInstanceId = "server-a:workspace-a:agent_agent-a";
+    expect(content.paneContextValue.paneInstanceId).toBe(paneInstanceId);
+
+    // Pane not focused -> it is not the find-focused pane.
+    act(() => {
+      root?.render(
+        <WorkspacePaneContent content={content} isPaneFocused={false} isWorkspaceFocused={true} />,
+      );
+    });
+    expect(paneFindController.getFocusedPane()).not.toBe(paneInstanceId);
+
+    // Focused -> it becomes the single find-focused pane.
+    act(() => {
+      root?.render(
+        <WorkspacePaneContent content={content} isPaneFocused isWorkspaceFocused={true} />,
+      );
+    });
+    expect(paneFindController.getFocusedPane()).toBe(paneInstanceId);
+
+    // Blur -> ownership is released.
+    act(() => {
+      root?.render(
+        <WorkspacePaneContent content={content} isPaneFocused={false} isWorkspaceFocused={true} />,
+      );
+    });
+    expect(paneFindController.getFocusedPane()).not.toBe(paneInstanceId);
   });
 
   it("updates focus without remounting panel content or replacing pane identity", () => {

@@ -1,4 +1,4 @@
-import React, { useMemo, type ReactNode } from "react";
+import React, { useEffect, useMemo, type ReactNode } from "react";
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
 } from "react-native";
 import { ScrollView as GHScrollView } from "react-native-gesture-handler";
 import { StyleSheet } from "react-native-unistyles";
+import { useCallback, useRef } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { AppearanceStyleBoundary } from "@/components/appearance-style-boundary";
@@ -19,6 +20,14 @@ import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { extensionFromPath, highlightToKeyedLines } from "@/utils/highlight-cache";
 import { HighlightedLines } from "./highlighted-content";
+import {
+  HighlightedText,
+  mapSourceOccurrenceToDisplayedOffset,
+} from "@/timeline-search/highlighted-text";
+import { useTimelineHighlightQuery } from "@/timeline-search/highlight";
+import { useTimelineSearchOccurrenceAnchor } from "@/timeline-search/occurrence-anchor";
+import { useTimelineSearchTarget } from "@/timeline-search/search-target";
+import type { TimelineSearchField } from "@/timeline-search/timeline-search-model";
 import { DiffViewer } from "./diff-viewer";
 import { getCodeInsets } from "./code-insets";
 import { isWeb } from "@/constants/platform";
@@ -29,6 +38,8 @@ const ScrollView = isWeb ? RNScrollView : GHScrollView;
 
 interface ToolCallDetailsContentProps {
   detail?: ToolCallDetail;
+  timelineSearchItemId?: string;
+  timelineSearchField?: TimelineSearchField;
   errorText?: string;
   maxHeight?: number;
   fillAvailableHeight?: boolean;
@@ -48,6 +59,67 @@ interface DetailStyles {
   resolvedMaxHeight: number | undefined;
   shouldFill: boolean;
   isFullBleed: boolean;
+}
+
+interface ToolDetailScrollHandle {
+  scrollTo: (options: { x?: number; y?: number; animated?: boolean }) => void;
+}
+
+interface ActiveToolDetailField {
+  field: TimelineSearchField;
+  text: string;
+  /** Canonical source when text is a display-only transformation of it. */
+  sourceText?: string;
+  /** The rendered line on which this field begins. */
+  startLine?: number;
+}
+
+const TOOL_DETAIL_LINE_HEIGHT = 18;
+const TOOL_DETAIL_REVEAL_CONTEXT_LINES = 4;
+
+/**
+ * The outer timeline can reveal a tool-call card, but a long tool output is
+ * itself a capped ScrollView. Keep that inner viewport aligned to the selected
+ * field before the shared occurrence anchor measures the exact text span.
+ */
+function useRevealActiveToolDetailLine({
+  scrollRef,
+  itemId,
+  fields,
+}: {
+  scrollRef: React.RefObject<ToolDetailScrollHandle | null>;
+  itemId?: string;
+  fields: readonly ActiveToolDetailField[];
+}) {
+  const target = useTimelineSearchTarget();
+  const query = useTimelineHighlightQuery();
+  useEffect(() => {
+    if (!itemId || target?.itemId !== itemId) {
+      return;
+    }
+    const field = fields.find((candidate) => candidate.field === target.field);
+    if (!field || target.fieldOffset < 0 || target.fieldOffset > field.text.length) {
+      return;
+    }
+    const displayFieldOffset = field.sourceText
+      ? mapSourceOccurrenceToDisplayedOffset({
+          sourceText: field.sourceText,
+          displayedText: field.text,
+          query,
+          sourceFieldOffset: target.fieldOffset,
+        })
+      : target.fieldOffset;
+    if (displayFieldOffset === null) return;
+    const line =
+      (field.startLine ?? 0) + field.text.slice(0, displayFieldOffset).split("\n").length - 1;
+    const frame = requestAnimationFrame(() => {
+      scrollRef.current?.scrollTo({
+        y: Math.max(0, (line - TOOL_DETAIL_REVEAL_CONTEXT_LINES) * TOOL_DETAIL_LINE_HEIGHT),
+        animated: false,
+      });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [fields, itemId, query, scrollRef, target]);
 }
 
 function resolveIsFullBleed(detail: ToolCallDetail | undefined): boolean {
@@ -147,16 +219,43 @@ interface ShellDetailProps {
   command: string;
   output: string | null | undefined;
   ds: DetailStyles;
+  itemId?: string;
 }
 
-function ShellDetailSection({ command, output, ds }: ShellDetailProps) {
+function ShellDetailSection({ command, output, ds, itemId }: ShellDetailProps) {
+  // Only trailing whitespace is trimmed off `command` for display — that
+  // can't shift any match's start offset, so it stays exactly the "toolInput"
+  // field text `extractSearchSpans` extracted (see buildDetailInputParts's
+  // "shell" case) and `fieldOffset` lines up.
   const normalizedCommand = command.replace(/\n+$/, "");
-  const commandOutput = (output ?? "").replace(/^\n+/, "");
-  const hasOutput = commandOutput.length > 0;
+  // The output field is rendered RAW (no leading-newline trim) so its text
+  // stays exactly the "toolOutput" span text (extractDetailOutput's "shell"
+  // case returns `detail.output` untouched) — trimming here would shift
+  // every match's offset left and break `fieldOffset` alignment.
+  const outputText = output ?? "";
+  const hasOutput = outputText.replace(/^\n+/, "").length > 0;
+  const scrollRef = useRef<RNScrollView>(null);
+  const fields = useMemo(
+    () => [
+      { field: "toolInput" as const, text: normalizedCommand },
+      {
+        field: "toolOutput" as const,
+        text: outputText,
+        startLine: normalizedCommand.split("\n").length + 1,
+      },
+    ],
+    [normalizedCommand, outputText],
+  );
+  useRevealActiveToolDetailLine({
+    scrollRef,
+    itemId,
+    fields,
+  });
   return (
     <View style={ds.sectionFillStyle}>
       <View style={ds.codeBlockFillStyle}>
         <ScrollView
+          ref={scrollRef}
           style={ds.codeVerticalScrollStyle}
           contentContainerStyle={styles.codeVerticalContent}
           nestedScrollEnabled
@@ -171,8 +270,18 @@ function ShellDetailSection({ command, output, ds }: ShellDetailProps) {
             <View style={styles.codeLine} dataSet={CODE_SURFACE_DATASET}>
               <Text selectable style={styles.scrollText}>
                 <Text style={styles.shellPrompt}>$ </Text>
-                {normalizedCommand}
-                {hasOutput ? `\n\n${commandOutput}` : ""}
+                <HighlightedText text={normalizedCommand} itemId={itemId} field="toolInput" />
+                {hasOutput
+                  ? [
+                      "\n\n",
+                      <HighlightedText
+                        key="output"
+                        text={outputText}
+                        itemId={itemId}
+                        field="toolOutput"
+                      />,
+                    ]
+                  : ""}
               </Text>
             </View>
           </ScrollView>
@@ -187,6 +296,7 @@ interface WorktreeSetupDetailProps {
   branchName: string;
   worktreePath: string;
   ds: DetailStyles;
+  itemId?: string;
 }
 
 function WorktreeSetupDetailSection({
@@ -194,9 +304,9 @@ function WorktreeSetupDetailSection({
   branchName,
   worktreePath,
   ds,
+  itemId,
 }: WorktreeSetupDetailProps) {
-  const setupLog = log.replace(/^\n+/, "");
-  const hasLog = setupLog.length > 0;
+  const hasLog = log.replace(/^\n+/, "").length > 0;
   return (
     <View style={ds.sectionFillStyle}>
       <View style={ds.codeBlockFillStyle}>
@@ -214,7 +324,14 @@ function WorktreeSetupDetailSection({
           >
             <View style={styles.codeLine} dataSet={CODE_SURFACE_DATASET}>
               <Text selectable style={styles.scrollText}>
-                {hasLog ? setupLog : `Preparing worktree ${branchName} at ${worktreePath}`}
+                {hasLog ? (
+                  // Rendered RAW (no leading-newline trim) to match
+                  // extractDetailOutput's "worktree_setup" case (`detail.log`
+                  // untouched), so fieldOffset stays aligned.
+                  <HighlightedText text={log} itemId={itemId} field="toolOutput" />
+                ) : (
+                  `Preparing worktree ${branchName} at ${worktreePath}`
+                )}
               </Text>
             </View>
           </ScrollView>
@@ -241,6 +358,7 @@ interface SubAgentDetailProps {
   subAgentType: string | null | undefined;
   description: string | null | undefined;
   ds: DetailStyles;
+  itemId?: string;
 }
 
 interface SubAgentActivityRow {
@@ -292,7 +410,7 @@ function parseSubAgentLog(log: string): ParsedSubAgentLog {
   };
 }
 
-function SubAgentActionRow({ action }: { action: SubAgentActivityRow }) {
+function SubAgentActionRow({ action, itemId }: { action: SubAgentActivityRow; itemId?: string }) {
   return (
     <View style={styles.subAgentActionRow}>
       <Text selectable style={styles.subAgentActionTool}>
@@ -300,7 +418,11 @@ function SubAgentActionRow({ action }: { action: SubAgentActivityRow }) {
       </Text>
       {action.summary ? (
         <Text selectable style={styles.subAgentActionSummary}>
-          {action.summary}
+          {/* action.summary is parsed out of the raw "toolOutput" log (see
+              parseSubAgentLog) — its offsets no longer line up with the raw
+              span, so this gets basic query highlighting but can't reliably
+              go active; the block-level fallback anchor covers reveal. */}
+          <HighlightedText text={action.summary} itemId={itemId} field="toolOutput" />
         </Text>
       ) : null}
     </View>
@@ -324,22 +446,31 @@ function SubAgentLogText({
   activityLog,
   fallbackHeader,
   hasActions,
+  itemId,
 }: {
   activityLog: string;
   fallbackHeader: string;
   hasActions: boolean;
+  itemId?: string;
 }) {
   if (activityLog.length > 0) {
     return (
       <Text selectable style={styles.scrollText}>
-        {activityLog}
+        {/* remainingLog (see parseSubAgentLog) is the raw "toolOutput" log
+            with bracketed action lines stripped out — offsets can drift from
+            the raw span, same caveat as SubAgentActionRow above. */}
+        <HighlightedText text={activityLog} itemId={itemId} field="toolOutput" />
       </Text>
     );
   }
   if (!hasActions) {
     return (
       <Text selectable style={styles.scrollText}>
-        {fallbackHeader}
+        {/* fallbackHeader is a synthesized string (subAgentType + description),
+            not any single field's own text — highlight the query in it, but
+            don't wire itemId/field, which could otherwise coincidentally
+            satisfy an unrelated match's offset and show a false "active" state. */}
+        <HighlightedText text={fallbackHeader} />
       </Text>
     );
   }
@@ -352,6 +483,7 @@ function SubAgentDetailSection({
   subAgentType,
   description,
   ds,
+  itemId,
 }: SubAgentDetailProps) {
   const { t } = useTranslation();
   const { actions, remainingLog } = useMemo(() => parseSubAgentLog(log), [log]);
@@ -385,7 +517,7 @@ function SubAgentDetailSection({
               {hasActions ? (
                 <View style={styles.subAgentActions}>
                   {actions.map((action) => (
-                    <SubAgentActionRow key={action.index} action={action} />
+                    <SubAgentActionRow key={action.index} action={action} itemId={itemId} />
                   ))}
                 </View>
               ) : null}
@@ -393,6 +525,7 @@ function SubAgentDetailSection({
                 activityLog={remainingLog}
                 fallbackHeader={fallbackHeader}
                 hasActions={hasActions}
+                itemId={itemId}
               />
             </View>
           </ScrollView>
@@ -430,6 +563,8 @@ interface ScrollableContentProps {
   // Drives syntax highlighting (extension only) and, with startLine, a gutter.
   filePath?: string | null;
   startLine?: number;
+  itemId?: string;
+  field?: TimelineSearchField;
 }
 
 function ScrollableTextSection({
@@ -438,24 +573,35 @@ function ScrollableTextSection({
   wrapInSectionFill = true,
   filePath,
   startLine,
+  itemId,
+  field,
 }: ScrollableContentProps) {
+  const highlightQuery = useTimelineHighlightQuery();
   const keyedLines = useMemo(
     () => (filePath ? highlightToKeyedLines(content, extensionFromPath(filePath)) : null),
     [content, filePath],
   );
+  const scrollRef = useRef<RNScrollView>(null);
+  const fields = useMemo(() => (field ? [{ field, text: content }] : []), [content, field]);
+  useRevealActiveToolDetailLine({
+    scrollRef,
+    itemId,
+    fields,
+  });
   const body = (
     <ScrollView
+      ref={scrollRef}
       style={ds.scrollAreaFillStyle}
       contentContainerStyle={styles.scrollContent}
       nestedScrollEnabled
       showsVerticalScrollIndicator={true}
     >
       <ScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator={true}>
-        {keyedLines ? (
+        {keyedLines && highlightQuery.length === 0 ? (
           <HighlightedLines lines={keyedLines} startLine={startLine} />
         ) : (
           <Text selectable style={styles.scrollText} dataSet={CODE_SURFACE_DATASET}>
-            {content}
+            <HighlightedText text={content} itemId={itemId} field={field} />
           </Text>
         )}
       </ScrollView>
@@ -469,12 +615,23 @@ interface FetchDetailProps {
   url: string;
   result: string | null | undefined;
   ds: DetailStyles;
+  itemId?: string;
 }
 
-function FetchDetailSection({ url, result, ds }: FetchDetailProps) {
+function FetchDetailSection({ url, result, ds, itemId }: FetchDetailProps) {
+  const scrollRef = useRef<RNScrollView>(null);
+  const fields = useMemo(
+    () => [
+      { field: "toolInput" as const, text: url },
+      { field: "toolOutput" as const, text: result ?? "", startLine: 2 },
+    ],
+    [result, url],
+  );
+  useRevealActiveToolDetailLine({ scrollRef, itemId, fields });
   return (
     <View style={ds.sectionFillStyle}>
       <ScrollView
+        ref={scrollRef}
         style={ds.scrollAreaFillStyle}
         contentContainerStyle={styles.scrollContent}
         nestedScrollEnabled
@@ -482,7 +639,13 @@ function FetchDetailSection({ url, result, ds }: FetchDetailProps) {
       >
         <ScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator>
           <Text selectable style={styles.scrollText} dataSet={CODE_SURFACE_DATASET}>
-            {result ? `${url}\n\n${result}` : url}
+            <HighlightedText text={url} itemId={itemId} field="toolInput" />
+            {result
+              ? [
+                  "\n\n",
+                  <HighlightedText key="result" text={result} itemId={itemId} field="toolOutput" />,
+                ]
+              : null}
           </Text>
         </ScrollView>
       </ScrollView>
@@ -490,7 +653,17 @@ function FetchDetailSection({ url, result, ds }: FetchDetailProps) {
   );
 }
 
-function ScrollablePlainTextSection({ text, ds }: { text: string; ds: DetailStyles }) {
+function ScrollablePlainTextSection({
+  text,
+  itemId,
+  ds,
+}: {
+  text: string;
+  itemId?: string;
+  ds: DetailStyles;
+}) {
+  // detail.text is its own "toolInput" span (buildDetailInputParts's
+  // "plain_text" case) — rendered verbatim here, so fieldOffset lines up.
   return (
     <View style={styles.section}>
       <ScrollView
@@ -500,7 +673,7 @@ function ScrollablePlainTextSection({ text, ds }: { text: string; ds: DetailStyl
         showsVerticalScrollIndicator
       >
         <Text selectable style={styles.plainText}>
-          {text}
+          <HighlightedText text={text} itemId={itemId} field="toolInput" />
         </Text>
       </ScrollView>
     </View>
@@ -515,31 +688,27 @@ interface SearchDetail {
   annotations?: string[];
 }
 
-function buildSearchSections(detail: SearchDetail, ds: DetailStyles): ReactNode[] {
+function buildSearchSections(detail: SearchDetail, ds: DetailStyles, itemId?: string): ReactNode[] {
   const out: ReactNode[] = [];
   if (detail.content) {
     out.push(
-      <View key="search-content" style={styles.section}>
-        <ScrollView
-          style={ds.scrollAreaStyle}
-          contentContainerStyle={styles.scrollContent}
-          nestedScrollEnabled
-          showsVerticalScrollIndicator
-        >
-          <ScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator>
-            <Text selectable style={styles.scrollText} dataSet={CODE_SURFACE_DATASET}>
-              {detail.content}
-            </Text>
-          </ScrollView>
-        </ScrollView>
-      </View>,
+      <SearchContentSection
+        key="search-content"
+        content={detail.content}
+        ds={ds}
+        itemId={itemId}
+      />,
     );
   }
   if (detail.filePaths && detail.filePaths.length > 0) {
     out.push(
       <View key="search-files" style={styles.section}>
         <Text selectable style={styles.scrollText} dataSet={CODE_SURFACE_DATASET}>
-          {detail.filePaths.join("\n")}
+          {/* `filePaths` is part of the tool-input search span (joined with
+              spaces by the model). The rendered separator differs, so this
+              can provide the ordinary filtered highlight but must not claim an
+              exact active occurrence. */}
+          <HighlightedText text={detail.filePaths.join("\n")} itemId={itemId} field="toolInput" />
         </Text>
       </View>,
     );
@@ -548,7 +717,9 @@ function buildSearchSections(detail: SearchDetail, ds: DetailStyles): ReactNode[
     out.push(
       <View key="search-web-results" style={styles.section}>
         <Text selectable style={styles.scrollText} dataSet={CODE_SURFACE_DATASET}>
-          {detail.webResults.map((entry) => `${entry.title}\n${entry.url}`).join("\n\n")}
+          <HighlightedText
+            text={detail.webResults.map((entry) => `${entry.title}\n${entry.url}`).join("\n\n")}
+          />
         </Text>
       </View>,
     );
@@ -557,12 +728,43 @@ function buildSearchSections(detail: SearchDetail, ds: DetailStyles): ReactNode[
     out.push(
       <View key="search-annotations" style={styles.section}>
         <Text selectable style={styles.scrollText} dataSet={CODE_SURFACE_DATASET}>
-          {detail.annotations.join("\n\n")}
+          <HighlightedText text={detail.annotations.join("\n\n")} />
         </Text>
       </View>,
     );
   }
   return out;
+}
+
+function SearchContentSection({
+  content,
+  ds,
+  itemId,
+}: {
+  content: string;
+  ds: DetailStyles;
+  itemId?: string;
+}) {
+  const scrollRef = useRef<RNScrollView>(null);
+  const fields = useMemo(() => [{ field: "toolOutput" as const, text: content }], [content]);
+  useRevealActiveToolDetailLine({ scrollRef, itemId, fields });
+  return (
+    <View key="search-content" style={styles.section}>
+      <ScrollView
+        ref={scrollRef}
+        style={ds.scrollAreaStyle}
+        contentContainerStyle={styles.scrollContent}
+        nestedScrollEnabled
+        showsVerticalScrollIndicator
+      >
+        <ScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator>
+          <Text selectable style={styles.scrollText} dataSet={CODE_SURFACE_DATASET}>
+            <HighlightedText text={content} itemId={itemId} field="toolOutput" />
+          </Text>
+        </ScrollView>
+      </ScrollView>
+    </View>
+  );
 }
 
 function serializeUnknownValue(value: unknown): string {
@@ -573,22 +775,43 @@ function serializeUnknownValue(value: unknown): string {
   }
 }
 
+/** Mirrors the compact serialization used by the timeline search model. */
+function serializeUnknownSearchSource(value: unknown): string {
+  try {
+    return typeof value === "string" ? value : (JSON.stringify(value) ?? String(value));
+  } catch {
+    return String(value);
+  }
+}
+
 interface UnknownDetail {
   input: unknown;
   output: unknown;
 }
 
-function buildUnknownSections(detail: UnknownDetail, ds: DetailStyles, t: TFunction): ReactNode[] {
+function buildUnknownSections(
+  detail: UnknownDetail,
+  ds: DetailStyles,
+  t: TFunction,
+  timelineSearchItemId?: string,
+): ReactNode[] {
   const plainInputText =
     typeof detail.input === "string" && detail.output === null ? detail.input : null;
 
   if (plainInputText !== null) {
-    return [<ScrollablePlainTextSection key="unknown-plain-text" text={plainInputText} ds={ds} />];
+    return [
+      <ScrollablePlainTextSection
+        key="unknown-plain-text"
+        text={plainInputText}
+        itemId={timelineSearchItemId}
+        ds={ds}
+      />,
+    ];
   }
 
   const sectionsFromTopLevel = [
-    { title: t("toolCallDetails.input"), value: detail.input },
-    { title: t("toolCallDetails.output"), value: detail.output },
+    { title: t("toolCallDetails.input"), value: detail.input, field: "toolInput" as const },
+    { title: t("toolCallDetails.output"), value: detail.output, field: "toolOutput" as const },
   ].filter((entry) =>
     hasMeaningfulToolCallDetail({
       type: "unknown",
@@ -600,6 +823,7 @@ function buildUnknownSections(detail: UnknownDetail, ds: DetailStyles, t: TFunct
   const out: ReactNode[] = [];
   for (const section of sectionsFromTopLevel) {
     const value = serializeUnknownValue(section.value);
+    const sourceText = serializeUnknownSearchSource(section.value);
     if (!value.length) {
       continue;
     }
@@ -618,7 +842,12 @@ function buildUnknownSections(detail: UnknownDetail, ds: DetailStyles, t: TFunct
           showsHorizontalScrollIndicator={true}
         >
           <Text selectable style={styles.scrollText} dataSet={CODE_SURFACE_DATASET}>
-            {value}
+            <HighlightedText
+              text={value}
+              sourceText={sourceText}
+              itemId={timelineSearchItemId}
+              field={section.field}
+            />
           </Text>
         </ScrollView>
       </View>,
@@ -632,11 +861,18 @@ function buildDetailSections(
   diffLines: DiffLine[] | undefined,
   ds: DetailStyles,
   t: TFunction,
+  timelineSearchItemId?: string,
 ): ReactNode[] {
   if (!detail) return [];
   if (detail.type === "shell") {
     return [
-      <ShellDetailSection key="shell" command={detail.command} output={detail.output} ds={ds} />,
+      <ShellDetailSection
+        key="shell"
+        command={detail.command}
+        output={detail.output}
+        ds={ds}
+        itemId={timelineSearchItemId}
+      />,
     ];
   }
   if (detail.type === "worktree_setup") {
@@ -647,6 +883,7 @@ function buildDetailSections(
         branchName={detail.branchName}
         worktreePath={detail.worktreePath}
         ds={ds}
+        itemId={timelineSearchItemId}
       />,
     ];
   }
@@ -659,6 +896,7 @@ function buildDetailSections(
         subAgentType={detail.subAgentType}
         description={detail.description}
         ds={ds}
+        itemId={timelineSearchItemId}
       />,
     ];
   }
@@ -674,6 +912,8 @@ function buildDetailSections(
             ds={ds}
             wrapInSectionFill={false}
             filePath={detail.filePath}
+            itemId={timelineSearchItemId}
+            field="toolInput"
           />
         ) : null}
       </View>,
@@ -688,26 +928,51 @@ function buildDetailSections(
         ds={ds}
         filePath={detail.filePath}
         startLine={detail.offset ?? 1}
+        itemId={timelineSearchItemId}
+        field="toolOutput"
       />,
     ];
   }
   if (detail.type === "search") {
-    return buildSearchSections(detail, ds);
+    return buildSearchSections(detail, ds, timelineSearchItemId);
   }
   if (detail.type === "fetch") {
-    return [<FetchDetailSection key="fetch" url={detail.url} result={detail.result} ds={ds} />];
+    return [
+      <FetchDetailSection
+        key="fetch"
+        url={detail.url}
+        result={detail.result}
+        ds={ds}
+        itemId={timelineSearchItemId}
+      />,
+    ];
   }
   if (detail.type === "plain_text") {
     if (!detail.text) return [];
-    return [<ScrollablePlainTextSection key="plain-text" text={detail.text} ds={ds} />];
+    return [
+      <ScrollablePlainTextSection
+        key="plain-text"
+        text={detail.text}
+        itemId={timelineSearchItemId}
+        ds={ds}
+      />,
+    ];
   }
   if (detail.type === "unknown") {
-    return buildUnknownSections(detail, ds, t);
+    return buildUnknownSections(detail, ds, t, timelineSearchItemId);
   }
   return [];
 }
 
-function ErrorSection({ errorText, ds }: { errorText: string; ds: DetailStyles }) {
+function ErrorSection({
+  errorText,
+  ds,
+  itemId,
+}: {
+  errorText: string;
+  ds: DetailStyles;
+  itemId?: string;
+}) {
   const { t } = useTranslation();
   return (
     <View style={styles.section}>
@@ -724,7 +989,11 @@ function ErrorSection({ errorText, ds }: { errorText: string; ds: DetailStyles }
           style={[styles.scrollText, styles.errorText]}
           dataSet={CODE_SURFACE_DATASET}
         >
-          {errorText}
+          {/* errorText comes from buildToolCallPresentation, which may format
+              the raw error differently than the model's own safeStringify —
+              highlight the query, but exact active-match alignment isn't
+              guaranteed here. */}
+          <HighlightedText text={errorText} itemId={itemId} field="toolError" />
         </Text>
       </ScrollView>
     </View>
@@ -751,20 +1020,49 @@ export function ToolCallDetailsContent({ ...props }: ToolCallDetailsContentProps
 
 function ToolCallDetailsContentInner({
   detail,
+  timelineSearchItemId,
+  timelineSearchField: _timelineSearchField,
   errorText,
   maxHeight,
   fillAvailableHeight = false,
   showLoadingSkeleton = false,
 }: ToolCallDetailsContentProps) {
   const { t } = useTranslation();
+  const searchTarget = useTimelineSearchTarget();
+  // itemId-only: a tool call has several field spans (tool/toolInput/
+  // toolOutput/toolError), any of which can be the active match, and several
+  // detail renderers (diff/JSON/parsed sub-agent log) can't map an exact span
+  // at all. This block-level anchor is the fallback for ALL of them — same
+  // itemId-only pattern as AssistantMessage/UserMessage — so it must not also
+  // require `searchTarget.field === timelineSearchField` (that coarse single
+  // field, defaulted by the caller, would almost never match the field the
+  // active occurrence actually landed in).
+  const isSearchTarget =
+    timelineSearchItemId != null && searchTarget?.itemId === timelineSearchItemId;
+  const searchAnchorRef = useRef<View>(null);
+  const measureSearchAnchor = useCallback((report: (centerY: number) => void) => {
+    searchAnchorRef.current?.measureInWindow?.((_x, y, _width, height) => {
+      report(y + height / 2);
+    });
+  }, []);
+  // Some detail renderers transform the source into a diff, JSON or a nested
+  // scroll surface. Their exact text span cannot be mapped safely, so this is
+  // a lower-priority block fallback behind HighlightedText's exact anchor.
+  useTimelineSearchOccurrenceAnchor(
+    isSearchTarget ? (searchTarget ?? null) : null,
+    measureSearchAnchor,
+    1,
+  );
   const resolvedMaxHeight = fillAvailableHeight ? undefined : (maxHeight ?? 300);
   const ds = useDetailStyles(detail, resolvedMaxHeight, fillAvailableHeight);
   const diffLines = useDiffLines(detail);
 
-  const sections: ReactNode[] = buildDetailSections(detail, diffLines, ds, t);
+  const sections: ReactNode[] = buildDetailSections(detail, diffLines, ds, t, timelineSearchItemId);
 
   if (errorText) {
-    sections.push(<ErrorSection key="error" errorText={errorText} ds={ds} />);
+    sections.push(
+      <ErrorSection key="error" errorText={errorText} ds={ds} itemId={timelineSearchItemId} />,
+    );
   }
 
   if (sections.length === 0) {
@@ -774,7 +1072,11 @@ function ToolCallDetailsContentInner({
     return <Text style={styles.emptyStateText}>{t("toolCallDetails.empty")}</Text>;
   }
 
-  return <View style={ds.fullBleedContainerStyle}>{sections}</View>;
+  return (
+    <View ref={searchAnchorRef} style={ds.fullBleedContainerStyle}>
+      {sections}
+    </View>
+  );
 }
 
 // ---- Styles ----

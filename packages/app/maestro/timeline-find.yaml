@@ -1,0 +1,76 @@
+# Timeline find (Ctrl/Cmd+F over the chat timeline) coverage.
+#
+# BLOCKED today: there is no touch-reachable way to open
+# `TimelineSearchPanel` on a phone/tablet. `workspace.find.open` is only
+# ever dispatched from a `window`/`document` "keydown" listener registered
+# in `useKeyboardShortcuts`
+# (packages/app/src/hooks/use-keyboard-shortcuts.ts), and that effect bails
+# out before attaching the listener on native AND on compact/mobile web:
+#
+#   if (isNative) return;
+#   if (isMobile) return;
+#
+# There is no on-screen button, header/kebab-menu entry
+# (`workspace-header-menu` has new-agent/new-browser/import-agent/copy-path/
+# copy-branch-name/show-setup/new-terminal/edit-terminal-profiles — no
+# find item), or gesture anywhere in the app that opens the panel as a
+# touch alternative. See the Maestro coverage report for the suggested fix
+# (a touch-reachable control, e.g. `timeline-search-open`, wired to the
+# existing `timelineFindAdapter.open` in packages/app/src/agent-stream/
+# view.tsx).
+#
+# Once that control ships, swap the `tapOn: id: "timeline-search-open"`
+# step below for the real trigger — everything after it already targets
+# TimelineSearchPanel's real testIDs
+# (packages/app/src/timeline-search/timeline-search-panel.tsx), which are
+# already stable and Maestro-targetable.
+appId: sh.paseo
+---
+- runFlow: flows/land-in-chat.yaml
+
+# Produce real timeline content to search. The marker word appears twice in
+# one prompt so there are two matches to page through with next/prev,
+# without depending on any particular agent/model's generated reply.
+- tapOn: "Message agent..."
+- inputText: "Search marker: zebra-quokka19. Repeat it: zebra-quokka19."
+- tapOn: "Send message"
+
+- extendedWaitUntil:
+    visible: ".*zebra-quokka19.*"
+    timeout: 30000
+
+# --- Open find ---------------------------------------------------------
+# No touch control exists yet (see header comment). This step fails until
+# one is added; it documents the exact target to wire up.
+- tapOn:
+    id: "timeline-search-open"
+
+- extendedWaitUntil:
+    visible:
+      id: "timeline-search-panel"
+    timeout: 10000
+
+# --- Query ---------------------------------------------------------------
+- tapOn:
+    id: "timeline-search-input"
+- inputText: "zebra-quokka19"
+
+- extendedWaitUntil:
+    visible: "2 matches"
+    timeout: 10000
+
+# --- Next / prev (also exercises the Android soft-keyboard search key via
+# onSubmitEditing, since handleSelectNext backs both the button and the
+# submit event) ---
+- tapOn:
+    id: "timeline-search-next"
+- tapOn:
+    id: "timeline-search-next"
+- tapOn:
+    id: "timeline-search-prev"
+
+# --- Close -----------------------------------------------------------------
+- tapOn:
+    id: "timeline-search-close"
+- assertNotVisible:
+    id: "timeline-search-panel"

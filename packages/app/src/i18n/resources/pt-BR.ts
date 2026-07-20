@@ -572,6 +572,7 @@ export const ptBR: TranslationResources = {
         copyPath: "Copiar caminho do workspace",
         copyBranchName: "Copiar nome da branch",
         showSetup: "Mostrar configuração",
+        findInTab: "Buscar na aba",
       },
       toasts: {
         workspacePathUnavailable: "O caminho do workspace ainda não está disponível",
@@ -1806,6 +1807,7 @@ export const ptBR: TranslationResources = {
         sendMessage: "Enviar mensagem",
         queueMessage: "Enfileirar mensagem",
         muteUnmuteVoiceMode: "Silenciar/ativar modo de voz",
+        toggleTimelineSearch: "Localizar no painel",
       },
       helpNotes: {
         showKeyboardShortcuts:
@@ -2157,5 +2159,35 @@ export const ptBR: TranslationResources = {
         cancel: "Cancelar",
       },
     },
+  },
+  timelineSearch: {
+    placeholder: "Pesquisar na linha do tempo...",
+    noResults: "Nenhum resultado no histórico carregado",
+    matchCount_one: "{{count}} correspondência",
+    matchCount_other: "{{count}} correspondências",
+    matchCountCapped: "{{count}}+ correspondências",
+    historyLoadFailed:
+      "Não foi possível carregar o histórico anterior — os resultados podem estar incompletos",
+    next: "Próximo resultado",
+    prev: "Resultado anterior",
+    close: "Fechar",
+    searchingHistory: "Pesquisando no histórico…",
+    loadingOlderHistory: "Carregando histórico anterior…",
+    filters: {
+      all: "Tudo",
+      prompts: "Prompts",
+      messages: "Mensagens",
+      thinking: "Racioc\u00ednio",
+      toolCalls: "Chamadas de ferramentas",
+      toolOutput: "Saída de ferramentas",
+      errors: "Erros",
+    },
+  },
+  paneFind: {
+    noMatches: "Nenhuma correspondência",
+    matchCount_one: "{{count}} correspondência",
+    matchCount_other: "{{count}} correspondências",
+    next: "Próximo resultado",
+    prev: "Resultado anterior",
   },
 };

@@ -566,6 +566,7 @@ export const en = {
         copyPath: "Copy workspace path",
         copyBranchName: "Copy branch name",
         showSetup: "Show setup",
+        findInTab: "Find in tab",
       },
       toasts: {
         workspacePathUnavailable: "Workspace path is not available yet",
@@ -1785,6 +1786,7 @@ export const en = {
         sendMessage: "Send message",
         queueMessage: "Queue message",
         muteUnmuteVoiceMode: "Mute/unmute voice mode",
+        toggleTimelineSearch: "Find in pane",
       },
       helpNotes: {
         showKeyboardShortcuts: "Available when focus is not in a text field or terminal.",
@@ -2133,6 +2135,35 @@ export const en = {
         cancel: "Cancel",
       },
     },
+  },
+  timelineSearch: {
+    placeholder: "Search timeline...",
+    noResults: "No results",
+    matchCount_one: "{{count}} match",
+    matchCount_other: "{{count}} matches",
+    matchCountCapped: "{{count}}+ matches",
+    historyLoadFailed: "Couldn't load older history — results may be incomplete",
+    next: "Next result",
+    prev: "Previous result",
+    close: "Close",
+    searchingHistory: "Searching history…",
+    loadingOlderHistory: "Loading older history…",
+    filters: {
+      all: "All",
+      prompts: "Prompts",
+      messages: "Messages",
+      thinking: "Thinking",
+      toolCalls: "Tool calls",
+      toolOutput: "Tool output",
+      errors: "Errors",
+    },
+  },
+  paneFind: {
+    noMatches: "No matches",
+    matchCount_one: "{{count}} match",
+    matchCount_other: "{{count}} matches",
+    next: "Next result",
+    prev: "Previous result",
   },
 } as const;
 

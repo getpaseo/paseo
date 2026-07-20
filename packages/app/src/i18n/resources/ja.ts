@@ -572,6 +572,7 @@ export const ja: TranslationResources = {
         copyPath: "ワークスペースパスをコピー",
         copyBranchName: "ブランチ名をコピー",
         showSetup: "セットアップを表示",
+        findInTab: "タブ内を検索",
       },
       toasts: {
         workspacePathUnavailable: "ワークスペースパスはまだ利用できません",
@@ -1792,6 +1793,7 @@ export const ja: TranslationResources = {
         sendMessage: "メッセージを送信",
         queueMessage: "メッセージをキューに追加",
         muteUnmuteVoiceMode: "音声モードのミュートを切り替え",
+        toggleTimelineSearch: "ペイン内を検索",
       },
       helpNotes: {
         showKeyboardShortcuts:
@@ -2144,5 +2146,34 @@ export const ja: TranslationResources = {
         cancel: "キャンセル",
       },
     },
+  },
+  timelineSearch: {
+    placeholder: "タイムラインを検索...",
+    noResults: "読み込み済みの履歴に一致する結果がありません",
+    matchCount_one: "{{count}} 件の一致",
+    matchCount_other: "{{count}} 件の一致",
+    matchCountCapped: "{{count}}+ 件の一致",
+    historyLoadFailed: "以前の履歴を読み込めませんでした — 結果が不完全な可能性があります",
+    next: "次の結果",
+    prev: "前の結果",
+    close: "閉じる",
+    searchingHistory: "履歴を検索中…",
+    loadingOlderHistory: "以前の履歴を読み込み中…",
+    filters: {
+      all: "すべて",
+      prompts: "プロンプト",
+      messages: "メッセージ",
+      thinking: "思考",
+      toolCalls: "ツール呼び出し",
+      toolOutput: "ツール出力",
+      errors: "エラー",
+    },
+  },
+  paneFind: {
+    noMatches: "一致する結果がありません",
+    matchCount_one: "{{count}} 件の一致",
+    matchCount_other: "{{count}} 件の一致",
+    next: "次の結果",
+    prev: "前の結果",
   },
 } as const;

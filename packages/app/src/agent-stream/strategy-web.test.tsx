@@ -199,6 +199,103 @@ describe("createWebStreamStrategy", () => {
     expect(renderLiveHeadRow).toHaveBeenCalledTimes(2);
   });
 
+  it("scrolls a virtualized history row into view by item id", () => {
+    const strategy = createWebStreamStrategy({ isMobileBreakpoint: true });
+    const viewportRef = React.createRef<StreamViewportHandle>();
+    const historyVirtualized = Array.from({ length: 16 }, (_, index) => userMessage(index));
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    act(() => {
+      root?.render(
+        strategy.render({
+          agentId: "agent",
+          segments: { historyVirtualized, historyMounted: [], liveHead: [] },
+          boundary: { hasVirtualizedHistory: true, hasMountedHistory: false, hasLiveHead: false },
+          renderers: createRenderers(vi.fn()),
+          listEmptyComponent: null,
+          viewportRef,
+          routeBottomAnchorRequest: null,
+          isAuthoritativeHistoryReady: true,
+          onNearBottomChange: vi.fn(),
+          onNearHistoryStart: vi.fn(),
+          isLoadingOlderHistory: false,
+          hasOlderHistory: false,
+          scrollEnabled: true,
+          listStyle: null,
+          baseListContentContainerStyle: null,
+          forwardListContentContainerStyle: null,
+        }),
+      );
+    });
+
+    const scrollTo = vi.fn();
+    HTMLElement.prototype.scrollTo = scrollTo;
+
+    let didScroll = false;
+    act(() => {
+      didScroll = viewportRef.current?.scrollToItem("message-10") ?? false;
+    });
+
+    expect(didScroll).toBe(true);
+    expect(scrollTo).toHaveBeenCalled();
+    expect(scrollTo).toHaveBeenCalledWith(expect.objectContaining({ behavior: "auto" }));
+  });
+
+  it("reports the actual scroll viewport center in window coordinates", () => {
+    const strategy = createWebStreamStrategy({ isMobileBreakpoint: true });
+    const viewportRef = React.createRef<StreamViewportHandle>();
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    act(() => {
+      root?.render(
+        strategy.render({
+          agentId: "agent",
+          segments: { historyVirtualized: [], historyMounted: [], liveHead: [] },
+          boundary: { hasVirtualizedHistory: false, hasMountedHistory: false, hasLiveHead: false },
+          renderers: createRenderers(vi.fn()),
+          listEmptyComponent: null,
+          viewportRef,
+          routeBottomAnchorRequest: null,
+          isAuthoritativeHistoryReady: true,
+          onNearBottomChange: vi.fn(),
+          onNearHistoryStart: vi.fn(),
+          isLoadingOlderHistory: false,
+          hasOlderHistory: false,
+          scrollEnabled: true,
+          listStyle: null,
+          baseListContentContainerStyle: null,
+          forwardListContentContainerStyle: null,
+        }),
+      );
+    });
+
+    const scrollContainer = container.querySelector('[data-testid="agent-chat-scroll"]');
+    if (!(scrollContainer instanceof HTMLElement)) {
+      throw new Error("Expected agent chat scroll container");
+    }
+    scrollContainer.getBoundingClientRect = vi.fn(() => ({
+      bottom: 650,
+      height: 500,
+      left: 0,
+      right: 320,
+      top: 150,
+      width: 320,
+      x: 0,
+      y: 150,
+      toJSON: () => ({}),
+    }));
+    const scrollBy = vi.fn();
+    scrollContainer.scrollBy = scrollBy;
+
+    expect(viewportRef.current?.getWindowCenterY()).toBe(400);
+    viewportRef.current?.scrollBy(36);
+    expect(scrollBy).toHaveBeenCalledWith({ behavior: "auto", top: 36 });
+  });
+
   it("fires near-history-start when the user scrolls near the top", async () => {
     const strategy = createWebStreamStrategy({ isMobileBreakpoint: true });
     const viewportRef = React.createRef<StreamViewportHandle>();
@@ -661,5 +758,91 @@ describe("createWebStreamStrategy", () => {
     });
 
     expect(scrollTo).toHaveBeenCalled();
+  });
+
+  it("scrolls a mounted history row into view by item id", async () => {
+    const strategy = createWebStreamStrategy({ isMobileBreakpoint: true });
+    const viewportRef = React.createRef<StreamViewportHandle>();
+    const historyMounted = [userMessage(1), userMessage(2), userMessage(3)];
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    act(() => {
+      root?.render(
+        strategy.render({
+          agentId: "agent",
+          segments: { historyVirtualized: [], historyMounted, liveHead: [] },
+          boundary: { hasVirtualizedHistory: false, hasMountedHistory: true, hasLiveHead: false },
+          renderers: createRenderers(vi.fn()),
+          listEmptyComponent: null,
+          viewportRef,
+          routeBottomAnchorRequest: null,
+          isAuthoritativeHistoryReady: true,
+          onNearBottomChange: vi.fn(),
+          onNearHistoryStart: vi.fn(),
+          isLoadingOlderHistory: false,
+          hasOlderHistory: false,
+          scrollEnabled: true,
+          listStyle: null,
+          baseListContentContainerStyle: null,
+          forwardListContentContainerStyle: null,
+        }),
+      );
+    });
+
+    const targetRow = container.querySelector('[data-stream-item-id="message-2"]');
+    if (!(targetRow instanceof HTMLElement)) {
+      throw new Error("Expected a mounted row wrapper with data-stream-item-id");
+    }
+    const scrollIntoView = vi.fn();
+    targetRow.scrollIntoView = scrollIntoView;
+
+    let didScroll = false;
+    act(() => {
+      didScroll = viewportRef.current?.scrollToItem("message-2") ?? false;
+    });
+
+    expect(didScroll).toBe(true);
+    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: "auto", block: "center" });
+  });
+
+  it("returns false and does not scroll for an item id that isn't rendered", () => {
+    const strategy = createWebStreamStrategy({ isMobileBreakpoint: true });
+    const viewportRef = React.createRef<StreamViewportHandle>();
+    const historyMounted = [userMessage(1), userMessage(2)];
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    act(() => {
+      root?.render(
+        strategy.render({
+          agentId: "agent",
+          segments: { historyVirtualized: [], historyMounted, liveHead: [] },
+          boundary: { hasVirtualizedHistory: false, hasMountedHistory: true, hasLiveHead: false },
+          renderers: createRenderers(vi.fn()),
+          listEmptyComponent: null,
+          viewportRef,
+          routeBottomAnchorRequest: null,
+          isAuthoritativeHistoryReady: true,
+          onNearBottomChange: vi.fn(),
+          onNearHistoryStart: vi.fn(),
+          isLoadingOlderHistory: false,
+          hasOlderHistory: false,
+          scrollEnabled: true,
+          listStyle: null,
+          baseListContentContainerStyle: null,
+          forwardListContentContainerStyle: null,
+        }),
+      );
+    });
+
+    let didScroll = true;
+    act(() => {
+      didScroll = viewportRef.current?.scrollToItem("message-not-rendered") ?? true;
+    });
+
+    expect(didScroll).toBe(false);
   });
 });
