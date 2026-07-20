@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { mapCodexToolCallEnvelope, mapCodexToolCallFromThreadItem } from "./tool-call-mapper.js";
+import {
+  mapCodexToolCallEnvelope,
+  mapCodexToolCallFromThreadItem,
+  splitCodexMcpToolResultImages,
+} from "./tool-call-mapper.js";
 
 function expectMapped<T>(item: T | null): T {
   expect(item).not.toBeNull();
@@ -839,6 +843,119 @@ describe("codex tool-call mapper", () => {
       },
     });
     expect(JSON.stringify(item)).not.toContain("iVBORw0KGgo=");
+  });
+
+  it("drops codex toolSurface screenshot data urls from mcp tool output", () => {
+    const item = expectMapped(
+      mapCodexToolCallFromThreadItem({
+        type: "mcpToolCall",
+        id: "codex-tool-surface",
+        status: "completed",
+        server: "node_repl",
+        tool: "js",
+        arguments: { code: "await page.screenshot()" },
+        result: {
+          content: [{ type: "text", text: "navigated" }],
+          structuredContent: { ok: true },
+          _meta: {
+            "codex/toolSurface": {
+              kind: "browser",
+              screenshot: {
+                url: "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ==",
+                width: 1280,
+                height: 720,
+              },
+            },
+            "codex/requestId": "req-42",
+          },
+        },
+      }),
+    );
+
+    expect(item).toEqual({
+      type: "tool_call",
+      callId: "codex-tool-surface",
+      name: "node_repl.js",
+      status: "completed",
+      error: null,
+      detail: {
+        type: "unknown",
+        input: { code: "await page.screenshot()" },
+        output: {
+          content: [{ type: "text", text: "navigated" }],
+          structuredContent: { ok: true },
+          _meta: {
+            "codex/toolSurface": {
+              kind: "browser",
+              screenshot: { width: 1280, height: 720 },
+            },
+            "codex/requestId": "req-42",
+          },
+        },
+      },
+    });
+    expect(JSON.stringify(item)).not.toContain("/9j/4AAQSkZJRgABAQ==");
+  });
+
+  it("hands codex toolSurface screenshots to the image materialization path", () => {
+    const { images } = splitCodexMcpToolResultImages({
+      content: [{ type: "text", text: "navigated" }],
+      _meta: {
+        "codex/toolSurface": {
+          screenshot: { url: "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ==" },
+        },
+      },
+    });
+
+    expect(images).toEqual([{ data: "/9j/4AAQSkZJRgABAQ==", mimeType: "image/jpeg" }]);
+  });
+
+  it("extracts both toolSurface screenshots and mcp image content blocks", () => {
+    const { images, output } = splitCodexMcpToolResultImages({
+      content: [
+        { type: "text", text: "navigated" },
+        { type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" },
+      ],
+      _meta: {
+        "codex/toolSurface": {
+          screenshot: { url: "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ==" },
+        },
+      },
+    });
+
+    expect(images).toEqual([
+      { data: "/9j/4AAQSkZJRgABAQ==", mimeType: "image/jpeg" },
+      { data: "iVBORw0KGgo=", mimeType: "image/png" },
+    ]);
+    expect(output).toEqual({
+      content: [
+        { type: "text", text: "navigated" },
+        { type: "text", text: "[image]" },
+      ],
+      _meta: { "codex/toolSurface": { screenshot: {} } },
+    });
+  });
+
+  it("leaves remote toolSurface screenshot urls untouched", () => {
+    const result = {
+      content: [{ type: "text", text: "navigated" }],
+      _meta: {
+        "codex/toolSurface": {
+          screenshot: { url: "https://example.com/shot.jpg", width: 800 },
+        },
+      },
+    };
+
+    expect(splitCodexMcpToolResultImages(result)).toEqual({ images: [], output: result });
+  });
+
+  it("leaves mcp tool results without a toolSurface screenshot unchanged", () => {
+    const result = {
+      content: [{ type: "text", text: "navigated" }],
+      _meta: { "codex/requestId": "req-42" },
+    };
+
+    expect(splitCodexMcpToolResultImages(result)).toEqual({ images: [], output: result });
   });
 
   it("normalizes codex paseo_voice.speak mcp calls and extracts spoken text", () => {

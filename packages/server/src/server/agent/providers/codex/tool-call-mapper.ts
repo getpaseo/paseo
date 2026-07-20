@@ -635,13 +635,65 @@ function readMcpImageContent(block: unknown): CodexMcpToolResultImage | null {
   };
 }
 
-export function splitCodexMcpToolResultImages(result: unknown): CodexMcpToolResultImagesSplit {
-  if (!isRecord(result) || !Array.isArray(result.content)) {
+const CODEX_TOOL_SURFACE_META_KEY = "codex/toolSurface";
+const DATA_URL_IMAGE_PATTERN = /^data:(image\/[^;]+);base64,(.*)$/;
+
+function readDataUrlImage(value: unknown): CodexMcpToolResultImage | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const match = value.match(DATA_URL_IMAGE_PATTERN);
+  if (!match) {
+    return null;
+  }
+  return {
+    data: match[2],
+    mimeType: match[1],
+  };
+}
+
+// Codex browser tools return their screenshot as a base64 data URL under
+// `_meta["codex/toolSurface"]` rather than as an MCP `image` content block. Left inline it lands
+// verbatim in the timeline entry, where a single screenshot can exceed 0.6 MB and a tail page can
+// outgrow the relay message cap.
+function splitCodexToolSurfaceScreenshot(result: unknown): CodexMcpToolResultImagesSplit {
+  if (!isRecord(result) || !isRecord(result._meta)) {
     return { images: [], output: result };
   }
 
-  const images: CodexMcpToolResultImage[] = [];
-  const content = result.content.map((block) => {
+  const surface = result._meta[CODEX_TOOL_SURFACE_META_KEY];
+  if (!isRecord(surface) || !isRecord(surface.screenshot)) {
+    return { images: [], output: result };
+  }
+
+  const image = readDataUrlImage(surface.screenshot.url);
+  if (!image) {
+    return { images: [], output: result };
+  }
+
+  const { url: _url, ...screenshot } = surface.screenshot;
+  return {
+    images: [image],
+    output: {
+      ...result,
+      _meta: {
+        ...result._meta,
+        [CODEX_TOOL_SURFACE_META_KEY]: { ...surface, screenshot },
+      },
+    },
+  };
+}
+
+export function splitCodexMcpToolResultImages(result: unknown): CodexMcpToolResultImagesSplit {
+  const surfaceSplit = splitCodexToolSurfaceScreenshot(result);
+  const base = surfaceSplit.output;
+
+  if (!isRecord(base) || !Array.isArray(base.content)) {
+    return surfaceSplit;
+  }
+
+  const images: CodexMcpToolResultImage[] = [...surfaceSplit.images];
+  const content = base.content.map((block) => {
     const image = readMcpImageContent(block);
     if (!image) {
       return block;
@@ -650,14 +702,14 @@ export function splitCodexMcpToolResultImages(result: unknown): CodexMcpToolResu
     return { type: "text", text: "[image]" };
   });
 
-  if (images.length === 0) {
-    return { images, output: result };
+  if (images.length === surfaceSplit.images.length) {
+    return { images, output: base };
   }
 
   return {
     images,
     output: {
-      ...result,
+      ...base,
       content,
     },
   };
