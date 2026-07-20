@@ -7881,7 +7881,12 @@ test("authoritative timeline includes provider-emitted submitted user prompt", a
           type: "timeline",
           provider: this.provider,
           turnId,
-          item: { type: "user_message", text, messageId: options?.messageId },
+          item: {
+            type: "user_message",
+            text,
+            messageId: "provider-message-1",
+            clientMessageId: options?.clientMessageId,
+          },
         });
         this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
       }, 0);
@@ -7907,13 +7912,16 @@ test("authoritative timeline includes provider-emitted submitted user prompt", a
       workspaceId: undefined,
     });
 
-    await manager.runAgent(snapshot.id, "hello from composer", { messageId: "msg-client-1" });
+    await manager.runAgent(snapshot.id, "hello from composer", {
+      clientMessageId: "msg-client-1",
+    });
 
     const timeline = manager.fetchTimeline(snapshot.id, { direction: "tail", limit: 20 }).rows;
     expect(timeline.map((row) => row.item)).toContainEqual({
       type: "user_message",
       text: "hello from composer",
-      messageId: "msg-client-1",
+      messageId: "provider-message-1",
+      clientMessageId: "msg-client-1",
     });
   } finally {
     await manager.flush().catch(() => undefined);

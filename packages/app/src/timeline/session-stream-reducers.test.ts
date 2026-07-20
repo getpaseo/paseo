@@ -538,7 +538,7 @@ describe("processTimelineResponse", () => {
     expect(result.error).toBe(null);
   });
 
-  it("reconciles an optimistic user message during an after-page response", () => {
+  it("reconciles a legacy canonical user message by content during an after-page response", () => {
     const existingCursor: TimelineCursor = {
       epoch: "epoch-1",
       startSeq: 1,
@@ -559,7 +559,7 @@ describe("processTimelineResponse", () => {
             item: {
               type: "user_message",
               text: "sent while catching up",
-              messageId: "optimistic-after",
+              messageId: "canonical-after",
             },
           },
         ],
@@ -568,7 +568,42 @@ describe("processTimelineResponse", () => {
 
     const userMessages = result.tail.filter((item) => item.kind === "user_message");
     expect(userMessages).toHaveLength(1);
-    expect(userMessages[0]?.id).toBe("optimistic-after");
+    expect(userMessages[0]?.id).toBe("canonical-after");
+    expect(userMessages[0]?.optimistic).toBeUndefined();
+  });
+
+  it("reconciles an optimistic user message by client message id", () => {
+    const optimistic = makeOptimisticUserMessage("local presentation", "client-message");
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail: [optimistic],
+      currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 1 },
+      payload: {
+        ...baseTimelineInput.payload,
+        epoch: "epoch-1",
+        entries: [
+          {
+            ...makeTimelineEntry(2, "provider presentation", "user_message"),
+            item: {
+              type: "user_message",
+              text: "provider presentation",
+              messageId: "provider-message",
+              clientMessageId: "client-message",
+            },
+          },
+        ],
+      },
+    });
+
+    const userMessages = result.tail.filter((item) => item.kind === "user_message");
+    expect(userMessages).toEqual([
+      expect.objectContaining({
+        id: "provider-message",
+        clientMessageId: "client-message",
+        text: "local presentation",
+      }),
+    ]);
     expect(userMessages[0]?.optimistic).toBeUndefined();
   });
 
@@ -1178,7 +1213,7 @@ describe("processTimelineResponse", () => {
     ]);
   });
 
-  it("does not match equal prompt text when canonical message ids differ", () => {
+  it("does not match equal prompt text when canonical client message ids differ", () => {
     const prompt = makeOptimisticUserMessage("continue", "local-prompt");
 
     const result = processTimelineResponse({
@@ -1197,6 +1232,7 @@ describe("processTimelineResponse", () => {
               type: "user_message",
               text: "continue",
               messageId: "remote-prompt",
+              clientMessageId: "remote-client-prompt",
             },
           },
         ],
