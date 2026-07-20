@@ -714,6 +714,29 @@ describe("ClaudeAgentSession features", () => {
     await session.close();
   });
 
+  test("falls back to the model default when switching away from an unsupported thinking option", async () => {
+    const { queryFactory, launches } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      model: "claude-sonnet-5",
+      thinkingOptionId: "off",
+    });
+
+    await session.setModel?.("claude-fable-5");
+    await session.startTurn("hello");
+
+    expect(launches.at(-1)?.options.thinking).toEqual({ type: "adaptive" });
+    expect(launches.at(-1)?.options.effort).toBe("low");
+
+    await session.close();
+  });
+
   test("returns a next-turn notice when changing Claude thinking during an active turn", async () => {
     const { queryFactory } = createQueryMock();
     const client = new ClaudeAgentClient({

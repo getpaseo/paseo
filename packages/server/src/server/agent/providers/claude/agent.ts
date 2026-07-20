@@ -2213,6 +2213,7 @@ class ClaudeAgentSession implements AgentSession {
     const activeQuery = await this.ensureQuery();
     await activeQuery.setModel(normalizedModelId ?? undefined);
     this.config.model = normalizedModelId ?? undefined;
+    this.reconcileThinkingOptionForModel(normalizedModelId);
     if (!claudeModelSupportsFastMode(this.config.model) && this.config.featureValues?.fast_mode) {
       await this.applyFastModeFeature(false, activeQuery);
     }
@@ -2224,6 +2225,26 @@ class ClaudeAgentSession implements AgentSession {
     this.cachedRuntimeInfo = null;
     // Model change affects persistence metadata, so invalidate cached handle.
     this.persistence = null;
+  }
+
+  private reconcileThinkingOptionForModel(modelId: string | null): void {
+    const thinkingOptionId = this.config.thinkingOptionId;
+    if (!modelId || !thinkingOptionId || thinkingOptionId === "default") {
+      return;
+    }
+
+    const model = findClaudeModel(modelId);
+    if (model?.thinkingOptions?.some((option) => option.id === thinkingOptionId)) {
+      return;
+    }
+
+    this.config.thinkingOptionId = model?.defaultThinkingOptionId;
+    this.queryRestartNeeded = true;
+    this.pushEvent({
+      type: "thinking_option_changed",
+      provider: "claude",
+      thinkingOptionId: this.config.thinkingOptionId ?? null,
+    });
   }
 
   async setThinkingOption(thinkingOptionId: string | null): Promise<void | AgentProviderNotice> {

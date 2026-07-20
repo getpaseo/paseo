@@ -3431,6 +3431,7 @@ export class AgentManager {
         this.emitState(agent);
         return undefined;
       case "thinking_option_changed":
+        agent.config.thinkingOptionId = event.thinkingOptionId ?? undefined;
         if (agent.runtimeInfo) {
           agent.runtimeInfo = {
             ...agent.runtimeInfo,
