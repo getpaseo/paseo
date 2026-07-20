@@ -102,7 +102,6 @@ const OPENCODE_BUILD_MODE_ID = "build";
 const OPENCODE_LEGACY_FULL_ACCESS_MODE_ID = "full-access";
 const OPENCODE_AUTO_ACCEPT_FEATURE_ID = "auto_accept";
 const OPENCODE_PERSISTED_SESSION_LIMIT = 200;
-const OPENCODE_PENDING_ABORT_START_TIMEOUT_MS = 10_000;
 const OPENCODE_CHILD_SESSION_HYDRATION_LIMIT = 100;
 const OPENCODE_CHILD_SESSION_SERVER_REGISTRY_LIMIT = 500;
 const OPENCODE_PERMISSION_ACTION_ALLOW_ONCE = "allow_once";
@@ -2790,14 +2789,6 @@ function getOpenCodeEventSessionId(event: OpenCodeEvent): string | null {
   );
 }
 
-function isOpenCodeUserMessageEvent(event: OpenCodeEvent, sessionId: string): boolean {
-  return (
-    event.type === "message.updated" &&
-    event.properties.info.sessionID === sessionId &&
-    event.properties.info.role === "user"
-  );
-}
-
 function isOpenCodeTerminalEvent(event: OpenCodeEvent, sessionId: string): boolean {
   if (event.type === "session.idle" || event.type === "session.error") {
     return event.properties.sessionID === sessionId;
@@ -2931,7 +2922,7 @@ class OpenCodeAgentSession implements AgentSession {
   private eventStreamAbortController: AbortController | null = null;
   private eventStreamReady: Deferred<void> | null = null;
   private eventStreamTask: Promise<void> | null = null;
-  private suppressTerminalUntilNextUserMessage = false;
+  private awaitingInterruptedTurnBoundary = false;
   private closed = false;
   private readonly persistSession: boolean;
   private deletedFromProvider = false;
@@ -3023,7 +3014,7 @@ class OpenCodeAgentSession implements AgentSession {
       );
     });
     if (turnId) {
-      this.suppressTerminalUntilNextUserMessage = true;
+      this.awaitingInterruptedTurnBoundary = true;
       this.finishForegroundTurn(
         { type: "turn_canceled", provider: "opencode", reason: "interrupted" },
         turnId,
@@ -3054,31 +3045,27 @@ class OpenCodeAgentSession implements AgentSession {
         );
         throw error;
       });
-    const trackedAbortPromise = abortPromise.finally(() => {
-      if (this.pendingAbortPromise === trackedAbortPromise) {
-        this.pendingAbortPromise = null;
-      }
-    });
-    this.pendingAbortPromise = trackedAbortPromise;
-    return trackedAbortPromise;
+    this.pendingAbortPromise = abortPromise;
+    return abortPromise;
   }
 
   private async awaitPendingAbortBeforeStartingTurn(): Promise<void> {
-    const pendingAbortPromise = this.pendingAbortPromise;
+    const pendingAbortPromise =
+      this.pendingAbortPromise ??
+      (this.awaitingInterruptedTurnBoundary
+        ? this.beginSessionAbort(null, "turn_start_boundary")
+        : null);
     if (!pendingAbortPromise) {
       return;
     }
 
-    await withTimeout(
-      pendingAbortPromise,
-      OPENCODE_PENDING_ABORT_START_TIMEOUT_MS,
-      "OpenCode pending session.abort",
-    ).catch((error) => {
-      this.logger.warn(
-        { err: error, sessionId: this.sessionId },
-        "OpenCode session.abort was still pending before starting the next turn",
-      );
-    });
+    try {
+      await pendingAbortPromise;
+    } finally {
+      if (this.pendingAbortPromise === pendingAbortPromise) {
+        this.pendingAbortPromise = null;
+      }
+    }
   }
 
   async startTurn(
@@ -3090,7 +3077,6 @@ class OpenCodeAgentSession implements AgentSession {
         const autonomousTurnId = this.activeForegroundTurnId;
         await this.beginSessionAbort(autonomousTurnId, "direct_prompt_handoff");
         if (this.activeForegroundTurnId === autonomousTurnId) {
-          this.suppressTerminalUntilNextUserMessage = true;
           this.finishForegroundTurn(
             { type: "turn_canceled", provider: "opencode", reason: "interrupted" },
             autonomousTurnId,
@@ -3101,6 +3087,7 @@ class OpenCodeAgentSession implements AgentSession {
       }
     }
     await this.awaitPendingAbortBeforeStartingTurn();
+    this.awaitingInterruptedTurnBoundary = false;
 
     this.runningToolCalls.clear();
     this.subAgentsByCallId.clear();
@@ -3567,7 +3554,7 @@ class OpenCodeAgentSession implements AgentSession {
         foregroundEvents.push(translatedEvent);
       }
     }
-    if (this.shouldSuppressStaleInterruptedEvent(event, eventCount)) {
+    if (this.consumeInterruptedTurnBoundary(event, eventCount)) {
       return;
     }
     if (!turnId && this.shouldStartAutonomousTurn(event, foregroundEvents)) {
@@ -3611,17 +3598,14 @@ class OpenCodeAgentSession implements AgentSession {
     }
   }
 
-  private shouldSuppressStaleInterruptedEvent(event: OpenCodeEvent, eventCount: number): boolean {
-    if (!this.suppressTerminalUntilNextUserMessage) {
-      return false;
-    }
-    if (isOpenCodeUserMessageEvent(event, this.sessionId)) {
-      this.suppressTerminalUntilNextUserMessage = false;
+  private consumeInterruptedTurnBoundary(event: OpenCodeEvent, eventCount: number): boolean {
+    if (!this.awaitingInterruptedTurnBoundary) {
       return false;
     }
     if (!isOpenCodeTerminalEvent(event, this.sessionId)) {
       return false;
     }
+    this.awaitingInterruptedTurnBoundary = false;
     this.traceOpenCode("provider.opencode.event.skip", {
       n: eventCount,
       reason: "stale_interrupt_terminal",
@@ -3642,7 +3626,7 @@ class OpenCodeAgentSession implements AgentSession {
     event: OpenCodeEvent,
     foregroundEvents: readonly AgentStreamEvent[],
   ): boolean {
-    if (this.activeForegroundTurnId || this.suppressTerminalUntilNextUserMessage) {
+    if (this.activeForegroundTurnId || this.awaitingInterruptedTurnBoundary) {
       return false;
     }
     if (getOpenCodeEventSessionId(event) !== this.sessionId) {

@@ -2753,11 +2753,11 @@ describe("OpenCode provider subagent contract", () => {
       cwd: "/workspace/repo",
     });
     const events: AgentStreamEvent[] = [];
-    const permissionRequested = createTestDeferred<void>();
+    const streamDrained = createTestDeferred<void>();
     parent.subscribe((event) => {
       events.push(event);
-      if (event.type === "permission_requested") {
-        permissionRequested.resolve();
+      if (event.type === "provider_subagent") {
+        streamDrained.resolve();
       }
     });
 
@@ -2765,6 +2765,16 @@ describe("OpenCode provider subagent contract", () => {
       await parent.startTurn("Start from Paseo");
       await parent.interrupt();
 
+      openCode.emitEvent({
+        type: "message.updated",
+        properties: {
+          info: {
+            id: "msg_delayed_interrupted_user",
+            sessionID: "ses_parent_interrupted",
+            role: "user",
+          },
+        },
+      });
       for (const event of assistantTurnEvents({
         sessionId: "ses_parent_interrupted",
         text: "Late interrupted response.",
@@ -2772,18 +2782,19 @@ describe("OpenCode provider subagent contract", () => {
         openCode.emitEvent(event);
       }
       openCode.emitEvent({
-        type: "permission.asked",
+        type: "session.created",
         properties: {
-          id: "perm_after_interrupted_output",
-          sessionID: "ses_parent_interrupted",
-          permission: "bash",
-          patterns: ["npm test"],
-          metadata: { command: "npm test", cwd: "/workspace/repo" },
+          info: {
+            id: "ses_child_after_interrupted_output",
+            parentID: "ses_parent_interrupted",
+            title: "Stream drain marker",
+            directory: "/workspace/repo",
+          },
         },
       });
 
-      await permissionRequested.promise;
-      expect(events.filter((event) => event.type !== "permission_requested")).toEqual([
+      await streamDrained.promise;
+      expect(events.filter((event) => event.type !== "provider_subagent")).toEqual([
         { type: "turn_started", provider: "opencode", turnId: "opencode-turn-0" },
         {
           type: "turn_canceled",
