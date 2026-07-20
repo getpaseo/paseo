@@ -1570,6 +1570,7 @@ export const ptBR: TranslationResources = {
     sections: {
       general: "Geral",
       appearance: "Aparência",
+      editor: "Editor",
       shortcuts: "Atalhos",
       integrations: "Integrações",
       permissions: "Permissões",

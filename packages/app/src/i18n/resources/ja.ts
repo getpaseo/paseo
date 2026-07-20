@@ -1558,6 +1558,7 @@ export const ja: TranslationResources = {
     sections: {
       general: "一般",
       appearance: "外観",
+      editor: "エディター",
       shortcuts: "ショートカット",
       integrations: "連携",
       permissions: "権限",

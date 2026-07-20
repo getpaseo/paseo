@@ -1523,6 +1523,7 @@ export const zhCN: TranslationResources = {
     sections: {
       general: "通用",
       appearance: "外观",
+      editor: "编辑器",
       shortcuts: "快捷键",
       integrations: "集成",
       permissions: "权限",

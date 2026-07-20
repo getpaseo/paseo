@@ -1583,6 +1583,7 @@ export const es: TranslationResources = {
     sections: {
       general: "General",
       appearance: "Apariencia",
+      editor: "Editor",
       shortcuts: "Atajos",
       integrations: "Integraciones",
       permissions: "Permisos",

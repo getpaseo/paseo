@@ -704,7 +704,13 @@ function TabChip({
               ) : null}
             </ContextMenuTrigger>
           </TooltipTrigger>
-          <TooltipContent side="bottom" align="center" offset={8}>
+          <TooltipContent
+            side="bottom"
+            align="center"
+            offset={8}
+            maxWidth={tab.target.kind === "file" ? 720 : 280}
+            testID={`workspace-tab-tooltip-${buildDeterministicWorkspaceTabId(tab.target)}`}
+          >
             {tab.target.kind === "agent" ? (
               <View style={styles.tooltipAgentRow}>
                 <Text style={styles.newTabTooltipText}>{tooltipLabel}</Text>
@@ -1158,10 +1164,12 @@ function ResolvedDesktopTabChip({
       workspaceId={normalizedWorkspaceId}
     >
       {(presentation) => {
-        const tooltipLabel =
-          presentation.titleState === "loading"
-            ? t("workspace.tabs.loadingAgentTitle")
-            : presentation.label;
+        let tooltipLabel = presentation.label;
+        if (item.tab.target.kind === "file") {
+          tooltipLabel = item.tab.target.path;
+        } else if (presentation.titleState === "loading") {
+          tooltipLabel = t("workspace.tabs.loadingAgentTitle");
+        }
 
         return (
           <View style={styles.tabSlot}>

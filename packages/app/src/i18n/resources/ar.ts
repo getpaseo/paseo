@@ -1540,6 +1540,7 @@ export const ar: TranslationResources = {
     sections: {
       general: "عام",
       appearance: "مظهر",
+      editor: "المحرر",
       shortcuts: "الاختصارات",
       integrations: "التكامل",
       permissions: "الأذونات",

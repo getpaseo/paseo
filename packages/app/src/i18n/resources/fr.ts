@@ -1586,6 +1586,7 @@ export const fr: TranslationResources = {
     sections: {
       general: "Général",
       appearance: "Apparence",
+      editor: "Éditeur",
       shortcuts: "Raccourcis",
       integrations: "Intégrations",
       permissions: "Autorisations",

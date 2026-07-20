@@ -1575,6 +1575,7 @@ export const ru: TranslationResources = {
     sections: {
       general: "Общий",
       appearance: "Появление",
+      editor: "Редактор",
       shortcuts: "Ярлыки",
       integrations: "Интеграции",
       permissions: "Разрешения",
