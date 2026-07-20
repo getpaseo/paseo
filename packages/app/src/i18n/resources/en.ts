@@ -774,6 +774,7 @@ export const en = {
         base: "base",
         newFile: "New",
         deletedFile: "Deleted",
+        openFile: "Open file",
         commits: {
           title: "Commits",
           legendLocal: "local",

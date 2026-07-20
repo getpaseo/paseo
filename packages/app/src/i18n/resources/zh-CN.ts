@@ -757,6 +757,7 @@ export const zhCN: TranslationResources = {
         base: "base",
         newFile: "新增",
         deletedFile: "已删除",
+        openFile: "打开文件",
         commits: {
           title: "提交",
           legendLocal: "本地",

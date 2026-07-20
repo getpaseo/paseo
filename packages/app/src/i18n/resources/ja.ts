@@ -776,6 +776,7 @@ export const ja: TranslationResources = {
         base: "ベース",
         newFile: "新規",
         deletedFile: "削除済み",
+        openFile: "ファイルを開く",
         commits: {
           title: "コミット",
           legendLocal: "ローカル",

@@ -785,6 +785,7 @@ export const ru: TranslationResources = {
         base: "база",
         newFile: "Новый",
         deletedFile: "Удалено",
+        openFile: "Открыть файл",
         commits: {
           title: "Коммиты",
           legendLocal: "локально",
