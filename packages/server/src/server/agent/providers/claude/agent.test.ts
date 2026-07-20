@@ -714,7 +714,12 @@ describe("ClaudeAgentSession features", () => {
     await session.close();
   });
 
-  test("falls back to the model default when switching away from an unsupported thinking option", async () => {
+  test.each([
+    ["supported model", "claude-opus-4-8", { type: "disabled" }, undefined],
+    ["unsupported model", "claude-fable-5", { type: "adaptive" }, "low"],
+    ["custom model", "openrouter/anthropic/claude-opus-4-8", undefined, undefined],
+    ["provider default", null, undefined, undefined],
+  ])("reconciles Off when switching to a %s", async (_label, modelId, thinking, effort) => {
     const { queryFactory, launches } = createQueryMock();
     const client = new ClaudeAgentClient({
       logger,
@@ -728,58 +733,11 @@ describe("ClaudeAgentSession features", () => {
       thinkingOptionId: "off",
     });
 
-    await session.setModel?.("claude-fable-5");
+    await session.setModel?.(modelId);
     await session.startTurn("hello");
 
-    expect(launches.at(-1)?.options.thinking).toEqual({ type: "adaptive" });
-    expect(launches.at(-1)?.options.effort).toBe("low");
-
-    await session.close();
-  });
-
-  test("clears thinking when switching to a provider-prefixed custom model", async () => {
-    const { queryFactory, launches } = createQueryMock();
-    const client = new ClaudeAgentClient({
-      logger,
-      queryFactory,
-      resolveBinary: async () => "/test/claude/bin",
-    });
-    const session = await client.createSession({
-      provider: "claude",
-      cwd: process.cwd(),
-      model: "claude-sonnet-5",
-      thinkingOptionId: "off",
-    });
-
-    await session.setModel?.("openrouter/anthropic/claude-opus-4-8");
-    await session.startTurn("hello");
-
-    expect(launches.at(-1)?.options.thinking).toBeUndefined();
-    expect(launches.at(-1)?.options.effort).toBeUndefined();
-
-    await session.close();
-  });
-
-  test("clears thinking when returning to the provider default model", async () => {
-    const { queryFactory, launches } = createQueryMock();
-    const client = new ClaudeAgentClient({
-      logger,
-      queryFactory,
-      resolveBinary: async () => "/test/claude/bin",
-    });
-    const session = await client.createSession({
-      provider: "claude",
-      cwd: process.cwd(),
-      model: "claude-sonnet-5",
-      thinkingOptionId: "off",
-    });
-
-    await session.setModel?.(null);
-    await session.startTurn("hello");
-
-    expect(launches.at(-1)?.options.model).toBeUndefined();
-    expect(launches.at(-1)?.options.thinking).toBeUndefined();
-    expect(launches.at(-1)?.options.effort).toBeUndefined();
+    expect(launches.at(-1)?.options.thinking).toEqual(thinking);
+    expect(launches.at(-1)?.options.effort).toBe(effort);
 
     await session.close();
   });

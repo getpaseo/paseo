@@ -172,6 +172,30 @@ export function getClaudeManifestModels(): AgentModelDefinition[] {
   });
 }
 
+export interface ClaudeDisabledThinkingResolution {
+  supported: boolean;
+  fallbackThinkingOptionId: string | undefined;
+}
+
+/**
+ * Resolve the disabled-thinking capability from the curated manifest only. Runtime/provider
+ * model aliases intentionally do not inherit this capability.
+ */
+export function resolveClaudeDisabledThinkingForModel(
+  modelId: string | null | undefined,
+): ClaudeDisabledThinkingResolution {
+  const normalizedModelId = normalizeClaudeManifestModelId(modelId);
+  const model = normalizedModelId
+    ? CLAUDE_MODEL_MANIFEST.find((candidate) => candidate.id === normalizedModelId)
+    : undefined;
+  return {
+    supported:
+      !!model && "supportsThinkingDisabled" in model && model.supportsThinkingDisabled === true,
+    fallbackThinkingOptionId:
+      model && "effortLevels" in model ? model.effortLevels?.[0] : undefined,
+  };
+}
+
 export function isClaudeManifestModelId(modelId: string): boolean {
   return CLAUDE_MODEL_MANIFEST.some((model) => model.id === modelId);
 }

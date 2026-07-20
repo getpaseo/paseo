@@ -10,6 +10,7 @@ import {
   CLAUDE_ULTRACODE_THINKING_OPTION_ID,
   claudeManifestModelSupportsFastMode,
   normalizeClaudeManifestModelId,
+  resolveClaudeDisabledThinkingForModel,
 } from "./model-manifest.js";
 import { findClaudeModel, getClaudeModels, normalizeClaudeRuntimeModelId } from "./models.js";
 
@@ -124,6 +125,20 @@ describe("getClaudeModels", () => {
       CLAUDE_DISABLED_THINKING_OPTION_ID,
     );
     expect(models.get("claude-haiku-4-5")?.thinkingOptions).toBeUndefined();
+  });
+
+  it.each([
+    ["claude-sonnet-5", true, "low"],
+    ["claude-sonnet-5-20260101", true, "low"],
+    ["claude-fable-5", false, "low"],
+    ["claude-haiku-4-5", false, undefined],
+    ["openrouter/anthropic/claude-opus-4-8", false, undefined],
+    [null, false, undefined],
+  ])("resolves disabled thinking for model %s", (modelId, supported, fallbackThinkingOptionId) => {
+    expect(resolveClaudeDisabledThinkingForModel(modelId)).toEqual({
+      supported,
+      fallbackThinkingOptionId,
+    });
   });
 
   it("returns fresh copies each call", () => {

@@ -37,7 +37,7 @@ import {
 import {
   CLAUDE_DISABLED_THINKING_OPTION_ID,
   CLAUDE_ULTRACODE_THINKING_OPTION_ID,
-  normalizeClaudeManifestModelId,
+  resolveClaudeDisabledThinkingForModel,
 } from "./model-manifest.js";
 import { parsePartialJsonObject } from "./partial-json.js";
 import { ClaudeSidechainTracker } from "./sidechain-tracker.js";
@@ -437,22 +437,13 @@ function isClaudeThinkingOption(value: string | null | undefined): value is Clau
   );
 }
 
-function claudeManifestModelSupportsThinkingOption(
-  modelId: string | null | undefined,
-  thinkingOptionId: string,
-): boolean {
-  const manifestModelId = normalizeClaudeManifestModelId(modelId);
-  const model = manifestModelId ? findClaudeModel(manifestModelId) : undefined;
-  return model?.thinkingOptions?.some((option) => option.id === thinkingOptionId) === true;
-}
-
 function assertClaudeThinkingOptionSupported(
   modelId: string | null | undefined,
   thinkingOptionId: string | null | undefined,
 ): void {
   if (
     thinkingOptionId !== CLAUDE_DISABLED_THINKING_OPTION_ID ||
-    claudeManifestModelSupportsThinkingOption(modelId, thinkingOptionId)
+    resolveClaudeDisabledThinkingForModel(modelId).supported
   ) {
     return;
   }
@@ -2255,17 +2246,16 @@ class ClaudeAgentSession implements AgentSession {
 
   private reconcileThinkingOptionForModel(modelId: string | null): void {
     const thinkingOptionId = this.config.thinkingOptionId;
-    if (!thinkingOptionId || thinkingOptionId === "default") {
+    if (thinkingOptionId !== CLAUDE_DISABLED_THINKING_OPTION_ID) {
       return;
     }
 
-    if (claudeManifestModelSupportsThinkingOption(modelId, thinkingOptionId)) {
+    const resolution = resolveClaudeDisabledThinkingForModel(modelId);
+    if (resolution.supported) {
       return;
     }
 
-    const manifestModelId = normalizeClaudeManifestModelId(modelId);
-    const model = manifestModelId ? findClaudeModel(manifestModelId) : undefined;
-    this.config.thinkingOptionId = model?.defaultThinkingOptionId;
+    this.config.thinkingOptionId = resolution.fallbackThinkingOptionId;
     this.queryRestartNeeded = true;
     this.pushEvent({
       type: "thinking_option_changed",
@@ -2958,6 +2948,7 @@ class ClaudeAgentSession implements AgentSession {
       this.config.thinkingOptionId && this.config.thinkingOptionId !== "default"
         ? this.config.thinkingOptionId
         : undefined;
+    assertClaudeThinkingOptionSupported(this.config.model, thinkingOptionId);
     if (thinkingOptionId === CLAUDE_DISABLED_THINKING_OPTION_ID) {
       return { thinking: { type: "disabled" }, effort: undefined, ultracode: false };
     }
