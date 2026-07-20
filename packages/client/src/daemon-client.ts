@@ -4134,6 +4134,7 @@ export class DaemonClient {
     path: string;
     content: string;
     expectedModifiedAt: string;
+    expectedRevision?: string;
   }): Promise<FileWriteResult> {
     const payload = await this.sendCorrelatedSessionRequest({
       message: { type: "fs.file.write.request", ...input },

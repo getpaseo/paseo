@@ -18,7 +18,11 @@ export interface FileEditorFile {
 
 export interface FileEditorSession {
   read(): Promise<FileEditorFile>;
-  write(input: { content: string; expectedModifiedAt: string }): Promise<FileWriteResult>;
+  write(input: {
+    content: string;
+    expectedModifiedAt: string;
+    expectedRevision?: string;
+  }): Promise<FileWriteResult>;
 }
 
 export interface FileEditorClock {
@@ -89,11 +93,29 @@ export class FileEditorModel {
       this.enterConflict(this.snapshot.observedVersion);
       return;
     }
-    await this.performWrite(this.snapshot.observedVersion.modifiedAt);
+    await this.performWrite(this.snapshot.observedVersion);
   }
 
   receiveFileVersion(version: FileVersion): void {
-    if (this.disposed || sameVersion(version, this.snapshot.observedVersion)) return;
+    if (this.disposed) return;
+    if (sameVersion(version, this.snapshot.observedVersion)) {
+      if (
+        version.status === "ready" &&
+        this.snapshot.observedVersion.status === "ready" &&
+        version.revision &&
+        !this.snapshot.observedVersion.revision
+      ) {
+        this.setSnapshot({
+          ...this.snapshot,
+          version:
+            this.snapshot.version.status === "ready"
+              ? { ...this.snapshot.version, revision: version.revision }
+              : this.snapshot.version,
+          observedVersion: version,
+        });
+      }
+      return;
+    }
     this.setSnapshot({ ...this.snapshot, observedVersion: version });
     if (this.snapshot.status === "saving") {
       this.observedWhileSaving = version;
@@ -109,7 +131,7 @@ export class FileEditorModel {
   async overwrite(): Promise<void> {
     if (this.disposed || this.snapshot.status !== "conflict") return;
     if (this.snapshot.observedVersion.status !== "ready") return;
-    await this.performWrite(this.snapshot.observedVersion.modifiedAt);
+    await this.performWrite(this.snapshot.observedVersion);
   }
 
   async reload(): Promise<void> {
@@ -124,7 +146,9 @@ export class FileEditorModel {
     this.listeners.clear();
   }
 
-  private async performWrite(expectedModifiedAt: string): Promise<void> {
+  private async performWrite(
+    expectedVersion: Extract<FileVersion, { status: "ready" }>,
+  ): Promise<void> {
     this.clearAutosave();
     const sequence = ++this.saveSequence;
     const content = this.snapshot.content;
@@ -132,7 +156,11 @@ export class FileEditorModel {
     this.setSnapshot({ ...this.snapshot, status: "saving", error: null });
     let result: FileWriteResult;
     try {
-      result = await this.session.write({ content, expectedModifiedAt });
+      result = await this.session.write({
+        content,
+        expectedModifiedAt: expectedVersion.modifiedAt,
+        expectedRevision: expectedVersion.revision,
+      });
     } catch (error) {
       if (this.disposed || sequence !== this.saveSequence) return;
       this.setSnapshot({
@@ -158,6 +186,7 @@ export class FileEditorModel {
       path: this.snapshot.version.path,
       size: result.size,
       modifiedAt: result.modifiedAt,
+      revision: result.revision,
     };
     const pending = this.observedWhileSaving;
     this.observedWhileSaving = null;
@@ -250,6 +279,7 @@ function sameVersion(left: FileVersion, right: FileVersion): boolean {
   if (left.status !== right.status || left.cwd !== right.cwd || left.path !== right.path)
     return false;
   if (left.status === "ready" && right.status === "ready") {
+    if (left.revision && right.revision) return left.revision === right.revision;
     return left.modifiedAt === right.modifiedAt && left.size === right.size;
   }
   if (left.status === "error" && right.status === "error") return left.error === right.error;

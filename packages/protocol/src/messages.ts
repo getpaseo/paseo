@@ -2154,6 +2154,7 @@ export const FileVersionSchema = z.discriminatedUnion("status", [
     path: z.string(),
     size: z.number().int().nonnegative(),
     modifiedAt: z.string(),
+    revision: z.string().optional(),
   }),
   z.object({
     status: z.literal("missing"),
@@ -2188,6 +2189,7 @@ export const FileWriteRequestSchema = z.object({
   path: z.string(),
   content: z.string(),
   expectedModifiedAt: z.string(),
+  expectedRevision: z.string().optional(),
   requestId: z.string(),
 });
 
@@ -4618,7 +4620,12 @@ export const FileUnsubscribeResponseSchema = z.object({
 });
 
 export const FileWriteResultSchema = z.discriminatedUnion("status", [
-  z.object({ status: z.literal("written"), modifiedAt: z.string(), size: z.number() }),
+  z.object({
+    status: z.literal("written"),
+    modifiedAt: z.string(),
+    size: z.number(),
+    revision: z.string().optional(),
+  }),
   z.object({ status: z.literal("conflict"), version: FileVersionSchema }),
   z.object({ status: z.literal("error"), error: z.string() }),
 ]);

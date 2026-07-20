@@ -1,5 +1,6 @@
 import { Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { useTranslation } from "react-i18next";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import type { Theme } from "@/styles/theme";
@@ -32,43 +33,72 @@ export function FilePanelBar({
   onOverwrite?(): void;
   onReload?(): void;
 }) {
+  const { t } = useTranslation();
+  const markdownModes = [
+    {
+      value: "preview" as const,
+      label: t("panels.file.editor.preview"),
+      testID: "file-mode-preview",
+    },
+    { value: "source" as const, label: t("panels.file.editor.source"), testID: "file-mode-source" },
+  ];
   return (
     <View style={styles.chrome} testID="file-panel-bar">
       <View style={styles.row}>
         <View style={styles.metadata}>
-          <Text style={styles.whisper} accessibilityLabel={`File size ${formatFileSize(size)}`}>
+          <Text
+            style={styles.whisper}
+            accessibilityLabel={t("panels.file.editor.fileSize", { size: formatFileSize(size) })}
+          >
             {formatFileSize(size)}
           </Text>
           {lineCount !== undefined ? (
-            <Text style={styles.whisper} accessibilityLabel={`${lineCount} lines`}>
-              {lineCount} lines
+            <Text
+              style={styles.whisper}
+              accessibilityLabel={t("panels.file.editor.lines", { count: lineCount })}
+            >
+              {t("panels.file.editor.lines", { count: lineCount })}
             </Text>
           ) : null}
         </View>
         <View
           style={styles.status}
-          accessibilityLabel={editorStatus ? `Editor status ${editorStatus}` : undefined}
+          accessibilityLabel={
+            editorStatus
+              ? t("panels.file.editor.editorStatus", { status: editorStatus })
+              : undefined
+          }
         >
           {editorStatus === "dirty" ? (
-            <View style={styles.dirtyDot} accessibilityLabel="Unsaved changes" />
+            <View
+              style={styles.dirtyDot}
+              accessibilityLabel={t("panels.file.editor.unsavedChanges")}
+            />
           ) : null}
           {editorStatus === "saving" ? (
             <>
               <ThemedSpinner size={14} uniProps={spinnerMapping} />
-              <Text style={styles.secondary}>Saving...</Text>
+              <Text style={styles.secondary}>{t("panels.file.editor.saving")}</Text>
             </>
           ) : null}
-          {editorStatus === "error" ? <Text style={styles.error}>Save failed</Text> : null}
-          {editorStatus === "conflict" ? <Text style={styles.error}>Changed on disk</Text> : null}
+          {editorStatus === "error" ? (
+            <Text style={styles.error}>{t("panels.file.editor.saveFailed")}</Text>
+          ) : null}
+          {editorStatus === "conflict" ? (
+            <Text style={styles.error}>{t("panels.file.editor.changedOnDisk")}</Text>
+          ) : null}
           {vimMode ? (
-            <Text style={styles.vim} accessibilityLabel={`Vim mode ${vimMode}`}>
+            <Text
+              style={styles.vim}
+              accessibilityLabel={t("panels.file.editor.vimMode", { mode: vimMode })}
+            >
               {vimMode}
             </Text>
           ) : null}
           {cursor ? (
             <Text
               style={styles.whisper}
-              accessibilityLabel={`Line ${cursor.line}, column ${cursor.column}`}
+              accessibilityLabel={t("panels.file.editor.cursor", cursor)}
             >
               Ln {cursor.line}, Col {cursor.column}
             </Text>
@@ -80,7 +110,7 @@ export function FilePanelBar({
             value={mode}
             onValueChange={onModeChange}
             testID="file-markdown-mode"
-            options={MARKDOWN_MODES}
+            options={markdownModes}
           />
         ) : null}
       </View>
@@ -96,11 +126,6 @@ export function FilePanelBar({
     </View>
   );
 }
-
-const MARKDOWN_MODES = [
-  { value: "preview" as const, label: "Preview", testID: "file-mode-preview" },
-  { value: "source" as const, label: "Source", testID: "file-mode-source" },
-];
 
 function formatFileSize(size: number): string {
   if (size < 1024) return `${size} B`;

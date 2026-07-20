@@ -14,7 +14,7 @@ const BLUE_PIXEL = Buffer.from(
 );
 
 function editor(page: Page) {
-  return page.getByTestId("file-source-editor").locator(".cm-content");
+  return page.getByTestId("file-source-editor").filter({ visible: true }).locator(".cm-content");
 }
 
 async function replaceEditorText(page: Page, content: string): Promise<void> {
@@ -99,6 +99,11 @@ test.describe("CodeMirror workspace file editing", () => {
     const workspace = await withWorkspace({ prefix: "file-editing-source-" });
     const sourcePath = path.join(workspace.repoPath, "source.ts");
     await writeFile(sourcePath, "const initial = 1;\n", "utf8");
+    await Promise.all(
+      ["one.ts", "two.ts", "three.ts", "four.ts"].map((fileName) =>
+        writeFile(path.join(workspace.repoPath, fileName), `// ${fileName}\n`, "utf8"),
+      ),
+    );
     await workspace.navigateTo();
     await openWorkspaceFile(page, "source.ts");
 
@@ -123,6 +128,12 @@ test.describe("CodeMirror workspace file editing", () => {
 
     await replaceEditorText(page, "const localWins = 5;\n");
     await writeFile(sourcePath, "const diskLoses = 6;\n", "utf8");
+    await expect(page.getByTestId("file-conflict-alert")).toBeVisible();
+    for (const fileName of ["one.ts", "two.ts", "three.ts", "four.ts"]) {
+      await openWorkspaceFile(page, fileName);
+    }
+    await page.getByTestId("workspace-tab-file_source.ts").filter({ visible: true }).click();
+    await expect(editor(page)).toContainText("const localWins = 5;");
     await expect(page.getByTestId("file-conflict-alert")).toBeVisible();
     await page.getByRole("button", { name: "Overwrite", exact: true }).click();
     await expect.poll(() => readFile(sourcePath, "utf8")).toBe("const localWins = 5;\n");

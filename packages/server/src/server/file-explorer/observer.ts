@@ -63,18 +63,21 @@ export class FileObserver {
     let observed = this.observed.get(target);
     if (!observed) {
       const initial = await getExplorerFileVersion({ root: input.cwd, relativePath: input.path });
-      observed = {
-        cwd: input.cwd,
-        path: input.path,
-        basename: path.basename(target),
-        listeners: new Set(),
-        fingerprint: fingerprint(initial),
-        watcher: null,
-        debounce: null,
-        fallback: null,
-      };
-      this.observed.set(target, observed);
-      this.startWatching(target, path.dirname(target), observed);
+      observed = this.observed.get(target);
+      if (!observed) {
+        observed = {
+          cwd: input.cwd,
+          path: input.path,
+          basename: path.basename(target),
+          listeners: new Set(),
+          fingerprint: fingerprint(initial),
+          watcher: null,
+          debounce: null,
+          fallback: null,
+        };
+        this.observed.set(target, observed);
+        this.startWatching(target, path.dirname(target), observed);
+      }
     }
     observed.listeners.add(listener);
     const initial = await getExplorerFileVersion({
@@ -164,7 +167,7 @@ export class FileObserver {
 
 function fingerprint(version: FileVersion): string {
   if (version.status !== "ready") return `${version.status}:${version.path}`;
-  return `${version.status}:${version.path}:${version.size}:${version.modifiedAt}`;
+  return `${version.status}:${version.path}:${version.revision ?? `${version.size}:${version.modifiedAt}`}`;
 }
 
 export const workspaceFileObserver = new FileObserver();

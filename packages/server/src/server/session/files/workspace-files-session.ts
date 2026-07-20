@@ -123,6 +123,7 @@ export class WorkspaceFilesSession {
       relativePath: request.path,
       content: request.content,
       expectedModifiedAt: request.expectedModifiedAt,
+      expectedRevision: request.expectedRevision,
     });
     this.host.emit({
       type: "fs.file.write.response",

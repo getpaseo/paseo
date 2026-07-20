@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
 import { usePaneContext } from "@/panels/pane-context";
 
 export interface PanelInstanceIdentity {
@@ -14,6 +14,8 @@ export interface PanelInstanceAttributes {
 const DEFAULT_ATTRIBUTES: PanelInstanceAttributes = { modified: false };
 const attributesByPanel = new Map<string, PanelInstanceAttributes>();
 const listenersByPanel = new Map<string, Set<() => void>>();
+const allListeners = new Set<() => void>();
+let attributesRevision = 0;
 
 export function buildPanelInstanceKey(identity: PanelInstanceIdentity): string {
   return `${identity.serverId}:${identity.workspaceId}:${identity.tabId}`;
@@ -34,7 +36,37 @@ export function setPanelInstanceAttributes(
   if (previous.modified === attributes.modified) return;
   if (attributes.modified) attributesByPanel.set(key, attributes);
   else attributesByPanel.delete(key);
+  attributesRevision += 1;
   for (const listener of listenersByPanel.get(key) ?? []) listener();
+  for (const listener of allListeners) listener();
+}
+
+export function useModifiedPanelTabIds(input: {
+  serverId: string;
+  workspaceId: string;
+  tabIds: string[];
+}): Set<string> {
+  const revision = useSyncExternalStore(
+    useCallback((listener: () => void) => {
+      allListeners.add(listener);
+      return () => allListeners.delete(listener);
+    }, []),
+    () => attributesRevision,
+    () => attributesRevision,
+  );
+  return useMemo(() => {
+    void revision;
+    return new Set(
+      input.tabIds.filter(
+        (tabId) =>
+          getPanelInstanceAttributes({
+            serverId: input.serverId,
+            workspaceId: input.workspaceId,
+            tabId,
+          }).modified,
+      ),
+    );
+  }, [input.serverId, input.tabIds, input.workspaceId, revision]);
 }
 
 export function subscribePanelInstanceAttributes(

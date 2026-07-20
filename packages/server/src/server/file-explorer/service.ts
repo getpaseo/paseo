@@ -1,4 +1,4 @@
-import { constants, promises as fs } from "fs";
+import { constants, promises as fs, type BigIntStats } from "fs";
 import type { FileHandle } from "fs/promises";
 import path from "path";
 import { randomUUID } from "crypto";
@@ -21,15 +21,23 @@ export interface ReadFileParams {
 export interface WriteFileParams extends ReadFileParams {
   content: string;
   expectedModifiedAt: string;
+  expectedRevision?: string;
 }
 
 export type ExplorerFileVersion =
-  | { status: "ready"; cwd: string; path: string; size: number; modifiedAt: string }
+  | {
+      status: "ready";
+      cwd: string;
+      path: string;
+      size: number;
+      modifiedAt: string;
+      revision: string;
+    }
   | { status: "missing"; cwd: string; path: string }
   | { status: "error"; cwd: string; path: string; error: string };
 
 export type ExplorerFileWriteResult =
-  | { status: "written"; modifiedAt: string; size: number }
+  | { status: "written"; modifiedAt: string; size: number; revision: string }
   | { status: "conflict"; version: ExplorerFileVersion }
   | { status: "error"; error: string };
 
@@ -76,6 +84,20 @@ export const MAX_EDITABLE_FILE_BYTES = 1024 * 1024;
 const READ_FILE_OPEN_FLAGS =
   process.platform === "win32" ? constants.O_RDONLY : constants.O_RDONLY | constants.O_NOFOLLOW;
 const ACCESS_OUTSIDE_WORKSPACE_MESSAGE = "Access outside of workspace is not allowed";
+
+function fileRevision(stats: BigIntStats): string {
+  return `${stats.dev}:${stats.ino}:${stats.size}:${stats.mtimeNs}`;
+}
+
+function matchesExpectedRevision(
+  stats: BigIntStats,
+  expectedModifiedAt: string,
+  expectedRevision?: string,
+): boolean {
+  return expectedRevision
+    ? fileRevision(stats) === expectedRevision
+    : stats.mtime.toISOString() === expectedModifiedAt;
+}
 
 const IMAGE_MIME_TYPES: Record<string, string> = {
   ".png": "image/png",
@@ -254,7 +276,7 @@ export async function getExplorerFileVersion({
   const cwd = expandUserPath(root);
   try {
     const filePath = await resolveScopedPath({ root, relativePath });
-    const stats = await fs.stat(filePath.resolvedPath);
+    const stats = await fs.stat(filePath.resolvedPath, { bigint: true });
     if (!stats.isFile()) {
       return { status: "error", cwd, path: relativePath, error: "Requested path is not a file" };
     }
@@ -262,8 +284,9 @@ export async function getExplorerFileVersion({
       status: "ready",
       cwd,
       path: normalizeRelativePath({ root, targetPath: filePath.requestedPath }),
-      size: stats.size,
+      size: Number(stats.size),
       modifiedAt: stats.mtime.toISOString(),
+      revision: fileRevision(stats),
     };
   } catch (error) {
     if (isMissingEntryError(error)) {
@@ -290,6 +313,7 @@ export async function writeExplorerFile({
   relativePath,
   content,
   expectedModifiedAt,
+  expectedRevision,
 }: WriteFileParams): Promise<ExplorerFileWriteResult> {
   const encoded = Buffer.from(content, "utf8");
   if (encoded.byteLength > MAX_EDITABLE_FILE_BYTES) {
@@ -302,28 +326,29 @@ export async function writeExplorerFile({
     filePath = await resolveScopedPath({ root, relativePath });
     const handle = await openFileForRead(filePath.resolvedPath);
     try {
-      const stats = await handle.stat();
+      const stats = await handle.stat({ bigint: true });
       if (!stats.isFile()) {
         return { status: "error", error: "Requested path is not a file" };
       }
-      if (stats.size > MAX_EDITABLE_FILE_BYTES) {
+      if (stats.size > BigInt(MAX_EDITABLE_FILE_BYTES)) {
         return { status: "error", error: "File is too large to edit" };
       }
       const current = await handle.readFile();
       if (isLikelyBinary(current) || !isValidUtf8(current)) {
         return { status: "error", error: "Binary files cannot be edited" };
       }
-      currentMode = stats.mode;
+      currentMode = Number(stats.mode);
       const modifiedAt = stats.mtime.toISOString();
-      if (modifiedAt !== expectedModifiedAt) {
+      if (!matchesExpectedRevision(stats, expectedModifiedAt, expectedRevision)) {
         return {
           status: "conflict",
           version: {
             status: "ready",
             cwd: expandUserPath(root),
             path: normalizeRelativePath({ root, targetPath: filePath.requestedPath }),
-            size: stats.size,
+            size: Number(stats.size),
             modifiedAt,
+            revision: fileRevision(stats),
           },
         };
       }
@@ -351,22 +376,28 @@ export async function writeExplorerFile({
     await temporaryHandle.sync();
     await temporaryHandle.close();
     temporaryHandle = null;
-    const latestStats = await fs.stat(filePath.resolvedPath);
-    if (latestStats.mtime.toISOString() !== expectedModifiedAt) {
+    const latestStats = await fs.stat(filePath.resolvedPath, { bigint: true });
+    if (!matchesExpectedRevision(latestStats, expectedModifiedAt, expectedRevision)) {
       return {
         status: "conflict",
         version: {
           status: "ready",
           cwd: expandUserPath(root),
           path: normalizeRelativePath({ root, targetPath: filePath.requestedPath }),
-          size: latestStats.size,
+          size: Number(latestStats.size),
           modifiedAt: latestStats.mtime.toISOString(),
+          revision: fileRevision(latestStats),
         },
       };
     }
     await fs.rename(temporaryPath, filePath.resolvedPath);
-    const stats = await fs.stat(filePath.resolvedPath);
-    return { status: "written", modifiedAt: stats.mtime.toISOString(), size: stats.size };
+    const stats = await fs.stat(filePath.resolvedPath, { bigint: true });
+    return {
+      status: "written",
+      modifiedAt: stats.mtime.toISOString(),
+      size: Number(stats.size),
+      revision: fileRevision(stats),
+    };
   } catch (error) {
     return { status: "error", error: error instanceof Error ? error.message : String(error) };
   } finally {

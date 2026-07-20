@@ -619,6 +619,7 @@ function EditableFilePane({
   location: WorkspaceFileLocation;
 }) {
   const { settings } = useAppSettings();
+  const { t } = useTranslation();
   const [cursor, setCursor] = useState({ line: 1, column: 1 });
   const [vimMode, setVimMode] = useState<string | null>(settings.vimKeybindings ? "NORMAL" : null);
   const session = useMemo(
@@ -637,7 +638,7 @@ function EditableFilePane({
           },
         };
       },
-      write(input: { content: string; expectedModifiedAt: string }) {
+      write(input: { content: string; expectedModifiedAt: string; expectedRevision?: string }) {
         return client.writeFile({ cwd, path, ...input });
       },
     }),
@@ -697,14 +698,14 @@ function EditableFilePane({
   const handleReload = useCallback(() => {
     void (async () => {
       const confirmed = await confirmDialog({
-        title: "Reload from disk?",
-        message: "Your local changes will be lost.",
-        confirmLabel: "Reload",
+        title: t("panels.file.editor.reloadTitle"),
+        message: t("panels.file.editor.reloadMessage"),
+        confirmLabel: t("panels.file.editor.reload"),
         destructive: true,
       });
       if (confirmed) void model.reload();
     })();
-  }, [model]);
+  }, [model, t]);
   const handleOverwrite = useCallback(() => void model.overwrite(), [model]);
   const handleVimModeChange = useCallback((nextMode: string | null) => setVimMode(nextMode), []);
   const renderedPreview = useMemo<ExplorerFile>(

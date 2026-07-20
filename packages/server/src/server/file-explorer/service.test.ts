@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { readExplorerFile, writeExplorerFile } from "./service.js";
+import { getExplorerFileVersion, readExplorerFile, writeExplorerFile } from "./service.js";
 
 async function createHomeTempDir(prefix: string): Promise<string> {
   return mkdtemp(path.join(os.homedir(), prefix));
@@ -18,13 +18,16 @@ describe("file explorer service", () => {
     try {
       const filePath = path.join(root, "notes.txt");
       await writeFile(filePath, "before", "utf8");
-      const current = await readExplorerFile({ root, relativePath: "notes.txt" });
+      const current = await getExplorerFileVersion({ root, relativePath: "notes.txt" });
+      expect(current.status).toBe("ready");
+      if (current.status !== "ready") return;
 
       const result = await writeExplorerFile({
         root,
         relativePath: "notes.txt",
         content: "after",
         expectedModifiedAt: current.modifiedAt,
+        expectedRevision: current.revision,
       });
 
       expect(result.status).toBe("written");
@@ -51,6 +54,30 @@ describe("file explorer service", () => {
       expect((await readExplorerFile({ root, relativePath: "notes.txt" })).content).toBe(
         "newer on disk",
       );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("prefers the high-precision revision token over the display timestamp", async () => {
+    const root = await createTempDir("paseo-file-revision-");
+    try {
+      const filePath = path.join(root, "notes.txt");
+      await writeFile(filePath, "on disk", "utf8");
+      const current = await getExplorerFileVersion({ root, relativePath: "notes.txt" });
+      expect(current.status).toBe("ready");
+      if (current.status !== "ready") return;
+
+      const result = await writeExplorerFile({
+        root,
+        relativePath: "notes.txt",
+        content: "stale local edit",
+        expectedModifiedAt: current.modifiedAt,
+        expectedRevision: `${current.revision}-stale`,
+      });
+
+      expect(result.status).toBe("conflict");
+      expect((await readExplorerFile({ root, relativePath: "notes.txt" })).content).toBe("on disk");
     } finally {
       await rm(root, { recursive: true, force: true });
     }

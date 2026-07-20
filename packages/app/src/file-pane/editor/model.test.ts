@@ -28,7 +28,7 @@ class TestClock implements FileEditorClock {
 
 class FileSession implements FileEditorSession {
   file: FileEditorFile;
-  writes: Array<{ content: string; expectedModifiedAt: string }> = [];
+  writes: Array<{ content: string; expectedModifiedAt: string; expectedRevision?: string }> = [];
   nextWrite: FileWriteResult | Error | null = null;
   private pendingWrite: Promise<FileWriteResult> | null = null;
   private resolvePendingWrite: ((result: FileWriteResult) => void) | null = null;
@@ -41,7 +41,11 @@ class FileSession implements FileEditorSession {
     return this.file;
   }
 
-  async write(input: { content: string; expectedModifiedAt: string }): Promise<FileWriteResult> {
+  async write(input: {
+    content: string;
+    expectedModifiedAt: string;
+    expectedRevision?: string;
+  }): Promise<FileWriteResult> {
     this.writes.push(input);
     if (this.pendingWrite) return this.pendingWrite;
     if (this.nextWrite instanceof Error) throw this.nextWrite;
@@ -66,7 +70,10 @@ class FileSession implements FileEditorSession {
   }
 }
 
-function ready(modifiedAt = "2026-07-18T00:00:00.000Z", size = 3): FileVersion {
+function ready(
+  modifiedAt = "2026-07-18T00:00:00.000Z",
+  size = 3,
+): Extract<FileVersion, { status: "ready" }> {
   return { status: "ready", cwd: "/workspace", path: "file.ts", size, modifiedAt };
 }
 
@@ -90,6 +97,14 @@ describe("FileEditorModel", () => {
     model.edit("saved");
     await model.save();
     expect(model.getSnapshot()).toMatchObject({ status: "clean", modified: false });
+  });
+
+  test("adopts a precise revision for otherwise unchanged initial metadata", () => {
+    const { model } = makeModel();
+
+    model.receiveFileVersion({ ...ready(), revision: "precise-revision" });
+
+    expect(model.getSnapshot().observedVersion).toMatchObject({ revision: "precise-revision" });
   });
 
   test("keeps a newer edit modified when an older save finishes", async () => {

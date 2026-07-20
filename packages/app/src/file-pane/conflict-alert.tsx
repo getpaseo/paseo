@@ -1,5 +1,6 @@
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { useTranslation } from "react-i18next";
 
 export function FileConflictAlert({
   unavailable,
@@ -10,18 +11,23 @@ export function FileConflictAlert({
   onOverwrite(): void;
   onReload(): void;
 }) {
+  const { t } = useTranslation();
   return (
     <Alert
       variant="warning"
-      title={unavailable ? "File unavailable on disk" : "Changed on disk"}
-      description="The local buffer was preserved. Choose which version to keep."
+      title={
+        unavailable
+          ? t("panels.file.editor.unavailableTitle")
+          : t("panels.file.editor.changedOnDisk")
+      }
+      description={t("panels.file.editor.conflictDescription")}
       testID="file-conflict-alert"
     >
       <Button variant="outline" size="sm" onPress={onOverwrite} disabled={unavailable}>
-        Overwrite
+        {t("panels.file.editor.overwrite")}
       </Button>
       <Button variant="outline" size="sm" onPress={onReload} disabled={unavailable}>
-        Reload
+        {t("panels.file.editor.reload")}
       </Button>
     </Alert>
   );

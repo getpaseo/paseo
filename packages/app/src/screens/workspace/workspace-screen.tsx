@@ -168,7 +168,10 @@ import {
   closeBulkWorkspaceTabs,
 } from "@/screens/workspace/workspace-bulk-close";
 import { resolveCloseAgentTabPolicy } from "@/subagents";
-import { getPanelInstanceAttributes } from "@/panels/panel-instance-attributes";
+import {
+  getPanelInstanceAttributes,
+  useModifiedPanelTabIds,
+} from "@/panels/panel-instance-attributes";
 import { findAdjacentPane } from "@/utils/split-navigation";
 import { useIsCompactFormFactor, supportsDesktopPaneSplits } from "@/constants/layout";
 import { getIsElectron, isNative, isWeb } from "@/constants/platform";
@@ -3254,10 +3257,16 @@ function WorkspaceScreenContent({
     [focusedPaneTabState.pane],
   );
   const focusedPaneTabIds = useMemo(() => tabs.map((tab) => tab.tabId), [tabs]);
+  const modifiedFocusedPaneTabIds = useModifiedPanelTabIds({
+    serverId: normalizedServerId,
+    workspaceId: normalizedWorkspaceId,
+    tabIds: focusedPaneTabIds,
+  });
   const focusedPaneTabDescriptorMap = useStableTabDescriptorMap(tabs);
   const { mountedTabIds: mountedFocusedPaneTabIdsSet } = useMountedTabSet({
     activeTabId,
     allTabIds: focusedPaneTabIds,
+    retainedTabIds: modifiedFocusedPaneTabIds,
     cap: 3,
   });
   const mountedFocusedPaneTabIds = useMemo(

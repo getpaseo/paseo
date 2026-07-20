@@ -82,6 +82,22 @@ describe("FileObserver", () => {
     expect(controls.closes).toBe(1);
   });
 
+  test("coalesces concurrent subscriptions onto one watcher", async () => {
+    const root = await workspace();
+    const controls = new ObservationControls();
+    const observer = new FileObserver(controls);
+
+    const [first, second] = await Promise.all([
+      observer.subscribe({ cwd: root, path: "file.txt" }, () => undefined),
+      observer.subscribe({ cwd: root, path: "file.txt" }, () => undefined),
+    ]);
+
+    expect(controls.watches).toBe(1);
+    first.unsubscribe();
+    second.unsubscribe();
+    expect(controls.closes).toBe(1);
+  });
+
   test("publishes deletion without dropping the subscription", async () => {
     const root = await workspace();
     const controls = new ObservationControls();
