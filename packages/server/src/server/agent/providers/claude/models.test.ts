@@ -6,9 +6,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import { ClaudeAgentClient } from "./agent.js";
 import {
+  CLAUDE_DISABLED_THINKING_OPTION_ID,
   CLAUDE_ULTRACODE_THINKING_OPTION_ID,
   claudeManifestModelSupportsFastMode,
   normalizeClaudeManifestModelId,
+  resolveClaudeDisabledThinkingForModel,
 } from "./model-manifest.js";
 import { findClaudeModel, getClaudeModels, normalizeClaudeRuntimeModelId } from "./models.js";
 
@@ -87,6 +89,7 @@ describe("getClaudeModels", () => {
     const models = new Map(getClaudeModels().map((model) => [model.id, model]));
 
     expect(models.get("claude-sonnet-5")?.thinkingOptions?.map((option) => option.id)).toEqual([
+      CLAUDE_DISABLED_THINKING_OPTION_ID,
       "low",
       "medium",
       "high",
@@ -100,8 +103,10 @@ describe("getClaudeModels", () => {
         ?.thinkingOptions?.find((option) => option.id === CLAUDE_ULTRACODE_THINKING_OPTION_ID)
         ?.label,
     ).toBe("Ultra Code");
+    expect(models.get("claude-sonnet-5")?.defaultThinkingOptionId).toBe("low");
 
     expect(models.get("claude-opus-4-7")?.thinkingOptions?.map((option) => option.id)).toEqual([
+      CLAUDE_DISABLED_THINKING_OPTION_ID,
       "low",
       "medium",
       "high",
@@ -110,12 +115,30 @@ describe("getClaudeModels", () => {
       CLAUDE_ULTRACODE_THINKING_OPTION_ID,
     ]);
     expect(models.get("claude-sonnet-4-6")?.thinkingOptions?.map((option) => option.id)).toEqual([
+      CLAUDE_DISABLED_THINKING_OPTION_ID,
       "low",
       "medium",
       "high",
       "max",
     ]);
+    expect(models.get("claude-fable-5")?.thinkingOptions?.map((option) => option.id)).not.toContain(
+      CLAUDE_DISABLED_THINKING_OPTION_ID,
+    );
     expect(models.get("claude-haiku-4-5")?.thinkingOptions).toBeUndefined();
+  });
+
+  it.each([
+    ["claude-sonnet-5", true, "low"],
+    ["claude-sonnet-5-20260101", true, "low"],
+    ["claude-fable-5", false, "low"],
+    ["claude-haiku-4-5", false, undefined],
+    ["openrouter/anthropic/claude-opus-4-8", false, undefined],
+    [null, false, undefined],
+  ])("resolves disabled thinking for model %s", (modelId, supported, fallbackThinkingOptionId) => {
+    expect(resolveClaudeDisabledThinkingForModel(modelId)).toEqual({
+      supported,
+      fallbackThinkingOptionId,
+    });
   });
 
   it("returns fresh copies each call", () => {

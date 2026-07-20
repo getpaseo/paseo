@@ -13,6 +13,7 @@ import path from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
 import { z } from "zod";
 
+import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
 import { createTestLogger } from "../test-utils/test-logger.js";
 import { Session } from "./session.js";
 import type { SessionOptions } from "./session.js";
@@ -157,6 +158,7 @@ interface SessionTestAccess {
     workspaceIds: Iterable<string>,
     options?: { skipReconcile?: boolean },
   ): Promise<void>;
+  updateClientCapabilities(capabilities: Record<string, unknown> | null): void;
   emit(message: unknown): void;
   onMessage(message: unknown): void;
   paseoHome: string;
@@ -7051,6 +7053,42 @@ test("project.rename.request stores customName and emits an updated workspace de
       id: "ws-1",
       projectDisplayName: "My Fork",
       projectCustomName: "My Fork",
+    },
+  });
+});
+
+test("project.rename.request updates a project with no workspaces", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const session = asTestSession(
+    createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) }),
+  );
+  session.updateClientCapabilities({ [CLIENT_CAPS.projectUpdates]: true });
+
+  const project = createPersistedProjectRecord({
+    projectId: "prj_empty",
+    rootPath: REPO_CWD,
+    kind: "non_git",
+    displayName: "repo",
+    createdAt: "2026-07-20T12:00:00.000Z",
+    updatedAt: "2026-07-20T12:00:00.000Z",
+  });
+  session.projectRegistry.get = async () => project;
+  session.projectRegistry.upsert = async () => project;
+  session.workspaceRegistry.list = async () => [];
+
+  await session.handleMessage({
+    type: "project.rename.request",
+    projectId: project.projectId,
+    customName: "Renamed empty project",
+    requestId: "req-rename-empty",
+  });
+
+  expect(findByType(emitted, "project.update")?.payload).toMatchObject({
+    kind: "upsert",
+    project: {
+      projectId: project.projectId,
+      projectDisplayName: "Renamed empty project",
+      projectCustomName: "Renamed empty project",
     },
   });
 });

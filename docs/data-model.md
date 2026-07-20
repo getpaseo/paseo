@@ -190,6 +190,10 @@ Single file, validated with `PersistedConfigSchema`.
   },
   worktrees?: {
     root?: string            // optional root for new worktrees; defaults to $PASEO_HOME/worktrees
+    servicePorts?: {         // optional dynamic service port allocation policy
+      range?: string         // inclusive range, e.g. "3000-4000"
+      portScript?: string    // executable that receives service/workspace context and prints one TCP port
+    }
   },
   providers: {
     openai: {

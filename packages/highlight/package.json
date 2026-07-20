@@ -27,7 +27,7 @@
     "typecheck": "tsgo --noEmit"
   },
   "dependencies": {
-    "@codemirror/language": "^6.12.3",
+    "@codemirror/language": "6.12.4",
     "@codemirror/legacy-modes": "^6.5.3",
     "@lezer/common": "^1.5.0",
     "@lezer/cpp": "^1.1.5",

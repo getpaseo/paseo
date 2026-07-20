@@ -1,4 +1,4 @@
-export type PiThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+export type PiThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
 export interface PiImageContent {
   type: "image";

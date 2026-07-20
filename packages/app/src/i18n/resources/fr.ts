@@ -475,6 +475,7 @@ export const fr: TranslationResources = {
     },
     tabs: {
       loading: "Chargement...",
+      modified: "Modifications non enregistrées",
       loadingAgentTitle: "Titre d'agent de chargement",
       emptyPane: "Aucun onglet dans ce volet.",
       fallback: {
@@ -542,6 +543,13 @@ export const fr: TranslationResources = {
         failedToReloadAgent: "Échec du rechargement de l'agent",
       },
       confirmations: {
+        unsavedTitle: "Modifications non enregistrées",
+        unsavedMessage:
+          "Cet onglet contient des modifications non enregistrées. Le fermer supprimera le brouillon.",
+        closeWithoutSaving: "Fermer sans enregistrer",
+        closePaneTitle: "Fermer le volet?",
+        bulkUnsaved:
+          "{{count}} onglet(s) contiennent des modifications non enregistrées. Les fermer supprimera ces brouillons.",
         close: "Fermer",
         cancel: "Annuler",
         archive: "Archive",
@@ -1496,6 +1504,25 @@ export const fr: TranslationResources = {
       binaryPreviewUnavailable: "Aperçu binaire indisponible",
       failedToLoad: "Échec du chargement du fichier",
       failedToLoadPreview: "Échec du chargement de l'aperçu du fichier",
+      editor: {
+        fileSize: "Taille {{size}}",
+        lines: "{{count}} lignes",
+        editorStatus: "État de l’éditeur : {{status}}",
+        unsavedChanges: "Modifications non enregistrées",
+        saving: "Enregistrement...",
+        saveFailed: "Échec de l’enregistrement",
+        changedOnDisk: "Modifié sur le disque",
+        vimMode: "Mode Vim {{mode}}",
+        cursor: "Ligne {{line}}, colonne {{column}}",
+        preview: "Aperçu",
+        source: "Source",
+        unavailableTitle: "Fichier indisponible sur le disque",
+        conflictDescription: "Le contenu local a été conservé. Choisissez la version à garder.",
+        overwrite: "Écraser",
+        reload: "Recharger",
+        reloadTitle: "Recharger depuis le disque ?",
+        reloadMessage: "Vos modifications locales seront perdues.",
+      },
     },
     diff: {
       changesLabel: "Modifications",
@@ -1591,11 +1618,17 @@ export const fr: TranslationResources = {
     sections: {
       general: "Général",
       appearance: "Apparence",
+      editor: "Éditeur",
       shortcuts: "Raccourcis",
       integrations: "Intégrations",
       permissions: "Autorisations",
       diagnostics: "Diagnostic",
       about: "À propos",
+    },
+    editor: {
+      title: "Éditeur",
+      vimKeybindings: "Raccourcis Vim",
+      vimHint: "S’applique aux fichiers source sur le web et le bureau.",
     },
     hostSections: {
       connections: "Relations",

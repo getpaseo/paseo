@@ -3103,6 +3103,53 @@ test("persists live mode, model, and thinking changes without an external snapsh
   expect(persisted?.runtimeInfo?.model).toBe("gpt-5.4");
 });
 
+test("later explicit config mutations win over events emitted by earlier mutations", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-config-mutation-order-"));
+  class ConfigMutationSession extends TestAgentSession {
+    async setModel(): Promise<void> {
+      this.pushEvent({
+        type: "timeline",
+        provider: "codex",
+        item: { type: "assistant_message", text: "model changed" },
+      });
+      this.pushEvent({
+        type: "thinking_option_changed",
+        provider: "codex",
+        thinkingOptionId: "low",
+      });
+    }
+
+    async setThinkingOption(): Promise<void> {}
+  }
+  class ConfigMutationClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new ConfigMutationSession(config);
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new ConfigMutationClient() },
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000134",
+  });
+  const snapshot = await manager.createAgent(
+    {
+      provider: "codex",
+      cwd: workdir,
+      model: "gpt-5.2-codex",
+      thinkingOptionId: "off",
+    },
+    undefined,
+    { workspaceId: undefined },
+  );
+
+  await manager.setAgentModel(snapshot.id, "gpt-5.4");
+  await manager.setAgentThinkingOption(snapshot.id, "high");
+  await manager.flush();
+
+  expect(manager.getAgent(snapshot.id)?.config.thinkingOptionId).toBe("high");
+});
+
 test("session config drift events update state through the stream channel", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-session-config-events-"));
   let capturedSession: TestAgentSession | null = null;
@@ -3171,6 +3218,7 @@ test("session config drift events update state through the stream channel", asyn
 
   const agent = manager.getAgent(snapshot.id);
   expect(agent?.currentModeId).toBe("build");
+  expect(agent?.config.thinkingOptionId).toBe("high");
   expect(agent?.availableModes).toEqual([
     { id: "plan", label: "Plan" },
     { id: "build", label: "Build" },

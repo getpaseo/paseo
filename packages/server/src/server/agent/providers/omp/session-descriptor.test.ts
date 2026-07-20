@@ -13,6 +13,42 @@ async function writeSession(root: string, relativePath: string, lines: unknown[]
 }
 
 describe("OMP session descriptor", () => {
+  test("cwd filtering continues past the global candidate overscan", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "paseo-omp-session-cwd-limit-"));
+    const sessionsDir = path.join(root, "sessions");
+    const requestedCwd = path.join(root, "requested");
+    const otherCwd = path.join(root, "other");
+    const requestedFile = await writeSession(root, "requested/requested.jsonl", [
+      {
+        type: "session",
+        id: "requested-session",
+        timestamp: "2026-06-01T00:00:00.000Z",
+        cwd: requestedCwd,
+      },
+    ]);
+    await utimes(requestedFile, new Date("2026-06-01"), new Date("2026-06-01"));
+
+    await Promise.all(
+      Array.from({ length: 400 }, async (_, index) => {
+        const file = await writeSession(root, `other/${index}.jsonl`, [
+          {
+            type: "session",
+            id: `other-${index}`,
+            timestamp: "2026-06-02T00:00:00.000Z",
+            cwd: otherCwd,
+          },
+        ]);
+        await utimes(file, new Date("2026-06-02"), new Date("2026-06-02"));
+      }),
+    );
+
+    await expect(
+      listOmpImportableSessions({ sessionDir: sessionsDir, cwd: requestedCwd, limit: 1 }),
+    ).resolves.toEqual([
+      expect.objectContaining({ providerHandleId: requestedFile, cwd: requestedCwd }),
+    ]);
+  });
+
   test("reads title-first sessions and OMP combined model identifiers", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "paseo-omp-session-title-first-"));
     const cwd = path.join(root, "repo");

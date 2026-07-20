@@ -132,6 +132,7 @@ function useCommitDiffPanelDescriptor(
   return {
     label: target.sha.slice(0, 7),
     subtitle: t("panels.diff.commitSubtitle"),
+    tooltip: target.sha,
     titleState: "ready",
     icon: ThemedGitCommitHorizontal,
     statusBucket: null,
