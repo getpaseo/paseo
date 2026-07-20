@@ -119,6 +119,7 @@ import {
   hasVisibleDiffTokens,
 } from "@/utils/diff-rendering";
 import { isWeb, isNative } from "@/constants/platform";
+import { useWorkspaceFileDragSource } from "@/attachments/use-workspace-file-drag-source";
 import {
   buildWorkspaceAttachmentScopeKey,
   useWorkspaceAttachmentsStore,
@@ -215,6 +216,7 @@ function HighlightedText({
 
 interface DiffFileSectionProps {
   file: ParsedDiffFile;
+  workspaceFileDragScope?: { serverId: string; workspaceId: string };
   isExpanded: boolean;
   /** Tree indentation level (0 on the flat/mobile path). */
   depth?: number;
@@ -954,6 +956,7 @@ function DiffFileHeaderContextMenu({
 
 const DiffFileHeader = memo(function DiffFileHeader({
   file,
+  workspaceFileDragScope,
   isExpanded,
   depth = 0,
   showDir = true,
@@ -967,6 +970,13 @@ const DiffFileHeader = memo(function DiffFileHeader({
   testID,
 }: DiffFileSectionProps) {
   const { t } = useTranslation();
+  const dragSourceRef = useWorkspaceFileDragSource({
+    enabled: interactive,
+    disabled: file.isDeleted,
+    workspaceId: null,
+    path: file.path,
+    ...workspaceFileDragScope,
+  });
   const layoutYRef = useRef<number | null>(null);
   const pressHandledRef = useRef(false);
   const pressInRef = useRef<{ ts: number; pageX: number; pageY: number } | null>(null);
@@ -1105,7 +1115,7 @@ const DiffFileHeader = memo(function DiffFileHeader({
   const hasContextMenu = actions.length > 0;
   const headerContent = (
     <>
-      <View style={styles.fileHeaderLeft}>
+      <View ref={dragSourceRef} style={styles.fileHeaderLeft}>
         {showDir ? null : (
           <View style={styles.fileIcon}>
             <SvgXml xml={getFileIconSvg(fileName)} width={16} height={16} />
@@ -1794,6 +1804,7 @@ interface SharedDiffViewProps {
         expandedPaths: string[];
         collapsedFolders: string[];
         reviewActions?: InlineReviewActions;
+        workspaceFileDragScope?: { serverId: string; workspaceId: string };
         onOpenFile?: (path: string) => void;
         onAddToChat?: (path: string) => void;
         onCopyPath?: (path: string) => void;
@@ -1832,6 +1843,8 @@ export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffVi
   const reviewActions = mode.kind === "working_tree" ? mode.reviewActions : undefined;
   const onOpenFile = mode.kind === "working_tree" ? mode.onOpenFile : undefined;
   const onAddToChat = mode.kind === "working_tree" ? mode.onAddToChat : undefined;
+  const workspaceFileDragScope =
+    mode.kind === "working_tree" ? mode.workspaceFileDragScope : undefined;
   const onCopyPath = mode.kind === "working_tree" ? mode.onCopyPath : undefined;
   const onDownload = mode.kind === "working_tree" ? mode.onDownload : undefined;
   const compressedTree = useMemo(() => compressSingleChildChains(buildDiffTree(files)), [files]);
@@ -2080,6 +2093,7 @@ export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffVi
         return (
           <DiffFileHeader
             file={item.file}
+            workspaceFileDragScope={workspaceFileDragScope}
             isExpanded={item.isExpanded}
             depth={item.depth}
             showDir={viewMode === "flat"}
@@ -2116,6 +2130,7 @@ export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffVi
       handleToggleFolder,
       layout,
       reviewActions,
+      workspaceFileDragScope,
       textMetricsStyle,
       viewMode,
       wrapLines,
@@ -2153,6 +2168,7 @@ export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffVi
       viewMode,
       wrapLines,
       reviewActions,
+      workspaceFileDragScope,
     }),
     [
       expandedPathsArray,
@@ -2162,6 +2178,7 @@ export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffVi
       reviewActions,
       typographyKey,
       viewMode,
+      workspaceFileDragScope,
       wrapLines,
     ],
   );
@@ -2661,6 +2678,7 @@ export function GitDiffPane({
       expandedPaths: stableExpandedPathsArray,
       collapsedFolders: stableCollapsedFoldersArray,
       reviewActions,
+      workspaceFileDragScope: workspaceId ? { serverId, workspaceId } : undefined,
       onOpenFile,
       onAddToChat,
       onCopyPath: handleCopyPath,
@@ -2673,6 +2691,8 @@ export function GitDiffPane({
       stableExpandedPathsArray,
       stableCollapsedFoldersArray,
       reviewActions,
+      serverId,
+      workspaceId,
       onOpenFile,
       onAddToChat,
       handleCopyPath,

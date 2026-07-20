@@ -120,9 +120,14 @@ import { ForgeBrandIcon } from "@/git/forge-icon";
 import { useComposerGithubAutoAttach } from "./github/auto-attach";
 import { resolveClientSlashCommand, type ClientSlashCommand } from "@/client-slash-commands";
 import {
+  appendWorkspaceFileAttachment,
   getWorkspaceFileAttachmentKey,
   getWorkspaceFileAttachmentSubtitle,
 } from "@/attachments/workspace-file";
+import {
+  resolveWorkspaceFileDrop,
+  type WorkspaceFileDragPayload,
+} from "@/attachments/workspace-file-drag";
 
 type QueuedMessage = QueuedComposerMessage;
 
@@ -808,6 +813,7 @@ function GithubPickerOption({
 interface ComposerProps {
   agentId: string;
   serverId: string;
+  workspaceId?: string | null;
   isPaneFocused: boolean;
   onSubmitMessage?: (payload: MessagePayload) => Promise<void>;
   onClientSlashCommand?: (command: ClientSlashCommand) => Promise<void>;
@@ -1028,6 +1034,7 @@ function ComposerVoiceModeButton({
 export function Composer({
   agentId,
   serverId,
+  workspaceId,
   isPaneFocused,
   onSubmitMessage,
   onClientSlashCommand,
@@ -1241,6 +1248,21 @@ export function Composer({
       },
     });
   }, []);
+
+  const handleWorkspaceFileDropped = useCallback(
+    (payload: WorkspaceFileDragPayload) => {
+      if (!workspaceId) {
+        return;
+      }
+      const attachment = resolveWorkspaceFileDrop({ payload, serverId, workspaceId });
+      if (!attachment) {
+        return;
+      }
+      setSelectedAttachments((current) => appendWorkspaceFileAttachment(current, attachment));
+      focusInput();
+    },
+    [focusInput, serverId, setSelectedAttachments, workspaceId],
+  );
 
   useEffect(() => {
     onFocusInput?.(focusInput);
@@ -2012,7 +2034,11 @@ export function Composer({
   // so a drop in that window would be lost or land on a locked draft. `disabled` hides the
   // backdrop and rejects the drop atomically, instead of accepting a drop with no feedback.
   useFileDrop(
-    { onFiles: addImages, onGenericFiles: handleGenericFilesDropped },
+    {
+      onFiles: addImages,
+      onGenericFiles: handleGenericFilesDropped,
+      onWorkspaceFile: handleWorkspaceFileDropped,
+    },
     { disabled: isSubmitBusy },
   );
 

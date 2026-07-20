@@ -38,6 +38,7 @@ import { usePanelStore, type SortOption } from "@/stores/panel-store";
 import { formatTimeAgo } from "@/utils/time";
 import { buildAbsoluteExplorerPath } from "@/utils/explorer-paths";
 import { filterVisibleExplorerEntries, isHiddenExplorerPath } from "@/file-explorer/visibility";
+import { useWorkspaceFileDragSource } from "@/attachments/use-workspace-file-drag-source";
 
 const SORT_OPTIONS: { value: SortOption }[] = [
   { value: "name" },
@@ -56,6 +57,8 @@ function formatFileSize({ size }: { size: number }): string {
 }
 
 interface TreeRowItemProps {
+  serverId: string;
+  workspaceId?: string | null;
   entry: ExplorerEntry;
   depth: number;
   isExpanded: boolean;
@@ -83,6 +86,8 @@ function treeRowKeyExtractor(row: TreeRow) {
 }
 
 function TreeRowItem({
+  serverId,
+  workspaceId,
   entry,
   depth,
   isExpanded,
@@ -96,6 +101,12 @@ function TreeRowItem({
   const { theme } = useUnistyles();
   const { t } = useTranslation();
   const isDirectory = entry.kind === "directory";
+  const dragSourceRef = useWorkspaceFileDragSource({
+    enabled: !isDirectory,
+    serverId,
+    workspaceId,
+    path: entry.path,
+  });
 
   const handlePress = useCallback(() => {
     onEntryPress(entry);
@@ -177,7 +188,7 @@ function TreeRowItem({
   return (
     <Pressable onPress={handlePress} style={pressableStyle}>
       <TreeIndentGuides depth={depth} />
-      <View style={styles.entryInfo}>
+      <View ref={dragSourceRef} style={styles.entryInfo}>
         <View style={styles.entryIcon}>
           {(() => {
             if (!isDirectory) {
@@ -411,6 +422,8 @@ export function FileExplorerPane({
   const renderTreeRow = useCallback(
     (info: ListRenderItemInfo<TreeRow>) => (
       <TreeRowDispatcher
+        serverId={serverId}
+        workspaceId={workspaceId}
         info={info}
         expandedPaths={expandedPaths}
         selectedEntryPath={selectedEntryPath}
@@ -429,6 +442,8 @@ export function FileExplorerPane({
       isDirectoryLoading,
       selectedEntryPath,
       onAddToChat,
+      serverId,
+      workspaceId,
     ],
   );
 
@@ -811,6 +826,8 @@ function toggleDirectory({
 }
 
 function TreeRowDispatcher({
+  serverId,
+  workspaceId,
   info,
   expandedPaths,
   selectedEntryPath,
@@ -820,6 +837,8 @@ function TreeRowDispatcher({
   onDownloadEntry,
   onAddToChat,
 }: {
+  serverId: string;
+  workspaceId?: string | null;
   info: ListRenderItemInfo<TreeRow>;
   expandedPaths: Set<string>;
   selectedEntryPath: string | null;
@@ -838,6 +857,8 @@ function TreeRowDispatcher({
 
   return (
     <TreeRowItem
+      serverId={serverId}
+      workspaceId={workspaceId}
       entry={entry}
       depth={depth}
       isExpanded={isExpanded}

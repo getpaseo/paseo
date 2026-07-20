@@ -14,6 +14,39 @@ function normalizePath(path: string): string {
   return path.trim().replace(/^\.\//, "");
 }
 
+export function isWorkspaceFileComposerAttachment(
+  value: unknown,
+): value is WorkspaceFileComposerAttachment {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  if (
+    record.kind !== "workspace_file" ||
+    typeof record.path !== "string" ||
+    record.path.trim().length === 0
+  ) {
+    return false;
+  }
+  const selection = record.selection;
+  if (!selection || typeof selection !== "object") {
+    return false;
+  }
+  const { kind, startLine, endLine } = selection as Record<string, unknown>;
+  if (kind === "whole_file") {
+    return true;
+  }
+  return (
+    kind === "line_range" &&
+    typeof startLine === "number" &&
+    Number.isInteger(startLine) &&
+    typeof endLine === "number" &&
+    Number.isInteger(endLine) &&
+    startLine > 0 &&
+    endLine >= startLine
+  );
+}
+
 export function createWorkspaceFileAttachment({
   path,
   selection = { kind: "whole_file" },

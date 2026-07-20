@@ -3,6 +3,7 @@ import {
   type AttachmentMetadata,
   type UserComposerAttachment,
 } from "@/attachments/types";
+import { isWorkspaceFileComposerAttachment } from "@/attachments/workspace-file";
 import { ForgeSearchItemSchema, GitHubSearchItemSchema } from "@getpaseo/protocol/messages";
 
 export const DRAFT_STORE_VERSION = 5;
@@ -74,29 +75,6 @@ export function normalizeAttachmentMetadata(image: AttachmentMetadata): Attachme
   };
 }
 
-function isWorkspaceFileComposerAttachment(record: Record<string, unknown>): boolean {
-  if (typeof record.path !== "string" || record.path.trim().length === 0) {
-    return false;
-  }
-  const selection = record.selection;
-  if (!selection || typeof selection !== "object") {
-    return false;
-  }
-  const { kind, startLine, endLine } = selection as Record<string, unknown>;
-  if (kind === "whole_file") {
-    return true;
-  }
-  return (
-    kind === "line_range" &&
-    typeof startLine === "number" &&
-    Number.isInteger(startLine) &&
-    typeof endLine === "number" &&
-    Number.isInteger(endLine) &&
-    startLine > 0 &&
-    endLine >= startLine
-  );
-}
-
 export function isUserComposerAttachment(value: unknown): value is UserComposerAttachment {
   if (!value || typeof value !== "object") {
     return false;
@@ -107,7 +85,7 @@ export function isUserComposerAttachment(value: unknown): value is UserComposerA
     return isAttachmentMetadata(metadata);
   }
   if (record.kind === "workspace_file") {
-    return isWorkspaceFileComposerAttachment(record);
+    return isWorkspaceFileComposerAttachment(value);
   }
   if (
     record.kind !== "forge_issue" &&
