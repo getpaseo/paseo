@@ -1457,6 +1457,112 @@ describe("OpenCode adapter startTurn error handling", () => {
     await session.close();
   });
 
+  test("keeps reconnecting through consecutive failed event stream connects while OpenCode is busy", async () => {
+    const eventsGate = createTestDeferred<void>();
+    const globalEvent = vi
+      .fn()
+      .mockResolvedValueOnce({
+        stream: (async function* () {
+          await eventsGate.promise;
+          yield {
+            type: "message.updated",
+            properties: {
+              info: {
+                id: "msg_assistant",
+                sessionID: "ses_unit_test",
+                role: "assistant",
+              },
+            },
+          };
+          yield {
+            type: "message.part.delta",
+            properties: {
+              sessionID: "ses_unit_test",
+              messageID: "msg_assistant",
+              partID: "prt_text",
+              field: "text",
+              delta: "Hello ",
+            },
+          };
+        })(),
+      })
+      .mockRejectedValueOnce(new Error("connect ECONNREFUSED 127.0.0.1:1"))
+      .mockRejectedValueOnce(new Error("connect ECONNREFUSED 127.0.0.1:1"))
+      .mockResolvedValueOnce({
+        stream: (async function* () {
+          yield {
+            type: "message.part.delta",
+            properties: {
+              sessionID: "ses_unit_test",
+              messageID: "msg_assistant",
+              partID: "prt_text",
+              field: "text",
+              delta: "world",
+            },
+          };
+          yield {
+            type: "session.status",
+            properties: { sessionID: "ses_unit_test", status: { type: "idle" } },
+          };
+        })(),
+      });
+    const messages = vi
+      .fn()
+      .mockResolvedValueOnce({ data: [], error: undefined })
+      .mockResolvedValue({
+        data: [
+          {
+            info: {
+              id: "msg_assistant",
+              sessionID: "ses_unit_test",
+              role: "assistant",
+              time: { created: Date.now() },
+            },
+            parts: [
+              {
+                id: "prt_text",
+                sessionID: "ses_unit_test",
+                messageID: "msg_assistant",
+                type: "text",
+                text: "Hello ",
+              },
+            ],
+          },
+        ],
+        error: undefined,
+      });
+    const status = vi.fn().mockResolvedValue({
+      data: { ses_unit_test: { type: "busy" } },
+      error: undefined,
+    });
+    const fakeClient = {
+      global: { event: globalEvent },
+      session: {
+        abort: vi.fn().mockResolvedValue({ data: true, error: undefined }),
+        messages,
+        promptAsync: vi.fn().mockImplementation(async () => {
+          eventsGate.resolve();
+          return { data: {}, error: undefined };
+        }),
+        status,
+      },
+    } as never;
+    const session = new __openCodeInternals.OpenCodeAgentSession(
+      { provider: "opencode", cwd: "/tmp/test" },
+      fakeClient,
+      "ses_unit_test",
+      createTestLogger(),
+    );
+
+    const turn = await collectTurnEvents(streamSession(session, "hello"));
+
+    expect(turn.turnCompleted).toBe(true);
+    expect(turn.turnFailed).toBe(false);
+    expect(turn.assistantMessages.map((message) => message.text).join("")).toBe("Hello world");
+    expect(globalEvent).toHaveBeenCalledTimes(4);
+    await session.close();
+  });
+
   test("recovers the missing assistant suffix when stream EOF finds OpenCode idle", async () => {
     const eventsGate = createTestDeferred<void>();
     const globalEvent = vi.fn().mockResolvedValue({

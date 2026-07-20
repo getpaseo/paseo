@@ -106,6 +106,7 @@ const OPENCODE_AUTO_ACCEPT_FEATURE_ID = "auto_accept";
 const OPENCODE_PERSISTED_SESSION_LIMIT = 200;
 const OPENCODE_PENDING_ABORT_START_TIMEOUT_MS = 10_000;
 const OPENCODE_EVENT_STREAM_RECONNECT_DELAY_MS = 100;
+const OPENCODE_EVENT_STREAM_RECONNECT_MAX_DELAY_MS = 5000;
 const OPENCODE_CHILD_SESSION_HYDRATION_LIMIT = 100;
 const OPENCODE_CHILD_SESSION_SERVER_REGISTRY_LIMIT = 500;
 const OPENCODE_PERMISSION_ACTION_ALLOW_ONCE = "allow_once";
@@ -3522,6 +3523,10 @@ class OpenCodeAgentSession implements AgentSession {
       cwd: this.config.cwd,
     });
     let eventStreamReadyResolved = false;
+    // Cycles that end without delivering a single event indicate the server is
+    // refusing or instantly dropping connections; back off exponentially so a
+    // dead server cannot turn the reconnect loop into a tight spin.
+    let consecutiveZeroEventCycles = 0;
     while (!eventStreamAbortController.signal.aborted) {
       let eventCount = 0;
       let streamError: unknown;
@@ -3572,6 +3577,7 @@ class OpenCodeAgentSession implements AgentSession {
         activeTurnId: this.activeForegroundTurnId,
         streamError,
       });
+      consecutiveZeroEventCycles = eventCount === 0 ? consecutiveZeroEventCycles + 1 : 0;
       const activeTurnId = this.activeForegroundTurnId;
       if (!activeTurnId) {
         return;
@@ -3582,9 +3588,11 @@ class OpenCodeAgentSession implements AgentSession {
         return;
       }
       if (recovery === "reconnect") {
-        await new Promise<void>((resolve) =>
-          setTimeout(resolve, OPENCODE_EVENT_STREAM_RECONNECT_DELAY_MS),
+        const reconnectDelayMs = Math.min(
+          OPENCODE_EVENT_STREAM_RECONNECT_DELAY_MS * 2 ** consecutiveZeroEventCycles,
+          OPENCODE_EVENT_STREAM_RECONNECT_MAX_DELAY_MS,
         );
+        await new Promise<void>((resolve) => setTimeout(resolve, reconnectDelayMs));
         continue;
       }
 
