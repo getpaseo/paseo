@@ -1937,58 +1937,6 @@ describe("OpenCode adapter startTurn error handling", () => {
 
     await session.interrupt();
   });
-
-  test("caps how long a pending interrupt abort can block the next prompt", async () => {
-    vi.useFakeTimers();
-    const abortDeferred = createTestDeferred<{ data: boolean; error: undefined }>();
-    const promptAsync = vi.fn().mockResolvedValue({ data: {}, error: undefined });
-    const abort = vi
-      .fn()
-      .mockReturnValueOnce(abortDeferred.promise)
-      .mockResolvedValue({ data: true, error: undefined });
-    const fakeClient = {
-      global: {
-        event: vi.fn().mockImplementation(
-          async (options: {
-            signal: AbortSignal;
-          }): Promise<{ stream: AsyncIterable<OpenCodeEvent> }> => ({
-            stream: abortableOpenCodeStream(options.signal),
-          }),
-        ),
-      },
-      session: {
-        promptAsync,
-        abort,
-      },
-    } as never;
-
-    const session = new __openCodeInternals.OpenCodeAgentSession(
-      { provider: "opencode", cwd: "/tmp/test" },
-      fakeClient,
-      "ses_unit_test",
-      createTestLogger(),
-    );
-
-    try {
-      await session.startTurn("first");
-      const interruptPromise = session.interrupt();
-      await vi.advanceTimersByTimeAsync(2_000);
-      await interruptPromise;
-
-      const secondTurnPromise = session.startTurn("second");
-      await vi.advanceTimersByTimeAsync(9_999);
-      expect(promptAsync).toHaveBeenCalledTimes(1);
-
-      await vi.advanceTimersByTimeAsync(1);
-      await secondTurnPromise;
-      expect(promptAsync).toHaveBeenCalledTimes(2);
-
-      abortDeferred.resolve({ data: true, error: undefined });
-      await session.interrupt();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
 });
 
 describe("OpenCodeAgentClient env", () => {
@@ -2801,10 +2749,7 @@ describe("OpenCode provider subagent contract", () => {
         openCode.emitEvent(event);
       }
       await vi.waitFor(() => {
-        expect(turnEventSignatures(events)).toEqual([
-          ["turn_started", "opencode-turn-0"],
-          ["timeline", "opencode-turn-0"],
-        ]);
+        expect(turnEventSignatures(events)).toEqual([["turn_started", "opencode-turn-0"]]);
       });
       expect(openCode.calls.sessionPromptAsync).toEqual([]);
 
@@ -2814,7 +2759,6 @@ describe("OpenCode provider subagent contract", () => {
       await vi.waitFor(() => {
         expect(turnEventSignatures(events)).toEqual([
           ["turn_started", "opencode-turn-0"],
-          ["timeline", "opencode-turn-0"],
           ["turn_canceled", "opencode-turn-0"],
           ["turn_started", "opencode-turn-1"],
           ["timeline", "opencode-turn-1"],
@@ -2886,6 +2830,119 @@ describe("OpenCode provider subagent contract", () => {
         ]);
       });
     } finally {
+      await parent.close();
+    }
+  });
+
+  test("keeps interrupted output fenced when the abort wait times out", async () => {
+    const runtime = new TestOpenCodeHarness();
+    const openCode = new TestOpenCodeClient();
+    const abortDeferred = createTestDeferred<{ data: boolean }>();
+    openCode.sessionCreateResponse = { data: { id: "ses_parent_timed_out_handoff" } };
+    openCode.sessionAbortImplementation = async () => abortDeferred.promise;
+    openCode.sessionPromptAsyncEvents = [];
+    runtime.enqueueClient(openCode);
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const parent = await client.createSession({
+      provider: "opencode",
+      cwd: "/workspace/repo",
+    });
+    const events: AgentStreamEvent[] = [];
+    const autonomousStarted = createTestDeferred<void>();
+    const staleStreamDrained = createTestDeferred<void>();
+    const directTurnCompleted = createTestDeferred<void>();
+    parent.subscribe((event) => {
+      events.push(event);
+      if (event.type === "turn_started" && event.turnId === "opencode-turn-0") {
+        autonomousStarted.resolve();
+      }
+      if (event.type === "provider_subagent") {
+        staleStreamDrained.resolve();
+      }
+      if (event.type === "turn_completed" && event.turnId === "opencode-turn-1") {
+        directTurnCompleted.resolve();
+      }
+    });
+
+    try {
+      openCode.emitEvent({
+        type: "session.status",
+        properties: { sessionID: "ses_parent_timed_out_handoff", status: { type: "busy" } },
+      });
+      await autonomousStarted.promise;
+
+      vi.useFakeTimers();
+      const directTurnPromise = parent.startTurn("Continue from Paseo");
+      await vi.advanceTimersByTimeAsync(9_999);
+      expect(openCode.calls.sessionPromptAsync).toEqual([]);
+
+      await vi.advanceTimersByTimeAsync(1);
+      await directTurnPromise;
+      expect(turnEventSignatures(events)).toEqual([
+        ["turn_started", "opencode-turn-0"],
+        ["turn_canceled", "opencode-turn-0"],
+        ["turn_started", "opencode-turn-1"],
+      ]);
+
+      for (const event of assistantTurnEvents({
+        sessionId: "ses_parent_timed_out_handoff",
+        text: "Late interrupted response.",
+      })) {
+        openCode.emitEvent(event);
+      }
+      openCode.emitEvent({
+        type: "session.created",
+        properties: {
+          info: {
+            id: "ses_child_after_timed_out_handoff",
+            parentID: "ses_parent_timed_out_handoff",
+            title: "Stream drain marker",
+            directory: "/workspace/repo",
+          },
+        },
+      });
+      await staleStreamDrained.promise;
+      expect(
+        turnEventSignatures(events.filter((event) => event.type !== "provider_subagent")),
+      ).toEqual([
+        ["turn_started", "opencode-turn-0"],
+        ["turn_canceled", "opencode-turn-0"],
+        ["turn_started", "opencode-turn-1"],
+      ]);
+
+      openCode.emitEvent({
+        type: "message.updated",
+        properties: {
+          info: {
+            id: "msg_paseo_after_timed_out_handoff",
+            sessionID: "ses_parent_timed_out_handoff",
+            role: "user",
+          },
+        },
+      });
+      for (const event of assistantTurnEvents({
+        sessionId: "ses_parent_timed_out_handoff",
+        text: "Paseo response.",
+      })) {
+        openCode.emitEvent(event);
+      }
+      await directTurnCompleted.promise;
+      expect(
+        turnEventSignatures(events.filter((event) => event.type !== "provider_subagent")),
+      ).toEqual([
+        ["turn_started", "opencode-turn-0"],
+        ["turn_canceled", "opencode-turn-0"],
+        ["turn_started", "opencode-turn-1"],
+        ["timeline", "opencode-turn-1"],
+        ["timeline", "opencode-turn-1"],
+        ["turn_completed", "opencode-turn-1"],
+      ]);
+    } finally {
+      vi.useRealTimers();
+      abortDeferred.resolve({ data: true });
       await parent.close();
     }
   });

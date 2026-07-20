@@ -108,6 +108,9 @@ const OPENCODE_PERMISSION_ACTION_ALLOW_ONCE = "allow_once";
 const OPENCODE_PERMISSION_ACTION_ALLOW_ALWAYS = "allow_always";
 const OPENCODE_PENDING_ABORT_START_TIMEOUT_MS = 10_000;
 
+type OpenCodeAbortResult = "confirmed" | "rejected";
+type OpenCodeAbortWaitResult = OpenCodeAbortResult | "not_needed" | "timed_out";
+
 // OpenCode child sessions run on the server process that spawned them. Adoption
 // resumes must attach to that same helper server to receive live global events.
 const openCodeChildSessionServerUrls = new Map<string, string>();
@@ -2884,7 +2887,7 @@ class OpenCodeAgentSession implements AgentSession {
   private autoAcceptEnabled = false;
   private pendingPermissions = new Map<string, AgentPermissionRequest>();
   private abortController: AbortController | null = null;
-  private pendingAbortPromise: Promise<void> | null = null;
+  private pendingAbortPromise: Promise<OpenCodeAbortResult> | null = null;
   private accumulatedUsage: AgentUsage = {};
   private sessionTotalCostUsd: number | undefined;
   private mcpConfigured = false;
@@ -3032,36 +3035,36 @@ class OpenCodeAgentSession implements AgentSession {
     });
   }
 
-  private beginSessionAbort(turnId: string | null, reason: string): Promise<void> {
+  private beginSessionAbort(turnId: string | null, reason: string): Promise<OpenCodeAbortResult> {
     const abortPromise = this.client.session
       .abort({
         sessionID: this.sessionId,
         directory: this.config.cwd,
       })
-      .then(() => undefined)
+      .then(() => "confirmed" as const)
       .catch((error) => {
         this.logger.warn(
           { err: error, sessionId: this.sessionId, turnId, reason },
           "OpenCode session.abort rejected",
         );
-        throw error;
+        return "rejected" as const;
       });
     this.pendingAbortPromise = abortPromise;
     return abortPromise;
   }
 
-  private async awaitPendingAbortBeforeStartingTurn(): Promise<void> {
+  private async awaitPendingAbortBeforeStartingTurn(): Promise<OpenCodeAbortWaitResult> {
     const pendingAbortPromise =
       this.pendingAbortPromise ??
       (this.awaitingInterruptedTurnBoundary
         ? this.beginSessionAbort(null, "turn_start_boundary")
         : null);
     if (!pendingAbortPromise) {
-      return;
+      return "not_needed";
     }
 
     try {
-      await withTimeout(
+      return await withTimeout(
         pendingAbortPromise,
         OPENCODE_PENDING_ABORT_START_TIMEOUT_MS,
         "OpenCode pending session.abort",
@@ -3070,6 +3073,7 @@ class OpenCodeAgentSession implements AgentSession {
           { err: error, sessionId: this.sessionId },
           "OpenCode session.abort did not settle before starting the next turn",
         );
+        return "timed_out" as const;
       });
     } finally {
       if (this.pendingAbortPromise === pendingAbortPromise) {
@@ -3082,12 +3086,14 @@ class OpenCodeAgentSession implements AgentSession {
     prompt: AgentPromptInput,
     options?: AgentRunOptions,
   ): Promise<{ turnId: string }> {
+    let abortWaitResult: OpenCodeAbortWaitResult | null = null;
     if (this.activeForegroundTurnId) {
       if (this.activeForegroundTurnSource === "autonomous") {
         const autonomousTurnId = this.activeForegroundTurnId;
+        this.awaitingInterruptedTurnBoundary = true;
         this.beginSessionAbort(autonomousTurnId, "direct_prompt_handoff");
         try {
-          await this.awaitPendingAbortBeforeStartingTurn();
+          abortWaitResult = await this.awaitPendingAbortBeforeStartingTurn();
         } finally {
           if (this.activeForegroundTurnId === autonomousTurnId) {
             this.finishForegroundTurn(
@@ -3100,8 +3106,10 @@ class OpenCodeAgentSession implements AgentSession {
         throw new Error("A foreground turn is already active");
       }
     }
-    await this.awaitPendingAbortBeforeStartingTurn();
-    this.awaitingInterruptedTurnBoundary = false;
+    abortWaitResult ??= await this.awaitPendingAbortBeforeStartingTurn();
+    if (abortWaitResult !== "timed_out") {
+      this.awaitingInterruptedTurnBoundary = false;
+    }
 
     this.runningToolCalls.clear();
     this.subAgentsByCallId.clear();
@@ -3616,13 +3624,16 @@ class OpenCodeAgentSession implements AgentSession {
     if (!this.awaitingInterruptedTurnBoundary) {
       return false;
     }
-    if (!isOpenCodeTerminalEvent(event, this.sessionId)) {
+    if (getOpenCodeEventSessionId(event) !== this.sessionId) {
       return false;
     }
-    this.awaitingInterruptedTurnBoundary = false;
+    const isTerminal = isOpenCodeTerminalEvent(event, this.sessionId);
+    if (isTerminal) {
+      this.awaitingInterruptedTurnBoundary = false;
+    }
     this.traceOpenCode("provider.opencode.event.skip", {
       n: eventCount,
-      reason: "stale_interrupt_terminal",
+      reason: isTerminal ? "stale_interrupt_terminal" : "stale_interrupt_event",
       type: event.type,
     });
     return true;
