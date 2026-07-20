@@ -39,6 +39,7 @@ interface AgentInputDraftComposerOptions {
 interface UseAgentInputDraftInput {
   draftKey: DraftKeyInput;
   composer?: AgentInputDraftComposerOptions;
+  initialAssistantId?: string | null;
 }
 
 type DraftComposerState = UseAgentFormStateResult & {
@@ -48,6 +49,8 @@ type DraftComposerState = UseAgentFormStateResult & {
   featureValues: Record<string, unknown> | undefined;
   agentControls: DraftAgentControlsProps;
   commandDraftConfig: DraftCommandConfig | undefined;
+  assistantId: string | null;
+  setAssistantId: (id: string | null) => void;
 };
 
 export interface AgentInputDraft {
@@ -58,6 +61,8 @@ export interface AgentInputDraft {
   clear: (lifecycle: "sent" | "abandoned") => void;
   isHydrated: boolean;
   composerState: DraftComposerState | null;
+  assistantId: string | null;
+  setAssistantId: (id: string | null) => void;
 }
 
 export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDraft {
@@ -80,6 +85,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
   const [text, setText] = useState("");
   const [attachments, setAttachmentsState] = useState<UserComposerAttachment[]>([]);
   const [isHydrated, setIsHydrated] = useState(false);
+  const initialAssistantId = input.initialAssistantId ?? null;
   const draftGenerationRef = useRef(0);
   const hydratedGenerationRef = useRef(0);
 
@@ -231,6 +237,19 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     [effectiveModelId, providerSelection],
   );
 
+  const [assistantId, setAssistantId] = useState<string | null>(initialAssistantId);
+
+  // Sync assistantId from the agent's labels when it becomes available.
+  // This handles the case where the user selected an assistant on the workspace
+  // creation page and the agent was created with that assistantId in its labels.
+  // We only set it when assistantId is currently null to avoid overriding the
+  // user's explicit selection in the chat page.
+  useEffect(() => {
+    if (initialAssistantId && !assistantId) {
+      setAssistantId(initialAssistantId);
+    }
+  }, [initialAssistantId, assistantId]);
+
   const workingDir = lockedWorkingDir || formState.workingDir;
   const {
     features: draftFeatures,
@@ -284,6 +303,8 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
         onSetFeature: setDraftFeatureValue,
       }),
       commandDraftConfig,
+      assistantId,
+      setAssistantId,
     };
   }, [
     commandDraftConfig,
@@ -295,6 +316,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     formState,
     setDraftFeatureValue,
     workingDir,
+    assistantId,
   ]);
 
   return {
@@ -305,6 +327,8 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     clear,
     isHydrated,
     composerState,
+    assistantId,
+    setAssistantId,
   };
 }
 

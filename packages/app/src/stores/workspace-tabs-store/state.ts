@@ -14,6 +14,7 @@ export interface WorkspaceDraftTabSetup {
   model: string | null;
   thinkingOptionId: string | null;
   featureValues: Record<string, unknown>;
+  assistantId?: string | null;
 }
 
 export type WorkspaceTabTarget =

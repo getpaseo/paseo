@@ -73,6 +73,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Shortcut } from "@/components/ui/shortcut";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { AutocompletePopover } from "@/components/ui/autocomplete-popover";
+import { AssistantSelector } from "@/composer/assistant-selector/assistant-selector";
 import { useAgentAutocomplete } from "@/hooks/use-agent-autocomplete";
 import {
   useHostRuntimeAgentDirectoryStatus,
@@ -252,6 +253,8 @@ function resolveContextWindowPlacement(
   };
 }
 
+const noopAssistantSelect = (_id: string | null) => {};
+
 interface RenderLeftContentArgs {
   agentControls: DraftAgentControlsProps | undefined;
   agentId: string;
@@ -259,21 +262,40 @@ interface RenderLeftContentArgs {
   focusInput: () => void;
   isCompactLayout: boolean;
   isPaneFocused: boolean;
+  assistantId: string | null | undefined;
+  onAssistantSelect: ((id: string | null) => void) | undefined;
 }
 
 function renderLeftContent(args: RenderLeftContentArgs): ReactElement {
   const { agentControls, agentId, serverId, focusInput, isCompactLayout, isPaneFocused } = args;
+  const assistantId = args.assistantId ?? null;
+  const onAssistantSelect = args.onAssistantSelect ?? noopAssistantSelect;
+  const assistantSelector = (
+    <AssistantSelector
+      serverId={serverId}
+      selectedAssistantId={assistantId}
+      onSelect={onAssistantSelect}
+    />
+  );
   if (resolveAgentControlsMode(agentControls) === "draft" && agentControls) {
-    return <DraftAgentControls {...agentControls} isCompactLayout={isCompactLayout} />;
+    return (
+      <View style={styles.leftContentRow}>
+        <DraftAgentControls {...agentControls} isCompactLayout={isCompactLayout} />
+        {assistantSelector}
+      </View>
+    );
   }
   return (
-    <AgentControls
-      agentId={agentId}
-      serverId={serverId}
-      isPaneFocused={isPaneFocused}
-      onDropdownClose={focusInput}
-      isCompactLayout={isCompactLayout}
-    />
+    <View style={styles.leftContentRow}>
+      <AgentControls
+        agentId={agentId}
+        serverId={serverId}
+        isPaneFocused={isPaneFocused}
+        onDropdownClose={focusInput}
+        isCompactLayout={isCompactLayout}
+      />
+      {assistantSelector}
+    </View>
   );
 }
 
@@ -800,6 +822,10 @@ interface ComposerProps {
   externalKeyboardShift?: boolean;
   /** Optional panel/container layout breakpoint. Defaults to the screen breakpoint. */
   isCompactLayout?: boolean;
+  /** Selected assistant ID for the current draft, if any. */
+  assistantId?: string | null;
+  /** Called when the user selects or clears an assistant. */
+  onAssistantSelect?: (id: string | null) => void;
 }
 
 const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024;
@@ -1003,6 +1029,8 @@ export function Composer({
   footer,
   externalKeyboardShift,
   isCompactLayout: isCompactLayoutOverride,
+  assistantId,
+  onAssistantSelect: setAssistantId,
 }: ComposerProps) {
   const { t } = useTranslation();
   const buttonIconSize = resolveComposerButtonIconSize();
@@ -1848,8 +1876,19 @@ export function Composer({
         focusInput,
         isCompactLayout,
         isPaneFocused,
+        assistantId: assistantId ?? null,
+        onAssistantSelect: setAssistantId ?? noopAssistantSelect,
       }),
-    [agentControls, agentId, focusInput, isCompactLayout, isPaneFocused, serverId],
+    [
+      agentControls,
+      agentId,
+      assistantId,
+      focusInput,
+      isCompactLayout,
+      isPaneFocused,
+      serverId,
+      setAssistantId,
+    ],
   );
 
   const handleAttachButtonRef = useCallback((node: View | null) => {
@@ -2068,6 +2107,12 @@ const styles = StyleSheet.create((theme: Theme) => ({
   container: {
     flexDirection: "column",
     position: "relative",
+  },
+  leftContentRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    flexShrink: 1,
   },
   borderSeparator: {
     height: theme.borderWidth[1],

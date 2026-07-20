@@ -22,9 +22,11 @@ import {
   forwardRef,
 } from "react";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
-import { ArrowUp, Mic, MicOff, CornerDownLeft, Plus, Square } from "lucide-react-native";
+import { ArrowUp, Mic, MicOff, CornerDownLeft, Plus, Square, Maximize2 } from "lucide-react-native";
+import Animated from "react-native-reanimated";
 import { useDictation } from "@/hooks/use-dictation";
 import { DictationOverlay } from "@/components/dictation-controls";
 import { RealtimeVoiceOverlay } from "@/components/realtime-voice-overlay";
@@ -41,6 +43,7 @@ import type { ComposerAttachment } from "@/attachments/types";
 import type { ImageAttachment, MessagePayload } from "@/composer/types";
 import { focusWithRetries } from "@/utils/web-focus";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Button } from "@/components/ui/button";
 import { Shortcut } from "@/components/ui/shortcut";
 import {
   DropdownMenu,
@@ -162,6 +165,7 @@ const DEFAULT_MAX_INPUT_HEIGHT = 160;
 const MAX_INPUT_VIEWPORT_RATIO = 0.5;
 const MIN_INPUT_HEIGHT = isWeb ? MIN_INPUT_HEIGHT_DESKTOP : MIN_INPUT_HEIGHT_MOBILE;
 const ATTACHMENT_SHEET_SNAP_POINTS = ["34%", "45%"];
+const EXPANDED_EDITOR_SNAP_POINTS = ["70%", "90%"];
 
 type WebTextInputKeyPressEvent = NativeSyntheticEvent<
   TextInputKeyPressEventData & {
@@ -382,6 +386,114 @@ function AttachmentDropdown({
   );
 }
 
+function MarkdownExpandButton({
+  disabled,
+  onPress,
+  buttonIconSize,
+  style,
+}: {
+  disabled?: boolean;
+  onPress: () => void;
+  buttonIconSize: number;
+  style: React.ComponentProps<typeof Pressable>["style"];
+}) {
+  const renderIcon = useCallback(
+    ({ hovered }: { hovered?: boolean }) => (
+      <ThemedMaximize2
+        size={buttonIconSize}
+        uniProps={hovered ? iconForegroundMapping : iconForegroundMutedMapping}
+      />
+    ),
+    [buttonIconSize],
+  );
+  return (
+    <Tooltip>
+      <TooltipTrigger>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Open expanded Markdown editor"
+          onPress={onPress}
+          disabled={disabled}
+          style={style}
+          testID="message-input-expand-button"
+        >
+          {renderIcon}
+        </Pressable>
+      </TooltipTrigger>
+      <TooltipContent>Expand Markdown editor</TooltipContent>
+    </Tooltip>
+  );
+}
+
+function ExpandedMarkdownEditor({
+  visible,
+  value,
+  placeholder,
+  onChangeText,
+  onClose,
+  onSend,
+  isSendButtonDisabled,
+  disabled,
+  isSubmitLoading,
+  t,
+}: {
+  visible: boolean;
+  value: string;
+  placeholder?: string;
+  onChangeText: (text: string) => void;
+  onClose: () => void;
+  onSend: () => void;
+  isSendButtonDisabled: boolean;
+  disabled?: boolean;
+  isSubmitLoading: boolean;
+  t: TFunction;
+}) {
+  const header = useMemo<SheetHeader>(
+    () => ({
+      title: "Markdown input",
+      subtitle: "Write multiple lines, lists, code blocks, and other Markdown.",
+    }),
+    [],
+  );
+  return (
+    <AdaptiveModalSheet
+      header={header}
+      visible={visible}
+      onClose={onClose}
+      snapPoints={EXPANDED_EDITOR_SNAP_POINTS}
+      testID="message-input-expanded-markdown-editor"
+    >
+      <View style={styles.expandedEditorBody}>
+        <ThemedTextInput
+          value={value}
+          onChangeText={onChangeText}
+          placeholder={placeholder ?? t("composer.placeholders.fallback")}
+          uniProps={textInputPlaceholderColorMapping}
+          accessibilityLabel="Expanded Markdown input"
+          style={styles.expandedEditorInput}
+          multiline
+          autoFocus={isWeb}
+          textAlignVertical="top"
+        />
+        <View style={styles.expandedEditorActions}>
+          <Button variant="outline" size="sm" onPress={onClose}>
+            Done
+          </Button>
+          <Button
+            variant="default"
+            size="sm"
+            onPress={onSend}
+            disabled={isSendButtonDisabled || isSubmitLoading || Boolean(disabled)}
+            loading={isSubmitLoading}
+          >
+            Send
+          </Button>
+        </View>
+      </View>
+    </AdaptiveModalSheet>
+  );
+}
+
 function VoiceButtonIcon({
   hovered,
   isDictating,
@@ -479,13 +591,13 @@ function handleDesktopKeyPressImpl(
     if (handled) return;
   }
 
-  const { shiftKey, metaKey, ctrlKey } = event.nativeEvent;
+  const { shiftKey } = event.nativeEvent;
 
   if (event.nativeEvent.key !== "Enter") return;
   if (!ctx.submitOnEnter) return;
   if (shiftKey) return;
 
-  if ((metaKey || ctrlKey) && ctx.isAgentRunning && ctx.onQueue) {
+  if (ctx.isAgentRunning && ctx.onQueue) {
     if (ctx.isSubmitDisabled || ctx.isSubmitLoading || ctx.disabled) return;
     event.preventDefault();
     ctx.handleAlternateSendAction();
@@ -1199,6 +1311,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     const focusInputKeys = useShortcutKeys("focus-message-input");
     const [inputHeight, setInputHeight] = useState(MIN_INPUT_HEIGHT);
     const [isInputFocused, setIsInputFocused] = useState(false);
+    const [isExpandedEditorOpen, setIsExpandedEditorOpen] = useState(false);
     const rootRef = useRef<View | null>(null);
     const inputWrapperRef = useRef<View | null>(null);
     const textInputRef = useRef<TextInput | (TextInput & { getNativeRef?: () => unknown }) | null>(
@@ -1674,6 +1787,15 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       [isDictating, isDictationStartEnabled],
     );
 
+    const expandButtonStyle = useCallback(
+      ({ hovered }: { hovered?: boolean }) => [
+        styles.voiceButton,
+        Boolean(hovered) && styles.iconButtonHovered,
+        disabled && styles.buttonDisabled,
+      ],
+      [disabled],
+    );
+
     const handleRealtimeVoiceStop = useCallback(() => {
       void handleStopRealtimeVoice();
     }, [handleStopRealtimeVoice]);
@@ -1709,6 +1831,14 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       ),
       [onAttachButtonRef, buttonIconSize],
     );
+
+    const handleOpenExpandedEditor = useCallback(() => {
+      setIsExpandedEditorOpen(true);
+    }, []);
+    const handleCloseExpandedEditor = useCallback(() => {
+      setIsExpandedEditorOpen(false);
+      textInputRef.current?.focus();
+    }, []);
 
     const renderVoiceButtonIcon = useCallback(
       ({ hovered }: { hovered?: boolean }) => (
@@ -1779,6 +1909,12 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
             {/* Right: voice button, contextual button (realtime/send/cancel) */}
             <View style={styles.rightButtonGroup}>
               {beforeVoiceContent}
+              <MarkdownExpandButton
+                disabled={disabled}
+                onPress={handleOpenExpandedEditor}
+                buttonIconSize={buttonIconSize}
+                style={expandButtonStyle}
+              />
               <VoiceButtonTooltip
                 onVoicePress={handleVoicePress}
                 isDictationStartEnabled={isDictationStartEnabled}
@@ -1810,7 +1946,20 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
           </View>
         </View>
 
-        <View
+        <ExpandedMarkdownEditor
+          visible={isExpandedEditorOpen}
+          value={value}
+          placeholder={placeholder}
+          onChangeText={handleInputChange}
+          onClose={handleCloseExpandedEditor}
+          onSend={handleDefaultSendAction}
+          isSendButtonDisabled={isSendButtonDisabled}
+          disabled={disabled}
+          isSubmitLoading={isSubmitLoading}
+          t={t}
+        />
+
+        <Animated.View
           style={overlayContainerStyle}
           pointerEvents={surfacePresentation.overlay.pointerEvents}
         >
@@ -1831,7 +1980,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
             onDiscardFailedRecording={handleDiscardFailedRecording}
             onRealtimeVoiceStop={handleRealtimeVoiceStop}
           />
-        </View>
+        </Animated.View>
       </View>
     );
   },
@@ -1953,6 +2102,26 @@ const styles = StyleSheet.create((theme: Theme) => ({
     fontSize: theme.fontSize.sm,
     color: theme.colors.popoverForeground,
   },
+  expandedEditorBody: {
+    gap: theme.spacing[4],
+  },
+  expandedEditorInput: {
+    minHeight: 320,
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    paddingVertical: theme.spacing[3],
+    paddingHorizontal: theme.spacing[4],
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderRadius: theme.borderRadius.lg,
+    backgroundColor: theme.colors.surface1,
+    textAlignVertical: "top",
+  },
+  expandedEditorActions: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: theme.spacing[2],
+  },
   buttonDisabled: {
     opacity: 0.5,
   },
@@ -2000,6 +2169,7 @@ const ThemedMic = withUnistyles(Mic);
 const ThemedMicOff = withUnistyles(MicOff);
 const ThemedArrowUp = withUnistyles(ArrowUp);
 const ThemedCornerDownLeft = withUnistyles(CornerDownLeft);
+const ThemedMaximize2 = withUnistyles(Maximize2);
 const ThemedActivityIndicator = withUnistyles(ActivityIndicator);
 const ThemedTextInput = withUnistyles(TextInput);
 

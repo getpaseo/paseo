@@ -211,6 +211,53 @@ test("mcp create accepts provider-only internal input and leaves model undefined
   );
 });
 
+test("mcp create uses workspaceTitle only when provisioning a workspace", async () => {
+  const snapshot = {
+    id: "agent-1",
+    provider: "claude",
+    cwd: "/tmp/paseo-create-test",
+    runtimeInfo: null,
+  } as ManagedAgent;
+  const createAgent = vi.fn(async () => snapshot);
+  const streamAgent = vi.fn(() => (async function* noop() {})());
+  const ensureWorkspaceForCreate = vi.fn(async () => "ws-created-from-title");
+  const dependencies: Parameters<typeof createAgentCommand>[0] = {
+    agentManager: {
+      createAgent,
+      getAgent: vi.fn(() => snapshot),
+      tryRunOutOfBand: vi.fn(() => false),
+      hasInFlightRun: vi.fn(() => false),
+      streamAgent,
+      waitForAgentRunStart: vi.fn(async () => undefined),
+    } as unknown as Parameters<typeof createAgentCommand>[0]["agentManager"],
+    agentStorage: {} as Parameters<typeof createAgentCommand>[0]["agentStorage"],
+    logger: createTestLogger(),
+    providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+    ensureWorkspaceForCreate,
+  };
+
+  await createAgentCommand(dependencies, {
+    kind: "mcp",
+    provider: "claude",
+    cwd: "/tmp/paseo-create-test",
+    title: "Topic title",
+    workspaceTitle: "Workspace from Lark topic",
+    initialPrompt: "Message from Lark user Alice in chat oc_1 (Topic title):\n\nReal prompt",
+    background: true,
+    notifyOnFinish: false,
+    promptFailure: "throw",
+  });
+
+  expect(ensureWorkspaceForCreate).toHaveBeenCalledWith("/tmp/paseo-create-test", {
+    prompt: "Workspace from Lark topic",
+  });
+  expect(streamAgent).toHaveBeenCalledWith(
+    "agent-1",
+    "Message from Lark user Alice in chat oc_1 (Topic title):\n\nReal prompt",
+    undefined,
+  );
+});
+
 test("session create stamps the requested workspaceId when no worktree setup runs", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "create-agent-test-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);

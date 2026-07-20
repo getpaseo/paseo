@@ -32,6 +32,8 @@ import {
   type ImportProviderSessionInput,
   type ListImportableSessionsOptions,
   type ProviderCatalog,
+  type ResolveAgentCreateConfigInput,
+  type ResolveAgentCreateConfigResult,
 } from "../agent-sdk-types.js";
 import { importSessionFromPersistence } from "../provider-session-import.js";
 import type { Logger } from "pino";
@@ -83,6 +85,7 @@ import {
   renderProviderImageOutputAsAssistantMarkdown,
   type ProviderImageOutput,
 } from "./provider-image-output.js";
+import { resolveDefaultAgentCreateConfig } from "../create-agent-mode.js";
 import { normalizeProviderReplayTimestamp } from "../provider-history-timestamps.js";
 import {
   formatProviderDiagnostic,
@@ -6177,6 +6180,14 @@ export class CodexAppServerAgentClient implements AgentClient {
     private readonly runtimeSettings?: ProviderRuntimeSettings,
     private readonly deps: CodexAppServerAgentDeps = {},
   ) {}
+
+  resolveCreateConfig(input: ResolveAgentCreateConfigInput): ResolveAgentCreateConfigResult {
+    const requestedMode =
+      input.requestedMode === undefined && !input.parent
+        ? DEFAULT_CODEX_MODE_ID
+        : input.requestedMode;
+    return resolveDefaultAgentCreateConfig({ ...input, requestedMode });
+  }
 
   private sessionDeps(): CodexAppServerAgentDeps {
     return {

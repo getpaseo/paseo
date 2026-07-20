@@ -214,6 +214,13 @@ import {
   type HubRelationshipRemote,
 } from "./hub/relationship-remote.js";
 import { DaemonExecutions } from "./hub/daemon-executions.js";
+import { LarkChannelStore } from "./channels/lark/lark-channel-store.js";
+import { OfficialLarkChannelClientAdapter } from "./channels/lark/lark-client-adapter.js";
+import { LarkChannelService } from "./channels/lark/lark-channel-service.js";
+import { AssistantStore } from "./assistants/assistant-store.js";
+import { TeamStore } from "./team/team-store.js";
+import { McpStore } from "./mcp/mcp-store.js";
+import { SkillStore } from "./skill/skill-store.js";
 
 const MAX_MCP_DEBUG_BATCH_ITEMS = 10;
 const REDACTED_LOG_VALUE = "[redacted]";
@@ -594,6 +601,8 @@ export async function createPaseoDaemon(
   const scriptRuntimeStore = new WorkspaceScriptRuntimeStore();
   const configuredHostnames = config.hostnames ?? config.allowedHosts;
   let wsServer: VoiceAssistantWebSocketServer | null = null;
+  let larkChannelService: LarkChannelService;
+  let assistantStore: AssistantStore;
   let serviceProxyListenTarget: ListenTarget | null = null;
   const scriptHealthMonitor = new ScriptHealthMonitor({
     serviceProxy,
@@ -1099,6 +1108,31 @@ export async function createPaseoDaemon(
       }),
   });
 
+  const larkChannelStore = new LarkChannelStore({ paseoHome: config.paseoHome, logger });
+  assistantStore = new AssistantStore({ paseoHome: config.paseoHome, logger });
+  const teamStore = new TeamStore({ paseoHome: config.paseoHome, logger });
+  const mcpStore = new McpStore({ paseoHome: config.paseoHome, logger });
+  const skillStore = new SkillStore({ paseoHome: config.paseoHome, logger });
+  larkChannelService = new LarkChannelService({
+    store: larkChannelStore,
+    adapter: new OfficialLarkChannelClientAdapter({ logger }),
+    agentManager,
+    agentStorage,
+    createAgent,
+    assistantStore,
+    logger,
+    host: {
+      emitStatusChanged: (status) => {
+        wsServer?.broadcast(
+          wrapSessionMessage({
+            type: "channel.lark.status_changed",
+            payload: { status },
+          }),
+        );
+      },
+    },
+  });
+
   const loopService = new LoopService({
     paseoHome: config.paseoHome,
     logger,
@@ -1534,6 +1568,11 @@ export async function createPaseoDaemon(
               serviceProxyPublicBaseUrl,
               browserToolsBroker,
               hubRelationships,
+              larkChannelService,
+              assistantStore,
+              teamStore,
+              mcpStore,
+              skillStore,
             );
             await hubRelationships.start();
 
@@ -1585,6 +1624,7 @@ export async function createPaseoDaemon(
       // model loading doesn't block the server from accepting connections.
       speechService.start();
       scriptHealthMonitor.start();
+      await larkChannelService.start();
     } catch (error) {
       await serviceProxy.stopStandalone().catch(() => undefined);
       if (mainStarted) {
@@ -1598,6 +1638,7 @@ export async function createPaseoDaemon(
   const stop = async () => {
     await hubRelationships.stop();
     workspaceReconciliation.dispose();
+    await larkChannelService.stop().catch(() => undefined);
     scriptHealthMonitor.stop();
     clearInterval(idleAgentCollectionTimer);
     await inFlightIdleAgentCollection;

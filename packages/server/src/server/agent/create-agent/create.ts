@@ -80,6 +80,7 @@ export interface CreateAgentFromMcpInput {
   kind: "mcp";
   provider: string;
   title: string;
+  workspaceTitle?: string;
   initialPrompt?: string;
   config?: Partial<AgentSessionConfig>;
   cwd?: string;
@@ -314,7 +315,7 @@ async function resolveMcpCreateAgent(
       dependencies,
       cwd,
       worktree: input.worktree,
-      initialPrompt: input.initialPrompt ?? "",
+      initialPrompt: input.workspaceTitle ?? input.initialPrompt ?? "",
     });
   if (createdWorktree) input.onWorktreeCreated?.(createdWorktree);
 
@@ -329,7 +330,11 @@ async function resolveMcpCreateAgent(
     resolveWorkspace: async (workspaceId) => ({ workspaceId, cwd: resolvedCwd }),
     createWorkspace: async () => ({
       workspaceId: requireResolvedWorkspaceId(
-        await ensureWorkspaceForMcpCreate(dependencies, resolvedCwd, input.initialPrompt ?? ""),
+        await ensureWorkspaceForMcpCreate(
+          dependencies,
+          resolvedCwd,
+          input.workspaceTitle ?? input.initialPrompt ?? "",
+        ),
       ),
       cwd: resolvedCwd,
     }),

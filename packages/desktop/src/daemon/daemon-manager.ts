@@ -1,5 +1,5 @@
 import { type ChildProcess } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { app, ipcMain, powerMonitor } from "electron";
 import log from "electron-log/main";
@@ -252,6 +252,50 @@ function resolveDesktopAppVersion(): string {
   return app.getVersion();
 }
 
+function resolveDesktopBuildId(): string | null {
+  const resourcesPath =
+    typeof process.resourcesPath === "string" && process.resourcesPath.trim().length > 0
+      ? process.resourcesPath
+      : null;
+  const appAsarPath = resourcesPath ? path.join(resourcesPath, "app.asar") : null;
+  const statParts = (() => {
+    if (!appAsarPath) {
+      return null;
+    }
+    try {
+      const stat = statSync(appAsarPath);
+      return `${stat.size}:${Math.trunc(stat.mtimeMs)}`;
+    } catch {
+      return null;
+    }
+  })();
+
+  return [
+    normalizeVersion(resolveDesktopAppVersion()) ?? "unknown-version",
+    process.execPath,
+    resourcesPath,
+    statParts,
+  ]
+    .filter((part): part is string => Boolean(part))
+    .join("|");
+}
+
+function readDesktopBuildIdFromPidLock(): string | null {
+  try {
+    const raw = readFileSync(path.join(getPaseoHome(), "paseo.pid"), "utf-8");
+    const lock = JSON.parse(raw) as { desktopBuildId?: unknown };
+    return typeof lock.desktopBuildId === "string" && lock.desktopBuildId.trim().length > 0
+      ? lock.desktopBuildId
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function isTestDesktopBuild(): boolean {
+  return path.basename(process.execPath).toLowerCase().includes("test");
+}
+
 // ---------------------------------------------------------------------------
 // Daemon lifecycle
 // ---------------------------------------------------------------------------
@@ -320,6 +364,13 @@ function shouldRestartForVersion(current: DesktopDaemonStatus): boolean {
   return Boolean(appVersion && daemonVersion && appVersion !== daemonVersion);
 }
 
+function shouldRestartForDesktopBuild(current: DesktopDaemonStatus): boolean {
+  if (!isTestDesktopBuild() || !current.desktopManaged) return false;
+  const appBuildId = resolveDesktopBuildId();
+  if (!appBuildId) return false;
+  return readDesktopBuildIdFromPidLock() !== appBuildId;
+}
+
 function assertBuiltInDaemonManagementEnabled(settings: DesktopSettings): void {
   if (!settings.daemon.manageBuiltInDaemon) {
     throw new Error("Built-in daemon management is disabled.");
@@ -379,6 +430,12 @@ async function startDaemon(): Promise<DesktopDaemonStatus> {
         daemonVersion: normalizeVersion(current.version),
       });
       await stopDesktopDaemon("version_mismatch");
+    } else if (shouldRestartForDesktopBuild(current)) {
+      logDesktopDaemonLifecycle("test daemon build mismatch, restarting", {
+        appBuildId: resolveDesktopBuildId(),
+        daemonBuildId: readDesktopBuildIdFromPidLock(),
+      });
+      await stopDesktopDaemon("version_mismatch");
     } else {
       return current;
     }
@@ -409,11 +466,16 @@ async function startDaemon(): Promise<DesktopDaemonStatus> {
     arch: process.arch,
   });
 
+  const desktopBuildId = resolveDesktopBuildId();
   const child: ChildProcess = spawnProcess(invocation.command, invocation.args, {
     detached: true,
     envMode: "internal",
     env: invocation.env,
-    envOverlay: { PASEO_DESKTOP_MANAGED: "1", PASEO_WEB_UI_ENABLED: "false" },
+    envOverlay: {
+      PASEO_DESKTOP_MANAGED: "1",
+      ...(desktopBuildId ? { PASEO_DESKTOP_BUILD_ID: desktopBuildId } : {}),
+      PASEO_WEB_UI_ENABLED: "false",
+    },
     stdio: ["ignore", "ignore", "ignore"],
   });
 

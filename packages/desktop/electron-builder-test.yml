@@ -1,0 +1,36 @@
+npmRebuild: false
+appId: sh.paseo.desktop.feishu.test
+productName: Paseo-Feishu-Test
+executableName: Paseo-Feishu-Test
+afterPack: ./scripts/after-pack.js
+directories:
+  output: release-test
+files:
+  - dist/**/*
+  - "!**/*.map"
+  - "!node_modules/@getpaseo/*/src/**"
+  - "!node_modules/@getpaseo/**/*.test.*"
+  - "!node_modules/@getpaseo/**/*.spec.*"
+  - "!node_modules/@getpaseo/server/dist/server/web-ui/**"
+asarUnpack:
+  - dist/daemon/node-entrypoint-runner.js
+  - node_modules/@getpaseo/server/dist/server/terminal/shell-integration/**/*
+extraResources:
+  - from: ../app/dist
+    to: app-dist
+  - from: ../../skills
+    to: skills
+mac:
+  artifactName: "Paseo-Feishu-Test-${version}-${arch}.${ext}"
+  category: public.app-category.developer-tools
+  icon: assets/icon.icns
+  hardenedRuntime: true
+  notarize: false
+  entitlements: assets/entitlements.mac.test.plist
+  entitlementsInherit: assets/entitlements.mac.inherit.test.plist
+  extraResources:
+    - from: bin/paseo
+      to: bin/paseo
+  target:
+    - dir
+    - zip

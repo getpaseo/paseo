@@ -7,6 +7,10 @@ import type {
 import { agentCommandsQueryRoot } from "@/hooks/agent-commands-query";
 import { orderCheckoutDiffFiles } from "@/git/diff-order";
 import { daemonConfigQueryKey } from "@/data/daemon-config";
+import { larkChannelQueryKey } from "@/data/lark-channel";
+import { teamsQueryKey } from "@/data/team";
+import { mcpServersQueryKey } from "@/data/mcp";
+import { skillsQueryKey } from "@/data/skill";
 import { providersSnapshotQueryKey, providersSnapshotQueryRoot } from "@/data/providers-snapshot";
 
 type ProvidersSnapshotUpdateMessage = Extract<
@@ -19,12 +23,17 @@ type SubscribeCheckoutDiffResponseMessage = Extract<
   { type: "subscribe_checkout_diff_response" }
 >;
 type StatusMessage = Extract<SessionOutboundMessage, { type: "status" }>;
+type LarkChannelStatusChangedMessage = Extract<
+  SessionOutboundMessage,
+  { type: "channel.lark.status_changed" }
+>;
 type TerminalsChangedMessage = Extract<SessionOutboundMessage, { type: "terminals_changed" }>;
 type ServerDataEventType =
   | "providers_snapshot_update"
   | "checkout_diff_update"
   | "subscribe_checkout_diff_response"
   | "status"
+  | "channel.lark.status_changed"
   | "terminals_changed";
 type CheckoutDiffResponsePayload = SubscribeCheckoutDiffResponseMessage["payload"];
 type CheckoutDiffCachePayload = Omit<CheckoutDiffResponsePayload, "subscriptionId">;
@@ -103,6 +112,30 @@ const RECONNECT_REPAIR_POLICIES: ReconnectRepairPolicy[] = [
     domain: "daemonConfig",
     invalidate: ({ queryClient, serverId }) => {
       void queryClient.invalidateQueries({ queryKey: daemonConfigQueryKey(serverId) });
+    },
+  },
+  {
+    domain: "larkChannel",
+    invalidate: ({ queryClient, serverId }) => {
+      void queryClient.invalidateQueries({ queryKey: larkChannelQueryKey(serverId) });
+    },
+  },
+  {
+    domain: "team",
+    invalidate: ({ queryClient, serverId }) => {
+      void queryClient.invalidateQueries({ queryKey: teamsQueryKey(serverId) });
+    },
+  },
+  {
+    domain: "mcp",
+    invalidate: ({ queryClient, serverId }) => {
+      void queryClient.invalidateQueries({ queryKey: mcpServersQueryKey(serverId) });
+    },
+  },
+  {
+    domain: "skill",
+    invalidate: ({ queryClient, serverId }) => {
+      void queryClient.invalidateQueries({ queryKey: skillsQueryKey(serverId) });
     },
   },
   {
@@ -269,6 +302,13 @@ export function mountServerDataPushRouter(input: PushRouterInput): () => void {
   const unsubscribeDaemonConfig = input.client.on("status", (message) => {
     applyDaemonConfigStatus({ queryClient: input.queryClient, serverId: input.serverId, message });
   });
+  const unsubscribeLarkChannel = input.client.on("channel.lark.status_changed", (message) => {
+    applyLarkChannelStatusChanged({
+      queryClient: input.queryClient,
+      serverId: input.serverId,
+      message,
+    });
+  });
   const unsubscribeCheckoutDiffUpdate = input.client.on("checkout_diff_update", (message) => {
     applyCheckoutDiffUpdate({
       activeCheckoutDiffSubscriptions,
@@ -315,6 +355,7 @@ export function mountServerDataPushRouter(input: PushRouterInput): () => void {
     unsubscribeQueryCache();
     unsubscribeProviders();
     unsubscribeDaemonConfig();
+    unsubscribeLarkChannel();
     unsubscribeCheckoutDiffUpdate();
     unsubscribeCheckoutDiffResponse();
     unsubscribeTerminalsChanged();
@@ -403,6 +444,14 @@ function applyDaemonConfigStatus(input: {
     daemonConfigQueryKey(input.serverId),
     payload.config,
   );
+}
+
+function applyLarkChannelStatusChanged(input: {
+  queryClient: QueryClient;
+  serverId: string;
+  message: LarkChannelStatusChangedMessage;
+}): void {
+  input.queryClient.setQueryData(larkChannelQueryKey(input.serverId), input.message.payload.status);
 }
 
 function applyCheckoutDiffUpdate(input: {

@@ -31,7 +31,15 @@ const SECTION_LABELS = {
 
 export type SettingsSection = keyof typeof SECTION_LABELS | "projects";
 
-type HostSection = "connections" | "agents" | "workspaces" | "providers" | "usage" | "host";
+type HostSection =
+  | "connections"
+  | "agents"
+  | "assistants"
+  | "workspaces"
+  | "providers"
+  | "channels"
+  | "usage"
+  | "host";
 
 export async function openSettingsSection(page: Page, section: SettingsSection): Promise<void> {
   const sidebar = page.getByTestId("settings-sidebar");

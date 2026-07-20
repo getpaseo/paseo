@@ -33,6 +33,7 @@ import {
   Plus,
   FolderGit2,
   SquareTerminal,
+  MessageCircle,
 } from "lucide-react-native";
 import { DropdownTrigger } from "@/components/ui/dropdown-trigger";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
@@ -92,6 +93,8 @@ import {
   HostAgentsPage,
   HostSettingsPage,
   HostProvidersPage,
+  HostAssistantsPage,
+  HostChannelsPage,
   HostUsagePage,
   HostWorkspacesPage,
   HostTerminalsPage,
@@ -162,8 +165,10 @@ const HOST_SECTION_ITEMS: HostSectionItem[] = [
   { id: "host", labelKey: "settings.hostSections.host", icon: Server },
   { id: "connections", labelKey: "settings.hostSections.connections", icon: Network },
   { id: "agents", labelKey: "settings.hostSections.agents", icon: Bot },
+  { id: "assistants", labelKey: "settings.hostSections.assistants", icon: Bot },
   { id: "workspaces", labelKey: "settings.hostSections.workspaces", icon: FolderGit2 },
   { id: "providers", labelKey: "settings.hostSections.providers", icon: Boxes },
+  { id: "channels", labelKey: "settings.hostSections.channels", icon: MessageCircle },
   { id: "usage", labelKey: "settings.hostSections.usage", icon: Gauge },
   { id: "terminals", labelKey: "settings.hostSections.terminals", icon: SquareTerminal },
 ];
@@ -177,10 +182,14 @@ function renderHostSettingsContent(
       return <HostConnectionsPage serverId={view.serverId} />;
     case "agents":
       return <HostAgentsPage serverId={view.serverId} />;
+    case "assistants":
+      return <HostAssistantsPage serverId={view.serverId} />;
     case "workspaces":
       return <HostWorkspacesPage serverId={view.serverId} />;
     case "providers":
       return <HostProvidersPage serverId={view.serverId} />;
+    case "channels":
+      return <HostChannelsPage serverId={view.serverId} />;
     case "usage":
       return <HostUsagePage serverId={view.serverId} />;
     case "terminals":

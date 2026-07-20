@@ -40,6 +40,177 @@ function fetchWorkspacesResponse(workspace: Record<string, unknown>) {
   };
 }
 
+describe("Assistant messages", () => {
+  test("parses assistant CRUD request and response messages", () => {
+    expect(
+      SessionInboundMessageSchema.parse({
+        type: "assistant.create.request",
+        requestId: "req-assistant-create",
+        assistant: {
+          name: "Reviewer",
+          description: "Reviews code",
+          provider: "claude",
+          model: "sonnet",
+          prompt: "Review carefully.",
+          memoryEnabled: true,
+          memory: "Prefer concise feedback.",
+        },
+      }).type,
+    ).toBe("assistant.create.request");
+
+    expect(
+      SessionInboundMessageSchema.parse({
+        type: "assistant.update.request",
+        requestId: "req-assistant-update",
+        assistant: {
+          id: "assistant-1",
+          memoryEnabled: true,
+          memoryAppend: "Remember to keep review comments actionable.",
+          memorySummary: "# Edited memory summary",
+          memoryDetailFileEdits: [
+            {
+              id: "detail-001",
+              content: "# Edited details\n\nPrefer actionable comments.",
+            },
+          ],
+        },
+      }).type,
+    ).toBe("assistant.update.request");
+
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "assistant.list.response",
+        payload: {
+          requestId: "req-assistant-list",
+          error: null,
+          assistants: [
+            {
+              id: "assistant-1",
+              name: "Reviewer",
+              description: "Reviews code",
+              provider: "claude",
+              model: "sonnet",
+              prompt: "Review carefully.",
+              memoryEnabled: true,
+              memory: "Prefer concise feedback.",
+              memorySummary: "# Assistant memory summary",
+              memoryFiles: {
+                summaryPath: "/tmp/assistant-memory/summary.md",
+                detailFiles: [
+                  {
+                    id: "detail-001",
+                    title: "Preferences",
+                    path: "/tmp/assistant-memory/details/detail-001.md",
+                    charCount: 24,
+                    content: "# Preferences\n\nPrefer concise feedback.",
+                  },
+                ],
+              },
+              createdAt: "2026-01-01T00:00:00.000Z",
+              updatedAt: "2026-01-01T00:00:00.000Z",
+            },
+          ],
+        },
+      }).type,
+    ).toBe("assistant.list.response");
+  });
+});
+
+describe("Lark channel messages", () => {
+  test("parses Lark channel request and response messages", () => {
+    expect(
+      SessionInboundMessageSchema.parse({
+        type: "channel.lark.configure.request",
+        requestId: "req-lark-configure",
+        createNew: true,
+        name: "Settlement bot",
+        appId: "cli_test",
+        appSecret: "secret",
+        target: {
+          kind: "workspace",
+          provider: "claude",
+          model: "sonnet",
+          cwd: "/repo/app",
+          workspaceId: "ws-1",
+        },
+      }).type,
+    ).toBe("channel.lark.configure.request");
+
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "channel.lark.get_status.response",
+        payload: {
+          requestId: "req-lark-status",
+          error: null,
+          status: {
+            activeBotId: "bot-1",
+            enabled: false,
+            connectionStatus: "disabled",
+            error: null,
+            appId: "cli_test",
+            hasAppSecret: true,
+            hasEncryptKey: false,
+            hasVerificationToken: false,
+            domain: "feishu",
+            target: {
+              kind: "workspace",
+              provider: null,
+              model: null,
+              cwd: null,
+              workspaceId: null,
+            },
+            bot: null,
+            pendingPairings: [],
+            authorizedUsers: [],
+            bots: [
+              {
+                id: "bot-1",
+                name: "Settlement bot",
+                enabled: false,
+                connectionStatus: "disabled",
+                error: null,
+                appId: "cli_test",
+                hasAppSecret: true,
+                hasEncryptKey: false,
+                hasVerificationToken: false,
+                domain: "feishu",
+                target: {
+                  kind: "workspace",
+                  provider: null,
+                  model: null,
+                  cwd: null,
+                  workspaceId: null,
+                },
+                bot: null,
+                pendingPairings: [],
+                authorizedUsers: [],
+              },
+            ],
+          },
+        },
+      }).type,
+    ).toBe("channel.lark.get_status.response");
+
+    expect(
+      SessionInboundMessageSchema.parse({
+        type: "channel.lark.delete_bot.request",
+        requestId: "req-lark-delete",
+        botId: "bot-1",
+      }).type,
+    ).toBe("channel.lark.delete_bot.request");
+  });
+
+  test("parses Lark channel feature flag", () => {
+    const parsed = parseServerInfoStatusPayload({
+      status: "server_info",
+      serverId: "srv_1",
+      features: { larkChannel: true },
+    });
+
+    expect(parsed.features?.larkChannel).toBe(true);
+  });
+});
+
 describe("workspace descriptor message compatibility", () => {
   test("old-shaped fetch_workspaces_response without project still parses", () => {
     const parsed = SessionOutboundMessageSchema.parse(

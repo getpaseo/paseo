@@ -32,6 +32,8 @@ export type {
   DaemonEvent,
   BrowserAutomationExecuteRequestMessage,
   BrowserAutomationExecuteResponseMessage,
+  ConfigureLarkChannelOptions,
+  DeleteLarkBotOptions,
   WebSocketFactory,
   WebSocketLike,
 } from "./daemon-client.js";
