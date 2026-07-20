@@ -910,38 +910,6 @@ function SplitDiffColumn({
   );
 }
 
-function DiffFileHeaderTooltip({ path, children }: { path: string; children: ReactElement }) {
-  return (
-    <Tooltip delayDuration={300} enabledOnDesktop enabledOnMobile={false}>
-      <TooltipTrigger asChild>{children}</TooltipTrigger>
-      <TooltipContent side="bottom" align="start" offset={6} maxWidth={520}>
-        <Text style={styles.tooltipText}>{path}</Text>
-      </TooltipContent>
-    </Tooltip>
-  );
-}
-
-function DiffFileContextMenuContent({
-  testID,
-  onSelect,
-}: {
-  testID?: string;
-  onSelect: () => void;
-}) {
-  const { t } = useTranslation();
-  return (
-    <ContextMenuContent
-      align="start"
-      minWidth={160}
-      testID={testID ? `${testID}-context-menu` : undefined}
-    >
-      <ContextMenuItem onSelect={onSelect} testID={testID ? `${testID}-open-file` : undefined}>
-        {t("workspace.git.diff.openFile")}
-      </ContextMenuItem>
-    </ContextMenuContent>
-  );
-}
-
 const DiffFileHeader = memo(function DiffFileHeader({
   file,
   isExpanded,
@@ -1063,32 +1031,69 @@ const DiffFileHeader = memo(function DiffFileHeader({
     </>
   );
 
-  const interactiveTrigger = (
-    <ContextMenuTrigger
-      testID={testID ? `${testID}-toggle` : undefined}
-      style={headerPressableStyle}
-      enabled={canOpenFile}
-      enabledOnMobile={false}
-      // Android: prevent parent pan/scroll gestures from canceling the tap release.
-      cancelable={false}
-      onPressIn={handlePressIn}
-      onPressOut={handlePressOut}
-      onPress={toggleExpanded}
-    >
-      {headerContent}
-    </ContextMenuTrigger>
+  let trigger: ReactElement;
+  if (!interactive) {
+    trigger = (
+      <View style={headerPressableStyle({ hovered: false, pressed: false })}>{headerContent}</View>
+    );
+  } else if (canOpenFile) {
+    trigger = (
+      <ContextMenuTrigger
+        testID={testID ? `${testID}-toggle` : undefined}
+        style={headerPressableStyle}
+        enabledOnMobile={false}
+        // Android: prevent parent pan/scroll gestures from canceling the tap release.
+        cancelable={false}
+        onPressIn={handlePressIn}
+        onPressOut={handlePressOut}
+        onPress={toggleExpanded}
+      >
+        {headerContent}
+      </ContextMenuTrigger>
+    );
+  } else {
+    trigger = (
+      <Pressable
+        testID={testID ? `${testID}-toggle` : undefined}
+        style={headerPressableStyle}
+        // Android: prevent parent pan/scroll gestures from canceling the tap release.
+        cancelable={false}
+        onPressIn={handlePressIn}
+        onPressOut={handlePressOut}
+        onPress={toggleExpanded}
+      >
+        {headerContent}
+      </Pressable>
+    );
+  }
+  const tooltip = (
+    <Tooltip delayDuration={300} enabledOnDesktop enabledOnMobile={false}>
+      <TooltipTrigger asChild triggerRefProp={canOpenFile ? "triggerRef" : undefined}>
+        {trigger}
+      </TooltipTrigger>
+      <TooltipContent side="bottom" align="start" offset={6} maxWidth={520}>
+        <Text style={styles.tooltipText}>{file.path}</Text>
+      </TooltipContent>
+    </Tooltip>
   );
-  const renderedHeader = interactive ? (
+  const renderedHeader = canOpenFile ? (
     <ContextMenu>
-      <DiffFileHeaderTooltip path={file.path}>{interactiveTrigger}</DiffFileHeaderTooltip>
-      {canOpenFile ? (
-        <DiffFileContextMenuContent testID={testID} onSelect={handleOpenFile} />
-      ) : null}
+      {tooltip}
+      <ContextMenuContent
+        align="start"
+        minWidth={160}
+        testID={testID ? `${testID}-context-menu` : undefined}
+      >
+        <ContextMenuItem
+          onSelect={handleOpenFile}
+          testID={testID ? `${testID}-open-file` : undefined}
+        >
+          {t("workspace.git.diff.openFile")}
+        </ContextMenuItem>
+      </ContextMenuContent>
     </ContextMenu>
   ) : (
-    <DiffFileHeaderTooltip path={file.path}>
-      <View style={headerPressableStyle({ hovered: false, pressed: false })}>{headerContent}</View>
-    </DiffFileHeaderTooltip>
+    tooltip
   );
 
   return (

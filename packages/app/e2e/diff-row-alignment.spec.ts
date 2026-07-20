@@ -1,4 +1,4 @@
-import { writeFile } from "node:fs/promises";
+import { unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { type Page } from "@playwright/test";
 import { buildHostWorkspaceRoute, buildSettingsSectionRoute } from "../src/utils/host-routes";
@@ -10,6 +10,10 @@ import { waitForWorkspaceTabsVisible } from "./helpers/workspace-tabs";
 
 interface DirtyWorkspace {
   id: string;
+}
+
+interface WorkspaceFixtureOptions {
+  includeDeletedFile?: boolean;
 }
 
 interface CleanupTask {
@@ -218,10 +222,19 @@ test("changes diff keeps code rows aligned with the gutter", async ({ page }) =>
   });
 });
 
-test("changes file context menu opens the file in a workspace tab", async ({ page }) => {
-  const workspace = await createWorkspaceWithMountedTabDiff();
+test("changes file context menu opens existing files and excludes deleted files", async ({
+  page,
+}) => {
+  const workspace = await createWorkspaceWithMountedTabDiff({ includeDeletedFile: true });
   await useUnwrappedDiffLines(page);
   await openWorkspaceChanges(page, workspace);
+
+  await page.getByTestId("diff-file-0-toggle").hover();
+  await expect(page.getByText("src/use-mounted-tab-set.ts", { exact: true })).toBeVisible();
+
+  await expect(page.getByTestId("diff-file-1")).toContainText("zz-deleted.ts");
+  await page.getByTestId("diff-file-1-toggle").click({ button: "right" });
+  await expect(page.getByTestId("diff-file-1-context-menu")).toHaveCount(0);
 
   await page.getByTestId("diff-file-0-toggle").click({ button: "right" });
   await expect(page.getByTestId("diff-file-0-context-menu")).toBeVisible();
@@ -412,10 +425,14 @@ async function readVisibleDiffRowGeometry(page: Page): Promise<{
   });
 }
 
-async function createWorkspaceWithMountedTabDiff(): Promise<DirtyWorkspace> {
-  const repo = await createTempGitRepo("diff-row-alignment-", {
-    files: [{ path: "src/use-mounted-tab-set.ts", content: BEFORE }],
-  });
+async function createWorkspaceWithMountedTabDiff(
+  options: WorkspaceFixtureOptions = {},
+): Promise<DirtyWorkspace> {
+  const files = [{ path: "src/use-mounted-tab-set.ts", content: BEFORE }];
+  if (options.includeDeletedFile) {
+    files.push({ path: "src/zz-deleted.ts", content: "export const deleted = true;\n" });
+  }
+  const repo = await createTempGitRepo("diff-row-alignment-", { files });
   const client = await connectSeedClient();
   cleanupTasks.push({
     run: async () => {
@@ -425,6 +442,9 @@ async function createWorkspaceWithMountedTabDiff(): Promise<DirtyWorkspace> {
   });
 
   await writeFile(path.join(repo.path, "src/use-mounted-tab-set.ts"), AFTER);
+  if (options.includeDeletedFile) {
+    await unlink(path.join(repo.path, "src/zz-deleted.ts"));
+  }
   const createdWorkspace = await client.createWorkspace({
     source: { kind: "directory", path: repo.path },
   });
