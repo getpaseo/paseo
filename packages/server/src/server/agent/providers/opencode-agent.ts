@@ -1708,6 +1708,7 @@ export interface OpenCodeEventTranslationState {
   cwd?: string;
   messageRoles: Map<string, OpenCodeMessageRole>;
   pendingUserMessageText?: string | null;
+  pendingClientMessageId?: string | null;
   emittedUserMessageIds?: Set<string>;
   accumulatedUsage: AgentUsage;
   sessionTotalCostUsd?: number;
@@ -2371,7 +2372,12 @@ function appendOpenCodeUserMessageUpdated(
   events.push({
     type: "timeline",
     provider: "opencode",
-    item: { type: "user_message", text, messageId: info.id },
+    item: {
+      type: "user_message",
+      text,
+      messageId: info.id,
+      ...(state.pendingClientMessageId ? { clientMessageId: state.pendingClientMessageId } : {}),
+    },
   });
 }
 
@@ -2896,6 +2902,7 @@ class OpenCodeAgentSession implements AgentSession {
   /** Tracks the role of each message by ID to distinguish user from assistant messages */
   private messageRoles = new Map<string, OpenCodeMessageRole>();
   private pendingUserMessageText: string | null = null;
+  private pendingClientMessageId: string | null = null;
   private emittedUserMessageIds = new Set<string>();
   /** Tracks streamed textual part IDs to suppress final full-text echoes from OpenCode. */
   private streamedPartKeys = new Set<string>();
@@ -3104,6 +3111,7 @@ class OpenCodeAgentSession implements AgentSession {
 
     const parts = buildOpenCodePromptParts(prompt);
     this.pendingUserMessageText = buildOpenCodeUserTimelineText(prompt);
+    this.pendingClientMessageId = options?.clientMessageId ?? null;
     this.suppressAssistantMessagesUntilIdle.active = false;
     const model = this.parseModel(this.config.model);
     const thinkingOptionId = this.config.thinkingOptionId;
@@ -3646,6 +3654,7 @@ class OpenCodeAgentSession implements AgentSession {
     this.subAgentsByCallId.clear();
     this.subAgentCallIdByChildSessionId.clear();
     this.pendingUserMessageText = null;
+    this.pendingClientMessageId = null;
     this.abortController = null;
     this.notifySubscribers({ type: "turn_started", provider: "opencode" }, turnId);
     return turnId;
@@ -3671,6 +3680,7 @@ class OpenCodeAgentSession implements AgentSession {
       this.runningToolCalls.clear();
     }
     this.pendingUserMessageText = null;
+    this.pendingClientMessageId = null;
     this.activeForegroundTurnId = null;
     this.activeForegroundTurnSource = null;
     this.abortController = null;
@@ -4069,6 +4079,7 @@ class OpenCodeAgentSession implements AgentSession {
       cwd: this.config.cwd,
       messageRoles: this.messageRoles,
       pendingUserMessageText: this.pendingUserMessageText,
+      pendingClientMessageId: this.pendingClientMessageId,
       emittedUserMessageIds: this.emittedUserMessageIds,
       accumulatedUsage: this.accumulatedUsage,
       sessionTotalCostUsd: this.sessionTotalCostUsd,

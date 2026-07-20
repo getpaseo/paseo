@@ -83,6 +83,10 @@ the existing optimistic-message rules, then restores any unmatched prompts after
 history. This keeps late history before a newly submitted prompt without duplicating an
 acknowledged prompt.
 
+Canonical submitted user rows carry the provider's `messageId` and Paseo's optional
+`clientMessageId`. Clients reconcile optimistic prompts by `clientMessageId`. Content matching is
+limited to the dated compatibility path for daemon timelines created before that field existed.
+
 ## Relevant code
 
 - Server live stream forwarding: `packages/server/src/server/session.ts`
