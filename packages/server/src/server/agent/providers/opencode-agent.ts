@@ -947,6 +947,7 @@ async function collectOpenCodeImportableSessionsFromSdk(
     archived: true,
     roots: true,
     limit: sessionListLimit,
+    ...(options?.cwd ? { directory: options.cwd } : {}),
   });
 
   if (response.error) {

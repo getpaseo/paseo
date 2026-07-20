@@ -2083,7 +2083,7 @@ describe("OpenCode persisted sessions", () => {
     ]);
   });
 
-  test("listImportableSessions returns rows without hydrating session messages", async () => {
+  test("listImportableSessions scopes upstream rows without hydrating session messages", async () => {
     const runtime = new TestOpenCodeHarness();
     const openCodeClient = new TestOpenCodeClient();
     const cwd = "/workspace/repo";
@@ -2198,7 +2198,7 @@ describe("OpenCode persisted sessions", () => {
     expect(sessions[0]?.lastActivityAt.toISOString()).toBe("1970-01-01T00:00:03.000Z");
     expect(runtime.clientCreations).toEqual([{ baseUrl: runtime.server.url, directory: cwd }]);
     expect(openCodeClient.calls.experimentalSessionList).toEqual([
-      { archived: true, roots: true, limit: 200 },
+      { archived: true, roots: true, limit: 200, directory: cwd },
     ]);
     expect(openCodeClient.calls.sessionMessages).toEqual([]);
   });
@@ -2319,7 +2319,7 @@ describe("OpenCode persisted sessions", () => {
       title: "Windows session",
     });
     expect(openCodeClient.calls.experimentalSessionList).toEqual([
-      { archived: true, roots: true, limit: 200 },
+      { archived: true, roots: true, limit: 200, directory: requestedCwd },
     ]);
   });
 });
