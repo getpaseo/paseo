@@ -5686,22 +5686,31 @@ export class Session {
 
   private shouldUseFullTimelineForProjectedPage(input: {
     timeline: AgentTimelineFetchResult;
+    pageLimit: number;
   }): boolean {
     const { timeline } = input;
-    if (timeline.reset || timeline.rows.length === 0 || !timeline.hasOlder) {
-      return false;
-    }
+    if (timeline.rows.length === 0) return false;
+
+    if (timeline.rows.some((row) => row.item.type === "tool_call")) return true;
 
     const firstRow = timeline.rows[0];
     if (
-      firstRow?.item.type === "assistant_message" ||
-      firstRow?.item.type === "reasoning" ||
-      firstRow?.item.type === "tool_call"
+      timeline.hasOlder &&
+      (firstRow?.item.type === "assistant_message" || firstRow?.item.type === "reasoning")
     ) {
       return true;
     }
 
-    return timeline.rows.some((row) => row.item.type === "tool_call");
+    const lastRow = timeline.rows.at(-1);
+    if (
+      timeline.hasNewer &&
+      (lastRow?.item.type === "assistant_message" || lastRow?.item.type === "reasoning")
+    ) {
+      return true;
+    }
+
+    if (!timeline.hasNewer || input.pageLimit === 0) return false;
+    return projectTimelineRows({ rows: timeline.rows, mode: "projected" }).length < input.pageLimit;
   }
 
   private selectCanonicalTimelineProjection(input: {
@@ -5727,6 +5736,7 @@ export class Session {
   }): AgentTimelineProjectionSelection {
     const timeline = this.shouldUseFullTimelineForProjectedPage({
       timeline: input.controlTimeline,
+      pageLimit: input.pageLimit,
     })
       ? this.agentManager.fetchTimeline(input.agentId, { direction: "tail", limit: 0 })
       : input.controlTimeline;
