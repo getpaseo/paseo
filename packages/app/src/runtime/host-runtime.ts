@@ -1350,7 +1350,7 @@ export class HostRuntimeStore {
   private hostRegistryStatus: HostRegistryStatus = "loading";
   private deps: HostRuntimeControllerDeps;
   private lastConnectionStatusByServer = new Map<string, HostRuntimeConnectionStatus>();
-  private agentDirectoryBootstrapInFlight = new Map<string, Promise<void>>();
+  private directoryBootstrapInFlight = new Map<string, Promise<void>>();
   private queuedAgentDrainInFlight = new Set<string>();
   private directorySyncByServer = new Map<string, DirectorySync>();
   private configuredOverrideBootstrapInFlight: Promise<void> | null = null;
@@ -1586,17 +1586,14 @@ export class HostRuntimeStore {
     controller.adoptReconciledServerId(newServerId);
 
     rekeyMap(this.lastConnectionStatusByServer, oldServerId, newServerId);
-    rekeyMap(this.agentDirectoryBootstrapInFlight, oldServerId, newServerId);
+    rekeyMap(this.directoryBootstrapInFlight, oldServerId, newServerId);
     this.replicaCache.reconcileServerId(oldServerId, newServerId);
     this.directorySyncByServer.get(oldServerId)?.dispose();
     this.directorySyncByServer.delete(oldServerId);
     const directory = new DirectorySync(newServerId, {
       drainQueuedAgentMessage: (agentId) => this.drainQueuedAgentMessage(newServerId, agentId),
       markAgentLoading: () => controller.markAgentDirectorySyncLoading(),
-      markAgentReady: () => {
-        this.agentDirectoryBootstrapInFlight.delete(newServerId);
-        controller.markAgentDirectorySyncReady();
-      },
+      markAgentReady: () => controller.markAgentDirectorySyncReady(),
       markAgentError: (error) => controller.markAgentDirectorySyncError(error),
     });
     this.directorySyncByServer.set(newServerId, directory);
@@ -1899,7 +1896,7 @@ export class HostRuntimeStore {
       }
       this.controllers.delete(serverId);
       this.lastConnectionStatusByServer.delete(serverId);
-      this.agentDirectoryBootstrapInFlight.delete(serverId);
+      this.directoryBootstrapInFlight.delete(serverId);
       this.directorySyncByServer.get(serverId)?.dispose();
       this.directorySyncByServer.delete(serverId);
       void controller.stop();
@@ -1930,10 +1927,7 @@ export class HostRuntimeStore {
           drainQueuedAgentMessage: (agentId) =>
             this.drainQueuedAgentMessage(host.serverId, agentId),
           markAgentLoading: () => controller.markAgentDirectorySyncLoading(),
-          markAgentReady: () => {
-            this.agentDirectoryBootstrapInFlight.delete(host.serverId);
-            controller.markAgentDirectorySyncReady();
-          },
+          markAgentReady: () => controller.markAgentDirectorySyncReady(),
           markAgentError: (error) => controller.markAgentDirectorySyncError(error),
         }),
       );
@@ -1942,7 +1936,7 @@ export class HostRuntimeStore {
         controller.getSnapshot().connectionStatus,
       );
       controller.subscribe(() => {
-        this.maybeAutoBootstrapAgentDirectory(host.serverId);
+        this.maybeAutoBootstrapDirectories(host.serverId);
         this.emit(host.serverId);
       });
       void controller
@@ -1961,11 +1955,11 @@ export class HostRuntimeStore {
     }
   }
 
-  private maybeAutoBootstrapAgentDirectory(serverId: string): void {
+  private maybeAutoBootstrapDirectories(serverId: string): void {
     const controller = this.controllers.get(serverId);
     if (!controller) {
       this.lastConnectionStatusByServer.delete(serverId);
-      this.agentDirectoryBootstrapInFlight.delete(serverId);
+      this.directoryBootstrapInFlight.delete(serverId);
       return;
     }
     const snapshot = controller.getSnapshot();
@@ -2000,7 +1994,7 @@ export class HostRuntimeStore {
     if (!didTransitionOnline && snapshot.hasEverLoadedAgentDirectory) {
       return;
     }
-    if (this.agentDirectoryBootstrapInFlight.has(serverId) && !directorySourceChanged) {
+    if (this.directoryBootstrapInFlight.has(serverId) && !directorySourceChanged) {
       return;
     }
 
@@ -2011,25 +2005,28 @@ export class HostRuntimeStore {
             serverId,
             subscribe: { subscriptionId: `app:${serverId}` },
             page: { limit: DEFAULT_AGENT_DIRECTORY_PAGE_LIMIT },
+          }).catch((error) => {
+            console.error("[HostRuntime] agent directory bootstrap failed", {
+              serverId,
+              error: toErrorMessage(error),
+            });
           }),
-          this.refreshWorkspaceDirectory({ serverId, subscribe: true }),
-        ]),
+          this.refreshWorkspaceDirectory({ serverId, subscribe: true }).catch((error) => {
+            console.error("[HostRuntime] workspace directory bootstrap failed", {
+              serverId,
+              error: toErrorMessage(error),
+            });
+          }),
+        ]).then(() => undefined),
       )
-      .then(() => undefined)
-      .catch((error) => {
-        console.error("[HostRuntime] agent directory bootstrap failed", {
-          serverId,
-          error: toErrorMessage(error),
-        });
-      })
       .finally(() => {
-        const inFlight = this.agentDirectoryBootstrapInFlight.get(serverId);
+        const inFlight = this.directoryBootstrapInFlight.get(serverId);
         if (inFlight === bootstrap) {
-          this.agentDirectoryBootstrapInFlight.delete(serverId);
+          this.directoryBootstrapInFlight.delete(serverId);
         }
       });
 
-    this.agentDirectoryBootstrapInFlight.set(serverId, bootstrap);
+    this.directoryBootstrapInFlight.set(serverId, bootstrap);
   }
 
   drainQueuedAgentMessage(serverId: string, agentId: string): void {

@@ -190,7 +190,7 @@ test("sendPromptToAgent forwards the client message id as run options", async ()
 
   expect(streamAgentSpy).toHaveBeenCalledWith("agent-1", "hello", {
     outputSchema: { type: "object" },
-    messageId: "msg-client-1",
+    clientMessageId: "msg-client-1",
   });
 });
 

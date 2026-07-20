@@ -466,6 +466,7 @@ export const zhCN: TranslationResources = {
     },
     tabs: {
       loading: "正在加载...",
+      modified: "未保存的更改",
       loadingAgentTitle: "正在加载 Agent 标题",
       emptyPane: "此窗格中没有标签。",
       fallback: {
@@ -532,6 +533,11 @@ export const zhCN: TranslationResources = {
         failedToReloadAgent: "重新加载 Agent 失败",
       },
       confirmations: {
+        unsavedTitle: "未保存的更改",
+        unsavedMessage: "此标签页有尚未保存的更改。关闭将丢弃草稿。",
+        closeWithoutSaving: "不保存并关闭",
+        closePaneTitle: "关闭面板？",
+        bulkUnsaved: "{{count}} 个标签页有未保存的更改。关闭将丢弃这些草稿。",
         close: "关闭",
         cancel: "取消",
         archive: "归档",
@@ -1428,6 +1434,25 @@ export const zhCN: TranslationResources = {
       binaryPreviewUnavailable: "二进制预览不可用",
       failedToLoad: "加载文件失败",
       failedToLoadPreview: "加载文件预览失败",
+      editor: {
+        fileSize: "文件大小 {{size}}",
+        lines: "{{count}} 行",
+        editorStatus: "编辑器状态 {{status}}",
+        unsavedChanges: "未保存的更改",
+        saving: "正在保存...",
+        saveFailed: "保存失败",
+        changedOnDisk: "磁盘上的文件已更改",
+        vimMode: "Vim 模式 {{mode}}",
+        cursor: "第 {{line}} 行，第 {{column}} 列",
+        preview: "预览",
+        source: "源代码",
+        unavailableTitle: "磁盘上的文件不可用",
+        conflictDescription: "本地内容已保留。请选择要保留的版本。",
+        overwrite: "覆盖",
+        reload: "重新加载",
+        reloadTitle: "从磁盘重新加载？",
+        reloadMessage: "本地更改将丢失。",
+      },
     },
     diff: {
       changesLabel: "更改",
@@ -1523,11 +1548,17 @@ export const zhCN: TranslationResources = {
     sections: {
       general: "通用",
       appearance: "外观",
+      editor: "编辑器",
       shortcuts: "快捷键",
       integrations: "集成",
       permissions: "权限",
       diagnostics: "诊断",
       about: "关于",
+    },
+    editor: {
+      title: "编辑器",
+      vimKeybindings: "Vim 键位",
+      vimHint: "适用于网页和桌面端的源文件。",
     },
     hostSections: {
       connections: "连接",

@@ -470,6 +470,7 @@ export const es: TranslationResources = {
     },
     tabs: {
       loading: "Cargando...",
+      modified: "Cambios sin guardar",
       loadingAgentTitle: "Título del agente de carga",
       emptyPane: "No hay pestañas en este panel.",
       fallback: {
@@ -537,6 +538,13 @@ export const es: TranslationResources = {
         failedToReloadAgent: "No se pudo recargar el agente",
       },
       confirmations: {
+        unsavedTitle: "Cambios sin guardar",
+        unsavedMessage:
+          "Esta pestaña tiene cambios sin guardar. Al cerrarla se descartará el borrador.",
+        closeWithoutSaving: "Cerrar sin guardar",
+        closePaneTitle: "¿Cerrar panel?",
+        bulkUnsaved:
+          "{{count}} pestaña(s) tienen cambios sin guardar. Al cerrar se descartarán esos borradores.",
         close: "Cerca",
         cancel: "Cancelar",
         archive: "Archivo",
@@ -1488,6 +1496,25 @@ export const es: TranslationResources = {
       binaryPreviewUnavailable: "Vista previa binaria no disponible",
       failedToLoad: "No se pudo cargar el archivo",
       failedToLoadPreview: "No se pudo cargar la vista previa del archivo",
+      editor: {
+        fileSize: "Tamaño {{size}}",
+        lines: "{{count}} líneas",
+        editorStatus: "Estado del editor: {{status}}",
+        unsavedChanges: "Cambios sin guardar",
+        saving: "Guardando...",
+        saveFailed: "Error al guardar",
+        changedOnDisk: "Cambiado en disco",
+        vimMode: "Modo Vim {{mode}}",
+        cursor: "Línea {{line}}, columna {{column}}",
+        preview: "Vista previa",
+        source: "Código fuente",
+        unavailableTitle: "Archivo no disponible en disco",
+        conflictDescription: "Se conservó el búfer local. Elige qué versión mantener.",
+        overwrite: "Sobrescribir",
+        reload: "Recargar",
+        reloadTitle: "¿Recargar desde el disco?",
+        reloadMessage: "Se perderán tus cambios locales.",
+      },
     },
     diff: {
       changesLabel: "Cambios",
@@ -1583,11 +1610,17 @@ export const es: TranslationResources = {
     sections: {
       general: "General",
       appearance: "Apariencia",
+      editor: "Editor",
       shortcuts: "Atajos",
       integrations: "Integraciones",
       permissions: "Permisos",
       diagnostics: "Diagnóstico",
       about: "Acerca de",
+    },
+    editor: {
+      title: "Editor",
+      vimKeybindings: "Atajos de Vim",
+      vimHint: "Se aplica a archivos fuente en web y escritorio.",
     },
     hostSections: {
       connections: "Conexiones",

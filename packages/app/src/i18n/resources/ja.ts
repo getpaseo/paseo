@@ -470,6 +470,7 @@ export const ja: TranslationResources = {
     },
     tabs: {
       loading: "読み込み中...",
+      modified: "未保存の変更",
       loadingAgentTitle: "エージェントタイトルを読み込み中",
       emptyPane: "このペインにタブがありません。",
       fallback: {
@@ -537,6 +538,11 @@ export const ja: TranslationResources = {
         failedToReloadAgent: "エージェントの再読み込みに失敗しました",
       },
       confirmations: {
+        unsavedTitle: "未保存の変更",
+        unsavedMessage: "このタブには未保存の変更があります。閉じると下書きが破棄されます。",
+        closeWithoutSaving: "保存せずに閉じる",
+        closePaneTitle: "ペインを閉じますか？",
+        bulkUnsaved: "{{count}} 個のタブに未保存の変更があります。閉じると下書きが破棄されます。",
         close: "閉じる",
         cancel: "キャンセル",
         archive: "アーカイブ",
@@ -1463,6 +1469,25 @@ export const ja: TranslationResources = {
       binaryPreviewUnavailable: "バイナリプレビューが利用できません",
       failedToLoad: "ファイルの読み込みに失敗しました",
       failedToLoadPreview: "ファイルプレビューの読み込みに失敗しました",
+      editor: {
+        fileSize: "ファイルサイズ {{size}}",
+        lines: "{{count}} 行",
+        editorStatus: "エディターの状態 {{status}}",
+        unsavedChanges: "未保存の変更",
+        saving: "保存中...",
+        saveFailed: "保存に失敗しました",
+        changedOnDisk: "ディスク上で変更されました",
+        vimMode: "Vim モード {{mode}}",
+        cursor: "{{line}} 行、{{column}} 列",
+        preview: "プレビュー",
+        source: "ソース",
+        unavailableTitle: "ディスク上のファイルを利用できません",
+        conflictDescription: "ローカルの内容は保持されています。残すバージョンを選択してください。",
+        overwrite: "上書き",
+        reload: "再読み込み",
+        reloadTitle: "ディスクから再読み込みしますか？",
+        reloadMessage: "ローカルの変更は失われます。",
+      },
     },
     diff: {
       changesLabel: "変更",
@@ -1558,11 +1583,17 @@ export const ja: TranslationResources = {
     sections: {
       general: "一般",
       appearance: "外観",
+      editor: "エディター",
       shortcuts: "ショートカット",
       integrations: "連携",
       permissions: "権限",
       diagnostics: "診断",
       about: "アプリ情報",
+    },
+    editor: {
+      title: "エディター",
+      vimKeybindings: "Vim キーバインド",
+      vimHint: "Web とデスクトップのソースファイルに適用されます。",
     },
     hostSections: {
       connections: "接続",

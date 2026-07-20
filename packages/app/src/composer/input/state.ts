@@ -1,5 +1,6 @@
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { MessagePayload } from "@/composer/types";
+import type { MessageInputKeyboardActionKind } from "@/keyboard/actions";
 
 export type SendBehavior = "interrupt" | "queue";
 
@@ -45,6 +46,18 @@ interface SendActionContext {
   handleQueueMessage: () => void;
 }
 
+interface MessageInputKeyboardActions {
+  focusInput: () => void;
+  isDictationRecording: () => boolean;
+  markTranscriptForSend: () => void;
+  confirmDictation: () => void | Promise<void>;
+  cancelDictation: () => void | Promise<void>;
+  startDictation: () => void | Promise<void>;
+  toggleRealtimeVoice: () => void;
+  isRealtimeVoiceActive: boolean;
+  toggleRealtimeVoiceMute: () => void;
+}
+
 export function computeCanStartDictation(input: {
   client: DaemonClient | null;
   isReadyForDictation: boolean | undefined;
@@ -74,6 +87,51 @@ export function runAlternateSendAction(ctx: SendActionContext): void {
   if (ctx.isAgentRunning && ctx.onQueue) {
     ctx.handleQueueMessage();
   }
+}
+
+export function runMessageInputKeyboardAction(
+  action: MessageInputKeyboardActionKind,
+  actions: MessageInputKeyboardActions,
+): boolean {
+  if (action === "focus") {
+    actions.focusInput();
+    return true;
+  }
+  if (action === "send" || action === "dictation-confirm") {
+    if (actions.isDictationRecording()) {
+      actions.markTranscriptForSend();
+      void actions.confirmDictation();
+      return true;
+    }
+    return false;
+  }
+  if (action === "voice-toggle") {
+    actions.toggleRealtimeVoice();
+    return true;
+  }
+  if (action === "voice-mute-toggle") {
+    if (actions.isRealtimeVoiceActive) {
+      actions.toggleRealtimeVoiceMute();
+    }
+    return true;
+  }
+  if (action === "dictation-cancel") {
+    if (actions.isDictationRecording()) {
+      void actions.cancelDictation();
+      return true;
+    }
+    return false;
+  }
+  if (action === "dictation-toggle") {
+    if (actions.isDictationRecording()) {
+      actions.markTranscriptForSend();
+      void actions.confirmDictation();
+    } else {
+      void actions.startDictation();
+    }
+    return true;
+  }
+  return false;
 }
 
 export async function stopRealtimeVoice(ctx: StopRealtimeVoiceContext): Promise<void> {

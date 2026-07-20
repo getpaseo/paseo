@@ -312,6 +312,7 @@ function mergeCanonicalUserWithLocalPresentation(
   return {
     kind: "user_message",
     id: canonical.id,
+    ...(canonical.clientMessageId ? { clientMessageId: canonical.clientMessageId } : {}),
     text: local.text,
     timestamp: local.timestamp,
     ...(local.images && local.images.length > 0 ? { images: local.images } : {}),
@@ -319,6 +320,27 @@ function mergeCanonicalUserWithLocalPresentation(
       ? { attachments: local.attachments }
       : {}),
   };
+}
+
+interface CanonicalUserMessageIdentity {
+  messageId?: string;
+  clientMessageId?: string;
+  text: string;
+}
+
+function matchesOptimisticUserMessageIdentity(
+  canonical: CanonicalUserMessageIdentity,
+  optimistic: UserMessageItem,
+): boolean {
+  if (canonical.clientMessageId !== undefined) {
+    return canonical.clientMessageId === optimistic.id;
+  }
+  if (canonical.messageId === optimistic.id) {
+    return true;
+  }
+  // COMPAT(userMessageClientId): added in v0.2.0, remove after 2027-01-20 once
+  // the supported daemon floor emits clientMessageId on submitted user messages.
+  return canonical.text.length > 0 && canonical.text === optimistic.text;
 }
 
 function reconcileLocalUserPresentationAfterReplace(params: {
@@ -352,6 +374,21 @@ function reconcileLocalUserPresentationAfterReplace(params: {
         return false;
       }
       if (local.item.optimistic) {
+        const canonical = params.canonicalTail[index];
+        if (canonical?.kind !== "user_message") {
+          return false;
+        }
+        const identityMatches = matchesOptimisticUserMessageIdentity(
+          {
+            messageId: canonical.id,
+            clientMessageId: canonical.clientMessageId,
+            text: canonical.text,
+          },
+          local.item,
+        );
+        if (canonical.clientMessageId !== undefined || identityMatches) {
+          return identityMatches;
+        }
         return ordinal >= local.ordinal;
       }
       return params.canonicalTail[index]?.id === local.item.id;
@@ -773,10 +810,7 @@ function matchesOptimisticUserMessage(params: {
   if (event.type !== "timeline" || event.item.type !== "user_message") {
     return false;
   }
-  if (event.item.messageId !== undefined) {
-    return event.item.messageId === params.optimistic.id;
-  }
-  return event.item.text.length > 0 && event.item.text === params.optimistic.text;
+  return matchesOptimisticUserMessageIdentity(event.item, params.optimistic);
 }
 
 function acknowledgeOptimisticUserMessage(params: {

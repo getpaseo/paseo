@@ -59,6 +59,7 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
   useEffect(() => {
     isRecordingRef.current = isRecording;
   }, [isRecording]);
+  const isRecordingActive = useCallback(() => isRecordingRef.current, []);
 
   const isProcessingRef = useRef(isProcessing);
   useEffect(() => {
@@ -453,6 +454,7 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
 
   return {
     isRecording,
+    isRecordingActive,
     isProcessing,
     partialTranscript,
     volume: audio.volume,

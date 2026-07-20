@@ -470,6 +470,7 @@ export const ru: TranslationResources = {
     },
     tabs: {
       loading: "Загрузка...",
+      modified: "Несохранённые изменения",
       loadingAgentTitle: "Название агента загрузки",
       emptyPane: "На этой панели нет вкладок.",
       fallback: {
@@ -536,6 +537,13 @@ export const ru: TranslationResources = {
         failedToReloadAgent: "Не удалось перезагрузить агент",
       },
       confirmations: {
+        unsavedTitle: "Несохранённые изменения",
+        unsavedMessage:
+          "В этой вкладке есть несохранённые изменения. При закрытии черновик будет удалён.",
+        closeWithoutSaving: "Закрыть без сохранения",
+        closePaneTitle: "Закрыть панель?",
+        bulkUnsaved:
+          "В {{count}} вкладках есть несохранённые изменения. При закрытии черновики будут удалены.",
         close: "Закрывать",
         cancel: "Отмена",
         archive: "Архив",
@@ -1480,6 +1488,25 @@ export const ru: TranslationResources = {
       binaryPreviewUnavailable: "Предварительный просмотр двоичного файла недоступен.",
       failedToLoad: "Не удалось загрузить файл",
       failedToLoadPreview: "Не удалось загрузить предварительный просмотр файла.",
+      editor: {
+        fileSize: "Размер файла {{size}}",
+        lines: "Строк: {{count}}",
+        editorStatus: "Состояние редактора: {{status}}",
+        unsavedChanges: "Несохранённые изменения",
+        saving: "Сохранение...",
+        saveFailed: "Не удалось сохранить",
+        changedOnDisk: "Изменён на диске",
+        vimMode: "Режим Vim {{mode}}",
+        cursor: "Строка {{line}}, столбец {{column}}",
+        preview: "Просмотр",
+        source: "Исходник",
+        unavailableTitle: "Файл недоступен на диске",
+        conflictDescription: "Локальный буфер сохранён. Выберите версию, которую нужно оставить.",
+        overwrite: "Перезаписать",
+        reload: "Перезагрузить",
+        reloadTitle: "Перезагрузить с диска?",
+        reloadMessage: "Локальные изменения будут потеряны.",
+      },
     },
     diff: {
       changesLabel: "Изменения",
@@ -1575,11 +1602,17 @@ export const ru: TranslationResources = {
     sections: {
       general: "Общий",
       appearance: "Появление",
+      editor: "Редактор",
       shortcuts: "Ярлыки",
       integrations: "Интеграции",
       permissions: "Разрешения",
       diagnostics: "Диагностика",
       about: "О",
+    },
+    editor: {
+      title: "Редактор",
+      vimKeybindings: "Клавиши Vim",
+      vimHint: "Применяется к исходным файлам в веб- и настольной версии.",
     },
     hostSections: {
       connections: "Соединения",

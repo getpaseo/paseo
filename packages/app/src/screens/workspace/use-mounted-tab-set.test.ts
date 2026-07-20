@@ -49,4 +49,23 @@ describe("useMountedTabSet", () => {
     rerender({ activeTabId: "third" });
     expect(mountedIds(result)).toEqual(["third", "second"]);
   });
+
+  it("keeps retained panels mounted beyond the normal cap", () => {
+    const { result, rerender } = renderHook(
+      ({ activeTabId }) =>
+        useMountedTabSet({
+          activeTabId,
+          allTabIds: ["modified", "second", "third", "fourth"],
+          retainedTabIds: new Set(["modified"]),
+          cap: 2,
+        }),
+      { initialProps: { activeTabId: "modified" } },
+    );
+
+    rerender({ activeTabId: "second" });
+    rerender({ activeTabId: "third" });
+    rerender({ activeTabId: "fourth" });
+
+    expect(mountedIds(result)).toEqual(["fourth", "modified"]);
+  });
 });

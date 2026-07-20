@@ -470,6 +470,7 @@ export const ptBR: TranslationResources = {
     },
     tabs: {
       loading: "Carregando...",
+      modified: "Alterações não salvas",
       loadingAgentTitle: "Carregando título do agente",
       emptyPane: "Nenhuma aba neste painel.",
       fallback: {
@@ -536,6 +537,12 @@ export const ptBR: TranslationResources = {
         failedToReloadAgent: "Falha ao recarregar agente",
       },
       confirmations: {
+        unsavedTitle: "Alterações não salvas",
+        unsavedMessage: "Esta aba tem alterações não salvas. Fechá-la descartará o rascunho.",
+        closeWithoutSaving: "Fechar sem salvar",
+        closePaneTitle: "Fechar painel?",
+        bulkUnsaved:
+          "{{count}} aba(s) têm alterações não salvas. Fechar descartará esses rascunhos.",
         close: "Fechar",
         cancel: "Cancelar",
         archive: "Arquivar",
@@ -1475,6 +1482,25 @@ export const ptBR: TranslationResources = {
       binaryPreviewUnavailable: "Prévia binária indisponível",
       failedToLoad: "Falha ao carregar arquivo",
       failedToLoadPreview: "Falha ao carregar prévia do arquivo",
+      editor: {
+        fileSize: "Tamanho {{size}}",
+        lines: "{{count}} linhas",
+        editorStatus: "Status do editor: {{status}}",
+        unsavedChanges: "Alterações não salvas",
+        saving: "Salvando...",
+        saveFailed: "Falha ao salvar",
+        changedOnDisk: "Alterado no disco",
+        vimMode: "Modo Vim {{mode}}",
+        cursor: "Linha {{line}}, coluna {{column}}",
+        preview: "Prévia",
+        source: "Fonte",
+        unavailableTitle: "Arquivo indisponível no disco",
+        conflictDescription: "O conteúdo local foi preservado. Escolha qual versão manter.",
+        overwrite: "Sobrescrever",
+        reload: "Recarregar",
+        reloadTitle: "Recarregar do disco?",
+        reloadMessage: "Suas alterações locais serão perdidas.",
+      },
     },
     diff: {
       changesLabel: "Alterações",
@@ -1570,11 +1596,17 @@ export const ptBR: TranslationResources = {
     sections: {
       general: "Geral",
       appearance: "Aparência",
+      editor: "Editor",
       shortcuts: "Atalhos",
       integrations: "Integrações",
       permissions: "Permissões",
       diagnostics: "Diagnósticos",
       about: "Sobre",
+    },
+    editor: {
+      title: "Editor",
+      vimKeybindings: "Atalhos do Vim",
+      vimHint: "Aplica-se a arquivos-fonte na web e no desktop.",
     },
     hostSections: {
       connections: "Conexões",

@@ -15,7 +15,6 @@ import {
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { WORKSPACE_SECONDARY_HEADER_HEIGHT } from "@/constants/layout";
 import * as Clipboard from "expo-clipboard";
-import { SvgXml } from "react-native-svg";
 import {
   ChevronDown,
   Copy,
@@ -25,7 +24,7 @@ import {
   MoreVertical,
   RotateCw,
 } from "lucide-react-native";
-import { getFileIconSvg } from "@/components/material-file-icons";
+import { MaterialFileIcon } from "@/components/material-file-icon";
 import { TreeChevron, TreeIndentGuides, TREE_INDENT_PER_LEVEL } from "@/components/tree-primitives";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import type { AgentFileExplorerState, ExplorerEntry } from "@/stores/session-store";
@@ -154,7 +153,7 @@ function TreeRowItem({
         <View style={styles.entryIcon}>
           {(() => {
             if (!isDirectory) {
-              return <SvgXml xml={getFileIconSvg(entry.name)} width={16} height={16} />;
+              return <MaterialFileIcon fileName={entry.name} size={16} />;
             }
             if (loading) return <ActivityIndicator size="small" />;
             return <TreeChevron expanded={isExpanded} />;

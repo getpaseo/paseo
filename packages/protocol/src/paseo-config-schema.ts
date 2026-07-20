@@ -1,5 +1,26 @@
 import { z } from "zod";
 
+const TCP_PORT_RANGE_PATTERN = /^(\d{1,5})-(\d{1,5})$/;
+
+export const PaseoServicePortAllocationSchema = z
+  .object({
+    range: z.string().trim().regex(TCP_PORT_RANGE_PATTERN).optional(),
+    portScript: z.string().trim().min(1).optional(),
+  })
+  .strict()
+  .refine(
+    (value) => value.range !== undefined || value.portScript !== undefined,
+    "Expected range or portScript",
+  )
+  .refine((value) => {
+    if (!value.range) return true;
+    const match = TCP_PORT_RANGE_PATTERN.exec(value.range);
+    if (!match) return false;
+    const start = Number(match[1]);
+    const end = Number(match[2]);
+    return start >= 1 && end <= 65_535 && start <= end;
+  }, "Expected an inclusive TCP port range from 1-65535");
+
 export function normalizeLifecycleCommands(commands: unknown): string[] {
   if (typeof commands === "string") {
     return commands.trim().length > 0 ? [commands] : [];
@@ -27,6 +48,7 @@ export const PaseoWorktreeConfigRawSchema = z
     setup: PaseoLifecycleCommandRawSchema.optional(),
     teardown: PaseoLifecycleCommandRawSchema.optional(),
     terminals: z.unknown().optional(),
+    servicePorts: PaseoServicePortAllocationSchema.optional(),
   })
   .passthrough();
 
@@ -92,6 +114,7 @@ export const ProjectConfigRpcErrorSchema = z.discriminatedUnion("code", [
 export type PaseoScriptEntryRaw = z.infer<typeof PaseoScriptEntryRawSchema>;
 export type PaseoMetadataGenerationEntry = z.infer<typeof PaseoMetadataGenerationEntrySchema>;
 export type PaseoMetadataGeneration = z.infer<typeof PaseoMetadataGenerationSchema>;
+export type PaseoServicePortAllocation = z.infer<typeof PaseoServicePortAllocationSchema>;
 export type PaseoConfigRaw = z.infer<typeof PaseoConfigRawSchema>;
 export type PaseoConfig = z.infer<typeof PaseoConfigSchema>;
 export type PaseoConfigRevision = z.infer<typeof PaseoConfigRevisionSchema>;
