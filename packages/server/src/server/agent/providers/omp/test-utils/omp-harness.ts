@@ -173,6 +173,22 @@ export class OmpHarness {
     return await run;
   }
 
+  async startPromptWithEmptyAgentEnd(
+    input: string,
+    output: string,
+  ): Promise<{ completion: Promise<unknown> }> {
+    const session = this.requireSession();
+    const promptStarted = this.omp.latestSession().nextPrompt();
+    const completion = session.run(input);
+    await promptStarted;
+    const runtime = this.omp.latestSession();
+    runtime.beginTurn();
+    runtime.acceptPrompt(input, "user-1");
+    runtime.streamAssistantText(output);
+    runtime.finishTurnWithEmptyAgentEnd();
+    return { completion };
+  }
+
   async runPromptAfterExtensionNotice(input: string, output: string): Promise<unknown> {
     const session = this.requireSession();
     const promptStarted = this.omp.latestSession().nextPrompt();

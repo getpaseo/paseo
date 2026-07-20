@@ -899,6 +899,7 @@ export class OmpAgentSession implements AgentSession {
   private activeTurnId: string | null = null;
   private activeClientMessageId: string | null = null;
   private activeAssistantMessageId: string | null = null;
+  private activeTurnTerminalAssistantMessage: OmpAgentMessage | null = null;
   private activeTurnStarted = false;
   private activeTurnHasUserMessage = false;
   private activeNoTurnPromptText: string | null = null;
@@ -987,6 +988,7 @@ export class OmpAgentSession implements AgentSession {
     this.activeTurnId = turnId;
     this.activeClientMessageId = options?.clientMessageId ?? null;
     this.activeAssistantMessageId = null;
+    this.activeTurnTerminalAssistantMessage = null;
     this.activeTurnStarted = false;
     this.activeTurnHasUserMessage = false;
     this.activePromptRequestId = null;
@@ -1017,6 +1019,7 @@ export class OmpAgentSession implements AgentSession {
         this.activeTurnStarted = false;
         this.activeTurnHasUserMessage = false;
         this.activeAssistantMessageId = null;
+        this.activeTurnTerminalAssistantMessage = null;
         this.clearNoTurnBuffers();
         if (isOmpRequestAbortError(error)) {
           this.emit({
@@ -1151,6 +1154,7 @@ export class OmpAgentSession implements AgentSession {
       this.activeTurnStarted = false;
       this.activeTurnHasUserMessage = false;
       this.activeAssistantMessageId = null;
+      this.activeTurnTerminalAssistantMessage = null;
       this.clearNoTurnBuffers();
       this.emit({
         type: "turn_canceled",
@@ -1773,6 +1777,7 @@ export class OmpAgentSession implements AgentSession {
     this.activeClientMessageId = null;
     this.activeTurnStarted = false;
     this.activeTurnHasUserMessage = false;
+    this.activeTurnTerminalAssistantMessage = null;
     this.clearNoTurnBuffers();
     this.emit({
       type: "turn_failed",
@@ -1857,17 +1862,25 @@ export class OmpAgentSession implements AgentSession {
           },
         });
         return;
-      case "agent_end":
+      case "agent_end": {
+        const messages = event.messages ?? [];
+        let terminalMessages: OmpAgentMessage[] | null = null;
+        if (messages.some((message) => message.role === "assistant")) {
+          terminalMessages = messages;
+        } else if (this.activeTurnTerminalAssistantMessage) {
+          terminalMessages = [this.activeTurnTerminalAssistantMessage];
+        }
         // OMP can end an internal extension-notice cycle before it starts the
-        // model turn for the same prompt. That cycle has no assistant message
-        // and is not the foreground turn's terminal event.
-        if (!(event.messages ?? []).some((message) => message.role === "assistant")) {
+        // model turn for the same prompt. Ignore only cycles where neither the
+        // terminal payload nor the live stream contained an assistant message.
+        if (!terminalMessages) {
           return;
         }
         // A state request is processed after OMP's RPC loop becomes promptable,
         // so do not advertise Paseo idle until it reports that transition.
-        void this.completeTurnAfterProviderIdle(turnId, event.messages ?? []);
+        void this.completeTurnAfterProviderIdle(turnId, terminalMessages);
         return;
+      }
       default:
         return;
     }
@@ -1983,6 +1996,9 @@ export class OmpAgentSession implements AgentSession {
   ): void {
     if (event.message.role === "assistant") {
       this.activeAssistantMessageId = null;
+      if (turnId) {
+        this.activeTurnTerminalAssistantMessage = event.message;
+      }
       return;
     }
     if (event.message.role === "custom") {
@@ -2097,6 +2113,7 @@ export class OmpAgentSession implements AgentSession {
     this.activeTurnId = null;
     this.activeClientMessageId = null;
     this.activeAssistantMessageId = null;
+    this.activeTurnTerminalAssistantMessage = null;
     this.activeTurnStarted = false;
     this.activeTurnHasUserMessage = false;
     this.clearNoTurnBuffers();

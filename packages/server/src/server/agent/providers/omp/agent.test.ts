@@ -132,6 +132,22 @@ describe("OMP agent client and session", () => {
     ]);
   });
 
+  test("completes a streamed assistant turn when agent_end omits messages", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+
+    const { completion } = await omp.startPromptWithEmptyAgentEnd(
+      "hello OMP",
+      "empty terminal payload recovered",
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(omp.completedTurnCount()).toBe(1);
+    await expect(completion).resolves.toMatchObject({
+      finalText: "empty terminal payload recovered",
+    });
+  });
+
   test("does not accept a follow-up until OMP reports stable idle", async () => {
     const omp = new OmpHarness();
     await omp.start();
