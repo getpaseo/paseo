@@ -3641,11 +3641,7 @@ class OpenCodeAgentSession implements AgentSession {
     ) {
       return true;
     }
-    return (
-      event.type === "session.status" &&
-      event.properties.sessionID === this.sessionId &&
-      event.properties.status.type === "busy"
-    );
+    return event.type === "session.status" && event.properties.status.type === "busy";
   }
 
   private startAutonomousTurn(): string {
