@@ -37,6 +37,7 @@ import {
 import {
   CLAUDE_DISABLED_THINKING_OPTION_ID,
   CLAUDE_ULTRACODE_THINKING_OPTION_ID,
+  normalizeClaudeManifestModelId,
 } from "./model-manifest.js";
 import { parsePartialJsonObject } from "./partial-json.js";
 import { ClaudeSidechainTracker } from "./sidechain-tracker.js";
@@ -2233,7 +2234,8 @@ class ClaudeAgentSession implements AgentSession {
       return;
     }
 
-    const model = findClaudeModel(modelId);
+    const manifestModelId = normalizeClaudeManifestModelId(modelId);
+    const model = manifestModelId ? findClaudeModel(manifestModelId) : undefined;
     if (model?.thinkingOptions?.some((option) => option.id === thinkingOptionId)) {
       return;
     }

@@ -737,6 +737,29 @@ describe("ClaudeAgentSession features", () => {
     await session.close();
   });
 
+  test("clears thinking when switching to a provider-prefixed custom model", async () => {
+    const { queryFactory, launches } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      model: "claude-sonnet-5",
+      thinkingOptionId: "off",
+    });
+
+    await session.setModel?.("openrouter/anthropic/claude-opus-4-8");
+    await session.startTurn("hello");
+
+    expect(launches.at(-1)?.options.thinking).toBeUndefined();
+    expect(launches.at(-1)?.options.effort).toBeUndefined();
+
+    await session.close();
+  });
+
   test("returns a next-turn notice when changing Claude thinking during an active turn", async () => {
     const { queryFactory } = createQueryMock();
     const client = new ClaudeAgentClient({
