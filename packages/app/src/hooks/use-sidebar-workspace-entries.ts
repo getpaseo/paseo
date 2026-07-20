@@ -38,7 +38,10 @@ export function useSidebarWorkspaceEntries(
   // subscription to structurally shared indexes, never one session-store
   // subscription per mounted row.
   return useMemo(() => {
-    if (!enabled || placements.length === 0 || sessions.length === 0) {
+    if (!enabled) {
+      return previousEntriesRef.current;
+    }
+    if (placements.length === 0 || sessions.length === 0) {
       previousEntriesRef.current = EMPTY_ENTRIES;
       return EMPTY_ENTRIES;
     }

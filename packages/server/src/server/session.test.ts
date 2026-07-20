@@ -370,6 +370,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
       ...options.agentManager,
     }),
     agentStorage: asAgentStorage({
+      get: vi.fn().mockResolvedValue(undefined),
       list: vi.fn().mockResolvedValue([]),
       ...options.agentStorage,
     }),
@@ -4899,12 +4900,22 @@ test("sends project updates only to capable sockets in a retained session", () =
 });
 
 describe("agent config setters", () => {
+  function liveAgentManager(overrides: { [K in keyof SessionOptions["agentManager"]]?: unknown }): {
+    [K in keyof SessionOptions["agentManager"]]?: unknown;
+  } {
+    return {
+      waitForAgentClose: vi.fn().mockResolvedValue(undefined),
+      touchAgentActivity: vi.fn(() => ({ id: "agent-1" })),
+      ...overrides,
+    };
+  }
+
   test("set_agent_mode_request: success emits accepted response carrying the notice", async () => {
     const messages: SessionOutboundMessage[] = [];
     const notice = { type: "info", message: "Switched to plan mode" } as const;
     const session = createSessionForTest({
       messages,
-      agentManager: { setAgentMode: vi.fn().mockResolvedValue(notice) },
+      agentManager: liveAgentManager({ setAgentMode: vi.fn().mockResolvedValue(notice) }),
     });
 
     await session.handleMessage({
@@ -4932,7 +4943,9 @@ describe("agent config setters", () => {
     const messages: SessionOutboundMessage[] = [];
     const session = createSessionForTest({
       messages,
-      agentManager: { setAgentMode: vi.fn().mockRejectedValue(new Error("mode boom")) },
+      agentManager: liveAgentManager({
+        setAgentMode: vi.fn().mockRejectedValue(new Error("mode boom")),
+      }),
     });
 
     await session.handleMessage({
@@ -4967,7 +4980,7 @@ describe("agent config setters", () => {
     const messages: SessionOutboundMessage[] = [];
     const session = createSessionForTest({
       messages,
-      agentManager: { setAgentModel: vi.fn().mockResolvedValue(undefined) },
+      agentManager: liveAgentManager({ setAgentModel: vi.fn().mockResolvedValue(undefined) }),
     });
 
     await session.handleMessage({
@@ -4989,7 +5002,9 @@ describe("agent config setters", () => {
     const messages: SessionOutboundMessage[] = [];
     const session = createSessionForTest({
       messages,
-      agentManager: { setAgentModel: vi.fn().mockRejectedValue(new Error("model boom")) },
+      agentManager: liveAgentManager({
+        setAgentModel: vi.fn().mockRejectedValue(new Error("model boom")),
+      }),
     });
 
     await session.handleMessage({
@@ -5024,7 +5039,7 @@ describe("agent config setters", () => {
     const messages: SessionOutboundMessage[] = [];
     const session = createSessionForTest({
       messages,
-      agentManager: { setAgentFeature: vi.fn().mockResolvedValue(undefined) },
+      agentManager: liveAgentManager({ setAgentFeature: vi.fn().mockResolvedValue(undefined) }),
     });
 
     await session.handleMessage({
@@ -5047,7 +5062,9 @@ describe("agent config setters", () => {
     const messages: SessionOutboundMessage[] = [];
     const session = createSessionForTest({
       messages,
-      agentManager: { setAgentFeature: vi.fn().mockRejectedValue(new Error("feature boom")) },
+      agentManager: liveAgentManager({
+        setAgentFeature: vi.fn().mockRejectedValue(new Error("feature boom")),
+      }),
     });
 
     await session.handleMessage({
@@ -5084,7 +5101,9 @@ describe("agent config setters", () => {
     const notice = { type: "warning", message: "Thinking budget reduced" } as const;
     const session = createSessionForTest({
       messages,
-      agentManager: { setAgentThinkingOption: vi.fn().mockResolvedValue(notice) },
+      agentManager: liveAgentManager({
+        setAgentThinkingOption: vi.fn().mockResolvedValue(notice),
+      }),
     });
 
     await session.handleMessage({
@@ -5112,9 +5131,9 @@ describe("agent config setters", () => {
     const messages: SessionOutboundMessage[] = [];
     const session = createSessionForTest({
       messages,
-      agentManager: {
+      agentManager: liveAgentManager({
         setAgentThinkingOption: vi.fn().mockRejectedValue(new Error("thinking boom")),
-      },
+      }),
     });
 
     await session.handleMessage({

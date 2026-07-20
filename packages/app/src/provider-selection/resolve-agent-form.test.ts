@@ -575,6 +575,25 @@ describe("resolveFormState", () => {
     expect(resolved.modeId).toBe("workspace-write");
   });
 
+  it("falls back when the provider cannot advertise its preferred default mode", () => {
+    const providerMap = makeProviderMap({
+      ...TEST_CODEX_DEFINITION,
+      defaultModeId: "auto-review",
+      modes: TEST_CODEX_DEFINITION.modes,
+    });
+
+    const resolved = resolveFormState(
+      undefined,
+      { provider: "codex" },
+      CODEX_MODELS,
+      INITIAL_USER_MODIFIED,
+      makeState({ provider: "codex" }).form,
+      providerMap,
+    );
+
+    expect(resolved.modeId).toBe("auto");
+  });
+
   it("ignores disabled ready providers when resolving selectable defaults", () => {
     const entries: ProviderSnapshotEntry[] = [
       {

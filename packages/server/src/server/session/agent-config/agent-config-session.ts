@@ -19,11 +19,12 @@ export interface AgentConfigSessionHost {
 
 /**
  * The per-agent config mutations this subsystem drives. The shell adapts these
- * onto the live AgentManager (mode still routes through setAgentModeCommand);
- * tests wire an in-memory fake. Mode and thinking yield a provider notice; model
- * and feature do not.
+ * onto the AgentManager and loads a collected agent before mutation (mode still
+ * routes through setAgentModeCommand); tests wire an in-memory fake. Mode and
+ * thinking yield a provider notice; model and feature do not.
  */
 export interface AgentConfigOperations {
+  ensureLoaded(agentId: string): Promise<void>;
   setMode(agentId: string, modeId: string): Promise<AgentProviderNotice | null>;
   setModel(agentId: string, modelId: string | null): Promise<void>;
   setFeature(agentId: string, featureId: string, value: unknown): Promise<void>;
@@ -138,6 +139,7 @@ export class AgentConfigSession {
     this.logger.info(logFields, `session: ${logLabel}`);
 
     try {
+      await this.operations.ensureLoaded(agentId);
       const notice = await run();
       this.logger.info(logFields, `session: ${logLabel} success`);
       emitResponse({ requestId, agentId, accepted: true, error: null, notice });

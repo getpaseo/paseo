@@ -39,6 +39,13 @@ export async function clickArchiveWorkspaceMenuItem(
   await archiveItem.click();
 }
 
+export async function pinWorkspaceFromSidebar(page: Page, workspaceId: string): Promise<void> {
+  const serverId = await openWorkspaceSidebarKebab(page, workspaceId);
+  const pinItem = page.getByTestId(`sidebar-workspace-menu-pin-${serverId}:${workspaceId}`);
+  await expect(pinItem).toBeVisible({ timeout: 10_000 });
+  await pinItem.click();
+}
+
 export async function archiveWorkspaceFromSidebar(page: Page, workspaceId: string): Promise<void> {
   // A clean workspace archives with no prompt. Managed worktree backing may raise
   // a browser confirm for unsynced work, so accept it when present.

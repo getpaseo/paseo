@@ -117,9 +117,11 @@ describe("ProviderSnapshotManager public surface", () => {
     try {
       const snapshot = manager.getSnapshot("/tmp/project");
       const claude = snapshot.find((entry) => entry.provider === "claude");
+      const codex = snapshot.find((entry) => entry.provider === "codex");
       expect(claude?.status).toBe("loading");
       expect(claude?.label).toBe("Claude");
-      expect(claude?.defaultModeId).toBe("default");
+      expect(claude?.defaultModeId).toBe("auto");
+      expect(codex?.defaultModeId).toBe("auto-review");
     } finally {
       manager.destroy();
     }
@@ -215,6 +217,34 @@ describe("ProviderSnapshotManager public surface", () => {
       expect(isAvailable).toHaveBeenCalledTimes(1);
       expect(fetchCatalog).toHaveBeenCalledTimes(1);
       expect(listener).not.toHaveBeenCalled();
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test("ready snapshots publish the catalog's capability-aware default mode", async () => {
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      extraClients: {
+        codex: createExtraClient("codex", {
+          isAvailable: async () => true,
+          fetchCatalog: async () => ({
+            models: [],
+            modes: [{ id: "default", label: "Default", description: "Ask before running tools" }],
+            defaultModeId: "default",
+          }),
+        }),
+      },
+    });
+
+    try {
+      const entry = await manager.getProvider({
+        cwd: "/tmp/project",
+        provider: "codex",
+        wait: true,
+      });
+
+      expect(entry).toMatchObject({ status: "ready", defaultModeId: "default" });
     } finally {
       manager.destroy();
     }

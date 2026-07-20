@@ -6,6 +6,7 @@ import {
   expectMobileAgentSidebarHidden,
   expectMobileAgentSidebarVisible,
   openMobileAgentSidebar,
+  pinWorkspaceFromSidebar,
 } from "./helpers/sidebar";
 import { seedWorkspace } from "./helpers/seed-client";
 import { expectWorkspaceHeader } from "./helpers/workspace-ui";
@@ -167,6 +168,30 @@ test.describe("Mobile sidebar panelState transition", () => {
     await expectMobileAgentSidebarVisible(page);
     await closeMobileAgentSidebar(page);
     await expectMobileAgentSidebarHidden(page);
+  });
+
+  test("keeps a pinned workspace rendered while the retained sidebar is closed", async ({
+    page,
+  }) => {
+    const workspace = await seedWorkspace({ repoPrefix: "sidebar-retained-pin-" });
+
+    try {
+      await gotoAppShell(page);
+      await openMobileAgentSidebar(page);
+      await expectMobileAgentSidebarVisible(page);
+
+      const row = page.getByTestId(getWorkspaceRowTestId(workspace.workspaceId));
+      await expect(row).toBeVisible({ timeout: 30_000 });
+      await pinWorkspaceFromSidebar(page, workspace.workspaceId);
+      await expect(page.getByTestId("sidebar-pinned-section")).toBeVisible();
+
+      await closeMobileAgentSidebar(page);
+      await expectMobileAgentSidebarHidden(page);
+
+      await expect(row).toHaveCount(1);
+    } finally {
+      await workspace.cleanup();
+    }
   });
 });
 

@@ -30,6 +30,29 @@ export interface EnsureAgentLoadedDeps {
   logger: Logger;
 }
 
+export async function ensureUnarchivedAgentLoaded(
+  agentId: string,
+  deps: EnsureAgentLoadedDeps & {
+    agentManager: AgentLoaderManager & Pick<AgentManager, "closeAgent">;
+  },
+): Promise<ManagedAgent> {
+  const record = await deps.agentStorage.get(agentId);
+  if (record?.archivedAt) {
+    throw new Error(`Agent is archived: ${agentId}`);
+  }
+
+  const agent = await ensureAgentLoaded(agentId, deps);
+  const latestRecord = await deps.agentStorage.get(agentId);
+  if (latestRecord?.archivedAt) {
+    await deps.agentManager.closeAgent(agentId).catch((error: unknown) => {
+      deps.logger.warn({ err: error, agentId }, "Failed to close concurrently archived agent");
+    });
+    throw new Error(`Agent is archived: ${agentId}`);
+  }
+
+  return agent;
+}
+
 export async function ensureAgentLoaded(
   agentId: string,
   deps: EnsureAgentLoadedDeps,
