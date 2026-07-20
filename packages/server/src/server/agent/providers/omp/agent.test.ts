@@ -140,12 +140,10 @@ describe("OMP agent client and session", () => {
       "hello OMP",
       "empty terminal payload recovered",
     );
-    await new Promise<void>((resolve) => setImmediate(resolve));
-
-    expect(omp.completedTurnCount()).toBe(1);
     await expect(completion).resolves.toMatchObject({
       finalText: "empty terminal payload recovered",
     });
+    expect(omp.completedTurnCount()).toBe(1);
   });
 
   test("does not accept a follow-up until OMP reports stable idle", async () => {
