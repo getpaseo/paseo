@@ -66,6 +66,7 @@ import {
 } from "./provider-config.js";
 export { formatOmpVersionSupport, resolveOmpDiagnosticPaths } from "./provider-config.js";
 import { OmpSubagentCardTracker, type OmpSubagentCardScheduler } from "./subagent-card-tracker.js";
+import { shouldDisplayOmpCustomMessage } from "./custom-message.js";
 import { getUserMessageText } from "./message-history.js";
 import { materializeProviderImage } from "../provider-image-output.js";
 import { OmpCliRuntime } from "./cli-runtime.js";
@@ -2064,15 +2065,17 @@ export class OmpAgentSession implements AgentSession {
       return;
     }
     if (event.message.role === "custom") {
-      const text = getUserMessageText(event.message.content);
-      if (text) {
-        const advisorItem = mapOmpAdvisorMessageToToolCall(event.message, text);
-        this.emit({
-          type: "timeline",
-          provider: this.provider,
-          turnId,
-          item: advisorItem ?? { type: "assistant_message", text },
-        });
+      if (shouldDisplayOmpCustomMessage(event.message)) {
+        const text = getUserMessageText(event.message.content);
+        if (text) {
+          const advisorItem = mapOmpAdvisorMessageToToolCall(event.message, text);
+          this.emit({
+            type: "timeline",
+            provider: this.provider,
+            turnId,
+            item: advisorItem ?? { type: "assistant_message", text },
+          });
+        }
       }
       if (!this.activeTurnHasUserMessage) {
         this.completeTurn(turnId, []);

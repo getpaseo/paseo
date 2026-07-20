@@ -201,16 +201,25 @@ export class OmpHarness {
     return { completion };
   }
 
-  async runPromptAfterExtensionNotice(input: string, output: string): Promise<unknown> {
+  async runPromptAfterExtensionNotice(
+    input: string,
+    output: string,
+    display?: boolean,
+  ): Promise<unknown> {
     const session = this.requireSession();
     const promptStarted = this.omp.latestSession().nextPrompt();
     const run = session.run(input);
     await promptStarted;
     const runtime = this.omp.latestSession();
+    const message = {
+      role: "custom" as const,
+      content: "extension inventory changed",
+      ...(display === undefined ? {} : { display }),
+    };
     runtime.beginTurn();
     runtime.acceptPrompt(input, "user-1");
-    runtime.acceptCustomMessage("extension inventory changed");
-    runtime.finishTurn({ role: "custom", content: "extension inventory changed" });
+    runtime.emit({ type: "message_end", message });
+    runtime.finishTurn(message);
     runtime.beginTurn();
     runtime.streamAssistantText(output);
     runtime.finishTurn();
