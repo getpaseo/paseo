@@ -12,7 +12,7 @@ class TestClock implements FileEditorClock {
 
   setTimeout(callback: () => void): ReturnType<typeof setTimeout> {
     this.callback = callback;
-    return 1 as ReturnType<typeof setTimeout>;
+    return 1 as unknown as ReturnType<typeof setTimeout>;
   }
 
   clearTimeout(): void {
