@@ -804,6 +804,24 @@ describe("ClaudeAgentSession features", () => {
     await session.close();
   });
 
+  test("rejects an initial disabled-thinking config for an unsupported model", async () => {
+    const { queryFactory } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+
+    await expect(
+      client.createSession({
+        provider: "claude",
+        cwd: process.cwd(),
+        model: "claude-fable-5",
+        thinkingOptionId: "off",
+      }),
+    ).rejects.toThrow("Thinking option 'off' is not available for model 'claude-fable-5'");
+  });
+
   test("returns a next-turn notice when changing Claude thinking during an active turn", async () => {
     const { queryFactory } = createQueryMock();
     const client = new ClaudeAgentClient({

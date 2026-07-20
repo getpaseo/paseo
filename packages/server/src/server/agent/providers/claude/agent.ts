@@ -446,6 +446,21 @@ function claudeManifestModelSupportsThinkingOption(
   return model?.thinkingOptions?.some((option) => option.id === thinkingOptionId) === true;
 }
 
+function assertClaudeThinkingOptionSupported(
+  modelId: string | null | undefined,
+  thinkingOptionId: string | null | undefined,
+): void {
+  if (
+    thinkingOptionId !== CLAUDE_DISABLED_THINKING_OPTION_ID ||
+    claudeManifestModelSupportsThinkingOption(modelId, thinkingOptionId)
+  ) {
+    return;
+  }
+  throw new Error(
+    `Thinking option '${thinkingOptionId}' is not available for model '${modelId ?? "default"}'`,
+  );
+}
+
 interface ClaudeOptionsLogSummary {
   cwd: string | null;
   permissionMode: string | null;
@@ -1966,6 +1981,7 @@ class ClaudeAgentSession implements AgentSession {
 
   constructor(config: ClaudeAgentConfig, options: ClaudeAgentSessionOptions) {
     this.config = config;
+    assertClaudeThinkingOptionSupported(config.model, config.thinkingOptionId);
     this.launchEnv = options.launchEnv;
     this.agentId = options.agentId;
     this.defaults = options.defaults;
@@ -2266,14 +2282,8 @@ class ClaudeAgentSession implements AgentSession {
 
     if (!normalizedThinkingOptionId || normalizedThinkingOptionId === "default") {
       this.config.thinkingOptionId = undefined;
-    } else if (
-      normalizedThinkingOptionId === CLAUDE_DISABLED_THINKING_OPTION_ID &&
-      !claudeManifestModelSupportsThinkingOption(this.config.model, normalizedThinkingOptionId)
-    ) {
-      throw new Error(
-        `Thinking option '${normalizedThinkingOptionId}' is not available for model '${this.config.model ?? "default"}'`,
-      );
     } else if (isClaudeThinkingOption(normalizedThinkingOptionId)) {
+      assertClaudeThinkingOptionSupported(this.config.model, normalizedThinkingOptionId);
       this.config.thinkingOptionId = normalizedThinkingOptionId;
     } else {
       throw new Error(`Unknown thinking option: ${normalizedThinkingOptionId}`);
