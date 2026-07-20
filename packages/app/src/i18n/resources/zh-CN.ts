@@ -758,6 +758,9 @@ export const zhCN: TranslationResources = {
         newFile: "新增",
         deletedFile: "已删除",
         openFile: "打开文件",
+        addToChat: "添加到聊天…",
+        addToChatPickerTitle: "将文件添加到聊天",
+        noOpenChats: "此工作区中没有打开的聊天。",
         commits: {
           title: "提交",
           legendLocal: "本地",

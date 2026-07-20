@@ -22,6 +22,11 @@ import {
   type ProviderSelectionState,
 } from "@/provider-selection/provider-selection";
 import { useDraftStore } from "@/stores/draft-store";
+import {
+  appendComposerInsertion,
+  drainComposerInsertions,
+  useComposerInsertionRevision,
+} from "@/composer/draft/insertion-queue";
 
 type AttachmentUpdater =
   | UserComposerAttachment[]
@@ -57,6 +62,7 @@ export interface AgentInputDraft {
   setAttachments: (updater: AttachmentUpdater) => void;
   clear: (lifecycle: "sent" | "abandoned") => void;
   isHydrated: boolean;
+  insertionFocusRequestId: number;
   composerState: DraftComposerState | null;
 }
 
@@ -80,6 +86,8 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
   const [text, setText] = useState("");
   const [attachments, setAttachmentsState] = useState<UserComposerAttachment[]>([]);
   const [isHydrated, setIsHydrated] = useState(false);
+  const [insertionFocusRequestId, setInsertionFocusRequestId] = useState(0);
+  const insertionRevision = useComposerInsertionRevision(draftKey);
   const draftGenerationRef = useRef(0);
   const hydratedGenerationRef = useRef(0);
 
@@ -144,6 +152,27 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
       cancelled = true;
     };
   }, [draftKey]);
+
+  useEffect(() => {
+    if (!isHydrated) {
+      return;
+    }
+    const commands = drainComposerInsertions(draftKey);
+    if (commands.length === 0) {
+      return;
+    }
+    setText((currentText) =>
+      commands.reduce(
+        (nextText, command) =>
+          appendComposerInsertion({ currentText: nextText, insertionText: command.text }),
+        currentText,
+      ),
+    );
+    const finalCommand = commands[commands.length - 1];
+    if (finalCommand) {
+      setInsertionFocusRequestId(finalCommand.id);
+    }
+  }, [draftKey, insertionRevision, isHydrated]);
 
   useEffect(() => {
     const currentGeneration = draftGenerationRef.current;
@@ -304,6 +333,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     setAttachments,
     clear,
     isHydrated,
+    insertionFocusRequestId,
     composerState,
   };
 }

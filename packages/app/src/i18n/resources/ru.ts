@@ -786,6 +786,9 @@ export const ru: TranslationResources = {
         newFile: "Новый",
         deletedFile: "Удалено",
         openFile: "Открыть файл",
+        addToChat: "Добавить в чат…",
+        addToChatPickerTitle: "Добавить файл в чат",
+        noOpenChats: "В этом рабочем пространстве нет открытых чатов.",
         commits: {
           title: "Коммиты",
           legendLocal: "локально",

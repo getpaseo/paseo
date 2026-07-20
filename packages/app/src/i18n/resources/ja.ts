@@ -777,6 +777,9 @@ export const ja: TranslationResources = {
         newFile: "新規",
         deletedFile: "削除済み",
         openFile: "ファイルを開く",
+        addToChat: "チャットに追加…",
+        addToChatPickerTitle: "ファイルをチャットに追加",
+        noOpenChats: "このワークスペースに開いているチャットはありません。",
         commits: {
           title: "コミット",
           legendLocal: "ローカル",

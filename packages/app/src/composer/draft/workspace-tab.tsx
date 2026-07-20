@@ -761,6 +761,7 @@ export function WorkspaceDraftAgentTab({
           cwd={composerState.workingDir}
           clearDraft={draftInput.clear}
           autoFocus={shouldAutoFocusWorkspaceDraftComposer({ isPaneFocused, isSubmitting })}
+          autoFocusKey={String(draftInput.insertionFocusRequestId)}
           onFocusInput={handleFocusInputCallback}
           commandDraftConfig={composerState.commandDraftConfig}
           agentControls={composerAgentControls}

@@ -764,6 +764,9 @@ export const ar: TranslationResources = {
         newFile: "جديد",
         deletedFile: "تم الحذف",
         openFile: "فتح الملف",
+        addToChat: "إضافة إلى الدردشة…",
+        addToChatPickerTitle: "إضافة ملف إلى الدردشة",
+        noOpenChats: "لا توجد دردشات مفتوحة في مساحة العمل هذه.",
         commits: {
           title: "الإيداعات",
           legendLocal: "محلي",

@@ -781,6 +781,8 @@ interface ComposerProps {
   clearDraft: (lifecycle: "sent" | "abandoned") => void;
   /** When true, auto-focuses the text input on web. */
   autoFocus?: boolean;
+  /** Changing this value requests focus again while autoFocus remains true. */
+  autoFocusKey?: string;
   /** Callback to expose a focus function to parent components (desktop only). */
   onFocusInput?: (focus: () => void) => void;
   /** Optional draft context for listing commands before an agent exists. */
@@ -992,6 +994,7 @@ export function Composer({
   cwd,
   clearDraft,
   autoFocus = false,
+  autoFocusKey,
   onFocusInput,
   commandDraftConfig,
   onMessageSent,
@@ -2016,7 +2019,7 @@ export function Composer({
                 isReadyForDictation={isDictationReady}
                 placeholder={messagePlaceholder}
                 autoFocus={messageInputAutoFocus}
-                autoFocusKey={`${serverId}:${agentId}`}
+                autoFocusKey={`${serverId}:${agentId}:${autoFocusKey ?? ""}`}
                 disabled={isSubmitLoading}
                 isPaneFocused={isPaneFocused}
                 leftContent={leftContent}

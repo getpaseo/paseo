@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -36,6 +36,8 @@ import { RetainedPanelActivity } from "@/components/retained-panel";
 import { SidebarResizeHandle } from "@/components/sidebar-resize-handle";
 import { buildWorkspaceAttachmentScopeKey } from "@/attachments/workspace-attachments-store";
 import { resolveDesktopExplorerWidth } from "@/components/desktop-sidebar-layout";
+import { AddFileToChatPicker } from "@/composer/add-file-to-chat-picker";
+import { isWeb } from "@/constants/platform";
 
 function logExplorerSidebar(_event: string, _details: Record<string, unknown>): void {}
 
@@ -386,11 +388,11 @@ function ExplorerSidebarContent({
       {/* Content based on active tab */}
       <View style={styles.contentArea} testID="explorer-content-area">
         {resolvedTab === "changes" && (
-          <GitDiffPane
+          <ChangedFilesPane
             serverId={serverId}
             workspaceId={workspaceId}
-            cwd={workspaceRoot}
-            enabled={isOpen}
+            workspaceRoot={workspaceRoot}
+            isOpen={isOpen}
             onOpenFile={onOpenFile}
           />
         )}
@@ -413,6 +415,47 @@ function ExplorerSidebarContent({
         )}
       </View>
     </View>
+  );
+}
+
+function ChangedFilesPane({
+  serverId,
+  workspaceId,
+  workspaceRoot,
+  isOpen,
+  onOpenFile,
+}: Pick<
+  SidebarContentProps,
+  "serverId" | "workspaceId" | "workspaceRoot" | "isOpen" | "onOpenFile"
+>) {
+  const [pendingChatFilePath, setPendingChatFilePath] = useState<string | null>(null);
+  const handleAddToChat = useCallback((filePath: string) => {
+    setPendingChatFilePath(filePath);
+  }, []);
+  const closeAddToChatPicker = useCallback(() => {
+    setPendingChatFilePath(null);
+  }, []);
+  const canAddToChat = isWeb && Boolean(workspaceId);
+
+  return (
+    <>
+      <GitDiffPane
+        serverId={serverId}
+        workspaceId={workspaceId}
+        cwd={workspaceRoot}
+        enabled={isOpen}
+        onOpenFile={onOpenFile}
+        onAddToChat={canAddToChat ? handleAddToChat : undefined}
+      />
+      {canAddToChat && workspaceId ? (
+        <AddFileToChatPicker
+          serverId={serverId}
+          workspaceId={workspaceId}
+          filePath={pendingChatFilePath}
+          onClose={closeAddToChatPicker}
+        />
+      ) : null}
+    </>
   );
 }
 

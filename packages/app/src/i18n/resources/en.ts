@@ -775,6 +775,9 @@ export const en = {
         newFile: "New",
         deletedFile: "Deleted",
         openFile: "Open file",
+        addToChat: "Add to chat…",
+        addToChatPickerTitle: "Add file to chat",
+        noOpenChats: "No open chats in this workspace.",
         commits: {
           title: "Commits",
           legendLocal: "local",
