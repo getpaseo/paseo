@@ -2007,13 +2007,23 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       return;
     }
 
+    const interruptedTurnId = this.activeForegroundTurnId;
     for (const pending of this.pendingPermissions.values()) {
       pending.resolve({ outcome: { outcome: "cancelled" } });
     }
     this.pendingPermissions.clear();
 
-    if (this.activeForegroundTurnId) {
+    if (interruptedTurnId) {
       await this.connection.cancel({ sessionId: this.sessionId });
+      if (this.activeForegroundTurnId === interruptedTurnId) {
+        this.synthesizeCanceledToolCalls();
+        this.finishTurn({
+          type: "turn_canceled",
+          provider: this.provider,
+          reason: "Interrupted",
+          turnId: interruptedTurnId,
+        });
+      }
     }
   }
 
@@ -2631,6 +2641,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   private handlePromptResponse(response: PromptResponse, turnId: string): void {
+    if (this.activeForegroundTurnId !== turnId) {
+      return;
+    }
     this.currentTurnUsage = mapACPUsage(response.usage) ?? this.currentTurnUsage;
 
     switch (response.stopReason) {
@@ -2725,6 +2738,20 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private finishTurn(
     event: Extract<AgentStreamEvent, { type: "turn_completed" | "turn_failed" | "turn_canceled" }>,
   ): void {
+    if (event.turnId && event.turnId !== this.activeForegroundTurnId) {
+      this.logger.trace(
+        {
+          agentId: this.agentId,
+          provider: this.provider,
+          sessionId: this.sessionId,
+          turnId: event.turnId,
+          activeForegroundTurnId: this.activeForegroundTurnId ?? undefined,
+          eventType: event.type,
+        },
+        "Ignoring stale ACP terminal event",
+      );
+      return;
+    }
     this.activeForegroundTurnId = null;
     this.fallbackAssistantMessageId = null;
     if (this.activeSubmittedUserMessage?.turnId === event.turnId) {
