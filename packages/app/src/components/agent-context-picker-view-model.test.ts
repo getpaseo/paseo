@@ -12,6 +12,7 @@ import {
   appendAgentContextAttachmentFromPicker,
   buildAgentContextSourceGroups,
   isAgentContextAttachment,
+  isAgentContextSourceSelectionDisabled,
   MAX_AGENT_CONTEXT_ATTACHMENTS,
 } from "./agent-context-picker-view-model";
 
@@ -188,6 +189,7 @@ describe("agent context attachment admission", () => {
         agentId: "source",
         title: "Updated title",
         provider: "codex",
+        workspaceLabel: "Updated workspace",
       },
     });
 
@@ -199,9 +201,37 @@ describe("agent context attachment admission", () => {
           agentId: "source",
           title: "Updated title",
           provider: "codex",
+          workspaceLabel: "Updated workspace",
         },
       },
     ]);
+  });
+
+  it("disables additional rows once pending selections consume the remaining slots", () => {
+    expect(
+      isAgentContextSourceSelectionDisabled({
+        attached: false,
+        selected: false,
+        selectionCount: 3,
+        remainingSlots: 3,
+      }),
+    ).toBe(true);
+    expect(
+      isAgentContextSourceSelectionDisabled({
+        attached: false,
+        selected: true,
+        selectionCount: 3,
+        remainingSlots: 3,
+      }),
+    ).toBe(false);
+    expect(
+      isAgentContextSourceSelectionDisabled({
+        attached: true,
+        selected: false,
+        selectionCount: 0,
+        remainingSlots: 5,
+      }),
+    ).toBe(true);
   });
 
   it("admits at most five agent references", () => {

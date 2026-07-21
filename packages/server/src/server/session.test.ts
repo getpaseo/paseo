@@ -23,7 +23,7 @@ import { isSessionRpcAllowed, Session } from "./session.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
 import { StructuredAgentFallbackError } from "./agent/agent-response-loop.js";
 import type { StoredAgentRecord } from "./agent/agent-storage.js";
-import type { AgentManagerEvent } from "./agent/agent-manager.js";
+import type { AgentManagerEvent, ManagedAgent } from "./agent/agent-manager.js";
 import type { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import { WorkspaceLabelError, type WorkspaceLabelService } from "./workspace-labels/index.js";
 import { createPersistedProjectRecord } from "./workspace-registry.js";
@@ -1481,6 +1481,62 @@ test("rejects unsafe agent context references before reading retained history", 
     ]),
   ).rejects.toThrow("archived agents cannot be attached");
   expect(fetchRetainedTimeline).not.toHaveBeenCalled();
+});
+
+test.each(["stored", "live"] as const)(
+  "rejects an internal %s agent context source without reading retained history",
+  async (sourceKind) => {
+    const sourceAgentId = "internal-source-agent";
+    const fetchRetainedTimeline = vi.fn(() => retainedTimelineWithAssistant("Should not be read."));
+    const storedRecord = createStoredAgentRecord({
+      id: sourceAgentId,
+      cwd: "/tmp/internal-source",
+      internal: sourceKind === "stored",
+    });
+    const session = createSessionForTest({
+      agentManager: {
+        getAgent: vi.fn(() =>
+          sourceKind === "live"
+            ? ({
+                id: sourceAgentId,
+                cwd: "/tmp/internal-source",
+                internal: true,
+                labels: {},
+              } as ManagedAgent)
+            : null,
+        ),
+        fetchRetainedTimeline,
+      },
+      agentStorage: {
+        get: vi.fn(async () => (sourceKind === "stored" ? storedRecord : null)),
+      },
+    });
+
+    await expect(
+      asSessionInternals(session).resolveAgentContextAttachments([
+        { type: "agent_context", agentId: sourceAgentId },
+      ]),
+    ).rejects.toThrow(`agent not found: ${sourceAgentId}`);
+    expect(fetchRetainedTimeline).not.toHaveBeenCalled();
+  },
+);
+
+test("asks the user to open a valid source when its timeline is no longer retained", async () => {
+  const sourceAgentId = "source-without-retained-timeline";
+  const fetchRetainedTimeline = vi.fn(() => null);
+  const session = createSessionForTest({
+    agentManager: { getAgent: vi.fn(() => null), fetchRetainedTimeline },
+    agentStorage: {
+      get: vi.fn(async () => createStoredAgentRecord({ id: sourceAgentId, cwd: "/tmp/source" })),
+    },
+  });
+
+  await expect(
+    asSessionInternals(session).resolveAgentContextAttachments([
+      { type: "agent_context", agentId: sourceAgentId },
+    ]),
+  ).rejects.toThrow("open the source session on this host, then try again");
+  expect(fetchRetainedTimeline).toHaveBeenCalledTimes(1);
 });
 
 test("rejects delegated and self agent context references", async () => {

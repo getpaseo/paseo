@@ -35,7 +35,10 @@ export interface AgentMentionSelection {
   agentId: string;
   title: string;
   provider: AggregatedAgent["provider"];
+  workspaceLabel?: string;
 }
+
+export const MAX_AGENT_MENTION_SUGGESTIONS = 30;
 
 interface UseAgentAutocompleteInput {
   userInput: string;
@@ -118,7 +121,7 @@ function resolveAgentAutocompleteSnapshot(input: {
   };
 }
 
-interface DirectorySuggestionEntry {
+export interface DirectorySuggestionEntry {
   path: string;
   kind: "file" | "directory";
 }
@@ -204,9 +207,23 @@ function resolveAgentMentionTitle(agent: AggregatedAgent): string {
   return title || agent.id;
 }
 
-type AutocompleteMode = "command" | "file" | null;
+function toAgentMentionSelection(agent: AggregatedAgent): AgentMentionSelection {
+  const selection: AgentMentionSelection = {
+    serverId: agent.serverId,
+    agentId: agent.id,
+    title: resolveAgentMentionTitle(agent),
+    provider: agent.provider,
+  };
+  const workspaceLabel = agent.projectPlacement?.workspaceName?.trim() || agent.cwd.trim();
+  if (workspaceLabel) {
+    selection.workspaceLabel = workspaceLabel;
+  }
+  return selection;
+}
 
-interface BuildAutocompleteOptionsInput {
+export type AutocompleteMode = "command" | "file" | null;
+
+export interface BuildAutocompleteOptionsInput {
   isVisible: boolean;
   mode: AutocompleteMode;
   commands: AgentSlashCommand[];
@@ -219,7 +236,7 @@ interface BuildAutocompleteOptionsInput {
   t: TFunction;
 }
 
-function buildCommandAutocompleteOptions(input: BuildAutocompleteOptionsInput) {
+export function buildCommandAutocompleteOptions(input: BuildAutocompleteOptionsInput) {
   if (!input.isVisible) {
     return [];
   }
@@ -251,8 +268,6 @@ function buildCommandAutocompleteOptions(input: BuildAutocompleteOptionsInput) {
 
   const activeFileMention = input.activeFileMention;
   if (input.mode === "file" && activeFileMention) {
-    const orderedAgents = orderAutocompleteOptions(input.agentSuggestions);
-    const orderedEntries = orderAutocompleteOptions(input.fileSuggestions);
     const agentSection = {
       id: "agents",
       label: input.t("agentAutocomplete.agents"),
@@ -261,18 +276,20 @@ function buildCommandAutocompleteOptions(input: BuildAutocompleteOptionsInput) {
       id: "workspace",
       label: input.t("agentAutocomplete.filesAndFolders"),
     };
-    return [
-      ...orderedAgents.map((agent) => ({
+    const logicalOptions: AgentAutocompleteOption[] = [
+      ...input.agentSuggestions.map((agent) => ({
         type: "agent" as const,
         id: `agent:${agent.serverId}:${agent.agentId}`,
         label: agent.title,
-        description: input.t("agentAutocomplete.agent"),
+        description:
+          [agent.workspaceLabel, agent.provider].filter(Boolean).join(" · ") ||
+          input.t("agentAutocomplete.agent"),
         kind: "agent" as const,
         section: agentSection,
         agent,
         mention: activeFileMention,
       })),
-      ...orderedEntries.map((entry) => ({
+      ...input.fileSuggestions.map((entry) => ({
         type: "workspace_entry" as const,
         id: `${entry.kind}:${entry.path}`,
         label: entry.path,
@@ -282,6 +299,10 @@ function buildCommandAutocompleteOptions(input: BuildAutocompleteOptionsInput) {
         mention: activeFileMention,
       })),
     ];
+    // The popover is anchored above the input, so the list is reversed as one
+    // unit. Agents then occupy the visible bottom section and the best agent is
+    // the default Enter target, while files remain available immediately above.
+    return orderAutocompleteOptions(logicalOptions);
   }
 
   return [];
@@ -532,14 +553,9 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
     if (!canSelectAgents) {
       return [];
     }
-    return filterAndRankAgentMentionCandidates(agentHistory.agents, fileFilterQuery, agentId).map(
-      (agent) => ({
-        serverId: agent.serverId,
-        agentId: agent.id,
-        title: resolveAgentMentionTitle(agent),
-        provider: agent.provider,
-      }),
-    );
+    return filterAndRankAgentMentionCandidates(agentHistory.agents, fileFilterQuery, agentId)
+      .slice(0, MAX_AGENT_MENTION_SUGGESTIONS)
+      .map(toAgentMentionSelection);
   }, [agentHistory.agents, agentId, canSelectAgents, fileFilterQuery]);
 
   const canLoadFileSuggestions = resolveFileSuggestionsEnabled({

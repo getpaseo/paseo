@@ -517,8 +517,68 @@ second line'`,
     expect(result.attachment.text).not.toContain(oversized);
   });
 
+  it("bounds multibyte context using UTF-8 bytes without splitting an entry", () => {
+    const newest = `最新の回答 ${"🙂漢字".repeat(60)}`;
+    const result = buildAgentContextAttachment({
+      maxBytes: 1024,
+      rows: [
+        row(1, { type: "assistant_message", text: `古い回答 ${"界".repeat(2_000)}` }),
+        row(2, { type: "user_message", text: newest }),
+      ],
+    });
+
+    expect(result.byteCount).toBeLessThanOrEqual(1024);
+    expect(result.attachment.text).toContain(newest);
+    expect(result.attachment.text).not.toContain("古い回答");
+    expect(result.truncated).toBe(true);
+  });
+
+  it("does not materialize an oversized newest entry or fall back to older context", () => {
+    const result = buildAgentContextAttachment({
+      maxBytes: 1024,
+      rows: [
+        row(1, { type: "assistant_message", text: "Older context that would fit." }),
+        row(2, { type: "assistant_message", text: "x".repeat(10_000) }),
+      ],
+    });
+
+    expect(result.attachment.text).toContain("No chat history to display.");
+    expect(result.attachment.text).not.toContain("Older context that would fit.");
+    expect(result.byteCount).toBeLessThanOrEqual(1024);
+    expect(result.truncated).toBe(true);
+  });
+
+  it("charges repeated tool lifecycle updates only once before selecting older context", () => {
+    const result = buildAgentContextAttachment({
+      maxBytes: 1024,
+      rows: [
+        row(1, { type: "user_message", text: "Keep this useful request." }),
+        ...Array.from({ length: 100 }, (_, index) =>
+          row(
+            index + 2,
+            toolCallItem({
+              callId: "same-long-running-tool",
+              name: "provider_tool",
+              status: index === 99 ? "completed" : "running",
+            }),
+          ),
+        ),
+      ],
+    });
+
+    expect(result.attachment.text).toContain("[User] Keep this useful request.");
+    expect(result.attachment.text.match(/\[Tool\]/g)).toHaveLength(1);
+    expect(result.byteCount).toBeLessThanOrEqual(1024);
+  });
+
   it("clamps daemon-side agent context limits", () => {
     expect(resolveAgentContextAttachmentMaxBytes(1)).toBe(1024);
+    expect(resolveAgentContextAttachmentMaxBytes(Number.NaN)).toBe(
+      AGENT_CONTEXT_ATTACHMENT_MAX_BYTES,
+    );
+    expect(resolveAgentContextAttachmentMaxBytes(Number.POSITIVE_INFINITY)).toBe(
+      AGENT_CONTEXT_ATTACHMENT_MAX_BYTES,
+    );
     expect(resolveAgentContextAttachmentMaxBytes(AGENT_CONTEXT_ATTACHMENT_MAX_BYTES * 2)).toBe(
       AGENT_CONTEXT_ATTACHMENT_MAX_BYTES,
     );

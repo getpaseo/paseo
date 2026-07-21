@@ -11,6 +11,7 @@ import {
   getAgentContextSourceTitle,
   getAgentContextSourceWorkspaceLabel,
   isAgentContextAttachment,
+  isAgentContextSourceSelectionDisabled,
   MAX_AGENT_CONTEXT_ATTACHMENTS,
   type AgentContextSourceGroupKind,
 } from "@/components/agent-context-picker-view-model";
@@ -20,6 +21,7 @@ import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { getProviderIcon } from "@/components/provider-icons";
 import type { AggregatedAgent } from "@/hooks/use-aggregated-agents";
 import { useAgentHistory } from "@/hooks/use-agent-history";
+import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { formatTimeAgo } from "@/utils/time";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 
@@ -31,6 +33,7 @@ const ThemedHistory = withUnistyles(History);
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 const accentColorMapping = (theme: Theme) => ({ color: theme.colors.accentForeground });
+const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 
 interface AgentContextPickerProps {
   visible: boolean;
@@ -121,7 +124,12 @@ function AgentContextSourceRow({
       testID={`agent-context-source-${source.id}`}
     >
       <View style={selectionStyle}>
-        {selected || attached ? <ThemedCheck size={12} uniProps={accentColorMapping} /> : null}
+        {selected || attached ? (
+          <ThemedCheck
+            size={12}
+            uniProps={attached ? foregroundColorMapping : accentColorMapping}
+          />
+        ) : null}
       </View>
       <View style={styles.iconSlot}>
         <AgentProviderIcon source={source} />
@@ -144,6 +152,65 @@ function AgentContextSourceRow({
   );
 }
 
+function AgentContextPickerStatus({
+  supported,
+  isConnected,
+  isInitialLoad,
+  isError,
+  selectionLimitReached,
+  isEmpty,
+  hasQuery,
+  onRetry,
+}: {
+  supported: boolean;
+  isConnected: boolean;
+  isInitialLoad: boolean;
+  isError: boolean;
+  selectionLimitReached: boolean;
+  isEmpty: boolean;
+  hasQuery: boolean;
+  onRetry: () => void;
+}) {
+  const { t } = useTranslation();
+  if (!supported) {
+    return <Text style={styles.statusText}>{t("agentContext.status.updateHost")}</Text>;
+  }
+  if (!isConnected) {
+    return <Text style={styles.statusText}>{t("workspace.terminal.hostDisconnected")}</Text>;
+  }
+  return (
+    <>
+      {isInitialLoad ? (
+        <View style={styles.loadingRow} testID="agent-context-loading">
+          <ThemedLoadingSpinner size={ICON_SIZE.md} uniProps={mutedColorMapping} />
+          <Text style={styles.statusText}>{t("agentContext.status.loading")}</Text>
+        </View>
+      ) : null}
+      {isError ? (
+        <View style={styles.errorRow}>
+          <Text style={styles.statusText}>{t("agentContext.status.failed")}</Text>
+          <Button size="sm" variant="ghost" onPress={onRetry}>
+            {t("common.actions.retry")}
+          </Button>
+        </View>
+      ) : null}
+      {selectionLimitReached ? (
+        <Text style={styles.statusText}>
+          {t("agentContext.status.limitReached", { count: MAX_AGENT_CONTEXT_ATTACHMENTS })}
+        </Text>
+      ) : null}
+      {isEmpty && !isError ? (
+        <View style={styles.emptyState} testID="agent-context-empty">
+          <ThemedBot size={ICON_SIZE.lg} uniProps={mutedColorMapping} strokeWidth={1.5} />
+          <Text style={styles.emptyTitle}>
+            {hasQuery ? t("agentContext.status.noMatches") : t("agentContext.status.empty")}
+          </Text>
+        </View>
+      ) : null}
+    </>
+  );
+}
+
 export function AgentContextPicker({
   visible,
   serverId,
@@ -156,7 +223,8 @@ export function AgentContextPicker({
   onAdd,
 }: AgentContextPickerProps) {
   const { t } = useTranslation();
-  const history = useAgentHistory({ serverId, enabled: visible && supported });
+  const isConnected = useHostRuntimeIsConnected(serverId);
+  const history = useAgentHistory({ serverId, enabled: visible && supported && isConnected });
   const [query, setQuery] = useState("");
   const [selection, setSelection] = useState<readonly string[]>([]);
 
@@ -211,6 +279,8 @@ export function AgentContextPicker({
   );
   const existingCount = existingKeys.size;
   const remainingSlots = Math.max(0, MAX_AGENT_CONTEXT_ATTACHMENTS - existingCount);
+  const selectionLimitReached =
+    remainingSlots === 0 || (remainingSlots > 0 && selection.length >= remainingSlots);
 
   const handleToggle = useCallback(
     (source: AggregatedAgent) => {
@@ -239,6 +309,10 @@ export function AgentContextPicker({
     }
     onClose();
   }, [onAdd, onClose, selection, sourcesByKey]);
+  const { refreshAll } = history;
+  const handleRetry = useCallback(() => {
+    void refreshAll();
+  }, [refreshAll]);
   const header = useMemo<SheetHeader>(
     () => ({
       title: t("agentContext.title"),
@@ -252,7 +326,7 @@ export function AgentContextPicker({
     }),
     [t, visible],
   );
-  const isEmpty = groups.length === 0 && !history.isInitialLoad;
+  const isEmpty = isConnected && groups.length === 0 && !history.isInitialLoad;
   const isConfirmDisabled = selection.length === 0 || !supported;
   const footer = useMemo(
     () =>
@@ -284,31 +358,16 @@ export function AgentContextPicker({
       desktopMaxWidth={600}
       snapPoints={AGENT_CONTEXT_PICKER_SNAP_POINTS}
     >
-      {!supported ? (
-        <Text style={styles.statusText}>{t("agentContext.status.updateHost")}</Text>
-      ) : null}
-      {supported && history.isInitialLoad ? (
-        <View style={styles.loadingRow} testID="agent-context-loading">
-          <ThemedLoadingSpinner size={ICON_SIZE.md} uniProps={mutedColorMapping} />
-          <Text style={styles.statusText}>{t("agentContext.status.loading")}</Text>
-        </View>
-      ) : null}
-      {supported && history.isError ? (
-        <Text style={styles.statusText}>{t("agentContext.status.failed")}</Text>
-      ) : null}
-      {supported && remainingSlots === 0 ? (
-        <Text style={styles.statusText}>
-          {t("agentContext.status.limitReached", { count: MAX_AGENT_CONTEXT_ATTACHMENTS })}
-        </Text>
-      ) : null}
-      {supported && isEmpty && !history.isError ? (
-        <View style={styles.emptyState} testID="agent-context-empty">
-          <ThemedBot size={ICON_SIZE.lg} uniProps={mutedColorMapping} strokeWidth={1.5} />
-          <Text style={styles.emptyTitle}>
-            {query.trim() ? t("agentContext.status.noMatches") : t("agentContext.status.empty")}
-          </Text>
-        </View>
-      ) : null}
+      <AgentContextPickerStatus
+        supported={supported}
+        isConnected={isConnected}
+        isInitialLoad={history.isInitialLoad}
+        isError={history.isError}
+        selectionLimitReached={selectionLimitReached}
+        isEmpty={isEmpty}
+        hasQuery={Boolean(query.trim())}
+        onRetry={handleRetry}
+      />
       {supported
         ? groups.map((group) => (
             <View key={group.kind} style={styles.group}>
@@ -316,13 +375,19 @@ export function AgentContextPicker({
               {group.agents.map((source) => {
                 const key = getAgentContextSourceKey(source);
                 const attached = existingKeys.has(key);
+                const selected = selection.includes(key);
                 return (
                   <AgentContextSourceRow
                     key={key}
                     source={source}
-                    selected={selection.includes(key)}
+                    selected={selected}
                     attached={attached}
-                    disabled={attached || (!selection.includes(key) && remainingSlots === 0)}
+                    disabled={isAgentContextSourceSelectionDisabled({
+                      attached,
+                      selected,
+                      selectionCount: selection.length,
+                      remainingSlots,
+                    })}
                     onPress={handleToggle}
                   />
                 );
@@ -365,6 +430,12 @@ const styles = StyleSheet.create((theme: Theme) => ({
     alignItems: "center",
     gap: theme.spacing[2],
     paddingVertical: theme.spacing[4],
+  },
+  errorRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: theme.spacing[2],
+    justifyContent: "space-between",
   },
   emptyState: {
     alignItems: "center",

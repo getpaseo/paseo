@@ -1132,7 +1132,7 @@ export const TextAttachmentSchema = z
  */
 export const AgentContextAttachmentSchema = z.object({
   type: z.literal("agent_context"),
-  agentId: z.string().trim().min(1),
+  agentId: z.string().min(1),
   title: z.string().optional(),
 });
 
@@ -1191,9 +1191,18 @@ function normalizeAgentAttachments(input: unknown): AgentAttachment[] {
   const normalized: AgentAttachment[] = [];
   for (const item of input) {
     const parsed = AgentAttachmentSchema.safeParse(item);
-    if (parsed.success) {
-      normalized.push(parsed.data);
+    if (!parsed.success) {
+      continue;
     }
+    if (parsed.data.type === "agent_context") {
+      const agentId = parsed.data.agentId.trim();
+      if (!agentId) {
+        continue;
+      }
+      normalized.push({ ...parsed.data, agentId });
+      continue;
+    }
+    normalized.push(parsed.data);
   }
   return normalized;
 }

@@ -13,6 +13,7 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { Bot, File, Folder } from "lucide-react-native";
 import type { Theme } from "@/styles/theme";
+import { isNative } from "@/constants/platform";
 import { getAutocompleteScrollOffset } from "./autocomplete-utils";
 
 export interface AutocompleteOptionSection {
@@ -96,7 +97,15 @@ function AutocompleteRow({
   );
 
   return (
-    <Pressable onLayout={handleLayout} onPress={handlePress} style={pressableStyle}>
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={[optionLabel, optionDescription, removeBoltGlyphs(option.detail)]
+        .filter(Boolean)
+        .join(". ")}
+      onLayout={handleLayout}
+      onPress={handlePress}
+      style={pressableStyle}
+    >
       {isFileOrDir || isAgent ? (
         <>
           <View style={styles.itemLeading}>{renderOptionIcon(option.kind, mutedColor)}</View>
@@ -361,7 +370,7 @@ const styles = StyleSheet.create((theme: Theme) => ({
   item: {
     flexDirection: "row",
     alignItems: "center",
-    minHeight: 36,
+    minHeight: isNative ? 44 : 36,
     paddingHorizontal: theme.spacing[3],
     paddingVertical: theme.spacing[2],
   },

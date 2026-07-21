@@ -74,8 +74,15 @@ export function applyFileMentionReplacement(input: ApplyFileMentionReplacementIn
 }
 
 export function applyAgentMentionReplacement(input: ApplyAgentMentionReplacementInput): string {
-  const before = input.text.slice(0, input.mention.start);
-  const after = input.text.slice(input.mention.end);
+  let before = input.text.slice(0, input.mention.start);
+  let after = input.text.slice(input.mention.end);
+  if (!before && /^\s/.test(after)) {
+    after = after.slice(1);
+  } else if (!after && /\s$/.test(before)) {
+    before = before.slice(0, -1);
+  } else if (/\s$/.test(before) && /^\s/.test(after)) {
+    after = after.slice(1);
+  }
   return `${before}${after}`;
 }
 

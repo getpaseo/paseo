@@ -1,6 +1,7 @@
 import { Buffer } from "node:buffer";
 import type { AgentTimelineItem } from "./agent-sdk-types.js";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
+import { MAX_AGENT_CONTEXT_ATTACHMENT_BYTES } from "@getpaseo/protocol/agent-context-limits";
 import type { AgentTimelineRow } from "./agent-timeline-store-types.js";
 import { isLikelyExternalToolName } from "@getpaseo/protocol/tool-name-normalization";
 import { buildToolCallDisplayModel } from "@getpaseo/protocol/tool-call-display";
@@ -410,7 +411,7 @@ interface AgentContextEntry {
 const EMPTY_AGENT_CONTEXT_BODY = "No chat history to display.";
 
 export const AGENT_CONTEXT_ATTACHMENT_MIN_BYTES = 1024;
-export const AGENT_CONTEXT_ATTACHMENT_MAX_BYTES = 128 * 1024;
+export const AGENT_CONTEXT_ATTACHMENT_MAX_BYTES = MAX_AGENT_CONTEXT_ATTACHMENT_BYTES;
 
 function textByteLength(value: string): number {
   return Buffer.byteLength(value, "utf8");
@@ -472,6 +473,87 @@ function curateAgentContextEntries(items: readonly AgentTimelineItem[]): AgentCo
   });
 }
 
+function estimateAgentContextItemBytes(item: AgentTimelineItem): number | null {
+  switch (item.type) {
+    case "user_message":
+      return textByteLength(item.text) + textByteLength("[User] \n");
+    case "assistant_message":
+      return textByteLength(item.text) + textByteLength("[Assistant] \n");
+    case "tool_call":
+      return textByteLength("[Worktree Setup]\n");
+    default:
+      return null;
+  }
+}
+
+function mergeAgentContextToolRows(
+  earlier: AgentTimelineRow,
+  latest: AgentTimelineRow,
+): AgentTimelineRow {
+  if (earlier.item.type !== "tool_call" || latest.item.type !== "tool_call") {
+    return latest;
+  }
+  const detail =
+    latest.item.detail.type === "unknown" && earlier.item.detail.type !== "unknown"
+      ? earlier.item.detail
+      : latest.item.detail;
+  return {
+    ...earlier,
+    item: {
+      ...latest.item,
+      detail,
+    },
+  };
+}
+
+/**
+ * Bound work before projection. Histories can contain tens of thousands of
+ * rows (including large reasoning/tool payloads) even though the resulting
+ * model context is small. Keep only the newest relevant suffix whose maximum
+ * rendered size can fit, preserving original sequence gaps so projection does
+ * not merge messages that excluded rows separated.
+ */
+function selectAgentContextCandidateRows(input: {
+  rows: readonly AgentTimelineRow[];
+  maxBodyBytes: number;
+}): { rows: AgentTimelineRow[]; truncated: boolean } {
+  const selectedRows: AgentTimelineRow[] = [];
+  const toolIndexByCallId = new Map<string, number>();
+  let remainingBytes = Math.max(0, input.maxBodyBytes);
+
+  for (let index = input.rows.length - 1; index >= 0; index -= 1) {
+    const row = input.rows[index];
+    if (row.item.type === "tool_call") {
+      const existingIndex = toolIndexByCallId.get(row.item.callId);
+      if (existingIndex !== undefined) {
+        const latest = selectedRows[existingIndex];
+        selectedRows[existingIndex] = mergeAgentContextToolRows(row, latest);
+        continue;
+      }
+    }
+    const estimatedBytes = estimateAgentContextItemBytes(row.item);
+    if (estimatedBytes === null) {
+      continue;
+    }
+    if (estimatedBytes > remainingBytes) {
+      return {
+        rows: selectedRows.toSorted((left, right) => left.seq - right.seq),
+        truncated: true,
+      };
+    }
+    selectedRows.push(row);
+    if (row.item.type === "tool_call") {
+      toolIndexByCallId.set(row.item.callId, selectedRows.length - 1);
+    }
+    remainingBytes -= estimatedBytes;
+  }
+
+  return {
+    rows: selectedRows.toSorted((left, right) => left.seq - right.seq),
+    truncated: false,
+  };
+}
+
 /**
  * Resolve a local agent reference into a privacy-curated, bounded chat-history
  * text attachment. Entries are retained as a contiguous newest suffix, so no
@@ -490,8 +572,6 @@ export function buildAgentContextAttachment(input: {
   byteCount: number;
   truncated: boolean;
 } {
-  const selected = selectForkContextRows({ rows: input.rows });
-  const entries = curateAgentContextEntries(selected.items);
   const maxBytes = resolveAgentContextAttachmentMaxBytes(input.maxBytes);
   const shell = buildBoundedAgentContextShell({
     maxBytes,
@@ -499,6 +579,12 @@ export function buildAgentContextAttachment(input: {
     cwd: input.cwd,
   });
   const availableBodyBytes = maxBytes - textByteLength(shell.prefix) - textByteLength(shell.suffix);
+  const candidates = selectAgentContextCandidateRows({
+    rows: input.rows,
+    maxBodyBytes: availableBodyBytes,
+  });
+  const selected = selectForkContextRows({ rows: candidates.rows });
+  const entries = curateAgentContextEntries(selected.items);
   const retainedNewestFirst: AgentContextEntry[] = [];
   let retainedBytes = 0;
 
@@ -527,6 +613,7 @@ export function buildAgentContextAttachment(input: {
     },
     includedItemCount: retained.length,
     byteCount: textByteLength(text),
-    truncated: Boolean(input.hasOlderRows) || retained.length < entries.length,
+    truncated:
+      Boolean(input.hasOlderRows) || candidates.truncated || retained.length < entries.length,
   };
 }

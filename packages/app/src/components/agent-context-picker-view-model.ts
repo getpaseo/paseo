@@ -1,8 +1,9 @@
 import { isDelegatedAgent } from "@getpaseo/protocol/agent-labels";
+import { MAX_AGENT_CONTEXT_ATTACHMENTS } from "@getpaseo/protocol/agent-context-limits";
 import { isAgentContextAttachment, type UserComposerAttachment } from "@/attachments/types";
 import type { AggregatedAgent } from "@/hooks/use-aggregated-agents";
 
-export const MAX_AGENT_CONTEXT_ATTACHMENTS = 5;
+export { MAX_AGENT_CONTEXT_ATTACHMENTS } from "@getpaseo/protocol/agent-context-limits";
 
 export type AgentContextSourceGroupKind = "workspace" | "project" | "other";
 
@@ -108,11 +109,23 @@ export function appendAgentContextAttachmentFromMention(input: {
     agentId: string;
     title: string;
     provider?: string | null;
+    workspaceLabel?: string | null;
   };
 }): UserComposerAttachment[] {
   return appendAgentContextAttachment(
     input.current,
     buildAgentContextAttachmentFromMetadata(input.source),
+  );
+}
+
+export function isAgentContextSourceSelectionDisabled(input: {
+  attached: boolean;
+  selected: boolean;
+  selectionCount: number;
+  remainingSlots: number;
+}): boolean {
+  return (
+    input.attached || (!input.selected && input.selectionCount >= Math.max(0, input.remainingSlots))
   );
 }
 
