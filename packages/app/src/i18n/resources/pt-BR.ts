@@ -1007,6 +1007,7 @@ export const ptBR: TranslationResources = {
     refPicker: {
       startingRef: "Ref inicial",
       chooseStart: "Escolha de onde começar",
+      defaultBranch: "Branch padrão",
       intoBase: "em {{baseRef}}",
       searching: "Buscando...",
       noMatchingRefs: "Nenhuma ref correspondente.",

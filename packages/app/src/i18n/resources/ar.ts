@@ -985,6 +985,7 @@ export const ar: TranslationResources = {
     refPicker: {
       startingRef: "بدء المرجع",
       chooseStart: "اختر من أين تبدأ",
+      defaultBranch: "الفرع الافتراضي",
       intoBase: "إلى {{baseRef}}",
       searching: "جارٍ البحث...",
       noMatchingRefs: "لا توجد مراجع مطابقة.",

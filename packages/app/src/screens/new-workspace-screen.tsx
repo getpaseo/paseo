@@ -1688,8 +1688,8 @@ export function NewWorkspaceScreen({
   );
   const triggerLabel = useMemo(() => {
     if (selectedItem) return pickerItemTriggerLabel(selectedItem);
-    return baseRef ?? "main";
-  }, [baseRef, selectedItem]);
+    return baseRef ?? t("newWorkspace.refPicker.defaultBranch");
+  }, [baseRef, selectedItem, t]);
 
   const selectedOptionId = useMemo(() => {
     if (!selectedItem) return "";

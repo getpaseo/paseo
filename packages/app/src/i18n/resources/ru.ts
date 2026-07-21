@@ -1007,6 +1007,7 @@ export const ru: TranslationResources = {
     refPicker: {
       startingRef: "Начальная ссылка",
       chooseStart: "Выберите, с чего начать",
+      defaultBranch: "Ветка по умолчанию",
       intoBase: "в {{baseRef}}",
       searching: "Идет поиск...",
       noMatchingRefs: "Нет подходящих ссылок.",

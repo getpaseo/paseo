@@ -1015,6 +1015,7 @@ export const fr: TranslationResources = {
     refPicker: {
       startingRef: "Réf de départ",
       chooseStart: "Choisissez par où commencer",
+      defaultBranch: "Branche par défaut",
       intoBase: "dans {{baseRef}}",
       searching: "Recherche...",
       noMatchingRefs: "Aucune référence correspondante.",

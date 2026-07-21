@@ -1016,6 +1016,7 @@ export const es: TranslationResources = {
     refPicker: {
       startingRef: "Árbitro inicial",
       chooseStart: "Elige por dónde empezar",
+      defaultBranch: "Rama predeterminada",
       intoBase: "en {{baseRef}}",
       searching: "Búsqueda...",
       noMatchingRefs: "No hay árbitros coincidentes.",
