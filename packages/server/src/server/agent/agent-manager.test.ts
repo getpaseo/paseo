@@ -2129,6 +2129,47 @@ test("createAgent fails when cwd does not exist", async () => {
   ).rejects.toThrow("Working directory does not exist");
 });
 
+test("resumeAgentFromPersistence rejects missing cwd unless allowMissingCwd is set", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const client = new TestAgentClient();
+  const manager = new AgentManager({
+    clients: {
+      codex: client,
+    },
+    registry: storage,
+    logger,
+  });
+  const missingCwd = join(workdir, "deleted-worktree");
+  const agentId = "11111111-1111-4111-8111-111111111111";
+  const handle = {
+    provider: "codex" as const,
+    sessionId: "thread-missing-cwd",
+    metadata: {
+      provider: "codex",
+      cwd: missingCwd,
+    },
+  };
+
+  await expect(
+    manager.resumeAgentFromPersistence(handle, { cwd: missingCwd }, agentId),
+  ).rejects.toThrow("Working directory does not exist");
+  expect(client.resumeOverrides).toHaveLength(0);
+
+  const resumed = await manager.resumeAgentFromPersistence(handle, { cwd: missingCwd }, agentId, {
+    allowMissingCwd: true,
+  });
+  expect(resumed.id).toBe(agentId);
+  expect(resumed.cwd).toBe(missingCwd);
+  expect(client.resumeOverrides).toHaveLength(1);
+
+  // Timeline fetch must work after missing-cwd resume (logs path).
+  const timeline = manager.fetchTimeline(agentId, { direction: "tail", limit: 0 });
+  expect(timeline.rows).toEqual([]);
+  expect(timeline.window.nextSeq).toBeGreaterThanOrEqual(1);
+});
+
 test("createAgent reports configured providers when provider is unknown", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const storagePath = join(workdir, "agents");

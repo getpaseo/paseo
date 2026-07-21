@@ -5804,10 +5804,14 @@ export class Session {
       : undefined;
 
     try {
+      // Timeline/logs must still work when the agent's recorded worktree is gone.
+      // allowMissingCwd lets resume recover provider history without requiring
+      // the cwd for new work (send still rejects missing cwd).
       const snapshot = await ensureAgentLoaded(msg.agentId, {
         agentManager: this.agentManager,
         agentStorage: this.agentStorage,
         logger: this.sessionLogger,
+        allowMissingCwd: true,
       });
       const agentPayload = await this.buildAgentPayload(snapshot);
 

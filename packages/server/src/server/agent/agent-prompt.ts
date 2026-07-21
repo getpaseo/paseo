@@ -3,6 +3,7 @@ import type { Logger } from "pino";
 import type { AgentPromptInput, AgentRunOptions } from "./agent-sdk-types.js";
 import type { AgentManager, ManagedAgent } from "./agent-manager.js";
 import type { AgentStorage } from "./agent-storage.js";
+import { assertAgentCwdExists } from "./agent-cwd.js";
 import { ensureAgentLoaded } from "./agent-loading.js";
 import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
 
@@ -187,10 +188,22 @@ export async function sendPromptToAgent(
     await unarchiveAgentState(params.agentStorage, params.agentManager, params.agentId);
   }
 
+  // Continue/send requires a live cwd. Check before load so missing-cwd agents
+  // get a structured recovery error instead of a generic not-found/load failure.
+  const liveBeforeLoad = params.agentManager.getAgent(params.agentId);
+  const cwd = record?.cwd ?? liveBeforeLoad?.cwd;
+  if (cwd) {
+    await assertAgentCwdExists(params.agentId, cwd);
+  } else if (!record && !liveBeforeLoad) {
+    throw new Error(`Agent not found: ${params.agentId}`);
+  }
+
   await ensureAgentLoaded(params.agentId, {
     agentManager: params.agentManager,
     agentStorage: params.agentStorage,
     logger: params.logger,
+    // Never allow missing cwd on the send path.
+    allowMissingCwd: false,
   });
 
   if (params.sessionMode) {

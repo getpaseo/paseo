@@ -159,6 +159,7 @@ test("sendPromptToAgent forwards the client message id as run options", async ()
   const agent: ManagedAgent = Object.create(null);
   Reflect.set(agent, "id", "agent-1");
   Reflect.set(agent, "provider", "codex");
+  Reflect.set(agent, "cwd", process.cwd());
 
   const streamAgentSpy = vi.fn(() => (async function* noop() {})());
   const agentManager: AgentManager = Object.create(AgentManager.prototype);
@@ -192,6 +193,57 @@ test("sendPromptToAgent forwards the client message id as run options", async ()
     outputSchema: { type: "object" },
     clientMessageId: "msg-client-1",
   });
+});
+
+test("sendPromptToAgent returns structured missing-cwd error for present agents", async () => {
+  const missingCwd = `/tmp/paseo-missing-agent-cwd-${Date.now()}`;
+  const agent: ManagedAgent = Object.create(null);
+  Reflect.set(agent, "id", "agent-missing-cwd");
+  Reflect.set(agent, "provider", "codex");
+  Reflect.set(agent, "cwd", missingCwd);
+
+  const streamAgentSpy = vi.fn(() => (async function* noop() {})());
+  const agentManager: AgentManager = Object.create(AgentManager.prototype);
+  Reflect.set(
+    agentManager,
+    "getAgent",
+    vi.fn(() => agent),
+  );
+  Reflect.set(agentManager, "tryRunOutOfBand", vi.fn().mockReturnValue(false));
+  Reflect.set(agentManager, "hasInFlightRun", vi.fn().mockReturnValue(false));
+  Reflect.set(agentManager, "streamAgent", streamAgentSpy);
+
+  const agentStorage: AgentStorage = Object.create(AgentStorage.prototype);
+  Reflect.set(
+    agentStorage,
+    "get",
+    vi.fn(async () => ({
+      id: "agent-missing-cwd",
+      cwd: missingCwd,
+      provider: "codex",
+      archivedAt: null,
+    })),
+  );
+
+  let caught: unknown;
+  try {
+    await sendPromptToAgent({
+      agentManager,
+      agentStorage,
+      agentId: "agent-missing-cwd",
+      prompt: "hello",
+      logger: createTestLogger(),
+    });
+  } catch (error) {
+    caught = error;
+  }
+
+  expect(caught).toBeInstanceOf(Error);
+  const message = (caught as Error).message;
+  expect(message).toMatch(/working directory is missing/i);
+  expect(message).toMatch(/Recreate the worktree|rebind the agent cwd/i);
+  expect(message).not.toMatch(/Agent not found/i);
+  expect(streamAgentSpy).not.toHaveBeenCalled();
 });
 
 test("finish notifications tell the parent the child's last assistant message", async () => {

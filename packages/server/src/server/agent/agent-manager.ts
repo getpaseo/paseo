@@ -118,6 +118,24 @@ interface PreparedSessionConfig {
 interface NormalizeConfigOptions {
   resolveDefaultModel?: boolean;
   env?: Record<string, string>;
+  /**
+   * When true (default), missing/non-directory cwd values throw.
+   * Set false only for resume/load-for-read paths that must recover
+   * timeline history after a worktree has been deleted.
+   * Never disable for createAgent / new work.
+   */
+  requireExistingCwd?: boolean;
+}
+
+export interface ResumeAgentFromPersistenceOptions {
+  createdAt?: Date;
+  updatedAt?: Date;
+  lastUserMessageAt?: Date | null;
+  labels?: Record<string, string>;
+  workspaceId?: string;
+  owner?: AgentOwner;
+  /** Allow resume when recorded cwd is gone (timeline/log recovery only). */
+  allowMissingCwd?: boolean;
 }
 
 interface TimeoutOptions {
@@ -1070,14 +1088,7 @@ export class AgentManager {
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
     agentId?: string,
-    options?: {
-      createdAt?: Date;
-      updatedAt?: Date;
-      lastUserMessageAt?: Date | null;
-      labels?: Record<string, string>;
-      workspaceId?: string;
-      owner?: AgentOwner;
-    },
+    options?: ResumeAgentFromPersistenceOptions,
   ): Promise<ManagedAgent> {
     return this.trackAgentRegistrationOperation(
       this.resumeAgentFromPersistenceInternal(handle, overrides, agentId, options),
@@ -1088,14 +1099,7 @@ export class AgentManager {
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
     agentId?: string,
-    options?: {
-      createdAt?: Date;
-      updatedAt?: Date;
-      lastUserMessageAt?: Date | null;
-      labels?: Record<string, string>;
-      workspaceId?: string;
-      owner?: AgentOwner;
-    },
+    options?: ResumeAgentFromPersistenceOptions,
   ): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
     const resolvedAgentId = validateAgentId(
@@ -1111,6 +1115,8 @@ export class AgentManager {
     const { storedConfig, launchConfig } = await this.prepareSessionConfig(
       mergedConfig,
       resolvedAgentId,
+      undefined,
+      { requireExistingCwd: !options?.allowMissingCwd },
     );
 
     const client = this.requireClient(handle.provider);
@@ -4065,27 +4071,34 @@ export class AgentManager {
     options: NormalizeConfigOptions = {},
   ): Promise<AgentSessionConfig> {
     const normalized: AgentSessionConfig = { ...config };
+    const requireExistingCwd = options.requireExistingCwd ?? true;
 
     // Always resolve cwd to absolute path for consistent history file lookup
     if (normalized.cwd) {
       normalized.cwd = resolve(normalized.cwd);
-      try {
-        const cwdStats = await stat(normalized.cwd);
-        if (!cwdStats.isDirectory()) {
-          throw new Error(`Working directory is not a directory: ${normalized.cwd}`);
+      if (requireExistingCwd) {
+        try {
+          const cwdStats = await stat(normalized.cwd);
+          if (!cwdStats.isDirectory()) {
+            throw new Error(`Working directory is not a directory: ${normalized.cwd}`);
+          }
+        } catch (error) {
+          if (
+            error instanceof Error &&
+            "code" in error &&
+            (error as NodeJS.ErrnoException).code === "ENOENT"
+          ) {
+            throw new Error(`Working directory does not exist: ${normalized.cwd}`, {
+              cause: error,
+            });
+          }
+          if (error instanceof Error) {
+            throw error;
+          }
+          throw new Error(`Failed to access working directory: ${normalized.cwd}`, {
+            cause: error,
+          });
         }
-      } catch (error) {
-        if (
-          error instanceof Error &&
-          "code" in error &&
-          (error as NodeJS.ErrnoException).code === "ENOENT"
-        ) {
-          throw new Error(`Working directory does not exist: ${normalized.cwd}`, { cause: error });
-        }
-        if (error instanceof Error) {
-          throw error;
-        }
-        throw new Error(`Failed to access working directory: ${normalized.cwd}`, { cause: error });
       }
     }
 
@@ -4146,8 +4159,12 @@ export class AgentManager {
     config: AgentSessionConfig,
     agentId: string,
     env?: Record<string, string>,
+    options?: Pick<NormalizeConfigOptions, "requireExistingCwd">,
   ): Promise<PreparedSessionConfig> {
-    const storedConfig = await this.normalizeConfig(stripInternalPaseoMcpServer(config), { env });
+    const storedConfig = await this.normalizeConfig(stripInternalPaseoMcpServer(config), {
+      env,
+      requireExistingCwd: options?.requireExistingCwd,
+    });
     const launchConfig = this.applyDaemonAppendSystemPrompt(
       withRuntimePaseoMcpServer({
         config: storedConfig,
