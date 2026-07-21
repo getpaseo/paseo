@@ -17,13 +17,24 @@ const result = await esbuild.build({
   platform: "browser",
   target: ["ios15", "chrome100"],
   minify: true,
+  // The app's deployment floor is iOS 15.1 but structuredClone (used by
+  // mermaid) only exists from iOS 15.4; esbuild targets transform syntax,
+  // not runtime APIs. Mermaid only clones plain config objects, so a
+  // JSON-based fallback is sufficient.
+  banner: {
+    js: 'if(typeof globalThis.structuredClone!=="function"){globalThis.structuredClone=function(v){return v===undefined?v:JSON.parse(JSON.stringify(v));};}',
+  },
   logLevel: "info",
 });
 
-const js = result.outputFiles[0]?.text;
-if (!js) {
+const rawJs = result.outputFiles[0]?.text;
+if (!rawJs) {
   throw new Error("mermaid webview bundle produced no JavaScript");
 }
+// JSON.stringify below escapes the TypeScript representation, not the runtime
+// HTML — an embedded closing-script sequence would still terminate the inline
+// <script>. `<\/script` is identical to `</script` inside JS strings/regex.
+const js = rawJs.replace(/<\/script/gi, "<\\/script");
 
 const html = `<!doctype html>
 <html>

@@ -13,6 +13,26 @@ export function isMermaidFence(info: string | null | undefined): boolean {
 const UNSAFE_MERMAID_SOURCE =
   /\bimg\s*:|\bicon\s*:|url\s*\(|@import\b|themeCSS|&#|<(?!br\s*\/?>)[a-z!/]/i;
 
+// Mermaid accepts quoted and unicode-escaped object keys (`"img":`,
+// `"img":`), which the raw regex would miss. Decode escapes and strip
+// quoting characters so the denylist sees the same keys mermaid's parser
+// ultimately produces, and test the raw source too.
+function normalizeMermaidSource(code: string): string {
+  return code
+    .replace(/\\u\{([0-9a-fA-F]{1,6})\}/g, (_, hex: string) =>
+      String.fromCodePoint(Number.parseInt(hex, 16)),
+    )
+    .replace(/\\u([0-9a-fA-F]{4})/g, (_, hex: string) =>
+      String.fromCharCode(Number.parseInt(hex, 16)),
+    )
+    .replace(/\\x([0-9a-fA-F]{2})/g, (_, hex: string) =>
+      String.fromCharCode(Number.parseInt(hex, 16)),
+    )
+    .replace(/["'`\\]/g, "");
+}
+
 export function containsUnsafeMermaidSource(code: string): boolean {
-  return UNSAFE_MERMAID_SOURCE.test(code);
+  return (
+    UNSAFE_MERMAID_SOURCE.test(code) || UNSAFE_MERMAID_SOURCE.test(normalizeMermaidSource(code))
+  );
 }

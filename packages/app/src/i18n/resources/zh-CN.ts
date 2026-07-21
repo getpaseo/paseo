@@ -272,6 +272,7 @@ export const zhCN: TranslationResources = {
     },
   },
   message: {
+    mermaidDiagram: "Mermaid 图表",
     actions: {
       copyCode: "复制代码",
       copyTurn: "复制回合",

@@ -272,6 +272,7 @@ export const ar: TranslationResources = {
     },
   },
   message: {
+    mermaidDiagram: "مخطط Mermaid",
     actions: {
       copyCode: "نسخ الرمز",
       copyTurn: "نسخ بدوره",

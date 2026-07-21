@@ -32,6 +32,25 @@ describe("containsUnsafeMermaidSource", () => {
     expect(containsUnsafeMermaidSource('graph TD\n A["</b>"]')).toBe(true);
   });
 
+  it("rejects quoted and escaped key evasions", () => {
+    expect(containsUnsafeMermaidSource('flowchart TD\n  A@{ "img": "https://x/y.png" }')).toBe(
+      true,
+    );
+    expect(containsUnsafeMermaidSource("flowchart TD\n  A@{ 'img': 'https://x/y.png' }")).toBe(
+      true,
+    );
+    expect(
+      containsUnsafeMermaidSource('flowchart TD\n  A@{ "\\u0069mg": "https://x/y.png" }'),
+    ).toBe(true);
+    expect(
+      containsUnsafeMermaidSource('flowchart TD\n  A@{ "\\u{69}mg": "https://x/y.png" }'),
+    ).toBe(true);
+    expect(containsUnsafeMermaidSource('flowchart TD\n  A@{ "\\x69mg": "https://x/y.png" }')).toBe(
+      true,
+    );
+    expect(containsUnsafeMermaidSource('flowchart TD\n  A@{ "icon": "pack:name" }')).toBe(true);
+  });
+
   it("allows ordinary diagrams including <br> labels", () => {
     expect(containsUnsafeMermaidSource("flowchart TD\n  A[Start] --> B{Choice}")).toBe(false);
     expect(containsUnsafeMermaidSource('graph TD\n A["line one<br>line two"]')).toBe(false);

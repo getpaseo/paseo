@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Modal,
   Pressable,
@@ -119,7 +119,12 @@ function MermaidWebView({
         return;
       }
       if (message.type === "renderError" && typeof message.requestId === "number") {
-        sentSourcesRef.current.delete(message.requestId);
+        // Serialization is latest-wins: requests skipped before this one can
+        // never complete later, so prune them too or a long broken stream
+        // retains every superseded source.
+        for (const id of sentSourcesRef.current.keys()) {
+          if (id <= message.requestId) sentSourcesRef.current.delete(id);
+        }
       }
     },
     [onRendered, sendRender],
@@ -216,6 +221,7 @@ function MermaidDiagramImpl({
   textStyle,
   colorScheme = "dark",
 }: MermaidDiagramImplProps) {
+  const { t } = useTranslation();
   // Last successful render: height sizes the preview, and its source (not the
   // possibly newer, still-invalid streamed code) is what the fullscreen viewer
   // renders — otherwise tapping mid-stream could open a blank viewer. Null
@@ -230,6 +236,13 @@ function MermaidDiagramImpl({
   const [viewerOpen, setViewerOpen] = useState(false);
   const openViewer = useCallback(() => setViewerOpen(true), []);
   const closeViewer = useCallback(() => setViewerOpen(false), []);
+  const previewInnerStyle = useMemo(
+    () =>
+      lastGoodRender === null
+        ? previewStyles.measuringInner
+        : { height: Math.min(lastGoodRender.height, MAX_PREVIEW_HEIGHT) },
+    [lastGoodRender],
+  );
 
   if (containsUnsafeMermaidSource(code)) {
     return (
@@ -257,18 +270,14 @@ function MermaidDiagramImpl({
         onPress={openViewer}
         disabled={lastGoodRender === null}
         accessibilityRole={lastGoodRender === null ? undefined : "imagebutton"}
-        accessibilityLabel="Mermaid diagram"
+        accessibilityLabel={t("message.mermaidDiagram")}
         style={
           lastGoodRender === null
-            ? previewStyles.measuring
-            : [
-                boxStyle as ViewStyle,
-                { height: Math.min(lastGoodRender.height, MAX_PREVIEW_HEIGHT) },
-                previewStyles.preview,
-              ]
+            ? [boxStyle as ViewStyle, previewStyles.measuring]
+            : [boxStyle as ViewStyle, previewStyles.preview]
         }
       >
-        <View style={previewStyles.webViewShield} pointerEvents="none">
+        <View style={previewInnerStyle} pointerEvents="none">
           <MermaidWebView
             code={code}
             colorScheme={colorScheme}
@@ -289,20 +298,25 @@ function MermaidDiagramImpl({
 }
 
 const previewStyles = RNStyleSheet.create({
-  // Mounted off-screen at full width so the svg lays out at its real size
-  // while the code block is still showing.
+  // Invisible overlay while the code block still shows underneath. Keeps the
+  // fence box insets so the webview measures at the same content width the
+  // final preview will have, and stays hit-test transparent so the code
+  // block's copy button and gestures aren't blocked by an unrendered diagram.
   measuring: {
     position: "absolute",
     left: 0,
     right: 0,
-    height: 240,
     opacity: 0,
+    pointerEvents: "none",
   },
+  measuringInner: {
+    height: 240,
+  },
+  // Height goes on the inner content view; the fence padding/border from
+  // boxStyle then add onto it, so the reported SVG height is never eaten by
+  // the insets.
   preview: {
     overflow: "hidden",
-  },
-  webViewShield: {
-    flex: 1,
   },
 });
 

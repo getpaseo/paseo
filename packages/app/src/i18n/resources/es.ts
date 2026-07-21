@@ -275,6 +275,7 @@ export const es: TranslationResources = {
     },
   },
   message: {
+    mermaidDiagram: "Diagrama Mermaid",
     actions: {
       copyCode: "Copiar código",
       copyTurn: "Copiar turno",

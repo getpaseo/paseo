@@ -271,6 +271,7 @@ export const en = {
     },
   },
   message: {
+    mermaidDiagram: "Mermaid diagram",
     actions: {
       copyCode: "Copy code",
       copyTurn: "Copy turn",

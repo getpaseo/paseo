@@ -73,8 +73,8 @@ let renderChain: Promise<void> = Promise.resolve();
 
 async function render(message: RenderMessage, seq: number): Promise<void> {
   if (seq !== renderSeq) return;
-  initializeMermaid(message.colorScheme);
   try {
+    initializeMermaid(message.colorScheme);
     const { svg } = await mermaid.render(`paseo-mermaid-native-${seq}`, message.code);
     if (seq !== renderSeq) return;
     setViewport(message.interactive);
@@ -90,7 +90,11 @@ async function render(message: RenderMessage, seq: number): Promise<void> {
     });
   } catch {
     // Invalid or still-streaming diagram source — keep the previous render.
-    if (seq === renderSeq) sendToNative({ type: "renderError", requestId: message.requestId });
+    try {
+      if (seq === renderSeq) sendToNative({ type: "renderError", requestId: message.requestId });
+    } catch {
+      // Never let a failed post reject the task and poison the chain.
+    }
   }
 }
 
@@ -98,7 +102,10 @@ window.__PASEO_MERMAID_WEBVIEW_RECEIVE__ = (message) => {
   if (message?.type !== "render") return;
   renderSeq += 1;
   const seq = renderSeq;
-  renderChain = renderChain.then(() => render(message, seq));
+  // The trailing catch keeps the chain alive even if a task rejects in a way
+  // the task-level try/catch didn't cover — one bad render must never brick
+  // this webview instance.
+  renderChain = renderChain.then(() => render(message, seq)).catch(() => {});
 };
 
 sendToNative({ type: "bridgeReady" });

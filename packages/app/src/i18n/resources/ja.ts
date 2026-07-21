@@ -275,6 +275,7 @@ export const ja: TranslationResources = {
     },
   },
   message: {
+    mermaidDiagram: "Mermaid図",
     actions: {
       copyCode: "コードをコピー",
       copyTurn: "ターンをコピー",
