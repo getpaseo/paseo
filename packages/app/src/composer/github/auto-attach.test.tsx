@@ -269,6 +269,26 @@ describe("useComposerGithubAutoAttach", () => {
     vi.useRealTimers();
   });
 
+  it("stops resolving when an in-flight PR URL is removed", async () => {
+    vi.useFakeTimers();
+    const lookup = deferred<ForgeSearchPayload>();
+    const client: ForgeSearchClient = {
+      searchForge: vi.fn().mockReturnValue(lookup.promise),
+    };
+    const { result } = renderHook(() => useHarness(client), { wrapper: createWrapper() });
+
+    act(() => {
+      result.current.setText("Review https://github.com/acme/paseo/pull/101");
+    });
+    await flushDebounce();
+    act(() => {
+      result.current.setText("");
+    });
+
+    expect(result.current.isResolving).toBe(false);
+    vi.useRealTimers();
+  });
+
   it("ignores a lookup that finishes after the target changes", async () => {
     vi.useFakeTimers();
     const lookup = deferred<ForgeSearchPayload>();

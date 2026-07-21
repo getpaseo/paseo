@@ -72,26 +72,26 @@ export function useComposerGithubAutoAttach(
 
     const refKeys = refs.map(githubRefKey);
     setResolvingRefCounts((current) => addKeys(current, refKeys));
-    let lookupStarted = false;
+    let resolvingReleased = false;
+    const releaseResolving = () => {
+      if (resolvingReleased) return;
+      resolvingReleased = true;
+      clearResolvingKeys(setResolvingRefCounts, refKeys);
+    };
 
     const timerId = setTimeout(() => {
-      lookupStarted = true;
       void attachRefs({
         refs,
         queryClient,
         latestRef,
         removedRefKeys: removedRefKeysRef.current,
         pendingRefKeys: pendingRefKeysRef.current,
-      }).finally(() => {
-        clearResolvingKeys(setResolvingRefCounts, refKeys);
-      });
+      }).finally(releaseResolving);
     }, AUTO_ATTACH_DEBOUNCE_MS);
 
     return () => {
       clearTimeout(timerId);
-      if (!lookupStarted) {
-        clearResolvingKeys(setResolvingRefCounts, refKeys);
-      }
+      releaseResolving();
     };
   }, [
     params.text,
