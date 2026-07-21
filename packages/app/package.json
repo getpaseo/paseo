@@ -29,7 +29,8 @@
     "build:web": "npm --prefix ../.. run build:app-deps && expo export --platform web",
     "profile:workspace-tabs": "node ./scripts/profile-workspace-tabs.mjs",
     "deploy:web": "npm run build:web && wrangler pages deploy dist --project-name paseo-app --branch main",
-    "build:terminal-webview": "node ./scripts/build-terminal-webview-html.mjs"
+    "build:terminal-webview": "node ./scripts/build-terminal-webview-html.mjs",
+    "build:mermaid-webview": "node ./scripts/build-mermaid-webview-html.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "6.10.4",
@@ -92,6 +93,7 @@
     "i18next": "^26.3.0",
     "lucide-react-native": "^0.546.0",
     "markdown-it": "^10.0.0",
+    "mermaid": "^11.16.0",
     "mnemonic-id": "^3.2.7",
     "qrcode": "^1.5.4",
     "react": "19.1.0",

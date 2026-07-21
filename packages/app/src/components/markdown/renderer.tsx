@@ -23,7 +23,9 @@ import Markdown, {
 } from "react-native-markdown-display";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
+import { MermaidDiagram } from "@/components/mermaid-diagram";
 import { MarkdownParagraphView, MarkdownTextSpan } from "@/components/markdown-text";
+import { isMermaidFence } from "@/utils/mermaid-fence";
 import { MarkdownTableCellText } from "@/components/markdown-text-selection";
 import { getMarkdownListMarker, getMarkdownListSpacing } from "@/utils/markdown-list";
 import { markdownNodeContainsType } from "@/utils/markdown-ast";
@@ -605,15 +607,23 @@ export function createSharedMarkdownRules(): RenderRules {
       _parent: ASTNode[],
       styles: MarkdownStyles,
       inheritedStyles: TextStyle = {},
-    ) => (
-      <HighlightedCodeBlock
-        key={node.key}
-        code={node.content}
-        language={node.sourceInfo}
-        inheritedStyles={inheritedStyles}
-        textStyle={styles.fence}
-      />
-    ),
+    ) =>
+      isMermaidFence(node.sourceInfo) ? (
+        <MermaidDiagram
+          key={node.key}
+          code={node.content}
+          inheritedStyles={inheritedStyles}
+          textStyle={styles.fence}
+        />
+      ) : (
+        <HighlightedCodeBlock
+          key={node.key}
+          code={node.content}
+          language={node.sourceInfo}
+          inheritedStyles={inheritedStyles}
+          textStyle={styles.fence}
+        />
+      ),
     code_inline: (
       node: ASTNode,
       _children: ReactNode[],
