@@ -10,6 +10,7 @@ import {
   type ComponentProps,
   type ReactNode,
 } from "react";
+import { useShallow } from "zustand/shallow";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import { useIsFocused } from "@react-navigation/native";
 import { ActivityIndicator, BackHandler, Keyboard, Pressable, Text, View } from "react-native";
@@ -206,6 +207,7 @@ const WORKSPACE_FLOATING_PANEL_PORTAL_HOST_PREFIX = "workspace-floating-panels";
 const EMPTY_UI_TABS: WorkspaceTab[] = [];
 const EMPTY_WORKSPACE_SCRIPTS: WorkspaceDescriptor["scripts"] = [];
 const EMPTY_PINNED_AGENT_IDS = new Set<string>();
+const EMPTY_FORKABLE_AGENT_IDS: string[] = [];
 const EMPTY_SET = new Set<string>();
 
 function getWorkspaceScripts(
@@ -2064,10 +2066,6 @@ function WorkspaceScreenContent({
     }
     return () => viewedTimelineSync.replaceVisibleAgentIds(persistenceKey, []);
   }, [persistenceKey, viewedTimelineSync]);
-  // COMPAT(agentSessionFork): added in v0.1.109, drop the gate when floor >= v0.1.109.
-  const hostSupportsAgentSessionFork = useSessionStore(
-    (state) => state.sessions[normalizedServerId]?.serverInfo?.features?.agentSessionFork === true,
-  );
   const setFocusedAgentId = useSessionStore((state) => state.setFocusedAgentId);
   const setFocusedTerminalId = useSessionStore((state) => state.setFocusedTerminalId);
   const focusedPaneAgentId = useMemo(() => {
@@ -2807,19 +2805,34 @@ function WorkspaceScreenContent({
     [normalizedServerId, toast, t],
   );
 
+  // A provider session id only lands once the agent has actually started, which
+  // is after the tab chip first builds its context menu. Reading the store with
+  // getState() inside the callback would leave that menu memoized against a
+  // null session id forever, so the entry has to be driven by a reactive
+  // selector that re-renders the chip when an agent becomes forkable.
+  const forkableAgentIds = useSessionStore(
+    useShallow((state) => {
+      const session = state.sessions[normalizedServerId];
+      // COMPAT(agentSessionFork): added in v0.1.109, drop the gate when floor >= v0.1.109.
+      if (session?.serverInfo?.features?.agentSessionFork !== true) {
+        return EMPTY_FORKABLE_AGENT_IDS;
+      }
+      const forkable: string[] = [];
+      for (const [agentId, agent] of session.agents ?? []) {
+        if (agent.capabilities?.supportsForkSession !== true) {
+          continue;
+        }
+        if (agent.runtimeInfo?.sessionId ?? agent.persistence?.sessionId) {
+          forkable.push(agentId);
+        }
+      }
+      return forkable;
+    }),
+  );
+
   const canForkAgentSession = useCallback(
-    (agentId: string) => {
-      if (!hostSupportsAgentSessionFork) {
-        return false;
-      }
-      const agent =
-        useSessionStore.getState().sessions[normalizedServerId]?.agents?.get(agentId) ?? null;
-      if (agent?.capabilities?.supportsForkSession !== true) {
-        return false;
-      }
-      return Boolean(agent.runtimeInfo?.sessionId ?? agent.persistence?.sessionId);
-    },
-    [hostSupportsAgentSessionFork, normalizedServerId],
+    (agentId: string) => forkableAgentIds.includes(agentId),
+    [forkableAgentIds],
   );
 
   const handleForkSession = useCallback(
