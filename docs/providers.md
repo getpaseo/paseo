@@ -50,6 +50,10 @@ Draft metadata lookups should avoid creating provider sessions when the upstream
 
 Provider session import has its own contract. The picker calls `listImportableSessions` and receives rows only: provider handle, cwd, title, prompt previews, and last activity. Import calls `importSession({ providerHandleId, cwd })` for the selected row and must not call listing again. The provider returns the resumed session, storage config, persistence handle, and hydrated timeline for that one native session; `AgentManager.importProviderSession` seeds the daemon timeline and publishes the Paseo agent only after it is ready.
 
+Session forking builds on that import contract. `AgentClient.forkSession({ providerHandleId, cwd, config })` asks the provider to branch a durable session into a brand new one holding a full copy of the transcript, and returns only the new provider handle id. `AgentManager.forkAgentSession` then runs the ordinary import path against that new handle, so the fork becomes a separate Paseo agent with its own hydrated timeline. Forking must be non-destructive: the source session stays on disk and the source agent keeps running against it. Advertise support with the `supportsForkSession` capability flag — the client hides the "Fork session" tab action for providers that do not set it. Claude implements this with the Agent SDK's `forkSession()` (no `upToMessageId`, so the whole transcript is copied); Codex has the equivalent `thread/fork`. Providers without a native branch primitive should simply omit the method rather than emulating one by replaying history.
+
+Do not implement forking by passing a fork flag through `buildOptions()`-style session option builders. Those builders re-run on every query recreation (model switch, mode switch, interrupt, rewind), so a fork flag there re-forks on every restart. Forking is a one-shot operation that happens before the new session is registered.
+
 ## Provider Helper Processes
 
 Provider-owned helper processes that can outlive an individual agent session must be recorded in the daemon's managed-process registry. Store provider/kind metadata, the PID, launch command/args, and process identity captured from the platform process table. Remove the record on normal exit or shutdown.
@@ -360,6 +364,7 @@ interface AgentClient {
     input: ImportProviderSessionInput,
     context: ImportProviderSessionContext,
   ): Promise<ImportedProviderSession>;
+  forkSession(input: ForkProviderSessionInput): Promise<ForkedProviderSession>;
   getDiagnostic?(): Promise<{ diagnostic: string }>;
 }
 ```

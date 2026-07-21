@@ -71,13 +71,25 @@ export type {
   WorkspaceTabSnapshot,
 };
 
+export interface OpenTabPlacementOptions {
+  /**
+   * Place the new tab directly to the right of this tab instead of at the end
+   * of the pane. Ignored when the anchor tab is not in the target pane.
+   */
+  insertAfterTabId?: string;
+}
+
 interface WorkspaceLayoutStore {
   layoutByWorkspace: Record<string, WorkspaceLayout>;
   splitSizesByWorkspace: Record<string, Record<string, number[]>>;
   pinnedAgentIdsByWorkspace: Record<string, Set<string>>;
   hiddenAgentIdsByWorkspace: Record<string, Set<string>>;
   focusRestorationByWorkspace: Record<string, WorkspaceFocusRestorationState>;
-  openTabFocused: (workspaceKey: string, target: WorkspaceTabTarget) => string | null;
+  openTabFocused: (
+    workspaceKey: string,
+    target: WorkspaceTabTarget,
+    options?: OpenTabPlacementOptions,
+  ) => string | null;
   openChildTabFocused: (
     workspaceKey: string,
     target: WorkspaceTabTarget,
@@ -231,17 +243,19 @@ export function createWorkspaceLayoutStore(
         pinnedAgentIdsByWorkspace: {},
         hiddenAgentIdsByWorkspace: {},
         focusRestorationByWorkspace: {},
-        openTabFocused: (workspaceKey, target) => {
+        openTabFocused: (workspaceKey, target, options) => {
           const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
           const normalizedTarget = normalizeWorkspaceTabTarget(target);
           if (!normalizedWorkspaceKey || !normalizedTarget) {
             return null;
           }
 
+          const insertAfterTabId = trimNonEmpty(options?.insertAfterTabId ?? "");
           const result = openTabInLayoutFocused({
             layout: getWorkspaceLayout(get().layoutByWorkspace, normalizedWorkspaceKey),
             target: normalizedTarget,
             now: Date.now(),
+            ...(insertAfterTabId ? { insertAfterTabId } : {}),
           });
 
           set((state) => ({

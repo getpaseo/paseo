@@ -1,3 +1,4 @@
+import type { OpenTabPlacementOptions } from "@/stores/workspace-layout-store";
 import { generateDraftId } from "@/stores/draft-keys";
 import {
   buildWorkspaceTabPersistenceKey,
@@ -9,10 +10,16 @@ export interface PrepareWorkspaceTabInput {
   workspaceId: string;
   target: WorkspaceTabTarget;
   pin?: boolean;
+  /** Open the tab directly to the right of this tab instead of at the end. */
+  insertAfterTabId?: string;
 }
 
 export interface PrepareWorkspaceTabDeps {
-  openTabFocused: (workspaceKey: string, target: WorkspaceTabTarget) => string | null;
+  openTabFocused: (
+    workspaceKey: string,
+    target: WorkspaceTabTarget,
+    options?: OpenTabPlacementOptions,
+  ) => string | null;
   pinAgent: (workspaceKey: string, agentId: string) => void;
 }
 
@@ -34,7 +41,11 @@ export function prepareWorkspaceTab(
       workspaceId: input.workspaceId,
     }) ?? "";
 
-  deps.openTabFocused(key, target);
+  deps.openTabFocused(
+    key,
+    target,
+    input.insertAfterTabId ? { insertAfterTabId: input.insertAfterTabId } : undefined,
+  );
 
   if (input.pin && target.kind === "agent") {
     deps.pinAgent(key, target.agentId);

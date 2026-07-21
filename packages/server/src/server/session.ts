@@ -1789,6 +1789,8 @@ export class Session {
         return this.handleResumeAgentRequest(msg);
       case "import_agent_request":
         return this.handleImportAgentRequest(msg);
+      case "agent.session.fork.request":
+        return this.handleAgentSessionForkRequest(msg);
       case "refresh_agent_request":
         return this.handleRefreshAgentRequest(msg);
       case "cancel_agent_request":
@@ -3275,6 +3277,43 @@ export class Session {
       } else {
         this.handleAgentRunError(agentId, error, "Failed to cancel running agent on request");
       }
+    }
+  }
+
+  private async handleAgentSessionForkRequest(
+    msg: Extract<SessionInboundMessage, { type: "agent.session.fork.request" }>,
+  ): Promise<void> {
+    try {
+      const forked = await this.agentManager.forkAgentSession({
+        agentId: msg.agentId,
+        workspaceId: msg.workspaceId,
+      });
+      this.emit({
+        type: "agent.session.fork.response",
+        payload: {
+          requestId: msg.requestId,
+          agentId: msg.agentId,
+          forkedAgentId: forked.id,
+          ok: true,
+          error: null,
+        },
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to fork agent session";
+      this.sessionLogger.error(
+        { err: error, agentId: msg.agentId },
+        "Failed to fork agent session",
+      );
+      this.emit({
+        type: "agent.session.fork.response",
+        payload: {
+          requestId: msg.requestId,
+          agentId: msg.agentId,
+          forkedAgentId: null,
+          ok: false,
+          error: message,
+        },
+      });
     }
   }
 

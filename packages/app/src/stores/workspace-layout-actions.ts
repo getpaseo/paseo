@@ -83,6 +83,11 @@ interface InsertTabIntoPaneInput {
   paneId: string;
   tab: WorkspaceTab;
   focusTabId?: string | null;
+  /**
+   * Place the new tab directly after this tab instead of at the end of the
+   * pane. Ignored when the anchor is not in this pane.
+   */
+  insertAfterTabId?: string;
 }
 
 interface InsertSplitInternalInput {
@@ -102,6 +107,8 @@ interface OpenTabInLayoutInput {
   layout: WorkspaceLayout;
   target: WorkspaceTabTarget;
   now: number;
+  /** Place the new tab directly after this tab instead of at the end of the pane. */
+  insertAfterTabId?: string;
 }
 
 interface OpenTabInLayoutResult {
@@ -716,6 +723,20 @@ function detachTabFromTree(
   };
 }
 
+function insertTabAtAnchor(
+  tabs: readonly WorkspaceTab[],
+  tab: WorkspaceTab,
+  insertAfterTabId: string | undefined,
+): WorkspaceTab[] {
+  const anchorIndex = insertAfterTabId
+    ? tabs.findIndex((existing) => existing.tabId === insertAfterTabId)
+    : -1;
+  if (anchorIndex < 0) {
+    return [...tabs, tab];
+  }
+  return [...tabs.slice(0, anchorIndex + 1), tab, ...tabs.slice(anchorIndex + 1)];
+}
+
 function insertTabIntoPane(
   root: SplitNodeInternal,
   input: InsertTabIntoPaneInput,
@@ -728,7 +749,7 @@ function insertTabIntoPane(
     const nextTabs =
       existingIndex >= 0
         ? node.pane.tabs.map((tab, index) => (index === existingIndex ? input.tab : tab))
-        : [...node.pane.tabs, input.tab];
+        : insertTabAtAnchor(node.pane.tabs, input.tab, input.insertAfterTabId);
     return {
       kind: "pane",
       pane: normalizePaneAfterTabChange({
@@ -1074,6 +1095,7 @@ function insertNewTabIntoFocusedPane(input: {
   target: WorkspaceTabTarget;
   now: number;
   focus: boolean;
+  insertAfterTabId?: string;
 }): OpenTabInLayoutResult {
   const layout = asInternalLayout(input.layout);
   const focusedPane =
@@ -1098,6 +1120,7 @@ function insertNewTabIntoFocusedPane(input: {
         paneId: focusedPane.id,
         tab: nextTab,
         focusTabId: input.focus ? tabId : preservedFocusTabId,
+        ...(input.insertAfterTabId ? { insertAfterTabId: input.insertAfterTabId } : {}),
       }),
       focusedPaneId: input.focus ? focusedPane.id : layout.focusedPaneId,
       parentTabIdByTabId: input.layout.parentTabIdByTabId,

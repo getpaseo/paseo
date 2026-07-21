@@ -2886,6 +2886,38 @@ export class DaemonClient {
     return payload;
   }
 
+  /**
+   * Branch an agent's provider session into a new agent seeded with a full copy
+   * of the transcript. Returns the id of the newly created agent.
+   */
+  async forkAgentSession(input: { agentId: string; workspaceId?: string }): Promise<string> {
+    const requestId = this.createRequestId();
+    const message = SessionInboundMessageSchema.parse({
+      type: "agent.session.fork.request",
+      requestId,
+      agentId: input.agentId,
+      ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
+    });
+    const payload = await this.sendRequest({
+      requestId,
+      message,
+      options: { skipQueue: true },
+      select: (msg) => {
+        if (msg.type !== "agent.session.fork.response") {
+          return null;
+        }
+        if (msg.payload.requestId !== requestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+    });
+    if (!payload.ok || !payload.forkedAgentId) {
+      throw new Error(payload.error ?? "Agent session fork failed");
+    }
+    return payload.forkedAgentId;
+  }
+
   async cancelAgent(agentId: string): Promise<void> {
     const requestId = this.createRequestId();
     const message = SessionInboundMessageSchema.parse({

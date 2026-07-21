@@ -420,6 +420,73 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
   return new Session(sessionOptions);
 }
 
+describe("agent session fork", () => {
+  test("forks the agent and returns the new agent id", async () => {
+    const messages: SessionOutboundMessage[] = [];
+    const forkAgentSession = vi.fn().mockResolvedValue({ id: "agent-fork" });
+
+    const session = createSessionForTest({
+      messages,
+      agentManager: { forkAgentSession },
+    });
+
+    await session.handleMessage({
+      type: "agent.session.fork.request",
+      agentId: "agent-source",
+      workspaceId: "ws-1",
+      requestId: "fork-1",
+    });
+
+    expect(forkAgentSession).toHaveBeenCalledWith({
+      agentId: "agent-source",
+      workspaceId: "ws-1",
+    });
+    expect(messages).toEqual([
+      {
+        type: "agent.session.fork.response",
+        payload: {
+          requestId: "fork-1",
+          agentId: "agent-source",
+          forkedAgentId: "agent-fork",
+          ok: true,
+          error: null,
+        },
+      },
+    ]);
+  });
+
+  test("reports the provider failure reason instead of throwing", async () => {
+    const messages: SessionOutboundMessage[] = [];
+    const forkAgentSession = vi
+      .fn()
+      .mockRejectedValue(new Error("Provider 'opencode' does not support forking sessions"));
+
+    const session = createSessionForTest({
+      messages,
+      agentManager: { forkAgentSession },
+    });
+
+    await session.handleMessage({
+      type: "agent.session.fork.request",
+      agentId: "agent-source",
+      requestId: "fork-2",
+    });
+
+    expect(messages).toEqual([
+      {
+        type: "agent.session.fork.response",
+        payload: {
+          requestId: "fork-2",
+          agentId: "agent-source",
+          forkedAgentId: null,
+          ok: false,
+          error: "Provider 'opencode' does not support forking sessions",
+        },
+      },
+    ]);
+  });
+});
+
 describe("session authorization scopes", () => {
   test("rejects an RPC outside an exact grant with the generic RPC error", async () => {
     const messages: SessionOutboundMessage[] = [];

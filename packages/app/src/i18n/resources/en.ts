@@ -484,6 +484,8 @@ export const en = {
       },
       menu: {
         openFor: "Open menu for {{label}}",
+        forkSession: "Fork session",
+        forkSessionTooltip: "Branch this session into a new tab. The original keeps running.",
         copyResumeCommand: "Copy resume command",
         copyAgentId: "Copy agent id",
         copyFilePath: "Copy file path",
@@ -527,6 +529,9 @@ export const en = {
         filePathCopiedLabel: "File path",
         resumeIdUnavailable: "Resume ID not available",
         resumeCommandUnavailable: "Resume command not available",
+        forkingSession: "Forking session…",
+        forkedSession: "Session forked",
+        failedToForkSession: "Failed to fork session",
         reloadingAgent: "Reloading agent...",
         reloadedAgent: "Reloaded agent",
         failedToReloadAgent: "Failed to reload agent",

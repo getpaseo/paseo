@@ -1139,6 +1139,68 @@ export class AgentManager {
     return this.trackAgentRegistrationOperation(this.importProviderSessionInternal(input));
   }
 
+  /**
+   * Branch an existing agent's provider session into a brand new agent that
+   * starts with a full copy of the transcript. The source agent keeps running
+   * against its own session; the two diverge from here.
+   */
+  forkAgentSession(input: {
+    agentId: string;
+    workspaceId?: string;
+    labels?: Record<string, string>;
+  }): Promise<ManagedAgent> {
+    return this.trackAgentRegistrationOperation(this.forkAgentSessionInternal(input));
+  }
+
+  private async forkAgentSessionInternal(input: {
+    agentId: string;
+    workspaceId?: string;
+    labels?: Record<string, string>;
+  }): Promise<ManagedAgent> {
+    const source = this.requireAgent(input.agentId);
+    const sourceSessionId = source.persistence?.sessionId;
+    if (!sourceSessionId) {
+      throw new Error(`Agent '${source.id}' has no provider session to fork`);
+    }
+    const workspaceId = input.workspaceId ?? source.workspaceId;
+    if (!workspaceId) {
+      throw new Error(`Agent '${source.id}' has no workspace to fork into`);
+    }
+
+    const client = await this.requireAvailableClient({ provider: source.provider });
+    if (!client.forkSession) {
+      throw new Error(`Provider '${source.provider}' does not support forking sessions`);
+    }
+
+    this.logger.info(
+      { agentId: source.id, provider: source.provider, sessionId: sourceSessionId },
+      "agent.fork.start",
+    );
+    const forked = await client.forkSession({
+      providerHandleId: sourceSessionId,
+      cwd: source.cwd,
+      config: source.config,
+    });
+
+    const agent = await this.importProviderSessionInternal({
+      provider: source.provider,
+      providerHandleId: forked.providerHandleId,
+      cwd: source.cwd,
+      workspaceId,
+      labels: input.labels ?? source.labels,
+    });
+    this.logger.info(
+      {
+        agentId: source.id,
+        forkedAgentId: agent.id,
+        provider: source.provider,
+        sessionId: forked.providerHandleId,
+      },
+      "agent.fork.complete",
+    );
+    return agent;
+  }
+
   private async importProviderSessionInternal(input: {
     provider: AgentProvider;
     providerHandleId: string;

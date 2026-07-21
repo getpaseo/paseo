@@ -489,6 +489,9 @@ export const fr: TranslationResources = {
       },
       menu: {
         openFor: "Ouvrir le menu pour{{label}}",
+        forkSession: "Dupliquer la session",
+        forkSessionTooltip:
+          "Créez une branche de cette session dans un nouvel onglet. L'originale continue de s'exécuter.",
         copyResumeCommand: "Copier la commande de reprise",
         copyAgentId: "Copier l'identifiant de l'agent",
         copyFilePath: "Copy file path",
@@ -533,6 +536,9 @@ export const fr: TranslationResources = {
         filePathCopiedLabel: "File path",
         resumeIdUnavailable: "ReprendreIDnon disponible",
         resumeCommandUnavailable: "Commande de reprise non disponible",
+        forkingSession: "Duplication de la session…",
+        forkedSession: "Session dupliquée",
+        failedToForkSession: "Échec de la duplication de la session",
         reloadingAgent: "Agent de rechargement...",
         reloadedAgent: "Agent rechargé",
         failedToReloadAgent: "Échec du rechargement de l'agent",

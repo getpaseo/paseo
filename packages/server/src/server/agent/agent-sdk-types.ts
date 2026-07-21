@@ -178,6 +178,7 @@ export interface AgentCapabilityFlags {
   supportsRewindConversation?: boolean;
   supportsRewindFiles?: boolean;
   supportsRewindBoth?: boolean;
+  supportsForkSession?: boolean;
 }
 
 export interface AgentPersistenceHandle {
@@ -531,6 +532,19 @@ export interface ImportProviderSessionInput {
   cwd: string;
 }
 
+export interface ForkProviderSessionInput {
+  /** Provider handle id of the session being branched. */
+  providerHandleId: string;
+  cwd: string;
+  /** Config of the source agent, used by providers that require it to fork. */
+  config?: AgentSessionConfig;
+}
+
+export interface ForkedProviderSession {
+  /** Provider handle id of the newly created session. */
+  providerHandleId: string;
+}
+
 export interface ImportProviderSessionContext {
   config: AgentSessionConfig;
   storedConfig: AgentSessionConfig;
@@ -708,6 +722,13 @@ export interface AgentClient {
     input: ImportProviderSessionInput,
     context: ImportProviderSessionContext,
   ): Promise<ImportedProviderSession>;
+  /**
+   * Branch a durable native session into a brand new one that starts with a full
+   * copy of the source transcript. Non-destructive: the source session is left
+   * untouched and both sides diverge independently from the fork point.
+   * Returns the provider handle id of the new session.
+   */
+  forkSession?(input: ForkProviderSessionInput): Promise<ForkedProviderSession>;
   /**
    * Check if this provider is available (CLI binary is installed).
    * Returns true if available, false otherwise.

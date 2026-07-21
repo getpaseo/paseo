@@ -353,6 +353,95 @@ describe("workspace-layout-store actions", () => {
     ]);
   });
 
+  it("inserts a tab directly to the right of the anchor tab", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+
+    store.openTabFocused(workspaceKey, { kind: "agent", agentId: "agent-a" });
+    store.openTabFocused(workspaceKey, { kind: "agent", agentId: "agent-b" });
+    store.openTabFocused(workspaceKey, { kind: "agent", agentId: "agent-c" });
+
+    const forkedTabId = store.openTabFocused(
+      workspaceKey,
+      { kind: "agent", agentId: "agent-a-fork" },
+      { insertAfterTabId: "agent_agent-a" },
+    );
+
+    const layout = workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
+    expect(collectAllTabs(layout.root).map((tab) => tab.tabId)).toEqual([
+      "agent_agent-a",
+      "agent_agent-a-fork",
+      "agent_agent-b",
+      "agent_agent-c",
+    ]);
+    expect(forkedTabId).toBe("agent_agent-a-fork");
+  });
+
+  it("places the tab at the end when the anchor is the last tab", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+
+    store.openTabFocused(workspaceKey, { kind: "agent", agentId: "agent-a" });
+    store.openTabFocused(workspaceKey, { kind: "agent", agentId: "agent-b" });
+
+    store.openTabFocused(
+      workspaceKey,
+      { kind: "agent", agentId: "agent-b-fork" },
+      { insertAfterTabId: "agent_agent-b" },
+    );
+
+    const layout = workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
+    expect(collectAllTabs(layout.root).map((tab) => tab.tabId)).toEqual([
+      "agent_agent-a",
+      "agent_agent-b",
+      "agent_agent-b-fork",
+    ]);
+  });
+
+  it("focuses the existing tab instead of re-inserting when the fork tab is already open", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+
+    store.openTabFocused(workspaceKey, { kind: "agent", agentId: "agent-a" });
+    store.openTabFocused(workspaceKey, { kind: "agent", agentId: "agent-a-fork" });
+    store.openTabFocused(workspaceKey, { kind: "agent", agentId: "agent-b" });
+
+    const reopened = store.openTabFocused(
+      workspaceKey,
+      { kind: "agent", agentId: "agent-a-fork" },
+      { insertAfterTabId: "agent_agent-a" },
+    );
+
+    const layout = workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
+    expect(reopened).toBe("agent_agent-a-fork");
+    expect(collectAllTabs(layout.root).map((tab) => tab.tabId)).toEqual([
+      "agent_agent-a",
+      "agent_agent-a-fork",
+      "agent_agent-b",
+    ]);
+  });
+
+  it("appends when the anchor tab is not in the pane", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+
+    store.openTabFocused(workspaceKey, { kind: "agent", agentId: "agent-a" });
+    store.openTabFocused(workspaceKey, { kind: "agent", agentId: "agent-b" });
+
+    store.openTabFocused(
+      workspaceKey,
+      { kind: "agent", agentId: "agent-c" },
+      { insertAfterTabId: "agent_does-not-exist" },
+    );
+
+    const layout = workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
+    expect(collectAllTabs(layout.root).map((tab) => tab.tabId)).toEqual([
+      "agent_agent-a",
+      "agent_agent-b",
+      "agent_agent-c",
+    ]);
+  });
+
   it("updates an existing file tab when opening the same path at a new line range", () => {
     const workspaceKey = createWorkspaceKey();
     const store = workspaceLayoutStore.getState();

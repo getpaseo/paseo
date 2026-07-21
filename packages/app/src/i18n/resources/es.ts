@@ -489,6 +489,9 @@ export const es: TranslationResources = {
       },
       menu: {
         openFor: "Menú abierto para{{label}}",
+        forkSession: "Bifurcar sesión",
+        forkSessionTooltip:
+          "Bifurca esta sesión en una pestaña nueva. La original sigue en ejecución.",
         copyResumeCommand: "Copiar comando de reanudación",
         copyAgentId: "Copiar ID del agente",
         copyFilePath: "Copy file path",
@@ -533,6 +536,9 @@ export const es: TranslationResources = {
         filePathCopiedLabel: "File path",
         resumeIdUnavailable: "ReanudarIDno disponible",
         resumeCommandUnavailable: "Comando de reanudación no disponible",
+        forkingSession: "Bifurcando sesión…",
+        forkedSession: "Sesión bifurcada",
+        failedToForkSession: "No se pudo bifurcar la sesión",
         reloadingAgent: "Agente de recarga...",
         reloadedAgent: "Agente recargado",
         failedToReloadAgent: "No se pudo recargar el agente",

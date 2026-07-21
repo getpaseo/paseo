@@ -6,6 +6,8 @@ import { buildDeterministicWorkspaceTabId } from "@/workspace-tabs/identity";
 export type WorkspaceTabMenuSurface = "desktop" | "mobile";
 
 export interface WorkspaceTabMenuLabels {
+  forkSession: string;
+  forkSessionTooltip: string;
   copyResumeCommand: string;
   copyAgentId: string;
   copyFilePath: string;
@@ -21,6 +23,8 @@ export interface WorkspaceTabMenuLabels {
 }
 
 export const DEFAULT_WORKSPACE_TAB_MENU_LABELS: WorkspaceTabMenuLabels = {
+  forkSession: i18n.t("workspace.tabs.menu.forkSession"),
+  forkSessionTooltip: i18n.t("workspace.tabs.menu.forkSessionTooltip"),
   copyResumeCommand: i18n.t("workspace.tabs.menu.copyResumeCommand"),
   copyAgentId: i18n.t("workspace.tabs.menu.copyAgentId"),
   copyFilePath: i18n.t("workspace.tabs.menu.copyFilePath"),
@@ -42,6 +46,7 @@ export type WorkspaceTabMenuEntry =
       label: string;
       icon?:
         | "copy"
+        | "git-branch"
         | "rotate-cw"
         | "arrow-left-to-line"
         | "arrow-right-to-line"
@@ -66,6 +71,8 @@ interface BuildWorkspaceTabMenuEntriesInput {
   index: number;
   tabCount: number;
   menuTestIDBase: string;
+  onForkSession: (agentId: string) => Promise<void> | void;
+  canForkSession: (agentId: string) => boolean;
   onCopyResumeCommand: (agentId: string) => Promise<void> | void;
   onCopyAgentId: (agentId: string) => Promise<void> | void;
   onCopyFilePath: (path: string) => Promise<void> | void;
@@ -82,6 +89,8 @@ interface BuildWorkspaceDesktopTabActionsInput {
   tab: WorkspaceTabDescriptor;
   index: number;
   tabCount: number;
+  onForkSession: (agentId: string) => Promise<void> | void;
+  canForkSession: (agentId: string) => boolean;
   onCopyResumeCommand: (agentId: string) => Promise<void> | void;
   onCopyAgentId: (agentId: string) => Promise<void> | void;
   onCopyFilePath: (path: string) => Promise<void> | void;
@@ -156,6 +165,8 @@ export function buildWorkspaceTabMenuEntries(
     index,
     tabCount,
     menuTestIDBase,
+    onForkSession,
+    canForkSession,
     onCopyResumeCommand,
     onCopyAgentId,
     onCopyFilePath,
@@ -174,6 +185,23 @@ export function buildWorkspaceTabMenuEntries(
 
   if (tab.target.kind === "agent") {
     const { agentId } = tab.target;
+    if (canForkSession(agentId)) {
+      entries.push({
+        kind: "item",
+        key: "fork-session",
+        label: labels.forkSession,
+        icon: "git-branch",
+        tooltip: labels.forkSessionTooltip,
+        testID: `${menuTestIDBase}-fork-session`,
+        onSelect: () => {
+          void onForkSession(agentId);
+        },
+      });
+      entries.push({
+        kind: "separator",
+        key: "fork-session-separator",
+      });
+    }
     entries.push({
       kind: "item",
       key: "copy-resume-command",
@@ -301,6 +329,8 @@ export function buildWorkspaceDesktopTabActions(
       index: input.index,
       tabCount: input.tabCount,
       menuTestIDBase: contextMenuTestId,
+      onForkSession: input.onForkSession,
+      canForkSession: input.canForkSession,
       onCopyResumeCommand: input.onCopyResumeCommand,
       onCopyAgentId: input.onCopyAgentId,
       onCopyFilePath: input.onCopyFilePath,

@@ -485,6 +485,8 @@ export const ar: TranslationResources = {
       },
       menu: {
         openFor: "فتح القائمة لـ{{label}}",
+        forkSession: "تفريع الجلسة",
+        forkSessionTooltip: "فرّع هذه الجلسة إلى علامة تبويب جديدة. تستمر الجلسة الأصلية في العمل.",
         copyResumeCommand: "نسخ أمر السيرة الذاتية",
         copyAgentId: "نسخ معرف الوكيل",
         copyFilePath: "Copy file path",
@@ -528,6 +530,9 @@ export const ar: TranslationResources = {
         filePathCopiedLabel: "File path",
         resumeIdUnavailable: "السيرة الذاتية ID غير متوفرة",
         resumeCommandUnavailable: "أمر الاستئناف غير متوفر",
+        forkingSession: "جارٍ تفريع الجلسة…",
+        forkedSession: "تم تفريع الجلسة",
+        failedToForkSession: "فشل تفريع الجلسة",
         reloadingAgent: "وكيل إعادة التحميل...",
         reloadedAgent: "وكيل إعادة تحميل",
         failedToReloadAgent: "فشل في إعادة تحميل الوكيل",

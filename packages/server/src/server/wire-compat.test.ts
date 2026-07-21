@@ -560,6 +560,129 @@ describe("wire compatibility", () => {
     expect(parsed.capabilities.supportsRewindBoth).toBe(false);
   });
 
+  test("old clients drop the fork-session capability instead of rejecting the snapshot", () => {
+    // supportsForkSession rides the capabilities catchall, so a daemon that
+    // advertises it must still parse against a client built before it existed.
+    const parsed = LegacyAgentSnapshotPayloadSchema.parse({
+      id: "agent-1",
+      provider: "claude",
+      cwd: "/tmp/project",
+      model: null,
+      thinkingOptionId: null,
+      effectiveThinkingOptionId: null,
+      createdAt: "2026-05-23T00:00:00.000Z",
+      updatedAt: "2026-05-23T00:00:00.000Z",
+      lastUserMessageAt: null,
+      status: "idle",
+      capabilities: {
+        supportsStreaming: true,
+        supportsSessionPersistence: true,
+        supportsDynamicModes: true,
+        supportsMcpServers: true,
+        supportsReasoningStream: true,
+        supportsToolInvocations: true,
+        supportsForkSession: true,
+      },
+      currentModeId: null,
+      availableModes: [],
+      pendingPermissions: [],
+      persistence: null,
+      title: null,
+      labels: {},
+    });
+
+    expect(parsed.capabilities).toEqual({
+      supportsStreaming: true,
+      supportsSessionPersistence: true,
+      supportsDynamicModes: true,
+      supportsMcpServers: true,
+      supportsReasoningStream: true,
+      supportsToolInvocations: true,
+    });
+  });
+
+  test("new clients parse agent snapshots without the fork-session capability", () => {
+    const parsed = AgentSnapshotPayloadSchema.parse({
+      id: "agent-1",
+      provider: "claude",
+      cwd: "/tmp/project",
+      model: null,
+      thinkingOptionId: null,
+      effectiveThinkingOptionId: null,
+      createdAt: "2026-05-23T00:00:00.000Z",
+      updatedAt: "2026-05-23T00:00:00.000Z",
+      lastUserMessageAt: null,
+      status: "idle",
+      capabilities: {
+        supportsStreaming: true,
+        supportsSessionPersistence: true,
+        supportsDynamicModes: true,
+        supportsMcpServers: true,
+        supportsReasoningStream: true,
+        supportsToolInvocations: true,
+      },
+      currentModeId: null,
+      availableModes: [],
+      pendingPermissions: [],
+      persistence: null,
+      title: null,
+      labels: {},
+    });
+
+    // Absent means "cannot fork", which is what gates the tab action off.
+    expect(parsed.capabilities.supportsForkSession).toBeUndefined();
+  });
+
+  test("agent.session.fork messages round-trip in both directions", () => {
+    const request = SessionInboundMessageSchema.parse({
+      type: "agent.session.fork.request",
+      agentId: "agent-source",
+      workspaceId: "ws-1",
+      requestId: "fork-1",
+    });
+    expect(request).toEqual({
+      type: "agent.session.fork.request",
+      agentId: "agent-source",
+      workspaceId: "ws-1",
+      requestId: "fork-1",
+    });
+
+    // workspaceId is optional: an older client omits it and the daemon falls
+    // back to the source agent's workspace.
+    expect(
+      SessionInboundMessageSchema.parse({
+        type: "agent.session.fork.request",
+        agentId: "agent-source",
+        requestId: "fork-2",
+      }),
+    ).toEqual({
+      type: "agent.session.fork.request",
+      agentId: "agent-source",
+      requestId: "fork-2",
+    });
+
+    const response: SessionOutboundMessage = SessionOutboundMessageSchema.parse({
+      type: "agent.session.fork.response",
+      payload: {
+        requestId: "fork-1",
+        agentId: "agent-source",
+        forkedAgentId: "agent-fork",
+        ok: true,
+        error: null,
+      },
+    });
+    expect(response).toEqual({
+      type: "agent.session.fork.response",
+      payload: {
+        requestId: "fork-1",
+        agentId: "agent-source",
+        forkedAgentId: "agent-fork",
+        ok: true,
+        error: null,
+      },
+    });
+  });
+
   test("legacy worktree request shape normalizes to the same internal input as the new shape", async () => {
     const workflow = new InMemoryWorktreeWorkflow();
 

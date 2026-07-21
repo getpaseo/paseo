@@ -20,6 +20,7 @@ import { useTranslation } from "react-i18next";
 import { DiffStat } from "@/components/diff-stat";
 import {
   CopyX,
+  GitBranch,
   ArrowLeftToLine,
   ArrowRightToLine,
   ChevronDown,
@@ -247,6 +248,7 @@ const ThemedRotateCw = withUnistyles(RotateCw);
 const ThemedArrowLeftToLine = withUnistyles(ArrowLeftToLine);
 const ThemedArrowRightToLine = withUnistyles(ArrowRightToLine);
 const ThemedCopyX = withUnistyles(CopyX);
+const ThemedGitBranch = withUnistyles(GitBranch);
 const ThemedPencil = withUnistyles(Pencil);
 const ThemedX = withUnistyles(X);
 const ThemedSquarePen = withUnistyles(SquarePen);
@@ -409,6 +411,8 @@ interface MobileWorkspaceTabSwitcherProps {
   normalizedServerId: string;
   normalizedWorkspaceId: string;
   onSelectSwitcherTab: (key: string) => void;
+  onForkSession: (agentId: string) => Promise<void> | void;
+  canForkSession: (agentId: string) => boolean;
   onCopyResumeCommand: (agentId: string) => Promise<void> | void;
   onCopyAgentId: (agentId: string) => Promise<void> | void;
   onCopyFilePath: (path: string) => Promise<void> | void;
@@ -561,6 +565,8 @@ function MobileTabDropdownMenuItem({
         return <ThemedArrowRightToLine size={16} uniProps={mutedColorMapping} />;
       case "copy-x":
         return <ThemedCopyX size={16} uniProps={mutedColorMapping} />;
+      case "git-branch":
+        return <ThemedGitBranch size={16} uniProps={mutedColorMapping} />;
       case "pencil":
         return <ThemedPencil size={16} uniProps={mutedColorMapping} />;
       case "x":
@@ -597,6 +603,8 @@ function MobileWorkspaceTabOption({
   selected,
   active,
   onPress,
+  onForkSession,
+  canForkSession,
   onCopyResumeCommand,
   onCopyAgentId,
   onCopyFilePath,
@@ -615,6 +623,8 @@ function MobileWorkspaceTabOption({
   selected: boolean;
   active: boolean;
   onPress: () => void;
+  onForkSession: (agentId: string) => Promise<void> | void;
+  canForkSession: (agentId: string) => boolean;
   onCopyResumeCommand: (agentId: string) => Promise<void> | void;
   onCopyAgentId: (agentId: string) => Promise<void> | void;
   onCopyFilePath: (path: string) => Promise<void> | void;
@@ -628,6 +638,8 @@ function MobileWorkspaceTabOption({
   const { t } = useTranslation();
   const tabMenuLabels = useMemo<WorkspaceTabMenuLabels>(
     () => ({
+      forkSession: t("workspace.tabs.menu.forkSession"),
+      forkSessionTooltip: t("workspace.tabs.menu.forkSessionTooltip"),
       copyResumeCommand: t("workspace.tabs.menu.copyResumeCommand"),
       copyAgentId: t("workspace.tabs.menu.copyAgentId"),
       copyFilePath: t("workspace.tabs.menu.copyFilePath"),
@@ -650,6 +662,8 @@ function MobileWorkspaceTabOption({
     index: tabIndex,
     tabCount,
     menuTestIDBase,
+    onForkSession,
+    canForkSession,
     onCopyResumeCommand,
     onCopyAgentId,
     onCopyFilePath,
@@ -717,6 +731,8 @@ const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitcher({
   normalizedServerId,
   normalizedWorkspaceId,
   onSelectSwitcherTab,
+  onForkSession,
+  canForkSession,
   onCopyResumeCommand,
   onCopyAgentId,
   onCopyFilePath,
@@ -773,6 +789,8 @@ const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitcher({
           selected={selected}
           active={active}
           onPress={onPress}
+          onForkSession={onForkSession}
+          canForkSession={canForkSession}
           onCopyResumeCommand={onCopyResumeCommand}
           onCopyAgentId={onCopyAgentId}
           onCopyFilePath={onCopyFilePath}
@@ -791,6 +809,8 @@ const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitcher({
       tabs.length,
       normalizedServerId,
       normalizedWorkspaceId,
+      onForkSession,
+      canForkSession,
       onCopyResumeCommand,
       onCopyAgentId,
       onCopyFilePath,
@@ -2044,6 +2064,10 @@ function WorkspaceScreenContent({
     }
     return () => viewedTimelineSync.replaceVisibleAgentIds(persistenceKey, []);
   }, [persistenceKey, viewedTimelineSync]);
+  // COMPAT(agentSessionFork): added in v0.1.109, drop the gate when floor >= v0.1.109.
+  const hostSupportsAgentSessionFork = useSessionStore(
+    (state) => state.sessions[normalizedServerId]?.serverInfo?.features?.agentSessionFork === true,
+  );
   const setFocusedAgentId = useSessionStore((state) => state.setFocusedAgentId);
   const setFocusedTerminalId = useSessionStore((state) => state.setFocusedTerminalId);
   const focusedPaneAgentId = useMemo(() => {
@@ -2781,6 +2805,51 @@ function WorkspaceScreenContent({
       }
     },
     [normalizedServerId, toast, t],
+  );
+
+  const canForkAgentSession = useCallback(
+    (agentId: string) => {
+      if (!hostSupportsAgentSessionFork) {
+        return false;
+      }
+      const agent =
+        useSessionStore.getState().sessions[normalizedServerId]?.agents?.get(agentId) ?? null;
+      if (agent?.capabilities?.supportsForkSession !== true) {
+        return false;
+      }
+      return Boolean(agent.runtimeInfo?.sessionId ?? agent.persistence?.sessionId);
+    },
+    [hostSupportsAgentSessionFork, normalizedServerId],
+  );
+
+  const handleForkSession = useCallback(
+    async (agentId: string) => {
+      if (!client || !isConnected) {
+        toast.error(t("workspace.terminal.hostDisconnected"));
+        return;
+      }
+
+      toast.show(t("workspace.tabs.toasts.forkingSession"), { durationMs: null });
+      try {
+        const forkedAgentId = await client.forkAgentSession({ agentId });
+        const tabId = persistenceKey
+          ? openWorkspaceTabFocused(
+              persistenceKey,
+              { kind: "agent", agentId: forkedAgentId },
+              { insertAfterTabId: buildDeterministicWorkspaceTabId({ kind: "agent", agentId }) },
+            )
+          : null;
+        if (tabId) {
+          navigateToTabId(tabId);
+        }
+        toast.show(t("workspace.tabs.toasts.forkedSession"), { variant: "success" });
+      } catch (error) {
+        toast.error(
+          error instanceof Error ? error.message : t("workspace.tabs.toasts.failedToForkSession"),
+        );
+      }
+    },
+    [client, isConnected, navigateToTabId, openWorkspaceTabFocused, persistenceKey, toast, t],
   );
 
   const handleReloadAgent = useCallback(
@@ -3607,6 +3676,8 @@ function WorkspaceScreenContent({
         closingTabIds={closingTabIds}
         onNavigateTab={navigateToTabId}
         onCloseTab={handleCloseTabById}
+        onForkSession={handleForkSession}
+        canForkSession={canForkAgentSession}
         onCopyResumeCommand={handleCopyResumeCommand}
         onCopyAgentId={handleCopyAgentId}
         onCopyFilePath={handleCopyFilePath}
@@ -3644,6 +3715,8 @@ function WorkspaceScreenContent({
     navigateToTabId,
     handleCloseTabById,
     handleCopyResumeCommand,
+    handleForkSession,
+    canForkAgentSession,
     handleCopyAgentId,
     handleCopyFilePath,
     handleReloadAgent,
@@ -3724,6 +3797,8 @@ function WorkspaceScreenContent({
           normalizedServerId={normalizedServerId}
           normalizedWorkspaceId={normalizedWorkspaceId}
           onSelectSwitcherTab={handleSelectSwitcherTab}
+          onForkSession={handleForkSession}
+          canForkSession={canForkAgentSession}
           onCopyResumeCommand={handleCopyResumeCommand}
           onCopyAgentId={handleCopyAgentId}
           onCopyFilePath={handleCopyFilePath}
@@ -3746,6 +3821,8 @@ function WorkspaceScreenContent({
           setHoveredCloseTabKey={setHoveredCloseTabKey}
           onNavigateTab={navigateToTabId}
           onCloseTab={handleCloseTabById}
+          onForkSession={handleForkSession}
+          canForkSession={canForkAgentSession}
           onCopyResumeCommand={handleCopyResumeCommand}
           onCopyAgentId={handleCopyAgentId}
           onCopyFilePath={handleCopyFilePath}

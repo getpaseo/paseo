@@ -34,6 +34,7 @@ import type {
   AgentSlashCommand,
   AgentStreamEvent,
   AgentTimelineItem,
+  ForkProviderSessionInput,
   ImportProviderSessionInput,
   ResolveAgentDefaultModeInput,
 } from "./agent-sdk-types.js";
@@ -2637,6 +2638,128 @@ test("importProviderSession imports the selected session without listing and pub
     },
   });
   expect((await storage.get(imported.id))?.title).toBe("Trace provider imports");
+});
+
+test("forkAgentSession branches the source session into a new agent with the copied transcript", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-fork-session-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const sourceSession = new TestAgentSession({ provider: "codex", cwd: workdir });
+  const forkedSession = new TestAgentSession({ provider: "codex", cwd: workdir });
+
+  class ForkClient extends TestAgentClient {
+    forkInput: ForkProviderSessionInput | null = null;
+    importInput: ImportProviderSessionInput | null = null;
+
+    async forkSession(input: ForkProviderSessionInput) {
+      this.forkInput = input;
+      return { providerHandleId: `${input.providerHandleId}-fork` };
+    }
+
+    async importSession(input: ImportProviderSessionInput) {
+      this.importInput = input;
+      return {
+        // The fork is a genuinely separate provider session, so it gets its own
+        // AgentSession rather than sharing the source agent's.
+        session: input.providerHandleId.endsWith("-fork") ? forkedSession : sourceSession,
+        config: { provider: "codex" as const, cwd: workdir },
+        persistence: {
+          provider: "codex" as const,
+          sessionId: input.providerHandleId,
+          nativeHandle: input.providerHandleId,
+          metadata: { provider: "codex", cwd: workdir },
+        },
+        timeline: [
+          {
+            item: { type: "user_message" as const, text: "Original prompt" },
+            timestamp: "2026-01-02T00:00:00.000Z",
+          },
+          {
+            item: { type: "assistant_message" as const, text: "Original answer" },
+            timestamp: "2026-01-02T00:00:01.000Z",
+          },
+        ],
+        providerSubagentEvents: [],
+      };
+    }
+  }
+
+  const client = new ForkClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+  });
+
+  const source = await manager.importProviderSession({
+    provider: "codex",
+    providerHandleId: "thread-source",
+    cwd: workdir,
+    workspaceId: "ws-fork",
+    labels: { surface: "workspace" },
+  });
+
+  const forked = await manager.forkAgentSession({ agentId: source.id });
+
+  // The provider is asked to branch the source session id, and the resulting
+  // brand-new handle is what gets imported as a separate agent.
+  expect(client.forkInput?.providerHandleId).toBe("thread-source");
+  expect(client.importInput?.providerHandleId).toBe("thread-source-fork");
+
+  expect(forked.id).not.toBe(source.id);
+  expect(forked.persistence?.sessionId).toBe("thread-source-fork");
+  expect(forked.workspaceId).toBe("ws-fork");
+  expect(forked.labels).toEqual({ surface: "workspace" });
+  expect(forked.historyPrimed).toBe(true);
+  expect(manager.getTimeline(forked.id)).toEqual([
+    { type: "user_message", text: "Original prompt" },
+    { type: "assistant_message", text: "Original answer" },
+  ]);
+
+  // The source agent is left untouched — fork is non-destructive.
+  expect(manager.getAgent(source.id)?.persistence?.sessionId).toBe("thread-source");
+  expect(manager.getAgent(source.id)?.lifecycle).toBe("idle");
+});
+
+test("forkAgentSession rejects providers that cannot fork", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-fork-unsupported-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const session = new TestAgentSession({ provider: "codex", cwd: workdir });
+
+  class NoForkClient extends TestAgentClient {
+    async importSession(input: ImportProviderSessionInput) {
+      return {
+        session,
+        config: { provider: "codex" as const, cwd: workdir },
+        persistence: {
+          provider: "codex" as const,
+          sessionId: input.providerHandleId,
+          nativeHandle: input.providerHandleId,
+          metadata: { provider: "codex", cwd: workdir },
+        },
+        timeline: [],
+        providerSubagentEvents: [],
+      };
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new NoForkClient() },
+    registry: storage,
+    logger,
+  });
+
+  const source = await manager.importProviderSession({
+    provider: "codex",
+    providerHandleId: "thread-source",
+    cwd: workdir,
+    workspaceId: "ws-fork",
+  });
+
+  await expect(manager.forkAgentSession({ agentId: source.id })).rejects.toThrow(
+    "does not support forking sessions",
+  );
 });
 
 test("reloadAgentSession passes daemon launch env through the provider launch context", async () => {

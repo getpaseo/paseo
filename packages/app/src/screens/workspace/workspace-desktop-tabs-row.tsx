@@ -18,6 +18,7 @@ import {
 } from "react-native";
 import {
   CopyX,
+  GitBranch,
   ArrowLeftToLine,
   ArrowRightToLine,
   ChevronDown,
@@ -101,6 +102,7 @@ const ThemedRotateCw = withUnistyles(RotateCw);
 const ThemedArrowLeftToLine = withUnistyles(ArrowLeftToLine);
 const ThemedArrowRightToLine = withUnistyles(ArrowRightToLine);
 const ThemedCopyX = withUnistyles(CopyX);
+const ThemedGitBranch = withUnistyles(GitBranch);
 const ThemedPencil = withUnistyles(Pencil);
 const ThemedSquarePen = withUnistyles(SquarePen);
 const ThemedSquareTerminal = withUnistyles(SquareTerminal);
@@ -336,6 +338,8 @@ function TabContextMenuItem({
         return <ThemedArrowRightToLine size={16} uniProps={mutedColorMapping} />;
       case "copy-x":
         return <ThemedCopyX size={16} uniProps={mutedColorMapping} />;
+      case "git-branch":
+        return <ThemedGitBranch size={16} uniProps={mutedColorMapping} />;
       case "pencil":
         return <ThemedPencil size={16} uniProps={mutedColorMapping} />;
       case "x":
@@ -417,6 +421,8 @@ interface WorkspaceDesktopTabsRowProps {
   setHoveredCloseTabKey: Dispatch<SetStateAction<string | null>>;
   onNavigateTab: (tabId: string) => void;
   onCloseTab: (tabId: string) => Promise<void> | void;
+  onForkSession: (agentId: string) => Promise<void> | void;
+  canForkSession: (agentId: string) => boolean;
   onCopyResumeCommand: (agentId: string) => Promise<void> | void;
   onCopyAgentId: (agentId: string) => Promise<void> | void;
   onCopyFilePath: (path: string) => Promise<void> | void;
@@ -759,6 +765,8 @@ export function WorkspaceDesktopTabsRow({
   setHoveredCloseTabKey,
   onNavigateTab,
   onCloseTab,
+  onForkSession,
+  canForkSession,
   onCopyResumeCommand,
   onCopyAgentId,
   onCopyFilePath,
@@ -841,6 +849,8 @@ export function WorkspaceDesktopTabsRow({
   );
   const tabMenuLabels = useMemo<WorkspaceTabMenuLabels>(
     () => ({
+      forkSession: t("workspace.tabs.menu.forkSession"),
+      forkSessionTooltip: t("workspace.tabs.menu.forkSessionTooltip"),
       copyResumeCommand: t("workspace.tabs.menu.copyResumeCommand"),
       copyAgentId: t("workspace.tabs.menu.copyAgentId"),
       copyFilePath: t("workspace.tabs.menu.copyFilePath"),
@@ -939,6 +949,8 @@ export function WorkspaceDesktopTabsRow({
           tabCount={tabs.length}
           normalizedServerId={normalizedServerId}
           normalizedWorkspaceId={normalizedWorkspaceId}
+          onForkSession={onForkSession}
+          canForkSession={canForkSession}
           onCopyResumeCommand={onCopyResumeCommand}
           onCopyAgentId={onCopyAgentId}
           onCopyFilePath={onCopyFilePath}
@@ -973,6 +985,8 @@ export function WorkspaceDesktopTabsRow({
       onCloseTabsToRight,
       onCopyAgentId,
       onCopyFilePath,
+      onForkSession,
+      canForkSession,
       onCopyResumeCommand,
       onNavigateTab,
       onReloadAgent,
@@ -1091,6 +1105,8 @@ function ResolvedDesktopTabChip({
   tabCount,
   normalizedServerId,
   normalizedWorkspaceId,
+  onForkSession,
+  canForkSession,
   onCopyResumeCommand,
   onCopyAgentId,
   onCopyFilePath,
@@ -1117,6 +1133,8 @@ function ResolvedDesktopTabChip({
   tabCount: number;
   normalizedServerId: string;
   normalizedWorkspaceId: string;
+  onForkSession: (agentId: string) => Promise<void> | void;
+  canForkSession: (agentId: string) => boolean;
   onCopyResumeCommand: (agentId: string) => Promise<void> | void;
   onCopyAgentId: (agentId: string) => Promise<void> | void;
   onCopyFilePath: (path: string) => Promise<void> | void;
@@ -1143,6 +1161,8 @@ function ResolvedDesktopTabChip({
         tab: item.tab,
         index,
         tabCount,
+        onForkSession,
+        canForkSession,
         onCopyResumeCommand,
         onCopyAgentId,
         onCopyFilePath,
@@ -1163,6 +1183,8 @@ function ResolvedDesktopTabChip({
       onCloseTabsToRight,
       onCopyAgentId,
       onCopyFilePath,
+      onForkSession,
+      canForkSession,
       onCopyResumeCommand,
       labels,
       onReloadAgent,

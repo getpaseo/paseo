@@ -489,6 +489,9 @@ export const ja: TranslationResources = {
       },
       menu: {
         openFor: "{{label}}のメニューを開く",
+        forkSession: "セッションをフォーク",
+        forkSessionTooltip:
+          "このセッションを新しいタブに分岐します。元のセッションは実行を続けます。",
         copyResumeCommand: "再開コマンドをコピー",
         copyAgentId: "エージェントIDをコピー",
         copyFilePath: "ファイルパスをコピー",
@@ -533,6 +536,9 @@ export const ja: TranslationResources = {
         filePathCopiedLabel: "ファイルパス",
         resumeIdUnavailable: "再開IDが利用できません",
         resumeCommandUnavailable: "再開コマンドが利用できません",
+        forkingSession: "セッションをフォーク中…",
+        forkedSession: "セッションをフォークしました",
+        failedToForkSession: "セッションのフォークに失敗しました",
         reloadingAgent: "エージェントを再読み込み中...",
         reloadedAgent: "エージェントを再読み込みしました",
         failedToReloadAgent: "エージェントの再読み込みに失敗しました",

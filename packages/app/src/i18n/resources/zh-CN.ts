@@ -485,6 +485,8 @@ export const zhCN: TranslationResources = {
       },
       menu: {
         openFor: "打开 {{label}} 的菜单",
+        forkSession: "复刻会话",
+        forkSessionTooltip: "将此会话分支到新标签页。原会话继续运行。",
         copyResumeCommand: "复制恢复命令",
         copyAgentId: "复制 Agent ID",
         copyFilePath: "Copy file path",
@@ -528,6 +530,9 @@ export const zhCN: TranslationResources = {
         filePathCopiedLabel: "File path",
         resumeIdUnavailable: "恢复 ID 不可用",
         resumeCommandUnavailable: "恢复命令不可用",
+        forkingSession: "正在复刻会话…",
+        forkedSession: "会话已复刻",
+        failedToForkSession: "复刻会话失败",
         reloadingAgent: "正在重新加载 Agent...",
         reloadedAgent: "已重新加载 Agent",
         failedToReloadAgent: "重新加载 Agent 失败",

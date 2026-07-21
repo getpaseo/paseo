@@ -2341,6 +2341,97 @@ test("sends structured first-agent context attachments with create_paseo_worktre
   });
 });
 
+test("forkAgentSession resolves with the forked agent id", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const forkPromise = client.forkAgentSession({ agentId: "agent-source" });
+
+  expect(mock.sent).toHaveLength(1);
+  const sent = parseSentFrame(mock.sent[0]) as {
+    type: string;
+    requestId: string;
+    agentId: string;
+    workspaceId?: string;
+  };
+  expect(sent.type).toBe("agent.session.fork.request");
+  expect(sent.agentId).toBe("agent-source");
+  // workspaceId is omitted rather than sent as undefined so the daemon falls
+  // back to the source agent's workspace.
+  expect("workspaceId" in sent).toBe(false);
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "agent.session.fork.response",
+      payload: {
+        requestId: sent.requestId,
+        agentId: "agent-source",
+        forkedAgentId: "agent-fork",
+        ok: true,
+        error: null,
+      },
+    }),
+  );
+
+  await expect(forkPromise).resolves.toBe("agent-fork");
+});
+
+test("forkAgentSession rejects with the daemon's failure reason", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const forkPromise = client.forkAgentSession({
+    agentId: "agent-source",
+    workspaceId: "ws-1",
+  });
+
+  const sent = parseSentFrame(mock.sent[0]) as { requestId: string; workspaceId?: string };
+  expect(sent.workspaceId).toBe("ws-1");
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "agent.session.fork.response",
+      payload: {
+        requestId: sent.requestId,
+        agentId: "agent-source",
+        forkedAgentId: null,
+        ok: false,
+        error: "Provider 'opencode' does not support forking sessions",
+      },
+    }),
+  );
+
+  await expect(forkPromise).rejects.toThrow(
+    "Provider 'opencode' does not support forking sessions",
+  );
+});
+
 test("sends project.add.request without creating a workspace", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();

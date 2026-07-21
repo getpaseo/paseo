@@ -93,6 +93,8 @@ interface SplitContainerProps {
   closingTabIds: Set<string>;
   onNavigateTab: (tabId: string) => void;
   onCloseTab: (tabId: string) => Promise<void> | void;
+  onForkSession: (agentId: string) => Promise<void> | void;
+  canForkSession: (agentId: string) => boolean;
   onCopyResumeCommand: (agentId: string) => Promise<void> | void;
   onCopyAgentId: (agentId: string) => Promise<void> | void;
   onCopyFilePath: (path: string) => Promise<void> | void;
@@ -371,6 +373,8 @@ export function SplitContainer({
   closingTabIds,
   onNavigateTab,
   onCloseTab,
+  onForkSession,
+  canForkSession,
   onCopyResumeCommand,
   onCopyAgentId,
   onCopyFilePath,
@@ -590,6 +594,8 @@ export function SplitContainer({
           closingTabIds={closingTabIds}
           onNavigateTab={onNavigateTab}
           onCloseTab={onCloseTab}
+          onForkSession={onForkSession}
+          canForkSession={canForkSession}
           onCopyResumeCommand={onCopyResumeCommand}
           onCopyAgentId={onCopyAgentId}
           onCopyFilePath={onCopyFilePath}
@@ -736,6 +742,8 @@ function SplitNodeView({
   closingTabIds,
   onNavigateTab,
   onCloseTab,
+  onForkSession,
+  canForkSession,
   onCopyResumeCommand,
   onCopyAgentId,
   onCopyFilePath,
@@ -793,6 +801,8 @@ function SplitNodeView({
           closingTabIds={closingTabIds}
           onNavigateTab={onNavigateTab}
           onCloseTab={onCloseTab}
+          onForkSession={onForkSession}
+          canForkSession={canForkSession}
           onCopyResumeCommand={onCopyResumeCommand}
           onCopyAgentId={onCopyAgentId}
           onCopyFilePath={onCopyFilePath}
@@ -842,6 +852,8 @@ function SplitNodeView({
               closingTabIds={closingTabIds}
               onNavigateTab={onNavigateTab}
               onCloseTab={onCloseTab}
+              onForkSession={onForkSession}
+              canForkSession={canForkSession}
               onCopyResumeCommand={onCopyResumeCommand}
               onCopyAgentId={onCopyAgentId}
               onCopyFilePath={onCopyFilePath}
@@ -897,6 +909,8 @@ function SplitPaneView({
   closingTabIds,
   onNavigateTab,
   onCloseTab,
+  onForkSession,
+  canForkSession,
   onCopyResumeCommand,
   onCopyAgentId,
   onCopyFilePath,
@@ -1042,6 +1056,8 @@ function SplitPaneView({
             setHoveredCloseTabKey={setHoveredCloseTabKey}
             onNavigateTab={onNavigateTab}
             onCloseTab={onCloseTab}
+            onForkSession={onForkSession}
+            canForkSession={canForkSession}
             onCopyResumeCommand={onCopyResumeCommand}
             onCopyAgentId={onCopyAgentId}
             onCopyFilePath={onCopyFilePath}

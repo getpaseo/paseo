@@ -29,6 +29,8 @@ describe("buildWorkspaceTabMenuEntries", () => {
       index: 1,
       tabCount: 3,
       menuTestIDBase: "workspace-tab-context-agent_123",
+      onForkSession: vi.fn(),
+      canForkSession: () => false,
       onCopyResumeCommand,
       onCopyAgentId,
       onCopyFilePath,
@@ -59,6 +61,8 @@ describe("buildWorkspaceTabMenuEntries", () => {
       index: 1,
       tabCount: 3,
       menuTestIDBase: "workspace-tab-menu-agent_123",
+      onForkSession: vi.fn(),
+      canForkSession: () => false,
       onCopyResumeCommand: vi.fn(),
       onCopyAgentId: vi.fn(),
       onCopyFilePath: vi.fn(),
@@ -94,6 +98,8 @@ describe("buildWorkspaceTabMenuEntries", () => {
       index: 0,
       tabCount: 1,
       menuTestIDBase: "workspace-tab-menu-draft_123",
+      onForkSession: vi.fn(),
+      canForkSession: () => false,
       onCopyResumeCommand: vi.fn(),
       onCopyAgentId: vi.fn(),
       onCopyFilePath: vi.fn(),
@@ -122,6 +128,8 @@ describe("buildWorkspaceTabMenuEntries", () => {
       index: 0,
       tabCount: 1,
       menuTestIDBase: "workspace-tab-context-agent_123",
+      onForkSession: vi.fn(),
+      canForkSession: () => false,
       onCopyResumeCommand: vi.fn(),
       onCopyAgentId: vi.fn(),
       onCopyFilePath: vi.fn(),
@@ -151,6 +159,8 @@ describe("buildWorkspaceTabMenuEntries", () => {
       index: 0,
       tabCount: 1,
       menuTestIDBase: "workspace-tab-context-agent_123",
+      onForkSession: vi.fn(),
+      canForkSession: () => false,
       onCopyResumeCommand: vi.fn(),
       onCopyAgentId: vi.fn(),
       onCopyFilePath: vi.fn(),
@@ -185,6 +195,8 @@ describe("buildWorkspaceTabMenuEntries", () => {
       index: 0,
       tabCount: 1,
       menuTestIDBase: "workspace-tab-context-terminal_abc",
+      onForkSession: vi.fn(),
+      canForkSession: () => false,
       onCopyResumeCommand: vi.fn(),
       onCopyAgentId: vi.fn(),
       onCopyFilePath: vi.fn(),
@@ -225,6 +237,8 @@ describe("buildWorkspaceTabMenuEntries", () => {
       index: 0,
       tabCount: 1,
       menuTestIDBase: "workspace-tab-context-file_abc",
+      onForkSession: vi.fn(),
+      canForkSession: () => false,
       onCopyResumeCommand: vi.fn(),
       onCopyAgentId: vi.fn(),
       onCopyFilePath,
@@ -266,6 +280,8 @@ describe("buildWorkspaceTabMenuEntries", () => {
       index: 0,
       tabCount: 1,
       menuTestIDBase,
+      onForkSession: vi.fn(),
+      canForkSession: () => false,
       onCopyResumeCommand: vi.fn(),
       onCopyAgentId: vi.fn(),
       onCopyFilePath: vi.fn(),
@@ -310,5 +326,63 @@ describe("buildWorkspaceTabMenuEntries", () => {
       .find((entry) => entry.kind === "separator");
     expect(agentSeparator?.key).toBe("rename-separator");
     expect(terminalSeparator?.key).toBe("rename-separator");
+  });
+  it("offers fork session as the first agent action when the agent can be forked", () => {
+    const onForkSession = vi.fn();
+
+    const entries = buildWorkspaceTabMenuEntries({
+      surface: "desktop",
+      tab: createAgentTab(),
+      index: 1,
+      tabCount: 3,
+      menuTestIDBase: "workspace-tab-context-agent_123",
+      onForkSession,
+      canForkSession: (agentId) => agentId === "agent-123",
+      onCopyResumeCommand: vi.fn(),
+      onCopyAgentId: vi.fn(),
+      onCopyFilePath: vi.fn(),
+      onReloadAgent: vi.fn(),
+      onRenameTab: vi.fn(),
+      onCloseTab: vi.fn(),
+      onCloseTabsBefore: vi.fn(),
+      onCloseTabsAfter: vi.fn(),
+      onCloseOtherTabs: vi.fn(),
+    });
+
+    const forkEntry = entries[0];
+    if (forkEntry?.kind !== "item") {
+      throw new Error("Fork session entry missing");
+    }
+    expect(forkEntry.key).toBe("fork-session");
+    expect(forkEntry.label).toBe("Fork session");
+    expect(forkEntry.testID).toBe("workspace-tab-context-agent_123-fork-session");
+    expect(entries[1]).toEqual({ kind: "separator", key: "fork-session-separator" });
+
+    forkEntry.onSelect();
+    expect(onForkSession).toHaveBeenCalledWith("agent-123");
+  });
+
+  it("omits fork session when the agent cannot be forked", () => {
+    const entries = buildWorkspaceTabMenuEntries({
+      surface: "desktop",
+      tab: createAgentTab(),
+      index: 1,
+      tabCount: 3,
+      menuTestIDBase: "workspace-tab-context-agent_123",
+      onForkSession: vi.fn(),
+      canForkSession: () => false,
+      onCopyResumeCommand: vi.fn(),
+      onCopyAgentId: vi.fn(),
+      onCopyFilePath: vi.fn(),
+      onReloadAgent: vi.fn(),
+      onRenameTab: vi.fn(),
+      onCloseTab: vi.fn(),
+      onCloseTabsBefore: vi.fn(),
+      onCloseTabsAfter: vi.fn(),
+      onCloseOtherTabs: vi.fn(),
+    });
+
+    expect(entries.some((entry) => entry.key === "fork-session")).toBe(false);
+    expect(entries.some((entry) => entry.key === "fork-session-separator")).toBe(false);
   });
 });

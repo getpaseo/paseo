@@ -52,6 +52,7 @@ import { appendOrReplaceGrowingAssistantMessage, runProviderTurn } from "../prov
 import { renderPromptAttachmentAsText } from "../../prompt-attachments.js";
 import { claudeQuery, type ClaudeOptions, type ClaudeQueryFactory } from "./query.js";
 import { realClaudeRewindSdk, revertClaudeConversation, revertClaudeFiles } from "./rewind.js";
+import { forkClaudeSession, realClaudeSessionForkSdk } from "./session-fork.js";
 import { normalizeProviderReplayTimestamp } from "../../provider-history-timestamps.js";
 import { claudeProjectDirSync } from "./project-dir.js";
 import { THINKING_APPLIES_NEXT_TURN_NOTICE } from "../../provider-notices.js";
@@ -89,6 +90,8 @@ import {
   type AgentUsage,
   type AgentRuntimeInfo,
   type FetchCatalogOptions,
+  type ForkedProviderSession,
+  type ForkProviderSessionInput,
   type ImportableProviderSession,
   type ImportProviderSessionContext,
   type ImportProviderSessionInput,
@@ -282,6 +285,7 @@ const CLAUDE_CAPABILITIES: AgentCapabilityFlags = {
   supportsRewindConversation: true,
   supportsRewindFiles: true,
   supportsRewindBoth: true,
+  supportsForkSession: true,
 };
 
 const DEFAULT_MODES: AgentMode[] = [
@@ -1560,6 +1564,14 @@ export class ClaudeAgentClient implements AgentClient {
       context,
       resumeSession: this.resumeSession.bind(this),
     });
+  }
+
+  async forkSession(input: ForkProviderSessionInput): Promise<ForkedProviderSession> {
+    const fork = await forkClaudeSession({
+      sdk: realClaudeSessionForkSdk,
+      sessionId: input.providerHandleId,
+    });
+    return { providerHandleId: fork.sessionId };
   }
 
   async isAvailable(): Promise<boolean> {

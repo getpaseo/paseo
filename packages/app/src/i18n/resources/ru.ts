@@ -489,6 +489,8 @@ export const ru: TranslationResources = {
       },
       menu: {
         openFor: "Открыть меню для{{label}}",
+        forkSession: "Ответвить сессию",
+        forkSessionTooltip: "Ответвите эту сессию в новую вкладку. Исходная продолжит работу.",
         copyResumeCommand: "Копировать команду возобновления",
         copyAgentId: "Скопировать идентификатор агента",
         copyFilePath: "Copy file path",
@@ -532,6 +534,9 @@ export const ru: TranslationResources = {
         filePathCopiedLabel: "File path",
         resumeIdUnavailable: "Резюме ID недоступно",
         resumeCommandUnavailable: "Команда возобновления недоступна",
+        forkingSession: "Ответвление сессии…",
+        forkedSession: "Сессия ответвлена",
+        failedToForkSession: "Не удалось ответвить сессию",
         reloadingAgent: "Перезагрузка агента...",
         reloadedAgent: "Перезагруженный агент",
         failedToReloadAgent: "Не удалось перезагрузить агент",
