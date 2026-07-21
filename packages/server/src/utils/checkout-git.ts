@@ -2146,11 +2146,14 @@ function parseCheckoutCommitRecords(stdout: string): ParsedCheckoutCommit[] {
 
 // Returns commits reachable from HEAD that are not reachable from any remote ref.
 async function getUnpushedCommitShas(cwd: string, context?: CheckoutContext): Promise<Set<string>> {
-  const { stdout } = await runGitCommand(["rev-list", "HEAD", "--not", "--remotes"], {
-    cwd,
-    envOverlay: READ_ONLY_GIT_ENV,
-    logger: context?.logger,
-  });
+  const { stdout } = await runGitCommand(
+    ["rev-list", `--max-count=${MAX_CHECKOUT_COMMITS}`, "HEAD", "--not", "--remotes"],
+    {
+      cwd,
+      envOverlay: READ_ONLY_GIT_ENV,
+      logger: context?.logger,
+    },
+  );
   return new Set(
     stdout
       .split("\n")

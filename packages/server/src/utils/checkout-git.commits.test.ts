@@ -122,7 +122,7 @@ describe("listCheckoutCommits", () => {
     ]);
   });
 
-  it("limits history to the 20 most recent commits", async () => {
+  it("limits history and unpushed classification to the 20 most recent commits", async () => {
     const { repoDir } = initRepoOnMain();
     for (let index = 1; index <= 24; index += 1) {
       commitFile(repoDir, "history.txt", `${index}\n`, `Commit ${index}`);
@@ -131,6 +131,7 @@ describe("listCheckoutCommits", () => {
     const { commits } = await listCheckoutCommits({ cwd: repoDir });
 
     expect(commits).toHaveLength(20);
+    expect(commits.every((entry) => entry.isOnRemote === false)).toBe(true);
     expect(commits.map((entry) => entry.subject)).toEqual(
       Array.from({ length: 20 }, (_, index) => `Commit ${24 - index}`),
     );
