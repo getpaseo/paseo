@@ -188,22 +188,27 @@ async function attachRef({
     return;
   }
   const item = search.items.find((candidate) => githubItemMatchesRef(candidate, ref));
-  if (!item || removedRefKeys.has(key) || !isRefStillPresent(ref, latestRef.current)) {
+  const current = latestRef.current;
+  if (
+    !item ||
+    removedRefKeys.has(key) ||
+    !isSameLookupTarget(snapshot, current) ||
+    !isRefStillPresent(ref, current)
+  ) {
     return;
   }
 
-  const latest = latestRef.current;
-  if (isAttachmentSelectedForGithubItem(latest.attachments, item)) {
+  if (isAttachmentSelectedForGithubItem(current.attachments, item)) {
     return;
   }
-  latest.setAttachments((current) => {
-    if (removedRefKeys.has(key) || isAttachmentSelectedForGithubItem(current, item)) {
-      return current;
+  current.setAttachments((attachments) => {
+    if (removedRefKeys.has(key) || isAttachmentSelectedForGithubItem(attachments, item)) {
+      return attachments;
     }
-    return toggleGithubAttachment(current, item);
+    return toggleGithubAttachment(attachments, item);
   });
   if (item.kind === "change_request") {
-    latest.onPullRequestAdded?.(item);
+    current.onPullRequestAdded?.(item);
   }
 }
 
@@ -262,6 +267,18 @@ async function fetchGithubRefSearch({
 function isRefStillPresent(ref: GithubRef, params: ComposerGithubAutoAttachInput): boolean {
   return extractGithubRefs(params.text, params.remoteUrl).some(
     (candidate) => githubRefKey(candidate) === githubRefKey(ref),
+  );
+}
+
+function isSameLookupTarget(
+  initial: ComposerGithubAutoAttachInput,
+  current: ComposerGithubAutoAttachInput,
+): boolean {
+  return (
+    initial.client === current.client &&
+    initial.serverId === current.serverId &&
+    initial.cwd === current.cwd &&
+    initial.remoteUrl === current.remoteUrl
   );
 }
 

@@ -48,6 +48,7 @@ interface SearchCall {
 
 interface HarnessInput {
   initialAttachments?: UserComposerAttachment[];
+  initialCwd?: string;
   initialText?: string;
   remote?: string | null;
 }
@@ -95,6 +96,7 @@ function createWrapper() {
 
 function useHarness(client: ForgeSearchClient, input: HarnessInput = {}) {
   const [text, setText] = useState(input.initialText ?? "");
+  const [workingDirectory, setWorkingDirectory] = useState(input.initialCwd ?? cwd);
   const [attachments, setAttachments] = useState<UserComposerAttachment[]>(
     input.initialAttachments ?? [],
   );
@@ -105,13 +107,14 @@ function useHarness(client: ForgeSearchClient, input: HarnessInput = {}) {
     client,
     isConnected: true,
     serverId: "server-1",
-    cwd,
+    cwd: workingDirectory,
     setAttachments,
   });
 
   return {
     text,
     setText,
+    setWorkingDirectory,
     attachments,
     setAttachments,
     isResolving: autoAttach.isResolving,
@@ -255,6 +258,31 @@ describe("useComposerGithubAutoAttach", () => {
       await Promise.resolve();
     });
     expect(result.current.isResolving).toBe(false);
+    vi.useRealTimers();
+  });
+
+  it("ignores a lookup that finishes after the target changes", async () => {
+    vi.useFakeTimers();
+    const lookup = deferred<ForgeSearchPayload>();
+    const client: ForgeSearchClient = {
+      searchForge: vi.fn().mockReturnValue(lookup.promise),
+    };
+    const { result } = renderHook(() => useHarness(client), { wrapper: createWrapper() });
+
+    act(() => {
+      result.current.setText("Review https://github.com/acme/paseo/pull/101");
+    });
+    await flushDebounce();
+
+    act(() => {
+      result.current.setWorkingDirectory("/other-repo");
+    });
+    await act(async () => {
+      lookup.resolve(githubPayload([pr101], "search-101"));
+      await Promise.resolve();
+    });
+
+    expect(result.current.attachments).toEqual([]);
     vi.useRealTimers();
   });
 });
