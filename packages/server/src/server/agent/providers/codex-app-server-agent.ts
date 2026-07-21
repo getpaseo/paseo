@@ -798,17 +798,27 @@ interface CodexMcpServerConfig {
   >;
 }
 
-function toCodexMcpConfig(config: McpServerConfig): CodexMcpServerConfig {
+interface CodexMcpServerPolicy {
+  enabledTools?: string[];
+  disabledTools?: string[];
+  defaultToolsApprovalMode?: "auto" | "prompt" | "approve";
+  tools?: Record<string, { approvalMode?: "auto" | "prompt" | "approve" }>;
+}
+
+function toCodexMcpConfig(
+  config: McpServerConfig,
+  policy?: CodexMcpServerPolicy,
+): CodexMcpServerConfig {
   const base = {
-    ...(config.enabledTools ? { enabled_tools: config.enabledTools } : {}),
-    ...(config.disabledTools ? { disabled_tools: config.disabledTools } : {}),
-    ...(config.defaultToolsApprovalMode
-      ? { default_tools_approval_mode: config.defaultToolsApprovalMode }
+    ...(policy?.enabledTools ? { enabled_tools: policy.enabledTools } : {}),
+    ...(policy?.disabledTools ? { disabled_tools: policy.disabledTools } : {}),
+    ...(policy?.defaultToolsApprovalMode
+      ? { default_tools_approval_mode: policy.defaultToolsApprovalMode }
       : {}),
-    ...(config.tools
+    ...(policy?.tools
       ? {
           tools: Object.fromEntries(
-            Object.entries(config.tools).map(([toolName, toolConfig]) => [
+            Object.entries(policy.tools).map(([toolName, toolConfig]) => [
               toolName,
               toolConfig.approvalMode ? { approval_mode: toolConfig.approvalMode } : {},
             ]),
@@ -4542,7 +4552,10 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (this.config.mcpServers) {
       const mcpServers: Record<string, CodexMcpServerConfig> = {};
       for (const [name, serverConfig] of Object.entries(this.config.mcpServers)) {
-        mcpServers[name] = toCodexMcpConfig(serverConfig);
+        mcpServers[name] = toCodexMcpConfig(
+          serverConfig,
+          this.config.codexMcpServerPolicies?.[name] as CodexMcpServerPolicy | undefined,
+        );
       }
       innerConfig.mcp_servers = mcpServers;
     }

@@ -24,15 +24,6 @@ export interface McpStdioServerConfig {
    * and never deferred behind tool search. Honored by the Claude provider.
    */
   alwaysLoad?: boolean;
-  enabledTools?: string[];
-  disabledTools?: string[];
-  defaultToolsApprovalMode?: "auto" | "prompt" | "approve";
-  tools?: Record<
-    string,
-    {
-      approvalMode?: "auto" | "prompt" | "approve";
-    }
-  >;
 }
 
 /**
@@ -47,15 +38,6 @@ export interface McpHttpServerConfig {
    * and never deferred behind tool search. Honored by the Claude provider.
    */
   alwaysLoad?: boolean;
-  enabledTools?: string[];
-  disabledTools?: string[];
-  defaultToolsApprovalMode?: "auto" | "prompt" | "approve";
-  tools?: Record<
-    string,
-    {
-      approvalMode?: "auto" | "prompt" | "approve";
-    }
-  >;
 }
 
 /**
@@ -70,15 +52,6 @@ export interface McpSseServerConfig {
    * and never deferred behind tool search. Honored by the Claude provider.
    */
   alwaysLoad?: boolean;
-  enabledTools?: string[];
-  disabledTools?: string[];
-  defaultToolsApprovalMode?: "auto" | "prompt" | "approve";
-  tools?: Record<
-    string,
-    {
-      approvalMode?: "auto" | "prompt" | "approve";
-    }
-  >;
 }
 
 /**
@@ -604,6 +577,8 @@ export interface AgentSessionConfig {
     claude?: Partial<ClaudeAgentOptions>;
   };
   mcpServers?: Record<string, McpServerConfig>;
+  /** Runtime-only provider extension, interpreted only by the matching provider. */
+  codexMcpServerPolicies?: Record<string, Record<string, unknown>>;
   /**
    * Internal voice-mode override for provider-specific speech tool routing.
    * This is persisted with the session config so reloads can apply the same

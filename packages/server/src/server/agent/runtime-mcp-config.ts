@@ -29,6 +29,7 @@ export function stripInternalPaseoMcpServer(config: AgentSessionConfig): AgentSe
 
 export function withRuntimePaseoMcpServer(params: {
   config: AgentSessionConfig;
+  provider: string;
   agentId: string;
   mcpBaseUrl: string | null;
   /**
@@ -43,22 +44,25 @@ export function withRuntimePaseoMcpServer(params: {
     return storedConfig;
   }
 
-  const applyVoiceApproval = storedConfig.voiceToolMcpServerName === PASEO_MCP_SERVER_NAME;
+  const applyVoiceApproval =
+    params.provider === "codex" && storedConfig.voiceToolMcpServerName === PASEO_MCP_SERVER_NAME;
   return {
     ...storedConfig,
+    ...(applyVoiceApproval
+      ? {
+          codexMcpServerPolicies: {
+            [PASEO_MCP_SERVER_NAME]: {
+              enabledTools: [...PASEO_VOICE_ENABLED_TOOLS],
+              defaultToolsApprovalMode: "prompt" as const,
+              tools: { speak: { approvalMode: "approve" as const } },
+            },
+          },
+        }
+      : {}),
     mcpServers: {
       [PASEO_MCP_SERVER_NAME]: {
         type: "http",
         url: `${params.mcpBaseUrl}?callerAgentId=${params.agentId}`,
-        ...(applyVoiceApproval
-          ? {
-              enabledTools: [...PASEO_VOICE_ENABLED_TOOLS],
-              defaultToolsApprovalMode: "prompt" as const,
-              tools: {
-                speak: { approvalMode: "approve" as const },
-              },
-            }
-          : {}),
         ...(params.mcpAuthToken
           ? { headers: { Authorization: `Bearer ${params.mcpAuthToken}` } }
           : {}),

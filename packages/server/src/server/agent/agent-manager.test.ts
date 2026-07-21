@@ -3776,22 +3776,26 @@ test("Codex voice MCP sessions use the generic paseo MCP injection with voice ap
   });
   manager.setMcpBaseUrl("http://127.0.0.1:4123/mcp/agents");
 
-  await manager.createAgent({
-    provider: "codex",
-    cwd: workdir,
-    voiceToolMcpServerName: PASEO_MCP_SERVER_NAME,
-  });
+  await manager.createAgent(
+    {
+      provider: "codex",
+      cwd: workdir,
+      voiceToolMcpServerName: PASEO_MCP_SERVER_NAME,
+    },
+    undefined,
+    { workspaceId: undefined },
+  );
 
   expect(client.createdConfigs).toHaveLength(1);
-  expect(client.createdConfigs[0]?.mcpServers).toMatchObject({
+  expect(client.createdConfigs[0]?.codexMcpServerPolicies).toMatchObject({
     [PASEO_MCP_SERVER_NAME]: {
-      type: "http",
       enabledTools: ["speak"],
       defaultToolsApprovalMode: "prompt",
-      tools: {
-        speak: { approvalMode: "approve" },
-      },
+      tools: { speak: { approvalMode: "approve" } },
     },
+  });
+  expect(client.createdConfigs[0]?.mcpServers).toMatchObject({
+    [PASEO_MCP_SERVER_NAME]: { type: "http" },
   });
   expect(client.createdConfigs[0]?.mcpServers?.[PASEO_MCP_SERVER_NAME]?.type).toBe("http");
   expect(client.createdConfigs[0]?.mcpServers?.[PASEO_MCP_SERVER_NAME]).toHaveProperty(

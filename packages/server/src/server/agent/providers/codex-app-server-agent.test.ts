@@ -1086,11 +1086,13 @@ describe("Codex app-server provider", () => {
         paseo: {
           type: "http",
           url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=test",
+        },
+      },
+      codexMcpServerPolicies: {
+        paseo: {
           enabledTools: ["speak"],
           defaultToolsApprovalMode: "prompt",
-          tools: {
-            speak: { approvalMode: "approve" },
-          },
+          tools: { speak: { approvalMode: "approve" } },
         },
       },
     });

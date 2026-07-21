@@ -6,7 +6,7 @@ Codex voice-mode sessions were receiving the injected `paseo` MCP server, but Pa
 
 ## Fix
 
-Paseo now carries MCP approval metadata in its shared agent config and forwards it to Codex as:
+Paseo now carries Codex MCP approval metadata in a Codex-specific runtime policy and forwards it only through the Codex adapter as:
 
 - `mcp_servers.<id>.enabled_tools`
 - `mcp_servers.<id>.default_tools_approval_mode`
@@ -19,6 +19,9 @@ For Codex voice mode, the injected `paseo` server is now configured with:
 - `tools.speak.approval_mode = "approve"`
 
 This keeps the approval override limited to `speak` while leaving the normal generic `paseo` MCP server in place.
+
+The voice approval override is intentionally Codex-only. Other providers use different permission systems or do not
+accept these Codex-specific MCP approval fields, so they receive the generic `paseo` MCP server without this metadata.
 
 ## Verification
 
