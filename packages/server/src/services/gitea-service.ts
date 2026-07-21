@@ -71,8 +71,8 @@ const reviewCommentsLimit = pLimit(REVIEW_COMMENTS_FAN_OUT_CONCURRENCY);
 const CURRENT_PR_HEAD_SHA_CACHE_TTL_MS = 30_000;
 // 50 is the page-size cap Gitea enforces on list endpoints; five pages bounds
 // the sweep to the 250 most recent Actions tasks.
-const GITEA_ACTIONS_RUNS_PAGE_LIMIT = 50;
-const GITEA_ACTIONS_RUNS_MAX_PAGES = 5;
+const GITEA_ACTION_PAGE_LIMIT = 50;
+const GITEA_ACTION_MAX_PAGES = 5;
 
 /**
  * Fields requested from `tea pr list -o json`. tea's default field set omits the
@@ -272,6 +272,7 @@ const GiteaCommitStatusSchema = z
     description: z.string().nullable().optional(),
     url: z.string().nullable().optional(),
     context: z.string().optional().default(""),
+    creator: z.unknown().nullable().optional(),
   })
   .passthrough();
 
@@ -284,7 +285,7 @@ const GiteaCombinedCommitStatusSchema = z
   })
   .passthrough();
 
-const GiteaActionsRunSchema = z
+const GiteaActionTaskSchema = z
   .object({
     id: z.number(),
     name: z.string().nullable().optional(),
@@ -294,6 +295,7 @@ const GiteaActionsRunSchema = z
     event: z.string().nullable().optional(),
     display_title: z.string().nullable().optional(),
     status: z.string(),
+    need_approval: z.boolean().optional().default(false),
     workflow_id: z.string().nullable().optional(),
     url: z.string().nullable().optional(),
     created_at: z.string().nullable().optional(),
@@ -301,10 +303,27 @@ const GiteaActionsRunSchema = z
   })
   .passthrough();
 
-// The item shape is validated per-run rather than as `z.array(GiteaActionsRunSchema)`
-// so one malformed run (missing id/status/head_sha) drops only itself instead of
+// The item shape is validated per-task rather than as `z.array(GiteaActionTaskSchema)`
+// so one malformed task (missing id/status/head_sha) drops only itself instead of
 // throwing out the whole page and zeroing every Actions check for the PR.
-const GiteaActionsRunsSchema = z
+const GiteaActionTasksResponseSchema = z
+  .object({
+    workflow_runs: z.array(z.unknown()).optional().default([]),
+    total_count: z.number().optional(),
+  })
+  .passthrough();
+
+const GiteaActionRunMetadataSchema = z
+  .object({
+    run_number: z.number().optional(),
+    index_in_repo: z.number().optional(),
+    head_sha: z.string().optional(),
+    commit_sha: z.string().optional(),
+    need_approval: z.boolean().optional().default(false),
+  })
+  .passthrough();
+
+const GiteaActionRunsResponseSchema = z
   .object({
     workflow_runs: z.array(z.unknown()).optional().default([]),
     total_count: z.number().optional(),
@@ -357,7 +376,7 @@ type GiteaPullRequestView = z.infer<typeof GiteaPullRequestViewSchema>;
 type GiteaCurrentPullRequestApi = z.infer<typeof GiteaCurrentPullRequestApiSchema>;
 type GiteaCommitStatus = z.infer<typeof GiteaCommitStatusSchema>;
 type GiteaCombinedCommitStatus = z.infer<typeof GiteaCombinedCommitStatusSchema>;
-type GiteaActionsRun = z.infer<typeof GiteaActionsRunSchema>;
+type GiteaActionTask = z.infer<typeof GiteaActionTaskSchema>;
 type GiteaIssueComment = z.infer<typeof GiteaIssueCommentSchema>;
 type GiteaReview = z.infer<typeof GiteaReviewSchema>;
 type GiteaReviewComment = z.infer<typeof GiteaReviewCommentSchema>;
@@ -670,12 +689,14 @@ function mapGiteaCommitStatus(state: string): PullRequestCheck["status"] {
       return "failure";
     case "pending":
       return "pending";
+    case "skipped":
+      return "skipped";
     default:
       return "pending";
   }
 }
 
-function mapGiteaActionsRunStatus(status: string): PullRequestCheck["status"] {
+function mapGiteaActionTaskStatus(status: string): PullRequestCheck["status"] {
   switch (status.toLowerCase()) {
     case "success":
       return "success";
@@ -702,38 +723,44 @@ function mapGiteaActionsRunStatus(status: string): PullRequestCheck["status"] {
 }
 
 function toGiteaPullRequestCheck(status: GiteaCommitStatus): PullRequestCheck {
+  const rawStatus = status.status.toLowerCase();
   return {
     name: status.context || `status-${status.id}`,
-    status: mapGiteaCommitStatus(status.status),
+    status: mapGiteaCommitStatus(rawStatus),
+    ...(rawStatus === "warning" ? { rawStatus } : {}),
     url: status.target_url ?? null,
     checkRunId: status.id,
   };
 }
 
-function getGiteaActionsRunName(workflowRun: GiteaActionsRun): string {
-  return (
-    workflowRun.name ||
-    workflowRun.display_title ||
-    workflowRun.workflow_id ||
-    `actions-${workflowRun.id}`
-  );
+function getGiteaActionTaskName(task: GiteaActionTask): string {
+  return task.name || task.display_title || task.workflow_id || `actions-${task.id}`;
 }
 
-function toGiteaActionsPullRequestCheck(workflowRun: GiteaActionsRun): PullRequestCheck {
+function toGiteaActionTaskCheck(task: GiteaActionTask): PullRequestCheck {
+  const rawStatus = task.status.toLowerCase();
   return {
-    name: getGiteaActionsRunName(workflowRun),
-    status: mapGiteaActionsRunStatus(workflowRun.status),
-    url: workflowRun.url ?? null,
-    workflowRunId: workflowRun.id,
+    name: getGiteaActionTaskName(task),
+    status: mapGiteaActionTaskStatus(rawStatus),
+    ...(rawStatus === "blocked" ? { rawStatus } : {}),
+    ...(rawStatus === "blocked" && task.need_approval ? { requiresAction: true } : {}),
+    url: task.url ?? null,
+    workflowRunId: task.id,
   };
 }
 
-function getGiteaActionsWorkflowIdentity(workflowRun: GiteaActionsRun): string {
-  return workflowRun.workflow_id || workflowRun.name || `actions-${workflowRun.id}`;
+function getGiteaActionWorkflowIdentity(task: GiteaActionTask): string {
+  return task.workflow_id || `unknown-workflow\u0000${getGiteaActionExecutionIdentity(task)}`;
 }
 
-function parseGiteaActionsRunTime(workflowRun: GiteaActionsRun): number {
-  const timestamp = workflowRun.created_at ?? workflowRun.run_started_at ?? null;
+function getGiteaActionExecutionIdentity(task: GiteaActionTask): string {
+  if (task.run_number !== undefined) return `run-number\u0000${task.run_number}`;
+  if (task.url) return `url\u0000${task.url}`;
+  return `task\u0000${task.id}`;
+}
+
+function parseGiteaActionTaskTime(task: GiteaActionTask): number {
+  const timestamp = task.created_at ?? task.run_started_at ?? null;
   if (!timestamp) {
     return 0;
   }
@@ -741,15 +768,15 @@ function parseGiteaActionsRunTime(workflowRun: GiteaActionsRun): number {
   return Number.isNaN(time) ? 0 : time;
 }
 
-function compareGiteaActionsRunRecency(left: GiteaActionsRun, right: GiteaActionsRun): number {
+function compareGiteaActionTaskRecency(left: GiteaActionTask, right: GiteaActionTask): number {
   const leftRunNumber = left.run_number ?? 0;
   const rightRunNumber = right.run_number ?? 0;
   if (leftRunNumber !== rightRunNumber) {
     return leftRunNumber - rightRunNumber;
   }
 
-  const leftTime = parseGiteaActionsRunTime(left);
-  const rightTime = parseGiteaActionsRunTime(right);
+  const leftTime = parseGiteaActionTaskTime(left);
+  const rightTime = parseGiteaActionTaskTime(right);
   if (leftTime !== rightTime) {
     return leftTime - rightTime;
   }
@@ -757,44 +784,95 @@ function compareGiteaActionsRunRecency(left: GiteaActionsRun, right: GiteaAction
   return left.id - right.id;
 }
 
-function parseGiteaActionsRuns(rawRuns: unknown[]): GiteaActionsRun[] {
-  const runs: GiteaActionsRun[] = [];
-  for (const raw of rawRuns) {
-    const parsed = GiteaActionsRunSchema.safeParse(raw);
+function parseGiteaActionTasks(rawTasks: unknown[]): GiteaActionTask[] {
+  const tasks: GiteaActionTask[] = [];
+  for (const raw of rawTasks) {
+    const parsed = GiteaActionTaskSchema.safeParse(raw);
     if (parsed.success) {
-      runs.push(parsed.data);
+      tasks.push(parsed.data);
     }
   }
-  return runs;
+  return tasks;
 }
 
-function latestGiteaActionsRunsByWorkflow(actionsRuns: GiteaActionsRun[]): GiteaActionsRun[] {
-  const latestRuns = new Map<string, GiteaActionsRun>();
-  for (const workflowRun of actionsRuns) {
-    const identity = getGiteaActionsWorkflowIdentity(workflowRun);
-    const current = latestRuns.get(identity);
-    if (!current || compareGiteaActionsRunRecency(current, workflowRun) < 0) {
-      latestRuns.set(identity, workflowRun);
+function latestGiteaActionTasksByWorkflow(tasks: GiteaActionTask[]): GiteaActionTask[] {
+  const latestExecutions = new Map<string, GiteaActionTask>();
+  for (const task of tasks) {
+    const identity = getGiteaActionWorkflowIdentity(task);
+    const current = latestExecutions.get(identity);
+    if (!current || compareGiteaActionTaskRecency(current, task) < 0) {
+      latestExecutions.set(identity, task);
     }
   }
-  return [...latestRuns.values()];
+  return tasks.filter((task) => {
+    const latest = latestExecutions.get(getGiteaActionWorkflowIdentity(task));
+    return (
+      latest !== undefined &&
+      getGiteaActionExecutionIdentity(task) === getGiteaActionExecutionIdentity(latest)
+    );
+  });
+}
+
+function getUrlOrigin(value: string | null | undefined): string | null {
+  if (!value) return null;
+  try {
+    return new URL(value).origin;
+  } catch {
+    return null;
+  }
+}
+
+function hasNativeActionJobUrl(
+  targetUrl: string | null | undefined,
+  nativeOrigins: ReadonlySet<string>,
+): boolean {
+  if (!targetUrl) return false;
+  try {
+    const relativeOrigin = "https://gitea.invalid";
+    const url = new URL(targetUrl, relativeOrigin);
+    return (
+      /\/actions\/runs\/\d+\/jobs\/\d+\/?$/.test(url.pathname) &&
+      (url.origin === relativeOrigin || nativeOrigins.has(url.origin))
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isGiteaActionShadowStatus(
+  status: GiteaCommitStatus,
+  taskNames: ReadonlySet<string>,
+  nativeOrigins: ReadonlySet<string>,
+): boolean {
+  if (status.creator !== null && !hasNativeActionJobUrl(status.target_url, nativeOrigins)) {
+    return false;
+  }
+  for (const taskName of taskNames) {
+    if (status.context.includes(` / ${taskName} (`) && status.context.endsWith(")")) return true;
+  }
+  return false;
 }
 
 function combineGiteaChecks(
   commitStatuses: GiteaCommitStatus[],
-  actionsRuns: GiteaActionsRun[],
+  actionTasks: GiteaActionTask[],
 ): PullRequestCheck[] {
-  const checks = commitStatuses.map(toGiteaPullRequestCheck);
-  const seen = new Set(
-    checks.map((check) => `${check.name}\u0000${check.url ?? ""}\u0000${check.status}`),
+  const taskNames = new Set(
+    actionTasks.map((task) => task.name).filter((name): name is string => Boolean(name)),
   );
-  for (const workflowRun of actionsRuns) {
-    const check = toGiteaActionsPullRequestCheck(workflowRun);
-    const key = `${check.name}\u0000${check.url ?? ""}\u0000${check.status}`;
-    if (!seen.has(key)) {
-      checks.push(check);
-      seen.add(key);
-    }
+  const nativeOrigins = new Set(
+    actionTasks
+      .map((task) => getUrlOrigin(task.url))
+      .filter((origin): origin is string => !!origin),
+  );
+  const checks = commitStatuses
+    .filter((status) => !isGiteaActionShadowStatus(status, taskNames, nativeOrigins))
+    .map(toGiteaPullRequestCheck);
+  const seenTaskIds = new Set<number>();
+  for (const task of actionTasks) {
+    if (seenTaskIds.has(task.id)) continue;
+    checks.push(toGiteaActionTaskCheck(task));
+    seenTaskIds.add(task.id);
   }
   return checks;
 }
@@ -802,9 +880,9 @@ function combineGiteaChecks(
 function applyGiteaChecks(
   status: CurrentPullRequestStatus,
   combined: GiteaCombinedCommitStatus,
-  actionsRuns: GiteaActionsRun[],
+  actionTasks: GiteaActionTask[],
 ): CurrentPullRequestStatus {
-  const checks = combineGiteaChecks(combined.statuses, actionsRuns);
+  const checks = combineGiteaChecks(combined.statuses, actionTasks);
   if (checks.length === 0) {
     return status;
   }
@@ -1513,21 +1591,21 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
       if (!pr.headSha) {
         return status;
       }
-      const [combined, actionsRuns] = await Promise.all([
+      const [combined, actionTasks] = await Promise.all([
         loadCombinedCommitStatusBestEffort({
           cwd,
           repoOwner: status.repoOwner,
           repoName: status.repoName,
           sha: pr.headSha,
         }),
-        loadActionsRunsBestEffort({
+        loadActionTasksBestEffort({
           cwd,
           repoOwner: status.repoOwner,
           repoName: status.repoName,
           sha: pr.headSha,
         }),
       ]);
-      return applyGiteaChecks(status, combined, actionsRuns);
+      return applyGiteaChecks(status, combined, actionTasks);
     } catch {
       return status;
     }
@@ -1563,19 +1641,65 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
     );
   }
 
-  async function loadActionsRunsBestEffort(input: {
+  async function loadActionTasksBestEffort(input: {
     cwd: string;
     repoOwner: string;
     repoName: string;
     sha: string;
-  }): Promise<GiteaActionsRun[]> {
+  }): Promise<GiteaActionTask[]> {
     try {
-      const runs = await loadActionsRuns(input);
-      const matchingRuns = runs.filter((workflowRun) => workflowRun.head_sha === input.sha);
-      return latestGiteaActionsRunsByWorkflow(matchingRuns);
+      const tasks = await loadActionTasks(input);
+      const matchingTasks = tasks.filter((task) => task.head_sha === input.sha);
+      const latestTasks = latestGiteaActionTasksByWorkflow(matchingTasks);
+      return await enrichActionTaskApprovalsBestEffort(input, latestTasks);
     } catch (error) {
       rethrowTeaAuthFailure(error);
       return [];
+    }
+  }
+
+  async function enrichActionTaskApprovalsBestEffort(
+    input: { cwd: string; repoOwner: string; repoName: string; sha: string },
+    tasks: GiteaActionTask[],
+  ): Promise<GiteaActionTask[]> {
+    if (!tasks.some((task) => task.status.toLowerCase() === "blocked")) return tasks;
+    try {
+      const owner = encodeURIComponent(input.repoOwner);
+      const repo = encodeURIComponent(input.repoName);
+      const sha = encodeURIComponent(input.sha);
+      const approvalRunNumbers = new Set<number>();
+      let fetched = 0;
+      for (let page = 1; page <= GITEA_ACTION_MAX_PAGES; page += 1) {
+        const response = await runJson(
+          [
+            "api",
+            `repos/${owner}/${repo}/actions/runs?head_sha=${sha}&limit=${GITEA_ACTION_PAGE_LIMIT}&page=${page}`,
+          ],
+          { cwd: input.cwd },
+          GiteaActionRunsResponseSchema,
+        );
+        if (response.workflow_runs.length === 0) break;
+        fetched += response.workflow_runs.length;
+        for (const rawRun of response.workflow_runs) {
+          const parsed = GiteaActionRunMetadataSchema.safeParse(rawRun);
+          if (!parsed.success || !parsed.data.need_approval) continue;
+          const metadata = parsed.data;
+          const runSha = metadata.head_sha ?? metadata.commit_sha;
+          const runNumber = metadata.run_number ?? metadata.index_in_repo;
+          if (runSha === input.sha && runNumber !== undefined) approvalRunNumbers.add(runNumber);
+        }
+        if (response.total_count !== undefined && fetched >= response.total_count) break;
+      }
+      return tasks.map((task) =>
+        task.status.toLowerCase() === "blocked" &&
+        task.run_number !== undefined &&
+        approvalRunNumbers.has(task.run_number)
+          ? { ...task, need_approval: true }
+          : task,
+      );
+    } catch (error) {
+      rethrowTeaAuthFailure(error);
+      return tasks;
     }
   }
 
@@ -1583,35 +1707,31 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
   // self-hosted cap can sit below our requested 50; it also cannot filter by ref
   // or sha server-side. A short page therefore does NOT mean the last page —
   // conflating the two drops the current PR's run on a capped instance. Page on
-  // until the target sha is found, a page comes back empty, or the bounded
-  // max-pages cap is hit.
-  async function loadActionsRuns(input: {
+  // until total_count is exhausted, a page comes back empty, or the bounded
+  // max-pages cap is hit. SHA matches need not be contiguous across pages.
+  async function loadActionTasks(input: {
     cwd: string;
     repoOwner: string;
     repoName: string;
-    sha: string;
-  }): Promise<GiteaActionsRun[]> {
+  }): Promise<GiteaActionTask[]> {
     const owner = encodeURIComponent(input.repoOwner);
     const repo = encodeURIComponent(input.repoName);
-    const runs: GiteaActionsRun[] = [];
+    const tasks: GiteaActionTask[] = [];
     let fetched = 0;
-    for (let page = 1; page <= GITEA_ACTIONS_RUNS_MAX_PAGES; page += 1) {
+    for (let page = 1; page <= GITEA_ACTION_MAX_PAGES; page += 1) {
       const batch = await runJson(
         [
           "api",
-          `repos/${owner}/${repo}/actions/tasks?limit=${GITEA_ACTIONS_RUNS_PAGE_LIMIT}&page=${page}`,
+          `repos/${owner}/${repo}/actions/tasks?limit=${GITEA_ACTION_PAGE_LIMIT}&page=${page}`,
         ],
         { cwd: input.cwd },
-        GiteaActionsRunsSchema,
+        GiteaActionTasksResponseSchema,
       );
       if (batch.workflow_runs.length === 0) {
         break;
       }
       fetched += batch.workflow_runs.length;
-      runs.push(...parseGiteaActionsRuns(batch.workflow_runs));
-      if (runs.some((workflowRun) => workflowRun.head_sha === input.sha)) {
-        break;
-      }
+      tasks.push(...parseGiteaActionTasks(batch.workflow_runs));
       // Stop once the whole result set is fetched: relying on a short page as
       // the terminator is unsafe on instances whose page cap is below the
       // requested limit, but `total_count` bounds the walk exactly, so a sha
@@ -1620,7 +1740,7 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
         break;
       }
     }
-    return runs;
+    return tasks;
   }
 
   async function resolveCurrentPullRequestHeadSha(cwd: string): Promise<string> {
@@ -1702,19 +1822,19 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
     };
   }
 
-  function toGiteaActionsCheckDetails(workflowRun: GiteaActionsRun): CheckDetails {
-    const conclusion = mapGiteaActionsRunStatus(workflowRun.status);
+  function toGiteaActionTaskDetails(task: GiteaActionTask): CheckDetails {
+    const conclusion = mapGiteaActionTaskStatus(task.status);
     return {
-      checkRunId: workflowRun.id,
-      workflowRunId: workflowRun.id,
-      name: getGiteaActionsRunName(workflowRun),
-      status: workflowRun.status,
+      checkRunId: task.id,
+      workflowRunId: task.id,
+      name: getGiteaActionTaskName(task),
+      status: task.status,
       conclusion,
-      url: workflowRun.url ?? null,
-      detailsUrl: workflowRun.url ?? null,
+      url: task.url ?? null,
+      detailsUrl: task.url ?? null,
       output: {
-        title: workflowRun.display_title ?? workflowRun.name ?? workflowRun.workflow_id ?? null,
-        summary: workflowRun.workflow_id ?? null,
+        title: task.display_title ?? task.name ?? task.workflow_id ?? null,
+        summary: task.workflow_id ?? null,
         text: null,
       },
       annotations: [],
@@ -1958,18 +2078,18 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
       if (status) {
         return toGiteaCheckDetails(status);
       }
-      const runs = await loadActionsRunsBestEffort({
+      const tasks = await loadActionTasksBestEffort({
         cwd: input.cwd,
         repoOwner: input.repoOwner,
         repoName: input.repoName,
         sha,
       });
       const workflowRunId = input.workflowRunId ?? input.checkRunId;
-      const workflowRun = runs.find((entry) => entry.id === workflowRunId);
-      if (!workflowRun) {
+      const task = tasks.find((entry) => entry.id === workflowRunId);
+      if (!task) {
         throw new Error(`Gitea check ${workflowRunId} was not found`);
       }
-      return toGiteaActionsCheckDetails(workflowRun);
+      return toGiteaActionTaskDetails(task);
     },
 
     async searchIssuesAndPrs(input: SearchIssuesAndPrsOptions): Promise<SearchResult> {

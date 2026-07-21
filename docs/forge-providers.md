@@ -181,6 +181,13 @@ are stale, run `npm run build:server`.
   real shims tagged with `COMPAT(name)`.
 - Gitea-family facts use `forgeSpecific.forge === "gitea"` even when the
   top-level brand is Forgejo or Codeberg.
+- Gitea's legacy Actions task endpoint cannot filter by commit, may enforce a
+  page size below the requested limit, and omits rerun-attempt numbers. Walk a
+  bounded number of pages using `total_count` and filter locally. Preserve
+  ambiguous same-run tasks: display names are not stable job identities, so
+  name-based deduplication can hide a real failure.
+- A blocked Gitea Actions task is not necessarily manual: only mark it as
+  action-required when the matching run metadata reports `need_approval`.
 - Brand icons are bundled React components, so they cannot come from protocol
   manifest data.
 - Source URL grammars are app-side because blob/tree path syntax is
