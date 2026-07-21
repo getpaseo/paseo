@@ -98,13 +98,28 @@ describe("applyFileMentionReplacement", () => {
 });
 
 describe("applyAgentMentionReplacement", () => {
-  it("removes only the active @query segment without inserting a path", () => {
+  it("removes an inline @query without leaving doubled whitespace", () => {
     const text = "review @oauth-agent before merging";
     const next = applyAgentMentionReplacement({
       text,
       mention: { start: 7, end: 19, query: "oauth-agent" },
     });
-    expect(next).toBe("review  before merging");
+    expect(next).toBe("review before merging");
+  });
+
+  it("removes adjacent whitespace when the @query starts or ends the prompt", () => {
+    expect(
+      applyAgentMentionReplacement({
+        text: "@oauth-agent before merging",
+        mention: { start: 0, end: 12, query: "oauth-agent" },
+      }),
+    ).toBe("before merging");
+    expect(
+      applyAgentMentionReplacement({
+        text: "review @oauth-agent",
+        mention: { start: 7, end: 19, query: "oauth-agent" },
+      }),
+    ).toBe("review");
   });
 });
 

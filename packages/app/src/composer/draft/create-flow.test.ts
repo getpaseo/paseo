@@ -264,6 +264,7 @@ describe("useDraftAgentCreateFlow", () => {
       agentId: "agent-1",
       result: { id: "agent-1" },
     }));
+    const onBeforeSubmit = vi.fn();
     useSessionStore.setState((state) => ({
       ...state,
       sessions: {
@@ -281,6 +282,7 @@ describe("useDraftAgentCreateFlow", () => {
         initialAttempt: attempt,
         buildDraftAgent: (currentAttempt) => ({ currentAttempt }),
         createRequest,
+        onBeforeSubmit,
         onCreateSuccess: vi.fn(),
       }),
     );
@@ -295,6 +297,7 @@ describe("useDraftAgentCreateFlow", () => {
     });
 
     expect(thrown).toBeInstanceOf(Error);
+    expect(onBeforeSubmit).not.toHaveBeenCalled();
     expect(createRequest).not.toHaveBeenCalled();
     expect(result.current.formErrorMessage).not.toBe("");
   });

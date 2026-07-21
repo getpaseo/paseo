@@ -65,6 +65,11 @@ import { releaseWorkspaceServicePortPlan } from "./workspace-service-port-regist
 import { getErrorMessage, getErrorMessageOr } from "@getpaseo/protocol/error-utils";
 import { getAgentStatusPriority } from "@getpaseo/protocol/agent-state-bucket";
 import { getParentAgentIdFromLabels, isDelegatedAgent } from "@getpaseo/protocol/agent-labels";
+import {
+  MAX_AGENT_CONTEXT_ATTACHMENTS,
+  MAX_AGENT_CONTEXT_ATTACHMENTS_TOTAL_BYTES,
+  MAX_AGENT_CONTEXT_TIMELINE_SCAN_ROWS,
+} from "@getpaseo/protocol/agent-context-limits";
 import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "./workspace-git-service.js";
 import type { ProjectUpdate } from "./workspace-reconciliation-service.js";
 import {
@@ -338,10 +343,6 @@ function beginAgentDeleteIfSupported(agentStorage: AgentStorage, agentId: string
 }
 
 const FETCH_AGENTS_SORT_KEYS = ["status_priority", "created_at", "updated_at", "title"] as const;
-const MAX_AGENT_CONTEXT_ATTACHMENTS = 5;
-const AGENT_CONTEXT_ATTACHMENTS_MAX_BYTES = 384 * 1024;
-const AGENT_CONTEXT_ATTACHMENT_SCAN_LIMIT = 25_000;
-
 interface AgentContextSource {
   liveAgent: ManagedAgent | null;
   storedRecord: StoredAgentRecord | null;
@@ -3527,7 +3528,7 @@ export class Session {
     // attached, allocate evenly so later selections retain useful context too.
     const maxBytesPerAttachment = Math.min(
       AGENT_CONTEXT_ATTACHMENT_MAX_BYTES,
-      Math.floor(AGENT_CONTEXT_ATTACHMENTS_MAX_BYTES / uniqueReferences.length),
+      Math.floor(MAX_AGENT_CONTEXT_ATTACHMENTS_TOTAL_BYTES / uniqueReferences.length),
     );
     const resolvedByAgentId = new Map<string, Extract<AgentAttachment, { type: "text" }>>();
     for (const reference of uniqueReferences) {
@@ -3572,7 +3573,7 @@ export class Session {
 
     const timeline = this.agentManager.fetchRetainedTimeline(reference.agentId, {
       direction: "tail",
-      limit: AGENT_CONTEXT_ATTACHMENT_SCAN_LIMIT,
+      limit: MAX_AGENT_CONTEXT_TIMELINE_SCAN_ROWS,
     });
     if (!timeline) {
       throw new Error(

@@ -293,6 +293,13 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
         ) {
           throw new Error(t("agentContext.status.updateHost"));
         }
+        await onBeforeSubmit?.({
+          attempt,
+          text: attempt.text,
+          images: attempt.images,
+          attachments: attempt.attachments,
+          cwd,
+        });
         const createResult = await createRequest({
           attempt,
           text: attempt.text,
