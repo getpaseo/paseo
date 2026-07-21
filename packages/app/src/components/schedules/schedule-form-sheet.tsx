@@ -322,10 +322,18 @@ function OpenScheduleFormSheet({
     if (!state.submitCadence) {
       return false;
     }
+    const prompt = state.prompt.trim();
+    if (!prompt) {
+      return false;
+    }
+    const maxRuns = parseMaxRuns(state.maxRuns);
     if (mode === "edit" && schedule) {
       await updateSchedule({
         id: schedule.id,
-        cadence: state.submitCadence,
+        prompt,
+        name: state.name.trim() || null,
+        ...(state.submitCadence ? { cadence: state.submitCadence } : {}),
+        maxRuns,
       });
       return true;
     }
@@ -334,11 +342,14 @@ function OpenScheduleFormSheet({
       return false;
     }
     await createSchedule({
+      prompt,
+      name: state.name.trim() || undefined,
       cadence: requireCronCadence(state.submitCadence),
       target: { type: "agent", agentId },
+      ...(maxRuns != null ? { maxRuns } : {}),
     });
     return true;
-  }, [createSchedule, mode, schedule, state.selectedAgentId, state.submitCadence, updateSchedule]);
+  }, [createSchedule, mode, schedule, state.selectedAgentId, state.name, state.prompt, state.submitCadence, updateSchedule]);
 
   const submitNewAgent = useCallback(async (): Promise<boolean> => {
     const provider = state.selectedProvider;
@@ -518,18 +529,63 @@ function ScheduleFormFields({
 
       {state.targetKind === "agent" ? (
         <>
+          <Field label="Name">
+            <FormTextInput
+              size={controlSize}
+              testID="schedule-agent-name-input"
+              accessibilityLabel="Schedule name"
+              initialValue={state.name}
+              value={state.name}
+              onChangeText={model.setName}
+              placeholder="Optional"
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+          </Field>
+
+          <Field label="Prompt">
+            <FormTextInput
+              size={controlSize}
+              testID="schedule-agent-prompt-input"
+              accessibilityLabel="Prompt"
+              initialValue={state.prompt}
+              value={state.prompt}
+              onChangeText={model.setPrompt}
+              placeholder="What should the agent do each run?"
+              style={styles.multilineInput}
+              multiline
+              numberOfLines={4}
+              textAlignVertical="top"
+            />
+          </Field>
+
           <ScheduleAgentSelector
             agents={agents}
             selectedAgentId={state.selectedAgentId}
             onSelectAgent={model.setAgentTarget}
             controlSize={controlSize}
           />
+
           <CadenceEditor
             value={state.cadence}
             onChange={model.setCadence}
             error={cadenceError ?? undefined}
             size={controlSize}
           />
+
+          <Field label="Max runs">
+            <FormTextInput
+              size={controlSize}
+              testID="schedule-agent-max-runs-input"
+              accessibilityLabel="Max runs"
+              initialValue={state.maxRuns}
+              value={state.maxRuns}
+              onChangeText={model.setMaxRuns}
+              placeholder="Unlimited"
+              keyboardType="number-pad"
+            />
+          </Field>
+
           {state.submitError ? <Text style={styles.submitError}>{state.submitError}</Text> : null}
         </>
       ) : (

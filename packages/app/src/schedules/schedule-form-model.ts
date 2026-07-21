@@ -556,7 +556,7 @@ function resolveDisclosure(state: ScheduleFormState): ScheduleDisclosureState {
 
 function resolveCanSubmit(state: ScheduleFormState): boolean {
   if (state.targetKind === "agent") {
-    return state.selectedAgentId.trim().length > 0 && state.submitCadence !== undefined;
+    return state.prompt.trim().length > 0 && state.selectedAgentId.trim().length > 0 && state.submitCadence !== undefined;
   }
   if (state.prompt.trim().length === 0) {
     return false;

@@ -3,6 +3,7 @@ import {
   Text,
   Pressable,
   Modal,
+  Alert,
   RefreshControl,
   FlatList,
   type ListRenderItem,
@@ -430,6 +431,30 @@ export function AgentList({
     setActionAgent(null);
   }, [actionAgent, actionClient, archiveAgent]);
 
+  const handleDeleteAgent = useCallback(() => {
+    if (!actionAgent || !actionClient) {
+      return;
+    }
+
+    Alert.alert(
+      t("agentList.deleteSheet.confirmTitle"),
+      t("agentList.deleteSheet.confirmMessage"),
+      [
+        { text: t("common.actions.cancel"), style: "cancel" },
+        {
+          text: t("agentList.deleteSheet.delete"),
+          style: "destructive",
+          onPress: () => {
+            const client = actionClient;
+            const agentId = actionAgent.id;
+            setActionAgent(null);
+            client.deleteAgent(agentId).catch(() => {});
+          },
+        },
+      ],
+    );
+  }, [actionAgent, actionClient, t]);
+
   const flatItems = useMemo((): FlatListItem[] => {
     const buckets = new Map<DateSectionKey, AggregatedAgent[]>();
     for (const agent of agents) {
@@ -499,6 +524,10 @@ export function AgentList({
     () => [styles.sheetArchiveText, isActionDaemonUnavailable && styles.sheetArchiveTextDisabled],
     [isActionDaemonUnavailable],
   );
+  const sheetDeleteTextStyle = useMemo(
+    () => [styles.sheetDeleteText, isActionDaemonUnavailable && styles.sheetDeleteTextDisabled],
+    [isActionDaemonUnavailable],
+  );
 
   const refreshControl = useMemo(
     () =>
@@ -559,6 +588,15 @@ export function AgentList({
                 <Text style={sheetArchiveTextStyle}>{t("agentList.archiveSheet.archive")}</Text>
               </Pressable>
             </View>
+            <View style={styles.sheetDivider} />
+            <Pressable
+              disabled={isActionDaemonUnavailable}
+              style={[styles.sheetButton, styles.sheetDeleteButton]}
+              onPress={handleDeleteAgent}
+              testID="agent-action-delete"
+            >
+              <Text style={sheetDeleteTextStyle}>{t("agentList.deleteSheet.delete")}</Text>
+            </Pressable>
           </View>
         </View>
       </Modal>
@@ -787,5 +825,21 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
     fontWeight: theme.fontWeight.semibold,
     fontSize: theme.fontSize.base,
+  },
+  sheetDivider: {
+    height: 1,
+    backgroundColor: theme.colors.surface1,
+    marginHorizontal: -theme.spacing[6],
+  },
+  sheetDeleteButton: {
+    backgroundColor: "rgba(239, 68, 68, 0.12)",
+  },
+  sheetDeleteText: {
+    color: theme.colors.palette.red[400],
+    fontWeight: theme.fontWeight.semibold,
+    fontSize: theme.fontSize.base,
+  },
+  sheetDeleteTextDisabled: {
+    opacity: 0.5,
   },
 }));
