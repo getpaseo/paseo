@@ -4,6 +4,7 @@ import {
   useEffect,
   useMemo,
   useRef,
+  useState,
   type Dispatch,
   type RefObject,
   type SetStateAction,
@@ -29,6 +30,7 @@ interface ComposerGithubAutoAttachInput {
 }
 
 interface ComposerGithubAutoAttachResult {
+  isResolving: boolean;
   markGithubAttachmentRemoved: (attachment: ComposerAttachment | undefined) => void;
 }
 
@@ -39,6 +41,7 @@ export function useComposerGithubAutoAttach(
   const latestRef = useRef(params);
   const removedRefKeysRef = useRef(new Set<string>());
   const pendingRefKeysRef = useRef(new Set<string>());
+  const [resolvingRefKeys, setResolvingRefKeys] = useState<ReadonlySet<string>>(() => new Set());
 
   latestRef.current = params;
 
@@ -52,18 +55,28 @@ export function useComposerGithubAutoAttach(
       return;
     }
 
+    const refKeys = refs.map(githubRefKey);
+    setResolvingRefKeys((current) => addKeys(current, refKeys));
+    let lookupStarted = false;
+
     const timerId = setTimeout(() => {
+      lookupStarted = true;
       void attachRefs({
         refs,
         queryClient,
         latestRef,
         removedRefKeys: removedRefKeysRef.current,
         pendingRefKeys: pendingRefKeysRef.current,
+      }).finally(() => {
+        clearResolvingKeys(setResolvingRefKeys, refKeys);
       });
     }, AUTO_ATTACH_DEBOUNCE_MS);
 
     return () => {
       clearTimeout(timerId);
+      if (!lookupStarted) {
+        clearResolvingKeys(setResolvingRefKeys, refKeys);
+      }
     };
   }, [
     params.text,
@@ -86,10 +99,32 @@ export function useComposerGithubAutoAttach(
 
   return useMemo(
     () => ({
+      isResolving: resolvingRefKeys.size > 0,
       markGithubAttachmentRemoved,
     }),
-    [markGithubAttachmentRemoved],
+    [markGithubAttachmentRemoved, resolvingRefKeys.size],
   );
+}
+
+function addKeys(current: ReadonlySet<string>, keys: readonly string[]): ReadonlySet<string> {
+  if (keys.every((key) => current.has(key))) return current;
+  const next = new Set(current);
+  for (const key of keys) next.add(key);
+  return next;
+}
+
+function removeKeys(current: ReadonlySet<string>, keys: readonly string[]): ReadonlySet<string> {
+  if (keys.every((key) => !current.has(key))) return current;
+  const next = new Set(current);
+  for (const key of keys) next.delete(key);
+  return next;
+}
+
+function clearResolvingKeys(
+  setResolvingRefKeys: Dispatch<SetStateAction<ReadonlySet<string>>>,
+  keys: readonly string[],
+): void {
+  setResolvingRefKeys((current) => removeKeys(current, keys));
 }
 
 async function attachRefs({

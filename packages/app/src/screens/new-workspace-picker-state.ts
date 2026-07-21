@@ -4,6 +4,12 @@ import {
 } from "@/attachments/types";
 import type { PickerItem } from "./new-workspace-picker-item";
 
+function isPrAttachment(
+  attachment: UserComposerAttachment,
+): attachment is Extract<UserComposerAttachment, { kind: "forge_change_request" | "github_pr" }> {
+  return attachment.kind === "forge_change_request" || attachment.kind === "github_pr";
+}
+
 function isPickerOwnedPrAttachment(attachment: UserComposerAttachment): attachment is Extract<
   UserComposerAttachment,
   { kind: "github_pr" }
@@ -28,8 +34,7 @@ export function syncPickerPrAttachment(input: {
   if (input.item?.kind === "github-pr") {
     const selectedPr = input.item.item;
     const hasExistingPrAttachment = nextAttachments.some(
-      (attachment) =>
-        attachment.kind === "github_pr" && attachment.item.number === selectedPr.number,
+      (attachment) => isPrAttachment(attachment) && attachment.item.number === selectedPr.number,
     );
     if (!hasExistingPrAttachment) {
       return [
@@ -54,14 +59,14 @@ export function clearPickerPrAttachmentForTargetChange(input: {
   if (input.currentTargetId === input.nextTargetId) {
     return input.attachments;
   }
-  return syncPickerPrAttachment({ attachments: input.attachments, item: null });
+  return input.attachments.filter((attachment) => !isPrAttachment(attachment));
 }
 
 export function pickerItemFromAttachments(
   attachments: ReadonlyArray<UserComposerAttachment>,
 ): PickerItem | null {
   for (const attachment of attachments) {
-    if (attachment.kind !== "forge_change_request" && attachment.kind !== "github_pr") continue;
+    if (!isPrAttachment(attachment)) continue;
     return { kind: "github-pr", item: attachment.item };
   }
 

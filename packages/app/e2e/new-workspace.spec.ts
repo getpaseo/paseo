@@ -838,6 +838,7 @@ test.describe("New workspace flow", () => {
       await composer.focus();
       await page.keyboard.press("Control+V");
 
+      await expect(page.getByTestId("workspace-create-submit")).toBeDisabled();
       await expectComposerGithubAttachmentPill(page, {
         number: pr.number,
         title: pr.title,

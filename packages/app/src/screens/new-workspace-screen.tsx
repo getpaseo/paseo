@@ -2135,6 +2135,7 @@ export function NewWorkspaceScreen({
             submitButtonTestID="workspace-create-submit"
             submitIcon="return"
             isSubmitLoading={isPending}
+            waitForGithubAutoAttachOnSubmit
             submitBehavior="preserve-and-lock"
             blurOnSubmit={true}
             value={chatDraft.text}

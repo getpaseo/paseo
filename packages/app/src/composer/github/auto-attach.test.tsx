@@ -106,6 +106,7 @@ function useHarness(client: ForgeSearchClient, input: HarnessInput = {}) {
     setText,
     attachments,
     setAttachments,
+    isResolving: autoAttach.isResolving,
     markGithubAttachmentRemoved: autoAttach.markGithubAttachmentRemoved,
   };
 }
@@ -126,9 +127,11 @@ describe("useComposerGithubAutoAttach", () => {
     act(() => {
       result.current.setText("Please review https://github.com/acme/paseo/pull/101");
     });
+    expect(result.current.isResolving).toBe(true);
     await flushDebounce();
 
     expect(result.current.attachments).toEqual([{ kind: "forge_change_request", item: pr101 }]);
+    expect(result.current.isResolving).toBe(false);
     expect(client.calls).toEqual([{ cwd, query: "101", limit: 20 }]);
     vi.useRealTimers();
   });

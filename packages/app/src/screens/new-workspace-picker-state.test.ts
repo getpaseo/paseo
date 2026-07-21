@@ -28,6 +28,12 @@ function prAttachment(
   return { kind: "github_pr", item, ...(owner ? { owner } : {}) };
 }
 
+function forgePrAttachment(
+  item: ForgeSearchItem,
+): Extract<UserComposerAttachment, { kind: "forge_change_request" }> {
+  return { kind: "forge_change_request", item };
+}
+
 function issueAttachment(number: number): UserComposerAttachment {
   return {
     kind: "github_issue",
@@ -91,6 +97,15 @@ describe("syncPickerPrAttachment", () => {
     expect(result).toEqual([prAttachment(pr)]);
   });
 
+  it("does not duplicate a generalized PR attachment", () => {
+    const pr = makePrItem(202, "Refactor picker");
+    const result = syncPickerPrAttachment({
+      attachments: [forgePrAttachment(pr)],
+      item: { kind: "github-pr", item: pr },
+    });
+    expect(result).toEqual([forgePrAttachment(pr)]);
+  });
+
   it("clears a persisted picker selection without removing user-added attachments", () => {
     const pickerPr = prAttachment(makePrItem(202, "Picker PR"), "new-workspace-picker");
     const manuallyAttachedPr = prAttachment(makePrItem(303, "Manual PR"));
@@ -119,17 +134,19 @@ describe("clearPickerPrAttachmentForTargetChange", () => {
     ).toBe(attachments);
   });
 
-  it("clears only the picker-owned PR when the target changes", () => {
+  it("clears all PR attachments when the target changes", () => {
     const pickerPr = prAttachment(makePrItem(202, "Picker PR"), "new-workspace-picker");
     const manualPr = prAttachment(makePrItem(303, "Manual PR"));
+    const forgePr = forgePrAttachment(makePrItem(404, "Forge PR"));
+    const issue = issueAttachment(44);
 
     expect(
       clearPickerPrAttachmentForTargetChange({
-        attachments: [pickerPr, manualPr],
+        attachments: [issue, pickerPr, manualPr, forgePr],
         currentTargetId: "server-a",
         nextTargetId: "server-b",
       }),
-    ).toEqual([manualPr]);
+    ).toEqual([issue]);
   });
 });
 
@@ -137,7 +154,7 @@ describe("pickerItemFromAttachments", () => {
   it("uses a forge change request attachment as the starting ref", () => {
     const item = makePrItem(101, "A");
 
-    expect(pickerItemFromAttachments([{ kind: "forge_change_request", item }])).toEqual({
+    expect(pickerItemFromAttachments([forgePrAttachment(item)])).toEqual({
       kind: "github-pr",
       item,
     });
