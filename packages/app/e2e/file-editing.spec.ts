@@ -74,10 +74,9 @@ test.describe("CodeMirror workspace file editing", () => {
         page.getByTestId("file-source-editor").locator(".cm-line", { hasText: "line42 = 42" }),
       ).toBeVisible();
 
-      await page
-        .getByTestId("file-source-editor")
-        .locator(".cm-line", { hasText: "line1 = 1" })
-        .click({ position: { x: 1, y: 5 } });
+      const sourceEditor = editor(page);
+      await sourceEditor.click();
+      await sourceEditor.press("Control+Home");
       await expect(page.getByLabel(/^Line 1, column \d+$/)).toBeVisible();
 
       await page
