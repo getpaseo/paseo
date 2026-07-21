@@ -13,9 +13,9 @@ import type { Theme } from "@/styles/theme";
 const ATTACHMENT_CONTENT_HEIGHT = 48;
 
 interface AttachmentPillProps {
-  onOpen: () => void;
+  onOpen?: () => void;
   onRemove: () => void;
-  openAccessibilityLabel: string;
+  openAccessibilityLabel?: string;
   removeAccessibilityLabel: string;
   disabled?: boolean;
   testID?: string;
@@ -52,8 +52,8 @@ export function AttachmentPill({
         disabled={disabled}
         onHoverIn={handleBodyHoverIn}
         onHoverOut={handleBodyHoverOut}
-        accessibilityRole="button"
-        accessibilityLabel={openAccessibilityLabel}
+        accessibilityRole={onOpen ? "button" : undefined}
+        accessibilityLabel={onOpen ? openAccessibilityLabel : undefined}
         style={styles.frame}
       >
         {children}

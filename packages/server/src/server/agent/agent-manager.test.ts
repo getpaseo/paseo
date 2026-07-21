@@ -5205,6 +5205,34 @@ test("getTimelineRows falls back to the in-memory timeline when no durable store
   ]);
 });
 
+test("fetchRetainedTimeline reads a closed agent without reopening or mutating it", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-retained-context-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000141",
+  });
+  const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  await manager.appendTimelineItem(snapshot.id, {
+    type: "assistant_message",
+    text: "retained after close",
+  });
+  await manager.closeAgent(snapshot.id);
+  const storedAfterClose = await storage.get(snapshot.id);
+
+  const timeline = manager.fetchRetainedTimeline(snapshot.id, { direction: "tail", limit: 10 });
+
+  expect(timeline?.rows.map((row) => row.item)).toEqual([
+    { type: "assistant_message", text: "retained after close" },
+  ]);
+  expect(manager.getAgent(snapshot.id)).toBeNull();
+  await expect(storage.get(snapshot.id)).resolves.toEqual(storedAfterClose);
+});
+
 test("getAgent does not expose committed history internals once manager owns the seam", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-timeline-boundary-"));
   const storagePath = join(workdir, "agents");

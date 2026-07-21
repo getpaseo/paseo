@@ -334,6 +334,9 @@ export function openComposerAttachment(input: OpenComposerAttachmentInput): void
   if (input.attachment.kind === "file" || input.attachment.kind === "workspace_file") {
     return;
   }
+  if (input.attachment.kind === "agent_context") {
+    return;
+  }
   if (isWorkspaceAttachment(input.attachment)) {
     input.openWorkspaceAttachment({ attachment: input.attachment });
     return;

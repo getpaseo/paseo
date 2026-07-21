@@ -1,12 +1,13 @@
 import {
   NEW_WORKSPACE_PICKER_ATTACHMENT_OWNER,
+  type AgentContextAttachment,
   type AttachmentMetadata,
   type UserComposerAttachment,
 } from "@/attachments/types";
 import { PluginResourceComposerAttachmentSchema } from "@/plugins/attachments";
 import { z } from "zod";
 
-export const DRAFT_STORE_VERSION = 5;
+export const DRAFT_STORE_VERSION = 6;
 export const FINALIZED_DRAFT_TTL_MS = 5 * 60 * 1000;
 
 export interface LegacyDraftImage {
@@ -76,6 +77,16 @@ const ChangeRequestItemSchema = z.strictObject({
   kind: z.literal("change_request"),
   ...ForgeItemFields,
 });
+const AgentContextAttachmentSchema: z.ZodType<AgentContextAttachment> = z.strictObject({
+  kind: z.literal("agent_context"),
+  source: z.strictObject({
+    serverId: z.string().trim().min(1),
+    agentId: z.string().trim().min(1),
+    title: z.string().trim().min(1),
+    workspaceLabel: z.string().optional(),
+    provider: z.string().optional(),
+  }),
+});
 export const UserComposerAttachmentSchema: z.ZodType<UserComposerAttachment> = z.discriminatedUnion(
   "kind",
   [
@@ -93,6 +104,7 @@ export const UserComposerAttachmentSchema: z.ZodType<UserComposerAttachment> = z
         }),
       ]),
     }),
+    AgentContextAttachmentSchema,
     z.strictObject({ kind: z.literal("forge_issue"), item: IssueItemSchema }),
     z.strictObject({ kind: z.literal("forge_change_request"), item: ChangeRequestItemSchema }),
     z.strictObject({ kind: z.literal("github_issue"), item: IssueItemSchema }),
@@ -145,6 +157,23 @@ export function normalizeAttachmentMetadata(image: AttachmentMetadata): Attachme
   };
 }
 
+function normalizeAgentContextAttachment(
+  attachment: AgentContextAttachment,
+): AgentContextAttachment {
+  const workspaceLabel = attachment.source.workspaceLabel?.trim();
+  const provider = attachment.source.provider?.trim();
+  return {
+    kind: "agent_context",
+    source: {
+      serverId: attachment.source.serverId.trim(),
+      agentId: attachment.source.agentId.trim(),
+      title: attachment.source.title.trim(),
+      ...(workspaceLabel ? { workspaceLabel } : {}),
+      ...(provider ? { provider } : {}),
+    },
+  };
+}
+
 export function isUserComposerAttachment(value: unknown): value is UserComposerAttachment {
   return UserComposerAttachmentSchema.safeParse(value).success;
 }
@@ -164,6 +193,9 @@ export function normalizeComposerAttachment(
       path: attachment.path.trim().replace(/^\.\//, ""),
       selection: attachment.selection,
     };
+  }
+  if (attachment.kind === "agent_context") {
+    return normalizeAgentContextAttachment(attachment);
   }
   return attachment;
 }
