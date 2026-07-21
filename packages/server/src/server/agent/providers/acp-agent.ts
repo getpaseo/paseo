@@ -452,7 +452,7 @@ export interface ACPToolSnapshot {
   toolCallId: string;
   title: string;
   kind?: ToolKind | null;
-  status?: ToolCallStatus | null;
+  status?: ToolCallStatus | "canceled" | null;
   content?: ToolCallContent[] | null;
   locations?: ToolCallLocation[] | null;
   rawInput?: unknown;
@@ -1331,6 +1331,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
   private currentTurnUsage: AgentUsage | undefined;
   private activeForegroundTurnId: string | null = null;
+  private foregroundCancellation: { turnId: string; promise: Promise<void> } | null = null;
   private fallbackAssistantMessageId: string | null = null;
   private closed = false;
   private historyPending = false;
@@ -2007,6 +2008,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       return;
     }
 
+    const connection = this.connection;
+    const sessionId = this.sessionId;
     const interruptedTurnId = this.activeForegroundTurnId;
     for (const pending of this.pendingPermissions.values()) {
       pending.resolve({ outcome: { outcome: "cancelled" } });
@@ -2014,15 +2017,31 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.pendingPermissions.clear();
 
     if (interruptedTurnId) {
-      await this.connection.cancel({ sessionId: this.sessionId });
-      if (this.activeForegroundTurnId === interruptedTurnId) {
-        this.synthesizeCanceledToolCalls();
-        this.finishTurn({
-          type: "turn_canceled",
-          provider: this.provider,
-          reason: "Interrupted",
-          turnId: interruptedTurnId,
-        });
+      const inFlightCancellation = this.foregroundCancellation;
+      if (inFlightCancellation?.turnId === interruptedTurnId) {
+        await inFlightCancellation.promise;
+        return;
+      }
+
+      const cancellation = (async () => {
+        await connection.cancel({ sessionId });
+        if (this.activeForegroundTurnId === interruptedTurnId) {
+          this.synthesizeCanceledToolCalls();
+          this.finishTurn({
+            type: "turn_canceled",
+            provider: this.provider,
+            reason: "Interrupted",
+            turnId: interruptedTurnId,
+          });
+        }
+      })();
+      this.foregroundCancellation = { turnId: interruptedTurnId, promise: cancellation };
+      try {
+        await cancellation;
+      } finally {
+        if (this.foregroundCancellation?.promise === cancellation) {
+          this.foregroundCancellation = null;
+        }
       }
     }
   }
@@ -2526,6 +2545,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     update: ToolCall | ToolCallUpdate,
     previous: ACPToolSnapshot | undefined,
   ): AgentStreamEvent[] {
+    if (previous?.status === "canceled") {
+      return [];
+    }
     let snapshot = mergeToolSnapshot(toolCallId, update, previous);
     if (this.toolSnapshotTransformer) {
       snapshot = this.toolSnapshotTransformer(snapshot);
@@ -2788,15 +2810,13 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   private synthesizeCanceledToolCalls(): void {
-    for (const snapshot of this.toolCalls.values()) {
+    for (const [toolCallId, snapshot] of this.toolCalls) {
       const mapped = mapToolSnapshotToTimeline(snapshot, this.terminalEntries);
       if (mapped.status === "running") {
+        const canceledSnapshot: ACPToolSnapshot = { ...snapshot, status: "canceled" };
+        this.toolCalls.set(toolCallId, canceledSnapshot);
         this.pushEvent(
-          this.wrapTimeline({
-            ...mapped,
-            status: "canceled",
-            error: null,
-          }),
+          this.wrapTimeline(mapToolSnapshotToTimeline(canceledSnapshot, this.terminalEntries)),
         );
       }
     }
@@ -3119,6 +3139,13 @@ function mapToolSnapshotToTimeline(
       error: null,
     };
   }
+  if (status === "canceled") {
+    return {
+      ...base,
+      status: "canceled",
+      error: null,
+    };
+  }
   return {
     ...base,
     status: "running",
@@ -3126,12 +3153,14 @@ function mapToolSnapshotToTimeline(
   };
 }
 
-function mapToolStatus(status: ToolCallStatus | null | undefined): ToolCallTimelineItem["status"] {
+function mapToolStatus(status: ACPToolSnapshot["status"]): ToolCallTimelineItem["status"] {
   switch (status) {
     case "completed":
       return "completed";
     case "failed":
       return "failed";
+    case "canceled":
+      return "canceled";
     case "pending":
     case "in_progress":
     default:

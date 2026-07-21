@@ -2381,6 +2381,76 @@ describe("ACPAgentSession", () => {
     });
   });
 
+  test("concurrent interrupts share one cancel request for the active turn", async () => {
+    const session = createSession();
+    let resolveCancel!: () => void;
+    const cancel = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveCancel = resolve;
+        }),
+    );
+    const prompt = vi.fn(() => new Promise<PromptResponse>(() => {}));
+    const internals = asInternals<ACPSessionInternals>(session);
+    internals.sessionId = "session-1";
+    internals.connection = { prompt, cancel };
+
+    await session.startTurn("first prompt");
+    const firstInterrupt = session.interrupt();
+    const secondInterrupt = session.interrupt();
+
+    expect(cancel).toHaveBeenCalledTimes(1);
+    resolveCancel();
+    await Promise.all([firstInterrupt, secondInterrupt]);
+
+    await expect(session.startTurn("replacement prompt")).resolves.toEqual({
+      turnId: expect.any(String),
+    });
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
+  test("interrupted tool snapshots are not canceled again by a later turn", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    const prompt = vi.fn(() => new Promise<PromptResponse>(() => {}));
+    const cancel = vi.fn(async () => undefined);
+    const internals = asInternals<ACPSessionInternals>(session);
+    internals.sessionId = "session-1";
+    internals.connection = { prompt, cancel };
+    session.subscribe((event) => events.push(event));
+
+    await session.startTurn("first prompt");
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "tool-1",
+        title: "Run command",
+        kind: "execute",
+        status: "in_progress",
+      } as SessionUpdate,
+    });
+    await session.interrupt();
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "tool-1",
+        status: "completed",
+      } as SessionUpdate,
+    });
+
+    await session.startTurn("replacement prompt");
+    await session.interrupt();
+
+    const toolStatuses = events.flatMap((event) =>
+      event.type === "timeline" && event.item.type === "tool_call" && event.item.callId === "tool-1"
+        ? [event.item.status]
+        : [],
+    );
+    expect(toolStatuses).toEqual(["running", "canceled"]);
+  });
+
   test("a late failure from an interrupted prompt does not terminate its replacement", async () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];
