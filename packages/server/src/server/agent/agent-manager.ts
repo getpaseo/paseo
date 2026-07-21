@@ -130,6 +130,25 @@ function formatProviderList(providers: readonly string[]): string {
   return providers.length > 0 ? providers.join(", ") : "none";
 }
 
+/**
+ * Config a forked agent should start from: everything the source agent was
+ * running with, minus the fields that identify a specific agent rather than
+ * describe how it runs.
+ *
+ * `title` is dropped so the fork derives its own from the copied transcript
+ * instead of impersonating the source tab, and `daemonAppendSystemPrompt` is
+ * dropped because it is reapplied from current daemon settings on launch and is
+ * deliberately never persisted into agent config.
+ */
+function buildForkedSessionConfig(sourceConfig: AgentSessionConfig): AgentSessionConfig {
+  const {
+    title: _title,
+    daemonAppendSystemPrompt: _daemonAppendSystemPrompt,
+    ...rest
+  } = sourceConfig;
+  return rest;
+}
+
 function buildStoredAgentConfig(record: StoredAgentRecord): AgentSessionConfig {
   const config: AgentSessionConfig = {
     provider: record.provider,
@@ -1188,6 +1207,11 @@ export class AgentManager {
       cwd: source.cwd,
       workspaceId,
       labels: input.labels ?? source.labels,
+      // A fork continues the source conversation, so it has to keep the source's
+      // model, thinking level, permission mode, and the rest of its runtime
+      // settings. Dropping them silently moves the user onto a different model
+      // and permission posture mid-conversation.
+      config: buildForkedSessionConfig(source.config),
     });
     this.logger.info(
       {
@@ -1207,6 +1231,13 @@ export class AgentManager {
     cwd: string;
     workspaceId: string;
     labels?: Record<string, string>;
+    /**
+     * Config to start the imported agent with. Plain imports have no prior
+     * agent to copy from and so fall back to provider defaults, but a fork
+     * continues an existing conversation and must keep running it the way the
+     * source did.
+     */
+    config?: AgentSessionConfig;
   }): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
     const resolvedAgentId = validateAgentId(this.idFactory(), "importProviderSession");
@@ -1219,6 +1250,7 @@ export class AgentManager {
 
     const { storedConfig, launchConfig } = await this.prepareSessionConfig(
       {
+        ...input.config,
         provider: input.provider,
         cwd: input.cwd,
       },

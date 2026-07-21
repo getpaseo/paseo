@@ -2721,6 +2721,63 @@ test("forkAgentSession branches the source session into a new agent with the cop
   expect(manager.getAgent(source.id)?.lifecycle).toBe("idle");
 });
 
+test("forkAgentSession carries the source model, thinking level, and mode onto the fork", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-fork-config-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const forkedSession = new TestAgentSession({ provider: "codex", cwd: workdir });
+
+  class ForkConfigClient extends TestAgentClient {
+    async forkSession(input: ForkProviderSessionInput) {
+      return { providerHandleId: `${input.providerHandleId}-fork` };
+    }
+
+    // Echo the config the manager hands in, exactly as the real shared import
+    // helper does (`importSessionFromPersistence` returns `storedConfig`). A
+    // fake that returns a hardcoded config would hide this bug entirely.
+    async importSession(input: ImportProviderSessionInput, context: ImportProviderSessionContext) {
+      return {
+        session: forkedSession,
+        config: { ...context.storedConfig, provider: "codex" as const, cwd: input.cwd },
+        persistence: {
+          provider: "codex" as const,
+          sessionId: input.providerHandleId,
+          nativeHandle: input.providerHandleId,
+          metadata: { provider: "codex", cwd: input.cwd },
+        },
+        timeline: [],
+        providerSubagentEvents: [],
+      };
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new ForkConfigClient() },
+    registry: storage,
+    logger,
+  });
+
+  const source = await manager.createAgent(
+    {
+      provider: "codex",
+      cwd: workdir,
+      model: "gpt-5.4-mini",
+      thinkingOptionId: "low",
+      modeId: "full-access",
+    },
+    undefined,
+    { workspaceId: "ws-fork-config" },
+  );
+
+  const forked = await manager.forkAgentSession({ agentId: source.id });
+
+  // Forking must not silently move the user onto a different model, thinking
+  // level, or permission mode — that changes both cost and safety posture.
+  expect(forked.config.model).toBe("gpt-5.4-mini");
+  expect(forked.config.thinkingOptionId).toBe("low");
+  expect(forked.config.modeId).toBe("full-access");
+});
+
 test("forkAgentSession rejects providers that cannot fork", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-fork-unsupported-"));
   const storagePath = join(workdir, "agents");
