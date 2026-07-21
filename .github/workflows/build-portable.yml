@@ -1,0 +1,30 @@
+name: Build Portable ZIP (Windows)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build desktop app (portable ZIP, x64 only)
+        run: npm run build:desktop -- --win --x64 --config.win.target=zip
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload portable ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: Paseo-Portable-Windows
+          path: packages/desktop/release/*.zip

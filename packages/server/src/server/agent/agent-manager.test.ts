@@ -8199,7 +8199,7 @@ test("listImportableSessions skips providers that lack supportsSessionListing ev
   expect(result.map((d) => d.provider)).toEqual(["claude"]);
 });
 
-test("user_message events wrapping a paseo-system envelope are not added to the timeline", async () => {
+test("user_message events wrapping a paseo-system envelope are stripped and added to the timeline", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-envelope-live-"));
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
@@ -8230,11 +8230,12 @@ test("user_message events wrapping a paseo-system envelope are not added to the 
   const timeline = manager.getTimeline(snapshot.id);
   const userMessages = timeline.filter((item) => item.type === "user_message");
 
-  expect(userMessages).toHaveLength(1);
-  expect(userMessages[0].text).toBe("plain user message");
+  expect(userMessages).toHaveLength(2);
+  expect(userMessages[0].text).toBe("child finished");
+  expect(userMessages[1].text).toBe("plain user message");
 });
 
-test("user_message events wrapping a paseo-system envelope are not restored during history replay", async () => {
+test("user_message events wrapping a paseo-system envelope are stripped during history replay", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-envelope-history-"));
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
@@ -8271,8 +8272,9 @@ test("user_message events wrapping a paseo-system envelope are not restored duri
   const timeline = manager.getTimeline(snapshot.id);
   const userMessages = timeline.filter((item) => item.type === "user_message");
 
-  expect(userMessages).toHaveLength(1);
-  expect(userMessages[0].text).toBe("real user message");
+  expect(userMessages).toHaveLength(2);
+  expect(userMessages[0].text).toBe("schedule fired");
+  expect(userMessages[1].text).toBe("real user message");
 });
 
 test("commandMayHaveChangedExternalState matches remote-state commands", () => {

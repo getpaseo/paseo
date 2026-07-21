@@ -83,6 +83,7 @@ type ProviderResolutionStatus = "idle" | "pending" | "complete";
 export interface ScheduleFormState {
   mode: "create" | "edit";
   targetKind: ScheduleFormTargetKind;
+  selectedAgentId: string;
   name: string;
   prompt: string;
   maxRuns: string;
@@ -137,6 +138,8 @@ export interface ScheduleFormModel {
   setIsolation: (value: "local" | "worktree") => void;
   setArchiveOnFinish: (value: boolean) => void;
   setSubmitError: (value: string | null) => void;
+  setTargetKind: (kind: ScheduleFormTargetKind) => void;
+  setAgentTarget: (agentId: string) => void;
 }
 
 const DEFAULT_CADENCE: ScheduleCadence = { type: "every", everyMs: 60 * 60 * 1000 };
@@ -382,6 +385,13 @@ function resolveTargetKind(snapshot: ScheduleFormSnapshot): ScheduleFormTargetKi
   return "new-agent";
 }
 
+function resolveInitialAgentId(snapshot: ScheduleFormSnapshot): string {
+  if (snapshot.schedule?.target.type === "agent") {
+    return snapshot.schedule.target.agentId;
+  }
+  return "";
+}
+
 function buildProviderSnapshotRequest(input: {
   targetKind: ScheduleFormTargetKind;
   selectedServerId: string | null;
@@ -546,7 +556,7 @@ function resolveDisclosure(state: ScheduleFormState): ScheduleDisclosureState {
 
 function resolveCanSubmit(state: ScheduleFormState): boolean {
   if (state.targetKind === "agent") {
-    return state.submitCadence !== undefined;
+    return state.prompt.trim().length > 0 && state.selectedAgentId.trim().length > 0 && state.submitCadence !== undefined;
   }
   if (state.prompt.trim().length === 0) {
     return false;
@@ -651,6 +661,7 @@ function buildInitialState(snapshot: ScheduleFormSnapshot): ScheduleFormState {
   const state: ScheduleFormState = {
     mode: snapshot.mode,
     targetKind,
+    selectedAgentId: resolveInitialAgentId(snapshot),
     name: snapshot.schedule?.name ?? "",
     prompt: snapshot.schedule?.prompt ?? "",
     maxRuns: formatInitialMaxRuns(snapshot.schedule),
@@ -1047,6 +1058,31 @@ export function openScheduleForm(snapshot: ScheduleFormSnapshot): ScheduleFormMo
     },
     setSubmitError(value) {
       publish({ ...state, submitError: value });
+    },
+    setTargetKind(kind) {
+      if (closed || state.targetKind === kind) {
+        return;
+      }
+      if (kind === "agent") {
+        publish({
+          ...state,
+          targetKind: kind,
+          selectedAgentId: "",
+          providerSnapshotRequest: null,
+          providerResolutionByServerId: {},
+        });
+      } else {
+        publish({
+          ...state,
+          targetKind: kind,
+        });
+      }
+    },
+    setAgentTarget(agentId) {
+      if (closed) {
+        return;
+      }
+      publish({ ...state, selectedAgentId: agentId });
     },
   };
 }

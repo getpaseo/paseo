@@ -245,6 +245,13 @@ export const en = {
       runningAgent: "This agent is still running. Archiving it will stop the agent.",
       archive: "Archive",
     },
+    deleteSheet: {
+      hostOffline: "Host offline",
+      runningAgent: "This agent is still running. Deleting will permanently remove it.",
+      delete: "Delete permanently",
+      confirmTitle: "Delete agent?",
+      confirmMessage: "This will permanently delete this agent and its session. This action cannot be undone.",
+    },
   },
   message: {
     actions: {

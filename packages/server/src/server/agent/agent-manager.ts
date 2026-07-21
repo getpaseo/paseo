@@ -63,7 +63,7 @@ import { limitAgentTimelineItemContent } from "./agent-timeline-content.js";
 import { AgentRunState, type ForegroundTurnWaiter } from "./agent-run-state.js";
 import { getAgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
 import { invokeRewindCapability, type RewindMode } from "./rewind/rewind.js";
-import { isSystemInjectedEnvelope } from "./agent-prompt.js";
+import { isSystemInjectedEnvelope, stripSystemEnvelope } from "./agent-prompt.js";
 import { stripInternalPaseoMcpServer, withRuntimePaseoMcpServer } from "./runtime-mcp-config.js";
 import { resolveCreateAgentTitles } from "./create-agent-title.js";
 import type { PaseoToolCatalogFactory } from "./tools/types.js";
@@ -528,6 +528,11 @@ function buildImportedTimelineRows(entries: readonly ImportedTimelineEntry[]): A
   const rows: AgentTimelineRow[] = [];
   for (const entry of entries) {
     if (entry.item.type === "user_message" && isSystemInjectedEnvelope(entry.item.text)) {
+      rows.push({
+        seq: rows.length + 1,
+        timestamp: entry.timestamp ?? new Date().toISOString(),
+        item: { type: "user_message", text: stripSystemEnvelope(entry.item.text) },
+      });
       continue;
     }
     rows.push({
@@ -1888,6 +1893,14 @@ export class AgentManager {
       }
     }
 
+    // Safety: always finalize the foreground turn when runAgent returns.
+    // If the session subscription processed the terminal event normally,
+    // finalizeForegroundTurn was already called and this is a no-op.
+    const runAgent_ = this.agents.get(agentId);
+    if (runAgent_?.activeForegroundTurnId) {
+      this.finalizeForegroundTurn(runAgent_, runAgent_.activeForegroundTurnId);
+    }
+
     finalText = this.getLastAssistantMessageFromTimeline(timeline) ?? "";
 
     const agent = this.requireAgent(agentId);
@@ -3194,6 +3207,10 @@ export class AgentManager {
     for await (const event of agent.session.streamHistory()) {
       if (event.type === "timeline") {
         if (event.item.type === "user_message" && isSystemInjectedEnvelope(event.item.text)) {
+          historyEvents.push({
+            ...event,
+            item: { type: "user_message" as const, text: stripSystemEnvelope(event.item.text) },
+          });
           continue;
         }
         historyEvents.push(event);
@@ -3255,6 +3272,11 @@ export class AgentManager {
           continue;
         }
         if (event.item.type === "user_message" && isSystemInjectedEnvelope(event.item.text)) {
+          this.recordTimeline(
+            agent.id,
+            { type: "user_message", text: stripSystemEnvelope(event.item.text) },
+            event.timestamp ? { timestamp: event.timestamp } : undefined,
+          );
           continue;
         }
         this.recordTimeline(
@@ -3514,10 +3536,11 @@ export class AgentManager {
   }): Promise<void> {
     const { agent, event, options, flags } = params;
 
-    if (event.item.type === "user_message" && isSystemInjectedEnvelope(event.item.text)) {
-      flags.shouldDispatchEvent = false;
-      flags.shouldNotifyWaiters = false;
-      return;
+    const itemText = event.item.type === "user_message" ? event.item.text : null;
+    const isSystemEnvelope = itemText !== null && isSystemInjectedEnvelope(itemText);
+
+    if (isSystemEnvelope) {
+      event.item = { type: "user_message", text: stripSystemEnvelope(itemText!) };
     }
 
     if (options?.fromHistory) {
@@ -3532,7 +3555,7 @@ export class AgentManager {
     }
 
     this.recordAndDispatchTimelineItem(agent.id, event.item, event.provider, event.turnId);
-    if (event.item.type === "user_message") {
+    if (event.item.type === "user_message" && !isSystemEnvelope) {
       agent.lastUserMessageAt = new Date();
       this.emitState(agent);
     }
