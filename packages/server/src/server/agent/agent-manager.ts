@@ -3536,10 +3536,11 @@ export class AgentManager {
   }): Promise<void> {
     const { agent, event, options, flags } = params;
 
-    const wasSystemEnvelope =
-      event.item.type === "user_message" && isSystemInjectedEnvelope(event.item.text);
-    if (wasSystemEnvelope) {
-      event.item = { type: "user_message", text: stripSystemEnvelope(event.item.text) };
+    const itemText = event.item.type === "user_message" ? event.item.text : null;
+    const isSystemEnvelope = itemText !== null && isSystemInjectedEnvelope(itemText);
+
+    if (isSystemEnvelope) {
+      event.item = { type: "user_message", text: stripSystemEnvelope(itemText!) };
     }
 
     if (options?.fromHistory) {
@@ -3554,7 +3555,7 @@ export class AgentManager {
     }
 
     this.recordAndDispatchTimelineItem(agent.id, event.item, event.provider, event.turnId);
-    if (event.item.type === "user_message" && !wasSystemEnvelope) {
+    if (event.item.type === "user_message" && !isSystemEnvelope) {
       agent.lastUserMessageAt = new Date();
       this.emitState(agent);
     }
