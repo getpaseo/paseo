@@ -948,6 +948,16 @@ export const ru: TranslationResources = {
         accessibility: {
           pullRequest: "PR #{{number}}",
           pullRequest_mr: "MR !{{number}}",
+          checkStatus: {
+            passed: "Успешно",
+            failed: "Ошибка",
+            warning: "Предупреждение",
+            actionRequired: "Требуется действие",
+            manual: "Вручную",
+            pending: "Ожидание",
+            skipped: "Пропущено",
+            cancelled: "Отменено",
+          },
         },
         states: {
           draft: "Черновик",
@@ -1138,6 +1148,14 @@ export const ru: TranslationResources = {
         serviceRunning: "Сервис {{name}} запущен",
         serviceUnhealthy: "Сервис {{name}} работает некорректно",
         creating: "Создание...",
+      },
+      checks: {
+        passed: "Успешные: {{count}}",
+        failed: "Ошибки: {{count}}",
+        warning: "Предупреждения: {{count}}",
+        actionRequired: "Требуется действие: {{count}}",
+        manual: "Вручную: {{count}}",
+        pending: "Ожидают: {{count}}",
       },
       actions: {
         menu: "Действия рабочего пространства",

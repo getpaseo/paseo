@@ -146,6 +146,7 @@ export const gitlabForgeLogic = {
     treeInfix: "/-/tree/",
     blobInfix: "/-/blob/",
     lineAnchor: gitlabLineAnchor,
+    changeRequestChecksSuffix: "/pipelines",
   },
   facts: defineForgeFacts({
     family: "gitlab",

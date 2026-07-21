@@ -964,6 +964,16 @@ export const es: TranslationResources = {
         accessibility: {
           pullRequest: "Solicitud de extracción n.°{{number}}",
           pullRequest_mr: "Solicitud de fusión !{{number}}",
+          checkStatus: {
+            passed: "Superado",
+            failed: "Fallido",
+            warning: "Advertencia",
+            actionRequired: "Acción requerida",
+            manual: "Manual",
+            pending: "Pendiente",
+            skipped: "Omitido",
+            cancelled: "Cancelado",
+          },
         },
         states: {
           draft: "Borrador",
@@ -1156,6 +1166,14 @@ export const es: TranslationResources = {
         serviceRunning: "Servicio {{name}} en ejecución",
         serviceUnhealthy: "Servicio {{name}} con fallos",
         creating: "Creando...",
+      },
+      checks: {
+        passed: "Superados: {{count}}",
+        failed: "Fallidos: {{count}}",
+        warning: "Advertencias: {{count}}",
+        actionRequired: "Acción requerida: {{count}}",
+        manual: "Manuales: {{count}}",
+        pending: "Pendientes: {{count}}",
       },
       actions: {
         menu: "AccionesWorkspace",

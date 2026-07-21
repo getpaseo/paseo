@@ -27,6 +27,23 @@ export interface ForgeBranchTreeUrlInput {
   branch: string | null | undefined;
 }
 
+export function buildForgeChecksUrl(forge: string, changeRequestUrl: string): string | null {
+  const suffix = getClientForgeLogicModule(forge)?.urlGrammar?.changeRequestChecksSuffix;
+  if (!suffix) {
+    return null;
+  }
+  try {
+    const url = new URL(changeRequestUrl);
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return null;
+    }
+    url.pathname = `${url.pathname.replace(/\/$/, "")}${suffix}`;
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
 interface ForgeWebLocation {
   host: string;
   /** Non-default port for a self-hosted http(s) origin, or undefined. */

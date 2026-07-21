@@ -1,5 +1,32 @@
 import { describe, expect, it } from "vitest";
-import { buildForgeBlobUrl, buildForgeBranchTreeUrl, hasForgeWebUrls } from "./forge-url";
+import {
+  buildForgeBlobUrl,
+  buildForgeBranchTreeUrl,
+  buildForgeChecksUrl,
+  hasForgeWebUrls,
+} from "./forge-url";
+
+describe("buildForgeChecksUrl", () => {
+  it("uses each forge's supported change-request checks route", () => {
+    expect(buildForgeChecksUrl("github", "https://github.com/acme/repo/pull/12")).toBe(
+      "https://github.com/acme/repo/pull/12/checks",
+    );
+    expect(buildForgeChecksUrl("gitlab", "https://gitlab.com/acme/repo/-/merge_requests/12")).toBe(
+      "https://gitlab.com/acme/repo/-/merge_requests/12/pipelines",
+    );
+  });
+
+  it("returns null when the forge has no separate checks route", () => {
+    expect(buildForgeChecksUrl("codeberg", "https://codeberg.org/acme/repo/pulls/12")).toBeNull();
+  });
+
+  it("returns null for an unknown forge or invalid change-request URL", () => {
+    expect(
+      buildForgeChecksUrl("bitbucket", "https://bitbucket.org/acme/repo/pull-requests/12"),
+    ).toBeNull();
+    expect(buildForgeChecksUrl("gitlab", "not a url")).toBeNull();
+  });
+});
 
 describe("buildForgeBranchTreeUrl", () => {
   it("builds a branch-specific GitHub tree URL", () => {

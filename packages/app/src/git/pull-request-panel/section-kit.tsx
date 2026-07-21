@@ -10,6 +10,8 @@ import {
   CircleX,
 } from "lucide-react-native";
 import { CONTROL_HEIGHTS } from "@/components/ui/control-geometry";
+import { ManualStatusIcon } from "@/components/icons/manual-status-icon";
+import type { CheckPresentation } from "@/git/check-presentation";
 import type { Theme } from "@/styles/theme";
 import type { CheckStatus } from "./check-status";
 
@@ -19,6 +21,7 @@ const ThemedCircleCheck = withUnistyles(CircleCheck);
 const ThemedCircleDot = withUnistyles(CircleDot);
 const ThemedCircleSlash = withUnistyles(CircleSlash);
 const ThemedCircleX = withUnistyles(CircleX);
+const ThemedManualStatusIcon = withUnistyles(ManualStatusIcon);
 
 export const foregroundMutedColorMapping = (theme: Theme) => ({
   color: theme.colors.foregroundMuted,
@@ -30,6 +33,15 @@ export const warningColorMapping = (theme: Theme) => ({ color: theme.colors.stat
 export const SUMMARY_SUCCESS_ICON = <ThemedCircleCheck size={12} uniProps={successColorMapping} />;
 export const SUMMARY_DANGER_ICON = <ThemedCircleX size={12} uniProps={dangerColorMapping} />;
 export const SUMMARY_WARNING_ICON = <ThemedCircleDot size={12} uniProps={warningColorMapping} />;
+export const SUMMARY_WARNING_FAILURE_ICON = (
+  <ThemedCircleX size={12} uniProps={warningColorMapping} />
+);
+export const SUMMARY_ACTION_REQUIRED_ICON = (
+  <ThemedManualStatusIcon size={12} uniProps={warningColorMapping} />
+);
+export const SUMMARY_MANUAL_ICON = (
+  <ThemedManualStatusIcon size={12} uniProps={foregroundMutedColorMapping} />
+);
 
 interface SectionProps {
   title: string;
@@ -37,12 +49,24 @@ interface SectionProps {
   onToggle: () => void;
   summary: ReactNode;
   children: ReactNode;
+  accessibilityLabel?: string;
 }
 
-export function Section({ title, open, onToggle, summary, children }: SectionProps) {
+export function Section({
+  title,
+  open,
+  onToggle,
+  summary,
+  children,
+  accessibilityLabel,
+}: SectionProps) {
   return (
     <View>
-      <Pressable style={sectionKitStyles.sectionHeader} onPress={onToggle}>
+      <Pressable
+        accessibilityLabel={accessibilityLabel}
+        style={sectionKitStyles.sectionHeader}
+        onPress={onToggle}
+      >
         {open ? (
           <ThemedChevronDown size={14} uniProps={foregroundMutedColorMapping} />
         ) : (
@@ -85,7 +109,22 @@ function summaryPillTextStyle(variant: SummaryPillVariant) {
   return sectionKitStyles.summaryPillMutedText;
 }
 
-export function CheckStatusIcon({ status }: { status: CheckStatus }) {
+export function CheckStatusIcon({
+  status,
+  presentation,
+}: {
+  status: CheckStatus;
+  presentation?: CheckPresentation;
+}) {
+  if (presentation === "actionRequired") {
+    return <ThemedManualStatusIcon size={14} uniProps={warningColorMapping} />;
+  }
+  if (presentation === "warning") {
+    return <ThemedCircleX size={14} uniProps={warningColorMapping} />;
+  }
+  if (presentation === "manual") {
+    return <ThemedManualStatusIcon size={14} uniProps={foregroundMutedColorMapping} />;
+  }
   if (status === "success") return <ThemedCircleCheck size={14} uniProps={successColorMapping} />;
   if (status === "failure") return <ThemedCircleX size={14} uniProps={dangerColorMapping} />;
   if (status === "pending") return <ThemedCircleDot size={14} uniProps={warningColorMapping} />;

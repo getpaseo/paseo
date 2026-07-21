@@ -108,7 +108,7 @@ describe("mapPrPaneData", () => {
     );
   });
 
-  it("drops checks with null URLs to preserve the pressable check contract", () => {
+  it("keeps checks with null URLs by linking them to the pull request", () => {
     const data = mapPrPaneData(
       status({
         checks: [
@@ -126,6 +126,12 @@ describe("mapPrPaneData", () => {
         status: "success",
         url: "https://example.com/checks/1",
       },
+      {
+        provider: "github",
+        name: "legacy status",
+        status: "pending",
+        url: "https://github.com/getpaseo/paseo/pull/42",
+      },
     ]);
   });
 
@@ -141,9 +147,22 @@ describe("mapPrPaneData", () => {
             duration: "1m",
           },
           { name: "failure", status: "failure", url: "https://example.com/2" },
-          { name: "pending", status: "pending", url: "https://example.com/3" },
+          {
+            name: "approval",
+            status: "pending",
+            rawStatus: "blocked",
+            requiresAction: true,
+            url: "https://example.com/3",
+          },
           { name: "skipped", status: "skipped", url: "https://example.com/4" },
           { name: "cancelled", status: "cancelled", url: "https://example.com/5" },
+          {
+            name: "manual",
+            status: "skipped",
+            rawStatus: "manual",
+            isManual: true,
+            url: "https://example.com/6",
+          },
         ],
       }),
       baseTimeline,
@@ -159,9 +178,30 @@ describe("mapPrPaneData", () => {
         url: "https://example.com/1",
       },
       { provider: "github", name: "failure", status: "failure", url: "https://example.com/2" },
-      { provider: "github", name: "pending", status: "pending", url: "https://example.com/3" },
+      {
+        provider: "github",
+        name: "approval",
+        status: "pending",
+        rawStatus: "blocked",
+        requiresAction: true,
+        url: "https://example.com/3",
+      },
       { provider: "github", name: "skipped", status: "skipped", url: "https://example.com/4" },
-      { provider: "github", name: "cancelled", status: "skipped", url: "https://example.com/5" },
+      {
+        provider: "github",
+        name: "cancelled",
+        status: "skipped",
+        rawStatus: "cancelled",
+        url: "https://example.com/5",
+      },
+      {
+        provider: "github",
+        name: "manual",
+        status: "skipped",
+        rawStatus: "manual",
+        isManual: true,
+        url: "https://example.com/6",
+      },
     ]);
   });
 
@@ -588,7 +628,7 @@ describe("mapPrPaneData", () => {
     ]);
   });
 
-  it("keeps Forgejo branding for aggregate Gitea-family CI status", () => {
+  it("keeps Forgejo branding and warning presentation for aggregate CI status", () => {
     const data = mapPrPaneData(
       status({
         forge: "forgejo",
@@ -598,7 +638,7 @@ describe("mapPrPaneData", () => {
           forge: "gitea",
           mergeable: true,
           hasMerged: false,
-          ciStatus: "failure",
+          ciStatus: "warning",
         },
       }),
       baseTimeline,
@@ -611,6 +651,7 @@ describe("mapPrPaneData", () => {
         provider: "forgejo",
         name: "CI",
         status: "failure",
+        rawStatus: "warning",
         url: "https://forgejo.example.com/group/repo/pulls/7",
       },
     ]);

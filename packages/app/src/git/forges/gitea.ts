@@ -63,6 +63,7 @@ export const giteaForgeLogic = {
             provider: forge,
             name: "CI",
             status: mapGiteaCiStatus(facts.ciStatus),
+            ...(facts.ciStatus === "warning" ? { rawStatus: "warning" } : {}),
             url: status.url,
           };
         },

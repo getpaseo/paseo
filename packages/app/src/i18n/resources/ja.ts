@@ -944,6 +944,16 @@ export const ja: TranslationResources = {
         accessibility: {
           pullRequest: "プルリクエスト#{{number}}",
           pullRequest_mr: "マージリクエスト !{{number}}",
+          checkStatus: {
+            passed: "成功",
+            failed: "失敗",
+            warning: "警告",
+            actionRequired: "操作が必要",
+            manual: "手動",
+            pending: "保留中",
+            skipped: "スキップ済み",
+            cancelled: "キャンセル済み",
+          },
         },
         states: {
           draft: "ドラフト",
@@ -1134,6 +1144,14 @@ export const ja: TranslationResources = {
         serviceRunning: "サービス {{name}} 実行中",
         serviceUnhealthy: "サービス {{name}} 異常",
         creating: "作成中...",
+      },
+      checks: {
+        passed: "成功: {{count}}",
+        failed: "失敗: {{count}}",
+        warning: "警告: {{count}}",
+        actionRequired: "操作が必要: {{count}}",
+        manual: "手動: {{count}}",
+        pending: "保留中: {{count}}",
       },
       actions: {
         menu: "ワークスペースアクション",

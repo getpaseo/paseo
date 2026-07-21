@@ -27,6 +27,8 @@ export interface ForgeUrlGrammar {
   blobInfix: string;
   /** Line/range anchor, e.g. github "#L1-L5" vs gitlab "#L1-5". */
   lineAnchor: (start: number, end?: number) => string;
+  /** Suffix for the change request's checks/pipelines overview. */
+  changeRequestChecksSuffix?: string;
 }
 
 /** Line/range anchor shared by every GitHub-family forge (github, gitea, forgejo, codeberg). */

@@ -955,6 +955,16 @@ export const ptBR: TranslationResources = {
         accessibility: {
           pullRequest: "Pull request #{{number}}",
           pullRequest_mr: "Merge request !{{number}}",
+          checkStatus: {
+            passed: "Aprovado",
+            failed: "Falhou",
+            warning: "Aviso",
+            actionRequired: "Ação necessária",
+            manual: "Manual",
+            pending: "Pendente",
+            skipped: "Ignorado",
+            cancelled: "Cancelado",
+          },
         },
         states: {
           draft: "Rascunho",
@@ -1147,6 +1157,14 @@ export const ptBR: TranslationResources = {
         serviceRunning: "Serviço {{name}} em execução",
         serviceUnhealthy: "Serviço {{name}} com falha",
         creating: "Criando...",
+      },
+      checks: {
+        passed: "Aprovados: {{count}}",
+        failed: "Falhas: {{count}}",
+        warning: "Avisos: {{count}}",
+        actionRequired: "Ação necessária: {{count}}",
+        manual: "Manuais: {{count}}",
+        pending: "Pendentes: {{count}}",
       },
       actions: {
         menu: "Ações do workspace",

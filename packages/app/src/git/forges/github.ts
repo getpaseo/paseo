@@ -86,6 +86,7 @@ export const githubForgeLogic = {
     treeInfix: "/tree/",
     blobInfix: "/blob/",
     lineAnchor: GITHUB_LINE_ANCHOR,
+    changeRequestChecksSuffix: "/checks",
   },
   facts: defineForgeFacts({
     family: "github",

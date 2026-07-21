@@ -74,7 +74,9 @@ import {
 } from "./timeline";
 import {
   Section,
+  SUMMARY_ACTION_REQUIRED_ICON,
   SUMMARY_DANGER_ICON,
+  SUMMARY_MANUAL_ICON,
   SUMMARY_SUCCESS_ICON,
   SummaryPill,
   dangerColorMapping,
