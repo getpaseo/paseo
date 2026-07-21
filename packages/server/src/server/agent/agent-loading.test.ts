@@ -1,12 +1,29 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { ensureAgentLoaded } from "./agent-loading.js";
-import { MissingAgentCwdError } from "./agent-cwd.js";
+import { MissingAgentCwdError, pathIsExistingDirectory } from "./agent-cwd.js";
 import type { AgentManager, ManagedAgent } from "./agent-manager.js";
 import type { AgentStorage } from "./agent-storage.js";
+
+const tempDirs: string[] = [];
+
+afterEach(() => {
+  for (const dir of tempDirs.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+function enotdirCwd(): string {
+  const dir = mkdtempSync(join(tmpdir(), "paseo-loading-enotdir-"));
+  tempDirs.push(dir);
+  const fileAncestor = join(dir, "not-a-dir");
+  writeFileSync(fileAncestor, "x");
+  return join(fileAncestor, "worktree");
+}
 
 describe("ensureAgentLoaded missing cwd", () => {
   test("resumes with allowMissingCwd and hydrates timeline for log recovery", async () => {
@@ -67,6 +84,70 @@ describe("ensureAgentLoaded missing cwd", () => {
       expect.objectContaining({ allowMissingCwd: true }),
     );
     expect(hydrateSpy).toHaveBeenCalledWith("agent-1");
+    expect(agentManager.createAgent).not.toHaveBeenCalled();
+  });
+
+  test("ENOTDIR cwd still allows timeline recovery with allowMissingCwd", async () => {
+    const missingCwd = enotdirCwd();
+    expect(await pathIsExistingDirectory(missingCwd)).toBe(false);
+
+    const agent: ManagedAgent = Object.create(null);
+    Reflect.set(agent, "id", "agent-enotdir");
+    Reflect.set(agent, "provider", "codex");
+    Reflect.set(agent, "cwd", missingCwd);
+    Reflect.set(agent, "lifecycle", "idle");
+
+    const resumeSpy = vi.fn(async () => agent);
+    const hydrateSpy = vi.fn(async () => undefined);
+    let live: ManagedAgent | null = null;
+    const agentManager = {
+      getAgent: vi.fn(() => live),
+      getRegisteredProviderIds: () => ["codex"],
+      resumeAgentFromPersistence: vi.fn(async (...args: unknown[]) => {
+        const result = await resumeSpy(...args);
+        live = result;
+        return result;
+      }),
+      createAgent: vi.fn(),
+      hydrateTimelineFromProvider: hydrateSpy,
+      touchAgentActivity: vi.fn(() => live),
+      waitForAgentClose: vi.fn(async () => undefined),
+    } as unknown as AgentManager;
+
+    const agentStorage = {
+      get: vi.fn(async () => ({
+        id: "agent-enotdir",
+        provider: "codex",
+        cwd: missingCwd,
+        createdAt: "2026-07-01T00:00:00.000Z",
+        updatedAt: "2026-07-01T00:00:00.000Z",
+        lastActivityAt: "2026-07-01T00:00:00.000Z",
+        lastUserMessageAt: null,
+        persistence: {
+          provider: "codex",
+          sessionId: "thread-enotdir",
+          metadata: { provider: "codex", cwd: missingCwd },
+        },
+        labels: {},
+      })),
+    } as unknown as AgentStorage;
+
+    // Timeline/log path: allowMissingCwd must resume + hydrate rather than throw ENOTDIR.
+    const loaded = await ensureAgentLoaded("agent-enotdir", {
+      agentManager,
+      agentStorage,
+      logger: createTestLogger(),
+      allowMissingCwd: true,
+    });
+
+    expect(loaded.id).toBe("agent-enotdir");
+    expect(resumeSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: "thread-enotdir" }),
+      expect.objectContaining({ cwd: missingCwd }),
+      "agent-enotdir",
+      expect.objectContaining({ allowMissingCwd: true }),
+    );
+    expect(hydrateSpy).toHaveBeenCalledWith("agent-enotdir");
     expect(agentManager.createAgent).not.toHaveBeenCalled();
   });
 

@@ -277,6 +277,7 @@ test("sendPromptToAgent prefers live agent cwd over a stale stored cwd", async (
     })),
   );
 
+  // Live resident cwd is valid; stored path is gone. Send must succeed using live cwd.
   await sendPromptToAgent({
     agentManager,
     agentStorage,
@@ -285,7 +286,90 @@ test("sendPromptToAgent prefers live agent cwd over a stale stored cwd", async (
     logger: createTestLogger(),
   });
 
+  expect(streamAgentSpy).toHaveBeenCalledTimes(1);
   expect(streamAgentSpy).toHaveBeenCalledWith("agent-rebound", "hello", undefined);
+
+  // Control: if only the stale stored path were used, send would reject.
+  Reflect.set(
+    agentManager,
+    "getAgent",
+    vi.fn(() => null),
+  );
+  await expect(
+    sendPromptToAgent({
+      agentManager,
+      agentStorage,
+      agentId: "agent-rebound",
+      prompt: "hello-stale-only",
+      logger: createTestLogger(),
+    }),
+  ).rejects.toSatisfy((error: unknown) => {
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toMatch(/working directory is missing/i);
+    return true;
+  });
+  expect(streamAgentSpy).toHaveBeenCalledTimes(1);
+});
+
+test("sendPromptToAgent returns structured error when cwd ancestor is a file (ENOTDIR)", async () => {
+  const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const dir = mkdtempSync(join(tmpdir(), "paseo-send-enotdir-"));
+  const fileAncestor = join(dir, "not-a-dir");
+  writeFileSync(fileAncestor, "x");
+  const enotdirCwd = join(fileAncestor, "worktree");
+
+  try {
+    const agent: ManagedAgent = Object.create(null);
+    Reflect.set(agent, "id", "agent-file-ancestor");
+    Reflect.set(agent, "provider", "codex");
+    Reflect.set(agent, "cwd", enotdirCwd);
+
+    const streamAgentSpy = vi.fn(() => (async function* noop() {})());
+    const agentManager: AgentManager = Object.create(AgentManager.prototype);
+    Reflect.set(
+      agentManager,
+      "getAgent",
+      vi.fn(() => agent),
+    );
+    Reflect.set(agentManager, "tryRunOutOfBand", vi.fn().mockReturnValue(false));
+    Reflect.set(agentManager, "hasInFlightRun", vi.fn().mockReturnValue(false));
+    Reflect.set(agentManager, "streamAgent", streamAgentSpy);
+
+    const agentStorage: AgentStorage = Object.create(AgentStorage.prototype);
+    Reflect.set(
+      agentStorage,
+      "get",
+      vi.fn(async () => ({
+        id: "agent-file-ancestor",
+        cwd: enotdirCwd,
+        provider: "codex",
+        archivedAt: null,
+      })),
+    );
+
+    await expect(
+      sendPromptToAgent({
+        agentManager,
+        agentStorage,
+        agentId: "agent-file-ancestor",
+        prompt: "hello",
+        logger: createTestLogger(),
+      }),
+    ).rejects.toSatisfy((error: unknown) => {
+      expect(error).toBeInstanceOf(Error);
+      const message = (error as Error).message;
+      expect(message).toMatch(/working directory is missing/i);
+      expect(message).toMatch(/Recreate the worktree|rebind the agent cwd/i);
+      expect(message).not.toMatch(/\bAgent not found\b/i);
+      expect(message).not.toMatch(/\bENOTDIR\b|\bENOENT\b/);
+      return true;
+    });
+    expect(streamAgentSpy).not.toHaveBeenCalled();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("finish notifications tell the parent the child's last assistant message", async () => {
