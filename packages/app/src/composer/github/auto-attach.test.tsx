@@ -97,6 +97,7 @@ function createWrapper() {
 
 function useHarness(client: ForgeSearchClient, input: HarnessInput = {}) {
   const [text, setText] = useState(input.initialText ?? "");
+  const [searchClient, setSearchClient] = useState(client);
   const [workingDirectory, setWorkingDirectory] = useState(input.initialCwd ?? cwd);
   const [attachments, setAttachments] = useState<UserComposerAttachment[]>(
     input.initialAttachments ?? [],
@@ -105,7 +106,7 @@ function useHarness(client: ForgeSearchClient, input: HarnessInput = {}) {
     text,
     remoteUrl: input.remote ?? remoteUrl,
     attachments,
-    client,
+    client: searchClient,
     isConnected: true,
     serverId: "server-1",
     cwd: workingDirectory,
@@ -116,6 +117,7 @@ function useHarness(client: ForgeSearchClient, input: HarnessInput = {}) {
   return {
     text,
     setText,
+    setSearchClient,
     setWorkingDirectory,
     attachments,
     setAttachments,
@@ -291,6 +293,32 @@ describe("useComposerGithubAutoAttach", () => {
 
     expect(result.current.attachments).toEqual([]);
     expect(client.searchForge).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+  });
+
+  it("accepts a lookup after the transport client is replaced for the same target", async () => {
+    vi.useFakeTimers();
+    const lookup = deferred<ForgeSearchPayload>();
+    const firstClient: ForgeSearchClient = {
+      searchForge: vi.fn().mockReturnValue(lookup.promise),
+    };
+    const replacementClient = createSearchClient([pr101]);
+    const { result } = renderHook(() => useHarness(firstClient), { wrapper: createWrapper() });
+
+    act(() => {
+      result.current.setText("Review https://github.com/acme/paseo/pull/101");
+    });
+    await flushDebounce();
+    act(() => {
+      result.current.setSearchClient(replacementClient);
+    });
+    await act(async () => {
+      lookup.resolve(githubPayload([pr101], "search-101"));
+      await Promise.resolve();
+    });
+
+    expect(result.current.attachments).toEqual([{ kind: "forge_change_request", item: pr101 }]);
+    expect(replacementClient.calls).toEqual([]);
     vi.useRealTimers();
   });
 });

@@ -159,8 +159,23 @@ describe("reducePickerSelection", () => {
 
     expect(reducePickerSelection(detected, { type: "pr-added", item })).toEqual({
       selectedItem: item,
-      allowAutoPrSelection: true,
+      allowAutoPrSelection: false,
     });
+  });
+
+  it("keeps the first PR selected when one edit adds multiple PRs", () => {
+    const detected = reducePickerSelection(initialPickerSelectionState, { type: "pr-detected" });
+    const first = reducePickerSelection(detected, {
+      type: "pr-added",
+      item: { kind: "github-pr", item: makePrItem(101, "A") },
+    });
+
+    expect(
+      reducePickerSelection(first, {
+        type: "pr-added",
+        item: { kind: "github-pr", item: makePrItem(202, "B") },
+      }),
+    ).toEqual(first);
   });
 
   it("keeps a branch selected after a pending PR is added", () => {

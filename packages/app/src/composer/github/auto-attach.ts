@@ -329,7 +329,6 @@ function isSameLookupTarget(
   current: ComposerGithubAutoAttachInput,
 ): boolean {
   return (
-    initial.client === current.client &&
     initial.serverId === current.serverId &&
     initial.cwd === current.cwd &&
     initial.remoteUrl === current.remoteUrl

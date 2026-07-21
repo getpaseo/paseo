@@ -28,7 +28,9 @@ export function reducePickerSelection(
     case "pr-detected":
       return { ...state, allowAutoPrSelection: true };
     case "pr-added":
-      return state.allowAutoPrSelection ? { ...state, selectedItem: event.item } : state;
+      return state.allowAutoPrSelection
+        ? { selectedItem: event.item, allowAutoPrSelection: false }
+        : state;
     case "picker-selected":
       return { selectedItem: event.item, allowAutoPrSelection: false };
     case "target-changed":
