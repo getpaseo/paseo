@@ -742,6 +742,7 @@ function EditableFilePane({
         <FileEditorView
           model={model}
           filename={filename}
+          location={location}
           vimEnabled={settings.vimKeybindings}
           theme={visualTheme}
           onCursorChange={setCursor}
