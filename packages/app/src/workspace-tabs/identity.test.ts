@@ -44,6 +44,66 @@ describe("provider subagent tab identity", () => {
   });
 });
 
+describe("working diff tab identity", () => {
+  const target = {
+    kind: "working_diff" as const,
+    focusPath: "src/example.ts",
+    focusRequestId: 1,
+    mode: "uncommitted" as const,
+    baseRef: "main",
+    ignoreWhitespace: false,
+  };
+
+  it("normalizes focus path, base ref, and whitespace policy", () => {
+    expect(
+      normalizeWorkspaceTabTarget({
+        ...target,
+        focusPath: " src\\example.ts ",
+        baseRef: " main ",
+      }),
+    ).toEqual(target);
+  });
+
+  it("requires a base ref for base comparisons", () => {
+    expect(
+      normalizeWorkspaceTabTarget({
+        ...target,
+        mode: "base",
+        baseRef: "   ",
+      }),
+    ).toBeNull();
+  });
+
+  it("keys comparison settings as part of identity", () => {
+    expect(workspaceTabTargetsEqual(target, target)).toBe(true);
+    expect(workspaceTabTargetsEqual(target, { ...target, ignoreWhitespace: true })).toBe(false);
+    expect(workspaceTabTargetsEqual(target, { ...target, mode: "base" })).toBe(false);
+    expect(workspaceTabTargetsEqual(target, { ...target, baseRef: "release" })).toBe(false);
+    expect(workspaceTabTargetsEqual(target, { ...target, focusPath: "src/other.ts" })).toBe(false);
+    expect(workspaceTabTargetsEqual(target, { ...target, focusRequestId: 2 })).toBe(false);
+  });
+
+  it("keys the tab by comparison while treating focus path as navigation state", () => {
+    const workingDiffId = buildDeterministicWorkspaceTabId(target);
+    const otherFocusId = buildDeterministicWorkspaceTabId({
+      ...target,
+      focusPath: "src/other.ts",
+    });
+    const fileId = buildDeterministicWorkspaceTabId({
+      kind: "file",
+      path: target.focusPath,
+    });
+    const otherBaseId = buildDeterministicWorkspaceTabId({
+      ...target,
+      baseRef: "a_b",
+    });
+
+    expect(workingDiffId).toBe(otherFocusId);
+    expect(workingDiffId).not.toBe(fileId);
+    expect(workingDiffId).not.toBe(otherBaseId);
+  });
+});
+
 describe("commit diff tab identity", () => {
   it("keys a commit diff tab by its sha", () => {
     expect(buildDeterministicWorkspaceTabId({ kind: "commit_diff", sha: "abc123" })).toBe(

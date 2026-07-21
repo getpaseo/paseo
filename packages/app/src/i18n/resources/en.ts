@@ -781,6 +781,7 @@ export const en = {
         base: "base",
         newFile: "New",
         deletedFile: "Deleted",
+        openDiff: "Open diff",
         commits: {
           title: "Commits",
           legendLocal: "local",
@@ -1488,6 +1489,8 @@ export const en = {
       changesLabel: "Changes",
       changesSubtitle: "Working tree diff",
       commitSubtitle: "Commit diff",
+      uncommittedSubtitle: "Uncommitted changes",
+      baseSubtitle: "Compared with {{baseRef}}",
       directoryMissing: "Workspace directory not found.",
       empty: "No changes",
       loadError: "Failed to load diff",

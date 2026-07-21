@@ -1,4 +1,4 @@
-import { writeFile } from "node:fs/promises";
+import { unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { type Page } from "@playwright/test";
 import { buildHostWorkspaceRoute, buildSettingsSectionRoute } from "../src/utils/host-routes";
@@ -10,6 +10,7 @@ import { waitForWorkspaceTabsVisible } from "./helpers/workspace-tabs";
 
 interface DirtyWorkspace {
   id: string;
+  repoPath: string;
 }
 
 interface CleanupTask {
@@ -218,6 +219,70 @@ test("changes diff keeps code rows aligned with the gutter", async ({ page }) =>
   });
 });
 
+test("changed files focus one live comparison-wide diff tab", async ({ page }) => {
+  const workspace = await createWorkspaceWithMountedTabDiff({ includeDeletedFile: true });
+  await useUnwrappedDiffLines(page);
+  await openWorkspaceChanges(page, workspace);
+
+  await page.getByTestId("diff-file-0-toggle").click();
+  await expect(page.getByTestId("diff-file-0-body")).toHaveCount(0);
+  await page.getByTestId("diff-file-0-toggle").click({ button: "right" });
+  await page.getByTestId("diff-file-0-open-diff").click();
+
+  const visiblePanel = page.getByTestId("working-diff-panel").filter({ visible: true });
+  await expect(visiblePanel).toBeVisible();
+  await expect(visiblePanel.getByText("use-mounted-tab-set.ts", { exact: true })).toBeVisible();
+  await expect(visiblePanel).toContainText("zz-deleted.ts");
+  await expect(visiblePanel.getByTestId("diff-file-0-body")).toBeVisible();
+  await expect(page.getByTestId("workspace-file-pane")).toHaveCount(0);
+  await visiblePanel.getByTestId("diff-file-0-toggle").click();
+  await expect(visiblePanel.getByTestId("diff-file-0-body")).toHaveCount(0);
+  await visiblePanel.getByTestId("diff-file-0-toggle").click();
+  await expect(visiblePanel.getByTestId("diff-file-0-body")).toBeVisible();
+  await expect(visiblePanel.getByTestId("working-diff-layout-unified")).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await visiblePanel.getByTestId("working-diff-layout-split").click();
+  await expect(visiblePanel.getByTestId("working-diff-layout-split")).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await visiblePanel.getByTestId("working-diff-toggle-expand-all").click();
+  await expect(visiblePanel.getByTestId(/^diff-file-\d+-body$/)).toHaveCount(0);
+  await visiblePanel.getByTestId("working-diff-toggle-expand-all").click();
+  await expect(visiblePanel.getByTestId("diff-file-0-body")).toBeVisible();
+
+  await page
+    .getByTestId("explorer-content-area")
+    .getByTestId("diff-file-0-toggle")
+    .click({ button: "right" });
+  await page.getByTestId("diff-file-0-open-diff").click();
+  await expect(page.getByTestId(/^workspace-working-diff-close-/)).toHaveCount(1);
+
+  await writeFile(path.join(workspace.repoPath, "src/use-mounted-tab-set.ts"), BEFORE);
+  await expect(visiblePanel.getByText("use-mounted-tab-set.ts", { exact: true })).toHaveCount(0, {
+    timeout: 30_000,
+  });
+  await expect(visiblePanel).toContainText("zz-deleted.ts");
+  await writeFile(path.join(workspace.repoPath, "src/use-mounted-tab-set.ts"), AFTER);
+  await expect(visiblePanel.getByText("use-mounted-tab-set.ts", { exact: true })).toBeVisible({
+    timeout: 30_000,
+  });
+
+  await expect(page.getByTestId("explorer-content-area").getByTestId("diff-file-1")).toContainText(
+    "zz-deleted.ts",
+  );
+  await page
+    .getByTestId("explorer-content-area")
+    .getByTestId("diff-file-1-toggle")
+    .click({ button: "right" });
+  await page.getByTestId("diff-file-1-open-diff").click();
+  await expect(page.getByTestId(/^workspace-working-diff-close-/)).toHaveCount(1);
+  await expect(visiblePanel.getByText("zz-deleted.ts", { exact: true })).toBeVisible();
+  await expect(visiblePanel).toContainText("Deleted");
+});
+
 test("changes diff switches between flat and tree file lists", async ({ page }) => {
   const workspace = await createWorkspaceWithMountedTabDiff();
   await useUnwrappedDiffLines(page);
@@ -399,10 +464,14 @@ async function readVisibleDiffRowGeometry(page: Page): Promise<{
   });
 }
 
-async function createWorkspaceWithMountedTabDiff(): Promise<DirtyWorkspace> {
-  const repo = await createTempGitRepo("diff-row-alignment-", {
-    files: [{ path: "src/use-mounted-tab-set.ts", content: BEFORE }],
-  });
+async function createWorkspaceWithMountedTabDiff(
+  options: { includeDeletedFile?: boolean } = {},
+): Promise<DirtyWorkspace> {
+  const files = [{ path: "src/use-mounted-tab-set.ts", content: BEFORE }];
+  if (options.includeDeletedFile) {
+    files.push({ path: "zz-deleted.ts", content: "export const deleted = true;\n" });
+  }
+  const repo = await createTempGitRepo("diff-row-alignment-", { files });
   const client = await connectSeedClient();
   cleanupTasks.push({
     run: async () => {
@@ -412,13 +481,16 @@ async function createWorkspaceWithMountedTabDiff(): Promise<DirtyWorkspace> {
   });
 
   await writeFile(path.join(repo.path, "src/use-mounted-tab-set.ts"), AFTER);
+  if (options.includeDeletedFile) {
+    await unlink(path.join(repo.path, "zz-deleted.ts"));
+  }
   const createdWorkspace = await client.createWorkspace({
     source: { kind: "directory", path: repo.path },
   });
   if (!createdWorkspace.workspace) {
     throw new Error(createdWorkspace.error ?? `Failed to create workspace ${repo.path}`);
   }
-  return { id: createdWorkspace.workspace.id };
+  return { id: createdWorkspace.workspace.id, repoPath: repo.path };
 }
 
 async function openWorkspaceChanges(page: Page, workspace: DirtyWorkspace): Promise<void> {

@@ -782,6 +782,7 @@ export const ja: TranslationResources = {
         base: "ベース",
         newFile: "新規",
         deletedFile: "削除済み",
+        openDiff: "差分を開く",
         commits: {
           title: "コミット",
           legendLocal: "ローカル",
@@ -1493,6 +1494,8 @@ export const ja: TranslationResources = {
       changesLabel: "変更",
       changesSubtitle: "作業ツリーの差分",
       commitSubtitle: "コミット差分",
+      uncommittedSubtitle: "未コミットの変更",
+      baseSubtitle: "{{baseRef}} との比較",
       directoryMissing: "ワークスペースディレクトリが見つかりません。",
       empty: "変更はありません",
       loadError: "差分の読み込みに失敗しました",

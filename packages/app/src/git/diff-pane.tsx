@@ -83,6 +83,12 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { lineNumberGutterWidth } from "@/components/code-insets";
 import { GitActionsSplitButton } from "@/git/actions-split-button";
@@ -98,7 +104,10 @@ import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { usePanelStore } from "@/stores/panel-store";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
-import { buildWorkspaceTabPersistenceKey } from "@/stores/workspace-tabs-store";
+import {
+  buildWorkspaceTabPersistenceKey,
+  type WorkspaceWorkingDiffTabTarget,
+} from "@/stores/workspace-tabs-store";
 import { buildWorkspaceExplorerStateKey } from "@/hooks/use-file-explorer-actions";
 import {
   formatDiffContentText,
@@ -209,6 +218,7 @@ interface DiffFileSectionProps {
   showDir?: boolean;
   interactive?: boolean;
   onToggle?: (path: string) => void;
+  onOpenDiff?: (path: string) => void;
   onHeaderHeightChange?: (path: string, height: number) => void;
   testID?: string;
 }
@@ -910,6 +920,7 @@ const DiffFileHeader = memo(function DiffFileHeader({
   showDir = true,
   interactive = true,
   onToggle,
+  onOpenDiff,
   onHeaderHeightChange,
   testID,
 }: DiffFileSectionProps) {
@@ -925,6 +936,10 @@ const DiffFileHeader = memo(function DiffFileHeader({
     pressHandledRef.current = true;
     onToggle?.(file.path);
   }, [file.path, interactive, onToggle]);
+
+  const handleOpenDiff = useCallback(() => {
+    onOpenDiff?.(file.path);
+  }, [file.path, onOpenDiff]);
 
   const handleLayout = useCallback(
     (event: LayoutChangeEvent) => {
@@ -981,6 +996,7 @@ const DiffFileHeader = memo(function DiffFileHeader({
   );
 
   const fileName = file.path.split("/").pop() ?? file.path;
+  const canOpenDiff = interactive && Boolean(onOpenDiff);
   const headerContent = (
     <>
       <View style={styles.fileHeaderLeft}>
@@ -1018,33 +1034,73 @@ const DiffFileHeader = memo(function DiffFileHeader({
     </>
   );
 
+  let trigger: ReactElement;
+  if (!interactive) {
+    trigger = (
+      <View style={headerPressableStyle({ hovered: false, pressed: false })}>{headerContent}</View>
+    );
+  } else if (canOpenDiff) {
+    trigger = (
+      <ContextMenuTrigger
+        testID={testID ? `${testID}-toggle` : undefined}
+        style={headerPressableStyle}
+        enabledOnMobile
+        cancelable={false}
+        onPressIn={handlePressIn}
+        onPressOut={handlePressOut}
+        onPress={toggleExpanded}
+      >
+        {headerContent}
+      </ContextMenuTrigger>
+    );
+  } else {
+    trigger = (
+      <Pressable
+        testID={testID ? `${testID}-toggle` : undefined}
+        style={headerPressableStyle}
+        cancelable={false}
+        onPressIn={handlePressIn}
+        onPressOut={handlePressOut}
+        onPress={toggleExpanded}
+      >
+        {headerContent}
+      </Pressable>
+    );
+  }
+
+  const tooltip = (
+    <Tooltip delayDuration={300} enabledOnDesktop enabledOnMobile={false}>
+      <TooltipTrigger asChild triggerRefProp={canOpenDiff ? "triggerRef" : undefined}>
+        {trigger}
+      </TooltipTrigger>
+      <TooltipContent side="bottom" align="start" offset={6} maxWidth={520}>
+        <Text style={styles.tooltipText}>{file.path}</Text>
+      </TooltipContent>
+    </Tooltip>
+  );
+
   return (
     <View style={containerStyle} onLayout={handleLayout} testID={testID}>
       <TreeIndentGuides depth={depth} />
-      <Tooltip delayDuration={300} enabledOnDesktop enabledOnMobile={false}>
-        <TooltipTrigger asChild>
-          {interactive ? (
-            <Pressable
-              testID={testID ? `${testID}-toggle` : undefined}
-              style={headerPressableStyle}
-              // Android: prevent parent pan/scroll gestures from canceling the tap release.
-              cancelable={false}
-              onPressIn={handlePressIn}
-              onPressOut={handlePressOut}
-              onPress={toggleExpanded}
+      {canOpenDiff ? (
+        <ContextMenu>
+          {tooltip}
+          <ContextMenuContent
+            align="start"
+            minWidth={160}
+            testID={testID ? `${testID}-context-menu` : undefined}
+          >
+            <ContextMenuItem
+              onSelect={handleOpenDiff}
+              testID={testID ? `${testID}-open-diff` : undefined}
             >
-              {headerContent}
-            </Pressable>
-          ) : (
-            <View style={headerPressableStyle({ hovered: false, pressed: false })}>
-              {headerContent}
-            </View>
-          )}
-        </TooltipTrigger>
-        <TooltipContent side="bottom" align="start" offset={6} maxWidth={520}>
-          <Text style={styles.tooltipText}>{file.path}</Text>
-        </TooltipContent>
-      </Tooltip>
+              {t("workspace.git.diff.openDiff")}
+            </ContextMenuItem>
+          </ContextMenuContent>
+        </ContextMenu>
+      ) : (
+        tooltip
+      )}
     </View>
   );
 });
@@ -1639,8 +1695,17 @@ interface SharedDiffViewProps {
         expandedPaths: string[];
         collapsedFolders: string[];
         reviewActions?: InlineReviewActions;
+        onOpenDiff: (path: string) => void;
         onExpandedPathsChange: (paths: string[]) => void;
         onCollapsedFoldersChange: (paths: string[]) => void;
+      }
+    | {
+        kind: "working_tab";
+        expandedPaths: string[] | null;
+        reviewActions: InlineReviewActions;
+        focusPath?: string;
+        focusRequestId?: number;
+        onExpandedPathsChange: (paths: string[]) => void;
       }
     | {
         kind: "commit";
@@ -1660,17 +1725,25 @@ export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffVi
     };
   }, [codeFontSize, diffBodyLineHeight, monoFontFamily]);
   const viewMode = mode.kind === "working_tree" ? mode.viewMode : "flat";
-  const expandedPathsArray = useMemo(
-    () => (mode.kind === "working_tree" ? mode.expandedPaths : files.map((file) => file.path)),
-    [files, mode],
-  );
+  const expandedPathsArray = useMemo(() => {
+    if (mode.kind === "working_tree") {
+      return mode.expandedPaths;
+    }
+    if (mode.kind === "working_tab" && mode.expandedPaths !== null) {
+      return mode.expandedPaths;
+    }
+    return files.map((file) => file.path);
+  }, [files, mode]);
   const expandedPaths = useMemo(() => new Set(expandedPathsArray), [expandedPathsArray]);
   const collapsedFoldersArray =
     mode.kind === "working_tree" ? mode.collapsedFolders : EMPTY_PATH_LIST;
   const collapsedFolders = useMemo(() => new Set(collapsedFoldersArray), [collapsedFoldersArray]);
-  const stickyHeaders = mode.kind === "working_tree";
-  const interactive = mode.kind === "working_tree";
-  const reviewActions = mode.kind === "working_tree" ? mode.reviewActions : undefined;
+  const stickyHeaders = mode.kind !== "commit";
+  const interactive = mode.kind !== "commit";
+  const reviewActions = mode.kind === "commit" ? undefined : mode.reviewActions;
+  const onOpenDiff = mode.kind === "working_tree" ? mode.onOpenDiff : undefined;
+  const focusPath = mode.kind === "working_tab" ? mode.focusPath : undefined;
+  const focusRequestId = mode.kind === "working_tab" ? mode.focusRequestId : undefined;
   const compressedTree = useMemo(() => compressSingleChildChains(buildDiffTree(files)), [files]);
   const allFolderPaths = useMemo(() => collectDirPaths(compressedTree), [compressedTree]);
   const allFolderPathSet = useMemo(() => new Set(allFolderPaths), [allFolderPaths]);
@@ -1828,9 +1901,28 @@ export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffVi
     [computeItemOffset],
   );
 
+  useEffect(() => {
+    if (!focusPath) {
+      return;
+    }
+    const hasTarget = flatItems.some(
+      (item) => item.type === "header" && item.file.path === focusPath,
+    );
+    if (!hasTarget) {
+      return;
+    }
+    const frame = requestAnimationFrame(() => {
+      diffListRef.current?.scrollToOffset({
+        offset: computeHeaderOffset(focusPath),
+        animated: false,
+      });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [computeHeaderOffset, flatItems, focusPath, focusRequestId]);
+
   const handleToggleExpanded = useCallback(
     (path: string) => {
-      if (mode.kind !== "working_tree") {
+      if (mode.kind === "commit") {
         return;
       }
       const isCurrentlyExpanded = expandedPaths.has(path);
@@ -1922,6 +2014,7 @@ export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffVi
             showDir={viewMode === "flat"}
             interactive={interactive}
             onToggle={interactive ? handleToggleExpanded : undefined}
+            onOpenDiff={onOpenDiff}
             onHeaderHeightChange={handleHeaderHeightChange}
             testID={`diff-file-${item.fileIndex}`}
           />
@@ -1953,6 +2046,7 @@ export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffVi
       viewMode,
       wrapLines,
       interactive,
+      onOpenDiff,
     ],
   );
 
@@ -2217,22 +2311,23 @@ export function GitDiffPane({ serverId, workspaceId, cwd, enabled }: GitDiffPane
   const overflowToggleStyle = useMemo(() => buildExpandAllButtonStyle(), []);
 
   const toast = useToast();
+  const showMobileAgent = usePanelStore((state) => state.showMobileAgent);
   const openWorkspaceTabFocused = useWorkspaceLayoutStore((state) => state.openTabFocused);
-  const commitDiffPersistenceKey = useMemo(
+  const diffTabPersistenceKey = useMemo(
     () => buildWorkspaceTabPersistenceKey({ serverId, workspaceId: workspaceId ?? cwd }),
     [cwd, serverId, workspaceId],
   );
   const handleCommitPress = useCallback(
     (sha: string) => {
-      if (!commitDiffPersistenceKey) {
+      if (!diffTabPersistenceKey) {
         return;
       }
-      openWorkspaceTabFocused(commitDiffPersistenceKey, {
+      openWorkspaceTabFocused(diffTabPersistenceKey, {
         kind: "commit_diff",
         sha,
       });
     },
-    [commitDiffPersistenceKey, openWorkspaceTabFocused],
+    [diffTabPersistenceKey, openWorkspaceTabFocused],
   );
   const refreshSupported = useSessionStore(
     (s) => s.sessions[serverId]?.serverInfo?.features?.checkoutRefresh === true,
@@ -2277,6 +2372,50 @@ export function GitDiffPane({ serverId, workspaceId, cwd, enabled }: GitDiffPane
     hasUncommittedChanges,
   });
   const setDiffModeOverride = useSetDiffModeOverride();
+  const handleOpenWorkingDiff = useCallback(
+    (path: string) => {
+      if (!diffTabPersistenceKey) {
+        return;
+      }
+      const focusRequestId = Date.now();
+      let target: WorkspaceWorkingDiffTabTarget;
+      if (diffMode === "base") {
+        if (!baseRef) {
+          return;
+        }
+        target = {
+          kind: "working_diff",
+          focusPath: path,
+          focusRequestId,
+          mode: "base",
+          baseRef,
+          ignoreWhitespace: changesPreferences.hideWhitespace,
+        };
+      } else {
+        target = {
+          kind: "working_diff",
+          focusPath: path,
+          focusRequestId,
+          mode: "uncommitted",
+          baseRef: baseRef ?? null,
+          ignoreWhitespace: changesPreferences.hideWhitespace,
+        };
+      }
+      const tabId = openWorkspaceTabFocused(diffTabPersistenceKey, target);
+      if (tabId && isMobile) {
+        showMobileAgent();
+      }
+    },
+    [
+      baseRef,
+      changesPreferences.hideWhitespace,
+      diffMode,
+      diffTabPersistenceKey,
+      isMobile,
+      openWorkspaceTabFocused,
+      showMobileAgent,
+    ],
+  );
 
   const {
     files,
@@ -2468,6 +2607,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, enabled }: GitDiffPane
       expandedPaths: stableExpandedPathsArray,
       collapsedFolders: stableCollapsedFoldersArray,
       reviewActions,
+      onOpenDiff: handleOpenWorkingDiff,
       onExpandedPathsChange: handleExpandedPathsChange,
       onCollapsedFoldersChange: handleCollapsedFoldersChange,
     }),
@@ -2476,6 +2616,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, enabled }: GitDiffPane
       stableExpandedPathsArray,
       stableCollapsedFoldersArray,
       reviewActions,
+      handleOpenWorkingDiff,
       handleExpandedPathsChange,
       handleCollapsedFoldersChange,
     ],

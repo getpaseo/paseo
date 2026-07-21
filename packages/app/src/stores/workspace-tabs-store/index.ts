@@ -20,7 +20,12 @@ import {
 } from "./state";
 
 export { buildWorkspaceTabPersistenceKey } from "./state";
-export type { WorkspaceDraftTabSetup, WorkspaceTab, WorkspaceTabTarget } from "./state";
+export type {
+  WorkspaceDraftTabSetup,
+  WorkspaceTab,
+  WorkspaceTabTarget,
+  WorkspaceWorkingDiffTabTarget,
+} from "./state";
 
 interface WorkspaceTabsState extends WorkspaceTabsCoreState {
   openDraftTab: (input: {

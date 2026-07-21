@@ -771,6 +771,7 @@ export const ar: TranslationResources = {
         base: "قاعدة",
         newFile: "جديد",
         deletedFile: "تم الحذف",
+        openDiff: "فتح الفرق",
         commits: {
           title: "الإيداعات",
           legendLocal: "محلي",
@@ -1477,6 +1478,8 @@ export const ar: TranslationResources = {
       changesLabel: "التغييرات",
       changesSubtitle: "فروقات شجرة العمل",
       commitSubtitle: "فروقات الالتزام",
+      uncommittedSubtitle: "تغييرات غير ملتزم بها",
+      baseSubtitle: "مقارنة مع {{baseRef}}",
       directoryMissing: "لم يتم العثور على دليل Workspace.",
       empty: "لا توجد تغييرات",
       loadError: "فشل تحميل الفروقات",

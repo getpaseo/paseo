@@ -16,6 +16,16 @@ export interface WorkspaceDraftTabSetup {
   featureValues: Record<string, unknown>;
 }
 
+interface WorkspaceWorkingDiffTabTargetBase {
+  kind: "working_diff";
+  focusPath?: string;
+  focusRequestId?: number;
+  ignoreWhitespace: boolean;
+}
+
+export type WorkspaceWorkingDiffTabTarget = WorkspaceWorkingDiffTabTargetBase &
+  ({ mode: "uncommitted"; baseRef: string | null } | { mode: "base"; baseRef: string });
+
 export type WorkspaceTabTarget =
   | { kind: "draft"; draftId: string; setup?: WorkspaceDraftTabSetup }
   | { kind: "agent"; agentId: string }
@@ -23,6 +33,7 @@ export type WorkspaceTabTarget =
   | { kind: "terminal"; terminalId: string }
   | { kind: "browser"; browserId: string }
   | WorkspaceFileTabTarget
+  | WorkspaceWorkingDiffTabTarget
   | { kind: "setup"; workspaceId: string }
   | { kind: "commit_diff"; sha: string };
 
@@ -527,6 +538,13 @@ function coerceWorkspaceTabTarget(raw: Record<string, unknown>): WorkspaceTabTar
   if (kind === "browser" && typeof raw.browserId === "string") {
     return normalizeWorkspaceTabTarget({ kind: "browser", browserId: raw.browserId });
   }
+  return coerceWorkspaceResourceTabTarget(kind, raw);
+}
+
+function coerceWorkspaceResourceTabTarget(
+  kind: string | null,
+  raw: Record<string, unknown>,
+): WorkspaceTabTarget | null {
   if (kind === "file" && typeof raw.path === "string") {
     return normalizeWorkspaceTabTarget({
       kind: "file",
@@ -535,10 +553,35 @@ function coerceWorkspaceTabTarget(raw: Record<string, unknown>): WorkspaceTabTar
       lineEnd: typeof raw.lineEnd === "number" ? raw.lineEnd : undefined,
     });
   }
+  if (kind === "working_diff") {
+    return coerceWorkingDiffTabTarget(raw);
+  }
   if (kind === "setup" && typeof raw.workspaceId === "string") {
     return normalizeWorkspaceTabTarget({ kind: "setup", workspaceId: raw.workspaceId });
   }
   return coercePersistedDiffTabTargetByKind(kind, raw);
+}
+
+function coerceWorkingDiffTabTarget(raw: Record<string, unknown>): WorkspaceTabTarget | null {
+  const focusPath = typeof raw.focusPath === "string" ? raw.focusPath : undefined;
+  const focusRequestId =
+    typeof raw.focusRequestId === "number" && Number.isFinite(raw.focusRequestId)
+      ? raw.focusRequestId
+      : undefined;
+  const base = {
+    kind: "working_diff" as const,
+    ...(focusPath ? { focusPath } : {}),
+    ...(focusRequestId !== undefined ? { focusRequestId } : {}),
+    ignoreWhitespace: raw.ignoreWhitespace === true,
+  };
+  const baseRef = typeof raw.baseRef === "string" ? raw.baseRef : null;
+  if (raw.mode === "uncommitted") {
+    return normalizeWorkspaceTabTarget({ ...base, mode: "uncommitted", baseRef });
+  }
+  if (raw.mode === "base" && baseRef !== null) {
+    return normalizeWorkspaceTabTarget({ ...base, mode: "base", baseRef });
+  }
+  return null;
 }
 
 function coercePersistedDiffTabTargetByKind(
@@ -555,9 +598,9 @@ function coercePersistedDiffTabTargetByKind(
 // owned by the workspace-layout store, which is where the "commit diff tabs are
 // ephemeral on reload" guarantee is enforced (see stripEphemeralTabsFromLayout).
 // This coercion exists only so this store's migration stays type-complete for any
-// old diff-shaped entries left in `workspace-tabs-state` blobs. Working-tree diff
-// tabs are dropped because they no longer exist as workspace targets; commit diff
-// tabs migrate to the dedicated `commit_diff` target shape.
+// old diff-shaped entries left in `workspace-tabs-state` blobs. Legacy whole-working-tree
+// tabs are dropped because they have no file path and cannot become a single-file tab;
+// commit diff tabs migrate to the dedicated `commit_diff` target shape.
 function coercePersistedDiffTabTarget(raw: Record<string, unknown>): WorkspaceTabTarget | null {
   const diffTarget = toObjectRecord(raw.diffTarget);
   if (!diffTarget || diffTarget.kind !== "commit" || typeof diffTarget.sha !== "string") {

@@ -793,6 +793,7 @@ export const ptBR: TranslationResources = {
         base: "base",
         newFile: "Novo",
         deletedFile: "Excluído",
+        openDiff: "Abrir diff",
         commits: {
           title: "Commits",
           legendLocal: "local",
@@ -1506,6 +1507,8 @@ export const ptBR: TranslationResources = {
       changesLabel: "Alterações",
       changesSubtitle: "Diff da árvore de trabalho",
       commitSubtitle: "Diff do commit",
+      uncommittedSubtitle: "Alterações não commitadas",
+      baseSubtitle: "Comparado com {{baseRef}}",
       directoryMissing: "Diretório do workspace não encontrado.",
       empty: "Nenhuma alteração",
       loadError: "Falha ao carregar diff",

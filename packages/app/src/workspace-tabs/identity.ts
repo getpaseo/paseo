@@ -31,6 +31,9 @@ export function normalizeWorkspaceTabTarget(
   if (value.kind === "file") {
     return normalizeFileTabTarget(value);
   }
+  if (value.kind === "working_diff") {
+    return normalizeWorkingDiffTabTarget(value);
+  }
   return normalizeSimpleWorkspaceTabTarget(value);
 }
 
@@ -104,11 +107,27 @@ export function workspaceTabTargetsEqual(
   if (left.kind === "terminal" && right.kind === "terminal") {
     return left.terminalId === right.terminalId;
   }
+  return secondaryWorkspaceTabTargetsEqual(left, right);
+}
+
+function secondaryWorkspaceTabTargetsEqual(
+  left: WorkspaceTabTarget,
+  right: WorkspaceTabTarget,
+): boolean {
   if (left.kind === "browser" && right.kind === "browser") {
     return left.browserId === right.browserId;
   }
   if (left.kind === "file" && right.kind === "file") {
     return workspaceFileLocationsEqual(left, right);
+  }
+  if (left.kind === "working_diff" && right.kind === "working_diff") {
+    return (
+      left.focusPath === right.focusPath &&
+      left.focusRequestId === right.focusRequestId &&
+      left.mode === right.mode &&
+      left.baseRef === right.baseRef &&
+      left.ignoreWhitespace === right.ignoreWhitespace
+    );
   }
   if (left.kind === "setup" && right.kind === "setup") {
     return left.workspaceId === right.workspaceId;
@@ -174,6 +193,10 @@ export function buildDeterministicWorkspaceTabId(target: WorkspaceTabTarget): st
   if (target.kind === "commit_diff") {
     return `commit_diff_${target.sha}`;
   }
+  if (target.kind === "working_diff") {
+    const baseRefPart = target.baseRef === null ? "n" : lengthPrefixed(target.baseRef);
+    return `working_diff_${target.mode}_${target.ignoreWhitespace ? "1" : "0"}_${baseRefPart}`;
+  }
   return `file_${target.path}`;
 }
 
@@ -190,6 +213,37 @@ function normalizeFileTabTarget(
 ): WorkspaceTabTarget | null {
   const location = normalizeWorkspaceFileLocation(value);
   return location ? { kind: "file", ...location } : null;
+}
+
+function normalizeWorkingDiffTabTarget(
+  value: Extract<WorkspaceTabTarget, { kind: "working_diff" }>,
+): WorkspaceTabTarget | null {
+  const focusPath = trimNonEmpty(value.focusPath)?.replace(/\\/g, "/") ?? null;
+  const focusRequestId = normalizePositiveInteger(value.focusRequestId);
+  const baseRef = trimOptionalString(value.baseRef);
+  const common = {
+    kind: "working_diff" as const,
+    ...(focusPath ? { focusPath } : {}),
+    ...(focusRequestId ? { focusRequestId } : {}),
+    ignoreWhitespace: value.ignoreWhitespace === true,
+  };
+  if (value.mode === "base") {
+    if (!baseRef) {
+      return null;
+    }
+    return { ...common, mode: "base", baseRef };
+  }
+  return { ...common, mode: "uncommitted", baseRef };
+}
+
+function lengthPrefixed(value: string): string {
+  return `${value.length}_${value}`;
+}
+
+function normalizePositiveInteger(value: number | null | undefined): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? Math.floor(value)
+    : null;
 }
 
 function trimOptionalString(value: string | null | undefined): string | null {

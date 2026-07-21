@@ -763,6 +763,7 @@ export const zhCN: TranslationResources = {
         base: "base",
         newFile: "新增",
         deletedFile: "已删除",
+        openDiff: "打开差异",
         commits: {
           title: "提交",
           legendLocal: "本地",
@@ -1458,6 +1459,8 @@ export const zhCN: TranslationResources = {
       changesLabel: "更改",
       changesSubtitle: "工作区差异",
       commitSubtitle: "提交差异",
+      uncommittedSubtitle: "未提交的更改",
+      baseSubtitle: "与 {{baseRef}} 比较",
       directoryMissing: "未找到 workspace 目录。",
       empty: "没有更改",
       loadError: "加载差异失败",

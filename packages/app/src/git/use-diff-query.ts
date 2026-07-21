@@ -54,8 +54,8 @@ export function useCheckoutDiffQuery({
   const compareBaseRef = normalizedCompare.baseRef;
   const compareIgnoreWhitespace = normalizedCompare.ignoreWhitespace;
   const queryKey = useMemo(
-    () => checkoutDiffQueryKey(serverId, cwd, mode, baseRef, compareIgnoreWhitespace),
-    [serverId, cwd, mode, baseRef, compareIgnoreWhitespace],
+    () => checkoutDiffQueryKey(serverId, cwd, compareMode, compareBaseRef, compareIgnoreWhitespace),
+    [serverId, cwd, compareMode, compareBaseRef, compareIgnoreWhitespace],
   );
   const subscriptionId = useMemo(() => `checkoutDiff:${JSON.stringify(queryKey)}`, [queryKey]);
   const routeEnabled = Boolean(enabled && isConnected && cwd);

@@ -335,6 +335,64 @@ describe("workspace-tabs-store reducers", () => {
     expect(result.state.focusedTabIdByWorkspace[WORKSPACE_KEY]).toBe(result.tabId);
   });
 
+  it("opens one working diff tab per captured comparison", () => {
+    let state = emptyState();
+    const uncommitted = applyOpenOrFocusTab(state, {
+      serverId: SERVER_ID,
+      workspaceId: WORKSPACE_ID,
+      target: {
+        kind: "working_diff",
+        focusPath: "src/a.ts",
+        focusRequestId: 1,
+        mode: "uncommitted",
+        baseRef: "main",
+        ignoreWhitespace: false,
+      },
+      now: NOW,
+    });
+    state = uncommitted.state;
+    const refocused = applyOpenOrFocusTab(state, {
+      serverId: SERVER_ID,
+      workspaceId: WORKSPACE_ID,
+      target: {
+        kind: "working_diff",
+        focusPath: "src/b.ts",
+        focusRequestId: 2,
+        mode: "uncommitted",
+        baseRef: "main",
+        ignoreWhitespace: false,
+      },
+      now: NOW,
+    });
+    state = refocused.state;
+    const whitespaceHidden = applyOpenOrFocusTab(state, {
+      serverId: SERVER_ID,
+      workspaceId: WORKSPACE_ID,
+      target: {
+        kind: "working_diff",
+        focusPath: "src/a.ts",
+        focusRequestId: 3,
+        mode: "uncommitted",
+        baseRef: "main",
+        ignoreWhitespace: true,
+      },
+      now: NOW,
+    });
+
+    expect(uncommitted.tabId).toBe("working_diff_uncommitted_0_4_main");
+    expect(refocused.tabId).toBe(uncommitted.tabId);
+    expect(state.uiTabsByWorkspace[WORKSPACE_KEY]?.[0]?.target).toEqual({
+      kind: "working_diff",
+      focusPath: "src/b.ts",
+      focusRequestId: 2,
+      mode: "uncommitted",
+      baseRef: "main",
+      ignoreWhitespace: false,
+    });
+    expect(whitespaceHidden.tabId).not.toBe(uncommitted.tabId);
+    expect(whitespaceHidden.state.uiTabsByWorkspace[WORKSPACE_KEY]).toHaveLength(2);
+  });
+
   it("opens a commit diff tab with a commit-specific id", () => {
     let state = emptyState();
     const commit = applyOpenOrFocusTab(state, {
@@ -378,7 +436,42 @@ describe("workspace-tabs-store reducers", () => {
   });
 });
 
-describe("migrateWorkspaceTabsState commit diff coercion", () => {
+describe("migrateWorkspaceTabsState diff coercion", () => {
+  it("restores a persisted single-file working diff target", () => {
+    const persisted = {
+      state: {
+        uiTabsByWorkspace: {
+          [WORKSPACE_KEY]: [
+            {
+              target: {
+                kind: "working_diff",
+                focusPath: " src\\a.ts ",
+                focusRequestId: 7,
+                mode: "base",
+                baseRef: " main ",
+                ignoreWhitespace: true,
+              },
+              createdAt: NOW,
+            },
+          ],
+        },
+      },
+    };
+
+    const migrated = migrateWorkspaceTabsState(persisted, { now: NOW });
+    const tabs = migrated.uiTabsByWorkspace[WORKSPACE_KEY] ?? [];
+
+    expect(tabs).toHaveLength(1);
+    expect(tabs[0]?.target).toEqual({
+      kind: "working_diff",
+      focusPath: "src/a.ts",
+      focusRequestId: 7,
+      mode: "base",
+      baseRef: "main",
+      ignoreWhitespace: true,
+    });
+  });
+
   // This legacy store no longer enforces the "commit diff tabs are ephemeral"
   // guarantee — that now lives in the workspace-layout store's partialize (see
   // stripEphemeralTabsFromLayout). This migration only needs to carry old commit

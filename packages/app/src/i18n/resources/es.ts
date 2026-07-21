@@ -802,6 +802,7 @@ export const es: TranslationResources = {
         base: "base",
         newFile: "Nuevo",
         deletedFile: "Eliminado",
+        openDiff: "Abrir diferencias",
         commits: {
           title: "Commits",
           legendLocal: "local",
@@ -1520,6 +1521,8 @@ export const es: TranslationResources = {
       changesLabel: "Cambios",
       changesSubtitle: "Diferencias del árbol de trabajo",
       commitSubtitle: "Diferencias del commit",
+      uncommittedSubtitle: "Cambios sin confirmar",
+      baseSubtitle: "Comparado con {{baseRef}}",
       directoryMissing: "No se encontró el directorio de Workspace.",
       empty: "Sin cambios",
       loadError: "No se pudieron cargar las diferencias",
