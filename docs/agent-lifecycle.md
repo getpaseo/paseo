@@ -99,6 +99,12 @@ Closing a tab on a **root agent** still archives — the tab is the agent's home
 
 Closing a tab on a **subagent** (any agent with `parentAgentId`) is **layout-only**. The agent stays unarchived and stays in its parent's track. The user can re-open the tab from the track at any time. This is implemented in `handleCloseAgentTab` (`packages/app/src/screens/workspace/workspace-screen.tsx`).
 
+When an agent is archived, reconciliation closes any ordinary workspace tab for that agent on every
+client. A user may explicitly reopen the archived agent from **History** as a read-only tab. That
+History-open intent is transient client state: reconciliation preserves the tab without auto-opening
+other archived agents, and clears the intent when the tab closes or the agent becomes active again.
+Opening the tab must not change either Paseo's or the provider's archive state.
+
 The asymmetry is intentional: a subagent's persistent relationship lives in the parent's track. Same-workspace subagents are not auto-opened as tabs; the user opens one from that track when needed. A cross-workspace subagent is also auto-opened as a tab in its own workspace so opening that workspace does not appear empty. It remains in the parent's track until it is actually detached.
 
 ## Workspace activity

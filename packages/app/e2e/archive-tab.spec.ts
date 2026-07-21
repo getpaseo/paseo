@@ -10,6 +10,7 @@ import {
   archiveAgentFromSessions,
   clickSessionRow,
   createIdleAgent,
+  expectArchivedAgentFocused,
   expectSessionRowArchived,
   expectSessionRowVisible,
   expectWorkspaceArchiveOutcome,
@@ -144,6 +145,7 @@ test.describe("Archive tab reconciliation", () => {
 
     await clickSessionRow(page, archived.title);
 
+    await expectArchivedAgentFocused(page, archived.id);
     expect(await fetchAgentArchivedAt(client, archived.id)).toBe(archivedAt);
 
     await expect(page).toHaveURL(buildHostWorkspaceRoute(getServerId(), archived.workspaceId), {

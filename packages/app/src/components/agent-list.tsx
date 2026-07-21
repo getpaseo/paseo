@@ -19,7 +19,7 @@ import { type AggregatedAgent } from "@/hooks/use-aggregated-agents";
 import { useSessionStore } from "@/stores/session-store";
 import { Archive, ChevronRight } from "lucide-react-native";
 import { getProviderIcon } from "@/components/provider-icons";
-import { navigateToAgent } from "@/utils/navigate-to-agent";
+import { navigateToAgent, type AgentNavigationPurpose } from "@/utils/navigate-to-agent";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
 
 interface AgentListProps {
@@ -32,6 +32,7 @@ interface AgentListProps {
   listFooterComponent?: ReactElement | null;
   showAttentionIndicator?: boolean;
   showHostColumn?: boolean;
+  navigationPurpose?: AgentNavigationPurpose;
 }
 
 type DateSectionKey = "today" | "yesterday" | "thisWeek" | "thisMonth" | "older";
@@ -365,6 +366,7 @@ export function AgentList({
   listFooterComponent,
   showAttentionIndicator = true,
   showHostColumn = false,
+  navigationPurpose = "interactive",
 }: AgentListProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
@@ -394,9 +396,10 @@ export function AgentList({
         serverId,
         agentId,
         workspaceId: agent.workspaceId,
+        purpose: navigationPurpose,
       });
     },
-    [isActionSheetVisible, onAgentSelect],
+    [isActionSheetVisible, navigationPurpose, onAgentSelect],
   );
 
   const handleAgentLongPress = useCallback(

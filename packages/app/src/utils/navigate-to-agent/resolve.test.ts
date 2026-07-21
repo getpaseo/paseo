@@ -86,6 +86,31 @@ describe("resolveNavigateToAgent", () => {
     ]);
   });
 
+  it("marks History navigation so archived workspace reconciliation retains the tab", () => {
+    const { deps, tabNavigations } = createFakeNavigators({
+      agentWorkspaceId: WORKSPACE_ID,
+    });
+
+    resolveNavigateToAgent(
+      {
+        serverId: SERVER_ID,
+        agentId: AGENT_ID,
+        purpose: "history",
+      },
+      deps,
+    );
+
+    expect(tabNavigations).toEqual([
+      {
+        serverId: SERVER_ID,
+        workspaceId: WORKSPACE_ID,
+        target: { kind: "agent", agentId: AGENT_ID },
+        pin: undefined,
+        retainAgentHistory: true,
+      },
+    ]);
+  });
+
   it("falls back to the host agent route when the agent has no workspaceId", () => {
     const { deps, hostNavigations, tabNavigations } = createFakeNavigators({
       agentWorkspaceId: null,

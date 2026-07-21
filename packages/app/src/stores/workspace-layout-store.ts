@@ -76,6 +76,8 @@ interface WorkspaceLayoutStore {
   splitSizesByWorkspace: Record<string, Record<string, number[]>>;
   pinnedAgentIdsByWorkspace: Record<string, Set<string>>;
   hiddenAgentIdsByWorkspace: Record<string, Set<string>>;
+  // Transient intent for archived agents explicitly opened from the History screen.
+  historyAgentIdsByWorkspace: Record<string, Set<string>>;
   focusRestorationByWorkspace: Record<string, WorkspaceFocusRestorationState>;
   openTabFocused: (workspaceKey: string, target: WorkspaceTabTarget) => string | null;
   openChildTabFocused: (
@@ -116,6 +118,7 @@ interface WorkspaceLayoutStore {
   unpinAgent: (workspaceKey: string, agentId: string) => void;
   hideAgent: (workspaceKey: string, agentId: string) => void;
   unhideAgent: (workspaceKey: string, agentId: string) => void;
+  retainAgentHistory: (workspaceKey: string, agentId: string) => void;
   purgeWorkspace: (workspaceKey: string) => void;
 }
 
@@ -230,6 +233,7 @@ export function createWorkspaceLayoutStore(
         splitSizesByWorkspace: {},
         pinnedAgentIdsByWorkspace: {},
         hiddenAgentIdsByWorkspace: {},
+        historyAgentIdsByWorkspace: {},
         focusRestorationByWorkspace: {},
         openTabFocused: (workspaceKey, target) => {
           const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
@@ -339,8 +343,15 @@ export function createWorkspaceLayoutStore(
           }
 
           set((state) => {
+            const currentLayout = getWorkspaceLayout(
+              state.layoutByWorkspace,
+              normalizedWorkspaceKey,
+            );
+            const closedTab = collectAllTabs(currentLayout.root).find(
+              (tab) => tab.tabId === normalizedTabId,
+            );
             const nextLayout = closeTabInLayout({
-              layout: getWorkspaceLayout(state.layoutByWorkspace, normalizedWorkspaceKey),
+              layout: currentLayout,
               tabId: normalizedTabId,
             });
             if (!nextLayout) {
@@ -349,6 +360,14 @@ export function createWorkspaceLayoutStore(
 
             return {
               ...withoutFocusRestoration(state, normalizedWorkspaceKey),
+              historyAgentIdsByWorkspace:
+                closedTab?.target.kind !== "agent"
+                  ? state.historyAgentIdsByWorkspace
+                  : removeAgentIdFromWorkspaceSet(
+                      state.historyAgentIdsByWorkspace,
+                      normalizedWorkspaceKey,
+                      closedTab.target.agentId,
+                    ),
               layoutByWorkspace: {
                 ...state.layoutByWorkspace,
                 [normalizedWorkspaceKey]: nextLayout,
@@ -459,6 +478,17 @@ export function createWorkspaceLayoutStore(
           }
 
           set((state) => {
+            const activeAgentIds = new Set(snapshot.activeAgentIds);
+            let historyAgentIdsByWorkspace = state.historyAgentIdsByWorkspace;
+            for (const agentId of state.historyAgentIdsByWorkspace[normalizedWorkspaceKey] ?? []) {
+              if (activeAgentIds.has(agentId)) {
+                historyAgentIdsByWorkspace = removeAgentIdFromWorkspaceSet(
+                  historyAgentIdsByWorkspace,
+                  normalizedWorkspaceKey,
+                  agentId,
+                );
+              }
+            }
             const currentLayout = getWorkspaceLayout(
               state.layoutByWorkspace,
               normalizedWorkspaceKey,
@@ -468,14 +498,19 @@ export function createWorkspaceLayoutStore(
                 layout: currentLayout,
                 pinnedAgentIds: state.pinnedAgentIdsByWorkspace[normalizedWorkspaceKey] ?? null,
                 hiddenAgentIds: state.hiddenAgentIdsByWorkspace[normalizedWorkspaceKey] ?? null,
+                historyAgentIds: historyAgentIdsByWorkspace[normalizedWorkspaceKey] ?? null,
               },
-              snapshot,
+              { ...snapshot, activeAgentIds },
             );
-            if (nextState.layout === currentLayout) {
+            if (
+              nextState.layout === currentLayout &&
+              historyAgentIdsByWorkspace === state.historyAgentIdsByWorkspace
+            ) {
               return state;
             }
 
             return {
+              historyAgentIdsByWorkspace,
               layoutByWorkspace: {
                 ...state.layoutByWorkspace,
                 [normalizedWorkspaceKey]: nextState.layout,
@@ -830,12 +865,21 @@ export function createWorkspaceLayoutStore(
               normalizedWorkspaceKey,
               normalizedAgentId,
             );
-            if (nextHiddenAgentIdsByWorkspace === state.hiddenAgentIdsByWorkspace) {
+            const nextHistoryAgentIdsByWorkspace = removeAgentIdFromWorkspaceSet(
+              state.historyAgentIdsByWorkspace,
+              normalizedWorkspaceKey,
+              normalizedAgentId,
+            );
+            if (
+              nextHiddenAgentIdsByWorkspace === state.hiddenAgentIdsByWorkspace &&
+              nextHistoryAgentIdsByWorkspace === state.historyAgentIdsByWorkspace
+            ) {
               return state;
             }
 
             return {
               hiddenAgentIdsByWorkspace: nextHiddenAgentIdsByWorkspace,
+              historyAgentIdsByWorkspace: nextHistoryAgentIdsByWorkspace,
             };
           });
         },
@@ -861,6 +905,26 @@ export function createWorkspaceLayoutStore(
             };
           });
         },
+        retainAgentHistory: (workspaceKey, agentId) => {
+          const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
+          const normalizedAgentId = trimNonEmpty(agentId);
+          if (!normalizedWorkspaceKey || !normalizedAgentId) {
+            return;
+          }
+
+          set((state) => ({
+            hiddenAgentIdsByWorkspace: removeAgentIdFromWorkspaceSet(
+              state.hiddenAgentIdsByWorkspace,
+              normalizedWorkspaceKey,
+              normalizedAgentId,
+            ),
+            historyAgentIdsByWorkspace: addAgentIdToWorkspaceSet(
+              state.historyAgentIdsByWorkspace,
+              normalizedWorkspaceKey,
+              normalizedAgentId,
+            ),
+          }));
+        },
         purgeWorkspace: (workspaceKey) => {
           const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
           if (!normalizedWorkspaceKey) {
@@ -873,6 +937,7 @@ export function createWorkspaceLayoutStore(
               normalizedWorkspaceKey in state.splitSizesByWorkspace ||
               normalizedWorkspaceKey in state.pinnedAgentIdsByWorkspace ||
               normalizedWorkspaceKey in state.hiddenAgentIdsByWorkspace ||
+              normalizedWorkspaceKey in state.historyAgentIdsByWorkspace ||
               normalizedWorkspaceKey in state.focusRestorationByWorkspace;
             if (!hasAny) {
               return state;
@@ -885,6 +950,8 @@ export function createWorkspaceLayoutStore(
               state.pinnedAgentIdsByWorkspace;
             const { [normalizedWorkspaceKey]: _hidden, ...hiddenAgentIdsByWorkspace } =
               state.hiddenAgentIdsByWorkspace;
+            const { [normalizedWorkspaceKey]: _history, ...historyAgentIdsByWorkspace } =
+              state.historyAgentIdsByWorkspace;
             const { [normalizedWorkspaceKey]: _restoration, ...focusRestorationByWorkspace } =
               state.focusRestorationByWorkspace;
             return {
@@ -892,6 +959,7 @@ export function createWorkspaceLayoutStore(
               splitSizesByWorkspace,
               pinnedAgentIdsByWorkspace,
               hiddenAgentIdsByWorkspace,
+              historyAgentIdsByWorkspace,
               focusRestorationByWorkspace,
             };
           });

@@ -311,6 +311,7 @@ describe("workspace-layout-store actions", () => {
       splitSizesByWorkspace: {},
       pinnedAgentIdsByWorkspace: {},
       hiddenAgentIdsByWorkspace: {},
+      historyAgentIdsByWorkspace: {},
       focusRestorationByWorkspace: {},
     });
   });
@@ -1254,6 +1255,24 @@ describe("workspace-layout-store actions", () => {
     });
   });
 
+  it("keeps History agent retention in memory without persisting it", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+
+    store.retainAgentHistory(workspaceKey, "archived-agent");
+
+    const state = workspaceLayoutStore.getState();
+    expect(Array.from(state.historyAgentIdsByWorkspace[workspaceKey] ?? [])).toEqual([
+      "archived-agent",
+    ]);
+    const partialize = workspaceLayoutStore.persist.getOptions().partialize;
+    expect(partialize).toBeTypeOf("function");
+    expect(partialize?.(state)).toEqual({
+      layoutByWorkspace: {},
+      splitSizesByWorkspace: {},
+    });
+  });
+
   it("convertDraftToAgent removes the draft and focuses the existing canonical agent tab", () => {
     useWorkspaceLayoutIds("67676767-6767-6767-6767-676767676767");
     const workspaceKey = createWorkspaceKey();
@@ -1494,6 +1513,88 @@ describe("workspace-layout-store actions", () => {
         .getWorkspaceTabs(workspaceKey)
         .map((tab) => tab.tabId),
     ).toEqual(["agent_parent-agent"]);
+  });
+
+  it("reconcileTabs keeps an archived agent explicitly opened from History", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+
+    store.retainAgentHistory(workspaceKey, "archived-agent");
+    const tabId = store.openTabFocused(workspaceKey, {
+      kind: "agent",
+      agentId: "archived-agent",
+    });
+
+    store.reconcileTabs(workspaceKey, {
+      agentsHydrated: true,
+      terminalsHydrated: true,
+      activeAgentIds: [],
+      autoOpenAgentIds: [],
+      knownAgentIds: ["archived-agent"],
+      standaloneTerminalIds: [],
+      hasActivePendingDraftCreate: false,
+    });
+
+    const state = workspaceLayoutStore.getState();
+    const layout = state.layoutByWorkspace[workspaceKey];
+    expect(state.getWorkspaceTabs(workspaceKey).map((tab) => tab.tabId)).toEqual([
+      "agent_archived-agent",
+    ]);
+    expect(findPaneById(layout.root, layout.focusedPaneId)?.focusedTabId).toBe(tabId);
+    expect(Array.from(state.historyAgentIdsByWorkspace[workspaceKey] ?? [])).toEqual([
+      "archived-agent",
+    ]);
+  });
+
+  it("clears History retention when the agent becomes active so a later archive prunes it", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+
+    store.retainAgentHistory(workspaceKey, "agent-1");
+    store.openTabFocused(workspaceKey, { kind: "agent", agentId: "agent-1" });
+    store.reconcileTabs(workspaceKey, {
+      agentsHydrated: true,
+      terminalsHydrated: true,
+      activeAgentIds: ["agent-1"],
+      autoOpenAgentIds: ["agent-1"],
+      knownAgentIds: ["agent-1"],
+      standaloneTerminalIds: [],
+      hasActivePendingDraftCreate: false,
+    });
+
+    expect(
+      workspaceLayoutStore.getState().historyAgentIdsByWorkspace[workspaceKey],
+    ).toBeUndefined();
+
+    store.reconcileTabs(workspaceKey, {
+      agentsHydrated: true,
+      terminalsHydrated: true,
+      activeAgentIds: [],
+      autoOpenAgentIds: [],
+      knownAgentIds: ["agent-1"],
+      standaloneTerminalIds: [],
+      hasActivePendingDraftCreate: false,
+    });
+
+    expect(workspaceLayoutStore.getState().getWorkspaceTabs(workspaceKey)).toEqual([]);
+  });
+
+  it("clears History retention when its agent tab is closed or hidden", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+
+    store.retainAgentHistory(workspaceKey, "agent-1");
+    const tabId = store.openTabFocused(workspaceKey, { kind: "agent", agentId: "agent-1" });
+    store.closeTab(workspaceKey, tabId!);
+    expect(
+      workspaceLayoutStore.getState().historyAgentIdsByWorkspace[workspaceKey],
+    ).toBeUndefined();
+
+    store.retainAgentHistory(workspaceKey, "agent-1");
+    store.hideAgent(workspaceKey, "agent-1");
+    expect(
+      workspaceLayoutStore.getState().historyAgentIdsByWorkspace[workspaceKey],
+    ).toBeUndefined();
   });
 
   it("openTabFocused reopens hidden subagent tabs and clears hidden intent", () => {

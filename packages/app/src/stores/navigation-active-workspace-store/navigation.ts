@@ -11,7 +11,10 @@ import {
   resolveWorkspaceMapKeyByIdentity,
 } from "@/utils/workspace-identity";
 import type { ActiveWorkspaceSelection } from "@/stores/last-workspace-selection";
-import type { WorkspaceTabTarget } from "@/stores/workspace-tabs-store";
+import {
+  buildWorkspaceTabPersistenceKey,
+  type WorkspaceTabTarget,
+} from "@/stores/workspace-tabs-store";
 import { prepareWorkspaceTab, type PrepareWorkspaceTabDeps } from "@/utils/prepare-workspace-tab";
 
 export interface RouteSelectionInput {
@@ -27,6 +30,8 @@ export interface NavigateToWorkspaceInput {
   workspaceId: string;
   target?: WorkspaceTabTarget;
   pin?: boolean;
+  // Keeps an explicitly opened archived Agent tab without treating it as active or pinned.
+  retainAgentHistory?: boolean;
 }
 
 export interface NavigateToWorkspaceDeps extends PrepareWorkspaceTabDeps {
@@ -34,6 +39,8 @@ export interface NavigateToWorkspaceDeps extends PrepareWorkspaceTabDeps {
   getSessionAgents: (serverId: string) => Iterable<Agent>;
   rememberLastWorkspace: (selection: ActiveWorkspaceSelection) => void;
   navigateToRoute: (route: string) => void;
+  retainAgentHistory: (workspaceKey: string, agentId: string) => void;
+  showWorkspaceContent: () => void;
 }
 
 export interface NavigateToLastWorkspaceDeps extends NavigateToWorkspaceDeps {
@@ -89,6 +96,16 @@ export function navigateToWorkspace(
     workspaceId: input.workspaceId,
   });
   if (input.target) {
+    if (input.target.kind === "agent" && input.retainAgentHistory) {
+      deps.showWorkspaceContent();
+      const workspaceKey = buildWorkspaceTabPersistenceKey({
+        serverId: input.serverId,
+        workspaceId: input.workspaceId,
+      });
+      if (workspaceKey) {
+        deps.retainAgentHistory(workspaceKey, input.target.agentId);
+      }
+    }
     if (resolvedWorkspaceId || input.target.kind !== "agent") {
       prepareWorkspaceTab({ ...input, target: input.target }, deps);
     }

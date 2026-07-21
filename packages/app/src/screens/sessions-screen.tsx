@@ -120,6 +120,7 @@ function SessionsScreenContent() {
           listFooterComponent={listFooterComponent}
           showAttentionIndicator={false}
           showHostColumn
+          navigationPurpose="history"
         />
       ) : null}
     </View>

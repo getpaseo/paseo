@@ -9,7 +9,10 @@ export interface NavigateToAgentInput {
   // (cold deep-links). Otherwise the workspace is read from the store.
   workspaceId?: string | null;
   pin?: boolean;
+  purpose?: AgentNavigationPurpose;
 }
+
+export type AgentNavigationPurpose = "interactive" | "history";
 
 export interface AgentNavTarget {
   agentWorkspaceId: string | null | undefined;
@@ -41,5 +44,6 @@ export function resolveNavigateToAgent(
     workspaceId,
     target: { kind: "agent", agentId: input.agentId },
     pin: input.pin,
+    ...(input.purpose === "history" ? { retainAgentHistory: true } : {}),
   });
 }

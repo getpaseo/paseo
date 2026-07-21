@@ -19,6 +19,8 @@ function createFakeDeps(overrides: Partial<NavigateToWorkspaceDeps> = {}) {
   const navigations: string[] = [];
   const remembered: ActiveWorkspaceSelection[] = [];
   const openedTabs: RecordedTab[] = [];
+  const retainedAgentHistory: RecordedTab[] = [];
+  const workspaceContentCommands: string[] = [];
   const deps: NavigateToWorkspaceDeps = {
     getSessionWorkspaces: () => null,
     getSessionAgents: () => [] as Agent[],
@@ -27,11 +29,24 @@ function createFakeDeps(overrides: Partial<NavigateToWorkspaceDeps> = {}) {
       return target.kind === "agent" ? target.agentId : null;
     },
     pinAgent: () => undefined,
+    retainAgentHistory: (workspaceKey, agentId) =>
+      retainedAgentHistory.push({
+        workspaceKey,
+        target: { kind: "agent", agentId },
+      }),
+    showWorkspaceContent: () => workspaceContentCommands.push("show"),
     rememberLastWorkspace: (selection) => remembered.push(selection),
     navigateToRoute: (route) => navigations.push(route),
     ...overrides,
   };
-  return { deps, navigations, remembered, openedTabs };
+  return {
+    deps,
+    navigations,
+    remembered,
+    openedTabs,
+    retainedAgentHistory,
+    workspaceContentCommands,
+  };
 }
 
 function createLastSelectionDeps(
@@ -112,7 +127,7 @@ describe("workspace navigation", () => {
       requiresAttention: true,
       attentionReason: "permission",
     } as unknown as Agent;
-    const { deps, openedTabs } = createFakeDeps({
+    const { deps, openedTabs, workspaceContentCommands } = createFakeDeps({
       getSessionWorkspaces: () => new Map([[workspace.id, workspace]]),
       getSessionAgents: () => [agent],
     });
@@ -132,6 +147,68 @@ describe("workspace navigation", () => {
         target: { kind: "draft", draftId: "draft-1" },
       },
     ]);
+    expect(workspaceContentCommands).toEqual([]);
+  });
+
+  it.each([
+    ["agent", { kind: "agent", agentId: "agent-1" }],
+    ["terminal", { kind: "terminal", terminalId: "terminal-1" }],
+  ] satisfies Array<[string, WorkspaceTabTarget]>)(
+    "does not switch workspace content for ordinary %s navigation",
+    (_label, target) => {
+      const workspace = {
+        id: "workspace-a",
+        workspaceDirectory: "/repo/workspace-a",
+      } as WorkspaceDescriptor;
+      const { deps, workspaceContentCommands } = createFakeDeps({
+        getSessionWorkspaces: () => new Map([[workspace.id, workspace]]),
+      });
+
+      navigateToWorkspace(
+        {
+          serverId: "server-1",
+          workspaceId: "workspace-a",
+          target,
+        },
+        deps,
+      );
+
+      expect(workspaceContentCommands).toEqual([]);
+    },
+  );
+
+  it("retains a History agent before opening its workspace tab", () => {
+    const workspace = {
+      id: "workspace-a",
+      workspaceDirectory: "/repo/workspace-a",
+    } as WorkspaceDescriptor;
+    const { deps, openedTabs, retainedAgentHistory, workspaceContentCommands } = createFakeDeps({
+      getSessionWorkspaces: () => new Map([[workspace.id, workspace]]),
+    });
+
+    navigateToWorkspace(
+      {
+        serverId: "server-1",
+        workspaceId: "workspace-a",
+        target: { kind: "agent", agentId: "archived-agent" },
+        retainAgentHistory: true,
+      },
+      deps,
+    );
+
+    expect(retainedAgentHistory).toEqual([
+      {
+        workspaceKey: "server-1:workspace-a",
+        target: { kind: "agent", agentId: "archived-agent" },
+      },
+    ]);
+    expect(openedTabs).toEqual([
+      {
+        workspaceKey: "server-1:workspace-a",
+        target: { kind: "agent", agentId: "archived-agent" },
+      },
+    ]);
+    expect(workspaceContentCommands).toEqual(["show"]);
   });
 
   it("defers an agent tab until a missing workspace is recovered", () => {
