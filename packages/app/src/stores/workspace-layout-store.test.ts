@@ -29,6 +29,7 @@ import {
   insertSplit,
   removePaneFromTree,
   removeTabFromTree,
+  stripEphemeralTabsFromLayout,
   type SplitNode,
   type SplitPane,
 } from "@/stores/workspace-layout-store";
@@ -1143,12 +1144,17 @@ describe("workspace-layout-store actions", () => {
 
     const partialize = workspaceLayoutStore.persist.getOptions().partialize;
     expect(partialize).toBeTypeOf("function");
-    const persisted = partialize?.(workspaceLayoutStore.getState()) as
-      | { layoutByWorkspace?: Record<string, ReturnType<typeof createDefaultLayout>> }
-      | undefined;
-    const layout = persisted?.layoutByWorkspace?.[workspaceKey];
+    if (!partialize) {
+      throw new Error("Workspace layout partialize function is missing");
+    }
+    const currentState = workspaceLayoutStore.getState();
+    const layout = stripEphemeralTabsFromLayout(currentState.layoutByWorkspace[workspaceKey]);
+    const persisted = partialize(currentState);
 
-    expect(layout).toBeDefined();
+    expect(persisted).toEqual({
+      layoutByWorkspace: { [workspaceKey]: layout },
+      splitSizesByWorkspace: currentState.splitSizesByWorkspace,
+    });
     expect(layout && collectAllTabs(layout.root).map((tab) => tab.target)).toEqual([
       {
         kind: "working_diff",

@@ -1,37 +1,45 @@
-import { useCallback, useMemo, useState, type ReactNode } from "react";
-import { Pressable, Text, View } from "react-native";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
-import { FileDiff, ListChevronsDownUp, ListChevronsUpDown } from "lucide-react-native";
+import { FileDiff } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import invariant from "tiny-invariant";
+import {
+  buildWorkspaceAttachmentScopeKey,
+  useWorkspaceAttachmentsStore,
+} from "@/attachments/workspace-attachments-store";
 import { useRetainedPanelActive } from "@/components/retained-panel";
-import { SegmentedControl } from "@/components/ui/segmented-control";
 import { useIsCompactFormFactor, WORKSPACE_SECONDARY_HEADER_HEIGHT } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
-import { SharedDiffView } from "@/git/diff-pane";
+import { useToast } from "@/contexts/toast-context";
+import { useCheckoutGitActionsStore } from "@/git/actions-store";
+import {
+  DiffFilesToolbar,
+  DiffLayoutToggle,
+  DiffOptionsMenu,
+  SharedDiffView,
+} from "@/git/diff-pane";
 import { useCheckoutDiffQuery } from "@/git/use-diff-query";
 import { useChangesPreferences } from "@/hooks/use-changes-preferences";
 import { useAppSettings } from "@/hooks/use-settings";
 import { usePaneContext } from "@/panels/pane-context";
 import type { PanelDescriptor, PanelRegistration } from "@/panels/panel-registry";
-import { buildReviewDraftKey, useInlineReviewController } from "@/review";
+import {
+  buildReviewDraftKey,
+  useInlineReviewController,
+  useReviewAttachmentSnapshot,
+} from "@/review";
 import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
+import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaceDirectory } from "@/stores/session-store-hooks";
 import type { WorkspaceTabTarget } from "@/stores/workspace-tabs-store";
-import type { Theme } from "@/styles/theme";
 
-const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 const ThemedFileDiff = withUnistyles(FileDiff);
-const ThemedListChevronsDownUp = withUnistyles(ListChevronsDownUp);
-const ThemedListChevronsUpDown = withUnistyles(ListChevronsUpDown);
-
-function toolbarButtonStyle({ hovered, pressed }: { hovered?: boolean; pressed: boolean }) {
-  return [styles.toolbarButton, (Boolean(hovered) || pressed) && styles.toolbarButtonActive];
-}
 
 function WorkingDiffPanel() {
   const { t } = useTranslation();
-  const { serverId, workspaceId, target } = usePaneContext();
+  const toast = useToast();
+  const { serverId, workspaceId, tabId, target, openTab } = usePaneContext();
   const cwd = useWorkspaceDirectory(serverId, workspaceId);
   const isConnected = useHostRuntimeIsConnected(serverId);
   const isActive = useRetainedPanelActive();
@@ -39,6 +47,14 @@ function WorkingDiffPanel() {
   const { preferences, updatePreferences } = useChangesPreferences();
   const isCompact = useIsCompactFormFactor();
   const [expandedPaths, setExpandedPaths] = useState<string[] | null>(null);
+  const refreshSupported = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.features?.checkoutRefresh === true,
+  );
+  const runRefresh = useCheckoutGitActionsStore((state) => state.refresh);
+  const isRefreshing =
+    useCheckoutGitActionsStore((state) =>
+      state.getStatus({ serverId, cwd: cwd ?? "", actionId: "refresh" }),
+    ) === "pending";
   invariant(target.kind === "working_diff", "WorkingDiffPanel requires working_diff target");
 
   const { files, payloadError, isLoading } = useCheckoutDiffQuery({
@@ -48,6 +64,7 @@ function WorkingDiffPanel() {
     baseRef: target.baseRef ?? undefined,
     ignoreWhitespace: target.ignoreWhitespace,
     enabled: Boolean(cwd) && isActive,
+    queryScope: `working-diff-tab:${tabId}`,
   });
   const reviewDraftKey = useMemo(
     () =>
@@ -62,29 +79,65 @@ function WorkingDiffPanel() {
     [cwd, serverId, target.baseRef, target.ignoreWhitespace, target.mode, workspaceId],
   );
   const reviewActions = useInlineReviewController({ reviewDraftKey });
+  const reviewAttachment = useReviewAttachmentSnapshot({
+    key: reviewDraftKey,
+    diffFiles: files,
+    cwd: cwd ?? "",
+    mode: target.mode,
+    baseRef: target.baseRef,
+  });
+  const workspaceAttachmentScopeKey = useMemo(
+    () => buildWorkspaceAttachmentScopeKey({ serverId, workspaceId, cwd: cwd ?? "" }),
+    [cwd, serverId, workspaceId],
+  );
+  const setWorkspaceAttachments = useWorkspaceAttachmentsStore(
+    (state) => state.setWorkspaceAttachments,
+  );
+  const clearWorkspaceAttachments = useWorkspaceAttachmentsStore(
+    (state) => state.clearWorkspaceAttachments,
+  );
+  useEffect(() => {
+    if (!isActive) {
+      return;
+    }
+    const attachments = reviewAttachment ? [reviewAttachment] : [];
+    setWorkspaceAttachments({ scopeKey: workspaceAttachmentScopeKey, attachments });
+    return () => {
+      const currentAttachments =
+        useWorkspaceAttachmentsStore.getState().attachmentsByScope[workspaceAttachmentScopeKey];
+      if (currentAttachments === attachments) {
+        clearWorkspaceAttachments({ scopeKey: workspaceAttachmentScopeKey });
+      }
+    };
+  }, [
+    clearWorkspaceAttachments,
+    isActive,
+    reviewAttachment,
+    setWorkspaceAttachments,
+    workspaceAttachmentScopeKey,
+  ]);
   const canUseSplitLayout = isWeb && !isCompact;
   const effectiveLayout = canUseSplitLayout ? preferences.layout : "unified";
-  const layoutOptions = useMemo(
-    () => [
-      {
-        value: "unified" as const,
-        label: t("workspace.git.diff.unified"),
-        testID: "working-diff-layout-unified",
-      },
-      {
-        value: "split" as const,
-        label: t("workspace.git.diff.split"),
-        testID: "working-diff-layout-split",
-      },
-    ],
-    [t],
-  );
-  const handleLayoutChange = useCallback(
-    (layout: "unified" | "split") => {
-      void updatePreferences({ layout });
-    },
-    [updatePreferences],
-  );
+  const handleToggleLayout = useCallback(() => {
+    void updatePreferences({ layout: preferences.layout === "unified" ? "split" : "unified" });
+  }, [preferences.layout, updatePreferences]);
+  const handleToggleWrapLines = useCallback(() => {
+    void updatePreferences({ wrapLines: !preferences.wrapLines });
+  }, [preferences.wrapLines, updatePreferences]);
+  const handleToggleHideWhitespace = useCallback(() => {
+    openTab({
+      ...target,
+      ignoreWhitespace: !target.ignoreWhitespace,
+    });
+  }, [openTab, target]);
+  const handleRefresh = useCallback(() => {
+    if (!cwd || isRefreshing) {
+      return;
+    }
+    void runRefresh({ serverId, cwd }).catch((error) => {
+      toast.error(error instanceof Error ? error.message : t("workspace.git.diff.failedRefresh"));
+    });
+  }, [cwd, isRefreshing, runRefresh, serverId, t, toast]);
   const displayPreferences = useMemo(
     () => ({
       layout: effectiveLayout,
@@ -97,9 +150,13 @@ function WorkingDiffPanel() {
   const handleExpandedPathsChange = useCallback((paths: string[]) => {
     setExpandedPaths(paths);
   }, []);
+  const expandedPathSet = useMemo(
+    () => (expandedPaths === null ? null : new Set(expandedPaths)),
+    [expandedPaths],
+  );
   const allFilesExpanded =
     files.length > 0 &&
-    (expandedPaths === null || files.every((file) => expandedPaths.includes(file.path)));
+    (expandedPathSet === null || files.every((file) => expandedPathSet.has(file.path)));
   const handleToggleExpandAll = useCallback(() => {
     setExpandedPaths(allFilesExpanded ? [] : null);
   }, [allFilesExpanded]);
@@ -135,7 +192,16 @@ function WorkingDiffPanel() {
       <PanelState message={t("workspace.tabs.loading")} testID="working-diff-loading" />
     );
   } else if (files.length === 0) {
-    bodyContent = <PanelState message={t("panels.diff.empty")} testID="working-diff-empty" />;
+    bodyContent = (
+      <PanelState
+        message={
+          target.ignoreWhitespace
+            ? t("workspace.git.diff.emptyHiddenWhitespace")
+            : t("panels.diff.empty")
+        }
+        testID="working-diff-empty"
+      />
+    );
   } else {
     bodyContent = (
       <SharedDiffView files={files} displayPreferences={displayPreferences} mode={workingTabMode} />
@@ -144,32 +210,35 @@ function WorkingDiffPanel() {
 
   return (
     <View style={styles.container} testID="working-diff-panel">
-      {canUseSplitLayout ? (
-        <View style={styles.toolbar} testID="working-diff-toolbar">
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={t(
-              allFilesExpanded ? "workspace.git.diff.collapseAll" : "workspace.git.diff.expandAll",
-            )}
-            onPress={handleToggleExpandAll}
-            style={toolbarButtonStyle}
-            testID="working-diff-toggle-expand-all"
-          >
-            {allFilesExpanded ? (
-              <ThemedListChevronsDownUp size={16} uniProps={mutedColorMapping} />
-            ) : (
-              <ThemedListChevronsUpDown size={16} uniProps={mutedColorMapping} />
-            )}
-          </Pressable>
-          <SegmentedControl
-            options={layoutOptions}
-            value={preferences.layout}
-            onValueChange={handleLayoutChange}
-            size="sm"
-            testID="working-diff-layout-control"
+      <View style={styles.toolbar} testID="working-diff-toolbar">
+        {canUseSplitLayout ? (
+          <DiffLayoutToggle
+            layout={preferences.layout}
+            isMobile={isCompact}
+            testID="working-diff-toggle-layout"
+            onToggle={handleToggleLayout}
           />
-        </View>
-      ) : null}
+        ) : null}
+        {files.length > 0 ? (
+          <DiffFilesToolbar
+            allFileDiffsExpanded={allFilesExpanded}
+            isMobile={isCompact}
+            testID="working-diff-toggle-expand-all"
+            onToggleExpandAll={handleToggleExpandAll}
+          />
+        ) : null}
+        <DiffOptionsMenu
+          hideWhitespace={target.ignoreWhitespace}
+          isMobile={isCompact}
+          isRefreshing={isRefreshing}
+          refreshSupported={refreshSupported}
+          testIDPrefix="working-diff"
+          wrapLines={preferences.wrapLines}
+          onRefresh={handleRefresh}
+          onToggleHideWhitespace={handleToggleHideWhitespace}
+          onToggleWrapLines={handleToggleWrapLines}
+        />
+      </View>
       <View style={styles.body}>{bodyContent}</View>
     </View>
   );
@@ -230,16 +299,6 @@ const styles = StyleSheet.create((theme) => ({
     borderBottomWidth: theme.borderWidth[1],
     borderBottomColor: theme.colors.border,
     flexShrink: 0,
-  },
-  toolbarButton: {
-    width: 30,
-    height: 30,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: theme.borderRadius.md,
-  },
-  toolbarButtonActive: {
-    backgroundColor: theme.colors.surface2,
   },
   body: {
     flex: 1,

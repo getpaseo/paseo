@@ -499,7 +499,7 @@ describe("migrateWorkspaceTabsState diff coercion", () => {
     expect(migrated.tabOrderByWorkspace[WORKSPACE_KEY]).toEqual(["commit_diff_abc123"]);
   });
 
-  it("drops a legacy working diff tab during migration", () => {
+  it("migrates a legacy working diff tab to the comparison-wide target", () => {
     const persisted = {
       state: {
         uiTabsByWorkspace: {
@@ -519,7 +519,12 @@ describe("migrateWorkspaceTabsState diff coercion", () => {
 
     const migrated = migrateWorkspaceTabsState(persisted, { now: NOW });
 
-    expect(migrated.uiTabsByWorkspace[WORKSPACE_KEY]).toBeUndefined();
-    expect(migrated.tabOrderByWorkspace[WORKSPACE_KEY]).toBeUndefined();
+    expect(migrated.uiTabsByWorkspace[WORKSPACE_KEY]?.[0]?.target).toEqual({
+      kind: "working_diff",
+      mode: "base",
+      baseRef: "main",
+      ignoreWhitespace: false,
+    });
+    expect(migrated.tabOrderByWorkspace[WORKSPACE_KEY]).toEqual(["diff_working:base:main"]);
   });
 });

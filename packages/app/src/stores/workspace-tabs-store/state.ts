@@ -598,17 +598,40 @@ function coercePersistedDiffTabTargetByKind(
 // owned by the workspace-layout store, which is where the "commit diff tabs are
 // ephemeral on reload" guarantee is enforced (see stripEphemeralTabsFromLayout).
 // This coercion exists only so this store's migration stays type-complete for any
-// old diff-shaped entries left in `workspace-tabs-state` blobs. Legacy whole-working-tree
-// tabs are dropped because they have no file path and cannot become a single-file tab;
-// commit diff tabs migrate to the dedicated `commit_diff` target shape.
+// old diff-shaped entries left in `workspace-tabs-state` blobs. Legacy working-tree
+// comparisons migrate to the comparison-wide target, while commit comparisons migrate
+// to the dedicated `commit_diff` target shape.
 function coercePersistedDiffTabTarget(raw: Record<string, unknown>): WorkspaceTabTarget | null {
   const diffTarget = toObjectRecord(raw.diffTarget);
-  if (!diffTarget || diffTarget.kind !== "commit" || typeof diffTarget.sha !== "string") {
+  if (!diffTarget) {
     return null;
   }
+  if (diffTarget.kind === "commit" && typeof diffTarget.sha === "string") {
+    return normalizeWorkspaceTabTarget({
+      kind: "commit_diff",
+      sha: diffTarget.sha,
+    });
+  }
+  if (diffTarget.kind !== "working") {
+    return null;
+  }
+  const baseRef = typeof diffTarget.baseRef === "string" ? diffTarget.baseRef : null;
+  if (diffTarget.mode === "base") {
+    if (!baseRef) {
+      return null;
+    }
+    return normalizeWorkspaceTabTarget({
+      kind: "working_diff",
+      mode: "base",
+      baseRef,
+      ignoreWhitespace: diffTarget.ignoreWhitespace === true,
+    });
+  }
   return normalizeWorkspaceTabTarget({
-    kind: "commit_diff",
-    sha: diffTarget.sha,
+    kind: "working_diff",
+    mode: "uncommitted",
+    baseRef,
+    ignoreWhitespace: diffTarget.ignoreWhitespace === true,
   });
 }
 

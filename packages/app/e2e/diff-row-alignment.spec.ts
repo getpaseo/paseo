@@ -239,15 +239,20 @@ test("changed files focus one live comparison-wide diff tab", async ({ page }) =
   await expect(visiblePanel.getByTestId("diff-file-0-body")).toHaveCount(0);
   await visiblePanel.getByTestId("diff-file-0-toggle").click();
   await expect(visiblePanel.getByTestId("diff-file-0-body")).toBeVisible();
-  await expect(visiblePanel.getByTestId("working-diff-layout-unified")).toHaveAttribute(
-    "aria-selected",
-    "true",
+  const workingDiffLayoutToggle = visiblePanel.getByTestId("working-diff-toggle-layout");
+  await expect(workingDiffLayoutToggle).toHaveAccessibleName("Switch to side-by-side diff");
+  await workingDiffLayoutToggle.click();
+  await expect(workingDiffLayoutToggle).toHaveAccessibleName("Switch to unified diff");
+  await visiblePanel.getByTestId("working-diff-options-menu").click();
+  await expect(page.getByTestId("working-diff-toggle-whitespace")).toContainText("Hide whitespace");
+  await expect(page.getByTestId("working-diff-toggle-wrap-lines")).toContainText("Wrap long lines");
+  await expect(page.getByTestId("working-diff-refresh")).toContainText("Refresh");
+  await page.getByTestId("working-diff-toggle-wrap-lines").click();
+  await visiblePanel.getByTestId("working-diff-options-menu").click();
+  await expect(page.getByTestId("working-diff-toggle-wrap-lines")).toContainText(
+    "Scroll long lines",
   );
-  await visiblePanel.getByTestId("working-diff-layout-split").click();
-  await expect(visiblePanel.getByTestId("working-diff-layout-split")).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
+  await page.keyboard.press("Escape");
   await visiblePanel.getByTestId("working-diff-toggle-expand-all").click();
   await expect(visiblePanel.getByTestId(/^diff-file-\d+-body$/)).toHaveCount(0);
   await visiblePanel.getByTestId("working-diff-toggle-expand-all").click();
@@ -307,6 +312,11 @@ test("changes diff switches between flat and tree file lists", async ({ page }) 
   await page.getByTestId("changes-toggle-view-mode").click();
   await expect(page.getByTestId("diff-folder-src")).toBeVisible();
   await expect(page.getByTestId("diff-file-0")).toBeVisible();
+
+  await page.getByRole("button", { name: "Collapse all" }).click();
+  await expect(page.getByTestId("diff-file-0")).toHaveCount(0);
+  await page.getByRole("button", { name: "Expand all" }).click();
+  await expect(page.getByTestId("diff-file-0-body")).toBeVisible();
 
   await page.getByTestId("diff-folder-src-toggle").click();
   await expect(page.getByTestId("diff-file-0")).toHaveCount(0);
