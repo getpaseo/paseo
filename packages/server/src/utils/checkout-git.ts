@@ -2144,37 +2144,9 @@ function parseCheckoutCommitRecords(stdout: string): ParsedCheckoutCommit[] {
   return commits;
 }
 
-async function resolveCheckoutCommitUpstreamRef(
-  cwd: string,
-  currentBranch: string,
-  context?: CheckoutContext,
-): Promise<string | null> {
-  // Prefer the branch's configured `@{u}`. If it's configured but the
-  // remote-tracking ref isn't present locally (e.g. configured upstream that was
-  // never fetched), fall back to `origin/<branch>` when that ref does exist, so a
-  // standard `origin` push is still recognized. Both missing => no remote.
-  const configured = await getConfiguredUpstreamRef(cwd, currentBranch, context);
-  if (configured && (await doesGitRefExist(cwd, `refs/remotes/${configured}`, context))) {
-    return configured;
-  }
-  if (await doesGitRefExist(cwd, `refs/remotes/origin/${currentBranch}`, context)) {
-    return `origin/${currentBranch}`;
-  }
-  return null;
-}
-
-// Returns the set of SHAs on the current branch that are NOT on the upstream
-// (local-only/unpushed), or `null` when no upstream exists (no remote at all).
-async function getLocalOnlyCommitShas(
-  cwd: string,
-  currentBranch: string,
-  context?: CheckoutContext,
-): Promise<Set<string> | null> {
-  const upstreamRef = await resolveCheckoutCommitUpstreamRef(cwd, currentBranch, context);
-  if (!upstreamRef) {
-    return null;
-  }
-  const { stdout } = await runGitCommand(["rev-list", `${upstreamRef}..HEAD`], {
+// Returns commits reachable from HEAD that are not reachable from any remote ref.
+async function getUnpushedCommitShas(cwd: string, context?: CheckoutContext): Promise<Set<string>> {
+  const { stdout } = await runGitCommand(["rev-list", "HEAD", "--not", "--remotes"], {
     cwd,
     envOverlay: READ_ONLY_GIT_ENV,
     logger: context?.logger,
@@ -2223,6 +2195,8 @@ export async function listCheckoutCommits({
     [
       "log",
       "HEAD",
+      "--first-parent",
+      "--diff-merges=first-parent",
       `--max-count=${MAX_CHECKOUT_COMMITS}`,
       `--format=${COMMIT_LOG_FORMAT}`,
       "--raw",
@@ -2237,7 +2211,7 @@ export async function listCheckoutCommits({
     return { baseRef: comparisonBaseRef, commits: [] };
   }
 
-  const localOnlyShas = await getLocalOnlyCommitShas(cwd, currentBranch);
+  const unpushedShas = await getUnpushedCommitShas(cwd);
 
   const commits = records.map((record) => ({
     sha: record.sha,
@@ -2245,7 +2219,7 @@ export async function listCheckoutCommits({
     subject: record.subject,
     authorName: record.authorName,
     authorDate: record.authorDate,
-    isOnRemote: localOnlyShas === null ? false : !localOnlyShas.has(record.sha),
+    isOnRemote: !unpushedShas.has(record.sha),
     files: record.files,
   }));
 
@@ -2257,13 +2231,12 @@ export async function listCheckoutCommits({
  * parses it into the same {@link ParsedDiffFile} shape the diff subscription
  * emits (so the client can reuse its existing renderer).
  *
- * Runs `git show <sha> --format= -- <path>` with the sha and path passed as
- * separate process args (never interpolated into a shell string), and `--format=`
- * suppresses the commit header so the output is a pure unified diff. The text is
- * parsed and highlighted by {@link parseAndHighlightDiff} — the exact parser the
- * diff subscription uses. Returns `null` when the file is absent from the commit
- * or the change is binary-only (no textual hunks). Throws on git failure (e.g. an
- * unknown sha), which the caller maps to a typed checkout error.
+ * Compares merge commits to their first parent, matching the linear history shown
+ * in the explorer. The text is parsed and highlighted by
+ * {@link parseAndHighlightDiff} — the exact parser the diff subscription uses.
+ * Returns `null` when the file is absent from the commit or the change is
+ * binary-only (no textual hunks). Throws on git failure (e.g. an unknown sha),
+ * which the caller maps to a typed checkout error.
  */
 export async function getCommitFileDiff({
   cwd,
@@ -2274,10 +2247,13 @@ export async function getCommitFileDiff({
   sha: string;
   path: string;
 }): Promise<ParsedDiffFile | null> {
-  const { stdout } = await runGitCommand(["show", sha, "--format=", "--", path], {
-    cwd,
-    envOverlay: READ_ONLY_GIT_ENV,
-  });
+  const { stdout } = await runGitCommand(
+    ["show", sha, "--format=", "--diff-merges=first-parent", "--", path],
+    {
+      cwd,
+      envOverlay: READ_ONLY_GIT_ENV,
+    },
+  );
 
   if (stdout.trim().length === 0) {
     return null;

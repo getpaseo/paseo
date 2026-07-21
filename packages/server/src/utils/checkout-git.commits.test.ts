@@ -107,6 +107,21 @@ describe("listCheckoutCommits", () => {
     expect(commits.every((c) => c.isOnRemote === false)).toBe(true);
   });
 
+  it("recognizes base history on a remote before the feature branch is pushed", async () => {
+    const { repoDir, tempDir } = initRepoOnMain();
+    addBareRemote(repoDir, tempDir);
+    git(["push", "-u", "origin", "main"], repoDir);
+    git(["checkout", "-b", "feature"], repoDir);
+    commitFile(repoDir, "feature.txt", "local\n", "Local feature");
+
+    const { commits } = await listCheckoutCommits({ cwd: repoDir });
+
+    expect(commits.map(({ subject, isOnRemote }) => ({ subject, isOnRemote }))).toEqual([
+      { subject: "Local feature", isOnRemote: false },
+      { subject: "initial", isOnRemote: true },
+    ]);
+  });
+
   it("limits history to the 20 most recent commits", async () => {
     const { repoDir } = initRepoOnMain();
     for (let index = 1; index <= 24; index += 1) {
@@ -119,6 +134,26 @@ describe("listCheckoutCommits", () => {
     expect(commits.map((entry) => entry.subject)).toEqual(
       Array.from({ length: 20 }, (_, index) => `Commit ${24 - index}`),
     );
+  });
+
+  it("shows merge commits with changes against their first parent", async () => {
+    const { repoDir } = initRepoOnMain();
+    git(["checkout", "-b", "feature"], repoDir);
+    commitFile(repoDir, "feature.txt", "feature\n", "Add feature");
+    git(["checkout", "main"], repoDir);
+    commitFile(repoDir, "main.txt", "main\n", "Advance main");
+    git(["merge", "--no-ff", "feature", "-m", "Merge feature"], repoDir);
+
+    const { commits } = await listCheckoutCommits({ cwd: repoDir });
+
+    expect(commits.map((entry) => entry.subject)).toEqual([
+      "Merge feature",
+      "Advance main",
+      "initial",
+    ]);
+    expect(commits[0]?.files).toEqual([
+      { path: "feature.txt", additions: 1, deletions: 0, status: "added" },
+    ]);
   });
 
   it("classifies renamed files with status renamed and correct destination path", async () => {

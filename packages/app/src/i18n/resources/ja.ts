@@ -799,12 +799,12 @@ export const ja: TranslationResources = {
         deletedFile: "削除済み",
         commits: {
           title: "コミット",
-          countLabel: "ベースより先のコミット数: {{count}}",
+          countLabel: "最近のコミット数: {{count}}",
           fileDiffEmpty: "表示する変更はありません",
           fileDiffError: "ファイル差分の読み込みに失敗しました",
           loading: "コミットを読み込み中…",
           loadError: "コミットの読み込みに失敗しました",
-          empty: "ベースより先のコミットはありません",
+          empty: "コミットはまだありません",
         },
       },
       openInEditor: {

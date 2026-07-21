@@ -788,12 +788,12 @@ export const ar: TranslationResources = {
         deletedFile: "تم الحذف",
         commits: {
           title: "الإيداعات",
-          countLabel: "{{count}} إيداعات قبل الأساس",
+          countLabel: "{{count}} من الإيداعات الأخيرة",
           fileDiffEmpty: "لا توجد تغييرات لعرضها",
           fileDiffError: "تعذّر تحميل فروق الملف",
           loading: "جارٍ تحميل الإيداعات…",
           loadError: "تعذّر تحميل الإيداعات",
-          empty: "لا توجد إيداعات قبل الأساس",
+          empty: "لا توجد إيداعات بعد",
         },
       },
       openInEditor: {
