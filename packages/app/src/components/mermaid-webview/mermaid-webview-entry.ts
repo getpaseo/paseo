@@ -2,6 +2,7 @@ import mermaid from "mermaid";
 
 interface RenderMessage {
   type: "render";
+  requestId: number;
   code: string;
   colorScheme: "light" | "dark";
   interactive: boolean;
@@ -11,8 +12,8 @@ type InboundMessage = RenderMessage;
 
 type OutboundMessage =
   | { type: "bridgeReady" }
-  | { type: "rendered"; height: number; width: number }
-  | { type: "renderError" };
+  | { type: "rendered"; requestId: number; height: number; width: number }
+  | { type: "renderError"; requestId: number };
 
 declare global {
   interface Window {
@@ -83,12 +84,13 @@ async function render(message: RenderMessage, seq: number): Promise<void> {
     const rect = host.querySelector("svg")?.getBoundingClientRect();
     sendToNative({
       type: "rendered",
+      requestId: message.requestId,
       height: Math.ceil(rect?.height ?? host.scrollHeight),
       width: Math.ceil(rect?.width ?? 0),
     });
   } catch {
     // Invalid or still-streaming diagram source — keep the previous render.
-    if (seq === renderSeq) sendToNative({ type: "renderError" });
+    if (seq === renderSeq) sendToNative({ type: "renderError", requestId: message.requestId });
   }
 }
 

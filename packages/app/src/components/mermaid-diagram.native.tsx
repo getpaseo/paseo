@@ -32,6 +32,7 @@ const MAX_PREVIEW_HEIGHT = 480;
 
 interface BridgeRenderMessage {
   type: "render";
+  requestId: number;
   code: string;
   colorScheme: "light" | "dark";
   interactive: boolean;
@@ -62,12 +63,22 @@ function MermaidWebView({
   const renderInputRef = useRef({ code, colorScheme, interactive });
   renderInputRef.current = { code, colorScheme, interactive };
 
-  const lastSentCodeRef = useRef(code);
+  // Sources by request id, so a "rendered" event is credited to the source
+  // that actually produced it — a newer (possibly invalid) chunk can be sent
+  // while an older render's completion message is still in flight.
+  const requestSeqRef = useRef(0);
+  const sentSourcesRef = useRef(new Map<number, string>());
 
   const sendRender = useCallback(() => {
     if (!bridgeReadyRef.current || !webViewRef.current) return;
-    lastSentCodeRef.current = renderInputRef.current.code;
-    const payload = serializeForInjectedJavaScript({ type: "render", ...renderInputRef.current });
+    requestSeqRef.current += 1;
+    const requestId = requestSeqRef.current;
+    sentSourcesRef.current.set(requestId, renderInputRef.current.code);
+    const payload = serializeForInjectedJavaScript({
+      type: "render",
+      requestId,
+      ...renderInputRef.current,
+    });
     webViewRef.current.injectJavaScript(
       `window.__PASEO_MERMAID_WEBVIEW_RECEIVE__ && window.__PASEO_MERMAID_WEBVIEW_RECEIVE__(${payload}); true;`,
     );
@@ -79,9 +90,13 @@ function MermaidWebView({
 
   const handleMessage = useCallback(
     (event: WebViewMessageEvent) => {
-      let message: { type?: string; height?: number };
+      let message: { type?: string; height?: number; requestId?: number };
       try {
-        message = JSON.parse(event.nativeEvent.data) as { type?: string; height?: number };
+        message = JSON.parse(event.nativeEvent.data) as {
+          type?: string;
+          height?: number;
+          requestId?: number;
+        };
       } catch {
         return;
       }
@@ -90,10 +105,21 @@ function MermaidWebView({
         sendRender();
         return;
       }
-      if (message.type === "rendered" && typeof message.height === "number") {
-        // Entry serializes renders latest-wins, so a "rendered" message always
-        // corresponds to the most recently sent source.
-        onRendered?.(message.height, lastSentCodeRef.current);
+      if (
+        message.type === "rendered" &&
+        typeof message.height === "number" &&
+        typeof message.requestId === "number"
+      ) {
+        const source = sentSourcesRef.current.get(message.requestId);
+        // Resolved and older entries can never be credited again.
+        for (const id of sentSourcesRef.current.keys()) {
+          if (id <= message.requestId) sentSourcesRef.current.delete(id);
+        }
+        if (source !== undefined) onRendered?.(message.height, source);
+        return;
+      }
+      if (message.type === "renderError" && typeof message.requestId === "number") {
+        sentSourcesRef.current.delete(message.requestId);
       }
     },
     [onRendered, sendRender],
