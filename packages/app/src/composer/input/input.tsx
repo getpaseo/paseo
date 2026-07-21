@@ -73,6 +73,7 @@ import {
   runMessageInputKeyboardAction,
   stopRealtimeVoice,
 } from "./state";
+import { applyComposerTabKeyDownResult, resolveComposerTabKeyDown } from "./tab-indent";
 
 const DEFAULT_SEND_KEYS: ShortcutKey[][] = [["Enter"]];
 const COMPOSER_INPUT_DATASET = { composerInput: "" } as const;
@@ -179,8 +180,10 @@ interface TextAreaHandle {
   clientHeight?: number;
   offsetHeight?: number;
   scrollTop?: number;
+  value?: string;
   selectionStart?: number | null;
   selectionEnd?: number | null;
+  setSelectionRange?: (selectionStart: number, selectionEnd: number) => void;
   style?: {
     height?: string;
     overflowY?: string;
@@ -574,6 +577,84 @@ function usePasteImagesEffect(args: PasteImagesEffectArgs): void {
     isDictating,
     isRealtimeVoiceForCurrentAgent,
     onAddImages,
+  ]);
+}
+
+interface WebTabIndentEffectArgs {
+  getWebTextArea: () => TextAreaHandle | null;
+  valueRef: React.MutableRefObject<string>;
+  onChangeText: (nextValue: string) => void;
+  onKeyPressCallback: ((event: { key: string; preventDefault: () => void }) => boolean) | undefined;
+  disabled: boolean;
+  isDictating: boolean;
+  isRealtimeVoiceForCurrentAgent: boolean;
+}
+
+/**
+ * Web/Electron: plain Tab inserts indentation instead of moving focus.
+ * Autocomplete (via onKeyPressCallback) still wins when suggestions are visible.
+ * Shift+Tab is intentionally ignored so agent mode-cycle shortcuts keep working.
+ */
+function useWebTabIndentEffect(args: WebTabIndentEffectArgs): void {
+  const {
+    getWebTextArea,
+    valueRef,
+    onChangeText,
+    onKeyPressCallback,
+    disabled,
+    isDictating,
+    isRealtimeVoiceForCurrentAgent,
+  } = args;
+
+  useEffect(() => {
+    if (!isWeb) return;
+
+    const textarea = getWebTextArea() as
+      | (TextAreaHandle & {
+          addEventListener?: (type: string, listener: (event: KeyboardEvent) => void) => void;
+          removeEventListener?: (type: string, listener: (event: KeyboardEvent) => void) => void;
+        })
+      | null;
+    if (
+      !textarea ||
+      typeof textarea.addEventListener !== "function" ||
+      typeof textarea.removeEventListener !== "function"
+    ) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const result = resolveComposerTabKeyDown({
+        event,
+        value: valueRef.current,
+        selectionStart: textarea.selectionStart,
+        selectionEnd: textarea.selectionEnd,
+        disabled,
+        isDictating,
+        isRealtimeVoiceForCurrentAgent,
+        onKeyPressCallback,
+      });
+      applyComposerTabKeyDownResult({
+        result,
+        valueRef,
+        textarea,
+        onChangeText,
+        preventDefault: () => event.preventDefault(),
+      });
+    };
+
+    textarea.addEventListener("keydown", handleKeyDown);
+    return () => {
+      textarea.removeEventListener?.("keydown", handleKeyDown);
+    };
+  }, [
+    disabled,
+    getWebTextArea,
+    isDictating,
+    isRealtimeVoiceForCurrentAgent,
+    onChangeText,
+    onKeyPressCallback,
+    valueRef,
   ]);
 }
 
@@ -1642,6 +1723,16 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       },
       [onChangeText],
     );
+
+    useWebTabIndentEffect({
+      getWebTextArea,
+      valueRef,
+      onChangeText: handleInputChange,
+      onKeyPressCallback,
+      disabled,
+      isDictating,
+      isRealtimeVoiceForCurrentAgent,
+    });
 
     const handleInputFocus = useCallback(() => {
       isInputFocusedRef.current = true;
