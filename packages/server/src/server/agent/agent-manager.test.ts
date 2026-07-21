@@ -1,6 +1,6 @@
 import { expect, test, vi } from "vitest";
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -2161,13 +2161,92 @@ test("resumeAgentFromPersistence rejects missing cwd unless allowMissingCwd is s
     allowMissingCwd: true,
   });
   expect(resumed.id).toBe(agentId);
+  // Managed/recorded path stays the original missing worktree.
   expect(resumed.cwd).toBe(missingCwd);
+  expect(resumed.config.cwd).toBe(missingCwd);
   expect(client.resumeOverrides).toHaveLength(1);
+  // Provider resume must receive a real launch cwd (not the deleted worktree).
+  const launchCwd = client.resumeOverrides[0]?.cwd;
+  expect(launchCwd).toBeTruthy();
+  expect(launchCwd).not.toBe(missingCwd);
+  expect(existsSync(launchCwd!)).toBe(true);
 
   // Timeline fetch must work after missing-cwd resume (logs path).
   const timeline = manager.fetchTimeline(agentId, { direction: "tail", limit: 0 });
   expect(timeline.rows).toEqual([]);
   expect(timeline.window.nextSeq).toBeGreaterThanOrEqual(1);
+});
+
+test("read-recovered missing-cwd agent cannot start provider runs until path returns", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const missingCwd = join(workdir, "deleted-worktree");
+  const agentId = "22222222-2222-4222-8222-222222222222";
+
+  let startTurnCalls = 0;
+  class TrackingClient extends TestAgentClient {
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+      _launchContext?: AgentLaunchContext,
+    ): Promise<AgentSession> {
+      this.resumeOverrides.push(config);
+      const session = new TestAgentSession({
+        provider: this.provider,
+        cwd: config?.cwd ?? process.cwd(),
+      });
+      const originalStart = session.startTurn.bind(session);
+      session.startTurn = async () => {
+        startTurnCalls += 1;
+        return originalStart();
+      };
+      return session;
+    }
+  }
+
+  const client = new TrackingClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+  });
+  const handle = {
+    provider: "codex" as const,
+    sessionId: "thread-read-recovery",
+    metadata: { provider: "codex", cwd: missingCwd },
+  };
+
+  const resumed = await manager.resumeAgentFromPersistence(handle, { cwd: missingCwd }, agentId, {
+    allowMissingCwd: true,
+  });
+  expect(resumed.cwd).toBe(missingCwd);
+  expect(client.resumeOverrides[0]?.cwd).not.toBe(missingCwd);
+
+  // Direct/schedule run path: blocked before startTurn with structured error.
+  expect(() => manager.streamAgent(agentId, "schedule tick")).toThrow(
+    /working directory is missing/i,
+  );
+  expect(() => manager.tryRunOutOfBand(agentId, "/goal pause")).toThrow(
+    /working directory is missing/i,
+  );
+  await expect(manager.runAgent(agentId, "schedule tick")).rejects.toThrow(
+    /working directory is missing/i,
+  );
+  await expect(manager.replaceAgentRun(agentId, "replace")).rejects.toThrow(
+    /working directory is missing/i,
+  );
+  expect(startTurnCalls).toBe(0);
+
+  // Recreate original worktree path: run guard clears without sticky flags.
+  mkdirSync(missingCwd, { recursive: true });
+  const stream = manager.streamAgent(agentId, "hello after rebind");
+  // Drain until startTurn is observed (generator advances on first next).
+  const first = await stream.next();
+  void first;
+  // Give startTurn a chance if the generator yields after the turn starts.
+  await Promise.resolve();
+  expect(startTurnCalls).toBeGreaterThanOrEqual(1);
 });
 
 test("createAgent reports configured providers when provider is unknown", async () => {

@@ -43,6 +43,11 @@ import {
   type ListImportableSessionsOptions,
 } from "./agent-sdk-types.js";
 import { buildArchivedAgentRecord, type ArchivedStoredAgentRecord } from "./agent-archive.js";
+import {
+  assertAgentCwdExistsSync,
+  pathIsExistingDirectory,
+  resolveSafeReadRecoveryCwd,
+} from "./agent-cwd.js";
 import type { StoredAgentRecord, AgentStorage } from "./agent-storage.js";
 import type { AgentOwner } from "./agent-owner.js";
 import {
@@ -1119,6 +1124,26 @@ export class AgentManager {
       { requireExistingCwd: !options?.allowMissingCwd },
     );
 
+    // Read recovery: provider spawn needs an existing launch cwd, but the managed
+    // agent must retain the original (possibly missing) recorded worktree path so
+    // run preflight and rebind recovery stay accurate.
+    let effectiveLaunchConfig = launchConfig;
+    if (options?.allowMissingCwd && launchConfig.cwd) {
+      const launchCwdExists = await pathIsExistingDirectory(launchConfig.cwd);
+      if (!launchCwdExists) {
+        const safeLaunchCwd = resolveSafeReadRecoveryCwd();
+        effectiveLaunchConfig = { ...launchConfig, cwd: safeLaunchCwd };
+        this.logger.warn(
+          {
+            agentId: resolvedAgentId,
+            recordedCwd: storedConfig.cwd,
+            launchCwd: safeLaunchCwd,
+          },
+          "Resuming agent for timeline recovery with temporary launch cwd; recorded cwd preserved",
+        );
+      }
+    }
+
     const client = this.requireClient(handle.provider);
     const available = await client.isAvailable();
     if (!available) {
@@ -1127,7 +1152,10 @@ export class AgentManager {
       );
     }
     const launchContext = await this.buildLaunchContext(resolvedAgentId, client);
-    const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
+    const providerLaunchConfig = this.resolveProviderLaunchConfig(
+      effectiveLaunchConfig,
+      launchContext,
+    );
     const session = await client.resumeSession(handle, providerLaunchConfig, launchContext);
     return this.registerSession(session, storedConfig, resolvedAgentId, {
       ...options,
@@ -1919,6 +1947,7 @@ export class AgentManager {
    */
   tryRunOutOfBand(agentId: string, prompt: AgentPromptInput): boolean {
     const agent = this.requireSessionAgent(agentId);
+    this.assertAgentCwdRunnable(agent);
     const handler = agent.session.tryHandleOutOfBand?.(prompt);
     if (!handler) {
       return false;
@@ -1990,6 +2019,10 @@ export class AgentManager {
     options?: AgentRunOptions,
   ): AsyncGenerator<AgentStreamEvent> {
     const existingAgent = this.requireSessionAgent(agentId);
+    // Central run guard: timeline-recovered agents keep a missing recorded cwd
+    // until the worktree is recreated or rebound. Re-checks the filesystem so
+    // recovery is automatic when the original path exists again (no sticky flag).
+    this.assertAgentCwdRunnable(existingAgent);
     this.logger.trace(
       {
         agentId,
@@ -2135,6 +2168,7 @@ export class AgentManager {
     options?: AgentRunOptions,
   ): Promise<AsyncGenerator<AgentStreamEvent>> {
     const snapshot = this.requireAgent(agentId);
+    this.assertAgentCwdRunnable(snapshot);
     if (
       snapshot.lifecycle !== "running" &&
       !snapshot.activeForegroundTurnId &&
@@ -4309,6 +4343,16 @@ export class AgentManager {
       throw new Error(`Agent '${agent.id}' has no managed session`);
     }
     return agent;
+  }
+
+  /**
+   * Non-bypassable run guard: provider turns require the agent's recorded cwd
+   * to exist on disk. Timeline recovery may leave agents live with a missing
+   * recorded path; schedule/direct run/out-of-band must fail closed until the
+   * worktree is recreated at that path or the agent is rebound.
+   */
+  private assertAgentCwdRunnable(agent: { id: string; cwd: string }): void {
+    assertAgentCwdExistsSync(agent.id, agent.cwd);
   }
 
   private requirePublicAgent(id: string): LiveManagedAgent {

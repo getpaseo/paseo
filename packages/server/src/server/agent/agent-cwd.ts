@@ -1,4 +1,6 @@
+import { existsSync, statSync } from "node:fs";
 import { stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 
 export const MISSING_AGENT_CWD_ERROR_CODE = "AGENT_CWD_MISSING" as const;
@@ -76,4 +78,41 @@ export async function assertAgentCwdExists(agentId: string, cwd: string): Promis
     }
     throw error;
   }
+}
+
+/**
+ * Sync twin of pathIsExistingDirectory for run-path guards that must not start
+ * provider work when the recorded worktree is gone.
+ */
+export function pathIsExistingDirectorySync(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch (error) {
+    if (isMissingPathFsError(error)) {
+      return false;
+    }
+    throw error;
+  }
+}
+
+/** Sync twin of assertAgentCwdExists for AgentManager run entrypoints. */
+export function assertAgentCwdExistsSync(agentId: string, cwd: string): void {
+  const absoluteCwd = resolve(cwd);
+  if (!pathIsExistingDirectorySync(absoluteCwd)) {
+    throw new MissingAgentCwdError(agentId, absoluteCwd);
+  }
+}
+
+/**
+ * Existing directory used only as the provider launch cwd when recovering
+ * timeline/logs for an agent whose recorded worktree is gone. Must never be
+ * written back as the managed/stored agent cwd.
+ */
+export function resolveSafeReadRecoveryCwd(): string {
+  const candidate = resolve(tmpdir());
+  if (existsSync(candidate) && statSync(candidate).isDirectory()) {
+    return candidate;
+  }
+  // Extremely defensive: process.cwd() is expected to exist for the daemon.
+  return resolve(process.cwd());
 }

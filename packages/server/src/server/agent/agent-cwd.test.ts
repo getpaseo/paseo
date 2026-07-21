@@ -5,10 +5,13 @@ import { afterEach, describe, expect, test } from "vitest";
 
 import {
   assertAgentCwdExists,
+  assertAgentCwdExistsSync,
   isMissingAgentCwdError,
   MISSING_AGENT_CWD_ERROR_CODE,
   MissingAgentCwdError,
   pathIsExistingDirectory,
+  pathIsExistingDirectorySync,
+  resolveSafeReadRecoveryCwd,
 } from "./agent-cwd.js";
 
 const tempDirs: string[] = [];
@@ -81,6 +84,13 @@ describe("agent-cwd", () => {
         expect(missingError.message).not.toMatch(/\bENOTDIR\b|\bENOENT\b/);
         return true;
       });
+      expect(() => assertAgentCwdExistsSync(agentId, path)).toThrow(MissingAgentCwdError);
+      expect(pathIsExistingDirectorySync(path)).toBe(false);
     }
+  });
+
+  test("resolveSafeReadRecoveryCwd returns an existing directory", () => {
+    const safe = resolveSafeReadRecoveryCwd();
+    expect(pathIsExistingDirectorySync(safe)).toBe(true);
   });
 });
