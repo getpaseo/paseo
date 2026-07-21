@@ -1124,22 +1124,21 @@ export class AgentManager {
       { requireExistingCwd: !options?.allowMissingCwd },
     );
 
-    // Read recovery: provider spawn needs an existing launch cwd, but the managed
-    // agent must retain the original (possibly missing) recorded worktree path so
-    // run preflight and rebind recovery stay accurate.
-    let effectiveLaunchConfig = launchConfig;
-    if (options?.allowMissingCwd && launchConfig.cwd) {
-      const launchCwdExists = await pathIsExistingDirectory(launchConfig.cwd);
-      if (!launchCwdExists) {
-        const safeLaunchCwd = resolveSafeReadRecoveryCwd();
-        effectiveLaunchConfig = { ...launchConfig, cwd: safeLaunchCwd };
+    // Read recovery: keep AgentSessionConfig.cwd as the original recorded path.
+    // Provider child process spawn uses launchContext.processCwd only when the
+    // recorded worktree is gone — never rewrite session/config cwd.
+    let processCwd: string | undefined;
+    if (options?.allowMissingCwd && storedConfig.cwd) {
+      const recordedExists = await pathIsExistingDirectory(storedConfig.cwd);
+      if (!recordedExists) {
+        processCwd = resolveSafeReadRecoveryCwd();
         this.logger.warn(
           {
             agentId: resolvedAgentId,
             recordedCwd: storedConfig.cwd,
-            launchCwd: safeLaunchCwd,
+            processCwd,
           },
-          "Resuming agent for timeline recovery with temporary launch cwd; recorded cwd preserved",
+          "Resuming agent for timeline recovery with process-launch-only cwd; session config cwd preserved",
         );
       }
     }
@@ -1151,11 +1150,10 @@ export class AgentManager {
         `Provider '${handle.provider}' is not available. Please ensure the CLI is installed.`,
       );
     }
-    const launchContext = await this.buildLaunchContext(resolvedAgentId, client);
-    const providerLaunchConfig = this.resolveProviderLaunchConfig(
-      effectiveLaunchConfig,
-      launchContext,
-    );
+    const launchContext = await this.buildLaunchContext(resolvedAgentId, client, undefined, {
+      processCwd,
+    });
+    const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
     const session = await client.resumeSession(handle, providerLaunchConfig, launchContext);
     return this.registerSession(session, storedConfig, resolvedAgentId, {
       ...options,
@@ -4227,6 +4225,7 @@ export class AgentManager {
     agentId: string,
     client: AgentClient,
     env?: Record<string, string>,
+    options?: { processCwd?: string },
   ): Promise<AgentLaunchContext> {
     const context: AgentLaunchContext = {
       agentId,
@@ -4234,6 +4233,7 @@ export class AgentManager {
         ...env,
         PASEO_AGENT_ID: agentId,
       },
+      ...(options?.processCwd ? { processCwd: options.processCwd } : {}),
     };
     if (
       this.paseoToolsEnabled &&

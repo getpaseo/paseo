@@ -27,6 +27,12 @@ export interface PiRuntimeLaunch {
 
 export interface PiStartSessionInput {
   cwd: string;
+  /**
+   * Process-launch-only spawn cwd. When set, the child process starts here
+   * while `cwd` remains the session/workspace identity (may be missing on disk
+   * during timeline recovery).
+   */
+  processCwd?: string;
   env?: Record<string, string>;
   protocolMode?: "rpc" | "rpc-ui";
   model?: string;
@@ -89,7 +95,7 @@ export function buildPiLaunch(input: {
   appendPiLaunchArgs(argv, input.session, protocolMode, systemPrompt);
 
   return {
-    cwd: input.session.cwd,
+    cwd: input.session.processCwd ?? input.session.cwd,
     argv,
     env:
       input.runtimeSettings?.env || input.session.env

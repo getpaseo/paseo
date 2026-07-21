@@ -116,6 +116,9 @@ class TestAgentClient implements AgentClient {
   readonly capabilities = TEST_CAPABILITIES;
   readonly createdConfigs: AgentSessionConfig[] = [];
   readonly resumeOverrides: Array<Partial<AgentSessionConfig> | undefined> = [];
+  readonly resumeLaunchContexts: Array<AgentLaunchContext | undefined> = [];
+  /** Process spawn cwd observed by the provider (processCwd ?? config.cwd). */
+  readonly resumeProcessSpawnCwds: string[] = [];
 
   constructor(provider: AgentProvider = "codex") {
     this.provider = provider;
@@ -157,9 +160,13 @@ class TestAgentClient implements AgentClient {
   async resumeSession(
     _handle: AgentPersistenceHandle,
     config?: Partial<AgentSessionConfig>,
-    _launchContext?: AgentLaunchContext,
+    launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
     this.resumeOverrides.push(config);
+    this.resumeLaunchContexts.push(launchContext);
+    const processSpawnCwd = launchContext?.processCwd ?? config?.cwd ?? process.cwd();
+    this.resumeProcessSpawnCwds.push(processSpawnCwd);
+    // Session config keeps the provider-facing cwd (original recorded path).
     return new TestAgentSession({
       provider: this.provider,
       cwd: config?.cwd ?? process.cwd(),
@@ -2165,11 +2172,14 @@ test("resumeAgentFromPersistence rejects missing cwd unless allowMissingCwd is s
   expect(resumed.cwd).toBe(missingCwd);
   expect(resumed.config.cwd).toBe(missingCwd);
   expect(client.resumeOverrides).toHaveLength(1);
-  // Provider resume must receive a real launch cwd (not the deleted worktree).
-  const launchCwd = client.resumeOverrides[0]?.cwd;
-  expect(launchCwd).toBeTruthy();
-  expect(launchCwd).not.toBe(missingCwd);
-  expect(existsSync(launchCwd!)).toBe(true);
+  // Session/config cwd must remain the original recorded path (not rewritten).
+  expect(client.resumeOverrides[0]?.cwd).toBe(missingCwd);
+  // Process spawn uses launchContext.processCwd only.
+  const processCwd = client.resumeLaunchContexts[0]?.processCwd;
+  expect(processCwd).toBeTruthy();
+  expect(processCwd).not.toBe(missingCwd);
+  expect(existsSync(processCwd!)).toBe(true);
+  expect(client.resumeProcessSpawnCwds[0]).toBe(processCwd);
 
   // Timeline fetch must work after missing-cwd resume (logs path).
   const timeline = manager.fetchTimeline(agentId, { direction: "tail", limit: 0 });
@@ -2185,20 +2195,22 @@ test("read-recovered missing-cwd agent cannot start provider runs until path ret
   const agentId = "22222222-2222-4222-8222-222222222222";
 
   let startTurnCalls = 0;
+  let lastStartTurnSessionCwd: string | undefined;
   class TrackingClient extends TestAgentClient {
     override async resumeSession(
-      _handle: AgentPersistenceHandle,
+      handle: AgentPersistenceHandle,
       config?: Partial<AgentSessionConfig>,
-      _launchContext?: AgentLaunchContext,
+      launchContext?: AgentLaunchContext,
     ): Promise<AgentSession> {
-      this.resumeOverrides.push(config);
-      const session = new TestAgentSession({
-        provider: this.provider,
-        cwd: config?.cwd ?? process.cwd(),
-      });
+      const session = (await super.resumeSession(
+        handle,
+        config,
+        launchContext,
+      )) as TestAgentSession;
       const originalStart = session.startTurn.bind(session);
       session.startTurn = async () => {
         startTurnCalls += 1;
+        lastStartTurnSessionCwd = session["config"]?.cwd ?? config?.cwd;
         return originalStart();
       };
       return session;
@@ -2221,7 +2233,12 @@ test("read-recovered missing-cwd agent cannot start provider runs until path ret
     allowMissingCwd: true,
   });
   expect(resumed.cwd).toBe(missingCwd);
-  expect(client.resumeOverrides[0]?.cwd).not.toBe(missingCwd);
+  // Config cwd stays original; process spawn uses safe processCwd.
+  expect(client.resumeOverrides[0]?.cwd).toBe(missingCwd);
+  expect(client.resumeLaunchContexts[0]?.processCwd).toBeTruthy();
+  expect(client.resumeLaunchContexts[0]?.processCwd).not.toBe(missingCwd);
+  expect(existsSync(client.resumeLaunchContexts[0]!.processCwd!)).toBe(true);
+  expect(client.resumeProcessSpawnCwds[0]).toBe(client.resumeLaunchContexts[0]?.processCwd);
 
   // Direct/schedule run path: blocked before startTurn with structured error.
   expect(() => manager.streamAgent(agentId, "schedule tick")).toThrow(
@@ -2241,12 +2258,11 @@ test("read-recovered missing-cwd agent cannot start provider runs until path ret
   // Recreate original worktree path: run guard clears without sticky flags.
   mkdirSync(missingCwd, { recursive: true });
   const stream = manager.streamAgent(agentId, "hello after rebind");
-  // Drain until startTurn is observed (generator advances on first next).
-  const first = await stream.next();
-  void first;
-  // Give startTurn a chance if the generator yields after the turn starts.
+  await stream.next();
   await Promise.resolve();
   expect(startTurnCalls).toBeGreaterThanOrEqual(1);
+  // startTurn still sees the original/rebound recorded cwd (not processCwd).
+  expect(lastStartTurnSessionCwd).toBe(missingCwd);
 });
 
 test("createAgent reports configured providers when provider is unknown", async () => {

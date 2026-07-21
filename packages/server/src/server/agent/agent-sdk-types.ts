@@ -588,6 +588,12 @@ export interface AgentLaunchContext {
   agentId?: string;
   env?: Record<string, string>;
   /**
+   * Process-launch-only working directory for spawning the provider child.
+   * Must never be written into AgentSessionConfig.cwd or persisted agent state.
+   * Used when resuming for timeline recovery while the recorded worktree is gone.
+   */
+  processCwd?: string;
+  /**
    * Runtime-only internal Paseo tools. This must never be persisted into
    * AgentSessionConfig; providers may adapt it to their native tool surface.
    */

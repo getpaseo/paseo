@@ -531,6 +531,7 @@ function buildResumeStartInput(input: {
 }): PiStartSessionInput {
   return {
     cwd: input.resumeConfig.cwd,
+    ...(input.launchContext?.processCwd ? { processCwd: input.launchContext.processCwd } : {}),
     env: input.launchContext?.env,
     session: input.sessionFile,
     model: input.resumeConfig.model,
@@ -2312,6 +2313,7 @@ export class PiRpcAgentClient implements AgentClient {
     try {
       runtimeSession = await this.runtime.startSession({
         cwd: config.cwd,
+        ...(launchContext?.processCwd ? { processCwd: launchContext.processCwd } : {}),
         model: config.model,
         thinkingOptionId:
           normalizePiThinkingOption(config.thinkingOptionId) ?? DEFAULT_PI_THINKING_LEVEL,
