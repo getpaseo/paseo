@@ -4,7 +4,7 @@ import {
   type ClientForgeLogicModule,
   type MergeCapability,
 } from "@/git/client-forge-module";
-import type { CheckoutPrMergeMethod } from "@getpaseo/protocol/messages";
+import type { CheckoutPipelineJob, CheckoutPrMergeMethod } from "@getpaseo/protocol/messages";
 import type { CheckStatus } from "@/git/pull-request-panel/check-status";
 
 const gitlabLineAnchor = (start: number, end?: number): string =>
@@ -22,6 +22,7 @@ const GITLAB_ACTIVE_PIPELINE_STATUSES = [
   "preparing",
   "pending",
   "running",
+  "canceling",
   "scheduled",
 ] as const;
 
@@ -43,6 +44,7 @@ export function mapPipelineStatus(status: string): CheckStatus {
     case "created":
     case "waiting_for_resource":
     case "preparing":
+    case "canceling":
     case "scheduled":
     case "manual":
       return "pending";
@@ -53,6 +55,40 @@ export function mapPipelineStatus(status: string): CheckStatus {
     default:
       return "pending";
   }
+}
+
+export interface GitlabPipelineJobCounts {
+  passed: number;
+  failed: number;
+  pending: number;
+  allowedFailures: number;
+  optionalManual: number;
+  blockingManual: number;
+}
+
+export function countGitlabPipelineJobs(
+  jobs: readonly CheckoutPipelineJob[],
+): GitlabPipelineJobCounts {
+  const counts: GitlabPipelineJobCounts = {
+    passed: 0,
+    failed: 0,
+    pending: 0,
+    allowedFailures: 0,
+    optionalManual: 0,
+    blockingManual: 0,
+  };
+  for (const job of jobs) {
+    if (job.status === "manual") {
+      counts[job.allowFailure ? "optionalManual" : "blockingManual"] += 1;
+      continue;
+    }
+    const status = mapPipelineStatus(job.status);
+    if (status === "success") counts.passed += 1;
+    else if (status === "failure" && job.allowFailure) counts.allowedFailures += 1;
+    else if (status === "failure") counts.failed += 1;
+    else if (status === "pending") counts.pending += 1;
+  }
+  return counts;
 }
 
 const GitlabMergeFactsSchema = z

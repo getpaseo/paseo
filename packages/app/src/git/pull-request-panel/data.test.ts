@@ -1,9 +1,14 @@
 import { describe, expect, it } from "vitest";
 import type {
+  CheckoutPipelineJob,
   CheckoutPrStatusResponse,
   PullRequestTimelineResponse,
 } from "@getpaseo/protocol/messages";
-import { isPipelineActiveStatus, mapPipelineStatus } from "@/git/forges/gitlab";
+import {
+  countGitlabPipelineJobs,
+  isPipelineActiveStatus,
+  mapPipelineStatus,
+} from "@/git/forges/gitlab";
 import { IDENTITY_COLOR_NAMES, identityColor } from "@/styles/identity-colors";
 import {
   deriveAvatarColor,
@@ -708,8 +713,39 @@ describe("mapPipelineStatus", () => {
     expect(mapPipelineStatus("created")).toBe("pending");
     expect(mapPipelineStatus("waiting_for_resource")).toBe("pending");
     expect(mapPipelineStatus("preparing")).toBe("pending");
+    expect(mapPipelineStatus("canceling")).toBe("pending");
     expect(mapPipelineStatus("scheduled")).toBe("pending");
     expect(mapPipelineStatus("anything-else")).toBe("pending");
+  });
+
+  it("separates blocking outcomes from allowed failures and optional manual jobs", () => {
+    const job = (id: number, jobStatus: string, allowFailure: boolean): CheckoutPipelineJob => ({
+      id,
+      name: `job-${id}`,
+      stage: "test",
+      status: jobStatus,
+      rawStatus: jobStatus,
+      url: null,
+      allowFailure,
+      durationSeconds: null,
+    });
+    expect(
+      countGitlabPipelineJobs([
+        job(1, "success", false),
+        job(2, "failed", false),
+        job(3, "failed", true),
+        job(4, "pending", false),
+        job(5, "manual", true),
+        job(6, "manual", false),
+      ]),
+    ).toEqual({
+      passed: 1,
+      failed: 1,
+      pending: 1,
+      allowedFailures: 1,
+      optionalManual: 1,
+      blockingManual: 1,
+    });
   });
 
   it("marks running and queued pipeline statuses as live for polling", () => {
@@ -718,6 +754,7 @@ describe("mapPipelineStatus", () => {
     expect(isPipelineActiveStatus("created")).toBe(true);
     expect(isPipelineActiveStatus("waiting_for_resource")).toBe(true);
     expect(isPipelineActiveStatus("preparing")).toBe(true);
+    expect(isPipelineActiveStatus("canceling")).toBe(true);
     expect(isPipelineActiveStatus("scheduled")).toBe(true);
     expect(isPipelineActiveStatus("success")).toBe(false);
     expect(isPipelineActiveStatus("failed")).toBe(false);

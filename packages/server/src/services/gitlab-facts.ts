@@ -31,6 +31,7 @@ export const GITLAB_ACTIVE_PIPELINE_STATUSES = [
   "preparing",
   "pending",
   "running",
+  "canceling",
   "scheduled",
 ] as const;
 

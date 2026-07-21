@@ -38,6 +38,7 @@ import type {
   PipelineJobStatus,
   PipelineStage,
   PullRequestAutoMergeResult,
+  PullRequestCheck,
   PullRequestChecksStatus,
   PullRequestCheckoutTarget,
   PullRequestCreateResult,
@@ -341,6 +342,7 @@ function mapPipelineChecksStatus(status: string | undefined): PullRequestChecksS
     case "created":
     case "scheduled":
     case "preparing":
+    case "canceling":
     case "waiting_for_resource":
     case "manual":
       return "pending";
@@ -558,6 +560,7 @@ function normalizePipelineJobStatus(raw: string): PipelineJobStatus {
     case "pending":
     case "waiting_for_resource":
     case "preparing":
+    case "canceling":
     case "scheduled":
       return "pending";
     case "created":
@@ -574,6 +577,68 @@ function normalizePipelineJobStatus(raw: string): PipelineJobStatus {
   }
 }
 
+function getPullRequestCheckMetadata(
+  rawStatus: string,
+  allowFailure: boolean,
+): Pick<PullRequestCheck, "rawStatus" | "isManual" | "requiresAction"> {
+  if (rawStatus === "manual") {
+    return {
+      rawStatus,
+      isManual: true,
+      ...(!allowFailure ? { requiresAction: true } : {}),
+    };
+  }
+  return rawStatus === "failed" && allowFailure ? { rawStatus: "warning" } : {};
+}
+
+function toPullRequestCheck(job: z.infer<typeof GitLabPipelineJobSchema>): PullRequestCheck {
+  const rawStatus = job.status.toLowerCase();
+  const allowFailure = job.allow_failure ?? false;
+
+  let status: PullRequestCheck["status"];
+  if (rawStatus === "failed" && allowFailure) {
+    // GitLab treats this as passed-with-warning: retain a successful aggregate
+    // while giving the client the presentation distinction it cannot express
+    // through the neutral status enum alone.
+    status = "success";
+  } else if (rawStatus === "manual" && allowFailure) {
+    status = "skipped";
+  } else {
+    switch (normalizePipelineJobStatus(rawStatus)) {
+      case "success":
+        status = "success";
+        break;
+      case "failed":
+        status = "failure";
+        break;
+      case "canceled":
+        status = "cancelled";
+        break;
+      case "skipped":
+        status = "skipped";
+        break;
+      default:
+        status = "pending";
+        break;
+    }
+  }
+
+  return {
+    name: job.name,
+    status,
+    ...getPullRequestCheckMetadata(rawStatus, allowFailure),
+    url: job.web_url ?? null,
+    workflow: job.stage,
+    checkRunId: job.id,
+  };
+}
+
+function toPullRequestChecks(
+  pipeline: z.infer<typeof GitLabPipelineDetailsSchema>,
+): PullRequestCheck[] {
+  return [...pipeline.jobs].sort((a, b) => a.id - b.id).map(toPullRequestCheck);
+}
+
 const STAGE_STATUS_PRIORITY: PipelineJobStatus[] = [
   "running",
   "failed",
@@ -587,7 +652,11 @@ const STAGE_STATUS_PRIORITY: PipelineJobStatus[] = [
 
 function aggregateStageStatus(jobs: PipelineJob[]): PipelineJobStatus {
   const present = new Set(
-    jobs.map((job) => (job.status === "failed" && job.allowFailure ? "success" : job.status)),
+    jobs.map((job) =>
+      job.allowFailure && (job.status === "failed" || job.status === "manual")
+        ? "success"
+        : job.status,
+    ),
   );
   for (const status of STAGE_STATUS_PRIORITY) {
     if (present.has(status)) {
@@ -658,6 +727,7 @@ function toCheckDetails(pipeline: z.infer<typeof GitLabPipelineDetailsSchema>): 
 function toCurrentPullRequestStatus(
   mr: GitLabMergeRequest,
   approvals?: GitLabApprovals | null,
+  checks: PullRequestCheck[] = [],
 ): CurrentPullRequestStatus {
   const { owner, name } = splitProjectPath(mr.references?.full);
   const projectPath = extractProjectPath(mr.references?.full);
@@ -674,7 +744,7 @@ function toCurrentPullRequestStatus(
     isMerged: mr.state === "merged" || mr.merged_at != null,
     isDraft: mr.draft ?? mr.work_in_progress ?? false,
     mergeable: mapMergeable(mr),
-    checks: [],
+    checks,
     checksStatus: mapPipelineChecksStatus(mr.head_pipeline?.status),
     reviewDecision: null,
     forgeSpecific: { forge: "gitlab", ...toGitLabStatusFacts(mr, approvals) },
@@ -956,6 +1026,35 @@ export function createGitLabService(options: CreateGitLabServiceOptions = {}): F
     }
   }
 
+  /**
+   * Populates the neutral checks used by the sidebar and hover card. Pipeline
+   * drill-down remains independently available, so any glab command or output
+   * failure while loading optional job details must not make the merge request
+   * itself disappear. Authentication and missing-CLI failures use separate
+   * error classes and still propagate.
+   */
+  async function fetchPipelineChecks(
+    cwd: string,
+    mr: GitLabMergeRequest,
+  ): Promise<PullRequestCheck[]> {
+    if (mr.head_pipeline?.id === undefined) {
+      return [];
+    }
+    try {
+      const pipeline = await runJson(
+        ["ci", "get", "--merge-request", String(mr.iid), "--with-job-details", "-F", "json"],
+        { cwd },
+        GitLabPipelineDetailsSchema,
+      );
+      return toPullRequestChecks(pipeline);
+    } catch (error) {
+      if (error instanceof GlabCommandError) {
+        return [];
+      }
+      throw error;
+    }
+  }
+
   async function runMergeRequestList(
     input: ListPullRequestsOptions,
   ): Promise<PullRequestSummary[]> {
@@ -1021,7 +1120,8 @@ export function createGitLabService(options: CreateGitLabServiceOptions = {}): F
           return null;
         }
         const approvals = await fetchApprovals(input.cwd, mr);
-        return toCurrentPullRequestStatus(mr, approvals);
+        const checks = await fetchPipelineChecks(input.cwd, mr);
+        return toCurrentPullRequestStatus(mr, approvals, checks);
       } catch (error) {
         if (error instanceof GlabCommandError && isNoMergeRequestText(error.stderr)) {
           return null;

@@ -195,3 +195,6 @@ are stale, run `npm run build:server`.
   rather than constructing a wrong URL.
 - GitLab pipeline status constants belong to the GitLab adapter/client module,
   not protocol.
+- GitLab `manual` jobs need `allow_failure` to distinguish optional gray jobs
+  from blocking action-required jobs. A failed allowed-failure job is a warning,
+  and `canceling` remains active until GitLab reports a terminal status.
