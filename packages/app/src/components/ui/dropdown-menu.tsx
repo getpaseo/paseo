@@ -218,12 +218,16 @@ function renderDropdownSurface(input: {
       style={surfaceStyle}
       frameStyle={frameStyle}
       entering={contentEntering}
-      exiting={contentExiting.withCallback((finished) => {
-        "worklet";
-        if (finished) {
-          runOnJS(onExited)();
-        }
-      })}
+      exiting={
+        isWeb
+          ? undefined
+          : contentExiting.withCallback((finished) => {
+              "worklet";
+              if (finished) {
+                runOnJS(onExited)();
+              }
+            })
+      }
     >
       {body}
     </FloatingSurface>

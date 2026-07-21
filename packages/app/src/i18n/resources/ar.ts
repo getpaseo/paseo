@@ -985,9 +985,6 @@ export const ar: TranslationResources = {
     refPicker: {
       startingRef: "بدء المرجع",
       chooseStart: "اختر من أين تبدأ",
-      checkoutHint: "تحقق من {{noun}} {{numberPrefix}}{{number}}؟",
-      checkoutPr: "تحقق من {{noun}} {{numberPrefix}}{{number}}",
-      dismissCheckoutHint: "تجاهل تلميح الخروج {{noun}} {{numberPrefix}}{{number}}",
       intoBase: "إلى {{baseRef}}",
       searching: "جارٍ البحث...",
       noMatchingRefs: "لا توجد مراجع مطابقة.",
