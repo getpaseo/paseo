@@ -2195,7 +2195,6 @@ export async function listCheckoutCommits({
     [
       "log",
       "HEAD",
-      "--first-parent",
       "--diff-merges=first-parent",
       `--max-count=${MAX_CHECKOUT_COMMITS}`,
       `--format=${COMMIT_LOG_FORMAT}`,

@@ -136,7 +136,7 @@ describe("listCheckoutCommits", () => {
     );
   });
 
-  it("shows merge commits with changes against their first parent", async () => {
+  it("shows merged branch commits and compares the merge against its first parent", async () => {
     const { repoDir } = initRepoOnMain();
     git(["checkout", "-b", "feature"], repoDir);
     commitFile(repoDir, "feature.txt", "feature\n", "Add feature");
@@ -149,6 +149,7 @@ describe("listCheckoutCommits", () => {
     expect(commits.map((entry) => entry.subject)).toEqual([
       "Merge feature",
       "Advance main",
+      "Add feature",
       "initial",
     ]);
     expect(commits[0]?.files).toEqual([
