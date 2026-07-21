@@ -11,6 +11,7 @@ interface FileEditorViewProps {
   model: FileEditorModel;
   filename: string;
   location: WorkspaceFileLocation;
+  navigationRevision: number;
   vimEnabled: boolean;
   theme: EditorVisualTheme;
   onCursorChange(position: { line: number; column: number }): void;
@@ -25,6 +26,7 @@ export function FileEditorView({
   model,
   filename,
   location,
+  navigationRevision,
   vimEnabled,
   theme,
   onCursorChange,
@@ -95,7 +97,7 @@ export function FileEditorView({
       selection: { anchor: from, head: lineEnd > lineStart ? to : from },
       effects: EditorView.scrollIntoView(from, { y: "center" }),
     });
-  }, [location.lineEnd, location.lineStart]);
+  }, [location.lineEnd, location.lineStart, navigationRevision]);
 
   useEffect(() => {
     viewRef.current?.dispatch({

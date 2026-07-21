@@ -8,6 +8,7 @@ export function FileEditorView(_props: {
   model: FileEditorModel;
   filename: string;
   location: WorkspaceFileLocation;
+  navigationRevision: number;
   vimEnabled: boolean;
   theme: {
     background: string;

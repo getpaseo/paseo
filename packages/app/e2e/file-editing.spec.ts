@@ -73,6 +73,24 @@ test.describe("CodeMirror workspace file editing", () => {
       await expect(
         page.getByTestId("file-source-editor").locator(".cm-line", { hasText: "line42 = 42" }),
       ).toBeVisible();
+
+      await page
+        .getByTestId("file-source-editor")
+        .locator(".cm-line", { hasText: "line1 = 1" })
+        .click({ position: { x: 1, y: 5 } });
+      await expect(page.getByLabel(/^Line 1, column \d+$/)).toBeVisible();
+
+      await page
+        .getByTestId(`workspace-tab-agent_${session.agentId}`)
+        .filter({ visible: true })
+        .click();
+      await expect(fileLink).toBeVisible();
+      await fileLink.click();
+
+      await expect(page.getByLabel("Line 42, column 1")).toBeVisible();
+      await expect(
+        page.getByTestId("file-source-editor").locator(".cm-line", { hasText: "line42 = 42" }),
+      ).toBeVisible();
     } finally {
       await session.cleanup();
     }
