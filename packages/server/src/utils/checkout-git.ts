@@ -19,6 +19,7 @@ import type {
   ForgeAuthState,
   ForgeService,
   ForgeSpecificStatusFacts,
+  PullRequestCheck as ForgePullRequestCheck,
   PullRequestMergeable,
 } from "../services/forge-service.js";
 import {
@@ -3882,13 +3883,7 @@ export function forgeAuthStateFromError(error: unknown): ForgeAuthState {
   return "unauthenticated";
 }
 
-export interface PullRequestCheck {
-  name: string;
-  status: "success" | "failure" | "pending" | "skipped" | "cancelled";
-  url: string | null;
-  workflow?: string;
-  duration?: string;
-}
+export type PullRequestCheck = ForgePullRequestCheck;
 
 export type ChecksStatus = "none" | "pending" | "success" | "failure";
 

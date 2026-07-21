@@ -44,6 +44,33 @@ describe("checkout PR schemas", () => {
     expect(CheckoutPrStatusSchema.parse(payload)).toEqual(payload);
   });
 
+  test("keeps check presentation metadata optional and preserves it when present", () => {
+    const base = {
+      url: "https://gitlab.com/acme/repo/-/merge_requests/42",
+      title: "Ship it",
+      state: "open",
+      baseRefName: "main",
+      headRefName: "feature/ship-it",
+      isMerged: false,
+    };
+    const legacyCheck = { name: "legacy", status: "success", url: null };
+    const detailedCheck = {
+      name: "deploy",
+      status: "pending",
+      url: null,
+      rawStatus: "manual",
+      isManual: true,
+      requiresAction: true,
+    };
+
+    expect(CheckoutPrStatusSchema.parse({ ...base, checks: [legacyCheck] }).checks).toEqual([
+      legacyCheck,
+    ]);
+    expect(CheckoutPrStatusSchema.parse({ ...base, checks: [detailedCheck] }).checks).toEqual([
+      detailedCheck,
+    ]);
+  });
+
   test("accepts unknown future forge identities", () => {
     const parsed = CheckoutPrStatusSchema.parse({
       forge: "someforge",
