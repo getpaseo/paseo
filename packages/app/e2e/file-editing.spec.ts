@@ -90,6 +90,27 @@ test.describe("CodeMirror workspace file editing", () => {
     await expect(selection).toHaveCSS("background-color", "rgba(255, 255, 255, 0.2)");
   });
 
+  test("applies the interface font to portaled tooltips", async ({ page, withWorkspace }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem("@paseo:app-settings", JSON.stringify({ uiFontFamily: "monospace" }));
+    });
+    const workspace = await withWorkspace({ prefix: "file-tooltip-font-" });
+    const relativePath = "tooltip-font.txt";
+    await writeFile(path.join(workspace.repoPath, relativePath), "tooltip font\n", "utf8");
+    await workspace.navigateTo();
+    await openFileExplorer(page);
+    await openFileFromExplorer(page, relativePath);
+    await expectFileTabOpen(page, relativePath);
+
+    await page.getByTestId(`workspace-tab-file_${relativePath}`).first().hover();
+
+    await expect(
+      page
+        .getByTestId(`workspace-tab-tooltip-file_${relativePath}`)
+        .getByText(relativePath, { exact: true }),
+    ).toHaveCSS("font-family", "monospace");
+  });
+
   test("autosaves, saves immediately, resolves conflicts, and restores live updates after reconnect", async ({
     page,
     withWorkspace,

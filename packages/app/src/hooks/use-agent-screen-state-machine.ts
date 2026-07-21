@@ -150,13 +150,11 @@ function resolveCatchingUpUi(args: {
   hasOptimisticCreateContinuity: boolean;
   isVisibilityCatchUpPending: boolean;
   hasHydratedHistoryBefore: boolean;
-  needsAuthoritativeSync: boolean;
   hadInitialSyncFailure: boolean;
 }): "overlay" | "silent" {
   if (args.hasOptimisticCreateContinuity) return "silent";
-  if (args.hasHydratedHistoryBefore && args.needsAuthoritativeSync) return "silent";
-  if (args.isVisibilityCatchUpPending) return "overlay";
   if (args.hasHydratedHistoryBefore) return "silent";
+  if (args.isVisibilityCatchUpPending) return "overlay";
   if (args.hadInitialSyncFailure) return "silent";
   return "overlay";
 }
@@ -186,7 +184,6 @@ function resolveAgentScreenSync(args: {
         hasOptimisticCreateContinuity: hasOptimisticCreateContinuity(input),
         isVisibilityCatchUpPending: input.visibilityCatchUpStatus === "pending",
         hasHydratedHistoryBefore: input.hasHydratedHistoryBefore,
-        needsAuthoritativeSync: input.needsAuthoritativeSync,
         hadInitialSyncFailure,
       }),
     };
