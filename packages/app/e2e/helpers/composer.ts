@@ -8,8 +8,11 @@ import { selectWorkspaceInSidebar } from "./sidebar";
 import { getServerId } from "./server-id";
 import { waitForTabBar } from "./launcher";
 
+// Inactive agent tabs stay mounted behind `display: none`, so with more than one
+// agent tab open the first composer in DOM order belongs to a hidden pane. Only
+// the visible one is the composer the user is actually typing into.
 function composerInput(page: Page) {
-  return page.getByRole("textbox", { name: "Message agent..." }).first();
+  return page.getByRole("textbox", { name: "Message agent..." }).filter({ visible: true }).first();
 }
 
 export function composerLocator(page: Page) {
