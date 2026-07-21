@@ -45,7 +45,7 @@ interface MermaidWebViewProps {
   code: string;
   colorScheme: "light" | "dark";
   interactive: boolean;
-  onRendered?: (height: number) => void;
+  onRendered?: (height: number, renderedCode: string) => void;
   style?: ViewStyle;
 }
 
@@ -62,8 +62,11 @@ function MermaidWebView({
   const renderInputRef = useRef({ code, colorScheme, interactive });
   renderInputRef.current = { code, colorScheme, interactive };
 
+  const lastSentCodeRef = useRef(code);
+
   const sendRender = useCallback(() => {
     if (!bridgeReadyRef.current || !webViewRef.current) return;
+    lastSentCodeRef.current = renderInputRef.current.code;
     const payload = serializeForInjectedJavaScript({ type: "render", ...renderInputRef.current });
     webViewRef.current.injectJavaScript(
       `window.__PASEO_MERMAID_WEBVIEW_RECEIVE__ && window.__PASEO_MERMAID_WEBVIEW_RECEIVE__(${payload}); true;`,
@@ -88,7 +91,9 @@ function MermaidWebView({
         return;
       }
       if (message.type === "rendered" && typeof message.height === "number") {
-        onRendered?.(message.height);
+        // Entry serializes renders latest-wins, so a "rendered" message always
+        // corresponds to the most recently sent source.
+        onRendered?.(message.height, lastSentCodeRef.current);
       }
     },
     [onRendered, sendRender],
@@ -185,9 +190,17 @@ function MermaidDiagramImpl({
   textStyle,
   colorScheme = "dark",
 }: MermaidDiagramImplProps) {
-  // Height reported by the webview after a successful render; null until the
-  // first valid parse (the code block shows meanwhile, matching web).
-  const [renderedHeight, setRenderedHeight] = useState<number | null>(null);
+  // Last successful render: height sizes the preview, and its source (not the
+  // possibly newer, still-invalid streamed code) is what the fullscreen viewer
+  // renders — otherwise tapping mid-stream could open a blank viewer. Null
+  // until the first valid parse (the code block shows meanwhile, matching web).
+  const [lastGoodRender, setLastGoodRender] = useState<{ code: string; height: number } | null>(
+    null,
+  );
+  const handleRendered = useCallback(
+    (height: number, renderedCode: string) => setLastGoodRender({ code: renderedCode, height }),
+    [],
+  );
   const [viewerOpen, setViewerOpen] = useState(false);
   const openViewer = useCallback(() => setViewerOpen(true), []);
   const closeViewer = useCallback(() => setViewerOpen(false), []);
@@ -206,7 +219,7 @@ function MermaidDiagramImpl({
   const { fontFamily: _ff, fontSize: _fs, color: _c, lineHeight: _lh, ...boxStyle } = textStyle;
   return (
     <>
-      {renderedHeight === null && (
+      {lastGoodRender === null && (
         <HighlightedCodeBlock
           code={code}
           language="mermaid"
@@ -216,15 +229,15 @@ function MermaidDiagramImpl({
       )}
       <Pressable
         onPress={openViewer}
-        disabled={renderedHeight === null}
-        accessibilityRole={renderedHeight === null ? undefined : "imagebutton"}
+        disabled={lastGoodRender === null}
+        accessibilityRole={lastGoodRender === null ? undefined : "imagebutton"}
         accessibilityLabel="Mermaid diagram"
         style={
-          renderedHeight === null
+          lastGoodRender === null
             ? previewStyles.measuring
             : [
                 boxStyle as ViewStyle,
-                { height: Math.min(renderedHeight, MAX_PREVIEW_HEIGHT) },
+                { height: Math.min(lastGoodRender.height, MAX_PREVIEW_HEIGHT) },
                 previewStyles.preview,
               ]
         }
@@ -234,12 +247,16 @@ function MermaidDiagramImpl({
             code={code}
             colorScheme={colorScheme}
             interactive={false}
-            onRendered={setRenderedHeight}
+            onRendered={handleRendered}
           />
         </View>
       </Pressable>
-      {viewerOpen ? (
-        <MermaidDiagramViewer code={code} colorScheme={colorScheme} onClose={closeViewer} />
+      {viewerOpen && lastGoodRender ? (
+        <MermaidDiagramViewer
+          code={lastGoodRender.code}
+          colorScheme={colorScheme}
+          onClose={closeViewer}
+        />
       ) : null}
     </>
   );

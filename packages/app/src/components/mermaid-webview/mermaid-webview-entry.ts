@@ -65,10 +65,13 @@ function setViewport(interactive: boolean): void {
 }
 
 let renderSeq = 0;
+// initialize()/render() mutate shared global mermaid state; serialize renders
+// so a newer message can't re-initialize (e.g. flip the theme) while a prior
+// layout is still running. Superseded queued renders are skipped entirely.
+let renderChain: Promise<void> = Promise.resolve();
 
-async function render(message: RenderMessage): Promise<void> {
-  renderSeq += 1;
-  const seq = renderSeq;
+async function render(message: RenderMessage, seq: number): Promise<void> {
+  if (seq !== renderSeq) return;
   initializeMermaid(message.colorScheme);
   try {
     const { svg } = await mermaid.render(`paseo-mermaid-native-${seq}`, message.code);
@@ -90,7 +93,10 @@ async function render(message: RenderMessage): Promise<void> {
 }
 
 window.__PASEO_MERMAID_WEBVIEW_RECEIVE__ = (message) => {
-  if (message?.type === "render") void render(message);
+  if (message?.type !== "render") return;
+  renderSeq += 1;
+  const seq = renderSeq;
+  renderChain = renderChain.then(() => render(message, seq));
 };
 
 sendToNative({ type: "bridgeReady" });
