@@ -98,18 +98,22 @@ function resolveCreateServerId(input: {
 }
 
 function buildScheduleHostOptionTestId(serverId: string): string {
-  return `schedule-host-option-${serverId}`;
+  return "schedule-host-option-" + serverId;
 }
 
 function buildThinkingOptionTestId(optionId: string): string {
-  return `schedule-thinking-option-${optionId}`;
+  return "schedule-thinking-option-" + optionId;
+}
+
+function buildAgentOptionTestId(agentId: string): string {
+  return "schedule-agent-option-" + agentId;
 }
 
 function openKey(props: ScheduleFormSheetProps): string {
   if (props.mode === "edit") {
-    return `edit:${props.serverId ?? ""}:${props.schedule?.id ?? ""}`;
+    return "edit:" + (props.serverId ?? "") + ":" + (props.schedule?.id ?? "");
   }
-  return `create:${props.serverId ?? ""}`;
+  return "create:" + (props.serverId ?? "");
 }
 
 function selectScheduleHosts(
@@ -315,15 +319,26 @@ function OpenScheduleFormSheet({
   ]);
 
   const submitAgentTarget = useCallback(async (): Promise<boolean> => {
-    if (!schedule || !state.submitCadence) {
+    if (!state.submitCadence) {
       return false;
     }
-    await updateSchedule({
-      id: schedule.id,
-      cadence: state.submitCadence,
+    if (mode === "edit" && schedule) {
+      await updateSchedule({
+        id: schedule.id,
+        cadence: state.submitCadence,
+      });
+      return true;
+    }
+    const agentId = state.selectedAgentId.trim();
+    if (!agentId) {
+      return false;
+    }
+    await createSchedule({
+      cadence: requireCronCadence(state.submitCadence),
+      target: { type: "agent", agentId },
     });
     return true;
-  }, [schedule, state.submitCadence, updateSchedule]);
+  }, [createSchedule, mode, schedule, state.selectedAgentId, state.submitCadence, updateSchedule]);
 
   const submitNewAgent = useCallback(async (): Promise<boolean> => {
     const provider = state.selectedProvider;
@@ -447,6 +462,7 @@ function OpenScheduleFormSheet({
         state={state}
         providerSnapshot={providerSnapshot}
         agentTargetLabel={agentTargetLabel}
+        agents={agents}
         controlSize={controlSize}
         cadenceError={cadenceError}
         mutationServerId={mutationServerId}
@@ -454,12 +470,12 @@ function OpenScheduleFormSheet({
     </AdaptiveModalSheet>
   );
 }
-
 interface ScheduleFormFieldsProps {
   model: ScheduleFormModel;
   state: ScheduleFormState;
   providerSnapshot: ReturnType<typeof useScheduleFormProviderSnapshot>;
   agentTargetLabel: string | null;
+  agents: { serverId: string; id: string; title?: string | null }[];
   controlSize: FieldControlSize;
   cadenceError: string | null;
   mutationServerId: string;
@@ -470,96 +486,179 @@ function ScheduleFormFields({
   state,
   providerSnapshot,
   agentTargetLabel,
+  agents,
   controlSize,
   cadenceError,
   mutationServerId,
 }: ScheduleFormFieldsProps): ReactElement {
-  if (state.targetKind === "agent") {
-    return (
-      <>
-        <ScheduleAgentTargetField label={agentTargetLabel} size={controlSize} />
-        <CadenceEditor
-          value={state.cadence}
-          onChange={model.setCadence}
-          error={cadenceError ?? undefined}
-          size={controlSize}
-        />
-        {state.submitError ? <Text style={styles.submitError}>{state.submitError}</Text> : null}
-      </>
-    );
-  }
+  const showTargetKindToggle = state.mode === "create";
 
   return (
     <>
-      <Field label="Name">
-        <FormTextInput
-          size={controlSize}
-          testID="schedule-name-input"
-          accessibilityLabel="Schedule name"
-          initialValue={state.name}
-          value={state.name}
-          onChangeText={model.setName}
-          placeholder="Optional"
-          autoCapitalize="none"
-          autoCorrect={false}
-        />
-      </Field>
+      {showTargetKindToggle ? (
+        <Field label="Target">
+          <View style={styles.targetKindRow}>
+            <Button
+              style={styles.targetKindButton}
+              variant={state.targetKind === "new-agent" ? "default" : "secondary"}
+              onPress={() => model.setTargetKind("new-agent")}
+            >
+              New agent
+            </Button>
+            <Button
+              style={styles.targetKindButton}
+              variant={state.targetKind === "agent" ? "default" : "secondary"}
+              onPress={() => model.setTargetKind("agent")}
+            >
+              Existing agent
+            </Button>
+          </View>
+        </Field>
+      ) : null}
 
-      <Field label="Prompt">
-        <FormTextInput
-          size={controlSize}
-          testID="schedule-prompt-input"
-          accessibilityLabel="Prompt"
-          initialValue={state.prompt}
-          value={state.prompt}
-          onChangeText={model.setPrompt}
-          placeholder="What should the agent do each run?"
-          style={styles.multilineInput}
-          multiline
-          numberOfLines={4}
-          textAlignVertical="top"
-        />
-      </Field>
+      {state.targetKind === "agent" ? (
+        <>
+          <ScheduleAgentSelector
+            agents={agents}
+            selectedAgentId={state.selectedAgentId}
+            onSelectAgent={model.setAgentTarget}
+            controlSize={controlSize}
+          />
+          <CadenceEditor
+            value={state.cadence}
+            onChange={model.setCadence}
+            error={cadenceError ?? undefined}
+            size={controlSize}
+          />
+          {state.submitError ? <Text style={styles.submitError}>{state.submitError}</Text> : null}
+        </>
+      ) : (
+        <>
+          <Field label="Name">
+            <FormTextInput
+              size={controlSize}
+              testID="schedule-name-input"
+              accessibilityLabel="Schedule name"
+              initialValue={state.name}
+              value={state.name}
+              onChangeText={model.setName}
+              placeholder="Optional"
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+          </Field>
 
-      <ScheduleTargetFields
-        model={model}
-        state={state}
-        providerSnapshot={providerSnapshot}
-        agentTargetLabel={null}
-        controlSize={controlSize}
-        mutationServerId={mutationServerId}
-      />
+          <Field label="Prompt">
+            <FormTextInput
+              size={controlSize}
+              testID="schedule-prompt-input"
+              accessibilityLabel="Prompt"
+              initialValue={state.prompt}
+              value={state.prompt}
+              onChangeText={model.setPrompt}
+              placeholder="What should the agent do each run?"
+              style={styles.multilineInput}
+              multiline
+              numberOfLines={4}
+              textAlignVertical="top"
+            />
+          </Field>
 
-      <CadenceEditor
-        value={state.cadence}
-        onChange={model.setCadence}
-        error={cadenceError ?? undefined}
-        size={controlSize}
-      />
+          <ScheduleTargetFields
+            model={model}
+            state={state}
+            providerSnapshot={providerSnapshot}
+            agentTargetLabel={null}
+            agents={[]}
+            controlSize={controlSize}
+            mutationServerId={mutationServerId}
+          />
 
-      <Field label="Max runs">
-        <FormTextInput
-          size={controlSize}
-          testID="schedule-max-runs-input"
-          accessibilityLabel="Max runs"
-          initialValue={state.maxRuns}
-          value={state.maxRuns}
-          onChangeText={model.setMaxRuns}
-          placeholder="Unlimited"
-          keyboardType="number-pad"
-        />
-      </Field>
+          <CadenceEditor
+            value={state.cadence}
+            onChange={model.setCadence}
+            error={cadenceError ?? undefined}
+            size={controlSize}
+          />
 
-      {state.submitError ? <Text style={styles.submitError}>{state.submitError}</Text> : null}
+          <Field label="Max runs">
+            <FormTextInput
+              size={controlSize}
+              testID="schedule-max-runs-input"
+              accessibilityLabel="Max runs"
+              initialValue={state.maxRuns}
+              value={state.maxRuns}
+              onChangeText={model.setMaxRuns}
+              placeholder="Unlimited"
+              keyboardType="number-pad"
+            />
+          </Field>
+
+          {state.submitError ? <Text style={styles.submitError}>{state.submitError}</Text> : null}
+        </>
+      )}
     </>
   );
 }
 
+interface ScheduleAgentSelectorProps {
+  agents: { serverId: string; id: string; title?: string | null }[];
+  selectedAgentId: string;
+  onSelectAgent: (agentId: string) => void;
+  controlSize: FieldControlSize;
+}
+
+function ScheduleAgentSelector({
+  agents,
+  selectedAgentId,
+  onSelectAgent,
+  controlSize,
+}: ScheduleAgentSelectorProps): ReactElement {
+  const agentOptions = useMemo<SelectFieldOption<string>[]>(
+    () =>
+      agents.map((agent) => ({
+        id: agent.id,
+        value: agent.id,
+        label: agent.title?.trim() || "Untitled agent",
+        testID: buildAgentOptionTestId(agent.id),
+      })),
+    [agents],
+  );
+
+  const selectedAgent = useMemo(
+    () => agents.find((a) => a.id === selectedAgentId) ?? null,
+    [agents, selectedAgentId],
+  );
+
+  const selectedDisplay = useMemo<SelectFieldDisplay | null>(
+    () =>
+      selectedAgent ? { label: selectedAgent.title?.trim() || "Untitled agent" } : null,
+    [selectedAgent],
+  );
+
+  return (
+    <SelectField
+      label="Agent"
+      value={selectedAgentId || null}
+      selectedDisplay={selectedDisplay}
+      options={agentOptions}
+      onChange={onSelectAgent}
+      placeholder="Select agent"
+      emptyText="No agents found"
+      searchable
+      searchPlaceholder="Search agents..."
+      title="Select agent"
+      size={controlSize}
+      triggerTestID="schedule-agent-trigger"
+    />
+  );
+}
 interface ScheduleTargetFieldsProps {
   model: ScheduleFormModel;
   state: ScheduleFormState;
   providerSnapshot: ReturnType<typeof useScheduleFormProviderSnapshot>;
   agentTargetLabel: string | null;
+  agents: { serverId: string; id: string; title?: string | null }[];
   controlSize: FieldControlSize;
   mutationServerId: string;
 }
@@ -569,6 +668,7 @@ function ScheduleTargetFields({
   state,
   providerSnapshot,
   agentTargetLabel,
+  agents,
   controlSize,
   mutationServerId,
 }: ScheduleTargetFieldsProps): ReactElement {
@@ -698,10 +798,6 @@ function ScheduleTargetFields({
     },
     [controlSize, modelTriggerLeading, state.selectedModel, state.selectedModelDisplay],
   );
-
-  if (state.targetKind === "agent") {
-    return <ScheduleAgentTargetField label={agentTargetLabel} size={controlSize} />;
-  }
 
   return (
     <>
@@ -916,7 +1012,6 @@ function ScheduleAgentTargetField({
     </Field>
   );
 }
-
 function IsolationOptionItem({
   option,
   selected,
@@ -1081,6 +1176,13 @@ const styles = StyleSheet.create((theme) => {
     },
     providerIcon: {
       color: theme.colors.foregroundMuted,
+    },
+    targetKindRow: {
+      flexDirection: "row",
+      gap: theme.spacing[2],
+    },
+    targetKindButton: {
+      flex: 1,
     },
   };
 });
