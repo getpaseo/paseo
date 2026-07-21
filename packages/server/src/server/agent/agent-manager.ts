@@ -19,6 +19,7 @@ import {
   type AgentCapabilityFlags,
   type AgentClient,
   type AgentCreateSessionOptions,
+  type AgentResumeSessionOptions,
   type AgentFeature,
   type AgentLaunchContext,
   type AgentSlashCommand,
@@ -1078,9 +1079,10 @@ export class AgentManager {
       workspaceId?: string;
       owner?: AgentOwner;
     },
+    resumeOptions?: AgentResumeSessionOptions,
   ): Promise<ManagedAgent> {
     return this.trackAgentRegistrationOperation(
-      this.resumeAgentFromPersistenceInternal(handle, overrides, agentId, options),
+      this.resumeAgentFromPersistenceInternal(handle, overrides, agentId, options, resumeOptions),
     );
   }
 
@@ -1096,6 +1098,7 @@ export class AgentManager {
       workspaceId?: string;
       owner?: AgentOwner;
     },
+    resumeOptions?: AgentResumeSessionOptions,
   ): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
     const resolvedAgentId = validateAgentId(
@@ -1122,7 +1125,12 @@ export class AgentManager {
     }
     const launchContext = await this.buildLaunchContext(resolvedAgentId, client);
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
-    const session = await client.resumeSession(handle, providerLaunchConfig, launchContext);
+    const session = await client.resumeSession(
+      handle,
+      providerLaunchConfig,
+      launchContext,
+      resumeOptions,
+    );
     return this.registerSession(session, storedConfig, resolvedAgentId, {
       ...options,
       persistence: handle,

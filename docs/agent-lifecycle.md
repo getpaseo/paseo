@@ -62,6 +62,12 @@ Archive is distinct from runtime collection. Archive sets `archivedAt`, invokes 
 archive hook, and cascades to managed children. Runtime collection does none of those things; it only
 releases the live runtime and writes `lastStatus: closed` on the still-active record.
 
+History navigation may load an archived agent's provider timeline with a runtime-only history resume
+intent. That read-only load must leave both Paseo's `archivedAt` and the provider's native archived
+state unchanged: it never unarchives, re-archives, or creates a replacement provider session. Explicit
+**Unarchive** remains the only transition out of archive. It first unarchives the native provider
+session, then clears Paseo's `archivedAt`; the next interactive load uses the normal interactive resume.
+
 `create_agent_request` can opt an agent into `autoArchive`. In that mode the daemon archives the agent after the first terminal turn event (`turn_completed`, `turn_failed`, or `turn_canceled`). When the agent owns an isolated workspace, auto-archive archives that workspace too; the managed worktree is removed when its final workspace reference is gone.
 
 Archiving runs through `AgentManager.archiveAgent` (`packages/server/src/server/agent/agent-manager.ts`):

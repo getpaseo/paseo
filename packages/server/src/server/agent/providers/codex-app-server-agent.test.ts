@@ -106,6 +106,37 @@ function createSession(
   return session;
 }
 
+function createProviderWithFakeAppServer(appServer: FakeCodexAppServer): CodexAppServerAgentClient {
+  const provider = new CodexAppServerAgentClient(createTestLogger());
+  const internals = castInternals<{
+    goalsEnabledPromise: Promise<boolean> | null;
+    autoReviewEnabledPromise: Promise<boolean> | null;
+    spawnAppServer: () => Promise<ChildProcessWithoutNullStreams>;
+  }>(provider);
+  internals.goalsEnabledPromise = Promise.resolve(false);
+  internals.autoReviewEnabledPromise = Promise.resolve(false);
+  internals.spawnAppServer = async () => appServer.child;
+  return provider;
+}
+
+function archivedThreadHandle() {
+  return {
+    sessionId: "archived-thread-id",
+    metadata: {
+      cwd: "/tmp/codex-question-test",
+      modeId: "auto",
+      model: "gpt-5.4",
+    },
+  };
+}
+
+function archivedThreadErrorMessage(threadId: string): string {
+  return (
+    `session ${threadId} is archived. ` +
+    `Run \`codex unarchive ${threadId}\` to unarchive it first.`
+  );
+}
+
 function asInternals(session: CodexTestSession): CodexSessionTestAccess {
   return castInternals<CodexSessionTestAccess>(session);
 }
@@ -1113,12 +1144,7 @@ describe("Codex app-server provider", () => {
         };
       },
     });
-    const provider = new CodexAppServerAgentClient(createTestLogger());
-    castInternals<{ goalsEnabledPromise: Promise<boolean> | null }>(provider).goalsEnabledPromise =
-      Promise.resolve(false);
-    castInternals<{ spawnAppServer: () => Promise<ChildProcessWithoutNullStreams> }>(
-      provider,
-    ).spawnAppServer = async () => appServer.child;
+    const provider = createProviderWithFakeAppServer(appServer);
 
     const outcome = await Promise.race([
       provider
@@ -1150,6 +1176,225 @@ describe("Codex app-server provider", () => {
 
     expect(threadRequests).toEqual(["thread/loaded/list", "thread/resume"]);
     expect(outcome).toBe("rejected");
+    appServer.assertNoErrors();
+  });
+
+  test("loads an archived Codex thread for history without changing its native archive state", async () => {
+    const threadRequests: Array<{ method: string; params: unknown }> = [];
+    const appServer = createFakeCodexAppServer({
+      "thread/loaded/list": (params) => {
+        threadRequests.push({ method: "thread/loaded/list", params });
+        return { data: [] };
+      },
+      "thread/resume": (params) => {
+        threadRequests.push({ method: "thread/resume", params });
+        return Promise.reject(new Error(archivedThreadErrorMessage("archived-thread-id")));
+      },
+      "thread/read": (params) => {
+        threadRequests.push({ method: "thread/read", params });
+        return {
+          thread: {
+            id: "archived-thread-id",
+            turns: [
+              {
+                items: [
+                  {
+                    type: "agentMessage",
+                    id: "archived-history-message",
+                    text: "Archived history loaded.",
+                    timestamp: "2026-07-21T08:00:00.000Z",
+                  },
+                ],
+              },
+            ],
+          },
+        };
+      },
+      "thread/start": (params) => {
+        threadRequests.push({ method: "thread/start", params });
+        return { thread: { id: "replacement-thread-id" } };
+      },
+    });
+    const provider = createProviderWithFakeAppServer(appServer);
+
+    const session = await provider.resumeSession(archivedThreadHandle(), undefined, undefined, {
+      purpose: "history",
+    });
+    const history: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) {
+      history.push(event);
+    }
+
+    expect(session.id).toBe("archived-thread-id");
+    expect(history).toEqual([
+      {
+        type: "timeline",
+        provider: "codex",
+        timestamp: "2026-07-21T08:00:00.000Z",
+        item: {
+          type: "assistant_message",
+          text: "Archived history loaded.",
+          messageId: "archived-history-message",
+        },
+      },
+    ]);
+    expect(threadRequests).toEqual([
+      { method: "thread/loaded/list", params: {} },
+      { method: "thread/resume", params: { threadId: "archived-thread-id" } },
+      {
+        method: "thread/read",
+        params: { threadId: "archived-thread-id", includeTurns: true },
+      },
+    ]);
+    await session.close();
+    appServer.assertNoErrors();
+  });
+
+  test("rejects a turn after history loading when the archived thread still cannot resume", async () => {
+    const threadRequests: string[] = [];
+    const appServer = createFakeCodexAppServer({
+      "thread/loaded/list": () => {
+        threadRequests.push("thread/loaded/list");
+        return { data: [] };
+      },
+      "thread/resume": () => {
+        threadRequests.push("thread/resume");
+        return Promise.reject(new Error(archivedThreadErrorMessage("archived-thread-id")));
+      },
+      "thread/read": () => {
+        threadRequests.push("thread/read");
+        return { thread: { id: "archived-thread-id", turns: [] } };
+      },
+      "thread/start": () => {
+        threadRequests.push("thread/start");
+        return { thread: { id: "replacement-thread-id" } };
+      },
+      "turn/start": () => {
+        threadRequests.push("turn/start");
+        return {};
+      },
+    });
+    const provider = createProviderWithFakeAppServer(appServer);
+    const session = await provider.resumeSession(archivedThreadHandle(), undefined, undefined, {
+      purpose: "history",
+    });
+
+    await expect(session.startTurn("Try to continue this archived thread.")).rejects.toThrow(
+      archivedThreadErrorMessage("archived-thread-id"),
+    );
+
+    expect(threadRequests).toEqual([
+      "thread/loaded/list",
+      "thread/resume",
+      "thread/read",
+      "thread/loaded/list",
+      "thread/resume",
+    ]);
+    await session.close();
+    appServer.assertNoErrors();
+  });
+
+  test("rejects an archived Codex thread during an interactive resume", async () => {
+    const threadRequests: string[] = [];
+    const appServer = createFakeCodexAppServer({
+      "thread/loaded/list": () => {
+        threadRequests.push("thread/loaded/list");
+        return { data: [] };
+      },
+      "thread/resume": () => {
+        threadRequests.push("thread/resume");
+        return Promise.reject(new Error(archivedThreadErrorMessage("archived-thread-id")));
+      },
+      "thread/read": () => {
+        threadRequests.push("thread/read");
+        return { thread: { turns: [] } };
+      },
+    });
+    const provider = createProviderWithFakeAppServer(appServer);
+
+    await expect(provider.resumeSession(archivedThreadHandle())).rejects.toThrow(
+      archivedThreadErrorMessage("archived-thread-id"),
+    );
+
+    expect(threadRequests).toEqual(["thread/loaded/list", "thread/resume"]);
+    appServer.assertNoErrors();
+  });
+
+  test("rejects an archive error for a different Codex thread while loading history", async () => {
+    const threadRequests: string[] = [];
+    const appServer = createFakeCodexAppServer({
+      "thread/loaded/list": () => {
+        threadRequests.push("thread/loaded/list");
+        return { data: [] };
+      },
+      "thread/resume": () => {
+        threadRequests.push("thread/resume");
+        return Promise.reject(new Error(archivedThreadErrorMessage("another-thread-id")));
+      },
+      "thread/read": () => {
+        threadRequests.push("thread/read");
+        return { thread: { turns: [] } };
+      },
+    });
+    const provider = createProviderWithFakeAppServer(appServer);
+
+    await expect(
+      provider.resumeSession(archivedThreadHandle(), undefined, undefined, { purpose: "history" }),
+    ).rejects.toThrow(archivedThreadErrorMessage("another-thread-id"));
+
+    expect(threadRequests).toEqual(["thread/loaded/list", "thread/resume"]);
+    appServer.assertNoErrors();
+  });
+
+  test("rejects other resume errors while loading Codex history", async () => {
+    const threadRequests: string[] = [];
+    const appServer = createFakeCodexAppServer({
+      "thread/loaded/list": () => {
+        threadRequests.push("thread/loaded/list");
+        return { data: [] };
+      },
+      "thread/resume": () => {
+        threadRequests.push("thread/resume");
+        return Promise.reject(new Error("Codex app-server resume failed"));
+      },
+      "thread/read": () => {
+        threadRequests.push("thread/read");
+        return { thread: { turns: [] } };
+      },
+    });
+    const provider = createProviderWithFakeAppServer(appServer);
+
+    await expect(
+      provider.resumeSession(archivedThreadHandle(), undefined, undefined, { purpose: "history" }),
+    ).rejects.toThrow("Codex app-server resume failed");
+
+    expect(threadRequests).toEqual(["thread/loaded/list", "thread/resume"]);
+    appServer.assertNoErrors();
+  });
+
+  test("rejects when an archived Codex thread history cannot be read", async () => {
+    const threadRequests: string[] = [];
+    const appServer = createFakeCodexAppServer({
+      "thread/loaded/list": () => {
+        threadRequests.push("thread/loaded/list");
+        return { data: [] };
+      },
+      "thread/resume": () => {
+        threadRequests.push("thread/resume");
+        return Promise.reject(new Error(archivedThreadErrorMessage("archived-thread-id")));
+      },
+      "thread/read": () => {
+        threadRequests.push("thread/read");
+        return Promise.reject(new Error("thread history is unavailable"));
+      },
+    });
+    const provider = createProviderWithFakeAppServer(appServer);
+
+    await expect(
+      provider.resumeSession(archivedThreadHandle(), undefined, undefined, { purpose: "history" }),
+    ).rejects.toThrow("thread history is unavailable");
+
+    expect(threadRequests).toEqual(["thread/loaded/list", "thread/resume", "thread/read"]);
     appServer.assertNoErrors();
   });
 
