@@ -48,4 +48,14 @@ describe("agent-cwd", () => {
     tempDirs.push(dir);
     await expect(assertAgentCwdExists("agent-ok", dir)).resolves.toBeUndefined();
   });
+
+  test("pathIsExistingDirectory treats ENOTDIR path components as missing", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "paseo-agent-cwd-file-"));
+    tempDirs.push(dir);
+    const filePath = join(dir, "not-a-dir");
+    const { writeFileSync } = await import("node:fs");
+    writeFileSync(filePath, "x");
+    // Path under a file component raises ENOTDIR on stat in most platforms.
+    expect(await pathIsExistingDirectory(join(filePath, "child"))).toBe(false);
+  });
 });

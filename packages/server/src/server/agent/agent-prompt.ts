@@ -190,8 +190,10 @@ export async function sendPromptToAgent(
 
   // Continue/send requires a live cwd. Check before load so missing-cwd agents
   // get a structured recovery error instead of a generic not-found/load failure.
+  // Prefer the resident agent's cwd over storage so a rebound/live cwd wins over
+  // a stale stored path after worktree recovery.
   const liveBeforeLoad = params.agentManager.getAgent(params.agentId);
-  const cwd = record?.cwd ?? liveBeforeLoad?.cwd;
+  const cwd = liveBeforeLoad?.cwd ?? record?.cwd;
   if (cwd) {
     await assertAgentCwdExists(params.agentId, cwd);
   } else if (!record && !liveBeforeLoad) {

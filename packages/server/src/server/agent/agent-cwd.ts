@@ -37,16 +37,22 @@ export function isMissingAgentCwdError(error: unknown): error is MissingAgentCwd
   );
 }
 
+function isMissingPathFsError(error: unknown): boolean {
+  if (!(error instanceof Error) || !("code" in error)) {
+    return false;
+  }
+  const code = (error as NodeJS.ErrnoException).code;
+  // ENOENT: path missing. ENOTDIR: a path component is not a directory (also
+  // unusable as a worktree cwd).
+  return code === "ENOENT" || code === "ENOTDIR";
+}
+
 export async function pathIsExistingDirectory(path: string): Promise<boolean> {
   try {
     const stats = await stat(path);
     return stats.isDirectory();
   } catch (error) {
-    if (
-      error instanceof Error &&
-      "code" in error &&
-      (error as NodeJS.ErrnoException).code === "ENOENT"
-    ) {
+    if (isMissingPathFsError(error)) {
       return false;
     }
     throw error;
@@ -65,11 +71,7 @@ export async function assertAgentCwdExists(agentId: string, cwd: string): Promis
     if (isMissingAgentCwdError(error)) {
       throw error;
     }
-    if (
-      error instanceof Error &&
-      "code" in error &&
-      (error as NodeJS.ErrnoException).code === "ENOENT"
-    ) {
+    if (isMissingPathFsError(error)) {
       throw new MissingAgentCwdError(agentId, absoluteCwd);
     }
     throw error;

@@ -246,6 +246,48 @@ test("sendPromptToAgent returns structured missing-cwd error for present agents"
   expect(streamAgentSpy).not.toHaveBeenCalled();
 });
 
+test("sendPromptToAgent prefers live agent cwd over a stale stored cwd", async () => {
+  const liveCwd = process.cwd();
+  const staleCwd = `/tmp/paseo-stale-agent-cwd-${Date.now()}`;
+  const agent: ManagedAgent = Object.create(null);
+  Reflect.set(agent, "id", "agent-rebound");
+  Reflect.set(agent, "provider", "codex");
+  Reflect.set(agent, "cwd", liveCwd);
+
+  const streamAgentSpy = vi.fn(() => (async function* noop() {})());
+  const agentManager: AgentManager = Object.create(AgentManager.prototype);
+  Reflect.set(
+    agentManager,
+    "getAgent",
+    vi.fn(() => agent),
+  );
+  Reflect.set(agentManager, "tryRunOutOfBand", vi.fn().mockReturnValue(false));
+  Reflect.set(agentManager, "hasInFlightRun", vi.fn().mockReturnValue(false));
+  Reflect.set(agentManager, "streamAgent", streamAgentSpy);
+
+  const agentStorage: AgentStorage = Object.create(AgentStorage.prototype);
+  Reflect.set(
+    agentStorage,
+    "get",
+    vi.fn(async () => ({
+      id: "agent-rebound",
+      cwd: staleCwd,
+      provider: "codex",
+      archivedAt: null,
+    })),
+  );
+
+  await sendPromptToAgent({
+    agentManager,
+    agentStorage,
+    agentId: "agent-rebound",
+    prompt: "hello",
+    logger: createTestLogger(),
+  });
+
+  expect(streamAgentSpy).toHaveBeenCalledWith("agent-rebound", "hello", undefined);
+});
+
 test("finish notifications tell the parent the child's last assistant message", async () => {
   const scenario = createFinishNotificationScenario({
     childLastAssistantMessage: "Implemented the cleanup and all checks pass.",
