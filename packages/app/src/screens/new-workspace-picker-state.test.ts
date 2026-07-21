@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { UserComposerAttachment } from "@/attachments/types";
 import {
   clearPickerPrAttachmentForTargetChange,
-  findCheckoutHintPrAttachment,
+  pickerItemFromAttachments,
   syncPickerPrAttachment,
 } from "./new-workspace-picker-state";
 import type { ForgeSearchItem } from "@getpaseo/protocol/messages";
@@ -133,53 +133,26 @@ describe("clearPickerPrAttachmentForTargetChange", () => {
   });
 });
 
-describe("findCheckoutHintPrAttachment", () => {
-  it("returns the first attached PR that is not selected or dismissed", () => {
-    const first = prAttachment(makePrItem(101, "A"));
-    const second = prAttachment(makePrItem(202, "B"));
+describe("pickerItemFromAttachments", () => {
+  it("uses a forge change request attachment as the starting ref", () => {
+    const item = makePrItem(101, "A");
 
-    expect(
-      findCheckoutHintPrAttachment({
-        attachments: [issueAttachment(44), first, second],
-        selectedItem: null,
-        dismissedPrNumbers: new Set(),
-      }),
-    ).toBe(first);
+    expect(pickerItemFromAttachments([{ kind: "forge_change_request", item }])).toEqual({
+      kind: "github-pr",
+      item,
+    });
   });
 
-  it("skips the selected PR and offers the next attached PR", () => {
-    const selected = prAttachment(makePrItem(101, "A"));
-    const next = prAttachment(makePrItem(202, "B"));
+  it("keeps legacy GitHub PR attachments working", () => {
+    const item = makePrItem(101, "A");
 
-    expect(
-      findCheckoutHintPrAttachment({
-        attachments: [selected, next],
-        selectedItem: { kind: "github-pr", item: selected.item },
-        dismissedPrNumbers: new Set(),
-      }),
-    ).toBe(next);
+    expect(pickerItemFromAttachments([prAttachment(item)])).toEqual({
+      kind: "github-pr",
+      item,
+    });
   });
 
-  it("skips dismissed PRs and ignores issues", () => {
-    const dismissed = prAttachment(makePrItem(101, "A"));
-    const next = prAttachment(makePrItem(202, "B"));
-
-    expect(
-      findCheckoutHintPrAttachment({
-        attachments: [issueAttachment(44), dismissed, next],
-        selectedItem: null,
-        dismissedPrNumbers: new Set([101]),
-      }),
-    ).toBe(next);
-  });
-
-  it("returns null when only issues qualify", () => {
-    expect(
-      findCheckoutHintPrAttachment({
-        attachments: [issueAttachment(44)],
-        selectedItem: null,
-        dismissedPrNumbers: new Set(),
-      }),
-    ).toBeNull();
+  it("ignores issue attachments", () => {
+    expect(pickerItemFromAttachments([issueAttachment(44)])).toBeNull();
   });
 });

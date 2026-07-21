@@ -57,20 +57,12 @@ export function clearPickerPrAttachmentForTargetChange(input: {
   return syncPickerPrAttachment({ attachments: input.attachments, item: null });
 }
 
-export function findCheckoutHintPrAttachment(input: {
-  attachments: ReadonlyArray<UserComposerAttachment>;
-  selectedItem: PickerItem | null;
-  dismissedPrNumbers: ReadonlySet<number>;
-}): Extract<UserComposerAttachment, { kind: "github_pr" }> | null {
-  const selectedPrNumber =
-    input.selectedItem?.kind === "github-pr" ? input.selectedItem.item.number : null;
-
-  for (const attachment of input.attachments) {
-    if (attachment.kind !== "github_pr") continue;
-    const prNumber = attachment.item.number;
-    if (prNumber === selectedPrNumber) continue;
-    if (input.dismissedPrNumbers.has(prNumber)) continue;
-    return attachment;
+export function pickerItemFromAttachments(
+  attachments: ReadonlyArray<UserComposerAttachment>,
+): PickerItem | null {
+  for (const attachment of attachments) {
+    if (attachment.kind !== "forge_change_request" && attachment.kind !== "github_pr") continue;
+    return { kind: "github-pr", item: attachment.item };
   }
 
   return null;

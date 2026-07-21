@@ -807,6 +807,68 @@ test.describe("New workspace flow", () => {
     }
   });
 
+  test("pasted GitHub PR becomes the starting ref and creates its worktree", async ({
+    page,
+    context,
+  }) => {
+    test.skip(!hasGithubAuth(), "Requires GitHub authentication (gh auth login)");
+
+    const ghRepo = await createTempGithubRepo({
+      category: "new-workspace-pasted-pr-ref",
+      prs: [{ title: "Use pasted PR as start ref", state: "open" }],
+    });
+    const pr = ghRepo.prs[0]!;
+    const mainCheckout = await cloneGithubRepoDefaultBranchOnly(ghRepo);
+
+    try {
+      const openedProject = await openProjectViaDaemon(client, mainCheckout.path);
+      localWorkspaceIds.add(openedProject.workspaceId);
+
+      await gotoAppShell(page);
+      await waitForSidebarHydration(page);
+      await openNewWorkspaceComposer(page, {
+        projectKey: openedProject.projectKey,
+        projectDisplayName: openedProject.projectDisplayName,
+      });
+      await selectWorkspaceIsolation(page, "worktree");
+
+      const composer = page.getByRole("textbox", { name: "Message agent..." });
+      await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+      await page.evaluate((url) => navigator.clipboard.writeText(url), pr.url);
+      await composer.focus();
+      await page.keyboard.press("Control+V");
+
+      await expectComposerGithubAttachmentPill(page, {
+        number: pr.number,
+        title: pr.title,
+      });
+      await expectStartingRefPickerTriggerPr(page, {
+        number: pr.number,
+        title: pr.title,
+        headRef: pr.branch,
+      });
+
+      await submitNewWorkspaceWithoutPrompt(page);
+
+      const worktree = await assertNewWorkspaceSidebarAndHeader(page, {
+        serverId: getServerId(),
+        client,
+        previousWorkspaceId: openedProject.workspaceId,
+        projectDisplayName: openedProject.projectDisplayName,
+      });
+      createdWorktreeDirectories.add(worktree.workspaceDirectory);
+
+      const branchInfo = await readWorktreeBranchInfo({
+        worktreePath: worktree.workspaceDirectory,
+      });
+      expect(branchInfo.currentBranch).toBe(pr.branch);
+      expect(existsSync(path.join(worktree.workspaceDirectory, "pr-1.txt"))).toBe(true);
+    } finally {
+      await mainCheckout.cleanup();
+      await ghRepo.cleanup();
+    }
+  });
+
   test("selected GitHub PR creates the worktree from the PR head even when the head branch is not fetched", async ({
     page,
   }) => {

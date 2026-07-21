@@ -1511,7 +1511,33 @@ async function tryFetchWorktreeTrackingRemote(options: {
       acceptExitCodes: [0, 1, 128],
     },
   );
-  return result.exitCode === 0 ? { name: options.remoteName, headRef: options.headRef } : undefined;
+  if (result.exitCode !== 0) {
+    return undefined;
+  }
+  await ensureRemoteFetchesBranch(options);
+  return { name: options.remoteName, headRef: options.headRef };
+}
+
+async function ensureRemoteFetchesBranch(options: {
+  cwd: string;
+  remoteName: string;
+  headRef: string;
+}): Promise<void> {
+  const configKey = `remote.${options.remoteName}.fetch`;
+  const exactRefspec = `refs/heads/${options.headRef}:refs/remotes/${options.remoteName}/${options.headRef}`;
+  const wildcardRefspec = `refs/heads/*:refs/remotes/${options.remoteName}/*`;
+  const { stdout } = await runGitCommand(["config", "--get-all", configKey], {
+    cwd: options.cwd,
+    acceptExitCodes: [0, 1],
+  });
+  const alreadyTracked = stdout
+    .split("\n")
+    .map((refspec) => refspec.trim().replace(/^\+/, ""))
+    .some((refspec) => refspec === exactRefspec || refspec === wildcardRefspec);
+  if (alreadyTracked) {
+    return;
+  }
+  await runGitCommand(["config", "--add", configKey, `+${exactRefspec}`], { cwd: options.cwd });
 }
 
 async function getWorktreeRemotePushUrl(
