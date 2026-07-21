@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { UserComposerAttachment } from "@/attachments/types";
 import {
   clearPickerPrAttachmentForTargetChange,
-  pickerItemFromLatestPrAttachment,
+  initialPickerSelectionState,
+  reducePickerSelection,
   syncPickerPrAttachment,
 } from "./new-workspace-picker-state";
 import type { ForgeSearchItem } from "@getpaseo/protocol/messages";
@@ -151,36 +152,51 @@ describe("clearPickerPrAttachmentForTargetChange", () => {
   });
 });
 
-describe("pickerItemFromLatestPrAttachment", () => {
-  it("restores a forge change request attachment as the starting ref", () => {
-    const item = makePrItem(101, "A");
+describe("reducePickerSelection", () => {
+  it("selects a PR that was newly detected and added", () => {
+    const item = { kind: "github-pr" as const, item: makePrItem(101, "A") };
+    const detected = reducePickerSelection(initialPickerSelectionState, { type: "pr-detected" });
 
-    expect(pickerItemFromLatestPrAttachment([forgePrAttachment(item)])).toEqual({
-      kind: "github-pr",
-      item,
+    expect(reducePickerSelection(detected, { type: "pr-added", item })).toEqual({
+      selectedItem: item,
+      allowAutoPrSelection: true,
     });
   });
 
-  it("restores a legacy GitHub PR attachment as the starting ref", () => {
-    const item = makePrItem(101, "A");
-
-    expect(pickerItemFromLatestPrAttachment([prAttachment(item)])).toEqual({
-      kind: "github-pr",
-      item,
+  it("keeps a branch selected after a pending PR is added", () => {
+    const detected = reducePickerSelection(initialPickerSelectionState, { type: "pr-detected" });
+    const branchSelected = reducePickerSelection(detected, {
+      type: "picker-selected",
+      item: { kind: "branch", name: "main" },
     });
+
+    expect(
+      reducePickerSelection(branchSelected, {
+        type: "pr-added",
+        item: { kind: "github-pr", item: makePrItem(101, "A") },
+      }),
+    ).toEqual(branchSelected);
   });
 
-  it("ignores issue attachments", () => {
-    expect(pickerItemFromLatestPrAttachment([issueAttachment(44)])).toBeNull();
+  it("does not derive checkout selection from an existing attachment", () => {
+    expect(
+      reducePickerSelection(initialPickerSelectionState, {
+        type: "pr-added",
+        item: { kind: "github-pr", item: makePrItem(101, "A") },
+      }),
+    ).toEqual(initialPickerSelectionState);
   });
 
-  it("restores the most recently attached PR", () => {
-    const first = forgePrAttachment(makePrItem(101, "A"));
-    const second = forgePrAttachment(makePrItem(202, "B"));
-
-    expect(pickerItemFromLatestPrAttachment([first, second])).toEqual({
-      kind: "github-pr",
-      item: second.item,
+  it("lets a newly detected PR replace an earlier explicit branch", () => {
+    const branchSelected = reducePickerSelection(initialPickerSelectionState, {
+      type: "picker-selected",
+      item: { kind: "branch", name: "main" },
     });
+    const detected = reducePickerSelection(branchSelected, { type: "pr-detected" });
+    const pr = { kind: "github-pr" as const, item: makePrItem(101, "A") };
+
+    expect(reducePickerSelection(detected, { type: "pr-added", item: pr }).selectedItem).toEqual(
+      pr,
+    );
   });
 });

@@ -4,6 +4,38 @@ import {
 } from "@/attachments/types";
 import type { PickerItem } from "./new-workspace-picker-item";
 
+export interface PickerSelectionState {
+  selectedItem: PickerItem | null;
+  allowAutoPrSelection: boolean;
+}
+
+export type PickerSelectionEvent =
+  | { type: "pr-detected" }
+  | { type: "pr-added"; item: Extract<PickerItem, { kind: "github-pr" }> }
+  | { type: "picker-selected"; item: PickerItem }
+  | { type: "target-changed" };
+
+export const initialPickerSelectionState: PickerSelectionState = {
+  selectedItem: null,
+  allowAutoPrSelection: false,
+};
+
+export function reducePickerSelection(
+  state: PickerSelectionState,
+  event: PickerSelectionEvent,
+): PickerSelectionState {
+  switch (event.type) {
+    case "pr-detected":
+      return { ...state, allowAutoPrSelection: true };
+    case "pr-added":
+      return state.allowAutoPrSelection ? { ...state, selectedItem: event.item } : state;
+    case "picker-selected":
+      return { selectedItem: event.item, allowAutoPrSelection: false };
+    case "target-changed":
+      return initialPickerSelectionState;
+  }
+}
+
 function isPrAttachment(
   attachment: UserComposerAttachment,
 ): attachment is Extract<UserComposerAttachment, { kind: "forge_change_request" | "github_pr" }> {
@@ -60,16 +92,4 @@ export function clearPickerPrAttachmentForTargetChange(input: {
     return input.attachments;
   }
   return input.attachments.filter((attachment) => !isPrAttachment(attachment));
-}
-
-export function pickerItemFromLatestPrAttachment(
-  attachments: ReadonlyArray<UserComposerAttachment>,
-): PickerItem | null {
-  for (let index = attachments.length - 1; index >= 0; index -= 1) {
-    const attachment = attachments[index];
-    if (!isPrAttachment(attachment)) continue;
-    return { kind: "github-pr", item: attachment.item };
-  }
-
-  return null;
 }

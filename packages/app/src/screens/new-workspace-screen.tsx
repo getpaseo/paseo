@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { ReactElement, RefObject } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
@@ -91,7 +91,8 @@ import {
 } from "./new-workspace-picker-item";
 import {
   clearPickerPrAttachmentForTargetChange,
-  pickerItemFromLatestPrAttachment,
+  initialPickerSelectionState,
+  reducePickerSelection,
   syncPickerPrAttachment,
 } from "./new-workspace-picker-state";
 import {
@@ -176,31 +177,6 @@ interface NewWorkspaceScreenProps {
 interface PickerOptionData {
   options: ComboboxOptionType[];
   itemById: Map<string, PickerItem>;
-}
-
-interface PickerSelection {
-  item: PickerItem;
-}
-
-function useNewWorkspacePickerSelection(input: {
-  attachments: Parameters<typeof pickerItemFromLatestPrAttachment>[0];
-  isDraftHydrated: boolean;
-}) {
-  const [pickerSelection, setPickerSelection] = useState<PickerSelection | null>(null);
-  const didRestorePickerSelectionRef = useRef(false);
-
-  useEffect(() => {
-    if (!input.isDraftHydrated || didRestorePickerSelectionRef.current) return;
-    didRestorePickerSelectionRef.current = true;
-    const restoredItem = pickerItemFromLatestPrAttachment(input.attachments);
-    if (!restoredItem) return;
-    setPickerSelection((current) => current ?? { item: restoredItem });
-  }, [input.attachments, input.isDraftHydrated]);
-
-  return {
-    selectedItem: pickerSelection ? pickerSelection.item : null,
-    setPickerSelection,
-  };
 }
 
 const BRANCH_OPTION_PREFIX = "branch:";
@@ -1632,17 +1608,22 @@ export function NewWorkspaceScreen({
     }),
   });
   const composerState = chatDraft.composerState;
-  const { selectedItem, setPickerSelection } = useNewWorkspacePickerSelection({
-    attachments: chatDraft.attachments,
-    isDraftHydrated: chatDraft.isHydrated,
-  });
-
-  const handleGithubPrAutoAttach = useCallback(
-    (item: ForgeSearchItem) => {
-      setPickerSelection({ item: { kind: "github-pr", item } });
-    },
-    [setPickerSelection],
+  const [pickerSelection, dispatchPickerSelection] = useReducer(
+    reducePickerSelection,
+    initialPickerSelectionState,
   );
+  const selectedItem = pickerSelection.selectedItem;
+
+  const handleGithubPrDetected = useCallback(() => {
+    dispatchPickerSelection({ type: "pr-detected" });
+  }, []);
+
+  const handleGithubPrAutoAttach = useCallback((item: ForgeSearchItem) => {
+    dispatchPickerSelection({
+      type: "pr-added",
+      item: { kind: "github-pr", item },
+    });
+  }, []);
 
   const withConnectedClient = useCallback(() => {
     if (!client || !isConnected) {
@@ -1743,11 +1724,11 @@ export function NewWorkspaceScreen({
         item,
       });
 
-      setPickerSelection({ item });
+      dispatchPickerSelection({ type: "picker-selected", item });
       chatDraft.setAttachments(nextAttachments);
       setPickerOpen(false);
     },
-    [chatDraft, setPickerSelection],
+    [chatDraft],
   );
 
   const handleSelectOption = useCallback(
@@ -1768,9 +1749,9 @@ export function NewWorkspaceScreen({
       });
       if (nextAttachments === chatDraft.attachments) return;
       chatDraft.setAttachments(nextAttachments);
-      setPickerSelection(null);
+      dispatchPickerSelection({ type: "target-changed" });
     },
-    [chatDraft, setPickerSelection],
+    [chatDraft],
   );
 
   const handleSelectProjectOption = useCallback(
@@ -2166,6 +2147,7 @@ export function NewWorkspaceScreen({
             attachments={chatDraft.attachments}
             attachmentScopeKeys={visibleDraftContextScopeKeys}
             onChangeAttachments={chatDraft.setAttachments}
+            onGithubPrDetected={handleGithubPrDetected}
             onGithubPrAutoAttach={handleGithubPrAutoAttach}
             cwd={selectedSourceDirectory ?? ""}
             clearDraft={handleClearDraft}

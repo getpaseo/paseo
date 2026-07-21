@@ -50,6 +50,7 @@ interface HarnessInput {
   initialAttachments?: UserComposerAttachment[];
   initialCwd?: string;
   initialText?: string;
+  onPullRequestDetected?: () => void;
   remote?: string | null;
 }
 
@@ -109,6 +110,7 @@ function useHarness(client: ForgeSearchClient, input: HarnessInput = {}) {
     serverId: "server-1",
     cwd: workingDirectory,
     setAttachments,
+    onPullRequestDetected: input.onPullRequestDetected,
   });
 
   return {
@@ -133,12 +135,16 @@ describe("useComposerGithubAutoAttach", () => {
   it("adds a matching pasted GitHub PR URL as a composer attachment", async () => {
     vi.useFakeTimers();
     const client = createSearchClient([pr101]);
-    const { result } = renderHook(() => useHarness(client), { wrapper: createWrapper() });
+    const onPullRequestDetected = vi.fn();
+    const { result } = renderHook(() => useHarness(client, { onPullRequestDetected }), {
+      wrapper: createWrapper(),
+    });
 
     act(() => {
       result.current.setText("Please review https://github.com/acme/paseo/pull/101");
     });
     expect(result.current.isResolving).toBe(true);
+    expect(onPullRequestDetected).toHaveBeenCalledTimes(1);
     await flushDebounce();
 
     expect(result.current.attachments).toEqual([{ kind: "forge_change_request", item: pr101 }]);
@@ -277,12 +283,14 @@ describe("useComposerGithubAutoAttach", () => {
     act(() => {
       result.current.setWorkingDirectory("/other-repo");
     });
+    await flushDebounce();
     await act(async () => {
       lookup.resolve(githubPayload([pr101], "search-101"));
       await Promise.resolve();
     });
 
     expect(result.current.attachments).toEqual([]);
+    expect(client.searchForge).toHaveBeenCalledTimes(1);
     vi.useRealTimers();
   });
 });

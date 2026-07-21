@@ -27,6 +27,7 @@ interface ComposerGithubAutoAttachInput {
   cwd: string;
   supportsForgeSearch?: boolean;
   setAttachments: Dispatch<SetStateAction<UserComposerAttachment[]>>;
+  onPullRequestDetected?: () => void;
   onPullRequestAdded?: (item: ForgeSearchItem) => void;
 }
 
@@ -42,6 +43,8 @@ export function useComposerGithubAutoAttach(
   const latestRef = useRef(params);
   const removedRefKeysRef = useRef(new Set<string>());
   const pendingRefKeysRef = useRef(new Set<string>());
+  const presentPullRequestKeysRef = useRef(new Set<string>());
+  const previousTargetRef = useRef({ serverId: params.serverId, cwd: params.cwd });
   const [resolvingRefCounts, setResolvingRefCounts] = useState<ReadonlyMap<string, number>>(
     () => new Map(),
   );
@@ -49,6 +52,15 @@ export function useComposerGithubAutoAttach(
   latestRef.current = params;
 
   useEffect(() => {
+    suppressRefsCarriedAcrossTargets({
+      params: latestRef.current,
+      previousTargetRef,
+      removedRefKeys: removedRefKeysRef.current,
+    });
+    notifyNewPullRequestRefs({
+      params: latestRef.current,
+      presentPullRequestKeysRef,
+    });
     const refs = refsReadyForLookup({
       params: latestRef.current,
       removedRefKeys: removedRefKeysRef.current,
@@ -107,6 +119,48 @@ export function useComposerGithubAutoAttach(
     }),
     [markGithubAttachmentRemoved, resolvingRefCounts.size],
   );
+}
+
+function suppressRefsCarriedAcrossTargets({
+  params,
+  previousTargetRef,
+  removedRefKeys,
+}: {
+  params: ComposerGithubAutoAttachInput;
+  previousTargetRef: RefObject<{ serverId: string; cwd: string }>;
+  removedRefKeys: Set<string>;
+}): void {
+  const previous = previousTargetRef.current;
+  const targetChanged =
+    previous.cwd.trim().length > 0 &&
+    params.cwd.trim().length > 0 &&
+    (previous.serverId !== params.serverId || previous.cwd !== params.cwd);
+  previousTargetRef.current = { serverId: params.serverId, cwd: params.cwd };
+  if (!targetChanged) return;
+
+  for (const ref of extractGithubRefs(params.text, params.remoteUrl)) {
+    removedRefKeys.add(githubRefKey(ref));
+  }
+}
+
+function notifyNewPullRequestRefs({
+  params,
+  presentPullRequestKeysRef,
+}: {
+  params: ComposerGithubAutoAttachInput;
+  presentPullRequestKeysRef: RefObject<Set<string>>;
+}): void {
+  const currentKeys = new Set(
+    extractGithubRefs(params.text, params.remoteUrl)
+      .filter((ref) => ref.kind === "pull")
+      .map(githubRefKey),
+  );
+  for (const key of currentKeys) {
+    if (!presentPullRequestKeysRef.current.has(key)) {
+      params.onPullRequestDetected?.();
+    }
+  }
+  presentPullRequestKeysRef.current = currentKeys;
 }
 
 function addKeys(

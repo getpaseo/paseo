@@ -779,6 +779,7 @@ interface ComposerProps {
   attachmentScopeKeys?: readonly string[];
   onOpenWorkspaceAttachment?: (attachment: WorkspaceComposerAttachment) => void;
   onChangeAttachments: (updater: AttachmentListUpdater) => void;
+  onGithubPrDetected?: () => void;
   onGithubPrAutoAttach?: (item: ForgeSearchItem) => void;
   cwd: string;
   clearDraft: (lifecycle: "sent" | "abandoned") => void;
@@ -993,6 +994,7 @@ export function Composer({
   attachmentScopeKeys = EMPTY_ATTACHMENT_SCOPE_KEYS,
   onOpenWorkspaceAttachment,
   onChangeAttachments,
+  onGithubPrDetected,
   onGithubPrAutoAttach,
   cwd,
   clearDraft,
@@ -1075,6 +1077,7 @@ export function Composer({
     cwd,
     supportsForgeSearch,
     setAttachments: setSelectedAttachments,
+    onPullRequestDetected: onGithubPrDetected,
     onPullRequestAdded: onGithubPrAutoAttach,
   });
   const [cursorIndex, setCursorIndex] = useState(0);
