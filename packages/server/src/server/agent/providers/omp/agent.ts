@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
+import { setImmediate as waitForImmediate, setTimeout as delay } from "node:timers/promises";
 import type { Logger } from "pino";
 import stripAnsi from "strip-ansi";
 
@@ -148,11 +149,22 @@ export interface OmpAgentClientOptions {
   runtime?: OmpRuntime;
   subagentCardScheduler?: OmpSubagentCardScheduler;
   providerIdleScheduler?: OmpProviderIdleScheduler;
+  noTurnScheduler?: OmpNoTurnScheduler;
 }
 
 export interface OmpProviderIdleScheduler {
   waitForRetry(): Promise<void>;
 }
+
+export interface OmpNoTurnScheduler {
+  waitForSettle(signal: AbortSignal): Promise<void>;
+}
+
+// COMPAT(ompDelayedLocalOnlyResult): OMP 17.0.5 can report a regular prompt as
+// local-only shortly before an extension-queued model turn starts. Added in
+// v0.2.0-beta.1; remove after January 20, 2027 once the minimum OMP version
+// guarantees prompt_result waits for queued extension work.
+const OMP_NO_TURN_SETTLE_MS = 5_000;
 
 interface OmpPromptPayload {
   text: string;
@@ -184,6 +196,7 @@ interface OmpAgentSessionOptions {
   logger: Logger;
   subagentCardScheduler?: OmpSubagentCardScheduler;
   providerIdleScheduler?: OmpProviderIdleScheduler;
+  noTurnScheduler?: OmpNoTurnScheduler;
   paseoTools?: PaseoToolCatalog;
   /**
    * When false (resumed sessions), replayed session events are dropped until
@@ -197,6 +210,14 @@ function createOmpProviderIdleScheduler(): OmpProviderIdleScheduler {
   return {
     waitForRetry: async () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
+    },
+  };
+}
+
+function createOmpNoTurnScheduler(): OmpNoTurnScheduler {
+  return {
+    waitForSettle: async (signal) => {
+      await delay(OMP_NO_TURN_SETTLE_MS, undefined, { signal });
     },
   };
 }
@@ -905,7 +926,9 @@ export class OmpAgentSession implements AgentSession {
   private activeNoTurnPromptText: string | null = null;
   private readonly pendingNoTurnOutputs: Array<{ turnId: string; message: string }> = [];
   private activePromptRequestId: string | null = null;
+  private activePromptAgentInvoked: boolean | null = null;
   private readonly pendingPromptResults = new Map<string, boolean>();
+  private pendingNoTurnCompletionAbort: AbortController | null = null;
   private lastKnownThinkingOptionId: string | null;
   private outOfBandCompactionEmit: ((event: AgentStreamEvent) => void) | null = null;
   private outOfBandCompactionStarted = false;
@@ -917,6 +940,7 @@ export class OmpAgentSession implements AgentSession {
   private state: OmpSessionState;
   private readonly currentModeId: string | null;
   private readonly providerIdleScheduler: OmpProviderIdleScheduler;
+  private readonly noTurnScheduler: OmpNoTurnScheduler;
   private closed = false;
   private live: boolean;
   private readonly emittedUserMessageIds = new Set<string>();
@@ -930,6 +954,7 @@ export class OmpAgentSession implements AgentSession {
     this.paseoTools = options.paseoTools;
     this.live = options.live ?? true;
     this.providerIdleScheduler = options.providerIdleScheduler ?? createOmpProviderIdleScheduler();
+    this.noTurnScheduler = options.noTurnScheduler ?? createOmpNoTurnScheduler();
     this.subagentCardTracker = new OmpSubagentCardTracker({
       scheduler: options.subagentCardScheduler,
     });
@@ -1005,8 +1030,12 @@ export class OmpAgentSession implements AgentSession {
         if (ack.requestId) {
           this.pendingPromptResults.delete(ack.requestId);
         }
-        const agentInvoked = correlatedResult ?? ack.agentInvoked;
-        if (agentInvoked === false) {
+        this.activePromptAgentInvoked = correlatedResult ?? ack.agentInvoked ?? null;
+        if (correlatedResult === false) {
+          this.scheduleNoTurnPromptCompletion(turnId);
+          return;
+        }
+        if (correlatedResult !== true && ack.agentInvoked === false) {
           await this.completeNoTurnPrompt(turnId);
           return;
         }
@@ -1183,6 +1212,7 @@ export class OmpAgentSession implements AgentSession {
       return;
     }
     this.closed = true;
+    this.cancelNoTurnPromptCompletion();
     try {
       await this.runtimeSession.close();
     } finally {
@@ -1309,11 +1339,40 @@ export class OmpAgentSession implements AgentSession {
     return this.activeTurnId ?? undefined;
   }
 
+  private scheduleNoTurnPromptCompletion(turnId: string): void {
+    this.cancelNoTurnPromptCompletion();
+    const abort = new AbortController();
+    this.pendingNoTurnCompletionAbort = abort;
+    void this.noTurnScheduler
+      .waitForSettle(abort.signal)
+      .then(async () => {
+        if (this.pendingNoTurnCompletionAbort !== abort) {
+          return undefined;
+        }
+        this.pendingNoTurnCompletionAbort = null;
+        return await this.completeNoTurnPrompt(turnId);
+      })
+      .catch((error: unknown) => {
+        if (!abort.signal.aborted) {
+          this.logger.debug({ err: error }, "OMP local-only settle wait failed");
+        }
+      });
+  }
+
+  private cancelNoTurnPromptCompletion(): void {
+    this.pendingNoTurnCompletionAbort?.abort();
+    this.pendingNoTurnCompletionAbort = null;
+  }
+
   private async completeNoTurnPrompt(turnId: string): Promise<void> {
-    await new Promise<void>((resolve) => {
-      setImmediate(resolve);
-    });
-    if (this.activeTurnId !== turnId || this.activeTurnStarted || this.activeTurnHasUserMessage) {
+    await waitForImmediate();
+    if (
+      this.closed ||
+      this.activeTurnId !== turnId ||
+      this.activeTurnStarted ||
+      this.activePromptAgentInvoked === true ||
+      this.activeTurnHasUserMessage
+    ) {
       return;
     }
     this.emitBufferedNoTurnOutputs(turnId);
@@ -1321,8 +1380,10 @@ export class OmpAgentSession implements AgentSession {
   }
 
   private clearNoTurnBuffers(): void {
+    this.cancelNoTurnPromptCompletion();
     this.activeNoTurnPromptText = null;
     this.activePromptRequestId = null;
+    this.activePromptAgentInvoked = null;
     this.pendingNoTurnOutputs.splice(0, this.pendingNoTurnOutputs.length);
   }
 
@@ -1736,12 +1797,13 @@ export class OmpAgentSession implements AgentSession {
           ? event.agentInvoked
           : undefined;
       if (requestId && agentInvoked !== undefined) {
-        if (
-          requestId === this.activePromptRequestId &&
-          agentInvoked === false &&
-          this.activeTurnId
-        ) {
-          void this.completeNoTurnPrompt(this.activeTurnId);
+        if (requestId === this.activePromptRequestId && this.activeTurnId) {
+          this.activePromptAgentInvoked = agentInvoked;
+          if (agentInvoked === false) {
+            this.scheduleNoTurnPromptCompletion(this.activeTurnId);
+          } else {
+            this.cancelNoTurnPromptCompletion();
+          }
         } else if (this.activePromptRequestId === null) {
           this.pendingPromptResults.set(requestId, agentInvoked);
         }
@@ -2139,7 +2201,7 @@ export class OmpAgentSession implements AgentSession {
     turnId: string | undefined,
     messages: OmpAgentMessage[],
   ): Promise<void> {
-    while (!this.closed && this.activeTurnId === turnId) {
+    while (!this.closed && this.activeTurnStarted && this.currentTurnIdForEvent() === turnId) {
       try {
         const state = await this.runtimeSession.getState();
         this.state = state;
@@ -2188,6 +2250,7 @@ export class OmpAgentClient implements AgentClient {
   private readonly modelRoleParams: OmpModelRoleParams;
   private readonly subagentCardScheduler?: OmpSubagentCardScheduler;
   private readonly providerIdleScheduler?: OmpProviderIdleScheduler;
+  private readonly noTurnScheduler?: OmpNoTurnScheduler;
   private readonly runtime: OmpRuntime;
 
   constructor(options: OmpAgentClientOptions) {
@@ -2209,6 +2272,7 @@ export class OmpAgentClient implements AgentClient {
     this.modelRoleParams = modelRoleParams;
     this.subagentCardScheduler = options.subagentCardScheduler;
     this.providerIdleScheduler = options.providerIdleScheduler;
+    this.noTurnScheduler = options.noTurnScheduler;
     this.runtime = options.runtime ?? createRuntime(options.logger, runtimeSettings);
   }
 
@@ -2249,6 +2313,7 @@ export class OmpAgentClient implements AgentClient {
         logger: this.logger,
         subagentCardScheduler: this.subagentCardScheduler,
         providerIdleScheduler: this.providerIdleScheduler,
+        noTurnScheduler: this.noTurnScheduler,
         paseoTools: launchContext?.paseoTools,
       });
     } catch (error) {
@@ -2289,6 +2354,7 @@ export class OmpAgentClient implements AgentClient {
         logger: this.logger,
         subagentCardScheduler: this.subagentCardScheduler,
         providerIdleScheduler: this.providerIdleScheduler,
+        noTurnScheduler: this.noTurnScheduler,
         paseoTools: launchContext?.paseoTools,
         live: false,
       });

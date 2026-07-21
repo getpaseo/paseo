@@ -1,7 +1,8 @@
+import { setImmediate as waitForImmediate } from "node:timers/promises";
 import { describe, expect, test } from "vitest";
 
 import type { PaseoToolCatalog } from "../../tools/types.js";
-import type { OmpProviderIdleScheduler } from "./agent.js";
+import type { OmpNoTurnScheduler, OmpProviderIdleScheduler } from "./agent.js";
 import { OmpHarness } from "./test-utils/omp-harness.js";
 
 class ManualIdleScheduler implements OmpProviderIdleScheduler {
@@ -27,6 +28,41 @@ class ManualIdleScheduler implements OmpProviderIdleScheduler {
     const resolve = this.retries.shift();
     if (!resolve) throw new Error("OMP has not requested an idle-state retry");
     resolve();
+  }
+}
+
+class ManualNoTurnScheduler implements OmpNoTurnScheduler {
+  private settleResolve: (() => void) | null = null;
+  private aborted = false;
+
+  waitForSettle(signal: AbortSignal): Promise<void> {
+    if (signal.aborted) {
+      this.aborted = true;
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+      this.settleResolve = resolve;
+      signal.addEventListener(
+        "abort",
+        () => {
+          this.aborted = true;
+          this.settleResolve = null;
+          resolve();
+        },
+        { once: true },
+      );
+    });
+  }
+
+  settle(): void {
+    const resolve = this.settleResolve;
+    if (!resolve) throw new Error("OMP has not requested a no-turn settle wait");
+    this.settleResolve = null;
+    resolve();
+  }
+
+  wasAborted(): boolean {
+    return this.aborted;
   }
 }
 
@@ -233,6 +269,104 @@ describe("OMP agent client and session", () => {
       omp.runPromptAfterFalseLocalOnlyHint("hello OMP", "queued model turn completed"),
     ).resolves.toMatchObject({ finalText: "queued model turn completed" });
     expect(omp.completedTurnCount()).toBe(1);
+  });
+
+  test("completes a local-only prompt when no OMP turn begins", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+
+    await expect(omp.runPromptWithoutTurn("/model")).resolves.toMatchObject({ finalText: "" });
+    expect(omp.completedTurnCount()).toBe(1);
+  });
+
+  test("waits for a delayed queued model turn after OMP's local-only result", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+
+    const completion = await omp.runPromptAfterDelayedFalseLocalOnlyResult(
+      "hello OMP",
+      "delayed queued model turn completed",
+    );
+
+    expect(completion.completedBeforeTurn).toBe(false);
+    expect(completion.result).toMatchObject({ finalText: "delayed queued model turn completed" });
+    expect(omp.completedTurnCount()).toBe(1);
+  });
+
+  test("completes an async local-only result after the settle window", async () => {
+    const scheduler = new ManualNoTurnScheduler();
+    const omp = new OmpHarness({ noTurnScheduler: scheduler });
+    await omp.start();
+    const { completion } = await omp.startPromptWithFalseLocalOnlyResult("local-only");
+    let completed = false;
+    void completion.then(
+      () => {
+        completed = true;
+        return undefined;
+      },
+      () => {
+        completed = true;
+        return undefined;
+      },
+    );
+
+    expect(completed).toBe(false);
+    scheduler.settle();
+    await expect(completion).resolves.toMatchObject({ finalText: "" });
+    expect(omp.completedTurnCount()).toBe(1);
+  });
+
+  test("cancels an async local-only settle when the OMP session closes", async () => {
+    const scheduler = new ManualNoTurnScheduler();
+    const omp = new OmpHarness({ noTurnScheduler: scheduler });
+    await omp.start();
+    const { completion } = await omp.startPromptWithFalseLocalOnlyResult("local-only");
+    let completed = false;
+    void completion.then(
+      () => {
+        completed = true;
+        return undefined;
+      },
+      () => {
+        completed = true;
+        return undefined;
+      },
+    );
+
+    await omp.close();
+    await waitForImmediate();
+
+    expect(scheduler.wasAborted()).toBe(true);
+    expect(completed).toBe(false);
+    expect(omp.completedTurnCount()).toBe(0);
+  });
+
+  test("preserves a correlated invoked result over a local-only prompt ack", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+
+    const completion = await omp.runPromptAfterCorrelatedTrueResult(
+      "hello OMP",
+      "correlated model turn completed",
+    );
+
+    expect(completion.completedBeforeTurn).toBe(false);
+    expect(completion.result).toMatchObject({ finalText: "correlated model turn completed" });
+    expect(omp.completedTurnCount()).toBe(1);
+  });
+
+  test("completes an autonomous OMP turn without a foreground turn ID", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+
+    await omp.runAutonomousTurn("autonomous turn completed");
+
+    expect(omp.completedTurnCount()).toBe(1);
+    expect(omp.timeline()).toContainEqual({
+      type: "assistant_message",
+      text: "autonomous turn completed",
+      messageId: "omp-assistant-1",
+    });
   });
 
   test("resumes an OMP session and replays its history", async () => {
