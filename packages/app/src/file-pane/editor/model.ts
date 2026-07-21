@@ -1,4 +1,5 @@
 import type { FileVersion, FileWriteResult } from "@getpaseo/protocol/messages";
+import { applyFileEol, detectFileEol, normalizeToLf, type FileEol } from "./line-endings";
 
 export type FileEditorStatus = "loading" | "clean" | "dirty" | "saving" | "conflict" | "error";
 
@@ -13,7 +14,18 @@ export interface FileEditorSnapshot {
 
 export interface FileEditorFile {
   content: string;
+  hasBom: boolean;
   version: Extract<FileVersion, { status: "ready" }>;
+}
+
+interface FileEditorFormatting {
+  eol: FileEol;
+  hasBom: boolean;
+}
+
+interface NormalizedFile {
+  content: string;
+  formatting: FileEditorFormatting;
 }
 
 export interface FileEditorSession {
@@ -49,6 +61,7 @@ export class FileEditorModel {
   private disposed = false;
   private observedWhileSaving: FileVersion | null = null;
   private persistedContent: string;
+  private formatting: FileEditorFormatting;
 
   constructor(input: {
     file: FileEditorFile;
@@ -57,10 +70,12 @@ export class FileEditorModel {
   }) {
     this.session = input.session;
     this.clock = input.clock ?? systemClock;
-    this.persistedContent = input.file.content;
+    const file = normalizeFile(input.file);
+    this.persistedContent = file.content;
+    this.formatting = file.formatting;
     this.snapshot = {
       status: "clean",
-      content: input.file.content,
+      content: file.content,
       modified: false,
       version: input.file.version,
       observedVersion: input.file.version,
@@ -170,7 +185,7 @@ export class FileEditorModel {
     let result: FileWriteResult;
     try {
       result = await this.session.write({
-        content,
+        content: restoreFileFormatting(content, this.formatting),
         expectedModifiedAt: expectedVersion.modifiedAt,
         expectedRevision: expectedVersion.revision,
       });
@@ -240,10 +255,12 @@ export class FileEditorModel {
       if (this.disposed || sequence !== this.saveSequence || this.snapshot.status !== "loading") {
         return;
       }
-      this.persistedContent = file.content;
+      const normalized = normalizeFile(file);
+      this.persistedContent = normalized.content;
+      this.formatting = normalized.formatting;
       this.setSnapshot({
         status: "clean",
-        content: file.content,
+        content: normalized.content,
         modified: false,
         version: file.version,
         observedVersion: file.version,
@@ -288,6 +305,18 @@ export class FileEditorModel {
     this.snapshot = snapshot;
     for (const listener of this.listeners) listener();
   }
+}
+
+function normalizeFile(file: FileEditorFile): NormalizedFile {
+  return {
+    content: normalizeToLf(file.content),
+    formatting: { eol: detectFileEol(file.content), hasBom: file.hasBom },
+  };
+}
+
+function restoreFileFormatting(content: string, formatting: FileEditorFormatting): string {
+  const withEol = applyFileEol(content, formatting.eol);
+  return formatting.hasBom ? `\uFEFF${withEol}` : withEol;
 }
 
 function sameVersion(left: FileVersion, right: FileVersion): boolean {

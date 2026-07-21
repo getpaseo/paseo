@@ -637,9 +637,13 @@ function EditableFilePane({
     () => ({
       async read(): Promise<FileEditorFile> {
         const file = await client.readFile(cwd, path);
-        if (file.kind !== "text") throw new Error("File is no longer text.");
+        const decodedFile = explorerFileFromReadResult(file);
+        if (decodedFile.kind !== "text" || decodedFile.content === undefined) {
+          throw new Error("File is no longer text.");
+        }
         return {
-          content: new TextDecoder().decode(file.bytes),
+          content: decodedFile.content,
+          hasBom: decodedFile.hasBom,
           version: {
             status: "ready",
             cwd,
@@ -661,6 +665,7 @@ function EditableFilePane({
       new FileEditorModel({
         file: {
           content: preview.content ?? "",
+          hasBom: preview.hasBom,
           version: {
             status: "ready",
             cwd,
