@@ -150,6 +150,40 @@ describe("PiCliRuntime", () => {
     ]);
   });
 
+  test("uses processCwd for process launch while session identity cwd stays original", async () => {
+    const child = createPiChild();
+    replyToCommands(child, () => ({}));
+    const launches: PiRuntimeLaunch[] = [];
+    const runtime = createRuntime(child, launches);
+    const originalCwd = "/missing/worktree-path";
+    const processCwd = "/tmp/safe-recovery-cwd";
+
+    await runtime.startSession({ cwd: originalCwd, processCwd });
+
+    expect(launches).toEqual([
+      expect.objectContaining({
+        cwd: processCwd,
+        argv: ["pi", "--mode", "rpc"],
+      }),
+    ]);
+  });
+
+  test("falls back to session cwd for process launch when processCwd is absent", async () => {
+    const child = createPiChild();
+    replyToCommands(child, () => ({}));
+    const launches: PiRuntimeLaunch[] = [];
+    const runtime = createRuntime(child, launches);
+
+    await runtime.startSession({ cwd: "/workspace/project" });
+
+    expect(launches).toEqual([
+      expect.objectContaining({
+        cwd: "/workspace/project",
+        argv: ["pi", "--mode", "rpc"],
+      }),
+    ]);
+  });
+
   test("passes an MCP config path to Pi", async () => {
     const child = createPiChild();
     replyToCommands(child, () => ({}));

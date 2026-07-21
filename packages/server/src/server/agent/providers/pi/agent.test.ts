@@ -86,6 +86,35 @@ test("forwards launch-context env to the Pi process launch", async () => {
   await session.close();
 });
 
+test("uses processCwd for child spawn while session config.cwd stays original", async () => {
+  const pi = new FakePi();
+  const client = createClient(pi);
+  const originalCwd = "/missing/worktree-path";
+  const processCwd = "/tmp/safe-recovery-cwd";
+
+  const session = await client.createSession(createConfig({ cwd: originalCwd }), {
+    processCwd,
+  });
+
+  expect(pi.recordedLaunches[0]?.cwd).toBe(processCwd);
+  expect(session.describePersistence()?.metadata).toMatchObject({ cwd: originalCwd });
+
+  await session.close();
+});
+
+test("falls back to config.cwd for Pi spawn when processCwd is absent", async () => {
+  const pi = new FakePi();
+  const client = createClient(pi);
+  const originalCwd = "/workspace/project";
+
+  const session = await client.createSession(createConfig({ cwd: originalCwd }));
+
+  expect(pi.recordedLaunches[0]?.cwd).toBe(originalCwd);
+  expect(session.describePersistence()?.metadata).toMatchObject({ cwd: originalCwd });
+
+  await session.close();
+});
+
 test("starts internal Pi agents without persisting a native session", async () => {
   const pi = new FakePi();
   const client = createClient(pi);
@@ -711,6 +740,32 @@ describe("PiRpcAgentSession", () => {
       "--extension",
       actualLaunch.extensionPaths[0],
     ]);
+  });
+
+  test("resume uses processCwd for spawn while persistence metadata keeps original cwd", async () => {
+    const pi = new FakePi();
+    const client = createClient(pi);
+    const originalCwd = "/missing/worktree-path";
+    const processCwd = "/tmp/safe-recovery-cwd";
+
+    const session = await client.resumeSession(
+      {
+        provider: "pi",
+        sessionId: "pi-session-1",
+        nativeHandle: "/tmp/native-pi-session",
+        metadata: {
+          cwd: originalCwd,
+          model: "openrouter/model-a",
+        },
+      },
+      {},
+      { processCwd },
+    );
+
+    expect(pi.recordedLaunches[0]?.cwd).toBe(processCwd);
+    expect(session.describePersistence()?.metadata).toMatchObject({ cwd: originalCwd });
+
+    await session.close();
   });
 
   test("creates Pi sessions with agent and daemon system prompts appended", async () => {
