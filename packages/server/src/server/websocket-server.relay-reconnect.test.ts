@@ -985,6 +985,20 @@ describe("relay external socket reconnect behavior", () => {
     await server.close();
   });
 
+  test("advertises daemon-resolved agent context attachments in initial server_info", async () => {
+    const server = createServer();
+    const socket = new MockSocket();
+
+    const serverInfo = await attachRelayAndHello({
+      server,
+      socket,
+      clientId: "cid-agent-context-attachments",
+    });
+
+    expect(serverInfo.features?.agentContextAttachments).toBe(true);
+    await server.close();
+  });
+
   test("includes voice capabilities in initial server_info when speech readiness exists", async () => {
     const speechReadiness = createReadySpeechReadinessSnapshot();
     const server = createServer({ speechReadiness });

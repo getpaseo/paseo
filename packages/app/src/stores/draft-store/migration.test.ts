@@ -317,4 +317,49 @@ describe("draft-store migration", () => {
     });
     expect(backing.values.has("paseo-drafts")).toBe(true);
   });
+
+  it("hydrates persisted agent context metadata without a transcript body", async () => {
+    const migrated = await migratePersistedState(
+      {
+        drafts: {
+          "agent:server:agent": {
+            input: {
+              text: "Continue this work",
+              attachments: [
+                {
+                  kind: "agent_context",
+                  source: {
+                    serverId: "server-a",
+                    agentId: "agent-source",
+                    title: "  Investigate auth race  ",
+                    workspaceLabel: "Paseo",
+                  },
+                },
+              ],
+            },
+            lifecycle: "active",
+            updatedAt: 1700000000001,
+            version: 2,
+          },
+        },
+        createModalDraft: null,
+      },
+      { migrateLegacyImages: passThroughMigrateLegacyImages, nowMs: 1700000000002 },
+    );
+
+    expect(migrated.drafts["agent:server:agent"]?.input).toEqual({
+      text: "Continue this work",
+      attachments: [
+        {
+          kind: "agent_context",
+          source: {
+            serverId: "server-a",
+            agentId: "agent-source",
+            title: "Investigate auth race",
+            workspaceLabel: "Paseo",
+          },
+        },
+      ],
+    });
+  });
 });

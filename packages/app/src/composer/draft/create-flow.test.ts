@@ -4,6 +4,7 @@
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
+import { useSessionStore } from "@/stores/session-store";
 import type { UserMessageImageAttachment } from "@/types/stream";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import { useDraftAgentCreateFlow, type DraftCreateAttempt } from "./create-flow";
@@ -11,6 +12,7 @@ import { useDraftAgentCreateFlow, type DraftCreateAttempt } from "./create-flow"
 describe("useDraftAgentCreateFlow", () => {
   beforeEach(() => {
     useCreateFlowStore.setState({ pendingByDraftId: {} });
+    useSessionStore.setState((state) => ({ ...state, sessions: {} }));
   });
 
   it("renders a prepared new-workspace submission before continuing it", async () => {
@@ -145,5 +147,51 @@ describe("useDraftAgentCreateFlow", () => {
       cwd: "/repo",
     });
     expect(onCreateSuccess).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not resume an agent-context create attempt on a host without support", async () => {
+    const attempt: DraftCreateAttempt = {
+      clientMessageId: "msg-agent-context",
+      text: "Use the attached context",
+      timestamp: new Date("2026-07-22T00:00:00.000Z"),
+      attachments: [{ type: "agent_context", agentId: "source-agent" }],
+    };
+    const createRequest = vi.fn(async () => ({
+      agentId: "agent-1",
+      result: { id: "agent-1" },
+    }));
+    useSessionStore.setState((state) => ({
+      ...state,
+      sessions: {
+        ...state.sessions,
+        "server-1": {
+          serverInfo: { features: { agentContextAttachments: false } },
+        } as (typeof state.sessions)[string],
+      },
+    }));
+
+    const { result } = renderHook(() =>
+      useDraftAgentCreateFlow({
+        draftId: "draft-1",
+        getPendingServerId: () => "server-1",
+        initialAttempt: attempt,
+        buildDraftAgent: (currentAttempt) => ({ currentAttempt }),
+        createRequest,
+        onCreateSuccess: vi.fn(),
+      }),
+    );
+
+    let thrown: unknown;
+    await act(async () => {
+      try {
+        await result.current.continueCreateFromAttempt({ attempt, cwd: "/repo" });
+      } catch (error) {
+        thrown = error;
+      }
+    });
+
+    expect(thrown).toBeInstanceOf(Error);
+    expect(createRequest).not.toHaveBeenCalled();
+    expect(result.current.formErrorMessage).not.toBe("");
   });
 });

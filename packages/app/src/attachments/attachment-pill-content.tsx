@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import type { TFunction } from "i18next";
 import React from "react";
 import {
+  Bot,
   CircleDot,
   FileText,
   GitPullRequest,
@@ -10,7 +11,7 @@ import {
 } from "lucide-react-native";
 import { withUnistyles } from "react-native-unistyles";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
-import type { WorkspaceComposerAttachment } from "@/attachments/types";
+import type { AgentContextAttachment, WorkspaceComposerAttachment } from "@/attachments/types";
 import { getFileTypeLabel } from "@/attachments/file-types";
 import { isPullRequestContextAttachment } from "@/attachments/workspace-attachment-utils";
 import { getForgePresentation } from "@/git/forge";
@@ -105,7 +106,27 @@ export function getAgentAttachmentPillContent(
         title: attachment.fileName,
         subtitle: getFileTypeLabel(attachment.fileName) ?? t("message.attachments.file"),
       };
+    case "agent_context":
+      return {
+        icon: attachmentAgentIcon,
+        title: attachment.title ?? t("message.attachments.agent"),
+        subtitle: t("message.attachments.agent"),
+      };
   }
+}
+
+export function getAgentContextAttachmentPillContent(
+  attachment: AgentContextAttachment,
+  t: TFunction,
+): AttachmentPillContent {
+  return {
+    icon: attachmentAgentIcon,
+    title: attachment.source.title,
+    subtitle:
+      attachment.source.workspaceLabel ??
+      attachment.source.provider ??
+      t("message.attachments.agent"),
+  };
 }
 
 export function getWorkspaceAttachmentPillContent(
@@ -141,6 +162,7 @@ export function getWorkspaceAttachmentPillContent(
 }
 
 const ThemedAttachmentFileText = withUnistyles(FileText);
+const ThemedAttachmentBot = withUnistyles(Bot);
 const ThemedAttachmentGitPullRequest = withUnistyles(GitPullRequest);
 const ThemedAttachmentCircleDot = withUnistyles(CircleDot);
 const ThemedAttachmentMessageSquareCode = withUnistyles(MessageSquareCode);
@@ -159,6 +181,9 @@ const attachmentGithubIssueIcon = (
 );
 const attachmentFileIcon = (
   <ThemedAttachmentFileText size={ICON_SIZE.sm} uniProps={iconForegroundMutedMapping} />
+);
+const attachmentAgentIcon = (
+  <ThemedAttachmentBot size={ICON_SIZE.sm} uniProps={iconForegroundMutedMapping} />
 );
 const attachmentBrowserIcon = (
   <ThemedAttachmentMousePointer size={ICON_SIZE.sm} uniProps={iconForegroundMutedMapping} />

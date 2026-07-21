@@ -32,6 +32,7 @@ import {
   Image as ImageIcon,
   ClipboardPaste,
   Paperclip,
+  Bot,
 } from "lucide-react-native";
 import * as Clipboard from "expo-clipboard";
 import Animated from "react-native-reanimated";
@@ -82,7 +83,7 @@ import { Shortcut } from "@/components/ui/shortcut";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { AutocompletePopover } from "@/components/ui/autocomplete-popover";
 import type { AutocompleteOption } from "@/components/ui/autocomplete";
-import { useAgentAutocomplete } from "@/hooks/use-agent-autocomplete";
+import { useAgentAutocomplete, type AgentMentionSelection } from "@/hooks/use-agent-autocomplete";
 import {
   useHostRuntimeAgentDirectoryStatus,
   useHostRuntimeClient,
@@ -116,12 +117,14 @@ import type {
   WorkspaceFileComposerAttachment,
   WorkspaceComposerAttachment,
 } from "@/attachments/types";
+import { hasForeignAgentContextAttachments } from "@/attachments/types";
 import type { PickedFile } from "@/attachments/picked-file";
 import { resolveComposerAttachmentSubmitFormat } from "@/composer/attachments/submit";
 import { composerWorkspaceAttachment } from "@/composer/attachments/workspace";
 import { useWorkspaceAttachmentsForScopes } from "@/attachments/workspace-attachments-store";
 import { droppedItemsToPickedFiles } from "@/composer/attachments/drop";
 import { getFileTypeLabel } from "@/attachments/file-types";
+import { getAgentContextAttachmentPillContent } from "@/attachments/attachment-pill-content";
 import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
 import { AttachmentLabel, AttachmentPill, AttachmentThumbnail } from "@/components/attachment-pill";
 import { AttachmentLightbox } from "@/components/attachment-lightbox";
@@ -146,6 +149,15 @@ import {
   resolveWorkspaceFileDrop,
   type WorkspaceFileDragPayload,
 } from "@/attachments/workspace-file-drag";
+import { AgentContextPicker } from "@/components/agent-context-picker";
+import {
+  appendAgentContextAttachmentFromMention,
+  appendAgentContextAttachmentFromPicker,
+  isAgentContextAttachment,
+  MAX_AGENT_CONTEXT_ATTACHMENTS,
+} from "@/components/agent-context-picker-view-model";
+import type { AggregatedAgent } from "@/hooks/use-aggregated-agents";
+import { useHostFeature } from "@/runtime/host-features";
 
 const composerImageAttachmentPersister: Pick<
   AttachmentPersister,
@@ -216,6 +228,10 @@ function resolveMessagePlaceholder(
   return isDesktopWebBreakpoint
     ? t("composer.placeholders.desktop")
     : t("composer.placeholders.mobile");
+}
+
+function hasAgentContextAttachment(attachments: readonly ComposerAttachment[]): boolean {
+  return attachments.some((attachment) => attachment.kind === "agent_context");
 }
 
 function resolveGithubSearchEnabled(
@@ -333,6 +349,7 @@ interface RenderAttachmentTrayArgs {
     openImage: string;
     removeImage: string;
     removeFile: string;
+    removeAgent: (title: string) => string;
     openGithub: (kind: string, numberLabel: string) => string;
     removeGithub: (kind: string, numberLabel: string) => string;
   };
@@ -437,6 +454,18 @@ function renderComposerAttachmentPill(args: RenderComposerAttachmentPillArgs): R
         disabled={disabled}
         onRemove={onRemove}
         removeLabel={labels.removeFile}
+      />
+    );
+  }
+  if (attachment.kind === "agent_context") {
+    return (
+      <AgentContextAttachmentPill
+        key={`agent-context:${attachment.source.serverId}:${attachment.source.agentId}`}
+        attachment={attachment}
+        index={index}
+        disabled={disabled}
+        onRemove={onRemove}
+        removeLabel={labels.removeAgent(attachment.source.title)}
       />
     );
   }
@@ -836,6 +865,14 @@ interface WorkspaceFileAttachmentPillProps {
   removeLabel: string;
 }
 
+interface AgentContextAttachmentPillProps {
+  attachment: Extract<ComposerAttachment, { kind: "agent_context" }>;
+  index: number;
+  disabled: boolean;
+  onRemove: (index: number) => void;
+  removeLabel: string;
+}
+
 function WorkspaceFileAttachmentPill({
   attachment,
   index,
@@ -861,6 +898,30 @@ function WorkspaceFileAttachmentPill({
         title={fileName}
         subtitle={getWorkspaceFileAttachmentSubtitle(attachment)}
       />
+    </AttachmentPill>
+  );
+}
+
+function AgentContextAttachmentPill({
+  attachment,
+  index,
+  disabled,
+  onRemove,
+  removeLabel,
+}: AgentContextAttachmentPillProps) {
+  const { t } = useTranslation();
+  const content = getAgentContextAttachmentPillContent(attachment, t);
+  const handleRemove = useCallback(() => {
+    onRemove(index);
+  }, [onRemove, index]);
+  return (
+    <AttachmentPill
+      testID="composer-agent-context-attachment-pill"
+      onRemove={handleRemove}
+      removeAccessibilityLabel={removeLabel}
+      disabled={disabled}
+    >
+      <AttachmentLabel icon={content.icon} title={content.title} subtitle={content.subtitle} />
     </AttachmentPill>
   );
 }
@@ -909,6 +970,7 @@ function GithubPickerOption({
 interface ComposerProps {
   agentId: string;
   serverId: string;
+  /** Workspace that scopes file drops and attach-agent selection. */
   workspaceId?: string | null;
   isPaneFocused: boolean;
   onSubmitMessage?: (payload: MessagePayload) => Promise<void>;
@@ -955,6 +1017,8 @@ interface ComposerProps {
   onAttentionPromptSend?: () => void;
   /** Controlled agent controls rendered in input area (draft flows). */
   agentControls?: DraftAgentControlsProps;
+  /** Lets a parent-owned New Agent picker serve the same attachment-menu action. */
+  onOpenAgentContextPicker?: () => void;
   /** Extra styles merged onto the message input wrapper (e.g. elevated background). */
   inputWrapperStyle?: import("react-native").ViewStyle;
   /** When true, a parent wrapper owns the keyboard shift, so the composer skips its own. */
@@ -1139,7 +1203,7 @@ const ComposerContent = memo(ComposerContentImpl);
 function ComposerContentImpl({
   agentId,
   serverId,
-  workspaceId,
+  workspaceId: workspaceIdOverride,
   onSubmitMessage,
   onClientSlashCommand,
   hasExternalContent = false,
@@ -1171,6 +1235,7 @@ function ComposerContentImpl({
   onAttentionInputFocus,
   onAttentionPromptSend,
   agentControls,
+  onOpenAgentContextPicker,
   inputWrapperStyle,
   externalKeyboardShift,
   isCompactLayout: isCompactLayoutOverride,
@@ -1200,6 +1265,11 @@ function ComposerContentImpl({
   const { settings: appSettings } = useAppSettings();
 
   const agentState = useSessionStore(useShallow(buildAgentStateSelector(serverId, agentId)));
+  const supportsAgentContextAttachments = useHostFeature(serverId, "agentContextAttachments");
+  const agentWorkspaceId = useSessionStore(
+    (state) => state.sessions[serverId]?.agents?.get(agentId)?.workspaceId ?? null,
+  );
+  const workspaceId = workspaceIdOverride ?? agentWorkspaceId;
 
   const queuedMessagesRaw = useSessionStore((state) =>
     state.sessions[serverId]?.queuedMessages?.get(agentId),
@@ -1256,6 +1326,7 @@ function ComposerContentImpl({
   const [sendError, setSendError] = useState<string | null>(null);
   const [isMessageInputFocused, setIsMessageInputFocused] = useState(false);
   const [isGithubPickerOpen, setIsGithubPickerOpen] = useState(false);
+  const [isAgentContextPickerOpen, setIsAgentContextPickerOpen] = useState(false);
   const [githubSearchQuery, setGithubSearchQuery] = useState("");
   const [lightboxMetadata, setLightboxMetadata] = useState<AttachmentMetadata | null>(null);
   const attachButtonRef = useRef<View | null>(null);
@@ -1282,6 +1353,50 @@ function ComposerContentImpl({
       onChangeText(text);
     },
     [onChangeText],
+  );
+
+  const handleOpenAgentContextPicker = useCallback(() => {
+    if (onOpenAgentContextPicker) {
+      onOpenAgentContextPicker();
+      return;
+    }
+    setIsAgentContextPickerOpen(true);
+  }, [onOpenAgentContextPicker]);
+  const handleCloseAgentContextPicker = useCallback(() => {
+    setIsAgentContextPickerOpen(false);
+  }, []);
+  const handleAddAgentContext = useCallback(
+    (source: AggregatedAgent) => {
+      setSelectedAttachments((current) =>
+        appendAgentContextAttachmentFromPicker({ current, source }),
+      );
+    },
+    [setSelectedAttachments],
+  );
+  const handleSelectAgentMention = useCallback(
+    (source: AgentMentionSelection) => {
+      if (source.serverId !== serverId) {
+        return false;
+      }
+      const alreadyAttached = attachments.some(
+        (attachment) =>
+          isAgentContextAttachment(attachment) &&
+          attachment.source.serverId === source.serverId &&
+          attachment.source.agentId === source.agentId,
+      );
+      const attachedCount = attachments.filter(isAgentContextAttachment).length;
+      if (!alreadyAttached && attachedCount >= MAX_AGENT_CONTEXT_ATTACHMENTS) {
+        toastErrorRef.current(
+          t("agentContext.status.limitReached", { count: MAX_AGENT_CONTEXT_ATTACHMENTS }),
+        );
+        return false;
+      }
+      setSelectedAttachments((current) =>
+        appendAgentContextAttachmentFromMention({ current, source }),
+      );
+      return true;
+    },
+    [attachments, serverId, setSelectedAttachments, t],
   );
 
   const runClientSlashCommand = useCallback(
@@ -1328,6 +1443,7 @@ function ComposerContentImpl({
     draftConfig: commandDraftConfig,
     canExecuteClientSlashCommand: buildOutgoingAttachments(attachments).length === 0,
     onClientSlashCommand: runClientSlashCommand,
+    onSelectAgent: supportsAgentContextAttachments ? handleSelectAgentMention : undefined,
     onAutocompleteApplied: () => {
       messageInputRef.current?.focus();
     },
@@ -1411,6 +1527,12 @@ function ComposerContentImpl({
 
   const submitMessage = useCallback(
     async (text: string, submitAttachments: ComposerAttachment[]) => {
+      if (!supportsAgentContextAttachments && hasAgentContextAttachment(submitAttachments)) {
+        throw new Error(t("agentContext.status.updateHost"));
+      }
+      if (hasForeignAgentContextAttachments(submitAttachments, serverId)) {
+        throw new Error(t("agentContext.status.wrongHost"));
+      }
       onMessageSent?.();
       if (onSubmitMessageRef.current) {
         await onSubmitMessageRef.current({ text, attachments: submitAttachments, cwd });
@@ -1419,14 +1541,14 @@ function ComposerContentImpl({
       if (!sendAgentMessageRef.current) {
         throw new Error(t("workspace.terminal.hostDisconnected"));
       }
-      await sendAgentMessageRef.current(
+  await sendAgentMessageRef.current(
         agentIdRef.current,
         text,
         submitAttachments,
         appSettings.sendBehavior === "steer" ? "steer" : "interrupt",
       );
     },
-    [appSettings.sendBehavior, cwd, onMessageSent, t],
+    [appSettings.sendBehavior, cwd, onMessageSent, serverId, supportsAgentContextAttachments, t],
   );
 
   useEffect(() => {
@@ -2062,6 +2184,12 @@ function ComposerContentImpl({
       },
       ...pluginAttachments.menuItems,
       {
+        id: "agent_context",
+        label: t("composer.attachments.addAgent"),
+        icon: <ThemedBot size={ICON_SIZE.md} uniProps={iconForegroundMutedMapping} />,
+        onSelect: handleOpenAgentContextPicker,
+      },
+      {
         id: "file",
         label: t("composer.attachments.addFile"),
         icon: <ThemedPaperclip size={ICON_SIZE.md} uniProps={iconForegroundMutedMapping} />,
@@ -2073,6 +2201,7 @@ function ComposerContentImpl({
     return items;
   }, [
     forgePresentation,
+    handleOpenAgentContextPicker,
     handlePasteImage,
     handlePickFile,
     handlePickImage,
@@ -2194,6 +2323,7 @@ function ComposerContentImpl({
           openImage: t("composer.attachments.openImage"),
           removeImage: t("composer.attachments.removeImage"),
           removeFile: t("composer.attachments.removeFile"),
+          removeAgent: (title: string) => t("composer.attachments.removeAgent", { title }),
           openGithub: (kind: string, numberLabel: string) =>
             t("composer.attachments.openGithub", { kind, number: numberLabel }),
           removeGithub: (kind: string, numberLabel: string) =>
@@ -2264,6 +2394,18 @@ function ComposerContentImpl({
       />
       <Animated.View style={composerContainerStyle}>
         <AttachmentLightbox metadata={lightboxMetadata} onClose={handleLightboxClose} />
+        {!onOpenAgentContextPicker ? (
+          <AgentContextPicker
+            visible={isAgentContextPickerOpen}
+            serverId={serverId}
+            workspaceId={workspaceId}
+            currentAgentId={agentId}
+            attachments={attachments}
+            supported={supportsAgentContextAttachments}
+            onClose={handleCloseAgentContextPicker}
+            onAdd={handleAddAgentContext}
+          />
+        ) : null}
         {/* Input area */}
         <View style={inputAreaContainerStyle}>
           <View style={styles.inputAreaContent}>
@@ -2503,6 +2645,7 @@ const ThemedPaperclip = withUnistyles(Paperclip);
 const ThemedImageIcon = withUnistyles(ImageIcon);
 const ThemedClipboardPaste = withUnistyles(ClipboardPaste);
 const ThemedFileText = withUnistyles(FileText);
+const ThemedBot = withUnistyles(Bot);
 const iconForegroundMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const iconForegroundMutedMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 const iconAccentForegroundMapping = (theme: Theme) => ({ color: theme.colors.accentForeground });

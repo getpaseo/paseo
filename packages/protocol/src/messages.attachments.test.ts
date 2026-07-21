@@ -269,6 +269,30 @@ describe("shared messages attachments", () => {
     ]);
   });
 
+  it("keeps daemon-resolved agent context references without transcript bodies", () => {
+    const parsed = SendAgentMessageRequestSchema.parse({
+      type: "send_agent_message_request",
+      requestId: "req-agent-context",
+      agentId: "destination-agent",
+      text: "Continue this work",
+      attachments: [
+        {
+          type: "agent_context",
+          agentId: " source-agent ",
+          title: "Source agent",
+        },
+      ],
+    });
+
+    expect(parsed.attachments).toEqual([
+      {
+        type: "agent_context",
+        agentId: "source-agent",
+        title: "Source agent",
+      },
+    ]);
+  });
+
   it("keeps known text attachment context kinds and ignores future ones", () => {
     const parsed = SendAgentMessageRequestSchema.parse({
       type: "send_agent_message_request",
