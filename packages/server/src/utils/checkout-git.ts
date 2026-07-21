@@ -2001,9 +2001,8 @@ export async function getCheckoutStatus(
   };
 }
 
-// Cap on how many ahead-of-base commits we enumerate. Branches with more than
-// this many unmerged commits are truncated to the newest MAX_CHECKOUT_COMMITS.
-const MAX_CHECKOUT_COMMITS = 200;
+// The explorer is a recent-history view, not a full repository log.
+const MAX_CHECKOUT_COMMITS = 20;
 // Bytes git emits between fields/records. We split parsed output on these.
 const COMMIT_FIELD_SEPARATOR = "\x00";
 const COMMIT_RECORD_SEPARATOR = "\x1e";
@@ -2189,13 +2188,8 @@ async function getLocalOnlyCommitShas(
 }
 
 /**
- * Lists the current branch's commits that are ahead of its base branch, newest
- * first, each flagged local-only vs on-remote with per-commit file +/- stats.
- *
- * Base ref is resolved exactly like {@link getCheckoutStatus}: the stored/default
- * base branch, mapped to the best comparison ref (origin/<base> when present,
- * else local <base>). Returns `[]` when the base cannot be resolved, the current
- * ref is the base itself, or there are no commits ahead.
+ * Lists the current branch's 20 most recent commits, newest first, each flagged
+ * local-only vs on-remote with per-commit file +/- stats.
  */
 export interface CheckoutCommitsResult {
   baseRef: string | null;
@@ -2213,21 +2207,14 @@ export async function listCheckoutCommits({
   }
 
   const { resolvedBaseRef } = await resolveBaseRefForCwd(cwd);
-  if (!resolvedBaseRef) {
-    return { baseRef: null, commits: [] };
-  }
-
-  const normalizedBaseRef = normalizeLocalBranchRefName(resolvedBaseRef);
-  if (!normalizedBaseRef || normalizedBaseRef === currentBranch) {
-    return { baseRef: null, commits: [] };
-  }
-
-  let comparisonBaseRef: string;
-  try {
-    comparisonBaseRef = await resolveBestComparisonBaseRef(cwd, resolvedBaseRef);
-  } catch {
-    // Base branch is not present locally or on origin — nothing to compare against.
-    return { baseRef: null, commits: [] };
+  const normalizedBaseRef = resolvedBaseRef ? normalizeLocalBranchRefName(resolvedBaseRef) : null;
+  let comparisonBaseRef: string | null = null;
+  if (resolvedBaseRef && normalizedBaseRef && normalizedBaseRef !== currentBranch) {
+    try {
+      comparisonBaseRef = await resolveBestComparisonBaseRef(cwd, resolvedBaseRef);
+    } catch {
+      // History does not depend on the configured base being available.
+    }
   }
 
   // Single pass: `--raw` carries the status letter, `--numstat` the +/- counts.
@@ -2235,8 +2222,7 @@ export async function listCheckoutCommits({
   const logResult = await runGitCommand(
     [
       "log",
-      `${comparisonBaseRef}..HEAD`,
-      "--no-merges",
+      "HEAD",
       `--max-count=${MAX_CHECKOUT_COMMITS}`,
       `--format=${COMMIT_LOG_FORMAT}`,
       "--raw",

@@ -52,7 +52,7 @@ function addBareRemote(repoDir: string, tempDir: string): string {
 }
 
 describe("listCheckoutCommits", () => {
-  it("lists commits ahead of base newest-first with on-remote flags and file stats", async () => {
+  it("lists recent commits newest-first with on-remote flags and file stats", async () => {
     const { repoDir, tempDir } = initRepoOnMain();
     git(["checkout", "-b", "feature"], repoDir);
     commitFile(repoDir, "foo.txt", "a\nb\nc\n", "Add foo");
@@ -65,12 +65,14 @@ describe("listCheckoutCommits", () => {
     const { baseRef, commits } = await listCheckoutCommits({ cwd: repoDir });
 
     expect(baseRef).toBe("main");
-    expect(commits).toHaveLength(2);
+    expect(commits).toHaveLength(3);
     expect(commits[0]?.subject).toBe("Add bar");
     expect(commits[1]?.subject).toBe("Add foo");
+    expect(commits[2]?.subject).toBe("initial");
 
     expect(commits[0]?.isOnRemote).toBe(false);
     expect(commits[1]?.isOnRemote).toBe(true);
+    expect(commits[2]?.isOnRemote).toBe(true);
 
     expect(commits[0]?.files).toEqual([
       { path: "bar.txt", additions: 1, deletions: 0, status: "added" },
@@ -85,11 +87,11 @@ describe("listCheckoutCommits", () => {
     expect(Number.isNaN(new Date(commits[0]?.authorDate ?? "").getTime())).toBe(false);
   });
 
-  it("returns [] when there are no commits ahead of base", async () => {
+  it("shows recent history on the base branch", async () => {
     const { repoDir } = initRepoOnMain();
     const { baseRef, commits } = await listCheckoutCommits({ cwd: repoDir });
     expect(baseRef).toBeNull();
-    expect(commits).toEqual([]);
+    expect(commits.map((entry) => entry.subject)).toEqual(["initial"]);
   });
 
   it("marks all commits local-only when there is no remote", async () => {
@@ -101,8 +103,22 @@ describe("listCheckoutCommits", () => {
     const { baseRef, commits } = await listCheckoutCommits({ cwd: repoDir });
 
     expect(baseRef).toBe("main");
-    expect(commits).toHaveLength(2);
+    expect(commits).toHaveLength(3);
     expect(commits.every((c) => c.isOnRemote === false)).toBe(true);
+  });
+
+  it("limits history to the 20 most recent commits", async () => {
+    const { repoDir } = initRepoOnMain();
+    for (let index = 1; index <= 24; index += 1) {
+      commitFile(repoDir, "history.txt", `${index}\n`, `Commit ${index}`);
+    }
+
+    const { commits } = await listCheckoutCommits({ cwd: repoDir });
+
+    expect(commits).toHaveLength(20);
+    expect(commits.map((entry) => entry.subject)).toEqual(
+      Array.from({ length: 20 }, (_, index) => `Commit ${24 - index}`),
+    );
   });
 
   it("classifies renamed files with status renamed and correct destination path", async () => {
