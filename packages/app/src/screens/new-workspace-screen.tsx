@@ -91,7 +91,7 @@ import {
 } from "./new-workspace-picker-item";
 import {
   clearPickerPrAttachmentForTargetChange,
-  pickerItemFromAttachments,
+  pickerItemFromLatestPrAttachment,
   syncPickerPrAttachment,
 } from "./new-workspace-picker-state";
 import {
@@ -180,6 +180,27 @@ interface PickerOptionData {
 
 interface PickerSelection {
   item: PickerItem;
+}
+
+function useNewWorkspacePickerSelection(input: {
+  attachments: Parameters<typeof pickerItemFromLatestPrAttachment>[0];
+  isDraftHydrated: boolean;
+}) {
+  const [pickerSelection, setPickerSelection] = useState<PickerSelection | null>(null);
+  const didRestorePickerSelectionRef = useRef(false);
+
+  useEffect(() => {
+    if (!input.isDraftHydrated || didRestorePickerSelectionRef.current) return;
+    didRestorePickerSelectionRef.current = true;
+    const restoredItem = pickerItemFromLatestPrAttachment(input.attachments);
+    if (!restoredItem) return;
+    setPickerSelection((current) => current ?? { item: restoredItem });
+  }, [input.attachments, input.isDraftHydrated]);
+
+  return {
+    selectedItem: pickerSelection ? pickerSelection.item : null,
+    setPickerSelection,
+  };
 }
 
 const BRANCH_OPTION_PREFIX = "branch:";
@@ -741,11 +762,6 @@ function getContentStyle(input: { isCompact: boolean; insetBottom: number }) {
     return [styles.content, styles.contentCompact, { paddingBottom: input.insetBottom }];
   }
   return [styles.content, styles.contentCentered];
-}
-
-function getSelectedPickerItem(selection: PickerSelection | null): PickerItem | null {
-  if (!selection) return null;
-  return selection.item;
 }
 
 function normalizeBranchDetails(
@@ -1546,7 +1562,6 @@ export function NewWorkspaceScreen({
     typeof normalizeWorkspaceDescriptor
   > | null>(null);
   const [pendingAction, setPendingAction] = useState<"chat" | "empty" | null>(null);
-  const [manualPickerSelection, setManualPickerSelection] = useState<PickerSelection | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const openAddProjectPicker = useOpenAddProject();
@@ -1617,9 +1632,17 @@ export function NewWorkspaceScreen({
     }),
   });
   const composerState = chatDraft.composerState;
-  const selectedItem =
-    getSelectedPickerItem(manualPickerSelection) ??
-    pickerItemFromAttachments(chatDraft.attachments);
+  const { selectedItem, setPickerSelection } = useNewWorkspacePickerSelection({
+    attachments: chatDraft.attachments,
+    isDraftHydrated: chatDraft.isHydrated,
+  });
+
+  const handleGithubPrAutoAttach = useCallback(
+    (item: ForgeSearchItem) => {
+      setPickerSelection({ item: { kind: "github-pr", item } });
+    },
+    [setPickerSelection],
+  );
 
   const withConnectedClient = useCallback(() => {
     if (!client || !isConnected) {
@@ -1720,11 +1743,11 @@ export function NewWorkspaceScreen({
         item,
       });
 
-      setManualPickerSelection({ item });
+      setPickerSelection({ item });
       chatDraft.setAttachments(nextAttachments);
       setPickerOpen(false);
     },
-    [chatDraft],
+    [chatDraft, setPickerSelection],
   );
 
   const handleSelectOption = useCallback(
@@ -1736,7 +1759,7 @@ export function NewWorkspaceScreen({
     [itemById, selectPickerItem],
   );
 
-  const clearManualPickerSelectionForTargetChange = useCallback(
+  const clearPickerSelectionForTargetChange = useCallback(
     (currentTargetId: string, nextTargetId: string) => {
       const nextAttachments = clearPickerPrAttachmentForTargetChange({
         attachments: chatDraft.attachments,
@@ -1745,9 +1768,9 @@ export function NewWorkspaceScreen({
       });
       if (nextAttachments === chatDraft.attachments) return;
       chatDraft.setAttachments(nextAttachments);
-      setManualPickerSelection(null);
+      setPickerSelection(null);
     },
-    [chatDraft],
+    [chatDraft, setPickerSelection],
   );
 
   const handleSelectProjectOption = useCallback(
@@ -1757,17 +1780,17 @@ export function NewWorkspaceScreen({
       // canCreateWorktree or non-git projects become unselectable.
       selectProjectOption(id);
       setProjectPickerOpen(false);
-      clearManualPickerSelectionForTargetChange(selectedProjectOptionId, id);
+      clearPickerSelectionForTargetChange(selectedProjectOptionId, id);
     },
-    [clearManualPickerSelectionForTargetChange, selectProjectOption, selectedProjectOptionId],
+    [clearPickerSelectionForTargetChange, selectProjectOption, selectedProjectOptionId],
   );
 
   const handleSelectWorkspaceHost = useCallback(
     (id: string) => {
       handleSelectHost(id);
-      clearManualPickerSelectionForTargetChange(selectedServerId, id);
+      clearPickerSelectionForTargetChange(selectedServerId, id);
     },
-    [clearManualPickerSelectionForTargetChange, handleSelectHost, selectedServerId],
+    [clearPickerSelectionForTargetChange, handleSelectHost, selectedServerId],
   );
 
   const handleAddProject = useCallback(() => {
@@ -2143,6 +2166,7 @@ export function NewWorkspaceScreen({
             attachments={chatDraft.attachments}
             attachmentScopeKeys={visibleDraftContextScopeKeys}
             onChangeAttachments={chatDraft.setAttachments}
+            onGithubPrAutoAttach={handleGithubPrAutoAttach}
             cwd={selectedSourceDirectory ?? ""}
             clearDraft={handleClearDraft}
             autoFocus

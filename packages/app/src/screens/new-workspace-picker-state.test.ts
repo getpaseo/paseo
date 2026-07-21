@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { UserComposerAttachment } from "@/attachments/types";
 import {
   clearPickerPrAttachmentForTargetChange,
-  pickerItemFromAttachments,
+  pickerItemFromLatestPrAttachment,
   syncPickerPrAttachment,
 } from "./new-workspace-picker-state";
 import type { ForgeSearchItem } from "@getpaseo/protocol/messages";
@@ -34,19 +34,20 @@ function forgePrAttachment(
   return { kind: "forge_change_request", item };
 }
 
-function issueAttachment(number: number): UserComposerAttachment {
+function makeIssueItem(number: number): ForgeSearchItem {
   return {
-    kind: "github_issue",
-    item: {
-      kind: "issue",
-      number,
-      title: `Issue ${number}`,
-      url: `https://example.com/issues/${number}`,
-      state: "open",
-      body: null,
-      labels: [],
-    },
+    kind: "issue",
+    number,
+    title: `Issue ${number}`,
+    url: `https://example.com/issues/${number}`,
+    state: "open",
+    body: null,
+    labels: [],
   };
+}
+
+function issueAttachment(number: number): UserComposerAttachment {
+  return { kind: "github_issue", item: makeIssueItem(number) };
 }
 
 describe("syncPickerPrAttachment", () => {
@@ -150,26 +151,36 @@ describe("clearPickerPrAttachmentForTargetChange", () => {
   });
 });
 
-describe("pickerItemFromAttachments", () => {
-  it("uses a forge change request attachment as the starting ref", () => {
+describe("pickerItemFromLatestPrAttachment", () => {
+  it("restores a forge change request attachment as the starting ref", () => {
     const item = makePrItem(101, "A");
 
-    expect(pickerItemFromAttachments([forgePrAttachment(item)])).toEqual({
+    expect(pickerItemFromLatestPrAttachment([forgePrAttachment(item)])).toEqual({
       kind: "github-pr",
       item,
     });
   });
 
-  it("keeps legacy GitHub PR attachments working", () => {
+  it("restores a legacy GitHub PR attachment as the starting ref", () => {
     const item = makePrItem(101, "A");
 
-    expect(pickerItemFromAttachments([prAttachment(item)])).toEqual({
+    expect(pickerItemFromLatestPrAttachment([prAttachment(item)])).toEqual({
       kind: "github-pr",
       item,
     });
   });
 
   it("ignores issue attachments", () => {
-    expect(pickerItemFromAttachments([issueAttachment(44)])).toBeNull();
+    expect(pickerItemFromLatestPrAttachment([issueAttachment(44)])).toBeNull();
+  });
+
+  it("restores the most recently attached PR", () => {
+    const first = forgePrAttachment(makePrItem(101, "A"));
+    const second = forgePrAttachment(makePrItem(202, "B"));
+
+    expect(pickerItemFromLatestPrAttachment([first, second])).toEqual({
+      kind: "github-pr",
+      item: second.item,
+    });
   });
 });

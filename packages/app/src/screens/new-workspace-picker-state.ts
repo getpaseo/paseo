@@ -62,10 +62,11 @@ export function clearPickerPrAttachmentForTargetChange(input: {
   return input.attachments.filter((attachment) => !isPrAttachment(attachment));
 }
 
-export function pickerItemFromAttachments(
+export function pickerItemFromLatestPrAttachment(
   attachments: ReadonlyArray<UserComposerAttachment>,
 ): PickerItem | null {
-  for (const attachment of attachments) {
+  for (let index = attachments.length - 1; index >= 0; index -= 1) {
+    const attachment = attachments[index];
     if (!isPrAttachment(attachment)) continue;
     return { kind: "github-pr", item: attachment.item };
   }

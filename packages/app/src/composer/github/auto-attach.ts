@@ -27,6 +27,7 @@ interface ComposerGithubAutoAttachInput {
   cwd: string;
   supportsForgeSearch?: boolean;
   setAttachments: Dispatch<SetStateAction<UserComposerAttachment[]>>;
+  onPullRequestAdded?: (item: ForgeSearchItem) => void;
 }
 
 interface ComposerGithubAutoAttachResult {
@@ -191,12 +192,19 @@ async function attachRef({
     return;
   }
 
-  latestRef.current.setAttachments((current) => {
+  const latest = latestRef.current;
+  if (isAttachmentSelectedForGithubItem(latest.attachments, item)) {
+    return;
+  }
+  latest.setAttachments((current) => {
     if (removedRefKeys.has(key) || isAttachmentSelectedForGithubItem(current, item)) {
       return current;
     }
     return toggleGithubAttachment(current, item);
   });
+  if (item.kind === "change_request") {
+    latest.onPullRequestAdded?.(item);
+  }
 }
 
 function refsReadyForLookup({
