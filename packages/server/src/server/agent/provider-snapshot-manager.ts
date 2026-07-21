@@ -361,6 +361,7 @@ export class ProviderSnapshotManager {
       parent,
       unattended: input.unattended || parent?.isUnattended === true,
       availableModes: entry.modes ?? [],
+      defaultModeId: entry.defaultModeId,
     });
   }
 

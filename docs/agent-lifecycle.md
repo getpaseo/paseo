@@ -39,6 +39,8 @@ Cancellation changes lifecycle state only after the provider acknowledges the in
 
 Agents can launch other agents via the agent-scoped `create_agent` MCP tool. Agent-scoped creation is always asynchronous and always stamps `paseo.parent-agent-id`, pointing back at the caller. Omit `workspaceId` to use the caller's workspace, or pass an existing workspace ID returned by `create_workspace`. Placement never changes parentage.
 
+Provider mode IDs are provider-specific. Omit the mode to use the target provider's default. For compatibility with automation that supplies a generic `default`, agent creation resolves that alias to the provider's advertised default when the provider does not expose a literal `default` mode; a real mode named `default` still wins.
+
 - **Subagents** — exist as part of the creating agent's work, appear in that agent's subagent track, and are archived with it.
 - **Detached agents** — stand on their own after an explicit detach transition, do not appear in the former parent's subagent track, and are not archived with it.
 

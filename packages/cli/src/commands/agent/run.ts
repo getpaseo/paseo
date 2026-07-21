@@ -37,7 +37,10 @@ export function addRunOptions(cmd: Command): Command {
         "Model to use (e.g., claude-sonnet-4-20250514, claude-3-5-haiku-20241022)",
       )
       .option("--thinking <id>", "Thinking option ID to use for this run")
-      .option("--mode <mode>", "Provider-specific mode (e.g., plan, default, bypass)")
+      .option(
+        "--mode <mode>",
+        "Provider-specific mode ID; omit for the provider default (see `paseo provider ls`)",
+      )
       .option("--isolation <local|worktree>", "Create a new workspace with this isolation")
       .addOption(new Option("--worktree <name>", "Legacy workspace isolation alias").hideHelp())
       .option("--base <branch>", "Base branch for an isolated workspace")
@@ -433,6 +436,7 @@ async function connectToDaemonOrThrow(
 interface RunWorkspace {
   id?: string;
   cwd: string;
+  cleanupWorkspaceId?: string;
 }
 
 export interface RunWorkspaceLookupClient {
@@ -518,7 +522,31 @@ async function resolveRunWorkspace(
   console.error(
     "Tip: pass --workspace <id> (or set PASEO_WORKSPACE_ID) to run in an existing workspace.",
   );
-  return { id: result.workspace.id, cwd: result.workspace.workspaceDirectory ?? cwd };
+  return {
+    id: result.workspace.id,
+    cwd: result.workspace.workspaceDirectory ?? cwd,
+    cleanupWorkspaceId: result.workspace.id,
+  };
+}
+
+export async function cleanupRunWorkspace(
+  client: Pick<ConnectedDaemonClient, "archiveWorkspace">,
+  workspaceId: string | undefined,
+): Promise<void> {
+  if (!workspaceId) {
+    return;
+  }
+  try {
+    const archived = await client.archiveWorkspace(workspaceId);
+    if (archived.error) {
+      console.error(`Warning: failed to clean up workspace ${workspaceId}: ${archived.error}`);
+    } else {
+      console.error(`Archived workspace ${workspaceId} after agent creation failed.`);
+    }
+  } catch (cleanupError) {
+    const message = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
+    console.error(`Warning: failed to clean up workspace ${workspaceId}: ${message}`);
+  }
 }
 
 export async function runRunCommand(
@@ -536,6 +564,7 @@ export async function runRunCommand(
   const resolvedTitle = options.title ?? options.name;
 
   const client = await connectToDaemonOrThrow(options.host, host);
+  let createdWorkspaceIdForCleanup: string | undefined;
 
   try {
     // Resolve working directory
@@ -559,6 +588,7 @@ export async function runRunCommand(
 
     const workspace = await resolveRunWorkspace(client, options, cwd);
     const workspaceId = workspace.id;
+    createdWorkspaceIdForCleanup = workspace.cleanupWorkspaceId;
     const callerAgentId = resolveRunCallerAgentId();
     const runCwd = workspace.cwd;
 
@@ -582,6 +612,7 @@ export async function runRunCommand(
             env: requestEnv,
             labels: Object.keys(labels).length > 0 ? labels : undefined,
           });
+          createdWorkspaceIdForCleanup = undefined;
         } else {
           await client.sendMessage(structuredAgent.id, structuredPrompt);
         }
@@ -652,6 +683,7 @@ export async function runRunCommand(
       env: requestEnv,
       labels: Object.keys(labels).length > 0 ? labels : undefined,
     });
+    createdWorkspaceIdForCleanup = undefined;
 
     // Default run behavior is foreground: wait for completion unless background execution is set.
     if (!runsInBackground(options)) {
@@ -676,6 +708,7 @@ export async function runRunCommand(
       schema: agentRunSchema,
     };
   } catch (err) {
+    await cleanupRunWorkspace(client, createdWorkspaceIdForCleanup);
     await client.close().catch(() => {});
 
     if (err && typeof err === "object" && "code" in err) {

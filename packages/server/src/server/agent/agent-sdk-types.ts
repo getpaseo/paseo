@@ -128,6 +128,7 @@ export interface ResolveAgentCreateConfigInput {
   parent: AgentCreateConfigParent | null;
   unattended: boolean;
   availableModes: AgentMode[] | undefined;
+  defaultModeId?: string | null;
 }
 
 export interface ResolveAgentCreateConfigResult {

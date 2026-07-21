@@ -1,10 +1,34 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  cleanupRunWorkspace,
   resolveExistingRunWorkspace,
   resolveRunCallerAgentId,
   runRunCommand,
   type AgentRunOptions,
 } from "./run";
+
+describe("failed run workspace cleanup", () => {
+  it("archives a workspace created for a run when agent creation fails", async () => {
+    const archiveWorkspace = vi.fn().mockResolvedValue({ archivedAt: new Date().toISOString() });
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await cleanupRunWorkspace({ archiveWorkspace } as never, "workspace-created-for-run");
+
+    expect(archiveWorkspace).toHaveBeenCalledWith("workspace-created-for-run");
+    expect(consoleError).toHaveBeenCalledWith(
+      "Archived workspace workspace-created-for-run after agent creation failed.",
+    );
+    consoleError.mockRestore();
+  });
+
+  it("does nothing when the run reused an existing workspace", async () => {
+    const archiveWorkspace = vi.fn();
+
+    await cleanupRunWorkspace({ archiveWorkspace } as never, undefined);
+
+    expect(archiveWorkspace).not.toHaveBeenCalled();
+  });
+});
 
 describe("managed agent caller context", () => {
   it("propagates a trimmed PASEO_AGENT_ID", () => {
