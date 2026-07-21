@@ -588,19 +588,34 @@ export const ar: TranslationResources = {
     scripts: {
       title: "البرامج النصية",
       actions: {
+        chooseUrl: "اختيار الرابط",
+        copyUrl: "نسخ الرابط",
+        openService: "عرض الخدمة",
+        restart: "إعادة التشغيل",
         run: "يجري",
-        view: "منظر",
+        stop: "إيقاف",
+        view: "عرض الوحدة الطرفية",
       },
       accessibility: {
         trigger: "البرامج النصية Workspace",
-        openAt: "افتح{{scriptName}}في{{label}}",
+        openService: "عرض خدمة {{scriptName}}",
         viewTerminal: "عرض محطة{{scriptName}}",
         runScript: "قم بتشغيل البرنامج النصي{{scriptName}}",
+        stopScript: "إيقاف{{scriptName}}",
+        restartScript: "إعادة تشغيل{{scriptName}}",
+        copyUrl: "نسخ عنوان URL لـ{{scriptName}}",
+        chooseUrl: "اختيار رابط {{scriptName}}",
         script: "البرنامج النصي{{scriptName}}",
+      },
+      routes: {
+        public: "الوكيل العكسي",
+        paseo: "Memorable",
+        direct: "مباشر",
       },
       states: {
         exitCode: "الخروج من{{code}}",
         startFailed: "فشل بدء تشغيل{{scriptName}}",
+        stopFailed: "فشل إيقاف{{scriptName}}",
       },
     },
     git: {

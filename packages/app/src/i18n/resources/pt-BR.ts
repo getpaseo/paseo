@@ -591,19 +591,34 @@ export const ptBR: TranslationResources = {
     scripts: {
       title: "Scripts",
       actions: {
+        chooseUrl: "Escolher URL",
+        copyUrl: "Copiar URL",
+        openService: "Ver serviço",
+        restart: "Reiniciar",
         run: "Executar",
-        view: "Ver",
+        stop: "Parar",
+        view: "Ver terminal",
       },
       accessibility: {
         trigger: "Scripts do workspace",
-        openAt: "Abrir {{scriptName}} em {{label}}",
+        openService: "Ver serviço {{scriptName}}",
         viewTerminal: "Ver terminal de {{scriptName}}",
         runScript: "Executar script {{scriptName}}",
+        stopScript: "Parar {{scriptName}}",
+        restartScript: "Reiniciar {{scriptName}}",
+        copyUrl: "Copiar URL de {{scriptName}}",
+        chooseUrl: "Escolher URL para {{scriptName}}",
         script: "script {{scriptName}}",
+      },
+      routes: {
+        public: "Proxy reverso",
+        paseo: "Memorable",
+        direct: "Direta",
       },
       states: {
         exitCode: "saída {{code}}",
         startFailed: "Falha ao iniciar {{scriptName}}",
+        stopFailed: "Falha ao parar {{scriptName}}",
       },
     },
     git: {

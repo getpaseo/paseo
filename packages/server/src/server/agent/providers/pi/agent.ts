@@ -535,10 +535,6 @@ function buildResumeStartInput(input: {
     session: input.sessionFile,
     model: input.resumeConfig.model,
     thinkingOptionId: normalizePiThinkingOption(input.resumeConfig.thinkingOptionId) ?? undefined,
-    systemPrompt: composeSystemPromptParts(
-      input.resumeConfig.config.systemPrompt,
-      input.resumeConfig.config.daemonAppendSystemPrompt,
-    ),
     mcpConfigPath: input.mcpConfig?.path,
     extensionPaths: input.paseoExtension ? [input.paseoExtension.path] : undefined,
   };
@@ -630,7 +626,7 @@ function createPiMcpConfigFile(
   };
 }
 
-function createPiPaseoExtensionFile(): PiTempFile {
+function createPiPaseoExtensionFile(systemPrompt?: string): PiTempFile {
   const dir = mkdtempSync(join(tmpdir(), "paseo-pi-extension-"));
   const filePath = join(dir, "paseo-integration.mjs");
   writeFileSync(
@@ -680,6 +676,14 @@ function createPiPaseoExtensionFile(): PiTempFile {
 	}
 
 	export default function paseoIntegration(pi) {
+	  ${
+      systemPrompt
+        ? `pi.on("before_agent_start", async (event) => ({
+	    systemPrompt: event.systemPrompt + "\\n\\n" + ${JSON.stringify(systemPrompt)},
+	  }));`
+        : ""
+    }
+
 	  pi.on("session_start", async (_event, ctx) => {
 	    emitEntryCapture(ctx, "session_start");
 	  });
@@ -2307,7 +2311,9 @@ export class PiRpcAgentClient implements AgentClient {
       ...launchContext?.env,
     };
     const mcpConfig = await this.prepareMcpConfig(config.cwd, config.mcpServers, mcpEnv);
-    const paseoExtension = createPiPaseoExtensionFile();
+    const paseoExtension = createPiPaseoExtensionFile(
+      composeSystemPromptParts(config.systemPrompt, config.daemonAppendSystemPrompt),
+    );
     let runtimeSession: PiRuntimeSession;
     try {
       runtimeSession = await this.runtime.startSession({
@@ -2316,10 +2322,6 @@ export class PiRpcAgentClient implements AgentClient {
         thinkingOptionId:
           normalizePiThinkingOption(config.thinkingOptionId) ?? DEFAULT_PI_THINKING_LEVEL,
         noSession: config.internal === true,
-        systemPrompt: composeSystemPromptParts(
-          config.systemPrompt,
-          config.daemonAppendSystemPrompt,
-        ),
         env: launchContext?.env,
         mcpConfigPath: mcpConfig?.path,
         extensionPaths: paseoExtension ? [paseoExtension.path] : undefined,
@@ -2368,7 +2370,12 @@ export class PiRpcAgentClient implements AgentClient {
       resumeConfig.config.mcpServers,
       mcpEnv,
     );
-    const paseoExtension = createPiPaseoExtensionFile();
+    const paseoExtension = createPiPaseoExtensionFile(
+      composeSystemPromptParts(
+        resumeConfig.config.systemPrompt,
+        resumeConfig.config.daemonAppendSystemPrompt,
+      ),
+    );
     let runtimeSession: PiRuntimeSession;
     try {
       runtimeSession = await this.runtime.startSession(

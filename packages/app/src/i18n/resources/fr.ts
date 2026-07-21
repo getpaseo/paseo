@@ -594,19 +594,34 @@ export const fr: TranslationResources = {
     scripts: {
       title: "Scripts",
       actions: {
+        chooseUrl: "Choisir l’URL",
+        copyUrl: "Copier l’URL",
+        openService: "Voir le service",
+        restart: "Redémarrer",
         run: "Courir",
-        view: "Voir",
+        stop: "Arrêter",
+        view: "Voir le terminal",
       },
       accessibility: {
         trigger: "ScriptsWorkspace",
-        openAt: "Ouvrir{{scriptName}}à{{label}}",
+        openService: "Voir le service {{scriptName}}",
         viewTerminal: "Voir le terminal{{scriptName}}",
         runScript: "Exécuter le script{{scriptName}}",
+        stopScript: "Arrêter{{scriptName}}",
+        restartScript: "Redémarrer{{scriptName}}",
+        copyUrl: "Copier l'URL de{{scriptName}}",
+        chooseUrl: "Choisir l’URL pour {{scriptName}}",
         script: "Script{{scriptName}}",
+      },
+      routes: {
+        public: "Proxy inverse",
+        paseo: "Memorable",
+        direct: "Directe",
       },
       states: {
         exitCode: "quitter{{code}}",
         startFailed: "Échec du démarrage de{{scriptName}}",
+        stopFailed: "Échec de l'arrêt de{{scriptName}}",
       },
     },
     git: {

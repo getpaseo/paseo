@@ -3,6 +3,11 @@ import { connectionFromListen } from "@/types/host-connection";
 import type { HostRuntimeStore } from "@/runtime/host-runtime";
 
 export type DaemonStartResult = { ok: true } | { ok: false; error: string };
+export type DaemonStartCondition = boolean | (() => boolean | Promise<boolean>);
+
+export interface StartDaemonIfEnabledInput {
+  shouldStart: DaemonStartCondition;
+}
 
 type DaemonConnectionStore = Pick<HostRuntimeStore, "upsertConnectionFromListen">;
 
@@ -50,8 +55,27 @@ export class DaemonStartService {
   }
 
   async start(): Promise<DaemonStartResult> {
+    return this.startIfEnabled({ shouldStart: true });
+  }
+
+  async startIfEnabled(input: StartDaemonIfEnabledInput): Promise<DaemonStartResult> {
+    // Settings evaluation is part of startup. Publish the running state before
+    // its first await so restored app chrome cannot appear between these phases.
     this.beginRequest();
     try {
+      let shouldStart: boolean;
+      try {
+        shouldStart =
+          typeof input.shouldStart === "boolean" ? input.shouldStart : await input.shouldStart();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return this.fail(`Failed to evaluate desktop daemon settings: ${message}`);
+      }
+
+      if (!shouldStart) {
+        return { ok: true };
+      }
+
       const daemon = await this.invokeStartDesktopDaemon();
       const result = await upsertDesktopDaemonConnection(this.store, daemon);
       return result.ok ? result : this.fail(result.error);
@@ -64,10 +88,6 @@ export class DaemonStartService {
 
   getLastError(): string | null {
     return this.lastError;
-  }
-
-  recordError(message: string): void {
-    this.setLastError(message);
   }
 
   isRunning(): boolean {

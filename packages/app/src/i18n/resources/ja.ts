@@ -590,19 +590,34 @@ export const ja: TranslationResources = {
     scripts: {
       title: "スクリプト",
       actions: {
+        chooseUrl: "URLを選択",
+        copyUrl: "URLをコピー",
+        openService: "サービスを表示",
+        restart: "再起動",
         run: "実行",
-        view: "表示",
+        stop: "停止",
+        view: "ターミナルを表示",
       },
       accessibility: {
         trigger: "ワークスペーススクリプト",
-        openAt: "{{label}}で{{scriptName}}を開く",
+        openService: "{{scriptName}}サービスを表示",
         viewTerminal: "{{scriptName}}ターミナルを表示",
         runScript: "{{scriptName}}スクリプトを実行",
+        stopScript: "{{scriptName}}を停止",
+        restartScript: "{{scriptName}}を再起動",
+        copyUrl: "{{scriptName}}のURLをコピー",
+        chooseUrl: "{{scriptName}}のURLを選択",
         script: "{{scriptName}}スクリプト",
+      },
+      routes: {
+        public: "リバースプロキシ",
+        paseo: "Memorable",
+        direct: "直接接続",
       },
       states: {
         exitCode: "終了コード: {{code}}",
         startFailed: "{{scriptName}}の起動に失敗しました",
+        stopFailed: "{{scriptName}}の停止に失敗しました",
       },
     },
     git: {

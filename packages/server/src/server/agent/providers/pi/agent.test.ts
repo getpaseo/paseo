@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import pino from "pino";
 import { setImmediate as waitForImmediate } from "node:timers/promises";
+import { pathToFileURL } from "node:url";
 import { describe, expect, onTestFinished, test } from "vitest";
 
 import type { AgentSession, AgentSessionConfig, AgentStreamEvent } from "../../agent-sdk-types.js";
@@ -55,6 +56,26 @@ function readUtf8File(pathname: string): string {
     closeSync(fd);
   }
 }
+
+async function applyPaseoExtensionSystemPrompt(
+  extensionPath: string,
+  systemPrompt: string,
+): Promise<string | undefined> {
+  const listeners = new Map<string, (event: { systemPrompt: string }) => unknown>();
+  const extension = (await import(pathToFileURL(extensionPath).href)) as {
+    default: (piApi: {
+      on: (event: string, listener: (event: { systemPrompt: string }) => unknown) => void;
+      registerCommand: () => void;
+    }) => void;
+  };
+  extension.default({
+    on: (event, listener) => listeners.set(event, listener),
+    registerCommand: () => undefined,
+  });
+  const result = await listeners.get("before_agent_start")?.({ systemPrompt });
+  return (result as { systemPrompt?: string } | undefined)?.systemPrompt;
+}
+
 async function flushTurnScheduling(): Promise<void> {
   await waitForImmediate();
 }
@@ -713,11 +734,11 @@ describe("PiRpcAgentSession", () => {
     ]);
   });
 
-  test("creates Pi sessions with agent and daemon system prompts appended", async () => {
+  test("appends agent and daemon prompts after Pi's discovered system prompt", async () => {
     const pi = new FakePi();
     const client = createClient(pi);
 
-    await client.createSession(
+    const session = await client.createSession(
       createConfig({
         systemPrompt: "Agent prompt",
         daemonAppendSystemPrompt: "Daemon prompt",
@@ -727,7 +748,6 @@ describe("PiRpcAgentSession", () => {
     const actualLaunch = pi.recordedLaunches[0]!;
     expect(actualLaunch).toMatchObject({
       cwd: "/tmp/paseo-pi-rpc-test",
-      systemPrompt: "Agent prompt\n\nDaemon prompt",
     });
     expect(actualLaunch.extensionPaths).toHaveLength(1);
     expect(actualLaunch.argv).toEqual([
@@ -736,11 +756,15 @@ describe("PiRpcAgentSession", () => {
       "rpc",
       "--thinking",
       "medium",
-      "--append-system-prompt",
-      "Agent prompt\n\nDaemon prompt",
       "--extension",
       actualLaunch.extensionPaths[0],
     ]);
+
+    await expect(
+      applyPaseoExtensionSystemPrompt(actualLaunch.extensionPaths[0]!, "Pi project prompt"),
+    ).resolves.toBe("Pi project prompt\n\nAgent prompt\n\nDaemon prompt");
+
+    await session.close();
   });
 
   test("resumes Pi sessions with daemon system prompts appended", async () => {
@@ -769,7 +793,6 @@ describe("PiRpcAgentSession", () => {
     expect(actualLaunch).toMatchObject({
       cwd: "/workspace/project",
       session: "/tmp/native-pi-session",
-      systemPrompt: "Agent prompt\n\nDaemon prompt",
     });
     expect(actualLaunch.extensionPaths).toHaveLength(1);
     expect(actualLaunch.argv).toEqual([
@@ -782,11 +805,12 @@ describe("PiRpcAgentSession", () => {
       "high",
       "--session",
       "/tmp/native-pi-session",
-      "--append-system-prompt",
-      "Agent prompt\n\nDaemon prompt",
       "--extension",
       actualLaunch.extensionPaths[0],
     ]);
+    await expect(
+      applyPaseoExtensionSystemPrompt(actualLaunch.extensionPaths[0]!, "Pi project prompt"),
+    ).resolves.toBe("Pi project prompt\n\nAgent prompt\n\nDaemon prompt");
   });
 
   test("updates model and thinking through Pi runtime commands", async () => {

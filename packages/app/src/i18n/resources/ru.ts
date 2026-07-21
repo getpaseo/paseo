@@ -593,19 +593,34 @@ export const ru: TranslationResources = {
     scripts: {
       title: "Скрипты",
       actions: {
+        chooseUrl: "Выбрать URL",
+        copyUrl: "Скопировать URL",
+        openService: "Просмотреть сервис",
+        restart: "Перезапустить",
         run: "Бегать",
-        view: "Вид",
+        stop: "Остановить",
+        view: "Открыть терминал",
       },
       accessibility: {
         trigger: "Скрипты Workspace",
-        openAt: "Откройте{{scriptName}}на{{label}}",
+        openService: "Просмотреть сервис {{scriptName}}",
         viewTerminal: "Посмотреть терминал{{scriptName}}",
         runScript: "Запустите скрипт{{scriptName}}",
+        stopScript: "Остановить{{scriptName}}",
+        restartScript: "Перезапустить{{scriptName}}",
+        copyUrl: "Скопировать URL {{scriptName}}",
+        chooseUrl: "Выбрать URL для {{scriptName}}",
         script: "скрипт{{scriptName}}",
+      },
+      routes: {
+        public: "Обратный прокси",
+        paseo: "Memorable",
+        direct: "Прямой адрес",
       },
       states: {
         exitCode: "выйти из{{code}}",
         startFailed: "Не удалось запустить{{scriptName}}",
+        stopFailed: "Не удалось остановить{{scriptName}}",
       },
     },
     git: {

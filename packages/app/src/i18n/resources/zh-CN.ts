@@ -584,19 +584,34 @@ export const zhCN: TranslationResources = {
     scripts: {
       title: "Scripts",
       actions: {
+        chooseUrl: "选择 URL",
+        copyUrl: "复制 URL",
+        openService: "查看服务",
+        restart: "重启",
         run: "运行",
-        view: "查看",
+        stop: "停止",
+        view: "查看终端",
       },
       accessibility: {
         trigger: "Workspace scripts",
-        openAt: "在 {{label}} 打开 {{scriptName}}",
+        openService: "查看 {{scriptName}} 服务",
         viewTerminal: "查看 {{scriptName}} Terminal",
         runScript: "运行 {{scriptName}} script",
+        stopScript: "停止 {{scriptName}}",
+        restartScript: "重启 {{scriptName}}",
+        copyUrl: "复制 {{scriptName}} 的 URL",
+        chooseUrl: "选择 {{scriptName}} 的 URL",
         script: "{{scriptName}} script",
+      },
+      routes: {
+        public: "反向代理",
+        paseo: "Memorable",
+        direct: "直接地址",
       },
       states: {
         exitCode: "exit {{code}}",
         startFailed: "启动 {{scriptName}} 失败",
+        stopFailed: "停止 {{scriptName}} 失败",
       },
     },
     git: {

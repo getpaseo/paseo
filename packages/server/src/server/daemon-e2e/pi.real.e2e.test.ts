@@ -140,6 +140,51 @@ beforeEach((context) => {
 });
 
 test(
+  "real Pi daemon composes project and Paseo system prompts",
+  async () => {
+    const cwd = tmpCwd("pi-system-prompts-");
+
+    try {
+      mkdirSync(path.join(cwd, ".pi"), { recursive: true });
+      writeFileSync(
+        path.join(cwd, ".pi", "APPEND_SYSTEM.md"),
+        [
+          "When the user says PASEO_SYSTEM_PROMPT_PROBE, reply with exactly two tokens:",
+          "PROJECT_PROMPT followed by the value of PASEO_PROMPT_TOKEN from later system instructions.",
+          "If no PASEO_PROMPT_TOKEN exists, use MISSING as the second token.",
+        ].join("\n"),
+      );
+
+      await withConnectedPiDaemon(async ({ client }) => {
+        const agent = await client.createAgent({
+          cwd,
+          title: "pi-system-prompts",
+          provider: "pi",
+          model: PI_REAL_TEST_MODEL,
+          systemPrompt:
+            "PASEO_PROMPT_TOKEN is PASEO_PROMPT. Follow the project instruction for PASEO_SYSTEM_PROMPT_PROBE.",
+        });
+
+        await client.sendMessage(agent.id, "PASEO_SYSTEM_PROMPT_PROBE");
+        const finish = await client.waitForFinish(agent.id, PI_TEST_TIMEOUT_MS);
+        expect(finish.status).toBe("idle");
+
+        const items = await fetchCanonicalTimeline(client, agent.id);
+        const response = items
+          .filter((item) => item.type === "assistant_message")
+          .map((item) => item.text)
+          .join("")
+          .trim();
+        expect(response).toBe("PROJECT_PROMPT PASEO_PROMPT");
+      });
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  },
+  PI_TEST_TIMEOUT_MS,
+);
+
+test(
   "real Pi daemon lists Paseo-handled compact slash commands",
   async () => {
     const cwd = tmpCwd("pi-compact-commands-");

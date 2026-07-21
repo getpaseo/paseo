@@ -51,6 +51,16 @@ When a client resumes with a known cursor, it catches up after that cursor to co
 
 When a client resumes without a cursor, it fetches the latest tail page.
 
+## Client replica lifetime
+
+The host runtime owns each session replica for as long as the host remains registered. React
+providers attach message handlers and UI integrations to that replica, but mounting or unmounting a
+provider must not create or clear it. A provider can remount during Fast Refresh or ordinary UI
+recomposition while the runtime still owns the same directory snapshot and timeline cursors.
+
+Removing the host from the registry is the destructive boundary: it stops the runtime and clears the
+session and host-scoped setup state together.
+
 ## Selective and legacy delivery
 
 The app chooses one delivery policy from `server_info.features.selectiveAgentTimeline`:
