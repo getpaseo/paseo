@@ -113,10 +113,15 @@ export function formatSystemNotificationPrompt(reason: string): string {
   return `<paseo-system>\n${reason}\n</paseo-system>`;
 }
 
-const SYSTEM_ENVELOPE_PATTERN = /^<paseo-system>\n[\s\S]*\n<\/paseo-system>$/;
+const SYSTEM_ENVELOPE_PATTERN = /^<paseo-system>\n([\s\S]*)\n<\/paseo-system>$/;
 
 export function isSystemInjectedEnvelope(text: string): boolean {
   return SYSTEM_ENVELOPE_PATTERN.test(text);
+}
+
+/** Strip the <paseo-system> envelope and return only the inner text. */
+export function stripSystemEnvelope(text: string): string {
+  return text.replace(SYSTEM_ENVELOPE_PATTERN, "$1");
 }
 
 export interface SendPromptToAgentParams {

@@ -9,6 +9,7 @@ import {
   isSystemInjectedEnvelope,
   sendPromptToAgent,
   setupFinishNotification,
+  stripSystemEnvelope,
 } from "./agent-prompt.js";
 import type { AgentManagerEvent, ManagedAgent } from "./agent-manager.js";
 
@@ -153,6 +154,11 @@ function createFinishNotificationScenario(
 test("isSystemInjectedEnvelope matches the envelope formatSystemNotificationPrompt produces", () => {
   expect(isSystemInjectedEnvelope(formatSystemNotificationPrompt("child finished"))).toBe(true);
   expect(isSystemInjectedEnvelope("hello world")).toBe(false);
+});
+
+test("stripSystemEnvelope removes the paseo-system wrapper", () => {
+  expect(stripSystemEnvelope(formatSystemNotificationPrompt("child finished"))).toBe("child finished");
+  expect(stripSystemEnvelope("hello world")).toBe("hello world");
 });
 
 test("sendPromptToAgent forwards the client message id as run options", async () => {
