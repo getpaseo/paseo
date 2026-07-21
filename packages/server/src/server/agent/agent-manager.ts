@@ -1893,6 +1893,14 @@ export class AgentManager {
       }
     }
 
+    // Safety: always finalize the foreground turn when runAgent returns.
+    // If the session subscription processed the terminal event normally,
+    // finalizeForegroundTurn was already called and this is a no-op.
+    const runAgent_ = this.agents.get(agentId);
+    if (runAgent_?.activeForegroundTurnId) {
+      this.finalizeForegroundTurn(runAgent_, runAgent_.activeForegroundTurnId);
+    }
+
     finalText = this.getLastAssistantMessageFromTimeline(timeline) ?? "";
 
     const agent = this.requireAgent(agentId);
