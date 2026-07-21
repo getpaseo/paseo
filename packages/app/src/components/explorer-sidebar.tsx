@@ -36,7 +36,6 @@ import { RetainedPanelActivity } from "@/components/retained-panel";
 import { SidebarResizeHandle } from "@/components/sidebar-resize-handle";
 import { buildWorkspaceAttachmentScopeKey } from "@/attachments/workspace-attachments-store";
 import { resolveDesktopExplorerWidth } from "@/components/desktop-sidebar-layout";
-import { isWeb } from "@/constants/platform";
 import {
   buildWorkspaceTabPersistenceKey,
   useWorkspaceLayoutStore,
@@ -427,7 +426,7 @@ function ExplorerSidebarContent({
 /**
  * Shared add-to-chat state for the changes/files panes: both expose an "add file
  * to chat" action that attaches the file to the focused chat's composer.
- * Web-only, and only when a workspace with a focused chat is available.
+ * Available only when a workspace with a focused chat is available.
  */
 function useAddFileToChat({
   serverId,
@@ -457,7 +456,7 @@ function useAddFileToChat({
     },
     [focusTab, focusedChat, workspaceKey],
   );
-  return { addFile, canAddToChat: isWeb && focusedChat !== null };
+  return { addFile, canAddToChat: focusedChat !== null };
 }
 
 function ChangedFilesPane({
