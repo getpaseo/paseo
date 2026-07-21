@@ -84,11 +84,7 @@ import {
   getWorkspaceNamingAttachments,
   remapDraftCwdToWorkspace,
 } from "./new-workspace-fork-context";
-import {
-  pickerItemToCheckoutRequest,
-  type PickerCheckoutRequest,
-  type PickerItem,
-} from "./new-workspace-picker-item";
+import { pickerItemToCheckoutRequest, type PickerItem } from "./new-workspace-picker-item";
 import {
   clearPickerPrAttachmentForTargetChange,
   initialPickerSelectionState,
@@ -106,19 +102,6 @@ const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.for
 const addProjectIcon = (
   <ThemedFolderPlus size={ICON_SIZE.sm} uniProps={foregroundMutedColorMapping} />
 );
-
-function resolveCheckoutRequest(
-  selectedItem: PickerItem | null,
-  currentBranch: string | null,
-): PickerCheckoutRequest | undefined {
-  const selectedCheckoutRequest = pickerItemToCheckoutRequest(selectedItem);
-  if (selectedCheckoutRequest) return selectedCheckoutRequest;
-  if (!currentBranch) return undefined;
-  return {
-    action: "branch-off",
-    refName: currentBranch,
-  };
-}
 
 function useIsNewWorkspaceDraftHandoffActive(input: {
   draftId: string | undefined;
@@ -809,7 +792,6 @@ async function createMultiplicityWorkspace(input: {
   project: HostProjectListItem;
   sourceDirectory: string;
   selectedItem: PickerItem | null;
-  currentBranch: string | null;
   withInitialAgent: boolean;
   prompt: string;
   attachments: AgentAttachment[];
@@ -821,9 +803,7 @@ async function createMultiplicityWorkspace(input: {
   createFailedMessage: string;
 }): Promise<ReturnType<typeof normalizeWorkspaceDescriptor>> {
   const isWorktree = input.isolation === "worktree";
-  const checkoutRequest = isWorktree
-    ? resolveCheckoutRequest(input.selectedItem, input.currentBranch)
-    : undefined;
+  const checkoutRequest = isWorktree ? pickerItemToCheckoutRequest(input.selectedItem) : undefined;
   const firstAgentContext = buildFirstAgentContext({
     prompt: input.prompt,
     attachments: input.attachments,
@@ -1652,7 +1632,7 @@ export function NewWorkspaceScreen({
     refetchOnWindowFocus: false,
   });
 
-  const currentBranch = checkoutStatusQuery.data?.currentBranch ?? null;
+  const baseRef = checkoutStatusQuery.data?.baseRef ?? null;
   const { effectiveIsolation, setIsolation, canCreateWorktree, showRefPicker } =
     useWorkspaceIsolation({
       supportsMultiplicity: supportsWorkspaceMultiplicity,
@@ -1708,8 +1688,8 @@ export function NewWorkspaceScreen({
   );
   const triggerLabel = useMemo(() => {
     if (selectedItem) return pickerItemTriggerLabel(selectedItem);
-    return currentBranch ?? "main";
-  }, [currentBranch, selectedItem]);
+    return baseRef ?? "main";
+  }, [baseRef, selectedItem]);
 
   const selectedOptionId = useMemo(() => {
     if (!selectedItem) return "";
@@ -1866,7 +1846,7 @@ export function NewWorkspaceScreen({
       if (!selectedSourceDirectory) {
         throw new Error("Choose a host for this project");
       }
-      const checkoutRequest = resolveCheckoutRequest(selectedItem, currentBranch);
+      const checkoutRequest = pickerItemToCheckoutRequest(selectedItem);
       const firstAgentContext = buildFirstAgentContext(input);
 
       return {
@@ -1877,7 +1857,7 @@ export function NewWorkspaceScreen({
         ...checkoutRequest,
       };
     },
-    [currentBranch, selectedItem, selectedProject, selectedSourceDirectory],
+    [selectedItem, selectedProject, selectedSourceDirectory],
   );
 
   const ensureWorkspace = useCallback(
@@ -1903,7 +1883,6 @@ export function NewWorkspaceScreen({
             project: selectedProject,
             sourceDirectory: selectedSourceDirectory,
             selectedItem,
-            currentBranch,
             withInitialAgent: input.withInitialAgent,
             prompt: input.prompt,
             attachments: input.attachments,
@@ -1924,7 +1903,6 @@ export function NewWorkspaceScreen({
     [
       buildCreateWorktreeInput,
       createdWorkspace,
-      currentBranch,
       effectiveIsolation,
       mergeWorkspaces,
       selectedItem,
