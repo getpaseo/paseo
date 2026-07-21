@@ -212,8 +212,8 @@ describe("OMP runtime event mapper", () => {
         type: "auto_compaction_end",
         action: "context-full",
         result: {
-          summary: "trimmed",
-          shortSummary: "trimmed",
+          summary: "Live recap: retained the deployment decision and rollback plan.",
+          shortSummary: "Deployment decision retained",
           firstKeptEntryId: "entry-1",
           tokensBefore: 123,
         },
@@ -227,6 +227,8 @@ describe("OMP runtime event mapper", () => {
         status: "completed",
         trigger: "auto",
         preTokens: 123,
+        summary: "Live recap: retained the deployment decision and rollback plan.",
+        shortSummary: "Deployment decision retained",
       },
     });
 

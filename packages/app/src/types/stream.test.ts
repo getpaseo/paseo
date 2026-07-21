@@ -102,7 +102,17 @@ function todoTimeline(items: { text: string; completed: boolean }[]): AgentStrea
 
 function compactionTimeline(
   status: "loading" | "completed",
-  trigger?: "auto" | "manual",
+  {
+    trigger,
+    preTokens,
+    summary,
+    shortSummary,
+  }: {
+    trigger?: "auto" | "manual";
+    preTokens?: number;
+    summary?: string;
+    shortSummary?: string;
+  } = {},
 ): AgentStreamEventPayload {
   return {
     type: "timeline",
@@ -111,6 +121,9 @@ function compactionTimeline(
       type: "compaction",
       status,
       ...(trigger ? { trigger } : {}),
+      ...(preTokens !== undefined ? { preTokens } : {}),
+      ...(summary !== undefined ? { summary } : {}),
+      ...(shortSummary !== undefined ? { shortSummary } : {}),
     },
   };
 }
@@ -845,14 +858,43 @@ describe("stream reducer canonical tool calls", () => {
     assert.strictEqual(todos.items[1]?.completed, true);
   });
 
-  it("preserves compaction trigger when completed update replaces loading marker", () => {
+  it("carries completed compaction recap fields into the stream item", () => {
     const state = hydrateStreamState([
       {
-        event: compactionTimeline("loading", "auto"),
+        event: compactionTimeline("completed", {
+          summary: "Reviewed the authentication flow and identified the remaining work.",
+          shortSummary: "Authentication flow review",
+        }),
+        timestamp: new Date("2025-01-01T10:50:00Z"),
+      },
+    ]);
+
+    const compaction = state.find(
+      (item): item is Extract<StreamItem, { kind: "compaction" }> => item.kind === "compaction",
+    );
+
+    assert.ok(compaction);
+    assert.strictEqual(
+      compaction.summary,
+      "Reviewed the authentication flow and identified the remaining work.",
+    );
+    assert.strictEqual(compaction.shortSummary, "Authentication flow review");
+  });
+
+  it("merges completion recap fields with loading compaction fallback metadata", () => {
+    const state = hydrateStreamState([
+      {
+        event: compactionTimeline("loading", {
+          trigger: "auto",
+          preTokens: 12_345,
+        }),
         timestamp: new Date("2025-01-01T10:50:00Z"),
       },
       {
-        event: compactionTimeline("completed"),
+        event: compactionTimeline("completed", {
+          summary: "Consolidated the implementation context for the next step.",
+          shortSummary: "Implementation context",
+        }),
         timestamp: new Date("2025-01-01T10:50:01Z"),
       },
     ]);
@@ -864,6 +906,12 @@ describe("stream reducer canonical tool calls", () => {
     assert.strictEqual(compactions.length, 1);
     assert.strictEqual(compactions[0].status, "completed");
     assert.strictEqual(compactions[0].trigger, "auto");
+    assert.strictEqual(compactions[0].preTokens, 12_345);
+    assert.strictEqual(
+      compactions[0].summary,
+      "Consolidated the implementation context for the next step.",
+    );
+    assert.strictEqual(compactions[0].shortSummary, "Implementation context");
   });
 
   it("renders Claude TodoWrite as todo_list and suppresses tool call badge", () => {

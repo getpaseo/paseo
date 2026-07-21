@@ -388,6 +388,59 @@ describe("OMP history mapper", () => {
     ]);
   });
 
+  test("restores compaction recap entries as completed timeline items", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "omp-compaction-history-"));
+    const sessionFile = join(dir, "session.jsonl");
+    writeFileSync(
+      sessionFile,
+      [
+        {
+          type: "session",
+          id: "compaction-root",
+          parentId: null,
+          timestamp: "2026-07-08T12:00:00Z",
+        },
+        {
+          type: "compaction",
+          id: "compaction-recap",
+          parentId: "compaction-root",
+          timestamp: "2026-07-08T12:00:01Z",
+          summary: "History recap: traced the failed cache invalidation and its correction.",
+          shortSummary: "Cache invalidation corrected",
+        },
+      ]
+        .map((entry) => JSON.stringify(entry))
+        .join("\n"),
+    );
+
+    const events: AgentStreamEvent[] = [];
+    for await (const event of streamOmpHistory({ sessionFile, provider: "omp" })) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([
+      {
+        type: "timeline",
+        provider: "omp",
+        timestamp: "2026-07-08T12:00:01Z",
+        item: {
+          type: "compaction",
+          status: "completed",
+          summary: "History recap: traced the failed cache invalidation and its correction.",
+          shortSummary: "Cache invalidation corrected",
+        },
+      },
+    ]);
+    expect(events).not.toContainEqual(
+      expect.objectContaining({
+        item: {
+          type: "assistant_message",
+          text: "[compaction] Unsupported history record",
+        },
+      }),
+    );
+  });
+
   test("rehydrates structured batch and nested task transcripts with stable status and time", async () => {
     const dir = mkdtempSync(join(tmpdir(), "omp-subagent-history-"));
     const parentFile = join(dir, "parent.jsonl");

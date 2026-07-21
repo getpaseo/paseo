@@ -21,3 +21,17 @@ export function getCompactionMarkerLabel({
   }
   return i18n.t("message.compaction.completed");
 }
+
+export function getCompactionRecapPreview({
+  summary,
+  shortSummary,
+}: {
+  summary?: string;
+  shortSummary?: string;
+}): string | null {
+  const shortPreview = shortSummary?.trim();
+  if (shortPreview) return shortPreview;
+
+  const summaryPreview = summary?.trim();
+  return summaryPreview || null;
+}

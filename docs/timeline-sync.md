@@ -87,6 +87,14 @@ Canonical submitted user rows carry the provider's `messageId` and Paseo's optio
 `clientMessageId`. Clients reconcile optimistic prompts by `clientMessageId`. Content matching is
 limited to the dated compatibility path for daemon timelines created before that field existed.
 
+## Compaction recap reconciliation
+
+Compaction timeline items may carry optional `summary` and `shortSummary` recap text. Live provider
+events and authoritative history hydration map both fields into the same completed compaction item;
+the stream reducer preserves an existing recap when a later completion update omits it. The app
+shows a trimmed short recap when present, falls back to the detailed summary, and keeps legacy
+recap-free compaction markers unchanged.
+
 ## Relevant code
 
 - Server live stream forwarding: `packages/server/src/server/session.ts`

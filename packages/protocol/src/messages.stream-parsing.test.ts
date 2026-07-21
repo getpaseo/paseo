@@ -160,6 +160,68 @@ describe("shared messages stream parsing", () => {
     }
   });
 
+  it("preserves optional compaction recap fields and parses legacy compaction items", () => {
+    const recapParsed = AgentStreamMessageSchema.parse({
+      type: "agent_stream",
+      payload: {
+        agentId: "agent_compaction_recap",
+        timestamp: "2026-07-08T13:00:00.000Z",
+        event: {
+          type: "timeline",
+          provider: "omp",
+          item: {
+            type: "compaction",
+            status: "completed",
+            trigger: "auto",
+            preTokens: 321,
+            summary: "Wire recap: preserved the database migration sequence and safety checks.",
+            shortSummary: "Migration safety preserved",
+          },
+        },
+      },
+    });
+    expect(recapParsed.payload.event).toEqual({
+      type: "timeline",
+      provider: "omp",
+      item: {
+        type: "compaction",
+        status: "completed",
+        trigger: "auto",
+        preTokens: 321,
+        summary: "Wire recap: preserved the database migration sequence and safety checks.",
+        shortSummary: "Migration safety preserved",
+      },
+    });
+
+    const legacyParsed = AgentStreamMessageSchema.parse({
+      type: "agent_stream",
+      payload: {
+        agentId: "agent_compaction_legacy",
+        timestamp: "2026-07-08T13:00:01.000Z",
+        event: {
+          type: "timeline",
+          provider: "omp",
+          item: {
+            type: "compaction",
+            status: "completed",
+            trigger: "auto",
+            preTokens: 144,
+          },
+        },
+      },
+    });
+    expect(legacyParsed.payload.event).toEqual({
+      type: "timeline",
+      provider: "omp",
+      item: {
+        type: "compaction",
+        status: "completed",
+        trigger: "auto",
+        preTokens: 144,
+      },
+    });
+  });
+
   it("parses representative sub_agent tool_call event", () => {
     const parsed = AgentStreamMessageSchema.parse({
       type: "agent_stream",

@@ -7,6 +7,7 @@ import type { OmpAgentMessage } from "./rpc-types.js";
 import type { OmpRuntimeSession } from "./runtime.js";
 import { OMP_HISTORY_MAPPER_HOOKS } from "./history-hooks.js";
 import { formatOmpSubagentTitle } from "./subagent-title.js";
+import { readOmpCompactionDetails } from "./event-mapper.js";
 
 interface OmpSessionEntry {
   type?: string;
@@ -68,21 +69,41 @@ export async function* streamOmpHistory(input: {
     throw error;
   }
   const messages: OmpAgentMessage[] = [];
-  const messageEntries: OmpSessionEntry[] = [];
   const userEntries: OmpCapturedUserMessageEntry[] = [];
+  const replayEntries: Array<
+    | { kind: "message"; entry: OmpSessionEntry; message: OmpAgentMessage }
+    | { kind: "compaction"; entry: OmpSessionEntry }
+  > = [];
   for (const entry of entries) {
+    if (entry.type === "compaction") {
+      replayEntries.push({ kind: "compaction", entry });
+      continue;
+    }
     const mapped = mapEntryMessage(entry);
     if (!mapped) continue;
     messages.push(mapped);
-    messageEntries.push(entry);
+    replayEntries.push({ kind: "message", entry, message: mapped });
     if (mapped.role === "user" && entry.id) {
       userEntries.push({ id: entry.id, text: textOf(mapped.content) });
     }
   }
   const mapper = new OmpHistoryMapper(input.provider, userEntries, OMP_HISTORY_MAPPER_HOOKS);
-  for (let index = 0; index < messages.length; index += 1) {
-    const timestamp = normalizeProviderReplayTimestamp(messageEntries[index]?.timestamp);
-    for (const event of mapper.mapMessages([messages[index]!])) {
+  for (const replayEntry of replayEntries) {
+    const timestamp = normalizeProviderReplayTimestamp(replayEntry.entry.timestamp);
+    if (replayEntry.kind === "compaction") {
+      yield {
+        type: "timeline",
+        provider: input.provider,
+        item: {
+          type: "compaction",
+          status: "completed",
+          ...readOmpCompactionDetails(replayEntry.entry),
+        },
+        ...(timestamp ? { timestamp } : {}),
+      };
+      continue;
+    }
+    for (const event of mapper.mapMessages([replayEntry.message])) {
       yield timestamp && event.type === "timeline" ? { ...event, timestamp } : event;
     }
   }
