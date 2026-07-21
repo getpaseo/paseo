@@ -311,6 +311,122 @@ test("sendPromptToAgent prefers live agent cwd over a stale stored cwd", async (
   expect(streamAgentSpy).toHaveBeenCalledTimes(1);
 });
 
+test("sendPromptToAgent rejects missing archived cwd before unarchive mutation", async () => {
+  const missingCwd = `/tmp/paseo-archived-missing-cwd-${Date.now()}`;
+  const unarchiveSnapshotSpy = vi.fn(async () => true);
+  const notifyAgentStateSpy = vi.fn();
+  const streamAgentSpy = vi.fn(() => (async function* noop() {})());
+  const setAgentModeSpy = vi.fn();
+  const tryRunOutOfBandSpy = vi.fn().mockReturnValue(false);
+  const hasInFlightRunSpy = vi.fn().mockReturnValue(false);
+  const getAgentSpy = vi.fn(() => null);
+
+  const agentManager: AgentManager = Object.create(AgentManager.prototype);
+  Reflect.set(agentManager, "getAgent", getAgentSpy);
+  Reflect.set(agentManager, "unarchiveSnapshot", unarchiveSnapshotSpy);
+  Reflect.set(agentManager, "notifyAgentState", notifyAgentStateSpy);
+  Reflect.set(agentManager, "tryRunOutOfBand", tryRunOutOfBandSpy);
+  Reflect.set(agentManager, "hasInFlightRun", hasInFlightRunSpy);
+  Reflect.set(agentManager, "streamAgent", streamAgentSpy);
+  Reflect.set(agentManager, "setAgentMode", setAgentModeSpy);
+  Reflect.set(
+    agentManager,
+    "touchAgentActivity",
+    vi.fn(() => null),
+  );
+  Reflect.set(
+    agentManager,
+    "waitForAgentClose",
+    vi.fn(async () => undefined),
+  );
+  Reflect.set(agentManager, "getRegisteredProviderIds", () => ["codex"]);
+  Reflect.set(agentManager, "resumeAgentFromPersistence", vi.fn());
+  Reflect.set(agentManager, "createAgent", vi.fn());
+  Reflect.set(agentManager, "hydrateTimelineFromProvider", vi.fn());
+
+  const storageGetSpy = vi.fn(async () => ({
+    id: "agent-archived-missing",
+    cwd: missingCwd,
+    provider: "codex",
+    archivedAt: "2026-07-01T00:00:00.000Z",
+  }));
+  const agentStorage: AgentStorage = Object.create(AgentStorage.prototype);
+  Reflect.set(agentStorage, "get", storageGetSpy);
+
+  await expect(
+    sendPromptToAgent({
+      agentManager,
+      agentStorage,
+      agentId: "agent-archived-missing",
+      prompt: "hello",
+      unarchive: true,
+      logger: createTestLogger(),
+    }),
+  ).rejects.toSatisfy((error: unknown) => {
+    expect(error).toBeInstanceOf(Error);
+    const message = (error as Error).message;
+    expect(message).toMatch(/working directory is missing/i);
+    expect(message).toMatch(/Recreate the worktree|rebind the agent cwd/i);
+    expect(message).not.toMatch(/\bAgent not found\b/i);
+    return true;
+  });
+
+  // Preflight must fail before any archive/provider/load mutation.
+  expect(storageGetSpy).toHaveBeenCalled();
+  expect(unarchiveSnapshotSpy).not.toHaveBeenCalled();
+  expect(notifyAgentStateSpy).not.toHaveBeenCalled();
+  expect(streamAgentSpy).not.toHaveBeenCalled();
+  expect(setAgentModeSpy).not.toHaveBeenCalled();
+  expect(tryRunOutOfBandSpy).not.toHaveBeenCalled();
+  expect(agentManager.resumeAgentFromPersistence).not.toHaveBeenCalled();
+  expect(agentManager.createAgent).not.toHaveBeenCalled();
+  expect(agentManager.hydrateTimelineFromProvider).not.toHaveBeenCalled();
+});
+
+test("sendPromptToAgent keeps archived silent no-op when unarchive=false", async () => {
+  const missingCwd = `/tmp/paseo-archived-noop-${Date.now()}`;
+  const unarchiveSnapshotSpy = vi.fn(async () => true);
+  const streamAgentSpy = vi.fn(() => (async function* noop() {})());
+
+  const agentManager: AgentManager = Object.create(AgentManager.prototype);
+  Reflect.set(
+    agentManager,
+    "getAgent",
+    vi.fn(() => null),
+  );
+  Reflect.set(agentManager, "unarchiveSnapshot", unarchiveSnapshotSpy);
+  Reflect.set(agentManager, "notifyAgentState", vi.fn());
+  Reflect.set(agentManager, "tryRunOutOfBand", vi.fn().mockReturnValue(false));
+  Reflect.set(agentManager, "hasInFlightRun", vi.fn().mockReturnValue(false));
+  Reflect.set(agentManager, "streamAgent", streamAgentSpy);
+
+  const agentStorage: AgentStorage = Object.create(AgentStorage.prototype);
+  Reflect.set(
+    agentStorage,
+    "get",
+    vi.fn(async () => ({
+      id: "agent-archived-noop",
+      cwd: missingCwd,
+      provider: "codex",
+      archivedAt: "2026-07-01T00:00:00.000Z",
+    })),
+  );
+
+  await expect(
+    sendPromptToAgent({
+      agentManager,
+      agentStorage,
+      agentId: "agent-archived-noop",
+      prompt: "hello",
+      unarchive: false,
+      logger: createTestLogger(),
+    }),
+  ).resolves.toEqual({ outOfBand: false });
+
+  expect(unarchiveSnapshotSpy).not.toHaveBeenCalled();
+  expect(streamAgentSpy).not.toHaveBeenCalled();
+});
+
 test("sendPromptToAgent returns structured error when cwd ancestor is a file (ENOTDIR)", async () => {
   const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");

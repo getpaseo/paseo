@@ -181,23 +181,25 @@ export async function sendPromptToAgent(
   const unarchive = params.unarchive ?? true;
 
   const record = await params.agentStorage.get(params.agentId);
-  if (record?.archivedAt) {
-    if (!unarchive) {
-      return { outOfBand: false };
-    }
-    await unarchiveAgentState(params.agentStorage, params.agentManager, params.agentId);
+  // Archived + unarchive=false remains a silent no-op before any preflight.
+  if (record?.archivedAt && !unarchive) {
+    return { outOfBand: false };
   }
 
-  // Continue/send requires a live cwd. Check before load so missing-cwd agents
-  // get a structured recovery error instead of a generic not-found/load failure.
-  // Prefer the resident agent's cwd over storage so a rebound/live cwd wins over
-  // a stale stored path after worktree recovery.
+  // Continue/send requires a live cwd. Run preflight before unarchive/load so a
+  // missing worktree never mutates archive/provider state. Prefer the resident
+  // agent's cwd over storage so a rebound/live cwd wins over a stale stored path.
   const liveBeforeLoad = params.agentManager.getAgent(params.agentId);
   const cwd = liveBeforeLoad?.cwd ?? record?.cwd;
   if (cwd) {
     await assertAgentCwdExists(params.agentId, cwd);
   } else if (!record && !liveBeforeLoad) {
     throw new Error(`Agent not found: ${params.agentId}`);
+  }
+
+  // Unarchive only after cwd is known to be usable.
+  if (record?.archivedAt && unarchive) {
+    await unarchiveAgentState(params.agentStorage, params.agentManager, params.agentId);
   }
 
   await ensureAgentLoaded(params.agentId, {
