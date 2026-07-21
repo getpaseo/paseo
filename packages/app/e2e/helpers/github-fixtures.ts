@@ -1,5 +1,5 @@
 import { execFileSync, execSync } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 export function hasGithubAuth(): boolean {
@@ -56,6 +56,12 @@ export interface GhRepoFixture {
 
 export interface GhDefaultBranchClone {
   path: string;
+  cleanup(): Promise<void>;
+}
+
+export interface LocalGhPrFixture {
+  pr: GhPrFixture;
+  mainCheckout: GhDefaultBranchClone;
   cleanup(): Promise<void>;
 }
 
@@ -278,6 +284,60 @@ export async function cloneGithubRepoDefaultBranchOnly(
     path: clonePath,
     cleanup: async () => {
       await rm(clonePath, { recursive: true, force: true });
+    },
+  };
+}
+
+export async function createLocalGithubPrFixture(): Promise<LocalGhPrFixture> {
+  const fixtureRoot = await mkdtemp(path.join("/tmp", "paseo-e2e-local-github-pr-"));
+  const basePath = path.join(fixtureRoot, "base");
+  const remotePath = path.join(fixtureRoot, "remote.git");
+  const checkoutPath = path.join(fixtureRoot, "main-only");
+  const githubUrl = "https://github.com/paseo-e2e/local-fixture.git";
+  await mkdir(basePath);
+
+  git(["init", "-b", "main"], basePath);
+  git(["config", "user.email", "e2e@paseo.test"], basePath);
+  git(["config", "user.name", "Paseo E2E"], basePath);
+  git(["config", "commit.gpgsign", "false"], basePath);
+  await writeFile(path.join(basePath, "README.md"), "# Local GitHub fixture\n");
+  git(["add", "README.md"], basePath);
+  git(["commit", "-m", "Initial commit"], basePath);
+  git(["checkout", "-b", "pr-branch-1"], basePath);
+  await writeFile(path.join(basePath, "pr-1.txt"), "PR 1\n");
+  git(["add", "pr-1.txt"], basePath);
+  git(["commit", "-m", "Add PR 1"], basePath);
+  git(["checkout", "main"], basePath);
+
+  execFileSync("git", ["clone", "--quiet", "--bare", basePath, remotePath], {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  git(["update-ref", "refs/pull/1/head", "refs/heads/pr-branch-1"], remotePath);
+  execFileSync(
+    "git",
+    ["clone", "--quiet", "--single-branch", "--branch", "main", remotePath, checkoutPath],
+    { stdio: ["ignore", "pipe", "pipe"] },
+  );
+  git(["remote", "set-url", "origin", githubUrl], checkoutPath);
+  git(["config", `url.${remotePath}.insteadOf`, githubUrl], checkoutPath);
+  git(["config", "user.email", "e2e@paseo.test"], checkoutPath);
+  git(["config", "user.name", "Paseo E2E"], checkoutPath);
+  git(["config", "commit.gpgsign", "false"], checkoutPath);
+
+  return {
+    pr: {
+      number: 1,
+      title: "Use pasted PR as start ref",
+      url: "https://github.com/paseo-e2e/local-fixture/pull/1",
+      branch: "pr-branch-1",
+      localPath: basePath,
+    },
+    mainCheckout: {
+      path: checkoutPath,
+      cleanup: async () => {},
+    },
+    cleanup: async () => {
+      await rm(fixtureRoot, { recursive: true, force: true });
     },
   };
 }

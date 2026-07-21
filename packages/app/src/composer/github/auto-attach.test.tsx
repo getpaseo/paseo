@@ -72,6 +72,14 @@ function createSearchClient(items: ForgeSearchItem[]): ForgeSearchClient & { cal
   };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
 function createWrapper() {
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -209,6 +217,44 @@ describe("useComposerGithubAutoAttach", () => {
       { cwd, query: "101", limit: 20 },
       { cwd, query: "202", limit: 20 },
     ]);
+    vi.useRealTimers();
+  });
+
+  it("stays resolving while overlapping lookups share a ref", async () => {
+    vi.useFakeTimers();
+    const firstLookup = deferred<ForgeSearchPayload>();
+    const secondLookup = deferred<ForgeSearchPayload>();
+    const client: ForgeSearchClient = {
+      searchForge: vi
+        .fn()
+        .mockReturnValueOnce(firstLookup.promise)
+        .mockReturnValueOnce(secondLookup.promise),
+    };
+    const { result } = renderHook(() => useHarness(client), { wrapper: createWrapper() });
+
+    act(() => {
+      result.current.setText(
+        "Refs https://github.com/acme/paseo/pull/101 and https://github.com/acme/paseo/pull/202",
+      );
+    });
+    await flushDebounce();
+
+    act(() => {
+      result.current.setText("Still https://github.com/acme/paseo/pull/202");
+    });
+    await flushDebounce();
+
+    await act(async () => {
+      firstLookup.resolve(githubPayload([], "search-101"));
+      await Promise.resolve();
+    });
+    expect(result.current.isResolving).toBe(true);
+
+    await act(async () => {
+      secondLookup.resolve(githubPayload([], "search-202"));
+      await Promise.resolve();
+    });
+    expect(result.current.isResolving).toBe(false);
     vi.useRealTimers();
   });
 });

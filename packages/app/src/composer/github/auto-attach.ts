@@ -41,7 +41,9 @@ export function useComposerGithubAutoAttach(
   const latestRef = useRef(params);
   const removedRefKeysRef = useRef(new Set<string>());
   const pendingRefKeysRef = useRef(new Set<string>());
-  const [resolvingRefKeys, setResolvingRefKeys] = useState<ReadonlySet<string>>(() => new Set());
+  const [resolvingRefCounts, setResolvingRefCounts] = useState<ReadonlyMap<string, number>>(
+    () => new Map(),
+  );
 
   latestRef.current = params;
 
@@ -56,7 +58,7 @@ export function useComposerGithubAutoAttach(
     }
 
     const refKeys = refs.map(githubRefKey);
-    setResolvingRefKeys((current) => addKeys(current, refKeys));
+    setResolvingRefCounts((current) => addKeys(current, refKeys));
     let lookupStarted = false;
 
     const timerId = setTimeout(() => {
@@ -68,14 +70,14 @@ export function useComposerGithubAutoAttach(
         removedRefKeys: removedRefKeysRef.current,
         pendingRefKeys: pendingRefKeysRef.current,
       }).finally(() => {
-        clearResolvingKeys(setResolvingRefKeys, refKeys);
+        clearResolvingKeys(setResolvingRefCounts, refKeys);
       });
     }, AUTO_ATTACH_DEBOUNCE_MS);
 
     return () => {
       clearTimeout(timerId);
       if (!lookupStarted) {
-        clearResolvingKeys(setResolvingRefKeys, refKeys);
+        clearResolvingKeys(setResolvingRefCounts, refKeys);
       }
     };
   }, [
@@ -99,32 +101,40 @@ export function useComposerGithubAutoAttach(
 
   return useMemo(
     () => ({
-      isResolving: resolvingRefKeys.size > 0,
+      isResolving: resolvingRefCounts.size > 0,
       markGithubAttachmentRemoved,
     }),
-    [markGithubAttachmentRemoved, resolvingRefKeys.size],
+    [markGithubAttachmentRemoved, resolvingRefCounts.size],
   );
 }
 
-function addKeys(current: ReadonlySet<string>, keys: readonly string[]): ReadonlySet<string> {
-  if (keys.every((key) => current.has(key))) return current;
-  const next = new Set(current);
-  for (const key of keys) next.add(key);
-  return next;
+function addKeys(
+  current: ReadonlyMap<string, number>,
+  keys: readonly string[],
+): ReadonlyMap<string, number> {
+  const nextCounts = new Map(current);
+  for (const key of keys) nextCounts.set(key, (nextCounts.get(key) ?? 0) + 1);
+  return nextCounts;
 }
 
-function removeKeys(current: ReadonlySet<string>, keys: readonly string[]): ReadonlySet<string> {
-  if (keys.every((key) => !current.has(key))) return current;
-  const next = new Set(current);
-  for (const key of keys) next.delete(key);
+function removeKeys(
+  current: ReadonlyMap<string, number>,
+  keys: readonly string[],
+): ReadonlyMap<string, number> {
+  const next = new Map(current);
+  for (const key of keys) {
+    const count = next.get(key) ?? 0;
+    if (count <= 1) next.delete(key);
+    else next.set(key, count - 1);
+  }
   return next;
 }
 
 function clearResolvingKeys(
-  setResolvingRefKeys: Dispatch<SetStateAction<ReadonlySet<string>>>,
+  setResolvingRefCounts: Dispatch<SetStateAction<ReadonlyMap<string, number>>>,
   keys: readonly string[],
 ): void {
-  setResolvingRefKeys((current) => removeKeys(current, keys));
+  setResolvingRefCounts((current) => removeKeys(current, keys));
 }
 
 async function attachRefs({

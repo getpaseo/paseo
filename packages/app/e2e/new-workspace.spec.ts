@@ -30,6 +30,7 @@ import {
 } from "./helpers/new-workspace";
 import { createTempGitRepo, readWorktreeBranchInfo } from "./helpers/workspace";
 import {
+  createLocalGithubPrFixture,
   cloneGithubRepoDefaultBranchOnly,
   createTempGithubRepo,
   hasGithubAuth,
@@ -811,14 +812,8 @@ test.describe("New workspace flow", () => {
     page,
     context,
   }) => {
-    test.skip(!hasGithubAuth(), "Requires GitHub authentication (gh auth login)");
-
-    const ghRepo = await createTempGithubRepo({
-      category: "new-workspace-pasted-pr-ref",
-      prs: [{ title: "Use pasted PR as start ref", state: "open" }],
-    });
-    const pr = ghRepo.prs[0]!;
-    const mainCheckout = await cloneGithubRepoDefaultBranchOnly(ghRepo);
+    const fixture = await createLocalGithubPrFixture();
+    const { pr, mainCheckout } = fixture;
 
     try {
       const openedProject = await openProjectViaDaemon(client, mainCheckout.path);
@@ -865,8 +860,7 @@ test.describe("New workspace flow", () => {
       expect(branchInfo.currentBranch).toBe(pr.branch);
       expect(existsSync(path.join(worktree.workspaceDirectory, "pr-1.txt"))).toBe(true);
     } finally {
-      await mainCheckout.cleanup();
-      await ghRepo.cleanup();
+      await fixture.cleanup();
     }
   });
 
