@@ -375,6 +375,40 @@ describe("workspace-layout-store actions", () => {
       "agent_agent-c",
     ]);
     expect(forkedTabId).toBe("agent_agent-a-fork");
+    // Inserting mid-pane must still hand focus to the new tab, not leave it on
+    // the anchor — the pane renders whichever tab the pane says is focused.
+    expect(findPaneById(layout.root, layout.focusedPaneId)?.focusedTabId).toBe(
+      "agent_agent-a-fork",
+    );
+  });
+
+  it("drops an agent tab whose agent the directory does not know yet", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+
+    store.openTabFocused(workspaceKey, { kind: "agent", agentId: "agent-a" });
+    store.openTabFocused(
+      workspaceKey,
+      { kind: "agent", agentId: "agent-a-fork" },
+      { insertAfterTabId: "agent_agent-a" },
+    );
+
+    // Reconciling against a snapshot that predates the new agent prunes its tab
+    // and drops focus back to the surviving tab. Callers that open a tab for a
+    // freshly created agent must therefore publish the agent first.
+    store.reconcileTabs(workspaceKey, {
+      agentsHydrated: true,
+      terminalsHydrated: true,
+      activeAgentIds: ["agent-a"],
+      autoOpenAgentIds: ["agent-a"],
+      knownAgentIds: ["agent-a"],
+      standaloneTerminalIds: [],
+      hasActivePendingDraftCreate: false,
+    });
+
+    const layout = workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
+    expect(collectAllTabs(layout.root).map((tab) => tab.tabId)).toEqual(["agent_agent-a"]);
+    expect(findPaneById(layout.root, layout.focusedPaneId)?.focusedTabId).toBe("agent_agent-a");
   });
 
   it("places the tab at the end when the anchor is the last tab", () => {

@@ -3288,6 +3288,12 @@ export class Session {
         agentId: msg.agentId,
         workspaceId: msg.workspaceId,
       });
+      // The forked agent has to reach the client's agent directory *before* the
+      // response does. The client opens and focuses a tab for the returned id
+      // as soon as this resolves, and its tab reconcile prunes agent tabs whose
+      // agent it does not know yet — which silently drops the fresh tab and
+      // leaves focus on the source agent.
+      await this.agentUpdates.forwardLiveAgent(forked);
       this.emit({
         type: "agent.session.fork.response",
         payload: {

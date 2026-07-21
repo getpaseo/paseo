@@ -421,6 +421,44 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
 }
 
 describe("agent session fork", () => {
+  test("publishes the forked agent to the client before answering the request", async () => {
+    const messages: SessionOutboundMessage[] = [];
+    const forkAgentSession = vi.fn().mockResolvedValue({ id: "agent-fork" });
+
+    const session = createSessionForTest({
+      messages,
+      agentManager: { forkAgentSession },
+    });
+
+    const forwardedAgentIds: string[] = [];
+    let releaseForward: () => void = () => {};
+    asSessionInternalsHelper<{
+      agentUpdates: { forwardLiveAgent: (agent: { id: string }) => Promise<void> };
+    }>(session).agentUpdates.forwardLiveAgent = async (agent) => {
+      forwardedAgentIds.push(agent.id);
+      await new Promise<void>((resolve) => {
+        releaseForward = resolve;
+      });
+    };
+
+    const handled = session.handleMessage({
+      type: "agent.session.fork.request",
+      agentId: "agent-source",
+      requestId: "fork-ordering",
+    });
+
+    await vi.waitFor(() => expect(forwardedAgentIds).toEqual(["agent-fork"]));
+    // The client opens and focuses a tab for the forked agent the instant this
+    // response lands, and its tab reconcile prunes agent tabs for agents the
+    // directory does not know yet. Answering first drops that tab and leaves
+    // the source agent focused, so the next turn runs on the source session.
+    expect(messages).toEqual([]);
+
+    releaseForward();
+    await handled;
+    expect(messages.map((message) => message.type)).toEqual(["agent.session.fork.response"]);
+  });
+
   test("forks the agent and returns the new agent id", async () => {
     const messages: SessionOutboundMessage[] = [];
     const forkAgentSession = vi.fn().mockResolvedValue({ id: "agent-fork" });
