@@ -621,6 +621,52 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
       expect(result.worktree.branchName).toBe("pr-123");
     });
 
+    test("tracks a same-repo PR branch from a single-branch clone", async () => {
+      const { tempDir, repoDir, remoteDir, paseoHome } = createSameRepoGitHubPrRemoteRepo();
+      cleanupPaths.push(tempDir);
+      execFileSync("git", ["config", "--unset-all", "remote.origin.fetch"], {
+        cwd: repoDir,
+        stdio: "pipe",
+      });
+      execFileSync(
+        "git",
+        ["config", "--add", "remote.origin.fetch", "+refs/heads/main:refs/remotes/origin/main"],
+        { cwd: repoDir, stdio: "pipe" },
+      );
+      execFileSync("git", ["update-ref", "-d", "refs/remotes/origin/daemon-shutdown-diagnostics"], {
+        cwd: repoDir,
+        stdio: "pipe",
+      });
+      const github = {
+        ...createGitHubServiceStub(),
+        getPullRequestCheckoutTarget: async () => ({
+          number: 1790,
+          baseRefName: "main",
+          headRefName: "daemon-shutdown-diagnostics",
+          headOwnerLogin: "getpaseo",
+          headRepositorySshUrl: remoteDir,
+          headRepositoryUrl: remoteDir,
+          isCrossRepository: false,
+        }),
+      };
+
+      const result = await createCoreWorktree(
+        {
+          cwd: repoDir,
+          action: "checkout",
+          githubPrNumber: 1790,
+          paseoHome,
+          runSetup: false,
+        },
+        createCoreDeps({ github }),
+      );
+
+      expect(result.worktree.branchName).toBe("daemon-shutdown-diagnostics");
+      expect(getBranchUpstream(result.worktree.worktreePath)).toBe(
+        "origin/daemon-shutdown-diagnostics",
+      );
+    });
+
     test("checks out a GitLab MR source branch through the resolved forge service", async () => {
       const { tempDir, repoDir, paseoHome } = createGitRepoWithOriginFeatureBranch();
       cleanupPaths.push(tempDir);

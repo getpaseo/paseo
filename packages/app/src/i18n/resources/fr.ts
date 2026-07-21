@@ -1015,9 +1015,6 @@ export const fr: TranslationResources = {
     refPicker: {
       startingRef: "Réf de départ",
       chooseStart: "Choisissez par où commencer",
-      checkoutHint: "Découvrez {{noun}} {{numberPrefix}}{{number}} ?",
-      checkoutPr: "Découvrez {{noun}} {{numberPrefix}}{{number}}",
-      dismissCheckoutHint: "Ignorer l'indice de paiement {{noun}} {{numberPrefix}}{{number}}",
       intoBase: "dans {{baseRef}}",
       searching: "Recherche...",
       noMatchingRefs: "Aucune référence correspondante.",

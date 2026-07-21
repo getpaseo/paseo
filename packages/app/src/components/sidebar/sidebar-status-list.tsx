@@ -116,7 +116,6 @@ export function SidebarStatusWorkspaceList({
                   showShortcutBadge={showShortcutBadges}
                   canPin={supportsPinningByServerId.get(workspace.serverId) === true}
                   onToggleWorkspacePin={onToggleWorkspacePin}
-                  reserveIdleStatusIndicatorSpace={false}
                   onWorkspacePress={onWorkspacePress}
                 />
               ))}

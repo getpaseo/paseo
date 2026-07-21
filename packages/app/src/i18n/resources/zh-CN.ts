@@ -974,9 +974,6 @@ export const zhCN: TranslationResources = {
     refPicker: {
       startingRef: "起始 ref",
       chooseStart: "选择起始位置",
-      checkoutHint: "Checkout {{noun}} {{numberPrefix}}{{number}}？",
-      checkoutPr: "Checkout {{noun}} {{numberPrefix}}{{number}}",
-      dismissCheckoutHint: "忽略 {{noun}} {{numberPrefix}}{{number}} checkout 提示",
       intoBase: "进入 {{baseRef}}",
       searching: "正在搜索...",
       noMatchingRefs: "没有匹配的 refs。",

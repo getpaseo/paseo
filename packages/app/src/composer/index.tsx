@@ -768,6 +768,8 @@ interface ComposerProps {
   submitIcon?: "arrow" | "return";
   /** Externally controlled loading state. When true, disables the submit button. */
   isSubmitLoading?: boolean;
+  /** When true, waits for pasted GitHub links to resolve before enabling submit. */
+  waitForGithubAutoAttachOnSubmit?: boolean;
   submitBehavior?: "clear" | "preserve-and-lock";
   /** When true, blurs the input immediately when submitting. */
   blurOnSubmit?: boolean;
@@ -777,6 +779,8 @@ interface ComposerProps {
   attachmentScopeKeys?: readonly string[];
   onOpenWorkspaceAttachment?: (attachment: WorkspaceComposerAttachment) => void;
   onChangeAttachments: (updater: AttachmentListUpdater) => void;
+  onGithubPrDetected?: () => void;
+  onGithubPrAutoAttach?: (item: ForgeSearchItem) => void;
   cwd: string;
   clearDraft: (lifecycle: "sent" | "abandoned") => void;
   /** When true, auto-focuses the text input on web. */
@@ -981,6 +985,7 @@ export function Composer({
   submitButtonTestID,
   submitIcon = "arrow",
   isSubmitLoading = false,
+  waitForGithubAutoAttachOnSubmit = false,
   submitBehavior = "clear",
   blurOnSubmit = false,
   value,
@@ -989,6 +994,8 @@ export function Composer({
   attachmentScopeKeys = EMPTY_ATTACHMENT_SCOPE_KEYS,
   onOpenWorkspaceAttachment,
   onChangeAttachments,
+  onGithubPrDetected,
+  onGithubPrAutoAttach,
   cwd,
   clearDraft,
   autoFocus = false,
@@ -1070,6 +1077,8 @@ export function Composer({
     cwd,
     supportsForgeSearch,
     setAttachments: setSelectedAttachments,
+    onPullRequestDetected: onGithubPrDetected,
+    onPullRequestAdded: onGithubPrAutoAttach,
   });
   const [cursorIndex, setCursorIndex] = useState(0);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -1949,7 +1958,11 @@ export function Composer({
 
   const messageInputContainerRef = useRef<View>(null);
 
-  const isSubmitBusy = isProcessing || isSubmitLoading || isUploadingFile;
+  const isSubmitBusy =
+    isProcessing ||
+    isSubmitLoading ||
+    isUploadingFile ||
+    (waitForGithubAutoAttachOnSubmit && githubAutoAttach.isResolving);
 
   // Disable drops while submitting/uploading: the submit path clears and restores attachments,
   // so a drop in that window would be lost or land on a locked draft. `disabled` hides the

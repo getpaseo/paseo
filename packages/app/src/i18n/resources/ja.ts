@@ -996,9 +996,6 @@ export const ja: TranslationResources = {
     refPicker: {
       startingRef: "開始Ref",
       chooseStart: "開始点を選択",
-      checkoutHint: "{{noun}} {{numberPrefix}}{{number}}をチェックアウトしますか？",
-      checkoutPr: "{{noun}} {{numberPrefix}}{{number}}をチェックアウト",
-      dismissCheckoutHint: "{{noun}} {{numberPrefix}}{{number}}のチェックアウトヒントを閉じる",
       intoBase: "{{baseRef}}に",
       searching: "検索中...",
       noMatchingRefs: "一致するRefがありません。",

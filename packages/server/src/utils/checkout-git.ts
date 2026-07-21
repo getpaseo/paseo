@@ -810,6 +810,10 @@ export type CheckoutSnapshotFacts =
       pullRequestLookupTarget: PullRequestStatusLookupTarget | null;
     };
 
+function isNotGitRepositoryError(error: unknown): boolean {
+  return error instanceof Error && /not a git repository/i.test(error.message);
+}
+
 async function requireGitRepo(cwd: string): Promise<void> {
   try {
     await runGitCommand(["rev-parse", "--git-dir"], { cwd, envOverlay: READ_ONLY_GIT_ENV });
@@ -897,11 +901,12 @@ async function getWorktreeRoot(cwd: string, context?: CheckoutContext): Promise<
     });
     return parseGitRevParsePath(stdout);
   } catch (error) {
-    // Git discovery is fail-open: keep the directory usable as non-Git and retain the diagnostic.
-    context?.logger?.warn(
-      { err: error, cwd },
-      "Git worktree discovery failed; treating directory as non-Git",
-    );
+    if (!isNotGitRepositoryError(error)) {
+      context?.logger?.warn(
+        { err: error, cwd },
+        "Git worktree discovery failed; treating directory as non-Git",
+      );
+    }
     return null;
   }
 }

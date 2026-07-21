@@ -1016,9 +1016,6 @@ export const es: TranslationResources = {
     refPicker: {
       startingRef: "Árbitro inicial",
       chooseStart: "Elige por dónde empezar",
-      checkoutHint: "¿Mira {{noun}} {{numberPrefix}}{{number}}?",
-      checkoutPr: "Echa un vistazo a {{noun}} {{numberPrefix}}{{number}}",
-      dismissCheckoutHint: "Descartar la sugerencia de pago de {{noun}} {{numberPrefix}}{{number}}",
       intoBase: "en {{baseRef}}",
       searching: "Búsqueda...",
       noMatchingRefs: "No hay árbitros coincidentes.",

@@ -1007,10 +1007,6 @@ export const ru: TranslationResources = {
     refPicker: {
       startingRef: "Начальная ссылка",
       chooseStart: "Выберите, с чего начать",
-      checkoutHint: "Проверьте {{noun}} {{numberPrefix}}{{number}}?",
-      checkoutPr: "Проверьте {{noun}} {{numberPrefix}}{{number}}",
-      dismissCheckoutHint:
-        "Отклонить подсказку по оформлению заказа {{noun}} {{numberPrefix}}{{number}}",
       intoBase: "в {{baseRef}}",
       searching: "Идет поиск...",
       noMatchingRefs: "Нет подходящих ссылок.",

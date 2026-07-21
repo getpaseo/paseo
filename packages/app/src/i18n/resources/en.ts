@@ -995,9 +995,6 @@ export const en = {
     refPicker: {
       startingRef: "Starting ref",
       chooseStart: "Choose where to start from",
-      checkoutHint: "Check out {{noun}} {{numberPrefix}}{{number}}?",
-      checkoutPr: "Check out {{noun}} {{numberPrefix}}{{number}}",
-      dismissCheckoutHint: "Dismiss {{noun}} {{numberPrefix}}{{number}} checkout hint",
       intoBase: "into {{baseRef}}",
       searching: "Searching...",
       noMatchingRefs: "No matching refs.",

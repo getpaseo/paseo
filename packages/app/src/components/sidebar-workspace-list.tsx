@@ -2303,7 +2303,6 @@ function ProjectModeList({
           canCopyBranchName={workspace.projectKind === "git"}
           canPin={supportsPinningByServerId.get(workspace.serverId) === true}
           onToggleWorkspacePin={onToggleWorkspacePin}
-          reserveIdleStatusIndicatorSpace={false}
           isCreating={creatingWorkspaceIds.has(workspace.workspaceId)}
           selectionEnabled={selectionEnabled}
           activeWorkspaceSelection={activeWorkspaceSelection}
