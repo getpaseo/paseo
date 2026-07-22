@@ -75,6 +75,7 @@ interface WorkspaceLayoutStore {
   layoutByWorkspace: Record<string, WorkspaceLayout>;
   splitSizesByWorkspace: Record<string, Record<string, number[]>>;
   pinnedAgentIdsByWorkspace: Record<string, Set<string>>;
+  pendingAgentIdsByWorkspace: Record<string, Set<string>>;
   hiddenAgentIdsByWorkspace: Record<string, Set<string>>;
   focusRestorationByWorkspace: Record<string, WorkspaceFocusRestorationState>;
   openTabFocused: (workspaceKey: string, target: WorkspaceTabTarget) => string | null;
@@ -229,6 +230,7 @@ export function createWorkspaceLayoutStore(
         layoutByWorkspace: {},
         splitSizesByWorkspace: {},
         pinnedAgentIdsByWorkspace: {},
+        pendingAgentIdsByWorkspace: {},
         hiddenAgentIdsByWorkspace: {},
         focusRestorationByWorkspace: {},
         openTabFocused: (workspaceKey, target) => {
@@ -467,15 +469,23 @@ export function createWorkspaceLayoutStore(
               {
                 layout: currentLayout,
                 pinnedAgentIds: state.pinnedAgentIdsByWorkspace[normalizedWorkspaceKey] ?? null,
+                pendingAgentIds: state.pendingAgentIdsByWorkspace[normalizedWorkspaceKey] ?? null,
                 hiddenAgentIds: state.hiddenAgentIdsByWorkspace[normalizedWorkspaceKey] ?? null,
               },
               snapshot,
             );
-            if (nextState.layout === currentLayout) {
+            const hadPendingAgents = normalizedWorkspaceKey in state.pendingAgentIdsByWorkspace;
+            if (nextState.layout === currentLayout && !hadPendingAgents) {
               return state;
             }
 
+            const nextPendingAgentIdsByWorkspace = {
+              ...state.pendingAgentIdsByWorkspace,
+            };
+            delete nextPendingAgentIdsByWorkspace[normalizedWorkspaceKey];
+
             return {
+              pendingAgentIdsByWorkspace: nextPendingAgentIdsByWorkspace,
               layoutByWorkspace: {
                 ...state.layoutByWorkspace,
                 [normalizedWorkspaceKey]: nextState.layout,
@@ -762,7 +772,12 @@ export function createWorkspaceLayoutStore(
           set((state) => {
             const currentPinnedAgentIds =
               state.pinnedAgentIdsByWorkspace[normalizedWorkspaceKey] ?? null;
-            if (currentPinnedAgentIds?.has(normalizedAgentId)) {
+            const currentPendingAgentIds =
+              state.pendingAgentIdsByWorkspace[normalizedWorkspaceKey] ?? null;
+            if (
+              currentPinnedAgentIds?.has(normalizedAgentId) &&
+              currentPendingAgentIds?.has(normalizedAgentId)
+            ) {
               return state;
             }
 
@@ -779,6 +794,11 @@ export function createWorkspaceLayoutStore(
                 ...state.pinnedAgentIdsByWorkspace,
                 [normalizedWorkspaceKey]: nextPinnedAgentIds,
               },
+              pendingAgentIdsByWorkspace: addAgentIdToWorkspaceSet(
+                state.pendingAgentIdsByWorkspace,
+                normalizedWorkspaceKey,
+                normalizedAgentId,
+              ),
             };
           });
         },
@@ -803,6 +823,11 @@ export function createWorkspaceLayoutStore(
               delete nextPinnedAgentIdsByWorkspace[normalizedWorkspaceKey];
               return {
                 pinnedAgentIdsByWorkspace: nextPinnedAgentIdsByWorkspace,
+                pendingAgentIdsByWorkspace: removeAgentIdFromWorkspaceSet(
+                  state.pendingAgentIdsByWorkspace,
+                  normalizedWorkspaceKey,
+                  normalizedAgentId,
+                ),
               };
             }
 
@@ -814,6 +839,11 @@ export function createWorkspaceLayoutStore(
                 ...state.pinnedAgentIdsByWorkspace,
                 [normalizedWorkspaceKey]: nextPinnedAgentIds,
               },
+              pendingAgentIdsByWorkspace: removeAgentIdFromWorkspaceSet(
+                state.pendingAgentIdsByWorkspace,
+                normalizedWorkspaceKey,
+                normalizedAgentId,
+              ),
             };
           });
         },
@@ -872,6 +902,7 @@ export function createWorkspaceLayoutStore(
               normalizedWorkspaceKey in state.layoutByWorkspace ||
               normalizedWorkspaceKey in state.splitSizesByWorkspace ||
               normalizedWorkspaceKey in state.pinnedAgentIdsByWorkspace ||
+              normalizedWorkspaceKey in state.pendingAgentIdsByWorkspace ||
               normalizedWorkspaceKey in state.hiddenAgentIdsByWorkspace ||
               normalizedWorkspaceKey in state.focusRestorationByWorkspace;
             if (!hasAny) {
@@ -883,6 +914,8 @@ export function createWorkspaceLayoutStore(
               state.splitSizesByWorkspace;
             const { [normalizedWorkspaceKey]: _pinned, ...pinnedAgentIdsByWorkspace } =
               state.pinnedAgentIdsByWorkspace;
+            const { [normalizedWorkspaceKey]: _pending, ...pendingAgentIdsByWorkspace } =
+              state.pendingAgentIdsByWorkspace;
             const { [normalizedWorkspaceKey]: _hidden, ...hiddenAgentIdsByWorkspace } =
               state.hiddenAgentIdsByWorkspace;
             const { [normalizedWorkspaceKey]: _restoration, ...focusRestorationByWorkspace } =
@@ -891,6 +924,7 @@ export function createWorkspaceLayoutStore(
               layoutByWorkspace,
               splitSizesByWorkspace,
               pinnedAgentIdsByWorkspace,
+              pendingAgentIdsByWorkspace,
               hiddenAgentIdsByWorkspace,
               focusRestorationByWorkspace,
             };

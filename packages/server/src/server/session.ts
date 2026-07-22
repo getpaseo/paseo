@@ -3187,6 +3187,7 @@ export class Session {
         snapshot = await ensureAgentLoaded(agentId, {
           agentManager: this.agentManager,
           agentStorage: this.agentStorage,
+          broadcastTimeline: true,
           logger: this.sessionLogger,
         });
       }
