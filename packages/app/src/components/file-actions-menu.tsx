@@ -2,7 +2,7 @@ import { useMemo, type ReactElement, type ReactNode } from "react";
 import { type PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { MoreVertical, type LucideIcon } from "lucide-react-native";
-import { ICON_SIZE, type Theme } from "@/styles/theme";
+import { ICON_SIZE, SPACING, type Theme } from "@/styles/theme";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -13,6 +13,9 @@ import {
 
 const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 const ThemedMoreVertical = withUnistyles(MoreVertical);
+
+/** Width occupied by a file action trigger, including its visual padding. */
+export const FILE_ACTIONS_MENU_WIDTH = ICON_SIZE.sm + 2 * SPACING[1];
 
 /** A single action rendered inside a {@link FileActionsMenu}. */
 export interface FileAction {
@@ -114,6 +117,7 @@ const styles = StyleSheet.create((theme) => ({
     // line height instead of growing it. The comfortable tap target is `hitSlop`,
     // never padding.
     padding: theme.spacing[1],
+    width: FILE_ACTIONS_MENU_WIDTH,
     marginVertical: -theme.spacing[1],
     borderRadius: theme.borderRadius.md,
     alignItems: "center",

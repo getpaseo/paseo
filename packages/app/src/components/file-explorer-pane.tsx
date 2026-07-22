@@ -25,7 +25,12 @@ import {
   RotateCw,
 } from "lucide-react-native";
 import { MaterialFileIcon } from "@/components/material-file-icon";
-import { TreeChevron, TreeIndentGuides, TREE_INDENT_PER_LEVEL } from "@/components/tree-primitives";
+import {
+  TreeChevron,
+  TreeIndentGuides,
+  treeRowPaddingLeft,
+  WORKSPACE_FILE_ROW_VERTICAL_PADDING,
+} from "@/components/tree-primitives";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import type { AgentFileExplorerState, ExplorerEntry } from "@/stores/session-store";
 import { useSessionStore } from "@/stores/session-store";
@@ -67,6 +72,7 @@ interface TreeRowItemProps {
   onCopyPath: (path: string) => void;
   onDownloadEntry: (entry: ExplorerEntry) => void;
   onAddToChat?: (path: string) => void;
+  testID?: string;
 }
 
 function sortTriggerStyle({
@@ -96,8 +102,8 @@ function TreeRowItem({
   onCopyPath,
   onDownloadEntry,
   onAddToChat,
+  testID,
 }: TreeRowItemProps) {
-  const { theme } = useUnistyles();
   const { t } = useTranslation();
   const isDirectory = entry.kind === "directory";
   const dragSourceRef = useWorkspaceFileDragSource({
@@ -114,10 +120,10 @@ function TreeRowItem({
   const pressableStyle = useCallback(
     ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.entryRow,
-      { paddingLeft: theme.spacing[2] + depth * TREE_INDENT_PER_LEVEL },
+      { paddingLeft: treeRowPaddingLeft(depth) },
       (Boolean(hovered) || pressed || isSelected) && styles.entryRowActive,
     ],
-    [depth, isSelected, theme.spacing],
+    [depth, isSelected],
   );
 
   const handleCopy = useCallback(() => {
@@ -185,7 +191,7 @@ function TreeRowItem({
   }, [entry.kind, handleAddToChat, handleCopy, handleDownload, onAddToChat, t]);
 
   return (
-    <Pressable onPress={handlePress} style={pressableStyle}>
+    <Pressable onPress={handlePress} style={pressableStyle} testID={testID}>
       <TreeIndentGuides depth={depth} />
       <View ref={dragSourceRef} style={styles.entryInfo}>
         <View style={styles.entryIcon}>
@@ -205,6 +211,7 @@ function TreeRowItem({
         actions={actions}
         header={metaHeader}
         accessibilityLabel={t("workspace.fileActions.moreActions")}
+        testID={testID ? `${testID}-actions` : undefined}
       />
     </Pressable>
   );
@@ -584,8 +591,14 @@ function FileExplorerPaneContent(props: FileExplorerPaneContentProps) {
   return (
     <View style={[styles.treePane, styles.treePaneFill]}>
       <View style={styles.paneHeader} testID="files-pane-header">
-        <Pressable onPress={handleSortCycle} style={sortTriggerStyleProp}>
-          <Text style={styles.sortTriggerText}>{currentSortLabel}</Text>
+        <Pressable
+          onPress={handleSortCycle}
+          style={sortTriggerStyleProp}
+          testID="files-sort-trigger"
+        >
+          <Text style={styles.sortTriggerText} testID="files-sort-label">
+            {currentSortLabel}
+          </Text>
           <ChevronDown size={12} color={theme.colors.foregroundMuted} />
         </Pressable>
         <View style={styles.headerActions}>
@@ -596,6 +609,7 @@ function FileExplorerPaneContent(props: FileExplorerPaneContentProps) {
             accessibilityRole="button"
             accessibilityLabel={hiddenFilesToggleAccessibilityLabel}
             accessibilityState={hiddenFilesToggleAccessibilityState}
+            testID="files-hidden-toggle"
           >
             {showHiddenFiles ? (
               <Eye size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
@@ -614,6 +628,7 @@ function FileExplorerPaneContent(props: FileExplorerPaneContentProps) {
                 ? t("workspace.fileExplorer.actions.refreshing")
                 : t("workspace.fileExplorer.actions.refresh")
             }
+            testID="files-refresh"
           >
             <View style={styles.refreshIcon}>
               {isRefreshFetching ? (
@@ -867,6 +882,7 @@ function TreeRowDispatcher({
       onCopyPath={onCopyPath}
       onDownloadEntry={onDownloadEntry}
       onAddToChat={onAddToChat}
+      testID={`file-explorer-row-${info.index}`}
     />
   );
 }
@@ -1045,7 +1061,6 @@ const styles = StyleSheet.create((theme) => ({
     minHeight: 0,
   },
   entriesContent: {
-    paddingHorizontal: theme.spacing[2],
     paddingTop: theme.spacing[2],
     paddingBottom: theme.spacing[4],
   },
@@ -1095,9 +1110,8 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingVertical: 2,
-    paddingRight: theme.spacing[2],
-    borderRadius: theme.borderRadius.md,
+    paddingVertical: WORKSPACE_FILE_ROW_VERTICAL_PADDING,
+    paddingRight: theme.spacing[3],
   },
   entryRowActive: {
     backgroundColor: theme.colors.surfaceSidebarHover,

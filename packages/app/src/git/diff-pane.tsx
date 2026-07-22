@@ -60,7 +60,11 @@ import {
 import { buildDiffFlatItems, sumHeightsBefore, type DiffFlatItem } from "@/git/diff-flat-items";
 import { buildDiffTree, collectDirPaths, compressSingleChildChains } from "@/git/diff-tree";
 import { DiffFolderRow } from "@/git/diff-folder-row";
-import { TreeIndentGuides, treeRowPaddingLeft } from "@/components/tree-primitives";
+import {
+  TreeIndentGuides,
+  treeRowPaddingLeft,
+  WORKSPACE_FILE_ROW_VERTICAL_PADDING,
+} from "@/components/tree-primitives";
 import { SvgXml } from "react-native-svg";
 import { getFileIconSvg } from "@/components/material-file-icons";
 import { useCheckoutStatusQuery } from "@/git/use-status-query";
@@ -87,7 +91,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import * as Clipboard from "expo-clipboard";
-import { FileActionsMenu, type FileAction } from "@/components/file-actions-menu";
+import {
+  FILE_ACTIONS_MENU_WIDTH,
+  FileActionsMenu,
+  type FileAction,
+} from "@/components/file-actions-menu";
 import { useFileDownload } from "@/hooks/use-file-download";
 import { buildAbsoluteExplorerPath } from "@/utils/explorer-paths";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
@@ -1116,7 +1124,11 @@ const DiffFileHeader = memo(function DiffFileHeader({
         )}
       </View>
       <View style={styles.fileHeaderRight}>
-        <DiffStat additions={file.additions} deletions={file.deletions} />
+        <DiffStat
+          additions={file.additions}
+          deletions={file.deletions}
+          testID={testID ? `${testID}-stat` : undefined}
+        />
         {interactive ? (
           <FileActionsMenu
             actions={actions}
@@ -2296,6 +2308,13 @@ function buildExpandAllButtonStyle(): PressableStyleFn {
   ];
 }
 
+function buildOverflowButtonStyle(): PressableStyleFn {
+  return ({ hovered, pressed }) => [
+    styles.overflowButton,
+    (Boolean(hovered) || pressed) && styles.toggleButtonSelected,
+  ];
+}
+
 function buildToggleButtonStyle(
   selected: boolean,
   baseStyles: StyleProp<ViewStyle> | StyleProp<ViewStyle>[],
@@ -2357,7 +2376,7 @@ export function GitDiffPane({
 
   const expandAllToggleStyle = useMemo(() => buildExpandAllButtonStyle(), []);
 
-  const overflowToggleStyle = useMemo(() => buildExpandAllButtonStyle(), []);
+  const overflowToggleStyle = useMemo(() => buildOverflowButtonStyle(), []);
 
   const toast = useToast();
   const openWorkspaceTabFocused = useWorkspaceLayoutStore((state) => state.openTabFocused);
@@ -2911,6 +2930,18 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.base,
     flexShrink: 0,
   },
+  overflowButton: {
+    width: FILE_ACTIONS_MENU_WIDTH,
+    height: {
+      xs: 32,
+      sm: 32,
+      md: 24,
+    },
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: theme.borderRadius.base,
+    flexShrink: 0,
+  },
   actionErrorText: {
     paddingHorizontal: theme.spacing[3],
     paddingBottom: theme.spacing[1],
@@ -2999,8 +3030,8 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     paddingLeft: theme.spacing[3],
-    paddingRight: theme.spacing[2],
-    paddingVertical: theme.spacing[1],
+    paddingRight: theme.spacing[3],
+    paddingVertical: WORKSPACE_FILE_ROW_VERTICAL_PADDING,
     gap: theme.spacing[1],
     minWidth: 0,
     zIndex: 2,
