@@ -274,7 +274,14 @@ export const ru: TranslationResources = {
     },
   },
   message: {
-    mermaidDiagram: "Диаграмма Mermaid",
+    mermaid: {
+      diagram: "Диаграмма Mermaid",
+      zoomIn: "Приблизить",
+      zoomOut: "Отдалить",
+      resetZoom: "Сбросить вид",
+      viewSource: "Показать код",
+      viewDiagram: "Показать диаграмму",
+    },
     actions: {
       copyCode: "Скопировать код",
       copyTurn: "Копировать ход",

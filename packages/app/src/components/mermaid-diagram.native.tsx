@@ -3,12 +3,13 @@ import {
   Modal,
   Pressable,
   StyleSheet as RNStyleSheet,
+  ScrollView,
   View,
   type TextStyle,
   type ViewStyle,
 } from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
-import { X } from "lucide-react-native";
+import { Code, Network, X } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
@@ -164,35 +165,75 @@ interface MermaidDiagramViewerProps {
   code: string;
   colorScheme: "light" | "dark";
   onClose: () => void;
+  inheritedStyles: TextStyle;
+  textStyle: TextStyle;
 }
 
 /** Fullscreen viewer; the platform webview owns pinch-zoom and panning. */
-function MermaidDiagramViewer({ code, colorScheme, onClose }: MermaidDiagramViewerProps) {
+function MermaidDiagramViewer({
+  code,
+  colorScheme,
+  onClose,
+  inheritedStyles,
+  textStyle,
+}: MermaidDiagramViewerProps) {
   const { t } = useTranslation();
+  const [showSource, setShowSource] = useState(false);
+  const toggleSource = useCallback(() => setShowSource((current) => !current), []);
   return (
     <Modal transparent animationType="fade" statusBarTranslucent visible onRequestClose={onClose}>
       <View style={viewerStyles.backdrop}>
-        <MermaidWebView
-          code={code}
-          colorScheme={colorScheme}
-          interactive
-          style={viewerStyles.webView}
-        />
-        <Pressable
-          onPress={onClose}
-          style={viewerStyles.closeButton}
-          accessibilityRole="button"
-          accessibilityLabel={t("common.actions.close")}
-          hitSlop={12}
-        >
-          <ThemedCloseIcon size={20} uniProps={closeIconColor} />
-        </Pressable>
+        {showSource ? (
+          <ScrollView style={viewerStyles.webView} contentContainerStyle={viewerStyles.source}>
+            <HighlightedCodeBlock
+              code={code}
+              language="mermaid"
+              inheritedStyles={inheritedStyles}
+              textStyle={textStyle}
+            />
+          </ScrollView>
+        ) : (
+          <MermaidWebView
+            code={code}
+            colorScheme={colorScheme}
+            interactive
+            style={viewerStyles.webView}
+          />
+        )}
+        <View style={viewerStyles.actions}>
+          <Pressable
+            onPress={toggleSource}
+            style={viewerStyles.actionButton}
+            accessibilityRole="button"
+            accessibilityLabel={
+              showSource ? t("message.mermaid.viewDiagram") : t("message.mermaid.viewSource")
+            }
+            hitSlop={12}
+          >
+            {showSource ? (
+              <ThemedDiagramIcon size={20} uniProps={closeIconColor} />
+            ) : (
+              <ThemedSourceIcon size={20} uniProps={closeIconColor} />
+            )}
+          </Pressable>
+          <Pressable
+            onPress={onClose}
+            style={viewerStyles.actionButton}
+            accessibilityRole="button"
+            accessibilityLabel={t("common.actions.close")}
+            hitSlop={12}
+          >
+            <ThemedCloseIcon size={20} uniProps={closeIconColor} />
+          </Pressable>
+        </View>
       </View>
     </Modal>
   );
 }
 
 const ThemedCloseIcon = withUnistyles(X);
+const ThemedSourceIcon = withUnistyles(Code);
+const ThemedDiagramIcon = withUnistyles(Network);
 const closeIconColor = (theme: Theme) => ({ color: theme.colors.foreground });
 
 const viewerStyles = StyleSheet.create((theme, rt) => ({
@@ -205,10 +246,20 @@ const viewerStyles = StyleSheet.create((theme, rt) => ({
     marginTop: rt.insets.top,
     marginBottom: rt.insets.bottom,
   },
-  closeButton: {
+  source: {
+    // Layout-only: leave room for the floating action buttons.
+    paddingTop: theme.spacing[12],
+    paddingHorizontal: theme.spacing[4],
+    paddingBottom: theme.spacing[4],
+  },
+  actions: {
     position: "absolute",
     top: rt.insets.top + theme.spacing[3],
     right: theme.spacing[4],
+    flexDirection: "row",
+    gap: theme.spacing[2],
+  },
+  actionButton: {
     padding: theme.spacing[2],
     borderRadius: theme.borderRadius.lg,
     backgroundColor: theme.colors.surface2,
@@ -270,7 +321,7 @@ function MermaidDiagramImpl({
         onPress={openViewer}
         disabled={lastGoodRender === null}
         accessibilityRole={lastGoodRender === null ? undefined : "imagebutton"}
-        accessibilityLabel={t("message.mermaidDiagram")}
+        accessibilityLabel={t("message.mermaid.diagram")}
         style={
           lastGoodRender === null
             ? [boxStyle as ViewStyle, previewStyles.measuring]
@@ -291,6 +342,8 @@ function MermaidDiagramImpl({
           code={lastGoodRender.code}
           colorScheme={colorScheme}
           onClose={closeViewer}
+          inheritedStyles={inheritedStyles}
+          textStyle={textStyle}
         />
       ) : null}
     </>

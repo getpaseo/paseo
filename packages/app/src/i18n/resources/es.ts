@@ -275,7 +275,14 @@ export const es: TranslationResources = {
     },
   },
   message: {
-    mermaidDiagram: "Diagrama Mermaid",
+    mermaid: {
+      diagram: "Diagrama Mermaid",
+      zoomIn: "Acercar",
+      zoomOut: "Alejar",
+      resetZoom: "Restablecer vista",
+      viewSource: "Ver fuente",
+      viewDiagram: "Ver diagrama",
+    },
     actions: {
       copyCode: "Copiar código",
       copyTurn: "Copiar turno",

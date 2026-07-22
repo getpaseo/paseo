@@ -272,7 +272,14 @@ export const ar: TranslationResources = {
     },
   },
   message: {
-    mermaidDiagram: "مخطط Mermaid",
+    mermaid: {
+      diagram: "مخطط Mermaid",
+      zoomIn: "تكبير",
+      zoomOut: "تصغير",
+      resetZoom: "إعادة تعيين العرض",
+      viewSource: "عرض المصدر",
+      viewDiagram: "عرض المخطط",
+    },
     actions: {
       copyCode: "نسخ الرمز",
       copyTurn: "نسخ بدوره",

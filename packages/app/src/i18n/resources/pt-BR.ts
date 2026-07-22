@@ -275,7 +275,14 @@ export const ptBR: TranslationResources = {
     },
   },
   message: {
-    mermaidDiagram: "Diagrama Mermaid",
+    mermaid: {
+      diagram: "Diagrama Mermaid",
+      zoomIn: "Aproximar",
+      zoomOut: "Afastar",
+      resetZoom: "Redefinir visualização",
+      viewSource: "Ver fonte",
+      viewDiagram: "Ver diagrama",
+    },
     actions: {
       copyCode: "Copiar código",
       copyTurn: "Copiar turno",
