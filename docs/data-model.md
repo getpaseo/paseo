@@ -60,7 +60,8 @@ $PASEO_HOME/
 │   └── loops.json                       # All loop records
 ├── projects/
 │   ├── projects.json                    # Project registry
-│   └── workspaces.json                  # Workspace registry
+│   ├── workspaces.json                  # Workspace registry
+│   └── icons/                           # Host-local downloaded project favicons
 ├── runtime/
 │   └── managed-processes/
 │       └── {recordId}.json              # Helper processes owned by Paseo; reconciled on daemon bootstrap
@@ -454,17 +455,18 @@ Single file containing an array of all loop records. Writes are direct (not atom
 
 Array of project records.
 
-| Field         | Type                        | Description                                                                      |
-| ------------- | --------------------------- | -------------------------------------------------------------------------------- |
-| `projectId`   | `string`                    | Host-local primary key; new records use opaque `prj_<16 hex>` IDs                |
-| `projectKey`  | `string \| null`            | Persisted opaque cross-host grouping key; reconciliation backfills absent values |
-| `rootPath`    | `string`                    | Exact lexically normalized selected root; never realpathed                       |
-| `kind`        | `"git" \| "non_git"`        | Mutable Git observation about `rootPath`, never a membership key                 |
-| `displayName` | `string`                    | Selected-root basename, stable across remote and Git changes                     |
-| `customName`  | `string \| null`            | User-set override layered over `displayName`. Null means "use the derived name". |
-| `createdAt`   | `string` (ISO 8601)         |                                                                                  |
-| `updatedAt`   | `string` (ISO 8601)         |                                                                                  |
-| `archivedAt`  | `string \| null` (ISO 8601) | Soft-delete timestamp; required nullable                                         |
+| Field         | Type                        | Description                                                                                                                                                                        |
+| ------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `projectId`   | `string`                    | Host-local primary key; new records use opaque `prj_<16 hex>` IDs                                                                                                                  |
+| `projectKey`  | `string \| null`            | Persisted opaque cross-host grouping key; reconciliation backfills absent values                                                                                                   |
+| `rootPath`    | `string`                    | Exact lexically normalized selected root; never realpathed                                                                                                                         |
+| `kind`        | `"git" \| "non_git"`        | Mutable Git observation about `rootPath`, never a membership key                                                                                                                   |
+| `displayName` | `string`                    | Selected-root basename, stable across remote and Git changes                                                                                                                       |
+| `customName`  | `string \| null`            | User-set override layered over `displayName`. Null means "use the derived name".                                                                                                   |
+| `appearance`  | `ProjectAppearance \| null` | Host-local icon mode, optional favicon URL or custom text, fallback color (`null` derives one; `"transparent"` clears it), and cache revision. Null preserves automatic discovery. |
+| `createdAt`   | `string` (ISO 8601)         |                                                                                                                                                                                    |
+| `updatedAt`   | `string` (ISO 8601)         |                                                                                                                                                                                    |
+| `archivedAt`  | `string \| null` (ISO 8601) | Soft-delete timestamp; required nullable                                                                                                                                           |
 
 Active exact roots are idempotent using lexical platform-equivalence semantics. Existing legacy
 remote-shaped and path-shaped IDs remain readable, including duplicate roots; reconciliation never

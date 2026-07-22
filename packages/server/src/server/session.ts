@@ -138,6 +138,8 @@ import {
 } from "./workspace-registry.js";
 import { wrapSpokenInput } from "./voice-config.js";
 import { isVoicePermissionAllowed } from "./voice-permission-policy.js";
+import { getProjectIcon } from "../utils/project-icon.js";
+import { cacheProjectFavicon, readCachedProjectFavicon } from "../utils/project-appearance.js";
 import { VoiceSession } from "./session/voice/voice-session.js";
 import { CheckoutSession } from "./session/checkout/checkout-session.js";
 import {
@@ -1934,6 +1936,8 @@ export class Session {
         return this.handleUpdateAgentRequest(msg.agentId, msg.name, msg.labels, msg.requestId);
       case "project.rename.request":
         return this.handleProjectRenameRequest(msg.projectId, msg.customName, msg.requestId);
+      case "project.appearance.set.request":
+        return this.handleProjectAppearanceSetRequest(msg);
       case "send_agent_message_request":
         return this.handleSendAgentMessageRequest(msg);
       case "wait_for_finish_request":
@@ -2131,6 +2135,8 @@ export class Session {
         return this.workspaceFilesSession.handleFileWriteRequest(msg);
       case "project_icon_request":
         return this.workspaceFilesSession.handleProjectIconRequest(msg);
+      case "project.icon.get.request":
+        return this.handleProjectIconGetRequest(msg.projectId, msg.requestId);
       case "file_download_token_request":
         return this.workspaceFilesSession.handleFileDownloadTokenRequest(msg);
       case "file.upload.request":
@@ -2661,6 +2667,87 @@ export class Session {
           customName: null,
           error: getErrorMessageOr(error, "Failed to rename project"),
         },
+      });
+    }
+  }
+
+  private async handleProjectAppearanceSetRequest(
+    request: Extract<SessionInboundMessage, { type: "project.appearance.set.request" }>,
+  ): Promise<void> {
+    const { projectId, requestId } = request;
+    try {
+      const existing = await this.projectRegistry.get(projectId);
+      if (!existing) throw new Error("Project not found");
+
+      const color = request.color?.trim().toLowerCase() ?? null;
+      if (color && color !== "transparent" && !/^#[0-9a-f]{6}$/.test(color)) {
+        throw new Error("Color must be transparent or a hex value like #8b5cf6");
+      }
+
+      let icon = request.icon;
+      if (icon.type === "custom") {
+        const text = icon.text.trim();
+        if (!text || Array.from(text).length > 8) {
+          throw new Error("Custom icon must be between 1 and 8 characters");
+        }
+        icon = { type: "custom", text };
+      } else if (icon.type === "favicon") {
+        const url = icon.url.trim();
+        await cacheProjectFavicon({ paseoHome: this.paseoHome, projectId, url });
+        icon = { type: "favicon", url };
+      }
+
+      const appearance = { icon, color, revision: new Date().toISOString() };
+      const updated = { ...existing, appearance, updatedAt: appearance.revision };
+      await this.projectRegistry.upsert(updated);
+
+      this.emit({
+        type: "project.appearance.set.response",
+        payload: { requestId, projectId, accepted: true, appearance, error: null },
+      });
+      this.emitProjectUpdate({ kind: "upsert", project: updated });
+
+      const affectedWorkspaceIds = (await this.workspaceRegistry.list())
+        .filter((workspace) => workspace.projectId === projectId)
+        .map((workspace) => workspace.workspaceId);
+      if (affectedWorkspaceIds.length > 0) {
+        await this.emitWorkspaceUpdatesForWorkspaceIds(affectedWorkspaceIds, {
+          skipReconcile: true,
+        });
+      }
+    } catch (error) {
+      this.emit({
+        type: "project.appearance.set.response",
+        payload: {
+          requestId,
+          projectId,
+          accepted: false,
+          appearance: null,
+          error: getErrorMessageOr(error, "Failed to update project appearance"),
+        },
+      });
+    }
+  }
+
+  private async handleProjectIconGetRequest(projectId: string, requestId: string): Promise<void> {
+    try {
+      const project = await this.projectRegistry.get(projectId);
+      if (!project) throw new Error("Project not found");
+
+      let icon = null;
+      if (project.appearance?.icon.type === "favicon") {
+        icon = await readCachedProjectFavicon({ paseoHome: this.paseoHome, projectId });
+      } else if (project.appearance?.icon.type !== "custom") {
+        icon = await getProjectIcon(project.rootPath);
+      }
+      this.emit({
+        type: "project.icon.get.response",
+        payload: { projectId, icon, error: null, requestId },
+      });
+    } catch (error) {
+      this.emit({
+        type: "project.icon.get.response",
+        payload: { projectId, icon: null, error: getErrorMessage(error), requestId },
       });
     }
   }
@@ -4210,6 +4297,7 @@ export class Session {
         ? resolveProjectDisplayName(resolvedProjectRecord)
         : workspace.projectId,
       projectCustomName: resolvedProjectRecord?.customName ?? null,
+      projectAppearance: resolvedProjectRecord?.appearance ?? null,
       projectRootPath: resolvedProjectRecord?.rootPath ?? workspace.cwd,
       workspaceDirectory: workspace.cwd,
       projectKind: (resolvedProjectRecord?.kind ?? "directory") === "git" ? "git" : "non_git",
@@ -4296,6 +4384,7 @@ export class Session {
         ? resolveProjectDisplayName(projectRecord)
         : result.workspace.projectId,
       projectCustomName: projectRecord?.customName ?? null,
+      projectAppearance: projectRecord?.appearance ?? null,
       projectRootPath: projectRecord?.rootPath ?? result.repoRoot,
       workspaceDirectory: result.workspace.cwd,
       projectKind: projectRecord?.kind ?? "git",
@@ -4467,6 +4556,7 @@ export class Session {
       ...(project.projectKey ? { projectKey: project.projectKey } : {}),
       projectDisplayName: resolveProjectDisplayName(project),
       projectCustomName: project.customName ?? null,
+      projectAppearance: project.appearance ?? null,
       projectRootPath: project.rootPath,
       projectKind: project.kind,
     };

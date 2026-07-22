@@ -129,6 +129,7 @@ export interface WorkspaceDescriptor {
   projectId: string;
   projectDisplayName: string;
   projectCustomName?: string | null;
+  projectAppearance?: WorkspaceDescriptorPayload["projectAppearance"];
   projectRootPath: string;
   workspaceDirectory: string;
   projectKind: WorkspaceDescriptorPayload["projectKind"];
@@ -160,6 +161,7 @@ export function normalizeWorkspaceDescriptor(
     projectId: payload.projectId,
     projectDisplayName: payload.projectDisplayName,
     projectCustomName: payload.projectCustomName ?? null,
+    projectAppearance: payload.projectAppearance ?? null,
     projectRootPath: payload.projectRootPath,
     // Canonicalize the workspace directory once, at the store boundary, so every
     // consumer can read workspace.workspaceDirectory directly. Empty means "no
@@ -187,6 +189,7 @@ export interface ProjectDescriptor {
   projectKey?: string | null;
   projectDisplayName: string;
   projectCustomName: string | null;
+  projectAppearance?: WorkspaceDescriptorPayload["projectAppearance"];
   projectRootPath: string;
   projectKind: WorkspaceDescriptorPayload["projectKind"];
 }
@@ -199,6 +202,7 @@ export function normalizeProjectDescriptor(
     projectKey: payload.projectKey ?? null,
     projectDisplayName: payload.projectDisplayName,
     projectCustomName: payload.projectCustomName ?? null,
+    projectAppearance: payload.projectAppearance ?? null,
     projectRootPath: payload.projectRootPath,
     projectKind: payload.projectKind,
   };

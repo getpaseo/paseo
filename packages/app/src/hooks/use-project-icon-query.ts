@@ -4,7 +4,11 @@ import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-
 import type { ProjectIcon } from "@getpaseo/protocol/messages";
 
 export function projectIconQueryKey(serverId: string, cwd: string) {
-  return ["projectIcon", serverId, cwd] as const;
+  return ["projectIcon", serverId, "legacy", cwd] as const;
+}
+
+export function resolvedProjectIconQueryKey(serverId: string, projectId: string, revision: string) {
+  return ["projectIcon", serverId, projectId, revision] as const;
 }
 
 export function projectIconToDataUri(icon: ProjectIcon | null): string | null {

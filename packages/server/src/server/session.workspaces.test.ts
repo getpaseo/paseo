@@ -3405,6 +3405,7 @@ test("archiving the last workspace emits a remove carrying the now-empty project
       projectId: project.projectId,
       projectDisplayName: "repo",
       projectCustomName: null,
+      projectAppearance: null,
       projectRootPath: REPO_CWD,
       projectKind: "git",
     },
@@ -7400,6 +7401,72 @@ test("a workspace leaving a filtered subscription after bootstrap emits a remova
       payload: { kind: "remove", id: descriptor.id },
     },
   ]);
+});
+
+test("project.appearance.set.request stores custom text and color", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const session = asTestSession(
+    createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) }),
+  );
+  session.updateClientCapabilities({ [CLIENT_CAPS.projectUpdates]: true });
+
+  const project = createPersistedProjectRecord({
+    projectId: "prj_appearance",
+    rootPath: REPO_CWD,
+    kind: "git",
+    displayName: "repo",
+    createdAt: "2026-07-22T12:00:00.000Z",
+    updatedAt: "2026-07-22T12:00:00.000Z",
+  });
+  const projects = new Map([[project.projectId, project]]);
+  session.projectRegistry.get = async (id: string) => projects.get(id) ?? null;
+  session.projectRegistry.upsert = async (record: typeof project) => {
+    projects.set(record.projectId, record);
+  };
+  session.workspaceRegistry.list = async () => [];
+
+  await session.handleMessage({
+    type: "project.appearance.set.request",
+    projectId: project.projectId,
+    icon: { type: "custom", text: " 🚀 " },
+    color: "#8B5CF6",
+    requestId: "req-appearance",
+  });
+
+  const response = findByType(emitted, "project.appearance.set.response");
+  expect(response?.payload).toMatchObject({
+    requestId: "req-appearance",
+    projectId: project.projectId,
+    accepted: true,
+    appearance: {
+      icon: { type: "custom", text: "🚀" },
+      color: "#8b5cf6",
+    },
+    error: null,
+  });
+  expect(projects.get(project.projectId)?.appearance).toMatchObject({
+    icon: { type: "custom", text: "🚀" },
+    color: "#8b5cf6",
+  });
+  expect(findByType(emitted, "project.update")?.payload).toMatchObject({
+    kind: "upsert",
+    project: { projectAppearance: { icon: { type: "custom", text: "🚀" } } },
+  });
+
+  emitted.length = 0;
+  await session.handleMessage({
+    type: "project.appearance.set.request",
+    projectId: project.projectId,
+    icon: { type: "custom", text: "🚀" },
+    color: "transparent",
+    requestId: "req-transparent-appearance",
+  });
+
+  expect(findByType(emitted, "project.appearance.set.response")?.payload).toMatchObject({
+    accepted: true,
+    appearance: { color: "transparent" },
+  });
+  expect(projects.get(project.projectId)?.appearance?.color).toBe("transparent");
 });
 
 test("project.rename.request stores customName and emits an updated workspace descriptor", async () => {

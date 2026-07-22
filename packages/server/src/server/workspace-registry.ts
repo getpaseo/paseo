@@ -11,6 +11,16 @@ import {
   type PersistedWorkspaceKind,
 } from "./workspace-registry-model.js";
 
+const PersistedProjectAppearanceSchema = z.object({
+  icon: z.discriminatedUnion("type", [
+    z.object({ type: z.literal("automatic") }),
+    z.object({ type: z.literal("favicon"), url: z.string() }),
+    z.object({ type: z.literal("custom"), text: z.string() }),
+  ]),
+  color: z.string().nullable(),
+  revision: z.string(),
+});
+
 const PersistedProjectRecordSchema = z.object({
   projectId: z.string(),
   rootPath: z.string(),
@@ -27,6 +37,9 @@ const PersistedProjectRecordSchema = z.object({
   customName: z
     .string()
     .nullable()
+    .optional()
+    .transform((value) => value ?? null),
+  appearance: PersistedProjectAppearanceSchema.nullable()
     .optional()
     .transform((value) => value ?? null),
   createdAt: z.string(),
@@ -81,6 +94,7 @@ const PersistedWorkspaceRecordSchema = z.object({
     .transform((value) => value ?? null),
 });
 
+export type PersistedProjectAppearance = z.infer<typeof PersistedProjectAppearanceSchema>;
 export type PersistedProjectRecord = z.infer<typeof PersistedProjectRecordSchema>;
 export type PersistedWorkspaceRecord = z.infer<typeof PersistedWorkspaceRecordSchema>;
 
@@ -475,6 +489,7 @@ export function createPersistedProjectRecord(input: {
   displayName: string;
   customName?: string | null;
   projectKey?: string | null;
+  appearance?: PersistedProjectAppearance | null;
   createdAt: string;
   updatedAt: string;
   archivedAt?: string | null;
@@ -483,6 +498,7 @@ export function createPersistedProjectRecord(input: {
     ...input,
     customName: input.customName ?? null,
     projectKey: input.projectKey ?? null,
+    appearance: input.appearance ?? null,
     archivedAt: input.archivedAt ?? null,
   });
 }

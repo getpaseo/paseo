@@ -1,6 +1,6 @@
 // Medium-saturation tones chosen so a white letter stays legible on top in both
 // light and dark themes. Soft and colorful, but not pale pastels.
-const PROJECT_ICON_COLORS = [
+export const PROJECT_ICON_COLORS = [
   "#8b5cf6", // violet
   "#0ea5e9", // sky
   "#10b981", // emerald

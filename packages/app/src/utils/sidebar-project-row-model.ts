@@ -4,6 +4,7 @@ export interface SidebarProjectHostTarget {
   serverId: string;
   projectId: string;
   iconWorkingDir: string;
+  projectAppearance?: SidebarProjectEntry["hosts"][number]["projectAppearance"];
 }
 
 export type SidebarProjectTrailingAction =
@@ -23,12 +24,18 @@ function hostTarget(input: {
   serverId: string;
   projectId: string;
   iconWorkingDir: string;
+  projectAppearance?: SidebarProjectEntry["hosts"][number]["projectAppearance"];
 }): SidebarProjectHostTarget | null {
   const iconWorkingDir = input.iconWorkingDir.trim();
   if (!input.serverId || !iconWorkingDir) {
     return null;
   }
-  return { serverId: input.serverId, projectId: input.projectId, iconWorkingDir };
+  return {
+    serverId: input.serverId,
+    projectId: input.projectId,
+    iconWorkingDir,
+    projectAppearance: input.projectAppearance,
+  };
 }
 
 export function resolveSidebarProjectIconTarget(
