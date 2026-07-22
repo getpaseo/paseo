@@ -591,6 +591,18 @@ function getPullRequestCheckMetadata(
   return rawStatus === "failed" && allowFailure ? { rawStatus: "warning" } : {};
 }
 
+const PULL_REQUEST_CHECK_STATUS_BY_PIPELINE_JOB_STATUS = {
+  success: "success",
+  failed: "failure",
+  running: "pending",
+  pending: "pending",
+  canceled: "cancelled",
+  skipped: "skipped",
+  manual: "pending",
+  created: "pending",
+  unknown: "pending",
+} as const satisfies Record<PipelineJobStatus, PullRequestCheck["status"]>;
+
 function toPullRequestCheck(job: z.infer<typeof GitLabPipelineJobSchema>): PullRequestCheck {
   const rawStatus = job.status.toLowerCase();
   const allowFailure = job.allow_failure ?? false;
@@ -604,23 +616,8 @@ function toPullRequestCheck(job: z.infer<typeof GitLabPipelineJobSchema>): PullR
   } else if (rawStatus === "manual" && allowFailure) {
     status = "skipped";
   } else {
-    switch (normalizePipelineJobStatus(rawStatus)) {
-      case "success":
-        status = "success";
-        break;
-      case "failed":
-        status = "failure";
-        break;
-      case "canceled":
-        status = "cancelled";
-        break;
-      case "skipped":
-        status = "skipped";
-        break;
-      default:
-        status = "pending";
-        break;
-    }
+    status =
+      PULL_REQUEST_CHECK_STATUS_BY_PIPELINE_JOB_STATUS[normalizePipelineJobStatus(rawStatus)];
   }
 
   return {

@@ -306,7 +306,7 @@ const GiteaActionTaskSchema = z
 // The item shape is validated per-task rather than as `z.array(GiteaActionTaskSchema)`
 // so one malformed task (missing id/status/head_sha) drops only itself instead of
 // throwing out the whole page and zeroing every Actions check for the PR.
-const GiteaActionTasksResponseSchema = z
+const GiteaActionsListResponseSchema = z
   .object({
     workflow_runs: z.array(z.unknown()).optional().default([]),
     total_count: z.number().optional(),
@@ -320,13 +320,6 @@ const GiteaActionRunMetadataSchema = z
     head_sha: z.string().optional(),
     commit_sha: z.string().optional(),
     need_approval: z.boolean().optional().default(false),
-  })
-  .passthrough();
-
-const GiteaActionRunsResponseSchema = z
-  .object({
-    workflow_runs: z.array(z.unknown()).optional().default([]),
-    total_count: z.number().optional(),
   })
   .passthrough();
 
@@ -1664,31 +1657,16 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
   ): Promise<GiteaActionTask[]> {
     if (!tasks.some((task) => task.status.toLowerCase() === "blocked")) return tasks;
     try {
-      const owner = encodeURIComponent(input.repoOwner);
-      const repo = encodeURIComponent(input.repoName);
       const sha = encodeURIComponent(input.sha);
       const approvalRunNumbers = new Set<number>();
-      let fetched = 0;
-      for (let page = 1; page <= GITEA_ACTION_MAX_PAGES; page += 1) {
-        const response = await runJson(
-          [
-            "api",
-            `repos/${owner}/${repo}/actions/runs?head_sha=${sha}&limit=${GITEA_ACTION_PAGE_LIMIT}&page=${page}`,
-          ],
-          { cwd: input.cwd },
-          GiteaActionRunsResponseSchema,
-        );
-        if (response.workflow_runs.length === 0) break;
-        fetched += response.workflow_runs.length;
-        for (const rawRun of response.workflow_runs) {
-          const parsed = GiteaActionRunMetadataSchema.safeParse(rawRun);
-          if (!parsed.success || !parsed.data.need_approval) continue;
-          const metadata = parsed.data;
-          const runSha = metadata.head_sha ?? metadata.commit_sha;
-          const runNumber = metadata.run_number ?? metadata.index_in_repo;
-          if (runSha === input.sha && runNumber !== undefined) approvalRunNumbers.add(runNumber);
-        }
-        if (response.total_count !== undefined && fetched >= response.total_count) break;
+      const runs = await loadGiteaActionPages(input, "runs", `head_sha=${sha}`);
+      for (const rawRun of runs) {
+        const parsed = GiteaActionRunMetadataSchema.safeParse(rawRun);
+        if (!parsed.success || !parsed.data.need_approval) continue;
+        const metadata = parsed.data;
+        const runSha = metadata.head_sha ?? metadata.commit_sha;
+        const runNumber = metadata.run_number ?? metadata.index_in_repo;
+        if (runSha === input.sha && runNumber !== undefined) approvalRunNumbers.add(runNumber);
       }
       return tasks.map((task) =>
         task.status.toLowerCase() === "blocked" &&
@@ -1709,38 +1687,39 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
   // conflating the two drops the current PR's run on a capped instance. Page on
   // until total_count is exhausted, a page comes back empty, or the bounded
   // max-pages cap is hit. SHA matches need not be contiguous across pages.
+  async function loadGiteaActionPages(
+    input: { cwd: string; repoOwner: string; repoName: string },
+    endpoint: "tasks" | "runs",
+    query?: string,
+  ): Promise<unknown[]> {
+    const owner = encodeURIComponent(input.repoOwner);
+    const repo = encodeURIComponent(input.repoName);
+    const items: unknown[] = [];
+    let fetched = 0;
+    for (let page = 1; page <= GITEA_ACTION_MAX_PAGES; page += 1) {
+      const queryPrefix = query ? `${query}&` : "";
+      const response = await runJson(
+        [
+          "api",
+          `repos/${owner}/${repo}/actions/${endpoint}?${queryPrefix}limit=${GITEA_ACTION_PAGE_LIMIT}&page=${page}`,
+        ],
+        { cwd: input.cwd },
+        GiteaActionsListResponseSchema,
+      );
+      if (response.workflow_runs.length === 0) break;
+      fetched += response.workflow_runs.length;
+      items.push(...response.workflow_runs);
+      if (response.total_count !== undefined && fetched >= response.total_count) break;
+    }
+    return items;
+  }
+
   async function loadActionTasks(input: {
     cwd: string;
     repoOwner: string;
     repoName: string;
   }): Promise<GiteaActionTask[]> {
-    const owner = encodeURIComponent(input.repoOwner);
-    const repo = encodeURIComponent(input.repoName);
-    const tasks: GiteaActionTask[] = [];
-    let fetched = 0;
-    for (let page = 1; page <= GITEA_ACTION_MAX_PAGES; page += 1) {
-      const batch = await runJson(
-        [
-          "api",
-          `repos/${owner}/${repo}/actions/tasks?limit=${GITEA_ACTION_PAGE_LIMIT}&page=${page}`,
-        ],
-        { cwd: input.cwd },
-        GiteaActionTasksResponseSchema,
-      );
-      if (batch.workflow_runs.length === 0) {
-        break;
-      }
-      fetched += batch.workflow_runs.length;
-      tasks.push(...parseGiteaActionTasks(batch.workflow_runs));
-      // Stop once the whole result set is fetched: relying on a short page as
-      // the terminator is unsafe on instances whose page cap is below the
-      // requested limit, but `total_count` bounds the walk exactly, so a sha
-      // with no run does not pay the full max-page fan-out.
-      if (batch.total_count !== undefined && fetched >= batch.total_count) {
-        break;
-      }
-    }
-    return tasks;
+    return parseGiteaActionTasks(await loadGiteaActionPages(input, "tasks"));
   }
 
   async function resolveCurrentPullRequestHeadSha(cwd: string): Promise<string> {

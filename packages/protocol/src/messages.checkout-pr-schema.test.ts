@@ -26,7 +26,18 @@ describe("checkout PR schemas", () => {
     expect(parsed.forge).toBe("github");
   });
 
-  test("round-trips forge and neutral project identity", () => {
+  test("round-trips forge, project identity, and optional check presentation metadata", () => {
+    const checks = [
+      { name: "legacy", status: "success", url: null },
+      {
+        name: "deploy",
+        status: "pending",
+        url: null,
+        rawStatus: "manual",
+        isManual: true,
+        requiresAction: true,
+      },
+    ];
     const payload = {
       forge: "github",
       projectPath: "getpaseo/paseo",
@@ -38,37 +49,10 @@ describe("checkout PR schemas", () => {
       isMerged: false,
       isDraft: false,
       mergeable: "UNKNOWN" as const,
-      checks: [],
+      checks,
     };
 
     expect(CheckoutPrStatusSchema.parse(payload)).toEqual(payload);
-  });
-
-  test("keeps check presentation metadata optional and preserves it when present", () => {
-    const base = {
-      url: "https://gitlab.com/acme/repo/-/merge_requests/42",
-      title: "Ship it",
-      state: "open",
-      baseRefName: "main",
-      headRefName: "feature/ship-it",
-      isMerged: false,
-    };
-    const legacyCheck = { name: "legacy", status: "success", url: null };
-    const detailedCheck = {
-      name: "deploy",
-      status: "pending",
-      url: null,
-      rawStatus: "manual",
-      isManual: true,
-      requiresAction: true,
-    };
-
-    expect(CheckoutPrStatusSchema.parse({ ...base, checks: [legacyCheck] }).checks).toEqual([
-      legacyCheck,
-    ]);
-    expect(CheckoutPrStatusSchema.parse({ ...base, checks: [detailedCheck] }).checks).toEqual([
-      detailedCheck,
-    ]);
   });
 
   test("accepts unknown future forge identities", () => {

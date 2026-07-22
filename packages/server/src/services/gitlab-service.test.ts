@@ -93,6 +93,17 @@ const OPEN_MR = {
   head_pipeline: { status: "success" },
 };
 
+function mergeRequestWithPipeline(status = "success") {
+  return {
+    ...OPEN_MR,
+    head_pipeline: {
+      id: 306,
+      status,
+      web_url: "https://gitlab.example.com/example-group/example-project/-/pipelines/306",
+    },
+  };
+}
+
 const OPEN_ISSUE = {
   iid: 7,
   title: "Login button misaligned",
@@ -629,14 +640,7 @@ describe("createGitLabService", () => {
   });
 
   it("surfaces the head pipeline id and url on the gitlab status facts", async () => {
-    const pipelineMr = {
-      ...OPEN_MR,
-      head_pipeline: {
-        id: 306,
-        status: "canceling",
-        web_url: "https://gitlab.example.com/example-group/example-project/-/pipelines/306",
-      },
-    };
+    const pipelineMr = mergeRequestWithPipeline("canceling");
     const { service } = makeService((args) => {
       if (args[0] === "mr" && args[1] === "list") return ok(JSON.stringify([pipelineMr]));
       if (args[0] === "mr" && args[1] === "view") return ok(JSON.stringify(pipelineMr));
@@ -659,14 +663,7 @@ describe("createGitLabService", () => {
   });
 
   it("populates sidebar checks from the merge request head pipeline", async () => {
-    const pipelineMr = {
-      ...OPEN_MR,
-      head_pipeline: {
-        id: 306,
-        status: "success",
-        web_url: "https://gitlab.example.com/example-group/example-project/-/pipelines/306",
-      },
-    };
+    const pipelineMr = mergeRequestWithPipeline();
     const pipeline = {
       ...PIPELINE_WITH_JOBS,
       status: "success",
@@ -752,62 +749,34 @@ describe("createGitLabService", () => {
     ]);
   });
 
-  it("keeps the merge request status when pipeline job details are unavailable", async () => {
-    const pipelineMr = {
-      ...OPEN_MR,
-      head_pipeline: {
-        id: 306,
-        status: "success",
-        web_url: "https://gitlab.example.com/example-group/example-project/-/pipelines/306",
+  it.each([
+    [
+      "unavailable",
+      () => {
+        throw { code: 1, stderr: "pipeline details unavailable" };
       },
-    };
-    const { service } = makeService((args) => {
-      if (args[0] === "mr" && args[1] === "list") return ok(JSON.stringify([pipelineMr]));
-      if (args[0] === "mr" && args[1] === "view") return ok(JSON.stringify(pipelineMr));
-      if (args[0] === "api" && args[1].endsWith("/approvals")) return ok("{}");
-      throw { code: 1, stderr: "pipeline details unavailable" };
-    });
+    ],
+    ["malformed", () => ok(JSON.stringify({ jobs: "invalid" }))],
+  ] as const)(
+    "keeps the merge request status when pipeline job details are %s",
+    async (_, load) => {
+      const pipelineMr = mergeRequestWithPipeline();
+      const { service } = makeService((args) => {
+        if (args[0] === "mr" && args[1] === "list") return ok(JSON.stringify([pipelineMr]));
+        if (args[0] === "mr" && args[1] === "view") return ok(JSON.stringify(pipelineMr));
+        if (args[0] === "api" && args[1].endsWith("/approvals")) return ok("{}");
+        if (args[0] === "ci" && args[1] === "get") return load();
+        throw new Error(`unexpected call: ${args.join(" ")}`);
+      });
 
-    const status = await service.getCurrentPullRequestStatus({
-      cwd: "/repo",
-      headRef: "release/v0.4.0",
-    });
+      const status = await service.getCurrentPullRequestStatus({
+        cwd: "/repo",
+        headRef: "release/v0.4.0",
+      });
 
-    expect(status).toMatchObject({
-      number: 14,
-      checks: [],
-      checksStatus: "success",
-    });
-  });
-
-  it("keeps the merge request status when pipeline job details are malformed", async () => {
-    const pipelineMr = {
-      ...OPEN_MR,
-      head_pipeline: {
-        id: 306,
-        status: "success",
-        web_url: "https://gitlab.example.com/example-group/example-project/-/pipelines/306",
-      },
-    };
-    const { service } = makeService((args) => {
-      if (args[0] === "mr" && args[1] === "list") return ok(JSON.stringify([pipelineMr]));
-      if (args[0] === "mr" && args[1] === "view") return ok(JSON.stringify(pipelineMr));
-      if (args[0] === "api" && args[1].endsWith("/approvals")) return ok("{}");
-      if (args[0] === "ci" && args[1] === "get") return ok(JSON.stringify({ jobs: "invalid" }));
-      throw new Error(`unexpected call: ${args.join(" ")}`);
-    });
-
-    const status = await service.getCurrentPullRequestStatus({
-      cwd: "/repo",
-      headRef: "release/v0.4.0",
-    });
-
-    expect(status).toMatchObject({
-      number: 14,
-      checks: [],
-      checksStatus: "success",
-    });
-  });
+      expect(status).toMatchObject({ number: 14, checks: [], checksStatus: "success" });
+    },
+  );
 
   it("keeps cancellation transitions active", () => {
     expect(GITLAB_ACTIVE_PIPELINE_STATUS_SET.has("canceling")).toBe(true);

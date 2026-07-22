@@ -3,6 +3,7 @@ import type {
   PullRequestTimelineResponse,
 } from "@getpaseo/protocol/messages";
 import { type Forge, getForgePresentation } from "@/git/forge";
+import type { PresentableCheck } from "@/git/check-presentation";
 import { parseClientForgeFacts } from "@/git/forges";
 import type { ForgeSpecificStatusFacts } from "@/git/merge-capability";
 import { deriveIdentityColorName, identityColor } from "@/styles/identity-colors";
@@ -22,7 +23,7 @@ export interface PullRequestProviderMetadata {
   url?: string | null;
 }
 
-export interface PrPaneCheck {
+export interface PrPaneCheck extends PresentableCheck {
   provider: PullRequestProvider;
   name: string;
   workflow?: string;

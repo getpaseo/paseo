@@ -2,6 +2,7 @@ import React, { type ReactNode } from "react";
 import { Pressable, Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { CountedCheckPresentation } from "@/git/check-presentation";
+import { CONTROL_HEIGHTS } from "@/components/ui/control-geometry";
 import {
   CheckPresentationIcon,
   getCheckPresentationTone,

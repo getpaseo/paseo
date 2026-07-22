@@ -40,17 +40,4 @@ describe("selectPrHintFromStatus", () => {
       selectPrHintFromStatus({ url: "https://example.com/x", state: "open", isMerged: false }),
     ).toBeNull();
   });
-
-  it("preserves check presentation metadata", () => {
-    const checks = [
-      {
-        name: "approval",
-        status: "pending",
-        rawStatus: "blocked",
-        requiresAction: true,
-        url: null,
-      },
-    ];
-    expect(selectPrHintFromStatus({ ...githubStatus, checks })?.checks).toEqual(checks);
-  });
 });

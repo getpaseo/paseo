@@ -868,6 +868,17 @@ describe("workspace message schemas", () => {
   });
 
   test("parses fetch_workspaces_response with optional runtime fields", () => {
+    const checks = [
+      { name: "legacy", status: "success", url: null },
+      {
+        name: "deploy",
+        status: "pending",
+        url: null,
+        rawStatus: "manual",
+        isManual: true,
+        requiresAction: true,
+      },
+    ];
     const parsed = SessionOutboundMessageSchema.parse({
       type: "fetch_workspaces_response",
       payload: {
@@ -909,6 +920,7 @@ describe("workspace message schemas", () => {
                 baseRefName: "main",
                 headRefName: "workspace-git-service",
                 isMerged: false,
+                checks,
               },
               error: null,
               refreshedAt: "2026-04-12T00:00:00.000Z",
@@ -930,53 +942,7 @@ describe("workspace message schemas", () => {
       aheadOfOrigin: 2,
     });
     expect(parsed.payload.entries[0]?.githubRuntime?.pullRequest?.title).toBe("Runtime payloads");
-  });
-
-  test("keeps workspace runtime check presentation metadata backward-compatible", () => {
-    const workspace = {
-      id: "ws-checks",
-      projectId: "remote:gitlab.com/acme/repo",
-      projectDisplayName: "acme/repo",
-      projectRootPath: "/tmp/repo",
-      workspaceDirectory: "/tmp/repo",
-      projectKind: "git",
-      workspaceKind: "local_checkout",
-      name: "feature",
-      status: "done",
-      activityAt: null,
-      githubRuntime: {
-        pullRequest: {
-          url: "https://gitlab.com/acme/repo/-/merge_requests/42",
-          title: "Ship it",
-          state: "open",
-          baseRefName: "main",
-          headRefName: "feature",
-          isMerged: false,
-          checks: [{ name: "legacy", status: "success", url: null }],
-        },
-      },
-    } as const;
-
-    expect(
-      WorkspaceDescriptorPayloadSchema.parse(workspace).githubRuntime?.pullRequest?.checks,
-    ).toEqual(workspace.githubRuntime.pullRequest.checks);
-
-    const detailedCheck = {
-      name: "deploy",
-      status: "pending" as const,
-      url: null,
-      rawStatus: "manual",
-      isManual: true,
-      requiresAction: true,
-    };
-    expect(
-      WorkspaceDescriptorPayloadSchema.parse({
-        ...workspace,
-        githubRuntime: {
-          pullRequest: { ...workspace.githubRuntime.pullRequest, checks: [detailedCheck] },
-        },
-      }).githubRuntime?.pullRequest?.checks,
-    ).toEqual([detailedCheck]);
+    expect(parsed.payload.entries[0]?.githubRuntime?.pullRequest?.checks).toEqual(checks);
   });
 
   test("older workspace parsers ignore additive runtime fields", () => {

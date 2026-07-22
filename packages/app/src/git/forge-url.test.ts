@@ -7,24 +7,22 @@ import {
 } from "./forge-url";
 
 describe("buildForgeChecksUrl", () => {
-  it("uses each forge's supported change-request checks route", () => {
-    expect(buildForgeChecksUrl("github", "https://github.com/acme/repo/pull/12")).toBe(
+  it.each([
+    [
+      "github",
+      "https://github.com/acme/repo/pull/12",
       "https://github.com/acme/repo/pull/12/checks",
-    );
-    expect(buildForgeChecksUrl("gitlab", "https://gitlab.com/acme/repo/-/merge_requests/12")).toBe(
+    ],
+    [
+      "gitlab",
+      "https://gitlab.com/acme/repo/-/merge_requests/12",
       "https://gitlab.com/acme/repo/-/merge_requests/12/pipelines",
-    );
-  });
-
-  it("returns null when the forge has no separate checks route", () => {
-    expect(buildForgeChecksUrl("codeberg", "https://codeberg.org/acme/repo/pulls/12")).toBeNull();
-  });
-
-  it("returns null for an unknown forge or invalid change-request URL", () => {
-    expect(
-      buildForgeChecksUrl("bitbucket", "https://bitbucket.org/acme/repo/pull-requests/12"),
-    ).toBeNull();
-    expect(buildForgeChecksUrl("gitlab", "not a url")).toBeNull();
+    ],
+    ["codeberg", "https://codeberg.org/acme/repo/pulls/12", null],
+    ["bitbucket", "https://bitbucket.org/acme/repo/pull-requests/12", null],
+    ["gitlab", "not a url", null],
+  ] as const)("maps the %s checks URL", (forge, url, expected) => {
+    expect(buildForgeChecksUrl(forge, url)).toBe(expected);
   });
 });
 
