@@ -89,6 +89,13 @@ describe("desktop packaging", () => {
     expect(config).toContain("!node_modules/@getpaseo/server/dist/server/web-ui/**");
   });
 
+  it("registers Paseo agent links with the operating system", () => {
+    const config = readFileSync(join(packageRoot, "electron-builder.yml"), "utf8");
+
+    expect(config).toContain("name: Paseo agent link");
+    expect(config).toContain("- paseo");
+  });
+
   // electron-builder packs production dependencies declared in package.json into
   // app.asar. Runtime code in runtime-paths.ts and bin/paseo dynamically resolves
   // these workspace packages by string, so static analysis (TypeScript, Knip) cannot

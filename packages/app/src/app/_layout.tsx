@@ -66,6 +66,7 @@ import {
 import { registerWorkspaceRouteNavigationRef } from "@/navigation/workspace-route-navigation";
 import { ThemedStack } from "@/navigation/themed-stack";
 import { shouldUseDesktopDaemon } from "@/desktop/daemon/desktop-daemon";
+import { AgentNavigationListener } from "@/desktop/agent-navigation";
 import { listenToDesktopEvent } from "@/desktop/electron/events";
 import { updateDesktopWindowControls } from "@/desktop/electron/window";
 import { getDesktopHost } from "@/desktop/host";
@@ -908,6 +909,7 @@ function AppShell() {
     <MobilePanelsProvider>
       <HorizontalScrollProvider>
         <OpenProjectListener />
+        <AgentNavigationListener />
         <AppWithSidebar>
           <WorkspaceRouteNavigationBridge />
           <RootStack />
