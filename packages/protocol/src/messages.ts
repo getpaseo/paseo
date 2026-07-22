@@ -3685,7 +3685,6 @@ export const WorkspaceGitHubRuntimePayloadSchema = z
               url: z.string().nullable(),
               workflow: z.string().optional(),
               duration: z.string().optional(),
-              rawStatus: z.string().optional(),
               // Open so future forge-neutral refinements remain parse-compatible.
               traits: z.array(z.string()).optional(),
             }),
@@ -4883,7 +4882,6 @@ export const CheckoutPrStatusSchema = z.object({
         duration: z.string().optional(),
         checkRunId: z.number().optional(),
         workflowRunId: z.number().optional(),
-        rawStatus: z.string().optional(),
         // Open so future forge-neutral refinements remain parse-compatible.
         traits: z.array(z.string()).optional(),
       }),
@@ -5128,7 +5126,11 @@ const CheckoutPipelineJobSchema = z.object({
   name: z.string(),
   stage: z.string(),
   status: z.string(),
-  rawStatus: z.string(),
+  // COMPAT(pipelineRawStatus): no client reads this, but peers <= v0.2.0-rc.1
+  // validate it as required, so daemons must keep emitting it. Optional since
+  // this schema so future daemons may omit it; delete the field and its
+  // emission after 2027-01-17 once the supported client floor is >= v0.2.0.
+  rawStatus: z.string().optional(),
   url: z.string().nullable().optional().default(null),
   allowFailure: z.boolean().optional().default(false),
   durationSeconds: z.number().nullable().optional().default(null),
@@ -5143,7 +5145,8 @@ const CheckoutPipelineStageSchema = z.object({
 const CheckoutPipelineSchema = z.object({
   id: z.number(),
   status: z.string(),
-  rawStatus: z.string(),
+  // COMPAT(pipelineRawStatus): see CheckoutPipelineJobSchema.rawStatus.
+  rawStatus: z.string().optional(),
   url: z.string().nullable().optional().default(null),
   ref: z.string().nullable().optional().default(null),
   sha: z.string().nullable().optional().default(null),

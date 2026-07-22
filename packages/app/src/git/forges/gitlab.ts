@@ -5,6 +5,12 @@ import {
   type MergeCapability,
 } from "@/git/client-forge-module";
 import type { CheckoutPipelineJob, CheckoutPrMergeMethod } from "@getpaseo/protocol/messages";
+import {
+  CHECK_TRAIT_ACTION_REQUIRED,
+  CHECK_TRAIT_MANUAL,
+  CHECK_TRAIT_WARNING,
+} from "@getpaseo/protocol/check-traits";
+import { GITLAB_ACTIVE_PIPELINE_STATUS_SET } from "@getpaseo/protocol/gitlab-pipeline";
 import type { CheckStatus } from "@/git/pull-request-panel/check-status";
 import {
   classifyCheck,
@@ -17,24 +23,6 @@ import {
 const gitlabLineAnchor = (start: number, end?: number): string =>
   end && end > start ? `#L${start}-${end}` : `#L${start}`;
 
-/**
- * Canonical set of GitLab pipeline statuses that count as "still active" (a
- * pipeline that has not reached a terminal state). Server-side twin:
- * packages/server/src/services/gitlab-facts.ts (GITLAB_ACTIVE_PIPELINE_STATUSES),
- * duplicated because the app can't depend on the server package.
- */
-const GITLAB_ACTIVE_PIPELINE_STATUSES = [
-  "created",
-  "waiting_for_resource",
-  "preparing",
-  "pending",
-  "running",
-  "canceling",
-  "scheduled",
-] as const;
-
-const GITLAB_ACTIVE_PIPELINE_STATUS_SET = new Set<string>(GITLAB_ACTIVE_PIPELINE_STATUSES);
-
 export function isPipelineActiveStatus(status: string): boolean {
   return GITLAB_ACTIVE_PIPELINE_STATUS_SET.has(status);
 }
@@ -46,20 +34,13 @@ export function mapPipelineStatus(status: string): CheckStatus {
       return "success";
     case "failed":
       return "failure";
-    case "running":
-    case "pending":
-    case "created":
-    case "waiting_for_resource":
-    case "preparing":
-    case "canceling":
-    case "scheduled":
-    case "manual":
-      return "pending";
     case "canceled":
     case "cancelled":
     case "skipped":
       return "skipped";
     default:
+      // "manual" and every active transitional status (see
+      // GITLAB_ACTIVE_PIPELINE_STATUSES) render as pending.
       return "pending";
   }
 }
@@ -71,10 +52,12 @@ function toPresentableGitlabPipelineJob(job: GitlabPipelineJobPresentationInput)
   if (job.status === "manual") {
     return {
       status,
-      traits: job.allowFailure ? ["manual"] : ["manual", "action_required"],
+      traits: job.allowFailure
+        ? [CHECK_TRAIT_MANUAL]
+        : [CHECK_TRAIT_MANUAL, CHECK_TRAIT_ACTION_REQUIRED],
     };
   }
-  if (status === "failure" && job.allowFailure) return { status, traits: ["warning"] };
+  if (status === "failure" && job.allowFailure) return { status, traits: [CHECK_TRAIT_WARNING] };
   return { status };
 }
 

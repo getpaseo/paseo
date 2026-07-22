@@ -48,7 +48,7 @@ export function formatCheckPresentationCountsLabel(
 export function getCheckPresentationStatusLabel(check: PresentableCheck, t: TFunction): string {
   const presentation = classifyCheck(check);
   if (presentation !== "ignored") return t(CHECK_PRESENTATION_STATUS_KEYS[presentation]);
-  if (check.rawStatus?.toLowerCase() === "cancelled") {
+  if (check.status === "cancelled") {
     return t("workspace.git.pr.accessibility.checkStatus.cancelled");
   }
   return t("workspace.git.pr.accessibility.checkStatus.skipped");

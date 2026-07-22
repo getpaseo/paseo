@@ -29,13 +29,8 @@ describe("check presentation copy", () => {
 
   it("uses presentation policy for row status labels", () => {
     expect(
-      getCheckPresentationStatusLabel(
-        { status: "success", rawStatus: "failed", traits: ["warning"] },
-        i18n.t,
-      ),
+      getCheckPresentationStatusLabel({ status: "success", traits: ["warning"] }, i18n.t),
     ).toBe("Warning");
-    expect(
-      getCheckPresentationStatusLabel({ status: "cancelled", rawStatus: "cancelled" }, i18n.t),
-    ).toBe("Cancelled");
+    expect(getCheckPresentationStatusLabel({ status: "cancelled" }, i18n.t)).toBe("Cancelled");
   });
 });

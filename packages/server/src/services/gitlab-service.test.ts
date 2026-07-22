@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import type { PullRequestCommandStatus } from "./forge-service.js";
-import { GITLAB_ACTIVE_PIPELINE_STATUS_SET, type GitLabStatusFacts } from "./gitlab-facts.js";
+import { GITLAB_ACTIVE_PIPELINE_STATUS_SET } from "@getpaseo/protocol/gitlab-pipeline";
+import type { GitLabStatusFacts } from "./gitlab-facts.js";
 import {
   type CreateGitLabServiceOptions,
   createGitLabService,
@@ -653,7 +654,9 @@ describe("createGitLabService", () => {
       headRef: "release/v0.4.0",
     });
 
-    expect(status?.checksStatus).toBe("pending");
+    // checksStatus follows the pipeline whose jobs are listed (the fetched
+    // one, status "failed"), while the facts keep head_pipeline's raw status.
+    expect(status?.checksStatus).toBe("failure");
     expect(status?.forgeSpecific).toMatchObject({
       forge: "gitlab",
       pipelineStatus: "canceling",
@@ -722,7 +725,6 @@ describe("createGitLabService", () => {
       {
         name: "flaky",
         status: "success",
-        rawStatus: "failed",
         traits: ["warning"],
         url: "https://gitlab.example.com/example-group/example-project/-/jobs/932",
         workflow: "test",
@@ -731,7 +733,6 @@ describe("createGitLabService", () => {
       {
         name: "optional-deploy",
         status: "skipped",
-        rawStatus: "manual",
         traits: ["manual"],
         url: "https://gitlab.example.com/example-group/example-project/-/jobs/934",
         workflow: "deploy",
@@ -740,7 +741,6 @@ describe("createGitLabService", () => {
       {
         name: "release",
         status: "pending",
-        rawStatus: "manual",
         traits: ["manual", "action_required"],
         url: "https://gitlab.example.com/example-group/example-project/-/jobs/935",
         workflow: "deploy",

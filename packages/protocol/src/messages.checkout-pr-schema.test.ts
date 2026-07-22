@@ -33,7 +33,6 @@ describe("checkout PR schemas", () => {
         name: "deploy",
         status: "pending",
         url: null,
-        rawStatus: "manual",
         traits: ["manual", "action_required", "future-forge-trait"],
       },
     ];
@@ -643,6 +642,46 @@ describe("checkout PR schemas", () => {
       status: "future_pipeline_status",
       stages: [{ jobs: [{ status: "future_job_status", allowFailure: false }] }],
     });
+  });
+
+  // COMPAT(pipelineRawStatus): released peers <= v0.2.0-rc.1 require rawStatus,
+  // so daemons keep emitting it; this proves newer clients accept its absence
+  // once emission stops.
+  test("parses pipeline details without the compat rawStatus field", () => {
+    const details = CheckoutGithubGetCheckDetailsResponseSchema.parse({
+      type: "checkout.github.get_check_details.response",
+      payload: {
+        cwd: "/tmp/repo",
+        success: true,
+        details: {
+          checkRunId: 307,
+          name: "Pipeline (feat/y)",
+          annotations: [],
+          failedJobs: [],
+          truncated: false,
+          pipeline: {
+            id: 307,
+            status: "running",
+            stages: [
+              {
+                name: "test",
+                status: "running",
+                jobs: [{ id: 930, name: "unit", stage: "test", status: "running" }],
+              },
+            ],
+          },
+        },
+        error: null,
+        requestId: "request-pipeline-no-raw",
+      },
+    }).payload.details;
+
+    expect(details?.pipeline).toMatchObject({
+      id: 307,
+      status: "running",
+      stages: [{ jobs: [{ id: 930, status: "running" }] }],
+    });
+    expect(details?.pipeline?.rawStatus).toBeUndefined();
   });
 
   test("keeps pipeline absent for legacy and GitHub check-details responses", () => {

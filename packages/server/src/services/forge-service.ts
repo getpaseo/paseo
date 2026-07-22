@@ -68,8 +68,6 @@ export interface PullRequestCheck {
   duration?: string;
   checkRunId?: number;
   workflowRunId?: number;
-  /** Provider-native status, retained when the normalized status loses presentation detail. */
-  rawStatus?: string;
   /** Open forge-neutral refinements such as manual, action_required, or warning. */
   traits?: string[];
 }
@@ -327,6 +325,11 @@ export interface PipelineJob {
   name: string;
   stage: string;
   status: PipelineJobStatus;
+  /**
+   * COMPAT(pipelineRawStatus): unread by clients but required by peers
+   * <= v0.2.0-rc.1, so adapters must keep populating it. Remove together with
+   * the wire field after 2027-01-17 once the client floor is >= v0.2.0.
+   */
   rawStatus: string;
   url: string | null;
   allowFailure: boolean;
@@ -347,6 +350,7 @@ export interface PipelineStage {
 export interface PipelineDetails {
   id: number;
   status: PipelineJobStatus;
+  /** COMPAT(pipelineRawStatus): see {@link PipelineJob.rawStatus}. */
   rawStatus: string;
   url: string | null;
   ref: string | null;

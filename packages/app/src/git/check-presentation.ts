@@ -1,6 +1,11 @@
+import {
+  CHECK_TRAIT_ACTION_REQUIRED,
+  CHECK_TRAIT_MANUAL,
+  CHECK_TRAIT_WARNING,
+} from "@getpaseo/protocol/check-traits";
+
 export interface PresentableCheck {
   status: string;
-  rawStatus?: string;
   traits?: readonly string[];
 }
 
@@ -26,9 +31,9 @@ export type CheckPresentationCounts = Record<CountedCheckPresentation, number>;
 
 export function classifyCheck(check: PresentableCheck): CheckPresentation {
   const traits = check.traits ?? [];
-  if (traits.includes("action_required")) return "actionRequired";
-  if (traits.includes("warning")) return "warning";
-  if (traits.includes("manual")) return "manual";
+  if (traits.includes(CHECK_TRAIT_ACTION_REQUIRED)) return "actionRequired";
+  if (traits.includes(CHECK_TRAIT_WARNING)) return "warning";
+  if (traits.includes(CHECK_TRAIT_MANUAL)) return "manual";
   if (check.status === "success") return "success";
   if (check.status === "failure") return "failure";
   if (check.status === "skipped" || check.status === "cancelled") return "ignored";

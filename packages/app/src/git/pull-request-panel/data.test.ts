@@ -155,7 +155,6 @@ describe("mapPrPaneData", () => {
           {
             name: "approval",
             status: "pending",
-            rawStatus: "blocked",
             traits: ["action_required"],
             url: "https://example.com/3",
           },
@@ -164,7 +163,6 @@ describe("mapPrPaneData", () => {
           {
             name: "manual",
             status: "skipped",
-            rawStatus: "manual",
             traits: ["manual"],
             url: "https://example.com/6",
           },
@@ -187,7 +185,6 @@ describe("mapPrPaneData", () => {
         provider: "github",
         name: "approval",
         status: "pending",
-        rawStatus: "blocked",
         traits: ["action_required"],
         url: "https://example.com/3",
       },
@@ -195,15 +192,13 @@ describe("mapPrPaneData", () => {
       {
         provider: "github",
         name: "cancelled",
-        status: "skipped",
-        rawStatus: "cancelled",
+        status: "cancelled",
         url: "https://example.com/5",
       },
       {
         provider: "github",
         name: "manual",
         status: "skipped",
-        rawStatus: "manual",
         traits: ["manual"],
         url: "https://example.com/6",
       },
@@ -656,7 +651,6 @@ describe("mapPrPaneData", () => {
         provider: "forgejo",
         name: "CI",
         status: "failure",
-        rawStatus: "warning",
         traits: ["warning"],
         url: "https://forgejo.example.com/group/repo/pulls/7",
       },

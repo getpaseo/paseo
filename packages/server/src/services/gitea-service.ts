@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { CHECK_TRAIT_ACTION_REQUIRED, CHECK_TRAIT_WARNING } from "@getpaseo/protocol/check-traits";
+import { mapGiteaCommitState } from "@getpaseo/protocol/gitea-status";
 import pLimit from "p-limit";
 import { parseGitHubRemoteIdentity, parseGitRemoteLocation } from "@getpaseo/protocol/git-remote";
 import { findExecutable } from "../executable-resolution/executable-resolution.js";
@@ -671,24 +673,6 @@ function mapGiteaCiStatus(ci: string | undefined): PullRequestChecksStatus {
   }
 }
 
-function mapGiteaCommitStatus(state: string): PullRequestCheck["status"] {
-  switch (state.toLowerCase()) {
-    case "success":
-      return "success";
-    case "failure":
-    case "error":
-    // See mapGiteaCiStatus: "warning" is terminal and non-passing (blocks merge).
-    case "warning":
-      return "failure";
-    case "pending":
-      return "pending";
-    case "skipped":
-      return "skipped";
-    default:
-      return "pending";
-  }
-}
-
 function mapGiteaActionTaskStatus(status: string): PullRequestCheck["status"] {
   switch (status.toLowerCase()) {
     case "success":
@@ -719,8 +703,8 @@ function toGiteaPullRequestCheck(status: GiteaCommitStatus): PullRequestCheck {
   const rawStatus = status.status.toLowerCase();
   return {
     name: status.context || `status-${status.id}`,
-    status: mapGiteaCommitStatus(rawStatus),
-    ...(rawStatus === "warning" ? { rawStatus, traits: ["warning"] } : {}),
+    status: mapGiteaCommitState(rawStatus),
+    ...(rawStatus === "warning" ? { traits: [CHECK_TRAIT_WARNING] } : {}),
     url: status.target_url ?? null,
     checkRunId: status.id,
   };
@@ -735,19 +719,32 @@ function toGiteaActionTaskCheck(task: GiteaActionTask): PullRequestCheck {
   return {
     name: getGiteaActionTaskName(task),
     status: mapGiteaActionTaskStatus(rawStatus),
-    ...(rawStatus === "blocked" ? { rawStatus } : {}),
-    ...(rawStatus === "blocked" && task.need_approval ? { traits: ["action_required"] } : {}),
+    ...(rawStatus === "blocked" && task.need_approval
+      ? { traits: [CHECK_TRAIT_ACTION_REQUIRED] }
+      : {}),
     url: task.url ?? null,
     workflowRunId: task.id,
   };
 }
 
 function getGiteaActionWorkflowIdentity(task: GiteaActionTask): string {
-  return task.workflow_id || `unknown-workflow\u0000${getGiteaActionExecutionIdentity(task)}`;
+  if (task.workflow_id) {
+    return `workflow\u0000${task.workflow_id}`;
+  }
+  // Instances that omit workflow_id (older Gitea/Forgejo payloads) still need
+  // reruns of the same job collapsed to the latest execution, so fall back to
+  // the job name before treating the task as its own group.
+  const name = task.name || task.display_title;
+  if (name) {
+    return `name\u0000${name}`;
+  }
+  return `task\u0000${getGiteaActionExecutionIdentity(task)}`;
 }
 
 function getGiteaActionExecutionIdentity(task: GiteaActionTask): string {
   if (task.run_number !== undefined) return `run-number\u0000${task.run_number}`;
+  const runId = getGiteaActionRunIdFromUrl(task.url);
+  if (runId !== null) return `run-id\u0000${runId}`;
   if (task.url) return `url\u0000${task.url}`;
   return `task\u0000${task.id}`;
 }
@@ -815,51 +812,70 @@ function getUrlOrigin(value: string | null | undefined): string | null {
   }
 }
 
-function hasNativeActionJobUrl(
+const GITEA_RELATIVE_URL_ORIGIN = "https://gitea.invalid";
+
+function getGiteaActionRunIdFromUrl(value: string | null | undefined): number | null {
+  if (!value) return null;
+  try {
+    const url = new URL(value, GITEA_RELATIVE_URL_ORIGIN);
+    const match = url.pathname.match(/\/actions\/runs\/(\d+)(?:\/jobs\/\d+)?\/?$/);
+    return match?.[1] ? Number.parseInt(match[1], 10) : null;
+  } catch {
+    return null;
+  }
+}
+
+function isNativeActionJobUrl(
   targetUrl: string | null | undefined,
   nativeOrigins: ReadonlySet<string>,
+  nativeRunIds: ReadonlySet<number>,
 ): boolean {
   if (!targetUrl) return false;
   try {
-    const relativeOrigin = "https://gitea.invalid";
-    const url = new URL(targetUrl, relativeOrigin);
-    return (
-      /\/actions\/runs\/\d+\/jobs\/\d+\/?$/.test(url.pathname) &&
-      (url.origin === relativeOrigin || nativeOrigins.has(url.origin))
-    );
+    const url = new URL(targetUrl, GITEA_RELATIVE_URL_ORIGIN);
+    if (!/\/actions\/runs\/\d+\/jobs\/\d+\/?$/.test(url.pathname)) return false;
+    if (url.origin !== GITEA_RELATIVE_URL_ORIGIN && !nativeOrigins.has(url.origin)) return false;
+    const runId = getGiteaActionRunIdFromUrl(targetUrl);
+    return runId !== null && nativeRunIds.has(runId);
   } catch {
     return false;
   }
 }
 
+// A "shadow" is the commit status Gitea synthesizes to mirror one of its own
+// Actions jobs; keeping both would double-report every job. Detection is purely
+// structural: Gitea always creates these statuses with a target_url of the form
+// "<run link>/jobs/<job id>" (services/actions/commit_status.go upstream), so a
+// status is a shadow exactly when its URL points at a job of a run we actually
+// fetched from the Actions API. Anything else - external CI, URL-less statuses,
+// contexts that merely look like "<workflow> / <job> (<event>)" - is kept.
 function isGiteaActionShadowStatus(
   status: GiteaCommitStatus,
-  taskNames: ReadonlySet<string>,
   nativeOrigins: ReadonlySet<string>,
+  nativeRunIds: ReadonlySet<number>,
 ): boolean {
-  if (status.creator !== null && !hasNativeActionJobUrl(status.target_url, nativeOrigins)) {
-    return false;
-  }
-  for (const taskName of taskNames) {
-    if (status.context.includes(` / ${taskName} (`) && status.context.endsWith(")")) return true;
-  }
-  return false;
+  return isNativeActionJobUrl(status.target_url, nativeOrigins, nativeRunIds);
 }
 
 function combineGiteaChecks(
   commitStatuses: GiteaCommitStatus[],
   actionTasks: GiteaActionTask[],
 ): PullRequestCheck[] {
-  const taskNames = new Set(
-    actionTasks.map((task) => task.name).filter((name): name is string => Boolean(name)),
-  );
   const nativeOrigins = new Set(
     actionTasks
       .map((task) => getUrlOrigin(task.url))
       .filter((origin): origin is string => !!origin),
   );
+  // Shadow target_urls and task urls both embed run.ID (run.Link() upstream);
+  // run_number is the unrelated per-repo run.Index, so only URL-derived ids can
+  // match here.
+  const nativeRunIds = new Set(
+    actionTasks
+      .map((task) => getGiteaActionRunIdFromUrl(task.url))
+      .filter((runId): runId is number => runId !== null),
+  );
   const checks = commitStatuses
-    .filter((status) => !isGiteaActionShadowStatus(status, taskNames, nativeOrigins))
+    .filter((status) => !isGiteaActionShadowStatus(status, nativeOrigins, nativeRunIds))
     .map(toGiteaPullRequestCheck);
   const seenTaskIds = new Set<number>();
   for (const task of actionTasks) {
@@ -1784,7 +1800,7 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
       checkRunId: status.id,
       name: status.context || `status-${status.id}`,
       status: status.status,
-      conclusion: mapGiteaCommitStatus(status.status),
+      conclusion: mapGiteaCommitState(status.status),
       url: status.target_url ?? null,
       detailsUrl: status.url ?? null,
       output:

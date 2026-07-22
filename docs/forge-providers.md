@@ -62,7 +62,10 @@ Check results keep a stable normalized `status` for aggregation and an optional
 open `traits: string[]` for composable forge-neutral refinements such as
 `manual`, `action_required`, and `warning`. Consumers ignore unknown traits and
 fall back to `status`; `rawStatus` preserves provider-native detail. Do not add
-provider vocabulary to the normalized status union.
+provider vocabulary to the normalized status union. Producers and the
+presentation layer share the trait constants in
+`packages/protocol/src/check-traits.ts` — use those instead of string literals
+so classification and emission cannot drift apart.
 
 Shipped GitHub compatibility stays separate:
 

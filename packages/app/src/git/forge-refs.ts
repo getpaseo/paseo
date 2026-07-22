@@ -83,9 +83,11 @@ function resolveRemoteReferenceTarget(
   const forgeIds = new Set<string>();
   for (const definition of FORGE_DEFINITIONS) {
     const cloudHosts = definition.cloudHosts?.map(normalizeHost) ?? [];
-    if (cloudHosts.includes(remote.host) && cloudHosts[0]) {
+    if (cloudHosts.includes(remote.host)) {
       forgeIds.add(definition.id);
-      webHosts.add(cloudHosts[0]);
+      for (const host of cloudHosts) {
+        webHosts.add(host);
+      }
     }
   }
   return {

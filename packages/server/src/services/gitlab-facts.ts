@@ -21,24 +21,6 @@ export interface GitLabStatusFacts {
   mergeWhenPipelineSucceeds: boolean;
 }
 
-// Client-side twin: packages/app/src/git/forges/gitlab.ts
-// (GITLAB_ACTIVE_PIPELINE_STATUSES / isPipelineActiveStatus). Duplicated because
-// the app can't depend on the server package; keep the two lists in sync by hand
-// if GitLab adds a new active pipeline status.
-export const GITLAB_ACTIVE_PIPELINE_STATUSES = [
-  "created",
-  "waiting_for_resource",
-  "preparing",
-  "pending",
-  "running",
-  "canceling",
-  "scheduled",
-] as const;
-
-export type GitLabActivePipelineStatus = (typeof GITLAB_ACTIVE_PIPELINE_STATUSES)[number];
-
-export const GITLAB_ACTIVE_PIPELINE_STATUS_SET = new Set<string>(GITLAB_ACTIVE_PIPELINE_STATUSES);
-
 export type GitLabForgeSpecificStatusFacts = ForgeSpecificStatusFacts & {
   forge: "gitlab";
 } & GitLabStatusFacts;
