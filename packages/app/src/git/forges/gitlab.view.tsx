@@ -1,11 +1,10 @@
 import React, { useCallback, useMemo, type ReactNode } from "react";
 import { Pressable, Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { CircleCheck, CircleX, ExternalLink } from "lucide-react-native";
+import { CircleCheck, ExternalLink } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import type { CheckoutPipelineJob, CheckoutPipelineStage } from "@getpaseo/protocol/messages";
 import { GitLabIcon } from "@/components/icons/gitlab-icon";
-import { ManualStatusIcon } from "@/components/icons/manual-status-icon";
 import {
   definePaneContribution,
   type ClientForgeViewModule,
@@ -13,26 +12,23 @@ import {
 } from "@/git/client-forge-module";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { formatDuration } from "@/utils/time";
+import { COUNTED_CHECK_PRESENTATIONS } from "@/git/check-presentation";
+import { CheckPresentationIcon } from "@/git/check-presentation.view";
 import {
-  CheckStatusIcon,
+  CheckPresentationSummaryPill,
   Section,
-  SUMMARY_DANGER_ICON,
-  SUMMARY_SUCCESS_ICON,
-  SUMMARY_WARNING_ICON,
-  SummaryPill,
   foregroundMutedColorMapping,
   sectionKitStyles,
   successColorMapping,
-  warningColorMapping,
 } from "@/git/pull-request-panel/section-kit";
 import { useGitLabPipeline } from "@/git/pull-request-panel/use-pipeline";
 import {
+  classifyGitlabPipelineJob,
   deriveGitlabApprovals,
   deriveGitlabPipelineSummary,
   countGitlabPipelineJobs,
   GitlabMergeFactsSchema,
   isPipelineActiveStatus,
-  mapPipelineStatus,
   type GitlabApprovals,
   type GitlabMergeFacts,
   type GitlabPipelineSummary,
@@ -68,16 +64,7 @@ function renderGitlabChecksSection(facts: GitlabMergeFacts, ctx: PaneChecksSlotC
 }
 
 const ThemedCircleCheck = withUnistyles(CircleCheck);
-const ThemedCircleX = withUnistyles(CircleX);
-const ThemedManualStatusIcon = withUnistyles(ManualStatusIcon);
 const ThemedExternalLink = withUnistyles(ExternalLink);
-const SUMMARY_ALLOWED_FAILURE_ICON = <ThemedCircleX size={12} uniProps={warningColorMapping} />;
-const SUMMARY_OPTIONAL_MANUAL_ICON = (
-  <ThemedManualStatusIcon size={12} uniProps={foregroundMutedColorMapping} />
-);
-const SUMMARY_BLOCKING_MANUAL_ICON = (
-  <ThemedManualStatusIcon size={12} uniProps={warningColorMapping} />
-);
 
 function GitlabApprovalsBadge({ approvals }: { approvals: GitlabApprovals }) {
   const { t } = useTranslation();
@@ -155,42 +142,14 @@ function GitLabPipelineSection({
 
   const sectionSummary = (
     <>
-      <SummaryPill
-        count={displayCounts.passed}
-        icon={SUMMARY_SUCCESS_ICON}
-        variant="success"
-        testID="pr-pane-pipeline-passed"
-      />
-      <SummaryPill
-        count={displayCounts.failed}
-        icon={SUMMARY_DANGER_ICON}
-        variant="danger"
-        testID="pr-pane-pipeline-failed"
-      />
-      <SummaryPill
-        count={displayCounts.pending}
-        icon={SUMMARY_WARNING_ICON}
-        variant="warning"
-        testID="pr-pane-pipeline-pending"
-      />
-      <SummaryPill
-        count={displayCounts.allowedFailures}
-        icon={SUMMARY_ALLOWED_FAILURE_ICON}
-        variant="warning"
-        testID="pr-pane-pipeline-allowed-failure"
-      />
-      <SummaryPill
-        count={displayCounts.blockingManual}
-        icon={SUMMARY_BLOCKING_MANUAL_ICON}
-        variant="warning"
-        testID="pr-pane-pipeline-blocking-manual"
-      />
-      <SummaryPill
-        count={displayCounts.optionalManual}
-        icon={SUMMARY_OPTIONAL_MANUAL_ICON}
-        variant="muted"
-        testID="pr-pane-pipeline-optional-manual"
-      />
+      {COUNTED_CHECK_PRESENTATIONS.map((presentation) => (
+        <CheckPresentationSummaryPill
+          key={presentation}
+          count={displayCounts[presentation]}
+          presentation={presentation}
+          testID={`pr-pane-pipeline-${presentation}`}
+        />
+      ))}
       {showBreakdown ? null : <GitLabPipelineStatusIcon status={summary.rawStatus} />}
     </>
   );
@@ -292,18 +251,8 @@ function GitLabPipelineStatusIcon({
   status: string;
   allowFailure?: boolean;
 }) {
-  if (status === "manual") {
-    return (
-      <ThemedManualStatusIcon
-        size={14}
-        uniProps={allowFailure ? foregroundMutedColorMapping : warningColorMapping}
-      />
-    );
-  }
-  if (status === "failed" && allowFailure) {
-    return <ThemedCircleX size={14} uniProps={warningColorMapping} />;
-  }
-  return <CheckStatusIcon status={mapPipelineStatus(status)} />;
+  const presentation = classifyGitlabPipelineJob({ status, allowFailure });
+  return <CheckPresentationIcon presentation={presentation} size={14} />;
 }
 
 export const gitlabForgeView = {

@@ -12,18 +12,7 @@ import { Dimensions, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { FadeIn, FadeOut } from "react-native-reanimated";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import {
-  Check,
-  CircleCheck,
-  CircleDot,
-  CircleX,
-  Copy,
-  ExternalLink,
-  FileDiff,
-  Folder,
-  GitBranch,
-  Server,
-} from "lucide-react-native";
+import { Check, Copy, ExternalLink, Folder, GitBranch, Server } from "lucide-react-native";
 import { getForgePresentation, normalizeForge } from "@/git/forge";
 import { ForgeBrandIcon } from "@/git/forge-icon";
 import type { Theme } from "@/styles/theme";
@@ -42,11 +31,13 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import { FloatingSurface } from "@/components/ui/floating";
 import { isWeb } from "@/constants/platform";
 import { useHosts } from "@/runtime/host-runtime";
-import { ManualStatusIcon } from "@/components/icons/manual-status-icon";
 import {
+  COUNTED_CHECK_PRESENTATIONS,
   countCheckPresentations,
-  formatCheckPresentationCountsLabel,
+  type CountedCheckPresentation,
 } from "@/git/check-presentation";
+import { formatCheckPresentationCountsLabel } from "@/git/check-presentation-copy";
+import { CheckPresentationIcon, getCheckPresentationTone } from "@/git/check-presentation.view";
 import { buildForgeChecksUrl } from "@/git/forge-url";
 
 interface Rect {
@@ -361,18 +352,11 @@ function HostRow({ serverId }: { serverId: string }): ReactElement | null {
 }
 
 const ThemedExternalLink = withUnistyles(ExternalLink);
-const ThemedCircleCheck = withUnistyles(CircleCheck);
-const ThemedCircleDot = withUnistyles(CircleDot);
-const ThemedCircleX = withUnistyles(CircleX);
-const ThemedManualStatusIcon = withUnistyles(ManualStatusIcon);
 const ThemedCopy = withUnistyles(Copy);
 const ThemedCheck = withUnistyles(Check);
 
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
-const successColorMapping = (theme: Theme) => ({ color: theme.colors.statusSuccess });
-const warningColorMapping = (theme: Theme) => ({ color: theme.colors.statusWarning });
-const dangerColorMapping = (theme: Theme) => ({ color: theme.colors.statusDanger });
 
 function InfoRow({
   icon: Icon,
@@ -464,64 +448,26 @@ function CopyableInfoRow({
 
 function ChecksSummaryPill({
   count,
-  kind,
+  presentation,
 }: {
   count: number;
-  kind: "passed" | "failed" | "warning" | "actionRequired" | "manual" | "pending";
+  presentation: CountedCheckPresentation;
 }) {
   if (count === 0) return null;
-
-  if (kind === "passed") {
-    return (
-      <View style={styles.checksSummaryPill}>
-        <ThemedCircleCheck size={12} uniProps={successColorMapping} />
-        <Text style={styles.checksStatusTextPassed}>{count}</Text>
-      </View>
-    );
-  }
-
-  if (kind === "failed") {
-    return (
-      <View style={styles.checksSummaryPill}>
-        <ThemedCircleX size={12} uniProps={dangerColorMapping} />
-        <Text style={styles.checksStatusTextFailed}>{count}</Text>
-      </View>
-    );
-  }
-
-  if (kind === "warning") {
-    return (
-      <View style={styles.checksSummaryPill}>
-        <ThemedCircleX size={12} uniProps={warningColorMapping} />
-        <Text style={styles.checksStatusTextPending}>{count}</Text>
-      </View>
-    );
-  }
-
-  if (kind === "actionRequired") {
-    return (
-      <View style={styles.checksSummaryPill}>
-        <ThemedManualStatusIcon size={12} uniProps={warningColorMapping} />
-        <Text style={styles.checksStatusTextPending}>{count}</Text>
-      </View>
-    );
-  }
-
-  if (kind === "manual") {
-    return (
-      <View style={styles.checksSummaryPill}>
-        <ThemedManualStatusIcon size={12} uniProps={foregroundMutedColorMapping} />
-        <Text style={styles.checksStatusTextMuted}>{count}</Text>
-      </View>
-    );
-  }
-
   return (
     <View style={styles.checksSummaryPill}>
-      <ThemedCircleDot size={12} uniProps={warningColorMapping} />
-      <Text style={styles.checksStatusTextPending}>{count}</Text>
+      <CheckPresentationIcon presentation={presentation} size={12} />
+      <Text style={checksSummaryTextStyle(presentation)}>{count}</Text>
     </View>
   );
+}
+
+function checksSummaryTextStyle(presentation: CountedCheckPresentation) {
+  const tone = getCheckPresentationTone(presentation);
+  if (tone === "success") return styles.checksStatusTextPassed;
+  if (tone === "danger") return styles.checksStatusTextFailed;
+  if (tone === "warning") return styles.checksStatusTextPending;
+  return styles.checksStatusTextMuted;
 }
 
 function ChecksSummaryContent({
@@ -534,8 +480,7 @@ function ChecksSummaryContent({
   hovered: boolean;
 }) {
   const { t } = useTranslation();
-  const { passed, failed, warnings, actionRequired, manual, pending } =
-    countCheckPresentations(checks);
+  const counts = countCheckPresentations(checks);
 
   const labelStyle = hovered
     ? [styles.checksSummaryLabel, styles.checksSummaryLabelHovered]
@@ -552,12 +497,13 @@ function ChecksSummaryContent({
       )}
       <Text style={labelStyle}>{t("workspace.git.pr.sections.checks")}</Text>
       <View style={styles.checksSummaryCounts}>
-        <ChecksSummaryPill count={passed} kind="passed" />
-        <ChecksSummaryPill count={failed} kind="failed" />
-        <ChecksSummaryPill count={warnings} kind="warning" />
-        <ChecksSummaryPill count={actionRequired} kind="actionRequired" />
-        <ChecksSummaryPill count={manual} kind="manual" />
-        <ChecksSummaryPill count={pending} kind="pending" />
+        {COUNTED_CHECK_PRESENTATIONS.map((presentation) => (
+          <ChecksSummaryPill
+            key={presentation}
+            count={counts[presentation]}
+            presentation={presentation}
+          />
+        ))}
       </View>
     </>
   );
@@ -574,17 +520,11 @@ function ChecksSummaryPressable({
 }) {
   const { t } = useTranslation();
   const counts = countCheckPresentations(checks);
-  const accessibilityLabel = formatCheckPresentationCountsLabel(counts, {
-    heading: t("workspace.git.pr.sections.checks"),
-    passed: t("sidebar.workspace.checks.passed", { count: counts.passed }),
-    failed: t("sidebar.workspace.checks.failed", { count: counts.failed }),
-    warnings: t("sidebar.workspace.checks.warning", { count: counts.warnings }),
-    actionRequired: t("sidebar.workspace.checks.actionRequired", {
-      count: counts.actionRequired,
-    }),
-    manual: t("sidebar.workspace.checks.manual", { count: counts.manual }),
-    pending: t("sidebar.workspace.checks.pending", { count: counts.pending }),
-  });
+  const accessibilityLabel = formatCheckPresentationCountsLabel(
+    counts,
+    t("workspace.git.pr.sections.checks"),
+    t,
+  );
   const handlePress = useCallback(() => {
     void openExternalUrl(buildForgeChecksUrl(forge, url) ?? url);
   }, [forge, url]);

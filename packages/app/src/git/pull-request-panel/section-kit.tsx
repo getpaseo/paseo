@@ -1,27 +1,17 @@
 import React, { type ReactNode } from "react";
 import { Pressable, Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import type { CountedCheckPresentation } from "@/git/check-presentation";
 import {
-  ChevronDown,
-  ChevronRight,
-  CircleCheck,
-  CircleDot,
-  CircleSlash,
-  CircleX,
-} from "lucide-react-native";
-import { CONTROL_HEIGHTS } from "@/components/ui/control-geometry";
-import { ManualStatusIcon } from "@/components/icons/manual-status-icon";
-import type { CheckPresentation } from "@/git/check-presentation";
+  CheckPresentationIcon,
+  getCheckPresentationTone,
+  type CheckPresentationTone,
+} from "@/git/check-presentation.view";
+import { ChevronDown, ChevronRight } from "lucide-react-native";
 import type { Theme } from "@/styles/theme";
-import type { CheckStatus } from "./check-status";
 
 const ThemedChevronDown = withUnistyles(ChevronDown);
 const ThemedChevronRight = withUnistyles(ChevronRight);
-const ThemedCircleCheck = withUnistyles(CircleCheck);
-const ThemedCircleDot = withUnistyles(CircleDot);
-const ThemedCircleSlash = withUnistyles(CircleSlash);
-const ThemedCircleX = withUnistyles(CircleX);
-const ThemedManualStatusIcon = withUnistyles(ManualStatusIcon);
 
 export const foregroundMutedColorMapping = (theme: Theme) => ({
   color: theme.colors.foregroundMuted,
@@ -29,19 +19,6 @@ export const foregroundMutedColorMapping = (theme: Theme) => ({
 export const successColorMapping = (theme: Theme) => ({ color: theme.colors.statusSuccess });
 export const dangerColorMapping = (theme: Theme) => ({ color: theme.colors.statusDanger });
 export const warningColorMapping = (theme: Theme) => ({ color: theme.colors.statusWarning });
-
-export const SUMMARY_SUCCESS_ICON = <ThemedCircleCheck size={12} uniProps={successColorMapping} />;
-export const SUMMARY_DANGER_ICON = <ThemedCircleX size={12} uniProps={dangerColorMapping} />;
-export const SUMMARY_WARNING_ICON = <ThemedCircleDot size={12} uniProps={warningColorMapping} />;
-export const SUMMARY_WARNING_FAILURE_ICON = (
-  <ThemedCircleX size={12} uniProps={warningColorMapping} />
-);
-export const SUMMARY_ACTION_REQUIRED_ICON = (
-  <ThemedManualStatusIcon size={12} uniProps={warningColorMapping} />
-);
-export const SUMMARY_MANUAL_ICON = (
-  <ThemedManualStatusIcon size={12} uniProps={foregroundMutedColorMapping} />
-);
 
 interface SectionProps {
   title: string;
@@ -80,7 +57,7 @@ export function Section({
   );
 }
 
-export type SummaryPillVariant = "success" | "danger" | "warning" | "muted";
+export type SummaryPillVariant = CheckPresentationTone;
 
 export function SummaryPill({
   count,
@@ -109,26 +86,22 @@ function summaryPillTextStyle(variant: SummaryPillVariant) {
   return sectionKitStyles.summaryPillMutedText;
 }
 
-export function CheckStatusIcon({
-  status,
+export function CheckPresentationSummaryPill({
+  count,
   presentation,
+  testID,
 }: {
-  status: CheckStatus;
-  presentation?: CheckPresentation;
+  count: number;
+  presentation: CountedCheckPresentation;
+  testID?: string;
 }) {
-  if (presentation === "actionRequired") {
-    return <ThemedManualStatusIcon size={14} uniProps={warningColorMapping} />;
-  }
-  if (presentation === "warning") {
-    return <ThemedCircleX size={14} uniProps={warningColorMapping} />;
-  }
-  if (presentation === "manual") {
-    return <ThemedManualStatusIcon size={14} uniProps={foregroundMutedColorMapping} />;
-  }
-  if (status === "success") return <ThemedCircleCheck size={14} uniProps={successColorMapping} />;
-  if (status === "failure") return <ThemedCircleX size={14} uniProps={dangerColorMapping} />;
-  if (status === "pending") return <ThemedCircleDot size={14} uniProps={warningColorMapping} />;
-  return <ThemedCircleSlash size={14} uniProps={foregroundMutedColorMapping} />;
+  if (count === 0) return null;
+  return (
+    <View style={sectionKitStyles.summaryPill} testID={testID}>
+      <CheckPresentationIcon presentation={presentation} size={12} />
+      <Text style={summaryPillTextStyle(getCheckPresentationTone(presentation))}>{count}</Text>
+    </View>
+  );
 }
 
 export const sectionKitStyles = StyleSheet.create((theme) => ({

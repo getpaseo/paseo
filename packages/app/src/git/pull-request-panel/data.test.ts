@@ -739,12 +739,12 @@ describe("mapPipelineStatus", () => {
         job(6, "manual", false),
       ]),
     ).toEqual({
-      passed: 1,
-      failed: 1,
+      success: 1,
+      failure: 1,
+      warning: 1,
+      actionRequired: 1,
+      manual: 1,
       pending: 1,
-      allowedFailures: 1,
-      optionalManual: 1,
-      blockingManual: 1,
     });
   });
 

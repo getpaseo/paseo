@@ -5,33 +5,25 @@ export interface PresentableCheck {
   requiresAction?: boolean;
 }
 
-export type CheckPresentation =
-  | "actionRequired"
-  | "warning"
-  | "manual"
-  | "success"
-  | "failure"
-  | "pending"
-  | "ignored";
+export const COUNTED_CHECK_PRESENTATIONS = [
+  "success",
+  "failure",
+  "warning",
+  "actionRequired",
+  "manual",
+  "pending",
+] as const;
 
-export interface CheckPresentationCounts {
-  passed: number;
-  failed: number;
-  warnings: number;
-  actionRequired: number;
-  manual: number;
-  pending: number;
-}
+export type CountedCheckPresentation = (typeof COUNTED_CHECK_PRESENTATIONS)[number];
+export type CheckPresentation = CountedCheckPresentation | "ignored";
 
-export interface CheckPresentationCountLabels {
-  heading: string;
-  passed: string;
-  failed: string;
-  warnings: string;
-  actionRequired: string;
-  manual: string;
-  pending: string;
-}
+export const ATTENTION_CHECK_PRESENTATIONS = [
+  "failure",
+  "warning",
+  "actionRequired",
+] as const satisfies readonly CountedCheckPresentation[];
+
+export type CheckPresentationCounts = Record<CountedCheckPresentation, number>;
 
 export function classifyCheck(check: PresentableCheck): CheckPresentation {
   if (check.requiresAction) return "actionRequired";
@@ -47,53 +39,16 @@ export function countCheckPresentations(
   checks: readonly PresentableCheck[],
 ): CheckPresentationCounts {
   const counts: CheckPresentationCounts = {
-    passed: 0,
-    failed: 0,
-    warnings: 0,
+    success: 0,
+    failure: 0,
+    warning: 0,
     actionRequired: 0,
     manual: 0,
     pending: 0,
   };
   for (const check of checks) {
-    switch (classifyCheck(check)) {
-      case "actionRequired":
-        counts.actionRequired += 1;
-        break;
-      case "warning":
-        counts.warnings += 1;
-        break;
-      case "manual":
-        counts.manual += 1;
-        break;
-      case "success":
-        counts.passed += 1;
-        break;
-      case "failure":
-        counts.failed += 1;
-        break;
-      case "pending":
-        counts.pending += 1;
-        break;
-      case "ignored":
-        break;
-    }
+    const presentation = classifyCheck(check);
+    if (presentation !== "ignored") counts[presentation] += 1;
   }
   return counts;
-}
-
-export function formatCheckPresentationCountsLabel(
-  counts: CheckPresentationCounts,
-  labels: CheckPresentationCountLabels,
-): string {
-  return [
-    labels.heading,
-    counts.passed > 0 ? labels.passed : null,
-    counts.failed > 0 ? labels.failed : null,
-    counts.warnings > 0 ? labels.warnings : null,
-    counts.actionRequired > 0 ? labels.actionRequired : null,
-    counts.manual > 0 ? labels.manual : null,
-    counts.pending > 0 ? labels.pending : null,
-  ]
-    .filter(Boolean)
-    .join(", ");
 }

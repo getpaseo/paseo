@@ -6,6 +6,13 @@ import {
 } from "@/git/client-forge-module";
 import type { CheckoutPipelineJob, CheckoutPrMergeMethod } from "@getpaseo/protocol/messages";
 import type { CheckStatus } from "@/git/pull-request-panel/check-status";
+import {
+  classifyCheck,
+  countCheckPresentations,
+  type CheckPresentation,
+  type CheckPresentationCounts,
+  type PresentableCheck,
+} from "@/git/check-presentation";
 
 const gitlabLineAnchor = (start: number, end?: number): string =>
   end && end > start ? `#L${start}-${end}` : `#L${start}`;
@@ -57,38 +64,27 @@ export function mapPipelineStatus(status: string): CheckStatus {
   }
 }
 
-export interface GitlabPipelineJobCounts {
-  passed: number;
-  failed: number;
-  pending: number;
-  allowedFailures: number;
-  optionalManual: number;
-  blockingManual: number;
+type GitlabPipelineJobPresentationInput = Pick<CheckoutPipelineJob, "status" | "allowFailure">;
+
+function toPresentableGitlabPipelineJob(job: GitlabPipelineJobPresentationInput): PresentableCheck {
+  const status = mapPipelineStatus(job.status);
+  if (job.status === "manual") {
+    return job.allowFailure ? { status, isManual: true } : { status, requiresAction: true };
+  }
+  if (status === "failure" && job.allowFailure) return { status, rawStatus: "warning" };
+  return { status };
+}
+
+export function classifyGitlabPipelineJob(
+  job: GitlabPipelineJobPresentationInput,
+): CheckPresentation {
+  return classifyCheck(toPresentableGitlabPipelineJob(job));
 }
 
 export function countGitlabPipelineJobs(
   jobs: readonly CheckoutPipelineJob[],
-): GitlabPipelineJobCounts {
-  const counts: GitlabPipelineJobCounts = {
-    passed: 0,
-    failed: 0,
-    pending: 0,
-    allowedFailures: 0,
-    optionalManual: 0,
-    blockingManual: 0,
-  };
-  for (const job of jobs) {
-    if (job.status === "manual") {
-      counts[job.allowFailure ? "optionalManual" : "blockingManual"] += 1;
-      continue;
-    }
-    const status = mapPipelineStatus(job.status);
-    if (status === "success") counts.passed += 1;
-    else if (status === "failure" && job.allowFailure) counts.allowedFailures += 1;
-    else if (status === "failure") counts.failed += 1;
-    else if (status === "pending") counts.pending += 1;
-  }
-  return counts;
+): CheckPresentationCounts {
+  return countCheckPresentations(jobs.map(toPresentableGitlabPipelineJob));
 }
 
 const GitlabMergeFactsSchema = z

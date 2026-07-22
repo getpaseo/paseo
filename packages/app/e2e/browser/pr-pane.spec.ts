@@ -102,11 +102,11 @@ test.describe("PR pane", () => {
     await expectPrPaneTitle(page, "Work in progress");
   });
 
-  test("renders check pills with correct passed/failed/pending counts", async ({ page }) => {
+  test("renders check pills with correct success/failure/pending counts", async ({ page }) => {
     await gotoWorkspace(page, workspaceByTitle.get("PR with mixed checks")!);
     await openPrPane(page);
 
-    await expectPrPaneCheckSummary(page, { passed: 2, failed: 1, pending: 1 });
+    await expectPrPaneCheckSummary(page, { success: 2, failure: 1, pending: 1 });
   });
 
   test("renders activity rows with correct count", async ({ page }) => {
@@ -120,7 +120,7 @@ test.describe("PR pane", () => {
     await gotoWorkspace(page, workspaceByTitle.get("PR with no checks")!);
     await openPrPane(page);
 
-    await expectPrPaneCheckSummary(page, { passed: 0, failed: 0, pending: 0 });
+    await expectPrPaneCheckSummary(page, { success: 0, failure: 0, pending: 0 });
     await expectPrPaneTitle(page, "PR with no checks");
   });
 });

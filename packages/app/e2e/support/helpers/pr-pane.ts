@@ -1,4 +1,5 @@
 import { expect, type Page } from "@playwright/test";
+import type { CheckPresentationCounts } from "@/git/check-presentation";
 import { getStateLabel } from "@/git/pull-request-panel/data";
 import { openPullRequestPanel } from "./workspace-tabs";
 
@@ -29,10 +30,10 @@ async function assertCheckPill(page: Page, testId: string, count: number): Promi
 
 export async function expectPrPaneCheckSummary(
   page: Page,
-  counts: { passed: number; failed: number; pending: number },
+  counts: Pick<CheckPresentationCounts, "success" | "failure" | "pending">,
 ): Promise<void> {
-  await assertCheckPill(page, "pr-pane-check-passed", counts.passed);
-  await assertCheckPill(page, "pr-pane-check-failed", counts.failed);
+  await assertCheckPill(page, "pr-pane-check-success", counts.success);
+  await assertCheckPill(page, "pr-pane-check-failure", counts.failure);
   await assertCheckPill(page, "pr-pane-check-pending", counts.pending);
 }
 
