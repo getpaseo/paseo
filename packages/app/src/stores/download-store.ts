@@ -16,6 +16,12 @@ interface DownloadProgress {
   eta: number;
 }
 
+interface DownloadFileBytesResult {
+  bytes: Uint8Array;
+  mime: string | null;
+  size: number;
+}
+
 export interface Download {
   id: string;
   serverId: string;
@@ -37,12 +43,15 @@ interface DownloadState {
     fileName: string;
     path: string;
     daemonProfile: HostProfile | undefined;
+    activeConnectionId?: string | null;
     requestFileDownloadToken: (path: string) => Promise<{
       token: string | null;
       fileName: string | null;
       mimeType: string | null;
+      size: number | null;
       error: string | null;
     }>;
+    requestFileBytes?: (path: string) => Promise<DownloadFileBytesResult>;
   }) => Promise<void>;
 
   updateProgress: (id: string, progress: DownloadProgress) => void;
@@ -56,6 +65,9 @@ function generateDownloadId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
+const MAX_WEBSOCKET_DOWNLOAD_BYTES = 50 * 1024 * 1024;
+const BROWSER_DOWNLOAD_URL_REVOKE_DELAY_MS = 60_000;
+
 export const useDownloadStore = create<DownloadState>()((set, get) => ({
   downloads: new Map(),
   activeDownloadId: null,
@@ -66,7 +78,9 @@ export const useDownloadStore = create<DownloadState>()((set, get) => ({
     fileName,
     path,
     daemonProfile,
+    activeConnectionId,
     requestFileDownloadToken,
+    requestFileBytes,
   }) => {
     const id = generateDownloadId();
     const download: Download = {
@@ -84,17 +98,28 @@ export const useDownloadStore = create<DownloadState>()((set, get) => ({
     }));
 
     try {
+      const downloadTarget = resolveDaemonDownloadTarget(daemonProfile, activeConnectionId);
       const tokenResponse = await requestFileDownloadToken(path);
       if (tokenResponse.error || !tokenResponse.token) {
         throw new Error(tokenResponse.error ?? i18n.t("downloads.requestTokenFailed"));
       }
 
-      const downloadTarget = resolveDaemonDownloadTarget(daemonProfile);
+      const resolvedFileName = tokenResponse.fileName ?? fileName;
+      const expectedSize = tokenResponse.size;
+
       if (!downloadTarget.baseUrl) {
-        throw new Error(i18n.t("downloads.hostUnavailable"));
+        await downloadViaFileBytes({
+          id,
+          path,
+          fileName: resolvedFileName,
+          expectedSize,
+          requestFileBytes,
+          completeDownload: get().completeDownload,
+          updateProgress: get().updateProgress,
+        });
+        return;
       }
 
-      const resolvedFileName = tokenResponse.fileName ?? fileName;
       const downloadUrl = buildDownloadUrl(
         downloadTarget.baseUrl,
         tokenResponse.token,
@@ -147,11 +172,10 @@ export const useDownloadStore = create<DownloadState>()((set, get) => ({
       get().completeDownload(id);
 
       if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(result.uri, {
-          mimeType: tokenResponse.mimeType ?? undefined,
-          dialogTitle: resolvedFileName
-            ? i18n.t("downloads.shareFileNamed", { fileName: resolvedFileName })
-            : i18n.t("downloads.shareFile"),
+        await shareDownloadedFile({
+          uri: result.uri,
+          fileName: resolvedFileName,
+          mimeType: tokenResponse.mimeType,
         });
       }
     } catch (error) {
@@ -244,8 +268,11 @@ interface DownloadTarget {
   authCredentials: { username: string; password: string } | null;
 }
 
-function resolveDaemonDownloadTarget(daemon?: HostProfile): DownloadTarget {
-  const connection = daemon?.connections.find((conn) => conn.type === "directTcp") ?? null;
+function resolveDaemonDownloadTarget(
+  daemon?: HostProfile,
+  activeConnectionId?: string | null,
+): DownloadTarget {
+  const connection = resolveDownloadConnection(daemon, activeConnectionId);
   if (!connection) {
     return { baseUrl: null, authHeader: null, authCredentials: null };
   }
@@ -285,6 +312,87 @@ function resolveDaemonDownloadTarget(daemon?: HostProfile): DownloadTarget {
   return { baseUrl, authHeader, authCredentials };
 }
 
+function resolveDownloadConnection(daemon?: HostProfile, activeConnectionId?: string | null) {
+  if (!daemon) {
+    return null;
+  }
+
+  if (activeConnectionId) {
+    const selectedConnection =
+      daemon.connections.find((connection) => connection.id === activeConnectionId) ?? null;
+    return selectedConnection?.type === "directTcp" ? selectedConnection : null;
+  }
+
+  const preferredConnectionId = daemon.preferredConnectionId;
+  if (preferredConnectionId) {
+    const preferredConnection =
+      daemon.connections.find((connection) => connection.id === preferredConnectionId) ?? null;
+    return preferredConnection?.type === "directTcp" ? preferredConnection : null;
+  }
+
+  return daemon.connections.find((connection) => connection.type === "directTcp") ?? null;
+}
+
+async function downloadViaFileBytes(input: {
+  id: string;
+  path: string;
+  fileName: string;
+  expectedSize: number | null;
+  requestFileBytes: ((path: string) => Promise<DownloadFileBytesResult>) | undefined;
+  updateProgress: (id: string, progress: DownloadProgress) => void;
+  completeDownload: (id: string) => void;
+}): Promise<void> {
+  if (!input.requestFileBytes) {
+    throw new Error(i18n.t("downloads.hostUnavailable"));
+  }
+  if (typeof input.expectedSize === "number" && input.expectedSize > MAX_WEBSOCKET_DOWNLOAD_BYTES) {
+    throw new Error(
+      i18n.t("downloads.websocketTooLarge", {
+        size: formatDownloadSize(MAX_WEBSOCKET_DOWNLOAD_BYTES),
+      }),
+    );
+  }
+
+  const file = await input.requestFileBytes(input.path);
+  if (file.size > MAX_WEBSOCKET_DOWNLOAD_BYTES) {
+    throw new Error(
+      i18n.t("downloads.websocketTooLarge", {
+        size: formatDownloadSize(MAX_WEBSOCKET_DOWNLOAD_BYTES),
+      }),
+    );
+  }
+  if (file.bytes.byteLength !== file.size) {
+    throw new Error(i18n.t("downloads.failed"));
+  }
+
+  const mimeType = file.mime ?? "application/octet-stream";
+  input.updateProgress(input.id, {
+    percent: 1,
+    bytesWritten: file.bytes.byteLength,
+    totalBytes: file.bytes.byteLength,
+    speed: 0,
+    eta: 0,
+  });
+
+  if (isWeb) {
+    triggerBrowserBytesDownload(file.bytes, input.fileName, mimeType);
+    input.completeDownload(input.id);
+    return;
+  }
+
+  const targetFile = resolveDownloadTargetFile(input.fileName);
+  await Promise.resolve(targetFile.write(file.bytes));
+  input.completeDownload(input.id);
+
+  if (await Sharing.isAvailableAsync()) {
+    await shareDownloadedFile({
+      uri: targetFile.uri,
+      fileName: input.fileName,
+      mimeType,
+    });
+  }
+}
+
 function buildDownloadUrl(
   baseUrl: string,
   token: string,
@@ -314,6 +422,50 @@ function triggerBrowserDownload(url: string, fileName: string) {
   document.body.appendChild(link);
   link.click();
   link.remove();
+}
+
+function triggerBrowserBytesDownload(bytes: Uint8Array, fileName: string, mimeType: string) {
+  const blob = new Blob([toBlobPart(bytes)], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  try {
+    triggerBrowserDownload(url, fileName);
+  } finally {
+    setTimeout(() => URL.revokeObjectURL(url), BROWSER_DOWNLOAD_URL_REVOKE_DELAY_MS);
+  }
+}
+
+function toBlobPart(bytes: Uint8Array): BlobPart {
+  const buffer = bytes.buffer;
+  if (buffer instanceof ArrayBuffer) {
+    if (bytes.byteOffset === 0 && bytes.byteLength === buffer.byteLength) {
+      return buffer;
+    }
+    return buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+  }
+
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  return copy.buffer;
+}
+
+async function shareDownloadedFile(input: {
+  uri: string;
+  fileName: string | null;
+  mimeType: string | null;
+}): Promise<void> {
+  await Sharing.shareAsync(input.uri, {
+    mimeType: input.mimeType ?? undefined,
+    dialogTitle: input.fileName
+      ? i18n.t("downloads.shareFileNamed", { fileName: input.fileName })
+      : i18n.t("downloads.shareFile"),
+  });
+}
+
+function formatDownloadSize(bytes: number): string {
+  if (bytes < 1024 * 1024) {
+    return `${Math.round(bytes / 1024)} KB`;
+  }
+  return `${Math.round(bytes / (1024 * 1024))} MB`;
 }
 
 function resolveDownloadTargetFile(fileName: string): FSFile {

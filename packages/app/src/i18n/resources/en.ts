@@ -1448,6 +1448,8 @@ export const en = {
   downloads: {
     requestTokenFailed: "Failed to request download token.",
     hostUnavailable: "Download host is unavailable.",
+    websocketTooLarge:
+      "This file is too large to download over this connection (max {{size}}). Connect through a direct host to download larger files.",
     cancelled: "Download was cancelled.",
     failed: "Failed to download file.",
     shareFile: "Share file",

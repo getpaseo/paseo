@@ -28,7 +28,7 @@ import { MaterialFileIcon } from "@/components/material-file-icon";
 import { TreeChevron, TreeIndentGuides, TREE_INDENT_PER_LEVEL } from "@/components/tree-primitives";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import type { AgentFileExplorerState, ExplorerEntry } from "@/stores/session-store";
-import { useHosts } from "@/runtime/host-runtime";
+import { useHostRuntimeSnapshot, useHosts } from "@/runtime/host-runtime";
 import { useSessionStore } from "@/stores/session-store";
 import { useDownloadStore } from "@/stores/download-store";
 import {
@@ -222,6 +222,7 @@ export function FileExplorerPane({
   const { t } = useTranslation();
 
   const daemons = useHosts();
+  const hostSnapshot = useHostRuntimeSnapshot(serverId);
   const daemonProfile = useMemo(
     () => daemons.find((daemon) => daemon.serverId === serverId),
     [daemons, serverId],
@@ -246,12 +247,16 @@ export function FileExplorerPane({
       : undefined,
   );
 
-  const { requestDirectoryListing, requestFileDownloadToken, selectExplorerEntry } =
-    useFileExplorerActions({
-      serverId,
-      workspaceId,
-      workspaceRoot: normalizedWorkspaceRoot,
-    });
+  const {
+    requestDirectoryListing,
+    requestFileDownloadToken,
+    requestFileBytes,
+    selectExplorerEntry,
+  } = useFileExplorerActions({
+    serverId,
+    workspaceId,
+    workspaceRoot: normalizedWorkspaceRoot,
+  });
   const sortOption = usePanelStore((state) => state.explorerSortOption);
   const showHiddenFiles = usePanelStore((state) => state.explorerShowHiddenFiles);
   const setSortOption = usePanelStore((state) => state.setExplorerSortOption);
@@ -347,6 +352,8 @@ export function FileExplorerPane({
   );
 
   const startDownload = useDownloadStore((state) => state.startDownload);
+  const activeConnectionId =
+    hostSnapshot?.activeConnectionId ?? daemonProfile?.preferredConnectionId ?? null;
   const handleDownloadEntry = useCallback(
     (entry: ExplorerEntry) =>
       downloadExplorerEntry({
@@ -354,10 +361,20 @@ export function FileExplorerPane({
         workspaceScopeId,
         serverId,
         daemonProfile,
+        activeConnectionId,
         startDownload,
         requestFileDownloadToken,
+        requestFileBytes,
       }),
-    [daemonProfile, requestFileDownloadToken, serverId, startDownload, workspaceScopeId],
+    [
+      activeConnectionId,
+      daemonProfile,
+      requestFileBytes,
+      requestFileDownloadToken,
+      serverId,
+      startDownload,
+      workspaceScopeId,
+    ],
   );
 
   const handleSortCycle = useCallback(() => {
@@ -786,17 +803,23 @@ function downloadExplorerEntry({
   workspaceScopeId,
   serverId,
   daemonProfile,
+  activeConnectionId,
   startDownload,
   requestFileDownloadToken,
+  requestFileBytes,
 }: {
   entry: ExplorerEntry;
   workspaceScopeId: string | undefined;
   serverId: string;
   daemonProfile: StartDownloadParams["daemonProfile"];
+  activeConnectionId: StartDownloadParams["activeConnectionId"];
   startDownload: StartDownloadFn;
   requestFileDownloadToken: (
     targetPath: string,
   ) => ReturnType<StartDownloadParams["requestFileDownloadToken"]>;
+  requestFileBytes: (
+    targetPath: string,
+  ) => ReturnType<NonNullable<StartDownloadParams["requestFileBytes"]>>;
 }): void {
   if (!workspaceScopeId || entry.kind !== "file") {
     return;
@@ -807,7 +830,9 @@ function downloadExplorerEntry({
     fileName: entry.name,
     path: entry.path,
     daemonProfile,
+    activeConnectionId,
     requestFileDownloadToken: (targetPath) => requestFileDownloadToken(targetPath),
+    requestFileBytes: (targetPath) => requestFileBytes(targetPath),
   });
 }
 

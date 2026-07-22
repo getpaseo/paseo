@@ -142,6 +142,11 @@ Enables remote access when the daemon is behind a firewall.
 - Pairing via QR code transfers the daemon's public key to the client
 - Self-hosted relays opt into TLS with `daemon.relay.useTls` or `PASEO_RELAY_USE_TLS=true`; the public (client-facing) TLS setting can be overridden independently via `daemon.relay.publicUseTls` or `PASEO_RELAY_PUBLIC_USE_TLS`
 
+Relay connections only carry encrypted WebSocket traffic. Daemon HTTP endpoints such as
+`/api/files/download` are not available through the relay, so clients must use the
+binary file-transfer WebSocket path for file downloads when the active connection is
+relay, socket, pipe, or otherwise has no direct HTTP download host.
+
 See [SECURITY.md](../SECURITY.md) for the full threat model.
 
 ### Paseo Hub

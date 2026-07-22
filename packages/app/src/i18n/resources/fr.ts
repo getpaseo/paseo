@@ -1483,6 +1483,8 @@ export const fr: TranslationResources = {
   downloads: {
     requestTokenFailed: "Échec de la demande du jeton de téléchargement.",
     hostUnavailable: "L'hôte de téléchargement n'est pas disponible.",
+    websocketTooLarge:
+      "Ce fichier est trop volumineux pour être téléchargé via cette connexion (max {{size}}). Connectez-vous via un hôte direct pour télécharger des fichiers plus volumineux.",
     cancelled: "Le téléchargement a été annulé.",
     failed: "Échec du téléchargement du fichier.",
     shareFile: "Partager un fichier",

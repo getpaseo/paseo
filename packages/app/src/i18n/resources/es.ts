@@ -1480,6 +1480,8 @@ export const es: TranslationResources = {
   downloads: {
     requestTokenFailed: "No se pudo solicitar el token de descarga.",
     hostUnavailable: "El host de descarga no está disponible.",
+    websocketTooLarge:
+      "Este archivo es demasiado grande para descargarlo por esta conexión (máx. {{size}}). Conéctate mediante un host directo para descargar archivos más grandes.",
     cancelled: "La descarga fue cancelada.",
     failed: "No se pudo descargar el archivo.",
     shareFile: "compartir archivo",

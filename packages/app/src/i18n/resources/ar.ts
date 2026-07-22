@@ -1437,6 +1437,8 @@ export const ar: TranslationResources = {
   downloads: {
     requestTokenFailed: "فشل طلب رمز التنزيل.",
     hostUnavailable: "مضيف التنزيل غير متاح.",
+    websocketTooLarge:
+      "هذا الملف كبير جدًا للتنزيل عبر هذا الاتصال (الحد الأقصى {{size}}). اتصل بمضيف مباشر لتنزيل ملفات أكبر.",
     cancelled: "تم إلغاء التنزيل.",
     failed: "فشل تنزيل الملف.",
     shareFile: "مشاركة الملف",

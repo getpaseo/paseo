@@ -1453,6 +1453,8 @@ export const ja: TranslationResources = {
   downloads: {
     requestTokenFailed: "ダウンロードトークンのリクエストに失敗しました。",
     hostUnavailable: "ダウンロードホストが利用できません。",
+    websocketTooLarge:
+      "この接続でダウンロードするにはファイルが大きすぎます（最大 {{size}}）。より大きなファイルをダウンロードするには直接ホストに接続してください。",
     cancelled: "ダウンロードがキャンセルされました。",
     failed: "ファイルのダウンロードに失敗しました。",
     shareFile: "ファイルを共有",

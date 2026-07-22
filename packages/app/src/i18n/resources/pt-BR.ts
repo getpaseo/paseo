@@ -1466,6 +1466,8 @@ export const ptBR: TranslationResources = {
   downloads: {
     requestTokenFailed: "Falha ao solicitar token de download.",
     hostUnavailable: "Host de download indisponível.",
+    websocketTooLarge:
+      "Este arquivo é grande demais para baixar por esta conexão (máx. {{size}}). Conecte por um host direto para baixar arquivos maiores.",
     cancelled: "Download cancelado.",
     failed: "Falha ao baixar arquivo.",
     shareFile: "Compartilhar arquivo",
