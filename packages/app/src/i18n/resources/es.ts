@@ -375,7 +375,6 @@ export const es: TranslationResources = {
       copyPath: "Copiar ruta",
       download: "Descargar",
       addToChat: "Añadir al chat…",
-      openChangesTab: "Abrir en la pestaña Cambios",
       moreActions: "Más acciones",
     },
     fileExplorer: {
@@ -790,6 +789,8 @@ export const es: TranslationResources = {
         },
       },
       diff: {
+        openChangesTab: "Abrir la pestaña Cambios",
+        closeChangesTab: "Cerrar la pestaña Cambios",
         binaryFile: "archivo binario",
         tooLarge: "La diferencia es demasiado grande para mostrarse",
         unified: "Diferencia unificada",

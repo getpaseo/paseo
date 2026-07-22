@@ -256,7 +256,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
     expect(onCopyFilePath).toHaveBeenCalledWith("/some/path.ts");
   });
 
-  it("uses a comparison-specific close id for working diff tabs", () => {
+  it("uses a Changes close id for the working diff tab", () => {
     const actions = buildWorkspaceDesktopTabActions({
       tab: {
         key: "working_diff_abc",
@@ -266,9 +266,6 @@ describe("buildWorkspaceTabMenuEntries", () => {
           kind: "working_diff",
           focusPath: "src/example.ts",
           focusRequestId: 1,
-          mode: "base",
-          baseRef: "main",
-          ignoreWhitespace: false,
         },
       },
       index: 0,

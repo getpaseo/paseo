@@ -370,7 +370,6 @@ export const en = {
       copyPath: "Copy path",
       download: "Download",
       addToChat: "Add to chat…",
-      openChangesTab: "Open in Changes tab",
       moreActions: "More actions",
     },
     fileExplorer: {
@@ -769,6 +768,8 @@ export const en = {
         },
       },
       diff: {
+        openChangesTab: "Open Changes tab",
+        closeChangesTab: "Close Changes tab",
         binaryFile: "Binary file",
         tooLarge: "Diff too large to display",
         unified: "Unified diff",

@@ -28,7 +28,6 @@ import { useCloseFileExplorerGesture } from "@/mobile-panels/gestures";
 import { MobilePanelOverlay } from "@/mobile-panels/presentation";
 import { HEADER_INNER_HEIGHT } from "@/constants/layout";
 import { GitDiffPane } from "@/git/diff-pane";
-import { useOpenChangesTab } from "@/git/use-open-changes-tab";
 import { FileExplorerPane } from "./file-explorer-pane";
 import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
 import { useHasOwnedWindowChromeObstruction, WindowChromeSafeArea } from "@/utils/desktop-window";
@@ -37,10 +36,8 @@ import { RetainedPanelActivity } from "@/components/retained-panel";
 import { SidebarResizeHandle } from "@/components/sidebar-resize-handle";
 import { buildWorkspaceAttachmentScopeKey } from "@/attachments/workspace-attachments-store";
 import { resolveDesktopExplorerWidth } from "@/components/desktop-sidebar-layout";
-import {
-  buildWorkspaceTabPersistenceKey,
-  useWorkspaceLayoutStore,
-} from "@/stores/workspace-layout-store";
+import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
+import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 import { resolveFocusedChatTarget } from "@/composer/focused-chat-target";
 import { createWorkspaceFileAttachment } from "@/attachments/workspace-file";
 import { useDraftStore } from "@/stores/draft-store";
@@ -490,7 +487,6 @@ function FilesPane({
   onOpenFile,
 }: Pick<SidebarContentProps, "serverId" | "workspaceId" | "workspaceRoot" | "onOpenFile">) {
   const { addFile, canAddToChat } = useAddFileToChat({ serverId, workspaceId });
-  const openChangesTab = useOpenChangesTab({ serverId, workspaceId, cwd: workspaceRoot });
   return (
     <FileExplorerPane
       serverId={serverId}
@@ -498,7 +494,6 @@ function FilesPane({
       workspaceRoot={workspaceRoot}
       onOpenFile={onOpenFile}
       onAddToChat={canAddToChat ? addFile : undefined}
-      onOpenChangesTab={openChangesTab}
     />
   );
 }

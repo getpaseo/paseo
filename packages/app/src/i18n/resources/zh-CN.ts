@@ -371,7 +371,6 @@ export const zhCN: TranslationResources = {
       copyPath: "复制路径",
       download: "下载",
       addToChat: "添加到聊天…",
-      openChangesTab: "在“更改”标签页中打开",
       moreActions: "更多操作",
     },
     fileExplorer: {
@@ -751,6 +750,8 @@ export const zhCN: TranslationResources = {
         },
       },
       diff: {
+        openChangesTab: "打开“更改”标签页",
+        closeChangesTab: "关闭“更改”标签页",
         binaryFile: "二进制文件",
         tooLarge: "Diff 过大，无法显示",
         unified: "Unified diff",

@@ -375,7 +375,6 @@ export const ptBR: TranslationResources = {
       copyPath: "Copiar caminho",
       download: "Baixar",
       addToChat: "Adicionar ao chat…",
-      openChangesTab: "Abrir na aba Alterações",
       moreActions: "Mais ações",
     },
     fileExplorer: {
@@ -781,6 +780,8 @@ export const ptBR: TranslationResources = {
         },
       },
       diff: {
+        openChangesTab: "Abrir a aba Alterações",
+        closeChangesTab: "Fechar a aba Alterações",
         binaryFile: "Arquivo binário",
         tooLarge: "Diff grande demais para exibir",
         unified: "Diff unificado",

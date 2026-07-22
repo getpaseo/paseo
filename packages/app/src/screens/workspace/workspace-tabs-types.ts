@@ -1,4 +1,4 @@
-import type { WorkspaceTabTarget } from "@/stores/workspace-tabs-store";
+import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
 
 export interface WorkspaceTabDescriptor {
   key: string;

@@ -64,7 +64,6 @@ interface TreeRowItemProps {
   onCopyPath: (path: string) => void;
   onDownloadEntry: (entry: ExplorerEntry) => void;
   onAddToChat?: (path: string) => void;
-  onOpenChangesTab?: (path: string) => void;
   testID?: string;
 }
 
@@ -95,7 +94,6 @@ function TreeRowItem({
   onCopyPath,
   onDownloadEntry,
   onAddToChat,
-  onOpenChangesTab,
   testID,
 }: TreeRowItemProps) {
   const { t } = useTranslation();
@@ -131,10 +129,6 @@ function TreeRowItem({
   const handleAddToChat = useCallback(() => {
     onAddToChat?.(entry.path);
   }, [onAddToChat, entry.path]);
-
-  const handleOpenChangesTab = useCallback(() => {
-    onOpenChangesTab?.(entry.path);
-  }, [onOpenChangesTab, entry.path]);
 
   const metaHeader = useMemo(
     () => (
@@ -179,7 +173,6 @@ function TreeRowItem({
       </View>
       <FileActionsMenu
         fileKind={entry.kind}
-        onOpenChangesTab={onOpenChangesTab ? handleOpenChangesTab : undefined}
         onCopyPath={handleCopy}
         onDownload={handleDownload}
         onAddToChat={onAddToChat ? handleAddToChat : undefined}
@@ -197,7 +190,6 @@ interface FileExplorerPaneProps {
   workspaceRoot: string;
   onOpenFile?: (filePath: string) => void;
   onAddToChat?: (path: string) => void;
-  onOpenChangesTab?: (path: string) => void;
 }
 
 interface TreeRow {
@@ -211,7 +203,6 @@ export function FileExplorerPane({
   workspaceRoot,
   onOpenFile,
   onAddToChat,
-  onOpenChangesTab,
 }: FileExplorerPaneProps) {
   const { t } = useTranslation();
 
@@ -414,7 +405,6 @@ export function FileExplorerPane({
         onCopyPath={handleCopyPath}
         onDownloadEntry={handleDownloadEntry}
         onAddToChat={onAddToChat}
-        onOpenChangesTab={onOpenChangesTab}
       />
     ),
     [
@@ -425,7 +415,6 @@ export function FileExplorerPane({
       isDirectoryLoading,
       selectedEntryPath,
       onAddToChat,
-      onOpenChangesTab,
       serverId,
       workspaceId,
     ],
@@ -828,7 +817,6 @@ function TreeRowDispatcher({
   onCopyPath,
   onDownloadEntry,
   onAddToChat,
-  onOpenChangesTab,
 }: {
   serverId: string;
   workspaceId?: string | null;
@@ -840,7 +828,6 @@ function TreeRowDispatcher({
   onCopyPath: (path: string) => void | Promise<void>;
   onDownloadEntry: (entry: ExplorerEntry) => void;
   onAddToChat?: (path: string) => void;
-  onOpenChangesTab?: (path: string) => void;
 }) {
   const entry = info.item.entry;
   const depth = info.item.depth;
@@ -862,7 +849,6 @@ function TreeRowDispatcher({
       onCopyPath={onCopyPath}
       onDownloadEntry={onDownloadEntry}
       onAddToChat={onAddToChat}
-      onOpenChangesTab={onOpenChangesTab}
       testID={`file-explorer-row-${info.index}`}
     />
   );

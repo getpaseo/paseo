@@ -1,5 +1,5 @@
 import { collectAllPanes, type WorkspaceLayout } from "@/stores/workspace-layout-store";
-import type { WorkspaceTab } from "@/stores/workspace-tabs-store";
+import type { WorkspaceTab } from "@/workspace-tabs/model";
 import { deriveWorkspacePaneState } from "./workspace-pane-state";
 
 export function selectVisibleAgentIds(input: {

@@ -1,5 +1,5 @@
 import invariant from "tiny-invariant";
-import type { WorkspaceTab, WorkspaceTabTarget } from "@/stores/workspace-tabs-store";
+import type { WorkspaceTab, WorkspaceTabTarget } from "@/workspace-tabs/model";
 import { MIN_SPLIT_SIZE } from "@/stores/workspace-layout-constants";
 import { defaultWorkspaceLayoutIds } from "@/stores/workspace-layout-ids";
 import type { WorkspaceLayoutNodeIdPrefix } from "@/stores/workspace-layout-ids";
@@ -285,9 +285,14 @@ function normalizeWorkspaceTab(value: unknown): WorkspaceTab | null {
 
   const tab = value as WorkspaceTab;
   const target = normalizeWorkspaceTabTarget(tab.target);
+  if (!target) {
+    return null;
+  }
   const tabId =
-    trimNonEmpty(tab.tabId) ?? (target ? buildDeterministicWorkspaceTabId(target) : null);
-  if (!target || !tabId) {
+    target.kind === "working_diff"
+      ? buildDeterministicWorkspaceTabId(target)
+      : (trimNonEmpty(tab.tabId) ?? buildDeterministicWorkspaceTabId(target));
+  if (!tabId) {
     return null;
   }
 

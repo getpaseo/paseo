@@ -1,7 +1,5 @@
-import type { WorkspaceTabTarget } from "@/stores/workspace-tabs-store";
 import { normalizeWorkspaceFileLocation, workspaceFileLocationsEqual } from "@/workspace/file-open";
-
-type WorkspaceDraftTabSetup = NonNullable<Extract<WorkspaceTabTarget, { kind: "draft" }>["setup"]>;
+import type { WorkspaceDraftTabSetup, WorkspaceTabTarget } from "@/workspace-tabs/model";
 
 export function normalizeWorkspaceTabTarget(
   value: WorkspaceTabTarget | null | undefined,
@@ -121,13 +119,7 @@ function secondaryWorkspaceTabTargetsEqual(
     return workspaceFileLocationsEqual(left, right);
   }
   if (left.kind === "working_diff" && right.kind === "working_diff") {
-    return (
-      left.focusPath === right.focusPath &&
-      left.focusRequestId === right.focusRequestId &&
-      left.mode === right.mode &&
-      left.baseRef === right.baseRef &&
-      left.ignoreWhitespace === right.ignoreWhitespace
-    );
+    return left.focusPath === right.focusPath && left.focusRequestId === right.focusRequestId;
   }
   if (left.kind === "setup" && right.kind === "setup") {
     return left.workspaceId === right.workspaceId;
@@ -194,8 +186,7 @@ export function buildDeterministicWorkspaceTabId(target: WorkspaceTabTarget): st
     return `commit_diff_${target.sha}`;
   }
   if (target.kind === "working_diff") {
-    const baseRefPart = target.baseRef === null ? "n" : lengthPrefixed(target.baseRef);
-    return `working_diff_${target.mode}_${target.ignoreWhitespace ? "1" : "0"}_${baseRefPart}`;
+    return "working_diff";
   }
   return `file_${target.path}`;
 }
@@ -220,24 +211,11 @@ function normalizeWorkingDiffTabTarget(
 ): WorkspaceTabTarget | null {
   const focusPath = trimNonEmpty(value.focusPath)?.replace(/\\/g, "/") ?? null;
   const focusRequestId = normalizePositiveInteger(value.focusRequestId);
-  const baseRef = trimOptionalString(value.baseRef);
-  const common = {
+  return {
     kind: "working_diff" as const,
     ...(focusPath ? { focusPath } : {}),
     ...(focusRequestId ? { focusRequestId } : {}),
-    ignoreWhitespace: value.ignoreWhitespace === true,
   };
-  if (value.mode === "base") {
-    if (!baseRef) {
-      return null;
-    }
-    return { ...common, mode: "base", baseRef };
-  }
-  return { ...common, mode: "uncommitted", baseRef };
-}
-
-function lengthPrefixed(value: string): string {
-  return `${value.length}_${value}`;
 }
 
 function normalizePositiveInteger(value: number | null | undefined): number | null {

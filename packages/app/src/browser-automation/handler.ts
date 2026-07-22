@@ -6,11 +6,8 @@ import {
   resizeResidentBrowserWebview,
 } from "@/components/browser-webview-resident";
 import { createWorkspaceBrowser, getBrowserRecord, useBrowserStore } from "@/stores/browser-store";
-import {
-  buildWorkspaceTabPersistenceKey,
-  collectAllTabs,
-  useWorkspaceLayoutStore,
-} from "@/stores/workspace-layout-store";
+import { collectAllTabs, useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
+import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 
 type BrowserAutomationExecuteRequest = Extract<
   SessionOutboundMessage,

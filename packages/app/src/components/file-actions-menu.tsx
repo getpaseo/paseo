@@ -4,7 +4,6 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
   Copy,
   Download,
-  FileDiff,
   FileText,
   MessageSquarePlus,
   MoreVertical,
@@ -37,8 +36,6 @@ interface FileAction {
 interface FileActionsMenuProps {
   fileKind: "file" | "directory";
   fileExists?: boolean;
-  /** Omitted outside a git checkout, where there is no Changes tab to open. */
-  onOpenChangesTab?: () => void;
   onOpenFile?: () => void;
   onCopyPath?: () => void;
   onDownload?: () => void;
@@ -73,7 +70,6 @@ function triggerStyle({
 export function FileActionsMenu({
   fileKind,
   fileExists = true,
-  onOpenChangesTab,
   onOpenFile,
   onCopyPath,
   onDownload,
@@ -89,16 +85,6 @@ export function FileActionsMenu({
   const actions = useMemo<FileAction[]>(() => {
     const availableFile = fileKind === "file" && fileExists;
     const next: FileAction[] = [];
-    // Not gated on `fileExists`: a deleted file still has changes worth opening.
-    if (fileKind === "file" && onOpenChangesTab) {
-      next.push({
-        key: "open-changes-tab",
-        label: t("workspace.fileActions.openChangesTab"),
-        icon: FileDiff,
-        onSelect: onOpenChangesTab,
-        testID: testIDPrefix ? `${testIDPrefix}-open-changes-tab` : undefined,
-      });
-    }
     if (availableFile && onOpenFile) {
       next.push({
         key: "open-file",
@@ -134,17 +120,7 @@ export function FileActionsMenu({
       });
     }
     return next;
-  }, [
-    fileExists,
-    fileKind,
-    onAddToChat,
-    onCopyPath,
-    onDownload,
-    onOpenChangesTab,
-    onOpenFile,
-    t,
-    testIDPrefix,
-  ]);
+  }, [fileExists, fileKind, onAddToChat, onCopyPath, onDownload, onOpenFile, t, testIDPrefix]);
 
   if (actions.length === 0) {
     return null;

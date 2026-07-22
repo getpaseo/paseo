@@ -375,7 +375,6 @@ export const ja: TranslationResources = {
       copyPath: "パスをコピー",
       download: "ダウンロード",
       addToChat: "チャットに追加…",
-      openChangesTab: "変更タブで開く",
       moreActions: "その他のアクション",
     },
     fileExplorer: {
@@ -770,6 +769,8 @@ export const ja: TranslationResources = {
         },
       },
       diff: {
+        openChangesTab: "変更タブを開く",
+        closeChangesTab: "変更タブを閉じる",
         binaryFile: "バイナリファイル",
         tooLarge: "差分が大きすぎて表示できません",
         unified: "ユニファイド差分",

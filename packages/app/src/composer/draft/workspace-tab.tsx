@@ -50,7 +50,7 @@ import {
   useIsCompactFormFactor,
 } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
-import type { WorkspaceDraftTabSetup } from "@/stores/workspace-tabs-store";
+import type { WorkspaceDraftTabSetup } from "@/workspace-tabs/model";
 
 const EMPTY_PENDING_PERMISSIONS = new Map();
 const EMPTY_ONLINE_SERVER_IDS: string[] = [];

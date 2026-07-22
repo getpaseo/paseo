@@ -15,9 +15,8 @@ vi.mock("@react-native-async-storage/async-storage", () => {
   };
 });
 
-import type { WorkspaceTab } from "@/stores/workspace-tabs-store";
+import { buildWorkspaceTabPersistenceKey, type WorkspaceTab } from "@/workspace-tabs/model";
 import {
-  buildWorkspaceTabPersistenceKey,
   collectAllPanes,
   collectAllTabs,
   createWorkspaceLayoutStore,
@@ -27,6 +26,7 @@ import {
   getFocusedBrowserId,
   getTreeDepth,
   insertSplit,
+  normalizeLayout,
   removePaneFromTree,
   removeTabFromTree,
   stripEphemeralTabsFromLayout,
@@ -1136,9 +1136,6 @@ describe("workspace-layout-store actions", () => {
     store.openTabFocused(workspaceKey, {
       kind: "working_diff",
       focusPath: "src/a.ts",
-      mode: "uncommitted",
-      baseRef: "main",
-      ignoreWhitespace: false,
     });
     store.openTabFocused(workspaceKey, { kind: "commit_diff", sha: "abc123" });
 
@@ -1159,9 +1156,42 @@ describe("workspace-layout-store actions", () => {
       {
         kind: "working_diff",
         focusPath: "src/a.ts",
-        mode: "uncommitted",
-        baseRef: "main",
-        ignoreWhitespace: false,
+      },
+    ]);
+  });
+
+  it("canonicalizes comparison-specific working diff tab ids from persisted layouts", () => {
+    const legacyTabId = "working_diff_uncommitted_0_n";
+    const layout = normalizeLayout({
+      root: {
+        kind: "pane",
+        pane: {
+          id: "main",
+          tabIds: [legacyTabId],
+          focusedTabId: legacyTabId,
+          tabs: [
+            {
+              tabId: legacyTabId,
+              createdAt: 1,
+              target: {
+                kind: "working_diff",
+                focusPath: "src/a.ts",
+                mode: "uncommitted",
+                baseRef: null,
+                ignoreWhitespace: false,
+              },
+            },
+          ],
+        },
+      },
+      focusedPaneId: "main",
+    });
+
+    expect(collectAllTabs(layout.root)).toEqual([
+      {
+        tabId: "working_diff",
+        target: { kind: "working_diff", focusPath: "src/a.ts" },
+        createdAt: 1,
       },
     ]);
   });

@@ -351,7 +351,7 @@ export function ContextMenuTrigger({
       collapsable={false}
       disabled={disabled}
       delayLongPress={longPressDelayMs}
-      onLongPress={isWeb ? propsOnLongPress : handleLongPress}
+      onLongPress={handleLongPress}
       // @ts-ignore - onContextMenu is web-only and not in RN types.
       onContextMenu={handleContextMenu}
       style={pressableStyle}

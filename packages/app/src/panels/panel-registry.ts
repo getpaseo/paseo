@@ -1,5 +1,5 @@
 import type { ComponentType } from "react";
-import type { WorkspaceTabTarget } from "@/stores/workspace-tabs-store";
+import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
 
 export interface PanelIconProps {

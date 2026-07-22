@@ -3,7 +3,7 @@ import type { WorkspaceLayout } from "@/stores/workspace-layout-store";
 import { resolveFocusedChatTarget } from "./focused-chat-target";
 
 function layoutWithTarget(
-  target: import("@/stores/workspace-tabs-store").WorkspaceTab["target"],
+  target: import("@/workspace-tabs/model").WorkspaceTab["target"],
 ): WorkspaceLayout {
   return {
     root: {

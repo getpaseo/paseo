@@ -371,7 +371,6 @@ export const ar: TranslationResources = {
       copyPath: "نسخ المسار",
       download: "تحميل",
       addToChat: "إضافة إلى الدردشة…",
-      openChangesTab: "فتح في علامة تبويب التغييرات",
       moreActions: "المزيد من الإجراءات",
     },
     fileExplorer: {
@@ -759,6 +758,8 @@ export const ar: TranslationResources = {
         },
       },
       diff: {
+        openChangesTab: "فتح علامة تبويب التغييرات",
+        closeChangesTab: "إغلاق علامة تبويب التغييرات",
         binaryFile: "ملف ثنائي",
         tooLarge: "الفرق كبير جدًا بحيث لا يمكن عرضه",
         unified: "الفرق الموحدة",

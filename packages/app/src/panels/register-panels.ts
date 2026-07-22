@@ -1,13 +1,12 @@
 import { agentPanelRegistration } from "@/panels/agent-panel";
 import { browserPanelRegistration } from "@/panels/browser-panel";
-import { commitDiffPanelRegistration } from "@/panels/commit-diff-panel";
+import { commitDiffPanelRegistration, workingDiffPanelRegistration } from "@/panels/diff-panel";
 import { draftPanelRegistration } from "@/panels/draft-panel";
 import { filePanelRegistration } from "@/panels/file-panel";
 import { registerPanel } from "@/panels/panel-registry";
 import { setupPanelRegistration } from "@/panels/setup-panel";
 import { terminalPanelRegistration } from "@/panels/terminal-panel";
 import { providerSubagentPanelRegistration } from "@/panels/provider-subagent-panel";
-import { workingDiffPanelRegistration } from "@/panels/working-diff-panel";
 
 let panelsRegistered = false;
 

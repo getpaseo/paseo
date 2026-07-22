@@ -375,7 +375,6 @@ export const fr: TranslationResources = {
       copyPath: "Copier le chemin",
       download: "Télécharger",
       addToChat: "Ajouter au chat…",
-      openChangesTab: "Ouvrir dans l'onglet Modifications",
       moreActions: "Plus de propositions",
     },
     fileExplorer: {
@@ -789,6 +788,8 @@ export const fr: TranslationResources = {
         },
       },
       diff: {
+        openChangesTab: "Ouvrir l'onglet Modifications",
+        closeChangesTab: "Fermer l'onglet Modifications",
         binaryFile: "Fichier binaire",
         tooLarge: "Diff trop grand pour être affiché",
         unified: "Différentiel unifié",

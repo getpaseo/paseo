@@ -374,7 +374,6 @@ export const ru: TranslationResources = {
       copyPath: "Копировать путь",
       download: "Скачать",
       addToChat: "Добавить в чат…",
-      openChangesTab: "Открыть во вкладке «Изменения»",
       moreActions: "Дополнительные действия",
     },
     fileExplorer: {
@@ -781,6 +780,8 @@ export const ru: TranslationResources = {
         },
       },
       diff: {
+        openChangesTab: "Открыть вкладку «Изменения»",
+        closeChangesTab: "Закрыть вкладку «Изменения»",
         binaryFile: "Бинарный файл",
         tooLarge: "Разница слишком велика для отображения",
         unified: "Единый дифференциал",
