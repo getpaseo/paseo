@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveWorkspaceRecoveryModel } from "./model";
+import { recoverWorkspaceSelection, resolveWorkspaceRecoveryModel } from "./model";
 
 describe("resolveWorkspaceRecoveryModel", () => {
   it("keeps newer recovery actions visible but non-actionable", () => {
@@ -27,5 +27,26 @@ describe("resolveWorkspaceRecoveryModel", () => {
       kind: "unsupportedAction",
       action: "repair_from_snapshot",
     });
+  });
+});
+
+describe("recoverWorkspaceSelection", () => {
+  it("restores the workspace and selected archived agent as one recovery action", async () => {
+    const operations: string[] = [];
+
+    await recoverWorkspaceSelection({
+      workspaceId: "workspace-1",
+      agentId: "agent-1",
+      client: {
+        restoreWorkspace: async (workspaceId) => {
+          operations.push(`workspace:${workspaceId}`);
+        },
+        refreshAgent: async (agentId) => {
+          operations.push(`agent:${agentId}`);
+        },
+      },
+    });
+
+    expect(operations).toEqual(["workspace:workspace-1", "agent:agent-1"]);
   });
 });

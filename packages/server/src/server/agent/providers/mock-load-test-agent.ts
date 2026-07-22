@@ -606,7 +606,7 @@ export class MockLoadTestAgentSession implements AgentSession {
 
   async startTurn(
     prompt: AgentPromptInput,
-    _options?: AgentRunOptions,
+    options?: AgentRunOptions,
   ): Promise<{ turnId: string }> {
     if (this.activeTurn) {
       throw new Error("Mock load-test provider already has an active turn");
@@ -648,6 +648,7 @@ export class MockLoadTestAgentSession implements AgentSession {
           type: "user_message",
           text: promptToText(prompt),
           messageId: userMessageId,
+          ...(options?.clientMessageId ? { clientMessageId: options.clientMessageId } : {}),
         },
       });
     }, 0);

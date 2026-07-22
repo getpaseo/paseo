@@ -471,7 +471,7 @@ describe("computeSidebarOrderUpdates", () => {
     expect(updates).toEqual({ projectOrder: null, workspaceOrders: [] });
   });
 
-  it("appends unseen projects and workspaces to the persisted orders", () => {
+  it("appends unseen projects while putting unseen workspaces before the saved order", () => {
     const projects = [
       sidebarProject({ projectKey: "project-a", workspaceKeys: ["ws-1", "ws-2"] }),
       sidebarProject({ projectKey: "project-b", workspaceKeys: ["ws-3"] }),
@@ -485,8 +485,30 @@ describe("computeSidebarOrderUpdates", () => {
 
     expect(updates.projectOrder).toEqual(["project-a", "project-b"]);
     expect(updates.workspaceOrders).toEqual([
-      { projectKey: "project-a", order: ["srv:ws-1", "srv:ws-2"] },
+      { projectKey: "project-a", order: ["srv:ws-2", "srv:ws-1"] },
       { projectKey: "project-b", order: ["srv:ws-3"] },
+    ]);
+  });
+
+  it("preserves the saved workspace order behind multiple newly discovered workspaces", () => {
+    const projects = [
+      sidebarProject({
+        projectKey: "project-a",
+        workspaceKeys: ["newest", "newer", "old-a", "old-b"],
+      }),
+    ];
+
+    const updates = computeSidebarOrderUpdates({
+      projects,
+      persistedProjectOrder: ["project-a"],
+      getWorkspaceOrder: () => ["srv:old-b", "srv:old-a"],
+    });
+
+    expect(updates.workspaceOrders).toEqual([
+      {
+        projectKey: "project-a",
+        order: ["srv:newest", "srv:newer", "srv:old-b", "srv:old-a"],
+      },
     ]);
   });
 

@@ -60,7 +60,6 @@ import {
   resolveStartupBlocker,
   resolveStartupNavigationReady,
   shouldRunStartupGiveUpTimer,
-  startDaemonIfGateAllows,
   startHostRuntimeBootstrap,
   type StartupBlocker,
 } from "@/navigation/host-runtime-bootstrap";
@@ -337,7 +336,6 @@ function HostRuntimeBootstrapProvider({ children }: { children: ReactNode }) {
       store,
       daemonStartService,
       shouldStartDaemon: shouldStartBuiltInDaemon,
-      onGateError: (message) => daemonStartService.recordError(message),
     });
   }, []);
 
@@ -376,11 +374,7 @@ function HostRuntimeBootstrapProvider({ children }: { children: ReactNode }) {
 
   const retry = useCallback(() => {
     const daemonStartService = getDaemonStartService({ store: getHostRuntimeStore() });
-    startDaemonIfGateAllows({
-      daemonStartService,
-      shouldStartDaemon: shouldStartBuiltInDaemon,
-      onGateError: (message) => daemonStartService.recordError(message),
-    });
+    void daemonStartService.startIfEnabled({ shouldStart: shouldStartBuiltInDaemon });
   }, []);
 
   const splashError =

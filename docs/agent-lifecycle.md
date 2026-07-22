@@ -80,6 +80,13 @@ archived workspace. History navigation must not infer workspace lifecycle from `
 or mutate either lifecycle. The workspace route asks the daemon for authoritative recovery state;
 only the route's explicit Unarchive or Restore action changes the archived workspace.
 
+History navigation preserves the selected agent as an explicit recovery target. If both that agent
+and its workspace are archived, the workspace recovery action restores the workspace and unarchives
+the selected agent as one user action. Other archived agents in the restored workspace remain
+recoverable from History. Opening one pins its tab and renders the archived-agent callout before any
+provider timeline is loaded; **Unarchive** runs the provider's native unarchive hook (including Codex
+`thread/unarchive`) before the normal agent resume and timeline hydration flow.
+
 ## Tabs vs archive
 
 These are two distinct concepts that used to be conflated:

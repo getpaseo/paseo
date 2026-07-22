@@ -13,11 +13,8 @@ export const DOT_SIZE = 8;
 const REMOTE_DOT_OPACITY = 0.55;
 
 /**
- * Shared local/remote commit dot styles used by both the commit rows and the
- * section legend so the two never drift.
- *
- * Semantics: a local-only commit is a hollow ring; a commit that has reached
- * the remote is a subtle (dimmed) filled green dot.
+ * A local-only commit is a hollow ring; a commit that has reached the remote
+ * is a subtle (dimmed) filled green dot.
  */
 export const dotStyles = StyleSheet.create((theme) => ({
   dotLocal: {
@@ -36,16 +33,5 @@ export const dotStyles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.statusSuccess,
     opacity: REMOTE_DOT_OPACITY,
     flexShrink: 0,
-  },
-  // Legend variant of the remote dot: same fill, with leading spacing so it
-  // separates from the preceding "local" label in the section header legend.
-  legendDotRemote: {
-    width: DOT_SIZE,
-    height: DOT_SIZE,
-    borderRadius: theme.borderRadius.full,
-    backgroundColor: theme.colors.statusSuccess,
-    opacity: REMOTE_DOT_OPACITY,
-    flexShrink: 0,
-    marginLeft: theme.spacing[1],
   },
 }));

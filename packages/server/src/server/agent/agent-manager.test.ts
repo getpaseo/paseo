@@ -3103,6 +3103,53 @@ test("persists live mode, model, and thinking changes without an external snapsh
   expect(persisted?.runtimeInfo?.model).toBe("gpt-5.4");
 });
 
+test("later explicit config mutations win over events emitted by earlier mutations", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-config-mutation-order-"));
+  class ConfigMutationSession extends TestAgentSession {
+    async setModel(): Promise<void> {
+      this.pushEvent({
+        type: "timeline",
+        provider: "codex",
+        item: { type: "assistant_message", text: "model changed" },
+      });
+      this.pushEvent({
+        type: "thinking_option_changed",
+        provider: "codex",
+        thinkingOptionId: "low",
+      });
+    }
+
+    async setThinkingOption(): Promise<void> {}
+  }
+  class ConfigMutationClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new ConfigMutationSession(config);
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new ConfigMutationClient() },
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000134",
+  });
+  const snapshot = await manager.createAgent(
+    {
+      provider: "codex",
+      cwd: workdir,
+      model: "gpt-5.2-codex",
+      thinkingOptionId: "off",
+    },
+    undefined,
+    { workspaceId: undefined },
+  );
+
+  await manager.setAgentModel(snapshot.id, "gpt-5.4");
+  await manager.setAgentThinkingOption(snapshot.id, "high");
+  await manager.flush();
+
+  expect(manager.getAgent(snapshot.id)?.config.thinkingOptionId).toBe("high");
+});
+
 test("session config drift events update state through the stream channel", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-session-config-events-"));
   let capturedSession: TestAgentSession | null = null;
@@ -3171,6 +3218,7 @@ test("session config drift events update state through the stream channel", asyn
 
   const agent = manager.getAgent(snapshot.id);
   expect(agent?.currentModeId).toBe("build");
+  expect(agent?.config.thinkingOptionId).toBe("high");
   expect(agent?.availableModes).toEqual([
     { id: "plan", label: "Plan" },
     { id: "build", label: "Build" },
@@ -7470,6 +7518,76 @@ test("ensureUnarchivedAgentLoaded fences an archived agent after joining a share
   }
 });
 
+test("a shared agent load upgrades provider history hydration to broadcast", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-shared-load-broadcast-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const historyStarted = deferred<void>();
+  const historyAllowed = deferred<void>();
+  const client = new (class extends TestAgentClient {
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      return new (class extends TestAgentSession {
+        override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+          historyStarted.resolve();
+          await historyAllowed.promise;
+          yield {
+            type: "timeline",
+            provider: "codex",
+            item: { type: "assistant_message", text: "Recovered history" },
+          };
+        }
+      })({ provider: "codex", cwd: config?.cwd ?? workdir });
+    }
+  })();
+  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await manager.collectIdleAgents({
+      cutoff: new Date(Date.now() + 1_000),
+      protectedAgentIds: new Set(),
+    });
+    await manager.deleteAgentState(agent.id);
+    const events: AgentManagerEvent[] = [];
+    manager.subscribe((event) => events.push(event), { agentId: agent.id, replayState: false });
+
+    const quietLoad = ensureAgentLoaded(agent.id, {
+      agentManager: manager,
+      agentStorage: storage,
+      logger,
+    });
+    await historyStarted.promise;
+    const broadcastingLoad = ensureAgentLoaded(agent.id, {
+      agentManager: manager,
+      agentStorage: storage,
+      broadcastTimeline: true,
+      logger,
+    });
+    historyAllowed.resolve();
+    await Promise.all([quietLoad, broadcastingLoad]);
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "agent_stream",
+        agentId: agent.id,
+        event: expect.objectContaining({
+          type: "timeline",
+          item: { type: "assistant_message", text: "Recovered history" },
+        }),
+      }),
+    );
+  } finally {
+    historyAllowed.resolve();
+    await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("collectIdleAgents leaves recent, protected, internal, running, and error agents resident", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-idle-eligibility-"));
   const client = new (class extends TestAgentClient {
@@ -7881,7 +7999,12 @@ test("authoritative timeline includes provider-emitted submitted user prompt", a
           type: "timeline",
           provider: this.provider,
           turnId,
-          item: { type: "user_message", text, messageId: options?.messageId },
+          item: {
+            type: "user_message",
+            text,
+            messageId: "provider-message-1",
+            clientMessageId: options?.clientMessageId,
+          },
         });
         this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
       }, 0);
@@ -7907,13 +8030,16 @@ test("authoritative timeline includes provider-emitted submitted user prompt", a
       workspaceId: undefined,
     });
 
-    await manager.runAgent(snapshot.id, "hello from composer", { messageId: "msg-client-1" });
+    await manager.runAgent(snapshot.id, "hello from composer", {
+      clientMessageId: "msg-client-1",
+    });
 
     const timeline = manager.fetchTimeline(snapshot.id, { direction: "tail", limit: 20 }).rows;
     expect(timeline.map((row) => row.item)).toContainEqual({
       type: "user_message",
       text: "hello from composer",
-      messageId: "msg-client-1",
+      messageId: "provider-message-1",
+      clientMessageId: "msg-client-1",
     });
   } finally {
     await manager.flush().catch(() => undefined);

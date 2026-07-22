@@ -1689,10 +1689,29 @@ export const AssistantMessage = memo(function AssistantMessage({
       // plain <Text> is not hoisted into a UITextViewChild and is dropped (same
       // root cause as strong/em/s) — so on iOS a hard line break vanished, and
       // a softbreak between words jammed them together ("one\ntwo" -> "onetwo").
-      // Emit the break through MarkdownTextSpan so it composes on iOS; web and
-      // Android keep the same "\n" they rendered before.
-      hardbreak: (node: ASTNode) => <MarkdownTextSpan key={node.key}>{"\n"}</MarkdownTextSpan>,
-      softbreak: (node: ASTNode) => <MarkdownTextSpan key={node.key}>{"\n"}</MarkdownTextSpan>,
+      // Emit the break through MarkdownTextSpan so it composes on iOS. Keep
+      // the resolved break styles: hardbreak is a full-width flex-row child on
+      // Android, and dropping that width joins the surrounding text spans.
+      hardbreak: (
+        node: ASTNode,
+        _children: ReactNode[],
+        _parent: ASTNode[],
+        styles: MarkdownStyles,
+      ) => (
+        <MarkdownTextSpan key={node.key} style={styles.hardbreak}>
+          {"\n"}
+        </MarkdownTextSpan>
+      ),
+      softbreak: (
+        node: ASTNode,
+        _children: ReactNode[],
+        _parent: ASTNode[],
+        styles: MarkdownStyles,
+      ) => (
+        <MarkdownTextSpan key={node.key} style={styles.softbreak}>
+          {"\n"}
+        </MarkdownTextSpan>
+      ),
       code_block: (
         node: ASTNode,
         _children: ReactNode[],

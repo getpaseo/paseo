@@ -1,5 +1,6 @@
 import { test, expect } from "./fixtures";
 import { expectComposerVisible, submitMessage } from "./helpers/composer";
+import { delayCreatedAgentInitialTailResponse } from "./helpers/agent-timeline-gate";
 import { delayBrowserAgentCreatedStatus } from "./helpers/new-workspace";
 import { seedWorkspace, type SeedDaemonClient } from "./helpers/seed-client";
 import { waitForWorkspaceTabsVisible } from "./helpers/workspace-tabs";
@@ -43,6 +44,49 @@ async function fetchActiveAgentTitle(
 }
 
 test.describe("Workspace agent title handoff", () => {
+  test("does not cover the agent pane while the optimistic create becomes authoritative", async ({
+    page,
+  }) => {
+    test.setTimeout(120_000);
+    await page.setViewportSize({ width: 1440, height: 900 });
+
+    const timelineGate = await delayCreatedAgentInitialTailResponse(page);
+    const workspace = await seedWorkspace({ repoPrefix: "workspace-create-handoff-flash-" });
+
+    try {
+      await page.goto(buildHostWorkspaceRoute(getServerId(), workspace.workspaceId));
+      await waitForWorkspaceTabsVisible(page);
+      await page.getByTestId("workspace-new-agent-tab-inline").click();
+      await expectComposerVisible(page);
+
+      const prompt = "Keep the optimistic agent pane visible during handoff";
+      await submitMessage(page, prompt);
+      const agentId = await timelineGate.waitForCreatedAgent();
+      await timelineGate.waitForDelayedResponse();
+
+      await expect(page.getByTestId(`workspace-tab-agent_${agentId}`).first()).toBeVisible({
+        timeout: 15_000,
+      });
+      await expect(page.getByText(prompt, { exact: true }).first()).toBeVisible();
+      await expect(page.getByTestId("agent-history-overlay")).toHaveCount(0);
+
+      const overlayAppeared = page
+        .getByTestId("agent-history-overlay")
+        .waitFor({ state: "attached", timeout: 2_000 })
+        .then(
+          () => true,
+          () => false,
+        );
+      timelineGate.release();
+      await timelineGate.waitForForwardedResponse();
+
+      expect(await overlayAppeared).toBe(false);
+    } finally {
+      timelineGate.release();
+      await workspace.cleanup();
+    }
+  });
+
   test("shows the prompt tab title and replaces it when the daemon title updates", async ({
     page,
   }) => {

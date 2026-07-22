@@ -72,23 +72,37 @@ describe("runRunCommand option validation", () => {
     });
   }
 
-  it("rejects --isolation combined with --workspace", async () => {
+  it("rejects --new-workspace combined with --workspace", async () => {
     await expectInvalidOptions(
-      { isolation: "worktree", workspace: "ws-1" },
-      /--isolation and --workspace cannot be combined/,
+      { newWorkspace: "worktree", workspace: "ws-1" },
+      /--new-workspace and --workspace cannot be combined/,
     );
   });
 
-  it("allows explicit worktree isolation through validation", async () => {
-    // Explicit isolation with no --workspace
+  it("allows explicit worktree workspace creation through validation", async () => {
+    // Explicit workspace creation with no --workspace
     // must clear validation. It still fails later (provider resolution), which
     // is enough to prove the new guard did not reject it.
     await expect(
-      runRunCommand("do something", { isolation: "worktree", provider: undefined }, {} as never),
+      runRunCommand("do something", { newWorkspace: "worktree", provider: undefined }, {} as never),
     ).rejects.not.toMatchObject({ code: "INVALID_OPTIONS" });
   });
 
-  it("rejects unknown workspace isolation", async () => {
-    await expectInvalidOptions({ isolation: "container" }, /Unsupported workspace isolation/);
+  it("rejects unknown new workspace kinds", async () => {
+    await expectInvalidOptions({ newWorkspace: "container" }, /Unsupported new workspace kind/);
+  });
+
+  it("rejects two workspace creation flags", async () => {
+    await expectInvalidOptions(
+      { newWorkspace: "local", worktree: "legacy-slug" },
+      /--new-workspace and --worktree cannot be combined/,
+    );
+  });
+
+  it("rejects an unknown worktree creation mode before connecting", async () => {
+    await expectInvalidOptions(
+      { newWorkspace: "worktree", worktreeMode: "container" },
+      /Unsupported worktree mode/,
+    );
   });
 });

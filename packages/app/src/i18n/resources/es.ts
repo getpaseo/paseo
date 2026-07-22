@@ -470,6 +470,7 @@ export const es: TranslationResources = {
     },
     tabs: {
       loading: "Cargando...",
+      modified: "Cambios sin guardar",
       loadingAgentTitle: "Título del agente de carga",
       emptyPane: "No hay pestañas en este panel.",
       fallback: {
@@ -537,6 +538,13 @@ export const es: TranslationResources = {
         failedToReloadAgent: "No se pudo recargar el agente",
       },
       confirmations: {
+        unsavedTitle: "Cambios sin guardar",
+        unsavedMessage:
+          "Esta pestaña tiene cambios sin guardar. Al cerrarla se descartará el borrador.",
+        closeWithoutSaving: "Cerrar sin guardar",
+        closePaneTitle: "¿Cerrar panel?",
+        bulkUnsaved:
+          "{{count}} pestaña(s) tienen cambios sin guardar. Al cerrar se descartarán esos borradores.",
         close: "Cerca",
         cancel: "Cancelar",
         archive: "Archivo",
@@ -586,19 +594,34 @@ export const es: TranslationResources = {
     scripts: {
       title: "Scripts",
       actions: {
+        chooseUrl: "Elegir URL",
+        copyUrl: "Copiar URL",
+        openService: "Ver servicio",
+        restart: "Reiniciar",
         run: "Correr",
-        view: "Vista",
+        stop: "Detener",
+        view: "Ver terminal",
       },
       accessibility: {
         trigger: "GuionesWorkspace",
-        openAt: "Abrir{{scriptName}}en{{label}}",
+        openService: "Ver servicio {{scriptName}}",
         viewTerminal: "Ver terminal{{scriptName}}",
         runScript: "Ejecute el script{{scriptName}}",
+        stopScript: "Detener{{scriptName}}",
+        restartScript: "Reiniciar{{scriptName}}",
+        copyUrl: "Copiar URL de{{scriptName}}",
+        chooseUrl: "Elegir URL para {{scriptName}}",
         script: "Guión{{scriptName}}",
+      },
+      routes: {
+        public: "Proxy inverso",
+        paseo: "Memorable",
+        direct: "Directa",
       },
       states: {
         exitCode: "salir de{{code}}",
         startFailed: "No se pudo iniciar{{scriptName}}",
+        stopFailed: "No se pudo detener{{scriptName}}",
       },
     },
     git: {
@@ -796,14 +819,12 @@ export const es: TranslationResources = {
         deletedFile: "Eliminado",
         commits: {
           title: "Commits",
-          legendLocal: "local",
-          legendRemote: "en remoto",
-          countLabel: "{{count}} commits por delante de la base",
+          countLabel: "{{count}} commits recientes",
           fileDiffEmpty: "No hay cambios para mostrar",
           fileDiffError: "Error al cargar el diff del archivo",
           loading: "Cargando commits…",
           loadError: "Error al cargar los commits",
-          empty: "No hay commits por delante de la base",
+          empty: "Aún no hay commits",
         },
       },
       openInEditor: {
@@ -936,6 +957,8 @@ export const es: TranslationResources = {
       actions: {
         menu: "AccionesWorkspace",
         newWorkspace: "Nuevo espacio de trabajo",
+        showMore: "Mostrar más",
+        showLess: "Mostrar menos",
         createWorkspaceFor: "Crea un nuevo espacio de trabajo para{{projectName}}",
         copyPath: "Copiar ruta",
         copyBranchName: "Copiar nombre de sucursal",
@@ -993,9 +1016,6 @@ export const es: TranslationResources = {
     refPicker: {
       startingRef: "Árbitro inicial",
       chooseStart: "Elige por dónde empezar",
-      checkoutHint: "¿Mira {{noun}} {{numberPrefix}}{{number}}?",
-      checkoutPr: "Echa un vistazo a {{noun}} {{numberPrefix}}{{number}}",
-      dismissCheckoutHint: "Descartar la sugerencia de pago de {{noun}} {{numberPrefix}}{{number}}",
       intoBase: "en {{baseRef}}",
       searching: "Búsqueda...",
       noMatchingRefs: "No hay árbitros coincidentes.",
@@ -1488,6 +1508,25 @@ export const es: TranslationResources = {
       binaryPreviewUnavailable: "Vista previa binaria no disponible",
       failedToLoad: "No se pudo cargar el archivo",
       failedToLoadPreview: "No se pudo cargar la vista previa del archivo",
+      editor: {
+        fileSize: "Tamaño {{size}}",
+        lines: "{{count}} líneas",
+        editorStatus: "Estado del editor: {{status}}",
+        unsavedChanges: "Cambios sin guardar",
+        saving: "Guardando...",
+        saveFailed: "Error al guardar",
+        changedOnDisk: "Cambiado en disco",
+        vimMode: "Modo Vim {{mode}}",
+        cursor: "Línea {{line}}, columna {{column}}",
+        preview: "Vista previa",
+        source: "Código fuente",
+        unavailableTitle: "Archivo no disponible en disco",
+        conflictDescription: "Se conservó el búfer local. Elige qué versión mantener.",
+        overwrite: "Sobrescribir",
+        reload: "Recargar",
+        reloadTitle: "¿Recargar desde el disco?",
+        reloadMessage: "Se perderán tus cambios locales.",
+      },
     },
     diff: {
       changesLabel: "Cambios",
@@ -1583,11 +1622,17 @@ export const es: TranslationResources = {
     sections: {
       general: "General",
       appearance: "Apariencia",
+      editor: "Editor",
       shortcuts: "Atajos",
       integrations: "Integraciones",
       permissions: "Permisos",
       diagnostics: "Diagnóstico",
       about: "Acerca de",
+    },
+    editor: {
+      title: "Editor",
+      vimKeybindings: "Atajos de Vim",
+      vimHint: "Se aplica a archivos fuente en web y escritorio.",
     },
     hostSections: {
       connections: "Conexiones",

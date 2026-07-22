@@ -10,6 +10,7 @@ export interface PanelIconProps {
 export interface PanelDescriptor {
   label: string;
   subtitle: string;
+  tooltip: string;
   titleState: "ready" | "loading";
   icon: ComponentType<PanelIconProps>;
   statusBucket: SidebarStateBucket | null;
@@ -18,6 +19,7 @@ export interface PanelDescriptor {
 export interface PanelDescriptorContext {
   serverId: string;
   workspaceId: string;
+  tabId: string;
 }
 
 export interface PanelRegistration<
@@ -29,10 +31,6 @@ export interface PanelRegistration<
     target: Extract<WorkspaceTabTarget, { kind: K }>,
     context: PanelDescriptorContext,
   ): PanelDescriptor;
-  confirmClose?(
-    target: Extract<WorkspaceTabTarget, { kind: K }>,
-    context: PanelDescriptorContext,
-  ): Promise<boolean>;
 }
 
 const panelRegistry = new Map<WorkspaceTabTarget["kind"], PanelRegistration>();

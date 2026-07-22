@@ -191,6 +191,9 @@ export function useSettings<TSelected>(
       if (updates.toolCallDetailLevel !== undefined) {
         appUpdates.toolCallDetailLevel = updates.toolCallDetailLevel;
       }
+      if (updates.vimKeybindings !== undefined) {
+        appUpdates.vimKeybindings = updates.vimKeybindings;
+      }
       const promises: Promise<void>[] = [];
       if (Object.keys(appUpdates).length > 0) {
         promises.push(appSettings.updateSettings(appUpdates));

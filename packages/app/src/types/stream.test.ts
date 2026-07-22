@@ -1242,6 +1242,7 @@ describe("turn lifecycle events", () => {
           type: "user_message",
           text: "server-rendered attachment text",
           messageId: "provider-owned-canonical",
+          clientMessageId: optimistic.id,
         },
       },
       new Date("2025-01-01T15:03:11Z"),
@@ -1455,6 +1456,52 @@ describe("turn lifecycle events", () => {
         ["provider-owned-second", "second typed text", undefined],
       ],
     );
+  });
+
+  it("does not shift later prompts when an earlier optimistic prompt has no canonical echo", () => {
+    const staleTimestamp = new Date("2025-01-01T15:04:00Z");
+    const submittedTimestamp = new Date("2025-01-01T15:04:01Z");
+    const stalePrompt: StreamItem = {
+      kind: "user_message",
+      id: "msg_stale",
+      text: "first prompt without an echo",
+      timestamp: staleTimestamp,
+      optimistic: true,
+    };
+    const submittedPrompt: StreamItem = {
+      kind: "user_message",
+      id: "msg_submitted",
+      text: "later submitted prompt",
+      timestamp: submittedTimestamp,
+      optimistic: true,
+    };
+
+    const state = reduceStreamUpdate(
+      [stalePrompt, submittedPrompt],
+      {
+        type: "timeline",
+        provider: "codex",
+        item: {
+          type: "user_message",
+          text: "canonical rendered prompt",
+          messageId: "provider-owned-submitted",
+          clientMessageId: submittedPrompt.id,
+        },
+      },
+      new Date("2025-01-01T15:04:02Z"),
+      { source: "live" },
+    );
+
+    assert.deepStrictEqual(state, [
+      stalePrompt,
+      {
+        kind: "user_message",
+        id: "provider-owned-submitted",
+        clientMessageId: submittedPrompt.id,
+        text: submittedPrompt.text,
+        timestamp: submittedPrompt.timestamp,
+      },
+    ]);
   });
 
   it("appends a live server user message when no optimistic user message is pending", () => {

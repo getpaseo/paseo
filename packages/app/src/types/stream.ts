@@ -86,6 +86,7 @@ export type UserMessageImageAttachment = AttachmentMetadata;
 export interface UserMessageItem {
   kind: "user_message";
   id: string;
+  clientMessageId?: string;
   text: string;
   timestamp: Date;
   optimistic?: true;
@@ -238,6 +239,7 @@ function markThoughtReady(item: ThoughtItem): ThoughtItem {
 
 function buildUserMessageItem(input: {
   id: string;
+  clientMessageId?: string;
   text: string;
   timestamp: Date;
   optimistic?: UserMessageItem | null;
@@ -246,6 +248,7 @@ function buildUserMessageItem(input: {
     return {
       kind: "user_message",
       id: input.id,
+      ...(input.clientMessageId ? { clientMessageId: input.clientMessageId } : {}),
       text: input.optimistic.text,
       timestamp: input.optimistic.timestamp,
       ...(input.optimistic.images && input.optimistic.images.length > 0
@@ -260,6 +263,7 @@ function buildUserMessageItem(input: {
   return {
     kind: "user_message",
     id: input.id,
+    ...(input.clientMessageId ? { clientMessageId: input.clientMessageId } : {}),
     text: input.text,
     timestamp: input.timestamp,
   };
@@ -350,7 +354,9 @@ function appendUserMessage(
   state: StreamItem[],
   text: string,
   timestamp: Date,
+  source: StreamUpdateSource,
   messageId?: string,
+  clientMessageId?: string,
 ): StreamItem[] {
   const { chunk, hasContent } = normalizeChunk(text);
   if (!hasContent) {
@@ -360,12 +366,18 @@ function appendUserMessage(
   const chunkSeed = chunk.trim() || chunk;
   const entryId = messageId ?? createUniqueTimelineId(state, "user", chunkSeed, timestamp);
   const optimisticIndex = state.findIndex(
-    (entry) => entry.kind === "user_message" && entry.optimistic,
+    (entry) =>
+      entry.kind === "user_message" &&
+      entry.optimistic &&
+      (clientMessageId !== undefined
+        ? entry.id === clientMessageId
+        : source === "live" || entry.id === messageId || entry.text === chunk),
   );
   const optimistic = optimisticIndex >= 0 ? (state[optimisticIndex] as UserMessageItem) : null;
 
   const nextItem = buildUserMessageItem({
     id: entryId,
+    clientMessageId,
     text: chunk,
     timestamp,
     optimistic,
@@ -833,7 +845,16 @@ function reduceTimelineEvent(
   const item = event.item;
   switch (item.type) {
     case "user_message":
-      return finalizeActiveThoughts(appendUserMessage(state, item.text, timestamp, item.messageId));
+      return finalizeActiveThoughts(
+        appendUserMessage(
+          state,
+          item.text,
+          timestamp,
+          source,
+          item.messageId,
+          item.clientMessageId,
+        ),
+      );
     case "assistant_message":
       return finalizeActiveThoughts(
         appendAssistantMessage(

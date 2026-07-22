@@ -26,6 +26,7 @@ function makeDescriptor(overrides: {
   projectKind?: string;
   workspaceKind?: "directory" | "local_checkout" | "worktree";
   name?: string | null;
+  currentBranch?: string | null;
   diffStat?: { additions: number; deletions: number } | null;
 }): WorkspaceDescriptorPayload {
   return {
@@ -34,6 +35,9 @@ function makeDescriptor(overrides: {
     projectKind: overrides.projectKind ?? "git",
     workspaceKind: overrides.workspaceKind ?? "local_checkout",
     name: overrides.name ?? null,
+    ...(overrides.currentBranch !== undefined
+      ? { gitRuntime: { currentBranch: overrides.currentBranch } }
+      : {}),
     diffStat: overrides.diffStat ?? null,
   } as unknown as WorkspaceDescriptorPayload;
 }
@@ -259,10 +263,31 @@ describe("shouldSkipUpdate", () => {
 });
 
 describe("recordDescriptorState", () => {
+  test("does not treat a workspace title as a branch change", () => {
+    const h = buildHarness();
+    const titledMain = makeDescriptor({
+      id: "ws1",
+      workspaceDirectory: WS1,
+      name: "Paseo main",
+      currentBranch: "main",
+    });
+    h.service.syncObservers([titledMain]);
+
+    h.emitSnapshot(WS1, "main");
+    h.service.recordDescriptorState("ws1", titledMain);
+
+    expect(h.branchChanges).toEqual([]);
+  });
+
   test("fires onBranchChanged once per branch name transition", () => {
     const h = buildHarness();
     h.service.syncObservers([makeDescriptor({ id: "ws1", workspaceDirectory: WS1 })]);
-    const feature = makeDescriptor({ id: "ws1", workspaceDirectory: WS1, name: "feature" });
+    const feature = makeDescriptor({
+      id: "ws1",
+      workspaceDirectory: WS1,
+      name: "Feature workspace",
+      currentBranch: "feature",
+    });
     h.service.recordDescriptorState("ws1", feature);
     h.service.recordDescriptorState("ws1", feature);
     expect(h.branchChanges).toEqual([["ws1", null, "feature"]]);
@@ -296,8 +321,8 @@ describe("teardown", () => {
   test("keeps a shared cwd subscription until its last workspace is removed", () => {
     const h = buildHarness();
     h.service.syncObservers([
-      makeDescriptor({ id: "ws1", workspaceDirectory: WS1, name: "main" }),
-      makeDescriptor({ id: "ws2", workspaceDirectory: WS1, name: "main" }),
+      makeDescriptor({ id: "ws1", workspaceDirectory: WS1, name: "Main", currentBranch: "main" }),
+      makeDescriptor({ id: "ws2", workspaceDirectory: WS1, name: "Main", currentBranch: "main" }),
     ]);
 
     h.emitSnapshot(WS1, "feature");

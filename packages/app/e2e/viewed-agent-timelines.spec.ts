@@ -3,10 +3,7 @@ import { buildHostAgentDetailRoute } from "@/utils/host-routes";
 import { test } from "./fixtures";
 import { seedWorkspace, type SeedDaemonClient } from "./helpers/seed-client";
 import { getServerId } from "./helpers/server-id";
-import {
-  observeLastAssistantFrames,
-  observeTimelineSubscriptions,
-} from "./helpers/timeline-delivery";
+import { observeTimelineSubscriptions } from "./helpers/timeline-delivery";
 import { waitForWorkspaceTabsVisible } from "./helpers/workspace-tabs";
 import { installDaemonWebSocketGate } from "./helpers/daemon-websocket-gate";
 import {
@@ -75,47 +72,40 @@ async function commitMessage(scenario: ViewedTimelineScenario, agentId: string, 
 }
 
 test.describe("Viewed agent timelines", () => {
-  test("a focused turn streams live and resumes its hidden remainder atomically", async ({
-    page,
-  }) => {
+  test("an unsubscribed hidden chat catches up when shown", async ({ page }) => {
     test.setTimeout(90_000);
     const subscriptions = observeTimelineSubscriptions(page);
     const scenario = await seedViewedTimelineScenario();
     try {
       await openAgent(page, scenario, scenario.firstAgentId);
-      await subscriptions.waitForSubscribedAgents([scenario.firstAgentId]);
-
-      await scenario.client.sendAgentMessage(
-        scenario.firstAgentId,
-        "Stream while focused, then finish while hidden.",
-      );
-      await expect(page.getByRole("button", { name: /stop|cancel/i }).first()).toBeVisible();
-      await expect(
-        page.getByTestId("assistant-message").filter({ hasText: "Cycle 1" }).first(),
-      ).toBeVisible();
-      await expect(page.getByText("(end of synthetic stream)", { exact: true })).toHaveCount(0);
-
       await selectAgent(page, "Second viewed chat");
-      await subscriptions.waitForSubscribedAgents([scenario.secondAgentId]);
-      const finish = await scenario.client.waitForFinish(scenario.firstAgentId, 30_000);
-      expect(finish.status).toBe("idle");
-
-      const assistantFrames = await observeLastAssistantFrames(page);
+      await subscriptions.waitForSubscribedAgents([scenario.secondAgentId], { timeout: 45_000 });
+      await commitMessage(
+        scenario,
+        scenario.firstAgentId,
+        "Committed after the first chat unsubscribed.",
+      );
+      await expect(
+        page.getByText("Committed after the first chat unsubscribed.", { exact: true }),
+      ).toHaveCount(0);
       await selectAgent(page, "First viewed chat");
+      await expect(
+        page.getByText("Committed after the first chat unsubscribed.", { exact: true }),
+      ).toBeVisible();
       await expect(page.getByText("(end of synthetic stream)", { exact: true })).toBeVisible();
-      const snapshots = await assistantFrames.stop();
-
-      expect(snapshots[0]).toContain("(end of synthetic stream)");
     } finally {
       await scenario.cleanup();
     }
   });
 
-  test("a hidden retained chat catches up when shown", async ({ page }) => {
+  test("a hidden retained chat stays current during unsubscribe grace", async ({ page }) => {
+    test.setTimeout(60_000);
+    const subscriptions = observeTimelineSubscriptions(page);
     const scenario = await seedViewedTimelineScenario();
     try {
       await openAgent(page, scenario, scenario.firstAgentId);
       await selectAgent(page, "Second viewed chat");
+      await subscriptions.waitForSubscribedAgents([scenario.firstAgentId, scenario.secondAgentId]);
       await commitMessage(
         scenario,
         scenario.firstAgentId,
@@ -128,6 +118,7 @@ test.describe("Viewed agent timelines", () => {
       await expect(
         page.getByText("Committed while the first chat is hidden.", { exact: true }),
       ).toBeVisible();
+      await expect(page.getByText("(end of synthetic stream)", { exact: true })).toBeVisible();
     } finally {
       await scenario.cleanup();
     }

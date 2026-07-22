@@ -3,6 +3,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DEFAULT_DESKTOP_SETTINGS } from "../settings/desktop-settings";
+import { getBundledCliShimPath } from "../integrations/cli-install";
 import { createDaemonCommandHandlers } from "./daemon-manager";
 
 const mocks = vi.hoisted(() => ({
@@ -451,7 +452,10 @@ describe("daemon-manager commands", () => {
       expect.objectContaining({
         detached: true,
         stdio: ["ignore", "ignore", "ignore"],
-        envOverlay: expect.objectContaining({ PASEO_WEB_UI_ENABLED: "false" }),
+        envOverlay: expect.objectContaining({
+          PASEO_CLI: getBundledCliShimPath(),
+          PASEO_WEB_UI_ENABLED: "false",
+        }),
       }),
     );
   });

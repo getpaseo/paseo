@@ -75,7 +75,7 @@ test("session create forwards clientMessageId to the initial prompt run options"
   });
 
   expect(streamAgent).toHaveBeenCalledWith("agent-1", "hello from create", {
-    messageId: "msg-create-1",
+    clientMessageId: "msg-create-1",
   });
 });
 

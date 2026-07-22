@@ -128,6 +128,20 @@ function shellQuoteCliArg(value) {
   return shellQuote(String(value));
 }
 
+function getTerminalHookSmokeCommand(marker) {
+  if (process.platform === "win32") {
+    const script = [
+      "& $env:PASEO_HOOK_CLI hooks codex Stop",
+      "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
+      `Write-Output '${marker}'`,
+    ].join("; ");
+    const encodedScript = Buffer.from(script, "utf16le").toString("base64");
+    return `powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encodedScript}`;
+  }
+
+  return `"$PASEO_HOOK_CLI" hooks codex Stop && echo ${marker}`;
+}
+
 function getShellCommand(script) {
   if (process.platform === "win32") {
     return {
@@ -740,8 +754,8 @@ async function smokeCliTerminal({ appPath, env }) {
     await runCliShimJsonCommand({
       appPath,
       env,
-      args: ["terminal", "send-keys", terminalId, "echo", "Space", marker, "Enter"],
-      label: "Bundled CLI shim terminal send-keys",
+      args: ["terminal", "send-keys", terminalId, getTerminalHookSmokeCommand(marker), "Enter"],
+      label: "Bundled CLI shim terminal hook command",
     });
 
     for (let attempt = 1; attempt <= TERMINAL_CAPTURE_ATTEMPTS; attempt += 1) {
@@ -753,7 +767,7 @@ async function smokeCliTerminal({ appPath, env }) {
       });
       const lines = Array.isArray(capture?.lines) ? capture.lines : [];
       if (lines.join("\n").includes(marker)) {
-        console.log("Packaged desktop smoke: terminal command output captured");
+        console.log("Packaged desktop smoke: terminal hook command completed");
         return;
       }
 

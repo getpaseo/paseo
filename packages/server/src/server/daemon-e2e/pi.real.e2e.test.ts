@@ -12,7 +12,7 @@ import type {
   AgentTimelineItem,
 } from "../agent/agent-sdk-types.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
-import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
+import { createTestPaseoDaemon, type TestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 import {
   canRunRealProvider,
   createRealProviderClient,
@@ -107,7 +107,7 @@ async function waitForTimelineItem(
 }
 
 async function withConnectedPiDaemon(
-  run: (context: { client: DaemonClient }) => Promise<void>,
+  run: (context: { client: DaemonClient; daemon: TestPaseoDaemon }) => Promise<void>,
 ): Promise<void> {
   const daemon = await createPiToolDaemon();
   const client = new DaemonClient({
@@ -120,7 +120,7 @@ async function withConnectedPiDaemon(
     await client.fetchAgents({
       subscribe: { subscriptionId: `pi-real-${randomUUID()}` },
     });
-    await run({ client });
+    await run({ client, daemon });
   } finally {
     await client.close().catch(() => undefined);
     await daemon.close().catch(() => undefined);
@@ -138,6 +138,51 @@ beforeEach((context) => {
     context.skip();
   }
 });
+
+test(
+  "real Pi daemon composes project and Paseo system prompts",
+  async () => {
+    const cwd = tmpCwd("pi-system-prompts-");
+
+    try {
+      mkdirSync(path.join(cwd, ".pi"), { recursive: true });
+      writeFileSync(
+        path.join(cwd, ".pi", "APPEND_SYSTEM.md"),
+        [
+          "When the user says PASEO_SYSTEM_PROMPT_PROBE, reply with exactly two tokens:",
+          "PROJECT_PROMPT followed by the value of PASEO_PROMPT_TOKEN from later system instructions.",
+          "If no PASEO_PROMPT_TOKEN exists, use MISSING as the second token.",
+        ].join("\n"),
+      );
+
+      await withConnectedPiDaemon(async ({ client }) => {
+        const agent = await client.createAgent({
+          cwd,
+          title: "pi-system-prompts",
+          provider: "pi",
+          model: PI_REAL_TEST_MODEL,
+          systemPrompt:
+            "PASEO_PROMPT_TOKEN is PASEO_PROMPT. Follow the project instruction for PASEO_SYSTEM_PROMPT_PROBE.",
+        });
+
+        await client.sendMessage(agent.id, "PASEO_SYSTEM_PROMPT_PROBE");
+        const finish = await client.waitForFinish(agent.id, PI_TEST_TIMEOUT_MS);
+        expect(finish.status).toBe("idle");
+
+        const items = await fetchCanonicalTimeline(client, agent.id);
+        const response = items
+          .filter((item) => item.type === "assistant_message")
+          .map((item) => item.text)
+          .join("")
+          .trim();
+        expect(response).toBe("PROJECT_PROMPT PASEO_PROMPT");
+      });
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  },
+  PI_TEST_TIMEOUT_MS,
+);
 
 test(
   "real Pi daemon lists Paseo-handled compact slash commands",
@@ -598,6 +643,70 @@ test(
     }
   },
   PI_TEST_TIMEOUT_MS,
+);
+
+test(
+  "resumed Pi prompts retain their exact native entry ids after idle collection",
+  async () => {
+    const cwd = tmpCwd("pi-resumed-entry-id-");
+    const firstPrompt = "PASEO_PI_ENTRY_ID_FIRST. Reply exactly: first-ok";
+    const secondPrompt = "PASEO_PI_ENTRY_ID_SECOND. Reply exactly: second-ok";
+
+    try {
+      await withConnectedPiDaemon(async ({ client, daemon }) => {
+        const agent = await client.createAgent({
+          cwd,
+          title: "pi-resumed-entry-id",
+          provider: "pi",
+          model: PI_REAL_TEST_MODEL,
+        });
+
+        await client.sendMessage(agent.id, firstPrompt);
+        const firstFinish = await client.waitForFinish(agent.id, PI_TEST_TIMEOUT_MS);
+        expect(firstFinish.status).toBe("idle");
+
+        const collection = await daemon.daemon.agentManager.collectIdleAgents({
+          cutoff: new Date(Date.now() + 1_000),
+          protectedAgentIds: new Set(),
+        });
+        expect(collection.failures).toEqual([]);
+        expect(collection.collected.map((entry) => entry.agentId)).toContain(agent.id);
+
+        await client.sendMessage(agent.id, secondPrompt);
+        const secondFinish = await client.waitForFinish(agent.id, PI_TEST_TIMEOUT_MS);
+        expect(secondFinish.status).toBe("idle");
+
+        const nativeHandle = secondFinish.final?.persistence?.nativeHandle;
+        if (typeof nativeHandle !== "string") {
+          throw new Error("Real Pi run did not return a native session file");
+        }
+        const nativeUserEntryIds = readFileSync(nativeHandle, "utf8")
+          .trim()
+          .split("\n")
+          .map((line) => JSON.parse(line) as Record<string, unknown>)
+          .filter(
+            (entry) =>
+              entry.type === "message" &&
+              typeof entry.id === "string" &&
+              typeof entry.message === "object" &&
+              entry.message !== null &&
+              (entry.message as { role?: unknown }).role === "user",
+          )
+          .map((entry) => entry.id as string);
+        const userMessages = (await fetchCanonicalTimeline(client, agent.id)).filter(
+          (item): item is Extract<AgentTimelineItem, { type: "user_message" }> =>
+            item.type === "user_message",
+        );
+
+        expect(userMessages.map((item) => item.text)).toEqual([firstPrompt, secondPrompt]);
+        expect(userMessages.map((item) => item.messageId)).toEqual(nativeUserEntryIds);
+        expect(new Set(nativeUserEntryIds).size).toBe(2);
+      });
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  },
+  PI_TEST_TIMEOUT_MS * 2,
 );
 
 test(

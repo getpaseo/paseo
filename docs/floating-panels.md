@@ -57,7 +57,7 @@ Android touches sailed straight through to the chat scroll view behind it.
 
 Two escape hatches in the codebase:
 
-- **`Modal`** (combobox, tooltip on native) — opens a new Android window, so
+- **`Modal`** (combobox, dropdown menu and tooltip on native) — opens a new Android window, so
   hit-testing starts fresh in that window. Side effect: a Modal opening on
   Android can detach the IME from an underlying TextInput. Fine for combobox
   (it has its own input) and tooltip (no input). **Not** fine for autocomplete
@@ -70,7 +70,13 @@ Two escape hatches in the codebase:
   overlays can use the current `FloatingPanelPortalHost` so sliding sidebars
   cover them.
 
-Choose Modal vs Portal by whether the underlying input can lose its keyboard.
+  Choose Modal vs Portal by whether the underlying input can lose its keyboard.
+
+On web, dropdown menus render into the shared `overlay-root`, not React Native
+Web's `<Modal>`/`<dialog>`. A browser top-layer dialog always paints above
+ordinary portals regardless of `z-index`, which would hide app toasts and
+tooltips behind the menu. The shared overlay scale keeps menus below toasts and
+lets tooltip portals paint above both.
 
 ## Gotcha 2 — Portal breaks lifecycle and coordinate-system inheritance
 

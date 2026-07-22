@@ -804,6 +804,7 @@ describe("file explorer binary responses", () => {
         size: 5,
         encoding: "binary",
         modifiedAt: expect.any(String),
+        revision: expect.any(String),
       },
       payload: new Uint8Array(),
     });

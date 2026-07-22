@@ -1591,6 +1591,66 @@ describe("workspace-layout-store actions", () => {
     expect(Array.from(state.pinnedAgentIdsByWorkspace[workspaceKey] ?? [])).toEqual(["agent-1"]);
   });
 
+  it("keeps an explicitly pinned archived agent before its detail is hydrated", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+
+    store.openTabFocused(workspaceKey, { kind: "agent", agentId: "archived-agent" });
+    store.pinAgent(workspaceKey, "archived-agent");
+    store.reconcileTabs(workspaceKey, {
+      agentsHydrated: true,
+      terminalsHydrated: true,
+      activeAgentIds: [],
+      autoOpenAgentIds: [],
+      knownAgentIds: [],
+      standaloneTerminalIds: [],
+    });
+
+    expect(store.getWorkspaceTabs(workspaceKey).map((tab) => tab.tabId)).toEqual([
+      "agent_archived-agent",
+    ]);
+
+    store.reconcileTabs(workspaceKey, {
+      agentsHydrated: true,
+      terminalsHydrated: true,
+      activeAgentIds: [],
+      autoOpenAgentIds: [],
+      knownAgentIds: [],
+      standaloneTerminalIds: [],
+    });
+
+    expect(store.getWorkspaceTabs(workspaceKey).map((tab) => tab.tabId)).toEqual([
+      "agent_archived-agent",
+    ]);
+
+    store.resolvePendingAgent(workspaceKey, "archived-agent");
+    store.reconcileTabs(workspaceKey, {
+      agentsHydrated: true,
+      terminalsHydrated: true,
+      activeAgentIds: [],
+      autoOpenAgentIds: [],
+      knownAgentIds: [],
+      standaloneTerminalIds: [],
+    });
+
+    expect(store.getWorkspaceTabs(workspaceKey).map((tab) => tab.tabId)).toEqual([]);
+
+    store.openTabFocused(workspaceKey, { kind: "agent", agentId: "archived-agent" });
+    store.pinAgent(workspaceKey, "archived-agent");
+    store.reconcileTabs(workspaceKey, {
+      agentsHydrated: true,
+      terminalsHydrated: true,
+      activeAgentIds: [],
+      autoOpenAgentIds: [],
+      knownAgentIds: [],
+      standaloneTerminalIds: [],
+    });
+
+    expect(store.getWorkspaceTabs(workspaceKey).map((tab) => tab.tabId)).toEqual([
+      "agent_archived-agent",
+    ]);
+  });
+
   it("retargeting a tab to an agent clears hidden intent", () => {
     const workspaceKey = createWorkspaceKey();
     const store = workspaceLayoutStore.getState();

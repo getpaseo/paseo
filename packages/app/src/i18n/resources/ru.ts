@@ -470,6 +470,7 @@ export const ru: TranslationResources = {
     },
     tabs: {
       loading: "Загрузка...",
+      modified: "Несохранённые изменения",
       loadingAgentTitle: "Название агента загрузки",
       emptyPane: "На этой панели нет вкладок.",
       fallback: {
@@ -536,6 +537,13 @@ export const ru: TranslationResources = {
         failedToReloadAgent: "Не удалось перезагрузить агент",
       },
       confirmations: {
+        unsavedTitle: "Несохранённые изменения",
+        unsavedMessage:
+          "В этой вкладке есть несохранённые изменения. При закрытии черновик будет удалён.",
+        closeWithoutSaving: "Закрыть без сохранения",
+        closePaneTitle: "Закрыть панель?",
+        bulkUnsaved:
+          "В {{count}} вкладках есть несохранённые изменения. При закрытии черновики будут удалены.",
         close: "Закрывать",
         cancel: "Отмена",
         archive: "Архив",
@@ -585,19 +593,34 @@ export const ru: TranslationResources = {
     scripts: {
       title: "Скрипты",
       actions: {
+        chooseUrl: "Выбрать URL",
+        copyUrl: "Скопировать URL",
+        openService: "Просмотреть сервис",
+        restart: "Перезапустить",
         run: "Бегать",
-        view: "Вид",
+        stop: "Остановить",
+        view: "Открыть терминал",
       },
       accessibility: {
         trigger: "Скрипты Workspace",
-        openAt: "Откройте{{scriptName}}на{{label}}",
+        openService: "Просмотреть сервис {{scriptName}}",
         viewTerminal: "Посмотреть терминал{{scriptName}}",
         runScript: "Запустите скрипт{{scriptName}}",
+        stopScript: "Остановить{{scriptName}}",
+        restartScript: "Перезапустить{{scriptName}}",
+        copyUrl: "Скопировать URL {{scriptName}}",
+        chooseUrl: "Выбрать URL для {{scriptName}}",
         script: "скрипт{{scriptName}}",
+      },
+      routes: {
+        public: "Обратный прокси",
+        paseo: "Memorable",
+        direct: "Прямой адрес",
       },
       states: {
         exitCode: "выйти из{{code}}",
         startFailed: "Не удалось запустить{{scriptName}}",
+        stopFailed: "Не удалось остановить{{scriptName}}",
       },
     },
     git: {
@@ -787,14 +810,12 @@ export const ru: TranslationResources = {
         deletedFile: "Удалено",
         commits: {
           title: "Коммиты",
-          legendLocal: "локально",
-          legendRemote: "на удалённом",
-          countLabel: "{{count}} коммитов впереди базы",
+          countLabel: "{{count}} последних коммитов",
           fileDiffEmpty: "Нет изменений для отображения",
           fileDiffError: "Не удалось загрузить различия файла",
           loading: "Загрузка коммитов…",
           loadError: "Не удалось загрузить коммиты",
-          empty: "Нет коммитов впереди базы",
+          empty: "Коммитов пока нет",
         },
       },
       openInEditor: {
@@ -927,6 +948,8 @@ export const ru: TranslationResources = {
       actions: {
         menu: "Действия Workspace",
         newWorkspace: "Новое рабочее пространство",
+        showMore: "Показать ещё",
+        showLess: "Показать меньше",
         createWorkspaceFor: "Создайте новое рабочее пространство для{{projectName}}.",
         copyPath: "Копировать путь",
         copyBranchName: "Скопировать название ветки",
@@ -984,10 +1007,6 @@ export const ru: TranslationResources = {
     refPicker: {
       startingRef: "Начальная ссылка",
       chooseStart: "Выберите, с чего начать",
-      checkoutHint: "Проверьте {{noun}} {{numberPrefix}}{{number}}?",
-      checkoutPr: "Проверьте {{noun}} {{numberPrefix}}{{number}}",
-      dismissCheckoutHint:
-        "Отклонить подсказку по оформлению заказа {{noun}} {{numberPrefix}}{{number}}",
       intoBase: "в {{baseRef}}",
       searching: "Идет поиск...",
       noMatchingRefs: "Нет подходящих ссылок.",
@@ -1480,6 +1499,25 @@ export const ru: TranslationResources = {
       binaryPreviewUnavailable: "Предварительный просмотр двоичного файла недоступен.",
       failedToLoad: "Не удалось загрузить файл",
       failedToLoadPreview: "Не удалось загрузить предварительный просмотр файла.",
+      editor: {
+        fileSize: "Размер файла {{size}}",
+        lines: "Строк: {{count}}",
+        editorStatus: "Состояние редактора: {{status}}",
+        unsavedChanges: "Несохранённые изменения",
+        saving: "Сохранение...",
+        saveFailed: "Не удалось сохранить",
+        changedOnDisk: "Изменён на диске",
+        vimMode: "Режим Vim {{mode}}",
+        cursor: "Строка {{line}}, столбец {{column}}",
+        preview: "Просмотр",
+        source: "Исходник",
+        unavailableTitle: "Файл недоступен на диске",
+        conflictDescription: "Локальный буфер сохранён. Выберите версию, которую нужно оставить.",
+        overwrite: "Перезаписать",
+        reload: "Перезагрузить",
+        reloadTitle: "Перезагрузить с диска?",
+        reloadMessage: "Локальные изменения будут потеряны.",
+      },
     },
     diff: {
       changesLabel: "Изменения",
@@ -1575,11 +1613,17 @@ export const ru: TranslationResources = {
     sections: {
       general: "Общий",
       appearance: "Появление",
+      editor: "Редактор",
       shortcuts: "Ярлыки",
       integrations: "Интеграции",
       permissions: "Разрешения",
       diagnostics: "Диагностика",
       about: "О",
+    },
+    editor: {
+      title: "Редактор",
+      vimKeybindings: "Клавиши Vim",
+      vimHint: "Применяется к исходным файлам в веб- и настольной версии.",
     },
     hostSections: {
       connections: "Соединения",

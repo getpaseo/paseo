@@ -75,6 +75,7 @@ interface WorkspaceLayoutStore {
   layoutByWorkspace: Record<string, WorkspaceLayout>;
   splitSizesByWorkspace: Record<string, Record<string, number[]>>;
   pinnedAgentIdsByWorkspace: Record<string, Set<string>>;
+  pendingAgentIdsByWorkspace: Record<string, Set<string>>;
   hiddenAgentIdsByWorkspace: Record<string, Set<string>>;
   focusRestorationByWorkspace: Record<string, WorkspaceFocusRestorationState>;
   openTabFocused: (workspaceKey: string, target: WorkspaceTabTarget) => string | null;
@@ -89,6 +90,7 @@ interface WorkspaceLayoutStore {
   retargetTab: (workspaceKey: string, tabId: string, target: WorkspaceTabTarget) => string | null;
   convertDraftToAgent: (workspaceKey: string, tabId: string, agentId: string) => string | null;
   reconcileTabs: (workspaceKey: string, snapshot: WorkspaceTabSnapshot) => void;
+  resolvePendingAgent: (workspaceKey: string, agentId: string) => void;
   reorderTabs: (workspaceKey: string, tabIds: string[]) => void;
   getWorkspaceTabs: (workspaceKey: string) => WorkspaceTab[];
   splitPane: (
@@ -229,6 +231,7 @@ export function createWorkspaceLayoutStore(
         layoutByWorkspace: {},
         splitSizesByWorkspace: {},
         pinnedAgentIdsByWorkspace: {},
+        pendingAgentIdsByWorkspace: {},
         hiddenAgentIdsByWorkspace: {},
         focusRestorationByWorkspace: {},
         openTabFocused: (workspaceKey, target) => {
@@ -467,6 +470,7 @@ export function createWorkspaceLayoutStore(
               {
                 layout: currentLayout,
                 pinnedAgentIds: state.pinnedAgentIdsByWorkspace[normalizedWorkspaceKey] ?? null,
+                pendingAgentIds: state.pendingAgentIdsByWorkspace[normalizedWorkspaceKey] ?? null,
                 hiddenAgentIds: state.hiddenAgentIdsByWorkspace[normalizedWorkspaceKey] ?? null,
               },
               snapshot,
@@ -481,6 +485,25 @@ export function createWorkspaceLayoutStore(
                 [normalizedWorkspaceKey]: nextState.layout,
               },
             };
+          });
+        },
+        resolvePendingAgent: (workspaceKey, agentId) => {
+          const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
+          const normalizedAgentId = trimNonEmpty(agentId);
+          if (!normalizedWorkspaceKey || !normalizedAgentId) {
+            return;
+          }
+
+          set((state) => {
+            const pendingAgentIdsByWorkspace = removeAgentIdFromWorkspaceSet(
+              state.pendingAgentIdsByWorkspace,
+              normalizedWorkspaceKey,
+              normalizedAgentId,
+            );
+            if (pendingAgentIdsByWorkspace === state.pendingAgentIdsByWorkspace) {
+              return state;
+            }
+            return { pendingAgentIdsByWorkspace };
           });
         },
         reorderTabs: (workspaceKey, tabIds) => {
@@ -762,7 +785,12 @@ export function createWorkspaceLayoutStore(
           set((state) => {
             const currentPinnedAgentIds =
               state.pinnedAgentIdsByWorkspace[normalizedWorkspaceKey] ?? null;
-            if (currentPinnedAgentIds?.has(normalizedAgentId)) {
+            const currentPendingAgentIds =
+              state.pendingAgentIdsByWorkspace[normalizedWorkspaceKey] ?? null;
+            if (
+              currentPinnedAgentIds?.has(normalizedAgentId) &&
+              currentPendingAgentIds?.has(normalizedAgentId)
+            ) {
               return state;
             }
 
@@ -779,6 +807,11 @@ export function createWorkspaceLayoutStore(
                 ...state.pinnedAgentIdsByWorkspace,
                 [normalizedWorkspaceKey]: nextPinnedAgentIds,
               },
+              pendingAgentIdsByWorkspace: addAgentIdToWorkspaceSet(
+                state.pendingAgentIdsByWorkspace,
+                normalizedWorkspaceKey,
+                normalizedAgentId,
+              ),
             };
           });
         },
@@ -803,6 +836,11 @@ export function createWorkspaceLayoutStore(
               delete nextPinnedAgentIdsByWorkspace[normalizedWorkspaceKey];
               return {
                 pinnedAgentIdsByWorkspace: nextPinnedAgentIdsByWorkspace,
+                pendingAgentIdsByWorkspace: removeAgentIdFromWorkspaceSet(
+                  state.pendingAgentIdsByWorkspace,
+                  normalizedWorkspaceKey,
+                  normalizedAgentId,
+                ),
               };
             }
 
@@ -814,6 +852,11 @@ export function createWorkspaceLayoutStore(
                 ...state.pinnedAgentIdsByWorkspace,
                 [normalizedWorkspaceKey]: nextPinnedAgentIds,
               },
+              pendingAgentIdsByWorkspace: removeAgentIdFromWorkspaceSet(
+                state.pendingAgentIdsByWorkspace,
+                normalizedWorkspaceKey,
+                normalizedAgentId,
+              ),
             };
           });
         },
@@ -872,6 +915,7 @@ export function createWorkspaceLayoutStore(
               normalizedWorkspaceKey in state.layoutByWorkspace ||
               normalizedWorkspaceKey in state.splitSizesByWorkspace ||
               normalizedWorkspaceKey in state.pinnedAgentIdsByWorkspace ||
+              normalizedWorkspaceKey in state.pendingAgentIdsByWorkspace ||
               normalizedWorkspaceKey in state.hiddenAgentIdsByWorkspace ||
               normalizedWorkspaceKey in state.focusRestorationByWorkspace;
             if (!hasAny) {
@@ -883,6 +927,8 @@ export function createWorkspaceLayoutStore(
               state.splitSizesByWorkspace;
             const { [normalizedWorkspaceKey]: _pinned, ...pinnedAgentIdsByWorkspace } =
               state.pinnedAgentIdsByWorkspace;
+            const { [normalizedWorkspaceKey]: _pending, ...pendingAgentIdsByWorkspace } =
+              state.pendingAgentIdsByWorkspace;
             const { [normalizedWorkspaceKey]: _hidden, ...hiddenAgentIdsByWorkspace } =
               state.hiddenAgentIdsByWorkspace;
             const { [normalizedWorkspaceKey]: _restoration, ...focusRestorationByWorkspace } =
@@ -891,6 +937,7 @@ export function createWorkspaceLayoutStore(
               layoutByWorkspace,
               splitSizesByWorkspace,
               pinnedAgentIdsByWorkspace,
+              pendingAgentIdsByWorkspace,
               hiddenAgentIdsByWorkspace,
               focusRestorationByWorkspace,
             };
