@@ -9,7 +9,7 @@ import {
   type ViewStyle,
 } from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
-import { Code, Network, X } from "lucide-react-native";
+import { Code, Workflow, X } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
@@ -233,7 +233,7 @@ function MermaidDiagramViewer({
 
 const ThemedCloseIcon = withUnistyles(X);
 const ThemedSourceIcon = withUnistyles(Code);
-const ThemedDiagramIcon = withUnistyles(Network);
+const ThemedDiagramIcon = withUnistyles(Workflow);
 const closeIconColor = (theme: Theme) => ({ color: theme.colors.foreground });
 
 const viewerStyles = StyleSheet.create((theme, rt) => ({
