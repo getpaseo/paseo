@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "r
 import type { ReactElement, RefObject } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import { Pressable, Text, View } from "react-native";
+import { Pressable, StyleSheet as RNStyleSheet, Text, View } from "react-native";
 import type { PressableStateCallbackType } from "react-native";
 import ReanimatedAnimated from "react-native-reanimated";
 import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
@@ -2034,7 +2034,7 @@ export function NewWorkspaceScreen({
   });
 
   const centeredStyle = useMemo(
-    () => [styles.centered, composerKeyboardStyle],
+    () => [animatedStaticStyles.centered, composerKeyboardStyle],
     [composerKeyboardStyle],
   );
 
@@ -2163,6 +2163,13 @@ export function NewWorkspaceScreen({
   );
 }
 
+const animatedStaticStyles = RNStyleSheet.create({
+  centered: {
+    width: "100%",
+    maxWidth: MAX_CONTENT_WIDTH,
+  },
+});
+
 const styles = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
@@ -2180,10 +2187,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   contentCompact: {
     justifyContent: "flex-end",
-  },
-  centered: {
-    width: "100%",
-    maxWidth: MAX_CONTENT_WIDTH,
   },
   composerTitleContainer: {
     marginBottom: theme.spacing[8],

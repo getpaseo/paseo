@@ -7,7 +7,6 @@ import { useChangesPreferences } from "@/hooks/use-changes-preferences";
 import { useCheckoutCommitsQuery, type CheckoutCommitsQueryResult } from "@/git/use-commits-query";
 import { ThemedChevron, chevronColorMapping } from "@/git/themed-chevron";
 import { CommitRow } from "./commit-row";
-import { dotStyles } from "./shared";
 
 interface CommitsSectionProps {
   serverId: string;
@@ -137,12 +136,6 @@ export function CommitsSection({ serverId, cwd, onCommitPress }: CommitsSectionP
             {commitCount}
           </Text>
         )}
-        <View style={styles.legend}>
-          <View style={dotStyles.dotLocal} />
-          <Text style={styles.legendText}>{t("workspace.git.diff.commits.legendLocal")}</Text>
-          <View style={dotStyles.legendDotRemote} />
-          <Text style={styles.legendText}>{t("workspace.git.diff.commits.legendRemote")}</Text>
-        </View>
       </Pressable>
       {collapsed ? null : (
         <CommitsSectionContent query={query} now={displayNow} onCommitPress={onCommitPress} />
@@ -177,7 +170,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   title: {
     fontSize: theme.fontSize.sm,
-    fontWeight: theme.fontWeight.medium,
     color: theme.colors.foreground,
   },
   count: {
@@ -187,16 +179,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   countSpacer: {
     flex: 1,
-  },
-  legend: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[1],
-    flexShrink: 0,
-  },
-  legendText: {
-    fontSize: theme.fontSize.xs,
-    color: theme.colors.foregroundMuted,
   },
   list: {
     paddingBottom: theme.spacing[1],

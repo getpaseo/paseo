@@ -30,7 +30,7 @@ function useFilePanelDescriptor(target: { kind: "file"; path: string }) {
 
 function FilePanel() {
   const { t } = useTranslation();
-  const { serverId, workspaceId, target } = usePaneContext();
+  const { serverId, workspaceId, target, fileNavigationRevision } = usePaneContext();
   const workspaceDirectory = useWorkspaceDirectory(serverId, workspaceId);
   invariant(target.kind === "file", "FilePanel requires file target");
   if (!workspaceDirectory) {
@@ -40,7 +40,14 @@ function FilePanel() {
       </View>
     );
   }
-  return <FilePane serverId={serverId} workspaceRoot={workspaceDirectory} location={target} />;
+  return (
+    <FilePane
+      serverId={serverId}
+      workspaceRoot={workspaceDirectory}
+      location={target}
+      navigationRevision={fileNavigationRevision ?? 0}
+    />
+  );
 }
 
 export const filePanelRegistration: PanelRegistration<"file"> = {

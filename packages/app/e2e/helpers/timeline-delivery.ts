@@ -7,6 +7,10 @@ interface SessionMessage {
   payload?: unknown;
 }
 
+interface TimelineSubscriptionWaitOptions {
+  timeout?: number;
+}
+
 function readSessionMessage(message: WebSocketMessage): SessionMessage | null {
   if (typeof message !== "string") return null;
   try {
@@ -36,72 +40,16 @@ export function observeTimelineSubscriptions(page: Page) {
   });
 
   return {
-    async waitForSubscribedAgents(agentIds: string[]): Promise<void> {
+    async waitForSubscribedAgents(
+      agentIds: string[],
+      options: TimelineSubscriptionWaitOptions = {},
+    ): Promise<void> {
       const expected = [...new Set(agentIds)].sort();
       await expect
-        .poll(() => acknowledgedAgentIds?.slice().sort() ?? null, { timeout: 15_000 })
+        .poll(() => acknowledgedAgentIds?.slice().sort() ?? null, {
+          timeout: options.timeout ?? 15_000,
+        })
         .toEqual(expected);
-    },
-  };
-}
-
-interface AssistantFrameState {
-  active: boolean;
-  lastText: string | null;
-  snapshots: string[];
-}
-
-export async function observeLastAssistantFrames(page: Page) {
-  await page.evaluate(() => {
-    const state: AssistantFrameState = {
-      active: true,
-      lastText: null,
-      snapshots: [],
-    };
-    const sample = () => {
-      const hasPaintedHistoryOverlay = Array.from(
-        document.querySelectorAll('[data-testid="agent-history-overlay"]'),
-      ).some((element) => {
-        const rect = element.getBoundingClientRect();
-        return rect.width > 0 && rect.height > 0;
-      });
-      if (!hasPaintedHistoryOverlay) {
-        const messages = Array.from(
-          document.querySelectorAll('[data-testid="assistant-message"]'),
-        ).filter((element) => {
-          const rect = element.getBoundingClientRect();
-          return rect.width > 0 && rect.height > 0;
-        });
-        const text = messages.at(-1)?.textContent?.trim() ?? "";
-        if (text && text !== state.lastText) {
-          state.lastText = text;
-          state.snapshots.push(text);
-        }
-      }
-      if (state.active) requestAnimationFrame(sample);
-    };
-    Object.assign(window, { __assistantFrameState: state });
-    requestAnimationFrame(sample);
-  });
-
-  return {
-    async stop(): Promise<string[]> {
-      return page.evaluate(
-        () =>
-          new Promise<string[]>((resolve) => {
-            requestAnimationFrame(() => {
-              const state = (
-                window as typeof window & { __assistantFrameState?: AssistantFrameState }
-              ).__assistantFrameState;
-              if (!state) {
-                resolve([]);
-                return;
-              }
-              state.active = false;
-              resolve([...state.snapshots]);
-            });
-          }),
-      );
     },
   };
 }

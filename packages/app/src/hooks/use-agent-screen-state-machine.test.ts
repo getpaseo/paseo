@@ -209,7 +209,7 @@ describe("deriveAgentScreenViewState", () => {
     expect(sync.ui).toBe("silent");
   });
 
-  it("covers already-hydrated history while a newly visible agent catches up", () => {
+  it("keeps already-hydrated history visible while a newly visible agent catches up", () => {
     const memory = createBaseMemory({
       hasRenderedReady: true,
       lastReadyAgent: createAgent("agent-1"),
@@ -225,7 +225,7 @@ describe("deriveAgentScreenViewState", () => {
     const ready = expectReadyState(result.state);
     const sync = expectCatchingUpSync(ready);
 
-    expect(sync.ui).toBe("overlay");
+    expect(sync.ui).toBe("silent");
   });
 
   it("keeps hydrated history readable after a visibility catch-up error", () => {

@@ -11,6 +11,7 @@ import {
   FlatList,
   ActivityIndicator,
   Keyboard,
+  Platform,
   View,
   type LayoutChangeEvent,
   type ListRenderItemInfo,
@@ -189,6 +190,12 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     },
     scrollToBottom,
   });
+  // Android's maintainVisibleContentPosition ignores the list inversion transform and
+  // fights the controller's offset-zero correction while the live header grows.
+  const maintainVisibleContentPosition =
+    Platform.OS === "android" && bottomAnchorController.mode === "sticky-bottom"
+      ? undefined
+      : DEFAULT_MAINTAIN_VISIBLE_CONTENT_POSITION;
 
   useEffect(() => {
     streamViewportMetricsRef.current = {
@@ -414,7 +421,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       onScroll={handleScroll}
       scrollEventThrottle={16}
       onContentSizeChange={handleContentSizeChange}
-      maintainVisibleContentPosition={DEFAULT_MAINTAIN_VISIBLE_CONTENT_POSITION}
+      maintainVisibleContentPosition={maintainVisibleContentPosition}
       initialNumToRender={40}
       maxToRenderPerBatch={40}
       updateCellsBatchingPeriod={0}

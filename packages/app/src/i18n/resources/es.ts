@@ -819,14 +819,12 @@ export const es: TranslationResources = {
         deletedFile: "Eliminado",
         commits: {
           title: "Commits",
-          legendLocal: "local",
-          legendRemote: "en remoto",
-          countLabel: "{{count}} commits por delante de la base",
+          countLabel: "{{count}} commits recientes",
           fileDiffEmpty: "No hay cambios para mostrar",
           fileDiffError: "Error al cargar el diff del archivo",
           loading: "Cargando commits…",
           loadError: "Error al cargar los commits",
-          empty: "No hay commits por delante de la base",
+          empty: "Aún no hay commits",
         },
       },
       openInEditor: {
@@ -959,6 +957,8 @@ export const es: TranslationResources = {
       actions: {
         menu: "AccionesWorkspace",
         newWorkspace: "Nuevo espacio de trabajo",
+        showMore: "Mostrar más",
+        showLess: "Mostrar menos",
         createWorkspaceFor: "Crea un nuevo espacio de trabajo para{{projectName}}",
         copyPath: "Copiar ruta",
         copyBranchName: "Copiar nombre de sucursal",

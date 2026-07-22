@@ -328,7 +328,7 @@ interface CanonicalUserMessageIdentity {
   text: string;
 }
 
-function matchesOptimisticUserMessageIdentity(
+function matchesLocalUserMessageIdentity(
   canonical: CanonicalUserMessageIdentity,
   optimistic: UserMessageItem,
 ): boolean {
@@ -363,61 +363,55 @@ function reconcileLocalUserPresentationAfterReplace(params: {
     }
   });
 
-  let changed = false;
   const nextTail = [...params.canonicalTail];
-  let searchFromOrdinal = 0;
+  const claimedCanonicalIndexes = new Set<number>();
   const unmatched: UserMessageItem[] = [];
 
   for (const local of localUsers) {
-    const canonicalOrdinal = canonicalUserIndexes.findIndex((index, ordinal) => {
-      if (ordinal < searchFromOrdinal) {
-        return false;
-      }
-      if (local.item.optimistic) {
-        const canonical = params.canonicalTail[index];
-        if (canonical?.kind !== "user_message") {
-          return false;
-        }
-        const identityMatches = matchesOptimisticUserMessageIdentity(
+    const exactIndex = canonicalUserIndexes.find((index) => {
+      if (claimedCanonicalIndexes.has(index)) return false;
+      const canonical = params.canonicalTail[index];
+      return (
+        canonical?.kind === "user_message" &&
+        matchesLocalUserMessageIdentity(
           {
             messageId: canonical.id,
             clientMessageId: canonical.clientMessageId,
             text: canonical.text,
           },
           local.item,
-        );
-        if (canonical.clientMessageId !== undefined || identityMatches) {
-          return identityMatches;
-        }
-        return ordinal >= local.ordinal;
-      }
-      return params.canonicalTail[index]?.id === local.item.id;
+        )
+      );
     });
-    if (canonicalOrdinal < 0) {
-      if (local.item.optimistic) {
-        unmatched.push(local.item);
-      }
-      continue;
-    }
-
-    const canonicalIndex = canonicalUserIndexes[canonicalOrdinal];
-    const canonicalItem = canonicalIndex !== undefined ? nextTail[canonicalIndex] : undefined;
-    if (!canonicalItem || canonicalItem.kind !== "user_message") {
+    const ordinalIndex = canonicalUserIndexes[local.ordinal];
+    const ordinalItem = ordinalIndex === undefined ? undefined : params.canonicalTail[ordinalIndex];
+    const canonicalIndex =
+      exactIndex ??
+      (ordinalIndex !== undefined &&
+      !claimedCanonicalIndexes.has(ordinalIndex) &&
+      ordinalItem?.kind === "user_message" &&
+      ordinalItem.clientMessageId === undefined
+        ? ordinalIndex
+        : undefined);
+    const canonicalItem = canonicalIndex === undefined ? undefined : nextTail[canonicalIndex];
+    if (canonicalIndex === undefined || !canonicalItem || canonicalItem.kind !== "user_message") {
       if (local.item.optimistic) {
         unmatched.push(local.item);
       }
       continue;
     }
     nextTail[canonicalIndex] = mergeCanonicalUserWithLocalPresentation(canonicalItem, local.item);
-    searchFromOrdinal = canonicalOrdinal + 1;
-    changed = true;
+    claimedCanonicalIndexes.add(canonicalIndex);
   }
 
-  if (unmatched.length === 0) {
-    return changed ? nextTail : params.canonicalTail;
+  for (const item of unmatched) {
+    const insertionIndex = nextTail.findIndex(
+      (canonical) => canonical.timestamp.getTime() > item.timestamp.getTime(),
+    );
+    nextTail.splice(insertionIndex < 0 ? nextTail.length : insertionIndex, 0, item);
   }
 
-  return [...nextTail, ...unmatched];
+  return nextTail;
 }
 
 interface IncrementalAcceptResult {
@@ -580,62 +574,6 @@ function replaceLiveAssistantWithProjectedText(params: {
     timelineCursor,
   };
   return next;
-}
-
-interface OptimisticUserMessagePosition {
-  item: UserMessageItem;
-  placement: "tail" | "head";
-  index: number;
-}
-
-function findOptimisticUserMessage(params: {
-  tail: StreamItem[];
-  head: StreamItem[];
-}): OptimisticUserMessagePosition | null {
-  const tailIndex = params.tail.findIndex(
-    (item) => item.kind === "user_message" && item.optimistic,
-  );
-  const tailItem = params.tail[tailIndex];
-  if (tailItem?.kind === "user_message") {
-    return { item: tailItem, placement: "tail", index: tailIndex };
-  }
-
-  const headIndex = params.head.findIndex(
-    (item) => item.kind === "user_message" && item.optimistic,
-  );
-  const headItem = params.head[headIndex];
-  return headItem?.kind === "user_message"
-    ? { item: headItem, placement: "head", index: headIndex }
-    : null;
-}
-
-function replaceOptimisticUserMessage(params: {
-  tail: StreamItem[];
-  head: StreamItem[];
-  position: OptimisticUserMessagePosition;
-  precedingItems: StreamItem[];
-  replacement: StreamItem[];
-}): { tail: StreamItem[]; head: StreamItem[] } {
-  const { position } = params;
-  const items = [...params.precedingItems, ...params.replacement];
-  if (position.placement === "tail") {
-    return {
-      tail: [
-        ...params.tail.slice(0, position.index),
-        ...items,
-        ...params.tail.slice(position.index + 1),
-      ],
-      head: params.head,
-    };
-  }
-  return {
-    tail: params.tail,
-    head: [
-      ...params.head.slice(0, position.index),
-      ...items,
-      ...params.head.slice(position.index + 1),
-    ],
-  };
 }
 
 function reconcileOverlappingProjectedAssistant(params: {
@@ -802,40 +740,6 @@ function reconcileOverlappingProjectedStreamItems(params: {
   return { tail, head, reconciledUnits };
 }
 
-function matchesOptimisticUserMessage(params: {
-  unit: TimelineUnit;
-  optimistic: UserMessageItem;
-}): boolean {
-  const { event } = params.unit;
-  if (event.type !== "timeline" || event.item.type !== "user_message") {
-    return false;
-  }
-  return matchesOptimisticUserMessageIdentity(event.item, params.optimistic);
-}
-
-function acknowledgeOptimisticUserMessage(params: {
-  tail: StreamItem[];
-  head: StreamItem[];
-  unit: TimelineUnit;
-  epoch: string;
-  optimistic: OptimisticUserMessagePosition;
-  precedingItems: StreamItem[];
-}): { tail: StreamItem[]; head: StreamItem[] } {
-  const { event, timestamp, seqEnd } = params.unit;
-  const timelineCursor = { epoch: params.epoch, seq: seqEnd };
-  const acknowledged = reduceStreamUpdate([params.optimistic.item], event, timestamp, {
-    source: "canonical",
-    timelineCursor,
-  });
-  return replaceOptimisticUserMessage({
-    tail: params.tail,
-    head: params.head,
-    position: params.optimistic,
-    precedingItems: params.precedingItems,
-    replacement: acknowledged,
-  });
-}
-
 function applyCanonicalForwardUnit(params: {
   tail: StreamItem[];
   head: StreamItem[];
@@ -860,6 +764,25 @@ function applyCanonicalForwardUnit(params: {
     timelineCursor,
   });
   if (replacedHead) return { tail: params.tail, head: replacedHead };
+
+  const activeAssistant = params.head.findLast(
+    (item): item is Extract<StreamItem, { kind: "assistant_message" }> =>
+      item.kind === "assistant_message",
+  );
+  if (
+    event.type === "timeline" &&
+    event.item.type === "assistant_message" &&
+    event.item.messageId !== undefined &&
+    event.item.messageId !== activeAssistant?.messageId
+  ) {
+    return {
+      tail: flushHeadToTail(params.tail, params.head),
+      head: reduceStreamUpdate([], event, timestamp, {
+        source: "canonical",
+        timelineCursor,
+      }),
+    };
+  }
 
   const applied = applyStreamEvent({
     tail: params.tail,
@@ -888,67 +811,15 @@ function applyAcceptedForwardTimelineUnits(params: {
   });
   let tail = reconciled.tail;
   let head = reconciled.head;
-  let delayedHistoryTail: StreamItem[] = [];
-  let delayedHistoryHead: StreamItem[] = [];
 
   for (const unit of params.units) {
     if (reconciled.reconciledUnits.has(unit)) continue;
-    const nextOptimistic = findOptimisticUserMessage({ tail, head });
-    if (nextOptimistic && matchesOptimisticUserMessage({ unit, optimistic: nextOptimistic.item })) {
-      const precedingItems = flushHeadToTail(delayedHistoryTail, delayedHistoryHead);
-      delayedHistoryTail = [];
-      delayedHistoryHead = [];
-      const applied = acknowledgeOptimisticUserMessage({
-        tail,
-        head,
-        unit,
-        epoch: params.epoch,
-        optimistic: nextOptimistic,
-        precedingItems,
-      });
-      tail = applied.tail;
-      head = applied.head;
-      continue;
-    }
-    if (nextOptimistic) {
-      if (
-        unit.event.type === "timeline" &&
-        (unit.event.item.type === "assistant_message" || unit.event.item.type === "reasoning")
-      ) {
-        delayedHistoryHead = reduceStreamUpdate(delayedHistoryHead, unit.event, unit.timestamp, {
-          source: "canonical",
-          timelineCursor: { epoch: params.epoch, seq: unit.seqEnd },
-        });
-        continue;
-      }
-      const applied = applyStreamEvent({
-        tail: delayedHistoryTail,
-        head: delayedHistoryHead,
-        event: unit.event,
-        timestamp: unit.timestamp,
-        source: "canonical",
-        timelineCursor: { epoch: params.epoch, seq: unit.seqEnd },
-      });
-      delayedHistoryTail = applied.tail;
-      delayedHistoryHead = applied.head;
-      continue;
-    }
     const applied = applyCanonicalForwardUnit({ tail, head, unit, epoch: params.epoch });
     tail = applied.tail;
     head = applied.head;
   }
 
-  const remainingOptimistic = findOptimisticUserMessage({ tail, head });
-  if (!remainingOptimistic) return { tail, head };
-  const precedingItems = flushHeadToTail(delayedHistoryTail, delayedHistoryHead);
-  if (precedingItems.length === 0) return { tail, head };
-  return replaceOptimisticUserMessage({
-    tail,
-    head,
-    position: remainingOptimistic,
-    precedingItems,
-    replacement: [remainingOptimistic.item],
-  });
+  return { tail, head };
 }
 
 function applyTimelineIncrementalPath(args: {

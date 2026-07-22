@@ -174,6 +174,10 @@ class TimelineWorld {
   }
 }
 
+test("keeps hidden agents subscribed for thirty seconds", () => {
+  expect(VIEWED_TIMELINE_UNSUBSCRIBE_GRACE_MS).toBe(30_000);
+});
+
 test("uses a tail fetch when a live cursor is not authoritative", async () => {
   const world = new TimelineWorld();
   world.setLiveCursor("agent-a", 9);
