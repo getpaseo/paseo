@@ -267,6 +267,23 @@ function MermaidDiagramImpl({
 
   const svgHtml = useMemo(() => ({ __html: svg ?? "" }), [svg]);
 
+  // Source view hoists the fence margins onto the wrapper so the floating
+  // view-diagram toggle aligns with the code block's own copy button — both
+  // sit spacing[2] below the same visible box edge.
+  const sourceView = useMemo(() => {
+    const { marginTop, marginBottom, marginVertical, ...text } = textStyle;
+    return {
+      container: [
+        {
+          marginTop: marginTop ?? marginVertical,
+          marginBottom: marginBottom ?? marginVertical,
+        } as ViewStyle,
+        sourceContainerStyle,
+      ],
+      text: text as TextStyle,
+    };
+  }, [textStyle]);
+
   if (!svg) {
     return (
       <HighlightedCodeBlock
@@ -281,7 +298,7 @@ function MermaidDiagramImpl({
   if (showSource) {
     return (
       <View
-        style={sourceContainerStyle}
+        style={sourceView.container}
         onPointerEnter={handlePointerEnter}
         onPointerLeave={handlePointerLeave}
       >
@@ -289,15 +306,16 @@ function MermaidDiagramImpl({
           code={code}
           language="mermaid"
           inheritedStyles={inheritedStyles}
-          textStyle={textStyle}
+          textStyle={sourceView.text}
         />
-        {/* Offset left of the code block's own copy button. */}
+        {/* Sits left of the code block's copy button, matching its plain style. */}
         <View style={[controlStyles.cluster, controlStyles.clusterSourceOffset]}>
           <MermaidControlButton
             icon={Workflow}
             label={t("message.mermaid.viewDiagram")}
             onPress={showDiagramPress}
             visible={controlsVisible}
+            plain
           />
         </View>
       </View>
@@ -366,6 +384,8 @@ interface MermaidControlButtonProps {
   label: string;
   onPress: () => void;
   visible: boolean;
+  /** Borderless, matching HighlightedCodeBlock's copy button. */
+  plain?: boolean;
 }
 
 const MermaidControlButton = React.memo(function MermaidControlButton({
@@ -373,11 +393,15 @@ const MermaidControlButton = React.memo(function MermaidControlButton({
   label,
   onPress,
   visible,
+  plain = false,
 }: MermaidControlButtonProps) {
+  const pillStyle = visible ? controlStyles.button : controlStyles.buttonHidden;
+  const plainStyle = visible ? controlStyles.plainButton : controlStyles.plainButtonHidden;
+  const style = plain ? plainStyle : pillStyle;
   return (
     <Pressable
       onPress={onPress}
-      style={visible ? controlStyles.button : controlStyles.buttonHidden}
+      style={style}
       pointerEvents={visible ? "auto" : "none"}
       accessibilityRole="button"
       accessibilityLabel={label}
@@ -415,6 +439,14 @@ const controlStyles = StyleSheet.create((theme) => ({
     padding: theme.spacing[1],
     borderRadius: theme.borderRadius.md,
     backgroundColor: theme.colors.surface2,
+    opacity: 0,
+  },
+  plainButton: {
+    padding: theme.spacing[1],
+    opacity: 1,
+  },
+  plainButtonHidden: {
+    padding: theme.spacing[1],
     opacity: 0,
   },
   icon: {
