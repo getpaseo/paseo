@@ -257,6 +257,35 @@ describe("bottom anchor controller driver", () => {
     expect(harness.scrollToBottom).not.toHaveBeenCalled();
   });
 
+  it("pauses sticky maintenance while a user scroll owns the viewport", () => {
+    const harness = createDriverHarness({
+      transportBehavior: {
+        verificationDelayFrames: 2,
+        verificationRetryMode: "recheck",
+      },
+    });
+
+    harness.driver.prepareForStickyContentChange();
+    harness.driver.beginUserScroll();
+    harness.driver.handleContentSizeChange({
+      previousContentHeight: 1200,
+      contentHeight: 1400,
+    });
+    harness.context.nearBottom = false;
+    harness.driver.handleScrollNearBottomChange({
+      nextIsNearBottom: false,
+      scrollDelta: 1,
+    });
+    harness.scheduler.flushAll();
+
+    expect(harness.scrollToBottom).toHaveBeenCalledTimes(1);
+    expect(harness.driver.getSnapshot()).toMatchObject({
+      mode: "detached",
+      pendingRequest: null,
+      pendingVerification: null,
+    });
+  });
+
   it("switches back to sticky-bottom for explicit jump-to-bottom", () => {
     const harness = createDriverHarness({
       isNearBottom: false,
