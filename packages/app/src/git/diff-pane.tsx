@@ -220,7 +220,7 @@ interface DiffFileSectionProps {
   showDir?: boolean;
   interactive?: boolean;
   onToggle?: (path: string) => void;
-  onOpenDiff?: (path: string) => void;
+  onOpenChangesTab?: (path: string) => void;
   onOpenFile?: (path: string) => void;
   onAddToChat?: (path: string) => void;
   onCopyPath?: (path: string) => void;
@@ -927,7 +927,7 @@ const DiffFileHeader = memo(function DiffFileHeader({
   showDir = true,
   interactive = true,
   onToggle,
-  onOpenDiff,
+  onOpenChangesTab,
   onOpenFile,
   onAddToChat,
   onCopyPath,
@@ -956,9 +956,9 @@ const DiffFileHeader = memo(function DiffFileHeader({
     onToggle?.(file.path);
   }, [file.path, interactive, onToggle]);
 
-  const handleOpenDiff = useCallback(() => {
-    onOpenDiff?.(file.path);
-  }, [file.path, onOpenDiff]);
+  const handleOpenChangesTab = useCallback(() => {
+    onOpenChangesTab?.(file.path);
+  }, [file.path, onOpenChangesTab]);
 
   const handleOpenFile = useCallback(() => {
     onOpenFile?.(file.path);
@@ -1081,7 +1081,7 @@ const DiffFileHeader = memo(function DiffFileHeader({
           <FileActionsMenu
             fileKind="file"
             fileExists={!file.isDeleted}
-            onOpenDiff={onOpenDiff ? handleOpenDiff : undefined}
+            onOpenChangesTab={onOpenChangesTab ? handleOpenChangesTab : undefined}
             onOpenFile={onOpenFile ? handleOpenFile : undefined}
             onCopyPath={onCopyPath ? handleCopyPath : undefined}
             onDownload={onDownload ? handleDownload : undefined}
@@ -1759,7 +1759,7 @@ interface SharedDiffViewProps {
         expandedPaths: string[];
         collapsedFolders: string[];
         reviewActions?: InlineReviewActions;
-        onOpenDiff?: (path: string) => void;
+        onOpenChangesTab?: (path: string) => void;
         workspaceFileDragScope?: { serverId: string; workspaceId: string };
         onOpenFile?: (path: string) => void;
         onAddToChat?: (path: string) => void;
@@ -1810,7 +1810,7 @@ export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffVi
   const stickyHeaders = mode.kind !== "commit";
   const interactive = mode.kind !== "commit";
   const reviewActions = mode.kind === "commit" ? undefined : mode.reviewActions;
-  const onOpenDiff = mode.kind === "working_tree" ? mode.onOpenDiff : undefined;
+  const onOpenChangesTab = mode.kind === "working_tree" ? mode.onOpenChangesTab : undefined;
   const focusPath = mode.kind === "working_tab" ? mode.focusPath : undefined;
   const focusRequestId = mode.kind === "working_tab" ? mode.focusRequestId : undefined;
   const onOpenFile = mode.kind === "working_tree" ? mode.onOpenFile : undefined;
@@ -2134,7 +2134,7 @@ export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffVi
             showDir={viewMode === "flat"}
             interactive={interactive}
             onToggle={interactive ? handleToggleExpanded : undefined}
-            onOpenDiff={onOpenDiff}
+            onOpenChangesTab={onOpenChangesTab}
             onOpenFile={onOpenFile}
             onAddToChat={onAddToChat}
             onCopyPath={onCopyPath}
@@ -2171,7 +2171,7 @@ export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffVi
       viewMode,
       wrapLines,
       interactive,
-      onOpenDiff,
+      onOpenChangesTab,
       onOpenFile,
       onAddToChat,
       onCopyPath,
@@ -2516,7 +2516,7 @@ export function GitDiffPane({
     hasUncommittedChanges,
   });
   const setDiffModeOverride = useSetDiffModeOverride();
-  const handleOpenWorkingDiff = useOpenChangesTab({ serverId, workspaceId, cwd });
+  const handleOpenChangesTab = useOpenChangesTab({ serverId, workspaceId, cwd });
 
   const {
     files,
@@ -2749,7 +2749,7 @@ export function GitDiffPane({
       expandedPaths: stableExpandedPathsArray,
       collapsedFolders: stableCollapsedFoldersArray,
       reviewActions,
-      onOpenDiff: handleOpenWorkingDiff,
+      onOpenChangesTab: handleOpenChangesTab,
       workspaceFileDragScope: workspaceId ? { serverId, workspaceId } : undefined,
       onOpenFile,
       onAddToChat,
@@ -2763,7 +2763,7 @@ export function GitDiffPane({
       stableExpandedPathsArray,
       stableCollapsedFoldersArray,
       reviewActions,
-      handleOpenWorkingDiff,
+      handleOpenChangesTab,
       serverId,
       workspaceId,
       onOpenFile,

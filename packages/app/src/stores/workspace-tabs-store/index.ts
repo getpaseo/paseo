@@ -24,6 +24,7 @@ export type {
   WorkspaceDraftTabSetup,
   WorkspaceTab,
   WorkspaceTabTarget,
+  WorkspaceWorkingDiffComparison,
   WorkspaceWorkingDiffTabTarget,
 } from "./state";
 

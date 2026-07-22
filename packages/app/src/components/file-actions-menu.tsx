@@ -37,8 +37,8 @@ interface FileAction {
 interface FileActionsMenuProps {
   fileKind: "file" | "directory";
   fileExists?: boolean;
-  /** Opens the file's changes in a diff tab. Only the git diff pane offers this. */
-  onOpenDiff?: () => void;
+  /** Omitted outside a git checkout, where there is no Changes tab to open. */
+  onOpenChangesTab?: () => void;
   onOpenFile?: () => void;
   onCopyPath?: () => void;
   onDownload?: () => void;
@@ -73,7 +73,7 @@ function triggerStyle({
 export function FileActionsMenu({
   fileKind,
   fileExists = true,
-  onOpenDiff,
+  onOpenChangesTab,
   onOpenFile,
   onCopyPath,
   onDownload,
@@ -90,13 +90,13 @@ export function FileActionsMenu({
     const availableFile = fileKind === "file" && fileExists;
     const next: FileAction[] = [];
     // Not gated on `fileExists`: a deleted file still has changes worth opening.
-    if (fileKind === "file" && onOpenDiff) {
+    if (fileKind === "file" && onOpenChangesTab) {
       next.push({
-        key: "open-diff",
-        label: t("workspace.git.diff.openChangesTab"),
+        key: "open-changes-tab",
+        label: t("workspace.fileActions.openChangesTab"),
         icon: FileDiff,
-        onSelect: onOpenDiff,
-        testID: testIDPrefix ? `${testIDPrefix}-open-diff` : undefined,
+        onSelect: onOpenChangesTab,
+        testID: testIDPrefix ? `${testIDPrefix}-open-changes-tab` : undefined,
       });
     }
     if (availableFile && onOpenFile) {
@@ -140,7 +140,7 @@ export function FileActionsMenu({
     onAddToChat,
     onCopyPath,
     onDownload,
-    onOpenDiff,
+    onOpenChangesTab,
     onOpenFile,
     t,
     testIDPrefix,

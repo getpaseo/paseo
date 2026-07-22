@@ -371,6 +371,7 @@ export const zhCN: TranslationResources = {
       copyPath: "复制路径",
       download: "下载",
       addToChat: "添加到聊天…",
+      openChangesTab: "在“更改”标签页中打开",
       moreActions: "更多操作",
     },
     fileExplorer: {
@@ -783,7 +784,6 @@ export const zhCN: TranslationResources = {
         base: "base",
         newFile: "新增",
         deletedFile: "已删除",
-        openChangesTab: "在“更改”标签页中打开",
         commits: {
           title: "提交",
           countLabel: "最近 {{count}} 个提交",

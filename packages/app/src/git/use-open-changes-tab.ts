@@ -7,7 +7,7 @@ import { usePanelStore } from "@/stores/panel-store";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import {
   buildWorkspaceTabPersistenceKey,
-  type WorkspaceWorkingDiffTabTarget,
+  type WorkspaceWorkingDiffComparison,
 } from "@/stores/workspace-tabs-store";
 
 interface UseOpenChangesTabInput {
@@ -51,52 +51,41 @@ export function useOpenChangesTab({
     hasUncommittedChanges: Boolean(gitStatus?.isDirty),
   });
 
+  // A base comparison without a base ref has nothing to compare against.
+  const comparison = useMemo<WorkspaceWorkingDiffComparison | null>(() => {
+    if (mode === "base") {
+      return baseRef ? { mode: "base", baseRef } : null;
+    }
+    return { mode: "uncommitted", baseRef: baseRef ?? null };
+  }, [baseRef, mode]);
+
   const openChangesTab = useCallback(
     (path: string) => {
-      if (!persistenceKey) {
+      if (!persistenceKey || !comparison) {
         return;
       }
-      const focusRequestId = Date.now();
-      let target: WorkspaceWorkingDiffTabTarget;
-      if (mode === "base") {
-        if (!baseRef) {
-          return;
-        }
-        target = {
-          kind: "working_diff",
-          focusPath: path,
-          focusRequestId,
-          mode: "base",
-          baseRef,
-          ignoreWhitespace,
-        };
-      } else {
-        target = {
-          kind: "working_diff",
-          focusPath: path,
-          focusRequestId,
-          mode: "uncommitted",
-          baseRef: baseRef ?? null,
-          ignoreWhitespace,
-        };
-      }
-      const tabId = openWorkspaceTabFocused(persistenceKey, target);
+      const tabId = openWorkspaceTabFocused(persistenceKey, {
+        kind: "working_diff",
+        focusPath: path,
+        focusRequestId: Date.now(),
+        ignoreWhitespace,
+        ...comparison,
+      });
       if (tabId && isMobile) {
         showMobileAgent();
       }
     },
     [
-      baseRef,
+      comparison,
       ignoreWhitespace,
       isMobile,
-      mode,
       openWorkspaceTabFocused,
       persistenceKey,
       showMobileAgent,
     ],
   );
 
-  if (!gitStatus || !persistenceKey || (mode === "base" && !baseRef)) {
+  if (!gitStatus || !persistenceKey || !comparison) {
     return undefined;
   }
   return openChangesTab;

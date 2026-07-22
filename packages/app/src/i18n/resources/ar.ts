@@ -371,6 +371,7 @@ export const ar: TranslationResources = {
       copyPath: "نسخ المسار",
       download: "تحميل",
       addToChat: "إضافة إلى الدردشة…",
+      openChangesTab: "فتح في علامة تبويب التغييرات",
       moreActions: "المزيد من الإجراءات",
     },
     fileExplorer: {
@@ -791,7 +792,6 @@ export const ar: TranslationResources = {
         base: "قاعدة",
         newFile: "جديد",
         deletedFile: "تم الحذف",
-        openChangesTab: "فتح في علامة تبويب التغييرات",
         commits: {
           title: "الإيداعات",
           countLabel: "{{count}} من الإيداعات الأخيرة",

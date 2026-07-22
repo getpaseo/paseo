@@ -370,6 +370,7 @@ export const en = {
       copyPath: "Copy path",
       download: "Download",
       addToChat: "Add to chat…",
+      openChangesTab: "Open in Changes tab",
       moreActions: "More actions",
     },
     fileExplorer: {
@@ -801,7 +802,6 @@ export const en = {
         base: "base",
         newFile: "New",
         deletedFile: "Deleted",
-        openChangesTab: "Open in Changes tab",
         commits: {
           title: "Commits",
           countLabel: "{{count}} recent commits",

@@ -375,6 +375,7 @@ export const fr: TranslationResources = {
       copyPath: "Copier le chemin",
       download: "Télécharger",
       addToChat: "Ajouter au chat…",
+      openChangesTab: "Ouvrir dans l'onglet Modifications",
       moreActions: "Plus de propositions",
     },
     fileExplorer: {
@@ -821,7 +822,6 @@ export const fr: TranslationResources = {
         base: "base",
         newFile: "Nouveau",
         deletedFile: "Supprimé",
-        openChangesTab: "Ouvrir dans l'onglet Modifications",
         commits: {
           title: "Commits",
           countLabel: "{{count}} commits récents",

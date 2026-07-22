@@ -250,7 +250,7 @@ test("changed files focus one live comparison-wide diff tab", async ({ page }) =
   await page.getByTestId("diff-file-0-toggle").click();
   await expect(page.getByTestId("diff-file-0-body")).toHaveCount(0);
   await page.getByTestId("diff-file-0-toggle").click({ button: "right" });
-  await page.getByTestId("diff-file-0-open-diff").click();
+  await page.getByTestId("diff-file-0-open-changes-tab").click();
 
   const visiblePanel = page.getByTestId("working-diff-panel").filter({ visible: true });
   await expect(visiblePanel).toBeVisible();
@@ -285,7 +285,7 @@ test("changed files focus one live comparison-wide diff tab", async ({ page }) =
     .getByTestId("explorer-content-area")
     .getByTestId("diff-file-0-toggle")
     .click({ button: "right" });
-  await page.getByTestId("diff-file-0-open-diff").click();
+  await page.getByTestId("diff-file-0-open-changes-tab").click();
   await expect(page.getByTestId(/^workspace-working-diff-close-/)).toHaveCount(1);
 
   await writeFile(path.join(workspace.repoPath, "src/use-mounted-tab-set.ts"), BEFORE);
@@ -305,7 +305,7 @@ test("changed files focus one live comparison-wide diff tab", async ({ page }) =
     .getByTestId("explorer-content-area")
     .getByTestId("diff-file-1-toggle")
     .click({ button: "right" });
-  await page.getByTestId("diff-file-1-open-diff").click();
+  await page.getByTestId("diff-file-1-open-changes-tab").click();
   await expect(page.getByTestId(/^workspace-working-diff-close-/)).toHaveCount(1);
   await expect(visiblePanel.getByText("zz-deleted.ts", { exact: true })).toBeVisible();
   await expect(visiblePanel).toContainText("Deleted");

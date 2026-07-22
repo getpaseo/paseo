@@ -498,7 +498,7 @@ function FilesPane({
       workspaceRoot={workspaceRoot}
       onOpenFile={onOpenFile}
       onAddToChat={canAddToChat ? addFile : undefined}
-      onOpenDiff={openChangesTab}
+      onOpenChangesTab={openChangesTab}
     />
   );
 }

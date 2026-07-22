@@ -375,6 +375,7 @@ export const ja: TranslationResources = {
       copyPath: "パスをコピー",
       download: "ダウンロード",
       addToChat: "チャットに追加…",
+      openChangesTab: "変更タブで開く",
       moreActions: "その他のアクション",
     },
     fileExplorer: {
@@ -802,7 +803,6 @@ export const ja: TranslationResources = {
         base: "ベース",
         newFile: "新規",
         deletedFile: "削除済み",
-        openChangesTab: "変更タブで開く",
         commits: {
           title: "コミット",
           countLabel: "最近のコミット数: {{count}}",

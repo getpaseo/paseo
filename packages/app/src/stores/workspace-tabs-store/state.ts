@@ -23,8 +23,13 @@ interface WorkspaceWorkingDiffTabTargetBase {
   ignoreWhitespace: boolean;
 }
 
+/** What the working tree is compared against. A base comparison always has a base ref. */
+export type WorkspaceWorkingDiffComparison =
+  | { mode: "uncommitted"; baseRef: string | null }
+  | { mode: "base"; baseRef: string };
+
 export type WorkspaceWorkingDiffTabTarget = WorkspaceWorkingDiffTabTargetBase &
-  ({ mode: "uncommitted"; baseRef: string | null } | { mode: "base"; baseRef: string });
+  WorkspaceWorkingDiffComparison;
 
 export type WorkspaceTabTarget =
   | { kind: "draft"; draftId: string; setup?: WorkspaceDraftTabSetup }

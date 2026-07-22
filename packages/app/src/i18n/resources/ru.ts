@@ -374,6 +374,7 @@ export const ru: TranslationResources = {
       copyPath: "Копировать путь",
       download: "Скачать",
       addToChat: "Добавить в чат…",
+      openChangesTab: "Открыть во вкладке «Изменения»",
       moreActions: "Дополнительные действия",
     },
     fileExplorer: {
@@ -813,7 +814,6 @@ export const ru: TranslationResources = {
         base: "база",
         newFile: "Новый",
         deletedFile: "Удалено",
-        openChangesTab: "Открыть во вкладке «Изменения»",
         commits: {
           title: "Коммиты",
           countLabel: "{{count}} последних коммитов",
