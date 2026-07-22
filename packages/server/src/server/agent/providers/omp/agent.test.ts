@@ -1,4 +1,3 @@
-import { setImmediate as waitForImmediate } from "node:timers/promises";
 import { describe, expect, test } from "vitest";
 
 import type { PaseoToolCatalog } from "../../tools/types.js";
@@ -297,22 +296,11 @@ describe("OMP agent client and session", () => {
     const scheduler = new ManualNoTurnScheduler();
     const omp = new OmpHarness({ noTurnScheduler: scheduler });
     await omp.start();
-    const { completion } = await omp.startPromptWithFalseLocalOnlyResult("local-only");
-    let completed = false;
-    void completion.then(
-      () => {
-        completed = true;
-        return undefined;
-      },
-      () => {
-        completed = true;
-        return undefined;
-      },
-    );
+    const prompt = await omp.startPromptWithFalseLocalOnlyResult("local-only");
 
-    expect(completed).toBe(false);
+    expect(prompt.completed()).toBe(false);
     scheduler.settle();
-    await expect(completion).resolves.toMatchObject({ finalText: "" });
+    await expect(prompt.completion).resolves.toMatchObject({ finalText: "" });
     expect(omp.completedTurnCount()).toBe(1);
   });
 
@@ -320,24 +308,12 @@ describe("OMP agent client and session", () => {
     const scheduler = new ManualNoTurnScheduler();
     const omp = new OmpHarness({ noTurnScheduler: scheduler });
     await omp.start();
-    const { completion } = await omp.startPromptWithFalseLocalOnlyResult("local-only");
-    let completed = false;
-    void completion.then(
-      () => {
-        completed = true;
-        return undefined;
-      },
-      () => {
-        completed = true;
-        return undefined;
-      },
-    );
+    const prompt = await omp.startPromptWithFalseLocalOnlyResult("local-only");
 
     await omp.close();
-    await waitForImmediate();
 
     expect(scheduler.wasAborted()).toBe(true);
-    expect(completed).toBe(false);
+    expect(prompt.completed()).toBe(false);
     expect(omp.completedTurnCount()).toBe(0);
   });
 

@@ -271,12 +271,23 @@ export class OmpHarness {
 
   async startPromptWithFalseLocalOnlyResult(
     input: string,
-  ): Promise<{ completion: Promise<unknown> }> {
+  ): Promise<{ completed: () => boolean; completion: Promise<unknown> }> {
     const session = this.requireSession();
     const runtime = this.omp.latestSession();
     runtime.promptAck = { requestId: "prompt-local-only" };
     const promptStarted = runtime.nextPrompt();
     const completion = session.run(input);
+    let isCompleted = false;
+    void completion.then(
+      () => {
+        isCompleted = true;
+        return undefined;
+      },
+      () => {
+        isCompleted = true;
+        return undefined;
+      },
+    );
     await promptStarted;
     await waitForImmediate();
     runtime.emit({
@@ -284,7 +295,7 @@ export class OmpHarness {
       id: "prompt-local-only",
       agentInvoked: false,
     });
-    return { completion };
+    return { completed: () => isCompleted, completion };
   }
 
   async runPromptAfterCorrelatedTrueResult(
@@ -473,6 +484,7 @@ export class OmpHarness {
 
   async close(): Promise<void> {
     await this.requireSession().close();
+    await waitForImmediate();
   }
 
   isClosed(): boolean {
