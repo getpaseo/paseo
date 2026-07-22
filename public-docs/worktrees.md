@@ -256,4 +256,4 @@ paseo run --workspace <workspace-id> "implement auth"
 paseo workspace archive <workspace-id>
 ```
 
-For the common case, `paseo run --isolation worktree --base main "implement auth"` creates both the workspace and its first agent.
+For the common case, `paseo run --new-workspace worktree --worktree-mode branch-off --new-branch feature/auth --base main "implement auth"` creates both the workspace and its first agent.

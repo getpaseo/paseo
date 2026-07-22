@@ -14,6 +14,7 @@ import { lookup } from "mime-types";
 import { parseDuration } from "../../utils/duration.js";
 import { collectMultiple } from "../../utils/command-options.js";
 import { resolveProviderAndModel } from "../../utils/provider-model.js";
+import { buildWorkspaceSource } from "../workspace/create.js";
 
 export { resolveProviderAndModel } from "../../utils/provider-model.js";
 
@@ -38,12 +39,21 @@ export function addRunOptions(cmd: Command): Command {
       )
       .option("--thinking <id>", "Thinking option ID to use for this run")
       .option("--mode <mode>", "Provider-specific mode (e.g., plan, default, bypass)")
-      .option("--isolation <local|worktree>", "Create a new workspace with this isolation")
+      .option("--new-workspace <local|worktree>", "Create a separate local or worktree workspace")
       .addOption(new Option("--worktree <name>", "Legacy workspace isolation alias").hideHelp())
-      .option("--base <branch>", "Base branch for an isolated workspace")
+      .option(
+        "--worktree-mode <mode>",
+        "Worktree mode: branch-off, checkout-branch, or checkout-pr",
+      )
+      .option("--worktree-slug <slug>", "Managed worktree path slug")
+      .option("--new-branch <name>", "New branch name for branch-off mode")
+      .option("--base <ref>", "Base ref for branch-off mode")
+      .option("--branch <name>", "Existing branch for checkout-branch mode")
+      .option("--pr-number <n>", "Pull request or change request number for checkout-pr mode")
+      .option("--forge <forge>", "Forge for checkout-pr mode")
       .option(
         "--workspace <id>",
-        "Run in an existing workspace (default: a new workspace is created per run; falls back to $PASEO_WORKSPACE_ID)",
+        "Run in an existing workspace (defaults to the caller workspace when agent-scoped)",
       )
       .option(
         "--image <path>",
@@ -105,9 +115,15 @@ export interface AgentRunOptions extends CommandOptions {
   model?: string;
   thinking?: string;
   mode?: string;
-  isolation?: string;
+  newWorkspace?: string;
   worktree?: string;
+  worktreeMode?: string;
+  worktreeSlug?: string;
+  newBranch?: string;
   base?: string;
+  branch?: string;
+  prNumber?: string;
+  forge?: string;
   workspace?: string;
   image?: string[];
   cwd?: string;
@@ -115,6 +131,25 @@ export interface AgentRunOptions extends CommandOptions {
   label?: string[];
   waitTimeout?: string;
   outputSchema?: string;
+}
+
+function resolveNewWorkspaceKind(options: AgentRunOptions): string | undefined {
+  return options.newWorkspace ?? (options.worktree ? "worktree" : undefined);
+}
+
+function buildRunWorkspaceSource(options: AgentRunOptions, cwd: string) {
+  const newWorkspace = resolveNewWorkspaceKind(options) ?? "local";
+  return buildWorkspaceSource({
+    isolation: newWorkspace,
+    path: cwd,
+    mode: options.worktreeMode,
+    worktreeSlug: options.worktreeSlug ?? options.worktree,
+    newBranch: options.newBranch,
+    base: options.base,
+    branch: options.branch,
+    prNumber: options.prNumber,
+    forge: options.forge,
+  });
 }
 
 function toRunResult(
@@ -269,37 +304,61 @@ function structuredRunSchema(output: Record<string, unknown>): OutputSchema<Agen
   };
 }
 
-function validateRunOptions(prompt: string, options: AgentRunOptions, outputSchema: unknown): void {
-  if (!prompt || prompt.trim().length === 0) {
+function validateRunWorkspaceOptions(options: AgentRunOptions): void {
+  const newWorkspace = resolveNewWorkspaceKind(options);
+  if (
+    options.newWorkspace &&
+    options.newWorkspace !== "local" &&
+    options.newWorkspace !== "worktree"
+  ) {
     throw {
-      code: "MISSING_PROMPT",
-      message: "A prompt is required",
-      details: "Usage: paseo agent run [options] <prompt>",
+      code: "INVALID_OPTIONS",
+      message: `Unsupported new workspace kind: ${options.newWorkspace}`,
+      details: "Use --new-workspace local or --new-workspace worktree",
     } satisfies CommandError;
   }
 
-  const createsIsolatedWorkspace = options.isolation === "worktree" || Boolean(options.worktree);
-  if (options.isolation && options.isolation !== "local" && options.isolation !== "worktree") {
+  if (options.newWorkspace && options.worktree) {
     throw {
       code: "INVALID_OPTIONS",
-      message: `Unsupported workspace isolation: ${options.isolation}`,
-      details: "Use --isolation local or --isolation worktree",
+      message: "--new-workspace and --worktree cannot be combined",
+      details: "Use --new-workspace worktree and the supported worktree options",
     } satisfies CommandError;
   }
 
-  if (options.base && !createsIsolatedWorkspace) {
+  const hasWorktreeCreationOptions = [
+    options.worktreeMode,
+    options.worktreeSlug,
+    options.newBranch,
+    options.base,
+    options.branch,
+    options.prNumber,
+    options.forge,
+  ].some((value) => value !== undefined);
+  if (hasWorktreeCreationOptions && newWorkspace !== "worktree") {
     throw {
       code: "INVALID_OPTIONS",
-      message: "--base can only be used with --isolation worktree",
-      details: "Usage: paseo agent run --isolation worktree --base <branch> <prompt>",
+      message: "Worktree options require --new-workspace worktree",
+      details: "Usage: paseo run --new-workspace worktree [worktree options] <prompt>",
     } satisfies CommandError;
   }
 
-  if (options.isolation && options.workspace) {
+  if (newWorkspace === "worktree") {
+    try {
+      buildRunWorkspaceSource(options, options.cwd ?? process.cwd());
+    } catch (error) {
+      throw {
+        code: "INVALID_OPTIONS",
+        message: error instanceof Error ? error.message : String(error),
+      } satisfies CommandError;
+    }
+  }
+
+  if (options.newWorkspace && options.workspace) {
     throw {
       code: "INVALID_OPTIONS",
-      message: "--isolation and --workspace cannot be combined",
-      details: "Select an existing workspace or create a new one with an isolation choice",
+      message: "--new-workspace and --workspace cannot be combined",
+      details: "Select an existing workspace or explicitly create a new one",
     } satisfies CommandError;
   }
 
@@ -309,9 +368,21 @@ function validateRunOptions(prompt: string, options: AgentRunOptions, outputSche
     throw {
       code: "INVALID_OPTIONS",
       message: "--worktree and --workspace cannot be combined",
-      details: "Use --isolation worktree instead of the legacy --worktree flag",
+      details: "Use --new-workspace worktree instead of the legacy --worktree flag",
     } satisfies CommandError;
   }
+}
+
+function validateRunOptions(prompt: string, options: AgentRunOptions, outputSchema: unknown): void {
+  if (!prompt || prompt.trim().length === 0) {
+    throw {
+      code: "MISSING_PROMPT",
+      message: "A prompt is required",
+      details: "Usage: paseo agent run [options] <prompt>",
+    } satisfies CommandError;
+  }
+
+  validateRunWorkspaceOptions(options);
 
   if (outputSchema && runsInBackground(options)) {
     throw {
@@ -465,27 +536,25 @@ export async function resolveExistingRunWorkspace(
 //   1. --workspace <id>            -> run in that existing workspace
 //   2. $PASEO_AGENT_ID             -> daemon resolves the caller's workspace
 //   3. $PASEO_WORKSPACE_ID         -> exported by workspace terminals
-//   4. --isolation <kind>          -> mint a new workspace with explicit isolation
+//   4. --new-workspace <kind>      -> mint a new workspace explicitly
 //   5. bare run                    -> mint a new local-backed workspace for cwd
 async function resolveRunWorkspace(
   client: ConnectedDaemonClient,
   options: AgentRunOptions,
   cwd: string,
 ): Promise<RunWorkspace> {
-  const requestedIsolation = options.isolation ?? (options.worktree ? "worktree" : undefined);
-  const explicit = requestedIsolation ? undefined : options.workspace?.trim();
+  const newWorkspace = resolveNewWorkspaceKind(options);
+  const explicit = newWorkspace ? undefined : options.workspace?.trim();
   if (explicit) {
     console.error(`Using workspace ${explicit}`);
     return resolveExistingRunWorkspace(client, explicit);
   }
 
-  if (!requestedIsolation && resolveRunCallerAgentId()) {
+  if (!newWorkspace && resolveRunCallerAgentId()) {
     return { cwd };
   }
 
-  const ambientWorkspaceId = requestedIsolation
-    ? undefined
-    : process.env.PASEO_WORKSPACE_ID?.trim();
+  const ambientWorkspaceId = newWorkspace ? undefined : process.env.PASEO_WORKSPACE_ID?.trim();
   if (ambientWorkspaceId) {
     console.error(`Using workspace ${ambientWorkspaceId}`);
     return resolveExistingRunWorkspace(client, ambientWorkspaceId);
@@ -493,17 +562,8 @@ async function resolveRunWorkspace(
 
   // TODO: thread the run `prompt` as firstAgentContext so workspace-level
   // title/branch generation picks up the task description (U8/U6 deferred).
-  const result =
-    requestedIsolation === "worktree"
-      ? await client.createWorkspace({
-          source: {
-            kind: "worktree",
-            cwd,
-            worktreeSlug: options.worktree,
-            baseBranch: options.base,
-          },
-        })
-      : await client.createWorkspace({ source: { kind: "directory", path: cwd } });
+  const source = buildRunWorkspaceSource(options, cwd);
+  const result = await client.createWorkspace({ source });
 
   if (!result.workspace) {
     throw {
