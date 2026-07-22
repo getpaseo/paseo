@@ -588,6 +588,7 @@ export const AgentTimelineItemPayloadSchema: z.ZodType<AgentTimelineItem, unknow
       z.object({
         text: z.string(),
         completed: z.boolean(),
+        status: z.enum(["pending", "in_progress", "completed"]).optional(),
       }),
     ),
   }),
@@ -633,6 +634,7 @@ export const AgentStreamEventPayloadSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("timeline"),
     provider: AgentProviderSchema,
+    turnId: z.string().optional(),
     item: AgentTimelineItemPayloadSchema,
   }),
   z.object({
@@ -3429,6 +3431,7 @@ export const AgentTimelineEntryPayloadSchema = z.object({
   provider: AgentProviderSchema,
   item: AgentTimelineItemPayloadSchema,
   timestamp: z.string(),
+  turnId: z.string().optional(),
   seqStart: z.number().int().nonnegative(),
   seqEnd: z.number().int().nonnegative(),
   sourceSeqRanges: z.array(AgentTimelineSeqRangeSchema),

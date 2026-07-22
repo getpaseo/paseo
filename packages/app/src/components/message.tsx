@@ -172,6 +172,7 @@ const ThemedTodoCheckIcon = withUnistyles(Check);
 const ThemedFileSymlinkIcon = withUnistyles(FileSymlink);
 const ThemedTriangleAlertIcon = withUnistyles(TriangleAlertIcon);
 const ThemedChevronRightIcon = withUnistyles(ChevronRight);
+const ThemedActivityIndicator = withUnistyles(ActivityIndicator);
 
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const foregroundMutedColorMapping = (theme: Theme) => ({
@@ -2260,12 +2261,23 @@ interface TodoListCardProps {
   disableOuterSpacing?: boolean;
 }
 
-interface TodoListItemRowProps {
-  text: string;
-  completed: boolean;
+type TodoItemStatus = NonNullable<TodoEntry["status"]>;
+
+function resolveTodoStatus(item: { completed: boolean; status?: TodoItemStatus }): TodoItemStatus {
+  if (item.status) {
+    return item.status;
+  }
+  return item.completed ? "completed" : "pending";
 }
 
-function TodoListItemRow({ text, completed }: TodoListItemRowProps) {
+interface TodoListItemRowProps {
+  text: string;
+  status: TodoItemStatus;
+}
+
+function TodoListItemRow({ text, status }: TodoListItemRowProps) {
+  const completed = status === "completed";
+  const inProgress = status === "in_progress";
   const badgeStyle = useMemo(
     () => [
       todoListCardStylesheet.radioBadge,
@@ -2279,13 +2291,21 @@ function TodoListItemRow({ text, completed }: TodoListItemRowProps) {
     () => [todoListCardStylesheet.itemText, completed && todoListCardStylesheet.itemTextCompleted],
     [completed],
   );
+  let statusIcon: ReactNode = null;
+  if (completed) {
+    statusIcon = <ThemedTodoCheckIcon size={12} uniProps={primaryForegroundColorMapping} />;
+  } else if (inProgress) {
+    statusIcon = (
+      <ThemedActivityIndicator
+        size="small"
+        style={todoListCardStylesheet.progressIndicator}
+        uniProps={primaryForegroundColorMapping}
+      />
+    );
+  }
   return (
     <View style={todoListCardStylesheet.itemRow}>
-      <View style={badgeStyle}>
-        {completed ? (
-          <ThemedTodoCheckIcon size={12} uniProps={primaryForegroundColorMapping} />
-        ) : null}
-      </View>
+      <View style={badgeStyle}>{statusIcon}</View>
       <Text style={textStyle}>{text}</Text>
     </View>
   );
@@ -2317,6 +2337,9 @@ const todoListCardStylesheet = StyleSheet.create((theme) => ({
   radioBadgeComplete: {
     opacity: 0.95,
   },
+  progressIndicator: {
+    transform: [{ scale: 0.7 }],
+  },
   itemText: {
     flex: 1,
     color: theme.colors.foreground,
@@ -2339,7 +2362,13 @@ export const TodoListCard = memo(function TodoListCard({
   const { t } = useTranslation();
   const [isExpanded, setIsExpanded] = useState(false);
 
-  const nextTask = useMemo(() => items.find((item) => !item.completed)?.text, [items]);
+  const nextTask = useMemo(() => {
+    const inProgress = items.find((item) => resolveTodoStatus(item) === "in_progress");
+    if (inProgress) {
+      return inProgress.text;
+    }
+    return items.find((item) => resolveTodoStatus(item) === "pending")?.text;
+  }, [items]);
 
   const handleToggle = useCallback(() => {
     setIsExpanded((prev) => !prev);
@@ -2353,7 +2382,7 @@ export const TodoListCard = memo(function TodoListCard({
             <Text style={todoListCardStylesheet.emptyText}>{t("message.todo.empty")}</Text>
           ) : (
             items.map((item) => (
-              <TodoListItemRow key={item.text} text={item.text} completed={item.completed} />
+              <TodoListItemRow key={item.text} text={item.text} status={resolveTodoStatus(item)} />
             ))
           )}
         </View>

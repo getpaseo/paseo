@@ -3058,6 +3058,7 @@ function mapPlanToTimeline(plan: Plan): AgentTimelineItem {
     items: plan.entries.map((entry) => ({
       text: entry.content,
       completed: entry.status === "completed",
+      status: entry.status,
     })),
   };
 }

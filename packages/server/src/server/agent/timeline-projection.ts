@@ -14,6 +14,7 @@ export type TimelineLimitDirection = "tail" | "before" | "after";
 export interface TimelineProjectionEntry {
   item: AgentTimelineItem;
   timestamp: string;
+  turnId?: string;
   seqStart: number;
   seqEnd: number;
   sourceSeqRanges: TimelineSeqRange[];
@@ -111,6 +112,7 @@ function makeCanonicalEntries(rows: readonly AgentTimelineRow[]): WorkingEntry[]
   return rows.map((row) => ({
     item: row.item,
     timestamp: row.timestamp,
+    ...(row.turnId !== undefined ? { turnId: row.turnId } : {}),
     seqStart: row.seq,
     seqEnd: row.seq,
     sourceSeqRanges: [{ startSeq: row.seq, endSeq: row.seq }],
@@ -169,6 +171,7 @@ function mergeReasoningChunks(entries: readonly WorkingEntry[]): WorkingEntry[] 
       previous &&
       previous.item.type === "reasoning" &&
       entry.item.type === "reasoning" &&
+      previous.turnId === entry.turnId &&
       previous.seqEnd + 1 === entry.seqStart;
 
     if (!shouldMerge || !previous) {
@@ -209,6 +212,7 @@ function mergeAssistantChunks(entries: readonly WorkingEntry[]): WorkingEntry[] 
       previous &&
       previous.item.type === "assistant_message" &&
       entry.item.type === "assistant_message" &&
+      previous.turnId === entry.turnId &&
       previous.seqEnd + 1 === entry.seqStart;
 
     if (!shouldMerge || !previous) {

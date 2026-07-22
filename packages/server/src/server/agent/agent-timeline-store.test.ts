@@ -50,4 +50,42 @@ describe("InMemoryAgentTimelineStore", () => {
       ],
     });
   });
+
+  it("preserves optional turnId on append and fetch", () => {
+    const store = new InMemoryAgentTimelineStore();
+    store.initialize("agent-1", {
+      epoch: "epoch-1",
+      nextSeq: 1,
+      rows: [],
+    });
+
+    const withTurn = store.append(
+      "agent-1",
+      { type: "todo", items: [{ text: "one", completed: false }] },
+      { timestamp: "2026-01-01T00:00:00.000Z", turnId: "turn-1" },
+    );
+    const withoutTurn = store.append(
+      "agent-1",
+      { type: "assistant_message", text: "done" },
+      { timestamp: "2026-01-01T00:00:01.000Z" },
+    );
+
+    expect(withTurn.turnId).toBe("turn-1");
+    expect(withoutTurn.turnId).toBeUndefined();
+
+    const fetched = store.fetch("agent-1", { direction: "tail", limit: 10 });
+    expect(fetched.rows).toEqual([
+      {
+        seq: 1,
+        timestamp: "2026-01-01T00:00:00.000Z",
+        item: { type: "todo", items: [{ text: "one", completed: false }] },
+        turnId: "turn-1",
+      },
+      {
+        seq: 2,
+        timestamp: "2026-01-01T00:00:01.000Z",
+        item: { type: "assistant_message", text: "done" },
+      },
+    ]);
+  });
 });

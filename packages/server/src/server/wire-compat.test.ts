@@ -224,16 +224,19 @@ function createSessionForWireCompatTest(options?: {
     {
       seq: 1,
       timestamp: "2026-05-02T00:00:00.000Z",
+      turnId: "turn-wire-1",
       item: { type: "reasoning", text: "Step " },
     },
     {
       seq: 2,
       timestamp: "2026-05-02T00:00:00.100Z",
+      turnId: "turn-wire-1",
       item: { type: "reasoning", text: "by step" },
     },
     {
       seq: 3,
       timestamp: "2026-05-02T00:00:00.200Z",
+      turnId: "turn-wire-1",
       item: { type: "assistant_message", text: "done" },
     },
   ];
@@ -464,6 +467,32 @@ describe("wire compatibility", () => {
 
     const currentParsed = FetchAgentTimelineResponseMessageSchema.parse(response);
     expect(currentParsed.payload.entries[0]?.collapsed).toContain("reasoning_merge");
+  });
+
+  test("projects optional entry turnId for current clients while legacy schema still parses", async () => {
+    // Default clients strip reasoning_merge from collapsed, matching the legacy enum set.
+    const response = await emitTimelineResponse();
+
+    // Session emits turnId on projected entries before any client schema strip.
+    expect(response.payload.entries.map((entry) => entry.turnId)).toEqual([
+      "turn-wire-1",
+      "turn-wire-1",
+    ]);
+    expect(response.payload.entries[0]?.item).toEqual({
+      type: "reasoning",
+      text: "Step by step",
+    });
+    expect(response.payload.entries[0]?.collapsed).toEqual([]);
+
+    // Current and legacy schemas both accept the payload (unknown optional fields strip).
+    expect(() => FetchAgentTimelineResponseMessageSchema.parse(response)).not.toThrow();
+    const legacyParsed = LegacyFetchAgentTimelineResponseMessageSchema.parse(response);
+    expect(legacyParsed.payload.entries).toHaveLength(2);
+    expect(
+      legacyParsed.payload.entries.every(
+        (entry) => !Object.prototype.hasOwnProperty.call(entry, "turnId"),
+      ),
+    ).toBe(true);
   });
 
   test("sub_agent tool-call payload still parses against the v0.1.65-beta.3 schema", () => {

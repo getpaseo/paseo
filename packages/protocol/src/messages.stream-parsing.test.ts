@@ -195,6 +195,74 @@ describe("shared messages stream parsing", () => {
     }
   });
 
+  it("parses legacy and explicit-status todo timeline payloads", () => {
+    const legacyParsed = AgentStreamMessageSchema.parse({
+      type: "agent_stream",
+      payload: {
+        agentId: "agent_live",
+        timestamp: "2026-02-08T20:10:00.000Z",
+        event: {
+          type: "timeline",
+          provider: "grok",
+          item: {
+            type: "todo",
+            items: [
+              { text: "Legacy done", completed: true },
+              { text: "Legacy open", completed: false },
+            ],
+          },
+        },
+      },
+    });
+
+    expect(legacyParsed.payload.event.type).toBe("timeline");
+    if (legacyParsed.payload.event.type !== "timeline") {
+      throw new Error("Expected timeline event");
+    }
+    expect(legacyParsed.payload.event.item).toEqual({
+      type: "todo",
+      items: [
+        { text: "Legacy done", completed: true },
+        { text: "Legacy open", completed: false },
+      ],
+    });
+
+    const statusParsed = AgentStreamMessageSchema.parse({
+      type: "agent_stream",
+      payload: {
+        agentId: "agent_live",
+        timestamp: "2026-02-08T20:10:00.000Z",
+        event: {
+          type: "timeline",
+          provider: "grok",
+          turnId: "turn-todo-status",
+          item: {
+            type: "todo",
+            items: [
+              { text: "Pending", completed: false, status: "pending" },
+              { text: "Active", completed: false, status: "in_progress" },
+              { text: "Done", completed: true, status: "completed" },
+            ],
+          },
+        },
+      },
+    });
+
+    expect(statusParsed.payload.event.type).toBe("timeline");
+    if (statusParsed.payload.event.type !== "timeline") {
+      throw new Error("Expected timeline event");
+    }
+    expect(statusParsed.payload.event.turnId).toBe("turn-todo-status");
+    expect(statusParsed.payload.event.item).toEqual({
+      type: "todo",
+      items: [
+        { text: "Pending", completed: false, status: "pending" },
+        { text: "Active", completed: false, status: "in_progress" },
+        { text: "Done", completed: true, status: "completed" },
+      ],
+    });
+  });
+
   it("parses optional permission actions and selectedActionId compatibly", () => {
     const requestParsed = AgentStreamMessageSchema.parse({
       type: "agent_stream",

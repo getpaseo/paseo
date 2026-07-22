@@ -1,4 +1,8 @@
-import type { AgentProvider, ToolCallDetail } from "@getpaseo/protocol/agent-types";
+import type {
+  AgentProvider,
+  AgentTodoStatus,
+  ToolCallDetail,
+} from "@getpaseo/protocol/agent-types";
 import type { AgentAttachment, AgentStreamEventPayload } from "@getpaseo/protocol/messages";
 import type { AttachmentMetadata } from "@/attachments/types";
 import { extractTaskEntriesFromToolCall } from "../utils/tool-call-parsers";
@@ -194,6 +198,7 @@ export interface CompactionItem {
 export interface TodoEntry {
   text: string;
   completed: boolean;
+  status?: AgentTodoStatus;
 }
 
 export interface TodoListItem {
@@ -202,6 +207,7 @@ export interface TodoListItem {
   timestamp: Date;
   provider: AgentProvider;
   items: TodoEntry[];
+  turnId?: string;
 }
 
 export type StreamUpdateSource = "live" | "canonical";
@@ -704,30 +710,71 @@ function appendActivityLog(state: StreamItem[], entry: ActivityLogItem): StreamI
   return [...state, entry];
 }
 
+function normalizeTodoEntry(entry: {
+  text: string;
+  completed: boolean;
+  status?: AgentTodoStatus | null;
+}): TodoEntry {
+  if (
+    entry.status === "pending" ||
+    entry.status === "in_progress" ||
+    entry.status === "completed"
+  ) {
+    return {
+      text: entry.text,
+      status: entry.status,
+      completed: entry.status === "completed",
+    };
+  }
+  // COMPAT(todoStatus): added in v0.2.0, remove after 2027-01-20 once all hosts send status.
+  return {
+    text: entry.text,
+    completed: entry.completed,
+    status: entry.completed ? "completed" : "pending",
+  };
+}
+
 function appendTodoList(
   state: StreamItem[],
   provider: AgentProvider,
   items: TodoEntry[],
   timestamp: Date,
+  turnId?: string,
 ): StreamItem[] {
-  const normalizedItems = items.map((item) => ({
-    text: item.text,
-    completed: item.completed,
-  }));
+  const normalizedItems = items.map((item) => normalizeTodoEntry(item));
 
-  const lastItem = state[state.length - 1];
-  if (lastItem && lastItem.kind === "todo_list" && lastItem.provider === provider) {
-    const next = [...state];
-    const updated: TodoListItem = {
-      ...lastItem,
-      items: normalizedItems,
-      timestamp,
-    };
-    next[next.length - 1] = updated;
-    return next;
+  if (turnId !== undefined) {
+    for (let index = state.length - 1; index >= 0; index -= 1) {
+      const candidate = state[index];
+      if (
+        candidate?.kind === "todo_list" &&
+        candidate.provider === provider &&
+        candidate.turnId === turnId
+      ) {
+        const next = [...state];
+        next[index] = {
+          ...candidate,
+          items: normalizedItems,
+          timestamp,
+          turnId,
+        };
+        return next;
+      }
+    }
+  } else {
+    const lastItem = state[state.length - 1];
+    if (lastItem && lastItem.kind === "todo_list" && lastItem.provider === provider) {
+      const next = [...state];
+      next[next.length - 1] = {
+        ...lastItem,
+        items: normalizedItems,
+        timestamp,
+      };
+      return next;
+    }
   }
 
-  const idSeed = `${provider}:${JSON.stringify(normalizedItems)}`;
+  const idSeed = `${provider}:${turnId ?? ""}:${JSON.stringify(normalizedItems)}`;
   const entryId = createUniqueTimelineId(state, "todo", idSeed, timestamp);
 
   const entry: TodoListItem = {
@@ -736,6 +783,7 @@ function appendTodoList(
     timestamp,
     provider,
     items: normalizedItems,
+    ...(turnId !== undefined ? { turnId } : {}),
   };
 
   return [...state, entry];
@@ -769,8 +817,13 @@ function reduceTimelineToolCall(
     return appendTodoList(
       state,
       event.provider,
-      tasks.map((entry) => ({ text: entry.text, completed: entry.completed })),
+      tasks.map((entry) => ({
+        text: entry.text,
+        completed: entry.completed,
+        status: entry.status,
+      })),
       timestamp,
+      event.turnId,
     );
   }
 
@@ -779,8 +832,13 @@ function reduceTimelineToolCall(
     return appendTodoList(
       state,
       event.provider,
-      tasks.map((entry) => ({ text: entry.text, completed: entry.completed })),
+      tasks.map((entry) => ({
+        text: entry.text,
+        completed: entry.completed,
+        status: entry.status,
+      })),
       timestamp,
+      event.turnId,
     );
   }
 
@@ -878,8 +936,11 @@ function reduceTimelineEvent(
       const items: TodoEntry[] = (item.items ?? []).map((todo) => ({
         text: todo.text,
         completed: todo.completed,
+        status: todo.status,
       }));
-      return finalizeActiveThoughts(appendTodoList(state, event.provider, items, timestamp));
+      return finalizeActiveThoughts(
+        appendTodoList(state, event.provider, items, timestamp, event.turnId),
+      );
     }
     case "error": {
       const activity: ActivityLogItem = {

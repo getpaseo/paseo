@@ -2045,6 +2045,111 @@ describe("processTimelineResponse", () => {
       endSeq: 2,
     });
   });
+
+  it("coalesces same provider+turn todo cards after timeline reload with turnId preserved", () => {
+    const turnA = "turn-reload-a";
+    const turnB = "turn-reload-b";
+    const provider = "grok";
+
+    const firstTodoEntry = {
+      seqStart: 1,
+      seqEnd: 1,
+      provider,
+      turnId: turnA,
+      item: {
+        type: "todo",
+        items: [
+          { text: "Investigate", completed: false, status: "pending" },
+          { text: "Fix", completed: false, status: "pending" },
+        ],
+      },
+      timestamp: new Date("2025-01-01T14:00:00Z").toISOString(),
+    };
+    const reasoningEntry = {
+      ...makeTimelineEntry(2, "checking reload path", "reasoning"),
+      provider,
+      turnId: turnA,
+    };
+    const assistantEntry = {
+      ...makeTimelineEntry(3, "working on it"),
+      provider,
+      turnId: turnA,
+      item: {
+        type: "assistant_message",
+        text: "working on it",
+        messageId: "msg-reload-coalesce",
+      },
+    };
+    const updatedTodoEntry = {
+      seqStart: 4,
+      seqEnd: 4,
+      provider,
+      turnId: turnA,
+      item: {
+        type: "todo",
+        items: [
+          { text: "Investigate", completed: false, status: "in_progress" },
+          { text: "Fix", completed: false, status: "pending" },
+        ],
+      },
+      timestamp: new Date("2025-01-01T14:00:04Z").toISOString(),
+    };
+    const nextTurnTodoEntry = {
+      seqStart: 5,
+      seqEnd: 5,
+      provider,
+      turnId: turnB,
+      item: {
+        type: "todo",
+        items: [{ text: "Verify", completed: false, status: "pending" }],
+      },
+      timestamp: new Date("2025-01-01T14:00:05Z").toISOString(),
+    };
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      isInitializing: true,
+      hasActiveInitDeferred: true,
+      initRequestDirection: "tail",
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "tail",
+        epoch: "epoch-1",
+        startCursor: { seq: 1 },
+        endCursor: { seq: 5 },
+        entries: [
+          firstTodoEntry,
+          reasoningEntry,
+          assistantEntry,
+          updatedTodoEntry,
+          nextTurnTodoEntry,
+        ],
+      },
+    });
+
+    const stream = [...result.tail, ...result.head];
+    const todoCards = stream.filter(
+      (item): item is Extract<StreamItem, { kind: "todo_list" }> => item.kind === "todo_list",
+    );
+    const firstCardIndex = stream.findIndex((item) => item.kind === "todo_list");
+    const thoughtIndex = stream.findIndex((item) => item.kind === "thought");
+    const assistantIndex = stream.findIndex((item) => item.kind === "assistant_message");
+
+    expect(todoCards).toHaveLength(2);
+    expect(todoCards[0]?.turnId).toBe(turnA);
+    expect(todoCards[0]?.provider).toBe(provider);
+    expect(todoCards[0]?.items.map((item) => ({ text: item.text, status: item.status }))).toEqual([
+      { text: "Investigate", status: "in_progress" },
+      { text: "Fix", status: "pending" },
+    ]);
+    expect(firstCardIndex).toBeGreaterThanOrEqual(0);
+    expect(firstCardIndex).toBeLessThan(thoughtIndex);
+    expect(firstCardIndex).toBeLessThan(assistantIndex);
+    expect(todoCards[1]?.turnId).toBe(turnB);
+    expect(todoCards[1]?.items.map((item) => ({ text: item.text, status: item.status }))).toEqual([
+      { text: "Verify", status: "pending" },
+    ]);
+  });
 });
 
 // ---------------------------------------------------------------------------

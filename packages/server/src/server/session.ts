@@ -5854,6 +5854,7 @@ export class Session {
             provider: snapshot.provider,
             item: entry.item,
             timestamp: entry.timestamp,
+            turnId: entry.turnId,
             seqStart: entry.seqStart,
             seqEnd: entry.seqEnd,
             sourceSeqRanges: entry.sourceSeqRanges,

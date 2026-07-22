@@ -119,6 +119,46 @@ describe("projectTimelineRows", () => {
     expect(projected[0]?.collapsed).toContain("reasoning_merge");
   });
 
+  test("does not merge adjacent text chunks across turns", () => {
+    const rows: AgentTimelineRow[] = [
+      {
+        seq: 1,
+        timestamp: "2026-02-13T00:00:00.000Z",
+        turnId: "turn-1",
+        item: { type: "assistant_message", text: "First answer" },
+      },
+      {
+        seq: 2,
+        timestamp: "2026-02-13T00:00:00.100Z",
+        turnId: "turn-2",
+        item: { type: "assistant_message", text: "Second answer" },
+      },
+      {
+        seq: 3,
+        timestamp: "2026-02-13T00:00:00.200Z",
+        turnId: "turn-1",
+        item: { type: "reasoning", text: "First thought" },
+      },
+      {
+        seq: 4,
+        timestamp: "2026-02-13T00:00:00.300Z",
+        turnId: "turn-2",
+        item: { type: "reasoning", text: "Second thought" },
+      },
+    ];
+
+    const projected = projectTimelineRows({ rows, mode: "projected" });
+
+    expect(projected).toHaveLength(4);
+    expect(projected.map((entry) => entry.turnId)).toEqual([
+      "turn-1",
+      "turn-2",
+      "turn-1",
+      "turn-2",
+    ]);
+    expect(projected.map((entry) => entry.collapsed)).toEqual([[], [], [], []]);
+  });
+
   test("collapses tool lifecycle by callId and reports exact source seq ranges", () => {
     const rows: AgentTimelineRow[] = [
       {
