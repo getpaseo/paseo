@@ -1498,30 +1498,6 @@ async function getAheadBehind(
   return { ahead, behind };
 }
 
-async function getAheadOfOrigin(
-  cwd: string,
-  currentBranch: string,
-  context?: CheckoutContext,
-): Promise<number | null> {
-  if (!currentBranch) {
-    return null;
-  }
-  const upstreamRef = await getConfiguredUpstreamRef(cwd, currentBranch, context);
-  if (!upstreamRef) {
-    return null;
-  }
-  try {
-    const { stdout } = await runGitCommand(
-      ["rev-list", "--count", `${upstreamRef}..${currentBranch}`],
-      { cwd, envOverlay: READ_ONLY_GIT_ENV, logger: context?.logger },
-    );
-    const count = Number.parseInt(stdout.trim(), 10);
-    return Number.isNaN(count) ? null : count;
-  } catch {
-    return null;
-  }
-}
-
 async function getConfiguredUpstreamRef(
   cwd: string,
   currentBranch: string,
@@ -1543,11 +1519,11 @@ async function getConfiguredUpstreamRef(
   return upstreamBranch ? `${remoteName}/${upstreamBranch}` : null;
 }
 
-async function getBehindOfOrigin(
+async function getOriginAheadBehind(
   cwd: string,
   currentBranch: string,
   context?: CheckoutContext,
-): Promise<number | null> {
+): Promise<AheadBehind | null> {
   if (!currentBranch) {
     return null;
   }
@@ -1557,11 +1533,13 @@ async function getBehindOfOrigin(
   }
   try {
     const { stdout } = await runGitCommand(
-      ["rev-list", "--count", `${currentBranch}..${upstreamRef}`],
+      ["rev-list", "--left-right", "--count", `${currentBranch}...${upstreamRef}`],
       { cwd, envOverlay: READ_ONLY_GIT_ENV, logger: context?.logger },
     );
-    const count = Number.parseInt(stdout.trim(), 10);
-    return Number.isNaN(count) ? null : count;
+    const [aheadRaw, behindRaw] = stdout.trim().split(/\s+/);
+    const ahead = Number.parseInt(aheadRaw ?? "", 10);
+    const behind = Number.parseInt(behindRaw ?? "", 10);
+    return Number.isNaN(ahead) || Number.isNaN(behind) ? null : { ahead, behind };
   } catch {
     return null;
   }
@@ -1784,7 +1762,9 @@ export async function getCheckoutSnapshotFacts(
     if (branchRemoteName) {
       [branchMergeRef, branchRemoteUrl] = await Promise.all([
         getGitConfigValue(cwd, `branch.${inspected.currentBranch}.merge`, context),
-        getGitConfigValue(cwd, `remote.${branchRemoteName}.url`, context),
+        branchRemoteName === "origin"
+          ? inspected.remoteUrl
+          : getGitConfigValue(cwd, `remote.${branchRemoteName}.url`, context),
       ]);
     }
   }
@@ -1963,17 +1943,16 @@ export async function getCheckoutStatus(
   const baseRef = facts.resolvedBaseRef;
   const mainRepoRoot = facts.mainRepoRoot;
   const factsContext = { ...context, facts };
-  const [aheadBehind, aheadOfOrigin, behindOfOrigin] = await Promise.all([
+  const [aheadBehind, originAheadBehind] = await Promise.all([
     baseRef && currentBranch
       ? getAheadBehind(cwd, baseRef, currentBranch, factsContext)
       : Promise.resolve(null),
     hasRemote && currentBranch
-      ? getAheadOfOrigin(cwd, currentBranch, factsContext)
-      : Promise.resolve(null),
-    hasRemote && currentBranch
-      ? getBehindOfOrigin(cwd, currentBranch, factsContext)
+      ? getOriginAheadBehind(cwd, currentBranch, factsContext)
       : Promise.resolve(null),
   ]);
+  const aheadOfOrigin = originAheadBehind?.ahead ?? null;
+  const behindOfOrigin = originAheadBehind?.behind ?? null;
 
   if (paseoWorktree.isPaseoOwnedWorktree && baseRef) {
     return {
