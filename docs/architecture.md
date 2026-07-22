@@ -91,7 +91,19 @@ it does not depend on the server.
 Owns the low-level daemon WebSocket driver plus the higher-level `PaseoClient`
 facade. App and CLI may import the low-level driver from
 `@getpaseo/client/internal/daemon-client` during migration, while new SDK-shaped
-code imports from `@getpaseo/client`.
+code imports from `@getpaseo/client`. Node automation uses
+`@getpaseo/client/node`, which owns daemon discovery, authentication, transport
+selection, and the capability-gated host automation facade shared by the CLI and
+published import tools.
+
+### External project import
+
+The private [`getpaseo/import`](https://github.com/getpaseo/import) repository publishes
+`@getpaseo/import`. It owns source discovery, parsing, mapping, fixtures, the CLI, and the
+programmatic import engine. Paseo Desktop pins an exact package version and calls its library
+entrypoint from Electron main, passing the public Node host-automation facade and forwarding typed
+progress events through a narrow IPC bridge. Paseo does not contain source databases, parsers, or
+import-package release machinery.
 
 ### `packages/app` — Mobile + web client (Expo)
 

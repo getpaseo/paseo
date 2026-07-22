@@ -13,6 +13,10 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "default": "./dist/node.js"
+    },
     "./internal/daemon-client": {
       "types": "./dist/daemon-client.d.ts",
       "default": "./dist/daemon-client.js"
@@ -37,10 +41,12 @@
   "dependencies": {
     "@getpaseo/protocol": "0.2.0-beta.1",
     "@getpaseo/relay": "0.2.0-beta.1",
+    "ws": "^8.20.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^20.9.0",
+    "@types/ws": "^8.5.14",
     "typescript": "^5.2.2",
     "vitest": "^4.1.6"
   }

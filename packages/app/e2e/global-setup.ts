@@ -779,11 +779,13 @@ function startDaemon(args: DaemonSpawnArgs): ChildProcess {
     PASEO_HOME: args.paseoHome,
     PASEO_E2E_EDITOR_RECORD_PATH: args.editorRecordPath,
     PASEO_SERVER_ID: "srv_e2e_test_daemon",
-    PASEO_LISTEN: `0.0.0.0:${args.port}`,
+    PASEO_LISTEN:
+      process.env.E2E_DESKTOP_RUNTIME === "1" ? `127.0.0.1:${args.port}` : `0.0.0.0:${args.port}`,
     PASEO_RELAY_ENDPOINT: `127.0.0.1:${args.relayPort}`,
     PASEO_CORS_ORIGINS: `http://localhost:${args.metroPort}`,
     PASEO_NODE_ENV: "development",
     NODE_ENV: "development",
+    ...(process.env.E2E_DESKTOP_RUNTIME === "1" ? { PASEO_DESKTOP_MANAGED: "1" } : {}),
   });
 
   const child = spawn(tsxBin, ["scripts/supervisor-entrypoint.ts", "--dev"], {

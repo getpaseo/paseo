@@ -165,6 +165,30 @@ export interface DesktopInvokeBridge {
   invoke?: (command: string, args?: Record<string, unknown>) => Promise<unknown>;
 }
 
+export type DesktopImportOutput =
+  | {
+      runId: string;
+      type: "event";
+      event: { level: "info" | "warning" | "error"; message: string };
+    }
+  | { runId: string; type: "status"; succeeded: boolean };
+
+export interface DesktopImportsBridge {
+  getAvailability?: (input: { source: string }) => Promise<{
+    available: boolean;
+    reason:
+      | "unsupported-source"
+      | "host-not-running"
+      | "nonlocal-host"
+      | "password-protected"
+      | "host-version-mismatch"
+      | "unavailable"
+      | null;
+  }>;
+  run?: (input: { source: string }) => Promise<{ runId: string }>;
+  onOutput?: (handler: (output: DesktopImportOutput) => void) => () => void;
+}
+
 export interface DesktopHostBridge {
   platform?: string;
   invoke?: DesktopInvokeBridge["invoke"];
@@ -178,6 +202,7 @@ export interface DesktopHostBridge {
   webUtils?: DesktopWebUtilsBridge;
   menu?: DesktopMenuBridge;
   browser?: DesktopBrowserBridge;
+  imports?: DesktopImportsBridge;
 }
 
 declare global {

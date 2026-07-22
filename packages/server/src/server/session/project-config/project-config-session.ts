@@ -2,7 +2,7 @@ import { realpathSync } from "node:fs";
 import { resolve, sep } from "path";
 import type pino from "pino";
 import type { SessionInboundMessage, SessionOutboundMessage } from "../../messages.js";
-import type { ProjectRegistry } from "../../workspace-registry.js";
+import type { ProjectRegistry, WorkspaceRegistry } from "../../workspace-registry.js";
 import {
   readPaseoConfigForEdit,
   writePaseoConfigForEdit,
@@ -16,24 +16,27 @@ export interface ProjectConfigSessionHost {
 export interface ProjectConfigSessionOptions {
   host: ProjectConfigSessionHost;
   projectRegistry: Pick<ProjectRegistry, "list">;
+  workspaceRegistry: Pick<WorkspaceRegistry, "list">;
   logger: pino.Logger;
 }
 
 /**
  * A client's read/write surface for a project's on-disk paseo.json. Resolves the
- * request's repoRoot against the known (non-archived) project roots — accepting a
- * trailing slash or a symlink via realpath — then reads or writes the config
- * substrate and emits the matching response. Reaches no state beyond the injected
- * project registry and the outbound channel.
+ * request's repoRoot against known active project and workspace roots — accepting
+ * a trailing slash or a symlink via realpath — then reads or writes the config
+ * substrate and emits the matching response. Workspace roots remain authorized
+ * only while both the workspace and its owning project are active.
  */
 export class ProjectConfigSession {
   private readonly host: ProjectConfigSessionHost;
   private readonly projectRegistry: Pick<ProjectRegistry, "list">;
+  private readonly workspaceRegistry: Pick<WorkspaceRegistry, "list">;
   private readonly logger: pino.Logger;
 
   constructor(options: ProjectConfigSessionOptions) {
     this.host = options.host;
     this.projectRegistry = options.projectRegistry;
+    this.workspaceRegistry = options.workspaceRegistry;
     this.logger = options.logger;
   }
 
@@ -153,13 +156,25 @@ export class ProjectConfigSession {
   private async resolveKnownProjectRoot(repoRoot: string): Promise<string | null> {
     const requestedRoot = canonicalizeConfigRoot(repoRoot);
     const projects = await this.projectRegistry.list();
+    const activeProjectIds = new Set<string>();
     for (const project of projects) {
       if (project.archivedAt !== null) {
         continue;
       }
+      activeProjectIds.add(project.projectId);
       const projectRoot = canonicalizeConfigRoot(project.rootPath);
       if (requestedRoot === projectRoot) {
         return projectRoot;
+      }
+    }
+    const workspaces = await this.workspaceRegistry.list();
+    for (const workspace of workspaces) {
+      if (workspace.archivedAt !== null || !activeProjectIds.has(workspace.projectId)) {
+        continue;
+      }
+      const workspaceRoot = canonicalizeConfigRoot(workspace.cwd);
+      if (requestedRoot === workspaceRoot) {
+        return workspaceRoot;
       }
     }
     return null;

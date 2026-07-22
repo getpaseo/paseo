@@ -3,7 +3,7 @@ import { WebSocket } from "ws";
 import pino from "pino";
 import { Writable } from "node:stream";
 import net from "node:net";
-import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { spawn, type ChildProcess } from "node:child_process";
 import { Buffer } from "node:buffer";
 
@@ -21,6 +21,7 @@ import {
 import { buildRelayWebSocketUrl } from "@getpaseo/protocol/daemon-endpoints";
 import { ConnectionOfferSchema } from "@getpaseo/protocol/connection-offer";
 import { WSOutboundMessageSchema } from "@getpaseo/protocol/messages";
+import { connectToDaemon } from "@getpaseo/client/node";
 
 const nodeMajor = Number((process.versions.node ?? "0").split(".")[0] ?? "0");
 const shouldRunRelayE2e = process.env.FORCE_RELAY_E2E === "1" || nodeMajor < 25;
@@ -172,7 +173,7 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
   const startRelay = async () => {
     relayStdoutLines = [];
     relayPort = await getAvailablePort();
-    const relayDir = path.resolve(process.cwd(), "../relay");
+    const relayDir = fileURLToPath(new URL("../../../../relay", import.meta.url));
     relayProcess = spawn(
       "npx",
       [
@@ -361,6 +362,41 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
       await stopRelay();
     }
   }, 90000);
+
+  test("public Node connector follows a real encrypted relay offer", async () => {
+    await startRelay();
+    const daemon = await createTestPaseoDaemon({
+      listen: "127.0.0.1",
+      relayEnabled: true,
+      relayEndpoint: `127.0.0.1:${relayPort}`,
+      relayUseTls: false,
+      relayPublicUseTls: false,
+    });
+    let client: Awaited<ReturnType<typeof connectToDaemon>> | null = null;
+    try {
+      const offerUrl = await getPairingOfferUrl({
+        paseoHome: daemon.paseoHome,
+        relayEnabled: daemon.config.relayEnabled,
+        relayEndpoint: daemon.config.relayEndpoint,
+        relayPublicEndpoint: daemon.config.relayPublicEndpoint,
+        appBaseUrl: daemon.config.appBaseUrl,
+      });
+
+      client = await connectToDaemon({
+        appVersion: "0.1.110",
+        clientId: "public-node-relay-e2e",
+        env: {},
+        host: offerUrl,
+        timeoutMs: 20_000,
+      });
+
+      expect((await client.fetchAgents()).entries).toEqual([]);
+    } finally {
+      await client?.close();
+      await daemon.close();
+      await stopRelay();
+    }
+  }, 90_000);
 
   test("daemon keeps relay socket open while idle (no handshake timeout loop)", async () => {
     process.env.PASEO_PRIMARY_LAN_IP = "192.168.1.12";

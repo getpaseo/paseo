@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import pino from "pino";
 import { ProjectConfigSession, type ProjectConfigSessionHost } from "./project-config-session.js";
-import type { PersistedProjectRecord } from "../../workspace-registry.js";
+import type { PersistedProjectRecord, PersistedWorkspaceRecord } from "../../workspace-registry.js";
 import type { SessionOutboundMessage } from "../../messages.js";
 
 const tempDirs: string[] = [];
@@ -33,12 +33,37 @@ function projectRecord(rootPath: string, archivedAt: string | null = null): Pers
   };
 }
 
-function makeSubsystem(records: PersistedProjectRecord[]) {
+function workspaceRecord(
+  projectId: string,
+  cwd: string,
+  archivedAt: string | null = null,
+): PersistedWorkspaceRecord {
+  return {
+    workspaceId: `workspace:${cwd}`,
+    projectId,
+    cwd,
+    kind: "worktree",
+    displayName: "Workspace",
+    branch: "feature",
+    worktreeRoot: cwd,
+    isPaseoOwnedWorktree: true,
+    mainRepoRoot: null,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    archivedAt,
+  };
+}
+
+function makeSubsystem(
+  records: PersistedProjectRecord[],
+  workspaces: PersistedWorkspaceRecord[] = [],
+) {
   const emitted: SessionOutboundMessage[] = [];
   const host: ProjectConfigSessionHost = { emit: (msg) => emitted.push(msg) };
   const subsystem = new ProjectConfigSession({
     host,
     projectRegistry: { list: async () => records },
+    workspaceRegistry: { list: async () => workspaces },
     logger: pino({ level: "silent" }),
   });
   return { subsystem, emitted };
@@ -174,6 +199,92 @@ describe("ProjectConfigSession", () => {
             mtimeMs: expect.any(Number),
             size: expect.any(Number),
           }),
+        },
+      },
+    ]);
+  });
+
+  test("read and write accept an active workspace belonging to an active project", async () => {
+    const repoRoot = makeRoot();
+    const workspaceRoot = makeRoot();
+    const project = projectRecord(repoRoot);
+    const { subsystem, emitted } = makeSubsystem(
+      [project],
+      [workspaceRecord(project.projectId, workspaceRoot)],
+    );
+
+    await subsystem.handleWriteProjectConfigRequest({
+      type: "write_project_config_request",
+      requestId: "workspace-write-1",
+      repoRoot: workspaceRoot,
+      config: { worktree: { setup: "npm ci" } },
+      expectedRevision: null,
+    });
+    await subsystem.handleReadProjectConfigRequest({
+      type: "read_project_config_request",
+      requestId: "workspace-read-1",
+      repoRoot: workspaceRoot,
+    });
+
+    expect(emitted).toEqual([
+      expect.objectContaining({
+        type: "write_project_config_response",
+        payload: expect.objectContaining({ ok: true, repoRoot: workspaceRoot }),
+      }),
+      expect.objectContaining({
+        type: "read_project_config_response",
+        payload: expect.objectContaining({
+          ok: true,
+          repoRoot: workspaceRoot,
+          config: { worktree: { setup: "npm ci" } },
+        }),
+      }),
+    ]);
+  });
+
+  test("read rejects archived workspaces and workspaces owned by archived projects", async () => {
+    const activeRepoRoot = makeRoot();
+    const archivedRepoRoot = makeRoot();
+    const archivedWorkspaceRoot = makeRoot();
+    const orphanedWorkspaceRoot = makeRoot();
+    const activeProject = projectRecord(activeRepoRoot);
+    const archivedProject = projectRecord(archivedRepoRoot, "2026-01-02T00:00:00.000Z");
+    const { subsystem, emitted } = makeSubsystem(
+      [activeProject, archivedProject],
+      [
+        workspaceRecord(activeProject.projectId, archivedWorkspaceRoot, "2026-01-02T00:00:00.000Z"),
+        workspaceRecord(archivedProject.projectId, orphanedWorkspaceRoot),
+      ],
+    );
+
+    for (const [requestId, repoRoot] of [
+      ["archived-workspace", archivedWorkspaceRoot],
+      ["archived-owner", orphanedWorkspaceRoot],
+    ] as const) {
+      await subsystem.handleReadProjectConfigRequest({
+        type: "read_project_config_request",
+        requestId,
+        repoRoot,
+      });
+    }
+
+    expect(emitted).toEqual([
+      {
+        type: "read_project_config_response",
+        payload: {
+          requestId: "archived-workspace",
+          repoRoot: archivedWorkspaceRoot,
+          ok: false,
+          error: { code: "project_not_found" },
+        },
+      },
+      {
+        type: "read_project_config_response",
+        payload: {
+          requestId: "archived-owner",
+          repoRoot: orphanedWorkspaceRoot,
+          ok: false,
+          error: { code: "project_not_found" },
         },
       },
     ]);

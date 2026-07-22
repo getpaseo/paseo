@@ -1147,6 +1147,25 @@ export const en = {
       },
     },
     integrations: {
+      import: {
+        availability: {
+          checking: "Checking import availability…",
+          "unsupported-source": "This import source is unavailable.",
+          "host-not-running": "Start the Desktop-managed host before importing.",
+          "nonlocal-host": "Import is unavailable for a nonlocal host.",
+          "password-protected": "Import is unavailable while the local host is password-protected.",
+          "host-version-mismatch": "Update the Desktop-managed host before importing.",
+          unavailable: "Desktop import is unavailable.",
+        },
+        actions: { import: "Import", importing: "Importing…", done: "Done" },
+        unavailable: "Desktop import is unavailable.",
+        complete: "Import complete.",
+        failed: "Import failed.",
+        description: "Import projects, settings, and worktrees from this Mac.",
+        sheetTitle: "Import from {{source}}",
+        confirmation:
+          "Paseo will register valid repositories, merge supported project settings, and adopt or recreate ready worktrees. {{source}} data will not be changed.",
+      },
       cli: {
         statusFailed: "Unable to check CLI install status.",
         installFailed: "Unable to install the Paseo CLI.",

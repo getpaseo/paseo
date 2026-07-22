@@ -117,6 +117,7 @@ export async function createWorktreeCore(
     worktreesRoot: input.worktreesRoot,
   });
   if (existingWorktree) {
+    assertExistingWorktreeMatchesIntent(existingWorktree, intent, normalizedSlug);
     return { worktree: existingWorktree, intent, repoRoot, created: false };
   }
 
@@ -133,6 +134,22 @@ export async function createWorktreeCore(
     repoRoot,
     created: true,
   };
+}
+
+function assertExistingWorktreeMatchesIntent(
+  existingWorktree: WorktreeConfig,
+  intent: WorktreeCreationIntent,
+  slug: string,
+): void {
+  const intendedBranchName =
+    intent.kind === "checkout-change-request" || intent.kind === "checkout-github-pr"
+      ? (intent.localBranchName ?? intent.headRef)
+      : intent.branchName;
+  if (existingWorktree.branchName !== intendedBranchName) {
+    throw new Error(
+      `Worktree name ${slug} is already used by branch ${existingWorktree.branchName}.`,
+    );
+  }
 }
 
 async function resolveForge(

@@ -1137,6 +1137,25 @@ export const ar: TranslationResources = {
       },
     },
     integrations: {
+      import: {
+        availability: {
+          checking: "جارٍ التحقق من توفّر الاستيراد…",
+          "unsupported-source": "مصدر الاستيراد هذا غير متاح.",
+          "host-not-running": "شغّل المضيف المُدار بواسطة تطبيق سطح المكتب قبل الاستيراد.",
+          "nonlocal-host": "الاستيراد غير متاح لمضيف غير محلي.",
+          "password-protected": "الاستيراد غير متاح أثناء حماية المضيف المحلي بكلمة مرور.",
+          "host-version-mismatch": "حدّث المضيف المُدار بواسطة تطبيق سطح المكتب قبل الاستيراد.",
+          unavailable: "استيراد تطبيق سطح المكتب غير متاح.",
+        },
+        actions: { import: "استيراد", importing: "جارٍ الاستيراد…", done: "تم" },
+        unavailable: "الاستيراد عبر تطبيق سطح المكتب غير متاح.",
+        complete: "اكتمل الاستيراد.",
+        failed: "فشل الاستيراد.",
+        description: "استيراد المشاريع والإعدادات وأشجار العمل من جهاز Mac هذا.",
+        sheetTitle: "الاستيراد من {{source}}",
+        confirmation:
+          "سيسجّل Paseo المستودعات الصالحة ويدمج إعدادات المشروع المدعومة ويتبنّى أشجار العمل الجاهزة أو يعيد إنشاءها. لن تتغير بيانات {{source}}.",
+      },
       cli: {
         statusFailed: "غير قادر على التحقق من حالة تثبيت CLI.",
         installFailed: "غير قادر على تثبيت PaseoCLI.",

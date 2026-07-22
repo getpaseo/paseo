@@ -458,6 +458,8 @@ export interface AdaptiveModalSheetProps {
   desktopMaxWidth?: number;
   scrollable?: boolean;
   presentation?: "push" | "replace";
+  /** Whether gestures may dismiss the compact bottom sheet. */
+  dismissible?: boolean;
 }
 
 export function AdaptiveModalSheet({
@@ -472,6 +474,7 @@ export function AdaptiveModalSheet({
   desktopMaxWidth,
   scrollable = true,
   presentation,
+  dismissible = true,
 }: AdaptiveModalSheetProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
@@ -608,7 +611,7 @@ export function AdaptiveModalSheet({
         onChange={handleSheetChange}
         onDismiss={handleDismiss}
         backdropComponent={renderBackdrop}
-        enablePanDownToClose
+        enablePanDownToClose={dismissible}
         backgroundComponent={SheetBackground}
         handleIndicatorStyle={handleIndicatorStyle}
         keyboardBehavior="extend"

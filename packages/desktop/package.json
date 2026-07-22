@@ -18,6 +18,7 @@
     "build": "npm --prefix ../.. run build:server:clean && npm run build:main && electron-builder --config electron-builder.yml",
     "build:main": "tsc -p tsconfig.json",
     "capture-harness": "./capture-harness/run.sh",
+    "test:import-electron": "npm --prefix ../.. run test:e2e:import-electron --workspace=@getpaseo/app",
     "dev": "./scripts/dev.sh",
     "dev:win": "powershell ./scripts/dev.ps1",
     "test:e2e:browser-tab-bridge": "npm run build:main && node ./scripts/browser-tab-bridge.e2e.mjs",
@@ -27,6 +28,7 @@
   },
   "dependencies": {
     "@getpaseo/cli": "*",
+    "@getpaseo/import": "0.1.0-beta.2",
     "@getpaseo/server": "*",
     "electron-log": "^5.4.3",
     "electron-updater": "^6.6.2",
@@ -34,6 +36,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@playwright/test": "^1.56.1",
     "@types/node": "24.6.0",
     "@types/ws": "^8.5.14",
     "electron": "41.2.0",

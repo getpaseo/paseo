@@ -1177,6 +1177,26 @@ export const es: TranslationResources = {
       },
     },
     integrations: {
+      import: {
+        availability: {
+          checking: "Comprobando la disponibilidad de la importación…",
+          "unsupported-source": "Esta fuente de importación no está disponible.",
+          "host-not-running": "Inicia el host gestionado por Desktop antes de importar.",
+          "nonlocal-host": "La importación no está disponible para un host no local.",
+          "password-protected":
+            "La importación no está disponible mientras el host local esté protegido con contraseña.",
+          "host-version-mismatch": "Actualiza el host gestionado por Desktop antes de importar.",
+          unavailable: "La importación de Desktop no está disponible.",
+        },
+        actions: { import: "Importar", importing: "Importando…", done: "Listo" },
+        unavailable: "La importación de escritorio no está disponible.",
+        complete: "Importación completada.",
+        failed: "La importación ha fallado.",
+        description: "Importa proyectos, ajustes y worktrees desde este Mac.",
+        sheetTitle: "Importar desde {{source}}",
+        confirmation:
+          "Paseo registrará los repositorios válidos, combinará los ajustes de proyecto compatibles y adoptará o recreará los worktrees preparados. Los datos de {{source}} no se modificarán.",
+      },
       cli: {
         statusFailed: "No se puede verificar el estado de instalación deCLI.",
         installFailed: "No se puede instalar elPaseoCLI.",

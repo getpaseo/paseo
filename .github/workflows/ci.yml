@@ -200,6 +200,41 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  import-electron:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies with retry
+        run: node scripts/npm-retry.mjs ci
+
+      - name: Build app and server dependencies
+        run: |
+          npm run build:app-deps
+          npm run build:server
+
+      - name: Build Desktop main
+        run: npm run build:main --workspace=@getpaseo/desktop
+
+      - name: Run product import behavior
+        run: npm run test:import-electron --workspace=@getpaseo/desktop
+
+      - name: Upload import behavior diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: import-electron-macos
+          path: |
+            packages/app/test-results/
+            packages/app/playwright-report/
+          retention-days: 7
+
   app-tests:
     runs-on: ubuntu-latest
     env:

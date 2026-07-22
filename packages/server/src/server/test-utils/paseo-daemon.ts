@@ -5,6 +5,7 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import pino from "pino";
 import {
   createPaseoDaemon,
+  type ListenTarget,
   type PaseoDaemonConfig,
   type PaseoOpenAIConfig,
   type PaseoSpeechConfig,
@@ -19,6 +20,7 @@ interface TestPaseoDaemonOptions {
   downloadTokenTtlMs?: number;
   corsAllowedOrigins?: string[];
   listen?: string;
+  allowIpc?: boolean;
   logger?: Parameters<typeof createPaseoDaemon>[1];
   mcpEnabled?: boolean;
   mcpDebug?: boolean;
@@ -49,6 +51,7 @@ export interface TestPaseoDaemon {
   config: PaseoDaemonConfig;
   daemon: Awaited<ReturnType<typeof createPaseoDaemon>>;
   port: number;
+  listenTarget: ListenTarget;
   paseoHome: string;
   staticDir: string;
   close: () => Promise<void>;
@@ -96,8 +99,8 @@ export async function createTestPaseoDaemon(
     try {
       await startDaemonWithTimeout(daemon, TEST_DAEMON_START_TIMEOUT_MS);
       const listenTarget = daemon.getListenTarget();
-      if (!listenTarget || listenTarget.type !== "tcp") {
-        throw new Error("Test daemon did not expose a bound TCP listen target");
+      if (!listenTarget || (listenTarget.type !== "tcp" && !options.allowIpc)) {
+        throw new Error("Test daemon did not expose an allowed listen target");
       }
 
       const close = async (): Promise<void> => {
@@ -115,7 +118,8 @@ export async function createTestPaseoDaemon(
       return {
         config,
         daemon,
-        port: listenTarget.port,
+        port: listenTarget.type === "tcp" ? listenTarget.port : 0,
+        listenTarget,
         paseoHome,
         staticDir,
         close,
@@ -157,7 +161,7 @@ async function prepareTestDaemonConfig(
   const staticDir = options.staticDir ?? (await mkdtemp(path.join(os.tmpdir(), "paseo-static-")));
   const listenHost = options.listen ?? "127.0.0.1";
   const config: PaseoDaemonConfig = {
-    listen: `${listenHost}:0`,
+    listen: options.allowIpc ? listenHost : `${listenHost}:0`,
     paseoHome,
     daemonVersion: options.daemonVersion,
     desktopManaged: options.desktopManaged,

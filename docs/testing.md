@@ -156,6 +156,15 @@ Vitest picks up tests by suffix. The suffix tells the runner which category it b
 
 App-level Playwright browser E2E lives in `packages/app/e2e/*.spec.ts` and runs via `npm run test:e2e --workspace=@getpaseo/app` (separate from Vitest E2E). App Playwright specs that hit real providers use `*.real.spec.ts` and run through `npm run test:e2e:real --workspace=@getpaseo/app`; the default app E2E project ignores that suffix so CI does not need provider credentials.
 
+Desktop import coverage starts from the real product Integrations row and crosses the real Electron
+main process, compiled sandboxed preload, production import IPC, the installed import library, and a
+real Desktop-managed daemon. It covers confirmation, streamed output, success, failure, and
+ineligible-host UI:
+
+```bash
+npm run test:import-electron --workspace=@getpaseo/desktop
+```
+
 Live provider smoke tests belong in `*.real.e2e.test.ts`, not `*.test.ts`, even when guarded by environment variables. Default unit suites must use deterministic provider adapters/fakes so missing credits, auth outages, and upstream model drift do not block normal CI.
 
 Codex MultiAgentV2 real tests use local Codex authentication rather than the OpenRouter-compatible test provider. OpenRouter does not accept Codex collaboration-history items on the parent follow-up request, so it cannot verify a complete native sub-agent turn.

@@ -236,7 +236,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function resolveDesktopAppVersion(): string {
+export function resolveDesktopAppVersion(): string {
   if (app.isPackaged) {
     return app.getVersion();
   }

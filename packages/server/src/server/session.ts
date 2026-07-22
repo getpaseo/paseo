@@ -840,6 +840,7 @@ export class Session {
         emit: (msg) => this.emit(msg),
       },
       projectRegistry: this.projectRegistry,
+      workspaceRegistry: this.workspaceRegistry,
       logger: this.sessionLogger,
     });
     this.daemonSession = new DaemonSession({

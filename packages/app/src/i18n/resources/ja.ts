@@ -1150,6 +1150,26 @@ export const ja: TranslationResources = {
       },
     },
     integrations: {
+      import: {
+        availability: {
+          checking: "インポートが利用可能か確認しています…",
+          "unsupported-source": "このインポート元は利用できません。",
+          "host-not-running": "インポートする前にDesktop管理ホストを起動してください。",
+          "nonlocal-host": "ローカル以外のホストではインポートできません。",
+          "password-protected":
+            "ローカルホストがパスワード保護されている間はインポートできません。",
+          "host-version-mismatch": "インポートする前にDesktop管理ホストを更新してください。",
+          unavailable: "Desktopインポートは利用できません。",
+        },
+        actions: { import: "インポート", importing: "インポート中…", done: "完了" },
+        unavailable: "デスクトップインポートは利用できません。",
+        complete: "インポートが完了しました。",
+        failed: "インポートに失敗しました。",
+        description: "このMacからプロジェクト、設定、worktreeをインポートします。",
+        sheetTitle: "{{source}}からインポート",
+        confirmation:
+          "Paseoは有効なリポジトリを登録し、対応するプロジェクト設定を統合して、準備済みのworktreeを採用または再作成します。{{source}}のデータは変更されません。",
+      },
       cli: {
         statusFailed: "CLIのインストール状態を確認できません。",
         installFailed: "Paseo CLIをインストールできません。",

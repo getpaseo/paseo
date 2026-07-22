@@ -1609,6 +1609,7 @@ export async function createPaseoDaemon(
     detachAgentStoragePersistence();
     await agentStorage.flush().catch(() => undefined);
     await providerSnapshotManager.shutdown();
+    workspaceGitService.dispose();
     terminalManager.killAll();
     speechService.stop();
     await scheduleService.stop().catch(() => undefined);

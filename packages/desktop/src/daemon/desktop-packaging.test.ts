@@ -104,6 +104,7 @@ describe("desktop packaging", () => {
     for (const required of ["@getpaseo/cli", "@getpaseo/server"]) {
       expect(deps[required], `${required} must be declared in dependencies`).toBe("*");
     }
+    expect(deps["@getpaseo/import"]).toBe("0.1.0-beta.2");
   });
 
   it("launches the packaged macOS CLI through Helper instead of the main app executable", () => {

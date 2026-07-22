@@ -1121,6 +1121,25 @@ export const zhCN: TranslationResources = {
       },
     },
     integrations: {
+      import: {
+        availability: {
+          checking: "正在检查导入是否可用…",
+          "unsupported-source": "此导入来源不可用。",
+          "host-not-running": "请先启动由桌面端管理的主机再导入。",
+          "nonlocal-host": "非本地主机无法使用导入。",
+          "password-protected": "本地主机受密码保护时无法导入。",
+          "host-version-mismatch": "请先更新由桌面端管理的主机再导入。",
+          unavailable: "桌面端导入不可用。",
+        },
+        actions: { import: "导入", importing: "正在导入…", done: "完成" },
+        unavailable: "桌面端导入不可用。",
+        complete: "导入完成。",
+        failed: "导入失败。",
+        description: "从这台 Mac 导入项目、设置和工作树。",
+        sheetTitle: "从 {{source}} 导入",
+        confirmation:
+          "Paseo 将注册有效仓库、合并支持的项目设置，并采用或重新创建已就绪的工作树。{{source}} 数据不会被修改。",
+      },
       cli: {
         statusFailed: "无法检查 CLI 安装状态。",
         installFailed: "无法安装 Paseo CLI。",

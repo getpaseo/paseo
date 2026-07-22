@@ -27,7 +27,10 @@ export default defineConfig({
   projects: [
     {
       name: "Desktop Chrome",
-      testIgnore: ["**/*.real.spec.ts"],
+      testIgnore:
+        process.env.E2E_DESKTOP_RUNTIME === "1"
+          ? ["**/*.real.spec.ts"]
+          : ["**/*.real.spec.ts", "**/*.electron.spec.ts"],
       use: { ...devices["Desktop Chrome"] },
     },
     {
