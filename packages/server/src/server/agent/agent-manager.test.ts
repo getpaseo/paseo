@@ -7518,6 +7518,76 @@ test("ensureUnarchivedAgentLoaded fences an archived agent after joining a share
   }
 });
 
+test("a shared agent load upgrades provider history hydration to broadcast", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-shared-load-broadcast-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const historyStarted = deferred<void>();
+  const historyAllowed = deferred<void>();
+  const client = new (class extends TestAgentClient {
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      return new (class extends TestAgentSession {
+        override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+          historyStarted.resolve();
+          await historyAllowed.promise;
+          yield {
+            type: "timeline",
+            provider: "codex",
+            item: { type: "assistant_message", text: "Recovered history" },
+          };
+        }
+      })({ provider: "codex", cwd: config?.cwd ?? workdir });
+    }
+  })();
+  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await manager.collectIdleAgents({
+      cutoff: new Date(Date.now() + 1_000),
+      protectedAgentIds: new Set(),
+    });
+    await manager.deleteAgentState(agent.id);
+    const events: AgentManagerEvent[] = [];
+    manager.subscribe((event) => events.push(event), { agentId: agent.id, replayState: false });
+
+    const quietLoad = ensureAgentLoaded(agent.id, {
+      agentManager: manager,
+      agentStorage: storage,
+      logger,
+    });
+    await historyStarted.promise;
+    const broadcastingLoad = ensureAgentLoaded(agent.id, {
+      agentManager: manager,
+      agentStorage: storage,
+      broadcastTimeline: true,
+      logger,
+    });
+    historyAllowed.resolve();
+    await Promise.all([quietLoad, broadcastingLoad]);
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "agent_stream",
+        agentId: agent.id,
+        event: expect.objectContaining({
+          type: "timeline",
+          item: { type: "assistant_message", text: "Recovered history" },
+        }),
+      }),
+    );
+  } finally {
+    historyAllowed.resolve();
+    await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("collectIdleAgents leaves recent, protected, internal, running, and error agents resident", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-idle-eligibility-"));
   const client = new (class extends TestAgentClient {

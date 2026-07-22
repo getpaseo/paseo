@@ -365,6 +365,13 @@ export const en = {
       copyBranchName: "Copy branch name",
       copied: "Copied",
     },
+    fileActions: {
+      openFile: "Open file",
+      copyPath: "Copy path",
+      download: "Download",
+      addToChat: "Add to chat…",
+      moreActions: "More actions",
+    },
     fileExplorer: {
       sort: {
         name: "Name",
@@ -374,8 +381,6 @@ export const en = {
       context: {
         size: "Size",
         modified: "Modified",
-        copyPath: "Copy path",
-        download: "Download",
       },
       actions: {
         back: "Back",
@@ -585,19 +590,34 @@ export const en = {
     scripts: {
       title: "Scripts",
       actions: {
+        chooseUrl: "Choose URL",
+        copyUrl: "Copy URL",
+        openService: "View service",
+        restart: "Restart",
         run: "Run",
-        view: "View",
+        stop: "Stop",
+        view: "View terminal",
       },
       accessibility: {
         trigger: "Workspace scripts",
-        openAt: "Open {{scriptName}} at {{label}}",
+        openService: "View {{scriptName}} service",
         viewTerminal: "View {{scriptName}} terminal",
         runScript: "Run {{scriptName}} script",
+        stopScript: "Stop {{scriptName}}",
+        restartScript: "Restart {{scriptName}}",
+        copyUrl: "Copy {{scriptName}} URL",
+        chooseUrl: "Choose URL for {{scriptName}}",
         script: "{{scriptName}} script",
+      },
+      routes: {
+        public: "Reverse proxy",
+        paseo: "Memorable",
+        direct: "Direct",
       },
       states: {
         exitCode: "exit {{code}}",
         startFailed: "Failed to start {{scriptName}}",
+        stopFailed: "Failed to stop {{scriptName}}",
       },
     },
     git: {
@@ -784,14 +804,12 @@ export const en = {
         openDiff: "Open diff",
         commits: {
           title: "Commits",
-          legendLocal: "local",
-          legendRemote: "on remote",
-          countLabel: "{{count}} commits ahead of base",
+          countLabel: "{{count}} recent commits",
           fileDiffEmpty: "No changes to display",
           fileDiffError: "Failed to load file diff",
           loading: "Loading commits…",
           loadError: "Failed to load commits",
-          empty: "No commits ahead of base",
+          empty: "No commits yet",
         },
       },
       openInEditor: {
@@ -924,6 +942,8 @@ export const en = {
       actions: {
         menu: "Workspace actions",
         newWorkspace: "New workspace",
+        showMore: "Show more",
+        showLess: "Show less",
         createWorkspaceFor: "Create a new workspace for {{projectName}}",
         copyPath: "Copy path",
         copyBranchName: "Copy branch name",
@@ -981,9 +1001,6 @@ export const en = {
     refPicker: {
       startingRef: "Starting ref",
       chooseStart: "Choose where to start from",
-      checkoutHint: "Check out {{noun}} {{numberPrefix}}{{number}}?",
-      checkoutPr: "Check out {{noun}} {{numberPrefix}}{{number}}",
-      dismissCheckoutHint: "Dismiss {{noun}} {{numberPrefix}}{{number}} checkout hint",
       intoBase: "into {{baseRef}}",
       searching: "Searching...",
       noMatchingRefs: "No matching refs.",

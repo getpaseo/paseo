@@ -42,7 +42,7 @@ export interface ViewedTimelineSync extends ViewedTimelineUiBridge {
 }
 
 const RETRY_DELAY_MS = 1_000;
-export const VIEWED_TIMELINE_UNSUBSCRIBE_GRACE_MS = 5_000;
+export const VIEWED_TIMELINE_UNSUBSCRIBE_GRACE_MS = 30_000;
 
 type CatchUpStatus = "running" | "complete" | "error";
 

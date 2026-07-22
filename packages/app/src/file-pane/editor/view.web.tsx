@@ -3,12 +3,15 @@ import { Annotation, Compartment, EditorState, Transaction } from "@codemirror/s
 import { EditorView } from "@codemirror/view";
 import { getLanguageForFile } from "@getpaseo/highlight";
 import { getCM, vim } from "@replit/codemirror-vim";
+import type { WorkspaceFileLocation } from "@/workspace/file-open";
 import type { FileEditorModel } from "./model";
 import { editorBaseExtensions, editorTheme, type EditorVisualTheme } from "./extensions.web";
 
 interface FileEditorViewProps {
   model: FileEditorModel;
   filename: string;
+  location: WorkspaceFileLocation;
+  navigationRevision: number;
   vimEnabled: boolean;
   theme: EditorVisualTheme;
   onCursorChange(position: { line: number; column: number }): void;
@@ -22,6 +25,8 @@ const vimCompartment = new Compartment();
 export function FileEditorView({
   model,
   filename,
+  location,
+  navigationRevision,
   vimEnabled,
   theme,
   onCursorChange,
@@ -80,6 +85,19 @@ export function FileEditorView({
       annotations: [remoteUpdate.of(true), Transaction.addToHistory.of(false)],
     });
   }, [snapshot.content]);
+
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view || !location.lineStart) return;
+    const lineStart = Math.min(location.lineStart, view.state.doc.lines);
+    const lineEnd = Math.min(location.lineEnd ?? lineStart, view.state.doc.lines);
+    const from = view.state.doc.line(lineStart).from;
+    const to = view.state.doc.line(Math.max(lineStart, lineEnd)).to;
+    view.dispatch({
+      selection: { anchor: from, head: lineEnd > lineStart ? to : from },
+      effects: EditorView.scrollIntoView(from, { y: "center" }),
+    });
+  }, [location.lineEnd, location.lineStart, navigationRevision]);
 
   useEffect(() => {
     viewRef.current?.dispatch({

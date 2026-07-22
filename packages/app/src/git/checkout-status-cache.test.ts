@@ -2,7 +2,11 @@
 import { QueryClient } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CheckoutStatusUpdate } from "@getpaseo/protocol/messages";
-import { checkoutPrStatusQueryKey, checkoutStatusQueryKey } from "@/git/query-keys";
+import {
+  checkoutCommitsQueryKey,
+  checkoutPrStatusQueryKey,
+  checkoutStatusQueryKey,
+} from "@/git/query-keys";
 import {
   prPanePipelineQueryKey,
   prPaneTimelineQueryKey,
@@ -130,6 +134,25 @@ describe("applyCheckoutStatusUpdateFromEvent", () => {
     });
 
     expect(queryClient.getQueryData(checkoutStatusQueryKey(serverId, cwd))).toEqual(pushed);
+  });
+
+  it("invalidates recent commits when checkout status is pushed", () => {
+    const queryClient = createQueryClient();
+    queryClient.setQueryData(checkoutCommitsQueryKey(serverId, cwd), { commits: [] });
+    queryClient.setQueryData(checkoutCommitsQueryKey(serverId, "/repo2"), { commits: [] });
+
+    applyCheckoutStatusUpdateFromEvent({
+      queryClient,
+      serverId,
+      message: checkoutStatusUpdate(checkoutStatus()),
+    });
+
+    expect(queryClient.getQueryState(checkoutCommitsQueryKey(serverId, cwd))?.isInvalidated).toBe(
+      true,
+    );
+    expect(
+      queryClient.getQueryState(checkoutCommitsQueryKey(serverId, "/repo2"))?.isInvalidated,
+    ).toBe(false);
   });
 
   it("writes the PR status cache when prStatus is present, and skips it otherwise", () => {

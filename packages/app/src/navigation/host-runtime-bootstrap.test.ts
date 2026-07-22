@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   resolveStartupBlocker,
   resolveStartupNavigationReady,
@@ -7,115 +7,37 @@ import {
   shouldRunStartupGiveUpTimer,
   startHostRuntimeBootstrap,
 } from "./host-runtime-bootstrap";
-
-function createFakeStore() {
-  return { boot: vi.fn() };
-}
-
-function createFakeDaemonStartService() {
-  return {
-    start: vi.fn(async () => ({ ok: true as const })),
-  };
-}
+import type {
+  DaemonStartCondition,
+  StartDaemonIfEnabledInput,
+} from "@/runtime/daemon-start-service";
 
 describe("startHostRuntimeBootstrap", () => {
-  it("fires boot and daemon-start without awaiting the daemon-start promise", () => {
+  it("boots the host registry and starts the managed-daemon decision as one operation", () => {
     const events: string[] = [];
+    const shouldStartDaemon = async () => true;
     const store = {
-      boot: vi.fn(() => {
+      boot: () => {
         events.push("boot");
-      }),
-    };
-    const daemonStartService = {
-      start: vi.fn(async () => {
-        events.push("daemon-start");
-        return { ok: true as const };
-      }),
-    };
-
-    startHostRuntimeBootstrap({
-      store,
-      daemonStartService,
-      shouldStartDaemon: true,
-    });
-
-    expect(store.boot).toHaveBeenCalledTimes(1);
-    expect(daemonStartService.start).toHaveBeenCalledTimes(1);
-    expect(events).toEqual(["boot", "daemon-start"]);
-  });
-
-  it("skips daemon-start when shouldStartDaemon is false", () => {
-    const store = createFakeStore();
-    const daemonStartService = createFakeDaemonStartService();
-
-    startHostRuntimeBootstrap({
-      store,
-      daemonStartService,
-      shouldStartDaemon: false,
-    });
-
-    expect(store.boot).toHaveBeenCalledTimes(1);
-    expect(daemonStartService.start).not.toHaveBeenCalled();
-  });
-
-  it("skips daemon-start when the startup gate resolves false", async () => {
-    const store = createFakeStore();
-    const daemonStartService = createFakeDaemonStartService();
-
-    startHostRuntimeBootstrap({
-      store,
-      daemonStartService,
-      shouldStartDaemon: async () => false,
-    });
-    await Promise.resolve();
-
-    expect(store.boot).toHaveBeenCalledTimes(1);
-    expect(daemonStartService.start).not.toHaveBeenCalled();
-  });
-
-  it("surfaces gate rejection to onGateError without starting the daemon", async () => {
-    const store = createFakeStore();
-    const daemonStartService = createFakeDaemonStartService();
-    const onGateError = vi.fn();
-
-    startHostRuntimeBootstrap({
-      store,
-      daemonStartService,
-      shouldStartDaemon: async () => {
-        throw new Error("settings file unreadable");
       },
-      onGateError,
-    });
-    await vi.waitFor(() => {
-      expect(onGateError).toHaveBeenCalledTimes(1);
-    });
-
-    expect(daemonStartService.start).not.toHaveBeenCalled();
-    expect(onGateError).toHaveBeenCalledWith(expect.stringContaining("settings file unreadable"));
-  });
-
-  it("does not await the daemon-start promise", () => {
-    const store = createFakeStore();
-    let resolveStart: ((value: { ok: true }) => void) | undefined;
+    };
+    let receivedCondition: DaemonStartCondition | null = null;
     const daemonStartService = {
-      start: vi.fn(
-        () =>
-          new Promise<{ ok: true }>((resolve) => {
-            resolveStart = resolve;
-          }),
-      ),
+      startIfEnabled: async (input: StartDaemonIfEnabledInput) => {
+        receivedCondition = input.shouldStart;
+        events.push("daemon-start-decision");
+        return { ok: true as const };
+      },
     };
 
     startHostRuntimeBootstrap({
       store,
       daemonStartService,
-      shouldStartDaemon: true,
+      shouldStartDaemon,
     });
 
-    expect(store.boot).toHaveBeenCalledTimes(1);
-    expect(daemonStartService.start).toHaveBeenCalledTimes(1);
-
-    resolveStart?.({ ok: true });
+    expect(events).toEqual(["boot", "daemon-start-decision"]);
+    expect(receivedCondition).toBe(shouldStartDaemon);
   });
 });
 

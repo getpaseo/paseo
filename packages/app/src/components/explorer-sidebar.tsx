@@ -36,6 +36,13 @@ import { RetainedPanelActivity } from "@/components/retained-panel";
 import { SidebarResizeHandle } from "@/components/sidebar-resize-handle";
 import { buildWorkspaceAttachmentScopeKey } from "@/attachments/workspace-attachments-store";
 import { resolveDesktopExplorerWidth } from "@/components/desktop-sidebar-layout";
+import {
+  buildWorkspaceTabPersistenceKey,
+  useWorkspaceLayoutStore,
+} from "@/stores/workspace-layout-store";
+import { resolveFocusedChatTarget } from "@/composer/focused-chat-target";
+import { createWorkspaceFileAttachment } from "@/attachments/workspace-file";
+import { useDraftStore } from "@/stores/draft-store";
 
 function logExplorerSidebar(_event: string, _details: Record<string, unknown>): void {}
 
@@ -386,15 +393,16 @@ function ExplorerSidebarContent({
       {/* Content based on active tab */}
       <View style={styles.contentArea} testID="explorer-content-area">
         {resolvedTab === "changes" && (
-          <GitDiffPane
+          <ChangedFilesPane
             serverId={serverId}
             workspaceId={workspaceId}
-            cwd={workspaceRoot}
-            enabled={isOpen}
+            workspaceRoot={workspaceRoot}
+            isOpen={isOpen}
+            onOpenFile={onOpenFile}
           />
         )}
         {resolvedTab === "files" && (
-          <FileExplorerPane
+          <FilesPane
             serverId={serverId}
             workspaceId={workspaceId}
             workspaceRoot={workspaceRoot}
@@ -412,6 +420,83 @@ function ExplorerSidebarContent({
         )}
       </View>
     </View>
+  );
+}
+
+/**
+ * Shared add-to-chat state for the changes/files panes: both expose an "add file
+ * to chat" action that attaches the file to the focused chat's composer.
+ * Available only when a workspace with a focused chat is available.
+ */
+function useAddFileToChat({
+  serverId,
+  workspaceId,
+}: Pick<SidebarContentProps, "serverId" | "workspaceId">) {
+  const workspaceKey = workspaceId
+    ? buildWorkspaceTabPersistenceKey({ serverId, workspaceId })
+    : null;
+  const layout = useWorkspaceLayoutStore((state) =>
+    workspaceKey ? state.layoutByWorkspace[workspaceKey] : undefined,
+  );
+  const focusTab = useWorkspaceLayoutStore((state) => state.focusTab);
+  const focusedChat = useMemo(
+    () => resolveFocusedChatTarget({ serverId, layout }),
+    [serverId, layout],
+  );
+  const addFile = useCallback(
+    (filePath: string) => {
+      if (!focusedChat || !workspaceKey) {
+        return;
+      }
+      void useDraftStore.getState().attachWorkspaceFile({
+        draftKey: focusedChat.draftKey,
+        attachment: createWorkspaceFileAttachment({ path: filePath }),
+      });
+      focusTab(workspaceKey, focusedChat.tabId);
+    },
+    [focusTab, focusedChat, workspaceKey],
+  );
+  return { addFile, canAddToChat: focusedChat !== null };
+}
+
+function ChangedFilesPane({
+  serverId,
+  workspaceId,
+  workspaceRoot,
+  isOpen,
+  onOpenFile,
+}: Pick<
+  SidebarContentProps,
+  "serverId" | "workspaceId" | "workspaceRoot" | "isOpen" | "onOpenFile"
+>) {
+  const { addFile, canAddToChat } = useAddFileToChat({ serverId, workspaceId });
+  return (
+    <GitDiffPane
+      serverId={serverId}
+      workspaceId={workspaceId}
+      cwd={workspaceRoot}
+      enabled={isOpen}
+      onOpenFile={onOpenFile}
+      onAddToChat={canAddToChat ? addFile : undefined}
+    />
+  );
+}
+
+function FilesPane({
+  serverId,
+  workspaceId,
+  workspaceRoot,
+  onOpenFile,
+}: Pick<SidebarContentProps, "serverId" | "workspaceId" | "workspaceRoot" | "onOpenFile">) {
+  const { addFile, canAddToChat } = useAddFileToChat({ serverId, workspaceId });
+  return (
+    <FileExplorerPane
+      serverId={serverId}
+      workspaceId={workspaceId}
+      workspaceRoot={workspaceRoot}
+      onOpenFile={onOpenFile}
+      onAddToChat={canAddToChat ? addFile : undefined}
+    />
   );
 }
 

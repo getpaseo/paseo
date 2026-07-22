@@ -31,11 +31,52 @@ import {
 } from "./helpers/workspace-ui";
 import { clickSettingsBackToWorkspace } from "./helpers/settings";
 import { getServerId } from "./helpers/server-id";
-import { injectDesktopBridge } from "./helpers/desktop-updates";
+import { injectDesktopBridge, waitForDesktopDaemonStartRequest } from "./helpers/desktop-updates";
 import { expectAppRoute } from "./helpers/route-assertions";
 import { installDaemonWebSocketGate } from "./helpers/daemon-websocket-gate";
 
 const LOADING_WORKSPACE_TEXT_PATTERN = /Loading workspace/i;
+type StartupPresentation = "splash" | "app";
+
+declare global {
+  interface Window {
+    __paseoStartupPresentationTrace?: StartupPresentation[];
+  }
+}
+
+async function observeStartupPresentation(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const trace: StartupPresentation[] = [];
+    window.__paseoStartupPresentationTrace = trace;
+
+    document.addEventListener("DOMContentLoaded", () => {
+      const recordPresentation = () => {
+        let presentation: StartupPresentation | null = null;
+        if (document.querySelector('[data-testid="startup-splash"]')) {
+          presentation = "splash";
+        } else if (
+          document.querySelector(
+            '[data-testid="workspace-header-title"], [data-testid="sidebar-settings"]',
+          )
+        ) {
+          presentation = "app";
+        }
+        if (presentation && trace.at(-1) !== presentation) {
+          trace.push(presentation);
+        }
+      };
+      new MutationObserver(recordPresentation).observe(document.documentElement, {
+        childList: true,
+        subtree: true,
+      });
+      recordPresentation();
+    });
+  });
+}
+
+async function getStartupPresentation(page: Page): Promise<StartupPresentation[]> {
+  return page.evaluate(() => window.__paseoStartupPresentationTrace?.slice() ?? []);
+}
 
 async function expectNoLoadingWorkspacePane(
   page: Page,
@@ -239,7 +280,9 @@ test.describe("Workspace navigation regression", () => {
     }
   });
 
-  test("refresh keeps the user on the same workspace route", async ({ page }) => {
+  test("refresh keeps one continuous splash before restoring the workspace route", async ({
+    page,
+  }) => {
     const serverId = getServerId();
     const daemonGate = await installDaemonWebSocketGate(page);
     const workspace = await seedWorkspace({ repoPrefix: "workspace-refresh-route-" });
@@ -254,6 +297,7 @@ test.describe("Workspace navigation regression", () => {
         serverId,
         manageBuiltInDaemon: true,
         hangDaemonStart: true,
+        desktopSettingsDelayMs: 250,
         daemonListen: `127.0.0.1:${getE2EDaemonPort()}`,
       });
       await openWorkspaceThroughApp(page, { serverId, workspace });
@@ -261,14 +305,16 @@ test.describe("Workspace navigation regression", () => {
       await expectWorkspaceTabVisible(page, agent.id);
       await expectWorkspaceLocation(page, { serverId, workspace });
 
+      await observeStartupPresentation(page);
       await daemonGate.drop();
       await page.reload();
-      await expect(page.getByTestId("startup-splash")).toBeVisible({ timeout: 30_000 });
+      await waitForDesktopDaemonStartRequest(page);
       daemonGate.restore();
       await waitForSidebarHydration(page);
 
       await expectWorkspaceLocation(page, { serverId, workspace });
       await waitForWorkspaceTabsVisible(page);
+      expect(await getStartupPresentation(page)).toEqual(["splash", "app"]);
     } finally {
       daemonGate.restore();
       await workspace.cleanup();

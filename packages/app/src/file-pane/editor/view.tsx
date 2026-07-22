@@ -1,11 +1,14 @@
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import type { HighlightStyle } from "@getpaseo/highlight";
+import type { WorkspaceFileLocation } from "@/workspace/file-open";
 import type { FileEditorModel } from "./model";
 
 export function FileEditorView(_props: {
   model: FileEditorModel;
   filename: string;
+  location: WorkspaceFileLocation;
+  navigationRevision: number;
   vimEnabled: boolean;
   theme: {
     background: string;

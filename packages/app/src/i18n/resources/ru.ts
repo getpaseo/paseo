@@ -369,6 +369,13 @@ export const ru: TranslationResources = {
       copyBranchName: "Копировать имя ветки",
       copied: "Скопировано",
     },
+    fileActions: {
+      openFile: "Открыть файл",
+      copyPath: "Копировать путь",
+      download: "Скачать",
+      addToChat: "Добавить в чат…",
+      moreActions: "Дополнительные действия",
+    },
     fileExplorer: {
       sort: {
         name: "Имя",
@@ -378,8 +385,6 @@ export const ru: TranslationResources = {
       context: {
         size: "Размер",
         modified: "Модифицированный",
-        copyPath: "Копировать путь",
-        download: "Скачать",
       },
       actions: {
         back: "Назад",
@@ -593,19 +598,34 @@ export const ru: TranslationResources = {
     scripts: {
       title: "Скрипты",
       actions: {
+        chooseUrl: "Выбрать URL",
+        copyUrl: "Скопировать URL",
+        openService: "Просмотреть сервис",
+        restart: "Перезапустить",
         run: "Бегать",
-        view: "Вид",
+        stop: "Остановить",
+        view: "Открыть терминал",
       },
       accessibility: {
         trigger: "Скрипты Workspace",
-        openAt: "Откройте{{scriptName}}на{{label}}",
+        openService: "Просмотреть сервис {{scriptName}}",
         viewTerminal: "Посмотреть терминал{{scriptName}}",
         runScript: "Запустите скрипт{{scriptName}}",
+        stopScript: "Остановить{{scriptName}}",
+        restartScript: "Перезапустить{{scriptName}}",
+        copyUrl: "Скопировать URL {{scriptName}}",
+        chooseUrl: "Выбрать URL для {{scriptName}}",
         script: "скрипт{{scriptName}}",
+      },
+      routes: {
+        public: "Обратный прокси",
+        paseo: "Memorable",
+        direct: "Прямой адрес",
       },
       states: {
         exitCode: "выйти из{{code}}",
         startFailed: "Не удалось запустить{{scriptName}}",
+        stopFailed: "Не удалось остановить{{scriptName}}",
       },
     },
     git: {
@@ -796,14 +816,12 @@ export const ru: TranslationResources = {
         openDiff: "Открыть различия",
         commits: {
           title: "Коммиты",
-          legendLocal: "локально",
-          legendRemote: "на удалённом",
-          countLabel: "{{count}} коммитов впереди базы",
+          countLabel: "{{count}} последних коммитов",
           fileDiffEmpty: "Нет изменений для отображения",
           fileDiffError: "Не удалось загрузить различия файла",
           loading: "Загрузка коммитов…",
           loadError: "Не удалось загрузить коммиты",
-          empty: "Нет коммитов впереди базы",
+          empty: "Коммитов пока нет",
         },
       },
       openInEditor: {
@@ -936,6 +954,8 @@ export const ru: TranslationResources = {
       actions: {
         menu: "Действия Workspace",
         newWorkspace: "Новое рабочее пространство",
+        showMore: "Показать ещё",
+        showLess: "Показать меньше",
         createWorkspaceFor: "Создайте новое рабочее пространство для{{projectName}}.",
         copyPath: "Копировать путь",
         copyBranchName: "Скопировать название ветки",
@@ -993,10 +1013,6 @@ export const ru: TranslationResources = {
     refPicker: {
       startingRef: "Начальная ссылка",
       chooseStart: "Выберите, с чего начать",
-      checkoutHint: "Проверьте {{noun}} {{numberPrefix}}{{number}}?",
-      checkoutPr: "Проверьте {{noun}} {{numberPrefix}}{{number}}",
-      dismissCheckoutHint:
-        "Отклонить подсказку по оформлению заказа {{noun}} {{numberPrefix}}{{number}}",
       intoBase: "в {{baseRef}}",
       searching: "Идет поиск...",
       noMatchingRefs: "Нет подходящих ссылок.",

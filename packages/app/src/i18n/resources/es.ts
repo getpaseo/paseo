@@ -370,6 +370,13 @@ export const es: TranslationResources = {
       copyBranchName: "Copiar nombre de rama",
       copied: "Copiado",
     },
+    fileActions: {
+      openFile: "Abrir archivo",
+      copyPath: "Copiar ruta",
+      download: "Descargar",
+      addToChat: "Añadir al chat…",
+      moreActions: "Más acciones",
+    },
     fileExplorer: {
       sort: {
         name: "Nombre",
@@ -379,8 +386,6 @@ export const es: TranslationResources = {
       context: {
         size: "Tamaño",
         modified: "Modificado",
-        copyPath: "Copiar ruta",
-        download: "Descargar",
       },
       actions: {
         back: "Atrás",
@@ -594,19 +599,34 @@ export const es: TranslationResources = {
     scripts: {
       title: "Scripts",
       actions: {
+        chooseUrl: "Elegir URL",
+        copyUrl: "Copiar URL",
+        openService: "Ver servicio",
+        restart: "Reiniciar",
         run: "Correr",
-        view: "Vista",
+        stop: "Detener",
+        view: "Ver terminal",
       },
       accessibility: {
         trigger: "GuionesWorkspace",
-        openAt: "Abrir{{scriptName}}en{{label}}",
+        openService: "Ver servicio {{scriptName}}",
         viewTerminal: "Ver terminal{{scriptName}}",
         runScript: "Ejecute el script{{scriptName}}",
+        stopScript: "Detener{{scriptName}}",
+        restartScript: "Reiniciar{{scriptName}}",
+        copyUrl: "Copiar URL de{{scriptName}}",
+        chooseUrl: "Elegir URL para {{scriptName}}",
         script: "Guión{{scriptName}}",
+      },
+      routes: {
+        public: "Proxy inverso",
+        paseo: "Memorable",
+        direct: "Directa",
       },
       states: {
         exitCode: "salir de{{code}}",
         startFailed: "No se pudo iniciar{{scriptName}}",
+        stopFailed: "No se pudo detener{{scriptName}}",
       },
     },
     git: {
@@ -805,14 +825,12 @@ export const es: TranslationResources = {
         openDiff: "Abrir diferencias",
         commits: {
           title: "Commits",
-          legendLocal: "local",
-          legendRemote: "en remoto",
-          countLabel: "{{count}} commits por delante de la base",
+          countLabel: "{{count}} commits recientes",
           fileDiffEmpty: "No hay cambios para mostrar",
           fileDiffError: "Error al cargar el diff del archivo",
           loading: "Cargando commits…",
           loadError: "Error al cargar los commits",
-          empty: "No hay commits por delante de la base",
+          empty: "Aún no hay commits",
         },
       },
       openInEditor: {
@@ -945,6 +963,8 @@ export const es: TranslationResources = {
       actions: {
         menu: "AccionesWorkspace",
         newWorkspace: "Nuevo espacio de trabajo",
+        showMore: "Mostrar más",
+        showLess: "Mostrar menos",
         createWorkspaceFor: "Crea un nuevo espacio de trabajo para{{projectName}}",
         copyPath: "Copiar ruta",
         copyBranchName: "Copiar nombre de sucursal",
@@ -1002,9 +1022,6 @@ export const es: TranslationResources = {
     refPicker: {
       startingRef: "Árbitro inicial",
       chooseStart: "Elige por dónde empezar",
-      checkoutHint: "¿Mira {{noun}} {{numberPrefix}}{{number}}?",
-      checkoutPr: "Echa un vistazo a {{noun}} {{numberPrefix}}{{number}}",
-      dismissCheckoutHint: "Descartar la sugerencia de pago de {{noun}} {{numberPrefix}}{{number}}",
       intoBase: "en {{baseRef}}",
       searching: "Búsqueda...",
       noMatchingRefs: "No hay árbitros coincidentes.",

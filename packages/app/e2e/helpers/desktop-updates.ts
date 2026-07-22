@@ -65,6 +65,8 @@ export interface DesktopBridgeConfig {
   daemonListen?: string;
   /** Keep start_desktop_daemon pending to hold the desktop startup blocker open. */
   hangDaemonStart?: boolean;
+  /** Delay the desktop settings IPC response to exercise startup ordering. */
+  desktopSettingsDelayMs?: number;
   /**
    * Controls what dialog.ask returns when the daemon management confirm dialog
    * fires. True = confirm (proceed with the action), false = cancel. Defaults to
@@ -101,6 +103,7 @@ declare global {
     __capturedDialogCall: ConfirmDialogCall | undefined;
     __capturedDialogOpenCalls: Array<Record<string, unknown> | undefined>;
     __recordDesktopEditorOpen?: (input: DesktopEditorOpenRecord) => Promise<void>;
+    __desktopDaemonStartRequested?: boolean;
   }
 }
 
@@ -129,6 +132,7 @@ export async function injectDesktopBridge(page: Page, config: DesktopBridgeConfi
     let daemonRunning = true;
     let currentPid: number | null = cfg.daemonPid ?? null;
     let startCount = 0;
+    window.__desktopDaemonStartRequested = false;
 
     function buildDaemonStatus() {
       return {
@@ -145,6 +149,7 @@ export async function injectDesktopBridge(page: Page, config: DesktopBridgeConfi
     }
 
     function startDesktopDaemon() {
+      window.__desktopDaemonStartRequested = true;
       if (cfg.hangDaemonStart) {
         return new Promise(() => undefined);
       }
@@ -154,6 +159,13 @@ export async function injectDesktopBridge(page: Page, config: DesktopBridgeConfi
       // (after a stop) get a fresh PID so tests can observe the change.
       currentPid = (cfg.daemonPid ?? 10000) + (startCount - 1) * 1000;
       return buildDaemonStatus();
+    }
+
+    async function waitForDesktopSettingsResponse() {
+      const delayMs = cfg.desktopSettingsDelayMs ?? 0;
+      if (delayMs > 0) {
+        await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+      }
     }
 
     const desktopBridge: {
@@ -212,6 +224,7 @@ export async function injectDesktopBridge(page: Page, config: DesktopBridgeConfi
         }
 
         if (command === "get_desktop_settings") {
+          await waitForDesktopSettingsResponse();
           return {
             releaseChannel: "stable",
             daemon: { manageBuiltInDaemon: manageDaemon, keepRunningAfterQuit: true },
@@ -275,6 +288,17 @@ export async function injectDesktopBridge(page: Page, config: DesktopBridgeConfi
     window.__capturedDialogOpenCalls = [];
     (window as unknown as { paseoDesktop: unknown }).paseoDesktop = desktopBridge;
   }, config);
+}
+
+export async function waitForDesktopDaemonStartRequest(page: Page): Promise<void> {
+  await page.waitForFunction(() => window.__desktopDaemonStartRequested === true);
+  // Give the startup state two paints to expose any app → splash regression.
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  );
 }
 
 export async function waitForDirectoryDialog(

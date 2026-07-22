@@ -11,7 +11,12 @@ import {
   toAgentPersistenceHandle,
 } from "../persistence-hooks.js";
 
-const pendingAgentInitializations = new Map<string, Promise<ManagedAgent>>();
+interface PendingAgentInitialization {
+  promise: Promise<ManagedAgent>;
+  options: { broadcastTimeline: boolean };
+}
+
+const pendingAgentInitializations = new Map<string, PendingAgentInitialization>();
 
 export type AgentLoaderManager = Pick<
   AgentManager,
@@ -27,6 +32,7 @@ export interface EnsureAgentLoadedDeps {
   agentManager: AgentLoaderManager;
   agentStorage: AgentStorage;
   validProviders?: Iterable<AgentProvider>;
+  broadcastTimeline?: boolean;
   logger: Logger;
 }
 
@@ -58,6 +64,13 @@ export async function ensureAgentLoaded(
   deps: EnsureAgentLoadedDeps,
 ): Promise<ManagedAgent> {
   await deps.agentManager.waitForAgentClose?.(agentId);
+
+  const inflight = pendingAgentInitializations.get(agentId);
+  if (inflight) {
+    inflight.options.broadcastTimeline ||= deps.broadcastTimeline === true;
+    return inflight.promise;
+  }
+
   const existing =
     deps.agentManager.touchAgentActivity?.(agentId) ?? deps.agentManager.getAgent(agentId);
   if (existing) {
@@ -69,11 +82,15 @@ export async function ensureAgentLoaded(
   // before storage-backed resume begins.
   await deps.agentManager.waitForAgentClose?.(agentId);
 
-  const inflight = pendingAgentInitializations.get(agentId);
-  if (inflight) {
-    return inflight;
+  const laterInflight = pendingAgentInitializations.get(agentId);
+  if (laterInflight) {
+    laterInflight.options.broadcastTimeline ||= deps.broadcastTimeline === true;
+    return laterInflight.promise;
   }
 
+  const pendingOptions = {
+    broadcastTimeline: deps.broadcastTimeline === true,
+  };
   const initPromise = (async () => {
     const record = await deps.agentStorage.get(agentId);
     if (!record) {
@@ -111,17 +128,20 @@ export async function ensureAgentLoaded(
       deps.logger.info({ agentId, provider: record.provider }, "Agent created from stored config");
     }
 
-    await deps.agentManager.hydrateTimelineFromProvider(agentId);
+    await deps.agentManager.hydrateTimelineFromProvider(agentId, {
+      broadcast: () => pendingOptions.broadcastTimeline,
+    });
     return deps.agentManager.getAgent(agentId) ?? snapshot;
   })();
 
-  pendingAgentInitializations.set(agentId, initPromise);
+  const pending: PendingAgentInitialization = { promise: initPromise, options: pendingOptions };
+  pendingAgentInitializations.set(agentId, pending);
 
   try {
     return await initPromise;
   } finally {
     const current = pendingAgentInitializations.get(agentId);
-    if (current === initPromise) {
+    if (current === pending) {
       pendingAgentInitializations.delete(agentId);
     }
   }

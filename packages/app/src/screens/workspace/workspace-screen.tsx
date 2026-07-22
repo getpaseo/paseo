@@ -291,11 +291,13 @@ interface WorkspaceScreenProps {
   workspaceId: string;
   isRouteFocused?: boolean;
   recoveryRequested?: boolean;
+  recoveryAgentId?: string | null;
 }
 
 type WorkspaceScreenContentProps = WorkspaceScreenProps & {
   isRouteFocused: boolean;
   recoveryRequested: boolean;
+  recoveryAgentId: string | null;
 };
 
 function trimNonEmpty(value: string | null | undefined): string | null {
@@ -921,6 +923,7 @@ export const WorkspaceScreen = memo(function WorkspaceScreen({
   workspaceId,
   isRouteFocused,
   recoveryRequested,
+  recoveryAgentId,
 }: WorkspaceScreenProps) {
   const navigationFocused = useIsFocused();
   return (
@@ -929,6 +932,7 @@ export const WorkspaceScreen = memo(function WorkspaceScreen({
       workspaceId={workspaceId}
       isRouteFocused={isRouteFocused ?? navigationFocused}
       recoveryRequested={recoveryRequested ?? false}
+      recoveryAgentId={recoveryAgentId ?? null}
     />
   );
 });
@@ -1724,6 +1728,7 @@ function WorkspaceScreenContent({
   workspaceId,
   isRouteFocused,
   recoveryRequested,
+  recoveryAgentId,
 }: WorkspaceScreenContentProps) {
   const { t } = useTranslation();
   const _insets = useSafeAreaInsets();
@@ -1782,6 +1787,17 @@ function WorkspaceScreenContent({
   const openWorkspaceChildTabFocused = useWorkspaceLayoutStore(
     (state) => state.openChildTabFocused,
   );
+  // File targets stay identity-stable so the same path reuses its tab. Keep navigation
+  // requests separate so clicking an unchanged path:line can still recenter the pane.
+  const [fileNavigationRevisionByTabId, setFileNavigationRevisionByTabId] = useState<
+    Record<string, number>
+  >({});
+  const requestFileNavigation = useCallback((tabId: string) => {
+    setFileNavigationRevisionByTabId((current) => ({
+      ...current,
+      [tabId]: (current[tabId] ?? 0) + 1,
+    }));
+  }, []);
   const focusWorkspacePane = useWorkspaceLayoutStore((state) => state.focusPane);
   const hasHydratedWorkspaces = useSessionStore(
     (state) => state.sessions[normalizedServerId]?.hasHydratedWorkspaces ?? false,
@@ -1789,6 +1805,7 @@ function WorkspaceScreenContent({
   const workspaceRecovery = useWorkspaceRecovery({
     serverId: normalizedServerId,
     workspaceId: normalizedWorkspaceId,
+    agentId: recoveryAgentId,
     enabled: shouldInspectWorkspaceRecovery(
       hasHydratedWorkspaces,
       workspaceDescriptor,
@@ -2342,6 +2359,7 @@ function WorkspaceScreenContent({
         ? openWorkspaceChildTabFocused(persistenceKey, target, options.parentTabId)
         : openWorkspaceTabFocused(persistenceKey, target);
       if (tabId) {
+        requestFileNavigation(tabId);
         navigateToTabId(tabId);
       }
     },
@@ -2351,6 +2369,7 @@ function WorkspaceScreenContent({
       openWorkspaceChildTabFocused,
       openWorkspaceTabFocused,
       persistenceKey,
+      requestFileNavigation,
       showMobileAgent,
     ],
   );
@@ -2390,6 +2409,7 @@ function WorkspaceScreenContent({
         ? openWorkspaceChildTabFocused(persistenceKey, target, input.parentTabId)
         : openWorkspaceTabFocused(persistenceKey, target);
       if (tabId) {
+        requestFileNavigation(tabId);
         navigateToTabId(tabId);
       }
     },
@@ -2401,6 +2421,7 @@ function WorkspaceScreenContent({
       openWorkspaceChildTabFocused,
       openWorkspaceTabFocused,
       persistenceKey,
+      requestFileNavigation,
       splitWorkspacePaneEmpty,
       uiTabs,
       workspaceLayout,
@@ -3221,6 +3242,7 @@ function WorkspaceScreenContent({
         tab: input.tab,
         normalizedServerId,
         normalizedWorkspaceId,
+        fileNavigationRevision: fileNavigationRevisionByTabId[input.tab.tabId] ?? 0,
         onOpenTab: (target) => {
           if (!persistenceKey) {
             return;
@@ -3255,6 +3277,7 @@ function WorkspaceScreenContent({
     [
       handleCloseTabById,
       focusWorkspacePane,
+      fileNavigationRevisionByTabId,
       handleOpenWorkspaceFileFromPane,
       navigateToTabId,
       normalizedServerId,

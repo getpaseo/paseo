@@ -366,6 +366,13 @@ export const ar: TranslationResources = {
       copyBranchName: "نسخ اسم الفرع",
       copied: "تم النسخ",
     },
+    fileActions: {
+      openFile: "افتح الملف",
+      copyPath: "نسخ المسار",
+      download: "تحميل",
+      addToChat: "إضافة إلى الدردشة…",
+      moreActions: "المزيد من الإجراءات",
+    },
     fileExplorer: {
       sort: {
         name: "اسم",
@@ -375,8 +382,6 @@ export const ar: TranslationResources = {
       context: {
         size: "مقاس",
         modified: "معدل",
-        copyPath: "نسخ المسار",
-        download: "تحميل",
       },
       actions: {
         back: "خلف",
@@ -588,19 +593,34 @@ export const ar: TranslationResources = {
     scripts: {
       title: "البرامج النصية",
       actions: {
+        chooseUrl: "اختيار الرابط",
+        copyUrl: "نسخ الرابط",
+        openService: "عرض الخدمة",
+        restart: "إعادة التشغيل",
         run: "يجري",
-        view: "منظر",
+        stop: "إيقاف",
+        view: "عرض الوحدة الطرفية",
       },
       accessibility: {
         trigger: "البرامج النصية Workspace",
-        openAt: "افتح{{scriptName}}في{{label}}",
+        openService: "عرض خدمة {{scriptName}}",
         viewTerminal: "عرض محطة{{scriptName}}",
         runScript: "قم بتشغيل البرنامج النصي{{scriptName}}",
+        stopScript: "إيقاف{{scriptName}}",
+        restartScript: "إعادة تشغيل{{scriptName}}",
+        copyUrl: "نسخ عنوان URL لـ{{scriptName}}",
+        chooseUrl: "اختيار رابط {{scriptName}}",
         script: "البرنامج النصي{{scriptName}}",
+      },
+      routes: {
+        public: "الوكيل العكسي",
+        paseo: "Memorable",
+        direct: "مباشر",
       },
       states: {
         exitCode: "الخروج من{{code}}",
         startFailed: "فشل بدء تشغيل{{scriptName}}",
+        stopFailed: "فشل إيقاف{{scriptName}}",
       },
     },
     git: {
@@ -774,14 +794,12 @@ export const ar: TranslationResources = {
         openDiff: "فتح الفرق",
         commits: {
           title: "الإيداعات",
-          legendLocal: "محلي",
-          legendRemote: "على المستودع البعيد",
-          countLabel: "{{count}} إيداعات قبل الأساس",
+          countLabel: "{{count}} من الإيداعات الأخيرة",
           fileDiffEmpty: "لا توجد تغييرات لعرضها",
           fileDiffError: "تعذّر تحميل فروق الملف",
           loading: "جارٍ تحميل الإيداعات…",
           loadError: "تعذّر تحميل الإيداعات",
-          empty: "لا توجد إيداعات قبل الأساس",
+          empty: "لا توجد إيداعات بعد",
         },
       },
       openInEditor: {
@@ -914,6 +932,8 @@ export const ar: TranslationResources = {
       actions: {
         menu: "إجراءات Workspace",
         newWorkspace: "مساحة عمل جديدة",
+        showMore: "عرض المزيد",
+        showLess: "عرض أقل",
         createWorkspaceFor: "قم بإنشاء مساحة عمل جديدة لـ{{projectName}}",
         copyPath: "نسخ المسار",
         copyBranchName: "انسخ اسم الفرع",
@@ -971,9 +991,6 @@ export const ar: TranslationResources = {
     refPicker: {
       startingRef: "بدء المرجع",
       chooseStart: "اختر من أين تبدأ",
-      checkoutHint: "تحقق من {{noun}} {{numberPrefix}}{{number}}؟",
-      checkoutPr: "تحقق من {{noun}} {{numberPrefix}}{{number}}",
-      dismissCheckoutHint: "تجاهل تلميح الخروج {{noun}} {{numberPrefix}}{{number}}",
       intoBase: "إلى {{baseRef}}",
       searching: "جارٍ البحث...",
       noMatchingRefs: "لا توجد مراجع مطابقة.",

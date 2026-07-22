@@ -3,6 +3,7 @@ import path from "node:path";
 import { expect, test, type Page } from "./fixtures";
 import { openFileExplorer, openFileFromExplorer, expectFileTabOpen } from "./helpers/file-explorer";
 import { installDaemonWebSocketGate } from "./helpers/daemon-websocket-gate";
+import { openAgentRoute, seedMockAgentWorkspace } from "./helpers/mock-agent";
 
 const RED_PIXEL = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZQmcAAAAASUVORK5CYII=",
@@ -31,7 +32,69 @@ async function openWorkspaceFile(page: Page, filename: string): Promise<void> {
   await expectFileTabOpen(page, filename);
 }
 
+async function seedAgentWithFileLink(target: string) {
+  const session = await seedMockAgentWorkspace({
+    repoPrefix: "file-editing-chat-link-",
+    title: "Chat file link e2e",
+    initialPrompt: [
+      "Generate a title and a git branch name for a coding agent from the user prompt and attachments.",
+      "Return JSON only with fields 'title' and 'branch'.",
+      "",
+      "<user-prompt>",
+      `Open \`${target}\` now`,
+      "</user-prompt>",
+    ].join("\n"),
+  });
+  await writeFile(
+    path.join(session.cwd, "target.ts"),
+    Array.from({ length: 80 }, (_, index) => `export const line${index + 1} = ${index + 1};`).join(
+      "\n",
+    ),
+    "utf8",
+  );
+  return session;
+}
+
 test.describe("CodeMirror workspace file editing", () => {
+  test("opens an assistant file link at its referenced line", async ({ page }) => {
+    const target = "target.ts:42";
+    const session = await seedAgentWithFileLink(target);
+
+    try {
+      await openAgentRoute(page, session);
+
+      const fileLink = page.getByText(target, { exact: true });
+      await expect(fileLink).toBeVisible({ timeout: 15_000 });
+      await fileLink.click();
+
+      await expectFileTabOpen(page, "target.ts");
+      await expect(page.getByTestId("file-source-editor")).toBeVisible();
+      await expect(page.getByLabel("Line 42, column 1")).toBeVisible();
+      await expect(
+        page.getByTestId("file-source-editor").locator(".cm-line", { hasText: "line42 = 42" }),
+      ).toBeVisible();
+
+      const sourceEditor = editor(page);
+      await sourceEditor.click();
+      await sourceEditor.press("Control+Home");
+      await expect(page.getByLabel(/^Line 1, column \d+$/)).toBeVisible();
+
+      await page
+        .getByTestId(`workspace-tab-agent_${session.agentId}`)
+        .filter({ visible: true })
+        .click();
+      await expect(fileLink).toBeVisible();
+      await fileLink.click();
+
+      await expect(page.getByLabel("Line 42, column 1")).toBeVisible();
+      await expect(
+        page.getByTestId("file-source-editor").locator(".cm-line", { hasText: "line42 = 42" }),
+      ).toBeVisible();
+    } finally {
+      await session.cleanup();
+    }
+  });
+
   test("shows the full file path and keeps editor controls stable", async ({
     page,
     withWorkspace,
@@ -88,6 +151,27 @@ test.describe("CodeMirror workspace file editing", () => {
     const selection = editorHost.locator(".cm-selectionBackground").first();
     await expect(selection).toBeVisible();
     await expect(selection).toHaveCSS("background-color", "rgba(255, 255, 255, 0.2)");
+  });
+
+  test("applies the interface font to portaled tooltips", async ({ page, withWorkspace }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem("@paseo:app-settings", JSON.stringify({ uiFontFamily: "monospace" }));
+    });
+    const workspace = await withWorkspace({ prefix: "file-tooltip-font-" });
+    const relativePath = "tooltip-font.txt";
+    await writeFile(path.join(workspace.repoPath, relativePath), "tooltip font\n", "utf8");
+    await workspace.navigateTo();
+    await openFileExplorer(page);
+    await openFileFromExplorer(page, relativePath);
+    await expectFileTabOpen(page, relativePath);
+
+    await page.getByTestId(`workspace-tab-file_${relativePath}`).first().hover();
+
+    await expect(
+      page
+        .getByTestId(`workspace-tab-tooltip-file_${relativePath}`)
+        .getByText(relativePath, { exact: true }),
+    ).toHaveCSS("font-family", "monospace");
   });
 
   test("autosaves, saves immediately, resolves conflicts, and restores live updates after reconnect", async ({

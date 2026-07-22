@@ -194,6 +194,7 @@ interface ReorderPaneTabsInLayoutInput {
 export interface WorkspaceTabReconcileState {
   layout: WorkspaceLayout;
   pinnedAgentIds?: ReadonlySet<string> | null;
+  pendingAgentIds?: ReadonlySet<string> | null;
   hiddenAgentIds?: ReadonlySet<string> | null;
 }
 
@@ -1653,13 +1654,14 @@ interface EntityTabGroup {
 function applyPinnedAndHidden(input: {
   baseAgentIds: Set<string>;
   pinnedAgentIds: Set<string>;
+  pendingAgentIds: Set<string>;
   hiddenAgentIds: Set<string>;
   knownAgentIds: Set<string>;
 }): Set<string> {
-  const { baseAgentIds, pinnedAgentIds, hiddenAgentIds, knownAgentIds } = input;
+  const { baseAgentIds, pinnedAgentIds, pendingAgentIds, hiddenAgentIds, knownAgentIds } = input;
   const result = new Set(baseAgentIds);
   for (const agentId of pinnedAgentIds) {
-    if (knownAgentIds.has(agentId)) {
+    if (knownAgentIds.has(agentId) || pendingAgentIds.has(agentId)) {
       result.add(agentId);
     }
   }
@@ -1784,6 +1786,7 @@ export function reconcileWorkspaceTabs(
     findPaneById(nextLayout.root, nextLayout.focusedPaneId)?.focusedTabId ?? null;
   let reconciledFocusedTabId = originalFocusedTabId;
   const pinnedAgentIds = new Set(state.pinnedAgentIds ?? []);
+  const pendingAgentIds = new Set(state.pendingAgentIds ?? []);
   const hiddenAgentIds = new Set(state.hiddenAgentIds ?? []);
   const activeAgentIds = normalizeStringSet(snapshot.activeAgentIds);
   const autoOpenAgentIds = normalizeStringSet(snapshot.autoOpenAgentIds);
@@ -1795,12 +1798,14 @@ export function reconcileWorkspaceTabs(
   const visibleAgentIds = applyPinnedAndHidden({
     baseAgentIds: activeAgentIds,
     pinnedAgentIds,
+    pendingAgentIds,
     hiddenAgentIds,
     knownAgentIds,
   });
   const autoOpenSet = applyPinnedAndHidden({
     baseAgentIds: autoOpenAgentIds,
     pinnedAgentIds,
+    pendingAgentIds,
     hiddenAgentIds,
     knownAgentIds,
   });

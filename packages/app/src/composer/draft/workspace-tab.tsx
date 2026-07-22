@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import { Keyboard, ScrollView, Text, View } from "react-native";
+import { Keyboard, ScrollView, StyleSheet as RNStyleSheet, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import ReanimatedAnimated from "react-native-reanimated";
 import { StyleSheet } from "react-native-unistyles";
@@ -665,7 +665,11 @@ export function WorkspaceDraftAgentTab({
   });
 
   const inputAreaWrapperStyle = useMemo(
-    () => [styles.inputAreaWrapper, { paddingBottom: insets.bottom }, composerKeyboardStyle],
+    () => [
+      animatedStaticStyles.inputAreaWrapper,
+      { paddingBottom: insets.bottom },
+      composerKeyboardStyle,
+    ],
     [insets.bottom, composerKeyboardStyle],
   );
 
@@ -747,6 +751,7 @@ export function WorkspaceDraftAgentTab({
         <Composer
           agentId={tabId}
           serverId={serverId}
+          workspaceId={workspaceId}
           externalKeyboardShift
           isPaneFocused={isPaneFocused}
           onSubmitMessage={handleCreateFromInput}
@@ -761,6 +766,7 @@ export function WorkspaceDraftAgentTab({
           cwd={composerState.workingDir}
           clearDraft={draftInput.clear}
           autoFocus={shouldAutoFocusWorkspaceDraftComposer({ isPaneFocused, isSubmitting })}
+          autoFocusKey={String(draftInput.attachmentFocusRequestId)}
           onFocusInput={handleFocusInputCallback}
           commandDraftConfig={composerState.commandDraftConfig}
           agentControls={composerAgentControls}
@@ -771,6 +777,12 @@ export function WorkspaceDraftAgentTab({
     </FileDropZone>
   );
 }
+
+const animatedStaticStyles = RNStyleSheet.create({
+  inputAreaWrapper: {
+    width: "100%",
+  },
+});
 
 const styles = StyleSheet.create((theme) => ({
   container: {
@@ -794,10 +806,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   configSection: {
     gap: theme.spacing[3],
-  },
-  inputAreaWrapper: {
-    width: "100%",
-    backgroundColor: theme.colors.surface0,
   },
   importPillRow: {
     width: "100%",

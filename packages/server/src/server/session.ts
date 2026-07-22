@@ -30,12 +30,7 @@ import { CursorError } from "./pagination/cursor.js";
 import { SortablePager, type SortSpec } from "./pagination/sortable-pager.js";
 import type { SpeechToTextProvider, TextToSpeechProvider } from "./speech/speech-provider.js";
 import type { TurnDetectionProvider } from "./speech/turn-detection-provider.js";
-import {
-  buildConfigOverrides,
-  extractTimestamps,
-  isStoredAgentProviderAvailable,
-  toAgentPersistenceHandle,
-} from "./persistence-hooks.js";
+import { isStoredAgentProviderAvailable, toAgentPersistenceHandle } from "./persistence-hooks.js";
 import { ensureAgentLoaded, ensureUnarchivedAgentLoaded } from "./agent/agent-loading.js";
 import {
   formatSystemNotificationPrompt,
@@ -3183,16 +3178,18 @@ export class Session {
         if (!isStoredAgentProviderAvailable(record, registeredProviderIds)) {
           throw new Error(`Agent ${agentId} references unavailable provider '${record.provider}'`);
         }
-        const handle = toAgentPersistenceHandle(registeredProviderIds, record.persistence);
-        if (!handle) {
+        if (!toAgentPersistenceHandle(registeredProviderIds, record.persistence)) {
           throw new Error(`Agent ${agentId} cannot be refreshed because it lacks persistence`);
         }
-        snapshot = await this.agentManager.resumeAgentFromPersistence(
-          handle,
-          buildConfigOverrides(record),
-          agentId,
-          extractTimestamps(record),
-        );
+        // Share the loader's per-agent in-flight operation with timeline fetches.
+        // Unarchiving publishes the record before provider resume finishes, so
+        // the agent pane can otherwise race this request and resume it twice.
+        snapshot = await ensureAgentLoaded(agentId, {
+          agentManager: this.agentManager,
+          agentStorage: this.agentStorage,
+          broadcastTimeline: true,
+          logger: this.sessionLogger,
+        });
       }
       await this.agentManager.hydrateTimelineFromProvider(agentId, { broadcast: true });
       await this.agentUpdates.forwardLiveAgent(snapshot);

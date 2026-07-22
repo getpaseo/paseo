@@ -164,6 +164,53 @@ describe("DaemonStartService", () => {
     expect(runningSnapshots).toEqual([true, false]);
   });
 
+  it("stays running while deciding whether the managed daemon should start", async () => {
+    const fake = createFakeStore();
+    let resolveCondition: ((value: boolean) => void) | undefined;
+    let daemonStartCount = 0;
+    const service = new DaemonStartService({
+      store: fake.store,
+      startDesktopDaemon: async () => {
+        daemonStartCount += 1;
+        return makeStatus();
+      },
+    });
+
+    const startPromise = service.startIfEnabled({
+      shouldStart: () =>
+        new Promise<boolean>((resolve) => {
+          resolveCondition = resolve;
+        }),
+    });
+
+    expect(service.isRunning()).toBe(true);
+    expect(daemonStartCount).toBe(0);
+
+    resolveCondition?.(true);
+    await startPromise;
+
+    expect(service.isRunning()).toBe(false);
+    expect(daemonStartCount).toBe(1);
+  });
+
+  it("finishes without starting the daemon when management is disabled", async () => {
+    const fake = createFakeStore();
+    let daemonStartCount = 0;
+    const service = new DaemonStartService({
+      store: fake.store,
+      startDesktopDaemon: async () => {
+        daemonStartCount += 1;
+        return makeStatus();
+      },
+    });
+
+    const result = await service.startIfEnabled({ shouldStart: false });
+
+    expect(result).toEqual({ ok: true });
+    expect(service.isRunning()).toBe(false);
+    expect(daemonStartCount).toBe(0);
+  });
+
   it("clears the error and notifies subscribers when retry begins", async () => {
     const fake = createFakeStore();
     const startMock = vi
@@ -188,19 +235,27 @@ describe("DaemonStartService", () => {
     expect(service.getLastError()).toBeNull();
   });
 
-  it("recordError surfaces an external error and notifies subscribers", () => {
+  it("surfaces settings errors through the daemon startup state", async () => {
     const fake = createFakeStore();
     const service = new DaemonStartService({
       store: fake.store,
       startDesktopDaemon: async () => makeStatus(),
     });
-    const notifications = vi.fn();
-    service.subscribe(notifications);
 
-    service.recordError("settings file unreadable");
+    const result = await service.startIfEnabled({
+      shouldStart: async () => {
+        throw new Error("settings file unreadable");
+      },
+    });
 
-    expect(service.getLastError()).toBe("settings file unreadable");
-    expect(notifications).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({
+      ok: false,
+      error: "Failed to evaluate desktop daemon settings: settings file unreadable",
+    });
+    expect(service.getLastError()).toBe(
+      "Failed to evaluate desktop daemon settings: settings file unreadable",
+    );
+    expect(service.isRunning()).toBe(false);
   });
 
   it("stops notifying after a subscriber unsubscribes", async () => {

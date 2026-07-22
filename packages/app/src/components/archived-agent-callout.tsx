@@ -9,6 +9,7 @@ import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-
 import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
 import { Button } from "@/components/ui/button";
 import type { Theme } from "@/styles/theme";
+import { toErrorMessage } from "@/utils/error-messages";
 
 interface ArchivedAgentCalloutProps {
   serverId: string;
@@ -21,6 +22,7 @@ export function ArchivedAgentCallout({ serverId, agentId }: ArchivedAgentCallout
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
   const [isUnarchiving, setIsUnarchiving] = useState(false);
+  const [unarchiveError, setUnarchiveError] = useState<string | null>(null);
 
   const { style: keyboardAnimatedStyle } = useKeyboardShiftStyle({ mode: "translate" });
 
@@ -32,10 +34,11 @@ export function ArchivedAgentCallout({ serverId, agentId }: ArchivedAgentCallout
   const handleUnarchive = useCallback(async () => {
     if (!client || !isConnected || isUnarchiving) return;
     setIsUnarchiving(true);
+    setUnarchiveError(null);
     try {
       await client.refreshAgent(agentId);
     } catch (error) {
-      console.error("[ArchivedAgentCallout] Failed to unarchive agent:", error);
+      setUnarchiveError(toErrorMessage(error));
       setIsUnarchiving(false);
     }
   }, [client, isConnected, isUnarchiving, agentId]);
@@ -44,16 +47,23 @@ export function ArchivedAgentCallout({ serverId, agentId }: ArchivedAgentCallout
     <Animated.View style={containerStyle}>
       <View style={styles.inputAreaContainer}>
         <View style={styles.inputAreaContent}>
-          <View style={styles.callout}>
-            <Text style={styles.calloutText}>{t("agentPanel.archived.callout")}</Text>
-            <Button
-              size="sm"
-              variant="secondary"
-              onPress={handleUnarchive}
-              disabled={!isConnected || isUnarchiving}
-            >
-              {t("agentPanel.archived.unarchive")}
-            </Button>
+          <View style={styles.calloutStack}>
+            <View style={styles.callout}>
+              <Text style={styles.calloutText}>{t("agentPanel.archived.callout")}</Text>
+              <Button
+                size="sm"
+                variant="secondary"
+                onPress={handleUnarchive}
+                disabled={!isConnected || isUnarchiving}
+              >
+                {t("agentPanel.archived.unarchive")}
+              </Button>
+            </View>
+            {unarchiveError ? (
+              <Text style={styles.errorText} testID="agent-unarchive-error">
+                {unarchiveError}
+              </Text>
+            ) : null}
           </View>
         </View>
       </View>
@@ -97,8 +107,16 @@ const styles = StyleSheet.create((theme: Theme) => ({
       md: theme.spacing[6],
     },
   },
+  calloutStack: {
+    gap: theme.spacing[2],
+  },
   calloutText: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.base,
+  },
+  errorText: {
+    color: theme.colors.statusDanger,
+    fontSize: theme.fontSize.sm,
+    textAlign: "center",
   },
 })) as unknown as Record<string, object>;

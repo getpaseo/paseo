@@ -370,6 +370,13 @@ export const ptBR: TranslationResources = {
       copyBranchName: "Copiar nome da branch",
       copied: "Copiado",
     },
+    fileActions: {
+      openFile: "Abrir arquivo",
+      copyPath: "Copiar caminho",
+      download: "Baixar",
+      addToChat: "Adicionar ao chat…",
+      moreActions: "Mais ações",
+    },
     fileExplorer: {
       sort: {
         name: "Nome",
@@ -379,8 +386,6 @@ export const ptBR: TranslationResources = {
       context: {
         size: "Tamanho",
         modified: "Modificado",
-        copyPath: "Copiar caminho",
-        download: "Baixar",
       },
       actions: {
         back: "Voltar",
@@ -591,19 +596,34 @@ export const ptBR: TranslationResources = {
     scripts: {
       title: "Scripts",
       actions: {
+        chooseUrl: "Escolher URL",
+        copyUrl: "Copiar URL",
+        openService: "Ver serviço",
+        restart: "Reiniciar",
         run: "Executar",
-        view: "Ver",
+        stop: "Parar",
+        view: "Ver terminal",
       },
       accessibility: {
         trigger: "Scripts do workspace",
-        openAt: "Abrir {{scriptName}} em {{label}}",
+        openService: "Ver serviço {{scriptName}}",
         viewTerminal: "Ver terminal de {{scriptName}}",
         runScript: "Executar script {{scriptName}}",
+        stopScript: "Parar {{scriptName}}",
+        restartScript: "Reiniciar {{scriptName}}",
+        copyUrl: "Copiar URL de {{scriptName}}",
+        chooseUrl: "Escolher URL para {{scriptName}}",
         script: "script {{scriptName}}",
+      },
+      routes: {
+        public: "Proxy reverso",
+        paseo: "Memorable",
+        direct: "Direta",
       },
       states: {
         exitCode: "saída {{code}}",
         startFailed: "Falha ao iniciar {{scriptName}}",
+        stopFailed: "Falha ao parar {{scriptName}}",
       },
     },
     git: {
@@ -796,14 +816,12 @@ export const ptBR: TranslationResources = {
         openDiff: "Abrir diff",
         commits: {
           title: "Commits",
-          legendLocal: "local",
-          legendRemote: "no remoto",
-          countLabel: "{{count}} commits à frente da base",
+          countLabel: "{{count}} commits recentes",
           fileDiffEmpty: "Nenhuma alteração para exibir",
           fileDiffError: "Falha ao carregar diff do arquivo",
           loading: "Carregando commits…",
           loadError: "Falha ao carregar commits",
-          empty: "Nenhum commit à frente da base",
+          empty: "Ainda não há commits",
         },
       },
       openInEditor: {
@@ -936,6 +954,8 @@ export const ptBR: TranslationResources = {
       actions: {
         menu: "Ações do workspace",
         newWorkspace: "Novo workspace",
+        showMore: "Mostrar mais",
+        showLess: "Mostrar menos",
         createWorkspaceFor: "Criar um novo workspace para {{projectName}}",
         copyPath: "Copiar caminho",
         copyBranchName: "Copiar nome da branch",
@@ -993,9 +1013,6 @@ export const ptBR: TranslationResources = {
     refPicker: {
       startingRef: "Ref inicial",
       chooseStart: "Escolha de onde começar",
-      checkoutHint: "Fazer checkout da {{noun}} {{numberPrefix}}{{number}}?",
-      checkoutPr: "Fazer checkout da {{noun}} {{numberPrefix}}{{number}}",
-      dismissCheckoutHint: "Dispensar dica de checkout da {{noun}} {{numberPrefix}}{{number}}",
       intoBase: "em {{baseRef}}",
       searching: "Buscando...",
       noMatchingRefs: "Nenhuma ref correspondente.",

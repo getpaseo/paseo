@@ -44,7 +44,10 @@ test.describe("Worktree restore", () => {
     tempRepo = await createTempGitRepo("wt-restore-");
   });
 
-  async function createArchivedMissingWorktree(prefix: string) {
+  async function createArchivedMissingWorktree(
+    prefix: string,
+    options: { agentCount?: number; keepAgentsArchived?: boolean } = {},
+  ) {
     const project = await openProjectViaDaemon(worktreeClient, tempRepo.path);
     createdProjectIds.add(project.projectKey);
     const worktree = await createWorktreeViaDaemon(worktreeClient, {
@@ -53,11 +56,19 @@ test.describe("Worktree restore", () => {
     });
     createdProjectIds.add(worktree.projectKey);
     createdWorktreeDirectories.add(worktree.workspaceDirectory);
-    const agent = await createIdleAgent(client, {
-      cwd: worktree.workspaceDirectory,
-      workspaceId: worktree.workspaceId,
-      title: `${prefix}-${randomUUID().slice(0, 8)}`,
-    });
+    const agents = await Promise.all(
+      Array.from({ length: options.agentCount ?? 1 }, () =>
+        createIdleAgent(client, {
+          cwd: worktree.workspaceDirectory,
+          workspaceId: worktree.workspaceId,
+          title: `${prefix}-${randomUUID().slice(0, 8)}`,
+        }),
+      ),
+    );
+    const agent = agents[0];
+    if (!agent) {
+      throw new Error("Expected at least one archived-worktree agent");
+    }
 
     await archiveWorkspaceFromDaemon(worktreeClient, worktree.workspaceDirectory);
     await expect
@@ -67,11 +78,21 @@ test.describe("Worktree restore", () => {
     // Match the remote cloud-race record: workspace archived and absent, while
     // the surviving closed agent record is not agent-archived. Refresh now owns
     // only agent lifecycle, so its expected cwd failure cannot recover the workspace.
-    await client.refreshAgent(agent.id).catch(() => undefined);
-    await expect.poll(() => fetchAgentArchivedAt(client, agent.id), { timeout: 30_000 }).toBeNull();
+    if (options.keepAgentsArchived) {
+      for (const archivedAgent of agents) {
+        await expect
+          .poll(() => fetchAgentArchivedAt(client, archivedAgent.id), { timeout: 30_000 })
+          .not.toBeNull();
+      }
+    } else {
+      await client.refreshAgent(agent.id).catch(() => undefined);
+      await expect
+        .poll(() => fetchAgentArchivedAt(client, agent.id), { timeout: 30_000 })
+        .toBeNull();
+    }
     expect(existsSync(worktree.workspaceDirectory)).toBe(false);
 
-    return { agent, worktree };
+    return { agent, agents, worktree };
   }
 
   async function openArchivedWorkspaceFromHistory(page: Page, prefix: string) {
@@ -239,6 +260,54 @@ test.describe("Worktree restore", () => {
     await expect(
       page.getByTestId("workspace-header-title").filter({ visible: true }).first(),
     ).toHaveText(switchedBranch, { timeout: 30_000 });
+  });
+
+  test("recovers the selected agent with its workspace and later rescues another archived agent", async ({
+    page,
+  }) => {
+    const { agents, worktree } = await createArchivedMissingWorktree("restore-agents", {
+      agentCount: 2,
+      keepAgentsArchived: true,
+    });
+    const [firstAgent, secondAgent] = agents;
+    if (!firstAgent || !secondAgent) {
+      throw new Error("Expected two archived agents");
+    }
+
+    await gotoAppShell(page);
+    await waitForSidebarHydration(page);
+    await openSessions(page);
+    await page.getByTestId(`agent-row-${getServerId()}-${firstAgent.id}`).click();
+
+    await expect(page.getByText("Workspace archived", { exact: true })).toBeVisible({
+      timeout: 30_000,
+    });
+    await page.getByTestId("workspace-recovery-action").click();
+    await expect
+      .poll(() => existsSync(worktree.workspaceDirectory), { timeout: 30_000 })
+      .toBe(true);
+    await expect(
+      page.getByTestId(`workspace-tab-agent_${firstAgent.id}`).filter({ visible: true }).first(),
+    ).toBeVisible({ timeout: 30_000 });
+    await expect
+      .poll(() => fetchAgentArchivedAt(client, firstAgent.id), { timeout: 30_000 })
+      .toBeNull();
+    await expect(page.getByRole("button", { name: "Unarchive" })).toHaveCount(0, {
+      timeout: 30_000,
+    });
+
+    await openSessions(page);
+    await page.getByTestId(`agent-row-${getServerId()}-${secondAgent.id}`).click();
+    await expect(
+      page.getByTestId(`workspace-tab-agent_${secondAgent.id}`).filter({ visible: true }).first(),
+    ).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole("button", { name: "Unarchive" })).toBeVisible({
+      timeout: 30_000,
+    });
+    await page.getByRole("button", { name: "Unarchive" }).click();
+    await expect
+      .poll(() => fetchAgentArchivedAt(client, secondAgent.id), { timeout: 30_000 })
+      .toBeNull();
   });
 
   test("restore failure stays visible and permits a successful retry", async ({ page }) => {
