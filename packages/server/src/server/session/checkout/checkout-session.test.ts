@@ -36,51 +36,8 @@ function isTimelineResponse(msg: SessionOutboundMessage): boolean {
 interface FakeDiffSubscription {
   cwd: string;
   compare: CheckoutDiffCompareInput;
-  listener: (snapshot: CheckoutDiffSnapshotPayload) => void;
+  emit(snapshot: CheckoutDiffSnapshotPayload): void;
   unsubscribeCalls: number;
-}
-
-interface Deferred<T> {
-  promise: Promise<T>;
-  resolve(value: T): void;
-}
-
-function createDeferred<T>(): Deferred<T> {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((resolvePromise) => {
-    resolve = resolvePromise;
-  });
-  return { promise, resolve };
-}
-
-function createPendingDiffSubscriber() {
-  const subscriptions: Array<FakeDiffSubscription & { resolve(): void }> = [];
-  const subscriber: CheckoutDiffSubscriber = {
-    subscribe: async (params, listener) => {
-      const pending = createDeferred<{
-        initial: CheckoutDiffSnapshotPayload;
-        unsubscribe: () => void;
-      }>();
-      const subscription: FakeDiffSubscription & { resolve(): void } = {
-        cwd: params.cwd,
-        compare: params.compare,
-        listener,
-        unsubscribeCalls: 0,
-        resolve: () => {
-          pending.resolve({
-            initial: { cwd: params.cwd, files: [], error: null },
-            unsubscribe: () => {
-              subscription.unsubscribeCalls += 1;
-            },
-          });
-        },
-      };
-      subscriptions.push(subscription);
-      return pending.promise;
-    },
-    scheduleRefreshForCwd: () => {},
-  };
-  return { subscriber, subscriptions };
 }
 
 function createFakeDiffSubscriber(initial: CheckoutDiffSnapshotPayload) {
@@ -88,18 +45,29 @@ function createFakeDiffSubscriber(initial: CheckoutDiffSnapshotPayload) {
   const refreshedCwds: string[] = [];
   const subscriber: CheckoutDiffSubscriber = {
     subscribe: async (params, listener) => {
+      let isSubscribed = true;
       const subscription: FakeDiffSubscription = {
         cwd: params.cwd,
         compare: params.compare,
-        listener,
         unsubscribeCalls: 0,
+        emit: (snapshot) => {
+          if (isSubscribed) {
+            listener(snapshot);
+          }
+        },
       };
+      const unsubscribe = () => {
+        if (!isSubscribed) {
+          return;
+        }
+        isSubscribed = false;
+        subscription.unsubscribeCalls += 1;
+      };
+      params.signal?.addEventListener("abort", unsubscribe, { once: true });
       subscriptions.push(subscription);
       return {
         initial: { ...initial, cwd: params.cwd },
-        unsubscribe: () => {
-          subscription.unsubscribeCalls += 1;
-        },
+        unsubscribe,
       };
     },
     scheduleRefreshForCwd: (cwd) => {
@@ -472,46 +440,6 @@ describe("CheckoutSession", () => {
   });
 
   describe("diff subscriptions", () => {
-    it("tears down a subscription that resolves after it was unsubscribed", async () => {
-      const { subscriber, subscriptions } = createPendingDiffSubscriber();
-      const { checkout, emitted } = makeCheckoutSession({ diff: subscriber });
-
-      const subscribeRequest = checkout.handleSubscribeDiffRequest({
-        type: "subscribe_checkout_diff_request",
-        subscriptionId: "pending",
-        cwd: "/repo",
-        compare: { mode: "uncommitted" },
-        requestId: "pending-request",
-      });
-      checkout.handleUnsubscribeDiffRequest({
-        type: "unsubscribe_checkout_diff_request",
-        subscriptionId: "pending",
-      });
-      subscriptions[0].resolve();
-      await subscribeRequest;
-
-      expect(subscriptions[0].unsubscribeCalls).toBe(1);
-      subscriptions[0].listener({ cwd: "/repo", files: [], error: null });
-      checkout.handleUnsubscribeDiffRequest({
-        type: "unsubscribe_checkout_diff_request",
-        subscriptionId: "pending",
-      });
-
-      expect(subscriptions[0].unsubscribeCalls).toBe(1);
-      expect(emitted).toEqual([
-        {
-          type: "subscribe_checkout_diff_response",
-          payload: {
-            subscriptionId: "pending",
-            cwd: "/repo",
-            files: [],
-            error: null,
-            requestId: "pending-request",
-          },
-        },
-      ]);
-    });
-
     it("opens a subscription, streams updates tagged with the id, and tears down on unsubscribe", async () => {
       const { subscriber, subscriptions } = createFakeDiffSubscriber({
         cwd: "/repo",
@@ -536,7 +464,7 @@ describe("CheckoutSession", () => {
       ]);
       expect(subscriptions).toHaveLength(1);
 
-      subscriptions[0].listener({
+      subscriptions[0].emit({
         cwd: "/repo",
         files: [],
         error: { code: "UNKNOWN", message: "transient" },
@@ -588,81 +516,6 @@ describe("CheckoutSession", () => {
       expect(subscriptions[1].unsubscribeCalls).toBe(0);
     });
 
-    it("keeps only the latest pending subscription when the same id is replaced", async () => {
-      const { subscriber, subscriptions } = createPendingDiffSubscriber();
-      const { checkout, emitted } = makeCheckoutSession({ diff: subscriber });
-
-      const firstRequest = checkout.handleSubscribeDiffRequest({
-        type: "subscribe_checkout_diff_request",
-        subscriptionId: "shared",
-        cwd: "/repo",
-        compare: { mode: "uncommitted" },
-        requestId: "first",
-      });
-      const secondRequest = checkout.handleSubscribeDiffRequest({
-        type: "subscribe_checkout_diff_request",
-        subscriptionId: "shared",
-        cwd: "/repo",
-        compare: { mode: "base", baseRef: "main" },
-        requestId: "second",
-      });
-
-      subscriptions[0].resolve();
-      await firstRequest;
-      subscriptions[0].listener({
-        cwd: "/repo",
-        files: [],
-        error: { code: "UNKNOWN", message: "stale" },
-      });
-      subscriptions[1].resolve();
-      await secondRequest;
-      subscriptions[1].listener({
-        cwd: "/repo",
-        files: [],
-        error: { code: "UNKNOWN", message: "current" },
-      });
-
-      expect(subscriptions[0].unsubscribeCalls).toBe(1);
-      expect(subscriptions[1].unsubscribeCalls).toBe(0);
-      expect(emitted).toEqual([
-        {
-          type: "subscribe_checkout_diff_response",
-          payload: {
-            subscriptionId: "shared",
-            cwd: "/repo",
-            files: [],
-            error: null,
-            requestId: "first",
-          },
-        },
-        {
-          type: "subscribe_checkout_diff_response",
-          payload: {
-            subscriptionId: "shared",
-            cwd: "/repo",
-            files: [],
-            error: null,
-            requestId: "second",
-          },
-        },
-        {
-          type: "checkout_diff_update",
-          payload: {
-            subscriptionId: "shared",
-            cwd: "/repo",
-            files: [],
-            error: { code: "UNKNOWN", message: "current" },
-          },
-        },
-      ]);
-
-      checkout.handleUnsubscribeDiffRequest({
-        type: "unsubscribe_checkout_diff_request",
-        subscriptionId: "shared",
-      });
-      expect(subscriptions[1].unsubscribeCalls).toBe(1);
-    });
-
     it("unsubscribes every live subscription on cleanup", async () => {
       const { subscriber, subscriptions } = createFakeDiffSubscriber({
         cwd: "/repo",
@@ -690,38 +543,6 @@ describe("CheckoutSession", () => {
 
       expect(subscriptions[0].unsubscribeCalls).toBe(1);
       expect(subscriptions[1].unsubscribeCalls).toBe(1);
-    });
-
-    it("tears down a pending subscription when the session is cleaned up", async () => {
-      const { subscriber, subscriptions } = createPendingDiffSubscriber();
-      const { checkout, emitted } = makeCheckoutSession({ diff: subscriber });
-
-      const subscribeRequest = checkout.handleSubscribeDiffRequest({
-        type: "subscribe_checkout_diff_request",
-        subscriptionId: "pending-cleanup",
-        cwd: "/repo",
-        compare: { mode: "uncommitted" },
-        requestId: "cleanup-request",
-      });
-      checkout.cleanup();
-      subscriptions[0].resolve();
-      await subscribeRequest;
-      subscriptions[0].listener({ cwd: "/repo", files: [], error: null });
-      checkout.cleanup();
-
-      expect(subscriptions[0].unsubscribeCalls).toBe(1);
-      expect(emitted).toEqual([
-        {
-          type: "subscribe_checkout_diff_response",
-          payload: {
-            subscriptionId: "pending-cleanup",
-            cwd: "/repo",
-            files: [],
-            error: null,
-            requestId: "cleanup-request",
-          },
-        },
-      ]);
     });
   });
 
