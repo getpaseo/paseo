@@ -375,6 +375,8 @@ export const ar: TranslationResources = {
     },
     actions: {
       refresh: "تحديث الجلسات",
+      resumeOriginal: "استئناف الأصل",
+      continueHere: "المتابعة هنا",
     },
     preview: {
       untitledSession: "جلسة بلا عنوان",
@@ -387,6 +389,8 @@ export const ar: TranslationResources = {
     },
     row: {
       importing: "جارٍ الاستيراد...",
+      continuing: "جارٍ المتابعة...",
+      continueHint: "ينشئ محادثة جديدة هنا. تبقى ملفات المصدر وتغييراته في شجرة العمل المصدرية.",
     },
   },
   workspace: {

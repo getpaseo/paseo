@@ -5823,8 +5823,107 @@ describe("Codex importable sessions", () => {
           capabilities: { experimentalApi: true, mcpServerOpenaiFormElicitation: true },
         },
       },
-      { method: "thread/list", params: { limit: 50, cwd: "/workspace/project-a" } },
+      {
+        method: "thread/list",
+        params: {
+          limit: 50,
+          sourceKinds: ["cli", "vscode", "appServer"],
+          sortKey: "updated_at",
+          cwd: "/workspace/project-a",
+        },
+      },
     ]);
+  });
+
+  test("forkImportableSession forks the native thread at the destination without resuming the source", async () => {
+    const calls: Array<{ method: string; params?: unknown }> = [];
+    const fakeClient = {
+      request: async (method: string, params?: unknown) => {
+        calls.push({ method, params });
+        if (method === "thread/fork") {
+          return {
+            thread: { id: "forked-thread", forkedFromId: "desktop-thread", turns: [] },
+            model: "gpt-5.4",
+            modelProvider: "openai",
+            serviceTier: null,
+            cwd: "/workspace/destination",
+            runtimeWorkspaceRoots: [],
+            instructionSources: [],
+            approvalPolicy: "never",
+            approvalsReviewer: "user",
+            sandbox: { type: "workspaceWrite" },
+          };
+        }
+        return {};
+      },
+      notify: () => {},
+      dispose: async () => {},
+    };
+    const provider = new CodexAppServerAgentClient(createTestLogger(), undefined, {
+      _createCodexClient: () => fakeClient,
+    });
+    castInternals<{ spawnAppServer: () => Promise<ChildProcessWithoutNullStreams> }>(
+      provider,
+    ).spawnAppServer = async () => {
+      const child = new EventEmitter() as ChildProcessWithoutNullStreams;
+      child.exitCode = 0;
+      child.signalCode = null;
+      child.stdin = new PassThrough();
+      child.stdout = new PassThrough();
+      child.stderr = new PassThrough();
+      child.kill = vi.fn(() => true) as ChildProcessWithoutNullStreams["kill"];
+      return child;
+    };
+    const resumedFork = {
+      async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+        yield* [];
+      },
+    } as AgentSession;
+    const resumeSession = vi.spyOn(provider, "resumeSession").mockResolvedValue(resumedFork);
+
+    const result = await provider.forkImportableSession!(
+      {
+        providerHandleId: "desktop-thread",
+        sourceCwd: "/workspace/source",
+        destinationCwd: "/workspace/destination",
+      },
+      {
+        config: createConfig({ cwd: "/workspace/destination" }),
+        storedConfig: createConfig({ cwd: "/workspace/destination" }),
+      },
+    );
+
+    expect(calls).toEqual([
+      {
+        method: "initialize",
+        params: {
+          clientInfo: {
+            name: "codex_app_server_daemon",
+            title: "Codex App Server Daemon",
+            version: "0.0.0",
+          },
+          capabilities: { experimentalApi: true, mcpServerOpenaiFormElicitation: true },
+        },
+      },
+      {
+        method: "thread/fork",
+        params: { threadId: "desktop-thread", cwd: "/workspace/destination" },
+      },
+    ]);
+    expect(resumeSession).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: "forked-thread", nativeHandle: "forked-thread" }),
+      expect.objectContaining({ cwd: "/workspace/destination" }),
+      undefined,
+    );
+    expect(result.persistence).toMatchObject({
+      sessionId: "forked-thread",
+      metadata: {
+        continuationSource: {
+          providerHandleId: "desktop-thread",
+          cwd: "/workspace/source",
+        },
+      },
+    });
   });
 });
 

@@ -5,6 +5,23 @@ import { i18n } from "@/i18n/i18next";
 export const PER_PROVIDER_LIMIT = 15;
 export const ALL_FILTER_VALUE = "__all__";
 
+export type ImportSessionAction = "resume_original" | "continue_here";
+
+/**
+ * The daemon stamps target-scoped listings with the operation it can safely
+ * perform. The app only decides which typed action to render; it never
+ * infers native fork support from a provider ID.
+ */
+export function resolveImportSessionAction(
+  entry: FetchRecentProviderSessionEntry,
+  hasTargetWorkspace: boolean,
+): ImportSessionAction | null {
+  if (!hasTargetWorkspace || entry.isTargetCwd === true) {
+    return "resume_original";
+  }
+  return entry.canContinueHere === true ? "continue_here" : null;
+}
+
 export function requiresImportSessionsHostUpgrade(input: {
   supportsSnapshot: boolean;
   workspaceId?: string | null;

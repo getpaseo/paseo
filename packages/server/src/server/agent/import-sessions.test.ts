@@ -13,10 +13,12 @@ import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import type { AgentTimelineItem } from "./agent-sdk-types.js";
 import { createPersistedWorkspaceRecord } from "../workspace-registry.js";
 import type { WorkspaceProvisioningService } from "../session/workspace-provisioning/workspace-provisioning-service.js";
+import type { WorkspaceGitService } from "../workspace-git-service.js";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import {
   type ImportSessionAgentManager,
   ImportSessionsRequestError,
+  continueProviderSession,
   importProviderSession,
   listImportableProviderSessions,
   normalizeImportAgentRequest,
@@ -53,6 +55,7 @@ function makeImportableSession(args: {
   lastActivityAt: string;
   firstPrompt?: string;
   lastPrompt?: string;
+  canContinueHere?: boolean;
 }): ManagedImportableProviderSession {
   const provider = args.provider ?? "codex";
   const cwd = args.cwd ?? "/tmp/project";
@@ -64,6 +67,7 @@ function makeImportableSession(args: {
     lastActivityAt: new Date(args.lastActivityAt),
     firstPromptPreview: args.firstPrompt ?? null,
     lastPromptPreview: args.lastPrompt ?? args.firstPrompt ?? null,
+    ...(args.canContinueHere !== undefined ? { canContinueHere: args.canContinueHere } : {}),
   };
 }
 
@@ -140,6 +144,16 @@ function makeRequest(
     requestId: "recent-provider-sessions",
     ...overrides,
   };
+}
+
+function makeGitSnapshot(repoRoot: string, mainRepoRoot: string | null = null) {
+  return {
+    git: {
+      isGit: true,
+      repoRoot,
+      mainRepoRoot,
+    },
+  } as Awaited<ReturnType<WorkspaceGitService["getSnapshot"]>>;
 }
 
 test("listImportableProviderSessions filters, sorts, limits, and projects importable sessions", async () => {
@@ -315,6 +329,75 @@ test("listImportableProviderSessions looks past already-imported rows to fill th
   });
   expect(result.entries.map((entry) => entry.providerHandleId)).toEqual(["available"]);
   expect(result.filteredAlreadyImportedCount).toBe(1);
+});
+
+test("listImportableProviderSessions scopes continuation candidates to the target Git working copy", async () => {
+  const targetCwd = "/repo/main";
+  const sameRepositoryWorktree = "/repo/feature";
+  const otherRepository = "/other-repo";
+  const listImportableSessions = vi.fn(async () => [
+    makeImportableSession({
+      sessionId: "same-cwd",
+      cwd: targetCwd,
+      title: "Resume here",
+      lastActivityAt: "2026-04-30T12:02:00.000Z",
+      canContinueHere: true,
+    }),
+    makeImportableSession({
+      sessionId: "same-repository",
+      cwd: sameRepositoryWorktree,
+      title: "Continue here",
+      lastActivityAt: "2026-04-30T12:01:00.000Z",
+      canContinueHere: true,
+    }),
+    makeImportableSession({
+      sessionId: "other-repository",
+      cwd: otherRepository,
+      title: "Do not offer",
+      lastActivityAt: "2026-04-30T12:03:00.000Z",
+      canContinueHere: true,
+    }),
+  ]);
+  const workspaceGitService = {
+    getSnapshot: async (cwd: string) => {
+      if (cwd === targetCwd) return makeGitSnapshot(targetCwd);
+      if (cwd === sameRepositoryWorktree) {
+        return makeGitSnapshot(sameRepositoryWorktree, targetCwd);
+      }
+      return makeGitSnapshot(otherRepository);
+    },
+  } satisfies Pick<WorkspaceGitService, "getSnapshot">;
+
+  const result = await listImportableProviderSessions({
+    request: makeRequest({ targetCwd, providers: ["codex"], limit: 2 }),
+    agentManager: {
+      listAgents: () => [],
+      listImportableSessions,
+    } satisfies Pick<AgentManager, "listAgents" | "listImportableSessions">,
+    agentStorage: {
+      list: async () => [],
+    } satisfies Pick<AgentStorage, "list">,
+    providerSnapshotManager: { getProviderLabel: () => "Codex" },
+    workspaceGitService,
+  });
+
+  expect(listImportableSessions).toHaveBeenCalledWith({
+    limit: 50,
+    providerFilter: new Set(["codex"]),
+    cwd: undefined,
+  });
+  expect(result.entries).toEqual([
+    expect.objectContaining({
+      providerHandleId: "same-cwd",
+      canContinueHere: true,
+      isTargetCwd: true,
+    }),
+    expect.objectContaining({
+      providerHandleId: "same-repository",
+      canContinueHere: true,
+      isTargetCwd: false,
+    }),
+  ]);
 });
 
 test("listImportableProviderSessions includes a provider session after its Paseo agent is archived", async () => {
@@ -514,6 +597,78 @@ test("normalizeImportAgentRequest accepts new and legacy import handle shapes", 
     provider: "codex",
     providerHandleId: "thread-2",
   });
+});
+
+test("continueProviderSession creates a destination agent without adopting the source handle", async () => {
+  const sourceCwd = "/repo/main";
+  const destinationCwd = "/repo/feature";
+  const snapshot = makeManagedAgent({
+    cwd: destinationCwd,
+    sessionId: "forked-thread",
+  });
+  const continueProviderSessionMock = vi.fn(async () => snapshot);
+  const agentManager = {
+    continueProviderSession: continueProviderSessionMock,
+    getTimeline: () => [{ type: "user_message", text: "Forked context" }],
+  } satisfies Pick<AgentManager, "continueProviderSession" | "getTimeline">;
+  const workspaceGitService = {
+    getSnapshot: async (cwd: string) =>
+      cwd === sourceCwd ? makeGitSnapshot(sourceCwd) : makeGitSnapshot(destinationCwd, sourceCwd),
+  } satisfies Pick<WorkspaceGitService, "getSnapshot">;
+
+  const result = await continueProviderSession({
+    request: {
+      type: "provider.session.continue.request",
+      requestId: "continue-thread",
+      providerId: "codex",
+      providerHandleId: "desktop-thread",
+      sourceCwd,
+      workspaceId: "ws-destination",
+    },
+    destinationCwd,
+    workspaceProvisioning: createImportWorkspace("ws-destination"),
+    workspaceGitService,
+    agentManager,
+  });
+
+  expect(continueProviderSessionMock).toHaveBeenCalledWith({
+    provider: "codex",
+    providerHandleId: "desktop-thread",
+    sourceCwd,
+    destinationCwd,
+    workspaceId: "ws-destination",
+  });
+  expect(result).toEqual({
+    snapshot,
+    timelineSize: 1,
+    createdWorkspace: null,
+  });
+});
+
+test("continueProviderSession rejects an unrelated destination before provider fork", async () => {
+  const continueProviderSessionMock = vi.fn();
+  await expect(
+    continueProviderSession({
+      request: {
+        type: "provider.session.continue.request",
+        requestId: "continue-unrelated",
+        providerId: "codex",
+        providerHandleId: "desktop-thread",
+        sourceCwd: "/repo-a",
+        workspaceId: "ws-destination",
+      },
+      destinationCwd: "/repo-b",
+      workspaceProvisioning: createImportWorkspace("ws-destination"),
+      workspaceGitService: {
+        getSnapshot: async (cwd: string) => makeGitSnapshot(cwd),
+      },
+      agentManager: {
+        continueProviderSession: continueProviderSessionMock,
+        getTimeline: () => [],
+      },
+    }),
+  ).rejects.toMatchObject({ code: "different_repository" });
+  expect(continueProviderSessionMock).not.toHaveBeenCalled();
 });
 
 function makeStoredProviderSession(input: {

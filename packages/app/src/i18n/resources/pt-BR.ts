@@ -378,6 +378,8 @@ export const ptBR: TranslationResources = {
     },
     actions: {
       refresh: "Atualizar sessões",
+      resumeOriginal: "Retomar original",
+      continueHere: "Continuar aqui",
     },
     preview: {
       untitledSession: "Sessão sem título",
@@ -390,6 +392,9 @@ export const ptBR: TranslationResources = {
     },
     row: {
       importing: "Importando...",
+      continuing: "Continuando...",
+      continueHint:
+        "Cria uma nova conversa aqui. Os arquivos e alterações de origem permanecem na worktree de origem.",
     },
   },
   workspace: {

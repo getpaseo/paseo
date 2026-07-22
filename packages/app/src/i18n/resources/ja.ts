@@ -378,6 +378,8 @@ export const ja: TranslationResources = {
     },
     actions: {
       refresh: "セッションを更新",
+      resumeOriginal: "元のセッションを再開",
+      continueHere: "ここで続ける",
     },
     preview: {
       untitledSession: "無題のセッション",
@@ -390,6 +392,9 @@ export const ja: TranslationResources = {
     },
     row: {
       importing: "インポート中...",
+      continuing: "続行中...",
+      continueHint:
+        "ここに新しい会話を作成します。ソースのファイルと変更は元の worktree に残ります。",
     },
   },
   workspace: {

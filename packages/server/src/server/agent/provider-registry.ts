@@ -483,6 +483,7 @@ function wrapClientProvider(
 ): AgentClient {
   const listImportableSessions = inner.listImportableSessions?.bind(inner);
   const importSession = inner.importSession?.bind(inner);
+  const forkImportableSession = inner.forkImportableSession?.bind(inner);
   const listFeatures = inner.listFeatures?.bind(inner);
 
   return {
@@ -560,6 +561,34 @@ function wrapClientProvider(
           const persistence = mapPersistenceHandle(provider, imported.persistence);
           if (!persistence) {
             throw new Error(`Provider '${provider}' import did not return persistence`);
+          }
+          return {
+            ...imported,
+            session: wrapSessionProvider(provider, imported.session),
+            config: {
+              ...imported.config,
+              provider,
+            },
+            persistence,
+          };
+        }
+      : undefined,
+    forkImportableSession: forkImportableSession
+      ? async (input, context) => {
+          const imported = await forkImportableSession(input, {
+            ...context,
+            config: {
+              ...context.config,
+              provider: inner.provider,
+            },
+            storedConfig: {
+              ...context.storedConfig,
+              provider: inner.provider,
+            },
+          });
+          const persistence = mapPersistenceHandle(provider, imported.persistence);
+          if (!persistence) {
+            throw new Error(`Provider '${provider}' fork did not return persistence`);
           }
           return {
             ...imported,

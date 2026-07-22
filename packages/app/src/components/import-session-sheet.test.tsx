@@ -163,12 +163,27 @@ vi.mock("@/hooks/use-providers-snapshot", () => ({
   }),
 }));
 
+const mockHostFeatures = vi.hoisted(() => ({
+  current: {
+    importSessionWorkspaceTarget: false,
+    providerSessionContinue: false,
+  },
+}));
+
+vi.mock("@/runtime/host-features", () => ({
+  useHostFeature: (
+    _serverId: string | null | undefined,
+    feature: keyof typeof mockHostFeatures.current,
+  ) => mockHostFeatures.current[feature] === true,
+}));
+
 interface RenderOptions {
   visible?: boolean;
   onClose?: () => void;
   onImportedAgent?: (agentId: string) => void;
   onImported?: (agent: Awaited<ReturnType<DaemonClient["importAgent"]>>) => void;
   cwd?: string | null;
+  workspaceId?: string | null;
   snapshot?: {
     entries?: ProviderSnapshotEntry[];
     supportsSnapshot?: boolean;
@@ -200,6 +215,7 @@ function renderSheet(
         client={client}
         serverId="server-1"
         cwd={cwd}
+        workspaceId={options?.workspaceId ?? undefined}
         onClose={options?.onClose ?? vi.fn()}
         onImportedAgent={options?.onImportedAgent ?? vi.fn()}
         onImported={options?.onImported}
@@ -284,6 +300,8 @@ describe("ImportSessionSheet", () => {
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();
+    mockHostFeatures.current.importSessionWorkspaceTarget = false;
+    mockHostFeatures.current.providerSessionContinue = false;
   });
 
   it("shows an update-host message when the daemon does not support provider snapshots", async () => {
@@ -515,6 +533,78 @@ describe("ImportSessionSheet", () => {
     });
     expect(onImportedAgent).toHaveBeenCalledWith("agent-imported");
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("continues a fork-capable session into the current workspace without importing its source handle", async () => {
+    mockHostFeatures.current.importSessionWorkspaceTarget = true;
+    mockHostFeatures.current.providerSessionContinue = true;
+    const fetchRecentProviderSessions = vi.fn(async () => ({
+      requestId: "recent-provider-sessions",
+      entries: [
+        createProviderSessionEntry({
+          providerId: "codex",
+          providerLabel: "Codex",
+          providerHandleId: "desktop-thread",
+          cwd: "/repo/another-worktree",
+          title: "Desktop task",
+          canContinueHere: true,
+          isTargetCwd: false,
+        }),
+        createProviderSessionEntry({
+          providerId: "claude",
+          providerLabel: "Claude Code",
+          providerHandleId: "claude-thread",
+          cwd: "/repo/another-worktree",
+          title: "Claude task",
+          canContinueHere: false,
+          isTargetCwd: false,
+        }),
+      ],
+    }));
+    const importAgent = vi.fn();
+    const continueProviderSession = vi.fn(async () => createImportedAgentSnapshot("agent-forked"));
+
+    renderSheet(
+      {
+        fetchRecentProviderSessions,
+        importAgent,
+        continueProviderSession,
+      } as Pick<
+        DaemonClient,
+        "fetchRecentProviderSessions" | "importAgent" | "continueProviderSession"
+      >,
+      {
+        workspaceId: "ws-destination",
+        snapshot: {
+          supportsSnapshot: true,
+          entries: [createSnapshotEntry("codex"), createSnapshotEntry("claude")],
+        },
+      },
+    );
+
+    await waitFor(() => {
+      expect(fetchRecentProviderSessions).toHaveBeenCalledWith({
+        targetCwd: "/repo/paseo",
+        providers: ["codex"],
+        limit: 15,
+      });
+    });
+    await screen.findByText(
+      "Creates a new conversation here. Source files and changes stay in the source worktree.",
+    );
+    expect(screen.queryByText("Claude task")).toBeNull();
+
+    fireEvent.click(await screen.findByTestId("import-session-session-codex-desktop-thread"));
+
+    await waitFor(() => {
+      expect(continueProviderSession).toHaveBeenCalledWith({
+        providerId: "codex",
+        providerHandleId: "desktop-thread",
+        sourceCwd: "/repo/another-worktree",
+        workspaceId: "ws-destination",
+      });
+    });
+    expect(importAgent).not.toHaveBeenCalled();
   });
 
   it("shows an import error state without closing when selected session import fails", async () => {
