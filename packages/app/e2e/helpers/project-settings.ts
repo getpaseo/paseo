@@ -57,7 +57,7 @@ export async function editWorktreeSetup(page: Page, setupCommands: string[]): Pr
 }
 
 export async function clickSaveProjectSettings(page: Page): Promise<void> {
-  await page.getByRole("button", { name: "Save" }).click();
+  await page.getByTestId("save-button").click();
 }
 
 export async function clickRetryProjectSettingsSave(page: Page): Promise<void> {
@@ -102,7 +102,7 @@ export async function expectWriteFailedCalloutActions(page: Page): Promise<void>
 }
 
 export async function expectSaveButtonDisabled(page: Page): Promise<void> {
-  await expect(page.getByRole("button", { name: "Save" })).toBeDisabled();
+  await expect(page.getByTestId("save-button")).toBeDisabled();
 }
 
 // --- Form-state assertions ---

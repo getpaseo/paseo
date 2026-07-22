@@ -668,6 +668,7 @@ describe("project command-center RPCs", () => {
               projectId: "prj_created_directory",
               projectDisplayName: "new-project",
               projectCustomName: null,
+              projectAppearance: null,
               projectRootPath: directoryPath,
               projectKind: "non_git",
             },
