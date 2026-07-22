@@ -89,8 +89,8 @@ export function FileActionsMenu({
   const actions = useMemo<FileAction[]>(() => {
     const availableFile = fileKind === "file" && fileExists;
     const next: FileAction[] = [];
-    // A deleted file still has changes worth opening, so this is not gated on existence.
-    if (onOpenDiff) {
+    // Not gated on `fileExists`: a deleted file still has changes worth opening.
+    if (fileKind === "file" && onOpenDiff) {
       next.push({
         key: "open-diff",
         label: t("workspace.git.diff.openChangesTab"),

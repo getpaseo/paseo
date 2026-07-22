@@ -106,10 +106,8 @@ import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { usePanelStore } from "@/stores/panel-store";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
-import {
-  buildWorkspaceTabPersistenceKey,
-  type WorkspaceWorkingDiffTabTarget,
-} from "@/stores/workspace-tabs-store";
+import { buildWorkspaceTabPersistenceKey } from "@/stores/workspace-tabs-store";
+import { useOpenChangesTab } from "@/git/use-open-changes-tab";
 import { buildWorkspaceExplorerStateKey } from "@/hooks/use-file-explorer-actions";
 import {
   formatDiffContentText,
@@ -1761,7 +1759,7 @@ interface SharedDiffViewProps {
         expandedPaths: string[];
         collapsedFolders: string[];
         reviewActions?: InlineReviewActions;
-        onOpenDiff: (path: string) => void;
+        onOpenDiff?: (path: string) => void;
         workspaceFileDragScope?: { serverId: string; workspaceId: string };
         onOpenFile?: (path: string) => void;
         onAddToChat?: (path: string) => void;
@@ -2458,7 +2456,6 @@ export function GitDiffPane({
   const overflowToggleStyle = useMemo(() => buildOverflowButtonStyle(), []);
 
   const toast = useToast();
-  const showMobileAgent = usePanelStore((state) => state.showMobileAgent);
   const openWorkspaceTabFocused = useWorkspaceLayoutStore((state) => state.openTabFocused);
   const diffTabPersistenceKey = useMemo(
     () => buildWorkspaceTabPersistenceKey({ serverId, workspaceId: workspaceId ?? cwd }),
@@ -2519,50 +2516,7 @@ export function GitDiffPane({
     hasUncommittedChanges,
   });
   const setDiffModeOverride = useSetDiffModeOverride();
-  const handleOpenWorkingDiff = useCallback(
-    (path: string) => {
-      if (!diffTabPersistenceKey) {
-        return;
-      }
-      const focusRequestId = Date.now();
-      let target: WorkspaceWorkingDiffTabTarget;
-      if (diffMode === "base") {
-        if (!baseRef) {
-          return;
-        }
-        target = {
-          kind: "working_diff",
-          focusPath: path,
-          focusRequestId,
-          mode: "base",
-          baseRef,
-          ignoreWhitespace: changesPreferences.hideWhitespace,
-        };
-      } else {
-        target = {
-          kind: "working_diff",
-          focusPath: path,
-          focusRequestId,
-          mode: "uncommitted",
-          baseRef: baseRef ?? null,
-          ignoreWhitespace: changesPreferences.hideWhitespace,
-        };
-      }
-      const tabId = openWorkspaceTabFocused(diffTabPersistenceKey, target);
-      if (tabId && isMobile) {
-        showMobileAgent();
-      }
-    },
-    [
-      baseRef,
-      changesPreferences.hideWhitespace,
-      diffMode,
-      diffTabPersistenceKey,
-      isMobile,
-      openWorkspaceTabFocused,
-      showMobileAgent,
-    ],
-  );
+  const handleOpenWorkingDiff = useOpenChangesTab({ serverId, workspaceId, cwd });
 
   const {
     files,

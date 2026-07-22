@@ -28,6 +28,7 @@ import { useCloseFileExplorerGesture } from "@/mobile-panels/gestures";
 import { MobilePanelOverlay } from "@/mobile-panels/presentation";
 import { HEADER_INNER_HEIGHT } from "@/constants/layout";
 import { GitDiffPane } from "@/git/diff-pane";
+import { useOpenChangesTab } from "@/git/use-open-changes-tab";
 import { FileExplorerPane } from "./file-explorer-pane";
 import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
 import { useHasOwnedWindowChromeObstruction, WindowChromeSafeArea } from "@/utils/desktop-window";
@@ -489,6 +490,7 @@ function FilesPane({
   onOpenFile,
 }: Pick<SidebarContentProps, "serverId" | "workspaceId" | "workspaceRoot" | "onOpenFile">) {
   const { addFile, canAddToChat } = useAddFileToChat({ serverId, workspaceId });
+  const openChangesTab = useOpenChangesTab({ serverId, workspaceId, cwd: workspaceRoot });
   return (
     <FileExplorerPane
       serverId={serverId}
@@ -496,6 +498,7 @@ function FilesPane({
       workspaceRoot={workspaceRoot}
       onOpenFile={onOpenFile}
       onAddToChat={canAddToChat ? addFile : undefined}
+      onOpenDiff={openChangesTab}
     />
   );
 }
