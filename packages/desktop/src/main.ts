@@ -802,11 +802,32 @@ async function createWindow(
 // App lifecycle
 // ---------------------------------------------------------------------------
 
+let agentNavigationWindowCreation: Promise<BrowserWindow> | null = null;
+
 function focusExistingWindowOnAgent(target: AgentDeepLinkTarget): void {
   const windows = BrowserWindow.getAllWindows();
   const mainWindow =
     BrowserWindow.getFocusedWindow() ?? windows.find((window) => window.isVisible()) ?? windows[0];
   if (!mainWindow || mainWindow.isDestroyed()) {
+    if (!agentNavigationWindowCreation) {
+      const creation = createWindow({
+        initialRoute: buildAgentDeepLinkRoute(target),
+        restoreWindowState: true,
+      });
+      agentNavigationWindowCreation = creation;
+      void creation
+        .catch((error) => log.error("[window] failed to create window for agent link", error))
+        .finally(() => {
+          if (agentNavigationWindowCreation === creation) {
+            agentNavigationWindowCreation = null;
+          }
+        });
+      return;
+    }
+
+    void agentNavigationWindowCreation
+      .then(() => focusExistingWindowOnAgent(target))
+      .catch((error) => log.error("[window] failed to deliver queued agent link", error));
     return;
   }
 

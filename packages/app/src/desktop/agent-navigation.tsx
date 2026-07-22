@@ -20,26 +20,47 @@ export function AgentNavigationListener() {
   });
 
   useEffect(() => {
+    const host = getDesktopHost();
+    const ready = host?.agentNavigation?.ready;
+    if (typeof host?.events?.on !== "function" || typeof ready !== "function") {
+      return;
+    }
+
     let disposed = false;
     let unlisten: (() => void) | null = null;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
 
-    void listenToDesktopEvent<OpenAgentEventPayload>("open-agent", openAgent)
-      .then(async (dispose) => {
+    const connect = async () => {
+      let dispose: (() => void) | null = null;
+      try {
+        dispose = await listenToDesktopEvent<OpenAgentEventPayload>("open-agent", openAgent);
         if (disposed) {
           dispose();
-          return undefined;
+          return;
         }
         unlisten = dispose;
-        const pending = await getDesktopHost()?.agentNavigation?.ready?.();
+        const pending = await ready();
         if (!disposed && pending) {
           openAgent(pending);
         }
-        return undefined;
-      })
-      .catch(() => undefined);
+      } catch {
+        dispose?.();
+        if (unlisten === dispose) {
+          unlisten = null;
+        }
+        if (!disposed) {
+          retryTimer = setTimeout(() => void connect(), 1_000);
+        }
+      }
+    };
+
+    void connect();
 
     return () => {
       disposed = true;
+      if (retryTimer) {
+        clearTimeout(retryTimer);
+      }
       unlisten?.();
     };
   }, [openAgent]);
