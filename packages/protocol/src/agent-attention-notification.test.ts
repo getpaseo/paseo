@@ -6,6 +6,22 @@ import {
 } from "./agent-attention-notification.js";
 
 describe("buildAgentAttentionNotificationPayload", () => {
+  it("carries the workspace needed to open a cold agent destination", () => {
+    const payload = buildAgentAttentionNotificationPayload({
+      reason: "finished",
+      serverId: "srv-1",
+      workspaceId: "workspace-1",
+      agentId: "agent-1",
+    });
+
+    expect(payload.data).toEqual({
+      serverId: "srv-1",
+      workspaceId: "workspace-1",
+      agentId: "agent-1",
+      reason: "finished",
+    });
+  });
+
   it("builds finished notifications from markdown assistant text", () => {
     const payload = buildAgentAttentionNotificationPayload({
       reason: "finished",

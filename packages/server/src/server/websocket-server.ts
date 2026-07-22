@@ -2156,6 +2156,7 @@ export class VoiceAssistantWebSocketServer {
     const notification = buildAgentAttentionNotificationPayload({
       reason: params.reason,
       serverId: this.serverId,
+      workspaceId: agent?.workspaceId,
       agentId: params.agentId,
       assistantMessage,
       permissionRequest: agent ? findLatestPermissionRequest(agent.pendingPermissions) : null,

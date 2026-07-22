@@ -1,4 +1,8 @@
-import { buildHostAgentDetailRoute, buildHostWorkspaceRoute } from "@/utils/host-routes";
+import {
+  buildHostAgentDetailRoute,
+  buildHostWorkspaceOpenRoute,
+  buildHostWorkspaceRoute,
+} from "@/utils/host-routes";
 import { expect, test, type Page } from "./fixtures";
 import { gotoAppShell, openSettings } from "./helpers/app";
 import {
@@ -34,6 +38,7 @@ import { getServerId } from "./helpers/server-id";
 import { injectDesktopBridge, waitForDesktopDaemonStartRequest } from "./helpers/desktop-updates";
 import { expectAppRoute } from "./helpers/route-assertions";
 import { installDaemonWebSocketGate } from "./helpers/daemon-websocket-gate";
+import { addOfflineHostAndReload } from "./helpers/hosts";
 
 const LOADING_WORKSPACE_TEXT_PATTERN = /Loading workspace/i;
 type StartupPresentation = "splash" | "app";
@@ -157,6 +162,43 @@ async function expectWorkspaceLocation(
 
 test.describe("Workspace navigation regression", () => {
   test.describe.configure({ timeout: 240_000 });
+
+  test("opens a notification's workspace on a different offline host", async ({ page }) => {
+    const target = {
+      serverId: "notification-offline-host",
+      workspaceId: "notification-workspace",
+      agentId: "notification-agent",
+    };
+
+    await gotoAppShell(page);
+    await addOfflineHostAndReload(page, {
+      serverId: target.serverId,
+      label: "Notification Host",
+    });
+    await expect(
+      page.getByTestId("sidebar-settings").filter({ visible: true }).first(),
+    ).toBeVisible({
+      timeout: 30_000,
+    });
+
+    await page.evaluate((data) => {
+      globalThis.dispatchEvent(
+        new CustomEvent("paseo:web-notification-click", {
+          detail: { data: { ...data, reason: "finished" } },
+          cancelable: true,
+        }),
+      );
+    }, target);
+
+    await expectAppRoute(
+      page,
+      buildHostWorkspaceOpenRoute(target.serverId, target.workspaceId, `agent:${target.agentId}`),
+      { timeout: 30_000 },
+    );
+    await expect(page.getByText("Connecting", { exact: true })).toBeVisible();
+    await expect(page.getByText("Notification Host", { exact: true })).toBeVisible();
+    await expect(page.getByText("Add a project", { exact: true })).toHaveCount(0);
+  });
 
   test("keeps one replacement draft after returning from settings and closing the last tab", async ({
     page,

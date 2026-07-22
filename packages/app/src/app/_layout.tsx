@@ -149,7 +149,7 @@ function PushNotificationRouter() {
     const serverId = target.serverId;
     const agentId = target.agentId;
     if (serverId && agentId) {
-      navigateToAgent({ serverId, agentId, pin: true });
+      navigateToAgent({ serverId, workspaceId: target.workspaceId, agentId, pin: true });
       return;
     }
 

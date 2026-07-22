@@ -506,6 +506,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         buildAgentAttentionNotificationPayload({
           reason: params.reason,
           serverId,
+          workspaceId: session?.agents?.get(params.agentId)?.workspaceId,
           agentId: params.agentId,
           assistantMessage: params.reason === "finished" ? assistantMessage : null,
           permissionRequest: params.reason === "permission" ? permissionRequest : null,
