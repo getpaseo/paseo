@@ -8,6 +8,7 @@ import {
   cacheProjectFavicon,
   readCachedProjectFavicon,
   removeCachedProjectFavicon,
+  serializeProjectAppearanceMutation,
 } from "./project-appearance.js";
 
 const PNG_1X1 = Buffer.from([
@@ -57,6 +58,30 @@ async function paseoHome(): Promise<string> {
 }
 
 describe("project favicon cache", () => {
+  it("serializes appearance mutations for one project", async () => {
+    const order: string[] = [];
+    let releaseFirst!: () => void;
+    let markFirstStarted!: () => void;
+    const firstStarted = new Promise<void>((resolve) => (markFirstStarted = resolve));
+    const firstGate = new Promise<void>((resolve) => (releaseFirst = resolve));
+
+    const first = serializeProjectAppearanceMutation("project-a", async () => {
+      order.push("first:start");
+      markFirstStarted();
+      await firstGate;
+      order.push("first:end");
+    });
+    await firstStarted;
+    const second = serializeProjectAppearanceMutation("project-a", async () => {
+      order.push("second");
+    });
+
+    expect(order).toEqual(["first:start"]);
+    releaseFirst();
+    await Promise.all([first, second]);
+    expect(order).toEqual(["first:start", "first:end", "second"]);
+  });
+
   it("downloads, validates, and reads a cached PNG", async () => {
     const home = await paseoHome();
     const icon = await cacheProjectFavicon({

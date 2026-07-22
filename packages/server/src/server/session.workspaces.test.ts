@@ -7445,6 +7445,7 @@ test("project.appearance.set.request stores custom text and color", async () => 
   });
 
   const response = findByType(emitted, "project.appearance.set.response");
+  const firstRevision = response?.payload.appearance?.revision;
   expect(response?.payload).toMatchObject({
     requestId: "req-appearance",
     projectId: project.projectId,
@@ -7474,10 +7475,12 @@ test("project.appearance.set.request stores custom text and color", async () => 
     requestId: "req-transparent-appearance",
   });
 
-  expect(findByType(emitted, "project.appearance.set.response")?.payload).toMatchObject({
+  const transparentResponse = findByType(emitted, "project.appearance.set.response");
+  expect(transparentResponse?.payload).toMatchObject({
     accepted: true,
     appearance: { color: "transparent" },
   });
+  expect(transparentResponse?.payload.appearance?.revision).not.toBe(firstRevision);
   expect(projects.get(project.projectId)).toMatchObject({
     customName: "Renamed while saving",
     appearance: { color: "transparent" },

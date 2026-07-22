@@ -9,6 +9,23 @@ const MAX_ICON_BYTES = 512 * 1024;
 const MAX_HTML_BYTES = 512 * 1024;
 const ICON_TOO_LARGE_ERROR = "Icon must be 512 KB or smaller";
 const DOWNLOAD_TIMEOUT_MS = 10_000;
+const projectAppearanceMutations = new Map<string, Promise<unknown>>();
+
+export async function serializeProjectAppearanceMutation<T>(
+  projectId: string,
+  mutation: () => Promise<T>,
+): Promise<T> {
+  const previous = projectAppearanceMutations.get(projectId) ?? Promise.resolve();
+  const next = previous.catch(() => undefined).then(mutation);
+  projectAppearanceMutations.set(projectId, next);
+  try {
+    return await next;
+  } finally {
+    if (projectAppearanceMutations.get(projectId) === next) {
+      projectAppearanceMutations.delete(projectId);
+    }
+  }
+}
 
 function cachePath(paseoHome: string, projectId: string): string {
   const key = createHash("sha256").update(projectId).digest("hex");

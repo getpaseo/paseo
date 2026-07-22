@@ -143,6 +143,7 @@ import {
   cacheProjectFavicon,
   readCachedProjectFavicon,
   removeCachedProjectFavicon,
+  serializeProjectAppearanceMutation,
 } from "../utils/project-appearance.js";
 import { VoiceSession } from "./session/voice/voice-session.js";
 import { CheckoutSession } from "./session/checkout/checkout-session.js";
@@ -2680,46 +2681,53 @@ export class Session {
   ): Promise<void> {
     const { projectId, requestId } = request;
     try {
-      const existing = await this.projectRegistry.get(projectId);
-      if (!existing) throw new Error("Project not found");
-
       const color = request.color?.trim().toLowerCase() ?? null;
       if (color && color !== "transparent" && !/^#[0-9a-f]{6}$/.test(color)) {
         throw new Error("Color must be transparent or a hex value like #8b5cf6");
       }
 
-      let icon = request.icon;
-      if (icon.type === "custom") {
-        const text = icon.text.trim();
-        if (!text || Array.from(text).length > 8) {
-          throw new Error("Custom icon must be between 1 and 8 characters");
-        }
-        icon = { type: "custom", text };
-      } else if (icon.type === "favicon") {
-        const url = icon.url.trim();
-        await cacheProjectFavicon({ paseoHome: this.paseoHome, projectId, url });
-        icon = { type: "favicon", url };
-      }
+      const { appearance, updated } = await serializeProjectAppearanceMutation(
+        projectId,
+        async () => {
+          const existing = await this.projectRegistry.get(projectId);
+          if (!existing) throw new Error("Project not found");
 
-      const appearance = { icon, color, revision: new Date().toISOString() };
-      const updated = await this.projectRegistry.update(projectId, (current) => ({
-        ...current,
-        appearance,
-        updatedAt: appearance.revision,
-      }));
-      if (!updated) {
-        if (icon.type === "favicon") {
-          await removeCachedProjectFavicon({ paseoHome: this.paseoHome, projectId }).catch(
-            (error) => {
-              this.sessionLogger.warn(
-                { err: error, projectId },
-                "Failed to clean up favicon for removed project",
+          let icon = request.icon;
+          if (icon.type === "custom") {
+            const text = icon.text.trim();
+            if (!text || Array.from(text).length > 8) {
+              throw new Error("Custom icon must be between 1 and 8 characters");
+            }
+            icon = { type: "custom", text };
+          } else if (icon.type === "favicon") {
+            const url = icon.url.trim();
+            await cacheProjectFavicon({ paseoHome: this.paseoHome, projectId, url });
+            icon = { type: "favicon", url };
+          }
+
+          const nextAppearance = { icon, color, revision: uuidv4() };
+          const updatedAt = new Date().toISOString();
+          const nextProject = await this.projectRegistry.update(projectId, (current) => ({
+            ...current,
+            appearance: nextAppearance,
+            updatedAt,
+          }));
+          if (!nextProject) {
+            if (icon.type === "favicon") {
+              await removeCachedProjectFavicon({ paseoHome: this.paseoHome, projectId }).catch(
+                (error) => {
+                  this.sessionLogger.warn(
+                    { err: error, projectId },
+                    "Failed to clean up favicon for removed project",
+                  );
+                },
               );
-            },
-          );
-        }
-        throw new Error("Project not found");
-      }
+            }
+            throw new Error("Project not found");
+          }
+          return { appearance: nextAppearance, updated: nextProject };
+        },
+      );
 
       this.emit({
         type: "project.appearance.set.response",
