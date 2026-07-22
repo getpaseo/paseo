@@ -354,6 +354,7 @@ function appendUserMessage(
   state: StreamItem[],
   text: string,
   timestamp: Date,
+  source: StreamUpdateSource,
   messageId?: string,
   clientMessageId?: string,
 ): StreamItem[] {
@@ -365,7 +366,12 @@ function appendUserMessage(
   const chunkSeed = chunk.trim() || chunk;
   const entryId = messageId ?? createUniqueTimelineId(state, "user", chunkSeed, timestamp);
   const optimisticIndex = state.findIndex(
-    (entry) => entry.kind === "user_message" && entry.optimistic,
+    (entry) =>
+      entry.kind === "user_message" &&
+      entry.optimistic &&
+      (clientMessageId !== undefined
+        ? entry.id === clientMessageId
+        : source === "live" || entry.id === messageId || entry.text === chunk),
   );
   const optimistic = optimisticIndex >= 0 ? (state[optimisticIndex] as UserMessageItem) : null;
 
@@ -840,7 +846,14 @@ function reduceTimelineEvent(
   switch (item.type) {
     case "user_message":
       return finalizeActiveThoughts(
-        appendUserMessage(state, item.text, timestamp, item.messageId, item.clientMessageId),
+        appendUserMessage(
+          state,
+          item.text,
+          timestamp,
+          source,
+          item.messageId,
+          item.clientMessageId,
+        ),
       );
     case "assistant_message":
       return finalizeActiveThoughts(

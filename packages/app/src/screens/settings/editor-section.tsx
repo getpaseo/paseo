@@ -1,9 +1,10 @@
-import { Switch, Text, View } from "react-native";
 import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
+import { Text, View } from "react-native";
+import { Switch } from "@/components/ui/switch";
 import { useAppSettings } from "@/hooks/use-settings";
-import { SettingsSection } from "./settings-section";
 import { settingsStyles } from "@/styles/settings";
+import { SettingsSection } from "./settings-section";
 
 export function EditorSection() {
   const { t } = useTranslation();

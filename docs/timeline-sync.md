@@ -67,11 +67,11 @@ The app chooses one delivery policy from `server_info.features.selectiveAgentTim
 
 - Selective daemons receive the union of agents visible in every pane. Additions subscribe and
   catch up immediately. Every visibility-driven removal, including app backgrounding, stays
-  subscribed for a short grace period so brief tab, pane, route, and app switches do not repeatedly
+  subscribed for a 30-second grace period so brief tab, pane, route, and app switches do not repeatedly
   unsubscribe and catch up. Losing window keyboard focus does not make a selected pane invisible.
   Disconnecting and disposal clear pending grace because the subscription itself no longer exists.
-  After grace has expired, a retained timeline stays covered when revisited until authoritative
-  catch-up completes; cached partial output is never presented as current history.
+  After grace has expired, revisiting a retained timeline displays its cached state immediately and
+  authoritative catch-up advances it to the current tail.
 - Legacy daemons keep globally streaming agent timelines. Visibility still triggers the existing
   authoritative catch-up, but the app does not issue selective-subscription RPCs.
 
@@ -87,11 +87,10 @@ its completion advances `seqEnd`, followed by a merged assistant message. The ap
 remaining page through the existing stream reducer. It must not append full projected text to a
 live prefix.
 
-Optimistic user prompts are presentation state rather than canonical history. Incremental catch-up
-temporarily separates them, applies canonical entries, lets canonical user rows reconcile through
-the existing optimistic-message rules, then restores any unmatched prompts after the caught-up
-history. This keeps late history before a newly submitted prompt without duplicating an
-acknowledged prompt.
+Optimistic user prompts occupy stable timeline slots. Catch-up never extracts, delays, or reinserts
+them. A canonical user row replaces its matching slot in place; an unmatched prompt stays exactly
+where the user submitted it. Other canonical rows are applied after the already-present timeline
+instead of relocating visible user messages around newly fetched history.
 
 Canonical submitted user rows carry the provider's `messageId` and Paseo's optional
 `clientMessageId`. Clients reconcile optimistic prompts by `clientMessageId`. Content matching is

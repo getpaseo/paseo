@@ -810,14 +810,12 @@ export const ptBR: TranslationResources = {
         deletedFile: "Excluído",
         commits: {
           title: "Commits",
-          legendLocal: "local",
-          legendRemote: "no remoto",
-          countLabel: "{{count}} commits à frente da base",
+          countLabel: "{{count}} commits recentes",
           fileDiffEmpty: "Nenhuma alteração para exibir",
           fileDiffError: "Falha ao carregar diff do arquivo",
           loading: "Carregando commits…",
           loadError: "Falha ao carregar commits",
-          empty: "Nenhum commit à frente da base",
+          empty: "Ainda não há commits",
         },
       },
       openInEditor: {
@@ -950,6 +948,8 @@ export const ptBR: TranslationResources = {
       actions: {
         menu: "Ações do workspace",
         newWorkspace: "Novo workspace",
+        showMore: "Mostrar mais",
+        showLess: "Mostrar menos",
         createWorkspaceFor: "Criar um novo workspace para {{projectName}}",
         copyPath: "Copiar caminho",
         copyBranchName: "Copiar nome da branch",
