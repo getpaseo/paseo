@@ -9,16 +9,7 @@ import {
   type ViewStyle,
 } from "react-native";
 import type { ProjectAppearance } from "@getpaseo/protocol/messages";
-import { deriveProjectIconColor } from "@/utils/project-icon-color";
-
-function textColor(backgroundColor: string): string {
-  const value = backgroundColor.replace("#", "");
-  if (!/^[0-9a-f]{6}$/i.test(value)) return "#ffffff";
-  const red = Number.parseInt(value.slice(0, 2), 16);
-  const green = Number.parseInt(value.slice(2, 4), 16);
-  const blue = Number.parseInt(value.slice(4, 6), 16);
-  return red * 299 + green * 587 + blue * 114 > 160_000 ? "#000000" : "#ffffff";
-}
+import { deriveProjectIconColor, projectIconTextColor } from "@/projects/icon-colors";
 
 export function ProjectIconView({
   iconDataUri,
@@ -47,7 +38,7 @@ export function ProjectIconView({
   const textStyles = useMemo(
     () => [
       textStyle,
-      backgroundColor === "transparent" ? null : { color: textColor(backgroundColor) },
+      backgroundColor === "transparent" ? null : { color: projectIconTextColor(backgroundColor) },
     ],
     [backgroundColor, textStyle],
   );

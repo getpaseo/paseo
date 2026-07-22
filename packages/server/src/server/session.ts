@@ -4,6 +4,7 @@ import { lstat, mkdir, mkdtemp, rename, rm, stat } from "node:fs/promises";
 import { resolve, sep } from "path";
 import { homedir } from "node:os";
 import { CLIENT_CAPS, type ClientCapability } from "@getpaseo/protocol/client-capabilities";
+import { MAX_PROJECT_ICON_TEXT_CHARACTERS } from "@getpaseo/protocol/project-appearance";
 import {
   serializeAgentStreamEvent,
   type AgentSnapshotPayload,
@@ -2695,8 +2696,10 @@ export class Session {
           let icon = request.icon;
           if (icon.type === "custom") {
             const text = icon.text.trim();
-            if (!text || Array.from(text).length > 8) {
-              throw new Error("Custom icon must be between 1 and 8 characters");
+            if (!text || Array.from(text).length > MAX_PROJECT_ICON_TEXT_CHARACTERS) {
+              throw new Error(
+                `Custom icon must be between 1 and ${MAX_PROJECT_ICON_TEXT_CHARACTERS} characters`,
+              );
             }
             icon = { type: "custom", text };
           } else if (icon.type === "favicon") {

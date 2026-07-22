@@ -7,7 +7,7 @@ import { useTranslation } from "react-i18next";
 import { ProjectIconView } from "@/components/project-icon-view";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { useProjects, type ProjectHostError } from "@/hooks/use-projects";
-import { useProjectIconDataByProjectViewKey } from "@/projects/project-icons";
+import { useProjectIcons } from "@/projects/icons";
 import { settingsStyles } from "@/styles/settings";
 import { buildProjectSettingsRoute } from "@/utils/host-routes";
 import { getProjectSummaryForHostProject, type ProjectSummary } from "@/utils/projects";
@@ -39,7 +39,7 @@ export default function ProjectsScreen({ view }: ProjectsScreenProps) {
       }),
     [projects],
   );
-  const iconDataByProjectViewKey = useProjectIconDataByProjectViewKey({
+  const iconDataByProjectViewKey = useProjectIcons({
     projects: iconTargets,
   });
 

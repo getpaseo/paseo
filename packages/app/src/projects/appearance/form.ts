@@ -1,4 +1,5 @@
 import type { ProjectAppearance } from "@getpaseo/protocol/messages";
+import { MAX_PROJECT_ICON_TEXT_CHARACTERS } from "@getpaseo/protocol/project-appearance";
 
 export type ProjectIconMode = ProjectAppearance["icon"]["type"];
 
@@ -51,7 +52,7 @@ export function openProjectAppearanceForm(
   let closed = false;
   const listeners = new Set<() => void>();
 
-  const deriveState = (): ProjectAppearanceFormState => {
+  function deriveState(): ProjectAppearanceFormState {
     const trimmedFaviconUrl = faviconUrl.trim();
     const trimmedCustomText = customText.trim();
     let valueError: string | null = null;
@@ -59,7 +60,8 @@ export function openProjectAppearanceForm(
       valueError = snapshot.labels.urlRequired;
     } else if (
       mode === "custom" &&
-      (!trimmedCustomText || Array.from(trimmedCustomText).length > 8)
+      (!trimmedCustomText ||
+        Array.from(trimmedCustomText).length > MAX_PROJECT_ICON_TEXT_CHARACTERS)
     ) {
       valueError = snapshot.labels.customRequired;
     }
@@ -83,14 +85,15 @@ export function openProjectAppearanceForm(
       canSubmit: !valueError,
       input: { icon, color: color.trim().toLowerCase() || null },
     };
-  };
+  }
 
   let state = deriveState();
-  const publish = () => {
+
+  function publish(): void {
     if (closed) return;
     state = deriveState();
     for (const listener of listeners) listener();
-  };
+  }
 
   return {
     getState: () => state,

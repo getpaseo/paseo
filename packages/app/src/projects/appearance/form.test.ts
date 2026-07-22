@@ -1,8 +1,6 @@
 import { describe, expect, it } from "vitest";
-import {
-  openProjectAppearanceForm,
-  type ProjectAppearanceFormSnapshot,
-} from "./project-appearance-form-model";
+import { MAX_PROJECT_ICON_TEXT_CHARACTERS } from "@getpaseo/protocol/project-appearance";
+import { openProjectAppearanceForm, type ProjectAppearanceFormSnapshot } from "./form";
 
 const labels: ProjectAppearanceFormSnapshot["labels"] = {
   automatic: "Automatic",
@@ -48,6 +46,20 @@ describe("project appearance form model", () => {
       valueError: null,
       canSubmit: true,
       input: { icon: { type: "favicon", url: "https://example.com" } },
+    });
+  });
+
+  it("enforces the shared custom text limit", () => {
+    const model = openProjectAppearanceForm({ appearance: null, labels });
+    model.setMode("custom");
+
+    model.setCustomText("a".repeat(MAX_PROJECT_ICON_TEXT_CHARACTERS));
+    expect(model.getState().canSubmit).toBe(true);
+
+    model.setCustomText("a".repeat(MAX_PROJECT_ICON_TEXT_CHARACTERS + 1));
+    expect(model.getState()).toMatchObject({
+      valueError: "Enter 1 to 8 characters",
+      canSubmit: false,
     });
   });
 

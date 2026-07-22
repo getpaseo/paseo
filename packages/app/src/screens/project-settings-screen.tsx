@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { Pressable, Text, TextInput, View } from "react-native";
@@ -16,8 +16,6 @@ import type {
 } from "@getpaseo/protocol/messages";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { Button } from "@/components/ui/button";
-import { Field, FormTextInput } from "@/components/ui/form-field";
-import { SelectField } from "@/components/ui/select-field";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -34,8 +32,8 @@ import { SettingsGroup } from "@/screens/settings/settings-group";
 import { SettingsSection } from "@/screens/settings/settings-section";
 import { settingsStyles } from "@/styles/settings";
 import { useProjects } from "@/hooks/use-projects";
-import { useProjectIconDataByProjectViewKey } from "@/projects/project-icons";
-import { useProjectAppearanceFormModel } from "@/projects/use-project-appearance-form-model";
+import { useProjectIcons } from "@/projects/icons";
+import { ProjectAppearanceSection } from "@/screens/project-settings/appearance-section";
 import { useHostRuntimeClient, useHostRuntimeSnapshot } from "@/runtime/host-runtime";
 import { useHostFeature } from "@/runtime/host-features";
 import { useToast } from "@/contexts/toast-context";
@@ -59,7 +57,6 @@ import {
 import { useSessionStore } from "@/stores/session-store";
 import { selectProjectIdForServer } from "@/stores/session-store-hooks/selectors";
 import { resolveProjectSettingsHostTarget } from "@/screens/project-settings-host-selection";
-import { PROJECT_ICON_COLORS } from "@/utils/project-icon-color";
 
 const SCRIPT_SERVICE_TYPE = "service";
 
@@ -279,10 +276,8 @@ function ProjectSettingsBody({
       selectedHost.serverId,
     ],
   );
-  const projectIconDataByKey = useProjectIconDataByProjectViewKey({
-    projects: projectIconTargets,
-  });
-  const projectIconDataUri = projectIconDataByKey.get(project.viewKey) ?? null;
+  const projectIcons = useProjectIcons({ projects: projectIconTargets });
+  const projectIconDataUri = projectIcons.get(project.viewKey) ?? null;
   const loadedConfig: PaseoConfigRaw | null = data?.ok ? (data.config ?? {}) : null;
   const loadedRevision: PaseoConfigRevision | null = data?.ok ? data.revision : null;
   const readError: ProjectConfigRpcError | null = data && !data.ok ? data.error : null;
@@ -317,10 +312,11 @@ function ProjectSettingsBody({
       </View>
 
       {supportsAppearance ? (
-        <ProjectAppearanceSettings
-          key={`${selectedHost.serverId}:${selectedHost.projectAppearance?.revision ?? "automatic"}`}
-          project={project}
-          host={selectedHost}
+        <ProjectAppearanceSection
+          key={appearanceKey}
+          projectId={project.projectKey}
+          serverId={selectedHost.serverId}
+          appearance={selectedHost.projectAppearance}
           client={client}
           onColorPreview={handleColorPreview}
         />
@@ -1032,196 +1028,6 @@ function ProjectTitleIcon({
   );
 }
 
-function ProjectColorSwatch({
-  color,
-  selected,
-  onChange,
-}: {
-  color: string;
-  selected: boolean;
-  onChange: (color: string) => void;
-}) {
-  const handlePress = useCallback(() => onChange(color), [color, onChange]);
-  const accessibilityState = useMemo(() => ({ selected }), [selected]);
-  const swatchStyle = useMemo(
-    () => [styles.colorSwatch, { backgroundColor: color }, selected && styles.colorSwatchSelected],
-    [color, selected],
-  );
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={color}
-      accessibilityState={accessibilityState}
-      onPress={handlePress}
-      style={styles.colorSwatchPressable}
-    >
-      <View style={swatchStyle} />
-    </Pressable>
-  );
-}
-
-function ProjectColorPicker({
-  value,
-  onChange,
-}: {
-  value: string;
-  onChange: (color: string) => void;
-}) {
-  const { t } = useTranslation();
-  const handleAutomatic = useCallback(() => onChange(""), [onChange]);
-  const handleTransparent = useCallback(() => onChange("transparent"), [onChange]);
-  return (
-    <Field label={t("settings.project.appearance.color")}>
-      <View style={styles.colorPickerRow}>
-        <Button variant={value ? "ghost" : "secondary"} size="xs" onPress={handleAutomatic}>
-          {t("settings.project.appearance.automatic")}
-        </Button>
-        <Button
-          variant={value === "transparent" ? "secondary" : "ghost"}
-          size="xs"
-          onPress={handleTransparent}
-        >
-          {t("settings.project.appearance.transparent")}
-        </Button>
-        {PROJECT_ICON_COLORS.map((color) => (
-          <ProjectColorSwatch
-            key={color}
-            color={color}
-            selected={value === color}
-            onChange={onChange}
-          />
-        ))}
-      </View>
-    </Field>
-  );
-}
-
-function ProjectAppearanceSettings({
-  project,
-  host,
-  client,
-  onColorPreview,
-}: {
-  project: ProjectSummary;
-  host: ProjectHostEntry;
-  client: DaemonClient;
-  onColorPreview: (color: string | null) => void;
-}) {
-  const { t } = useTranslation();
-  const queryClient = useQueryClient();
-  const toast = useToast();
-  const model = useProjectAppearanceFormModel({
-    appearance: host.projectAppearance,
-    labels: {
-      automatic: t("settings.project.appearance.automatic"),
-      favicon: t("settings.project.appearance.favicon"),
-      custom: t("settings.project.appearance.custom"),
-      urlRequired: t("settings.project.appearance.urlRequired"),
-      customRequired: t("settings.project.appearance.customRequired"),
-    },
-  });
-  const state = useSyncExternalStore(model.subscribe, model.getState, model.getState);
-
-  const options = useMemo(
-    () => [
-      {
-        id: "automatic",
-        value: "automatic" as const,
-        label: t("settings.project.appearance.automatic"),
-      },
-      {
-        id: "favicon",
-        value: "favicon" as const,
-        label: t("settings.project.appearance.favicon"),
-      },
-      {
-        id: "custom",
-        value: "custom" as const,
-        label: t("settings.project.appearance.custom"),
-      },
-    ],
-    [t],
-  );
-  const mutation = useMutation({
-    mutationFn: () => client.setProjectAppearance(project.projectKey, state.input),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["projectIcon", host.serverId] });
-      toast.show(t("settings.project.appearance.saved"), { variant: "success" });
-    },
-  });
-
-  const handleSave = useCallback(() => mutation.mutate(), [mutation]);
-  const handleColorChange = useCallback(
-    (nextColor: string) => {
-      model.setColor(nextColor);
-      onColorPreview(nextColor || null);
-    },
-    [model, onColorPreview],
-  );
-
-  return (
-    <SettingsGroup title={t("settings.project.appearance.title")} testID="appearance-group">
-      <View style={[settingsStyles.card, styles.appearanceCard]}>
-        <SelectField
-          label={t("settings.project.appearance.icon")}
-          value={state.mode}
-          selectedDisplay={state.selectedDisplay}
-          options={options}
-          onChange={model.setMode}
-          placeholder={t("settings.project.appearance.automatic")}
-          emptyText=""
-          searchable={false}
-          size="sm"
-          testID="project-icon-mode"
-        />
-        {state.showFaviconUrl ? (
-          <Field label={t("settings.project.appearance.url")} error={state.valueError}>
-            <FormTextInput
-              value={state.faviconUrl}
-              onChangeText={model.setFaviconUrl}
-              autoCapitalize="none"
-              autoCorrect={false}
-              placeholder="https://example.com/favicon.ico"
-              size="sm"
-              testID="project-icon-url"
-            />
-          </Field>
-        ) : null}
-        {state.showCustomText ? (
-          <Field label={t("settings.project.appearance.text")} error={state.valueError}>
-            <FormTextInput
-              value={state.customText}
-              onChangeText={model.setCustomText}
-              placeholder="🚀"
-              size="sm"
-              testID="project-icon-text"
-            />
-          </Field>
-        ) : null}
-        <ProjectColorPicker value={state.color} onChange={handleColorChange} />
-        {mutation.isError ? (
-          <Alert
-            variant="error"
-            title={t("settings.project.appearance.saveFailed")}
-            description={errorToDetail(mutation.error) ?? undefined}
-          />
-        ) : null}
-        <Button
-          variant="outline"
-          size="sm"
-          loading={mutation.isPending}
-          disabled={!state.canSubmit}
-          onPress={handleSave}
-          style={styles.appearanceSave}
-          testID="project-icon-save"
-        >
-          {t("settings.project.appearance.save")}
-        </Button>
-      </View>
-    </SettingsGroup>
-  );
-}
-
 interface HostContextProps {
   hosts: ProjectHostEntry[];
   selectedHost: ProjectHostEntry;
@@ -1638,32 +1444,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   errorBlock: {
     marginTop: theme.spacing[2],
-  },
-  appearanceCard: {
-    padding: theme.spacing[4],
-    gap: theme.spacing[3],
-  },
-  appearanceSave: {
-    alignSelf: "flex-end",
-  },
-  colorPickerRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    alignItems: "center",
-    gap: theme.spacing[1],
-  },
-  colorSwatchPressable: {
-    padding: theme.spacing[1],
-    borderRadius: theme.borderRadius.full,
-  },
-  colorSwatch: {
-    width: 24,
-    height: 24,
-    borderRadius: theme.borderRadius.full,
-  },
-  colorSwatchSelected: {
-    borderWidth: 2,
-    borderColor: theme.colors.foreground,
   },
   emptyScripts: {
     color: theme.colors.foregroundMuted,

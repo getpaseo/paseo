@@ -94,7 +94,10 @@ vi.mock("react-native", () => {
     Pressable: passthrough,
     Image: ({ source }: { source?: { uri?: string } }) =>
       React.createElement("img", { src: source?.uri ?? "" }),
-    Platform: { OS: "web" },
+    Platform: {
+      OS: "web",
+      select: <T,>(options: { web?: T; default?: T }) => options.web ?? options.default,
+    },
   };
 });
 
@@ -201,8 +204,8 @@ vi.mock("@/hooks/use-projects", () => ({
   useProjects: () => projectsState.current,
 }));
 
-vi.mock("@/projects/project-icons", () => ({
-  useProjectIconDataByProjectViewKey: () => new Map(),
+vi.mock("@/projects/icons", () => ({
+  useProjectIcons: () => new Map(),
 }));
 
 import ProjectsScreen from "./projects-screen";
