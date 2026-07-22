@@ -376,17 +376,17 @@ export function toggleForgeAttachment(
   return [...current, buildForgeAttachment(item)];
 }
 
-interface ToggleGithubAttachmentFromPickerInput {
+interface ToggleForgeAttachmentFromPickerInput {
   current: UserComposerAttachment[];
   item: ForgeSearchItem;
-  markGithubAttachmentRemoved: (attachment: UserComposerAttachment) => void;
+  markForgeAttachmentRemoved: (attachment: UserComposerAttachment) => void;
 }
 
-export function toggleGithubAttachmentFromPicker({
+export function toggleForgeAttachmentFromPicker({
   current,
   item,
-  markGithubAttachmentRemoved,
-}: ToggleGithubAttachmentFromPickerInput): UserComposerAttachment[] {
+  markForgeAttachmentRemoved,
+}: ToggleForgeAttachmentFromPickerInput): UserComposerAttachment[] {
   const existingAttachment = current.find(
     (attachment) =>
       isForgeAttachment(attachment) &&
@@ -394,19 +394,19 @@ export function toggleGithubAttachmentFromPicker({
       attachment.item.number === item.number,
   );
   if (existingAttachment) {
-    markGithubAttachmentRemoved(existingAttachment);
+    markForgeAttachmentRemoved(existingAttachment);
   }
   return toggleForgeAttachment(current, item);
 }
 
-export function findGithubItemByOption(
+export function findForgeItemByOption(
   items: readonly ForgeSearchItem[],
   optionId: string,
 ): ForgeSearchItem | undefined {
   return items.find((candidate) => `${candidate.kind}:${candidate.number}` === optionId);
 }
 
-export function isAttachmentSelectedForGithubItem(
+export function isAttachmentSelectedForForgeItem(
   current: readonly ComposerAttachment[],
   item: ForgeSearchItem,
 ): boolean {
@@ -417,5 +417,3 @@ export function isAttachmentSelectedForGithubItem(
       attachment.item.number === item.number,
   );
 }
-
-export const toggleGithubAttachment = toggleForgeAttachment;

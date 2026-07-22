@@ -179,6 +179,10 @@ export const gitlabForgeLogic = {
     blobInfix: "/-/blob/",
     lineAnchor: gitlabLineAnchor,
     changeRequestChecksSuffix: "/pipelines",
+    referencePaths: [
+      { kind: "change_request", infix: "/-/merge_requests/" },
+      { kind: "issue", infix: "/-/issues/" },
+    ],
   },
   facts: defineForgeFacts({
     family: "gitlab",

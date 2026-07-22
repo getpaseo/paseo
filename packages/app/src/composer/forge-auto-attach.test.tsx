@@ -9,7 +9,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { UserComposerAttachment } from "@/attachments/types";
 import type { ForgeSearchClient } from "@/git/use-forge-search-query";
 import type { ForgeSearchItem, ForgeSearchResponse } from "@getpaseo/protocol/messages";
-import { useComposerGithubAutoAttach } from "./auto-attach";
+import { useComposerForgeAutoAttach } from "./forge-auto-attach";
 
 type ForgeSearchPayload = ForgeSearchResponse["payload"];
 
@@ -48,6 +48,31 @@ const issue202: ForgeSearchItem = {
   headRefName: null,
 };
 
+const gitlabMr73: ForgeSearchItem = {
+  forge: "gitlab",
+  kind: "change_request",
+  number: 73,
+  title: "Attach MR",
+  url: "https://gitlab.com/acme/paseo/-/merge_requests/73",
+  state: "opened",
+  body: null,
+  labels: [],
+  projectPath: "acme/paseo",
+  baseRefName: "main",
+  headRefName: "feature",
+};
+
+const giteaIssue27: ForgeSearchItem = {
+  forge: "gitea",
+  kind: "issue",
+  number: 27,
+  title: "Attach Gitea issue",
+  url: "https://gitea.example.com/acme/paseo/issues/27",
+  state: "open",
+  body: null,
+  labels: [],
+};
+
 interface SearchCall {
   cwd: string;
   query: string;
@@ -58,8 +83,8 @@ interface HarnessInput {
   initialAttachments?: UserComposerAttachment[];
   initialCwd?: string;
   initialText?: string;
-  onPullRequestDetected?: () => void;
-  onPullRequestAdded?: (item: ForgeSearchItem) => void;
+onChangeRequestDetected?: () => void;
+  onChangeRequestAdded?: (item: ForgeSearchItem) => void;
   remote?: string | null;
 }
 
@@ -111,7 +136,7 @@ function useHarness(client: ForgeSearchClient, input: HarnessInput = {}) {
   const [attachments, setAttachments] = useState<UserComposerAttachment[]>(
     input.initialAttachments ?? [],
   );
-  const autoAttach = useComposerGithubAutoAttach({
+  const autoAttach = useComposerForgeAutoAttach({
     text,
     remoteUrl: input.remote ?? remoteUrl,
     attachments,
@@ -120,8 +145,8 @@ function useHarness(client: ForgeSearchClient, input: HarnessInput = {}) {
     serverId: "server-1",
     cwd: workingDirectory,
     setAttachments,
-    onPullRequestDetected: input.onPullRequestDetected,
-    onPullRequestAdded: input.onPullRequestAdded,
+onChangeRequestDetected: input.onChangeRequestDetected,
+    onChangeRequestAdded: input.onChangeRequestAdded
   });
 
   return {
@@ -132,7 +157,7 @@ function useHarness(client: ForgeSearchClient, input: HarnessInput = {}) {
     attachments,
     setAttachments,
     isResolving: autoAttach.isResolving,
-    markGithubAttachmentRemoved: autoAttach.markGithubAttachmentRemoved,
+    markForgeAttachmentRemoved: autoAttach.markForgeAttachmentRemoved,
   };
 }
 
@@ -143,12 +168,12 @@ async function flushDebounce() {
   });
 }
 
-describe("useComposerGithubAutoAttach", () => {
+describe("useComposerForgeAutoAttach", () => {
   it("adds a matching pasted GitHub PR URL as a composer attachment", async () => {
     vi.useFakeTimers();
     const client = createSearchClient([pr101]);
-    const onPullRequestDetected = vi.fn();
-    const { result } = renderHook(() => useHarness(client, { onPullRequestDetected }), {
+    const onChangeRequestDetected = vi.fn();
+    const { result } = renderHook(() => useHarness(client, { onChangeRequestDetected }), {
       wrapper: createWrapper(),
     });
 
@@ -156,12 +181,62 @@ describe("useComposerGithubAutoAttach", () => {
       result.current.setText("Please review https://github.com/acme/paseo/pull/101");
     });
     expect(result.current.isResolving).toBe(true);
-    expect(onPullRequestDetected).toHaveBeenCalledTimes(1);
+    expect(onChangeRequestDetected).toHaveBeenCalledTimes(1);
     await flushDebounce();
 
     expect(result.current.attachments).toEqual([{ kind: "forge_change_request", item: pr101 }]);
     expect(result.current.isResolving).toBe(false);
     expect(client.calls).toEqual([{ cwd, query: "101", limit: 20 }]);
+    vi.useRealTimers();
+  });
+
+  it("adds a matching pasted GitLab MR URL as a composer attachment", async () => {
+    vi.useFakeTimers();
+    const client = createSearchClient([gitlabMr73]);
+    const onChangeRequestDetected = vi.fn();
+    const onChangeRequestAdded = vi.fn();
+    const { result } = renderHook(
+      () =>
+        useHarness(client, {
+          onChangeRequestDetected,
+          onChangeRequestAdded,
+          remote: "git@gitlab.com:acme/paseo.git",
+        }),
+      { wrapper: createWrapper() },
+    );
+
+    act(() => {
+      result.current.setText("Review https://gitlab.com/acme/paseo/-/merge_requests/73/diffs");
+    });
+    await flushDebounce();
+
+    expect(result.current.attachments).toEqual([
+      { kind: "forge_change_request", item: gitlabMr73 },
+    ]);
+    expect(onChangeRequestDetected).toHaveBeenCalledTimes(1);
+    expect(onChangeRequestAdded).toHaveBeenCalledWith(gitlabMr73);
+    expect(client.calls).toEqual([{ cwd, query: "73", limit: 20 }]);
+    vi.useRealTimers();
+  });
+
+  it("adds a matching pasted self-hosted Gitea issue URL", async () => {
+    vi.useFakeTimers();
+    const client = createSearchClient([giteaIssue27]);
+    const { result } = renderHook(
+      () =>
+        useHarness(client, {
+          remote: "git@gitea.example.com:acme/paseo.git",
+        }),
+      { wrapper: createWrapper() },
+    );
+
+    act(() => {
+      result.current.setText("See https://gitea.example.com/acme/paseo/issues/27");
+    });
+    await flushDebounce();
+
+    expect(result.current.attachments).toEqual([{ kind: "forge_issue", item: giteaIssue27 }]);
+    expect(client.calls).toEqual([{ cwd, query: "27", limit: 20 }]);
     vi.useRealTimers();
   });
 
@@ -207,7 +282,7 @@ describe("useComposerGithubAutoAttach", () => {
     });
 
     act(() => {
-      result.current.markGithubAttachmentRemoved(initialAttachments[0]);
+      result.current.markForgeAttachmentRemoved(initialAttachments[0]);
       result.current.setAttachments([]);
       result.current.setText("Re-pasted https://github.com/acme/paseo/pull/101");
     });

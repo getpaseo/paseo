@@ -26,8 +26,9 @@ For forge `acme`, the expected end state is:
 3. **App modules** - a forge splits into a pure logic half and a view half so
    logic consumers (URL builders, merge-capability, native checks, and the
    Node-based e2e harness) never pull the client rendering stack:
-   - `packages/app/src/git/forges/acme.ts` - logic: `id`, optional `urlGrammar`,
-     optional `facts` (schema, merge-capability, native-check fallbacks). No
+   - `packages/app/src/git/forges/acme.ts` - logic: `id`, optional `urlGrammar`
+     (source links and pasted issue/change-request reference paths), optional
+     `facts` (schema, merge-capability, native-check fallbacks). No
      React/React-Native imports. Register in `CLIENT_FORGE_LOGIC_MODULES` in
      `packages/app/src/git/forges/index.ts`.
    - `packages/app/src/git/forges/acme.view.tsx` - view: `icon` (SVG component
@@ -112,7 +113,7 @@ rendering stack:
 `acme.ts` exports a `ClientForgeLogicModule`:
 
 - `id`
-- optional `urlGrammar`
+- optional `urlGrammar` (including `referencePaths` for composer auto-attachment)
 - optional `facts` registration (schema, merge-capability, native-check fallbacks)
 
 `acme.view.tsx` exports a `ClientForgeViewModule`:
@@ -193,6 +194,11 @@ are stale, run `npm run build:server`.
 - Source URL grammars are app-side because blob/tree path syntax is
   forge-specific. If a forge has no grammar, omit the "Open on ..." source link
   rather than constructing a wrong URL.
+- Pasted issue/change-request URL recognition is also app-side and registry
+  driven. Put the forge's route infixes in `urlGrammar.referencePaths`; the
+  neutral extractor matches the pasted host and full repository path against
+  the current remote before it invokes cwd-routed forge search. Do not add a
+  central forge switch or guess a self-hosted Gitea-family brand from URL shape.
 - GitLab pipeline status constants belong to the GitLab adapter/client module,
   not protocol.
 - GitLab `manual` jobs need `allow_failure` to distinguish optional gray jobs
