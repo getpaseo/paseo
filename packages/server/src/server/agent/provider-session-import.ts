@@ -78,6 +78,7 @@ async function collectImportedHistory(events: AsyncGenerator<AgentStreamEvent>):
     timeline.push({
       item: event.item,
       ...(event.timestamp ? { timestamp: event.timestamp } : {}),
+      ...(event.turnId !== undefined ? { turnId: event.turnId } : {}),
     });
   }
   return { timeline, providerSubagentEvents };

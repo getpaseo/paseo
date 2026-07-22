@@ -238,6 +238,7 @@ const BASE_ACP_CLIENT_CAPABILITIES: ACPClientCapabilities = {
 };
 
 export type ACPClientCapabilityMeta = Record<string, unknown>;
+export type ACPInitializeRequestMeta = Record<string, unknown>;
 
 export function buildACPClientCapabilities(
   meta?: ACPClientCapabilityMeta,
@@ -365,6 +366,34 @@ export type ACPExtensionCommandsParser = (
   method: string,
   params: Record<string, unknown>,
 ) => AgentSlashCommand[] | null;
+export type ACPInitialCommandsParser = (response: InitializeResponse) => AgentSlashCommand[] | null;
+
+export interface ACPExtensionNotificationParserContext {
+  provider: string;
+  sessionId: string | null;
+  turnId: string | null;
+}
+
+export type ACPExtensionNotificationParser = (
+  method: string,
+  params: Record<string, unknown>,
+  context: ACPExtensionNotificationParserContext,
+) => AgentStreamEvent[] | null;
+
+export interface ACPThinkingOptionWriterContext {
+  connection: ClientSideConnection;
+  sessionId: string;
+  modelId: string;
+  thinkingOptionId: string;
+}
+
+export type ACPThinkingOptionWriter = (context: ACPThinkingOptionWriterContext) => Promise<void>;
+
+/** Optional post-pass after the generic ACP tool detail mapper (vendor polish). */
+export type ACPToolDetailMapper = (
+  snapshot: ACPToolSnapshot,
+  defaultDetail: ToolCallDetail,
+) => ToolCallDetail;
 
 interface ACPAgentClientOptions {
   provider: string;
@@ -378,19 +407,20 @@ interface ACPAgentClientOptions {
   configFeatureOptions?: ACPConfigFeatureOption[];
   clientCapabilities?: ACPClientCapabilities;
   clientCapabilityMeta?: ACPClientCapabilityMeta;
+  initializeRequestMeta?: ACPInitializeRequestMeta;
   modeIdTransformer?: (modeId: string) => string | null;
   toolSnapshotTransformer?: (snapshot: ACPToolSnapshot) => ACPToolSnapshot;
+  toolDetailMapper?: ACPToolDetailMapper;
   providerModeWriter?: (
     context: ACPProviderModeWriterContext,
   ) => Promise<ACPProviderModeWriteResult>;
   beforeModeWriter?: (context: ACPProviderModeWriterContext) => Promise<ACPBeforeModeWriteResult>;
-  thinkingOptionWriter?: (
-    connection: ClientSideConnection,
-    sessionId: string,
-    thinkingOptionId: string,
-  ) => Promise<void>;
+  thinkingOptionWriter?: ACPThinkingOptionWriter;
   capabilities?: AgentCapabilityFlags;
   extensionCommandsParser?: ACPExtensionCommandsParser;
+  initialCommandsParser?: ACPInitialCommandsParser;
+  extensionNotificationParser?: ACPExtensionNotificationParser;
+  forwardChildSessionUpdates?: boolean;
   waitForInitialCommands?: boolean;
   initialCommandsWaitTimeoutMs?: number;
   terminateProcess?: ProcessTerminator;
@@ -408,19 +438,20 @@ interface ACPAgentSessionOptions {
   configFeatureOptions?: ACPConfigFeatureOption[];
   clientCapabilities?: ACPClientCapabilities;
   clientCapabilityMeta?: ACPClientCapabilityMeta;
+  initializeRequestMeta?: ACPInitializeRequestMeta;
   modeIdTransformer?: (modeId: string) => string | null;
   toolSnapshotTransformer?: (snapshot: ACPToolSnapshot) => ACPToolSnapshot;
+  toolDetailMapper?: ACPToolDetailMapper;
   providerModeWriter?: (
     context: ACPProviderModeWriterContext,
   ) => Promise<ACPProviderModeWriteResult>;
   beforeModeWriter?: (context: ACPProviderModeWriterContext) => Promise<ACPBeforeModeWriteResult>;
-  thinkingOptionWriter?: (
-    connection: ClientSideConnection,
-    sessionId: string,
-    thinkingOptionId: string,
-  ) => Promise<void>;
+  thinkingOptionWriter?: ACPThinkingOptionWriter;
   capabilities: AgentCapabilityFlags;
   extensionCommandsParser?: ACPExtensionCommandsParser;
+  initialCommandsParser?: ACPInitialCommandsParser;
+  extensionNotificationParser?: ACPExtensionNotificationParser;
+  forwardChildSessionUpdates?: boolean;
   handle?: AgentPersistenceHandle;
   agentId?: string;
   launchEnv?: Record<string, string>;
@@ -469,6 +500,14 @@ interface PendingPermission {
 
 interface MessageAssemblyState {
   text: string;
+}
+
+/** Per-session content translation state shared by foreground and child paths. */
+interface SessionContentTranslationState {
+  messageAssemblies: Map<string, MessageAssemblyState>;
+  toolCalls: Map<string, ACPToolSnapshot>;
+  fallbackAssistantMessageId: string | null;
+  currentAssistantAssemblyKey: string | null;
 }
 
 interface SubmittedUserMessageEcho {
@@ -717,22 +756,23 @@ export class ACPAgentClient implements AgentClient {
   private readonly configFeatureOptions: ACPConfigFeatureOption[];
   private readonly clientCapabilities?: ACPClientCapabilities;
   private readonly clientCapabilityMeta?: ACPClientCapabilityMeta;
+  private readonly initializeRequestMeta?: ACPInitializeRequestMeta;
   private readonly modeIdTransformer?: (modeId: string) => string | null;
   private readonly toolSnapshotTransformer?: (snapshot: ACPToolSnapshot) => ACPToolSnapshot;
+  private readonly toolDetailMapper?: ACPToolDetailMapper;
   private readonly providerModeWriter?: (
     context: ACPProviderModeWriterContext,
   ) => Promise<ACPProviderModeWriteResult>;
   private readonly beforeModeWriter?: (
     context: ACPProviderModeWriterContext,
   ) => Promise<ACPBeforeModeWriteResult>;
-  private readonly thinkingOptionWriter?: (
-    connection: ClientSideConnection,
-    sessionId: string,
-    thinkingOptionId: string,
-  ) => Promise<void>;
+  private readonly thinkingOptionWriter?: ACPThinkingOptionWriter;
   private readonly waitForInitialCommands: boolean;
   private readonly initialCommandsWaitTimeoutMs: number;
   private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
+  private readonly initialCommandsParser?: ACPInitialCommandsParser;
+  private readonly extensionNotificationParser?: ACPExtensionNotificationParser;
+  private readonly forwardChildSessionUpdates: boolean;
   protected readonly terminateProcess: ProcessTerminator;
 
   constructor(options: ACPAgentClientOptions) {
@@ -752,14 +792,19 @@ export class ACPAgentClient implements AgentClient {
     this.configFeatureOptions = options.configFeatureOptions ?? [];
     this.clientCapabilities = options.clientCapabilities;
     this.clientCapabilityMeta = options.clientCapabilityMeta;
+    this.initializeRequestMeta = options.initializeRequestMeta;
     this.modeIdTransformer = options.modeIdTransformer;
     this.toolSnapshotTransformer = options.toolSnapshotTransformer;
+    this.toolDetailMapper = options.toolDetailMapper;
     this.providerModeWriter = options.providerModeWriter;
     this.beforeModeWriter = options.beforeModeWriter;
     this.thinkingOptionWriter = options.thinkingOptionWriter;
     this.waitForInitialCommands = options.waitForInitialCommands ?? false;
     this.initialCommandsWaitTimeoutMs = options.initialCommandsWaitTimeoutMs ?? 1500;
     this.extensionCommandsParser = options.extensionCommandsParser;
+    this.initialCommandsParser = options.initialCommandsParser;
+    this.extensionNotificationParser = options.extensionNotificationParser;
+    this.forwardChildSessionUpdates = options.forwardChildSessionUpdates ?? false;
   }
 
   async createSession(
@@ -781,8 +826,10 @@ export class ACPAgentClient implements AgentClient {
         configFeatureOptions: this.configFeatureOptions,
         clientCapabilities: this.clientCapabilities,
         clientCapabilityMeta: this.clientCapabilityMeta,
+        initializeRequestMeta: this.initializeRequestMeta,
         modeIdTransformer: this.modeIdTransformer,
         toolSnapshotTransformer: this.toolSnapshotTransformer,
+        toolDetailMapper: this.toolDetailMapper,
         providerModeWriter: this.providerModeWriter,
         beforeModeWriter: this.beforeModeWriter,
         thinkingOptionWriter: this.thinkingOptionWriter,
@@ -790,6 +837,9 @@ export class ACPAgentClient implements AgentClient {
         agentId: launchContext?.agentId,
         launchEnv: launchContext?.env,
         extensionCommandsParser: this.extensionCommandsParser,
+        initialCommandsParser: this.initialCommandsParser,
+        extensionNotificationParser: this.extensionNotificationParser,
+        forwardChildSessionUpdates: this.forwardChildSessionUpdates,
         waitForInitialCommands: this.waitForInitialCommands,
         initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
       },
@@ -831,8 +881,10 @@ export class ACPAgentClient implements AgentClient {
       configFeatureOptions: this.configFeatureOptions,
       clientCapabilities: this.clientCapabilities,
       clientCapabilityMeta: this.clientCapabilityMeta,
+      initializeRequestMeta: this.initializeRequestMeta,
       modeIdTransformer: this.modeIdTransformer,
       toolSnapshotTransformer: this.toolSnapshotTransformer,
+      toolDetailMapper: this.toolDetailMapper,
       providerModeWriter: this.providerModeWriter,
       beforeModeWriter: this.beforeModeWriter,
       thinkingOptionWriter: this.thinkingOptionWriter,
@@ -841,6 +893,9 @@ export class ACPAgentClient implements AgentClient {
       agentId: launchContext?.agentId,
       launchEnv: launchContext?.env,
       extensionCommandsParser: this.extensionCommandsParser,
+      initialCommandsParser: this.initialCommandsParser,
+      extensionNotificationParser: this.extensionNotificationParser,
+      forwardChildSessionUpdates: this.forwardChildSessionUpdates,
       waitForInitialCommands: this.waitForInitialCommands,
       initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
     });
@@ -1073,6 +1128,7 @@ export class ACPAgentClient implements AgentClient {
               this.clientCapabilities,
             ),
             clientInfo: { name: "Paseo", version: "dev" },
+            _meta: this.initializeRequestMeta,
           }),
           transport.spawnError,
           ...(initializeTimeoutPromise ? [initializeTimeoutPromise] : []),
@@ -1285,29 +1341,33 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private readonly configFeatureOptions: ACPConfigFeatureOption[];
   private readonly clientCapabilities?: ACPClientCapabilities;
   private readonly clientCapabilityMeta?: ACPClientCapabilityMeta;
+  private readonly initializeRequestMeta?: ACPInitializeRequestMeta;
   private readonly modeIdTransformer?: (modeId: string) => string | null;
   private readonly toolSnapshotTransformer?: (snapshot: ACPToolSnapshot) => ACPToolSnapshot;
+  private readonly toolDetailMapper?: ACPToolDetailMapper;
   private readonly providerModeWriter?: (
     context: ACPProviderModeWriterContext,
   ) => Promise<ACPProviderModeWriteResult>;
   private readonly beforeModeWriter?: (
     context: ACPProviderModeWriterContext,
   ) => Promise<ACPBeforeModeWriteResult>;
-  private readonly thinkingOptionWriter?: (
-    connection: ClientSideConnection,
-    sessionId: string,
-    thinkingOptionId: string,
-  ) => Promise<void>;
+  private readonly thinkingOptionWriter?: ACPThinkingOptionWriter;
   private readonly agentId?: string;
   private readonly launchEnv?: Record<string, string>;
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private readonly pendingPermissions = new Map<string, PendingPermission>();
-  private readonly messageAssemblies = new Map<string, MessageAssemblyState>();
+  private readonly contentTranslationState: SessionContentTranslationState = {
+    messageAssemblies: new Map(),
+    toolCalls: new Map(),
+    fallbackAssistantMessageId: null,
+    currentAssistantAssemblyKey: null,
+  };
   private readonly submittedUserMessageIds = new Set<string>();
   private activeSubmittedUserMessage: SubmittedUserMessageEcho | null = null;
-  private readonly toolCalls = new Map<string, ACPToolSnapshot>();
   private readonly terminalEntries = new Map<string, TerminalEntry>();
-  private readonly persistedHistory: AgentTimelineItem[] = [];
+  private readonly persistedEvents: Array<
+    Extract<AgentStreamEvent, { type: "timeline" } | { type: "provider_subagent" }>
+  > = [];
   private readonly initialHandle?: AgentPersistenceHandle;
 
   private readonly config: AgentSessionConfig;
@@ -1329,9 +1389,15 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private waitForInitialCommands: boolean;
   private initialCommandsWaitTimeoutMs: number;
   private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
+  private readonly initialCommandsParser?: ACPInitialCommandsParser;
+  private readonly extensionNotificationParser?: ACPExtensionNotificationParser;
+  private readonly forwardChildSessionUpdates: boolean;
+  private readonly providerSubagentSessionUpdateStates = new Map<
+    string,
+    SessionContentTranslationState
+  >();
   private currentTurnUsage: AgentUsage | undefined;
   private activeForegroundTurnId: string | null = null;
-  private fallbackAssistantMessageId: string | null = null;
   private closed = false;
   private historyPending = false;
   private replayingHistory = false;
@@ -1352,8 +1418,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.configFeatureOptions = options.configFeatureOptions ?? [];
     this.clientCapabilities = options.clientCapabilities;
     this.clientCapabilityMeta = options.clientCapabilityMeta;
+    this.initializeRequestMeta = options.initializeRequestMeta;
     this.modeIdTransformer = options.modeIdTransformer;
     this.toolSnapshotTransformer = options.toolSnapshotTransformer;
+    this.toolDetailMapper = options.toolDetailMapper;
     this.providerModeWriter = options.providerModeWriter;
     this.beforeModeWriter = options.beforeModeWriter;
     this.thinkingOptionWriter = options.thinkingOptionWriter;
@@ -1369,6 +1437,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.waitForInitialCommands = options.waitForInitialCommands ?? false;
     this.initialCommandsWaitTimeoutMs = options.initialCommandsWaitTimeoutMs ?? 1500;
     this.extensionCommandsParser = options.extensionCommandsParser;
+    this.initialCommandsParser = options.initialCommandsParser;
+    this.extensionNotificationParser = options.extensionNotificationParser;
+    this.forwardChildSessionUpdates = options.forwardChildSessionUpdates ?? false;
   }
 
   get id(): string | null {
@@ -1390,6 +1461,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.sessionId = response.sessionId;
     this.bootstrapThreadEventPending = true;
     this.applySessionState(response);
+    this.applyInitialCommands(spawned.initialize);
     await this.applyConfiguredOverrides();
   }
 
@@ -1424,7 +1496,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         }),
       );
       this.replayingHistory = false;
-      this.historyPending = this.persistedHistory.length > 0;
+      this.historyPending = this.persistedEvents.length > 0;
       this.applySessionState(response);
     } else if (sessionCapabilities?.resume) {
       const response = await this.runACPRequest(() =>
@@ -1438,6 +1510,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     } else {
       throw new Error(`${this.provider} does not support ACP session resume`);
     }
+    this.applyInitialCommands(spawned.initialize);
 
     await this.applyConfiguredOverrides();
   }
@@ -1476,7 +1549,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     const turnId = randomUUID();
     const messageId = options?.clientMessageId ?? randomUUID();
     this.activeForegroundTurnId = turnId;
-    this.fallbackAssistantMessageId = null;
+    this.resetAssistantMessageContinuity(this.contentTranslationState);
     this.activeSubmittedUserMessage = null;
     this.emitBootstrapThreadEvent();
     this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
@@ -1522,15 +1595,13 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
-    if (!this.historyPending || this.persistedHistory.length === 0) {
+    if (!this.historyPending || this.persistedEvents.length === 0) {
       return;
     }
-    const history = [...this.persistedHistory];
-    this.persistedHistory.length = 0;
+    const history = [...this.persistedEvents];
+    this.persistedEvents.length = 0;
     this.historyPending = false;
-    for (const item of history) {
-      yield { type: "timeline", provider: this.provider, item };
-    }
+    yield* history;
   }
 
   async getRuntimeInfo(): Promise<AgentRuntimeInfo> {
@@ -1588,6 +1659,13 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       if (timer) {
         clearTimeout(timer);
       }
+    }
+  }
+
+  private applyInitialCommands(response: InitializeResponse): void {
+    const commands = this.initialCommandsParser?.(response);
+    if (commands) {
+      this.applyResolvedCommands(commands);
     }
   }
 
@@ -1845,7 +1923,15 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
 
     if (this.thinkingOptionWriter) {
-      await this.thinkingOptionWriter(this.connection, this.sessionId, thinkingOptionId);
+      if (!this.currentModel) {
+        throw new Error(`${this.provider} cannot set a thinking option without a current model`);
+      }
+      await this.thinkingOptionWriter({
+        connection: this.connection,
+        sessionId: this.sessionId,
+        modelId: this.currentModel,
+        thinkingOptionId,
+      });
       this.thinkingOptionId = thinkingOptionId;
       this.pushEvent({
         type: "thinking_option_changed",
@@ -2069,7 +2155,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     // Match Zed acp.rs:3189-3220: generic ACP permission requests stay pure pass-through.
     const requestId = randomUUID();
     let toolSnapshot =
-      this.toolCalls.get(params.toolCall.toolCallId) ??
+      this.contentTranslationState.toolCalls.get(params.toolCall.toolCallId) ??
       mergeToolSnapshot(params.toolCall.toolCallId, params.toolCall);
     if (this.toolSnapshotTransformer) {
       toolSnapshot = this.toolSnapshotTransformer(toolSnapshot);
@@ -2106,6 +2192,17 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       "provider.acp.raw_event",
     );
     if (params.sessionId !== this.sessionId) {
+      if (!this.forwardChildSessionUpdates) {
+        return;
+      }
+      const events = this.translateProviderSubagentSessionUpdate(params.sessionId, params.update);
+      if (this.replayingHistory) {
+        this.persistedEvents.push(...events);
+        return;
+      }
+      for (const event of events) {
+        this.pushEvent(event);
+      }
       return;
     }
 
@@ -2124,7 +2221,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     if (this.replayingHistory) {
       for (const event of events) {
         if (event.type === "timeline") {
-          this.persistedHistory.push(event.item);
+          this.persistedEvents.push(event);
         }
       }
       return;
@@ -2153,6 +2250,29 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         sessionId: typeof params.sessionId === "string" ? params.sessionId : undefined,
       });
     }
+
+    const parsedEvents = this.extensionNotificationParser?.(method, params, {
+      provider: this.provider,
+      sessionId: this.sessionId,
+      turnId: this.activeForegroundTurnId,
+    });
+    if (!parsedEvents) {
+      return;
+    }
+    const events = this.normalizeProviderSubagentCompletionEvents(parsedEvents);
+    if (this.replayingHistory) {
+      for (const event of events) {
+        if (event.type === "timeline" || event.type === "provider_subagent") {
+          this.persistedEvents.push(event);
+        }
+      }
+      this.clearCompletedProviderSubagentSessionUpdateStates(events);
+      return;
+    }
+    for (const event of events) {
+      this.pushEvent(event);
+    }
+    this.clearCompletedProviderSubagentSessionUpdateStates(events);
   }
 
   // Cache an asynchronously-delivered slash-command batch and unblock any
@@ -2343,6 +2463,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
           this.clientCapabilities,
         ),
         clientInfo: { name: "Paseo", version: "dev" },
+        _meta: this.initializeRequestMeta,
       }),
     );
 
@@ -2445,8 +2566,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private translateSessionUpdate(update: SessionUpdate): AgentStreamEvent[] {
     switch (update.sessionUpdate) {
       case "user_message_chunk": {
-        this.fallbackAssistantMessageId = null;
-        const item = this.createMessageTimelineItem("user_message", update);
+        const item = this.translateContentUpdate(update, this.contentTranslationState, {
+          userAssemblyFallbackId: this.activeForegroundTurnId,
+          freshToolCall: true,
+        });
         if (!item) {
           return [];
         }
@@ -2458,27 +2581,17 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         }
         return [this.wrapTimeline(item)];
       }
-      case "agent_message_chunk": {
-        const item = this.createMessageTimelineItem("assistant_message", update);
-        return item ? [this.wrapTimeline(item)] : [];
-      }
-      case "agent_thought_chunk": {
-        this.fallbackAssistantMessageId = null;
-        const item = this.createMessageTimelineItem("reasoning", update);
-        return item ? [this.wrapTimeline(item)] : [];
-      }
+      case "agent_message_chunk":
+      case "agent_thought_chunk":
       case "tool_call":
-        this.fallbackAssistantMessageId = null;
-        return this.handleToolCallUpdate(update.toolCallId, update, undefined);
       case "tool_call_update":
-        return this.handleToolCallUpdate(
-          update.toolCallId,
-          update,
-          this.toolCalls.get(update.toolCallId),
-        );
-      case "plan":
-        this.fallbackAssistantMessageId = null;
-        return [this.wrapTimeline(mapPlanToTimeline(update))];
+      case "plan": {
+        const item = this.translateContentUpdate(update, this.contentTranslationState, {
+          userAssemblyFallbackId: this.activeForegroundTurnId,
+          freshToolCall: true,
+        });
+        return item ? [this.wrapTimeline(item)] : [];
+      }
       case "current_mode_update":
         this.handleCurrentModeUpdate(update);
         return [
@@ -2511,68 +2624,218 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
   }
 
-  private handleToolCallUpdate(
-    toolCallId: string,
-    update: ToolCall | ToolCallUpdate,
-    previous: ACPToolSnapshot | undefined,
-  ): AgentStreamEvent[] {
-    let snapshot = mergeToolSnapshot(toolCallId, update, previous);
-    if (this.toolSnapshotTransformer) {
-      snapshot = this.toolSnapshotTransformer(snapshot);
+  private translateProviderSubagentSessionUpdate(
+    sessionId: string,
+    update: SessionUpdate,
+  ): Array<Extract<AgentStreamEvent, { type: "provider_subagent" }>> {
+    const state = this.getProviderSubagentSessionUpdateState(sessionId);
+    const item = this.translateContentUpdate(update, state);
+    if (!item) {
+      return [];
     }
-    this.toolCalls.set(toolCallId, snapshot);
-    return [this.wrapTimeline(mapToolSnapshotToTimeline(snapshot, this.terminalEntries))];
+    return [
+      {
+        type: "provider_subagent",
+        provider: this.provider,
+        event: { type: "timeline", id: sessionId, item },
+      },
+    ];
   }
 
-  private createMessageTimelineItem(
+  /**
+   * Shared content translation for foreground and child sessions.
+   * Handles message chunks, tool calls/updates, and plans against injected state.
+   */
+  private translateContentUpdate(
+    update: SessionUpdate,
+    state: SessionContentTranslationState,
+    options?: { userAssemblyFallbackId?: string | null; freshToolCall?: boolean },
+  ): AgentTimelineItem | null {
+    switch (update.sessionUpdate) {
+      case "user_message_chunk":
+        this.resetAssistantMessageContinuity(state);
+        return this.appendContentMessage(
+          "user_message",
+          update,
+          state,
+          options?.userAssemblyFallbackId,
+        );
+      case "agent_message_chunk":
+        return this.appendContentMessage(
+          "assistant_message",
+          update,
+          state,
+          options?.userAssemblyFallbackId,
+        );
+      case "agent_thought_chunk":
+        this.resetAssistantMessageContinuity(state);
+        return this.appendContentMessage(
+          "reasoning",
+          update,
+          state,
+          options?.userAssemblyFallbackId,
+        );
+      case "tool_call":
+      case "tool_call_update": {
+        const previous = state.toolCalls.get(update.toolCallId);
+        const isToolCall = update.sessionUpdate === "tool_call";
+        // Foreground resets only on tool_call and replaces prior snapshot.
+        // Child also resets when there is no prior snapshot, and always merges.
+        if (isToolCall || (!options?.freshToolCall && !previous)) {
+          this.resetAssistantMessageContinuity(state);
+        }
+        let snapshot = mergeToolSnapshot(
+          update.toolCallId,
+          update,
+          isToolCall && options?.freshToolCall ? undefined : previous,
+        );
+        if (this.toolSnapshotTransformer) {
+          snapshot = this.toolSnapshotTransformer(snapshot);
+        }
+        state.toolCalls.set(update.toolCallId, snapshot);
+        return mapToolSnapshotToTimeline(snapshot, this.terminalEntries, {
+          detailMapper: this.toolDetailMapper,
+        });
+      }
+      case "plan":
+        this.resetAssistantMessageContinuity(state);
+        return mapPlanToTimeline(update);
+      default:
+        return null;
+    }
+  }
+
+  private appendContentMessage(
     type: "user_message" | "assistant_message" | "reasoning",
     update: Extract<
       SessionUpdate,
       { sessionUpdate: "user_message_chunk" | "agent_message_chunk" | "agent_thought_chunk" }
     >,
-  ):
-    | { type: "user_message"; text: string; messageId?: string }
-    | { type: "assistant_message"; text: string; messageId: string }
-    | { type: "reasoning"; text: string }
-    | null {
+    state: SessionContentTranslationState,
+    userAssemblyFallbackId?: string | null,
+  ): AgentTimelineItem | null {
     const chunkText = contentBlockToText(update.content);
     if (!chunkText) {
       return null;
     }
-    const key = this.messageAssemblyKey(type, update.messageId);
-    const state = this.messageAssemblies.get(key) ?? { text: "" };
-    state.text += chunkText;
-    this.messageAssemblies.set(key, state);
 
-    if (type === "user_message") {
-      return { type: "user_message", text: state.text, messageId: update.messageId ?? undefined };
-    }
     if (type === "assistant_message") {
+      const messageId = update.messageId ?? state.fallbackAssistantMessageId ?? randomUUID();
+      state.fallbackAssistantMessageId = update.messageId ? null : messageId;
+      const key = `assistant_message:${messageId}`;
+      const assembly = state.messageAssemblies.get(key) ?? { text: "" };
+      assembly.text += chunkText;
+      state.messageAssemblies.set(key, assembly);
+      state.currentAssistantAssemblyKey = key;
       return {
         type: "assistant_message",
         text: chunkText,
-        messageId: this.resolveAssistantMessageId(update.messageId),
+        messageId,
+      };
+    }
+
+    const fallbackId = type === "user_message" ? (userAssemblyFallbackId ?? "default") : "default";
+    const key = `${type}:${update.messageId ?? fallbackId}`;
+    const assembly = state.messageAssemblies.get(key) ?? { text: "" };
+    assembly.text += chunkText;
+    state.messageAssemblies.set(key, assembly);
+
+    if (type === "user_message") {
+      return {
+        type: "user_message",
+        text: assembly.text,
+        messageId: update.messageId ?? undefined,
       };
     }
     return { type: "reasoning", text: chunkText };
   }
 
-  private resolveAssistantMessageId(messageId: string | null | undefined): string {
-    if (messageId) {
-      this.fallbackAssistantMessageId = null;
-      return messageId;
-    }
-    this.fallbackAssistantMessageId ??= randomUUID();
-    return this.fallbackAssistantMessageId;
+  private resetAssistantMessageContinuity(state: SessionContentTranslationState): void {
+    state.fallbackAssistantMessageId = null;
+    state.currentAssistantAssemblyKey = null;
   }
 
-  private messageAssemblyKey(
-    type: "user_message" | "assistant_message" | "reasoning",
-    messageId: string | null | undefined,
-  ): string {
-    const fallbackId =
-      type === "user_message" ? (this.activeForegroundTurnId ?? "default") : "default";
-    return `${type}:${messageId ?? fallbackId}`;
+  private getProviderSubagentSessionUpdateState(sessionId: string): SessionContentTranslationState {
+    const existing = this.providerSubagentSessionUpdateStates.get(sessionId);
+    if (existing) {
+      return existing;
+    }
+    const created: SessionContentTranslationState = {
+      messageAssemblies: new Map(),
+      toolCalls: new Map(),
+      fallbackAssistantMessageId: null,
+      currentAssistantAssemblyKey: null,
+    };
+    this.providerSubagentSessionUpdateStates.set(sessionId, created);
+    return created;
+  }
+
+  private normalizeProviderSubagentCompletionEvents(
+    events: AgentStreamEvent[],
+  ): AgentStreamEvent[] {
+    if (!this.forwardChildSessionUpdates) {
+      return events;
+    }
+    const completedIds = new Set(
+      events.flatMap((event) =>
+        event.type === "provider_subagent" &&
+        event.event.type === "upsert" &&
+        event.event.status !== undefined &&
+        event.event.status !== "running"
+          ? [event.event.id]
+          : [],
+      ),
+    );
+    if (completedIds.size === 0) {
+      return events;
+    }
+    return events.flatMap((event) => {
+      if (
+        event.type !== "provider_subagent" ||
+        event.event.type !== "timeline" ||
+        event.event.item.type !== "assistant_message" ||
+        !completedIds.has(event.event.id)
+      ) {
+        return [event];
+      }
+      const state = this.providerSubagentSessionUpdateStates.get(event.event.id);
+      if (!state) {
+        return [event];
+      }
+      const completionText = event.event.item.text;
+      for (const [key, assembly] of state.messageAssemblies) {
+        if (key.startsWith("assistant_message:") && assembly.text === completionText) {
+          return [];
+        }
+      }
+      const streamedText =
+        (state.currentAssistantAssemblyKey &&
+          state.messageAssemblies.get(state.currentAssistantAssemblyKey)?.text) ||
+        "";
+      if (!streamedText || !completionText.startsWith(streamedText)) {
+        return [event];
+      }
+      const suffix = completionText.slice(streamedText.length);
+      return suffix
+        ? [{ ...event, event: { ...event.event, item: { ...event.event.item, text: suffix } } }]
+        : [];
+    });
+  }
+
+  private clearCompletedProviderSubagentSessionUpdateStates(events: AgentStreamEvent[]): void {
+    if (!this.forwardChildSessionUpdates) {
+      return;
+    }
+    for (const event of events) {
+      if (
+        event.type === "provider_subagent" &&
+        event.event.type === "upsert" &&
+        event.event.status !== undefined &&
+        event.event.status !== "running"
+      ) {
+        this.providerSubagentSessionUpdateStates.delete(event.event.id);
+      }
+    }
   }
 
   private handleCurrentModeUpdate(update: CurrentModeUpdate): void {
@@ -2726,11 +2989,12 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     event: Extract<AgentStreamEvent, { type: "turn_completed" | "turn_failed" | "turn_canceled" }>,
   ): void {
     this.activeForegroundTurnId = null;
-    this.fallbackAssistantMessageId = null;
+    this.resetAssistantMessageContinuity(this.contentTranslationState);
     if (this.activeSubmittedUserMessage?.turnId === event.turnId) {
       this.activeSubmittedUserMessage = null;
     }
     this.pushEvent(event);
+    this.providerSubagentSessionUpdateStates.clear();
   }
 
   private isSubmittedUserMessageEcho(
@@ -2761,8 +3025,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   private synthesizeCanceledToolCalls(): void {
-    for (const snapshot of this.toolCalls.values()) {
-      const mapped = mapToolSnapshotToTimeline(snapshot, this.terminalEntries);
+    for (const snapshot of this.contentTranslationState.toolCalls.values()) {
+      const mapped = mapToolSnapshotToTimeline(snapshot, this.terminalEntries, {
+        detailMapper: this.toolDetailMapper,
+      });
       if (mapped.status === "running") {
         this.pushEvent(
           this.wrapTimeline({
@@ -3058,20 +3324,36 @@ function mapPlanToTimeline(plan: Plan): AgentTimelineItem {
     items: plan.entries.map((entry) => ({
       text: entry.content,
       completed: entry.status === "completed",
+      status: entry.status,
     })),
   };
+}
+
+export function resolveAcpToolCallName(snapshot: ACPToolSnapshot): string {
+  const kind = typeof snapshot.kind === "string" ? snapshot.kind.trim() : "";
+  const title = snapshot.title.trim();
+  // Generic ACP "other" (and missing kind) should not become the display label
+  // "Other" — prefer the human title Grok and other agents put on the tool.
+  if (!kind || kind === "other") {
+    return title || kind || snapshot.toolCallId;
+  }
+  return kind;
 }
 
 function mapToolSnapshotToTimeline(
   snapshot: ACPToolSnapshot,
   terminals: Map<string, TerminalEntry>,
+  options?: { detailMapper?: ACPToolDetailMapper },
 ): ToolCallTimelineItem {
   const status = mapToolStatus(snapshot.status);
-  const detail = mapToolDetail(snapshot, terminals);
+  const defaultDetail = mapToolDetail(snapshot, terminals);
+  const detail = options?.detailMapper
+    ? options.detailMapper(snapshot, defaultDetail)
+    : defaultDetail;
   const base = {
     type: "tool_call" as const,
     callId: snapshot.toolCallId,
-    name: snapshot.kind ?? snapshot.title,
+    name: resolveAcpToolCallName(snapshot),
     detail,
     metadata: {
       kind: snapshot.kind ?? undefined,

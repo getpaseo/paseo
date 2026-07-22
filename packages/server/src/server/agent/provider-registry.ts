@@ -34,6 +34,7 @@ import { CodexAppServerAgentClient } from "./providers/codex-app-server-agent.js
 import { CopilotACPAgentClient } from "./providers/copilot-acp-agent.js";
 import { CursorACPAgentClient } from "./providers/cursor-acp-agent.js";
 import { GenericACPAgentClient } from "./providers/generic-acp-agent.js";
+import { GrokACPAgentClient } from "./providers/grok-acp-agent.js";
 import { KiroACPAgentClient } from "./providers/kiro-acp-agent.js";
 import { OpenCodeAgentClient } from "./providers/opencode-agent.js";
 import { OmpAgentClient } from "./providers/omp/agent.js";
@@ -675,6 +676,9 @@ function addDerivedProviders(
           };
           if (providerId === "cursor") {
             return new CursorACPAgentClient(acpOptions);
+          }
+          if (providerId === "grok") {
+            return new GrokACPAgentClient(acpOptions);
           }
           if (providerId === "kiro") {
             return new KiroACPAgentClient(acpOptions);

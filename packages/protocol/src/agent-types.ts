@@ -337,12 +337,14 @@ export interface CompactionTimelineItem {
   preTokens?: number;
 }
 
+export type AgentTodoStatus = "pending" | "in_progress" | "completed";
+
 export type AgentTimelineItem =
   | { type: "user_message"; text: string; messageId?: string; clientMessageId?: string }
   | { type: "assistant_message"; text: string; messageId?: string }
   | { type: "reasoning"; text: string }
   | ToolCallTimelineItem
-  | { type: "todo"; items: { text: string; completed: boolean }[] }
+  | { type: "todo"; items: { text: string; completed: boolean; status?: AgentTodoStatus }[] }
   | { type: "error"; message: string }
   | CompactionTimelineItem;
 

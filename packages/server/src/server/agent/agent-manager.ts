@@ -534,6 +534,7 @@ function buildImportedTimelineRows(entries: readonly ImportedTimelineEntry[]): A
       seq: rows.length + 1,
       timestamp: entry.timestamp ?? new Date().toISOString(),
       item: limitAgentTimelineItemContent(entry.item),
+      ...(entry.turnId !== undefined ? { turnId: entry.turnId } : {}),
     });
   }
   return rows;
@@ -1922,7 +1923,11 @@ export class AgentManager {
       // for live subscribers. Other event types are broadcast only.
       if (event.type === "timeline") {
         this.touchUpdatedAt(agent);
-        const row = this.recordTimeline(agent.id, event.item);
+        const row = this.recordTimeline(
+          agent.id,
+          event.item,
+          event.turnId !== undefined ? { turnId: event.turnId } : undefined,
+        );
         this.dispatchStream(agent.id, event, {
           seq: row.seq,
           epoch: this.timelineStore.getEpoch(agent.id),
@@ -3220,11 +3225,10 @@ export class AgentManager {
       }
     }
     for (const event of historyEvents) {
-      const row = this.recordTimeline(
-        agent.id,
-        event.item,
-        event.timestamp ? { timestamp: event.timestamp } : undefined,
-      );
+      const row = this.recordTimeline(agent.id, event.item, {
+        ...(event.timestamp ? { timestamp: event.timestamp } : {}),
+        ...(event.turnId !== undefined ? { turnId: event.turnId } : {}),
+      });
       if (broadcast) {
         this.dispatchStream(agent.id, event, {
           seq: row.seq,
@@ -3257,11 +3261,10 @@ export class AgentManager {
         if (event.item.type === "user_message" && isSystemInjectedEnvelope(event.item.text)) {
           continue;
         }
-        this.recordTimeline(
-          agent.id,
-          event.item,
-          event.timestamp ? { timestamp: event.timestamp } : undefined,
-        );
+        this.recordTimeline(agent.id, event.item, {
+          ...(event.timestamp ? { timestamp: event.timestamp } : {}),
+          ...(event.turnId !== undefined ? { turnId: event.turnId } : {}),
+        });
       }
     } catch {
       // ignore history failures
@@ -3521,11 +3524,10 @@ export class AgentManager {
     }
 
     if (options?.fromHistory) {
-      this.recordTimeline(
-        agent.id,
-        event.item,
-        event.timestamp ? { timestamp: event.timestamp } : undefined,
-      );
+      this.recordTimeline(agent.id, event.item, {
+        ...(event.timestamp ? { timestamp: event.timestamp } : {}),
+        ...(event.turnId !== undefined ? { turnId: event.turnId } : {}),
+      });
       flags.shouldDispatchEvent = false;
       flags.shouldNotifyWaiters = false;
       return;
@@ -3717,7 +3719,7 @@ export class AgentManager {
     provider: AgentProvider,
     turnId?: string,
   ): AgentStreamEvent {
-    const row = this.recordTimeline(agentId, item);
+    const row = this.recordTimeline(agentId, item, turnId !== undefined ? { turnId } : undefined);
     const event: AgentStreamEvent = {
       type: "timeline",
       item,
@@ -3802,7 +3804,7 @@ export class AgentManager {
   private recordTimeline(
     agentId: string,
     item: AgentTimelineItem,
-    options?: { timestamp?: string },
+    options?: { timestamp?: string; turnId?: string },
   ): AgentTimelineRow {
     item = limitAgentTimelineItemContent(item);
     const row = this.timelineStore.append(agentId, item, options);

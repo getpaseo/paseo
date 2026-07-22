@@ -18,6 +18,7 @@ import {
 import {
   ACPAgentClient,
   ACPAgentSession,
+  type ACPExtensionNotificationParser,
   type SpawnedACPProcess,
   type SessionStateResponse,
   buildACPClientCapabilities,
@@ -27,6 +28,7 @@ import {
   mapACPUsage,
   resolveACPModeSelection,
   resolveACPModelSelection,
+  resolveAcpToolCallName,
   summarizeACPRequestError,
 } from "./acp-agent.js";
 import type { ProcessTerminator, TreeKillTarget } from "../../../utils/tree-kill.js";
@@ -124,7 +126,11 @@ interface ACPConfiguredOverrideInternals {
   applyConfiguredOverrides(): Promise<void>;
 }
 
-function createSession(terminateProcess?: ProcessTerminator): ACPAgentSession {
+function createSession(
+  terminateProcess?: ProcessTerminator,
+  forwardChildSessionUpdates = false,
+  extensionNotificationParser?: ACPExtensionNotificationParser,
+): ACPAgentSession {
   return new ACPAgentSession(
     {
       provider: "claude-acp",
@@ -143,6 +149,8 @@ function createSession(terminateProcess?: ProcessTerminator): ACPAgentSession {
         supportsReasoningStream: true,
         supportsToolInvocations: true,
       },
+      forwardChildSessionUpdates,
+      extensionNotificationParser,
       ...(terminateProcess ? { terminateProcess } : {}),
     },
   );
@@ -2166,6 +2174,152 @@ describe("ACPAgentSession", () => {
     ]);
   });
 
+  test("routes opted-in child session updates into provider subagent timelines", async () => {
+    const extensionNotificationParser: ACPExtensionNotificationParser = () => [
+      {
+        type: "provider_subagent",
+        provider: "claude-acp",
+        event: {
+          type: "timeline",
+          id: "child-1",
+          item: { type: "assistant_message", text: "Done" },
+        },
+      },
+      {
+        type: "provider_subagent",
+        provider: "claude-acp",
+        event: { type: "upsert", id: "child-1", status: "completed" },
+      },
+    ];
+    const session = createSession(undefined, true, extensionNotificationParser);
+    const events: AgentStreamEvent[] = [];
+    asInternals<ACPSessionInternals>(session).sessionId = "parent-1";
+    session.subscribe((event) => events.push(event));
+
+    const childUpdates = [
+      {
+        sessionUpdate: "user_message_chunk",
+        messageId: "user-1",
+        content: { type: "text", text: "hel" },
+      },
+      {
+        sessionUpdate: "user_message_chunk",
+        messageId: "user-1",
+        content: { type: "text", text: "lo" },
+      },
+      {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "First" },
+      },
+      {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: " part" },
+      },
+      {
+        sessionUpdate: "agent_thought_chunk",
+        content: { type: "text", text: "Think" },
+      },
+      {
+        sessionUpdate: "agent_thought_chunk",
+        content: { type: "text", text: " more" },
+      },
+      {
+        sessionUpdate: "plan",
+        entries: [
+          { content: "Inspect", status: "completed" },
+          { content: "Implement", status: "in_progress" },
+          { content: "Report", status: "pending" },
+        ],
+      },
+      {
+        sessionUpdate: "tool_call",
+        toolCallId: "child-tool",
+        title: "Read a file",
+        kind: "read",
+        status: "pending",
+        rawInput: { path: "/tmp/input.txt" },
+      },
+      {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "child-tool",
+        status: "completed",
+      },
+      {
+        sessionUpdate: "agent_message_chunk",
+        messageId: "child-answer",
+        content: { type: "text", text: "Done" },
+      },
+      // Intervening non-assistant event before completion output.
+      {
+        sessionUpdate: "tool_call",
+        toolCallId: "child-final-tool",
+        title: "Verify the result",
+        kind: "read",
+        status: "completed",
+        rawInput: { path: "/tmp/output.txt" },
+      },
+    ] as SessionUpdate[];
+
+    for (const update of childUpdates) {
+      await session.sessionUpdate({ sessionId: "child-1", update });
+    }
+    await session.extNotification("_provider/subagent_finished", {});
+
+    const projected = events.flatMap((event) => {
+      if (event.type !== "provider_subagent") {
+        return [];
+      }
+      if (event.event.type === "upsert") {
+        return [{ type: "upsert" as const, id: event.event.id, status: event.event.status }];
+      }
+      if (event.event.type !== "timeline") {
+        return [];
+      }
+      const item = event.event.item;
+      switch (item.type) {
+        case "user_message":
+        case "assistant_message":
+          return [{ type: item.type, text: item.text, messageId: item.messageId }];
+        case "reasoning":
+          return [{ type: "reasoning" as const, text: item.text }];
+        case "todo":
+          return [{ type: "todo" as const, items: item.items }];
+        case "tool_call":
+          return [{ type: "tool_call" as const, callId: item.callId, status: item.status }];
+        default:
+          return [{ type: item.type }];
+      }
+    });
+
+    const fallbackId = projected.find(
+      (entry) => entry.type === "assistant_message" && entry.messageId !== "child-answer",
+    )?.messageId;
+
+    expect(fallbackId).toEqual(expect.any(String));
+    expect(projected).toEqual([
+      { type: "user_message", text: "hel", messageId: "user-1" },
+      { type: "user_message", text: "hello", messageId: "user-1" },
+      { type: "assistant_message", text: "First", messageId: fallbackId },
+      { type: "assistant_message", text: " part", messageId: fallbackId },
+      { type: "reasoning", text: "Think" },
+      { type: "reasoning", text: " more" },
+      {
+        type: "todo",
+        items: [
+          { text: "Inspect", completed: true, status: "completed" },
+          { text: "Implement", completed: false, status: "in_progress" },
+          { text: "Report", completed: false, status: "pending" },
+        ],
+      },
+      { type: "tool_call", callId: "child-tool", status: "running" },
+      { type: "tool_call", callId: "child-tool", status: "completed" },
+      { type: "assistant_message", text: "Done", messageId: "child-answer" },
+      { type: "tool_call", callId: "child-final-tool", status: "completed" },
+      // Completion assistant text matching streamed output is dropped after the tool.
+      { type: "upsert", id: "child-1", status: "completed" },
+    ]);
+  });
+
   test("assigns one fallback ID per contiguous assistant message", async () => {
     const session = createSession();
     const assistantMessages: Array<{ text: string; messageId?: string }> = [];
@@ -2992,5 +3146,46 @@ describe("ACP session/load invariant — cwd and mcpServers always passed", () =
       cwd: "/tmp/paseo-acp-test",
       mcpServers: [],
     });
+  });
+});
+
+describe("resolveAcpToolCallName", () => {
+  test("uses title when kind is other", () => {
+    expect(
+      resolveAcpToolCallName({
+        toolCallId: "call-1",
+        title: "Web search",
+        kind: "other",
+      } as never),
+    ).toBe("Web search");
+  });
+
+  test("uses title when kind is missing", () => {
+    expect(
+      resolveAcpToolCallName({
+        toolCallId: "call-2",
+        title: "Custom tool",
+      } as never),
+    ).toBe("Custom tool");
+  });
+
+  test("falls back to toolCallId when title and kind are empty", () => {
+    expect(
+      resolveAcpToolCallName({
+        toolCallId: "call-3",
+        title: "   ",
+        kind: "",
+      } as never),
+    ).toBe("call-3");
+  });
+
+  test("uses kind for normal tool kinds", () => {
+    expect(
+      resolveAcpToolCallName({
+        toolCallId: "call-4",
+        title: "Read a file",
+        kind: "read",
+      } as never),
+    ).toBe("read");
   });
 });

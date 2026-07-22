@@ -8,9 +8,17 @@ This guide walks through adding a new agent provider end-to-end. There are two i
 
 Extend `ACPAgentClient` from `packages/server/src/server/agent/providers/acp-agent.ts`. The base class handles process spawning, stdio transport, session lifecycle, streaming, permissions, and model discovery. You provide configuration (command, modes, capabilities) and optionally override `isAvailable()` for auth checks.
 
-The only built-in ACP provider today is `copilot` (`copilot-acp-agent.ts`). `GenericACPAgentClient` (`generic-acp-agent.ts`) is also ACP-based but is used for user-defined custom providers configured via `extends: "acp"` overrides — see [docs/custom-providers.md](custom-providers.md).
+Built-in and catalog ACP providers share `ACPAgentClient`. Providers that only need a command use `GenericACPAgentClient`; providers with vendor extensions use focused subclasses such as `CursorACPAgentClient`, `KiroACPAgentClient`, `TraeACPAgentClient`, and `GrokACPAgentClient`. The registry selects these subclasses by provider ID while retaining the common ACP process, lifecycle, permission, and streaming implementation. User-defined `extends: "acp"` providers remain generic — see [docs/custom-providers.md](custom-providers.md).
+
+Tool cards use `kind` as the display name when it is a concrete ACP kind; when `kind` is missing or `other`, the base class prefers the tool `title` so cards are not labeled "Other".
 
 Copilot custom agents are exposed through ACP session config, not the slash-command list. When custom agents are available, Copilot returns a select config option with `id: "agent"` and `category: "_agent"`; Paseo maps that to the `agent` provider feature. Copilot uses the agent display name as the option value, and the blank value means the default Copilot agent.
+
+Grok Build is standard ACP plus a documented `x.ai/*` extension surface. `GrokACPAgentClient` keeps standard ACP for initialize, session create/load, prompts, cancellation, permissions, models, and config writes. It specializes only the product-specific seams: initialize metadata and available commands (including Grok's plan command), `x.ai/sessionConfig` reasoning options mapped to Paseo thinking levels, live and replayed subagent lifecycle notifications, standard child-session updates routed into subagent timelines (Grok uses the child session ID as the subagent ID), richer `x.ai/session/list` import discovery, and auth-readiness diagnostics. Unknown extension fields remain ignored so Grok can expand its vendor metadata without breaking Paseo.
+
+Grok provider-subagent **display** of model/effort is adapter-local (no protocol fields): the mapper folds them into the existing `title` string, e.g. `Map the registry · grok-4.5 · low`, same idea as OMP. Model comes from the `subagent_spawned` wire field when present. Reasoning effort is not on that frame; the adapter best-effort reads the child session's local `summary.json` under `GROK_HOME/sessions` (shallow walk fallback) on spawn/progress/finished and silently omits effort when missing.
+
+Grok parent-timeline Task tools use the shared ACP `toolDetailMapper` hook (`mapGrokAcpToolDetail`): `variant: "Task"` / `spawn_subagent` → `sub_agent` detail; `TaskOutput` / `get_command_or_subagent_output` → short `plain_text` wait summary; `open_page`-style tools nested under `action.url` → `fetch` detail; web search under `action.query` → `web_search` detail.
 
 ### Direct
 

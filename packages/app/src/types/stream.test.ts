@@ -89,10 +89,18 @@ function canonicalToolTimeline(params: {
   };
 }
 
-function todoTimeline(items: { text: string; completed: boolean }[]): AgentStreamEventPayload {
+function todoTimeline(
+  items: {
+    text: string;
+    completed: boolean;
+    status?: "pending" | "in_progress" | "completed";
+  }[],
+  options?: { provider?: AgentProvider; turnId?: string },
+): AgentStreamEventPayload {
   return {
     type: "timeline",
-    provider: "codex",
+    provider: options?.provider ?? "codex",
+    ...(options?.turnId !== undefined ? { turnId: options.turnId } : {}),
     item: {
       type: "todo",
       items,
@@ -1586,6 +1594,181 @@ describe("turn lifecycle events", () => {
     assert.deepStrictEqual(
       userMessages.map((item) => item.id),
       ["native-1", "native-2"],
+    );
+  });
+});
+
+describe("stream reducer todo status", () => {
+  it("preserves explicit pending, in_progress, and completed todo statuses", () => {
+    const state = hydrateStreamState([
+      {
+        event: todoTimeline(
+          [
+            { text: "Pending task", completed: false, status: "pending" },
+            { text: "Active task", completed: false, status: "in_progress" },
+            { text: "Done task", completed: true, status: "completed" },
+          ],
+          { provider: "grok", turnId: "turn-status" },
+        ),
+        timestamp: new Date("2025-01-01T13:00:00Z"),
+      },
+    ]);
+
+    const todos = state.filter(
+      (item): item is Extract<StreamItem, { kind: "todo_list" }> => item.kind === "todo_list",
+    );
+
+    assert.strictEqual(todos.length, 1);
+    assert.deepStrictEqual(
+      todos[0]?.items.map((item) => ({
+        text: item.text,
+        completed: item.completed,
+        status: item.status,
+      })),
+      [
+        { text: "Pending task", completed: false, status: "pending" },
+        { text: "Active task", completed: false, status: "in_progress" },
+        { text: "Done task", completed: true, status: "completed" },
+      ],
+    );
+  });
+
+  it("derives status from completed for legacy todo entries without status", () => {
+    const state = hydrateStreamState([
+      {
+        event: todoTimeline([
+          { text: "Outline", completed: false },
+          { text: "Ship", completed: true },
+        ]),
+        timestamp: new Date("2025-01-01T13:01:00Z"),
+      },
+    ]);
+
+    const todos = state.find(
+      (item): item is Extract<StreamItem, { kind: "todo_list" }> => item.kind === "todo_list",
+    );
+
+    assert.ok(todos);
+    assert.deepStrictEqual(
+      todos.items.map((item) => ({
+        text: item.text,
+        completed: item.completed,
+        status: item.status,
+      })),
+      [
+        { text: "Outline", completed: false, status: "pending" },
+        { text: "Ship", completed: true, status: "completed" },
+      ],
+    );
+  });
+
+  it("replaces the same provider+turn todo card in place across interleaved stream events", () => {
+    const turnId = "turn-coalesce";
+    const provider: AgentProvider = "grok";
+    const firstTodo = todoTimeline(
+      [
+        { text: "Investigate", completed: false, status: "pending" },
+        { text: "Fix", completed: false, status: "pending" },
+      ],
+      { provider, turnId },
+    );
+    const updatedTodo = todoTimeline(
+      [
+        { text: "Investigate", completed: false, status: "in_progress" },
+        { text: "Fix", completed: false, status: "pending" },
+      ],
+      { provider, turnId },
+    );
+
+    let state = reduceStreamUpdate([], firstTodo, new Date("2025-01-01T13:02:00Z"));
+    const firstCard = state.find(
+      (item): item is Extract<StreamItem, { kind: "todo_list" }> => item.kind === "todo_list",
+    );
+    assert.ok(firstCard);
+    const cardId = firstCard.id;
+    const cardIndex = state.findIndex((item) => item.id === cardId);
+
+    state = reduceStreamUpdate(
+      state,
+      reasoningTimeline("checking the reducer", provider),
+      new Date("2025-01-01T13:02:01Z"),
+    );
+    state = reduceStreamUpdate(
+      state,
+      assistantTimeline("working on it", provider, "msg-coalesce"),
+      new Date("2025-01-01T13:02:02Z"),
+    );
+    state = reduceStreamUpdate(
+      state,
+      canonicalToolTimeline({
+        provider,
+        callId: "tool-coalesce",
+        name: "shell",
+        status: "running",
+        input: { command: "rg status" },
+      }),
+      new Date("2025-01-01T13:02:03Z"),
+    );
+    state = reduceStreamUpdate(state, updatedTodo, new Date("2025-01-01T13:02:04Z"));
+
+    const todoCards = state.filter(
+      (item): item is Extract<StreamItem, { kind: "todo_list" }> => item.kind === "todo_list",
+    );
+    const replacedIndex = state.findIndex((item) => item.id === cardId);
+
+    assert.strictEqual(todoCards.length, 1);
+    assert.strictEqual(todoCards[0]?.id, cardId);
+    assert.strictEqual(todoCards[0]?.turnId, turnId);
+    assert.strictEqual(replacedIndex, cardIndex);
+    assert.deepStrictEqual(
+      todoCards[0]?.items.map((item) => ({ text: item.text, status: item.status })),
+      [
+        { text: "Investigate", status: "in_progress" },
+        { text: "Fix", status: "pending" },
+      ],
+    );
+    assert.ok(replacedIndex < state.findIndex((item) => item.kind === "thought"));
+    assert.ok(replacedIndex < state.findIndex((item) => item.kind === "assistant_message"));
+  });
+
+  it("creates a separate todo card for a different turn", () => {
+    const provider: AgentProvider = "grok";
+    const state = hydrateStreamState([
+      {
+        event: todoTimeline([{ text: "Turn one task", completed: false, status: "in_progress" }], {
+          provider,
+          turnId: "turn-a",
+        }),
+        timestamp: new Date("2025-01-01T13:03:00Z"),
+      },
+      {
+        event: assistantTimeline("between turns", provider, "msg-between-turns"),
+        timestamp: new Date("2025-01-01T13:03:01Z"),
+      },
+      {
+        event: todoTimeline([{ text: "Turn two task", completed: false, status: "pending" }], {
+          provider,
+          turnId: "turn-b",
+        }),
+        timestamp: new Date("2025-01-01T13:03:02Z"),
+      },
+    ]);
+
+    const todoCards = state.filter(
+      (item): item is Extract<StreamItem, { kind: "todo_list" }> => item.kind === "todo_list",
+    );
+
+    assert.strictEqual(todoCards.length, 2);
+    assert.deepStrictEqual(
+      todoCards.map((card) => ({
+        turnId: card.turnId,
+        text: card.items[0]?.text,
+        status: card.items[0]?.status,
+      })),
+      [
+        { turnId: "turn-a", text: "Turn one task", status: "in_progress" },
+        { turnId: "turn-b", text: "Turn two task", status: "pending" },
+      ],
     );
   });
 });

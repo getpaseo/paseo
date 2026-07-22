@@ -65,6 +65,7 @@ interface TimelineResponseEntry {
   sourceSeqRanges?: TimelineSeqRange[];
   collapsed?: string[];
   provider: string;
+  turnId?: string;
   item: Record<string, unknown>;
   timestamp: string;
 }
@@ -937,6 +938,7 @@ export function processTimelineResponse(
     event: {
       type: "timeline",
       provider: entry.provider,
+      ...(entry.turnId !== undefined ? { turnId: entry.turnId } : {}),
       item: entry.item,
     } as AgentStreamEventPayload,
     timestamp: new Date(entry.timestamp),
