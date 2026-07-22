@@ -57,6 +57,7 @@ function createAgentWithStatus({ id, status }: { id: string; status: Agent["stat
 function createBaseInput(): AgentScreenMachineInput {
   return {
     agent: null,
+    isArchived: false,
     continuity: { kind: "none" },
     missingAgentState: { kind: "idle" },
     isConnected: true,
@@ -383,6 +384,22 @@ describe("deriveAgentScreenViewState", () => {
     });
     expect(result.memory.hasRenderedReady).toBe(false);
     expect(result.memory.lastReadyAgent).toBeNull();
+  });
+
+  it("renders an archived agent before provider history is initialized", () => {
+    const result = deriveAgentScreenViewState({
+      input: {
+        ...createBaseInput(),
+        agent: createAgent("agent-1"),
+        isArchived: true,
+        needsAuthoritativeSync: true,
+      },
+      memory: createBaseMemory(),
+    });
+
+    const ready = expectReadyState(result.state);
+    expect(ready.agent.id).toBe("agent-1");
+    expect(ready.sync).toEqual({ status: "idle" });
   });
 
   it("keeps optimistic create non-blocking while timeline and authoritative history catch up", () => {

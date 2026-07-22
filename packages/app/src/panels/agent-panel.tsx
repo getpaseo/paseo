@@ -894,6 +894,7 @@ function ChatAgentContent({
     routeKey: `${serverId}:${agentId ?? ""}`,
     input: {
       agent: agent ?? null,
+      isArchived: agentState.archivedAt !== null,
       missingAgentState,
       isConnected,
       isArchivingCurrentAgent,
@@ -945,6 +946,9 @@ function ChatAgentContent({
 
   useEffect(() => {
     if (!agentId) {
+      return;
+    }
+    if (agentState.archivedAt) {
       return;
     }
     if (agentState.id && hasAppliedAuthoritativeHistory) {
@@ -1012,6 +1016,7 @@ function ChatAgentContent({
       });
   }, [
     agentState.id,
+    agentState.archivedAt,
     hasAppliedAuthoritativeHistory,
     agentId,
     client,

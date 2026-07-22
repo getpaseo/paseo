@@ -144,7 +144,7 @@ export interface SeedDaemonClient {
   } | null;
   fetchAgentHistory(options?: {
     page?: { limit: number };
-  }): Promise<{ entries: Array<{ id: string }> }>;
+  }): Promise<{ entries: Array<{ agent: { id: string } }> }>;
   subscribeTerminal(
     terminalId: string,
   ): Promise<{ terminalId: string; slot: number; error: null } | { error: string }>;

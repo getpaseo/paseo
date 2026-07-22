@@ -1654,14 +1654,11 @@ function applyPinnedAndHidden(input: {
   baseAgentIds: Set<string>;
   pinnedAgentIds: Set<string>;
   hiddenAgentIds: Set<string>;
-  knownAgentIds: Set<string>;
 }): Set<string> {
-  const { baseAgentIds, pinnedAgentIds, hiddenAgentIds, knownAgentIds } = input;
+  const { baseAgentIds, pinnedAgentIds, hiddenAgentIds } = input;
   const result = new Set(baseAgentIds);
   for (const agentId of pinnedAgentIds) {
-    if (knownAgentIds.has(agentId)) {
-      result.add(agentId);
-    }
+    result.add(agentId);
   }
   for (const agentId of hiddenAgentIds) {
     result.delete(agentId);
@@ -1787,7 +1784,6 @@ export function reconcileWorkspaceTabs(
   const hiddenAgentIds = new Set(state.hiddenAgentIds ?? []);
   const activeAgentIds = normalizeStringSet(snapshot.activeAgentIds);
   const autoOpenAgentIds = normalizeStringSet(snapshot.autoOpenAgentIds);
-  const knownAgentIds = normalizeStringSet(snapshot.knownAgentIds);
   const standaloneTerminalIds = normalizeStringSet(snapshot.standaloneTerminalIds);
   const knownTerminalIds = snapshot.knownTerminalIds
     ? normalizeStringSet(snapshot.knownTerminalIds)
@@ -1796,13 +1792,11 @@ export function reconcileWorkspaceTabs(
     baseAgentIds: activeAgentIds,
     pinnedAgentIds,
     hiddenAgentIds,
-    knownAgentIds,
   });
   const autoOpenSet = applyPinnedAndHidden({
     baseAgentIds: autoOpenAgentIds,
     pinnedAgentIds,
     hiddenAgentIds,
-    knownAgentIds,
   });
 
   const initialTabs = collectAllTabs(nextLayout.root);

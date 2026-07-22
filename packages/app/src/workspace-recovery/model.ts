@@ -34,6 +34,22 @@ export interface WorkspaceRecoveryController {
   retryInspection: () => void;
 }
 
+export interface WorkspaceSelectionRecoveryClient {
+  restoreWorkspace: (workspaceId: string) => Promise<unknown>;
+  refreshAgent: (agentId: string) => Promise<unknown>;
+}
+
+export async function recoverWorkspaceSelection(input: {
+  client: WorkspaceSelectionRecoveryClient;
+  workspaceId: string;
+  agentId?: string | null;
+}): Promise<void> {
+  await input.client.restoreWorkspace(input.workspaceId);
+  if (input.agentId) {
+    await input.client.refreshAgent(input.agentId);
+  }
+}
+
 function resolveRecoveryPhase(input: {
   pending: boolean;
   error: string | null;
