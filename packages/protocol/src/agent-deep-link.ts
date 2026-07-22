@@ -7,18 +7,24 @@ function normalizeSegment(value: string): string {
   return value.trim();
 }
 
-export function buildAgentDeepLink(target: AgentDeepLinkTarget): string {
+function normalizeAgentDeepLinkTarget(target: AgentDeepLinkTarget): AgentDeepLinkTarget {
   const serverId = normalizeSegment(target.serverId);
   const agentId = normalizeSegment(target.agentId);
   if (!serverId || !agentId) {
     throw new Error("Agent deep links require a server ID and agent ID.");
   }
-  return `paseo://h/${encodeURIComponent(serverId)}/agent/${encodeURIComponent(agentId)}`;
+  return { serverId, agentId };
 }
 
-export function buildAgentDeepLinkRoute(target: AgentDeepLinkTarget): string {
-  const link = new URL(buildAgentDeepLink(target));
-  return `/h${link.pathname}`;
+export function buildAgentDeepLinkRoute(
+  target: AgentDeepLinkTarget,
+): `/h/${string}/agent/${string}` {
+  const { serverId, agentId } = normalizeAgentDeepLinkTarget(target);
+  return `/h/${encodeURIComponent(serverId)}/agent/${encodeURIComponent(agentId)}`;
+}
+
+export function buildAgentDeepLink(target: AgentDeepLinkTarget): string {
+  return `paseo:/${buildAgentDeepLinkRoute(target)}`;
 }
 
 export function parseAgentDeepLink(input: string): AgentDeepLinkTarget | null {

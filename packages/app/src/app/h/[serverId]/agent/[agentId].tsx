@@ -133,8 +133,8 @@ function HostAgentReadyRouteContent() {
     resolution.kind === "fetchingAgent" ||
     resolution.kind === "lookupError"
   ) {
-    // COMPAT(notificationWorkspaceId): added in v0.2.0; remove after 2027-02-01 once
-    // supported daemons and already-delivered notifications include workspaceId.
+    // Agent URLs intentionally omit workspaceId. Keep this route mounted while the target host
+    // reconnects, then resolve the workspace from the authoritative agent record.
     return (
       <AgentRouteResolutionView
         resolution={resolution}

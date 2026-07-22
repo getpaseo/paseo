@@ -2152,14 +2152,17 @@ export class VoiceAssistantWebSocketServer {
     const allStates = clientEntries.map((e) => e.state);
     const nowMs = Date.now();
     const agent = this.agentManager.getAgent(params.agentId);
+    if (!agent?.workspaceId) {
+      return;
+    }
     const assistantMessage = await this.agentManager.getLastAssistantMessage(params.agentId);
     const notification = buildAgentAttentionNotificationPayload({
       reason: params.reason,
       serverId: this.serverId,
-      workspaceId: agent?.workspaceId,
+      workspaceId: agent.workspaceId,
       agentId: params.agentId,
       assistantMessage,
-      permissionRequest: agent ? findLatestPermissionRequest(agent.pendingPermissions) : null,
+      permissionRequest: findLatestPermissionRequest(agent.pendingPermissions),
     });
 
     const plan = computeNotificationPlan({

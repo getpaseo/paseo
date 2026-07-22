@@ -147,9 +147,10 @@ function PushNotificationRouter() {
   const openNotification = useStableEvent((data: Record<string, unknown> | undefined) => {
     const target = resolveNotificationTarget(data);
     const serverId = target.serverId;
+    const workspaceId = target.workspaceId;
     const agentId = target.agentId;
-    if (serverId && agentId) {
-      navigateToAgent({ serverId, workspaceId: target.workspaceId, agentId, pin: true });
+    if (serverId && workspaceId && agentId) {
+      navigateToAgent({ serverId, workspaceId, agentId, pin: true });
       return;
     }
 
