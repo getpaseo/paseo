@@ -1602,13 +1602,23 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
       { cwd: input.cwd },
       GiteaCurrentPullRequestApiSchema,
     );
-    const candidates = recentItems.filter((item) =>
-      matchesCurrentHeadRef(
-        currentPullRequestApiToListItem(item),
-        input.headRef,
-        expectedHeadOwner,
-      ),
-    );
+    const candidates = recentItems.filter((item) => {
+      if (
+        matchesCurrentHeadRef(
+          currentPullRequestApiToListItem(item),
+          input.headRef,
+          expectedHeadOwner,
+        )
+      ) {
+        return true;
+      }
+      // A cross-fork PR carries the fork owner in its head, so the checkout-owner
+      // gate excludes it even though the PR lives in this base repo. The head sha
+      // is an unambiguous identity, so accept a match on it regardless of owner —
+      // this mirrors the GitLab adapter, which resolves fork MRs without an
+      // owner gate.
+      return input.headSha !== undefined && item.head.sha === input.headSha;
+    });
     const match =
       candidates.find((item) => mapGiteaState(item.state) === "open") ??
       candidates.find(

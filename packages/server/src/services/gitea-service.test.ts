@@ -2110,6 +2110,95 @@ describe("createGiteaService", () => {
     ]);
   });
 
+  it("resolves an open cross-fork PR by head sha despite the owner gate", async () => {
+    // The PR lives in the base repo but its head is on a fork
+    // (contributor:feat/fork-change), so the checkout-owner gate excludes it.
+    // The head sha uniquely identifies it, so resolution must accept it — this
+    // mirrors GitLab, which resolves fork MRs from the base checkout.
+    const forkHeadSha = "c4ce035f493f2c50f656e3e5bdba29b321a74042";
+    const forkPr = {
+      number: 6,
+      html_url: "https://gitea.com/example-user/sample-repo/pulls/6",
+      title: "Fork contribution",
+      body: "",
+      state: "open",
+      merged: false,
+      mergeable: true,
+      updated_at: "2026-07-22T10:00:00Z",
+      labels: [],
+      head: {
+        ref: "feat/fork-change",
+        sha: forkHeadSha,
+        repo: { id: 2, owner: { login: "contributor" } },
+      },
+      base: {
+        ref: "main",
+        repo: { id: 1, owner: { login: "example-user" } },
+      },
+    };
+    const { service } = makeService((args) => {
+      if (args[0] === "pr" && args[1] === "list") return ok("[]");
+      if (args[0] === "api" && args[1].includes("/pulls?state=all")) {
+        return ok(JSON.stringify([forkPr]));
+      }
+      if (args[0] === "pr" && args[1] === "6") {
+        return ok(JSON.stringify({ ...STATUS_PR_VIEW, index: 6, headSha: forkHeadSha }));
+      }
+      if (args[0] === "api" && args[1].includes("/commits/")) {
+        return ok(JSON.stringify({ state: "", statuses: [], total_count: 0 }));
+      }
+      if (args[0] === "api" && args[1].includes("/actions/tasks")) {
+        return ok(JSON.stringify({ workflow_runs: [], total_count: 0 }));
+      }
+      throw new Error(`unexpected call: ${args.join(" ")}`);
+    });
+
+    const status = await service.getCurrentPullRequestStatus({
+      cwd: "/repo",
+      headRef: "feat/fork-change",
+      headSha: forkHeadSha,
+    });
+
+    expect(status?.number).toBe(6);
+  });
+
+  it("does not resolve a cross-fork PR when the head sha does not match", async () => {
+    // Without a sha match the owner gate still protects against blindly picking
+    // a colliding cross-fork branch name.
+    const forkPr = {
+      number: 6,
+      html_url: "https://gitea.com/example-user/sample-repo/pulls/6",
+      title: "Fork contribution",
+      body: "",
+      state: "open",
+      merged: false,
+      mergeable: true,
+      updated_at: "2026-07-22T10:00:00Z",
+      labels: [],
+      head: {
+        ref: "feat/fork-change",
+        sha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        repo: { id: 2, owner: { login: "contributor" } },
+      },
+      base: { ref: "main", repo: { id: 1, owner: { login: "example-user" } } },
+    };
+    const { service } = makeService((args) => {
+      if (args[0] === "pr" && args[1] === "list") return ok("[]");
+      if (args[0] === "api" && args[1].includes("/pulls?state=all")) {
+        return ok(JSON.stringify([forkPr]));
+      }
+      throw new Error(`unexpected call: ${args.join(" ")}`);
+    });
+
+    await expect(
+      service.getCurrentPullRequestStatus({
+        cwd: "/repo",
+        headRef: "feat/fork-change",
+        headSha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      }),
+    ).resolves.toBeNull();
+  });
+
   it("lists open pull requests", async () => {
     const { service, calls } = makeService(() => ok(JSON.stringify([OPEN_PR])));
 
