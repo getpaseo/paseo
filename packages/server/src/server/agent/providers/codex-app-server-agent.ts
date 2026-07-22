@@ -3179,6 +3179,18 @@ interface ConsumedRootCompaction {
   itemId?: string;
 }
 
+type CodexStreamSubscriber = (event: AgentStreamEvent) => void;
+
+interface BufferedCodexStreamEvent {
+  event: AgentStreamEvent;
+  recipients: Set<CodexStreamSubscriber> | null;
+}
+
+interface DeliverToSubscribersOptions {
+  event: AgentStreamEvent;
+  recipients?: Iterable<CodexStreamSubscriber>;
+}
+
 export class CodexAppServerAgentSession implements AgentSession {
   readonly provider = CODEX_PROVIDER;
   readonly capabilities = CODEX_APP_SERVER_CAPABILITIES;
@@ -3200,7 +3212,10 @@ export class CodexAppServerAgentSession implements AgentSession {
     resolve: (turnId: string | null) => void;
   } | null = null;
   private client: CodexAppServerClient | null = null;
-  private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
+  private readonly subscribers = new Set<CodexStreamSubscriber>();
+  // thread/resume can start an autonomous goal before AgentManager receives the session.
+  private preSubscriptionEvents: BufferedCodexStreamEvent[] | null = [];
+  private preSubscriptionReplayScheduled = false;
   private nextTurnOrdinal = 0;
   private activeForegroundTurnId: string | null = null;
   private activeClientMessageId: string | null = null;
@@ -3756,17 +3771,10 @@ export class CodexAppServerAgentSession implements AgentSession {
       if (ids.includes(this.currentThreadId)) {
         return;
       }
-      const params: Record<string, unknown> = { threadId: this.currentThreadId };
-      const developerInstructions = composeSystemPromptParts(
-        this.config.systemPrompt,
-        this.config.daemonAppendSystemPrompt,
-      );
-      if (developerInstructions) {
-        params.developerInstructions = developerInstructions;
-      }
-      const codexConfig = this.buildCodexInnerConfig();
-      if (codexConfig) {
-        params.config = codexConfig;
+      const { params } = this.buildThreadRequest(this.config.model);
+      params.threadId = this.currentThreadId;
+      if (this.serviceTier) {
+        params.serviceTier = this.serviceTier;
       }
       const response = await this.client.request("thread/resume", params);
       this.rememberResolvedSandboxPolicy(response);
@@ -4064,7 +4072,8 @@ export class CodexAppServerAgentSession implements AgentSession {
       const turnId = this.createTurnId();
       this.activeForegroundTurnId = turnId;
       this.activeClientMessageId = options?.clientMessageId ?? null;
-      this.currentTurnId = null;
+      // Codex may steer this input into an existing autonomous turn. Keep that
+      // native id interruptible unless turn/started replaces it or the turn ends.
       this.pendingForegroundTurnIdentification?.resolve(null);
       let resolveTurnIdentification!: (identifiedTurnId: string | null) => void;
       const turnIdentification = new Promise<string | null>((resolvePromise) => {
@@ -4133,9 +4142,24 @@ export class CodexAppServerAgentSession implements AgentSession {
 
   subscribe(callback: (event: AgentStreamEvent) => void): () => void {
     this.subscribers.add(callback);
+    if (this.preSubscriptionEvents?.length === 0) {
+      this.preSubscriptionEvents = null;
+    } else {
+      const recipients = new Set(this.subscribers);
+      for (const buffered of this.preSubscriptionEvents ?? []) {
+        if (buffered.recipients === null) {
+          buffered.recipients = recipients;
+        }
+      }
+      this.schedulePreSubscriptionReplay();
+    }
     return () => {
       this.subscribers.delete(callback);
     };
+  }
+
+  flushPreSubscriptionEvents(): void {
+    this.replayPreSubscriptionEvents();
   }
 
   async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
@@ -4512,6 +4536,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.clearPendingPermissions();
     this.pendingSubAgentNotificationsByThreadId.clear();
     this.subscribers.clear();
+    this.preSubscriptionEvents = null;
     this.activeForegroundTurnId = null;
     this.activeClientMessageId = null;
     this.pendingForegroundTurnIdentification?.resolve(null);
@@ -4759,7 +4784,10 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.config.model = model;
     this.config.thinkingOptionId = thinkingOptionId;
 
-    const { params, approvalPolicy, sandbox } = this.buildThreadStartRequest(model);
+    const { params, approvalPolicy, sandbox } = this.buildThreadRequest(model);
+    if (this.ephemeral) {
+      params.ephemeral = true;
+    }
     const rawResponse = await this.client.request("thread/start", params);
     this.rememberResolvedSandboxPolicy(rawResponse);
     const response = toObjectRecord(rawResponse);
@@ -4783,7 +4811,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.currentThreadId = threadId;
   }
 
-  private buildThreadStartRequest(model: string): {
+  private buildThreadRequest(model?: string): {
     params: Record<string, unknown>;
     approvalPolicy?: string;
     sandbox?: string;
@@ -4797,7 +4825,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       this.config.daemonAppendSystemPrompt,
     );
     const params: Record<string, unknown> = {
-      model,
+      ...(model ? { model } : {}),
       cwd: this.config.cwd ?? null,
       ...(approvalPolicy && this.providerOptions.approval_policy === undefined
         ? { approvalPolicy }
@@ -4805,7 +4833,6 @@ export class CodexAppServerAgentSession implements AgentSession {
       ...(sandbox && this.providerOptions.sandbox_mode === undefined ? { sandbox } : {}),
       ...(developerInstructions ? { developerInstructions } : {}),
       ...(innerConfig ? { config: innerConfig } : {}),
-      ...(this.ephemeral ? { ephemeral: true } : {}),
     };
     if (this.hasWorkflowModeOverride) {
       applyApprovalsReviewerParam(params, preset);
@@ -4846,7 +4873,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   private notifySubscribers(event: AgentStreamEvent): void {
-    const turnId = this.activeForegroundTurnId;
+    const turnId = this.activeForegroundTurnId ?? this.currentTurnId;
     const tagged = turnId ? { ...event, turnId } : event;
     this.logger.trace(
       {
@@ -4858,9 +4885,62 @@ export class CodexAppServerAgentSession implements AgentSession {
       },
       "provider.codex.event_emit",
     );
-    for (const callback of this.subscribers) {
+    if (this.preSubscriptionEvents) {
+      this.preSubscriptionEvents.push({
+        event: tagged,
+        recipients: this.subscribers.size > 0 ? new Set(this.subscribers) : null,
+      });
+      this.schedulePreSubscriptionReplay();
+      return;
+    }
+    this.deliverToSubscribers({ event: tagged });
+  }
+
+  private schedulePreSubscriptionReplay(): void {
+    if (
+      !this.preSubscriptionEvents ||
+      this.preSubscriptionReplayScheduled ||
+      this.subscribers.size === 0
+    ) {
+      return;
+    }
+    this.preSubscriptionReplayScheduled = true;
+    // Defer replay so callbacks may safely capture the unsubscribe function
+    // returned by subscribe(), while recipient snapshots preserve event order.
+    queueMicrotask(() => {
+      this.preSubscriptionReplayScheduled = false;
+      this.replayPreSubscriptionEvents();
+    });
+  }
+
+  private replayPreSubscriptionEvents(): void {
+    const buffered = this.preSubscriptionEvents;
+    if (!buffered || this.subscribers.size === 0) {
+      return;
+    }
+    let consumed = 0;
+    while (consumed < buffered.length && this.subscribers.size > 0) {
+      const next = buffered[consumed++];
+      if (next?.recipients) {
+        this.deliverToSubscribers({ event: next.event, recipients: next.recipients });
+      }
+    }
+    buffered.splice(0, consumed);
+    if (buffered.length === 0) {
+      this.preSubscriptionEvents = null;
+    }
+  }
+
+  private deliverToSubscribers({
+    event,
+    recipients = this.subscribers,
+  }: DeliverToSubscribersOptions): void {
+    for (const callback of recipients) {
+      if (!this.subscribers.has(callback)) {
+        continue;
+      }
       try {
-        callback(tagged);
+        callback(event);
       } catch (error) {
         this.logger.warn({ err: error }, "Subscriber callback threw");
       }
@@ -5625,9 +5705,9 @@ export class CodexAppServerAgentSession implements AgentSession {
         usage: this.latestUsage,
       });
     }
+    this.currentTurnId = null;
     this.activeForegroundTurnId = null;
     this.activeClientMessageId = null;
-    this.currentTurnId = null;
     this.pendingForegroundTurnIdentification?.resolve(null);
     this.pendingForegroundTurnIdentification = null;
     this.pendingSubAgentNotificationsByThreadId.clear();

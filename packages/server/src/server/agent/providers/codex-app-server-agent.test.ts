@@ -1459,6 +1459,109 @@ describe("Codex app-server provider", () => {
     appServer.assertNoErrors();
   });
 
+  test("replays an autonomous turn that starts while a resumed session connects", async () => {
+    let interruptParams: unknown;
+    let appServer: FakeCodexAppServer;
+    appServer = createFakeCodexAppServer({
+      "thread/resume": () => {
+        appServer.startsTurn({ threadId: "resumed-thread", turnId: "goal-turn" });
+        return {};
+      },
+      "turn/interrupt": (params) => {
+        interruptParams = params;
+        return {};
+      },
+    });
+    const session = new CodexAppServerAgentSession(
+      createConfig({ modeId: "full-access" }),
+      { sessionId: "resumed-thread" },
+      createTestLogger(),
+      async () => appServer.child,
+    );
+
+    try {
+      await session.connect();
+
+      const events: AgentStreamEvent[] = [];
+      const turnStarted = new Promise<void>((resolve) => {
+        session.subscribe((event) => {
+          events.push(event);
+          if (event.type === "turn_started") {
+            resolve();
+          }
+        });
+      });
+      await turnStarted;
+
+      expect(events).toContainEqual({
+        type: "turn_started",
+        provider: "codex",
+        turnId: "goal-turn",
+      });
+      await session.startTurn("continue the active goal");
+      await session.interrupt();
+      expect(interruptParams).toEqual({
+        threadId: "resumed-thread",
+        turnId: "goal-turn",
+      });
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("does not let a buffered autonomous completion settle the next direct run", async () => {
+    const session = createSession();
+    session.activeForegroundTurnId = null;
+    const internals = asInternals(session);
+    const request = vi.fn(async (method: string) => {
+      if (method === "thread/loaded/list") {
+        return { data: ["test-thread"] };
+      }
+      if (method === "turn/start") {
+        internals.handleNotification("turn/started", {
+          threadId: "test-thread",
+          turn: { id: "next-native-turn" },
+        });
+        internals.handleNotification("item/completed", {
+          threadId: "test-thread",
+          item: {
+            id: "next-answer",
+            type: "agentMessage",
+            text: "Answer from the next turn",
+          },
+        });
+        internals.handleNotification("turn/completed", {
+          threadId: "test-thread",
+          turn: { status: "completed" },
+        });
+        return {};
+      }
+      throw new Error(`Unexpected request: ${method}`);
+    });
+    session.client = { request };
+
+    internals.handleNotification("turn/started", {
+      threadId: "test-thread",
+      turn: { id: "completed-goal-turn" },
+    });
+    internals.handleNotification("turn/completed", {
+      threadId: "test-thread",
+      turn: { status: "completed" },
+    });
+
+    await expect(session.run("start a fresh turn")).resolves.toMatchObject({
+      finalText: "Answer from the next turn",
+      timeline: [
+        {
+          type: "assistant_message",
+          messageId: "next-answer",
+          text: "Answer from the next turn",
+        },
+      ],
+    });
+  });
+
   test("lists repo skills using WorkspaceGitService repo-root resolution", async () => {
     const tempDir = await mkdtemp(path.join(tmpdir(), "codex-skills-"));
     const cwd = path.join(tempDir, "repo", "packages", "app");
@@ -3170,6 +3273,27 @@ describe("Codex app-server provider", () => {
     });
   });
 
+  test("does not interrupt a completed native Codex turn", async () => {
+    const session = createSession();
+    const request = vi.fn(async () => ({}));
+    session.activeForegroundTurnId = null;
+    session.client = { request };
+
+    asInternals(session).handleNotification("turn/started", {
+      threadId: "test-thread",
+      turn: { id: "completed-turn" },
+    });
+    asInternals(session).handleNotification("turn/completed", {
+      threadId: "test-thread",
+      turn: { status: "completed" },
+    });
+
+    await expect(session.interrupt()).rejects.toThrow(
+      "Cannot interrupt Codex before turn/started identifies the active turn",
+    );
+    expect(request).not.toHaveBeenCalled();
+  });
+
   test("never replaces the root identity with an early child thread start", () => {
     const session = createSession();
 
@@ -4153,8 +4277,81 @@ describe("Codex app-server provider", () => {
     expect(session.currentThreadId).toBe("archived-thread-id");
     expect(requests).toEqual([
       { method: "thread/loaded/list", params: {} },
-      { method: "thread/resume", params: { threadId: "archived-thread-id" } },
+      {
+        method: "thread/resume",
+        params: {
+          threadId: "archived-thread-id",
+          approvalPolicy: "on-request",
+          sandbox: "workspace-write",
+          model: "gpt-5.4",
+          cwd: "/tmp/codex-question-test",
+        },
+      },
     ]);
+  });
+
+  test("applies the persisted access mode when resuming a Codex thread", async () => {
+    const session = createSession({ modeId: "full-access" });
+    session.currentThreadId = "full-access-thread";
+    const requests: Array<{ method: string; params: unknown }> = [];
+    session.client = {
+      request: vi.fn(async (method: string, params: unknown) => {
+        requests.push({ method, params });
+        if (method === "thread/loaded/list") {
+          return { data: [] };
+        }
+        return {};
+      }),
+    };
+
+    await asInternals(session).ensureThreadLoaded();
+
+    expect(requests).toContainEqual({
+      method: "thread/resume",
+      params: {
+        threadId: "full-access-thread",
+        approvalPolicy: "never",
+        sandbox: "danger-full-access",
+        model: "gpt-5.4",
+        cwd: "/tmp/codex-question-test",
+      },
+    });
+  });
+
+  test("preserves auto-review and fast settings when resuming a Codex thread", async () => {
+    const session = createSession(
+      {
+        modeId: "auto-review",
+        featureValues: { fast_mode: true },
+      },
+      { autoReviewEnabled: true },
+    );
+    session.currentThreadId = "specialized-thread";
+    const requests: Array<{ method: string; params: unknown }> = [];
+    session.client = {
+      request: vi.fn(async (method: string, params: unknown) => {
+        requests.push({ method, params });
+        if (method === "thread/loaded/list") {
+          return { data: [] };
+        }
+        return {};
+      }),
+    };
+
+    await asInternals(session).ensureThreadLoaded();
+
+    expect(requests).toContainEqual({
+      method: "thread/resume",
+      params: {
+        threadId: "specialized-thread",
+        approvalPolicy: "on-request",
+        sandbox: "workspace-write",
+        approvalsReviewer: "auto_review",
+        model: "gpt-5.4",
+        cwd: "/tmp/codex-question-test",
+        serviceTier: "fast",
+      },
+    });
   });
 
   test("appends blank-line spacing to /goal status messages", async () => {
