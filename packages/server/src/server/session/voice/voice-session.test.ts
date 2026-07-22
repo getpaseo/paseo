@@ -4,6 +4,7 @@ import { describe, expect, test, vi } from "vitest";
 
 import { VoiceSession, type VoiceSessionHost } from "./voice-session.js";
 import type { ManagedAgent } from "../../agent/agent-manager.js";
+import type { AgentSessionConfig } from "../../agent/agent-sdk-types.js";
 import type { SessionOutboundMessage } from "../../messages.js";
 import type {
   SpeechToTextProvider,
@@ -57,20 +58,27 @@ class FakeVoiceSttSession extends EventEmitter implements StreamingTranscription
 interface FakeVoiceHost extends VoiceSessionHost {
   readonly emitted: SessionOutboundMessage[];
   readonly spokenInput: Array<{ agentId: string; text: string }>;
+  readonly reloadedConfigs: Array<Partial<AgentSessionConfig> | undefined>;
 }
 
-function createFakeHost(): FakeVoiceHost {
+function createFakeHost(
+  config: AgentSessionConfig = { provider: "claude", cwd: "/tmp" },
+): FakeVoiceHost {
   const emitted: SessionOutboundMessage[] = [];
   const spokenInput: Array<{ agentId: string; text: string }> = [];
+  const reloadedConfigs: Array<Partial<AgentSessionConfig> | undefined> = [];
   return {
     emitted,
     spokenInput,
+    reloadedConfigs,
     emit: (msg) => {
       emitted.push(msg);
     },
-    loadAgent: async (agentId) =>
-      ({ id: agentId, config: { systemPrompt: undefined } }) as unknown as ManagedAgent,
-    reloadAgentSession: async (agentId) => ({ id: agentId }) as unknown as ManagedAgent,
+    loadAgent: async (agentId) => ({ id: agentId, config }) as unknown as ManagedAgent,
+    reloadAgentSession: async (agentId, overrides) => {
+      reloadedConfigs.push(overrides);
+      return { id: agentId } as unknown as ManagedAgent;
+    },
     sendSpokenInput: async (agentId, text) => {
       spokenInput.push({ agentId, text });
     },
@@ -79,7 +87,7 @@ function createFakeHost(): FakeVoiceHost {
   };
 }
 
-function createVoiceSession() {
+function createVoiceSession(config?: AgentSessionConfig) {
   const detector = new FakeVoiceTurnDetectionSession();
   const sttSession = new FakeVoiceSttSession();
   const stt: SpeechToTextProvider = {
@@ -90,7 +98,7 @@ function createVoiceSession() {
     id: "local",
     createSession: vi.fn(() => detector),
   };
-  const host = createFakeHost();
+  const host = createFakeHost(config);
   const voiceSession = new VoiceSession({
     host,
     logger: pino({ level: "silent" }),
@@ -102,6 +110,40 @@ function createVoiceSession() {
   });
   return { voiceSession, detector, sttSession, host };
 }
+
+test("Codex voice mode adds and restores its MCP policy in provider-specific config", async () => {
+  const originalExtra = { codex: { model_provider: "custom" } };
+  const { voiceSession, host } = createVoiceSession({
+    provider: "codex",
+    cwd: "/tmp",
+    extra: originalExtra,
+  });
+
+  await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
+
+  expect(host.reloadedConfigs[0]).toMatchObject({
+    extra: {
+      codex: {
+        model_provider: "custom",
+        mcpServerPolicies: {
+          paseo: {
+            enabledTools: ["speak"],
+            defaultToolsApprovalMode: "prompt",
+            tools: { speak: { approvalMode: "approve" } },
+          },
+        },
+      },
+    },
+  });
+
+  await voiceSession.handleSetVoiceMode(false, VOICE_AGENT_ID);
+
+  expect(host.reloadedConfigs[1]).toEqual({
+    systemPrompt: expect.any(String),
+    extra: originalExtra,
+  });
+  await voiceSession.cleanup();
+});
 
 async function settle(): Promise<void> {
   await Promise.resolve();

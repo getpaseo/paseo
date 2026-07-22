@@ -6,7 +6,7 @@ Codex voice-mode sessions were receiving the injected `paseo` MCP server, but Pa
 
 ## Fix
 
-Paseo now carries Codex MCP approval metadata in a Codex-specific runtime policy and forwards it only through the Codex adapter as:
+Paseo now carries Codex MCP approval metadata in `extra.codex.mcpServerPolicies` and forwards it only through the Codex adapter as:
 
 - `mcp_servers.<id>.enabled_tools`
 - `mcp_servers.<id>.default_tools_approval_mode`

@@ -35,12 +35,17 @@ const MIN_STREAMING_SEGMENT_BYTES = Math.round(
   PCM_BYTES_PER_MS * MIN_STREAMING_SEGMENT_DURATION_MS,
 );
 const AgentIdSchema = z.guid();
+const CODEX_VOICE_MCP_POLICY = {
+  enabledTools: ["speak"],
+  defaultToolsApprovalMode: "prompt",
+  tools: { speak: { approvalMode: "approve" } },
+} as const;
 
 type ProcessingPhase = "idle" | "transcribing";
 
 interface VoiceModeBaseConfig {
   systemPrompt?: string;
-  voiceToolMcpServerName?: string;
+  extra?: AgentSessionConfig["extra"];
 }
 
 interface AudioBufferState {
@@ -487,7 +492,7 @@ export class VoiceSession {
 
     const baseConfig: VoiceModeBaseConfig = {
       systemPrompt: stripVoiceModeSystemPrompt(existing.config.systemPrompt),
-      voiceToolMcpServerName: existing.config.voiceToolMcpServerName,
+      extra: existing.config.extra,
     };
     this.voiceModeBaseConfig = baseConfig;
     const refreshOverrides = this.buildVoiceModeRefreshOverrides(existing.config, baseConfig);
@@ -530,7 +535,18 @@ export class VoiceSession {
     }
 
     return {
-      voiceToolMcpServerName: PASEO_MCP_SERVER_NAME,
+      extra: {
+        ...existingConfig.extra,
+        codex: {
+          ...existingConfig.extra?.codex,
+          mcpServerPolicies: {
+            ...(existingConfig.extra?.codex?.mcpServerPolicies as
+              | Record<string, unknown>
+              | undefined),
+            [PASEO_MCP_SERVER_NAME]: CODEX_VOICE_MCP_POLICY,
+          },
+        },
+      },
     };
   }
 
@@ -551,7 +567,7 @@ export class VoiceSession {
       try {
         await this.host.reloadAgentSession(agentId, {
           systemPrompt: buildVoiceModeSystemPrompt(baseConfig.systemPrompt, false),
-          voiceToolMcpServerName: baseConfig.voiceToolMcpServerName,
+          extra: baseConfig.extra,
         });
       } catch (error) {
         this.sessionLogger.warn(

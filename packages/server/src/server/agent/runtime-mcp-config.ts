@@ -2,7 +2,6 @@ import type { AgentSessionConfig, McpServerConfig } from "./agent-sdk-types.js";
 
 const PASEO_MCP_SERVER_NAME = "paseo";
 const PASEO_MCP_PATHNAME = "/mcp/agents";
-const PASEO_VOICE_ENABLED_TOOLS = ["speak"] as const;
 
 export function stripInternalPaseoMcpServer(config: AgentSessionConfig): AgentSessionConfig {
   const mcpServers = config.mcpServers;
@@ -29,7 +28,6 @@ export function stripInternalPaseoMcpServer(config: AgentSessionConfig): AgentSe
 
 export function withRuntimePaseoMcpServer(params: {
   config: AgentSessionConfig;
-  provider: string;
   agentId: string;
   mcpBaseUrl: string | null;
   /**
@@ -44,21 +42,8 @@ export function withRuntimePaseoMcpServer(params: {
     return storedConfig;
   }
 
-  const applyVoiceApproval =
-    params.provider === "codex" && storedConfig.voiceToolMcpServerName === PASEO_MCP_SERVER_NAME;
   return {
     ...storedConfig,
-    ...(applyVoiceApproval
-      ? {
-          codexMcpServerPolicies: {
-            [PASEO_MCP_SERVER_NAME]: {
-              enabledTools: [...PASEO_VOICE_ENABLED_TOOLS],
-              defaultToolsApprovalMode: "prompt" as const,
-              tools: { speak: { approvalMode: "approve" as const } },
-            },
-          },
-        }
-      : {}),
     mcpServers: {
       [PASEO_MCP_SERVER_NAME]: {
         type: "http",

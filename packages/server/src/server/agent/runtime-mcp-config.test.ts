@@ -12,7 +12,6 @@ describe("withRuntimePaseoMcpServer", () => {
   test("injects the paseo MCP server with a bearer header when a token is provided", () => {
     const result = withRuntimePaseoMcpServer({
       config: BASE_CONFIG,
-      provider: BASE_CONFIG.provider,
       agentId: "agent-1",
       mcpBaseUrl: "http://127.0.0.1:6767/mcp/agents",
       mcpAuthToken: "cap-token",
@@ -28,7 +27,6 @@ describe("withRuntimePaseoMcpServer", () => {
   test("omits the header when no token is available", () => {
     const result = withRuntimePaseoMcpServer({
       config: BASE_CONFIG,
-      provider: BASE_CONFIG.provider,
       agentId: "agent-1",
       mcpBaseUrl: "http://127.0.0.1:6767/mcp/agents",
       mcpAuthToken: null,
@@ -43,56 +41,11 @@ describe("withRuntimePaseoMcpServer", () => {
   test("does not inject when no MCP base URL is configured", () => {
     const result = withRuntimePaseoMcpServer({
       config: BASE_CONFIG,
-      provider: BASE_CONFIG.provider,
       agentId: "agent-1",
       mcpBaseUrl: null,
       mcpAuthToken: "cap-token",
     });
 
     expect(result.mcpServers).toBeUndefined();
-  });
-
-  test("adds voice approval metadata for Codex voice sessions on the generic paseo server", () => {
-    const result = withRuntimePaseoMcpServer({
-      config: {
-        provider: "codex",
-        cwd: "/tmp/agent",
-        voiceToolMcpServerName: "paseo",
-      },
-      provider: "codex",
-      agentId: "agent-1",
-      mcpBaseUrl: "http://127.0.0.1:6767/mcp/agents",
-      mcpAuthToken: null,
-    });
-
-    expect(result.codexMcpServerPolicies?.paseo).toEqual({
-      enabledTools: ["speak"],
-      defaultToolsApprovalMode: "prompt",
-      tools: { speak: { approvalMode: "approve" } },
-    });
-    expect(result.mcpServers?.paseo).toEqual({
-      type: "http",
-      url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-1",
-    });
-  });
-
-  test("does not apply Codex voice approval metadata to other providers", () => {
-    const result = withRuntimePaseoMcpServer({
-      config: {
-        provider: "claude",
-        cwd: "/tmp/agent",
-        voiceToolMcpServerName: "paseo",
-      },
-      provider: "claude",
-      agentId: "agent-1",
-      mcpBaseUrl: "http://127.0.0.1:6767/mcp/agents",
-      mcpAuthToken: null,
-    });
-
-    expect(result.mcpServers?.paseo).toEqual({
-      type: "http",
-      url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-1",
-    });
-    expect(result.codexMcpServerPolicies).toBeUndefined();
   });
 });

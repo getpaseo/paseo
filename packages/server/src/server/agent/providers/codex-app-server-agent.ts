@@ -4549,18 +4549,20 @@ export class CodexAppServerAgentSession implements AgentSession {
 
   private buildCodexInnerConfig(): Record<string, unknown> | null {
     const innerConfig: Record<string, unknown> = {};
+    const codexExtra = this.config.extra?.codex;
+    const mcpServerPolicies = codexExtra?.mcpServerPolicies as
+      | Record<string, CodexMcpServerPolicy>
+      | undefined;
     if (this.config.mcpServers) {
       const mcpServers: Record<string, CodexMcpServerConfig> = {};
       for (const [name, serverConfig] of Object.entries(this.config.mcpServers)) {
-        mcpServers[name] = toCodexMcpConfig(
-          serverConfig,
-          this.config.codexMcpServerPolicies?.[name] as CodexMcpServerPolicy | undefined,
-        );
+        mcpServers[name] = toCodexMcpConfig(serverConfig, mcpServerPolicies?.[name]);
       }
       innerConfig.mcp_servers = mcpServers;
     }
-    if (this.config.extra?.codex) {
-      Object.assign(innerConfig, this.config.extra.codex);
+    if (codexExtra) {
+      const { mcpServerPolicies: _mcpServerPolicies, ...nativeCodexExtra } = codexExtra;
+      Object.assign(innerConfig, nativeCodexExtra);
     }
     if (this.deps.customCodexConfig) {
       Object.assign(innerConfig, this.deps.customCodexConfig);

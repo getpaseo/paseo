@@ -4188,7 +4188,6 @@ export class AgentManager {
     const launchConfig = this.applyDaemonAppendSystemPrompt(
       withRuntimePaseoMcpServer({
         config: storedConfig,
-        provider: storedConfig.provider,
         agentId,
         mcpBaseUrl: this.mcpBaseUrl,
         mcpAuthToken: this.mcpAuthToken,

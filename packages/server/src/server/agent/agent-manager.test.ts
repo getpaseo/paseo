@@ -3780,14 +3780,24 @@ test("Codex voice MCP sessions use the generic paseo MCP injection with voice ap
     {
       provider: "codex",
       cwd: workdir,
-      voiceToolMcpServerName: PASEO_MCP_SERVER_NAME,
+      extra: {
+        codex: {
+          mcpServerPolicies: {
+            [PASEO_MCP_SERVER_NAME]: {
+              enabledTools: ["speak"],
+              defaultToolsApprovalMode: "prompt",
+              tools: { speak: { approvalMode: "approve" } },
+            },
+          },
+        },
+      },
     },
     undefined,
     { workspaceId: undefined },
   );
 
   expect(client.createdConfigs).toHaveLength(1);
-  expect(client.createdConfigs[0]?.codexMcpServerPolicies).toMatchObject({
+  expect(client.createdConfigs[0]?.extra?.codex?.mcpServerPolicies).toMatchObject({
     [PASEO_MCP_SERVER_NAME]: {
       enabledTools: ["speak"],
       defaultToolsApprovalMode: "prompt",
