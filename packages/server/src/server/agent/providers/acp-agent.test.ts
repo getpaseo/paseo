@@ -2409,6 +2409,53 @@ describe("ACPAgentSession", () => {
     expect(cancel).toHaveBeenCalledTimes(1);
   });
 
+  test("permission denial and interrupt share one cancel request for the active turn", async () => {
+    const session = createSession();
+    let resolveCancel!: () => void;
+    const cancel = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveCancel = resolve;
+        }),
+    );
+    const prompt = vi.fn(() => new Promise<PromptResponse>(() => {}));
+    const internals = asInternals<ACPSessionInternals>(session);
+    internals.sessionId = "session-1";
+    internals.connection = { prompt, cancel };
+
+    await session.startTurn("first prompt");
+    const permissionResult = session.requestPermission({
+      sessionId: "session-1",
+      toolCall: {
+        toolCallId: "tool-1",
+        title: "Run command",
+        kind: "execute",
+        status: "pending",
+      },
+      options: [{ optionId: "deny", name: "Deny", kind: "reject_once" }],
+    });
+    const pendingPermissions = session.getPendingPermissions();
+    expect(pendingPermissions).toHaveLength(1);
+
+    const deny = session.respondToPermission(pendingPermissions[0]!.id, {
+      behavior: "deny",
+      interrupt: true,
+    });
+    const interrupt = session.interrupt();
+
+    expect(cancel).toHaveBeenCalledTimes(1);
+    resolveCancel();
+    await Promise.all([deny, interrupt]);
+    await expect(permissionResult).resolves.toEqual({
+      outcome: { outcome: "selected", optionId: "deny" },
+    });
+
+    await expect(session.startTurn("replacement prompt")).resolves.toEqual({
+      turnId: expect.any(String),
+    });
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
   test("interrupted tool snapshots are not canceled again by a later turn", async () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];

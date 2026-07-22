@@ -1984,7 +1984,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     });
 
     if (response.behavior === "deny" && response.interrupt && this.connection && this.sessionId) {
-      await this.connection.cancel({ sessionId: this.sessionId });
+      await this.cancelForegroundTurn(pending.turnId);
     }
   }
 
@@ -2008,42 +2008,13 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       return;
     }
 
-    const connection = this.connection;
-    const sessionId = this.sessionId;
     const interruptedTurnId = this.activeForegroundTurnId;
     for (const pending of this.pendingPermissions.values()) {
       pending.resolve({ outcome: { outcome: "cancelled" } });
     }
     this.pendingPermissions.clear();
 
-    if (interruptedTurnId) {
-      const inFlightCancellation = this.foregroundCancellation;
-      if (inFlightCancellation?.turnId === interruptedTurnId) {
-        await inFlightCancellation.promise;
-        return;
-      }
-
-      const cancellation = (async () => {
-        await connection.cancel({ sessionId });
-        if (this.activeForegroundTurnId === interruptedTurnId) {
-          this.synthesizeCanceledToolCalls();
-          this.finishTurn({
-            type: "turn_canceled",
-            provider: this.provider,
-            reason: "Interrupted",
-            turnId: interruptedTurnId,
-          });
-        }
-      })();
-      this.foregroundCancellation = { turnId: interruptedTurnId, promise: cancellation };
-      try {
-        await cancellation;
-      } finally {
-        if (this.foregroundCancellation?.promise === cancellation) {
-          this.foregroundCancellation = null;
-        }
-      }
-    }
+    await this.cancelForegroundTurn(interruptedTurnId);
   }
 
   async close(): Promise<void> {
@@ -2818,6 +2789,44 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         this.pushEvent(
           this.wrapTimeline(mapToolSnapshotToTimeline(canceledSnapshot, this.terminalEntries)),
         );
+      }
+    }
+  }
+
+  private async cancelForegroundTurn(turnId: string | null): Promise<void> {
+    if (!turnId || !this.connection || !this.sessionId) {
+      return;
+    }
+
+    const inFlightCancellation = this.foregroundCancellation;
+    if (inFlightCancellation?.turnId === turnId) {
+      await inFlightCancellation.promise;
+      return;
+    }
+    if (this.activeForegroundTurnId !== turnId) {
+      return;
+    }
+
+    const connection = this.connection;
+    const sessionId = this.sessionId;
+    const cancellation = (async () => {
+      await connection.cancel({ sessionId });
+      if (this.activeForegroundTurnId === turnId) {
+        this.synthesizeCanceledToolCalls();
+        this.finishTurn({
+          type: "turn_canceled",
+          provider: this.provider,
+          reason: "Interrupted",
+          turnId,
+        });
+      }
+    })();
+    this.foregroundCancellation = { turnId, promise: cancellation };
+    try {
+      await cancellation;
+    } finally {
+      if (this.foregroundCancellation?.promise === cancellation) {
+        this.foregroundCancellation = null;
       }
     }
   }
