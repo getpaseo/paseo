@@ -226,8 +226,7 @@ function mapCheck(
     ...(check.rawStatus || check.status === "cancelled"
       ? { rawStatus: check.rawStatus ?? check.status }
       : {}),
-    ...(check.isManual ? { isManual: true } : {}),
-    ...(check.requiresAction ? { requiresAction: true } : {}),
+    ...(check.traits ? { traits: check.traits } : {}),
     url: check.url ?? fallbackUrl,
     ...(check.workflow ? { workflow: check.workflow } : {}),
     ...(timing ? { timing } : {}),

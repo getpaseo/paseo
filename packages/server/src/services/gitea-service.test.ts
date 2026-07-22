@@ -903,13 +903,13 @@ describe("createGiteaService", () => {
     ]);
     expect(status?.checks.find((check) => check.name === "approval-required")).toMatchObject({
       rawStatus: "blocked",
-      requiresAction: true,
+      traits: ["action_required"],
     });
     expect(status?.checks.find((check) => check.name === "dependency-blocked")).toMatchObject({
       rawStatus: "blocked",
     });
     expect(
-      status?.checks.find((check) => check.name === "dependency-blocked")?.requiresAction,
+      status?.checks.find((check) => check.name === "dependency-blocked")?.traits,
     ).toBeUndefined();
     expect(
       calls.filter((args) => args[0] === "api" && args[1].includes("/actions/runs?")),

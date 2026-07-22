@@ -70,10 +70,8 @@ export interface PullRequestCheck {
   workflowRunId?: number;
   /** Provider-native status, retained when the normalized status loses presentation detail. */
   rawStatus?: string;
-  /** Whether the check is configured for manual execution. */
-  isManual?: boolean;
-  /** Whether this check is waiting for an explicit user action. */
-  requiresAction?: boolean;
+  /** Open forge-neutral refinements such as manual, action_required, or warning. */
+  traits?: string[];
 }
 
 export type PullRequestChecksStatus = "none" | "pending" | "success" | "failure";

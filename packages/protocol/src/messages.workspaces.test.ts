@@ -875,8 +875,7 @@ describe("workspace message schemas", () => {
         status: "pending",
         url: null,
         rawStatus: "manual",
-        isManual: true,
-        requiresAction: true,
+        traits: ["manual", "action_required", "future-forge-trait"],
       },
     ];
     const parsed = SessionOutboundMessageSchema.parse({

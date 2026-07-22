@@ -580,15 +580,14 @@ function normalizePipelineJobStatus(raw: string): PipelineJobStatus {
 function getPullRequestCheckMetadata(
   rawStatus: string,
   allowFailure: boolean,
-): Pick<PullRequestCheck, "rawStatus" | "isManual" | "requiresAction"> {
+): Pick<PullRequestCheck, "rawStatus" | "traits"> {
   if (rawStatus === "manual") {
     return {
       rawStatus,
-      isManual: true,
-      ...(!allowFailure ? { requiresAction: true } : {}),
+      traits: allowFailure ? ["manual"] : ["manual", "action_required"],
     };
   }
-  return rawStatus === "failed" && allowFailure ? { rawStatus: "warning" } : {};
+  return rawStatus === "failed" && allowFailure ? { rawStatus, traits: ["warning"] } : {};
 }
 
 const PULL_REQUEST_CHECK_STATUS_BY_PIPELINE_JOB_STATUS = {

@@ -720,7 +720,7 @@ function toGiteaPullRequestCheck(status: GiteaCommitStatus): PullRequestCheck {
   return {
     name: status.context || `status-${status.id}`,
     status: mapGiteaCommitStatus(rawStatus),
-    ...(rawStatus === "warning" ? { rawStatus } : {}),
+    ...(rawStatus === "warning" ? { rawStatus, traits: ["warning"] } : {}),
     url: status.target_url ?? null,
     checkRunId: status.id,
   };
@@ -736,7 +736,7 @@ function toGiteaActionTaskCheck(task: GiteaActionTask): PullRequestCheck {
     name: getGiteaActionTaskName(task),
     status: mapGiteaActionTaskStatus(rawStatus),
     ...(rawStatus === "blocked" ? { rawStatus } : {}),
-    ...(rawStatus === "blocked" && task.need_approval ? { requiresAction: true } : {}),
+    ...(rawStatus === "blocked" && task.need_approval ? { traits: ["action_required"] } : {}),
     url: task.url ?? null,
     workflowRunId: task.id,
   };

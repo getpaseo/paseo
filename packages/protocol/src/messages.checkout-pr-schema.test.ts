@@ -34,8 +34,7 @@ describe("checkout PR schemas", () => {
         status: "pending",
         url: null,
         rawStatus: "manual",
-        isManual: true,
-        requiresAction: true,
+        traits: ["manual", "action_required", "future-forge-trait"],
       },
     ];
     const payload = {

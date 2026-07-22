@@ -3,16 +3,17 @@ import { classifyCheck, countCheckPresentations } from "./check-presentation";
 
 describe("check presentation", () => {
   it.each([
-    [{ status: "failure", rawStatus: "warning", requiresAction: true }, "actionRequired"],
-    [{ status: "pending", isManual: true, requiresAction: true }, "actionRequired"],
-    [{ status: "success", requiresAction: true }, "actionRequired"],
-    [{ status: "failure", rawStatus: "warning" }, "warning"],
-    [{ status: "skipped", isManual: true }, "manual"],
+    [{ status: "failure", traits: ["warning", "action_required"] }, "actionRequired"],
+    [{ status: "pending", traits: ["manual", "action_required"] }, "actionRequired"],
+    [{ status: "success", traits: ["action_required"] }, "actionRequired"],
+    [{ status: "success", traits: ["warning"] }, "warning"],
+    [{ status: "skipped", traits: ["manual"] }, "manual"],
     [{ status: "success" }, "success"],
     [{ status: "failure" }, "failure"],
     [{ status: "skipped" }, "ignored"],
     [{ status: "cancelled" }, "ignored"],
     [{ status: "pending" }, "pending"],
+    [{ status: "success", traits: ["future-forge-trait"] }, "success"],
     [{ status: "future-provider-state" }, "pending"],
   ] as const)("classifies %o as %s", (check, expected) => {
     expect(classifyCheck(check)).toBe(expected);
@@ -23,10 +24,10 @@ describe("check presentation", () => {
       countCheckPresentations([
         { status: "success" },
         { status: "failure" },
-        { status: "failure", rawStatus: "warning" },
-        { status: "pending", requiresAction: true },
+        { status: "success", traits: ["warning"] },
+        { status: "pending", traits: ["action_required"] },
         { status: "pending" },
-        { status: "skipped", isManual: true },
+        { status: "skipped", traits: ["manual"] },
         { status: "skipped" },
       ]),
     ).toEqual({

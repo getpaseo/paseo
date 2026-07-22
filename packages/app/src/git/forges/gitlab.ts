@@ -69,9 +69,12 @@ type GitlabPipelineJobPresentationInput = Pick<CheckoutPipelineJob, "status" | "
 function toPresentableGitlabPipelineJob(job: GitlabPipelineJobPresentationInput): PresentableCheck {
   const status = mapPipelineStatus(job.status);
   if (job.status === "manual") {
-    return job.allowFailure ? { status, isManual: true } : { status, requiresAction: true };
+    return {
+      status,
+      traits: job.allowFailure ? ["manual"] : ["manual", "action_required"],
+    };
   }
-  if (status === "failure" && job.allowFailure) return { status, rawStatus: "warning" };
+  if (status === "failure" && job.allowFailure) return { status, traits: ["warning"] };
   return { status };
 }
 

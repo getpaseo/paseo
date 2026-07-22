@@ -1,8 +1,7 @@
 export interface PresentableCheck {
   status: string;
   rawStatus?: string;
-  isManual?: boolean;
-  requiresAction?: boolean;
+  traits?: readonly string[];
 }
 
 export const COUNTED_CHECK_PRESENTATIONS = [
@@ -26,9 +25,10 @@ export const ATTENTION_CHECK_PRESENTATIONS = [
 export type CheckPresentationCounts = Record<CountedCheckPresentation, number>;
 
 export function classifyCheck(check: PresentableCheck): CheckPresentation {
-  if (check.requiresAction) return "actionRequired";
-  if (check.rawStatus?.toLowerCase() === "warning") return "warning";
-  if (check.isManual) return "manual";
+  const traits = check.traits ?? [];
+  if (traits.includes("action_required")) return "actionRequired";
+  if (traits.includes("warning")) return "warning";
+  if (traits.includes("manual")) return "manual";
   if (check.status === "success") return "success";
   if (check.status === "failure") return "failure";
   if (check.status === "skipped" || check.status === "cancelled") return "ignored";

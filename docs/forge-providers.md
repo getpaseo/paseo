@@ -58,6 +58,12 @@ schema-mismatched facts render neutrally instead of failing the whole message
 parse. This is the version-skew win: an old client can receive facts from a
 newer forge and still show the PR/MR in a neutral state.
 
+Check results keep a stable normalized `status` for aggregation and an optional
+open `traits: string[]` for composable forge-neutral refinements such as
+`manual`, `action_required`, and `warning`. Consumers ignore unknown traits and
+fall back to `status`; `rawStatus` preserves provider-native detail. Do not add
+provider vocabulary to the normalized status union.
+
 Shipped GitHub compatibility stays separate:
 
 - The forge compatibility layer first shipped in `v0.2.0-beta.1`. Its initial
@@ -190,8 +196,9 @@ are stale, run `npm run build:server`.
   bounded number of pages using `total_count` and filter locally. Preserve
   ambiguous same-run tasks: display names are not stable job identities, so
   name-based deduplication can hide a real failure.
-- A blocked Gitea Actions task is not necessarily manual: only mark it as
-  action-required when the matching run metadata reports `need_approval`.
+- A blocked Gitea Actions task is not necessarily manual: only add the
+  `action_required` trait when the matching run metadata reports
+  `need_approval`.
 - Brand icons are bundled React components, so they cannot come from protocol
   manifest data.
 - Source URL grammars are app-side because blob/tree path syntax is
@@ -205,5 +212,6 @@ are stale, run `npm run build:server`.
 - GitLab pipeline status constants belong to the GitLab adapter/client module,
   not protocol.
 - GitLab `manual` jobs need `allow_failure` to distinguish optional gray jobs
-  from blocking action-required jobs. A failed allowed-failure job is a warning,
-  and `canceling` remains active until GitLab reports a terminal status.
+  (`manual`) from blocking jobs (`manual` plus `action_required`). A failed
+  allowed-failure job carries the `warning` trait, and `canceling` remains active
+  until GitLab reports a terminal status.
