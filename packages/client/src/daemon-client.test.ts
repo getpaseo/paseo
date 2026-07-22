@@ -4660,6 +4660,89 @@ test("imports an agent by provider handle id", async () => {
   });
 });
 
+test("continues a provider session by requesting a new native fork", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const promise = client.continueProviderSession({
+    providerId: "codex",
+    providerHandleId: "thread-source",
+    sourceCwd: "/repo/source-worktree",
+    workspaceId: "workspace-destination",
+  });
+
+  const request = parseSentFrame(mock.sent[0]);
+  expect(request).toMatchObject({
+    type: "provider.session.continue.request",
+    providerId: "codex",
+    providerHandleId: "thread-source",
+    sourceCwd: "/repo/source-worktree",
+    workspaceId: "workspace-destination",
+  });
+  const requestId = z.object({ requestId: z.string() }).parse(request).requestId;
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "provider.session.continue.response",
+      payload: {
+        requestId,
+        agent: {
+          id: "agent-forked",
+          provider: "codex",
+          cwd: "/repo/destination-worktree",
+          model: null,
+          features: [],
+          thinkingOptionId: null,
+          effectiveThinkingOptionId: null,
+          createdAt: "2026-04-30T00:00:00.000Z",
+          updatedAt: "2026-04-30T00:00:00.000Z",
+          lastUserMessageAt: null,
+          status: "idle",
+          capabilities: {
+            supportsStreaming: false,
+            supportsSessionPersistence: true,
+            supportsDynamicModes: false,
+            supportsMcpServers: false,
+            supportsReasoningStream: false,
+            supportsToolInvocations: false,
+          },
+          currentModeId: null,
+          availableModes: [],
+          pendingPermissions: [],
+          persistence: {
+            provider: "codex",
+            sessionId: "thread-forked",
+            nativeHandle: "thread-forked",
+          },
+          title: "Continued session",
+          labels: {},
+          requiresAttention: false,
+          attentionReason: null,
+        },
+      },
+    }),
+  );
+
+  await expect(promise).resolves.toMatchObject({
+    id: "agent-forked",
+    provider: "codex",
+    cwd: "/repo/destination-worktree",
+  });
+});
+
 test("uses server-provided dictation finish timeout budget", async () => {
   useHeartbeatClock();
   const logger = createMockLogger();

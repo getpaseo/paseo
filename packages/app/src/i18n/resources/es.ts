@@ -389,6 +389,8 @@ export const es: TranslationResources = {
       refresh: "Actualizar sesiones",
       showAll: "Mostrar todo",
       loadMore: "Cargar más",
+      resumeOriginal: "Reanudar original",
+      continueHere: "Continuar aquí",
     },
     preview: {
       untitledSession: "Sesión sin título",
@@ -402,6 +404,9 @@ export const es: TranslationResources = {
     },
     row: {
       importing: "Importador...",
+      continuing: "Continuando...",
+      continueHint:
+        "Crea una nueva conversación aquí. Los archivos y cambios de origen permanecen en el worktree de origen.",
     },
   },
   workspace: {

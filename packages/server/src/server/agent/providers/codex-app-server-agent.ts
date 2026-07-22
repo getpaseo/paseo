@@ -30,6 +30,7 @@ import {
   type ToolCallTimelineItem,
   type AgentUsage,
   type FetchCatalogOptions,
+  type ForkImportableProviderSessionInput,
   type ImportableProviderSession,
   type ImportProviderSessionContext,
   type ImportProviderSessionInput,
@@ -149,6 +150,8 @@ const CODEX_NON_ORIGINATING_APP_SERVER_CLIENT_INFO = {
 const ASSISTANT_MESSAGE_BOUNDARY_MARKDOWN = "\n\n---\n\n";
 const MAX_PENDING_SUB_AGENT_THREADS = 32;
 const MAX_PENDING_SUB_AGENT_NOTIFICATIONS_PER_THREAD = 128;
+const CODEX_IMPORT_SESSION_SOURCE_KINDS = ["cli", "vscode", "appServer"] as const;
+const MAX_CODEX_IMPORT_SESSION_PAGES = 5;
 // COMPAT(codexLegacyCollabAgentToolCall): Codex <0.143 emits this shape. Added in
 // Paseo v0.1.105; remove after 2027-01-09 once the supported Codex floor is >=0.143.
 const CODEX_TOOL_THREAD_ITEM_TYPES = new Set([
@@ -928,6 +931,13 @@ function filterCodexThreadsByCwd(
   return threads.filter(
     (thread) => typeof thread.cwd === "string" && belongsToWorkspace(thread.cwd),
   );
+}
+
+function readCodexThreadListCursor(
+  response: Record<string, unknown> | null | undefined,
+): string | null {
+  const cursor = response?.nextCursor ?? response?.next_cursor;
+  return typeof cursor === "string" && cursor.length > 0 ? cursor : null;
 }
 
 export function toAgentUsage(tokenUsage: unknown): AgentUsage | undefined {
@@ -7040,15 +7050,33 @@ export class CodexAppServerAgentClient implements AgentClient {
       const scanLimit = Math.min(options?.scanLimit ?? limit, 500);
       // thread/list returns the cheap `cwd` field. Fetch a wider window when
       // filtering since most threads will be from other cwds, then keep the
-      // local realpath-aware filter for symlink-equivalent workspace paths.
+      // local path-equivalence filter for workspace paths. Explicit source
+      // kinds include Codex Desktop threads, which are currently persisted as
+      // `vscode`-sourced threads by the installed Codex app-server.
       const listLimit = options?.cwd ? Math.max(scanLimit, 50) : scanLimit;
-      const response = toObjectRecord(
-        await client.request("thread/list", {
-          limit: listLimit,
-          ...(options?.cwd ? { cwd: options.cwd } : {}),
-        }),
-      );
-      const allThreads = Array.isArray(response?.data) ? response.data.filter(isRecord) : [];
+      const pageLimit = Math.min(Math.max(listLimit, 50), 100);
+      const allThreads: Array<Record<string, unknown>> = [];
+      let cursor: string | null = null;
+      for (let page = 0; page < MAX_CODEX_IMPORT_SESSION_PAGES; page += 1) {
+        const response = toObjectRecord(
+          await client.request("thread/list", {
+            limit: pageLimit,
+            sourceKinds: CODEX_IMPORT_SESSION_SOURCE_KINDS,
+            sortKey: "updated_at",
+            ...(cursor ? { cursor } : {}),
+            ...(options?.cwd ? { cwd: options.cwd } : {}),
+          }),
+        );
+        const pageThreads = Array.isArray(response?.data) ? response.data.filter(isRecord) : [];
+        allThreads.push(...pageThreads);
+        if (filterCodexThreadsByCwd(allThreads, options?.cwd).length >= listLimit) {
+          break;
+        }
+        cursor = readCodexThreadListCursor(response);
+        if (!cursor) {
+          break;
+        }
+      }
       const threads = filterCodexThreadsByCwd(allThreads, options?.cwd);
       return threads.slice(0, limit).map((thread) => {
         const threadId = typeof thread.id === "string" ? thread.id : "";
@@ -7081,6 +7109,59 @@ export class CodexAppServerAgentClient implements AgentClient {
       context,
       resumeSession: this.resumeSession.bind(this),
     });
+  }
+
+  async forkImportableSession(
+    input: ForkImportableProviderSessionInput,
+    context: ImportProviderSessionContext,
+  ) {
+    const child = await this.spawnAppServer();
+    const client =
+      this.deps._createCodexClient?.(child, this.logger, () => ({})) ??
+      new CodexAppServerClient(child, this.logger);
+
+    try {
+      await client.request("initialize", buildCodexAppServerInitializeParams());
+      client.notify("initialized", {});
+      const forked = await forkCodexThread(client, {
+        threadId: input.providerHandleId,
+        cwd: input.destinationCwd,
+      });
+      const forkedThreadId = forked.thread.id;
+      if (forked.thread.forkedFromId && forked.thread.forkedFromId !== input.providerHandleId) {
+        throw new Error(
+          "Codex fork returned a source thread that does not match the selected session",
+        );
+      }
+      const config = {
+        ...context.storedConfig,
+        provider: CODEX_PROVIDER,
+        cwd: input.destinationCwd,
+      } satisfies AgentSessionConfig;
+      return await importSessionFromPersistence({
+        provider: CODEX_PROVIDER,
+        request: {
+          providerHandleId: forkedThreadId,
+          cwd: input.destinationCwd,
+        },
+        context,
+        resumeSession: this.resumeSession.bind(this),
+        persistence: {
+          provider: CODEX_PROVIDER,
+          sessionId: forkedThreadId,
+          nativeHandle: forkedThreadId,
+          metadata: {
+            ...config,
+            continuationSource: {
+              providerHandleId: input.providerHandleId,
+              cwd: input.sourceCwd,
+            },
+          },
+        },
+      });
+    } finally {
+      await client.dispose();
+    }
   }
 
   async fetchCatalog(

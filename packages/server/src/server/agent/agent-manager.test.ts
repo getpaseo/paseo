@@ -42,6 +42,8 @@ import type {
   AgentSlashCommand,
   AgentStreamEvent,
   AgentTimelineItem,
+  ForkImportableProviderSessionInput,
+  ImportProviderSessionContext,
   ImportProviderSessionInput,
   ImportProviderSessionContext,
   ResolveAgentDefaultModeInput,
@@ -3972,6 +3974,81 @@ test("importProviderSession imports the selected session without listing and pub
     },
   });
   expect((await storage.get(imported.id))?.title).toBe("Trace provider imports");
+});
+
+test("continueProviderSession registers a fork in the destination workspace without importing the source", async () => {
+  const sourceCwd = mkdtempSync(join(tmpdir(), "agent-manager-continue-source-"));
+  const destinationCwd = mkdtempSync(join(tmpdir(), "agent-manager-continue-destination-"));
+  const storage = new AgentStorage(join(destinationCwd, "agents"), logger);
+  const forkedSession = new TestAgentSession({ provider: "codex", cwd: destinationCwd });
+
+  class ForkClient extends TestAgentClient {
+    forkInput: ForkImportableProviderSessionInput | null = null;
+    importCalls = 0;
+
+    override async importSession() {
+      this.importCalls += 1;
+      throw new Error("Continue here must not import the source native handle");
+    }
+
+    override async forkImportableSession(
+      input: ForkImportableProviderSessionInput,
+      _context: ImportProviderSessionContext,
+    ) {
+      this.forkInput = input;
+      return {
+        session: forkedSession,
+        config: { provider: "codex" as const, cwd: destinationCwd },
+        persistence: {
+          provider: "codex" as const,
+          sessionId: "forked-thread",
+          nativeHandle: "forked-thread",
+          metadata: {
+            provider: "codex",
+            cwd: destinationCwd,
+            continuationSource: {
+              providerHandleId: input.providerHandleId,
+              cwd: input.sourceCwd,
+            },
+          },
+        },
+        timeline: [{ item: { type: "assistant_message" as const, text: "Forked context" } }],
+      };
+    }
+  }
+
+  const client = new ForkClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+  });
+
+  const continued = await manager.continueProviderSession({
+    provider: "codex",
+    providerHandleId: "desktop-thread",
+    sourceCwd,
+    destinationCwd,
+    workspaceId: "ws-destination",
+  });
+
+  expect(client.importCalls).toBe(0);
+  expect(client.forkInput).toEqual({
+    providerHandleId: "desktop-thread",
+    sourceCwd,
+    destinationCwd,
+  });
+  expect(continued.cwd).toBe(destinationCwd);
+  expect(continued.workspaceId).toBe("ws-destination");
+  expect(continued.persistence).toMatchObject({
+    sessionId: "forked-thread",
+    metadata: {
+      continuationSource: { providerHandleId: "desktop-thread", cwd: sourceCwd },
+    },
+  });
+  expect(manager.getTimeline(continued.id)).toEqual([
+    { type: "assistant_message", text: "Forked context" },
+  ]);
 });
 
 test("reloadAgentSession passes daemon launch env through the provider launch context", async () => {

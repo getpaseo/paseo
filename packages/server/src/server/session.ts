@@ -142,6 +142,7 @@ import {
 import type { StoredAgentRecord } from "./agent/agent-storage.js";
 import type { AgentStorage } from "./agent/agent-storage.js";
 import {
+  continueProviderSession,
   ImportSessionsRequestError,
   importProviderSession,
   listImportableProviderSessions,
@@ -2404,6 +2405,8 @@ export class Session {
         return this.handleResumeAgentRequest(msg);
       case "import_agent_request":
         return this.handleImportAgentRequest(msg);
+      case "provider.session.continue.request":
+        return this.handleProviderSessionContinueRequest(msg);
       case "refresh_agent_request":
         return this.handleRefreshAgentRequest(msg);
       case "cancel_agent_request":
@@ -4027,6 +4030,64 @@ export class Session {
           timestamp: new Date(),
           type: "error",
           content: `Failed to import agent: ${message}`,
+        },
+      });
+    }
+  }
+
+  private async handleProviderSessionContinueRequest(
+    msg: Extract<SessionInboundMessage, { type: "provider.session.continue.request" }>,
+  ): Promise<void> {
+    this.sessionLogger.info(
+      {
+        provider: msg.providerId,
+        providerHandleId: msg.providerHandleId,
+        sourceCwd: msg.sourceCwd,
+        workspaceId: msg.workspaceId,
+      },
+      "Continuing provider session in workspace",
+    );
+
+    try {
+      const workspace = await this.workspaceRegistry.get(msg.workspaceId);
+      if (!workspace || workspace.archivedAt) {
+        throw new ImportSessionsRequestError(
+          "workspace_not_found",
+          `Workspace not found: ${msg.workspaceId}`,
+        );
+      }
+      const { snapshot } = await continueProviderSession({
+        request: msg,
+        destinationCwd: workspace.cwd,
+        workspaceProvisioning: this.workspaceProvisioning,
+        workspaceGitService: this.workspaceGitService,
+        agentManager: this.agentManager,
+      });
+      this.emit({
+        type: "provider.session.continue.response",
+        payload: {
+          requestId: msg.requestId,
+          agent: await this.buildAgentPayload(snapshot),
+        },
+      });
+    } catch (error) {
+      const code =
+        error instanceof ImportSessionsRequestError
+          ? error.code
+          : "provider_session_continue_failed";
+      const message =
+        error instanceof Error ? error.message : "Failed to continue provider session";
+      this.sessionLogger.error(
+        { err: error, provider: msg.providerId, providerHandleId: msg.providerHandleId },
+        "Failed to continue provider session",
+      );
+      this.emit({
+        type: "rpc_error",
+        payload: {
+          requestId: msg.requestId,
+          requestType: msg.type,
+          error: message,
+          code,
         },
       });
     }
@@ -5756,6 +5817,7 @@ export class Session {
         agentManager: this.agentManager,
         agentStorage: this.agentStorage,
         providerSnapshotManager: this.providerSnapshotManager,
+        workspaceGitService: this.workspaceGitService,
       });
       this.emit({
         type: "fetch_recent_provider_sessions_response",

@@ -384,6 +384,8 @@ export const en = {
       refresh: "Refresh sessions",
       showAll: "Show all",
       loadMore: "Load more",
+      resumeOriginal: "Resume original",
+      continueHere: "Continue here",
     },
     preview: {
       untitledSession: "Untitled session",
@@ -397,6 +399,9 @@ export const en = {
     },
     row: {
       importing: "Importing...",
+      continuing: "Continuing...",
+      continueHint:
+        "Creates a new conversation here. Source files and changes stay in the source worktree.",
     },
   },
   workspace: {

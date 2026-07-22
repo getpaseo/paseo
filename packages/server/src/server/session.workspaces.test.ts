@@ -124,6 +124,7 @@ interface SessionTestAccess {
       providerErrors: Array<{ provider: string; message: string }>;
     }>;
     importProviderSession(input: unknown): Promise<unknown>;
+    continueProviderSession(input: unknown): Promise<unknown>;
     resumeAgentFromPersistence(
       handle: unknown,
       overrides?: unknown,
@@ -4361,6 +4362,81 @@ test("import_agent_request imports into the workspace that opened the import she
 
   expect(importedWorkspaceId).toBe(workspaceId);
   expect(workspaceCreated).toBe(false);
+});
+
+test("provider.session.continue.request forks into the requested workspace without importing the source", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const sourceCwd = path.resolve("/tmp/source-worktree");
+  const destinationCwd = REPO_CWD;
+  const workspaceGitService = createNoopWorkspaceGitService({
+    getSnapshot: async (cwd: string) => ({
+      cwd,
+      git: {
+        isGit: true,
+        repoRoot: cwd,
+        mainRepoRoot: "/tmp/shared-main-repository",
+        currentBranch: "main",
+        remoteUrl: null,
+        isPaseoOwnedWorktree: false,
+        isDirty: false,
+        baseRef: null,
+        aheadBehind: null,
+        aheadOfOrigin: null,
+        behindOfOrigin: null,
+        hasRemote: false,
+        diffStat: null,
+      },
+      forge: {
+        featuresEnabled: false,
+        pullRequest: null,
+        error: null,
+      },
+    }),
+  });
+  const session = createSessionForWorkspaceTests({
+    onMessage: (message) => emitted.push(message),
+    workspaceGitService,
+  });
+  const continued = makeManagedAgent({
+    id: "continued-agent",
+    cwd: destinationCwd,
+    workspaceId: "ws-repo-running",
+    lifecycle: "idle",
+    updatedAt: "2026-05-21T00:00:00.000Z",
+  });
+  const continueProviderSession = vi.fn(async () => continued);
+  session.agentManager.continueProviderSession = continueProviderSession;
+  session.agentManager.getTimeline = () => [];
+  session.projectRegistry.get = async () =>
+    createPersistedProjectRecord({
+      projectId: "proj-repo-running",
+      rootPath: destinationCwd,
+      kind: "git",
+      displayName: "repo",
+      createdAt: "2026-03-01T12:00:00.000Z",
+      updatedAt: "2026-03-01T12:00:00.000Z",
+    });
+
+  await session.handleMessage({
+    type: "provider.session.continue.request",
+    requestId: "req-continue",
+    providerId: "codex",
+    providerHandleId: "desktop-thread",
+    sourceCwd,
+    workspaceId: "ws-repo-running",
+  });
+
+  expect(continueProviderSession).toHaveBeenCalledWith({
+    provider: "codex",
+    providerHandleId: "desktop-thread",
+    sourceCwd,
+    destinationCwd,
+    workspaceId: "ws-repo-running",
+  });
+  expect(findByType(emitted, "provider.session.continue.response")?.payload).toMatchObject({
+    requestId: "req-continue",
+    agent: { id: "continued-agent", cwd: destinationCwd },
+  });
 });
 
 test("import_agent_request maps an import failure to agent_create_failed", async () => {

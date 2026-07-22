@@ -388,6 +388,8 @@ export const ru: TranslationResources = {
       refresh: "Обновить список сессий",
       showAll: "Показать все",
       loadMore: "Загрузить ещё",
+      resumeOriginal: "Возобновить исходный",
+      continueHere: "Продолжить здесь",
     },
     preview: {
       untitledSession: "Сессия без названия",
@@ -401,6 +403,9 @@ export const ru: TranslationResources = {
     },
     row: {
       importing: "Импортируется...",
+      continuing: "Продолжение...",
+      continueHint:
+        "Здесь будет создан новый разговор. Исходные файлы и изменения останутся в исходном worktree.",
     },
   },
   workspace: {
