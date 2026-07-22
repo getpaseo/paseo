@@ -26,7 +26,7 @@ import {
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import type { AgentFileExplorerState, ExplorerEntry } from "@/stores/session-store";
 import { useSessionStore } from "@/stores/session-store";
-import { FileActionsMenu, useFileActions } from "@/components/file-actions-menu";
+import { FileActionsMenu } from "@/components/file-actions-menu";
 import { useFileDownload } from "@/hooks/use-file-download";
 import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
 import { buildWorkspaceExplorerStateKey } from "@/hooks/use-file-explorer-actions";
@@ -130,14 +130,6 @@ function TreeRowItem({
     onAddToChat?.(entry.path);
   }, [onAddToChat, entry.path]);
 
-  const fileActions = useFileActions({
-    fileKind: entry.kind,
-    onCopyPath: handleCopy,
-    onDownload: handleDownload,
-    onAddToChat: onAddToChat ? handleAddToChat : undefined,
-    testIDPrefix: testID,
-  });
-
   const metaHeader = useMemo(
     () => (
       <View style={styles.contextMetaBlock}>
@@ -180,7 +172,10 @@ function TreeRowItem({
         </Text>
       </View>
       <FileActionsMenu
-        actions={fileActions}
+        fileKind={entry.kind}
+        onCopyPath={handleCopy}
+        onDownload={handleDownload}
+        onAddToChat={onAddToChat ? handleAddToChat : undefined}
         header={metaHeader}
         accessibilityLabel={t("workspace.fileActions.moreActions")}
         testIDPrefix={testID}

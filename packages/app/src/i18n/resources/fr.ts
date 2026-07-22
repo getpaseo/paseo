@@ -821,7 +821,7 @@ export const fr: TranslationResources = {
         base: "base",
         newFile: "Nouveau",
         deletedFile: "Supprimé",
-        openDiff: "Ouvrir les différences",
+        openChangesTab: "Ouvrir dans l'onglet Modifications",
         commits: {
           title: "Commits",
           countLabel: "{{count}} commits récents",

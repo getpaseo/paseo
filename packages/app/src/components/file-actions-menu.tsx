@@ -1,7 +1,15 @@
 import { useMemo, type ReactElement, type ReactNode } from "react";
 import { type PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { Copy, Download, FileText, MessageSquarePlus, MoreVertical } from "lucide-react-native";
+import {
+  Copy,
+  Download,
+  FileDiff,
+  FileText,
+  MessageSquarePlus,
+  MoreVertical,
+  type LucideIcon,
+} from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import { ICON_SIZE, SPACING, type Theme } from "@/styles/theme";
 import {
@@ -14,45 +22,27 @@ import {
 
 const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 const ThemedMoreVertical = withUnistyles(MoreVertical);
-const ThemedFileText = withUnistyles(FileText);
-const ThemedCopy = withUnistyles(Copy);
-const ThemedDownload = withUnistyles(Download);
-const ThemedMessageSquarePlus = withUnistyles(MessageSquarePlus);
-
-// Menu icons never vary per row, so build each element once at module scope and
-// hand the same reference to every surface that renders the action.
-const OPEN_FILE_ICON = (
-  <ThemedFileText size={ICON_SIZE.sm} uniProps={foregroundMutedColorMapping} />
-);
-const COPY_PATH_ICON = <ThemedCopy size={ICON_SIZE.sm} uniProps={foregroundMutedColorMapping} />;
-const DOWNLOAD_ICON = <ThemedDownload size={ICON_SIZE.sm} uniProps={foregroundMutedColorMapping} />;
-const ADD_TO_CHAT_ICON = (
-  <ThemedMessageSquarePlus size={ICON_SIZE.sm} uniProps={foregroundMutedColorMapping} />
-);
 
 /** Width occupied by a file action trigger, including its visual padding. */
 export const FILE_ACTIONS_MENU_WIDTH = ICON_SIZE.sm + 2 * SPACING[1];
 
-export interface FileAction {
+interface FileAction {
   key: string;
   label: string;
-  leading: ReactElement;
+  icon: LucideIcon;
   onSelect: () => void;
   testID?: string;
 }
 
-interface FileActionsOptions {
+interface FileActionsMenuProps {
   fileKind: "file" | "directory";
   fileExists?: boolean;
+  /** Opens the file's changes in a diff tab. Only the git diff pane offers this. */
+  onOpenDiff?: () => void;
   onOpenFile?: () => void;
   onCopyPath?: () => void;
   onDownload?: () => void;
   onAddToChat?: () => void;
-  testIDPrefix?: string;
-}
-
-interface FileActionsMenuProps {
-  actions: readonly FileAction[];
   /** Optional metadata block rendered above the actions (e.g. size/modified). */
   header?: ReactNode;
   open?: boolean;
@@ -60,64 +50,6 @@ interface FileActionsMenuProps {
   hitSlop?: number;
   accessibilityLabel: string;
   testIDPrefix?: string;
-}
-
-/**
- * Single source of truth for per-file action availability, ordering, and labels.
- * Surfaces render the returned list however they like — the kebab menu below,
- * or a right-click context menu — so both stay in sync.
- */
-export function useFileActions({
-  fileKind,
-  fileExists = true,
-  onOpenFile,
-  onCopyPath,
-  onDownload,
-  onAddToChat,
-  testIDPrefix,
-}: FileActionsOptions): readonly FileAction[] {
-  const { t } = useTranslation();
-  return useMemo<FileAction[]>(() => {
-    const availableFile = fileKind === "file" && fileExists;
-    const next: FileAction[] = [];
-    if (availableFile && onOpenFile) {
-      next.push({
-        key: "open-file",
-        label: t("workspace.fileActions.openFile"),
-        leading: OPEN_FILE_ICON,
-        onSelect: onOpenFile,
-        testID: testIDPrefix ? `${testIDPrefix}-open-file` : undefined,
-      });
-    }
-    if (onCopyPath) {
-      next.push({
-        key: "copy-path",
-        label: t("workspace.fileActions.copyPath"),
-        leading: COPY_PATH_ICON,
-        onSelect: onCopyPath,
-        testID: testIDPrefix ? `${testIDPrefix}-copy-path` : undefined,
-      });
-    }
-    if (availableFile && onDownload) {
-      next.push({
-        key: "download",
-        label: t("workspace.fileActions.download"),
-        leading: DOWNLOAD_ICON,
-        onSelect: onDownload,
-        testID: testIDPrefix ? `${testIDPrefix}-download` : undefined,
-      });
-    }
-    if (availableFile && onAddToChat) {
-      next.push({
-        key: "add-to-chat",
-        label: t("workspace.fileActions.addToChat"),
-        leading: ADD_TO_CHAT_ICON,
-        onSelect: onAddToChat,
-        testID: testIDPrefix ? `${testIDPrefix}-add-to-chat` : undefined,
-      });
-    }
-    return next;
-  }, [fileExists, fileKind, onAddToChat, onCopyPath, onDownload, onOpenFile, t, testIDPrefix]);
 }
 
 // The menu lives inside pressable rows (diff header, explorer entry); stop the
@@ -139,7 +71,13 @@ function triggerStyle({
  * git diff pane so both surfaces share action availability, ordering, and chrome.
  */
 export function FileActionsMenu({
-  actions,
+  fileKind,
+  fileExists = true,
+  onOpenDiff,
+  onOpenFile,
+  onCopyPath,
+  onDownload,
+  onAddToChat,
   header,
   open,
   onOpenChange,
@@ -147,6 +85,67 @@ export function FileActionsMenu({
   accessibilityLabel,
   testIDPrefix,
 }: FileActionsMenuProps): ReactElement | null {
+  const { t } = useTranslation();
+  const actions = useMemo<FileAction[]>(() => {
+    const availableFile = fileKind === "file" && fileExists;
+    const next: FileAction[] = [];
+    // A deleted file still has changes worth opening, so this is not gated on existence.
+    if (onOpenDiff) {
+      next.push({
+        key: "open-diff",
+        label: t("workspace.git.diff.openChangesTab"),
+        icon: FileDiff,
+        onSelect: onOpenDiff,
+        testID: testIDPrefix ? `${testIDPrefix}-open-diff` : undefined,
+      });
+    }
+    if (availableFile && onOpenFile) {
+      next.push({
+        key: "open-file",
+        label: t("workspace.fileActions.openFile"),
+        icon: FileText,
+        onSelect: onOpenFile,
+        testID: testIDPrefix ? `${testIDPrefix}-open-file` : undefined,
+      });
+    }
+    if (onCopyPath) {
+      next.push({
+        key: "copy-path",
+        label: t("workspace.fileActions.copyPath"),
+        icon: Copy,
+        onSelect: onCopyPath,
+      });
+    }
+    if (availableFile && onDownload) {
+      next.push({
+        key: "download",
+        label: t("workspace.fileActions.download"),
+        icon: Download,
+        onSelect: onDownload,
+      });
+    }
+    if (availableFile && onAddToChat) {
+      next.push({
+        key: "add-to-chat",
+        label: t("workspace.fileActions.addToChat"),
+        icon: MessageSquarePlus,
+        onSelect: onAddToChat,
+        testID: testIDPrefix ? `${testIDPrefix}-add-to-chat` : undefined,
+      });
+    }
+    return next;
+  }, [
+    fileExists,
+    fileKind,
+    onAddToChat,
+    onCopyPath,
+    onDownload,
+    onOpenDiff,
+    onOpenFile,
+    t,
+    testIDPrefix,
+  ]);
+
   if (actions.length === 0) {
     return null;
   }
@@ -177,8 +176,14 @@ export function FileActionsMenu({
 }
 
 function FileActionMenuItem({ action }: { action: FileAction }): ReactElement {
+  const Icon = action.icon;
+  const ThemedIcon = useMemo(() => withUnistyles(Icon), [Icon]);
+  const leading = useMemo(
+    () => <ThemedIcon size={ICON_SIZE.sm} uniProps={foregroundMutedColorMapping} />,
+    [ThemedIcon],
+  );
   return (
-    <DropdownMenuItem leading={action.leading} onSelect={action.onSelect} testID={action.testID}>
+    <DropdownMenuItem leading={leading} onSelect={action.onSelect} testID={action.testID}>
       {action.label}
     </DropdownMenuItem>
   );

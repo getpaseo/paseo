@@ -802,7 +802,7 @@ export const ja: TranslationResources = {
         base: "ベース",
         newFile: "新規",
         deletedFile: "削除済み",
-        openDiff: "差分を開く",
+        openChangesTab: "変更タブで開く",
         commits: {
           title: "コミット",
           countLabel: "最近のコミット数: {{count}}",

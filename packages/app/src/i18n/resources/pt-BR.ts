@@ -813,7 +813,7 @@ export const ptBR: TranslationResources = {
         base: "base",
         newFile: "Novo",
         deletedFile: "Excluído",
-        openDiff: "Abrir diff",
+        openChangesTab: "Abrir na aba Alterações",
         commits: {
           title: "Commits",
           countLabel: "{{count}} commits recentes",

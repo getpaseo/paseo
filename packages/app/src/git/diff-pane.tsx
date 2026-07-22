@@ -7,7 +7,6 @@ import {
   memo,
   type ReactElement,
   type ReactNode,
-  type RefCallback,
 } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
@@ -37,7 +36,6 @@ import {
   ChevronDown,
   Columns2,
   Download,
-  FileDiff,
   FolderTree,
   GitCommitHorizontal,
   GitMerge,
@@ -89,20 +87,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuSeparator,
-  ContextMenuTrigger,
-} from "@/components/ui/context-menu";
 import * as Clipboard from "expo-clipboard";
-import {
-  FILE_ACTIONS_MENU_WIDTH,
-  FileActionsMenu,
-  useFileActions,
-  type FileAction,
-} from "@/components/file-actions-menu";
+import { FILE_ACTIONS_MENU_WIDTH, FileActionsMenu } from "@/components/file-actions-menu";
 import { useFileDownload } from "@/hooks/use-file-download";
 import { buildAbsoluteExplorerPath } from "@/utils/explorer-paths";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
@@ -935,38 +921,6 @@ function SplitDiffColumn({
   );
 }
 
-/** Binds the shared file actions to one changed file's path. */
-function useDiffFileActions({
-  file,
-  onOpenFile,
-  onAddToChat,
-  onCopyPath,
-  onDownload,
-  testID,
-}: {
-  file: ParsedDiffFile;
-  onOpenFile?: (path: string) => void;
-  onAddToChat?: (path: string) => void;
-  onCopyPath?: (path: string) => void;
-  onDownload?: (path: string) => void;
-  testID?: string;
-}): readonly FileAction[] {
-  const { path, isDeleted } = file;
-  const handleOpenFile = useCallback(() => onOpenFile?.(path), [onOpenFile, path]);
-  const handleAddToChat = useCallback(() => onAddToChat?.(path), [onAddToChat, path]);
-  const handleCopyPath = useCallback(() => onCopyPath?.(path), [onCopyPath, path]);
-  const handleDownload = useCallback(() => onDownload?.(path), [onDownload, path]);
-  return useFileActions({
-    fileKind: "file",
-    fileExists: !isDeleted,
-    onOpenFile: onOpenFile ? handleOpenFile : undefined,
-    onCopyPath: onCopyPath ? handleCopyPath : undefined,
-    onDownload: onDownload ? handleDownload : undefined,
-    onAddToChat: onAddToChat ? handleAddToChat : undefined,
-    testIDPrefix: testID,
-  });
-}
-
 const DiffFileHeader = memo(function DiffFileHeader({
   file,
   workspaceFileDragScope,
@@ -983,6 +937,7 @@ const DiffFileHeader = memo(function DiffFileHeader({
   onHeaderHeightChange,
   testID,
 }: DiffFileSectionProps) {
+  const { t } = useTranslation();
   const dragSourceRef = useWorkspaceFileDragSource({
     enabled: interactive,
     disabled: file.isDeleted,
@@ -1007,14 +962,30 @@ const DiffFileHeader = memo(function DiffFileHeader({
     onOpenDiff?.(file.path);
   }, [file.path, onOpenDiff]);
 
-  const fileActions = useDiffFileActions({
-    file,
-    onOpenFile,
-    onAddToChat,
-    onCopyPath,
-    onDownload,
-    testID,
-  });
+  const handleOpenFile = useCallback(() => {
+    onOpenFile?.(file.path);
+  }, [file.path, onOpenFile]);
+
+  const handleAddToChat = useCallback(() => {
+    onAddToChat?.(file.path);
+  }, [file.path, onAddToChat]);
+
+  const handleCopyPath = useCallback(() => {
+    onCopyPath?.(file.path);
+  }, [file.path, onCopyPath]);
+
+  const handleDownload = useCallback(() => {
+    onDownload?.(file.path);
+  }, [file.path, onDownload]);
+
+  const handleContextMenu = useCallback(
+    (event: { preventDefault: () => void; stopPropagation: () => void }) => {
+      event.preventDefault();
+      event.stopPropagation();
+      setIsActionsOpen(true);
+    },
+    [],
+  );
 
   const handleLayout = useCallback(
     (event: LayoutChangeEvent) => {
@@ -1071,117 +1042,7 @@ const DiffFileHeader = memo(function DiffFileHeader({
   );
 
   const fileName = file.path.split("/").pop() ?? file.path;
-  const canOpenDiff = interactive && Boolean(onOpenDiff);
-  // Right-click offers everything the kebab does, plus opening the diff in a tab.
-  const hasContextMenu = interactive && (canOpenDiff || fileActions.length > 0);
   const headerContent = (
-    <DiffFileHeaderContent
-      file={file}
-      fileName={fileName}
-      showDir={showDir}
-      dragSourceRef={dragSourceRef}
-      actions={interactive ? fileActions : EMPTY_FILE_ACTIONS}
-      isActionsOpen={isActionsOpen}
-      onActionsOpenChange={setIsActionsOpen}
-      testID={testID}
-    />
-  );
-
-  let trigger: ReactElement;
-  if (!interactive) {
-    trigger = (
-      <View style={headerPressableStyle({ hovered: false, pressed: false })}>{headerContent}</View>
-    );
-  } else if (hasContextMenu) {
-    trigger = (
-      <ContextMenuTrigger
-        testID={testID ? `${testID}-toggle` : undefined}
-        style={headerPressableStyle}
-        enabledOnMobile
-        // Android: prevent parent pan/scroll gestures from canceling the tap release.
-        cancelable={false}
-        onPressIn={handlePressIn}
-        onPressOut={handlePressOut}
-        onPress={toggleExpanded}
-      >
-        {headerContent}
-      </ContextMenuTrigger>
-    );
-  } else {
-    trigger = (
-      <Pressable
-        testID={testID ? `${testID}-toggle` : undefined}
-        style={headerPressableStyle}
-        // Android: prevent parent pan/scroll gestures from canceling the tap release.
-        cancelable={false}
-        onPressIn={handlePressIn}
-        onPressOut={handlePressOut}
-        onPress={toggleExpanded}
-      >
-        {headerContent}
-      </Pressable>
-    );
-  }
-
-  const tooltip = (
-    <Tooltip delayDuration={300} enabledOnDesktop enabledOnMobile={false}>
-      <TooltipTrigger asChild triggerRefProp={hasContextMenu ? "triggerRef" : undefined}>
-        {trigger}
-      </TooltipTrigger>
-      <TooltipContent side="bottom" align="start" offset={6} maxWidth={520}>
-        <Text style={styles.tooltipText}>{file.path}</Text>
-      </TooltipContent>
-    </Tooltip>
-  );
-
-  return (
-    <View style={containerStyle} onLayout={handleLayout} testID={testID}>
-      <TreeIndentGuides depth={depth} />
-      {hasContextMenu ? (
-        <ContextMenu>
-          {tooltip}
-          <ContextMenuContent
-            align="start"
-            minWidth={180}
-            testID={testID ? `${testID}-context-menu` : undefined}
-          >
-            <DiffFileContextMenuItems
-              actions={fileActions}
-              onOpenDiff={canOpenDiff ? handleOpenDiff : undefined}
-              testID={testID}
-            />
-          </ContextMenuContent>
-        </ContextMenu>
-      ) : (
-        tooltip
-      )}
-    </View>
-  );
-});
-
-const EMPTY_FILE_ACTIONS: readonly FileAction[] = [];
-
-function DiffFileHeaderContent({
-  file,
-  fileName,
-  showDir,
-  dragSourceRef,
-  actions,
-  isActionsOpen,
-  onActionsOpenChange,
-  testID,
-}: {
-  file: ParsedDiffFile;
-  fileName: string;
-  showDir: boolean;
-  dragSourceRef: RefCallback<View> | undefined;
-  actions: readonly FileAction[];
-  isActionsOpen: boolean;
-  onActionsOpenChange: (open: boolean) => void;
-  testID?: string;
-}): ReactElement {
-  const { t } = useTranslation();
-  return (
     <>
       <View ref={dragSourceRef} style={styles.fileHeaderLeft}>
         {showDir ? null : (
@@ -1218,57 +1079,60 @@ function DiffFileHeaderContent({
           deletions={file.deletions}
           testID={testID ? `${testID}-stat` : undefined}
         />
-        <FileActionsMenu
-          actions={actions}
-          open={isActionsOpen}
-          onOpenChange={onActionsOpenChange}
-          accessibilityLabel={t("workspace.fileActions.moreActions")}
-          testIDPrefix={testID}
-        />
+        {interactive ? (
+          <FileActionsMenu
+            fileKind="file"
+            fileExists={!file.isDeleted}
+            onOpenDiff={onOpenDiff ? handleOpenDiff : undefined}
+            onOpenFile={onOpenFile ? handleOpenFile : undefined}
+            onCopyPath={onCopyPath ? handleCopyPath : undefined}
+            onDownload={onDownload ? handleDownload : undefined}
+            onAddToChat={onAddToChat ? handleAddToChat : undefined}
+            open={isActionsOpen}
+            onOpenChange={setIsActionsOpen}
+            accessibilityLabel={t("workspace.fileActions.moreActions")}
+            testIDPrefix={testID}
+          />
+        ) : null}
       </View>
     </>
   );
-}
 
-/**
- * Right-click menu for a changed file: opening the diff in a tab, then the same
- * actions the row's kebab offers, so both entry points stay in lockstep.
- */
-function DiffFileContextMenuItems({
-  actions,
-  onOpenDiff,
-  testID,
-}: {
-  actions: readonly FileAction[];
-  onOpenDiff?: () => void;
-  testID?: string;
-}): ReactElement {
-  const { t } = useTranslation();
+  let trigger: ReactElement;
+  if (!interactive) {
+    trigger = (
+      <View style={headerPressableStyle({ hovered: false, pressed: false })}>{headerContent}</View>
+    );
+  } else {
+    trigger = (
+      <Pressable
+        testID={testID ? `${testID}-toggle` : undefined}
+        style={headerPressableStyle}
+        // Android: prevent parent pan/scroll gestures from canceling the tap release.
+        cancelable={false}
+        onPressIn={handlePressIn}
+        onPressOut={handlePressOut}
+        onPress={toggleExpanded}
+        // @ts-ignore - onContextMenu is web-only and not in RN types.
+        onContextMenu={handleContextMenu}
+      >
+        {headerContent}
+      </Pressable>
+    );
+  }
+
   return (
-    <>
-      {onOpenDiff ? (
-        <ContextMenuItem
-          leading={OPEN_DIFF_ICON}
-          onSelect={onOpenDiff}
-          testID={testID ? `${testID}-open-diff` : undefined}
-        >
-          {t("workspace.git.diff.openDiff")}
-        </ContextMenuItem>
-      ) : null}
-      {onOpenDiff && actions.length > 0 ? <ContextMenuSeparator /> : null}
-      {actions.map((action) => (
-        <ContextMenuItem
-          key={action.key}
-          leading={action.leading}
-          onSelect={action.onSelect}
-          testID={action.testID}
-        >
-          {action.label}
-        </ContextMenuItem>
-      ))}
-    </>
+    <View style={containerStyle} onLayout={handleLayout} testID={testID}>
+      <TreeIndentGuides depth={depth} />
+      <Tooltip delayDuration={300} enabledOnDesktop enabledOnMobile={false}>
+        <TooltipTrigger asChild>{trigger}</TooltipTrigger>
+        <TooltipContent side="bottom" align="start" offset={6} maxWidth={520}>
+          <Text style={styles.tooltipText}>{file.path}</Text>
+        </TooltipContent>
+      </Tooltip>
+    </View>
   );
-}
+});
 
 export function DiffFileBody({
   file,
@@ -1490,11 +1354,6 @@ const ThemedGitMerge = withUnistyles(GitMerge);
 const ThemedRefreshCcw = withUnistyles(RefreshCcw);
 const ThemedArchive = withUnistyles(Archive);
 const ThemedChevronDown = withUnistyles(ChevronDown);
-const ThemedFileDiff = withUnistyles(FileDiff);
-
-const OPEN_DIFF_ICON = (
-  <ThemedFileDiff size={ICON_SIZE.sm} uniProps={foregroundMutedIconColorMapping} />
-);
 const DIFF_OPTIONS_WHITESPACE_ICON = (
   <ThemedPilcrow size={14} uniProps={foregroundMutedIconColorMapping} />
 );

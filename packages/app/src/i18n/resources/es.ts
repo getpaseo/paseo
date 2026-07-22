@@ -822,7 +822,7 @@ export const es: TranslationResources = {
         base: "base",
         newFile: "Nuevo",
         deletedFile: "Eliminado",
-        openDiff: "Abrir diferencias",
+        openChangesTab: "Abrir en la pestaña Cambios",
         commits: {
           title: "Commits",
           countLabel: "{{count}} commits recientes",

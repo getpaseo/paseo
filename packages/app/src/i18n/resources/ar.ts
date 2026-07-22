@@ -791,7 +791,7 @@ export const ar: TranslationResources = {
         base: "قاعدة",
         newFile: "جديد",
         deletedFile: "تم الحذف",
-        openDiff: "فتح الفرق",
+        openChangesTab: "فتح في علامة تبويب التغييرات",
         commits: {
           title: "الإيداعات",
           countLabel: "{{count}} من الإيداعات الأخيرة",

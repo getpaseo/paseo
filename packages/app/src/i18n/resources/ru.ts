@@ -813,7 +813,7 @@ export const ru: TranslationResources = {
         base: "база",
         newFile: "Новый",
         deletedFile: "Удалено",
-        openDiff: "Открыть различия",
+        openChangesTab: "Открыть во вкладке «Изменения»",
         commits: {
           title: "Коммиты",
           countLabel: "{{count}} последних коммитов",

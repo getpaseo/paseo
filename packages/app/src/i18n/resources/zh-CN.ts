@@ -783,7 +783,7 @@ export const zhCN: TranslationResources = {
         base: "base",
         newFile: "新增",
         deletedFile: "已删除",
-        openDiff: "打开差异",
+        openChangesTab: "在“更改”标签页中打开",
         commits: {
           title: "提交",
           countLabel: "最近 {{count}} 个提交",

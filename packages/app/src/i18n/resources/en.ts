@@ -801,7 +801,7 @@ export const en = {
         base: "base",
         newFile: "New",
         deletedFile: "Deleted",
-        openDiff: "Open diff",
+        openChangesTab: "Open in Changes tab",
         commits: {
           title: "Commits",
           countLabel: "{{count}} recent commits",
