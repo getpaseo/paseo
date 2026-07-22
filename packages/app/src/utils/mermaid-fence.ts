@@ -6,33 +6,50 @@ export function isMermaidFence(info: string | null | undefined): boolean {
 // (`A@{ img: "url" }`) construct an Image and await decode before any output
 // sanitization runs, and CSS can pull url()/@import — so a prompt-injected
 // diagram could exfiltrate data in a request URL. securityLevel "strict" does
-// not prevent this (mermaid-js/mermaid#7645). Reject resource-bearing
-// constructs up front; matches fall back to the source code block. `<br>` is
-// allowed because it is idiomatic in mermaid labels; all other tags (and
-// entity-encoded text that could smuggle one) are rejected.
-const UNSAFE_MERMAID_SOURCE =
-  /\bimg\s*:|\bicon\s*:|url\s*\(|@import\b|themeCSS|&#|<(?!br\s*\/?>)[a-z!/]/i;
+// not prevent this (mermaid-js/mermaid#7645). Mermaid 11.16 parses the shape
+// metadata object with yaml.JSON_SCHEMA semantics, including aliases and
+// explicit keys; matching those keys safely would require a real parser. We
+// therefore reject any `@{ ... }` shape-data construct up front and fall back
+// to the source code block. `<br>` is allowed because it is idiomatic in
+// mermaid labels; all other tags (and entity-encoded text that could smuggle
+// one) are rejected.
+const UNSAFE_MERMAID_SOURCE = /@\s*\{|url\s*\(|@import\b|themeCSS|&#|<(?!br\s*\/?>)[a-z!/]/i;
 
-// Mermaid accepts quoted and unicode-escaped object keys (`"img":`,
-// `"img":`), which the raw regex would miss. Decode escapes and strip
-// quoting characters so the denylist sees the same keys mermaid's parser
-// ultimately produces, and test the raw source too.
-function normalizeMermaidSource(code: string): string {
-  return code
-    .replace(/\\u\{([0-9a-fA-F]{1,6})\}/g, (_, hex: string) =>
-      String.fromCodePoint(Number.parseInt(hex, 16)),
-    )
-    .replace(/\\u([0-9a-fA-F]{4})/g, (_, hex: string) =>
-      String.fromCharCode(Number.parseInt(hex, 16)),
-    )
-    .replace(/\\x([0-9a-fA-F]{2})/g, (_, hex: string) =>
-      String.fromCharCode(Number.parseInt(hex, 16)),
-    )
-    .replace(/["'`\\]/g, "");
+// Mermaid labels can contain escaped text. Decode the escape forms we care
+// about before running the denylist so disguised HTML still gets caught.
+// Invalid escape sequences fail closed and fall back to the source block.
+function normalizeMermaidSource(code: string): string | null {
+  try {
+    return code
+      .replace(/\\u\{([0-9a-fA-F]{1,6})\}/g, (_, hex: string) =>
+        decodeCodePointEscape(Number.parseInt(hex, 16)),
+      )
+      .replace(/\\u([0-9a-fA-F]{4})/g, (_, hex: string) =>
+        String.fromCharCode(Number.parseInt(hex, 16)),
+      )
+      .replace(/\\x([0-9a-fA-F]{2})/g, (_, hex: string) =>
+        String.fromCharCode(Number.parseInt(hex, 16)),
+      )
+      .replace(/["'`\\]/g, "");
+  } catch {
+    return null;
+  }
+}
+
+function decodeCodePointEscape(value: number): string {
+  if (!Number.isInteger(value) || value < 0 || value > 0x10ffff) {
+    throw new RangeError("Invalid Unicode code point");
+  }
+  return String.fromCodePoint(value);
 }
 
 export function containsUnsafeMermaidSource(code: string): boolean {
-  return (
-    UNSAFE_MERMAID_SOURCE.test(code) || UNSAFE_MERMAID_SOURCE.test(normalizeMermaidSource(code))
-  );
+  if (UNSAFE_MERMAID_SOURCE.test(code)) {
+    return true;
+  }
+  const normalized = normalizeMermaidSource(code);
+  if (normalized === null) {
+    return true;
+  }
+  return UNSAFE_MERMAID_SOURCE.test(normalized);
 }

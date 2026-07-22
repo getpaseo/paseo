@@ -32,7 +32,7 @@ describe("containsUnsafeMermaidSource", () => {
     expect(containsUnsafeMermaidSource('graph TD\n A["</b>"]')).toBe(true);
   });
 
-  it("rejects quoted and escaped key evasions", () => {
+  it("rejects all shape-data constructs, including yaml key evasions", () => {
     expect(containsUnsafeMermaidSource('flowchart TD\n  A@{ "img": "https://x/y.png" }')).toBe(
       true,
     );
@@ -48,7 +48,31 @@ describe("containsUnsafeMermaidSource", () => {
     expect(containsUnsafeMermaidSource('flowchart TD\n  A@{ "\\x69mg": "https://x/y.png" }')).toBe(
       true,
     );
+    expect(
+      containsUnsafeMermaidSource('flowchart TD\n  A@{ "\\U00000069mg": "https://attacker/x" }'),
+    ).toBe(true);
     expect(containsUnsafeMermaidSource('flowchart TD\n  A@{ "icon": "pack:name" }')).toBe(true);
+    expect(
+      containsUnsafeMermaidSource(
+        'flowchart TD\n  A@{ ? img # comment\n  : "https://attacker/x" }',
+      ),
+    ).toBe(true);
+    expect(
+      containsUnsafeMermaidSource(
+        'flowchart TD\n  A@{ dummy: &k img\n  ? *k # comment\n  : "https://attacker/x" }',
+      ),
+    ).toBe(true);
+  });
+
+  it("fails closed for malformed or out-of-range escapes without throwing", () => {
+    expect(() =>
+      containsUnsafeMermaidSource('graph TD\n A["\\u{110000} disguised"]'),
+    ).not.toThrow();
+    expect(containsUnsafeMermaidSource('graph TD\n A["\\u{110000} disguised"]')).toBe(true);
+    expect(() =>
+      containsUnsafeMermaidSource('graph TD\n A["\\u{FFFFFF} disguised"]'),
+    ).not.toThrow();
+    expect(containsUnsafeMermaidSource('graph TD\n A["\\u{FFFFFF} disguised"]')).toBe(true);
   });
 
   it("allows ordinary diagrams including <br> labels", () => {
@@ -58,5 +82,6 @@ describe("containsUnsafeMermaidSource", () => {
     expect(containsUnsafeMermaidSource("sequenceDiagram\n  Alice->>Bob: a < b and x > y")).toBe(
       false,
     );
+    expect(containsUnsafeMermaidSource("flowchart TD\n  A@{ shape: rect }")).toBe(true);
   });
 });

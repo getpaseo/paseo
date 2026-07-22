@@ -152,6 +152,7 @@ function MermaidDiagramImpl({
 
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
+  const controlsRegionRef = useRef<HTMLDivElement | null>(null);
   const transformRef = useRef({ x: 0, y: 0, scale: 1 });
   const dragRef = useRef<{
     pointerId: number;
@@ -161,16 +162,47 @@ function MermaidDiagramImpl({
     originY: number;
   } | null>(null);
 
+  const applyTransformToElement = useCallback(
+    (el: HTMLDivElement, transform: { x: number; y: number; scale: number }) => {
+      const { x, y, scale } = transform;
+      el.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
+    },
+    [],
+  );
+
   const applyTransform = useCallback(() => {
     const el = contentRef.current;
     if (!el) return;
-    const { x, y, scale } = transformRef.current;
-    el.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
+    applyTransformToElement(el, transformRef.current);
+  }, [applyTransformToElement]);
+
+  const setContentRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      contentRef.current = node;
+      if (node) {
+        applyTransformToElement(node, transformRef.current);
+      }
+    },
+    [applyTransformToElement],
+  );
+
+  const setControlsRegionRef = useCallback((node: unknown) => {
+    controlsRegionRef.current = node as HTMLDivElement | null;
   }, []);
 
-  useEffect(() => {
-    applyTransform();
-  }, [svg, applyTransform]);
+  const hasFocusedControls = useCallback(() => {
+    const region = controlsRegionRef.current;
+    const active = document.activeElement;
+    return Boolean(region && active instanceof Node && region.contains(active));
+  }, []);
+
+  const [isFocusWithin, setIsFocusWithin] = useState(false);
+  const handleFocusWithin = useCallback(() => setIsFocusWithin(true), []);
+  const handleBlurWithin = useCallback(() => {
+    window.requestAnimationFrame(() => {
+      setIsFocusWithin(hasFocusedControls());
+    });
+  }, [hasFocusedControls]);
 
   // Zoom on ctrl/cmd+wheel (trackpad pinch arrives as ctrl+wheel); plain wheel
   // keeps scrolling the chat. Attached natively because React's root wheel
@@ -263,7 +295,13 @@ function MermaidDiagramImpl({
   const handlePointerEnter = useCallback(() => setIsHovered(true), []);
   const handlePointerLeave = useCallback(() => setIsHovered(false), []);
   const isCompact = useIsCompactFormFactor();
-  const controlsVisible = isHovered || isCompact;
+  const controlsVisible = isHovered || isCompact || isFocusWithin;
+
+  useEffect(() => {
+    if (!showSource && contentRef.current) {
+      applyTransformToElement(contentRef.current, transformRef.current);
+    }
+  }, [showSource, applyTransformToElement]);
 
   const svgHtml = useMemo(() => ({ __html: svg ?? "" }), [svg]);
 
@@ -298,9 +336,12 @@ function MermaidDiagramImpl({
   if (showSource) {
     return (
       <View
+        ref={setControlsRegionRef}
         style={sourceView.container}
         onPointerEnter={handlePointerEnter}
         onPointerLeave={handlePointerLeave}
+        onFocus={handleFocusWithin}
+        onBlur={handleBlurWithin}
       >
         <HighlightedCodeBlock
           code={code}
@@ -325,9 +366,12 @@ function MermaidDiagramImpl({
   const { fontFamily: _ff, fontSize: _fs, color: _c, lineHeight: _lh, ...boxStyle } = textStyle;
   return (
     <View
+      ref={setControlsRegionRef}
       style={[boxStyle as ViewStyle, containerStyle]}
       onPointerEnter={handlePointerEnter}
       onPointerLeave={handlePointerLeave}
+      onFocus={handleFocusWithin}
+      onBlur={handleBlurWithin}
     >
       <div
         ref={viewportRef}
@@ -341,7 +385,7 @@ function MermaidDiagramImpl({
         onDoubleClick={resetTransform}
       >
         <div
-          ref={contentRef}
+          ref={setContentRef}
           style={contentDomStyle}
           // securityLevel "strict" sanitizes the SVG mermaid produces, and
           // resource-bearing source is rejected before render (see
@@ -402,7 +446,6 @@ const MermaidControlButton = React.memo(function MermaidControlButton({
     <Pressable
       onPress={onPress}
       style={style}
-      pointerEvents={visible ? "auto" : "none"}
       accessibilityRole="button"
       accessibilityLabel={label}
       hitSlop={4}
@@ -434,20 +477,24 @@ const controlStyles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.md,
     backgroundColor: theme.colors.surface2,
     opacity: 1,
+    pointerEvents: "auto",
   },
   buttonHidden: {
     padding: theme.spacing[1],
     borderRadius: theme.borderRadius.md,
     backgroundColor: theme.colors.surface2,
     opacity: 0,
+    pointerEvents: "none",
   },
   plainButton: {
     padding: theme.spacing[1],
     opacity: 1,
+    pointerEvents: "auto",
   },
   plainButtonHidden: {
     padding: theme.spacing[1],
     opacity: 0,
+    pointerEvents: "none",
   },
   icon: {
     color: theme.colors.foregroundMuted,
