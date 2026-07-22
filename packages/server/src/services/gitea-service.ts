@@ -315,13 +315,32 @@ const GiteaActionsListResponseSchema = z
   })
   .passthrough();
 
+const GiteaActionRunPullRequestRefSchema = z
+  .object({
+    repo: z.object({ id: z.number().optional() }).passthrough().nullable().optional(),
+  })
+  .passthrough();
+
 const GiteaActionRunMetadataSchema = z
   .object({
+    id: z.number().optional(),
     run_number: z.number().optional(),
     index_in_repo: z.number().optional(),
     head_sha: z.string().optional(),
     commit_sha: z.string().optional(),
+    status: z.string().optional(),
     need_approval: z.boolean().optional().default(false),
+    pull_requests: z
+      .array(
+        z
+          .object({
+            head: GiteaActionRunPullRequestRefSchema.optional(),
+            base: GiteaActionRunPullRequestRefSchema.optional(),
+          })
+          .passthrough(),
+      )
+      .nullable()
+      .optional(),
   })
   .passthrough();
 
@@ -699,8 +718,23 @@ function mapGiteaActionTaskStatus(status: string): PullRequestCheck["status"] {
   }
 }
 
-function toGiteaPullRequestCheck(status: GiteaCommitStatus): PullRequestCheck {
+function toGiteaPullRequestCheck(
+  status: GiteaCommitStatus,
+  actionRequiredRunIds: ReadonlySet<number>,
+): PullRequestCheck {
   const rawStatus = status.status.toLowerCase();
+  const runId = getGiteaActionRunIdFromUrl(status.target_url);
+  if (runId !== null && actionRequiredRunIds.has(runId)) {
+    // The Actions run behind this shadow status is held awaiting approval; the
+    // raw shadow reads plain pending, so surface the gate as a neutral trait.
+    return {
+      name: status.context || `status-${status.id}`,
+      status: "pending",
+      traits: [CHECK_TRAIT_ACTION_REQUIRED],
+      url: status.target_url ?? null,
+      checkRunId: status.id,
+    };
+  }
   return {
     name: status.context || `status-${status.id}`,
     status: mapGiteaCommitState(rawStatus),
@@ -708,6 +742,37 @@ function toGiteaPullRequestCheck(status: GiteaCommitStatus): PullRequestCheck {
     url: status.target_url ?? null,
     checkRunId: status.id,
   };
+}
+
+/**
+ * A Gitea Actions run is awaiting approval when it explicitly reports
+ * need_approval (self-hosted instances that expose it) OR when it is held in a
+ * non-terminal `waiting`/`blocked` state for a cross-repo fork PR. gitea.com
+ * does not set need_approval and represents the approval gate as a `waiting`
+ * run with no tasks, so the cross-repo signal is what disambiguates an approval
+ * hold from a run merely queued for a runner.
+ */
+function isGiteaRunAwaitingApproval(run: z.infer<typeof GiteaActionRunMetadataSchema>): boolean {
+  if (run.need_approval) return true;
+  const status = (run.status ?? "").toLowerCase();
+  if (status !== "waiting" && status !== "blocked") return false;
+  const pr = run.pull_requests?.[0];
+  const headRepoId = pr?.head?.repo?.id;
+  const baseRepoId = pr?.base?.repo?.id;
+  return headRepoId !== undefined && baseRepoId !== undefined && headRepoId !== baseRepoId;
+}
+
+function deriveGiteaActionRequiredRunIds(runs: unknown[], sha: string): Set<number> {
+  const runIds = new Set<number>();
+  for (const raw of runs) {
+    const parsed = GiteaActionRunMetadataSchema.safeParse(raw);
+    if (!parsed.success) continue;
+    const run = parsed.data;
+    if (run.id === undefined) continue;
+    if ((run.head_sha ?? run.commit_sha) !== sha) continue;
+    if (isGiteaRunAwaitingApproval(run)) runIds.add(run.id);
+  }
+  return runIds;
 }
 
 function getGiteaActionTaskName(task: GiteaActionTask): string {
@@ -860,6 +925,7 @@ function isGiteaActionShadowStatus(
 function combineGiteaChecks(
   commitStatuses: GiteaCommitStatus[],
   actionTasks: GiteaActionTask[],
+  actionRequiredRunIds: ReadonlySet<number> = new Set(),
 ): PullRequestCheck[] {
   const nativeOrigins = new Set(
     actionTasks
@@ -876,7 +942,7 @@ function combineGiteaChecks(
   );
   const checks = commitStatuses
     .filter((status) => !isGiteaActionShadowStatus(status, nativeOrigins, nativeRunIds))
-    .map(toGiteaPullRequestCheck);
+    .map((status) => toGiteaPullRequestCheck(status, actionRequiredRunIds));
   const seenTaskIds = new Set<number>();
   for (const task of actionTasks) {
     if (seenTaskIds.has(task.id)) continue;
@@ -890,8 +956,9 @@ function applyGiteaChecks(
   status: CurrentPullRequestStatus,
   combined: GiteaCombinedCommitStatus,
   actionTasks: GiteaActionTask[],
+  actionRequiredRunIds: ReadonlySet<number> = new Set(),
 ): CurrentPullRequestStatus {
-  const checks = combineGiteaChecks(combined.statuses, actionTasks);
+  const checks = combineGiteaChecks(combined.statuses, actionTasks, actionRequiredRunIds);
   if (checks.length === 0) {
     return status;
   }
@@ -1600,21 +1667,22 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
       if (!pr.headSha) {
         return status;
       }
+      const checksInput = {
+        cwd,
+        repoOwner: status.repoOwner,
+        repoName: status.repoName,
+        sha: pr.headSha,
+      };
       const [combined, actionTasks] = await Promise.all([
-        loadCombinedCommitStatusBestEffort({
-          cwd,
-          repoOwner: status.repoOwner,
-          repoName: status.repoName,
-          sha: pr.headSha,
-        }),
-        loadActionTasksBestEffort({
-          cwd,
-          repoOwner: status.repoOwner,
-          repoName: status.repoName,
-          sha: pr.headSha,
-        }),
+        loadCombinedCommitStatusBestEffort(checksInput),
+        loadActionTasksBestEffort(checksInput),
       ]);
-      return applyGiteaChecks(status, combined, actionTasks);
+      const actionRequiredRunIds = await loadActionRequiredRunIdsBestEffort(
+        checksInput,
+        combined,
+        actionTasks,
+      );
+      return applyGiteaChecks(status, combined, actionTasks, actionRequiredRunIds);
     } catch {
       return status;
     }
@@ -1648,6 +1716,39 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
       { cwd: input.cwd },
       GiteaCombinedCommitStatusSchema,
     );
+  }
+
+  // Only fetch runs when there is a pending Actions shadow status whose run has
+  // no corresponding task: that is the approval-hold signature on gitea.com
+  // (waiting run, no tasks, pending shadows). Skipping the fetch otherwise keeps
+  // the common running/finished path at two requests.
+  async function loadActionRequiredRunIdsBestEffort(
+    input: { cwd: string; repoOwner: string; repoName: string; sha: string },
+    combined: GiteaCombinedCommitStatus,
+    actionTasks: GiteaActionTask[],
+  ): Promise<ReadonlySet<number>> {
+    const taskRunIds = new Set(
+      actionTasks
+        .map((task) => getGiteaActionRunIdFromUrl(task.url))
+        .filter((runId): runId is number => runId !== null),
+    );
+    const hasUncoveredPendingShadow = combined.statuses.some((status) => {
+      const runId = getGiteaActionRunIdFromUrl(status.target_url);
+      return (
+        runId !== null &&
+        !taskRunIds.has(runId) &&
+        mapGiteaCommitState(status.status.toLowerCase()) === "pending"
+      );
+    });
+    if (!hasUncoveredPendingShadow) return new Set();
+    try {
+      const sha = encodeURIComponent(input.sha);
+      const runs = await loadGiteaActionPages(input, "runs", `head_sha=${sha}`);
+      return deriveGiteaActionRequiredRunIds(runs, input.sha);
+    } catch (error) {
+      rethrowTeaAuthFailure(error);
+      return new Set();
+    }
   }
 
   async function loadActionTasksBestEffort(input: {

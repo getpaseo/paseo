@@ -1101,6 +1101,149 @@ describe("createGiteaService", () => {
     expect(status?.checks.map((check) => check.name)).toEqual(["verify"]);
   });
 
+  it("marks a fork PR awaiting Actions approval as action_required", async () => {
+    // Real gitea.com shape for a fork PR held for approval: the run is
+    // "waiting" (not "blocked"), exposes no need_approval, and produces NO
+    // tasks — only pending shadow commit statuses carrying the run id in their
+    // target_url. The cross-repo PR (head.repo.id != base.repo.id) is the
+    // approval-pending signal.
+    const headSha = STATUS_PR_VIEW.headSha;
+    const { service } = makeService((args) => {
+      if (args[0] === "pr" && args[1] === "list") return ok(JSON.stringify([OPEN_PR]));
+      if (args[0] === "pr" && args[1] === "5") return ok(JSON.stringify(STATUS_PR_VIEW));
+      if (args[0] === "api" && args[1].includes("/commits/")) {
+        return ok(
+          JSON.stringify({
+            state: "pending",
+            statuses: [
+              {
+                id: 201,
+                status: "pending",
+                context: "build / db-breaking (pull_request)",
+                target_url: "https://gitea.com/example-user/sample-repo/actions/runs/715170/jobs/1",
+                creator: null,
+              },
+              {
+                id: 202,
+                status: "pending",
+                context: "build / backend-external-tests (pull_request)",
+                target_url: "https://gitea.com/example-user/sample-repo/actions/runs/715170/jobs/2",
+                creator: null,
+              },
+            ],
+            total_count: 2,
+          }),
+        );
+      }
+      if (args[0] === "api" && args[1].includes("/actions/tasks")) {
+        return ok(JSON.stringify({ workflow_runs: [], total_count: 0 }));
+      }
+      if (args[0] === "api" && args[1].includes("/actions/runs")) {
+        return ok(
+          JSON.stringify({
+            workflow_runs: [
+              {
+                id: 715170,
+                status: "waiting",
+                head_sha: headSha,
+                run_number: 7,
+                pull_requests: [
+                  {
+                    number: 6,
+                    head: { ref: "action-required-demo", repo: { id: 2 } },
+                    base: { ref: "main", repo: { id: 1 } },
+                  },
+                ],
+              },
+            ],
+            total_count: 1,
+          }),
+        );
+      }
+      throw new Error(`unexpected call: ${args.join(" ")}`);
+    });
+
+    const status = await service.getCurrentPullRequestStatus({
+      cwd: "/repo",
+      headRef: "feat/sample-change",
+    });
+
+    expect(status?.checks).toEqual([
+      {
+        name: "build / db-breaking (pull_request)",
+        status: "pending",
+        traits: ["action_required"],
+        url: "https://gitea.com/example-user/sample-repo/actions/runs/715170/jobs/1",
+        checkRunId: 201,
+      },
+      {
+        name: "build / backend-external-tests (pull_request)",
+        status: "pending",
+        traits: ["action_required"],
+        url: "https://gitea.com/example-user/sample-repo/actions/runs/715170/jobs/2",
+        checkRunId: 202,
+      },
+    ]);
+    expect(status?.checksStatus).toBe("pending");
+  });
+
+  it("does not mark a same-repo waiting run as action_required", async () => {
+    // A same-repo run waiting for a runner (head.repo.id == base.repo.id) must
+    // stay plain pending — approval gating only applies to cross-repo forks.
+    const headSha = STATUS_PR_VIEW.headSha;
+    const { service } = makeService((args) => {
+      if (args[0] === "pr" && args[1] === "list") return ok(JSON.stringify([OPEN_PR]));
+      if (args[0] === "pr" && args[1] === "5") return ok(JSON.stringify(STATUS_PR_VIEW));
+      if (args[0] === "api" && args[1].includes("/commits/")) {
+        return ok(
+          JSON.stringify({
+            state: "pending",
+            statuses: [
+              {
+                id: 211,
+                status: "pending",
+                context: "build / db-breaking (push)",
+                target_url: "https://gitea.com/example-user/sample-repo/actions/runs/715171/jobs/1",
+                creator: null,
+              },
+            ],
+            total_count: 1,
+          }),
+        );
+      }
+      if (args[0] === "api" && args[1].includes("/actions/tasks")) {
+        return ok(JSON.stringify({ workflow_runs: [], total_count: 0 }));
+      }
+      if (args[0] === "api" && args[1].includes("/actions/runs")) {
+        return ok(
+          JSON.stringify({
+            workflow_runs: [
+              {
+                id: 715171,
+                status: "waiting",
+                head_sha: headSha,
+                run_number: 8,
+                pull_requests: [
+                  { number: 7, head: { repo: { id: 1 } }, base: { repo: { id: 1 } } },
+                ],
+              },
+            ],
+            total_count: 1,
+          }),
+        );
+      }
+      throw new Error(`unexpected call: ${args.join(" ")}`);
+    });
+
+    const status = await service.getCurrentPullRequestStatus({
+      cwd: "/repo",
+      headRef: "feat/sample-change",
+    });
+
+    expect(status?.checks.map((c) => c.traits ?? [])).toEqual([[]]);
+    expect(status?.checks[0]?.status).toBe("pending");
+  });
+
   it("keeps external statuses that only look like Actions shadows", async () => {
     const headSha = STATUS_PR_VIEW.headSha;
     const { service } = makeService((args) => {
