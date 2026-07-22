@@ -90,6 +90,7 @@ interface WorkspaceLayoutStore {
   retargetTab: (workspaceKey: string, tabId: string, target: WorkspaceTabTarget) => string | null;
   convertDraftToAgent: (workspaceKey: string, tabId: string, agentId: string) => string | null;
   reconcileTabs: (workspaceKey: string, snapshot: WorkspaceTabSnapshot) => void;
+  resolvePendingAgent: (workspaceKey: string, agentId: string) => void;
   reorderTabs: (workspaceKey: string, tabIds: string[]) => void;
   getWorkspaceTabs: (workspaceKey: string) => WorkspaceTab[];
   splitPane: (
@@ -474,23 +475,35 @@ export function createWorkspaceLayoutStore(
               },
               snapshot,
             );
-            const hadPendingAgents = normalizedWorkspaceKey in state.pendingAgentIdsByWorkspace;
-            if (nextState.layout === currentLayout && !hadPendingAgents) {
+            if (nextState.layout === currentLayout) {
               return state;
             }
 
-            const nextPendingAgentIdsByWorkspace = {
-              ...state.pendingAgentIdsByWorkspace,
-            };
-            delete nextPendingAgentIdsByWorkspace[normalizedWorkspaceKey];
-
             return {
-              pendingAgentIdsByWorkspace: nextPendingAgentIdsByWorkspace,
               layoutByWorkspace: {
                 ...state.layoutByWorkspace,
                 [normalizedWorkspaceKey]: nextState.layout,
               },
             };
+          });
+        },
+        resolvePendingAgent: (workspaceKey, agentId) => {
+          const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
+          const normalizedAgentId = trimNonEmpty(agentId);
+          if (!normalizedWorkspaceKey || !normalizedAgentId) {
+            return;
+          }
+
+          set((state) => {
+            const pendingAgentIdsByWorkspace = removeAgentIdFromWorkspaceSet(
+              state.pendingAgentIdsByWorkspace,
+              normalizedWorkspaceKey,
+              normalizedAgentId,
+            );
+            if (pendingAgentIdsByWorkspace === state.pendingAgentIdsByWorkspace) {
+              return state;
+            }
+            return { pendingAgentIdsByWorkspace };
           });
         },
         reorderTabs: (workspaceKey, tabIds) => {

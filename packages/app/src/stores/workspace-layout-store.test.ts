@@ -1619,6 +1619,20 @@ describe("workspace-layout-store actions", () => {
       standaloneTerminalIds: [],
     });
 
+    expect(store.getWorkspaceTabs(workspaceKey).map((tab) => tab.tabId)).toEqual([
+      "agent_archived-agent",
+    ]);
+
+    store.resolvePendingAgent(workspaceKey, "archived-agent");
+    store.reconcileTabs(workspaceKey, {
+      agentsHydrated: true,
+      terminalsHydrated: true,
+      activeAgentIds: [],
+      autoOpenAgentIds: [],
+      knownAgentIds: [],
+      standaloneTerminalIds: [],
+    });
+
     expect(store.getWorkspaceTabs(workspaceKey).map((tab) => tab.tabId)).toEqual([]);
 
     store.openTabFocused(workspaceKey, { kind: "agent", agentId: "archived-agent" });
