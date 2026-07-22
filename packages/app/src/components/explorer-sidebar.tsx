@@ -42,7 +42,7 @@ import {
 } from "@/stores/workspace-layout-store";
 import { resolveFocusedChatTarget } from "@/composer/focused-chat-target";
 import { createWorkspaceFileAttachment } from "@/attachments/workspace-file";
-import { enqueueComposerAttachment } from "@/composer/draft/attachment-command-queue";
+import { useDraftStore } from "@/stores/draft-store";
 
 function logExplorerSidebar(_event: string, _details: Record<string, unknown>): void {}
 
@@ -448,7 +448,7 @@ function useAddFileToChat({
       if (!focusedChat || !workspaceKey) {
         return;
       }
-      enqueueComposerAttachment({
+      void useDraftStore.getState().attachWorkspaceFile({
         draftKey: focusedChat.draftKey,
         attachment: createWorkspaceFileAttachment({ path: filePath }),
       });

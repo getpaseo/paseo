@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { UserComposerAttachment } from "@/attachments/types";
 import type { DraftAgentControlsProps } from "@/composer/agent-controls";
 import type { DraftCommandConfig } from "@/hooks/use-agent-commands-query";
@@ -9,7 +9,6 @@ import {
 } from "@/hooks/use-agent-form-state";
 import { useDraftAgentFeatures } from "@/hooks/use-draft-agent-features";
 import {
-  areAttachmentsEqual,
   buildDraftAgentControls,
   hasDraftContent,
   resolveDraftKey,
@@ -22,11 +21,7 @@ import {
   type ProviderSelectionState,
 } from "@/provider-selection/provider-selection";
 import { useDraftStore } from "@/stores/draft-store";
-import {
-  drainComposerAttachmentCommands,
-  useComposerAttachmentCommandRevision,
-} from "@/composer/draft/attachment-command-queue";
-import { appendWorkspaceFileAttachment } from "@/attachments/workspace-file";
+import { toDraftInputIfReady } from "@/stores/draft-store/state";
 
 type AttachmentUpdater =
   | UserComposerAttachment[]
@@ -83,142 +78,72 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
       }),
     [formState.selectedServerId, input.draftKey],
   );
-  const [text, setText] = useState("");
-  const [attachments, setAttachmentsState] = useState<UserComposerAttachment[]>([]);
-  const [isHydrated, setIsHydrated] = useState(false);
-  const [attachmentFocusRequestId, setAttachmentFocusRequestId] = useState(0);
-  const attachmentCommandRevision = useComposerAttachmentCommandRevision(draftKey);
-  const draftGenerationRef = useRef(0);
-  const hydratedGenerationRef = useRef(0);
+  const draftRecord = useDraftStore((state) => state.drafts[draftKey]);
+  const draft = useMemo(() => toDraftInputIfReady(draftRecord), [draftRecord]);
+  const attachmentFocusRequestId = useDraftStore(
+    (state) => state.attachmentFocusRequestByDraftKey[draftKey] ?? 0,
+  );
+  const [hydratedDraftKey, setHydratedDraftKey] = useState<string | null>(null);
+  const text = draft?.text ?? "";
+  const attachments = draft?.attachments ?? [];
+  const isHydrated = hydratedDraftKey === draftKey;
 
-  const setAttachments = useCallback((updater: AttachmentUpdater) => {
-    setAttachmentsState((previousAttachments) => {
-      if (typeof updater === "function") {
-        return updater(previousAttachments);
+  const saveDraft = useCallback(
+    (
+      update: (draft: { text: string; attachments: UserComposerAttachment[] }) => {
+        text: string;
+        attachments: UserComposerAttachment[];
+      },
+    ) => {
+      const store = useDraftStore.getState();
+      const current = store.getDraftInput(draftKey) ?? { text: "", attachments: [] };
+      const next = update(current);
+      if (!hasDraftContent(next)) {
+        store.clearDraftInput({ draftKey, lifecycle: "abandoned" });
+        return;
       }
-      return updater;
-    });
-  }, []);
+      store.saveDraftInput({ draftKey, draft: next });
+    },
+    [draftKey],
+  );
+
+  const setText = useCallback(
+    (nextText: string) => {
+      saveDraft((current) => ({ ...current, text: nextText }));
+    },
+    [saveDraft],
+  );
+
+  const setAttachments = useCallback(
+    (updater: AttachmentUpdater) => {
+      saveDraft((current) => ({
+        ...current,
+        attachments: typeof updater === "function" ? updater(current.attachments) : updater,
+      }));
+    },
+    [saveDraft],
+  );
 
   const clear = useCallback(
     (lifecycle: "sent" | "abandoned") => {
-      const store = useDraftStore.getState();
-      store.clearDraftInput({ draftKey, lifecycle });
-
-      const generation = store.beginDraftGeneration(draftKey);
-      draftGenerationRef.current = generation;
-      hydratedGenerationRef.current = generation;
-
-      setText("");
-      setAttachmentsState([]);
-      setIsHydrated(true);
+      useDraftStore.getState().clearDraftInput({ draftKey, lifecycle });
     },
     [draftKey],
   );
 
   useEffect(() => {
-    const store = useDraftStore.getState();
-    const generation = store.beginDraftGeneration(draftKey);
-    draftGenerationRef.current = generation;
-    hydratedGenerationRef.current = 0;
-
-    setText("");
-    setAttachmentsState([]);
-    setIsHydrated(false);
-
     let cancelled = false;
-
     void (async () => {
-      const draft = await store.hydrateDraftInput({
-        draftKey,
-      });
-      if (cancelled) {
-        return;
+      await useDraftStore.getState().hydrateDraftInput({ draftKey });
+      if (!cancelled) {
+        setHydratedDraftKey(draftKey);
       }
-      if (!useDraftStore.getState().isDraftGenerationCurrent({ draftKey, generation })) {
-        return;
-      }
-
-      if (draft) {
-        setText(draft.text);
-        setAttachmentsState(draft.attachments);
-      }
-
-      hydratedGenerationRef.current = generation;
-      setIsHydrated(true);
     })();
 
     return () => {
       cancelled = true;
     };
   }, [draftKey]);
-
-  useEffect(() => {
-    if (!isHydrated) {
-      return;
-    }
-    const commands = drainComposerAttachmentCommands(draftKey);
-    if (commands.length === 0) {
-      return;
-    }
-    setAttachmentsState((currentAttachments) =>
-      commands.reduce(
-        (nextAttachments, command) =>
-          appendWorkspaceFileAttachment(nextAttachments, command.attachment),
-        currentAttachments,
-      ),
-    );
-    const finalCommand = commands[commands.length - 1];
-    if (finalCommand) {
-      setAttachmentFocusRequestId(finalCommand.id);
-    }
-  }, [attachmentCommandRevision, draftKey, isHydrated]);
-
-  useEffect(() => {
-    const currentGeneration = draftGenerationRef.current;
-    if (currentGeneration <= 0) {
-      return;
-    }
-
-    const store = useDraftStore.getState();
-    const isCurrentGeneration = store.isDraftGenerationCurrent({
-      draftKey,
-      generation: currentGeneration,
-    });
-    if (!isCurrentGeneration) {
-      return;
-    }
-    if (hydratedGenerationRef.current !== currentGeneration) {
-      return;
-    }
-
-    const existing = store.getDraftInput(draftKey);
-    const isSameDraft =
-      existing !== undefined &&
-      existing.text === text &&
-      areAttachmentsEqual({
-        left: existing.attachments,
-        right: attachments,
-      });
-    if (isSameDraft) {
-      return;
-    }
-
-    if (!hasDraftContent({ text, attachments })) {
-      if (existing) {
-        store.clearDraftInput({ draftKey, lifecycle: "abandoned" });
-      }
-      return;
-    }
-
-    store.saveDraftInput({
-      draftKey,
-      draft: {
-        text,
-        attachments,
-      },
-    });
-  }, [attachments, draftKey, text]);
 
   const lockedWorkingDir = composerOptions?.lockedWorkingDir?.trim() ?? "";
   useEffect(() => {

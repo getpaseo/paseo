@@ -35,16 +35,13 @@ import {
   ArrowDownUp,
   ChevronDown,
   Columns2,
-  Copy,
   Download,
-  FileText,
   FolderTree,
   GitCommitHorizontal,
   GitMerge,
   List,
   ListChevronsDownUp,
   ListChevronsUpDown,
-  MessageSquarePlus,
   Pilcrow,
   RefreshCcw,
   RotateCw,
@@ -91,11 +88,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import * as Clipboard from "expo-clipboard";
-import {
-  FILE_ACTIONS_MENU_WIDTH,
-  FileActionsMenu,
-  type FileAction,
-} from "@/components/file-actions-menu";
+import { FILE_ACTIONS_MENU_WIDTH, FileActionsMenu } from "@/components/file-actions-menu";
 import { useFileDownload } from "@/hooks/use-file-download";
 import { buildAbsoluteExplorerPath } from "@/utils/explorer-paths";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
@@ -1040,58 +1033,6 @@ const DiffFileHeader = memo(function DiffFileHeader({
   );
 
   const fileName = file.path.split("/").pop() ?? file.path;
-  const canOpenFile = Boolean(onOpenFile) && !file.isDeleted;
-  const canAddToChat = Boolean(onAddToChat) && !file.isDeleted;
-  const canDownload = Boolean(onDownload) && !file.isDeleted;
-  const actions = useMemo<FileAction[]>(() => {
-    const list: FileAction[] = [];
-    if (canOpenFile) {
-      list.push({
-        key: "open-file",
-        label: t("workspace.fileActions.openFile"),
-        icon: FileText,
-        onSelect: handleOpenFile,
-        testID: testID ? `${testID}-open-file` : undefined,
-      });
-    }
-    if (onCopyPath) {
-      list.push({
-        key: "copy-path",
-        label: t("workspace.fileActions.copyPath"),
-        icon: Copy,
-        onSelect: handleCopyPath,
-      });
-    }
-    if (canDownload) {
-      list.push({
-        key: "download",
-        label: t("workspace.fileActions.download"),
-        icon: Download,
-        onSelect: handleDownload,
-      });
-    }
-    if (canAddToChat) {
-      list.push({
-        key: "add-to-chat",
-        label: t("workspace.fileActions.addToChat"),
-        icon: MessageSquarePlus,
-        onSelect: handleAddToChat,
-        testID: testID ? `${testID}-add-to-chat` : undefined,
-      });
-    }
-    return list;
-  }, [
-    canAddToChat,
-    canDownload,
-    canOpenFile,
-    handleAddToChat,
-    handleCopyPath,
-    handleDownload,
-    handleOpenFile,
-    onCopyPath,
-    t,
-    testID,
-  ]);
   const headerContent = (
     <>
       <View ref={dragSourceRef} style={styles.fileHeaderLeft}>
@@ -1131,11 +1072,16 @@ const DiffFileHeader = memo(function DiffFileHeader({
         />
         {interactive ? (
           <FileActionsMenu
-            actions={actions}
+            fileKind="file"
+            fileExists={!file.isDeleted}
+            onOpenFile={onOpenFile ? handleOpenFile : undefined}
+            onCopyPath={onCopyPath ? handleCopyPath : undefined}
+            onDownload={onDownload ? handleDownload : undefined}
+            onAddToChat={onAddToChat ? handleAddToChat : undefined}
             open={isActionsOpen}
             onOpenChange={setIsActionsOpen}
             accessibilityLabel={t("workspace.fileActions.moreActions")}
-            testID={testID ? `${testID}-actions` : undefined}
+            testIDPrefix={testID}
           />
         ) : null}
       </View>

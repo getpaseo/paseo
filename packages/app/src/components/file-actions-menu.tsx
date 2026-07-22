@@ -1,7 +1,15 @@
 import { useMemo, type ReactElement, type ReactNode } from "react";
 import { type PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { MoreVertical, type LucideIcon } from "lucide-react-native";
+import {
+  Copy,
+  Download,
+  FileText,
+  MessageSquarePlus,
+  MoreVertical,
+  type LucideIcon,
+} from "lucide-react-native";
+import { useTranslation } from "react-i18next";
 import { ICON_SIZE, SPACING, type Theme } from "@/styles/theme";
 import {
   DropdownMenu,
@@ -17,8 +25,7 @@ const ThemedMoreVertical = withUnistyles(MoreVertical);
 /** Width occupied by a file action trigger, including its visual padding. */
 export const FILE_ACTIONS_MENU_WIDTH = ICON_SIZE.sm + 2 * SPACING[1];
 
-/** A single action rendered inside a {@link FileActionsMenu}. */
-export interface FileAction {
+interface FileAction {
   key: string;
   label: string;
   icon: LucideIcon;
@@ -27,15 +34,19 @@ export interface FileAction {
 }
 
 interface FileActionsMenuProps {
-  /** Ordered actions. The menu renders nothing when this is empty. */
-  actions: FileAction[];
+  fileKind: "file" | "directory";
+  fileExists?: boolean;
+  onOpenFile?: () => void;
+  onCopyPath?: () => void;
+  onDownload?: () => void;
+  onAddToChat?: () => void;
   /** Optional metadata block rendered above the actions (e.g. size/modified). */
   header?: ReactNode;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
   hitSlop?: number;
   accessibilityLabel: string;
-  testID?: string;
+  testIDPrefix?: string;
 }
 
 // The menu lives inside pressable rows (diff header, explorer entry); stop the
@@ -54,19 +65,63 @@ function triggerStyle({
 
 /**
  * Shared kebab (⋮) menu for per-file actions. Used by the file explorer tree and
- * the git diff pane so both surfaces expose the same actions with identical
- * chrome. Callers build the {@link FileAction} list; this owns the trigger and
- * menu layout.
+ * git diff pane so both surfaces share action availability, ordering, and chrome.
  */
 export function FileActionsMenu({
-  actions,
+  fileKind,
+  fileExists = true,
+  onOpenFile,
+  onCopyPath,
+  onDownload,
+  onAddToChat,
   header,
   open,
   onOpenChange,
   hitSlop = 12,
   accessibilityLabel,
-  testID,
+  testIDPrefix,
 }: FileActionsMenuProps): ReactElement | null {
+  const { t } = useTranslation();
+  const actions = useMemo<FileAction[]>(() => {
+    const availableFile = fileKind === "file" && fileExists;
+    const next: FileAction[] = [];
+    if (availableFile && onOpenFile) {
+      next.push({
+        key: "open-file",
+        label: t("workspace.fileActions.openFile"),
+        icon: FileText,
+        onSelect: onOpenFile,
+        testID: testIDPrefix ? `${testIDPrefix}-open-file` : undefined,
+      });
+    }
+    if (onCopyPath) {
+      next.push({
+        key: "copy-path",
+        label: t("workspace.fileActions.copyPath"),
+        icon: Copy,
+        onSelect: onCopyPath,
+      });
+    }
+    if (availableFile && onDownload) {
+      next.push({
+        key: "download",
+        label: t("workspace.fileActions.download"),
+        icon: Download,
+        onSelect: onDownload,
+      });
+    }
+    if (availableFile && onAddToChat) {
+      next.push({
+        key: "add-to-chat",
+        label: t("workspace.fileActions.addToChat"),
+        icon: MessageSquarePlus,
+        onSelect: onAddToChat,
+        testID: testIDPrefix ? `${testIDPrefix}-add-to-chat` : undefined,
+      });
+    }
+    return next;
+  }, [fileExists, fileKind, onAddToChat, onCopyPath, onDownload, onOpenFile, t, testIDPrefix]);
+
   if (actions.length === 0) {
     return null;
   }
@@ -77,7 +132,7 @@ export function FileActionsMenu({
         onPressIn={stopTriggerPropagation}
         style={triggerStyle}
         accessibilityLabel={accessibilityLabel}
-        testID={testID}
+        testID={testIDPrefix ? `${testIDPrefix}-actions` : undefined}
       >
         <ThemedMoreVertical size={ICON_SIZE.sm} uniProps={foregroundMutedColorMapping} />
       </DropdownMenuTrigger>

@@ -15,15 +15,7 @@ import {
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { WORKSPACE_SECONDARY_HEADER_HEIGHT } from "@/constants/layout";
 import * as Clipboard from "expo-clipboard";
-import {
-  ChevronDown,
-  Copy,
-  Download,
-  Eye,
-  EyeOff,
-  MessageSquarePlus,
-  RotateCw,
-} from "lucide-react-native";
+import { ChevronDown, Eye, EyeOff, RotateCw } from "lucide-react-native";
 import { MaterialFileIcon } from "@/components/material-file-icon";
 import {
   TreeChevron,
@@ -34,7 +26,7 @@ import {
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import type { AgentFileExplorerState, ExplorerEntry } from "@/stores/session-store";
 import { useSessionStore } from "@/stores/session-store";
-import { FileActionsMenu, type FileAction } from "@/components/file-actions-menu";
+import { FileActionsMenu } from "@/components/file-actions-menu";
 import { useFileDownload } from "@/hooks/use-file-download";
 import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
 import { buildWorkspaceExplorerStateKey } from "@/hooks/use-file-explorer-actions";
@@ -162,34 +154,6 @@ function TreeRowItem({
     [entry.modifiedAt, entry.size, t],
   );
 
-  const actions = useMemo<FileAction[]>(() => {
-    const list: FileAction[] = [
-      {
-        key: "copy-path",
-        label: t("workspace.fileActions.copyPath"),
-        icon: Copy,
-        onSelect: handleCopy,
-      },
-    ];
-    if (entry.kind === "file") {
-      list.push({
-        key: "download",
-        label: t("workspace.fileActions.download"),
-        icon: Download,
-        onSelect: handleDownload,
-      });
-      if (onAddToChat) {
-        list.push({
-          key: "add-to-chat",
-          label: t("workspace.fileActions.addToChat"),
-          icon: MessageSquarePlus,
-          onSelect: handleAddToChat,
-        });
-      }
-    }
-    return list;
-  }, [entry.kind, handleAddToChat, handleCopy, handleDownload, onAddToChat, t]);
-
   return (
     <Pressable onPress={handlePress} style={pressableStyle} testID={testID}>
       <TreeIndentGuides depth={depth} />
@@ -208,10 +172,13 @@ function TreeRowItem({
         </Text>
       </View>
       <FileActionsMenu
-        actions={actions}
+        fileKind={entry.kind}
+        onCopyPath={handleCopy}
+        onDownload={handleDownload}
+        onAddToChat={onAddToChat ? handleAddToChat : undefined}
         header={metaHeader}
         accessibilityLabel={t("workspace.fileActions.moreActions")}
-        testID={testID ? `${testID}-actions` : undefined}
+        testIDPrefix={testID}
       />
     </Pressable>
   );
