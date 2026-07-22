@@ -121,10 +121,11 @@ export async function ensureAgentLoaded(
       deps.logger.info({ agentId, provider: record.provider }, "Agent created from stored config");
     }
 
-    await deps.agentManager.hydrateTimelineFromProvider(
-      agentId,
-      pendingOptions.broadcastTimeline ? { broadcast: true } : undefined,
-    );
+    if (pendingOptions.broadcastTimeline) {
+      await deps.agentManager.hydrateTimelineFromProvider(agentId, { broadcast: true });
+    } else {
+      await deps.agentManager.hydrateTimelineFromProvider(agentId);
+    }
     return deps.agentManager.getAgent(agentId) ?? snapshot;
   })();
 
