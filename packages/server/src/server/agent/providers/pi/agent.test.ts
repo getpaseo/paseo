@@ -57,14 +57,15 @@ function readUtf8File(pathname: string): string {
   }
 }
 
-async function applyPaseoExtensionSystemPrompt(
+type PaseoExtensionListener = (event: unknown, context?: unknown) => unknown;
+
+async function loadPaseoExtensionListeners(
   extensionPath: string,
-  systemPrompt: string,
-): Promise<string | undefined> {
-  const listeners = new Map<string, (event: { systemPrompt: string }) => unknown>();
+): Promise<Map<string, PaseoExtensionListener>> {
+  const listeners = new Map<string, PaseoExtensionListener>();
   const extension = (await import(pathToFileURL(extensionPath).href)) as {
     default: (piApi: {
-      on: (event: string, listener: (event: { systemPrompt: string }) => unknown) => void;
+      on: (event: string, listener: PaseoExtensionListener) => void;
       registerCommand: () => void;
     }) => void;
   };
@@ -72,6 +73,14 @@ async function applyPaseoExtensionSystemPrompt(
     on: (event, listener) => listeners.set(event, listener),
     registerCommand: () => undefined,
   });
+  return listeners;
+}
+
+async function applyPaseoExtensionSystemPrompt(
+  extensionPath: string,
+  systemPrompt: string,
+): Promise<string | undefined> {
+  const listeners = await loadPaseoExtensionListeners(extensionPath);
   const result = await listeners.get("before_agent_start")?.({ systemPrompt });
   return (result as { systemPrompt?: string } | undefined)?.systemPrompt;
 }
@@ -594,21 +603,53 @@ describe("PiRpcAgentSession", () => {
     ]);
   });
 
-  test("emits live user messages with captured Pi tree entry ids", async () => {
+  test("emits live user messages with submitted Pi tree entry ids", async () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();
 
-    fakeSession.capturedUserEntries = [{ id: "entry-user-1", parentId: null, text: "hello" }];
     await session.startTurn("hello");
-    fakeSession.emit({
-      type: "message_end",
-      message: { role: "user", content: "hello" },
+    fakeSession.finishSubmittedUserMessage({
+      id: "entry-user-1",
+      parentId: null,
+      text: "hello",
     });
 
     await events.nextTimelineEvent();
 
     expect(events.timelineItems()).toEqual([
       { type: "user_message", text: "hello", messageId: "entry-user-1" },
+    ]);
+  });
+
+  test("uses the Pi entry attached to a submitted prompt after resuming old history", async () => {
+    const pi = new FakePi();
+    const client = createClient(pi);
+    const session = (await client.resumeSession({
+      provider: "pi",
+      sessionId: "pi-session-1",
+      nativeHandle: "/tmp/native-pi-session",
+      metadata: { cwd: "/workspace/project" },
+    })) as PiRpcAgentSession;
+    const events = new SessionEvents(session);
+    const fakeSession = pi.latestSession();
+    fakeSession.capturedUserEntries = [{ id: "entry-old", parentId: null, text: "old prompt" }];
+
+    await session.startTurn("new prompt", { clientMessageId: "client-new" });
+    fakeSession.finishSubmittedUserMessage({
+      id: "entry-new",
+      parentId: "entry-old-assistant",
+      text: "new prompt",
+    });
+
+    await events.nextTimelineEvent();
+
+    expect(events.timelineItems()).toEqual([
+      {
+        type: "user_message",
+        text: "new prompt",
+        messageId: "entry-new",
+        clientMessageId: "client-new",
+      },
     ]);
   });
 
@@ -732,6 +773,52 @@ describe("PiRpcAgentSession", () => {
       "--extension",
       actualLaunch.extensionPaths[0],
     ]);
+  });
+
+  test("reports the persisted Pi entry attached to the submitted message", async () => {
+    const pi = new FakePi();
+    const client = createClient(pi);
+    const session = await client.createSession(createConfig());
+    const extensionPath = pi.recordedLaunches[0]?.extensionPaths[0];
+    expect(extensionPath).toBeDefined();
+    const listeners = await loadPaseoExtensionListeners(extensionPath!);
+    const submittedMessage = { role: "user", content: "new prompt" };
+    const entries: Array<{
+      type: string;
+      id: string;
+      parentId: string | null;
+      message: { role: string; content: string };
+    }> = [
+      {
+        type: "message",
+        id: "entry-old",
+        parentId: null,
+        message: { role: "user", content: "old prompt" },
+      },
+    ];
+    const notifications: string[] = [];
+    const context = {
+      sessionManager: { getEntries: () => entries },
+      ui: { notify: (message: string) => notifications.push(message) },
+    };
+
+    await listeners.get("message_end")?.({ message: submittedMessage }, context);
+    entries.push({
+      type: "message",
+      id: "entry-new",
+      parentId: "entry-old-assistant",
+      message: submittedMessage,
+    });
+    await listeners.get("message_start")?.(
+      { message: { role: "assistant", content: [] } },
+      context,
+    );
+
+    expect(notifications).toEqual([
+      'PASEO_SUBMITTED_USER_ENTRY {"entry":{"id":"entry-new","parentId":"entry-old-assistant","text":"new prompt"}}',
+    ]);
+
+    await session.close();
   });
 
   test("appends agent and daemon prompts after Pi's discovered system prompt", async () => {
