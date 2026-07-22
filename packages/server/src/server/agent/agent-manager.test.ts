@@ -7521,17 +7521,17 @@ test("ensureUnarchivedAgentLoaded fences an archived agent after joining a share
 test("a shared agent load upgrades provider history hydration to broadcast", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-shared-load-broadcast-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);
-  const resumeStarted = deferred<void>();
-  const resumeAllowed = deferred<void>();
+  const historyStarted = deferred<void>();
+  const historyAllowed = deferred<void>();
   const client = new (class extends TestAgentClient {
     override async resumeSession(
       _handle: AgentPersistenceHandle,
       config?: Partial<AgentSessionConfig>,
     ): Promise<AgentSession> {
-      resumeStarted.resolve();
-      await resumeAllowed.promise;
       return new (class extends TestAgentSession {
         override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+          historyStarted.resolve();
+          await historyAllowed.promise;
           yield {
             type: "timeline",
             provider: "codex",
@@ -7560,14 +7560,14 @@ test("a shared agent load upgrades provider history hydration to broadcast", asy
       agentStorage: storage,
       logger,
     });
-    await resumeStarted.promise;
+    await historyStarted.promise;
     const broadcastingLoad = ensureAgentLoaded(agent.id, {
       agentManager: manager,
       agentStorage: storage,
       broadcastTimeline: true,
       logger,
     });
-    resumeAllowed.resolve();
+    historyAllowed.resolve();
     await Promise.all([quietLoad, broadcastingLoad]);
 
     expect(events).toContainEqual(
@@ -7581,7 +7581,7 @@ test("a shared agent load upgrades provider history hydration to broadcast", asy
       }),
     );
   } finally {
-    resumeAllowed.resolve();
+    historyAllowed.resolve();
     await manager.flush().catch(() => undefined);
     await storage.flush().catch(() => undefined);
     rmSync(workdir, { recursive: true, force: true });

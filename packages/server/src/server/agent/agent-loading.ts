@@ -64,6 +64,13 @@ export async function ensureAgentLoaded(
   deps: EnsureAgentLoadedDeps,
 ): Promise<ManagedAgent> {
   await deps.agentManager.waitForAgentClose?.(agentId);
+
+  const inflight = pendingAgentInitializations.get(agentId);
+  if (inflight) {
+    inflight.options.broadcastTimeline ||= deps.broadcastTimeline === true;
+    return inflight.promise;
+  }
+
   const existing =
     deps.agentManager.touchAgentActivity?.(agentId) ?? deps.agentManager.getAgent(agentId);
   if (existing) {
@@ -75,10 +82,10 @@ export async function ensureAgentLoaded(
   // before storage-backed resume begins.
   await deps.agentManager.waitForAgentClose?.(agentId);
 
-  const inflight = pendingAgentInitializations.get(agentId);
-  if (inflight) {
-    inflight.options.broadcastTimeline ||= deps.broadcastTimeline === true;
-    return inflight.promise;
+  const laterInflight = pendingAgentInitializations.get(agentId);
+  if (laterInflight) {
+    laterInflight.options.broadcastTimeline ||= deps.broadcastTimeline === true;
+    return laterInflight.promise;
   }
 
   const pendingOptions = {
@@ -121,11 +128,9 @@ export async function ensureAgentLoaded(
       deps.logger.info({ agentId, provider: record.provider }, "Agent created from stored config");
     }
 
-    if (pendingOptions.broadcastTimeline) {
-      await deps.agentManager.hydrateTimelineFromProvider(agentId, { broadcast: true });
-    } else {
-      await deps.agentManager.hydrateTimelineFromProvider(agentId);
-    }
+    await deps.agentManager.hydrateTimelineFromProvider(agentId, {
+      broadcast: () => pendingOptions.broadcastTimeline,
+    });
     return deps.agentManager.getAgent(agentId) ?? snapshot;
   })();
 

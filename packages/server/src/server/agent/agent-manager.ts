@@ -185,7 +185,7 @@ export interface SubscribeOptions {
 
 interface HydrateTimelineOptions {
   force?: boolean;
-  broadcast?: boolean;
+  broadcast?: boolean | (() => boolean);
 }
 
 export type ImportablePersistedAgentQueryOptions = ListImportableSessionsOptions & {
@@ -3177,12 +3177,17 @@ export class AgentManager {
       return;
     }
 
+    const broadcast = options?.broadcast ?? false;
+
     if (options?.force) {
-      await this.forceHydrateTimelineFromLegacyProviderHistory(agent, options.broadcast === true);
+      await this.forceHydrateTimelineFromLegacyProviderHistory(
+        agent,
+        typeof broadcast === "function" ? broadcast() : broadcast,
+      );
       return;
     }
 
-    await this.primeTimelineFromLegacyProviderHistory(agent, options?.broadcast === true);
+    await this.primeTimelineFromLegacyProviderHistory(agent, broadcast);
   }
 
   private async forceHydrateTimelineFromLegacyProviderHistory(
@@ -3239,15 +3244,24 @@ export class AgentManager {
 
   private async primeTimelineFromLegacyProviderHistory(
     agent: ActiveManagedAgent,
-    broadcast: boolean,
+    broadcast: boolean | (() => boolean),
   ): Promise<void> {
+    const deferredBroadcast = typeof broadcast === "function";
+    const timelineEvents: Array<{
+      event: Extract<AgentStreamEvent, { type: "timeline" }>;
+      row: AgentTimelineRow;
+    }> = [];
+    const providerSubagentEvents: AgentManagerEvent[] = [];
     agent.historyPrimed = true;
     try {
       for await (const event of agent.session.streamHistory()) {
         if (event.type === "provider_subagent") {
           const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
-          if (broadcast) {
-            this.dispatch({ type: "provider_subagent", event: update });
+          const managerEvent: AgentManagerEvent = { type: "provider_subagent", event: update };
+          if (deferredBroadcast) {
+            providerSubagentEvents.push(managerEvent);
+          } else if (broadcast) {
+            this.dispatch(managerEvent);
           }
           continue;
         }
@@ -3262,7 +3276,9 @@ export class AgentManager {
           event.item,
           event.timestamp ? { timestamp: event.timestamp } : undefined,
         );
-        if (broadcast) {
+        if (deferredBroadcast) {
+          timelineEvents.push({ event, row });
+        } else if (broadcast) {
           this.dispatchStream(agent.id, event, {
             seq: row.seq,
             epoch: this.timelineStore.getEpoch(agent.id),
@@ -3272,6 +3288,20 @@ export class AgentManager {
       }
     } catch {
       // ignore history failures
+    }
+
+    if (typeof broadcast !== "function" || !broadcast()) {
+      return;
+    }
+    for (const event of providerSubagentEvents) {
+      this.dispatch(event);
+    }
+    for (const { event, row } of timelineEvents) {
+      this.dispatchStream(agent.id, event, {
+        seq: row.seq,
+        epoch: this.timelineStore.getEpoch(agent.id),
+        timestamp: row.timestamp,
+      });
     }
   }
 
