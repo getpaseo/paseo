@@ -2186,7 +2186,6 @@ export const es: TranslationResources = {
         text: "Texto o emoji",
         color: "Color",
         transparent: "Transparente",
-        invalidColor: "Usa un color hexadecimal como #8b5cf6",
         urlRequired: "Ingresa la URL de un favicon",
         customRequired: "Ingresa de 1 a 8 caracteres",
         saved: "Apariencia del proyecto guardada",

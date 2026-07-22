@@ -4,7 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { cacheProjectFavicon, readCachedProjectFavicon } from "./project-appearance.js";
+import {
+  cacheProjectFavicon,
+  readCachedProjectFavicon,
+  removeCachedProjectFavicon,
+} from "./project-appearance.js";
 
 const PNG_1X1 = Buffer.from([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
@@ -65,6 +69,21 @@ describe("project favicon cache", () => {
     await expect(
       readCachedProjectFavicon({ paseoHome: home, projectId: "project-a" }),
     ).resolves.toEqual(icon);
+  });
+
+  it("removes a cached icon", async () => {
+    const home = await paseoHome();
+    await cacheProjectFavicon({
+      paseoHome: home,
+      projectId: "project-a",
+      url: await serve(PNG_1X1),
+    });
+
+    await removeCachedProjectFavicon({ paseoHome: home, projectId: "project-a" });
+
+    await expect(
+      readCachedProjectFavicon({ paseoHome: home, projectId: "project-a" }),
+    ).resolves.toBeNull();
   });
 
   it("discovers an icon from a website URL", async () => {

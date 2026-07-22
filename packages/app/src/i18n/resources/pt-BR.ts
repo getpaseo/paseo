@@ -2171,7 +2171,6 @@ export const ptBR: TranslationResources = {
         text: "Texto ou emoji",
         color: "Cor",
         transparent: "Transparente",
-        invalidColor: "Use uma cor hexadecimal como #8b5cf6",
         urlRequired: "Informe a URL de um favicon",
         customRequired: "Informe de 1 a 8 caracteres",
         saved: "Aparência do projeto salva",

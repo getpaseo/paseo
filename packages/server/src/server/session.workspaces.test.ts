@@ -7419,9 +7419,20 @@ test("project.appearance.set.request stores custom text and color", async () => 
     updatedAt: "2026-07-22T12:00:00.000Z",
   });
   const projects = new Map([[project.projectId, project]]);
-  session.projectRegistry.get = async (id: string) => projects.get(id) ?? null;
-  session.projectRegistry.upsert = async (record: typeof project) => {
-    projects.set(record.projectId, record);
+  let renameDuringRead = false;
+  session.projectRegistry.get = async (id: string) => {
+    const current = projects.get(id) ?? null;
+    if (current && renameDuringRead) {
+      projects.set(id, { ...current, customName: "Renamed while saving" });
+    }
+    return current;
+  };
+  session.projectRegistry.update = async (id, updater) => {
+    const current = projects.get(id);
+    if (!current) return null;
+    const updated = updater(current);
+    projects.set(id, updated);
+    return updated;
   };
   session.workspaceRegistry.list = async () => [];
 
@@ -7454,6 +7465,7 @@ test("project.appearance.set.request stores custom text and color", async () => 
   });
 
   emitted.length = 0;
+  renameDuringRead = true;
   await session.handleMessage({
     type: "project.appearance.set.request",
     projectId: project.projectId,
@@ -7466,7 +7478,10 @@ test("project.appearance.set.request stores custom text and color", async () => 
     accepted: true,
     appearance: { color: "transparent" },
   });
-  expect(projects.get(project.projectId)?.appearance?.color).toBe("transparent");
+  expect(projects.get(project.projectId)).toMatchObject({
+    customName: "Renamed while saving",
+    appearance: { color: "transparent" },
+  });
 });
 
 test("project.rename.request stores customName and emits an updated workspace descriptor", async () => {

@@ -2157,7 +2157,6 @@ export const ja: TranslationResources = {
         text: "テキストまたは絵文字",
         color: "色",
         transparent: "透明",
-        invalidColor: "#8b5cf6 のような16進数カラーを入力してください",
         urlRequired: "Favicon URLを入力してください",
         customRequired: "1〜8文字を入力してください",
         saved: "プロジェクトの外観を保存しました",

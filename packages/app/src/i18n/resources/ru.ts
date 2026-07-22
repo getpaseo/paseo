@@ -2175,7 +2175,6 @@ export const ru: TranslationResources = {
         text: "Текст или эмодзи",
         color: "Цвет",
         transparent: "Прозрачный",
-        invalidColor: "Укажите hex-цвет, например #8b5cf6",
         urlRequired: "Укажите URL favicon",
         customRequired: "Введите от 1 до 8 символов",
         saved: "Оформление проекта сохранено",

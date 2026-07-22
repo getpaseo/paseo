@@ -2108,7 +2108,6 @@ export const zhCN: TranslationResources = {
         text: "文字或表情",
         color: "颜色",
         transparent: "透明",
-        invalidColor: "请输入类似 #8b5cf6 的十六进制颜色",
         urlRequired: "请输入 Favicon URL",
         customRequired: "请输入 1 到 8 个字符",
         saved: "项目外观已保存",

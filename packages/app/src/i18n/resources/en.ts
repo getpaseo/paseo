@@ -2146,7 +2146,6 @@ export const en = {
         text: "Text or emoji",
         color: "Color",
         transparent: "Transparent",
-        invalidColor: "Use a hex color like #8b5cf6",
         urlRequired: "Enter a favicon URL",
         customRequired: "Enter 1 to 8 characters",
         saved: "Project appearance saved",

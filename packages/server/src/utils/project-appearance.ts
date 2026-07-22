@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 
 import { writeFileAtomic } from "../server/atomic-file.js";
-import type { ProjectIcon } from "./project-icon.js";
+import { getImageDimensions, type ProjectIcon } from "./project-icon.js";
 
 const MAX_ICON_BYTES = 512 * 1024;
 const MAX_HTML_BYTES = 512 * 1024;
@@ -13,57 +13,6 @@ const DOWNLOAD_TIMEOUT_MS = 10_000;
 function cachePath(paseoHome: string, projectId: string): string {
   const key = createHash("sha256").update(projectId).digest("hex");
   return join(paseoHome, "projects", "icons", `${key}.bin`);
-}
-
-function jpegDimensions(buffer: Buffer): { width: number; height: number } | null {
-  let offset = 2;
-  while (offset + 8 < buffer.length) {
-    if (buffer[offset] !== 0xff) {
-      offset += 1;
-      continue;
-    }
-    const marker = buffer[offset + 1] ?? 0;
-    if (marker >= 0xc0 && marker <= 0xc2) {
-      return { width: buffer.readUInt16BE(offset + 7), height: buffer.readUInt16BE(offset + 5) };
-    }
-    const length = buffer.readUInt16BE(offset + 2);
-    if (length < 2) return null;
-    offset += 2 + length;
-  }
-  return null;
-}
-
-function webpDimensions(buffer: Buffer): { width: number; height: number } | null {
-  if (buffer.length < 30) return null;
-  const chunk = buffer.toString("ascii", 12, 16);
-  if (chunk === "VP8 ") {
-    return {
-      width: buffer.readUInt16LE(26) & 0x3fff,
-      height: buffer.readUInt16LE(28) & 0x3fff,
-    };
-  }
-  if (chunk === "VP8L") {
-    const bits = buffer.readUInt32LE(21);
-    return { width: (bits & 0x3fff) + 1, height: ((bits >> 14) & 0x3fff) + 1 };
-  }
-  return null;
-}
-
-function dimensions(buffer: Buffer, mimeType: string): { width: number; height: number } | null {
-  if (mimeType === "image/png" && buffer.length >= 24) {
-    return { width: buffer.readUInt32BE(16), height: buffer.readUInt32BE(20) };
-  }
-  if (mimeType === "image/gif" && buffer.length >= 10) {
-    return { width: buffer.readUInt16LE(6), height: buffer.readUInt16LE(8) };
-  }
-  if (mimeType === "image/x-icon" && buffer.length >= 22) {
-    const width = buffer[6] === 0 ? 256 : (buffer[6] ?? 0);
-    const height = buffer[7] === 0 ? 256 : (buffer[7] ?? 0);
-    return { width, height };
-  }
-  if (mimeType === "image/webp") return webpDimensions(buffer);
-  if (mimeType === "image/jpeg") return jpegDimensions(buffer);
-  return null;
 }
 
 function detectMimeType(buffer: Buffer): string | null {
@@ -93,7 +42,7 @@ function validateIcon(buffer: Buffer): ProjectIcon {
   }
   const mimeType = detectMimeType(buffer);
   if (!mimeType) throw new Error("Unsupported or invalid icon file");
-  const size = dimensions(buffer, mimeType);
+  const size = getImageDimensions(buffer, mimeType);
   if (!size || size.width <= 0 || size.width !== size.height || size.width > 1024) {
     throw new Error("Icon must be a square image up to 1024×1024");
   }
@@ -206,6 +155,13 @@ export async function cacheProjectFavicon(input: {
   const icon = validateIcon(buffer);
   await writeFileAtomic(cachePath(input.paseoHome, input.projectId), buffer);
   return icon;
+}
+
+export async function removeCachedProjectFavicon(input: {
+  paseoHome: string;
+  projectId: string;
+}): Promise<void> {
+  await rm(cachePath(input.paseoHome, input.projectId), { force: true });
 }
 
 export async function readCachedProjectFavicon(input: {

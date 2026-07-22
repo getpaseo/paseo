@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { Pressable, Text, TextInput, View } from "react-native";
@@ -35,6 +35,7 @@ import { SettingsSection } from "@/screens/settings/settings-section";
 import { settingsStyles } from "@/styles/settings";
 import { useProjects } from "@/hooks/use-projects";
 import { useProjectIconDataByProjectViewKey } from "@/projects/project-icons";
+import { useProjectAppearanceFormModel } from "@/projects/use-project-appearance-form-model";
 import { useHostRuntimeClient, useHostRuntimeSnapshot } from "@/runtime/host-runtime";
 import { useHostFeature } from "@/runtime/host-features";
 import { useToast } from "@/contexts/toast-context";
@@ -1031,33 +1032,6 @@ function ProjectTitleIcon({
   );
 }
 
-type ProjectIconMode = ProjectAppearance["icon"]["type"];
-
-function projectAppearanceValueError(
-  mode: ProjectIconMode,
-  faviconUrl: string,
-  customText: string,
-  t: TFunction,
-): string | null {
-  if (mode === "favicon" && !faviconUrl.trim()) {
-    return t("settings.project.appearance.urlRequired");
-  }
-  if (mode === "custom" && (!customText.trim() || Array.from(customText.trim()).length > 8)) {
-    return t("settings.project.appearance.customRequired");
-  }
-  return null;
-}
-
-function buildProjectAppearanceIcon(
-  mode: ProjectIconMode,
-  faviconUrl: string,
-  customText: string,
-): ProjectAppearance["icon"] {
-  if (mode === "favicon") return { type: "favicon", url: faviconUrl.trim() };
-  if (mode === "custom") return { type: "custom", text: customText.trim() };
-  return { type: "automatic" };
-}
-
 function ProjectColorSwatch({
   color,
   selected,
@@ -1136,15 +1110,17 @@ function ProjectAppearanceSettings({
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const toast = useToast();
-  const appearance = host.projectAppearance;
-  const [mode, setMode] = useState<ProjectIconMode>(appearance?.icon.type ?? "automatic");
-  const [faviconUrl, setFaviconUrl] = useState(
-    appearance?.icon.type === "favicon" ? appearance.icon.url : "",
-  );
-  const [customText, setCustomText] = useState(
-    appearance?.icon.type === "custom" ? appearance.icon.text : "",
-  );
-  const [color, setColor] = useState(appearance?.color ?? "");
+  const model = useProjectAppearanceFormModel({
+    appearance: host.projectAppearance,
+    labels: {
+      automatic: t("settings.project.appearance.automatic"),
+      favicon: t("settings.project.appearance.favicon"),
+      custom: t("settings.project.appearance.custom"),
+      urlRequired: t("settings.project.appearance.urlRequired"),
+      customRequired: t("settings.project.appearance.customRequired"),
+    },
+  });
+  const state = useSyncExternalStore(model.subscribe, model.getState, model.getState);
 
   const options = useMemo(
     () => [
@@ -1166,21 +1142,8 @@ function ProjectAppearanceSettings({
     ],
     [t],
   );
-  const selectedDisplay = useMemo(
-    () => ({ label: options.find((option) => option.value === mode)?.label ?? mode }),
-    [mode, options],
-  );
-
-  const trimmedColor = color.trim().toLowerCase();
-  const valueError = projectAppearanceValueError(mode, faviconUrl, customText, t);
-
   const mutation = useMutation({
-    mutationFn: () => {
-      return client.setProjectAppearance(project.projectKey, {
-        icon: buildProjectAppearanceIcon(mode, faviconUrl, customText),
-        color: trimmedColor || null,
-      });
-    },
+    mutationFn: () => client.setProjectAppearance(project.projectKey, state.input),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["projectIcon", host.serverId] });
       toast.show(t("settings.project.appearance.saved"), { variant: "success" });
@@ -1190,10 +1153,10 @@ function ProjectAppearanceSettings({
   const handleSave = useCallback(() => mutation.mutate(), [mutation]);
   const handleColorChange = useCallback(
     (nextColor: string) => {
-      setColor(nextColor);
+      model.setColor(nextColor);
       onColorPreview(nextColor || null);
     },
-    [onColorPreview],
+    [model, onColorPreview],
   );
 
   return (
@@ -1201,21 +1164,21 @@ function ProjectAppearanceSettings({
       <View style={[settingsStyles.card, styles.appearanceCard]}>
         <SelectField
           label={t("settings.project.appearance.icon")}
-          value={mode}
-          selectedDisplay={selectedDisplay}
+          value={state.mode}
+          selectedDisplay={state.selectedDisplay}
           options={options}
-          onChange={setMode}
+          onChange={model.setMode}
           placeholder={t("settings.project.appearance.automatic")}
           emptyText=""
           searchable={false}
           size="sm"
           testID="project-icon-mode"
         />
-        {mode === "favicon" ? (
-          <Field label={t("settings.project.appearance.url")} error={valueError}>
+        {state.showFaviconUrl ? (
+          <Field label={t("settings.project.appearance.url")} error={state.valueError}>
             <FormTextInput
-              value={faviconUrl}
-              onChangeText={setFaviconUrl}
+              value={state.faviconUrl}
+              onChangeText={model.setFaviconUrl}
               autoCapitalize="none"
               autoCorrect={false}
               placeholder="https://example.com/favicon.ico"
@@ -1224,18 +1187,18 @@ function ProjectAppearanceSettings({
             />
           </Field>
         ) : null}
-        {mode === "custom" ? (
-          <Field label={t("settings.project.appearance.text")} error={valueError}>
+        {state.showCustomText ? (
+          <Field label={t("settings.project.appearance.text")} error={state.valueError}>
             <FormTextInput
-              value={customText}
-              onChangeText={setCustomText}
+              value={state.customText}
+              onChangeText={model.setCustomText}
               placeholder="🚀"
               size="sm"
               testID="project-icon-text"
             />
           </Field>
         ) : null}
-        <ProjectColorPicker value={color} onChange={handleColorChange} />
+        <ProjectColorPicker value={state.color} onChange={handleColorChange} />
         {mutation.isError ? (
           <Alert
             variant="error"
@@ -1247,7 +1210,7 @@ function ProjectAppearanceSettings({
           variant="outline"
           size="sm"
           loading={mutation.isPending}
-          disabled={Boolean(valueError)}
+          disabled={!state.canSubmit}
           onPress={handleSave}
           style={styles.appearanceSave}
           testID="project-icon-save"

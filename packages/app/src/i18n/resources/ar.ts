@@ -2134,7 +2134,6 @@ export const ar: TranslationResources = {
         text: "نص أو رمز تعبيري",
         color: "اللون",
         transparent: "شفاف",
-        invalidColor: "استخدم لونًا سداسيًا مثل #8b5cf6",
         urlRequired: "أدخل رابط الأيقونة",
         customRequired: "أدخل من 1 إلى 8 أحرف",
         saved: "تم حفظ مظهر المشروع",
