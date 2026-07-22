@@ -462,12 +462,13 @@ test.describe("Workspace navigation regression", () => {
       await expectWorkspaceDeckEntryCount(page, 2);
 
       await page.evaluate(
-        ({ agentId, serverId: targetServerId }) => {
+        ({ agentId, serverId: targetServerId, workspaceId }) => {
           globalThis.dispatchEvent(
             new CustomEvent("paseo:web-notification-click", {
               detail: {
                 data: {
                   serverId: targetServerId,
+                  workspaceId,
                   agentId,
                   reason: "finished",
                 },
@@ -476,7 +477,7 @@ test.describe("Workspace navigation regression", () => {
             }),
           );
         },
-        { agentId: secondAgent.id, serverId },
+        { agentId: secondAgent.id, serverId, workspaceId: secondWorkspace.workspaceId },
       );
       await waitForWorkspaceTabsVisible(page);
       await expect(page).toHaveURL(buildHostWorkspaceRoute(serverId, secondWorkspace.workspaceId), {
