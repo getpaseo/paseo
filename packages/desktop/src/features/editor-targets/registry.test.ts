@@ -4,6 +4,7 @@ import { listAvailableEditorTargets, openEditorTarget } from "./registry.js";
 import type { EditorTargetIcon, EditorTargetRuntime } from "./target.js";
 import { cursorTarget } from "./targets/cursor.js";
 import { explorerTarget, fileManagerTarget, finderTarget } from "./targets/file-manager.js";
+import { forkTarget } from "./targets/fork.js";
 import { intellijIdeaTarget } from "./targets/intellij-idea.js";
 import { pycharmTarget } from "./targets/pycharm.js";
 import { vscodeTarget } from "./targets/vscode.js";
@@ -253,6 +254,35 @@ describe("editor target registry", () => {
         args: ["C:/repo", "--goto", "C:/repo/src/app.ts:9"],
       },
     ]);
+  });
+
+  it("opens the repository in Fork through the macOS application", async () => {
+    const runtime = new FakeEditorTargets("darwin");
+    runtime.installMacApplication("Fork");
+
+    expect(await forkTarget.isInstalled(runtime)).toBe(true);
+    expect(await forkTarget.describe(runtime)).toEqual({
+      id: "fork",
+      label: "Fork",
+      kind: "editor",
+      icon: { kind: "image", dataUrl: "data:image/png;base64,fork.png" },
+    });
+
+    // Fork is a repository GUI: it always opens the workspace root, never a file.
+    await forkTarget.launch(
+      { workspacePath: "/repo", filePath: "/repo/src/app.ts", line: 12, column: 4 },
+      runtime,
+    );
+
+    expect(runtime.openedMacApplications).toEqual([{ applicationName: "Fork", paths: ["/repo"] }]);
+  });
+
+  it("does not offer Fork when its application is absent or off macOS", async () => {
+    const withoutApp = new FakeEditorTargets("darwin");
+    const onLinux = new FakeEditorTargets("linux");
+
+    expect(await forkTarget.isInstalled(withoutApp)).toBe(false);
+    expect(await forkTarget.isInstalled(onLinux)).toBe(false);
   });
 
   it("delegates folder opening and file reveal to the system file manager", async () => {

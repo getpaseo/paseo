@@ -11,6 +11,7 @@ import { cursorTarget } from "./targets/cursor.js";
 import { datagripTarget } from "./targets/datagrip.js";
 import { dataspellTarget } from "./targets/dataspell.js";
 import { explorerTarget, fileManagerTarget, finderTarget } from "./targets/file-manager.js";
+import { forkTarget } from "./targets/fork.js";
 import { golandTarget } from "./targets/goland.js";
 import { intellijIdeaTarget } from "./targets/intellij-idea.js";
 import { kiroTarget } from "./targets/kiro.js";
@@ -50,6 +51,7 @@ export const EDITOR_TARGETS: readonly EditorTarget[] = [
   finderTarget,
   explorerTarget,
   fileManagerTarget,
+  forkTarget,
 ];
 
 export async function listAvailableEditorTargets(
