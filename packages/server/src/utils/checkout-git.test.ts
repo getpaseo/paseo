@@ -1419,6 +1419,26 @@ const x = 1;
     expect(diff.diff).toContain("# untracked-large.txt: diff too large omitted");
   });
 
+  it("resolves the Git common directory once when reading Paseo worktree facts", async () => {
+    const result = await createLegacyWorktreeForTest({
+      branchName: "main",
+      cwd: repoDir,
+      baseBranch: "main",
+      worktreeSlug: "common-dir",
+      paseoHome,
+    });
+
+    startGitCommandMetrics();
+    const facts = await getCheckoutSnapshotFacts(result.worktreePath, { paseoHome });
+    const metrics = stopGitCommandMetrics();
+    const commonDirCommands = metrics.commands.filter(
+      (command) => command.args.join(" ") === "rev-parse --git-common-dir",
+    );
+
+    expect(facts.isGit).toBe(true);
+    expect(commonDirCommands).toHaveLength(1);
+  });
+
   it("handles status/diff/commit in a .paseo worktree", async () => {
     const result = await createLegacyWorktreeForTest({
       branchName: "main",

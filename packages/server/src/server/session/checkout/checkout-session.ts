@@ -113,6 +113,10 @@ export interface CheckoutDiffSubscriber {
   scheduleRefreshForCwd(cwd: string): void;
 }
 
+interface DiffSubscriptionLifecycle {
+  unsubscribe: (() => void) | null;
+}
+
 export interface CheckoutSessionOptions {
   host: CheckoutSessionHost;
   gitMutation: Pick<GitMutationService, "checkoutExistingBranch" | "notifyGitMutation">;
@@ -150,7 +154,7 @@ export class CheckoutSession {
   private readonly paseoHome: string;
   private readonly worktreesRoot: string | undefined;
   private readonly logger: pino.Logger;
-  private readonly diffSubscriptions = new Map<string, () => void>();
+  private readonly diffSubscriptions = new Map<string, DiffSubscriptionLifecycle>();
 
   constructor(options: CheckoutSessionOptions) {
     this.host = options.host;
@@ -399,21 +403,42 @@ export class CheckoutSession {
 
   async handleSubscribeDiffRequest(msg: SubscribeCheckoutDiffRequest): Promise<void> {
     const cwd = expandTilde(msg.cwd);
-    this.diffSubscriptions.get(msg.subscriptionId)?.();
+    const previous = this.diffSubscriptions.get(msg.subscriptionId);
     this.diffSubscriptions.delete(msg.subscriptionId);
-    const subscription = await this.checkoutDiffManager.subscribe(
-      { cwd, compare: msg.compare },
-      (snapshot) => {
-        this.host.emit({
-          type: "checkout_diff_update",
-          payload: {
-            subscriptionId: msg.subscriptionId,
-            ...snapshot,
-          },
-        });
-      },
-    );
-    this.diffSubscriptions.set(msg.subscriptionId, subscription.unsubscribe);
+    previous?.unsubscribe?.();
+
+    const lifecycle: DiffSubscriptionLifecycle = { unsubscribe: null };
+    this.diffSubscriptions.set(msg.subscriptionId, lifecycle);
+
+    let subscription: Awaited<ReturnType<CheckoutDiffSubscriber["subscribe"]>>;
+    try {
+      subscription = await this.checkoutDiffManager.subscribe(
+        { cwd, compare: msg.compare },
+        (snapshot) => {
+          if (this.diffSubscriptions.get(msg.subscriptionId) !== lifecycle) {
+            return;
+          }
+          this.host.emit({
+            type: "checkout_diff_update",
+            payload: {
+              subscriptionId: msg.subscriptionId,
+              ...snapshot,
+            },
+          });
+        },
+      );
+    } catch (error) {
+      if (this.diffSubscriptions.get(msg.subscriptionId) === lifecycle) {
+        this.diffSubscriptions.delete(msg.subscriptionId);
+      }
+      throw error;
+    }
+
+    if (this.diffSubscriptions.get(msg.subscriptionId) === lifecycle) {
+      lifecycle.unsubscribe = subscription.unsubscribe;
+    } else {
+      subscription.unsubscribe();
+    }
 
     this.host.emit({
       type: "subscribe_checkout_diff_response",
@@ -426,8 +451,9 @@ export class CheckoutSession {
   }
 
   handleUnsubscribeDiffRequest(msg: UnsubscribeCheckoutDiffRequest): void {
-    this.diffSubscriptions.get(msg.subscriptionId)?.();
+    const lifecycle = this.diffSubscriptions.get(msg.subscriptionId);
     this.diffSubscriptions.delete(msg.subscriptionId);
+    lifecycle?.unsubscribe?.();
   }
 
   async handleRefreshRequest(msg: CheckoutRefreshRequest): Promise<void> {
@@ -1373,10 +1399,11 @@ export class CheckoutSession {
   }
 
   cleanup(): void {
-    for (const unsubscribe of this.diffSubscriptions.values()) {
-      unsubscribe();
-    }
+    const subscriptions = [...this.diffSubscriptions.values()];
     this.diffSubscriptions.clear();
+    for (const subscription of subscriptions) {
+      subscription.unsubscribe?.();
+    }
   }
 }
 
