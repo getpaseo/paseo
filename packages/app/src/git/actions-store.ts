@@ -50,8 +50,9 @@ function resolveAutoMergeActionsRpc(serverId: string): AutoMergeActionsRpc {
   if (session?.serverInfo?.features?.checkoutForgeSetAutoMerge === true) {
     return "forge";
   }
-  // COMPAT(githubAutoMergeRpc): added in v0.1.106, remove after 2026-12-28 once
-  // all supported clients use checkout.forge.set_auto_merge.*.
+  // COMPAT(githubAutoMergeRpc): use the legacy GitHub RPC with daemons that
+  // predate checkout.forge.set_auto_merge.*. Remove after 2027-01-17 once the
+  // supported daemon floor is >= v0.2.0.
   if (session?.serverInfo?.features?.checkoutGithubSetAutoMerge === true) {
     return "github";
   }
@@ -298,8 +299,9 @@ export const useCheckoutGitActionsStore = create<CheckoutGitActionsStoreState>()
       actionId: `enable-pr-auto-merge-${method}`,
       run: async () => {
         const client = resolveClient(serverId);
-        // COMPAT(githubAutoMergeRpc): added in v0.1.106, remove after 2026-12-28 once
-        // all supported clients use checkout.forge.set_auto_merge.*.
+        // COMPAT(githubAutoMergeRpc): use the legacy GitHub RPC with daemons
+        // that predate checkout.forge.set_auto_merge.*. Remove after 2027-01-17
+        // once the supported daemon floor is >= v0.2.0.
         const payload =
           rpc === "forge"
             ? await client.checkoutForgeSetAutoMerge(cwd, { enabled: true, method })
@@ -319,8 +321,9 @@ export const useCheckoutGitActionsStore = create<CheckoutGitActionsStoreState>()
       actionId: "disable-pr-auto-merge",
       run: async () => {
         const client = resolveClient(serverId);
-        // COMPAT(githubAutoMergeRpc): added in v0.1.106, remove after 2026-12-28 once
-        // all supported clients use checkout.forge.set_auto_merge.*.
+        // COMPAT(githubAutoMergeRpc): use the legacy GitHub RPC with daemons
+        // that predate checkout.forge.set_auto_merge.*. Remove after 2027-01-17
+        // once the supported daemon floor is >= v0.2.0.
         const payload =
           rpc === "forge"
             ? await client.checkoutForgeSetAutoMerge(cwd, { enabled: false })

@@ -95,8 +95,9 @@ export function buildForgeSearchQueryOptions(input: ForgeSearchQueryInput) {
       const request = input.kinds
         ? { cwd: input.cwd, query, limit: 20, kinds: input.kinds }
         : { cwd: input.cwd, query, limit: 20 };
-      // COMPAT(githubSearchRpc): added in v0.1.106, remove after 2026-12-28 once
-      // clients use forge.search.*.
+      // COMPAT(githubSearchRpc): use the legacy GitHub RPC with daemons that
+      // predate forge.search.*. Remove after 2027-01-17 once the supported
+      // daemon floor is >= v0.2.0.
       if (transport === "github" && input.client.searchGitHub) {
         return normalizeLegacyGitHubSearchPayload(
           await input.client.searchGitHub(toLegacyGitHubSearchRequest(request)),
@@ -125,7 +126,8 @@ function normalizeForgeSearchPayload(payload: ForgeSearchResponse["payload"]): F
 function normalizeLegacyGitHubSearchPayload(
   payload: GitHubSearchResponse["payload"],
 ): ForgeSearchPayload {
-  // COMPAT(githubSearchAuthState): added in v0.1.106, remove after 2026-12-28.
+  // COMPAT(githubSearchAuthState): normalize the legacy GitHub search response
+  // until 2027-01-17, when the supported daemon floor is >= v0.2.0.
   const featuresEnabled = payload.featuresEnabled ?? payload.githubFeaturesEnabled ?? true;
   return {
     items: payload.items.flatMap((item) => {

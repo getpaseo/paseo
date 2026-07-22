@@ -60,6 +60,9 @@ newer forge and still show the PR/MR in a neutral state.
 
 Shipped GitHub compatibility stays separate:
 
+- The forge compatibility layer first shipped in `v0.2.0-beta.1`. Its initial
+  six-month cleanup target is `2027-01-17`, after supported client and daemon
+  floors reach stable `v0.2.0`.
 - `status.github` remains accepted for released peers.
 - The server keeps the `COMPAT(forgeSpecific)` mirror that copies GitHub facts
   into `status.github` for older clients.

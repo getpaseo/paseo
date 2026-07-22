@@ -51,6 +51,8 @@ export function renderPromptAttachmentAsText(attachment: AgentAttachment): strin
         headRefName: attachment.headRefName,
       });
     }
+    // COMPAT(githubAttachmentKinds): render legacy wire attachments until
+    // 2027-01-17, when supported client and daemon floors are >= v0.2.0.
     case "github_pr": {
       return renderChangeRequestAttachment({
         forge: "github",
@@ -72,6 +74,8 @@ export function renderPromptAttachmentAsText(attachment: AgentAttachment): strin
         projectPath: attachment.projectPath,
       });
     }
+    // COMPAT(githubAttachmentKinds): render legacy wire attachments until
+    // 2027-01-17, when supported client and daemon floors are >= v0.2.0.
     case "github_issue": {
       return renderIssueAttachment({
         forge: "github",

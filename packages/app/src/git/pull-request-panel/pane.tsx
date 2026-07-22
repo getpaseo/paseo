@@ -209,8 +209,9 @@ export function PullRequestPane({
   );
   const toast = useToast();
   const daemonClient = useHostRuntimeClient(serverId);
-  // COMPAT(githubCheckDetailsRpc): added in v0.1.106, remove after 2026-12-28 once
-  // all supported clients use checkout.forge.get_check_details.*.
+  // COMPAT(githubCheckDetailsRpc): recognize the legacy capability on daemons
+  // predating checkout.forge.get_check_details.*. Remove after 2027-01-17 once
+  // the supported daemon floor is >= v0.2.0.
   const canFetchGitHubCheckDetails = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.features?.githubCheckDetails === true,
   );
@@ -399,8 +400,9 @@ export function PullRequestPane({
               workflowRunId: ref.workflowRunId,
               changeRequestNumber: data.number,
             };
-            // COMPAT(githubCheckDetailsRpc): added in v0.1.106, remove after 2026-12-28 once
-            // all supported clients use checkout.forge.get_check_details.*.
+            // COMPAT(githubCheckDetailsRpc): use the legacy GitHub RPC with
+            // daemons predating checkout.forge.get_check_details.*. Remove after
+            // 2027-01-17 once the supported daemon floor is >= v0.2.0.
             const payload = canFetchForgeCheckDetails
               ? await daemonClient.checkoutForgeGetCheckDetails(request)
               : await daemonClient.checkoutGithubGetCheckDetails(request);

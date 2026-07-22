@@ -334,8 +334,9 @@ export function normalizeGitOptions(
   const normalizedWorktreeSlug = requestedWorktreeSlug ?? normalizedBranchName;
   const refName = merged.refName?.trim() || undefined;
   const action = merged.action;
-  // COMPAT(githubPrNumber): added in v0.1.106, remove after 2026-12-28 once
-  // clients send checkoutSource.
+  // COMPAT(githubPrNumber): legacy GitHub checkout input retained when
+  // checkoutSource shipped in v0.2.0-beta.1. Remove after 2027-01-17 once the
+  // supported client floor is >= v0.2.0.
   const checkoutSource =
     merged.checkoutSource ??
     (merged.githubPrNumber

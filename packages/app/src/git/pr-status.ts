@@ -12,8 +12,9 @@ export function normalizeCheckoutPrStatusPayload(
 ): CheckoutPrStatusPayload {
   return {
     ...payload,
-    // COMPAT(forgeAuthState): added in v0.1.106, remove after 2026-12-27 once
-    // all supported daemons send authState.
+    // COMPAT(forgeAuthState): normalize the legacy GitHub boolean for daemons
+    // predating v0.2.0-beta.1. Remove after 2027-01-17 once the supported daemon
+    // floor is >= v0.2.0.
     authState:
       parseForgeAuthState(payload.authState) ??
       (payload.githubFeaturesEnabled ? "authenticated" : "unauthenticated"),

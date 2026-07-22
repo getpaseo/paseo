@@ -153,9 +153,10 @@ export function normalizeCheckoutPrStatusPayload(
   }
   if (status.forgeSpecific) {
     payload.forgeSpecific = status.forgeSpecific;
-    // COMPAT(forgeSpecific): added in v0.1.106, remove after 2026-12-27. Keep
-    // mirroring GitHub facts onto `github` for clients that predate forgeSpecific;
-    // drop once the daemon floor >= v0.1.106.
+    // COMPAT(forgeSpecific): forgeSpecific shipped in v0.2.0-beta.1. Keep
+    // mirroring GitHub facts onto `github` for clients that predate it. Stop
+    // emitting the mirror after 2027-01-17 once the supported client floor
+    // is >= v0.2.0.
     if (isGitHubPullRequestStatusFacts(status.forgeSpecific)) {
       const { forge: _forge, ...githubFacts } = status.forgeSpecific;
       payload.github = githubFacts;
