@@ -2,6 +2,7 @@ import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { useToast } from "@/contexts/toast-context";
+import { confirmDialog } from "@/utils/confirm-dialog";
 import {
   confirmRiskyWorktreeArchive,
   DEFAULT_WORKTREE_ARCHIVE_WARNING_LABELS,
@@ -11,6 +12,7 @@ import type { WorkspaceDescriptor } from "@/stores/session-store";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 import { archiveWorkspaceOptimistically } from "@/workspace/workspace-archive";
+import { resolveWorkspaceArchiveConfirmationKind } from "@/workspace/workspace-archive-confirmation";
 
 function purgeArchivedWorkspaceState(input: { serverId: string; workspaceId: string }): void {
   const workspaceKey = buildWorkspaceTabPersistenceKey(input);
@@ -27,6 +29,7 @@ export interface ArchiveWorkspaceInput {
   isDirty?: boolean | null;
   aheadOfOrigin?: number | null;
   diffStat?: { additions: number; deletions: number } | null;
+  isChatWorkspace?: boolean;
   warningLabels?: WorktreeArchiveWarningLabels;
   onArchiveStarted: () => void;
   onSetHiding?: (hiding: boolean) => void;
@@ -45,6 +48,7 @@ export function useWorkspaceArchive(input: ArchiveWorkspaceInput): WorkspaceArch
     isDirty,
     aheadOfOrigin,
     diffStat,
+    isChatWorkspace = false,
     warningLabels = DEFAULT_WORKTREE_ARCHIVE_WARNING_LABELS,
     onArchiveStarted,
     onSetHiding,
@@ -80,7 +84,23 @@ export function useWorkspaceArchive(input: ArchiveWorkspaceInput): WorkspaceArch
 
   const archive = useCallback(() => {
     void (async () => {
-      if (workspaceKind === "worktree") {
+      const confirmationKind = resolveWorkspaceArchiveConfirmationKind({
+        isChatWorkspace,
+        workspaceKind,
+      });
+
+      if (confirmationKind === "chat") {
+        const confirmed = await confirmDialog({
+          title: t("sidebar.workspace.archiveChat.title"),
+          message: t("sidebar.workspace.archiveChat.message"),
+          confirmLabel: t("sidebar.workspace.archiveChat.confirm"),
+          cancelLabel: t("sidebar.workspace.archiveChat.cancel"),
+          destructive: true,
+        });
+        if (!confirmed) {
+          return;
+        }
+      } else if (confirmationKind === "worktree") {
         const confirmed = await confirmRiskyWorktreeArchive(
           {
             workspaceName: name,
@@ -100,8 +120,10 @@ export function useWorkspaceArchive(input: ArchiveWorkspaceInput): WorkspaceArch
     aheadOfOrigin,
     archiveWorkspaceRecord,
     diffStat,
+    isChatWorkspace,
     isDirty,
     name,
+    t,
     warningLabels,
     workspaceKind,
   ]);

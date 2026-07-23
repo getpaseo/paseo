@@ -47,6 +47,9 @@ export interface SidebarWorkspaceEntry extends SidebarStatusWorkspacePlacement {
   archiveUnpushedCommitCount: number | null;
   scripts: WorkspaceDescriptor["scripts"];
   hasRunningScripts: boolean;
+  // True for chat workspaces. Drives the sidebar's dedicated Chats section —
+  // see splitSidebarChatWorkspaces below.
+  chatWorkspace: boolean;
 }
 
 export interface SidebarProjectEntry {
@@ -172,6 +175,7 @@ export function createSidebarWorkspaceEntry(input: {
     archiveUnpushedCommitCount: input.workspace.gitRuntime?.aheadOfOrigin ?? null,
     scripts: input.workspace.scripts,
     hasRunningScripts: input.workspace.scripts.some((script) => script.lifecycle === "running"),
+    chatWorkspace: input.workspace.chatWorkspace ?? false,
   };
 }
 
@@ -397,6 +401,53 @@ export function buildSidebarProjectsFromHostProjects(input: {
       }),
     ),
   }));
+}
+
+export interface SidebarChatsSplit {
+  projects: SidebarProjectEntry[];
+  chats: SidebarWorkspacePlacement[];
+}
+
+// Chat workspaces are grouped by the daemon under a synthetic "Chats" project,
+// but the sidebar renders them in their own section instead of as a project
+// entry. Membership is decided by each workspace entry's chatWorkspace flag,
+// never by matching the project's name — pulling a project's workspaces down
+// to zero this way (as opposed to a project that was already empty) is what
+// keeps that synthetic project header from rendering at all.
+export function splitSidebarChatWorkspaces(input: {
+  projects: SidebarProjectEntry[];
+  workspaceEntriesByKey: ReadonlyMap<string, SidebarWorkspaceEntry>;
+}): SidebarChatsSplit {
+  const chats: SidebarWorkspacePlacement[] = [];
+  const projects: SidebarProjectEntry[] = [];
+
+  for (const project of input.projects) {
+    if (project.workspaces.length === 0) {
+      projects.push(project);
+      continue;
+    }
+
+    const remainingWorkspaces: SidebarWorkspacePlacement[] = [];
+    for (const workspace of project.workspaces) {
+      if (input.workspaceEntriesByKey.get(workspace.workspaceKey)?.chatWorkspace) {
+        chats.push(workspace);
+      } else {
+        remainingWorkspaces.push(workspace);
+      }
+    }
+
+    if (remainingWorkspaces.length === 0) {
+      continue;
+    }
+
+    projects.push(
+      remainingWorkspaces.length === project.workspaces.length
+        ? project
+        : { ...project, workspaces: remainingWorkspaces },
+    );
+  }
+
+  return { projects, chats };
 }
 
 // Host labels disambiguate which machine a workspace lives on; they only earn their

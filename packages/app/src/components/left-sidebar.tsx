@@ -4,6 +4,7 @@ import {
   FolderPlus,
   History,
   Home,
+  MessageCircle,
   Plus,
   Search,
   Server,
@@ -49,6 +50,7 @@ import type { StatusGroup } from "@/hooks/sidebar-status-view-model";
 import { type SidebarGroupMode, useSidebarViewStore } from "@/stores/sidebar-view-store";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { useHosts } from "@/runtime/host-runtime";
+import { useEarliestOnlineHostServerId } from "@/app/_layout";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { useWorkspace } from "@/stores/session-store-hooks";
 import { usePanelStore } from "@/stores/panel-store";
@@ -97,6 +99,7 @@ interface SidebarSharedProps {
 
 interface SidebarLabels {
   addProject: string;
+  newChat: string;
   newWorkspace: string;
   hosts: string;
   home: string;
@@ -220,6 +223,7 @@ export const LeftSidebar = memo(function LeftSidebar({ active }: { active: boole
   const labels = useMemo(
     (): SidebarLabels => ({
       addProject: t("sidebar.actions.addProject"),
+      newChat: t("sidebar.actions.newChat"),
       newWorkspace: t("sidebar.actions.newWorkspace"),
       hosts: t("sidebar.actions.hosts"),
       home: t("sidebar.actions.home"),
@@ -524,6 +528,43 @@ const SidebarNewWorkspaceHeaderRow = memo(function SidebarNewWorkspaceHeaderRow(
   );
 });
 
+const SidebarNewChatHeaderRow = memo(function SidebarNewChatHeaderRow({
+  label,
+  onBeforeNavigate,
+}: {
+  label: string;
+  onBeforeNavigate?: () => void;
+}) {
+  const activeWorkspaceSelection = useActiveWorkspaceSelection();
+  const earliestOnlineHostServerId = useEarliestOnlineHostServerId();
+  // Fall back to any online host so the row survives screens with no active
+  // workspace selection (fresh profiles, the /new route itself).
+  const serverId = activeWorkspaceSelection?.serverId ?? earliestOnlineHostServerId;
+  const supportsChatWorkspace = useHostFeature(serverId, "chatWorkspace");
+
+  const handlePress = useCallback(() => {
+    if (!serverId) {
+      return;
+    }
+    onBeforeNavigate?.();
+    router.push({ pathname: "/new", params: { chat: "1", serverId } });
+  }, [onBeforeNavigate, serverId]);
+
+  if (!supportsChatWorkspace) {
+    return null;
+  }
+
+  return (
+    <SidebarHeaderRow
+      icon={MessageCircle}
+      label={label}
+      onPress={handlePress}
+      testID="sidebar-new-chat"
+      variant="compact"
+    />
+  );
+});
+
 function SidebarFooter({
   theme,
   handleOpenProject,
@@ -659,6 +700,7 @@ function MobileSidebar({
             shortcutKeys={newWorkspaceKeys}
             onBeforeNavigate={closeSidebar}
           />
+          <SidebarNewChatHeaderRow label={labels.newChat} onBeforeNavigate={closeSidebar} />
           <SidebarHeaderRow
             icon={History}
             label={labels.sessions}
@@ -844,6 +886,7 @@ function DesktopSidebar({
               variant="compact"
               shortcutKeys={newWorkspaceKeys}
             />
+            <SidebarNewChatHeaderRow label={labels.newChat} />
             <SidebarHeaderRow
               icon={History}
               label={labels.sessions}

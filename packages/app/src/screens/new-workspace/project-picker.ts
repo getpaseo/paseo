@@ -8,9 +8,11 @@ import {
   type HostProjectListItem,
 } from "@/projects/host-projects";
 import {
+  createChatProjectSelection,
   createManualProjectSelectionContextKey,
   createProjectSelectionContextKey,
   createProjectSelection,
+  isChatProjectSelection,
   reconcileProjectSelection,
   resolveInitialProjectSelectionSource,
   resolveProjectSelection,
@@ -19,6 +21,7 @@ import {
 } from "./project-selection";
 
 const PROJECT_OPTION_PREFIX = "project:";
+export const CHAT_WORKSPACE_OPTION_ID = "chat-workspace";
 
 interface NewWorkspaceProjectPickerInput {
   selectedServerId: string;
@@ -26,10 +29,14 @@ interface NewWorkspaceProjectPickerInput {
   routeProject: HostProjectListItem | null;
   lastActiveProject: HostProjectListItem | null;
   allowAllProjects: boolean;
+  allowChatWorkspace: boolean;
+  initialChatWorkspace: boolean;
+  chatWorkspaceLabel: string;
 }
 
 interface NewWorkspaceProjectPickerState {
   selectedProject: HostProjectListItem | null;
+  isChatWorkspace: boolean;
   selectedSourceDirectory: string | null;
   projectPickerOptions: ComboboxOptionType[];
   projectByOptionId: Map<string, HostProjectListItem>;
@@ -42,13 +49,29 @@ function projectOptionId(projectId: string): string {
   return `${PROJECT_OPTION_PREFIX}${projectId}`;
 }
 
-function computeProjectOptionData(projects: readonly HostProjectListItem[]) {
+function resolveSelectedProjectOptionId(input: {
+  isChatWorkspace: boolean;
+  selectedProject: HostProjectListItem | null;
+}): string {
+  if (input.isChatWorkspace) return CHAT_WORKSPACE_OPTION_ID;
+  if (input.selectedProject) return projectOptionId(input.selectedProject.projectKey);
+  return "";
+}
+
+export function computeProjectOptionData(input: {
+  projects: readonly HostProjectListItem[];
+  allowChatWorkspace: boolean;
+  chatWorkspaceLabel: string;
+}) {
   const projectByOptionId = new Map<string, HostProjectListItem>();
-  const options = projects.map((project) => {
+  const projectOptions = input.projects.map((project) => {
     const id = projectOptionId(project.projectKey);
     projectByOptionId.set(id, project);
     return { id, label: project.projectName };
   });
+  const options = input.allowChatWorkspace
+    ? [{ id: CHAT_WORKSPACE_OPTION_ID, label: input.chatWorkspaceLabel }, ...projectOptions]
+    : projectOptions;
   return { options, projectByOptionId };
 }
 
@@ -86,6 +109,9 @@ export function useNewWorkspaceProjectPicker({
   routeProject,
   lastActiveProject,
   allowAllProjects,
+  allowChatWorkspace,
+  initialChatWorkspace,
+  chatWorkspaceLabel,
 }: NewWorkspaceProjectPickerInput): NewWorkspaceProjectPickerState {
   const selectableProjects = useMemo(
     () =>
@@ -105,11 +131,14 @@ export function useNewWorkspaceProjectPicker({
   );
 
   const routeProjectKey = routeProject?.projectKey ?? null;
-  const selectionContextKey = createProjectSelectionContextKey({
+  const baseSelectionContextKey = createProjectSelectionContextKey({
     selectedServerId,
     routeProjectKey,
     allowAllProjects,
   });
+  const selectionContextKey = `${baseSelectionContextKey}:${
+    allowChatWorkspace ? "chat-enabled" : "chat-disabled"
+  }:${initialChatWorkspace ? "initial-chat" : ""}`;
   const manualSelectionContextKey = createManualProjectSelectionContextKey({
     selectedServerId,
     routeProjectKey,
@@ -135,9 +164,13 @@ export function useNewWorkspaceProjectPicker({
       projects: selectableProjects,
       routeProject,
       lastActiveProject,
+      allowChatWorkspace,
+      initialChatWorkspace,
       shouldPreserveMissingProject,
     }),
     [
+      allowChatWorkspace,
+      initialChatWorkspace,
       initialProject,
       lastActiveProject,
       manualSelectionContextKey,
@@ -156,13 +189,23 @@ export function useNewWorkspaceProjectPicker({
   }, [selectionContext]);
 
   const activeSelection = reconcileProjectSelection(projectSelection, selectionContext);
+  const isChatWorkspace = isChatProjectSelection(activeSelection);
   const selectedProject = resolveProjectSelection(activeSelection, selectionContext);
   const { options: projectPickerOptions, projectByOptionId } = useMemo(
-    () => computeProjectOptionData(selectableProjects),
-    [selectableProjects],
+    () =>
+      computeProjectOptionData({
+        projects: selectableProjects,
+        allowChatWorkspace,
+        chatWorkspaceLabel,
+      }),
+    [allowChatWorkspace, chatWorkspaceLabel, selectableProjects],
   );
   const handleSelectProjectOption = useCallback(
     (id: string) => {
+      if (id === CHAT_WORKSPACE_OPTION_ID && allowChatWorkspace) {
+        setProjectSelection(createChatProjectSelection(manualSelectionContextKey, "manual"));
+        return;
+      }
       const project = projectByOptionId.get(id);
       if (!project) return;
       if (!allowAllProjects && !project.hosts.some((host) => host.canCreateWorktree)) return;
@@ -173,18 +216,24 @@ export function useNewWorkspaceProjectPicker({
         source: "manual",
       });
     },
-    [allowAllProjects, manualSelectionContextKey, projectByOptionId],
+    [allowAllProjects, allowChatWorkspace, manualSelectionContextKey, projectByOptionId],
   );
 
   return {
     selectedProject,
+    isChatWorkspace,
     selectedSourceDirectory: selectedProject
       ? getHostProjectSourceDirectory(selectedProject, selectedServerId)
       : null,
     projectPickerOptions,
     projectByOptionId,
-    selectedProjectOptionId: selectedProject ? projectOptionId(selectedProject.projectKey) : "",
-    projectTriggerLabel: selectedProject?.projectName ?? "Choose project",
+    selectedProjectOptionId: resolveSelectedProjectOptionId({
+      isChatWorkspace,
+      selectedProject,
+    }),
+    projectTriggerLabel: isChatWorkspace
+      ? chatWorkspaceLabel
+      : (selectedProject?.projectName ?? "Choose project"),
     handleSelectProjectOption,
   };
 }

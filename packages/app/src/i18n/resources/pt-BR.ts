@@ -894,6 +894,7 @@ export const ptBR: TranslationResources = {
     },
     actions: {
       addProject: "Adicionar projeto",
+      newChat: "Novo chat",
       newWorkspace: "Novo workspace",
       hosts: "Hosts",
       home: "Início",
@@ -914,6 +915,7 @@ export const ptBR: TranslationResources = {
     sections: {
       sessions: "Histórico",
       schedules: "Agendamentos",
+      chats: "Chats",
     },
     worktreeSetup: {
       title: "Configurar scripts de worktree",
@@ -976,6 +978,13 @@ export const ptBR: TranslationResources = {
         hideConfirm: "Ocultar",
         cancel: "Cancelar",
       },
+      archiveChat: {
+        title: "Excluir chat?",
+        message:
+          "Isso exclui permanentemente a conversa e quaisquer arquivos que o agente tenha criado nela. Essa ação não pode ser desfeita.",
+        confirm: "Excluir",
+        cancel: "Cancelar",
+      },
       rename: {
         title: "Renomear workspace",
         submit: "Renomear",
@@ -994,6 +1003,10 @@ export const ptBR: TranslationResources = {
   newWorkspace: {
     title: "Novo workspace",
     create: "Criar",
+    chat: {
+      title: "Novo chat",
+      noWorkspace: "Sem espaço de trabalho (apenas chat)",
+    },
     isolation: {
       local: "Local",
       worktree: "Novo worktree",
@@ -1010,6 +1023,8 @@ export const ptBR: TranslationResources = {
       createWorktreeFailed: "Falha ao criar worktree",
       composerStateRequired: "O estado do composer é obrigatório",
       selectModel: "Selecione um modelo",
+      chatPromptRequired: "Digite uma mensagem para iniciar um chat",
+      chatWorkspaceRequired: "O host não retornou um workspace de chat",
     },
     refPicker: {
       startingRef: "Ref inicial",
@@ -1215,6 +1230,10 @@ export const ptBR: TranslationResources = {
       pairDevice: {
         title: "Parear dispositivo",
         description: "Conecte seu celular a este daemon",
+      },
+      newChat: {
+        title: "Novo chat",
+        description: "Converse com um modelo sem um workspace",
       },
     },
   },

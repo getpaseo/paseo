@@ -133,6 +133,9 @@ export interface WorkspaceDescriptor {
   workspaceDirectory: string;
   projectKind: WorkspaceDescriptorPayload["projectKind"];
   workspaceKind: WorkspaceDescriptorPayload["workspaceKind"];
+  // True for chat workspaces (daemon-minted scratch dirs under $PASEO_HOME/chats).
+  // Old daemons never set this, so it's always false there. See docs/chats.md.
+  chatWorkspace?: boolean;
   name: string;
   title?: string | null;
   pinnedAt?: string | null;
@@ -167,6 +170,7 @@ export function normalizeWorkspaceDescriptor(
     workspaceDirectory: normalizeWorkspacePath(payload.workspaceDirectory) ?? "",
     projectKind: payload.projectKind,
     workspaceKind: payload.workspaceKind,
+    chatWorkspace: payload.chatWorkspace ?? false,
     name: payload.name,
     title: payload.title ?? null,
     pinnedAt: payload.pinnedAt ?? null,

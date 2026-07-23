@@ -894,6 +894,7 @@ export const ru: TranslationResources = {
     },
     actions: {
       addProject: "Добавить проект",
+      newChat: "Новый чат",
       newWorkspace: "Новое рабочее пространство",
       hosts: "Хосты",
       home: "Дом",
@@ -914,6 +915,7 @@ export const ru: TranslationResources = {
     sections: {
       sessions: "История",
       schedules: "Расписания",
+      chats: "Чаты",
     },
     worktreeSetup: {
       title: "Настройка сценариев рабочего дерева",
@@ -976,6 +978,13 @@ export const ru: TranslationResources = {
         hideConfirm: "Скрывать",
         cancel: "Отмена",
       },
+      archiveChat: {
+        title: "Удалить чат?",
+        message:
+          "Это навсегда удалит переписку и все файлы, созданные агентом в ней. Это действие нельзя отменить.",
+        confirm: "Удалить",
+        cancel: "Отмена",
+      },
       rename: {
         title: "Переименовать рабочую область",
         submit: "Переименовать",
@@ -994,6 +1003,10 @@ export const ru: TranslationResources = {
   newWorkspace: {
     title: "Новое рабочее пространство",
     create: "Создавать",
+    chat: {
+      title: "Новый чат",
+      noWorkspace: "Без рабочего пространства (только чат)",
+    },
     isolation: {
       local: "Локально",
       worktree: "Новый worktree",
@@ -1010,6 +1023,8 @@ export const ru: TranslationResources = {
       createWorktreeFailed: "Не удалось создать рабочее дерево.",
       composerStateRequired: "Требуется состояние композитора.",
       selectModel: "Выберите модель",
+      chatPromptRequired: "Введите сообщение, чтобы начать чат",
+      chatWorkspaceRequired: "Хост не вернул рабочее пространство чата",
     },
     refPicker: {
       startingRef: "Начальная ссылка",
@@ -1218,6 +1233,10 @@ export const ru: TranslationResources = {
       pairDevice: {
         title: "Сопряжение устройства",
         description: "Подключите свой телефон к этому демону",
+      },
+      newChat: {
+        title: "Новый чат",
+        description: "Общайтесь с моделью без рабочей области",
       },
     },
   },

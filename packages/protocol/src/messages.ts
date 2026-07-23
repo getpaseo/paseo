@@ -1263,6 +1263,10 @@ export const CreateAgentRequestMessageSchema = z.object({
   git: GitSetupOptionsSchema.optional(),
   worktree: CreateAgentWorktreeTargetSchema.optional(),
   autoArchive: z.boolean().optional(),
+  // When true the daemon mints a scratch chat directory under $PASEO_HOME/chats
+  // and ignores config.cwd (clients send ""). Gated by server_info.features.chatWorkspace,
+  // so old daemons never receive it. Mutually exclusive with workspaceId/git/worktree.
+  chatWorkspace: z.boolean().optional(),
   labels: z.record(z.string(), z.string()).default({}),
   requestId: z.string(),
 });
@@ -2763,6 +2767,8 @@ export const ServerInfoStatusPayloadSchema = z
         agentForkContext: z.boolean().optional(),
         // COMPAT(agentForkContextCursor): added in v0.1.108, remove gate after 2027-01-14.
         agentForkContextCursor: z.boolean().optional(),
+        // COMPAT(chatWorkspace): added in v0.1.106, drop the gate when floor >= v0.1.106.
+        chatWorkspace: z.boolean().optional(),
         // COMPAT(providerSubagents): added in v0.1.107, remove gate after 2027-01-12.
         providerSubagents: z.boolean().optional(),
         // COMPAT(workspacePinning): added in v0.1.107, remove gate after 2027-01-12.
@@ -3060,6 +3066,11 @@ export const WorkspaceDescriptorPayloadSchema = z
     projectKind: z.enum(["git", "non_git", "directory"]),
     // COMPAT(workspaces): keep legacy directory workspace kind parseable.
     workspaceKind: z.enum(["directory", "local_checkout", "checkout", "worktree"]),
+    // COMPAT(chatWorkspace): added in v0.1.106, drop the optional gate when floor >= v0.1.106.
+    // True for chat workspaces (daemon-minted scratch dirs under $PASEO_HOME/chats).
+    // Clients render these in a dedicated Chats section instead of the projects list.
+    chatWorkspace: z.boolean().optional(),
+    // COMPAT(chatWorkspace): added in v0.1.106, drop the optional gate when floor >= v0.1.106.
     name: z.string(),
     // COMPAT(workspaceTitles): added in v0.1.97, drop the optional gate when floor >= v0.1.97.
     // When the user has titled a workspace, `name` carries the resolved value

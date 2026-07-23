@@ -9,6 +9,7 @@ import type {
 } from "./workspace-registry.js";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
 import { areEquivalentPaths } from "../utils/path.js";
+import { pathsReferToSameDirectory, resolveChatsRoot } from "./chat-workspace/scratch-dir.js";
 import {
   deriveProjectKind,
   reconcileWorkspacePlacement,
@@ -92,6 +93,10 @@ export interface WorkspaceReconciliationServiceOptions {
   clock?: ReconciliationClock;
   rescanIntervalMs?: number;
   debounceMs?: number;
+  // Enables the synthetic Chats project pin. When the chats root happens to live
+  // inside a git repository (dev homes do), git-derived reconciliation must not
+  // re-home chat workspaces onto that repository's project.
+  paseoHome?: string;
 }
 
 interface ProjectReconciliationInput {
@@ -129,6 +134,7 @@ export class WorkspaceReconciliationService {
   private started = false;
   private reconciling = false;
   private reconcileQueuedMode: "metadata" | "full" | null = null;
+  private readonly paseoHome: string | null;
 
   constructor(options: WorkspaceReconciliationServiceOptions) {
     this.projectRegistry = options.projectRegistry;
@@ -142,6 +148,7 @@ export class WorkspaceReconciliationService {
     this.clock = options.clock ?? systemClock;
     this.rescanIntervalMs = options.rescanIntervalMs ?? DEFAULT_RESCAN_INTERVAL_MS;
     this.debounceMs = options.debounceMs ?? DEFAULT_DEBOUNCE_MS;
+    this.paseoHome = options.paseoHome ?? null;
   }
 
   async start(): Promise<void> {
@@ -324,6 +331,14 @@ export class WorkspaceReconciliationService {
 
   private async reconcileProject(input: ProjectReconciliationInput): Promise<void> {
     const { project, siblings, currentGit, readCheckout, changes } = input;
+    // Chat records are pinned to their synthetic non-git project. The chats root
+    // may itself live inside a git repository in development environments.
+    if (
+      this.paseoHome &&
+      pathsReferToSameDirectory(resolveChatsRoot(this.paseoHome), project.rootPath)
+    ) {
+      return;
+    }
     const workspaceCheckouts = await Promise.all(
       siblings.map(async (workspace) => ({
         workspace,

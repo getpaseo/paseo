@@ -11,6 +11,7 @@ import {
   createSidebarWorkspaceEntry,
   deriveSidebarLoadingState,
   shouldShowSidebarHostLabels,
+  splitSidebarChatWorkspaces,
   type SidebarProjectEntry,
 } from "./sidebar-workspaces-view-model";
 
@@ -117,6 +118,7 @@ function workspace(input: {
   projectDisplayName: string;
   status?: WorkspaceDescriptor["status"];
   statusEnteredAt?: Date | null;
+  chatWorkspace?: boolean;
 }): WorkspaceDescriptor {
   return {
     id: input.id,
@@ -124,7 +126,7 @@ function workspace(input: {
     projectDisplayName: input.projectDisplayName,
     projectRootPath: `/repo/${input.projectId}`,
     workspaceDirectory: `/repo/${input.projectId}/${input.id}`,
-    projectKind: "git",
+    projectKind: input.chatWorkspace ? "non_git" : "git",
     workspaceKind: input.name === "main" ? "local_checkout" : "worktree",
     name: input.name,
     status: input.status ?? "done",
@@ -132,6 +134,7 @@ function workspace(input: {
     archivingAt: null,
     diffStat: null,
     scripts: [],
+    chatWorkspace: input.chatWorkspace ?? false,
   };
 }
 
@@ -400,6 +403,134 @@ describe("shared sidebar workspace model", () => {
 
     expect(nextEntries.get("srv:one")).toBe(previousEntries.get("srv:one"));
     expect(nextEntries.get("srv:two")).not.toBe(previousEntries.get("srv:two"));
+  });
+});
+
+describe("splitSidebarChatWorkspaces", () => {
+  function buildEntries(input: {
+    projects: WorkspaceStructureProject[];
+    workspaces: WorkspaceDescriptor[];
+  }) {
+    const model = buildSidebarWorkspacePlacementModel({ projects: input.projects });
+    const workspacesById = new Map(input.workspaces.map((w) => [w.id, w]));
+    const entries = buildSidebarWorkspaceEntries({
+      placements: model.workspaces,
+      sessions: [
+        {
+          serverId: "srv",
+          workspaceAgentActivity: new Map(),
+          workspaces: workspacesById,
+        },
+      ],
+    });
+    return { projects: model.projects, entries };
+  }
+
+  it("excludes a chat workspace from its project and drops an all-chat project", () => {
+    const { projects, entries } = buildEntries({
+      projects: [
+        project({ projectKey: "getpaseo/paseo", workspaceKeys: ["srv:main"] }),
+        project({ projectKey: "chats", projectName: "Chats", workspaceKeys: ["srv:chat-1"] }),
+      ],
+      workspaces: [
+        workspace({
+          id: "main",
+          name: "main",
+          projectId: "getpaseo/paseo",
+          projectDisplayName: "getpaseo/paseo",
+        }),
+        workspace({
+          id: "chat-1",
+          name: "chat-1",
+          projectId: "chats",
+          projectDisplayName: "Chats",
+          chatWorkspace: true,
+        }),
+      ],
+    });
+
+    const split = splitSidebarChatWorkspaces({ projects, workspaceEntriesByKey: entries });
+
+    expect(split.projects.map((entry) => entry.projectKey)).toEqual(["getpaseo/paseo"]);
+    expect(split.chats.map((entry) => entry.workspaceKey)).toEqual(["srv:chat-1"]);
+  });
+
+  it("filters a chat workspace out of a project without dropping its non-chat siblings", () => {
+    const { projects, entries } = buildEntries({
+      projects: [project({ projectKey: "mixed", workspaceKeys: ["srv:a", "srv:b"] })],
+      workspaces: [
+        workspace({ id: "a", name: "a", projectId: "mixed", projectDisplayName: "mixed" }),
+        workspace({
+          id: "b",
+          name: "b",
+          projectId: "mixed",
+          projectDisplayName: "mixed",
+          chatWorkspace: true,
+        }),
+      ],
+    });
+
+    const split = splitSidebarChatWorkspaces({ projects, workspaceEntriesByKey: entries });
+
+    expect(split.projects).toHaveLength(1);
+    expect(split.projects[0]?.workspaces.map((placement) => placement.workspaceKey)).toEqual([
+      "srv:a",
+    ]);
+    expect(split.chats.map((entry) => entry.workspaceKey)).toEqual(["srv:b"]);
+  });
+
+  it("orders the chats list the same way the workspaces list is ordered", () => {
+    const { projects, entries } = buildEntries({
+      projects: [
+        project({ projectKey: "chats-a", projectName: "Chats", workspaceKeys: ["srv:chat-a"] }),
+        project({ projectKey: "project-b", workspaceKeys: ["srv:main", "srv:chat-b"] }),
+      ],
+      workspaces: [
+        workspace({
+          id: "chat-a",
+          name: "chat-a",
+          projectId: "chats-a",
+          projectDisplayName: "Chats",
+          chatWorkspace: true,
+        }),
+        workspace({
+          id: "main",
+          name: "main",
+          projectId: "project-b",
+          projectDisplayName: "project-b",
+        }),
+        workspace({
+          id: "chat-b",
+          name: "chat-b",
+          projectId: "project-b",
+          projectDisplayName: "project-b",
+          chatWorkspace: true,
+        }),
+      ],
+    });
+
+    const split = splitSidebarChatWorkspaces({ projects, workspaceEntriesByKey: entries });
+
+    expect(split.chats.map((entry) => entry.workspaceKey)).toEqual(["srv:chat-a", "srv:chat-b"]);
+  });
+
+  it("returns an empty chats list and the original projects when nothing is a chat workspace", () => {
+    const { projects, entries } = buildEntries({
+      projects: [project({ projectKey: "getpaseo/paseo", workspaceKeys: ["srv:main"] })],
+      workspaces: [
+        workspace({
+          id: "main",
+          name: "main",
+          projectId: "getpaseo/paseo",
+          projectDisplayName: "getpaseo/paseo",
+        }),
+      ],
+    });
+
+    const split = splitSidebarChatWorkspaces({ projects, workspaceEntriesByKey: entries });
+
+    expect(split.chats).toEqual([]);
+    expect(split.projects).toEqual(projects);
   });
 });
 

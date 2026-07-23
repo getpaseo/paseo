@@ -29,6 +29,7 @@ function workspace(overrides: Partial<SidebarWorkspaceEntry> = {}): SidebarWorks
     scripts: [],
     hasRunningScripts: false,
     statusEnteredAt: null,
+    chatWorkspace: false,
     ...overrides,
     archivingAt: overrides.archivingAt ?? null,
   };

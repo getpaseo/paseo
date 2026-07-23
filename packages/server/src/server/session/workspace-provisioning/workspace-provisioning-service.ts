@@ -1,5 +1,7 @@
 import { basename, resolve } from "node:path";
 import type { Logger } from "pino";
+import type { ProjectCheckoutLitePayload } from "@getpaseo/protocol/messages";
+import { classifyChatWorkspaceMembership } from "../../chat-workspace/project-membership.js";
 import {
   generateWorkspaceId,
   initialWorkspacePlacement,
@@ -82,12 +84,27 @@ export class WorkspaceProvisioningError extends Error {
 }
 
 export function createWorkspaceProvisioningService(deps: {
+  paseoHome: string;
   workspaceRegistry: WorkspaceRegistry;
   projectRegistry: ProjectRegistry;
   workspaceGitService: Pick<WorkspaceGitService, "getCheckout" | "peekSnapshot">;
   logger: Logger;
 }): WorkspaceProvisioningService {
-  const { workspaceRegistry, projectRegistry, workspaceGitService, logger } = deps;
+  const { paseoHome, workspaceRegistry, projectRegistry, workspaceGitService, logger } = deps;
+
+  // Chat scratch dirs classify into one synthetic "Chats" project; every other
+  // path falls through to the normal git/directory classification unchanged.
+  function classifyForPlacement(input: { cwd: string; checkout: ProjectCheckoutLitePayload }) {
+    const chatMembership = classifyChatWorkspaceMembership({
+      paseoHome,
+      cwd: input.cwd,
+      checkout: input.checkout,
+    });
+    if (chatMembership) {
+      return chatMembership;
+    }
+    return null;
+  }
 
   async function runInImportWorkspace<T>(
     input: ImportWorkspaceInput,
@@ -155,7 +172,16 @@ export function createWorkspaceProvisioningService(deps: {
   async function findOrCreateProjectForDirectory(cwd: string): Promise<PersistedProjectRecord> {
     const rootPath = resolve(cwd);
     const checkout = await workspaceGitService.getCheckout(rootPath);
+    const membership = classifyForPlacement({ cwd: rootPath, checkout });
     const timestamp = new Date().toISOString();
+    if (membership) {
+      return projectRegistry.getOrCreateActiveByRoot({
+        rootPath: membership.projectRootPath,
+        kind: membership.projectKind,
+        displayName: membership.projectName,
+        timestamp,
+      });
+    }
     return projectRegistry.getOrCreateActiveByRoot({
       rootPath,
       kind: checkout.isGit ? "git" : "non_git",
@@ -178,6 +204,7 @@ export function createWorkspaceProvisioningService(deps: {
   ): Promise<PersistedWorkspaceRecord> {
     const normalizedCwd = resolve(cwd);
     const checkout = await workspaceGitService.getCheckout(normalizedCwd);
+    const chatMembership = classifyForPlacement({ cwd: normalizedCwd, checkout });
     const project = projectId
       ? await refreshProjectKind(await requireActiveProject(projectId), normalizedCwd, checkout)
       : // COMPAT(workspaceCreateMissingProjectId): added in v0.1.107, remove after 2027-01-15.
@@ -186,7 +213,16 @@ export function createWorkspaceProvisioningService(deps: {
     const workspace = createPersistedWorkspaceRecord({
       workspaceId: generateWorkspaceId(),
       projectId: project.projectId,
-      ...initialWorkspacePlacement({ source: "checkout", cwd: normalizedCwd, checkout }),
+      ...(chatMembership
+        ? {
+            cwd: chatMembership.cwd,
+            kind: chatMembership.workspaceKind,
+            displayName: chatMembership.workspaceDisplayName,
+            branch: null,
+            baseBranch: null,
+            mainRepoRoot: null,
+          }
+        : initialWorkspacePlacement({ source: "checkout", cwd: normalizedCwd, checkout })),
       title: title?.trim() || null,
       createdAt: timestamp,
       updatedAt: timestamp,
@@ -307,6 +343,13 @@ export function createWorkspaceProvisioningService(deps: {
       workspace.archivedAt || project.archivedAt
         ? await workspaceGitService.getCheckout(workspace.cwd)
         : null;
+    const chatMembership = checkout ? classifyForPlacement({ cwd: workspace.cwd, checkout }) : null;
+    if (chatMembership) {
+      if (!workspace.archivedAt) return workspace;
+      const restored = { ...workspace, archivedAt: null, updatedAt: timestamp };
+      await workspaceRegistry.upsert(restored);
+      return restored;
+    }
     let next: PersistedWorkspaceRecord | null = null;
     if (workspace.archivedAt && checkout) {
       const placementUpdate = reconcileWorkspacePlacement({
@@ -338,6 +381,7 @@ export function createWorkspaceProvisioningService(deps: {
     workspace: PersistedWorkspaceRecord,
   ): Promise<PersistedWorkspaceRecord> {
     const checkout = await workspaceGitService.getCheckout(workspace.cwd);
+    if (classifyForPlacement({ cwd: workspace.cwd, checkout })) return workspace;
     const project = await projectRegistry.get(workspace.projectId);
     if (project && !project.archivedAt) {
       await refreshProjectKind(project, workspace.cwd, checkout);

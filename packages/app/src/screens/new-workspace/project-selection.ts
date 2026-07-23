@@ -1,5 +1,7 @@
 import type { HostProjectListItem } from "@/projects/host-projects";
 
+export const CHAT_WORKSPACE_PROJECT_KEY = "__chat_workspace__";
+
 export type ProjectSelectionSource = "initial" | "manual";
 export type InitialProjectSelectionSource = "route" | "lastActive" | "fallback" | null;
 
@@ -18,6 +20,8 @@ export interface ProjectSelectionContext {
   projects: HostProjectListItem[];
   routeProject: HostProjectListItem | null;
   lastActiveProject: HostProjectListItem | null;
+  allowChatWorkspace: boolean;
+  initialChatWorkspace: boolean;
   shouldPreserveMissingProject: (project: HostProjectListItem) => boolean;
 }
 
@@ -37,16 +41,38 @@ export function createManualProjectSelectionContextKey(input: {
   return `${input.selectedServerId}:${input.routeProjectKey ?? ""}`;
 }
 
+export function createChatProjectSelection(
+  contextKey: string,
+  source: ProjectSelectionSource,
+): ProjectSelection {
+  return {
+    contextKey,
+    projectKey: CHAT_WORKSPACE_PROJECT_KEY,
+    project: null,
+    source,
+  };
+}
+
 export function createProjectSelection({
   contextKey,
   initialProject,
+  allowChatWorkspace,
+  initialChatWorkspace,
 }: ProjectSelectionContext): ProjectSelection {
+  if (allowChatWorkspace && initialChatWorkspace) {
+    return createChatProjectSelection(contextKey, "initial");
+  }
+
   return {
     contextKey,
     projectKey: initialProject?.projectKey ?? null,
     project: initialProject,
     source: "initial",
   };
+}
+
+export function isChatProjectSelection(selection: ProjectSelection): boolean {
+  return selection.projectKey === CHAT_WORKSPACE_PROJECT_KEY;
 }
 
 export function resolveInitialProjectSelectionSource(input: {
@@ -151,6 +177,10 @@ export function reconcileProjectSelection(
 
   if (shouldResetInitialFallbackSelection(current, context)) {
     return initialSelection;
+  }
+
+  if (isChatProjectSelection(current)) {
+    return context.allowChatWorkspace ? current : initialSelection;
   }
 
   const resolvedProject = resolveProjectSelection(current, context);

@@ -864,6 +864,7 @@ export const zhCN: TranslationResources = {
     },
     actions: {
       addProject: "添加 project",
+      newChat: "新聊天",
       newWorkspace: "新建工作区",
       hosts: "Hosts",
       home: "首页",
@@ -884,6 +885,7 @@ export const zhCN: TranslationResources = {
     sections: {
       sessions: "历史",
       schedules: "计划",
+      chats: "聊天",
     },
     worktreeSetup: {
       title: "设置 worktree scripts",
@@ -943,6 +945,12 @@ export const zhCN: TranslationResources = {
         hideConfirm: "隐藏",
         cancel: "取消",
       },
+      archiveChat: {
+        title: "删除聊天？",
+        message: "这将永久删除该对话以及智能体在其中创建的所有文件。此操作无法撤销。",
+        confirm: "删除",
+        cancel: "取消",
+      },
       rename: {
         title: "重命名 workspace",
         submit: "重命名",
@@ -961,6 +969,10 @@ export const zhCN: TranslationResources = {
   newWorkspace: {
     title: "新建 workspace",
     create: "创建",
+    chat: {
+      title: "新聊天",
+      noWorkspace: "无工作区（仅聊天）",
+    },
     isolation: {
       local: "本地",
       worktree: "新建 worktree",
@@ -977,6 +989,8 @@ export const zhCN: TranslationResources = {
       createWorktreeFailed: "创建 worktree 失败",
       composerStateRequired: "Composer 状态必填",
       selectModel: "请选择模型",
+      chatPromptRequired: "请输入消息以开始聊天",
+      chatWorkspaceRequired: "Host 未返回聊天工作区",
     },
     refPicker: {
       startingRef: "起始 ref",
@@ -1172,6 +1186,10 @@ export const zhCN: TranslationResources = {
       pairDevice: {
         title: "配对设备",
         description: "将手机连接到此 daemon",
+      },
+      newChat: {
+        title: "新聊天",
+        description: "在没有 workspace 的情况下与模型对话",
       },
     },
   },

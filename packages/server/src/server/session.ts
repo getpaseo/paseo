@@ -43,6 +43,8 @@ import {
   resolveFirstAgentPromptTitle,
 } from "./agent/create-agent-title.js";
 import { respondToAgentPermission } from "./agent/permission-response.js";
+import { deleteChatWorkspaceScratchDir } from "./chat-workspace/archive-cleanup.js";
+import { ensureChatScratchDir, isChatScratchDir } from "./chat-workspace/scratch-dir.js";
 import type { VoiceCallerContext, VoiceSpeakHandler } from "./voice-types.js";
 import type { ScriptHealthState } from "./script-health-monitor.js";
 import { spawnWorkspaceScript } from "./worktree-bootstrap.js";
@@ -722,6 +724,7 @@ export class Session {
     });
     this.workspaceAutoName = workspaceAutoName;
     this.workspaceProvisioning = createWorkspaceProvisioningService({
+      paseoHome: this.paseoHome,
       workspaceRegistry: this.workspaceRegistry,
       projectRegistry: this.projectRegistry,
       workspaceGitService: this.workspaceGitService,
@@ -2806,6 +2809,31 @@ export class Session {
   /**
    * Handle create agent request
    */
+  private async resolveRequestedCreateAgentConfig(msg: CreateAgentRequestMessage): Promise<{
+    config: AgentSessionConfig;
+    chatScratchCwd: string | null;
+  }> {
+    if (msg.chatWorkspace !== true) {
+      return { config: msg.config, chatScratchCwd: null };
+    }
+    const hasConflictingWorkspaceTarget =
+      msg.workspaceId !== undefined ||
+      msg.callerAgentId !== undefined ||
+      msg.git !== undefined ||
+      msg.worktree !== undefined ||
+      msg.worktreeName !== undefined;
+    if (hasConflictingWorkspaceTarget) {
+      throw new Error(
+        "create_agent_request chatWorkspace cannot be combined with workspaceId, callerAgentId, git options, or a worktree",
+      );
+    }
+    const chatScratchCwd = await ensureChatScratchDir(this.paseoHome);
+    return {
+      config: { ...msg.config, cwd: chatScratchCwd },
+      chatScratchCwd,
+    };
+  }
+
   private async handleCreateAgentRequest(msg: CreateAgentRequestMessage): Promise<void> {
     const {
       config,
@@ -2830,8 +2858,14 @@ export class Session {
 
     let createdWorktreeForCleanup: CreatePaseoWorktreeWorkflowResult | null = null;
     let createdAgentId: string | null = null;
+    let createdChatScratchCwd: string | null = null;
+    let createdChatWorkspaceId: string | null = null;
     try {
-      const requestedCwd = resolve(config.cwd);
+      const requested = await this.resolveRequestedCreateAgentConfig(msg);
+      const requestedConfig = requested.config;
+      createdChatScratchCwd = requested.chatScratchCwd;
+
+      const requestedCwd = resolve(requestedConfig.cwd);
       const needsRequestedDirectory =
         Boolean(worktreeName || git || worktree) || (!msg.workspaceId && !msg.callerAgentId);
       if (needsRequestedDirectory && !(await this.filesystem.isDirectory(requestedCwd))) {
@@ -2849,20 +2883,23 @@ export class Session {
       };
       const workspacePromptTitle = resolveFirstAgentPromptTitle(firstAgentContext);
       const createdWorktree = await this.createAgentLifecycleDispatch.createWorktreeForRequest({
-        cwd: config.cwd,
+        cwd: requestedConfig.cwd,
         target: worktree,
         firstAgentContext,
         hasLegacyGitOptions: Boolean(git),
       });
       createdWorktreeForCleanup = createdWorktree;
       const resolvedIntent = await this.resolveSessionCreateAgentIntent({
-        request: msg,
+        request: requestedConfig === config ? msg : { ...msg, config: requestedConfig },
         createdWorktree,
         workspacePromptTitle,
       });
       const resolvedCwd = resolve(resolvedIntent.config.cwd);
       if (!(await this.filesystem.isDirectory(resolvedCwd))) {
         throw new Error(`Working directory does not exist or is not a directory: ${resolvedCwd}`);
+      }
+      if (createdChatScratchCwd !== null) {
+        createdChatWorkspaceId = resolvedIntent.intent.workspaceId;
       }
 
       const { snapshot, liveSnapshot } = await createAgentCommand(
@@ -2931,6 +2968,11 @@ export class Session {
       await this.createAgentLifecycleDispatch.cleanupCreatedWorktreeAfterFailedAgentCreate({
         createdWorktree: createdWorktreeForCleanup,
         createdAgentId,
+      });
+      await this.cleanupChatWorkspaceAfterFailedCreate({
+        createdAgentId,
+        workspaceId: createdChatWorkspaceId,
+        scratchCwd: createdChatScratchCwd,
       });
       const wireError = toWorktreeWireError(error);
       this.sessionLogger.error({ err: error }, "Failed to create agent");
@@ -3004,6 +3046,36 @@ export class Session {
       intent,
       createdDirectoryWorkspace: !createdWorktree && !request.workspaceId && !callerAgent,
     };
+  }
+
+  // A failed chat create must not leave a daemon-minted workspace record or scratch
+  // directory behind — there is no usable agent, and the record is invisible litter
+  // in the Chats project. Only runs when no agent came to exist; archiving the
+  // record also deletes the scratch dir via teardownArchivedWorkspace.
+  private async cleanupChatWorkspaceAfterFailedCreate(input: {
+    createdAgentId: string | null;
+    workspaceId: string | null;
+    scratchCwd: string | null;
+  }): Promise<void> {
+    if (input.createdAgentId !== null || input.scratchCwd === null) {
+      return;
+    }
+    try {
+      if (input.workspaceId !== null) {
+        await this.archiveWorkspaceRecord(input.workspaceId);
+        return;
+      }
+      await deleteChatWorkspaceScratchDir({
+        paseoHome: this.paseoHome,
+        cwd: input.scratchCwd,
+        sessionLogger: this.sessionLogger,
+      });
+    } catch (err) {
+      this.sessionLogger.warn(
+        { err, workspaceId: input.workspaceId, scratchCwd: input.scratchCwd },
+        "Failed to clean up chat workspace after failed agent create",
+      );
+    }
   }
 
   private async handleResumeAgentRequest(
@@ -4031,10 +4103,17 @@ export class Session {
     const resolvedProjectRecord =
       projectRecord ?? (await this.projectRegistry.get(workspace.projectId));
 
+    // A chat's scratch dir may sit inside an unrelated git repo (e.g. a dev
+    // $PASEO_HOME), whose diff would be meaningless noise on the chat row. Chats
+    // have no diff of their own — surface a file count instead of git stats.
+    const isChat = isChatScratchDir(this.paseoHome, workspace.cwd);
+
     let diffStat: { additions: number; deletions: number } | null = null;
-    const snapshot = this.workspaceGitService.peekSnapshot(workspace.cwd);
-    if (snapshot?.git.diffStat) {
-      diffStat = snapshot.git.diffStat;
+    if (!isChat) {
+      const snapshot = this.workspaceGitService.peekSnapshot(workspace.cwd);
+      if (snapshot?.git.diffStat) {
+        diffStat = snapshot.git.diffStat;
+      }
     }
 
     return {
@@ -4056,6 +4135,7 @@ export class Session {
       statusEnteredAt: null,
       activityAt: null,
       diffStat,
+      ...(isChat ? { chatWorkspace: true } : {}),
       scripts: this.buildWorkspaceScriptPayloadSnapshot(workspace, resolvedProjectRecord),
       ...(resolvedProjectRecord
         ? {
@@ -4400,13 +4480,23 @@ export class Session {
       );
     }
 
-    await this.teardownArchivedWorkspace(existingWorkspace.workspaceId);
+    await this.teardownArchivedWorkspace(existingWorkspace.workspaceId, existingWorkspace.cwd);
   }
 
-  private async teardownArchivedWorkspace(workspaceId: string): Promise<void> {
+  private async teardownArchivedWorkspace(workspaceId: string, cwd?: string): Promise<void> {
     this.workspaceGitObserver.removeForWorkspaceId(workspaceId);
     this.scriptRuntimeStore?.removeForWorkspace(workspaceId);
     releaseWorkspaceServicePortPlan(workspaceId);
+    // Every archive path (workspace archive, project remove, worktree archive)
+    // funnels through archiveWorkspaceRecord into here, so chat scratch dirs are
+    // reclaimed no matter which gesture archived them. No-op for non-chat cwds.
+    if (cwd) {
+      await deleteChatWorkspaceScratchDir({
+        paseoHome: this.paseoHome,
+        cwd,
+        sessionLogger: this.sessionLogger,
+      });
+    }
   }
 
   private async reconcileAndEmitWorkspaceUpdates(): Promise<void> {
@@ -4432,6 +4522,7 @@ export class Session {
       workspaceRegistry: this.workspaceRegistry,
       logger: this.sessionLogger,
       workspaceGitService: this.workspaceGitService,
+      paseoHome: this.paseoHome,
     });
     const result = await service.runOnce();
     const changedWorkspaceIds = new Set<string>();

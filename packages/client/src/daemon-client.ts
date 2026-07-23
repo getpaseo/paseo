@@ -354,6 +354,7 @@ export interface CreateAgentRequestOptions extends AgentConfigOverrides {
   worktreeName?: string;
   requestId?: string;
   labels?: Record<string, string>;
+  chatWorkspace?: CreateAgentRequestMessage["chatWorkspace"];
 }
 
 export interface CreatePaseoWorktreeInput extends Pick<
@@ -2324,6 +2325,7 @@ export class DaemonClient {
       ...(options.labels && Object.keys(options.labels).length > 0
         ? { labels: options.labels }
         : {}),
+      ...(options.chatWorkspace !== undefined ? { chatWorkspace: options.chatWorkspace } : {}),
     });
 
     const status = await this.sendRequest({
@@ -5826,6 +5828,7 @@ function resolveAgentConfig(options: CreateAgentRequestOptions): AgentSessionCon
     worktreeName: _worktreeName,
     requestId: _requestId,
     labels: _labels,
+    chatWorkspace,
     ...overrides
   } = options;
 
@@ -5837,13 +5840,18 @@ function resolveAgentConfig(options: CreateAgentRequestOptions): AgentSessionCon
 
   const merged = config ? { ...baseConfig, ...config } : baseConfig;
 
-  if (!merged.provider || !merged.cwd) {
-    throw new Error("createAgent requires provider and cwd");
+  if (!merged.provider) {
+    throw new Error("createAgent requires provider");
+  }
+  // Chat workspaces have no user-picked cwd: the daemon mints a scratch
+  // directory and ignores the empty string sent on the wire.
+  if (!merged.cwd && !chatWorkspace) {
+    throw new Error("createAgent requires cwd");
   }
 
   return {
     ...merged,
     provider: merged.provider,
-    cwd: merged.cwd,
+    cwd: merged.cwd ?? "",
   };
 }

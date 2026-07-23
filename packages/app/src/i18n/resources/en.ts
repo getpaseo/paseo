@@ -882,6 +882,7 @@ export const en = {
     },
     actions: {
       addProject: "Add project",
+      newChat: "New chat",
       newWorkspace: "New workspace",
       hosts: "Hosts",
       home: "Home",
@@ -902,6 +903,7 @@ export const en = {
     sections: {
       sessions: "History",
       schedules: "Schedules",
+      chats: "Chats",
     },
     worktreeSetup: {
       title: "Set up worktree scripts",
@@ -964,6 +966,13 @@ export const en = {
         hideConfirm: "Hide",
         cancel: "Cancel",
       },
+      archiveChat: {
+        title: "Delete chat?",
+        message:
+          "This permanently deletes the conversation and any files the agent created in it. This can't be undone.",
+        confirm: "Delete",
+        cancel: "Cancel",
+      },
       rename: {
         title: "Rename workspace",
         submit: "Rename",
@@ -982,6 +991,10 @@ export const en = {
   newWorkspace: {
     title: "New workspace",
     create: "Create",
+    chat: {
+      title: "New chat",
+      noWorkspace: "No Workspace (chat only)",
+    },
     isolation: {
       local: "Local",
       worktree: "New worktree",
@@ -998,6 +1011,8 @@ export const en = {
       createWorktreeFailed: "Failed to create worktree",
       composerStateRequired: "Composer state is required",
       selectModel: "Select a model",
+      chatPromptRequired: "Enter a message to start a chat",
+      chatWorkspaceRequired: "The host did not return a chat workspace",
     },
     refPicker: {
       startingRef: "Starting ref",
@@ -1199,6 +1214,10 @@ export const en = {
       pairDevice: {
         title: "Pair device",
         description: "Connect your phone to this daemon",
+      },
+      newChat: {
+        title: "New chat",
+        description: "Chat with a model without a workspace",
       },
     },
   },
