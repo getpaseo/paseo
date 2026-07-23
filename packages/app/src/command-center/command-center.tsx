@@ -497,7 +497,11 @@ function ResultContent({ result }: { result: CommandCenterResult }) {
     );
   }
   return (
-    <View style={styles.rowContent} testID={presentation.testId}>
+    <View
+      style={styles.rowContent}
+      testID={presentation.testId}
+      aria-selected={presentation.selected}
+    >
       <View style={styles.rowMain}>
         {Icon ? (
           <View style={styles.iconSlot}>

@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import ReanimatedAnimated from "react-native-reanimated";
 import { StyleSheet } from "react-native-unistyles";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { Brain, ListTodo } from "lucide-react-native";
 import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
 import { useContainerWidthBelow } from "@/hooks/use-container-width";
 import invariant from "tiny-invariant";
@@ -24,19 +25,13 @@ import type { Agent } from "@/stores/session-store";
 import { useWorkspaceFields } from "@/stores/session-store-hooks";
 import { useWorkspaceDraftSubmissionStore } from "@/stores/workspace-draft-submission-store";
 import { useCommandCenterActions } from "@/command-center/provider";
-import { buildModelChoiceContributions } from "@/command-center/model-contributions";
-import { getCommandCenterProviderIcon } from "@/command-center/provider-icon";
-import type { CommandCenterContribution } from "@/command-center/contributions";
 import {
-  buildAgentSettingContributions,
-  buildAgentSettingLabels,
-} from "@/command-center/agent-setting-contributions";
-import {
-  CommandCenterFastModeIcon,
-  CommandCenterPlanModeIcon,
-  CommandCenterThinkingIcon,
-  getCommandCenterModeIcon,
-} from "@/command-center/setting-icon";
+  buildAgentControlContributions,
+  buildAgentControlContributionLabels,
+} from "@/command-center/agent-control-contributions";
+import { getCommandCenterIcon } from "@/command-center/icon";
+import { getProviderIcon } from "@/components/provider-icons";
+import { getAgentFeatureIcon, getAgentModeIcon } from "@/composer/agent-controls/icons";
 import { encodeImages } from "@/utils/encode-images";
 import type { WorkspaceFileOpenRequest } from "@/workspace/file-open";
 import { shouldAutoFocusWorkspaceDraftComposer } from "@/screens/workspace/workspace-draft-pane-focus";
@@ -101,8 +96,6 @@ function resolveAutoSubmitConfig(
 }
 
 // Reconcile the form's selected mode against the currently discovered modes.
-const EMPTY_COMMAND_CENTER_CONTRIBUTIONS: CommandCenterContribution[] = [];
-
 // The mode picker displays modeOptions[0] when the stored mode isn't in the
 // list (e.g. a globally-remembered "plan" that this workspace's OpenCode config
 // no longer defines), so the submitted mode must match that display — otherwise
@@ -391,28 +384,6 @@ export function WorkspaceDraftAgentTab({
     throw new Error("Workspace draft composer state is required");
   }
 
-  const draftModelActions = useMemo(
-    () =>
-      buildModelChoiceContributions({
-        serverId,
-        providers: composerState.modelSelectorProviders,
-        selectedProvider: composerState.selectedProvider,
-        selectedModelId: composerState.effectiveModelId || null,
-        groupLabel: t("shell.commandCenter.modelGroupLabel"),
-        searchKeywords: t("shell.commandCenter.modelSearchKeywords"),
-        getIcon: getCommandCenterProviderIcon,
-        select: composerState.setProviderAndModelFromUser,
-      }),
-    [
-      composerState.effectiveModelId,
-      composerState.modelSelectorProviders,
-      composerState.selectedProvider,
-      composerState.setProviderAndModelFromUser,
-      serverId,
-      t,
-    ],
-  );
-
   const draftProvider = composerState.selectedProvider;
   const draftProviderDefinitions = composerState.providerDefinitions;
   const draftThinkingOptions = composerState.availableThinkingOptions;
@@ -423,58 +394,66 @@ export function WorkspaceDraftAgentTab({
   const draftSetMode = composerState.setModeFromUser;
   const draftFeatures = composerState.agentControls.features;
   const draftOnSetFeature = composerState.agentControls.onSetFeature;
-  const draftFeatureValues = composerState.featureValues;
-  const draftSettingActions = useMemo(() => {
-    if (!draftProvider) {
-      return EMPTY_COMMAND_CENTER_CONTRIBUTIONS;
-    }
-    const featureValues = draftFeatureValues ?? {};
-    return buildAgentSettingContributions({
+  const draftControlActions = useMemo(
+    () =>
+      buildAgentControlContributions({
+        serverId,
+        ownerKey: tabId,
+        provider: draftProvider,
+        labels: buildAgentControlContributionLabels(t),
+        icons: {
+          provider: (provider) => getCommandCenterIcon(getProviderIcon(provider)),
+          thinking: getCommandCenterIcon(Brain),
+          planMode: getCommandCenterIcon(ListTodo),
+          mode: (modeId) =>
+            getCommandCenterIcon(
+              getAgentModeIcon(draftProvider ?? "", modeId, draftProviderDefinitions),
+            ),
+          feature: (feature) => getCommandCenterIcon(getAgentFeatureIcon(feature.icon)),
+        },
+        models: {
+          providers: composerState.modelSelectorProviders,
+          selectedProvider: draftProvider,
+          selectedModelId: composerState.effectiveModelId || null,
+          select: composerState.setProviderAndModelFromUser,
+        },
+        thinking: {
+          options: draftThinkingOptions,
+          selectedId: draftSelectedThinkingId || null,
+          select: draftSetThinkingOption,
+        },
+        modes: {
+          options: draftModeOptions,
+          selectedId: draftSelectedMode || null,
+          defaultModeId:
+            draftProviderDefinitions.find((definition) => definition.id === draftProvider)
+              ?.defaultModeId ?? null,
+          select: draftSetMode,
+        },
+        features: {
+          list: draftFeatures ?? [],
+          set: (featureId, value) => draftOnSetFeature?.(featureId, value),
+        },
+      }),
+    [
       serverId,
-      ownerKey: tabId,
-      provider: draftProvider,
-      labels: buildAgentSettingLabels(t),
-      icons: {
-        thinking: CommandCenterThinkingIcon,
-        planMode: CommandCenterPlanModeIcon,
-        fast: CommandCenterFastModeIcon,
-        mode: (modeId) => getCommandCenterModeIcon(draftProvider, modeId, draftProviderDefinitions),
-      },
-      thinking: {
-        options: draftThinkingOptions,
-        selectedId: draftSelectedThinkingId || null,
-        select: draftSetThinkingOption,
-      },
-      modes: {
-        options: draftModeOptions,
-        selectedId: draftSelectedMode || null,
-        defaultModeId:
-          draftProviderDefinitions.find((definition) => definition.id === draftProvider)
-            ?.defaultModeId ?? null,
-        select: draftSetMode,
-      },
-      features: {
-        list: draftFeatures ?? [],
-        value: (featureId) => featureValues[featureId],
-        set: (featureId, value) => draftOnSetFeature?.(featureId, value),
-      },
-    });
-  }, [
-    serverId,
-    tabId,
-    t,
-    draftProvider,
-    draftProviderDefinitions,
-    draftThinkingOptions,
-    draftSelectedThinkingId,
-    draftSetThinkingOption,
-    draftModeOptions,
-    draftSelectedMode,
-    draftSetMode,
-    draftFeatures,
-    draftOnSetFeature,
-    draftFeatureValues,
-  ]);
+      tabId,
+      t,
+      composerState.effectiveModelId,
+      composerState.modelSelectorProviders,
+      composerState.setProviderAndModelFromUser,
+      draftProvider,
+      draftProviderDefinitions,
+      draftThinkingOptions,
+      draftSelectedThinkingId,
+      draftSetThinkingOption,
+      draftModeOptions,
+      draftSelectedMode,
+      draftSetMode,
+      draftFeatures,
+      draftOnSetFeature,
+    ],
+  );
 
   const clearDraftInput = draftInput.clear;
   const setDraftText = draftInput.setText;
@@ -621,12 +600,7 @@ export function WorkspaceDraftAgentTab({
   useCommandCenterActions({
     sourceId: `draft:${serverId}:${tabId}`,
     enabled: isPaneFocused && !isSubmitting,
-    actions: draftModelActions,
-  });
-  useCommandCenterActions({
-    sourceId: `draft-settings:${serverId}:${tabId}`,
-    enabled: isPaneFocused && !isSubmitting,
-    actions: draftSettingActions,
+    actions: draftControlActions,
   });
 
   const isReadyForPendingAutoSubmit = Boolean(

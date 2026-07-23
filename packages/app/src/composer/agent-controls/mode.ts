@@ -1,6 +1,10 @@
 import type { DraftAgentControlsProps } from "@/composer/agent-controls";
 import type { AgentMode } from "@getpaseo/protocol/agent-types";
 
+export function isPlanningAgentMode(modeId: string): boolean {
+  return modeId === "plan" || modeId.endsWith("#plan");
+}
+
 export function resolveNextAgentModeId({
   modeOptions,
   selectedMode,
