@@ -102,13 +102,16 @@ export async function getDesktopRuntimeInfo(): Promise<DesktopRuntimeInfo> {
 
 export async function checkDesktopAppUpdate({
   releaseChannel,
+  autoInstallUpdates,
   intent,
 }: {
   releaseChannel: DesktopReleaseChannel;
+  autoInstallUpdates: boolean;
   intent: DesktopAppUpdateCheckIntent;
 }): Promise<DesktopAppUpdateCheckResult> {
   const result = await invokeDesktopCommand<unknown>("check_app_update", {
     releaseChannel,
+    autoInstallUpdates,
     intent,
   });
   if (!isRecord(result)) {
@@ -128,10 +131,15 @@ export async function checkDesktopAppUpdate({
 
 export async function installDesktopAppUpdate({
   releaseChannel,
+  autoInstallUpdates,
 }: {
   releaseChannel: DesktopReleaseChannel;
+  autoInstallUpdates: boolean;
 }): Promise<DesktopAppUpdateInstallResult> {
-  const result = await invokeDesktopCommand<unknown>("install_app_update", { releaseChannel });
+  const result = await invokeDesktopCommand<unknown>("install_app_update", {
+    releaseChannel,
+    autoInstallUpdates,
+  });
   if (!isRecord(result)) {
     throw new Error("Unexpected response while installing desktop update.");
   }

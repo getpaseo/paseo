@@ -1737,6 +1737,10 @@ export const ptBR: TranslationResources = {
       },
       updates: {
         label: "Atualizações do app",
+        autoInstall: {
+          title: "Instalar atualizações automaticamente",
+          hint: "Quando desativado, o Paseo continua verificando atualizações em segundo plano, mas nunca baixa ou instala nenhuma até que você escolha Atualizar.",
+        },
         readyToInstall: "Pronta para instalar: {{version}}",
         installTitle: "Instalar atualização desktop",
         installMessage: "Isso atualiza o Paseo neste computador",

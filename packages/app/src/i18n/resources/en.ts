@@ -1716,6 +1716,10 @@ export const en = {
       },
       updates: {
         label: "App updates",
+        autoInstall: {
+          title: "Automatically install updates",
+          hint: "When off, Paseo still checks for updates in the background but never downloads or installs one until you choose Update.",
+        },
         readyToInstall: "Ready to install: {{version}}",
         installTitle: "Install desktop update",
         installMessage: "This updates Paseo on this computer",

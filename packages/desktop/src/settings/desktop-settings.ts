@@ -6,6 +6,7 @@ import type { AppReleaseChannel } from "../features/auto-updater.js";
 
 export interface DesktopSettings {
   releaseChannel: AppReleaseChannel;
+  autoInstallUpdates: boolean;
   daemon: {
     manageBuiltInDaemon: boolean;
     keepRunningAfterQuit: boolean;
@@ -14,6 +15,7 @@ export interface DesktopSettings {
 
 interface DesktopSettingsPatch {
   releaseChannel?: AppReleaseChannel;
+  autoInstallUpdates?: boolean;
   daemon?: Partial<DesktopSettings["daemon"]>;
 }
 
@@ -33,6 +35,9 @@ export interface DesktopSettingsStore {
 
 export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
   releaseChannel: "stable",
+  // Matches electron-updater's own default (autoDownload: true) so this is purely additive:
+  // existing installs keep today's behavior until a user opts out. See issue #998.
+  autoInstallUpdates: true,
   daemon: {
     manageBuiltInDaemon: true,
     keepRunningAfterQuit: true,
@@ -68,6 +73,7 @@ function buildDefaultDocument(): PersistedDesktopSettingsDocument {
     version: 1,
     settings: {
       releaseChannel: DEFAULT_DESKTOP_SETTINGS.releaseChannel,
+      autoInstallUpdates: DEFAULT_DESKTOP_SETTINGS.autoInstallUpdates,
       daemon: { ...DEFAULT_DESKTOP_SETTINGS.daemon },
     },
     migrations: {
@@ -79,6 +85,7 @@ function buildDefaultDocument(): PersistedDesktopSettingsDocument {
 function coerceDesktopSettings(input: unknown): DesktopSettings {
   const result: DesktopSettings = {
     releaseChannel: DEFAULT_DESKTOP_SETTINGS.releaseChannel,
+    autoInstallUpdates: DEFAULT_DESKTOP_SETTINGS.autoInstallUpdates,
     daemon: { ...DEFAULT_DESKTOP_SETTINGS.daemon },
   };
 
@@ -89,6 +96,11 @@ function coerceDesktopSettings(input: unknown): DesktopSettings {
   const releaseChannel = coerceReleaseChannel(input.releaseChannel);
   if (releaseChannel) {
     result.releaseChannel = releaseChannel;
+  }
+
+  const autoInstallUpdates = coerceBoolean(input.autoInstallUpdates);
+  if (autoInstallUpdates !== null) {
+    result.autoInstallUpdates = autoInstallUpdates;
   }
 
   if (isRecord(input.daemon)) {
@@ -116,6 +128,11 @@ function coerceDesktopSettingsPatch(input: unknown): DesktopSettingsPatch {
   const releaseChannel = coerceReleaseChannel(input.releaseChannel);
   if (releaseChannel) {
     patch.releaseChannel = releaseChannel;
+  }
+
+  const autoInstallUpdates = coerceBoolean(input.autoInstallUpdates);
+  if (autoInstallUpdates !== null) {
+    patch.autoInstallUpdates = autoInstallUpdates;
   }
 
   if (isRecord(input.daemon)) {
@@ -163,6 +180,7 @@ function mergeDesktopSettings(
 ): DesktopSettings {
   return {
     releaseChannel: patch.releaseChannel ?? current.releaseChannel,
+    autoInstallUpdates: patch.autoInstallUpdates ?? current.autoInstallUpdates,
     daemon: { ...current.daemon, ...patch.daemon },
   };
 }

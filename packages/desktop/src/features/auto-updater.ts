@@ -89,7 +89,7 @@ class ElectronAppUpdateRuntime implements AppUpdateRuntime {
   private configured = false;
 
   configure(input: AppUpdateRuntimeConfiguration): void {
-    autoUpdater.autoDownload = true;
+    autoUpdater.autoDownload = input.autoInstallUpdates;
     autoUpdater.autoRunAppAfterInstall = true;
     // Paseo revalidates the current manifest before explicitly installing on quit.
     // Electron's built-in handler would install an older download without checking
@@ -165,27 +165,36 @@ const appUpdateService = createAppUpdateService({
 export async function checkForAppUpdate({
   currentVersion,
   releaseChannel,
+  autoInstallUpdates,
   intent,
 }: {
   currentVersion: string;
   releaseChannel: AppReleaseChannel;
+  autoInstallUpdates?: boolean;
   intent: AppUpdateCheckIntent;
 }): Promise<AppUpdateCheckResult> {
-  return appUpdateService.checkForAppUpdate({ currentVersion, releaseChannel, intent });
+  return appUpdateService.checkForAppUpdate({
+    currentVersion,
+    releaseChannel,
+    autoInstallUpdates,
+    intent,
+  });
 }
 
 export async function downloadAndInstallUpdate(
   {
     currentVersion,
     releaseChannel,
+    autoInstallUpdates,
   }: {
     currentVersion: string;
     releaseChannel: AppReleaseChannel;
+    autoInstallUpdates?: boolean;
   },
   onBeforeQuit?: () => Promise<void>,
 ): Promise<AppUpdateInstallResult> {
   return appUpdateService.downloadAndInstallUpdate(
-    { currentVersion, releaseChannel },
+    { currentVersion, releaseChannel, autoInstallUpdates },
     onBeforeQuit,
   );
 }
@@ -193,10 +202,12 @@ export async function downloadAndInstallUpdate(
 export async function installAppUpdateOnQuit({
   currentVersion,
   releaseChannel,
+  autoInstallUpdates,
   signal,
 }: {
   currentVersion: string;
   releaseChannel: AppReleaseChannel;
+  autoInstallUpdates?: boolean;
   signal: AbortSignal;
 }): Promise<boolean> {
   if (
@@ -208,5 +219,10 @@ export async function installAppUpdateOnQuit({
     return false;
   }
 
-  return appUpdateService.installUpdateOnQuit({ currentVersion, releaseChannel, signal });
+  return appUpdateService.installUpdateOnQuit({
+    currentVersion,
+    releaseChannel,
+    autoInstallUpdates,
+    signal,
+  });
 }

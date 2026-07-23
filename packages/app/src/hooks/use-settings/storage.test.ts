@@ -215,6 +215,7 @@ describe("loadSettingsFromStorage", () => {
       isElectron: true,
       settings: {
         releaseChannel: "beta",
+        autoInstallUpdates: true,
         daemon: { manageBuiltInDaemon: false, keepRunningAfterQuit: true },
       },
     });

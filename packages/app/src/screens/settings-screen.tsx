@@ -80,6 +80,8 @@ import { BrowserDataSection } from "@/desktop/components/browser-data-section";
 import { IntegrationsSection } from "@/desktop/components/integrations-section";
 import { isElectronRuntime } from "@/desktop/host";
 import { useDesktopAppUpdater } from "@/desktop/updates/use-desktop-app-updater";
+import { useDesktopSettings } from "@/desktop/settings/desktop-settings";
+import { Switch } from "@/components/ui/switch";
 import { formatVersionWithPrefix } from "@/desktop/updates/desktop-updates";
 import { resolveAppVersion } from "@/utils/app-version";
 import { useAppDiagnosticStore } from "@/diagnostics/store";
@@ -627,6 +629,7 @@ function getUpdateButtonLabel(
 function DesktopAppUpdateRow() {
   const { t } = useTranslation();
   const { settings, updateSettings } = useSettings();
+  const { settings: desktopSettings, updateSettings: updateDesktopSettings } = useDesktopSettings();
   const {
     isDesktopApp,
     statusText,
@@ -637,6 +640,18 @@ function DesktopAppUpdateRow() {
     checkForUpdates,
     installUpdate,
   } = useDesktopAppUpdater();
+
+  const [isUpdatingAutoInstall, setIsUpdatingAutoInstall] = useState(false);
+  const handleToggleAutoInstallUpdates = useCallback(() => {
+    setIsUpdatingAutoInstall(true);
+    void updateDesktopSettings({ autoInstallUpdates: !desktopSettings.autoInstallUpdates })
+      .catch(() => {
+        // useDesktopSettings owns the user-visible IPC error.
+      })
+      .finally(() => {
+        setIsUpdatingAutoInstall(false);
+      });
+  }, [desktopSettings.autoInstallUpdates, updateDesktopSettings]);
 
   useFocusEffect(
     useCallback(() => {
@@ -717,6 +732,20 @@ function DesktopAppUpdateRow() {
           value={settings.releaseChannel}
           onValueChange={handleReleaseChannelChange}
           options={releaseChannelOptions}
+        />
+      </View>
+      <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
+        <View style={settingsStyles.rowContent}>
+          <Text style={settingsStyles.rowTitle}>
+            {t("settings.about.updates.autoInstall.title")}
+          </Text>
+          <Text style={settingsStyles.rowHint}>{t("settings.about.updates.autoInstall.hint")}</Text>
+        </View>
+        <Switch
+          value={desktopSettings.autoInstallUpdates}
+          onValueChange={handleToggleAutoInstallUpdates}
+          disabled={isUpdatingAutoInstall}
+          accessibilityLabel={t("settings.about.updates.autoInstall.title")}
         />
       </View>
       <View style={[settingsStyles.row, settingsStyles.rowBorder]}>

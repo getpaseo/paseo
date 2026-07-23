@@ -1755,6 +1755,10 @@ export const fr: TranslationResources = {
       },
       updates: {
         label: "Mises à jour de l'application",
+        autoInstall: {
+          title: "Installer les mises à jour automatiquement",
+          hint: "Lorsque c'est désactivé, Paseo continue de vérifier les mises à jour en arrière-plan, mais ne télécharge ni n'installe jamais de mise à jour tant que vous n'avez pas choisi Mettre à jour.",
+        },
         readyToInstall: "Prêt à installer:{{version}}",
         installTitle: "Installer la mise à jour du bureau",
         installMessage: "Cela met à jourPaseosur cet ordinateur",
