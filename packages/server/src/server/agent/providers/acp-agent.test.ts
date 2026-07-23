@@ -2664,6 +2664,49 @@ describe("ACPAgentSession", () => {
     expect(asInternals<ACPSessionInternals>(session).activeForegroundTurnId).toBeNull();
   });
 
+  test("flushes an image-only provider echo before a rejected turn finishes", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    let rejectPrompt!: (error: Error) => void;
+    const prompt = vi.fn(
+      () =>
+        new Promise<PromptResponse>((_, reject) => {
+          rejectPrompt = reject;
+        }),
+    );
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    asInternals<ACPSessionInternals>(session).connection = { prompt };
+    session.subscribe((event) => events.push(event));
+
+    const { turnId } = await session.startTurn([
+      { type: "image", data: "AA==", mimeType: "image/png" },
+    ]);
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "user_message_chunk",
+        content: { type: "image", data: "AA==", mimeType: "image/png" },
+      } as SessionUpdate,
+    });
+
+    rejectPrompt(new Error("prompt failed"));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(
+      events.filter((event) => event.type === "timeline" || event.type === "turn_failed"),
+    ).toEqual([
+      {
+        type: "timeline",
+        provider: session.provider,
+        item: { type: "user_message", text: "[image]" },
+        turnId,
+      },
+      expect.objectContaining({ type: "turn_failed", turnId, error: "prompt failed" }),
+    ]);
+  });
+
   test("startTurn preserves JSON-RPC error details from a real ACP prompt response", async () => {
     const session = createSession();
     const clientToAgent = new TransformStream();
