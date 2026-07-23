@@ -151,11 +151,14 @@ describe("FileEditorModel", () => {
     expect(model.getSnapshot().status).toBe("clean");
   });
 
-  test("writes CRLF after CodeMirror normalizes the editor buffer", async () => {
+  test("keeps CRLF content in file form", async () => {
     const { model, session } = makeModel({ content: "one\r\ntwo\r\n" });
 
-    expect(model.getSnapshot().content).toBe("one\ntwo\n");
-    model.edit("one\ntwo\nthree\n");
+    expect(model.getSnapshot()).toMatchObject({
+      content: "one\r\ntwo\r\n",
+      lineSeparator: "\r\n",
+    });
+    model.edit("one\r\ntwo\r\nthree\r\n");
     await model.save();
 
     expect(session.writes).toEqual([
@@ -169,9 +172,9 @@ describe("FileEditorModel", () => {
   test("restores a UTF-8 BOM before writing a CRLF file", async () => {
     const { model, session } = makeModel({ content: "one\r\n", hasBom: true });
 
-    model.edit("saved\n");
+    model.edit("saved\r\n");
     await model.save();
-    model.edit("saved again\n");
+    model.edit("saved again\r\n");
     await model.save();
 
     expect(session.writes).toEqual([
@@ -184,6 +187,12 @@ describe("FileEditorModel", () => {
         expectedModifiedAt: "2026-07-18T00:00:01.000Z",
       },
     ]);
+  });
+
+  test("uses the first line separator when a file mixes styles", () => {
+    const { model } = makeModel({ content: "one\r\ntwo\nthree\r" });
+
+    expect(model.getSnapshot().lineSeparator).toBe("\r\n");
   });
 
   test("reloads a clean editor when the disk version changes", async () => {
@@ -210,6 +219,7 @@ describe("FileEditorModel", () => {
 
     model.receiveFileVersion(session.file.version);
     await Promise.resolve();
+    expect(model.getSnapshot().lineSeparator).toBe("\n");
     model.edit("saved\n");
     await model.save();
 
@@ -252,7 +262,7 @@ describe("FileEditorModel", () => {
 
   test("keeps the local CRLF and BOM when overwriting a conflict", async () => {
     const { model, session } = makeModel({ content: "one\r\n", hasBom: true });
-    model.edit("local\n");
+    model.edit("local\r\n");
     model.receiveFileVersion(ready("2026-07-18T00:00:02.000Z", 4));
 
     await model.overwrite();
@@ -282,7 +292,7 @@ describe("FileEditorModel", () => {
 
   test("adopts the remote format when reloading a conflict", async () => {
     const { model, session } = makeModel({ content: "one\r\n", hasBom: true });
-    model.edit("local\n");
+    model.edit("local\r\n");
     const diskVersion = ready("2026-07-18T00:00:02.000Z", 5) as Extract<
       FileVersion,
       { status: "ready" }

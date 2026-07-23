@@ -239,20 +239,26 @@ test.describe("CodeMirror workspace file editing", () => {
     await expect(editor(page)).toContainText("const afterReconnect = 9;");
   });
 
-  test("preserves a UTF-8 BOM and CRLF line endings after saving", async ({
+  test("preserves a UTF-8 BOM and uses the first line separator after saving", async ({
     page,
     withWorkspace,
   }) => {
     const workspace = await withWorkspace({ prefix: "file-editing-encoding-" });
     const sourcePath = path.join(workspace.repoPath, "windows.ts");
-    await writeFile(sourcePath, Buffer.from("\uFEFFconst initial = true;\r\n", "utf8"));
+    await writeFile(
+      sourcePath,
+      Buffer.from("\uFEFFconst initial = true;\r\nconst mixed = true;\n", "utf8"),
+    );
     await workspace.navigateTo();
     await openWorkspaceFile(page, "windows.ts");
 
-    await replaceEditorText(page, "const saved = true;\n");
+    await replaceEditorText(page, "const saved = true;\nconst normalized = true;\n");
     await editor(page).press("Control+s");
 
-    const expected = Buffer.from("\uFEFFconst saved = true;\r\n", "utf8").toString("hex");
+    const expected = Buffer.from(
+      "\uFEFFconst saved = true;\r\nconst normalized = true;\r\n",
+      "utf8",
+    ).toString("hex");
     await expect.poll(async () => (await readFile(sourcePath)).toString("hex")).toBe(expected);
   });
 
