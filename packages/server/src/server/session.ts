@@ -129,6 +129,7 @@ import {
   type PersistedProjectRecord,
   type PersistedWorkspaceRecord,
   type ProjectRegistry,
+  type WorkspaceMutation,
   type WorkspaceRegistry,
 } from "./workspace-registry.js";
 import { wrapSpokenInput } from "./voice-config.js";
@@ -585,6 +586,7 @@ export class Session {
   private readonly daemonConfigStore: DaemonConfigStore;
   private readonly pushTokenStore: PushTokenStore;
   private unsubscribeAgentEvents: (() => void) | null = null;
+  private unsubscribeWorkspaceMutations: (() => void) | null = null;
   private viewedTimelineAgentIds = new Set<string>();
   private readonly viewedTimelineAgentIdsBySource = new Map<object, Set<string>>();
   private readonly clientCapabilitiesBySource = new Map<object, ReadonlySet<ClientCapability>>();
@@ -981,6 +983,7 @@ export class Session {
     });
 
     this.subscribeToAgentEvents();
+    this.subscribeToWorkspaceMutations();
 
     this.sessionLogger.trace({}, "agent.session.lifecycle.created");
   }
@@ -1135,10 +1138,6 @@ export class Session {
     // COMPAT(workspaceCreateCausalUpdate): added in v0.1.106, remove after 2027-01-12.
     // Older clients create before subscribing and require the causal update beside the response.
     this.emit({ type: "workspace_update", payload: { kind: "upsert", workspace } });
-  }
-
-  async archiveWorkspaceRecordForExternalMutation(workspaceId: string): Promise<void> {
-    await this.archiveWorkspaceRecord(workspaceId);
   }
 
   markWorkspaceArchivingForExternalMutation(
@@ -1346,6 +1345,36 @@ export class Session {
         });
     }
     this.providerCatalogSession.start();
+  }
+
+  private subscribeToWorkspaceMutations(): void {
+    this.unsubscribeWorkspaceMutations?.();
+    this.unsubscribeWorkspaceMutations =
+      this.workspaceRegistry.subscribeToMutations?.((mutation) =>
+        this.handleWorkspaceMutation(mutation),
+      ) ?? null;
+  }
+
+  private async handleWorkspaceMutation(mutation: WorkspaceMutation): Promise<void> {
+    try {
+      if (
+        mutation.kind === "archive" ||
+        mutation.kind === "remove" ||
+        mutation.workspace?.archivedAt
+      ) {
+        this.workspaceGitObserver.removeForWorkspaceId(mutation.workspaceId);
+      } else if (mutation.workspace && this.workspaceUpdatesSubscription) {
+        await this.workspaceGitObserver.syncObserverForWorkspace(mutation.workspace);
+      }
+      await this.emitWorkspaceUpdatesForWorkspaceIds([mutation.workspaceId], {
+        skipReconcile: true,
+      });
+    } catch (error) {
+      this.sessionLogger.warn(
+        { err: error, workspaceId: mutation.workspaceId, mutationKind: mutation.kind },
+        "Failed to apply workspace mutation to session",
+      );
+    }
   }
 
   private subscribeToAgentEvents(): void {
@@ -4491,6 +4520,7 @@ export class Session {
         workspace && this.matchesWorkspaceFilter({ workspace, filter: subscription.filter })
           ? workspace
           : null;
+      const lastEmitted = subscription.lastEmittedByWorkspaceId.get(workspaceId);
       if (
         options?.dedupeGitState &&
         this.workspaceGitObserver.shouldSkipUpdate(workspaceId, nextWorkspace)
@@ -4500,7 +4530,7 @@ export class Session {
       this.workspaceGitObserver.recordDescriptorState(workspaceId, nextWorkspace);
 
       if (!nextWorkspace) {
-        if (workspace && !subscription.lastEmittedByWorkspaceId.has(workspaceId)) {
+        if (lastEmitted?.kind === "remove" || (workspace && !lastEmitted)) {
           continue;
         }
         subscription.lastEmittedByWorkspaceId.delete(workspaceId);
@@ -4516,7 +4546,6 @@ export class Session {
         workspace: nextWorkspace,
       };
 
-      const lastEmitted = subscription.lastEmittedByWorkspaceId.get(workspaceId);
       if (
         lastEmitted &&
         lastEmitted.kind === "upsert" &&
@@ -6315,6 +6344,8 @@ export class Session {
       this.unsubscribeAgentEvents();
       this.unsubscribeAgentEvents = null;
     }
+    this.unsubscribeWorkspaceMutations?.();
+    this.unsubscribeWorkspaceMutations = null;
     this.agentUpdates.dispose();
     await this.hubExecutionController?.cleanup();
     if (this.unsubscribeTerminalWorkspaceContributionEvents) {
