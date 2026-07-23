@@ -3765,7 +3765,7 @@ test("fetchTimeline returns a bounded reset window when cursor epoch is stale", 
   expect(older.hasOlder).toBe(true);
 });
 
-test("Codex voice MCP sessions use the generic paseo MCP injection with voice approval", async () => {
+test("Codex voice MCP launch config preserves voice approval and injects Paseo MCP", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-codex-voice-mcp-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);
   const client = new TestAgentClient();
@@ -3807,7 +3807,6 @@ test("Codex voice MCP sessions use the generic paseo MCP injection with voice ap
   expect(client.createdConfigs[0]?.mcpServers).toMatchObject({
     [PASEO_MCP_SERVER_NAME]: { type: "http" },
   });
-  expect(client.createdConfigs[0]?.mcpServers?.[PASEO_MCP_SERVER_NAME]?.type).toBe("http");
   expect(client.createdConfigs[0]?.mcpServers?.[PASEO_MCP_SERVER_NAME]).toHaveProperty(
     "url",
     expect.stringMatching(/^http:\/\/127\.0\.0\.1:4123\/mcp\/agents\?callerAgentId=[0-9a-f-]+$/),

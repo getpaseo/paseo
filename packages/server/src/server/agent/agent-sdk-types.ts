@@ -13,6 +13,7 @@ export interface AgentMetadata {
 
 export type CodexMcpApprovalMode = "auto" | "prompt" | "approve";
 
+/** Native Codex MCP server settings stored under the Codex-specific extra config. */
 export interface CodexMcpServerPolicy {
   enabled_tools?: string[];
   disabled_tools?: string[];

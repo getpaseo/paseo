@@ -1080,7 +1080,7 @@ describe("Codex app-server provider", () => {
     });
   });
 
-  test("maps MCP approval settings into Codex inner config", () => {
+  test("includes native MCP approval settings in Codex inner config", () => {
     const session = createSession({
       mcpServers: {
         paseo: {
