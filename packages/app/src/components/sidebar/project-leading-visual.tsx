@@ -6,7 +6,7 @@ import { ProjectIconView } from "@/components/project-icon-view";
 import { SyncedLoader } from "@/components/synced-loader";
 import type { Theme } from "@/styles/theme";
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
-import { shouldRenderSyncedStatusLoader } from "@/utils/status-loader";
+import { getProjectStatusBadgeContent } from "@/utils/project-status-badge-content";
 import { projectIconPlaceholderLabelFromDisplayName } from "@/utils/project-display-name";
 
 // Every surfaced status shares one badge shell, so the ring never changes size or position
@@ -133,41 +133,35 @@ export function ProjectStatusIndicator({
 }
 
 function ProjectStatusBadge({ statusBucket }: { statusBucket: SidebarStateBucket | null }) {
-  const content = getStatusBadgeContent(statusBucket);
+  const content = getProjectStatusBadgeContent(statusBucket);
   if (content === null) {
     return null;
   }
 
   return (
     <View style={styles.statusBadge} testID="project-status-badge">
-      {content}
+      {renderProjectStatusBadgeContent(content)}
     </View>
   );
 }
 
-// Returns the badge's inner element, or null when the bucket shouldn't surface a badge at
-// all. Resolved as a value rather than a component so the shell is never rendered empty.
-function getStatusBadgeContent(statusBucket: SidebarStateBucket | null): ReactNode | null {
-  if (shouldRenderSyncedStatusLoader({ bucket: statusBucket })) {
-    // Nudged left a hair so the comet's visual center sits on the circle center (see the
-    // nudge constant). The wrapper carries the transform; the loader itself is untouched.
-    return (
-      <View style={styles.runningLoaderNudge}>
-        <ThemedSyncedLoader size={STATUS_BADGE_LOADER_SIZE} uniProps={syncedLoaderColorMapping} />
-      </View>
-    );
+function renderProjectStatusBadgeContent(
+  content: NonNullable<ReturnType<typeof getProjectStatusBadgeContent>>,
+): ReactNode {
+  switch (content.kind) {
+    case "loader":
+      // Nudged left a hair so the comet's visual center sits on the circle center (see the
+      // nudge constant). The wrapper carries the transform; the loader itself is untouched.
+      return (
+        <View style={styles.runningLoaderNudge}>
+          <ThemedSyncedLoader size={STATUS_BADGE_LOADER_SIZE} uniProps={syncedLoaderColorMapping} />
+        </View>
+      );
+    case "alert":
+      return <ThemedCircleAlert size={STATUS_BADGE_ALERT_SIZE} uniProps={amberColorMapping} />;
+    case "dot":
+      return <View testID="project-status-dot" style={getStatusDotColorStyle(content.bucket)} />;
   }
-
-  if (statusBucket === "needs_input") {
-    return <ThemedCircleAlert size={STATUS_BADGE_ALERT_SIZE} uniProps={amberColorMapping} />;
-  }
-
-  const dotColorStyle = statusBucket ? getStatusDotColorStyle(statusBucket) : null;
-  if (!dotColorStyle) {
-    return null;
-  }
-
-  return <View testID="project-status-dot" style={dotColorStyle} />;
 }
 
 function ProjectIcon({
@@ -201,19 +195,8 @@ function ProjectInlineChevron({ chevron }: { chevron: "expand" | "collapse" | nu
   return <ChevronRight size={14} color="#9ca3af" />;
 }
 
-function getStatusDotColorStyle(bucket: SidebarStateBucket): ViewStyle | null {
-  switch (bucket) {
-    case "needs_input":
-      return styles.statusDotNeedsInput;
-    case "failed":
-      return styles.statusDotFailed;
-    case "running":
-      return styles.statusDotRunning;
-    case "attention":
-      return styles.statusDotAttention;
-    case "done":
-      return null;
-  }
+function getStatusDotColorStyle(bucket: "failed" | "attention"): ViewStyle {
+  return bucket === "failed" ? styles.statusDotFailed : styles.statusDotAttention;
 }
 
 const styles = StyleSheet.create((theme) => {
@@ -271,17 +254,9 @@ const styles = StyleSheet.create((theme) => {
     runningLoaderNudge: {
       transform: [{ translateX: STATUS_BADGE_LOADER_NUDGE_X }],
     },
-    statusDotNeedsInput: {
-      ...statusDotBase,
-      backgroundColor: theme.colors.palette.amber[500],
-    },
     statusDotFailed: {
       ...statusDotBase,
       backgroundColor: theme.colors.palette.red[500],
-    },
-    statusDotRunning: {
-      ...statusDotBase,
-      backgroundColor: theme.colors.palette.blue[500],
     },
     statusDotAttention: {
       ...statusDotBase,

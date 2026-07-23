@@ -364,38 +364,42 @@ test.describe("collapsed project status badge", () => {
 
       await page.mouse.move(1200, 850);
 
-      const expectations: Array<{
-        label: string;
-        projectId: string;
-        expectedBadge: string | null;
-      }> = [
-        {
-          label: runningAttention.label,
-          projectId: runningAttention.base.projectId,
-          expectedBadge: "running",
-        },
-        {
-          label: needsInputRunning.label,
-          projectId: needsInputRunning.base.projectId,
-          expectedBadge: "needs_input",
-        },
-        {
-          label: attentionDone.label,
-          projectId: attentionDone.base.projectId,
-          expectedBadge: "attention",
-        },
-        { label: allDone.label, projectId: allDone.base.projectId, expectedBadge: null },
+      // Split by expected outcome rather than branching per-item on a nullable field: each
+      // array's seeded state is deterministic, so every assertion path is fixed at seed time
+      // instead of decided by the test body at runtime.
+      const badgeExpectations: Array<{ label: string; projectId: string; expectedBadge: string }> =
+        [
+          {
+            label: runningAttention.label,
+            projectId: runningAttention.base.projectId,
+            expectedBadge: "running",
+          },
+          {
+            label: needsInputRunning.label,
+            projectId: needsInputRunning.base.projectId,
+            expectedBadge: "needs_input",
+          },
+          {
+            label: attentionDone.label,
+            projectId: attentionDone.base.projectId,
+            expectedBadge: "attention",
+          },
+        ];
+      const noBadgeExpectations: Array<{ label: string; projectId: string }> = [
+        { label: allDone.label, projectId: allDone.base.projectId },
       ];
-      for (const expectation of expectations) {
+      const expectations = [...badgeExpectations, ...noBadgeExpectations];
+
+      for (const expectation of badgeExpectations) {
         const row = page.getByTestId(`sidebar-project-row-${expectation.projectId}`);
-        if (expectation.expectedBadge === null) {
-          await expect(row.getByTestId("project-status-badge")).toHaveCount(0, { timeout: 60_000 });
-          continue;
-        }
         await expect(
           row.getByTestId(`project-status-indicator-${expectation.expectedBadge}`),
         ).toBeVisible({ timeout: 60_000 });
         await expect(row.getByTestId("project-status-badge")).toBeVisible({ timeout: 60_000 });
+      }
+      for (const expectation of noBadgeExpectations) {
+        const row = page.getByTestId(`sidebar-project-row-${expectation.projectId}`);
+        await expect(row.getByTestId("project-status-badge")).toHaveCount(0, { timeout: 60_000 });
       }
 
       // Control assertions: no badge on the expanded project row, but the running workspace
