@@ -539,12 +539,15 @@ export function AdaptiveModalSheet({
     [footer, insets.bottom, isMobile, theme.spacing],
   );
   const bottomSheetContentStyle = useMemo(
+    // Gorhom spreads this outer array into StyleSheet.compose, which accepts two arguments on web.
     () => [
       styles.bottomSheetContent,
-      contentContainerStyle,
-      compactSafeAreaPadding.contentPaddingBottom != null
-        ? { paddingBottom: compactSafeAreaPadding.contentPaddingBottom }
-        : null,
+      [
+        contentContainerStyle,
+        compactSafeAreaPadding.contentPaddingBottom != null
+          ? { paddingBottom: compactSafeAreaPadding.contentPaddingBottom }
+          : null,
+      ],
     ],
     [compactSafeAreaPadding.contentPaddingBottom, contentContainerStyle],
   );
