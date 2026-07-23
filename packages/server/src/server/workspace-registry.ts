@@ -84,6 +84,12 @@ export interface WorkspaceMutation {
   workspace: PersistedWorkspaceRecord | null;
 }
 
+export interface ProjectMutation {
+  kind: "upsert" | "archive" | "remove";
+  projectId: string;
+  project: PersistedProjectRecord | null;
+}
+
 export interface ProjectRegistry {
   initialize(): Promise<void>;
   existsOnDisk(): Promise<boolean>;
@@ -99,13 +105,7 @@ export interface ProjectRegistry {
   archive(projectId: string, archivedAt: string): Promise<void>;
   remove(projectId: string): Promise<void>;
   /** Central lifecycle seam for daemon-global project observers. */
-  subscribeToMutations?(
-    listener: (mutation: {
-      kind: "upsert" | "archive" | "remove";
-      projectId: string;
-      project: PersistedProjectRecord | null;
-    }) => void | Promise<void>,
-  ): () => void;
+  subscribeToMutations?(listener: (mutation: ProjectMutation) => void | Promise<void>): () => void;
 }
 
 export interface WorkspaceRegistry {
