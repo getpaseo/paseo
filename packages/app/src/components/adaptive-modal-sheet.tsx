@@ -3,7 +3,7 @@ import type { ReactNode, Ref } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { Modal, Platform, Pressable, ScrollView, Text, TextInput, View } from "react-native";
-import type { TextInputProps } from "react-native";
+import type { StyleProp, TextInputProps, ViewStyle } from "react-native";
 import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { getOverlayRoot, OVERLAY_Z } from "../lib/overlay-root";
@@ -458,6 +458,7 @@ export interface AdaptiveModalSheetProps {
   desktopMaxWidth?: number;
   scrollable?: boolean;
   presentation?: "push" | "replace";
+  contentContainerStyle?: StyleProp<ViewStyle>;
 }
 
 export function AdaptiveModalSheet({
@@ -472,6 +473,7 @@ export function AdaptiveModalSheet({
   desktopMaxWidth,
   scrollable = true,
   presentation,
+  contentContainerStyle,
 }: AdaptiveModalSheetProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
@@ -492,20 +494,22 @@ export function AdaptiveModalSheet({
   const bottomSheetContentStyle = useMemo(
     () => [
       styles.bottomSheetContent,
+      contentContainerStyle,
       compactSafeAreaPadding.contentPaddingBottom != null
         ? { paddingBottom: compactSafeAreaPadding.contentPaddingBottom }
         : null,
     ],
-    [compactSafeAreaPadding.contentPaddingBottom],
+    [compactSafeAreaPadding.contentPaddingBottom, contentContainerStyle],
   );
   const bottomSheetStaticContentStyle = useMemo(
     () => [
       styles.bottomSheetStaticContent,
+      contentContainerStyle,
       compactSafeAreaPadding.contentPaddingBottom != null
         ? { paddingBottom: compactSafeAreaPadding.contentPaddingBottom }
         : null,
     ],
-    [compactSafeAreaPadding.contentPaddingBottom],
+    [compactSafeAreaPadding.contentPaddingBottom, contentContainerStyle],
   );
   const footerStyle = useMemo(
     () => [
@@ -640,7 +644,7 @@ export function AdaptiveModalSheet({
         <View style={styles.desktopScrollContainer}>
           <ScrollView
             style={styles.desktopScroll}
-            contentContainerStyle={styles.desktopContent}
+            contentContainerStyle={[styles.desktopContent, contentContainerStyle]}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator
           >
@@ -648,7 +652,7 @@ export function AdaptiveModalSheet({
           </ScrollView>
         </View>
       ) : (
-        <View style={styles.desktopStaticContent}>{children}</View>
+        <View style={[styles.desktopStaticContent, contentContainerStyle]}>{children}</View>
       )}
       {footer ? <View style={footerStyle}>{footer}</View> : null}
     </>

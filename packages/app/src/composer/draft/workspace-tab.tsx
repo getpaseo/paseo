@@ -9,7 +9,6 @@ import { useContainerWidthBelow } from "@/hooks/use-container-width";
 import invariant from "tiny-invariant";
 import { Composer } from "@/composer";
 import { FileDropZone } from "@/components/file-drop/file-drop-zone";
-import { DraftAgentModeControl } from "@/composer/agent-controls/mode-control";
 import { ComposerImportPill } from "@/composer/draft/import-pill";
 import { AgentStreamView } from "@/agent-stream/view";
 import { composerWorkspaceAttachment } from "@/composer/attachments/workspace";
@@ -609,57 +608,6 @@ export function WorkspaceDraftAgentTab({
     focusInputRef.current = focus;
   }, []);
 
-  const handleProviderSelectWithFocus = useCallback(
-    (provider: Parameters<typeof composerState.setProviderFromUser>[0]) => {
-      composerState.setProviderFromUser(provider);
-      focusInputRef.current?.();
-    },
-    [composerState],
-  );
-
-  const handleModeSelectWithFocus = useCallback(
-    (modeId: string) => {
-      composerState.setModeFromUser(modeId);
-      focusInputRef.current?.();
-    },
-    [composerState],
-  );
-
-  const handleModelSelectWithFocus = useCallback(
-    (modelId: string) => {
-      composerState.setModelFromUser(modelId);
-      focusInputRef.current?.();
-    },
-    [composerState],
-  );
-
-  const handleProviderAndModelSelectWithFocus = useCallback(
-    (
-      provider: Parameters<typeof composerState.setProviderAndModelFromUser>[0],
-      modelId: string,
-    ) => {
-      composerState.setProviderAndModelFromUser(provider, modelId);
-      focusInputRef.current?.();
-    },
-    [composerState],
-  );
-
-  const handleThinkingOptionSelectWithFocus = useCallback(
-    (optionId: string) => {
-      composerState.setThinkingOptionFromUser(optionId);
-      focusInputRef.current?.();
-    },
-    [composerState],
-  );
-
-  const handleSetFeatureWithFocus = useCallback(
-    (featureId: string, value: unknown) => {
-      composerState.agentControls.onSetFeature?.(featureId, value);
-      focusInputRef.current?.();
-    },
-    [composerState],
-  );
-
   const { style: composerKeyboardStyle } = useKeyboardShiftStyle({
     mode: "translate",
   });
@@ -680,39 +628,11 @@ export function WorkspaceDraftAgentTab({
   const composerAgentControls = useMemo(
     () => ({
       ...composerState.agentControls,
-      onSelectProvider: handleProviderSelectWithFocus,
-      onSelectMode: handleModeSelectWithFocus,
-      onSelectModel: handleModelSelectWithFocus,
-      onSelectProviderAndModel: handleProviderAndModelSelectWithFocus,
-      onSelectThinkingOption: handleThinkingOptionSelectWithFocus,
-      onSetFeature: handleSetFeatureWithFocus,
       onDropdownClose: handleDropdownCloseFocus,
       disabled: isSubmitting,
     }),
-    [
-      composerState.agentControls,
-      handleProviderSelectWithFocus,
-      handleModeSelectWithFocus,
-      handleModelSelectWithFocus,
-      handleProviderAndModelSelectWithFocus,
-      handleThinkingOptionSelectWithFocus,
-      handleSetFeatureWithFocus,
-      handleDropdownCloseFocus,
-      isSubmitting,
-    ],
+    [composerState.agentControls, handleDropdownCloseFocus, isSubmitting],
   );
-  const composerFooter = useMemo(
-    () =>
-      isCompactComposerLayout ? (
-        <DraftAgentModeControl
-          placement="footer"
-          {...composerAgentControls}
-          isCompactLayout={isCompactComposerLayout}
-        />
-      ) : undefined,
-    [isCompactComposerLayout, composerAgentControls],
-  );
-
   return (
     <FileDropZone style={styles.container}>
       <View style={styles.contentContainer}>
@@ -770,7 +690,6 @@ export function WorkspaceDraftAgentTab({
           onFocusInput={handleFocusInputCallback}
           commandDraftConfig={composerState.commandDraftConfig}
           agentControls={composerAgentControls}
-          footer={composerFooter}
           isCompactLayout={isCompactComposerLayout}
         />
       </ReanimatedAnimated.View>
