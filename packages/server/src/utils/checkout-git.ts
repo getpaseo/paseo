@@ -2183,6 +2183,21 @@ export interface CheckoutCommitsResult {
   commits: CheckoutCommit[];
 }
 
+async function tryResolveCheckoutCommitsBaseRef(
+  cwd: string,
+  baseRef: string | null,
+  currentBranch: string,
+): Promise<string | null> {
+  if (!baseRef) {
+    return null;
+  }
+  const normalizedBaseRef = normalizeLocalBranchRefName(baseRef);
+  if (!normalizedBaseRef || normalizedBaseRef === currentBranch) {
+    return null;
+  }
+  return resolveMostAheadBaseRef(cwd, normalizedBaseRef).catch(() => null);
+}
+
 export async function listCheckoutCommits({
   cwd,
   context,
@@ -2197,13 +2212,18 @@ export async function listCheckoutCommits({
 
   const { resolvedBaseRef } = await resolveBaseRefForCwd(cwd, context);
   const normalizedBaseRef = resolvedBaseRef ? normalizeLocalBranchRefName(resolvedBaseRef) : null;
-  let comparisonBaseRef: string | null = null;
-  if (resolvedBaseRef && normalizedBaseRef && normalizedBaseRef !== currentBranch) {
-    try {
-      comparisonBaseRef = await resolveBestComparisonBaseRef(cwd, resolvedBaseRef);
-    } catch {
-      // History remains useful when a saved base branch has been renamed or deleted.
-    }
+  let comparisonBaseRef = await tryResolveCheckoutCommitsBaseRef(
+    cwd,
+    resolvedBaseRef,
+    currentBranch,
+  );
+  if (!comparisonBaseRef && normalizedBaseRef && normalizedBaseRef !== currentBranch) {
+    // Saved worktree metadata can outlive a renamed or deleted base branch.
+    comparisonBaseRef = await tryResolveCheckoutCommitsBaseRef(
+      cwd,
+      await resolveBaseRef(cwd),
+      currentBranch,
+    );
   }
 
   let workspaceRecords: ParsedCheckoutCommit[] = [];

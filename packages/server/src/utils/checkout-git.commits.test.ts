@@ -113,9 +113,9 @@ describe("listCheckoutCommits", () => {
       context: { worktreesRoot },
     });
 
-    expect(baseRef).toBeNull();
+    expect(baseRef).toBe("main");
     expect(commits.map((entry) => entry.subject)).toEqual(["Feature work", "initial"]);
-    expect(commits.every((entry) => entry.isOnBase === true)).toBe(true);
+    expect(commits.map((entry) => entry.isOnBase)).toEqual([false, true]);
   });
 
   it("marks all commits local-only when there is no remote", async () => {
@@ -143,6 +143,23 @@ describe("listCheckoutCommits", () => {
     expect(commits.map(({ subject, isOnRemote }) => ({ subject, isOnRemote }))).toEqual([
       { subject: "Local feature", isOnRemote: false },
       { subject: "initial", isOnRemote: true },
+    ]);
+  });
+
+  it("keeps local base commits out of workspace history when the local base is ahead", async () => {
+    const { repoDir, tempDir } = initRepoOnMain();
+    addBareRemote(repoDir, tempDir);
+    git(["push", "-u", "origin", "main"], repoDir);
+    commitFile(repoDir, "local-base.txt", "base\n", "Local base work");
+    git(["checkout", "-b", "feature"], repoDir);
+    commitFile(repoDir, "feature.txt", "feature\n", "Feature work");
+
+    const { commits } = await listCheckoutCommits({ cwd: repoDir });
+
+    expect(commits.map(({ subject, isOnBase }) => ({ subject, isOnBase }))).toEqual([
+      { subject: "Feature work", isOnBase: false },
+      { subject: "Local base work", isOnBase: true },
+      { subject: "initial", isOnBase: true },
     ]);
   });
 
