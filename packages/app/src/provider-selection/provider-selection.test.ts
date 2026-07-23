@@ -260,6 +260,25 @@ describe("combined model selector data", () => {
     ).toBe("Default");
   });
 
+  it("distinguishes a loading selection from a resolved empty selection", () => {
+    expect(
+      resolveSelectedModelLabel({
+        providers: [],
+        selectedProvider: "",
+        selectedModel: "",
+        isLoading: true,
+      }),
+    ).toBe("Loading...");
+    expect(
+      resolveSelectedModelLabel({
+        providers: [],
+        selectedProvider: "",
+        selectedModel: "",
+        isLoading: false,
+      }),
+    ).toBe("Select model");
+  });
+
   it("keeps a stored selected model visible when current snapshot rows no longer offer it", () => {
     const providers = buildSelectableProviderSelectorProviders([
       snapshotEntry({

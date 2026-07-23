@@ -1,7 +1,6 @@
-import { useCallback, useState, type ReactNode } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Keyboard, ScrollView, Text, View, type PressableStateCallbackType } from "react-native";
-import { BottomSheetScrollView } from "@gorhom/bottom-sheet";
 import { StyleSheet } from "react-native-unistyles";
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
 import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
@@ -12,11 +11,12 @@ import { ComposerToolbarGlyph } from "@/composer/agent-controls/glyph";
 import type { ProviderSelectorProvider } from "@/provider-selection/provider-selection";
 import { useIsCompactFormFactor } from "@/constants/layout";
 
-const SNAP_POINTS = ["70%", "90%"];
+const SNAP_POINTS = ["80%", "90%"];
 const MODEL_LIST_TOP_INSET = 4;
 const MODEL_ROW_STRIDE = 44;
 const MODEL_VIEWPORT_VISIBLE_ROWS = 4.5;
-const MODEL_VIEWPORT_HEIGHT = MODEL_LIST_TOP_INSET + MODEL_ROW_STRIDE * MODEL_VIEWPORT_VISIBLE_ROWS;
+const FIXED_MODEL_VIEWPORT_HEIGHT =
+  MODEL_LIST_TOP_INSET + MODEL_ROW_STRIDE * MODEL_VIEWPORT_VISIBLE_ROWS;
 
 interface CompactModelSheetProps {
   providers: ProviderSelectorProvider[];
@@ -72,6 +72,16 @@ export function CompactModelSheet({
   const { prepareToOpen, reset } = browser;
   const ProviderIcon =
     selectedProvider.trim().length > 0 ? getProviderIcon(selectedProvider) : null;
+  const compactFooter = useMemo(
+    () =>
+      usesBottomSheet ? (
+        <View style={styles.compactFooter} testID="agent-controls-settings-list">
+          <View style={styles.modelViewportDivider} />
+          <View style={[styles.controlsContent, styles.compactControlsContent]}>{children}</View>
+        </View>
+      ) : undefined,
+    [children, usesBottomSheet],
+  );
 
   const open = useCallback(() => {
     Keyboard.dismiss();
@@ -134,10 +144,19 @@ export function CompactModelSheet({
         onClose={close}
         snapPoints={SNAP_POINTS}
         scrollable={false}
+        sizeContentToCurrentSnapPoint={usesBottomSheet}
+        footer={compactFooter}
+        footerContainerStyle={usesBottomSheet ? styles.compactFooterContainer : undefined}
         contentContainerStyle={styles.sheetBody}
         testID="agent-controls-model-sheet"
       >
-        <View style={styles.modelViewport} testID="agent-controls-model-viewport">
+        <View
+          style={[
+            styles.modelViewport,
+            usesBottomSheet ? styles.flexibleModelViewport : styles.fixedModelViewport,
+          ]}
+          testID="agent-controls-model-viewport"
+        >
           <ModelBrowser
             state={browser}
             onSelect={onSelect}
@@ -147,28 +166,20 @@ export function CompactModelSheet({
             scrolling="independent"
           />
         </View>
-        <View style={styles.modelViewportDivider} />
-        {usesBottomSheet ? (
-          <BottomSheetScrollView
-            style={styles.controlsScroll}
-            contentContainerStyle={styles.controlsContent}
-            keyboardShouldPersistTaps="handled"
-            showsVerticalScrollIndicator={false}
-            testID="agent-controls-settings-list"
-          >
-            {children}
-          </BottomSheetScrollView>
-        ) : (
-          <ScrollView
-            style={styles.controlsScroll}
-            contentContainerStyle={styles.controlsContent}
-            keyboardShouldPersistTaps="handled"
-            showsVerticalScrollIndicator={false}
-            testID="agent-controls-settings-list"
-          >
-            {children}
-          </ScrollView>
-        )}
+        {!usesBottomSheet ? (
+          <>
+            <View style={styles.modelViewportDivider} />
+            <ScrollView
+              style={styles.controlsScroll}
+              contentContainerStyle={styles.controlsContent}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+              testID="agent-controls-settings-list"
+            >
+              {children}
+            </ScrollView>
+          </>
+        ) : null}
       </AdaptiveModalSheet>
     </>
   );
@@ -208,21 +219,44 @@ const styles = StyleSheet.create((theme) => ({
   sheetBody: {
     paddingHorizontal: 0,
     paddingTop: 0,
+    paddingBottom: 0,
     gap: 0,
   },
   modelViewport: {
-    height: MODEL_VIEWPORT_HEIGHT,
-    minHeight: MODEL_VIEWPORT_HEIGHT,
     overflow: "hidden",
     backgroundColor: theme.colors.surfaceSidebar,
   },
+  flexibleModelViewport: {
+    flex: 1,
+    minHeight: 0,
+  },
+  fixedModelViewport: {
+    height: FIXED_MODEL_VIEWPORT_HEIGHT,
+    minHeight: FIXED_MODEL_VIEWPORT_HEIGHT,
+  },
   modelViewportDivider: {
     height: 1,
+    flexShrink: 0,
     backgroundColor: theme.colors.border,
   },
   controlsScroll: {
     flex: 1,
     minHeight: 0,
+  },
+  compactFooterContainer: {
+    flexDirection: "column",
+    alignItems: "stretch",
+    justifyContent: "flex-start",
+    gap: 0,
+    paddingHorizontal: 0,
+    paddingTop: 0,
+    borderTopWidth: 0,
+  },
+  compactFooter: {
+    minWidth: 0,
+  },
+  compactControlsContent: {
+    paddingBottom: 0,
   },
   controlsContent: {
     paddingHorizontal: theme.spacing[2],
