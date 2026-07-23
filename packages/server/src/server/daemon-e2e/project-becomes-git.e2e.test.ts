@@ -1,6 +1,6 @@
 import { execFile as execFileCallback } from "node:child_process";
 import { mkdtempSync, realpathSync } from "node:fs";
-import { readFile, rm } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -18,6 +18,7 @@ const cleanupListeners = new Set<() => void>();
 const execFile = promisify(execFileCallback);
 
 type ProjectUpdatePayload = Extract<DaemonEvent, { type: "project.update" }>["payload"];
+type WorkspaceUpdatePayload = Extract<DaemonEvent, { type: "workspace_update" }>["payload"];
 
 function waitForProjectUpdate(
   client: DaemonClient,
@@ -25,6 +26,21 @@ function waitForProjectUpdate(
 ): Promise<ProjectUpdatePayload> {
   return new Promise((resolve) => {
     const unsubscribe = client.on("project.update", (message) => {
+      if (!predicate(message.payload)) return;
+      cleanupListeners.delete(unsubscribe);
+      unsubscribe();
+      resolve(message.payload);
+    });
+    cleanupListeners.add(unsubscribe);
+  });
+}
+
+function waitForWorkspaceUpdate(
+  client: DaemonClient,
+  predicate: (payload: WorkspaceUpdatePayload) => boolean,
+): Promise<WorkspaceUpdatePayload> {
+  return new Promise((resolve) => {
+    const unsubscribe = client.on("workspace_update", (message) => {
       if (!predicate(message.payload)) return;
       cleanupListeners.delete(unsubscribe);
       unsubscribe();
@@ -120,4 +136,83 @@ test("an empty project becomes Git without changing its identity or creating a w
     updatedAt: expect.any(String),
     archivedAt: null,
   });
+}, 30_000);
+
+test("an opened directory workspace becomes Git without restarting the daemon", async () => {
+  const projectRoot = realpathSync(
+    mkdtempSync(path.join(os.tmpdir(), "paseo-workspace-becomes-git-")),
+  );
+  const paseoHomeRoot = realpathSync(
+    mkdtempSync(path.join(os.tmpdir(), "paseo-workspace-becomes-git-home-")),
+  );
+  cleanupPaths.add(projectRoot);
+  cleanupPaths.add(paseoHomeRoot);
+
+  const daemon = await createTestPaseoDaemon({ paseoHomeRoot, cleanup: false });
+  cleanupDaemons.add(daemon);
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  cleanupClients.add(client);
+  await client.connect();
+
+  const opened = await client.openProject(projectRoot);
+  expect(opened.error).toBeNull();
+  expect(opened.workspace).toMatchObject({
+    workspaceDirectory: projectRoot,
+    projectRootPath: projectRoot,
+    projectKind: "non_git",
+    workspaceKind: "directory",
+  });
+  const workspace = opened.workspace!;
+
+  await client.fetchWorkspaces({
+    subscribe: { subscriptionId: "workspace-becomes-git" },
+    filter: { projectId: workspace.projectId },
+  });
+
+  const gitWorkspaceUpdate = waitForWorkspaceUpdate(
+    client,
+    (payload) =>
+      payload.kind === "upsert" &&
+      payload.workspace.id === workspace.id &&
+      payload.workspace.projectId === workspace.projectId &&
+      payload.workspace.projectKind === "git" &&
+      payload.workspace.workspaceKind === "local_checkout" &&
+      Boolean(payload.workspace.gitRuntime),
+  );
+  await execFile("git", ["init", "-b", "main"], { cwd: projectRoot });
+  await execFile("git", ["config", "user.email", "test@getpaseo.dev"], { cwd: projectRoot });
+  await execFile("git", ["config", "user.name", "Paseo Test"], { cwd: projectRoot });
+  await writeFile(path.join(projectRoot, "README.md"), "# Test\n", "utf8");
+  await execFile("git", ["add", "README.md"], { cwd: projectRoot });
+  await execFile("git", ["-c", "commit.gpgSign=false", "commit", "-m", "initial"], {
+    cwd: projectRoot,
+  });
+  const update = await withTimeout({
+    promise: gitWorkspaceUpdate,
+    timeoutMs: 10_000,
+    label: "workspace_update after git init",
+  });
+
+  expect(update).toMatchObject({
+    kind: "upsert",
+    workspace: {
+      id: workspace.id,
+      projectId: workspace.projectId,
+      projectRootPath: projectRoot,
+      workspaceDirectory: projectRoot,
+      projectKind: "git",
+      workspaceKind: "local_checkout",
+      gitRuntime: expect.any(Object),
+    },
+  });
+
+  const afterGitInit = await client.fetchWorkspaces({ filter: { projectId: workspace.projectId } });
+  expect(afterGitInit.entries).toContainEqual(
+    expect.objectContaining({
+      id: workspace.id,
+      projectKind: "git",
+      workspaceKind: "local_checkout",
+      gitRuntime: expect.objectContaining({ currentBranch: "main" }),
+    }),
+  );
 }, 30_000);

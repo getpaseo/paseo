@@ -1167,6 +1167,13 @@ export class Session {
         const workspace = await this.workspaceRegistry.get(workspaceId);
         if (workspace && !workspace.archivedAt) {
           await this.workspaceGitObserver.syncObserverForWorkspace(workspace);
+          if (workspace.kind !== "directory") {
+            await this.workspaceGitService.getSnapshot(workspace.cwd, {
+              force: true,
+              includeForge: true,
+              reason: "workspace_reconciliation",
+            });
+          }
         }
       }),
     );
