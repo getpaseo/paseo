@@ -11,6 +11,8 @@ export type { DraggableListProps, DraggableRenderItemInfo };
 
 const SCROLL_ENABLED_FLEX_STYLE = { flex: 1 };
 
+function noop() {}
+
 export function DraggableList<T>({
   data,
   keyExtractor,
@@ -34,6 +36,7 @@ export function DraggableList<T>({
   waitFor,
   onDragBegin: onDragBeginProp,
   nestable = false,
+  enabled = true,
 }: DraggableListProps<T>) {
   const { theme } = useUnistyles();
   const [isDragging, setIsDragging] = useState(false);
@@ -56,12 +59,14 @@ export function DraggableList<T>({
       const info: DraggableRenderItemInfo<T> = {
         item,
         index,
-        drag,
+        // When reordering is disabled, swallow the drag trigger so a long-press
+        // can't start a drag that would snap back on release.
+        drag: enabled ? drag : noop,
         isActive,
       };
       return renderItem(info);
     },
-    [renderItem],
+    [renderItem, enabled],
   );
 
   const handleDragEnd = useCallback(

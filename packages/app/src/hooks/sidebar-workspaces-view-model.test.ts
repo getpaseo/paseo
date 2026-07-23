@@ -13,6 +13,7 @@ import {
   deriveProjectStatusBucket,
   deriveSidebarLoadingState,
   shouldShowSidebarHostLabels,
+  sortSidebarProjects,
   type ProjectStatusSession,
   type SidebarProjectEntry,
   type SidebarWorkspacePlacement,
@@ -937,5 +938,74 @@ describe("deriveProjectStatusBucket", () => {
         },
       }),
     ).toBe("done");
+  });
+});
+
+describe("sortSidebarProjects", () => {
+  function placement(name: string): SidebarWorkspacePlacement {
+    return {
+      workspaceKey: `srv:${name}`,
+      serverId: "srv",
+      workspaceId: name,
+      projectViewKey: "proj",
+      projectName: "proj",
+      projectKind: "git",
+      workspaceKind: "worktree",
+      name,
+    };
+  }
+
+  function projectEntry(projectName: string, workspaceNames: string[]): SidebarProjectEntry {
+    return {
+      viewKey: projectName,
+      projectName,
+      projectKind: "git",
+      iconWorkingDir: `/repo/${projectName}`,
+      hosts: [],
+      workspaces: workspaceNames.map(placement),
+    };
+  }
+
+  it("returns the input unchanged in manual mode", () => {
+    const projects = [projectEntry("bravo", ["b", "a"]), projectEntry("alpha", ["z"])];
+    expect(sortSidebarProjects({ projects, sortMode: "manual", activityByKey: {} })).toBe(projects);
+  });
+
+  it("sorts projects and workspaces by name", () => {
+    const projects = [projectEntry("bravo", ["beta", "alpha"]), projectEntry("alpha", ["one"])];
+    const sorted = sortSidebarProjects({ projects, sortMode: "name", activityByKey: {} });
+    expect(sorted.map((entry) => entry.projectName)).toEqual(["alpha", "bravo"]);
+    expect(sorted[1]?.workspaces.map((entry) => entry.name)).toEqual(["alpha", "beta"]);
+  });
+
+  it("sorts projects and workspaces by recent activity", () => {
+    const projects = [projectEntry("old", ["old-ws"]), projectEntry("recent", ["stale", "fresh"])];
+    const sorted = sortSidebarProjects({
+      projects,
+      sortMode: "activity",
+      activityByKey: { "srv:old-ws": 100, "srv:stale": 200, "srv:fresh": 900 },
+    });
+    expect(sorted.map((entry) => entry.projectName)).toEqual(["recent", "old"]);
+    expect(sorted[0]?.workspaces.map((entry) => entry.name)).toEqual(["fresh", "stale"]);
+  });
+
+  it("keeps stable order for equal or missing activity", () => {
+    const projects = [projectEntry("first", ["a"]), projectEntry("second", ["b"])];
+    const tie = sortSidebarProjects({
+      projects,
+      sortMode: "activity",
+      activityByKey: { "srv:a": 42, "srv:b": 42 },
+    });
+    expect(tie.map((entry) => entry.projectName)).toEqual(["first", "second"]);
+
+    const sorted = sortSidebarProjects({
+      projects: [projectEntry("p", ["active", "unknown"])],
+      sortMode: "activity",
+      activityByKey: { "srv:active": 500 },
+    });
+    expect(sorted[0]?.workspaces.map((entry) => entry.name)).toEqual([
+      "active",
+      "unknown",
+    ]);
   });
 });

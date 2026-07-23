@@ -64,4 +64,10 @@ export interface DraggableListProps<T> {
    * lists coordinated by a shared NestableScrollContainer.
    */
   nestable?: boolean;
+  /**
+   * When false, drag-to-reorder is disabled: rows render normally but cannot
+   * initiate a drag. Defaults to true. Used to suspend manual reordering while
+   * a computed sort (e.g. by name or activity) is active.
+   */
+  enabled?: boolean;
 }

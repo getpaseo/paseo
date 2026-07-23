@@ -3,6 +3,8 @@ import { selectPrHintFromStatus } from "@/git/pr-hint";
 import { type HostProjectListItem } from "@/projects/host-project-model";
 import type { PendingCreateAttempt } from "@/stores/create-flow-store";
 import type { WorkspaceDescriptor } from "@/stores/session-store";
+import type { WorkspaceActivityByKey } from "@/stores/session-store-hooks/selectors";
+import type { SidebarSortMode } from "@/stores/sidebar-view-store";
 import type {
   WorkspaceStructureHostPlacement,
   WorkspaceStructureProject,
@@ -594,6 +596,55 @@ export function computeSidebarOrderUpdates(input: {
   }
 
   return { projectOrder, workspaceOrders };
+}
+
+const compareByName = (a: string, b: string): number =>
+  a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
+
+// Applies the sidebar's "Sort by" preference to the canonical project list (which arrives in the
+// persisted manual/drag order). This is sidebar-only presentation: it deliberately runs here,
+// after the shared workspace structure and after persisted-order reconciliation, so that neither
+// the New Workspace flow nor the saved manual order is affected by the chosen sort.
+// - "manual": returned unchanged (already in the persisted order).
+// - "name": alphabetical by project name, and by workspace name within each project.
+// - "activity": most-recently-active first at both levels; ties keep the incoming order (stable).
+export function sortSidebarProjects(input: {
+  projects: SidebarProjectEntry[];
+  sortMode: SidebarSortMode;
+  activityByKey: WorkspaceActivityByKey;
+}): SidebarProjectEntry[] {
+  if (input.sortMode === "manual" || input.projects.length === 0) {
+    return input.projects;
+  }
+
+  if (input.sortMode === "name") {
+    return input.projects
+      .map((project) => ({
+        ...project,
+        workspaces: [...project.workspaces].sort(
+          (a, b) => compareByName(a.name, b.name) || a.workspaceKey.localeCompare(b.workspaceKey),
+        ),
+      }))
+      .sort((a, b) => compareByName(a.projectName, b.projectName));
+  }
+
+  const activityOf = (workspaceKey: string): number => input.activityByKey[workspaceKey] ?? 0;
+  return input.projects
+    .map((project, index) => {
+      const workspaces = [...project.workspaces].sort(
+        (a, b) => activityOf(b.workspaceKey) - activityOf(a.workspaceKey),
+      );
+      let latest = 0;
+      for (const workspace of workspaces) {
+        const value = activityOf(workspace.workspaceKey);
+        if (value > latest) {
+          latest = value;
+        }
+      }
+      return { project: { ...project, workspaces }, latest, index };
+    })
+    .sort((a, b) => b.latest - a.latest || a.index - b.index)
+    .map((entry) => entry.project);
 }
 
 export interface SidebarLoadingState {
