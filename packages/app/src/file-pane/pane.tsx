@@ -459,6 +459,7 @@ export function FilePane({
     preview,
     supportsEditing,
   });
+  const canToggleMarkdownMode = isMarkdown && editable;
   const lineCount =
     preview?.kind === "text" ? (preview.content ?? "").split("\n").length : undefined;
   const errorMessage = getFileErrorMessage(query.error, t("panels.file.failedToLoad"));
@@ -471,8 +472,8 @@ export function FilePane({
       preview={preview}
       version={version}
       filename={getFileNameFromPath(location.path) ?? location.path}
-      markdownMode={isMarkdown ? markdownMode : undefined}
-      onMarkdownModeChange={isMarkdown ? setMarkdownMode : undefined}
+      markdownMode={canToggleMarkdownMode ? markdownMode : undefined}
+      onMarkdownModeChange={canToggleMarkdownMode ? setMarkdownMode : undefined}
       lineCount={lineCount}
       editable={editable}
       disconnectedMessage={t("workspace.terminal.hostDisconnected")}
