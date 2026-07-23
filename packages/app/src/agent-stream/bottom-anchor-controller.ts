@@ -419,6 +419,9 @@ function createBottomAnchorControllerDriver(
       | "manual_reevaluate"
       | "retry_scroll",
   ) => {
+    if (isUserScrollActive) {
+      return;
+    }
     if (attemptHandle) {
       return;
     }
@@ -504,7 +507,7 @@ function createBottomAnchorControllerDriver(
     },
     beginUserScroll() {
       isUserScrollActive = true;
-      cancelPendingRequest("user_scroll_started");
+      cancelPendingAttempt();
     },
     endUserScroll() {
       isUserScrollActive = false;
@@ -512,6 +515,10 @@ function createBottomAnchorControllerDriver(
         if (mode === "detached") {
           setModeInternal("sticky-bottom");
           pendingVerification = { requestId: null, retries: 0 };
+          evaluate(false, "user_scroll_end");
+          return;
+        }
+        if (pendingRequest) {
           evaluate(false, "user_scroll_end");
           return;
         }
