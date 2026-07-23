@@ -151,6 +151,48 @@ async function seedEdgeCaseProject(input: {
   return { label: input.label, base, secondWorkspaceId: second.workspace.id };
 }
 
+/**
+ * Seeds one project with N same-directory workspaces, each driven into its own bucket, so the
+ * collapsed project row must aggregate all N down to a single highest-priority badge. Returns the
+ * project handle plus the ordered workspace ids (index 0 is the base workspace). `base.cleanup()`
+ * tears down the whole project, same as seedEdgeCaseProject.
+ */
+async function seedMultiWorkspaceProject(input: {
+  label: string;
+  buckets: ReadonlyArray<"running" | "needs_input" | "attention" | "failed" | "done">;
+}): Promise<{ label: string; base: SeededWorkspace; workspaceIds: string[] }> {
+  const [firstBucket, ...restBuckets] = input.buckets;
+  const base = await seedWorkspace({ repoPrefix: `roll-${input.label}` });
+  await seedSubState({
+    client: base.client,
+    cwd: base.repoPath,
+    workspaceId: base.workspaceId,
+    label: input.label,
+    bucket: firstBucket,
+  });
+
+  const workspaceIds = [base.workspaceId];
+  for (const bucket of restBuckets) {
+    const created = await base.client.createWorkspace({
+      source: { kind: "directory", path: base.repoPath, projectId: base.projectId },
+      title: `${input.label}-${bucket}`,
+    });
+    if (!created.workspace) {
+      throw new Error(created.error ?? `Failed to create workspace for ${input.label}`);
+    }
+    await seedSubState({
+      client: base.client,
+      cwd: base.repoPath,
+      workspaceId: created.workspace.id,
+      label: input.label,
+      bucket,
+    });
+    workspaceIds.push(created.workspace.id);
+  }
+
+  return { label: input.label, base, workspaceIds };
+}
+
 test.describe("collapsed project status badge", () => {
   test("captures every status in the shared badge shell", async ({ page }) => {
     test.setTimeout(240_000);
@@ -795,6 +837,131 @@ test.describe("collapsed project status badge", () => {
       await page.waitForTimeout(800);
     } finally {
       await state.workspace.cleanup().catch(() => undefined);
+    }
+  });
+
+  test("records workspace statuses resolving up to the collapsed project badge", async ({
+    page,
+  }) => {
+    test.setTimeout(240_000);
+    const PROP_OUT_DIR = path.join(OUT_DIR, "propagation");
+    const FRAMES_DIR = path.join(PROP_OUT_DIR, "frames");
+    await mkdir(FRAMES_DIR, { recursive: true });
+
+    // Three projects, each with several same-directory workspaces in different buckets, chosen so
+    // each resolves to a DIFFERENT winner — proving the priority order picks the right one in
+    // each case: needs_input > failed > running > attention > done.
+    const needsInput = await seedMultiWorkspaceProject({
+      label: "needs-input-wins",
+      buckets: ["running", "attention", "needs_input"], // needs_input outranks running and attention
+    });
+    const failed = await seedMultiWorkspaceProject({
+      label: "failed-wins",
+      buckets: ["running", "failed"], // failed outranks running
+    });
+    const running = await seedMultiWorkspaceProject({
+      label: "running-wins",
+      buckets: ["attention", "running"], // running outranks attention
+    });
+
+    // A fixed clip over the sidebar list, captured at deviceScaleFactor 3 so each frame is crisp
+    // (~295 CSS px -> 885 device px wide) rather than upscaled from a low-res video.
+    const CLIP = { x: 0, y: 145, width: 295, height: 620 };
+    let frameIndex = 0;
+    const grab = async (): Promise<void> => {
+      await page.screenshot({
+        path: path.join(FRAMES_DIR, `frame-${String(frameIndex).padStart(3, "0")}.png`),
+        clip: CLIP,
+      });
+      frameIndex += 1;
+    };
+    // Films a beat: `count` crisp frames spaced `everyMs` apart, so animation (expand/collapse
+    // reflow) lands on tape as motion rather than a single jump.
+    const film = async (count: number, everyMs = 130): Promise<void> => {
+      for (let i = 0; i < count; i += 1) {
+        await grab();
+        await page.waitForTimeout(everyMs);
+      }
+    };
+    const parkPointer = async (): Promise<void> => {
+      // Off every project row so a hovered row never swaps its badge for the expand chevron.
+      await page.mouse.move(1200, 850);
+    };
+
+    try {
+      await gotoAppShell(page);
+      await waitForSidebarHydration(page);
+
+      const projects = [needsInput, failed, running];
+      const rows = projects.map((p) => page.getByTestId(`sidebar-project-row-${p.base.projectId}`));
+      for (const row of rows) {
+        await expect(row).toBeVisible({ timeout: 60_000 });
+      }
+
+      // Projects seed expanded; collapse all three so each row shows its aggregate badge.
+      for (const row of rows) {
+        await row.click();
+      }
+      await parkPointer();
+
+      // Each must have resolved to the correct winner before we film.
+      await expect(rows[0].getByTestId("project-status-indicator-needs_input")).toBeVisible({
+        timeout: 60_000,
+      });
+      await expect(rows[1].getByTestId("project-status-indicator-failed")).toBeVisible({
+        timeout: 60_000,
+      });
+      await expect(rows[2].getByTestId("project-status-indicator-running")).toBeVisible({
+        timeout: 60_000,
+      });
+
+      // Beat 1 — all collapsed: three projects, three correctly-resolved badges side by side.
+      await film(10, 160);
+
+      // Beat 2 — expand the needs_input project to reveal the three workspaces that rolled up
+      // (running + attention + needs_input); the parent badge disappears while expanded.
+      await rows[0].click();
+      await parkPointer();
+      for (const wid of needsInput.workspaceIds) {
+        await expect(page.getByTestId(`sidebar-workspace-row-${getServerId()}:${wid}`)).toBeVisible(
+          { timeout: 60_000 },
+        );
+      }
+      await expect(rows[0].getByTestId("project-status-badge")).toHaveCount(0, { timeout: 60_000 });
+      await film(14);
+
+      // Beat 3 — collapse it: the badge resolves back to the needs_input winner.
+      await rows[0].click();
+      await parkPointer();
+      await expect(rows[0].getByTestId("project-status-indicator-needs_input")).toBeVisible({
+        timeout: 60_000,
+      });
+      await film(8);
+
+      // Beat 4 — expand the failed project: failed + running workspaces sit under the red-dot
+      // winner, proving failed outranks running.
+      await rows[1].click();
+      await parkPointer();
+      for (const wid of failed.workspaceIds) {
+        await expect(page.getByTestId(`sidebar-workspace-row-${getServerId()}:${wid}`)).toBeVisible(
+          { timeout: 60_000 },
+        );
+      }
+      await film(14);
+
+      // Beat 5 — collapse: back to the resolved red dot.
+      await rows[1].click();
+      await parkPointer();
+      await expect(rows[1].getByTestId("project-status-indicator-failed")).toBeVisible({
+        timeout: 60_000,
+      });
+      await film(8);
+    } finally {
+      await Promise.all([
+        needsInput.base.cleanup().catch(() => undefined),
+        failed.base.cleanup().catch(() => undefined),
+        running.base.cleanup().catch(() => undefined),
+      ]);
     }
   });
 });
