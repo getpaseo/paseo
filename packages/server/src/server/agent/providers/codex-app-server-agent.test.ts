@@ -1092,9 +1092,9 @@ describe("Codex app-server provider", () => {
         codex: {
           mcpServerPolicies: {
             paseo: {
-              enabledTools: ["speak"],
-              defaultToolsApprovalMode: "prompt",
-              tools: { speak: { approvalMode: "approve" } },
+              enabled_tools: ["speak"],
+              default_tools_approval_mode: "prompt",
+              tools: { speak: { approval_mode: "approve" } },
             },
           },
         },

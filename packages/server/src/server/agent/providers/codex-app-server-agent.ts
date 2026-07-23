@@ -803,23 +803,7 @@ function toCodexMcpConfig(
   config: McpServerConfig,
   policy?: CodexMcpServerPolicy,
 ): CodexMcpServerConfig {
-  const base = {
-    ...(policy?.enabledTools ? { enabled_tools: policy.enabledTools } : {}),
-    ...(policy?.disabledTools ? { disabled_tools: policy.disabledTools } : {}),
-    ...(policy?.defaultToolsApprovalMode
-      ? { default_tools_approval_mode: policy.defaultToolsApprovalMode }
-      : {}),
-    ...(policy?.tools
-      ? {
-          tools: Object.fromEntries(
-            Object.entries(policy.tools).map(([toolName, toolConfig]) => [
-              toolName,
-              toolConfig.approvalMode ? { approval_mode: toolConfig.approvalMode } : {},
-            ]),
-          ),
-        }
-      : {}),
-  } satisfies Partial<CodexMcpServerConfig>;
+  const base: Partial<CodexMcpServerConfig> = policy ?? {};
 
   switch (config.type) {
     case "stdio":

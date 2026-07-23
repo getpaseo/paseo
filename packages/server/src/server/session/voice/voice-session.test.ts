@@ -127,9 +127,9 @@ test("Codex voice mode adds and restores its MCP policy in provider-specific con
         model_provider: "custom",
         mcpServerPolicies: {
           paseo: {
-            enabledTools: ["speak"],
-            defaultToolsApprovalMode: "prompt",
-            tools: { speak: { approvalMode: "approve" } },
+            enabled_tools: ["speak"],
+            default_tools_approval_mode: "prompt",
+            tools: { speak: { approval_mode: "approve" } },
           },
         },
       },

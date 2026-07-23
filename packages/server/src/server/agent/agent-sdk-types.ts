@@ -12,10 +12,10 @@ export interface AgentMetadata {
 }
 
 export interface CodexMcpServerPolicy {
-  enabledTools?: string[];
-  disabledTools?: string[];
-  defaultToolsApprovalMode?: "auto" | "prompt" | "approve";
-  tools?: Record<string, { approvalMode?: "auto" | "prompt" | "approve" }>;
+  enabled_tools?: string[];
+  disabled_tools?: string[];
+  default_tools_approval_mode?: "auto" | "prompt" | "approve";
+  tools?: Record<string, { approval_mode?: "auto" | "prompt" | "approve" }>;
 }
 
 export interface CodexAgentExtra extends AgentMetadata {

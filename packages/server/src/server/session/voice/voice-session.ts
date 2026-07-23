@@ -36,9 +36,9 @@ const MIN_STREAMING_SEGMENT_BYTES = Math.round(
 );
 const AgentIdSchema = z.guid();
 const CODEX_VOICE_MCP_POLICY: CodexMcpServerPolicy = {
-  enabledTools: ["speak"],
-  defaultToolsApprovalMode: "prompt",
-  tools: { speak: { approvalMode: "approve" } },
+  enabled_tools: ["speak"],
+  default_tools_approval_mode: "prompt",
+  tools: { speak: { approval_mode: "approve" } },
 };
 
 type ProcessingPhase = "idle" | "transcribing";
