@@ -2742,6 +2742,81 @@ describe("ACPAgentSession close() tree-kill", () => {
   });
 });
 
+describe("ACPAgentSession initialization cleanup", () => {
+  test("terminates the ACP process when session/new fails", async () => {
+    const terminator = new FakeTerminator();
+    const child = createProbeChildStub();
+
+    class FailingNewSession extends ACPAgentSession {
+      protected override async spawnProcess(): Promise<SpawnedACPProcess> {
+        return {
+          child,
+          connection: {
+            newSession: vi.fn().mockRejectedValue(new Error("session/new failed")),
+          } as unknown as ClientSideConnection,
+          initialize: { agentCapabilities: {} },
+        };
+      }
+    }
+
+    const session = new FailingNewSession(
+      { provider: "copilot", cwd: "/tmp/paseo-acp-test" },
+      {
+        provider: "copilot",
+        logger: createTestLogger(),
+        defaultCommand: ["copilot", "--acp"],
+        defaultModes: [],
+        capabilities: {
+          supportsStreaming: true,
+          supportsSessionPersistence: true,
+        },
+        terminateProcess: terminator.terminate,
+      },
+    );
+
+    await expect(session.initializeNewSession()).rejects.toThrow("session/new failed");
+
+    expect(terminator.terminated).toContain(child);
+  });
+
+  test("terminates the ACP process when session/load fails", async () => {
+    const terminator = new FakeTerminator();
+    const child = createProbeChildStub();
+
+    class FailingLoadSession extends ACPAgentSession {
+      protected override async spawnProcess(): Promise<SpawnedACPProcess> {
+        return {
+          child,
+          connection: {
+            loadSession: vi.fn().mockRejectedValue(new Error("session/load failed")),
+          } as unknown as ClientSideConnection,
+          initialize: { agentCapabilities: { loadSession: true } },
+        };
+      }
+    }
+
+    const session = new FailingLoadSession(
+      { provider: "cursor", cwd: "/tmp/paseo-acp-test" },
+      {
+        provider: "cursor",
+        logger: createTestLogger(),
+        defaultCommand: ["cursor-agent", "acp"],
+        defaultModes: [],
+        capabilities: {
+          supportsStreaming: true,
+          supportsSessionPersistence: true,
+        },
+        handle: { provider: "cursor", sessionId: "session-1" },
+        terminateProcess: terminator.terminate,
+      },
+    );
+
+    await expect(session.initializeResumedSession()).rejects.toThrow("session/load failed");
+
+    expect(terminator.terminated).toContain(child);
+  });
+});
+
 describe("ACPAgentClient probe cleanup", () => {
   afterEach(() => {
     vi.restoreAllMocks();

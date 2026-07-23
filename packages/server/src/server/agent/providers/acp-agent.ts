@@ -1376,21 +1376,25 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   async initializeNewSession(): Promise<void> {
-    const spawned = await this.spawnProcess();
-    this.child = spawned.child;
-    this.connection = spawned.connection;
-    this.agentCapabilities = spawned.initialize.agentCapabilities ?? null;
+    try {
+      const spawned = await this.spawnProcess();
+      this.child = spawned.child;
+      this.connection = spawned.connection;
+      this.agentCapabilities = spawned.initialize.agentCapabilities ?? null;
 
-    const response = await this.runACPRequest(() =>
-      this.connection!.newSession({
-        cwd: this.config.cwd,
-        mcpServers: this.acpMcpServers(),
-      }),
-    );
-    this.sessionId = response.sessionId;
-    this.bootstrapThreadEventPending = true;
-    this.applySessionState(response);
-    await this.applyConfiguredOverrides();
+      const response = await this.runACPRequest(() =>
+        this.connection!.newSession({
+          cwd: this.config.cwd,
+          mcpServers: this.acpMcpServers(),
+        }),
+      );
+      this.sessionId = response.sessionId;
+      this.bootstrapThreadEventPending = true;
+      this.applySessionState(response);
+      await this.applyConfiguredOverrides();
+    } catch (error) {
+      await this.closeAfterInitializationFailure(error);
+    }
   }
 
   /**
@@ -1401,45 +1405,61 @@ export class ACPAgentSession implements AgentSession, ACPClient {
    * from these calls regardless of capabilities.
    */
   async initializeResumedSession(): Promise<void> {
-    const handle = this.initialHandle;
-    if (!handle) {
-      throw new Error("Resume requested without persistence handle");
+    try {
+      const handle = this.initialHandle;
+      if (!handle) {
+        throw new Error("Resume requested without persistence handle");
+      }
+
+      const spawned = await this.spawnProcess();
+      this.child = spawned.child;
+      this.connection = spawned.connection;
+      this.agentCapabilities = spawned.initialize.agentCapabilities ?? null;
+      this.sessionId = handle.sessionId;
+      this.bootstrapThreadEventPending = true;
+
+      const sessionCapabilities = this.agentCapabilities?.sessionCapabilities;
+      if (this.agentCapabilities?.loadSession) {
+        this.replayingHistory = true;
+        const response = await this.runACPRequest(() =>
+          this.connection!.loadSession({
+            sessionId: handle.sessionId,
+            cwd: this.config.cwd,
+            mcpServers: this.acpMcpServers(),
+          }),
+        );
+        this.replayingHistory = false;
+        this.historyPending = this.persistedHistory.length > 0;
+        this.applySessionState(response);
+      } else if (sessionCapabilities?.resume) {
+        const response = await this.runACPRequest(() =>
+          this.connection!.unstable_resumeSession({
+            sessionId: handle.sessionId,
+            cwd: this.config.cwd,
+            mcpServers: this.acpMcpServers(),
+          }),
+        );
+        this.applySessionState(response);
+      } else {
+        throw new Error(`${this.provider} does not support ACP session resume`);
+      }
+
+      await this.applyConfiguredOverrides();
+    } catch (error) {
+      await this.closeAfterInitializationFailure(error);
     }
+  }
 
-    const spawned = await this.spawnProcess();
-    this.child = spawned.child;
-    this.connection = spawned.connection;
-    this.agentCapabilities = spawned.initialize.agentCapabilities ?? null;
-    this.sessionId = handle.sessionId;
-    this.bootstrapThreadEventPending = true;
-
-    const sessionCapabilities = this.agentCapabilities?.sessionCapabilities;
-    if (this.agentCapabilities?.loadSession) {
-      this.replayingHistory = true;
-      const response = await this.runACPRequest(() =>
-        this.connection!.loadSession({
-          sessionId: handle.sessionId,
-          cwd: this.config.cwd,
-          mcpServers: this.acpMcpServers(),
-        }),
+  private async closeAfterInitializationFailure(error: unknown): Promise<never> {
+    try {
+      await this.close();
+    } catch (closeError) {
+      this.logger.warn(
+        { err: closeError, initializationError: error },
+        "Failed to close ACP process after session initialization failure",
       );
-      this.replayingHistory = false;
-      this.historyPending = this.persistedHistory.length > 0;
-      this.applySessionState(response);
-    } else if (sessionCapabilities?.resume) {
-      const response = await this.runACPRequest(() =>
-        this.connection!.unstable_resumeSession({
-          sessionId: handle.sessionId,
-          cwd: this.config.cwd,
-          mcpServers: this.acpMcpServers(),
-        }),
-      );
-      this.applySessionState(response);
-    } else {
-      throw new Error(`${this.provider} does not support ACP session resume`);
     }
-
-    await this.applyConfiguredOverrides();
+    throw error;
   }
 
   async run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult> {
@@ -2335,6 +2355,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       { logger: this.logger, provider: this.provider },
     );
     const connection = new ClientSideConnection(() => this, stream);
+    // Take ownership before initialize so the outer initialization guard can
+    // close the process even when the ACP handshake itself rejects.
+    this.child = child;
+    this.connection = connection;
     const initialize = await this.runACPRequest(() =>
       connection.initialize({
         protocolVersion: PROTOCOL_VERSION,
