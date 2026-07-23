@@ -116,4 +116,3 @@ function withFdroidAutolinking(config) {
 }
 
 module.exports = withFdroidAutolinking;
-module.exports.configureFdroidAppBuildGradle = configureFdroidAppBuildGradle;
