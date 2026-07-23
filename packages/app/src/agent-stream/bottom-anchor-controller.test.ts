@@ -263,7 +263,37 @@ describe("bottom anchor controller driver", () => {
 
     expect(harness.scrollAttempts).toHaveLength(0);
 
-    harness.driver.endUserScroll();
+    harness.driver.endUserScroll({ isNearBottom: true });
+    harness.scheduler.flushAll();
+
+    expect(harness.scrollAttempts).toHaveLength(1);
+    expect(harness.driver.getSnapshot()).toMatchObject({
+      mode: "sticky-bottom",
+      blockedReason: null,
+      pendingRequest: null,
+      pendingVerification: null,
+    });
+  });
+
+  it("preserves a blocked route anchor when layout moves after drag release", () => {
+    const harness = createDriverHarness({ authoritativeReady: false });
+
+    harness.driver.applyRouteRequest({
+      agentId: "agent-1",
+      reason: "resume",
+      requestKey: "route:agent-1:resume",
+    });
+    harness.scheduler.flushAll();
+
+    harness.driver.beginUserScroll();
+    harness.context.nearBottom = false;
+    harness.driver.handleScrollNearBottomChange({
+      nextIsNearBottom: false,
+      scrollDelta: 0,
+    });
+    harness.context.authoritativeReady = true;
+    harness.driver.notifyAuthoritativeHistoryMaybeChanged();
+    harness.driver.endUserScroll({ isNearBottom: true });
     harness.scheduler.flushAll();
 
     expect(harness.scrollAttempts).toHaveLength(1);
@@ -291,7 +321,7 @@ describe("bottom anchor controller driver", () => {
       nextIsNearBottom: false,
       scrollDelta: 48,
     });
-    harness.driver.endUserScroll();
+    harness.driver.endUserScroll({ isNearBottom: false });
     harness.context.authoritativeReady = true;
     harness.driver.notifyAuthoritativeHistoryMaybeChanged();
     harness.driver.reevaluate();
@@ -349,10 +379,14 @@ describe("bottom anchor controller driver", () => {
 
     expect(harness.scrollAttempts).toHaveLength(1);
     expect(harness.driver.getSnapshot()).toMatchObject({
-      mode: "detached",
+      mode: "sticky-bottom",
       pendingRequest: null,
       pendingVerification: null,
     });
+
+    harness.driver.endUserScroll({ isNearBottom: false });
+
+    expect(harness.driver.getSnapshot().mode).toBe("detached");
   });
 
   it("restores sticky maintenance when a user scroll returns to the bottom", () => {
@@ -378,7 +412,7 @@ describe("bottom anchor controller driver", () => {
       nextIsNearBottom: true,
       scrollDelta: -48,
     });
-    harness.driver.endUserScroll();
+    harness.driver.endUserScroll({ isNearBottom: true });
     harness.scheduler.flushAll();
 
     expect(harness.driver.getSnapshot()).toMatchObject({

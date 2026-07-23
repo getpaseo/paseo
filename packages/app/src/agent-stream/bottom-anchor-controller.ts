@@ -69,7 +69,7 @@ interface BottomAnchorControllerDriver {
   applyRouteRequest: (request: BottomAnchorRouteRequest | null) => void;
   requestLocalAnchor: (request: BottomAnchorLocalRequest) => void;
   beginUserScroll: () => void;
-  endUserScroll: () => void;
+  endUserScroll: (params: { isNearBottom: boolean }) => void;
   detachByUser: () => void;
   handleViewportMetricsChange: (params: {
     previousViewportWidth: number;
@@ -509,9 +509,9 @@ function createBottomAnchorControllerDriver(
       isUserScrollActive = true;
       cancelPendingAttempt();
     },
-    endUserScroll() {
+    endUserScroll(params) {
       isUserScrollActive = false;
-      if (input.isNearBottom()) {
+      if (params.isNearBottom) {
         if (mode === "detached") {
           setModeInternal("sticky-bottom");
           pendingVerification = { requestId: null, retries: 0 };
@@ -519,6 +519,14 @@ function createBottomAnchorControllerDriver(
           return;
         }
         if (pendingRequest) {
+          evaluate(false, "user_scroll_end");
+          return;
+        }
+        if (
+          !input.isNearBottom() ||
+          stickyMeasurementRevision !== lastVerifiedStickyMeasurementRevision
+        ) {
+          pendingVerification = { requestId: null, retries: 0 };
           evaluate(false, "user_scroll_end");
           return;
         }
@@ -613,9 +621,6 @@ function createBottomAnchorControllerDriver(
     handleScrollNearBottomChange(params) {
       const { nextIsNearBottom, scrollDelta } = params;
       if (isUserScrollActive) {
-        if (mode === "sticky-bottom" && !nextIsNearBottom) {
-          this.detachByUser();
-        }
         return;
       }
       if (
@@ -787,8 +792,8 @@ export function useBottomAnchorController(input: {
     beginUserScroll() {
       driverRef.current?.beginUserScroll();
     },
-    endUserScroll() {
-      driverRef.current?.endUserScroll();
+    endUserScroll(params: { isNearBottom: boolean }) {
+      driverRef.current?.endUserScroll(params);
     },
     detachByUser() {
       driverRef.current?.detachByUser();

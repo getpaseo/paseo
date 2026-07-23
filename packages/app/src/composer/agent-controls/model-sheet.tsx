@@ -96,6 +96,14 @@ export function CompactModelSheet({
     onClose?.();
   }, [onClose, reset]);
 
+  const handleSelect = useCallback(
+    (provider: string, modelId: string) => {
+      onSelect(provider, modelId);
+      close();
+    },
+    [close, onSelect],
+  );
+
   const toggle = useCallback(() => {
     if (isOpen) {
       close();
@@ -159,7 +167,7 @@ export function CompactModelSheet({
         >
           <ModelBrowser
             state={browser}
-            onSelect={onSelect}
+            onSelect={handleSelect}
             onToggleFavorite={onToggleFavorite}
             onRetryProvider={onRetryProvider}
             isRetryingProvider={isRetryingProvider}
