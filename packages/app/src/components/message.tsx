@@ -2657,7 +2657,9 @@ function computeShimmerMetrics(input: {
     Math.min(120, input.labelRowWidth > 0 ? input.labelRowWidth * 0.28 : 0),
   );
   const isWebShimmer = input.isLoading && isWeb;
-  const shouldMeasureWebShimmer = isWebShimmer;
+  // React Native Web only observes a node when onLayout exists at mount. Keep
+  // measuring while idle so a retained badge has dimensions when it starts loading.
+  const shouldMeasureWebShimmer = isWeb;
   const shouldMeasureNativeShimmer = input.isLoading && isNative;
   const isNativeShimmer =
     shouldMeasureNativeShimmer && input.labelRowWidth > 0 && input.labelRowHeight > 0;
