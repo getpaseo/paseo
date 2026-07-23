@@ -2809,6 +2809,32 @@ describe("ACPAgentSession close() tree-kill", () => {
     vi.restoreAllMocks();
   });
 
+  test("close() flushes a buffered provider-owned user message before unsubscribing", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    asInternals<ACPCloseInternals>(session).sessionId = "session-1";
+
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "user_message_chunk",
+        content: { type: "image", data: "AA==", mimeType: "image/png" },
+      } as SessionUpdate,
+    });
+    expect(events).toEqual([]);
+
+    await session.close();
+
+    expect(events).toEqual([
+      {
+        type: "timeline",
+        provider: session.provider,
+        item: { type: "user_message", text: "[image]" },
+      },
+    ]);
+  });
+
   test("close() terminates the main child process via the process tree", async () => {
     const terminator = new FakeTerminator();
     const session = createSession(terminator.terminate);

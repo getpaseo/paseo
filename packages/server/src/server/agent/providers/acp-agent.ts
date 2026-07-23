@@ -2039,6 +2039,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
     this.closed = true;
 
+    this.deliverTranslatedEvents(this.flushPendingUserMessage());
     this.settleCommandsReady();
 
     for (const pending of this.pendingPermissions.values()) {
