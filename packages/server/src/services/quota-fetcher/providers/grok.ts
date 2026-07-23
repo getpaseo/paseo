@@ -38,6 +38,8 @@ const GrokUsageResponseSchema = z.object({
 interface GrokQuotaProviderOptions {
   logger: Logger;
   fetch?: ProviderApiFetch;
+  /** Override home directory (tests). Production uses os.homedir(). */
+  homeDir?: string;
 }
 
 /** Resolve a Grok CLI token from ~/.grok/auth.json (legacy or current nested shape). */
@@ -71,10 +73,12 @@ export class GrokQuotaProvider implements ProviderUsageFetcher {
 
   private readonly logger: Logger;
   private readonly fetchApi: ProviderApiFetch;
+  private readonly homeDir: string | undefined;
 
   constructor(options: GrokQuotaProviderOptions) {
     this.logger = options.logger;
     this.fetchApi = options.fetch ?? fetch;
+    this.homeDir = options.homeDir;
   }
 
   async fetchUsage(): Promise<ProviderUsage> {
@@ -134,7 +138,8 @@ export class GrokQuotaProvider implements ProviderUsageFetcher {
   }
 
   private async readGrokToken(): Promise<string | null> {
-    const path = join(homedir(), ".grok", "auth.json");
+    // homeDir override is for tests: Windows os.homedir() ignores $HOME (uses USERPROFILE).
+    const path = join(this.homeDir ?? homedir(), ".grok", "auth.json");
     if (!existsSync(path)) return null;
     try {
       return extractGrokTokenFromAuth(JSON.parse(await fs.readFile(path, "utf8")));
