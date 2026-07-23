@@ -2,6 +2,7 @@ import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
 import {
   checkoutDiffQueryKey,
+  checkoutCommitsQueryKey,
   checkoutPrStatusQueryKey,
   checkoutStatusQueryKey,
   invalidateCheckoutGitQueriesForClient,
@@ -24,6 +25,8 @@ describe("checkout query keys", () => {
       files: [],
     });
     queryClient.setQueryData(checkoutPrStatusQueryKey(serverId, cwd), { status: { number: 12 } });
+    queryClient.setQueryData(checkoutCommitsQueryKey(serverId, cwd), { commits: [] });
+    queryClient.setQueryData(checkoutCommitsQueryKey(serverId, "/tmp/other"), { commits: [] });
     queryClient.setQueryData(prPaneTimelineQueryKey({ serverId, cwd, prNumber: 12 }), {
       items: [],
     });
@@ -62,6 +65,12 @@ describe("checkout query keys", () => {
     expect(queryClient.getQueryState(checkoutPrStatusQueryKey(serverId, cwd))?.isInvalidated).toBe(
       true,
     );
+    expect(queryClient.getQueryState(checkoutCommitsQueryKey(serverId, cwd))?.isInvalidated).toBe(
+      true,
+    );
+    expect(
+      queryClient.getQueryState(checkoutCommitsQueryKey(serverId, "/tmp/other"))?.isInvalidated,
+    ).toBe(false);
     expect(
       queryClient.getQueryState(prPaneTimelineQueryKey({ serverId, cwd, prNumber: 12 }))
         ?.isInvalidated,
@@ -102,6 +111,8 @@ describe("checkout query keys", () => {
     queryClient.setQueryData(checkoutStatusQueryKey(serverId, cwd), { isGit: true });
     queryClient.setQueryData(checkoutStatusQueryKey(serverId, otherCwd), { isGit: true });
     queryClient.setQueryData(checkoutPrStatusQueryKey(serverId, cwd), { status: { number: 12 } });
+    queryClient.setQueryData(checkoutCommitsQueryKey(serverId, cwd), { commits: [] });
+    queryClient.setQueryData(checkoutCommitsQueryKey(otherServerId, cwd), { commits: [] });
     queryClient.setQueryData(prPaneTimelineQueryKey({ serverId, cwd, prNumber: 12 }), {
       items: [],
     });
@@ -128,6 +139,12 @@ describe("checkout query keys", () => {
     expect(queryClient.getQueryState(checkoutPrStatusQueryKey(serverId, cwd))?.isInvalidated).toBe(
       true,
     );
+    expect(queryClient.getQueryState(checkoutCommitsQueryKey(serverId, cwd))?.isInvalidated).toBe(
+      true,
+    );
+    expect(
+      queryClient.getQueryState(checkoutCommitsQueryKey(otherServerId, cwd))?.isInvalidated,
+    ).toBe(false);
     expect(
       queryClient.getQueryState(prPaneTimelineQueryKey({ serverId, cwd, prNumber: 12 }))
         ?.isInvalidated,

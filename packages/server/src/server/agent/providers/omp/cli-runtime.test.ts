@@ -96,6 +96,23 @@ describe("OMP CLI runtime", () => {
     });
   });
 
+  test("accepts session state without thinkingLevel for non-reasoning models", async () => {
+    const child = createOmpChild();
+    // Models like cursor-grok-4.5-high-fast encode effort in the model ID, so
+    // OMP marks them reasoning: false and omits thinkingLevel from get_state.
+    replyToCommands(child, () => ({
+      model: null,
+      isStreaming: false,
+      isCompacting: false,
+      sessionId: "session-1",
+      messageCount: 0,
+      queuedMessageCount: 0,
+    }));
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    await expect(session.getState()).resolves.toMatchObject({ sessionId: "session-1" });
+  });
+
   test("rejects malformed RPC results instead of trusting transport data", async () => {
     const child = createOmpChild();
     replyToCommands(child, () => ({

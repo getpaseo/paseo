@@ -4,6 +4,7 @@ import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
 import {
   composeWorkspaceStructure,
   selectHasHydratedWorkspaces,
+  selectHydratedWorkspaceServerIds,
   selectHasWorkspaces,
   selectProjectOrder,
   selectRecommendedProjectPaths,
@@ -67,6 +68,14 @@ export function useHasHydratedWorkspaces(serverId: string | null): boolean {
     useSessionStore,
     (state) => selectHasHydratedWorkspaces(state, serverId),
     workspaceEqualityFns.identity,
+  );
+}
+
+export function useHydratedWorkspaceServerIds(serverIds: string[]): string[] {
+  return useStoreWithEqualityFn(
+    useSessionStore,
+    (state) => selectHydratedWorkspaceServerIds(state, serverIds),
+    workspaceEqualityFns.deep,
   );
 }
 

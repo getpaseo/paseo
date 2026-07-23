@@ -9,6 +9,7 @@ interface ClaudeModelManifestEntry {
   isDefault?: boolean;
   contextWindowMaxTokens?: number;
   effortLevels?: readonly ClaudeEffortLevel[];
+  supportsThinkingDisabled?: boolean;
   supportsFastMode?: boolean;
 }
 
@@ -25,6 +26,7 @@ const CLAUDE_EFFORT_LABELS = {
   max: "Max",
 } as const satisfies Record<ClaudeEffortLevel, string>;
 
+export const CLAUDE_DISABLED_THINKING_OPTION_ID = "off";
 export const CLAUDE_ULTRACODE_THINKING_OPTION_ID = "ultracode";
 
 export const CLAUDE_MODEL_MANIFEST = [
@@ -41,6 +43,7 @@ export const CLAUDE_MODEL_MANIFEST = [
     description: "Opus 4.8 with 1M context window",
     contextWindowMaxTokens: 1_000_000,
     effortLevels: CLAUDE_EFFORT_LEVELS.xhigh,
+    supportsThinkingDisabled: true,
     supportsFastMode: true,
   },
   {
@@ -50,6 +53,7 @@ export const CLAUDE_MODEL_MANIFEST = [
     isDefault: true,
     contextWindowMaxTokens: 200_000,
     effortLevels: CLAUDE_EFFORT_LEVELS.xhigh,
+    supportsThinkingDisabled: true,
     supportsFastMode: true,
   },
   {
@@ -58,6 +62,7 @@ export const CLAUDE_MODEL_MANIFEST = [
     description: "Sonnet 5 · Best for everyday tasks",
     contextWindowMaxTokens: 1_000_000,
     effortLevels: CLAUDE_EFFORT_LEVELS.xhigh,
+    supportsThinkingDisabled: true,
   },
   {
     id: "claude-opus-4-7[1m]",
@@ -65,6 +70,7 @@ export const CLAUDE_MODEL_MANIFEST = [
     description: "Opus 4.7 with 1M context window",
     contextWindowMaxTokens: 1_000_000,
     effortLevels: CLAUDE_EFFORT_LEVELS.xhigh,
+    supportsThinkingDisabled: true,
     supportsFastMode: true,
   },
   {
@@ -73,6 +79,7 @@ export const CLAUDE_MODEL_MANIFEST = [
     description: "Opus 4.7 · Previous release",
     contextWindowMaxTokens: 200_000,
     effortLevels: CLAUDE_EFFORT_LEVELS.xhigh,
+    supportsThinkingDisabled: true,
     supportsFastMode: true,
   },
   {
@@ -81,6 +88,7 @@ export const CLAUDE_MODEL_MANIFEST = [
     description: "Opus 4.6 with 1M context window",
     contextWindowMaxTokens: 1_000_000,
     effortLevels: CLAUDE_EFFORT_LEVELS.standard,
+    supportsThinkingDisabled: true,
     supportsFastMode: true,
   },
   {
@@ -89,6 +97,7 @@ export const CLAUDE_MODEL_MANIFEST = [
     description: "Opus 4.6 · Most capable for complex work",
     contextWindowMaxTokens: 200_000,
     effortLevels: CLAUDE_EFFORT_LEVELS.standard,
+    supportsThinkingDisabled: true,
     supportsFastMode: true,
   },
   {
@@ -97,6 +106,7 @@ export const CLAUDE_MODEL_MANIFEST = [
     description: "Sonnet 4.6 with 1M context window",
     contextWindowMaxTokens: 1_000_000,
     effortLevels: CLAUDE_EFFORT_LEVELS.standard,
+    supportsThinkingDisabled: true,
   },
   {
     id: "claude-sonnet-4-6",
@@ -104,6 +114,7 @@ export const CLAUDE_MODEL_MANIFEST = [
     description: "Sonnet 4.6 · Best for everyday tasks",
     contextWindowMaxTokens: 200_000,
     effortLevels: CLAUDE_EFFORT_LEVELS.standard,
+    supportsThinkingDisabled: true,
   },
   {
     id: "claude-haiku-4-5",
@@ -115,15 +126,19 @@ export const CLAUDE_MODEL_MANIFEST = [
 
 function buildThinkingOptions(
   effortLevels: readonly ClaudeEffortLevel[] | undefined,
+  supportsThinkingDisabled: boolean,
 ): AgentSelectOption[] | undefined {
   if (!effortLevels) {
     return undefined;
   }
 
-  const options: AgentSelectOption[] = effortLevels.map((id) => ({
-    id,
-    label: CLAUDE_EFFORT_LABELS[id],
-  }));
+  const options: AgentSelectOption[] = [
+    ...(supportsThinkingDisabled ? [{ id: CLAUDE_DISABLED_THINKING_OPTION_ID, label: "Off" }] : []),
+    ...effortLevels.map((id) => ({
+      id,
+      label: CLAUDE_EFFORT_LABELS[id],
+    })),
+  ];
 
   if (effortLevels.includes("xhigh")) {
     options.push({ id: CLAUDE_ULTRACODE_THINKING_OPTION_ID, label: "Ultra Code" });
@@ -136,6 +151,7 @@ export function getClaudeManifestModels(): AgentModelDefinition[] {
   return CLAUDE_MODEL_MANIFEST.map((model) => {
     const thinkingOptions = buildThinkingOptions(
       "effortLevels" in model ? model.effortLevels : undefined,
+      "supportsThinkingDisabled" in model && model.supportsThinkingDisabled,
     );
     return {
       provider: "claude",
@@ -146,9 +162,38 @@ export function getClaudeManifestModels(): AgentModelDefinition[] {
       ...(model.contextWindowMaxTokens !== undefined
         ? { contextWindowMaxTokens: model.contextWindowMaxTokens }
         : {}),
-      ...(thinkingOptions ? { thinkingOptions } : {}),
+      ...(thinkingOptions
+        ? {
+            thinkingOptions,
+            defaultThinkingOptionId: "effortLevels" in model ? model.effortLevels?.[0] : undefined,
+          }
+        : {}),
     };
   });
+}
+
+export interface ClaudeDisabledThinkingResolution {
+  supported: boolean;
+  fallbackThinkingOptionId: string | undefined;
+}
+
+/**
+ * Resolve the disabled-thinking capability from the curated manifest only. Runtime/provider
+ * model aliases intentionally do not inherit this capability.
+ */
+export function resolveClaudeDisabledThinkingForModel(
+  modelId: string | null | undefined,
+): ClaudeDisabledThinkingResolution {
+  const normalizedModelId = normalizeClaudeManifestModelId(modelId);
+  const model = normalizedModelId
+    ? CLAUDE_MODEL_MANIFEST.find((candidate) => candidate.id === normalizedModelId)
+    : undefined;
+  return {
+    supported:
+      !!model && "supportsThinkingDisabled" in model && model.supportsThinkingDisabled === true,
+    fallbackThinkingOptionId:
+      model && "effortLevels" in model ? model.effortLevels?.[0] : undefined,
+  };
 }
 
 export function isClaudeManifestModelId(modelId: string): boolean {

@@ -366,6 +366,13 @@ export const zhCN: TranslationResources = {
       copyBranchName: "复制分支名称",
       copied: "已复制",
     },
+    fileActions: {
+      openFile: "打开文件",
+      copyPath: "复制路径",
+      download: "下载",
+      addToChat: "添加到聊天…",
+      moreActions: "更多操作",
+    },
     fileExplorer: {
       sort: {
         name: "名称",
@@ -375,8 +382,6 @@ export const zhCN: TranslationResources = {
       context: {
         size: "大小",
         modified: "修改时间",
-        copyPath: "复制路径",
-        download: "下载",
       },
       actions: {
         back: "返回",
@@ -466,6 +471,7 @@ export const zhCN: TranslationResources = {
     },
     tabs: {
       loading: "正在加载...",
+      modified: "未保存的更改",
       loadingAgentTitle: "正在加载 Agent 标题",
       emptyPane: "此窗格中没有标签。",
       fallback: {
@@ -532,6 +538,11 @@ export const zhCN: TranslationResources = {
         failedToReloadAgent: "重新加载 Agent 失败",
       },
       confirmations: {
+        unsavedTitle: "未保存的更改",
+        unsavedMessage: "此标签页有尚未保存的更改。关闭将丢弃草稿。",
+        closeWithoutSaving: "不保存并关闭",
+        closePaneTitle: "关闭面板？",
+        bulkUnsaved: "{{count}} 个标签页有未保存的更改。关闭将丢弃这些草稿。",
         close: "关闭",
         cancel: "取消",
         archive: "归档",
@@ -578,19 +589,34 @@ export const zhCN: TranslationResources = {
     scripts: {
       title: "Scripts",
       actions: {
+        chooseUrl: "选择 URL",
+        copyUrl: "复制 URL",
+        openService: "查看服务",
+        restart: "重启",
         run: "运行",
-        view: "查看",
+        stop: "停止",
+        view: "查看终端",
       },
       accessibility: {
         trigger: "Workspace scripts",
-        openAt: "在 {{label}} 打开 {{scriptName}}",
+        openService: "查看 {{scriptName}} 服务",
         viewTerminal: "查看 {{scriptName}} Terminal",
         runScript: "运行 {{scriptName}} script",
+        stopScript: "停止 {{scriptName}}",
+        restartScript: "重启 {{scriptName}}",
+        copyUrl: "复制 {{scriptName}} 的 URL",
+        chooseUrl: "选择 {{scriptName}} 的 URL",
         script: "{{scriptName}} script",
+      },
+      routes: {
+        public: "反向代理",
+        paseo: "Memorable",
+        direct: "直接地址",
       },
       states: {
         exitCode: "exit {{code}}",
         startFailed: "启动 {{scriptName}} 失败",
+        stopFailed: "停止 {{scriptName}} 失败",
       },
     },
     git: {
@@ -724,6 +750,8 @@ export const zhCN: TranslationResources = {
         },
       },
       diff: {
+        openChangesTab: "打开“更改”标签页",
+        closeChangesTab: "关闭“更改”标签页",
         binaryFile: "二进制文件",
         tooLarge: "Diff 过大，无法显示",
         unified: "Unified diff",
@@ -759,14 +787,12 @@ export const zhCN: TranslationResources = {
         deletedFile: "已删除",
         commits: {
           title: "提交",
-          legendLocal: "本地",
-          legendRemote: "已推送",
-          countLabel: "领先基线 {{count}} 个提交",
+          countLabel: "最近 {{count}} 个提交",
           fileDiffEmpty: "没有可显示的更改",
           fileDiffError: "加载文件差异失败",
           loading: "正在加载提交…",
           loadError: "加载提交失败",
-          empty: "没有领先基线的提交",
+          empty: "暂无提交",
         },
       },
       openInEditor: {
@@ -897,6 +923,8 @@ export const zhCN: TranslationResources = {
       actions: {
         menu: "Workspace 操作",
         newWorkspace: "新建 workspace",
+        showMore: "显示更多",
+        showLess: "收起",
         createWorkspaceFor: "为 {{projectName}} 新建 workspace",
         copyPath: "复制路径",
         copyBranchName: "复制分支名称",
@@ -953,9 +981,6 @@ export const zhCN: TranslationResources = {
     refPicker: {
       startingRef: "起始 ref",
       chooseStart: "选择起始位置",
-      checkoutHint: "Checkout {{noun}} {{numberPrefix}}{{number}}？",
-      checkoutPr: "Checkout {{noun}} {{numberPrefix}}{{number}}",
-      dismissCheckoutHint: "忽略 {{noun}} {{numberPrefix}}{{number}} checkout 提示",
       intoBase: "进入 {{baseRef}}",
       searching: "正在搜索...",
       noMatchingRefs: "没有匹配的 refs。",
@@ -1428,11 +1453,32 @@ export const zhCN: TranslationResources = {
       binaryPreviewUnavailable: "二进制预览不可用",
       failedToLoad: "加载文件失败",
       failedToLoadPreview: "加载文件预览失败",
+      editor: {
+        fileSize: "文件大小 {{size}}",
+        lines: "{{count}} 行",
+        editorStatus: "编辑器状态 {{status}}",
+        unsavedChanges: "未保存的更改",
+        saving: "正在保存...",
+        saveFailed: "保存失败",
+        changedOnDisk: "磁盘上的文件已更改",
+        vimMode: "Vim 模式 {{mode}}",
+        cursor: "第 {{line}} 行，第 {{column}} 列",
+        preview: "预览",
+        source: "源代码",
+        unavailableTitle: "磁盘上的文件不可用",
+        conflictDescription: "本地内容已保留。请选择要保留的版本。",
+        overwrite: "覆盖",
+        reload: "重新加载",
+        reloadTitle: "从磁盘重新加载？",
+        reloadMessage: "本地更改将丢失。",
+      },
     },
     diff: {
       changesLabel: "更改",
       changesSubtitle: "工作区差异",
       commitSubtitle: "提交差异",
+      uncommittedSubtitle: "未提交的更改",
+      baseSubtitle: "与 {{baseRef}} 比较",
       directoryMissing: "未找到 workspace 目录。",
       empty: "没有更改",
       loadError: "加载差异失败",
@@ -1523,11 +1569,17 @@ export const zhCN: TranslationResources = {
     sections: {
       general: "通用",
       appearance: "外观",
+      editor: "编辑器",
       shortcuts: "快捷键",
       integrations: "集成",
       permissions: "权限",
       diagnostics: "诊断",
       about: "关于",
+    },
+    editor: {
+      title: "编辑器",
+      vimKeybindings: "Vim 键位",
+      vimHint: "适用于网页和桌面端的源文件。",
     },
     hostSections: {
       connections: "连接",

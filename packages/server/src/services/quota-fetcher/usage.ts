@@ -2,6 +2,7 @@ import { z } from "zod";
 import type {
   ProviderUsage,
   ProviderUsageBalance,
+  ProviderUsageTone,
   ProviderUsageWindow,
 } from "../../server/messages.js";
 import type { ProviderApiFetch } from "./provider.js";
@@ -67,12 +68,41 @@ export function windowFromUsedPct(input: {
   return window;
 }
 
+/**
+ * The tone scale for anything measured against a known limit, windows and balances alike.
+ *
+ * Thresholds match `deriveTone` in the app's provider-usage/tone.ts, which is what the
+ * client falls back to when a window arrives without a tone. Healthy is "ok" rather than
+ * "default" because that is what every provider setting a tone has always sent, and it is
+ * what the bars render today below their thresholds.
+ */
+export function toneFromUsedPct(usedPct: number | null | undefined): ProviderUsageTone {
+  if (typeof usedPct !== "number") return "default";
+  if (usedPct > 90) return "danger";
+  if (usedPct >= 70) return "warning";
+  return "ok";
+}
+
+/**
+ * Tone for a balance with no known limit, where a percentage cannot be computed and the
+ * only signal is whether anything is left. Prefer `toneFromUsedPct` when a limit exists:
+ * this one stays "ok" until the balance is completely spent.
+ */
 export function balanceToneFromRemaining(
   remaining: number | null | undefined,
 ): ProviderUsageBalance["tone"] {
   if (typeof remaining !== "number") return "default";
   if (remaining <= 0) return "danger";
   return "ok";
+}
+
+/** Percentage of a limit consumed, or null when either side is unknown. */
+export function usedPctOf(
+  used: number | null | undefined,
+  limit: number | null | undefined,
+): number | null {
+  if (typeof used !== "number" || typeof limit !== "number" || limit <= 0) return null;
+  return (used / limit) * 100;
 }
 
 export function toIsoStringOrNull(timestampMs: number): string | null {

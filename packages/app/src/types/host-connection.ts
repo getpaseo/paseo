@@ -75,6 +75,29 @@ export function orderHostsLocalFirst<T extends { serverId: string }>(
   return ordered;
 }
 
+/**
+ * Resolves which host a settings host section should target: the picker
+ * selection, else the local daemon, else the first connected host.
+ *
+ * Only a serverId that names a currently connected host is used. Both the
+ * selection and the local daemon can name a host that isn't connected (a stale
+ * selection, or a local daemon whose id persists in storage while it's stopped);
+ * using one would resolve the section to an unknown id and render "host not found".
+ */
+export function resolveActiveHostServerId(params: {
+  selectedServerId: string | null;
+  localServerId: string | null;
+  hosts: readonly { serverId: string }[];
+  orderedHosts: readonly { serverId: string }[];
+}): string | null {
+  const { selectedServerId, localServerId, hosts, orderedHosts } = params;
+  const connected = (serverId: string | null): string | null =>
+    serverId && hosts.some((host) => host.serverId === serverId) ? serverId : null;
+  return (
+    connected(selectedServerId) ?? connected(localServerId) ?? orderedHosts[0]?.serverId ?? null
+  );
+}
+
 function hostConnectionEquals(left: HostConnection, right: HostConnection): boolean {
   if (left.type !== right.type || left.id !== right.id) {
     return false;

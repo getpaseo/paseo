@@ -156,6 +156,59 @@ describe("OMP history mapper", () => {
     ]);
   });
 
+  test("renders replayed OMP advisor messages as synthetic tool-call blocks", async () => {
+    await expect(
+      collectHistory([
+        {
+          role: "custom",
+          content: [
+            {
+              type: "text",
+              text: '<advisory severity="blocker">Add an authorization check.</advisory>',
+            },
+          ],
+          customType: "advisor",
+          id: "advisor-message-1",
+          display: true,
+          details: {
+            notes: [
+              {
+                note: "Add an authorization check.",
+                severity: "blocker",
+                advisor: "security",
+              },
+              { note: "Exercise the failure path.", severity: "concern" },
+            ],
+          },
+        },
+      ]),
+    ).resolves.toEqual([
+      {
+        type: "timeline",
+        provider: "omp",
+        item: {
+          type: "tool_call",
+          callId: "omp-advisor:advisor-message-1",
+          name: "advisor",
+          status: "completed",
+          detail: {
+            type: "plain_text",
+            label: "Advisor · 2 notes · 1 blocker",
+            text: "[blocker] [security] Add an authorization check.\n\n[concern] Exercise the failure path.",
+            icon: "brain",
+          },
+          metadata: {
+            synthetic: true,
+            source: "omp_advisor",
+            noteCount: 2,
+            blockerCount: 1,
+          },
+          error: null,
+        },
+      },
+    ]);
+  });
+
   test("suppresses replayed raw todo tool calls through the OMP detail hook", async () => {
     await expect(
       collectHistory([

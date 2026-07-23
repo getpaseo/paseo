@@ -1,4 +1,5 @@
 import { Buffer } from "buffer";
+import { buildAgentDeepLinkRoute } from "@getpaseo/protocol/agent-deep-link";
 
 type NullableString = string | null | undefined;
 const BASE64_WORKSPACE_ID_PREFIX = "b64_";
@@ -389,7 +390,10 @@ export function buildHostAgentDetailRoute(serverId: string, agentId: string, wor
   if (!normalizedServerId || !normalizedAgentId) {
     return "/" as const;
   }
-  return `${buildHostRootRoute(normalizedServerId)}/agent/${encodeSegment(normalizedAgentId)}` as const;
+  return buildAgentDeepLinkRoute({
+    serverId: normalizedServerId,
+    agentId: normalizedAgentId,
+  });
 }
 
 export function buildHostRootRoute(serverId: string) {
@@ -488,6 +492,7 @@ export function resolveKnownHostRoute(input: {
 export const SETTINGS_SECTION_SLUGS = [
   "general",
   "appearance",
+  "editor",
   "shortcuts",
   "integrations",
   "permissions",

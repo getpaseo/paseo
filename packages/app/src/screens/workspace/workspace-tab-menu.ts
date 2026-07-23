@@ -144,6 +144,9 @@ function getCloseButtonTestId(tab: WorkspaceTabDescriptor): string {
   if (tab.target.kind === "commit_diff") {
     return `workspace-commit-diff-close-${encodeFilePathForPathSegment(tab.target.sha)}`;
   }
+  if (tab.target.kind === "working_diff") {
+    return `workspace-working-diff-close-${encodeFilePathForPathSegment(buildDeterministicWorkspaceTabId(tab.target))}`;
+  }
   return `workspace-file-close-${encodeFilePathForPathSegment(tab.target.path)}`;
 }
 

@@ -315,18 +315,28 @@ describe("checkout git utilities", () => {
     });
   });
 
-  it("reports a real non-git directory as non-git", async () => {
+  it("reports an ordinary directory as non-git without warning", async () => {
     const nonGitDir = join(tempDir, "not-git-status");
     mkdirSync(nonGitDir, { recursive: true });
+    const records: unknown[] = [];
+    const logger = pino(
+      { level: "warn" },
+      {
+        write(line: string) {
+          records.push(JSON.parse(line));
+        },
+      },
+    );
 
-    await expect(getCheckoutStatus(nonGitDir)).resolves.toEqual({ isGit: false });
+    await expect(getCheckoutStatus(nonGitDir, { logger })).resolves.toEqual({ isGit: false });
+    expect(records).toEqual([]);
   });
 
   it.runIf(
     process.platform !== "win32" &&
       existsSync("/dev/shm") &&
       statSync("/dev").dev !== statSync("/dev/shm").dev,
-  )("warns and reports a non-git directory at a filesystem boundary as non-git", async () => {
+  )("does not warn for a non-git directory at a filesystem boundary", async () => {
     const nonGitDir = realpathSync.native(mkdtempSync("/dev/shm/checkout-git-boundary-test-"));
     const records: unknown[] = [];
     const logger = pino(
@@ -339,19 +349,32 @@ describe("checkout git utilities", () => {
     );
     try {
       await expect(getCheckoutStatus(nonGitDir, { logger })).resolves.toEqual({ isGit: false });
-      expect(records).toEqual([
-        expect.objectContaining({
-          level: 40,
-          cwd: nonGitDir,
-          msg: "Git worktree discovery failed; treating directory as non-Git",
-          err: expect.objectContaining({
-            message: expect.stringContaining("Stopping at filesystem boundary"),
-          }),
-        }),
-      ]);
+      expect(records).toEqual([]);
     } finally {
       rmSync(nonGitDir, { recursive: true, force: true });
     }
+  });
+
+  it("warns when git discovery fails unexpectedly", async () => {
+    const missingDir = join(tempDir, "missing-git-cwd");
+    const records: unknown[] = [];
+    const logger = pino(
+      { level: "warn" },
+      {
+        write(line: string) {
+          records.push(JSON.parse(line));
+        },
+      },
+    );
+
+    await expect(getCheckoutStatus(missingDir, { logger })).resolves.toEqual({ isGit: false });
+    expect(records).toEqual([
+      expect.objectContaining({
+        level: 40,
+        cwd: missingDir,
+        msg: "Git worktree discovery failed; treating directory as non-Git",
+      }),
+    ]);
   });
 
   it("returns null for getCurrentBranch in a repo with no commits", async () => {
@@ -485,6 +508,45 @@ describe("checkout git utilities", () => {
       .toString()
       .trim();
     expect(message).toBe("update file");
+  });
+
+  it("reads the origin URL once when collecting facts for an origin-tracking branch", async () => {
+    setupRemoteTrackingMain(repoDir, tempDir);
+
+    startGitCommandMetrics();
+    const facts = await getCheckoutSnapshotFacts(repoDir, { paseoHome });
+    const metrics = stopGitCommandMetrics();
+    const originUrlCommands = metrics.commands.filter(
+      (command) => command.args.join(" ") === "config --get remote.origin.url",
+    );
+
+    expect(facts.isGit).toBe(true);
+    expect(originUrlCommands).toHaveLength(1);
+  });
+
+  it("reads a non-origin branch remote without replacing it with the origin URL", async () => {
+    setupRemoteTrackingMain(repoDir, tempDir);
+    execFileSync("git", ["remote", "set-url", "origin", "git@github.com:upstream/repo.git"], {
+      cwd: repoDir,
+    });
+    execFileSync("git", ["remote", "add", "fork", "git@github.com:contributor/repo.git"], {
+      cwd: repoDir,
+    });
+    execFileSync("git", ["config", "branch.main.remote", "fork"], { cwd: repoDir });
+    execFileSync("git", ["config", "branch.main.merge", "refs/heads/main"], { cwd: repoDir });
+
+    startGitCommandMetrics();
+    const facts = await getCheckoutSnapshotFacts(repoDir, { paseoHome });
+    const metrics = stopGitCommandMetrics();
+    const commands = metrics.commands.map((command) => command.args.join(" "));
+
+    expect(facts.isGit).toBe(true);
+    expect(commands.filter((command) => command === "config --get remote.origin.url")).toHaveLength(
+      1,
+    );
+    expect(commands.filter((command) => command === "config --get remote.fork.url")).toHaveLength(
+      1,
+    );
   });
 
   it("reuses checkout snapshot facts across status, shortstat, and PR status reads", async () => {
@@ -662,19 +724,34 @@ const x = 1;
     expect(behindStatus.aheadOfOrigin).toBe(0);
     expect(behindStatus.behindOfOrigin).toBe(1);
 
-    writeFileSync(join(repoDir, "local.txt"), "local\n");
-    execFileSync("git", ["add", "local.txt"], { cwd: repoDir });
-    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "local update"], {
-      cwd: repoDir,
-    });
+    commitFile(repoDir, "local-1.txt", "local 1\n", "local update 1");
+    commitFile(repoDir, "local-2.txt", "local 2\n", "local update 2");
+    commitFile(repoDir, "local-3.txt", "local 3\n", "local update 3");
+    commitFile(cloneDir, "remote-2.txt", "remote 2\n", "remote update 2");
+    execFileSync("git", ["push"], { cwd: cloneDir });
+    execFileSync("git", ["fetch", "origin"], { cwd: repoDir });
 
-    const divergedStatus = await getCheckoutStatus(repoDir);
+    const facts = await getCheckoutSnapshotFacts(repoDir);
+    startGitCommandMetrics();
+    const divergedStatus = await getCheckoutStatus(repoDir, { facts });
+    const metrics = stopGitCommandMetrics();
+    const upstreamCountCommands = metrics.commands.filter(
+      (command) => command.args[0] === "rev-list" && command.args.join(" ").includes("main"),
+    );
+
     expect(divergedStatus.isGit).toBe(true);
     if (!divergedStatus.isGit) {
       return;
     }
-    expect(divergedStatus.aheadOfOrigin).toBe(1);
-    expect(divergedStatus.behindOfOrigin).toBe(1);
+    expect(divergedStatus.aheadOfOrigin).toBe(3);
+    expect(divergedStatus.behindOfOrigin).toBe(2);
+    expect(upstreamCountCommands).toHaveLength(1);
+    expect(upstreamCountCommands[0]?.args).toEqual([
+      "rev-list",
+      "--left-right",
+      "--count",
+      "main...origin/main",
+    ]);
   });
 
   it("reports a PR worktree as not ahead when its branch is pushed to the configured PR remote", async () => {
@@ -777,6 +854,7 @@ const x = 1;
       return;
     }
     expect(status.aheadOfOrigin).toBeNull();
+    expect(status.behindOfOrigin).toBeNull();
   });
 
   it("does not report full history as unpushed for fresh no-track Paseo worktrees", async () => {
@@ -1394,6 +1472,26 @@ const x = 1;
     expect(entry).toBeTruthy();
     expect(entry?.status).toBe("too_large");
     expect(diff.diff).toContain("# untracked-large.txt: diff too large omitted");
+  });
+
+  it("resolves the Git common directory once when reading Paseo worktree facts", async () => {
+    const result = await createLegacyWorktreeForTest({
+      branchName: "main",
+      cwd: repoDir,
+      baseBranch: "main",
+      worktreeSlug: "common-dir",
+      paseoHome,
+    });
+
+    startGitCommandMetrics();
+    const facts = await getCheckoutSnapshotFacts(result.worktreePath, { paseoHome });
+    const metrics = stopGitCommandMetrics();
+    const commonDirCommands = metrics.commands.filter(
+      (command) => command.args.join(" ") === "rev-parse --git-common-dir",
+    );
+
+    expect(facts.isGit).toBe(true);
+    expect(commonDirCommands).toHaveLength(1);
   });
 
   it("handles status/diff/commit in a .paseo worktree", async () => {

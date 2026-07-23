@@ -1,5 +1,65 @@
 # Changelog
 
+## 0.2.0-beta.3 - 2026-07-22
+
+### Added
+
+- Open the complete Changes view as a workspace tab ([#2298](https://github.com/getpaseo/paseo/pull/2298) by [@nikuscs](https://github.com/nikuscs))
+- Add files to chat directly from Files and Changes ([#2275](https://github.com/getpaseo/paseo/pull/2275) by [@nikuscs](https://github.com/nikuscs))
+- Open existing agents from Paseo links or the CLI ([#2324](https://github.com/getpaseo/paseo/pull/2324))
+- Use Oh My Pi's Write Approval mode to allow reads while requiring approval for changes ([#2228](https://github.com/getpaseo/paseo/pull/2228) by [@theslava](https://github.com/theslava))
+
+### Improved
+
+- Usage bars now warn as provider limits approach ([#2322](https://github.com/getpaseo/paseo/pull/2322) by [@cleiter](https://github.com/cleiter))
+- Oh My Pi advisor results now retain their structure and severity ([#2219](https://github.com/getpaseo/paseo/pull/2219) by [@ebg1223](https://github.com/ebg1223))
+
+### Fixed
+
+- Notifications now open the correct workspace and agent ([#2331](https://github.com/getpaseo/paseo/pull/2331))
+- Archived agents can be restored directly from History ([#2316](https://github.com/getpaseo/paseo/pull/2316))
+- CLI agent runs stay in the current workspace unless a new workspace is requested ([#2315](https://github.com/getpaseo/paseo/pull/2315))
+- Oh My Pi slash commands now include commands from every supported source ([#2175](https://github.com/getpaseo/paseo/pull/2175) by [@bendavid](https://github.com/bendavid))
+- Oh My Pi chats no longer stay stuck as running after delayed or incomplete completion events ([#2261](https://github.com/getpaseo/paseo/pull/2261), [#2282](https://github.com/getpaseo/paseo/pull/2282) by [@isac322](https://github.com/isac322))
+
+## 0.2.0-beta.2 - 2026-07-22
+
+### Added
+
+- Edit files directly in the web and desktop apps ([#2270](https://github.com/getpaseo/paseo/pull/2270), [#2309](https://github.com/getpaseo/paseo/pull/2309))
+- Switch models from the Command Center for active agents and new drafts ([#2147](https://github.com/getpaseo/paseo/pull/2147) by [@kedrzu](https://github.com/kedrzu))
+- Configure workspace service ports with a fixed range or external allocator ([#2165](https://github.com/getpaseo/paseo/pull/2165) by [@mcowger](https://github.com/mcowger))
+- Search keyboard shortcuts by action, note, or key combination ([#2160](https://github.com/getpaseo/paseo/pull/2160))
+- Turn thinking off for supported Claude models ([#2257](https://github.com/getpaseo/paseo/pull/2257))
+- Use Pi's Max thinking level ([#2267](https://github.com/getpaseo/paseo/pull/2267) by [@ByteTrue](https://github.com/ByteTrue))
+
+### Improved
+
+- Improved parity of CLI and MCP tools for workspace, agent and schedule management ([#2186](https://github.com/getpaseo/paseo/pull/2186))
+- Pasted PR/MR links in the composer become auto-selected as a checkout option ([#2290](https://github.com/getpaseo/paseo/pull/2290))
+- Projects, workspaces and chat syncing is more efficient ([#2028](https://github.com/getpaseo/paseo/pull/2028), [#2185](https://github.com/getpaseo/paseo/pull/2185), [#2196](https://github.com/getpaseo/paseo/pull/2196), [#2206](https://github.com/getpaseo/paseo/pull/2206), [#2259](https://github.com/getpaseo/paseo/pull/2259), [#2263](https://github.com/getpaseo/paseo/pull/2263))
+- Make project creation more explicit ([#2098](https://github.com/getpaseo/paseo/pull/2098), [#2187](https://github.com/getpaseo/paseo/pull/2187))
+- Idle agents release processes automatically and resume when needed ([#2203](https://github.com/getpaseo/paseo/pull/2203), [#2209](https://github.com/getpaseo/paseo/pull/2209))
+- New Claude and Codex agents default to safer automatic approval modes when supported ([#2213](https://github.com/getpaseo/paseo/pull/2213))
+- Oh My Pi now supports Max thinking in imported and new sessions ([#2191](https://github.com/getpaseo/paseo/pull/2191) by [@mvanhorn](https://github.com/mvanhorn))
+- Commit history now includes recent pushed and base-branch commits ([#2312](https://github.com/getpaseo/paseo/pull/2312))
+- Permission and thinking changes made during a turn now show when they take effect ([#2201](https://github.com/getpaseo/paseo/pull/2201))
+
+### Fixed
+
+- Reused branches no longer attach an unrelated merged or closed pull request ([#2172](https://github.com/getpaseo/paseo/pull/2172) by [@nllptrx](https://github.com/nllptrx))
+- Pi compaction waits for long summaries instead of reporting a false timeout ([#2181](https://github.com/getpaseo/paseo/pull/2181) by [@jasonhnd](https://github.com/jasonhnd))
+- Pi chats keep new messages aligned with the correct history after an idle agent resumes ([#2313](https://github.com/getpaseo/paseo/pull/2313))
+- OpenCode follow-ups triggered by completed background work now remain visible ([#2258](https://github.com/getpaseo/paseo/pull/2258))
+- Codex no longer shows the parent agent as a phantom subagent ([#2214](https://github.com/getpaseo/paseo/pull/2214))
+- Local dictation now works in Nix-packaged installations ([#1587](https://github.com/getpaseo/paseo/pull/1587) by [@yhori991](https://github.com/yhori991))
+- The composer remains visible after submitting dictated text and returning to the app ([#2194](https://github.com/getpaseo/paseo/pull/2194))
+- Desktop's dictation shortcut remains responsive after finishing a recording ([#2268](https://github.com/getpaseo/paseo/pull/2268))
+- Projects can be renamed before their first workspace ([#2252](https://github.com/getpaseo/paseo/pull/2252) by [@albertodeago](https://github.com/albertodeago))
+- Settings keep showing a connected remote host when the local daemon is stopped ([#1749](https://github.com/getpaseo/paseo/pull/1749) by [@dwyanewang](https://github.com/dwyanewang))
+- Pinned workspaces no longer disappear briefly when reopening the compact sidebar ([#2210](https://github.com/getpaseo/paseo/pull/2210))
+- Session imports find older matches from the current workspace ([#2265](https://github.com/getpaseo/paseo/pull/2265) by [@nikuscs](https://github.com/nikuscs))
+
 ## 0.2.0-beta.1 - 2026-07-17
 
 ### Added

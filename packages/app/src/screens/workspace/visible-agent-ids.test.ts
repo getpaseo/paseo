@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import type { WorkspaceLayout } from "@/stores/workspace-layout-store";
-import type { WorkspaceTab } from "@/stores/workspace-tabs-store";
+import type { WorkspaceTab } from "@/workspace-tabs/model";
 import { selectVisibleAgentIds } from "./visible-agent-ids";
 
 test("selects only the active agent tab in every visible pane", () => {

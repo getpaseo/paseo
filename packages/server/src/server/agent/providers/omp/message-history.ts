@@ -17,6 +17,7 @@ export interface OmpCapturedUserMessageEntry {
 
 export interface OmpHistoryMapperHooks {
   mapCustomMessage?: (
+    message: Extract<OmpAgentMessage, { role: "custom" }>,
     text: string,
     provider: string,
   ) => Extract<AgentStreamEvent, { type: "timeline" }> | null;
@@ -117,7 +118,7 @@ export class OmpHistoryMapper {
     message: Extract<OmpAgentMessage, { role: "custom" }>,
   ): AgentStreamEvent[] {
     const text = getUserMessageText(message.content);
-    const mappedEvent = text ? this.hooks.mapCustomMessage?.(text, this.provider) : null;
+    const mappedEvent = text ? this.hooks.mapCustomMessage?.(message, text, this.provider) : null;
     if (mappedEvent) {
       return [mappedEvent];
     }

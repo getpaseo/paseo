@@ -810,6 +810,10 @@ export type CheckoutSnapshotFacts =
       pullRequestLookupTarget: PullRequestStatusLookupTarget | null;
     };
 
+function isNotGitRepositoryError(error: unknown): boolean {
+  return error instanceof Error && /not a git repository/i.test(error.message);
+}
+
 async function requireGitRepo(cwd: string): Promise<void> {
   try {
     await runGitCommand(["rev-parse", "--git-dir"], { cwd, envOverlay: READ_ONLY_GIT_ENV });
@@ -897,11 +901,12 @@ async function getWorktreeRoot(cwd: string, context?: CheckoutContext): Promise<
     });
     return parseGitRevParsePath(stdout);
   } catch (error) {
-    // Git discovery is fail-open: keep the directory usable as non-Git and retain the diagnostic.
-    context?.logger?.warn(
-      { err: error, cwd },
-      "Git worktree discovery failed; treating directory as non-Git",
-    );
+    if (!isNotGitRepositoryError(error)) {
+      context?.logger?.warn(
+        { err: error, cwd },
+        "Git worktree discovery failed; treating directory as non-Git",
+      );
+    }
     return null;
   }
 }
@@ -1047,10 +1052,15 @@ type PaseoWorktreeForCwd =
   | { isPaseoOwnedWorktree: false }
   | { isPaseoOwnedWorktree: true; worktreeRoot: string };
 
+interface PaseoWorktreeLookupOptions {
+  context?: CheckoutContext;
+  knownWorktreeRoot?: string | null;
+  knownGitCommonDir?: string | null;
+}
+
 async function getPaseoWorktreeForCwd(
   cwd: string,
-  context?: CheckoutContext,
-  knownWorktreeRoot?: string | null,
+  options: PaseoWorktreeLookupOptions = {},
 ): Promise<PaseoWorktreeForCwd> {
   // Fast-path reject: non-worktree paths do not need expensive ownership checks.
   if (!/[\\/]worktrees[\\/]/.test(cwd)) {
@@ -1058,8 +1068,9 @@ async function getPaseoWorktreeForCwd(
   }
 
   const ownership = await isPaseoOwnedWorktreeCwd(cwd, {
-    paseoHome: context?.paseoHome,
-    worktreesRoot: context?.worktreesRoot,
+    paseoHome: options.context?.paseoHome,
+    worktreesRoot: options.context?.worktreesRoot,
+    knownGitCommonDir: options.knownGitCommonDir,
   });
   if (!ownership.allowed) {
     return { isPaseoOwnedWorktree: false };
@@ -1067,7 +1078,7 @@ async function getPaseoWorktreeForCwd(
 
   return {
     isPaseoOwnedWorktree: true,
-    worktreeRoot: knownWorktreeRoot ?? (await getWorktreeRoot(cwd, context)) ?? cwd,
+    worktreeRoot: options.knownWorktreeRoot ?? (await getWorktreeRoot(cwd, options.context)) ?? cwd,
   };
 }
 
@@ -1082,7 +1093,7 @@ async function getStoredBaseRefForCwd(
   if (context?.facts?.isGit) {
     return context.facts.storedBaseRef;
   }
-  const paseoWorktree = await getPaseoWorktreeForCwd(cwd, context);
+  const paseoWorktree = await getPaseoWorktreeForCwd(cwd, { context });
   if (!paseoWorktree.isPaseoOwnedWorktree) {
     return null;
   }
@@ -1487,30 +1498,6 @@ async function getAheadBehind(
   return { ahead, behind };
 }
 
-async function getAheadOfOrigin(
-  cwd: string,
-  currentBranch: string,
-  context?: CheckoutContext,
-): Promise<number | null> {
-  if (!currentBranch) {
-    return null;
-  }
-  const upstreamRef = await getConfiguredUpstreamRef(cwd, currentBranch, context);
-  if (!upstreamRef) {
-    return null;
-  }
-  try {
-    const { stdout } = await runGitCommand(
-      ["rev-list", "--count", `${upstreamRef}..${currentBranch}`],
-      { cwd, envOverlay: READ_ONLY_GIT_ENV, logger: context?.logger },
-    );
-    const count = Number.parseInt(stdout.trim(), 10);
-    return Number.isNaN(count) ? null : count;
-  } catch {
-    return null;
-  }
-}
-
 async function getConfiguredUpstreamRef(
   cwd: string,
   currentBranch: string,
@@ -1532,11 +1519,11 @@ async function getConfiguredUpstreamRef(
   return upstreamBranch ? `${remoteName}/${upstreamBranch}` : null;
 }
 
-async function getBehindOfOrigin(
+async function getOriginAheadBehind(
   cwd: string,
   currentBranch: string,
   context?: CheckoutContext,
-): Promise<number | null> {
+): Promise<AheadBehind | null> {
   if (!currentBranch) {
     return null;
   }
@@ -1546,11 +1533,13 @@ async function getBehindOfOrigin(
   }
   try {
     const { stdout } = await runGitCommand(
-      ["rev-list", "--count", `${currentBranch}..${upstreamRef}`],
+      ["rev-list", "--left-right", "--count", `${currentBranch}...${upstreamRef}`],
       { cwd, envOverlay: READ_ONLY_GIT_ENV, logger: context?.logger },
     );
-    const count = Number.parseInt(stdout.trim(), 10);
-    return Number.isNaN(count) ? null : count;
+    const [aheadRaw, behindRaw] = stdout.trim().split(/\s+/);
+    const ahead = Number.parseInt(aheadRaw ?? "", 10);
+    const behind = Number.parseInt(behindRaw ?? "", 10);
+    return Number.isNaN(ahead) || Number.isNaN(behind) ? null : { ahead, behind };
   } catch {
     return null;
   }
@@ -1574,15 +1563,17 @@ async function inspectCheckoutContext(
     return null;
   }
 
-  const [currentBranch, remoteUrl, absoluteGitDir, gitCommonDir, paseoWorktree] = await Promise.all(
-    [
-      getCurrentBranch(cwd),
-      getOriginRemoteUrl(cwd),
-      resolveAbsoluteGitDir(cwd),
-      resolveGitCommonDir(cwd),
-      getPaseoWorktreeForCwd(cwd, context, root),
-    ],
-  );
+  const [currentBranch, remoteUrl, absoluteGitDir, gitCommonDir] = await Promise.all([
+    getCurrentBranch(cwd),
+    getOriginRemoteUrl(cwd),
+    resolveAbsoluteGitDir(cwd),
+    resolveGitCommonDir(cwd),
+  ]);
+  const paseoWorktree = await getPaseoWorktreeForCwd(cwd, {
+    context,
+    knownWorktreeRoot: root,
+    knownGitCommonDir: gitCommonDir,
+  });
 
   return {
     worktreeRoot: root,
@@ -1771,7 +1762,9 @@ export async function getCheckoutSnapshotFacts(
     if (branchRemoteName) {
       [branchMergeRef, branchRemoteUrl] = await Promise.all([
         getGitConfigValue(cwd, `branch.${inspected.currentBranch}.merge`, context),
-        getGitConfigValue(cwd, `remote.${branchRemoteName}.url`, context),
+        branchRemoteName === "origin"
+          ? inspected.remoteUrl
+          : getGitConfigValue(cwd, `remote.${branchRemoteName}.url`, context),
       ]);
     }
   }
@@ -1950,17 +1943,16 @@ export async function getCheckoutStatus(
   const baseRef = facts.resolvedBaseRef;
   const mainRepoRoot = facts.mainRepoRoot;
   const factsContext = { ...context, facts };
-  const [aheadBehind, aheadOfOrigin, behindOfOrigin] = await Promise.all([
+  const [aheadBehind, originAheadBehind] = await Promise.all([
     baseRef && currentBranch
       ? getAheadBehind(cwd, baseRef, currentBranch, factsContext)
       : Promise.resolve(null),
     hasRemote && currentBranch
-      ? getAheadOfOrigin(cwd, currentBranch, factsContext)
-      : Promise.resolve(null),
-    hasRemote && currentBranch
-      ? getBehindOfOrigin(cwd, currentBranch, factsContext)
+      ? getOriginAheadBehind(cwd, currentBranch, factsContext)
       : Promise.resolve(null),
   ]);
+  const aheadOfOrigin = originAheadBehind?.ahead ?? null;
+  const behindOfOrigin = originAheadBehind?.behind ?? null;
 
   if (paseoWorktree.isPaseoOwnedWorktree && baseRef) {
     return {
@@ -1996,9 +1988,8 @@ export async function getCheckoutStatus(
   };
 }
 
-// Cap on how many ahead-of-base commits we enumerate. Branches with more than
-// this many unmerged commits are truncated to the newest MAX_CHECKOUT_COMMITS.
-const MAX_CHECKOUT_COMMITS = 200;
+// The explorer is a recent-history view, not a full repository log.
+const MAX_CHECKOUT_COMMITS = 20;
 // Bytes git emits between fields/records. We split parsed output on these.
 const COMMIT_FIELD_SEPARATOR = "\x00";
 const COMMIT_RECORD_SEPARATOR = "\x1e";
@@ -2140,41 +2131,16 @@ function parseCheckoutCommitRecords(stdout: string): ParsedCheckoutCommit[] {
   return commits;
 }
 
-async function resolveCheckoutCommitUpstreamRef(
-  cwd: string,
-  currentBranch: string,
-  context?: CheckoutContext,
-): Promise<string | null> {
-  // Prefer the branch's configured `@{u}`. If it's configured but the
-  // remote-tracking ref isn't present locally (e.g. configured upstream that was
-  // never fetched), fall back to `origin/<branch>` when that ref does exist, so a
-  // standard `origin` push is still recognized. Both missing => no remote.
-  const configured = await getConfiguredUpstreamRef(cwd, currentBranch, context);
-  if (configured && (await doesGitRefExist(cwd, `refs/remotes/${configured}`, context))) {
-    return configured;
-  }
-  if (await doesGitRefExist(cwd, `refs/remotes/origin/${currentBranch}`, context)) {
-    return `origin/${currentBranch}`;
-  }
-  return null;
-}
-
-// Returns the set of SHAs on the current branch that are NOT on the upstream
-// (local-only/unpushed), or `null` when no upstream exists (no remote at all).
-async function getLocalOnlyCommitShas(
-  cwd: string,
-  currentBranch: string,
-  context?: CheckoutContext,
-): Promise<Set<string> | null> {
-  const upstreamRef = await resolveCheckoutCommitUpstreamRef(cwd, currentBranch, context);
-  if (!upstreamRef) {
-    return null;
-  }
-  const { stdout } = await runGitCommand(["rev-list", `${upstreamRef}..HEAD`], {
-    cwd,
-    envOverlay: READ_ONLY_GIT_ENV,
-    logger: context?.logger,
-  });
+// Returns commits reachable from HEAD that are not reachable from any remote ref.
+async function getUnpushedCommitShas(cwd: string, context?: CheckoutContext): Promise<Set<string>> {
+  const { stdout } = await runGitCommand(
+    ["rev-list", `--max-count=${MAX_CHECKOUT_COMMITS}`, "HEAD", "--not", "--remotes"],
+    {
+      cwd,
+      envOverlay: READ_ONLY_GIT_ENV,
+      logger: context?.logger,
+    },
+  );
   return new Set(
     stdout
       .split("\n")
@@ -2184,13 +2150,8 @@ async function getLocalOnlyCommitShas(
 }
 
 /**
- * Lists the current branch's commits that are ahead of its base branch, newest
- * first, each flagged local-only vs on-remote with per-commit file +/- stats.
- *
- * Base ref is resolved exactly like {@link getCheckoutStatus}: the stored/default
- * base branch, mapped to the best comparison ref (origin/<base> when present,
- * else local <base>). Returns `[]` when the base cannot be resolved, the current
- * ref is the base itself, or there are no commits ahead.
+ * Lists the current branch's 20 most recent commits, newest first, each flagged
+ * local-only vs on-remote with per-commit file +/- stats.
  */
 export interface CheckoutCommitsResult {
   baseRef: string | null;
@@ -2208,21 +2169,14 @@ export async function listCheckoutCommits({
   }
 
   const { resolvedBaseRef } = await resolveBaseRefForCwd(cwd);
-  if (!resolvedBaseRef) {
-    return { baseRef: null, commits: [] };
-  }
-
-  const normalizedBaseRef = normalizeLocalBranchRefName(resolvedBaseRef);
-  if (!normalizedBaseRef || normalizedBaseRef === currentBranch) {
-    return { baseRef: null, commits: [] };
-  }
-
-  let comparisonBaseRef: string;
-  try {
-    comparisonBaseRef = await resolveBestComparisonBaseRef(cwd, resolvedBaseRef);
-  } catch {
-    // Base branch is not present locally or on origin — nothing to compare against.
-    return { baseRef: null, commits: [] };
+  const normalizedBaseRef = resolvedBaseRef ? normalizeLocalBranchRefName(resolvedBaseRef) : null;
+  let comparisonBaseRef: string | null = null;
+  if (resolvedBaseRef && normalizedBaseRef && normalizedBaseRef !== currentBranch) {
+    try {
+      comparisonBaseRef = await resolveBestComparisonBaseRef(cwd, resolvedBaseRef);
+    } catch {
+      // History does not depend on the configured base being available.
+    }
   }
 
   // Single pass: `--raw` carries the status letter, `--numstat` the +/- counts.
@@ -2230,8 +2184,8 @@ export async function listCheckoutCommits({
   const logResult = await runGitCommand(
     [
       "log",
-      `${comparisonBaseRef}..HEAD`,
-      "--no-merges",
+      "HEAD",
+      "--diff-merges=first-parent",
       `--max-count=${MAX_CHECKOUT_COMMITS}`,
       `--format=${COMMIT_LOG_FORMAT}`,
       "--raw",
@@ -2246,7 +2200,7 @@ export async function listCheckoutCommits({
     return { baseRef: comparisonBaseRef, commits: [] };
   }
 
-  const localOnlyShas = await getLocalOnlyCommitShas(cwd, currentBranch);
+  const unpushedShas = await getUnpushedCommitShas(cwd);
 
   const commits = records.map((record) => ({
     sha: record.sha,
@@ -2254,7 +2208,7 @@ export async function listCheckoutCommits({
     subject: record.subject,
     authorName: record.authorName,
     authorDate: record.authorDate,
-    isOnRemote: localOnlyShas === null ? false : !localOnlyShas.has(record.sha),
+    isOnRemote: !unpushedShas.has(record.sha),
     files: record.files,
   }));
 
@@ -2266,13 +2220,12 @@ export async function listCheckoutCommits({
  * parses it into the same {@link ParsedDiffFile} shape the diff subscription
  * emits (so the client can reuse its existing renderer).
  *
- * Runs `git show <sha> --format= -- <path>` with the sha and path passed as
- * separate process args (never interpolated into a shell string), and `--format=`
- * suppresses the commit header so the output is a pure unified diff. The text is
- * parsed and highlighted by {@link parseAndHighlightDiff} — the exact parser the
- * diff subscription uses. Returns `null` when the file is absent from the commit
- * or the change is binary-only (no textual hunks). Throws on git failure (e.g. an
- * unknown sha), which the caller maps to a typed checkout error.
+ * Compares merge commits to their first parent, matching the linear history shown
+ * in the explorer. The text is parsed and highlighted by
+ * {@link parseAndHighlightDiff} — the exact parser the diff subscription uses.
+ * Returns `null` when the file is absent from the commit or the change is
+ * binary-only (no textual hunks). Throws on git failure (e.g. an unknown sha),
+ * which the caller maps to a typed checkout error.
  */
 export async function getCommitFileDiff({
   cwd,
@@ -2283,10 +2236,13 @@ export async function getCommitFileDiff({
   sha: string;
   path: string;
 }): Promise<ParsedDiffFile | null> {
-  const { stdout } = await runGitCommand(["show", sha, "--format=", "--", path], {
-    cwd,
-    envOverlay: READ_ONLY_GIT_ENV,
-  });
+  const { stdout } = await runGitCommand(
+    ["show", sha, "--format=", "--diff-merges=first-parent", "--", path],
+    {
+      cwd,
+      envOverlay: READ_ONLY_GIT_ENV,
+    },
+  );
 
   if (stdout.trim().length === 0) {
     return null;

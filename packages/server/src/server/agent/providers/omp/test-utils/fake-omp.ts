@@ -413,6 +413,12 @@ export class FakeOmpSession implements OmpRuntimeSession {
     this.emit({ type: "agent_end", messages: this.messages });
   }
 
+  finishTurnWithEmptyAgentEnd(message: OmpAgentMessage = { role: "assistant", content: [] }): void {
+    this.messages = [...this.messages, message];
+    this.emit({ type: "message_end", message });
+    this.emit({ type: "agent_end", messages: [] });
+  }
+
   beginTurn(): void {
     this.emit({ type: "turn_start" });
   }

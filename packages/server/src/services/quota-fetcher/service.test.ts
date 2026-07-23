@@ -947,3 +947,81 @@ describe("real provider usage fetchers", () => {
     });
   });
 });
+
+// Regression for #2320: providers hardcoded `tone: "ok"`, which suppressed the client's
+// own thresholds (window-bar.tsx reads `window.tone ?? deriveTone(usedPct)`), so a bar
+// stayed green at 99%. Codex escalated to "warning" but could never reach "danger".
+describe("usage bars escalate as they fill", () => {
+  let claudeHome: string;
+  let codexHome: string;
+
+  beforeEach(() => {
+    claudeHome = mkdtempSync(join(tmpdir(), "paseo-tone-claude-"));
+    codexHome = mkdtempSync(join(tmpdir(), "paseo-tone-codex-"));
+  });
+
+  afterEach(() => {
+    rmSync(claudeHome, { recursive: true, force: true });
+    rmSync(codexHome, { recursive: true, force: true });
+  });
+
+  function claudeAt(utilization: number) {
+    writeClaudeCredentials(claudeHome, "at_valid");
+    return new ClaudeQuotaProvider({
+      logger: createLogger(),
+      claudeHome,
+      claudeKeychainReader: async () => null,
+      fetch: mockFetch(
+        new Map([
+          [
+            "https://api.anthropic.com/api/oauth/usage",
+            () =>
+              jsonResponse({
+                seven_day: { utilization, resets_at: "2026-06-04T00:00:00Z" },
+              }),
+          ],
+        ]),
+      ),
+    }).fetchUsage();
+  }
+
+  it.each([
+    [10, "ok"],
+    [75, "warning"],
+    [99, "danger"],
+  ])("a Claude window at %s%% is %s", async (utilization, tone) => {
+    const usage = await claudeAt(utilization);
+    expect(usage.windows).toEqual([expect.objectContaining({ id: "weekly", tone })]);
+  });
+
+  it("a Codex window can reach danger, not just warning", async () => {
+    writeCodexAuth(codexHome, "at_codex");
+    const usage = await new CodexQuotaProvider({
+      logger: createLogger(),
+      codexHome,
+      fetch: mockFetch(
+        new Map([
+          [
+            "https://chatgpt.com/backend-api/wham/usage",
+            () =>
+              jsonResponse(
+                makeCodexResponse({
+                  rate_limit: {
+                    primary_window: { used_percent: 12, reset_at: 1_748_812_800 },
+                    secondary_window: { used_percent: 96, reset_at: 1_749_072_000 },
+                  },
+                }),
+              ),
+          ],
+        ]),
+      ),
+    }).fetchUsage();
+
+    expect(usage.windows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "session", tone: "ok" }),
+        expect.objectContaining({ id: "weekly", tone: "danger" }),
+      ]),
+    );
+  });
+});

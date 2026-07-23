@@ -1380,6 +1380,8 @@ export class VoiceAssistantWebSocketServer {
         worktreeRestore: true,
         // COMPAT(workspaceRecovery): added in v0.1.105, remove after 2027-01-11 once daemon floor >= v0.1.105.
         workspaceRecovery: true,
+        // COMPAT(workspaceFileEditing): added in v0.2.0, remove after 2027-01-18 once daemon floor >= v0.2.0.
+        workspaceFileEditing: true,
         // COMPAT(providerUsageList): added in v0.1.98, drop the gate when daemon floor >= v0.1.98.
         providerUsageList: true,
         // COMPAT(agentDetach): added in v0.1.98, remove gate after 2026-12-19 once daemon floor >= v0.1.98.
@@ -2150,13 +2152,17 @@ export class VoiceAssistantWebSocketServer {
     const allStates = clientEntries.map((e) => e.state);
     const nowMs = Date.now();
     const agent = this.agentManager.getAgent(params.agentId);
+    if (!agent?.workspaceId) {
+      return;
+    }
     const assistantMessage = await this.agentManager.getLastAssistantMessage(params.agentId);
     const notification = buildAgentAttentionNotificationPayload({
       reason: params.reason,
       serverId: this.serverId,
+      workspaceId: agent.workspaceId,
       agentId: params.agentId,
       assistantMessage,
-      permissionRequest: agent ? findLatestPermissionRequest(agent.pendingPermissions) : null,
+      permissionRequest: findLatestPermissionRequest(agent.pendingPermissions),
     });
 
     const plan = computeNotificationPlan({

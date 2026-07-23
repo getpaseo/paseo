@@ -30,12 +30,7 @@ import { CursorError } from "./pagination/cursor.js";
 import { SortablePager, type SortSpec } from "./pagination/sortable-pager.js";
 import type { SpeechToTextProvider, TextToSpeechProvider } from "./speech/speech-provider.js";
 import type { TurnDetectionProvider } from "./speech/turn-detection-provider.js";
-import {
-  buildConfigOverrides,
-  extractTimestamps,
-  isStoredAgentProviderAvailable,
-  toAgentPersistenceHandle,
-} from "./persistence-hooks.js";
+import { isStoredAgentProviderAvailable, toAgentPersistenceHandle } from "./persistence-hooks.js";
 import { ensureAgentLoaded, ensureUnarchivedAgentLoaded } from "./agent/agent-loading.js";
 import {
   formatSystemNotificationPrompt,
@@ -57,6 +52,8 @@ import {
   type WorkspaceScriptsService,
 } from "./session/workspace-scripts/workspace-scripts-service.js";
 import type { DaemonConfigStore } from "./daemon-config-store.js";
+import { loadPersistedConfig } from "./persisted-config.js";
+import { releaseWorkspaceServicePortPlan } from "./workspace-service-port-registry.js";
 import { getErrorMessage, getErrorMessageOr } from "@getpaseo/protocol/error-utils";
 import { getAgentStatusPriority } from "@getpaseo/protocol/agent-state-bucket";
 import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
@@ -935,6 +932,7 @@ export class Session {
       logger: this.sessionLogger,
       emit: (message) => this.emit(message),
       spawnWorkspaceScript,
+      globalServicePorts: loadPersistedConfig(this.paseoHome).worktrees?.servicePorts,
     });
     this.subscribeToOptionalManagers();
     this.workspaceDirectory = new WorkspaceDirectory({
@@ -1959,6 +1957,13 @@ export class Session {
     switch (msg.type) {
       case "file_explorer_request":
         return this.workspaceFilesSession.handleFileExplorerRequest(msg);
+      case "fs.file.subscribe.request":
+        return this.workspaceFilesSession.handleFileSubscribeRequest(msg);
+      case "fs.file.unsubscribe.request":
+        this.workspaceFilesSession.handleFileUnsubscribeRequest(msg);
+        return undefined;
+      case "fs.file.write.request":
+        return this.workspaceFilesSession.handleFileWriteRequest(msg);
       case "project_icon_request":
         return this.workspaceFilesSession.handleProjectIconRequest(msg);
       case "file_download_token_request":
@@ -2431,11 +2436,12 @@ export class Session {
       const trimmed = customName?.trim() ?? "";
       const nextCustomName = trimmed.length === 0 ? null : trimmed;
 
-      await this.projectRegistry.upsert({
+      const updated = {
         ...existing,
         customName: nextCustomName,
         updatedAt: new Date().toISOString(),
-      });
+      };
+      await this.projectRegistry.upsert(updated);
 
       this.emit({
         type: "project.rename.response",
@@ -2447,6 +2453,10 @@ export class Session {
           error: null,
         },
       });
+
+      // Emit a project.update so clients that track the project as an empty
+      // project (no workspaces yet) receive the resolved name immediately.
+      this.emitProjectUpdate({ kind: "upsert", project: updated });
 
       // Re-emit descriptors for every workspace under this project so the new
       // resolved name lands in the UI immediately.
@@ -3168,16 +3178,18 @@ export class Session {
         if (!isStoredAgentProviderAvailable(record, registeredProviderIds)) {
           throw new Error(`Agent ${agentId} references unavailable provider '${record.provider}'`);
         }
-        const handle = toAgentPersistenceHandle(registeredProviderIds, record.persistence);
-        if (!handle) {
+        if (!toAgentPersistenceHandle(registeredProviderIds, record.persistence)) {
           throw new Error(`Agent ${agentId} cannot be refreshed because it lacks persistence`);
         }
-        snapshot = await this.agentManager.resumeAgentFromPersistence(
-          handle,
-          buildConfigOverrides(record),
-          agentId,
-          extractTimestamps(record),
-        );
+        // Share the loader's per-agent in-flight operation with timeline fetches.
+        // Unarchiving publishes the record before provider resume finishes, so
+        // the agent pane can otherwise race this request and resume it twice.
+        snapshot = await ensureAgentLoaded(agentId, {
+          agentManager: this.agentManager,
+          agentStorage: this.agentStorage,
+          broadcastTimeline: true,
+          logger: this.sessionLogger,
+        });
       }
       await this.agentManager.hydrateTimelineFromProvider(agentId, { broadcast: true });
       await this.agentUpdates.forwardLiveAgent(snapshot);
@@ -4394,6 +4406,7 @@ export class Session {
   private async teardownArchivedWorkspace(workspaceId: string): Promise<void> {
     this.workspaceGitObserver.removeForWorkspaceId(workspaceId);
     this.scriptRuntimeStore?.removeForWorkspace(workspaceId);
+    releaseWorkspaceServicePortPlan(workspaceId);
   }
 
   private async reconcileAndEmitWorkspaceUpdates(): Promise<void> {
@@ -5686,22 +5699,31 @@ export class Session {
 
   private shouldUseFullTimelineForProjectedPage(input: {
     timeline: AgentTimelineFetchResult;
+    pageLimit: number;
   }): boolean {
     const { timeline } = input;
-    if (timeline.reset || timeline.rows.length === 0 || !timeline.hasOlder) {
-      return false;
-    }
+    if (timeline.rows.length === 0) return false;
+
+    if (timeline.rows.some((row) => row.item.type === "tool_call")) return true;
 
     const firstRow = timeline.rows[0];
     if (
-      firstRow?.item.type === "assistant_message" ||
-      firstRow?.item.type === "reasoning" ||
-      firstRow?.item.type === "tool_call"
+      timeline.hasOlder &&
+      (firstRow?.item.type === "assistant_message" || firstRow?.item.type === "reasoning")
     ) {
       return true;
     }
 
-    return timeline.rows.some((row) => row.item.type === "tool_call");
+    const lastRow = timeline.rows.at(-1);
+    if (
+      timeline.hasNewer &&
+      (lastRow?.item.type === "assistant_message" || lastRow?.item.type === "reasoning")
+    ) {
+      return true;
+    }
+
+    if (!timeline.hasNewer || input.pageLimit === 0) return false;
+    return projectTimelineRows({ rows: timeline.rows, mode: "projected" }).length < input.pageLimit;
   }
 
   private selectCanonicalTimelineProjection(input: {
@@ -5727,6 +5749,7 @@ export class Session {
   }): AgentTimelineProjectionSelection {
     const timeline = this.shouldUseFullTimelineForProjectedPage({
       timeline: input.controlTimeline,
+      pageLimit: input.pageLimit,
     })
       ? this.agentManager.fetchTimeline(input.agentId, { direction: "tail", limit: 0 })
       : input.controlTimeline;
@@ -6307,6 +6330,7 @@ export class Session {
     this.checkoutSession.cleanup();
 
     this.workspaceGitObserver.dispose();
+    this.workspaceFilesSession.dispose();
   }
 }
 

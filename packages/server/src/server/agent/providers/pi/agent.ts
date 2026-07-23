@@ -92,6 +92,7 @@ const PI_CATALOG_REQUEST_TIMEOUT_MS = 120_000;
 const PASEO_PI_TREE_EXTENSION_COMMAND = "paseo_tree";
 const PASEO_PI_CAPTURE_EXTENSION_COMMAND = "paseo_capture_entries";
 const PASEO_PI_ENTRY_CAPTURE_MARKER = "PASEO_ENTRY_CAPTURE";
+const PASEO_PI_SUBMITTED_USER_ENTRY_MARKER = "PASEO_SUBMITTED_USER_ENTRY";
 const PASEO_PI_COMMAND_RESULT_MARKER = "PASEO_COMMAND_RESULT";
 const DEFAULT_PI_EXTENSION_RESULT_TIMEOUT_MS = 30_000;
 const QUESTION_RESPONSE_HEADER = "Response";
@@ -173,7 +174,8 @@ const PI_THINKING_OPTIONS: ReadonlyArray<{
   { id: "low", label: "Low", description: "Faster reasoning" },
   { id: "medium", label: "Medium", description: "Balanced reasoning", isDefault: true },
   { id: "high", label: "High", description: "Deeper reasoning" },
-  { id: "xhigh", label: "XHigh", description: "Maximum reasoning" },
+  { id: "xhigh", label: "XHigh", description: "Very deep reasoning" },
+  { id: "max", label: "Max", description: "Extreme reasoning" },
 ] as const;
 
 export interface PiRpcAgentClientOptions {
@@ -255,11 +257,6 @@ interface PiCapturedEntry extends PiCapturedUserMessageEntry {
   parentId: string | null;
 }
 
-interface PendingPiUserMessage {
-  text: string;
-  turnId: string | undefined;
-}
-
 interface PendingExtensionResult {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
@@ -328,7 +325,8 @@ function isPiThinkingLevel(value: string | null | undefined): value is PiThinkin
     value === "low" ||
     value === "medium" ||
     value === "high" ||
-    value === "xhigh"
+    value === "xhigh" ||
+    value === "max"
   );
 }
 
@@ -532,10 +530,6 @@ function buildResumeStartInput(input: {
     session: input.sessionFile,
     model: input.resumeConfig.model,
     thinkingOptionId: normalizePiThinkingOption(input.resumeConfig.thinkingOptionId) ?? undefined,
-    systemPrompt: composeSystemPromptParts(
-      input.resumeConfig.config.systemPrompt,
-      input.resumeConfig.config.daemonAppendSystemPrompt,
-    ),
     mcpConfigPath: input.mcpConfig?.path,
     extensionPaths: input.paseoExtension ? [input.paseoExtension.path] : undefined,
   };
@@ -627,7 +621,7 @@ function createPiMcpConfigFile(
   };
 }
 
-function createPiPaseoExtensionFile(): PiTempFile {
+function createPiPaseoExtensionFile(systemPrompt?: string): PiTempFile {
   const dir = mkdtempSync(join(tmpdir(), "paseo-pi-extension-"));
   const filePath = join(dir, "paseo-integration.mjs");
   writeFileSync(
@@ -654,11 +648,15 @@ function createPiPaseoExtensionFile(): PiTempFile {
 	  return ctx.sessionManager
 	    .getEntries()
 	    .filter((entry) => entry.type === "message" && entry.message?.role === "user")
-	    .map((entry) => ({
+	    .map(toCapturedUserEntry);
+	}
+
+	function toCapturedUserEntry(entry) {
+	  return {
 	      id: entry.id,
 	      parentId: entry.parentId ?? null,
 	      text: readTextContent(entry.message.content),
-	    }));
+	    };
 	}
 
 	function emitEntryCapture(ctx, reason, requestId) {
@@ -677,11 +675,56 @@ function createPiPaseoExtensionFile(): PiTempFile {
 	}
 
 	export default function paseoIntegration(pi) {
+	  const submittedUserMessages = [];
+
+	  function emitSubmittedUserEntries(ctx) {
+	    const entries = ctx.sessionManager.getEntries();
+	    for (let index = 0; index < submittedUserMessages.length; index += 1) {
+	      const message = submittedUserMessages[index];
+	      // Pi assigns the entry ID after message_end, then persists this same message object.
+	      // Reference equality preserves the exact association even when another extension edits it.
+	      const entry = entries.find(
+	        (candidate) => candidate.type === "message" && candidate.message === message,
+	      );
+	      if (!entry) {
+	        continue;
+	      }
+	      submittedUserMessages.splice(index, 1);
+	      index -= 1;
+	      ctx.ui.notify(
+	        "${PASEO_PI_SUBMITTED_USER_ENTRY_MARKER} " +
+	          JSON.stringify({ entry: toCapturedUserEntry(entry) }),
+	        "info",
+	      );
+	    }
+	  }
+
+	  ${
+      systemPrompt
+        ? `pi.on("before_agent_start", async (event) => ({
+	    systemPrompt: event.systemPrompt + "\\n\\n" + ${JSON.stringify(systemPrompt)},
+	  }));`
+        : ""
+    }
+
 	  pi.on("session_start", async (_event, ctx) => {
 	    emitEntryCapture(ctx, "session_start");
 	  });
 
+	  pi.on("message_end", async (event) => {
+	    if (event.message?.role === "user") {
+	      submittedUserMessages.push(event.message);
+	    }
+	  });
+
+	  pi.on("message_start", async (event, ctx) => {
+	    if (event.message?.role === "assistant") {
+	      emitSubmittedUserEntries(ctx);
+	    }
+	  });
+
 	  pi.on("turn_end", async (_event, ctx) => {
+	    emitSubmittedUserEntries(ctx);
 	    emitEntryCapture(ctx, "turn_end");
 	  });
 
@@ -1179,6 +1222,7 @@ export class PiRpcAgentSession implements AgentSession {
   private activeAskUserDialog: ActiveAskUserDialog | null = null;
   private pendingCombinedAskUserResponse: PendingCombinedAskUserResponse | null = null;
   private activeTurnId: string | null = null;
+  private activeClientMessageId: string | null = null;
   private activeAssistantMessageId: string | null = null;
   private activeTurnStarted = false;
   private activeNoTurnPromptText: string | null = null;
@@ -1189,8 +1233,6 @@ export class PiRpcAgentSession implements AgentSession {
   currentLeafOverrideId: string | null | undefined;
   private readonly capturedUserEntries: PiCapturedEntry[] = [];
   private readonly capturedUserEntriesById = new Map<string, PiCapturedEntry>();
-  private readonly seenUserEntryIds = new Set<string>();
-  private readonly pendingUserMessages: PendingPiUserMessage[] = [];
   private readonly pendingExtensionResults = new Map<string, PendingExtensionResult>();
   private outOfBandCompactionEmit: ((event: AgentStreamEvent) => void) | null = null;
   private outOfBandCompactionStarted = false;
@@ -1240,7 +1282,7 @@ export class PiRpcAgentSession implements AgentSession {
     });
   }
 
-  async startTurn(prompt: AgentPromptInput, _options?: AgentRunOptions): Promise<StartTurnResult> {
+  async startTurn(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<StartTurnResult> {
     if (this.activeTurnId) {
       throw new Error("A Pi turn is already active");
     }
@@ -1248,6 +1290,7 @@ export class PiRpcAgentSession implements AgentSession {
     const payload = convertPromptInput(prompt, { model: this.state.model });
     const turnId = randomUUID();
     this.activeTurnId = turnId;
+    this.activeClientMessageId = options?.clientMessageId ?? null;
     this.activeAssistantMessageId = null;
     this.activeTurnStarted = false;
     this.activePromptRequestId = null;
@@ -1278,6 +1321,7 @@ export class PiRpcAgentSession implements AgentSession {
           return;
         }
         this.activeTurnId = null;
+        this.activeClientMessageId = null;
         this.activeTurnStarted = false;
         this.activeAssistantMessageId = null;
         this.clearNoTurnBuffers();
@@ -1393,6 +1437,7 @@ export class PiRpcAgentSession implements AgentSession {
     await this.runtimeSession.abort();
     if (turnId && this.activeTurnId === turnId) {
       this.activeTurnId = null;
+      this.activeClientMessageId = null;
       this.activeTurnStarted = false;
       this.activeAssistantMessageId = null;
       this.clearNoTurnBuffers();
@@ -1574,6 +1619,7 @@ export class PiRpcAgentSession implements AgentSession {
         item: {
           type: "user_message",
           text: promptText,
+          ...(this.activeClientMessageId ? { clientMessageId: this.activeClientMessageId } : {}),
         },
       });
     }
@@ -1764,41 +1810,34 @@ export class PiRpcAgentSession implements AgentSession {
   }
 
   private recordCapturedUserEntries(entries: PiCapturedEntry[]): void {
-    const previouslySeenEntryIds = new Set(this.seenUserEntryIds);
     this.capturedUserEntries.splice(0, this.capturedUserEntries.length, ...entries);
     this.capturedUserEntriesById.clear();
     for (const entry of entries) {
       this.capturedUserEntriesById.set(entry.id, entry);
     }
-    this.flushPendingUserMessages(previouslySeenEntryIds);
-    for (const entry of entries) {
-      this.seenUserEntryIds.add(entry.id);
-    }
   }
 
-  private flushPendingUserMessages(previouslySeenEntryIds: Set<string>): void {
-    for (let index = 0; index < this.pendingUserMessages.length; index += 1) {
-      const pending = this.pendingUserMessages[index]!;
-      const entry = this.capturedUserEntries.find(
-        (candidate) => !previouslySeenEntryIds.has(candidate.id),
-      );
-      if (!entry) {
-        continue;
-      }
-      previouslySeenEntryIds.add(entry.id);
-      this.pendingUserMessages.splice(index, 1);
-      index -= 1;
-      this.emit({
-        type: "timeline",
-        provider: this.provider,
-        turnId: pending.turnId,
-        item: {
-          type: "user_message",
-          text: pending.text,
-          messageId: entry.id,
-        },
-      });
+  private handleSubmittedUserEntryMarker(message: string): boolean {
+    const payload = parseExtensionMarkerPayload(message, PASEO_PI_SUBMITTED_USER_ENTRY_MARKER);
+    if (!payload) {
+      return false;
     }
+    const [entry] = parseCapturedEntries([payload.entry]);
+    if (!entry) {
+      return true;
+    }
+    this.emit({
+      type: "timeline",
+      provider: this.provider,
+      turnId: this.currentTurnIdForEvent(),
+      item: {
+        type: "user_message",
+        text: entry.text,
+        messageId: entry.id,
+        ...(this.activeClientMessageId ? { clientMessageId: this.activeClientMessageId } : {}),
+      },
+    });
+    return true;
   }
 
   private handleEntryCaptureMarker(message: string): boolean {
@@ -1836,7 +1875,11 @@ export class PiRpcAgentSession implements AgentSession {
   ): void {
     const message = optionalString(event.message);
     if (event.method === "notify" && message) {
-      if (this.handleEntryCaptureMarker(message) || this.handleCommandResultMarker(message)) {
+      if (
+        this.handleSubmittedUserEntryMarker(message) ||
+        this.handleEntryCaptureMarker(message) ||
+        this.handleCommandResultMarker(message)
+      ) {
         return;
       }
       this.bufferNoTurnOutput(message);
@@ -1961,6 +2004,7 @@ export class PiRpcAgentSession implements AgentSession {
     }
     const turnId = this.activeTurnId;
     this.activeTurnId = null;
+    this.activeClientMessageId = null;
     this.activeTurnStarted = false;
     this.clearNoTurnBuffers();
     this.emit({
@@ -2162,24 +2206,6 @@ export class PiRpcAgentSession implements AgentSession {
       this.completeTurn(turnId, []);
       return;
     }
-
-    if (event.message.role !== "user") {
-      return;
-    }
-    const text = getUserMessageText(event.message.content);
-    if (!text) {
-      return;
-    }
-    this.pendingUserMessages.push({ text, turnId });
-    void this.requestEntryCapture("message_end").catch((error: unknown) => {
-      const message = error instanceof Error ? error.message : String(error);
-      this.emit({
-        type: "turn_failed",
-        provider: this.provider,
-        turnId,
-        error: message,
-      });
-    });
   }
 
   private emitToolCallEvent(
@@ -2221,6 +2247,7 @@ export class PiRpcAgentSession implements AgentSession {
 
   private completeTurn(turnId: string | undefined, messages: PiAgentMessage[]): void {
     this.activeTurnId = null;
+    this.activeClientMessageId = null;
     this.activeAssistantMessageId = null;
     this.activeTurnStarted = false;
     this.clearNoTurnBuffers();
@@ -2292,7 +2319,9 @@ export class PiRpcAgentClient implements AgentClient {
       ...launchContext?.env,
     };
     const mcpConfig = await this.prepareMcpConfig(config.cwd, config.mcpServers, mcpEnv);
-    const paseoExtension = createPiPaseoExtensionFile();
+    const paseoExtension = createPiPaseoExtensionFile(
+      composeSystemPromptParts(config.systemPrompt, config.daemonAppendSystemPrompt),
+    );
     let runtimeSession: PiRuntimeSession;
     try {
       runtimeSession = await this.runtime.startSession({
@@ -2301,10 +2330,6 @@ export class PiRpcAgentClient implements AgentClient {
         thinkingOptionId:
           normalizePiThinkingOption(config.thinkingOptionId) ?? DEFAULT_PI_THINKING_LEVEL,
         noSession: config.internal === true,
-        systemPrompt: composeSystemPromptParts(
-          config.systemPrompt,
-          config.daemonAppendSystemPrompt,
-        ),
         env: launchContext?.env,
         mcpConfigPath: mcpConfig?.path,
         extensionPaths: paseoExtension ? [paseoExtension.path] : undefined,
@@ -2353,7 +2378,12 @@ export class PiRpcAgentClient implements AgentClient {
       resumeConfig.config.mcpServers,
       mcpEnv,
     );
-    const paseoExtension = createPiPaseoExtensionFile();
+    const paseoExtension = createPiPaseoExtensionFile(
+      composeSystemPromptParts(
+        resumeConfig.config.systemPrompt,
+        resumeConfig.config.daemonAppendSystemPrompt,
+      ),
+    );
     let runtimeSession: PiRuntimeSession;
     try {
       runtimeSession = await this.runtime.startSession(

@@ -94,6 +94,8 @@ import type { StatusGroup } from "@/hooks/sidebar-status-view-model";
 import { SidebarWorkspaceMenu } from "@/components/sidebar/sidebar-workspace-menu";
 import { useLongPressDragInteraction } from "@/components/sidebar/use-long-press-drag-interaction";
 import { PinnedSectionHeader } from "@/components/sidebar/pinned-section-header";
+import { SidebarGroupToggleRow } from "@/components/sidebar/sidebar-group-toggle-row";
+import { useLimitedSidebarGroup } from "@/components/sidebar/use-limited-sidebar-group";
 import {
   SidebarWorkspaceRowFrame,
   SidebarWorkspaceRowContent,
@@ -1632,6 +1634,12 @@ function ProjectBlock({
   supportsPinningByServerId: ReadonlyMap<string, boolean>;
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
 }) {
+  const {
+    visibleItems: visibleWorkspaces,
+    expanded: workspacesExpanded,
+    canToggle: canToggleWorkspaces,
+    toggleExpanded: toggleWorkspacesExpanded,
+  } = useLimitedSidebarGroup(project.workspaces);
   const rowModel = useMemo(
     () =>
       buildSidebarProjectRowModel({
@@ -1784,19 +1792,28 @@ function ProjectBlock({
   if (!collapsed) {
     if (project.workspaces.length > 0) {
       projectChildren = (
-        <DraggableList
-          testID={`sidebar-workspace-list-${project.projectKey}`}
-          data={project.workspaces}
-          keyExtractor={workspaceKeyExtractor}
-          renderItem={renderWorkspace}
-          onDragEnd={handleWorkspaceDragEnd}
-          extraData={activeWorkspaceSelectionKey(activeWorkspaceSelection)}
-          scrollEnabled={false}
-          useDragHandle
-          nestable={useNestable}
-          simultaneousGestureRef={parentGestureRef}
-          containerStyle={styles.workspaceListContainer}
-        />
+        <>
+          <DraggableList
+            testID={`sidebar-workspace-list-${project.projectKey}`}
+            data={visibleWorkspaces}
+            keyExtractor={workspaceKeyExtractor}
+            renderItem={renderWorkspace}
+            onDragEnd={handleWorkspaceDragEnd}
+            extraData={activeWorkspaceSelectionKey(activeWorkspaceSelection)}
+            scrollEnabled={false}
+            useDragHandle
+            nestable={useNestable}
+            simultaneousGestureRef={parentGestureRef}
+            containerStyle={styles.workspaceListContainer}
+          />
+          {canToggleWorkspaces ? (
+            <SidebarGroupToggleRow
+              expanded={workspacesExpanded}
+              onPress={toggleWorkspacesExpanded}
+              testID={`sidebar-project-show-more-${project.projectKey}`}
+            />
+          ) : null}
+        </>
       );
     } else if (rowModel.trailingAction.kind === "new_workspace") {
       projectChildren = (
@@ -2073,6 +2090,12 @@ function ProjectModeList({
   const selectionEnabled = isWorkspaceRoute;
   const activeWorkspaceSelection = useActiveWorkspaceSelection();
   const { pinnedChats, unpinnedProjects } = pinnedGroups;
+  const {
+    visibleItems: visiblePinnedChats,
+    expanded: pinnedChatsExpanded,
+    canToggle: canTogglePinnedChats,
+    toggleExpanded: togglePinnedChatsExpanded,
+  } = useLimitedSidebarGroup(pinnedChats);
   const projectIconTargets = useMemo(
     () =>
       projects.flatMap((project) => {
@@ -2303,7 +2326,6 @@ function ProjectModeList({
           canCopyBranchName={workspace.projectKind === "git"}
           canPin={supportsPinningByServerId.get(workspace.serverId) === true}
           onToggleWorkspacePin={onToggleWorkspacePin}
-          reserveIdleStatusIndicatorSpace={false}
           isCreating={creatingWorkspaceIds.has(workspace.workspaceId)}
           selectionEnabled={selectionEnabled}
           activeWorkspaceSelection={activeWorkspaceSelection}
@@ -2331,7 +2353,18 @@ function ProjectModeList({
       {pinnedChats.length > 0 ? (
         <View style={styles.pinnedSection} testID="sidebar-pinned-section">
           <PinnedSectionHeader collapsed={pinnedCollapsed} onToggle={togglePinnedCollapsed} />
-          {pinnedCollapsed ? null : pinnedChats.map(renderPinnedChat)}
+          {pinnedCollapsed ? null : (
+            <>
+              {visiblePinnedChats.map(renderPinnedChat)}
+              {canTogglePinnedChats ? (
+                <SidebarGroupToggleRow
+                  expanded={pinnedChatsExpanded}
+                  onPress={togglePinnedChatsExpanded}
+                  testID="sidebar-pinned-show-more"
+                />
+              ) : null}
+            </>
+          )}
         </View>
       ) : null}
       {unpinnedProjects.length > 0 || hasActiveHostFilter ? listHeaderComponent : null}
@@ -2399,7 +2432,9 @@ const styles = StyleSheet.create((theme) => ({
   },
   listContent: {
     paddingHorizontal: theme.spacing[2],
-    paddingTop: theme.spacing[2],
+    // Optical inset: aligns the visible Pinned/Workspaces glyph edge with the
+    // Schedules icon across the divider; their layout boxes have different insets.
+    paddingTop: 2,
     paddingBottom: theme.spacing[4],
   },
   projectListContainer: {

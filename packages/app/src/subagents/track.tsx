@@ -41,8 +41,11 @@ export interface SubagentsTrackProps {
 const SUBAGENTS_LIST_MAX_HEIGHT = 200;
 
 function buildRowPresentation(row: SubagentRow): WorkspaceTabPresentation {
+  const data = buildSubagentRowPresentationData(row);
   return {
-    ...buildSubagentRowPresentationData(row),
+    ...data,
+    tooltip: data.label,
+    modified: false,
     icon: getProviderIcon(row.provider),
   };
 }

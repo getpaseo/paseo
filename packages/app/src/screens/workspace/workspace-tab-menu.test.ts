@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { buildWorkspaceTabMenuEntries } from "@/screens/workspace/workspace-tab-menu";
+import {
+  buildWorkspaceDesktopTabActions,
+  buildWorkspaceTabMenuEntries,
+} from "@/screens/workspace/workspace-tab-menu";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 
 function createAgentTab(): WorkspaceTabDescriptor {
@@ -251,6 +254,37 @@ describe("buildWorkspaceTabMenuEntries", () => {
     }
     copyFilePathEntry.onSelect();
     expect(onCopyFilePath).toHaveBeenCalledWith("/some/path.ts");
+  });
+
+  it("uses a Changes close id for the working diff tab", () => {
+    const actions = buildWorkspaceDesktopTabActions({
+      tab: {
+        key: "working_diff_abc",
+        tabId: "working_diff_abc",
+        kind: "working_diff",
+        target: {
+          kind: "working_diff",
+          focusPath: "src/example.ts",
+          focusRequestId: 1,
+        },
+      },
+      index: 0,
+      tabCount: 1,
+      onCopyResumeCommand: vi.fn(),
+      onCopyAgentId: vi.fn(),
+      onCopyFilePath: vi.fn(),
+      onReloadAgent: vi.fn(),
+      onRenameTab: vi.fn(),
+      onCloseTab: vi.fn(),
+      onCloseTabsToLeft: vi.fn(),
+      onCloseTabsToRight: vi.fn(),
+      onCloseOtherTabs: vi.fn(),
+    });
+
+    expect(actions.closeButtonTestId).toMatch(/^workspace-working-diff-close-/);
+    expect(actions.menuEntries).not.toContainEqual(
+      expect.objectContaining({ kind: "item", key: "copy-file-path" }),
+    );
   });
 
   it("uses the same rename entry shape for agent and terminal tabs", () => {

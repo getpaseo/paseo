@@ -1,8 +1,8 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { readExplorerFile } from "./service.js";
+import { getExplorerFileVersion, readExplorerFile, writeExplorerFile } from "./service.js";
 
 async function createHomeTempDir(prefix: string): Promise<string> {
   return mkdtemp(path.join(os.homedir(), prefix));
@@ -13,6 +13,120 @@ async function createTempDir(prefix: string): Promise<string> {
 }
 
 describe("file explorer service", () => {
+  it("atomically writes an existing text file at the expected revision", async () => {
+    const root = await createTempDir("paseo-file-write-");
+    try {
+      const filePath = path.join(root, "notes.txt");
+      await writeFile(filePath, "before", "utf8");
+      const current = await getExplorerFileVersion({ root, relativePath: "notes.txt" });
+      expect(current.status).toBe("ready");
+      if (current.status !== "ready") return;
+
+      const result = await writeExplorerFile({
+        root,
+        relativePath: "notes.txt",
+        content: "after",
+        expectedModifiedAt: current.modifiedAt,
+        expectedRevision: current.revision,
+      });
+
+      expect(result.status).toBe("written");
+      expect((await readExplorerFile({ root, relativePath: "notes.txt" })).content).toBe("after");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "preserves the original file permissions across atomic replacement",
+    async () => {
+      const root = await createTempDir("paseo-file-mode-");
+      try {
+        const filePath = path.join(root, "script.sh");
+        await writeFile(filePath, "before", "utf8");
+        await chmod(filePath, 0o764);
+        const current = await getExplorerFileVersion({ root, relativePath: "script.sh" });
+        expect(current.status).toBe("ready");
+        if (current.status !== "ready") return;
+
+        const result = await writeExplorerFile({
+          root,
+          relativePath: "script.sh",
+          content: "after",
+          expectedModifiedAt: current.modifiedAt,
+          expectedRevision: current.revision,
+        });
+
+        expect(result.status).toBe("written");
+        expect((await stat(filePath)).mode & 0o7777).toBe(0o764);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("preserves a newer disk revision instead of overwriting it", async () => {
+    const root = await createTempDir("paseo-file-conflict-");
+    try {
+      const filePath = path.join(root, "notes.txt");
+      await writeFile(filePath, "newer on disk", "utf8");
+
+      const result = await writeExplorerFile({
+        root,
+        relativePath: "notes.txt",
+        content: "stale local edit",
+        expectedModifiedAt: "2020-01-01T00:00:00.000Z",
+      });
+
+      expect(result).toMatchObject({ status: "conflict", version: { status: "ready" } });
+      expect((await readExplorerFile({ root, relativePath: "notes.txt" })).content).toBe(
+        "newer on disk",
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("prefers the high-precision revision token over the display timestamp", async () => {
+    const root = await createTempDir("paseo-file-revision-");
+    try {
+      const filePath = path.join(root, "notes.txt");
+      await writeFile(filePath, "on disk", "utf8");
+      const current = await getExplorerFileVersion({ root, relativePath: "notes.txt" });
+      expect(current.status).toBe("ready");
+      if (current.status !== "ready") return;
+
+      const result = await writeExplorerFile({
+        root,
+        relativePath: "notes.txt",
+        content: "stale local edit",
+        expectedModifiedAt: current.modifiedAt,
+        expectedRevision: `${current.revision}-stale`,
+      });
+
+      expect(result.status).toBe("conflict");
+      expect((await readExplorerFile({ root, relativePath: "notes.txt" })).content).toBe("on disk");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("never creates a missing file through the write API", async () => {
+    const root = await createTempDir("paseo-file-missing-");
+    try {
+      const result = await writeExplorerFile({
+        root,
+        relativePath: "missing.txt",
+        content: "new file",
+        expectedModifiedAt: "2020-01-01T00:00:00.000Z",
+      });
+
+      expect(result).toMatchObject({ status: "conflict", version: { status: "missing" } });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("reads .ex files as text", async () => {
     const root = await createTempDir("paseo-file-explorer-");
 

@@ -114,7 +114,7 @@ const OmpContextUsageSchema = z
 export const OmpSessionStateSchema = z
   .object({
     model: OmpModelSchema.nullable().optional(),
-    thinkingLevel: OmpThinkingLevelSchema,
+    thinkingLevel: OmpThinkingLevelSchema.optional(),
     isStreaming: z.boolean(),
     isCompacting: z.boolean(),
     autoCompactionEnabled: z.boolean().optional(),
@@ -149,7 +149,7 @@ export const OmpRpcSlashCommandSchema = z
   .object({
     name: z.string(),
     description: z.string().optional(),
-    source: z.enum(["extension", "prompt", "skill", "builtin"]),
+    source: z.string().optional(),
     sourceInfo: z.record(z.string(), z.unknown()).optional(),
     input: z.object({ hint: z.string().optional() }).passthrough().nullable().optional(),
   })

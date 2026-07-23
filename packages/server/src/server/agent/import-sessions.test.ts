@@ -242,7 +242,7 @@ test("listImportableProviderSessions filters, sorts, limits, and projects import
   });
 
   expect(listImportableSessions).toHaveBeenCalledWith({
-    limit: 2,
+    limit: 4,
     providerFilter: new Set(["codex"]),
     cwd,
   });
@@ -271,6 +271,50 @@ test("listImportableProviderSessions filters, sorts, limits, and projects import
       },
     ],
   });
+});
+
+test("listImportableProviderSessions looks past already-imported rows to fill the requested limit", async () => {
+  const cwd = "/tmp/project";
+  const imported = makeImportableSession({
+    provider: "claude",
+    sessionId: "already-imported",
+    cwd,
+    lastActivityAt: "2026-04-30T12:02:00.000Z",
+  });
+  const available = makeImportableSession({
+    provider: "claude",
+    sessionId: "available",
+    cwd,
+    lastActivityAt: "2026-04-30T12:01:00.000Z",
+  });
+  const listImportableSessions = vi.fn(async (options?: { limit?: number }) =>
+    [imported, available].slice(0, options?.limit),
+  );
+
+  const result = await listImportableProviderSessions({
+    request: makeRequest({ cwd, providers: ["claude"], limit: 1 }),
+    agentManager: {
+      listAgents: () => [],
+      listImportableSessions,
+    },
+    agentStorage: {
+      list: async () => [
+        {
+          provider: "claude",
+          persistence: { provider: "claude", sessionId: "already-imported" },
+        } as StoredAgentRecord,
+      ],
+    },
+    providerSnapshotManager: { getProviderLabel: () => "Claude Code" },
+  });
+
+  expect(listImportableSessions).toHaveBeenCalledWith({
+    limit: 2,
+    providerFilter: new Set(["claude"]),
+    cwd,
+  });
+  expect(result.entries.map((entry) => entry.providerHandleId)).toEqual(["available"]);
+  expect(result.filteredAlreadyImportedCount).toBe(1);
 });
 
 test("listImportableProviderSessions includes a provider session after its Paseo agent is archived", async () => {

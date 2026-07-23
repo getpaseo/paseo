@@ -89,6 +89,7 @@ export class TestOpenCodeClient {
     sessionGet: [] as unknown[],
     sessionMessages: [] as unknown[],
     sessionPromptAsync: [] as unknown[],
+    sessionStatus: [] as unknown[],
     sessionSummarize: [] as unknown[],
     sessionUpdate: [] as unknown[],
   };
@@ -102,9 +103,13 @@ export class TestOpenCodeClient {
   permissionReplyResponse: OpenCodeResponse = {};
   providerListResponse: OpenCodeResponse = { data: { connected: [], all: [] } };
   providerListImplementation: (() => Promise<OpenCodeResponse>) | null = null;
+  globalEventImplementation:
+    | ((options: unknown) => Promise<{ stream: AsyncIterable<unknown> }>)
+    | null = null;
   questionRejectResponse: OpenCodeResponse = {};
   questionReplyResponse: OpenCodeResponse = {};
   sessionAbortResponse: OpenCodeResponse = {};
+  sessionAbortImplementation: ((parameters: unknown) => Promise<OpenCodeResponse>) | null = null;
   sessionCommandError: unknown = null;
   sessionCommandEvents: unknown[] = [idleEvent()];
   sessionCommandResponse: OpenCodeResponse = {};
@@ -118,6 +123,7 @@ export class TestOpenCodeClient {
   sessionMessagesResponse: OpenCodeResponse = { data: [] };
   sessionPromptAsyncEvents: unknown[] = [idleEvent()];
   sessionPromptAsyncResponse: OpenCodeResponse = {};
+  sessionStatusResponse: OpenCodeResponse = { data: {} };
   sessionSummarizeEvents: unknown[] = [idleEvent()];
   sessionSummarizeResponse: OpenCodeResponse = { data: {} };
   sessionUpdateResponse: OpenCodeResponse = {};
@@ -162,6 +168,9 @@ export class TestOpenCodeClient {
       global: {
         event: async (options: unknown) => {
           this.calls.globalEvent.push(options);
+          if (this.globalEventImplementation) {
+            return await this.globalEventImplementation(options);
+          }
           const signal = (options as { signal?: AbortSignal }).signal;
           return {
             stream: signal ? stopEventStreamOnAbort(this.eventStream, signal) : this.eventStream,
@@ -205,7 +214,9 @@ export class TestOpenCodeClient {
       session: {
         abort: async (parameters: unknown) => {
           this.calls.sessionAbort.push(parameters);
-          return this.sessionAbortResponse;
+          return this.sessionAbortImplementation
+            ? await this.sessionAbortImplementation(parameters)
+            : this.sessionAbortResponse;
         },
         command: async (parameters: unknown) => {
           this.calls.sessionCommand.push(parameters);
@@ -246,6 +257,10 @@ export class TestOpenCodeClient {
             this.emitEvent(event);
           }
           return this.sessionPromptAsyncResponse;
+        },
+        status: async (parameters: unknown) => {
+          this.calls.sessionStatus.push(parameters);
+          return this.sessionStatusResponse;
         },
         summarize: async (parameters: unknown) => {
           this.calls.sessionSummarize.push(parameters);

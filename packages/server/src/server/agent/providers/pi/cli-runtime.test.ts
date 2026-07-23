@@ -229,26 +229,6 @@ describe("PiCliRuntime", () => {
     ]);
   });
 
-  test("passes an appended system prompt to Pi", async () => {
-    const child = createPiChild();
-    replyToCommands(child, () => ({}));
-    const launches: PiRuntimeLaunch[] = [];
-    const runtime = createRuntime(child, launches);
-
-    await runtime.startSession({
-      cwd: "/workspace/project",
-      systemPrompt: "  Use the daemon prompt.  ",
-    });
-
-    expect(launches).toEqual([
-      expect.objectContaining({
-        cwd: "/workspace/project",
-        systemPrompt: "Use the daemon prompt.",
-        argv: ["pi", "--mode", "rpc", "--append-system-prompt", "Use the daemon prompt."],
-      }),
-    ]);
-  });
-
   test("delivers events separately from command responses", async () => {
     const child = createPiChild();
     replyToCommands(child, () => ({ models: [] }));

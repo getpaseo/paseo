@@ -366,6 +366,13 @@ export const ar: TranslationResources = {
       copyBranchName: "نسخ اسم الفرع",
       copied: "تم النسخ",
     },
+    fileActions: {
+      openFile: "افتح الملف",
+      copyPath: "نسخ المسار",
+      download: "تحميل",
+      addToChat: "إضافة إلى الدردشة…",
+      moreActions: "المزيد من الإجراءات",
+    },
     fileExplorer: {
       sort: {
         name: "اسم",
@@ -375,8 +382,6 @@ export const ar: TranslationResources = {
       context: {
         size: "مقاس",
         modified: "معدل",
-        copyPath: "نسخ المسار",
-        download: "تحميل",
       },
       actions: {
         back: "خلف",
@@ -466,6 +471,7 @@ export const ar: TranslationResources = {
     },
     tabs: {
       loading: "تحميل...",
+      modified: "تغييرات غير محفوظة",
       loadingAgentTitle: "جارٍ تحميل عنوان الوكيل",
       emptyPane: "لا توجد علامات تبويب في هذا الجزء.",
       fallback: {
@@ -532,6 +538,13 @@ export const ar: TranslationResources = {
         failedToReloadAgent: "فشل في إعادة تحميل الوكيل",
       },
       confirmations: {
+        unsavedTitle: "تغييرات غير محفوظة",
+        unsavedMessage:
+          "تحتوي علامة التبويب هذه على تغييرات غير محفوظة. سيؤدي إغلاقها إلى تجاهل المسودة.",
+        closeWithoutSaving: "إغلاق بدون حفظ",
+        closePaneTitle: "إغلاق اللوحة؟",
+        bulkUnsaved:
+          "تحتوي {{count}} علامة تبويب على تغييرات غير محفوظة. سيؤدي الإغلاق إلى تجاهل المسودات.",
         close: "يغلق",
         cancel: "يلغي",
         archive: "أرشيف",
@@ -580,19 +593,34 @@ export const ar: TranslationResources = {
     scripts: {
       title: "البرامج النصية",
       actions: {
+        chooseUrl: "اختيار الرابط",
+        copyUrl: "نسخ الرابط",
+        openService: "عرض الخدمة",
+        restart: "إعادة التشغيل",
         run: "يجري",
-        view: "منظر",
+        stop: "إيقاف",
+        view: "عرض الوحدة الطرفية",
       },
       accessibility: {
         trigger: "البرامج النصية Workspace",
-        openAt: "افتح{{scriptName}}في{{label}}",
+        openService: "عرض خدمة {{scriptName}}",
         viewTerminal: "عرض محطة{{scriptName}}",
         runScript: "قم بتشغيل البرنامج النصي{{scriptName}}",
+        stopScript: "إيقاف{{scriptName}}",
+        restartScript: "إعادة تشغيل{{scriptName}}",
+        copyUrl: "نسخ عنوان URL لـ{{scriptName}}",
+        chooseUrl: "اختيار رابط {{scriptName}}",
         script: "البرنامج النصي{{scriptName}}",
+      },
+      routes: {
+        public: "الوكيل العكسي",
+        paseo: "Memorable",
+        direct: "مباشر",
       },
       states: {
         exitCode: "الخروج من{{code}}",
         startFailed: "فشل بدء تشغيل{{scriptName}}",
+        stopFailed: "فشل إيقاف{{scriptName}}",
       },
     },
     git: {
@@ -730,6 +758,8 @@ export const ar: TranslationResources = {
         },
       },
       diff: {
+        openChangesTab: "فتح علامة تبويب التغييرات",
+        closeChangesTab: "إغلاق علامة تبويب التغييرات",
         binaryFile: "ملف ثنائي",
         tooLarge: "الفرق كبير جدًا بحيث لا يمكن عرضه",
         unified: "الفرق الموحدة",
@@ -765,14 +795,12 @@ export const ar: TranslationResources = {
         deletedFile: "تم الحذف",
         commits: {
           title: "الإيداعات",
-          legendLocal: "محلي",
-          legendRemote: "على المستودع البعيد",
-          countLabel: "{{count}} إيداعات قبل الأساس",
+          countLabel: "{{count}} من الإيداعات الأخيرة",
           fileDiffEmpty: "لا توجد تغييرات لعرضها",
           fileDiffError: "تعذّر تحميل فروق الملف",
           loading: "جارٍ تحميل الإيداعات…",
           loadError: "تعذّر تحميل الإيداعات",
-          empty: "لا توجد إيداعات قبل الأساس",
+          empty: "لا توجد إيداعات بعد",
         },
       },
       openInEditor: {
@@ -905,6 +933,8 @@ export const ar: TranslationResources = {
       actions: {
         menu: "إجراءات Workspace",
         newWorkspace: "مساحة عمل جديدة",
+        showMore: "عرض المزيد",
+        showLess: "عرض أقل",
         createWorkspaceFor: "قم بإنشاء مساحة عمل جديدة لـ{{projectName}}",
         copyPath: "نسخ المسار",
         copyBranchName: "انسخ اسم الفرع",
@@ -962,9 +992,6 @@ export const ar: TranslationResources = {
     refPicker: {
       startingRef: "بدء المرجع",
       chooseStart: "اختر من أين تبدأ",
-      checkoutHint: "تحقق من {{noun}} {{numberPrefix}}{{number}}؟",
-      checkoutPr: "تحقق من {{noun}} {{numberPrefix}}{{number}}",
-      dismissCheckoutHint: "تجاهل تلميح الخروج {{noun}} {{numberPrefix}}{{number}}",
       intoBase: "إلى {{baseRef}}",
       searching: "جارٍ البحث...",
       noMatchingRefs: "لا توجد مراجع مطابقة.",
@@ -1445,11 +1472,32 @@ export const ar: TranslationResources = {
       binaryPreviewUnavailable: "المعاينة الثنائية غير متاحة",
       failedToLoad: "فشل تحميل الملف",
       failedToLoadPreview: "فشل تحميل معاينة الملف",
+      editor: {
+        fileSize: "حجم الملف {{size}}",
+        lines: "{{count}} سطر",
+        editorStatus: "حالة المحرر {{status}}",
+        unsavedChanges: "تغييرات غير محفوظة",
+        saving: "جارٍ الحفظ...",
+        saveFailed: "فشل الحفظ",
+        changedOnDisk: "تغيّر على القرص",
+        vimMode: "وضع Vim ‏{{mode}}",
+        cursor: "السطر {{line}}، العمود {{column}}",
+        preview: "معاينة",
+        source: "المصدر",
+        unavailableTitle: "الملف غير متاح على القرص",
+        conflictDescription: "تم الاحتفاظ بالمحتوى المحلي. اختر الإصدار الذي تريد إبقاءه.",
+        overwrite: "استبدال",
+        reload: "إعادة تحميل",
+        reloadTitle: "إعادة التحميل من القرص؟",
+        reloadMessage: "ستفقد تغييراتك المحلية.",
+      },
     },
     diff: {
       changesLabel: "التغييرات",
       changesSubtitle: "فروقات شجرة العمل",
       commitSubtitle: "فروقات الالتزام",
+      uncommittedSubtitle: "تغييرات غير ملتزم بها",
+      baseSubtitle: "مقارنة مع {{baseRef}}",
       directoryMissing: "لم يتم العثور على دليل Workspace.",
       empty: "لا توجد تغييرات",
       loadError: "فشل تحميل الفروقات",
@@ -1540,11 +1588,17 @@ export const ar: TranslationResources = {
     sections: {
       general: "عام",
       appearance: "مظهر",
+      editor: "المحرر",
       shortcuts: "الاختصارات",
       integrations: "التكامل",
       permissions: "الأذونات",
       diagnostics: "التشخيص",
       about: "عن",
+    },
+    editor: {
+      title: "المحرر",
+      vimKeybindings: "اختصارات Vim",
+      vimHint: "تنطبق على ملفات المصدر في الويب وسطح المكتب.",
     },
     hostSections: {
       connections: "اتصالات",

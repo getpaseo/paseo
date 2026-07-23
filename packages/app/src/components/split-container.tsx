@@ -55,6 +55,7 @@ import {
   getWorkspacePaneDescriptors,
 } from "@/screens/workspace/workspace-pane-state";
 import { useMountedTabSet } from "@/screens/workspace/use-mounted-tab-set";
+import { useModifiedPanelTabIds } from "@/panels/panel-instance-attributes";
 import {
   WorkspacePaneContent,
   type WorkspacePaneContentModel,
@@ -75,7 +76,7 @@ import {
   type SplitPane,
   type WorkspaceLayout,
 } from "@/stores/workspace-layout-store";
-import type { WorkspaceTab } from "@/stores/workspace-tabs-store";
+import type { WorkspaceTab } from "@/workspace-tabs/model";
 import { RenderProfile } from "@/utils/render-profiler";
 import { workspaceTabTargetsEqual } from "@/workspace-tabs/identity";
 import { isNative } from "@/constants/platform";
@@ -934,11 +935,17 @@ function SplitPaneView({
   );
   const paneTabs = useMemo(() => paneState.tabs.map((tab) => tab.descriptor), [paneState.tabs]);
   const paneTabIds = useMemo(() => paneTabs.map((tab) => tab.tabId), [paneTabs]);
+  const modifiedPaneTabIds = useModifiedPanelTabIds({
+    serverId: normalizedServerId,
+    workspaceId: normalizedWorkspaceId,
+    tabIds: paneTabIds,
+  });
   const tabDescriptorMap = useStableTabDescriptorMap(paneTabs);
   const activeTabDescriptor = paneState.activeTab?.descriptor ?? null;
   const { mountedTabIds } = useMountedTabSet({
     activeTabId: activeTabDescriptor?.tabId ?? null,
     allTabIds: paneTabIds,
+    retainedTabIds: modifiedPaneTabIds,
     cap: 3,
   });
   const mountedPaneTabIds = useMemo(

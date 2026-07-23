@@ -28,8 +28,8 @@ interface WorkspaceGitWatchState {
  * watch without sharing identity or teardown lifetime.
  *
  * Branch changes reach `onBranchChanged` from two paths that share `lastBranchName`: the
- * on-disk snapshot listener (handleBranchSnapshot) and the workspace-emit loop
- * (recordDescriptorState). Both stay inside this module so the shared state is coherent.
+ * on-disk snapshot listener (handleBranchSnapshot) and the workspace-emit loop's Git runtime
+ * projection (recordDescriptorState). Both stay inside this module so the shared state is coherent.
  */
 export interface WorkspaceGitObserverService {
   syncObservers(workspaces: Iterable<WorkspaceDescriptorPayload>): void;
@@ -92,7 +92,10 @@ export function createWorkspaceGitObserverService(deps: {
       return;
     }
     state.latestDescriptorStateKey = descriptorStateKey(workspace);
-    state.lastBranchName = workspace?.name ?? null;
+    const currentBranch = workspace?.gitRuntime?.currentBranch;
+    if (currentBranch !== undefined) {
+      state.lastBranchName = currentBranch;
+    }
   }
 
   function removeForCwd(cwd: string): void {
@@ -225,8 +228,8 @@ export function createWorkspaceGitObserverService(deps: {
 
     recordDescriptorState(workspaceId, nextWorkspace) {
       const state = workspaceStates.get(workspaceId);
-      if (state && onBranchChanged) {
-        const newBranchName = nextWorkspace?.name ?? null;
+      const newBranchName = nextWorkspace?.gitRuntime?.currentBranch;
+      if (state && onBranchChanged && newBranchName !== undefined) {
         if (newBranchName !== state.lastBranchName) {
           onBranchChanged(workspaceId, state.lastBranchName, newBranchName);
         }
