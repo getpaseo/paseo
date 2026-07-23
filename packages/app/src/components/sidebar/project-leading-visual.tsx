@@ -15,8 +15,12 @@ const STATUS_BADGE_SIZE = 14;
 const STATUS_BADGE_BORDER_WIDTH = 1;
 // Centers the badge on the icon's bottom-right corner: half in, half out.
 const STATUS_BADGE_OFFSET = -(STATUS_BADGE_SIZE / 2);
-const STATUS_BADGE_DOT_SIZE = 6;
-const STATUS_BADGE_ALERT_SIZE = 10;
+// Both glyphs nearly fill the shell's 12pt interior (14 minus the 1pt ring on each side): the
+// ring exists to separate the badge from the icon underneath, not to pad the glyph. Lucide's
+// circle-alert paints ~83% of its nominal size, so an alert of 12 draws a 10pt circle — and the
+// dot is 10 to match it exactly, so the two states read as the same-diameter disc in the shell.
+const STATUS_BADGE_DOT_SIZE = 10;
+const STATUS_BADGE_ALERT_SIZE = 12;
 // SyncedLoader clamps its dot size at 2px, so sizes 5-10 all render the same 5x8 dot grid.
 const STATUS_BADGE_LOADER_SIZE = 7;
 // The dot-comet's 6 divs are geometrically centered, but the snake reads a hair right inside
