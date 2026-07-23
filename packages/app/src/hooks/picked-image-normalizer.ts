@@ -2,7 +2,7 @@ export type PickedImageSource = { kind: "file_uri"; uri: string } | { kind: "blo
 
 export interface PickedImageAttachmentInput {
   source: PickedImageSource;
-  mimeType?: string | null;
+  mimeType: string;
   fileName?: string | null;
 }
 
