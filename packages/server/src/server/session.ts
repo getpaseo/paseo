@@ -587,6 +587,7 @@ export class Session {
   private readonly pushTokenStore: PushTokenStore;
   private unsubscribeAgentEvents: (() => void) | null = null;
   private unsubscribeWorkspaceMutations: (() => void) | null = null;
+  private workspaceMutationQueue: Promise<void> = Promise.resolve();
   private viewedTimelineAgentIds = new Set<string>();
   private readonly viewedTimelineAgentIdsBySource = new Map<object, Set<string>>();
   private readonly clientCapabilitiesBySource = new Map<object, ReadonlySet<ClientCapability>>();
@@ -1351,8 +1352,14 @@ export class Session {
     this.unsubscribeWorkspaceMutations?.();
     this.unsubscribeWorkspaceMutations =
       this.workspaceRegistry.subscribeToMutations?.((mutation) =>
-        this.handleWorkspaceMutation(mutation),
+        this.enqueueWorkspaceMutation(mutation),
       ) ?? null;
+  }
+
+  private enqueueWorkspaceMutation(mutation: WorkspaceMutation): Promise<void> {
+    const next = this.workspaceMutationQueue.then(() => this.handleWorkspaceMutation(mutation));
+    this.workspaceMutationQueue = next.catch(() => {});
+    return next;
   }
 
   private async handleWorkspaceMutation(mutation: WorkspaceMutation): Promise<void> {

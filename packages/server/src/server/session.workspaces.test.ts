@@ -70,6 +70,7 @@ import {
   createPersistedWorkspaceRecord,
   type PersistedProjectRecord,
   type PersistedWorkspaceRecord,
+  type WorkspaceMutation,
 } from "./workspace-registry.js";
 
 const REPO_CWD = path.resolve("/tmp/repo");
@@ -6925,6 +6926,127 @@ test("subscribed fetch_workspaces includes git enrichment in the initial snapsho
     gitWorkspace,
     gitProject,
   );
+});
+
+test("workspace mutation handling does not let a delayed upsert recreate an archived observer", async () => {
+  let mutationListener: ((mutation: WorkspaceMutation) => void | Promise<void>) | null = null;
+  const registerCalls: string[] = [];
+  const unsubscribeCalls: string[] = [];
+  const project = createPersistedProjectRecord({
+    projectId: "proj-race",
+    rootPath: REPO_CWD,
+    kind: "git",
+    displayName: "repo",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: "ws-race",
+    projectId: project.projectId,
+    cwd: REPO_CWD,
+    kind: "local_checkout",
+    displayName: "main",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  const descriptor = {
+    id: workspace.workspaceId,
+    projectId: project.projectId,
+    projectDisplayName: project.displayName,
+    projectRootPath: project.rootPath,
+    workspaceDirectory: workspace.cwd,
+    projectKind: project.kind,
+    workspaceKind: workspace.kind,
+    name: workspace.displayName,
+    status: "done",
+    activityAt: null,
+    diffStat: null,
+  } as WorkspaceDescriptorPayload;
+  const workspaceRegistry: SessionOptions["workspaceRegistry"] = {
+    initialize: async () => {},
+    existsOnDisk: async () => true,
+    list: async () => [],
+    get: async (workspaceId: string) => (workspaceId === workspace.workspaceId ? workspace : null),
+    update: async () => null,
+    upsert: async () => {},
+    archive: async () => {},
+    remove: async () => {},
+    subscribeToMutations: (listener) => {
+      mutationListener = listener;
+      return () => {
+        mutationListener = null;
+      };
+    },
+  };
+  const session = createSessionForWorkspaceTests({
+    projectRegistry: {
+      initialize: async () => {},
+      existsOnDisk: async () => true,
+      list: async () => [project],
+      get: async (projectId: string) => (projectId === project.projectId ? project : null),
+      getOrCreateActiveByRoot: async () => project,
+      upsert: async () => {},
+      archive: async () => {},
+      remove: async () => {},
+    },
+    workspaceRegistry,
+    workspaceGitService: createNoopWorkspaceGitService({
+      registerWorkspace: ({ cwd }) => {
+        registerCalls.push(path.resolve(cwd));
+        return {
+          unsubscribe: () => {
+            unsubscribeCalls.push(path.resolve(cwd));
+          },
+        };
+      },
+    }),
+  });
+  session.emitWorkspaceUpdatesForWorkspaceIds = async () => {};
+
+  await session.handleMessage({
+    type: "fetch_workspaces_request",
+    requestId: "req-fetch-workspaces-subscribe",
+    subscribe: {},
+  });
+
+  let resumeDescribe!: () => void;
+  const describeStarted = new Promise<void>((resolveStarted) => {
+    session.describeWorkspaceRecordWithGitData = async () => {
+      resolveStarted();
+      await new Promise<void>((resolveResume) => {
+        resumeDescribe = resolveResume;
+      });
+      return descriptor;
+    };
+  });
+
+  const upsertMutation = mutationListener?.({
+    kind: "upsert",
+    workspaceId: workspace.workspaceId,
+    workspace,
+  });
+  expect(upsertMutation).toBeDefined();
+  const upsertPromise = Promise.resolve(upsertMutation);
+  await describeStarted;
+
+  const archivedWorkspace = { ...workspace, archivedAt: "2026-03-02T12:00:00.000Z" };
+  const archivePromise = Promise.resolve(
+    mutationListener?.({
+      kind: "archive",
+      workspaceId: workspace.workspaceId,
+      workspace: archivedWorkspace,
+    }),
+  );
+
+  await Promise.resolve();
+  expect(unsubscribeCalls).toEqual([]);
+
+  resumeDescribe();
+  await upsertPromise;
+  await archivePromise;
+
+  expect(registerCalls).toEqual([REPO_CWD]);
+  expect(unsubscribeCalls).toEqual([REPO_CWD]);
 });
 
 test("a workspace leaving a filtered subscription after bootstrap emits a removal", async () => {
