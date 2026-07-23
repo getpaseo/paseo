@@ -67,8 +67,15 @@ function CommitsSectionContent({
   }
   return (
     <View style={styles.list}>
-      {query.data.commits.map((commit) => (
-        <CommitRow key={commit.sha} commit={commit} now={now} onCommitPress={onCommitPress} />
+      {query.data.commits.map((commit, index) => (
+        <CommitRow
+          key={commit.sha}
+          commit={commit}
+          isFirst={index === 0}
+          isLast={index === query.data.commits.length - 1}
+          now={now}
+          onCommitPress={onCommitPress}
+        />
       ))}
     </View>
   );
@@ -110,7 +117,10 @@ export function CommitsSection({ serverId, cwd, onCommitPress }: CommitsSectionP
   if (query.status === "unsupported") {
     return null;
   }
-  const commitCount = query.status === "loaded" ? query.data.commits.length : null;
+  const commitCount =
+    query.status === "loaded"
+      ? query.data.commits.filter((commit) => !commit.isOnBase).length
+      : null;
 
   return (
     <View style={styles.container}>

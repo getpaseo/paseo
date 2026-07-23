@@ -817,7 +817,7 @@ export const ptBR: TranslationResources = {
         deletedFile: "Excluído",
         commits: {
           title: "Commits",
-          countLabel: "{{count}} commits recentes",
+          countLabel: "{{count}} commits do espaço de trabalho",
           fileDiffEmpty: "Nenhuma alteração para exibir",
           fileDiffError: "Falha ao carregar diff do arquivo",
           loading: "Carregando commits…",
