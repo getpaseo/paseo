@@ -2171,8 +2171,11 @@ async function getCheckoutCommitRecords({
     args.splice(2, 0, `--max-count=${maxCount}`);
   }
 
-  const { stdout } = await runGitCommand(args, { cwd, envOverlay: READ_ONLY_GIT_ENV });
-  return parseCheckoutCommitRecords(stdout);
+  const result = await runGitCommand(args, { cwd, envOverlay: READ_ONLY_GIT_ENV });
+  if (result.truncated) {
+    throw new Error("Commit history exceeded the git output limit");
+  }
+  return parseCheckoutCommitRecords(result.stdout);
 }
 
 export interface CheckoutCommitsResult {
@@ -2182,19 +2185,25 @@ export interface CheckoutCommitsResult {
 
 export async function listCheckoutCommits({
   cwd,
+  context,
 }: {
   cwd: string;
+  context?: CheckoutContext;
 }): Promise<CheckoutCommitsResult> {
   const currentBranch = await getCurrentBranch(cwd);
   if (!currentBranch) {
     return { baseRef: null, commits: [] };
   }
 
-  const { resolvedBaseRef } = await resolveBaseRefForCwd(cwd);
+  const { resolvedBaseRef } = await resolveBaseRefForCwd(cwd, context);
   const normalizedBaseRef = resolvedBaseRef ? normalizeLocalBranchRefName(resolvedBaseRef) : null;
   let comparisonBaseRef: string | null = null;
   if (resolvedBaseRef && normalizedBaseRef && normalizedBaseRef !== currentBranch) {
-    comparisonBaseRef = await resolveBestComparisonBaseRef(cwd, resolvedBaseRef);
+    try {
+      comparisonBaseRef = await resolveBestComparisonBaseRef(cwd, resolvedBaseRef);
+    } catch {
+      // History remains useful when a saved base branch has been renamed or deleted.
+    }
   }
 
   let workspaceRecords: ParsedCheckoutCommit[] = [];

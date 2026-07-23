@@ -4,6 +4,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, describe, expect, it } from "vitest";
 import { listCheckoutCommits } from "./checkout-git.js";
+import { writePaseoWorktreeMetadata } from "./worktree-metadata.js";
 
 const tempDirs: string[] = [];
 
@@ -96,6 +97,25 @@ describe("listCheckoutCommits", () => {
     expect(baseRef).toBeNull();
     expect(commits.map((entry) => entry.subject)).toEqual(["initial"]);
     expect(commits[0]?.isOnBase).toBe(true);
+  });
+
+  it("keeps recent history when the saved base branch no longer exists", async () => {
+    const { repoDir, tempDir } = initRepoOnMain();
+    const worktreesRoot = join(tempDir, "worktrees");
+    const worktreeDir = join(worktreesRoot, "repo-hash", "feature");
+    mkdirSync(join(worktreesRoot, "repo-hash"), { recursive: true });
+    git(["worktree", "add", "-b", "feature", worktreeDir], repoDir);
+    commitFile(worktreeDir, "feature.txt", "feature\n", "Feature work");
+    writePaseoWorktreeMetadata(worktreeDir, { baseRefName: "deleted-base" });
+
+    const { baseRef, commits } = await listCheckoutCommits({
+      cwd: worktreeDir,
+      context: { worktreesRoot },
+    });
+
+    expect(baseRef).toBeNull();
+    expect(commits.map((entry) => entry.subject)).toEqual(["Feature work", "initial"]);
+    expect(commits.every((entry) => entry.isOnBase === true)).toBe(true);
   });
 
   it("marks all commits local-only when there is no remote", async () => {
