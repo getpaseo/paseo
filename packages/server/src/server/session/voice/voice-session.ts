@@ -530,7 +530,7 @@ export class VoiceSession {
   private buildCodexVoiceModeOverrides(
     existingConfig: AgentSessionConfig,
   ): Partial<AgentSessionConfig> | null {
-    if (existingConfig.provider !== "codex") {
+    if (!existingConfig.provider.toLowerCase().includes("codex")) {
       return null;
     }
 

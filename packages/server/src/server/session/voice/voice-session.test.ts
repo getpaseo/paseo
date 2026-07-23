@@ -145,6 +145,30 @@ test("Codex voice mode adds and restores its MCP policy in provider-specific con
   await voiceSession.cleanup();
 });
 
+test("Codex-derived provider IDs receive the voice MCP policy", async () => {
+  const { voiceSession, host } = createVoiceSession({
+    provider: "custom-codex",
+    cwd: "/tmp",
+  });
+
+  await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
+
+  expect(host.reloadedConfigs[0]).toMatchObject({
+    extra: {
+      codex: {
+        mcpServerPolicies: {
+          paseo: {
+            enabled_tools: ["speak"],
+            default_tools_approval_mode: "prompt",
+            tools: { speak: { approval_mode: "approve" } },
+          },
+        },
+      },
+    },
+  });
+  await voiceSession.cleanup();
+});
+
 async function settle(): Promise<void> {
   await Promise.resolve();
   await Promise.resolve();
