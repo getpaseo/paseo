@@ -8775,6 +8775,7 @@ test("workspace.create.response persists the first prompt as the initial title",
 test("workspace create emits through a matching workspace subscription", async () => {
   const emitted: SessionOutboundMessage[] = [];
   const workspaces = new Map<string, ReturnType<typeof createPersistedWorkspaceRecord>>();
+  let mutationListener: ((mutation: WorkspaceMutation) => void | Promise<void>) | null = null;
   const session = createSessionForWorkspaceTests({
     onMessage: (message) => emitted.push(message),
     workspaceRegistry: {
@@ -8782,11 +8783,23 @@ test("workspace create emits through a matching workspace subscription", async (
       existsOnDisk: async () => true,
       list: async () => Array.from(workspaces.values()),
       get: async (workspaceId) => workspaces.get(workspaceId) ?? null,
-      upsert: async (workspace) => {
+      upsert: async (workspace, context) => {
         workspaces.set(workspace.workspaceId, workspace);
+        await mutationListener?.({
+          kind: "upsert",
+          workspaceId: workspace.workspaceId,
+          workspace,
+          expectsInitialAgent: context?.expectsInitialAgent,
+        });
       },
       archive: async () => {},
       remove: async () => {},
+      subscribeToMutations: (listener) => {
+        mutationListener = listener;
+        return () => {
+          mutationListener = null;
+        };
+      },
     },
   });
   session.listAgentPayloads = async () => [];
@@ -8794,7 +8807,7 @@ test("workspace create emits through a matching workspace subscription", async (
   await session.handleMessage({
     type: "fetch_workspaces_request",
     requestId: "req-subscribe-create-match",
-    filter: { query: "repo" },
+    filter: { query: "Implement" },
     subscribe: { subscriptionId: "sub-create-match" },
   });
   emitted.length = 0;
@@ -8802,9 +8815,14 @@ test("workspace create emits through a matching workspace subscription", async (
     type: "workspace.create.request",
     requestId: "req-create-match",
     source: { kind: "directory", path: REPO_CWD },
+    firstAgentContext: { prompt: "Implement the requested change" },
   });
 
-  expect(filterByType(emitted, "workspace_update")).toHaveLength(1);
+  const statuses = filterByType(emitted, "workspace_update").flatMap((message) =>
+    message.payload.kind === "upsert" ? [message.payload.workspace.status] : [],
+  );
+  expect(statuses).toContain("running");
+  expect(statuses).not.toContain("done");
 });
 
 test("workspace create stays out of a non-matching workspace subscription", async () => {

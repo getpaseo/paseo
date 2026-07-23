@@ -82,6 +82,11 @@ export interface WorkspaceMutation {
   kind: "upsert" | "archive" | "remove";
   workspaceId: string;
   workspace: PersistedWorkspaceRecord | null;
+  expectsInitialAgent?: boolean;
+}
+
+export interface WorkspaceMutationContext {
+  expectsInitialAgent?: boolean;
 }
 
 export interface ProjectMutation {
@@ -117,7 +122,7 @@ export interface WorkspaceRegistry {
     workspaceId: string,
     updater: (record: PersistedWorkspaceRecord) => PersistedWorkspaceRecord,
   ): Promise<PersistedWorkspaceRecord | null>;
-  upsert(record: PersistedWorkspaceRecord): Promise<void>;
+  upsert(record: PersistedWorkspaceRecord, context?: WorkspaceMutationContext): Promise<void>;
   archive(workspaceId: string, archivedAt: string): Promise<void>;
   remove(workspaceId: string): Promise<void>;
   /** Central lifecycle seam for daemon-global workspace observers. */
@@ -418,12 +423,16 @@ export class FileBackedWorkspaceRegistry
     return workspace;
   }
 
-  override async upsert(record: PersistedWorkspaceRecord): Promise<void> {
+  override async upsert(
+    record: PersistedWorkspaceRecord,
+    context?: WorkspaceMutationContext,
+  ): Promise<void> {
     await super.upsert(record);
     await this.notifyMutation({
       kind: "upsert",
       workspaceId: record.workspaceId,
       workspace: record,
+      ...(context?.expectsInitialAgent ? { expectsInitialAgent: true } : {}),
     });
   }
 

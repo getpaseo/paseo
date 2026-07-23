@@ -1135,14 +1135,26 @@ export class Session {
     await this.emitWorkspaceUpdatesForWorkspaceIds([workspaceId], { skipReconcile: true });
   }
 
-  private async emitCreatedWorkspaceUpdate(workspace: WorkspaceDescriptorPayload): Promise<void> {
+  private async emitCreatedWorkspaceUpdate(
+    workspace: WorkspaceDescriptorPayload,
+    optimisticStatus?: WorkspaceDescriptorPayload["status"],
+  ): Promise<void> {
     if (this.workspaceUpdatesSubscription) {
-      await this.emitWorkspaceUpdateForWorkspaceId(workspace.id);
+      await this.emitWorkspaceUpdatesForWorkspaceIds([workspace.id], {
+        skipReconcile: true,
+        ...(optimisticStatus ? { optimisticStatus } : {}),
+      });
       return;
     }
     // COMPAT(workspaceCreateCausalUpdate): added in v0.1.106, remove after 2027-01-12.
     // Older clients create before subscribing and require the causal update beside the response.
-    this.emit({ type: "workspace_update", payload: { kind: "upsert", workspace } });
+    this.emit({
+      type: "workspace_update",
+      payload: {
+        kind: "upsert",
+        workspace: optimisticStatus ? { ...workspace, status: optimisticStatus } : workspace,
+      },
+    });
   }
 
   markWorkspaceArchivingForExternalMutation(
@@ -1390,6 +1402,7 @@ export class Session {
       }
       await this.emitWorkspaceUpdatesForWorkspaceIds([mutation.workspaceId], {
         skipReconcile: true,
+        ...(mutation.expectsInitialAgent ? { optimisticStatus: "running" } : {}),
       });
     } catch (error) {
       this.sessionLogger.warn(
@@ -4612,7 +4625,12 @@ export class Session {
 
   private async emitWorkspaceUpdatesForWorkspaceIds(
     workspaceIds: Iterable<string>,
-    options?: { skipReconcile?: boolean; dedupeGitState?: boolean; removedProjectId?: string },
+    options?: {
+      skipReconcile?: boolean;
+      dedupeGitState?: boolean;
+      removedProjectId?: string;
+      optimisticStatus?: WorkspaceDescriptorPayload["status"];
+    },
   ): Promise<void> {
     const subscription = this.workspaceUpdatesSubscription;
     if (!subscription) {
@@ -4631,10 +4649,14 @@ export class Session {
 
     for (const workspaceId of uniqueWorkspaceIds) {
       const workspace = descriptorsByWorkspaceId.get(workspaceId);
-      const nextWorkspace =
+      const filteredWorkspace =
         workspace && this.matchesWorkspaceFilter({ workspace, filter: subscription.filter })
           ? workspace
           : null;
+      const nextWorkspace = this.applyOptimisticWorkspaceStatus(
+        filteredWorkspace,
+        options?.optimisticStatus,
+      );
       const lastEmitted = subscription.lastEmittedByWorkspaceId.get(workspaceId);
       if (
         options?.dedupeGitState &&
@@ -4675,6 +4697,16 @@ export class Session {
     if (!options?.skipReconcile) {
       void this.reconcileAndEmitWorkspaceUpdates();
     }
+  }
+
+  private applyOptimisticWorkspaceStatus(
+    workspace: WorkspaceDescriptorPayload | null,
+    optimisticStatus: WorkspaceDescriptorPayload["status"] | undefined,
+  ): WorkspaceDescriptorPayload | null {
+    if (!workspace || !optimisticStatus) {
+      return workspace;
+    }
+    return { ...workspace, status: optimisticStatus };
   }
 
   private shouldSkipWorkspaceRemoval(
@@ -5074,6 +5106,7 @@ export class Session {
       cwd,
       explicitTitle ?? promptTitle,
       request.source.projectId,
+      { expectsInitialAgent: Boolean(request.firstAgentContext) },
     );
     await this.syncWorkspaceGitObserverForWorkspace(workspace);
     const descriptor = await this.describeWorkspaceRecord(workspace);
@@ -5086,7 +5119,10 @@ export class Session {
         error: null,
       },
     });
-    await this.emitCreatedWorkspaceUpdate(descriptor);
+    await this.emitCreatedWorkspaceUpdate(
+      descriptor,
+      request.firstAgentContext ? "running" : undefined,
+    );
     void this.workspaceGitService
       .getSnapshot(workspace.cwd, { force: true, includeForge: true, reason: "open_project" })
       .catch((error) => {
@@ -5161,7 +5197,10 @@ export class Session {
         error: null,
       },
     });
-    await this.emitCreatedWorkspaceUpdate(descriptor);
+    await this.emitCreatedWorkspaceUpdate(
+      descriptor,
+      request.firstAgentContext ? "running" : undefined,
+    );
   }
 
   private async handleOpenProjectRequest(
