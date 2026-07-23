@@ -11,6 +11,17 @@ export interface AgentMetadata {
   [key: string]: unknown;
 }
 
+export interface CodexMcpServerPolicy {
+  enabledTools?: string[];
+  disabledTools?: string[];
+  defaultToolsApprovalMode?: "auto" | "prompt" | "approve";
+  tools?: Record<string, { approvalMode?: "auto" | "prompt" | "approve" }>;
+}
+
+export interface CodexAgentExtra extends AgentMetadata {
+  mcpServerPolicies?: Record<string, CodexMcpServerPolicy>;
+}
+
 /**
  * Stdio-based MCP server (spawns a subprocess).
  */
@@ -573,7 +584,7 @@ export interface AgentSessionConfig {
   networkAccess?: boolean;
   webSearch?: boolean;
   extra?: {
-    codex?: AgentMetadata;
+    codex?: CodexAgentExtra;
     claude?: Partial<ClaudeAgentOptions>;
   };
   mcpServers?: Record<string, McpServerConfig>;

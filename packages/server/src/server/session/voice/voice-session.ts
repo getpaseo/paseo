@@ -21,7 +21,7 @@ import {
 } from "../../voice-config.js";
 import type { VoiceCallerContext, VoiceSpeakHandler } from "../../voice-types.js";
 import type { ManagedAgent } from "../../agent/agent-manager.js";
-import type { AgentSessionConfig } from "../../agent/agent-sdk-types.js";
+import type { AgentSessionConfig, CodexMcpServerPolicy } from "../../agent/agent-sdk-types.js";
 import type { LocalSpeechModelId } from "../../speech/providers/local/models.js";
 import { toResolver, type Resolvable } from "../../speech/provider-resolver.js";
 import type { SpeechReadinessSnapshot, SpeechReadinessState } from "../../speech/speech-runtime.js";
@@ -35,11 +35,11 @@ const MIN_STREAMING_SEGMENT_BYTES = Math.round(
   PCM_BYTES_PER_MS * MIN_STREAMING_SEGMENT_DURATION_MS,
 );
 const AgentIdSchema = z.guid();
-const CODEX_VOICE_MCP_POLICY = {
+const CODEX_VOICE_MCP_POLICY: CodexMcpServerPolicy = {
   enabledTools: ["speak"],
   defaultToolsApprovalMode: "prompt",
   tools: { speak: { approvalMode: "approve" } },
-} as const;
+};
 
 type ProcessingPhase = "idle" | "transcribing";
 
@@ -540,9 +540,7 @@ export class VoiceSession {
         codex: {
           ...existingConfig.extra?.codex,
           mcpServerPolicies: {
-            ...(existingConfig.extra?.codex?.mcpServerPolicies as
-              | Record<string, unknown>
-              | undefined),
+            ...existingConfig.extra?.codex?.mcpServerPolicies,
             [PASEO_MCP_SERVER_NAME]: CODEX_VOICE_MCP_POLICY,
           },
         },

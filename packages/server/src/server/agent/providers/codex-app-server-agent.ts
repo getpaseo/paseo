@@ -4,6 +4,7 @@ import {
   type AgentCapabilityFlags,
   type AgentClient,
   type AgentCreateSessionOptions,
+  type CodexMcpServerPolicy,
   type AgentFeature,
   type AgentLaunchContext,
   type AgentMode,
@@ -796,13 +797,6 @@ interface CodexMcpServerConfig {
       approval_mode?: "auto" | "prompt" | "approve";
     }
   >;
-}
-
-interface CodexMcpServerPolicy {
-  enabledTools?: string[];
-  disabledTools?: string[];
-  defaultToolsApprovalMode?: "auto" | "prompt" | "approve";
-  tools?: Record<string, { approvalMode?: "auto" | "prompt" | "approve" }>;
 }
 
 function toCodexMcpConfig(
@@ -4550,9 +4544,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   private buildCodexInnerConfig(): Record<string, unknown> | null {
     const innerConfig: Record<string, unknown> = {};
     const codexExtra = this.config.extra?.codex;
-    const mcpServerPolicies = codexExtra?.mcpServerPolicies as
-      | Record<string, CodexMcpServerPolicy>
-      | undefined;
+    const mcpServerPolicies = codexExtra?.mcpServerPolicies;
     if (this.config.mcpServers) {
       const mcpServers: Record<string, CodexMcpServerConfig> = {};
       for (const [name, serverConfig] of Object.entries(this.config.mcpServers)) {
