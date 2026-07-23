@@ -11,11 +11,13 @@ export interface AgentMetadata {
   [key: string]: unknown;
 }
 
+export type CodexMcpApprovalMode = "auto" | "prompt" | "approve";
+
 export interface CodexMcpServerPolicy {
   enabled_tools?: string[];
   disabled_tools?: string[];
-  default_tools_approval_mode?: "auto" | "prompt" | "approve";
-  tools?: Record<string, { approval_mode?: "auto" | "prompt" | "approve" }>;
+  default_tools_approval_mode?: CodexMcpApprovalMode;
+  tools?: Record<string, { approval_mode?: CodexMcpApprovalMode }>;
 }
 
 export interface CodexAgentExtra extends AgentMetadata {

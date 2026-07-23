@@ -4,6 +4,7 @@ import {
   type AgentCapabilityFlags,
   type AgentClient,
   type AgentCreateSessionOptions,
+  type CodexMcpApprovalMode,
   type CodexMcpServerPolicy,
   type AgentFeature,
   type AgentLaunchContext,
@@ -790,11 +791,11 @@ interface CodexMcpServerConfig {
   tool_timeout_sec?: number;
   enabled_tools?: string[];
   disabled_tools?: string[];
-  default_tools_approval_mode?: "auto" | "prompt" | "approve";
+  default_tools_approval_mode?: CodexMcpApprovalMode;
   tools?: Record<
     string,
     {
-      approval_mode?: "auto" | "prompt" | "approve";
+      approval_mode?: CodexMcpApprovalMode;
     }
   >;
 }
