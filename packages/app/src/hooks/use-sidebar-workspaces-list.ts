@@ -3,7 +3,7 @@ import { useStoreWithEqualityFn } from "zustand/traditional";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
 import { useSessionStore } from "@/stores/session-store";
 import {
-  useWorkspaceActivityByKey,
+  useHydratedWorkspaceServerIds,
   useWorkspaceDirectoryServerIds,
 } from "@/stores/session-store-hooks";
 import { workspaceEqualityFns } from "@/stores/session-store-hooks/selectors";
@@ -17,7 +17,6 @@ import {
   createSidebarWorkspaceEntry,
   deriveProjectStatusBucket,
   deriveSidebarLoadingState,
-  sortSidebarProjects,
   type ProjectStatusSession,
   type SidebarProjectEntry,
   type SidebarWorkspaceEntry,
@@ -130,6 +129,7 @@ export function useSidebarWorkspacesList(options?: {
 
   const persistedProjectOrder = useSidebarOrderStore((state) => state.projectOrder ?? EMPTY_ORDER);
 
+  const hydratedServerIds = useHydratedWorkspaceServerIds(serverIds);
   const directoryServerIds = useWorkspaceDirectoryServerIds(serverIds);
 
   const hostProjects = useHostProjects(directoryServerIds);
@@ -150,32 +150,25 @@ export function useSidebarWorkspacesList(options?: {
       ? sidebarModel.projectNamesByViewKey
       : EMPTY_PROJECT_NAMES;
 
-  // Persisted-order reconciliation runs against the canonical (manual-ordered) `projects`, never
-  // the sorted view — so choosing Name/Activity never rewrites the saved manual drag order.
+  // Persisted-order reconciliation runs against the canonical (manual-ordered) `projects`. The
+  // sidebar-only "Sort by" preference is applied downstream in the sidebar model (where the
+  // workspace entries live), so it never rewrites the saved manual drag order.
   useEffect(() => {
     const orderStore = useSidebarOrderStore.getState();
     const updates = computeSidebarOrderUpdates({
       projects,
       persistedProjectOrder,
-      getWorkspaceOrder: (projectKey) =>
-        orderStore.workspaceOrderByProject[projectKey] ?? EMPTY_ORDER,
+      getWorkspaceOrder: (projectViewKey) =>
+        orderStore.workspaceOrderByProject[projectViewKey] ?? EMPTY_ORDER,
     });
 
     if (updates.projectOrder) {
       orderStore.setProjectOrder(updates.projectOrder);
     }
-    for (const { projectKey, order } of updates.workspaceOrders) {
-      orderStore.setWorkspaceOrder(projectKey, order);
+    for (const { projectViewKey, order } of updates.workspaceOrders) {
+      orderStore.setWorkspaceOrder(projectViewKey, order);
     }
   }, [persistedProjectOrder, projects]);
-
-  // Apply the sidebar-only "Sort by" preference on top of the canonical order for rendering.
-  const sortMode = useSidebarViewStore((state) => state.sortMode);
-  const activityByKey = useWorkspaceActivityByKey(directoryServerIds, sortMode === "activity");
-  const sortedProjects = useMemo(
-    () => sortSidebarProjects({ projects, sortMode, activityByKey }),
-    [projects, sortMode, activityByKey],
-  );
 
   const refreshAll = useCallback(() => {
     if (!isActive) return;
@@ -192,13 +185,13 @@ export function useSidebarWorkspacesList(options?: {
   const loadingState = deriveSidebarLoadingState({
     isActive,
     serverIds,
-    hydratedServerIds: directoryServerIds,
+    hydratedServerIds,
     hasProjects: projects.length > 0,
   });
 
   return {
     workspacePlacements,
-    projects: sortedProjects,
+    projects,
     projectNamesByViewKey,
     ...loadingState,
     refreshAll,

@@ -28,10 +28,7 @@ export interface SidebarOrderSnapshot {
   workspaceOrderByProject: Record<string, string[]>;
 }
 
-export type WorkspaceActivityByKey = Record<string, number>;
-
 const EMPTY_WORKSPACE_KEYS: string[] = [];
-const EMPTY_WORKSPACE_ACTIVITY: WorkspaceActivityByKey = {};
 const EMPTY_WORKSPACE_STRUCTURE: WorkspaceStructure = { projects: [] };
 
 export const workspaceEqualityFns = {
@@ -215,23 +212,6 @@ export function createWorkspaceStructureProjectsSelector(
     previousProjects = selectWorkspaceStructureProjects(state, serverIds);
     return previousProjects;
   };
-}
-
-export function selectWorkspaceActivityByKey(
-  state: SessionsSnapshot,
-  serverIds: readonly string[],
-): WorkspaceActivityByKey {
-  const activityByKey: WorkspaceActivityByKey = {};
-  for (const serverId of serverIds) {
-    const workspaces = state.sessions[serverId]?.workspaces;
-    if (!workspaces) {
-      continue;
-    }
-    for (const workspace of workspaces.values()) {
-      activityByKey[`${serverId}:${workspace.id}`] = workspace.statusEnteredAt?.getTime() ?? 0;
-    }
-  }
-  return Object.keys(activityByKey).length === 0 ? EMPTY_WORKSPACE_ACTIVITY : activityByKey;
 }
 
 export function selectProject(

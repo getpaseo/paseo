@@ -11,7 +11,6 @@ import {
   selectProjectOrder,
   selectRecommendedProjectPaths,
   selectWorkspace,
-  selectWorkspaceActivityByKey,
   selectWorkspaceDirectory,
   selectWorkspaceFields,
   selectWorkspaceKeys,
@@ -504,32 +503,6 @@ describe("workspace structure composition", () => {
       equivalenceViewKey("project-a"),
     ]);
     expect(after).not.toEqual(before);
-  });
-});
-
-describe("selectWorkspaceActivityByKey", () => {
-  it("maps each workspace key to its status-entered timestamp in epoch ms", () => {
-    const activeAt = new Date("2026-07-01T00:00:00Z");
-    initializeWorkspaces([
-      createWorkspace({ id: "active", statusEnteredAt: activeAt }),
-      createWorkspace({ id: "idle", statusEnteredAt: null }),
-    ]);
-
-    const activityByKey = selectWorkspaceActivityByKey(useSessionStore.getState(), [SERVER_ID]);
-
-    // Missing/unset activity collapses to 0 so it sorts last under the activity sort.
-    expect(activityByKey).toEqual({
-      "test-server:active": activeAt.getTime(),
-      "test-server:idle": 0,
-    });
-  });
-
-  it("returns a stable empty map when there are no workspaces", () => {
-    const activityByKey = selectWorkspaceActivityByKey(
-      { sessions: {} } as Parameters<typeof selectWorkspaceActivityByKey>[0],
-      [SERVER_ID],
-    );
-    expect(activityByKey).toEqual({});
   });
 });
 

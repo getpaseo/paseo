@@ -966,16 +966,37 @@ describe("sortSidebarProjects", () => {
     };
   }
 
+  const NO_LABELS: ReadonlyMap<string, string> = new Map();
+  const NO_ACTIVITY: ReadonlyMap<string, number> = new Map();
+
   it("returns the input unchanged in manual mode", () => {
     const projects = [projectEntry("bravo", ["b", "a"]), projectEntry("alpha", ["z"])];
-    expect(sortSidebarProjects({ projects, sortMode: "manual", activityByKey: {} })).toBe(projects);
+    expect(
+      sortSidebarProjects({
+        projects,
+        sortMode: "manual",
+        labelByKey: NO_LABELS,
+        activityByKey: NO_ACTIVITY,
+      }),
+    ).toBe(projects);
   });
 
-  it("sorts projects and workspaces by name", () => {
-    const projects = [projectEntry("bravo", ["beta", "alpha"]), projectEntry("alpha", ["one"])];
-    const sorted = sortSidebarProjects({ projects, sortMode: "name", activityByKey: {} });
+  it("sorts by displayed label in name mode", () => {
+    const projects = [projectEntry("bravo", ["ws-a", "ws-b"]), projectEntry("alpha", ["one"])];
+    const sorted = sortSidebarProjects({
+      projects,
+      sortMode: "name",
+      labelByKey: new Map([
+        ["srv:ws-a", "zeta"],
+        ["srv:ws-b", "alpha"],
+      ]),
+      activityByKey: NO_ACTIVITY,
+    });
     expect(sorted.map((entry) => entry.projectName)).toEqual(["alpha", "bravo"]);
-    expect(sorted[1]?.workspaces.map((entry) => entry.name)).toEqual(["alpha", "beta"]);
+    expect(sorted[1]?.workspaces.map((entry) => entry.workspaceKey)).toEqual([
+      "srv:ws-b",
+      "srv:ws-a",
+    ]);
   });
 
   it("sorts projects and workspaces by recent activity", () => {
@@ -983,29 +1004,35 @@ describe("sortSidebarProjects", () => {
     const sorted = sortSidebarProjects({
       projects,
       sortMode: "activity",
-      activityByKey: { "srv:old-ws": 100, "srv:stale": 200, "srv:fresh": 900 },
+      labelByKey: NO_LABELS,
+      activityByKey: new Map([
+        ["srv:old-ws", 100],
+        ["srv:stale", 200],
+        ["srv:fresh", 900],
+      ]),
     });
     expect(sorted.map((entry) => entry.projectName)).toEqual(["recent", "old"]);
     expect(sorted[0]?.workspaces.map((entry) => entry.name)).toEqual(["fresh", "stale"]);
   });
 
   it("keeps stable order for equal or missing activity", () => {
-    const projects = [projectEntry("first", ["a"]), projectEntry("second", ["b"])];
     const tie = sortSidebarProjects({
-      projects,
+      projects: [projectEntry("first", ["a"]), projectEntry("second", ["b"])],
       sortMode: "activity",
-      activityByKey: { "srv:a": 42, "srv:b": 42 },
+      labelByKey: NO_LABELS,
+      activityByKey: new Map([
+        ["srv:a", 42],
+        ["srv:b", 42],
+      ]),
     });
     expect(tie.map((entry) => entry.projectName)).toEqual(["first", "second"]);
 
     const sorted = sortSidebarProjects({
       projects: [projectEntry("p", ["active", "unknown"])],
       sortMode: "activity",
-      activityByKey: { "srv:active": 500 },
+      labelByKey: NO_LABELS,
+      activityByKey: new Map([["srv:active", 500]]),
     });
-    expect(sorted[0]?.workspaces.map((entry) => entry.name)).toEqual([
-      "active",
-      "unknown",
-    ]);
+    expect(sorted[0]?.workspaces.map((entry) => entry.name)).toEqual(["active", "unknown"]);
   });
 });

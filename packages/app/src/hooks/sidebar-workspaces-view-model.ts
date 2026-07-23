@@ -3,7 +3,6 @@ import { selectPrHintFromStatus } from "@/git/pr-hint";
 import { type HostProjectListItem } from "@/projects/host-project-model";
 import type { PendingCreateAttempt } from "@/stores/create-flow-store";
 import type { WorkspaceDescriptor } from "@/stores/session-store";
-import type { WorkspaceActivityByKey } from "@/stores/session-store-hooks/selectors";
 import type { SidebarSortMode } from "@/stores/sidebar-view-store";
 import type {
   WorkspaceStructureHostPlacement,
@@ -605,30 +604,37 @@ const compareByName = (a: string, b: string): number =>
 // persisted manual/drag order). This is sidebar-only presentation: it deliberately runs here,
 // after the shared workspace structure and after persisted-order reconciliation, so that neither
 // the New Workspace flow nor the saved manual order is affected by the chosen sort.
+//
+// The ordering keys come from the caller (resolved from the sidebar workspace entries) so this
+// stays pure and orders by what the row actually renders:
+// - "name": the displayed workspace label (branch name or title), then project name.
+// - "activity": the effective, agent-activity-aware status timestamp (the signal status mode uses).
 // - "manual": returned unchanged (already in the persisted order).
-// - "name": alphabetical by project name, and by workspace name within each project.
-// - "activity": most-recently-active first at both levels; ties keep the incoming order (stable).
 export function sortSidebarProjects(input: {
   projects: SidebarProjectEntry[];
   sortMode: SidebarSortMode;
-  activityByKey: WorkspaceActivityByKey;
+  labelByKey: ReadonlyMap<string, string>;
+  activityByKey: ReadonlyMap<string, number>;
 }): SidebarProjectEntry[] {
   if (input.sortMode === "manual" || input.projects.length === 0) {
     return input.projects;
   }
 
   if (input.sortMode === "name") {
+    const labelOf = (placement: SidebarWorkspacePlacement): string =>
+      input.labelByKey.get(placement.workspaceKey) ?? placement.name;
     return input.projects
       .map((project) => ({
         ...project,
         workspaces: [...project.workspaces].sort(
-          (a, b) => compareByName(a.name, b.name) || a.workspaceKey.localeCompare(b.workspaceKey),
+          (a, b) =>
+            compareByName(labelOf(a), labelOf(b)) || a.workspaceKey.localeCompare(b.workspaceKey),
         ),
       }))
       .sort((a, b) => compareByName(a.projectName, b.projectName));
   }
 
-  const activityOf = (workspaceKey: string): number => input.activityByKey[workspaceKey] ?? 0;
+  const activityOf = (workspaceKey: string): number => input.activityByKey.get(workspaceKey) ?? 0;
   return input.projects
     .map((project, index) => {
       const workspaces = [...project.workspaces].sort(
