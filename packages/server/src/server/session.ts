@@ -588,6 +588,7 @@ export class Session {
   private unsubscribeAgentEvents: (() => void) | null = null;
   private unsubscribeWorkspaceMutations: (() => void) | null = null;
   private workspaceMutationQueue: Promise<void> = Promise.resolve();
+  private isCleanedUp = false;
   private viewedTimelineAgentIds = new Set<string>();
   private readonly viewedTimelineAgentIdsBySource = new Map<object, Set<string>>();
   private readonly clientCapabilitiesBySource = new Map<object, ReadonlySet<ClientCapability>>();
@@ -1364,6 +1365,9 @@ export class Session {
 
   private async handleWorkspaceMutation(mutation: WorkspaceMutation): Promise<void> {
     try {
+      if (this.isCleanedUp) {
+        return;
+      }
       if (
         mutation.kind === "archive" ||
         mutation.kind === "remove" ||
@@ -1371,7 +1375,19 @@ export class Session {
       ) {
         this.workspaceGitObserver.removeForWorkspaceId(mutation.workspaceId);
       } else if (mutation.workspace && this.workspaceUpdatesSubscription) {
-        await this.workspaceGitObserver.syncObserverForWorkspace(mutation.workspace);
+        const currentWorkspace = await this.workspaceRegistry.get(mutation.workspaceId);
+        if (!currentWorkspace || currentWorkspace.archivedAt) {
+          this.workspaceGitObserver.removeForWorkspaceId(mutation.workspaceId);
+        } else {
+          await this.workspaceGitObserver.syncObserverForWorkspace(currentWorkspace);
+          if (this.isCleanedUp) {
+            this.workspaceGitObserver.removeForWorkspaceId(mutation.workspaceId);
+            return;
+          }
+        }
+      }
+      if (this.isCleanedUp) {
+        return;
       }
       await this.emitWorkspaceUpdatesForWorkspaceIds([mutation.workspaceId], {
         skipReconcile: true,
@@ -4537,7 +4553,7 @@ export class Session {
       this.workspaceGitObserver.recordDescriptorState(workspaceId, nextWorkspace);
 
       if (!nextWorkspace) {
-        if (lastEmitted?.kind === "remove" || (workspace && !lastEmitted)) {
+        if (this.shouldSkipWorkspaceRemoval(workspace, lastEmitted, options?.removedProjectId)) {
           continue;
         }
         subscription.lastEmittedByWorkspaceId.delete(workspaceId);
@@ -4567,6 +4583,17 @@ export class Session {
     if (!options?.skipReconcile) {
       void this.reconcileAndEmitWorkspaceUpdates();
     }
+  }
+
+  private shouldSkipWorkspaceRemoval(
+    workspace: WorkspaceDescriptorPayload | undefined,
+    lastEmitted: WorkspaceUpdatePayload | undefined,
+    removedProjectId: string | undefined,
+  ): boolean {
+    if (lastEmitted?.kind === "remove") {
+      return !removedProjectId;
+    }
+    return Boolean(workspace && !lastEmitted);
   }
 
   private async buildWorkspaceRemoveUpdatePayload(
@@ -6346,6 +6373,7 @@ export class Session {
    */
   public async cleanup(): Promise<void> {
     this.sessionLogger.trace({}, "agent.session.lifecycle.cleanup");
+    this.isCleanedUp = true;
 
     if (this.unsubscribeAgentEvents) {
       this.unsubscribeAgentEvents();

@@ -3579,7 +3579,9 @@ test("project.remove.request removes an already-empty project", async () => {
     filter: undefined,
     isBootstrapping: false,
     pendingUpdatesByWorkspaceId: new Map(),
-    lastEmittedByWorkspaceId: new Map(),
+    lastEmittedByWorkspaceId: new Map([
+      [archivedWorkspace.workspaceId, { kind: "remove", id: archivedWorkspace.workspaceId }],
+    ]),
   };
   session.reconcileActiveWorkspaceRecords = async () => new Set();
   session.listAgentPayloads = async () => [];
@@ -7044,6 +7046,138 @@ test("workspace mutation handling does not let a delayed upsert recreate an arch
   resumeDescribe();
   await upsertPromise;
   await archivePromise;
+
+  expect(registerCalls).toEqual([REPO_CWD]);
+  expect(unsubscribeCalls).toEqual([REPO_CWD]);
+});
+
+test("workspace mutation handling drops queued observer sync after session cleanup", async () => {
+  let mutationListener: ((mutation: WorkspaceMutation) => void | Promise<void>) | null = null;
+  const registerCalls: string[] = [];
+  const unsubscribeCalls: string[] = [];
+  const project = createPersistedProjectRecord({
+    projectId: "proj-cleanup-race",
+    rootPath: REPO_CWD,
+    kind: "git",
+    displayName: "repo",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  const firstWorkspace = createPersistedWorkspaceRecord({
+    workspaceId: "ws-cleanup-first",
+    projectId: project.projectId,
+    cwd: REPO_CWD,
+    kind: "local_checkout",
+    displayName: "main",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  const queuedWorkspace = createPersistedWorkspaceRecord({
+    workspaceId: "ws-cleanup-queued",
+    projectId: project.projectId,
+    cwd: "/tmp/repo/queued",
+    kind: "local_checkout",
+    displayName: "queued",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  const workspaces = new Map([
+    [firstWorkspace.workspaceId, firstWorkspace],
+    [queuedWorkspace.workspaceId, queuedWorkspace],
+  ]);
+  const workspaceRegistry: SessionOptions["workspaceRegistry"] = {
+    initialize: async () => {},
+    existsOnDisk: async () => true,
+    list: async () => [],
+    get: async (workspaceId: string) => workspaces.get(workspaceId) ?? null,
+    update: async () => null,
+    upsert: async () => {},
+    archive: async () => {},
+    remove: async () => {},
+    subscribeToMutations: (listener) => {
+      mutationListener = listener;
+      return () => {
+        mutationListener = null;
+      };
+    },
+  };
+  const session = createSessionForWorkspaceTests({
+    projectRegistry: {
+      initialize: async () => {},
+      existsOnDisk: async () => true,
+      list: async () => [project],
+      get: async (projectId: string) => (projectId === project.projectId ? project : null),
+      getOrCreateActiveByRoot: async () => project,
+      upsert: async () => {},
+      archive: async () => {},
+      remove: async () => {},
+    },
+    workspaceRegistry,
+    workspaceGitService: createNoopWorkspaceGitService({
+      registerWorkspace: ({ cwd }) => {
+        registerCalls.push(path.resolve(cwd));
+        return {
+          unsubscribe: () => {
+            unsubscribeCalls.push(path.resolve(cwd));
+          },
+        };
+      },
+    }),
+  });
+
+  await session.handleMessage({
+    type: "fetch_workspaces_request",
+    requestId: "req-fetch-workspaces-cleanup-subscribe",
+    subscribe: {},
+  });
+
+  session.describeWorkspaceRecordWithGitData = async (workspace) =>
+    ({
+      id: workspace.workspaceId,
+      projectId: workspace.projectId,
+      projectDisplayName: project.displayName,
+      projectRootPath: project.rootPath,
+      workspaceDirectory: workspace.cwd,
+      projectKind: project.kind,
+      workspaceKind: workspace.kind,
+      name: workspace.displayName,
+      status: "done",
+      activityAt: null,
+      diffStat: null,
+    }) as WorkspaceDescriptorPayload;
+
+  let resumeFirstEmit!: () => void;
+  const firstEmitStarted = new Promise<void>((resolveStarted) => {
+    session.emitWorkspaceUpdatesForWorkspaceIds = async () => {
+      resolveStarted();
+      await new Promise<void>((resolveResume) => {
+        resumeFirstEmit = resolveResume;
+      });
+    };
+  });
+
+  const firstMutationPromise = Promise.resolve(
+    mutationListener?.({
+      kind: "upsert",
+      workspaceId: firstWorkspace.workspaceId,
+      workspace: firstWorkspace,
+    }),
+  );
+  expect(firstMutationPromise).toBeDefined();
+  await firstEmitStarted;
+
+  const queuedMutationPromise = Promise.resolve(
+    mutationListener?.({
+      kind: "upsert",
+      workspaceId: queuedWorkspace.workspaceId,
+      workspace: queuedWorkspace,
+    }),
+  );
+
+  await session.cleanup();
+  resumeFirstEmit();
+  await firstMutationPromise;
+  await queuedMutationPromise;
 
   expect(registerCalls).toEqual([REPO_CWD]);
   expect(unsubscribeCalls).toEqual([REPO_CWD]);
