@@ -21,6 +21,11 @@ const GrokUsageResponseSchema = z.object({
           val: ApiNumberSchema.optional(),
         })
         .nullish(),
+      used: z
+        .object({
+          val: ApiNumberSchema.optional(),
+        })
+        .nullish(),
     })
     .nullish(),
   usage: z
@@ -30,13 +35,34 @@ const GrokUsageResponseSchema = z.object({
     .nullish(),
 });
 
-const GrokAuthSchema = z.object({
-  access_token: z.string().optional(),
-});
-
 interface GrokQuotaProviderOptions {
   logger: Logger;
   fetch?: ProviderApiFetch;
+}
+
+/** Resolve a Grok CLI token from ~/.grok/auth.json (legacy or current nested shape). */
+export function extractGrokTokenFromAuth(auth: unknown): string | null {
+  if (auth == null || typeof auth !== "object" || Array.isArray(auth)) return null;
+  const record = auth as Record<string, unknown>;
+
+  const topLevel = record["access_token"];
+  if (typeof topLevel === "string" && topLevel.length > 0) {
+    return topLevel;
+  }
+
+  const entries = Object.entries(record);
+  const preferred = entries.filter(([key]) => key.startsWith("https://auth.x.ai::"));
+  const candidates = preferred.length > 0 ? preferred : entries;
+
+  for (const [, value] of candidates) {
+    if (value == null || typeof value !== "object" || Array.isArray(value)) continue;
+    const nestedKey = (value as Record<string, unknown>)["key"];
+    if (typeof nestedKey === "string" && nestedKey.length > 0) {
+      return nestedKey;
+    }
+  }
+
+  return null;
 }
 
 export class GrokQuotaProvider implements ProviderUsageFetcher {
@@ -76,7 +102,8 @@ export class GrokQuotaProvider implements ProviderUsageFetcher {
 
     const resp = GrokUsageResponseSchema.parse(await res.json());
     const monthlyLimit = resp.config?.monthlyLimit?.val ?? null;
-    const creditUsage = resp.usage?.creditUsage ?? null;
+    // Live CLI billing uses config.used.val; older mocks used usage.creditUsage.
+    const creditUsage = resp.config?.used?.val ?? resp.usage?.creditUsage ?? null;
     const balances: ProviderUsageBalance[] = [];
     if (monthlyLimit !== null || creditUsage !== null) {
       const remaining =
@@ -110,8 +137,7 @@ export class GrokQuotaProvider implements ProviderUsageFetcher {
     const path = join(homedir(), ".grok", "auth.json");
     if (!existsSync(path)) return null;
     try {
-      const auth = GrokAuthSchema.parse(JSON.parse(await fs.readFile(path, "utf8")));
-      return auth.access_token ?? null;
+      return extractGrokTokenFromAuth(JSON.parse(await fs.readFile(path, "utf8")));
     } catch {
       return null;
     }

@@ -51,6 +51,11 @@ function writeKimiCredentials(dir: string, accessToken: string): void {
   );
 }
 
+function writeGrokAuth(home: string, auth: Record<string, unknown>): void {
+  mkdirSync(join(home, ".grok"), { recursive: true });
+  writeFileSync(join(home, ".grok", "auth.json"), JSON.stringify(auth));
+}
+
 function writeMiniMaxConfig(dir: string, payload: Record<string, unknown>): void {
   mkdirSync(join(dir, ".mmx"), { recursive: true });
   writeFileSync(join(dir, ".mmx", "config.json"), JSON.stringify(payload));
@@ -720,8 +725,7 @@ describe("real provider usage fetchers", () => {
           "https://cli-chat-proxy.grok.com/v1/billing",
           () =>
             jsonResponse({
-              config: { monthlyLimit: { val: 0 } },
-              usage: { creditUsage: 0 },
+              config: { monthlyLimit: { val: 0 }, used: { val: 0 } },
             }),
         ],
       ]),
@@ -737,6 +741,109 @@ describe("real provider usage fetchers", () => {
           used: 0,
           remaining: 0,
           limit: 0,
+        }),
+      ],
+    });
+  });
+
+  it("fetches Grok usage from live billing shape (config.used.val)", async () => {
+    process.env["GROK_API_KEY"] = "grok_test_token";
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://cli-chat-proxy.grok.com/v1/billing",
+          () =>
+            jsonResponse({
+              config: {
+                monthlyLimit: { val: 150000 },
+                used: { val: 37886 },
+                billingPeriodStart: "2026-07-01T00:00:00+00:00",
+                billingPeriodEnd: "2026-08-01T00:00:00+00:00",
+              },
+            }),
+        ],
+      ]),
+    );
+
+    const grok = findProvider(await service().listUsage(), "grok");
+
+    expect(grok).toMatchObject({
+      status: "available",
+      balances: [
+        expect.objectContaining({
+          id: "monthly_credits",
+          used: 37886,
+          remaining: 112114,
+          limit: 150000,
+          unit: "credits",
+        }),
+      ],
+    });
+  });
+
+  it("fetches Grok usage with nested ~/.grok/auth.json key token", async () => {
+    writeGrokAuth(homeDir, {
+      "https://auth.x.ai::test-user-id": {
+        key: "nested_jwt_token",
+        refresh_token: "rt_nested",
+        expires_at: "2026-08-01T00:00:00Z",
+        user_id: "test-user-id",
+        email: "user@example.com",
+      },
+    });
+
+    let authorization: string | null = null;
+    fetchApi = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+      authorization = (init?.headers as Record<string, string> | undefined)?.Authorization ?? null;
+      return jsonResponse({
+        config: {
+          monthlyLimit: { val: 100 },
+          used: { val: 25 },
+        },
+      });
+    }) as typeof fetch;
+
+    const grok = findProvider(await service().listUsage(), "grok");
+
+    expect(authorization).toBe("Bearer nested_jwt_token");
+    expect(grok).toMatchObject({
+      status: "available",
+      balances: [
+        expect.objectContaining({
+          id: "monthly_credits",
+          used: 25,
+          remaining: 75,
+          limit: 100,
+        }),
+      ],
+    });
+  });
+
+  it("still accepts legacy Grok usage.creditUsage when config.used is absent", async () => {
+    process.env["GROK_API_KEY"] = "grok_test_token";
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://cli-chat-proxy.grok.com/v1/billing",
+          () =>
+            jsonResponse({
+              config: { monthlyLimit: { val: 50 } },
+              usage: { creditUsage: 10 },
+            }),
+        ],
+      ]),
+    );
+
+    const grok = findProvider(await service().listUsage(), "grok");
+
+    expect(grok).toMatchObject({
+      status: "available",
+      balances: [
+        expect.objectContaining({
+          id: "monthly_credits",
+          used: 10,
+          remaining: 40,
+          limit: 50,
         }),
       ],
     });
