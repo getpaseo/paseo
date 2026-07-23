@@ -474,6 +474,7 @@ describe("WorkspaceReconciliationService", () => {
 
   test("archives workspaces whose directories no longer exist", async () => {
     const { projects, workspaces, projectRegistry, workspaceRegistry } = createTestRegistries();
+    const archivedWorkspaceIds: string[] = [];
 
     projects.set(
       "p1",
@@ -503,14 +504,23 @@ describe("WorkspaceReconciliationService", () => {
       projectRegistry,
       workspaceRegistry,
       logger: createTestLogger(),
+      onWorkspaceArchived: (workspaceId) => {
+        archivedWorkspaceIds.push(workspaceId);
+      },
     });
 
     const result = await service.runOnce();
 
-    expect(result.changesApplied.length).toBeGreaterThanOrEqual(1);
-    const wsChange = result.changesApplied.find((c) => c.kind === "workspace_archived");
-    expect(wsChange).toBeDefined();
-    expect(workspaces.get("w1")!.archivedAt).toBeTruthy();
+    expect(result.changesApplied).toEqual([
+      {
+        kind: "workspace_archived",
+        workspaceId: "w1",
+        directory: "/tmp/does-not-exist-reconcile-test",
+        reason: "directory_missing",
+      },
+    ]);
+    expect(archivedWorkspaceIds).toEqual(["w1"]);
+    expect(workspaces.get("w1")?.archivedAt).toEqual(expect.any(String));
   });
 
   test("keeps a project active after all its workspaces are archived", async () => {
