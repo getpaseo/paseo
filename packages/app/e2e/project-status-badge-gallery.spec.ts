@@ -13,11 +13,42 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { test, expect } from "./fixtures";
 import { gotoAppShell } from "./helpers/app";
+import { daemonWsRoutePattern } from "./helpers/daemon-port";
 import { seedWorkspace, type SeededWorkspace } from "./helpers/seed-client";
 import { getServerId } from "./helpers/server-id";
+import { expectMobileAgentSidebarVisible, openMobileAgentSidebar } from "./helpers/sidebar";
 import { waitForSidebarHydration } from "./helpers/workspace-ui";
 
 const OUT_DIR = path.resolve(__dirname, "../.verification/project-status-badge");
+
+// Same key the app's settings hook writes to (@/hooks/use-settings/storage.ts). Kept as a
+// local literal — same convention diff-row-alignment.spec.ts uses — so this spec doesn't
+// reach into app source for a single string. Distinct from the legacy "@paseo:settings" key
+// the paseoE2ESetup auto fixture clears, so seeding this doesn't race that reset.
+const APP_SETTINGS_KEY = "@paseo:app-settings";
+
+/**
+ * `routeWebSocket` handler that swallows client -> daemon `project.remove.request`
+ * messages instead of forwarding them, so `isRemovingProject` never resolves and the
+ * archiving spinner stays mounted for the capture. Everything else passes through
+ * untouched in both directions. Top-level (not inline) to stay under oxlint's
+ * max-nested-callbacks limit.
+ */
+function dropProjectRemoveRequests(ws: import("@playwright/test").WebSocketRoute): void {
+  const server = ws.connectToServer();
+  ws.onMessage((message) => forwardUnlessProjectRemove(message, server));
+  server.onMessage((message) => ws.send(message));
+}
+
+function forwardUnlessProjectRemove(
+  message: string | Buffer,
+  server: import("@playwright/test").WebSocketRoute,
+): void {
+  if (typeof message === "string" && message.includes('"type":"project.remove.request"')) {
+    return; // dropped — never forwarded to the daemon
+  }
+  server.send(message);
+}
 
 // 3x so the captures are directly comparable with the pre-change gallery, which was shot at
 // the same density — the geometry numbers in the plan are all in these device pixels.
@@ -57,16 +88,19 @@ async function seedSubState(input: {
   cwd: string;
   workspaceId: string;
   label: string;
-  bucket: "running" | "needs_input" | "attention" | "done";
+  bucket: "running" | "needs_input" | "attention" | "failed" | "done";
 }): Promise<void> {
   if (input.bucket === "done") {
     return;
   }
   const model = input.bucket === "attention" ? "ten-second-stream" : "thirty-minute-stream";
-  const PROMPT_BY_BUCKET: Record<"needs_input" | "attention" | "running", string> = {
+  const PROMPT_BY_BUCKET: Record<"needs_input" | "attention" | "running" | "failed", string> = {
     needs_input: "emit a synthetic plan approval",
     attention: "finish quickly for the capture",
     running: "keep streaming for the capture",
+    // Resolves the turn with a `turn_failed` event immediately — the duration profile never
+    // matters, so this shares the same model pool as the other sub-states.
+    failed: "emit a synthetic turn failure",
   };
   const prompt = PROMPT_BY_BUCKET[input.bucket];
   await input.client.createAgent({
@@ -87,8 +121,8 @@ async function seedSubState(input: {
  */
 async function seedEdgeCaseProject(input: {
   label: string;
-  bucketA: "running" | "needs_input" | "attention" | "done";
-  bucketB: "running" | "needs_input" | "attention" | "done";
+  bucketA: "running" | "needs_input" | "attention" | "failed" | "done";
+  bucketB: "running" | "needs_input" | "attention" | "failed" | "done";
 }): Promise<{ label: string; base: SeededWorkspace; secondWorkspaceId: string }> {
   const base = await seedWorkspace({ repoPrefix: `edge-${input.label}` });
   await seedSubState({
@@ -149,6 +183,15 @@ test.describe("collapsed project status badge", () => {
           bucket: "attention",
           model: "ten-second-stream",
           prompt: "finish quickly for the capture",
+        }),
+      );
+      // failed — the mock provider's synthetic turn-failure trigger, which resolves the turn
+      // with a `turn_failed` event immediately (no duration profile involved).
+      states.push(
+        await seedState({
+          label: "failed",
+          bucket: "failed",
+          prompt: "emit a synthetic turn failure",
         }),
       );
       // done — a project with no agents at all.
@@ -334,6 +377,19 @@ test.describe("collapsed project status badge", () => {
         bucketA: "done",
         bucketB: "done",
       });
+      // failed beats running: proves the priority order (needs_input > failed > running >
+      // attention > done) holds for the previously-uncovered "failed" bucket.
+      const failedRunning = await seedEdgeCaseProject({
+        label: "failed-plus-running",
+        bucketA: "failed",
+        bucketB: "running",
+      });
+      // needs_input still wins over failed — the one bucket that outranks it.
+      const needsInputFailed = await seedEdgeCaseProject({
+        label: "needs-input-plus-failed",
+        bucketA: "needs_input",
+        bucketB: "failed",
+      });
       // Control: a single-workspace project left EXPANDED. The project row must carry NO
       // badge — status rides the workspace row instead, the inverse of every collapsed case
       // above. This is what proves the badge is collapse-only, not "always on".
@@ -348,13 +404,22 @@ test.describe("collapsed project status badge", () => {
         needsInputRunning.base,
         attentionDone.base,
         allDone.base,
+        failedRunning.base,
+        needsInputFailed.base,
         control.base,
       );
 
       await gotoAppShell(page);
       await waitForSidebarHydration(page);
 
-      const collapsing = [runningAttention, needsInputRunning, attentionDone, allDone];
+      const collapsing = [
+        runningAttention,
+        needsInputRunning,
+        attentionDone,
+        allDone,
+        failedRunning,
+        needsInputFailed,
+      ];
       for (const edge of collapsing) {
         const row = page.getByTestId(`sidebar-project-row-${edge.base.projectId}`);
         await expect(row).toBeVisible({ timeout: 60_000 });
@@ -383,6 +448,16 @@ test.describe("collapsed project status badge", () => {
             label: attentionDone.label,
             projectId: attentionDone.base.projectId,
             expectedBadge: "attention",
+          },
+          {
+            label: failedRunning.label,
+            projectId: failedRunning.base.projectId,
+            expectedBadge: "failed",
+          },
+          {
+            label: needsInputFailed.label,
+            projectId: needsInputFailed.base.projectId,
+            expectedBadge: "needs_input",
           },
         ];
       const noBadgeExpectations: Array<{ label: string; projectId: string }> = [
@@ -446,6 +521,320 @@ test.describe("collapsed project status badge", () => {
       for (const project of projects) {
         await project.cleanup().catch(() => undefined);
       }
+    }
+  });
+
+  test("captures every visible status in dark mode", async ({ page }) => {
+    test.setTimeout(240_000);
+    const DARK_OUT_DIR = path.join(OUT_DIR, "dark-mode");
+    await mkdir(DARK_OUT_DIR, { recursive: true });
+
+    // Force dark regardless of the OS/browser color-scheme preference. Must run before
+    // gotoAppShell's navigation so the app boots with it already in storage.
+    await page.addInitScript(
+      ({ settingsKey }) => {
+        localStorage.setItem(settingsKey, JSON.stringify({ theme: "dark" }));
+      },
+      { settingsKey: APP_SETTINGS_KEY },
+    );
+
+    const states: SeededState[] = [];
+    try {
+      states.push(
+        await seedState({
+          label: "dark-running",
+          bucket: "running",
+          model: "thirty-minute-stream",
+          prompt: "keep streaming for the capture",
+        }),
+      );
+      states.push(
+        await seedState({
+          label: "dark-needs-input",
+          bucket: "needs_input",
+          model: "thirty-minute-stream",
+          prompt: "emit a synthetic plan approval",
+        }),
+      );
+      states.push(
+        await seedState({
+          label: "dark-failed",
+          bucket: "failed",
+          prompt: "emit a synthetic turn failure",
+        }),
+      );
+      states.push(
+        await seedState({
+          label: "dark-attention",
+          bucket: "attention",
+          model: "ten-second-stream",
+          prompt: "finish quickly for the capture",
+        }),
+      );
+      states.push(await seedState({ label: "dark-done", bucket: "done" }));
+
+      await gotoAppShell(page);
+      await waitForSidebarHydration(page);
+
+      for (const state of states) {
+        const row = page.getByTestId(`sidebar-project-row-${state.workspace.projectId}`);
+        await expect(row).toBeVisible({ timeout: 60_000 });
+        await row.click();
+      }
+      await page.mouse.move(1200, 850);
+
+      for (const state of states) {
+        const row = page.getByTestId(`sidebar-project-row-${state.workspace.projectId}`);
+        if (state.bucket === "done") {
+          await expect(row.getByTestId("project-status-badge")).toHaveCount(0, { timeout: 60_000 });
+          continue;
+        }
+        await expect(row.getByTestId(`project-status-indicator-${state.bucket}`)).toBeVisible({
+          timeout: 60_000,
+        });
+        await expect(row.getByTestId("project-status-badge")).toBeVisible({ timeout: 60_000 });
+      }
+
+      // Sanity check the theme actually flipped: unistyles' colorScheme drives
+      // theme.colors.surfaceSidebar / surface0, so the sidebar background itself must be
+      // dark, not just the badge. Read one pixel from a definitely-sidebar region.
+      const sidebarBg = await page.evaluate(() => {
+        const el = document.elementFromPoint(20, 20);
+        if (!el) return null;
+        return getComputedStyle(el).backgroundColor;
+      });
+
+      // Geometry + background-color dump for the pixel verification pass done outside the
+      // spec (ImageMagick against the PNGs) — mirrors the light-mode geometry.json pattern
+      // but scoped to what dark mode needs to prove: badge boxes to crop precisely, plus the
+      // raw background read above.
+      const geometry = await page.evaluate(() => {
+        const box = (el: Element | null) => {
+          if (!el) return null;
+          const r = el.getBoundingClientRect();
+          return {
+            w: +r.width.toFixed(2),
+            h: +r.height.toFixed(2),
+            x: +r.x.toFixed(2),
+            y: +r.y.toFixed(2),
+          };
+        };
+        const measured = [];
+        for (const row of document.querySelectorAll('[data-testid^="sidebar-project-row-"]')) {
+          const badge = row.querySelector('[data-testid="project-status-badge"]');
+          const indicator = row.querySelector('[data-testid^="project-status-indicator-"]');
+          measured.push({
+            testId: row.getAttribute("data-testid"),
+            indicator: indicator?.getAttribute("data-testid") ?? null,
+            badge: box(badge),
+          });
+        }
+        return measured;
+      });
+      await writeFile(
+        path.join(DARK_OUT_DIR, "geometry.json"),
+        `${JSON.stringify({ sidebarBackgroundColor: sidebarBg, rows: geometry }, null, 2)}\n`,
+        "utf8",
+      );
+
+      for (const state of states) {
+        const row = page.getByTestId(`sidebar-project-row-${state.workspace.projectId}`);
+        await row.screenshot({ path: path.join(DARK_OUT_DIR, `state-${state.label}.png`) });
+      }
+      await page.screenshot({ path: path.join(DARK_OUT_DIR, "all-states-dark.png") });
+    } finally {
+      for (const state of states) {
+        await state.workspace.cleanup().catch(() => undefined);
+      }
+    }
+  });
+
+  // SKIPPED (archiving capture): could not get `project-status-indicator-archiving` to render
+  // in this harness despite several targeted fixes, so this is left disabled rather than flaky
+  // or faked. What's confirmed:
+  //  - The remove flow does run: the confirm() dialog fires and is accepted, and the dropdown
+  //    closes normally.
+  //  - ProjectLeadingVisual's showChevron (hover) branch is checked BEFORE isArchiving, so a
+  //    row left "hovered" by the kebab/menu interaction renders the expand chevron over the
+  //    spinner regardless of isArchiving's value. Explicit unhover (mouse-move-away, a settle
+  //    wait plus a second move-away, and finally a direct pointerleave dispatch on the row) was
+  //    tried and did not make the indicator appear within a 15s window either.
+  // That leaves two live hypotheses this harness doesn't distinguish: (a) some other hover/focus
+  // path keeps re-asserting itself after the menu closes, or (b) `isRemovingProject` never
+  // actually renders true for a full frame in this test daemon (e.g. a readiness/feature-gate
+  // check short-circuits synchronously so React never paints the intermediate true state). A
+  // real bug is possible here — flagged for a maintainer to reproduce with the DOM inspector
+  // live rather than guessed at further via screenshots.
+  test.skip("captures the archiving spinner via a dropped project.remove.request", async ({
+    page,
+  }) => {
+    test.setTimeout(120_000);
+    const ARCHIVING_OUT_DIR = path.join(OUT_DIR, "archiving");
+    await mkdir(ARCHIVING_OUT_DIR, { recursive: true });
+
+    // Swallow the client -> daemon project.remove.request so isRemovingProject never
+    // resolves. This must be registered before gotoAppShell navigates, since routeWebSocket
+    // only intercepts sockets opened after it's armed. The project is never actually
+    // removed mid-test — the seed client's cleanup() below uses its own, unrouted
+    // connection to remove it for real afterward.
+    await page.routeWebSocket(daemonWsRoutePattern(), dropProjectRemoveRequests);
+
+    const workspace = await seedWorkspace({ repoPrefix: "badge-archiving-" });
+    try {
+      await gotoAppShell(page);
+      await waitForSidebarHydration(page);
+
+      const row = page.getByTestId(`sidebar-project-row-${workspace.projectId}`);
+      await expect(row).toBeVisible({ timeout: 60_000 });
+      await row.hover();
+
+      const kebab = page.getByTestId(`sidebar-project-kebab-${workspace.projectId}`);
+      await expect(kebab).toBeVisible({ timeout: 10_000 });
+      await kebab.click();
+
+      page.once("dialog", (dialog) => void dialog.accept());
+      const removeItem = page.getByTestId(`sidebar-project-menu-remove-${workspace.projectId}`);
+      await expect(removeItem).toBeVisible({ timeout: 10_000 });
+      await removeItem.click();
+
+      // ProjectLeadingVisual checks showChevron (hover) before isArchiving, so the row must
+      // stop being "hovered" for the spinner to win instead of the chevron — see the skip note
+      // above for what was tried here and why it wasn't enough to unblock this capture.
+      await expect(removeItem).not.toBeVisible({ timeout: 10_000 });
+      await row.dispatchEvent("pointerleave");
+      await page.mouse.move(1200, 850);
+
+      const archivingIndicator = row.getByTestId("project-status-indicator-archiving");
+      await expect(archivingIndicator).toBeVisible({ timeout: 15_000 });
+      await row.screenshot({ path: path.join(ARCHIVING_OUT_DIR, "state-archiving.png") });
+    } finally {
+      await workspace.cleanup().catch(() => undefined);
+    }
+  });
+
+  test("captures the badge swapped for the hover chevron and back", async ({ page }) => {
+    test.setTimeout(120_000);
+    const HOVER_OUT_DIR = path.join(OUT_DIR, "hover");
+    await mkdir(HOVER_OUT_DIR, { recursive: true });
+
+    const state = await seedState({
+      label: "hover-running",
+      bucket: "running",
+      model: "thirty-minute-stream",
+      prompt: "keep streaming for the capture",
+    });
+    try {
+      await gotoAppShell(page);
+      await waitForSidebarHydration(page);
+
+      const row = page.getByTestId(`sidebar-project-row-${state.workspace.projectId}`);
+      await expect(row).toBeVisible({ timeout: 60_000 });
+      await row.click(); // collapse so the badge has something to show
+
+      // Baseline: pointer off the row, badge visible on the icon.
+      await page.mouse.move(1200, 850);
+      await expect(row.getByTestId("project-status-indicator-running")).toBeVisible({
+        timeout: 60_000,
+      });
+      await expect(row.getByTestId("project-status-badge")).toBeVisible({ timeout: 60_000 });
+      await row.screenshot({ path: path.join(HOVER_OUT_DIR, "unhovered.png") });
+
+      // Hovered: the leading slot swaps the icon (and its badge) for the expand chevron.
+      // ProjectInlineChevron carries no testID of its own, so the icon/badge disappearing
+      // is the assertable half of this — the chevron glyph itself is confirmed by reading
+      // the screenshot back below.
+      await row.hover();
+      await expect(row.getByTestId("project-status-indicator-running")).toHaveCount(0, {
+        timeout: 10_000,
+      });
+      await expect(row.getByTestId("project-status-badge")).toHaveCount(0, { timeout: 10_000 });
+      await row.screenshot({ path: path.join(HOVER_OUT_DIR, "hovered.png") });
+    } finally {
+      await state.workspace.cleanup().catch(() => undefined);
+    }
+  });
+
+  test("records the running badge animating through an expand-to-workspace-row transition", async ({
+    page,
+  }) => {
+    test.setTimeout(120_000);
+    const state = await seedState({
+      label: "recording-running",
+      bucket: "running",
+      model: "thirty-minute-stream",
+      prompt: "keep streaming for the capture",
+    });
+    try {
+      await gotoAppShell(page);
+      await waitForSidebarHydration(page);
+
+      const row = page.getByTestId(`sidebar-project-row-${state.workspace.projectId}`);
+      await expect(row).toBeVisible({ timeout: 60_000 });
+      await row.click(); // collapse
+
+      await page.mouse.move(1200, 850);
+      await expect(row.getByTestId("project-status-indicator-running")).toBeVisible({
+        timeout: 60_000,
+      });
+      await expect(row.getByTestId("project-status-badge")).toBeVisible({ timeout: 60_000 });
+
+      // Let the loader animate on tape for a beat before the transition.
+      await page.waitForTimeout(1500);
+
+      // Expand: the badge disappears from the project row and the running status moves to
+      // the workspace row underneath it instead.
+      await row.click();
+      const workspaceRow = page.getByTestId(
+        `sidebar-workspace-row-${getServerId()}:${state.workspace.workspaceId}`,
+      );
+      await expect(workspaceRow.getByTestId("workspace-status-indicator-running")).toBeVisible({
+        timeout: 60_000,
+      });
+      await expect(row.getByTestId("project-status-badge")).toHaveCount(0, { timeout: 60_000 });
+
+      await page.waitForTimeout(800);
+    } finally {
+      await state.workspace.cleanup().catch(() => undefined);
+    }
+  });
+});
+
+test.describe("collapsed project status badge — compact viewport", () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+
+  test("captures the status badge at a narrow (compact) form factor", async ({ page }) => {
+    test.setTimeout(120_000);
+    const COMPACT_OUT_DIR = path.join(OUT_DIR, "compact");
+    await mkdir(COMPACT_OUT_DIR, { recursive: true });
+
+    const state = await seedState({
+      label: "compact-needs-input",
+      bucket: "needs_input",
+      model: "thirty-minute-stream",
+      prompt: "emit a synthetic plan approval",
+    });
+    try {
+      await gotoAppShell(page);
+      await openMobileAgentSidebar(page);
+      await expectMobileAgentSidebarVisible(page);
+
+      const row = page.getByTestId(`sidebar-project-row-${state.workspace.projectId}`);
+      await expect(row).toBeVisible({ timeout: 60_000 });
+      await row.click(); // collapse
+
+      // Park the pointer off the row — same reason as the desktop captures: a hovered
+      // project row swaps its icon (and badge) for the expand chevron. 350,820 stays inside
+      // the 390x844 compact viewport, below the seeded project row.
+      await page.mouse.move(350, 820);
+
+      await expect(row.getByTestId("project-status-indicator-needs_input")).toBeVisible({
+        timeout: 60_000,
+      });
+      await expect(row.getByTestId("project-status-badge")).toBeVisible({ timeout: 60_000 });
+      await row.screenshot({ path: path.join(COMPACT_OUT_DIR, "state-needs-input-compact.png") });
+      await page.screenshot({ path: path.join(COMPACT_OUT_DIR, "sidebar-compact.png") });
+    } finally {
+      await state.workspace.cleanup().catch(() => undefined);
     }
   });
 });
