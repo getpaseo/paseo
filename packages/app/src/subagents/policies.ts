@@ -5,5 +5,10 @@
 // The full module entry `@/subagents` re-exports these too, alongside the
 // UI surface. Use `@/subagents/policies` only when the caller is
 // non-RN infrastructure code; otherwise prefer `@/subagents`.
-export { resolveCloseAgentTabPolicy, type CloseAgentTabPolicy } from "./close-tab-policy";
+export {
+  resolveAgentForCloseTabPolicy,
+  resolveCloseAgentTabPolicy,
+  shouldArchiveAgentOnTabClose,
+  type CloseAgentTabPolicy,
+} from "./close-tab-policy";
 export { isWorkspaceRootAgent } from "./workspace-root-policy";

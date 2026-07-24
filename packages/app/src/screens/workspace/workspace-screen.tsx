@@ -160,14 +160,22 @@ import {
 } from "@/screens/workspace/workspace-pane-content";
 import { useMountedTabSet } from "@/screens/workspace/use-mounted-tab-set";
 import { WorkspaceFocusProvider } from "@/workspace/focus";
-import { shouldSeedEmptyWorkspaceDraft } from "@/screens/workspace/workspace-empty-draft-seed";
+import {
+  decideEmptyWorkspaceRecovery,
+  isEmptyWorkspaceLayoutReady,
+  selectRediscoverableHiddenAgentIds,
+} from "@/screens/workspace/workspace-empty-draft-seed";
 import {
   buildBulkCloseConfirmationMessage,
   type BulkCloseConfirmationLabels,
   classifyBulkClosableTabs,
   closeBulkWorkspaceTabs,
 } from "@/screens/workspace/workspace-bulk-close";
-import { resolveCloseAgentTabPolicy } from "@/subagents";
+import {
+  resolveAgentForCloseTabPolicy,
+  resolveCloseAgentTabPolicy,
+  shouldArchiveAgentOnTabClose,
+} from "@/subagents";
 import {
   getPanelInstanceAttributes,
   useModifiedPanelTabIds,
@@ -1996,7 +2004,7 @@ function WorkspaceScreenContent({
       ? (state.pinnedAgentIdsByWorkspace[persistenceKey] ?? EMPTY_PINNED_AGENT_IDS)
       : EMPTY_PINNED_AGENT_IDS,
   );
-  const _hiddenAgentIds = useWorkspaceLayoutStore((state) =>
+  const hiddenAgentIds = useWorkspaceLayoutStore((state) =>
     persistenceKey ? (state.hiddenAgentIdsByWorkspace[persistenceKey] ?? EMPTY_SET) : EMPTY_SET,
   );
   const pendingByDraftId = useCreateFlowStore((state) => state.pendingByDraftId);
@@ -2007,6 +2015,7 @@ function WorkspaceScreenContent({
     function closeWorkspaceTabWithCleanup(input: {
       tabId: string;
       target?: WorkspaceTabTarget | null;
+      hideAgent?: boolean;
     }) {
       const normalizedTabId = trimNonEmpty(input.tabId);
       if (!normalizedTabId || !persistenceKey) {
@@ -2015,7 +2024,9 @@ function WorkspaceScreenContent({
 
       if (input.target?.kind === "agent") {
         unpinWorkspaceAgent(persistenceKey, input.target.agentId);
-        hideWorkspaceAgent(persistenceKey, input.target.agentId);
+        if (input.hideAgent !== false) {
+          hideWorkspaceAgent(persistenceKey, input.target.agentId);
+        }
       }
       if (input.target?.kind === "browser") {
         const { browserId } = input.target;
@@ -2226,19 +2237,27 @@ function WorkspaceScreenContent({
   ]);
 
   useEffect(() => {
-    if (
-      !shouldSeedEmptyWorkspaceDraft({
-        isRouteFocused,
-        hasPersistenceKey: Boolean(persistenceKey),
-        hasWorkspaceDirectory: Boolean(workspaceDirectory),
-        hasHydratedWorkspaceLayoutStore,
-        hasHydratedAgents,
-        hasLoadedTerminals: terminalsQuery.isSuccess,
-        activeAgentCount: workspaceAgentVisibility.activeAgentIds.size,
-        terminalCount: terminals.length,
-        tabCount: tabs.length,
-      })
-    ) {
+    const layoutReady = isEmptyWorkspaceLayoutReady({
+      isRouteFocused,
+      hasPersistenceKey: Boolean(persistenceKey),
+      hasWorkspaceDirectory: Boolean(workspaceDirectory),
+      hasHydratedWorkspaceLayoutStore,
+      hasHydratedAgents,
+      hasLoadedTerminals: terminalsQuery.isSuccess,
+      terminalCount: terminals.length,
+      tabCount: tabs.length,
+    });
+    const rediscoverableHiddenAgentIds = selectRediscoverableHiddenAgentIds({
+      hiddenAgentIds,
+      autoOpenAgentIds: workspaceAgentVisibility.autoOpenAgentIds,
+      activeAgentIds: workspaceAgentVisibility.activeAgentIds,
+    });
+    const recovery = decideEmptyWorkspaceRecovery({
+      layoutReady,
+      rediscoverableHiddenAgentIds,
+      activeAgentCount: workspaceAgentVisibility.activeAgentIds.size,
+    });
+    if (recovery.kind === "noop") {
       emptyWorkspaceSeedRef.current = null;
       return;
     }
@@ -2247,20 +2266,32 @@ function WorkspaceScreenContent({
       return;
     }
     emptyWorkspaceSeedRef.current = workspaceKey;
+    if (recovery.kind === "reopen-hidden-agents") {
+      if (!persistenceKey) {
+        return;
+      }
+      for (const agentId of recovery.agentIds) {
+        openWorkspaceTabFocused(persistenceKey, { kind: "agent", agentId });
+      }
+      return;
+    }
     openWorkspaceDraftTab();
   }, [
     normalizedServerId,
     normalizedWorkspaceId,
     openWorkspaceDraftTab,
+    openWorkspaceTabFocused,
     persistenceKey,
     hasHydratedAgents,
     hasHydratedWorkspaceLayoutStore,
+    hiddenAgentIds,
     isRouteFocused,
     terminals.length,
     terminalsQuery.isSuccess,
     tabs.length,
     workspaceDirectory,
-    workspaceAgentVisibility.activeAgentIds.size,
+    workspaceAgentVisibility.activeAgentIds,
+    workspaceAgentVisibility.autoOpenAgentIds,
   ]);
 
   useEffect(() => {
@@ -2649,8 +2680,12 @@ function WorkspaceScreenContent({
           return;
         }
 
-        const agent =
-          useSessionStore.getState().sessions[normalizedServerId]?.agents?.get(agentId) ?? null;
+        const session = useSessionStore.getState().sessions[normalizedServerId];
+        const agent = resolveAgentForCloseTabPolicy({
+          agentId,
+          agents: session?.agents,
+          agentDetails: session?.agentDetails,
+        });
         const closePolicy = resolveCloseAgentTabPolicy(agent);
         const isRunning = agent?.status === "running";
 
@@ -2672,10 +2707,14 @@ function WorkspaceScreenContent({
           closeWorkspaceTabWithCleanup({
             tabId,
             target: { kind: "agent", agentId },
+            // Hide only for layout-only close so reconcile does not auto-reopen.
+            // Archive-on-close skips hide to avoid empty-seed rediscovering a root
+            // that is about to leave the active set.
+            hideAgent: closePolicy.kind === "layout-only",
           });
         }
 
-        if (closePolicy.kind === "layout-only") {
+        if (!shouldArchiveAgentOnTabClose(closePolicy)) {
           return;
         }
 
