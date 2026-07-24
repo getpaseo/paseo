@@ -86,7 +86,10 @@ describe("buildACPClientCapabilities", () => {
 
 interface ACPSessionInternals {
   sessionId: string | null;
-  connection: { prompt: (...args: unknown[]) => Promise<PromptResponse> };
+  connection: {
+    prompt: (...args: unknown[]) => Promise<PromptResponse>;
+    cancel?: (...args: unknown[]) => Promise<void>;
+  };
   activeForegroundTurnId: string | null;
   configOptions: SessionConfigOption[];
   translateSessionUpdate(update: SessionUpdate): AgentStreamEvent[];
@@ -124,7 +127,15 @@ interface ACPConfiguredOverrideInternals {
   applyConfiguredOverrides(): Promise<void>;
 }
 
-function createSession(terminateProcess?: ProcessTerminator): ACPAgentSession {
+interface TestPromptBusyRetry {
+  wait: (delayMs: number, signal: AbortSignal) => Promise<boolean>;
+  random: () => number;
+}
+
+function createSession(
+  terminateProcess?: ProcessTerminator,
+  promptBusyRetry?: TestPromptBusyRetry,
+): ACPAgentSession {
   return new ACPAgentSession(
     {
       provider: "claude-acp",
@@ -144,8 +155,68 @@ function createSession(terminateProcess?: ProcessTerminator): ACPAgentSession {
         supportsToolInvocations: true,
       },
       ...(terminateProcess ? { terminateProcess } : {}),
+      ...(promptBusyRetry
+        ? {
+            promptBusyRetryWait: promptBusyRetry.wait,
+            promptBusyRetryRandom: promptBusyRetry.random,
+          }
+        : {}),
     },
   );
+}
+
+interface PendingTestRetry {
+  signal: AbortSignal;
+  resolve: (elapsed: boolean) => void;
+  handleAbort: () => void;
+}
+
+class FakePromptBusyRetry implements TestPromptBusyRetry {
+  readonly delays: number[] = [];
+  private readonly pending: PendingTestRetry[] = [];
+  readonly random = (): number => this.randomValue;
+
+  constructor(private readonly randomValue = 0.5) {}
+
+  readonly wait = (delayMs: number, signal: AbortSignal): Promise<boolean> => {
+    this.delays.push(delayMs);
+    if (signal.aborted) {
+      return Promise.resolve(false);
+    }
+    return new Promise((resolve) => {
+      const entry: PendingTestRetry = {
+        signal,
+        resolve,
+        handleAbort: () => this.settle(entry, false),
+      };
+      this.pending.push(entry);
+      signal.addEventListener("abort", entry.handleAbort, { once: true });
+    });
+  };
+
+  releaseNext(): void {
+    const entry = this.pending[0];
+    if (!entry) {
+      return;
+    }
+    this.settle(entry, true);
+  }
+
+  private settle(entry: PendingTestRetry, elapsed: boolean): void {
+    const index = this.pending.indexOf(entry);
+    if (index === -1) {
+      return;
+    }
+    this.pending.splice(index, 1);
+    entry.signal.removeEventListener("abort", entry.handleAbort);
+    entry.resolve(elapsed);
+  }
+}
+
+async function flushMicrotasks(): Promise<void> {
+  for (let index = 0; index < 5; index += 1) {
+    await Promise.resolve();
+  }
 }
 
 // Typed substitute for the real tree-kill terminator. Records which child
@@ -2316,6 +2387,495 @@ describe("ACPAgentSession", () => {
       turnId,
     });
     expect(asInternals<ACPSessionInternals>(session).activeForegroundTurnId).toBeNull();
+  });
+
+  test("queues turn.agent_busy rejections and retries the same prompt until it succeeds", async () => {
+    const retry = new FakePromptBusyRetry();
+    const session = createSession(undefined, retry);
+    const events: AgentStreamEvent[] = [];
+    const busyError = new RequestError(-32600, "Cannot launch a new turn", {
+      code: "turn.agent_busy",
+      details: { turnId: 9 },
+    });
+    const prompt = vi
+      .fn()
+      .mockRejectedValueOnce(busyError)
+      .mockRejectedValueOnce(busyError)
+      .mockResolvedValueOnce({ stopReason: "end_turn" } satisfies PromptResponse);
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    asInternals<ACPSessionInternals>(session).connection = { prompt };
+    session.subscribe((event) => events.push(event));
+
+    const { turnId } = await session.startTurn("hello", { clientMessageId: "message-1" });
+    await flushMicrotasks();
+
+    expect(prompt).toHaveBeenCalledOnce();
+    expect(retry.delays).toEqual([250]);
+    expect(asInternals<ACPSessionInternals>(session).activeForegroundTurnId).toBe(turnId);
+    expect(events.filter((event) => event.type === "turn_failed")).toEqual([]);
+
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        messageId: "autonomous-message",
+        content: { type: "text", text: "Background work completed" },
+      } as SessionUpdate,
+    });
+    expect(
+      events.find(
+        (event) =>
+          event.type === "timeline" &&
+          event.item.type === "assistant_message" &&
+          event.item.messageId === "autonomous-message",
+      ),
+    ).toEqual({
+      type: "timeline",
+      provider: session.provider,
+      item: {
+        type: "assistant_message",
+        text: "Background work completed",
+        messageId: "autonomous-message",
+      },
+    });
+    expect(events.filter((event) => event.type.startsWith("turn_"))).toEqual([
+      expect.objectContaining({ type: "turn_started", turnId }),
+    ]);
+
+    retry.releaseNext();
+    await flushMicrotasks();
+    expect(prompt).toHaveBeenCalledTimes(2);
+    expect(retry.delays).toEqual([250, 500]);
+
+    retry.releaseNext();
+    await flushMicrotasks();
+    expect(prompt).toHaveBeenCalledTimes(3);
+    expect(prompt.mock.calls[1]?.[0]).toEqual(prompt.mock.calls[0]?.[0]);
+    expect(prompt.mock.calls[2]?.[0]).toEqual(prompt.mock.calls[0]?.[0]);
+    expect(
+      events.filter((event) => event.type === "timeline" && event.item.type === "user_message"),
+    ).toHaveLength(1);
+    expect(events.filter((event) => event.type === "turn_failed")).toEqual([]);
+    expect(events.filter((event) => event.type === "turn_completed")).toEqual([
+      expect.objectContaining({ type: "turn_completed", turnId }),
+    ]);
+    expect(asInternals<ACPSessionInternals>(session).activeForegroundTurnId).toBeNull();
+  });
+
+  test("does not retry generic JSON-RPC invalid-request errors", async () => {
+    const retry = new FakePromptBusyRetry();
+    const session = createSession(undefined, retry);
+    const events: AgentStreamEvent[] = [];
+    const prompt = vi.fn().mockRejectedValue(
+      new RequestError(-32600, "Invalid request", {
+        code: "session.invalid_state",
+        details: { turnId: 9 },
+      }),
+    );
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    asInternals<ACPSessionInternals>(session).connection = { prompt };
+    session.subscribe((event) => events.push(event));
+
+    const { turnId } = await session.startTurn("hello");
+    await flushMicrotasks();
+
+    expect(prompt).toHaveBeenCalledOnce();
+    expect(retry.delays).toEqual([]);
+    expect(events.filter((event) => event.type === "turn_failed")).toEqual([
+      expect.objectContaining({ type: "turn_failed", turnId, code: "-32600" }),
+    ]);
+    expect(asInternals<ACPSessionInternals>(session).activeForegroundTurnId).toBeNull();
+  });
+
+  test("caps jittered busy retry delays at five seconds", async () => {
+    const retry = new FakePromptBusyRetry(1);
+    const session = createSession(undefined, retry);
+    const prompt = vi.fn().mockRejectedValue(
+      new RequestError(-32600, "Cannot launch a new turn", {
+        code: "turn.agent_busy",
+        details: { turnId: 9 },
+      }),
+    );
+    const cancel = vi.fn().mockResolvedValue(undefined);
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    asInternals<ACPSessionInternals>(session).connection = { prompt, cancel };
+
+    await session.startTurn("hello");
+    await flushMicrotasks();
+    for (const expectedDelays of [
+      [300],
+      [300, 600],
+      [300, 600, 1_200],
+      [300, 600, 1_200, 2_400],
+      [300, 600, 1_200, 2_400, 4_800],
+      [300, 600, 1_200, 2_400, 4_800, 5_000],
+    ]) {
+      expect(retry.delays).toEqual(expectedDelays);
+      if (expectedDelays.length < 6) {
+        retry.releaseNext();
+        await flushMicrotasks();
+      }
+    }
+
+    expect(prompt).toHaveBeenCalledTimes(6);
+    await session.close();
+  });
+
+  test("cancels a queued busy retry only after the ACP provider acknowledges cancel", async () => {
+    const retry = new FakePromptBusyRetry();
+    const session = createSession(undefined, retry);
+    const events: AgentStreamEvent[] = [];
+    const prompt = vi.fn().mockRejectedValue(
+      new RequestError(-32600, "Cannot launch a new turn", {
+        code: "turn.agent_busy",
+        details: { turnId: 11 },
+      }),
+    );
+    const cancel = vi.fn().mockResolvedValue(undefined);
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    asInternals<ACPSessionInternals>(session).connection = { prompt, cancel };
+    session.subscribe((event) => events.push(event));
+
+    const { turnId } = await session.startTurn("hello");
+    await flushMicrotasks();
+    expect(retry.delays).toEqual([250]);
+
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "background-tool",
+        title: "Background tool",
+        kind: "execute",
+        status: "in_progress",
+      } as SessionUpdate,
+    });
+
+    await session.interrupt();
+    await flushMicrotasks();
+    retry.releaseNext();
+    await flushMicrotasks();
+
+    expect(cancel).toHaveBeenCalledWith({ sessionId: "session-1" });
+    expect(prompt).toHaveBeenCalledOnce();
+    expect(events.filter((event) => event.type === "turn_canceled")).toEqual([
+      expect.objectContaining({ type: "turn_canceled", turnId }),
+    ]);
+    expect(
+      events.filter(
+        (event) =>
+          event.type === "timeline" &&
+          event.item.type === "tool_call" &&
+          event.item.callId === "background-tool" &&
+          event.item.status === "canceled",
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        turnId: undefined,
+        item: expect.objectContaining({ callId: "background-tool", status: "canceled" }),
+      }),
+    ]);
+    expect(asInternals<ACPSessionInternals>(session).activeForegroundTurnId).toBeNull();
+  });
+
+  test("does not reprompt when busy backoff elapses while ACP cancel is in flight", async () => {
+    const retry = new FakePromptBusyRetry();
+    const session = createSession(undefined, retry);
+    const events: AgentStreamEvent[] = [];
+    const prompt = vi.fn().mockRejectedValue(
+      new RequestError(-32600, "Cannot launch a new turn", {
+        code: "turn.agent_busy",
+        details: { turnId: 11 },
+      }),
+    );
+    let acknowledgeCancel!: () => void;
+    const cancel = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          acknowledgeCancel = resolve;
+        }),
+    );
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    asInternals<ACPSessionInternals>(session).connection = { prompt, cancel };
+    session.subscribe((event) => events.push(event));
+
+    const { turnId } = await session.startTurn("hello");
+    await flushMicrotasks();
+    const interrupt = session.interrupt();
+    retry.releaseNext();
+    await flushMicrotasks();
+
+    expect(prompt).toHaveBeenCalledOnce();
+    acknowledgeCancel();
+    await interrupt;
+    await flushMicrotasks();
+
+    expect(prompt).toHaveBeenCalledOnce();
+    expect(events.filter((event) => event.type === "turn_canceled")).toEqual([
+      expect.objectContaining({ type: "turn_canceled", turnId }),
+    ]);
+  });
+
+  test("denying an autonomous busy permission with interrupt cancels the queued prompt", async () => {
+    const retry = new FakePromptBusyRetry();
+    const session = createSession(undefined, retry);
+    const events: AgentStreamEvent[] = [];
+    const prompt = vi.fn().mockRejectedValue(
+      new RequestError(-32600, "Cannot launch a new turn", {
+        code: "turn.agent_busy",
+        details: { turnId: 11 },
+      }),
+    );
+    const cancel = vi.fn().mockResolvedValue(undefined);
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    asInternals<ACPSessionInternals>(session).connection = { prompt, cancel };
+    session.subscribe((event) => events.push(event));
+
+    const { turnId } = await session.startTurn("hello");
+    await flushMicrotasks();
+    const permission = session.requestPermission({
+      sessionId: "session-1",
+      toolCall: {
+        toolCallId: "autonomous-tool",
+        title: "Background tool",
+        kind: "execute",
+        status: "pending",
+      },
+      options: [{ optionId: "reject-once", name: "Reject", kind: "reject_once" }],
+    } satisfies RequestPermissionRequest);
+    await flushMicrotasks();
+    const request = events.find((event) => event.type === "permission_requested");
+    expect(request).toMatchObject({ type: "permission_requested", turnId: undefined });
+
+    await session.respondToPermission(
+      (request as Extract<AgentStreamEvent, { type: "permission_requested" }>).request.id,
+      { behavior: "deny", interrupt: true },
+    );
+    await expect(permission).resolves.toEqual({
+      outcome: { outcome: "selected", optionId: "reject-once" },
+    });
+    retry.releaseNext();
+    await flushMicrotasks();
+
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(prompt).toHaveBeenCalledOnce();
+    expect(events.filter((event) => event.type === "turn_canceled")).toEqual([
+      expect.objectContaining({ type: "turn_canceled", turnId }),
+    ]);
+  });
+
+  test("denying an unscoped autonomous permission with interrupt still cancels ACP", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    const cancel = vi.fn().mockResolvedValue(undefined);
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    asInternals<ACPSessionInternals>(session).connection = { cancel };
+    session.subscribe((event) => events.push(event));
+
+    const permission = session.requestPermission({
+      sessionId: "session-1",
+      toolCall: {
+        toolCallId: "autonomous-tool",
+        title: "Background tool",
+        kind: "execute",
+        status: "pending",
+      },
+      options: [{ optionId: "reject-once", name: "Reject", kind: "reject_once" }],
+    } satisfies RequestPermissionRequest);
+    await flushMicrotasks();
+    const request = events.find((event) => event.type === "permission_requested");
+    expect(request).toMatchObject({ type: "permission_requested", turnId: undefined });
+
+    await session.respondToPermission(
+      (request as Extract<AgentStreamEvent, { type: "permission_requested" }>).request.id,
+      { behavior: "deny", interrupt: true },
+    );
+
+    await expect(permission).resolves.toEqual({
+      outcome: { outcome: "selected", optionId: "reject-once" },
+    });
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(cancel).toHaveBeenCalledWith({ sessionId: "session-1" });
+  });
+
+  test("cancel acknowledged while a retried prompt is in flight wins over a late error", async () => {
+    const retry = new FakePromptBusyRetry();
+    const session = createSession(undefined, retry);
+    const events: AgentStreamEvent[] = [];
+    let rejectRetriedPrompt!: (error: Error) => void;
+    const prompt = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new RequestError(-32600, "Cannot launch a new turn", {
+          code: "turn.agent_busy",
+          details: { turnId: 11 },
+        }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<PromptResponse>((_resolve, reject) => {
+            rejectRetriedPrompt = reject;
+          }),
+      );
+    const cancel = vi.fn().mockResolvedValue(undefined);
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    asInternals<ACPSessionInternals>(session).connection = { prompt, cancel };
+    session.subscribe((event) => events.push(event));
+
+    const { turnId } = await session.startTurn("hello");
+    await flushMicrotasks();
+    retry.releaseNext();
+    await flushMicrotasks();
+    expect(prompt).toHaveBeenCalledTimes(2);
+
+    await session.interrupt();
+    rejectRetriedPrompt(new Error("late provider error"));
+    await flushMicrotasks();
+
+    expect(events.filter((event) => event.type === "turn_canceled")).toEqual([
+      expect.objectContaining({ type: "turn_canceled", turnId }),
+    ]);
+    expect(events.filter((event) => event.type === "turn_failed")).toEqual([]);
+  });
+
+  test("cancel acknowledged while a retried prompt is in flight wins over a late success", async () => {
+    const retry = new FakePromptBusyRetry();
+    const session = createSession(undefined, retry);
+    const events: AgentStreamEvent[] = [];
+    let resolveRetriedPrompt!: (response: PromptResponse) => void;
+    const prompt = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new RequestError(-32600, "Cannot launch a new turn", {
+          code: "turn.agent_busy",
+          details: { turnId: 11 },
+        }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<PromptResponse>((resolve) => {
+            resolveRetriedPrompt = resolve;
+          }),
+      );
+    const cancel = vi.fn().mockResolvedValue(undefined);
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    asInternals<ACPSessionInternals>(session).connection = { prompt, cancel };
+    session.subscribe((event) => events.push(event));
+
+    const { turnId } = await session.startTurn("hello");
+    await flushMicrotasks();
+    retry.releaseNext();
+    await flushMicrotasks();
+    expect(prompt).toHaveBeenCalledTimes(2);
+
+    await session.interrupt();
+    resolveRetriedPrompt({ stopReason: "end_turn" });
+    await flushMicrotasks();
+
+    expect(events.filter((event) => event.type === "turn_canceled")).toEqual([
+      expect.objectContaining({ type: "turn_canceled", turnId }),
+    ]);
+    expect(events.filter((event) => event.type === "turn_completed")).toEqual([]);
+  });
+
+  test("keeps a queued busy retry alive when ACP cancel is rejected", async () => {
+    const retry = new FakePromptBusyRetry();
+    const session = createSession(undefined, retry);
+    const events: AgentStreamEvent[] = [];
+    const prompt = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new RequestError(-32600, "Cannot launch a new turn", {
+          code: "turn.agent_busy",
+          details: { turnId: 11 },
+        }),
+      )
+      .mockResolvedValueOnce({ stopReason: "end_turn" } satisfies PromptResponse);
+    const cancel = vi.fn().mockRejectedValue(new Error("cancel rejected"));
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    asInternals<ACPSessionInternals>(session).connection = { prompt, cancel };
+    session.subscribe((event) => events.push(event));
+
+    const { turnId } = await session.startTurn("hello");
+    await flushMicrotasks();
+    await expect(session.interrupt()).rejects.toThrow("cancel rejected");
+
+    retry.releaseNext();
+    await flushMicrotasks();
+
+    expect(prompt).toHaveBeenCalledTimes(2);
+    expect(events.filter((event) => event.type === "turn_canceled")).toEqual([]);
+    expect(events.filter((event) => event.type === "turn_completed")).toEqual([
+      expect.objectContaining({ type: "turn_completed", turnId }),
+    ]);
+  });
+
+  test("converts an unexpected busy retry wait rejection into turn_failed", async () => {
+    const session = createSession(undefined, {
+      wait: async () => {
+        throw new Error("retry scheduler failed");
+      },
+      random: () => 0.5,
+    });
+    const events: AgentStreamEvent[] = [];
+    const prompt = vi.fn().mockRejectedValue(
+      new RequestError(-32600, "Cannot launch a new turn", {
+        code: "turn.agent_busy",
+        details: { turnId: 11 },
+      }),
+    );
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    asInternals<ACPSessionInternals>(session).connection = { prompt };
+    session.subscribe((event) => events.push(event));
+
+    const { turnId } = await session.startTurn("hello");
+    await flushMicrotasks();
+
+    expect(events.filter((event) => event.type === "turn_failed")).toEqual([
+      expect.objectContaining({ type: "turn_failed", turnId, error: "retry scheduler failed" }),
+    ]);
+    expect(asInternals<ACPSessionInternals>(session).activeForegroundTurnId).toBeNull();
+  });
+
+  test("close aborts a queued busy retry without a late prompt or lifecycle event", async () => {
+    const retry = new FakePromptBusyRetry();
+    const session = createSession(undefined, retry);
+    const events: AgentStreamEvent[] = [];
+    const prompt = vi.fn().mockRejectedValue(
+      new RequestError(-32600, "Cannot launch a new turn", {
+        code: "turn.agent_busy",
+        details: { turnId: 11 },
+      }),
+    );
+    const cancel = vi.fn().mockResolvedValue(undefined);
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    asInternals<ACPSessionInternals>(session).connection = { prompt, cancel };
+    session.subscribe((event) => events.push(event));
+
+    await session.startTurn("hello");
+    await flushMicrotasks();
+    await session.close();
+    retry.releaseNext();
+    await flushMicrotasks();
+
+    expect(prompt).toHaveBeenCalledOnce();
+    expect(
+      events.filter((event) =>
+        ["turn_completed", "turn_failed", "turn_canceled"].includes(event.type),
+      ),
+    ).toEqual([]);
   });
 
   test("startTurn emits the submitted user message even when ACP does not echo it", async () => {

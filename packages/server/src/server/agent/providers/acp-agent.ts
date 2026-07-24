@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { Readable, Writable } from "node:stream";
+import { setTimeout as waitForTimeout } from "node:timers/promises";
 
 import { terminateWithTreeKill } from "../../../utils/tree-kill.js";
 import type { ProcessTerminator } from "../../../utils/tree-kill.js";
@@ -128,6 +129,48 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isACPError(value: unknown): value is ACPError {
   return isRecord(value) && typeof value.message === "string" && typeof value.code === "number";
+}
+
+const ACP_AGENT_BUSY_CODE = "turn.agent_busy";
+const ACP_AGENT_BUSY_RETRY_INITIAL_MS = 250;
+const ACP_AGENT_BUSY_RETRY_MAX_MS = 5_000;
+const ACP_AGENT_BUSY_RETRY_JITTER = 0.2;
+
+function isACPAgentBusyError(error: unknown): error is ACPError {
+  return isACPError(error) && isRecord(error.data) && error.data.code === ACP_AGENT_BUSY_CODE;
+}
+
+function extractACPAgentBusyTurnId(error: ACPError): string | number | null {
+  if (!isRecord(error.data) || !isRecord(error.data.details)) {
+    return null;
+  }
+  const turnId = error.data.details.turnId;
+  return typeof turnId === "string" || typeof turnId === "number" ? turnId : null;
+}
+
+function calculateACPAgentBusyRetryDelay(attempt: number, random: () => number): number {
+  const exponentialDelay = Math.min(
+    ACP_AGENT_BUSY_RETRY_INITIAL_MS * 2 ** Math.max(0, attempt - 1),
+    ACP_AGENT_BUSY_RETRY_MAX_MS,
+  );
+  const jitterFactor = 1 - ACP_AGENT_BUSY_RETRY_JITTER + random() * ACP_AGENT_BUSY_RETRY_JITTER * 2;
+  return Math.min(ACP_AGENT_BUSY_RETRY_MAX_MS, Math.round(exponentialDelay * jitterFactor));
+}
+
+async function waitForACPAgentBusyRetry(delayMs: number, signal: AbortSignal): Promise<boolean> {
+  if (signal.aborted) {
+    return false;
+  }
+
+  try {
+    await waitForTimeout(delayMs, undefined, { signal });
+    return true;
+  } catch (error) {
+    if (signal.aborted) {
+      return false;
+    }
+    throw error;
+  }
 }
 
 function extractACPErrorDataMessage(data: unknown): string | null {
@@ -427,6 +470,18 @@ interface ACPAgentSessionOptions {
   waitForInitialCommands?: boolean;
   initialCommandsWaitTimeoutMs?: number;
   terminateProcess?: ProcessTerminator;
+  promptBusyRetryWait?: (delayMs: number, signal: AbortSignal) => Promise<boolean>;
+  promptBusyRetryRandom?: () => number;
+}
+
+interface PendingPromptBusyRetry {
+  turnId: string;
+  controller: AbortController;
+}
+
+interface ForegroundInterrupt {
+  turnId: string;
+  promise: Promise<void>;
 }
 
 export interface SpawnedACPProcess {
@@ -1325,12 +1380,18 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
   private currentTurnUsage: AgentUsage | undefined;
   private activeForegroundTurnId: string | null = null;
+  private providerBusyForegroundTurnId: string | null = null;
   private fallbackAssistantMessageId: string | null = null;
+  private pendingPromptBusyRetry: PendingPromptBusyRetry | null = null;
+  private foregroundInterrupt: ForegroundInterrupt | null = null;
+  private acknowledgedInterruptTurnId: string | null = null;
   private closed = false;
   private historyPending = false;
   private replayingHistory = false;
   private bootstrapThreadEventPending = false;
   private readonly terminateProcess: ProcessTerminator;
+  private readonly promptBusyRetryWait: (delayMs: number, signal: AbortSignal) => Promise<boolean>;
+  private readonly promptBusyRetryRandom: () => number;
 
   constructor(config: AgentSessionConfig, options: ACPAgentSessionOptions) {
     this.provider = options.provider;
@@ -1363,6 +1424,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.waitForInitialCommands = options.waitForInitialCommands ?? false;
     this.initialCommandsWaitTimeoutMs = options.initialCommandsWaitTimeoutMs ?? 1500;
     this.extensionCommandsParser = options.extensionCommandsParser;
+    this.promptBusyRetryWait = options.promptBusyRetryWait ?? waitForACPAgentBusyRetry;
+    this.promptBusyRetryRandom = options.promptBusyRetryRandom ?? Math.random;
   }
 
   get id(): string | null {
@@ -1494,31 +1557,20 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.activeForegroundTurnId = turnId;
     this.fallbackAssistantMessageId = null;
     this.submittedUserMessageTurnId = null;
+    this.acknowledgedInterruptTurnId = null;
     this.emitBootstrapThreadEvent();
     this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
     this.emitSubmittedUserMessage(prompt, messageId, turnId, options?.clientMessageId);
 
-    void this.connection
-      .prompt({
+    void this.submitPromptWithBusyRetry(
+      this.connection,
+      {
         sessionId: this.sessionId,
         messageId,
         prompt: toACPContentBlocks(prompt),
-      })
-      .then((response) => {
-        this.handlePromptResponse(response, turnId);
-        return;
-      })
-      .catch((error) => {
-        const summary = summarizeACPRequestError(error);
-        this.finishTurn({
-          type: "turn_failed",
-          provider: this.provider,
-          error: summary.message,
-          code: summary.code,
-          diagnostic: this.collectDiagnostic(summary.diagnostic ?? summary.message),
-          turnId,
-        });
-      });
+      },
+      turnId,
+    ).catch((error) => this.failForegroundTurn(error, turnId));
 
     return { turnId };
   }
@@ -1998,8 +2050,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       turnId: pending.turnId ?? undefined,
     });
 
-    if (response.behavior === "deny" && response.interrupt && this.connection && this.sessionId) {
-      await this.connection.cancel({ sessionId: this.sessionId });
+    if (response.behavior === "deny" && response.interrupt) {
+      await this.interrupt();
     }
   }
 
@@ -2028,8 +2080,37 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
     this.pendingPermissions.clear();
 
-    if (this.activeForegroundTurnId) {
-      await this.connection.cancel({ sessionId: this.sessionId });
+    const turnId = this.activeForegroundTurnId;
+    const promise = this.connection.cancel({ sessionId: this.sessionId });
+    if (!turnId) {
+      await promise;
+      return;
+    }
+
+    const interrupt = { turnId, promise };
+    this.foregroundInterrupt = interrupt;
+    try {
+      await promise;
+    } catch (error) {
+      if (this.foregroundInterrupt === interrupt) {
+        this.foregroundInterrupt = null;
+      }
+      throw error;
+    }
+
+    if (this.foregroundInterrupt === interrupt) {
+      this.foregroundInterrupt = null;
+    }
+    if (this.activeForegroundTurnId !== turnId) {
+      return;
+    }
+
+    this.acknowledgedInterruptTurnId = turnId;
+    if (
+      this.pendingPromptBusyRetry?.turnId === turnId ||
+      this.providerBusyForegroundTurnId === turnId
+    ) {
+      this.finishAcknowledgedQueuedTurn(turnId);
     }
   }
 
@@ -2038,6 +2119,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       return;
     }
     this.closed = true;
+    this.abortPendingPromptBusyRetry();
 
     this.deliverTranslatedEvents(this.flushPendingUserMessage());
     this.settleCommandsReady();
@@ -2080,6 +2162,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.connection = null;
     this.child = null;
     this.activeForegroundTurnId = null;
+    this.providerBusyForegroundTurnId = null;
+    this.foregroundInterrupt = null;
+    this.acknowledgedInterruptTurnId = null;
   }
 
   async requestPermission(params: RequestPermissionRequest): Promise<RequestPermissionResponse> {
@@ -2099,7 +2184,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         options: params.options,
         resolve,
         reject,
-        turnId: this.activeForegroundTurnId,
+        turnId: this.currentProviderEventTurnId() ?? null,
       });
     });
 
@@ -2107,7 +2192,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       type: "permission_requested",
       provider: this.provider,
       request,
-      turnId: this.activeForegroundTurnId ?? undefined,
+      turnId: this.currentProviderEventTurnId(),
     });
     return promise;
   }
@@ -2132,7 +2217,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         agentId: this.agentId,
         provider: this.provider,
         sessionId: this.sessionId,
-        turnId: this.activeForegroundTurnId ?? undefined,
+        turnId: this.currentProviderEventTurnId(),
         rawEvent: params,
         events,
       },
@@ -2540,6 +2625,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.fallbackAssistantMessageId = null;
     if (
       this.activeForegroundTurnId &&
+      this.providerBusyForegroundTurnId !== this.activeForegroundTurnId &&
       this.submittedUserMessageTurnId === this.activeForegroundTurnId
     ) {
       return [];
@@ -2711,12 +2797,150 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
   }
 
+  private async submitPromptWithBusyRetry(
+    connection: ClientSideConnection,
+    request: Parameters<ClientSideConnection["prompt"]>[0],
+    turnId: string,
+  ): Promise<void> {
+    let busyAttempts = 0;
+
+    for (;;) {
+      if (!this.isCurrentForegroundTurn(turnId)) {
+        return;
+      }
+      if (this.acknowledgedInterruptTurnId === turnId) {
+        this.finishAcknowledgedQueuedTurn(turnId);
+        return;
+      }
+
+      const interrupt = this.foregroundInterrupt;
+      if (interrupt?.turnId === turnId) {
+        try {
+          await interrupt.promise;
+        } catch {
+          // interrupt() reports the failure; the original prompt remains eligible for retry.
+        }
+        if (!this.isCurrentForegroundTurn(turnId)) {
+          return;
+        }
+        if (this.acknowledgedInterruptTurnId === turnId) {
+          this.finishAcknowledgedQueuedTurn(turnId);
+          return;
+        }
+      }
+
+      if (this.providerBusyForegroundTurnId === turnId) {
+        this.providerBusyForegroundTurnId = null;
+      }
+
+      try {
+        const response = await connection.prompt(request);
+        if (this.isCurrentForegroundTurn(turnId)) {
+          if (this.acknowledgedInterruptTurnId === turnId) {
+            this.finishAcknowledgedQueuedTurn(turnId);
+          } else {
+            this.handlePromptResponse(response, turnId);
+          }
+        }
+        return;
+      } catch (error) {
+        if (!this.isCurrentForegroundTurn(turnId)) {
+          return;
+        }
+        if (this.acknowledgedInterruptTurnId === turnId) {
+          this.finishAcknowledgedQueuedTurn(turnId);
+          return;
+        }
+        if (!isACPAgentBusyError(error)) {
+          this.failForegroundTurn(error, turnId);
+          return;
+        }
+
+        this.providerBusyForegroundTurnId = turnId;
+        busyAttempts += 1;
+        const delayMs = calculateACPAgentBusyRetryDelay(busyAttempts, this.promptBusyRetryRandom);
+        const logContext = {
+          agentId: this.agentId,
+          sessionId: this.sessionId,
+          turnId,
+          providerTurnId: extractACPAgentBusyTurnId(error),
+          attempt: busyAttempts,
+          delayMs,
+        };
+        if (busyAttempts === 1) {
+          this.logger.warn(logContext, "ACP provider is busy; queued prompt for retry");
+        } else {
+          this.logger.debug(logContext, "ACP provider remains busy; retrying queued prompt");
+        }
+
+        const pendingRetry: PendingPromptBusyRetry = {
+          turnId,
+          controller: new AbortController(),
+        };
+        this.pendingPromptBusyRetry = pendingRetry;
+        const elapsed = await this.promptBusyRetryWait(delayMs, pendingRetry.controller.signal);
+        if (this.pendingPromptBusyRetry === pendingRetry) {
+          this.pendingPromptBusyRetry = null;
+        }
+        if (!elapsed || !this.isCurrentForegroundTurn(turnId)) {
+          return;
+        }
+      }
+    }
+  }
+
+  private isCurrentForegroundTurn(turnId: string): boolean {
+    return !this.closed && this.activeForegroundTurnId === turnId;
+  }
+
+  private failForegroundTurn(error: unknown, turnId: string): void {
+    if (!this.isCurrentForegroundTurn(turnId)) {
+      return;
+    }
+    const summary = summarizeACPRequestError(error);
+    this.finishTurn({
+      type: "turn_failed",
+      provider: this.provider,
+      error: summary.message,
+      code: summary.code,
+      diagnostic: this.collectDiagnostic(summary.diagnostic ?? summary.message),
+      turnId,
+    });
+  }
+
+  private finishAcknowledgedQueuedTurn(turnId: string): void {
+    if (this.acknowledgedInterruptTurnId !== turnId || !this.isCurrentForegroundTurn(turnId)) {
+      return;
+    }
+    if (this.pendingPromptBusyRetry?.turnId === turnId) {
+      this.abortPendingPromptBusyRetry();
+    }
+    this.synthesizeCanceledToolCalls();
+    this.finishTurn({
+      type: "turn_canceled",
+      provider: this.provider,
+      reason: "Interrupted",
+      turnId,
+    });
+  }
+
+  private currentProviderEventTurnId(): string | undefined {
+    return this.providerBusyForegroundTurnId === this.activeForegroundTurnId
+      ? undefined
+      : (this.activeForegroundTurnId ?? undefined);
+  }
+
+  private abortPendingPromptBusyRetry(): void {
+    this.pendingPromptBusyRetry?.controller.abort();
+    this.pendingPromptBusyRetry = null;
+  }
+
   private wrapTimeline(item: AgentTimelineItem): AgentStreamEvent {
     return {
       type: "timeline",
       provider: this.provider,
       item,
-      turnId: this.activeForegroundTurnId ?? undefined,
+      turnId: this.currentProviderEventTurnId(),
     };
   }
 
@@ -2726,7 +2950,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         agentId: this.agentId,
         provider: this.provider,
         sessionId: this.sessionId,
-        turnId: getAgentStreamEventTurnId(event) ?? this.activeForegroundTurnId ?? undefined,
+        turnId: getAgentStreamEventTurnId(event) ?? this.currentProviderEventTurnId(),
         event,
       },
       "provider.acp.event_emit",
@@ -2778,8 +3002,14 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     event: Extract<AgentStreamEvent, { type: "turn_completed" | "turn_failed" | "turn_canceled" }>,
   ): void {
     this.deliverTranslatedEvents(this.flushPendingUserMessage());
+    if (this.pendingPromptBusyRetry?.turnId === event.turnId) {
+      this.abortPendingPromptBusyRetry();
+    }
     this.activeForegroundTurnId = null;
+    this.providerBusyForegroundTurnId = null;
     this.fallbackAssistantMessageId = null;
+    this.foregroundInterrupt = null;
+    this.acknowledgedInterruptTurnId = null;
     if (this.submittedUserMessageTurnId === event.turnId) {
       this.submittedUserMessageTurnId = null;
     }
