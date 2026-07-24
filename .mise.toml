@@ -1,10 +1,7 @@
 [env]
-ANDROID_HOME = "{{env.HOME}}/.local/share/mise/installs/android-sdk/21.0"
-_.path = [
-  "{{env.HOME}}/.local/share/mise/installs/android-sdk/21.0/cmdline-tools/21.0/bin",
-  "{{env.HOME}}/.local/share/mise/installs/android-sdk/21.0/platform-tools",
-  "{{env.HOME}}/.local/share/mise/installs/android-sdk/21.0/emulator",
-]
-
-[tools]
-java = "21"
+ANDROID_HOME = { value = "{{ tools['android-sdk'].path }}", tools = true }
+_.path = { path = [
+  "{{ tools['android-sdk'].path }}/cmdline-tools/{{ tools['android-sdk'].version }}/bin",
+  "{{ tools['android-sdk'].path }}/platform-tools",
+  "{{ tools['android-sdk'].path }}/emulator",
+], tools = true }
