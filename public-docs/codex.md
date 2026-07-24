@@ -33,7 +33,13 @@ codex login
 Or sign in with an API key for usage billed through your OpenAI Platform account:
 
 ```bash
+# macOS or Linux
 printenv OPENAI_API_KEY | codex login --with-api-key
+```
+
+```powershell
+# Windows PowerShell
+$env:OPENAI_API_KEY | codex login --with-api-key
 ```
 
 Then confirm the CLI starts:
