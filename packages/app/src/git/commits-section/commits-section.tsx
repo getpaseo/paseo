@@ -6,6 +6,7 @@ import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useChangesPreferences } from "@/hooks/use-changes-preferences";
 import { useCheckoutCommitsQuery, type CheckoutCommitsQueryResult } from "@/git/use-commits-query";
 import { ThemedChevron, chevronColorMapping } from "@/git/themed-chevron";
+import { normalizeBranchOptionName } from "@/utils/branch-suggestions";
 import { CommitRow } from "./commit-row";
 
 interface CommitsSectionProps {
@@ -13,8 +14,6 @@ interface CommitsSectionProps {
   cwd: string;
   onCommitPress: (sha: string) => void;
 }
-
-const SKELETON_ROW_KEYS = ["commit-skeleton-1", "commit-skeleton-2", "commit-skeleton-3"];
 
 function CommitsSectionSkeleton() {
   const { t } = useTranslation();
@@ -25,15 +24,13 @@ function CommitsSectionSkeleton() {
       style={styles.skeleton}
       testID="commits-section-skeleton"
     >
-      {SKELETON_ROW_KEYS.map((key) => (
-        <View key={key} style={styles.skeletonRow}>
-          <View style={styles.skeletonDot} />
-          <View style={styles.skeletonSha} />
-          <View style={styles.skeletonSubject} />
-          <View style={styles.skeletonTimestamp} />
-          <View style={styles.skeletonCaret} />
-        </View>
-      ))}
+      <View style={styles.skeletonRow}>
+        <View style={styles.skeletonDot} />
+        <View style={styles.skeletonSha} />
+        <View style={styles.skeletonSubject} />
+        <View style={styles.skeletonTimestamp} />
+        <View style={styles.skeletonCaret} />
+      </View>
     </View>
   );
 }
@@ -58,17 +55,28 @@ function CommitsSectionContent({
   if (query.status !== "loaded") {
     return <CommitsSectionSkeleton />;
   }
-  if (query.data.commits.length === 0) {
+  const workspaceCommits = query.data.commits.filter((commit) => !commit.isOnBase);
+  const baseRef = normalizeBranchOptionName(query.data.baseRef) ?? t("workspace.git.diff.base");
+  if (workspaceCommits.length === 0) {
     return (
-      <Text style={styles.emptyRow} testID="commits-section-empty">
-        {t("workspace.git.diff.commits.empty")}
-      </Text>
+      <View style={styles.noWorkspaceCommitsRow} testID="commits-section-no-workspace-commits">
+        <Text style={styles.noWorkspaceCommitsText}>
+          {t("workspace.git.diff.commits.noneAhead", { baseRef })}
+        </Text>
+      </View>
     );
   }
   return (
     <View style={styles.list}>
-      {query.data.commits.map((commit) => (
-        <CommitRow key={commit.sha} commit={commit} now={now} onCommitPress={onCommitPress} />
+      {workspaceCommits.map((commit, index) => (
+        <CommitRow
+          key={commit.sha}
+          commit={commit}
+          isFirst={index === 0}
+          isLast={index === workspaceCommits.length - 1}
+          now={now}
+          onCommitPress={onCommitPress}
+        />
       ))}
     </View>
   );
@@ -110,7 +118,10 @@ export function CommitsSection({ serverId, cwd, onCommitPress }: CommitsSectionP
   if (query.status === "unsupported") {
     return null;
   }
-  const commitCount = query.status === "loaded" ? query.data.commits.length : null;
+  const commitCount =
+    query.status === "loaded"
+      ? query.data.commits.filter((commit) => !commit.isOnBase).length
+      : null;
 
   return (
     <View style={styles.container}>
@@ -183,12 +194,17 @@ const styles = StyleSheet.create((theme) => ({
   list: {
     paddingBottom: theme.spacing[1],
   },
-  emptyRow: {
-    fontSize: theme.fontSize.xs,
-    color: theme.colors.foregroundMuted,
+  noWorkspaceCommitsRow: {
+    flexDirection: "row",
+    alignItems: "center",
     paddingLeft: theme.spacing[2],
     paddingRight: theme.spacing[3],
-    paddingVertical: theme.spacing[2],
+    paddingTop: theme.spacing[1],
+    paddingBottom: theme.spacing[2],
+  },
+  noWorkspaceCommitsText: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foregroundMuted,
   },
   errorRow: {
     fontSize: theme.fontSize.xs,

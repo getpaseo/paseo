@@ -826,7 +826,8 @@ export const es: TranslationResources = {
         deletedFile: "Eliminado",
         commits: {
           title: "Commits",
-          countLabel: "{{count}} commits recientes",
+          countLabel: "{{count}} commits del espacio de trabajo",
+          noneAhead: "Aún no hay commits por delante de {{baseRef}}",
           fileDiffEmpty: "No hay cambios para mostrar",
           fileDiffError: "Error al cargar el diff del archivo",
           loading: "Cargando commits…",

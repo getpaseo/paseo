@@ -111,6 +111,7 @@ export async function ensureAgentLoaded(
         buildConfigOverrides(record),
         agentId,
         extractTimestamps(record),
+        record.archivedAt ? { purpose: "history" } : undefined,
       );
       deps.logger.info({ agentId, provider: record.provider }, "Agent resumed from persistence");
     } else {

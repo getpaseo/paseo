@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.2.0-beta.4 - 2026-07-23
+
+### Improved
+
+- Improved model selection on mobile ([#2361](https://github.com/getpaseo/paseo/pull/2361))
+- Selector popovers stay readable on iPad ([#2360](https://github.com/getpaseo/paseo/pull/2360) by [@yzim](https://github.com/yzim))
+
+### Fixed
+
+- Workspace creation stays responsive even with many active or archived workspaces ([#2355](https://github.com/getpaseo/paseo/pull/2355), [#2379](https://github.com/getpaseo/paseo/pull/2379))
+- Failed agent starts no longer leave provider processes running ([#2348](https://github.com/getpaseo/paseo/pull/2348) by [@dwyanewang](https://github.com/dwyanewang))
+- Completed OpenCode turns stay idle when late metadata updates arrive ([#2336](https://github.com/getpaseo/paseo/pull/2336) by [@mcowger](https://github.com/mcowger))
+- ACP image prompts no longer appear twice ([#2363](https://github.com/getpaseo/paseo/pull/2363))
+- File edits preserve CRLF line endings and UTF-8 BOMs ([#2277](https://github.com/getpaseo/paseo/pull/2277) by [@dwyanewang](https://github.com/dwyanewang))
+- Oh My Pi custom messages marked hidden stay hidden in live and restored chats ([#2280](https://github.com/getpaseo/paseo/pull/2280) by [@isac322](https://github.com/isac322))
+- Web chats stay pinned to the latest message at non-default browser zoom ([#2368](https://github.com/getpaseo/paseo/pull/2368))
+- Grouped tool-call loading animations display correctly ([#2369](https://github.com/getpaseo/paseo/pull/2369))
+
 ## 0.2.0-beta.3 - 2026-07-22
 
 ### Added

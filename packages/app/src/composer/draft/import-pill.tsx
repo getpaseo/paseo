@@ -19,6 +19,7 @@ export function ComposerImportPill({ onPress, disabled = false }: ComposerImport
   const handleHoverIn = useCallback(() => setIsHovered(true), []);
   const handleHoverOut = useCallback(() => setIsHovered(false), []);
   const bodyStyle = useMemo(() => [styles.body, isHovered && styles.bodyHovered], [isHovered]);
+  const labelStyle = useMemo(() => [styles.label, isHovered && styles.labelHovered], [isHovered]);
   return (
     <View style={styles.row}>
       <Pressable
@@ -32,7 +33,7 @@ export function ComposerImportPill({ onPress, disabled = false }: ComposerImport
         style={bodyStyle}
       >
         <ThemedImportIcon size={14} uniProps={iconColorMapping} />
-        <Text style={styles.label} numberOfLines={1}>
+        <Text style={labelStyle} numberOfLines={1}>
           {t("importSession.title")}
         </Text>
       </Pressable>
@@ -50,7 +51,7 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
     paddingHorizontal: theme.spacing[3],
     paddingVertical: theme.spacing[2],
-    borderRadius: theme.borderRadius.md,
+    borderRadius: theme.borderRadius.xl,
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.borderAccent,
     backgroundColor: theme.colors.surface1,
@@ -59,7 +60,10 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surface2,
   },
   label: {
-    color: theme.colors.foreground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
+  },
+  labelHovered: {
+    color: theme.colors.foreground,
   },
 }));

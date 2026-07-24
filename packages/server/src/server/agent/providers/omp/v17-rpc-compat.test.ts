@@ -1,8 +1,9 @@
 import { describe, expect, test } from "vitest";
 
 import { parseToolArgs, parseToolResult } from "./tool-call-detail.js";
-import { OmpAvailableCommandsUpdateEventSchema } from "./rpc-types.js";
+import { OmpAgentMessageSchema, OmpAvailableCommandsUpdateEventSchema } from "./rpc-types.js";
 import { mapOmpToolDetail } from "./tool-call-mapper.js";
+import { shouldDisplayOmpCustomMessage } from "./custom-message.js";
 
 describe("OMP 17 RPC compatibility", () => {
   test("parses source-attributed command updates", () => {
@@ -14,6 +15,20 @@ describe("OMP 17 RPC compatibility", () => {
     expect(event.commands).toEqual([
       { name: "prewalk", description: "Prewalk at the next action", source: "builtin" },
     ]);
+  });
+
+  test("keeps non-false custom display metadata backward compatible", () => {
+    const message = OmpAgentMessageSchema.parse({
+      role: "custom",
+      content: "visible custom message",
+      display: null,
+    });
+
+    expect(message).toMatchObject({ display: null });
+    if (message.role !== "custom") {
+      throw new Error("Expected a custom OMP message");
+    }
+    expect(shouldDisplayOmpCustomMessage(message)).toBe(true);
   });
 
   test("maps subscribed custom tool events without assuming built-in names", () => {

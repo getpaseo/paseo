@@ -278,6 +278,8 @@ export interface ExplorerFile {
   kind: ExplorerFileKind;
   encoding: ExplorerEncoding;
   content?: string;
+  // TextDecoder removes a leading UTF-8 BOM; retain this bit so file writes can restore it.
+  hasBom: boolean;
   mimeType?: string;
   size: number;
   modifiedAt: string;

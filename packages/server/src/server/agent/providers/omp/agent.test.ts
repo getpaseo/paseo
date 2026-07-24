@@ -260,6 +260,23 @@ describe("OMP agent client and session", () => {
     expect(omp.completedTurnCount()).toBe(1);
   });
 
+  test("omits live custom messages when display is false", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+
+    await expect(
+      omp.runPromptAfterExtensionNotice("hello OMP", "model turn completed", false),
+    ).resolves.toMatchObject({ finalText: expect.stringContaining("model turn completed") });
+    expect(omp.timeline()).toEqual([
+      { type: "user_message", text: "hello OMP", messageId: "user-1" },
+      {
+        type: "assistant_message",
+        text: "model turn completed",
+        messageId: "omp-assistant-1",
+      },
+    ]);
+  });
+
   test("does not complete a queued model turn from OMP's local-only hint", async () => {
     const omp = new OmpHarness();
     await omp.start();

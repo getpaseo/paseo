@@ -11,6 +11,51 @@ const EXCLUDED_ANDROID_MODULES = [
   "expo-dev-menu-interface",
 ];
 
+const FDROID_ABI_VERSION_CODE_BLOCK = `// Paseo F-Droid single-ABI version codes
+def paseoAbiVersionCodes = [
+    "armeabi-v7a": 1,
+    "arm64-v8a": 2,
+    "x86": 3,
+    "x86_64": 4,
+]
+def paseoArchitectures = (findProperty("reactNativeArchitectures") ?: "")
+    .toString()
+    .split(",")
+    .collect { it.trim() }
+    .findAll { !it.isEmpty() }
+
+if (paseoArchitectures.size() == 1) {
+    def paseoAbi = paseoArchitectures[0]
+    def paseoAbiVersionCode = paseoAbiVersionCodes[paseoAbi]
+    if (paseoAbiVersionCode == null) {
+        throw new GradleException("Unsupported Paseo Android ABI: " + paseoAbi)
+    }
+    android.defaultConfig.versionCode = android.defaultConfig.versionCode * 10 + paseoAbiVersionCode
+}
+`;
+
+function configureFdroidAppBuildGradle(contents) {
+  let configuredContents = contents;
+
+  if (!configuredContents.includes("dependenciesInfo {")) {
+    const androidBlock = "android {";
+    if (!configuredContents.includes(androidBlock)) {
+      throw new Error("Could not disable F-Droid dependency metadata in app/build.gradle");
+    }
+
+    configuredContents = configuredContents.replace(
+      androidBlock,
+      `${androidBlock}\n    dependenciesInfo {\n        includeInApk = false\n        includeInBundle = false\n    }`,
+    );
+  }
+
+  if (!configuredContents.includes("// Paseo F-Droid single-ABI version codes")) {
+    configuredContents = `${configuredContents.trimEnd()}\n\n${FDROID_ABI_VERSION_CODE_BLOCK}`;
+  }
+
+  return configuredContents;
+}
+
 function withFdroidAutolinking(config) {
   config = withDangerousMod(config, [
     "android",
@@ -65,19 +110,7 @@ function withFdroidAutolinking(config) {
   });
 
   return withAppBuildGradle(config, (modConfig) => {
-    if (modConfig.modResults.contents.includes("dependenciesInfo {")) {
-      return modConfig;
-    }
-
-    const androidBlock = "android {";
-    if (!modConfig.modResults.contents.includes(androidBlock)) {
-      throw new Error("Could not disable F-Droid dependency metadata in app/build.gradle");
-    }
-
-    modConfig.modResults.contents = modConfig.modResults.contents.replace(
-      androidBlock,
-      `${androidBlock}\n    dependenciesInfo {\n        includeInApk = false\n        includeInBundle = false\n    }`,
-    );
+    modConfig.modResults.contents = configureFdroidAppBuildGradle(modConfig.modResults.contents);
     return modConfig;
   });
 }

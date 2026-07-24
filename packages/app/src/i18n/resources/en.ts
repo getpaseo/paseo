@@ -805,7 +805,8 @@ export const en = {
         deletedFile: "Deleted",
         commits: {
           title: "Commits",
-          countLabel: "{{count}} recent commits",
+          countLabel: "{{count}} workspace commits",
+          noneAhead: "No commits ahead of {{baseRef}} yet",
           fileDiffEmpty: "No changes to display",
           fileDiffError: "Failed to load file diff",
           loading: "Loading commits…",

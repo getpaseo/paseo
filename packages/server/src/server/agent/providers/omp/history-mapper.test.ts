@@ -209,6 +209,54 @@ describe("OMP history mapper", () => {
     ]);
   });
 
+  test("omits replayed custom messages only when display is false", async () => {
+    await expect(
+      collectHistory(
+        [
+          { role: "user", content: "first prompt" },
+          { role: "custom", content: "hidden reminder", display: false },
+          { role: "custom", content: "visible explicit custom", display: true },
+          { role: "custom", content: "visible legacy custom" },
+          {
+            role: "assistant",
+            content: [{ type: "text", text: "assistant reply" }],
+            responseId: "assistant-history",
+          },
+        ],
+        [{ id: "entry-user-1", text: "first prompt" }],
+      ),
+    ).resolves.toEqual([
+      {
+        type: "timeline",
+        provider: "omp",
+        item: {
+          type: "user_message",
+          text: "first prompt",
+          messageId: "entry-user-1",
+        },
+      },
+      {
+        type: "timeline",
+        provider: "omp",
+        item: { type: "assistant_message", text: "visible explicit custom" },
+      },
+      {
+        type: "timeline",
+        provider: "omp",
+        item: { type: "assistant_message", text: "visible legacy custom" },
+      },
+      {
+        type: "timeline",
+        provider: "omp",
+        item: {
+          type: "assistant_message",
+          text: "assistant reply",
+          messageId: "assistant-history",
+        },
+      },
+    ]);
+  });
+
   test("suppresses replayed raw todo tool calls through the OMP detail hook", async () => {
     await expect(
       collectHistory([

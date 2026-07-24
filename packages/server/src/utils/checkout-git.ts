@@ -1988,8 +1988,9 @@ export async function getCheckoutStatus(
   };
 }
 
-// The explorer is a recent-history view, not a full repository log.
-const MAX_CHECKOUT_COMMITS = 20;
+// Workspace history stays complete; base history is bounded context until the
+// commits list supports paging older base commits.
+const CHECKOUT_BASE_COMMIT_LIMIT = 10;
 // Bytes git emits between fields/records. We split parsed output on these.
 const COMMIT_FIELD_SEPARATOR = "\x00";
 const COMMIT_RECORD_SEPARATOR = "\x1e";
@@ -2007,6 +2008,12 @@ interface ParsedCheckoutCommit {
   authorDate: string;
   subject: string;
   files: CheckoutCommitFile[];
+}
+
+interface CheckoutCommitLogInput {
+  cwd: string;
+  revision: string;
+  maxCount?: number;
 }
 
 function mapNameStatusLetter(letter: string): CheckoutCommitFileStatus | undefined {
@@ -2133,14 +2140,11 @@ function parseCheckoutCommitRecords(stdout: string): ParsedCheckoutCommit[] {
 
 // Returns commits reachable from HEAD that are not reachable from any remote ref.
 async function getUnpushedCommitShas(cwd: string, context?: CheckoutContext): Promise<Set<string>> {
-  const { stdout } = await runGitCommand(
-    ["rev-list", `--max-count=${MAX_CHECKOUT_COMMITS}`, "HEAD", "--not", "--remotes"],
-    {
-      cwd,
-      envOverlay: READ_ONLY_GIT_ENV,
-      logger: context?.logger,
-    },
-  );
+  const { stdout } = await runGitCommand(["rev-list", "HEAD", "--not", "--remotes"], {
+    cwd,
+    envOverlay: READ_ONLY_GIT_ENV,
+    logger: context?.logger,
+  });
   return new Set(
     stdout
       .split("\n")
@@ -2149,58 +2153,104 @@ async function getUnpushedCommitShas(cwd: string, context?: CheckoutContext): Pr
   );
 }
 
-/**
- * Lists the current branch's 20 most recent commits, newest first, each flagged
- * local-only vs on-remote with per-commit file +/- stats.
- */
+async function getCheckoutCommitRecords({
+  cwd,
+  revision,
+  maxCount,
+}: CheckoutCommitLogInput): Promise<ParsedCheckoutCommit[]> {
+  const args = [
+    "log",
+    revision,
+    "--diff-merges=first-parent",
+    `--format=${COMMIT_LOG_FORMAT}`,
+    "--raw",
+    "--numstat",
+    "-M",
+  ];
+  if (maxCount !== undefined) {
+    args.splice(2, 0, `--max-count=${maxCount}`);
+  }
+
+  const result = await runGitCommand(args, { cwd, envOverlay: READ_ONLY_GIT_ENV });
+  if (result.truncated) {
+    throw new Error("Commit history exceeded the git output limit");
+  }
+  return parseCheckoutCommitRecords(result.stdout);
+}
+
 export interface CheckoutCommitsResult {
   baseRef: string | null;
   commits: CheckoutCommit[];
 }
 
+async function tryResolveCheckoutCommitsBaseRef(
+  cwd: string,
+  baseRef: string | null,
+  currentBranch: string,
+): Promise<string | null> {
+  if (!baseRef) {
+    return null;
+  }
+  const normalizedBaseRef = normalizeLocalBranchRefName(baseRef);
+  if (!normalizedBaseRef || normalizedBaseRef === currentBranch) {
+    return null;
+  }
+  return resolveMostAheadBaseRef(cwd, normalizedBaseRef).catch(() => null);
+}
+
 export async function listCheckoutCommits({
   cwd,
+  context,
 }: {
   cwd: string;
+  context?: CheckoutContext;
 }): Promise<CheckoutCommitsResult> {
   const currentBranch = await getCurrentBranch(cwd);
   if (!currentBranch) {
     return { baseRef: null, commits: [] };
   }
 
-  const { resolvedBaseRef } = await resolveBaseRefForCwd(cwd);
+  const { resolvedBaseRef } = await resolveBaseRefForCwd(cwd, context);
   const normalizedBaseRef = resolvedBaseRef ? normalizeLocalBranchRefName(resolvedBaseRef) : null;
-  let comparisonBaseRef: string | null = null;
-  if (resolvedBaseRef && normalizedBaseRef && normalizedBaseRef !== currentBranch) {
-    try {
-      comparisonBaseRef = await resolveBestComparisonBaseRef(cwd, resolvedBaseRef);
-    } catch {
-      // History does not depend on the configured base being available.
-    }
+  let comparisonBaseRef = await tryResolveCheckoutCommitsBaseRef(
+    cwd,
+    resolvedBaseRef,
+    currentBranch,
+  );
+  if (!comparisonBaseRef && normalizedBaseRef && normalizedBaseRef !== currentBranch) {
+    // Saved worktree metadata can outlive a renamed or deleted base branch.
+    comparisonBaseRef = await tryResolveCheckoutCommitsBaseRef(
+      cwd,
+      await resolveBaseRef(cwd),
+      currentBranch,
+    );
   }
 
-  // Single pass: `--raw` carries the status letter, `--numstat` the +/- counts.
-  // (`--name-status` cannot be combined with `--numstat` — git emits only one.)
-  const logResult = await runGitCommand(
-    [
-      "log",
-      "HEAD",
-      "--diff-merges=first-parent",
-      `--max-count=${MAX_CHECKOUT_COMMITS}`,
-      `--format=${COMMIT_LOG_FORMAT}`,
-      "--raw",
-      "--numstat",
-      "-M",
-    ],
-    { cwd, envOverlay: READ_ONLY_GIT_ENV },
-  );
+  let workspaceRecords: ParsedCheckoutCommit[] = [];
+  let baseRevision = "HEAD";
+  if (comparisonBaseRef) {
+    const [records, mergeBase] = await Promise.all([
+      getCheckoutCommitRecords({ cwd, revision: `${comparisonBaseRef}..HEAD` }),
+      tryResolveMergeBase(cwd, comparisonBaseRef),
+    ]);
+    workspaceRecords = records;
+    baseRevision = mergeBase ?? "";
+  }
 
-  const records = parseCheckoutCommitRecords(logResult.stdout);
+  const baseRecords = baseRevision
+    ? await getCheckoutCommitRecords({
+        cwd,
+        revision: baseRevision,
+        maxCount: CHECKOUT_BASE_COMMIT_LIMIT,
+      })
+    : [];
+  const records = [...workspaceRecords, ...baseRecords];
   if (records.length === 0) {
     return { baseRef: comparisonBaseRef, commits: [] };
   }
 
   const unpushedShas = await getUnpushedCommitShas(cwd);
+  const workspaceShas = new Set(workspaceRecords.map((record) => record.sha));
 
   const commits = records.map((record) => ({
     sha: record.sha,
@@ -2209,6 +2259,7 @@ export async function listCheckoutCommits({
     authorName: record.authorName,
     authorDate: record.authorDate,
     isOnRemote: !unpushedShas.has(record.sha),
+    isOnBase: !workspaceShas.has(record.sha),
     files: record.files,
   }));
 
