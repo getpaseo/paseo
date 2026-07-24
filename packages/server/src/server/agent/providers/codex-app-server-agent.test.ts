@@ -2280,6 +2280,227 @@ describe("Codex app-server provider", () => {
     }
   });
 
+  test("keeps a settled child completed after a late child item completion", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    try {
+      const resultPromise = session.run("Delegate the guardian review.");
+      await appServer.waitForTurnStart();
+
+      appServer.startsSubAgent({
+        callId: "spawn-guardian-late-item",
+        threadId: "guardian-thread-late-item",
+        agentPath: "/root/guardian",
+      });
+      appServer.says({
+        threadId: "guardian-thread-late-item",
+        itemId: "guardian-decision",
+        text: "Approve with notes.",
+      });
+      appServer.completeTurn({ threadId: "guardian-thread-late-item" });
+      appServer.says({
+        threadId: "guardian-thread-late-item",
+        itemId: "guardian-late-decision",
+        text: "Late trailing decision.",
+      });
+      appServer.completeTurn();
+
+      const result = await resultPromise;
+      expect(result.timeline.findLast((item) => item.type === "tool_call")).toMatchObject({
+        callId: "spawn-guardian-late-item",
+        status: "completed",
+        detail: {
+          type: "sub_agent",
+          log: expect.stringContaining("Late trailing decision."),
+        },
+      });
+      const providerUpserts = events.flatMap((event) =>
+        event.type === "provider_subagent" && event.event.type === "upsert" ? [event.event] : [],
+      );
+      expect(providerUpserts.at(-1)).toMatchObject({
+        type: "upsert",
+        id: "guardian-thread-late-item",
+        status: "completed",
+      });
+      expect(providerUpserts.some((event) => event.status === "running")).toBe(true);
+      expect(
+        providerUpserts.findLastIndex((event) => event.status === "completed"),
+      ).toBeGreaterThan(providerUpserts.findLastIndex((event) => event.status === "running"));
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("keeps a settled child completed after a late new-id interacted activity", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    try {
+      const resultPromise = session.run("Delegate the guardian review.");
+      await appServer.waitForTurnStart();
+
+      appServer.startsSubAgent({
+        callId: "spawn-guardian-late-interacted",
+        threadId: "guardian-thread-late-interacted",
+        agentPath: "/root/guardian",
+      });
+      appServer.completeTurn({ threadId: "guardian-thread-late-interacted" });
+      appServer.beginsSubAgentActivity({
+        callId: "late-guardian-interacted",
+        threadId: "guardian-thread-late-interacted",
+        agentPath: "/root/guardian",
+        kind: "interacted",
+      });
+      appServer.completesSubAgentActivity({
+        callId: "late-guardian-interacted",
+        threadId: "guardian-thread-late-interacted",
+        agentPath: "/root/guardian",
+        kind: "interacted",
+      });
+      appServer.completeTurn();
+
+      const result = await resultPromise;
+      expect(result.timeline.findLast((item) => item.type === "tool_call")).toMatchObject({
+        callId: "spawn-guardian-late-interacted",
+        status: "completed",
+      });
+      expect(
+        events
+          .flatMap((event) =>
+            event.type === "provider_subagent" && event.event.type === "upsert"
+              ? [event.event]
+              : [],
+          )
+          .at(-1),
+      ).toMatchObject({
+        type: "upsert",
+        id: "guardian-thread-late-interacted",
+        status: "completed",
+      });
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("keeps an active child running while its turn is still open", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "test-thread",
+      item: {
+        type: "subAgentActivity",
+        id: "spawn-active-child",
+        kind: "started",
+        agentThreadId: "active-child-thread",
+        agentPath: "/root/active-child",
+      },
+    });
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "active-child-thread",
+      item: {
+        type: "agentMessage",
+        id: "active-child-message",
+        text: "Still working.",
+      },
+    });
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "test-thread",
+      item: {
+        type: "subAgentActivity",
+        id: "active-child-interacted",
+        kind: "interacted",
+        agentThreadId: "active-child-thread",
+        agentPath: "/root/active-child",
+      },
+    });
+
+    expect(events.at(-1)).toMatchObject({
+      type: "timeline",
+      item: {
+        callId: "spawn-active-child",
+        status: "running",
+        detail: {
+          type: "sub_agent",
+          log: "[Assistant] Still working.",
+        },
+      },
+    });
+    expect(
+      events
+        .flatMap((event) =>
+          event.type === "provider_subagent" && event.event.type === "upsert" ? [event.event] : [],
+        )
+        .at(-1),
+    ).toMatchObject({
+      type: "upsert",
+      id: "active-child-thread",
+      status: "running",
+    });
+  });
+
+  test("cancels a settled child when a late interrupted activity arrives", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+
+    try {
+      const resultPromise = session.run("Delegate the investigation.");
+      await appServer.waitForTurnStart();
+
+      appServer.startsSubAgent({
+        callId: "spawn-child-interrupt-after-settle",
+        threadId: "child-thread-interrupt-after-settle",
+        agentPath: "/root/interrupt-after-settle",
+      });
+      appServer.completeTurn({ threadId: "child-thread-interrupt-after-settle" });
+      appServer.beginsSubAgentActivity({
+        callId: "late-interrupt-after-settle",
+        threadId: "child-thread-interrupt-after-settle",
+        agentPath: "/root/interrupt-after-settle",
+        kind: "interrupted",
+      });
+      appServer.completesSubAgentActivity({
+        callId: "late-interrupt-after-settle",
+        threadId: "child-thread-interrupt-after-settle",
+        agentPath: "/root/interrupt-after-settle",
+        kind: "interrupted",
+      });
+      appServer.completeTurn();
+
+      const result = await resultPromise;
+      expect(result.timeline.findLast((item) => item.type === "tool_call")).toMatchObject({
+        callId: "spawn-child-interrupt-after-settle",
+        status: "canceled",
+      });
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
   test("preserves a completed child status when replaying a late compaction", async () => {
     const appServer = createFakeCodexAppServer();
     const session = new CodexAppServerAgentSession(
@@ -3045,6 +3266,10 @@ describe("Codex app-server provider", () => {
 
     const liveEvents: AgentStreamEvent[] = [];
     session.subscribe((event) => liveEvents.push(event));
+    asInternals(session).handleNotification("turn/started", {
+      threadId: "v2-child-thread",
+      turn: { id: "v2-child-turn-after-resume" },
+    });
     asInternals(session).handleNotification("item/completed", {
       threadId: "test-thread",
       item: {
@@ -3073,6 +3298,10 @@ describe("Codex app-server provider", () => {
     });
 
     liveEvents.length = 0;
+    asInternals(session).handleNotification("turn/started", {
+      threadId: "legacy-child-thread",
+      turn: { id: "legacy-child-turn-after-resume" },
+    });
     asInternals(session).handleNotification("item/agentMessage/delta", {
       threadId: "legacy-child-thread",
       itemId: "legacy-child-message-after-resume",

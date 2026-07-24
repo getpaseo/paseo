@@ -1654,6 +1654,12 @@ function shouldIgnoreMirroredLifecycleItem(source: "item" | "codex_event", item:
   return source === "codex_event" && !readCodexSubAgentActivity(item);
 }
 
+function isTerminalSubAgentToolCallStatus(
+  status: ToolCallTimelineItem["status"],
+): status is "completed" | "failed" | "canceled" {
+  return status === "completed" || status === "failed" || status === "canceled";
+}
+
 function settleHistoricalSubAgentActivity(
   item: ToolCallTimelineItem,
   kind: CodexSubAgentActivity["kind"],
@@ -4605,7 +4611,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   private dispatchSubAgentNotification(parsed: ParsedCodexNotification, callId: string): void {
     switch (parsed.kind) {
       case "thread_started":
-        this.emitSubAgentActivityUpdate(callId, "running");
+        this.emitSubAgentActivityUpdate(callId, "running", { reopen: true });
         return;
       case "turn_started":
       case "turn_completed":
@@ -4878,10 +4884,16 @@ export class CodexAppServerAgentSession implements AgentSession {
         },
       };
     }
-    this.emitSubAgentActivityUpdate(
-      callId,
-      activity.kind === "interrupted" ? "canceled" : "running",
-    );
+    // Non-interrupted activity is live `running` only while the child is
+    // non-terminal. After turn settle, late started/interacted ids must not
+    // reopen the card; interrupted may still cancel a settled child.
+    let nextStatus: ToolCallTimelineItem["status"] | undefined = "running";
+    if (activity.kind === "interrupted") {
+      nextStatus = "canceled";
+    } else if (isTerminalSubAgentToolCallStatus(state.toolCall.status)) {
+      nextStatus = undefined;
+    }
+    this.emitSubAgentActivityUpdate(callId, nextStatus);
     return true;
   }
 
@@ -4965,6 +4977,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   private emitSubAgentActivityUpdate(
     callId: string,
     status?: ToolCallTimelineItem["status"],
+    options?: { reopen?: boolean },
   ): void {
     const state = this.subAgentCallsByCallId.get(callId);
     if (!state || state.toolCall.detail.type !== "sub_agent") {
@@ -4975,7 +4988,18 @@ export class CodexAppServerAgentSession implements AgentSession {
       childTimeline.length > 0
         ? curateAgentActivity(childTimeline, { labelAssistantMessages: true })
         : "";
-    const resolvedStatus = status ?? state.toolCall.status;
+    // Child turn settle is authoritative. Late item/activity traffic must not
+    // reopen a terminal card to `running` unless a new turn/thread start
+    // explicitly reopens multi-turn reuse. Terminal→canceled (interrupt) and
+    // other terminal transitions remain allowed.
+    let resolvedStatus = status ?? state.toolCall.status;
+    if (
+      status === "running" &&
+      !options?.reopen &&
+      isTerminalSubAgentToolCallStatus(state.toolCall.status)
+    ) {
+      resolvedStatus = state.toolCall.status;
+    }
     for (const childThreadId of state.childThreadIds) {
       this.emitProviderSubagentUpsert(childThreadId, state, resolvedStatus);
     }
@@ -5114,7 +5138,9 @@ export class CodexAppServerAgentSession implements AgentSession {
       this.pendingCommandOutputDeltas.delete(itemId);
       this.pendingFileChangeOutputDeltas.delete(itemId);
     }
-    this.emitSubAgentActivityUpdate(callId, "running");
+    // Preserve status (including terminal settle). Forcing `running` here
+    // reopened finished Auto-review guardians on late child item/completed.
+    this.emitSubAgentActivityUpdate(callId);
   }
 
   private handleSubAgentContextCompactionItem(
@@ -5250,7 +5276,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   ): void {
     const subAgentCallId = this.getSubAgentCallIdForThread(parsed.threadId);
     if (subAgentCallId) {
-      this.emitSubAgentActivityUpdate(subAgentCallId, "running");
+      this.emitSubAgentActivityUpdate(subAgentCallId, "running", { reopen: true });
       return;
     }
     this.currentTurnId = parsed.turnId;
