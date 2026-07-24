@@ -419,6 +419,25 @@ function resolveBrowserToolsEnabled(persisted: ReturnType<typeof loadPersistedCo
   return persisted.daemon?.browserTools?.enabled ?? false;
 }
 
+function resolveForgeCliAutoInstall(
+  env: NodeJS.ProcessEnv,
+  persisted: ReturnType<typeof loadPersistedConfig>,
+): boolean {
+  return (
+    parseBooleanEnv(env.PASEO_FORGE_CLI_AUTOINSTALL) ??
+    persisted.daemon?.forgeCliAutoInstall ??
+    true
+  );
+}
+
+function resolveToolsDir(paseoHome: string, env: NodeJS.ProcessEnv): string {
+  const configured = env.PASEO_TOOLS_DIR?.trim();
+  if (!configured) {
+    return path.join(paseoHome, "tools");
+  }
+  return path.isAbsolute(configured) ? configured : path.resolve(paseoHome, configured);
+}
+
 function resolveStaticLoadConfigSettings(
   env: NodeJS.ProcessEnv,
   cli: CliConfigOverrides | undefined,
@@ -464,6 +483,8 @@ export function loadConfig(
     trustedProxies,
     appBaseUrl,
   } = resolveStaticLoadConfigSettings(env, options?.cli, persisted);
+  const forgeCliAutoInstall = resolveForgeCliAutoInstall(env, persisted);
+  const toolsDir = resolveToolsDir(paseoHome, env);
 
   const relay = resolveRelayConfig({
     env,
@@ -497,6 +518,8 @@ export function loadConfig(
     mcpInjectIntoAgents,
     browserToolsEnabled,
     autoArchiveAfterMerge,
+    forgeCliAutoInstall,
+    toolsDir,
     enableTerminalAgentHooks: persisted.daemon?.enableTerminalAgentHooks ?? false,
     appendSystemPrompt,
     terminalProfiles,

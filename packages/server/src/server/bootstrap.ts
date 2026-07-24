@@ -388,6 +388,8 @@ export interface PaseoDaemonConfig {
   mcpInjectIntoAgents?: boolean;
   browserToolsEnabled?: boolean;
   autoArchiveAfterMerge?: boolean;
+  forgeCliAutoInstall?: boolean;
+  toolsDir?: string;
   enableTerminalAgentHooks?: boolean;
   appendSystemPrompt?: string;
   terminalProfiles?: TerminalProfile[];

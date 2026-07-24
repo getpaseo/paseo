@@ -249,6 +249,7 @@ export const PersistedConfigSchema = z
           .passthrough()
           .optional(),
         autoArchiveAfterMerge: z.boolean().optional(),
+        forgeCliAutoInstall: z.boolean().optional(),
         enableTerminalAgentHooks: z.boolean().optional(),
         appendSystemPrompt: z.string().optional(),
         terminalProfiles: z.array(TerminalProfileSchema).optional(),

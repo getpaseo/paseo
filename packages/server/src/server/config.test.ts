@@ -26,6 +26,35 @@ describe("server config", () => {
     expect(standaloneConfig.desktopManaged).toBe(false);
   });
 
+  test("defaults forge CLI auto-install to enabled", async () => {
+    const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-config-forge-cli-"));
+    roots.push(paseoHome);
+
+    const config = loadConfig(paseoHome, { env: {} });
+
+    expect(config.forgeCliAutoInstall).toBe(true);
+    expect(config.toolsDir).toBe(path.join(paseoHome, "tools"));
+  });
+
+  test("disables forge CLI auto-install via PASEO_FORGE_CLI_AUTOINSTALL", async () => {
+    const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-config-forge-cli-off-"));
+    roots.push(paseoHome);
+
+    const config = loadConfig(paseoHome, { env: { PASEO_FORGE_CLI_AUTOINSTALL: "0" } });
+
+    expect(config.forgeCliAutoInstall).toBe(false);
+  });
+
+  test("overrides the tools dir via PASEO_TOOLS_DIR", async () => {
+    const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-config-tools-dir-"));
+    roots.push(paseoHome);
+    const toolsDir = path.join(os.tmpdir(), "paseo-tools-override");
+
+    const config = loadConfig(paseoHome, { env: { PASEO_TOOLS_DIR: toolsDir } });
+
+    expect(config.toolsDir).toBe(toolsDir);
+  });
+
   test("resolves bundled web UI path from source-tree modules", () => {
     const root = path.parse(process.cwd()).root;
     expect(
