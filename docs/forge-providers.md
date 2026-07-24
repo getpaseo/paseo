@@ -84,6 +84,15 @@ Register the adapter in `defaultForgeRegistry` with:
 - `matchesHost` from manifest `cloudHosts`
 - `probeHost` when self-hosted/Enterprise detection is supported
 
+If the new forge shells out to a CLI (like `gh`/`glab`/`tea`), add an entry to
+`forge-cli-catalog.ts` (pinned version + a pure `(platform, arch) => asset`
+resolver, linux only) and wire the adapter's `resolveXPath()` to call
+`resolveForgeCliPath()` from `forge-cli-autoinstall-default.ts`. That's the
+one place that does "PATH first, then download into
+`$PASEO_HOME/tools/<cli>/<cli>`", gated by `PASEO_FORGE_CLI_AUTOINSTALL`.
+Follow the `gh`/`glab`/`tea` resolvers in `github-service.ts` /
+`gitlab-service.ts` / `gitea-service.ts` as examples.
+
 Current change-request lookup uses two identities deliberately:
 
 - An open PR/MR belongs to the checkout when its head branch and head repository

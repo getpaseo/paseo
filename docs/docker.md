@@ -111,6 +111,39 @@ Provider environment variables such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
 `OPENAI_BASE_URL`, or `ANTHROPIC_BASE_URL` can be passed through `docker run -e`
 or `compose.environment`; Paseo passes them to launched agents.
 
+## Git Forge CLIs
+
+The base image also leaves out the git forge CLIs (`gh` for GitHub, `glab` for
+GitLab, `tea` for the Gitea/Forgejo/Codeberg family) for the same reason it
+leaves out agent CLIs. Forge features (PR/MR status, create, merge, CI checks)
+need one of these installed.
+
+By default the daemon downloads the official release binary itself the first
+time a forge feature needs it, over HTTPS from the CLI's own release host
+(`github.com`, `gitlab.com`, `dl.gitea.com`). This is a container-only
+feature: it only runs on `linux/amd64` and `linux/arm64`, matching the image.
+The binary is cached at `$PASEO_HOME/tools/<cli>/<cli>` (inside the
+`/home/paseo` volume), so it persists across restarts and downloads only
+once. A CLI already on `PATH` (installed in a child image, or mounted from
+the host) always wins over auto-install.
+
+Disable auto-install entirely with:
+
+```yaml
+environment:
+  PASEO_FORGE_CLI_AUTOINSTALL: "0"
+```
+
+For air-gapped or otherwise offline deployments, install the CLI in a child
+image instead (same pattern as [Installing Agents](#installing-agents) above):
+
+```Dockerfile
+FROM ghcr.io/getpaseo/paseo:latest
+
+USER root
+RUN apt-get update && apt-get install -y gh
+```
+
 ## Volumes
 
 | Mount         | Purpose                                                                  |
@@ -232,6 +265,11 @@ The published image is multi-arch for `linux/amd64` and `linux/arm64`.
 - **403 Host not allowed**: set `PASEO_HOSTNAMES` to the DNS names you use.
 - **Provider not available**: install that agent CLI in a child image or mount a
   runtime where the binary is on `PATH`.
+- **Forge CLI (`gh`/`glab`/`tea`) not available**: the daemon auto-installs it
+  on first use unless `PASEO_FORGE_CLI_AUTOINSTALL=0` is set, or the platform
+  is unsupported (only `linux/amd64` and `linux/arm64` are covered today).
+  Check `docker logs paseo` for the download attempt, or install the CLI in a
+  child image.
 - **Permission errors in `/workspace`**: make the mounted directory writable by
   uid/gid `1000:1000`, or run the container as the host uid/gid.
 - **Logs**: inspect `docker logs paseo` or

@@ -95,6 +95,14 @@ docker exec -it --user paseo paseo claude
 
 Agent credentials persist in `/home/paseo`.
 
+## Git forge CLIs
+
+Forge features (PR/MR status, create, merge, CI checks) need the matching CLI: `gh` for GitHub, `glab` for GitLab, `tea` for Gitea, Forgejo, and Codeberg. The base image doesn't bundle these either, but the daemon downloads the official release binary itself the first time a forge feature needs one, no separate install step required. This is a container-only feature, `linux/amd64` and `linux/arm64` only.
+
+The downloaded binary is cached under `/home/paseo/.paseo/tools`, so it persists across restarts and downloads once. A CLI already on `PATH` (from a child image or a host mount) always takes priority over auto-install.
+
+Disable this with `PASEO_FORGE_CLI_AUTOINSTALL: "0"` in `compose.environment`, and install the CLI yourself in a child image for offline or air-gapped setups.
+
 ## Volumes
 
 Mount two paths for most deployments:
@@ -160,5 +168,6 @@ See [Security](/docs/security) for the full daemon trust model.
 - **The UI loads but cannot connect:** if `PASEO_PASSWORD` is set, add a direct connection with the same password.
 - **403 Host not allowed:** set `PASEO_HOSTNAMES` to the DNS names you use.
 - **Provider not available:** install that agent CLI in a child image or make sure the binary is on `PATH`.
+- **Forge CLI (`gh`/`glab`/`tea`) not available:** the daemon auto-installs it on first use unless `PASEO_FORGE_CLI_AUTOINSTALL=0` is set, or your platform isn't covered yet (`linux/amd64` and `linux/arm64` only, for now). Check `docker logs paseo` for the download attempt.
 - **Permission errors in `/workspace`:** make the mounted directory writable by uid/gid `1000:1000`, or run the container as the host uid/gid.
 - **Logs:** run `docker logs paseo`, or inspect `/home/paseo/.paseo/daemon.log` inside the container.
