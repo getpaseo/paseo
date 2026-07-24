@@ -30,10 +30,14 @@ class FakeAppUpdateRuntime implements AppUpdateRuntime {
   downloadedVersions: string[] = [];
   installedVersions: string[] = [];
   installModes: Array<{ isSilent: boolean; isForceRunAfter: boolean }> = [];
+  // The Electron runtime maps this straight onto `autoUpdater.autoDownload`,
+  // so it is the observable proxy for "will a background check download by itself?".
+  autoDownloadSettings: boolean[] = [];
 
   configure(input: AppUpdateRuntimeConfiguration): void {
     this.configuration = input;
     this.gate = input.shouldAdmitUpdate;
+    this.autoDownloadSettings.push(input.autoInstallUpdates);
   }
 
   nextCheck(result: { isUpdateAvailable: boolean; updateInfo: RuntimeUpdateInfo } | null): void {
@@ -350,6 +354,90 @@ describe("app update service", () => {
 
     expect(installed).toBe(false);
     expect(runtime.installedVersions).toEqual([]);
+  });
+
+  it("never installs on quit when automatic updates are disabled", async () => {
+    const { runtime, service } = createService({ bucket: async () => 0 });
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+
+    await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      autoInstallUpdates: false,
+      intent: "automatic",
+    });
+    // Force the worst case: a download somehow already completed on disk.
+    runtime.finishUpdateDownload(rolledOutUpdate);
+
+    const checkCountBeforeQuit = runtime.checkCount;
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    const installed = await service.installUpdateOnQuit({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      autoInstallUpdates: false,
+      signal: new AbortController().signal,
+    });
+
+    expect(installed).toBe(false);
+    expect(runtime.installedVersions).toEqual([]);
+    // The gate short-circuits before any quit-time revalidation happens.
+    expect(runtime.checkCount).toBe(checkCountBeforeQuit);
+  });
+
+  it("still installs on quit when automatic updates are enabled", async () => {
+    const { runtime, service } = createService({ bucket: async () => 0 });
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+
+    await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      autoInstallUpdates: true,
+      intent: "automatic",
+    });
+    runtime.finishUpdateDownload(rolledOutUpdate);
+
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    const installed = await service.installUpdateOnQuit({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      autoInstallUpdates: true,
+      signal: new AbortController().signal,
+    });
+
+    expect(installed).toBe(true);
+    expect(runtime.installedVersions).toEqual(["1.2.4"]);
+  });
+
+  it("leaves background downloads off when automatic updates are disabled", async () => {
+    const { runtime, service } = createService({ bucket: async () => 0 });
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+
+    const result = await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      autoInstallUpdates: false,
+      intent: "automatic",
+    });
+
+    // The update is still surfaced to the UI — it just is not fetched unattended.
+    expect(result.hasUpdate).toBe(true);
+    expect(result.readyToInstall).toBe(false);
+    expect(runtime.autoDownloadSettings).toEqual([false]);
+    expect(runtime.downloadCallCount).toBe(0);
+    expect(runtime.downloadedVersions).toEqual([]);
+  });
+
+  it("keeps background downloads on by default", async () => {
+    const { runtime, service } = createService({ bucket: async () => 0 });
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+
+    await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+    });
+
+    expect(runtime.autoDownloadSettings).toEqual([true]);
   });
 
   it("does not install after quit-time revalidation expires", async () => {

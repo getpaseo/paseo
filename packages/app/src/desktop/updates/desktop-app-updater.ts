@@ -28,15 +28,21 @@ export interface DesktopAppUpdaterSnapshot {
   isInstalling: boolean;
 }
 
+// `autoInstallUpdates` is required on the port. The public updater API keeps it
+// optional and resolves it to a concrete boolean (defaulting to `true`) before
+// crossing this boundary, and both implementations in ./desktop-updates declare
+// it required. Leaving it optional here would let a future caller pass
+// `undefined` into a `boolean` parameter without a type error — method
+// bivariance hides the mismatch.
 export interface DesktopAppUpdaterPort {
   checkDesktopAppUpdate(input: {
     releaseChannel: DesktopReleaseChannel;
-    autoInstallUpdates?: boolean;
+    autoInstallUpdates: boolean;
     intent: DesktopAppUpdateCheckIntent;
   }): Promise<DesktopAppUpdateCheckResult>;
   installDesktopAppUpdate(input: {
     releaseChannel: DesktopReleaseChannel;
-    autoInstallUpdates?: boolean;
+    autoInstallUpdates: boolean;
   }): Promise<DesktopAppUpdateInstallResult>;
 }
 

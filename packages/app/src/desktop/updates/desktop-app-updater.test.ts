@@ -61,6 +61,22 @@ describe("desktop app updater — check", () => {
     ]);
   });
 
+  it("forwards a disabled automatic-update setting to the port", async () => {
+    const { updater, port } = createUpdater();
+    port.nextCheckResult(buildFakeCheckResult());
+
+    await updater.checkForUpdates({
+      releaseChannel: "stable",
+      autoInstallUpdates: false,
+      intent: "automatic",
+      silent: true,
+    });
+
+    expect(port.recordedChecks).toEqual([
+      { releaseChannel: "stable", autoInstallUpdates: false, intent: "automatic" },
+    ]);
+  });
+
   it("does not add manual last-checked feedback for automatic checks", async () => {
     const { updater, port } = createUpdater({ now: () => 42 });
     port.nextCheckResult(buildFakeCheckResult({ hasUpdate: true, readyToInstall: false }));
@@ -320,6 +336,15 @@ describe("desktop app updater — install", () => {
     await updater.installUpdate({ releaseChannel: "beta" });
 
     expect(port.recordedInstalls).toEqual([{ releaseChannel: "beta", autoInstallUpdates: true }]);
+  });
+
+  it("forwards a disabled automatic-update setting to the port", async () => {
+    const { updater, port } = createUpdater();
+    port.nextInstallResult(buildFakeInstallResult({ installed: true }));
+
+    await updater.installUpdate({ releaseChannel: "beta", autoInstallUpdates: false });
+
+    expect(port.recordedInstalls).toEqual([{ releaseChannel: "beta", autoInstallUpdates: false }]);
   });
 
   it("moves to 'installed' when the install reports installation succeeded", async () => {
