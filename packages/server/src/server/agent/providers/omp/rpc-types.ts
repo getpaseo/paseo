@@ -103,7 +103,7 @@ export const OmpModelSchema = z
     name: z.string().optional(),
     reasoning: z.boolean().optional(),
     thinking: OmpModelThinkingSchema.optional(),
-    contextWindow: z.number().optional(),
+    contextWindow: z.number().nullable().optional(),
     maxTokens: z.number().nullable().optional(),
     api: z.string().optional(),
     baseUrl: z.string().optional(),
