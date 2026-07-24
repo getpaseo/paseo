@@ -178,6 +178,7 @@ export const OmpRpcHostToolDefinitionSchema = z
     name: z.string(),
     label: z.string().optional(),
     description: z.string(),
+    loadMode: z.enum(["essential", "discoverable"]).optional(),
     parameters: z.record(z.string(), z.unknown()),
     hidden: z.boolean().optional(),
   })
