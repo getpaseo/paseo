@@ -97,6 +97,19 @@ server {
 
 ## Environment variables
 
+When a service starts, Paseo injects:
+
+| Variable                             | Description                                                                                  |
+| ------------------------------------ | -------------------------------------------------------------------------------------------- |
+| `HOST`                               | Bind address for the service process (`127.0.0.1` for loopback daemons, otherwise `0.0.0.0`) |
+| `PASEO_PORT`                         | Allocated backend port                                                                       |
+| `PASEO_URL`                          | Proxy URL for this service (public alias when configured, otherwise localhost)               |
+| `PASEO_SERVICE_<NAME>_PORT` / `_URL` | Peer service ports and proxy URLs in the same workspace                                      |
+
+`PASEO_URL` / `PASEO_SERVICE_*_URL` are fixed at spawn from the registered route identity. A later branch rename updates the proxy's **canonical** hostname and keeps the spawn-time hostname(s) as aliases to the same backend until the service stops or restarts. Restarting the service re-registers under the current branch and drops prior aliases.
+
+Routes are keyed by `(workspaceId, scriptName)`: re-registering the same script replaces any prior hostname for that pair. Archive and process exit remove the workspace's proxy routes so projections never advertise an unregistered live URL.
+
 The listen address and public base URL can also be set via environment variables, which take precedence over `config.json`:
 
 | Variable                              | Description                                                               |

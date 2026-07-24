@@ -166,6 +166,27 @@ describe("buildWorkspaceServiceEnv", () => {
     });
   });
 
+  it("prefers the registered self route for PASEO_URL over the branch formula", () => {
+    expect(
+      buildWorkspaceServiceEnv({
+        scriptName: "web",
+        projectSlug: "paseo",
+        branchName: "feature-new",
+        daemonPort: 6767,
+        daemonListenHost: null,
+        peers: [{ scriptName: "web", port: 5173 }],
+        registeredSelfRoute: {
+          hostname: "web--feature-spawned--paseo.localhost",
+          projectSlug: "paseo",
+          scriptName: "web",
+        },
+      }),
+    ).toMatchObject({
+      PASEO_URL: "http://web--feature-spawned--paseo.localhost:6767",
+      PASEO_SERVICE_WEB_URL: "http://web--feature-spawned--paseo.localhost:6767",
+    });
+  });
+
   it("throws when normalized peer env names collide", () => {
     expect(() =>
       buildWorkspaceServiceEnv({

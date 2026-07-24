@@ -1,4 +1,8 @@
-import { projectServiceProxyUrls } from "./service-proxy.js";
+import {
+  projectRegisteredServiceProxyUrls,
+  projectServiceProxyUrls,
+  type ServiceProxyRouteEntry,
+} from "./service-proxy.js";
 
 export interface WorkspaceServicePeer {
   scriptName: string;
@@ -13,6 +17,11 @@ export interface BuildWorkspaceServiceEnvOptions {
   daemonListenHost: string | null | undefined;
   serviceProxyPublicBaseUrl?: string | null;
   peers: readonly WorkspaceServicePeer[];
+  /** When set, self PASEO_URL comes from the registered route (spawn identity snapshot). */
+  registeredSelfRoute?: Pick<
+    ServiceProxyRouteEntry,
+    "hostname" | "publicHostname" | "publicBaseUrl" | "projectSlug" | "scriptName"
+  >;
 }
 
 export function normalizeServiceEnvName(scriptName: string): string {
@@ -38,13 +47,18 @@ export function buildWorkspaceServiceEnv(
     PASEO_PORT: String(selfPeer.port),
   };
 
-  const selfProxyUrl = buildServiceProxyUrl({
-    projectSlug: options.projectSlug,
-    branchName: options.branchName,
-    scriptName: options.scriptName,
-    daemonPort: options.daemonPort,
-    serviceProxyPublicBaseUrl: options.serviceProxyPublicBaseUrl,
-  });
+  const selfProxyUrl = options.registeredSelfRoute
+    ? projectRegisteredServiceProxyUrls({
+        route: options.registeredSelfRoute,
+        daemonPort: options.daemonPort,
+      }).proxyUrl
+    : buildServiceProxyUrl({
+        projectSlug: options.projectSlug,
+        branchName: options.branchName,
+        scriptName: options.scriptName,
+        daemonPort: options.daemonPort,
+        serviceProxyPublicBaseUrl: options.serviceProxyPublicBaseUrl,
+      });
   if (selfProxyUrl) {
     env.PASEO_URL = selfProxyUrl;
   }
@@ -53,13 +67,16 @@ export function buildWorkspaceServiceEnv(
     const envName = normalizeServiceEnvName(peer.scriptName);
     env[`PASEO_SERVICE_${envName}_PORT`] = String(peer.port);
 
-    const peerProxyUrl = buildServiceProxyUrl({
-      projectSlug: options.projectSlug,
-      branchName: options.branchName,
-      scriptName: peer.scriptName,
-      daemonPort: options.daemonPort,
-      serviceProxyPublicBaseUrl: options.serviceProxyPublicBaseUrl,
-    });
+    const peerProxyUrl =
+      peer.scriptName === options.scriptName && options.registeredSelfRoute
+        ? selfProxyUrl
+        : buildServiceProxyUrl({
+            projectSlug: options.projectSlug,
+            branchName: options.branchName,
+            scriptName: peer.scriptName,
+            daemonPort: options.daemonPort,
+            serviceProxyPublicBaseUrl: options.serviceProxyPublicBaseUrl,
+          });
     if (peerProxyUrl) {
       env[`PASEO_SERVICE_${envName}_URL`] = peerProxyUrl;
     }

@@ -293,4 +293,137 @@ describe("service proxy subsystem shape", () => {
       port: 4000,
     });
   });
+
+  it("replaces prior hostnames when the same workspace/script registers under a new branch", () => {
+    const serviceProxy = createServiceProxySubsystem({ logger });
+    serviceProxy.registerWorkspaceService({
+      workspaceId: "workspace-a",
+      projectSlug: "example-app",
+      branchName: "topic/old",
+      scriptName: "web",
+      port: 64064,
+    });
+    serviceProxy.registerWorkspaceService({
+      workspaceId: "workspace-a",
+      projectSlug: "example-app",
+      branchName: "topic/new",
+      scriptName: "web",
+      port: 64065,
+    });
+
+    expect(
+      serviceProxy.getHealthTargetForHostname("web--topic-old--example-app.localhost"),
+    ).toBeNull();
+    expect(
+      serviceProxy.getHealthTargetForHostname("web--topic-new--example-app.localhost"),
+    ).toMatchObject({
+      workspaceId: "workspace-a",
+      scriptName: "web",
+      port: 64065,
+    });
+    expect(serviceProxy.getWorkspaceHealthTargets("workspace-a")).toEqual([
+      expect.objectContaining({
+        hostname: "web--topic-new--example-app.localhost",
+        port: 64065,
+      }),
+    ]);
+  });
+
+  it("removeWorkspaceService clears every route for the workspace script", () => {
+    const routes = new ServiceProxyRouteRegistry();
+    routes.registerRoute({
+      hostname: "web--topic-old--example-app.localhost",
+      port: 64064,
+      workspaceId: "workspace-a",
+      projectSlug: "example-app",
+      scriptName: "web",
+    });
+    routes.registerRoute({
+      hostname: "web--topic-new--example-app.localhost",
+      port: 64065,
+      workspaceId: "workspace-a",
+      projectSlug: "example-app",
+      scriptName: "web",
+    });
+
+    routes.removeWorkspaceService({ workspaceId: "workspace-a", scriptName: "web" });
+
+    expect(routes.listRoutesForWorkspace("workspace-a")).toEqual([]);
+    expect(routes.getRouteEntry("web--topic-old--example-app.localhost")).toBeNull();
+    expect(routes.getRouteEntry("web--topic-new--example-app.localhost")).toBeNull();
+  });
+
+  it("removeRoutesForWorkspace clears all routes for the workspace", () => {
+    const serviceProxy = createServiceProxySubsystem({ logger });
+    serviceProxy.registerWorkspaceService({
+      workspaceId: "workspace-a",
+      projectSlug: "repo",
+      branchName: "main",
+      scriptName: "api",
+      port: 3000,
+    });
+    serviceProxy.registerWorkspaceService({
+      workspaceId: "workspace-a",
+      projectSlug: "repo",
+      branchName: "main",
+      scriptName: "web",
+      port: 3001,
+    });
+    serviceProxy.registerWorkspaceService({
+      workspaceId: "workspace-b",
+      projectSlug: "other",
+      branchName: "main",
+      scriptName: "api",
+      port: 3002,
+    });
+
+    serviceProxy.removeRoutesForWorkspace("workspace-a");
+
+    expect(serviceProxy.getWorkspaceHealthTargets("workspace-a")).toEqual([]);
+    expect(serviceProxy.getHealthTargetForHostname("api--other.localhost")).toMatchObject({
+      workspaceId: "workspace-b",
+      port: 3002,
+    });
+  });
+
+  it("keeps prior hostnames as aliases when branch routes are replaced", () => {
+    const routes = new ServiceProxyRouteRegistry();
+    routes.registerWorkspaceService({
+      workspaceId: "workspace-a",
+      projectSlug: "paseo",
+      branchName: "feature/auth",
+      scriptName: "api",
+      port: 3001,
+      publicBaseUrl: "https://services.example.com",
+    });
+
+    expect(
+      routes.replaceWorkspaceBranchRoutes({
+        workspaceId: "workspace-a",
+        newBranch: "feature/billing",
+      }),
+    ).toBe(true);
+
+    expect(routes.findRoute("api--feature-billing--paseo.localhost")).toEqual({
+      hostname: "api--feature-billing--paseo.localhost",
+      port: 3001,
+    });
+    expect(routes.findRoute("api--feature-auth--paseo.localhost")).toEqual({
+      hostname: "api--feature-billing--paseo.localhost",
+      port: 3001,
+    });
+    expect(routes.findRoute("api--feature-auth--paseo.services.example.com")).toEqual({
+      hostname: "api--feature-billing--paseo.localhost",
+      port: 3001,
+    });
+    expect(routes.getRouteEntry("api--feature-billing--paseo.localhost")).toMatchObject({
+      hostname: "api--feature-billing--paseo.localhost",
+      publicHostname: "api--feature-billing--paseo.services.example.com",
+      previousHostnames: [
+        "api--feature-auth--paseo.localhost",
+        "api--feature-auth--paseo.services.example.com",
+      ],
+      port: 3001,
+    });
+  });
 });

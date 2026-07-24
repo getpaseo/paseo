@@ -73,7 +73,7 @@ function registerRoute(
 }
 
 describe("script-route-branch-handler", () => {
-  it("updates routes on branch rename by removing old hostnames and registering new ones", () => {
+  it("updates routes on branch rename while keeping prior hostnames as aliases", () => {
     const routeStore = new ScriptRouteStore();
     registerRoute(routeStore, {
       hostname: "api--feature-auth--paseo.localhost",
@@ -89,7 +89,10 @@ describe("script-route-branch-handler", () => {
 
     handleBranchChange("workspace-a", "feature/auth", "feature/billing");
 
-    expect(routeStore.findRoute("api--feature-auth--paseo.localhost")).toBeNull();
+    expect(routeStore.findRoute("api--feature-auth--paseo.localhost")).toEqual({
+      hostname: "api--feature-billing--paseo.localhost",
+      port: 3001,
+    });
     expect(routeStore.findRoute("api--feature-billing--paseo.localhost")).toEqual({
       hostname: "api--feature-billing--paseo.localhost",
       port: 3001,
@@ -175,7 +178,10 @@ describe("script-route-branch-handler", () => {
 
     handleBranchChange("workspace-a", "feature/auth", "feature/billing");
 
-    expect(routeStore.findRoute("api--feature-auth--paseo.services.example.com")).toBeNull();
+    expect(routeStore.findRoute("api--feature-auth--paseo.services.example.com")).toEqual({
+      hostname: "api--feature-billing--paseo.localhost",
+      port: 3001,
+    });
     expect(routeStore.findRoute("api--feature-billing--paseo.services.example.com")).toEqual({
       hostname: "api--feature-billing--paseo.localhost",
       port: 3001,
@@ -185,6 +191,10 @@ describe("script-route-branch-handler", () => {
         hostname: "api--feature-billing--paseo.localhost",
         publicHostname: "api--feature-billing--paseo.services.example.com",
         publicBaseUrl: "https://services.example.com:8443",
+        previousHostnames: [
+          "api--feature-auth--paseo.localhost",
+          "api--feature-auth--paseo.services.example.com",
+        ],
         port: 3001,
         workspaceId: "workspace-a",
         projectSlug: "paseo",
@@ -224,6 +234,7 @@ describe("script-route-branch-handler", () => {
     expect(routeStore.listRoutesForWorkspace("workspace-a")).toEqual([
       {
         hostname: "api--feature-billing--paseo.localhost",
+        previousHostnames: ["api--feature-auth--paseo.localhost"],
         port: 3001,
         workspaceId: "workspace-a",
         projectSlug: "paseo",
@@ -231,6 +242,7 @@ describe("script-route-branch-handler", () => {
       },
       {
         hostname: "web--feature-billing--paseo.localhost",
+        previousHostnames: ["web--feature-auth--paseo.localhost"],
         port: 3002,
         workspaceId: "workspace-a",
         projectSlug: "paseo",
@@ -298,6 +310,7 @@ describe("script-route-branch-handler", () => {
       expect(routeStore.listRoutesForWorkspace(workspace.repoDir)).toEqual([
         {
           hostname: "api--feature-billing--repo.localhost",
+          previousHostnames: ["api--feature-auth--repo.localhost"],
           port: 3001,
           workspaceId: workspace.repoDir,
           projectSlug: "repo",

@@ -4405,6 +4405,7 @@ export class Session {
 
   private async teardownArchivedWorkspace(workspaceId: string): Promise<void> {
     this.workspaceGitObserver.removeForWorkspaceId(workspaceId);
+    this.serviceProxy?.removeRoutesForWorkspace(workspaceId);
     this.scriptRuntimeStore?.removeForWorkspace(workspaceId);
     releaseWorkspaceServicePortPlan(workspaceId);
   }

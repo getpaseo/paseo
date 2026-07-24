@@ -596,4 +596,57 @@ describe("script-status-projection", () => {
       workspace.cleanup();
     }
   });
+
+  it("does not advertise predicted proxy URLs for a running service without a registered route", () => {
+    const workspaceId = "workspace-unregistered-running";
+    const workspace = createWorkspaceRepo({
+      paseoConfig: {
+        scripts: {
+          web: { type: "service", command: "npm run web", port: 3000 },
+        },
+      },
+    });
+    const routeStore = new ScriptRouteStore();
+    const runtimeStore = new WorkspaceScriptRuntimeStore();
+    runtimeStore.set({
+      workspaceId,
+      scriptName: "web",
+      type: "service",
+      lifecycle: "running",
+      terminalId: "term-web",
+      exitCode: null,
+    });
+
+    try {
+      expect(
+        buildPayloads({
+          workspaceId,
+          workspaceDirectory: workspace.repoDir,
+          routeStore,
+          runtimeStore,
+          daemonPort: 6767,
+          gitMetadata: {
+            projectSlug: "repo",
+            currentBranch: "topic/current",
+          },
+        }),
+      ).toEqual([
+        {
+          scriptName: "web",
+          type: "service",
+          hostname: "web--topic-current--repo.localhost",
+          port: null,
+          localProxyUrl: null,
+          publicProxyUrl: null,
+          proxyUrl: null,
+          lifecycle: "running",
+          health: null,
+          exitCode: null,
+          terminalId: "term-web",
+        },
+      ]);
+    } finally {
+      workspace.cleanup();
+    }
+  });
 });

@@ -23,6 +23,8 @@ export interface ServiceProxyRouteEntry extends ServiceProxyRoute {
   localHostname?: string;
   publicHostname?: string | null;
   publicBaseUrl?: string | null;
+  /** Prior local/public hostnames kept as aliases after identity changes (e.g. branch rename). */
+  previousHostnames?: string[];
 }
 
 export interface ServiceProxyUrlProjection {
@@ -353,6 +355,33 @@ function sameRouteOwner(left: ServiceProxyRouteEntry, right: ServiceProxyRouteEn
   return left.workspaceId === right.workspaceId && left.scriptName === right.scriptName;
 }
 
+function collectPreviousHostnames(params: {
+  route: ServiceProxyRouteEntry;
+  nextHostname: string;
+  nextPublicHostname: string | null;
+}): string[] {
+  const nextHostnames = new Set(
+    [params.nextHostname, params.nextPublicHostname]
+      .filter((hostname): hostname is string => Boolean(hostname))
+      .map((hostname) => hostname.toLowerCase()),
+  );
+  const collected: string[] = [];
+  const seen = new Set<string>();
+  for (const hostname of [
+    ...(params.route.previousHostnames ?? []),
+    params.route.hostname,
+    ...(params.route.publicHostname ? [params.route.publicHostname] : []),
+  ]) {
+    const normalized = hostname.toLowerCase();
+    if (nextHostnames.has(normalized) || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    collected.push(hostname);
+  }
+  return collected;
+}
+
 export class ServiceProxyRouteCollisionError extends Error {
   constructor(
     public readonly hostname: string,
@@ -395,6 +424,14 @@ export class ServiceProxyRouteRegistry {
       projectSlug: input.projectSlug,
       scriptName: input.scriptName,
     };
+    const existingForScript = this.listRoutesForWorkspace(input.workspaceId).filter(
+      (route) => route.scriptName === input.scriptName,
+    );
+    const replacingHostnames = new Set(existingForScript.map((route) => route.hostname));
+    this.assertCanRegister(entry, replacingHostnames);
+    for (const existing of existingForScript) {
+      this.removeRoute(existing.hostname);
+    }
     this.registerRoute(entry);
     return { ...entry };
   }
@@ -421,25 +458,35 @@ export class ServiceProxyRouteRegistry {
     if (routes.length === 0) {
       return false;
     }
-    const updates = routes.map((route) => ({
-      oldHostname: route.hostname,
-      entry: this.toStoredEntry({
-        ...route,
-        hostname: buildLocalServiceHostname({
-          projectSlug: route.projectSlug,
-          branchName: params.newBranch,
-          scriptName: route.scriptName,
+    const updates = routes.map((route) => {
+      const hostname = buildLocalServiceHostname({
+        projectSlug: route.projectSlug,
+        branchName: params.newBranch,
+        scriptName: route.scriptName,
+      });
+      const publicHostname = route.publicBaseUrl
+        ? buildPublicServiceHostname({
+            projectSlug: route.projectSlug,
+            branchName: params.newBranch,
+            scriptName: route.scriptName,
+            publicBaseUrl: route.publicBaseUrl,
+          })
+        : null;
+      const previousHostnames = collectPreviousHostnames({
+        route,
+        nextHostname: hostname,
+        nextPublicHostname: publicHostname,
+      });
+      return {
+        oldHostname: route.hostname,
+        entry: this.toStoredEntry({
+          ...route,
+          hostname,
+          publicHostname,
+          ...(previousHostnames.length > 0 ? { previousHostnames } : {}),
         }),
-        publicHostname: route.publicBaseUrl
-          ? buildPublicServiceHostname({
-              projectSlug: route.projectSlug,
-              branchName: params.newBranch,
-              scriptName: route.scriptName,
-              publicBaseUrl: route.publicBaseUrl,
-            })
-          : null,
-      }),
-    }));
+      };
+    });
 
     if (
       updates.every(
@@ -480,16 +527,21 @@ export class ServiceProxyRouteRegistry {
   }
 
   removeRouteForWorkspaceScript(params: { workspaceId: string; scriptName: string }): void {
-    const route = this.listRoutesForWorkspace(params.workspaceId).find(
-      (entry) => entry.scriptName === params.scriptName,
-    );
-    if (route) {
-      this.removeRoute(route.hostname);
+    for (const route of this.listRoutesForWorkspace(params.workspaceId)) {
+      if (route.scriptName === params.scriptName) {
+        this.removeRoute(route.hostname);
+      }
     }
   }
 
   removeWorkspaceService(params: { workspaceId: string; scriptName: string }): void {
     this.removeRouteForWorkspaceScript(params);
+  }
+
+  removeRoutesForWorkspace(workspaceId: string): void {
+    for (const route of this.listRoutesForWorkspace(workspaceId)) {
+      this.removeRoute(route.hostname);
+    }
   }
 
   projectUrls(input: {
@@ -651,11 +703,12 @@ export class ServiceProxyRouteRegistry {
   }
 
   private toStoredEntry(entry: ServiceProxyRouteEntry): ServiceProxyRouteEntry {
-    const { publicHostname, publicBaseUrl, ...requiredEntry } = entry;
+    const { publicHostname, publicBaseUrl, previousHostnames, ...requiredEntry } = entry;
     return {
       ...requiredEntry,
       ...(publicHostname ? { publicHostname } : {}),
       ...(publicBaseUrl ? { publicBaseUrl } : {}),
+      ...(previousHostnames && previousHostnames.length > 0 ? { previousHostnames } : {}),
     };
   }
 
@@ -665,11 +718,13 @@ export class ServiceProxyRouteRegistry {
   }
 
   private getRouteHostnames(
-    entry: Pick<ServiceProxyRouteEntry, "hostname" | "publicHostname">,
+    entry: Pick<ServiceProxyRouteEntry, "hostname" | "publicHostname" | "previousHostnames">,
   ): string[] {
-    return [entry.hostname, ...(entry.publicHostname ? [entry.publicHostname] : [])].map((host) =>
-      host.toLowerCase(),
-    );
+    return [
+      entry.hostname,
+      ...(entry.publicHostname ? [entry.publicHostname] : []),
+      ...(entry.previousHostnames ?? []),
+    ].map((host) => host.toLowerCase());
   }
 
   private addHostnameToWorkspaceIndex(workspaceId: string, hostname: string): void {
@@ -748,6 +803,7 @@ export function createScriptProxyUpgradeHandler({
 export interface ServiceProxySubsystem {
   registerWorkspaceService(input: RegisterWorkspaceServiceInput): ServiceProxyRouteEntry;
   removeWorkspaceService(params: { workspaceId: string; scriptName: string }): void;
+  removeRoutesForWorkspace(workspaceId: string): void;
   removeServiceRoutesByHostnames(hostnames: string[]): void;
   replaceWorkspaceBranchRoutes(params: { workspaceId: string; newBranch: string | null }): boolean;
   getHealthCheckTargets(): ServiceProxyHealthTarget[];
@@ -813,6 +869,10 @@ class NodeServiceProxySubsystem implements ServiceProxySubsystem {
 
   removeWorkspaceService(params: { workspaceId: string; scriptName: string }): void {
     this.routes.removeRouteForWorkspaceScript(params);
+  }
+
+  removeRoutesForWorkspace(workspaceId: string): void {
+    this.routes.removeRoutesForWorkspace(workspaceId);
   }
 
   removeServiceRoutesByHostnames(hostnames: string[]): void {

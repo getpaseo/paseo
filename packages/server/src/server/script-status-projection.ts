@@ -10,6 +10,7 @@ import { deriveProjectSlug } from "./workspace-git-metadata.js";
 import type { ScriptHealthEntry, ScriptHealthState } from "./script-health-monitor.js";
 import type {
   ServiceProxySubsystem,
+  ServiceProxyUrlProjection,
   ServiceProxyWorkspaceScriptProjection,
 } from "./service-proxy.js";
 import type { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
@@ -113,6 +114,38 @@ function buildConfiguredPlainScriptPayload(
   };
 }
 
+function emptyServiceUrls(): ServiceProxyUrlProjection {
+  return { localProxyUrl: null, publicProxyUrl: null, proxyUrl: null };
+}
+
+function resolveProjectedServiceUrls(params: {
+  registeredState: ServiceProxyWorkspaceScriptProjection | null;
+  predicted: ServiceProxyUrlProjection;
+  lifecycle: WorkspaceScriptPayload["lifecycle"];
+}): ServiceProxyUrlProjection {
+  if (params.registeredState) {
+    return params.registeredState;
+  }
+  if (params.lifecycle === "running") {
+    return emptyServiceUrls();
+  }
+  return params.predicted;
+}
+
+function resolveProjectedServicePort(params: {
+  registeredState: ServiceProxyWorkspaceScriptProjection | null;
+  lifecycle: WorkspaceScriptPayload["lifecycle"];
+  configuredPort: number | null;
+}): number | null {
+  if (params.registeredState) {
+    return params.registeredState.port;
+  }
+  if (params.lifecycle === "running") {
+    return null;
+  }
+  return params.configuredPort;
+}
+
 function buildConfiguredScriptPayload(
   scriptName: string,
   config: ReturnType<typeof getScriptConfigs> extends Map<string, infer V> ? V : never,
@@ -127,7 +160,9 @@ function buildConfiguredScriptPayload(
 
   const type = "service";
   const configuredPort = config.port ?? null;
-  const hostname = (
+  const lifecycle = runtimeEntry?.lifecycle ?? "stopped";
+  const registeredState = serviceState !== null && serviceState.port !== null ? serviceState : null;
+  const predicted =
     serviceState ??
     ctx.serviceProxy.projectWorkspaceService({
       projectSlug: ctx.projectSlug,
@@ -135,28 +170,20 @@ function buildConfiguredScriptPayload(
       scriptName,
       daemonPort: ctx.daemonPort,
       publicBaseUrl: ctx.serviceProxyPublicBaseUrl,
-    })
-  ).hostname;
-
-  const urls =
-    serviceState ??
-    ctx.serviceProxy.projectUrls({
-      projectSlug: ctx.projectSlug,
-      branchName: ctx.branchName,
-      scriptName,
-      daemonPort: ctx.daemonPort,
-      publicBaseUrl: ctx.serviceProxyPublicBaseUrl,
     });
+
+  const hostname = registeredState ? registeredState.hostname : predicted.hostname;
+  const urls = resolveProjectedServiceUrls({ registeredState, predicted, lifecycle });
 
   return {
     scriptName,
     type,
     hostname,
-    port: serviceState?.port ?? configuredPort,
+    port: resolveProjectedServicePort({ registeredState, lifecycle, configuredPort }),
     localProxyUrl: urls.localProxyUrl,
     publicProxyUrl: urls.publicProxyUrl,
     proxyUrl: urls.proxyUrl,
-    lifecycle: runtimeEntry?.lifecycle ?? "stopped",
+    lifecycle,
     health: toWireHealth(ctx.resolveHealth?.(hostname) ?? null),
     exitCode: runtimeEntry?.exitCode ?? null,
     terminalId: runtimeEntry?.terminalId ?? null,
@@ -169,43 +196,47 @@ function buildOrphanRuntimePayload(
   ctx: BuildPayloadContext,
 ): WorkspaceScriptPayload {
   const type = runtimeEntry.type;
-  const hostname =
-    type === "service"
-      ? (
-          serviceState ??
-          ctx.serviceProxy.projectWorkspaceService({
-            projectSlug: ctx.projectSlug,
-            branchName: ctx.branchName,
-            scriptName: runtimeEntry.scriptName,
-            daemonPort: ctx.daemonPort,
-            publicBaseUrl: ctx.serviceProxyPublicBaseUrl,
-          })
-        ).hostname
-      : runtimeEntry.scriptName;
-  const urls =
+  if (type !== "service") {
+    return {
+      scriptName: runtimeEntry.scriptName,
+      type,
+      hostname: runtimeEntry.scriptName,
+      port: null,
+      proxyUrl: null,
+      lifecycle: runtimeEntry.lifecycle,
+      health: null,
+      exitCode: runtimeEntry.exitCode,
+      terminalId: runtimeEntry.terminalId,
+    };
+  }
+
+  const registeredState = serviceState !== null && serviceState.port !== null ? serviceState : null;
+  const predicted =
     serviceState ??
-    ctx.serviceProxy.projectUrls({
+    ctx.serviceProxy.projectWorkspaceService({
       projectSlug: ctx.projectSlug,
       branchName: ctx.branchName,
       scriptName: runtimeEntry.scriptName,
       daemonPort: ctx.daemonPort,
       publicBaseUrl: ctx.serviceProxyPublicBaseUrl,
     });
+  const hostname = registeredState?.hostname ?? predicted.hostname;
+  const urls = resolveProjectedServiceUrls({
+    registeredState,
+    predicted,
+    lifecycle: runtimeEntry.lifecycle,
+  });
 
   return {
     scriptName: runtimeEntry.scriptName,
     type,
     hostname,
-    port: type === "service" ? (serviceState?.port ?? null) : null,
-    ...(type === "service"
-      ? { localProxyUrl: urls.localProxyUrl, publicProxyUrl: urls.publicProxyUrl }
-      : {}),
-    proxyUrl: type === "service" ? urls.proxyUrl : null,
+    port: registeredState?.port ?? null,
+    localProxyUrl: urls.localProxyUrl,
+    publicProxyUrl: urls.publicProxyUrl,
+    proxyUrl: urls.proxyUrl,
     lifecycle: runtimeEntry.lifecycle,
-    health:
-      type === "service" && serviceState?.port !== null
-        ? toWireHealth(ctx.resolveHealth?.(hostname) ?? null)
-        : null,
+    health: registeredState ? toWireHealth(ctx.resolveHealth?.(hostname) ?? null) : null,
     exitCode: runtimeEntry.exitCode,
     terminalId: runtimeEntry.terminalId,
   };

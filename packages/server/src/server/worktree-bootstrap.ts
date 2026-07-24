@@ -804,6 +804,14 @@ async function setupServiceScriptRoute(params: {
     });
   }
 
+  const registeredRoute = serviceProxy.registerWorkspaceService({
+    port,
+    workspaceId,
+    projectSlug,
+    branchName,
+    scriptName,
+    publicBaseUrl: serviceProxyPublicBaseUrl ?? null,
+  });
   const env = buildWorkspaceServiceEnv({
     scriptName,
     projectSlug,
@@ -812,15 +820,7 @@ async function setupServiceScriptRoute(params: {
     daemonListenHost,
     serviceProxyPublicBaseUrl,
     peers,
-  });
-
-  const registeredRoute = serviceProxy.registerWorkspaceService({
-    port,
-    workspaceId,
-    projectSlug,
-    branchName,
-    scriptName,
-    publicBaseUrl: serviceProxyPublicBaseUrl ?? null,
+    registeredSelfRoute: registeredRoute,
   });
   return { hostname: registeredRoute.hostname, port, env };
 }
