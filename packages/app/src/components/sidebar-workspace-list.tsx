@@ -114,7 +114,7 @@ import { useClearWorkspaceAttention } from "@/hooks/use-clear-workspace-attentio
 import type { PrHint } from "@/git/use-pr-status-query";
 import {
   buildSidebarProjectRowModel,
-  resolveSidebarProjectIconTarget,
+  resolveSidebarProjectIconTargets,
   type SidebarProjectHostTarget,
 } from "@/utils/sidebar-project-row-model";
 import { redirectIfArchivingActiveWorkspace } from "@/utils/sidebar-workspace-archive-redirect";
@@ -1938,6 +1938,16 @@ export function SidebarWorkspaceList({
   const supportsPinningByServerId = useHostFeatureMap(serverIds, "workspacePinning");
   const onToggleWorkspacePin = useSidebarWorkspacePinController();
   const showHostLabels = useMemo(() => shouldShowSidebarHostLabels(projects), [projects]);
+  // Status mode drops the project grouping, so its rows carry their own project
+  // icon. Project mode fetches the same icons inside ProjectModeList for its
+  // project headers, so only the active mode requests them.
+  const statusProjectIconTargets = useMemo(
+    () => (groupMode === "status" ? resolveSidebarProjectIconTargets(projects) : []),
+    [groupMode, projects],
+  );
+  const statusProjectIconByProjectKey = useProjectIconDataByProjectKey({
+    projects: statusProjectIconTargets,
+  });
 
   const content =
     groupMode === "status" ? (
@@ -1946,6 +1956,7 @@ export function SidebarWorkspaceList({
         pinnedGroups={pinnedGroups}
         workspaceEntriesByKey={workspaceEntriesByKey}
         projectNamesByKey={projectNamesByKey}
+        projectIconByProjectKey={statusProjectIconByProjectKey}
         shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
         onWorkspacePress={onWorkspacePress}
         hostLabelByServerId={hostLabelByServerId}
@@ -1984,6 +1995,7 @@ function SidebarStatusModeWrapper({
   pinnedGroups,
   workspaceEntriesByKey,
   projectNamesByKey,
+  projectIconByProjectKey,
   shortcutIndexByWorkspaceKey: _projectShortcutIndex,
   onWorkspacePress,
   hostLabelByServerId,
@@ -1996,6 +2008,7 @@ function SidebarStatusModeWrapper({
   pinnedGroups: PinnedSidebarGroups;
   workspaceEntriesByKey: ReadonlyMap<string, SidebarWorkspaceEntry>;
   projectNamesByKey: Map<string, string>;
+  projectIconByProjectKey: ReadonlyMap<string, string | null>;
   shortcutIndexByWorkspaceKey: Map<string, number>;
   onWorkspacePress?: () => void;
   hostLabelByServerId: ReadonlyMap<string, string>;
@@ -2014,6 +2027,7 @@ function SidebarStatusModeWrapper({
         return entry ? [entry] : [];
       })}
       projectNamesByKey={projectNamesByKey}
+      projectIconByProjectKey={projectIconByProjectKey}
       shortcutIndexByWorkspaceKey={_projectShortcutIndex}
       showShortcutBadges={showShortcutBadges}
       onWorkspacePress={onWorkspacePress}
@@ -2085,14 +2099,7 @@ function ProjectModeList({
     canToggle: canTogglePinnedChats,
     toggleExpanded: togglePinnedChatsExpanded,
   } = useLimitedSidebarGroup(pinnedChats);
-  const projectIconTargets = useMemo(
-    () =>
-      projects.flatMap((project) => {
-        const target = resolveSidebarProjectIconTarget(project);
-        return target ? [{ projectKey: project.projectKey, ...target }] : [];
-      }),
-    [projects],
-  );
+  const projectIconTargets = useMemo(() => resolveSidebarProjectIconTargets(projects), [projects]);
   const nativeScrollGestureProps = useMemo(
     () =>
       parentGestureRef

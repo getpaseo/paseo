@@ -42,6 +42,19 @@ export function resolveSidebarProjectIconTarget(
   return null;
 }
 
+export interface SidebarProjectIconTarget extends SidebarProjectHostTarget {
+  projectKey: string;
+}
+
+export function resolveSidebarProjectIconTargets(
+  projects: readonly SidebarProjectEntry[],
+): SidebarProjectIconTarget[] {
+  return projects.flatMap((project) => {
+    const target = resolveSidebarProjectIconTarget(project);
+    return target ? [{ projectKey: project.projectKey, ...target }] : [];
+  });
+}
+
 // A project can host a brand-new workspace on a host when that host can create a
 // git worktree (git projects) OR the host supports running multiple independent
 // workspaces per directory (`workspaceMultiplicity`), which is what lets non-git
