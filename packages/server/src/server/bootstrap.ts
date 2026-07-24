@@ -118,6 +118,7 @@ export async function fanOutReconciledWorkspaceUpdates(input: {
 
 import { VoiceAssistantWebSocketServer } from "./websocket-server.js";
 import { createGitHubService } from "../services/github-service.js";
+import { resolveForgeCliPath } from "../services/forge-cli/forge-cli-autoinstall-default.js";
 import { createPaseoWorktree as createRegisteredPaseoWorktree } from "./paseo-worktree-service.js";
 import { createWorkspaceProvisioningService } from "./session/workspace-provisioning/workspace-provisioning-service.js";
 import { createPaseoWorktreeWorkflow } from "./worktree-session.js";
@@ -787,11 +788,21 @@ export async function createPaseoDaemon(
     paseoHome: config.paseoHome,
     logger,
   });
-  const github = createGitHubService();
+  const github = createGitHubService({
+    resolveGhPath: () =>
+      resolveForgeCliPath("gh", {
+        paseoHome: config.paseoHome,
+        toolsDir: config.toolsDir,
+        autoInstallEnabled: config.forgeCliAutoInstall,
+        logger,
+      }),
+  });
   const workspaceGitService = new WorkspaceGitServiceImpl({
     logger,
     paseoHome: config.paseoHome,
     worktreesRoot: config.worktreesRoot,
+    toolsDir: config.toolsDir,
+    forgeCliAutoInstall: config.forgeCliAutoInstall,
     deps: {
       forgeOverrides: { github },
     },

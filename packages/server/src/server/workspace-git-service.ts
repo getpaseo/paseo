@@ -295,6 +295,8 @@ interface WorkspaceGitServiceOptions {
   logger: pino.Logger;
   paseoHome: string;
   worktreesRoot?: string;
+  toolsDir?: string;
+  forgeCliAutoInstall?: boolean;
   deps?: Partial<WorkspaceGitServiceDependencies>;
 }
 
@@ -431,7 +433,14 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     this.worktreesRoot = options.worktreesRoot;
     this.deps = resolveWorkspaceGitServiceDeps(options.deps);
     this.forgeResolver = createForgeResolver({
-      createService: (forge) => this.deps.forgeOverrides?.[forge] ?? createForgeService(forge),
+      createService: (forge) =>
+        this.deps.forgeOverrides?.[forge] ??
+        createForgeService(forge, {
+          paseoHome: this.paseoHome,
+          logger: this.logger,
+          toolsDir: options.toolsDir,
+          forgeCliAutoInstall: options.forgeCliAutoInstall,
+        }),
     });
   }
 

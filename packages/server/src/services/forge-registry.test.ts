@@ -1,7 +1,13 @@
 import { FORGE_IDS } from "@getpaseo/protocol/forge-manifest";
+import pino from "pino";
 import { describe, expect, it, vi } from "vitest";
 
-import { createForgeService, defaultForgeRegistry, ForgeRegistry } from "./forge-registry.js";
+import {
+  createForgeService,
+  defaultForgeRegistry,
+  ForgeRegistry,
+  type ForgeServiceContext,
+} from "./forge-registry.js";
 import { createGitHubService } from "./github-service.js";
 
 describe("forge registry", () => {
@@ -20,6 +26,31 @@ describe("forge registry", () => {
 
   it("returns null for an unregistered forge", () => {
     expect(createForgeService("bitbucket")).toBeNull();
+  });
+
+  it("threads the daemon context (paseoHome/logger/toolsDir) into an adapter's factory", () => {
+    let receivedContext: ForgeServiceContext | undefined;
+    const registry = new ForgeRegistry([
+      [
+        "contextual",
+        {
+          createService: (context) => {
+            receivedContext = context;
+            return createGitHubService();
+          },
+        },
+      ],
+    ]);
+
+    const context: ForgeServiceContext = {
+      paseoHome: "/tmp/paseo-home",
+      logger: pino({ level: "silent" }),
+      toolsDir: "/tmp/paseo-home/tools",
+      forgeCliAutoInstall: false,
+    };
+    registry.create("contextual", context);
+
+    expect(receivedContext).toBe(context);
   });
 
   it("keeps the built-in registry in sync with the forge manifest", () => {

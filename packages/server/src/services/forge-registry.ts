@@ -1,11 +1,27 @@
+import type pino from "pino";
 import { getForgeDefinition } from "@getpaseo/protocol/forge-manifest";
 import { normalizeHost } from "@getpaseo/protocol/git-remote";
+import { resolveForgeCliPath } from "./forge-cli/forge-cli-autoinstall-default.js";
+import type { ForgeCliId } from "./forge-cli/forge-cli-catalog.js";
 import { createGitHubService, probeGitHubHost } from "./github-service.js";
 import type { ForgeService } from "./forge-service.js";
 import { createGiteaService, resolveGiteaFamilyForge } from "./gitea-service.js";
 import { createGitLabService, probeGitLabHost } from "./gitlab-service.js";
 
-export type ForgeServiceFactory = () => ForgeService;
+/**
+ * Real daemon config (paseoHome/logger/auto-install flag), passed down to
+ * each adapter's CLI resolver so it doesn't fall back to module-level
+ * defaults. Optional because createForgeService("gitlab") with no context
+ * still works, it just uses ensureForgeCliWithDefaults's own fallbacks.
+ */
+export interface ForgeServiceContext {
+  paseoHome: string;
+  logger: pino.Logger;
+  toolsDir?: string;
+  forgeCliAutoInstall?: boolean;
+}
+
+export type ForgeServiceFactory = (context?: ForgeServiceContext) => ForgeService;
 
 export interface ForgeAdapterRegistration {
   createService: ForgeServiceFactory;
@@ -52,13 +68,13 @@ export class ForgeRegistry {
     return normalizedForge ? this.#adapters.has(normalizedForge) : false;
   }
 
-  create(forge: string): ForgeService | null {
+  create(forge: string, context?: ForgeServiceContext): ForgeService | null {
     const normalizedForge = parseForgeId(forge);
     if (!normalizedForge) {
       return null;
     }
     const adapter = this.#adapters.get(normalizedForge);
-    return adapter ? adapter.createService() : null;
+    return adapter ? adapter.createService(context) : null;
   }
 
   matchHost(host: string): string | null {
@@ -130,6 +146,22 @@ function matchesCloudHost(forgeId: string): ((host: string) => boolean) | undefi
   return (host) => normalized.has(normalizeHost(host));
 }
 
+// Wraps resolveForgeCliPath (the single PATH-then-install resolver, shared
+// with github-service.ts/gitlab-service.ts/gitea-service.ts's own bare
+// resolveXPath fallbacks) with whatever context this registry call has.
+function resolveCliPathWithAutoInstall(
+  cli: ForgeCliId,
+  context: ForgeServiceContext | undefined,
+): () => Promise<string | null> {
+  return () =>
+    resolveForgeCliPath(cli, {
+      paseoHome: context?.paseoHome,
+      logger: context?.logger,
+      toolsDir: context?.toolsDir,
+      autoInstallEnabled: context?.forgeCliAutoInstall,
+    });
+}
+
 export const defaultForgeRegistry = new ForgeRegistry([
   // GitHub Enterprise Server is recognized at runtime by probeHost, exactly like
   // self-hosted GitLab/Gitea: github.com short-circuits via matchHost, so the
@@ -138,7 +170,8 @@ export const defaultForgeRegistry = new ForgeRegistry([
   [
     "github",
     {
-      createService: createGitHubService,
+      createService: (context) =>
+        createGitHubService({ resolveGhPath: resolveCliPathWithAutoInstall("gh", context) }),
       matchesHost: matchesCloudHost("github"),
       probeHost: probeGitHubHost,
     },
@@ -146,7 +179,8 @@ export const defaultForgeRegistry = new ForgeRegistry([
   [
     "gitlab",
     {
-      createService: createGitLabService,
+      createService: (context) =>
+        createGitLabService({ resolveGlabPath: resolveCliPathWithAutoInstall("glab", context) }),
       matchesHost: matchesCloudHost("gitlab"),
       probeHost: probeGitLabHost,
     },
@@ -154,7 +188,8 @@ export const defaultForgeRegistry = new ForgeRegistry([
   [
     "gitea",
     {
-      createService: createGiteaService,
+      createService: (context) =>
+        createGiteaService({ resolveTeaPath: resolveCliPathWithAutoInstall("tea", context) }),
       matchesHost: matchesCloudHost("gitea"),
       probeHost: async (host) => (await resolveGiteaFamilyForge(host)) === "gitea",
     },
@@ -162,15 +197,26 @@ export const defaultForgeRegistry = new ForgeRegistry([
   [
     "forgejo",
     {
-      createService: createGiteaService,
+      createService: (context) =>
+        createGiteaService({ resolveTeaPath: resolveCliPathWithAutoInstall("tea", context) }),
       probeHost: async (host) => (await resolveGiteaFamilyForge(host)) === "forgejo",
     },
   ],
-  ["codeberg", { createService: createGiteaService, matchesHost: matchesCloudHost("codeberg") }],
+  [
+    "codeberg",
+    {
+      createService: (context) =>
+        createGiteaService({ resolveTeaPath: resolveCliPathWithAutoInstall("tea", context) }),
+      matchesHost: matchesCloudHost("codeberg"),
+    },
+  ],
 ]);
 
-export function createForgeService(forge: string): ForgeService | null {
-  return defaultForgeRegistry.create(forge);
+export function createForgeService(
+  forge: string,
+  context?: ForgeServiceContext,
+): ForgeService | null {
+  return defaultForgeRegistry.create(forge, context);
 }
 
 export function probeRegisteredForgeHost(host: string): Promise<string | null> {
