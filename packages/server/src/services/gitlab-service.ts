@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { parseGitRemoteLocation } from "@getpaseo/protocol/git-remote";
-import { findExecutable } from "../executable-resolution/executable-resolution.js";
+import { resolveForgeCliPath } from "./forge-cli/forge-cli-autoinstall-default.js";
 import {
   createCachedCliPathResolver,
   createForgeCliRunner,
@@ -256,7 +256,7 @@ type GitLabApprovals = z.infer<typeof GitLabApprovalsSchema>;
 const TIMELINE_PAGE_SIZE = 100;
 
 async function resolveGlabPath(): Promise<string | null> {
-  return findExecutable("glab");
+  return resolveForgeCliPath("glab");
 }
 
 const glabCliRunner = createForgeCliRunner({

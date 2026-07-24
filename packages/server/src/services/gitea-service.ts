@@ -4,6 +4,7 @@ import { parseGitHubRemoteIdentity, parseGitRemoteLocation } from "@getpaseo/pro
 import { findExecutable } from "../executable-resolution/executable-resolution.js";
 import { runGitCommand } from "../utils/run-git-command.js";
 import { execCommand } from "../utils/spawn.js";
+import { resolveForgeCliPath } from "./forge-cli/forge-cli-autoinstall-default.js";
 import {
   createCachedCliPathResolver,
   createForgeCliRunner,
@@ -368,7 +369,7 @@ interface GiteaTimelineBucket<T> {
 }
 
 async function resolveTeaPath(): Promise<string | null> {
-  return findExecutable("tea");
+  return resolveForgeCliPath("tea");
 }
 
 const teaCliRunner = createForgeCliRunner({

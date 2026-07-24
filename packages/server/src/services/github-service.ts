@@ -8,6 +8,7 @@ import { findExecutable } from "../executable-resolution/executable-resolution.j
 import { runGitCommand } from "../utils/run-git-command.js";
 import { execCommand } from "../utils/spawn.js";
 import { resolveSshHostname } from "../utils/ssh-hostname.js";
+import { resolveForgeCliPath } from "./forge-cli/forge-cli-autoinstall-default.js";
 import {
   CLI_AUTH_PROBE_TIMEOUT_MS,
   createForgeCliRunner,
@@ -1710,7 +1711,7 @@ function isGitHubStatusPending(status: CurrentPullRequestStatus | null): boolean
 }
 
 async function resolveGhPath(): Promise<string | null> {
-  return findExecutable("gh");
+  return resolveForgeCliPath("gh");
 }
 
 /**
