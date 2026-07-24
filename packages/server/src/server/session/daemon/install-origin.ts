@@ -1,13 +1,13 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { getErrorMessage } from "@getpaseo/protocol/error-utils";
 import { z } from "zod";
 import { isRealpathInsideRoot } from "../../../utils/path.js";
 import {
   PASEO_CLI_PACKAGE,
   type GlobalCliPackageManager,
   type GlobalPaseoInstall,
-  type PackageManagerName,
 } from "./global-cli.js";
 
 const PackageJsonSchema = z.object({ name: z.string().optional() }).passthrough();
@@ -36,6 +36,8 @@ export type ResolveGlobalCliSelfUpdateResult =
  * Managers are probed in order; the first one whose global install contains the
  * running daemon wins. When the owning install is linked or version-mismatched,
  * its reason is returned instead of silently falling through to another manager.
+ * A failed probe never passes for "not installed": other managers can still
+ * claim the daemon, and the failure is reported when no owner is found.
  */
 export async function resolveGlobalCliSelfUpdate(
   managers: readonly GlobalCliPackageManager[],
@@ -50,13 +52,20 @@ export async function resolveGlobalCliSelfUpdate(
     };
   }
 
-  const installedManagers: PackageManagerName[] = [];
+  let foundInstall = false;
+  const probeFailures: string[] = [];
   for (const manager of managers) {
-    const install = await manager.inspect();
+    let install: GlobalPaseoInstall | null;
+    try {
+      install = await manager.inspect();
+    } catch (error) {
+      probeFailures.push(getErrorMessage(error));
+      continue;
+    }
     if (!install) {
       continue;
     }
-    installedManagers.push(manager.name);
+    foundInstall = true;
 
     if (!installContainsDaemon(install, currentServerPackageRoot)) {
       continue;
@@ -66,10 +75,20 @@ export async function resolveGlobalCliSelfUpdate(
     return reason ? { ok: false, error: reason } : { ok: true, target: { manager, install } };
   }
 
-  if (installedManagers.length === 0) {
+  // A broken probe means we cannot trust the negative result, so surface the
+  // actionable failure instead of claiming the cli is missing.
+  if (probeFailures.length > 0) {
     return {
       ok: false,
-      error: `${PASEO_CLI_PACKAGE} is not installed globally with npm or pnpm on this host.`,
+      error: `Unable to inspect the global ${PASEO_CLI_PACKAGE} install (${probeFailures.join("; ")}).`,
+    };
+  }
+
+  if (!foundInstall) {
+    const managerNames = managers.map((manager) => manager.name).join(" or ");
+    return {
+      ok: false,
+      error: `${PASEO_CLI_PACKAGE} is not installed globally with ${managerNames} on this host.`,
     };
   }
 

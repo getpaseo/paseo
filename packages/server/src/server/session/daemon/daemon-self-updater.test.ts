@@ -67,6 +67,7 @@ function pnpmInstall(version: string): GlobalPaseoInstall {
 interface ManagerSpec {
   name: PackageManagerName;
   inspections: Array<GlobalPaseoInstall | null>;
+  inspectError?: string;
   installResult?: CommandResult;
   calls?: string[];
 }
@@ -76,6 +77,9 @@ function createManager(spec: ManagerSpec): GlobalCliPackageManager {
     name: spec.name,
     async inspect() {
       spec.calls?.push("inspect");
+      if (spec.inspectError !== undefined) {
+        throw new Error(spec.inspectError);
+      }
       if (spec.inspections.length === 0) {
         throw new Error(`Unexpected ${spec.name} inspect`);
       }
@@ -105,11 +109,17 @@ function createRuntime(input: {
   managers: GlobalCliPackageManager[];
   currentServerPackageRoot?: string | null;
 }): DaemonSelfUpdateRuntime {
+  // Only treat an omitted root as "use the default": `null` must reach the
+  // runtime so the unresolvable-origin branch stays testable.
+  const currentServerPackageRoot =
+    input.currentServerPackageRoot !== undefined
+      ? input.currentServerPackageRoot
+      : npmServerPackageRoot;
   return {
     managers: input.managers,
     installOrigin: {
       resolveCurrentServerPackageRoot() {
-        return input.currentServerPackageRoot ?? npmServerPackageRoot;
+        return currentServerPackageRoot;
       },
     },
   };
@@ -198,7 +208,10 @@ describe("DaemonSelfUpdater", () => {
   test("does not run install when the cli is not installed globally", async () => {
     const calls: string[] = [];
     const runtime = createRuntime({
-      managers: [createManager({ name: "npm", inspections: [null], calls })],
+      managers: [
+        createManager({ name: "npm", inspections: [null], calls }),
+        createManager({ name: "pnpm", inspections: [null], calls }),
+      ],
     });
 
     const { result, phases } = await runUpdate({ runtime });
@@ -208,7 +221,70 @@ describe("DaemonSelfUpdater", () => {
       "@getpaseo/cli is not installed globally with npm or pnpm on this host.",
     );
     expect(phases).toEqual(["starting"]);
-    expect(calls).toEqual(["inspect"]);
+    expect(calls).toEqual(["inspect", "inspect"]);
+  });
+
+  test("reports when the daemon origin cannot be resolved without probing managers", async () => {
+    const calls: string[] = [];
+    const runtime = createRuntime({
+      currentServerPackageRoot: null,
+      managers: [createManager({ name: "npm", inspections: [], calls })],
+    });
+
+    const { result } = await runUpdate({ runtime });
+
+    expect(result).toEqual({
+      success: false,
+      error: "Unable to verify that this daemon is running from a global @getpaseo/cli install.",
+      newVersion: null,
+    });
+    expect(calls).toEqual([]);
+  });
+
+  test("surfaces a broken probe instead of reporting the cli as missing", async () => {
+    const calls: string[] = [];
+    const runtime = createRuntime({
+      managers: [
+        createManager({
+          name: "npm",
+          inspections: [],
+          inspectError: "npm -g ls failed: EACCES: permission denied",
+          calls,
+        }),
+        createManager({ name: "pnpm", inspections: [null], calls }),
+      ],
+    });
+
+    const { result, phases } = await runUpdate({ runtime });
+
+    expect(result).toEqual({
+      success: false,
+      error:
+        "Unable to inspect the global @getpaseo/cli install (npm -g ls failed: EACCES: permission denied).",
+      newVersion: null,
+    });
+    expect(phases).toEqual(["starting"]);
+    expect(calls).toEqual(["inspect", "inspect"]);
+  });
+
+  test("updates through the owning manager even when another probe fails", async () => {
+    const pnpmCalls: string[] = [];
+    const runtime = createRuntime({
+      currentServerPackageRoot: pnpmServerPackageRoot,
+      managers: [
+        createManager({ name: "npm", inspections: [], inspectError: "npm exploded" }),
+        createManager({
+          name: "pnpm",
+          inspections: [pnpmInstall("0.1.15"), pnpmInstall("0.1.96")],
+          calls: pnpmCalls,
+        }),
+      ],
+    });
+
+    const { result } = await runUpdate({ runtime });
+
+    expect(result).toEqual({ success: true, error: null, newVersion: "0.1.96" });
+    expect(pnpmCalls).toEqual(["inspect", "installLatest", "inspect"]);
   });
 
   test("does not update a daemon whose version does not match the global cli", async () => {

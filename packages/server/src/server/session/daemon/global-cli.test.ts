@@ -1,6 +1,6 @@
 import path from "node:path";
 import { describe, expect, test } from "vitest";
-import { DefaultNpmGlobalCli, DefaultPnpmGlobalCli } from "./global-cli.js";
+import { DefaultNpmGlobalCli, DefaultPnpmGlobalCli, type CommandOptions } from "./global-cli.js";
 
 interface CommandCall {
   command: string;
@@ -54,7 +54,7 @@ function pnpmGlobalPaseoCliJson(version: string): string {
 
 function recordingRunner(response: { exitCode?: number; stdout?: string; stderr?: string }) {
   const calls: CommandCall[] = [];
-  const runner = async (command: string, args: string[], options?: CommandCall) => {
+  const runner = async (command: string, args: string[], options?: CommandOptions) => {
     calls.push({ command, args, timeout: options?.timeout, maxBuffer: options?.maxBuffer });
     return {
       exitCode: response.exitCode ?? 0,
@@ -115,11 +115,22 @@ describe("DefaultNpmGlobalCli", () => {
     ]);
   });
 
-  test("returns null when npm exits without JSON", async () => {
+  test("returns null when npm is not on the host", async () => {
     const cli = new DefaultNpmGlobalCli(async () => ({
       exitCode: 127,
       stdout: "",
       stderr: "npm: command not found",
+    }));
+
+    await expect(cli.inspect()).resolves.toBeNull();
+  });
+
+  test("returns null when npm cannot be spawned", async () => {
+    const cli = new DefaultNpmGlobalCli(async () => ({
+      exitCode: 1,
+      stdout: "",
+      stderr: "spawn npm ENOENT",
+      errorCode: "ENOENT",
     }));
 
     await expect(cli.inspect()).resolves.toBeNull();
@@ -134,12 +145,22 @@ describe("DefaultNpmGlobalCli", () => {
 
     await expect(cli.inspect()).resolves.toBeNull();
   });
+
+  test("rejects when the npm probe fails without JSON output", async () => {
+    const cli = new DefaultNpmGlobalCli(async () => ({
+      exitCode: 1,
+      stdout: "",
+      stderr: "EACCES: permission denied",
+    }));
+
+    await expect(cli.inspect()).rejects.toThrow("npm -g ls failed: EACCES: permission denied");
+  });
 });
 
 describe("DefaultPnpmGlobalCli", () => {
   test("inspects the pnpm global cli install with pnpm ls -g", async () => {
     const { calls, runner } = recordingRunner({ stdout: pnpmGlobalPaseoCliJson("0.1.15") });
-    const cli = new DefaultPnpmGlobalCli(runner);
+    const cli = new DefaultPnpmGlobalCli(runner, {});
 
     await expect(cli.inspect()).resolves.toEqual({
       packageManager: "pnpm",
@@ -160,9 +181,39 @@ describe("DefaultPnpmGlobalCli", () => {
     ]);
   });
 
+  test("prefers PNPM_HOME from the environment for containment", async () => {
+    const envHome = path.join(path.sep, "custom", "pnpm-home");
+    const { runner } = recordingRunner({ stdout: pnpmGlobalPaseoCliJson("0.1.15") });
+    const cli = new DefaultPnpmGlobalCli(runner, { PNPM_HOME: envHome });
+
+    await expect(cli.inspect()).resolves.toMatchObject({
+      containmentRoots: [pnpmGlobalRoot, envHome, pnpmHome],
+    });
+  });
+
+  test("does not widen containment for a custom global-dir layout", async () => {
+    const customGlobalRoot = path.join(path.sep, "custom", "pg", "v11");
+    const stdout = JSON.stringify([
+      {
+        path: customGlobalRoot,
+        private: true,
+        dependencies: {
+          "@getpaseo/cli": { from: "@getpaseo/cli", version: "0.1.15" },
+        },
+      },
+    ]);
+    const cli = new DefaultPnpmGlobalCli(async () => ({ exitCode: 0, stdout, stderr: "" }), {});
+
+    // The grandparent of an arbitrary global-dir is not the pnpm home; deriving
+    // it anyway would let containment claim daemons under an unrelated ancestor.
+    await expect(cli.inspect()).resolves.toMatchObject({
+      containmentRoots: [customGlobalRoot],
+    });
+  });
+
   test("runs the pnpm add command for the latest cli", async () => {
     const { calls, runner } = recordingRunner({ stdout: "Packages: +1" });
-    const cli = new DefaultPnpmGlobalCli(runner);
+    const cli = new DefaultPnpmGlobalCli(runner, {});
 
     await expect(cli.installLatest()).resolves.toEqual({
       exitCode: 0,
@@ -180,22 +231,43 @@ describe("DefaultPnpmGlobalCli", () => {
   });
 
   test("returns null when pnpm is not available", async () => {
-    const cli = new DefaultPnpmGlobalCli(async () => ({
-      exitCode: 127,
-      stdout: "",
-      stderr: "pnpm: command not found",
-    }));
+    const cli = new DefaultPnpmGlobalCli(
+      async () => ({
+        exitCode: 127,
+        stdout: "",
+        stderr: "pnpm: command not found",
+      }),
+      {},
+    );
 
     await expect(cli.inspect()).resolves.toBeNull();
   });
 
   test("returns null when pnpm global has no cli dependency", async () => {
-    const cli = new DefaultPnpmGlobalCli(async () => ({
-      exitCode: 0,
-      stdout: JSON.stringify([{ path: pnpmGlobalRoot, dependencies: {} }]),
-      stderr: "",
-    }));
+    const cli = new DefaultPnpmGlobalCli(
+      async () => ({
+        exitCode: 0,
+        stdout: JSON.stringify([{ path: pnpmGlobalRoot, dependencies: {} }]),
+        stderr: "",
+      }),
+      {},
+    );
 
     await expect(cli.inspect()).resolves.toBeNull();
+  });
+
+  test("rejects when the pnpm probe fails without JSON output", async () => {
+    const cli = new DefaultPnpmGlobalCli(
+      async () => ({
+        exitCode: 1,
+        stdout: "",
+        stderr: "Command failed: pnpm ls -g --json --depth=0",
+      }),
+      {},
+    );
+
+    await expect(cli.inspect()).rejects.toThrow(
+      "pnpm ls -g failed: Command failed: pnpm ls -g --json --depth=0",
+    );
   });
 });
