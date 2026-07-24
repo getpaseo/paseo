@@ -1,5 +1,5 @@
 import { withUnistyles } from "react-native-unistyles";
-import type { AgentControlIcon } from "@/composer/agent-controls/icons";
+import type { AgentControlIcon } from "@/agent-controls/icons";
 import type { CommandCenterIcon, CommandCenterIconProps } from "./contributions";
 
 const commandCenterIcons = new Map<AgentControlIcon, CommandCenterIcon>();

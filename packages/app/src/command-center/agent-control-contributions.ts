@@ -5,12 +5,14 @@ import type {
   AgentSelectOption,
 } from "@getpaseo/protocol/agent-types";
 import type { ProviderSelectorProvider } from "@/provider-selection/provider-selection";
-import { formatAgentModeLabel, formatThinkingOptionLabel } from "@/composer/agent-controls/utils";
-import { isPlanningAgentMode } from "@/composer/agent-controls/mode";
+import { formatAgentModeLabel, formatThinkingOptionLabel } from "@/agent-controls/labels";
+import {
+  FAST_MODE_FEATURE_ID,
+  isPlanningAgentMode,
+  PLAN_MODE_FEATURE_ID,
+  resolveNonPlanningModeId,
+} from "@/agent-controls/policy";
 import type { CommandCenterContribution, CommandCenterIcon } from "./contributions";
-
-const PLAN_MODE_FEATURE_ID = "plan_mode";
-const FAST_MODE_FEATURE_ID = "fast_mode";
 
 const GROUP_RANK = {
   models: 1,
@@ -194,7 +196,7 @@ function buildThinkingGroup(source: AgentControlContributionSource): CommandCent
 
 function buildModeGroup(source: AgentControlContributionSource): CommandCenterChoiceGroup {
   const choices = source.modes.options
-    .filter((mode) => !isPlanningAgentMode(mode.id))
+    .filter((mode) => !isPlanningAgentMode(mode))
     .map(
       (mode): CommandCenterChoice => ({
         id: mode.id,
@@ -251,11 +253,8 @@ function buildPlanModeGroup(source: AgentControlContributionSource): CommandCent
       turnOff: () => source.features.set(PLAN_MODE_FEATURE_ID, false),
     });
   } else {
-    const planMode = source.modes.options.find((mode) => isPlanningAgentMode(mode.id));
-    const offModeId =
-      source.modes.defaultModeId ??
-      source.modes.options.find((mode) => !isPlanningAgentMode(mode.id))?.id ??
-      null;
+    const planMode = source.modes.options.find(isPlanningAgentMode);
+    const offModeId = resolveNonPlanningModeId(source.modes.options, source.modes.defaultModeId);
     if (planMode && offModeId) {
       choices = toggleChoices({
         source,

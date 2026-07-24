@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentMode } from "@getpaseo/protocol/agent-types";
-import { isPlanningAgentMode, resolveAgentControlsMode, resolveNextAgentModeId } from "./mode";
+import { resolveAgentControlsMode, resolveNextAgentModeId } from "./mode";
 
 const PLAN_MODE = { id: "plan", label: "Plan" } satisfies AgentMode;
 
@@ -65,16 +65,5 @@ describe("resolveNextAgentModeId", () => {
   it("returns null when there are fewer than two modes", () => {
     expect(resolveNextAgentModeId({ modeOptions: [], selectedMode: "" })).toBeNull();
     expect(resolveNextAgentModeId({ modeOptions: [PLAN_MODE], selectedMode: "plan" })).toBeNull();
-  });
-});
-
-describe("isPlanningAgentMode", () => {
-  it("matches plain and ACP planning mode ids only", () => {
-    expect(isPlanningAgentMode("plan")).toBe(true);
-    expect(isPlanningAgentMode("https://agentclientprotocol.com/protocol/session-modes#plan")).toBe(
-      true,
-    );
-    expect(isPlanningAgentMode("default")).toBe(false);
-    expect(isPlanningAgentMode("acceptEdits")).toBe(false);
   });
 });

@@ -4,7 +4,6 @@ import { useTranslation } from "react-i18next";
 import ReanimatedAnimated from "react-native-reanimated";
 import { StyleSheet } from "react-native-unistyles";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Brain, ListTodo } from "lucide-react-native";
 import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
 import { useContainerWidthBelow } from "@/hooks/use-container-width";
 import invariant from "tiny-invariant";
@@ -24,14 +23,7 @@ import { useCreateFlowStore } from "@/stores/create-flow-store";
 import type { Agent } from "@/stores/session-store";
 import { useWorkspaceFields } from "@/stores/session-store-hooks";
 import { useWorkspaceDraftSubmissionStore } from "@/stores/workspace-draft-submission-store";
-import { useCommandCenterActions } from "@/command-center/provider";
-import {
-  buildAgentControlContributions,
-  buildAgentControlContributionLabels,
-} from "@/command-center/agent-control-contributions";
-import { getCommandCenterIcon } from "@/command-center/icon";
-import { getProviderIcon } from "@/components/provider-icons";
-import { getAgentFeatureIcon, getAgentModeIcon } from "@/composer/agent-controls/icons";
+import { useAgentControlCommandCenterActions } from "@/command-center/agent-control-registration";
 import { encodeImages } from "@/utils/encode-images";
 import type { WorkspaceFileOpenRequest } from "@/workspace/file-open";
 import { shouldAutoFocusWorkspaceDraftComposer } from "@/screens/workspace/workspace-draft-pane-focus";
@@ -394,66 +386,6 @@ export function WorkspaceDraftAgentTab({
   const draftSetMode = composerState.setModeFromUser;
   const draftFeatures = composerState.agentControls.features;
   const draftOnSetFeature = composerState.agentControls.onSetFeature;
-  const draftControlActions = useMemo(
-    () =>
-      buildAgentControlContributions({
-        serverId,
-        ownerKey: tabId,
-        provider: draftProvider,
-        labels: buildAgentControlContributionLabels(t),
-        icons: {
-          provider: (provider) => getCommandCenterIcon(getProviderIcon(provider)),
-          thinking: getCommandCenterIcon(Brain),
-          planMode: getCommandCenterIcon(ListTodo),
-          mode: (modeId) =>
-            getCommandCenterIcon(
-              getAgentModeIcon(draftProvider ?? "", modeId, draftProviderDefinitions),
-            ),
-          feature: (feature) => getCommandCenterIcon(getAgentFeatureIcon(feature.icon)),
-        },
-        models: {
-          providers: composerState.modelSelectorProviders,
-          selectedProvider: draftProvider,
-          selectedModelId: composerState.effectiveModelId || null,
-          select: composerState.setProviderAndModelFromUser,
-        },
-        thinking: {
-          options: draftThinkingOptions,
-          selectedId: draftSelectedThinkingId || null,
-          select: draftSetThinkingOption,
-        },
-        modes: {
-          options: draftModeOptions,
-          selectedId: draftSelectedMode || null,
-          defaultModeId:
-            draftProviderDefinitions.find((definition) => definition.id === draftProvider)
-              ?.defaultModeId ?? null,
-          select: draftSetMode,
-        },
-        features: {
-          list: draftFeatures ?? [],
-          set: (featureId, value) => draftOnSetFeature?.(featureId, value),
-        },
-      }),
-    [
-      serverId,
-      tabId,
-      t,
-      composerState.effectiveModelId,
-      composerState.modelSelectorProviders,
-      composerState.setProviderAndModelFromUser,
-      draftProvider,
-      draftProviderDefinitions,
-      draftThinkingOptions,
-      draftSelectedThinkingId,
-      draftSetThinkingOption,
-      draftModeOptions,
-      draftSelectedMode,
-      draftSetMode,
-      draftFeatures,
-      draftOnSetFeature,
-    ],
-  );
 
   const clearDraftInput = draftInput.clear;
   const setDraftText = draftInput.setText;
@@ -597,12 +529,36 @@ export function WorkspaceDraftAgentTab({
       onCreated(result);
     },
   });
-  useCommandCenterActions({
+  useAgentControlCommandCenterActions({
     sourceId: `draft:${serverId}:${tabId}`,
     enabled: isPaneFocused && !isSubmitting,
-    actions: draftControlActions,
+    controls: {
+      serverId,
+      ownerKey: tabId,
+      provider: draftProvider,
+      providerDefinitions: draftProviderDefinitions,
+      models: {
+        providers: composerState.modelSelectorProviders,
+        selectedProvider: draftProvider,
+        selectedModelId: composerState.effectiveModelId,
+        select: composerState.setProviderAndModelFromUser,
+      },
+      thinking: {
+        options: draftThinkingOptions,
+        selectedId: draftSelectedThinkingId,
+        select: draftSetThinkingOption,
+      },
+      modes: {
+        options: draftModeOptions,
+        selectedId: draftSelectedMode,
+        select: draftSetMode,
+      },
+      features: {
+        list: draftFeatures,
+        set: draftOnSetFeature,
+      },
+    },
   });
-
   const isReadyForPendingAutoSubmit = Boolean(
     pendingAutoSubmit &&
     draftInput.isHydrated &&

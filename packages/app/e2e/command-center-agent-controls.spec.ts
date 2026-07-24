@@ -86,9 +86,11 @@ test.describe("Command Center agent controls", () => {
 
       const reopened = await openCommandCenter(page);
       await reopened.getByTestId("command-center-input").fill("load test");
-      await expect(
-        reopened.getByTestId(`command-center-mode-${getServerId()}:${workspace.agentId}:load-test`),
-      ).toHaveAttribute("aria-selected", "true");
+      const selectedMode = reopened.getByTestId(
+        `command-center-mode-${getServerId()}:${workspace.agentId}:load-test`,
+      );
+      await expect(selectedMode).toHaveRole("button");
+      await expect(selectedMode).toHaveAttribute("aria-selected", "true");
     } finally {
       await workspace.cleanup();
     }

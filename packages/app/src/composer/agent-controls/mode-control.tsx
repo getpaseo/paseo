@@ -6,7 +6,8 @@ import { type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Shortcut } from "@/components/ui/shortcut";
-import { formatAgentModeLabel, getAgentControlHintKey } from "@/composer/agent-controls/utils";
+import { formatAgentModeLabel } from "@/agent-controls/labels";
+import { getAgentControlHintKey } from "@/composer/agent-controls/utils";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
@@ -16,7 +17,7 @@ import { useComposerControlLayout } from "@/composer/agent-controls/layout-conte
 import { AgentControlTrigger } from "@/composer/agent-controls/control";
 import type { AgentMode } from "@getpaseo/protocol/agent-types";
 import type { AgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
-import { getAgentModeIcon } from "./icons";
+import { getAgentModeIcon } from "@/agent-controls/icons";
 interface ModeComboboxOptionProps {
   option: ComboboxOption;
   selected: boolean;

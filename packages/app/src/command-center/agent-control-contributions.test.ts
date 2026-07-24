@@ -277,6 +277,28 @@ describe("Command Center agent-control contributions", () => {
     expect(selections).toEqual(["default"]);
   });
 
+  it("does not use a planning provider default as the Plan off target", () => {
+    const selections: string[] = [];
+    const contributions = buildAgentControlContributions(
+      makeSource({
+        modes: {
+          options: [
+            { id: "research", label: "Research", colorTier: "planning" },
+            { id: "default", label: "Default", colorTier: "safe" },
+          ],
+          selectedId: "research",
+          defaultModeId: "research",
+          select: (id) => {
+            selections.push(id);
+          },
+        },
+      }),
+    ).filter((contribution) => contribution.group === "plan-mode");
+
+    contributions[1].run();
+    expect(selections).toEqual(["default"]);
+  });
+
   it("prefers the plan_mode feature and reads its canonical value", () => {
     const calls: [string, unknown][] = [];
     const contributions = buildAgentControlContributions(

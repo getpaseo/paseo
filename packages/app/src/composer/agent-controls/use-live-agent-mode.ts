@@ -23,7 +23,6 @@ export interface LiveAgentModeSelection {
   providerDefinitions: AgentProviderDefinition[];
   options: AgentMode[];
   selectedId: string | null;
-  defaultModeId: string | null;
   canSelect: boolean;
   select(modeId: string): void;
 }
@@ -82,15 +81,12 @@ export function useLiveAgentModeSelection(
   );
 
   const provider = slice?.provider ?? null;
-  const defaultModeId =
-    providerDefinitions.find((definition) => definition.id === provider)?.defaultModeId ?? null;
 
   return {
     provider,
     providerDefinitions,
     options,
     selectedId: slice?.currentModeId ?? null,
-    defaultModeId,
     canSelect: Boolean(client),
     select,
   };

@@ -22,9 +22,10 @@ import {
 } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useShallow } from "zustand/shallow";
-import { Brain, ListTodo, Settings2 } from "lucide-react-native";
+import { Settings2 } from "lucide-react-native";
+import { getAgentFeatureIcon, ThinkingIcon } from "@/agent-controls/icons";
+import { formatThinkingOptionLabel } from "@/agent-controls/labels";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
-import { getProviderIcon } from "@/components/provider-icons";
 import { CombinedModelSelector } from "@/components/combined-model-selector";
 import {
   buildProviderSelectorProviders,
@@ -55,20 +56,13 @@ import {
   getFeatureHighlightColor,
   getFeatureTooltip,
   getAgentControlHintKey,
-  formatThinkingOptionLabel,
   resolveAgentModelSelection,
 } from "@/composer/agent-controls/utils";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useToast } from "@/contexts/toast-context";
 import { toErrorMessage } from "@/utils/error-messages";
 import { showProviderNoticeToast } from "@/utils/provider-notice-toast";
-import { useCommandCenterActions } from "@/command-center/provider";
-import {
-  buildAgentControlContributions,
-  buildAgentControlContributionLabels,
-} from "@/command-center/agent-control-contributions";
-import { getCommandCenterIcon } from "@/command-center/icon";
-import { getAgentFeatureIcon, getAgentModeIcon } from "./icons";
+import { useAgentControlCommandCenterActions } from "@/command-center/agent-control-registration";
 import { runLiveAgentControlChange } from "./live-change";
 import { useLiveAgentModeSelection } from "./use-live-agent-mode";
 import { isNative } from "@/constants/platform";
@@ -916,7 +910,7 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
             <TooltipTrigger asChild triggerRefProp="ref">
               <AgentControlTrigger
                 ref={thinkingAnchorRef}
-                icon={Brain}
+                icon={ThinkingIcon}
                 surface="toolbar"
                 label={t("agentControls.thinking.title")}
                 value={displayThinking}
@@ -1096,7 +1090,7 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
         <>
           <AgentControlTrigger
             ref={thinkingAnchorRef}
-            icon={Brain}
+            icon={ThinkingIcon}
             surface="sheet"
             label={t("agentControls.thinking.title")}
             value={displayThinking}
@@ -1395,7 +1389,7 @@ function ThinkingComboboxOption({
   onPress: () => void;
   iconColor: string;
 }) {
-  const leadingSlot = useMemo(() => <Brain size={16} color={iconColor} />, [iconColor]);
+  const leadingSlot = useMemo(() => <ThinkingIcon size={16} color={iconColor} />, [iconColor]);
   return (
     <ComboboxItem
       label={option.label}
@@ -1414,7 +1408,6 @@ export const AgentControls = memo(function AgentControls({
   onDropdownClose,
   isCompactLayout,
 }: AgentControlsProps) {
-  const { t } = useTranslation();
   const { preferences, updatePreferences } = useFormPreferences();
   const agent = useSessionStore(
     useShallow((state) => selectAgentControlsSlice(state, serverId, agentId)),
@@ -1528,6 +1521,10 @@ export const AgentControls = memo(function AgentControls({
     },
     [agentId, agentProvider, client, toast, updatePreferences],
   );
+  const handleSelectCommandCenterModel = useCallback(
+    (_provider: AgentProvider, modelId: string) => handleSelectModel(modelId),
+    [handleSelectModel],
+  );
 
   const handleToggleFavoriteModel = useCallback(
     (provider: string, modelId: string) => {
@@ -1602,74 +1599,35 @@ export const AgentControls = memo(function AgentControls({
     [agentId, agentProvider, client, toast, updatePreferences],
   );
 
-  const commandCenterActions = useMemo(
-    () =>
-      buildAgentControlContributions({
-        serverId,
-        ownerKey: agentId,
-        provider: agentProvider ?? null,
-        labels: buildAgentControlContributionLabels(t),
-        icons: {
-          provider: (provider) => getCommandCenterIcon(getProviderIcon(provider)),
-          thinking: getCommandCenterIcon(Brain),
-          planMode: getCommandCenterIcon(ListTodo),
-          mode: (modeId) =>
-            getCommandCenterIcon(
-              getAgentModeIcon(
-                liveMode.provider ?? agentProvider ?? "",
-                modeId,
-                liveMode.providerDefinitions,
-              ),
-            ),
-          feature: (feature) => getCommandCenterIcon(getAgentFeatureIcon(feature.icon)),
-        },
-        models: {
-          providers: agentModelSelectorProviders,
-          selectedProvider: agentProvider ?? null,
-          selectedModelId: activeModelId,
-          select: (_provider, modelId) => handleSelectModel(modelId),
-        },
-        thinking: {
-          options: modelSelection.thinkingOptions ?? [],
-          selectedId: modelSelection.selectedThinkingId,
-          select: handleSelectThinkingOption,
-        },
-        modes: {
-          options: liveMode.options,
-          selectedId: liveMode.selectedId,
-          defaultModeId: liveMode.defaultModeId,
-          select: liveMode.select,
-        },
-        features: {
-          list: agent?.features ?? [],
-          set: handleSetFeature,
-        },
-      }),
-    [
-      activeModelId,
-      agent?.features,
-      agentId,
-      agentModelSelectorProviders,
-      agentProvider,
-      handleSelectModel,
-      handleSelectThinkingOption,
-      handleSetFeature,
-      liveMode.defaultModeId,
-      liveMode.options,
-      liveMode.provider,
-      liveMode.providerDefinitions,
-      liveMode.selectedId,
-      liveMode.select,
-      modelSelection.selectedThinkingId,
-      modelSelection.thinkingOptions,
-      serverId,
-      t,
-    ],
-  );
-  useCommandCenterActions({
+  useAgentControlCommandCenterActions({
     sourceId: `agent:${serverId}:${agentId}`,
     enabled: isPaneFocused && Boolean(client),
-    actions: commandCenterActions,
+    controls: {
+      serverId,
+      ownerKey: agentId,
+      provider: agentProvider,
+      providerDefinitions: liveMode.providerDefinitions,
+      models: {
+        providers: agentModelSelectorProviders,
+        selectedProvider: agentProvider,
+        selectedModelId: activeModelId,
+        select: handleSelectCommandCenterModel,
+      },
+      thinking: {
+        options: modelSelection.thinkingOptions,
+        selectedId: modelSelection.selectedThinkingId,
+        select: handleSelectThinkingOption,
+      },
+      modes: {
+        options: liveMode.options,
+        selectedId: liveMode.selectedId,
+        select: liveMode.select,
+      },
+      features: {
+        list: agent?.features,
+        set: handleSetFeature,
+      },
+    },
   });
 
   const handleModelSelectorOpen = useCallback(() => {

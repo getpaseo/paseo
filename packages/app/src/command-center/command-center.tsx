@@ -401,6 +401,14 @@ interface ResultRowProps {
 
 const ResultRow = memo(function ResultRow({ result, active, onSelect }: ResultRowProps) {
   const press = useCallback(() => onSelect(result), [onSelect, result]);
+  const choice =
+    result.kind === "contribution" && result.contribution.presentation.kind === "choice"
+      ? result.contribution.presentation
+      : null;
+  const accessibilityState = useMemo(
+    () => (choice ? { selected: choice.selected } : undefined),
+    [choice],
+  );
   const style = useCallback(
     ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.row,
@@ -415,7 +423,14 @@ const ResultRow = memo(function ResultRow({ result, active, onSelect }: ResultRo
     [active, result],
   );
   return (
-    <Pressable style={style} onPress={press}>
+    <Pressable
+      style={style}
+      onPress={press}
+      accessibilityRole="button"
+      accessibilityState={accessibilityState}
+      aria-selected={choice?.selected}
+      testID={choice?.testId}
+    >
       <ResultContent result={result} />
     </Pressable>
   );
@@ -497,11 +512,7 @@ function ResultContent({ result }: { result: CommandCenterResult }) {
     );
   }
   return (
-    <View
-      style={styles.rowContent}
-      testID={presentation.testId}
-      aria-selected={presentation.selected}
-    >
+    <View style={styles.rowContent}>
       <View style={styles.rowMain}>
         {Icon ? (
           <View style={styles.iconSlot}>
