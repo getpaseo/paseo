@@ -14,9 +14,17 @@ import type {
   OutputSchema,
   SingleResult,
 } from "../../output/index.js";
+import {
+  isInteractiveTerminal,
+  isWindowsElectronRunAsNode,
+  PASSWORD_ALTERNATES_DETAILS,
+  promptPasswordViaWindowsConsole,
+  type InteractivePasswordProcess,
+} from "../../utils/interactive-password.js";
 import { resolveLocalPaseoHome } from "./local-daemon.js";
 
 const CONFIG_FILENAME = "config.json";
+const SET_PASSWORD_ENV = "PASEO_SET_PASSWORD";
 
 interface SetPasswordResult {
   action: "password_set";
@@ -29,7 +37,11 @@ export type PromptPassword = (message: string) => Promise<string | symbol>;
 
 export interface SetPasswordOptions {
   home?: string;
+  password?: string;
   promptPassword?: PromptPassword;
+  promptWindowsConsole?: PromptPassword;
+  process?: InteractivePasswordProcess;
+  env?: NodeJS.ProcessEnv;
 }
 
 const setPasswordResultSchema: OutputSchema<SetPasswordResult> = {
@@ -57,6 +69,20 @@ function createCommandError(code: string, message: string, details?: string): Co
   return { code, message, ...(details ? { details } : {}) };
 }
 
+function resolveProvidedPassword(options: SetPasswordOptions): string | undefined {
+  if (typeof options.password === "string") {
+    return options.password;
+  }
+
+  const env = options.env ?? process.env;
+  const fromEnv = env[SET_PASSWORD_ENV];
+  if (typeof fromEnv === "string" && fromEnv.length > 0) {
+    return fromEnv;
+  }
+
+  return undefined;
+}
+
 async function promptForPassword(promptPassword: PromptPassword): Promise<string> {
   const first = await promptPassword("New daemon password");
   if (isCancel(first)) {
@@ -75,6 +101,73 @@ async function promptForPassword(promptPassword: PromptPassword): Promise<string
   }
 
   return first;
+}
+
+function throwPromptUnavailable(message: string, cause?: unknown): never {
+  let causeMessage: string | undefined;
+  if (cause instanceof Error) {
+    causeMessage = cause.message;
+  } else if (cause !== undefined) {
+    causeMessage = String(cause);
+  }
+  const details = causeMessage
+    ? `${causeMessage}\n\n${PASSWORD_ALTERNATES_DETAILS}`
+    : PASSWORD_ALTERNATES_DETAILS;
+  throw createCommandError("PASSWORD_PROMPT_UNAVAILABLE", message, details);
+}
+
+async function resolveNewPassword(options: SetPasswordOptions): Promise<string> {
+  const provided = resolveProvidedPassword(options);
+  if (provided !== undefined) {
+    if (provided.length === 0) {
+      throw createCommandError("PASSWORD_REQUIRED", "Password cannot be empty");
+    }
+    return provided;
+  }
+
+  if (typeof options.promptPassword === "function") {
+    return await promptForPassword(options.promptPassword);
+  }
+
+  const processLike = options.process ?? process;
+  const windowsElectron = isWindowsElectronRunAsNode(processLike);
+
+  if (!isInteractiveTerminal(processLike) && !windowsElectron) {
+    throwPromptUnavailable(
+      "Non-interactive terminal detected; provide --password or set PASEO_SET_PASSWORD.",
+    );
+  }
+
+  if (windowsElectron) {
+    const promptWindows =
+      typeof options.promptWindowsConsole === "function"
+        ? options.promptWindowsConsole
+        : (message: string) => promptPasswordViaWindowsConsole(message);
+    try {
+      return await promptForPassword(promptWindows);
+    } catch (error) {
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        typeof (error as CommandError).code === "string"
+      ) {
+        throw error;
+      }
+      throwPromptUnavailable(
+        "Could not read a password from the Windows console under the desktop CLI.",
+        error,
+      );
+    }
+  }
+
+  if (!isInteractiveTerminal(processLike)) {
+    throwPromptUnavailable(
+      "Non-interactive terminal detected; provide --password or set PASEO_SET_PASSWORD.",
+    );
+  }
+
+  return await promptForPassword((message) => passwordPrompt({ message }));
 }
 
 export async function setDaemonPasswordInConfig(
@@ -109,13 +202,30 @@ export async function runSetPasswordCommand(
   options: CommandOptions,
   _command: Command,
 ): Promise<SingleResult<SetPasswordResult>> {
-  const promptPassword =
-    typeof options.promptPassword === "function"
-      ? (options.promptPassword as PromptPassword)
-      : (message: string) => passwordPrompt({ message });
-  const newPassword = await promptForPassword(promptPassword);
-  const result = await setDaemonPasswordInConfig(newPassword, {
+  const setPasswordOptions: SetPasswordOptions = {
     home: typeof options.home === "string" ? options.home : undefined,
+    password: typeof options.password === "string" ? options.password : undefined,
+    promptPassword:
+      typeof options.promptPassword === "function"
+        ? (options.promptPassword as PromptPassword)
+        : undefined,
+    promptWindowsConsole:
+      typeof options.promptWindowsConsole === "function"
+        ? (options.promptWindowsConsole as PromptPassword)
+        : undefined,
+    process:
+      options.process && typeof options.process === "object"
+        ? (options.process as InteractivePasswordProcess)
+        : undefined,
+    env:
+      options.env && typeof options.env === "object"
+        ? (options.env as NodeJS.ProcessEnv)
+        : undefined,
+  };
+
+  const newPassword = await resolveNewPassword(setPasswordOptions);
+  const result = await setDaemonPasswordInConfig(newPassword, {
+    home: setPasswordOptions.home,
   });
 
   return {

@@ -146,6 +146,14 @@ paseo daemon set-password
 
 This prompts for a password, writes the bcrypt hash to `config.json`, and tells you to restart the daemon.
 
+On Windows, the desktop-bundled CLI (`paseo.cmd`) runs under Electron and cannot always read interactive stdin. Prefer a non-interactive form, or use the standalone npm CLI:
+
+```bash
+paseo daemon set-password --password my-secret
+PASEO_SET_PASSWORD=my-secret paseo daemon set-password
+npx -y @getpaseo/cli daemon set-password
+```
+
 Alternatively, set the `PASEO_PASSWORD` environment variable (plaintext, hashed automatically at startup):
 
 ```bash

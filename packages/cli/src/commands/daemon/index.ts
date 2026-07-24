@@ -69,6 +69,10 @@ export function createDaemonCommand(): Command {
       .description("Prompt for and save a hashed daemon password to config.json"),
   )
     .option("--home <path>", "Paseo home directory (default: ~/.paseo)")
+    .option(
+      "--password <value>",
+      "Set password non-interactively (skips prompts; prefer PASEO_SET_PASSWORD)",
+    )
     .action(withOutput(runSetPasswordCommand));
 
   return daemon;
