@@ -64,7 +64,7 @@ test("allows a slow provider.list call to succeed instead of failing after 10 se
   expect(openCodeClient.calls.providerList).toHaveLength(1);
 });
 
-test("uses a new server for explicit catalog refresh", async () => {
+test("uses the current server for explicit catalog refresh", async () => {
   const runtime = new TestOpenCodeHarness();
   const openCodeClient = new TestOpenCodeClient();
   openCodeClient.providerListResponse = {
@@ -82,7 +82,47 @@ test("uses a new server for explicit catalog refresh", async () => {
 
   await client.fetchCatalog({ scope: "workspace", cwd: "/tmp/opencode-models", force: true });
 
-  expect(runtime.acquisitions).toEqual([{ kind: "new", releaseCount: 1 }]);
+  expect(runtime.acquisitions).toEqual([{ kind: "current", releaseCount: 1 }]);
+});
+
+test("forced catalog refresh does not rotate the server while a session holds a ref", async () => {
+  const runtime = new TestOpenCodeHarness();
+  const firstClient = new TestOpenCodeClient();
+  firstClient.providerListResponse = {
+    data: {
+      connected: ["openai"],
+      all: [{ id: "openai", name: "OpenAI", models: {} }],
+    },
+  };
+  const secondClient = new TestOpenCodeClient();
+  secondClient.providerListResponse = {
+    data: {
+      connected: ["openai"],
+      all: [{ id: "openai", name: "OpenAI", models: {} }],
+    },
+  };
+  runtime.enqueueClient(firstClient);
+  runtime.enqueueClient(secondClient);
+
+  const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+    serverManager: runtime,
+    createClient: runtime.createClient,
+  });
+
+  // Session-like held ref on the current generation.
+  const sessionAcquisition = await runtime.acquireCurrent();
+
+  await client.fetchCatalog({ scope: "workspace", cwd: "/tmp/opencode-models", force: true });
+  await client.fetchCatalog({ scope: "workspace", cwd: "/tmp/opencode-models", force: true });
+
+  expect(runtime.acquisitions).toEqual([
+    { kind: "current", releaseCount: 0 },
+    { kind: "current", releaseCount: 1 },
+    { kind: "current", releaseCount: 1 },
+  ]);
+  expect(runtime.acquisitions.some((acquisition) => acquisition.kind === "new")).toBe(false);
+
+  await sessionAcquisition.release();
 });
 
 test("includes models from api-source providers not in connected", async () => {

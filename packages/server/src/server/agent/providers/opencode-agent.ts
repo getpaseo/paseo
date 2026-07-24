@@ -1388,9 +1388,10 @@ export class OpenCodeAgentClient implements AgentClient {
   }
 
   async fetchCatalog(options: FetchCatalogOptions): Promise<ProviderCatalog> {
-    const acquisition = options.force
-      ? await this.serverManager.acquireNew()
-      : await this.serverManager.acquireCurrent();
+    // Always reuse the current generation. force still bypasses the Paseo catalog
+    // cache and re-probes via HTTP; rotating the server is not required for that
+    // and leaks retired processes while sessions hold refs (issue #2370).
+    const acquisition = await this.serverManager.acquireCurrent();
     const { url } = acquisition.server;
     const isGlobalCatalog = options.scope === "global";
 
