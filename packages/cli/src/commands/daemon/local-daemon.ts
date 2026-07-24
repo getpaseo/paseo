@@ -15,39 +15,17 @@ import { tryConnectToDaemon } from "../../utils/client.js";
  *
  * Requires `loginctl enable-linger` so the user's systemd instance persists
  * after the last session closes. Without linger, the user manager is stopped
+ * when the session ends, killing the scope along with it.
  */
-let systemdRunUserAvailable: boolean | null = null;
-
 function isSystemdRunUserAvailable(): boolean {
-  if (systemdRunUserAvailable !== null) return systemdRunUserAvailable;
-  if (process.platform !== "linux") {
-    systemdRunUserAvailable = false;
-    return false;
-  }
-  // systemd-run --user requires a user session bus (XDG_RUNTIME_DIR is set by
-  // pam_systemd when a session is created).
-  if (!process.env.XDG_RUNTIME_DIR) {
-    systemdRunUserAvailable = false;
-    return false;
-  }
+  if (process.platform !== "linux") return false;
+  if (!process.env.XDG_RUNTIME_DIR) return false;
   try {
     const result = spawnSync("systemd-run", ["--version"], { timeout: 2000, stdio: "ignore" });
-    systemdRunUserAvailable = result.status === 0;
+    return result.status === 0;
   } catch {
-    systemdRunUserAvailable = false;
+    return false;
   }
-  // Enable linger so the user's systemd instance persists after the session
-  // closes. Without this, systemd-logind kills the user manager (and our
-  // scope) when the last session ends. Best-effort — may require polkit
-  // privileges; if it fails, the scope still works during the session.
-  if (systemdRunUserAvailable) {
-    try {
-      spawnSync("loginctl", ["enable-linger"], { timeout: 2000, stdio: "ignore" });
-    } catch {
-      // Best-effort — linger may already be enabled or polkit may deny it.
-    }
-  }
-  return systemdRunUserAvailable;
 }
 
 export interface DaemonStartOptions {
@@ -60,6 +38,8 @@ export interface DaemonStartOptions {
   mcp?: boolean;
   injectMcp?: boolean;
   webUi?: boolean;
+  /** Skip systemd-run cgroup escape (for tests). */
+  forceNoSystemdRun?: boolean;
   hostnames?: string;
 }
 
@@ -631,7 +611,16 @@ export async function startLocalDaemonDetached(
   const paseoHome = runtime.resolveHome(childEnv);
   const logPath = path.join(paseoHome, DAEMON_LOG_FILENAME);
   const daemonArgs = [...process.execArgv, daemonRunnerEntry, ...buildRunnerArgs(options)];
-  const useSystemdRun = isSystemdRunUserAvailable();
+  const useSystemdRun = !options.forceNoSystemdRun && isSystemdRunUserAvailable();
+  if (useSystemdRun) {
+    // Enable linger so the user's systemd instance persists after the session
+    // closes. Best-effort — may require polkit privileges.
+    try {
+      spawnSync("loginctl", ["enable-linger"], { timeout: 2000, stdio: "ignore" });
+    } catch {
+      // Linger may already be enabled or polkit may deny it.
+    }
+  }
   const child = runtime.spawnDetached(
     useSystemdRun ? "systemd-run" : process.execPath,
     useSystemdRun ? ["--user", "--scope", "--quiet", process.execPath, ...daemonArgs] : daemonArgs,

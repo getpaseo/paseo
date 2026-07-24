@@ -119,7 +119,7 @@ describe("local daemon launch supervision", () => {
     const runtime = new FakeDaemonRuntime();
 
     const resultPromise = startLocalDaemonDetached(
-      { home: "/tmp/paseo-test", mcp: false },
+      { home: "/tmp/paseo-test", mcp: false, forceNoSystemdRun: true },
       runtime,
     );
     await vi.advanceTimersByTimeAsync(1200);

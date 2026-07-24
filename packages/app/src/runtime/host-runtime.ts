@@ -1742,6 +1742,7 @@ export class HostRuntimeStore {
     user?: string;
     remotePort?: number;
     remoteHome?: string;
+    installDir?: string;
     label?: string;
     onProgress?: (message: string) => void;
   }): Promise<{ profile: HostProfile; serverId: string; hostname: string | null }> {
@@ -2450,9 +2451,11 @@ export interface HostMutations {
     host: string;
     port?: number;
     user?: string;
+    remotePort?: number;
+    remoteHome?: string;
+    installDir?: string;
     label?: string;
     onProgress?: (message: string) => void;
-    installDir?: string;
   }) => Promise<{ profile: HostProfile; serverId: string; hostname: string | null }>;
   upsertRelayConnection: (input: {
     serverId: string;
