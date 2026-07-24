@@ -7,11 +7,10 @@ log.initialize({ spyRendererConsole: true });
 import { inheritLoginShellEnv } from "./login-shell-env.js";
 
 import path from "node:path";
-import { tmpdir } from "node:os";
+import { execFileSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { existsSync } from "node:fs";
-import { execFileSync } from "node:child_process";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import {
   app,
   autoUpdater as electronAutoUpdater,
@@ -100,10 +99,10 @@ import {
 import { AgentNavigationInbox, parseAgentDeepLinkFromArgv } from "./agent-navigation.js";
 import {
   SshTunnel,
-  ensureRemoteDaemon,
   normalizeSshHostConfig,
   createAskpassScript,
   cleanupAskpassScript,
+  buildEnsureScript,
 } from "@getpaseo/cli/ssh";
 
 const DEV_SERVER_URL = process.env.EXPO_DEV_URL ?? "http://localhost:8081";
@@ -607,12 +606,6 @@ ipcMain.handle("paseo:browser:copy-element", (_event, payload: unknown): boolean
   return false;
 });
 
-function sshControlPath(config: { host: string; port: number; user?: string }): string {
-  const key = `${config.user ?? ""}@${config.host}:${config.port}`;
-  const hash = createHash("sha256").update(key).digest("hex").slice(0, 12);
-  return path.join(tmpdir(), `paseo-ssh-${hash}.sock`);
-}
-
 function parseSshConfig(config: Record<string, unknown>) {
   return normalizeSshHostConfig({
     id: "desktop",
@@ -629,9 +622,13 @@ ipcMain.handle("paseo:ssh:open-tunnel", async (_event, config: Record<string, un
   const sshConfig = parseSshConfig(config);
   console.log("[ssh] open-tunnel:", sshConfig.host, "port", sshConfig.port);
   try {
+    const version =
+      typeof config.version === "string" ? config.version : (sshConfig.packageVersion ?? "latest");
+    const ensureScript = buildEnsureScript(sshConfig, version);
     const tunnel = await SshTunnel.open(sshConfig, sshConfig.remotePort, {
       askpassPath: sshAskpassScript,
-      controlPath: sshControlPath(sshConfig),
+      ensureScript,
+      onProgress: (msg) => console.log("[ssh] progress:", msg),
     });
     const tunnelId = randomUUID();
     sshTunnels.set(tunnelId, tunnel);
@@ -651,26 +648,6 @@ ipcMain.handle("paseo:ssh:close-tunnel", async (_event, tunnelId: string) => {
     sshTunnels.delete(tunnelId);
   }
 });
-ipcMain.handle(
-  "paseo:ssh:ensure-remote-daemon",
-  async (_event, config: Record<string, unknown>) => {
-    const sshConfig = parseSshConfig(config);
-    console.log("[ssh] ensure-remote-daemon:", sshConfig.host, "port", sshConfig.port);
-    try {
-      const result = await ensureRemoteDaemon({
-        config: sshConfig,
-        askpassPath: sshAskpassScript,
-        controlPath: sshControlPath(sshConfig),
-        onProgress: (msg) => console.log("[ssh] ensure progress:", msg),
-      });
-      console.log("[ssh] ensure result:", JSON.stringify(result));
-      return result;
-    } catch (err) {
-      console.error("[ssh] ensure failed:", err instanceof Error ? err.message : String(err));
-      throw err;
-    }
-  },
-);
 
 protocol.registerSchemesAsPrivileged([
   {

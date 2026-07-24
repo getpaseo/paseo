@@ -92,17 +92,18 @@ export function buildEnsureScript(config: SshHostConfig, version: string): strin
   const portCheck = `node -e 'const n=require("net");const s=n.connect({port:${port},host:"127.0.0.1"});s.on("connect",()=>{s.end();process.exit(0)});s.on("error",()=>process.exit(1));setTimeout(()=>{s.destroy();process.exit(1)},3000)'`;
 
   return [
+    `ensure_daemon() {`,
     `# 1. Already running?`,
-    `${portCheck} && { echo "PROGRESS:Remote daemon is already running." >&2; exit 0; }`,
+    `${portCheck} && { echo "PROGRESS:Remote daemon is already running." >&2; return 0; }`,
     `# 2. Check node and npm`,
     ``,
-    `node -v >/dev/null 2>&1 && npm -v >/dev/null 2>&1 || { echo "PROGRESS:Node.js and npm are required on ${config.host}." >&2; exit 10; }`,
+    `node -v >/dev/null 2>&1 && npm -v >/dev/null 2>&1 || { echo "PROGRESS:Node.js and npm are required on ${config.host}." >&2; return 10; }`,
     ``,
     `# 3. Install Paseo if missing`,
     `if [ ! -x ${bin} ]; then`,
     `  echo "PROGRESS:Installing Paseo ${version} into ${config.installDir} on ${config.host}…" >&2`,
     `  mkdir -p "${installDir}"`,
-    `  npm install --prefix "${installDir}" "${spec}" || { echo "PROGRESS:Failed to install Paseo on ${config.host}." >&2; exit 11; }`,
+    `  npm install --prefix "${installDir}" "${spec}" || { echo "PROGRESS:Failed to install Paseo on ${config.host}." >&2; return 11; }`,
     `  echo "PROGRESS:Paseo installed on the remote host." >&2`,
     `else`,
     `  echo "PROGRESS:Paseo is already installed on the remote host." >&2`,
@@ -116,12 +117,14 @@ export function buildEnsureScript(config: SshHostConfig, version: string): strin
     `echo "PROGRESS:Waiting for the remote daemon to become ready…" >&2`,
     `i=0`,
     `while [ $i -lt ${maxPolls} ]; do`,
-    `  ${portCheck} && { echo "PROGRESS:Remote daemon is ready." >&2; exit 0; }`,
+    `  ${portCheck} && { echo "PROGRESS:Remote daemon is ready." >&2; return 0; }`,
     `  sleep ${pollIntervalMs / 1000}`,
     `  i=$((i + 1))`,
     `done`,
     `echo "PROGRESS:The Paseo daemon was launched on ${config.host} but did not become ready on port ${port}. Check ${config.remoteHome}/daemon.log on the remote host." >&2`,
-    `exit 12`,
+    `return 12`,
+    `}`,
+    `ensure_daemon`,
   ].join("\n");
 }
 
@@ -137,8 +140,6 @@ export interface EnsureRemoteDaemonOptions {
   commandTimeoutMs?: number;
   /** Path to an SSH_ASKPASS program for interactive password prompts. */
   askpassPath?: string;
-  /** SSH ControlMaster socket path for connection multiplexing. */
-  controlPath?: string;
   /** Allocate a PTY for SSH (terminal password prompts). */
   tty?: boolean;
 }
@@ -172,7 +173,6 @@ export async function ensureRemoteDaemon(
       sshExec(config, command, {
         timeoutMs: commandTimeoutMs,
         askpassPath: options.askpassPath,
-        controlPath: options.controlPath,
         tty: options.tty,
       }));
 

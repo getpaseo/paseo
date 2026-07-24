@@ -9,13 +9,12 @@ import type { SshHostConfig } from "./ssh-host-config.js";
  * Base SSH arguments. When `askpassPath` is set, BatchMode is dropped so SSH
  * can prompt for a password via the SSH_ASKPASS program. Without it, BatchMode
  * ensures auth fails fast instead of hanging on a prompt the user can't see.
- * When `controlPath` is set, SSH connection multiplexing (ControlMaster) is
- * enabled so multiple sshExec calls and the tunnel share a single TCP
- * connection — the user authenticates once, not once per command.
+ * When `tty` is set, a PTY is allocated (`-tt`) for interactive password
+ * prompts directly on the terminal.
  */
 export function buildSshBaseArgs(
   config: SshHostConfig,
-  options?: { askpassPath?: string; controlPath?: string; tty?: boolean },
+  options?: { askpassPath?: string; tty?: boolean },
 ): string[] {
   const args = [
     "-p",
@@ -25,16 +24,6 @@ export function buildSshBaseArgs(
     "-o",
     "ConnectTimeout=10",
   ];
-  if (options?.controlPath) {
-    args.push(
-      "-o",
-      "ControlMaster=auto",
-      "-o",
-      `ControlPath=${options.controlPath}`,
-      "-o",
-      "ControlPersist=300",
-    );
-  }
   if (!options?.askpassPath && !options?.tty) {
     args.push("-o", "BatchMode=yes");
   }
@@ -47,8 +36,6 @@ export interface SshExecOptions {
   timeoutMs?: number;
   /** Path to an SSH_ASKPASS program. When set, BatchMode is dropped. */
   askpassPath?: string;
-  /** SSH ControlMaster socket path for connection multiplexing. */
-  controlPath?: string;
   /** Allocate a PTY for the SSH process (terminal password prompts). */
   tty?: boolean;
 }
@@ -76,7 +63,6 @@ export function sshExec(
     const sshArgs = [
       ...buildSshBaseArgs(config, {
         askpassPath: options?.askpassPath,
-        controlPath: options?.controlPath,
         tty: options?.tty,
       }),
       ...(options?.tty ? ["-tt"] : []),
@@ -173,6 +159,42 @@ export function waitForLocalPort(
     attempt();
   });
 }
+function attachProgressParser(child: ChildProcess, onProgress?: (message: string) => void): void {
+  if (!onProgress || !child.stderr) return;
+  let stderrBuffer = "";
+  child.stderr.on("data", (chunk: Buffer) => {
+    stderrBuffer += chunk.toString("utf8");
+    const lines = stderrBuffer.split("\n");
+    stderrBuffer = lines.pop() ?? "";
+    for (const line of lines) {
+      const match = line.match(/^PROGRESS:(.*)$/);
+      if (match) onProgress(match[1]);
+    }
+  });
+}
+
+function buildTunnelSpawnOpts(options?: {
+  askpassPath?: string;
+  tty?: boolean;
+  ensureScript?: string;
+}): SpawnOptions {
+  // When an ensure script is provided, always pipe stderr for progress parsing.
+  // tty is only for password prompts, but with an ensure script we use askpass.
+  const useTty = options?.tty && !options?.ensureScript;
+  const spawnOpts: SpawnOptions = {
+    stdio: useTty ? "inherit" : ["pipe", "pipe", "pipe"],
+    windowsHide: true,
+  };
+  if (options?.askpassPath) {
+    spawnOpts.env = {
+      ...process.env,
+      SSH_ASKPASS: options.askpassPath,
+      SSH_ASKPASS_REQUIRE: "force",
+      DISPLAY: process.env.DISPLAY ?? ":0",
+    };
+  }
+  return spawnOpts;
+}
 
 /**
  * An SSH local port-forward (`ssh -L`) kept open for the life of a tunneled
@@ -186,11 +208,20 @@ export class SshTunnel {
     readonly localPort: number,
     readonly remotePort: number,
   ) {
-    child.unref();
+    // Don't unref — the SSH process should keep the event loop alive so
+    // close() can kill it before the process exits.
   }
-
   /**
-   * `127.0.0.1:<remotePort>`. Resolves once the local port accepts connections.
+   * Open an SSH local port-forward to `127.0.0.1:<remotePort>`. Resolves once
+   * the local port accepts connections.
+   *
+   * When `ensureScript` is provided, it is run on the remote host through the
+   * same SSH connection (no separate ensure call, no ControlMaster needed).
+   * The port forward is active from the moment SSH connects, so the script can
+   * launch the daemon and the local port becomes ready as soon as the daemon
+   * listens. After the script exits, `exec cat` keeps the connection alive by
+   * blocking on stdin forever — closing the tunnel (or the SSH process) drops
+   * the connection.
    */
   static async open(
     config: SshHostConfig,
@@ -199,41 +230,63 @@ export class SshTunnel {
       localPort?: number;
       readyTimeoutMs?: number;
       askpassPath?: string;
-      controlPath?: string;
       tty?: boolean;
+      ensureScript?: string;
+      onProgress?: (message: string) => void;
     },
   ): Promise<SshTunnel> {
     const localPort = options?.localPort ?? (await findFreeLocalPort());
     const sshBaseArgs = buildSshBaseArgs(config, {
       askpassPath: options?.askpassPath,
-      controlPath: options?.controlPath,
       tty: options?.tty,
     });
     const args = [
       "-L",
       `${localPort}:127.0.0.1:${remotePort}`,
-      "-N",
       "-o",
       "ExitOnForwardFailure=yes",
       ...sshBaseArgs,
     ];
-    const spawnOpts: SpawnOptions = {
-      stdio: options?.tty ? "inherit" : ["ignore", "pipe", "pipe"],
-      windowsHide: true,
-    };
-    if (options?.askpassPath) {
-      spawnOpts.env = {
-        ...process.env,
-        SSH_ASKPASS: options.askpassPath,
-        SSH_ASKPASS_REQUIRE: "force",
-        DISPLAY: process.env.DISPLAY ?? ":0",
-      };
+    // When running an ensure script, keep the connection alive after the script
+    // exits with `exec sleep infinity` (blocks on SIGTERM). Without a script,
+    // use -N (no remote command, just port forwarding).
+    if (options?.ensureScript) {
+      args.push(`${options.ensureScript}; [ $? -eq 0 ] && exec sleep infinity`);
+    } else {
+      args.push("-N");
     }
-    const child = spawn("ssh", args, spawnOpts);
-
-    const ready = waitForLocalPort(localPort, {
-      timeoutMs: options?.readyTimeoutMs ?? 15_000,
+    const progressCallbacks: ((msg: string) => void)[] = [];
+    if (options?.onProgress) progressCallbacks.push(options.onProgress);
+    const child = spawn("ssh", args, buildTunnelSpawnOpts(options));
+    attachProgressParser(child, (msg) => {
+      for (const cb of progressCallbacks) cb(msg);
     });
+
+    // When an ensure script is provided, wait for the "Remote daemon is ready"
+    // or "already running" progress message — the local port forward accepts
+    // connections before the remote daemon is actually listening, so
+    // waitForLocalPort would give a false positive. Without a script, the port
+    // forward is to an already-running daemon, so waitForLocalPort is reliable.
+    let ready: Promise<boolean>;
+    if (options?.ensureScript) {
+      ready = Promise.race([
+        new Promise<boolean>((resolve) => {
+          progressCallbacks.push((msg: string) => {
+            if (msg.includes("daemon is ready") || msg.includes("already running")) {
+              resolve(true);
+            }
+          });
+        }),
+        new Promise<boolean>((resolve) => {
+          const timer = setTimeout(() => resolve(false), options?.readyTimeoutMs ?? 300_000);
+          timer.unref();
+        }),
+      ]);
+    } else {
+      ready = waitForLocalPort(localPort, {
+        timeoutMs: options?.readyTimeoutMs ?? 300_000,
+      });
+    }
 
     // If ssh dies before the port opens, surface its stderr.
     const exited = new Promise<number | null>((resolve) => {
@@ -258,7 +311,6 @@ export class SshTunnel {
         `SSH tunnel did not become ready on local port ${localPort} within the timeout.${stderr ? ` ${stderr.trim()}` : ""}`,
       );
     }
-
     const tunnel = new SshTunnel(child, localPort, remotePort);
     process.once("exit", () => tunnel.close());
     return tunnel;
@@ -266,17 +318,11 @@ export class SshTunnel {
 
   close(): void {
     if (!this.child.killed) {
-      this.child.kill("SIGTERM");
-      const child = this.child;
-      const killTimer = setTimeout(() => {
-        if (!child.killed) child.kill("SIGKILL");
-      }, 2_000);
-      killTimer.unref();
-      this.child.once("close", () => clearTimeout(killTimer));
+      this.child.stdin?.destroy();
+      this.child.kill("SIGKILL");
     }
   }
 }
-
 /**
  * Create a temporary SSH_ASKPASS script that shows a native OS password
  * dialog. SSH calls this program (with the prompt as argv[1]) when it needs
@@ -293,6 +339,24 @@ if [ "$(uname)" = "Darwin" ]; then
 else
   zenity --password --title="$1" 2>/dev/null || kdialog --password "$1" 2>/dev/null
 fi
+`;
+  writeFileSync(scriptPath, script, { mode: 0o700 });
+  chmodSync(scriptPath, 0o700);
+  return scriptPath;
+}
+
+/**
+ * Create a temporary SSH_ASKPASS script that prompts on the terminal via
+ * /dev/tty. Used by the CLI where no GUI dialog is available. SSH invokes
+ * this program with the prompt as argv[1]; the password goes to stdout.
+ */
+export function createTerminalAskpassScript(): string {
+  const scriptPath = path.join(tmpdir(), `paseo-askpass-term-${process.pid}.sh`);
+  const script = `#!/bin/sh
+printf "%s: " "$1" >/dev/tty 2>&1
+read -rs password </dev/tty
+printf "\\n" >/dev/tty
+printf "%s" "$password"
 `;
   writeFileSync(scriptPath, script, { mode: 0o700 });
   chmodSync(scriptPath, 0o700);

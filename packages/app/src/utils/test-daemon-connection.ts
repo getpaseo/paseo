@@ -266,9 +266,6 @@ async function connectToDaemonViaSsh(
     remoteHome: sshConfig.remoteHome,
     installDir: sshConfig.installDir,
   };
-
-  await sshBridge.ensureRemoteDaemon(bridgeConfig);
-
   const { tunnelId, localPort } = await sshBridge.openTunnel(bridgeConfig);
 
   const config = await buildClientConfig(

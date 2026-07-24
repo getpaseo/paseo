@@ -128,7 +128,5 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
     openTunnel: (config: Record<string, unknown>) =>
       ipcRenderer.invoke("paseo:ssh:open-tunnel", config),
     closeTunnel: (tunnelId: string) => ipcRenderer.invoke("paseo:ssh:close-tunnel", tunnelId),
-    ensureRemoteDaemon: (config: Record<string, unknown>) =>
-      ipcRenderer.invoke("paseo:ssh:ensure-remote-daemon", config),
   },
 });

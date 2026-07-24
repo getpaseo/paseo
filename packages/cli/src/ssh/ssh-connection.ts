@@ -1,14 +1,8 @@
-import { createHash } from "node:crypto";
-import { tmpdir } from "node:os";
-import path from "node:path";
 import { DaemonClient, type WebSocketLike } from "@getpaseo/client/internal/daemon-client";
-import {
-  resolveSshHostConfig,
-  type SshHostConfig,
-} from "./ssh-host-config.js";
-import { SshTunnel } from "./ssh-process.js";
+import { resolveSshHostConfig, type SshHostConfig } from "./ssh-host-config.js";
+import { SshTunnel, createTerminalAskpassScript, cleanupAskpassScript } from "./ssh-process.js";
 export { isSshHostUri } from "./ssh-host-config.js";
-import { ensureRemoteDaemon } from "./remote-daemon.js";
+import { buildEnsureScript } from "./remote-daemon.js";
 import { createNodeWebSocketFactory } from "../utils/client.js";
 
 export interface ConnectViaSshOptions {
@@ -28,9 +22,10 @@ export interface ConnectViaSshOptions {
 
 /**
  * Connect to a remote Paseo daemon over SSH. Resolves the {@link SshHostConfig}
- * from an `ssh://` URI, ensures a daemon is running on the remote host
- * (installing Paseo first if needed), opens an SSH local port-forward, and
- * returns a connected {@link DaemonClient} whose traffic is tunneled.
+ * from an `ssh://` URI, opens a single SSH connection that both ensures a
+ * daemon is running on the remote host (installing Paseo first if needed) and
+ * forwards the daemon port to a local port. Returns a connected
+ * {@link DaemonClient} whose traffic is tunneled.
  *
  * The tunnel is reaped when the client is closed or the process exits.
  */
@@ -45,29 +40,21 @@ export async function connectViaSsh(
   return connectViaSshConfig(config, options);
 }
 
-function sshControlPath(config: { host: string; port: number; user?: string }): string {
-  const key = `${config.user ?? ""}@${config.host}:${config.port}`;
-  const hash = createHash("sha256").update(key).digest("hex").slice(0, 12);
-  return path.join(tmpdir(), `paseo-ssh-${hash}.sock`);
-}
-
 /** Connect using an already-resolved {@link SshHostConfig}. */
 export async function connectViaSshConfig(
   config: SshHostConfig,
   options: ConnectViaSshOptions,
 ): Promise<DaemonClient> {
-  const tty = process.stdin.isTTY === true;
-  const controlPath = sshControlPath(config);
-  const sshOptions = { controlPath, ...(tty ? { tty } : {}) };
+  const version = options.version ?? config.packageVersion ?? "latest";
+  const askpassPath = createTerminalAskpassScript();
+  process.once("exit", () => cleanupAskpassScript(askpassPath));
+  const ensureScript = buildEnsureScript(config, version);
 
-  await ensureRemoteDaemon({
-    config,
-    version: options.version,
+  const tunnel = await SshTunnel.open(config, config.remotePort, {
+    ensureScript,
+    askpassPath,
     onProgress: options.onProgress,
-    ...sshOptions,
   });
-
-  const tunnel = await SshTunnel.open(config, config.remotePort, sshOptions);
 
   const url = `ws://127.0.0.1:${tunnel.localPort}/ws`;
   const webSocketFactory = options.webSocketFactory ?? createNodeWebSocketFactory();

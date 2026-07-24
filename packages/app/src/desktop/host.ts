@@ -175,11 +175,6 @@ export type SshBridgeConfig = Omit<NormalizedSshHostConnection, "id" | "type">;
 export interface DesktopSshBridge {
   openTunnel: (config: SshBridgeConfig) => Promise<{ tunnelId: string; localPort: number }>;
   closeTunnel: (tunnelId: string) => Promise<void>;
-  ensureRemoteDaemon: (config: SshBridgeConfig) => Promise<{
-    installed: boolean;
-    launched: boolean;
-    ready: boolean;
-  }>;
 }
 
 export interface DesktopHostBridge {
