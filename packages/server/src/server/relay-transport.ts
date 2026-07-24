@@ -54,7 +54,12 @@ type ControlMessage =
 const CONTROL_PING_INTERVAL_MS = 10_000;
 const CONTROL_STALE_TIMEOUT_MS = 30_000;
 const CONTROL_READY_TIMEOUT_MS = 8_000;
-const RELAY_WEBSOCKET_OPTIONS = { handshakeTimeout: 10_000, perMessageDeflate: false } as const;
+// Pin HTTP/1.1 ALPN so Node/WSL TLS does not negotiate h2 and hang the WS handshake.
+export const RELAY_WEBSOCKET_OPTIONS = {
+  handshakeTimeout: 10_000,
+  perMessageDeflate: false,
+  ALPNProtocols: ["http/1.1"],
+} as const;
 
 function createDefaultRelayWebSocket(url: string): RelayWebSocketLike {
   return new WebSocket(url, RELAY_WEBSOCKET_OPTIONS);
