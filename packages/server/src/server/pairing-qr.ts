@@ -11,5 +11,8 @@ export async function renderPairingQr(url: string): Promise<string> {
   };
 
   const qr = await QRCode.toString(url, utf8Options);
-  return `${BLACK_ON_WHITE}${qr}${RESET_COLORS}`;
+  return qr
+    .split("\n")
+    .map((line) => `${BLACK_ON_WHITE}${line}${RESET_COLORS}`)
+    .join("\n");
 }
