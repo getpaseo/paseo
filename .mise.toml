@@ -1,7 +1,10 @@
+[vars]
+android_sdk_version = '{{ read_file(path=".tool-versions") | split(pat="android-sdk") | last | trim | split(pat="\n") | first | trim }}'
+
 [env]
-ANDROID_HOME = { value = "{{ tools['android-sdk'].path }}", tools = true }
-_.path = { path = [
-  "{{ tools['android-sdk'].path }}/cmdline-tools/{{ tools['android-sdk'].version }}/bin",
-  "{{ tools['android-sdk'].path }}/platform-tools",
-  "{{ tools['android-sdk'].path }}/emulator",
-], tools = true }
+ANDROID_HOME = "{{ env.HOME }}/.local/share/mise/installs/android-sdk/{{ vars.android_sdk_version }}"
+_.path = [
+  "{{ env.HOME }}/.local/share/mise/installs/android-sdk/{{ vars.android_sdk_version }}/cmdline-tools/{{ vars.android_sdk_version }}/bin",
+  "{{ env.HOME }}/.local/share/mise/installs/android-sdk/{{ vars.android_sdk_version }}/platform-tools",
+  "{{ env.HOME }}/.local/share/mise/installs/android-sdk/{{ vars.android_sdk_version }}/emulator",
+]

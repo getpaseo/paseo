@@ -27,7 +27,7 @@ The formula reserves three digits each for minor and patch. If either reaches `1
 
 ## Prerequisites (local dev)
 
-Local Android builds run on macOS (or Linux) and need the Android toolchain, pinned in `.tool-versions` (`java 21`, `android-sdk 21.0`) and wired up by `.mise.toml` (which derives `ANDROID_HOME` and the command-line tool paths from the resolved Android SDK). With [mise](https://mise.jdx.dev):
+Local Android builds run on macOS (or Linux) and need the Android toolchain, pinned in `.tool-versions` (`java 21`, `android-sdk 21.0`) and wired up by `.mise.toml` (which derives `ANDROID_HOME` and the command-line tool paths from the `android-sdk` entry). With [mise](https://mise.jdx.dev):
 
 ```bash
 mise install        # java 21 + android-sdk 21.0 command-line tools
