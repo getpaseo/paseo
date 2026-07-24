@@ -230,6 +230,7 @@ interface ProbeOptions {
   serverId?: string;
   timeoutMs?: number;
   capabilities?: DaemonClientConfig["capabilities"];
+  onProgress?: (message: string) => void;
 }
 
 function resolveTimeout(connection: HostConnection, options?: ProbeOptions): number {
@@ -266,30 +267,49 @@ async function connectToDaemonViaSsh(
     remoteHome: sshConfig.remoteHome,
     installDir: sshConfig.installDir,
   };
-  const { tunnelId, localPort } = await sshBridge.openTunnel(bridgeConfig);
-
-  const config = await buildClientConfig(
-    {
-      id: connection.id,
-      type: "directTcp",
-      endpoint: `127.0.0.1:${localPort}`,
-      useTls: false,
-    },
-    options?.serverId,
-    options,
-    deps,
-  );
+  // Subscribe to SSH progress events from the desktop main process.
+  const events = getDesktopHost()?.events;
+  let unsubscribeProgress: (() => void) | null = null;
+  if (events?.on && options?.onProgress) {
+    const unsub = events.on("ssh-progress", (payload) => {
+      if (payload && typeof payload === "object" && "message" in payload) {
+        const msg = (payload as { message: string }).message;
+        if (sshConfig.host === (payload as { host?: string }).host) {
+          options.onProgress!(msg);
+        }
+      }
+    });
+    if (unsub) unsubscribeProgress = typeof unsub === "function" ? unsub : null;
+  }
 
   try {
-    const result = await connectAndProbe(config, resolveTimeout(connection, options), deps);
-    // Attach the tunnelId to the client so it can be closed when the client closes.
-    // The DaemonClient doesn't have a hook for this, so we store it on the client
-    // and the host runtime closes the tunnel when disposing the client.
-    (result.client as DaemonClient & { __sshTunnelId?: string }).__sshTunnelId = tunnelId;
-    return result;
-  } catch (error) {
-    await sshBridge.closeTunnel(tunnelId).catch(() => undefined);
-    throw error;
+    const { tunnelId, localPort } = await sshBridge.openTunnel(bridgeConfig);
+
+    const config = await buildClientConfig(
+      {
+        id: connection.id,
+        type: "directTcp",
+        endpoint: `127.0.0.1:${localPort}`,
+        useTls: false,
+      },
+      options?.serverId,
+      options,
+      deps,
+    );
+
+    try {
+      const result = await connectAndProbe(config, resolveTimeout(connection, options), deps);
+      // Attach the tunnelId to the client so it can be closed when the client closes.
+      // The DaemonClient doesn't have a hook for this, so we store it on the client
+      // and the host runtime closes the tunnel when disposing the client.
+      (result.client as DaemonClient & { __sshTunnelId?: string }).__sshTunnelId = tunnelId;
+      return result;
+    } catch (error) {
+      await sshBridge.closeTunnel(tunnelId).catch(() => undefined);
+      throw error;
+    }
+  } finally {
+    unsubscribeProgress?.();
   }
 }
 

@@ -146,6 +146,7 @@ export interface HostRuntimeControllerDeps {
     host: HostProfile;
     connection: HostConnection;
     timeoutMs?: number;
+    onProgress?: (message: string) => void;
   }) => Promise<{
     client: DaemonClient;
     serverId: string;
@@ -529,11 +530,12 @@ function createDefaultDeps(): HostRuntimeControllerDeps {
         },
       });
     },
-    connectToDaemon: ({ host, connection, timeoutMs }) =>
+    connectToDaemon: ({ host, connection, timeoutMs, onProgress }) =>
       connectToDaemon(connection, {
         ...(host.serverId ? { serverId: host.serverId } : {}),
         ...(timeoutMs !== undefined ? { timeoutMs } : {}),
         capabilities: appCapabilities,
+        ...(onProgress ? { onProgress } : {}),
       }),
     getClientId: () => getOrCreateClientId(),
     mountClientHandlers: ({ client, host }) => {
@@ -1685,6 +1687,7 @@ export class HostRuntimeStore {
     connection: HostConnection;
     label?: string;
     timeoutMs?: number;
+    onProgress?: (message: string) => void;
   }): Promise<{ profile: HostProfile; serverId: string; hostname: string | null }> {
     if (input.connection.type === "relay") {
       throw new Error("Cannot probe a relay connection without a server id.");
@@ -1702,6 +1705,7 @@ export class HostRuntimeStore {
       host: probeHost,
       connection: input.connection,
       ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
+      ...(input.onProgress ? { onProgress: input.onProgress } : {}),
     });
     const profile = await this.upsertHostConnection({
       serverId,
@@ -1738,8 +1742,8 @@ export class HostRuntimeStore {
     user?: string;
     remotePort?: number;
     remoteHome?: string;
-    installDir?: string;
     label?: string;
+    onProgress?: (message: string) => void;
   }): Promise<{ profile: HostProfile; serverId: string; hostname: string | null }> {
     const connection = normalizeSshConnection({
       id: input.user ? `ssh:${input.user}@${input.host}` : `ssh:${input.host}`,
@@ -1753,6 +1757,7 @@ export class HostRuntimeStore {
     return this.probeAndUpsertConnection({
       label: input.label ?? (input.user ? `${input.user}@${input.host}` : input.host),
       connection,
+      ...(input.onProgress ? { onProgress: input.onProgress } : {}),
     });
   }
 
@@ -2445,10 +2450,9 @@ export interface HostMutations {
     host: string;
     port?: number;
     user?: string;
-    remotePort?: number;
-    remoteHome?: string;
-    installDir?: string;
     label?: string;
+    onProgress?: (message: string) => void;
+    installDir?: string;
   }) => Promise<{ profile: HostProfile; serverId: string; hostname: string | null }>;
   upsertRelayConnection: (input: {
     serverId: string;

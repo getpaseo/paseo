@@ -628,7 +628,12 @@ ipcMain.handle("paseo:ssh:open-tunnel", async (_event, config: Record<string, un
     const tunnel = await SshTunnel.open(sshConfig, sshConfig.remotePort, {
       askpassPath: sshAskpassScript,
       ensureScript,
-      onProgress: (msg) => console.log("[ssh] progress:", msg),
+      onProgress: (msg) => {
+        console.log("[ssh] progress:", msg);
+        for (const win of BrowserWindow.getAllWindows()) {
+          win.webContents.send("paseo:event:ssh-progress", { host: sshConfig.host, message: msg });
+        }
+      },
     });
     const tunnelId = randomUUID();
     sshTunnels.set(tunnelId, tunnel);

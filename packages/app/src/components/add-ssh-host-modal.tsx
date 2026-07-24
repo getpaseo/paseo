@@ -46,6 +46,11 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.destructive,
     marginTop: theme.spacing[2],
   },
+  progress: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foregroundMuted,
+    marginTop: theme.spacing[1],
+  },
   buttonRow: {
     flexDirection: "row",
     gap: theme.spacing[2],
@@ -67,6 +72,7 @@ export function AddSshHostModal({ visible, onClose, onCancel, onSaved }: AddSshH
 
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const [progressMessage, setProgressMessage] = useState("");
   const [host, setHost] = useState("");
   const [port, setPort] = useState("22");
   const [user, setUser] = useState("");
@@ -79,6 +85,7 @@ export function AddSshHostModal({ visible, onClose, onCancel, onSaved }: AddSshH
     setPort("22");
     setUser("");
     setErrorMessage("");
+    setProgressMessage("");
   }, []);
 
   const handleClose = useCallback(() => {
@@ -105,10 +112,12 @@ export function AddSshHostModal({ visible, onClose, onCancel, onSaved }: AddSshH
     try {
       setIsSaving(true);
       setErrorMessage("");
+      setProgressMessage("");
       const { serverId, hostname } = await probeAndUpsertSshConnection({
         host: trimmedHost,
         port: port.trim() ? Number(port) : undefined,
         ...(trimmedUser ? { user: trimmedUser } : {}),
+        onProgress: (msg) => setProgressMessage(msg),
       });
       onSaved?.({ serverId, hostname });
       handleClose();
@@ -185,6 +194,7 @@ export function AddSshHostModal({ visible, onClose, onCancel, onSaved }: AddSshH
       </View>
 
       {errorMessage ? <Text style={styles.error}>{errorMessage}</Text> : null}
+      {isSaving && progressMessage ? <Text style={styles.progress}>{progressMessage}</Text> : null}
 
       <View style={styles.buttonRow}>
         <Button variant="ghost" onPress={handleCancel} disabled={isSaving}>
