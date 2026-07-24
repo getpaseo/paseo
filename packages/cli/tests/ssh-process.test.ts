@@ -30,7 +30,6 @@ describe("ssh-process: buildSshBaseArgs", () => {
     expect(args).toContain("alice@server.example.com");
   });
 
-
   it("uses the configured SSH port", () => {
     const args = buildSshBaseArgs(makeConfig({ port: 2222 }));
     expect(args).toContain("2222");
