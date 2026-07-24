@@ -1,6 +1,7 @@
 import { Platform } from "react-native";
 import { getElectronHost } from "@/desktop/electron/host";
 import type { BrowserKeyboardPolicy } from "@/keyboard/browser-shortcuts";
+import type { NormalizedSshHostConnection } from "@getpaseo/protocol/host-connection-schema";
 import type { SessionInboundMessage, SessionOutboundMessage } from "@getpaseo/protocol/messages";
 
 type BrowserAutomationExecuteRequest = Extract<
@@ -169,6 +170,18 @@ export interface DesktopInvokeBridge {
   invoke?: (command: string, args?: Record<string, unknown>) => Promise<unknown>;
 }
 
+export type SshBridgeConfig = Omit<NormalizedSshHostConnection, "id" | "type">;
+
+export interface DesktopSshBridge {
+  openTunnel: (config: SshBridgeConfig) => Promise<{ tunnelId: string; localPort: number }>;
+  closeTunnel: (tunnelId: string) => Promise<void>;
+  ensureRemoteDaemon: (config: SshBridgeConfig) => Promise<{
+    installed: boolean;
+    launched: boolean;
+    ready: boolean;
+  }>;
+}
+
 export interface DesktopHostBridge {
   platform?: string;
   invoke?: DesktopInvokeBridge["invoke"];
@@ -183,6 +196,7 @@ export interface DesktopHostBridge {
   webUtils?: DesktopWebUtilsBridge;
   menu?: DesktopMenuBridge;
   browser?: DesktopBrowserBridge;
+  ssh?: DesktopSshBridge;
 }
 
 declare global {

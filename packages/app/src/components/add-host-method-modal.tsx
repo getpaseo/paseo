@@ -2,10 +2,10 @@ import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { Pressable, Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { QrCode, Link2, ClipboardPaste } from "lucide-react-native";
+import { QrCode, Link2, ClipboardPaste, Terminal } from "lucide-react-native";
 import { AdaptiveModalSheet, type SheetHeader } from "./adaptive-modal-sheet";
 import { isFdroidBuild } from "@/constants/build-profile";
-import { isNative } from "@/constants/platform";
+import { isNative, isWeb } from "@/constants/platform";
 
 const styles = StyleSheet.create((theme) => ({
   option: {
@@ -39,6 +39,7 @@ export interface AddHostMethodModalProps {
   onDirectConnection: () => void;
   onScanQr: () => void;
   onPasteLink: () => void;
+  onSshConnection: () => void;
 }
 
 export function AddHostMethodModal({
@@ -47,6 +48,7 @@ export function AddHostMethodModal({
   onDirectConnection,
   onScanQr,
   onPasteLink,
+  onSshConnection,
 }: AddHostMethodModalProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
@@ -63,6 +65,10 @@ export function AddHostMethodModal({
   const handlePaste = useCallback(() => {
     onPasteLink();
   }, [onPasteLink]);
+
+  const handleSsh = useCallback(() => {
+    onSshConnection();
+  }, [onSshConnection]);
 
   return (
     <AdaptiveModalSheet
@@ -100,6 +106,21 @@ export function AddHostMethodModal({
             <Text style={styles.optionSubtext}>
               {t("pairing.connectionMethods.scanQr.description")}
             </Text>
+          </View>
+        </Pressable>
+      ) : null}
+      {isWeb ? (
+        <Pressable
+          style={styles.option}
+          onPress={handleSsh}
+          accessibilityRole="button"
+          accessibilityLabel="SSH"
+          testID="add-host-method-ssh"
+        >
+          <Terminal size={18} color={theme.colors.foreground} />
+          <View style={styles.optionBody}>
+            <Text style={styles.optionText}>SSH</Text>
+            <Text style={styles.optionSubtext}>Connect to a remote host via SSH tunnel</Text>
           </View>
         </Pressable>
       ) : null}

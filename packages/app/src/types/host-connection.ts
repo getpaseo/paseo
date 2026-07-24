@@ -5,9 +5,16 @@ import {
 import {
   DirectTcpHostConnectionSchema,
   type DirectTcpHostConnection,
+  SshHostConnectionSchema,
+  type SshHostConnection,
 } from "@getpaseo/protocol/host-connection-schema";
 
-export { DirectTcpHostConnectionSchema, type DirectTcpHostConnection };
+export {
+  DirectTcpHostConnectionSchema,
+  type DirectTcpHostConnection,
+  SshHostConnectionSchema,
+  type SshHostConnection,
+};
 
 export interface DirectSocketHostConnection {
   id: string;
@@ -28,12 +35,12 @@ export interface RelayHostConnection {
   useTls?: boolean;
   daemonPublicKeyB64: string;
 }
-
 export type HostConnection =
   | DirectTcpHostConnection
   | DirectSocketHostConnection
   | DirectPipeHostConnection
-  | RelayHostConnection;
+  | RelayHostConnection
+  | SshHostConnection;
 
 export type HostLifecycle = Record<string, never>;
 
@@ -98,6 +105,15 @@ export function resolveActiveHostServerId(params: {
   );
 }
 
+function sshConnectionEquals(left: SshHostConnection, right: SshHostConnection): boolean {
+  return (
+    left.host === right.host &&
+    left.port === right.port &&
+    left.user === right.user &&
+    left.remotePort === right.remotePort
+  );
+}
+
 function hostConnectionEquals(left: HostConnection, right: HostConnection): boolean {
   if (left.type !== right.type || left.id !== right.id) {
     return false;
@@ -122,6 +138,9 @@ function hostConnectionEquals(left: HostConnection, right: HostConnection): bool
       left.useTls === right.useTls &&
       left.daemonPublicKeyB64 === right.daemonPublicKeyB64
     );
+  }
+  if (left.type === "ssh" && right.type === "ssh") {
+    return sshConnectionEquals(left, right);
   }
 
   return false;
@@ -285,6 +304,43 @@ function toObjectRecord(value: unknown): Record<string, unknown> | undefined {
   return isPlainRecord(value) ? value : undefined;
 }
 
+function parseSshConnectionRecord(record: Record<string, unknown>): SshHostConnection | null {
+  try {
+    const host = typeof record.host === "string" ? record.host.trim() : "";
+    const user = typeof record.user === "string" ? record.user.trim() : "";
+    if (!host) return null;
+    return SshHostConnectionSchema.parse({
+      id: user ? `ssh:${user}@${host}` : `ssh:${host}`,
+      type: "ssh",
+      host,
+      port: record.port,
+      ...(user ? { user } : {}),
+      remotePort: record.remotePort,
+      remoteHome: record.remoteHome,
+      installDir: record.installDir,
+    });
+  } catch {
+    return null;
+  }
+}
+
+function normalizeDirectTcpConnection(record: Record<string, unknown>): HostConnection | null {
+  try {
+    const endpoint = normalizeLoopbackToLocalhost(
+      normalizeHostPort(typeof record.endpoint === "string" ? record.endpoint : ""),
+    );
+    return DirectTcpHostConnectionSchema.parse({
+      id: `direct:${endpoint}`,
+      type: "directTcp",
+      endpoint,
+      useTls: record.useTls,
+      ...(typeof record.password === "string" ? { password: record.password } : {}),
+    });
+  } catch {
+    return null;
+  }
+}
+
 function normalizeStoredConnection(connection: unknown): HostConnection | null {
   const record = toObjectRecord(connection);
   if (!record) {
@@ -292,21 +348,9 @@ function normalizeStoredConnection(connection: unknown): HostConnection | null {
   }
   const type = record.type;
   if (type === "directTcp") {
-    try {
-      const endpoint = normalizeLoopbackToLocalhost(
-        normalizeHostPort(typeof record.endpoint === "string" ? record.endpoint : ""),
-      );
-      return DirectTcpHostConnectionSchema.parse({
-        id: `direct:${endpoint}`,
-        type: "directTcp",
-        endpoint,
-        useTls: record.useTls,
-        ...(typeof record.password === "string" ? { password: record.password } : {}),
-      });
-    } catch {
-      return null;
-    }
+    return normalizeDirectTcpConnection(record);
   }
+
   if (type === "directSocket") {
     const path = (typeof record.path === "string" ? record.path : "").trim();
     return path ? { id: `socket:${path}`, type: "directSocket", path } : null;
@@ -335,6 +379,9 @@ function normalizeStoredConnection(connection: unknown): HostConnection | null {
     } catch {
       return null;
     }
+  }
+  if (type === "ssh") {
+    return parseSshConnectionRecord(record);
   }
 
   return null;

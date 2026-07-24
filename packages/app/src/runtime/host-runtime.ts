@@ -14,6 +14,7 @@ import {
   type HostConnection,
   type HostProfile,
 } from "@/types/host-connection";
+import { normalizeSshConnection } from "@getpaseo/protocol/host-connection-schema";
 import {
   buildDaemonWebSocketUrl,
   buildRelayWebSocketUrl,
@@ -65,7 +66,8 @@ export type ActiveConnection =
   | { type: "directTcp"; endpoint: string; display: string }
   | { type: "directSocket"; endpoint: string; display: "socket" }
   | { type: "directPipe"; endpoint: string; display: "pipe" }
-  | { type: "relay"; endpoint: string; display: "relay" };
+  | { type: "relay"; endpoint: string; display: "relay" }
+  | { type: "ssh"; endpoint: string; display: string };
 
 export type HostRuntimeAgentDirectoryStatus =
   | "idle"
@@ -200,6 +202,13 @@ function toActiveConnection(connection: HostConnection): ActiveConnection {
       type: "directTcp",
       endpoint: connection.endpoint,
       display: connection.endpoint,
+    };
+  }
+  if (connection.type === "ssh") {
+    return {
+      type: "ssh",
+      endpoint: `${connection.user ?? ""}@${connection.host}:${connection.port}`,
+      display: connection.user ? `${connection.user}@${connection.host}` : connection.host,
     };
   }
   return {
@@ -503,6 +512,9 @@ function createDefaultDeps(): HostRuntimeControllerDeps {
           }),
           ...(connection.password ? { password: connection.password } : {}),
         });
+      }
+      if (connection.type === "ssh") {
+        throw new Error("SSH connections are established through the probe path, not createClient");
       }
       return new DaemonClient({
         ...base,
@@ -1128,6 +1140,12 @@ export class HostRuntimeController {
     if (this.activeClient) {
       const previousClient = this.activeClient;
       this.activeClient = null;
+      const tunnelId = (previousClient as DaemonClient & { __sshTunnelId?: string }).__sshTunnelId;
+      if (tunnelId) {
+        getDesktopHost()
+          ?.ssh?.closeTunnel(tunnelId)
+          .catch(() => undefined);
+      }
       await previousClient.close().catch(() => undefined);
     }
   }
@@ -1169,7 +1187,6 @@ export class HostRuntimeController {
 
     if (!this.isSwitchStillValid(requestVersion, expectedProbeVersion)) {
       await this.abortSwitchWithClient(existingClient);
-      return;
     }
 
     await this.disposePreviousActiveClient();
@@ -1180,17 +1197,28 @@ export class HostRuntimeController {
     }
 
     const nextGeneration = this.snapshot.clientGeneration + 1;
+    let client: DaemonClient;
     if (existingClient) {
       existingClient.setReconnectEnabled(true);
-    }
-    const client =
-      existingClient ??
-      this.deps.createClient({
+      client = existingClient;
+    } else if (connection.type === "ssh") {
+      // SSH connections need a tunnel opened before the client can connect.
+      // The probe path (connectToDaemon) handles this and passes existingClient;
+      // this branch covers manual activation without a prior probe.
+      const { client: probedClient } = await this.deps.connectToDaemon({
+        host: this.host,
+        connection,
+      });
+      probedClient.setReconnectEnabled(true);
+      client = probedClient;
+    } else {
+      client = this.deps.createClient({
         host: this.host,
         connection,
         clientId,
         runtimeGeneration: nextGeneration,
       });
+    }
 
     if (!this.isSwitchStillValid(requestVersion, expectedProbeVersion)) {
       await client.close().catch(() => undefined);
@@ -1233,7 +1261,7 @@ export class HostRuntimeController {
     });
 
     try {
-      if (!existingClient) {
+      if (!existingClient && connection.type !== "ssh") {
         await client.connect();
       }
     } catch (error) {
@@ -1701,6 +1729,30 @@ export class HostRuntimeStore {
         useTls: input.useTls ?? false,
         ...(password ? { password } : {}),
       },
+    });
+  }
+
+  async probeAndUpsertSshConnection(input: {
+    host: string;
+    port?: number;
+    user?: string;
+    remotePort?: number;
+    remoteHome?: string;
+    installDir?: string;
+    label?: string;
+  }): Promise<{ profile: HostProfile; serverId: string; hostname: string | null }> {
+    const connection = normalizeSshConnection({
+      id: input.user ? `ssh:${input.user}@${input.host}` : `ssh:${input.host}`,
+      host: input.host,
+      ...(input.user ? { user: input.user } : {}),
+      port: input.port,
+      remotePort: input.remotePort,
+      remoteHome: input.remoteHome,
+      installDir: input.installDir,
+    });
+    return this.probeAndUpsertConnection({
+      label: input.label ?? (input.user ? `${input.user}@${input.host}` : input.host),
+      connection,
     });
   }
 
@@ -2358,6 +2410,7 @@ export function useHosts(): HostProfile[] {
 
 export function useHostRegistryStatus(): HostRegistryStatus {
   const store = getHostRuntimeStore();
+
   return useSyncExternalStore(
     (onStoreChange) => store.subscribeHostList(onStoreChange),
     () => store.getHostRegistryStatus(),
@@ -2388,6 +2441,15 @@ export interface HostMutations {
     password?: string;
     label?: string;
   }) => Promise<{ profile: HostProfile; serverId: string; hostname: string | null }>;
+  probeAndUpsertSshConnection: (input: {
+    host: string;
+    port?: number;
+    user?: string;
+    remotePort?: number;
+    remoteHome?: string;
+    installDir?: string;
+    label?: string;
+  }) => Promise<{ profile: HostProfile; serverId: string; hostname: string | null }>;
   upsertRelayConnection: (input: {
     serverId: string;
     relayEndpoint: string;
@@ -2412,6 +2474,7 @@ export function useHostMutations(): HostMutations {
       upsertDirectConnection: (input) => store.upsertDirectConnection(input),
       probeAndUpsertDirectConnection: (input) => store.probeAndUpsertDirectConnection(input),
       upsertRelayConnection: (input) => store.upsertRelayConnection(input),
+      probeAndUpsertSshConnection: (input) => store.probeAndUpsertSshConnection(input),
       upsertConnectionFromOffer: (offer, label) => store.upsertConnectionFromOffer(offer, label),
       upsertConnectionFromOfferUrl: (url, label) => store.upsertConnectionFromOfferUrl(url, label),
       renameHost: (serverId, label) => store.renameHost(serverId, label),

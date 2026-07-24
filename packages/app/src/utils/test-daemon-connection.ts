@@ -1,6 +1,7 @@
 import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { DaemonClientConfig } from "@getpaseo/client/internal/daemon-client";
 import type { HostConnection } from "@/types/host-connection";
+import { normalizeSshConnection } from "@getpaseo/protocol/host-connection-schema";
 import { getOrCreateClientId } from "./client-id";
 import { resolveAppVersion } from "./app-version";
 import {
@@ -12,6 +13,7 @@ import {
   buildLocalDaemonTransportUrl,
   createDesktopLocalDaemonTransportFactory,
 } from "@/desktop/daemon/desktop-daemon-transport";
+import { getDesktopHost } from "@/desktop/host";
 
 export interface DaemonProbeClient {
   readonly lastError: string | null;
@@ -136,6 +138,10 @@ export async function buildClientConfig(
     };
   }
 
+  if (connection.type === "ssh") {
+    throw new Error("SSH connections must be probed via connectToDaemonViaSsh");
+  }
+
   if (!serverId) {
     throw new Error("serverId is required to probe a relay connection");
   }
@@ -228,7 +234,66 @@ interface ProbeOptions {
 
 function resolveTimeout(connection: HostConnection, options?: ProbeOptions): number {
   if (options?.timeoutMs) return options.timeoutMs;
+  if (connection.type === "ssh") return 30_000;
   return connection.type === "relay" ? 10_000 : 6_000;
+}
+async function connectToDaemonViaSsh(
+  connection: Extract<HostConnection, { type: "ssh" }>,
+  options: ProbeOptions | undefined,
+  deps: DaemonConnectionDependencies<DaemonProbeClient>,
+): Promise<{ client: DaemonProbeClient; serverId: string; hostname: string | null }> {
+  const sshBridge = getDesktopHost()?.ssh;
+  if (!sshBridge) {
+    throw new DaemonConnectionTestError("SSH connections require the Paseo desktop app.", {
+      reason: "SSH not available",
+      lastError: null,
+    });
+  }
+  const sshConfig = normalizeSshConnection({
+    id: connection.id,
+    host: connection.host,
+    user: connection.user,
+    port: connection.port,
+    remotePort: connection.remotePort,
+    remoteHome: connection.remoteHome,
+    installDir: connection.installDir,
+  });
+  const bridgeConfig = {
+    host: sshConfig.host,
+    port: sshConfig.port,
+    user: sshConfig.user,
+    remotePort: sshConfig.remotePort,
+    remoteHome: sshConfig.remoteHome,
+    installDir: sshConfig.installDir,
+  };
+
+  await sshBridge.ensureRemoteDaemon(bridgeConfig);
+
+  const { tunnelId, localPort } = await sshBridge.openTunnel(bridgeConfig);
+
+  const config = await buildClientConfig(
+    {
+      id: connection.id,
+      type: "directTcp",
+      endpoint: `127.0.0.1:${localPort}`,
+      useTls: false,
+    },
+    options?.serverId,
+    options,
+    deps,
+  );
+
+  try {
+    const result = await connectAndProbe(config, resolveTimeout(connection, options), deps);
+    // Attach the tunnelId to the client so it can be closed when the client closes.
+    // The DaemonClient doesn't have a hook for this, so we store it on the client
+    // and the host runtime closes the tunnel when disposing the client.
+    (result.client as DaemonClient & { __sshTunnelId?: string }).__sshTunnelId = tunnelId;
+    return result;
+  } catch (error) {
+    await sshBridge.closeTunnel(tunnelId).catch(() => undefined);
+    throw error;
+  }
 }
 
 export function connectToDaemon(
@@ -245,6 +310,9 @@ export async function connectToDaemon(
   options?: ProbeOptions,
   deps: DaemonConnectionDependencies<DaemonProbeClient> = defaultDaemonConnectionDependencies,
 ): Promise<{ client: DaemonProbeClient; serverId: string; hostname: string | null }> {
+  if (connection.type === "ssh") {
+    return connectToDaemonViaSsh(connection, options, deps);
+  }
   const config = await buildClientConfig(connection, options?.serverId, options, deps);
   return connectAndProbe(config, resolveTimeout(connection, options), deps);
 }

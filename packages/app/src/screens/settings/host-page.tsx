@@ -108,6 +108,9 @@ function formatHostConnectionLabel(connection: HostConnection, t: TFunction): st
   if (connection.type === "directSocket" || connection.type === "directPipe") {
     return `${t("settings.host.badges.local")} (${connection.path})`;
   }
+  if (connection.type === "ssh") {
+    return `SSH (${connection.user ? `${connection.user}@${connection.host}` : connection.host})`;
+  }
   return `TCP (${connection.endpoint})`;
 }
 

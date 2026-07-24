@@ -11,6 +11,25 @@
     "!dist/**/*.map"
   ],
   "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "source": "./src/index.ts",
+      "default": "./dist/index.js"
+    },
+    "./ssh": {
+      "types": "./dist/ssh/index.d.ts",
+      "source": "./src/ssh/index.ts",
+      "default": "./dist/ssh/index.js"
+    },
+    "./dist/*": {
+      "default": "./dist/*"
+    },
+    "./bin/*": {
+      "default": "./bin/*"
+    },
+    "./package.json": "./package.json"
+  },
   "publishConfig": {
     "access": "public"
   },
