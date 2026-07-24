@@ -7,9 +7,11 @@ log.initialize({ spyRendererConsole: true });
 import { inheritLoginShellEnv } from "./login-shell-env.js";
 
 import path from "node:path";
+import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import { existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
 import {
   app,
   autoUpdater as electronAutoUpdater,
@@ -96,15 +98,25 @@ import {
   type AgentDeepLinkTarget,
 } from "@getpaseo/protocol/agent-deep-link";
 import { AgentNavigationInbox, parseAgentDeepLinkFromArgv } from "./agent-navigation.js";
+import {
+  SshTunnel,
+  ensureRemoteDaemon,
+  normalizeSshHostConfig,
+  createAskpassScript,
+  cleanupAskpassScript,
+} from "@getpaseo/cli/ssh";
 
 const DEV_SERVER_URL = process.env.EXPO_DEV_URL ?? "http://localhost:8081";
 const APP_SCHEME = "paseo";
 const PASEO_DEBUG = process.env.PASEO_DEBUG === "1";
+const sshAskpassScript = createAskpassScript();
+app.on("will-quit", () => cleanupAskpassScript(sshAskpassScript));
 const DISABLE_SINGLE_INSTANCE_LOCK = process.env.PASEO_DISABLE_SINGLE_INSTANCE_LOCK === "1";
 const APP_NAME = process.env.PASEO_TEST_APP_NAME?.trim() || "Paseo";
 const UPDATE_QUIT_DEADLINE_MS = 5_000;
 const pendingBrowserWindowOpenRequests = new PendingBrowserWindowOpenRequests();
 const agentNavigationInbox = new AgentNavigationInbox();
+const sshTunnels = new Map<string, SshTunnel>();
 
 // A second-instance launch can arrive before the packaged protocol handler,
 // IPC handlers, and first window exist. Wait for full bootstrap, not just
@@ -595,6 +607,71 @@ ipcMain.handle("paseo:browser:copy-element", (_event, payload: unknown): boolean
   return false;
 });
 
+function sshControlPath(config: { host: string; port: number; user?: string }): string {
+  const key = `${config.user ?? ""}@${config.host}:${config.port}`;
+  const hash = createHash("sha256").update(key).digest("hex").slice(0, 12);
+  return path.join(tmpdir(), `paseo-ssh-${hash}.sock`);
+}
+
+function parseSshConfig(config: Record<string, unknown>) {
+  return normalizeSshHostConfig({
+    id: "desktop",
+    label: "desktop",
+    host: String(config.host ?? ""),
+    user: String(config.user ?? ""),
+    port: typeof config.port === "number" ? config.port : undefined,
+    remotePort: typeof config.remotePort === "number" ? config.remotePort : undefined,
+    remoteHome: typeof config.remoteHome === "string" ? config.remoteHome : undefined,
+    installDir: typeof config.installDir === "string" ? config.installDir : undefined,
+  });
+}
+ipcMain.handle("paseo:ssh:open-tunnel", async (_event, config: Record<string, unknown>) => {
+  const sshConfig = parseSshConfig(config);
+  console.log("[ssh] open-tunnel:", sshConfig.host, "port", sshConfig.port);
+  try {
+    const tunnel = await SshTunnel.open(sshConfig, sshConfig.remotePort, {
+      askpassPath: sshAskpassScript,
+      controlPath: sshControlPath(sshConfig),
+    });
+    const tunnelId = randomUUID();
+    sshTunnels.set(tunnelId, tunnel);
+    console.log("[ssh] tunnel open:", tunnelId, "localPort", tunnel.localPort);
+    return { tunnelId, localPort: tunnel.localPort };
+  } catch (err) {
+    console.error("[ssh] tunnel open failed:", err instanceof Error ? err.message : String(err));
+    throw err;
+  }
+});
+
+ipcMain.handle("paseo:ssh:close-tunnel", async (_event, tunnelId: string) => {
+  console.log("[ssh] close-tunnel:", tunnelId);
+  const tunnel = sshTunnels.get(tunnelId);
+  if (tunnel) {
+    tunnel.close();
+    sshTunnels.delete(tunnelId);
+  }
+});
+ipcMain.handle(
+  "paseo:ssh:ensure-remote-daemon",
+  async (_event, config: Record<string, unknown>) => {
+    const sshConfig = parseSshConfig(config);
+    console.log("[ssh] ensure-remote-daemon:", sshConfig.host, "port", sshConfig.port);
+    try {
+      const result = await ensureRemoteDaemon({
+        config: sshConfig,
+        askpassPath: sshAskpassScript,
+        controlPath: sshControlPath(sshConfig),
+        onProgress: (msg) => console.log("[ssh] ensure progress:", msg),
+      });
+      console.log("[ssh] ensure result:", JSON.stringify(result));
+      return result;
+    } catch (err) {
+      console.error("[ssh] ensure failed:", err instanceof Error ? err.message : String(err));
+      throw err;
+    }
+  },
+);
+
 protocol.registerSchemesAsPrivileged([
   {
     scheme: APP_SCHEME,
@@ -713,6 +790,21 @@ async function createWindow(
       webviewTag: true,
     },
   });
+
+  // Strip the Origin header for WebSocket upgrades to loopback addresses.
+  // The Electron renderer's Origin (e.g. http://localhost:8083 from Metro) won't
+  // match the SSH tunnel port (e.g. 127.0.0.1:35173). The daemon's same-origin
+  // check rejects the mismatch, causing 1006. Without an Origin header, the
+  // daemon accepts the connection — the SSH tunnel itself is the trust boundary.
+  mainWindow.webContents.session.webRequest.onBeforeSendHeaders(
+    { urls: ["ws://127.0.0.1:*/*", "ws://localhost:*/*"] },
+    (details, callback) => {
+      if (details.resourceType === "webSocket") {
+        delete details.requestHeaders.Origin;
+      }
+      callback({ requestHeaders: details.requestHeaders });
+    },
+  );
 
   const webContentsId = mainWindow.webContents.id;
   pendingOpenProjectStore.set(webContentsId, options.pendingOpenProjectPath);
