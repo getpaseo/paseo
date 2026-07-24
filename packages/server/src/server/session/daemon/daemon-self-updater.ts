@@ -1,10 +1,10 @@
 import { getErrorMessage } from "@getpaseo/protocol/error-utils";
+import { globalCliPackageManagers, type GlobalCliPackageManager } from "./global-cli.js";
 import {
   daemonInstallOriginRuntime,
-  validateDaemonInstallOrigin,
+  resolveGlobalCliSelfUpdate,
   type DaemonInstallOriginRuntime,
 } from "./install-origin.js";
-import { npmGlobalPaseoCli, type NpmGlobalPaseoCli } from "./npm-global-cli.js";
 
 export type DaemonSelfUpdatePhase = "starting" | "downloading" | "installing" | "complete";
 
@@ -27,7 +27,7 @@ export interface DaemonSelfUpdateLogger {
 }
 
 export interface DaemonSelfUpdateRuntime {
-  npm: NpmGlobalPaseoCli;
+  managers: readonly GlobalCliPackageManager[];
   installOrigin: DaemonInstallOriginRuntime;
 }
 
@@ -39,7 +39,7 @@ export class DaemonSelfUpdateInProgressError extends Error {
 }
 
 const defaultRuntime: DaemonSelfUpdateRuntime = {
-  npm: npmGlobalPaseoCli,
+  managers: globalCliPackageManagers,
   installOrigin: daemonInstallOriginRuntime,
 };
 
@@ -63,32 +63,34 @@ export class DaemonSelfUpdater {
     this.inProgress = true;
     try {
       input.onProgress("starting");
-      const install = await this.runtime.npm.inspect();
-      const unsupportedReason = validateDaemonInstallOrigin(
-        install,
+      const resolution = await resolveGlobalCliSelfUpdate(
+        this.runtime.managers,
         input.daemonVersion,
         this.runtime.installOrigin,
       );
-      if (unsupportedReason) {
-        return { success: false, error: unsupportedReason, newVersion: null };
+      if (!resolution.ok) {
+        return { success: false, error: resolution.error, newVersion: null };
       }
+      const { manager } = resolution.target;
 
       input.onProgress("downloading");
       input.onProgress("installing");
 
-      const result = await this.runtime.npm.installLatest();
+      const result = await manager.installLatest();
       if (result.exitCode !== 0) {
         const error =
-          result.stderr.trim() || result.stdout.trim() || `npm exited with code ${result.exitCode}`;
+          result.stderr.trim() ||
+          result.stdout.trim() ||
+          `${manager.name} exited with code ${result.exitCode}`;
         input.logger.error(
-          { exitCode: result.exitCode, stderr: result.stderr },
+          { packageManager: manager.name, exitCode: result.exitCode, stderr: result.stderr },
           "Daemon self-update failed",
         );
         return { success: false, error, newVersion: null };
       }
 
-      const updatedInstall = await this.runtime.npm.inspect().catch((error: unknown) => {
-        input.logger.warn({ err: error }, "Unable to read updated npm package version");
+      const updatedInstall = await manager.inspect().catch((error: unknown) => {
+        input.logger.warn({ err: error }, "Unable to read updated global package version");
         return null;
       });
 
