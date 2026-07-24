@@ -11,6 +11,7 @@ import {
   FlatList,
   Keyboard,
   Platform,
+  TextInput,
   View,
   type LayoutChangeEvent,
   type ListRenderItemInfo,
@@ -22,8 +23,19 @@ import { withUnistyles } from "react-native-unistyles";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import type { StreamItem } from "@/types/stream";
 import type { Theme } from "@/styles/theme";
+import {
+  DEFAULT_IOS_KEYBOARD_INSET_MIN_HEIGHT,
+  resolveKeyboardShift,
+} from "@/hooks/keyboard-shift-policy";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { useBottomAnchorController } from "./bottom-anchor-controller";
+import {
+  beginDragSpeedSamples,
+  IDLE_DRAG_SPEED_SAMPLES,
+  recordDragSpeedSample,
+  resolveDragReleaseSpeed,
+  resolveScrollEventTimeMs,
+} from "./scroll-keyboard-dismiss";
 import type { StreamRenderInput, StreamStrategy, StreamViewportHandle } from "./strategy";
 import {
   createStreamStrategy,
@@ -52,6 +64,16 @@ const historyStartSlotStyle: ViewStyle = {
   paddingTop: 4,
   paddingBottom: 8,
 };
+// Speed at release (points/ms) above which an upward flick dismisses the
+// keyboard. Measuring at release rather than averaging the whole drag is what
+// separates a flick (finger lifted mid-motion) from a fast but controlled
+// read-scroll (slowed down before lifting), so scrolling fast stays allowed.
+// Native keyboardDismissMode is unusable here: "interactive" is broken on
+// inverted lists and "on-drag" fires on the first pixel regardless of speed.
+const SCROLL_KEYBOARD_DISMISS_VELOCITY = 1.5;
+// Release speed is measured over at least this span; shorter ones carry too
+// little movement to give a stable reading.
+const SCROLL_RELEASE_SAMPLE_MIN_MS = 30;
 
 interface HistoryRowDisplayVariants {
   regular?: StreamItem;
@@ -110,6 +132,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   });
   const scrollOffsetYRef = useRef(0);
   const isUserScrollActiveRef = useRef(false);
+  const dragSpeedSamplesRef = useRef(IDLE_DRAG_SPEED_SAMPLES);
   const userScrollEndFrameIdRef = useRef<number | null>(null);
   const programmaticScrollEventBudgetRef = useRef(0);
   const [isNativeViewportSettling, setIsNativeViewportSettling] = useState(false);
@@ -335,6 +358,16 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
     const previousOffsetY = scrollOffsetYRef.current;
     scrollOffsetYRef.current = contentOffset.y;
+
+    if (isUserScrollActiveRef.current) {
+      dragSpeedSamplesRef.current = recordDragSpeedSample(
+        dragSpeedSamplesRef.current,
+        resolveScrollEventTimeMs(event),
+        contentOffset.y,
+        SCROLL_RELEASE_SAMPLE_MIN_MS,
+      );
+    }
+
     streamViewportMetricsRef.current = {
       contentHeight: Math.max(0, contentSize.height),
       viewportWidth: Math.max(0, layoutMeasurement.width),
@@ -365,7 +398,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     }
   });
 
-  const handleScrollBeginDrag = useStableEvent(() => {
+  const handleScrollBeginDrag = useStableEvent((event: NativeSyntheticEvent<NativeScrollEvent>) => {
     if (!isLoadingOlderHistory) {
       historyStartPaginationStateRef.current = rearmHistoryStartPagination(
         historyStartPaginationStateRef.current,
@@ -373,6 +406,10 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     }
     clearPendingUserScrollEnd();
     isUserScrollActiveRef.current = true;
+    dragSpeedSamplesRef.current = beginDragSpeedSamples(
+      resolveScrollEventTimeMs(event),
+      event.nativeEvent.contentOffset.y,
+    );
     bottomAnchorController.beginUserScroll();
     evaluateHistoryStart();
   });
@@ -381,6 +418,40 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   // gesture position now because layout may move the viewport in the meantime.
   const handleScrollEndDrag = useStableEvent((event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const isNearBottom = isScrollEventNearBottom(event);
+
+    // This event's own timestamp and offset are the gesture's true endpoint —
+    // the last onScroll can be stale by the time a short flick releases.
+    const releaseSpeed = resolveDragReleaseSpeed({
+      samples: dragSpeedSamplesRef.current,
+      releaseTs: resolveScrollEventTimeMs(event),
+      releaseY: event.nativeEvent.contentOffset.y,
+      minSampleMs: SCROLL_RELEASE_SAMPLE_MIN_MS,
+    });
+    // Run the app's own keyboard-inset rule over the current metrics: it decides
+    // whether a software keyboard really occupies space, and in particular reads
+    // iOS's accessory-bar-sized inset as "no keyboard". Without this the composer
+    // can be focused with only a hardware keyboard attached, and blurring would
+    // stop the user typing to dismiss something that was never on screen.
+    const keyboardMetrics = Keyboard.metrics();
+    const keyboardShift = resolveKeyboardShift({
+      rawKeyboardHeight: keyboardMetrics?.height ?? 0,
+      keyboardProgress: keyboardMetrics ? 1 : 0,
+      bottomInset: 0,
+      isIos: Platform.OS === "ios",
+      iosMinHeight: DEFAULT_IOS_KEYBOARD_INSET_MIN_HEIGHT,
+    });
+    if (releaseSpeed > SCROLL_KEYBOARD_DISMISS_VELOCITY && keyboardShift > 0) {
+      // Both steps are needed on Android: dismissing alone leaves the input
+      // focused and the keyboard inset applied (layout stays shifted with an
+      // empty gap), while blurring alone releases focus but leaves the IME on
+      // screen. Together they match the system back gesture.
+      const focusedInput = TextInput.State.currentlyFocusedInput();
+      if (focusedInput) {
+        TextInput.State.blurTextInput(focusedInput);
+      }
+      Keyboard.dismiss();
+    }
+
     clearPendingUserScrollEnd();
     userScrollEndFrameIdRef.current = requestAnimationFrame(() => {
       userScrollEndFrameIdRef.current = null;
