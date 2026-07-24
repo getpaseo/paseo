@@ -484,6 +484,40 @@ describe("daemon-manager commands", () => {
     );
   });
 
+  it("reclaims a stale unreachable desktop pid lock after reboot", async () => {
+    mocks.runExternalCliJsonCommand.mockResolvedValue({
+      localDaemon: "stale_pid",
+      connectedDaemon: "unreachable",
+      serverId: "",
+      pid: 44160,
+      listen: "127.0.0.1:6767",
+      desktopManaged: true,
+    });
+    mocks.spawnProcess.mockImplementation(() => {
+      const child = createMockChildProcess();
+      scheduleFailedStartup(child);
+      return child;
+    });
+
+    await expect(createDaemonCommandHandlers().start_desktop_daemon()).rejects.toThrow(
+      "Daemon failed to start: exit code 1",
+    );
+
+    expect(mocks.createNodeEntrypointInvocation).toHaveBeenCalledWith(
+      expect.objectContaining({ args: ["--reclaim-stale-pid-lock"] }),
+    );
+    expect(mocks.spawnProcess).toHaveBeenCalledWith(
+      "node",
+      [],
+      expect.objectContaining({
+        detached: true,
+        envOverlay: expect.objectContaining({
+          PASEO_DESKTOP_MANAGED: "1",
+        }),
+      }),
+    );
+  });
+
   it("does not pass stale lock reclaim when the status command fails", async () => {
     mocks.runExternalCliJsonCommand.mockRejectedValue(new Error("status command failed"));
     mocks.spawnProcess.mockImplementation(() => {
@@ -499,6 +533,29 @@ describe("daemon-manager commands", () => {
     expect(mocks.createNodeEntrypointInvocation).toHaveBeenCalledWith(
       expect.objectContaining({ args: [] }),
     );
+  });
+
+  it("starts a non-managed stopped daemon without reclaiming the pid lock", async () => {
+    mocks.runExternalCliJsonCommand.mockResolvedValue({
+      localDaemon: "stopped",
+      connectedDaemon: "unreachable",
+      serverId: "",
+      desktopManaged: false,
+    });
+    mocks.spawnProcess.mockImplementation(() => {
+      const child = createMockChildProcess();
+      scheduleFailedStartup(child);
+      return child;
+    });
+
+    await expect(createDaemonCommandHandlers().start_desktop_daemon()).rejects.toThrow(
+      "Daemon failed to start: exit code 1",
+    );
+
+    expect(mocks.createNodeEntrypointInvocation).toHaveBeenCalledWith(
+      expect.objectContaining({ args: [] }),
+    );
+    expect(mocks.spawnProcess).toHaveBeenCalled();
   });
 
   it("returns the Electron main-process log tail from electron-log", () => {

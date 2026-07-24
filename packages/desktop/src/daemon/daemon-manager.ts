@@ -389,12 +389,14 @@ async function startDaemon(): Promise<DesktopDaemonStatus> {
   }
 
   const daemonRunner = resolveDaemonRunnerEntrypoint();
-  const reclaimStalePidLock =
-    current.status === "errored" && current.desktopManaged && current.error === null;
+  // Reclaim for desktop-managed locks that are not a live/reachable daemon:
+  // unresponsive (errored) and stale_pid after reboot (stopped + desktopManaged).
+  const needsStaleLockReclaim =
+    current.desktopManaged === true && current.error === null && current.status !== "running";
   const invocation = createNodeEntrypointInvocation({
     entrypoint: daemonRunner,
     argvMode: "node-script",
-    args: reclaimStalePidLock ? ["--reclaim-stale-pid-lock"] : [],
+    args: needsStaleLockReclaim ? ["--reclaim-stale-pid-lock"] : [],
     baseEnv: process.env,
   });
 
