@@ -16,6 +16,7 @@ function createWorkspaceDescriptor(): WorkspaceDescriptor {
     status: "running",
     diffStat: null,
     scripts: [],
+    links: [],
     archivingAt: null,
     statusEnteredAt: null,
   };

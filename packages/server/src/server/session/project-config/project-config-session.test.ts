@@ -37,13 +37,19 @@ function projectRecord(rootPath: string, archivedAt: string | null = null): Pers
 
 function makeSubsystem(records: PersistedProjectRecord[]) {
   const emitted: SessionOutboundMessage[] = [];
-  const host: ProjectConfigSessionHost = { emit: (msg) => emitted.push(msg) };
+  const refreshedRepoRoots: string[] = [];
+  const host: ProjectConfigSessionHost = {
+    emit: (msg) => emitted.push(msg),
+    refreshWorkspaceDescriptors: async (repoRoot) => {
+      refreshedRepoRoots.push(repoRoot);
+    },
+  };
   const subsystem = new ProjectConfigSession({
     host,
     projectRegistry: { list: async () => records },
     logger: pino({ level: "silent" }),
   });
-  return { subsystem, emitted };
+  return { subsystem, emitted, refreshedRepoRoots };
 }
 
 describe("ProjectConfigSession", () => {
@@ -186,7 +192,7 @@ describe("ProjectConfigSession", () => {
 
   test("write round-trips a config to a known root and echoes the new revision", async () => {
     const repoRoot = makeRoot();
-    const { subsystem, emitted } = makeSubsystem([projectRecord(repoRoot)]);
+    const { subsystem, emitted, refreshedRepoRoots } = makeSubsystem([projectRecord(repoRoot)]);
 
     await subsystem.handleWriteProjectConfigRequest({
       type: "write_project_config_request",
@@ -211,6 +217,7 @@ describe("ProjectConfigSession", () => {
         },
       },
     ]);
+    expect(refreshedRepoRoots).toEqual([repoRoot]);
   });
 
   test("write recomputes the worktree setup commit status", async () => {
@@ -247,7 +254,7 @@ describe("ProjectConfigSession", () => {
     const staleRoot = makeRoot();
     writeFileSync(join(staleRoot, "paseo.json"), JSON.stringify({ worktree: { setup: "old" } }));
     const unknownRoot = makeRoot();
-    const { subsystem, emitted } = makeSubsystem([projectRecord(staleRoot)]);
+    const { subsystem, emitted, refreshedRepoRoots } = makeSubsystem([projectRecord(staleRoot)]);
 
     await subsystem.handleWriteProjectConfigRequest({
       type: "write_project_config_request",
@@ -290,5 +297,6 @@ describe("ProjectConfigSession", () => {
         },
       },
     ]);
+    expect(refreshedRepoRoots).toEqual([]);
   });
 });

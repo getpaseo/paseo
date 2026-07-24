@@ -34,6 +34,7 @@ function workspaceWithForge(forge: string | undefined, prUrl: string): Workspace
     archivingAt: null,
     diffStat: null,
     scripts: [],
+    links: [],
     forge,
     githubRuntime: {
       featuresEnabled: true,
@@ -163,6 +164,7 @@ function workspace(input: {
     archivingAt: null,
     diffStat: null,
     scripts: [],
+    links: [],
   };
 }
 

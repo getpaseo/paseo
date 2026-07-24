@@ -33,6 +33,26 @@ describe("paseo config schema", () => {
     });
   });
 
+  it("preserves workspace link entries", () => {
+    expect(
+      PaseoConfigRawSchema.parse({
+        scripts: {
+          "Open in code-server": {
+            type: "link",
+            url: "https://code.razvoj.app/?folder={workspacePath}",
+          },
+        },
+      }),
+    ).toEqual({
+      scripts: {
+        "Open in code-server": {
+          type: "link",
+          url: "https://code.razvoj.app/?folder={workspacePath}",
+        },
+      },
+    });
+  });
+
   it("parses service port allocation", () => {
     expect(
       PaseoConfigSchema.parse({

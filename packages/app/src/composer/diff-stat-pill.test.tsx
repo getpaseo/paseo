@@ -24,6 +24,7 @@ const workspace: WorkspaceDescriptor = {
   archivingAt: null,
   diffStat: null,
   scripts: [],
+  links: [],
 };
 
 function setDiffStat(diffStat: WorkspaceDescriptor["diffStat"]): void {

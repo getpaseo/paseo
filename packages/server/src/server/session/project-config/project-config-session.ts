@@ -12,6 +12,7 @@ import { hasUncommittedWorktreeSetupChanges } from "./worktree-setup-commit-stat
 
 export interface ProjectConfigSessionHost {
   emit(msg: SessionOutboundMessage): void;
+  refreshWorkspaceDescriptors(repoRoot: string): Promise<void>;
 }
 
 export interface ProjectConfigSessionOptions {
@@ -126,6 +127,14 @@ export class ProjectConfigSession {
           : { hasUncommittedWorktreeSetupChanges: setupCommitStatus }),
       },
     });
+    try {
+      await this.host.refreshWorkspaceDescriptors(repoRoot);
+    } catch (error) {
+      this.logger.warn(
+        { err: error, repoRoot, requestId: msg.requestId },
+        "Failed to refresh workspaces after project config write",
+      );
+    }
   }
 
   private async readSetupCommitStatus(
@@ -173,13 +182,13 @@ export class ProjectConfigSession {
   }
 
   private async resolveKnownProjectRoot(repoRoot: string): Promise<string | null> {
-    const requestedRoot = canonicalizeConfigRoot(repoRoot);
+    const requestedRoot = canonicalizeProjectConfigRoot(repoRoot);
     const projects = await this.projectRegistry.list();
     for (const project of projects) {
       if (project.archivedAt !== null) {
         continue;
       }
-      const projectRoot = canonicalizeConfigRoot(project.rootPath);
+      const projectRoot = canonicalizeProjectConfigRoot(project.rootPath);
       if (requestedRoot === projectRoot) {
         return projectRoot;
       }
@@ -188,7 +197,7 @@ export class ProjectConfigSession {
   }
 }
 
-function canonicalizeConfigRoot(repoRoot: string): string {
+export function canonicalizeProjectConfigRoot(repoRoot: string): string {
   const resolved = resolve(repoRoot);
   try {
     return stripTrailingPathSeparators(realpathSync(resolved));

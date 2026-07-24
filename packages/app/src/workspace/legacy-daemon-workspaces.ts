@@ -331,6 +331,7 @@ function createLegacyWorkspace(
     archivingAt: null,
     diffStat: null,
     scripts: [],
+    links: [],
     gitRuntime: checkout.isGit
       ? {
           currentBranch: checkout.currentBranch,

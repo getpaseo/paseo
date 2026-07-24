@@ -26,8 +26,10 @@ import {
 } from "../../script-status-projection.js";
 import { deriveProjectServiceSlug, deriveProjectSlug } from "../../workspace-git-metadata.js";
 import type { PaseoServicePortAllocation } from "@getpaseo/protocol/paseo-config-schema";
+import { buildWorkspaceLinkPayloads } from "../../workspace-links.js";
 
 type WorkspaceScriptsPayload = WorkspaceDescriptorPayload["scripts"];
+type WorkspaceLinksPayload = WorkspaceDescriptorPayload["links"];
 
 /**
  * The service-proxy-backed scripts a workspace exposes: build the scripts payload
@@ -43,6 +45,10 @@ export interface WorkspaceScriptsService {
     workspace: PersistedWorkspaceRecord,
     project?: PersistedProjectRecord | null,
   ): WorkspaceScriptsPayload;
+  buildLinks(
+    workspace: PersistedWorkspaceRecord,
+    project?: PersistedProjectRecord | null,
+  ): WorkspaceLinksPayload;
   emitStatusUpdate(workspaceId: string, workspaceDirectory: string): Promise<void>;
   list(workspaceId: string): Promise<WorkspaceScriptPayload[]>;
   launch(input: { workspaceId: string; scriptName: string }): Promise<WorkspaceScriptPayload>;
@@ -123,6 +129,16 @@ export function createWorkspaceScriptsService(deps: {
       serviceProxyPublicBaseUrl,
       gitMetadata: resolveGitMetadata(workspace, project),
       resolveHealth: resolveScriptHealth ?? undefined,
+    });
+  }
+
+  function buildLinks(
+    workspace: PersistedWorkspaceRecord,
+    project: PersistedProjectRecord | null = null,
+  ): WorkspaceLinksPayload {
+    return buildWorkspaceLinkPayloads({
+      paseoConfig: readPaseoConfigForProjection(project?.rootPath ?? workspace.cwd, logger),
+      workspacePath: workspace.worktreeRoot ?? workspace.cwd,
     });
   }
 
@@ -268,5 +284,5 @@ export function createWorkspaceScriptsService(deps: {
     }
   }
 
-  return { buildSnapshot, emitStatusUpdate, list, launch, stop, start };
+  return { buildSnapshot, buildLinks, emitStatusUpdate, list, launch, stop, start };
 }

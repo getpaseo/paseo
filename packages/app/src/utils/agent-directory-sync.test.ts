@@ -334,6 +334,7 @@ describe("replaceFetchedAgentDirectory", () => {
             archivingAt: null,
             diffStat: null,
             scripts: [],
+            links: [],
           },
         ],
       ]),

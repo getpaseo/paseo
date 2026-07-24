@@ -39,6 +39,7 @@ export const PaseoScriptEntryRawSchema = z
   .object({
     type: z.unknown().optional(),
     command: z.unknown().optional(),
+    url: z.unknown().optional(),
     port: z.unknown().optional(),
   })
   .passthrough();
