@@ -1,5 +1,5 @@
-import { randomUUID } from "node:crypto";
-import { createWriteStream } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { createReadStream, createWriteStream } from "node:fs";
 import { chmod, copyFile, mkdir, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
@@ -8,7 +8,7 @@ import type pino from "pino";
 
 import { probeExecutable } from "../../executable-resolution/executable-resolution.js";
 import { spawnProcess } from "../../utils/spawn.js";
-import { resolveForgeCliAsset, type ForgeCliId } from "./forge-cli-catalog.js";
+import { getForgeCliChecksum, resolveForgeCliAsset, type ForgeCliId } from "./forge-cli-catalog.js";
 
 export interface EnsureForgeCliOptions {
   paseoHome: string;
@@ -19,6 +19,8 @@ export interface EnsureForgeCliOptions {
   fetchImpl?: typeof fetch;
   /** Injectable for tests; defaults to the real `--version` probe. */
   probeExecutableImpl?: (executablePath: string) => Promise<boolean>;
+  /** Injectable for tests; defaults to the real forge-cli-versions.json lookup. */
+  getForgeCliChecksumImpl?: (cli: ForgeCliId, assetFilename: string) => string | null;
   /** Injectable for tests; defaults to process.platform. */
   platform?: NodeJS.Platform;
   /** Injectable for tests; defaults to process.arch. */
@@ -66,6 +68,12 @@ async function downloadToFile(
   }
 }
 
+async function sha256File(filePath: string): Promise<string> {
+  const hash = createHash("sha256");
+  await pipeline(createReadStream(filePath), hash);
+  return hash.digest("hex");
+}
+
 async function extractTarArchive(archivePath: string, destDir: string): Promise<void> {
   await mkdir(destDir, { recursive: true });
 
@@ -111,6 +119,43 @@ export function ensureForgeCli(
   return promise;
 }
 
+interface VerifyChecksumParams {
+  cli: ForgeCliId;
+  filePath: string;
+  assetFilename: string;
+  lookupChecksum: (cli: ForgeCliId, assetFilename: string) => string | null;
+  logger: pino.Logger;
+}
+
+// Returns false only on an actual mismatch (caller should treat that as a
+// hard failure, same as a failed post-download probe). A missing catalog
+// entry (mid version-bump, or an arch/platform combo we haven't published
+// checksums for yet) isn't fatal on its own -- the post-download
+// probeExecutable() check downstream is a lesser but non-zero safety net,
+// so we log and let the download proceed rather than block auto-install
+// entirely on the checksum data being complete.
+async function verifyChecksum(params: VerifyChecksumParams): Promise<boolean> {
+  const { cli, filePath, assetFilename, lookupChecksum, logger } = params;
+  const expected = lookupChecksum(cli, assetFilename);
+  if (!expected) {
+    logger.warn(
+      { assetFilename },
+      "no pinned checksum for this forge CLI asset, skipping verification",
+    );
+    return true;
+  }
+
+  const actual = await sha256File(filePath);
+  if (actual !== expected) {
+    logger.error(
+      { assetFilename, expected, actual },
+      "forge CLI checksum mismatch, removing download",
+    );
+    return false;
+  }
+  return true;
+}
+
 async function ensureForgeCliUncached(
   cli: ForgeCliId,
   options: EnsureForgeCliOptions,
@@ -119,6 +164,7 @@ async function ensureForgeCliUncached(
   const binaryPath = managedCliPath(options, cli);
   const fetchImpl = options.fetchImpl ?? fetch;
   const probe = options.probeExecutableImpl ?? probeExecutable;
+  const lookupChecksum = options.getForgeCliChecksumImpl ?? getForgeCliChecksum;
 
   if (await probe(binaryPath)) {
     return binaryPath;
@@ -140,13 +186,42 @@ async function ensureForgeCliUncached(
   try {
     const cliDir = path.dirname(binaryPath);
     await mkdir(cliDir, { recursive: true });
+    const assetFilename = path.basename(new URL(asset.url).pathname);
 
     if (asset.archive === "none") {
       await downloadToFile(fetchImpl, asset.url, binaryPath);
+
+      if (
+        !(await verifyChecksum({
+          cli,
+          filePath: binaryPath,
+          assetFilename,
+          lookupChecksum,
+          logger,
+        }))
+      ) {
+        await rm(binaryPath, { force: true }).catch(() => undefined);
+        return null;
+      }
     } else {
       const downloadsDir = path.join(toolsDirFor(options), ".downloads", cli);
-      const archivePath = path.join(downloadsDir, path.basename(new URL(asset.url).pathname));
+      const archivePath = path.join(downloadsDir, assetFilename);
       await downloadToFile(fetchImpl, asset.url, archivePath);
+
+      // gh/glab publish checksums against the .tar.gz itself, not the
+      // extracted binary, so verify before we ever touch tar.
+      if (
+        !(await verifyChecksum({
+          cli,
+          filePath: archivePath,
+          assetFilename,
+          lookupChecksum,
+          logger,
+        }))
+      ) {
+        await rm(archivePath, { force: true }).catch(() => undefined);
+        return null;
+      }
 
       const extractDir = path.join(downloadsDir, `${cli}-extract-${randomUUID()}`);
       await extractTarArchive(archivePath, extractDir);

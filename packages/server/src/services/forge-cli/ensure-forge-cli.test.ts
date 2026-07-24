@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -7,6 +8,10 @@ import pino from "pino";
 import { describe, expect, test } from "vitest";
 
 import { ensureForgeCli, type EnsureForgeCliOptions } from "./ensure-forge-cli.js";
+
+function sha256Hex(buf: Buffer): string {
+  return createHash("sha256").update(buf).digest("hex");
+}
 
 const logger = pino({ level: "silent" });
 
@@ -21,15 +26,16 @@ function fakeResponse(body: Buffer, init?: { ok?: boolean; status?: number }): R
 }
 
 /** A bare-binary asset (tea-shaped): the "download" is a shell script printing a version. */
-function makeBareBinaryFetch(): typeof fetch {
+function makeBareBinaryFetch(): { fetchImpl: typeof fetch; body: Buffer } {
   const script = "#!/bin/sh\necho 'tea version 0.3.0'\n";
   const body = Buffer.from(script, "utf8");
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return (async () => fakeResponse(body)) as any;
+  const fetchImpl = (async () => fakeResponse(body)) as any;
+  return { fetchImpl, body };
 }
 
 /** A tar.gz asset (gh/glab-shaped): builds a real tarball containing a fake gh binary. */
-function makeTarGzFetch(binaryRelPath: string): typeof fetch {
+function makeTarGzFetch(binaryRelPath: string): { fetchImpl: typeof fetch; body: Buffer } {
   const stageDir = makeTmpDir();
   const binaryAbsPath = path.join(stageDir, binaryRelPath);
   mkdirSync(path.dirname(binaryAbsPath), { recursive: true });
@@ -41,7 +47,8 @@ function makeTarGzFetch(binaryRelPath: string): typeof fetch {
   const tarball = execFileSync("cat", [archivePath]);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return (async () => fakeResponse(tarball)) as any;
+  const fetchImpl = (async () => fakeResponse(tarball)) as any;
+  return { fetchImpl, body: tarball };
 }
 
 function baseOptions(overrides: Partial<EnsureForgeCliOptions> = {}): EnsureForgeCliOptions {
@@ -106,7 +113,8 @@ describe("ensureForgeCli", () => {
     const result = await ensureForgeCli("tea", {
       paseoHome,
       logger,
-      fetchImpl: makeBareBinaryFetch(),
+      fetchImpl: makeBareBinaryFetch().fetchImpl,
+      getForgeCliChecksumImpl: () => null,
       probeExecutableImpl: async (executablePath) => {
         probeCallCount += 1;
         // First probe (cache check) reports absent so we take the download
@@ -134,7 +142,8 @@ describe("ensureForgeCli", () => {
     const result = await ensureForgeCli("gh", {
       paseoHome,
       logger,
-      fetchImpl: makeTarGzFetch("gh_2.96.0_linux_amd64/bin/gh"),
+      fetchImpl: makeTarGzFetch("gh_2.96.0_linux_amd64/bin/gh").fetchImpl,
+      getForgeCliChecksumImpl: () => null,
       probeExecutableImpl: async () => {
         probeCallCount += 1;
         return probeCallCount > 1;
@@ -156,7 +165,8 @@ describe("ensureForgeCli", () => {
     const result = await ensureForgeCli("tea", {
       paseoHome,
       logger,
-      fetchImpl: makeBareBinaryFetch(),
+      fetchImpl: makeBareBinaryFetch().fetchImpl,
+      getForgeCliChecksumImpl: () => null,
       probeExecutableImpl: async () => false,
     });
 
@@ -183,6 +193,7 @@ describe("ensureForgeCli", () => {
       paseoHome,
       logger,
       fetchImpl,
+      getForgeCliChecksumImpl: () => null,
       probeExecutableImpl: async () => {
         probeCallCount += 1;
         // First probe is the shared cache check (miss); second is the
@@ -199,5 +210,128 @@ describe("ensureForgeCli", () => {
     expect(first).toBe(path.join(paseoHome, "tools", "tea", "tea"));
     expect(second).toBe(first);
     expect(fetchCalls).toBe(1);
+  });
+
+  test("downloads a bare binary whose checksum matches the pinned value", async () => {
+    const paseoHome = makeTmpDir();
+    const { fetchImpl, body } = makeBareBinaryFetch();
+    let probeCallCount = 0;
+
+    const result = await ensureForgeCli("tea", {
+      paseoHome,
+      logger,
+      fetchImpl,
+      getForgeCliChecksumImpl: (_cli, assetFilename) =>
+        assetFilename === "tea-0.3.0-linux-amd64" || assetFilename === "tea-0.3.0-linux-arm64"
+          ? sha256Hex(body)
+          : null,
+      probeExecutableImpl: async () => {
+        probeCallCount += 1;
+        return probeCallCount > 1;
+      },
+      platform: "linux",
+      arch: "x64",
+    });
+
+    expect(result).toBe(path.join(paseoHome, "tools", "tea", "tea"));
+  });
+
+  test("downloads a tar.gz asset whose checksum matches the pinned value", async () => {
+    const paseoHome = makeTmpDir();
+    const { fetchImpl, body } = makeTarGzFetch("gh_2.96.0_linux_amd64/bin/gh");
+    let probeCallCount = 0;
+
+    const result = await ensureForgeCli("gh", {
+      paseoHome,
+      logger,
+      fetchImpl,
+      getForgeCliChecksumImpl: (_cli, assetFilename) =>
+        assetFilename === "gh_2.96.0_linux_amd64.tar.gz" ? sha256Hex(body) : null,
+      probeExecutableImpl: async () => {
+        probeCallCount += 1;
+        return probeCallCount > 1;
+      },
+      platform: "linux",
+      arch: "x64",
+    });
+
+    expect(result).toBe(path.join(paseoHome, "tools", "gh", "gh"));
+  });
+
+  test("cleans up and returns null when the checksum doesn't match the pinned value", async () => {
+    const paseoHome = makeTmpDir();
+    let probeCallCount = 0;
+
+    const result = await ensureForgeCli("tea", {
+      paseoHome,
+      logger,
+      fetchImpl: makeBareBinaryFetch().fetchImpl,
+      getForgeCliChecksumImpl: () => "0".repeat(64),
+      probeExecutableImpl: async () => {
+        probeCallCount += 1;
+        return false;
+      },
+      platform: "linux",
+      arch: "x64",
+    });
+
+    expect(result).toBeNull();
+    // Only the cache-check probe should have run; a checksum mismatch
+    // short-circuits before the post-download probe.
+    expect(probeCallCount).toBe(1);
+
+    const expectedPath = path.join(paseoHome, "tools", "tea", "tea");
+    await expect(stat(expectedPath)).rejects.toThrow();
+  });
+
+  test("cleans up and returns null when a tar.gz checksum doesn't match the pinned value", async () => {
+    const paseoHome = makeTmpDir();
+    let probeCallCount = 0;
+
+    const result = await ensureForgeCli("gh", {
+      paseoHome,
+      logger,
+      fetchImpl: makeTarGzFetch("gh_2.96.0_linux_amd64/bin/gh").fetchImpl,
+      getForgeCliChecksumImpl: () => "0".repeat(64),
+      probeExecutableImpl: async () => {
+        probeCallCount += 1;
+        return false;
+      },
+      platform: "linux",
+      arch: "x64",
+    });
+
+    expect(result).toBeNull();
+    // Only the cache-check probe should have run; a checksum mismatch
+    // short-circuits before the post-download probe.
+    expect(probeCallCount).toBe(1);
+
+    const expectedPath = path.join(paseoHome, "tools", "gh", "gh");
+    await expect(stat(expectedPath)).rejects.toThrow();
+  });
+
+  test("proceeds and warns when no pinned checksum exists for the asset", async () => {
+    const paseoHome = makeTmpDir();
+    let probeCallCount = 0;
+    let checksumLookupCalled = false;
+
+    const result = await ensureForgeCli("tea", {
+      paseoHome,
+      logger,
+      fetchImpl: makeBareBinaryFetch().fetchImpl,
+      getForgeCliChecksumImpl: () => {
+        checksumLookupCalled = true;
+        return null;
+      },
+      probeExecutableImpl: async () => {
+        probeCallCount += 1;
+        return probeCallCount > 1;
+      },
+      platform: "linux",
+      arch: "x64",
+    });
+
+    expect(checksumLookupCalled).toBe(true);
+    expect(result).toBe(path.join(paseoHome, "tools", "tea", "tea"));
   });
 });
