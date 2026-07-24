@@ -144,7 +144,7 @@ async function ensureForgeCliUncached(
     if (asset.archive === "none") {
       await downloadToFile(fetchImpl, asset.url, binaryPath);
     } else {
-      const downloadsDir = path.join(toolsDirFor(options), ".downloads");
+      const downloadsDir = path.join(toolsDirFor(options), ".downloads", cli);
       const archivePath = path.join(downloadsDir, path.basename(new URL(asset.url).pathname));
       await downloadToFile(fetchImpl, asset.url, archivePath);
 
