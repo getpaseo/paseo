@@ -1,0 +1,23 @@
+{
+  "gh": {
+    "version": "2.96.0",
+    "checksums": {
+      "gh_2.96.0_linux_amd64.tar.gz": "83d5c2ccad5498f58bf6368acb1ab32588cf43ab3a4b1c301bf36328b1c8bd60",
+      "gh_2.96.0_linux_arm64.tar.gz": "06f86ec7103d41993b76cd78072f43595c34aaa56506d971d9860e67140bf909"
+    }
+  },
+  "glab": {
+    "version": "1.109.0",
+    "checksums": {
+      "glab_1.109.0_linux_amd64.tar.gz": "67b4a8557727a058f44e0839babdcf214ea6f6f829062cf0bae02f7b25814e5d",
+      "glab_1.109.0_linux_arm64.tar.gz": "288155229b7a0824aaca5fbdc36000d0c41fe5d8b4a4c3cbe9908e75f4e4ec2e"
+    }
+  },
+  "tea": {
+    "version": "0.14.2",
+    "checksums": {
+      "tea-0.14.2-linux-amd64": "be4ab135752825ab223cfa87d30e7f328312a24120b70176b67c1bd4aba19cc3",
+      "tea-0.14.2-linux-arm64": "f201f6ba4136f1129e99e6318af07900c0c16a92030648bd186ff27067b34568"
+    }
+  }
+}

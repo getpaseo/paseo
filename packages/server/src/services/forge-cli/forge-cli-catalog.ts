@@ -1,3 +1,5 @@
+import forgeCliVersions from "./forge-cli-versions.json" with { type: "json" };
+
 export type ForgeCliId = "gh" | "glab" | "tea";
 
 export type ForgeCliArchiveKind = "tar.gz" | "none";
@@ -24,9 +26,12 @@ function normalizeArch(arch: string): string | null {
   return null;
 }
 
-const GH_VERSION = "2.96.0";
-const GLAB_VERSION = "1.109.0";
-const TEA_VERSION = "0.3.0";
+// Pinned versions + sha256 checksums live in forge-cli-versions.json, not
+// here, so a version bump is a JSON diff (bumpable by scripts/update-forge-cli-versions.mjs
+// and the weekly CI workflow) instead of a TypeScript PR.
+const GH_VERSION = forgeCliVersions.gh.version;
+const GLAB_VERSION = forgeCliVersions.glab.version;
+const TEA_VERSION = forgeCliVersions.tea.version;
 
 // Auto-install only targets the linux container image, see ensureForgeCli.
 // Keeping the platform check here too so a direct resolveForgeCliAsset()
@@ -72,6 +77,17 @@ const FORGE_CLI_CATALOG: Record<ForgeCliId, ForgeCliCatalogEntry> = {
 
 export function getForgeCliVersion(cli: ForgeCliId): string {
   return FORGE_CLI_CATALOG[cli].version;
+}
+
+/**
+ * Looks up the pinned sha256 for a downloaded asset filename (e.g.
+ * "gh_2.96.0_linux_amd64.tar.gz" or "tea-0.3.0-linux-amd64"). Returns null
+ * when the filename isn't in forge-cli-versions.json — callers should treat
+ * that as "can't verify" rather than a hard failure, see ensure-forge-cli.ts.
+ */
+export function getForgeCliChecksum(cli: ForgeCliId, assetFilename: string): string | null {
+  const checksums: Record<string, string> = forgeCliVersions[cli].checksums;
+  return checksums[assetFilename] ?? null;
 }
 
 export function resolveForgeCliAsset(
