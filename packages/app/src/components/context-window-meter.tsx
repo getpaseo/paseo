@@ -18,17 +18,16 @@ interface ContextWindowMeterProps {
   provider?: string | null;
   /** Reserve the meter footprint and show a loading ring while usage is pending. */
   pending?: boolean;
+  /** Optional glyph envelope for icon-toolbar alignment. */
+  glyphSize?: number;
 }
 
 const SVG_SIZE = 14;
 const COMPACT_SVG_SIZE = 12;
-const CENTER = SVG_SIZE / 2;
 const COMPACT_CENTER = COMPACT_SVG_SIZE / 2;
-const RADIUS = 6;
 const COMPACT_RADIUS = 5;
 const STROKE_WIDTH = 2;
 const COMPACT_STROKE_WIDTH = 1.75;
-const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
 const COMPACT_CIRCUMFERENCE = 2 * Math.PI * COMPACT_RADIUS;
 
 function isValidMaxTokens(value: number): boolean {
@@ -74,7 +73,7 @@ function getMeterColors(
   return { progress: theme.colors.foregroundMuted, track };
 }
 
-function getMeterGeometry(showPercentage: boolean) {
+function getMeterGeometry(showPercentage: boolean, glyphSize?: number) {
   if (showPercentage) {
     return {
       svgSize: COMPACT_SVG_SIZE,
@@ -85,12 +84,14 @@ function getMeterGeometry(showPercentage: boolean) {
       containerStyle: styles.containerWithLabel,
     };
   }
+  const resolvedSize = glyphSize ?? SVG_SIZE;
+  const resolvedStrokeWidth = glyphSize ? 2 : STROKE_WIDTH;
   return {
-    svgSize: SVG_SIZE,
-    center: CENTER,
-    radius: RADIUS,
-    strokeWidth: STROKE_WIDTH,
-    circumference: CIRCUMFERENCE,
+    svgSize: resolvedSize,
+    center: resolvedSize / 2,
+    radius: (resolvedSize - resolvedStrokeWidth) / 2,
+    strokeWidth: resolvedStrokeWidth,
+    circumference: Math.PI * (resolvedSize - resolvedStrokeWidth),
     containerStyle: styles.container,
   };
 }
@@ -103,6 +104,7 @@ export function ContextWindowMeter({
   serverId,
   provider,
   pending = false,
+  glyphSize,
 }: ContextWindowMeterProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
@@ -123,7 +125,7 @@ export function ContextWindowMeter({
     [refreshProviderUsage],
   );
 
-  const geometry = getMeterGeometry(showPercentage);
+  const geometry = getMeterGeometry(showPercentage, glyphSize);
 
   // No usage yet: reserve the footprint with a track-only ring while a session is
   // active so the real ring fades in without shifting siblings. Render nothing when

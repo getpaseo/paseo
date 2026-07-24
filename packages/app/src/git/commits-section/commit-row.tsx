@@ -3,6 +3,7 @@ import { Pressable, Text, View, type PressableStateCallbackType } from "react-na
 import { StyleSheet } from "react-native-unistyles";
 import { ThemedChevron, chevronColorMapping } from "@/git/themed-chevron";
 import type { ClassifiedCheckoutCommit } from "@/git/use-commits-query";
+import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { formatTimeAgo } from "@/utils/time";
 import { CommitGraphNode } from "./commit-graph-node";
 
@@ -41,7 +42,7 @@ export const CommitRow = memo(function CommitRow({
     >
       <CommitGraphNode commit={commit} isFirst={isFirst} isLast={isLast} />
       <View style={styles.commitDetails}>
-        <Text style={styles.shortSha} numberOfLines={1}>
+        <Text dataSet={CODE_SURFACE_DATASET} style={styles.shortSha} numberOfLines={1}>
           {commit.shortSha}
         </Text>
         <Text style={styles.subject} numberOfLines={1}>
@@ -79,7 +80,7 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.xs,
     fontFamily: theme.fontFamily.mono,
     color: theme.colors.foregroundMuted,
-    width: theme.spacing[16],
+    width: 70,
     flexShrink: 0,
   },
   subject: {

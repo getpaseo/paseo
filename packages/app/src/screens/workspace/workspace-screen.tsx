@@ -3536,7 +3536,7 @@ function WorkspaceScreenContent({
             tooltipLabel={t("workspace.tabs.explorer.toggle")}
             tooltipKeys={EXPLORER_TOGGLE_KEYS}
             tooltipSide="left"
-            style={styles.compactHeaderActionButton}
+            style={[styles.compactHeaderActionButton, styles.explorerPanelButton]}
             accessible
             accessibilityRole="button"
             accessibilityLabel={explorerToggleLabel}
@@ -3959,6 +3959,11 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "center",
   },
+  explorerPanelButton: {
+    // The 32px trigger and 16px panel glyph leave 8px more trailing space than
+    // the 22px split-pane trigger and its 14px glyph in the row below.
+    marginRight: -theme.spacing[2],
+  },
   compactHeaderMenuCluster: {
     flexDirection: "row",
     alignItems: "center",
@@ -3977,6 +3982,9 @@ const styles = StyleSheet.create((theme) => ({
     minHeight: Math.ceil(theme.fontSize.sm * 1.5) + theme.spacing[1] * 2,
     minWidth: Math.ceil(theme.fontSize.sm * 1.5) + theme.spacing[1] * 2,
     borderRadius: theme.borderRadius.md,
+    // Match the painted right edge of the trailing split-pane glyph below. The
+    // two header rows intentionally use different control sizes and padding.
+    marginRight: -7,
   },
   sourceControlButtonWithStats: {
     paddingHorizontal: theme.spacing[3],

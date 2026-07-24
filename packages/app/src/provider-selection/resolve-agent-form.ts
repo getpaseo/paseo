@@ -56,8 +56,8 @@ export const INITIAL_USER_MODIFIED: UserModifiedFields = {
   workingDir: false,
 };
 
-export const INITIAL_AGENT_FORM_RESOLUTION: AgentFormResolutionState = { status: "completed" };
 export const PENDING_AGENT_FORM_RESOLUTION: AgentFormResolutionState = { status: "pending" };
+export const INITIAL_AGENT_FORM_RESOLUTION = PENDING_AGENT_FORM_RESOLUTION;
 
 type ProviderPrefs = NonNullable<FormPreferences["providerPreferences"]>[AgentProvider];
 

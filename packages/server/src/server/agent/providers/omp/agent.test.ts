@@ -260,6 +260,52 @@ describe("OMP agent client and session", () => {
     expect(omp.completedTurnCount()).toBe(1);
   });
 
+  test("omits live custom messages when display is false", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+
+    await expect(
+      omp.runPromptAfterExtensionNotice("hello OMP", "model turn completed", false),
+    ).resolves.toMatchObject({ finalText: expect.stringContaining("model turn completed") });
+    expect(omp.timeline()).toEqual([
+      { type: "user_message", text: "hello OMP", messageId: "user-1" },
+      {
+        type: "assistant_message",
+        text: "model turn completed",
+        messageId: "omp-assistant-1",
+      },
+    ]);
+  });
+
+  test("renders a live system-notice custom message as a synthetic tool call", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+
+    await omp.runPrompt("hello OMP", "done");
+    omp
+      .runtime()
+      .acceptCustomMessage(
+        [
+          "<system-notice>",
+          "Background job DocsSmokeTwo has completed.",
+          '<task-result id="DocsSmokeTwo" agent="explore" status="completed" duration="21.6s">',
+          "<output>done</output>",
+          "</task-result>",
+          "</system-notice>",
+        ].join("\n"),
+      );
+    omp.runtime().acceptCustomMessage("plain custom status text");
+
+    expect(omp.timeline().filter((item) => item.type === "tool_call")).toMatchObject([
+      { callId: "omp-notice:DocsSmokeTwo", name: "task_notification", status: "completed" },
+    ]);
+    // Non-notice custom messages still fall through as assistant messages.
+    expect(omp.timeline().filter((item) => item.type === "assistant_message")).toMatchObject([
+      { text: "done" },
+      { text: "plain custom status text" },
+    ]);
+  });
+
   test("does not complete a queued model turn from OMP's local-only hint", async () => {
     const omp = new OmpHarness();
     await omp.start();

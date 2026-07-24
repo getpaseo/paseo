@@ -32,4 +32,21 @@ describe("session resume revalidation", () => {
     expect(revalidated).toBe(false);
     expect(calls).toEqual([]);
   });
+
+  it("defers stale resume revalidation while the host is disconnected", async () => {
+    const calls: string[] = [];
+
+    const revalidated = await revalidateSessionAfterResume({
+      awayMs: SESSION_STALE_AFTER_MS,
+      serverId: "server",
+      bumpHistorySyncGeneration: (serverId) => calls.push(`history:${serverId}`),
+      refreshDirectories: async () => {
+        calls.push("directories");
+        throw new Error("Host server is not connected");
+      },
+    });
+
+    expect(revalidated).toBe(false);
+    expect(calls).toEqual(["history:server", "directories"]);
+  });
 });

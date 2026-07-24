@@ -92,10 +92,7 @@ function formatListenTarget(listenTarget: ListenTarget | null): string | null {
 export async function fanOutReconciledWorkspaceUpdates(input: {
   sessions: Iterable<{
     syncWorkspaceGitObserversForExternalWorkspaceIds(workspaceIds: Iterable<string>): Promise<void>;
-    emitWorkspaceUpdatesForExternalWorkspaceIds(
-      workspaceIds: Iterable<string>,
-      options: { skipReconcile: boolean },
-    ): Promise<void>;
+    emitWorkspaceUpdatesForExternalWorkspaceIds(workspaceIds: Iterable<string>): Promise<void>;
   }>;
   workspaceIds: readonly string[];
   logger: Pick<Logger, "warn">;
@@ -111,9 +108,7 @@ export async function fanOutReconciledWorkspaceUpdates(input: {
         );
       }
       try {
-        await session.emitWorkspaceUpdatesForExternalWorkspaceIds(input.workspaceIds, {
-          skipReconcile: true,
-        });
+        await session.emitWorkspaceUpdatesForExternalWorkspaceIds(input.workspaceIds);
       } catch (error) {
         input.logger.warn({ err: error }, "Failed to emit workspace updates after reconciliation");
       }
@@ -178,6 +173,7 @@ import type {
 } from "./agent/provider-launch-config.js";
 import type { PersistedConfig } from "./persisted-config.js";
 import { createServiceProxySubsystem, type ServiceProxySubsystem } from "./service-proxy.js";
+import { releaseWorkspaceServicePortPlan } from "./workspace-service-port-registry.js";
 import { ScriptHealthMonitor } from "./script-health-monitor.js";
 import { createScriptStatusEmitter } from "./script-status-projection.js";
 import { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
@@ -841,12 +837,17 @@ export async function createPaseoDaemon(
     logger,
   });
   logger.info({ elapsed: elapsed() }, "Workspace registries bootstrapped");
+  const teardownArchivedWorkspaceRuntime = (workspaceId: string): void => {
+    scriptRuntimeStore.removeForWorkspace(workspaceId);
+    releaseWorkspaceServicePortPlan(workspaceId);
+  };
   const workspaceReconciliation = new WorkspaceReconciliationService({
     projectRegistry,
     workspaceRegistry,
     logger,
     workspaceGitService,
     onProjectUpdate: (update) => wsServer?.publishProjectUpdate(update),
+    onWorkspaceArchived: teardownArchivedWorkspaceRuntime,
     onWorkspacesChanged: async (workspaceIds) => {
       await fanOutReconciledWorkspaceUpdates({
         sessions: wsServer?.listTrustedSessions() ?? [],
@@ -867,18 +868,12 @@ export async function createPaseoDaemon(
     workspaceGitService,
   });
   const archiveWorkspaceRecordExternal = async (workspaceId: string) => {
-    const sessions = wsServer?.listTrustedSessions() ?? [];
-    if (sessions.length > 0) {
-      await Promise.all(
-        sessions.map((session) => session.archiveWorkspaceRecordForExternalMutation(workspaceId)),
-      );
-      return;
-    }
-
-    await archivePersistedWorkspaceRecord({
+    const existingWorkspace = await archivePersistedWorkspaceRecord({
       workspaceId,
       workspaceRegistry,
     });
+    if (!existingWorkspace || existingWorkspace.archivedAt) return;
+    teardownArchivedWorkspaceRuntime(workspaceId);
   };
   // external path→workspace adapter, not ownership: archive-by-path requests that
   // arrive with a worktree path and no workspaceId (old clients / CLI).

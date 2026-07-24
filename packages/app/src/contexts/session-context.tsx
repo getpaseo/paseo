@@ -485,11 +485,6 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         serverId,
         bumpHistorySyncGeneration,
         refreshDirectories: () => getHostRuntimeStore().refreshDirectories(serverId),
-      }).catch((error) => {
-        console.error("[SessionProvider] resume revalidation failed", {
-          serverId,
-          error: toErrorMessage(error),
-        });
       });
     },
     [bumpHistorySyncGeneration, serverId],
