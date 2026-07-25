@@ -9,13 +9,13 @@ Controlled by `APP_VARIANT` in `packages/app/app.config.js` (vanilla Expo, no cu
 | `production`  | Paseo       | `sh.paseo`       |
 | `development` | Paseo Debug | `sh.paseo.debug` |
 
-Fork release builds can override the production identity with:
+Fork release builds default to the same production identity as official Paseo. Override only when you intentionally want a distinct brand:
 
-- `PASEO_ANDROID_APP_NAME` — launcher name, for example `Paseo iamriajul`
-- `PASEO_ANDROID_PACKAGE_ID` — Android package ID (defaults to the original `sh.paseo` in fork APK builds; set this only if you want a distinct package)
-- `PASEO_URL_SCHEME` — deep-link scheme, for example `paseo-iamriajul`
+- `PASEO_ANDROID_APP_NAME` — launcher name (defaults to `Paseo`)
+- `PASEO_ANDROID_PACKAGE_ID` — Android package ID (defaults to `sh.paseo`)
+- `PASEO_URL_SCHEME` — deep-link scheme (defaults to `paseo`)
 
-When `PASEO_FORK_ID_SUFFIX` is set without an explicit package ID, `packages/app/app.config.js` can still derive a suffixed package ID from the official package. The fork APK release path sets `PASEO_ANDROID_PACKAGE_ID=sh.paseo` by default so the installed app id matches the original application. Fork builds disable the upstream EAS Update URL unless `PASEO_EXPO_UPDATES_URL` is explicitly set, so a fork APK does not later load upstream JavaScript.
+When `PASEO_FORK_ID_SUFFIX` is set without an explicit package ID, `packages/app/app.config.js` can still derive a suffixed package ID for intentional side-by-side installs. The fork APK release path emits official-like defaults (`sh.paseo` / `Paseo` / `paseo`) so personal builds replace an official install and keep asset names aligned with upstream. Fork builds disable the upstream EAS Update URL unless `PASEO_EXPO_UPDATES_URL` is explicitly set, so a fork APK does not later load upstream JavaScript.
 
 EAS profiles: `development`, `production`, and `production-apk` in `packages/app/eas.json`.
 
