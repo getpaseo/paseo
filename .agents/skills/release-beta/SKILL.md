@@ -8,4 +8,6 @@ user-invocable: true
 
 Read `docs/release.md` in the Paseo repo and follow the **Beta flow** section end-to-end. Run the **Beta release** completion checklist at the bottom of that doc.
 
-Key rules the doc enforces — each beta updates an in-place `CHANGELOG.md` entry (`## X.Y.Z-beta.N`) that gets overwritten at promotion (never leave a stale `-beta.N` heading behind), and betas publish npm only with the explicit `beta` dist-tag.
+During preparation, classify the previous-stable-to-`HEAD` diff as patch or minor and show the target version and rationale to the user. Agents never select a major version autonomously.
+
+Each beta updates an in-place `CHANGELOG.md` entry (`## X.Y.Z-beta.N`) that gets overwritten at promotion, and npm publishes only on the explicit `beta` dist-tag.

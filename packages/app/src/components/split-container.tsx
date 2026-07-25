@@ -55,6 +55,7 @@ import {
   getWorkspacePaneDescriptors,
 } from "@/screens/workspace/workspace-pane-state";
 import { useMountedTabSet } from "@/screens/workspace/use-mounted-tab-set";
+import { useModifiedPanelTabIds } from "@/panels/panel-instance-attributes";
 import {
   WorkspacePaneContent,
   type WorkspacePaneContentModel,
@@ -75,7 +76,7 @@ import {
   type SplitPane,
   type WorkspaceLayout,
 } from "@/stores/workspace-layout-store";
-import type { WorkspaceTab } from "@/stores/workspace-tabs-store";
+import type { WorkspaceTab } from "@/workspace-tabs/model";
 import { RenderProfile } from "@/utils/render-profiler";
 import { workspaceTabTargetsEqual } from "@/workspace-tabs/identity";
 import { isNative } from "@/constants/platform";
@@ -125,6 +126,7 @@ interface SplitContainerProps {
   onReorderTabsInPane: (paneId: string, tabIds: string[]) => void;
   renderPaneEmptyState?: () => ReactNode;
   focusModeEnabled?: boolean;
+  onExitFocusMode: () => void;
 }
 
 interface WorkspaceTabDragData {
@@ -394,6 +396,7 @@ export function SplitContainer({
   onReorderTabsInPane,
   renderPaneEmptyState = () => null,
   focusModeEnabled,
+  onExitFocusMode,
 }: SplitContainerProps) {
   const inheritedWindowChromeCorners = useWindowChromeCorners();
   const windowChromeCorners = focusModeEnabled ? inheritedWindowChromeCorners : "none";
@@ -617,6 +620,8 @@ export function SplitContainer({
           dropPreview={dropPreview}
           tabDropPreview={tabDropPreview}
           windowChromeCorners={splitRoot.usesFallbackStrip ? "none" : windowChromeCorners}
+          focusModeEnabled={focusModeEnabled}
+          onExitFocusMode={onExitFocusMode}
         />
         <DragOverlay dropAnimation={null}>
           {activeDragTabId ? (
@@ -763,6 +768,8 @@ function SplitNodeView({
   dropPreview,
   tabDropPreview,
   windowChromeCorners,
+  focusModeEnabled,
+  onExitFocusMode,
 }: SplitNodeViewProps) {
   const groupId = node.kind === "group" ? node.group.id : null;
   const groupDirection = node.kind === "group" ? node.group.direction : null;
@@ -818,6 +825,8 @@ function SplitNodeView({
           showDropZones={showDropZones}
           dropPreview={dropPreview}
           tabDropPreview={tabDropPreview}
+          focusModeEnabled={focusModeEnabled}
+          onExitFocusMode={onExitFocusMode}
         />
       </WindowChromeRegion>
     );
@@ -869,6 +878,8 @@ function SplitNodeView({
               dropPreview={dropPreview}
               tabDropPreview={tabDropPreview}
               windowChromeCorners={windowChromeCorners}
+              focusModeEnabled={focusModeEnabled}
+              onExitFocusMode={onExitFocusMode}
             />
           </SplitGroupChild>
           {index < node.group.children.length - 1 ? (
@@ -922,6 +933,8 @@ function SplitPaneView({
   showDropZones,
   dropPreview,
   tabDropPreview,
+  focusModeEnabled,
+  onExitFocusMode,
 }: SplitPaneViewProps) {
   const { theme: _theme } = useUnistyles();
   const paneRef = useRef<View | null>(null);
@@ -936,11 +949,17 @@ function SplitPaneView({
   );
   const paneTabs = useMemo(() => paneState.tabs.map((tab) => tab.descriptor), [paneState.tabs]);
   const paneTabIds = useMemo(() => paneTabs.map((tab) => tab.tabId), [paneTabs]);
+  const modifiedPaneTabIds = useModifiedPanelTabIds({
+    serverId: normalizedServerId,
+    workspaceId: normalizedWorkspaceId,
+    tabIds: paneTabIds,
+  });
   const tabDescriptorMap = useStableTabDescriptorMap(paneTabs);
   const activeTabDescriptor = paneState.activeTab?.descriptor ?? null;
   const { mountedTabIds } = useMountedTabSet({
     activeTabId: activeTabDescriptor?.tabId ?? null,
     allTabIds: paneTabIds,
+    retainedTabIds: modifiedPaneTabIds,
     cap: 3,
   });
   const mountedPaneTabIds = useMemo(
@@ -1059,6 +1078,8 @@ function SplitPaneView({
             tabDropPreviewIndex={
               tabDropPreview?.paneId === pane.id ? tabDropPreview.indicatorIndex : null
             }
+            focusModeEnabled={Boolean(focusModeEnabled)}
+            onExitFocusMode={onExitFocusMode}
           />
         </WindowChromeSafeArea>
 

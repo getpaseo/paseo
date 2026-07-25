@@ -257,10 +257,10 @@ export default function PairScanScreen() {
             />
             <View style={styles.overlay} pointerEvents="none">
               <View style={styles.scanFrame}>
-                <View style={CORNER_TL_STYLE} />
-                <View style={CORNER_TR_STYLE} />
-                <View style={CORNER_BL_STYLE} />
-                <View style={CORNER_BR_STYLE} />
+                <View style={[styles.corner, styles.cornerTL]} />
+                <View style={[styles.corner, styles.cornerTR]} />
+                <View style={[styles.corner, styles.cornerBL]} />
+                <View style={[styles.corner, styles.cornerBR]} />
               </View>
               {isPairing ? <Text style={helperTextStyle}>{t("pairing.scan.pairing")}</Text> : null}
             </View>
@@ -272,7 +272,3 @@ export default function PairScanScreen() {
 }
 
 const BARCODE_SCANNER_SETTINGS: BarcodeSettings = { barcodeTypes: ["qr"] };
-const CORNER_TL_STYLE = [styles.corner, styles.cornerTL];
-const CORNER_TR_STYLE = [styles.corner, styles.cornerTR];
-const CORNER_BL_STYLE = [styles.corner, styles.cornerBL];
-const CORNER_BR_STYLE = [styles.corner, styles.cornerBR];

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { deriveWorkspaceTabModel } from "@/screens/workspace/workspace-tab-model";
-import type { WorkspaceTab } from "@/stores/workspace-tabs-store";
+import type { WorkspaceTab } from "@/workspace-tabs/model";
 
 describe("deriveWorkspaceTabModel", () => {
   it("keeps normalized tabs in stored order and preserves targets", () => {

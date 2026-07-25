@@ -62,6 +62,8 @@ export const ptBR: TranslationResources = {
       newAgent: "Novo agente",
       addProject: "Adicionar projeto",
       home: "Início",
+      modelGroupLabel: "Modelo",
+      modelSearchKeywords: "trocar modelo mudar modelo definir modelo selecionar modelo",
     },
   },
   composer: {
@@ -102,6 +104,7 @@ export const ptBR: TranslationResources = {
       addImage: "Adicionar imagem",
       addFile: "Enviar arquivo",
       addIssueOrPr: "Adicionar issue ou PR",
+      addIssueOrPr_mr: "Adicionar issue ou MR",
       dropImagesHere: "Solte imagens aqui",
       dropFilesHere: "Solte arquivos aqui",
       editQueuedMessage: "Editar mensagem na fila",
@@ -109,8 +112,8 @@ export const ptBR: TranslationResources = {
       openImage: "Abrir anexo de imagem",
       removeImage: "Remover anexo de imagem",
       removeFile: "Remover anexo de arquivo",
-      openGithub: "Abrir {{kind}} #{{number}}",
-      removeGithub: "Remover {{kind}} #{{number}}",
+      openGithub: "Abrir {{kind}} {{number}}",
+      removeGithub: "Remover {{kind}} {{number}}",
       element: "Elemento",
       openBrowserElement: "Abrir anexo de elemento do navegador",
       removeBrowserElement: "Remover anexo de elemento do navegador",
@@ -134,7 +137,9 @@ export const ptBR: TranslationResources = {
       searching: "Buscando...",
       noResults: "Nenhum resultado encontrado.",
       searchPlaceholder: "Buscar issues e PRs...",
+      searchPlaceholder_mr: "Buscar issues e MRs...",
       title: "Anexar issue ou PR",
+      title_mr: "Anexar issue ou MR",
     },
   },
   agentControls: {
@@ -201,6 +206,7 @@ export const ptBR: TranslationResources = {
       notFound: "Agente não encontrado",
       failedToLoad: "Falha ao carregar agente",
       reconnecting: "Reconectando...",
+      timelineSyncFailed: "Não foi possível atualizar o histórico do agente. Tentando novamente…",
       archivingTitle: "Arquivando agente...",
       archivingSubtitle: "Aguarde enquanto arquivamos este agente.",
     },
@@ -352,22 +358,38 @@ export const ptBR: TranslationResources = {
   workspace: {
     route: {
       loading: "Carregando workspace",
-      restoring: "Restaurando workspace",
-      restoreFailed:
-        "Não foi possível restaurar este workspace — o diretório pode ter sido movido ou excluído",
       connecting: "Conectando",
       hostOffline: "{{hostName}} está offline",
       cannotReachHost: "Não é possível acessar {{hostName}}",
       hostStatus: "Status do host: {{status}}",
-      missing: "Workspace não encontrado",
       needsHostUpgrade: "Atualize o host para restaurar este workspace",
       manageHost: "Gerenciar host",
+      recovery: {
+        archivedTitle: "Workspace arquivado",
+        restoreDescription:
+          "{{workspaceName}} foi arquivado e sua worktree foi removida. Restaure a branch {{branch}} para abri-lo novamente.",
+        unarchiveDescription:
+          "{{workspaceName}} está arquivado. Desarquive-o para abri-lo novamente.",
+        restoreAction: "Restaurar",
+        unarchiveAction: "Desarquivar",
+        restoringTitle: "Restaurando workspace",
+        restoringAction: "Restaurando...",
+        unavailableTitle: "Workspace indisponível",
+        checkFailedTitle: "Não foi possível verificar o workspace",
+      },
     },
     hoverCard: {
       scriptsAccessibility: "Scripts do workspace",
       copyPath: "Copiar caminho",
       copyBranchName: "Copiar nome da branch",
       copied: "Copiado",
+    },
+    fileActions: {
+      openFile: "Abrir arquivo",
+      copyPath: "Copiar caminho",
+      download: "Baixar",
+      addToChat: "Adicionar ao chat…",
+      moreActions: "Mais ações",
     },
     fileExplorer: {
       sort: {
@@ -378,8 +400,6 @@ export const ptBR: TranslationResources = {
       context: {
         size: "Tamanho",
         modified: "Modificado",
-        copyPath: "Copiar caminho",
-        download: "Baixar",
       },
       actions: {
         back: "Voltar",
@@ -475,6 +495,7 @@ export const ptBR: TranslationResources = {
     },
     tabs: {
       loading: "Carregando...",
+      modified: "Alterações não salvas",
       loadingAgentTitle: "Carregando título do agente",
       emptyPane: "Nenhuma aba neste painel.",
       fallback: {
@@ -516,6 +537,7 @@ export const ptBR: TranslationResources = {
         preparingTerminalTooltip: "Preparando terminal...",
         newBrowser: "Novo navegador",
         newCodeServer: "New Code Server",
+        exitFocusMode: "Sair do modo de foco",
         splitRight: "Dividir painel à direita",
         splitDown: "Dividir painel abaixo",
         terminalProfilesMenu: "Perfis de terminal",
@@ -542,6 +564,12 @@ export const ptBR: TranslationResources = {
         failedToReloadAgent: "Falha ao recarregar agente",
       },
       confirmations: {
+        unsavedTitle: "Alterações não salvas",
+        unsavedMessage: "Esta aba tem alterações não salvas. Fechá-la descartará o rascunho.",
+        closeWithoutSaving: "Fechar sem salvar",
+        closePaneTitle: "Fechar painel?",
+        bulkUnsaved:
+          "{{count}} aba(s) têm alterações não salvas. Fechar descartará esses rascunhos.",
         close: "Fechar",
         cancel: "Cancelar",
         archive: "Arquivar",
@@ -591,19 +619,34 @@ export const ptBR: TranslationResources = {
     scripts: {
       title: "Scripts",
       actions: {
+        chooseUrl: "Escolher URL",
+        copyUrl: "Copiar URL",
+        openService: "Ver serviço",
+        restart: "Reiniciar",
         run: "Executar",
-        view: "Ver",
+        stop: "Parar",
+        view: "Ver terminal",
       },
       accessibility: {
         trigger: "Scripts do workspace",
-        openAt: "Abrir {{scriptName}} em {{label}}",
+        openService: "Ver serviço {{scriptName}}",
         viewTerminal: "Ver terminal de {{scriptName}}",
         runScript: "Executar script {{scriptName}}",
+        stopScript: "Parar {{scriptName}}",
+        restartScript: "Reiniciar {{scriptName}}",
+        copyUrl: "Copiar URL de {{scriptName}}",
+        chooseUrl: "Escolher URL para {{scriptName}}",
         script: "script {{scriptName}}",
+      },
+      routes: {
+        public: "Proxy reverso",
+        paseo: "Memorable",
+        direct: "Direta",
       },
       states: {
         exitCode: "saída {{code}}",
         startFailed: "Falha ao iniciar {{scriptName}}",
+        stopFailed: "Falha ao parar {{scriptName}}",
       },
     },
     git: {
@@ -635,6 +678,9 @@ export const ptBR: TranslationResources = {
           label: "Criar PR",
           pending: "Criando PR...",
           success: "PR criada",
+          label_mr: "Criar MR",
+          pending_mr: "Criando MR...",
+          success_mr: "MR criada",
         },
         mergeBranch: {
           label: "Fazer merge localmente",
@@ -657,7 +703,13 @@ export const ptBR: TranslationResources = {
           rebase: "Merge",
           pending: "Fazendo merge da PR...",
           success: "PR mergeada",
+          squash_mr: "Merge",
+          merge_mr: "Merge",
+          rebase_mr: "Merge",
+          pending_mr: "Fazendo merge da MR...",
+          success_mr: "MR mergeada",
         },
+        viewPr_mr: "Ver MR",
         autoMerge: {
           enableSquash: "Merge automático",
           enableMerge: "Merge automático",
@@ -668,7 +720,8 @@ export const ptBR: TranslationResources = {
           disabled: "Merge automático desativado",
         },
         unavailable: {
-          viewPrNoGithub: "Ver PR não está disponível agora porque o GitHub não está conectado",
+          viewPrNoForge:
+            "Ver {{noun}} não está disponível agora porque o {{brand}} não está conectado",
           pullNoRemote:
             "Pull não está disponível aqui porque esta branch ainda não está conectada a um remoto",
           pullDirty:
@@ -683,9 +736,14 @@ export const ptBR: TranslationResources = {
             "Pull e push não estão disponíveis aqui porque esta branch ainda não está conectada a um remoto",
           pullAndPushDirty:
             "Pull e push não estão disponíveis enquanto há alterações locais. Faça commit ou stash primeiro",
+          pullAndPushNoIncoming:
+            "Pull e push não estão disponíveis porque não há alterações de entrada para puxar primeiro",
           pullAndPushInSync:
             "Pull e push não estão disponíveis porque esta branch já está sincronizada",
-          createPrNoGithub: "Criar PR não está disponível agora porque o GitHub não está conectado",
+          pullAndPushNothingToPush:
+            "Pull e push não estão disponíveis porque não há nada novo para enviar depois do pull",
+          createPrNoForge:
+            "Criar {{noun}} não está disponível agora porque o {{brand}} não está conectado",
           createPrNoCommits:
             "Criar PR não está disponível porque esta branch ainda não tem commits novos",
           mergeNoBase: "Merge não está disponível porque não foi possível determinar a branch base",
@@ -701,6 +759,10 @@ export const ptBR: TranslationResources = {
             "Atualizar não está disponível porque esta branch já está atualizada com {{baseRef}}",
           mergePrNoGithub:
             "Merge da PR não está disponível agora porque o GitHub não está conectado",
+          archiveNotWorktree:
+            "Arquivar não está disponível aqui porque este workspace não foi criado como um worktree do Paseo",
+          mergePrNoForge:
+            "Merge da {{noun}} não está disponível agora porque o {{brand}} não está conectado",
           mergePrMissing: "Merge da PR não está disponível porque ainda não há uma pull request",
           mergePrDraft: "Merge da PR não está disponível porque a pull request ainda é um rascunho",
           mergePrMerged: "Merge da PR não está disponível porque a pull request já foi mergeada",
@@ -709,7 +771,7 @@ export const ptBR: TranslationResources = {
           mergePrQueue:
             "Merge da PR não está disponível aqui porque este repositório usa uma merge queue",
           mergePrNotReady:
-            "Merge da PR não está disponível até o GitHub informar que a pull request está pronta para merge",
+            "Merge da {{noun}} não está disponível até o {{brand}} informar que a {{noun}} está pronta para merge",
           autoMergeCannotDisable:
             "O merge automático está ativado, mas esta conta não pode desativá-lo",
         },
@@ -741,6 +803,8 @@ export const ptBR: TranslationResources = {
         },
       },
       diff: {
+        openChangesTab: "Abrir a aba Alterações",
+        closeChangesTab: "Fechar a aba Alterações",
         binaryFile: "Arquivo binário",
         tooLarge: "Diff grande demais para exibir",
         unified: "Diff unificado",
@@ -760,7 +824,7 @@ export const ptBR: TranslationResources = {
         expandAllFolders: "Expandir todas as pastas",
         refreshing: "Atualizando",
         refresh: "Atualizar",
-        refreshState: "Atualizar estado do git e do GitHub",
+        refreshState: "Atualizar estado do git e do {{brand}}",
         failedRefresh: "Falha ao atualizar estado do git.",
         emptyHiddenWhitespace: "Nenhuma alteração visível após ocultar espaços em branco",
         emptyUncommitted: "Nenhuma alteração sem commit",
@@ -774,6 +838,16 @@ export const ptBR: TranslationResources = {
         base: "base",
         newFile: "Novo",
         deletedFile: "Excluído",
+        commits: {
+          title: "Commits",
+          countLabel: "{{count}} commits do espaço de trabalho",
+          noneAhead: "Ainda não há commits à frente de {{baseRef}}",
+          fileDiffEmpty: "Nenhuma alteração para exibir",
+          fileDiffError: "Falha ao carregar diff do arquivo",
+          loading: "Carregando commits…",
+          loadError: "Falha ao carregar commits",
+          empty: "Ainda não há commits",
+        },
       },
       openInEditor: {
         open: "Abrir",
@@ -785,13 +859,23 @@ export const ptBR: TranslationResources = {
       pr: {
         actions: {
           viewPullRequest: "Ver",
+          openOn: "Abrir no {{brand}}",
         },
         sections: {
           checks: "Verificações",
+          pipeline: "Pipeline",
           reviews: "Revisões",
         },
+        empty: {
+          noJobs: "Sem jobs",
+          loadingPipeline: "Carregando pipeline...",
+          pipelineJobsLoadFailed: "Não foi possível carregar os jobs do pipeline",
+          allowedToFail: "permitido falhar",
+        },
+        approvals: "{{given}} de {{required}} aprovações",
         accessibility: {
           pullRequest: "Pull request #{{number}}",
+          pullRequest_mr: "Merge request !{{number}}",
         },
         states: {
           draft: "Rascunho",
@@ -808,10 +892,18 @@ export const ptBR: TranslationResources = {
         time: {
           justNow: "agora mesmo",
         },
+        thread: {
+          discussion: "Tópico de discussão",
+        },
         errors: {
           statusLoadFailed: "Não foi possível carregar o status da pull request",
           activityLoadFailed: "Não foi possível carregar a atividade da pull request",
         },
+      },
+      forgeSetup: {
+        installCli: "Instale a CLI {{cli}} para usar os recursos do {{brand}}.",
+        signIn: "Execute {{command}} para usar os recursos do {{brand}}.",
+        generic: "Configure o {{brand}} neste host para usar seus recursos.",
       },
     },
   },
@@ -890,6 +982,8 @@ export const ptBR: TranslationResources = {
       actions: {
         menu: "Ações do workspace",
         newWorkspace: "Novo workspace",
+        showMore: "Mostrar mais",
+        showLess: "Mostrar menos",
         createWorkspaceFor: "Criar um novo workspace para {{projectName}}",
         copyPath: "Copiar caminho",
         copyBranchName: "Copiar nome da branch",
@@ -947,9 +1041,6 @@ export const ptBR: TranslationResources = {
     refPicker: {
       startingRef: "Ref inicial",
       chooseStart: "Escolha de onde começar",
-      checkoutHint: "Fazer checkout da PR #{{number}}?",
-      checkoutPr: "Fazer checkout da PR #{{number}}",
-      dismissCheckoutHint: "Dispensar dica de checkout da PR #{{number}}",
       intoBase: "em {{baseRef}}",
       searching: "Buscando...",
       noMatchingRefs: "Nenhuma ref correspondente.",
@@ -1437,6 +1528,36 @@ export const ptBR: TranslationResources = {
       binaryPreviewUnavailable: "Prévia binária indisponível",
       failedToLoad: "Falha ao carregar arquivo",
       failedToLoadPreview: "Falha ao carregar prévia do arquivo",
+      editor: {
+        fileSize: "Tamanho {{size}}",
+        lines: "{{count}} linhas",
+        editorStatus: "Status do editor: {{status}}",
+        unsavedChanges: "Alterações não salvas",
+        saving: "Salvando...",
+        saveFailed: "Falha ao salvar",
+        changedOnDisk: "Alterado no disco",
+        vimMode: "Modo Vim {{mode}}",
+        cursor: "Linha {{line}}, coluna {{column}}",
+        preview: "Prévia",
+        source: "Fonte",
+        unavailableTitle: "Arquivo indisponível no disco",
+        conflictDescription: "O conteúdo local foi preservado. Escolha qual versão manter.",
+        overwrite: "Sobrescrever",
+        reload: "Recarregar",
+        reloadTitle: "Recarregar do disco?",
+        reloadMessage: "Suas alterações locais serão perdidas.",
+      },
+    },
+    diff: {
+      changesLabel: "Alterações",
+      changesSubtitle: "Diff da árvore de trabalho",
+      commitSubtitle: "Diff do commit",
+      uncommittedSubtitle: "Alterações não commitadas",
+      baseSubtitle: "Comparado com {{baseRef}}",
+      directoryMissing: "Diretório do workspace não encontrado.",
+      empty: "Nenhuma alteração",
+      loadError: "Falha ao carregar diff",
+      capabilityMissing: "Atualize o host para ver diffs de commits.",
     },
   },
   toolCallDetails: {
@@ -1523,11 +1644,17 @@ export const ptBR: TranslationResources = {
     sections: {
       general: "Geral",
       appearance: "Aparência",
+      editor: "Editor",
       shortcuts: "Atalhos",
       integrations: "Integrações",
       permissions: "Permissões",
       diagnostics: "Diagnósticos",
       about: "Sobre",
+    },
+    editor: {
+      title: "Editor",
+      vimKeybindings: "Atalhos do Vim",
+      vimHint: "Aplica-se a arquivos-fonte na web e no desktop.",
     },
     hostSections: {
       connections: "Conexões",
@@ -1701,6 +1828,7 @@ export const ptBR: TranslationResources = {
     },
     shortcuts: {
       dialogTitle: "Atalhos",
+      searchPlaceholder: "Pesquisar atalhos",
       unavailableOnMobile: "Atalhos de teclado estão disponíveis apenas no desktop",
       capturePrompt: "Pressione o atalho...",
       actions: {
@@ -1917,6 +2045,8 @@ export const ptBR: TranslationResources = {
           dialogFailedMessage: "Não foi possível abrir o diálogo de confirmação de reinício.",
         },
         update: {
+          desktopManagedHint:
+            "Este daemon é gerenciado pelo Paseo Desktop. Atualize o Paseo Desktop no host.",
           title: "Atualizar daemon",
           hint: "Atualiza o daemon para a versão mais recente e o reinicia",
           confirm: "Atualizar",
@@ -1966,6 +2096,17 @@ export const ptBR: TranslationResources = {
       loading: "Carregando...",
       addErrorTitle: "Não foi possível adicionar provedor",
       updateErrorTitle: "Não foi possível atualizar provedor",
+      actions: {
+        menu: "{{name}} actions",
+        remove: "Remove provider",
+        removing: "Removing...",
+      },
+      remove: {
+        confirmTitle: "Remove {{name}}?",
+        confirmMessage: "This deletes the provider entry from config.json. It cannot be undone.",
+        confirm: "Remove",
+        errorTitle: "Unable to remove provider",
+      },
       statuses: {
         disabled: "Desativado",
         loading: "Carregando",

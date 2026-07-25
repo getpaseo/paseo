@@ -16,7 +16,12 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import { settingsStyles } from "@/styles/settings";
 import type { Theme } from "@/styles/theme";
 import type { ScheduleDerivedState } from "@/schedules/schedule-derivation";
-import { formatCadence, formatNextRun, resolveScheduleTitle } from "@/utils/schedule-format";
+import {
+  formatCadence,
+  formatNextRun,
+  resolveScheduleTitle,
+  scheduleProductName,
+} from "@/utils/schedule-format";
 import { formatTimeAgo } from "@/utils/time";
 import type { ScheduleSummary } from "@getpaseo/protocol/schedule/types";
 
@@ -153,9 +158,10 @@ export function ScheduleRow({
   const handlePointerLeave = useCallback(() => setIsHovered(false), []);
 
   const title = resolveScheduleTitle(schedule);
+  const productName = scheduleProductName(schedule);
   const badge = stateBadge(state);
   const meta = buildMeta(schedule, state, serverName, singleHost ?? false);
-  const canRun = state === "active" || state === "paused";
+  const canRun = schedule.target.type === "new-agent" && (state === "active" || state === "paused");
 
   const rowStyle = useCallback(
     ({ pressed }: PressableStateCallbackType) => [
@@ -178,7 +184,7 @@ export function ScheduleRow({
         style={rowStyle}
         onPress={onEdit}
         accessibilityRole="button"
-        accessibilityLabel={`Edit schedule ${title}`}
+        accessibilityLabel={`Edit ${productName.toLowerCase()} ${title}`}
         testID={`schedule-row-${schedule.id}`}
       >
         <View style={styles.main}>
@@ -222,6 +228,66 @@ const resumeLeading = <ThemedPlay size={MENU_ICON_SIZE} uniProps={mutedColorMapp
 const runLeading = <ThemedRotateCw size={MENU_ICON_SIZE} uniProps={mutedColorMapping} />;
 const deleteLeading = <ThemedTrash2 size={MENU_ICON_SIZE} uniProps={destructiveColorMapping} />;
 
+function ScheduleExecutionMenuItems({
+  schedule,
+  canRun,
+  pending,
+  onPause,
+  onResume,
+  onRunNow,
+}: Pick<ScheduleRowProps, "schedule" | "pending" | "onPause" | "onResume" | "onRunNow"> & {
+  canRun: boolean;
+}): ReactElement | null {
+  if (schedule.target.type === "agent") {
+    return null;
+  }
+
+  let cadenceAction: ReactElement;
+  if (schedule.status === "paused") {
+    cadenceAction = (
+      <DropdownMenuItem
+        leading={resumeLeading}
+        disabled={!canRun}
+        status={pending?.resume ? "pending" : "idle"}
+        pendingLabel="Resuming..."
+        onSelect={onResume}
+        testID={`schedule-menu-resume-${schedule.id}`}
+      >
+        Resume schedule
+      </DropdownMenuItem>
+    );
+  } else {
+    cadenceAction = (
+      <DropdownMenuItem
+        leading={pauseLeading}
+        disabled={schedule.status === "completed" || !canRun}
+        status={pending?.pause ? "pending" : "idle"}
+        pendingLabel="Pausing..."
+        onSelect={onPause}
+        testID={`schedule-menu-pause-${schedule.id}`}
+      >
+        Pause schedule
+      </DropdownMenuItem>
+    );
+  }
+
+  return (
+    <>
+      {cadenceAction}
+      <DropdownMenuItem
+        leading={runLeading}
+        disabled={!canRun}
+        status={pending?.runNow ? "pending" : "idle"}
+        pendingLabel="Starting..."
+        onSelect={onRunNow}
+        testID={`schedule-menu-run-${schedule.id}`}
+      >
+        Run now
+      </DropdownMenuItem>
+    </>
+  );
+}
+
 function renderKebabTriggerIcon({ hovered }: { hovered?: boolean }): ReactElement {
   return (
     <ThemedKebab
@@ -246,13 +312,15 @@ function ScheduleKebabMenu({
 > & {
   canRun: boolean;
 }): ReactElement {
+  const productName = scheduleProductName(schedule);
+  const productNameLower = productName.toLowerCase();
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
         hitSlop={8}
         style={kebabTriggerStyle}
         accessibilityRole={isNative ? "button" : undefined}
-        accessibilityLabel="Schedule actions"
+        accessibilityLabel={`${productName} actions`}
         testID={`schedule-kebab-${schedule.id}`}
       >
         {renderKebabTriggerIcon}
@@ -263,41 +331,16 @@ function ScheduleKebabMenu({
           onSelect={onEdit}
           testID={`schedule-menu-edit-${schedule.id}`}
         >
-          Edit schedule
+          Edit {productNameLower}
         </DropdownMenuItem>
-        {schedule.status === "paused" ? (
-          <DropdownMenuItem
-            leading={resumeLeading}
-            disabled={!canRun}
-            status={pending?.resume ? "pending" : "idle"}
-            pendingLabel="Resuming..."
-            onSelect={onResume}
-            testID={`schedule-menu-resume-${schedule.id}`}
-          >
-            Resume schedule
-          </DropdownMenuItem>
-        ) : (
-          <DropdownMenuItem
-            leading={pauseLeading}
-            disabled={schedule.status === "completed" || !canRun}
-            status={pending?.pause ? "pending" : "idle"}
-            pendingLabel="Pausing..."
-            onSelect={onPause}
-            testID={`schedule-menu-pause-${schedule.id}`}
-          >
-            Pause schedule
-          </DropdownMenuItem>
-        )}
-        <DropdownMenuItem
-          leading={runLeading}
-          disabled={!canRun}
-          status={pending?.runNow ? "pending" : "idle"}
-          pendingLabel="Starting..."
-          onSelect={onRunNow}
-          testID={`schedule-menu-run-${schedule.id}`}
-        >
-          Run now
-        </DropdownMenuItem>
+        <ScheduleExecutionMenuItems
+          schedule={schedule}
+          canRun={canRun}
+          pending={pending}
+          onPause={onPause}
+          onResume={onResume}
+          onRunNow={onRunNow}
+        />
         <DropdownMenuSeparator />
         <DropdownMenuItem
           leading={deleteLeading}
@@ -307,7 +350,7 @@ function ScheduleKebabMenu({
           onSelect={onDelete}
           testID={`schedule-menu-delete-${schedule.id}`}
         >
-          Delete schedule
+          Delete {productNameLower}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

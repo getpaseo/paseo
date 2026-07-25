@@ -142,6 +142,31 @@ const OPENCODE_MODES: AgentProviderModeDefinition[] = [
   },
 ];
 
+export const OMP_MODES: AgentProviderModeDefinition[] = [
+  {
+    id: "full",
+    label: "Full Access",
+    description: "Launches OMP with yolo approval mode so tools run without prompts.",
+    icon: "ShieldOff",
+    colorTier: "dangerous",
+    isUnattended: true,
+  },
+  {
+    id: "write",
+    label: "Write Approval",
+    description: "Launches OMP with write approval mode — reads are free, writes require approval.",
+    icon: "ShieldAlert",
+    colorTier: "moderate",
+  },
+  {
+    id: "ask",
+    label: "Always Ask",
+    description: "Launches OMP with always-ask approval mode for write and exec tools.",
+    icon: "ShieldCheck",
+    colorTier: "safe",
+  },
+];
+
 const MOCK_LOAD_TEST_MODES: AgentProviderModeDefinition[] = [
   {
     id: "load-test",
@@ -167,7 +192,7 @@ export const AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [
     id: "claude",
     label: "Claude",
     description: "Anthropic's multi-tool assistant with MCP support, streaming, and deep reasoning",
-    defaultModeId: "default",
+    defaultModeId: "auto",
     modes: CLAUDE_MODES,
     voice: {
       enabled: true,
@@ -179,7 +204,7 @@ export const AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [
     id: "codex",
     label: "Codex",
     description: "OpenAI's Codex workspace agent with sandbox controls and optional network access",
-    defaultModeId: "auto",
+    defaultModeId: "auto-review",
     modes: CODEX_MODES,
     voice: {
       enabled: true,
@@ -217,11 +242,11 @@ export const AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [
   },
   {
     id: "omp",
-    label: "OMP",
-    description: "Pi-compatible coding agent distributed as Oh My Pi",
+    label: "Oh My Pi",
+    description: "Multi-provider coding agent with native approvals, host tools, and subagents",
     enabledByDefault: false,
-    defaultModeId: null,
-    modes: [],
+    defaultModeId: "full",
+    modes: OMP_MODES,
   },
 ];
 

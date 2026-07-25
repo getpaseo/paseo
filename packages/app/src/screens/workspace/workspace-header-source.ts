@@ -54,10 +54,6 @@ export function resolveWorkspaceHeaderRenderState(input: {
     return { kind: "skeleton" };
   }
 
-  if (input.checkoutState.kind === "pending" && input.workspace.projectKind === "git") {
-    return { kind: "skeleton" };
-  }
-
   const header = resolveWorkspaceHeader({ workspace: input.workspace });
   const checkout = input.checkoutState.kind === "ready" ? input.checkoutState.checkout : null;
   const currentBranchName =

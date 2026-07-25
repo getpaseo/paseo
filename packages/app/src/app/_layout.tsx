@@ -21,7 +21,8 @@ import { GestureDetector, GestureHandlerRootView } from "react-native-gesture-ha
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
-import { CommandCenter } from "@/components/command-center";
+import { CommandCenter, CommandCenterRootActions } from "@/command-center/command-center";
+import { CommandCenterProvider } from "@/command-center/provider";
 import { AddProjectFlowHost } from "@/components/add-project-flow-host";
 import { WorktreeSetupCalloutSource } from "@/components/worktree-setup-callout-source";
 import { DownloadToast } from "@/components/download-toast";
@@ -40,6 +41,7 @@ import { FloatingPanelPortalHost } from "@/components/ui/floating-panel-portal";
 import { HostChooserModal, useHostChooser } from "@/hosts/host-chooser";
 import {
   getIsElectronRuntime,
+  getIsElectronRuntimeMac,
   HEADER_INNER_HEIGHT,
   useIsCompactFormFactor,
 } from "@/constants/layout";
@@ -58,13 +60,13 @@ import {
   resolveStartupBlocker,
   resolveStartupNavigationReady,
   shouldRunStartupGiveUpTimer,
-  startDaemonIfGateAllows,
   startHostRuntimeBootstrap,
   type StartupBlocker,
 } from "@/navigation/host-runtime-bootstrap";
 import { registerWorkspaceRouteNavigationRef } from "@/navigation/workspace-route-navigation";
 import { ThemedStack } from "@/navigation/themed-stack";
 import { shouldUseDesktopDaemon } from "@/desktop/daemon/desktop-daemon";
+import { AgentNavigationListener } from "@/desktop/agent-navigation";
 import { listenToDesktopEvent } from "@/desktop/electron/events";
 import { updateDesktopWindowControls } from "@/desktop/electron/window";
 import { getDesktopHost } from "@/desktop/host";
@@ -110,7 +112,11 @@ import {
   WindowChromeRegion,
   WindowChromeSafeArea,
 } from "@/utils/desktop-window";
-import { buildOpenProjectRoute, parseServerIdFromPathname } from "@/utils/host-routes";
+import {
+  buildOpenProjectRoute,
+  parseHostWorkspaceRouteFromPathname,
+  parseServerIdFromPathname,
+} from "@/utils/host-routes";
 import { buildNotificationRoute, resolveNotificationTarget } from "@/utils/notification-routing";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import {
@@ -143,9 +149,10 @@ function PushNotificationRouter() {
   const openNotification = useStableEvent((data: Record<string, unknown> | undefined) => {
     const target = resolveNotificationTarget(data);
     const serverId = target.serverId;
+    const workspaceId = target.workspaceId;
     const agentId = target.agentId;
-    if (serverId && agentId) {
-      navigateToAgent({ serverId, agentId, pin: true });
+    if (serverId && workspaceId && agentId) {
+      navigateToAgent({ serverId, workspaceId, agentId, pin: true });
       return;
     }
 
@@ -333,7 +340,6 @@ function HostRuntimeBootstrapProvider({ children }: { children: ReactNode }) {
       store,
       daemonStartService,
       shouldStartDaemon: shouldStartBuiltInDaemon,
-      onGateError: (message) => daemonStartService.recordError(message),
     });
   }, []);
 
@@ -372,11 +378,7 @@ function HostRuntimeBootstrapProvider({ children }: { children: ReactNode }) {
 
   const retry = useCallback(() => {
     const daemonStartService = getDaemonStartService({ store: getHostRuntimeStore() });
-    startDaemonIfGateAllows({
-      daemonStartService,
-      shouldStartDaemon: shouldStartBuiltInDaemon,
-      onGateError: (message) => daemonStartService.recordError(message),
-    });
+    void daemonStartService.startIfEnabled({ shouldStart: shouldStartBuiltInDaemon });
   }, []);
 
   const splashError =
@@ -427,7 +429,6 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
   const openDesktopAgentList = usePanelStore((state) => state.openDesktopAgentList);
   const closeDesktopAgentList = usePanelStore((state) => state.closeDesktopAgentList);
   const closeDesktopFileExplorer = usePanelStore((state) => state.closeDesktopFileExplorer);
-  const toggleFocusMode = usePanelStore((state) => state.toggleFocusMode);
   const isFocusModeEnabled = usePanelStore((state) => state.desktop.focusModeEnabled);
   const isDesktopAgentListOpen = usePanelStore((state) => state.desktop.agentListOpen);
   const isDesktopFileExplorerOpen = usePanelStore((state) => state.desktop.fileExplorerOpen);
@@ -444,6 +445,8 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
   const isCompactLayout = useIsCompactFormFactor();
   useCompactWebViewportZoomLock(isCompactLayout);
   const pathname = usePathname();
+  const isWorkspaceRoute = parseHostWorkspaceRouteFromPathname(pathname) !== null;
+  const isWorkspaceFocusModeEnabled = isWorkspaceRoute && isFocusModeEnabled;
   const chromeEnabled = chromeEnabledOverride ?? daemons.length > 0;
   const toggleAgentList = isCompactLayout ? toggleMobileAgentList : toggleDesktopAgentList;
   const toggleDesktopSidebars = useCallback(() => {
@@ -472,7 +475,6 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
     isMobile: isCompactLayout,
     toggleAgentList,
     toggleBothSidebars: toggleDesktopSidebars,
-    toggleFocusMode,
     cycleTheme,
   });
 
@@ -481,11 +483,11 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
 
   const appContentMinimumWidth = resolveDesktopAppContentMinimum({
     isSettingsRoute: pathname.includes("/settings"),
-    isWorkspaceExplorerOpen: pathname.includes("/workspace/") && isDesktopFileExplorerOpen,
+    isWorkspaceExplorerOpen: isWorkspaceRoute && isDesktopFileExplorerOpen,
     requestedExplorerWidth: explorerWidth,
     viewportWidth,
   });
-  const desktopSidebarMounted = chromeEnabled && !isFocusModeEnabled;
+  const desktopSidebarMounted = chromeEnabled && !isWorkspaceFocusModeEnabled;
   const desktopSidebarVisible =
     !isCompactLayout &&
     desktopSidebarMounted &&
@@ -499,7 +501,7 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
   const appChromeLayout = resolveDesktopAppChromeLayout({
     desktopSidebarRendered: desktopSidebarVisible,
     hasTopLeftWindowControls,
-    sidebarControlsEnabled: chromeEnabled && !isFocusModeEnabled,
+    sidebarControlsEnabled: chromeEnabled && !isWorkspaceFocusModeEnabled,
   });
   const sidebarChrome = (
     <SidebarChrome
@@ -550,6 +552,7 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
       <RosettaCalloutSource />
       <UpdateCalloutSource />
       <WorktreeSetupCalloutSource />
+      <CommandCenterRootActions />
       <CommandCenter />
       <AddProjectFlowHost />
       <HostChooserModal />
@@ -567,7 +570,7 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
     surface
   );
 
-  return content;
+  return <CommandCenterProvider>{content}</CommandCenterProvider>;
 }
 
 function SidebarChrome({
@@ -661,16 +664,23 @@ function DesktopWindowControlsSync({ enabled }: { enabled: boolean }) {
   const { theme } = useUnistyles();
   const surface0 = theme.colors.surface0;
   const foreground = theme.colors.foreground;
+  const pathname = usePathname();
+  const isFocusModeEnabled = usePanelStore((state) => state.desktop.focusModeEnabled);
+  const liftTrafficLights =
+    getIsElectronRuntimeMac() &&
+    isFocusModeEnabled &&
+    parseHostWorkspaceRouteFromPathname(pathname) !== null;
 
   useEffect(() => {
     if (!enabled || isNative) return;
     void updateDesktopWindowControls({
       backgroundColor: surface0,
       foregroundColor: foreground,
+      trafficLightOffsetY: liftTrafficLights ? -5 : 0.5,
     }).catch((error) => {
       console.warn("[DesktopWindow] Failed to update window controls overlay", error);
     });
-  }, [enabled, surface0, foreground]);
+  }, [enabled, surface0, foreground, liftTrafficLights]);
 
   return null;
 }
@@ -906,6 +916,7 @@ function AppShell() {
         <OpenProjectListener />
         <BrowserLoopbackTunnelController />
         <MobileBrowserTunnelController />
+        <AgentNavigationListener />
         <AppWithSidebar>
           <WorkspaceRouteNavigationBridge />
           <RootStack />
@@ -993,7 +1004,7 @@ const layoutStyles = StyleSheet.create((theme) => ({
   },
   windowSidebarToggle: {
     position: "absolute",
-    top: 0,
+    top: 1,
     left: 0,
     zIndex: 20,
     height: HEADER_INNER_HEIGHT,

@@ -8,6 +8,8 @@ user-invocable: true
 
 A loop is a worker/verifier cycle: launch a worker → check verification → repeat until done or limits hit. Use for "keep trying", "babysit", or "watch this until X."
 
+For lightweight recurring checks that should return to this same conversation, prefer a cron heartbeat (`create_heartbeat`, then `delete_heartbeat` when finished). To change it, delete and recreate it. Use a loop when each iteration needs a worker/verifier lifecycle; use a schedule when each firing should create a fresh independent agent and workspace.
+
 **User's arguments:** $ARGUMENTS
 
 ## Prerequisites

@@ -12,12 +12,15 @@ import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { isEmphasizedStatusDotBucket } from "@/utils/status-dot-color";
 import { shouldRenderSyncedStatusLoader } from "@/utils/status-loader";
 import type { Theme } from "@/styles/theme";
+import { usePanelInstanceAttributes } from "@/panels/panel-instance-attributes";
 
 export interface WorkspaceTabPresentation {
   key: string;
   kind: WorkspaceTabDescriptor["kind"];
   label: string;
   subtitle: string;
+  tooltip: string;
+  modified: boolean;
   titleState: "ready" | "loading";
   icon: React.ComponentType<{ size: number; color: string }>;
   statusBucket: SidebarStateBucket | null;
@@ -72,7 +75,9 @@ function WorkspaceTabPresentationResolverInner({
   const descriptor = registration.useDescriptor(tab.target as never, {
     serverId,
     workspaceId,
+    tabId: tab.tabId,
   });
+  const attributes = usePanelInstanceAttributes({ serverId, workspaceId, tabId: tab.tabId });
 
   const presentation = useMemo(
     () => ({
@@ -80,6 +85,8 @@ function WorkspaceTabPresentationResolverInner({
       kind: tab.kind,
       label: descriptor.label,
       subtitle: descriptor.subtitle,
+      tooltip: descriptor.tooltip,
+      modified: attributes.modified,
       titleState: descriptor.titleState,
       icon: descriptor.icon,
       statusBucket: descriptor.statusBucket,
@@ -87,11 +94,13 @@ function WorkspaceTabPresentationResolverInner({
     [
       descriptor.icon,
       descriptor.label,
+      descriptor.tooltip,
       descriptor.statusBucket,
       descriptor.subtitle,
       descriptor.titleState,
       tab.key,
       tab.kind,
+      attributes.modified,
     ],
   );
 
@@ -208,6 +217,9 @@ export function WorkspaceTabOptionRow({
           </Text>
         </View>
       </Pressable>
+      {presentation.modified ? (
+        <View style={styles.optionModifiedDot} accessibilityLabel={t("workspace.tabs.modified")} />
+      ) : null}
       {selected ? (
         <View style={styles.optionTrailingSlot}>
           <ThemedCheckIcon size={16} uniProps={mutedColorMapping} />
@@ -302,6 +314,12 @@ const styles = StyleSheet.create((theme) => ({
     width: 16,
     alignItems: "center",
     justifyContent: "center",
+  },
+  optionModifiedDot: {
+    width: 8,
+    height: 8,
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.foregroundMuted,
   },
   optionTrailingAccessorySlot: {
     alignItems: "center",

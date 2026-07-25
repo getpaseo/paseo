@@ -77,4 +77,32 @@ describe("navigateToHostWorkspaceRoute", () => {
       },
     });
   });
+
+  it("preserves a workspace open intent in the POP_TO target", () => {
+    const { navigationRef, dispatch } = createNavigationRef({
+      key: "root-stack",
+      routes: [{ key: "host-server-1", name: "h/[serverId]" }],
+    });
+    registerWorkspaceRouteNavigationRef(navigationRef);
+
+    navigateToHostWorkspaceRoute("/h/server-1/workspace/workspace-a?open=agent%3Aagent-1");
+
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "POP_TO",
+      target: "root-stack",
+      payload: {
+        name: "h/[serverId]",
+        params: {
+          serverId: "server-1",
+          screen: "workspace/[workspaceId]/index",
+          params: {
+            serverId: "server-1",
+            workspaceId: "workspace-a",
+            open: "agent:agent-1",
+          },
+          pop: true,
+        },
+      },
+    });
+  });
 });

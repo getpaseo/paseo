@@ -8,10 +8,61 @@ import {
   buildSidebarWorkspacePlacementModel,
   buildSidebarProjectsFromStructure,
   computeSidebarOrderUpdates,
+  createSidebarWorkspaceEntry,
   deriveSidebarLoadingState,
   shouldShowSidebarHostLabels,
   type SidebarProjectEntry,
 } from "./sidebar-workspaces-view-model";
+
+function workspaceWithForge(forge: string | undefined, prUrl: string): WorkspaceDescriptor {
+  return {
+    id: "ws-1",
+    projectId: "proj",
+    projectDisplayName: "repo",
+    projectRootPath: "/repo",
+    workspaceDirectory: "/repo",
+    projectKind: "git",
+    workspaceKind: "worktree",
+    name: "feature",
+    title: null,
+    status: "done",
+    statusEnteredAt: null,
+    archivingAt: null,
+    diffStat: null,
+    scripts: [],
+    forge,
+    githubRuntime: {
+      featuresEnabled: true,
+      pullRequest: {
+        url: prUrl,
+        title: "Change",
+        state: "open",
+        baseRefName: "main",
+        headRefName: "feature",
+        isMerged: false,
+      },
+      error: null,
+    },
+  };
+}
+
+describe("createSidebarWorkspaceEntry forge threading", () => {
+  it("threads a gitlab summary forge onto the prHint", () => {
+    const entry = createSidebarWorkspaceEntry({
+      serverId: "srv",
+      workspace: workspaceWithForge("gitlab", "https://gitlab.com/group/proj/-/merge_requests/7"),
+    });
+    expect(entry.prHint).toMatchObject({ number: 7, forge: "gitlab" });
+  });
+
+  it("falls back to github when the summary omits forge (old daemon)", () => {
+    const entry = createSidebarWorkspaceEntry({
+      serverId: "srv",
+      workspace: workspaceWithForge(undefined, "https://github.com/acme/repo/pull/42"),
+    });
+    expect(entry.prHint).toMatchObject({ number: 42, forge: "github" });
+  });
+});
 
 interface OrderedItem {
   key: string;
@@ -420,7 +471,7 @@ describe("computeSidebarOrderUpdates", () => {
     expect(updates).toEqual({ projectOrder: null, workspaceOrders: [] });
   });
 
-  it("appends unseen projects and workspaces to the persisted orders", () => {
+  it("appends unseen projects while putting unseen workspaces before the saved order", () => {
     const projects = [
       sidebarProject({ projectKey: "project-a", workspaceKeys: ["ws-1", "ws-2"] }),
       sidebarProject({ projectKey: "project-b", workspaceKeys: ["ws-3"] }),
@@ -434,8 +485,30 @@ describe("computeSidebarOrderUpdates", () => {
 
     expect(updates.projectOrder).toEqual(["project-a", "project-b"]);
     expect(updates.workspaceOrders).toEqual([
-      { projectKey: "project-a", order: ["srv:ws-1", "srv:ws-2"] },
+      { projectKey: "project-a", order: ["srv:ws-2", "srv:ws-1"] },
       { projectKey: "project-b", order: ["srv:ws-3"] },
+    ]);
+  });
+
+  it("preserves the saved workspace order behind multiple newly discovered workspaces", () => {
+    const projects = [
+      sidebarProject({
+        projectKey: "project-a",
+        workspaceKeys: ["newest", "newer", "old-a", "old-b"],
+      }),
+    ];
+
+    const updates = computeSidebarOrderUpdates({
+      projects,
+      persistedProjectOrder: ["project-a"],
+      getWorkspaceOrder: () => ["srv:old-b", "srv:old-a"],
+    });
+
+    expect(updates.workspaceOrders).toEqual([
+      {
+        projectKey: "project-a",
+        order: ["srv:newest", "srv:newer", "srv:old-b", "srv:old-a"],
+      },
     ]);
   });
 

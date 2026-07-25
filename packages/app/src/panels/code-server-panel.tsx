@@ -22,9 +22,11 @@ function useCodeServerPanelDescriptor(target: {
     (state) => state.codeServersById[target.codeServerId] ?? null,
   );
 
+  const label = codeServer?.title ?? "Code Server";
   return {
-    label: codeServer?.title ?? "Code Server",
+    label,
     subtitle: "Code Server",
+    tooltip: label,
     titleState: "ready",
     icon: Code2,
     statusBucket: null,

@@ -16,12 +16,12 @@ This page covers the git-specific details: where worktrees live, how branches ar
 
 ## Layout and workflow
 
-Worktrees live under `$PASEO_HOME/worktrees/` by default, grouped by a hash of the source checkout path. You can change the base directory with `worktrees.root` in `config.json`. Each worktree gets a random slug; the branch name is chosen when you first launch an agent.
+Worktrees live under `$PASEO_HOME/worktrees/` by default, grouped by a hash of the source checkout path. You can change the base directory with `worktrees.root` in `config.json`. Each worktree gets a slug and a branch when its workspace is created.
 
 ```
 ~/.paseo/worktrees/
 └── 1vnnm9k3/               # hash of source checkout path
-    ├── tidy-fox/           # worktree slug (branch set on first agent)
+    ├── tidy-fox/           # worktree slug
     └── bold-owl/
 ```
 
@@ -35,10 +35,46 @@ With a custom root, Paseo keeps the same hashed layout under that directory:
 }
 ```
 
-1. Create a worktree, Paseo runs your setup hooks
-2. Launch an agent, a branch is created or assigned
+1. Create a workspace with worktree isolation, Paseo creates the worktree and runs your setup hooks
+2. Launch one or more agents in that workspace
 3. Review the diff against the base branch
-4. Merge or archive, archive runs teardown and removes the directory
+4. Merge or archive the workspace; after the last workspace using it is archived, Paseo runs teardown and removes the worktree
+
+## Create a worktree-backed workspace
+
+The examples below use the current directory as the source checkout. Pass `--path ~/dev/my-app` to create the workspace from another checkout.
+
+Branch off from a base branch:
+
+```bash
+paseo workspace create \
+  --isolation worktree \
+  --mode branch-off \
+  --new-branch feature/auth \
+  --worktree-slug feature-auth \
+  --base main
+```
+
+Check out an existing branch:
+
+```bash
+paseo workspace create \
+  --isolation worktree \
+  --mode checkout-branch \
+  --branch feature/existing \
+  --worktree-slug existing-copy
+```
+
+Or open a pull request in its own workspace:
+
+```bash
+paseo workspace create \
+  --isolation worktree \
+  --mode checkout-pr \
+  --pr-number 2186
+```
+
+Add `--forge <name>` when Paseo cannot infer the forge from the source checkout.
 
 ## paseo.json
 
@@ -110,6 +146,49 @@ Commands run with the worktree as `cwd`. Use `$PASEO_SOURCE_CHECKOUT_PATH` to re
 
 Omit `port` to let Paseo auto-assign one. Bind your process to `$PASEO_PORT` rather than hard-coding, each worktree gets a distinct port so multiple copies of the same service coexist.
 
+### Dynamic port allocation
+
+By default, Paseo asks the OS for an available ephemeral port. Configure a range globally in
+`~/.paseo/config.json` or per project in `paseo.json`:
+
+```json
+// ~/.paseo/config.json
+{
+  "worktrees": {
+    "servicePorts": { "range": "3000-4000" }
+  }
+}
+```
+
+```json
+// paseo.json
+{
+  "worktree": {
+    "servicePorts": { "range": "3000-4000" }
+  }
+}
+```
+
+The range is inclusive. A project `servicePorts` block replaces the global block. An explicit
+service `port` always wins over either setting.
+
+For an external allocator, configure `portScript` instead:
+
+```json
+{
+  "worktree": {
+    "servicePorts": { "portScript": "/usr/bin/portmake" }
+  }
+}
+```
+
+Paseo runs the executable in the workspace directory with four arguments: service name, workspace
+ID, branch name, and worktree path. Since the script is executed directly without a shell, `portScript` must point to a real executable (such as a compiled binary or a script with a proper shebang line like `#!/bin/bash`) rather than an inline shell command or pipeline. If you need shell evaluation or pipelines, wrap them in a small executable script. A missing branch is passed as an empty string. The same values
+are available as `PASEO_SCRIPTNAME`, `PASEO_WORKSPACE_ID`, `PASEO_BRANCH_NAME`, and
+`PASEO_WORKTREE_PATH`. It must print one valid TCP port to stdout. `portScript` wins over `range` in
+the same block. Paseo trusts the external allocator, so the returned port may already be in use, for
+example by a service Paseo will attach to.
+
 ### Reverse proxy
 
 Every service is reachable through the daemon at a deterministic hostname:
@@ -169,10 +248,12 @@ Services additionally get:
 - `$PASEO_SERVICE_<NAME>_PORT` / `_URL`, peer service ports and URLs
 - `$HOST`, `127.0.0.1` for local-only daemons, `0.0.0.0` when the daemon binds all interfaces
 
-## CLI
+## Manage the workspace
 
 ```bash
-paseo run --worktree feature-auth --base main "implement auth"
-paseo worktree ls
-paseo worktree archive feature-auth
+paseo workspace ls
+paseo run --workspace <workspace-id> "implement auth"
+paseo workspace archive <workspace-id>
 ```
+
+For the common case, `paseo run --new-workspace worktree --worktree-mode branch-off --new-branch feature/auth --base main "implement auth"` creates both the workspace and its first agent.

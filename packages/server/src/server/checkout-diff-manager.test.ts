@@ -14,6 +14,56 @@ import type pino from "pino";
 import { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
 
+interface Deferred<T> {
+  promise: Promise<T>;
+  resolve(value: T): void;
+}
+
+function createDeferred<T>(): Deferred<T> {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
+function createPendingManager() {
+  const watches: Array<{
+    cwd: string;
+    onChange: () => void;
+    unsubscribeCalls: number;
+    resolve(): void;
+  }> = [];
+  const workspaceGitService = {
+    getCheckoutDiff: async () => ({ diff: "", structured: [] }),
+    requestWorkingTreeWatch: (cwd: string, onChange: () => void) => {
+      const pending = createDeferred<{ repoRoot: string | null; unsubscribe: () => void }>();
+      const watch = {
+        cwd,
+        onChange,
+        unsubscribeCalls: 0,
+        resolve: () => {
+          pending.resolve({
+            repoRoot: "/tmp/repo",
+            unsubscribe: () => {
+              watch.unsubscribeCalls += 1;
+            },
+          });
+        },
+      };
+      watches.push(watch);
+      return pending.promise;
+    },
+  };
+  const logger = { child: () => logger, warn: () => {} };
+  const manager = new CheckoutDiffManager({
+    logger: logger as unknown as pino.Logger,
+    paseoHome: "/tmp/paseo-test",
+    workspaceGitService,
+  });
+  return { manager, watches };
+}
+
 describe("CheckoutDiffManager", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -101,6 +151,54 @@ describe("CheckoutDiffManager", () => {
     subscription.unsubscribe();
 
     expect(unsubscribe).toHaveBeenCalledTimes(1);
+  });
+
+  test("cancels a subscription while its working tree watch is still opening", async () => {
+    const { manager, watches } = createPendingManager();
+    const abort = new AbortController();
+
+    const pendingSubscription = manager.subscribe(
+      {
+        cwd: "/tmp/repo/packages/server",
+        compare: { mode: "uncommitted" },
+        signal: abort.signal,
+      },
+      () => {},
+    );
+    abort.abort();
+    watches[0].resolve();
+    await pendingSubscription;
+
+    expect(watches[0].unsubscribeCalls).toBe(1);
+    expect(manager.getMetrics()).toEqual({
+      checkoutDiffTargetCount: 0,
+      checkoutDiffSubscriptionCount: 0,
+      checkoutDiffWatcherCount: 0,
+      checkoutDiffFallbackRefreshTargetCount: 0,
+    });
+  });
+
+  test("shares one opening target between concurrent subscriptions", async () => {
+    const { manager, watches } = createPendingManager();
+
+    const firstSubscription = manager.subscribe(
+      { cwd: "/tmp/repo/packages/server", compare: { mode: "uncommitted" } },
+      () => {},
+    );
+    const secondSubscription = manager.subscribe(
+      { cwd: "/tmp/repo/packages/server", compare: { mode: "uncommitted" } },
+      () => {},
+    );
+
+    expect(watches).toHaveLength(1);
+    watches[0].resolve();
+    const [first, second] = await Promise.all([firstSubscription, secondSubscription]);
+    expect(manager.getMetrics().checkoutDiffSubscriptionCount).toBe(2);
+
+    first.unsubscribe();
+    expect(watches[0].unsubscribeCalls).toBe(0);
+    second.unsubscribe();
+    expect(watches[0].unsubscribeCalls).toBe(1);
   });
 
   test("diffCwd uses repoRoot from the working tree watch result", async () => {

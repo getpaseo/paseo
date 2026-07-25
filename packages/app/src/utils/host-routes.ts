@@ -1,4 +1,5 @@
 import { Buffer } from "buffer";
+import { buildAgentDeepLinkRoute } from "@getpaseo/protocol/agent-deep-link";
 
 type NullableString = string | null | undefined;
 const BASE64_WORKSPACE_ID_PREFIX = "b64_";
@@ -174,11 +175,16 @@ export function parseWorkspaceOpenIntent(
 export function parseHostWorkspaceOpenIntentFromPathname(
   pathname: string,
 ): WorkspaceOpenIntent | null {
+  return parseWorkspaceOpenIntent(getHostWorkspaceOpenParamFromPathname(pathname));
+}
+
+export function getHostWorkspaceOpenParamFromPathname(pathname: string): string | null {
   const search = extractSearch(pathname);
   if (!search) {
     return null;
   }
-  return parseWorkspaceOpenIntent(new URLSearchParams(search).get("open"));
+  const open = new URLSearchParams(search).get("open");
+  return parseWorkspaceOpenIntent(open) ? open : null;
 }
 
 export function encodeWorkspaceIdForPathSegment(workspaceId: string): string {
@@ -384,7 +390,10 @@ export function buildHostAgentDetailRoute(serverId: string, agentId: string, wor
   if (!normalizedServerId || !normalizedAgentId) {
     return "/" as const;
   }
-  return `${buildHostRootRoute(normalizedServerId)}/agent/${encodeSegment(normalizedAgentId)}` as const;
+  return buildAgentDeepLinkRoute({
+    serverId: normalizedServerId,
+    agentId: normalizedAgentId,
+  });
 }
 
 export function buildHostRootRoute(serverId: string) {
@@ -506,6 +515,7 @@ export function resolveKnownHostRoute(input: {
 export const SETTINGS_SECTION_SLUGS = [
   "general",
   "appearance",
+  "editor",
   "shortcuts",
   "integrations",
   "permissions",

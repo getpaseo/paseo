@@ -382,6 +382,8 @@ export async function generateStructuredAgentResponse<T>(
       await manager.closeAgent(agent.id);
     } catch {
       // ignore cleanup errors
+    } finally {
+      await manager.deleteAgentState(agent.id).catch(() => undefined);
     }
   }
 }

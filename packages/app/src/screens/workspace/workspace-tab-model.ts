@@ -1,4 +1,4 @@
-import type { WorkspaceTab, WorkspaceTabTarget } from "@/stores/workspace-tabs-store";
+import type { WorkspaceTab, WorkspaceTabTarget } from "@/workspace-tabs/model";
 import {
   deriveWorkspacePaneState,
   type WorkspaceDerivedTab,

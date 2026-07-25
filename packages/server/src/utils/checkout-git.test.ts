@@ -8,15 +8,18 @@ import {
   readFileSync,
   realpathSync,
   mkdirSync,
+  statSync,
 } from "fs";
 import { join } from "path";
 import { win32 } from "node:path";
 import { tmpdir } from "os";
+import pino from "pino";
 import {
   __resetCheckoutShortstatCacheForTests,
   __resetPullRequestStatusCacheForTests,
   __setPullRequestStatusCacheTtlForTests,
   commitAll,
+  createPullRequest,
   getCachedCheckoutShortstat,
   getCheckoutSnapshotFacts,
   getCurrentBranch,
@@ -42,12 +45,14 @@ import {
   warmCheckoutShortstatInBackground,
 } from "./checkout-git.js";
 import { startGitCommandMetrics, stopGitCommandMetrics } from "./run-git-command.js";
+import { createForgeResolver } from "../services/forge-resolver.js";
+import { GitHubCommandError, GitHubCliMissingError } from "../services/github-service.js";
+import type { CurrentPullRequestStatus, ForgeService } from "../services/forge-service.js";
 import {
-  GitHubCommandError,
-  GitHubCliMissingError,
-  type GitHubCurrentPullRequestStatus,
-  type GitHubService,
-} from "../services/github-service.js";
+  TeaAuthenticationError,
+  TeaCliMissingError,
+  TeaCommandError,
+} from "../services/gitea-service.js";
 import {
   createWorktree as createWorktreePrimitive,
   type CreateWorktreeOptions,
@@ -102,9 +107,9 @@ function sleep(ms: number): Promise<void> {
 }
 
 function createGitHubServiceForStatus(
-  status: GitHubCurrentPullRequestStatus | null,
+  status: CurrentPullRequestStatus | null,
   options?: { onStatus?: () => void },
-): GitHubService {
+): ForgeService {
   return {
     listPullRequests: async () => [],
     listIssues: async () => [],
@@ -120,6 +125,15 @@ function createGitHubServiceForStatus(
       labels: [],
     }),
     getPullRequestHeadRef: async () => "feature",
+    getPullRequestCheckoutTarget: async ({ number }) => ({
+      number,
+      baseRefName: "main",
+      headRefName: "feature",
+      headOwnerLogin: null,
+      headRepositorySshUrl: null,
+      headRepositoryUrl: null,
+      isCrossRepository: false,
+    }),
     getCurrentPullRequestStatus: async () => {
       options?.onStatus?.();
       return status;
@@ -134,7 +148,7 @@ function createGitHubServiceForStatus(
   };
 }
 
-function createPullRequestStatus(overrides?: Partial<GitHubCurrentPullRequestStatus>) {
+function createPullRequestStatus(overrides?: Partial<CurrentPullRequestStatus>) {
   return {
     url: "https://github.com/getpaseo/paseo/pull/123",
     title: "Ship feature",
@@ -151,21 +165,23 @@ function createPullRequestStatus(overrides?: Partial<GitHubCurrentPullRequestSta
 
 interface RequestedPullRequestTarget {
   headRef: string;
+  headSha?: string;
   headRepositoryOwner?: string;
 }
 
 interface RecordingPullRequestTargetsOptions {
   requestedTargets: RequestedPullRequestTarget[];
-  statusOverrides?: Partial<GitHubCurrentPullRequestStatus>;
+  statusOverrides?: Partial<CurrentPullRequestStatus>;
 }
 
 function createGitHubServiceRecordingPullRequestTargets(
   options: RecordingPullRequestTargetsOptions,
-): GitHubService {
+): ForgeService {
   const github = createGitHubServiceForStatus(null);
   github.getCurrentPullRequestStatus = async (request) => {
     options.requestedTargets.push({
       headRef: request.headRef,
+      ...(request.headSha ? { headSha: request.headSha } : {}),
       ...(request.headRepositoryOwner ? { headRepositoryOwner: request.headRepositoryOwner } : {}),
     });
     return createPullRequestStatus({
@@ -243,6 +259,122 @@ describe("checkout git utilities", () => {
     await expect(getCheckoutDiff(nonGitDir, { mode: "uncommitted" })).rejects.toBeInstanceOf(
       NotGitRepoError,
     );
+  });
+
+  it("creates a pull request via the given adapter without resolving a repo slug in the shell", async () => {
+    setupRemoteTrackingMain(repoDir, tempDir);
+    let adapterReached = false;
+    const adapter = createGitHubServiceForStatus(null);
+    adapter.createPullRequest = async () => {
+      adapterReached = true;
+      return { url: "https://gitlab.com/group/proj/-/merge_requests/7", number: 7 };
+    };
+
+    const result = await createPullRequest(
+      repoDir,
+      { title: "Add thing", body: "desc", base: "main" },
+      adapter,
+    );
+
+    expect(adapterReached).toBe(true);
+    expect(result).toEqual({
+      url: "https://gitlab.com/group/proj/-/merge_requests/7",
+      number: 7,
+    });
+  });
+
+  it("resolves a gitlab remote through the resolver and creates via the gitlab adapter", async () => {
+    // origin is a real local bare repo so the push succeeds; the resolver reads a
+    // gitlab remote URL (injected) so it selects the gitlab adapter from the host.
+    setupRemoteTrackingMain(repoDir, tempDir);
+    let adapterReached = false;
+    const adapter = createGitHubServiceForStatus(null);
+    adapter.createPullRequest = async () => {
+      adapterReached = true;
+      return { url: "https://gitlab.com/group/proj/-/merge_requests/9", number: 9 };
+    };
+
+    const resolver = createForgeResolver({
+      resolveRemoteUrl: async () => "git@gitlab.com:group/proj.git",
+      createService: (forge) => (forge === "gitlab" ? adapter : null),
+    });
+    const resolution = await resolver.resolve(repoDir);
+    expect(resolution).toMatchObject({ forge: "gitlab", host: "gitlab.com" });
+    expect(resolution?.service).toBe(adapter);
+
+    const result = await createPullRequest(
+      repoDir,
+      { title: "Add thing", body: "desc", base: "main" },
+      resolution?.service,
+    );
+
+    expect(adapterReached).toBe(true);
+    expect(result).toEqual({
+      url: "https://gitlab.com/group/proj/-/merge_requests/9",
+      number: 9,
+    });
+  });
+
+  it("reports an ordinary directory as non-git without warning", async () => {
+    const nonGitDir = join(tempDir, "not-git-status");
+    mkdirSync(nonGitDir, { recursive: true });
+    const records: unknown[] = [];
+    const logger = pino(
+      { level: "warn" },
+      {
+        write(line: string) {
+          records.push(JSON.parse(line));
+        },
+      },
+    );
+
+    await expect(getCheckoutStatus(nonGitDir, { logger })).resolves.toEqual({ isGit: false });
+    expect(records).toEqual([]);
+  });
+
+  it.runIf(
+    process.platform !== "win32" &&
+      existsSync("/dev/shm") &&
+      statSync("/dev").dev !== statSync("/dev/shm").dev,
+  )("does not warn for a non-git directory at a filesystem boundary", async () => {
+    const nonGitDir = realpathSync.native(mkdtempSync("/dev/shm/checkout-git-boundary-test-"));
+    const records: unknown[] = [];
+    const logger = pino(
+      { level: "warn" },
+      {
+        write(line: string) {
+          records.push(JSON.parse(line));
+        },
+      },
+    );
+    try {
+      await expect(getCheckoutStatus(nonGitDir, { logger })).resolves.toEqual({ isGit: false });
+      expect(records).toEqual([]);
+    } finally {
+      rmSync(nonGitDir, { recursive: true, force: true });
+    }
+  });
+
+  it("warns when git discovery fails unexpectedly", async () => {
+    const missingDir = join(tempDir, "missing-git-cwd");
+    const records: unknown[] = [];
+    const logger = pino(
+      { level: "warn" },
+      {
+        write(line: string) {
+          records.push(JSON.parse(line));
+        },
+      },
+    );
+
+    await expect(getCheckoutStatus(missingDir, { logger })).resolves.toEqual({ isGit: false });
+    expect(records).toEqual([
+      expect.objectContaining({
+        level: 40,
+        cwd: missingDir,
+        msg: "Git worktree discovery failed; treating directory as non-Git",
+      }),
+    ]);
   });
 
   it("returns null for getCurrentBranch in a repo with no commits", async () => {
@@ -376,6 +508,45 @@ describe("checkout git utilities", () => {
       .toString()
       .trim();
     expect(message).toBe("update file");
+  });
+
+  it("reads the origin URL once when collecting facts for an origin-tracking branch", async () => {
+    setupRemoteTrackingMain(repoDir, tempDir);
+
+    startGitCommandMetrics();
+    const facts = await getCheckoutSnapshotFacts(repoDir, { paseoHome });
+    const metrics = stopGitCommandMetrics();
+    const originUrlCommands = metrics.commands.filter(
+      (command) => command.args.join(" ") === "config --get remote.origin.url",
+    );
+
+    expect(facts.isGit).toBe(true);
+    expect(originUrlCommands).toHaveLength(1);
+  });
+
+  it("reads a non-origin branch remote without replacing it with the origin URL", async () => {
+    setupRemoteTrackingMain(repoDir, tempDir);
+    execFileSync("git", ["remote", "set-url", "origin", "git@github.com:upstream/repo.git"], {
+      cwd: repoDir,
+    });
+    execFileSync("git", ["remote", "add", "fork", "git@github.com:contributor/repo.git"], {
+      cwd: repoDir,
+    });
+    execFileSync("git", ["config", "branch.main.remote", "fork"], { cwd: repoDir });
+    execFileSync("git", ["config", "branch.main.merge", "refs/heads/main"], { cwd: repoDir });
+
+    startGitCommandMetrics();
+    const facts = await getCheckoutSnapshotFacts(repoDir, { paseoHome });
+    const metrics = stopGitCommandMetrics();
+    const commands = metrics.commands.map((command) => command.args.join(" "));
+
+    expect(facts.isGit).toBe(true);
+    expect(commands.filter((command) => command === "config --get remote.origin.url")).toHaveLength(
+      1,
+    );
+    expect(commands.filter((command) => command === "config --get remote.fork.url")).toHaveLength(
+      1,
+    );
   });
 
   it("reuses checkout snapshot facts across status, shortstat, and PR status reads", async () => {
@@ -553,19 +724,34 @@ const x = 1;
     expect(behindStatus.aheadOfOrigin).toBe(0);
     expect(behindStatus.behindOfOrigin).toBe(1);
 
-    writeFileSync(join(repoDir, "local.txt"), "local\n");
-    execFileSync("git", ["add", "local.txt"], { cwd: repoDir });
-    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "local update"], {
-      cwd: repoDir,
-    });
+    commitFile(repoDir, "local-1.txt", "local 1\n", "local update 1");
+    commitFile(repoDir, "local-2.txt", "local 2\n", "local update 2");
+    commitFile(repoDir, "local-3.txt", "local 3\n", "local update 3");
+    commitFile(cloneDir, "remote-2.txt", "remote 2\n", "remote update 2");
+    execFileSync("git", ["push"], { cwd: cloneDir });
+    execFileSync("git", ["fetch", "origin"], { cwd: repoDir });
 
-    const divergedStatus = await getCheckoutStatus(repoDir);
+    const facts = await getCheckoutSnapshotFacts(repoDir);
+    startGitCommandMetrics();
+    const divergedStatus = await getCheckoutStatus(repoDir, { facts });
+    const metrics = stopGitCommandMetrics();
+    const upstreamCountCommands = metrics.commands.filter(
+      (command) => command.args[0] === "rev-list" && command.args.join(" ").includes("main"),
+    );
+
     expect(divergedStatus.isGit).toBe(true);
     if (!divergedStatus.isGit) {
       return;
     }
-    expect(divergedStatus.aheadOfOrigin).toBe(1);
-    expect(divergedStatus.behindOfOrigin).toBe(1);
+    expect(divergedStatus.aheadOfOrigin).toBe(3);
+    expect(divergedStatus.behindOfOrigin).toBe(2);
+    expect(upstreamCountCommands).toHaveLength(1);
+    expect(upstreamCountCommands[0]?.args).toEqual([
+      "rev-list",
+      "--left-right",
+      "--count",
+      "main...origin/main",
+    ]);
   });
 
   it("reports a PR worktree as not ahead when its branch is pushed to the configured PR remote", async () => {
@@ -668,6 +854,7 @@ const x = 1;
       return;
     }
     expect(status.aheadOfOrigin).toBeNull();
+    expect(status.behindOfOrigin).toBeNull();
   });
 
   it("does not report full history as unpushed for fresh no-track Paseo worktrees", async () => {
@@ -1285,6 +1472,26 @@ const x = 1;
     expect(entry).toBeTruthy();
     expect(entry?.status).toBe("too_large");
     expect(diff.diff).toContain("# untracked-large.txt: diff too large omitted");
+  });
+
+  it("resolves the Git common directory once when reading Paseo worktree facts", async () => {
+    const result = await createLegacyWorktreeForTest({
+      branchName: "main",
+      cwd: repoDir,
+      baseBranch: "main",
+      worktreeSlug: "common-dir",
+      paseoHome,
+    });
+
+    startGitCommandMetrics();
+    const facts = await getCheckoutSnapshotFacts(result.worktreePath, { paseoHome });
+    const metrics = stopGitCommandMetrics();
+    const commonDirCommands = metrics.commands.filter(
+      (command) => command.args.join(" ") === "rev-parse --git-common-dir",
+    );
+
+    expect(facts.isGit).toBe(true);
+    expect(commonDirCommands).toHaveLength(1);
   });
 
   it("handles status/diff/commit in a .paseo worktree", async () => {
@@ -2199,6 +2406,7 @@ const x = 1;
 
     expect(status).toEqual({
       githubFeaturesEnabled: true,
+      authState: "authenticated",
       status: {
         number: 123,
         url: "https://github.com/getpaseo/paseo/pull/123",
@@ -2237,7 +2445,8 @@ const x = 1;
 
     const lookupTarget = await readPullRequestLookupTargetFromFacts(repoDir, paseoHome);
 
-    expect(lookupTarget).toEqual({ headRef: "refactor/workspace-scripts" });
+    expect(lookupTarget).toMatchObject({ headRef: "refactor/workspace-scripts" });
+    expect(lookupTarget?.headSha).toMatch(/^[0-9a-f]{40}$/);
   });
 
   it("keeps the local branch lookup when origin tracking uses the same head name", async () => {
@@ -2252,7 +2461,8 @@ const x = 1;
 
     const lookupTarget = await readPullRequestLookupTargetFromFacts(repoDir, paseoHome);
 
-    expect(lookupTarget).toEqual({ headRef: "feature" });
+    expect(lookupTarget).toMatchObject({ headRef: "feature" });
+    expect(lookupTarget?.headSha).toMatch(/^[0-9a-f]{40}$/);
   });
 
   it("does not attach an owner when the tracked remote is the same GitHub repository", async () => {
@@ -2274,7 +2484,8 @@ const x = 1;
 
     const lookupTarget = await readPullRequestLookupTargetFromFacts(repoDir, paseoHome);
 
-    expect(lookupTarget).toEqual({ headRef: "refactor/workspace-scripts" });
+    expect(lookupTarget).toMatchObject({ headRef: "refactor/workspace-scripts" });
+    expect(lookupTarget?.headSha).toMatch(/^[0-9a-f]{40}$/);
   });
 
   it("keeps the fork owner when same-repo comparison is indeterminate", async () => {
@@ -2292,7 +2503,8 @@ const x = 1;
 
     const lookupTarget = await readPullRequestLookupTargetFromFacts(repoDir, paseoHome);
 
-    expect(lookupTarget).toEqual({ headRef: "main", headRepositoryOwner: "chethanuk" });
+    expect(lookupTarget).toMatchObject({ headRef: "main", headRepositoryOwner: "chethanuk" });
+    expect(lookupTarget?.headSha).toMatch(/^[0-9a-f]{40}$/);
   });
 
   it("uses the configured push remote for fork PR lookup when upstream is absent", async () => {
@@ -2321,8 +2533,11 @@ const x = 1;
     );
 
     expect(getBranchUpstream(repoDir)).toBeNull();
-    expect(factsTarget).toEqual({ headRef: "main", headRepositoryOwner: "chethanuk" });
-    expect(requestedTargets).toEqual([{ headRef: "main", headRepositoryOwner: "chethanuk" }]);
+    expect(factsTarget).toMatchObject({ headRef: "main", headRepositoryOwner: "chethanuk" });
+    expect(factsTarget?.headSha).toMatch(/^[0-9a-f]{40}$/);
+    expect(requestedTargets).toEqual([
+      expect.objectContaining({ headRef: "main", headRepositoryOwner: "chethanuk" }),
+    ]);
   });
 
   it("keeps the local branch lookup when same-repo tracking points at the base branch", async () => {
@@ -2337,7 +2552,8 @@ const x = 1;
 
     const lookupTarget = await readPullRequestLookupTargetFromFacts(repoDir, paseoHome);
 
-    expect(lookupTarget).toEqual({ headRef: "tender-parrot" });
+    expect(lookupTarget).toMatchObject({ headRef: "tender-parrot" });
+    expect(lookupTarget?.headSha).toMatch(/^[0-9a-f]{40}$/);
   });
 
   it("derives the same origin tracked head for on-demand PR status reads", async () => {
@@ -2391,7 +2607,9 @@ const x = 1;
 
     const status = await getPullRequestStatus(repoDir, github);
 
-    expect(requestedTargets).toEqual([{ headRef: "main", headRepositoryOwner: "chethanuk" }]);
+    expect(requestedTargets).toEqual([
+      expect.objectContaining({ headRef: "main", headRepositoryOwner: "chethanuk" }),
+    ]);
     expect(status.status?.number).toBe(345);
     expect(status.status?.headRefName).toBe("main");
   });
@@ -2438,6 +2656,33 @@ const x = 1;
     expect(first).toEqual(second);
     expect(first.status?.url).toContain("/pull/123");
     expect(callCount).toBe(1);
+  });
+
+  it("does not reuse a PR status cache entry after HEAD changes on the same branch", async () => {
+    execFileSync("git", ["checkout", "-b", "feature"], { cwd: repoDir });
+    execFileSync("git", ["remote", "add", "origin", "https://github.com/getpaseo/paseo.git"], {
+      cwd: repoDir,
+    });
+
+    const requestedShas: string[] = [];
+    const github = createGitHubServiceForStatus(null);
+    github.getCurrentPullRequestStatus = async (options) => {
+      if (options.headSha) requestedShas.push(options.headSha);
+      return createPullRequestStatus({
+        url: `https://github.com/getpaseo/paseo/pull/${requestedShas.length}`,
+      });
+    };
+
+    const first = await getPullRequestStatus(repoDir, github);
+    writeFileSync(join(repoDir, "next.txt"), "next\n");
+    execFileSync("git", ["add", "next.txt"], { cwd: repoDir });
+    execFileSync("git", ["commit", "-m", "next commit"], { cwd: repoDir });
+    const second = await getPullRequestStatus(repoDir, github);
+
+    expect(first.status?.url).toContain("/pull/1");
+    expect(second.status?.url).toContain("/pull/2");
+    expect(requestedShas).toHaveLength(2);
+    expect(requestedShas[0]).not.toBe(requestedShas[1]);
   });
 
   it("passes forced PR status reads through to the GitHub service", async () => {
@@ -2533,6 +2778,41 @@ const x = 1;
     }
   });
 
+  it("keeps stale PR status when a Gitea-family refresh hits a transient command error", async () => {
+    execFileSync("git", ["checkout", "-b", "feature"], { cwd: repoDir });
+    execFileSync("git", ["remote", "add", "origin", "https://gitea.example.com/acme/repo.git"], {
+      cwd: repoDir,
+    });
+
+    __setPullRequestStatusCacheTtlForTests(50);
+    try {
+      let callCount = 0;
+      const service = createGitHubServiceForStatus(null);
+      service.getCurrentPullRequestStatus = async () => {
+        callCount += 1;
+        if (callCount === 1) {
+          return createPullRequestStatus({ url: "https://gitea.example.com/acme/repo/pulls/7" });
+        }
+        throw new TeaCommandError({
+          args: ["pr", "list"],
+          cwd: repoDir,
+          exitCode: 1,
+          stderr: "request timed out",
+        });
+      };
+
+      const fresh = await getPullRequestStatus(repoDir, service);
+      await sleep(80);
+      const stale = await getPullRequestStatus(repoDir, service);
+
+      expect(stale).toEqual(fresh);
+      expect(stale.status?.url).toContain("/pulls/7");
+      expect(callCount).toBe(2);
+    } finally {
+      __resetPullRequestStatusCacheForTests();
+    }
+  });
+
   it("does not use stale PR status fallback for forced GitHub errors", async () => {
     execFileSync("git", ["checkout", "-b", "feature"], { cwd: repoDir });
     execFileSync("git", ["remote", "add", "origin", "https://github.com/getpaseo/paseo.git"], {
@@ -2593,12 +2873,49 @@ const x = 1;
       expect(fresh.status?.url).toContain("/pull/123");
       expect(cleared).toEqual({
         githubFeaturesEnabled: true,
+        authState: "authenticated",
         status: null,
       });
       expect(callCount).toBe(2);
     } finally {
       __resetPullRequestStatusCacheForTests();
     }
+  });
+
+  it("maps missing Gitea CLI PR status lookups to cli_missing auth state", async () => {
+    execFileSync("git", ["checkout", "-b", "feature"], { cwd: repoDir });
+    execFileSync("git", ["remote", "add", "origin", "https://gitea.example.com/acme/repo.git"], {
+      cwd: repoDir,
+    });
+
+    const service = createGitHubServiceForStatus(null);
+    service.getCurrentPullRequestStatus = async () => {
+      throw new TeaCliMissingError();
+    };
+
+    await expect(getPullRequestStatus(repoDir, service)).resolves.toEqual({
+      status: null,
+      authState: "cli_missing",
+      githubFeaturesEnabled: false,
+    });
+  });
+
+  it("maps Gitea authentication PR status failures to unauthenticated auth state", async () => {
+    execFileSync("git", ["checkout", "-b", "feature"], { cwd: repoDir });
+    execFileSync("git", ["remote", "add", "origin", "https://gitea.example.com/acme/repo.git"], {
+      cwd: repoDir,
+    });
+
+    const service = createGitHubServiceForStatus(null);
+    service.getCurrentPullRequestStatus = async () => {
+      throw new TeaAuthenticationError({ stderr: "401 unauthorized" });
+    };
+
+    await expect(getPullRequestStatus(repoDir, service)).resolves.toEqual({
+      status: null,
+      authState: "unauthenticated",
+      githubFeaturesEnabled: false,
+    });
   });
 
   it("dedupes concurrent PR status lookups for the same cwd", async () => {

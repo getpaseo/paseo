@@ -1,6 +1,6 @@
 import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { create } from "zustand";
-import { buildWorkspaceTabPersistenceKey } from "@/stores/workspace-tabs-store";
+import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 
 export type WorkspaceCreationMethod = "open_project" | "create_worktree";
 

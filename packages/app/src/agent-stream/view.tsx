@@ -100,7 +100,7 @@ import {
   useWorkspaceAttachmentsStore,
 } from "@/attachments/workspace-attachments-store";
 import type { WorkspaceComposerAttachment } from "@/attachments/types";
-import type { WorkspaceDraftTabSetup, WorkspaceTabTarget } from "@/stores/workspace-tabs-store";
+import type { WorkspaceDraftTabSetup, WorkspaceTabTarget } from "@/workspace-tabs/model";
 import { toErrorMessage } from "@/utils/error-messages";
 import { useWorkspaceDraftSubmissionStore } from "@/stores/workspace-draft-submission-store";
 import { isLoopbackHttpUrl, rewriteWithVscodeProxyUri } from "@/utils/localhost-url";
@@ -926,7 +926,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       [pendingPermissions, agentId],
     );
 
-    const showRunningTurnFooter = context.status === "running";
+    const showRunningTurnFooter = baseRenderModel.turnTiming.isActive;
     const pendingPermissionsNode = useMemo(
       () =>
         renderPendingPermissionsNode({
@@ -1286,7 +1286,9 @@ function PermissionActionButton({
   onPress,
 }: PermissionActionButtonProps) {
   const handlePress = useCallback(() => onPress(action), [onPress, action]);
-  const optionTextStyle = isPrimary ? optionTextPrimaryStyle : permissionStyles.optionText;
+  const optionTextStyle = isPrimary
+    ? [permissionStyles.optionText, permissionStyles.optionTextPrimary]
+    : permissionStyles.optionText;
   const colorMapping = isPrimary ? primaryColorMapping : mutedColorMapping;
   return (
     <Pressable testID={testID} style={pressableStyle} onPress={handlePress} disabled={isResponding}>
@@ -1677,8 +1679,6 @@ const permissionStyles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
   },
 }));
-
-const optionTextPrimaryStyle = [permissionStyles.optionText, permissionStyles.optionTextPrimary];
 
 interface StreamItemWrapperProps {
   gapBelow: number;

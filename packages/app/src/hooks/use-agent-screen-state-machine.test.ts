@@ -57,12 +57,14 @@ function createAgentWithStatus({ id, status }: { id: string; status: Agent["stat
 function createBaseInput(): AgentScreenMachineInput {
   return {
     agent: null,
+    isArchived: false,
     continuity: { kind: "none" },
     missingAgentState: { kind: "idle" },
     isConnected: true,
     isArchivingCurrentAgent: false,
     isHistorySyncing: false,
     needsAuthoritativeSync: false,
+    visibilityCatchUpStatus: "ready",
     hasHydratedHistoryBefore: false,
   };
 }
@@ -187,6 +189,62 @@ describe("deriveAgentScreenViewState", () => {
     const sync = expectCatchingUpSync(ready);
 
     expect(sync.ui).toBe("silent");
+  });
+
+  it("keeps hydrated history visible while reconnect revalidation and visibility catch-up overlap", () => {
+    const memory = createBaseMemory({
+      hasRenderedReady: true,
+      lastReadyAgent: createAgent("agent-1"),
+    });
+    const input: AgentScreenMachineInput = {
+      ...createBaseInput(),
+      hasHydratedHistoryBefore: true,
+      needsAuthoritativeSync: true,
+      visibilityCatchUpStatus: "pending",
+    };
+
+    const result = deriveAgentScreenViewState({ input, memory });
+    const ready = expectReadyState(result.state);
+    const sync = expectCatchingUpSync(ready);
+
+    expect(sync.ui).toBe("silent");
+  });
+
+  it("keeps already-hydrated history visible while a newly visible agent catches up", () => {
+    const memory = createBaseMemory({
+      hasRenderedReady: true,
+      lastReadyAgent: createAgent("agent-1"),
+    });
+    const input: AgentScreenMachineInput = {
+      ...createBaseInput(),
+      agent: createAgent("agent-1"),
+      hasHydratedHistoryBefore: true,
+      visibilityCatchUpStatus: "pending",
+    };
+
+    const result = deriveAgentScreenViewState({ input, memory });
+    const ready = expectReadyState(result.state);
+    const sync = expectCatchingUpSync(ready);
+
+    expect(sync.ui).toBe("silent");
+  });
+
+  it("keeps hydrated history readable after a visibility catch-up error", () => {
+    const memory = createBaseMemory({
+      hasRenderedReady: true,
+      lastReadyAgent: createAgent("agent-1"),
+    });
+    const input: AgentScreenMachineInput = {
+      ...createBaseInput(),
+      agent: createAgent("agent-1"),
+      hasHydratedHistoryBefore: true,
+      visibilityCatchUpStatus: "error",
+    };
+
+    const result = deriveAgentScreenViewState({ input, memory });
+    const ready = expectReadyState(result.state);
+
+    expectSyncErrorSync(ready);
   });
 
   it("keeps sync errors non-blocking once the screen was ready", () => {
@@ -328,7 +386,23 @@ describe("deriveAgentScreenViewState", () => {
     expect(result.memory.lastReadyAgent).toBeNull();
   });
 
-  it("still allows optimistic create flow to render before authoritative history arrives", () => {
+  it("renders an archived agent before provider history is initialized", () => {
+    const result = deriveAgentScreenViewState({
+      input: {
+        ...createBaseInput(),
+        agent: createAgent("agent-1"),
+        isArchived: true,
+        needsAuthoritativeSync: true,
+      },
+      memory: createBaseMemory(),
+    });
+
+    const ready = expectReadyState(result.state);
+    expect(ready.agent.id).toBe("agent-1");
+    expect(ready.sync).toEqual({ status: "idle" });
+  });
+
+  it("keeps optimistic create non-blocking while timeline and authoritative history catch up", () => {
     const memory = createBaseMemory();
     const input: AgentScreenMachineInput = {
       ...createBaseInput(),
@@ -336,6 +410,7 @@ describe("deriveAgentScreenViewState", () => {
       continuity: { kind: "optimistic-create", agent: createAgent("agent-1") },
       needsAuthoritativeSync: true,
       isHistorySyncing: true,
+      visibilityCatchUpStatus: "pending",
       hasHydratedHistoryBefore: false,
     };
 

@@ -18,6 +18,16 @@ export interface KeyboardShortcutContext {
   commandCenterOpen: boolean;
 }
 
+export interface KeyboardShortcutInput {
+  key: string;
+  code: string;
+  altKey: boolean;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  shiftKey: boolean;
+  repeat: boolean;
+}
+
 export interface KeyboardShortcutMatch {
   action: KeyboardActionId;
   payload: KeyboardShortcutPayload;
@@ -1085,8 +1095,8 @@ export function buildEffectiveBindings(overrides: Record<string, string>): Parse
 
 // --- Matching engine ---
 
-function parseDigit(event: KeyboardEvent): number | null {
-  const code = event.code ?? "";
+function parseDigit(event: KeyboardShortcutInput): number | null {
+  const code = event.code;
   if (code.startsWith("Digit")) {
     const value = Number(code.slice("Digit".length));
     return Number.isFinite(value) && value >= 1 && value <= 9 ? value : null;
@@ -1095,14 +1105,14 @@ function parseDigit(event: KeyboardEvent): number | null {
     const value = Number(code.slice("Numpad".length));
     return Number.isFinite(value) && value >= 1 && value <= 9 ? value : null;
   }
-  const key = event.key ?? "";
+  const key = event.key;
   if (key >= "1" && key <= "9") {
     return Number(key);
   }
   return null;
 }
 
-function matchesKeyOrCode(combo: KeyCombo, event: KeyboardEvent): boolean {
+function matchesKeyOrCode(combo: KeyCombo, event: KeyboardShortcutInput): boolean {
   if (combo.key === undefined) {
     return event.code === combo.code;
   }
@@ -1120,7 +1130,7 @@ function matchesKeyOrCode(combo: KeyCombo, event: KeyboardEvent): boolean {
   return combo.codeFallback === true && event.code === combo.code;
 }
 
-function matchesCombo(combo: KeyCombo, event: KeyboardEvent, isMac: boolean): boolean {
+function matchesCombo(combo: KeyCombo, event: KeyboardShortcutInput, isMac: boolean): boolean {
   if (combo.mod) {
     if (isMac) {
       if (!event.metaKey) return false;
@@ -1143,7 +1153,10 @@ function matchesCombo(combo: KeyCombo, event: KeyboardEvent, isMac: boolean): bo
   return matchesKeyOrCode(combo, event);
 }
 
-function matchesWhen(when: ShortcutWhen | undefined, context: KeyboardShortcutContext): boolean {
+export function matchesKeyboardShortcutContext(
+  when: ShortcutWhen | undefined,
+  context: KeyboardShortcutContext,
+): boolean {
   if (!when) return true;
   if (when.mac !== undefined && when.mac !== context.isMac) return false;
   if (when.desktop !== undefined && when.desktop !== context.isDesktop) return false;
@@ -1161,7 +1174,7 @@ function matchesWhen(when: ShortcutWhen | undefined, context: KeyboardShortcutCo
 
 function resolvePayload(
   def: ShortcutPayloadDef | undefined,
-  event: KeyboardEvent,
+  event: KeyboardShortcutInput,
 ): KeyboardShortcutPayload {
   if (!def) return null;
   switch (def.type) {
@@ -1212,7 +1225,7 @@ function helpMatchesPlatform(
 
 function buildMatchFromBinding(
   binding: ParsedShortcutBinding,
-  event: KeyboardEvent,
+  event: KeyboardShortcutInput,
 ): KeyboardShortcutMatch {
   return {
     action: binding.action,
@@ -1223,7 +1236,7 @@ function buildMatchFromBinding(
 }
 
 function resolveInitialChordStep(input: {
-  event: KeyboardEvent;
+  event: KeyboardShortcutInput;
   context: KeyboardShortcutContext;
   chordState: ChordState;
   onChordReset: () => void;
@@ -1245,7 +1258,7 @@ function resolveInitialChordStep(input: {
     if (!matchesCombo(firstCombo, event, context.isMac)) {
       continue;
     }
-    if (!matchesWhen(binding.when, context)) {
+    if (!matchesKeyboardShortcutContext(binding.when, context)) {
       continue;
     }
     if (binding.parsedChord.length > 1) {
@@ -1277,7 +1290,7 @@ function resolveInitialChordStep(input: {
 }
 
 function resolveAdvancingChordStep(input: {
-  event: KeyboardEvent;
+  event: KeyboardShortcutInput;
   context: KeyboardShortcutContext;
   chordState: ChordState;
   onChordReset: () => void;
@@ -1303,7 +1316,7 @@ function resolveAdvancingChordStep(input: {
     if (!matchesCombo(combo, event, context.isMac)) {
       continue;
     }
-    if (!matchesWhen(binding.when, context)) {
+    if (!matchesKeyboardShortcutContext(binding.when, context)) {
       continue;
     }
     if (chordState.step + 1 === binding.parsedChord.length) {
@@ -1342,7 +1355,7 @@ function resolveAdvancingChordStep(input: {
 }
 
 export function resolveKeyboardShortcut(input: {
-  event: KeyboardEvent;
+  event: KeyboardShortcutInput;
   context: KeyboardShortcutContext;
   chordState: ChordState;
   onChordReset: () => void;

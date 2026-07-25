@@ -37,6 +37,28 @@ describe("opencode agent commands E2E", () => {
     }
   }, 60_000);
 
+  test("listing commands resumes an idle-collected agent", async () => {
+    const agent = await ctx.client.createAgent({
+      ...getFullAccessConfig("opencode"),
+      cwd: "/tmp",
+      title: "Collected OpenCode Commands Test Agent",
+    });
+
+    const collection = await ctx.daemon.daemon.agentManager.collectIdleAgents({
+      cutoff: new Date(Date.now() + 1_000),
+      protectedAgentIds: new Set(),
+    });
+    expect(collection.failures).toEqual([]);
+    expect(collection.collected.map((entry) => entry.agentId)).toContain(agent.id);
+    expect(ctx.daemon.daemon.agentManager.getAgent(agent.id)).toBeNull();
+
+    const result = await ctx.client.listCommands({ agentId: agent.id });
+
+    expect(result.error).toBeNull();
+    expect(result.commands.length).toBeGreaterThan(0);
+    expect(ctx.daemon.daemon.agentManager.getAgent(agent.id)?.id).toBe(agent.id);
+  }, 60_000);
+
   test("sendMessage executes a slash command without arguments", async () => {
     const agent = await ctx.client.createAgent({
       ...getFullAccessConfig("opencode"),

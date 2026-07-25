@@ -123,4 +123,16 @@ test.describe("mobile bottom sheet reopen", () => {
       await openAndCloseModelSelectorTwice(page);
     });
   });
+
+  test("model selector closes after model selection", async ({ page }) => {
+    await withMobileMockAgent(page, async () => {
+      await openModelSelector(page);
+      const sheet = page.getByLabel("Bottom Sheet", { exact: true });
+
+      await sheet.getByText("Ten second stream", { exact: true }).click();
+
+      await expect(sheet).not.toBeVisible({ timeout: 10_000 });
+      await expect(page.getByRole("button", { name: /Ten second stream/ })).toBeVisible();
+    });
+  });
 });

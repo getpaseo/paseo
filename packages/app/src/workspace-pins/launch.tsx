@@ -12,7 +12,11 @@ import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useSessionStore } from "@/stores/session-store";
 import type { Theme } from "@/styles/theme";
 import { shouldShowCodeServerLauncher } from "@/workspace-pins/code-server-availability";
-import { pinnedTargetKey, type PinnedTabTarget } from "@/workspace-pins/target";
+import {
+  isPinnedTargetAvailable,
+  pinnedTargetKey,
+  type PinnedTabTarget,
+} from "@/workspace-pins/target";
 import { usePinnedTargetsStore } from "@/workspace-pins/store";
 
 export interface ResolvedPin {
@@ -79,6 +83,9 @@ export function usePinnedLaunchers({ serverId, onLaunch }: UsePinnedLaunchersInp
   return useMemo(() => {
     const resolved: ResolvedPin[] = [];
     for (const target of pinned) {
+      if (!isPinnedTargetAvailable(target, { isElectron: getIsElectron() })) {
+        continue;
+      }
       if (target.kind === "draft") {
         resolved.push({
           key: pinnedTargetKey(target),

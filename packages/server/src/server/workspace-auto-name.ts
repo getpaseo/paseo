@@ -108,13 +108,14 @@ export class WorkspaceAutoName {
     firstAgentContext: FirstAgentContext;
     currentSelection: CurrentSelection;
   }): Promise<void> {
+    const worktreeRoot = input.workspace.worktreeRoot ?? input.workspace.cwd;
     let generated: GeneratedWorkspaceName | null = null;
     const result: AttemptFirstAgentBranchAutoNameResult = await attemptFirstAgentBranchAutoName({
-      cwd: input.workspace.cwd,
+      cwd: worktreeRoot,
       firstAgentContext: input.firstAgentContext,
-      generateBranchNameFromContext: ({ cwd, firstAgentContext }) => {
+      generateBranchNameFromContext: ({ firstAgentContext }) => {
         return this.generateFromContext({
-          cwd,
+          cwd: input.workspace.cwd,
           firstAgentContext,
           currentSelection: input.currentSelection,
         }).then((nextGenerated) => {
@@ -146,7 +147,7 @@ export class WorkspaceAutoName {
       promptTitle: resolveFirstAgentPromptTitle(input.firstAgentContext),
     });
     if (result.renamed) {
-      await this.gitMutation.notifyGitMutation(input.workspace.cwd, "rename-branch");
+      await this.gitMutation.notifyGitMutation(worktreeRoot, "rename-branch");
     }
     await this.emitWorkspaceUpdateForCwd(input.workspace.cwd);
   }

@@ -87,19 +87,6 @@ export function planTimelineOlderFetch(cursor: TimelineSyncCursor) {
   } as const;
 }
 
-export function planTimelineCatchUpFollowUp(input: {
-  direction: "tail" | "before" | "after";
-  hasNewer: boolean;
-  endCursor: TimelineSyncCursor | null;
-  error: string | null;
-}): ProjectedTimelineAfterFetchPlan | null {
-  if (input.error || input.direction !== "after" || !input.hasNewer || !input.endCursor) {
-    return null;
-  }
-
-  return planTimelineCatchUpAfter(input.endCursor);
-}
-
 export function isTimelineCatchUpComplete(input: {
   direction: "tail" | "before" | "after";
   hasNewer: boolean;

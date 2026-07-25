@@ -4,6 +4,7 @@ interface UseMountedTabSetInput {
   activeTabId: string | null;
   allTabIds: string[];
   cap: number;
+  retainedTabIds?: Set<string>;
 }
 
 interface UseMountedTabSetResult {
@@ -15,6 +16,7 @@ interface DeriveMountedTabLruInput {
   availableTabIds: Set<string>;
   cap: number;
   previousLru: string[];
+  retainedTabIds: Set<string>;
 }
 
 function createInitialMountedTabLru(input: UseMountedTabSetInput): string[] {
@@ -25,12 +27,16 @@ function createInitialMountedTabLru(input: UseMountedTabSetInput): string[] {
 }
 
 function deriveMountedTabLru(input: DeriveMountedTabLruInput): string[] {
-  const { activeTabId, availableTabIds, cap, previousLru } = input;
+  const { activeTabId, availableTabIds, cap, previousLru, retainedTabIds } = input;
   const maxSize = Math.max(1, cap);
 
   const next: string[] = [];
   if (activeTabId && availableTabIds.has(activeTabId)) {
     next.push(activeTabId);
+  }
+
+  for (const tabId of retainedTabIds) {
+    if (tabId !== activeTabId && availableTabIds.has(tabId)) next.push(tabId);
   }
 
   for (const tabId of previousLru) {
@@ -57,8 +63,9 @@ export function useMountedTabSet(input: UseMountedTabSetInput): UseMountedTabSet
         availableTabIds,
         cap,
         previousLru: committedLruRef.current,
+        retainedTabIds: input.retainedTabIds ?? new Set(),
       }),
-    [activeTabId, availableTabIds, cap],
+    [activeTabId, availableTabIds, cap, input.retainedTabIds],
   );
   const mountedTabIds = useMemo(() => new Set<string>(mountedTabLru), [mountedTabLru]);
 

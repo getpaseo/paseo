@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
+import type { BrowserKeyboardPolicy } from "./features/browser-keyboard/index.js";
 
 // This preload runs in Electron's sandbox and is tsc-compiled (not bundled), so it MUST
 // NOT emit any runtime module load other than "electron" — a require() of a local or
@@ -22,6 +23,13 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
     ipcRenderer.invoke("paseo:invoke", command, args),
   getPendingOpenProject: () =>
     ipcRenderer.invoke("paseo:get-pending-open-project") as Promise<string | null>,
+  agentNavigation: {
+    ready: () =>
+      ipcRenderer.invoke("paseo:agent-navigation:ready") as Promise<{
+        serverId: string;
+        agentId: string;
+      } | null>,
+  },
   events: {
     on: (event: string, handler: EventHandler): Promise<() => void> => {
       const listener = (_ipcEvent: Electron.IpcRendererEvent, payload: unknown) => {
@@ -45,6 +53,7 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
         height?: number;
         backgroundColor?: string;
         foregroundColor?: string;
+        trafficLightOffsetY?: number;
       }) => ipcRenderer.invoke("paseo:window:updateWindowControls", update),
       onResized: (handler: EventHandler): (() => void) => {
         const listener = (_ipcEvent: Electron.IpcRendererEvent, payload: unknown) => {
@@ -77,9 +86,10 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
     listTargets: () => ipcRenderer.invoke("paseo:editor:listTargets"),
     openTarget: (input: {
       editorId: string;
-      path: string;
-      cwd?: string;
-      mode?: "open" | "reveal";
+      workspacePath: string;
+      filePath?: string;
+      line?: number;
+      column?: number;
     }) => ipcRenderer.invoke("paseo:editor:openTarget", input),
   },
   webUtils: {
@@ -92,6 +102,8 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
       ipcRenderer.invoke("paseo:menu:set-capturing-shortcut", capturing),
   },
   browser: {
+    setShortcutPolicy: (input: BrowserKeyboardPolicy) =>
+      ipcRenderer.invoke("paseo:browser:set-shortcut-policy", input),
     profilePartition: PASEO_BROWSER_PROFILE_PARTITION,
     registerAttachedBrowser: (input: AttachedBrowserRegistration) =>
       ipcRenderer.invoke("paseo:browser:register-attached", input),
