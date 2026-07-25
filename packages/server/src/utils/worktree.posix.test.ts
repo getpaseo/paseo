@@ -34,6 +34,7 @@ import {
   writeFileSync,
   readFileSync,
   chmodSync,
+  lstatSync,
 } from "fs";
 import { delimiter, dirname, join } from "path";
 import { tmpdir } from "os";
@@ -1060,6 +1061,152 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       expect(JSON.parse(readFileSync(worktreeConfigPath, "utf8"))).toEqual({
         scripts: { dev: { command: "committed" } },
       });
+    });
+
+    it("materializes copies and symlinks before setup, then removes only the new worktree links", async () => {
+      writeFileSync(
+        join(repoDir, ".gitignore"),
+        [".copy.env", "copy-cache/", "linked-file.txt", "linked-state", "setup.log", ""].join("\n"),
+      );
+      writeFileSync(
+        join(repoDir, "paseo.json"),
+        JSON.stringify({
+          worktree: {
+            setup: [
+              "test -f .copy.env",
+              "test -L linked-file.txt",
+              "test -L linked-state",
+              "cat linked-state/state.txt > setup.log",
+            ],
+          },
+        }),
+      );
+      execFileSync("git", ["add", ".gitignore", "paseo.json"], { cwd: repoDir });
+      execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "add include fixture"], {
+        cwd: repoDir,
+      });
+
+      writeFileSync(
+        join(repoDir, ".worktreeinclude"),
+        [
+          ".copy.env",
+          "copy-cache/**",
+          "# @symlink",
+          "linked-file.txt",
+          "# @symlink",
+          "linked-state",
+          "",
+        ].join("\n"),
+      );
+      writeFileSync(join(repoDir, ".copy.env"), "copy-v1\n");
+      mkdirSync(join(repoDir, "copy-cache"), { recursive: true });
+      writeFileSync(join(repoDir, "copy-cache", "state.txt"), "copy-cache-v1\n");
+      writeFileSync(join(repoDir, "linked-file.txt"), "linked-file-v1\n");
+      mkdirSync(join(repoDir, "linked-state"), { recursive: true });
+      writeFileSync(join(repoDir, "linked-state", "state.txt"), "linked-state-v1\n");
+
+      const result = await createLegacyWorktreeForTest({
+        cwd: repoDir,
+        worktreeSlug: "include-links",
+        source: { kind: "branch-off", baseBranch: "main", branchName: "feature/include-links" },
+        runSetup: true,
+        paseoHome,
+      });
+
+      expect(readFileSync(join(result.worktreePath, "setup.log"), "utf8")).toBe(
+        "linked-state-v1\n",
+      );
+      expect(lstatSync(join(result.worktreePath, ".copy.env")).isSymbolicLink()).toBe(false);
+      expect(lstatSync(join(result.worktreePath, "copy-cache")).isSymbolicLink()).toBe(false);
+      expect(lstatSync(join(result.worktreePath, "linked-file.txt")).isSymbolicLink()).toBe(true);
+      expect(lstatSync(join(result.worktreePath, "linked-state")).isSymbolicLink()).toBe(true);
+      expect(
+        execFileSync("git", ["status", "--porcelain"], {
+          cwd: result.worktreePath,
+          encoding: "utf8",
+        }),
+      ).toBe("");
+
+      writeFileSync(join(repoDir, ".copy.env"), "copy-v2\n");
+      writeFileSync(join(repoDir, "copy-cache", "state.txt"), "copy-cache-v2\n");
+      writeFileSync(join(repoDir, "linked-file.txt"), "linked-file-v2\n");
+      writeFileSync(join(repoDir, "linked-state", "state.txt"), "linked-state-v2\n");
+
+      expect(readFileSync(join(result.worktreePath, ".copy.env"), "utf8")).toBe("copy-v1\n");
+      expect(readFileSync(join(result.worktreePath, "copy-cache", "state.txt"), "utf8")).toBe(
+        "copy-cache-v1\n",
+      );
+      expect(readFileSync(join(result.worktreePath, "linked-file.txt"), "utf8")).toBe(
+        "linked-file-v2\n",
+      );
+      expect(readFileSync(join(result.worktreePath, "linked-state", "state.txt"), "utf8")).toBe(
+        "linked-state-v2\n",
+      );
+
+      await deletePaseoWorktree({
+        cwd: repoDir,
+        worktreePath: result.worktreePath,
+        paseoHome,
+      });
+
+      expect(existsSync(result.worktreePath)).toBe(false);
+      expect(readFileSync(join(repoDir, "linked-file.txt"), "utf8")).toBe("linked-file-v2\n");
+      expect(readFileSync(join(repoDir, "linked-state", "state.txt"), "utf8")).toBe(
+        "linked-state-v2\n",
+      );
+    });
+
+    it("rejects a missing include before creating a worktree", async () => {
+      const projectHash = await deriveWorktreeProjectHash(repoDir);
+      const expectedWorktreePath = join(paseoHome, "worktrees", projectHash, "missing-include");
+      writeFileSync(join(repoDir, ".worktreeinclude"), ".missing-cache/**\n");
+
+      await expect(
+        createLegacyWorktreeForTest({
+          cwd: repoDir,
+          worktreeSlug: "missing-include",
+          source: { kind: "branch-off", baseBranch: "main", branchName: "feature/missing-include" },
+          runSetup: false,
+          paseoHome,
+        }),
+      ).rejects.toThrow("No paths matched .worktreeinclude entry '.missing-cache/**'");
+
+      expect(existsSync(expectedWorktreePath)).toBe(false);
+      expect(
+        execFileSync("git", ["worktree", "list", "--porcelain"], {
+          cwd: repoDir,
+          encoding: "utf8",
+        }),
+      ).not.toContain(expectedWorktreePath);
+    });
+
+    it("rolls back a created worktree when a symlink include conflicts", async () => {
+      const projectHash = await deriveWorktreeProjectHash(repoDir);
+      const expectedWorktreePath = join(paseoHome, "worktrees", projectHash, "include-conflict");
+      writeFileSync(join(repoDir, "paseo.json"), JSON.stringify({ scripts: {} }));
+      writeFileSync(join(repoDir, ".worktreeinclude"), "# @symlink\npaseo.json\n");
+
+      await expect(
+        createLegacyWorktreeForTest({
+          cwd: repoDir,
+          worktreeSlug: "include-conflict",
+          source: {
+            kind: "branch-off",
+            baseBranch: "main",
+            branchName: "feature/include-conflict",
+          },
+          runSetup: false,
+          paseoHome,
+        }),
+      ).rejects.toThrow("conflicts with the new worktree");
+
+      expect(existsSync(expectedWorktreePath)).toBe(false);
+      expect(
+        execFileSync("git", ["worktree", "list", "--porcelain"], {
+          cwd: repoDir,
+          encoding: "utf8",
+        }),
+      ).not.toContain(expectedWorktreePath);
     });
 
     it("creates a worktree without error when no paseo.json exists in the main repo", async () => {
