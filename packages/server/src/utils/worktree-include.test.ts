@@ -6,6 +6,7 @@ import {
   linkSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   readlinkSync,
   realpathSync,
@@ -251,20 +252,28 @@ describe.skipIf(isPlatform("win32"))("worktree include materialization", () => {
     expect(readFileSync(join(worktreeRoot, "copy-dir", "state.txt"), "utf8")).toBe("copy-dir-v2\n");
   });
 
-  it("rejects a destination parent symlink without writing through it", async () => {
+  it("skips a destination parent symlink without writing through it", async () => {
     mkdirSync(join(sourceRoot, "config"), { recursive: true });
     writeFileSync(join(sourceRoot, "config", "local.json"), "{}\n");
-    writeFileSync(join(sourceRoot, ".worktreeinclude"), "config/local.json\n");
+    writeFileSync(join(sourceRoot, "safe.txt"), "safe\n");
+    writeFileSync(join(sourceRoot, ".worktreeinclude"), "config/local.json\nsafe.txt\n");
 
     const outsideRoot = join(tempDir, "outside");
     mkdirSync(outsideRoot);
     symlinkSync(outsideRoot, join(worktreeRoot, "config"));
 
     const plan = await readWorktreeIncludePlan({ sourceRoot });
-    await expect(materializeWorktreeIncludePlan({ plan, worktreeRoot })).rejects.toThrow(
-      "Refusing to materialize .worktreeinclude entry",
-    );
+    const result = await materializeWorktreeIncludePlan({ plan, worktreeRoot });
+
     expect(existsSync(join(outsideRoot, "local.json"))).toBe(false);
+    expect(readFileSync(join(worktreeRoot, "safe.txt"), "utf8")).toBe("safe\n");
+    expect(result).toMatchObject({ materialized: 1 });
+    expect(result.skipped).toEqual([
+      expect.objectContaining({ raw: "config/local.json", reason: "conflict" }),
+    ]);
+    expect(readdirSync(worktreeRoot)).not.toContain(
+      expect.stringMatching(/^\.paseo-worktreeinclude-/),
+    );
   });
 
   it("copies resolved source links and creates direct live links", async () => {

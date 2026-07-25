@@ -1223,33 +1223,42 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       ).toContain("feature/protected-include");
     });
 
-    it("rolls back a created worktree when a symlink include conflicts", async () => {
+    it("skips a symlink include conflict and keeps the new worktree", async () => {
       const projectHash = await deriveWorktreeProjectHash(repoDir);
       const expectedWorktreePath = join(paseoHome, "worktrees", projectHash, "include-conflict");
       writeFileSync(join(repoDir, "paseo.json"), JSON.stringify({ scripts: {} }));
       writeFileSync(join(repoDir, ".worktreeinclude"), "symlink paseo.json\n");
 
-      await expect(
-        createLegacyWorktreeForTest({
-          cwd: repoDir,
-          worktreeSlug: "include-conflict",
-          source: {
-            kind: "branch-off",
-            baseBranch: "main",
-            branchName: "feature/include-conflict",
-          },
-          runSetup: false,
-          paseoHome,
-        }),
-      ).rejects.toThrow("conflicts with the new worktree");
+      const result = await createLegacyWorktreeForTest({
+        cwd: repoDir,
+        worktreeSlug: "include-conflict",
+        source: {
+          kind: "branch-off",
+          baseBranch: "main",
+          branchName: "feature/include-conflict",
+        },
+        runSetup: false,
+        paseoHome,
+      });
 
-      expect(existsSync(expectedWorktreePath)).toBe(false);
+      expect(result.worktreePath).toBe(expectedWorktreePath);
+      expect(existsSync(expectedWorktreePath)).toBe(true);
+      expect(lstatSync(join(expectedWorktreePath, "paseo.json")).isSymbolicLink()).toBe(false);
+      expect(result.worktreeIncludeSummary?.skipped).toEqual([
+        expect.objectContaining({ raw: "symlink paseo.json", reason: "conflict" }),
+      ]);
       expect(
         execFileSync("git", ["worktree", "list", "--porcelain"], {
           cwd: repoDir,
           encoding: "utf8",
         }),
-      ).not.toContain(expectedWorktreePath);
+      ).toContain(expectedWorktreePath);
+      expect(
+        execFileSync("git", ["branch", "--list", "feature/include-conflict"], {
+          cwd: repoDir,
+          encoding: "utf8",
+        }).trim(),
+      ).toContain("feature/include-conflict");
     });
 
     it("creates a worktree without error when no paseo.json exists in the main repo", async () => {

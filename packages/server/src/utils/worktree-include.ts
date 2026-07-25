@@ -1,5 +1,18 @@
 import { type Stats } from "fs";
-import { copyFile, cp, lstat, mkdir, readFile, readdir, realpath, symlink } from "fs/promises";
+import {
+  copyFile,
+  cp,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  rename,
+  rm,
+  rmdir,
+  symlink,
+} from "fs/promises";
 import {
   basename as pathBasename,
   dirname,
@@ -26,6 +39,7 @@ type WorktreeIncludeErrorCode =
 export type WorktreeIncludeSkipReason =
   | "conflict"
   | "invalid"
+  | "materialization"
   | "missing"
   | "source_changed"
   | "unsafe";
@@ -79,6 +93,11 @@ interface ResolvedWorktreeIncludeMaterialization {
   sourcePath: string;
 }
 
+interface StagedWorktreeIncludeMaterialization {
+  directoryPath: string;
+  entryPath: string;
+}
+
 interface ParsedWorktreeIncludeEntries {
   entries: WorktreeIncludeEntry[];
   skipped: WorktreeIncludeSkippedEntry[];
@@ -96,6 +115,16 @@ export class WorktreeIncludeError extends Error {
   ) {
     super(message);
     this.name = "WorktreeIncludeError";
+  }
+}
+
+class WorktreeIncludeCleanupError extends Error {
+  constructor(
+    message: string,
+    public readonly cleanupError: unknown,
+  ) {
+    super(message);
+    this.name = "WorktreeIncludeCleanupError";
   }
 }
 
@@ -200,30 +229,23 @@ export async function materializeWorktreeIncludePlan(
 
   const worktreeRoot = await realpath(options.worktreeRoot);
   for (const materialization of options.plan.materializations) {
+    const entry = {
+      lineNumber: materialization.lineNumber,
+      mode: materialization.mode,
+      raw: materialization.raw,
+      relativePath: materialization.relativePath,
+    };
     let resolved: ResolvedWorktreeIncludeMaterialization;
     try {
       resolved = await resolveSourceMaterialization({
-        entry: {
-          lineNumber: materialization.lineNumber,
-          mode: materialization.mode,
-          raw: materialization.raw,
-          relativePath: materialization.relativePath,
-        },
+        entry,
         excludedSourceRoots: options.plan.excludedSourceRoots,
         relativePath: materialization.relativePath,
         sourceRoot: options.plan.sourceRoot,
       });
     } catch (error) {
       if (isSkippableWorktreeIncludeError(error)) {
-        skipped.push(
-          toSkippedEntry(
-            {
-              lineNumber: materialization.lineNumber,
-              raw: materialization.raw,
-            },
-            error,
-          ),
-        );
+        skipped.push(toSkippedEntry(entry, error));
         continue;
       }
       throw error;
@@ -231,10 +253,7 @@ export async function materializeWorktreeIncludePlan(
     if (resolved.materialization.sourceKind !== materialization.sourceKind) {
       skipped.push(
         toSkippedEntry(
-          {
-            lineNumber: materialization.lineNumber,
-            raw: materialization.raw,
-          },
+          entry,
           new WorktreeIncludeError(
             "source_changed",
             `Source for .worktreeinclude entry '${materialization.raw}' changed type before it could be materialized`,
@@ -243,62 +262,203 @@ export async function materializeWorktreeIncludePlan(
       );
       continue;
     }
-    const destinationPath = getDestinationPath({
-      worktreeRoot,
-      relativePath: resolved.materialization.relativePath,
-    });
-    await ensureDestinationParent({
-      worktreeRoot,
-      relativePath: resolved.materialization.relativePath,
-    });
-    let needsMaterialization: boolean;
+
+    let staged: StagedWorktreeIncludeMaterialization | null = null;
+    let createdDestinationParents: string[] = [];
     try {
-      needsMaterialization = await preflightDestination({
+      const destinationPath = getDestinationPath({
         worktreeRoot,
-        resolved,
+        relativePath: resolved.materialization.relativePath,
       });
+      if (
+        !(await preflightDestination({
+          worktreeRoot,
+          resolved,
+        }))
+      ) {
+        materialized++;
+        continue;
+      }
+
+      staged = await stageMaterialization({
+        destinationPath,
+        resolved,
+        worktreeRoot,
+      });
+      createdDestinationParents = await ensureDestinationParent({
+        worktreeRoot,
+        relativePath: resolved.materialization.relativePath,
+      });
+      if (
+        !(await preflightDestination({
+          worktreeRoot,
+          resolved,
+        }))
+      ) {
+        await cleanupStagingDirectory(staged.directoryPath);
+        staged = null;
+        await cleanupCreatedDestinationParents(createdDestinationParents);
+        materialized++;
+        continue;
+      }
+
+      const destinationStats = await lstatIfExists(destinationPath);
+      if (resolved.materialization.mode === "copy" && destinationStats !== null) {
+        await copyStagedMaterializationToExistingDestination({
+          destinationPath,
+          resolved,
+          staged,
+        });
+      } else {
+        await rename(staged.entryPath, destinationPath);
+      }
+
+      await cleanupStagingDirectory(staged.directoryPath);
+      staged = null;
+      materialized++;
     } catch (error) {
-      if (error instanceof WorktreeIncludeError && error.code === "unsupported_source") {
-        skipped.push(
-          toSkippedEntry(
-            {
-              lineNumber: materialization.lineNumber,
-              raw: materialization.raw,
-            },
-            error,
-          ),
-        );
+      if (staged !== null) {
+        await cleanupStagingDirectory(staged.directoryPath);
+      }
+      await cleanupCreatedDestinationParents(createdDestinationParents);
+      if (isWorktreeIncludeMaterializationError(error)) {
+        skipped.push(toSkippedEntry(entry, error));
         continue;
       }
       throw error;
     }
-    if (!needsMaterialization) {
-      materialized++;
-      continue;
-    }
-
-    if (resolved.materialization.mode === "copy") {
-      if (resolved.materialization.sourceKind === "file") {
-        await copyFile(resolved.sourcePath, destinationPath);
-      } else {
-        await cp(resolved.sourcePath, destinationPath, {
-          recursive: true,
-          force: true,
-          dereference: false,
-        });
-      }
-      materialized++;
-      continue;
-    }
-
-    await createMaterializationSymlink({
-      destinationPath,
-      resolved,
-    });
-    materialized++;
   }
 
   return { materialized, skipped };
+}
+
+async function stageMaterialization(options: {
+  destinationPath: string;
+  resolved: ResolvedWorktreeIncludeMaterialization;
+  worktreeRoot: string;
+}): Promise<StagedWorktreeIncludeMaterialization> {
+  const directoryPath = await mkdtemp(join(options.worktreeRoot, ".paseo-worktreeinclude-"));
+  const entryPath = join(directoryPath, "entry");
+  try {
+    if (options.resolved.materialization.mode === "copy") {
+      await copyMaterializationPath({
+        destinationPath: entryPath,
+        sourceKind: options.resolved.materialization.sourceKind,
+        sourcePath: options.resolved.sourcePath,
+      });
+    } else {
+      await createMaterializationSymlink({
+        destinationPath: entryPath,
+        linkDestinationPath: options.destinationPath,
+        resolved: options.resolved,
+      });
+    }
+    return { directoryPath, entryPath };
+  } catch (error) {
+    await cleanupStagingDirectory(directoryPath);
+    throw error;
+  }
+}
+
+async function copyStagedMaterializationToExistingDestination(options: {
+  destinationPath: string;
+  resolved: ResolvedWorktreeIncludeMaterialization;
+  staged: StagedWorktreeIncludeMaterialization;
+}): Promise<void> {
+  const backupPath = join(options.staged.directoryPath, "backup");
+  const sourceKind = options.resolved.materialization.sourceKind;
+  await copyMaterializationPath({
+    destinationPath: backupPath,
+    sourceKind,
+    sourcePath: options.destinationPath,
+  });
+  try {
+    await copyMaterializationPath({
+      destinationPath: options.destinationPath,
+      sourceKind,
+      sourcePath: options.staged.entryPath,
+    });
+  } catch (error) {
+    await restoreCopiedDestination({
+      backupPath,
+      destinationPath: options.destinationPath,
+      sourceKind,
+    });
+    throw error;
+  }
+}
+
+async function copyMaterializationPath(options: {
+  destinationPath: string;
+  sourceKind: WorktreeIncludeSourceKind;
+  sourcePath: string;
+}): Promise<void> {
+  if (options.sourceKind === "file") {
+    await copyFile(options.sourcePath, options.destinationPath);
+    return;
+  }
+  await cp(options.sourcePath, options.destinationPath, {
+    recursive: true,
+    force: true,
+    dereference: false,
+  });
+}
+
+async function restoreCopiedDestination(options: {
+  backupPath: string;
+  destinationPath: string;
+  sourceKind: WorktreeIncludeSourceKind;
+}): Promise<void> {
+  try {
+    const destinationStats = await lstatIfExists(options.destinationPath);
+    if (destinationStats !== null) {
+      if (
+        destinationStats.isSymbolicLink() ||
+        (options.sourceKind === "file" && !destinationStats.isFile()) ||
+        (options.sourceKind === "directory" && !destinationStats.isDirectory())
+      ) {
+        throw new Error("destination changed while restoring a failed materialization");
+      }
+      await rm(options.destinationPath, {
+        recursive: destinationStats.isDirectory(),
+        force: true,
+      });
+    }
+    await rename(options.backupPath, options.destinationPath);
+  } catch (error) {
+    throw new WorktreeIncludeCleanupError(
+      `Unable to restore .worktreeinclude destination '${options.destinationPath}' after a failed materialization`,
+      error,
+    );
+  }
+}
+
+async function cleanupStagingDirectory(directoryPath: string): Promise<void> {
+  try {
+    await rm(directoryPath, { recursive: true, force: true });
+  } catch (error) {
+    throw new WorktreeIncludeCleanupError(
+      `Unable to clean up .worktreeinclude staging directory '${directoryPath}'`,
+      error,
+    );
+  }
+}
+
+async function cleanupCreatedDestinationParents(createdPaths: string[]): Promise<void> {
+  for (const path of createdPaths.toReversed()) {
+    try {
+      await rmdir(path);
+    } catch (error) {
+      const code = getErrorCode(error);
+      if (code === "ENOENT" || code === "ENOTEMPTY" || code === "EEXIST") {
+        continue;
+      }
+      throw new WorktreeIncludeCleanupError(
+        `Unable to clean up .worktreeinclude destination directory '${path}'`,
+        error,
+      );
+    }
+  }
 }
 
 async function readWorktreeIncludeEntries(
@@ -924,23 +1084,31 @@ function getDestinationPath(options: { relativePath: string; worktreeRoot: strin
 async function ensureDestinationParent(options: {
   relativePath: string;
   worktreeRoot: string;
-}): Promise<void> {
+}): Promise<string[]> {
   const parentSegments = options.relativePath.split("/").slice(0, -1);
   let currentPath = options.worktreeRoot;
-  for (const segment of parentSegments) {
-    currentPath = join(currentPath, segment);
-    const stats = await lstatIfExists(currentPath);
-    if (stats === null) {
-      await mkdir(currentPath);
-      continue;
+  const createdPaths: string[] = [];
+  try {
+    for (const segment of parentSegments) {
+      currentPath = join(currentPath, segment);
+      const stats = await lstatIfExists(currentPath);
+      if (stats === null) {
+        await mkdir(currentPath);
+        createdPaths.push(currentPath);
+        continue;
+      }
+      if (stats.isSymbolicLink() || !stats.isDirectory()) {
+        throw new WorktreeIncludeError(
+          "conflict",
+          `Refusing to materialize .worktreeinclude entry '${options.relativePath}' through '${currentPath}'`,
+        );
+      }
     }
-    if (stats.isSymbolicLink() || !stats.isDirectory()) {
-      throw new WorktreeIncludeError(
-        "conflict",
-        `Refusing to materialize .worktreeinclude entry '${options.relativePath}' through '${currentPath}'`,
-      );
-    }
+  } catch (error) {
+    await cleanupCreatedDestinationParents(createdPaths);
+    throw error;
   }
+  return createdPaths;
 }
 
 async function assertCopyDestinationTreeSafe(options: {
@@ -984,10 +1152,14 @@ async function assertCopyDestinationTreeSafe(options: {
 
 async function createMaterializationSymlink(options: {
   destinationPath: string;
+  linkDestinationPath?: string;
   resolved: ResolvedWorktreeIncludeMaterialization;
 }): Promise<void> {
   if (process.platform !== "win32") {
-    const target = relative(dirname(options.destinationPath), options.resolved.sourcePath);
+    const target = relative(
+      dirname(options.linkDestinationPath ?? options.destinationPath),
+      options.resolved.sourcePath,
+    );
     await symlink(target, options.destinationPath);
     return;
   }
@@ -1069,35 +1241,42 @@ function noMatchError(entry: WorktreeIncludeEntry): WorktreeIncludeError {
 
 function toSkippedEntry(
   entry: Pick<WorktreeIncludeEntry, "lineNumber" | "raw">,
-  error: WorktreeIncludeError,
+  error: unknown,
 ): WorktreeIncludeSkippedEntry {
   return {
     lineNumber: entry.lineNumber,
-    message: error.message,
+    message: error instanceof Error ? error.message : String(error),
     raw: entry.raw,
     reason: getSkipReason(error),
   };
 }
 
-function getSkipReason(error: WorktreeIncludeError): WorktreeIncludeSkipReason {
+function getSkipReason(error: unknown): WorktreeIncludeSkipReason {
+  if (!(error instanceof WorktreeIncludeError)) {
+    return "materialization";
+  }
   switch (error.code) {
     case "conflict":
       return "conflict";
     case "invalid_entry":
       return "invalid";
+    case "windows_symlink_unavailable":
+      return "materialization";
     case "missing_source":
       return "missing";
     case "source_changed":
       return "source_changed";
     case "unsupported_source":
       return "unsafe";
-    case "windows_symlink_unavailable":
-      return "unsafe";
   }
 }
 
 function isSkippableWorktreeIncludeError(error: unknown): error is WorktreeIncludeError {
   return error instanceof WorktreeIncludeError && error.code !== "windows_symlink_unavailable";
+}
+
+function isWorktreeIncludeMaterializationError(error: unknown): boolean {
+  return error instanceof WorktreeIncludeError || getErrorCode(error) !== null;
 }
 
 function getErrorCode(error: unknown): string | null {
