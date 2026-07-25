@@ -304,6 +304,8 @@ jobs:
       - name: Assemble signed fork APK locally
         # Free runners + larger app trees (file editor, PDF, etc.) regularly exceed 45m.
         # Successful pre-0.2 fork APKs finished near the old ceiling; leave headroom.
+        # Builds have also been cancelled mid-Gradle with no logs; keep a heartbeat so
+        # the job is not treated as idle, and build arm64-only to cut wall-clock time.
         timeout-minutes: 90
         shell: bash
         run: |
@@ -311,7 +313,21 @@ jobs:
 
           cd packages/app/android
           chmod +x ./gradlew
+
+          # Emit periodic output while Gradle may be quiet for long stretches.
+          (
+            while true; do
+              echo "[paseo-android] still assembling at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+              sleep 60
+            done
+          ) &
+          heartbeat_pid=$!
+          trap 'kill "$heartbeat_pid" 2>/dev/null || true' EXIT
+
+          # arm64-v8a covers nearly all modern phones and avoids compiling 4 ABIs.
           ./gradlew :app:assembleRelease \
+            --console=plain \
+            -PreactNativeArchitectures=arm64-v8a \
             -x lint \
             -x lintVitalAnalyzeRelease \
             -x lintVitalRelease \
@@ -331,10 +347,15 @@ jobs:
 
           apk_path="packages/app/android/app/build/outputs/apk/release/app-release.apk"
           if [[ ! -f "$apk_path" ]]; then
-            echo "::error::Signed APK not found at $apk_path"
-            find packages/app/android/app/build/outputs -type f -name '*.apk' -print
+            # Single-ABI builds can land under a slightly different name.
+            apk_path="$(find packages/app/android/app/build/outputs -type f -name '*.apk' | head -n 1 || true)"
+          fi
+          if [[ -z "${apk_path:-}" || ! -f "$apk_path" ]]; then
+            echo "::error::Signed APK not found under packages/app/android/app/build/outputs"
+            find packages/app/android/app/build/outputs -type f -name '*.apk' -print || true
             exit 1
           fi
+          echo "Using APK at $apk_path"
 
           if [[ "$PASEO_ANDROID_SIGNING_MODE" == "insecure-fallback" ]]; then
             asset_name="paseo-${RELEASE_TAG}-android-${PASEO_FORK_ID_SUFFIX}-INSECURE-PUBLIC-FALLBACK-KEY.apk"
