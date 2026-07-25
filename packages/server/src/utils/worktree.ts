@@ -36,7 +36,11 @@ import { createExternalProcessEnv } from "../server/paseo-env.js";
 import { parseGitRevParsePath, resolveGitRevParsePath } from "./git-rev-parse-path.js";
 import { validateBranchSlug } from "@getpaseo/protocol/branch-slug";
 import { expandTilde, getRealpathAwareRelativePath, isPathInsideRoot } from "./path.js";
-import { materializeWorktreeIncludePlan, readWorktreeIncludePlan } from "./worktree-include.js";
+import {
+  materializeWorktreeIncludePlan,
+  readWorktreeIncludePlan,
+  type WorktreeIncludeSummary,
+} from "./worktree-include.js";
 
 export { slugify, validateBranchSlug } from "@getpaseo/protocol/branch-slug";
 
@@ -47,6 +51,7 @@ const READ_ONLY_GIT_ENV = {
 
 export interface WorktreeConfig {
   branchName: string;
+  worktreeIncludeSummary?: WorktreeIncludeSummary;
   worktreePath: string;
 }
 
@@ -1291,11 +1296,19 @@ export const createWorktree = async ({
   });
 
   await seedPaseoConfigFile({ sourceCwd: cwd, targetCwd: worktreePath });
+  let worktreeIncludeSummary: WorktreeIncludeSummary = {
+    materialized: 0,
+    skipped: [...worktreeIncludePlan.skipped],
+  };
   try {
-    await materializeWorktreeIncludePlan({
+    const materialization = await materializeWorktreeIncludePlan({
       plan: worktreeIncludePlan,
       worktreeRoot: worktreePath,
     });
+    worktreeIncludeSummary = {
+      materialized: materialization.materialized,
+      skipped: [...worktreeIncludePlan.skipped, ...materialization.skipped],
+    };
   } catch (error) {
     await rollbackCreatedPaseoWorktree(
       {
@@ -1320,6 +1333,7 @@ export const createWorktree = async ({
 
   return {
     branchName: sourcePlan.branchName,
+    worktreeIncludeSummary,
     worktreePath,
   };
 };

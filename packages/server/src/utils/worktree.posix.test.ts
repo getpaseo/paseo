@@ -1179,7 +1179,7 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       ).toContain(expectedWorktreePath);
     });
 
-    it("rejects a recursive include of checkout-local worktree storage before creation", async () => {
+    it("skips checkout-local worktree storage and creates the remaining includes", async () => {
       const checkoutLocalPaseoHome = join(repoDir, ".dev", "paseo-home");
       const projectHash = await deriveWorktreeProjectHash(repoDir);
       const expectedWorktreePath = join(
@@ -1188,35 +1188,39 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
         projectHash,
         "protected-include",
       );
-      writeFileSync(join(repoDir, ".worktreeinclude"), ".dev/**\n");
+      mkdirSync(join(checkoutLocalPaseoHome, "worktrees", projectHash), { recursive: true });
+      writeFileSync(join(repoDir, ".worktreeinclude"), [".dev/**", ".env", ""].join("\n"));
+      writeFileSync(join(repoDir, ".env"), "present\n");
 
-      await expect(
-        createLegacyWorktreeForTest({
-          cwd: repoDir,
-          worktreeSlug: "protected-include",
-          source: {
-            kind: "branch-off",
-            baseBranch: "main",
-            branchName: "feature/protected-include",
-          },
-          runSetup: false,
-          paseoHome: checkoutLocalPaseoHome,
-        }),
-      ).rejects.toThrow("overlaps with a protected worktree path");
+      const result = await createLegacyWorktreeForTest({
+        cwd: repoDir,
+        worktreeSlug: "protected-include",
+        source: {
+          kind: "branch-off",
+          baseBranch: "main",
+          branchName: "feature/protected-include",
+        },
+        runSetup: false,
+        paseoHome: checkoutLocalPaseoHome,
+      });
 
-      expect(existsSync(expectedWorktreePath)).toBe(false);
+      expect(result.worktreePath).toBe(expectedWorktreePath);
+      expect(readFileSync(join(result.worktreePath, ".env"), "utf8")).toBe("present\n");
+      expect(result.worktreeIncludeSummary?.skipped).toEqual([
+        expect.objectContaining({ raw: ".dev/**", reason: "unsafe" }),
+      ]);
       expect(
         execFileSync("git", ["worktree", "list", "--porcelain"], {
           cwd: repoDir,
           encoding: "utf8",
         }),
-      ).not.toContain(expectedWorktreePath);
+      ).toContain(expectedWorktreePath);
       expect(
-        execFileSync("git", ["branch", "--list", "feature/include-conflict"], {
+        execFileSync("git", ["branch", "--list", "feature/protected-include"], {
           cwd: repoDir,
           encoding: "utf8",
         }).trim(),
-      ).toBe("");
+      ).toContain("feature/protected-include");
     });
 
     it("rolls back a created worktree when a symlink include conflicts", async () => {

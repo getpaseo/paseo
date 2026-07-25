@@ -3,15 +3,18 @@ import {
   existsSync,
   chmodSync,
   lstatSync,
+  linkSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readlinkSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
 } from "fs";
 import { tmpdir } from "os";
-import { join } from "path";
+import { dirname, join, relative } from "path";
 import { isPlatform } from "../test-utils/platform.js";
 import { materializeWorktreeIncludePlan, readWorktreeIncludePlan } from "./worktree-include.js";
 
@@ -65,22 +68,26 @@ describe("worktree include planning", () => {
     );
   });
 
-  it("rejects unsafe, dangling, and conflicting entries before a worktree exists", async () => {
-    writeFileSync(join(sourceRoot, ".worktreeinclude"), "../outside\n");
-    await expect(readWorktreeIncludePlan({ sourceRoot })).rejects.toThrow(
-      "parent-directory segments are not allowed",
-    );
-
-    writeFileSync(join(sourceRoot, ".worktreeinclude"), "symlink\n");
-    await expect(readWorktreeIncludePlan({ sourceRoot })).rejects.toThrow("requires a path");
-
+  it("skips invalid and conflicting entries while retaining safe entries", async () => {
     writeFileSync(join(sourceRoot, "shared"), "source\n");
+    writeFileSync(join(sourceRoot, ".env"), "source\n");
     writeFileSync(
       join(sourceRoot, ".worktreeinclude"),
-      ["shared", "symlink shared", ""].join("\n"),
+      ["../outside", "symlink", "shared", "symlink shared", ".env", ""].join("\n"),
     );
-    await expect(readWorktreeIncludePlan({ sourceRoot })).rejects.toThrow(
-      "use both copy and symlink modes",
+
+    const plan = await readWorktreeIncludePlan({ sourceRoot });
+
+    expect(plan.materializations).toEqual([
+      expect.objectContaining({ mode: "copy", relativePath: ".env", sourceKind: "file" }),
+    ]);
+    expect(plan.skipped).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ lineNumber: 1, raw: "../outside", reason: "invalid" }),
+        expect.objectContaining({ lineNumber: 2, raw: "symlink", reason: "invalid" }),
+        expect.objectContaining({ lineNumber: 3, raw: "shared", reason: "conflict" }),
+        expect.objectContaining({ lineNumber: 4, raw: "symlink shared", reason: "conflict" }),
+      ]),
     );
   });
 
@@ -103,34 +110,68 @@ describe("worktree include planning", () => {
         sourceKind: "file",
       }),
     ]);
+    expect(plan.skipped).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ raw: ".env.local", reason: "missing" }),
+        expect.objectContaining({ raw: "missing/**", reason: "missing" }),
+      ]),
+    );
   });
 
-  it("rejects directory copies that overlap protected worktree paths", async () => {
+  it("skips directory copies that overlap protected worktree paths", async () => {
     const protectedWorktreeRoot = join(sourceRoot, ".dev", "paseo-home", "worktrees", "project");
     mkdirSync(protectedWorktreeRoot, { recursive: true });
     writeFileSync(join(sourceRoot, ".worktreeinclude"), ".dev/**\n");
 
-    await expect(
-      readWorktreeIncludePlan({
-        sourceRoot,
-        excludedSourceRoots: [protectedWorktreeRoot],
-      }),
-    ).rejects.toThrow("overlaps with a protected worktree path");
+    const plan = await readWorktreeIncludePlan({
+      sourceRoot,
+      excludedSourceRoots: [protectedWorktreeRoot],
+    });
+
+    expect(plan.materializations).toEqual([]);
+    expect(plan.skipped).toEqual([expect.objectContaining({ raw: ".dev/**", reason: "unsafe" })]);
   });
 
   it.skipIf(isPlatform("win32"))(
-    "rejects protected paths reached through a symlink alias",
+    "skips protected paths reached through a symlink alias",
     async () => {
       const sourceAlias = join(tempDir, "source-alias");
       symlinkSync(sourceRoot, sourceAlias, "dir");
+      mkdirSync(join(sourceRoot, ".dev", "paseo-home", "worktrees", "project"), {
+        recursive: true,
+      });
       writeFileSync(join(sourceRoot, ".worktreeinclude"), ".dev/**\n");
 
-      await expect(
-        readWorktreeIncludePlan({
-          sourceRoot,
-          excludedSourceRoots: [join(sourceAlias, ".dev", "paseo-home", "worktrees", "project")],
-        }),
-      ).rejects.toThrow("overlaps with a protected worktree path");
+      const plan = await readWorktreeIncludePlan({
+        sourceRoot,
+        excludedSourceRoots: [join(sourceAlias, ".dev", "paseo-home", "worktrees", "project")],
+      });
+
+      expect(plan.materializations).toEqual([]);
+      expect(plan.skipped).toEqual([expect.objectContaining({ raw: ".dev/**", reason: "unsafe" })]);
+    },
+  );
+
+  it.skipIf(isPlatform("win32"))(
+    "skips external source links while retaining safe entries",
+    async () => {
+      const outsidePath = join(tempDir, "outside.txt");
+      writeFileSync(outsidePath, "outside\n");
+      writeFileSync(join(sourceRoot, "safe.txt"), "safe\n");
+      symlinkSync(outsidePath, join(sourceRoot, "linked.txt"));
+      writeFileSync(
+        join(sourceRoot, ".worktreeinclude"),
+        ["safe.txt", "linked.txt", ""].join("\n"),
+      );
+
+      const plan = await readWorktreeIncludePlan({ sourceRoot });
+
+      expect(plan.materializations).toEqual([
+        expect.objectContaining({ relativePath: "safe.txt", sourceKind: "file" }),
+      ]);
+      expect(plan.skipped).toEqual([
+        expect.objectContaining({ raw: "linked.txt", reason: "unsafe" }),
+      ]);
     },
   );
 
@@ -226,14 +267,127 @@ describe.skipIf(isPlatform("win32"))("worktree include materialization", () => {
     expect(existsSync(join(outsideRoot, "local.json"))).toBe(false);
   });
 
-  it("rejects a source symlink", async () => {
-    const outsidePath = join(tempDir, "outside.txt");
-    writeFileSync(outsidePath, "outside\n");
-    symlinkSync(outsidePath, join(sourceRoot, "linked.txt"));
-    writeFileSync(join(sourceRoot, ".worktreeinclude"), "linked.txt\n");
+  it("copies resolved source links and creates direct live links", async () => {
+    const targetPath = join(sourceRoot, "target.txt");
+    const targetDirectoryPath = join(sourceRoot, "target-directory");
+    writeFileSync(targetPath, "v1\n");
+    mkdirSync(targetDirectoryPath);
+    writeFileSync(join(targetDirectoryPath, "state.txt"), "v1\n");
+    symlinkSync(targetPath, join(sourceRoot, "copy-link.txt"));
+    symlinkSync(targetPath, join(sourceRoot, "live-link.txt"));
+    symlinkSync(targetDirectoryPath, join(sourceRoot, "copy-directory-link"), "dir");
+    symlinkSync(targetDirectoryPath, join(sourceRoot, "live-directory-link"), "dir");
+    writeFileSync(
+      join(sourceRoot, ".worktreeinclude"),
+      [
+        "copy-link.txt",
+        "symlink live-link.txt",
+        "copy-directory-link",
+        "symlink live-directory-link",
+        "",
+      ].join("\n"),
+    );
 
-    await expect(readWorktreeIncludePlan({ sourceRoot })).rejects.toThrow(
-      "resolves through a symbolic link",
+    const plan = await readWorktreeIncludePlan({ sourceRoot });
+    const result = await materializeWorktreeIncludePlan({ plan, worktreeRoot });
+
+    const copiedPath = join(worktreeRoot, "copy-link.txt");
+    const linkedPath = join(worktreeRoot, "live-link.txt");
+    const copiedDirectoryPath = join(worktreeRoot, "copy-directory-link");
+    const linkedDirectoryPath = join(worktreeRoot, "live-directory-link");
+    const canonicalWorktreeRoot = realpathSync(worktreeRoot);
+    expect(result).toMatchObject({ materialized: 4, skipped: [] });
+    expect(lstatSync(copiedPath).isSymbolicLink()).toBe(false);
+    expect(lstatSync(linkedPath).isSymbolicLink()).toBe(true);
+    expect(lstatSync(copiedDirectoryPath).isSymbolicLink()).toBe(false);
+    expect(lstatSync(linkedDirectoryPath).isSymbolicLink()).toBe(true);
+    expect(readlinkSync(linkedPath)).toBe(
+      relative(dirname(join(canonicalWorktreeRoot, "live-link.txt")), realpathSync(targetPath)),
+    );
+    expect(readlinkSync(linkedDirectoryPath)).toBe(
+      relative(
+        dirname(join(canonicalWorktreeRoot, "live-directory-link")),
+        realpathSync(targetDirectoryPath),
+      ),
+    );
+    expect(realpathSync(linkedPath)).toBe(realpathSync(targetPath));
+    expect(realpathSync(linkedDirectoryPath)).toBe(realpathSync(targetDirectoryPath));
+
+    writeFileSync(targetPath, "v2\n");
+    writeFileSync(join(targetDirectoryPath, "state.txt"), "v2\n");
+    expect(readFileSync(copiedPath, "utf8")).toBe("v1\n");
+    expect(readFileSync(linkedPath, "utf8")).toBe("v2\n");
+    expect(readFileSync(join(copiedDirectoryPath, "state.txt"), "utf8")).toBe("v1\n");
+    expect(readFileSync(join(linkedDirectoryPath, "state.txt"), "utf8")).toBe("v2\n");
+  });
+
+  it("treats hard links as ordinary files", async () => {
+    const targetPath = join(sourceRoot, "target.txt");
+    const hardLinkPath = join(sourceRoot, "hard-link.txt");
+    writeFileSync(targetPath, "v1\n");
+    linkSync(targetPath, hardLinkPath);
+    writeFileSync(join(sourceRoot, ".worktreeinclude"), "hard-link.txt\n");
+
+    const plan = await readWorktreeIncludePlan({ sourceRoot });
+    await materializeWorktreeIncludePlan({ plan, worktreeRoot });
+
+    const copiedPath = join(worktreeRoot, "hard-link.txt");
+    expect(lstatSync(copiedPath).isSymbolicLink()).toBe(false);
+    expect(readFileSync(copiedPath, "utf8")).toBe("v1\n");
+  });
+
+  it("skips a source link retargeted outside the checkout after planning", async () => {
+    const insidePath = join(sourceRoot, "inside.txt");
+    const linkedPath = join(sourceRoot, "linked.txt");
+    const outsidePath = join(tempDir, "outside.txt");
+    writeFileSync(insidePath, "inside\n");
+    writeFileSync(outsidePath, "outside\n");
+    symlinkSync(insidePath, linkedPath);
+    writeFileSync(join(sourceRoot, ".worktreeinclude"), "symlink linked.txt\n");
+
+    const plan = await readWorktreeIncludePlan({ sourceRoot });
+    rmSync(linkedPath);
+    symlinkSync(outsidePath, linkedPath);
+
+    const result = await materializeWorktreeIncludePlan({ plan, worktreeRoot });
+
+    expect(existsSync(join(worktreeRoot, "linked.txt"))).toBe(false);
+    expect(result.skipped).toEqual([
+      expect.objectContaining({ raw: "symlink linked.txt", reason: "unsafe" }),
+    ]);
+  });
+
+  it("skips a linked directory that exposes an external nested link", async () => {
+    const sharedPath = join(sourceRoot, "shared");
+    const outsidePath = join(tempDir, "outside.txt");
+    mkdirSync(sharedPath);
+    writeFileSync(outsidePath, "outside\n");
+    symlinkSync(outsidePath, join(sharedPath, "outside.txt"));
+    writeFileSync(join(sourceRoot, ".worktreeinclude"), "symlink shared\n");
+
+    const plan = await readWorktreeIncludePlan({ sourceRoot });
+
+    expect(plan.materializations).toEqual([]);
+    expect(plan.skipped).toEqual([
+      expect.objectContaining({ raw: "symlink shared", reason: "unsafe" }),
+    ]);
+  });
+
+  it("allows a linked directory with internal nested links", async () => {
+    const sharedPath = join(sourceRoot, "shared");
+    const targetPath = join(sourceRoot, "shared-target");
+    mkdirSync(sharedPath);
+    mkdirSync(targetPath);
+    writeFileSync(join(targetPath, "state.txt"), "source\n");
+    symlinkSync(targetPath, join(sharedPath, "target"), "dir");
+    writeFileSync(join(sourceRoot, ".worktreeinclude"), "symlink shared\n");
+
+    const plan = await readWorktreeIncludePlan({ sourceRoot });
+    const result = await materializeWorktreeIncludePlan({ plan, worktreeRoot });
+
+    expect(result).toMatchObject({ materialized: 1, skipped: [] });
+    expect(readFileSync(join(worktreeRoot, "shared", "target", "state.txt"), "utf8")).toBe(
+      "source\n",
     );
   });
 
@@ -245,9 +399,12 @@ describe.skipIf(isPlatform("win32"))("worktree include materialization", () => {
     const plan = await readWorktreeIncludePlan({ sourceRoot });
     rmSync(sourcePath);
 
-    await materializeWorktreeIncludePlan({ plan, worktreeRoot });
+    const result = await materializeWorktreeIncludePlan({ plan, worktreeRoot });
 
     expect(existsSync(join(worktreeRoot, "runtime.env"))).toBe(false);
+    expect(result.skipped).toEqual([
+      expect.objectContaining({ raw: "runtime.env", reason: "missing" }),
+    ]);
   });
 });
 

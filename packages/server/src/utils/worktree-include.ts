@@ -7,7 +7,6 @@ import {
   join,
   relative,
   resolve,
-  sep,
   win32,
 } from "path";
 import { areEquivalentPaths, isPathInsideRoot } from "./path.js";
@@ -24,6 +23,13 @@ type WorktreeIncludeErrorCode =
   | "unsupported_source"
   | "windows_symlink_unavailable";
 
+export type WorktreeIncludeSkipReason =
+  | "conflict"
+  | "invalid"
+  | "missing"
+  | "source_changed"
+  | "unsafe";
+
 interface WorktreeIncludeEntry {
   lineNumber: number;
   mode: WorktreeIncludeMode;
@@ -34,12 +40,27 @@ interface WorktreeIncludeEntry {
 export interface WorktreeIncludeMaterialization {
   lineNumber: number;
   mode: WorktreeIncludeMode;
+  raw: string;
   relativePath: string;
   sourceKind: WorktreeIncludeSourceKind;
 }
 
+export interface WorktreeIncludeSkippedEntry {
+  lineNumber: number;
+  message: string;
+  raw: string;
+  reason: WorktreeIncludeSkipReason;
+}
+
+export interface WorktreeIncludeSummary {
+  materialized: number;
+  skipped: WorktreeIncludeSkippedEntry[];
+}
+
 export interface WorktreeIncludePlan {
+  excludedSourceRoots: string[];
   materializations: WorktreeIncludeMaterialization[];
+  skipped: WorktreeIncludeSkippedEntry[];
   sourceRoot: string;
 }
 
@@ -58,6 +79,16 @@ interface ResolvedWorktreeIncludeMaterialization {
   sourcePath: string;
 }
 
+interface ParsedWorktreeIncludeEntries {
+  entries: WorktreeIncludeEntry[];
+  skipped: WorktreeIncludeSkippedEntry[];
+}
+
+interface NormalizedWorktreeIncludeMaterializations {
+  materializations: WorktreeIncludeMaterialization[];
+  skipped: WorktreeIncludeSkippedEntry[];
+}
+
 export class WorktreeIncludeError extends Error {
   constructor(
     public readonly code: WorktreeIncludeErrorCode,
@@ -72,9 +103,14 @@ export async function readWorktreeIncludePlan(
   options: ReadWorktreeIncludePlanOptions,
 ): Promise<WorktreeIncludePlan> {
   const sourceRoot = await realpath(options.sourceRoot);
-  const entries = await readWorktreeIncludeEntries(sourceRoot);
+  const { entries, skipped } = await readWorktreeIncludeEntries(sourceRoot);
   if (entries.length === 0) {
-    return { sourceRoot, materializations: [] };
+    return {
+      sourceRoot,
+      excludedSourceRoots: [],
+      materializations: [],
+      skipped,
+    };
   }
 
   const excludedSourceRoots = await Promise.all(
@@ -98,33 +134,35 @@ export async function readWorktreeIncludePlan(
   for (const entry of entries) {
     const matchedPaths = resolveEntryMatches({ entry, candidates });
     if (matchedPaths.length === 0) {
+      skipped.push(toSkippedEntry(entry, noMatchError(entry)));
       continue;
     }
 
     for (const relativePath of matchedPaths) {
-      assertSourcePathDoesNotOverlapExcludedRoot({
-        entry,
-        excludedSourceRoots,
-        sourcePath: join(sourceRoot, ...relativePath.split("/")),
-      });
       try {
         const resolved = await resolveSourceMaterialization({
-          sourceRoot,
           entry,
+          excludedSourceRoots,
           relativePath,
+          sourceRoot,
         });
         materializations.push(resolved.materialization);
       } catch (error) {
-        if (!isMissingSourceError(error)) {
+        if (!isSkippableWorktreeIncludeError(error)) {
           throw error;
         }
+        skipped.push(toSkippedEntry(entry, error));
       }
     }
   }
 
+  const normalized = normalizeMaterializations(materializations);
+
   return {
+    excludedSourceRoots,
+    materializations: normalized.materializations,
+    skipped: [...skipped, ...normalized.skipped],
     sourceRoot,
-    materializations: normalizeMaterializations(materializations),
   };
 }
 
@@ -153,9 +191,11 @@ async function canonicalizeExistingPathPrefix(path: string): Promise<string> {
 
 export async function materializeWorktreeIncludePlan(
   options: MaterializeWorktreeIncludePlanOptions,
-): Promise<void> {
+): Promise<WorktreeIncludeSummary> {
+  const skipped: WorktreeIncludeSkippedEntry[] = [];
+  let materialized = 0;
   if (options.plan.materializations.length === 0) {
-    return;
+    return { materialized, skipped };
   }
 
   const worktreeRoot = await realpath(options.worktreeRoot);
@@ -163,26 +203,45 @@ export async function materializeWorktreeIncludePlan(
     let resolved: ResolvedWorktreeIncludeMaterialization;
     try {
       resolved = await resolveSourceMaterialization({
-        sourceRoot: options.plan.sourceRoot,
         entry: {
           lineNumber: materialization.lineNumber,
           mode: materialization.mode,
-          raw: materialization.relativePath,
+          raw: materialization.raw,
           relativePath: materialization.relativePath,
         },
+        excludedSourceRoots: options.plan.excludedSourceRoots,
         relativePath: materialization.relativePath,
+        sourceRoot: options.plan.sourceRoot,
       });
     } catch (error) {
-      if (isMissingSourceError(error)) {
+      if (isSkippableWorktreeIncludeError(error)) {
+        skipped.push(
+          toSkippedEntry(
+            {
+              lineNumber: materialization.lineNumber,
+              raw: materialization.raw,
+            },
+            error,
+          ),
+        );
         continue;
       }
       throw error;
     }
     if (resolved.materialization.sourceKind !== materialization.sourceKind) {
-      throw new WorktreeIncludeError(
-        "source_changed",
-        `Source for .worktreeinclude entry '${materialization.relativePath}' changed type before it could be materialized`,
+      skipped.push(
+        toSkippedEntry(
+          {
+            lineNumber: materialization.lineNumber,
+            raw: materialization.raw,
+          },
+          new WorktreeIncludeError(
+            "source_changed",
+            `Source for .worktreeinclude entry '${materialization.raw}' changed type before it could be materialized`,
+          ),
+        ),
       );
+      continue;
     }
     const destinationPath = getDestinationPath({
       worktreeRoot,
@@ -192,11 +251,29 @@ export async function materializeWorktreeIncludePlan(
       worktreeRoot,
       relativePath: resolved.materialization.relativePath,
     });
-    const needsMaterialization = await preflightDestination({
-      worktreeRoot,
-      resolved,
-    });
+    let needsMaterialization: boolean;
+    try {
+      needsMaterialization = await preflightDestination({
+        worktreeRoot,
+        resolved,
+      });
+    } catch (error) {
+      if (error instanceof WorktreeIncludeError && error.code === "unsupported_source") {
+        skipped.push(
+          toSkippedEntry(
+            {
+              lineNumber: materialization.lineNumber,
+              raw: materialization.raw,
+            },
+            error,
+          ),
+        );
+        continue;
+      }
+      throw error;
+    }
     if (!needsMaterialization) {
+      materialized++;
       continue;
     }
 
@@ -210,6 +287,7 @@ export async function materializeWorktreeIncludePlan(
           dereference: false,
         });
       }
+      materialized++;
       continue;
     }
 
@@ -217,21 +295,27 @@ export async function materializeWorktreeIncludePlan(
       destinationPath,
       resolved,
     });
+    materialized++;
   }
+
+  return { materialized, skipped };
 }
 
-async function readWorktreeIncludeEntries(sourceRoot: string): Promise<WorktreeIncludeEntry[]> {
+async function readWorktreeIncludeEntries(
+  sourceRoot: string,
+): Promise<ParsedWorktreeIncludeEntries> {
   let contents: string;
   try {
     contents = await readFile(join(sourceRoot, WORKTREE_INCLUDE_FILE_NAME), "utf8");
   } catch (error) {
     if (getErrorCode(error) === "ENOENT") {
-      return [];
+      return { entries: [], skipped: [] };
     }
     throw error;
   }
 
   const entries: WorktreeIncludeEntry[] = [];
+  const skipped: WorktreeIncludeSkippedEntry[] = [];
 
   for (const [index, sourceLine] of contents.split(/\r?\n/).entries()) {
     const lineNumber = index + 1;
@@ -244,10 +328,17 @@ async function readWorktreeIncludeEntries(sourceRoot: string): Promise<WorktreeI
       continue;
     }
 
-    entries.push(parseWorktreeIncludeEntry({ line, lineNumber }));
+    try {
+      entries.push(parseWorktreeIncludeEntry({ line, lineNumber }));
+    } catch (error) {
+      if (!isSkippableWorktreeIncludeError(error)) {
+        throw error;
+      }
+      skipped.push(toSkippedEntry({ lineNumber, raw: line }, error));
+    }
   }
 
-  return entries;
+  return { entries, skipped };
 }
 
 function parseWorktreeIncludeEntry(options: {
@@ -472,26 +563,44 @@ function segmentGlobMatches(pattern: string, value: string): boolean {
 
 async function resolveSourceMaterialization(options: {
   entry: WorktreeIncludeEntry;
+  excludedSourceRoots: string[];
   relativePath: string;
   sourceRoot: string;
 }): Promise<ResolvedWorktreeIncludeMaterialization> {
-  const sourcePath = join(options.sourceRoot, ...options.relativePath.split("/"));
-  const sourceKind = await getSourceKind({
-    sourceRoot: options.sourceRoot,
-    sourcePath,
+  const requestedSourcePath = join(options.sourceRoot, ...options.relativePath.split("/"));
+  const sourcePath = await realpathSourcePath(requestedSourcePath, options.entry);
+  assertSourcePathIsSafe({
     entry: options.entry,
+    excludedSourceRoots: options.excludedSourceRoots,
+    sourcePath,
+    sourceRoot: options.sourceRoot,
   });
-  if (options.entry.mode === "copy" && sourceKind === "directory") {
-    await assertCopyDirectorySafe({
-      sourcePath,
-      entry: options.entry,
-    });
+
+  const sourceKind = await getCanonicalSourceKind({
+    entry: options.entry,
+    sourcePath,
+  });
+  if (sourceKind === "directory") {
+    if (options.entry.mode === "copy") {
+      await assertCopyDirectorySafe({
+        entry: options.entry,
+        sourcePath,
+      });
+    } else {
+      await assertSymlinkDirectorySafe({
+        entry: options.entry,
+        excludedSourceRoots: options.excludedSourceRoots,
+        sourcePath,
+        sourceRoot: options.sourceRoot,
+      });
+    }
   }
 
   return {
     materialization: {
       lineNumber: options.entry.lineNumber,
       mode: options.entry.mode,
+      raw: options.entry.raw,
       relativePath: options.relativePath,
       sourceKind,
     },
@@ -499,11 +608,19 @@ async function resolveSourceMaterialization(options: {
   };
 }
 
-function assertSourcePathDoesNotOverlapExcludedRoot(options: {
+function assertSourcePathIsSafe(options: {
   entry: WorktreeIncludeEntry;
   excludedSourceRoots: string[];
   sourcePath: string;
+  sourceRoot: string;
 }): void {
+  if (!isPathInsideRoot(options.sourceRoot, options.sourcePath)) {
+    throw new WorktreeIncludeError(
+      "unsupported_source",
+      `.worktreeinclude entry '${options.entry.raw}' on line ${options.entry.lineNumber} resolves outside the source checkout`,
+    );
+  }
+
   const excludedRoot = options.excludedSourceRoots.find(
     (candidate) =>
       isPathInsideRoot(options.sourcePath, candidate) ||
@@ -514,34 +631,20 @@ function assertSourcePathDoesNotOverlapExcludedRoot(options: {
   }
 
   throw new WorktreeIncludeError(
-    "invalid_entry",
+    "unsupported_source",
     `.worktreeinclude entry '${options.entry.raw}' on line ${options.entry.lineNumber} overlaps with a protected worktree path`,
   );
 }
 
-async function getSourceKind(options: {
+async function getCanonicalSourceKind(options: {
   entry: WorktreeIncludeEntry;
   sourcePath: string;
-  sourceRoot: string;
 }): Promise<WorktreeIncludeSourceKind> {
-  const segments = relative(options.sourceRoot, options.sourcePath).split(sep).filter(Boolean);
-  let currentPath = options.sourceRoot;
-  for (const segment of segments.slice(0, -1)) {
-    currentPath = join(currentPath, segment);
-    const currentStats = await lstatSourcePath(currentPath, options.entry);
-    if (currentStats.isSymbolicLink()) {
-      throw new WorktreeIncludeError(
-        "unsupported_source",
-        `.worktreeinclude entry '${options.entry.raw}' on line ${options.entry.lineNumber} resolves through a symbolic link`,
-      );
-    }
-  }
-
   const stats = await lstatSourcePath(options.sourcePath, options.entry);
   if (stats.isSymbolicLink()) {
     throw new WorktreeIncludeError(
       "unsupported_source",
-      `.worktreeinclude entry '${options.entry.raw}' on line ${options.entry.lineNumber} resolves through a symbolic link`,
+      `.worktreeinclude entry '${options.entry.raw}' on line ${options.entry.lineNumber} changed while its source path was resolved`,
     );
   }
   if (!stats.isFile() && !stats.isDirectory()) {
@@ -551,15 +654,28 @@ async function getSourceKind(options: {
     );
   }
 
-  const canonicalSourcePath = await realpath(options.sourcePath);
-  if (!isPathInsideRoot(options.sourceRoot, canonicalSourcePath)) {
-    throw new WorktreeIncludeError(
-      "unsupported_source",
-      `.worktreeinclude entry '${options.entry.raw}' on line ${options.entry.lineNumber} resolves outside the source checkout`,
-    );
-  }
-
   return stats.isDirectory() ? "directory" : "file";
+}
+
+async function realpathSourcePath(
+  sourcePath: string,
+  entry: WorktreeIncludeEntry,
+): Promise<string> {
+  try {
+    return await realpath(sourcePath);
+  } catch (error) {
+    const code = getErrorCode(error);
+    if (code === "ENOENT" || code === "ENOTDIR") {
+      throw noMatchError(entry);
+    }
+    if (code === "ELOOP") {
+      throw new WorktreeIncludeError(
+        "unsupported_source",
+        `.worktreeinclude entry '${entry.raw}' on line ${entry.lineNumber} contains a symbolic-link loop`,
+      );
+    }
+    throw error;
+  }
 }
 
 async function lstatSourcePath(sourcePath: string, entry: WorktreeIncludeEntry): Promise<Stats> {
@@ -599,31 +715,131 @@ async function assertCopyDirectorySafe(options: {
   }
 }
 
-function normalizeMaterializations(
-  materializations: WorktreeIncludeMaterialization[],
-): WorktreeIncludeMaterialization[] {
-  const byPath = new Map<string, WorktreeIncludeMaterialization>();
-  for (const materialization of materializations) {
-    const existing = byPath.get(materialization.relativePath);
-    if (existing === undefined) {
-      byPath.set(materialization.relativePath, materialization);
-      continue;
+async function assertSymlinkDirectorySafe(options: {
+  entry: WorktreeIncludeEntry;
+  excludedSourceRoots: string[];
+  sourcePath: string;
+  sourceRoot: string;
+}): Promise<void> {
+  const visitedDirectories = new Set<string>();
+
+  async function visit(directoryPath: string): Promise<void> {
+    if (visitedDirectories.has(directoryPath)) {
+      return;
     }
-    if (existing.mode !== materialization.mode) {
-      throw new WorktreeIncludeError(
-        "conflict",
-        `.worktreeinclude entries for '${materialization.relativePath}' use both copy and symlink modes`,
-      );
+    visitedDirectories.add(directoryPath);
+
+    for (const name of await readdir(directoryPath)) {
+      if (name.toLowerCase() === ".git") {
+        throw new WorktreeIncludeError(
+          "unsupported_source",
+          `.worktreeinclude entry '${options.entry.raw}' on line ${options.entry.lineNumber} contains git metadata`,
+        );
+      }
+
+      const childPath = join(directoryPath, name);
+      const childStats = await lstatSourcePath(childPath, options.entry);
+      if (childStats.isSymbolicLink()) {
+        const linkedPath = await realpathSourcePath(childPath, options.entry);
+        assertSourcePathIsSafe({
+          entry: options.entry,
+          excludedSourceRoots: options.excludedSourceRoots,
+          sourcePath: linkedPath,
+          sourceRoot: options.sourceRoot,
+        });
+        const linkedKind = await getCanonicalSourceKind({
+          entry: options.entry,
+          sourcePath: linkedPath,
+        });
+        if (linkedKind === "directory") {
+          await visit(linkedPath);
+        }
+        continue;
+      }
+
+      if (childStats.isDirectory()) {
+        await visit(childPath);
+        continue;
+      }
+      if (!childStats.isFile()) {
+        throw new WorktreeIncludeError(
+          "unsupported_source",
+          `.worktreeinclude entry '${options.entry.raw}' on line ${options.entry.lineNumber} contains an unsupported file type`,
+        );
+      }
     }
   }
 
-  const sorted = [...byPath.values()].sort((left, right) => {
-    const depthDifference =
-      left.relativePath.split("/").length - right.relativePath.split("/").length;
-    return depthDifference === 0
-      ? left.relativePath.localeCompare(right.relativePath)
-      : depthDifference;
-  });
+  await visit(options.sourcePath);
+}
+
+function normalizeMaterializations(
+  materializations: WorktreeIncludeMaterialization[],
+): NormalizedWorktreeIncludeMaterializations {
+  const byPath = new Map<string, WorktreeIncludeMaterialization[]>();
+  for (const materialization of materializations) {
+    const matches = byPath.get(materialization.relativePath) ?? [];
+    matches.push(materialization);
+    byPath.set(materialization.relativePath, matches);
+  }
+
+  const skipped: WorktreeIncludeSkippedEntry[] = [];
+  const candidates: WorktreeIncludeMaterialization[] = [];
+  for (const [relativePath, matches] of byPath) {
+    if (new Set(matches.map((materialization) => materialization.mode)).size === 1) {
+      candidates.push(matches[0]!);
+      continue;
+    }
+
+    const message = `.worktreeinclude entries for '${relativePath}' use both copy and symlink modes`;
+    skipped.push(
+      ...matches.map((materialization) =>
+        toSkippedEntry(materialization, new WorktreeIncludeError("conflict", message)),
+      ),
+    );
+  }
+
+  const conflicted = new Set<WorktreeIncludeMaterialization>();
+  const skippedConflictEntries = new Set<WorktreeIncludeMaterialization>();
+  const skipConflict = (materialization: WorktreeIncludeMaterialization, message: string): void => {
+    conflicted.add(materialization);
+    if (skippedConflictEntries.has(materialization)) {
+      return;
+    }
+    skippedConflictEntries.add(materialization);
+    skipped.push(toSkippedEntry(materialization, new WorktreeIncludeError("conflict", message)));
+  };
+
+  for (let leftIndex = 0; leftIndex < candidates.length; leftIndex++) {
+    const left = candidates[leftIndex]!;
+    for (let rightIndex = leftIndex + 1; rightIndex < candidates.length; rightIndex++) {
+      const right = candidates[rightIndex]!;
+      let ancestor: WorktreeIncludeMaterialization | null = null;
+      if (isRelativePathAncestor(left.relativePath, right.relativePath)) {
+        ancestor = left;
+      } else if (isRelativePathAncestor(right.relativePath, left.relativePath)) {
+        ancestor = right;
+      }
+      if (ancestor === null || (left.mode === "copy" && right.mode === "copy")) {
+        continue;
+      }
+
+      const descendant = ancestor === left ? right : left;
+      const message = `.worktreeinclude entries for '${ancestor.relativePath}' and '${descendant.relativePath}' overlap with a symlink`;
+      skipConflict(left, message);
+      skipConflict(right, message);
+    }
+  }
+
+  const sorted = candidates
+    .filter((materialization) => !conflicted.has(materialization))
+    .sort((left, right) => {
+      const depthDifference =
+        left.relativePath.split("/").length - right.relativePath.split("/").length;
+      return depthDifference === 0
+        ? left.relativePath.localeCompare(right.relativePath)
+        : depthDifference;
+    });
   const normalized: WorktreeIncludeMaterialization[] = [];
 
   for (const materialization of sorted) {
@@ -637,13 +853,9 @@ function normalizeMaterializations(
     if (ancestor.mode === "copy" && materialization.mode === "copy") {
       continue;
     }
-    throw new WorktreeIncludeError(
-      "conflict",
-      `.worktreeinclude entries for '${ancestor.relativePath}' and '${materialization.relativePath}' overlap with a symlink`,
-    );
   }
 
-  return normalized;
+  return { materializations: normalized, skipped };
 }
 
 function isRelativePathAncestor(ancestor: string, candidate: string): boolean {
@@ -855,8 +1067,37 @@ function noMatchError(entry: WorktreeIncludeEntry): WorktreeIncludeError {
   );
 }
 
-function isMissingSourceError(error: unknown): error is WorktreeIncludeError {
-  return error instanceof WorktreeIncludeError && error.code === "missing_source";
+function toSkippedEntry(
+  entry: Pick<WorktreeIncludeEntry, "lineNumber" | "raw">,
+  error: WorktreeIncludeError,
+): WorktreeIncludeSkippedEntry {
+  return {
+    lineNumber: entry.lineNumber,
+    message: error.message,
+    raw: entry.raw,
+    reason: getSkipReason(error),
+  };
+}
+
+function getSkipReason(error: WorktreeIncludeError): WorktreeIncludeSkipReason {
+  switch (error.code) {
+    case "conflict":
+      return "conflict";
+    case "invalid_entry":
+      return "invalid";
+    case "missing_source":
+      return "missing";
+    case "source_changed":
+      return "source_changed";
+    case "unsupported_source":
+      return "unsafe";
+    case "windows_symlink_unavailable":
+      return "unsafe";
+  }
+}
+
+function isSkippableWorktreeIncludeError(error: unknown): error is WorktreeIncludeError {
+  return error instanceof WorktreeIncludeError && error.code !== "windows_symlink_unavailable";
 }
 
 function getErrorCode(error: unknown): string | null {
