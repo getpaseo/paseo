@@ -242,6 +242,14 @@ commands use the same non-login Bash behavior on macOS/Linux, but preserve their
 existing `cmd.exe /c` string semantics on Windows. Service scripts are separate:
 they launch in a terminal and receive the service environment described below.
 
+Because the shell differs per platform, a lifecycle command that must run
+everywhere cannot use POSIX-only syntax — `VAR=1 cmd` env prefixes, `$VAR`
+expansion, `cp`/`rm`, or a `./scripts/*.sh` entrypoint all fail under PowerShell,
+and `bash` is not guaranteed to exist on Windows. Put that logic in a Node script
+that reads what it needs from `process.env` and invoke it as
+`node ./scripts/<name>.mjs`. This repo's own setup does exactly that in
+`scripts/seed-worktree-dev-state.mjs` and `scripts/seed-ios-native-cache.mjs`.
+
 ```json
 {
   "worktree": {
