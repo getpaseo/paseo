@@ -19,6 +19,7 @@ import {
   ApiNumberSchema,
   balanceToneFromRemaining,
   fetchProviderApi,
+  toneFromUsedPct,
   unavailableUsage,
   windowFromUsedPct,
 } from "../usage.js";
@@ -155,10 +156,6 @@ function limitLabel(limitName: string): string {
   return limitName.replace(/-/g, " ");
 }
 
-function highUsageTone(usedPct: number): ProviderUsageWindow["tone"] {
-  return usedPct >= 70 ? "warning" : "ok";
-}
-
 function codexPrimaryWindows(resp: CodexUsageResponse): ProviderUsageWindow[] {
   const session = codexWindow(resp.rate_limit?.primary_window);
   const weekly = codexWindow(resp.rate_limit?.secondary_window);
@@ -172,7 +169,7 @@ function codexPrimaryWindows(resp: CodexUsageResponse): ProviderUsageWindow[] {
         label: "Session",
         utilizationPct: session.usedPct,
         resetsAt: session.resetsAt,
-        tone: "ok",
+        tone: toneFromUsedPct(session.usedPct),
       }),
     );
   }
@@ -183,7 +180,7 @@ function codexPrimaryWindows(resp: CodexUsageResponse): ProviderUsageWindow[] {
         label: "Weekly",
         utilizationPct: weekly.usedPct,
         resetsAt: weekly.resetsAt,
-        tone: highUsageTone(weekly.usedPct),
+        tone: toneFromUsedPct(weekly.usedPct),
       }),
     );
   }
@@ -194,7 +191,7 @@ function codexPrimaryWindows(resp: CodexUsageResponse): ProviderUsageWindow[] {
         label: "Code review",
         utilizationPct: codeReview.usedPct,
         resetsAt: codeReview.resetsAt,
-        tone: highUsageTone(codeReview.usedPct),
+        tone: toneFromUsedPct(codeReview.usedPct),
       }),
     );
   }
@@ -220,7 +217,7 @@ function codexAdditionalWindows(
           label: `${label} 5 hour`,
           utilizationPct: primary.usedPct,
           resetsAt: primary.resetsAt,
-          tone: highUsageTone(primary.usedPct),
+          tone: toneFromUsedPct(primary.usedPct),
         }),
       );
     }
@@ -231,7 +228,7 @@ function codexAdditionalWindows(
           label: `${label} weekly`,
           utilizationPct: secondary.usedPct,
           resetsAt: secondary.resetsAt,
-          tone: highUsageTone(secondary.usedPct),
+          tone: toneFromUsedPct(secondary.usedPct),
         }),
       );
     }
