@@ -271,14 +271,19 @@ async function listCommandsFromFakeCodex(skills: unknown[]): Promise<AgentSlashC
     `
 let buffer = "";
 
-function resultFor(method) {
+function resultFor(method, params) {
   if (method === "initialize") return {};
   if (method === "collaborationMode/list") return { data: [] };
   if (method === "skills/list") {
+    const cwds = params && params.cwds;
+    const projectCwd = "/tmp/codex-question-test";
+    if (!Array.isArray(cwds) || cwds.length !== 1 || cwds[0] !== projectCwd) {
+      return { data: [] };
+    }
     return {
       data: [
         {
-          cwd: "/tmp/codex-question-test",
+          cwd: projectCwd,
           skills: ${JSON.stringify(skills)},
           errors: [],
         },
@@ -299,7 +304,7 @@ process.stdin.on("data", (chunk) => {
     const message = JSON.parse(line);
     if (typeof message.id !== "number") continue;
     try {
-      process.stdout.write(JSON.stringify({ id: message.id, result: resultFor(message.method) }) + "\\n");
+      process.stdout.write(JSON.stringify({ id: message.id, result: resultFor(message.method, message.params) }) + "\\n");
     } catch (error) {
       process.stdout.write(JSON.stringify({ id: message.id, error: { message: error.message } }) + "\\n");
     }
@@ -1496,6 +1501,23 @@ describe("Codex app-server provider", () => {
         ],
       }),
     );
+  });
+
+  test("lists project skill commands when app-server receives the project cwd in cwds", async () => {
+    const commands = await listCommandsFromFakeCodex([
+      {
+        name: "project-skill-discovery-regression",
+        description: "A skill discovered from this project.",
+        path: "/tmp/codex-question-test/.agents/skills/project-skill-discovery-regression/SKILL.md",
+      },
+    ]);
+
+    expect(commands).toContainEqual({
+      name: "project-skill-discovery-regression",
+      description: "A skill discovered from this project.",
+      argumentHint: "",
+      kind: "skill",
+    });
   });
 
   test("deduplicates Codex skill slash commands returned from multiple skill roots", async () => {
