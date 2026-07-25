@@ -91,7 +91,7 @@ describe("OMP agent client and session", () => {
       cwd: "/tmp/paseo-omp-agent-test",
       protocolMode: "rpc-ui",
       modeId: "ask",
-      argv: ["omp", "--mode", "rpc-ui", "--approval-mode", "always-ask", "--thinking", "medium"],
+      argv: ["omp", "--mode", "rpc-ui", "--approval-mode", "always-ask"],
     });
     expect(omp.registeredHostTools()).toEqual([
       [expect.objectContaining({ name: "create_agent" })],
@@ -117,8 +117,23 @@ describe("OMP agent client and session", () => {
       cwd: "/tmp/paseo-omp-agent-test",
       protocolMode: "rpc-ui",
       modeId: "write",
-      argv: ["omp", "--mode", "rpc-ui", "--approval-mode", "write", "--thinking", "medium"],
+      argv: ["omp", "--mode", "rpc-ui", "--approval-mode", "write"],
     });
+  });
+
+  test("passes --thinking when a thinking option is provided", async () => {
+    const omp = new OmpHarness();
+    await omp.start({ modeId: "ask", thinkingOptionId: "xhigh" }, createToolCatalog());
+
+    expect(omp.launchConfiguration().argv).toEqual([
+      "omp",
+      "--mode",
+      "rpc-ui",
+      "--approval-mode",
+      "always-ask",
+      "--thinking",
+      "xhigh",
+    ]);
   });
 
   test("streams a prompt through completion", async () => {
@@ -274,6 +289,35 @@ describe("OMP agent client and session", () => {
         text: "model turn completed",
         messageId: "omp-assistant-1",
       },
+    ]);
+  });
+
+  test("renders a live system-notice custom message as a synthetic tool call", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+
+    await omp.runPrompt("hello OMP", "done");
+    omp
+      .runtime()
+      .acceptCustomMessage(
+        [
+          "<system-notice>",
+          "Background job DocsSmokeTwo has completed.",
+          '<task-result id="DocsSmokeTwo" agent="explore" status="completed" duration="21.6s">',
+          "<output>done</output>",
+          "</task-result>",
+          "</system-notice>",
+        ].join("\n"),
+      );
+    omp.runtime().acceptCustomMessage("plain custom status text");
+
+    expect(omp.timeline().filter((item) => item.type === "tool_call")).toMatchObject([
+      { callId: "omp-notice:DocsSmokeTwo", name: "task_notification", status: "completed" },
+    ]);
+    // Non-notice custom messages still fall through as assistant messages.
+    expect(omp.timeline().filter((item) => item.type === "assistant_message")).toMatchObject([
+      { text: "done" },
+      { text: "plain custom status text" },
     ]);
   });
 

@@ -1,4 +1,4 @@
-import { test, expect } from "./fixtures";
+import { test, expect, type Page } from "./fixtures";
 import { clickNewTerminal, gotoWorkspace } from "./helpers/launcher";
 import { renameModalInput, renameModalSubmit } from "./helpers/rename";
 import { seedWorkspace, type SeededWorkspace } from "./helpers/seed-client";
@@ -36,7 +36,52 @@ async function waitForCreatedTerminalId(workspace: SeededWorkspace): Promise<str
   return terminal.id;
 }
 
+async function cleanupTerminal(
+  workspace: SeededWorkspace,
+  terminalId: string | null,
+): Promise<void> {
+  if (terminalId) {
+    await workspace.client.killTerminal(terminalId).catch(() => undefined);
+  }
+  await workspace.cleanup();
+}
+
+async function readClipboard(page: Page): Promise<string> {
+  return page.evaluate(() => navigator.clipboard.readText());
+}
+
 test.describe("Workspace terminal tab rename", () => {
+  test("right-click copy terminal id writes the terminal id to the clipboard", async ({
+    context,
+    page,
+  }) => {
+    test.setTimeout(60_000);
+
+    const workspace = await seedWorkspace({ repoPrefix: "workspace-terminal-copy-id-" });
+    let terminalId: string | null = null;
+
+    try {
+      await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+      await gotoWorkspace(page, workspace.workspaceId);
+      await clickNewTerminal(page);
+      terminalId = await waitForCreatedTerminalId(workspace);
+
+      const tab = page.getByTestId(`workspace-tab-terminal_${terminalId}`).first();
+      await expect(tab).toBeVisible({ timeout: 15_000 });
+
+      await tab.click({ button: "right" });
+      const copyTerminalId = page.getByTestId(
+        `workspace-tab-context-terminal_${terminalId}-copy-terminal-id`,
+      );
+      await expect(copyTerminalId).toBeVisible({ timeout: 10_000 });
+      await copyTerminalId.click();
+
+      await expect.poll(() => readClipboard(page)).toBe(terminalId);
+    } finally {
+      await cleanupTerminal(workspace, terminalId);
+    }
+  });
+
   test("right-click rename persists the terminal title and updates the tab label", async ({
     page,
   }) => {
@@ -74,10 +119,7 @@ test.describe("Workspace terminal tab rename", () => {
         .poll(() => fetchTerminalTitle(workspace, terminalId!))
         .toBe("My Renamed Terminal");
     } finally {
-      if (terminalId) {
-        await workspace.client.killTerminal(terminalId).catch(() => undefined);
-      }
-      await workspace.cleanup();
+      await cleanupTerminal(workspace, terminalId);
     }
   });
 });

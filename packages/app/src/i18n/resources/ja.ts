@@ -496,6 +496,7 @@ export const ja: TranslationResources = {
         openFor: "{{label}}のメニューを開く",
         copyResumeCommand: "再開コマンドをコピー",
         copyAgentId: "エージェントIDをコピー",
+        copyTerminalId: "ターミナルIDをコピー",
         copyFilePath: "ファイルパスをコピー",
         rename: "名前を変更",
         closeAbove: "上のタブを閉じる",
@@ -534,6 +535,7 @@ export const ja: TranslationResources = {
       toasts: {
         copyFailed: "コピーに失敗しました",
         agentIdCopiedLabel: "エージェントID",
+        terminalIdCopiedLabel: "ターミナルID",
         resumeCommandCopiedLabel: "再開コマンド",
         filePathCopiedLabel: "ファイルパス",
         resumeIdUnavailable: "再開IDが利用できません",

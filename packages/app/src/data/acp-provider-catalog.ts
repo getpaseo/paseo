@@ -159,10 +159,10 @@ const CATALOG_DATA = [
     id: "factory-droid",
     title: "Factory Droid",
     description: "Factory Droid - AI coding agent powered by Factory AI",
-    version: "0.178.0",
+    version: "0.179.0",
     iconId: "factory-droid",
     installLink: "https://factory.ai/product/cli",
-    command: ["npx", "-y", "droid@0.178.0", "exec", "--output-format", "acp-daemon"],
+    command: ["npx", "-y", "droid@0.179.0", "exec", "--output-format", "acp-daemon"],
     env: {
       DROID_DISABLE_AUTO_UPDATE: "true",
       FACTORY_DROID_AUTO_UPDATE_ENABLED: "false",

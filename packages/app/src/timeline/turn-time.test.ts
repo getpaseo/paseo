@@ -22,6 +22,36 @@ function assistant(id: string, timestamp: Date): StreamItem {
 }
 
 describe("deriveStreamTurnTiming", () => {
+  it("reserves a running footer for an optimistic prompt before the host starts the turn", () => {
+    const optimisticPrompt = {
+      ...user("optimistic", new Date("2026-05-15T00:00:00.000Z")),
+      optimistic: true as const,
+    };
+
+    const timing = deriveStreamTurnTiming({
+      agentStatus: "idle",
+      tail: [],
+      head: [optimisticPrompt],
+    });
+
+    assert.equal(timing.isActive, true);
+  });
+
+  it("does not start elapsed time from an optimistic prompt", () => {
+    const optimisticPrompt = {
+      ...user("optimistic", new Date("2026-05-15T00:00:00.000Z")),
+      optimistic: true as const,
+    };
+
+    const timing = deriveStreamTurnTiming({
+      agentStatus: "running",
+      tail: [],
+      head: [optimisticPrompt],
+    });
+
+    assert.equal(timing.runningStartedAt, null);
+  });
+
   it("uses the last user message as the running turn start", () => {
     const firstUserAt = new Date("2026-05-15T00:00:00.000Z");
     const secondUserAt = new Date("2026-05-15T00:01:00.000Z");

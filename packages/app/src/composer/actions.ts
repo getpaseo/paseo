@@ -93,7 +93,7 @@ export async function pickAndPersistImages(input: {
   return await Promise.all(
     result.map(async (picked) => {
       const fileName = picked.fileName ?? null;
-      const mimeType = picked.mimeType || "image/jpeg";
+      const mimeType = picked.mimeType;
       if (picked.source.kind === "blob") {
         return await input.persister.persistFromBlob({
           blob: picked.source.blob,
@@ -186,40 +186,50 @@ export async function dispatchComposerAgentMessage(
     images: wirePayload.images,
     attachments: wirePayload.attachments,
   });
-  appendUserMessageToStream(input.agentId, userMessage, input.stream);
-  const imagesData = await input.encodeImages(wirePayload.images);
-  await input.client.sendAgentMessage(input.agentId, input.text, {
-    messageId,
-    images: imagesData ?? [],
-    attachments: wirePayload.attachments,
-  });
+  const rollbackOptimisticMessage = appendUserMessageToStream(
+    input.agentId,
+    userMessage,
+    input.stream,
+  );
+  try {
+    const imagesData = await input.encodeImages(wirePayload.images);
+    await input.client.sendAgentMessage(input.agentId, input.text, {
+      messageId,
+      images: imagesData ?? [],
+      attachments: wirePayload.attachments,
+    });
+  } catch (error) {
+    rollbackOptimisticMessage();
+    throw error;
+  }
 }
 
 function appendUserMessageToStream(
   agentId: string,
   userMessage: UserMessageItem,
   stream: AgentStreamWriter,
-): void {
+): () => void {
   const result = appendOptimisticUserMessageToStream({
     tail: stream.getTail(agentId) ?? [],
     head: stream.getHead(agentId) ?? [],
     message: userMessage,
     placement: "active-head",
   });
-  if (result.changedHead) {
-    stream.setHead((prev) => {
-      const next = new Map(prev);
-      next.set(agentId, result.head);
-      return next;
+  const write = result.changedHead ? stream.setHead : stream.setTail;
+  const items = result.changedHead ? result.head : result.tail;
+  write((prev) => new Map(prev).set(agentId, items));
+
+  return () => {
+    write((prev) => {
+      const current = prev.get(agentId);
+      if (!current) return prev;
+      const nextItems = current.filter(
+        (item) => item.id !== userMessage.id || item.kind !== "user_message" || !item.optimistic,
+      );
+      if (nextItems.length === current.length) return prev;
+      return new Map(prev).set(agentId, nextItems);
     });
-  }
-  if (result.changedTail) {
-    stream.setTail((prev) => {
-      const next = new Map(prev);
-      next.set(agentId, result.tail);
-      return next;
-    });
-  }
+  };
 }
 
 export interface QueueComposerMessageInput {
