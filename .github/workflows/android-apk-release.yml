@@ -302,7 +302,9 @@ jobs:
           node scripts/configure-android-release-signing.mjs
 
       - name: Assemble signed fork APK locally
-        timeout-minutes: 45
+        # Free runners + larger app trees (file editor, PDF, etc.) regularly exceed 45m.
+        # Successful pre-0.2 fork APKs finished near the old ceiling; leave headroom.
+        timeout-minutes: 90
         shell: bash
         run: |
           set -euo pipefail
