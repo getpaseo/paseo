@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   existsSync,
+  chmodSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
@@ -95,6 +96,40 @@ describe("worktree include planning", () => {
       "No paths matched .worktreeinclude entry '**/.runtime.env'",
     );
   });
+
+  it("rejects directory copies that overlap protected worktree paths", async () => {
+    const protectedWorktreeRoot = join(sourceRoot, ".dev", "paseo-home", "worktrees", "project");
+    mkdirSync(protectedWorktreeRoot, { recursive: true });
+    writeFileSync(join(sourceRoot, ".worktreeinclude"), ".dev/**\n");
+
+    await expect(
+      readWorktreeIncludePlan({
+        sourceRoot,
+        excludedSourceRoots: [protectedWorktreeRoot],
+      }),
+    ).rejects.toThrow("overlaps with a protected worktree path");
+  });
+
+  it.skipIf(isPlatform("win32"))(
+    "does not scan unrelated directories for bounded globs",
+    async () => {
+      writeFileSync(join(sourceRoot, ".worktreeinclude"), "packages/*/.runtime.env\n");
+      mkdirSync(join(sourceRoot, "packages", "api"), { recursive: true });
+      writeFileSync(join(sourceRoot, "packages", "api", ".runtime.env"), "api\n");
+      const unreadableDirectory = join(sourceRoot, "unrelated");
+      mkdirSync(unreadableDirectory);
+      chmodSync(unreadableDirectory, 0o000);
+
+      try {
+        const plan = await readWorktreeIncludePlan({ sourceRoot });
+        expect(plan.materializations).toEqual([
+          expect.objectContaining({ relativePath: "packages/api/.runtime.env" }),
+        ]);
+      } finally {
+        chmodSync(unreadableDirectory, 0o700);
+      }
+    },
+  );
 });
 
 describe.skipIf(isPlatform("win32"))("worktree include materialization", () => {

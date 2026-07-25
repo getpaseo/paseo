@@ -1174,6 +1174,40 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       ).not.toContain(expectedWorktreePath);
     });
 
+    it("rejects a recursive include of checkout-local worktree storage before creation", async () => {
+      const checkoutLocalPaseoHome = join(repoDir, ".dev", "paseo-home");
+      const projectHash = await deriveWorktreeProjectHash(repoDir);
+      const expectedWorktreePath = join(
+        checkoutLocalPaseoHome,
+        "worktrees",
+        projectHash,
+        "protected-include",
+      );
+      writeFileSync(join(repoDir, ".worktreeinclude"), ".dev/**\n");
+
+      await expect(
+        createLegacyWorktreeForTest({
+          cwd: repoDir,
+          worktreeSlug: "protected-include",
+          source: {
+            kind: "branch-off",
+            baseBranch: "main",
+            branchName: "feature/protected-include",
+          },
+          runSetup: false,
+          paseoHome: checkoutLocalPaseoHome,
+        }),
+      ).rejects.toThrow("overlaps with a protected worktree path");
+
+      expect(existsSync(expectedWorktreePath)).toBe(false);
+      expect(
+        execFileSync("git", ["worktree", "list", "--porcelain"], {
+          cwd: repoDir,
+          encoding: "utf8",
+        }),
+      ).not.toContain(expectedWorktreePath);
+    });
+
     it("rolls back a created worktree when a symlink include conflicts", async () => {
       const projectHash = await deriveWorktreeProjectHash(repoDir);
       const expectedWorktreePath = join(paseoHome, "worktrees", projectHash, "include-conflict");

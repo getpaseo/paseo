@@ -69,12 +69,19 @@ export async function readWorktreeIncludePlan(
   }
 
   const excludedSourceRoots = (options.excludedSourceRoots ?? []).map((path) => resolve(path));
-  const needsCandidates = entries.some(
-    (entry) => entry.relativePath.includes("*") && getRecursiveDirectoryPath(entry) === null,
-  );
-  const candidates = needsCandidates
-    ? await collectWorktreeIncludeCandidates({ sourceRoot, excludedSourceRoots })
-    : [];
+  const candidatePatterns = entries
+    .filter(
+      (entry) => entry.relativePath.includes("*") && getRecursiveDirectoryPath(entry) === null,
+    )
+    .map((entry) => entry.relativePath);
+  const candidates =
+    candidatePatterns.length > 0
+      ? await collectWorktreeIncludeCandidates({
+          sourceRoot,
+          excludedSourceRoots,
+          patterns: candidatePatterns,
+        })
+      : [];
   const materializations: WorktreeIncludeMaterialization[] = [];
 
   for (const entry of entries) {
@@ -84,6 +91,11 @@ export async function readWorktreeIncludePlan(
     }
 
     for (const relativePath of matchedPaths) {
+      assertSourcePathDoesNotOverlapExcludedRoot({
+        entry,
+        excludedSourceRoots,
+        sourcePath: join(sourceRoot, ...relativePath.split("/")),
+      });
       const resolved = await resolveSourceMaterialization({
         sourceRoot,
         entry,
@@ -281,6 +293,7 @@ function getRecursiveDirectoryPath(entry: WorktreeIncludeEntry): string | null {
 
 async function collectWorktreeIncludeCandidates(options: {
   excludedSourceRoots: string[];
+  patterns: string[];
   sourceRoot: string;
 }): Promise<string[]> {
   const candidates: string[] = [];
@@ -302,8 +315,14 @@ async function collectWorktreeIncludeCandidates(options: {
         continue;
       }
 
-      candidates.push(pathSegments.join("/"));
-      if (entry.isDirectory()) {
+      const relativePath = pathSegments.join("/");
+      if (options.patterns.some((pattern) => worktreeIncludeGlobMatches(pattern, relativePath))) {
+        candidates.push(relativePath);
+      }
+      if (
+        entry.isDirectory() &&
+        options.patterns.some((pattern) => canGlobMatchDescendant(pattern, pathSegments))
+      ) {
         await visit(sourcePath, pathSegments);
       }
     }
@@ -311,6 +330,38 @@ async function collectWorktreeIncludeCandidates(options: {
 
   await visit(options.sourceRoot, []);
   return candidates.sort();
+}
+
+function canGlobMatchDescendant(pattern: string, directorySegments: string[]): boolean {
+  const patternSegments = pattern.split("/");
+  const cache = new Map<string, boolean>();
+
+  function match(patternIndex: number, directoryIndex: number): boolean {
+    const cacheKey = `${patternIndex}:${directoryIndex}`;
+    const cached = cache.get(cacheKey);
+    if (cached !== undefined) {
+      return cached;
+    }
+
+    const patternSegment = patternSegments[patternIndex];
+    let result: boolean;
+    if (directoryIndex === directorySegments.length) {
+      result = patternSegment !== undefined;
+    } else if (patternSegment === "**") {
+      result = match(patternIndex + 1, directoryIndex) || match(patternIndex, directoryIndex + 1);
+    } else {
+      const directorySegment = directorySegments[directoryIndex];
+      result =
+        patternSegment !== undefined &&
+        segmentGlobMatches(patternSegment, directorySegment) &&
+        match(patternIndex + 1, directoryIndex + 1);
+    }
+
+    cache.set(cacheKey, result);
+    return result;
+  }
+
+  return match(0, 0);
 }
 
 function resolveEntryMatches(options: {
@@ -398,6 +449,26 @@ async function resolveSourceMaterialization(options: {
     },
     sourcePath,
   };
+}
+
+function assertSourcePathDoesNotOverlapExcludedRoot(options: {
+  entry: WorktreeIncludeEntry;
+  excludedSourceRoots: string[];
+  sourcePath: string;
+}): void {
+  const excludedRoot = options.excludedSourceRoots.find(
+    (candidate) =>
+      isPathInsideRoot(options.sourcePath, candidate) ||
+      isPathInsideRoot(candidate, options.sourcePath),
+  );
+  if (excludedRoot === undefined) {
+    return;
+  }
+
+  throw new WorktreeIncludeError(
+    "invalid_entry",
+    `.worktreeinclude entry '${options.entry.raw}' on line ${options.entry.lineNumber} overlaps with a protected worktree path`,
+  );
 }
 
 async function getSourceKind(options: {
