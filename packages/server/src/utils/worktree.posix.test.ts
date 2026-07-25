@@ -1206,6 +1206,12 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
           encoding: "utf8",
         }),
       ).not.toContain(expectedWorktreePath);
+      expect(
+        execFileSync("git", ["branch", "--list", "feature/include-conflict"], {
+          cwd: repoDir,
+          encoding: "utf8",
+        }).trim(),
+      ).toBe("");
     });
 
     it("rolls back a created worktree when a symlink include conflicts", async () => {

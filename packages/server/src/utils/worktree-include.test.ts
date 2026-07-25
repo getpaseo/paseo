@@ -111,6 +111,22 @@ describe("worktree include planning", () => {
   });
 
   it.skipIf(isPlatform("win32"))(
+    "rejects protected paths reached through a symlink alias",
+    async () => {
+      const sourceAlias = join(tempDir, "source-alias");
+      symlinkSync(sourceRoot, sourceAlias, "dir");
+      writeFileSync(join(sourceRoot, ".worktreeinclude"), ".dev/**\n");
+
+      await expect(
+        readWorktreeIncludePlan({
+          sourceRoot,
+          excludedSourceRoots: [join(sourceAlias, ".dev", "paseo-home", "worktrees", "project")],
+        }),
+      ).rejects.toThrow("overlaps with a protected worktree path");
+    },
+  );
+
+  it.skipIf(isPlatform("win32"))(
     "does not scan unrelated directories for bounded globs",
     async () => {
       writeFileSync(join(sourceRoot, ".worktreeinclude"), "packages/*/.runtime.env\n");

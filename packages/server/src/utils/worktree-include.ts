@@ -1,6 +1,15 @@
 import { type Stats } from "fs";
 import { copyFile, cp, lstat, mkdir, readFile, readdir, realpath, symlink } from "fs/promises";
-import { dirname, isAbsolute, join, relative, resolve, sep, win32 } from "path";
+import {
+  basename as pathBasename,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  sep,
+  win32,
+} from "path";
 import { areEquivalentPaths, isPathInsideRoot } from "./path.js";
 
 const WORKTREE_INCLUDE_FILE_NAME = ".worktreeinclude";
@@ -68,7 +77,9 @@ export async function readWorktreeIncludePlan(
     return { sourceRoot, materializations: [] };
   }
 
-  const excludedSourceRoots = (options.excludedSourceRoots ?? []).map((path) => resolve(path));
+  const excludedSourceRoots = await Promise.all(
+    (options.excludedSourceRoots ?? []).map(canonicalizeExistingPathPrefix),
+  );
   const candidatePatterns = entries
     .filter(
       (entry) => entry.relativePath.includes("*") && getRecursiveDirectoryPath(entry) === null,
@@ -109,6 +120,29 @@ export async function readWorktreeIncludePlan(
     sourceRoot,
     materializations: normalizeMaterializations(materializations),
   };
+}
+
+async function canonicalizeExistingPathPrefix(path: string): Promise<string> {
+  const absolutePath = resolve(path);
+  const missingSegments: string[] = [];
+  let existingPath = absolutePath;
+
+  while (true) {
+    try {
+      return join(await realpath(existingPath), ...missingSegments);
+    } catch (error) {
+      if (getErrorCode(error) !== "ENOENT" && getErrorCode(error) !== "ENOTDIR") {
+        throw error;
+      }
+
+      const parentPath = dirname(existingPath);
+      if (parentPath === existingPath) {
+        return absolutePath;
+      }
+      missingSegments.unshift(pathBasename(existingPath));
+      existingPath = parentPath;
+    }
+  }
 }
 
 export async function materializeWorktreeIncludePlan(

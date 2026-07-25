@@ -1162,13 +1162,22 @@ export async function deletePaseoWorktree({
   }
 }
 
+export interface RollbackCreatedPaseoWorktreeOptions extends DeletePaseoWorktreeOptions {
+  createdBranchName?: string;
+}
+
 export async function rollbackCreatedPaseoWorktree(
-  options: DeletePaseoWorktreeOptions,
+  options: RollbackCreatedPaseoWorktreeOptions,
   cause: unknown,
 ): Promise<never> {
   let cleanupError: unknown;
   try {
     await deletePaseoWorktree(options);
+    if (options.createdBranchName && options.cwd) {
+      await runGitCommand(["branch", "--delete", "--force", options.createdBranchName], {
+        cwd: options.cwd,
+      });
+    }
   } catch (error) {
     cleanupError = error;
   }
@@ -1295,6 +1304,7 @@ export const createWorktree = async ({
         teardownCwds: [],
         paseoHome,
         worktreesBaseRoot: worktreesRoot,
+        createdBranchName: sourcePlan.createdBranchName,
       },
       error,
     );
@@ -1322,6 +1332,7 @@ interface ResolveWorktreeSourcePlanOptions {
 
 interface WorktreeSourcePlan {
   branchName: string;
+  createdBranchName?: string;
   metadataBaseRefName: string;
   changeRequestLookupTarget?: PaseoWorktreeChangeRequestLookupTarget;
   addArguments: string[];
@@ -1355,6 +1366,7 @@ async function resolveWorktreeSourcePlan({
 
       return {
         branchName: newBranchName,
+        createdBranchName: newBranchName,
         metadataBaseRefName: normalizedBaseBranch,
         addArguments: ["-b", newBranchName, "--no-track", base],
       };
