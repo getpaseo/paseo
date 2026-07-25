@@ -1490,6 +1490,8 @@ export const es: TranslationResources = {
   downloads: {
     requestTokenFailed: "No se pudo solicitar el token de descarga.",
     hostUnavailable: "El host de descarga no está disponible.",
+    relayFileTooLarge:
+      "This file is too large to download through the relay (max {{size}}). Add a direct connection to download it.",
     cancelled: "La descarga fue cancelada.",
     failed: "No se pudo descargar el archivo.",
     shareFile: "compartir archivo",

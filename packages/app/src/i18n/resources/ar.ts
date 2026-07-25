@@ -1447,6 +1447,8 @@ export const ar: TranslationResources = {
   downloads: {
     requestTokenFailed: "فشل طلب رمز التنزيل.",
     hostUnavailable: "مضيف التنزيل غير متاح.",
+    relayFileTooLarge:
+      "This file is too large to download through the relay (max {{size}}). Add a direct connection to download it.",
     cancelled: "تم إلغاء التنزيل.",
     failed: "فشل تنزيل الملف.",
     shareFile: "مشاركة الملف",

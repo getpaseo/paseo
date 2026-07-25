@@ -1,5 +1,5 @@
 import { useCallback, useMemo } from "react";
-import { useHosts } from "@/runtime/host-runtime";
+import { useHosts, useHostRuntimeSnapshot } from "@/runtime/host-runtime";
 import { useDownloadStore } from "@/stores/download-store";
 import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
 
@@ -25,12 +25,13 @@ export function useFileDownload({
     () => daemons.find((daemon) => daemon.serverId === serverId),
     [daemons, serverId],
   );
+  const runtime = useHostRuntimeSnapshot(serverId);
   const normalizedWorkspaceRoot = useMemo(() => workspaceRoot.trim(), [workspaceRoot]);
   const workspaceScopeId = useMemo(
     () => workspaceId?.trim() || normalizedWorkspaceRoot,
     [normalizedWorkspaceRoot, workspaceId],
   );
-  const { requestFileDownloadToken } = useFileExplorerActions({
+  const { requestFileBytes, requestFileDownloadToken } = useFileExplorerActions({
     serverId,
     workspaceId,
     workspaceRoot: normalizedWorkspaceRoot,
@@ -48,9 +49,22 @@ export function useFileDownload({
         fileName,
         path,
         daemonProfile,
+        activeConnectionId: runtime?.activeConnectionId ?? null,
+        supportsRelayFileDownloads:
+          runtime?.client?.getLastServerInfoMessage()?.features?.relayFileDownloads === true,
         requestFileDownloadToken: (targetPath) => requestFileDownloadToken(targetPath),
+        requestFileBytes: (targetPath) => requestFileBytes(targetPath),
       });
     },
-    [daemonProfile, requestFileDownloadToken, serverId, startDownload, workspaceScopeId],
+    [
+      daemonProfile,
+      requestFileBytes,
+      requestFileDownloadToken,
+      runtime?.activeConnectionId,
+      runtime?.client,
+      serverId,
+      startDownload,
+      workspaceScopeId,
+    ],
   );
 }

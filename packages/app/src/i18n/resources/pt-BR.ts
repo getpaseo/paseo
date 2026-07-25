@@ -1476,6 +1476,8 @@ export const ptBR: TranslationResources = {
   downloads: {
     requestTokenFailed: "Falha ao solicitar token de download.",
     hostUnavailable: "Host de download indisponível.",
+    relayFileTooLarge:
+      "This file is too large to download through the relay (max {{size}}). Add a direct connection to download it.",
     cancelled: "Download cancelado.",
     failed: "Falha ao baixar arquivo.",
     shareFile: "Compartilhar arquivo",

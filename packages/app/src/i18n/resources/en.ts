@@ -1458,6 +1458,8 @@ export const en = {
   downloads: {
     requestTokenFailed: "Failed to request download token.",
     hostUnavailable: "Download host is unavailable.",
+    relayFileTooLarge:
+      "This file is too large to download through the relay (max {{size}}). Add a direct connection to download it.",
     cancelled: "Download was cancelled.",
     failed: "Failed to download file.",
     shareFile: "Share file",

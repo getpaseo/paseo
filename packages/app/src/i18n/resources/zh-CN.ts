@@ -1428,6 +1428,7 @@ export const zhCN: TranslationResources = {
   downloads: {
     requestTokenFailed: "请求下载 token 失败。",
     hostUnavailable: "下载 Host 不可用。",
+    relayFileTooLarge: "此文件太大，无法通过 relay 下载（最大 {{size}}）。请添加直连后再下载。",
     cancelled: "下载已取消。",
     failed: "下载文件失败。",
     shareFile: "共享文件",
