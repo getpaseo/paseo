@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.900 - 2026-07-25
+
+### Added
+
+- Sync the fork with official Paseo v0.2.1, including Claude Opus 5, in-app file editing, Changes as a workspace tab, Oh My Pi, multi-forge PR/MR support, and the rest of the official 0.2.0/0.2.1 line ([#14](https://github.com/iamriajul/paseo/pull/14) by [@iamriajul](https://github.com/iamriajul))
+
+### Improved
+
+- Keep the fork's Code Server tabs, Browser localhost/loopback tunneling, PDF preview, task backlog, provider quota resets, and original Android package ID while adopting the official 0.2 release line ([#14](https://github.com/iamriajul/paseo/pull/14))
+
 ## 0.2.1 - 2026-07-24
 
 ### Added
