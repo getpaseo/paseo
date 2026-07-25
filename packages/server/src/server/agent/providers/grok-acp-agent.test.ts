@@ -552,6 +552,24 @@ function collectTimelineItems(session: ACPAgentSession): AgentTimelineItem[] {
   return items;
 }
 
+/**
+ * ACP accumulates user_message_chunk into pendingUserMessage and only emits on
+ * a later non-user update (flushPendingUserMessage). Empty agent_message_chunk
+ * flushes without adding an assistant bubble — same pattern as acp-agent tests.
+ */
+async function flushPendingUserMessages(
+  session: ACPAgentSession,
+  sessionId = "session-1",
+): Promise<void> {
+  await session.sessionUpdate({
+    sessionId,
+    update: {
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: "" },
+    },
+  });
+}
+
 function hiddenUserChunk(
   text: string,
   messageId?: string | null,
@@ -584,10 +602,16 @@ test("live Grok session suppresses hideFromScrollback user chunks", async () => 
       messageId: "msg-visible",
     },
   });
+  // Deferred assembly: visible text is pending until a non-user update flushes.
+  expect(items).toEqual([]);
+  await flushPendingUserMessages(session);
 
   expect(items).toEqual([
     { type: "user_message", text: "real user prompt", messageId: "msg-visible" },
   ]);
+  expect(items.every((item) => !("text" in item && item.text.includes("system-reminder")))).toBe(
+    true,
+  );
 });
 
 test("history replay also suppresses hideFromScrollback user chunks", async () => {
@@ -612,10 +636,18 @@ test("history replay also suppresses hideFromScrollback user chunks", async () =
       messageId: "msg-load",
     },
   });
+  expect(internals.persistedHistory).toEqual([]);
+  // loadSession ends with flushPendingUserMessage; mirror that boundary here.
+  await flushPendingUserMessages(session);
 
   expect(internals.persistedHistory).toEqual([
     { type: "user_message", text: "visible during load", messageId: "msg-load" },
   ]);
+  expect(
+    internals.persistedHistory.every(
+      (item) => !("text" in item && item.text.includes("system-reminder")),
+    ),
+  ).toBe(true);
 });
 
 test("hidden chunk without messageId does not contaminate a later visible user message", async () => {
@@ -641,11 +673,12 @@ test("hidden chunk without messageId does not contaminate a later visible user m
       content: { type: "text", text: " second" },
     },
   });
+  expect(items).toEqual([]);
+  await flushPendingUserMessages(session);
 
-  // User chunks emit accumulated text per chunk; the hidden wake-up must never
-  // enter messageAssemblies for the shared no-messageId key.
+  // Contiguous ID-less chunks coalesce into one pending message; the hidden
+  // wake-up must never join that assembly (suppress runs before pending).
   expect(items.map((item) => ("text" in item ? item.text : null))).toEqual([
-    "first visible",
     "first visible second",
   ]);
   expect(items.every((item) => !("text" in item && item.text.includes("system-reminder")))).toBe(
@@ -662,12 +695,98 @@ test("generic ACP provider still renders hideFromScrollback chunks as user messa
     sessionId: "session-1",
     update: hiddenUserChunk("<system-reminder>would be hidden only for Grok</system-reminder>"),
   });
+  expect(items).toEqual([]);
+  await flushPendingUserMessages(session);
 
   expect(items).toEqual([
     {
       type: "user_message",
       text: "<system-reminder>would be hidden only for Grok</system-reminder>",
     },
+  ]);
+});
+
+test("Grok hidden-only user chunks stay off the timeline after flush", async () => {
+  const session = createGrokBackgroundTaskSession();
+  const items = collectTimelineItems(session);
+  asInternals<{ sessionId: string | null }>(session).sessionId = "session-1";
+
+  await session.sessionUpdate({
+    sessionId: "session-1",
+    update: hiddenUserChunk("<system-reminder>only hidden</system-reminder>", "msg-only-hidden"),
+  });
+  await flushPendingUserMessages(session);
+
+  expect(items).toEqual([]);
+});
+
+test("Grok suppress does not contaminate a later pending message with a different id", async () => {
+  const session = createGrokBackgroundTaskSession();
+  const items = collectTimelineItems(session);
+  asInternals<{ sessionId: string | null }>(session).sessionId = "session-1";
+
+  await session.sessionUpdate({
+    sessionId: "session-1",
+    update: {
+      sessionUpdate: "user_message_chunk",
+      content: { type: "text", text: "first" },
+      messageId: "msg-a",
+    },
+  });
+  await session.sessionUpdate({
+    sessionId: "session-1",
+    update: hiddenUserChunk("<system-reminder>interleaved</system-reminder>", "msg-hidden"),
+  });
+  await session.sessionUpdate({
+    sessionId: "session-1",
+    update: {
+      sessionUpdate: "user_message_chunk",
+      content: { type: "text", text: "second" },
+      messageId: "msg-b",
+    },
+  });
+  // Different messageId flushes the previous pending message immediately.
+  expect(items).toEqual([{ type: "user_message", text: "first", messageId: "msg-a" }]);
+  await flushPendingUserMessages(session);
+  expect(items).toEqual([
+    { type: "user_message", text: "first", messageId: "msg-a" },
+    { type: "user_message", text: "second", messageId: "msg-b" },
+  ]);
+  expect(items.every((item) => !("text" in item && item.text.includes("system-reminder")))).toBe(
+    true,
+  );
+});
+
+test("Grok flushes pending user message on a later assistant chunk", async () => {
+  const session = createGrokBackgroundTaskSession();
+  const items = collectTimelineItems(session);
+  asInternals<{ sessionId: string | null }>(session).sessionId = "session-1";
+
+  await session.sessionUpdate({
+    sessionId: "session-1",
+    update: hiddenUserChunk("<system-reminder>wake</system-reminder>", "msg-hidden"),
+  });
+  await session.sessionUpdate({
+    sessionId: "session-1",
+    update: {
+      sessionUpdate: "user_message_chunk",
+      content: { type: "text", text: "ask something" },
+      messageId: "msg-user",
+    },
+  });
+  expect(items).toEqual([]);
+  await session.sessionUpdate({
+    sessionId: "session-1",
+    update: {
+      sessionUpdate: "agent_message_chunk",
+      messageId: "msg-assistant",
+      content: { type: "text", text: "reply" },
+    },
+  });
+
+  expect(items).toEqual([
+    { type: "user_message", text: "ask something", messageId: "msg-user" },
+    { type: "assistant_message", text: "reply", messageId: "msg-assistant" },
   ]);
 });
 
