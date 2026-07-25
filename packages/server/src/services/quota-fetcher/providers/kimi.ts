@@ -5,7 +5,12 @@ import type { Logger } from "pino";
 import { z } from "zod";
 import type { ProviderUsage } from "../../../server/messages.js";
 import type { ProviderApiFetch, ProviderUsageFetcher } from "../provider.js";
-import { ApiOptionalStringSchema, fetchProviderApi, unavailableUsage } from "../usage.js";
+import {
+  ApiOptionalStringSchema,
+  fetchProviderApi,
+  toneFromUsedPct,
+  unavailableUsage,
+} from "../usage.js";
 
 const KimiUsageResponseSchema = z.object({
   usage: z
@@ -81,7 +86,7 @@ export class KimiQuotaProvider implements ProviderUsageFetcher {
           usedPct,
           remainingPct: usedPct === null ? null : Math.max(0, 100 - usedPct),
           resetsAt: resp.usage?.resetTime ?? null,
-          tone: "ok",
+          tone: toneFromUsedPct(usedPct),
         },
       ],
       balances: [],

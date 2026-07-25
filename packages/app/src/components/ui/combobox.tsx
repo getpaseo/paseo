@@ -24,6 +24,7 @@ import {
   type ViewStyle,
 } from "react-native";
 import { useTranslation } from "react-i18next";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import {
@@ -100,6 +101,8 @@ export interface ComboboxProps {
    */
   header?: SheetHeader;
   mobileChildrenScrollEnabled?: boolean;
+  /** Overrides the mobile scroll container spacing for custom child content. */
+  mobileChildrenContentContainerStyle?: StyleProp<ViewStyle>;
   presentation?: "push" | "replace";
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
@@ -934,6 +937,7 @@ interface MobileBodyProps {
   searchable: boolean;
   hasChildren: boolean;
   mobileChildrenScrollEnabled: boolean;
+  mobileChildrenContentContainerStyle: StyleProp<ViewStyle>;
   presentation?: "push" | "replace";
   searchResetKey: number;
   searchPlaceholder: string;
@@ -947,6 +951,7 @@ interface MobileBodyProps {
   handleSelect: (id: string) => void;
   renderOption: RenderOptionFn | undefined;
   children: ReactNode;
+  safeAreaBottom: number;
 }
 
 function MobileComboboxBody(props: MobileBodyProps): ReactElement {
@@ -965,6 +970,10 @@ function MobileComboboxBody(props: MobileBodyProps): ReactElement {
   const comboboxTitleStyle = useMemo(
     () => [styles.comboboxTitle, { color: props.titleColor }],
     [props.titleColor],
+  );
+  const frameStyle = useMemo(
+    () => [styles.mobileSheetFrame, { paddingBottom: props.safeAreaBottom }],
+    [props.safeAreaBottom],
   );
 
   const body = props.hasChildren ? (
@@ -996,40 +1005,46 @@ function MobileComboboxBody(props: MobileBodyProps): ReactElement {
       keyboardBlurBehavior="none"
       presentation={props.presentation}
     >
-      {props.header ? (
-        <SheetHeaderView header={props.header} onClose={props.onClose} />
-      ) : (
-        <>
-          <View style={styles.bottomSheetHeader}>
-            <Text key={props.titleColor} style={comboboxTitleStyle}>
-              {props.title}
-            </Text>
-          </View>
-          {props.stickyHeader}
-          {!props.hasChildren && props.searchable ? (
-            <SearchInput
-              placeholder={props.searchPlaceholder}
-              onChangeText={props.setSearchQueryWithCallback}
-              onSubmitEditing={props.handleSubmitSearch}
-              autoFocus={false}
-              useBottomSheetInput
-              resetKey={props.searchResetKey}
-            />
-          ) : null}
-        </>
-      )}
-      {props.hasChildren && !props.mobileChildrenScrollEnabled ? (
-        body
-      ) : (
-        <BottomSheetScrollView
-          contentContainerStyle={styles.comboboxScrollContent}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-        >
-          {body}
-        </BottomSheetScrollView>
-      )}
-      {props.footer ? <View style={styles.footer}>{props.footer}</View> : null}
+      <View style={frameStyle}>
+        {props.header ? (
+          <SheetHeaderView header={props.header} onClose={props.onClose} />
+        ) : (
+          <>
+            <View style={styles.bottomSheetHeader}>
+              <Text key={props.titleColor} style={comboboxTitleStyle}>
+                {props.title}
+              </Text>
+            </View>
+            {props.stickyHeader}
+            {!props.hasChildren && props.searchable ? (
+              <SearchInput
+                placeholder={props.searchPlaceholder}
+                onChangeText={props.setSearchQueryWithCallback}
+                onSubmitEditing={props.handleSubmitSearch}
+                autoFocus={false}
+                useBottomSheetInput
+                resetKey={props.searchResetKey}
+              />
+            ) : null}
+          </>
+        )}
+        {props.hasChildren && !props.mobileChildrenScrollEnabled ? (
+          body
+        ) : (
+          <BottomSheetScrollView
+            style={styles.mobileSheetBody}
+            contentContainerStyle={[
+              styles.comboboxScrollContent,
+              props.mobileChildrenContentContainerStyle,
+            ]}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            {body}
+          </BottomSheetScrollView>
+        )}
+        {props.footer ? <View style={styles.footer}>{props.footer}</View> : null}
+      </View>
     </IsolatedBottomSheetModal>
   );
 }
@@ -1222,6 +1237,7 @@ export function Combobox({
   title,
   header,
   mobileChildrenScrollEnabled = true,
+  mobileChildrenContentContainerStyle,
   presentation,
   open,
   onOpenChange,
@@ -1241,6 +1257,7 @@ export function Combobox({
   const resolvedEmptyText = emptyText ?? t("common.empty.noOptionsMatchSearch");
   const resolvedTitle = title ?? t("common.actions.select");
   const isMobile = useIsCompactFormFactor();
+  const safeAreaInsets = useSafeAreaInsets();
   const titleColor = theme.colors.foreground;
   const effectiveOptionsPosition = resolveEffectiveOptionsPosition(isMobile, optionsPosition);
   const isDesktopAboveSearch = resolveIsDesktopAboveSearch(isMobile, effectiveOptionsPosition);
@@ -1515,6 +1532,7 @@ export function Combobox({
         searchable={searchable}
         hasChildren={hasChildren}
         mobileChildrenScrollEnabled={mobileChildrenScrollEnabled}
+        mobileChildrenContentContainerStyle={mobileChildrenContentContainerStyle}
         presentation={presentation}
         searchResetKey={searchResetKey}
         searchPlaceholder={effectiveSearchPlaceholder}
@@ -1527,6 +1545,7 @@ export function Combobox({
         emptyText={resolvedEmptyText}
         handleSelect={handleSelect}
         renderOption={renderOption}
+        safeAreaBottom={safeAreaInsets.bottom}
       >
         {children}
       </MobileComboboxBody>
@@ -1569,6 +1588,14 @@ export function Combobox({
 }
 
 const styles = StyleSheet.create((theme) => ({
+  mobileSheetFrame: {
+    flex: 1,
+    minHeight: 0,
+  },
+  mobileSheetBody: {
+    flex: 1,
+    minHeight: 0,
+  },
   searchInputContainer: {
     flexDirection: "row",
     alignItems: "center",

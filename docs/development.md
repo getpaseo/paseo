@@ -390,6 +390,7 @@ npm run cli -- ls -a -g              # List all agents globally
 npm run cli -- ls -a -g --json       # Same, as JSON
 npm run cli -- inspect <id>          # Show detailed agent info
 npm run cli -- logs <id>             # View agent timeline
+npm run cli -- agent open <id>       # Focus an existing agent in Paseo Desktop
 npm run cli -- daemon status         # Check daemon status
 npm run cli -- clone owner/repo --dir ~/workspace # Clone GitHub repo and register project
 ```
@@ -399,6 +400,11 @@ Use `--host <host:port>` to point the CLI at a different daemon:
 ```bash
 npm run cli -- --host localhost:7777 ls -a
 ```
+
+Desktop integrations can focus an existing agent without creating one or
+sending a message. Use `paseo://h/<server-id>/agent/<agent-id>`, or run
+`paseo agent open <agent-id>`. The CLI reads the local daemon's server ID by
+default; pass `--server <server-id>` when targeting another server.
 
 ## Agent state
 

@@ -1,56 +1,42 @@
 # Changelog
 
-## 0.2.0-beta.2 - 2026-07-22
+## 0.2.1 - 2026-07-24
 
 ### Added
 
-- Edit files directly in the web and desktop apps ([#2270](https://github.com/getpaseo/paseo/pull/2270), [#2309](https://github.com/getpaseo/paseo/pull/2309))
-- Switch models from the Command Center for active agents and new drafts ([#2147](https://github.com/getpaseo/paseo/pull/2147) by [@kedrzu](https://github.com/kedrzu))
-- Configure workspace service ports with a fixed range or external allocator ([#2165](https://github.com/getpaseo/paseo/pull/2165) by [@mcowger](https://github.com/mcowger))
-- Search keyboard shortcuts by action, note, or key combination ([#2160](https://github.com/getpaseo/paseo/pull/2160))
-- Turn thinking off for supported Claude models ([#2257](https://github.com/getpaseo/paseo/pull/2257))
-- Use Pi's Max thinking level ([#2267](https://github.com/getpaseo/paseo/pull/2267) by [@ByteTrue](https://github.com/ByteTrue))
+- Claude Opus 5 is available
 
-### Improved
-
-- Improved parity of CLI and MCP tools for workspace, agent and schedule management ([#2186](https://github.com/getpaseo/paseo/pull/2186))
-- Pasted PR/MR links in the composer become auto-selected as a checkout option ([#2290](https://github.com/getpaseo/paseo/pull/2290))
-- Projects, workspaces and chat syncing is more efficient ([#2028](https://github.com/getpaseo/paseo/pull/2028), [#2185](https://github.com/getpaseo/paseo/pull/2185), [#2196](https://github.com/getpaseo/paseo/pull/2196), [#2206](https://github.com/getpaseo/paseo/pull/2206), [#2259](https://github.com/getpaseo/paseo/pull/2259), [#2263](https://github.com/getpaseo/paseo/pull/2263))
-- Make project creation more explicit ([#2098](https://github.com/getpaseo/paseo/pull/2098), [#2187](https://github.com/getpaseo/paseo/pull/2187))
-- Idle agents release processes automatically and resume when needed ([#2203](https://github.com/getpaseo/paseo/pull/2203), [#2209](https://github.com/getpaseo/paseo/pull/2209))
-- New Claude and Codex agents default to safer automatic approval modes when supported ([#2213](https://github.com/getpaseo/paseo/pull/2213))
-- Oh My Pi now supports Max thinking in imported and new sessions ([#2191](https://github.com/getpaseo/paseo/pull/2191) by [@mvanhorn](https://github.com/mvanhorn))
-- Commit history now includes recent pushed and base-branch commits ([#2312](https://github.com/getpaseo/paseo/pull/2312))
-- Permission and thinking changes made during a turn now show when they take effect ([#2201](https://github.com/getpaseo/paseo/pull/2201))
-
-### Fixed
-
-- Reused branches no longer attach an unrelated merged or closed pull request ([#2172](https://github.com/getpaseo/paseo/pull/2172) by [@nllptrx](https://github.com/nllptrx))
-- Pi compaction waits for long summaries instead of reporting a false timeout ([#2181](https://github.com/getpaseo/paseo/pull/2181) by [@jasonhnd](https://github.com/jasonhnd))
-- Pi chats keep new messages aligned with the correct history after an idle agent resumes ([#2313](https://github.com/getpaseo/paseo/pull/2313))
-- OpenCode follow-ups triggered by completed background work now remain visible ([#2258](https://github.com/getpaseo/paseo/pull/2258))
-- Codex no longer shows the parent agent as a phantom subagent ([#2214](https://github.com/getpaseo/paseo/pull/2214))
-- Local dictation now works in Nix-packaged installations ([#1587](https://github.com/getpaseo/paseo/pull/1587) by [@yhori991](https://github.com/yhori991))
-- The composer remains visible after submitting dictated text and returning to the app ([#2194](https://github.com/getpaseo/paseo/pull/2194))
-- Desktop's dictation shortcut remains responsive after finishing a recording ([#2268](https://github.com/getpaseo/paseo/pull/2268))
-- Projects can be renamed before their first workspace ([#2252](https://github.com/getpaseo/paseo/pull/2252) by [@albertodeago](https://github.com/albertodeago))
-- Settings keep showing a connected remote host when the local daemon is stopped ([#1749](https://github.com/getpaseo/paseo/pull/1749) by [@dwyanewang](https://github.com/dwyanewang))
-- Pinned workspaces no longer disappear briefly when reopening the compact sidebar ([#2210](https://github.com/getpaseo/paseo/pull/2210))
-- Session imports find older matches from the current workspace ([#2265](https://github.com/getpaseo/paseo/pull/2265) by [@nikuscs](https://github.com/nikuscs))
-
-## 0.2.0-beta.1 - 2026-07-17
+## 0.2.0 - 2026-07-24
 
 ### Added
 
 - Work with pull requests and merge requests from GitLab, Gitea, Forgejo, and Codeberg ([#1913](https://github.com/getpaseo/paseo/pull/1913) by [@nllptrx](https://github.com/nllptrx))
-- Use Oh My Pi as a native agent provider ([#2067](https://github.com/getpaseo/paseo/pull/2067) by [@ebg1223](https://github.com/ebg1223))
-- Browse branch commit history and open individual commit diffs from Changes ([#1534](https://github.com/getpaseo/paseo/pull/1534), [#2146](https://github.com/getpaseo/paseo/pull/2146) by [@adradr](https://github.com/adradr))
+- Edit files directly in the web and desktop apps ([#2270](https://github.com/getpaseo/paseo/pull/2270), [#2309](https://github.com/getpaseo/paseo/pull/2309), [#2277](https://github.com/getpaseo/paseo/pull/2277), [#2382](https://github.com/getpaseo/paseo/pull/2382) by [@dwyanewang](https://github.com/dwyanewang))
+- Oh My Pi (OMP) as a native agent provider ([#2067](https://github.com/getpaseo/paseo/pull/2067) by [@ebg1223](https://github.com/ebg1223))
+- Open the complete Changes view as a workspace tab ([#2298](https://github.com/getpaseo/paseo/pull/2298) by [@nikuscs](https://github.com/nikuscs))
+- Add files to chat directly from Files and Changes ([#2275](https://github.com/getpaseo/paseo/pull/2275) by [@nikuscs](https://github.com/nikuscs))
+- Browse workspace commit history and open individual commit diffs from Changes ([#1534](https://github.com/getpaseo/paseo/pull/1534), [#2146](https://github.com/getpaseo/paseo/pull/2146), [#2312](https://github.com/getpaseo/paseo/pull/2312) by [@adradr](https://github.com/adradr))
+- Switch models from the Command Center for active agents and new drafts ([#2147](https://github.com/getpaseo/paseo/pull/2147) by [@kedrzu](https://github.com/kedrzu))
+- Open existing agents from Paseo links or the CLI ([#2324](https://github.com/getpaseo/paseo/pull/2324))
+- Configure workspace service ports with a fixed range or external allocator ([#2165](https://github.com/getpaseo/paseo/pull/2165) by [@mcowger](https://github.com/mcowger))
+- Search keyboard shortcuts by action, note, or key combination ([#2160](https://github.com/getpaseo/paseo/pull/2160))
+- Turn thinking off for supported Claude models ([#2257](https://github.com/getpaseo/paseo/pull/2257))
+- Allow Pi's Max thinking level ([#2267](https://github.com/getpaseo/paseo/pull/2267) by [@ByteTrue](https://github.com/ByteTrue))
 - Open workspace files in more installed editors and file managers ([#2119](https://github.com/getpaseo/paseo/pull/2119))
 - Remove individual custom providers from Settings ([#1951](https://github.com/getpaseo/paseo/pull/1951))
 
 ### Improved
 
-- ACP provider catalog updated to the latest registry versions
+- Improved model selection on mobile ([#2361](https://github.com/getpaseo/paseo/pull/2361))
+- Selector popovers stay readable on iPad ([#2360](https://github.com/getpaseo/paseo/pull/2360) by [@yzim](https://github.com/yzim))
+- Projects, workspaces and chat syncing is more efficient ([#2028](https://github.com/getpaseo/paseo/pull/2028), [#2185](https://github.com/getpaseo/paseo/pull/2185), [#2196](https://github.com/getpaseo/paseo/pull/2196), [#2206](https://github.com/getpaseo/paseo/pull/2206), [#2259](https://github.com/getpaseo/paseo/pull/2259), [#2263](https://github.com/getpaseo/paseo/pull/2263))
+- CLI and MCP tools manage workspaces, agents, and schedules more consistently ([#2186](https://github.com/getpaseo/paseo/pull/2186))
+- Pasted PR/MR links in the composer become auto-selected as a checkout option ([#2290](https://github.com/getpaseo/paseo/pull/2290))
+- Make project creation more explicit ([#2098](https://github.com/getpaseo/paseo/pull/2098), [#2187](https://github.com/getpaseo/paseo/pull/2187))
+- Idle agents release processes automatically and resume when needed ([#2203](https://github.com/getpaseo/paseo/pull/2203), [#2209](https://github.com/getpaseo/paseo/pull/2209))
+- New Claude and Codex agents default to safer automatic approval modes when supported ([#2213](https://github.com/getpaseo/paseo/pull/2213))
+- Permission and thinking changes made during a turn now show when they take effect ([#2201](https://github.com/getpaseo/paseo/pull/2201))
+- Usage bars now warn as provider limits approach ([#2322](https://github.com/getpaseo/paseo/pull/2322) by [@cleiter](https://github.com/cleiter))
 - Workspace focus mode stays confined to the active workspace with a visible exit control ([#2151](https://github.com/getpaseo/paseo/pull/2151))
 - Desktop installs the newest available update instead of a cached older release ([#2149](https://github.com/getpaseo/paseo/pull/2149))
 - Remote daemon update failures now show specific recovery steps ([#2120](https://github.com/getpaseo/paseo/pull/2120))
@@ -58,12 +44,34 @@
 
 ### Fixed
 
+- Terminal pairing QR codes remain scannable in narrow terminals ([#2381](https://github.com/getpaseo/paseo/pull/2381))
+- Workspace creation stays responsive even with many active or archived workspaces ([#2355](https://github.com/getpaseo/paseo/pull/2355), [#2379](https://github.com/getpaseo/paseo/pull/2379))
+- Failed agent starts no longer leave provider processes running ([#2348](https://github.com/getpaseo/paseo/pull/2348) by [@dwyanewang](https://github.com/dwyanewang))
+- Completed OpenCode turns stay idle when late metadata updates arrive ([#2336](https://github.com/getpaseo/paseo/pull/2336) by [@mcowger](https://github.com/mcowger))
+- ACP image prompts no longer appear twice ([#2363](https://github.com/getpaseo/paseo/pull/2363))
+- Web chats stay pinned to the latest message at non-default browser zoom ([#2368](https://github.com/getpaseo/paseo/pull/2368))
+- Grouped tool-call loading animations display correctly ([#2369](https://github.com/getpaseo/paseo/pull/2369))
+- Notifications now open the correct workspace and agent ([#2331](https://github.com/getpaseo/paseo/pull/2331))
+- Archived agents can be restored directly from History ([#2316](https://github.com/getpaseo/paseo/pull/2316))
+- CLI agent runs stay in the current workspace unless a new workspace is requested ([#2315](https://github.com/getpaseo/paseo/pull/2315))
+- Reused branches no longer attach an unrelated merged or closed pull request ([#2172](https://github.com/getpaseo/paseo/pull/2172) by [@nllptrx](https://github.com/nllptrx))
+- Pi compaction waits for long summaries instead of reporting a false timeout ([#2181](https://github.com/getpaseo/paseo/pull/2181) by [@jasonhnd](https://github.com/jasonhnd))
+- Pi chats keep new messages aligned with the correct history after an idle agent resumes ([#2313](https://github.com/getpaseo/paseo/pull/2313))
+- OpenCode follow-ups triggered by completed background work now remain visible ([#2258](https://github.com/getpaseo/paseo/pull/2258))
+- Codex no longer shows the parent agent as a phantom subagent ([#2214](https://github.com/getpaseo/paseo/pull/2214))
+- Oh My Pi background notices appear as task notifications instead of raw system text ([#2218](https://github.com/getpaseo/paseo/pull/2218) by [@ebg1223](https://github.com/ebg1223))
+- Local dictation now works in Nix-packaged installations ([#1587](https://github.com/getpaseo/paseo/pull/1587) by [@yhori991](https://github.com/yhori991))
+- The composer remains visible after submitting dictated text and returning to the app ([#2194](https://github.com/getpaseo/paseo/pull/2194))
+- Desktop's dictation shortcut remains responsive after finishing a recording ([#2268](https://github.com/getpaseo/paseo/pull/2268))
+- Projects can be renamed before their first workspace ([#2252](https://github.com/getpaseo/paseo/pull/2252) by [@albertodeago](https://github.com/albertodeago))
+- Settings keep showing a connected remote host when the local daemon is stopped ([#1749](https://github.com/getpaseo/paseo/pull/1749) by [@dwyanewang](https://github.com/dwyanewang))
+- Pinned workspaces no longer disappear briefly when reopening the compact sidebar ([#2210](https://github.com/getpaseo/paseo/pull/2210))
 - Terminal panes no longer remain at 80x24 after focus or visibility changes ([#2059](https://github.com/getpaseo/paseo/pull/2059), [#2154](https://github.com/getpaseo/paseo/pull/2154) by [@cleiter](https://github.com/cleiter))
 - Sign-in popups in the desktop browser now complete successfully ([#2137](https://github.com/getpaseo/paseo/pull/2137))
 - Browser typing and shortcuts no longer submit the active Paseo prompt ([#1982](https://github.com/getpaseo/paseo/pull/1982))
 - Agent browser tabs remain controllable after switching workspaces ([#2156](https://github.com/getpaseo/paseo/pull/2156))
 - Archived workspaces now show the correct Unarchive or Restore action ([#2002](https://github.com/getpaseo/paseo/pull/2002))
-- Archived sessions can be reimported into the current workspace ([#2123](https://github.com/getpaseo/paseo/pull/2123))
+- Archived sessions can be reimported into the current workspace ([#2123](https://github.com/getpaseo/paseo/pull/2123), [#2265](https://github.com/getpaseo/paseo/pull/2265) by [@nikuscs](https://github.com/nikuscs))
 - Browser shortcuts no longer appear where browser tabs are unavailable ([#2116](https://github.com/getpaseo/paseo/pull/2116) by [@jasonhnd](https://github.com/jasonhnd))
 
 ## 0.1.110 - 2026-07-16

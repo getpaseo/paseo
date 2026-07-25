@@ -18,6 +18,7 @@ import {
   type DaemonStartOptions,
 } from "./daemon/local-daemon.js";
 import { tryConnectToDaemon } from "../utils/client.js";
+import { formatPairingInstructions } from "../output/pairing.js";
 
 interface OnboardOptions extends DaemonStartOptions {
   timeout?: string;
@@ -520,11 +521,13 @@ export async function runOnboard(options: OnboardOptions): Promise<void> {
     return;
   }
 
-  renderNote(
-    pairing.qr ?? "QR is unavailable in this terminal. Use the pairing link below.",
-    "Scan to pair",
+  process.stdout.write(
+    formatPairingInstructions({
+      url: pairing.url,
+      qr: pairing.qr,
+      columns: process.stdout.columns,
+    }),
   );
-  renderNote(pairing.url, "Pairing link");
   printNextSteps(pairing.url, paseoHome, richUi);
   if (richUi) {
     outro("Paseo is ready!");

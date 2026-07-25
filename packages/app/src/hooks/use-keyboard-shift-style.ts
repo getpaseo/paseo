@@ -9,7 +9,10 @@ import {
 import { Platform } from "react-native";
 import type { ViewStyle } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
+import {
+  useGenericKeyboardHandler,
+  useReanimatedKeyboardAnimation,
+} from "react-native-keyboard-controller";
 import {
   useAnimatedStyle,
   useDerivedValue,
@@ -39,6 +42,19 @@ export function KeyboardShiftProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     bottomInset.value = insets.bottom;
   }, [bottomInset, insets.bottom]);
+
+  useGenericKeyboardHandler(
+    {
+      onEnd: (event) => {
+        "worklet";
+        if (isIos) {
+          keyboardHeight.value = -event.height;
+          keyboardProgress.value = event.progress;
+        }
+      },
+    },
+    [isIos, keyboardHeight, keyboardProgress],
+  );
 
   const shift = useDerivedValue(() => {
     "worklet";

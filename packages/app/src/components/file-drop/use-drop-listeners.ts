@@ -5,9 +5,9 @@ import type { ImageAttachment } from "@/composer/types";
 import { getDesktopHost } from "@/desktop/host";
 import { persistAttachmentFromBlob, persistAttachmentFromFileUri } from "@/attachments/service";
 import {
-  getRasterImageMimeTypeFromPath,
   isRasterImageFile,
   isRasterImagePath,
+  resolveRasterImageMimeType,
 } from "@/attachments/file-types";
 import { isWeb } from "@/constants/platform";
 import type { DroppedItem, DroppedPathItem, FileDropSink } from "./types";
@@ -27,14 +27,21 @@ interface DesktopDragDropEvent {
 }
 
 async function filePathToImageAttachment(path: string): Promise<ImageAttachment> {
-  const mimeType = getRasterImageMimeTypeFromPath(path) ?? "image/jpeg";
+  const mimeType = resolveRasterImageMimeType({ path });
+  if (!mimeType) {
+    throw new Error(`Unsupported image type for '${path}'.`);
+  }
   return await persistAttachmentFromFileUri({ uri: path, mimeType });
 }
 
 async function fileToImageAttachment(file: File): Promise<ImageAttachment> {
+  const mimeType = resolveRasterImageMimeType({ mimeType: file.type, path: file.name });
+  if (!mimeType) {
+    throw new Error(`Unsupported image type for '${file.name}'.`);
+  }
   return await persistAttachmentFromBlob({
     blob: file,
-    mimeType: file.type || "image/jpeg",
+    mimeType,
     fileName: file.name,
   });
 }

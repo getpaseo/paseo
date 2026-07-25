@@ -1096,7 +1096,7 @@ describe("resolveAgentForm", () => {
   });
 
   describe("RESET", () => {
-    it("resets userModified flags while keeping form state", () => {
+    it("keeps form values but marks them unresolved for the next open", () => {
       const state = makeState(
         { provider: "codex", modeId: "full-access", model: "gpt-5.3-codex" },
         { provider: true, modeId: true, model: true },
@@ -1106,7 +1106,7 @@ describe("resolveAgentForm", () => {
 
       expect(next.userModified).toEqual(INITIAL_USER_MODIFIED);
       expect(next.form).toEqual(state.form);
-      expect(next.resolution.status).toBe("completed");
+      expect(next.resolution.status).toBe("pending");
     });
   });
 

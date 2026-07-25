@@ -87,6 +87,7 @@ export interface WorkspaceReconciliationServiceOptions {
   onChanges?: (changes: ReconciliationChange[]) => void;
   workspaceGitService?: Pick<WorkspaceGitService, "getCheckout">;
   onProjectUpdate?: (update: ProjectUpdate) => void;
+  onWorkspaceArchived?: (workspaceId: string) => void | Promise<void>;
   onWorkspacesChanged?: (workspaceIds: string[]) => Promise<void>;
   watchProjectRoot?: ProjectRootWatch;
   clock?: ReconciliationClock;
@@ -116,6 +117,7 @@ export class WorkspaceReconciliationService {
   private readonly onChanges: ((changes: ReconciliationChange[]) => void) | null;
   private readonly workspaceGitService: Pick<WorkspaceGitService, "getCheckout"> | null;
   private readonly onProjectUpdate: ((update: ProjectUpdate) => void) | null;
+  private readonly onWorkspaceArchived: ((workspaceId: string) => void | Promise<void>) | null;
   private readonly onWorkspacesChanged: ((workspaceIds: string[]) => Promise<void>) | null;
   private readonly watchProjectRoot: ProjectRootWatch;
   private readonly clock: ReconciliationClock;
@@ -137,6 +139,7 @@ export class WorkspaceReconciliationService {
     this.onChanges = options.onChanges ?? null;
     this.workspaceGitService = options.workspaceGitService ?? null;
     this.onProjectUpdate = options.onProjectUpdate ?? null;
+    this.onWorkspaceArchived = options.onWorkspaceArchived ?? null;
     this.onWorkspacesChanged = options.onWorkspacesChanged ?? null;
     this.watchProjectRoot = options.watchProjectRoot ?? watchProjectRoot;
     this.clock = options.clock ?? systemClock;
@@ -237,6 +240,7 @@ export class WorkspaceReconciliationService {
       missingWorkspaces.map(async (workspace) => {
         const timestamp = new Date().toISOString();
         await this.workspaceRegistry.archive(workspace.workspaceId, timestamp);
+        await this.onWorkspaceArchived?.(workspace.workspaceId);
         changes.push({
           kind: "workspace_archived",
           workspaceId: workspace.workspaceId,

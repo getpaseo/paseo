@@ -496,6 +496,7 @@ export const fr: TranslationResources = {
         openFor: "Ouvrir le menu pour{{label}}",
         copyResumeCommand: "Copier la commande de reprise",
         copyAgentId: "Copier l'identifiant de l'agent",
+        copyTerminalId: "Copier l'identifiant du terminal",
         copyFilePath: "Copy file path",
         rename: "Rebaptiser",
         closeAbove: "Fermer les onglets ci-dessus",
@@ -534,6 +535,7 @@ export const fr: TranslationResources = {
       toasts: {
         copyFailed: "Échec de la copie",
         agentIdCopiedLabel: "AgentID",
+        terminalIdCopiedLabel: "Identifiant du terminal",
         resumeCommandCopiedLabel: "reprendre la commande",
         filePathCopiedLabel: "File path",
         resumeIdUnavailable: "ReprendreIDnon disponible",
@@ -788,6 +790,8 @@ export const fr: TranslationResources = {
         },
       },
       diff: {
+        openChangesTab: "Ouvrir l'onglet Modifications",
+        closeChangesTab: "Fermer l'onglet Modifications",
         binaryFile: "Fichier binaire",
         tooLarge: "Diff trop grand pour être affiché",
         unified: "Différentiel unifié",
@@ -823,7 +827,8 @@ export const fr: TranslationResources = {
         deletedFile: "Supprimé",
         commits: {
           title: "Commits",
-          countLabel: "{{count}} commits récents",
+          countLabel: "{{count}} commits de l’espace de travail",
+          noneAhead: "Aucun commit en avance sur {{baseRef}} pour le moment",
           fileDiffEmpty: "Aucune modification à afficher",
           fileDiffError: "Échec du chargement du diff du fichier",
           loading: "Chargement des commits…",
@@ -1540,6 +1545,8 @@ export const fr: TranslationResources = {
       changesLabel: "Modifications",
       changesSubtitle: "Différences de l'arbre de travail",
       commitSubtitle: "Différences du commit",
+      uncommittedSubtitle: "Modifications non validées",
+      baseSubtitle: "Comparé à {{baseRef}}",
       directoryMissing: "Répertoire Workspace introuvable.",
       empty: "Aucune modification",
       loadError: "Échec du chargement des différences",

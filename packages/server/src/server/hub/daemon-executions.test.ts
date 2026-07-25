@@ -53,13 +53,12 @@ test("a failed Hub create removes its auto-created worktree", async () => {
   expect(await hub.durableOwnedAgentIds()).toEqual([]);
 });
 
-test("failed Hub auto-archive creates release their lifecycle subscriptions", async () => {
+test("failed Hub creates release their lifecycle subscriptions", async () => {
   const hub = await launchRelationship();
   const subscriptionBaseline = hub.agentSubscriptionCount();
 
   hub.failProviderPromptStart();
   hub.beginOwnedCreate("failed-prompt-create-1", "failed-prompt-execution-1", {
-    autoArchive: true,
     worktree: { mode: "branch-off", newBranch: "failed-prompt-1" },
   });
   const first = await hub.ownedCreateResult("failed-prompt-create-1");
@@ -75,7 +74,6 @@ test("failed Hub auto-archive creates release their lifecycle subscriptions", as
 
   hub.failProviderPromptStart();
   hub.beginOwnedCreate("failed-prompt-create-2", "failed-prompt-execution-2", {
-    autoArchive: true,
     worktree: { mode: "branch-off", newBranch: "failed-prompt-2" },
   });
   const second = await hub.ownedCreateResult("failed-prompt-create-2");
@@ -138,7 +136,6 @@ test("failed create never archives a reused worktree", async () => {
   const failedPrompt = "Fail the reused worktree create";
   hub.failProviderPromptStart(failedPrompt);
   hub.beginOwnedCreate("reused-create", "reused-execution", {
-    autoArchive: true,
     prompt: failedPrompt,
     worktree: { mode: "branch-off", newBranch: "shared-hub-worktree" },
   });

@@ -106,6 +106,37 @@ function createSession(
   return session;
 }
 
+function createProviderWithFakeAppServer(appServer: FakeCodexAppServer): CodexAppServerAgentClient {
+  const provider = new CodexAppServerAgentClient(createTestLogger());
+  const internals = castInternals<{
+    goalsEnabledPromise: Promise<boolean> | null;
+    autoReviewEnabledPromise: Promise<boolean> | null;
+    spawnAppServer: () => Promise<ChildProcessWithoutNullStreams>;
+  }>(provider);
+  internals.goalsEnabledPromise = Promise.resolve(false);
+  internals.autoReviewEnabledPromise = Promise.resolve(false);
+  internals.spawnAppServer = async () => appServer.child;
+  return provider;
+}
+
+function archivedThreadHandle() {
+  return {
+    sessionId: "archived-thread-id",
+    metadata: {
+      cwd: "/tmp/codex-question-test",
+      modeId: "auto",
+      model: "gpt-5.4",
+    },
+  };
+}
+
+function archivedThreadErrorMessage(threadId: string): string {
+  return (
+    `session ${threadId} is archived. ` +
+    `Run \`codex unarchive ${threadId}\` to unarchive it first.`
+  );
+}
+
 function asInternals(session: CodexTestSession): CodexSessionTestAccess {
   return castInternals<CodexSessionTestAccess>(session);
 }
@@ -871,6 +902,66 @@ describe("Codex app-server provider", () => {
     await session.close();
   });
 
+  test("loads archived Codex history without resuming the native thread", async () => {
+    const threadRequests: string[] = [];
+    const appServer = createFakeCodexAppServer({
+      "thread/loaded/list": () => {
+        threadRequests.push("thread/loaded/list");
+        return { data: [] };
+      },
+      "thread/resume": () => {
+        threadRequests.push("thread/resume");
+        return Promise.reject(new Error(archivedThreadErrorMessage("archived-thread-id")));
+      },
+      "thread/read": () => {
+        threadRequests.push("thread/read");
+        return { thread: { turns: [] } };
+      },
+    });
+    const provider = createProviderWithFakeAppServer(appServer);
+
+    const session = await provider.resumeSession(archivedThreadHandle(), undefined, undefined, {
+      purpose: "history",
+    });
+
+    expect(threadRequests).toEqual(["thread/loaded/list", "thread/resume", "thread/read"]);
+    await session.close();
+    appServer.assertNoErrors();
+  });
+
+  test("closes Codex app-server when an interactive resume fails", async () => {
+    const appServer = createFakeCodexAppServer({
+      "thread/resume": () =>
+        Promise.reject(new Error(archivedThreadErrorMessage("archived-thread-id"))),
+    });
+    const killSpy = vi.spyOn(appServer.child, "kill");
+    const provider = createProviderWithFakeAppServer(appServer);
+
+    await expect(provider.resumeSession(archivedThreadHandle())).rejects.toThrow(
+      archivedThreadErrorMessage("archived-thread-id"),
+    );
+
+    expect(killSpy).toHaveBeenCalledWith("SIGTERM");
+    appServer.assertNoErrors();
+  });
+
+  test("closes Codex app-server when archived history hydration fails", async () => {
+    const appServer = createFakeCodexAppServer({
+      "thread/resume": () =>
+        Promise.reject(new Error(archivedThreadErrorMessage("archived-thread-id"))),
+      "thread/read": () => Promise.reject(new Error("thread history is unavailable")),
+    });
+    const killSpy = vi.spyOn(appServer.child, "kill");
+    const provider = createProviderWithFakeAppServer(appServer);
+
+    await expect(
+      provider.resumeSession(archivedThreadHandle(), undefined, undefined, { purpose: "history" }),
+    ).rejects.toThrow("thread history is unavailable");
+
+    expect(killSpy).toHaveBeenCalledWith("SIGTERM");
+    appServer.assertNoErrors();
+  });
+
   test("unarchives a persisted Codex thread through app-server", async () => {
     const threadRequests: Array<{ method: string; params: unknown }> = [];
     const appServer = createFakeCodexAppServer({
@@ -1113,12 +1204,7 @@ describe("Codex app-server provider", () => {
         };
       },
     });
-    const provider = new CodexAppServerAgentClient(createTestLogger());
-    castInternals<{ goalsEnabledPromise: Promise<boolean> | null }>(provider).goalsEnabledPromise =
-      Promise.resolve(false);
-    castInternals<{ spawnAppServer: () => Promise<ChildProcessWithoutNullStreams> }>(
-      provider,
-    ).spawnAppServer = async () => appServer.child;
+    const provider = createProviderWithFakeAppServer(appServer);
 
     const outcome = await Promise.race([
       provider

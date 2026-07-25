@@ -3,6 +3,7 @@ import type {
   SessionOutboundMessage,
   StartWorkspaceScriptRequest,
   WorkspaceDescriptorPayload,
+  WorkspaceScriptPayload,
 } from "../../messages.js";
 import type { TerminalManager } from "../../../terminal/terminal-manager.js";
 import type { ServiceProxySubsystem } from "../../service-proxy.js";
@@ -43,6 +44,9 @@ export interface WorkspaceScriptsService {
     project?: PersistedProjectRecord | null,
   ): WorkspaceScriptsPayload;
   emitStatusUpdate(workspaceId: string, workspaceDirectory: string): Promise<void>;
+  list(workspaceId: string): Promise<WorkspaceScriptPayload[]>;
+  launch(input: { workspaceId: string; scriptName: string }): Promise<WorkspaceScriptPayload>;
+  stop(input: { workspaceId: string; scriptName: string }): Promise<WorkspaceScriptPayload>;
   start(request: StartWorkspaceScriptRequest): Promise<void>;
 }
 
@@ -93,11 +97,10 @@ export function createWorkspaceScriptsService(deps: {
         currentBranch,
       };
     }
-    if (!snapshot) return undefined;
     return {
       projectSlug: deriveProjectSlug(
         workspace.cwd,
-        snapshot.git.isGit ? snapshot.git.remoteUrl : null,
+        snapshot?.git.isGit ? snapshot.git.remoteUrl : null,
       ),
       currentBranch,
     };
@@ -137,47 +140,104 @@ export function createWorkspaceScriptsService(deps: {
     }
   }
 
+  async function getWorkspace(workspaceId: string) {
+    const workspace = await workspaceRegistry.get(workspaceId);
+    if (!workspace) {
+      throw new Error(`Workspace not found: ${workspaceId}`);
+    }
+    return workspace;
+  }
+
+  function requireAvailable(): {
+    serviceProxy: ServiceProxySubsystem;
+    runtimeStore: WorkspaceScriptRuntimeStore;
+    terminalManager: TerminalManager;
+  } {
+    if (!terminalManager || !serviceProxy || !scriptRuntimeStore) {
+      throw new Error("Workspace scripts are not available on this daemon");
+    }
+    return { serviceProxy, runtimeStore: scriptRuntimeStore, terminalManager };
+  }
+
+  async function list(workspaceId: string): Promise<WorkspaceScriptPayload[]> {
+    requireAvailable();
+    const workspace = await getWorkspace(workspaceId);
+    const project = await projectRegistry.get(workspace.projectId);
+    return buildSnapshot(workspace, project);
+  }
+
+  async function launchProcess(input: { workspaceId: string; scriptName: string }) {
+    const available = requireAvailable();
+    const workspace = await getWorkspace(input.workspaceId);
+    const project = await projectRegistry.get(workspace.projectId);
+    const gitMetadata = resolveGitMetadata(workspace, project);
+    const result = await spawnWorkspaceScript({
+      repoRoot: workspace.cwd,
+      workspaceId: workspace.workspaceId,
+      projectSlug: gitMetadata.projectSlug,
+      branchName: gitMetadata.currentBranch,
+      scriptName: input.scriptName,
+      daemonPort: getDaemonTcpPort?.() ?? null,
+      daemonListenHost: getDaemonTcpHost?.() ?? null,
+      serviceProxyPublicBaseUrl,
+      serviceProxy: available.serviceProxy,
+      runtimeStore: available.runtimeStore,
+      terminalManager: available.terminalManager,
+      globalServicePorts,
+      logger,
+      onLifecycleChanged: () => {
+        void emitStatusUpdate(workspace.workspaceId, workspace.cwd);
+      },
+    });
+    return { workspace, project, terminalId: result.terminalId };
+  }
+
+  async function launch(input: {
+    workspaceId: string;
+    scriptName: string;
+  }): Promise<WorkspaceScriptPayload> {
+    const { workspace, project } = await launchProcess(input);
+    const script = buildSnapshot(workspace, project).find(
+      (entry) => entry.scriptName === input.scriptName,
+    );
+    if (!script) {
+      throw new Error(`Script '${input.scriptName}' did not produce a status record`);
+    }
+    void emitStatusUpdate(workspace.workspaceId, workspace.cwd);
+    return script;
+  }
+
+  async function stop(input: {
+    workspaceId: string;
+    scriptName: string;
+  }): Promise<WorkspaceScriptPayload> {
+    const available = requireAvailable();
+    const workspace = await getWorkspace(input.workspaceId);
+    const project = await projectRegistry.get(workspace.projectId);
+    const runtime = available.runtimeStore.get(input);
+    if (!runtime || runtime.lifecycle !== "running") {
+      throw new Error(`Script '${input.scriptName}' is not running`);
+    }
+    if (!available.terminalManager.getTerminal(runtime.terminalId)) {
+      throw new Error(`Terminal for script '${input.scriptName}' is no longer available`);
+    }
+
+    // The launcher's terminal exit listener owns route removal and runtime state updates.
+    await available.terminalManager.killTerminalAndWait(runtime.terminalId);
+
+    const script = buildSnapshot(workspace, project).find(
+      (entry) => entry.scriptName === input.scriptName,
+    );
+    if (!script) {
+      throw new Error(`Script '${input.scriptName}' did not produce a status record`);
+    }
+    void emitStatusUpdate(workspace.workspaceId, workspace.cwd);
+    return script;
+  }
+
   async function start(request: StartWorkspaceScriptRequest): Promise<void> {
     try {
-      if (!terminalManager || !serviceProxy || !scriptRuntimeStore) {
-        throw new Error("Workspace scripts are not available on this daemon");
-      }
-
-      const workspace = await workspaceRegistry.get(request.workspaceId);
-      if (!workspace) {
-        throw new Error(`Workspace not found: ${request.workspaceId}`);
-      }
-      const project = await projectRegistry.get(workspace.projectId);
-      const projectSlug = project
-        ? deriveProjectServiceSlug(project)
-        : deriveProjectSlug(
-            workspace.cwd,
-            workspaceGitService.peekSnapshot(workspace.cwd)?.git.remoteUrl ?? null,
-          );
-      const branchName =
-        workspaceGitService.peekSnapshot(workspace.cwd)?.git.currentBranch ??
-        workspace.branch ??
-        null;
-
-      const serviceResult = await spawnWorkspaceScript({
-        repoRoot: workspace.cwd,
-        workspaceId: workspace.workspaceId,
-        projectSlug,
-        branchName,
-        scriptName: request.scriptName,
-        daemonPort: getDaemonTcpPort?.() ?? null,
-        daemonListenHost: getDaemonTcpHost?.() ?? null,
-        serviceProxyPublicBaseUrl,
-        serviceProxy,
-        runtimeStore: scriptRuntimeStore,
-        terminalManager,
-        globalServicePorts,
-        logger,
-        onLifecycleChanged: () => {
-          void emitStatusUpdate(workspace.workspaceId, workspace.cwd);
-        },
-      });
-
+      const { workspace, terminalId } = await launchProcess(request);
       void emitStatusUpdate(workspace.workspaceId, workspace.cwd);
       emit({
         type: "start_workspace_script_response",
@@ -185,18 +245,14 @@ export function createWorkspaceScriptsService(deps: {
           requestId: request.requestId,
           workspaceId: request.workspaceId,
           scriptName: request.scriptName,
-          terminalId: serviceResult.terminalId,
+          terminalId,
           error: null,
         },
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to start workspace script";
       logger.error(
-        {
-          err: error,
-          workspaceId: request.workspaceId,
-          scriptName: request.scriptName,
-        },
+        { err: error, workspaceId: request.workspaceId, scriptName: request.scriptName },
         "Failed to start workspace script",
       );
       emit({
@@ -212,5 +268,5 @@ export function createWorkspaceScriptsService(deps: {
     }
   }
 
-  return { buildSnapshot, emitStatusUpdate, start };
+  return { buildSnapshot, emitStatusUpdate, list, launch, stop, start };
 }

@@ -46,6 +46,11 @@ interface ProviderListRow {
 
 const EXPECTED_CLAUDE_MODELS = [
   {
+    id: "claude-opus-5",
+    model: "Opus 5",
+    descriptionFragment: "Latest release",
+  },
+  {
     id: "claude-fable-5",
     model: "Fable 5",
     descriptionFragment: "Most powerful",
@@ -58,7 +63,7 @@ const EXPECTED_CLAUDE_MODELS = [
   {
     id: "claude-opus-4-8",
     model: "Opus 4.8",
-    descriptionFragment: "Latest release",
+    descriptionFragment: "Previous release",
   },
   {
     id: "claude-sonnet-5",
