@@ -363,6 +363,68 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       expect(metadata).toMatchObject({ baseRefName: "main" });
     });
 
+    it("removes fetched branches when include planning fails", async () => {
+      const remoteDir = join(tempDir, "remote.git");
+      const remoteCloneDir = join(tempDir, "remote-clone");
+      execFileSync("git", ["clone", "--bare", repoDir, remoteDir]);
+      execFileSync("git", ["remote", "add", "origin", remoteDir], { cwd: repoDir });
+
+      execFileSync("git", ["clone", remoteDir, remoteCloneDir]);
+      execFileSync("git", ["config", "user.email", "test@test.com"], { cwd: remoteCloneDir });
+      execFileSync("git", ["config", "user.name", "Test"], { cwd: remoteCloneDir });
+      execFileSync("git", ["checkout", "-b", "contributor/cleanup"], { cwd: remoteCloneDir });
+      writeFileSync(join(remoteCloneDir, "file.txt"), "from-pr\n");
+      execFileSync("git", ["add", "file.txt"], { cwd: remoteCloneDir });
+      execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "pr branch"], {
+        cwd: remoteCloneDir,
+      });
+      const prHead = execFileSync("git", ["rev-parse", "HEAD"], { cwd: remoteCloneDir })
+        .toString()
+        .trim();
+      execFileSync("git", ["push", "origin", "contributor/cleanup"], { cwd: remoteCloneDir });
+      execFileSync("git", [`--git-dir=${remoteDir}`, "update-ref", "refs/pull/44/head", prHead]);
+      mkdirSync(join(repoDir, ".worktreeinclude"));
+
+      await expect(
+        createLegacyWorktreeForTest({
+          cwd: repoDir,
+          worktreeSlug: "pr-44-cleanup",
+          source: {
+            kind: "checkout-github-pr",
+            githubPrNumber: 44,
+            headRef: "contributor/cleanup",
+            baseRefName: "main",
+          },
+          runSetup: false,
+          paseoHome,
+        }),
+      ).rejects.toMatchObject({ code: "EISDIR" });
+
+      expect(() =>
+        execFileSync("git", ["show-ref", "--verify", "--quiet", "refs/heads/contributor/cleanup"], {
+          cwd: repoDir,
+          stdio: "pipe",
+        }),
+      ).toThrow();
+
+      await expect(
+        createLegacyWorktreeForTest({
+          cwd: repoDir,
+          worktreeSlug: "branch-cleanup",
+          source: { kind: "checkout-branch", branchName: "contributor/cleanup" },
+          runSetup: false,
+          paseoHome,
+        }),
+      ).rejects.toMatchObject({ code: "EISDIR" });
+
+      expect(() =>
+        execFileSync("git", ["show-ref", "--verify", "--quiet", "refs/heads/contributor/cleanup"], {
+          cwd: repoDir,
+          stdio: "pipe",
+        }),
+      ).toThrow();
+    });
+
     it("fetches a GitHub PR branch when the head ref contains uppercase letters and dots", async () => {
       const remoteDir = join(tempDir, "remote.git");
       const remoteCloneDir = join(tempDir, "remote-clone");
@@ -1221,6 +1283,43 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
           encoding: "utf8",
         }).trim(),
       ).toContain("feature/protected-include");
+    });
+
+    it("keeps includes when branching from a Paseo-managed worktree", async () => {
+      writeFileSync(join(repoDir, ".gitignore"), ".env\n");
+      writeFileSync(join(repoDir, ".worktreeinclude"), ".env\n");
+      execFileSync("git", ["add", ".gitignore", ".worktreeinclude"], { cwd: repoDir });
+      execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "add include config"], {
+        cwd: repoDir,
+      });
+      writeFileSync(join(repoDir, ".env"), "source\n");
+
+      const sourceWorktree = await createLegacyWorktreeForTest({
+        cwd: repoDir,
+        worktreeSlug: "include-source",
+        source: {
+          kind: "branch-off",
+          baseBranch: "main",
+          branchName: "feature/include-source",
+        },
+        runSetup: false,
+        paseoHome,
+      });
+      const nestedWorktree = await createLegacyWorktreeForTest({
+        cwd: sourceWorktree.worktreePath,
+        worktreeSlug: "include-nested",
+        source: {
+          kind: "branch-off",
+          baseBranch: "feature/include-source",
+          branchName: "feature/include-nested",
+        },
+        runSetup: false,
+        paseoHome,
+      });
+
+      expect(readFileSync(join(sourceWorktree.worktreePath, ".env"), "utf8")).toBe("source\n");
+      expect(readFileSync(join(nestedWorktree.worktreePath, ".env"), "utf8")).toBe("source\n");
+      expect(nestedWorktree.worktreeIncludeSummary?.skipped).toEqual([]);
     });
 
     it("skips a symlink include conflict and keeps the new worktree", async () => {

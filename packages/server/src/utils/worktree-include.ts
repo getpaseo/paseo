@@ -1,4 +1,4 @@
-import { type Stats } from "fs";
+import { type Dirent, type Stats } from "fs";
 import {
   copyFile,
   cp,
@@ -108,6 +108,11 @@ interface NormalizedWorktreeIncludeMaterializations {
   skipped: WorktreeIncludeSkippedEntry[];
 }
 
+interface WorktreeIncludeCandidateCollection {
+  candidates: string[];
+  errorsByPattern: Map<string, unknown>;
+}
+
 export class WorktreeIncludeError extends Error {
   constructor(
     public readonly code: WorktreeIncludeErrorCode,
@@ -142,26 +147,33 @@ export async function readWorktreeIncludePlan(
     };
   }
 
-  const excludedSourceRoots = await Promise.all(
-    (options.excludedSourceRoots ?? []).map(canonicalizeExistingPathPrefix),
-  );
+  const excludedSourceRoots = (
+    await Promise.all((options.excludedSourceRoots ?? []).map(canonicalizeExistingPathPrefix))
+  ).filter((candidate) => !isPathInsideRoot(candidate, sourceRoot));
   const candidatePatterns = entries
     .filter(
       (entry) => entry.relativePath.includes("*") && getRecursiveDirectoryPath(entry) === null,
     )
     .map((entry) => entry.relativePath);
-  const candidates =
+  const candidateCollection =
     candidatePatterns.length > 0
       ? await collectWorktreeIncludeCandidates({
           sourceRoot,
           excludedSourceRoots,
           patterns: candidatePatterns,
         })
-      : [];
+      : { candidates: [], errorsByPattern: new Map<string, unknown>() };
   const materializations: WorktreeIncludeMaterialization[] = [];
 
   for (const entry of entries) {
-    const matchedPaths = resolveEntryMatches({ entry, candidates });
+    if (candidateCollection.errorsByPattern.has(entry.relativePath)) {
+      skipped.push(
+        toSkippedEntry(entry, candidateCollection.errorsByPattern.get(entry.relativePath)),
+      );
+      continue;
+    }
+
+    const matchedPaths = resolveEntryMatches({ entry, candidates: candidateCollection.candidates });
     if (matchedPaths.length === 0) {
       skipped.push(toSkippedEntry(entry, noMatchError(entry)));
       continue;
@@ -177,7 +189,7 @@ export async function readWorktreeIncludePlan(
         });
         materializations.push(resolved.materialization);
       } catch (error) {
-        if (!isSkippableWorktreeIncludeError(error)) {
+        if (!isWorktreeIncludeMaterializationError(error)) {
           throw error;
         }
         skipped.push(toSkippedEntry(entry, error));
@@ -594,11 +606,27 @@ async function collectWorktreeIncludeCandidates(options: {
   excludedSourceRoots: string[];
   patterns: string[];
   sourceRoot: string;
-}): Promise<string[]> {
+}): Promise<WorktreeIncludeCandidateCollection> {
   const candidates: string[] = [];
+  const errorsByPattern = new Map<string, unknown>();
 
-  async function visit(directoryPath: string, directorySegments: string[]): Promise<void> {
-    const entries = await readdir(directoryPath, { withFileTypes: true });
+  async function visit(
+    directoryPath: string,
+    directorySegments: string[],
+    patterns: string[],
+  ): Promise<void> {
+    let entries: Dirent<string>[];
+    try {
+      entries = await readdir(directoryPath, { withFileTypes: true });
+    } catch (error) {
+      if (getErrorCode(error) === null) {
+        throw error;
+      }
+      for (const pattern of patterns) {
+        errorsByPattern.set(pattern, error);
+      }
+      return;
+    }
     for (const entry of entries) {
       if (entry.name.toLowerCase() === ".git") {
         continue;
@@ -615,20 +643,20 @@ async function collectWorktreeIncludeCandidates(options: {
       }
 
       const relativePath = pathSegments.join("/");
-      if (options.patterns.some((pattern) => worktreeIncludeGlobMatches(pattern, relativePath))) {
+      if (patterns.some((pattern) => worktreeIncludeGlobMatches(pattern, relativePath))) {
         candidates.push(relativePath);
       }
-      if (
-        entry.isDirectory() &&
-        options.patterns.some((pattern) => canGlobMatchDescendant(pattern, pathSegments))
-      ) {
-        await visit(sourcePath, pathSegments);
+      const descendantPatterns = patterns.filter((pattern) =>
+        canGlobMatchDescendant(pattern, pathSegments),
+      );
+      if (entry.isDirectory() && descendantPatterns.length > 0) {
+        await visit(sourcePath, pathSegments, descendantPatterns);
       }
     }
   }
 
-  await visit(options.sourceRoot, []);
-  return candidates.sort();
+  await visit(options.sourceRoot, [], options.patterns);
+  return { candidates: candidates.sort(), errorsByPattern };
 }
 
 function canGlobMatchDescendant(pattern: string, directorySegments: string[]): boolean {

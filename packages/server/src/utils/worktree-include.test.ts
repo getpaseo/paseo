@@ -133,6 +133,24 @@ describe("worktree include planning", () => {
     expect(plan.skipped).toEqual([expect.objectContaining({ raw: ".dev/**", reason: "unsafe" })]);
   });
 
+  it("allows includes from a source worktree inside the protected worktree root", async () => {
+    const managedWorktreesRoot = join(tempDir, "paseo-home", "worktrees", "project");
+    sourceRoot = join(managedWorktreesRoot, "source-worktree");
+    mkdirSync(sourceRoot, { recursive: true });
+    writeFileSync(join(sourceRoot, ".worktreeinclude"), ".env\n");
+    writeFileSync(join(sourceRoot, ".env"), "source\n");
+
+    const plan = await readWorktreeIncludePlan({
+      sourceRoot,
+      excludedSourceRoots: [managedWorktreesRoot],
+    });
+
+    expect(plan.materializations).toEqual([
+      expect.objectContaining({ relativePath: ".env", sourceKind: "file" }),
+    ]);
+    expect(plan.skipped).toEqual([]);
+  });
+
   it.skipIf(isPlatform("win32"))(
     "skips protected paths reached through a symlink alias",
     async () => {
@@ -193,6 +211,37 @@ describe("worktree include planning", () => {
         ]);
       } finally {
         chmodSync(unreadableDirectory, 0o700);
+      }
+    },
+  );
+
+  it.skipIf(isPlatform("win32") || process.getuid?.() === 0)(
+    "skips inaccessible entries while retaining safe paths",
+    async () => {
+      const inaccessibleDirectory = join(sourceRoot, "private");
+      mkdirSync(inaccessibleDirectory);
+      writeFileSync(join(inaccessibleDirectory, "secret.txt"), "secret\n");
+      writeFileSync(join(sourceRoot, "safe.txt"), "safe\n");
+      writeFileSync(
+        join(sourceRoot, ".worktreeinclude"),
+        ["private/**", "private/*", "safe.txt", ""].join("\n"),
+      );
+      chmodSync(inaccessibleDirectory, 0o000);
+
+      try {
+        const plan = await readWorktreeIncludePlan({ sourceRoot });
+
+        expect(plan.materializations).toEqual([
+          expect.objectContaining({ relativePath: "safe.txt", sourceKind: "file" }),
+        ]);
+        expect(plan.skipped).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ raw: "private/**", reason: "materialization" }),
+            expect.objectContaining({ raw: "private/*", reason: "materialization" }),
+          ]),
+        );
+      } finally {
+        chmodSync(inaccessibleDirectory, 0o700);
       }
     },
   );
