@@ -30,6 +30,7 @@ import {
   parseClampedFontSize,
   sanitizeFontFamily,
   useAppSettings,
+  type AppearanceSettings,
   type AppSettings,
   DEFAULT_THEME_PREFERENCE,
 } from "@/hooks/use-settings";
@@ -515,6 +516,42 @@ function SyntaxRow({ value, onChange }: SyntaxRowProps) {
 }
 
 // ---------------------------------------------------------------------------
+// Sidebar: device-local toggles that declutter the sidebar
+// ---------------------------------------------------------------------------
+
+interface SidebarToggleRowProps {
+  title: string;
+  hint: string;
+  settingKey: keyof AppearanceSettings;
+  value: boolean;
+  withBorder: boolean;
+  onChange: (key: keyof AppearanceSettings, value: boolean) => void;
+}
+
+function SidebarToggleRow({
+  title,
+  hint,
+  settingKey,
+  value,
+  withBorder,
+  onChange,
+}: SidebarToggleRowProps) {
+  const handleValueChange = useCallback(
+    (next: boolean) => onChange(settingKey, next),
+    [onChange, settingKey],
+  );
+  return (
+    <View style={withBorder ? [settingsStyles.row, settingsStyles.rowBorder] : settingsStyles.row}>
+      <View style={settingsStyles.rowContent}>
+        <Text style={settingsStyles.rowTitle}>{title}</Text>
+        <Text style={settingsStyles.rowHint}>{hint}</Text>
+      </View>
+      <Switch value={value} onValueChange={handleValueChange} />
+    </View>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
 
@@ -587,6 +624,13 @@ export function AppearanceSection() {
       void updateSettings({ chatOutlineEnabled });
     },
     [updateSettings],
+  );
+
+  const handleAppearanceChange = useCallback(
+    (key: keyof AppearanceSettings, value: boolean) => {
+      void updateSettings({ appearance: { ...settings.appearance, [key]: value } });
+    },
+    [settings.appearance, updateSettings],
   );
 
   const commitUiFontFamily = useCallback(
@@ -711,6 +755,42 @@ export function AppearanceSection() {
         </View>
       </SettingsSection>
       <SidebarNavSection />
+      <SettingsSection title={t("settings.appearance.sidebar.title")}>
+        <View style={settingsStyles.card}>
+          <SidebarToggleRow
+            title={t("settings.appearance.sidebar.compactRows.label")}
+            hint={t("settings.appearance.sidebar.compactRows.description")}
+            settingKey="compactSidebarRows"
+            value={settings.appearance.compactSidebarRows}
+            withBorder={false}
+            onChange={handleAppearanceChange}
+          />
+          <SidebarToggleRow
+            title={t("settings.appearance.sidebar.hideDiffStats.label")}
+            hint={t("settings.appearance.sidebar.hideDiffStats.description")}
+            settingKey="hideWorkspaceDiffStats"
+            value={settings.appearance.hideWorkspaceDiffStats}
+            withBorder
+            onChange={handleAppearanceChange}
+          />
+          <SidebarToggleRow
+            title={t("settings.appearance.sidebar.hidePrStatus.label")}
+            hint={t("settings.appearance.sidebar.hidePrStatus.description")}
+            settingKey="hidePrStatus"
+            value={settings.appearance.hidePrStatus}
+            withBorder
+            onChange={handleAppearanceChange}
+          />
+          <SidebarToggleRow
+            title={t("settings.appearance.sidebar.hideHostNames.label")}
+            hint={t("settings.appearance.sidebar.hideHostNames.description")}
+            settingKey="hideHostLabels"
+            value={settings.appearance.hideHostLabels}
+            withBorder
+            onChange={handleAppearanceChange}
+          />
+        </View>
+      </SettingsSection>
       <SettingsSection title={t("settings.appearance.fonts.title")}>
         <View style={settingsStyles.card}>
           {showInterfaceFontFamilyRow ? (

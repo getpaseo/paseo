@@ -2156,6 +2156,23 @@ export const ptBR: TranslationResources = {
         description: "Escolha quais itens aparecem no topo da barra lateral e em que ordem",
         moveUp: "Mover para cima",
         moveDown: "Mover para baixo",
+        compactRows: {
+          label: "Linhas compactas",
+          description: "Espaçamento mais compacto para linhas de projetos e espaços de trabalho",
+        },
+        hideDiffStats: {
+          label: "Ocultar estatísticas de diff",
+          description: "Oculta as contagens de alterações +/− nas linhas de espaços de trabalho",
+        },
+        hidePrStatus: {
+          label: "Ocultar status de PR",
+          description:
+            "Oculta o selo de pull request e as verificações nas linhas de espaços de trabalho",
+        },
+        hideHostNames: {
+          label: "Ocultar nomes de host",
+          description: "Oculta o nome da máquina ao agrupar por status",
+        },
       },
       fonts: {
         title: "Fontes",

@@ -2133,6 +2133,22 @@ export const ko: TranslationResources = {
         description: "사이드바 상단에 표시할 항목과 순서를 선택하세요",
         moveUp: "위로 이동",
         moveDown: "아래로 이동",
+        compactRows: {
+          label: "컴팩트 행",
+          description: "프로젝트와 워크스페이스 행의 간격을 좁힙니다",
+        },
+        hideDiffStats: {
+          label: "차이 통계 숨기기",
+          description: "워크스페이스 행의 +/− 변경 횟수를 숨깁니다",
+        },
+        hidePrStatus: {
+          label: "PR 상태 숨기기",
+          description: "워크스페이스 행의 풀 리퀘스트 배지와 검사를 숨깁니다",
+        },
+        hideHostNames: {
+          label: "호스트 이름 숨기기",
+          description: "상태별 그룹화 시 기기 이름을 숨깁니다",
+        },
       },
       fonts: {
         title: "글꼴",

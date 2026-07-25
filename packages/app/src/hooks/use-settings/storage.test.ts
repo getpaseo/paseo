@@ -947,6 +947,95 @@ describe("appearance settings", () => {
   });
 });
 
+describe("sidebar appearance preferences", () => {
+  const ALL_DEFAULT = {
+    hideWorkspaceDiffStats: false,
+    hideHostLabels: false,
+    compactSidebarRows: false,
+    hidePrStatus: false,
+  };
+
+  it("defaults every appearance toggle when the stored blob omits the key", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ theme: "dark" }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.appearance).toEqual(ALL_DEFAULT);
+  });
+
+  it("loads stored appearance toggles and defaults the missing ones", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({
+          appearance: { compactSidebarRows: true, hidePrStatus: true },
+        }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.appearance).toEqual({
+      hideWorkspaceDiffStats: false,
+      hideHostLabels: false,
+      compactSidebarRows: true,
+      hidePrStatus: true,
+    });
+  });
+
+  it("ignores non-boolean appearance values", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({
+          appearance: { compactSidebarRows: "yes", hideHostLabels: 1 },
+        }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.appearance).toEqual(ALL_DEFAULT);
+  });
+
+  it("ignores an appearance blob that is not an object", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ appearance: "nope" }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.appearance).toEqual(ALL_DEFAULT);
+  });
+
+  it("persists an updated appearance object through saveAppSettings", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify(DEFAULT_CLIENT_SETTINGS),
+      }),
+    });
+    const queryClient = new QueryClient();
+
+    await saveAppSettings({
+      queryClient,
+      updates: { appearance: { ...ALL_DEFAULT, hideWorkspaceDiffStats: true } },
+      deps,
+    });
+
+    const stored = JSON.parse(deps.storage.entries.get(APP_SETTINGS_KEY) ?? "null");
+    expect(stored.appearance).toEqual({
+      hideWorkspaceDiffStats: true,
+      hideHostLabels: false,
+      compactSidebarRows: false,
+      hidePrStatus: false,
+    });
+  });
+});
+
 describe("parseClampedFontSize", () => {
   it("clamps to the bounds and rejects non-numeric strings", () => {
     expect(parseClampedFontSize(999, { min: 11, max: 24 })).toBe(24);

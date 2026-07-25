@@ -72,6 +72,11 @@ import {
   SidebarWorkspaceContextMenu,
   SidebarWorkspaceMenu,
 } from "@/components/sidebar/sidebar-workspace-menu";
+import { useSidebarAppearance } from "@/components/sidebar/use-sidebar-appearance";
+import {
+  comfortableSidebarRowDensity,
+  compactSidebarRowDensity,
+} from "@/components/sidebar/sidebar-row-metrics";
 import { PinnedSectionHeader } from "@/components/sidebar/pinned-section-header";
 import { SidebarGroupToggleRow } from "@/components/sidebar/sidebar-group-toggle-row";
 import { useLimitedSidebarGroup } from "@/components/sidebar/use-limited-sidebar-group";
@@ -780,6 +785,7 @@ function StatusWorkspaceRowInnerContent({
   const isTouchPlatform = platformIsNative || isCompact;
   const [isPressed, setIsPressed] = useState(false);
   const trailing = useSidebarWorkspaceTrailing();
+  const { compactSidebarRows } = useSidebarAppearance();
   const {
     role: _dragRole,
     tabIndex: _dragTabIndex,
@@ -838,6 +844,7 @@ function StatusWorkspaceRowInnerContent({
           isHovered,
           inStatusGroup,
           isDragging,
+          compact: compactSidebarRows,
         });
         const backdrop = getSidebarRowBackdrop({ isDragging, isPressed, selected, isHovered });
         return (
@@ -1003,15 +1010,18 @@ function getStatusWorkspaceRowStyle({
   isHovered,
   inStatusGroup,
   isDragging,
+  compact,
 }: {
   isPressed: boolean;
   selected: boolean;
   isHovered: boolean;
   inStatusGroup: boolean;
   isDragging: boolean;
+  compact: boolean;
 }) {
   return [
     styles.workspaceRow,
+    compact && styles.workspaceRowCompact,
     inStatusGroup && sidebarWorkspaceRowStyles.rowIndented,
     isHovered && styles.workspaceRowHovered,
     selected && styles.sidebarRowSelected,
@@ -1092,9 +1102,8 @@ const styles = StyleSheet.create((theme) => ({
     position: "relative",
   },
   workspaceRow: {
-    minHeight: 36,
-    marginBottom: theme.spacing[0.5],
-    paddingVertical: theme.spacing[2],
+    ...comfortableSidebarRowDensity(theme),
+    marginBottom: theme.spacing[1],
     paddingLeft: theme.spacing[2],
     paddingRight: theme.spacing[3],
     borderRadius: theme.borderRadius.lg,
@@ -1104,6 +1113,7 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[1],
     userSelect: "none",
   },
+  workspaceRowCompact: compactSidebarRowDensity(theme),
   workspaceRowHovered: {
     backgroundColor: theme.colors.surfaceSidebarHover,
   },

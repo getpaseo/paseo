@@ -23,6 +23,11 @@ import {
   SidebarWorkspaceContextMenu,
   SidebarWorkspaceMenu,
 } from "@/components/sidebar/sidebar-workspace-menu";
+import { useSidebarAppearance } from "@/components/sidebar/use-sidebar-appearance";
+import {
+  comfortableSidebarRowDensity,
+  compactSidebarRowDensity,
+} from "@/components/sidebar/sidebar-row-metrics";
 import {
   SidebarWorkspaceRowFrame,
   SidebarWorkspaceRowContent,
@@ -227,6 +232,7 @@ function WorkspaceRowBody({
   const isTouchPlatform = platformIsNative || isCompact;
   const [isPressed, setIsPressed] = useState(false);
   const trailing = useSidebarWorkspaceTrailing();
+  const { compactSidebarRows } = useSidebarAppearance();
   const draggable = Boolean(drag);
   const interaction = useLongPressDragInteraction({
     drag: drag ?? noop,
@@ -270,6 +276,7 @@ function WorkspaceRowBody({
           isPressed,
           selected,
           isHovered,
+          compact: compactSidebarRows,
         });
         const backdrop = getSidebarRowBackdrop({ isDragging, isPressed, selected, isHovered });
         return (
@@ -449,14 +456,17 @@ function getWorkspaceRowStyle({
   isPressed,
   selected,
   isHovered,
+  compact,
 }: {
   isDragging: boolean;
   isPressed: boolean;
   selected: boolean;
   isHovered: boolean;
+  compact: boolean;
 }) {
   return [
     styles.workspaceRow,
+    compact && styles.workspaceRowCompact,
     isHovered && styles.workspaceRowHovered,
     selected && styles.sidebarRowSelected,
     isDragging && styles.workspaceRowDragging,
@@ -471,9 +481,8 @@ const styles = StyleSheet.create((theme) => ({
     position: "relative",
   },
   workspaceRow: {
-    minHeight: 36,
+    ...comfortableSidebarRowDensity(theme),
     marginBottom: theme.spacing[1],
-    paddingVertical: theme.spacing[2],
     paddingLeft: theme.spacing[2],
     paddingRight: theme.spacing[3],
     borderRadius: theme.borderRadius.lg,
@@ -483,6 +492,7 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[1],
     userSelect: "none",
   },
+  workspaceRowCompact: compactSidebarRowDensity(theme),
   workspaceRowHovered: {
     backgroundColor: theme.colors.surfaceSidebarHover,
   },

@@ -2221,6 +2221,22 @@ export const en = {
         description: "Choose which items appear at the top of the sidebar and in what order",
         moveUp: "Move up",
         moveDown: "Move down",
+        compactRows: {
+          label: "Compact rows",
+          description: "Tighter spacing for project and workspace rows",
+        },
+        hideDiffStats: {
+          label: "Hide diff stats",
+          description: "Hide the +/− change counts on workspace rows",
+        },
+        hidePrStatus: {
+          label: "Hide PR status",
+          description: "Hide the pull request badge and checks on workspace rows",
+        },
+        hideHostNames: {
+          label: "Hide host names",
+          description: "Hide the machine name when grouping by status",
+        },
       },
       fonts: {
         title: "Fonts",

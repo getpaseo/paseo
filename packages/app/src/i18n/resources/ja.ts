@@ -2139,6 +2139,22 @@ export const ja: TranslationResources = {
         description: "サイドバー上部に表示する項目とその順序を選択します",
         moveUp: "上に移動",
         moveDown: "下に移動",
+        compactRows: {
+          label: "コンパクト行",
+          description: "プロジェクトとワークスペースの行の間隔を狭くする",
+        },
+        hideDiffStats: {
+          label: "差分統計を非表示",
+          description: "ワークスペース行の +/− 変更数を非表示にする",
+        },
+        hidePrStatus: {
+          label: "PR ステータスを非表示",
+          description: "ワークスペース行のプルリクエストバッジとチェックを非表示にする",
+        },
+        hideHostNames: {
+          label: "ホスト名を非表示",
+          description: "ステータスでグループ化するときにマシン名を非表示にする",
+        },
       },
       fonts: {
         title: "フォント",
