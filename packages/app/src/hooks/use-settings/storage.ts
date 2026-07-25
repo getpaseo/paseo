@@ -64,14 +64,20 @@ export const MIN_CODE_FONT_SIZE = 9;
 export const MAX_CODE_FONT_SIZE = 22; // line-height 1.5×22=33 stays safe
 export const MAX_FONT_FAMILY_LENGTH = 200;
 
-// Device-local appearance toggles for decluttering the sidebar. All default to
-// their "current behavior" (nothing hidden, comfortable density), so an old
-// stored blob without the key loads with today's look.
+export const RECENTLY_DONE_WINDOW_OPTIONS = [0, 1, 5, 15, 30, 60] as const; // minutes, 0 = off
+export type RecentlyDoneWindowMinutes = (typeof RECENTLY_DONE_WINDOW_OPTIONS)[number];
+
+// Device-local appearance settings for the sidebar. All default to their
+// "current behavior" (nothing hidden, comfortable density, no recency split),
+// so an old stored blob without the key loads with today's look.
 export interface AppearanceSettings {
   hideWorkspaceDiffStats: boolean;
   hideHostLabels: boolean;
   compactSidebarRows: boolean;
   hidePrStatus: boolean;
+  hideNewWorkspaceRow: boolean;
+  hideScriptIndicators: boolean;
+  recentlyDoneWindowMinutes: RecentlyDoneWindowMinutes;
 }
 
 export interface AppSettings {
@@ -135,6 +141,9 @@ export const DEFAULT_APPEARANCE_SETTINGS: AppearanceSettings = {
   hideHostLabels: false,
   compactSidebarRows: false,
   hidePrStatus: false,
+  hideNewWorkspaceRow: false,
+  hideScriptIndicators: false,
+  recentlyDoneWindowMinutes: 0,
 };
 
 export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
@@ -469,18 +478,24 @@ function parseAppearance(value: unknown): AppearanceSettings {
     typeof value === "object" && value !== null && !Array.isArray(value)
       ? (value as Partial<Record<keyof AppearanceSettings, unknown>>)
       : {};
+  const defaults = DEFAULT_APPEARANCE_SETTINGS;
   return {
     hideWorkspaceDiffStats: readBoolean(
       stored.hideWorkspaceDiffStats,
-      DEFAULT_APPEARANCE_SETTINGS.hideWorkspaceDiffStats,
+      defaults.hideWorkspaceDiffStats,
     ),
-    hideHostLabels: readBoolean(stored.hideHostLabels, DEFAULT_APPEARANCE_SETTINGS.hideHostLabels),
-    compactSidebarRows: readBoolean(
-      stored.compactSidebarRows,
-      DEFAULT_APPEARANCE_SETTINGS.compactSidebarRows,
-    ),
-    hidePrStatus: readBoolean(stored.hidePrStatus, DEFAULT_APPEARANCE_SETTINGS.hidePrStatus),
+    hideHostLabels: readBoolean(stored.hideHostLabels, defaults.hideHostLabels),
+    compactSidebarRows: readBoolean(stored.compactSidebarRows, defaults.compactSidebarRows),
+    hidePrStatus: readBoolean(stored.hidePrStatus, defaults.hidePrStatus),
+    hideNewWorkspaceRow: readBoolean(stored.hideNewWorkspaceRow, defaults.hideNewWorkspaceRow),
+    hideScriptIndicators: readBoolean(stored.hideScriptIndicators, defaults.hideScriptIndicators),
+    recentlyDoneWindowMinutes: readRecentlyDoneWindowMinutes(stored.recentlyDoneWindowMinutes),
   };
+}
+
+function readRecentlyDoneWindowMinutes(value: unknown): RecentlyDoneWindowMinutes {
+  const match = RECENTLY_DONE_WINDOW_OPTIONS.find((option) => option === value);
+  return match ?? DEFAULT_APPEARANCE_SETTINGS.recentlyDoneWindowMinutes;
 }
 
 function readBoolean(value: unknown, fallback: boolean): boolean {

@@ -18,3 +18,11 @@ export function comfortableSidebarRowDensity(theme: Theme): SidebarRowDensity {
 export function compactSidebarRowDensity(theme: Theme): SidebarRowDensity {
   return { minHeight: 28, paddingVertical: theme.spacing[1] };
 }
+
+export function comfortableSidebarSecondaryRowDensity(theme: Theme): SidebarRowDensity {
+  return { minHeight: 32, paddingVertical: theme.spacing[1] };
+}
+
+export function compactSidebarSecondaryRowDensity(theme: Theme): SidebarRowDensity {
+  return { minHeight: 24, paddingVertical: theme.spacing[0] };
+}

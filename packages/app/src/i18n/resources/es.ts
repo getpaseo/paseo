@@ -2175,7 +2175,7 @@ export const es: TranslationResources = {
         moveDown: "Mover hacia abajo",
         compactRows: {
           label: "Filas compactas",
-          description: "Espaciado más ajustado para filas de proyectos y espacios de trabajo",
+          description: "Espaciado más ajustado para filas, encabezados y grupos de estado",
         },
         hideDiffStats: {
           label: "Ocultar estadísticas de cambios",
@@ -2186,9 +2186,28 @@ export const es: TranslationResources = {
           description:
             "Oculta la insignia de pull request y las comprobaciones en las filas de espacios de trabajo",
         },
+        hideNewWorkspaceRow: {
+          label: "Ocultar fila Nuevo espacio de trabajo",
+          description: "Oculta la fila + Nuevo espacio de trabajo bajo los proyectos vacíos",
+        },
+        hideScriptIndicators: {
+          label: "Ocultar indicadores de scripts",
+          description: "Oculta los iconos de globo y terminal de los scripts en ejecución",
+        },
         hideHostNames: {
           label: "Ocultar nombres de host",
           description: "Oculta el nombre de la máquina al agrupar por estado",
+        },
+        recentlyDone: {
+          label: "Terminado hace poco",
+          description:
+            "Muestra los espacios de trabajo recién terminados en su propio grupo sobre Listo",
+          accessibilityLabel: "Ventana de terminado hace poco, actualmente {{value}}",
+          options: {
+            off: "Desactivado",
+            minutes: "{{minutes}} min",
+            hour: "1 hora",
+          },
         },
       },
       fonts: {

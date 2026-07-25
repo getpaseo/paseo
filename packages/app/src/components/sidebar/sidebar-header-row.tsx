@@ -5,6 +5,11 @@ import type { LucideIcon } from "lucide-react-native";
 import { HEADER_INNER_HEIGHT, HEADER_INNER_HEIGHT_MOBILE } from "@/constants/layout";
 import { ICON_SIZE } from "@/styles/theme";
 import type { Theme } from "@/styles/theme";
+import { useSidebarAppearance } from "@/components/sidebar/use-sidebar-appearance";
+import {
+  comfortableSidebarSecondaryRowDensity,
+  compactSidebarSecondaryRowDensity,
+} from "@/components/sidebar/sidebar-row-metrics";
 import { Shortcut } from "@/components/ui/shortcut";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 
@@ -43,6 +48,8 @@ export function SidebarHeaderRow({
   shortcutKeys = null,
 }: SidebarHeaderRowProps) {
   const ThemedIcon = useMemo(() => withUnistyles(Icon), [Icon]);
+  const { compactSidebarRows } = useSidebarAppearance();
+  const isDense = variant === "compact" && compactSidebarRows;
 
   const containerStyle = useMemo(
     () => (variant === "compact" ? styles.containerCompact : styles.container),
@@ -53,9 +60,10 @@ export function SidebarHeaderRow({
     ({ hovered }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.button,
       variant === "compact" && styles.buttonCompact,
+      isDense && styles.buttonDense,
       (Boolean(hovered) || isActive) && styles.buttonHovered,
     ],
-    [isActive, variant],
+    [isActive, isDense, variant],
   );
 
   const renderChildren = useCallback(
@@ -139,12 +147,12 @@ const styles = StyleSheet.create((theme) => ({
   // Compact header entries (New workspace / History) sit tighter than the
   // workspace-row shape the base button mirrors.
   buttonCompact: {
-    minHeight: 32,
-    paddingVertical: theme.spacing[1.5],
+    ...comfortableSidebarSecondaryRowDensity(theme),
     // Match the project rows' inner padding so the icons align on one vertical
     // edge with the workspace list below (base button uses a wider spacing[3]).
     paddingHorizontal: theme.spacing[2],
   },
+  buttonDense: compactSidebarSecondaryRowDensity(theme),
   buttonHovered: {
     backgroundColor: theme.colors.surfaceSidebarHover,
   },

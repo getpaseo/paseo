@@ -2223,7 +2223,7 @@ export const en = {
         moveDown: "Move down",
         compactRows: {
           label: "Compact rows",
-          description: "Tighter spacing for project and workspace rows",
+          description: "Tighter spacing for rows, section headers, and status groups",
         },
         hideDiffStats: {
           label: "Hide diff stats",
@@ -2233,9 +2233,27 @@ export const en = {
           label: "Hide PR status",
           description: "Hide the pull request badge and checks on workspace rows",
         },
+        hideNewWorkspaceRow: {
+          label: "Hide New workspace row",
+          description: "Hide the + New workspace row under empty projects",
+        },
+        hideScriptIndicators: {
+          label: "Hide script indicators",
+          description: "Hide the globe and terminal glyphs for running scripts",
+        },
         hideHostNames: {
           label: "Hide host names",
           description: "Hide the machine name when grouping by status",
+        },
+        recentlyDone: {
+          label: "Recently done",
+          description: "Show freshly finished workspaces in their own group above Done",
+          accessibilityLabel: "Recently done window, currently {{value}}",
+          options: {
+            off: "Off",
+            minutes: "{{minutes}} min",
+            hour: "1 hour",
+          },
         },
       },
       fonts: {

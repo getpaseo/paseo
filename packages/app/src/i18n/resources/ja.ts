@@ -2141,7 +2141,7 @@ export const ja: TranslationResources = {
         moveDown: "下に移動",
         compactRows: {
           label: "コンパクト行",
-          description: "プロジェクトとワークスペースの行の間隔を狭くする",
+          description: "行・セクション見出し・ステータスグループの間隔を狭くする",
         },
         hideDiffStats: {
           label: "差分統計を非表示",
@@ -2151,9 +2151,27 @@ export const ja: TranslationResources = {
           label: "PR ステータスを非表示",
           description: "ワークスペース行のプルリクエストバッジとチェックを非表示にする",
         },
+        hideNewWorkspaceRow: {
+          label: "新規ワークスペース行を非表示",
+          description: "空のプロジェクトの下に表示される + 新規ワークスペース行を非表示にする",
+        },
+        hideScriptIndicators: {
+          label: "スクリプトインジケーターを非表示",
+          description: "実行中スクリプトの地球儀とターミナルのアイコンを非表示にする",
+        },
         hideHostNames: {
           label: "ホスト名を非表示",
           description: "ステータスでグループ化するときにマシン名を非表示にする",
+        },
+        recentlyDone: {
+          label: "最近完了",
+          description: "完了したばかりのワークスペースを「完了」の上の専用グループに表示する",
+          accessibilityLabel: "最近完了の期間、現在 {{value}}",
+          options: {
+            off: "オフ",
+            minutes: "{{minutes}} 分",
+            hour: "1 時間",
+          },
         },
       },
       fonts: {

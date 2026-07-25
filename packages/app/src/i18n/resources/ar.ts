@@ -2124,7 +2124,7 @@ export const ar: TranslationResources = {
         moveDown: "نقل لأسفل",
         compactRows: {
           label: "صفوف مضغوطة",
-          description: "تباعد أضيق لصفوف المشاريع ومساحات العمل",
+          description: "تباعد أضيق للصفوف وعناوين الأقسام ومجموعات الحالة",
         },
         hideDiffStats: {
           label: "إخفاء إحصائيات الفروق",
@@ -2134,9 +2134,27 @@ export const ar: TranslationResources = {
           label: "إخفاء حالة طلب السحب",
           description: "إخفاء شارة طلب السحب والفحوصات في صفوف مساحات العمل",
         },
+        hideNewWorkspaceRow: {
+          label: "إخفاء صف مساحة عمل جديدة",
+          description: "إخفاء صف + مساحة عمل جديدة أسفل المشاريع الفارغة",
+        },
+        hideScriptIndicators: {
+          label: "إخفاء مؤشرات البرامج النصية",
+          description: "إخفاء رمزي الكرة الأرضية والطرفية للبرامج النصية قيد التشغيل",
+        },
         hideHostNames: {
           label: "إخفاء أسماء المضيفين",
           description: "إخفاء اسم الجهاز عند التجميع حسب الحالة",
+        },
+        recentlyDone: {
+          label: "أُنجز حديثًا",
+          description: 'عرض مساحات العمل المنتهية حديثًا في مجموعة خاصة فوق "تم"',
+          accessibilityLabel: "نافذة أُنجز حديثًا، حاليًا {{value}}",
+          options: {
+            off: "إيقاف",
+            minutes: "{{minutes}} د",
+            hour: "ساعة واحدة",
+          },
         },
       },
       fonts: {

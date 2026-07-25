@@ -122,7 +122,7 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   const {
     settings: {
       workspaceTitleSource,
-      appearance: { hidePrStatus },
+      appearance: { hidePrStatus, hideScriptIndicators },
     },
   } = useAppSettings();
   const workspaceLabel = resolveSidebarWorkspacePrimaryLabel({ workspace, workspaceTitleSource });
@@ -171,7 +171,7 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
             projectName={leadingProjectName}
             hostBadge={hostBadge ?? null}
             prHint={hidePrStatus ? null : workspace.prHint}
-            serviceSummary={serviceSummary}
+            serviceSummary={hideScriptIndicators ? null : serviceSummary}
             labels={labels}
           />
         </View>

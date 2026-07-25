@@ -3,8 +3,9 @@ import type { SidebarWorkspaceEntry } from "./sidebar-workspaces-view-model";
 import {
   buildStatusGroups,
   buildStatusShortcutIndex,
-  STATUS_BUCKET_LABELS,
-  STATUS_BUCKET_ORDER,
+  resolveRecencyTickMs,
+  STATUS_GROUP_LABELS,
+  STATUS_GROUP_ORDER,
   type StatusGroup,
 } from "./sidebar-status-view-model";
 
@@ -57,7 +58,7 @@ describe("buildStatusGroups", () => {
 
     const groups = buildStatusGroups(workspaces, emptyProjectNames);
 
-    expect(groups.map((g) => g.bucket)).toEqual(["needs_input", "running", "done"]);
+    expect(groups.map((g) => g.key)).toEqual(["needs_input", "running", "done"]);
     expect(groups[0]?.label).toBe("Needs input");
     expect(groups[1]?.label).toBe("Working");
     expect(groups[2]?.label).toBe("Done");
@@ -71,7 +72,7 @@ describe("buildStatusGroups", () => {
 
     const groups = buildStatusGroups(workspaces, emptyProjectNames);
 
-    expect(groups.map((g) => g.bucket)).toEqual(["running", "done"]);
+    expect(groups.map((g) => g.key)).toEqual(["running", "done"]);
   });
 
   it("sorts by statusEnteredAt desc within a bucket", () => {
@@ -182,28 +183,111 @@ describe("buildStatusGroups", () => {
 
     const groups = buildStatusGroups(workspaces, emptyProjectNames);
 
-    expect(groups.map((g) => g.bucket)).toEqual(STATUS_BUCKET_ORDER);
+    // "recently_done" only materializes with a recency window, so the real
+    // status buckets are what this fixture can produce.
+    const statusBuckets = STATUS_GROUP_ORDER.filter((key) => key !== "recently_done");
+    expect(groups.map((g) => g.key)).toEqual(statusBuckets);
     expect(groups.map((g) => g.label)).toEqual(
-      STATUS_BUCKET_ORDER.map((b) => STATUS_BUCKET_LABELS[b]),
+      statusBuckets.map((key) => STATUS_GROUP_LABELS[key]),
     );
     // Each group has exactly one row with the matching bucket
     for (const group of groups) {
       expect(group.rows).toHaveLength(1);
-      expect(group.rows[0]?.statusBucket).toBe(group.bucket);
+      expect(group.rows[0]?.statusBucket).toBe(group.key);
     }
+  });
+});
+
+describe("buildStatusGroups recently-done window", () => {
+  const NOW = d("2026-01-01T12:00:00Z").getTime();
+  const MINUTE = 60_000;
+
+  function doneAt(workspaceKey: string, minutesAgo: number): SidebarWorkspaceEntry {
+    return ws({
+      workspaceKey,
+      statusBucket: "done",
+      statusEnteredAt: new Date(NOW - minutesAgo * MINUTE),
+    });
+  }
+
+  it("splits fresh finishes above Done and leaves older ones behind", () => {
+    const groups = buildStatusGroups(
+      [doneAt("srv:old", 20), doneAt("srv:fresh", 2)],
+      emptyProjectNames,
+      { windowMs: 5 * MINUTE, now: NOW },
+    );
+
+    expect(groups.map((g) => g.key)).toEqual(["recently_done", "done"]);
+    expect(groups[0]?.label).toBe("Recently done");
+    expect(groups[0]?.rows.map((r) => r.workspaceKey)).toEqual(["srv:fresh"]);
+    expect(groups[1]?.rows.map((r) => r.workspaceKey)).toEqual(["srv:old"]);
+  });
+
+  it("keeps Done whole when the window is zero or absent", () => {
+    const workspaces = [doneAt("srv:fresh", 1)];
+
+    expect(buildStatusGroups(workspaces, emptyProjectNames).map((g) => g.key)).toEqual(["done"]);
+    expect(
+      buildStatusGroups(workspaces, emptyProjectNames, { windowMs: 0, now: NOW }).map((g) => g.key),
+    ).toEqual(["done"]);
+  });
+
+  it("only splits Done, and never a workspace with no transition time", () => {
+    const groups = buildStatusGroups(
+      [
+        ws({ workspaceKey: "srv:no-ts", statusBucket: "done", statusEnteredAt: null }),
+        ws({
+          workspaceKey: "srv:run",
+          statusBucket: "running",
+          statusEnteredAt: new Date(NOW - MINUTE),
+        }),
+      ],
+      emptyProjectNames,
+      { windowMs: 5 * MINUTE, now: NOW },
+    );
+
+    expect(groups.map((g) => g.key)).toEqual(["running", "done"]);
+  });
+
+  it("treats a future timestamp as not recent rather than pinning it forever", () => {
+    const groups = buildStatusGroups([doneAt("srv:future", -10)], emptyProjectNames, {
+      windowMs: 5 * MINUTE,
+      now: NOW,
+    });
+
+    expect(groups.map((g) => g.key)).toEqual(["done"]);
+  });
+});
+
+describe("resolveRecencyTickMs", () => {
+  const MINUTE = 60_000;
+
+  it("schedules no tick when the window is off", () => {
+    expect(resolveRecencyTickMs(0)).toBeNull();
+    expect(resolveRecencyTickMs(-1)).toBeNull();
+  });
+
+  it("floors at 5s so a short window still ages out promptly", () => {
+    expect(resolveRecencyTickMs(MINUTE)).toBe(15_000);
+    expect(resolveRecencyTickMs(10_000)).toBe(5_000);
+  });
+
+  it("caps at 60s so a long window doesn't poll a quarter-hour apart", () => {
+    expect(resolveRecencyTickMs(5 * MINUTE)).toBe(60_000);
+    expect(resolveRecencyTickMs(60 * MINUTE)).toBe(60_000);
   });
 });
 
 describe("buildStatusShortcutIndex", () => {
   it("assigns sequential numbers in status visual order", () => {
     const groups: StatusGroup[] = [
-      { bucket: "needs_input", label: "Needs input", rows: [ws({ workspaceKey: "srv:ni" })] },
+      { key: "needs_input", label: "Needs input", rows: [ws({ workspaceKey: "srv:ni" })] },
       {
-        bucket: "running",
+        key: "running",
         label: "Working",
         rows: [ws({ workspaceKey: "srv:run" }), ws({ workspaceKey: "srv:run2" })],
       },
-      { bucket: "done", label: "Done", rows: [ws({ workspaceKey: "srv:dn" })] },
+      { key: "done", label: "Done", rows: [ws({ workspaceKey: "srv:dn" })] },
     ];
 
     const index = buildStatusShortcutIndex(groups);
@@ -216,7 +300,7 @@ describe("buildStatusShortcutIndex", () => {
 
   it("stops at 9 shortcuts", () => {
     const rows = Array.from({ length: 12 }, (_, i) => ws({ workspaceKey: `srv:ws${i}` }));
-    const groups: StatusGroup[] = [{ bucket: "done", label: "Done", rows }];
+    const groups: StatusGroup[] = [{ key: "done", label: "Done", rows }];
 
     const index = buildStatusShortcutIndex(groups);
 

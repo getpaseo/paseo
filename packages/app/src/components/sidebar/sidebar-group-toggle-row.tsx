@@ -5,6 +5,8 @@ import { ChevronDown, ChevronUp } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { isWeb } from "@/constants/platform";
 import { sidebarWorkspaceRowStyles } from "@/components/sidebar/sidebar-workspace-row-content";
+import { useSidebarAppearance } from "@/components/sidebar/use-sidebar-appearance";
+import { compactSidebarSecondaryRowDensity } from "@/components/sidebar/sidebar-row-metrics";
 import type { Theme } from "@/styles/theme";
 
 const foregroundMutedColorMapping = (theme: Theme) => ({
@@ -38,17 +40,19 @@ export function SidebarGroupToggleRow({
   testID: string;
 }) {
   const { t } = useTranslation();
+  const { compactSidebarRows } = useSidebarAppearance();
   const label = t(
     expanded ? "sidebar.workspace.actions.showLess" : "sidebar.workspace.actions.showMore",
   );
   const rowStyle = useCallback(
     ({ hovered = false, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.row,
+      compactSidebarRows && styles.rowCompact,
       indented && sidebarWorkspaceRowStyles.rowIndented,
       hovered && !pressed && styles.rowHovered,
       pressed && styles.rowPressed,
     ],
-    [indented],
+    [compactSidebarRows, indented],
   );
 
   return (
@@ -97,6 +101,7 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
     userSelect: "none",
   },
+  rowCompact: compactSidebarSecondaryRowDensity(theme),
   rowHovered: {
     backgroundColor: theme.colors.surfaceSidebarHover,
   },

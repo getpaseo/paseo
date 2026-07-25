@@ -2158,7 +2158,7 @@ export const ptBR: TranslationResources = {
         moveDown: "Mover para baixo",
         compactRows: {
           label: "Linhas compactas",
-          description: "Espaçamento mais compacto para linhas de projetos e espaços de trabalho",
+          description: "Espaçamento mais compacto para linhas, cabeçalhos e grupos de status",
         },
         hideDiffStats: {
           label: "Ocultar estatísticas de diff",
@@ -2169,9 +2169,28 @@ export const ptBR: TranslationResources = {
           description:
             "Oculta o selo de pull request e as verificações nas linhas de espaços de trabalho",
         },
+        hideNewWorkspaceRow: {
+          label: "Ocultar linha Novo espaço de trabalho",
+          description: "Oculta a linha + Novo espaço de trabalho abaixo de projetos vazios",
+        },
+        hideScriptIndicators: {
+          label: "Ocultar indicadores de scripts",
+          description: "Oculta os ícones de globo e terminal dos scripts em execução",
+        },
         hideHostNames: {
           label: "Ocultar nomes de host",
           description: "Oculta o nome da máquina ao agrupar por status",
+        },
+        recentlyDone: {
+          label: "Concluído há pouco",
+          description:
+            "Mostra os espaços de trabalho recém-concluídos em um grupo próprio acima de Concluído",
+          accessibilityLabel: "Janela de concluído há pouco, atualmente {{value}}",
+          options: {
+            off: "Desativado",
+            minutes: "{{minutes}} min",
+            hour: "1 hora",
+          },
         },
       },
       fonts: {

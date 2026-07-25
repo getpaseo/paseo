@@ -33,6 +33,7 @@ import {
   normalizeAppSettings,
   parseClampedFontSize,
   parseTerminalScrollbackLines,
+  RECENTLY_DONE_WINDOW_OPTIONS,
   sanitizeFontFamily,
   saveAppSettings as saveAppSettingsPure,
   type AppearanceSettings,
@@ -42,6 +43,7 @@ import {
   type PullRequestOpenLocation,
   type DesktopSettingsBridge,
   type KeyValueStorage,
+  type RecentlyDoneWindowMinutes,
   type ReleaseChannel,
   type SendBehavior,
   type ServiceUrlBehavior,
@@ -70,6 +72,7 @@ export {
   MIN_UI_BASE_FONT_SIZE,
   parseClampedFontSize,
   parseTerminalScrollbackLines,
+  RECENTLY_DONE_WINDOW_OPTIONS,
   sanitizeFontFamily,
 };
 export type {
@@ -81,6 +84,7 @@ export type {
   PullRequestOpenLocation,
   DesktopSettingsBridge,
   KeyValueStorage,
+  RecentlyDoneWindowMinutes,
   ReleaseChannel,
   SendBehavior,
   ServiceUrlBehavior,
