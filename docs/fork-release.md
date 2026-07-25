@@ -11,7 +11,7 @@ This is the low-plumbing path for maintaining a personal fork that carries local
 
 The desktop app's updater metadata is generated from the repository running the workflow. A build produced in `your-user/paseo` checks `your-user/paseo` for updates, not `getpaseo/paseo`.
 
-Fork desktop builds also stamp a fork bundle ID from the GitHub owner. For example, `iamriajul/paseo` builds use `sh.paseo.desktop.iamriajul` instead of `sh.paseo.desktop`.
+By default, fork desktop builds keep the official desktop app ID (`sh.paseo.desktop`) so personal releases stay close to upstream. Override with `PASEO_DESKTOP_APP_ID` only when a fork intentionally needs a distinct app id.
 
 ## Version Choice
 
@@ -100,19 +100,19 @@ The CLI tarball keeps the package name `@getpaseo/cli`, but its internal `@getpa
 Fork Android APKs are built locally in GitHub Actions, not on Expo Cloud. The workflow runs `expo prebuild`, applies the fork app identity, signs the generated Gradle release build, and uploads:
 
 ```text
-paseo-vX.Y.Z-android-<fork-suffix>.apk
+paseo-vX.Y.Z-android.apk
 ```
 
-For `iamriajul/paseo`, the APK defaults to:
+Fork APKs default to the same product identity as official Paseo:
 
 | Setting    | Value                 |
 | ---------- | --------------------- |
-| App name   | `Paseo iamriajul`     |
+| App name   | `Paseo`               |
 | Package ID | `sh.paseo`            |
-| URL scheme | `paseo-iamriajul`     |
+| URL scheme | `paseo`               |
 | Updates    | Upstream EAS disabled |
 
-The Android package ID matches the original app (`sh.paseo`) so the fork APK can replace an existing official install. Set `PASEO_ANDROID_PACKAGE_ID` in the release environment if a fork needs a distinct package.
+That keeps package id, launcher name, deep-link scheme, and release asset names aligned with upstream so the fork APK can replace an existing official install. Override with `PASEO_ANDROID_PACKAGE_ID`, `PASEO_ANDROID_APP_NAME`, or `PASEO_URL_SCHEME` only when a fork intentionally needs a distinct brand.
 
 Configure these repository secrets once for a secure, stable signing key:
 

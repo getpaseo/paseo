@@ -80,15 +80,16 @@ const suffix = normalizeIdSuffix(rawSuffix);
 const displayName = (args.displayName || args.owner || suffix).trim();
 assertSingleLine(displayName, "display name");
 
+// Default to official product identity so personal forks can replace/update the
+// upstream app and publish release assets with the same names as getpaseo/paseo.
+// Set env overrides only when a fork intentionally needs a distinct brand.
 const entries = [
   ["PASEO_FORK_ID_SUFFIX", suffix],
   ["PASEO_FORK_DISPLAY_NAME", displayName],
-  // Match the original app package so side-by-side installs replace the upstream APK.
-  // Override with PASEO_ANDROID_PACKAGE_ID if a fork needs a distinct package.
   ["PASEO_ANDROID_PACKAGE_ID", process.env.PASEO_ANDROID_PACKAGE_ID || "sh.paseo"],
-  ["PASEO_ANDROID_APP_NAME", process.env.PASEO_ANDROID_APP_NAME || `Paseo ${displayName}`],
-  ["PASEO_URL_SCHEME", process.env.PASEO_URL_SCHEME || `paseo-${suffix.replace(/\./g, "-")}`],
-  ["PASEO_DESKTOP_APP_ID", process.env.PASEO_DESKTOP_APP_ID || `sh.paseo.desktop.${suffix}`],
+  ["PASEO_ANDROID_APP_NAME", process.env.PASEO_ANDROID_APP_NAME || "Paseo"],
+  ["PASEO_URL_SCHEME", process.env.PASEO_URL_SCHEME || "paseo"],
+  ["PASEO_DESKTOP_APP_ID", process.env.PASEO_DESKTOP_APP_ID || "sh.paseo.desktop"],
 ];
 
 for (const [key, value] of entries) {

@@ -358,16 +358,16 @@ jobs:
           echo "Using APK at $apk_path"
 
           if [[ "$PASEO_ANDROID_SIGNING_MODE" == "insecure-fallback" ]]; then
-            asset_name="paseo-${RELEASE_TAG}-android-${PASEO_FORK_ID_SUFFIX}-INSECURE-PUBLIC-FALLBACK-KEY.apk"
+            asset_name="paseo-${RELEASE_TAG}-android-INSECURE-PUBLIC-FALLBACK-KEY.apk"
           else
-            asset_name="paseo-${RELEASE_TAG}-android-${PASEO_FORK_ID_SUFFIX}.apk"
+            asset_name="paseo-${RELEASE_TAG}-android.apk"
           fi
 
           asset_path="$RUNNER_TEMP/$asset_name"
           cp "$apk_path" "$asset_path"
 
           if [[ "$PASEO_ANDROID_SIGNING_MODE" == "insecure-fallback" ]]; then
-            warning_name="paseo-${RELEASE_TAG}-android-${PASEO_FORK_ID_SUFFIX}-WARNING-INSECURE-PUBLIC-FALLBACK-KEY-see-docs-fork-release.txt"
+            warning_name="paseo-${RELEASE_TAG}-android-WARNING-INSECURE-PUBLIC-FALLBACK-KEY-see-docs-fork-release.txt"
             warning_path="$RUNNER_TEMP/$warning_name"
             warning_text="WARNING: This APK was signed with Paseo's public insecure fallback Android key because ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, and ANDROID_KEY_PASSWORD were not configured. Do not distribute it as a trusted production build. Configure secure Android signing secrets using docs/fork-release.md#android-apks."
             printf '%s\n' "$warning_text" > "$warning_path"
