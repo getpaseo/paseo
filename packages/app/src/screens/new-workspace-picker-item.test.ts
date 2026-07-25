@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ForgeSearchItem } from "@getpaseo/protocol/messages";
 import {
+  branchPickerOptionId,
   buildBranchPickerItems,
   pickerItemToCheckoutRequest,
   type PickerItem,
@@ -17,6 +18,14 @@ const prItem: ForgeSearchItem = {
   baseRefName: "main",
   headRefName: "feature/picker",
 };
+
+describe("branchPickerOptionId", () => {
+  it("distinguishes a local origin-prefixed branch from the origin ref", () => {
+    expect(branchPickerOptionId("refs/heads/origin/main")).not.toBe(
+      branchPickerOptionId("refs/remotes/origin/main"),
+    );
+  });
+});
 
 describe("pickerItemToCheckoutRequest", () => {
   it("returns undefined for no selection (null)", () => {
@@ -165,6 +174,34 @@ describe("buildBranchPickerItems", () => {
         refName: "refs/remotes/origin/release",
         accessibilityLabel: "origin release, origin branch",
         committerDate: 5,
+      },
+    ]);
+  });
+
+  it("shows both refs when their divergence is unavailable", () => {
+    expect(
+      buildBranchPickerItems([
+        {
+          name: "main",
+          committerDate: 10,
+          hasLocal: true,
+          hasRemote: true,
+        },
+      ]),
+    ).toEqual([
+      {
+        kind: "branch",
+        name: "main",
+        refName: "refs/heads/main",
+        accessibilityLabel: "main, local branch",
+        committerDate: 10,
+      },
+      {
+        kind: "branch",
+        name: "origin/main",
+        refName: "refs/remotes/origin/main",
+        accessibilityLabel: "origin main, origin branch",
+        committerDate: 10,
       },
     ]);
   });

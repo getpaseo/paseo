@@ -84,6 +84,7 @@ import {
   remapDraftCwdToWorkspace,
 } from "./new-workspace-fork-context";
 import {
+  branchPickerOptionId,
   buildBranchPickerItems,
   pickerItemToCheckoutRequest,
   type BranchPickerDetail,
@@ -180,7 +181,6 @@ interface PickerOptionData {
   itemById: Map<string, PickerItem>;
 }
 
-const BRANCH_OPTION_PREFIX = "branch:";
 const PR_OPTION_PREFIX = "github-pr:";
 const PROJECT_ICON_FALLBACK_FONT_SIZE = 10;
 // Height of a single picker-trigger badge. The Base-row spacer reserves exactly
@@ -482,10 +482,6 @@ function ProjectOptionItem({
   );
 }
 
-function branchOptionId(name: string): string {
-  return `${BRANCH_OPTION_PREFIX}${name}`;
-}
-
 function prOptionId(number: number): string {
   return `${PR_OPTION_PREFIX}${number}`;
 }
@@ -631,7 +627,7 @@ function computePickerOptionData(
 
   for (const branch of buildBranchPickerItems(branchDetails)) {
     if (branch.kind !== "branch") continue;
-    const id = branchOptionId(branch.name);
+    const id = branchPickerOptionId(branch.refName);
     const option = { id, label: branch.name };
     idMap.set(id, branch);
     timedOptions.push({ option, timestamp: branch.committerDate ?? 0 });
@@ -1727,11 +1723,15 @@ export function NewWorkspaceScreen({
   }, [currentBranch, selectedItem]);
 
   const selectedOptionId = useMemo(() => {
-    if (!selectedItem) return currentBranch ? branchOptionId(currentBranch) : "";
+    if (!selectedItem) {
+      if (!currentBranch) return "";
+      const exactLocalId = branchPickerOptionId(`refs/heads/${currentBranch}`);
+      return itemById.has(exactLocalId) ? exactLocalId : branchPickerOptionId(currentBranch);
+    }
     return selectedItem.kind === "branch"
-      ? branchOptionId(selectedItem.name)
+      ? branchPickerOptionId(selectedItem.refName)
       : prOptionId(selectedItem.item.number);
-  }, [currentBranch, selectedItem]);
+  }, [currentBranch, itemById, selectedItem]);
   const selectPickerItem = useCallback(
     (item: PickerItem) => {
       const nextAttachments = syncPickerPrAttachment({

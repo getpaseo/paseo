@@ -29,6 +29,12 @@ export type PickerCheckoutRequest = Pick<
   "action" | "refName" | "checkoutSource" | "githubPrNumber"
 >;
 
+const BRANCH_OPTION_PREFIX = "branch:";
+
+export function branchPickerOptionId(refName: string): string {
+  return `${BRANCH_OPTION_PREFIX}${refName}`;
+}
+
 function divergenceLabel(ahead: number, behind: number): string | undefined {
   const parts = [ahead > 0 ? `+${ahead}` : null, behind > 0 ? `−${behind}` : null].filter(
     (part): part is string => part !== null,
@@ -96,7 +102,7 @@ export function buildBranchPickerItems(details: readonly BranchPickerDetail[]): 
     }
 
     const refsDiffer = hasDivergence && (localAhead > 0 || localBehind > 0);
-    if (hasRemote && (!hasLocal || refsDiffer)) {
+    if (hasRemote && (!hasLocal || !hasDivergence || refsDiffer)) {
       const remoteAhead = hasDivergence ? localBehind : 0;
       const remoteBehind = hasDivergence ? localAhead : 0;
       const remoteItem: Extract<PickerItem, { kind: "branch" }> = {
