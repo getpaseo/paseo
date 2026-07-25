@@ -119,6 +119,7 @@ describe("snapshot mutation ownership boundary", () => {
           upsert: directStorageWrite,
         }),
         projectRegistry: createStub<SessionOptions["projectRegistry"]>({
+          subscribeToMutations: () => () => {},
           initialize: async () => {},
           existsOnDisk: async () => true,
           list: async () => [],
@@ -128,6 +129,7 @@ describe("snapshot mutation ownership boundary", () => {
           remove: async () => {},
         }),
         workspaceRegistry: createStub<SessionOptions["workspaceRegistry"]>({
+          subscribeToMutations: () => () => {},
           initialize: async () => {},
           existsOnDisk: async () => true,
           list: async () => [],

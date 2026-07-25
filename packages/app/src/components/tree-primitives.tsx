@@ -11,6 +11,7 @@ import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 // indentation, guide lines, and chevron. Keep those here so the two trees can't
 // drift apart.
 export const TREE_INDENT_PER_LEVEL = 16;
+export const WORKSPACE_FILE_ROW_VERTICAL_PADDING = SPACING[1.5];
 
 /** Left padding for a tree row at `depth`. Shared by folder rows and file headers
  * in the Changes tree so their indentation can't drift apart. */

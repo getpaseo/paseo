@@ -4,6 +4,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, describe, expect, it } from "vitest";
 import { listCheckoutCommits } from "./checkout-git.js";
+import { writePaseoWorktreeMetadata } from "./worktree-metadata.js";
 
 const tempDirs: string[] = [];
 
@@ -73,6 +74,9 @@ describe("listCheckoutCommits", () => {
     expect(commits[0]?.isOnRemote).toBe(false);
     expect(commits[1]?.isOnRemote).toBe(true);
     expect(commits[2]?.isOnRemote).toBe(true);
+    expect(commits[0]?.isOnBase).toBe(false);
+    expect(commits[1]?.isOnBase).toBe(false);
+    expect(commits[2]?.isOnBase).toBe(true);
 
     expect(commits[0]?.files).toEqual([
       { path: "bar.txt", additions: 1, deletions: 0, status: "added" },
@@ -92,6 +96,26 @@ describe("listCheckoutCommits", () => {
     const { baseRef, commits } = await listCheckoutCommits({ cwd: repoDir });
     expect(baseRef).toBeNull();
     expect(commits.map((entry) => entry.subject)).toEqual(["initial"]);
+    expect(commits[0]?.isOnBase).toBe(true);
+  });
+
+  it("keeps recent history when the saved base branch no longer exists", async () => {
+    const { repoDir, tempDir } = initRepoOnMain();
+    const worktreesRoot = join(tempDir, "worktrees");
+    const worktreeDir = join(worktreesRoot, "repo-hash", "feature");
+    mkdirSync(join(worktreesRoot, "repo-hash"), { recursive: true });
+    git(["worktree", "add", "-b", "feature", worktreeDir], repoDir);
+    commitFile(worktreeDir, "feature.txt", "feature\n", "Feature work");
+    writePaseoWorktreeMetadata(worktreeDir, { baseRefName: "deleted-base" });
+
+    const { baseRef, commits } = await listCheckoutCommits({
+      cwd: worktreeDir,
+      context: { worktreesRoot },
+    });
+
+    expect(baseRef).toBe("main");
+    expect(commits.map((entry) => entry.subject)).toEqual(["Feature work", "initial"]);
+    expect(commits.map((entry) => entry.isOnBase)).toEqual([false, true]);
   });
 
   it("marks all commits local-only when there is no remote", async () => {
@@ -122,19 +146,77 @@ describe("listCheckoutCommits", () => {
     ]);
   });
 
-  it("limits history and unpushed classification to the 20 most recent commits", async () => {
+  it("keeps local base commits out of workspace history when the local base is ahead", async () => {
+    const { repoDir, tempDir } = initRepoOnMain();
+    addBareRemote(repoDir, tempDir);
+    git(["push", "-u", "origin", "main"], repoDir);
+    commitFile(repoDir, "local-base.txt", "base\n", "Local base work");
+    git(["checkout", "-b", "feature"], repoDir);
+    commitFile(repoDir, "feature.txt", "feature\n", "Feature work");
+
+    const { commits } = await listCheckoutCommits({ cwd: repoDir });
+
+    expect(commits.map(({ subject, isOnBase }) => ({ subject, isOnBase }))).toEqual([
+      { subject: "Feature work", isOnBase: false },
+      { subject: "Local base work", isOnBase: true },
+      { subject: "initial", isOnBase: true },
+    ]);
+  });
+
+  it("shows every workspace commit followed by at most 10 base commits", async () => {
     const { repoDir } = initRepoOnMain();
+    for (let index = 1; index <= 14; index += 1) {
+      commitFile(repoDir, "base-history.txt", `${index}\n`, `Base ${index}`);
+    }
+    git(["checkout", "-b", "feature"], repoDir);
     for (let index = 1; index <= 24; index += 1) {
+      commitFile(repoDir, "workspace-history.txt", `${index}\n`, `Workspace ${index}`);
+    }
+
+    const { commits } = await listCheckoutCommits({ cwd: repoDir });
+
+    expect(commits).toHaveLength(34);
+    expect(commits.every((entry) => entry.isOnRemote === false)).toBe(true);
+    expect(commits.slice(0, 24).map((entry) => entry.subject)).toEqual(
+      Array.from({ length: 24 }, (_, index) => `Workspace ${24 - index}`),
+    );
+    expect(commits.slice(0, 24).every((entry) => entry.isOnBase === false)).toBe(true);
+    expect(commits.slice(24).map((entry) => entry.subject)).toEqual(
+      Array.from({ length: 10 }, (_, index) => `Base ${14 - index}`),
+    );
+    expect(commits.slice(24).every((entry) => entry.isOnBase === true)).toBe(true);
+  });
+
+  it("starts base context at the fork point when the base branch has advanced", async () => {
+    const { repoDir } = initRepoOnMain();
+    commitFile(repoDir, "shared.txt", "shared\n", "Shared base");
+    git(["checkout", "-b", "feature"], repoDir);
+    commitFile(repoDir, "feature.txt", "feature\n", "Feature work");
+    git(["checkout", "main"], repoDir);
+    commitFile(repoDir, "newer-base.txt", "newer\n", "Newer base");
+    git(["checkout", "feature"], repoDir);
+
+    const { commits } = await listCheckoutCommits({ cwd: repoDir });
+
+    expect(commits.map(({ subject, isOnBase }) => ({ subject, isOnBase }))).toEqual([
+      { subject: "Feature work", isOnBase: false },
+      { subject: "Shared base", isOnBase: true },
+      { subject: "initial", isOnBase: true },
+    ]);
+  });
+
+  it("limits base-branch history to 10 commits", async () => {
+    const { repoDir } = initRepoOnMain();
+    for (let index = 1; index <= 14; index += 1) {
       commitFile(repoDir, "history.txt", `${index}\n`, `Commit ${index}`);
     }
 
     const { commits } = await listCheckoutCommits({ cwd: repoDir });
 
-    expect(commits).toHaveLength(20);
-    expect(commits.every((entry) => entry.isOnRemote === false)).toBe(true);
     expect(commits.map((entry) => entry.subject)).toEqual(
-      Array.from({ length: 20 }, (_, index) => `Commit ${24 - index}`),
+      Array.from({ length: 10 }, (_, index) => `Commit ${14 - index}`),
     );
+    expect(commits.every((entry) => entry.isOnBase === true)).toBe(true);
   });
 
   it("shows merged branch commits and compares the merge against its first parent", async () => {

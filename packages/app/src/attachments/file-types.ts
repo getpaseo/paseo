@@ -41,18 +41,31 @@ export function getRasterImageMimeTypeFromPath(path: string): string | null {
   return RASTER_IMAGE_MIME_TYPE_BY_EXTENSION[getFileExtension(path)] ?? null;
 }
 
+export function resolveRasterImageMimeType(input: {
+  mimeType?: string | null;
+  path?: string | null;
+}): string | null {
+  const suppliedMimeType = input.mimeType?.trim();
+  if (suppliedMimeType) {
+    const normalizedMimeType = suppliedMimeType.split(";", 1)[0]?.trim().toLowerCase();
+    if (normalizedMimeType === "image/jpg") {
+      return "image/jpeg";
+    }
+    return normalizedMimeType && RASTER_IMAGE_MIME_TYPES.has(normalizedMimeType)
+      ? normalizedMimeType
+      : null;
+  }
+  return input.path ? getRasterImageMimeTypeFromPath(input.path) : null;
+}
+
 export function isRasterImagePath(path: string): boolean {
   return getRasterImageMimeTypeFromPath(path) !== null;
 }
 
 export function isRasterImageMimeType(mimeType: string | null | undefined): boolean {
-  const normalized = mimeType?.split(";", 1)[0]?.trim().toLowerCase();
-  return Boolean(normalized && RASTER_IMAGE_MIME_TYPES.has(normalized));
+  return resolveRasterImageMimeType({ mimeType }) !== null;
 }
 
 export function isRasterImageFile(file: Pick<File, "name" | "type">): boolean {
-  if (isRasterImageMimeType(file.type)) {
-    return true;
-  }
-  return file.type.trim().length === 0 && isRasterImagePath(file.name);
+  return resolveRasterImageMimeType({ mimeType: file.type, path: file.name }) !== null;
 }

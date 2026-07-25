@@ -12,6 +12,8 @@ import { WebSocket } from "ws";
 import type {
   AgentSnapshotPayload,
   HubExecutionAgentCreateResponse,
+  HubExecutionControlAction,
+  HubExecutionControlResponse,
   HubExecutionAgentStream,
   HubExecutionAgentUpdate,
   RpcErrorMessage,
@@ -671,7 +673,6 @@ export class HubRelationshipHarness {
     executionId = "execution-race",
     options: {
       worktree?: CreateAgentWorktreeTarget;
-      autoArchive?: boolean;
       prompt?: string;
       modeId?: string;
     } = {},
@@ -701,6 +702,49 @@ export class HubRelationshipHarness {
     return this.latestSocket().socket.messageFor(requestId);
   }
 
+  async controlExecution(
+    executionId: string,
+    action: HubExecutionControlAction,
+    requestId = `${action}-${executionId}`,
+  ): Promise<HubExecutionControlResponse["payload"]> {
+    this.beginExecutionControl(requestId, executionId, action);
+    return this.executionControlResult(requestId);
+  }
+
+  beginExecutionControl(
+    requestId: string,
+    executionId: string,
+    action: HubExecutionControlAction,
+  ): void {
+    this.latestSocket().socket.receive({
+      type: "hub.execution.control.request",
+      requestId,
+      executionId,
+      action,
+    });
+  }
+
+  async executionControlResult(requestId: string): Promise<HubExecutionControlResponse["payload"]> {
+    const response = (await this.latestSocket().socket.messageFor(
+      requestId,
+    )) as HubExecutionControlResponse;
+    return response.payload;
+  }
+
+  interruptExecution(
+    executionId: string,
+    requestId?: string,
+  ): Promise<HubExecutionControlResponse["payload"]> {
+    return this.controlExecution(executionId, "interrupt", requestId);
+  }
+
+  archiveExecution(
+    executionId: string,
+    requestId?: string,
+  ): Promise<HubExecutionControlResponse["payload"]> {
+    return this.controlExecution(executionId, "archive", requestId);
+  }
+
   async durableOwnedAgentIds(): Promise<string[]> {
     return (await this.daemon!.agentStorage.list())
       .filter((record) => record.owner?.kind === "daemon")
@@ -721,6 +765,31 @@ export class HubRelationshipHarness {
     return this.daemon!.agentManager.listAgents()
       .filter((agent) => agent.owner?.kind === "daemon")
       .map((agent) => agent.id);
+  }
+
+  ownedAgentIsRunning(agentId: string): boolean {
+    return this.daemon!.agentManager.hasInFlightRun(agentId);
+  }
+
+  async ownedAgentArchivedAt(agentId: string): Promise<string | null> {
+    return (await this.daemon!.agentStorage.get(agentId))?.archivedAt ?? null;
+  }
+
+  async createForeignExecution(executionId: string): Promise<string> {
+    const agent = await this.daemon!.agentManager.createAgent(
+      { provider: "codex", cwd: this.root },
+      undefined,
+      {
+        workspaceId: "foreign-workspace",
+        owner: { kind: "daemon", daemonId: "another-daemon", executionId },
+      },
+    );
+    return agent.id;
+  }
+
+  async agentRemainsAvailable(agentId: string): Promise<boolean> {
+    const record = await this.daemon!.agentStorage.get(agentId);
+    return this.daemon!.agentManager.getAgent(agentId) !== null && !record?.archivedAt;
   }
 
   agentSubscriptionCount(): number {
@@ -763,6 +832,10 @@ export class HubRelationshipHarness {
 
   repoRoot(): string {
     return this.root;
+  }
+
+  repoExists(): boolean {
+    return existsSync(this.root);
   }
 
   async waitForOwnedArchiveCompletion(
@@ -849,6 +922,10 @@ export class HubRelationshipHarness {
     };
   }
 
+  pathsReferToSameLocation(left: string, right: string): boolean {
+    return this.comparablePath(left) === this.comparablePath(right);
+  }
+
   async createBranch(branch: string): Promise<void> {
     await execFileAsync("git", ["-C", this.root, "branch", branch]);
   }
@@ -887,6 +964,20 @@ export class HubRelationshipHarness {
       .split("\n")
       .filter((line) => line.startsWith("worktree "))
       .map((line) => line.slice("worktree ".length));
+  }
+
+  async createSiblingWorkspace(cwd: string): Promise<string> {
+    const client = await this.trustedClient();
+    try {
+      const result = await client.createWorkspace({
+        source: { kind: "directory", path: cwd },
+        title: "sibling",
+      });
+      if (!result.workspace) throw new Error(result.error ?? "Failed to create sibling workspace");
+      return result.workspace.id;
+    } finally {
+      await client.close();
+    }
   }
 
   async createOwnedConcurrently(executionId = "execution-1"): Promise<{
@@ -1322,16 +1413,19 @@ export class HubRelationshipHarness {
   }
 
   private async removeRoot(): Promise<void> {
-    let retryableCode: string | null = null;
-    if (platform() === "win32") retryableCode = "EBUSY";
-    if (platform() === "darwin") retryableCode = "ENOTEMPTY";
-    const attempts = retryableCode ? 10 : 1;
+    // Daemon may still flush into .paseo/projects during teardown; recursive rm
+    // can race and hit ENOTEMPTY/EBUSY/EPERM. Observed on Linux CI as well as macOS/Windows.
+    const retryableCodes = new Set(["ENOTEMPTY", "EBUSY", "EPERM"]);
+    const attempts = 10;
     for (let attempt = 1; attempt <= attempts; attempt++) {
       try {
         await rm(this.root, { recursive: true, force: true });
         return;
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== retryableCode || attempt === attempts) {
+        if (
+          !retryableCodes.has((error as NodeJS.ErrnoException).code ?? "") ||
+          attempt === attempts
+        ) {
           throw error;
         }
         await new Promise((resolve) => setTimeout(resolve, 100 * attempt));
@@ -1385,6 +1479,10 @@ export class HubRelationshipHarness {
           },
           input,
         ),
+      interruptAgent: (agentId) => manager.cancelAgentRun(agentId),
+      archiveAgent: (agentId) => manager.archiveAgent(agentId),
+      listActiveWorkspaces: async () => [],
+      archiveWorkspace: async () => undefined,
     });
   }
 

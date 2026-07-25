@@ -36,7 +36,7 @@ function isTimelineResponse(msg: SessionOutboundMessage): boolean {
 interface FakeDiffSubscription {
   cwd: string;
   compare: CheckoutDiffCompareInput;
-  listener: (snapshot: CheckoutDiffSnapshotPayload) => void;
+  emit(snapshot: CheckoutDiffSnapshotPayload): void;
   unsubscribeCalls: number;
 }
 
@@ -45,18 +45,29 @@ function createFakeDiffSubscriber(initial: CheckoutDiffSnapshotPayload) {
   const refreshedCwds: string[] = [];
   const subscriber: CheckoutDiffSubscriber = {
     subscribe: async (params, listener) => {
+      let isSubscribed = true;
       const subscription: FakeDiffSubscription = {
         cwd: params.cwd,
         compare: params.compare,
-        listener,
         unsubscribeCalls: 0,
+        emit: (snapshot) => {
+          if (isSubscribed) {
+            listener(snapshot);
+          }
+        },
       };
+      const unsubscribe = () => {
+        if (!isSubscribed) {
+          return;
+        }
+        isSubscribed = false;
+        subscription.unsubscribeCalls += 1;
+      };
+      params.signal?.addEventListener("abort", unsubscribe, { once: true });
       subscriptions.push(subscription);
       return {
         initial: { ...initial, cwd: params.cwd },
-        unsubscribe: () => {
-          subscription.unsubscribeCalls += 1;
-        },
+        unsubscribe,
       };
     },
     scheduleRefreshForCwd: (cwd) => {
@@ -453,7 +464,7 @@ describe("CheckoutSession", () => {
       ]);
       expect(subscriptions).toHaveLength(1);
 
-      subscriptions[0].listener({
+      subscriptions[0].emit({
         cwd: "/repo",
         files: [],
         error: { code: "UNKNOWN", message: "transient" },

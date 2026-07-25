@@ -1,4 +1,5 @@
 import type { CheckoutCommit } from "@getpaseo/protocol/messages";
+import invariant from "tiny-invariant";
 import { useFetchQuery } from "@/data/query";
 import { checkoutCommitsQueryKey } from "@/git/query-keys";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
@@ -16,7 +17,11 @@ interface UseCheckoutCommitsQueryOptions {
 
 export interface CheckoutCommitsData {
   baseRef: string | null;
-  commits: CheckoutCommit[];
+  commits: ClassifiedCheckoutCommit[];
+}
+
+export interface ClassifiedCheckoutCommit extends CheckoutCommit {
+  isOnBase: boolean;
 }
 
 export type CheckoutCommitsQueryResult =
@@ -69,10 +74,13 @@ export function useCheckoutCommitsQuery({
 }: UseCheckoutCommitsQueryOptions): CheckoutCommitsQueryResult {
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
-  // COMPAT(commitsList): added in v0.1.110, remove gate after 2027-01-16.
+  // COMPAT(commitsList): added in v0.1.110, remove after 2027-01-16.
+  // COMPAT(commitBaseClassification): added in v0.2.0, remove after 2027-01-23.
   // Single capability-detection site; downstream reads a clean load-state union.
   const capabilityPresent = useSessionStore(
-    (state) => state.sessions[serverId]?.serverInfo?.features?.commitsList === true,
+    (state) =>
+      state.sessions[serverId]?.serverInfo?.features?.commitsList === true &&
+      state.sessions[serverId]?.serverInfo?.features?.commitBaseClassification === true,
   );
 
   const canFetch = Boolean(cwd) && Boolean(client) && isConnected;
@@ -84,7 +92,12 @@ export function useCheckoutCommitsQuery({
       if (!client) {
         throw new Error("Host disconnected");
       }
-      return client.listCheckoutCommits(cwd);
+      const data = await client.listCheckoutCommits(cwd);
+      const commits = data.commits.map((commit) => {
+        invariant(commit.isOnBase !== undefined, "Host omitted commit base classification");
+        return { ...commit, isOnBase: commit.isOnBase };
+      });
+      return { baseRef: data.baseRef, commits };
     },
     enabled: queryEnabled,
     staleTimeMs: CHECKOUT_COMMITS_STALE_TIME,

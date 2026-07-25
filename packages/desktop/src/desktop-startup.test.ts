@@ -5,7 +5,7 @@ describe("desktop startup", () => {
   it("runs CLI passthrough before GUI login-shell env inheritance", async () => {
     const calls: string[] = [];
     await runDesktopStartup({
-      hasPendingOpenProjectPath: false,
+      hasPendingGuiLaunchRequest: false,
       runCliPassthroughIfRequested: vi.fn(async () => {
         calls.push("cli");
         return true;
@@ -22,7 +22,7 @@ describe("desktop startup", () => {
   it("keeps login-shell env inheritance on normal GUI startup", async () => {
     const calls: string[] = [];
     await runDesktopStartup({
-      hasPendingOpenProjectPath: false,
+      hasPendingGuiLaunchRequest: false,
       runCliPassthroughIfRequested: vi.fn(async () => {
         calls.push("cli");
         return false;
@@ -39,7 +39,7 @@ describe("desktop startup", () => {
   it("starts skills auto-update after GUI startup", async () => {
     const calls: string[] = [];
     await runDesktopStartup({
-      hasPendingOpenProjectPath: false,
+      hasPendingGuiLaunchRequest: false,
       runCliPassthroughIfRequested: vi.fn(async () => {
         calls.push("cli");
         return false;
@@ -59,7 +59,7 @@ describe("desktop startup", () => {
     const calls: string[] = [];
 
     await runDesktopStartup({
-      hasPendingOpenProjectPath: true,
+      hasPendingGuiLaunchRequest: true,
       runCliPassthroughIfRequested,
       inheritLoginShellEnv: vi.fn(() => calls.push("env")),
       bootstrapGui: vi.fn(async () => {

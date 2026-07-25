@@ -16,6 +16,7 @@ import { mkdtemp, rm, mkdir } from "fs/promises";
 import { existsSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
+import { fileURLToPath } from "url";
 import { ChildProcess, spawn } from "child_process";
 import { getAvailablePort } from "./network.ts";
 
@@ -43,6 +44,7 @@ const TEST_DAEMON_ENV_DEFAULTS: Record<string, string> = {
   PASEO_VOICE_MODE_ENABLED: process.env.PASEO_VOICE_MODE_ENABLED ?? "0",
 };
 const TEST_DAEMON_HOST = "127.0.0.1";
+const TSX_ENTRY = fileURLToPath(import.meta.resolve("tsx/cli"));
 
 const DEFAULT_OUTPUT_CAPTURE_LIMIT = 256 * 1024;
 const TEST_OUTPUT_CAPTURE_LIMIT = Number.parseInt(
@@ -233,19 +235,23 @@ export async function startTestDaemon(options?: {
   const cliSrcPath = join(cliDir, "src", "index.ts");
 
   // Start daemon process using tsx to run TypeScript directly
-  const daemonProcess = spawn("npx", ["tsx", cliSrcPath, "daemon", "start", "--foreground"], {
-    env: {
-      ...process.env,
-      ...TEST_DAEMON_ENV_DEFAULTS,
-      PASEO_HOME: paseoHome,
-      PASEO_LISTEN: `${TEST_DAEMON_HOST}:${port}`,
-      // Force no TTY to prevent QR code output
-      CI: "true",
-      ...options?.env,
+  const daemonProcess = spawn(
+    process.execPath,
+    [TSX_ENTRY, cliSrcPath, "daemon", "start", "--foreground"],
+    {
+      env: {
+        ...process.env,
+        ...TEST_DAEMON_ENV_DEFAULTS,
+        PASEO_HOME: paseoHome,
+        PASEO_LISTEN: `${TEST_DAEMON_HOST}:${port}`,
+        // Force no TTY to prevent QR code output
+        CI: "true",
+        ...options?.env,
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: process.platform !== "win32",
     },
-    stdio: ["ignore", "pipe", "pipe"],
-    detached: process.platform !== "win32",
-  });
+  );
 
   const stdout = createOutputCapture();
   const stderr = createOutputCapture();
@@ -345,7 +351,7 @@ export async function runPaseoCli(
   const cliSrcPath = join(cliDir, "src", "index.ts");
 
   return new Promise((resolve, reject) => {
-    const proc = spawn("npx", ["tsx", cliSrcPath, ...args], {
+    const proc = spawn(process.execPath, [TSX_ENTRY, cliSrcPath, ...args], {
       env: {
         ...process.env,
         ...TEST_DAEMON_ENV_DEFAULTS,

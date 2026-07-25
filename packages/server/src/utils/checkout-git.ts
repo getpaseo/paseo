@@ -1052,10 +1052,15 @@ type PaseoWorktreeForCwd =
   | { isPaseoOwnedWorktree: false }
   | { isPaseoOwnedWorktree: true; worktreeRoot: string };
 
+interface PaseoWorktreeLookupOptions {
+  context?: CheckoutContext;
+  knownWorktreeRoot?: string | null;
+  knownGitCommonDir?: string | null;
+}
+
 async function getPaseoWorktreeForCwd(
   cwd: string,
-  context?: CheckoutContext,
-  knownWorktreeRoot?: string | null,
+  options: PaseoWorktreeLookupOptions = {},
 ): Promise<PaseoWorktreeForCwd> {
   // Fast-path reject: non-worktree paths do not need expensive ownership checks.
   if (!/[\\/]worktrees[\\/]/.test(cwd)) {
@@ -1063,8 +1068,9 @@ async function getPaseoWorktreeForCwd(
   }
 
   const ownership = await isPaseoOwnedWorktreeCwd(cwd, {
-    paseoHome: context?.paseoHome,
-    worktreesRoot: context?.worktreesRoot,
+    paseoHome: options.context?.paseoHome,
+    worktreesRoot: options.context?.worktreesRoot,
+    knownGitCommonDir: options.knownGitCommonDir,
   });
   if (!ownership.allowed) {
     return { isPaseoOwnedWorktree: false };
@@ -1072,7 +1078,7 @@ async function getPaseoWorktreeForCwd(
 
   return {
     isPaseoOwnedWorktree: true,
-    worktreeRoot: knownWorktreeRoot ?? (await getWorktreeRoot(cwd, context)) ?? cwd,
+    worktreeRoot: options.knownWorktreeRoot ?? (await getWorktreeRoot(cwd, options.context)) ?? cwd,
   };
 }
 
@@ -1087,7 +1093,7 @@ async function getStoredBaseRefForCwd(
   if (context?.facts?.isGit) {
     return context.facts.storedBaseRef;
   }
-  const paseoWorktree = await getPaseoWorktreeForCwd(cwd, context);
+  const paseoWorktree = await getPaseoWorktreeForCwd(cwd, { context });
   if (!paseoWorktree.isPaseoOwnedWorktree) {
     return null;
   }
@@ -1126,6 +1132,12 @@ async function resolveBaseRefForCwd(
     storedBaseRef,
     resolvedBaseRef: storedBaseRef ?? (await resolveBaseRef(cwd)),
   };
+}
+
+// Names both refs rather than labelling either one correct: a caller's ref can be stale, but the
+// stored ref can equally be wrong, so the message states the two facts and leaves the diagnosis open.
+function baseRefMismatchError(refs: { stored: string; requested: string }): Error {
+  return new Error(`Base ref mismatch: stored ${refs.stored}, requested ${refs.requested}`);
 }
 
 async function isWorkingTreeDirty(cwd: string, context?: CheckoutContext): Promise<boolean> {
@@ -1492,30 +1504,6 @@ async function getAheadBehind(
   return { ahead, behind };
 }
 
-async function getAheadOfOrigin(
-  cwd: string,
-  currentBranch: string,
-  context?: CheckoutContext,
-): Promise<number | null> {
-  if (!currentBranch) {
-    return null;
-  }
-  const upstreamRef = await getConfiguredUpstreamRef(cwd, currentBranch, context);
-  if (!upstreamRef) {
-    return null;
-  }
-  try {
-    const { stdout } = await runGitCommand(
-      ["rev-list", "--count", `${upstreamRef}..${currentBranch}`],
-      { cwd, envOverlay: READ_ONLY_GIT_ENV, logger: context?.logger },
-    );
-    const count = Number.parseInt(stdout.trim(), 10);
-    return Number.isNaN(count) ? null : count;
-  } catch {
-    return null;
-  }
-}
-
 async function getConfiguredUpstreamRef(
   cwd: string,
   currentBranch: string,
@@ -1537,11 +1525,11 @@ async function getConfiguredUpstreamRef(
   return upstreamBranch ? `${remoteName}/${upstreamBranch}` : null;
 }
 
-async function getBehindOfOrigin(
+async function getOriginAheadBehind(
   cwd: string,
   currentBranch: string,
   context?: CheckoutContext,
-): Promise<number | null> {
+): Promise<AheadBehind | null> {
   if (!currentBranch) {
     return null;
   }
@@ -1551,11 +1539,13 @@ async function getBehindOfOrigin(
   }
   try {
     const { stdout } = await runGitCommand(
-      ["rev-list", "--count", `${currentBranch}..${upstreamRef}`],
+      ["rev-list", "--left-right", "--count", `${currentBranch}...${upstreamRef}`],
       { cwd, envOverlay: READ_ONLY_GIT_ENV, logger: context?.logger },
     );
-    const count = Number.parseInt(stdout.trim(), 10);
-    return Number.isNaN(count) ? null : count;
+    const [aheadRaw, behindRaw] = stdout.trim().split(/\s+/);
+    const ahead = Number.parseInt(aheadRaw ?? "", 10);
+    const behind = Number.parseInt(behindRaw ?? "", 10);
+    return Number.isNaN(ahead) || Number.isNaN(behind) ? null : { ahead, behind };
   } catch {
     return null;
   }
@@ -1579,15 +1569,17 @@ async function inspectCheckoutContext(
     return null;
   }
 
-  const [currentBranch, remoteUrl, absoluteGitDir, gitCommonDir, paseoWorktree] = await Promise.all(
-    [
-      getCurrentBranch(cwd),
-      getOriginRemoteUrl(cwd),
-      resolveAbsoluteGitDir(cwd),
-      resolveGitCommonDir(cwd),
-      getPaseoWorktreeForCwd(cwd, context, root),
-    ],
-  );
+  const [currentBranch, remoteUrl, absoluteGitDir, gitCommonDir] = await Promise.all([
+    getCurrentBranch(cwd),
+    getOriginRemoteUrl(cwd),
+    resolveAbsoluteGitDir(cwd),
+    resolveGitCommonDir(cwd),
+  ]);
+  const paseoWorktree = await getPaseoWorktreeForCwd(cwd, {
+    context,
+    knownWorktreeRoot: root,
+    knownGitCommonDir: gitCommonDir,
+  });
 
   return {
     worktreeRoot: root,
@@ -1776,7 +1768,9 @@ export async function getCheckoutSnapshotFacts(
     if (branchRemoteName) {
       [branchMergeRef, branchRemoteUrl] = await Promise.all([
         getGitConfigValue(cwd, `branch.${inspected.currentBranch}.merge`, context),
-        getGitConfigValue(cwd, `remote.${branchRemoteName}.url`, context),
+        branchRemoteName === "origin"
+          ? inspected.remoteUrl
+          : getGitConfigValue(cwd, `remote.${branchRemoteName}.url`, context),
       ]);
     }
   }
@@ -1955,17 +1949,16 @@ export async function getCheckoutStatus(
   const baseRef = facts.resolvedBaseRef;
   const mainRepoRoot = facts.mainRepoRoot;
   const factsContext = { ...context, facts };
-  const [aheadBehind, aheadOfOrigin, behindOfOrigin] = await Promise.all([
+  const [aheadBehind, originAheadBehind] = await Promise.all([
     baseRef && currentBranch
       ? getAheadBehind(cwd, baseRef, currentBranch, factsContext)
       : Promise.resolve(null),
     hasRemote && currentBranch
-      ? getAheadOfOrigin(cwd, currentBranch, factsContext)
-      : Promise.resolve(null),
-    hasRemote && currentBranch
-      ? getBehindOfOrigin(cwd, currentBranch, factsContext)
+      ? getOriginAheadBehind(cwd, currentBranch, factsContext)
       : Promise.resolve(null),
   ]);
+  const aheadOfOrigin = originAheadBehind?.ahead ?? null;
+  const behindOfOrigin = originAheadBehind?.behind ?? null;
 
   if (paseoWorktree.isPaseoOwnedWorktree && baseRef) {
     return {
@@ -2001,8 +1994,9 @@ export async function getCheckoutStatus(
   };
 }
 
-// The explorer is a recent-history view, not a full repository log.
-const MAX_CHECKOUT_COMMITS = 20;
+// Workspace history stays complete; base history is bounded context until the
+// commits list supports paging older base commits.
+const CHECKOUT_BASE_COMMIT_LIMIT = 10;
 // Bytes git emits between fields/records. We split parsed output on these.
 const COMMIT_FIELD_SEPARATOR = "\x00";
 const COMMIT_RECORD_SEPARATOR = "\x1e";
@@ -2020,6 +2014,12 @@ interface ParsedCheckoutCommit {
   authorDate: string;
   subject: string;
   files: CheckoutCommitFile[];
+}
+
+interface CheckoutCommitLogInput {
+  cwd: string;
+  revision: string;
+  maxCount?: number;
 }
 
 function mapNameStatusLetter(letter: string): CheckoutCommitFileStatus | undefined {
@@ -2146,14 +2146,11 @@ function parseCheckoutCommitRecords(stdout: string): ParsedCheckoutCommit[] {
 
 // Returns commits reachable from HEAD that are not reachable from any remote ref.
 async function getUnpushedCommitShas(cwd: string, context?: CheckoutContext): Promise<Set<string>> {
-  const { stdout } = await runGitCommand(
-    ["rev-list", `--max-count=${MAX_CHECKOUT_COMMITS}`, "HEAD", "--not", "--remotes"],
-    {
-      cwd,
-      envOverlay: READ_ONLY_GIT_ENV,
-      logger: context?.logger,
-    },
-  );
+  const { stdout } = await runGitCommand(["rev-list", "HEAD", "--not", "--remotes"], {
+    cwd,
+    envOverlay: READ_ONLY_GIT_ENV,
+    logger: context?.logger,
+  });
   return new Set(
     stdout
       .split("\n")
@@ -2162,58 +2159,104 @@ async function getUnpushedCommitShas(cwd: string, context?: CheckoutContext): Pr
   );
 }
 
-/**
- * Lists the current branch's 20 most recent commits, newest first, each flagged
- * local-only vs on-remote with per-commit file +/- stats.
- */
+async function getCheckoutCommitRecords({
+  cwd,
+  revision,
+  maxCount,
+}: CheckoutCommitLogInput): Promise<ParsedCheckoutCommit[]> {
+  const args = [
+    "log",
+    revision,
+    "--diff-merges=first-parent",
+    `--format=${COMMIT_LOG_FORMAT}`,
+    "--raw",
+    "--numstat",
+    "-M",
+  ];
+  if (maxCount !== undefined) {
+    args.splice(2, 0, `--max-count=${maxCount}`);
+  }
+
+  const result = await runGitCommand(args, { cwd, envOverlay: READ_ONLY_GIT_ENV });
+  if (result.truncated) {
+    throw new Error("Commit history exceeded the git output limit");
+  }
+  return parseCheckoutCommitRecords(result.stdout);
+}
+
 export interface CheckoutCommitsResult {
   baseRef: string | null;
   commits: CheckoutCommit[];
 }
 
+async function tryResolveCheckoutCommitsBaseRef(
+  cwd: string,
+  baseRef: string | null,
+  currentBranch: string,
+): Promise<string | null> {
+  if (!baseRef) {
+    return null;
+  }
+  const normalizedBaseRef = normalizeLocalBranchRefName(baseRef);
+  if (!normalizedBaseRef || normalizedBaseRef === currentBranch) {
+    return null;
+  }
+  return resolveMostAheadBaseRef(cwd, normalizedBaseRef).catch(() => null);
+}
+
 export async function listCheckoutCommits({
   cwd,
+  context,
 }: {
   cwd: string;
+  context?: CheckoutContext;
 }): Promise<CheckoutCommitsResult> {
   const currentBranch = await getCurrentBranch(cwd);
   if (!currentBranch) {
     return { baseRef: null, commits: [] };
   }
 
-  const { resolvedBaseRef } = await resolveBaseRefForCwd(cwd);
+  const { resolvedBaseRef } = await resolveBaseRefForCwd(cwd, context);
   const normalizedBaseRef = resolvedBaseRef ? normalizeLocalBranchRefName(resolvedBaseRef) : null;
-  let comparisonBaseRef: string | null = null;
-  if (resolvedBaseRef && normalizedBaseRef && normalizedBaseRef !== currentBranch) {
-    try {
-      comparisonBaseRef = await resolveBestComparisonBaseRef(cwd, resolvedBaseRef);
-    } catch {
-      // History does not depend on the configured base being available.
-    }
+  let comparisonBaseRef = await tryResolveCheckoutCommitsBaseRef(
+    cwd,
+    resolvedBaseRef,
+    currentBranch,
+  );
+  if (!comparisonBaseRef && normalizedBaseRef && normalizedBaseRef !== currentBranch) {
+    // Saved worktree metadata can outlive a renamed or deleted base branch.
+    comparisonBaseRef = await tryResolveCheckoutCommitsBaseRef(
+      cwd,
+      await resolveBaseRef(cwd),
+      currentBranch,
+    );
   }
 
-  // Single pass: `--raw` carries the status letter, `--numstat` the +/- counts.
-  // (`--name-status` cannot be combined with `--numstat` — git emits only one.)
-  const logResult = await runGitCommand(
-    [
-      "log",
-      "HEAD",
-      "--diff-merges=first-parent",
-      `--max-count=${MAX_CHECKOUT_COMMITS}`,
-      `--format=${COMMIT_LOG_FORMAT}`,
-      "--raw",
-      "--numstat",
-      "-M",
-    ],
-    { cwd, envOverlay: READ_ONLY_GIT_ENV },
-  );
+  let workspaceRecords: ParsedCheckoutCommit[] = [];
+  let baseRevision = "HEAD";
+  if (comparisonBaseRef) {
+    const [records, mergeBase] = await Promise.all([
+      getCheckoutCommitRecords({ cwd, revision: `${comparisonBaseRef}..HEAD` }),
+      tryResolveMergeBase(cwd, comparisonBaseRef),
+    ]);
+    workspaceRecords = records;
+    baseRevision = mergeBase ?? "";
+  }
 
-  const records = parseCheckoutCommitRecords(logResult.stdout);
+  const baseRecords = baseRevision
+    ? await getCheckoutCommitRecords({
+        cwd,
+        revision: baseRevision,
+        maxCount: CHECKOUT_BASE_COMMIT_LIMIT,
+      })
+    : [];
+  const records = [...workspaceRecords, ...baseRecords];
   if (records.length === 0) {
     return { baseRef: comparisonBaseRef, commits: [] };
   }
 
   const unpushedShas = await getUnpushedCommitShas(cwd);
+  const workspaceShas = new Set(workspaceRecords.map((record) => record.sha));
 
   const commits = records.map((record) => ({
     sha: record.sha,
@@ -2222,6 +2265,7 @@ export async function listCheckoutCommits({
     authorName: record.authorName,
     authorDate: record.authorDate,
     isOnRemote: !unpushedShas.has(record.sha),
+    isOnBase: !workspaceShas.has(record.sha),
     files: record.files,
   }));
 
@@ -2757,7 +2801,7 @@ async function resolveCheckoutDiffRefs(
     return null;
   }
   if (storedBaseRef && compare.baseRef && compare.baseRef !== storedBaseRef) {
-    throw new Error(`Base ref mismatch: expected ${baseRef}, got ${compare.baseRef}`);
+    throw baseRefMismatchError({ stored: storedBaseRef, requested: compare.baseRef });
   }
   const bestBaseRef = await resolveBestComparisonBaseRef(cwd, baseRef);
   return {
@@ -2971,7 +3015,7 @@ export async function mergeToBase(
     throw new Error("Unable to determine base branch for merge");
   }
   if (storedBaseRef && options.baseRef && options.baseRef !== storedBaseRef) {
-    throw new Error(`Base ref mismatch: expected ${baseRef}, got ${options.baseRef}`);
+    throw baseRefMismatchError({ stored: storedBaseRef, requested: options.baseRef });
   }
   if (!currentBranch) {
     throw new Error("Unable to determine current branch for merge");
@@ -3047,7 +3091,7 @@ export async function mergeFromBase(
     throw new Error("Unable to determine base branch for merge");
   }
   if (storedBaseRef && options.baseRef && options.baseRef !== storedBaseRef) {
-    throw new Error(`Base ref mismatch: expected ${baseRef}, got ${options.baseRef}`);
+    throw baseRefMismatchError({ stored: storedBaseRef, requested: options.baseRef });
   }
 
   const requireCleanTarget = options.requireCleanTarget ?? true;
@@ -3385,7 +3429,7 @@ export async function createPullRequest(
   }
   const normalizedBase = normalizeLocalBranchRefName(base);
   if (storedBaseRef && options.base && options.base !== storedBaseRef) {
-    throw new Error(`Base ref mismatch: expected ${base}, got ${options.base}`);
+    throw baseRefMismatchError({ stored: storedBaseRef, requested: options.base });
   }
 
   // The push deliberately happens before the adapter resolves the target

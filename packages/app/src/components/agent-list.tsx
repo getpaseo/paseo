@@ -394,6 +394,7 @@ export function AgentList({
         serverId,
         agentId,
         workspaceId: agent.workspaceId,
+        pin: true,
       });
     },
     [isActionSheetVisible, onAgentSelect],

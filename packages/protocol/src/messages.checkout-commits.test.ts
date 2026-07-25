@@ -35,6 +35,7 @@ describe("checkout.commits.list schemas", () => {
           authorName: "Ada",
           authorDate: "2026-06-13T10:00:00.000Z",
           isOnRemote: true,
+          isOnBase: false,
           files: [
             { path: "src/a.ts", additions: 10, deletions: 2, status: "modified" },
             { path: "src/b.ts", additions: 5, deletions: 0, status: "added" },
@@ -47,6 +48,7 @@ describe("checkout.commits.list schemas", () => {
           authorName: "Ada",
           authorDate: "2026-06-13T11:00:00.000Z",
           isOnRemote: false,
+          isOnBase: true,
           files: [{ path: "src/c.ts", additions: 1, deletions: 1 }],
         },
       ],
@@ -61,8 +63,35 @@ describe("checkout.commits.list schemas", () => {
 
     expect(parsed.payload).toEqual(payload);
     expect(parsed.payload.commits[0]?.isOnRemote).toBe(true);
+    expect(parsed.payload.commits[0]?.isOnBase).toBe(false);
     expect(parsed.payload.commits[1]?.isOnRemote).toBe(false);
+    expect(parsed.payload.commits[1]?.isOnBase).toBe(true);
     expect(parsed.payload.commits[1]?.files[0]?.status).toBeUndefined();
+  });
+
+  test("still parses commits from hosts without base classification", () => {
+    const parsed = CheckoutCommitsListResponseSchema.parse({
+      type: "checkout.commits.list.response",
+      payload: {
+        cwd: "/tmp/repo",
+        baseRef: "main",
+        commits: [
+          {
+            sha: "1111111111111111111111111111111111111111",
+            shortSha: "1111111",
+            subject: "Legacy commit",
+            authorName: "Ada",
+            authorDate: "2026-06-13T10:00:00.000Z",
+            isOnRemote: true,
+            files: [],
+          },
+        ],
+        error: null,
+        requestId: "request-commits",
+      },
+    });
+
+    expect(parsed.payload.commits[0]?.isOnBase).toBeUndefined();
   });
 
   test("accepts a null baseRef and an error payload", () => {
@@ -107,16 +136,17 @@ describe("checkout.commits.list schemas", () => {
     ).toMatchObject({ type: "checkout.commits.list.response" });
   });
 
-  test("accepts the commitsList server_info feature flag", () => {
+  test("accepts the commit history server_info feature flags", () => {
     expect(
       ServerInfoStatusPayloadSchema.parse({
         status: "server_info",
         serverId: "srv_test",
         features: {
           commitsList: true,
+          commitBaseClassification: true,
         },
       }).features,
-    ).toEqual({ commitsList: true });
+    ).toEqual({ commitsList: true, commitBaseClassification: true });
   });
 
   test("still parses server_info without the commitsList feature flag", () => {

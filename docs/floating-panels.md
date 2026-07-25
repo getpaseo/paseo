@@ -129,6 +129,13 @@ lockstep, no re-measurement needed. Do not call
 can briefly report a stale nonzero height with closed progress, and the shared
 provider is where that is normalized.
 
+The provider also reconciles iOS from the controller's native `onEnd` event.
+The controller's stock iOS shared values update at move start and during an
+interactive move, but not at the terminal event, so JS contention can otherwise
+leave the last height/progress pair stuck in either the open or closed state.
+Keep that terminal reconciliation on the UI thread; a later focus or blur must
+not be required to repair the offset.
+
 Re-measure on `Keyboard.addListener('keyboardDidShow'|'keyboardDidHide')` only
 to refresh the snapshot if the keyboard was mid-transition when the popover
 opened.

@@ -32,6 +32,11 @@ Terminal frames share the daemon main event loop with all agent traffic. The `ev
 - **Browser perf specs (user-perceived path):** gated behind `PASEO_TERMINAL_PERF_E2E=1` —
   `packages/app/e2e/terminal-performance.spec.ts` and `packages/app/e2e/terminal-keystroke-stress.spec.ts` (per-stage keydown→xterm-commit breakdown under mock-agent load). Healthy: keydown→commit p50 ~18ms under 600-key burst.
 - **Production:** grep `daemon.log` for `ws_runtime_metrics` and read `eventLoopDelay` + `bufferedAmount`.
+- **Git pressure:** the same log line includes `git.commands` (limiter occupancy, queue age,
+  queue wait, execution time, failures, timeouts, and top operations),
+  `git.workspaceService` (daemon-global Git observer ownership), and per-session workspace Git
+  subscription totals under `runtime`. Queue wait and execution time are separate because the Git
+  command timeout begins only after a command acquires a limiter slot.
 
 ## Known remaining contention (follow-up candidates)
 

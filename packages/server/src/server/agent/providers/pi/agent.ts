@@ -92,6 +92,7 @@ const PI_CATALOG_REQUEST_TIMEOUT_MS = 120_000;
 const PASEO_PI_TREE_EXTENSION_COMMAND = "paseo_tree";
 const PASEO_PI_CAPTURE_EXTENSION_COMMAND = "paseo_capture_entries";
 const PASEO_PI_ENTRY_CAPTURE_MARKER = "PASEO_ENTRY_CAPTURE";
+const PASEO_PI_SUBMITTED_USER_ENTRY_MARKER = "PASEO_SUBMITTED_USER_ENTRY";
 const PASEO_PI_COMMAND_RESULT_MARKER = "PASEO_COMMAND_RESULT";
 const DEFAULT_PI_EXTENSION_RESULT_TIMEOUT_MS = 30_000;
 const QUESTION_RESPONSE_HEADER = "Response";
@@ -254,12 +255,6 @@ interface PiTempFile {
 
 interface PiCapturedEntry extends PiCapturedUserMessageEntry {
   parentId: string | null;
-}
-
-interface PendingPiUserMessage {
-  text: string;
-  turnId: string | undefined;
-  clientMessageId?: string;
 }
 
 interface PendingExtensionResult {
@@ -653,11 +648,15 @@ function createPiPaseoExtensionFile(systemPrompt?: string): PiTempFile {
 	  return ctx.sessionManager
 	    .getEntries()
 	    .filter((entry) => entry.type === "message" && entry.message?.role === "user")
-	    .map((entry) => ({
+	    .map(toCapturedUserEntry);
+	}
+
+	function toCapturedUserEntry(entry) {
+	  return {
 	      id: entry.id,
 	      parentId: entry.parentId ?? null,
 	      text: readTextContent(entry.message.content),
-	    }));
+	    };
 	}
 
 	function emitEntryCapture(ctx, reason, requestId) {
@@ -676,6 +675,30 @@ function createPiPaseoExtensionFile(systemPrompt?: string): PiTempFile {
 	}
 
 	export default function paseoIntegration(pi) {
+	  const submittedUserMessages = [];
+
+	  function emitSubmittedUserEntries(ctx) {
+	    const entries = ctx.sessionManager.getEntries();
+	    for (let index = 0; index < submittedUserMessages.length; index += 1) {
+	      const message = submittedUserMessages[index];
+	      // Pi assigns the entry ID after message_end, then persists this same message object.
+	      // Reference equality preserves the exact association even when another extension edits it.
+	      const entry = entries.find(
+	        (candidate) => candidate.type === "message" && candidate.message === message,
+	      );
+	      if (!entry) {
+	        continue;
+	      }
+	      submittedUserMessages.splice(index, 1);
+	      index -= 1;
+	      ctx.ui.notify(
+	        "${PASEO_PI_SUBMITTED_USER_ENTRY_MARKER} " +
+	          JSON.stringify({ entry: toCapturedUserEntry(entry) }),
+	        "info",
+	      );
+	    }
+	  }
+
 	  ${
       systemPrompt
         ? `pi.on("before_agent_start", async (event) => ({
@@ -688,7 +711,20 @@ function createPiPaseoExtensionFile(systemPrompt?: string): PiTempFile {
 	    emitEntryCapture(ctx, "session_start");
 	  });
 
+	  pi.on("message_end", async (event) => {
+	    if (event.message?.role === "user") {
+	      submittedUserMessages.push(event.message);
+	    }
+	  });
+
+	  pi.on("message_start", async (event, ctx) => {
+	    if (event.message?.role === "assistant") {
+	      emitSubmittedUserEntries(ctx);
+	    }
+	  });
+
 	  pi.on("turn_end", async (_event, ctx) => {
+	    emitSubmittedUserEntries(ctx);
 	    emitEntryCapture(ctx, "turn_end");
 	  });
 
@@ -1197,8 +1233,6 @@ export class PiRpcAgentSession implements AgentSession {
   currentLeafOverrideId: string | null | undefined;
   private readonly capturedUserEntries: PiCapturedEntry[] = [];
   private readonly capturedUserEntriesById = new Map<string, PiCapturedEntry>();
-  private readonly seenUserEntryIds = new Set<string>();
-  private readonly pendingUserMessages: PendingPiUserMessage[] = [];
   private readonly pendingExtensionResults = new Map<string, PendingExtensionResult>();
   private outOfBandCompactionEmit: ((event: AgentStreamEvent) => void) | null = null;
   private outOfBandCompactionStarted = false;
@@ -1776,42 +1810,34 @@ export class PiRpcAgentSession implements AgentSession {
   }
 
   private recordCapturedUserEntries(entries: PiCapturedEntry[]): void {
-    const previouslySeenEntryIds = new Set(this.seenUserEntryIds);
     this.capturedUserEntries.splice(0, this.capturedUserEntries.length, ...entries);
     this.capturedUserEntriesById.clear();
     for (const entry of entries) {
       this.capturedUserEntriesById.set(entry.id, entry);
     }
-    this.flushPendingUserMessages(previouslySeenEntryIds);
-    for (const entry of entries) {
-      this.seenUserEntryIds.add(entry.id);
-    }
   }
 
-  private flushPendingUserMessages(previouslySeenEntryIds: Set<string>): void {
-    for (let index = 0; index < this.pendingUserMessages.length; index += 1) {
-      const pending = this.pendingUserMessages[index]!;
-      const entry = this.capturedUserEntries.find(
-        (candidate) => !previouslySeenEntryIds.has(candidate.id),
-      );
-      if (!entry) {
-        continue;
-      }
-      previouslySeenEntryIds.add(entry.id);
-      this.pendingUserMessages.splice(index, 1);
-      index -= 1;
-      this.emit({
-        type: "timeline",
-        provider: this.provider,
-        turnId: pending.turnId,
-        item: {
-          type: "user_message",
-          text: pending.text,
-          messageId: entry.id,
-          ...(pending.clientMessageId ? { clientMessageId: pending.clientMessageId } : {}),
-        },
-      });
+  private handleSubmittedUserEntryMarker(message: string): boolean {
+    const payload = parseExtensionMarkerPayload(message, PASEO_PI_SUBMITTED_USER_ENTRY_MARKER);
+    if (!payload) {
+      return false;
     }
+    const [entry] = parseCapturedEntries([payload.entry]);
+    if (!entry) {
+      return true;
+    }
+    this.emit({
+      type: "timeline",
+      provider: this.provider,
+      turnId: this.currentTurnIdForEvent(),
+      item: {
+        type: "user_message",
+        text: entry.text,
+        messageId: entry.id,
+        ...(this.activeClientMessageId ? { clientMessageId: this.activeClientMessageId } : {}),
+      },
+    });
+    return true;
   }
 
   private handleEntryCaptureMarker(message: string): boolean {
@@ -1849,7 +1875,11 @@ export class PiRpcAgentSession implements AgentSession {
   ): void {
     const message = optionalString(event.message);
     if (event.method === "notify" && message) {
-      if (this.handleEntryCaptureMarker(message) || this.handleCommandResultMarker(message)) {
+      if (
+        this.handleSubmittedUserEntryMarker(message) ||
+        this.handleEntryCaptureMarker(message) ||
+        this.handleCommandResultMarker(message)
+      ) {
         return;
       }
       this.bufferNoTurnOutput(message);
@@ -2176,28 +2206,6 @@ export class PiRpcAgentSession implements AgentSession {
       this.completeTurn(turnId, []);
       return;
     }
-
-    if (event.message.role !== "user") {
-      return;
-    }
-    const text = getUserMessageText(event.message.content);
-    if (!text) {
-      return;
-    }
-    this.pendingUserMessages.push({
-      text,
-      turnId,
-      ...(this.activeClientMessageId ? { clientMessageId: this.activeClientMessageId } : {}),
-    });
-    void this.requestEntryCapture("message_end").catch((error: unknown) => {
-      const message = error instanceof Error ? error.message : String(error);
-      this.emit({
-        type: "turn_failed",
-        provider: this.provider,
-        turnId,
-        error: message,
-      });
-    });
   }
 
   private emitToolCallEvent(

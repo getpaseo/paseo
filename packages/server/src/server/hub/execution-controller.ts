@@ -1,6 +1,7 @@
 import { isAbsolute } from "node:path";
 import type {
   HubExecutionAgentCreateRequest,
+  HubExecutionControlRequest,
   SessionOutboundMessage,
 } from "@getpaseo/protocol/messages";
 
@@ -16,6 +17,7 @@ export class HubExecutionController {
   private readonly send: (message: SessionOutboundMessage) => void;
   private readonly unsubscribe: () => void;
   private readonly pendingCreates = new Set<Promise<void>>();
+  private readonly pendingControls = new Set<Promise<void>>();
   private cleanupPromise: Promise<void> | null = null;
   private closed = false;
 
@@ -33,7 +35,43 @@ export class HubExecutionController {
   private async cleanupOnce(): Promise<void> {
     this.closed = true;
     this.unsubscribe();
-    await Promise.allSettled(this.pendingCreates);
+    await Promise.allSettled([...this.pendingCreates, ...this.pendingControls]);
+  }
+
+  async controlExecution(message: HubExecutionControlRequest): Promise<void> {
+    if (this.closed) return;
+    const control = this.controlExecutionWithResponse(message);
+    this.pendingControls.add(control);
+    try {
+      await control;
+    } finally {
+      this.pendingControls.delete(control);
+    }
+  }
+
+  private async controlExecutionWithResponse(message: HubExecutionControlRequest): Promise<void> {
+    let error: string | null = null;
+    try {
+      requireNonBlankHubAgentField("executionId", message.executionId);
+      await this.agents.control({
+        requestId: message.requestId,
+        executionId: message.executionId,
+        action: message.action,
+      });
+    } catch (controlError) {
+      error = controlError instanceof Error ? controlError.message : String(controlError);
+    }
+    if (this.closed) return;
+    this.send({
+      type: "hub.execution.control.response",
+      payload: {
+        requestId: message.requestId,
+        executionId: message.executionId,
+        action: message.action,
+        success: error === null,
+        error,
+      },
+    });
   }
 
   async createAgent(message: HubExecutionAgentCreateRequest): Promise<void> {
@@ -65,7 +103,6 @@ export class HubExecutionController {
         featureValues: message.featureValues,
         env: message.env,
         worktree: message.worktree,
-        autoArchive: message.autoArchive,
       });
       if (this.closed) return;
       this.send({

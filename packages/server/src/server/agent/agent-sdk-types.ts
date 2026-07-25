@@ -603,6 +603,12 @@ export interface AgentCreateSessionOptions {
   persistSession?: boolean;
 }
 
+/** Runtime-only intent for a persisted-session resume. Never persist this option. */
+export interface AgentResumeSessionOptions {
+  /** Defaults to interactive. History loading may be read-only for archived native sessions. */
+  purpose?: "interactive" | "history";
+}
+
 /**
  * Returned by respondToPermission when the permission resolution requires
  * a follow-up turn (e.g. Codex plan approval → implementation).
@@ -689,6 +695,7 @@ export interface AgentClient {
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
     launchContext?: AgentLaunchContext,
+    options?: AgentResumeSessionOptions,
   ): Promise<AgentSession>;
   /**
    * Discover models and modes together. Implementations may use one upstream

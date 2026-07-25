@@ -207,6 +207,35 @@ describe("syncObservers", () => {
     h.emitSnapshot(WS1, "feature");
     expect(h.branchChanges).toEqual([["ws2", null, "feature"]]);
   });
+
+  test("reports observer ownership as workspaces are added and removed", () => {
+    const h = buildHarness();
+    h.service.syncObservers([
+      makeDescriptor({ id: "ws1", workspaceDirectory: WS1 }),
+      makeDescriptor({ id: "ws2", workspaceDirectory: WS1 }),
+      makeDescriptor({ id: "ws3", workspaceDirectory: WS2 }),
+    ]);
+
+    expect(h.service.getMetrics()).toEqual({
+      watchedDirectoryCount: 2,
+      workspaceRecordCount: 3,
+      subscriptionCount: 2,
+    });
+
+    h.service.removeForWorkspaceId("ws1");
+    expect(h.service.getMetrics()).toEqual({
+      watchedDirectoryCount: 2,
+      workspaceRecordCount: 2,
+      subscriptionCount: 2,
+    });
+
+    h.service.dispose();
+    expect(h.service.getMetrics()).toEqual({
+      watchedDirectoryCount: 0,
+      workspaceRecordCount: 0,
+      subscriptionCount: 0,
+    });
+  });
 });
 
 describe("git snapshot listener", () => {

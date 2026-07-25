@@ -82,6 +82,20 @@ archived workspace. History navigation must not infer workspace lifecycle from `
 or mutate either lifecycle. The workspace route asks the daemon for authoritative recovery state;
 only the route's explicit Unarchive or Restore action changes the archived workspace.
 
+History navigation preserves the selected agent as an explicit recovery target. If both that agent
+and its workspace are archived, the workspace recovery action restores the workspace and unarchives
+the selected agent as one user action. Other archived agents in the restored workspace remain
+recoverable from History. Opening one pins its tab and renders the archived-agent callout. Authoritative
+timeline catch-up may load provider history with a runtime-only `history` resume purpose, which must
+leave both Paseo's `archivedAt` and the provider's native archive state unchanged. **Unarchive** remains
+the only transition back to an interactive runtime: it runs the provider's native unarchive hook
+(including Codex `thread/unarchive`) before the normal agent resume and timeline hydration flow.
+
+Provider session connection owns every process it spawns until the session is registered with
+`AgentManager`. If initialization, persisted-session resume, or initial history hydration fails,
+`connect()` must dispose that process before rethrowing; the manager cannot clean up a session it never
+received.
+
 ## Tabs vs archive
 
 These are two distinct concepts that used to be conflated:
