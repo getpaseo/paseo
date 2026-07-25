@@ -48,7 +48,7 @@ The daemon also supports an optional shared-secret password (set via `auth.passw
 
 Connected clients are trusted operators of the daemon user. File previews follow that authority: a preview request may read any regular file the daemon process can read, while keeping path normalization and symlink checks in the daemon file service. Workspace-relative paths remain a UI convenience, not a security boundary.
 
-An explicit # @symlink entry in a repository's .worktreeinclude intentionally gives a
+An explicit `symlink <path>` entry in a repository's .worktreeinclude intentionally gives a
 Paseo-created worktree live access to that source-checkout file or directory. It is useful for
 local dependencies and caches, but it weakens the usual worktree isolation: agents and lifecycle
 scripts can modify the source through the link. Paseo validates entries and refuses traversal or

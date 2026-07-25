@@ -28,18 +28,12 @@ describe("worktree include planning", () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
-  it("keeps legacy entries as copies and applies a symlink directive to one entry", async () => {
+  it("copies bare entries and accepts explicit copy and symlink modes", async () => {
     writeFileSync(
       join(sourceRoot, ".worktreeinclude"),
-      [
-        ".env.local",
-        ".cache/**",
-        "# @symlink",
-        "shared-state",
-        "# @copy",
-        "packages/*/.runtime.env",
-        "",
-      ].join("\n"),
+      [".env.local", ".cache/**", "symlink shared-state", "copy packages/*/.runtime.env", ""].join(
+        "\n",
+      ),
     );
     writeFileSync(join(sourceRoot, ".env.local"), "source\n");
     mkdirSync(join(sourceRoot, ".cache"), { recursive: true });
@@ -76,13 +70,13 @@ describe("worktree include planning", () => {
       "parent-directory segments are not allowed",
     );
 
-    writeFileSync(join(sourceRoot, ".worktreeinclude"), "# @symlink\n");
-    await expect(readWorktreeIncludePlan({ sourceRoot })).rejects.toThrow("has no path entry");
+    writeFileSync(join(sourceRoot, ".worktreeinclude"), "symlink\n");
+    await expect(readWorktreeIncludePlan({ sourceRoot })).rejects.toThrow("requires a path");
 
     writeFileSync(join(sourceRoot, "shared"), "source\n");
     writeFileSync(
       join(sourceRoot, ".worktreeinclude"),
-      ["shared", "# @symlink", "shared", ""].join("\n"),
+      ["shared", "symlink shared", ""].join("\n"),
     );
     await expect(readWorktreeIncludePlan({ sourceRoot })).rejects.toThrow(
       "use both copy and symlink modes",
@@ -123,9 +117,7 @@ describe.skipIf(isPlatform("win32"))("worktree include materialization", () => {
   it("copies snapshots, links shared paths, and is idempotent", async () => {
     writeFileSync(
       join(sourceRoot, ".worktreeinclude"),
-      ["copy.txt", "copy-dir/**", "# @symlink", "linked.txt", "# @symlink", "linked-dir"].join(
-        "\n",
-      ),
+      ["copy.txt", "copy-dir/**", "symlink linked.txt", "symlink linked-dir"].join("\n"),
     );
     writeFileSync(join(sourceRoot, "copy.txt"), "copy-v1\n");
     mkdirSync(join(sourceRoot, "copy-dir"), { recursive: true });
@@ -207,7 +199,7 @@ describe.skipIf(!isPlatform("win32"))("worktree include Windows directory links"
   it("uses a live directory link and removes it without touching the source", async () => {
     mkdirSync(join(sourceRoot, "shared-state"));
     writeFileSync(join(sourceRoot, "shared-state", "state.txt"), "source-v1\n");
-    writeFileSync(join(sourceRoot, ".worktreeinclude"), "# @symlink\nshared-state\n");
+    writeFileSync(join(sourceRoot, ".worktreeinclude"), "symlink shared-state\n");
 
     const plan = await readWorktreeIncludePlan({ sourceRoot });
     await materializeWorktreeIncludePlan({ plan, worktreeRoot });

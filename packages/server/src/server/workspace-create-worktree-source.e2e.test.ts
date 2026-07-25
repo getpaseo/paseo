@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { lstatSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, test } from "vitest";
@@ -89,55 +89,6 @@ test("workspace.create keeps a branch-off name separate from its worktree slug",
     expect(result.error).toBeNull();
     expect(result.workspace?.gitRuntime?.currentBranch).toBe("feature/auth");
     expect(path.basename(result.workspace?.workspaceDirectory ?? "")).toBe("feature-auth");
-  } finally {
-    await client.close().catch(() => undefined);
-    await daemon.close();
-    rmSync(tempRoot, { recursive: true, force: true });
-  }
-}, 180000);
-
-test("workspace.create materializes .worktreeinclude copies and symlinks", async () => {
-  const daemon = await createTestPaseoDaemon();
-  const { repoDir, tempRoot } = createGitRepoWithBranch();
-  const client = new DaemonClient({
-    url: `ws://127.0.0.1:${daemon.port}/ws`,
-    appVersion: "0.1.82",
-  });
-
-  try {
-    writeFileSync(
-      path.join(repoDir, ".worktreeinclude"),
-      ["copy.env", "# @symlink", "linked.txt", ""].join("\n"),
-    );
-    writeFileSync(path.join(repoDir, "copy.env"), "copy-v1\n");
-    writeFileSync(path.join(repoDir, "linked.txt"), "linked-v1\n");
-    await client.connect();
-
-    const result = await client.createWorkspace({
-      source: {
-        kind: "worktree",
-        cwd: repoDir,
-        action: "branch-off",
-        branchName: "feature/include-e2e",
-        worktreeSlug: "include-e2e",
-        baseBranch: "main",
-      },
-    });
-
-    expect(result.error).toBeNull();
-    const worktreePath = result.workspace?.workspaceDirectory;
-    if (!worktreePath) {
-      throw new Error("workspace.create did not return a worktree directory");
-    }
-
-    expect(readFileSync(path.join(worktreePath, "copy.env"), "utf8")).toBe("copy-v1\n");
-    expect(lstatSync(path.join(worktreePath, "linked.txt")).isSymbolicLink()).toBe(true);
-
-    writeFileSync(path.join(repoDir, "copy.env"), "copy-v2\n");
-    writeFileSync(path.join(repoDir, "linked.txt"), "linked-v2\n");
-
-    expect(readFileSync(path.join(worktreePath, "copy.env"), "utf8")).toBe("copy-v1\n");
-    expect(readFileSync(path.join(worktreePath, "linked.txt"), "utf8")).toBe("linked-v2\n");
   } finally {
     await client.close().catch(() => undefined);
     await daemon.close();

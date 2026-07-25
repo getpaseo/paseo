@@ -1,10 +1,9 @@
 import { type Stats } from "fs";
 import { copyFile, cp, lstat, mkdir, readFile, readdir, realpath, symlink } from "fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep, win32 } from "path";
+import { areEquivalentPaths, isPathInsideRoot } from "./path.js";
 
 const WORKTREE_INCLUDE_FILE_NAME = ".worktreeinclude";
-const COPY_DIRECTIVE = "# @copy";
-const SYMLINK_DIRECTIVE = "# @symlink";
 
 export type WorktreeIncludeMode = "copy" | "symlink";
 type WorktreeIncludeSourceKind = "file" | "directory";
@@ -84,7 +83,6 @@ export async function readWorktreeIncludePlan(
       throw noMatchError(entry);
     }
 
-    let matched = false;
     for (const relativePath of matchedPaths) {
       const resolved = await resolveSourceMaterialization({
         sourceRoot,
@@ -92,11 +90,6 @@ export async function readWorktreeIncludePlan(
         relativePath,
       });
       materializations.push(resolved.materialization);
-      matched = true;
-    }
-
-    if (!matched) {
-      throw noMatchError(entry);
     }
   }
 
@@ -114,7 +107,6 @@ export async function materializeWorktreeIncludePlan(
   }
 
   const worktreeRoot = await realpath(options.worktreeRoot);
-  const resolvedMaterializations: ResolvedWorktreeIncludeMaterialization[] = [];
   for (const materialization of options.plan.materializations) {
     const resolved = await resolveSourceMaterialization({
       sourceRoot: options.plan.sourceRoot,
@@ -132,17 +124,6 @@ export async function materializeWorktreeIncludePlan(
         `Source for .worktreeinclude entry '${materialization.relativePath}' changed type before it could be materialized`,
       );
     }
-    resolvedMaterializations.push(resolved);
-  }
-
-  for (const resolved of resolvedMaterializations) {
-    await preflightDestination({
-      worktreeRoot,
-      resolved,
-    });
-  }
-
-  for (const resolved of resolvedMaterializations) {
     const destinationPath = getDestinationPath({
       worktreeRoot,
       relativePath: resolved.materialization.relativePath,
@@ -151,17 +132,30 @@ export async function materializeWorktreeIncludePlan(
       worktreeRoot,
       relativePath: resolved.materialization.relativePath,
     });
+    const needsMaterialization = await preflightDestination({
+      worktreeRoot,
+      resolved,
+    });
+    if (!needsMaterialization) {
+      continue;
+    }
 
     if (resolved.materialization.mode === "copy") {
-      await copyMaterialization({ sourcePath: resolved.sourcePath, destinationPath, resolved });
+      if (resolved.materialization.sourceKind === "file") {
+        await copyFile(resolved.sourcePath, destinationPath);
+      } else {
+        await cp(resolved.sourcePath, destinationPath, {
+          recursive: true,
+          force: true,
+          dereference: false,
+        });
+      }
       continue;
     }
 
     await createMaterializationSymlink({
-      sourcePath: resolved.sourcePath,
       destinationPath,
-      sourceKind: resolved.materialization.sourceKind,
-      entry: resolved.materialization,
+      resolved,
     });
   }
 }
@@ -178,7 +172,6 @@ async function readWorktreeIncludeEntries(sourceRoot: string): Promise<WorktreeI
   }
 
   const entries: WorktreeIncludeEntry[] = [];
-  let pendingDirective: { lineNumber: number; mode: WorktreeIncludeMode } | null = null;
 
   for (const [index, sourceLine] of contents.split(/\r?\n/).entries()) {
     const lineNumber = index + 1;
@@ -187,49 +180,45 @@ async function readWorktreeIncludeEntries(sourceRoot: string): Promise<WorktreeI
       continue;
     }
 
-    const directiveMode = getDirectiveMode(line);
-    if (directiveMode !== null) {
-      if (pendingDirective !== null) {
-        throw new WorktreeIncludeError(
-          "invalid_entry",
-          `Multiple .worktreeinclude directives apply before line ${lineNumber}`,
-        );
-      }
-      pendingDirective = { lineNumber, mode: directiveMode };
-      continue;
-    }
-
     if (line.startsWith("#")) {
       continue;
     }
 
-    entries.push({
-      lineNumber,
-      mode: pendingDirective?.mode ?? "copy",
-      raw: line,
-      relativePath: normalizeRelativePath({ entry: line, lineNumber }),
-    });
-    pendingDirective = null;
-  }
-
-  if (pendingDirective !== null) {
-    throw new WorktreeIncludeError(
-      "invalid_entry",
-      `.worktreeinclude directive on line ${pendingDirective.lineNumber} has no path entry`,
-    );
+    entries.push(parseWorktreeIncludeEntry({ line, lineNumber }));
   }
 
   return entries;
 }
 
-function getDirectiveMode(line: string): WorktreeIncludeMode | null {
-  if (line === COPY_DIRECTIVE) {
-    return "copy";
+function parseWorktreeIncludeEntry(options: {
+  line: string;
+  lineNumber: number;
+}): WorktreeIncludeEntry {
+  let mode: WorktreeIncludeMode = "copy";
+  let path = options.line;
+  const separatorIndex = options.line.search(/\s/);
+
+  if (separatorIndex === -1) {
+    if (options.line === "copy" || options.line === "symlink") {
+      throw new WorktreeIncludeError(
+        "invalid_entry",
+        `.worktreeinclude ${options.line} entry on line ${options.lineNumber} requires a path`,
+      );
+    }
+  } else {
+    const verb = options.line.slice(0, separatorIndex);
+    if (verb === "copy" || verb === "symlink") {
+      mode = verb;
+      path = options.line.slice(separatorIndex).trim();
+    }
   }
-  if (line === SYMLINK_DIRECTIVE) {
-    return "symlink";
-  }
-  return null;
+
+  return {
+    lineNumber: options.lineNumber,
+    mode,
+    raw: options.line,
+    relativePath: normalizeRelativePath({ entry: path, lineNumber: options.lineNumber }),
+  };
 }
 
 function normalizeRelativePath(options: { entry: string; lineNumber: number }): string {
@@ -314,8 +303,7 @@ async function collectWorktreeIncludeCandidates(options: {
       }
 
       candidates.push(pathSegments.join("/"));
-      const stats = await lstat(sourcePath);
-      if (stats.isDirectory() && !stats.isSymbolicLink()) {
+      if (entry.isDirectory()) {
         await visit(sourcePath, pathSegments);
       }
     }
@@ -388,17 +376,14 @@ async function resolveSourceMaterialization(options: {
   relativePath: string;
   sourceRoot: string;
 }): Promise<ResolvedWorktreeIncludeMaterialization> {
-  const sourcePath = getSourcePath({
-    sourceRoot: options.sourceRoot,
-    relativePath: options.relativePath,
-  });
+  const sourcePath = join(options.sourceRoot, ...options.relativePath.split("/"));
   const sourceKind = await getSourceKind({
     sourceRoot: options.sourceRoot,
     sourcePath,
     entry: options.entry,
   });
   if (options.entry.mode === "copy" && sourceKind === "directory") {
-    await assertCopyTreeSafe({
+    await assertCopyDirectorySafe({
       sourcePath,
       entry: options.entry,
     });
@@ -415,10 +400,6 @@ async function resolveSourceMaterialization(options: {
   };
 }
 
-function getSourcePath(options: { relativePath: string; sourceRoot: string }): string {
-  return join(options.sourceRoot, ...options.relativePath.split("/"));
-}
-
 async function getSourceKind(options: {
   entry: WorktreeIncludeEntry;
   sourcePath: string;
@@ -426,7 +407,7 @@ async function getSourceKind(options: {
 }): Promise<WorktreeIncludeSourceKind> {
   const segments = relative(options.sourceRoot, options.sourcePath).split(sep).filter(Boolean);
   let currentPath = options.sourceRoot;
-  for (const segment of segments) {
+  for (const segment of segments.slice(0, -1)) {
     currentPath = join(currentPath, segment);
     const currentStats = await lstatSourcePath(currentPath, options.entry);
     if (currentStats.isSymbolicLink()) {
@@ -438,7 +419,13 @@ async function getSourceKind(options: {
   }
 
   const stats = await lstatSourcePath(options.sourcePath, options.entry);
-  if (stats.isSymbolicLink() || (!stats.isFile() && !stats.isDirectory())) {
+  if (stats.isSymbolicLink()) {
+    throw new WorktreeIncludeError(
+      "unsupported_source",
+      `.worktreeinclude entry '${options.entry.raw}' on line ${options.entry.lineNumber} resolves through a symbolic link`,
+    );
+  }
+  if (!stats.isFile() && !stats.isDirectory()) {
     throw new WorktreeIncludeError(
       "unsupported_source",
       `.worktreeinclude entry '${options.entry.raw}' on line ${options.entry.lineNumber} must match a regular file or directory`,
@@ -467,27 +454,10 @@ async function lstatSourcePath(sourcePath: string, entry: WorktreeIncludeEntry):
   }
 }
 
-async function assertCopyTreeSafe(options: {
+async function assertCopyDirectorySafe(options: {
   entry: WorktreeIncludeEntry;
   sourcePath: string;
 }): Promise<void> {
-  const stats = await lstatSourcePath(options.sourcePath, options.entry);
-  if (stats.isSymbolicLink()) {
-    throw new WorktreeIncludeError(
-      "unsupported_source",
-      `.worktreeinclude entry '${options.entry.raw}' on line ${options.entry.lineNumber} contains a symbolic link`,
-    );
-  }
-  if (stats.isFile()) {
-    return;
-  }
-  if (!stats.isDirectory()) {
-    throw new WorktreeIncludeError(
-      "unsupported_source",
-      `.worktreeinclude entry '${options.entry.raw}' on line ${options.entry.lineNumber} contains an unsupported file type`,
-    );
-  }
-
   for (const name of await readdir(options.sourcePath)) {
     if (name.toLowerCase() === ".git") {
       throw new WorktreeIncludeError(
@@ -495,10 +465,18 @@ async function assertCopyTreeSafe(options: {
         `.worktreeinclude entry '${options.entry.raw}' on line ${options.entry.lineNumber} contains git metadata`,
       );
     }
-    await assertCopyTreeSafe({
-      sourcePath: join(options.sourcePath, name),
-      entry: options.entry,
-    });
+
+    const sourcePath = join(options.sourcePath, name);
+    const stats = await lstatSourcePath(sourcePath, options.entry);
+    if (stats.isSymbolicLink() || (!stats.isFile() && !stats.isDirectory())) {
+      throw new WorktreeIncludeError(
+        "unsupported_source",
+        `.worktreeinclude entry '${options.entry.raw}' on line ${options.entry.lineNumber} contains an unsupported file type or symbolic link`,
+      );
+    }
+    if (stats.isDirectory()) {
+      await assertCopyDirectorySafe({ sourcePath, entry: options.entry });
+    }
   }
 }
 
@@ -556,21 +534,15 @@ function isRelativePathAncestor(ancestor: string, candidate: string): boolean {
 async function preflightDestination(options: {
   resolved: ResolvedWorktreeIncludeMaterialization;
   worktreeRoot: string;
-}): Promise<void> {
+}): Promise<boolean> {
   const { materialization } = options.resolved;
-  await inspectDestinationParent({
-    worktreeRoot: options.worktreeRoot,
-    relativePath: materialization.relativePath,
-    createMissing: false,
-  });
-
   const destinationPath = getDestinationPath({
     worktreeRoot: options.worktreeRoot,
     relativePath: materialization.relativePath,
   });
   const destinationStats = await lstatIfExists(destinationPath);
   if (destinationStats === null) {
-    return;
+    return true;
   }
 
   if (destinationStats.isSymbolicLink()) {
@@ -581,7 +553,7 @@ async function preflightDestination(options: {
         sourcePath: options.resolved.sourcePath,
       }))
     ) {
-      return;
+      return false;
     }
     throw destinationConflict(materialization);
   }
@@ -604,6 +576,7 @@ async function preflightDestination(options: {
       materialization,
     });
   }
+  return true;
 }
 
 function getDestinationPath(options: { relativePath: string; worktreeRoot: string }): string {
@@ -617,8 +590,7 @@ function getDestinationPath(options: { relativePath: string; worktreeRoot: strin
   return destinationPath;
 }
 
-async function inspectDestinationParent(options: {
-  createMissing: boolean;
+async function ensureDestinationParent(options: {
   relativePath: string;
   worktreeRoot: string;
 }): Promise<void> {
@@ -628,9 +600,6 @@ async function inspectDestinationParent(options: {
     currentPath = join(currentPath, segment);
     const stats = await lstatIfExists(currentPath);
     if (stats === null) {
-      if (!options.createMissing) {
-        return;
-      }
       await mkdir(currentPath);
       continue;
     }
@@ -641,13 +610,6 @@ async function inspectDestinationParent(options: {
       );
     }
   }
-}
-
-async function ensureDestinationParent(options: {
-  relativePath: string;
-  worktreeRoot: string;
-}): Promise<void> {
-  await inspectDestinationParent({ ...options, createMissing: true });
 }
 
 async function assertCopyDestinationTreeSafe(options: {
@@ -689,82 +651,24 @@ async function assertCopyDestinationTreeSafe(options: {
   }
 }
 
-async function copyMaterialization(options: {
-  destinationPath: string;
-  resolved: ResolvedWorktreeIncludeMaterialization;
-  sourcePath: string;
-}): Promise<void> {
-  if (options.resolved.materialization.sourceKind === "file") {
-    await copyFile(options.sourcePath, options.destinationPath);
-    return;
-  }
-  await cp(options.sourcePath, options.destinationPath, {
-    recursive: true,
-    force: true,
-    dereference: false,
-  });
-}
-
 async function createMaterializationSymlink(options: {
   destinationPath: string;
-  entry: WorktreeIncludeMaterialization;
-  sourceKind: WorktreeIncludeSourceKind;
-  sourcePath: string;
+  resolved: ResolvedWorktreeIncludeMaterialization;
 }): Promise<void> {
-  const existing = await lstatIfExists(options.destinationPath);
-  if (existing !== null) {
-    if (
-      existing.isSymbolicLink() &&
-      (await isExpectedSymlink({
-        destinationPath: options.destinationPath,
-        sourcePath: options.sourcePath,
-      }))
-    ) {
-      return;
-    }
-    throw destinationConflict(options.entry);
-  }
-
   if (process.platform !== "win32") {
-    const target = relative(dirname(options.destinationPath), options.sourcePath);
+    const target = relative(dirname(options.destinationPath), options.resolved.sourcePath);
     await symlink(target, options.destinationPath);
     return;
   }
 
-  if (options.sourceKind === "file") {
-    await createWindowsSymlink({
-      target: options.sourcePath,
-      destinationPath: options.destinationPath,
-      type: "file",
-      entry: options.entry,
-    });
-    return;
+  let type: "dir" | "file" | "junction" = "file";
+  if (options.resolved.materialization.sourceKind === "directory") {
+    type = isWindowsNetworkPath(options.resolved.sourcePath) ? "dir" : "junction";
   }
-
   try {
-    await symlink(options.sourcePath, options.destinationPath, "dir");
+    await symlink(options.resolved.sourcePath, options.destinationPath, type);
   } catch (error) {
-    if (isWindowsNetworkPath(options.sourcePath) || !isWindowsSymlinkPrivilegeError(error)) {
-      throw toWindowsSymlinkError({ error, entry: options.entry });
-    }
-    try {
-      await symlink(options.sourcePath, options.destinationPath, "junction");
-    } catch (fallbackError) {
-      throw toWindowsSymlinkError({ error: fallbackError, entry: options.entry });
-    }
-  }
-}
-
-async function createWindowsSymlink(options: {
-  destinationPath: string;
-  entry: WorktreeIncludeMaterialization;
-  target: string;
-  type: "dir" | "file" | "junction";
-}): Promise<void> {
-  try {
-    await symlink(options.target, options.destinationPath, options.type);
-  } catch (error) {
-    throw toWindowsSymlinkError({ error, entry: options.entry });
+    throw toWindowsSymlinkError({ error, entry: options.resolved.materialization });
   }
 }
 
@@ -786,7 +690,7 @@ function toWindowsSymlinkError(options: {
   }
   return new WorktreeIncludeError(
     "windows_symlink_unavailable",
-    `Unable to create a Windows symlink for .worktreeinclude entry '${options.entry.relativePath}'. Enable Developer Mode or use # @copy.`,
+    `Unable to create a Windows symlink for .worktreeinclude entry '${options.entry.relativePath}'. Enable Developer Mode or use copy ${options.entry.relativePath}.`,
   );
 }
 
@@ -799,16 +703,10 @@ async function isExpectedSymlink(options: {
       realpath(options.destinationPath),
       realpath(options.sourcePath),
     ]);
-    return (
-      normalizePathForComparison(destinationTarget) === normalizePathForComparison(sourceTarget)
-    );
+    return areEquivalentPaths(destinationTarget, sourceTarget);
   } catch {
     return false;
   }
-}
-
-function normalizePathForComparison(path: string): string {
-  return process.platform === "win32" ? path.toLowerCase() : path;
 }
 
 async function lstatIfExists(path: string): Promise<Stats | null> {
@@ -835,16 +733,6 @@ function noMatchError(entry: WorktreeIncludeEntry): WorktreeIncludeError {
   return new WorktreeIncludeError(
     "missing_source",
     `No paths matched .worktreeinclude entry '${entry.raw}' on line ${entry.lineNumber}`,
-  );
-}
-
-function isPathInsideRoot(root: string, path: string): boolean {
-  const pathRelativeToRoot = relative(root, path);
-  return (
-    pathRelativeToRoot === "" ||
-    (!pathRelativeToRoot.startsWith(`..${sep}`) &&
-      pathRelativeToRoot !== ".." &&
-      !isAbsolute(pathRelativeToRoot))
   );
 }
 

@@ -1088,15 +1088,9 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
 
       writeFileSync(
         join(repoDir, ".worktreeinclude"),
-        [
-          ".copy.env",
-          "copy-cache/**",
-          "# @symlink",
-          "linked-file.txt",
-          "# @symlink",
-          "linked-state",
-          "",
-        ].join("\n"),
+        [".copy.env", "copy-cache/**", "symlink linked-file.txt", "symlink linked-state", ""].join(
+          "\n",
+        ),
       );
       writeFileSync(join(repoDir, ".copy.env"), "copy-v1\n");
       mkdirSync(join(repoDir, "copy-cache"), { recursive: true });
@@ -1184,7 +1178,7 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       const projectHash = await deriveWorktreeProjectHash(repoDir);
       const expectedWorktreePath = join(paseoHome, "worktrees", projectHash, "include-conflict");
       writeFileSync(join(repoDir, "paseo.json"), JSON.stringify({ scripts: {} }));
-      writeFileSync(join(repoDir, ".worktreeinclude"), "# @symlink\npaseo.json\n");
+      writeFileSync(join(repoDir, ".worktreeinclude"), "symlink paseo.json\n");
 
       await expect(
         createLegacyWorktreeForTest({

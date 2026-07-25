@@ -119,17 +119,14 @@ worktree.setup runs. Each path is relative to the source checkout.
     .env.local
     .cache/**
 
-    # This directive applies to the next path only.
-    # @symlink
-    node_modules
+    # Modes can also be explicit.
+    symlink node_modules
+    copy .tool-state/**
 
-    # @copy is available when switching back explicitly.
-    # @copy
-    .tool-state/**
-
-Blank lines and whole-line comments are ignored. A single star matches within a path segment
-and a double star matches recursively; a directory ending in /\*\* materializes that directory as
-one recursive entry. Absolute paths, parent-directory paths, and .git paths are rejected.
+Each line is `[copy|symlink] <path>`; the mode is optional and defaults to `copy`. Blank lines
+and whole-line comments are ignored. A single star matches within a path segment and a double
+star matches recursively; a directory ending in /\*\* materializes that directory as one
+recursive entry. Absolute paths, parent-directory paths, and .git paths are rejected.
 
 Copy entries are independent snapshots: a copied file is replaced on a later materialization,
 and a copied directory merges into an existing directory. Symlink entries point directly at
@@ -144,10 +141,9 @@ Prefer paths ignored by the target branch. For a symlinked directory, use an ign
 a trailing slash (for example, node_modules, not node_modules/), because Git treats the link
 itself as a file. Unignored materialized paths appear in git status.
 
-On Windows, file links require Windows symbolic-link support. Paseo uses a directory symlink
-when available and can use a local directory junction when the symbolic-link privilege is
-unavailable. It never silently copies an explicit # @symlink entry; enable Developer Mode or
-switch that entry to # @copy if link creation fails.
+On Windows, Paseo uses junctions for local directories. File links and network-directory links
+require Windows symbolic-link support. It never silently copies an explicit `symlink <path>`
+entry; enable Developer Mode or switch that entry to `copy <path>` if link creation fails.
 
 Archiving removes only the worktree's links, not their source targets. If the source path is
 later moved or deleted, a symlink becomes broken; Paseo does not repair it automatically.
