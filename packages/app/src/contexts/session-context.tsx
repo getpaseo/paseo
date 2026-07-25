@@ -29,6 +29,7 @@ import type { AgentAttachment, SessionOutboundMessage } from "@getpaseo/protocol
 import { parseServerInfoStatusPayload } from "@getpaseo/protocol/messages";
 import {
   buildAgentAttentionNotificationPayload,
+  type AgentAttentionReason,
   type AgentAttentionNotificationPayload,
   type NotificationPermissionRequest,
 } from "@getpaseo/protocol/agent-attention-notification";
@@ -153,6 +154,35 @@ const getLatestPermissionRequest = (
 
   return null;
 };
+
+interface AgentAttentionNotificationInput {
+  notification?: AgentAttentionNotificationPayload;
+  reason: AgentAttentionReason;
+  serverId: string;
+  workspaceId: string | undefined;
+  agentId: string;
+  assistantMessage: string | null;
+  permissionRequest: NotificationPermissionRequest | null;
+}
+
+function resolveAgentAttentionNotification(
+  input: AgentAttentionNotificationInput,
+): AgentAttentionNotificationPayload | null {
+  if (input.notification) {
+    return input.notification.data.workspaceId ? input.notification : null;
+  }
+  if (!input.workspaceId) {
+    return null;
+  }
+  return buildAgentAttentionNotificationPayload({
+    reason: input.reason,
+    serverId: input.serverId,
+    workspaceId: input.workspaceId,
+    agentId: input.agentId,
+    assistantMessage: input.reason === "finished" ? input.assistantMessage : null,
+    permissionRequest: input.reason === "permission" ? input.permissionRequest : null,
+  });
+}
 
 type WorkspaceSetupProgressPayload = Extract<
   SessionOutboundMessage,
@@ -455,11 +485,6 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         serverId,
         bumpHistorySyncGeneration,
         refreshDirectories: () => getHostRuntimeStore().refreshDirectories(serverId),
-      }).catch((error) => {
-        console.error("[SessionProvider] resume revalidation failed", {
-          serverId,
-          error: toErrorMessage(error),
-        });
       });
     },
     [bumpHistorySyncGeneration, serverId],
@@ -500,16 +525,20 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       const assistantMessage =
         findLatestAssistantMessageText(head) ?? findLatestAssistantMessageText(tail);
       const permissionRequest = getLatestPermissionRequest(session, params.agentId);
+      const workspaceId = session?.agents?.get(params.agentId)?.workspaceId;
 
-      const notification =
-        params.notification ??
-        buildAgentAttentionNotificationPayload({
-          reason: params.reason,
-          serverId,
-          agentId: params.agentId,
-          assistantMessage: params.reason === "finished" ? assistantMessage : null,
-          permissionRequest: params.reason === "permission" ? permissionRequest : null,
-        });
+      const notification = resolveAgentAttentionNotification({
+        notification: params.notification,
+        reason: params.reason,
+        serverId,
+        workspaceId,
+        agentId: params.agentId,
+        assistantMessage,
+        permissionRequest,
+      });
+      if (!notification) {
+        return;
+      }
 
       void sendOsNotification({
         title: notification.title,

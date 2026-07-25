@@ -2,11 +2,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useEffect, useState } from "react";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
-import {
-  buildWorkspaceTabPersistenceKey,
-  type WorkspaceTab,
-  type WorkspaceTabTarget,
-} from "@/stores/workspace-tabs-store";
+import type { WorkspaceTab, WorkspaceTabTarget } from "@/workspace-tabs/model";
 import {
   defaultWorkspaceLayoutIds,
   type WorkspaceLayoutIdSource,
@@ -47,7 +43,6 @@ import {
 } from "@/stores/workspace-layout-actions";
 import { normalizeWorkspaceTabTarget } from "@/workspace-tabs/identity";
 
-export { buildWorkspaceTabPersistenceKey };
 export {
   collectAllPanes,
   collectAllTabs,

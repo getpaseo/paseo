@@ -1008,6 +1008,7 @@ test("receives server_info on websocket connect", async () => {
   expect(serverInfo?.features?.["terminal-restore-modes"]).toBe(true);
   expect(serverInfo?.features?.hubRelationship).toBe(true);
   expect(serverInfo?.features?.commitsList).toBe(true);
+  expect(serverInfo?.features?.commitBaseClassification).toBe(true);
   expect(serverInfo?.desktopManaged).toBe(false);
   expect(serverInfo?.features?.daemonSelfUpdate).toBe(true);
   expect(serverInfo?.features?.worktreeRestore).toBe(true);

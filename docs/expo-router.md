@@ -73,6 +73,20 @@ only use local param fallback during cold mount (`/` or empty pathname), or a
 hidden workspace can overwrite the remembered workspace before Settings or
 History returns.
 
+## Agent Targets
+
+Notifications and agent URLs enter the router with different authoritative
+targets.
+
+- Notifications carry `serverId`, `workspaceId`, and `agentId`. Route them
+  directly to the workspace with the agent open intent.
+- Agent URLs carry only `serverId` and `agentId`. Route them through
+  `/h/[serverId]/agent/[agentId]`; that route waits for the named host, resolves
+  the agent's workspace from the host, and then opens the agent there.
+
+Both paths converge on `navigateToAgent()`. Do not make notification routing
+guess a workspace, and do not add a workspace to the stable agent URL format.
+
 ## Params
 
 Required dynamic params belong to the matched route.

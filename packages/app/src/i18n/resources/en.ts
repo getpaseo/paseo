@@ -491,6 +491,7 @@ export const en = {
         openFor: "Open menu for {{label}}",
         copyResumeCommand: "Copy resume command",
         copyAgentId: "Copy agent id",
+        copyTerminalId: "Copy terminal id",
         copyFilePath: "Copy file path",
         rename: "Rename",
         closeAbove: "Close tabs above",
@@ -528,6 +529,7 @@ export const en = {
       toasts: {
         copyFailed: "Copy failed",
         agentIdCopiedLabel: "Agent ID",
+        terminalIdCopiedLabel: "Terminal ID",
         resumeCommandCopiedLabel: "resume command",
         filePathCopiedLabel: "File path",
         resumeIdUnavailable: "Resume ID not available",
@@ -768,6 +770,8 @@ export const en = {
         },
       },
       diff: {
+        openChangesTab: "Open Changes tab",
+        closeChangesTab: "Close Changes tab",
         binaryFile: "Binary file",
         tooLarge: "Diff too large to display",
         unified: "Unified diff",
@@ -803,7 +807,8 @@ export const en = {
         deletedFile: "Deleted",
         commits: {
           title: "Commits",
-          countLabel: "{{count}} recent commits",
+          countLabel: "{{count}} workspace commits",
+          noneAhead: "No commits ahead of {{baseRef}} yet",
           fileDiffEmpty: "No changes to display",
           fileDiffError: "Failed to load file diff",
           loading: "Loading commits…",
@@ -1505,6 +1510,8 @@ export const en = {
       changesLabel: "Changes",
       changesSubtitle: "Working tree diff",
       commitSubtitle: "Commit diff",
+      uncommittedSubtitle: "Uncommitted changes",
+      baseSubtitle: "Compared with {{baseRef}}",
       directoryMissing: "Workspace directory not found.",
       empty: "No changes",
       loadError: "Failed to load diff",

@@ -496,6 +496,7 @@ export const ja: TranslationResources = {
         openFor: "{{label}}のメニューを開く",
         copyResumeCommand: "再開コマンドをコピー",
         copyAgentId: "エージェントIDをコピー",
+        copyTerminalId: "ターミナルIDをコピー",
         copyFilePath: "ファイルパスをコピー",
         rename: "名前を変更",
         closeAbove: "上のタブを閉じる",
@@ -534,6 +535,7 @@ export const ja: TranslationResources = {
       toasts: {
         copyFailed: "コピーに失敗しました",
         agentIdCopiedLabel: "エージェントID",
+        terminalIdCopiedLabel: "ターミナルID",
         resumeCommandCopiedLabel: "再開コマンド",
         filePathCopiedLabel: "ファイルパス",
         resumeIdUnavailable: "再開IDが利用できません",
@@ -769,6 +771,8 @@ export const ja: TranslationResources = {
         },
       },
       diff: {
+        openChangesTab: "変更タブを開く",
+        closeChangesTab: "変更タブを閉じる",
         binaryFile: "バイナリファイル",
         tooLarge: "差分が大きすぎて表示できません",
         unified: "ユニファイド差分",
@@ -804,7 +808,8 @@ export const ja: TranslationResources = {
         deletedFile: "削除済み",
         commits: {
           title: "コミット",
-          countLabel: "最近のコミット数: {{count}}",
+          countLabel: "ワークスペースのコミット数: {{count}}",
+          noneAhead: "{{baseRef}} より先のコミットはまだありません",
           fileDiffEmpty: "表示する変更はありません",
           fileDiffError: "ファイル差分の読み込みに失敗しました",
           loading: "コミットを読み込み中…",
@@ -1510,6 +1515,8 @@ export const ja: TranslationResources = {
       changesLabel: "変更",
       changesSubtitle: "作業ツリーの差分",
       commitSubtitle: "コミット差分",
+      uncommittedSubtitle: "未コミットの変更",
+      baseSubtitle: "{{baseRef}} との比較",
       directoryMissing: "ワークスペースディレクトリが見つかりません。",
       empty: "変更はありません",
       loadError: "差分の読み込みに失敗しました",

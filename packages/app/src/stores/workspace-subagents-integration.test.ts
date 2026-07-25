@@ -5,8 +5,9 @@ import {
   deriveWorkspaceAgentVisibility,
   type WorkspaceAgentVisibility,
 } from "@/workspace-tabs/agent-visibility";
+import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 import { selectSubagentsForParent } from "@/subagents/select";
-import { buildWorkspaceTabPersistenceKey, useWorkspaceLayoutStore } from "./workspace-layout-store";
+import { useWorkspaceLayoutStore } from "./workspace-layout-store";
 import { useSessionStore, type Agent } from "./session-store";
 
 vi.mock("@react-native-async-storage/async-storage", () => {

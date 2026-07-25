@@ -2,7 +2,7 @@ import {
   createWorkspaceFileTabTarget,
   normalizeWorkspaceFileLocation,
 } from "@/workspace/file-open";
-import type { WorkspaceTabTarget } from "@/stores/workspace-tabs-store";
+import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
 
 interface OpenWorkspaceFileFromExplorerInput {
   filePath: string;

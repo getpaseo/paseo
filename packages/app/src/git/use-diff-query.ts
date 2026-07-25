@@ -12,6 +12,7 @@ interface UseCheckoutDiffQueryOptions {
   baseRef?: string;
   ignoreWhitespace?: boolean;
   enabled?: boolean;
+  queryScope?: string;
 }
 
 type CheckoutDiffQueryPayload = Omit<SubscribeCheckoutDiffResponse["payload"], "subscriptionId">;
@@ -44,6 +45,7 @@ export function useCheckoutDiffQuery({
   baseRef,
   ignoreWhitespace,
   enabled = true,
+  queryScope,
 }: UseCheckoutDiffQueryOptions) {
   const isConnected = useHostRuntimeIsConnected(serverId);
   const normalizedCompare = useMemo(
@@ -53,10 +55,17 @@ export function useCheckoutDiffQuery({
   const compareMode = normalizedCompare.mode;
   const compareBaseRef = normalizedCompare.baseRef;
   const compareIgnoreWhitespace = normalizedCompare.ignoreWhitespace;
-  const queryKey = useMemo(
-    () => checkoutDiffQueryKey(serverId, cwd, mode, baseRef, compareIgnoreWhitespace),
-    [serverId, cwd, mode, baseRef, compareIgnoreWhitespace],
-  );
+  const queryKey = useMemo(() => {
+    const comparisonKey = checkoutDiffQueryKey(
+      serverId,
+      cwd,
+      compareMode,
+      compareBaseRef,
+      compareIgnoreWhitespace,
+    );
+    const normalizedScope = queryScope?.trim();
+    return normalizedScope ? [...comparisonKey, "scope", normalizedScope] : comparisonKey;
+  }, [serverId, cwd, compareMode, compareBaseRef, compareIgnoreWhitespace, queryScope]);
   const subscriptionId = useMemo(() => `checkoutDiff:${JSON.stringify(queryKey)}`, [queryKey]);
   const routeEnabled = Boolean(enabled && isConnected && cwd);
 

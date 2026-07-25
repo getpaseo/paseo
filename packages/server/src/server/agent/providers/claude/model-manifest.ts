@@ -31,6 +31,15 @@ export const CLAUDE_ULTRACODE_THINKING_OPTION_ID = "ultracode";
 
 export const CLAUDE_MODEL_MANIFEST = [
   {
+    id: "claude-opus-5",
+    label: "Opus 5",
+    description: "Opus 5 · Latest release",
+    isDefault: true,
+    contextWindowMaxTokens: 1_000_000,
+    effortLevels: CLAUDE_EFFORT_LEVELS.xhigh,
+    supportsThinkingDisabled: true,
+  },
+  {
     id: "claude-fable-5",
     label: "Fable 5",
     description: "Fable 5 · Most powerful model",
@@ -49,8 +58,7 @@ export const CLAUDE_MODEL_MANIFEST = [
   {
     id: "claude-opus-4-8",
     label: "Opus 4.8",
-    description: "Opus 4.8 · Latest release",
-    isDefault: true,
+    description: "Opus 4.8 · Previous release",
     contextWindowMaxTokens: 200_000,
     effortLevels: CLAUDE_EFFORT_LEVELS.xhigh,
     supportsThinkingDisabled: true,

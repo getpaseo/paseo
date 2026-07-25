@@ -349,6 +349,9 @@ jobs:
       - name: Install dependencies
         run: node scripts/npm-retry.mjs ci
 
+      - name: Build server stack
+        run: npm run build:server
+
       - name: Install agent CLIs for provider tests
         run: node scripts/npm-retry.mjs install -g @anthropic-ai/claude-code @openai/codex@0.105.0 opencode-ai
 

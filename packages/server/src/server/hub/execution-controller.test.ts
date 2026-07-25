@@ -37,6 +37,8 @@ class ControlledHubExecutionAgents implements HubExecutionAgents {
     return this.createGate.promise;
   }
 
+  async control(): Promise<void> {}
+
   subscribe(_listener: (event: OwnedAgentEvent) => void): () => void {
     return () => undefined;
   }
