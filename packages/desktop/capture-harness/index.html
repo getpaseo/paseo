@@ -38,12 +38,40 @@
     </style>
   </head>
   <body>
+    <form id="host-composer-form">
+      <label for="host-composer">Host composer</label>
+      <input id="host-composer" name="host-composer" autocomplete="off" />
+    </form>
     <div id="paseo-browser-resident-webviews" aria-hidden="true"></div>
 
     <script>
       const RESIDENT_VIEWPORT_WIDTH = 1280;
       const RESIDENT_VIEWPORT_HEIGHT = 800;
       const host = document.getElementById("paseo-browser-resident-webviews");
+      const hostComposer = document.getElementById("host-composer");
+      const hostComposerForm = document.getElementById("host-composer-form");
+      let hostComposerEnterEvents = 0;
+      let hostComposerSubmissions = 0;
+      let hostBrowserShortcutEvents = 0;
+      hostComposer.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          hostComposerEnterEvents += 1;
+        }
+      });
+      hostComposerForm.addEventListener("submit", (event) => {
+        event.preventDefault();
+        hostComposerSubmissions += 1;
+      });
+      window.addEventListener("keydown", (event) => {
+        if (
+          (event.metaKey || event.ctrlKey) &&
+          !event.altKey &&
+          !event.shiftKey &&
+          event.key.toLowerCase() === "b"
+        ) {
+          hostBrowserShortcutEvents += 1;
+        }
+      });
       const params = new URLSearchParams(window.location.search);
       const requestedWebviewCount = params.has("webviewCount")
         ? Number(params.get("webviewCount"))
@@ -355,6 +383,23 @@
           return webviews.map((webview) =>
             typeof webview.getWebContentsId === "function" ? webview.getWebContentsId() : null,
           );
+        },
+        focusHostComposer() {
+          hostComposer.focus();
+          return document.activeElement?.id || null;
+        },
+        hostComposerState() {
+          return {
+            activeElementId: document.activeElement?.id || null,
+            enterEvents: hostComposerEnterEvents,
+            submissions: hostComposerSubmissions,
+          };
+        },
+        resetHostBrowserShortcutState() {
+          hostBrowserShortcutEvents = 0;
+        },
+        hostBrowserShortcutState() {
+          return { events: hostBrowserShortcutEvents };
         },
         addWebview(sourceUrl) {
           return appendHarnessWebview(sourceUrl || params.get("targetUrl") || "bright.html");

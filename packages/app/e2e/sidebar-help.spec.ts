@@ -81,6 +81,32 @@ test("opens support and release destinations", async ({ page }) => {
   await expectExternalPage(page, "sidebar-help-changelog", CHANGELOG_DESTINATION);
 });
 
+test("searches keyboard shortcuts from the sidebar help menu", async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "platform", { get: () => "MacIntel" });
+  });
+  await gotoAppShell(page);
+  await openHelpMenu(page);
+  await page.getByTestId("sidebar-help-shortcuts").click();
+
+  const dialog = page.getByTestId("keyboard-shortcuts-dialog");
+  const search = page.getByPlaceholder("Search shortcuts");
+
+  await search.fill("command+n");
+  await expect(dialog.getByText("New workspace", { exact: true })).toBeVisible();
+
+  await search.fill("interrupt");
+
+  await expect(dialog.getByText("Interrupt agent", { exact: true })).toBeVisible();
+  await expect(dialog.getByText("New workspace", { exact: true })).toHaveCount(0);
+
+  await search.fill("no matching shortcut");
+  await expect(dialog.getByText("No results found", { exact: true })).toBeVisible();
+
+  await search.fill("");
+  await expect(dialog.getByText("New workspace", { exact: true })).toBeVisible();
+});
+
 test("keeps diagnostics available from Settings after globalizing the sheet", async ({ page }) => {
   await gotoAppShell(page);
   await openSettings(page);

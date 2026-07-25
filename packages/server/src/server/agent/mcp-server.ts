@@ -6,6 +6,7 @@ import type {
   ServerRequest,
 } from "@modelcontextprotocol/sdk/types.js";
 
+import { addModelVisibleStructuredContent } from "./tools/paseo-tool-serialization.js";
 import { createPaseoToolCatalog, type PaseoToolHostDependencies } from "./tools/paseo-tools.js";
 import type { PaseoToolResult } from "./tools/types.js";
 
@@ -13,62 +14,18 @@ export type AgentMcpServerOptions = PaseoToolHostDependencies;
 
 type McpToolContext = RequestHandlerExtra<ServerRequest, ServerNotification>;
 
-function formatStructuredContentForModel(structuredContent: unknown): string {
-  if (
-    !structuredContent ||
-    typeof structuredContent !== "object" ||
-    Array.isArray(structuredContent)
-  ) {
-    return JSON.stringify(structuredContent, null, 2);
-  }
-
-  const record = structuredContent as Record<string, unknown>;
-  const summary: string[] = [];
-  for (const [key, value] of Object.entries(record)) {
-    if (!Array.isArray(value)) {
-      continue;
-    }
-    summary.push(`${key}_count=${value.length}`);
-    const ids = value
-      .map((item) =>
-        item && typeof item === "object" && !Array.isArray(item)
-          ? (item as Record<string, unknown>).id
-          : null,
-      )
-      .filter((id): id is string => typeof id === "string" && id.length > 0);
-    if (ids.length === value.length && ids.length > 0) {
-      summary.push(`${key}_ids=${ids.join(",")}`);
-    }
-  }
-
-  const json = JSON.stringify(structuredContent, null, 2);
-  return summary.length > 0 ? `${summary.join("\n")}\n\n${json}` : json;
-}
-
-function addModelVisibleStructuredContent(result: CallToolResult): CallToolResult {
-  if (result.structuredContent === undefined || result.content.length > 0) {
-    return result;
-  }
-
-  return {
-    ...result,
-    content: [
-      {
-        type: "text",
-        text: formatStructuredContentForModel(result.structuredContent),
-      },
-    ],
-  };
-}
-
 function toMcpToolResult(result: PaseoToolResult): CallToolResult {
-  return addModelVisibleStructuredContent({
-    content: result.content as CallToolResult["content"],
-    ...(result.structuredContent !== undefined
-      ? { structuredContent: result.structuredContent as CallToolResult["structuredContent"] }
+  const modelVisibleResult = addModelVisibleStructuredContent(result);
+  return {
+    content: modelVisibleResult.content as CallToolResult["content"],
+    ...(modelVisibleResult.structuredContent !== undefined
+      ? {
+          structuredContent:
+            modelVisibleResult.structuredContent as CallToolResult["structuredContent"],
+        }
       : {}),
-    ...(result.isError !== undefined ? { isError: result.isError } : {}),
-  });
+    ...(modelVisibleResult.isError !== undefined ? { isError: modelVisibleResult.isError } : {}),
+  };
 }
 
 export async function createAgentMcpServer(options: AgentMcpServerOptions): Promise<McpServer> {

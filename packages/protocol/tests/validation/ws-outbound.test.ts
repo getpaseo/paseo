@@ -138,8 +138,121 @@ const SourceSchema = z.object({
     );
   });
 
+  it.each([
+    {
+      name: "dedicated attention message",
+      message: {
+        type: "agent_attention_required",
+        payload: {
+          agentId: "agent-1",
+          reason: "finished",
+          timestamp: "2026-07-22T18:00:00.000Z",
+          shouldNotify: true,
+          notification: {
+            title: "Agent finished",
+            body: "Done",
+            data: {
+              serverId: "server-1",
+              workspaceId: "workspace-1",
+              agentId: "agent-1",
+              reason: "finished",
+            },
+          },
+        },
+      },
+    },
+    {
+      name: "agent stream attention event",
+      message: {
+        type: "agent_stream",
+        payload: {
+          agentId: "agent-1",
+          timestamp: "2026-07-22T18:00:00.000Z",
+          event: {
+            type: "attention_required",
+            provider: "codex",
+            reason: "finished",
+            timestamp: "2026-07-22T18:00:00.000Z",
+            shouldNotify: true,
+            notification: {
+              title: "Agent finished",
+              body: "Done",
+              data: {
+                serverId: "server-1",
+                workspaceId: "workspace-1",
+                agentId: "agent-1",
+                reason: "finished",
+              },
+            },
+          },
+        },
+      },
+    },
+  ])("preserves workspaceId in a $name", ({ message }) => {
+    const envelope = { type: "session", message };
+
+    expect(GeneratedWSOutboundMessageSchema.safeParse(envelope)).toEqual({
+      success: true,
+      data: envelope,
+    });
+  });
+
   it("emits runtime imports with .js extensions", async () => {
     const generated = await readFile(generatedWSOutboundPath, "utf8");
     expect(generated).toContain('from "../../validation/ws-outbound-schema-metadata.js"');
+  });
+
+  it("accepts a forge.search.response envelope", () => {
+    const result = GeneratedWSOutboundMessageSchema.safeParse({
+      type: "session",
+      message: {
+        type: "forge.search.response",
+        payload: {
+          items: [
+            {
+              kind: "change_request",
+              number: 17,
+              title: "Fix search",
+              url: "https://gitlab.com/acme/repo/-/merge_requests/17",
+              state: "open",
+              body: null,
+              labels: [],
+            },
+          ],
+          authState: "authenticated",
+          error: null,
+          requestId: "search-forge",
+        },
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts a legacy github_search_response envelope", () => {
+    const result = GeneratedWSOutboundMessageSchema.safeParse({
+      type: "session",
+      message: {
+        type: "github_search_response",
+        payload: {
+          items: [
+            {
+              kind: "pr",
+              number: 42,
+              title: "Legacy PR",
+              url: "https://github.com/acme/repo/pull/42",
+              state: "open",
+              body: null,
+              labels: [],
+            },
+          ],
+          featuresEnabled: true,
+          githubFeaturesEnabled: true,
+          authState: "authenticated",
+          error: null,
+          requestId: "search-github",
+        },
+      },
+    });
+    expect(result.success).toBe(true);
   });
 });

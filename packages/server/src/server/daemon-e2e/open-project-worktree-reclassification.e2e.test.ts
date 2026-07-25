@@ -29,7 +29,7 @@ afterEach(async () => {
   cleanupPaths.clear();
 });
 
-test("openProject reclassifies an existing directory workspace into its parent git project", async () => {
+test("openProject preserves a worktree's exact-root project without rehoming it", async () => {
   const previousSupervised = process.env.PASEO_SUPERVISED;
   process.env.PASEO_SUPERVISED = "0";
   try {
@@ -113,17 +113,13 @@ test("openProject reclassifies an existing directory workspace into its parent g
     const persistedWorkspaces = await readRegistry<PersistedWorkspaceRecord>(workspacesPath);
 
     expect(response.error).toBeNull();
-    expect(response.workspace?.projectId).toBe(repoRoot);
-    expect(response.workspace?.workspaceKind).toBe("worktree");
+    expect(response.workspace?.projectId).toBe(worktreeRoot);
     expect(persistedProjects.find((project) => project.projectId === repoRoot)?.rootPath).toBe(
       repoRoot,
     );
     expect(
       persistedWorkspaces.find((workspace) => workspace.workspaceId === worktreeRoot)?.projectId,
-    ).toBe(repoRoot);
-    expect(
-      persistedWorkspaces.find((workspace) => workspace.workspaceId === worktreeRoot)?.kind,
-    ).toBe("worktree");
+    ).toBe(worktreeRoot);
   } finally {
     process.env.PASEO_SUPERVISED = previousSupervised;
   }

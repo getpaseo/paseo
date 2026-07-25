@@ -49,6 +49,7 @@ function useProviderSubagentDescriptor(
   return {
     label,
     subtitle: `${formatProviderLabel(provider)} subagent`,
+    tooltip: label,
     titleState: descriptor ? "ready" : "loading",
     icon: getProviderIcon(provider),
     statusBucket: descriptor

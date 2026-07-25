@@ -105,7 +105,7 @@ export function DictationControls({
           <Pressable
             onPress={onRetry}
             accessibilityLabel={t("message.dictation.retry")}
-            style={ACTION_CONFIRM_STYLE}
+            style={[styles.actionButton, styles.actionButtonConfirm]}
           >
             <RefreshCcw size={theme.iconSize.sm} color={theme.colors.surface0} />
           </Pressable>
@@ -115,14 +115,14 @@ export function DictationControls({
             <Pressable
               onPress={onAccept}
               accessibilityLabel={t("message.dictation.insert")}
-              style={ACTION_SECONDARY_STYLE}
+              style={[styles.actionButton, styles.actionButtonSecondary]}
             >
               <Check size={theme.iconSize.sm} color={theme.colors.foreground} />
             </Pressable>
             <Pressable
               onPress={onAcceptAndSend}
               accessibilityLabel={t("message.dictation.insertAndSend")}
-              style={ACTION_CONFIRM_STYLE}
+              style={[styles.actionButton, styles.actionButtonConfirm]}
             >
               <ArrowUp size={theme.iconSize.sm} color={theme.colors.surface0} />
             </Pressable>
@@ -240,7 +240,7 @@ export function DictationOverlay({
               onPress={onAccept}
               accessibilityRole="button"
               accessibilityLabel={t("message.dictation.insert")}
-              style={OVERLAY_ACCEPT_BUTTON_STYLE}
+              style={[overlayStyles.actionButton, OVERLAY_ACCEPT_BUTTON_BG]}
             >
               <Pencil
                 size={theme.iconSize.lg}
@@ -400,7 +400,4 @@ const overlayStyles = StyleSheet.create((theme) => ({
   },
 }));
 
-const ACTION_CONFIRM_STYLE = [styles.actionButton, styles.actionButtonConfirm];
-const ACTION_SECONDARY_STYLE = [styles.actionButton, styles.actionButtonSecondary];
 const OVERLAY_ACCEPT_BUTTON_BG = { backgroundColor: "rgba(255, 255, 255, 0.25)" };
-const OVERLAY_ACCEPT_BUTTON_STYLE = [overlayStyles.actionButton, OVERLAY_ACCEPT_BUTTON_BG];

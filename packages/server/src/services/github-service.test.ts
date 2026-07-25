@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   GitHubAuthenticationError,
@@ -9,18 +9,19 @@ import {
   GitHubCommandError,
   computeGithubNextInterval,
   createGitHubService,
-  resolveGitHubRepo,
   type GitHubCommandRunner,
   type GitHubCommandRunnerOptions,
-  type GitHubCurrentPullRequestStatus,
+  type CurrentPullRequestStatus,
+  type GitHubPullRequestStatusFacts,
 } from "./github-service.js";
+import { isPlatform } from "../test-utils/platform.js";
 import { CheckoutPrStatusResponseSchema } from "@getpaseo/protocol/messages";
 
 const EXPECTED_GITHUB_FAST_POLL_MS = 20_000;
 const EXPECTED_GITHUB_SLOW_POLL_MS = 120_000;
 const EXPECTED_GITHUB_ERROR_BACKOFF_CAP_MS = 300_000;
 const CURRENT_PR_STATUS_BASE_FIELDS =
-  "number,url,title,state,isDraft,baseRefName,headRefName,mergedAt,reviewDecision,mergeable,headRepositoryOwner";
+  "number,url,title,state,isDraft,baseRefName,headRefName,headRefOid,mergedAt,reviewDecision,mergeable,headRepositoryOwner";
 const CURRENT_PR_STATUS_FIELDS = `${CURRENT_PR_STATUS_BASE_FIELDS},statusCheckRollup`;
 
 interface RunnerCall {
@@ -77,6 +78,12 @@ function createScriptedRunner(steps: RunnerStep[]): TestRunner {
   };
 }
 
+async function flushMicrotasks(): Promise<void> {
+  for (let i = 0; i < 10; i++) {
+    await Promise.resolve();
+  }
+}
+
 function createDeferredRunner(): TestRunner {
   const calls: RunnerCall[] = [];
   let resolveNext: ((stdout: string) => void) | null = null;
@@ -98,6 +105,99 @@ function createDeferredRunner(): TestRunner {
   };
 }
 
+interface FakeGitHubCliFixture {
+  cwd: string;
+  logPath: string;
+  dispose: () => void;
+}
+
+function createFakeGitHubCliFixture(input: {
+  remoteUrl: string;
+  authStatusSucceeds?: boolean;
+  authStatusMode?: "success" | "unauthenticated" | "transient-once";
+}): FakeGitHubCliFixture {
+  const previousPath = process.env.PATH;
+  const previousLog = process.env.GH_TEST_LOG;
+  const tempDir = mkdtempSync(join(tmpdir(), "github-service-gh-host-"));
+  const repoDir = join(tempDir, "repo");
+  const binDir = join(tempDir, "bin");
+  const logPath = join(tempDir, "gh.log");
+  const authStatusMode =
+    input.authStatusMode ?? (input.authStatusSucceeds === true ? "success" : "unauthenticated");
+  const authStatusStatePath = join(tempDir, "auth-status-state");
+  execFileSync("git", ["init", repoDir], { stdio: "pipe" });
+  execFileSync("git", ["-C", repoDir, "remote", "add", "origin", input.remoteUrl], {
+    stdio: "pipe",
+  });
+  mkdirSync(binDir, { recursive: true });
+  const ghPath = join(binDir, "gh");
+  writeFileSync(
+    ghPath,
+    `#!/bin/sh
+AUTH_STATUS_MODE=${JSON.stringify(authStatusMode)}
+AUTH_STATUS_STATE=${JSON.stringify(authStatusStatePath)}
+printf '%s|%s\\n' "$*" "\${GH_HOST:-}" >> "$GH_TEST_LOG"
+if [ "$1" = "--version" ]; then
+  echo "gh version test"
+  exit 0
+fi
+if [ "$1" = "auth" ] && [ "$2" = "status" ] && [ "$3" = "--hostname" ]; then
+  case "$AUTH_STATUS_MODE" in
+    success)
+      exit 0
+      ;;
+    transient-once)
+      if [ ! -f "$AUTH_STATUS_STATE" ]; then
+        touch "$AUTH_STATUS_STATE"
+        echo "request timed out" >&2
+        exit 2
+      fi
+      exit 0
+      ;;
+    *)
+      echo "gh auth login required" >&2
+      exit 1
+      ;;
+  esac
+fi
+if [ "$1" = "repo" ] && [ "$2" = "view" ]; then
+  echo '{"owner":{"login":"acme"},"name":"repo"}'
+  exit 0
+fi
+if [ "$1" = "api" ]; then
+  echo '{"url":"https://github.acme.internal/acme/repo/pull/7","number":7}'
+  exit 0
+fi
+echo "unexpected gh args: $*" >&2
+exit 1
+`,
+  );
+  chmodSync(ghPath, 0o755);
+  process.env.PATH = [binDir, previousPath].filter(Boolean).join(delimiter);
+  process.env.GH_TEST_LOG = logPath;
+  return {
+    cwd: repoDir,
+    logPath,
+    dispose: () => {
+      if (previousPath === undefined) {
+        delete process.env.PATH;
+      } else {
+        process.env.PATH = previousPath;
+      }
+      if (previousLog === undefined) {
+        delete process.env.GH_TEST_LOG;
+      } else {
+        process.env.GH_TEST_LOG = previousLog;
+      }
+      rmSync(tempDir, { recursive: true, force: true });
+    },
+  };
+}
+
+function readFakeGitHubCliLog(logPath: string): string[] {
+  return readFileSync(logPath, "utf8").trim().split("\n").filter(Boolean);
+}
+
 function currentPullRequestJson(overrides: Record<string, unknown> = {}): string {
   return JSON.stringify({
     number: 42,
@@ -107,6 +207,7 @@ function currentPullRequestJson(overrides: Record<string, unknown> = {}): string
     isDraft: false,
     baseRefName: "main",
     headRefName: "feature/fork",
+    headRefOid: "1111111111111111111111111111111111111111",
     mergedAt: null,
     statusCheckRollup: [],
     reviewDecision: "REVIEW_REQUIRED",
@@ -140,8 +241,8 @@ function currentPullRequestGithubFactsJson(overrides: Record<string, unknown> = 
 }
 
 function createCurrentPullRequestStatus(
-  overrides: Partial<GitHubCurrentPullRequestStatus> = {},
-): GitHubCurrentPullRequestStatus {
+  overrides: Partial<CurrentPullRequestStatus> = {},
+): CurrentPullRequestStatus {
   return {
     number: 42,
     repoOwner: "acme",
@@ -162,9 +263,10 @@ function createCurrentPullRequestStatus(
 }
 
 function githubStatusFacts(
-  overrides: Partial<NonNullable<GitHubCurrentPullRequestStatus["github"]>> = {},
-): NonNullable<GitHubCurrentPullRequestStatus["github"]> {
+  overrides: Partial<GitHubPullRequestStatusFacts> = {},
+): GitHubPullRequestStatusFacts & { forge: "github" } {
   return {
+    forge: "github",
     mergeStateStatus: "CLEAN",
     autoMergeRequest: null,
     viewerCanEnableAutoMerge: false,
@@ -348,7 +450,7 @@ function pullRequestTimelineJson(overrides: Record<string, unknown> = {}): strin
   });
 }
 
-describe("GitHubService", () => {
+describe("ForgeService", () => {
   beforeEach(() => {
     vi.useFakeTimers();
   });
@@ -373,7 +475,7 @@ describe("GitHubService", () => {
         prNumber: 42,
         mergeMethod,
         status: createCurrentPullRequestStatus({
-          github: githubStatusFacts(),
+          forgeSpecific: githubStatusFacts(),
         }),
       }),
     ).resolves.toEqual({ success: true });
@@ -419,7 +521,7 @@ describe("GitHubService", () => {
           prNumber: 42,
           mergeMethod: "squash",
           status: createCurrentPullRequestStatus({
-            github: githubStatusFacts({ mergeStateStatus }),
+            forgeSpecific: githubStatusFacts({ mergeStateStatus }),
           }),
         }),
       ).rejects.toThrow("ready for direct merge");
@@ -443,7 +545,7 @@ describe("GitHubService", () => {
         prNumber: 42,
         mergeMethod: "squash",
         status: createCurrentPullRequestStatus({
-          github: githubStatusFacts(overrides),
+          forgeSpecific: githubStatusFacts(overrides),
         }),
       }),
     ).rejects.toThrow("merge queue");
@@ -463,7 +565,7 @@ describe("GitHubService", () => {
         prNumber: 42,
         mergeMethod: "squash",
         status: createCurrentPullRequestStatus({
-          github: githubStatusFacts({
+          forgeSpecific: githubStatusFacts({
             autoMergeRequest: {
               enabledAt: "2026-05-13T12:00:00Z",
               mergeMethod: "SQUASH",
@@ -489,7 +591,7 @@ describe("GitHubService", () => {
         prNumber: 42,
         mergeMethod: "squash",
         status: createCurrentPullRequestStatus({
-          github: githubStatusFacts({
+          forgeSpecific: githubStatusFacts({
             repository: {
               autoMergeAllowed: true,
               mergeCommitAllowed: true,
@@ -521,7 +623,7 @@ describe("GitHubService", () => {
         prNumber: 42,
         mergeMethod,
         status: createCurrentPullRequestStatus({
-          github: githubStatusFacts({
+          forgeSpecific: githubStatusFacts({
             mergeStateStatus: "BLOCKED",
             viewerCanEnableAutoMerge: true,
             repository: {
@@ -556,7 +658,7 @@ describe("GitHubService", () => {
         cwd: "/tmp/repo",
         prNumber: 42,
         status: createCurrentPullRequestStatus({
-          github: githubStatusFacts({
+          forgeSpecific: githubStatusFacts({
             autoMergeRequest: {
               enabledAt: "2026-05-13T12:00:00Z",
               mergeMethod: "SQUASH",
@@ -614,6 +716,7 @@ describe("GitHubService", () => {
       number: 526,
       baseRefName: "main",
       headRefName: "main",
+      checkoutRefs: [{ remoteName: "origin", remoteRef: "refs/pull/526/head" }],
       headOwnerLogin: "therainisme",
       headRepositorySshUrl: "git@github.com:therainisme/paseo.git",
       headRepositoryUrl: "https://github.com/therainisme/paseo",
@@ -630,6 +733,28 @@ describe("GitHubService", () => {
     expect(runner.calls[1]?.args).toContain("owner=getpaseo");
     expect(runner.calls[1]?.args).toContain("name=paseo");
     expect(runner.calls[1]?.args).toContain("number=526");
+  });
+
+  it("populates repoOwner/repoName from a GitHub Enterprise PR URL", async () => {
+    const runner = createRunner([
+      currentPullRequestJson({ url: "https://github.acme.internal/acme/repo/pull/42" }),
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      now: () => 0,
+    });
+
+    const status = await service.getCurrentPullRequestStatus({
+      cwd: "/repo",
+      headRef: "feature/fork",
+    });
+
+    expect(status).toMatchObject({
+      repoOwner: "acme",
+      repoName: "repo",
+      url: "https://github.acme.internal/acme/repo/pull/42",
+    });
   });
 
   it("polls PR status at fast cadence while checks are pending", async () => {
@@ -1639,6 +1764,7 @@ describe("GitHubService", () => {
       ttlMs: 1_000,
       runner: runner.runner,
       resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => null,
       now: () => 100,
     });
     const request = {
@@ -1649,7 +1775,7 @@ describe("GitHubService", () => {
     };
 
     const staleRequest = service.getPullRequestTimeline(request);
-    await Promise.resolve();
+    await flushMicrotasks();
     expect(runner.calls).toHaveLength(1);
 
     service.invalidate({ cwd: "/repo" });
@@ -1673,7 +1799,7 @@ describe("GitHubService", () => {
     expect(stale.items.at(-1)?.body).toBe("Stale pre-invalidation result");
 
     const freshRequest = service.getPullRequestTimeline(request);
-    await Promise.resolve();
+    await flushMicrotasks();
     expect(runner.calls).toHaveLength(2);
     runner.resolveNext(
       pullRequestTimelineJson({
@@ -1862,13 +1988,13 @@ describe("GitHubService", () => {
       now: () => 100,
     });
 
-    const first = await service.getGitHubCheckDetails({
+    const first = await service.getCheckDetails({
       cwd: "/repo",
       repoOwner: "acme",
       repoName: "repo",
       checkRunId: 12345,
     });
-    const second = await service.getGitHubCheckDetails({
+    const second = await service.getCheckDetails({
       cwd: "/repo",
       repoOwner: "acme",
       repoName: "repo",
@@ -1959,7 +2085,7 @@ describe("GitHubService", () => {
       now: () => 100,
     });
 
-    const details = await service.getGitHubCheckDetails({
+    const details = await service.getCheckDetails({
       cwd: "/repo",
       repoOwner: "acme",
       repoName: "repo",
@@ -2019,7 +2145,7 @@ describe("GitHubService", () => {
       now: () => 100,
     });
 
-    const details = await service.getGitHubCheckDetails({
+    const details = await service.getCheckDetails({
       cwd: "/repo",
       repoOwner: "acme",
       repoName: "repo",
@@ -2057,7 +2183,7 @@ describe("GitHubService", () => {
       now: () => 100,
     });
 
-    const details = await service.getGitHubCheckDetails({
+    const details = await service.getCheckDetails({
       cwd: "/repo",
       repoOwner: "acme",
       repoName: "repo",
@@ -2121,6 +2247,26 @@ describe("GitHubService", () => {
     expect(status?.mergeable).toBe("UNKNOWN");
   });
 
+  it("keeps an open PR when its remote head SHA differs from the checkout HEAD", async () => {
+    const runner = createRunner([
+      currentPullRequestJson({
+        headRefOid: "1111111111111111111111111111111111111111",
+      }),
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+    });
+
+    const status = await service.getCurrentPullRequestStatus({
+      cwd: "/repo",
+      headRef: "feature/fork",
+      headSha: "2222222222222222222222222222222222222222",
+    });
+
+    expect(status).toMatchObject({ number: 42, state: "open" });
+  });
+
   it("loads GitHub merge, auto-merge, permission, policy, and queue facts for PR 993 shape", async () => {
     const runner = createScriptedRunner([
       currentPullRequestJson({
@@ -2167,7 +2313,8 @@ describe("GitHubService", () => {
         },
       ],
       checksStatus: "pending",
-      github: {
+      forgeSpecific: {
+        forge: "github",
         mergeStateStatus: "BLOCKED",
         autoMergeRequest: null,
         viewerCanEnableAutoMerge: true,
@@ -2185,6 +2332,100 @@ describe("GitHubService", () => {
         isInMergeQueue: false,
       },
     });
+  });
+
+  it("keeps a merged PR only when headRefOid matches the checkout HEAD", async () => {
+    const headSha = "2222222222222222222222222222222222222222";
+    const runner = createRunner([
+      currentPullRequestJson({
+        state: "MERGED",
+        mergedAt: "2026-07-17T12:00:00Z",
+        headRefOid: headSha,
+      }),
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+    });
+
+    const status = await service.getCurrentPullRequestStatus({
+      cwd: "/repo",
+      headRef: "feature/fork",
+      headSha,
+    });
+
+    expect(status?.number).toBe(42);
+    expect(status?.state).toBe("merged");
+  });
+
+  it("does not attach a stale merged PR after a same-name branch advances", async () => {
+    const stale = currentPullRequestJson({
+      state: "MERGED",
+      mergedAt: "2026-07-17T12:00:00Z",
+      headRefOid: "1111111111111111111111111111111111111111",
+    });
+    const runner = createScriptedRunner([
+      stale,
+      JSON.stringify({ owner: { login: "parentOwner" }, name: "parentRepo", parent: null }),
+      JSON.stringify([JSON.parse(stale)]),
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+    });
+
+    await expect(
+      service.getCurrentPullRequestStatus({
+        cwd: "/repo",
+        headRef: "feature/fork",
+        headSha: "2222222222222222222222222222222222222222",
+      }),
+    ).resolves.toBeNull();
+    expect(runner.calls.some((call) => call.args[0] === "pr" && call.args[1] === "list")).toBe(
+      true,
+    );
+  });
+
+  it("prefers an open PR over an exact-SHA merged PR for the same head", async () => {
+    const checkoutSha = "2222222222222222222222222222222222222222";
+    const owner = { login: "forkOwner" };
+    const staleView = currentPullRequestJson({
+      state: "MERGED",
+      mergedAt: "2026-07-15T12:00:00Z",
+      headRefOid: "0000000000000000000000000000000000000000",
+      headRepositoryOwner: owner,
+    });
+    const open = JSON.parse(
+      currentPullRequestJson({
+        number: 43,
+        state: "OPEN",
+        headRefOid: "3333333333333333333333333333333333333333",
+        headRepositoryOwner: owner,
+      }),
+    );
+    const exactMerged = JSON.parse(
+      currentPullRequestJson({
+        number: 42,
+        state: "MERGED",
+        mergedAt: "2026-07-16T12:00:00Z",
+        headRefOid: checkoutSha,
+        headRepositoryOwner: owner,
+      }),
+    );
+    const runner = createScriptedRunner([staleView, JSON.stringify([exactMerged, open])]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+    });
+
+    const status = await service.getCurrentPullRequestStatus({
+      cwd: "/repo",
+      headRef: "feature/fork",
+      headSha: checkoutSha,
+      headRepositoryOwner: "forkOwner",
+    });
+
+    expect(status).toMatchObject({ number: 43, state: "open" });
   });
 
   it("resolves fork PR heads to the parent repository when gh pr view returns a stale branch match", async () => {
@@ -2415,6 +2656,18 @@ describe("GitHubService", () => {
     expect(calls.map((call) => call.args)).toEqual([
       ["pr", "view", "--json", CURRENT_PR_STATUS_FIELDS],
       ["repo", "view", "--json", "owner,name,parent"],
+      [
+        "pr",
+        "list",
+        "--state",
+        "all",
+        "--head",
+        "main",
+        "--limit",
+        "10",
+        "--json",
+        CURRENT_PR_STATUS_FIELDS,
+      ],
     ]);
   });
 
@@ -2588,6 +2841,7 @@ describe("GitHubService", () => {
           headRefName: "feature",
           isMerged: false,
         },
+        featuresEnabled: true,
         githubFeaturesEnabled: true,
         error: null,
         requestId: "req-old",
@@ -2626,6 +2880,7 @@ describe("GitHubService", () => {
           checksStatus: "success",
           reviewDecision: "pending",
         },
+        featuresEnabled: true,
         githubFeaturesEnabled: true,
         error: null,
         requestId: "req-new",
@@ -2633,6 +2888,7 @@ describe("GitHubService", () => {
     });
 
     expect(newDaemonResponse.payload.status).toEqual({
+      forge: "github",
       number: 42,
       url: "https://github.com/acme/repo/pull/42",
       title: "New daemon payload",
@@ -2701,12 +2957,13 @@ describe("GitHubService", () => {
       ttlMs: 1_000,
       runner: runner.runner,
       resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => null,
       now: () => 100,
     });
 
     const first = service.listPullRequests({ cwd: "/repo", query: "bug", limit: 10 });
     const second = service.listPullRequests({ cwd: "/repo", query: "bug", limit: 10 });
-    await Promise.resolve();
+    await flushMicrotasks();
     runner.resolveNext(pullRequestJson("Shared result"));
 
     await expect(Promise.all([first, second])).resolves.toEqual([
@@ -2818,6 +3075,32 @@ describe("GitHubService", () => {
     });
   });
 
+  it("throws a typed command error for malformed JSON output", async () => {
+    const runner = createRunner(["not-json"]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      now: () => 100,
+    });
+
+    await expect(service.listPullRequests({ cwd: "/repo" })).rejects.toMatchObject({
+      kind: "command-error",
+      args: [
+        "pr",
+        "list",
+        "--search",
+        "",
+        "--json",
+        "number,title,url,state,body,labels,baseRefName,headRefName,updatedAt",
+        "--limit",
+        "20",
+      ],
+      cwd: "/repo",
+      exitCode: null,
+      stderr: "gh did not return valid JSON (8 bytes)",
+    });
+  });
+
   it("searches GitHub issues and PRs", async () => {
     const runner = createRunner([issueJson("Issue title"), searchPullRequestJson("PR title")]);
     const service = createGitHubService({
@@ -2829,10 +3112,12 @@ describe("GitHubService", () => {
     await expect(
       service.searchIssuesAndPrs({ cwd: "/repo", query: "cache", limit: 5 }),
     ).resolves.toEqual({
+      featuresEnabled: true,
+      authState: "authenticated",
       githubFeaturesEnabled: true,
       items: [
         {
-          kind: "pr",
+          kind: "change_request",
           number: 123,
           title: "PR title",
           url: "https://github.com/acme/repo/pull/123",
@@ -2926,6 +3211,84 @@ describe("GitHubService", () => {
     ]);
   });
 
+  it("does not treat an unrelated tracker URL as a GitHub issue/PR number", async () => {
+    const runner = createRunner([issueJson("Issue title"), searchPullRequestJson("PR title")]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => null,
+      now: () => 100,
+    });
+
+    await service.searchIssuesAndPrs({
+      cwd: "/repo",
+      query: "https://gitlab.com/getpaseo/paseo/issues/793",
+      limit: 5,
+    });
+
+    expect(runner.calls.map((call) => call.args)).toEqual([
+      [
+        "issue",
+        "list",
+        "--search",
+        "https://gitlab.com/getpaseo/paseo/issues/793",
+        "--json",
+        "number,title,url,state,body,labels,updatedAt",
+        "--limit",
+        "5",
+      ],
+      [
+        "pr",
+        "list",
+        "--search",
+        "https://gitlab.com/getpaseo/paseo/issues/793",
+        "--json",
+        "number,title,url,state,body,labels,baseRefName,headRefName,updatedAt",
+        "--limit",
+        "5",
+      ],
+    ]);
+  });
+
+  it("treats a GitHub Enterprise issue/PR URL as a search for that number", async () => {
+    const runner = createRunner([issueJson("Issue title"), searchPullRequestJson("PR title")]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => "github.acme.internal",
+      now: () => 100,
+    });
+
+    await service.searchIssuesAndPrs({
+      cwd: "/repo",
+      query: "https://github.acme.internal/getpaseo/paseo/pull/793",
+      limit: 5,
+    });
+
+    expect(runner.calls.map((call) => call.args)).toEqual([
+      [
+        "issue",
+        "list",
+        "--search",
+        "793",
+        "--json",
+        "number,title,url,state,body,labels,updatedAt",
+        "--limit",
+        "5",
+      ],
+      [
+        "pr",
+        "list",
+        "--search",
+        "793",
+        "--json",
+        "number,title,url,state,body,labels,baseRefName,headRefName,updatedAt",
+        "--limit",
+        "5",
+      ],
+    ]);
+  });
+
   it("searches only GitHub PRs when the search kinds request excludes issues", async () => {
     const runner = createRunner([searchPullRequestJson("PR title")]);
     const service = createGitHubService({
@@ -2942,10 +3305,12 @@ describe("GitHubService", () => {
         kinds: ["github-pr"],
       }),
     ).resolves.toEqual({
+      featuresEnabled: true,
+      authState: "authenticated",
       githubFeaturesEnabled: true,
       items: [
         {
-          kind: "pr",
+          kind: "change_request",
           number: 123,
           title: "PR title",
           url: "https://github.com/acme/repo/pull/123",
@@ -3030,12 +3395,13 @@ describe("GitHubService", () => {
     const service = createGitHubService({
       runner: runner.runner,
       resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => null,
       now: () => 100,
     });
 
     const first = service.getCurrentPullRequestStatus({ cwd: "/repo", headRef: "feature/fork" });
     const second = service.getCurrentPullRequestStatus({ cwd: "/repo", headRef: "feature/fork" });
-    await Promise.resolve();
+    await flushMicrotasks();
 
     expect(currentPullRequestStatusCalls(runner.calls)).toHaveLength(1);
     runner.resolveNext(currentPullRequestJson());
@@ -3064,32 +3430,298 @@ describe("GitHubService", () => {
         headRef: "feature/fork",
         force: true,
       } as never),
-    ).rejects.toThrow("GitHubService forced read requires a reason");
+    ).rejects.toThrow("ForgeService forced read requires a reason");
   });
 
   it("type: force true requires a reason", () => {
     // @ts-expect-error force: true requires reason
-    const invalid: GitHubReadOptions = { force: true };
-    const valid: GitHubReadOptions = { force: true, reason: "test" };
+    const invalid: ForgeReadOptions = { force: true };
+    const valid: ForgeReadOptions = { force: true, reason: "test" };
 
     expect(invalid.force).toBe(true);
     expect(valid.reason).toBe("test");
   });
 
-  it("resolves GitHub repos from the origin remote URL", async () => {
-    vi.useRealTimers();
-    const cwd = mkdtempSync(join(tmpdir(), "github-service-repo-"));
+  it("resolves the repo slug from the workspace when creating a pull request", async () => {
+    const runner = createRunner([
+      JSON.stringify({ owner: { login: "acme" }, name: "repo" }),
+      JSON.stringify({ url: "https://github.com/acme/repo/pull/7", number: 7 }),
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveRepoHost: async () => null,
+    });
 
-    try {
-      execFileSync("git", ["init", "-b", "main"], { cwd, stdio: "ignore" });
-      execFileSync("git", ["remote", "add", "origin", "git@github.com:getpaseo/paseo.git"], {
-        cwd,
-        stdio: "ignore",
+    await expect(
+      service.createPullRequest({
+        cwd: "/tmp/repo",
+        title: "Add thing",
+        head: "feature",
+        base: "main",
+      }),
+    ).resolves.toEqual({ url: "https://github.com/acme/repo/pull/7", number: 7 });
+
+    expect(runner.calls[0]?.args).toEqual(["repo", "view", "--json", "owner,name,parent"]);
+    expect(runner.calls[1]?.args).toEqual([
+      "api",
+      "-X",
+      "POST",
+      "repos/acme/repo/pulls",
+      "-f",
+      "title=Add thing",
+      "-f",
+      "head=feature",
+      "-f",
+      "base=main",
+    ]);
+  });
+
+  it("routes gh calls to the resolved GitHub Enterprise host via GH_HOST", async () => {
+    const runner = createRunner([
+      JSON.stringify({ owner: { login: "acme" }, name: "repo" }),
+      JSON.stringify({ url: "https://github.acme.internal/acme/repo/pull/7", number: 7 }),
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveRepoHost: async () => "github.acme.internal",
+    });
+
+    await expect(
+      service.createPullRequest({
+        cwd: "/tmp/repo",
+        title: "Add thing",
+        head: "feature",
+        base: "main",
+      }),
+    ).resolves.toEqual({ url: "https://github.acme.internal/acme/repo/pull/7", number: 7 });
+
+    expect(runner.calls[1]?.args).toEqual([
+      "api",
+      "-X",
+      "POST",
+      "repos/acme/repo/pulls",
+      "-f",
+      "title=Add thing",
+      "-f",
+      "head=feature",
+      "-f",
+      "base=main",
+    ]);
+    // GH_HOST is injected on every gh call (the slug lookup and the POST alike).
+    expect(runner.calls[0]?.envOverlay).toMatchObject({ GH_HOST: "github.acme.internal" });
+    expect(runner.calls[1]?.envOverlay).toMatchObject({ GH_HOST: "github.acme.internal" });
+  });
+
+  it.skipIf(isPlatform("win32"))(
+    "routes default gh calls to GitHub Enterprise only after host auth succeeds",
+    async () => {
+      vi.useRealTimers();
+      const fixture = createFakeGitHubCliFixture({
+        remoteUrl: "https://github.acme.internal/acme/repo.git",
+        authStatusSucceeds: true,
       });
+      try {
+        const service = createGitHubService();
 
-      await expect(resolveGitHubRepo(cwd)).resolves.toBe("getpaseo/paseo");
+        await expect(
+          service.createPullRequest({
+            cwd: fixture.cwd,
+            title: "Add thing",
+            head: "feature",
+            base: "main",
+          }),
+        ).resolves.toEqual({ url: "https://github.acme.internal/acme/repo/pull/7", number: 7 });
+
+        expect(readFakeGitHubCliLog(fixture.logPath)).toEqual(
+          expect.arrayContaining([
+            "auth status --hostname github.acme.internal|",
+            "repo view --json owner,name,parent|github.acme.internal",
+            "api -X POST repos/acme/repo/pulls -f title=Add thing -f head=feature -f base=main|github.acme.internal",
+          ]),
+        );
+      } finally {
+        fixture.dispose();
+      }
+    },
+  );
+
+  it.skipIf(isPlatform("win32"))(
+    "retries GitHub Enterprise host probing after a transient auth-status failure",
+    async () => {
+      vi.useRealTimers();
+      const fixture = createFakeGitHubCliFixture({
+        remoteUrl: "https://github.acme.internal/acme/repo.git",
+        authStatusMode: "transient-once",
+      });
+      try {
+        const service = createGitHubService();
+
+        await expect(
+          service.createPullRequest({
+            cwd: fixture.cwd,
+            title: "Add thing",
+            head: "feature",
+            base: "main",
+          }),
+        ).rejects.toThrow("Unable to verify GitHub Enterprise host github.acme.internal");
+
+        await expect(
+          service.createPullRequest({
+            cwd: fixture.cwd,
+            title: "Add thing",
+            head: "feature",
+            base: "main",
+          }),
+        ).resolves.toEqual({ url: "https://github.acme.internal/acme/repo/pull/7", number: 7 });
+
+        const log = readFakeGitHubCliLog(fixture.logPath);
+        expect(
+          log.filter((line) => line === "auth status --hostname github.acme.internal|"),
+        ).toHaveLength(2);
+        expect(log).toEqual(
+          expect.arrayContaining([
+            "repo view --json owner,name,parent|github.acme.internal",
+            "api -X POST repos/acme/repo/pulls -f title=Add thing -f head=feature -f base=main|github.acme.internal",
+          ]),
+        );
+      } finally {
+        fixture.dispose();
+      }
+    },
+  );
+
+  it.skipIf(isPlatform("win32"))(
+    "fails instead of routing gh calls to github.com for an unauthenticated Enterprise host",
+    async () => {
+      vi.useRealTimers();
+      const fixture = createFakeGitHubCliFixture({
+        remoteUrl: "https://github.acme.internal/acme/repo.git",
+        authStatusSucceeds: false,
+      });
+      try {
+        const service = createGitHubService();
+
+        // An unauthenticated Enterprise host must fail, not silently proceed
+        // against github.com (the default when GH_HOST is unset).
+        await expect(
+          service.createPullRequest({
+            cwd: fixture.cwd,
+            title: "Add thing",
+            head: "feature",
+            base: "main",
+          }),
+        ).rejects.toThrow(/authentication failed/i);
+
+        const log = readFakeGitHubCliLog(fixture.logPath);
+        expect(log).toContain("auth status --hostname github.acme.internal|");
+        // It threw at host resolution, before running any api/graphql call.
+        expect(log.some((line) => line.startsWith("api ") || line.startsWith("graphql"))).toBe(
+          false,
+        );
+      } finally {
+        fixture.dispose();
+      }
+    },
+  );
+
+  it.skipIf(isPlatform("win32"))("does not probe or route github.com through GH_HOST", async () => {
+    vi.useRealTimers();
+    const fixture = createFakeGitHubCliFixture({
+      remoteUrl: "https://github.com/acme/repo.git",
+      authStatusSucceeds: false,
+    });
+    try {
+      const service = createGitHubService();
+
+      await expect(
+        service.createPullRequest({
+          cwd: fixture.cwd,
+          title: "Add thing",
+          head: "feature",
+          base: "main",
+        }),
+      ).resolves.toEqual({ url: "https://github.acme.internal/acme/repo/pull/7", number: 7 });
+
+      const log = readFakeGitHubCliLog(fixture.logPath);
+      expect(log.some((line) => line.startsWith("auth status --hostname "))).toBe(false);
+      expect(log.every((line) => line.endsWith("|"))).toBe(true);
     } finally {
-      rmSync(cwd, { recursive: true, force: true });
+      fixture.dispose();
     }
+  });
+
+  it("caches definitive null repo host resolutions", async () => {
+    const runner = createRunner(["[]", "[]"]);
+    let hostResolutions = 0;
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => {
+        hostResolutions += 1;
+        return null;
+      },
+    });
+
+    await service.listPullRequests({ cwd: "/repo", query: "one", limit: 1 });
+    await service.listPullRequests({ cwd: "/repo", query: "two", limit: 1 });
+
+    expect(hostResolutions).toBe(1);
+    expect(runner.calls.every((call) => call.envOverlay?.GH_HOST === undefined)).toBe(true);
+  });
+
+  it("re-resolves a null repo host after the TTL expires", async () => {
+    const runner = createRunner(["[]", "[]"]);
+    let hostResolutions = 0;
+    let nowMs = 0;
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      now: () => nowMs,
+      resolveRepoHost: async () => {
+        hostResolutions += 1;
+        return hostResolutions === 1 ? null : "ghe.example.com";
+      },
+    });
+
+    await service.listPullRequests({ cwd: "/repo", query: "one", limit: 1 });
+    expect(runner.calls[0]?.envOverlay?.GH_HOST).toBeUndefined();
+
+    nowMs = 60_001;
+    await service.listPullRequests({ cwd: "/repo", query: "two", limit: 1 });
+
+    expect(hostResolutions).toBe(2);
+    expect(runner.calls[1]?.envOverlay).toMatchObject({ GH_HOST: "ghe.example.com" });
+  });
+
+  it("re-resolves the host after invalidation when the remote changes", async () => {
+    const runner = createRunner([]);
+    let hostCall = 0;
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => (hostCall++ === 0 ? "host-a.internal" : "host-b.internal"),
+    });
+
+    await service.listPullRequests({ cwd: "/repo", query: "x", limit: 1 });
+    expect(runner.calls[0]?.envOverlay).toMatchObject({ GH_HOST: "host-a.internal" });
+
+    service.invalidate({ cwd: "/repo" });
+
+    await service.listPullRequests({ cwd: "/repo", query: "x", limit: 1 });
+    expect(runner.calls[1]?.envOverlay).toMatchObject({ GH_HOST: "host-b.internal" });
+  });
+
+  it("throws when the workspace repository cannot be resolved for pull request creation", async () => {
+    const runner = createRunner([JSON.stringify({})]);
+    const service = createGitHubService({ runner: runner.runner });
+
+    await expect(
+      service.createPullRequest({
+        cwd: "/tmp/repo",
+        title: "Add thing",
+        head: "feature",
+        base: "main",
+      }),
+    ).rejects.toThrow("Unable to resolve GitHub repository for pull request creation");
   });
 });

@@ -25,7 +25,7 @@ export function getActivityStateKey(identity: PullRequestActivityIdentity): stri
 
 function shouldCollapseByDefault(entry: PrTimelineEntry): boolean {
   if (entry.kind === "thread") {
-    return entry.location.isResolved === true || entry.location.isOutdated === true;
+    return entry.isResolved === true || entry.location?.isOutdated === true;
   }
   if (entry.kind === "single") {
     return (

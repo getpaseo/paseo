@@ -1,27 +1,21 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { ReactElement, RefObject } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import { Pressable, Text, View } from "react-native";
+import { Pressable, StyleSheet as RNStyleSheet, Text, View } from "react-native";
 import type { PressableStateCallbackType } from "react-native";
 import ReanimatedAnimated from "react-native-reanimated";
 import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { createNameId } from "mnemonic-id";
 import { useQuery } from "@tanstack/react-query";
-import {
-  Check,
-  ChevronDown,
-  Folder,
-  FolderPlus,
-  GitBranch,
-  GitPullRequest,
-  X,
-} from "lucide-react-native";
+import { ChevronDown, Folder, FolderPlus, GitBranch, GitPullRequest } from "lucide-react-native";
 import { Composer } from "@/composer";
 import { FileDropZone } from "@/components/file-drop/file-drop-zone";
-import { DraftAgentModeControl } from "@/composer/agent-controls/mode-control";
-import { splitComposerAttachmentsForSubmit } from "@/composer/attachments/submit";
+import {
+  resolveComposerAttachmentSubmitFormat,
+  splitComposerAttachmentsForSubmit,
+} from "@/composer/attachments/submit";
 import { HostStatusDot } from "@/components/host-status-dot";
 import { HostPicker } from "@/components/hosts/host-picker";
 import { ProjectIconView } from "@/components/project-icon-view";
@@ -36,7 +30,7 @@ import { ScreenHeader } from "@/components/headers/screen-header";
 import { HEADER_INNER_HEIGHT, MAX_CONTENT_WIDTH, useIsCompactFormFactor } from "@/constants/layout";
 import { useToast } from "@/contexts/toast-context";
 import { useAgentInputDraft } from "@/composer/draft/input-draft";
-import { useGithubSearchQuery } from "@/git/use-github-search-query";
+import { useForgeSearchQuery } from "@/git/use-forge-search-query";
 import {
   useHostRuntimeClient,
   useHostRuntimeConnectionStatuses,
@@ -63,6 +57,7 @@ import {
 import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
 import { useFormPreferences } from "@/hooks/use-form-preferences";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
+import { getForgePresentation } from "@/git/forge";
 import type { CreateAgentInitialValues } from "@/hooks/use-agent-form-state";
 import { generateMessageId } from "@/types/stream";
 import { toErrorMessage } from "@/utils/error-messages";
@@ -76,13 +71,13 @@ import {
 } from "@/projects/host-projects";
 import { useProjectIconDataByProjectKey } from "@/projects/project-icons";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
-import type { ComposerAttachment, UserComposerAttachment } from "@/attachments/types";
+import type { ComposerAttachment } from "@/attachments/types";
 import { useDraftWorkspaceAttachmentScopeKey } from "@/attachments/workspace-attachments-store";
 import type { MessagePayload } from "@/composer/types";
-import type { AgentAttachment, GitHubSearchItem } from "@getpaseo/protocol/messages";
+import type { AgentAttachment, ForgeSearchItem } from "@getpaseo/protocol/messages";
 import type { CreatePaseoWorktreeInput } from "@getpaseo/client/internal/daemon-client";
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
-import type { WorkspaceDraftTabSetup, WorkspaceTabTarget } from "@/stores/workspace-tabs-store";
+import type { WorkspaceDraftTabSetup, WorkspaceTabTarget } from "@/workspace-tabs/model";
 import { isEmptyWorkspaceSubmission, runCreateEmptyWorkspace } from "./new-workspace-empty";
 import {
   getWorkspaceNamingAttachments,
@@ -95,7 +90,8 @@ import {
 } from "./new-workspace-picker-item";
 import {
   clearPickerPrAttachmentForTargetChange,
-  findCheckoutHintPrAttachment,
+  initialPickerSelectionState,
+  reducePickerSelection,
   syncPickerPrAttachment,
 } from "./new-workspace-picker-state";
 import {
@@ -180,10 +176,6 @@ interface NewWorkspaceScreenProps {
 interface PickerOptionData {
   options: ComboboxOptionType[];
   itemById: Map<string, PickerItem>;
-}
-
-interface PickerSelection {
-  item: PickerItem;
 }
 
 const BRANCH_OPTION_PREFIX = "branch:";
@@ -328,50 +320,6 @@ function ProjectPickerTrigger({
         <Text style={styles.tooltipText}>Choose project</Text>
       </TooltipContent>
     </Tooltip>
-  );
-}
-
-function CheckoutHintBadge({
-  label,
-  acceptLabel,
-  dismissLabel,
-  onAccept,
-  onDismiss,
-  iconColor,
-  iconSize,
-}: {
-  label: string;
-  acceptLabel: string;
-  dismissLabel: string;
-  onAccept: () => void;
-  onDismiss: () => void;
-  iconColor: string;
-  iconSize: number;
-}) {
-  return (
-    <View style={styles.checkoutHintBadge}>
-      <Text style={styles.badgeText} numberOfLines={1}>
-        {label}
-      </Text>
-      <Pressable
-        testID="new-workspace-checkout-hint-accept"
-        onPress={onAccept}
-        style={styles.checkoutHintAction}
-        accessibilityRole="button"
-        accessibilityLabel={acceptLabel}
-      >
-        <Check size={iconSize} color={iconColor} />
-      </Pressable>
-      <Pressable
-        testID="new-workspace-checkout-hint-dismiss"
-        onPress={onDismiss}
-        style={styles.checkoutHintAction}
-        accessibilityRole="button"
-        accessibilityLabel={dismissLabel}
-      >
-        <X size={iconSize} color={iconColor} />
-      </Pressable>
-    </View>
   );
 }
 
@@ -637,8 +585,9 @@ function AddProjectPickerAction({ onPress }: { onPress: () => void }) {
   );
 }
 
-function formatPrLabel(item: { number: number; title: string }): string {
-  return `#${item.number} ${item.title}`;
+function formatPrLabel(item: Pick<ForgeSearchItem, "forge" | "number" | "title">): string {
+  const presentation = getForgePresentation(item.forge ?? "github");
+  return `${presentation.numberPrefix}${item.number} ${item.title}`;
 }
 
 function pickerItemLabel(item: PickerItem): string {
@@ -655,7 +604,7 @@ function newWorkspaceHostOptionTestID(serverId: string): string {
 
 function computePickerOptionData(
   branchDetails: ReadonlyArray<{ name: string; committerDate: number }>,
-  prItems: ReadonlyArray<GitHubSearchItem>,
+  prItems: ReadonlyArray<ForgeSearchItem>,
 ): PickerOptionData {
   const idMap = new Map<string, PickerItem>();
 
@@ -790,11 +739,6 @@ function getContentStyle(input: { isCompact: boolean; insetBottom: number }) {
   return [styles.content, styles.contentCentered];
 }
 
-function getSelectedPickerItem(selection: PickerSelection | null): PickerItem | null {
-  if (!selection) return null;
-  return selection.item;
-}
-
 function normalizeBranchDetails(
   data:
     | { branchDetails?: Array<{ name: string; committerDate: number }>; branches?: string[] }
@@ -817,6 +761,7 @@ interface SubmitDraftInput {
   attachments: ComposerAttachment[];
   provider: AgentProvider;
   composerState: NewWorkspaceComposerState;
+  supportsForgeSearch: boolean;
 }
 
 type NewWorkspaceComposerState = NonNullable<
@@ -922,6 +867,7 @@ interface CreateChatAgentInput {
   serverId: string;
   draftKey: string;
   draftId?: string;
+  supportsForgeSearch: boolean;
   labels: {
     composerStateRequired: string;
     selectModel: string;
@@ -992,7 +938,12 @@ async function runCreateChatAgent(input: CreateChatAgentInput): Promise<void> {
   if (!provider) {
     throw new Error(input.labels.selectModel);
   }
-  const { attachments: reviewAttachments } = splitComposerAttachmentsForSubmit(attachments);
+  const attachmentSubmitFormat = resolveComposerAttachmentSubmitFormat({
+    supportsForgeAttachments: input.supportsForgeSearch,
+  });
+  const { attachments: reviewAttachments } = splitComposerAttachmentsForSubmit(attachments, {
+    format: attachmentSubmitFormat,
+  });
   const workspaceNamingAttachments = getWorkspaceNamingAttachments(reviewAttachments);
   const ensuredWorkspace = await ensureWorkspace({
     cwd,
@@ -1017,6 +968,7 @@ async function runCreateChatAgent(input: CreateChatAgentInput): Promise<void> {
     attachments,
     provider,
     composerState,
+    supportsForgeSearch: input.supportsForgeSearch,
   });
 }
 
@@ -1037,47 +989,6 @@ function buildComposerConfig(input: {
     onlineServerIds: isConnected && serverId ? [serverId] : [],
     lockedWorkingDir: workingDir,
   };
-}
-
-function collectAttachedPrNumbers(attachments: ReadonlyArray<UserComposerAttachment>): Set<number> {
-  const numbers = new Set<number>();
-  for (const attachment of attachments) {
-    if (attachment.kind === "github_pr") {
-      numbers.add(attachment.item.number);
-    }
-  }
-  return numbers;
-}
-
-function pruneDismissedCheckoutHintPrNumbers(
-  dismissed: ReadonlySet<number>,
-  attached: ReadonlySet<number>,
-): ReadonlySet<number> {
-  let changed = false;
-  const next = new Set<number>();
-  for (const prNumber of dismissed) {
-    if (attached.has(prNumber)) {
-      next.add(prNumber);
-    } else {
-      changed = true;
-    }
-  }
-  return changed ? next : dismissed;
-}
-
-function useCheckoutHintDismissals(attachments: ReadonlyArray<UserComposerAttachment>) {
-  const [dismissedPrNumbers, setDismissedPrNumbers] = useState<ReadonlySet<number>>(
-    () => new Set(),
-  );
-  const attachedPrNumbers = useMemo(() => collectAttachedPrNumbers(attachments), [attachments]);
-
-  useEffect(() => {
-    setDismissedPrNumbers((current) =>
-      pruneDismissedCheckoutHintPrNumbers(current, attachedPrNumbers),
-    );
-  }, [attachedPrNumbers]);
-
-  return [dismissedPrNumbers, setDismissedPrNumbers] as const;
 }
 
 function usePendingWorkspaceDraftSetup(
@@ -1138,7 +1049,11 @@ function submitWorkspaceDraft(input: SubmitDraftInput): void {
   const draftId = draftIdInput?.trim() || generateDraftId();
   const clientMessageId = generateMessageId();
   const timestamp = Date.now();
-  const wirePayload = splitComposerAttachmentsForSubmit(attachments);
+  const wirePayload = splitComposerAttachmentsForSubmit(attachments, {
+    format: resolveComposerAttachmentSubmitFormat({
+      supportsForgeAttachments: input.supportsForgeSearch,
+    }),
+  });
   const submission = resolveWorkspaceDraftSubmissionConfig({
     draftId,
     workspaceDirectory,
@@ -1466,6 +1381,7 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
         open={project.openState}
         onOpenChange={project.onOpenChange}
         desktopPlacement="bottom-start"
+        desktopMinWidth={360}
         anchorRef={project.anchorRef}
         emptyText="No projects available."
         renderOption={project.renderOption}
@@ -1486,6 +1402,7 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
         searchable={false}
         title="Host"
         desktopPlacement="bottom-start"
+        desktopMinWidth={200}
         hostOptionTestID={newWorkspaceHostOptionTestID}
       >
         <Pressable
@@ -1616,12 +1533,12 @@ export function NewWorkspaceScreen({
   });
   // COMPAT(workspaceMultiplicity): added in v0.1.97, drop the gate when floor >= v0.1.97
   const supportsWorkspaceMultiplicity = useHostFeature(selectedServerId, "workspaceMultiplicity");
+  const supportsForgeSearch = useHostFeature(selectedServerId, "forgeSearch");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [createdWorkspace, setCreatedWorkspace] = useState<ReturnType<
     typeof normalizeWorkspaceDescriptor
   > | null>(null);
   const [pendingAction, setPendingAction] = useState<"chat" | "empty" | null>(null);
-  const [manualPickerSelection, setManualPickerSelection] = useState<PickerSelection | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const openAddProjectPicker = useOpenAddProject();
@@ -1692,10 +1609,22 @@ export function NewWorkspaceScreen({
     }),
   });
   const composerState = chatDraft.composerState;
-  const [dismissedCheckoutHintPrNumbers, setDismissedCheckoutHintPrNumbers] =
-    useCheckoutHintDismissals(chatDraft.attachments);
+  const [pickerSelection, dispatchPickerSelection] = useReducer(
+    reducePickerSelection,
+    initialPickerSelectionState,
+  );
+  const selectedItem = pickerSelection.selectedItem;
 
-  const selectedItem = getSelectedPickerItem(manualPickerSelection);
+  const handleGithubPrDetected = useCallback(() => {
+    dispatchPickerSelection({ type: "pr-detected" });
+  }, []);
+
+  const handleGithubPrAutoAttach = useCallback((item: ForgeSearchItem) => {
+    dispatchPickerSelection({
+      type: "pr-added",
+      item: { kind: "github-pr", item },
+    });
+  }, []);
 
   const withConnectedClient = useCallback(() => {
     if (!client || !isConnected) {
@@ -1753,12 +1682,13 @@ export function NewWorkspaceScreen({
     staleTime: 15_000,
   });
 
-  const githubPrSearchQuery = useGithubSearchQuery({
+  const githubPrSearchQuery = useForgeSearchQuery({
     client,
     serverId: selectedServerId,
     cwd: selectedSourceDirectory ?? "",
     query: debouncedPickerSearchQuery,
-    kinds: ["github-pr"],
+    kinds: ["change_request"],
+    supportsForgeSearch,
     enabled: pickerQueryEnabled,
   });
 
@@ -1766,11 +1696,12 @@ export function NewWorkspaceScreen({
     () => normalizeBranchDetails(branchSuggestionsQuery.data),
     [branchSuggestionsQuery.data],
   );
-  const githubFeaturesEnabled = githubPrSearchQuery.data?.githubFeaturesEnabled !== false;
-  const prItems: GitHubSearchItem[] = useMemo(() => {
-    if (!githubFeaturesEnabled) return [];
+  const forgeSearchAuthenticated =
+    !githubPrSearchQuery.data || githubPrSearchQuery.data.authState === "authenticated";
+  const prItems: ForgeSearchItem[] = useMemo(() => {
+    if (!forgeSearchAuthenticated) return [];
     return githubPrSearchQuery.data?.items ?? [];
-  }, [githubFeaturesEnabled, githubPrSearchQuery.data?.items]);
+  }, [forgeSearchAuthenticated, githubPrSearchQuery.data?.items]);
 
   const { options, itemById }: PickerOptionData = useMemo(
     () => computePickerOptionData(branchDetails, prItems),
@@ -1794,7 +1725,7 @@ export function NewWorkspaceScreen({
         item,
       });
 
-      setManualPickerSelection({ item });
+      dispatchPickerSelection({ type: "picker-selected", item });
       chatDraft.setAttachments(nextAttachments);
       setPickerOpen(false);
     },
@@ -1810,7 +1741,7 @@ export function NewWorkspaceScreen({
     [itemById, selectPickerItem],
   );
 
-  const clearManualPickerSelectionForTargetChange = useCallback(
+  const clearPickerSelectionForTargetChange = useCallback(
     (currentTargetId: string, nextTargetId: string) => {
       const nextAttachments = clearPickerPrAttachmentForTargetChange({
         attachments: chatDraft.attachments,
@@ -1819,7 +1750,7 @@ export function NewWorkspaceScreen({
       });
       if (nextAttachments === chatDraft.attachments) return;
       chatDraft.setAttachments(nextAttachments);
-      setManualPickerSelection(null);
+      dispatchPickerSelection({ type: "target-changed" });
     },
     [chatDraft],
   );
@@ -1831,49 +1762,23 @@ export function NewWorkspaceScreen({
       // canCreateWorktree or non-git projects become unselectable.
       selectProjectOption(id);
       setProjectPickerOpen(false);
-      clearManualPickerSelectionForTargetChange(selectedProjectOptionId, id);
+      clearPickerSelectionForTargetChange(selectedProjectOptionId, id);
     },
-    [clearManualPickerSelectionForTargetChange, selectProjectOption, selectedProjectOptionId],
+    [clearPickerSelectionForTargetChange, selectProjectOption, selectedProjectOptionId],
   );
 
   const handleSelectWorkspaceHost = useCallback(
     (id: string) => {
       handleSelectHost(id);
-      clearManualPickerSelectionForTargetChange(selectedServerId, id);
+      clearPickerSelectionForTargetChange(selectedServerId, id);
     },
-    [clearManualPickerSelectionForTargetChange, handleSelectHost, selectedServerId],
+    [clearPickerSelectionForTargetChange, handleSelectHost, selectedServerId],
   );
 
   const handleAddProject = useCallback(() => {
     setProjectPickerOpen(false);
     openAddProjectPicker(selectedServerId);
   }, [openAddProjectPicker, selectedServerId]);
-
-  const checkoutHintPrAttachment = useMemo(
-    () =>
-      findCheckoutHintPrAttachment({
-        attachments: chatDraft.attachments,
-        selectedItem,
-        dismissedPrNumbers: dismissedCheckoutHintPrNumbers,
-      }),
-    [chatDraft.attachments, dismissedCheckoutHintPrNumbers, selectedItem],
-  );
-
-  const acceptCheckoutHint = useCallback(() => {
-    if (!checkoutHintPrAttachment) return;
-    selectPickerItem({ kind: "github-pr", item: checkoutHintPrAttachment.item });
-  }, [checkoutHintPrAttachment, selectPickerItem]);
-
-  const dismissCheckoutHint = useCallback(() => {
-    if (!checkoutHintPrAttachment) return;
-    const prNumber = checkoutHintPrAttachment.item.number;
-    setDismissedCheckoutHintPrNumbers((current) => {
-      if (current.has(prNumber)) return current;
-      const next = new Set(current);
-      next.add(prNumber);
-      return next;
-    });
-  }, [checkoutHintPrAttachment, setDismissedCheckoutHintPrNumbers]);
 
   const openPicker = useCallback(() => {
     setPickerOpen(true);
@@ -2059,6 +1964,7 @@ export function NewWorkspaceScreen({
           serverId: selectedServerId,
           draftKey,
           draftId,
+          supportsForgeSearch,
           labels: {
             composerStateRequired: t("newWorkspace.errors.composerStateRequired"),
             selectModel: t("newWorkspace.errors.selectModel"),
@@ -2071,7 +1977,17 @@ export function NewWorkspaceScreen({
         toast.error(message);
       }
     },
-    [composerState, draftId, draftKey, ensureWorkspace, forkDraftSetup, selectedServerId, t, toast],
+    [
+      composerState,
+      draftId,
+      draftKey,
+      ensureWorkspace,
+      forkDraftSetup,
+      selectedServerId,
+      supportsForgeSearch,
+      t,
+      toast,
+    ],
   );
 
   const renderPickerOption = useCallback(
@@ -2119,7 +2035,7 @@ export function NewWorkspaceScreen({
   });
 
   const centeredStyle = useMemo(
-    () => [styles.centered, composerKeyboardStyle],
+    () => [animatedStaticStyles.centered, composerKeyboardStyle],
     [composerKeyboardStyle],
   );
 
@@ -2194,41 +2110,6 @@ export function NewWorkspaceScreen({
     },
   });
 
-  const composerFooter = useMemo(
-    () => (
-      <>
-        {agentControlsWithDisabled ? (
-          <DraftAgentModeControl placement="footer" {...agentControlsWithDisabled} />
-        ) : null}
-        {checkoutHintPrAttachment ? (
-          <CheckoutHintBadge
-            label={t("newWorkspace.refPicker.checkoutHint", {
-              number: checkoutHintPrAttachment.item.number,
-            })}
-            acceptLabel={t("newWorkspace.refPicker.checkoutPr", {
-              number: checkoutHintPrAttachment.item.number,
-            })}
-            dismissLabel={t("newWorkspace.refPicker.dismissCheckoutHint", {
-              number: checkoutHintPrAttachment.item.number,
-            })}
-            onAccept={acceptCheckoutHint}
-            onDismiss={dismissCheckoutHint}
-            iconColor={theme.colors.foregroundMuted}
-            iconSize={theme.iconSize.sm}
-          />
-        ) : null}
-      </>
-    ),
-    [
-      acceptCheckoutHint,
-      agentControlsWithDisabled,
-      checkoutHintPrAttachment,
-      dismissCheckoutHint,
-      t,
-      theme.colors.foregroundMuted,
-      theme.iconSize.sm,
-    ],
-  );
   const screenHeaderLeft = useMemo(() => <SidebarMenuToggle />, []);
 
   return (
@@ -2252,6 +2133,7 @@ export function NewWorkspaceScreen({
             submitButtonTestID="workspace-create-submit"
             submitIcon="return"
             isSubmitLoading={isPending}
+            waitForGithubAutoAttachOnSubmit
             submitBehavior="preserve-and-lock"
             blurOnSubmit={true}
             value={chatDraft.text}
@@ -2259,12 +2141,13 @@ export function NewWorkspaceScreen({
             attachments={chatDraft.attachments}
             attachmentScopeKeys={visibleDraftContextScopeKeys}
             onChangeAttachments={chatDraft.setAttachments}
+            onGithubPrDetected={handleGithubPrDetected}
+            onGithubPrAutoAttach={handleGithubPrAutoAttach}
             cwd={selectedSourceDirectory ?? ""}
             clearDraft={handleClearDraft}
             autoFocus
             commandDraftConfig={composerState?.commandDraftConfig}
             agentControls={agentControlsWithDisabled}
-            footer={composerFooter}
           />
           {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
         </ReanimatedAnimated.View>
@@ -2272,6 +2155,13 @@ export function NewWorkspaceScreen({
     </FileDropZone>
   );
 }
+
+const animatedStaticStyles = RNStyleSheet.create({
+  centered: {
+    width: "100%",
+    maxWidth: MAX_CONTENT_WIDTH,
+  },
+});
 
 const styles = StyleSheet.create((theme) => ({
   container: {
@@ -2290,10 +2180,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   contentCompact: {
     justifyContent: "flex-end",
-  },
-  centered: {
-    width: "100%",
-    maxWidth: MAX_CONTENT_WIDTH,
   },
   composerTitleContainer: {
     marginBottom: theme.spacing[8],
@@ -2344,23 +2230,6 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.spacing[2],
     borderRadius: theme.borderRadius["2xl"],
     gap: theme.spacing[1],
-  },
-  checkoutHintBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    height: BADGE_HEIGHT,
-    maxWidth: 240,
-    paddingHorizontal: theme.spacing[2],
-    borderRadius: theme.borderRadius["2xl"],
-    gap: theme.spacing[1],
-    backgroundColor: theme.colors.surface1,
-  },
-  checkoutHintAction: {
-    width: theme.iconSize.md,
-    height: theme.iconSize.md,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: theme.borderRadius.full,
   },
   badgeHovered: {
     backgroundColor: theme.colors.surface2,

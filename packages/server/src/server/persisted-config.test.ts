@@ -125,6 +125,16 @@ describe("PersistedConfigSchema worktrees config", () => {
 
     expect(parsed.worktrees?.root).toBe("/mnt/fast/paseo-worktrees");
   });
+
+  test("accepts service port allocation", () => {
+    const parsed = PersistedConfigSchema.parse({
+      worktrees: {
+        servicePorts: { range: "3000-4000" },
+      },
+    });
+
+    expect(parsed.worktrees?.servicePorts).toEqual({ range: "3000-4000" });
+  });
 });
 
 describe("PersistedConfigSchema provider credentials", () => {

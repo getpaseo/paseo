@@ -164,7 +164,10 @@ export function createSidebarWorkspaceEntry(input: {
     statusEnteredAt: effectiveStatus.enteredAt,
     archivingAt: input.workspace.archivingAt,
     diffStat: input.workspace.diffStat,
-    prHint: selectPrHintFromStatus(input.workspace.githubRuntime?.pullRequest),
+    prHint: selectPrHintFromStatus(
+      input.workspace.githubRuntime?.pullRequest,
+      input.workspace.forge,
+    ),
     archiveHasUncommittedChanges: input.workspace.gitRuntime?.isDirty ?? null,
     archiveUnpushedCommitCount: input.workspace.gitRuntime?.aheadOfOrigin ?? null,
     scripts: input.workspace.scripts,
@@ -474,6 +477,23 @@ export function appendMissingOrderKeys(input: {
   return [...input.currentOrder, ...missingKeys];
 }
 
+export function prependMissingOrderKeys(input: {
+  currentOrder: string[];
+  visibleKeys: string[];
+}): string[] {
+  if (input.visibleKeys.length === 0) {
+    return input.currentOrder;
+  }
+
+  const existingKeys = new Set(input.currentOrder);
+  const missingKeys = input.visibleKeys.filter((key) => !existingKeys.has(key));
+  if (missingKeys.length === 0) {
+    return input.currentOrder;
+  }
+
+  return [...missingKeys, ...input.currentOrder];
+}
+
 export interface SidebarOrderUpdates {
   projectOrder: string[] | null;
   workspaceOrders: Array<{ projectKey: string; order: string[] }>;
@@ -497,7 +517,7 @@ export function computeSidebarOrderUpdates(input: {
   const workspaceOrders: Array<{ projectKey: string; order: string[] }> = [];
   for (const project of input.projects) {
     const persistedWorkspaceOrder = input.getWorkspaceOrder(project.projectKey);
-    const nextWorkspaceOrder = appendMissingOrderKeys({
+    const nextWorkspaceOrder = prependMissingOrderKeys({
       currentOrder: persistedWorkspaceOrder,
       visibleKeys: project.workspaces.map((workspace) => workspace.workspaceKey),
     });

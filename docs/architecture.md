@@ -54,22 +54,30 @@ The heart of Paseo. A Node.js process that:
 
 All paths are under `packages/server/src/`.
 
+Project identity is daemon-global rather than session-owned. After registry bootstrap, the daemon's
+project Git observer keeps one non-recursive watch on each lexically equivalent active project root
+and listens only for the root `.git` entry, with a slow rescan as a missed-event fallback. It runs
+for empty projects and without connected clients, then fans metadata changes through the WebSocket
+server to capability-aware sessions. It deliberately does not use the broad recursive working-tree
+watcher or the per-session Git observer: those are checkout/status mechanisms and intentionally do
+not retain non-Git directories.
+
 **Key modules:**
 
-| Module                          | Responsibility                                                               |
-| ------------------------------- | ---------------------------------------------------------------------------- |
-| `server/bootstrap.ts`           | Daemon initialization: HTTP server, WS server, agent manager, storage, relay |
-| `server/websocket-server.ts`    | WebSocket connection management, hello handshake, binary frame routing       |
-| `server/session.ts`             | Per-client session state, timeline subscriptions, terminal operations        |
-| `server/agent/agent-manager.ts` | Agent lifecycle state machine, timeline tracking, subscriber management      |
-| `server/agent/agent-storage.ts` | File-backed JSON persistence at `$PASEO_HOME/agents/`                        |
-| `server/agent/tools/`           | Transport-neutral Paseo tool catalog for subagents, permissions, worktrees   |
-| `server/agent/mcp-server.ts`    | Thin MCP adapter that registers the Paseo tool catalog with the MCP SDK      |
-| `server/agent/providers/`       | Provider adapters (see "Agent providers" below)                              |
-| `server/relay-transport.ts`     | Outbound relay connection with E2E encryption                                |
-| `server/schedule/`              | Cron-based scheduled agents                                                  |
-| `server/loop-service.ts`        | Looping agent runs that retry until an exit condition                        |
-| `server/chat/`                  | Chat rooms for agent-to-agent and human-to-agent messaging                   |
+| Module                          | Responsibility                                                                |
+| ------------------------------- | ----------------------------------------------------------------------------- |
+| `server/bootstrap.ts`           | Daemon initialization: HTTP server, WS server, agent manager, storage, relay  |
+| `server/websocket-server.ts`    | WebSocket connection management, hello handshake, binary frame routing        |
+| `server/session.ts`             | Per-client session state, timeline subscriptions, terminal operations         |
+| `server/agent/agent-manager.ts` | Agent lifecycle state machine, timeline tracking, subscriber management       |
+| `server/agent/agent-storage.ts` | File-backed JSON persistence at `$PASEO_HOME/agents/`                         |
+| `server/agent/tools/`           | Transport-neutral catalog for workspaces, agents, permissions, and automation |
+| `server/agent/mcp-server.ts`    | Thin MCP adapter that registers the Paseo tool catalog with the MCP SDK       |
+| `server/agent/providers/`       | Provider adapters (see "Agent providers" below)                               |
+| `server/relay-transport.ts`     | Outbound relay connection with E2E encryption                                 |
+| `server/schedule/`              | Cron-based scheduled agents                                                   |
+| `server/loop-service.ts`        | Looping agent runs that retry until an exit condition                         |
+| `server/chat/`                  | Chat rooms for agent-to-agent and human-to-agent messaging                    |
 
 ### `packages/protocol` — Wire schemas and shared protocol types
 
@@ -89,14 +97,22 @@ code imports from `@getpaseo/client`.
 
 Cross-platform React Native app that connects to one or more daemons.
 
-- Expo Router navigation (`/h/[serverId]/workspace/[workspaceId]`, `/h/[serverId]/agent/[agentId]`, etc.). The `workspaceId` URL segment is an opaque workspace id (path-shaped today and opaque-encoded for routing), not a directly meaningful filesystem path.
+- Expo Router navigation (`/h/[serverId]/workspace/[workspaceId]`, `/h/[serverId]/agent/[agentId]`, etc.). The `workspaceId` URL segment is an opaque workspace id, not a directly meaningful filesystem path.
 - `HostRuntimeController` manages saved host connections, reconnection, and per-host runtime state
+- `runtime/replica-cache` keeps a non-authoritative per-host display replica in AsyncStorage: only the last focused agent, its workspace, and a short timeline tail. It restores before navigation becomes ready, leaves remote hydration flags false, and is atomically replaced by the normal snapshot-plus-delta synchronization path.
 - `SessionContext` wraps the daemon client for the active session
 - Composer UI and submit/draft behavior live in `packages/app/src/composer/`; screens and panels should integrate it from there instead of dropping composer internals into `components/`, `hooks/`, or `screens/workspace/`
 - Timeline reducers in `timeline/session-stream-reducers.ts` handle compaction, gap detection, sequence-based deduplication
 - Timeline sync correctness is documented in [docs/timeline-sync.md](timeline-sync.md): live streams are for immediacy, `fetch_agent_timeline_request` is authoritative, and catch-up is paged but complete.
 - Voice features: dictation (STT) and voice agent (realtime)
 - Android workspace Browser panes use `react-native-webview` plus one app-level tunnel controller. An app-local Expo module owns an authenticated loopback HTTP proxy and a process-wide reverse-bypass WebView proxy override; JavaScript maps each accepted loopback connection onto the selected host's existing direct or encrypted-relay `DaemonClient.openTcpTunnel` stream. Public HTTP/HTTPS bypasses this proxy. See [browser-localhost-routing.md](browser-localhost-routing.md).
+
+The replica cache exists only to paint stale data immediately while the host connects. It does not
+own mutations, infer deletions, or replace daemon reconciliation. Pending permission requests are
+not restored from it. AsyncStorage is not encrypted, so the cached timeline tail may contain source
+code, prompts, and tool output; encrypted-at-rest storage is a separate product/security decision.
+Its serialized payload has a 1 MiB byte budget and evicts whole host snapshots in least-recently-
+written order; a single oversized host is omitted rather than partially restored.
 
 ### `packages/cli` — Command-line client
 
@@ -108,9 +124,11 @@ Commander.js CLI with Docker-style commands. Common agent operations are also ex
 - `paseo terminal ls/create/capture/send-keys/kill`
 - `paseo loop run/ls/inspect/logs/stop`
 - `paseo schedule create/ls/inspect/update/pause/resume/run-once/logs/delete`
+- `paseo heartbeat create/update/delete`
+- `paseo workspace create/ls/archive`
 - `paseo permit allow/deny/ls`
 - `paseo provider ls/models`
-- `paseo worktree create/ls/archive`
+- hidden legacy `paseo worktree create/ls/archive` compatibility alias
 - `paseo speech …`
 
 Communicates with the daemon via the same WebSocket protocol as the app.
@@ -127,6 +145,11 @@ Enables remote access when the daemon is behind a firewall.
 
 See [SECURITY.md](../SECURITY.md) for the full threat model.
 
+### Paseo Hub
+
+The optional Hub relationship is daemon-outbound and does not use the relay. Its connection,
+authorization, ownership, persistence, and lifecycle contract is documented in [hub.md](hub.md).
+
 ### `packages/desktop` — Desktop app (Electron)
 
 Electron wrapper for macOS, Linux, and Windows.
@@ -140,9 +163,25 @@ Electron wrapper for macOS, Linux, and Windows.
 
 > **Window-state v1 limitation:** only the _first_ window of a session restores and persists saved geometry (size/position/maximized). Windows opened via ⌘⇧N / second-instance / "Open in new window" open at the default size, OS-cascaded, and do not persist — this avoids every window stacking on the same restored bounds and fighting over the single window-state store. Lifting this needs per-window state keys.
 >
-> **In-app browser profile.** Every browser guest uses one stable persistent Electron session, so cookies, authentication, cache, and site storage are shared across tabs, workspaces, and desktop windows and survive tab or app closure. Browser identity is independent of that storage partition: after `did-attach`, the renderer explicitly registers its browser id, workspace id, and guest `WebContents` id, and main accepts the registration only when that guest belongs to the calling renderer and the shared profile. Settings > General > Clear browser data is the sole profile-deletion path; it clears the shared session and reloads live guests without deleting saved tabs or URLs.
+> **In-app browser profile.** Every browser guest uses one stable persistent Electron session, so cookies, authentication, cache, and site storage are shared across tabs, workspaces, and desktop windows and survive tab or app closure. Browser identity is independent of that storage partition: after every `did-attach`, the renderer explicitly registers its browser id, workspace id, and current guest `WebContents` id, and main accepts the registration only when that guest belongs to the calling renderer and the shared profile. Registration is intentionally repeated because reparenting a retained `<webview>` can replace its guest without replacing the DOM element. Settings > General > Clear browser data is the sole profile-deletion path; it clears the shared session and reloads live guests without deleting saved tabs or URLs.
+>
+> **In-app browser window opens.** Ordinary link opens, including Shift-clicked links, become Paseo workspace tabs. Script-created opens with popup features or a named window target and POST-backed opens remain secured Electron child windows in the shared browser profile, preserving `window.opener`, `postMessage`, named-window reuse, request bodies, and `window.close()` for OAuth, payment, and similar popup protocols. Unsupported URL schemes are denied before either path.
+>
+> **In-app browser ownership.** Each registered guest records its owning host window. The active browser is keyed by `(host window, workspace)`, and application-menu Reload / Force Reload resolve only within the window Electron supplies to the menu callback. A non-null active update must name a browser owned by that host; a null update clears only that host/workspace. Browser automation continues to target explicit browser ids returned by `browser_new_tab` or `browser_list_tabs`.
+>
+> **Browser keyboard boundary.** Guest pages receive renderer-published shortcuts first. `Cmd/Ctrl+L` and `Cmd/Ctrl+R` are explicit guest-shell reservations; ordinary Paseo shortcuts run only after the page declines them. The sandboxed guest preload runs in every frame so focused iframes use the same boundary, while Node integration remains disabled. Human guest input disables Electron's menu fallback for plain keys. Agent-generated keys use guest `sendInputEvent` with `skipIfUnhandled`, so an unhandled Enter stops at the guest instead of reaching the host composer. Main selects the preload; it exposes no APIs to guest pages.
 
-> **In-app browser targets are not yet per-window.** Browser webviews are still tracked by one process-global registry that keeps a single current `WebContents` per browser id. Human focus records the workspace-active browser for UI state and `list_tabs` reporting, while agent automation targets explicit browser ids returned by `browser_new_tab` or `browser_list_tabs`. Explicit attached-guest registration prevents concurrent windows from swapping different browser ids, but rendering the same saved browser tab in multiple windows can still make menu actions target the most recently registered guest. Making the registry window-scoped remains a follow-up.
+```text
+Human key -> guest WebContents
+  |-- Cmd/Ctrl+T/L/R ----------> reserved browser-shell action
+  `-- page keydown
+        |-- page prevents ------> page owns it
+        `-- published shortcut -> guest preload -> IPC(browserId) -> Paseo resolver
+
+Agent browser_keypress -> guest sendInputEvent(skipIfUnhandled)
+  |-- guest handles ------------> page owns it
+  `-- guest does not handle ----> stop; never redispatch to the host window
+```
 
 ### `packages/website` — Marketing site
 
@@ -175,7 +214,7 @@ Client liveness checks use the top-level JSON `ping`/`pong` envelope, not a sess
 
 Client session RPC waits default to 60s so slow relay or mobile networks do not turn a live but delayed daemon response into a false operation failure. Keep connect timeouts, app-level grace windows, explicit diagnostic latency probes, liveness ping timers, and genuinely long-running RPCs separate from this default.
 
-New session RPCs use dotted names with `.request` and `.response` suffixes, such as `checkout.github.set_auto_merge.request` and `checkout.github.set_auto_merge.response`. See [rpc-namespacing.md](rpc-namespacing.md) for the convention and migration rules for older flat RPC names.
+New session RPCs use dotted names with `.request` and `.response` suffixes, such as `checkout.forge.set_auto_merge.request` and `checkout.forge.set_auto_merge.response`. See [rpc-namespacing.md](rpc-namespacing.md) for the convention and migration rules for older flat RPC names.
 
 **Notable session message types:**
 
@@ -257,14 +296,14 @@ Two workspaces can share the same `cwd` (e.g. a `directory` workspace and a `loc
 
 **Directory-backed (shared by same-`cwd` workspaces) — keyed by `(serverId, cwd)`, never by `workspaceId`:**
 
-| Surface                | Key                                                      | Source                                                  |
-| ---------------------- | -------------------------------------------------------- | ------------------------------------------------------- |
-| Git status             | `checkoutStatusQueryKey(serverId, cwd)`                  | `packages/app/src/git/query-keys.ts`                    |
-| Git diff               | `checkoutDiffQueryKey(serverId, cwd, mode, baseRef, ws)` | `packages/app/src/git/query-keys.ts`                    |
-| GitHub PR status       | `checkoutPrStatusQueryKey(serverId, cwd)`                | `packages/app/src/git/query-keys.ts`                    |
-| PR pane timeline       | `prPaneTimelineQueryKey({ serverId, cwd, prNumber })`    | `packages/app/src/git/pull-request-panel/query-keys.ts` |
-| File preview content   | `["workspaceFile", serverId, cwd, path]`                 | `packages/app/src/components/file-pane.tsx`             |
-| File explorer listings | fetched via `listDirectory(workspaceRoot, path)`         | `packages/app/src/hooks/use-file-explorer-actions.ts`   |
+| Surface                 | Key                                                      | Source                                                  |
+| ----------------------- | -------------------------------------------------------- | ------------------------------------------------------- |
+| Git status              | `checkoutStatusQueryKey(serverId, cwd)`                  | `packages/app/src/git/query-keys.ts`                    |
+| Git diff                | `checkoutDiffQueryKey(serverId, cwd, mode, baseRef, ws)` | `packages/app/src/git/query-keys.ts`                    |
+| Forge change request    | `checkoutPrStatusQueryKey(serverId, cwd)`                | `packages/app/src/git/query-keys.ts`                    |
+| Change request timeline | `prPaneTimelineQueryKey({ serverId, cwd, prNumber })`    | `packages/app/src/git/pull-request-panel/query-keys.ts` |
+| File preview content    | `["workspaceFile", serverId, cwd, path]`                 | `packages/app/src/components/file-pane.tsx`             |
+| File explorer listings  | fetched via `listDirectory(workspaceRoot, path)`         | `packages/app/src/hooks/use-file-explorer-actions.ts`   |
 
 **Workspace-owned (independent per workspace) — keyed by `workspaceId` (falling back to `cwd` only when no `workspaceId` exists):**
 

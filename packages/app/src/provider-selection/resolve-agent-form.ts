@@ -56,8 +56,8 @@ export const INITIAL_USER_MODIFIED: UserModifiedFields = {
   workingDir: false,
 };
 
-export const INITIAL_AGENT_FORM_RESOLUTION: AgentFormResolutionState = { status: "completed" };
 export const PENDING_AGENT_FORM_RESOLUTION: AgentFormResolutionState = { status: "pending" };
+export const INITIAL_AGENT_FORM_RESOLUTION = PENDING_AGENT_FORM_RESOLUTION;
 
 type ProviderPrefs = NonNullable<FormPreferences["providerPreferences"]>[AgentProvider];
 
@@ -171,7 +171,12 @@ function resolvePreferredModeId(input: {
   const preferredModeId = normalizeSelectedModeId(input.preferredModeId);
   if (preferredModeId) return preferredModeId;
 
-  return input.providerDef?.defaultModeId ?? input.providerDef?.modes[0]?.id ?? "";
+  const defaultModeId = input.providerDef?.defaultModeId;
+  const modes = input.providerDef?.modes ?? [];
+  if (defaultModeId && (modes.length === 0 || modes.some((mode) => mode.id === defaultModeId))) {
+    return defaultModeId;
+  }
+  return modes[0]?.id ?? "";
 }
 
 export function mergeSelectedComposerPreferences(args: {

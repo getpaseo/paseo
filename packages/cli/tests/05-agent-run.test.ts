@@ -53,10 +53,13 @@ try {
     const result = await $`npx paseo run --help`.nothrow();
     assert.strictEqual(result.exitCode, 0, "run --help should exit 0");
     assert(result.stdout.includes("-d"), "help should mention -d flag");
-    assert(result.stdout.includes("--detach"), "help should mention --detach flag");
+    assert(result.stdout.includes("--background"), "help should mention --background flag");
+    assert(!result.stdout.includes("--detach"), "help should hide legacy --detach syntax");
     assert(result.stdout.includes("--title"), "help should mention --title option");
     assert(result.stdout.includes("--provider"), "help should mention --provider option");
     assert(result.stdout.includes("--mode"), "help should mention --mode option");
+    assert(result.stdout.includes("--new-workspace"), "help should mention --new-workspace option");
+    assert(!result.stdout.includes("--isolation"), "help should not mention --isolation");
     assert(result.stdout.includes("--cwd"), "help should mention --cwd option");
     assert(result.stdout.includes("--output-schema"), "help should mention --output-schema option");
     assert(result.stdout.includes("--host"), "help should mention --host option");
@@ -174,18 +177,18 @@ try {
     console.log("✓ run --output-schema flag is accepted\n");
   }
 
-  // Test 10: run --output-schema cannot be used with --detach
+  // Test 10: run --output-schema cannot be used with --background
   {
-    console.log("Test 10: run --output-schema cannot be used with --detach");
+    console.log("Test 10: run --output-schema cannot be used with --background");
     const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo run -d --output-schema ${schemaPath} "test prompt"`.nothrow();
-    assert.notStrictEqual(result.exitCode, 0, "should fail with --detach and --output-schema");
+      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo run --background --output-schema ${schemaPath} "test prompt"`.nothrow();
+    assert.notStrictEqual(result.exitCode, 0, "should fail with --background and --output-schema");
     const output = result.stdout + result.stderr;
     assert(
-      output.includes("--output-schema cannot be used with --detach"),
-      "error should explain detach incompatibility",
+      output.includes("--output-schema cannot be used with --background"),
+      "error should explain background incompatibility",
     );
-    console.log("✓ run --output-schema cannot be used with --detach\n");
+    console.log("✓ run --output-schema cannot be used with --background\n");
   }
 
   // Test 11: -q (quiet) flag is accepted with run
@@ -242,6 +245,28 @@ try {
     const output = result.stdout + result.stderr;
     assert(output.includes("unknown option"), "should report unknown option for --ui");
     console.log("✓ run --ui is rejected\n");
+  }
+
+  // Test 15: run --new-workspace is accepted
+  {
+    console.log("Test 15: run --new-workspace is accepted");
+    const result =
+      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo run --new-workspace local "test prompt"`.nothrow();
+    const output = result.stdout + result.stderr;
+    assert(!output.includes("unknown option"), "should accept --new-workspace");
+    assert(!output.includes("error: option"), "should not have option parsing error");
+    console.log("✓ run --new-workspace is accepted\n");
+  }
+
+  // Test 16: run --isolation is rejected (unreleased flag removed)
+  {
+    console.log("Test 16: run --isolation is rejected");
+    const result =
+      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo run --isolation local "test prompt"`.nothrow();
+    assert.notStrictEqual(result.exitCode, 0, "should fail for removed --isolation flag");
+    const output = result.stdout + result.stderr;
+    assert(output.includes("unknown option"), "should report unknown option for --isolation");
+    console.log("✓ run --isolation is rejected\n");
   }
 } finally {
   // Clean up temp directory

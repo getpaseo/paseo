@@ -17,7 +17,7 @@ Read the **paseo** skill. Before choosing a provider, read `~/.paseo/orchestrati
 ## Parsing arguments
 
 1. **Provider** — explicit user request first; otherwise resolve from `impl` preference (or `ui` if the task is styling-only).
-2. **Worktree** — "in a worktree" / "worktree" → create a worktree via Paseo with a short branch name derived from the task, based on the current branch.
+2. **Isolation** — "in a worktree" / "worktree" → create a workspace with `isolation: "worktree"`, using a short branch name derived from the task.
 3. **Task description** — anything else the user said.
 
 ## The handoff prompt
@@ -54,18 +54,14 @@ The receiving agent has zero context. Include:
 
 ## Launch
 
-Create the agent via Paseo with a `[Handoff] <task>` title, the briefing as initial prompt, and `relationship: { kind: "detached" }`.
+Prepare the handoff in a dedicated workspace:
 
-Use `workspace` for placement:
+1. Select the current workspace or call `create_workspace` with the requested isolation.
+2. Call `create_agent` with a `[Handoff] <task>` title, the briefing as initial prompt, and the selected `workspaceId` when explicit placement is needed.
+3. Return the agent and workspace to the user, explaining that it remains in your subagent track until they detach it manually.
 
-- No worktree: `workspace: { kind: "current" }`.
-- Worktree: `workspace: { kind: "create", source: { kind: "worktree", target: { kind: "branch-off", worktreeSlug: "<short-task-slug>", branchName: "fix/<short-task-slug>" } } }`.
-- Existing worktree already created by `create_worktree`: `workspace: { kind: "existing", workspaceId: "<returned-workspace-id>" }`.
-
-Do not use `workspace: { kind: "current", cwd: "<worktreePath>" }` to place a handoff in a worktree; that keeps the agent in the caller's workspace with only a different runtime cwd.
+Do not encode independence as a create mode and do not invoke CLI or wire-level detach operations. Detach is a user gesture in the subagents track.
 
 Leave `notifyOnFinish` omitted unless the user explicitly wants no callback.
-
-Handoff agents are siblings/root agents, not your subagents. They must survive you being archived and must not appear in your subagent track.
 
 Don't wait by default — the user decides whether to follow along or move on. Tell them the agent ID and how to follow along (the paseo skill explains).

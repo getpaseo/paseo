@@ -58,6 +58,30 @@ For standard React Native components, the [Unistyles Babel plugin](https://www.u
 
 The important detail: the automatic native path tracks `props.style`. It does not generally track every prop that happens to carry style-like values.
 
+### Do Not Materialize Styles At Module Scope
+
+Never read a Unistyles style property into a module-level constant. This includes cached arrays:
+
+```tsx
+// Wrong: evaluated while the app may still be using the temporary system theme.
+const ROW_STYLE = [settingsStyles.row, settingsStyles.rowBorder];
+
+// Right: each style proxy is read when this view renders.
+<View style={[settingsStyles.row, settingsStyles.rowBorder]} />;
+```
+
+Paseo starts with adaptive themes, then applies the persisted theme after async settings load. A
+module-level read can therefore materialize the light style before a persisted dark theme is
+active. If the view mounts after that theme change, React Native receives the stale light object;
+Unistyles registers the node for future changes but does not retroactively replace its initial
+props. Settings dividers once rendered light `#e4e4e7` inside a dark `#252B2A` card for exactly
+this reason.
+
+Render-time array syntax is intentional and exempt from the app's JSX array-allocation lint rule.
+Keep the entries separate so each retains its Unistyles metadata. If composition is needed outside
+JSX, create the array inside the component or in a `useMemo` that first runs when the component
+mounts—never at module evaluation time.
+
 [`useUnistyles()`](https://www.unistyl.es/v3/references/use-unistyles) is different. It gives React access to the current theme/runtime and can make a component re-render when those values change. Use it for values that must be rendered through React props, such as icon colors or small escape hatches. Do not expect direct reads from `UnistylesRuntime` to re-render a component; [issue #817](https://github.com/jpudysz/react-native-unistyles/issues/817) is a useful reminder of that invariant.
 
 ## Dynamic Pixel Styles On Web

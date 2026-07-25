@@ -8,7 +8,13 @@ import {
 } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { DiffStat } from "@/components/diff-stat";
-import { TreeChevron, TreeIndentGuides, treeRowPaddingLeft } from "@/components/tree-primitives";
+import { FILE_ACTIONS_MENU_WIDTH } from "@/components/file-actions-menu";
+import {
+  TreeChevron,
+  TreeIndentGuides,
+  treeRowPaddingLeft,
+  WORKSPACE_FILE_ROW_VERTICAL_PADDING,
+} from "@/components/tree-primitives";
 import { type Theme } from "@/styles/theme";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 
@@ -80,7 +86,12 @@ export function DiffFolderRow({
           </Text>
         </View>
         <View style={styles.right}>
-          <DiffStat additions={additions} deletions={deletions} />
+          <DiffStat
+            additions={additions}
+            deletions={deletions}
+            testID={testID ? `${testID}-stat` : undefined}
+          />
+          <View style={styles.actionSlot} />
         </View>
       </Pressable>
     </View>
@@ -94,8 +105,8 @@ const styles = StyleSheet.create((theme: Theme) => ({
   folderRow: {
     flexDirection: "row",
     alignItems: "center",
-    paddingRight: theme.spacing[2],
-    paddingVertical: theme.spacing[2],
+    paddingRight: theme.spacing[3],
+    paddingVertical: WORKSPACE_FILE_ROW_VERTICAL_PADDING,
     gap: theme.spacing[1],
     minWidth: 0,
   },
@@ -113,6 +124,10 @@ const styles = StyleSheet.create((theme: Theme) => ({
     flexDirection: "row",
     alignItems: "center",
     flexShrink: 0,
+    gap: theme.spacing[1],
+  },
+  actionSlot: {
+    width: FILE_ACTIONS_MENU_WIDTH,
   },
   folderName: {
     fontSize: theme.fontSize.sm,

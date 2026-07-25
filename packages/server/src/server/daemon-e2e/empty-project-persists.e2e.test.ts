@@ -62,10 +62,10 @@ test("project.add creates a project without creating a workspace", async () => {
     expect(added.project).not.toBeNull();
     const project = added.project!;
     expect(project).toMatchObject({
-      projectId: repoRoot,
       projectRootPath: repoRoot,
       projectKind: "git",
     });
+    expect(project.projectId).toMatch(/^prj_[0-9a-f]{16}$/);
 
     const workspaces = await client.fetchWorkspaces({
       filter: { projectId: project.projectId },
@@ -73,7 +73,6 @@ test("project.add creates a project without creating a workspace", async () => {
     expect(workspaces.entries).toEqual([]);
     expect(workspaces.emptyProjects).toEqual([
       expect.objectContaining({
-        projectId: repoRoot,
         projectRootPath: repoRoot,
         projectKind: "git",
       }),

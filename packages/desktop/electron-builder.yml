@@ -2,6 +2,10 @@ npmRebuild: false
 appId: sh.paseo.desktop
 productName: Paseo
 executableName: Paseo
+protocols:
+  - name: Paseo agent link
+    schemes:
+      - paseo
 afterPack: ./scripts/after-pack.js
 afterSign: ./scripts/after-sign.js
 directories:
@@ -21,6 +25,8 @@ extraResources:
     to: app-dist
   - from: ../../skills
     to: skills
+  - from: assets/editor-targets
+    to: editor-target-icons
 publish:
   provider: github
   owner: getpaseo

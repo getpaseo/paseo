@@ -11,6 +11,7 @@ import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 // indentation, guide lines, and chevron. Keep those here so the two trees can't
 // drift apart.
 export const TREE_INDENT_PER_LEVEL = 16;
+export const WORKSPACE_FILE_ROW_VERTICAL_PADDING = SPACING[1.5];
 
 /** Left padding for a tree row at `depth`. Shared by folder rows and file headers
  * in the Changes tree so their indentation can't drift apart. */
@@ -51,7 +52,7 @@ export function TreeIndentGuides({ depth }: { depth: number }) {
 /** Rotating disclosure chevron for a directory row (points right; rotates down when expanded). */
 export function TreeChevron({ expanded }: { expanded: boolean }) {
   return (
-    <View style={expanded ? CHEVRON_EXPANDED_STYLE : styles.chevron}>
+    <View style={expanded ? [styles.chevron, styles.chevronExpanded] : styles.chevron}>
       <ThemedChevronRight size={16} uniProps={foregroundMutedIconColorMapping} />
     </View>
   );
@@ -76,7 +77,3 @@ const styles = StyleSheet.create((theme: Theme) => ({
     transform: [{ rotate: "90deg" }],
   },
 }));
-
-// Stable module-level style ref so TreeChevron passes a constant array, not one created
-// per render — satisfies react-perf (no inline-array prop) without a per-render useMemo.
-const CHEVRON_EXPANDED_STYLE = [styles.chevron, styles.chevronExpanded];

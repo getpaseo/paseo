@@ -1,5 +1,5 @@
 import type { Agent } from "@/stores/session-store";
-import type { WorkspaceDraftTabSetup } from "@/stores/workspace-tabs-store";
+import type { WorkspaceDraftTabSetup } from "@/workspace-tabs/model";
 
 export type ClientSlashCommandKind = "archive-agent" | "replace-agent-with-draft";
 export type ClientSlashCommandExecution = "immediate" | "insert";

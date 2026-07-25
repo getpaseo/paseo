@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   normalizeStoredHostProfile,
   orderHostsLocalFirst,
+  resolveActiveHostServerId,
   type HostProfile,
 } from "./host-connection";
 
@@ -112,5 +113,77 @@ describe("normalizeStoredHostProfile", () => {
       useTls: true,
       daemonPublicKeyB64: "pubkey",
     });
+  });
+});
+
+describe("resolveActiveHostServerId", () => {
+  it("uses the selected host when one is set", () => {
+    expect(
+      resolveActiveHostServerId({
+        selectedServerId: "srv_selected",
+        localServerId: "srv_local",
+        hosts: [makeHost("srv_local"), makeHost("srv_selected")],
+        orderedHosts: [makeHost("srv_local"), makeHost("srv_selected")],
+      }),
+    ).toBe("srv_selected");
+  });
+
+  it("falls back to the local host when it is connected", () => {
+    expect(
+      resolveActiveHostServerId({
+        selectedServerId: null,
+        localServerId: "srv_local",
+        hosts: [makeHost("srv_local"), makeHost("srv_remote")],
+        orderedHosts: [makeHost("srv_local"), makeHost("srv_remote")],
+      }),
+    ).toBe("srv_local");
+  });
+
+  it("skips a stopped local daemon and uses the first connected host", () => {
+    // Regression: a stopped local daemon's serverId persists but isn't in `hosts`.
+    // Falling back to it would resolve the section to an unknown id ("host not found").
+    expect(
+      resolveActiveHostServerId({
+        selectedServerId: null,
+        localServerId: "srv_local_stopped",
+        hosts: [makeHost("srv_remote")],
+        orderedHosts: [makeHost("srv_remote")],
+      }),
+    ).toBe("srv_remote");
+  });
+
+  it("returns null when no hosts are connected", () => {
+    expect(
+      resolveActiveHostServerId({
+        selectedServerId: null,
+        localServerId: "srv_local_stopped",
+        hosts: [],
+        orderedHosts: [],
+      }),
+    ).toBeNull();
+  });
+
+  it("ignores a selected host that is not connected", () => {
+    // A stale selection (e.g. the host was removed) must not be used unless it is
+    // currently connected, or the section resolves to an unknown id ("host not found").
+    expect(
+      resolveActiveHostServerId({
+        selectedServerId: "srv_stale_selection",
+        localServerId: null,
+        hosts: [makeHost("srv_remote")],
+        orderedHosts: [makeHost("srv_remote")],
+      }),
+    ).toBe("srv_remote");
+  });
+
+  it("falls through a disconnected selection to the connected local host", () => {
+    expect(
+      resolveActiveHostServerId({
+        selectedServerId: "srv_stale_selection",
+        localServerId: "srv_local",
+        hosts: [makeHost("srv_local"), makeHost("srv_remote")],
+        orderedHosts: [makeHost("srv_local"), makeHost("srv_remote")],
+      }),
+    ).toBe("srv_local");
   });
 });

@@ -32,7 +32,7 @@ import { AgentStorage } from "./agent/agent-storage.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import { createAgentCommand } from "./agent/create-agent/create.js";
 import type { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
-import { createLocalCheckoutWorkspace } from "./paseo-worktree-service.js";
+import { createWorkspaceProvisioningService } from "./session/workspace-provisioning/workspace-provisioning-service.js";
 import { createNoopWorkspaceGitService } from "./test-utils/workspace-git-service-stub.js";
 import { FileBackedProjectRegistry, FileBackedWorkspaceRegistry } from "./workspace-registry.js";
 import { LoopService } from "./loop-service.js";
@@ -108,12 +108,17 @@ async function createRegistryBackedWorkspaceEnsure(rootDir: string): Promise<{
   await workspaceRegistry.initialize();
   await projectRegistry.initialize();
   const workspaceGitService = createNoopWorkspaceGitService();
+  const workspaceProvisioning = createWorkspaceProvisioningService({
+    projectRegistry,
+    workspaceRegistry,
+    workspaceGitService,
+  });
   return {
     workspaceRegistry,
     ensureWorkspaceForCreate: async (cwd, firstAgentContext) => {
-      const workspace = await createLocalCheckoutWorkspace(
-        { cwd, title: firstAgentContext?.prompt ?? null },
-        { projectRegistry, workspaceRegistry, workspaceGitService },
+      const workspace = await workspaceProvisioning.createWorkspaceForDirectory(
+        cwd,
+        firstAgentContext?.prompt ?? null,
       );
       return workspace.workspaceId;
     },

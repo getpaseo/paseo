@@ -28,6 +28,10 @@ export function isNewAgentSchedule(schedule: ScheduleSummary): boolean {
   return schedule.target.type === "new-agent";
 }
 
+export function scheduleProductName(schedule: ScheduleSummary): "Heartbeat" | "Schedule" {
+  return schedule.target.type === "agent" ? "Heartbeat" : "Schedule";
+}
+
 export function resolveScheduleTitle(schedule: ScheduleSummary): string {
   const name = schedule.name?.trim();
   if (name) {
@@ -43,7 +47,7 @@ export function resolveScheduleTitle(schedule: ScheduleSummary): string {
     .split("\n")
     .map((line) => line.trim())
     .find((line) => line.length > 0);
-  return firstPromptLine || "Untitled schedule";
+  return firstPromptLine || `Untitled ${scheduleProductName(schedule).toLowerCase()}`;
 }
 
 function pluralize(value: number, noun: string): string {

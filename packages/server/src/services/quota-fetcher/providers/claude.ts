@@ -14,6 +14,7 @@ import type { ProviderApiFetch, ProviderUsageFetcher } from "../provider.js";
 import {
   ApiNumberSchema,
   fetchProviderApi,
+  toneFromUsedPct,
   unavailableUsage,
   windowFromUsedPct,
 } from "../usage.js";
@@ -156,7 +157,7 @@ export class ClaudeQuotaProvider implements ProviderUsageFetcher {
           label: "Session",
           utilizationPct: resp.five_hour.utilization,
           resetsAt: resp.five_hour.resets_at ?? null,
-          tone: "ok",
+          tone: toneFromUsedPct(resp.five_hour.utilization),
         }),
       );
     }
@@ -167,7 +168,7 @@ export class ClaudeQuotaProvider implements ProviderUsageFetcher {
           label: "Weekly",
           utilizationPct: resp.seven_day.utilization,
           resetsAt: resp.seven_day.resets_at ?? null,
-          tone: "ok",
+          tone: toneFromUsedPct(resp.seven_day.utilization),
         }),
       );
     }
@@ -178,7 +179,7 @@ export class ClaudeQuotaProvider implements ProviderUsageFetcher {
           label: "Weekly · Opus",
           utilizationPct: resp.seven_day_opus.utilization,
           resetsAt: resp.seven_day_opus.resets_at ?? null,
-          tone: "ok",
+          tone: toneFromUsedPct(resp.seven_day_opus.utilization),
         }),
       );
     }
@@ -189,7 +190,7 @@ export class ClaudeQuotaProvider implements ProviderUsageFetcher {
           label: "Weekly · Omelette",
           utilizationPct: resp.seven_day_omelette.utilization,
           resetsAt: resp.seven_day_omelette.resets_at ?? null,
-          tone: "ok",
+          tone: toneFromUsedPct(resp.seven_day_omelette.utilization),
         }),
       );
     }

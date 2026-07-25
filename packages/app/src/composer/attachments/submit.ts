@@ -5,14 +5,39 @@ import {
   workspaceAttachmentToSubmitAttachment,
 } from "@/attachments/workspace-attachment-utils";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
-import { buildGitHubAttachmentFromSearchItem } from "@/utils/review-attachments";
+import {
+  buildForgeAttachmentFromSearchItem,
+  buildLegacyGitHubAttachmentFromSearchItem,
+} from "@/utils/review-attachments";
+import { workspaceFileAttachmentToAgentAttachment } from "@/attachments/workspace-file";
 
-export function splitComposerAttachmentsForSubmit(attachments: ComposerAttachment[]): {
+export type ComposerAttachmentSubmitFormat = "forge" | "legacy-github";
+
+interface SplitComposerAttachmentsOptions {
+  format?: ComposerAttachmentSubmitFormat;
+}
+
+export function resolveComposerAttachmentSubmitFormat(input: {
+  supportsForgeAttachments?: boolean;
+}): ComposerAttachmentSubmitFormat {
+  // COMPAT(forgeSearch): added in v0.1.106, remove github_search fallback after 2026-12-28.
+  return input.supportsForgeAttachments === false ? "legacy-github" : "forge";
+}
+
+export function splitComposerAttachmentsForSubmit(
+  attachments: ComposerAttachment[],
+  options: SplitComposerAttachmentsOptions = {},
+): {
   images: ImageAttachment[];
   attachments: AgentAttachment[];
 } {
   const images: ImageAttachment[] = [];
   const agentAttachments: AgentAttachment[] = [];
+  // COMPAT(forgeSearch): added in v0.1.106, remove github_search fallback after 2026-12-28.
+  const buildSearchAttachment =
+    options.format === "legacy-github"
+      ? buildLegacyGitHubAttachmentFromSearchItem
+      : buildForgeAttachmentFromSearchItem;
 
   for (const attachment of attachments) {
     if (attachment.kind === "image") {
@@ -22,6 +47,11 @@ export function splitComposerAttachmentsForSubmit(attachments: ComposerAttachmen
 
     if (attachment.kind === "file") {
       agentAttachments.push(attachment.attachment);
+      continue;
+    }
+
+    if (attachment.kind === "workspace_file") {
+      agentAttachments.push(workspaceFileAttachmentToAgentAttachment(attachment));
       continue;
     }
 
@@ -36,7 +66,7 @@ export function splitComposerAttachmentsForSubmit(attachments: ComposerAttachmen
       continue;
     }
 
-    const reviewAttachment = buildGitHubAttachmentFromSearchItem(attachment.item);
+    const reviewAttachment = buildSearchAttachment(attachment.item);
     if (reviewAttachment) {
       agentAttachments.push(reviewAttachment);
     }

@@ -456,6 +456,7 @@ import {
   buildProviderRegistry,
   createAllClients,
 } from "./provider-registry.js";
+import { FakeOmp } from "./providers/omp/test-utils/fake-omp.js";
 
 const logger = createTestLogger();
 
@@ -523,28 +524,27 @@ test("built-in override applies env", () => {
   });
 });
 
-test("OMP is a disabled built-in backed by the Pi adapter", () => {
-  const registry = buildProviderRegistry(logger);
+test("OMP is a disabled built-in backed by the real OMP adapter", async () => {
+  const omp = new FakeOmp();
+  const registry = buildProviderRegistry(logger, { ompRuntime: omp });
 
   expect(registry.omp).toMatchObject({
     id: "omp",
-    label: "OMP",
+    label: "Oh My Pi",
     enabled: false,
     derivedFromProviderId: null,
   });
-  expect(registry.omp.createClient(logger).provider).toBe("omp");
-  expect(mockState.constructorArgs.pi.at(-1)).toEqual({
-    runtimeSettings: {
-      command: {
-        mode: "replace",
-        argv: ["omp"],
-      },
-    },
-    providerParams: {
-      sessionDir: "~/.omp/agent/sessions",
-    },
-    commandsRpcType: "get_available_commands",
-  });
+  const client = registry.omp.createClient(logger);
+  expect(client.provider).toBe("omp");
+  const session = await client.createSession({ provider: "omp", cwd: "/tmp/registry-omp" });
+  expect(omp.recordedLaunches).toEqual([
+    expect.objectContaining({
+      cwd: "/tmp/registry-omp",
+      protocolMode: "rpc-ui",
+      argv: ["omp", "--mode", "rpc-ui", "--approval-mode", "yolo", "--thinking", "medium"],
+    }),
+  ]);
+  await session.close();
 });
 
 test("OMP can be enabled without custom provider boilerplate", () => {
@@ -574,8 +574,10 @@ test("new provider extending claude appears in registry", () => {
   expect(registry.zai.createClient(logger).provider).toBe("zai");
 });
 
-test("built-in OMP override passes params to the Pi adapter constructor", () => {
+test("built-in OMP override keeps the real OMP adapter enabled and launchable", async () => {
+  const omp = new FakeOmp(["custom-omp"]);
   const registry = buildProviderRegistry(logger, {
+    ompRuntime: omp,
     providerOverrides: {
       omp: {
         label: "OMP",
@@ -587,21 +589,19 @@ test("built-in OMP override passes params to the Pi adapter constructor", () => 
     },
   });
 
-  expect(registry.omp.createClient(logger).provider).toBe("omp");
-  expect(mockState.constructorArgs.pi.at(-1)).toEqual({
-    runtimeSettings: {
-      command: {
-        mode: "replace",
-        argv: ["omp"],
-      },
-      env: undefined,
-      disallowedTools: undefined,
-    },
-    providerParams: {
-      sessionDir: "~/.omp/agent/sessions",
-    },
-    commandsRpcType: "get_available_commands",
-  });
+  const client = registry.omp.createClient(logger);
+  const session = await client.createSession({ provider: "omp", cwd: "/tmp/registry-override" });
+  expect(client.provider).toBe("omp");
+  expect(omp.recordedLaunches[0]?.argv).toEqual([
+    "custom-omp",
+    "--mode",
+    "rpc-ui",
+    "--approval-mode",
+    "yolo",
+    "--thinking",
+    "medium",
+  ]);
+  await session.close();
 });
 
 test("new provider extending acp uses GenericACPAgentClient", () => {
@@ -814,7 +814,7 @@ test("enabled: false keeps provider metadata in registry", () => {
     id: "claude",
     label: "Claude",
     description: "Anthropic's multi-tool assistant with MCP support, streaming, and deep reasoning",
-    defaultModeId: "default",
+    defaultModeId: "auto",
     enabled: false,
   });
   expect(registry.claude.modes).toEqual(
@@ -1485,6 +1485,31 @@ describe("fetchCatalog", () => {
     });
 
     expect(catalog.models.map((model) => model.id)).toEqual(["profile-model", "extra-model"]);
+  });
+
+  test("replacement models still resolve the provider's capability-aware default mode", async () => {
+    const resolveDefaultModeId = vi.fn(async () => "default");
+    const injectedClient = {
+      provider: "codex",
+      capabilities: {},
+      resolveDefaultModeId,
+      isAvailable: vi.fn(async () => true),
+    } satisfies Partial<AgentClient> as AgentClient;
+    const registry = buildProviderRegistry(logger, {
+      providerOverrides: {
+        codex: { models: [{ id: "profile-model", label: "Profile Model" }] },
+      },
+    });
+
+    const catalog = await registry.codex.fetchCatalog(
+      { scope: "workspace", cwd: "/tmp/catalog", force: false },
+      injectedClient,
+    );
+
+    expect(catalog.defaultModeId).toBe("default");
+    expect(resolveDefaultModeId).toHaveBeenCalledWith({
+      config: { provider: "codex", cwd: "/tmp/catalog" },
+    });
   });
 
   test("additionalModels can override replacement model fields", async () => {

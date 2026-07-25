@@ -3,6 +3,7 @@ import type {
   CheckoutStatusResponse,
   SessionOutboundMessage,
 } from "@getpaseo/protocol/messages";
+import { isGitHubPullRequestStatusFacts } from "../../services/github-facts.js";
 import type { WorkspaceGitRuntimeSnapshot } from "../workspace-git-service.js";
 
 type CheckoutPrStatusPayload = Extract<
@@ -10,6 +11,9 @@ type CheckoutPrStatusPayload = Extract<
   { type: "checkout_pr_status_response" }
 >["payload"];
 type CheckoutPrStatusPayloadStatus = NonNullable<CheckoutPrStatusPayload["status"]>;
+type CheckoutPrStatusWireStatus = Omit<CheckoutPrStatusPayloadStatus, "forge"> & {
+  forge?: string;
+};
 
 export function buildCheckoutStatusPayloadFromSnapshot({
   cwd,
@@ -95,27 +99,35 @@ export function buildCheckoutPrStatusPayloadFromSnapshot({
   requestId: string;
   snapshot: WorkspaceGitRuntimeSnapshot;
 }): CheckoutPrStatusResponse["payload"] {
+  // Prefer the forge resolved during snapshot refresh (probe-aware, so
+  // self-managed GitLab hosts are correct). forgeSpecific.forge is only a facts
+  // family tag, not a brand id, so unresolved snapshots stay unlabeled.
+  const forge = snapshot.forge.forge;
   return {
     cwd,
-    status: normalizeCheckoutPrStatusPayload(snapshot.github.pullRequest),
-    githubFeaturesEnabled: snapshot.github.featuresEnabled,
-    error: snapshot.github.error
+    status: normalizeCheckoutPrStatusPayload(snapshot.forge.pullRequest, forge),
+    githubFeaturesEnabled: snapshot.forge.featuresEnabled,
+    authState: snapshot.forge.authState,
+    ...(forge ? { forge } : {}),
+    error: snapshot.forge.error
       ? {
           code: "UNKNOWN",
-          message: snapshot.github.error.message,
+          message: snapshot.forge.error.message,
         }
       : null,
     requestId,
-  };
+  } as CheckoutPrStatusResponse["payload"];
 }
 
 export function normalizeCheckoutPrStatusPayload(
-  status: WorkspaceGitRuntimeSnapshot["github"]["pullRequest"],
+  status: WorkspaceGitRuntimeSnapshot["forge"]["pullRequest"],
+  forge?: string,
 ): CheckoutPrStatusPayloadStatus | null {
   if (!status) {
     return null;
   }
-  const payload: CheckoutPrStatusPayloadStatus = {
+  const payload: CheckoutPrStatusWireStatus = {
+    ...(forge ? { forge } : {}),
     number: status.number,
     url: status.url,
     title: status.title,
@@ -131,8 +143,20 @@ export function normalizeCheckoutPrStatusPayload(
     checksStatus: status.checksStatus,
     reviewDecision: status.reviewDecision,
   };
-  if (status.github) {
-    payload.github = status.github;
+  if (status.projectPath) {
+    payload.projectPath = status.projectPath;
+  } else if (status.repoOwner && status.repoName) {
+    payload.projectPath = `${status.repoOwner}/${status.repoName}`;
   }
-  return payload;
+  if (status.forgeSpecific) {
+    payload.forgeSpecific = status.forgeSpecific;
+    // COMPAT(forgeSpecific): added in v0.1.106, remove after 2026-12-27. Keep
+    // mirroring GitHub facts onto `github` for clients that predate forgeSpecific;
+    // drop once the daemon floor >= v0.1.106.
+    if (isGitHubPullRequestStatusFacts(status.forgeSpecific)) {
+      const { forge: _forge, ...githubFacts } = status.forgeSpecific;
+      payload.github = githubFacts;
+    }
+  }
+  return payload as CheckoutPrStatusPayloadStatus;
 }

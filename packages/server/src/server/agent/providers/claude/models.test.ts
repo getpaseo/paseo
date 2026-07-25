@@ -6,9 +6,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import { ClaudeAgentClient } from "./agent.js";
 import {
+  CLAUDE_DISABLED_THINKING_OPTION_ID,
   CLAUDE_ULTRACODE_THINKING_OPTION_ID,
   claudeManifestModelSupportsFastMode,
   normalizeClaudeManifestModelId,
+  resolveClaudeDisabledThinkingForModel,
 } from "./model-manifest.js";
 import { findClaudeModel, getClaudeModels, normalizeClaudeRuntimeModelId } from "./models.js";
 
@@ -40,6 +42,7 @@ describe("getClaudeModels", () => {
   it("returns all claude models", () => {
     const models = getClaudeModels();
     expect(models.map((m) => m.id)).toEqual([
+      "claude-opus-5",
       "claude-fable-5",
       "claude-opus-4-8[1m]",
       "claude-opus-4-8",
@@ -58,7 +61,7 @@ describe("getClaudeModels", () => {
     const models = getClaudeModels();
     const defaults = models.filter((m) => m.isDefault);
     expect(defaults).toHaveLength(1);
-    expect(defaults[0].id).toBe("claude-opus-4-8");
+    expect(defaults[0].id).toBe("claude-opus-5");
   });
 
   it("defines context window sizes in the catalog", () => {
@@ -68,6 +71,7 @@ describe("getClaudeModels", () => {
 
     expect(contextWindows).toEqual(
       new Map([
+        ["claude-opus-5", 1_000_000],
         ["claude-fable-5", 1_000_000],
         ["claude-opus-4-8[1m]", 1_000_000],
         ["claude-opus-4-8", 200_000],
@@ -86,7 +90,17 @@ describe("getClaudeModels", () => {
   it("derives thinking options from model effort capabilities", () => {
     const models = new Map(getClaudeModels().map((model) => [model.id, model]));
 
+    expect(models.get("claude-opus-5")?.thinkingOptions?.map((option) => option.id)).toEqual([
+      CLAUDE_DISABLED_THINKING_OPTION_ID,
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+      CLAUDE_ULTRACODE_THINKING_OPTION_ID,
+    ]);
     expect(models.get("claude-sonnet-5")?.thinkingOptions?.map((option) => option.id)).toEqual([
+      CLAUDE_DISABLED_THINKING_OPTION_ID,
       "low",
       "medium",
       "high",
@@ -100,8 +114,10 @@ describe("getClaudeModels", () => {
         ?.thinkingOptions?.find((option) => option.id === CLAUDE_ULTRACODE_THINKING_OPTION_ID)
         ?.label,
     ).toBe("Ultra Code");
+    expect(models.get("claude-sonnet-5")?.defaultThinkingOptionId).toBe("low");
 
     expect(models.get("claude-opus-4-7")?.thinkingOptions?.map((option) => option.id)).toEqual([
+      CLAUDE_DISABLED_THINKING_OPTION_ID,
       "low",
       "medium",
       "high",
@@ -110,12 +126,32 @@ describe("getClaudeModels", () => {
       CLAUDE_ULTRACODE_THINKING_OPTION_ID,
     ]);
     expect(models.get("claude-sonnet-4-6")?.thinkingOptions?.map((option) => option.id)).toEqual([
+      CLAUDE_DISABLED_THINKING_OPTION_ID,
       "low",
       "medium",
       "high",
       "max",
     ]);
+    expect(models.get("claude-fable-5")?.thinkingOptions?.map((option) => option.id)).not.toContain(
+      CLAUDE_DISABLED_THINKING_OPTION_ID,
+    );
     expect(models.get("claude-haiku-4-5")?.thinkingOptions).toBeUndefined();
+  });
+
+  it.each([
+    ["claude-opus-5", true, "low"],
+    ["claude-opus-5-20260724", true, "low"],
+    ["claude-sonnet-5", true, "low"],
+    ["claude-sonnet-5-20260101", true, "low"],
+    ["claude-fable-5", false, "low"],
+    ["claude-haiku-4-5", false, undefined],
+    ["openrouter/anthropic/claude-opus-4-8", false, undefined],
+    [null, false, undefined],
+  ])("resolves disabled thinking for model %s", (modelId, supported, fallbackThinkingOptionId) => {
+    expect(resolveClaudeDisabledThinkingForModel(modelId)).toEqual({
+      supported,
+      fallbackThinkingOptionId,
+    });
   });
 
   it("returns fresh copies each call", () => {
@@ -263,6 +299,7 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
 
 describe("normalizeClaudeRuntimeModelId", () => {
   it("returns exact match for known model IDs", () => {
+    expect(normalizeClaudeRuntimeModelId("claude-opus-5")).toBe("claude-opus-5");
     expect(normalizeClaudeRuntimeModelId("claude-fable-5")).toBe("claude-fable-5");
     expect(normalizeClaudeRuntimeModelId("claude-sonnet-5")).toBe("claude-sonnet-5");
     expect(normalizeClaudeRuntimeModelId("claude-opus-4-6")).toBe("claude-opus-4-6");
@@ -272,6 +309,7 @@ describe("normalizeClaudeRuntimeModelId", () => {
   });
 
   it("normalizes dated model IDs to base model", () => {
+    expect(normalizeClaudeRuntimeModelId("claude-opus-5-20260724")).toBe("claude-opus-5");
     expect(normalizeClaudeRuntimeModelId("claude-fable-5-20260301")).toBe("claude-fable-5");
     expect(normalizeClaudeRuntimeModelId("claude-sonnet-5-20260101")).toBe("claude-sonnet-5");
     expect(normalizeClaudeRuntimeModelId("claude-opus-4-6-20260101")).toBe("claude-opus-4-6");

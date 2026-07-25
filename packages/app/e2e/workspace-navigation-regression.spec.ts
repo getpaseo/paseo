@@ -1,5 +1,8 @@
-import { buildHostAgentDetailRoute, buildHostWorkspaceRoute } from "@/utils/host-routes";
-import type { WebSocketRoute } from "@playwright/test";
+import {
+  buildHostAgentDetailRoute,
+  buildHostWorkspaceOpenRoute,
+  buildHostWorkspaceRoute,
+} from "@/utils/host-routes";
 import { expect, test, type Page } from "./fixtures";
 import { gotoAppShell, openSettings } from "./helpers/app";
 import {
@@ -32,10 +35,53 @@ import {
 } from "./helpers/workspace-ui";
 import { clickSettingsBackToWorkspace } from "./helpers/settings";
 import { getServerId } from "./helpers/server-id";
-import { injectDesktopBridge } from "./helpers/desktop-updates";
+import { injectDesktopBridge, waitForDesktopDaemonStartRequest } from "./helpers/desktop-updates";
 import { expectAppRoute } from "./helpers/route-assertions";
+import { installDaemonWebSocketGate } from "./helpers/daemon-websocket-gate";
+import { addOfflineHostAndReload } from "./helpers/hosts";
 
 const LOADING_WORKSPACE_TEXT_PATTERN = /Loading workspace/i;
+type StartupPresentation = "splash" | "app";
+
+declare global {
+  interface Window {
+    __paseoStartupPresentationTrace?: StartupPresentation[];
+  }
+}
+
+async function observeStartupPresentation(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const trace: StartupPresentation[] = [];
+    window.__paseoStartupPresentationTrace = trace;
+
+    document.addEventListener("DOMContentLoaded", () => {
+      const recordPresentation = () => {
+        let presentation: StartupPresentation | null = null;
+        if (document.querySelector('[data-testid="startup-splash"]')) {
+          presentation = "splash";
+        } else if (
+          document.querySelector(
+            '[data-testid="workspace-header-title"], [data-testid="sidebar-settings"]',
+          )
+        ) {
+          presentation = "app";
+        }
+        if (presentation && trace.at(-1) !== presentation) {
+          trace.push(presentation);
+        }
+      };
+      new MutationObserver(recordPresentation).observe(document.documentElement, {
+        childList: true,
+        subtree: true,
+      });
+      recordPresentation();
+    });
+  });
+}
+
+async function getStartupPresentation(page: Page): Promise<StartupPresentation[]> {
+  return page.evaluate(() => window.__paseoStartupPresentationTrace?.slice() ?? []);
+}
 
 async function expectNoLoadingWorkspacePane(
   page: Page,
@@ -114,63 +160,45 @@ async function expectWorkspaceLocation(
   });
 }
 
-async function installDaemonWebSocketGate(page: Page) {
-  let acceptingConnections = true;
-  const activeSockets = new Set<WebSocketRoute>();
-
-  await page.routeWebSocket(daemonWsRoutePattern(), (ws) => {
-    if (!acceptingConnections) {
-      void ws.close({ code: 1008, reason: "Blocked by workspace reconnect regression test." });
-      return;
-    }
-
-    activeSockets.add(ws);
-    const server = ws.connectToServer();
-
-    ws.onMessage((message) => {
-      if (!acceptingConnections) {
-        return;
-      }
-      try {
-        server.send(message);
-      } catch {
-        activeSockets.delete(ws);
-      }
-    });
-
-    server.onMessage((message) => {
-      if (!acceptingConnections) {
-        return;
-      }
-      try {
-        ws.send(message);
-      } catch {
-        activeSockets.delete(ws);
-      }
-    });
-  });
-
-  return {
-    async drop(): Promise<void> {
-      acceptingConnections = false;
-      const sockets = Array.from(activeSockets);
-      activeSockets.clear();
-      await Promise.all(
-        sockets.map((ws) =>
-          ws
-            .close({ code: 1008, reason: "Dropped by workspace reconnect regression test." })
-            .catch(() => undefined),
-        ),
-      );
-    },
-    restore(): void {
-      acceptingConnections = true;
-    },
-  };
-}
-
 test.describe("Workspace navigation regression", () => {
   test.describe.configure({ timeout: 240_000 });
+
+  test("opens a notification's workspace on a different offline host", async ({ page }) => {
+    const target = {
+      serverId: "notification-offline-host",
+      workspaceId: "notification-workspace",
+      agentId: "notification-agent",
+    };
+
+    await gotoAppShell(page);
+    await addOfflineHostAndReload(page, {
+      serverId: target.serverId,
+      label: "Notification Host",
+    });
+    await expect(
+      page.getByTestId("sidebar-settings").filter({ visible: true }).first(),
+    ).toBeVisible({
+      timeout: 30_000,
+    });
+
+    await page.evaluate((data) => {
+      globalThis.dispatchEvent(
+        new CustomEvent("paseo:web-notification-click", {
+          detail: { data: { ...data, reason: "finished" } },
+          cancelable: true,
+        }),
+      );
+    }, target);
+
+    await expectAppRoute(
+      page,
+      buildHostWorkspaceOpenRoute(target.serverId, target.workspaceId, `agent:${target.agentId}`),
+      { timeout: 30_000 },
+    );
+    await expect(page.getByText("Connecting", { exact: true })).toBeVisible();
+    await expect(page.getByText("Notification Host", { exact: true })).toBeVisible();
+    await expect(page.getByText("Add a project", { exact: true })).toHaveCount(0);
+  });
 
   test("keeps one replacement draft after returning from settings and closing the last tab", async ({
     page,
@@ -294,7 +322,9 @@ test.describe("Workspace navigation regression", () => {
     }
   });
 
-  test("refresh keeps the user on the same workspace route", async ({ page }) => {
+  test("refresh keeps one continuous splash before restoring the workspace route", async ({
+    page,
+  }) => {
     const serverId = getServerId();
     const daemonGate = await installDaemonWebSocketGate(page);
     const workspace = await seedWorkspace({ repoPrefix: "workspace-refresh-route-" });
@@ -309,6 +339,7 @@ test.describe("Workspace navigation regression", () => {
         serverId,
         manageBuiltInDaemon: true,
         hangDaemonStart: true,
+        desktopSettingsDelayMs: 250,
         daemonListen: `127.0.0.1:${getE2EDaemonPort()}`,
       });
       await openWorkspaceThroughApp(page, { serverId, workspace });
@@ -316,14 +347,16 @@ test.describe("Workspace navigation regression", () => {
       await expectWorkspaceTabVisible(page, agent.id);
       await expectWorkspaceLocation(page, { serverId, workspace });
 
+      await observeStartupPresentation(page);
       await daemonGate.drop();
       await page.reload();
-      await expect(page.getByTestId("startup-splash")).toBeVisible({ timeout: 30_000 });
+      await waitForDesktopDaemonStartRequest(page);
       daemonGate.restore();
       await waitForSidebarHydration(page);
 
       await expectWorkspaceLocation(page, { serverId, workspace });
       await waitForWorkspaceTabsVisible(page);
+      expect(await getStartupPresentation(page)).toEqual(["splash", "app"]);
     } finally {
       daemonGate.restore();
       await workspace.cleanup();
@@ -429,12 +462,13 @@ test.describe("Workspace navigation regression", () => {
       await expectWorkspaceDeckEntryCount(page, 2);
 
       await page.evaluate(
-        ({ agentId, serverId: targetServerId }) => {
+        ({ agentId, serverId: targetServerId, workspaceId }) => {
           globalThis.dispatchEvent(
             new CustomEvent("paseo:web-notification-click", {
               detail: {
                 data: {
                   serverId: targetServerId,
+                  workspaceId,
                   agentId,
                   reason: "finished",
                 },
@@ -443,7 +477,7 @@ test.describe("Workspace navigation regression", () => {
             }),
           );
         },
-        { agentId: secondAgent.id, serverId },
+        { agentId: secondAgent.id, serverId, workspaceId: secondWorkspace.workspaceId },
       );
       await waitForWorkspaceTabsVisible(page);
       await expect(page).toHaveURL(buildHostWorkspaceRoute(serverId, secondWorkspace.workspaceId), {
