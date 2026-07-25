@@ -29,7 +29,7 @@ Root checkout dev is intentionally split across terminals:
 - **Repo dev scripts** default to `$ROOT/.dev/paseo-home`, where `$ROOT` is the current checkout or worktree root. This keeps all dev state scoped to the checkout instead of the packaged desktop app.
 - **`npm run cli -- ...`** runs through the same dev-home wrapper as the dev scripts, so the in-repo CLI automatically targets the current checkout's `.dev/paseo-home` and configured dev daemon endpoint.
 - **Paseo-created worktrees** seed `$PASEO_WORKTREE_PATH/.dev/paseo-home` from `$PASEO_SOURCE_CHECKOUT_PATH/.dev/paseo-home` by copying durable JSON metadata. Runtime files like pid files, sockets, and logs are not copied.
-- **Paseo-created worktrees** read `.worktreeinclude` from the live source checkout before creation. Bare paths and `copy <path>` copy into the new worktree; `symlink <path>` creates a source link. Materialization finishes before `worktree.setup` runs.
+- **Paseo-created worktrees** read `.worktreeinclude` from the live source checkout before creation. Bare paths and `copy <path>` copy into the new worktree; `symlink <path>` creates a source link. Missing paths and patterns with no matches are ignored; invalid or unsafe entries still fail creation. Materialization finishes before `worktree.setup` runs.
 - **This repo's worktree setup** also best-effort seeds `packages/app/ios` and the newest `.dev/ios-build` entry from the source checkout so iOS simulator services can reuse native project and Xcode cache state when it is safe enough to do so.
 
 Override knobs:

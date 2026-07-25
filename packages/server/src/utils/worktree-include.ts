@@ -98,7 +98,7 @@ export async function readWorktreeIncludePlan(
   for (const entry of entries) {
     const matchedPaths = resolveEntryMatches({ entry, candidates });
     if (matchedPaths.length === 0) {
-      throw noMatchError(entry);
+      continue;
     }
 
     for (const relativePath of matchedPaths) {
@@ -107,12 +107,18 @@ export async function readWorktreeIncludePlan(
         excludedSourceRoots,
         sourcePath: join(sourceRoot, ...relativePath.split("/")),
       });
-      const resolved = await resolveSourceMaterialization({
-        sourceRoot,
-        entry,
-        relativePath,
-      });
-      materializations.push(resolved.materialization);
+      try {
+        const resolved = await resolveSourceMaterialization({
+          sourceRoot,
+          entry,
+          relativePath,
+        });
+        materializations.push(resolved.materialization);
+      } catch (error) {
+        if (!isMissingSourceError(error)) {
+          throw error;
+        }
+      }
     }
   }
 
@@ -154,16 +160,24 @@ export async function materializeWorktreeIncludePlan(
 
   const worktreeRoot = await realpath(options.worktreeRoot);
   for (const materialization of options.plan.materializations) {
-    const resolved = await resolveSourceMaterialization({
-      sourceRoot: options.plan.sourceRoot,
-      entry: {
-        lineNumber: materialization.lineNumber,
-        mode: materialization.mode,
-        raw: materialization.relativePath,
+    let resolved: ResolvedWorktreeIncludeMaterialization;
+    try {
+      resolved = await resolveSourceMaterialization({
+        sourceRoot: options.plan.sourceRoot,
+        entry: {
+          lineNumber: materialization.lineNumber,
+          mode: materialization.mode,
+          raw: materialization.relativePath,
+          relativePath: materialization.relativePath,
+        },
         relativePath: materialization.relativePath,
-      },
-      relativePath: materialization.relativePath,
-    });
+      });
+    } catch (error) {
+      if (isMissingSourceError(error)) {
+        continue;
+      }
+      throw error;
+    }
     if (resolved.materialization.sourceKind !== materialization.sourceKind) {
       throw new WorktreeIncludeError(
         "source_changed",
@@ -839,6 +853,10 @@ function noMatchError(entry: WorktreeIncludeEntry): WorktreeIncludeError {
     "missing_source",
     `No paths matched .worktreeinclude entry '${entry.raw}' on line ${entry.lineNumber}`,
   );
+}
+
+function isMissingSourceError(error: unknown): error is WorktreeIncludeError {
+  return error instanceof WorktreeIncludeError && error.code === "missing_source";
 }
 
 function getErrorCode(error: unknown): string | null {

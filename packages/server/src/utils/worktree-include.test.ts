@@ -84,17 +84,25 @@ describe("worktree include planning", () => {
     );
   });
 
-  it("reports unmatched literals and globs consistently", async () => {
-    writeFileSync(join(sourceRoot, ".worktreeinclude"), "missing/**\n");
-
-    await expect(readWorktreeIncludePlan({ sourceRoot })).rejects.toThrow(
-      "No paths matched .worktreeinclude entry 'missing/**'",
+  it("skips missing entries while retaining existing literal and glob matches", async () => {
+    writeFileSync(
+      join(sourceRoot, ".worktreeinclude"),
+      [".env", ".env.local", "config/*.env", "missing/**", ""].join("\n"),
     );
+    writeFileSync(join(sourceRoot, ".env"), "source\n");
+    mkdirSync(join(sourceRoot, "config"), { recursive: true });
+    writeFileSync(join(sourceRoot, "config", "runtime.env"), "runtime\n");
 
-    writeFileSync(join(sourceRoot, ".worktreeinclude"), "**/.runtime.env\n");
-    await expect(readWorktreeIncludePlan({ sourceRoot })).rejects.toThrow(
-      "No paths matched .worktreeinclude entry '**/.runtime.env'",
-    );
+    const plan = await readWorktreeIncludePlan({ sourceRoot });
+
+    expect(plan.materializations).toEqual([
+      expect.objectContaining({ mode: "copy", relativePath: ".env", sourceKind: "file" }),
+      expect.objectContaining({
+        mode: "copy",
+        relativePath: "config/runtime.env",
+        sourceKind: "file",
+      }),
+    ]);
   });
 
   it("rejects directory copies that overlap protected worktree paths", async () => {
@@ -227,6 +235,19 @@ describe.skipIf(isPlatform("win32"))("worktree include materialization", () => {
     await expect(readWorktreeIncludePlan({ sourceRoot })).rejects.toThrow(
       "resolves through a symbolic link",
     );
+  });
+
+  it("skips a source removed after planning", async () => {
+    writeFileSync(join(sourceRoot, ".worktreeinclude"), "runtime.env\n");
+    const sourcePath = join(sourceRoot, "runtime.env");
+    writeFileSync(sourcePath, "source\n");
+
+    const plan = await readWorktreeIncludePlan({ sourceRoot });
+    rmSync(sourcePath);
+
+    await materializeWorktreeIncludePlan({ plan, worktreeRoot });
+
+    expect(existsSync(join(worktreeRoot, "runtime.env"))).toBe(false);
   });
 });
 

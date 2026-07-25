@@ -1150,28 +1150,33 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       );
     });
 
-    it("rejects a missing include before creating a worktree", async () => {
+    it("skips missing includes and materializes paths that exist", async () => {
       const projectHash = await deriveWorktreeProjectHash(repoDir);
       const expectedWorktreePath = join(paseoHome, "worktrees", projectHash, "missing-include");
-      writeFileSync(join(repoDir, ".worktreeinclude"), ".missing-cache/**\n");
+      writeFileSync(
+        join(repoDir, ".worktreeinclude"),
+        [".env", ".env.local", ".sops.yaml", ""].join("\n"),
+      );
+      writeFileSync(join(repoDir, ".env"), "present\n");
 
-      await expect(
-        createLegacyWorktreeForTest({
-          cwd: repoDir,
-          worktreeSlug: "missing-include",
-          source: { kind: "branch-off", baseBranch: "main", branchName: "feature/missing-include" },
-          runSetup: false,
-          paseoHome,
-        }),
-      ).rejects.toThrow("No paths matched .worktreeinclude entry '.missing-cache/**'");
+      const result = await createLegacyWorktreeForTest({
+        cwd: repoDir,
+        worktreeSlug: "missing-include",
+        source: { kind: "branch-off", baseBranch: "main", branchName: "feature/missing-include" },
+        runSetup: false,
+        paseoHome,
+      });
 
-      expect(existsSync(expectedWorktreePath)).toBe(false);
+      expect(result.worktreePath).toBe(expectedWorktreePath);
+      expect(readFileSync(join(result.worktreePath, ".env"), "utf8")).toBe("present\n");
+      expect(existsSync(join(result.worktreePath, ".env.local"))).toBe(false);
+      expect(existsSync(join(result.worktreePath, ".sops.yaml"))).toBe(false);
       expect(
         execFileSync("git", ["worktree", "list", "--porcelain"], {
           cwd: repoDir,
           encoding: "utf8",
         }),
-      ).not.toContain(expectedWorktreePath);
+      ).toContain(expectedWorktreePath);
     });
 
     it("rejects a recursive include of checkout-local worktree storage before creation", async () => {
