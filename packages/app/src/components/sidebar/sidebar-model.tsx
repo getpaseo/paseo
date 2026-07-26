@@ -1,4 +1,11 @@
-import React, { createContext, useCallback, useContext, useMemo, type ReactNode } from "react";
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  type ReactNode,
+} from "react";
 import equal from "fast-deep-equal";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import {
@@ -9,6 +16,7 @@ import {
 import { useSidebarWorkspaceEntries } from "@/hooks/use-sidebar-workspace-entries";
 import type { StatusGroup } from "@/hooks/sidebar-status-view-model";
 import { usePinnedSidebarKeys, type PinnedSidebarGroups } from "@/hooks/use-sidebar-pins";
+import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { useSidebarCollapsedSectionsStore } from "@/stores/sidebar-collapsed-sections-store";
 import { resolveCollapsedProjectKeys } from "@/stores/sidebar-collapsed-sections-store/state";
 import { useSidebarViewStore, type SidebarGroupMode } from "@/stores/sidebar-view-store";
@@ -101,6 +109,34 @@ export function SidebarModelProvider({
       }),
     [activeWorkspaceKeys, projectTree],
   );
+  const activeWorkspaceSelection = useActiveWorkspaceSelection();
+  const selectedProjectPathKeys = useMemo(() => {
+    if (!activeWorkspaceSelection) {
+      return new Set<string>();
+    }
+    return expandedProjectKeysForActiveWorkspaces({
+      nodes: projectTree,
+      activeWorkspaceKeys: new Set([
+        `${activeWorkspaceSelection.serverId}:${activeWorkspaceSelection.workspaceId}`,
+      ]),
+    });
+  }, [activeWorkspaceSelection, projectTree]);
+  useEffect(() => {
+    if (selectedProjectPathKeys.size === 0) {
+      return;
+    }
+    const nextExpandedProjectKeys = new Set(expandedProjectKeys);
+    let changed = false;
+    for (const projectKey of selectedProjectPathKeys) {
+      if (!nextExpandedProjectKeys.has(projectKey)) {
+        nextExpandedProjectKeys.add(projectKey);
+        changed = true;
+      }
+    }
+    if (changed) {
+      setExpandedProjectKeys(nextExpandedProjectKeys);
+    }
+  }, [expandedProjectKeys, selectedProjectPathKeys, setExpandedProjectKeys]);
   const toggleAllProjectsExpanded = useCallback(() => {
     setExpandedProjectKeys(allProjectsExpanded ? activeProjectPathKeys : allProjectKeys);
   }, [activeProjectPathKeys, allProjectKeys, allProjectsExpanded, setExpandedProjectKeys]);

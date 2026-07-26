@@ -52,6 +52,9 @@ function deriveActiveSessionStatus(agent: Agent): ActiveSessionStatus | null {
   if (agent.status === "running" || agent.status === "initializing") {
     return "running";
   }
+  if (agent.status === "idle" || agent.status === "closed") {
+    return "finished";
+  }
   return null;
 }
 

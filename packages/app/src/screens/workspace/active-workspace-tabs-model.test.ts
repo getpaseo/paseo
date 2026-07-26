@@ -75,7 +75,7 @@ function agent(input: {
 }
 
 describe("active-workspace-tabs-model", () => {
-  it("shows every workspace and marks those without active sessions idle", () => {
+  it("shows every workspace and marks idle sessions as awaiting follow-up", () => {
     const active = workspace({ id: "active", project: "Acme", name: "API" });
     const idle = workspace({ id: "idle", project: "Acme", name: "Web" });
 
@@ -102,8 +102,8 @@ describe("active-workspace-tabs-model", () => {
     expect(tabs[0]?.sessions.map((session) => session.agentId)).toEqual(["running"]);
     expect(tabs[1]).toMatchObject({
       key: "local:idle",
-      status: "idle",
-      sessions: [],
+      status: "finished",
+      sessions: [{ agentId: "idle", status: "finished" }],
     });
   });
 
@@ -180,6 +180,33 @@ describe("active-workspace-tabs-model", () => {
     expect(tabs[0]).toMatchObject({
       status: "finished",
       sessions: [{ agentId: "finished", status: "finished" }],
+    });
+  });
+
+  it("marks collected sessions as awaiting follow-up", () => {
+    const current = workspace({ id: "workspace" });
+
+    const tabs = selectActiveWorkspaceTabs({
+      sessions: {
+        local: {
+          workspaces: new Map([[current.id, current]]),
+          agents: new Map([
+            [
+              "collected",
+              agent({
+                id: "collected",
+                workspaceId: current.id,
+                status: "closed",
+              }),
+            ],
+          ]),
+        },
+      },
+    });
+
+    expect(tabs[0]).toMatchObject({
+      status: "finished",
+      sessions: [{ agentId: "collected", status: "finished" }],
     });
   });
 });
