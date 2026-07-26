@@ -17,8 +17,8 @@ const CLAUDE_SETTINGS_MODEL_ENV_KEYS = [
   "ANTHROPIC_DEFAULT_HAIKU_MODEL",
 ] as const;
 
-export function getClaudeModels(): AgentModelDefinition[] {
-  return getClaudeManifestModels();
+export function getClaudeModels(claudeCodeVersion?: string): AgentModelDefinition[] {
+  return getClaudeManifestModels(claudeCodeVersion);
 }
 
 export function findClaudeModel(
@@ -34,8 +34,9 @@ export function findClaudeModel(
 export async function getClaudeModelsWithSettings(
   logger: Logger,
   configDir?: string,
+  claudeCodeVersion?: string,
 ): Promise<AgentModelDefinition[]> {
-  const hardcodedModels = getClaudeModels();
+  const hardcodedModels = getClaudeModels(claudeCodeVersion);
   const settingsModels = await readClaudeSettingsModels(logger, configDir);
   if (settingsModels.length === 0) {
     return hardcodedModels;
