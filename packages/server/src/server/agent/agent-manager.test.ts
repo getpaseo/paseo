@@ -7652,6 +7652,34 @@ test("collectIdleAgents closes managed descendants before their ancestors", asyn
   }
 });
 
+test("collectIdleAgents does not let a protected idle child pin its parent", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-protected-idle-child-"));
+  const manager = new AgentManager({ clients: { codex: new TestAgentClient() }, logger });
+
+  try {
+    const parent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const child = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      labels: { [PARENT_AGENT_ID_LABEL]: parent.id },
+      workspaceId: undefined,
+    });
+
+    await manager.collectIdleAgents({
+      cutoff: new Date(Date.now() + 1_000),
+      protectedAgentIds: new Set([child.id]),
+    });
+
+    expect(manager.getAgent(parent.id)).toBeNull();
+    expect(manager.getAgent(child.id)?.lifecycle).toBe("idle");
+  } finally {
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id))).catch(
+      () => undefined,
+    );
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("collectIdleAgents serializes descendant registration with ancestor collection", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-descendant-registration-race-"));
   const closeStarted = deferred<void>();

@@ -1530,7 +1530,7 @@ export class AgentManager {
     };
     for (const agent of this.agents.values()) {
       this.recordRuntimeCollectionActivity(agent, agent.updatedAt.getTime(), state);
-      if (agent.lifecycle !== "error") {
+      if (this.shouldProtectManagedAncestors(agent, protectedAgentIds)) {
         this.protectManagedAncestors(agent, state.protectedAgentIds);
       }
       for (const subagent of this.providerSubagents.list(agent.id)) {
@@ -1542,6 +1542,17 @@ export class AgentManager {
       }
     }
     return state;
+  }
+
+  private shouldProtectManagedAncestors(
+    agent: LiveManagedAgent,
+    externallyProtectedAgentIds: ReadonlySet<string>,
+  ): boolean {
+    return (
+      agent.lifecycle === "initializing" ||
+      agent.lifecycle === "running" ||
+      (agent.lifecycle === "idle" && !agent.internal && !externallyProtectedAgentIds.has(agent.id))
+    );
   }
 
   private protectManagedAncestors(agent: LiveManagedAgent, protectedAgentIds: Set<string>): void {
