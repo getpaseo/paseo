@@ -64,6 +64,7 @@
     "@xterm/addon-webgl": "^0.20.0-beta.212",
     "@xterm/xterm": "^6.1.0-beta.213",
     "buffer": "^6.0.3",
+    "emojilib": "^4.0.3",
     "expo": "^54.0.18",
     "expo-asset": "~12.0.12",
     "expo-audio": "~1.0.13",

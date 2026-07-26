@@ -2152,8 +2152,13 @@ export const ptBR: TranslationResources = {
       },
       icon: {
         title: "Ícone do projeto",
-        description: "Envie um PNG ou JPEG. O Paseo recorta e reduz automaticamente.",
-        image: "Imagem personalizada",
+        description:
+          "Escolha um emoji ou envie um PNG ou JPEG. O Paseo recorta e reduz as imagens automaticamente.",
+        image: "Ícone personalizado",
+        chooseEmoji: "Escolher emoji",
+        emojiPickerTitle: "Escolher um emoji",
+        emojiSearchPlaceholder: "Buscar emojis",
+        emojiNoResults: "Nenhum emoji correspondente",
         choose: "Escolher imagem",
         reset: "Usar ícone detectado",
         updatedToast: "Ícone do projeto atualizado",

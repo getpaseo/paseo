@@ -256,6 +256,31 @@ describe("WorkspaceFilesSession", () => {
     });
   });
 
+  test("stores a project emoji", async () => {
+    const cwd = makeDir("workspace-files-project-emoji-");
+    const { subsystem, emitted } = makeSubsystem();
+
+    await subsystem.handleProjectIconUpdateRequest({
+      type: "project.icon.update.request",
+      cwd,
+      icon: { emoji: "\u{1F4B2}", mimeType: "text/plain" },
+      requestId: "req-emoji-set",
+    });
+
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0]).toMatchObject({
+      type: "project.icon.update.response",
+      payload: {
+        icon: {
+          source: "custom",
+          emoji: "\u{1F4B2}",
+          mimeType: "image/svg+xml",
+        },
+        error: null,
+      },
+    });
+  });
+
   test("round-trips an upload through transfer frames", async () => {
     const { subsystem, emitted, paseoHome } = makeSubsystem();
 

@@ -56,7 +56,8 @@ $PASEO_HOME/
 │   ├── projects.json                    # Project registry
 │   └── workspaces.json                  # Workspace registry
 ├── project-icons/
-│   └── {sha256-project-path}.png         # Resized custom project icon overrides
+│   ├── {sha256-project-path}.png         # Resized custom project image overrides
+│   └── {sha256-project-path}.emoji       # Custom project emoji overrides
 ├── runtime/
 │   └── managed-processes/
 │       └── {recordId}.json              # Helper processes owned by Paseo; reconciled on daemon bootstrap

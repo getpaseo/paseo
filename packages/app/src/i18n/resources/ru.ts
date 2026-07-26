@@ -2156,8 +2156,13 @@ export const ru: TranslationResources = {
       },
       icon: {
         title: "Значок проекта",
-        description: "Загрузите PNG или JPEG. Paseo автоматически обрежет и уменьшит изображение.",
-        image: "Своё изображение",
+        description:
+          "Выберите эмодзи или загрузите PNG либо JPEG. Paseo автоматически обрежет и уменьшит изображение.",
+        image: "Свой значок",
+        chooseEmoji: "Выбрать эмодзи",
+        emojiPickerTitle: "Выбрать эмодзи",
+        emojiSearchPlaceholder: "Поиск эмодзи",
+        emojiNoResults: "Подходящих эмодзи нет",
         choose: "Выбрать изображение",
         reset: "Использовать найденный значок",
         updatedToast: "Значок проекта обновлён",

@@ -2215,10 +2215,16 @@ export const ProjectIconUpdateRequestSchema = z.object({
   type: z.literal("project.icon.update.request"),
   cwd: z.string(),
   icon: z
-    .object({
-      data: z.string(),
-      mimeType: z.literal("image/png"),
-    })
+    .discriminatedUnion("mimeType", [
+      z.object({
+        data: z.string(),
+        mimeType: z.literal("image/png"),
+      }),
+      z.object({
+        emoji: z.string(),
+        mimeType: z.literal("text/plain"),
+      }),
+    ])
     .nullable(),
   requestId: z.string(),
 });
@@ -2855,6 +2861,8 @@ export const ServerInfoStatusPayloadSchema = z
         projectOnboarding: z.boolean().optional(),
         // COMPAT(projectCustomIcon): added in v0.2.X, remove gate after 2027-01-26.
         projectCustomIcon: z.boolean().optional(),
+        // COMPAT(projectEmojiIcon): added in v0.2.X, remove gate after 2027-01-26.
+        projectEmojiIcon: z.boolean().optional(),
       })
       .optional(),
   })
@@ -4771,6 +4779,7 @@ const ProjectIconSchema = z.object({
   data: z.string(),
   mimeType: z.string(),
   source: z.enum(["discovered", "custom"]).optional(),
+  emoji: z.string().optional(),
 });
 
 export const ProjectIconResponseSchema = z.object({

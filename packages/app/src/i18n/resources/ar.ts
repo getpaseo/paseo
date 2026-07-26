@@ -2115,8 +2115,13 @@ export const ar: TranslationResources = {
       },
       icon: {
         title: "أيقونة المشروع",
-        description: "حمّل صورة PNG أو JPEG. يقوم Paseo بقصها وتصغيرها تلقائيًا.",
-        image: "صورة مخصصة",
+        description:
+          "اختر رمزًا تعبيريًا أو حمّل صورة PNG أو JPEG. يقوم Paseo بقص الصور وتصغيرها تلقائيًا.",
+        image: "أيقونة مخصصة",
+        chooseEmoji: "اختيار رمز تعبيري",
+        emojiPickerTitle: "اختيار رمز تعبيري",
+        emojiSearchPlaceholder: "البحث في الرموز التعبيرية",
+        emojiNoResults: "لا توجد رموز تعبيرية مطابقة",
         choose: "اختيار صورة",
         reset: "استخدام الأيقونة المكتشفة",
         updatedToast: "تم تحديث أيقونة المشروع",

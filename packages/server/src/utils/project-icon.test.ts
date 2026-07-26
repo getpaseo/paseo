@@ -447,4 +447,53 @@ describe("getProjectIcon", () => {
       source: "discovered",
     });
   });
+
+  it("stores an emoji override and returns backward-compatible image data", async () => {
+    const paseoHome = join(tempDir, "paseo-home");
+
+    await setCustomProjectIcon(paseoHome, tempDir, { emoji: "\u{1F4B2}" });
+
+    await expect(getProjectIcon(tempDir, paseoHome)).resolves.toMatchObject({
+      mimeType: "image/svg+xml",
+      source: "custom",
+      emoji: "\u{1F4B2}",
+    });
+  });
+
+  it("replaces an emoji override with a custom image", async () => {
+    const paseoHome = join(tempDir, "paseo-home");
+    await setCustomProjectIcon(paseoHome, tempDir, { emoji: "\u{1F4B2}" });
+
+    await setCustomProjectIcon(paseoHome, tempDir, squarePng.toString("base64"));
+
+    await expect(getProjectIcon(tempDir, paseoHome)).resolves.toMatchObject({
+      data: squarePng.toString("base64"),
+      mimeType: "image/png",
+      source: "custom",
+    });
+    expect((await getProjectIcon(tempDir, paseoHome))?.emoji).toBeUndefined();
+  });
+
+  it("clears an emoji override and falls back to discovery", async () => {
+    const paseoHome = join(tempDir, "paseo-home");
+    writeFileSync(join(tempDir, "favicon.png"), squarePng);
+    await setCustomProjectIcon(paseoHome, tempDir, { emoji: "\u{1F4B2}" });
+
+    await setCustomProjectIcon(paseoHome, tempDir, null);
+
+    await expect(getProjectIcon(tempDir, paseoHome)).resolves.toMatchObject({
+      source: "discovered",
+    });
+  });
+
+  it("rejects non-emoji and multiple graphemes", async () => {
+    const paseoHome = join(tempDir, "paseo-home");
+
+    await expect(setCustomProjectIcon(paseoHome, tempDir, { emoji: "A" })).rejects.toThrowError(
+      "Project emoji must be one emoji.",
+    );
+    await expect(
+      setCustomProjectIcon(paseoHome, tempDir, { emoji: "\u{1F4B2}\u{1F680}" }),
+    ).rejects.toThrowError("Project emoji must be one emoji.");
+  });
 });

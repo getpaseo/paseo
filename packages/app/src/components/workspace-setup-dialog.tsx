@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Image, Text, View } from "react-native";
+import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { createNameId } from "mnemonic-id";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
+import { ProjectIconView } from "@/components/project-icon-view";
 import { FileDropZone } from "@/components/file-drop/file-drop-zone";
 import { Composer } from "@/composer";
 import { useToast } from "@/contexts/toast-context";
 import { useAgentInputDraft } from "@/composer/draft/input-draft";
-import { useProjectIconQuery } from "@/hooks/use-project-icon-query";
+import { projectIconToDataUri, useProjectIconQuery } from "@/hooks/use-project-icon-query";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { normalizeWorkspaceDescriptor, useSessionStore } from "@/stores/session-store";
 import { useWorkspaceSetupStore } from "@/stores/workspace-setup-store";
@@ -29,13 +30,6 @@ import { requireWorkspaceDirectory } from "@/utils/workspace-directory";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import type { MessagePayload } from "@/composer/types";
-
-function toProjectIconDataUri(icon: { mimeType: string; data: string } | null): string | null {
-  if (!icon) {
-    return null;
-  }
-  return `data:${icon.mimeType};base64,${icon.data}`;
-}
 
 const SNAP_POINTS: string[] = ["82%", "94%"];
 
@@ -199,7 +193,7 @@ export function WorkspaceSetupDialog() {
     serverId,
     cwd: sourceDirectory,
   });
-  const iconDataUri = toProjectIconDataUri(projectIcon);
+  const iconDataUri = projectIconToDataUri(projectIcon);
 
   useEffect(() => {
     setErrorMessage(null);
@@ -380,7 +374,6 @@ export function WorkspaceSetupDialog() {
   const placeholderLabel = projectIconPlaceholderLabelFromDisplayName(workspaceTitle);
   const placeholderInitial = placeholderLabel.charAt(0).toUpperCase();
 
-  const iconSource = useMemo(() => (iconDataUri ? { uri: iconDataUri } : null), [iconDataUri]);
   const agentControlsWithDisabled = useMemo(
     () =>
       composerState
@@ -395,19 +388,21 @@ export function WorkspaceSetupDialog() {
   const subtitleContent = useMemo(
     () => (
       <View style={styles.subtitleRow}>
-        {iconSource ? (
-          <Image source={iconSource} style={styles.projectIcon} />
-        ) : (
-          <View style={styles.projectIconFallback}>
-            <Text style={styles.projectIconFallbackText}>{placeholderInitial}</Text>
-          </View>
-        )}
+        <ProjectIconView
+          iconDataUri={iconDataUri}
+          initial={placeholderInitial}
+          projectKey={`${serverId}:${sourceDirectory}`}
+          imageStyle={styles.projectIcon}
+          fallbackStyle={styles.projectIconFallback}
+          textStyle={styles.projectIconFallbackText}
+          emojiStyle={styles.projectIconEmoji}
+        />
         <Text style={styles.projectTitle} numberOfLines={1}>
           {workspaceTitle}
         </Text>
       </View>
     ),
-    [iconSource, placeholderInitial, workspaceTitle],
+    [iconDataUri, placeholderInitial, serverId, sourceDirectory, workspaceTitle],
   );
 
   const sheetHeader = useMemo<SheetHeader>(
@@ -477,6 +472,9 @@ const styles = StyleSheet.create((theme) => ({
   projectIconFallbackText: {
     color: theme.colors.foregroundMuted,
     fontSize: 9,
+  },
+  projectIconEmoji: {
+    fontSize: 13,
   },
   projectTitle: {
     fontSize: theme.fontSize.sm,

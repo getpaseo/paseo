@@ -1555,6 +1555,8 @@ export class VoiceAssistantWebSocketServer {
         projectOnboarding: true,
         // COMPAT(projectCustomIcon): added in v0.2.X, remove gate after 2027-01-26.
         projectCustomIcon: true,
+        // COMPAT(projectEmojiIcon): added in v0.2.X, remove gate after 2027-01-26.
+        projectEmojiIcon: true,
       },
     };
   }

@@ -4280,7 +4280,10 @@ export class DaemonClient {
 
   async updateProjectIcon(
     cwd: string,
-    icon: { data: string; mimeType: "image/png" } | null,
+    icon:
+      | { data: string; mimeType: "image/png" }
+      | { emoji: string; mimeType: "text/plain" }
+      | null,
     requestId?: string,
   ): Promise<ProjectIconUpdateResponse["payload"]> {
     return this.sendCorrelatedSessionRequest({

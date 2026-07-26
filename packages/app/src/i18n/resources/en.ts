@@ -2129,8 +2129,12 @@ export const en = {
       icon: {
         title: "Project icon",
         description:
-          "Upload a PNG or JPEG. Paseo crops and downsizes it automatically; reset to use an icon found in the project.",
-        image: "Custom image",
+          "Choose an emoji or upload a PNG or JPEG. Paseo crops and downsizes images automatically; reset to use an icon found in the project.",
+        image: "Custom icon",
+        chooseEmoji: "Choose emoji",
+        emojiPickerTitle: "Choose an emoji",
+        emojiSearchPlaceholder: "Search emojis",
+        emojiNoResults: "No matching emojis",
         choose: "Choose image",
         reset: "Use discovered icon",
         updatedToast: "Project icon updated",

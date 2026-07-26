@@ -2167,8 +2167,13 @@ export const es: TranslationResources = {
       },
       icon: {
         title: "Icono del proyecto",
-        description: "Sube un PNG o JPEG. Paseo lo recorta y reduce automáticamente.",
-        image: "Imagen personalizada",
+        description:
+          "Elige un emoji o sube un PNG o JPEG. Paseo recorta y reduce las imágenes automáticamente.",
+        image: "Icono personalizado",
+        chooseEmoji: "Elegir emoji",
+        emojiPickerTitle: "Elegir un emoji",
+        emojiSearchPlaceholder: "Buscar emojis",
+        emojiNoResults: "No hay emojis coincidentes",
         choose: "Elegir imagen",
         reset: "Usar icono detectado",
         updatedToast: "Icono del proyecto actualizado",

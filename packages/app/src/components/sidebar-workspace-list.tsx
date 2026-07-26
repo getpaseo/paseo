@@ -730,6 +730,7 @@ function ProjectIcon({
       imageStyle={styles.projectIcon}
       fallbackStyle={styles.projectIconFallback}
       textStyle={styles.projectIconFallbackText}
+      emojiStyle={styles.projectIconEmoji}
     />
   );
 }
@@ -2679,6 +2680,9 @@ const styles = StyleSheet.create((theme) => ({
   },
   projectIconFallbackText: {
     fontSize: 9,
+  },
+  projectIconEmoji: {
+    fontSize: 13,
   },
   projectTitle: {
     color: theme.colors.foreground,

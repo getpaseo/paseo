@@ -2,16 +2,10 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import type { ProjectIcon } from "@getpaseo/protocol/messages";
+export { projectIconToDataUri } from "@/utils/project-icon-presentation";
 
 export function projectIconQueryKey(serverId: string, cwd: string) {
   return ["projectIcon", serverId, cwd] as const;
-}
-
-export function projectIconToDataUri(icon: ProjectIcon | null): string | null {
-  if (!icon) {
-    return null;
-  }
-  return `data:${icon.mimeType};base64,${icon.data}`;
 }
 
 interface UseProjectIconQueryOptions {

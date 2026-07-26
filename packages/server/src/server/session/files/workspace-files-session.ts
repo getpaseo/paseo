@@ -294,7 +294,11 @@ export class WorkspaceFilesSession {
   ): Promise<void> {
     const { cwd, icon, requestId } = request;
     try {
-      await setCustomProjectIcon(this.paseoHome, cwd, icon?.data ?? null);
+      await setCustomProjectIcon(
+        this.paseoHome,
+        cwd,
+        icon?.mimeType === "text/plain" ? { emoji: icon.emoji } : (icon?.data ?? null),
+      );
       const resolvedIcon = await getProjectIcon(cwd, this.paseoHome);
       this.host.emit({
         type: "project.icon.update.response",

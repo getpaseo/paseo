@@ -2171,8 +2171,13 @@ export const fr: TranslationResources = {
       },
       icon: {
         title: "Icône du projet",
-        description: "Importez un PNG ou JPEG. Paseo le recadre et le réduit automatiquement.",
-        image: "Image personnalisée",
+        description:
+          "Choisissez un emoji ou importez un PNG ou JPEG. Paseo recadre et réduit automatiquement les images.",
+        image: "Icône personnalisée",
+        chooseEmoji: "Choisir un emoji",
+        emojiPickerTitle: "Choisir un emoji",
+        emojiSearchPlaceholder: "Rechercher des emojis",
+        emojiNoResults: "Aucun emoji correspondant",
         choose: "Choisir une image",
         reset: "Utiliser l’icône détectée",
         updatedToast: "Icône du projet mise à jour",

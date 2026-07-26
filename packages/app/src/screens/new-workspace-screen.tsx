@@ -306,6 +306,7 @@ function ProjectPickerTrigger({
                 imageStyle={styles.projectIcon}
                 fallbackStyle={styles.projectIconFallback}
                 textStyle={styles.projectIconFallbackText}
+                emojiStyle={styles.projectIconEmoji}
               />
             ) : (
               <Folder size={iconSize} color={iconColor} />
@@ -449,6 +450,7 @@ function ProjectOptionItem({
           imageStyle={styles.projectIcon}
           fallbackStyle={styles.projectIconFallback}
           textStyle={styles.projectIconFallbackText}
+          emojiStyle={styles.projectIconEmoji}
         />
       </View>
     ),
@@ -2274,6 +2276,9 @@ const styles = StyleSheet.create((theme) => ({
     // smallest font-size token, so it stays a literal sized to the box.
     fontSize: PROJECT_ICON_FALLBACK_FONT_SIZE,
     fontWeight: "600",
+  },
+  projectIconEmoji: {
+    fontSize: 13,
   },
   rowIconBox: {
     width: theme.iconSize.md,

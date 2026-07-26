@@ -13,11 +13,13 @@ import {
   MoreVertical,
   Pencil,
   Plus,
+  SmilePlus,
   Sparkles,
   Trash2,
   X,
 } from "lucide-react-native";
 import { ProjectIconView } from "@/components/project-icon-view";
+import { ProjectEmojiIconPicker } from "@/components/project-emoji-icon-picker";
 import { HostPicker as SharedHostPicker, HostStatusDotSlot } from "@/components/hosts/host-picker";
 import type {
   PaseoConfigRaw,
@@ -240,6 +242,7 @@ function ProjectSettingsBody({
   const hasMultipleHosts = hosts.length > 1;
   const supportsProjectOnboarding = useHostFeature(selectedHost.serverId, "projectOnboarding");
   const supportsProjectCustomIcon = useHostFeature(selectedHost.serverId, "projectCustomIcon");
+  const supportsProjectEmojiIcon = useHostFeature(selectedHost.serverId, "projectEmojiIcon");
 
   return (
     <View style={styles.body}>
@@ -259,10 +262,12 @@ function ProjectSettingsBody({
 
       {supportsProjectCustomIcon ? (
         <ProjectIconSettings
+          key={`${selectedHost.serverId}:${selectedHost.repoRoot}`}
           client={client}
           cwd={selectedHost.repoRoot}
           serverId={selectedHost.serverId}
           icon={projectIconQuery.icon}
+          supportsEmoji={supportsProjectEmojiIcon}
         />
       ) : null}
 
@@ -1021,6 +1026,7 @@ function ProjectTitleIcon({
       imageStyle={styles.titleIcon}
       fallbackStyle={styles.titleIconFallback}
       textStyle={styles.titleIconFallbackText}
+      emojiStyle={styles.titleIconEmoji}
     />
   );
 }
@@ -1030,19 +1036,22 @@ function ProjectIconSettings({
   cwd,
   serverId,
   icon,
+  supportsEmoji,
 }: {
   client: DaemonClient;
   cwd: string;
   serverId: string;
   icon: ProjectIcon | null;
+  supportsEmoji: boolean;
 }) {
   const { t } = useTranslation();
   const toast = useToast();
   const queryClient = useQueryClient();
   const { pickProjectIcon } = useProjectIconPicker();
+  const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
   const mutation = useMutation({
-    mutationFn: (data: string | null) =>
-      client.updateProjectIcon(cwd, data ? { data, mimeType: "image/png" } : null),
+    mutationFn: (nextIcon: Parameters<DaemonClient["updateProjectIcon"]>[1]) =>
+      client.updateProjectIcon(cwd, nextIcon),
     onSuccess: (payload) => {
       if (payload.error) {
         throw new Error(payload.error);
@@ -1062,7 +1071,7 @@ function ProjectIconSettings({
     try {
       const data = await pickProjectIcon();
       if (data) {
-        mutation.mutate(data);
+        mutation.mutate({ data, mimeType: "image/png" });
       }
     } catch (error) {
       toast.show(
@@ -1075,41 +1084,75 @@ function ProjectIconSettings({
   const handleReset = useCallback(() => {
     mutation.mutate(null);
   }, [mutation]);
+  const handleEmojiPickerOpen = useCallback(() => {
+    setEmojiPickerOpen(true);
+  }, []);
+  const handleEmojiPickerClose = useCallback(() => {
+    setEmojiPickerOpen(false);
+  }, []);
+  const handleEmojiSelect = useCallback(
+    (emoji: string) => {
+      setEmojiPickerOpen(false);
+      mutation.mutate({ emoji, mimeType: "text/plain" });
+    },
+    [mutation],
+  );
 
   return (
-    <SettingsGroup
-      title={t("settings.project.icon.title")}
-      info={t("settings.project.icon.description")}
-      testID="project-icon-group"
-    >
-      <SettingsSection title={t("settings.project.icon.image")} flush>
-        <View style={styles.projectIconActions}>
-          <Button
-            testID="project-icon-upload"
-            variant="outline"
-            size="sm"
-            leftIcon={ImagePlus}
-            loading={mutation.isPending}
-            disabled={mutation.isPending}
-            onPress={handleUpload}
-          >
-            {t("settings.project.icon.choose")}
-          </Button>
-          {icon?.source === "custom" ? (
+    <>
+      <SettingsGroup
+        title={t("settings.project.icon.title")}
+        info={t("settings.project.icon.description")}
+        testID="project-icon-group"
+      >
+        <SettingsSection title={t("settings.project.icon.image")} flush>
+          <View style={styles.projectIconActions}>
+            {supportsEmoji ? (
+              <Button
+                testID="project-icon-choose-emoji"
+                variant="outline"
+                size="sm"
+                leftIcon={SmilePlus}
+                disabled={mutation.isPending}
+                onPress={handleEmojiPickerOpen}
+              >
+                {t("settings.project.icon.chooseEmoji")}
+              </Button>
+            ) : null}
             <Button
-              testID="project-icon-reset"
+              testID="project-icon-upload"
               variant="outline"
               size="sm"
-              leftIcon={Trash2}
+              leftIcon={ImagePlus}
+              loading={mutation.isPending}
               disabled={mutation.isPending}
-              onPress={handleReset}
+              onPress={handleUpload}
             >
-              {t("settings.project.icon.reset")}
+              {t("settings.project.icon.choose")}
             </Button>
-          ) : null}
-        </View>
-      </SettingsSection>
-    </SettingsGroup>
+            {icon?.source === "custom" ? (
+              <Button
+                testID="project-icon-reset"
+                variant="outline"
+                size="sm"
+                leftIcon={Trash2}
+                disabled={mutation.isPending}
+                onPress={handleReset}
+              >
+                {t("settings.project.icon.reset")}
+              </Button>
+            ) : null}
+          </View>
+        </SettingsSection>
+      </SettingsGroup>
+      {emojiPickerOpen ? (
+        <ProjectEmojiIconPicker
+          selectedEmoji={icon?.emoji ?? null}
+          onSelect={handleEmojiSelect}
+          onClose={handleEmojiPickerClose}
+        />
+      ) : null}
+    </>
   );
 }
 
@@ -1500,6 +1543,9 @@ const styles = StyleSheet.create((theme) => ({
   titleIconFallbackText: {
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.medium,
+  },
+  titleIconEmoji: {
+    fontSize: 20,
   },
   iconColor: {
     color: theme.colors.foregroundMuted,

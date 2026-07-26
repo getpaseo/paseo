@@ -161,6 +161,7 @@ function ProjectRowIcon({
       imageStyle={styles.iconImage}
       fallbackStyle={styles.iconFallback}
       textStyle={styles.iconFallbackText}
+      emojiStyle={styles.iconEmoji}
     />
   );
 }
@@ -227,6 +228,9 @@ const styles = StyleSheet.create((theme) => ({
   },
   iconFallbackText: {
     fontSize: theme.fontSize.xs,
+  },
+  iconEmoji: {
+    fontSize: 13,
   },
   spinnerColor: {
     color: theme.colors.foregroundMuted,

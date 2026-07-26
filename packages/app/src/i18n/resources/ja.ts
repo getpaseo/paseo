@@ -2138,8 +2138,13 @@ export const ja: TranslationResources = {
       },
       icon: {
         title: "プロジェクトアイコン",
-        description: "PNGまたはJPEGを選択すると、Paseoが自動で切り抜き・縮小します。",
-        image: "カスタム画像",
+        description:
+          "絵文字を選択するか、PNGまたはJPEGをアップロードします。画像はPaseoが自動で切り抜き・縮小します。",
+        image: "カスタムアイコン",
+        chooseEmoji: "絵文字を選択",
+        emojiPickerTitle: "絵文字を選択",
+        emojiSearchPlaceholder: "絵文字を検索",
+        emojiNoResults: "一致する絵文字がありません",
         choose: "画像を選択",
         reset: "検出したアイコンを使用",
         updatedToast: "プロジェクトアイコンを更新しました",

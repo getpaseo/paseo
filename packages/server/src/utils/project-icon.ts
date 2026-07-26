@@ -59,15 +59,26 @@ export interface ProjectIcon {
   data: string;
   mimeType: string;
   source?: "discovered" | "custom";
+  emoji?: string;
 }
 
 const MAX_ICON_SIZE = 32 * 1024; // 32KB max
 const MAX_CUSTOM_ICON_SIZE = 256 * 1024;
 const MAX_CUSTOM_ICON_DIMENSION = 256;
+const MAX_CUSTOM_EMOJI_SIZE = 64;
+
+export type CustomProjectIconInput = string | { emoji: string } | null;
+
+function customProjectIconKey(projectDir: string): string {
+  return createHash("sha256").update(projectDir).digest("hex");
+}
 
 function customProjectIconPath(paseoHome: string, projectDir: string): string {
-  const key = createHash("sha256").update(projectDir).digest("hex");
-  return join(paseoHome, "project-icons", `${key}.png`);
+  return join(paseoHome, "project-icons", `${customProjectIconKey(projectDir)}.png`);
+}
+
+function customProjectEmojiPath(paseoHome: string, projectDir: string): string {
+  return join(paseoHome, "project-icons", `${customProjectIconKey(projectDir)}.emoji`);
 }
 
 function validateCustomProjectIcon(buffer: Buffer): void {
@@ -85,20 +96,71 @@ function validateCustomProjectIcon(buffer: Buffer): void {
   }
 }
 
+function validateCustomProjectEmoji(emoji: string): void {
+  if (
+    !emoji ||
+    emoji !== emoji.trim() ||
+    Buffer.byteLength(emoji, "utf8") > MAX_CUSTOM_EMOJI_SIZE
+  ) {
+    throw new Error("Project emoji must be one emoji.");
+  }
+
+  const graphemes = Array.from(
+    new Intl.Segmenter("en", { granularity: "grapheme" }).segment(emoji),
+  );
+  const hasEmojiBase =
+    /[\p{Extended_Pictographic}\p{Regional_Indicator}]/u.test(emoji) ||
+    /[#*0-9]\uFE0F?\u20E3/u.test(emoji);
+  if (graphemes.length !== 1 || !hasEmojiBase) {
+    throw new Error("Project emoji must be one emoji.");
+  }
+}
+
+function projectEmojiToIcon(emoji: string): ProjectIcon {
+  const escapedEmoji = emoji
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&apos;");
+  const svg = [
+    '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">',
+    '<text x="32" y="34" text-anchor="middle" dominant-baseline="central" font-size="52"',
+    ' font-family="Apple Color Emoji,Segoe UI Emoji,Noto Color Emoji,sans-serif">',
+    escapedEmoji,
+    "</text></svg>",
+  ].join("");
+  return {
+    data: Buffer.from(svg, "utf8").toString("base64"),
+    mimeType: "image/svg+xml",
+    source: "custom",
+    emoji,
+  };
+}
+
 export async function setCustomProjectIcon(
   paseoHome: string,
   projectDir: string,
-  data: string | null,
+  input: CustomProjectIconInput,
 ): Promise<ProjectIcon | null> {
   const iconPath = customProjectIconPath(paseoHome, projectDir);
-  if (data === null) {
-    await rm(iconPath, { force: true });
+  const emojiPath = customProjectEmojiPath(paseoHome, projectDir);
+  if (input === null) {
+    await Promise.all([rm(iconPath, { force: true }), rm(emojiPath, { force: true })]);
     return null;
   }
 
-  const buffer = Buffer.from(data, "base64");
+  if (typeof input !== "string") {
+    validateCustomProjectEmoji(input.emoji);
+    await writeFileAtomic(emojiPath, input.emoji);
+    await rm(iconPath, { force: true });
+    return projectEmojiToIcon(input.emoji);
+  }
+
+  const buffer = Buffer.from(input, "base64");
   validateCustomProjectIcon(buffer);
   await writeFileAtomic(iconPath, buffer);
+  await rm(emojiPath, { force: true });
   return { data: buffer.toString("base64"), mimeType: "image/png", source: "custom" };
 }
 
@@ -106,6 +168,14 @@ async function getCustomProjectIcon(
   paseoHome: string,
   projectDir: string,
 ): Promise<ProjectIcon | null> {
+  try {
+    const emoji = await readFile(customProjectEmojiPath(paseoHome, projectDir), "utf8");
+    validateCustomProjectEmoji(emoji);
+    return projectEmojiToIcon(emoji);
+  } catch {
+    // Fall through to a custom image or automatic discovery.
+  }
+
   try {
     const buffer = await readFile(customProjectIconPath(paseoHome, projectDir));
     validateCustomProjectIcon(buffer);
