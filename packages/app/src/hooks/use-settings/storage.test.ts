@@ -70,6 +70,37 @@ describe("loadAppSettingsFromStorage", () => {
     expect(result.workspaceTitleSource).toBe("title");
   });
 
+  it("defaults attention interrupt settings for desktop attention UX", async () => {
+    const deps = makeDeps();
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.attentionIntrusiveMode).toBe(false);
+    expect(result.attentionOsBubbleEnabled).toBe(true);
+    expect(result.attentionSoundEnabled).toBe(true);
+    expect(result.attentionSoundPreset).toBe("soft");
+  });
+
+  it("loads attention interrupt settings from storage", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({
+          attentionIntrusiveMode: true,
+          attentionOsBubbleEnabled: false,
+          attentionSoundEnabled: false,
+          attentionSoundPreset: "ping",
+        }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.attentionIntrusiveMode).toBe(true);
+    expect(result.attentionOsBubbleEnabled).toBe(false);
+    expect(result.attentionSoundEnabled).toBe(false);
+    expect(result.attentionSoundPreset).toBe("ping");
+  });
+
   it("loads configured terminal scrollback lines from app settings", async () => {
     const deps = makeDeps({
       storage: createInMemoryKeyValueStorage({

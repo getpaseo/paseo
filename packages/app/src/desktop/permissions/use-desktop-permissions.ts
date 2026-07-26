@@ -7,6 +7,12 @@ import {
   type DesktopPermissionKind,
   type DesktopPermissionSnapshot,
 } from "@/desktop/permissions/desktop-permissions";
+import { queryClient } from "@/data/query-client";
+import {
+  APP_SETTINGS_QUERY_KEY,
+  DEFAULT_CLIENT_SETTINGS,
+  normalizeAppSettings,
+} from "@/hooks/use-settings/storage";
 import { sendOsNotification } from "@/utils/os-notifications";
 
 export interface UseDesktopPermissionsReturn {
@@ -121,9 +127,17 @@ export function useDesktopPermissions(): UseDesktopPermissionsReturn {
     setIsSendingTestNotification(true);
     setTestNotificationError(null);
     try {
+      const settings = normalizeAppSettings(
+        queryClient.getQueryData(APP_SETTINGS_QUERY_KEY) ?? DEFAULT_CLIENT_SETTINGS,
+      );
+      if (!settings.attentionOsBubbleEnabled) {
+        setTestNotificationError(t("desktop.permissions.testNotification.notDelivered"));
+        return;
+      }
       const sent = await sendOsNotification({
         title: t("desktop.permissions.testNotification.title"),
         body: t("desktop.permissions.testNotification.body"),
+        silent: !settings.attentionSoundEnabled,
       });
       if (!sent) {
         setTestNotificationError(t("desktop.permissions.testNotification.notDelivered"));

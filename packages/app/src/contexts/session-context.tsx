@@ -42,8 +42,9 @@ import { useVoiceAudioEngineOptional, useVoiceRuntimeOptional } from "@/contexts
 import type { AudioPlaybackSource } from "@/voice/audio-engine-types";
 import { useSessionStore, type MessageEntry, type SessionState } from "@/stores/session-store";
 import { useWorkspaceSetupStore } from "@/stores/workspace-setup-store";
-import { sendOsNotification } from "@/utils/os-notifications";
+import { deliverAttentionInterrupt } from "@/utils/deliver-attention-interrupt";
 import { getIsAppActivelyVisible, getIsAppVisible } from "@/utils/app-visibility";
+import { router } from "expo-router";
 import {
   getInitKey,
   getInitDeferred,
@@ -505,12 +506,8 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       const appState = appStateRef.current;
       const session = useSessionStore.getState().sessions[serverId];
       const attentionFocusedAgentId = session?.focusedAgentId ?? null;
+      const attentionFocusedTerminalId = session?.focusedTerminalId ?? null;
       if (params.reason === "error") {
-        return;
-      }
-      const isActivelyVisible = getIsAppActivelyVisible(appState);
-      const isAwayFromAgent = !isActivelyVisible || attentionFocusedAgentId !== params.agentId;
-      if (!isAwayFromAgent) {
         return;
       }
 
@@ -541,10 +538,17 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         return;
       }
 
-      void sendOsNotification({
+      void deliverAttentionInterrupt({
         title: notification.title,
         body: notification.body,
         data: notification.data,
+        target: { kind: "agent", id: params.agentId },
+        focusedAgentId: attentionFocusedAgentId,
+        focusedTerminalId: attentionFocusedTerminalId,
+        isActivelyVisible: getIsAppActivelyVisible(appState),
+        navigate: (route) => {
+          router.navigate(route as never);
+        },
       });
     },
     [serverId],
@@ -1109,7 +1113,8 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       if (!message.payload.shouldNotify) {
         return;
       }
-      void sendOsNotification({
+      const session = useSessionStore.getState().sessions[serverId];
+      void deliverAttentionInterrupt({
         title: message.payload.title,
         body: message.payload.body,
         // serverId + workspaceId + terminalId route a tap to the terminal tab; cwd is
@@ -1119,6 +1124,12 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
           terminalId: message.payload.terminalId,
           cwd: message.payload.cwd,
           ...(message.payload.workspaceId ? { workspaceId: message.payload.workspaceId } : {}),
+        },
+        target: { kind: "terminal", id: message.payload.terminalId },
+        focusedAgentId: session?.focusedAgentId ?? null,
+        focusedTerminalId: session?.focusedTerminalId ?? null,
+        navigate: (route) => {
+          router.navigate(route as never);
         },
       });
     });

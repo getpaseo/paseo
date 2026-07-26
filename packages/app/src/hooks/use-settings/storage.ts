@@ -13,11 +13,13 @@ export type ReleaseChannel = "stable" | "beta";
 export type ServiceUrlBehavior = "ask" | "in-app" | "external";
 export type WorkspaceTitleSource = "title" | "branch";
 export type ToolCallDetailLevel = "overview" | "detailed";
+export type AttentionSoundPreset = "soft" | "ping" | "classic";
 
 const VALID_THEMES = new Set<string>([...Object.keys(THEME_TO_UNISTYLES), "auto"]);
 const VALID_SERVICE_URL_BEHAVIORS = new Set<ServiceUrlBehavior>(["ask", "in-app", "external"]);
 const VALID_WORKSPACE_TITLE_SOURCES = new Set<WorkspaceTitleSource>(["title", "branch"]);
 const VALID_TOOL_CALL_DETAIL_LEVELS = new Set<ToolCallDetailLevel>(["overview", "detailed"]);
+const VALID_ATTENTION_SOUND_PRESETS = new Set<AttentionSoundPreset>(["soft", "ping", "classic"]);
 export const DEFAULT_TERMINAL_SCROLLBACK_LINES = 10_000;
 export const MIN_TERMINAL_SCROLLBACK_LINES = 0;
 export const MAX_TERMINAL_SCROLLBACK_LINES = 1_000_000;
@@ -44,6 +46,14 @@ export interface AppSettings {
   autoExpandReasoning: boolean;
   toolCallDetailLevel: ToolCallDetailLevel;
   vimKeybindings: boolean;
+  /** When true, unfocused attention focuses Paseo and opens the target. Default off. */
+  attentionIntrusiveMode: boolean;
+  /** When true, show OS/system notification bubbles. Default on. */
+  attentionOsBubbleEnabled: boolean;
+  /** When true, play attention sound for delivered interrupts. Default on. */
+  attentionSoundEnabled: boolean;
+  /** Built-in attention sound preset. Default soft. */
+  attentionSoundPreset: AttentionSoundPreset;
 }
 
 export interface Settings extends AppSettings {
@@ -68,6 +78,10 @@ export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   autoExpandReasoning: false,
   toolCallDetailLevel: "detailed",
   vimKeybindings: false,
+  attentionIntrusiveMode: false,
+  attentionOsBubbleEnabled: true,
+  attentionSoundEnabled: true,
+  attentionSoundPreset: "soft",
 };
 
 export const DEFAULT_APP_SETTINGS: Settings = {
@@ -250,6 +264,27 @@ function pickAppSettings(stored: StoredAppSettings): Partial<AppSettings> {
   const toolCallDetailLevel = parseToolCallDetailLevel(stored);
   if (toolCallDetailLevel !== null) {
     result.toolCallDetailLevel = toolCallDetailLevel;
+  }
+  Object.assign(result, pickAttentionAppSettings(stored));
+  return result;
+}
+
+function pickAttentionAppSettings(stored: StoredAppSettings): Partial<AppSettings> {
+  const result: Partial<AppSettings> = {};
+  if (typeof stored.attentionIntrusiveMode === "boolean") {
+    result.attentionIntrusiveMode = stored.attentionIntrusiveMode;
+  }
+  if (typeof stored.attentionOsBubbleEnabled === "boolean") {
+    result.attentionOsBubbleEnabled = stored.attentionOsBubbleEnabled;
+  }
+  if (typeof stored.attentionSoundEnabled === "boolean") {
+    result.attentionSoundEnabled = stored.attentionSoundEnabled;
+  }
+  if (
+    typeof stored.attentionSoundPreset === "string" &&
+    VALID_ATTENTION_SOUND_PRESETS.has(stored.attentionSoundPreset)
+  ) {
+    result.attentionSoundPreset = stored.attentionSoundPreset;
   }
   return result;
 }

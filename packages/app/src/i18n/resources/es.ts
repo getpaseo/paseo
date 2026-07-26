@@ -1953,6 +1953,29 @@ export const es: TranslationResources = {
       refreshing: "Refrescante...",
       refreshAccessibility: "Actualizar permisos de escritorio",
       test: "Prueba",
+      attention: {
+        title: "Attention",
+        intrusive: {
+          label: "Bring Paseo to the front",
+          description:
+            "When something needs you and Paseo is in the background, focus the window and open that workspace.",
+        },
+        bubble: {
+          label: "System notification bubble",
+          description: "Show macOS/system notifications for attention events.",
+        },
+        sound: {
+          label: "Play sound",
+          description: "Play a short attention sound with notifications and in-app banners.",
+        },
+        preset: {
+          label: "Sound",
+          description: "Choose the attention sound preset.",
+          soft: "Soft",
+          ping: "Ping",
+          classic: "Classic",
+        },
+      },
       actions: {
         granted: "Otorgada",
         request: "Pedido",
