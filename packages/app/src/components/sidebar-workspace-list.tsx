@@ -131,10 +131,15 @@ import {
   getIsElectron,
 } from "@/constants/platform";
 import { getDesktopHost } from "@/desktop/host";
+import {
+  buildSidebarProjectTree,
+  flattenSidebarProjectTree,
+  type SidebarProjectTreeNode,
+} from "@/utils/sidebar-project-tree";
 
 const workspaceKeyExtractor = (workspace: SidebarWorkspacePlacement) => workspace.workspaceKey;
 
-const projectKeyExtractor = (project: SidebarProjectEntry) => project.projectKey;
+const projectTreeKeyExtractor = (node: SidebarProjectTreeNode) => node.project.projectKey;
 
 const WORKSPACE_STATUS_DOT_WIDTH = 14;
 const DEFAULT_STATUS_DOT_SIZE = 7;
@@ -1906,6 +1911,50 @@ function areProjectBlockSelectionsEqual(
 
 const MemoProjectBlock = memo(ProjectBlock, areProjectBlockPropsEqual);
 
+function ProjectTreeBlock({
+  node,
+  collapsedProjectKeys,
+  renderProjectBlock,
+  drag,
+  isDragging,
+  dragHandleProps,
+}: {
+  node: SidebarProjectTreeNode;
+  collapsedProjectKeys: ReadonlySet<string>;
+  renderProjectBlock: (
+    project: SidebarProjectEntry,
+    dragState: {
+      drag: () => void;
+      isDragging: boolean;
+      dragHandleProps?: DraggableListDragHandleProps;
+    },
+  ) => ReactElement;
+  drag: () => void;
+  isDragging: boolean;
+  dragHandleProps?: DraggableListDragHandleProps;
+}) {
+  const collapsed = collapsedProjectKeys.has(node.project.projectKey);
+  return (
+    <View>
+      {renderProjectBlock(node.project, { drag, isDragging, dragHandleProps })}
+      {!collapsed && node.children.length > 0 ? (
+        <View style={styles.nestedProjectTree}>
+          {node.children.map((child) => (
+            <ProjectTreeBlock
+              key={child.project.projectKey}
+              node={child}
+              collapsedProjectKeys={collapsedProjectKeys}
+              renderProjectBlock={renderProjectBlock}
+              drag={noop}
+              isDragging={false}
+            />
+          ))}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
 export function SidebarWorkspaceList({
   statusGroups,
   pinnedGroups,
@@ -2079,6 +2128,14 @@ function ProjectModeList({
   const selectionEnabled = isWorkspaceRoute;
   const activeWorkspaceSelection = useActiveWorkspaceSelection();
   const { pinnedChats, unpinnedProjects } = pinnedGroups;
+  const projectTree = useMemo(
+    () =>
+      buildSidebarProjectTree({
+        projects: unpinnedProjects,
+        hierarchyProjects: projects,
+      }),
+    [projects, unpinnedProjects],
+  );
   const {
     visibleItems: visiblePinnedChats,
     expanded: pinnedChatsExpanded,
@@ -2158,8 +2215,10 @@ function ProjectModeList({
   }, [creatingWorkspaceIds, projects]);
 
   const handleProjectDragEnd = useCallback(
-    (reorderedProjects: SidebarProjectEntry[]) => {
-      const reorderedProjectKeys = reorderedProjects.map((project) => project.projectKey);
+    (reorderedProjectTree: SidebarProjectTreeNode[]) => {
+      const reorderedProjectKeys = flattenSidebarProjectTree(reorderedProjectTree).map(
+        (project) => project.projectKey,
+      );
       const currentProjectOrder = getProjectOrder();
       if (
         !hasVisibleOrderChanged({
@@ -2292,9 +2351,22 @@ function ProjectModeList({
   );
 
   const renderProject = useCallback(
-    ({ item, drag, isActive, dragHandleProps }: DraggableRenderItemInfo<SidebarProjectEntry>) =>
-      renderProjectBlock(item, { drag, isDragging: isActive, dragHandleProps }),
-    [renderProjectBlock],
+    ({
+      item,
+      drag,
+      isActive,
+      dragHandleProps,
+    }: DraggableRenderItemInfo<SidebarProjectTreeNode>) => (
+      <ProjectTreeBlock
+        node={item}
+        collapsedProjectKeys={collapsedProjectKeys}
+        renderProjectBlock={renderProjectBlock}
+        drag={drag}
+        isDragging={isActive}
+        dragHandleProps={dragHandleProps}
+      />
+    ),
+    [collapsedProjectKeys, renderProjectBlock],
   );
 
   const renderPinnedChat = useCallback(
@@ -2370,8 +2442,8 @@ function ProjectModeList({
       ) : (
         <DraggableList
           testID="sidebar-project-list"
-          data={unpinnedProjects}
-          keyExtractor={projectKeyExtractor}
+          data={projectTree}
+          keyExtractor={projectTreeKeyExtractor}
           renderItem={renderProject}
           onDragEnd={handleProjectDragEnd}
           extraData={activeWorkspaceSelectionKey(activeWorkspaceSelection)}
@@ -2428,6 +2500,9 @@ const styles = StyleSheet.create((theme) => ({
   },
   projectListContainer: {
     width: "100%",
+  },
+  nestedProjectTree: {
+    marginLeft: theme.spacing[4],
   },
   pinnedSection: {
     marginBottom: theme.spacing[1],
