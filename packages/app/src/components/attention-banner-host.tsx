@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
+import { createPortal } from "react-dom";
 import { Pressable, Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useRouter } from "expo-router";
 import { useAttentionBannerStore } from "@/stores/attention-banner-store";
 import { buildNotificationRoute } from "@/utils/notification-routing";
 import { useIsCompactFormFactor } from "@/constants/layout";
+import { isWeb } from "@/constants/platform";
+import { getOverlayRoot, OVERLAY_Z } from "@/lib/overlay-root";
 
 const AUTO_DISMISS_MS = 5000;
 
@@ -34,7 +37,7 @@ export function AttentionBannerHost() {
         timerRef.current = null;
       }
     };
-  }, [banner?.id, dismiss, banner]);
+  }, [banner, dismiss]);
 
   const handlePress = useCallback(() => {
     if (!banner) {
@@ -56,7 +59,7 @@ export function AttentionBannerHost() {
 
   const extraLabel = banner.extraCount > 0 ? ` +${banner.extraCount}` : "";
 
-  return (
+  const content = (
     <View pointerEvents="box-none" style={styles.host} testID="attention-banner-host">
       <Pressable
         accessibilityRole="button"
@@ -77,6 +80,12 @@ export function AttentionBannerHost() {
       </Pressable>
     </View>
   );
+
+  if (isWeb && typeof document !== "undefined") {
+    return createPortal(content, getOverlayRoot());
+  }
+
+  return content;
 }
 
 const styles = StyleSheet.create((theme) => ({
@@ -85,7 +94,7 @@ const styles = StyleSheet.create((theme) => ({
     top: theme.spacing[3],
     left: 0,
     right: 0,
-    zIndex: 10000,
+    zIndex: OVERLAY_Z.toast + 1,
     alignItems: "center",
     pointerEvents: "box-none",
   },

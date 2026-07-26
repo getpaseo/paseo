@@ -50,8 +50,9 @@ async function focusDesktopWindow(): Promise<void> {
  * Execute client-side attention interrupt channels after shouldNotify is true.
  *
  * Sound routing:
- * - OS bubble + sound → Electron Notification silent:false (OS owns audio)
- * - banner / intrusive / sound-only + sound → in-app playAttentionSound
+ * - OS bubble carries OS-native audio via Notification.silent
+ * - Banner, intrusive focus, and sound-only paths always play in-app sound when enabled
+ * - When bubble + banner both fire, play both channels so the in-app surface is never silent
  */
 export async function deliverAttentionInterrupt(
   input: DeliverAttentionInterruptInput,
@@ -109,8 +110,9 @@ export async function deliverAttentionInterrupt(
     });
   }
 
-  // In-app sound when OS bubble is not carrying the audio.
-  if (plan.playSound && !plan.showOsBubble) {
+  const needsInAppSound =
+    plan.playSound && (plan.showBanner || plan.intrusiveFocusAndNavigate || !plan.showOsBubble);
+  if (needsInAppSound) {
     playAttentionSound(plan.soundPreset);
   }
 }
