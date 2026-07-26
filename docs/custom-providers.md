@@ -254,17 +254,15 @@ Example: two different Anthropic accounts as separate profiles:
       "claude-work": {
         "extends": "claude",
         "label": "Claude (Work)",
-        "description": "Work Anthropic account",
         "env": {
-          "ANTHROPIC_API_KEY": "sk-ant-work-..."
+          "CLAUDE_CONFIG_DIR": "/Users/me/.claude-work"
         }
       },
       "claude-personal": {
         "extends": "claude",
         "label": "Claude (Personal)",
-        "description": "Personal Anthropic account",
         "env": {
-          "ANTHROPIC_API_KEY": "sk-ant-personal-..."
+          "CLAUDE_CONFIG_DIR": "/Users/me/.claude-personal"
         }
       }
     }
@@ -272,7 +270,7 @@ Example: two different Anthropic accounts as separate profiles:
 }
 ```
 
-Each profile appears as a separate provider in the Paseo app. You can select which one to use when launching an agent.
+Authenticate each directory with `CLAUDE_CONFIG_DIR=<directory> claude auth login`. Each profile becomes a selectable provider and gets its own parallel plan-usage card; credentials stay in Claude Code's config/keychain storage.
 
 You can also combine profiles with model overrides to pin specific models per profile:
 

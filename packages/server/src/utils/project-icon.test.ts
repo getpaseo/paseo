@@ -5,6 +5,7 @@ import { tmpdir } from "os";
 import {
   findProjectIcon,
   getProjectIcon,
+  setCustomProjectIcon,
   ICON_PATTERNS,
   PRIORITY_DIRS,
   IGNORED_DIRS,
@@ -420,5 +421,30 @@ describe("getProjectIcon", () => {
   it("returns null when no icon is found", async () => {
     const result = await getProjectIcon(tempDir);
     expect(result).toBeNull();
+  });
+
+  it("stores a custom icon outside the project and prefers it over discovery", async () => {
+    const paseoHome = join(tempDir, "paseo-home");
+    writeFileSync(join(tempDir, "favicon.png"), squarePng);
+
+    await setCustomProjectIcon(paseoHome, tempDir, squarePng.toString("base64"));
+
+    await expect(getProjectIcon(tempDir, paseoHome)).resolves.toMatchObject({
+      data: squarePng.toString("base64"),
+      mimeType: "image/png",
+      source: "custom",
+    });
+  });
+
+  it("removes a custom icon and falls back to discovery", async () => {
+    const paseoHome = join(tempDir, "paseo-home");
+    writeFileSync(join(tempDir, "favicon.png"), squarePng);
+    await setCustomProjectIcon(paseoHome, tempDir, squarePng.toString("base64"));
+
+    await setCustomProjectIcon(paseoHome, tempDir, null);
+
+    await expect(getProjectIcon(tempDir, paseoHome)).resolves.toMatchObject({
+      source: "discovered",
+    });
   });
 });

@@ -2116,6 +2116,26 @@ export const en = {
         cancelLabel: "Cancel renaming",
         reset: "Reset",
       },
+      onboarding: {
+        title: "AI project setup",
+        description:
+          "Scan project docs and manifests to draft worktree hooks, scripts, and metadata instructions. Nothing is written until you review and save.",
+        generate: "Generate draft",
+        generating: "Scanning project...",
+        generated:
+          "Draft generated from {{count}} project files. Review the settings below, then save.",
+        failedFallback: "Project onboarding failed.",
+      },
+      icon: {
+        title: "Project icon",
+        description:
+          "Upload a PNG or JPEG. Paseo crops and downsizes it automatically; reset to use an icon found in the project.",
+        image: "Custom image",
+        choose: "Choose image",
+        reset: "Use discovered icon",
+        updatedToast: "Project icon updated",
+        errorFallback: "Couldn't update project icon",
+      },
       readFailures: {
         invalidTitle: "paseo.json couldn't be parsed",
         invalidDescription: "Fix the file on disk, then reload.",

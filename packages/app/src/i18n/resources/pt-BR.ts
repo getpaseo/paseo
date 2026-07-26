@@ -2130,6 +2130,16 @@ export const ptBR: TranslationResources = {
       noEditableTarget: "Não há uma cópia editável deste projeto em nenhum host conectado.",
       backToProjects: "Voltar para projetos",
       switchHost: "Trocar host",
+      onboarding: {
+        title: "Configuração do projeto com IA",
+        description:
+          "Analisa documentos e manifestos para preparar hooks, scripts e instruções. Nada é gravado até você revisar e salvar.",
+        generate: "Gerar rascunho",
+        generating: "Analisando projeto...",
+        generated:
+          "Rascunho gerado a partir de {{count}} arquivos. Revise as configurações e salve.",
+        failedFallback: "Falha na configuração do projeto.",
+      },
       rename: {
         renamedToast: "Projeto renomeado",
         errorFallback: "Não foi possível renomear projeto",
@@ -2139,6 +2149,15 @@ export const ptBR: TranslationResources = {
         saveLabel: "Salvar nome do projeto",
         cancelLabel: "Cancelar renomeação",
         reset: "Redefinir",
+      },
+      icon: {
+        title: "Ícone do projeto",
+        description: "Envie um PNG ou JPEG. O Paseo recorta e reduz automaticamente.",
+        image: "Imagem personalizada",
+        choose: "Escolher imagem",
+        reset: "Usar ícone detectado",
+        updatedToast: "Ícone do projeto atualizado",
+        errorFallback: "Não foi possível atualizar o ícone",
       },
       readFailures: {
         invalidTitle: "Não foi possível analisar paseo.json",

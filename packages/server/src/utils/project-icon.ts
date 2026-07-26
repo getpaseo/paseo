@@ -1,5 +1,7 @@
-import { readdir, readFile, stat } from "fs/promises";
+import { createHash } from "node:crypto";
+import { readdir, readFile, rm, stat } from "fs/promises";
 import { extname, join } from "path";
+import { writeFileAtomic } from "../server/atomic-file.js";
 
 /**
  * Icon file patterns to search for, in priority order.
@@ -56,9 +58,62 @@ export const IGNORED_DIRS = [
 export interface ProjectIcon {
   data: string;
   mimeType: string;
+  source?: "discovered" | "custom";
 }
 
 const MAX_ICON_SIZE = 32 * 1024; // 32KB max
+const MAX_CUSTOM_ICON_SIZE = 256 * 1024;
+const MAX_CUSTOM_ICON_DIMENSION = 256;
+
+function customProjectIconPath(paseoHome: string, projectDir: string): string {
+  const key = createHash("sha256").update(projectDir).digest("hex");
+  return join(paseoHome, "project-icons", `${key}.png`);
+}
+
+function validateCustomProjectIcon(buffer: Buffer): void {
+  if (buffer.length > MAX_CUSTOM_ICON_SIZE) {
+    throw new Error("Project icon must be smaller than 256KB after resizing.");
+  }
+  const dimensions = getPngDimensions(buffer);
+  if (
+    !dimensions ||
+    dimensions.width !== dimensions.height ||
+    dimensions.width < 1 ||
+    dimensions.width > MAX_CUSTOM_ICON_DIMENSION
+  ) {
+    throw new Error("Project icon must be a square PNG no larger than 256×256.");
+  }
+}
+
+export async function setCustomProjectIcon(
+  paseoHome: string,
+  projectDir: string,
+  data: string | null,
+): Promise<ProjectIcon | null> {
+  const iconPath = customProjectIconPath(paseoHome, projectDir);
+  if (data === null) {
+    await rm(iconPath, { force: true });
+    return null;
+  }
+
+  const buffer = Buffer.from(data, "base64");
+  validateCustomProjectIcon(buffer);
+  await writeFileAtomic(iconPath, buffer);
+  return { data: buffer.toString("base64"), mimeType: "image/png", source: "custom" };
+}
+
+async function getCustomProjectIcon(
+  paseoHome: string,
+  projectDir: string,
+): Promise<ProjectIcon | null> {
+  try {
+    const buffer = await readFile(customProjectIconPath(paseoHome, projectDir));
+    validateCustomProjectIcon(buffer);
+    return { data: buffer.toString("base64"), mimeType: "image/png", source: "custom" };
+  } catch {
+    return null;
+  }
+}
 
 interface ImageDimensions {
   width: number;
@@ -415,7 +470,16 @@ async function findDirRecursively(
  * @param projectDir - The root directory of the project to search
  * @returns The icon data with mime type, or null if not found
  */
-export async function getProjectIcon(projectDir: string): Promise<ProjectIcon | null> {
+export async function getProjectIcon(
+  projectDir: string,
+  paseoHome?: string,
+): Promise<ProjectIcon | null> {
+  if (paseoHome) {
+    const customIcon = await getCustomProjectIcon(paseoHome, projectDir);
+    if (customIcon) {
+      return customIcon;
+    }
+  }
   const iconPath = await findProjectIcon(projectDir);
   if (!iconPath) {
     return null;
@@ -436,7 +500,7 @@ export async function getProjectIcon(projectDir: string): Promise<ProjectIcon | 
     }
 
     const data = buffer.toString("base64");
-    return { data, mimeType };
+    return { data, mimeType, source: "discovered" };
   } catch {
     return null;
   }

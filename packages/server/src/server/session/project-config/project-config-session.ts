@@ -8,6 +8,11 @@ import {
   writePaseoConfigForEdit,
   type ProjectConfigRpcError,
 } from "../../../utils/paseo-config-file.js";
+import type { StructuredTextGeneration } from "../checkout/git-metadata-generator.js";
+import {
+  generateProjectOnboardingProposal,
+  ProjectOnboardingScanError,
+} from "./project-onboarding.js";
 
 export interface ProjectConfigSessionHost {
   emit(msg: SessionOutboundMessage): void;
@@ -16,6 +21,7 @@ export interface ProjectConfigSessionHost {
 export interface ProjectConfigSessionOptions {
   host: ProjectConfigSessionHost;
   projectRegistry: Pick<ProjectRegistry, "list">;
+  generation: StructuredTextGeneration;
   logger: pino.Logger;
 }
 
@@ -29,11 +35,13 @@ export interface ProjectConfigSessionOptions {
 export class ProjectConfigSession {
   private readonly host: ProjectConfigSessionHost;
   private readonly projectRegistry: Pick<ProjectRegistry, "list">;
+  private readonly generation: StructuredTextGeneration;
   private readonly logger: pino.Logger;
 
   constructor(options: ProjectConfigSessionOptions) {
     this.host = options.host;
     this.projectRegistry = options.projectRegistry;
+    this.generation = options.generation;
     this.logger = options.logger;
   }
 
@@ -116,6 +124,60 @@ export class ProjectConfigSession {
         revision: result.revision,
       },
     });
+  }
+
+  async handleGenerateProjectOnboardingRequest(
+    msg: Extract<SessionInboundMessage, { type: "project.onboarding.generate.request" }>,
+  ): Promise<void> {
+    const repoRoot = await this.resolveKnownProjectRoot(msg.repoRoot);
+    if (!repoRoot) {
+      this.host.emit({
+        type: "project.onboarding.generate.response",
+        payload: {
+          requestId: msg.requestId,
+          repoRoot: msg.repoRoot,
+          ok: false,
+          code: "project_not_found",
+          error: "Project is not registered on this host.",
+        },
+      });
+      return;
+    }
+
+    try {
+      const result = await generateProjectOnboardingProposal({
+        repoRoot,
+        existingConfig: msg.existingConfig,
+        generation: this.generation,
+      });
+      this.host.emit({
+        type: "project.onboarding.generate.response",
+        payload: {
+          requestId: msg.requestId,
+          repoRoot,
+          ok: true,
+          config: result.config,
+          scannedFiles: result.scannedFiles,
+        },
+      });
+    } catch (error) {
+      const code =
+        error instanceof ProjectOnboardingScanError ? "scan_failed" : "generation_failed";
+      this.logger.warn(
+        { err: error, repoRoot, requestId: msg.requestId, code },
+        "Project onboarding generation failed",
+      );
+      this.host.emit({
+        type: "project.onboarding.generate.response",
+        payload: {
+          requestId: msg.requestId,
+          repoRoot,
+          ok: false,
+          code,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+    }
   }
 
   private emitProjectConfigReadFailure(

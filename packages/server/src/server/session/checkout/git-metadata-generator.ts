@@ -49,6 +49,7 @@ export interface StructuredTextGenerationRequest<T> {
   schema: z.ZodType<T>;
   schemaName: string;
   agentTitle: string;
+  systemPrompt?: string;
 }
 
 type GitMetadataDiffSource = Pick<WorkspaceGitService, "getCheckoutDiff" | "resolveRepoRoot">;
@@ -182,7 +183,7 @@ export function createAgentStructuredTextGeneration(deps: {
   ) => ResolveStructuredGenerationProvidersOptions["currentSelection"];
 }): StructuredTextGeneration {
   return {
-    async generate({ cwd, prompt, schema, schemaName, agentTitle }) {
+    async generate({ cwd, prompt, schema, schemaName, agentTitle, systemPrompt }) {
       const providers = await resolveStructuredGenerationProviders({
         cwd,
         providerSnapshotManager: deps.providerSnapshotManager,
@@ -201,6 +202,7 @@ export function createAgentStructuredTextGeneration(deps: {
         agentConfigOverrides: {
           title: agentTitle,
           internal: true,
+          ...(systemPrompt ? { systemPrompt } : {}),
         },
       });
     },

@@ -1,12 +1,13 @@
 import type { Logger } from "pino";
 import type { ProviderUsage } from "../../server/messages.js";
-import { createProviderUsageFetchers } from "./manifest.js";
+import { createProviderUsageFetchers, type ClaudeUsageAccountProfile } from "./manifest.js";
 import type { ProviderApiFetch, ProviderUsageFetcher } from "./provider.js";
 import { unavailableUsage } from "./usage.js";
 
 export interface ProviderUsageServiceOptions {
   logger: Logger;
   fetchers?: ProviderUsageFetcher[];
+  getClaudeAccounts?: () => readonly ClaudeUsageAccountProfile[];
   fetch?: ProviderApiFetch;
   cacheTtlMs?: number;
   now?: () => number;
@@ -21,20 +22,25 @@ const DEFAULT_PROVIDER_USAGE_CACHE_TTL_MS = 5 * 60 * 1000;
 
 export class ProviderUsageService {
   private readonly logger: Logger;
-  private readonly fetchers: ProviderUsageFetcher[];
+  private readonly getFetchers: () => ProviderUsageFetcher[];
   private readonly cacheTtlMs: number;
   private readonly now: () => number;
   private cached: { fetchedAtMs: number; result: ProviderUsageListResult } | null = null;
   private inFlight: Promise<ProviderUsageListResult> | null = null;
+  private generation = 0;
 
   constructor(options: ProviderUsageServiceOptions) {
     this.logger = options.logger.child({ module: "provider-usage-service" });
-    this.fetchers =
-      options.fetchers ??
-      createProviderUsageFetchers({
-        logger: this.logger,
-        fetch: options.fetch,
-      });
+    this.getFetchers = options.fetchers
+      ? () => options.fetchers ?? []
+      : () =>
+          createProviderUsageFetchers(
+            {
+              logger: this.logger,
+              fetch: options.fetch,
+            },
+            options.getClaudeAccounts?.() ?? [],
+          );
     this.cacheTtlMs = options.cacheTtlMs ?? DEFAULT_PROVIDER_USAGE_CACHE_TTL_MS;
     this.now = options.now ?? Date.now;
   }
@@ -53,7 +59,7 @@ export class ProviderUsageService {
       return this.inFlight;
     }
 
-    const request = this.fetchFreshUsage(nowMs);
+    const request = this.fetchFreshUsage(nowMs, this.generation);
     this.inFlight = request;
     try {
       return await request;
@@ -64,10 +70,20 @@ export class ProviderUsageService {
     }
   }
 
-  private async fetchFreshUsage(nowMs: number): Promise<ProviderUsageListResult> {
-    const settled = await Promise.allSettled(this.fetchers.map((fetcher) => fetcher.fetchUsage()));
+  invalidate(): void {
+    this.generation += 1;
+    this.cached = null;
+    this.inFlight = null;
+  }
+
+  private async fetchFreshUsage(
+    nowMs: number,
+    generation: number,
+  ): Promise<ProviderUsageListResult> {
+    const fetchers = this.getFetchers();
+    const settled = await Promise.allSettled(fetchers.map((fetcher) => fetcher.fetchUsage()));
     const providers = settled.map((result, index) => {
-      const fetcher = this.fetchers[index];
+      const fetcher = fetchers[index];
       if (result.status === "fulfilled") {
         return result.value;
       }
@@ -78,12 +94,15 @@ export class ProviderUsageService {
       return unavailableUsage({
         providerId: fetcher.providerId,
         displayName: fetcher.displayName,
+        iconKey: fetcher.iconKey,
         error: result.reason instanceof Error ? result.reason.message : String(result.reason),
       });
     });
 
     const result = { fetchedAt: new Date(nowMs).toISOString(), providers };
-    this.cached = { fetchedAtMs: nowMs, result };
+    if (generation === this.generation) {
+      this.cached = { fetchedAtMs: nowMs, result };
+    }
     return result;
   }
 }

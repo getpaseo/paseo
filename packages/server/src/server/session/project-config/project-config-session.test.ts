@@ -6,6 +6,7 @@ import pino from "pino";
 import { ProjectConfigSession, type ProjectConfigSessionHost } from "./project-config-session.js";
 import type { PersistedProjectRecord } from "../../workspace-registry.js";
 import type { SessionOutboundMessage } from "../../messages.js";
+import type { StructuredTextGeneration } from "../checkout/git-metadata-generator.js";
 
 const tempDirs: string[] = [];
 
@@ -33,12 +34,18 @@ function projectRecord(rootPath: string, archivedAt: string | null = null): Pers
   };
 }
 
-function makeSubsystem(records: PersistedProjectRecord[]) {
+function makeSubsystem(
+  records: PersistedProjectRecord[],
+  generation: StructuredTextGeneration = {
+    generate: async <T>(): Promise<T> => ({}) as T,
+  },
+) {
   const emitted: SessionOutboundMessage[] = [];
   const host: ProjectConfigSessionHost = { emit: (msg) => emitted.push(msg) };
   const subsystem = new ProjectConfigSession({
     host,
     projectRegistry: { list: async () => records },
+    generation,
     logger: pino({ level: "silent" }),
   });
   return { subsystem, emitted };
@@ -226,5 +233,44 @@ describe("ProjectConfigSession", () => {
         },
       },
     ]);
+  });
+
+  test("onboarding returns an editable proposal without writing paseo.json", async () => {
+    const repoRoot = makeRoot();
+    writeFileSync(join(repoRoot, "README.md"), "Run npm ci before npm run dev.");
+    const generation: StructuredTextGeneration = {
+      generate: async <T>(): Promise<T> =>
+        ({
+          worktree: { setup: ["npm ci"] },
+          scripts: [{ name: "dev", command: "npm run dev", type: "service" }],
+        }) as T,
+    };
+    const { subsystem, emitted } = makeSubsystem([projectRecord(repoRoot)], generation);
+
+    await subsystem.handleGenerateProjectOnboardingRequest({
+      type: "project.onboarding.generate.request",
+      requestId: "onboard-1",
+      repoRoot,
+      existingConfig: {},
+    });
+
+    expect(emitted).toEqual([
+      {
+        type: "project.onboarding.generate.response",
+        payload: {
+          requestId: "onboard-1",
+          repoRoot,
+          ok: true,
+          config: {
+            worktree: { setup: ["npm ci"] },
+            scripts: {
+              dev: { command: "npm run dev", type: "service" },
+            },
+          },
+          scannedFiles: ["README.md"],
+        },
+      },
+    ]);
+    expect(() => realpathSync(join(repoRoot, "paseo.json"))).toThrow();
   });
 });

@@ -1119,8 +1119,6 @@ describe("normalizeClaudeAskUserQuestionUpdatedInput", () => {
 describe("ClaudeAgentClient.listImportableSessions", () => {
   test("scopes candidates to the requested cwd before applying the limit", async () => {
     const tmpConfigDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-import-"));
-    const previousConfigDir = process.env.CLAUDE_CONFIG_DIR;
-    process.env.CLAUDE_CONFIG_DIR = tmpConfigDir;
 
     try {
       const requestedCwd = path.join(tmpConfigDir, "requested-project");
@@ -1161,6 +1159,7 @@ describe("ClaudeAgentClient.listImportableSessions", () => {
 
       const client = new ClaudeAgentClient({
         logger: createTestLogger(),
+        runtimeSettings: { env: { CLAUDE_CONFIG_DIR: tmpConfigDir } },
         resolveBinary: async () => "/test/claude/bin",
       });
 
@@ -1177,11 +1176,6 @@ describe("ClaudeAgentClient.listImportableSessions", () => {
         ],
       );
     } finally {
-      if (previousConfigDir === undefined) {
-        delete process.env.CLAUDE_CONFIG_DIR;
-      } else {
-        process.env.CLAUDE_CONFIG_DIR = previousConfigDir;
-      }
       await fs.rm(tmpConfigDir, { recursive: true, force: true });
     }
   });

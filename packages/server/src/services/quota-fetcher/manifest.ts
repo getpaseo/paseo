@@ -12,6 +12,43 @@ import { KimiQuotaProvider } from "./providers/kimi.js";
 import { MiniMaxQuotaProvider } from "./providers/minimax.js";
 import { ZaiQuotaProvider } from "./providers/zai.js";
 
+export interface ClaudeUsageAccountProfile {
+  providerId: string;
+  displayName: string;
+  configDir: string;
+}
+
+export function resolveClaudeUsageAccountProfiles(
+  providers: Record<string, unknown>,
+): ClaudeUsageAccountProfile[] {
+  return Object.entries(providers).flatMap(([providerId, value]) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return [];
+    }
+    const provider = value as Record<string, unknown>;
+    if (provider["extends"] !== "claude") {
+      return [];
+    }
+    const env = provider["env"];
+    if (!env || typeof env !== "object" || Array.isArray(env)) {
+      return [];
+    }
+    const configDir = (env as Record<string, unknown>)["CLAUDE_CONFIG_DIR"];
+    if (typeof configDir !== "string" || configDir.trim().length === 0) {
+      return [];
+    }
+    const label = provider["label"];
+    return [
+      {
+        providerId,
+        displayName:
+          typeof label === "string" && label.trim().length > 0 ? label.trim() : providerId,
+        configDir: configDir.trim(),
+      },
+    ];
+  });
+}
+
 export const PROVIDER_USAGE_FETCHERS: readonly ProviderUsageFetcherManifestEntry[] = [
   {
     providerId: "claude",
@@ -57,6 +94,20 @@ export const PROVIDER_USAGE_FETCHERS: readonly ProviderUsageFetcherManifestEntry
 
 export function createProviderUsageFetchers(
   options: ProviderUsageFetcherFactoryOptions,
+  claudeAccounts: readonly ClaudeUsageAccountProfile[] = [],
 ): ProviderUsageFetcher[] {
-  return PROVIDER_USAGE_FETCHERS.map((entry) => entry.create(options));
+  return [
+    ...PROVIDER_USAGE_FETCHERS.map((entry) => entry.create(options)),
+    ...claudeAccounts.map(
+      (account) =>
+        new ClaudeQuotaProvider({
+          logger: options.logger,
+          fetch: options.fetch,
+          providerId: account.providerId,
+          displayName: account.displayName,
+          claudeHome: account.configDir,
+          useKeychain: false,
+        }),
+    ),
+  ];
 }

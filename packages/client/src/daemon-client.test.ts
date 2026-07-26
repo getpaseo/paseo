@@ -3248,6 +3248,63 @@ test("writes project config via correlated RPC and returns inline failures", asy
   });
 });
 
+test("generates a project onboarding draft via namespaced RPC", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const promise = client.generateProjectOnboarding(
+    "/repo/app",
+    { scripts: { test: { command: "npm test" } } },
+    "onboard-1",
+  );
+
+  expect(parseSentFrame(mock.sent[0])).toEqual({
+    type: "project.onboarding.generate.request",
+    requestId: "onboard-1",
+    repoRoot: "/repo/app",
+    existingConfig: { scripts: { test: { command: "npm test" } } },
+  });
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "project.onboarding.generate.response",
+      payload: {
+        requestId: "onboard-1",
+        repoRoot: "/repo/app",
+        ok: true,
+        config: {
+          worktree: { setup: ["npm ci"] },
+          scripts: { test: { command: "npm test" } },
+        },
+        scannedFiles: ["README.md", "package.json"],
+      },
+    }),
+  );
+
+  await expect(promise).resolves.toEqual({
+    requestId: "onboard-1",
+    repoRoot: "/repo/app",
+    ok: true,
+    config: {
+      worktree: { setup: ["npm ci"] },
+      scripts: { test: { command: "npm test" } },
+    },
+    scannedFiles: ["README.md", "package.json"],
+  });
+});
+
 test("requests directory suggestions via RPC", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();

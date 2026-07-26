@@ -2094,6 +2094,15 @@ export const ar: TranslationResources = {
       noEditableTarget: "ليس لدينا نسخة قابلة للتحرير من هذا المشروع على أي مضيف متصل.",
       backToProjects: "العودة إلى المشاريع",
       switchHost: "تبديل المضيف",
+      onboarding: {
+        title: "إعداد المشروع بالذكاء الاصطناعي",
+        description:
+          "يفحص مستندات المشروع وملفاته لإعداد الخطافات والبرامج النصية والتعليمات. لن تتم الكتابة حتى تراجع وتحفظ.",
+        generate: "إنشاء مسودة",
+        generating: "جارٍ فحص المشروع...",
+        generated: "تم إنشاء مسودة من {{count}} ملفات. راجع الإعدادات ثم احفظ.",
+        failedFallback: "فشل إعداد المشروع.",
+      },
       rename: {
         renamedToast: "تمت إعادة تسمية المشروع",
         errorFallback: "تعذرت إعادة تسمية المشروع",
@@ -2103,6 +2112,15 @@ export const ar: TranslationResources = {
         saveLabel: "احفظ اسم المشروع",
         cancelLabel: "إلغاء إعادة التسمية",
         reset: "إعادة ضبط",
+      },
+      icon: {
+        title: "أيقونة المشروع",
+        description: "حمّل صورة PNG أو JPEG. يقوم Paseo بقصها وتصغيرها تلقائيًا.",
+        image: "صورة مخصصة",
+        choose: "اختيار صورة",
+        reset: "استخدام الأيقونة المكتشفة",
+        updatedToast: "تم تحديث أيقونة المشروع",
+        errorFallback: "تعذر تحديث أيقونة المشروع",
       },
       readFailures: {
         invalidTitle: "تعذر تحليل paseo.json",

@@ -5,12 +5,24 @@ import { Pressable, Text, TextInput, View } from "react-native";
 import { router } from "expo-router";
 import { StyleSheet } from "react-native-unistyles";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Check, ChevronDown, MoreVertical, Pencil, Plus, X } from "lucide-react-native";
+import {
+  ArrowLeft,
+  Check,
+  ChevronDown,
+  ImagePlus,
+  MoreVertical,
+  Pencil,
+  Plus,
+  Sparkles,
+  Trash2,
+  X,
+} from "lucide-react-native";
 import { ProjectIconView } from "@/components/project-icon-view";
 import { HostPicker as SharedHostPicker, HostStatusDotSlot } from "@/components/hosts/host-picker";
 import type {
   PaseoConfigRaw,
   PaseoConfigRevision,
+  ProjectIcon,
   ProjectConfigRpcError,
 } from "@getpaseo/protocol/messages";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
@@ -31,8 +43,14 @@ import { SettingsGroup } from "@/screens/settings/settings-group";
 import { SettingsSection } from "@/screens/settings/settings-section";
 import { settingsStyles } from "@/styles/settings";
 import { useProjects } from "@/hooks/use-projects";
-import { useProjectIconDataByProjectKey } from "@/projects/project-icons";
+import {
+  projectIconQueryKey,
+  projectIconToDataUri,
+  useProjectIconQuery,
+} from "@/hooks/use-project-icon-query";
+import { useProjectIconPicker } from "@/hooks/use-project-icon-picker";
 import { useHostRuntimeClient, useHostRuntimeSnapshot } from "@/runtime/host-runtime";
+import { useHostFeature } from "@/runtime/host-features";
 import { useToast } from "@/contexts/toast-context";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import {
@@ -206,20 +224,11 @@ function ProjectSettingsBody({
   });
 
   const data = readQuery.data;
-  const projectIconTargets = useMemo(
-    () => [
-      {
-        serverId: selectedHost.serverId,
-        projectKey: project.projectKey,
-        iconWorkingDir: selectedHost.repoRoot,
-      },
-    ],
-    [project.projectKey, selectedHost.repoRoot, selectedHost.serverId],
-  );
-  const projectIconDataByKey = useProjectIconDataByProjectKey({
-    projects: projectIconTargets,
+  const projectIconQuery = useProjectIconQuery({
+    serverId: selectedHost.serverId,
+    cwd: selectedHost.repoRoot,
   });
-  const projectIconDataUri = projectIconDataByKey.get(project.projectKey) ?? null;
+  const projectIconDataUri = projectIconToDataUri(projectIconQuery.icon);
   const loadedConfig: PaseoConfigRaw | null = data?.ok ? (data.config ?? {}) : null;
   const loadedRevision: PaseoConfigRevision | null = data?.ok ? data.revision : null;
   const readError: ProjectConfigRpcError | null = data && !data.ok ? data.error : null;
@@ -229,6 +238,8 @@ function ProjectSettingsBody({
   }, [readQuery]);
 
   const hasMultipleHosts = hosts.length > 1;
+  const supportsProjectOnboarding = useHostFeature(selectedHost.serverId, "projectOnboarding");
+  const supportsProjectCustomIcon = useHostFeature(selectedHost.serverId, "projectCustomIcon");
 
   return (
     <View style={styles.body}>
@@ -246,6 +257,15 @@ function ProjectSettingsBody({
         <HostContext hosts={hosts} selectedHost={selectedHost} onSelectHost={onSelectHost} />
       </View>
 
+      {supportsProjectCustomIcon ? (
+        <ProjectIconSettings
+          client={client}
+          cwd={selectedHost.repoRoot}
+          serverId={selectedHost.serverId}
+          icon={projectIconQuery.icon}
+        />
+      ) : null}
+
       {renderContent({
         readQuery,
         loadedConfig,
@@ -257,6 +277,7 @@ function ProjectSettingsBody({
         onReload: handleReload,
         hasMultipleHosts,
         isHostGone,
+        supportsProjectOnboarding,
       })}
     </View>
   );
@@ -273,6 +294,7 @@ interface RenderContentInput {
   onReload: () => void;
   hasMultipleHosts: boolean;
   isHostGone: boolean;
+  supportsProjectOnboarding: boolean;
 }
 
 function renderContent({
@@ -286,6 +308,7 @@ function renderContent({
   onReload,
   hasMultipleHosts,
   isHostGone,
+  supportsProjectOnboarding,
 }: RenderContentInput) {
   if (readQuery.isLoading) {
     return (
@@ -339,6 +362,7 @@ function renderContent({
       queryKey={queryKey}
       client={client}
       onReload={onReload}
+      supportsProjectOnboarding={supportsProjectOnboarding}
     />
   );
 }
@@ -417,6 +441,14 @@ function errorToDetail(error: unknown): string | null {
   return null;
 }
 
+function onboardingAlertVariant(
+  result: { kind: "success" | "error" } | null,
+): "info" | "success" | "error" {
+  if (result?.kind === "error") return "error";
+  if (result?.kind === "success") return "success";
+  return "info";
+}
+
 interface ProjectConfigFormProps {
   baseConfig: PaseoConfigRaw;
   revision: PaseoConfigRevision | null;
@@ -424,6 +456,7 @@ interface ProjectConfigFormProps {
   queryKey: readonly [string, string, string];
   client: DaemonClient;
   onReload: () => void;
+  supportsProjectOnboarding: boolean;
 }
 
 function ProjectConfigForm({
@@ -433,6 +466,7 @@ function ProjectConfigForm({
   queryKey,
   client,
   onReload,
+  supportsProjectOnboarding,
 }: ProjectConfigFormProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -441,6 +475,39 @@ function ProjectConfigForm({
   const [draft, setDraft] = useState<ProjectConfigDraft>(() => configToDraft(baseConfig));
   const [writeError, setWriteError] = useState<ProjectConfigRpcError | null>(null);
   const [editingScriptId, setEditingScriptId] = useState<string | null>(null);
+  const [onboardingResult, setOnboardingResult] = useState<{
+    kind: "success" | "error";
+    message: string;
+  } | null>(null);
+
+  const onboardingMutation = useMutation({
+    mutationFn: () =>
+      client.generateProjectOnboarding(repoRoot, applyDraftToConfig({ draft, base: baseConfig })),
+    onMutate: () => {
+      setOnboardingResult(null);
+    },
+    onSuccess: (result) => {
+      if (!result.ok) {
+        setOnboardingResult({ kind: "error", message: result.error });
+        return;
+      }
+      setDraft(configToDraft(result.config));
+      setWriteError(null);
+      setOnboardingResult({
+        kind: "success",
+        message: t("settings.project.onboarding.generated", {
+          count: result.scannedFiles.length,
+        }),
+      });
+    },
+    onError: (error) => {
+      setOnboardingResult({
+        kind: "error",
+        message:
+          error instanceof Error ? error.message : t("settings.project.onboarding.failedFallback"),
+      });
+    },
+  });
 
   const saveMutation = useMutation({
     mutationFn: async (input: {
@@ -629,9 +696,37 @@ function ProjectConfigForm({
   const isStale = writeError?.code === "stale_project_config";
   const isWriteFailed = writeError?.code === "write_failed";
   const saveDisabled = saveMutation.isPending || isStale || hasInvalidScripts;
+  const handleGenerateOnboarding = useCallback(() => {
+    onboardingMutation.mutate();
+  }, [onboardingMutation]);
 
   return (
     <View>
+      {supportsProjectOnboarding ? (
+        <View style={styles.onboardingBlock}>
+          <Alert
+            testID="project-onboarding"
+            variant={onboardingAlertVariant(onboardingResult)}
+            title={t("settings.project.onboarding.title")}
+            description={onboardingResult?.message ?? t("settings.project.onboarding.description")}
+          >
+            <Button
+              testID="project-onboarding-generate"
+              variant="outline"
+              size="sm"
+              leftIcon={Sparkles}
+              loading={onboardingMutation.isPending}
+              disabled={onboardingMutation.isPending || saveMutation.isPending}
+              onPress={handleGenerateOnboarding}
+            >
+              {onboardingMutation.isPending
+                ? t("settings.project.onboarding.generating")
+                : t("settings.project.onboarding.generate")}
+            </Button>
+          </Alert>
+        </View>
+      ) : null}
+
       <SettingsGroup
         title={t("settings.project.worktree.title")}
         info={t("settings.project.worktree.info")}
@@ -927,6 +1022,94 @@ function ProjectTitleIcon({
       fallbackStyle={styles.titleIconFallback}
       textStyle={styles.titleIconFallbackText}
     />
+  );
+}
+
+function ProjectIconSettings({
+  client,
+  cwd,
+  serverId,
+  icon,
+}: {
+  client: DaemonClient;
+  cwd: string;
+  serverId: string;
+  icon: ProjectIcon | null;
+}) {
+  const { t } = useTranslation();
+  const toast = useToast();
+  const queryClient = useQueryClient();
+  const { pickProjectIcon } = useProjectIconPicker();
+  const mutation = useMutation({
+    mutationFn: (data: string | null) =>
+      client.updateProjectIcon(cwd, data ? { data, mimeType: "image/png" } : null),
+    onSuccess: (payload) => {
+      if (payload.error) {
+        throw new Error(payload.error);
+      }
+      queryClient.setQueryData(projectIconQueryKey(serverId, cwd), payload.icon);
+      toast.show(t("settings.project.icon.updatedToast"), { variant: "success" });
+    },
+    onError: (error) => {
+      toast.show(
+        error instanceof Error ? error.message : t("settings.project.icon.errorFallback"),
+        { variant: "error" },
+      );
+    },
+  });
+
+  const handleUpload = useCallback(async () => {
+    try {
+      const data = await pickProjectIcon();
+      if (data) {
+        mutation.mutate(data);
+      }
+    } catch (error) {
+      toast.show(
+        error instanceof Error ? error.message : t("settings.project.icon.errorFallback"),
+        { variant: "error" },
+      );
+    }
+  }, [mutation, pickProjectIcon, t, toast]);
+
+  const handleReset = useCallback(() => {
+    mutation.mutate(null);
+  }, [mutation]);
+
+  return (
+    <SettingsGroup
+      title={t("settings.project.icon.title")}
+      info={t("settings.project.icon.description")}
+      testID="project-icon-group"
+    >
+      <SettingsSection title={t("settings.project.icon.image")} flush>
+        <View style={styles.projectIconActions}>
+          <Button
+            testID="project-icon-upload"
+            variant="outline"
+            size="sm"
+            leftIcon={ImagePlus}
+            loading={mutation.isPending}
+            disabled={mutation.isPending}
+            onPress={handleUpload}
+          >
+            {t("settings.project.icon.choose")}
+          </Button>
+          {icon?.source === "custom" ? (
+            <Button
+              testID="project-icon-reset"
+              variant="outline"
+              size="sm"
+              leftIcon={Trash2}
+              disabled={mutation.isPending}
+              onPress={handleReset}
+            >
+              {t("settings.project.icon.reset")}
+            </Button>
+          ) : null}
+        </View>
+      </SettingsSection>
+    </SettingsGroup>
   );
 }
 
@@ -1345,6 +1528,14 @@ const styles = StyleSheet.create((theme) => ({
   },
   errorBlock: {
     marginTop: theme.spacing[2],
+  },
+  onboardingBlock: {
+    marginBottom: theme.spacing[4],
+  },
+  projectIconActions: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: theme.spacing[2],
   },
   emptyScripts: {
     color: theme.colors.foregroundMuted,

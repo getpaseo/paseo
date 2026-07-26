@@ -63,6 +63,7 @@ import type {
   PaseoWorktreeListResponse,
   PaseoWorktreeArchiveResponse,
   ProjectIconResponse,
+  ProjectIconUpdateResponse,
   ProjectAddResponse,
   ProjectCreateDirectoryResponse,
   OpenProjectResponseMessage,
@@ -448,6 +449,10 @@ type ReadProjectConfigPayload = Extract<
 type WriteProjectConfigPayload = Extract<
   SessionOutboundMessage,
   { type: "write_project_config_response" }
+>["payload"];
+type GenerateProjectOnboardingPayload = Extract<
+  SessionOutboundMessage,
+  { type: "project.onboarding.generate.response" }
 >["payload"];
 
 type ListCommandsPayload = ListCommandsResponse["payload"];
@@ -4273,6 +4278,22 @@ export class DaemonClient {
     });
   }
 
+  async updateProjectIcon(
+    cwd: string,
+    icon: { data: string; mimeType: "image/png" } | null,
+    requestId?: string,
+  ): Promise<ProjectIconUpdateResponse["payload"]> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "project.icon.update.request",
+        cwd,
+        icon,
+      },
+      responseType: "project.icon.update.response",
+    });
+  }
+
   // ============================================================================
   // Provider Models / Commands
   // ============================================================================
@@ -4464,6 +4485,22 @@ export class DaemonClient {
         expectedRevision: input.expectedRevision,
       },
       responseType: "write_project_config_response",
+    });
+  }
+
+  async generateProjectOnboarding(
+    repoRoot: string,
+    existingConfig: PaseoConfigRaw,
+    requestId?: string,
+  ): Promise<GenerateProjectOnboardingPayload> {
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "project.onboarding.generate.request",
+        repoRoot,
+        existingConfig,
+      },
+      timeout: 180_000,
     });
   }
 

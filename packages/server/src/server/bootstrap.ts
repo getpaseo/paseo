@@ -504,6 +504,19 @@ function createInitialMutableDaemonConfig(config: PaseoDaemonConfig): MutableDae
       if (override.additionalModels) {
         providerConfig.additionalModels = override.additionalModels;
       }
+      const claudeConfigDir = override.env?.["CLAUDE_CONFIG_DIR"];
+      if (
+        override.extends === "claude" &&
+        typeof claudeConfigDir === "string" &&
+        claudeConfigDir.trim().length > 0
+      ) {
+        Object.assign(providerConfig, {
+          extends: "claude",
+          label: override.label,
+          description: override.description,
+          env: { CLAUDE_CONFIG_DIR: claudeConfigDir },
+        });
+      }
       return [providerId, providerConfig];
     }),
   );

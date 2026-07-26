@@ -1183,6 +1183,13 @@ export const WriteProjectConfigRequestMessageSchema = z.object({
   expectedRevision: PaseoConfigRevisionSchema.nullable(),
 });
 
+export const GenerateProjectOnboardingRequestMessageSchema = z.object({
+  type: z.literal("project.onboarding.generate.request"),
+  requestId: z.string(),
+  repoRoot: z.string(),
+  existingConfig: PaseoConfigRawSchema,
+});
+
 // ============================================================================
 // Dictation Streaming (lossless, resumable)
 // ============================================================================
@@ -2204,6 +2211,18 @@ export const ProjectIconRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const ProjectIconUpdateRequestSchema = z.object({
+  type: z.literal("project.icon.update.request"),
+  cwd: z.string(),
+  icon: z
+    .object({
+      data: z.string(),
+      mimeType: z.literal("image/png"),
+    })
+    .nullable(),
+  requestId: z.string(),
+});
+
 export const FileDownloadTokenRequestSchema = z.object({
   type: z.literal("file_download_token_request"),
   cwd: z.string(),
@@ -2469,6 +2488,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   SetDaemonConfigRequestMessageSchema,
   ReadProjectConfigRequestMessageSchema,
   WriteProjectConfigRequestMessageSchema,
+  GenerateProjectOnboardingRequestMessageSchema,
   DictationStreamStartMessageSchema,
   DictationStreamChunkMessageSchema,
   DictationStreamFinishMessageSchema,
@@ -2549,6 +2569,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   FileUnsubscribeRequestSchema,
   FileWriteRequestSchema,
   ProjectIconRequestSchema,
+  ProjectIconUpdateRequestSchema,
   FileDownloadTokenRequestSchema,
   FileUploadRequestSchema,
   ClearAgentAttentionMessageSchema,
@@ -2830,6 +2851,10 @@ export const ServerInfoStatusPayloadSchema = z
         stableProjectIdentity: z.boolean().optional(),
         // COMPAT(workspaceScriptManagement): added in v0.1.105, remove gate after 2027-01-10.
         workspaceScriptManagement: z.boolean().optional(),
+        // COMPAT(projectOnboarding): added in v0.2.X, remove gate after 2027-01-26.
+        projectOnboarding: z.boolean().optional(),
+        // COMPAT(projectCustomIcon): added in v0.2.X, remove gate after 2027-01-26.
+        projectCustomIcon: z.boolean().optional(),
       })
       .optional(),
   })
@@ -3870,6 +3895,33 @@ export const WriteProjectConfigResponseMessageSchema = z.object({
   ]),
 });
 
+export const ProjectOnboardingErrorSchema = z.enum([
+  "project_not_found",
+  "scan_failed",
+  "generation_failed",
+]);
+
+export const GenerateProjectOnboardingResponseMessageSchema = z.object({
+  type: z.literal("project.onboarding.generate.response"),
+  // zod-aot 0.2.0 miscompiles boolean discriminators as string options.
+  payload: z.union([
+    z.object({
+      requestId: z.string(),
+      repoRoot: z.string(),
+      ok: z.literal(true),
+      config: PaseoConfigRawSchema,
+      scannedFiles: z.array(z.string()),
+    }),
+    z.object({
+      requestId: z.string(),
+      repoRoot: z.string(),
+      ok: z.literal(false),
+      code: ProjectOnboardingErrorSchema,
+      error: z.string(),
+    }),
+  ]),
+});
+
 export const AgentPermissionRequestMessageSchema = z.object({
   type: z.literal("agent_permission_request"),
   payload: z.object({
@@ -4718,10 +4770,21 @@ export const FileUpdateSchema = z.object({
 const ProjectIconSchema = z.object({
   data: z.string(),
   mimeType: z.string(),
+  source: z.enum(["discovered", "custom"]).optional(),
 });
 
 export const ProjectIconResponseSchema = z.object({
   type: z.literal("project_icon_response"),
+  payload: z.object({
+    cwd: z.string(),
+    icon: ProjectIconSchema.nullable(),
+    error: z.string().nullable(),
+    requestId: z.string(),
+  }),
+});
+
+export const ProjectIconUpdateResponseSchema = z.object({
+  type: z.literal("project.icon.update.response"),
   payload: z.object({
     cwd: z.string(),
     icon: ProjectIconSchema.nullable(),
@@ -4875,6 +4938,7 @@ export const ProviderUsageDetailSchema = z.object({
 
 export const ProviderUsageSchema = z.object({
   providerId: z.string(),
+  iconKey: z.string().optional(),
   displayName: z.string(),
   status: ProviderUsageStatusSchema,
   planLabel: z.string().nullable(),
@@ -5226,6 +5290,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   SetDaemonConfigResponseMessageSchema,
   ReadProjectConfigResponseMessageSchema,
   WriteProjectConfigResponseMessageSchema,
+  GenerateProjectOnboardingResponseMessageSchema,
   SetAgentModeResponseMessageSchema,
   SetAgentModelResponseMessageSchema,
   SetAgentThinkingResponseMessageSchema,
@@ -5284,6 +5349,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   FileWriteResponseSchema,
   FileUpdateSchema,
   ProjectIconResponseSchema,
+  ProjectIconUpdateResponseSchema,
   FileDownloadTokenResponseSchema,
   FileUploadResponseSchema,
   ListProviderModelsResponseMessageSchema,
@@ -5470,6 +5536,9 @@ export type ProviderUsageBalance = z.infer<typeof ProviderUsageBalanceSchema>;
 export type ProviderUsageDetail = z.infer<typeof ProviderUsageDetailSchema>;
 export type ProviderUsageListResponseMessage = z.infer<
   typeof ProviderUsageListResponseMessageSchema
+>;
+export type GenerateProjectOnboardingResponseMessage = z.infer<
+  typeof GenerateProjectOnboardingResponseMessageSchema
 >;
 export type ChatCreateResponse = z.infer<typeof ChatCreateResponseSchema>;
 export type ChatListResponse = z.infer<typeof ChatListResponseSchema>;
@@ -5699,7 +5768,9 @@ export type FileWriteResponse = z.infer<typeof FileWriteResponseSchema>;
 export type FileWriteResult = z.infer<typeof FileWriteResultSchema>;
 export type FileUpdate = z.infer<typeof FileUpdateSchema>;
 export type ProjectIconRequest = z.infer<typeof ProjectIconRequestSchema>;
+export type ProjectIconUpdateRequest = z.infer<typeof ProjectIconUpdateRequestSchema>;
 export type ProjectIconResponse = z.infer<typeof ProjectIconResponseSchema>;
+export type ProjectIconUpdateResponse = z.infer<typeof ProjectIconUpdateResponseSchema>;
 export type ProjectIcon = z.infer<typeof ProjectIconSchema>;
 export type FileDownloadTokenRequest = z.infer<typeof FileDownloadTokenRequestSchema>;
 export type FileDownloadTokenResponse = z.infer<typeof FileDownloadTokenResponseSchema>;

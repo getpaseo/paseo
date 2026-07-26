@@ -2149,6 +2149,16 @@ export const fr: TranslationResources = {
         "Nous n'avons pas de copie modifiable de ce projet sur aucun hôte connecté.",
       backToProjects: "Retour aux projets",
       switchHost: "Changer d'hôte",
+      onboarding: {
+        title: "Configuration du projet par IA",
+        description:
+          "Analyse les documents et manifestes du projet pour préparer les hooks, scripts et instructions. Rien n'est écrit avant votre validation.",
+        generate: "Générer un brouillon",
+        generating: "Analyse du projet...",
+        generated:
+          "Brouillon généré à partir de {{count}} fichiers. Vérifiez les réglages, puis enregistrez.",
+        failedFallback: "La configuration du projet a échoué.",
+      },
       rename: {
         renamedToast: "Projet renommé",
         errorFallback: "Impossible de renommer le projet",
@@ -2158,6 +2168,15 @@ export const fr: TranslationResources = {
         saveLabel: "Enregistrer le nom du projet",
         cancelLabel: "Annuler le changement de nom",
         reset: "Réinitialiser",
+      },
+      icon: {
+        title: "Icône du projet",
+        description: "Importez un PNG ou JPEG. Paseo le recadre et le réduit automatiquement.",
+        image: "Image personnalisée",
+        choose: "Choisir une image",
+        reset: "Utiliser l’icône détectée",
+        updatedToast: "Icône du projet mise à jour",
+        errorFallback: "Impossible de mettre à jour l’icône",
       },
       readFailures: {
         invalidTitle: "paseo.json n'a pas pu être analysé",

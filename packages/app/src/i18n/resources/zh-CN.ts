@@ -2068,6 +2068,15 @@ export const zhCN: TranslationResources = {
       noEditableTarget: "任何已连接 Host 上都没有这个 Project 的可编辑副本。",
       backToProjects: "返回 Projects",
       switchHost: "切换 Host",
+      onboarding: {
+        title: "AI 项目设置",
+        description:
+          "扫描项目文档和清单，生成工作树钩子、脚本和元数据说明草稿。审核并保存前不会写入文件。",
+        generate: "生成草稿",
+        generating: "正在扫描项目...",
+        generated: "已根据 {{count}} 个文件生成草稿。请审核以下设置并保存。",
+        failedFallback: "项目设置失败。",
+      },
       rename: {
         renamedToast: "Project 已重命名",
         errorFallback: "无法重命名 Project",
@@ -2077,6 +2086,15 @@ export const zhCN: TranslationResources = {
         saveLabel: "保存 Project 名称",
         cancelLabel: "取消重命名",
         reset: "重置",
+      },
+      icon: {
+        title: "项目图标",
+        description: "上传 PNG 或 JPEG，Paseo 会自动裁剪并缩小。",
+        image: "自定义图片",
+        choose: "选择图片",
+        reset: "使用检测到的图标",
+        updatedToast: "项目图标已更新",
+        errorFallback: "无法更新项目图标",
       },
       readFailures: {
         invalidTitle: "无法解析 paseo.json",

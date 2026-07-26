@@ -14,6 +14,7 @@ import { KimiQuotaProvider } from "./providers/kimi.js";
 import { MiniMaxQuotaProvider } from "./providers/minimax.js";
 import { ZaiQuotaProvider } from "./providers/zai.js";
 import { ProviderUsageService } from "./service.js";
+import { resolveClaudeUsageAccountProfiles } from "./manifest.js";
 
 function writeClaudeCredentials(
   dir: string,
@@ -140,6 +141,42 @@ function findProvider(result: { providers: ProviderUsage[] }, providerId: string
 }
 
 describe("ProviderUsageService", () => {
+  it("starts all provider usage requests in parallel", async () => {
+    const started: string[] = [];
+    const resolvers = new Map<string, (usage: ProviderUsage) => void>();
+    const fetcher = (providerId: string): ProviderUsageFetcher => ({
+      providerId,
+      displayName: providerId,
+      fetchUsage: () => {
+        started.push(providerId);
+        return new Promise((resolve) => resolvers.set(providerId, resolve));
+      },
+    });
+    const service = new ProviderUsageService({
+      logger: createLogger(),
+      fetchers: [fetcher("claude-work"), fetcher("claude-personal")],
+    });
+
+    const resultPromise = service.listUsage();
+
+    expect(started).toEqual(["claude-work", "claude-personal"]);
+    for (const providerId of started) {
+      resolvers.get(providerId)?.({
+        providerId,
+        displayName: providerId,
+        status: "available",
+        planLabel: "Max",
+        windows: [],
+      });
+    }
+    await expect(resultPromise).resolves.toMatchObject({
+      providers: [
+        { providerId: "claude-work", status: "available" },
+        { providerId: "claude-personal", status: "available" },
+      ],
+    });
+  });
+
   it("returns arbitrary registered providers and windows as normalized usage data", async () => {
     const service = new ProviderUsageService({
       logger: createLogger(),
@@ -301,6 +338,32 @@ describe("ProviderUsageService", () => {
         },
       ],
     });
+  });
+});
+
+describe("resolveClaudeUsageAccountProfiles", () => {
+  it("discovers only Claude-derived providers with isolated config directories", () => {
+    expect(
+      resolveClaudeUsageAccountProfiles({
+        "claude-work": {
+          extends: "claude",
+          label: "Claude Work",
+          env: { CLAUDE_CONFIG_DIR: "/accounts/work" },
+        },
+        "claude-zai": {
+          extends: "claude",
+          label: "Z.AI",
+          env: { ANTHROPIC_BASE_URL: "https://example.test" },
+        },
+        codex: { enabled: true },
+      }),
+    ).toEqual([
+      {
+        providerId: "claude-work",
+        displayName: "Claude Work",
+        configDir: "/accounts/work",
+      },
+    ]);
   });
 });
 

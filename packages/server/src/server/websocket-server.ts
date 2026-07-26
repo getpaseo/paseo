@@ -76,6 +76,7 @@ import {
   type WebSocketRuntimeDiagnosticSnapshot,
 } from "./websocket/runtime-metrics.js";
 import { ProviderUsageService } from "../services/quota-fetcher/service.js";
+import { resolveClaudeUsageAccountProfiles } from "../services/quota-fetcher/manifest.js";
 import { getProcessMemoryDiagnostics, getProcessUptimeSeconds } from "./process-diagnostics.js";
 import {
   CLIENT_SHUTDOWN_RPC_REASON,
@@ -653,6 +654,7 @@ export class VoiceAssistantWebSocketServer {
         { removeProviders: details.removedProviders },
       );
       this.agentManager.updateProviderRegistry(nextAgentManagerState);
+      this.providerUsageService.invalidate();
       this.broadcastDaemonConfigChanged(config);
     });
 
@@ -669,6 +671,8 @@ export class VoiceAssistantWebSocketServer {
 
     this.providerUsageService = new ProviderUsageService({
       logger: this.logger,
+      getClaudeAccounts: () =>
+        resolveClaudeUsageAccountProfiles(this.daemonConfigStore.get().providers),
     });
 
     this.wss = this.createWebSocketServer(server, wsConfig, auth);
@@ -1547,6 +1551,10 @@ export class VoiceAssistantWebSocketServer {
         stableProjectIdentity: true,
         // COMPAT(workspaceScriptManagement): added in v0.1.105, remove gate after 2027-01-10.
         workspaceScriptManagement: true,
+        // COMPAT(projectOnboarding): added in v0.2.X, remove gate after 2027-01-26.
+        projectOnboarding: true,
+        // COMPAT(projectCustomIcon): added in v0.2.X, remove gate after 2027-01-26.
+        projectCustomIcon: true,
       },
     };
   }

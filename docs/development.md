@@ -230,6 +230,8 @@ for machine-readable output.
 
 ## paseo.json service scripts
 
+Project Settings can scan bounded project docs/manifests and generate a `paseo.json` draft through the configured structured-generation providers. Generation only updates the form; the file is written after review via Save.
+
 `worktree.setup` and `worktree.teardown` accept either a multiline shell script or an array
 of commands. Both run sequentially.
 

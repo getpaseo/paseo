@@ -6,6 +6,7 @@ export type ProviderApiFetch = typeof fetch;
 export interface ProviderUsageFetcher {
   readonly providerId: string;
   readonly displayName: string;
+  readonly iconKey?: string;
   fetchUsage(): Promise<ProviderUsage>;
 }
 

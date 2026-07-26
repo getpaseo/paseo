@@ -33,10 +33,12 @@ export function fetchProviderApi(
 export function unavailableUsage(provider: {
   providerId: string;
   displayName: string;
+  iconKey?: string;
   error?: string | null;
 }): ProviderUsage {
   return {
     providerId: provider.providerId,
+    ...(provider.iconKey ? { iconKey: provider.iconKey } : {}),
     displayName: provider.displayName,
     status: provider.error ? "error" : "unavailable",
     planLabel: null,

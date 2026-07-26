@@ -90,8 +90,11 @@ interface ClaudeCredentialRecord {
 
 interface ClaudeQuotaProviderOptions {
   logger: Logger;
+  providerId?: string;
+  displayName?: string;
   claudeHome?: string;
   claudeKeychainReader?: () => Promise<unknown | null>;
+  useKeychain?: boolean;
   platform?: typeof process.platform;
   fetch?: ProviderApiFetch;
 }
@@ -313,20 +316,28 @@ async function readClaudeKeychainCredentials(): Promise<unknown | null> {
 }
 
 export class ClaudeQuotaProvider implements ProviderUsageFetcher {
-  readonly providerId = "claude";
-  readonly displayName = "Claude";
+  readonly iconKey = "claude";
+  readonly providerId: string;
+  readonly displayName: string;
 
   private readonly logger: Logger;
   private readonly claudeHome: string;
   private readonly readKeychainCredentials: () => Promise<unknown | null>;
+  private readonly useKeychain: boolean;
   private readonly platform: typeof process.platform;
   private readonly fetchApi: ProviderApiFetch;
 
   constructor(options: ClaudeQuotaProviderOptions) {
-    this.logger = options.logger.child({ module: "claude-quota-provider" });
+    this.providerId = options.providerId ?? "claude";
+    this.displayName = options.displayName ?? "Claude";
+    this.logger = options.logger.child({
+      module: "claude-quota-provider",
+      providerId: this.providerId,
+    });
     this.claudeHome =
       options.claudeHome || process.env["CLAUDE_HOME"] || join(homedir(), ".claude");
     this.readKeychainCredentials = options.claudeKeychainReader ?? readClaudeKeychainCredentials;
+    this.useKeychain = options.useKeychain ?? true;
     this.platform = options.platform ?? process.platform;
     this.fetchApi = options.fetch ?? fetch;
   }
@@ -388,6 +399,7 @@ export class ClaudeQuotaProvider implements ProviderUsageFetcher {
 
     return {
       providerId: this.providerId,
+      iconKey: this.iconKey,
       displayName: this.displayName,
       status: "available",
       planLabel: plan,
@@ -443,7 +455,7 @@ export class ClaudeQuotaProvider implements ProviderUsageFetcher {
       }
     }
 
-    if (this.platform === "darwin") {
+    if (this.useKeychain && this.platform === "darwin") {
       const creds = ClaudeCredentialsSchema.safeParse(await this.readKeychainCredentials());
       const oauth = creds.success ? creds.data.claudeAiOauth : undefined;
       if (oauth?.accessToken) {

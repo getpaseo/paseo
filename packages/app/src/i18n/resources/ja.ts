@@ -2116,6 +2116,16 @@ export const ja: TranslationResources = {
         "接続されているホストのどれにもこのプロジェクトの編集可能なコピーがありません。",
       backToProjects: "プロジェクトに戻る",
       switchHost: "ホストを切り替え",
+      onboarding: {
+        title: "AI プロジェクト設定",
+        description:
+          "ドキュメントとマニフェストを解析してフック、スクリプト、指示の下書きを作成します。確認して保存するまで書き込みません。",
+        generate: "下書きを生成",
+        generating: "プロジェクトを解析中...",
+        generated:
+          "{{count}} 個のファイルから下書きを生成しました。設定を確認して保存してください。",
+        failedFallback: "プロジェクト設定に失敗しました。",
+      },
       rename: {
         renamedToast: "プロジェクト名を変更しました",
         errorFallback: "プロジェクト名を変更できませんでした",
@@ -2125,6 +2135,15 @@ export const ja: TranslationResources = {
         saveLabel: "プロジェクト名を保存",
         cancelLabel: "名前変更をキャンセル",
         reset: "リセット",
+      },
+      icon: {
+        title: "プロジェクトアイコン",
+        description: "PNGまたはJPEGを選択すると、Paseoが自動で切り抜き・縮小します。",
+        image: "カスタム画像",
+        choose: "画像を選択",
+        reset: "検出したアイコンを使用",
+        updatedToast: "プロジェクトアイコンを更新しました",
+        errorFallback: "アイコンを更新できませんでした",
       },
       readFailures: {
         invalidTitle: "paseo.jsonを解析できませんでした",

@@ -224,6 +224,38 @@ describe("WorkspaceFilesSession", () => {
     expect(message.payload.error).toBeNull();
   });
 
+  test("stores and clears a custom project icon", async () => {
+    const cwd = makeDir("workspace-files-custom-icon-");
+    const { subsystem, emitted } = makeSubsystem();
+    const png = Buffer.alloc(24);
+    png.set([0x89, 0x50, 0x4e, 0x47], 0);
+    png.writeUInt32BE(1, 16);
+    png.writeUInt32BE(1, 20);
+
+    await subsystem.handleProjectIconUpdateRequest({
+      type: "project.icon.update.request",
+      cwd,
+      icon: { data: png.toString("base64"), mimeType: "image/png" },
+      requestId: "req-icon-set",
+    });
+    await subsystem.handleProjectIconUpdateRequest({
+      type: "project.icon.update.request",
+      cwd,
+      icon: null,
+      requestId: "req-icon-clear",
+    });
+
+    expect(emitted).toHaveLength(2);
+    expect(emitted[0]).toMatchObject({
+      type: "project.icon.update.response",
+      payload: { icon: { source: "custom" }, error: null },
+    });
+    expect(emitted[1]).toMatchObject({
+      type: "project.icon.update.response",
+      payload: { icon: null, error: null },
+    });
+  });
+
   test("round-trips an upload through transfer frames", async () => {
     const { subsystem, emitted, paseoHome } = makeSubsystem();
 

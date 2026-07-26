@@ -2145,6 +2145,16 @@ export const es: TranslationResources = {
       noEditableTarget: "No tenemos una copia editable de este proyecto en ningún host conectado.",
       backToProjects: "Volver a proyectos",
       switchHost: "Cambiar de anfitrión",
+      onboarding: {
+        title: "Configuración del proyecto con IA",
+        description:
+          "Analiza documentos y manifiestos para preparar hooks, scripts e instrucciones. No se escribe nada hasta que revises y guardes.",
+        generate: "Generar borrador",
+        generating: "Analizando proyecto...",
+        generated:
+          "Borrador generado a partir de {{count}} archivos. Revisa los ajustes y guárdalos.",
+        failedFallback: "Falló la configuración del proyecto.",
+      },
       rename: {
         renamedToast: "Proyecto renombrado",
         errorFallback: "No se pudo cambiar el nombre del proyecto",
@@ -2154,6 +2164,15 @@ export const es: TranslationResources = {
         saveLabel: "Guardar nombre del proyecto",
         cancelLabel: "Cancelar cambio de nombre",
         reset: "Reiniciar",
+      },
+      icon: {
+        title: "Icono del proyecto",
+        description: "Sube un PNG o JPEG. Paseo lo recorta y reduce automáticamente.",
+        image: "Imagen personalizada",
+        choose: "Elegir imagen",
+        reset: "Usar icono detectado",
+        updatedToast: "Icono del proyecto actualizado",
+        errorFallback: "No se pudo actualizar el icono",
       },
       readFailures: {
         invalidTitle: "paseo.json no se pudo analizar",

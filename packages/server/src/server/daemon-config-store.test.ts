@@ -15,6 +15,8 @@ describe("applyMutableProviderConfigToOverrides", () => {
             extends: "acp",
             label: "Gemini",
             command: ["gemini", "--acp"],
+            env: { GEMINI_API_KEY: "secret" },
+            params: { transport: "stdio" },
           },
         },
         {
@@ -22,6 +24,7 @@ describe("applyMutableProviderConfigToOverrides", () => {
             enabled: false,
             description: "Gemini ACP",
             env: { GEMINI_AUTO_UPDATE: "0" },
+            params: { account: "work" },
           },
           claude: {
             additionalModels: [
@@ -39,7 +42,8 @@ describe("applyMutableProviderConfigToOverrides", () => {
         label: "Gemini",
         description: "Gemini ACP",
         command: ["gemini", "--acp"],
-        env: { GEMINI_AUTO_UPDATE: "0" },
+        env: { GEMINI_API_KEY: "secret", GEMINI_AUTO_UPDATE: "0" },
+        params: { transport: "stdio", account: "work" },
         enabled: false,
       },
       claude: {

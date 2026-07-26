@@ -55,6 +55,7 @@ import {
 } from "@/runtime/host-runtime";
 import { ProvidersSection } from "@/screens/settings/providers-section";
 import { ProviderUsageSettingsSection } from "@/provider-usage/settings-section";
+import { ClaudeAccountsSettingsSection } from "@/provider-usage/claude-accounts-section";
 import { useProviderUsage } from "@/provider-usage/use-provider-usage";
 import { SettingsSection } from "@/screens/settings/settings-section";
 import { useSessionStore } from "@/stores/session-store";
@@ -335,6 +336,7 @@ export function HostUsagePage({ serverId }: { serverId: string }) {
 
   return (
     <View>
+      <ClaudeAccountsSettingsSection serverId={serverId} onAccountsChanged={refreshProviderUsage} />
       <ProviderUsageSettingsSection view={providerUsageView} onRefresh={handleRefresh} />
     </View>
   );

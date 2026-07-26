@@ -25,7 +25,7 @@ import {
   writeExplorerFile,
 } from "../../file-explorer/service.js";
 import { workspaceFileObserver, type FileObserver } from "../../file-explorer/observer.js";
-import { getProjectIcon } from "../../../utils/project-icon.js";
+import { getProjectIcon, setCustomProjectIcon } from "../../../utils/project-icon.js";
 
 /**
  * What a workspace file-access request reaches outside its own domain: the
@@ -60,12 +60,14 @@ export class WorkspaceFilesSession {
   private readonly logger: pino.Logger;
   private readonly fileUploads: FileUploadStore;
   private readonly fileObserver: FileObserver;
+  private readonly paseoHome: string;
   private readonly fileSubscriptions = new Map<string, () => void>();
 
   constructor(options: WorkspaceFilesSessionOptions) {
     this.host = options.host;
     this.downloadTokenStore = options.downloadTokenStore;
     this.logger = options.logger;
+    this.paseoHome = options.paseoHome;
     this.fileUploads = new FileUploadStore({ paseoHome: options.paseoHome });
     this.fileObserver = options.fileObserver ?? workspaceFileObserver;
   }
@@ -264,7 +266,7 @@ export class WorkspaceFilesSession {
     const { cwd, requestId } = request;
 
     try {
-      const icon = await getProjectIcon(cwd);
+      const icon = await getProjectIcon(cwd, this.paseoHome);
       this.host.emit({
         type: "project_icon_response",
         payload: {
@@ -283,6 +285,25 @@ export class WorkspaceFilesSession {
           error: getErrorMessage(error),
           requestId,
         },
+      });
+    }
+  }
+
+  async handleProjectIconUpdateRequest(
+    request: Extract<SessionInboundMessage, { type: "project.icon.update.request" }>,
+  ): Promise<void> {
+    const { cwd, icon, requestId } = request;
+    try {
+      await setCustomProjectIcon(this.paseoHome, cwd, icon?.data ?? null);
+      const resolvedIcon = await getProjectIcon(cwd, this.paseoHome);
+      this.host.emit({
+        type: "project.icon.update.response",
+        payload: { cwd, icon: resolvedIcon, error: null, requestId },
+      });
+    } catch (error) {
+      this.host.emit({
+        type: "project.icon.update.response",
+        payload: { cwd, icon: null, error: getErrorMessage(error), requestId },
       });
     }
   }
