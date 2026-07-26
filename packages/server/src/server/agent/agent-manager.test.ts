@@ -7947,7 +7947,7 @@ test("collectIdleAgents retains managed descendant activity after explicit child
     expect(restoredDescendantIdleWindow).toEqual({ collected: [], failures: [] });
 
     await resumedManager.collectIdleAgents({
-      cutoff: new Date(childUpdatedAt.getTime() + 1),
+      cutoff: new Date(Date.now() + 1_000),
       protectedAgentIds: new Set(),
     });
     expect(resumedManager.getAgent(parent.id)).toBeNull();
