@@ -1324,6 +1324,44 @@ export const ar: TranslationResources = {
         title: "الصق رابط الاقتران",
         description: "اتصال التتابع المشفر.",
       },
+      ssh: {
+        title: "SSH",
+        description: "الاتصال بمضيف بعيد عبر نفق SSH.",
+      },
+    },
+    ssh: {
+      prompt: {
+        passphrase: "عبارة مرور مفتاح SSH",
+        password: "كلمة مرور SSH",
+        submit: "فتح",
+        cancel: "إلغاء",
+        secret: "كلمة المرور",
+      },
+      title: "اتصال SSH",
+      helper:
+        "اتصل بخادم Paseo بعيد عبر SSH. سيقوم Paseo بتثبيت الخدمة وتشغيلها على المضيف البعيد إذا لم تكن قيد التشغيل.",
+      fields: {
+        host: "المضيف",
+        port: "المنفذ",
+        user: "المستخدم",
+        optional: "اختياري",
+      },
+      placeholders: {
+        host: "server.example.com",
+        port: "22",
+        user: "اسم المستخدم",
+      },
+      actions: {
+        cancel: "إلغاء",
+        connect: "اتصال",
+        connecting: "جارٍ الاتصال...",
+      },
+      errors: {
+        hostRequired: "المضيف مطلوب",
+        invalidPort: "يجب أن يكون المنفذ بين 1 و65535",
+        cancelled: "تم إلغاء الاتصال.",
+        desktopOnly: "تتطلب اتصالات SSH تطبيق Paseo لسطح المكتب.",
+      },
     },
     direct: {
       title: "اتصال مباشر",

@@ -64,6 +64,30 @@ CORS is not a complete security boundary. It controls which browser origins can 
 
 Paseo validates the `Host` header on every HTTP request and every WebSocket upgrade against an allowlist (Vite-style semantics). By default, only `localhost`, `*.localhost`, and any literal IP address (IPv4 or IPv6) are accepted. Additional hostnames can be configured via `hostnames` in `config.json` or the `PASEO_HOSTNAMES` env var (comma-separated; entries beginning with `.` match a domain and its subdomains; the value `true` disables the allowlist entirely). Requests with unrecognized hosts are rejected with `403 Host not allowed`.
 
+## SSH tunnels
+
+The CLI and desktop app can reach a daemon on another machine over `ssh -L`
+(see [docs/ssh.md](docs/ssh.md)). The remote daemon binds `127.0.0.1` and is
+launched with `--no-relay --no-mcp`, so the tunnel is the only path to it, and
+SSH provides the authentication and transport encryption.
+
+Two properties worth stating explicitly:
+
+**Host keys are trust-on-first-use.** Connections use
+`StrictHostKeyChecking=accept-new`: an unknown host key is accepted silently,
+a _changed_ one still fails. The desktop UI has no way to present a fingerprint
+for confirmation, so a first connection made from the GUI accepts the key
+without showing it. Connect once from the CLI if you want to verify a
+fingerprint by hand.
+
+**The desktop strips `Origin` for tunneled WebSocket upgrades.** A renderer's
+origin can never match a tunnel's ephemeral loopback port, so the daemon's
+same-origin check would reject every tunneled connection. The header is removed
+only for ports the main process is currently forwarding — never for loopback
+generally, which would also disable the check for a directly-connected local
+daemon. Untrusted web content runs in a separate Electron session
+(`PASEO_BROWSER_PROFILE_PARTITION`) that the rule is not installed on.
+
 ## Agent authentication
 
 Paseo wraps agent CLIs (Claude Code, Codex, OpenCode) but does not manage their authentication. Each agent provider handles its own credentials. Paseo never stores or transmits provider API keys. Agents run in your user context with your existing credentials.

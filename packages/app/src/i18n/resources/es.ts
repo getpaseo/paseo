@@ -1365,6 +1365,44 @@ export const es: TranslationResources = {
         title: "Pegar enlace de emparejamiento",
         description: "Conexión de retransmisión cifrada.",
       },
+      ssh: {
+        title: "SSH",
+        description: "Conéctate a un host remoto a través de un túnel SSH.",
+      },
+    },
+    ssh: {
+      prompt: {
+        passphrase: "Frase de contraseña de la clave SSH",
+        password: "Contraseña SSH",
+        submit: "Desbloquear",
+        cancel: "Cancelar",
+        secret: "Contraseña",
+      },
+      title: "Conexión SSH",
+      helper:
+        "Conéctate a un daemon de Paseo remoto por SSH. Paseo instalará e iniciará el daemon en el host remoto si no está en ejecución.",
+      fields: {
+        host: "Host",
+        port: "Puerto",
+        user: "Usuario",
+        optional: "Opcional",
+      },
+      placeholders: {
+        host: "servidor.ejemplo.com",
+        port: "22",
+        user: "usuario",
+      },
+      actions: {
+        cancel: "Cancelar",
+        connect: "Conectar",
+        connecting: "Conectando...",
+      },
+      errors: {
+        hostRequired: "El host es obligatorio",
+        invalidPort: "El puerto debe estar entre 1 y 65535",
+        cancelled: "Conexión cancelada.",
+        desktopOnly: "Las conexiones SSH requieren la aplicación de escritorio de Paseo.",
+      },
     },
     direct: {
       title: "Conexión directa",

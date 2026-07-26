@@ -1307,6 +1307,44 @@ export const zhCN: TranslationResources = {
         title: "粘贴配对链接",
         description: "加密 relay 连接。",
       },
+      ssh: {
+        title: "SSH",
+        description: "通过 SSH 隧道连接到远程主机。",
+      },
+    },
+    ssh: {
+      prompt: {
+        passphrase: "SSH 密钥口令",
+        password: "SSH 密码",
+        submit: "解锁",
+        cancel: "取消",
+        secret: "密码",
+      },
+      title: "SSH 连接",
+      helper:
+        "通过 SSH 连接到远程 Paseo 守护进程。如果守护进程未运行，Paseo 会在远程主机上安装并启动它。",
+      fields: {
+        host: "主机",
+        port: "端口",
+        user: "用户",
+        optional: "可选",
+      },
+      placeholders: {
+        host: "server.example.com",
+        port: "22",
+        user: "用户名",
+      },
+      actions: {
+        cancel: "取消",
+        connect: "连接",
+        connecting: "连接中...",
+      },
+      errors: {
+        hostRequired: "请填写主机",
+        invalidPort: "端口必须在 1 到 65535 之间",
+        cancelled: "连接已取消。",
+        desktopOnly: "SSH 连接需要 Paseo 桌面应用。",
+      },
     },
     direct: {
       title: "直接连接",

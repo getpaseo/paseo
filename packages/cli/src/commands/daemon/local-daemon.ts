@@ -7,17 +7,19 @@ import treeKill from "tree-kill";
 import { tryConnectToDaemon } from "../../utils/client.js";
 
 /**
- * Detect whether `systemd-run --user` is available. When it is, wrapping the
- * daemon launch in `systemd-run --user --scope` moves the daemon into a new
- * cgroup scope that survives the originating session (e.g. an SSH session)
- * closing. Without this, systemd-logind with `KillUserProcesses=yes` kills the
- * daemon when the SSH session that started it ends.
+ * Detect whether `systemd-run --user` is available.
  *
- * Requires `loginctl enable-linger` so the user's systemd instance persists
- * after the last session closes. Without linger, the user manager is stopped
- * when the session ends, killing the scope along with it.
+ * A detached daemon has to outlive the session that started it. Under
+ * systemd-logind with `KillUserProcesses=yes` it does not: the daemon inherits
+ * the launching session's cgroup and is killed when that session ends —
+ * closing an SSH connection, logging out of a desktop session, or exiting the
+ * terminal that ran `paseo daemon start`. `systemd-run --user --scope` moves
+ * the daemon into its own transient scope so it survives all of those.
+ *
+ * Pairs with `loginctl enable-linger`: without linger the user's systemd
+ * instance is stopped at last logout, taking the scope with it.
  */
-function isSystemdRunUserAvailable(): boolean {
+function detectSystemdScopeSupport(): boolean {
   if (process.platform !== "linux") return false;
   if (!process.env.XDG_RUNTIME_DIR) return false;
   try {
@@ -25,6 +27,19 @@ function isSystemdRunUserAvailable(): boolean {
     return result.status === 0;
   } catch {
     return false;
+  }
+}
+
+/**
+ * Best-effort `loginctl enable-linger`. May be denied by polkit, and may
+ * already be on; neither is fatal, the daemon just reverts to dying with the
+ * user's last session.
+ */
+function enableSystemdLinger(): void {
+  try {
+    spawnSync("loginctl", ["enable-linger"], { timeout: 2000, stdio: "ignore" });
+  } catch {
+    // Linger may already be enabled, or polkit may deny it.
   }
 }
 
@@ -38,8 +53,6 @@ export interface DaemonStartOptions {
   mcp?: boolean;
   injectMcp?: boolean;
   webUi?: boolean;
-  /** Skip systemd-run cgroup escape (for tests). */
-  forceNoSystemdRun?: boolean;
   hostnames?: string;
 }
 
@@ -106,6 +119,13 @@ export interface ForegroundDaemonProcessResult {
 export interface DaemonLaunchRuntime {
   resolveRunnerEntry(): string;
   resolveHome(env: NodeJS.ProcessEnv): string;
+  /**
+   * Whether to wrap the launch in a systemd scope so it survives the session
+   * that started it. See {@link detectSystemdScopeSupport}.
+   */
+  useSystemdScope(): boolean;
+  /** Keep the user's systemd instance alive after the last session closes. */
+  enableSystemdLinger(): void;
   spawnDetached(
     command: string,
     args: string[],
@@ -133,6 +153,8 @@ const defaultDaemonLaunchRuntime: DaemonLaunchRuntime = {
   resolveHome: resolvePaseoHome,
   spawnDetached: spawnProcess,
   spawnForeground: spawnSync,
+  useSystemdScope: detectSystemdScopeSupport,
+  enableSystemdLinger,
 };
 
 const startupReady = (): DetachedStartupResult => ({ exitedEarly: false });
@@ -611,19 +633,15 @@ export async function startLocalDaemonDetached(
   const paseoHome = runtime.resolveHome(childEnv);
   const logPath = path.join(paseoHome, DAEMON_LOG_FILENAME);
   const daemonArgs = [...process.execArgv, daemonRunnerEntry, ...buildRunnerArgs(options)];
-  const useSystemdRun = !options.forceNoSystemdRun && isSystemdRunUserAvailable();
-  if (useSystemdRun) {
-    // Enable linger so the user's systemd instance persists after the session
-    // closes. Best-effort — may require polkit privileges.
-    try {
-      spawnSync("loginctl", ["enable-linger"], { timeout: 2000, stdio: "ignore" });
-    } catch {
-      // Linger may already be enabled or polkit may deny it.
-    }
+  const useSystemdScope = runtime.useSystemdScope();
+  if (useSystemdScope) {
+    runtime.enableSystemdLinger();
   }
   const child = runtime.spawnDetached(
-    useSystemdRun ? "systemd-run" : process.execPath,
-    useSystemdRun ? ["--user", "--scope", "--quiet", process.execPath, ...daemonArgs] : daemonArgs,
+    useSystemdScope ? "systemd-run" : process.execPath,
+    useSystemdScope
+      ? ["--user", "--scope", "--quiet", process.execPath, ...daemonArgs]
+      : daemonArgs,
     {
       detached: true,
       envMode: "internal",

@@ -1356,6 +1356,44 @@ export const ru: TranslationResources = {
         title: "Вставьте ссылку на сопряжение",
         description: "Зашифрованное релейное соединение.",
       },
+      ssh: {
+        title: "SSH",
+        description: "Подключение к удалённому хосту через SSH-туннель.",
+      },
+    },
+    ssh: {
+      prompt: {
+        passphrase: "Пароль SSH-ключа",
+        password: "Пароль SSH",
+        submit: "Разблокировать",
+        cancel: "Отмена",
+        secret: "Пароль",
+      },
+      title: "SSH-подключение",
+      helper:
+        "Подключитесь к удалённому демону Paseo по SSH. Paseo установит и запустит демон на удалённом хосте, если он не запущен.",
+      fields: {
+        host: "Хост",
+        port: "Порт",
+        user: "Пользователь",
+        optional: "Необязательно",
+      },
+      placeholders: {
+        host: "server.example.com",
+        port: "22",
+        user: "пользователь",
+      },
+      actions: {
+        cancel: "Отмена",
+        connect: "Подключить",
+        connecting: "Подключение...",
+      },
+      errors: {
+        hostRequired: "Укажите хост",
+        invalidPort: "Порт должен быть от 1 до 65535",
+        cancelled: "Подключение отменено.",
+        desktopOnly: "SSH-подключения доступны только в десктопном приложении Paseo.",
+      },
     },
     direct: {
       title: "Прямое подключение",

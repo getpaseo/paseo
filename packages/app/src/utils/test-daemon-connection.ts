@@ -14,6 +14,7 @@ import {
   createDesktopLocalDaemonTransportFactory,
 } from "@/desktop/daemon/desktop-daemon-transport";
 import { getDesktopHost } from "@/desktop/host";
+import { i18n } from "@/i18n/i18next";
 
 export interface DaemonProbeClient {
   readonly lastError: string | null;
@@ -82,6 +83,37 @@ function isIncorrectPasswordFailure(input: {
     details.includes("unauthorized") ||
     details.includes("code 1006")
   );
+}
+
+/**
+ * Cleanup for transport resources a client was handed but does not own — today
+ * that means the SSH tunnel its WebSocket runs through.
+ *
+ * A WeakMap rather than a field on the client: the tunnel's lifetime is tied to
+ * the client instance, but every intermediate signature between the probe and
+ * the eventual close would otherwise have to carry it, and any one of them
+ * forgetting leaks an `ssh` process for the lifetime of the app.
+ */
+const transportDisposers = new WeakMap<DaemonProbeClient, () => Promise<void>>();
+
+export function registerTransportDisposer(
+  client: DaemonProbeClient,
+  dispose: () => Promise<void>,
+): void {
+  transportDisposers.set(client, dispose);
+}
+
+/**
+ * Close a client and release its transport. Every path that disposes a client
+ * must go through here — closing the client alone leaves the tunnel open.
+ */
+export async function closeClientAndTransport(client: DaemonProbeClient): Promise<void> {
+  const dispose = transportDisposers.get(client);
+  transportDisposers.delete(client);
+  await client.close().catch(() => undefined);
+  if (dispose) {
+    await dispose().catch(() => undefined);
+  }
 }
 
 export class DaemonConnectionTestError extends Error {
@@ -238,6 +270,10 @@ function resolveTimeout(connection: HostConnection, options?: ProbeOptions): num
   if (connection.type === "ssh") return 30_000;
   return connection.type === "relay" ? 10_000 : 6_000;
 }
+
+/** Distinguishes concurrent SSH probes so their progress streams don't mix. */
+let probeSequence = 0;
+
 async function connectToDaemonViaSsh(
   connection: Extract<HostConnection, { type: "ssh" }>,
   options: ProbeOptions | undefined,
@@ -245,7 +281,7 @@ async function connectToDaemonViaSsh(
 ): Promise<{ client: DaemonProbeClient; serverId: string; hostname: string | null }> {
   const sshBridge = getDesktopHost()?.ssh;
   if (!sshBridge) {
-    throw new DaemonConnectionTestError("SSH connections require the Paseo desktop app.", {
+    throw new DaemonConnectionTestError(i18n.t("pairing.ssh.errors.desktopOnly"), {
       reason: "SSH not available",
       lastError: null,
     });
@@ -267,23 +303,26 @@ async function connectToDaemonViaSsh(
     remoteHome: sshConfig.remoteHome,
     installDir: sshConfig.installDir,
   };
-  // Subscribe to SSH progress events from the desktop main process.
+  // The main process reports ensure-script progress out of band, tagged with
+  // the request id so concurrent connects to the same host don't cross streams.
+  const requestId = `ssh-${connection.id}-${probeSequence++}`;
   const events = getDesktopHost()?.events;
   let unsubscribeProgress: (() => void) | null = null;
   if (events?.on && options?.onProgress) {
-    const unsub = events.on("ssh-progress", (payload) => {
-      if (payload && typeof payload === "object" && "message" in payload) {
-        const msg = (payload as { message: string }).message;
-        if (sshConfig.host === (payload as { host?: string }).host) {
-          options.onProgress!(msg);
-        }
+    // The Electron bridge resolves the unsubscribe asynchronously; awaiting it
+    // is what makes the listener removable at all.
+    unsubscribeProgress = await events.on("ssh-progress", (payload) => {
+      if (!payload || typeof payload !== "object") return;
+      const event = payload as { requestId?: string; message?: string };
+      if (event.requestId === requestId && typeof event.message === "string") {
+        options.onProgress?.(event.message);
       }
     });
-    if (unsub) unsubscribeProgress = typeof unsub === "function" ? unsub : null;
   }
 
   try {
-    const { tunnelId, localPort } = await sshBridge.openTunnel(bridgeConfig);
+    const { tunnelId, localPort } = await sshBridge.openTunnel({ ...bridgeConfig, requestId });
+    const closeTunnel = () => sshBridge.closeTunnel(tunnelId).then(() => undefined);
 
     const config = await buildClientConfig(
       {
@@ -299,15 +338,22 @@ async function connectToDaemonViaSsh(
 
     try {
       const result = await connectAndProbe(config, resolveTimeout(connection, options), deps);
-      // Attach the tunnelId to the client so it can be closed when the client closes.
-      // The DaemonClient doesn't have a hook for this, so we store it on the client
-      // and the host runtime closes the tunnel when disposing the client.
-      (result.client as DaemonClient & { __sshTunnelId?: string }).__sshTunnelId = tunnelId;
+      registerTransportDisposer(result.client, closeTunnel);
       return result;
     } catch (error) {
-      await sshBridge.closeTunnel(tunnelId).catch(() => undefined);
+      await closeTunnel().catch(() => undefined);
       throw error;
     }
+  } catch (error) {
+    // The tunnel reports a declined prompt as a cancellation; say so plainly
+    // rather than surfacing the authentication error it produced.
+    if (error instanceof Error && /cancelled/i.test(error.message)) {
+      throw new DaemonConnectionTestError(i18n.t("pairing.ssh.errors.cancelled"), {
+        reason: "cancelled",
+        lastError: null,
+      });
+    }
+    throw error;
   } finally {
     unsubscribeProgress?.();
   }

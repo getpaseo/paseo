@@ -1368,6 +1368,44 @@ export const fr: TranslationResources = {
         title: "Coller le lien d'association",
         description: "Connexion relais cryptée.",
       },
+      ssh: {
+        title: "SSH",
+        description: "Se connecter à un hôte distant via un tunnel SSH.",
+      },
+    },
+    ssh: {
+      prompt: {
+        passphrase: "Phrase secrète de la clé SSH",
+        password: "Mot de passe SSH",
+        submit: "Déverrouiller",
+        cancel: "Annuler",
+        secret: "Mot de passe",
+      },
+      title: "Connexion SSH",
+      helper:
+        "Connectez-vous à un démon Paseo distant via SSH. Paseo installera et lancera le démon sur l'hôte distant s'il n'est pas démarré.",
+      fields: {
+        host: "Hôte",
+        port: "Port",
+        user: "Utilisateur",
+        optional: "Facultatif",
+      },
+      placeholders: {
+        host: "serveur.exemple.com",
+        port: "22",
+        user: "utilisateur",
+      },
+      actions: {
+        cancel: "Annuler",
+        connect: "Connecter",
+        connecting: "Connexion...",
+      },
+      errors: {
+        hostRequired: "L'hôte est requis",
+        invalidPort: "Le port doit être compris entre 1 et 65535",
+        cancelled: "Connexion annulée.",
+        desktopOnly: "Les connexions SSH nécessitent l'application de bureau Paseo.",
+      },
     },
     direct: {
       title: "Connexion directe",

@@ -1335,6 +1335,44 @@ export const en = {
         title: "Paste pairing link",
         description: "Encrypted relay connection.",
       },
+      ssh: {
+        title: "SSH",
+        description: "Connect to a remote host through an SSH tunnel.",
+      },
+    },
+    ssh: {
+      prompt: {
+        passphrase: "SSH key passphrase",
+        password: "SSH password",
+        submit: "Unlock",
+        cancel: "Cancel",
+        secret: "Password",
+      },
+      title: "SSH connection",
+      helper:
+        "Connect to a remote Paseo daemon over SSH. Paseo installs and launches the daemon on the remote host if it isn't running.",
+      fields: {
+        host: "Host",
+        port: "Port",
+        user: "User",
+        optional: "Optional",
+      },
+      placeholders: {
+        host: "server.example.com",
+        port: "22",
+        user: "username",
+      },
+      actions: {
+        cancel: "Cancel",
+        connect: "Connect",
+        connecting: "Connecting...",
+      },
+      errors: {
+        hostRequired: "Host is required",
+        invalidPort: "Port must be between 1 and 65535",
+        cancelled: "Connection cancelled.",
+        desktopOnly: "SSH connections require the Paseo desktop app.",
+      },
     },
     direct: {
       title: "Direct connection",

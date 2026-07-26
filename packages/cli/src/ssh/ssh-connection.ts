@@ -1,9 +1,10 @@
 import { DaemonClient, type WebSocketLike } from "@getpaseo/client/internal/daemon-client";
 import { resolveSshHostConfig, type SshHostConfig } from "./ssh-host-config.js";
-import { SshTunnel, createTerminalAskpassScript, cleanupAskpassScript } from "./ssh-process.js";
+import { SshTunnel, createTerminalAskpassScript } from "./ssh-process.js";
 export { isSshHostUri } from "./ssh-host-config.js";
 import { buildEnsureScript } from "./remote-daemon.js";
 import { createNodeWebSocketFactory } from "../utils/client.js";
+import { resolveCliVersion } from "../version.js";
 
 export interface ConnectViaSshOptions {
   /** Connect timeout in milliseconds. */
@@ -12,7 +13,12 @@ export interface ConnectViaSshOptions {
   clientId: string;
   /** CLI version reported in the hello handshake. */
   appVersion: string;
-  /** @getpaseo/cli version to install on the remote if Paseo is missing. */
+  /**
+   * @getpaseo/cli version to install on the remote if Paseo is missing.
+   * Defaults to this CLI's own version so both ends run the same build; the
+   * remote falls back to the latest release when that version is not
+   * published, which is the normal case for a source checkout.
+   */
   version?: string;
   /** Progress callback for ensure/launch status. */
   onProgress?: (message: string) => void;
@@ -45,16 +51,22 @@ export async function connectViaSshConfig(
   config: SshHostConfig,
   options: ConnectViaSshOptions,
 ): Promise<DaemonClient> {
-  const version = options.version ?? config.packageVersion ?? "latest";
-  const askpassPath = createTerminalAskpassScript();
-  process.once("exit", () => cleanupAskpassScript(askpassPath));
+  const version = options.version ?? config.packageVersion ?? resolveCliVersion();
+  const askpass = createTerminalAskpassScript();
   const ensureScript = buildEnsureScript(config, version);
 
-  const tunnel = await SshTunnel.open(config, config.remotePort, {
-    ensureScript,
-    askpassPath,
-    onProgress: options.onProgress,
-  });
+  let tunnel: SshTunnel;
+  try {
+    tunnel = await SshTunnel.open(config, config.remotePort, {
+      ensureScript,
+      askpassPath: askpass.path,
+      ...(options.onProgress ? { onProgress: options.onProgress } : {}),
+    });
+  } finally {
+    // SSH has either authenticated or given up by now; the script is no longer
+    // needed and should not outlive a failed connect.
+    askpass.cleanup();
+  }
 
   const url = `ws://127.0.0.1:${tunnel.localPort}/ws`;
   const webSocketFactory = options.webSocketFactory ?? createNodeWebSocketFactory();
@@ -68,7 +80,9 @@ export async function connectViaSshConfig(
     webSocketFactory: (
       target: string,
       wsOptions?: { headers?: Record<string, string>; protocols?: string[] },
-    ) => webSocketFactory(target, { headers: wsOptions?.headers }),
+    ) => webSocketFactory(target, wsOptions),
+    // Reconnecting is pointless once the tunnel is gone: the local port stops
+    // being served and no retry can bring it back.
     reconnect: { enabled: false },
   });
 

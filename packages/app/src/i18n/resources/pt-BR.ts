@@ -1351,6 +1351,44 @@ export const ptBR: TranslationResources = {
         title: "Colar link de pareamento",
         description: "Conexão relay criptografada.",
       },
+      ssh: {
+        title: "SSH",
+        description: "Conecte-se a um host remoto por um túnel SSH.",
+      },
+    },
+    ssh: {
+      prompt: {
+        passphrase: "Senha da chave SSH",
+        password: "Senha SSH",
+        submit: "Desbloquear",
+        cancel: "Cancelar",
+        secret: "Senha",
+      },
+      title: "Conexão SSH",
+      helper:
+        "Conecte-se a um daemon do Paseo remoto via SSH. O Paseo instala e inicia o daemon no host remoto se ele não estiver em execução.",
+      fields: {
+        host: "Host",
+        port: "Porta",
+        user: "Usuário",
+        optional: "Opcional",
+      },
+      placeholders: {
+        host: "servidor.exemplo.com",
+        port: "22",
+        user: "usuário",
+      },
+      actions: {
+        cancel: "Cancelar",
+        connect: "Conectar",
+        connecting: "Conectando...",
+      },
+      errors: {
+        hostRequired: "O host é obrigatório",
+        invalidPort: "A porta deve estar entre 1 e 65535",
+        cancelled: "Conexão cancelada.",
+        desktopOnly: "Conexões SSH exigem o aplicativo de desktop do Paseo.",
+      },
     },
     direct: {
       title: "Conexão direta",

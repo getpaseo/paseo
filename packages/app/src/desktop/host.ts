@@ -170,11 +170,27 @@ export interface DesktopInvokeBridge {
   invoke?: (command: string, args?: Record<string, unknown>) => Promise<unknown>;
 }
 
-export type SshBridgeConfig = Omit<NormalizedSshHostConnection, "id" | "type">;
+export type SshBridgeConfig = Omit<NormalizedSshHostConnection, "id" | "type"> & {
+  /** Correlates `ssh-progress` events with this specific open request. */
+  requestId?: string;
+};
+
+/** Which secret SSH is asking for, classified by the CLI askpass channel. */
+export type SshPromptKind = "passphrase" | "password";
+
+export interface SshPasswordRequestEvent {
+  requestId: string;
+  host: string;
+  /** SSH's own prompt — carries the key path or `user@host`. */
+  prompt: string;
+  kind: SshPromptKind;
+}
 
 export interface DesktopSshBridge {
   openTunnel: (config: SshBridgeConfig) => Promise<{ tunnelId: string; localPort: number }>;
   closeTunnel: (tunnelId: string) => Promise<void>;
+  /** Answer a pending prompt. A null secret means the user declined. */
+  submitPassword: (payload: { requestId: string; secret: string | null }) => Promise<void>;
 }
 
 export interface DesktopHostBridge {

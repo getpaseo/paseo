@@ -1,12 +1,11 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Alert, Text, View } from "react-native";
+import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { Terminal } from "lucide-react-native";
 import { AdaptiveModalSheet, AdaptiveTextInput, type SheetHeader } from "./adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
 import { useHostMutations } from "@/runtime/host-runtime";
-import { useIsCompactFormFactor } from "@/constants/layout";
 
 const styles = StyleSheet.create((theme) => ({
   helper: {
@@ -21,11 +20,16 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
   },
   portField: {
-    width: 90,
+    // Wide enough for "Port (Optional)" on one line; the input itself only
+    // needs room for five digits.
+    width: 130,
   },
   row: {
     flexDirection: "row",
     gap: theme.spacing[3],
+    // Keep the inputs level even when a longer translation wraps the port
+    // label onto a second line.
+    alignItems: "flex-end",
   },
   label: {
     color: theme.colors.foregroundMuted,
@@ -68,69 +72,99 @@ export interface AddSshHostModalProps {
 export function AddSshHostModal({ visible, onClose, onCancel, onSaved }: AddSshHostModalProps) {
   const { t } = useTranslation();
   const { probeAndUpsertSshConnection } = useHostMutations();
-  const isMobile = useIsCompactFormFactor();
 
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [progressMessage, setProgressMessage] = useState("");
   const [host, setHost] = useState("");
-  const [port, setPort] = useState("22");
+  const [port, setPort] = useState("");
   const [user, setUser] = useState("");
+  // Bumped on cancel so a connect that is already in flight stops reporting
+  // into a modal the user has walked away from.
+  const attemptRef = useRef(0);
 
-  const header = useMemo<SheetHeader>(() => ({ title: "SSH Connection" }), []);
+  const header = useMemo<SheetHeader>(() => ({ title: t("pairing.ssh.title") }), [t]);
   const icon = useMemo(() => <Terminal size={16} />, []);
 
   const clearInput = useCallback(() => {
     setHost("");
-    setPort("22");
+    setPort("");
     setUser("");
     setErrorMessage("");
     setProgressMessage("");
   }, []);
 
+  const abandonAttempt = useCallback(() => {
+    attemptRef.current += 1;
+    setIsSaving(false);
+    setProgressMessage("");
+  }, []);
+
   const handleClose = useCallback(() => {
-    if (isSaving) return;
+    abandonAttempt();
     clearInput();
     onClose();
-  }, [isSaving, clearInput, onClose]);
+  }, [abandonAttempt, clearInput, onClose]);
 
   const handleCancel = useCallback(() => {
-    if (isSaving) return;
+    abandonAttempt();
     clearInput();
     (onCancel ?? onClose)();
-  }, [isSaving, onCancel, onClose, clearInput]);
+  }, [abandonAttempt, clearInput, onCancel, onClose]);
 
   const handleSave = useCallback(async () => {
     if (isSaving) return;
     const trimmedHost = host.trim();
     const trimmedUser = user.trim();
+    const trimmedPort = port.trim();
     if (!trimmedHost) {
-      setErrorMessage("Host is required.");
+      setErrorMessage(t("pairing.ssh.errors.hostRequired"));
       return;
     }
+    // Left blank on purpose means "whatever ~/.ssh/config says", so only a
+    // non-empty value is validated.
+    let parsedPort: number | undefined;
+    if (trimmedPort) {
+      parsedPort = Number(trimmedPort);
+      if (!Number.isInteger(parsedPort) || parsedPort < 1 || parsedPort > 65535) {
+        setErrorMessage(t("pairing.ssh.errors.invalidPort"));
+        return;
+      }
+    }
 
+    const attempt = attemptRef.current;
+    const isCurrent = () => attemptRef.current === attempt;
+
+    setIsSaving(true);
+    setErrorMessage("");
+    setProgressMessage("");
     try {
-      setIsSaving(true);
-      setErrorMessage("");
-      setProgressMessage("");
       const { serverId, hostname } = await probeAndUpsertSshConnection({
         host: trimmedHost,
-        port: port.trim() ? Number(port) : undefined,
+        ...(parsedPort !== undefined ? { port: parsedPort } : {}),
         ...(trimmedUser ? { user: trimmedUser } : {}),
-        onProgress: (msg) => setProgressMessage(msg),
+        onProgress: (message) => {
+          if (isCurrent()) setProgressMessage(message);
+        },
       });
+      if (!isCurrent()) return;
       onSaved?.({ serverId, hostname });
       handleClose();
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setErrorMessage(message);
-      if (!isMobile) {
-        Alert.alert("SSH connection failed", message);
-      }
+      if (!isCurrent()) return;
+      setErrorMessage(error instanceof Error ? error.message : String(error));
     } finally {
-      setIsSaving(false);
+      if (isCurrent()) setIsSaving(false);
     }
-  }, [host, user, port, isSaving, isMobile, onSaved, handleClose, probeAndUpsertSshConnection]);
+  }, [host, user, port, isSaving, onSaved, handleClose, probeAndUpsertSshConnection, t]);
+
+  // Enter connects from any field rather than advancing focus: every field
+  // except the host is optional, so there is usually nothing left to fill in.
+  // `handleSave` is async, so it has to be voided rather than handed straight
+  // to a sync handler.
+  const handleSubmitEditing = useCallback(() => {
+    void handleSave();
+  }, [handleSave]);
 
   return (
     <AdaptiveModalSheet
@@ -139,57 +173,61 @@ export function AddSshHostModal({ visible, onClose, onCancel, onSaved }: AddSshH
       onClose={handleClose}
       testID="add-ssh-host-modal"
     >
-      <Text style={styles.helper}>
-        Connect to a remote Paseo daemon over SSH. Paseo will install and launch the daemon on the
-        remote host if needed.
-      </Text>
+      <Text style={styles.helper}>{t("pairing.ssh.helper")}</Text>
 
       <View style={styles.row}>
         <View style={[styles.field, styles.hostField]}>
-          <Text style={styles.label}>Host</Text>
+          <Text style={styles.label}>{t("pairing.ssh.fields.host")}</Text>
           <AdaptiveTextInput
             testID="ssh-host-input"
-            accessibilityLabel="Host"
+            accessibilityLabel={t("pairing.ssh.fields.host")}
             value={host}
             onChangeText={setHost}
-            placeholder="server.example.com"
+            placeholder={t("pairing.ssh.placeholders.host")}
             style={styles.input}
             autoCapitalize="none"
             autoCorrect={false}
             keyboardType="url"
             editable={!isSaving}
-            returnKeyType="next"
+            returnKeyType="done"
+            onSubmitEditing={handleSubmitEditing}
           />
         </View>
         <View style={[styles.field, styles.portField]}>
-          <Text style={styles.label}>Port</Text>
+          <Text style={styles.label}>
+            {t("pairing.ssh.fields.port")} ({t("pairing.ssh.fields.optional")})
+          </Text>
           <AdaptiveTextInput
             testID="ssh-port-input"
-            accessibilityLabel="Port"
+            accessibilityLabel={t("pairing.ssh.fields.port")}
             value={port}
             onChangeText={setPort}
-            placeholder="22"
+            placeholder={t("pairing.ssh.placeholders.port")}
             style={styles.input}
             keyboardType="number-pad"
             editable={!isSaving}
-            returnKeyType="next"
+            returnKeyType="done"
+            onSubmitEditing={handleSubmitEditing}
           />
         </View>
       </View>
 
       <View style={styles.field}>
-        <Text style={styles.label}>User (optional)</Text>
+        <Text style={styles.label}>
+          {t("pairing.ssh.fields.user")} ({t("pairing.ssh.fields.optional")})
+        </Text>
         <AdaptiveTextInput
           testID="ssh-user-input"
-          accessibilityLabel="User"
+          accessibilityLabel={t("pairing.ssh.fields.user")}
           value={user}
           onChangeText={setUser}
-          placeholder="username"
+          placeholder={t("pairing.ssh.placeholders.user")}
           style={styles.input}
           autoCapitalize="none"
           autoCorrect={false}
           editable={!isSaving}
-          returnKeyType="next"
+          returnKeyType="done"
+          onSubmitEditing={handleSubmitEditing}
         />
       </View>
 
@@ -197,8 +235,10 @@ export function AddSshHostModal({ visible, onClose, onCancel, onSaved }: AddSshH
       {isSaving && progressMessage ? <Text style={styles.progress}>{progressMessage}</Text> : null}
 
       <View style={styles.buttonRow}>
-        <Button variant="ghost" onPress={handleCancel} disabled={isSaving}>
-          {t("common.actions.cancel")}
+        {/* Deliberately enabled while connecting: an ensure that installs Paseo
+            can run for minutes, and the user needs a way out. */}
+        <Button variant="ghost" onPress={handleCancel}>
+          {t("pairing.ssh.actions.cancel")}
         </Button>
         <Button
           variant="default"
@@ -207,7 +247,7 @@ export function AddSshHostModal({ visible, onClose, onCancel, onSaved }: AddSshH
           leftIcon={icon}
           testID="add-ssh-host-connect"
         >
-          {isSaving ? "Connecting…" : "Connect"}
+          {isSaving ? t("pairing.ssh.actions.connecting") : t("pairing.ssh.actions.connect")}
         </Button>
       </View>
     </AdaptiveModalSheet>

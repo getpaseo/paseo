@@ -21,6 +21,7 @@ import {
   type HostRuntimeStorage,
 } from "./host-runtime";
 import { ReplicaCache } from "./replica-cache";
+import { registerTransportDisposer } from "@/utils/test-daemon-connection";
 
 class FakeDaemonClient {
   private state: ConnectionState = { status: "idle" };
@@ -1266,6 +1267,177 @@ describe("HostRuntimeController", () => {
     expect(snapshot.lastError).toBeNull();
     expect(createdClients).toHaveLength(2);
     expect(createdClients[0]?.isDisposed()).toBe(true);
+  });
+
+  it("labels an SSH connection without inventing a user or port", async () => {
+    // Both are unset when ~/.ssh/config supplies them. Interpolating them
+    // blindly renders "@host:undefined" in the host picker, and guessing a
+    // username would be worse: ssh resolves the effective user, not us.
+    const host = makeHost({
+      preferredConnectionId: "ssh:remote",
+      connections: [{ id: "ssh:remote", type: "ssh", host: "server.example.com" }],
+    });
+    const controller = new HostRuntimeController({
+      host,
+      deps: {
+        createClient: () => new FakeDaemonClient() as unknown as DaemonClient,
+        connectToDaemon: async ({ host: hostProfile }) => ({
+          client: makeConnectedProbeClient(5) as unknown as DaemonClient,
+          serverId: hostProfile.serverId,
+          hostname: hostProfile.label ?? null,
+        }),
+        getClientId: async () => "cid_test_runtime",
+      },
+    });
+
+    await controller.activateConnection({ connectionId: "ssh:remote" });
+
+    const active = controller.getSnapshot().activeConnection;
+    expect(active?.endpoint).toBe("server.example.com");
+    expect(active?.display).toBe("server.example.com");
+    expect(active?.endpoint).not.toContain("undefined");
+    expect(active?.endpoint).not.toContain("@");
+  });
+
+  it("does not open a throwaway SSH tunnel just to time a probe", async () => {
+    // Opening an SSH connection spawns ssh, authenticates, and runs the ensure
+    // script. Doing that on the probe timer would re-prompt password-auth hosts
+    // every cycle and orphan a tunnel each time.
+    useHostRuntimeClock();
+    const host = makeHost({
+      preferredConnectionId: "direct:lan:6767",
+      connections: [
+        { id: "direct:lan:6767", type: "directTcp", endpoint: "lan:6767" },
+        // A second cheap connection, so the cycle has something to probe and a
+        // no-op cycle cannot masquerade as "SSH was skipped".
+        { id: "direct:wan:6767", type: "directTcp", endpoint: "wan:6767" },
+        { id: "ssh:deploy@remote", type: "ssh", host: "remote", user: "deploy" },
+      ],
+    });
+    const probedConnectionIds: string[] = [];
+
+    const controller = new HostRuntimeController({
+      host,
+      deps: {
+        createClient: () => new FakeDaemonClient() as unknown as DaemonClient,
+        connectToDaemon: async ({ host: hostProfile, connection }) => {
+          probedConnectionIds.push(connection.id);
+          return {
+            client: makeConnectedProbeClient(
+              connection.id === "direct:lan:6767" ? 5 : 200,
+            ) as unknown as DaemonClient,
+            serverId: hostProfile.serverId,
+            hostname: hostProfile.label ?? null,
+          };
+        },
+        getClientId: async () => "cid_test_runtime",
+      },
+    });
+
+    // Nothing online yet: SSH is eligible, because connecting is the point.
+    await controller.runProbeCycleNow();
+    expect(controller.getSnapshot().connectionStatus).toBe("online");
+    expect(probedConnectionIds).toContain("ssh:deploy@remote");
+
+    // Past the inactive-while-online interval, so only the interval gate is no
+    // longer what is holding SSH back.
+    probedConnectionIds.length = 0;
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    await controller.runProbeCycleNow();
+
+    expect(probedConnectionIds).toContain("direct:wan:6767");
+    expect(probedConnectionIds).not.toContain("ssh:deploy@remote");
+  });
+
+  it("closes the tunnel behind a throwaway probe client", async () => {
+    // A probe that is not adopted as the active client must release its
+    // transport, not just the WebSocket.
+    const host = makeHost({
+      preferredConnectionId: "direct:lan:6767",
+      connections: [
+        { id: "direct:lan:6767", type: "directTcp", endpoint: "lan:6767" },
+        { id: "direct:wan:6767", type: "directTcp", endpoint: "wan:6767" },
+      ],
+    });
+    const released: string[] = [];
+
+    const controller = new HostRuntimeController({
+      host,
+      deps: {
+        createClient: () => new FakeDaemonClient() as unknown as DaemonClient,
+        connectToDaemon: async ({ host: hostProfile, connection }) => {
+          const client = makeConnectedProbeClient(connection.id === "direct:lan:6767" ? 5 : 50);
+          registerTransportDisposer(client as unknown as DaemonClient, async () => {
+            released.push(connection.id);
+          });
+          return {
+            client: client as unknown as DaemonClient,
+            serverId: hostProfile.serverId,
+            hostname: hostProfile.label ?? null,
+          };
+        },
+        getClientId: async () => "cid_test_runtime",
+      },
+    });
+
+    await controller.runProbeCycleNow();
+
+    // The slower one was probed and discarded; its transport must be gone.
+    expect(released).toContain("direct:wan:6767");
+  });
+
+  it("leaves the winning connection alone when a superseded switch unwinds", async () => {
+    // A switch that loses the race must abandon only its own work. Unwinding it
+    // takes an await (closing the client it was handed), and the winner can
+    // finish during that window. If the loser then falls through to disposing
+    // the active client, it tears down the connection that superseded it and
+    // the user drops offline for no reason.
+    const host = makeHost();
+    const createdClients: FakeDaemonClient[] = [];
+    const clientIdGate = createDeferred<string>();
+    const closeGate = createDeferred<void>();
+
+    // Handed to the switch that loses; its close() is what parks the unwind.
+    const losingClient = {
+      close: () => closeGate.promise,
+      setReconnectEnabled: () => {},
+    } as unknown as DaemonClient;
+
+    const controller = new HostRuntimeController({
+      host,
+      deps: {
+        createClient: () => {
+          const client = new FakeDaemonClient();
+          createdClients.push(client);
+          return client as unknown as DaemonClient;
+        },
+        connectToDaemon: async () => {
+          throw new Error("connectToDaemon should not be called");
+        },
+        getClientId: () => clientIdGate.promise,
+      },
+    });
+
+    // Both park on the same pending client id; the second one wins the race.
+    const superseded = controller.activateConnection({
+      connectionId: "relay:relay.paseo.sh:443",
+      existingClient: losingClient,
+    });
+    const winning = controller.activateConnection({ connectionId: "direct:lan:6767" });
+
+    clientIdGate.resolve("client_test");
+    await winning;
+
+    const winner = controller.getSnapshot().client;
+    expect(winner).toBeTruthy();
+    expect(controller.getSnapshot().activeConnectionId).toBe("direct:lan:6767");
+
+    // Let the superseded switch finish unwinding.
+    closeGate.resolve();
+    await superseded;
+
+    expect(controller.getSnapshot().activeConnectionId).toBe("direct:lan:6767");
+    expect((winner as unknown as FakeDaemonClient).isDisposed()).toBe(false);
   });
 
   it("coalesces overlapping probe cycles instead of invalidating the in-flight result", async () => {

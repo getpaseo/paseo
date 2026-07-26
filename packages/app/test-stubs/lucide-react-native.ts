@@ -59,6 +59,7 @@ export const Inbox = StubIcon;
 export const Info = StubIcon;
 export const Layers = StubIcon;
 export const Link = StubIcon;
+export const KeyRound = StubIcon;
 export const Link2 = StubIcon;
 export const MessageSquare = StubIcon;
 export const MessageSquarePlus = StubIcon;

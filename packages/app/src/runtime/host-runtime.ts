@@ -26,7 +26,7 @@ import { resolveAppVersion } from "@/utils/app-version";
 import { ConnectionOfferSchema, type ConnectionOffer } from "@getpaseo/protocol/connection-offer";
 import { shouldUseDesktopDaemon } from "@/desktop/daemon/desktop-daemon";
 import { isWeb } from "@/constants/platform";
-import { connectToDaemon } from "@/utils/test-daemon-connection";
+import { connectToDaemon, closeClientAndTransport } from "@/utils/test-daemon-connection";
 import { getOrCreateClientId } from "@/utils/client-id";
 import {
   selectBestConnection,
@@ -206,10 +206,16 @@ function toActiveConnection(connection: HostConnection): ActiveConnection {
     };
   }
   if (connection.type === "ssh") {
+    // Both user and port are legitimately unset when ~/.ssh/config supplies
+    // them, so neither can be interpolated unconditionally — that renders as
+    // "@host:undefined" in the host picker. Showing just the host is also the
+    // honest thing: the effective user is resolved by ssh, not by us, so we
+    // must not imply a username we do not actually know.
+    const authority = connection.user ? `${connection.user}@${connection.host}` : connection.host;
     return {
       type: "ssh",
-      endpoint: `${connection.user ?? ""}@${connection.host}:${connection.port}`,
-      display: connection.user ? `${connection.user}@${connection.host}` : connection.host,
+      endpoint: connection.port ? `${authority}:${connection.port}` : authority,
+      display: authority,
     };
   }
   return {
@@ -771,6 +777,23 @@ export class HostRuntimeController {
     const hasActiveOnlineConnection = isOnline && activeConnectionId !== null;
 
     const connectionsToProbe = this.host.connections.filter((connection) => {
+      // Probing a non-active SSH connection means spawning ssh, authenticating,
+      // and running the ensure script just to time a round trip — then throwing
+      // the tunnel away. On a password-auth host that re-prompts the user every
+      // cycle. Only probe SSH when it is already the live client (reading its
+      // liveness RTT is free) or when nothing is online and connecting is the
+      // point. The cost is that SSH never carries a latency number while
+      // another transport is up, so the adaptive switcher will not move *onto*
+      // a tunnel on RTT alone — which is the behavior we want anyway. Failover
+      // still works: once the active connection drops, this predicate opens up
+      // again on the next cycle.
+      if (
+        connection.type === "ssh" &&
+        hasActiveOnlineConnection &&
+        connection.id !== activeConnectionId
+      ) {
+        return false;
+      }
       const lastProbed = this.connectionLastProbedAt.get(connection.id);
       if (lastProbed == null) {
         return true;
@@ -954,7 +977,7 @@ export class HostRuntimeController {
                 if (isPlaceholderServerId(this.host.serverId) && this.onReconcileServerId) {
                   this.onReconcileServerId(this.host.serverId, serverId);
                 } else {
-                  await client.close().catch(() => undefined);
+                  await closeClientAndTransport(client);
                   throw new Error(
                     `Connection resolved to ${serverId}, expected ${this.host.serverId}.`,
                   );
@@ -1006,7 +1029,9 @@ export class HostRuntimeController {
             }
           } finally {
             if (connectedClient && shouldCloseClient) {
-              await connectedClient.close().catch(() => undefined);
+              // Throwaway probe clients can own an SSH tunnel; closing the
+              // client alone would orphan the ssh process every cycle.
+              await closeClientAndTransport(connectedClient);
             }
             settleProbe();
           }
@@ -1097,7 +1122,9 @@ export class HostRuntimeController {
 
   private async abortSwitchWithClient(client: DaemonClient | undefined): Promise<void> {
     if (client) {
-      await client.close().catch(() => undefined);
+      // Not a bare close(): a probed SSH client owns a tunnel, and abandoning
+      // the switch has to reap it too.
+      await closeClientAndTransport(client);
     }
   }
 
@@ -1142,13 +1169,7 @@ export class HostRuntimeController {
     if (this.activeClient) {
       const previousClient = this.activeClient;
       this.activeClient = null;
-      const tunnelId = (previousClient as DaemonClient & { __sshTunnelId?: string }).__sshTunnelId;
-      if (tunnelId) {
-        getDesktopHost()
-          ?.ssh?.closeTunnel(tunnelId)
-          .catch(() => undefined);
-      }
-      await previousClient.close().catch(() => undefined);
+      await closeClientAndTransport(previousClient);
     }
   }
 
@@ -1189,6 +1210,7 @@ export class HostRuntimeController {
 
     if (!this.isSwitchStillValid(requestVersion, expectedProbeVersion)) {
       await this.abortSwitchWithClient(existingClient);
+      return;
     }
 
     await this.disposePreviousActiveClient();
@@ -1223,7 +1245,7 @@ export class HostRuntimeController {
     }
 
     if (!this.isSwitchStillValid(requestVersion, expectedProbeVersion)) {
-      await client.close().catch(() => undefined);
+      await closeClientAndTransport(client);
       return;
     }
 

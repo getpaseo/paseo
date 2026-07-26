@@ -40,9 +40,19 @@ class FakeDaemonRuntime implements DaemonLaunchRuntime {
   readonly daemonProcess = new FakeDaemonProcess();
   foregroundStatus = 0;
   runnerEntry = "/repo/packages/server/scripts/supervisor-entrypoint.ts";
+  systemdScope = false;
+  lingerEnabledCount = 0;
 
   resolveRunnerEntry(): string {
     return this.runnerEntry;
+  }
+
+  useSystemdScope(): boolean {
+    return this.systemdScope;
+  }
+
+  enableSystemdLinger(): void {
+    this.lingerEnabledCount += 1;
   }
 
   resolveHome(env: NodeJS.ProcessEnv): string {
@@ -119,7 +129,7 @@ describe("local daemon launch supervision", () => {
     const runtime = new FakeDaemonRuntime();
 
     const resultPromise = startLocalDaemonDetached(
-      { home: "/tmp/paseo-test", mcp: false, forceNoSystemdRun: true },
+      { home: "/tmp/paseo-test", mcp: false },
       runtime,
     );
     await vi.advanceTimersByTimeAsync(1200);
@@ -133,6 +143,29 @@ describe("local daemon launch supervision", () => {
     expect(launch?.command).toBe(process.execPath);
     expectSupervisorLaunch(launch?.args ?? []);
     expect(launch?.args).toContain("--no-mcp");
+    expect(runtime.lingerEnabledCount).toBe(0);
+  });
+
+  test("detached start escapes the session cgroup when systemd scopes are available", async () => {
+    vi.useFakeTimers();
+    const runtime = new FakeDaemonRuntime();
+    runtime.systemdScope = true;
+
+    const resultPromise = startLocalDaemonDetached(
+      { home: "/tmp/paseo-test", mcp: false },
+      runtime,
+    );
+    await vi.advanceTimersByTimeAsync(1200);
+    await resultPromise;
+
+    const launch = runtime.recordedLaunches[0];
+    expect(launch?.command).toBe("systemd-run");
+    // The scope wrapper must sit in front of the node invocation, not replace
+    // it: everything after `--quiet` is the daemon launch we would have run.
+    expect(launch?.args.slice(0, 4)).toEqual(["--user", "--scope", "--quiet", process.execPath]);
+    expectSupervisorLaunch(launch?.args.slice(4) ?? []);
+    // Without linger the transient scope dies with the user's last session.
+    expect(runtime.lingerEnabledCount).toBe(1);
   });
 
   test("relay TLS flag is passed to the supervised daemon", async () => {

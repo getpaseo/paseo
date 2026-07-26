@@ -3,7 +3,6 @@ import {
   DEFAULT_INSTALL_DIR,
   DEFAULT_REMOTE_HOME,
   DEFAULT_REMOTE_PORT,
-  DEFAULT_SSH_PORT,
   isSshHostUri,
   isValidSshHostId,
   normalizeSshHostConfig,
@@ -18,7 +17,8 @@ describe("ssh-host-config: normalizeSshHostConfig", () => {
       host: "10.0.0.5",
       user: "deploy",
     });
-    expect(config.port).toBe(DEFAULT_SSH_PORT);
+    // Port stays unset so ~/.ssh/config can supply one.
+    expect(config.port).toBeUndefined();
     expect(config.remotePort).toBe(DEFAULT_REMOTE_PORT);
     expect(config.remoteHome).toBe(DEFAULT_REMOTE_HOME);
     expect(config.installDir).toBe(DEFAULT_INSTALL_DIR);
@@ -105,12 +105,23 @@ describe("ssh-host-config: parseSshHostUri", () => {
     }
   });
 
-  it("parses an inline host with default port", () => {
+  it("leaves the port unset when the URI omits one", () => {
     const parsed = parseSshHostUri("ssh://bob@server.example.com");
     expect(parsed?.kind).toBe("inline");
     if (parsed?.kind === "inline") {
-      expect(parsed.config.port).toBe(DEFAULT_SSH_PORT);
+      expect(parsed.config.port).toBeUndefined();
     }
+  });
+
+  it("rejects a non-numeric port instead of folding it into the hostname", () => {
+    expect(parseSshHostUri("ssh://bob@host:2222x")).toBeNull();
+    expect(parseSshHostUri("ssh://bob@host:")).toBeNull();
+    expect(parseSshHostUri("ssh://bob@host:99999")).toBeNull();
+  });
+
+  it("rejects an out-of-range remotePort override", () => {
+    expect(() => parseSshHostUri("ssh://bob@host?remotePort=abc")).toThrow(/remotePort/);
+    expect(() => parseSshHostUri("ssh://bob@host?remotePort=70000")).toThrow(/remotePort/);
   });
 
   it("parses an IPv6 host", () => {

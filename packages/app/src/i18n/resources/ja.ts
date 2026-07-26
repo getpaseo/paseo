@@ -1338,6 +1338,44 @@ export const ja: TranslationResources = {
         title: "ペアリングリンクを貼り付け",
         description: "暗号化されたリレー接続。",
       },
+      ssh: {
+        title: "SSH",
+        description: "SSH トンネル経由でリモートホストに接続します。",
+      },
+    },
+    ssh: {
+      prompt: {
+        passphrase: "SSH 鍵のパスフレーズ",
+        password: "SSH パスワード",
+        submit: "ロック解除",
+        cancel: "キャンセル",
+        secret: "パスワード",
+      },
+      title: "SSH 接続",
+      helper:
+        "SSH 経由でリモートの Paseo デーモンに接続します。デーモンが起動していない場合は、Paseo がリモートホストにインストールして起動します。",
+      fields: {
+        host: "ホスト",
+        port: "ポート",
+        user: "ユーザー",
+        optional: "任意",
+      },
+      placeholders: {
+        host: "server.example.com",
+        port: "22",
+        user: "ユーザー名",
+      },
+      actions: {
+        cancel: "キャンセル",
+        connect: "接続",
+        connecting: "接続中...",
+      },
+      errors: {
+        hostRequired: "ホストは必須です",
+        invalidPort: "ポートは 1 から 65535 の間で指定してください",
+        cancelled: "接続をキャンセルしました。",
+        desktopOnly: "SSH 接続には Paseo デスクトップアプリが必要です。",
+      },
     },
     direct: {
       title: "直接接続",

@@ -379,3 +379,4 @@ $PASEO_HOME/
 1. **Local daemon** (default): `paseo daemon start` on `127.0.0.1:6767`
 2. **Managed desktop**: Electron app spawns daemon as subprocess
 3. **Remote + relay**: Daemon behind firewall, relay bridges with E2E encryption
+4. **Remote + SSH tunnel**: CLI or desktop forwards a loopback-bound remote daemon over `ssh -L`, installing and launching it if needed. See [ssh.md](ssh.md)

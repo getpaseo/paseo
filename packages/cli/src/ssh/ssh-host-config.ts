@@ -1,4 +1,9 @@
-import { SshHostConnectionSchema } from "@getpaseo/protocol/host-connection-schema";
+import {
+  SshHostConnectionSchema,
+  DEFAULT_SSH_PORT,
+} from "@getpaseo/protocol/host-connection-schema";
+
+export { DEFAULT_SSH_PORT };
 
 /**
  * A remote SSH host. The CLI tunnels daemon WebSocket traffic through an
@@ -12,8 +17,11 @@ export interface SshHostConfig {
   label: string;
   /** Remote hostname or IP address. */
   host: string;
-  /** SSH port (default 22). */
-  port: number;
+  /**
+   * SSH port. Undefined means "not specified", which lets `ssh` apply its own
+   * default or a `Port` directive from the user's `~/.ssh/config`.
+   */
+  port?: number;
   /** SSH user (optional — falls back to ssh config or current user). */
   user?: string;
   /** Remote daemon port to forward to (default 6767). */
@@ -22,7 +30,7 @@ export interface SshHostConfig {
   remoteHome: string;
   /** Remote Paseo install directory (default ~/.paseo/cli). */
   installDir: string;
-  /** Optional @getpaseo/cli version to install (default: the local CLI version). */
+  /** @getpaseo/cli version to install if Paseo is missing on the remote host. */
   packageVersion?: string;
 }
 
@@ -33,7 +41,6 @@ const SSH_DEFAULTS = SshHostConnectionSchema.parse({
   user: "defaults",
 });
 
-export const DEFAULT_SSH_PORT = SSH_DEFAULTS.port;
 export const DEFAULT_REMOTE_PORT = SSH_DEFAULTS.remotePort;
 export const DEFAULT_REMOTE_HOME = SSH_DEFAULTS.remoteHome;
 export const DEFAULT_INSTALL_DIR = SSH_DEFAULTS.installDir;
@@ -71,7 +78,8 @@ export function normalizeSshHostConfig(
   if (!host) throw new Error("SSH host is required");
   const user = input.user?.trim() || undefined;
 
-  const port = validatePort(input.port ?? DEFAULT_SSH_PORT, "SSH port");
+  // Left undefined when unspecified so `ssh` and ~/.ssh/config decide.
+  const port = input.port === undefined ? undefined : validatePort(input.port, "SSH port");
   const remotePort = validatePort(input.remotePort ?? DEFAULT_REMOTE_PORT, "remote daemon port");
   const label = (input.label ?? "").trim() || sshHostLabel(user, host);
   const remoteHome = (input.remoteHome ?? "").trim() || DEFAULT_REMOTE_HOME;
@@ -82,7 +90,7 @@ export function normalizeSshHostConfig(
     id: input.id,
     label,
     host,
-    port,
+    ...(port !== undefined ? { port } : {}),
     ...(user ? { user } : {}),
     remotePort,
     remoteHome,
@@ -104,10 +112,23 @@ export interface ParsedSshHostUri {
  *
  * Query params: remotePort, remoteHome, installDir, label, version.
  */
+/** Parse a decimal port, rejecting NaN and anything out of range. */
+function parsePort(value: string): number | null {
+  if (!/^\d+$/.test(value)) return null;
+  const port = Number(value);
+  return Number.isInteger(port) && port >= 1 && port <= 65535 ? port : null;
+}
+
 function parseSshUriOverrides(params: URLSearchParams): Partial<SshHostConfig> {
   const overrides: Partial<SshHostConfig> = {};
   const remotePortParam = params.get("remotePort");
-  if (remotePortParam) overrides.remotePort = Number(remotePortParam);
+  if (remotePortParam) {
+    const remotePort = parsePort(remotePortParam);
+    if (remotePort === null) {
+      throw new Error(`Invalid remotePort in ssh:// URI: ${remotePortParam}`);
+    }
+    overrides.remotePort = remotePort;
+  }
   const remoteHome = params.get("remoteHome");
   if (remoteHome) overrides.remoteHome = remoteHome;
   const installDir = params.get("installDir");
@@ -126,17 +147,19 @@ function splitHostPort(hostPort: string): { host: string; port?: number } | null
     if (close < 0) return null;
     const host = hostPort.slice(1, close);
     const after = hostPort.slice(close + 1);
-    if (after.startsWith(":")) {
-      return { host, port: Number(after.slice(1)) };
-    }
-    return { host };
+    if (!after) return { host };
+    if (!after.startsWith(":")) return null;
+    const port = parsePort(after.slice(1));
+    return port === null ? null : { host, port };
   }
   const lastColon = hostPort.lastIndexOf(":");
   if (lastColon >= 0) {
-    const maybePort = Number(hostPort.slice(lastColon + 1));
-    if (Number.isInteger(maybePort) && maybePort > 0) {
-      return { host: hostPort.slice(0, lastColon), port: maybePort };
-    }
+    const port = parsePort(hostPort.slice(lastColon + 1));
+    // A trailing colon with a non-numeric suffix is a typo, not a hostname —
+    // treating "host:2222x" as a hostname would fail much later and less
+    // clearly than rejecting it here.
+    if (port === null) return null;
+    return { host: hostPort.slice(0, lastColon), port };
   }
   return { host: hostPort };
 }
