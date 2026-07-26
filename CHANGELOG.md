@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.901 - 2026-07-26
+
+### Fixed
+
+- Restore desktop Browser localhost tunneling after the official v0.2.1 sync by accepting per-browser webview partitions and matching attached registration to those sessions again
+
 ## 0.2.900 - 2026-07-25
 
 ### Added
