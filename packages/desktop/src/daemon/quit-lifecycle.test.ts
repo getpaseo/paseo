@@ -7,12 +7,12 @@ import {
   stopDesktopManagedDaemonOnQuitIfNeeded,
 } from "./quit-lifecycle";
 
-const SETTINGS_KEEP_RUNNING = DEFAULT_DESKTOP_SETTINGS;
-const SETTINGS_STOP_ON_QUIT = {
+const SETTINGS_STOP_ON_QUIT = DEFAULT_DESKTOP_SETTINGS;
+const SETTINGS_KEEP_RUNNING = {
   ...DEFAULT_DESKTOP_SETTINGS,
   daemon: {
     ...DEFAULT_DESKTOP_SETTINGS.daemon,
-    keepRunningAfterQuit: false,
+    keepRunningAfterQuit: true,
   },
 };
 
@@ -29,7 +29,7 @@ function waitForQuitLifecycle(): Promise<void> {
 }
 
 describe("quit-lifecycle", () => {
-  it("only stops when keepRunningAfterQuit is explicitly disabled", () => {
+  it("stops by default and only keeps running when keepRunningAfterQuit is enabled", () => {
     expect(shouldStopDesktopManagedDaemonOnQuit(SETTINGS_STOP_ON_QUIT)).toBe(true);
     expect(shouldStopDesktopManagedDaemonOnQuit(SETTINGS_KEEP_RUNNING)).toBe(false);
   });
