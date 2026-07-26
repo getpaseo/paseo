@@ -20,6 +20,8 @@ You still need a Claude plan that includes Claude Code, and your plan's usual us
 
 Install and sign in to the Claude Code CLI on the machine running Paseo. Paseo uses that existing installation and account when you start a Claude Code agent.
 
+If your Claude login expires, re-authenticate with the Claude Code CLI, then start a new Claude Code session in Paseo. Existing Paseo sessions keep the authentication they started with, so re-authenticating does not update a session that is already running.
+
 ## Use Claude Code in the Paseo terminal
 
 Claude Code also works great inside the Paseo terminal. If you prefer the standard CLI experience, open a terminal in your workspace and run `claude` as usual.
