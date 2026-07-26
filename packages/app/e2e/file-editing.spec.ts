@@ -18,6 +18,14 @@ function editor(page: Page) {
   return page.getByTestId("file-source-editor").filter({ visible: true }).locator(".cm-content");
 }
 
+function hasHorizontalOverflow(element: HTMLElement): boolean {
+  return element.scrollWidth > element.clientWidth;
+}
+
+function fitsViewportWidth(element: HTMLElement): boolean {
+  return element.scrollWidth === element.clientWidth;
+}
+
 async function replaceEditorText(page: Page, content: string): Promise<void> {
   const contentElement = editor(page);
   await contentElement.click();
@@ -200,6 +208,36 @@ test.describe("CodeMirror workspace file editing", () => {
         .getByTestId(`workspace-tab-tooltip-file_${relativePath}`)
         .getByText(relativePath, { exact: true }),
     ).toHaveCSS("font-family", "monospace");
+  });
+
+  test("wraps Markdown while source code remains horizontally scrollable", async ({
+    page,
+    withWorkspace,
+  }) => {
+    const workspace = await withWorkspace({ prefix: "file-editing-wrap-" });
+    const longLine = "word ".repeat(300);
+    await writeFile(path.join(workspace.repoPath, "notes.md"), `${longLine}\n`, "utf8");
+    await writeFile(
+      path.join(workspace.repoPath, "source.ts"),
+      `const value = "${longLine}";\n`,
+      "utf8",
+    );
+    await workspace.navigateTo();
+    await openWorkspaceFile(page, "notes.md");
+    await page.getByTestId("file-mode-source").click();
+
+    const markdownScroller = page
+      .getByTestId("file-source-editor")
+      .filter({ visible: true })
+      .locator(".cm-scroller");
+    await expect.poll(() => markdownScroller.evaluate(fitsViewportWidth)).toBe(true);
+
+    await openWorkspaceFile(page, "source.ts");
+    const sourceScroller = page
+      .getByTestId("file-source-editor")
+      .filter({ visible: true })
+      .locator(".cm-scroller");
+    await expect.poll(() => sourceScroller.evaluate(hasHorizontalOverflow)).toBe(true);
   });
 
   test("autosaves, saves immediately, resolves conflicts, and restores live updates after reconnect", async ({
