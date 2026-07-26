@@ -1,9 +1,9 @@
 import type pino from "pino";
-import { Readable } from "node:stream";
+import { PassThrough } from "node:stream";
 import { existsSync } from "node:fs";
 
 import type { SpeechStreamResult, TextToSpeechProvider } from "../../../speech-provider.js";
-import { chunkBuffer, float32ToPcm16le } from "../../../audio.js";
+import { float32ToPcm16le } from "../../../audio.js";
 import { loadSherpaOnnxNode } from "./sherpa-onnx-node-loader.js";
 
 export type SherpaTtsPreset = "kokoro-en-v0_19";
@@ -31,6 +31,10 @@ interface SherpaOfflineTtsNative {
     speed: number;
     enableExternalBuffer: boolean;
   }) => { samples?: Float32Array | number[]; sampleRate?: number } | undefined;
+  generateAsync?: (
+    args: { text: string; sid: number; speed: number; enableExternalBuffer: boolean },
+    onProgress: (samples: Float32Array | number[], progress: number) => number,
+  ) => Promise<{ sampleRate?: number } | undefined>;
   free?: () => void;
 }
 
@@ -86,14 +90,48 @@ export class SherpaOnnxTTS implements TextToSpeechProvider {
     );
   }
 
-  async synthesizeSpeech(text: string): Promise<SpeechStreamResult> {
+  synthesizeSpeech(text: string): Promise<SpeechStreamResult> {
     const trimmed = text.trim();
     if (!trimmed) {
       throw new Error("Cannot synthesize empty text");
     }
 
+    const sampleRate =
+      typeof this.tts.sampleRate === "number" && this.tts.sampleRate > 0
+        ? this.tts.sampleRate
+        : 24000;
+
+    if (this.tts.generateAsync) {
+      return this.synthesizeStreaming(trimmed, sampleRate);
+    }
+    return this.synthesizeBatch(trimmed, sampleRate);
+  }
+
+  private synthesizeStreaming(text: string, sampleRate: number): Promise<SpeechStreamResult> {
+    const passThrough = new PassThrough();
+
+    void this.tts.generateAsync!(
+      { text, sid: this.speakerId, speed: this.speed, enableExternalBuffer: false },
+      (samples) => {
+        // Copy to avoid "External buffers are not allowed" with native-backed arrays.
+        const copied = Float32Array.from(
+          samples instanceof Float32Array ? samples : Float32Array.from(samples),
+        );
+        passThrough.push(float32ToPcm16le(copied));
+        return 1; // continue synthesis
+      },
+    ).then(() => {
+      passThrough.end();
+    }).catch((err: unknown) => {
+      passThrough.destroy(err instanceof Error ? err : new Error(String(err)));
+    });
+
+    return Promise.resolve({ stream: passThrough, format: `pcm;rate=${sampleRate}` });
+  }
+
+  private async synthesizeBatch(text: string, sampleRate: number): Promise<SpeechStreamResult> {
     const audio = this.tts.generate({
-      text: trimmed,
+      text,
       sid: this.speakerId,
       speed: this.speed,
       // Electron rejects native external-backed typed arrays. Request a copied buffer
@@ -109,32 +147,12 @@ export class SherpaOnnxTTS implements TextToSpeechProvider {
     // Copy to avoid "External buffers are not allowed" when sherpa-onnx
     // returns a Float32Array backed by native memory.
     const samples = rawSamples ? Float32Array.from(rawSamples) : null;
-    let sampleRate: number;
-    if (
-      audio &&
-      typeof audio.sampleRate === "number" &&
-      Number.isFinite(audio.sampleRate) &&
-      audio.sampleRate > 0
-    ) {
-      sampleRate = audio.sampleRate;
-    } else if (typeof this.tts.sampleRate === "number") {
-      sampleRate = this.tts.sampleRate;
-    } else {
-      sampleRate = 24000;
-    }
-
     if (!samples) {
       throw new Error("Unexpected sherpa TTS output: missing Float32 samples");
     }
-
-    const pcm16 = float32ToPcm16le(samples);
-    const chunkBytes = Math.max(2, Math.round(sampleRate * 0.05) * 2); // ~50ms
-    const chunks = chunkBuffer(pcm16, chunkBytes);
-
-    return {
-      stream: Readable.from(chunks),
-      format: `pcm;rate=${sampleRate}`,
-    };
+    const passThrough = new PassThrough();
+    passThrough.end(float32ToPcm16le(samples));
+    return { stream: passThrough, format: `pcm;rate=${sampleRate}` };
   }
 
   free(): void {

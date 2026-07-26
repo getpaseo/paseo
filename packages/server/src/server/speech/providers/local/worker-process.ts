@@ -281,14 +281,15 @@ function handleSessionRequest(message: LocalSpeechWorkerSessionRequest): void {
 async function handleRequest(message: LocalSpeechWorkerRequest): Promise<void> {
   if (message.type === "tts.synthesize") {
     const result = await getTtsProvider(message.config).synthesizeSpeech(message.text);
-    const chunks: Buffer[] = [];
+    sendToParent({ type: "tts.start", requestId: message.requestId, format: result.format });
     for await (const chunk of result.stream) {
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      sendToParent({
+        type: "tts.chunk",
+        requestId: message.requestId,
+        audio: bufferToWorkerBytes(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)),
+      });
     }
-    sendOk(message.requestId, {
-      audio: bufferToWorkerBytes(Buffer.concat(chunks)),
-      format: result.format,
-    });
+    sendOk(message.requestId, { format: result.format });
     return;
   }
 
