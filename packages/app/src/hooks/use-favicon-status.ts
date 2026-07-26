@@ -5,6 +5,10 @@ import { getDesktopHost } from "@/desktop/host";
 import { useWorkspaceStatusesForBadges } from "@/stores/session-store-hooks";
 import { deriveMacDockBadgeCountFromWorkspaceStatuses } from "@/utils/desktop-badge-state";
 import { isNative } from "@/constants/platform";
+import equal from "fast-deep-equal";
+import { useStoreWithEqualityFn } from "zustand/traditional";
+import { useSessionStore } from "@/stores/session-store";
+import { selectActiveWorkspaceTabs } from "@/screens/workspace/active-workspace-tabs-model";
 
 type FaviconStatus = "none" | "running" | "attention";
 type ColorScheme = "dark" | "light";
@@ -96,8 +100,14 @@ async function updateMacDockBadge(count?: number) {
 export function useFaviconStatus() {
   const { agents } = useAggregatedAgents();
   const workspaceStatuses = useWorkspaceStatusesForBadges();
+  const activeWorkspaceTabs = useStoreWithEqualityFn(
+    useSessionStore,
+    selectActiveWorkspaceTabs,
+    equal,
+  );
   const [colorScheme, setColorScheme] = useState<ColorScheme>(getSystemColorScheme);
   const lastDockBadgeCountRef = useRef<number | undefined>(undefined);
+  const lastAttentionStateKeyRef = useRef<string | null>(null);
 
   // Listen for system color scheme changes
   useEffect(() => {
@@ -124,5 +134,31 @@ export function useFaviconStatus() {
       lastDockBadgeCountRef.current = dockBadgeCount;
       void updateMacDockBadge(dockBadgeCount);
     }
-  }, [agents, colorScheme, workspaceStatuses]);
+
+    const attentionItems = activeWorkspaceTabs.flatMap((workspace) =>
+      workspace.sessions.map((session) => ({
+        serverId: workspace.serverId,
+        workspaceId: workspace.workspaceId,
+        agentId: session.agentId,
+        workspaceLabel: workspace.workspaceLabel,
+        sessionLabel: session.label,
+        status: session.status,
+      })),
+    );
+    let attentionStatus: "none" | "running" | "needs_input" = "none";
+    if (attentionItems.some((item) => item.status === "needs_input" || item.status === "failed")) {
+      attentionStatus = "needs_input";
+    } else if (attentionItems.length > 0) {
+      attentionStatus = "running";
+    }
+    const attentionState = {
+      status: attentionStatus,
+      items: attentionItems,
+    };
+    const attentionStateKey = JSON.stringify(attentionState);
+    if (attentionStateKey !== lastAttentionStateKeyRef.current) {
+      lastAttentionStateKeyRef.current = attentionStateKey;
+      void getDesktopHost()?.attention?.update?.(attentionState);
+    }
+  }, [activeWorkspaceTabs, agents, colorScheme, workspaceStatuses]);
 }

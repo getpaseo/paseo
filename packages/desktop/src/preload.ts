@@ -80,8 +80,25 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
   },
   notification: {
     isSupported: () => ipcRenderer.invoke("paseo:notification:isSupported"),
-    sendNotification: (payload: { title: string; body?: string; data?: Record<string, unknown> }) =>
-      ipcRenderer.invoke("paseo:notification:send", payload),
+    sendNotification: (payload: {
+      title: string;
+      body?: string;
+      data?: Record<string, unknown>;
+      silent?: boolean;
+    }) => ipcRenderer.invoke("paseo:notification:send", payload),
+  },
+  attention: {
+    update: (input: {
+      status: "none" | "running" | "needs_input";
+      items: Array<{
+        serverId: string;
+        workspaceId: string;
+        agentId: string;
+        workspaceLabel: string;
+        sessionLabel: string;
+        status: "needs_input" | "failed" | "running";
+      }>;
+    }) => ipcRenderer.invoke("paseo:attention:update", input),
   },
   opener: {
     openUrl: (url: string) => ipcRenderer.invoke("paseo:opener:openUrl", url),

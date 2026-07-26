@@ -7,6 +7,7 @@ interface OsNotificationPayload {
   title: string;
   body?: string;
   data?: Record<string, unknown>;
+  silent?: boolean;
 }
 
 export interface WebNotificationClickDetail {
@@ -27,6 +28,7 @@ function getDesktopNotificationSender():
       title: string;
       body?: string;
       data?: Record<string, unknown>;
+      silent?: boolean;
     }) => Promise<boolean>)
   | null {
   const sendNotification = getDesktopHost()?.notification?.sendNotification;
@@ -35,6 +37,7 @@ function getDesktopNotificationSender():
         title: string;
         body?: string;
         data?: Record<string, unknown>;
+        silent?: boolean;
       }) => Promise<boolean>)
     : null;
 }

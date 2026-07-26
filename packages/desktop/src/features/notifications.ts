@@ -6,6 +6,7 @@ interface NotificationInput {
   title?: unknown;
   body?: unknown;
   data?: unknown;
+  silent?: unknown;
 }
 
 interface NotificationClickPayload {
@@ -94,12 +95,13 @@ export function registerNotificationHandlers(): void {
 
     const body = toTrimmedString(rawInput?.body) ?? undefined;
     const data = toRecord(rawInput?.data);
+    const silent = rawInput?.silent !== false;
     const icon = getNotificationIcon();
     const notification = new Notification({
       title,
       ...(body ? { body } : {}),
       ...(icon ? { icon } : {}),
-      silent: true,
+      silent,
     });
 
     activeNotifications.add(notification);

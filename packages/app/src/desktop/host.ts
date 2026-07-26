@@ -67,8 +67,31 @@ export interface DesktopDialogBridge {
 export interface DesktopNotificationBridge {
   isSupported?: () => Promise<boolean>;
   sendNotification?: (
-    payload: string | { title: string; body?: string; data?: Record<string, unknown> },
+    payload:
+      | string
+      | {
+          title: string;
+          body?: string;
+          data?: Record<string, unknown>;
+          silent?: boolean;
+        },
   ) => Promise<boolean>;
+}
+
+export interface DesktopAttentionItem {
+  serverId: string;
+  workspaceId: string;
+  agentId: string;
+  workspaceLabel: string;
+  sessionLabel: string;
+  status: "needs_input" | "failed" | "running";
+}
+
+export interface DesktopAttentionBridge {
+  update?: (input: {
+    status: "none" | "running" | "needs_input";
+    items: DesktopAttentionItem[];
+  }) => Promise<boolean>;
 }
 
 export interface DesktopOpenerBridge {
@@ -190,6 +213,7 @@ export interface DesktopHostBridge {
   window?: DesktopWindowModuleBridge;
   dialog?: DesktopDialogBridge;
   notification?: DesktopNotificationBridge;
+  attention?: DesktopAttentionBridge;
   opener?: DesktopOpenerBridge;
   editor?: DesktopEditorBridge;
   webUtils?: DesktopWebUtilsBridge;

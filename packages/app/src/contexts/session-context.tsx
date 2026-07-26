@@ -544,6 +544,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         title: notification.title,
         body: notification.body,
         data: notification.data,
+        silent: params.reason !== "permission",
       });
     },
     [serverId],
@@ -1129,6 +1130,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       void sendOsNotification({
         title: message.payload.title,
         body: message.payload.body,
+        silent: message.payload.reason !== "needs_input",
         // serverId + workspaceId + terminalId route a tap to the terminal tab; cwd is
         // carried as a fallback identifier when the daemon resolved no workspace.
         data: {

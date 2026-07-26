@@ -579,6 +579,7 @@ function TabChip({
   const tabChipStyle = useCallback(
     () => [
       styles.tab,
+      presentation.statusBucket === "needs_input" && styles.tabNeedsInput,
       isWeb && isDragging && ({ cursor: "grabbing" } as object),
       {
         minWidth: resolvedTabWidth,
@@ -586,7 +587,7 @@ function TabChip({
         maxWidth: resolvedTabWidth,
       },
     ],
-    [isDragging, resolvedTabWidth],
+    [isDragging, presentation.statusBucket, resolvedTabWidth],
   );
 
   const handleTabHoverIn = useCallback(() => {
@@ -1280,6 +1281,11 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[1],
     userSelect: "none",
+  },
+  tabNeedsInput: {
+    borderBottomWidth: 2,
+    borderBottomColor: theme.colors.palette.amber[500],
+    backgroundColor: theme.colors.surface1,
   },
   tabSlot: {
     position: "relative",

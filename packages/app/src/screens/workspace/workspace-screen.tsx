@@ -129,6 +129,7 @@ import {
   WorkspaceDesktopTabsRow,
   type WorkspaceDesktopTabRowItem,
 } from "@/screens/workspace/workspace-desktop-tabs-row";
+import { ActiveWorkspaceTabsRow } from "@/screens/workspace/active-workspace-tabs-row";
 import {
   buildWorkspaceTabMenuEntries,
   type WorkspaceTabMenuEntry,
@@ -3794,6 +3795,10 @@ function WorkspaceScreenContent({
           onCloseTabsBelow={handleCloseTabsToRight}
           onCloseOtherTabs={handleCloseOtherTabs}
         />
+      ) : null}
+
+      {!isMobile ? (
+        <ActiveWorkspaceTabsRow serverId={normalizedServerId} workspaceId={normalizedWorkspaceId} />
       ) : null}
 
       {shouldRenderDesktopPaneFallback ? (
