@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, Menu, nativeImage, Tray } from "electron";
 
 type AttentionStatus = "none" | "running" | "needs_input";
-type AttentionItemStatus = "needs_input" | "failed" | "running";
+type AttentionItemStatus = "needs_input" | "failed" | "finished" | "running";
 
 interface AttentionItem {
   serverId: string;
@@ -50,7 +50,10 @@ function readAttentionItem(value: unknown): AttentionItem | null {
     !agentId ||
     !workspaceLabel ||
     !sessionLabel ||
-    (status !== "needs_input" && status !== "failed" && status !== "running")
+    (status !== "needs_input" &&
+      status !== "failed" &&
+      status !== "finished" &&
+      status !== "running")
   ) {
     return null;
   }
@@ -113,11 +116,13 @@ function updateTray(state: AttentionState): void {
   attentionTray ??= new Tray(createStatusImage(state.status));
   attentionTray.setImage(createStatusImage(state.status));
 
-  const waitingCount = state.items.filter((item) => item.status === "needs_input").length;
+  const waitingCount = state.items.filter(
+    (item) => item.status === "needs_input" || item.status === "finished",
+  ).length;
   const activeCount = state.items.length;
   let tooltip = app.name;
   if (waitingCount > 0) {
-    tooltip = `${app.name}: ${waitingCount} waiting for input`;
+    tooltip = `${app.name}: ${waitingCount} awaiting follow-up`;
   } else if (activeCount > 0) {
     tooltip = `${app.name}: ${activeCount} active sessions`;
   }
@@ -137,7 +142,9 @@ function updateTray(state: AttentionState): void {
   );
   attentionTray.removeAllListeners("click");
   attentionTray.on("click", () => {
-    const waitingItem = state.items.find((item) => item.status === "needs_input");
+    const waitingItem = state.items.find(
+      (item) => item.status === "needs_input" || item.status === "finished",
+    );
     if (waitingItem) {
       navigateToAttentionItem(waitingItem);
       return;

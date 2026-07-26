@@ -30,6 +30,7 @@ function workspaceChipStyle({
 function statusDotStyle(status: ActiveWorkspaceStatus) {
   if (status === "needs_input") return [styles.statusDot, styles.statusDotNeedsInput];
   if (status === "failed") return [styles.statusDot, styles.statusDotFailed];
+  if (status === "finished") return [styles.statusDot, styles.statusDotFinished];
   if (status === "idle") return [styles.statusDot, styles.statusDotIdle];
   return [styles.statusDot, styles.statusDotRunning];
 }
@@ -239,6 +240,9 @@ const styles = StyleSheet.create((theme) => ({
   },
   statusDotFailed: {
     backgroundColor: theme.colors.palette.red[500],
+  },
+  statusDotFinished: {
+    backgroundColor: theme.colors.palette.amber[500],
   },
   statusDotIdle: {
     backgroundColor: theme.colors.foregroundMuted,

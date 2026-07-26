@@ -43,6 +43,7 @@ import type { AudioPlaybackSource } from "@/voice/audio-engine-types";
 import { useSessionStore, type MessageEntry, type SessionState } from "@/stores/session-store";
 import { useWorkspaceSetupStore } from "@/stores/workspace-setup-store";
 import { sendOsNotification } from "@/utils/os-notifications";
+import { getDesktopHost } from "@/desktop/host";
 import { getIsAppActivelyVisible, getIsAppVisible } from "@/utils/app-visibility";
 import {
   getInitKey,
@@ -507,10 +508,12 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       if (params.reason === "error") {
         return;
       }
-      const isActivelyVisible = getIsAppActivelyVisible(appState);
-      const isAwayFromAgent = !isActivelyVisible || attentionFocusedAgentId !== params.agentId;
-      if (!isAwayFromAgent) {
-        return;
+      if (params.reason !== "finished") {
+        const isActivelyVisible = getIsAppActivelyVisible(appState);
+        const isAwayFromAgent = !isActivelyVisible || attentionFocusedAgentId !== params.agentId;
+        if (!isAwayFromAgent) {
+          return;
+        }
       }
 
       const timestampMs = new Date(params.timestamp).getTime();
@@ -544,7 +547,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         title: notification.title,
         body: notification.body,
         data: notification.data,
-        silent: params.reason !== "permission",
+        silent: false,
       });
     },
     [serverId],
@@ -840,7 +843,9 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     });
 
     const unsubAgentAttention = client.onAgentAttentionRequired((notification) => {
-      if (notification.shouldNotify) {
+      const shouldNotifyFinishedDesktop =
+        notification.reason === "finished" && getDesktopHost()?.notification !== undefined;
+      if (notification.shouldNotify || shouldNotifyFinishedDesktop) {
         notifyAgentAttention(notification);
       }
     });

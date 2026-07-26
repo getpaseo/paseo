@@ -1,6 +1,6 @@
 import type { Agent, WorkspaceDescriptor } from "@/stores/session-store";
 
-export type ActiveSessionStatus = "needs_input" | "failed" | "running";
+export type ActiveSessionStatus = "needs_input" | "failed" | "finished" | "running";
 export type ActiveWorkspaceStatus = ActiveSessionStatus | "idle";
 
 export interface ActiveWorkspaceSessionTab {
@@ -35,7 +35,8 @@ interface ActiveWorkspaceTabsState {
 const STATUS_PRIORITY: Record<ActiveSessionStatus, number> = {
   needs_input: 0,
   failed: 1,
-  running: 2,
+  finished: 2,
+  running: 3,
 };
 
 function deriveActiveSessionStatus(agent: Agent): ActiveSessionStatus | null {
@@ -44,6 +45,9 @@ function deriveActiveSessionStatus(agent: Agent): ActiveSessionStatus | null {
   }
   if (agent.status === "error" || agent.attentionReason === "error") {
     return "failed";
+  }
+  if (agent.requiresAttention && agent.attentionReason === "finished") {
+    return "finished";
   }
   if (agent.status === "running" || agent.status === "initializing") {
     return "running";

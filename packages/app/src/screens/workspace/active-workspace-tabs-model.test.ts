@@ -27,10 +27,17 @@ function agent(input: {
   workspaceId: string;
   status: Agent["status"];
   permission?: boolean;
+  finished?: boolean;
   archived?: boolean;
   lastActivityAt?: number;
 }): Agent {
   const now = new Date(input.lastActivityAt ?? 1);
+  let attentionReason: Agent["attentionReason"] = null;
+  if (input.permission) {
+    attentionReason = "permission";
+  } else if (input.finished) {
+    attentionReason = "finished";
+  }
   return {
     serverId: "local",
     id: input.id,
@@ -58,8 +65,9 @@ function agent(input: {
     cwd: `/code/${input.workspaceId}`,
     workspaceId: input.workspaceId,
     model: null,
-    attentionReason: input.permission ? "permission" : null,
-    attentionTimestamp: input.permission ? now : null,
+    requiresAttention: input.permission || input.finished,
+    attentionReason,
+    attentionTimestamp: input.permission || input.finished ? now : null,
     archivedAt: input.archived ? now : null,
     parentAgentId: null,
     labels: {},
@@ -145,5 +153,33 @@ describe("active-workspace-tabs-model", () => {
     expect(tabs[0]?.status).toBe("needs_input");
     expect(tabs[0]?.needsInputCount).toBe(1);
     expect(tabs[0]?.sessions.map((session) => session.agentId)).toEqual(["waiting", "running"]);
+  });
+
+  it("marks completed sessions as awaiting follow-up", () => {
+    const current = workspace({ id: "workspace" });
+
+    const tabs = selectActiveWorkspaceTabs({
+      sessions: {
+        local: {
+          workspaces: new Map([[current.id, current]]),
+          agents: new Map([
+            [
+              "finished",
+              agent({
+                id: "finished",
+                workspaceId: current.id,
+                status: "idle",
+                finished: true,
+              }),
+            ],
+          ]),
+        },
+      },
+    });
+
+    expect(tabs[0]).toMatchObject({
+      status: "finished",
+      sessions: [{ agentId: "finished", status: "finished" }],
+    });
   });
 });

@@ -84,7 +84,7 @@ export interface DesktopAttentionItem {
   agentId: string;
   workspaceLabel: string;
   sessionLabel: string;
-  status: "needs_input" | "failed" | "running";
+  status: "needs_input" | "failed" | "finished" | "running";
 }
 
 export interface DesktopAttentionBridge {

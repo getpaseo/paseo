@@ -96,7 +96,7 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
         agentId: string;
         workspaceLabel: string;
         sessionLabel: string;
-        status: "needs_input" | "failed" | "running";
+        status: "needs_input" | "failed" | "finished" | "running";
       }>;
     }) => ipcRenderer.invoke("paseo:attention:update", input),
   },

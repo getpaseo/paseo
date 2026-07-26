@@ -146,7 +146,12 @@ export function useFaviconStatus() {
       })),
     );
     let attentionStatus: "none" | "running" | "needs_input" = "none";
-    if (attentionItems.some((item) => item.status === "needs_input" || item.status === "failed")) {
+    if (
+      attentionItems.some(
+        (item) =>
+          item.status === "needs_input" || item.status === "failed" || item.status === "finished",
+      )
+    ) {
       attentionStatus = "needs_input";
     } else if (attentionItems.length > 0) {
       attentionStatus = "running";
