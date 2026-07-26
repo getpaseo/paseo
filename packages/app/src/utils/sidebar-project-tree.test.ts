@@ -190,6 +190,14 @@ describe("buildSidebarProjectTree", () => {
       projects: [client, repo, emptyRepo, emptyRoot],
     });
 
-    expect(Array.from(expandableProjectKeys(tree))).toEqual(["repo", "client"]);
+    expect(Array.from(expandableProjectKeys(tree))).toEqual(["client", "repo"]);
+  });
+
+  it("expands structural folders even when their nested leaves have no workspaces", () => {
+    const client = project("client", "/code/client");
+    const repo = project("repo", "/code/client/repo");
+    const tree = buildSidebarProjectTree({ projects: [client, repo] });
+
+    expect(Array.from(expandableProjectKeys(tree))).toEqual(["client"]);
   });
 });
