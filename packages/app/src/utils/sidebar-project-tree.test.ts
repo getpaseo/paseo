@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { SidebarProjectEntry } from "@/hooks/use-sidebar-workspaces-list";
 import {
   buildSidebarProjectTree,
+  expandableProjectKeys,
   expandedProjectKeysForActiveWorkspaces,
   flattenSidebarProjectTree,
   reorderSidebarProjectTreeChildren,
@@ -178,5 +179,17 @@ describe("buildSidebarProjectTree", () => {
         activeWorkspaceKeys: new Set(),
       }),
     ).toEqual(new Set());
+  });
+
+  it("expands projects with workspaces and required ancestors but skips empty leaves", () => {
+    const client = project("client", "/code/client");
+    const repo = project("repo", "/code/client/repo", { workspaceIds: ["workspace"] });
+    const emptyRepo = project("empty-repo", "/code/client/empty");
+    const emptyRoot = project("empty-root", "/code/empty");
+    const tree = buildSidebarProjectTree({
+      projects: [client, repo, emptyRepo, emptyRoot],
+    });
+
+    expect(Array.from(expandableProjectKeys(tree))).toEqual(["repo", "client"]);
   });
 });

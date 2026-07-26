@@ -67,7 +67,7 @@ function agent(input: {
 }
 
 describe("active-workspace-tabs-model", () => {
-  it("shows only workspaces containing running or actionable sessions", () => {
+  it("shows every workspace and marks those without active sessions idle", () => {
     const active = workspace({ id: "active", project: "Acme", name: "API" });
     const idle = workspace({ id: "idle", project: "Acme", name: "Web" });
 
@@ -86,12 +86,17 @@ describe("active-workspace-tabs-model", () => {
       },
     });
 
-    expect(tabs.map((tab) => tab.key)).toEqual(["local:active"]);
+    expect(tabs.map((tab) => tab.key)).toEqual(["local:active", "local:idle"]);
     expect(tabs[0]).toMatchObject({
       projectKey: "project-active",
       projectRootPath: "/code/active",
     });
     expect(tabs[0]?.sessions.map((session) => session.agentId)).toEqual(["running"]);
+    expect(tabs[1]).toMatchObject({
+      key: "local:idle",
+      status: "idle",
+      sessions: [],
+    });
   });
 
   it("prioritizes waiting sessions and excludes archived sessions", () => {

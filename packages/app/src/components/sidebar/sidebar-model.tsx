@@ -17,6 +17,7 @@ import { selectActiveWorkspaceTabs } from "@/screens/workspace/active-workspace-
 import type { SidebarShortcutModel } from "@/utils/sidebar-shortcuts";
 import {
   buildSidebarProjectTree,
+  expandableProjectKeys,
   expandedProjectKeysForActiveWorkspaces,
 } from "@/utils/sidebar-project-tree";
 import { buildSidebarProjection } from "./sidebar-projection";
@@ -80,23 +81,25 @@ export function SidebarModelProvider({
       ),
     [expandedProjectKeys, list.projects],
   );
-  const allProjectKeys = useMemo(
-    () => list.projects.map((project) => project.projectKey),
+  const projectTree = useMemo(
+    () => buildSidebarProjectTree({ projects: list.projects }),
     [list.projects],
   );
+  const allProjectKeys = useMemo(() => expandableProjectKeys(projectTree), [projectTree]);
   const allProjectsExpanded =
-    allProjectKeys.length > 0 && allProjectKeys.every((key) => expandedProjectKeys.has(key));
+    allProjectKeys.size > 0 &&
+    Array.from(allProjectKeys).every((key) => expandedProjectKeys.has(key));
   const activeWorkspaceKeys = useMemo(
-    () => new Set(activeWorkspaceTabs.map((tab) => tab.key)),
+    () => new Set(activeWorkspaceTabs.filter((tab) => tab.status !== "idle").map((tab) => tab.key)),
     [activeWorkspaceTabs],
   );
   const activeProjectPathKeys = useMemo(
     () =>
       expandedProjectKeysForActiveWorkspaces({
-        nodes: buildSidebarProjectTree({ projects: list.projects }),
+        nodes: projectTree,
         activeWorkspaceKeys,
       }),
-    [activeWorkspaceKeys, list.projects],
+    [activeWorkspaceKeys, projectTree],
   );
   const toggleAllProjectsExpanded = useCallback(() => {
     setExpandedProjectKeys(allProjectsExpanded ? activeProjectPathKeys : allProjectKeys);

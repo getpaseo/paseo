@@ -198,6 +198,25 @@ export function expandedProjectKeysForActiveWorkspaces(input: {
   return expandedProjectKeys;
 }
 
+export function expandableProjectKeys(nodes: readonly SidebarProjectTreeNode[]): Set<string> {
+  const projectKeys = new Set<string>();
+
+  const visit = (node: SidebarProjectTreeNode): boolean => {
+    const hasWorkspace = node.project.workspaces.length > 0;
+    const hasWorkspaceDescendant = node.children.some(visit);
+    if (hasWorkspace || hasWorkspaceDescendant) {
+      projectKeys.add(node.project.projectKey);
+      return true;
+    }
+    return false;
+  };
+
+  for (const node of nodes) {
+    visit(node);
+  }
+  return projectKeys;
+}
+
 export function reorderSidebarProjectTreeChildren(input: {
   nodes: readonly SidebarProjectTreeNode[];
   parentProjectKey: string;

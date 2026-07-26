@@ -14,7 +14,7 @@ import type { Theme } from "@/styles/theme";
 import {
   selectActiveWorkspaceTabs,
   type ActiveWorkspaceTab,
-  type ActiveSessionStatus,
+  type ActiveWorkspaceStatus,
 } from "./active-workspace-tabs-model";
 
 const ThemedCircleAlert = withUnistyles(CircleAlert);
@@ -27,9 +27,10 @@ function workspaceChipStyle({
   return [styles.workspaceChip, (Boolean(hovered) || pressed) && styles.workspaceChipHovered];
 }
 
-function statusDotStyle(status: ActiveSessionStatus) {
+function statusDotStyle(status: ActiveWorkspaceStatus) {
   if (status === "needs_input") return [styles.statusDot, styles.statusDotNeedsInput];
   if (status === "failed") return [styles.statusDot, styles.statusDotFailed];
+  if (status === "idle") return [styles.statusDot, styles.statusDotIdle];
   return [styles.statusDot, styles.statusDotRunning];
 }
 
@@ -238,6 +239,10 @@ const styles = StyleSheet.create((theme) => ({
   },
   statusDotFailed: {
     backgroundColor: theme.colors.palette.red[500],
+  },
+  statusDotIdle: {
+    backgroundColor: theme.colors.foregroundMuted,
+    opacity: 0.55,
   },
   attentionButton: {
     height: 22,

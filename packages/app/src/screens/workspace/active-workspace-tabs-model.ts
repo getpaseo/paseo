@@ -1,6 +1,7 @@
 import type { Agent, WorkspaceDescriptor } from "@/stores/session-store";
 
 export type ActiveSessionStatus = "needs_input" | "failed" | "running";
+export type ActiveWorkspaceStatus = ActiveSessionStatus | "idle";
 
 export interface ActiveWorkspaceSessionTab {
   agentId: string;
@@ -17,7 +18,7 @@ export interface ActiveWorkspaceTab {
   projectRootPath: string;
   projectLabel: string;
   workspaceLabel: string;
-  status: ActiveSessionStatus;
+  status: ActiveWorkspaceStatus;
   sessions: ActiveWorkspaceSessionTab[];
   needsInputCount: number;
 }
@@ -97,10 +98,7 @@ export function selectActiveWorkspaceTabs(state: ActiveWorkspaceTabsState): Acti
     }
 
     for (const workspace of session.workspaces.values()) {
-      const sessions = sessionsByWorkspaceId.get(workspace.id);
-      if (!sessions || sessions.length === 0) {
-        continue;
-      }
+      const sessions = sessionsByWorkspaceId.get(workspace.id) ?? [];
       sessions.sort(compareSessions);
       tabs.push({
         key: `${serverId}:${workspace.id}`,
@@ -110,7 +108,7 @@ export function selectActiveWorkspaceTabs(state: ActiveWorkspaceTabsState): Acti
         projectRootPath: workspace.projectRootPath,
         projectLabel: workspaceProjectLabel(workspace),
         workspaceLabel: workspaceLabel(workspace),
-        status: sessions[0]?.status ?? "running",
+        status: sessions[0]?.status ?? "idle",
         sessions,
         needsInputCount: sessions.filter((agent) => agent.status === "needs_input").length,
       });
