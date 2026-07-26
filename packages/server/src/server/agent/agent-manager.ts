@@ -409,6 +409,11 @@ export interface IdleAgentCollectionResult {
   failures: IdleAgentCollectionFailure[];
 }
 
+interface RuntimeCollectionState {
+  protectedAgentIds: Set<string>;
+  latestActivityAtByAgentId: Map<string, number>;
+}
+
 type ActiveManagedAgent =
   | ManagedAgentInitializing
   | ManagedAgentIdle
@@ -1425,10 +1430,20 @@ export class AgentManager {
     protectedAgentIds: ReadonlySet<string>;
   }): Promise<IdleAgentCollectionResult> {
     const result: IdleAgentCollectionResult = { collected: [], failures: [] };
+    const collectionState = this.resolveRuntimeCollectionState(options.protectedAgentIds);
 
     for (const agent of Array.from(this.agents.values())) {
       const current = this.agents.get(agent.id);
-      if (!current || !this.isIdleAgentCollectable(current, options)) {
+      if (
+        !current ||
+        !this.isIdleAgentCollectable(current, {
+          cutoff: options.cutoff,
+          protectedAgentIds: collectionState.protectedAgentIds,
+          latestActivityAt:
+            collectionState.latestActivityAtByAgentId.get(current.id) ??
+            current.updatedAt.getTime(),
+        })
+      ) {
         continue;
       }
 
@@ -1448,13 +1463,83 @@ export class AgentManager {
     return result;
   }
 
+  private resolveRuntimeCollectionState(
+    protectedAgentIds: ReadonlySet<string>,
+  ): RuntimeCollectionState {
+    const state: RuntimeCollectionState = {
+      protectedAgentIds: new Set(protectedAgentIds),
+      latestActivityAtByAgentId: new Map(),
+    };
+    for (const agent of this.agents.values()) {
+      this.recordRuntimeCollectionActivity(agent, agent.updatedAt.getTime(), state);
+      if (this.hasActiveRuntimeWork(agent)) {
+        this.protectManagedAncestors(agent, state.protectedAgentIds);
+      }
+      for (const subagent of this.providerSubagents.list(agent.id)) {
+        this.recordRuntimeCollectionActivity(agent, Date.parse(subagent.updatedAt), state);
+        if (subagent.status === "running") {
+          state.protectedAgentIds.add(agent.id);
+          this.protectManagedAncestors(agent, state.protectedAgentIds);
+        }
+      }
+    }
+    return state;
+  }
+
+  private hasActiveRuntimeWork(agent: LiveManagedAgent): boolean {
+    return (
+      isAgentBusy(agent.lifecycle) ||
+      agent.activeForegroundTurnId !== null ||
+      this.runs.hasRun(agent.id) ||
+      agent.pendingReplacement ||
+      agent.pendingPermissions.size > 0 ||
+      agent.inFlightPermissionResponses.size > 0
+    );
+  }
+
+  private protectManagedAncestors(agent: LiveManagedAgent, protectedAgentIds: Set<string>): void {
+    for (const parentAgentId of this.listManagedAncestorIds(agent)) {
+      protectedAgentIds.add(parentAgentId);
+    }
+  }
+
+  private recordRuntimeCollectionActivity(
+    agent: LiveManagedAgent,
+    activityAt: number,
+    state: RuntimeCollectionState,
+  ): void {
+    for (const agentId of [agent.id, ...this.listManagedAncestorIds(agent)]) {
+      const current = state.latestActivityAtByAgentId.get(agentId) ?? Number.NEGATIVE_INFINITY;
+      if (activityAt > current) {
+        state.latestActivityAtByAgentId.set(agentId, activityAt);
+      }
+    }
+  }
+
+  private listManagedAncestorIds(agent: LiveManagedAgent): string[] {
+    const ancestorIds: string[] = [];
+    const visited = new Set([agent.id]);
+    let parentAgentId = getParentAgentIdFromLabels(agent.labels);
+    while (parentAgentId && !visited.has(parentAgentId)) {
+      visited.add(parentAgentId);
+      ancestorIds.push(parentAgentId);
+      const parent = this.agents.get(parentAgentId);
+      parentAgentId = parent ? getParentAgentIdFromLabels(parent.labels) : null;
+    }
+    return ancestorIds;
+  }
+
   private isIdleAgentCollectable(
     agent: LiveManagedAgent,
-    options: { cutoff: Date; protectedAgentIds: ReadonlySet<string> },
+    options: {
+      cutoff: Date;
+      protectedAgentIds: ReadonlySet<string>;
+      latestActivityAt: number;
+    },
   ): agent is ManagedAgentIdle {
     return (
       agent.lifecycle === "idle" &&
-      agent.updatedAt.getTime() <= options.cutoff.getTime() &&
+      options.latestActivityAt <= options.cutoff.getTime() &&
       !agent.internal &&
       !options.protectedAgentIds.has(agent.id) &&
       agent.activeForegroundTurnId === null &&
