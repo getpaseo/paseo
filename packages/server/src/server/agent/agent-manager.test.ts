@@ -7680,7 +7680,55 @@ test("collectIdleAgents does not let a protected idle child pin its parent", asy
   }
 });
 
-test("collectIdleAgents serializes descendant registration with ancestor collection", async () => {
+test("collectIdleAgents does not let an idle child awaiting permission pin its parent", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-permission-idle-child-"));
+  const client = new (class extends TestAgentClient {
+    readonly sessions: TestAgentSession[] = [];
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      const session = new TestAgentSession(config);
+      this.sessions.push(session);
+      return session;
+    }
+  })();
+  const manager = new AgentManager({ clients: { codex: client }, logger });
+
+  try {
+    const parent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const child = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      labels: { [PARENT_AGENT_ID_LABEL]: parent.id },
+      workspaceId: undefined,
+    });
+    client.sessions[1]!.pushEvent({
+      type: "permission_requested",
+      provider: "codex",
+      request: {
+        id: "permission-child",
+        provider: "codex",
+        kind: "tool",
+        name: "Run command",
+      },
+    });
+    await manager.flush();
+
+    await manager.collectIdleAgents({
+      cutoff: new Date(Date.now() + 1_000),
+      protectedAgentIds: new Set(),
+    });
+
+    expect(manager.getAgent(parent.id)).toBeNull();
+    expect(manager.getAgent(child.id)?.lifecycle).toBe("idle");
+  } finally {
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id))).catch(
+      () => undefined,
+    );
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("collectIdleAgents serializes descendant publication with ancestor collection", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-descendant-registration-race-"));
   const closeStarted = deferred<void>();
   const closeAllowed = deferred<void>();
@@ -7717,9 +7765,7 @@ test("collectIdleAgents serializes descendant registration with ancestor collect
       labels: { [PARENT_AGENT_ID_LABEL]: parent.id },
       workspaceId: undefined,
     });
-    await Promise.resolve();
-
-    expect(client.sessions).toHaveLength(1);
+    await vi.waitFor(() => expect(client.sessions).toHaveLength(2));
 
     closeAllowed.resolve();
     await expect(collection).resolves.toEqual({
@@ -7730,6 +7776,50 @@ test("collectIdleAgents serializes descendant registration with ancestor collect
     expect(client.sessions).toHaveLength(2);
   } finally {
     closeAllowed.resolve();
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id))).catch(
+      () => undefined,
+    );
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("managed descendant provider startup remains concurrent", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-descendant-startup-concurrency-"));
+  const firstChildStarted = deferred<void>();
+  const firstChildAllowed = deferred<void>();
+  const client = new (class extends TestAgentClient {
+    sessionCount = 0;
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      const sessionIndex = this.sessionCount++;
+      if (sessionIndex === 1) {
+        firstChildStarted.resolve();
+        await firstChildAllowed.promise;
+      }
+      return new TestAgentSession(config);
+    }
+  })();
+  const manager = new AgentManager({ clients: { codex: client }, logger });
+
+  try {
+    const parent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const firstChild = manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      labels: { [PARENT_AGENT_ID_LABEL]: parent.id },
+      workspaceId: undefined,
+    });
+    await firstChildStarted.promise;
+    const secondChild = manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      labels: { [PARENT_AGENT_ID_LABEL]: parent.id },
+      workspaceId: undefined,
+    });
+
+    await vi.waitFor(() => expect(client.sessionCount).toBe(3));
+    firstChildAllowed.resolve();
+    await Promise.all([firstChild, secondChild]);
+  } finally {
+    firstChildAllowed.resolve();
     await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id))).catch(
       () => undefined,
     );
@@ -7797,6 +7887,62 @@ test("collectIdleAgents keeps an idle agent resident while a provider subagent i
 
     await manager.collectIdleAgents({
       cutoff: new Date(providerChildUpdatedAt + 1),
+      protectedAgentIds: new Set(),
+    });
+    expect(manager.getAgent(parent.id)).toBeNull();
+  } finally {
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id))).catch(
+      () => undefined,
+    );
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("removing a provider subagent starts a fresh parent idle window", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-removed-provider-subagent-"));
+  let session: TestAgentSession | null = null;
+  const client = new (class extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      session = new TestAgentSession(config);
+      return session;
+    }
+  })();
+  const manager = new AgentManager({ clients: { codex: client }, logger });
+
+  try {
+    const parent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    session?.pushEvent({
+      type: "provider_subagent",
+      provider: "codex",
+      event: {
+        type: "upsert",
+        id: "provider-child",
+        status: "running",
+      },
+    });
+    await manager.flush();
+    const beforeRemoval = manager.getAgent(parent.id)!.updatedAt.getTime();
+
+    session?.pushEvent({
+      type: "provider_subagent",
+      provider: "codex",
+      event: { type: "remove", id: "provider-child" },
+    });
+    await manager.flush();
+    const removedAt = manager.getAgent(parent.id)!.updatedAt.getTime();
+
+    expect(removedAt).toBeGreaterThan(beforeRemoval);
+    await expect(
+      manager.collectIdleAgents({
+        cutoff: new Date(removedAt - 1),
+        protectedAgentIds: new Set(),
+      }),
+    ).resolves.toEqual({ collected: [], failures: [] });
+
+    await manager.collectIdleAgents({
+      cutoff: new Date(removedAt + 1),
       protectedAgentIds: new Set(),
     });
     expect(manager.getAgent(parent.id)).toBeNull();

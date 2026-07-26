@@ -71,6 +71,7 @@ import type { PaseoToolCatalogFactory } from "./tools/types.js";
 import {
   ProviderSubagentStore,
   type ProviderSubagentDescriptor,
+  type ProviderSubagentInputEvent,
   type ProviderSubagentStoreEvent,
 } from "./provider-subagents/store.js";
 
@@ -1037,11 +1038,7 @@ export class AgentManager {
     agentId: string | undefined,
     options: CreateAgentOptions,
   ): Promise<ManagedAgent> {
-    return this.trackAgentRegistrationOperation(
-      this.runManagedDescendantRegistration(options.labels, () =>
-        this.createAgentInternal(config, agentId, options),
-      ),
-    );
+    return this.trackAgentRegistrationOperation(this.createAgentInternal(config, agentId, options));
   }
 
   private async createAgentInternal(
@@ -1098,9 +1095,7 @@ export class AgentManager {
     resumeOptions?: AgentResumeSessionOptions,
   ): Promise<ManagedAgent> {
     return this.trackAgentRegistrationOperation(
-      this.runManagedDescendantRegistration(options?.labels, () =>
-        this.resumeAgentFromPersistenceInternal(handle, overrides, agentId, options, resumeOptions),
-      ),
+      this.resumeAgentFromPersistenceInternal(handle, overrides, agentId, options, resumeOptions),
     );
   }
 
@@ -1162,11 +1157,7 @@ export class AgentManager {
     workspaceId: string;
     labels?: Record<string, string>;
   }): Promise<ManagedAgent> {
-    return this.trackAgentRegistrationOperation(
-      this.runManagedDescendantRegistration(input.labels, () =>
-        this.importProviderSessionInternal(input),
-      ),
-    );
+    return this.trackAgentRegistrationOperation(this.importProviderSessionInternal(input));
   }
 
   private async importProviderSessionInternal(input: {
@@ -1221,7 +1212,7 @@ export class AgentManager {
         publishWhenReady: true,
       });
       for (const event of imported.providerSubagentEvents ?? []) {
-        const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
+        const update = this.applyProviderSubagentEvent(agent.id, event.provider, event.event);
         this.dispatch({ type: "provider_subagent", event: update });
       }
       return agent;
@@ -1243,11 +1234,8 @@ export class AgentManager {
     overrides?: Partial<AgentSessionConfig>,
     options?: { rehydrateFromDisk?: boolean },
   ): Promise<ManagedAgent> {
-    const labels = this.agents.get(agentId)?.labels;
     return this.trackAgentRegistrationOperation(
-      this.runManagedDescendantRegistration(labels, () =>
-        this.reloadAgentSessionInternal(agentId, overrides, options),
-      ),
+      this.reloadAgentSessionInternal(agentId, overrides, options),
     );
   }
 
@@ -1503,10 +1491,10 @@ export class AgentManager {
     return result;
   }
 
-  private runManagedDescendantRegistration<T>(
+  private publishManagedDescendantRegistration(
     labels: Record<string, string> | undefined,
-    operation: () => Promise<T>,
-  ): Promise<T> {
+    operation: () => Promise<void>,
+  ): Promise<void> {
     return getParentAgentIdFromLabels(labels)
       ? this.runAgentTreeLifecycleOperation(operation)
       : operation();
@@ -1551,7 +1539,23 @@ export class AgentManager {
     return (
       agent.lifecycle === "initializing" ||
       agent.lifecycle === "running" ||
-      (agent.lifecycle === "idle" && !agent.internal && !externallyProtectedAgentIds.has(agent.id))
+      this.isIdleAgentCollectionEligible(agent, externallyProtectedAgentIds)
+    );
+  }
+
+  private isIdleAgentCollectionEligible(
+    agent: LiveManagedAgent,
+    protectedAgentIds: ReadonlySet<string>,
+  ): agent is ManagedAgentIdle {
+    return (
+      agent.lifecycle === "idle" &&
+      !agent.internal &&
+      !protectedAgentIds.has(agent.id) &&
+      agent.activeForegroundTurnId === null &&
+      !this.runs.hasRun(agent.id) &&
+      !agent.pendingReplacement &&
+      agent.pendingPermissions.size === 0 &&
+      agent.inFlightPermissionResponses.size === 0
     );
   }
 
@@ -1677,15 +1681,8 @@ export class AgentManager {
     },
   ): agent is ManagedAgentIdle {
     return (
-      agent.lifecycle === "idle" &&
-      options.latestActivityAt <= options.cutoff.getTime() &&
-      !agent.internal &&
-      !options.protectedAgentIds.has(agent.id) &&
-      agent.activeForegroundTurnId === null &&
-      !this.runs.hasRun(agent.id) &&
-      !agent.pendingReplacement &&
-      agent.pendingPermissions.size === 0 &&
-      agent.inFlightPermissionResponses.size === 0
+      this.isIdleAgentCollectionEligible(agent, options.protectedAgentIds) &&
+      options.latestActivityAt <= options.cutoff.getTime()
     );
   }
 
@@ -2981,12 +2978,17 @@ export class AgentManager {
         options,
       });
 
-      this.assertAcceptingAgentRegistrations();
-      this.agents.set(resolvedAgentId, managed);
-      this.updateManagedParentAgentId(resolvedAgentId, managed.labels);
-      registered = true;
-      // Initialize previousStatus to track transitions
-      this.previousStatuses.set(resolvedAgentId, managed.lifecycle);
+      await this.publishManagedDescendantRegistration(managed.labels, async () => {
+        this.assertAcceptingAgentRegistrations();
+        if (this.agents.has(resolvedAgentId)) {
+          throw new Error(`Agent with id ${resolvedAgentId} already exists`);
+        }
+        this.agents.set(resolvedAgentId, managed);
+        this.updateManagedParentAgentId(resolvedAgentId, managed.labels);
+        registered = true;
+        // Initialize previousStatus to track transitions
+        this.previousStatuses.set(resolvedAgentId, managed.lifecycle);
+      });
       await this.refreshRuntimeInfo(managed, { emit: false });
       this.assertAgentRegistrationActive(managed);
       await this.persistSnapshot(managed, {
@@ -3280,12 +3282,29 @@ export class AgentManager {
     }
   }
 
+  private applyProviderSubagentEvent(
+    parentAgentId: string,
+    provider: AgentProvider,
+    event: ProviderSubagentInputEvent,
+  ): ProviderSubagentStoreEvent {
+    const removedExistingSubagent =
+      event.type === "remove" && this.providerSubagents.get(parentAgentId, event.id) !== null;
+    const update = this.providerSubagents.apply(parentAgentId, provider, event);
+    if (removedExistingSubagent) {
+      const parent = this.agents.get(parentAgentId);
+      if (parent) {
+        this.touchUpdatedAt(parent);
+      }
+    }
+    return update;
+  }
+
   private async dispatchSessionEvent(
     agent: ActiveManagedAgent,
     event: AgentStreamEvent,
   ): Promise<void> {
     if (event.type === "provider_subagent") {
-      const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
+      const update = this.applyProviderSubagentEvent(agent.id, event.provider, event.event);
       this.dispatch({ type: "provider_subagent", event: update });
       return;
     }
@@ -3468,7 +3487,7 @@ export class AgentManager {
       }
     }
     for (const event of providerSubagentEvents) {
-      const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
+      const update = this.applyProviderSubagentEvent(agent.id, event.provider, event.event);
       if (broadcast) {
         this.dispatch({ type: "provider_subagent", event: update });
       }
@@ -3505,7 +3524,7 @@ export class AgentManager {
     try {
       for await (const event of agent.session.streamHistory()) {
         if (event.type === "provider_subagent") {
-          const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
+          const update = this.applyProviderSubagentEvent(agent.id, event.provider, event.event);
           const managerEvent: AgentManagerEvent = { type: "provider_subagent", event: update };
           if (deferredBroadcast) {
             providerSubagentEvents.push(managerEvent);
