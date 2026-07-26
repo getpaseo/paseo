@@ -8,6 +8,7 @@ import type {
   PiSessionStats,
 } from "./rpc-types.js";
 import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
+import type { ProcessLaunchStrategy } from "../../../devcontainer/launch-strategy.js";
 
 export interface PiRuntimeLaunch {
   cwd: string;
@@ -36,6 +37,8 @@ export interface PiStartSessionInput {
   mcpConfigPath?: string;
   extensionPaths?: string[];
   extraArgs?: string[];
+  /** When set, spawn inside the isolated environment instead of on the host. */
+  launchStrategy?: ProcessLaunchStrategy;
 }
 
 export interface PiRuntimeSession {

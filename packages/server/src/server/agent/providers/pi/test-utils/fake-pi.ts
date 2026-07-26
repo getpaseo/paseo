@@ -53,6 +53,8 @@ interface FakePiUserEntry {
 
 export class FakePi implements PiRuntime {
   readonly recordedLaunches: PiRuntimeLaunch[] = [];
+  /** The full start input, which carries what buildPiLaunch drops. */
+  readonly recordedInputs: PiStartSessionInput[] = [];
   private readonly sessions: FakePiSession[] = [];
   private readonly command: [string, ...string[]];
   private readonly queuedCommands: PiRpcSlashCommand[][] = [];
@@ -68,6 +70,7 @@ export class FakePi implements PiRuntime {
       session: input,
     });
     this.recordedLaunches.push(launch);
+    this.recordedInputs.push(input);
     const session = new FakePiSession(launch);
     session.commands = this.queuedCommands.shift() ?? [];
     this.queuedSessionSetups.shift()?.(session);
