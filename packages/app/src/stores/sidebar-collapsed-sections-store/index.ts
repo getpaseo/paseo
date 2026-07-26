@@ -3,6 +3,7 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import {
   type CollapsedProjectsState,
+  type PersistedCollapsedProjects,
   mergePersistedCollapsedProjects,
   serializeCollapsedProjects,
   setProjectCollapsed,
@@ -21,7 +22,7 @@ interface SidebarCollapsedSectionsState extends CollapsedProjectsState {
 export const useSidebarCollapsedSectionsStore = create<SidebarCollapsedSectionsState>()(
   persist(
     (set) => ({
-      collapsedProjectKeys: new Set(),
+      expandedProjectKeys: new Set(),
       collapsedStatusGroupKeys: new Set(),
       collapsedPinned: false,
       toggleProjectCollapsed: (projectKey) =>
@@ -38,7 +39,7 @@ export const useSidebarCollapsedSectionsStore = create<SidebarCollapsedSectionsS
       partialize: (state) => serializeCollapsedProjects(state),
       merge: (persistedState, currentState) =>
         mergePersistedCollapsedProjects(
-          persistedState as { collapsedProjectKeys?: unknown } | undefined,
+          persistedState as PersistedCollapsedProjects | undefined,
           currentState,
         ),
     },

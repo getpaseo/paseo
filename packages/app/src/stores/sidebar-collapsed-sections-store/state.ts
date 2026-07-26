@@ -1,11 +1,11 @@
 export interface CollapsedProjectsState {
-  collapsedProjectKeys: Set<string>;
+  expandedProjectKeys: Set<string>;
   collapsedStatusGroupKeys: Set<string>;
   collapsedPinned: boolean;
 }
 
 export interface PersistedCollapsedProjects {
-  collapsedProjectKeys?: unknown;
+  expandedProjectKeys?: unknown;
   collapsedStatusGroupKeys?: unknown;
   collapsedPinned?: unknown;
 }
@@ -18,13 +18,13 @@ export function toggleProjectCollapsed(
   state: CollapsedProjectsState,
   projectKey: string,
 ): CollapsedProjectsState {
-  const next = new Set(state.collapsedProjectKeys);
+  const next = new Set(state.expandedProjectKeys);
   if (next.has(projectKey)) {
     next.delete(projectKey);
   } else {
     next.add(projectKey);
   }
-  return { ...state, collapsedProjectKeys: next };
+  return { ...state, expandedProjectKeys: next };
 }
 
 export function toggleStatusGroupCollapsed(
@@ -45,22 +45,35 @@ export function setProjectCollapsed(
   projectKey: string,
   collapsed: boolean,
 ): CollapsedProjectsState {
-  const next = new Set(state.collapsedProjectKeys);
+  const next = new Set(state.expandedProjectKeys);
   if (collapsed) {
-    next.add(projectKey);
-  } else {
     next.delete(projectKey);
+  } else {
+    next.add(projectKey);
   }
-  return { ...state, collapsedProjectKeys: next };
+  return { ...state, expandedProjectKeys: next };
+}
+
+export function resolveCollapsedProjectKeys(
+  projectKeys: Iterable<string>,
+  expandedProjectKeys: ReadonlySet<string>,
+): Set<string> {
+  const collapsedProjectKeys = new Set<string>();
+  for (const projectKey of projectKeys) {
+    if (!expandedProjectKeys.has(projectKey)) {
+      collapsedProjectKeys.add(projectKey);
+    }
+  }
+  return collapsedProjectKeys;
 }
 
 export function serializeCollapsedProjects(state: CollapsedProjectsState): {
-  collapsedProjectKeys: string[];
+  expandedProjectKeys: string[];
   collapsedStatusGroupKeys: string[];
   collapsedPinned: boolean;
 } {
   return {
-    collapsedProjectKeys: Array.from(state.collapsedProjectKeys),
+    expandedProjectKeys: Array.from(state.expandedProjectKeys),
     collapsedStatusGroupKeys: Array.from(state.collapsedStatusGroupKeys),
     collapsedPinned: state.collapsedPinned,
   };
@@ -71,20 +84,20 @@ export function mergePersistedCollapsedProjects<S extends CollapsedProjectsState
   current: S,
 ): S {
   if (
-    !persisted?.collapsedProjectKeys &&
+    !persisted?.expandedProjectKeys &&
     !persisted?.collapsedStatusGroupKeys &&
     persisted?.collapsedPinned === undefined
   ) {
     return current;
   }
-  const restoredProjects = deserializeCollapsedKeys(persisted.collapsedProjectKeys);
-  const restoredStatusGroups = deserializeCollapsedKeys(persisted.collapsedStatusGroupKeys);
+  const restoredProjects = deserializeKeys(persisted.expandedProjectKeys);
+  const restoredStatusGroups = deserializeKeys(persisted.collapsedStatusGroupKeys);
   const restoredPinned =
     typeof persisted.collapsedPinned === "boolean"
       ? persisted.collapsedPinned
       : current.collapsedPinned;
   if (
-    areSetsEqual(current.collapsedProjectKeys, restoredProjects) &&
+    areSetsEqual(current.expandedProjectKeys, restoredProjects) &&
     areSetsEqual(current.collapsedStatusGroupKeys, restoredStatusGroups) &&
     current.collapsedPinned === restoredPinned
   ) {
@@ -92,13 +105,13 @@ export function mergePersistedCollapsedProjects<S extends CollapsedProjectsState
   }
   return {
     ...current,
-    collapsedProjectKeys: restoredProjects,
+    expandedProjectKeys: restoredProjects,
     collapsedStatusGroupKeys: restoredStatusGroups,
     collapsedPinned: restoredPinned,
   };
 }
 
-function deserializeCollapsedKeys(value: unknown): Set<string> {
+function deserializeKeys(value: unknown): Set<string> {
   if (!Array.isArray(value)) {
     return new Set();
   }

@@ -79,7 +79,7 @@ describe("WorkspaceShortcutTargetsSubscriber", () => {
       sidebarShortcutWorkspaceTargets: [],
     });
     useSidebarCollapsedSectionsStore.setState({
-      collapsedProjectKeys: new Set(),
+      expandedProjectKeys: new Set(),
     });
     useSidebarOrderStore.setState({
       projectOrder: [],
@@ -121,13 +121,19 @@ describe("WorkspaceShortcutTargetsSubscriber", () => {
     });
   });
 
-  it("publishes workspace shortcut targets without rendering the sidebar", async () => {
+  it("publishes project shortcuts only after the project is expanded", async () => {
     await act(async () => {
       root?.render(
         <SidebarModelProvider>
           <WorkspaceShortcutTargetsSubscriber enabled={true} />
         </SidebarModelProvider>,
       );
+    });
+
+    expect(useKeyboardShortcutsStore.getState().sidebarShortcutWorkspaceTargets).toEqual([]);
+
+    await act(async () => {
+      useSidebarCollapsedSectionsStore.getState().setProjectCollapsed("project-1", false);
     });
 
     expect(useKeyboardShortcutsStore.getState().sidebarShortcutWorkspaceTargets).toEqual([
@@ -226,6 +232,7 @@ describe("WorkspaceShortcutTargetsSubscriber", () => {
       useSessionStore.getState().setHasHydratedWorkspaces("host-a", true);
       useSessionStore.getState().setHasHydratedWorkspaces("host-b", true);
       useSidebarViewStore.getState().toggleHostFilter("host-b");
+      useSidebarCollapsedSectionsStore.getState().setProjectCollapsed("project-1", false);
     });
 
     await act(async () => {
@@ -250,6 +257,10 @@ describe("WorkspaceShortcutTargetsSubscriber", () => {
   });
 
   it("clears targets when disabled", async () => {
+    act(() => {
+      useSidebarCollapsedSectionsStore.getState().setProjectCollapsed("project-1", false);
+    });
+
     await act(async () => {
       root?.render(
         <SidebarModelProvider>

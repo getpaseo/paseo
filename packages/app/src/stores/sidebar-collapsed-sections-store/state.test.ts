@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   type CollapsedProjectsState,
   mergePersistedCollapsedProjects,
+  resolveCollapsedProjectKeys,
   serializeCollapsedProjects,
   setProjectCollapsed,
   togglePinnedCollapsed,
@@ -11,34 +12,45 @@ import {
 
 function emptyState(): CollapsedProjectsState {
   return {
-    collapsedProjectKeys: new Set(),
+    expandedProjectKeys: new Set(),
     collapsedStatusGroupKeys: new Set(),
     collapsedPinned: false,
   };
 }
 
 describe("sidebar collapsed projects transitions", () => {
-  it("tracks collapsed project keys as a Set", () => {
+  it("defaults projects to collapsed and tracks explicit expansions", () => {
     let state = emptyState();
 
-    state = setProjectCollapsed(state, "project-a", true);
+    expect(
+      Array.from(
+        resolveCollapsedProjectKeys(["project-a", "project-b"], state.expandedProjectKeys),
+      ),
+    ).toEqual(["project-a", "project-b"]);
+
+    state = setProjectCollapsed(state, "project-a", false);
     state = toggleProjectCollapsed(state, "project-b");
     state = toggleProjectCollapsed(state, "project-a");
     state = toggleStatusGroupCollapsed(state, "running");
 
-    expect(Array.from(state.collapsedProjectKeys)).toEqual(["project-b"]);
+    expect(Array.from(state.expandedProjectKeys)).toEqual(["project-b"]);
+    expect(
+      Array.from(
+        resolveCollapsedProjectKeys(["project-a", "project-b"], state.expandedProjectKeys),
+      ),
+    ).toEqual(["project-a"]);
     expect(Array.from(state.collapsedStatusGroupKeys)).toEqual(["running"]);
   });
 
-  it("serializes collapsed project keys for preference storage", () => {
+  it("serializes expanded project keys for preference storage", () => {
     const state: CollapsedProjectsState = {
-      collapsedProjectKeys: new Set(["project-a", "project-b"]),
+      expandedProjectKeys: new Set(["project-a", "project-b"]),
       collapsedStatusGroupKeys: new Set(["running"]),
       collapsedPinned: true,
     };
 
     expect(serializeCollapsedProjects(state)).toEqual({
-      collapsedProjectKeys: ["project-a", "project-b"],
+      expandedProjectKeys: ["project-a", "project-b"],
       collapsedStatusGroupKeys: ["running"],
       collapsedPinned: true,
     });
@@ -52,13 +64,13 @@ describe("sidebar collapsed projects transitions", () => {
     expect(restored.collapsedPinned).toBe(true);
   });
 
-  it("restores collapsed project keys from persisted preferences", () => {
+  it("restores expanded project keys from persisted preferences", () => {
     const restored = mergePersistedCollapsedProjects(
-      { collapsedProjectKeys: ["project-a", "project-b", 42] },
+      { expandedProjectKeys: ["project-a", "project-b", 42] },
       emptyState(),
     );
 
-    expect(Array.from(restored.collapsedProjectKeys)).toEqual(["project-a", "project-b"]);
+    expect(Array.from(restored.expandedProjectKeys)).toEqual(["project-a", "project-b"]);
     expect(Array.from(restored.collapsedStatusGroupKeys)).toEqual([]);
   });
 
@@ -67,7 +79,7 @@ describe("sidebar collapsed projects transitions", () => {
 
     expect(mergePersistedCollapsedProjects(undefined, currentState)).toBe(currentState);
     expect(mergePersistedCollapsedProjects({}, currentState)).toBe(currentState);
-    expect(mergePersistedCollapsedProjects({ collapsedProjectKeys: [] }, currentState)).toBe(
+    expect(mergePersistedCollapsedProjects({ expandedProjectKeys: [] }, currentState)).toBe(
       currentState,
     );
   });

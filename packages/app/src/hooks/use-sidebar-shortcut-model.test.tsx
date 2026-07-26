@@ -54,8 +54,8 @@ const PROJECTS_ONLY_SECOND = [project("p2")];
 
 function Probe({ projectSet }: { projectSet: "both" | "onlySecond" }) {
   const projects = projectSet === "both" ? PROJECTS_BOTH : PROJECTS_ONLY_SECOND;
-  useSidebarShortcutModel({ projects });
-  return null;
+  const { collapsedProjectKeys } = useSidebarShortcutModel({ projects });
+  return <div>{Array.from(collapsedProjectKeys).join(",")}</div>;
 }
 
 describe("useSidebarShortcutModel", () => {
@@ -67,7 +67,7 @@ describe("useSidebarShortcutModel", () => {
     document.body.appendChild(container);
     root = createRoot(container);
     useSidebarCollapsedSectionsStore.setState({
-      collapsedProjectKeys: new Set(),
+      expandedProjectKeys: new Set(),
       collapsedStatusGroupKeys: new Set(),
     });
   });
@@ -83,21 +83,34 @@ describe("useSidebarShortcutModel", () => {
     container = null;
   });
 
-  it("keeps a collapsed project collapsed when the project list temporarily omits it", async () => {
+  it("defaults every project to collapsed", async () => {
+    await act(async () => {
+      root?.render(<Probe projectSet="both" />);
+    });
+
+    expect(container?.textContent).toBe("p1,p2");
+  });
+
+  it("preserves expansion while a project is omitted", async () => {
     useSidebarCollapsedSectionsStore.setState({
-      collapsedProjectKeys: new Set(["p1"]),
+      expandedProjectKeys: new Set(["p1"]),
     });
 
     await act(async () => {
       root?.render(<Probe projectSet="both" />);
     });
+    expect(container?.textContent).toBe("p2");
+
     await act(async () => {
       root?.render(<Probe projectSet="onlySecond" />);
     });
+    expect(container?.textContent).toBe("p2");
+
     await act(async () => {
       root?.render(<Probe projectSet="both" />);
     });
 
-    expect(useSidebarCollapsedSectionsStore.getState().collapsedProjectKeys.has("p1")).toBe(true);
+    expect(container?.textContent).toBe("p2");
+    expect(useSidebarCollapsedSectionsStore.getState().expandedProjectKeys.has("p1")).toBe(true);
   });
 });
