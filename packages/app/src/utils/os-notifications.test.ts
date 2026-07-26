@@ -285,6 +285,32 @@ describe("sendOsNotification", () => {
       title: "Paseo notification test",
       body: "If you can see this, desktop notifications work.",
       data: { serverId: "srv-1" },
+      silent: true,
+    });
+  });
+
+  it("forwards silent:false when sound is requested", async () => {
+    const sendNotification = vi.fn(async () => true);
+
+    const { sendOsNotification } = await loadModuleForPlatform("web", {
+      desktopHost: {
+        notification: {
+          sendNotification,
+        },
+      },
+    });
+
+    await sendOsNotification({
+      title: "Paseo notification test",
+      body: "Sound on",
+      silent: false,
+    });
+
+    expect(sendNotification).toHaveBeenCalledWith({
+      title: "Paseo notification test",
+      body: "Sound on",
+      data: undefined,
+      silent: false,
     });
   });
 });

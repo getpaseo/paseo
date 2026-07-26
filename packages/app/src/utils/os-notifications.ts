@@ -7,6 +7,8 @@ interface OsNotificationPayload {
   title: string;
   body?: string;
   data?: Record<string, unknown>;
+  /** When true, request a silent OS notification. Default true if omitted (quiet by default). */
+  silent?: boolean;
 }
 
 export interface WebNotificationClickDetail {
@@ -27,6 +29,7 @@ function getDesktopNotificationSender():
       title: string;
       body?: string;
       data?: Record<string, unknown>;
+      silent?: boolean;
     }) => Promise<boolean>)
   | null {
   const sendNotification = getDesktopHost()?.notification?.sendNotification;
@@ -35,6 +38,7 @@ function getDesktopNotificationSender():
         title: string;
         body?: string;
         data?: Record<string, unknown>;
+        silent?: boolean;
       }) => Promise<boolean>)
     : null;
 }
@@ -171,7 +175,12 @@ export async function sendOsNotification(payload: OsNotificationPayload): Promis
 
   const desktopNotificationSender = getDesktopNotificationSender();
   if (desktopNotificationSender) {
-    return await desktopNotificationSender(payload);
+    return await desktopNotificationSender({
+      title: payload.title,
+      body: payload.body,
+      data: payload.data,
+      silent: payload.silent !== false,
+    });
   }
 
   const NotificationConstructor = getWebNotificationConstructor();

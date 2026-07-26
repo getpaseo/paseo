@@ -32,6 +32,7 @@ import {
   sanitizeFontFamily,
   saveAppSettings as saveAppSettingsPure,
   type AppSettings,
+  type AttentionSoundPreset,
   type DesktopSettingsBridge,
   type KeyValueStorage,
   type ReleaseChannel,
@@ -62,6 +63,7 @@ export {
 export type {
   AppSettings,
   AppLanguage,
+  AttentionSoundPreset,
   DesktopSettingsBridge,
   KeyValueStorage,
   ReleaseChannel,

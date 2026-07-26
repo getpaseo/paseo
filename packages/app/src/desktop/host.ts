@@ -55,7 +55,14 @@ export interface DesktopDialogBridge {
 export interface DesktopNotificationBridge {
   isSupported?: () => Promise<boolean>;
   sendNotification?: (
-    payload: string | { title: string; body?: string; data?: Record<string, unknown> },
+    payload:
+      | string
+      | {
+          title: string;
+          body?: string;
+          data?: Record<string, unknown>;
+          silent?: boolean;
+        },
   ) => Promise<boolean>;
 }
 
@@ -109,6 +116,7 @@ export interface DesktopWindowBridge {
     handler: (event: TEvent) => void,
   ) => Promise<() => void> | (() => void);
   setBadgeCount?: (count?: number) => Promise<void>;
+  focus?: () => Promise<boolean>;
   onDragDropEvent?: <TEvent = unknown>(
     handler: (event: TEvent) => void,
   ) => Promise<() => void> | (() => void);

@@ -65,6 +65,7 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
         };
       },
       setBadgeCount: (count?: number) => ipcRenderer.invoke("paseo:window:setBadgeCount", count),
+      focus: () => ipcRenderer.invoke("paseo:window:focus") as Promise<boolean>,
     }),
   },
   dialog: {
@@ -76,8 +77,12 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
   },
   notification: {
     isSupported: () => ipcRenderer.invoke("paseo:notification:isSupported"),
-    sendNotification: (payload: { title: string; body?: string; data?: Record<string, unknown> }) =>
-      ipcRenderer.invoke("paseo:notification:send", payload),
+    sendNotification: (payload: {
+      title: string;
+      body?: string;
+      data?: Record<string, unknown>;
+      silent?: boolean;
+    }) => ipcRenderer.invoke("paseo:notification:send", payload),
   },
   opener: {
     openUrl: (url: string) => ipcRenderer.invoke("paseo:opener:openUrl", url),

@@ -6,6 +6,8 @@ interface NotificationInput {
   title?: unknown;
   body?: unknown;
   data?: unknown;
+  /** When true, OS notification is silent. Defaults to true for safety. */
+  silent?: unknown;
 }
 
 interface NotificationClickPayload {
@@ -95,11 +97,13 @@ export function registerNotificationHandlers(): void {
     const body = toTrimmedString(rawInput?.body) ?? undefined;
     const data = toRecord(rawInput?.data);
     const icon = getNotificationIcon();
+    // Default silent true so accidental callers stay quiet; app passes silent:false when sound on.
+    const silent = rawInput?.silent !== false;
     const notification = new Notification({
       title,
       ...(body ? { body } : {}),
       ...(icon ? { icon } : {}),
-      silent: true,
+      silent,
     });
 
     activeNotifications.add(notification);
@@ -119,5 +123,10 @@ export function registerNotificationHandlers(): void {
 
     notification.show();
     return true;
+  });
+
+  ipcMain.handle("paseo:window:focus", (event) => {
+    const win = focusSenderWindow(event.sender);
+    return win !== null;
   });
 }
