@@ -108,7 +108,13 @@ import type {
   AgentProvider,
   AgentSessionConfig,
 } from "@getpaseo/protocol/agent-types";
-import type { MutableDaemonConfig, MutableDaemonConfigPatch } from "@getpaseo/protocol/messages";
+import type {
+  MutableDaemonConfig,
+  MutableDaemonConfigPatch,
+  ContainerRestartResponse,
+  ContainerRebuildResponse,
+  ContainerAvailabilityResponse,
+} from "@getpaseo/protocol/messages";
 import { isRelayClientWebSocketUrl } from "@getpaseo/protocol/daemon-endpoints";
 import { terminalSubscriptionKey } from "@getpaseo/protocol/terminal-subscription-key";
 import {
@@ -435,6 +441,7 @@ type ListProviderModelsPayload = ListProviderModelsResponseMessage["payload"];
 type ListProviderModesPayload = ListProviderModesResponseMessage["payload"];
 type ListAvailableProvidersPayload = ListAvailableProvidersResponse["payload"];
 type GetProvidersSnapshotPayload = GetProvidersSnapshotResponseMessage["payload"];
+type ProviderSnapshotEntry = GetProvidersSnapshotPayload["entries"][number];
 type RefreshProvidersSnapshotPayload = RefreshProvidersSnapshotResponseMessage["payload"];
 type ProviderDiagnosticPayload = ProviderDiagnosticResponseMessage["payload"];
 type ProviderUsageListPayload = ProviderUsageListResponseMessage["payload"];
@@ -949,6 +956,8 @@ function toTimeoutError(error: unknown, label: string, timeoutMs: number): Error
 const DEFAULT_RECONNECT_BASE_DELAY_MS = 1500;
 const DEFAULT_RECONNECT_MAX_DELAY_MS = 30000;
 const DEFAULT_SESSION_RPC_TIMEOUT_MS = 60_000;
+/** A first container build pulls an image and runs lifecycle scripts. */
+const CONTAINER_PROBE_TIMEOUT_MS = 600_000;
 const DEFAULT_CONNECT_TIMEOUT_MS = 15_000;
 const DEFAULT_LIVENESS_TIMEOUT_MS = 5000;
 const LIVENESS_HEARTBEAT_INTERVAL_MS = 10_000;
@@ -2562,6 +2571,26 @@ export class DaemonClient {
     return { pinnedAt: payload.pinnedAt };
   }
 
+  async setWorkspaceContainerBackend(
+    workspaceId: string,
+    containerBackend: string | null,
+    requestId?: string,
+  ): Promise<{ containerBackend: string | null }> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "workspace.container_backend.set.request",
+        workspaceId,
+        containerBackend,
+      },
+      responseType: "workspace.container_backend.set.response",
+    });
+    if (!payload.accepted) {
+      throw new Error(payload.error ?? "setWorkspaceContainerBackend rejected");
+    }
+    return { containerBackend: payload.containerBackend };
+  }
+
   async inspectWorkspaceRecovery(
     workspaceId: string,
     requestId?: string,
@@ -3968,6 +3997,7 @@ export class DaemonClient {
       source: WorkspaceCreateRequest["source"];
       title?: string;
       firstAgentContext?: WorkspaceCreateRequest["firstAgentContext"];
+      containerBackend?: string | null;
     },
     requestId?: string,
   ): Promise<WorkspaceCreatePayload> {
@@ -3979,6 +4009,9 @@ export class DaemonClient {
         ...(input.title !== undefined ? { title: input.title } : {}),
         ...(input.firstAgentContext !== undefined
           ? { firstAgentContext: input.firstAgentContext }
+          : {}),
+        ...(input.containerBackend !== undefined
+          ? { containerBackend: input.containerBackend }
           : {}),
       },
       responseType: "workspace.create.response",
@@ -4470,6 +4503,7 @@ export class DaemonClient {
   async refreshProvidersSnapshot(options?: {
     cwd?: string;
     providers?: AgentProvider[];
+    containerBackend?: string | null;
     requestId?: string;
   }): Promise<RefreshProvidersSnapshotPayload> {
     return this.sendCorrelatedSessionRequest({
@@ -4478,6 +4512,7 @@ export class DaemonClient {
         type: "refresh_providers_snapshot_request",
         cwd: options?.cwd,
         providers: options?.providers,
+        ...(options?.containerBackend ? { containerBackend: options.containerBackend } : {}),
       },
       responseType: "refresh_providers_snapshot_response",
       timeout: 120000,
@@ -5208,6 +5243,123 @@ export class DaemonClient {
         unsubscribe();
         resolve(event);
       });
+    });
+  }
+
+  // ============================================================================
+  // Container Management
+  // ============================================================================
+  async restartContainer(
+    workspaceId: string,
+    requestId?: string,
+  ): Promise<ContainerRestartResponse["payload"]> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "container.restart.request",
+        workspaceId,
+      },
+      responseType: "container.restart.response",
+    });
+  }
+
+  async rebuildContainer(
+    workspaceId: string,
+    requestId?: string,
+  ): Promise<ContainerRebuildResponse["payload"]> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "container.rebuild.request",
+        workspaceId,
+      },
+      responseType: "container.rebuild.response",
+    });
+  }
+
+  async checkContainerAvailability(
+    cwd: string,
+    requestId?: string,
+  ): Promise<ContainerAvailabilityResponse["payload"]> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "container.availability.request",
+        cwd,
+      },
+      responseType: "container.availability.response",
+    });
+  }
+
+  /**
+   * Probe a directory's container for the providers it has. The daemon builds a
+   * throwaway container, so this can take minutes on a first build — progress
+   * lines arrive through `onProgress`, and aborting the signal tells the daemon
+   * to stop building rather than leaving it to finish for nobody.
+   *
+   * The returned entries are the whole answer: the probe container is gone by
+   * the time they arrive, so a follow-up snapshot refresh would run on the host
+   * and report the wrong thing.
+   */
+  async probeContainer(
+    cwd: string,
+    containerBackend: string,
+    options?: {
+      requestId?: string;
+      onProgress?: (line: string) => void;
+      signal?: AbortSignal;
+      timeout?: number;
+    },
+  ): Promise<{
+    success: boolean;
+    cancelled: boolean;
+    error: string | null;
+    entries: ProviderSnapshotEntry[];
+  }> {
+    const requestId = this.createRequestId(options?.requestId);
+    const unsubscribeProgress = options?.onProgress
+      ? this.on("container.probe.progress", (message) => {
+          if (
+            message.type === "container.probe.progress" &&
+            message.payload.requestId === requestId
+          ) {
+            options.onProgress?.(message.payload.line);
+          }
+        })
+      : null;
+    const cancel = (): void => {
+      try {
+        this.sendSessionMessageStrict({ type: "container.probe.cancel.request", requestId });
+      } catch {
+        // Disconnected — the daemon cancels this session's probes on its own.
+      }
+    };
+    options?.signal?.addEventListener("abort", cancel, { once: true });
+
+    try {
+      const payload = await this.sendCorrelatedSessionRequest({
+        requestId,
+        message: { type: "container.probe.request", cwd, containerBackend },
+        responseType: "container.probe.response",
+        timeout: options?.timeout ?? CONTAINER_PROBE_TIMEOUT_MS,
+      });
+      return {
+        success: payload.success,
+        cancelled: payload.cancelled ?? false,
+        error: payload.error,
+        entries: payload.entries ?? [],
+      };
+    } finally {
+      unsubscribeProgress?.();
+      options?.signal?.removeEventListener("abort", cancel);
+    }
+  }
+
+  onContainerConfigChanged(handler: (workspaceId: string) => void): () => void {
+    return this.on("container.config_changed", (message) => {
+      if (message.type === "container.config_changed") {
+        handler(message.payload.workspaceId);
+      }
     });
   }
 
