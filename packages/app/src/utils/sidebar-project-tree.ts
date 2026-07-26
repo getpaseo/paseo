@@ -201,13 +201,14 @@ export function expandedProjectKeysForActiveWorkspaces(input: {
 export function expandableProjectKeys(nodes: readonly SidebarProjectTreeNode[]): Set<string> {
   const projectKeys = new Set<string>();
 
-  const visit = (node: SidebarProjectTreeNode): void => {
-    if (node.project.workspaces.length > 0 || node.children.length > 0) {
+  const visit = (node: SidebarProjectTreeNode): boolean => {
+    const hasWorkspace = node.project.workspaces.length > 0;
+    const hasWorkspaceDescendant = node.children.some(visit);
+    if (hasWorkspace || hasWorkspaceDescendant) {
       projectKeys.add(node.project.projectKey);
+      return true;
     }
-    for (const child of node.children) {
-      visit(child);
-    }
+    return false;
   };
 
   for (const node of nodes) {
