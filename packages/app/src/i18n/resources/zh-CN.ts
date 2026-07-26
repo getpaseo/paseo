@@ -1595,6 +1595,21 @@ export const zhCN: TranslationResources = {
     },
     general: {
       title: "通用",
+      configBackup: {
+        title: "配置备份",
+        label: "导出或导入配置",
+        description: "包含项目、自定义图标、侧边栏顺序和偏好设置。不包含会话、凭据或仓库内容。",
+        unavailable: "请连接到已更新的主机以导出或导入配置。",
+        export: "导出",
+        import: "导入",
+        confirmTitle: "导入配置？",
+        confirmMessage: "这会将项目和偏好设置合并到此 Paseo 安装中。不会删除现有项目。",
+        successTitle: "配置备份",
+        exportSuccess: "配置已导出。",
+        importSuccess:
+          "已添加 {{added}} 个项目，更新 {{updated}} 个，跳过 {{skipped}} 个。Paseo 将重新加载以应用偏好设置。",
+        errorTitle: "配置备份失败",
+      },
       browserData: {
         title: "浏览器数据",
         siteData: "Cookie 和网站数据",

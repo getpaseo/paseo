@@ -164,7 +164,7 @@ export async function setCustomProjectIcon(
   return { data: buffer.toString("base64"), mimeType: "image/png", source: "custom" };
 }
 
-async function getCustomProjectIcon(
+export async function getCustomProjectIcon(
   paseoHome: string,
   projectDir: string,
 ): Promise<ProjectIcon | null> {

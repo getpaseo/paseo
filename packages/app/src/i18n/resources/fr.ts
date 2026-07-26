@@ -1660,6 +1660,23 @@ export const fr: TranslationResources = {
     },
     general: {
       title: "Général",
+      configBackup: {
+        title: "Sauvegarde de configuration",
+        label: "Exporter ou importer la configuration",
+        description:
+          "Projets, icônes personnalisées, ordre de la barre latérale et préférences. Les sessions, identifiants et contenus des dépôts sont exclus.",
+        unavailable: "Connectez un hôte à jour pour exporter ou importer la configuration.",
+        export: "Exporter",
+        import: "Importer",
+        confirmTitle: "Importer la configuration ?",
+        confirmMessage:
+          "Les projets et préférences seront fusionnés avec cette installation de Paseo. Aucun projet existant ne sera supprimé.",
+        successTitle: "Sauvegarde de configuration",
+        exportSuccess: "Configuration exportée.",
+        importSuccess:
+          "{{added}} projets ajoutés, {{updated}} mis à jour et {{skipped}} ignorés. Paseo va se recharger pour appliquer les préférences.",
+        errorTitle: "Échec de la sauvegarde de configuration",
+      },
       browserData: {
         title: "Données du navigateur",
         siteData: "Cookies et données des sites",

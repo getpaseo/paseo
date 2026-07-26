@@ -1625,6 +1625,23 @@ export const en = {
     },
     general: {
       title: "General",
+      configBackup: {
+        title: "Configuration backup",
+        label: "Export or import configuration",
+        description:
+          "Projects, custom icons, sidebar order, and preferences. Sessions, credentials, and repository contents are excluded.",
+        unavailable: "Connect to an updated host to export or import configuration.",
+        export: "Export",
+        import: "Import",
+        confirmTitle: "Import configuration?",
+        confirmMessage:
+          "This merges projects and preferences into this Paseo installation. Existing projects are never deleted.",
+        successTitle: "Configuration backup",
+        exportSuccess: "Configuration exported.",
+        importSuccess:
+          "Imported {{added}} projects, updated {{updated}}, and skipped {{skipped}}. Paseo will reload to apply preferences.",
+        errorTitle: "Configuration backup failed",
+      },
       browserData: {
         title: "Browser data",
         siteData: "Cookies and site data",

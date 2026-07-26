@@ -9,8 +9,13 @@ import {
 } from "./diagnostics.js";
 import { DaemonSelfUpdateSessionController } from "./daemon-self-update-session-controller.js";
 import type { ManagedAgent } from "../../agent/agent-manager.js";
-import type { PersistedProjectRecord, PersistedWorkspaceRecord } from "../../workspace-registry.js";
+import type {
+  PersistedProjectRecord,
+  PersistedWorkspaceRecord,
+  ProjectRegistry,
+} from "../../workspace-registry.js";
 import type { HubRelationshipManagement } from "../../hub/relationship-controller.js";
+import { PortableConfigService } from "./portable-config-service.js";
 
 export interface DaemonRuntimeConfig {
   listen: string | null;
@@ -46,6 +51,7 @@ export interface DaemonSessionOptions {
   listAgents: () => ManagedAgent[];
   listProjects: () => Promise<PersistedProjectRecord[]>;
   listWorkspaces: () => Promise<PersistedWorkspaceRecord[]>;
+  projectRegistry: ProjectRegistry;
   listProviderAvailability: () => Promise<ProviderAvailability[]>;
   getWebSocketRuntimeMetrics?: () => DaemonWebSocketRuntimeDiagnosticSnapshot | null;
   logger: pino.Logger;
@@ -74,6 +80,7 @@ export class DaemonSession {
   private readonly logger: pino.Logger;
   private readonly selfUpdate: DaemonSelfUpdateSessionController;
   private readonly hubRelationships: HubRelationshipManagement | null;
+  private readonly portableConfig: PortableConfigService;
 
   constructor(options: DaemonSessionOptions) {
     this.host = options.host;
@@ -89,6 +96,10 @@ export class DaemonSession {
     this.getWebSocketRuntimeMetrics = options.getWebSocketRuntimeMetrics ?? (() => null);
     this.logger = options.logger;
     this.hubRelationships = options.hubRelationships ?? null;
+    this.portableConfig = new PortableConfigService({
+      paseoHome: this.paseoHome,
+      projectRegistry: options.projectRegistry,
+    });
     this.selfUpdate = new DaemonSelfUpdateSessionController({
       clientId: this.clientId,
       daemonVersion: this.daemonVersion ?? null,
@@ -267,9 +278,61 @@ export class DaemonSession {
     }
   }
 
+  async handleConfigExportRequest(
+    msg: Extract<SessionInboundMessage, { type: "daemon.config.export.request" }>,
+  ): Promise<void> {
+    try {
+      this.host.emit({
+        type: "daemon.config.export.response",
+        payload: {
+          requestId: msg.requestId,
+          config: await this.portableConfig.export(),
+        },
+      });
+    } catch (error) {
+      this.logger.error({ err: error }, "Failed to export portable daemon configuration");
+      this.emitConfigRpcError(msg, error);
+    }
+  }
+
+  async handleConfigImportRequest(
+    msg: Extract<SessionInboundMessage, { type: "daemon.config.import.request" }>,
+  ): Promise<void> {
+    try {
+      this.host.emit({
+        type: "daemon.config.import.response",
+        payload: {
+          requestId: msg.requestId,
+          ...(await this.portableConfig.import(msg.config)),
+        },
+      });
+    } catch (error) {
+      this.logger.error({ err: error }, "Failed to import portable daemon configuration");
+      this.emitConfigRpcError(msg, error);
+    }
+  }
+
   async handleUpdateRequest(
     msg: Extract<SessionInboundMessage, { type: "daemon.update.request" }>,
   ): Promise<void> {
     await this.selfUpdate.dispatch(msg);
+  }
+
+  private emitConfigRpcError(
+    msg: Extract<
+      SessionInboundMessage,
+      { type: "daemon.config.export.request" | "daemon.config.import.request" }
+    >,
+    error: unknown,
+  ): void {
+    this.host.emit({
+      type: "rpc_error",
+      payload: {
+        requestId: msg.requestId,
+        requestType: msg.type,
+        error: error instanceof Error ? error.message : String(error),
+        code: "handler_error",
+      },
+    });
   }
 }

@@ -84,6 +84,9 @@ import type {
   DaemonGetStatusResponse,
   DaemonGetPairingOfferResponse,
   DiagnosticsResponse,
+  DaemonConfigExportResponse,
+  DaemonConfigImportResponse,
+  PortableDaemonConfiguration,
   AgentRewindResponseMessage,
   ListTerminalsResponse,
   CreateTerminalResponse,
@@ -4445,6 +4448,28 @@ export class DaemonClient {
       requestId,
       message: {
         type: "diagnostics.request",
+      },
+    });
+  }
+
+  async exportPortableConfig(requestId?: string): Promise<DaemonConfigExportResponse["payload"]> {
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "daemon.config.export.request",
+      },
+    });
+  }
+
+  async importPortableConfig(
+    config: PortableDaemonConfiguration,
+    requestId?: string,
+  ): Promise<DaemonConfigImportResponse["payload"]> {
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "daemon.config.import.request",
+        config,
       },
     });
   }

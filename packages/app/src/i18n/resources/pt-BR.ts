@@ -1643,6 +1643,23 @@ export const ptBR: TranslationResources = {
     },
     general: {
       title: "Geral",
+      configBackup: {
+        title: "Backup da configuração",
+        label: "Exportar ou importar configuração",
+        description:
+          "Projetos, ícones personalizados, ordem da barra lateral e preferências. Sessões, credenciais e conteúdo dos repositórios não são incluídos.",
+        unavailable: "Conecte-se a um host atualizado para exportar ou importar a configuração.",
+        export: "Exportar",
+        import: "Importar",
+        confirmTitle: "Importar configuração?",
+        confirmMessage:
+          "Isso mescla projetos e preferências nesta instalação do Paseo. Projetos existentes nunca são excluídos.",
+        successTitle: "Backup da configuração",
+        exportSuccess: "Configuração exportada.",
+        importSuccess:
+          "{{added}} projetos adicionados, {{updated}} atualizados e {{skipped}} ignorados. O Paseo será recarregado para aplicar as preferências.",
+        errorTitle: "Falha no backup da configuração",
+      },
       browserData: {
         title: "Dados do navegador",
         siteData: "Cookies e dados de sites",

@@ -578,3 +578,15 @@ Stores binary attachment blobs keyed by attachment ID.
 | `createdAt`   | `number`  | Epoch ms                       |
 | `fileName`    | `string?` | Original filename              |
 | `byteSize`    | `number?` | Size in bytes                  |
+
+---
+
+## Portable configuration backup
+
+Settings → General exports a versioned JSON backup containing active projects, project names and
+custom icons, sidebar ordering/collapse state, portable app preferences, and desktop preferences.
+Sessions, agents, drafts, credentials, daemon identity, logs, repository contents, and
+machine-specific runtime state are excluded.
+
+Import merges without deleting projects. IDs are preserved when possible, collisions are remapped,
+and a home-relative path hint maps projects from the old user's home to the new one.

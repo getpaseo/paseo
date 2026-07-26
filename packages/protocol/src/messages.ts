@@ -1158,6 +1158,48 @@ export const DiagnosticsRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const PortableProjectIconSchema = z
+  .discriminatedUnion("kind", [
+    z.object({
+      kind: z.literal("image"),
+      data: z.string(),
+    }),
+    z.object({
+      kind: z.literal("emoji"),
+      emoji: z.string(),
+    }),
+  ])
+  .nullable();
+
+export const PortableProjectConfigurationSchema = z.object({
+  projectId: z.string(),
+  rootPath: z.string(),
+  homeRelativePath: z.string().optional(),
+  kind: z.enum(["git", "non_git"]),
+  displayName: z.string(),
+  customName: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  customIcon: PortableProjectIconSchema,
+});
+
+export const PortableDaemonConfigurationSchema = z.object({
+  version: z.literal(1),
+  exportedAt: z.string(),
+  projects: z.array(PortableProjectConfigurationSchema),
+});
+
+export const DaemonConfigExportRequestSchema = z.object({
+  type: z.literal("daemon.config.export.request"),
+  requestId: z.string(),
+});
+
+export const DaemonConfigImportRequestSchema = z.object({
+  type: z.literal("daemon.config.import.request"),
+  requestId: z.string(),
+  config: PortableDaemonConfigurationSchema,
+});
+
 export const GetDaemonConfigRequestMessageSchema = z.object({
   type: z.literal("get_daemon_config_request"),
   requestId: z.string(),
@@ -2490,6 +2532,8 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   HubManagementDaemonGetStatusRequestSchema,
   HubManagementDaemonDisconnectRequestSchema,
   DiagnosticsRequestSchema,
+  DaemonConfigExportRequestSchema,
+  DaemonConfigImportRequestSchema,
   GetDaemonConfigRequestMessageSchema,
   SetDaemonConfigRequestMessageSchema,
   ReadProjectConfigRequestMessageSchema,
@@ -2863,6 +2907,8 @@ export const ServerInfoStatusPayloadSchema = z
         projectCustomIcon: z.boolean().optional(),
         // COMPAT(projectEmojiIcon): added in v0.2.X, remove gate after 2027-01-26.
         projectEmojiIcon: z.boolean().optional(),
+        // COMPAT(portableConfigBackup): added in v0.2.X, remove gate after 2027-01-26.
+        portableConfigBackup: z.boolean().optional(),
       })
       .optional(),
   })
@@ -3849,6 +3895,39 @@ export const DiagnosticsResponseSchema = z.object({
       diagnostic: z.string(),
     })
     .passthrough(),
+});
+
+export const DaemonConfigExportResponseSchema = z.object({
+  type: z.literal("daemon.config.export.response"),
+  payload: z.object({
+    requestId: z.string(),
+    config: PortableDaemonConfigurationSchema,
+  }),
+});
+
+export const DaemonConfigImportResponseSchema = z.object({
+  type: z.literal("daemon.config.import.response"),
+  payload: z.object({
+    requestId: z.string(),
+    added: z.number().int().nonnegative(),
+    updated: z.number().int().nonnegative(),
+    skipped: z.number().int().nonnegative(),
+    projectIdMap: z.record(z.string(), z.string()),
+    rootPathMap: z.record(z.string(), z.string()),
+    skippedProjects: z.array(
+      z.object({
+        projectId: z.string(),
+        rootPath: z.string(),
+        reason: z.string(),
+      }),
+    ),
+    iconErrors: z.array(
+      z.object({
+        projectId: z.string(),
+        error: z.string(),
+      }),
+    ),
+  }),
 });
 
 export const SetDaemonConfigResponseMessageSchema = z.object({
@@ -5295,6 +5374,8 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   HubManagementDaemonGetStatusResponseSchema,
   HubManagementDaemonDisconnectResponseSchema,
   DiagnosticsResponseSchema,
+  DaemonConfigExportResponseSchema,
+  DaemonConfigImportResponseSchema,
   GetDaemonConfigResponseMessageSchema,
   SetDaemonConfigResponseMessageSchema,
   ReadProjectConfigResponseMessageSchema,
@@ -5527,6 +5608,11 @@ export type ListAvailableProvidersResponse = z.infer<typeof ListAvailableProvide
 export type DaemonGetStatusResponse = z.infer<typeof DaemonGetStatusResponseSchema>;
 export type DaemonGetPairingOfferResponse = z.infer<typeof DaemonGetPairingOfferResponseSchema>;
 export type DiagnosticsResponse = z.infer<typeof DiagnosticsResponseSchema>;
+export type PortableProjectIcon = z.infer<typeof PortableProjectIconSchema>;
+export type PortableProjectConfiguration = z.infer<typeof PortableProjectConfigurationSchema>;
+export type PortableDaemonConfiguration = z.infer<typeof PortableDaemonConfigurationSchema>;
+export type DaemonConfigExportResponse = z.infer<typeof DaemonConfigExportResponseSchema>;
+export type DaemonConfigImportResponse = z.infer<typeof DaemonConfigImportResponseSchema>;
 export type GetProvidersSnapshotResponseMessage = z.infer<
   typeof GetProvidersSnapshotResponseMessageSchema
 >;

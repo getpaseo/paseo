@@ -1,4 +1,6 @@
 import { dialog, ipcMain, BrowserWindow } from "electron";
+import { readFile, writeFile } from "node:fs/promises";
+import { basename } from "node:path";
 
 interface AskOptions {
   title?: string;
@@ -20,6 +22,15 @@ interface OpenOptions {
   multiple?: boolean;
   filters?: Array<{ name: string; extensions: string[] }>;
 }
+
+interface SaveTextOptions {
+  title?: string;
+  defaultPath: string;
+  content: string;
+  filters?: Array<{ name: string; extensions: string[] }>;
+}
+
+const MAX_TEXT_FILE_BYTES = 64 * 1024 * 1024;
 
 function resolveDialogType(kind: AskOptions["kind"]): "warning" | "error" | "question" {
   if (kind === "warning") return "warning";
@@ -79,5 +90,37 @@ export function registerDialogHandlers(): void {
 
     if (result.canceled) return null;
     return options?.multiple ? result.filePaths : (result.filePaths[0] ?? null);
+  });
+
+  ipcMain.handle("paseo:dialog:openText", async (event, options?: OpenOptions) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    const result = await dialog.showOpenDialog(win ?? BrowserWindow.getFocusedWindow()!, {
+      title: options?.title,
+      defaultPath: options?.defaultPath,
+      properties: ["openFile"],
+      filters: options?.filters,
+    });
+    const filePath = result.filePaths[0];
+    if (result.canceled || !filePath) return null;
+    const content = await readFile(filePath, "utf8");
+    if (Buffer.byteLength(content, "utf8") > MAX_TEXT_FILE_BYTES) {
+      throw new Error("Selected file is too large.");
+    }
+    return { fileName: basename(filePath), content };
+  });
+
+  ipcMain.handle("paseo:dialog:saveText", async (event, options: SaveTextOptions) => {
+    if (Buffer.byteLength(options.content, "utf8") > MAX_TEXT_FILE_BYTES) {
+      throw new Error("Backup is too large to save.");
+    }
+    const win = BrowserWindow.fromWebContents(event.sender);
+    const result = await dialog.showSaveDialog(win ?? BrowserWindow.getFocusedWindow()!, {
+      title: options.title,
+      defaultPath: options.defaultPath,
+      filters: options.filters,
+    });
+    if (result.canceled || !result.filePath) return null;
+    await writeFile(result.filePath, options.content, "utf8");
+    return result.filePath;
   });
 }

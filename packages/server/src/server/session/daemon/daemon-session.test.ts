@@ -60,6 +60,18 @@ function makeSubsystem(overrides: {
     listAgents: () => [],
     listProjects: async () => [],
     listWorkspaces: async () => [],
+    projectRegistry: {
+      initialize: async () => {},
+      existsOnDisk: async () => false,
+      list: async () => [],
+      get: async () => null,
+      getOrCreateActiveByRoot: async () => {
+        throw new Error("Unexpected project allocation");
+      },
+      upsert: async () => {},
+      archive: async () => {},
+      remove: async () => {},
+    },
     listProviderAvailability: overrides.listProviderAvailability ?? (async () => []),
     getWebSocketRuntimeMetrics: overrides.getWebSocketRuntimeMetrics,
     hubRelationships: overrides.hubRelationships,

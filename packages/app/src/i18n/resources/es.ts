@@ -1657,6 +1657,23 @@ export const es: TranslationResources = {
     },
     general: {
       title: "General",
+      configBackup: {
+        title: "Copia de configuración",
+        label: "Exportar o importar configuración",
+        description:
+          "Proyectos, iconos personalizados, orden de la barra lateral y preferencias. No incluye sesiones, credenciales ni contenido de repositorios.",
+        unavailable: "Conéctate a un host actualizado para exportar o importar la configuración.",
+        export: "Exportar",
+        import: "Importar",
+        confirmTitle: "¿Importar configuración?",
+        confirmMessage:
+          "Esto combina proyectos y preferencias con esta instalación de Paseo. Los proyectos existentes nunca se eliminan.",
+        successTitle: "Copia de configuración",
+        exportSuccess: "Configuración exportada.",
+        importSuccess:
+          "Se añadieron {{added}} proyectos, se actualizaron {{updated}} y se omitieron {{skipped}}. Paseo se recargará para aplicar las preferencias.",
+        errorTitle: "Error en la copia de configuración",
+      },
       browserData: {
         title: "Datos del navegador",
         siteData: "Cookies y datos de sitios",

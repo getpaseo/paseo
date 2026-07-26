@@ -1630,6 +1630,24 @@ export const ja: TranslationResources = {
     },
     general: {
       title: "一般",
+      configBackup: {
+        title: "設定のバックアップ",
+        label: "設定をエクスポートまたはインポート",
+        description:
+          "プロジェクト、カスタムアイコン、サイドバーの順序、環境設定。セッション、認証情報、リポジトリの内容は含まれません。",
+        unavailable:
+          "設定をエクスポートまたはインポートするには、更新済みのホストに接続してください。",
+        export: "エクスポート",
+        import: "インポート",
+        confirmTitle: "設定をインポートしますか？",
+        confirmMessage:
+          "プロジェクトと環境設定をこの Paseo に統合します。既存のプロジェクトは削除されません。",
+        successTitle: "設定のバックアップ",
+        exportSuccess: "設定をエクスポートしました。",
+        importSuccess:
+          "{{added}} 件を追加、{{updated}} 件を更新、{{skipped}} 件をスキップしました。環境設定を適用するため Paseo を再読み込みします。",
+        errorTitle: "設定のバックアップに失敗しました",
+      },
       browserData: {
         title: "ブラウザーデータ",
         siteData: "Cookie とサイトデータ",

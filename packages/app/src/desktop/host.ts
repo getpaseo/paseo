@@ -33,6 +33,11 @@ export interface DesktopDialogOpenOptions {
   }>;
 }
 
+export interface DesktopDialogTextFile {
+  fileName: string;
+  content: string;
+}
+
 export interface DesktopDialogAskWithCheckboxOptions extends DesktopDialogAskOptions {
   checkboxLabel: string;
   checkboxChecked?: boolean;
@@ -50,6 +55,13 @@ export interface DesktopDialogBridge {
     options: DesktopDialogAskWithCheckboxOptions,
   ) => Promise<DesktopDialogAskWithCheckboxResult>;
   open?: (options?: DesktopDialogOpenOptions) => Promise<string | string[] | null>;
+  openText?: (options?: DesktopDialogOpenOptions) => Promise<DesktopDialogTextFile | null>;
+  saveText?: (options: {
+    title?: string;
+    defaultPath: string;
+    content: string;
+    filters?: DesktopDialogOpenOptions["filters"];
+  }) => Promise<string | null>;
 }
 
 export interface DesktopNotificationBridge {

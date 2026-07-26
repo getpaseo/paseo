@@ -119,6 +119,7 @@ import {
   type SettingsSectionSlug,
 } from "@/utils/host-routes";
 import { navigateToLastWorkspace } from "@/stores/navigation-active-workspace-store";
+import { ConfigBackupSection } from "@/screens/settings/config-backup-section";
 
 // ---------------------------------------------------------------------------
 // View model
@@ -1165,6 +1166,7 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
       orderedHosts: sortedHosts,
     });
   }, [view, selectedSettingsHostServerId, localServerId, hosts, sortedHosts]);
+  const configBackupHost = hosts.find((host) => host.serverId === activeHostServerId) ?? null;
 
   const handleSendBehaviorChange = useCallback(
     (behavior: SendBehavior) => {
@@ -1400,6 +1402,10 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
                 handleServiceUrlBehaviorChange={handleServiceUrlBehaviorChange}
                 handleLanguageChange={handleLanguageChange}
                 handleTerminalScrollbackLinesChange={handleTerminalScrollbackLinesChange}
+              />
+              <ConfigBackupSection
+                serverId={activeHostServerId}
+                hostLabel={configBackupHost?.label ?? null}
               />
               {isDesktopApp ? <BrowserDataSection /> : null}
             </>

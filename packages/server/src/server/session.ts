@@ -865,6 +865,7 @@ export class Session {
       listAgents: () => this.agentManager.listAgents(),
       listProjects: () => this.projectRegistry.list(),
       listWorkspaces: () => this.workspaceRegistry.list(),
+      projectRegistry: this.projectRegistry,
       logger: this.sessionLogger,
       hubRelationships: options.hubRelationships,
     });
@@ -1978,6 +1979,10 @@ export class Session {
         return this.daemonSession.handleHubRelationshipRequest(msg);
       case "diagnostics.request":
         return this.daemonSession.handleDiagnosticsRequest(msg);
+      case "daemon.config.export.request":
+        return this.daemonSession.handleConfigExportRequest(msg);
+      case "daemon.config.import.request":
+        return this.daemonSession.handleConfigImportRequest(msg);
       case "daemon.update.request":
         return this.daemonSession.handleUpdateRequest(msg);
       case "set_daemon_config_request":
