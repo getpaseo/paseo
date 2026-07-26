@@ -134,6 +134,7 @@ import { getDesktopHost } from "@/desktop/host";
 import {
   buildSidebarProjectTree,
   flattenSidebarProjectTree,
+  reorderSidebarProjectTreeChildren,
   type SidebarProjectTreeNode,
 } from "@/utils/sidebar-project-tree";
 
@@ -1915,6 +1916,8 @@ function ProjectTreeBlock({
   node,
   collapsedProjectKeys,
   renderProjectBlock,
+  onChildrenReorder,
+  parentGestureRef,
   drag,
   isDragging,
   dragHandleProps,
@@ -1929,27 +1932,59 @@ function ProjectTreeBlock({
       dragHandleProps?: DraggableListDragHandleProps;
     },
   ) => ReactElement;
+  onChildrenReorder: (
+    parentProjectKey: string,
+    reorderedChildren: SidebarProjectTreeNode[],
+  ) => void;
+  parentGestureRef?: MutableRefObject<GestureType | undefined>;
   drag: () => void;
   isDragging: boolean;
   dragHandleProps?: DraggableListDragHandleProps;
 }) {
   const collapsed = collapsedProjectKeys.has(node.project.projectKey);
+  const renderChild = useCallback(
+    ({
+      item,
+      drag: childDrag,
+      isActive,
+      dragHandleProps: childDragHandleProps,
+    }: DraggableRenderItemInfo<SidebarProjectTreeNode>) => (
+      <ProjectTreeBlock
+        node={item}
+        collapsedProjectKeys={collapsedProjectKeys}
+        renderProjectBlock={renderProjectBlock}
+        onChildrenReorder={onChildrenReorder}
+        parentGestureRef={parentGestureRef}
+        drag={childDrag}
+        isDragging={isActive}
+        dragHandleProps={childDragHandleProps}
+      />
+    ),
+    [collapsedProjectKeys, onChildrenReorder, parentGestureRef, renderProjectBlock],
+  );
+  const handleChildrenDragEnd = useCallback(
+    (reorderedChildren: SidebarProjectTreeNode[]) => {
+      onChildrenReorder(node.project.projectKey, reorderedChildren);
+    },
+    [node.project.projectKey, onChildrenReorder],
+  );
+
   return (
     <View>
       {renderProjectBlock(node.project, { drag, isDragging, dragHandleProps })}
       {!collapsed && node.children.length > 0 ? (
-        <View style={styles.nestedProjectTree}>
-          {node.children.map((child) => (
-            <ProjectTreeBlock
-              key={child.project.projectKey}
-              node={child}
-              collapsedProjectKeys={collapsedProjectKeys}
-              renderProjectBlock={renderProjectBlock}
-              drag={noop}
-              isDragging={false}
-            />
-          ))}
-        </View>
+        <DraggableList
+          testID={`sidebar-nested-project-list-${node.project.projectKey}`}
+          data={node.children}
+          keyExtractor={projectTreeKeyExtractor}
+          renderItem={renderChild}
+          onDragEnd={handleChildrenDragEnd}
+          scrollEnabled={false}
+          useDragHandle
+          nestable={platformIsNative}
+          simultaneousGestureRef={parentGestureRef}
+          containerStyle={styles.nestedProjectTree}
+        />
       ) : null}
     </View>
   );
@@ -2214,7 +2249,7 @@ function ProjectModeList({
     });
   }, [creatingWorkspaceIds, projects]);
 
-  const handleProjectDragEnd = useCallback(
+  const persistProjectTreeOrder = useCallback(
     (reorderedProjectTree: SidebarProjectTreeNode[]) => {
       const reorderedProjectKeys = flattenSidebarProjectTree(reorderedProjectTree).map(
         (project) => project.projectKey,
@@ -2237,6 +2272,18 @@ function ProjectModeList({
       );
     },
     [getProjectOrder, setProjectOrder],
+  );
+  const handleNestedProjectDragEnd = useCallback(
+    (parentProjectKey: string, reorderedChildren: SidebarProjectTreeNode[]) => {
+      persistProjectTreeOrder([
+        ...reorderSidebarProjectTreeChildren({
+          nodes: projectTree,
+          parentProjectKey,
+          reorderedChildren,
+        }),
+      ]);
+    },
+    [persistProjectTreeOrder, projectTree],
   );
 
   const handleWorkspaceReorder = useCallback(
@@ -2361,12 +2408,14 @@ function ProjectModeList({
         node={item}
         collapsedProjectKeys={collapsedProjectKeys}
         renderProjectBlock={renderProjectBlock}
+        onChildrenReorder={handleNestedProjectDragEnd}
+        parentGestureRef={parentGestureRef}
         drag={drag}
         isDragging={isActive}
         dragHandleProps={dragHandleProps}
       />
     ),
-    [collapsedProjectKeys, renderProjectBlock],
+    [collapsedProjectKeys, handleNestedProjectDragEnd, parentGestureRef, renderProjectBlock],
   );
 
   const renderPinnedChat = useCallback(
@@ -2445,7 +2494,7 @@ function ProjectModeList({
           data={projectTree}
           keyExtractor={projectTreeKeyExtractor}
           renderItem={renderProject}
-          onDragEnd={handleProjectDragEnd}
+          onDragEnd={persistProjectTreeOrder}
           extraData={activeWorkspaceSelectionKey(activeWorkspaceSelection)}
           scrollEnabled={false}
           useDragHandle

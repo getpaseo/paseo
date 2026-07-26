@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { SidebarProjectEntry } from "@/hooks/use-sidebar-workspaces-list";
-import { buildSidebarProjectTree, flattenSidebarProjectTree } from "./sidebar-project-tree";
+import {
+  buildSidebarProjectTree,
+  flattenSidebarProjectTree,
+  reorderSidebarProjectTreeChildren,
+} from "./sidebar-project-tree";
 
 function project(
   projectKey: string,
@@ -116,5 +120,28 @@ describe("buildSidebarProjectTree", () => {
     expect(
       flattenSidebarProjectTree([tree[1]!, tree[0]!]).map((entry) => entry.projectKey),
     ).toEqual(["client-b", "repo-b", "client-a", "repo-a"]);
+  });
+
+  it("reorders nested siblings without changing their parent or surrounding Projects", () => {
+    const client = project("client", "/code/client");
+    const repoA = project("repo-a", "/code/client/repo-a");
+    const repoB = project("repo-b", "/code/client/repo-b");
+    const unrelated = project("unrelated", "/code/unrelated");
+    const tree = buildSidebarProjectTree({
+      projects: [client, repoA, repoB, unrelated],
+    });
+
+    const reorderedTree = reorderSidebarProjectTreeChildren({
+      nodes: tree,
+      parentProjectKey: "client",
+      reorderedChildren: [tree[0]!.children[1]!, tree[0]!.children[0]!],
+    });
+
+    expect(flattenSidebarProjectTree(reorderedTree).map((entry) => entry.projectKey)).toEqual([
+      "client",
+      "repo-b",
+      "repo-a",
+      "unrelated",
+    ]);
   });
 });

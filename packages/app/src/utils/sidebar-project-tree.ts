@@ -173,3 +173,28 @@ export function flattenSidebarProjectTree(
   for (const node of nodes) visit(node);
   return projects;
 }
+
+export function reorderSidebarProjectTreeChildren(input: {
+  nodes: readonly SidebarProjectTreeNode[];
+  parentProjectKey: string;
+  reorderedChildren: SidebarProjectTreeNode[];
+}): readonly SidebarProjectTreeNode[] {
+  let changed = false;
+  const nodes = input.nodes.map((node) => {
+    if (node.project.projectKey === input.parentProjectKey) {
+      changed = true;
+      return { ...node, children: input.reorderedChildren };
+    }
+
+    const children = reorderSidebarProjectTreeChildren({
+      nodes: node.children,
+      parentProjectKey: input.parentProjectKey,
+      reorderedChildren: input.reorderedChildren,
+    });
+    if (children === node.children) return node;
+    changed = true;
+    return { ...node, children: [...children] };
+  });
+
+  return changed ? nodes : input.nodes;
+}
