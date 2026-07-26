@@ -54,6 +54,13 @@ export function setProjectCollapsed(
   return { ...state, expandedProjectKeys: next };
 }
 
+export function setExpandedProjectKeys(
+  state: CollapsedProjectsState,
+  projectKeys: Iterable<string>,
+): CollapsedProjectsState {
+  return { ...state, expandedProjectKeys: new Set(projectKeys) };
+}
+
 export function resolveCollapsedProjectKeys(
   projectKeys: Iterable<string>,
   expandedProjectKeys: ReadonlySet<string>,

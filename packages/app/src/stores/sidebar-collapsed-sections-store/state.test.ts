@@ -4,6 +4,7 @@ import {
   mergePersistedCollapsedProjects,
   resolveCollapsedProjectKeys,
   serializeCollapsedProjects,
+  setExpandedProjectKeys,
   setProjectCollapsed,
   togglePinnedCollapsed,
   toggleProjectCollapsed,
@@ -54,6 +55,13 @@ describe("sidebar collapsed projects transitions", () => {
       collapsedStatusGroupKeys: ["running"],
       collapsedPinned: true,
     });
+  });
+
+  it("replaces all expanded project keys in one transition", () => {
+    const current = setExpandedProjectKeys(emptyState(), ["project-a", "project-b"]);
+    const next = setExpandedProjectKeys(current, ["project-c"]);
+
+    expect(Array.from(next.expandedProjectKeys)).toEqual(["project-c"]);
   });
 
   it("toggles and restores the pinned section collapse flag", () => {

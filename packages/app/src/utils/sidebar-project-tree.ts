@@ -174,6 +174,30 @@ export function flattenSidebarProjectTree(
   return projects;
 }
 
+export function expandedProjectKeysForActiveWorkspaces(input: {
+  nodes: readonly SidebarProjectTreeNode[];
+  activeWorkspaceKeys: ReadonlySet<string>;
+}): Set<string> {
+  const expandedProjectKeys = new Set<string>();
+
+  const visit = (node: SidebarProjectTreeNode): boolean => {
+    const hasActiveWorkspace = node.project.workspaces.some((workspace) =>
+      input.activeWorkspaceKeys.has(workspace.workspaceKey),
+    );
+    const hasActiveDescendant = node.children.some(visit);
+    if (hasActiveWorkspace || hasActiveDescendant) {
+      expandedProjectKeys.add(node.project.projectKey);
+      return true;
+    }
+    return false;
+  };
+
+  for (const node of input.nodes) {
+    visit(node);
+  }
+  return expandedProjectKeys;
+}
+
 export function reorderSidebarProjectTreeChildren(input: {
   nodes: readonly SidebarProjectTreeNode[];
   parentProjectKey: string;

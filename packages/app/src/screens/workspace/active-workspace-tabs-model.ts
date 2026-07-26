@@ -13,6 +13,8 @@ export interface ActiveWorkspaceTab {
   key: string;
   serverId: string;
   workspaceId: string;
+  projectKey: string;
+  projectRootPath: string;
   projectLabel: string;
   workspaceLabel: string;
   status: ActiveSessionStatus;
@@ -104,6 +106,8 @@ export function selectActiveWorkspaceTabs(state: ActiveWorkspaceTabsState): Acti
         key: `${serverId}:${workspace.id}`,
         serverId,
         workspaceId: workspace.id,
+        projectKey: workspace.project?.projectKey ?? workspace.projectId,
+        projectRootPath: workspace.projectRootPath,
         projectLabel: workspaceProjectLabel(workspace),
         workspaceLabel: workspaceLabel(workspace),
         status: sessions[0]?.status ?? "running",

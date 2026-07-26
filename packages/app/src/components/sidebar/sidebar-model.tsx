@@ -1,4 +1,6 @@
-import React, { createContext, useContext, useMemo, type ReactNode } from "react";
+import React, { createContext, useCallback, useContext, useMemo, type ReactNode } from "react";
+import equal from "fast-deep-equal";
+import { useStoreWithEqualityFn } from "zustand/traditional";
 import {
   useSidebarWorkspacesList,
   type SidebarWorkspaceEntry,
@@ -10,7 +12,13 @@ import { usePinnedSidebarKeys, type PinnedSidebarGroups } from "@/hooks/use-side
 import { useSidebarCollapsedSectionsStore } from "@/stores/sidebar-collapsed-sections-store";
 import { resolveCollapsedProjectKeys } from "@/stores/sidebar-collapsed-sections-store/state";
 import { useSidebarViewStore, type SidebarGroupMode } from "@/stores/sidebar-view-store";
+import { useSessionStore } from "@/stores/session-store";
+import { selectActiveWorkspaceTabs } from "@/screens/workspace/active-workspace-tabs-model";
 import type { SidebarShortcutModel } from "@/utils/sidebar-shortcuts";
+import {
+  buildSidebarProjectTree,
+  expandedProjectKeysForActiveWorkspaces,
+} from "@/utils/sidebar-project-tree";
 import { buildSidebarProjection } from "./sidebar-projection";
 
 interface SidebarModel extends SidebarWorkspacesListResult {
@@ -20,6 +28,8 @@ interface SidebarModel extends SidebarWorkspacesListResult {
   pinnedGroups: PinnedSidebarGroups;
   collapsedProjectKeys: ReadonlySet<string>;
   toggleProjectCollapsed: (projectKey: string) => void;
+  allProjectsExpanded: boolean;
+  toggleAllProjectsExpanded: () => void;
   shortcutModel: SidebarShortcutModel;
 }
 
@@ -45,6 +55,14 @@ export function SidebarModelProvider({
   const toggleProjectCollapsed = useSidebarCollapsedSectionsStore(
     (state) => state.toggleProjectCollapsed,
   );
+  const setExpandedProjectKeys = useSidebarCollapsedSectionsStore(
+    (state) => state.setExpandedProjectKeys,
+  );
+  const activeWorkspaceTabs = useStoreWithEqualityFn(
+    useSessionStore,
+    selectActiveWorkspaceTabs,
+    equal,
+  );
   const isStatusMode = groupMode === "status";
   const workspaceEntriesByKey = useSidebarWorkspaceEntries(
     list.workspacePlacements,
@@ -62,6 +80,27 @@ export function SidebarModelProvider({
       ),
     [expandedProjectKeys, list.projects],
   );
+  const allProjectKeys = useMemo(
+    () => list.projects.map((project) => project.projectKey),
+    [list.projects],
+  );
+  const allProjectsExpanded =
+    allProjectKeys.length > 0 && allProjectKeys.every((key) => expandedProjectKeys.has(key));
+  const activeWorkspaceKeys = useMemo(
+    () => new Set(activeWorkspaceTabs.map((tab) => tab.key)),
+    [activeWorkspaceTabs],
+  );
+  const activeProjectPathKeys = useMemo(
+    () =>
+      expandedProjectKeysForActiveWorkspaces({
+        nodes: buildSidebarProjectTree({ projects: list.projects }),
+        activeWorkspaceKeys,
+      }),
+    [activeWorkspaceKeys, list.projects],
+  );
+  const toggleAllProjectsExpanded = useCallback(() => {
+    setExpandedProjectKeys(allProjectsExpanded ? activeProjectPathKeys : allProjectKeys);
+  }, [activeProjectPathKeys, allProjectKeys, allProjectsExpanded, setExpandedProjectKeys]);
   const projection = useMemo(
     () =>
       buildSidebarProjection({
@@ -94,6 +133,8 @@ export function SidebarModelProvider({
       pinnedGroups: projection.pinnedGroups,
       collapsedProjectKeys,
       toggleProjectCollapsed,
+      allProjectsExpanded,
+      toggleAllProjectsExpanded,
       shortcutModel: projection.shortcutModel,
     }),
     [
@@ -101,6 +142,8 @@ export function SidebarModelProvider({
       groupMode,
       list,
       projection,
+      allProjectsExpanded,
+      toggleAllProjectsExpanded,
       toggleProjectCollapsed,
       workspaceEntriesByKey,
     ],

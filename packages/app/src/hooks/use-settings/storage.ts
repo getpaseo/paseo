@@ -7,6 +7,7 @@ import { THEME_TO_UNISTYLES, type ThemeName } from "@/styles/theme";
 export const APP_SETTINGS_KEY = "@paseo:app-settings";
 export const APP_SETTINGS_QUERY_KEY = ["app-settings"];
 const LEGACY_SETTINGS_KEY = "@paseo:settings";
+const SAFE_SEND_BEHAVIOR_MIGRATION_KEY = "@paseo:safe-send-behavior-v1";
 
 export type SendBehavior = "interrupt" | "queue";
 export type ReleaseChannel = "stable" | "beta";
@@ -56,7 +57,7 @@ type StoredAppSettings = Partial<AppSettings> & { compactToolCalls?: unknown };
 export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   theme: "auto",
   language: "system",
-  sendBehavior: "interrupt",
+  sendBehavior: "queue",
   serviceUrlBehavior: "ask",
   terminalScrollbackLines: DEFAULT_TERMINAL_SCROLLBACK_LINES,
   uiFontFamily: "",
@@ -113,7 +114,15 @@ export async function loadAppSettingsFromStorage(deps: SettingsDeps): Promise<Ap
   try {
     const stored = await deps.storage.getItem(APP_SETTINGS_KEY);
     if (stored) {
-      return normalizeAppSettings(JSON.parse(stored));
+      const normalized = normalizeAppSettings(JSON.parse(stored));
+      const migrationComplete = await deps.storage.getItem(SAFE_SEND_BEHAVIOR_MIGRATION_KEY);
+      if (migrationComplete === "1") {
+        return normalized;
+      }
+      const migrated = { ...normalized, sendBehavior: "queue" as const };
+      await deps.storage.setItem(APP_SETTINGS_KEY, JSON.stringify(migrated));
+      await deps.storage.setItem(SAFE_SEND_BEHAVIOR_MIGRATION_KEY, "1");
+      return migrated;
     }
 
     const legacyStored = await deps.storage.getItem(LEGACY_SETTINGS_KEY);
@@ -124,10 +133,12 @@ export async function loadAppSettingsFromStorage(deps: SettingsDeps): Promise<Ap
         ...pickAppSettingsFromLegacy(legacyParsed),
       } satisfies AppSettings;
       await deps.storage.setItem(APP_SETTINGS_KEY, JSON.stringify(next));
+      await deps.storage.setItem(SAFE_SEND_BEHAVIOR_MIGRATION_KEY, "1");
       return next;
     }
 
     await deps.storage.setItem(APP_SETTINGS_KEY, JSON.stringify(DEFAULT_CLIENT_SETTINGS));
+    await deps.storage.setItem(SAFE_SEND_BEHAVIOR_MIGRATION_KEY, "1");
     return DEFAULT_CLIENT_SETTINGS;
   } catch (error) {
     console.error("[AppSettings] Failed to load settings:", error);

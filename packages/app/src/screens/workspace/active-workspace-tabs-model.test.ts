@@ -87,6 +87,10 @@ describe("active-workspace-tabs-model", () => {
     });
 
     expect(tabs.map((tab) => tab.key)).toEqual(["local:active"]);
+    expect(tabs[0]).toMatchObject({
+      projectKey: "project-active",
+      projectRootPath: "/code/active",
+    });
     expect(tabs[0]?.sessions.map((session) => session.agentId)).toEqual(["running"]);
   });
 

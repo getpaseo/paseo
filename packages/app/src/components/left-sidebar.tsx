@@ -1,6 +1,8 @@
 import { router, usePathname } from "expo-router";
 import {
   CalendarClock,
+  ChevronsDown,
+  ChevronsUp,
   FolderPlus,
   History,
   Home,
@@ -85,6 +87,8 @@ interface SidebarSharedProps {
   collapsedProjectKeys: ReadonlySet<string>;
   shortcutIndexByWorkspaceKey: Map<string, number>;
   toggleProjectCollapsed: (projectKey: string) => void;
+  allProjectsExpanded: boolean;
+  toggleAllProjectsExpanded: () => void;
   handleRefresh: () => void;
   handleOpenProject: () => void;
   handleHome: () => void;
@@ -140,6 +144,8 @@ export const LeftSidebar = memo(function LeftSidebar({ active }: { active: boole
     pinnedGroups,
     collapsedProjectKeys,
     toggleProjectCollapsed,
+    allProjectsExpanded,
+    toggleAllProjectsExpanded,
     groupMode,
     shortcutModel,
   } = useSidebarModel();
@@ -246,6 +252,8 @@ export const LeftSidebar = memo(function LeftSidebar({ active }: { active: boole
     collapsedProjectKeys,
     shortcutIndexByWorkspaceKey,
     toggleProjectCollapsed,
+    allProjectsExpanded,
+    toggleAllProjectsExpanded,
     handleRefresh,
     labels,
     newWorkspaceKeys,
@@ -600,6 +608,8 @@ function MobileSidebar({
   collapsedProjectKeys,
   shortcutIndexByWorkspaceKey,
   toggleProjectCollapsed,
+  allProjectsExpanded,
+  toggleAllProjectsExpanded,
   handleRefresh,
   newWorkspaceKeys,
   handleOpenProject,
@@ -641,6 +651,16 @@ function MobileSidebar({
       backgroundColor: theme.colors.surfaceSidebar,
     }),
     [insetsTop, insetsBottom, theme.colors.surfaceSidebar],
+  );
+  const workspacesSectionHeaderElement = useMemo(
+    () => (
+      <WorkspacesSectionHeader
+        showProjectTreeToggle={groupMode === "project"}
+        allProjectsExpanded={allProjectsExpanded}
+        onToggleAllProjects={toggleAllProjectsExpanded}
+      />
+    ),
+    [allProjectsExpanded, groupMode, toggleAllProjectsExpanded],
   );
 
   return (
@@ -746,6 +766,8 @@ function DesktopSidebar({
   collapsedProjectKeys,
   shortcutIndexByWorkspaceKey,
   toggleProjectCollapsed,
+  allProjectsExpanded,
+  toggleAllProjectsExpanded,
   handleRefresh,
   newWorkspaceKeys,
   handleOpenProject,
@@ -820,6 +842,16 @@ function DesktopSidebar({
   const sidebarHeaderGroupStyle = useMemo(
     () => [styles.sidebarHeaderGroup, ownsTopLeft && styles.sidebarHeaderGroupBelowChrome],
     [ownsTopLeft],
+  );
+  const workspacesSectionHeaderElement = useMemo(
+    () => (
+      <WorkspacesSectionHeader
+        showProjectTreeToggle={groupMode === "project"}
+        allProjectsExpanded={allProjectsExpanded}
+        onToggleAllProjects={toggleAllProjectsExpanded}
+      />
+    ),
+    [allProjectsExpanded, groupMode, toggleAllProjectsExpanded],
   );
   return (
     <Animated.View
@@ -905,8 +937,17 @@ function DesktopSidebar({
   );
 }
 
-function WorkspacesSectionHeader() {
+function WorkspacesSectionHeader({
+  showProjectTreeToggle,
+  allProjectsExpanded,
+  onToggleAllProjects,
+}: {
+  showProjectTreeToggle: boolean;
+  allProjectsExpanded: boolean;
+  onToggleAllProjects: () => void;
+}) {
   const { theme } = useUnistyles();
+  const { t } = useTranslation();
   const setCommandCenterOpen = useKeyboardShortcutsStore((state) => state.setCommandCenterOpen);
   const commandCenterKeys = useShortcutKeys("toggle-command-center");
   const handleSearchPress = useCallback(() => setCommandCenterOpen(true), [setCommandCenterOpen]);
@@ -917,11 +958,40 @@ function WorkspacesSectionHeader() {
     ],
     [],
   );
+  const projectTreeToggleLabel = allProjectsExpanded
+    ? t("workspace.git.diff.collapseAllFolders")
+    : t("workspace.git.diff.expandAllFolders");
+  const ProjectTreeToggleIcon = allProjectsExpanded ? ChevronsUp : ChevronsDown;
 
   return (
     <View style={styles.workspacesSectionHeader}>
       <Text style={styles.workspacesSectionTitle}>Workspaces</Text>
       <View style={styles.workspacesSectionActions}>
+        {showProjectTreeToggle ? (
+          <Tooltip delayDuration={300}>
+            <TooltipTrigger asChild>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={projectTreeToggleLabel}
+                testID="sidebar-toggle-all-projects"
+                style={searchButtonStyle}
+                onPress={onToggleAllProjects}
+              >
+                {({ hovered, pressed }) => (
+                  <ProjectTreeToggleIcon
+                    size={14}
+                    color={
+                      hovered || pressed ? theme.colors.foreground : theme.colors.foregroundMuted
+                    }
+                  />
+                )}
+              </Pressable>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" align="center" offset={8}>
+              <IconTooltipContent label={projectTreeToggleLabel} />
+            </TooltipContent>
+          </Tooltip>
+        ) : null}
         <Tooltip delayDuration={300}>
           <TooltipTrigger asChild>
             <Pressable
@@ -959,10 +1029,6 @@ function WorkspacesSectionHeader() {
     </View>
   );
 }
-
-// Stable element so the sidebar list's listHeaderComponent prop keeps identity across
-// renders (WorkspacesSectionHeader takes no props).
-const workspacesSectionHeaderElement = <WorkspacesSectionHeader />;
 
 // Static styles for Animated.Views — must NOT use Unistyles dynamic theme to
 // avoid the "Unable to find node on an unmounted component" crash when Unistyles

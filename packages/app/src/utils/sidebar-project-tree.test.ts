@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { SidebarProjectEntry } from "@/hooks/use-sidebar-workspaces-list";
 import {
   buildSidebarProjectTree,
+  expandedProjectKeysForActiveWorkspaces,
   flattenSidebarProjectTree,
   reorderSidebarProjectTreeChildren,
 } from "./sidebar-project-tree";
@@ -143,5 +144,39 @@ describe("buildSidebarProjectTree", () => {
       "repo-a",
       "unrelated",
     ]);
+  });
+
+  it("expands only the ancestry needed to reveal active workspaces", () => {
+    const inactiveClient = project("inactive-client", "/code/inactive");
+    const activeClient = project("active-client", "/code/active");
+    const activeRepo = project("active-repo", "/code/active/repo", {
+      workspaceIds: ["running"],
+    });
+    const inactiveRepo = project("inactive-repo", "/code/active/other");
+    const tree = buildSidebarProjectTree({
+      projects: [inactiveClient, activeClient, activeRepo, inactiveRepo],
+    });
+
+    const expanded = expandedProjectKeysForActiveWorkspaces({
+      nodes: tree,
+      activeWorkspaceKeys: new Set(["host:running"]),
+    });
+
+    expect(Array.from(expanded)).toEqual(["active-repo", "active-client"]);
+    expect(expanded.has("inactive-client")).toBe(false);
+    expect(expanded.has("inactive-repo")).toBe(false);
+  });
+
+  it("collapses every project when there are no active workspaces", () => {
+    const tree = buildSidebarProjectTree({
+      projects: [project("client", "/code/client"), project("repo", "/code/client/repo")],
+    });
+
+    expect(
+      expandedProjectKeysForActiveWorkspaces({
+        nodes: tree,
+        activeWorkspaceKeys: new Set(),
+      }),
+    ).toEqual(new Set());
   });
 });

@@ -34,6 +34,33 @@ function makeDeps(
 }
 
 describe("loadAppSettingsFromStorage", () => {
+  it("defaults follow-up messages to the safe queue behavior", async () => {
+    const deps = makeDeps();
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.sendBehavior).toBe("queue");
+  });
+
+  it("migrates the previous interrupt default to queue once", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({
+          ...DEFAULT_CLIENT_SETTINGS,
+          sendBehavior: "interrupt",
+        }),
+      }),
+    });
+
+    expect((await loadAppSettingsFromStorage(deps)).sendBehavior).toBe("queue");
+
+    await deps.storage.setItem(
+      APP_SETTINGS_KEY,
+      JSON.stringify({ ...DEFAULT_CLIENT_SETTINGS, sendBehavior: "interrupt" }),
+    );
+    expect((await loadAppSettingsFromStorage(deps)).sendBehavior).toBe("interrupt");
+  });
+
   it("defaults theme to auto when storage is empty", async () => {
     const deps = makeDeps();
 

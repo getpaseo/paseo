@@ -1,11 +1,13 @@
 import { useCallback, useMemo } from "react";
 import { Pressable, ScrollView, Text, View, type PressableStateCallbackType } from "react-native";
 import { useRouter, type Href } from "expo-router";
-import { CircleAlert, FolderGit2 } from "lucide-react-native";
+import { CircleAlert } from "lucide-react-native";
 import equal from "fast-deep-equal";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { ProjectIconView } from "@/components/project-icon-view";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useProjectIconDataByProjectKey } from "@/projects/project-icons";
 import { useSessionStore } from "@/stores/session-store";
 import { buildHostWorkspaceOpenRoute, buildHostWorkspaceRoute } from "@/utils/host-routes";
 import type { Theme } from "@/styles/theme";
@@ -15,9 +17,7 @@ import {
   type ActiveSessionStatus,
 } from "./active-workspace-tabs-model";
 
-const ThemedFolderGit = withUnistyles(FolderGit2);
 const ThemedCircleAlert = withUnistyles(CircleAlert);
-const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 const attentionColorMapping = (theme: Theme) => ({ color: theme.colors.palette.amber[500] });
 
 function workspaceChipStyle({
@@ -33,7 +33,15 @@ function statusDotStyle(status: ActiveSessionStatus) {
   return [styles.statusDot, styles.statusDotRunning];
 }
 
-function ActiveWorkspaceChip({ tab, selected }: { tab: ActiveWorkspaceTab; selected: boolean }) {
+function ActiveWorkspaceChip({
+  tab,
+  selected,
+  iconDataUri,
+}: {
+  tab: ActiveWorkspaceTab;
+  selected: boolean;
+  iconDataUri: string | null;
+}) {
   const router = useRouter();
   const navigateWorkspace = useCallback(() => {
     router.push(buildHostWorkspaceRoute(tab.serverId, tab.workspaceId) as Href);
@@ -70,11 +78,15 @@ function ActiveWorkspaceChip({ tab, selected }: { tab: ActiveWorkspaceTab; selec
         style={workspaceChipStyle}
       >
         {selected ? <View style={styles.selectedIndicator} /> : null}
-        <ThemedFolderGit size={14} uniProps={mutedColorMapping} />
-        <Text style={styles.projectLabel} numberOfLines={1}>
-          {tab.projectLabel}
-        </Text>
-        <Text style={styles.pathSeparator}>/</Text>
+        <ProjectIconView
+          iconDataUri={iconDataUri}
+          initial={tab.projectLabel.trim().charAt(0).toUpperCase() || "P"}
+          projectKey={tab.projectKey}
+          imageStyle={styles.projectIconImage}
+          fallbackStyle={styles.projectIconFallback}
+          textStyle={styles.projectIconText}
+          emojiStyle={styles.projectIconEmoji}
+        />
         <Text
           style={[styles.workspaceLabel, selected && styles.workspaceLabelSelected]}
           numberOfLines={1}
@@ -111,6 +123,18 @@ export function ActiveWorkspaceTabsRow({
   workspaceId: string;
 }) {
   const tabs = useStoreWithEqualityFn(useSessionStore, selectActiveWorkspaceTabs, equal);
+  const projectIconTargets = useMemo(
+    () =>
+      tabs.map((tab) => ({
+        serverId: tab.serverId,
+        projectKey: tab.projectKey,
+        iconWorkingDir: tab.projectRootPath,
+      })),
+    [tabs],
+  );
+  const projectIconByProjectKey = useProjectIconDataByProjectKey({
+    projects: projectIconTargets,
+  });
   const contentStyle = useMemo(() => styles.content, []);
 
   if (tabs.length === 0) {
@@ -129,6 +153,7 @@ export function ActiveWorkspaceTabsRow({
             key={tab.key}
             tab={tab}
             selected={tab.serverId === serverId && tab.workspaceId === workspaceId}
+            iconDataUri={projectIconByProjectKey.get(tab.projectKey) ?? null}
           />
         ))}
       </ScrollView>
@@ -170,15 +195,25 @@ const styles = StyleSheet.create((theme) => ({
     height: 2,
     backgroundColor: theme.colors.accent,
   },
-  projectLabel: {
-    flexShrink: 1,
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
+  projectIconImage: {
+    width: 18,
+    height: 18,
+    borderRadius: theme.borderRadius.sm,
   },
-  pathSeparator: {
-    color: theme.colors.foregroundMuted,
-    opacity: 0.6,
-    fontSize: theme.fontSize.xs,
+  projectIconFallback: {
+    width: 18,
+    height: 18,
+    borderRadius: theme.borderRadius.sm,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  projectIconText: {
+    fontSize: 10,
+    fontWeight: theme.fontWeight.semibold,
+  },
+  projectIconEmoji: {
+    fontSize: 14,
+    lineHeight: 18,
   },
   workspaceLabel: {
     flexShrink: 1,
