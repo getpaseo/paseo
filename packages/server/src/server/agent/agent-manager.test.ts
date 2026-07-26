@@ -235,6 +235,7 @@ class HeldAgentCreationAndCloseClient extends TestAgentClient {
 class HeldReloadCloseClient extends TestAgentClient {
   private readonly closeStarted = deferred<void>();
   private readonly closeAllowed = deferred<void>();
+  originalSession: TestAgentSession | null = null;
   originalSessionClosed = false;
   replacementSessionClosed = false;
 
@@ -244,13 +245,15 @@ class HeldReloadCloseClient extends TestAgentClient {
     const recordOriginalClosed = () => {
       this.originalSessionClosed = true;
     };
-    return new (class extends TestAgentSession {
+    const session = new (class extends TestAgentSession {
       override async close(): Promise<void> {
         signalCloseStarted();
         await waitForClose();
         recordOriginalClosed();
       }
     })(config);
+    this.originalSession = session;
+    return session;
   }
 
   override async resumeSession(
@@ -890,6 +893,14 @@ test("reload closes both sessions when the closed snapshot cannot be persisted",
       undefined,
       { workspaceId: undefined },
     );
+    client.originalSession?.pushEvent({
+      type: "provider_subagent",
+      provider: "codex",
+      event: { type: "upsert", id: "reload-aborted-child", status: "running" },
+    });
+    await manager.flush();
+    const events: AgentManagerEvent[] = [];
+    manager.subscribe((event) => events.push(event), { replayState: false });
     await storage.flush();
     rmSync(storagePath, { recursive: true, force: true });
     writeFileSync(storagePath, "blocks the storage directory");
@@ -904,10 +915,18 @@ test("reload closes both sessions when the closed snapshot cannot be persisted",
       agents: manager.listAgents(),
       originalSessionClosed: client.originalSessionClosed,
       replacementSessionClosed: client.replacementSessionClosed,
+      canceledProviderChild: events.some(
+        (event) =>
+          event.type === "provider_subagent" &&
+          event.event.type === "upsert" &&
+          event.event.subagent.id === "reload-aborted-child" &&
+          event.event.subagent.status === "canceled",
+      ),
     }).toEqual({
       agents: [],
       originalSessionClosed: true,
       replacementSessionClosed: true,
+      canceledProviderChild: true,
     });
   } finally {
     client.finishClosing();
@@ -7855,6 +7874,133 @@ test("collectIdleAgents starts an ancestor's idle window after managed descendan
     });
     expect(manager.getAgent(parent.id)).toBeNull();
     expect(manager.getAgent(child.id)).toBeNull();
+  } finally {
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id))).catch(
+      () => undefined,
+    );
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("collectIdleAgents retains managed descendant activity after explicit child closure", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-closed-descendant-activity-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const client = new (class extends TestAgentClient {
+    readonly sessions: TestAgentSession[] = [];
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      const session = new TestAgentSession(config);
+      this.sessions.push(session);
+      return session;
+    }
+  })();
+  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+  let resumedManager: AgentManager | null = null;
+
+  try {
+    const parent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const child = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      labels: { [PARENT_AGENT_ID_LABEL]: parent.id },
+      workspaceId: undefined,
+    });
+    client.sessions[1]!.pushEvent({
+      type: "turn_started",
+      provider: "codex",
+      turnId: "closed-child-turn",
+    });
+    client.sessions[1]!.pushEvent({
+      type: "turn_completed",
+      provider: "codex",
+      turnId: "closed-child-turn",
+    });
+    await manager.flush();
+    const childUpdatedAt = manager.getAgent(child.id)!.updatedAt;
+
+    await manager.closeAgent(child.id);
+    const beforeDescendantIdleWindow = await manager.collectIdleAgents({
+      cutoff: new Date(childUpdatedAt.getTime() - 1),
+      protectedAgentIds: new Set(),
+    });
+
+    expect(beforeDescendantIdleWindow).toEqual({ collected: [], failures: [] });
+    expect(manager.getAgent(parent.id)?.lifecycle).toBe("idle");
+
+    await manager.closeAgent(parent.id);
+    await storage.flush();
+    resumedManager = new AgentManager({
+      clients: { codex: new TestAgentClient() },
+      registry: storage,
+      logger,
+    });
+    await ensureAgentLoaded(parent.id, {
+      agentManager: resumedManager,
+      agentStorage: storage,
+      logger,
+    });
+
+    const restoredDescendantIdleWindow = await resumedManager.collectIdleAgents({
+      cutoff: new Date(childUpdatedAt.getTime() - 1),
+      protectedAgentIds: new Set(),
+    });
+    expect(restoredDescendantIdleWindow).toEqual({ collected: [], failures: [] });
+
+    await resumedManager.collectIdleAgents({
+      cutoff: new Date(childUpdatedAt.getTime() + 1),
+      protectedAgentIds: new Set(),
+    });
+    expect(resumedManager.getAgent(parent.id)).toBeNull();
+  } finally {
+    if (resumedManager) {
+      await Promise.all(
+        resumedManager.listAgents().map((agent) => resumedManager!.closeAgent(agent.id)),
+      ).catch(() => undefined);
+    }
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id))).catch(
+      () => undefined,
+    );
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("collectIdleAgents does not let error descendants pin ancestors", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-error-descendant-"));
+  const client = new (class extends TestAgentClient {
+    readonly sessions: TestAgentSession[] = [];
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      const session = new TestAgentSession(config);
+      this.sessions.push(session);
+      return session;
+    }
+  })();
+  const manager = new AgentManager({ clients: { codex: client }, logger });
+
+  try {
+    const parent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const child = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      labels: { [PARENT_AGENT_ID_LABEL]: parent.id },
+      workspaceId: undefined,
+    });
+    client.sessions[1]!.pushEvent({
+      type: "turn_failed",
+      provider: "codex",
+      turnId: "failed-child-turn",
+      error: "provider failed",
+    });
+    await manager.flush();
+
+    await manager.collectIdleAgents({
+      cutoff: new Date(Date.now() + 1_000),
+      protectedAgentIds: new Set(),
+    });
+
+    expect(manager.getAgent(parent.id)).toBeNull();
+    expect(manager.getAgent(child.id)?.lifecycle).toBe("error");
   } finally {
     await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id))).catch(
       () => undefined,

@@ -582,6 +582,7 @@ export class AgentManager {
   private readonly providerEnabled = new Map<AgentProvider, boolean>();
   private readonly agents = new Map<string, LiveManagedAgent>();
   private managedParentAgentIds = new Map<string, string>();
+  private readonly retainedDescendantActivityAtByAgentId = new Map<string, number>();
   private readonly timelineStore = new InMemoryAgentTimelineStore();
   private readonly providerSubagents = new ProviderSubagentStore();
   private readonly agentsAwaitingInitialSnapshotPersist = new Set<string>();
@@ -1283,10 +1284,12 @@ export class AgentManager {
       : await client.createSession(providerLaunchConfig, launchContext);
 
     let handedToRegistration = false;
+    let closedExistingRuntime = false;
     try {
       this.assertAcceptingAgentRegistrations();
 
       const closedExisting = this.prepareAgentForClosure(existing, "agent reloaded", "reload");
+      closedExistingRuntime = true;
       try {
         await this.persistSnapshot(closedExisting);
       } finally {
@@ -1306,7 +1309,7 @@ export class AgentManager {
 
       // Preserve existing labels and timeline during reload.
       handedToRegistration = true;
-      return this.registerSession(session, storedConfig, agentId, {
+      return await this.registerSession(session, storedConfig, agentId, {
         labels: existing.labels,
         workspaceId: existing.workspaceId,
         owner: existing.owner,
@@ -1319,6 +1322,9 @@ export class AgentManager {
         attention: preservedAttention,
       });
     } finally {
+      if (closedExistingRuntime && !this.agents.has(agentId)) {
+        this.cancelRunningProviderSubagents(agentId);
+      }
       if (!handedToRegistration) {
         await this.closeUnregisteredSession(session);
       }
@@ -1520,11 +1526,13 @@ export class AgentManager {
   ): RuntimeCollectionState {
     const state: RuntimeCollectionState = {
       protectedAgentIds: new Set(protectedAgentIds),
-      latestActivityAtByAgentId: new Map(),
+      latestActivityAtByAgentId: new Map(this.retainedDescendantActivityAtByAgentId),
     };
     for (const agent of this.agents.values()) {
       this.recordRuntimeCollectionActivity(agent, agent.updatedAt.getTime(), state);
-      this.protectManagedAncestors(agent, state.protectedAgentIds);
+      if (agent.lifecycle !== "error") {
+        this.protectManagedAncestors(agent, state.protectedAgentIds);
+      }
       for (const subagent of this.providerSubagents.list(agent.id)) {
         this.recordRuntimeCollectionActivity(agent, Date.parse(subagent.updatedAt), state);
         if (subagent.status === "running") {
@@ -1556,16 +1564,20 @@ export class AgentManager {
   }
 
   private listManagedAncestorIds(agent: LiveManagedAgent): string[] {
+    return this.listManagedAncestorIdsFrom(agent.id, getParentAgentIdFromLabels(agent.labels));
+  }
+
+  private listManagedAncestorIdsFrom(agentId: string, parentAgentId: string | null): string[] {
     const ancestorIds: string[] = [];
-    const visited = new Set([agent.id]);
-    let parentAgentId = getParentAgentIdFromLabels(agent.labels);
-    while (parentAgentId && !visited.has(parentAgentId)) {
-      visited.add(parentAgentId);
-      ancestorIds.push(parentAgentId);
-      const parent = this.agents.get(parentAgentId);
-      parentAgentId = parent
+    const visited = new Set([agentId]);
+    let currentParentAgentId = parentAgentId;
+    while (currentParentAgentId && !visited.has(currentParentAgentId)) {
+      visited.add(currentParentAgentId);
+      ancestorIds.push(currentParentAgentId);
+      const parent = this.agents.get(currentParentAgentId);
+      currentParentAgentId = parent
         ? getParentAgentIdFromLabels(parent.labels)
-        : (this.managedParentAgentIds.get(parentAgentId) ?? null);
+        : (this.managedParentAgentIds.get(currentParentAgentId) ?? null);
     }
     return ancestorIds;
   }
@@ -1575,7 +1587,8 @@ export class AgentManager {
       return;
     }
     const nextParentAgentIds = new Map<string, string>();
-    for (const record of await this.registry.list()) {
+    const records = await this.registry.list();
+    for (const record of records) {
       const parentAgentId = getParentAgentIdFromLabels(record.labels);
       if (parentAgentId) {
         nextParentAgentIds.set(record.id, parentAgentId);
@@ -1590,6 +1603,49 @@ export class AgentManager {
       }
     }
     this.managedParentAgentIds = nextParentAgentIds;
+    for (const record of records) {
+      if (record.archivedAt) {
+        continue;
+      }
+      this.recordRetainedDescendantActivityForAncestors(
+        record.id,
+        getParentAgentIdFromLabels(record.labels),
+        Date.parse(record.lastActivityAt ?? record.updatedAt),
+      );
+    }
+  }
+
+  private retainManagedDescendantActivity(agent: LiveManagedAgent): void {
+    let latestActivityAt = Math.max(
+      agent.updatedAt.getTime(),
+      this.retainedDescendantActivityAtByAgentId.get(agent.id) ?? Number.NEGATIVE_INFINITY,
+    );
+    for (const subagent of this.providerSubagents.list(agent.id)) {
+      latestActivityAt = Math.max(latestActivityAt, Date.parse(subagent.updatedAt));
+    }
+    this.recordRetainedDescendantActivityForAncestors(
+      agent.id,
+      getParentAgentIdFromLabels(agent.labels),
+      latestActivityAt,
+    );
+    this.retainedDescendantActivityAtByAgentId.delete(agent.id);
+  }
+
+  private recordRetainedDescendantActivityForAncestors(
+    agentId: string,
+    parentAgentId: string | null,
+    activityAt: number,
+  ): void {
+    if (!Number.isFinite(activityAt)) {
+      return;
+    }
+    for (const ancestorId of this.listManagedAncestorIdsFrom(agentId, parentAgentId)) {
+      const current =
+        this.retainedDescendantActivityAtByAgentId.get(ancestorId) ?? Number.NEGATIVE_INFINITY;
+      if (activityAt > current) {
+        this.retainedDescendantActivityAtByAgentId.set(ancestorId, activityAt);
+      }
+    }
   }
 
   private updateManagedParentAgentId(agentId: string, labels: Record<string, string>): void {
@@ -3085,10 +3141,9 @@ export class AgentManager {
   ): ManagedAgentClosed {
     this.agentStreamCoalescer.flushAndDiscard(agent.id);
     if (disposition === "terminate") {
-      for (const event of this.providerSubagents.cancelRunning(agent.id)) {
-        this.dispatch({ type: "provider_subagent", event });
-      }
+      this.cancelRunningProviderSubagents(agent.id);
     }
+    this.retainManagedDescendantActivity(agent);
     this.agents.delete(agent.id);
     this.previousStatuses.delete(agent.id);
     if (agent.unsubscribeSession) {
@@ -3117,8 +3172,15 @@ export class AgentManager {
     };
   }
 
+  private cancelRunningProviderSubagents(parentAgentId: string): void {
+    for (const event of this.providerSubagents.cancelRunning(parentAgentId)) {
+      this.dispatch({ type: "provider_subagent", event });
+    }
+  }
+
   private discardRetainedAgentState(agentId: string): void {
     this.timelineStore.delete(agentId);
+    this.retainedDescendantActivityAtByAgentId.delete(agentId);
     for (const event of this.providerSubagents.deleteParent(agentId)) {
       this.dispatch({ type: "provider_subagent", event });
     }
