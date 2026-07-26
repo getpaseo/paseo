@@ -14,7 +14,7 @@ const { runtime, updateTheme } = vi.hoisted(() => {
 });
 vi.mock("react-native-unistyles", () => ({ UnistylesRuntime: runtime }));
 
-const ALL_THEME_KEYS = Object.keys(REGISTERED_THEMES);
+const ALL_THEME_KEYS = [...Object.keys(REGISTERED_THEMES), "custom"];
 
 // The signature of the updater passed to UnistylesRuntime.updateTheme.
 type ThemeUpdater = (theme: FakeTheme) => FakeTheme;

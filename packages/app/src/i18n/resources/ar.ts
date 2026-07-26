@@ -1965,7 +1965,14 @@ export const ar: TranslationResources = {
           claude: "كلود",
           ghostty: "شبحي",
           pureBlack: "أسود خالص",
+          custom: "مخصص",
           auto: "نظام",
+        },
+        custom: {
+          title: "سمة مخصصة",
+          none: "استورد ملف سمة Paseo بصيغة JSON",
+          import: "استيراد",
+          importing: "جارٍ الاستيراد...",
         },
       },
       detailLevel: {

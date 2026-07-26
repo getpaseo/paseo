@@ -17,6 +17,7 @@ import {
 import { THEME_OPTIONS, type ThemePreference } from "@/styles/theme";
 import { z } from "zod";
 import { readValidatedJson } from "@/storage/validated-storage";
+import { customThemeSchema, type CustomThemePreset } from "@/styles/custom-theme";
 
 export const APP_SETTINGS_KEY = "@paseo:app-settings";
 export const APP_SETTINGS_QUERY_KEY = ["app-settings"];
@@ -30,8 +31,11 @@ export type WorkspaceTitleSource = "title" | "branch";
 export type SidebarWorkspaceTrailing = "diff" | "timestamp" | "none";
 export type ToolCallDetailLevel = "overview" | "detailed";
 
-const VALID_THEMES = new Set<string>(THEME_OPTIONS.map((option) => option.name));
-const ThemePreferenceSchema = z.enum(THEME_OPTIONS.map((option) => option.name));
+const VALID_THEMES = new Set<string>([...THEME_OPTIONS.map((option) => option.name), "custom"]);
+const ThemePreferenceSchema = z.enum([
+  ...THEME_OPTIONS.map((option) => option.name),
+  "custom",
+]);
 const VALID_SERVICE_URL_BEHAVIORS = new Set<ServiceUrlBehavior>(["ask", "in-app", "external"]);
 const VALID_WORKSPACE_TITLE_SOURCES = new Set<WorkspaceTitleSource>(["title", "branch"]);
 const VALID_SIDEBAR_WORKSPACE_TRAILINGS = new Set<SidebarWorkspaceTrailing>([
@@ -53,6 +57,7 @@ export const MAX_FONT_FAMILY_LENGTH = 200;
 
 export interface AppSettings {
   theme: ThemePreference;
+  customTheme: CustomThemePreset | null;
   language: AppLanguage;
   sendBehavior: SendBehavior;
   serviceUrlBehavior: ServiceUrlBehavior;
@@ -90,6 +95,7 @@ const SidebarRowItemsSchema = z.strictObject({
 
 const StoredAppSettingsSchema = z.strictObject({
   theme: ThemePreferenceSchema.optional(),
+  customTheme: z.unknown().optional(),
   language: z
     .enum(["system", "ar", "en", "es", "fr", "ja", "ko", "pt-BR", "ru", "zh-CN"])
     .optional(),
@@ -122,6 +128,7 @@ type StoredAppSettings = z.infer<typeof StoredAppSettingsSchema>;
 
 export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   theme: "auto",
+  customTheme: null,
   language: "system",
   sendBehavior: "interrupt",
   serviceUrlBehavior: "ask",
@@ -273,6 +280,25 @@ function parseStoredSidebarChecksDisplay(stored: StoredAppSettings): SidebarChec
   return isChecksHiddenByLegacyRowItem(stored.sidebarRowItems) ? "none" : null;
 }
 
+function pickThemeSettings(
+  stored: StoredAppSettings,
+): Pick<Partial<AppSettings>, "customTheme" | "theme"> {
+  const parsedCustomTheme = customThemeSchema.safeParse(stored.customTheme);
+  const customTheme = parsedCustomTheme.success ? parsedCustomTheme.data : null;
+  const result: Pick<Partial<AppSettings>, "customTheme" | "theme"> = {};
+  if (customTheme !== null) {
+    result.customTheme = customTheme;
+  }
+  if (
+    typeof stored.theme === "string" &&
+    VALID_THEMES.has(stored.theme) &&
+    (stored.theme !== "custom" || customTheme !== null)
+  ) {
+    result.theme = stored.theme;
+  }
+  return result;
+}
+
 function pickBooleanAppSettings(stored: StoredAppSettings): Partial<AppSettings> {
   const result: Partial<AppSettings> = {};
   if (typeof stored.useLegacyTerminalRenderer === "boolean") {
@@ -294,9 +320,6 @@ function pickBooleanAppSettings(stored: StoredAppSettings): Partial<AppSettings>
  */
 function pickEnumAppSettings(stored: StoredAppSettings): Partial<AppSettings> {
   const result: Partial<AppSettings> = {};
-  if (typeof stored.theme === "string" && VALID_THEMES.has(stored.theme)) {
-    result.theme = stored.theme;
-  }
   if (
     stored.sendBehavior === "interrupt" ||
     stored.sendBehavior === "steer" ||
@@ -330,7 +353,7 @@ function pickEnumAppSettings(stored: StoredAppSettings): Partial<AppSettings> {
 
 function pickAppSettings(stored: StoredAppSettings): Partial<AppSettings> {
   const result: Partial<AppSettings> = {};
-  Object.assign(result, pickEnumAppSettings(stored));
+  Object.assign(result, pickEnumAppSettings(stored), pickThemeSettings(stored));
   if (stored.sidebarRowItems !== undefined) {
     result.sidebarRowItems = parseSidebarRowItems(stored.sidebarRowItems);
   }

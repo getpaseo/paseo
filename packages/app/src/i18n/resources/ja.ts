@@ -1981,7 +1981,14 @@ export const ja: TranslationResources = {
           claude: "Claude",
           ghostty: "Ghostty",
           pureBlack: "ピュアブラック",
+          custom: "カスタム",
           auto: "システム",
+        },
+        custom: {
+          title: "カスタムテーマ",
+          none: "PaseoテーマのJSONファイルをインポート",
+          import: "インポート",
+          importing: "インポート中...",
         },
       },
       detailLevel: {

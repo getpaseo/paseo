@@ -2016,7 +2016,14 @@ export const fr: TranslationResources = {
           claude: "Claude",
           ghostty: "Fantôme",
           pureBlack: "Noir pur",
+          custom: "Personnalisé",
           auto: "Système",
+        },
+        custom: {
+          title: "Thème personnalisé",
+          none: "Importer un fichier de thème Paseo JSON",
+          import: "Importer",
+          importing: "Importation...",
         },
       },
       detailLevel: {

@@ -2029,7 +2029,14 @@ export const en = {
           claude: "Claude",
           ghostty: "Ghostty",
           pureBlack: "Pure black",
+          custom: "Custom",
           auto: "System",
+        },
+        custom: {
+          title: "Custom theme",
+          none: "Import a Paseo theme JSON file",
+          import: "Import",
+          importing: "Importing...",
         },
       },
       detailLevel: {

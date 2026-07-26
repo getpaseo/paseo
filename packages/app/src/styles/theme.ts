@@ -755,7 +755,7 @@ export const THEME_OPTIONS = [
   },
 ] as const;
 
-export type ThemePreference = (typeof THEME_OPTIONS)[number]["name"];
+export type ThemePreference = (typeof THEME_OPTIONS)[number]["name"] | "custom";
 export type ThemeName = Exclude<ThemePreference, "auto">;
 type ConcreteThemeOption = Exclude<(typeof THEME_OPTIONS)[number], { name: "auto" }>;
 export type Theme = ConcreteThemeOption["theme"];
@@ -765,24 +765,28 @@ const CONCRETE_THEME_OPTIONS = THEME_OPTIONS.filter(
 );
 
 type ThemeToUnistyles = {
-  [Name in ThemeName]: Extract<ConcreteThemeOption, { name: Name }>["unistylesName"];
-};
+  [Name in Exclude<ThemeName, "custom">]: Extract<ConcreteThemeOption, { name: Name }>["unistylesName"];
+} & { custom: "custom" };
 
 type ThemeSwatches = {
-  [Name in ThemeName]: Extract<ConcreteThemeOption, { name: Name }>["swatch"];
-};
+  [Name in Exclude<ThemeName, "custom">]: Extract<ConcreteThemeOption, { name: Name }>["swatch"];
+} & { custom: string };
 
 type RegisteredThemes = {
   [Option in ConcreteThemeOption as Option["unistylesName"]]: Option["theme"];
 };
 
-export const THEME_TO_UNISTYLES = Object.fromEntries(
-  CONCRETE_THEME_OPTIONS.map((option) => [option.name, option.unistylesName]),
-) as ThemeToUnistyles;
+export const THEME_TO_UNISTYLES = {
+  ...Object.fromEntries(
+    CONCRETE_THEME_OPTIONS.map((option) => [option.name, option.unistylesName]),
+  ),
+  custom: "custom",
+} as ThemeToUnistyles;
 
-export const THEME_SWATCHES = Object.fromEntries(
-  CONCRETE_THEME_OPTIONS.map((option) => [option.name, option.swatch]),
-) as ThemeSwatches;
+export const THEME_SWATCHES = {
+  ...Object.fromEntries(CONCRETE_THEME_OPTIONS.map((option) => [option.name, option.swatch])),
+  custom: "#20744A",
+} as ThemeSwatches;
 
 export const REGISTERED_THEMES = Object.fromEntries(
   CONCRETE_THEME_OPTIONS.map((option) => [option.unistylesName, option.theme]),

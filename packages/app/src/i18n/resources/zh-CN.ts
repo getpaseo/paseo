@@ -1942,7 +1942,14 @@ export const zhCN: TranslationResources = {
           claude: "Claude",
           ghostty: "Ghostty",
           pureBlack: "纯黑",
+          custom: "自定义",
           auto: "系统",
+        },
+        custom: {
+          title: "自定义主题",
+          none: "导入 Paseo 主题 JSON 文件",
+          import: "导入",
+          importing: "正在导入...",
         },
       },
       detailLevel: {

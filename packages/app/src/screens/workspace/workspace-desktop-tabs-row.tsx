@@ -1472,6 +1472,17 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "center",
   },
+  tabFocusIndicator: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 2,
+    backgroundColor: theme.colors.accentBright,
+  },
+  tabFocusIndicatorUnfocused: {
+    backgroundColor: theme.colors.accent,
+  },
   // The chip box stops at the slot's padding box, so the gap between two chips runs from
   // -TAB_CHIP_GAP to 0. Centre a TAB_DROP_INDICATOR_WIDTH pill in it.
   tabDropIndicator: {

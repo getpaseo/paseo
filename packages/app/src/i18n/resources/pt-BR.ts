@@ -1996,7 +1996,14 @@ export const ptBR: TranslationResources = {
           claude: "Claude",
           ghostty: "Ghostty",
           pureBlack: "Preto puro",
+          custom: "Personalizado",
           auto: "Sistema",
+        },
+        custom: {
+          title: "Tema personalizado",
+          none: "Importe um arquivo de tema Paseo em JSON",
+          import: "Importar",
+          importing: "Importando...",
         },
       },
       detailLevel: {

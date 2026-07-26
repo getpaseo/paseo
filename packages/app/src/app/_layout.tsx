@@ -111,6 +111,7 @@ import { selectIsAgentListOpen, usePanelStore } from "@/stores/panel-store";
 import { flushDraftPersistStorage } from "@/stores/draft-store";
 import { getNextThemePreference, THEME_TO_UNISTYLES } from "@/styles/theme";
 import { useSessionStore } from "@/stores/session-store";
+import { buildCustomTheme } from "@/styles/custom-theme";
 import { installWebScrollbarStyles } from "@/styles/install-web-scrollbar-styles";
 import type { HostProfile } from "@/types/host-connection";
 import { toggleDesktopSidebarsWithCheckoutIntent } from "@/utils/desktop-sidebar-toggle";
@@ -658,17 +659,20 @@ function ProvidersWrapper({ children }: { children: ReactNode }) {
   // Apply theme setting on mount and when it changes
   useEffect(() => {
     if (settingsLoading) return;
+    const customTheme = settings.customTheme;
+    if (customTheme !== null) {
+      UnistylesRuntime.updateTheme("custom", () => buildCustomTheme(customTheme));
+    }
     if (settings.theme === "auto") {
       UnistylesRuntime.setAdaptiveThemes(true);
     } else {
       UnistylesRuntime.setAdaptiveThemes(false);
       UnistylesRuntime.setTheme(THEME_TO_UNISTYLES[settings.theme]);
     }
-  }, [settingsLoading, settings.theme]);
+  }, [settings.customTheme, settingsLoading, settings.theme]);
 
   // Apply font / size / syntax appearance settings on mount and when they change.
-  // Sibling to the theme effect above; order is irrelevant because both patch all
-  // registered theme keys, so the active key is always current.
+  // This runs after the theme effect so imported custom themes receive persisted overrides.
   useEffect(() => {
     if (settingsLoading) return;
     applyAppearance({
@@ -679,6 +683,7 @@ function ProvidersWrapper({ children }: { children: ReactNode }) {
       syntaxTheme: settings.syntaxTheme,
     });
   }, [
+    settings.customTheme,
     settingsLoading,
     settings.uiFontFamily,
     settings.monoFontFamily,

@@ -1,6 +1,6 @@
 # Design
 
-Tokens — every color, font size, weight, spacing step, radius, icon size — live in `packages/app/src/styles/theme.ts`.
+Built-in tokens — colors, font sizes, weights, spacing, radii, and icon sizes — live in `packages/app/src/styles/theme.ts`. Imported custom theme colors are validated and expanded into the same token shape by `packages/app/src/styles/custom-theme.ts`.
 
 ---
 

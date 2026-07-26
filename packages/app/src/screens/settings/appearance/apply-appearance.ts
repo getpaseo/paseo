@@ -9,7 +9,10 @@ import {
 } from "@/styles/theme";
 import { applyRootUiFont } from "./apply-root-font";
 
-const ALL_THEME_KEYS = Object.keys(REGISTERED_THEMES) as (keyof typeof REGISTERED_THEMES)[];
+const ALL_THEME_KEYS = [
+  ...(Object.keys(REGISTERED_THEMES) as (keyof typeof REGISTERED_THEMES)[]),
+  "custom",
+] as const;
 
 // The UI font size at which the FONT_SIZE ramp is authored (1.0 scale factor).
 const BASE_UI_REFERENCE = FONT_SIZE.base; // 16

@@ -2012,7 +2012,14 @@ export const es: TranslationResources = {
           claude: "claudio",
           ghostty: "fantasmal",
           pureBlack: "Negro puro",
+          custom: "Personalizado",
           auto: "Sistema",
+        },
+        custom: {
+          title: "Tema personalizado",
+          none: "Importa un archivo de tema de Paseo en JSON",
+          import: "Importar",
+          importing: "Importando...",
         },
       },
       detailLevel: {
