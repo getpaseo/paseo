@@ -97,9 +97,10 @@ import {
   physicalSocketHasCapacity,
   sendBoundedPhysicalFrame,
 } from "./websocket/physical-socket.js";
+import type { LaunchStrategyRegistry } from "./devcontainer/launch-strategy-registry.js";
+import type { ContainerBackendRegistry } from "./devcontainer/container-backend-registry.js";
 
 const WS_CLOSE_DAEMON_AUTH_FAILED = 4401;
-
 export interface ExternalSocketMetadata {
   transport: "relay";
   externalSessionKey?: string;
@@ -545,6 +546,9 @@ export class VoiceAssistantWebSocketServer {
   private readonly browserToolsBroker: BrowserToolsBroker | null;
   private readonly hubRelationships: HubRelationshipManagement | null;
   private readonly browserToolsRegistrations = new Map<string, BrowserToolsRegistration>();
+  private readonly devContainerAvailable: boolean;
+  private readonly launchStrategyRegistry: LaunchStrategyRegistry | null;
+  private readonly containerBackends: ContainerBackendRegistry | null;
   private acceptingConnections = true;
 
   constructor(
@@ -591,6 +595,9 @@ export class VoiceAssistantWebSocketServer {
     serviceProxyPublicBaseUrl?: string | null,
     browserToolsBroker?: BrowserToolsBroker | null,
     hubRelationships?: HubRelationshipManagement | null,
+    devContainerAvailable?: boolean,
+    launchStrategyRegistry?: LaunchStrategyRegistry,
+    containerBackends?: ContainerBackendRegistry,
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.serverId = serverId;
@@ -601,6 +608,9 @@ export class VoiceAssistantWebSocketServer {
     this.daemonRuntimeConfig = daemonRuntimeConfig;
     this.browserToolsBroker = browserToolsBroker ?? null;
     this.hubRelationships = hubRelationships ?? null;
+    this.devContainerAvailable = devContainerAvailable ?? false;
+    this.launchStrategyRegistry = launchStrategyRegistry ?? null;
+    this.containerBackends = containerBackends ?? null;
     this.agentManager = agentManager;
     this.agentStorage = agentStorage;
     this.projectRegistry = projectRegistry ?? createNoopProjectRegistry();
@@ -1308,6 +1318,8 @@ export class VoiceAssistantWebSocketServer {
       hubRelationships: options.hubRelationships,
       serviceProxy: this.serviceProxy ?? undefined,
       scriptRuntimeStore: this.scriptRuntimeStore ?? undefined,
+      launchStrategyRegistry: this.launchStrategyRegistry ?? undefined,
+      containerBackends: this.containerBackends ?? undefined,
       workspaceSetupSnapshots: this.workspaceSetupSnapshots,
       onBranchChanged: this.onBranchChanged ?? undefined,
       getDaemonTcpPort: this.getDaemonTcpPort ?? undefined,
@@ -1547,6 +1559,8 @@ export class VoiceAssistantWebSocketServer {
         stableProjectIdentity: true,
         // COMPAT(workspaceScriptManagement): added in v0.1.105, remove gate after 2027-01-10.
         workspaceScriptManagement: true,
+        // COMPAT(devContainers): added in v0.2.0, remove gate after 2027-07-22 once daemon floor >= v0.2.0.
+        devContainers: this.devContainerAvailable,
       },
     };
   }

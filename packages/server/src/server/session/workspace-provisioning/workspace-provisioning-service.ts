@@ -57,6 +57,7 @@ export interface WorkspaceProvisioningService {
     title?: string | null,
     projectId?: string,
     context?: { expectsInitialAgent?: boolean },
+    containerBackend?: string | null,
   ): Promise<PersistedWorkspaceRecord>;
   createWorkspaceForWorktree(
     input: CreateWorktreeWorkspaceInput,
@@ -172,12 +173,12 @@ export function createWorkspaceProvisioningService(deps: {
     if (project.archivedAt) throw new WorkspaceProvisioningError("archived_project", projectId);
     return project;
   }
-
   async function createWorkspaceForDirectory(
     cwd: string,
     title?: string | null,
     projectId?: string,
     context?: { expectsInitialAgent?: boolean },
+    containerBackend?: string | null,
   ): Promise<PersistedWorkspaceRecord> {
     const normalizedCwd = resolve(cwd);
     const checkout = await workspaceGitService.getCheckout(normalizedCwd);
@@ -193,6 +194,7 @@ export function createWorkspaceProvisioningService(deps: {
       title: title?.trim() || null,
       createdAt: timestamp,
       updatedAt: timestamp,
+      containerBackend,
     });
     await workspaceRegistry.upsert(workspace, context);
     return workspace;

@@ -13,7 +13,7 @@ import type { TerminalCell, TerminalState } from "@getpaseo/protocol/messages";
 import { TerminalInputModeTracker } from "@getpaseo/protocol/terminal-input-mode";
 import { TerminalActivityTracker } from "./activity/terminal-activity-tracker.js";
 import type { TerminalActivity, TerminalActivityState } from "@getpaseo/protocol/terminal-activity";
-
+import type { ProcessLaunchStrategy } from "../server/devcontainer/launch-strategy.js";
 const { Terminal } = xterm;
 const require = createRequire(import.meta.url);
 const PASEO_CLI_BIN_ENTRY = "@getpaseo/cli/bin/paseo";
@@ -128,6 +128,11 @@ export interface CreateTerminalOptions {
   title?: string;
   command?: string;
   args?: string[];
+  /**
+   * When set, the terminal shell is spawned inside the dev container via
+   * `docker exec -it` instead of directly on the host.
+   */
+  launchStrategy?: ProcessLaunchStrategy;
 }
 
 function toTerminalActivity(snapshot: {
@@ -796,6 +801,63 @@ function extractLastOutputLinesFromText(text: string, limit: number): string[] {
   return lines.slice(-limit);
 }
 
+interface CreatePtyProcessInput {
+  command?: string;
+  args: string[];
+  resolvedShell: string;
+  cwd: string;
+  cols: number;
+  rows: number;
+  env: Record<string, string>;
+  activityEnv: Record<string, string>;
+  workspaceId: string;
+  launchStrategy?: ProcessLaunchStrategy;
+}
+
+async function createPtyProcess(input: CreatePtyProcessInput) {
+  const {
+    command,
+    args,
+    resolvedShell,
+    cwd,
+    cols,
+    rows,
+    env,
+    activityEnv,
+    workspaceId,
+    launchStrategy,
+  } = input;
+  const { command: resolvedCmd, args: resolvedArgs } = command
+    ? await resolveTerminalSpawnCommand(command, args)
+    : { command: resolvedShell, args: [] as string[] };
+  const terminalEnv = {
+    ...env,
+    ...activityEnv,
+    PASEO_WORKSPACE_ID: workspaceId,
+  };
+  // An isolated terminal's pty runs the exec binary on the host, so the
+  // terminal's own variables have to travel as exec env flags — anything set
+  // on the pty process itself stops at the container boundary.
+  const { command: spawnCommand, args: spawnArgs } = launchStrategy
+    ? launchStrategy.wrapCommand(resolvedCmd, resolvedArgs, {
+        cwd,
+        env: terminalEnv,
+        interactive: true,
+      })
+    : { command: resolvedCmd, args: resolvedArgs };
+  return pty.spawn(spawnCommand, spawnArgs, {
+    name: "xterm-256color",
+    cols,
+    rows,
+    // The exec binary itself is a host process, so it needs a host cwd.
+    cwd,
+    env: buildTerminalEnvironment({
+      shell: spawnCommand,
+      env: terminalEnv,
+    }),
+  });
+}
+
 export async function createTerminal(options: CreateTerminalOptions): Promise<TerminalSession> {
   const {
     cwd,
@@ -810,7 +872,10 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     command,
     args = [],
   } = options;
-  const resolvedShell = shell ?? resolveDefaultTerminalShell();
+  // A container answers with its own user's shell; the host's $SHELL is a host
+  // path that usually doesn't exist in the image.
+  const resolvedShell =
+    shell ?? (await options.launchStrategy?.resolveDefaultShell()) ?? resolveDefaultTerminalShell();
 
   const id = options.id ?? randomUUID();
   const listeners = new Set<(msg: ServerMessage) => void>();
@@ -851,23 +916,17 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
 
   ensureNodePtySpawnHelperExecutableForCurrentPlatform();
 
-  // Create PTY
-  const { command: spawnCommand, args: spawnArgs } = command
-    ? await resolveTerminalSpawnCommand(command, args)
-    : { command: resolvedShell, args: [] as string[] };
-  const ptyProcess = pty.spawn(spawnCommand, spawnArgs, {
-    name: "xterm-256color",
+  const ptyProcess = await createPtyProcess({
+    command,
+    args,
+    resolvedShell,
+    cwd,
     cols,
     rows,
-    cwd,
-    env: buildTerminalEnvironment({
-      shell: spawnCommand,
-      env: {
-        ...env,
-        ...activityEnv,
-        PASEO_WORKSPACE_ID: workspaceId,
-      },
-    }),
+    env,
+    activityEnv,
+    workspaceId,
+    launchStrategy: options.launchStrategy,
   });
 
   function emitTitleChange(nextTitle: string | undefined): void {

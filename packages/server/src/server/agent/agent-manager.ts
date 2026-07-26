@@ -46,6 +46,8 @@ import {
 import { buildArchivedAgentRecord, type ArchivedStoredAgentRecord } from "./agent-archive.js";
 import type { StoredAgentRecord, AgentStorage } from "./agent-storage.js";
 import type { AgentOwner } from "./agent-owner.js";
+import type { LaunchStrategyRegistry } from "../devcontainer/launch-strategy-registry.js";
+import type { ProcessLaunchStrategy } from "../devcontainer/launch-strategy.js";
 import {
   InMemoryAgentTimelineStore,
   type SeedAgentTimelineOptions,
@@ -251,6 +253,11 @@ export interface AgentManagerOptions {
   mcpAuthToken?: string;
   paseoToolsEnabled?: boolean;
   paseoToolCatalogFactory?: PaseoToolCatalogFactory;
+  launchStrategyRegistry?: LaunchStrategyRegistry;
+  resolveLaunchStrategy?: (
+    cwd: string,
+    workspaceId?: string,
+  ) => Promise<ProcessLaunchStrategy | null>;
   appendSystemPrompt?: string;
   agentStreamCoalesceWindowMs?: number;
   rescueTimeouts?: AgentManagerRescueTimeouts;
@@ -592,6 +599,10 @@ export class AgentManager {
   private readonly mcpAuthToken: string | null;
   private paseoToolsEnabled = true;
   private paseoToolCatalogFactory: PaseoToolCatalogFactory | null = null;
+  private launchStrategyRegistry: LaunchStrategyRegistry | null = null;
+  private resolveLaunchStrategy:
+    | ((cwd: string, workspaceId?: string) => Promise<ProcessLaunchStrategy | null>)
+    | null = null;
   private appendSystemPrompt: string;
   private onAgentAttention?: AgentAttentionCallback;
   private onAgentArchived?: AgentArchivedCallback;
@@ -600,6 +611,7 @@ export class AgentManager {
   private readonly rescueTimeouts: Required<AgentManagerRescueTimeouts>;
   private acceptingAgentRegistrations = true;
 
+  // eslint-disable-next-line complexity
   constructor(options: AgentManagerOptions) {
     this.idFactory = options?.idFactory ?? (() => randomUUID());
     this.registry = options?.registry;
@@ -608,8 +620,10 @@ export class AgentManager {
     this.onWorkspaceStateMayHaveChanged = options?.onWorkspaceStateMayHaveChanged;
     this.mcpBaseUrl = options?.mcpBaseUrl ?? null;
     this.mcpAuthToken = options?.mcpAuthToken ?? null;
-    this.configurePaseoTools(options);
+    this.launchStrategyRegistry = options.launchStrategyRegistry ?? null;
+    this.resolveLaunchStrategy = options.resolveLaunchStrategy ?? null;
     this.appendSystemPrompt = options.appendSystemPrompt ?? "";
+    this.configurePaseoTools(options);
     this.logger = options.logger.child({ module: "agent", component: "agent-manager" });
     this.rescueTimeouts = {
       reloadSessionCloseMs:
@@ -629,6 +643,23 @@ export class AgentManager {
       providerDefinitions: options.providerDefinitions ?? {},
       clients: options.clients ?? {},
     });
+  }
+
+  /**
+   * Lenient launch strategy resolver for catalog/metadata operations.
+   * Tries the container first, falls back to host if the container isn't
+   * running or doesn't have the tool. Catalog discovery is a read-only
+   * probe — the host's answer is safe when the container can't answer.
+   * Agent execution uses the strict resolver (buildLaunchContext) which
+   * throws rather than falling back.
+   */
+  private async resolveLaunchStrategyForCwd(cwd: string): Promise<ProcessLaunchStrategy | null> {
+    if (!this.resolveLaunchStrategy) return null;
+    try {
+      return await this.resolveLaunchStrategy(cwd);
+    } catch {
+      return null;
+    }
   }
 
   private configurePaseoTools(options: AgentManagerOptions): void {
@@ -825,10 +856,14 @@ export class AgentManager {
     const sessionLists = await Promise.all(
       providerEntries.map(async ([provider, client]) => {
         try {
+          const launchStrategy = options?.cwd
+            ? await this.resolveLaunchStrategyForCwd(options.cwd)
+            : null;
           return (
             await client.listImportableSessions!({
               limit: options?.limit,
               cwd: options?.cwd,
+              ...(launchStrategy ? { launchStrategy } : {}),
             })
           ).map((session) => Object.assign(session, { provider }));
         } catch (error) {
@@ -1047,7 +1082,13 @@ export class AgentManager {
     const client = await this.requireAvailableClient({
       provider: storedConfig.provider,
     });
-    const launchContext = await this.buildLaunchContext(resolvedAgentId, client, options?.env);
+    const launchContext = await this.buildLaunchContext(
+      resolvedAgentId,
+      client,
+      options?.env,
+      launchConfig.cwd,
+      options?.workspaceId,
+    );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
     const createOptions = this.buildCreateSessionOptions(options);
     const session = await client.createSession(providerLaunchConfig, launchContext, createOptions);
@@ -1125,7 +1166,13 @@ export class AgentManager {
         `Provider '${handle.provider}' is not available. Please ensure the CLI is installed.`,
       );
     }
-    const launchContext = await this.buildLaunchContext(resolvedAgentId, client);
+    const launchContext = await this.buildLaunchContext(
+      resolvedAgentId,
+      client,
+      undefined,
+      launchConfig.cwd,
+      options?.workspaceId,
+    );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
     const session = await client.resumeSession(
       handle,
@@ -1172,7 +1219,13 @@ export class AgentManager {
       },
       resolvedAgentId,
     );
-    const launchContext = await this.buildLaunchContext(resolvedAgentId, client);
+    const launchContext = await this.buildLaunchContext(
+      resolvedAgentId,
+      client,
+      undefined,
+      launchConfig.cwd,
+      input.workspaceId,
+    );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
     const imported = await client.importSession(
       {
@@ -1253,7 +1306,13 @@ export class AgentManager {
       provider,
     } as AgentSessionConfig;
     const { storedConfig, launchConfig } = await this.prepareSessionConfig(refreshConfig, agentId);
-    const launchContext = await this.buildLaunchContext(agentId, client);
+    const launchContext = await this.buildLaunchContext(
+      agentId,
+      client,
+      undefined,
+      launchConfig.cwd,
+      existing.workspaceId,
+    );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
 
     const session = handle
@@ -4223,6 +4282,8 @@ export class AgentManager {
     agentId: string,
     client: AgentClient,
     env?: Record<string, string>,
+    cwd?: string,
+    workspaceId?: string,
   ): Promise<AgentLaunchContext> {
     const context: AgentLaunchContext = {
       agentId,
@@ -4238,6 +4299,23 @@ export class AgentManager {
     ) {
       context.paseoTools = await this.paseoToolCatalogFactory({ callerAgentId: agentId });
     }
+    if (cwd) {
+      // Use resolveLaunchStrategy (which checks per-workspace approval) when
+      // available. Fall back to the registry directly for backward compat.
+      if (this.resolveLaunchStrategy) {
+        const strategy = await this.resolveLaunchStrategy(cwd, workspaceId);
+        context.launchStrategy = strategy ?? undefined;
+      } else if (this.launchStrategyRegistry) {
+        context.launchStrategy = await this.launchStrategyRegistry.awaitStrategy(cwd);
+      }
+      if (context.launchStrategy?.isIsolated && !client.capabilities.supportsIsolatedLaunch) {
+        // Running it anyway would put the agent on the host while the user
+        // believes it is contained.
+        throw new Error(
+          `Provider '${client.provider}' cannot run inside a container yet. Switch this workspace to Host, or use a provider that supports containers.`,
+        );
+      }
+    }
     return context;
   }
 
@@ -4245,7 +4323,40 @@ export class AgentManager {
     launchConfig: AgentSessionConfig,
     launchContext: AgentLaunchContext,
   ): AgentSessionConfig {
-    return launchContext.paseoTools ? stripInternalPaseoMcpServer(launchConfig) : launchConfig;
+    return launchContext.paseoTools
+      ? stripInternalPaseoMcpServer(launchConfig)
+      : this.applyLaunchStrategyToMcpConfig(launchConfig, launchContext);
+  }
+
+  /**
+   * The daemon's MCP endpoint is addressed as loopback, which inside a
+   * container means the container itself. Rewrite it to an address the agent
+   * can actually reach, and drop the server outright when there is none —
+   * an unreachable MCP server costs the agent a full tool-call timeout on
+   * every call instead of simply not being there.
+   */
+  private applyLaunchStrategyToMcpConfig(
+    launchConfig: AgentSessionConfig,
+    launchContext: AgentLaunchContext,
+  ): AgentSessionConfig {
+    const strategy = launchContext.launchStrategy;
+    const agentId = launchContext.agentId;
+    if (!strategy?.isIsolated || !this.mcpBaseUrl || !agentId) return launchConfig;
+
+    const reachableUrl = strategy.resolveDaemonUrl(this.mcpBaseUrl);
+    if (!reachableUrl) {
+      this.logger.warn(
+        { agentId, mcpBaseUrl: this.mcpBaseUrl },
+        "Paseo MCP tools are unavailable to this agent: the daemon is not reachable from the container. Bind the daemon to a non-loopback address to enable them.",
+      );
+      return stripInternalPaseoMcpServer(launchConfig);
+    }
+    return withRuntimePaseoMcpServer({
+      config: stripInternalPaseoMcpServer(launchConfig),
+      agentId,
+      mcpBaseUrl: reachableUrl,
+      mcpAuthToken: this.mcpAuthToken,
+    });
   }
 
   private async requireAvailableClient(options: { provider: AgentProvider }): Promise<AgentClient> {
@@ -4305,7 +4416,13 @@ export class AgentManager {
     const client = this.clients.get(provider);
     if (!client?.archiveNativeSession) return;
     try {
-      await client.archiveNativeSession(persistence);
+      const cwd =
+        typeof persistence.metadata?.cwd === "string" ? persistence.metadata.cwd : undefined;
+      const launchStrategy = cwd ? await this.resolveLaunchStrategyForCwd(cwd) : null;
+      await client.archiveNativeSession(
+        persistence,
+        launchStrategy ? { launchStrategy } : undefined,
+      );
     } catch (error) {
       this.logger.warn(
         { error, provider, sessionId: persistence.sessionId },
@@ -4321,7 +4438,13 @@ export class AgentManager {
     if (!persistence) return;
     const client = this.clients.get(provider);
     if (!client?.unarchiveNativeSession) return;
-    await client.unarchiveNativeSession(persistence);
+    const cwd =
+      typeof persistence.metadata?.cwd === "string" ? persistence.metadata.cwd : undefined;
+    const launchStrategy = cwd ? await this.resolveLaunchStrategyForCwd(cwd) : null;
+    await client.unarchiveNativeSession(
+      persistence,
+      launchStrategy ? { launchStrategy } : undefined,
+    );
   }
 
   private requireAgent(id: string): LiveManagedAgent {

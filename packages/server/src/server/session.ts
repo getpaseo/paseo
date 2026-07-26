@@ -1,7 +1,8 @@
 import equal from "fast-deep-equal";
 import { v4 as uuidv4 } from "uuid";
 import { lstat, mkdir, mkdtemp, rename, rm, stat } from "node:fs/promises";
-import { resolve, sep } from "path";
+import { watch, type FSWatcher } from "node:fs";
+import { dirname, resolve, sep } from "path";
 import { homedir } from "node:os";
 import { CLIENT_CAPS, type ClientCapability } from "@getpaseo/protocol/client-capabilities";
 import {
@@ -22,6 +23,12 @@ import {
   type WorkspaceSetupSnapshot,
   type WorkspaceDescriptorPayload,
 } from "./messages.js";
+import type { LaunchStrategyRegistry } from "./devcontainer/launch-strategy-registry.js";
+import type { ContainerBackendRegistry } from "./devcontainer/container-backend-registry.js";
+import { ContainerProbeCoordinator } from "./devcontainer/container-probe-coordinator.js";
+import { ContainerNotRunningError } from "./devcontainer/launch-strategy-registry.js";
+import type { ContainerRef } from "./devcontainer/container-backend.js";
+import { discoverDevContainerConfig } from "./devcontainer/config-discovery.js";
 import type {
   TerminalManager,
   TerminalWorkspaceContributionChangedEvent,
@@ -441,6 +448,8 @@ export interface SessionOptions {
   hubRelationships?: HubRelationshipManagement;
   serviceProxy?: ServiceProxySubsystem;
   scriptRuntimeStore?: WorkspaceScriptRuntimeStore;
+  launchStrategyRegistry?: LaunchStrategyRegistry;
+  containerBackends?: ContainerBackendRegistry;
   workspaceSetupSnapshots?: Map<string, WorkspaceSetupSnapshot>;
   onBranchChanged?: (
     workspaceId: string,
@@ -552,6 +561,19 @@ function describeRegistryTransition(record: ArchivedRecordSnapshot | null): Regi
   return record.archivedAt ? "unarchived" : "existing";
 }
 
+function resolveContainerStatus(
+  registry: LaunchStrategyRegistry | null,
+  workspace: PersistedWorkspaceRecord,
+): { containerStatus: "running" | "starting" } | Record<string, never> {
+  // A null backend (host) never shows a container status, even if a container
+  // is running for this cwd (another workspace with the same cwd may use a
+  // container backend).
+  if (!workspace.containerBackend) return {};
+  const key = workspace.workspaceId;
+  if (registry?.hasContainerStrategy(key)) return { containerStatus: "running" };
+  if (registry?.isPendingActivation(key)) return { containerStatus: "starting" };
+  return {};
+}
 /**
  * Session represents a single connected client session.
  * It owns all state management, orchestration logic, and message processing.
@@ -613,17 +635,21 @@ export class Session {
   } | null = null;
   private readonly terminalManager: TerminalManager | null;
   private readonly providerSnapshotManager: ProviderSnapshotManager;
-  private readonly serviceProxy: ServiceProxySubsystem | null;
-  private readonly scriptRuntimeStore: WorkspaceScriptRuntimeStore | null;
-  private readonly getDaemonTcpPort: (() => number | null) | null;
-  private readonly getDaemonTcpHost: (() => string | null) | null;
-  private readonly serviceProxyPublicBaseUrl: string | null;
-  private readonly resolveScriptHealth: ((hostname: string) => ScriptHealthState | null) | null;
+  private serviceProxy!: ServiceProxySubsystem | null;
+  private scriptRuntimeStore!: WorkspaceScriptRuntimeStore | null;
+  private getDaemonTcpPort!: (() => number | null) | null;
+  private getDaemonTcpHost!: (() => string | null) | null;
+  private serviceProxyPublicBaseUrl!: string | null;
+  private resolveScriptHealth!: ((hostname: string) => ScriptHealthState | null) | null;
+  private launchStrategyRegistry!: LaunchStrategyRegistry | null;
+  private containerBackends!: ContainerBackendRegistry | null;
+  private containerProbes!: ContainerProbeCoordinator;
+  private containerConfigWatchers: Map<string, FSWatcher> = new Map();
+  private readonly workspaceGitObserver: WorkspaceGitObserverService;
   private readonly terminalController: TerminalSessionController;
   private inflightRequests = 0;
   private peakInflightRequests = 0;
-  private readonly workspaceSetupSnapshots: Map<string, WorkspaceSetupSnapshot>;
-  private readonly workspaceGitObserver: WorkspaceGitObserverService;
+  private workspaceSetupSnapshots!: Map<string, WorkspaceSetupSnapshot>;
   private readonly workspaceDirectory: WorkspaceDirectory;
   private readonly voiceSession: VoiceSession;
   private readonly checkoutSession: CheckoutSession;
@@ -676,6 +702,8 @@ export class Session {
       providerUsageService,
       serviceProxy,
       scriptRuntimeStore,
+      launchStrategyRegistry,
+      containerBackends,
       workspaceSetupSnapshots,
       onBranchChanged,
       getDaemonTcpPort,
@@ -885,6 +913,20 @@ export class Session {
       clientSupportsWrapReflow: () =>
         this.clientCapabilities.has(CLIENT_CAPS.terminalReflowableSnapshot),
       getClientBufferedAmount: () => this.getTransportBufferedAmount(),
+      resolveLaunchStrategy: async (_cwd, workspaceId) => {
+        if (!this.launchStrategyRegistry || !workspaceId) return null;
+        // A host workspace runs terminals on the host.
+        const workspace = await this.workspaceRegistry.get(workspaceId);
+        if (!workspace?.containerBackend) return null;
+        // awaitStrategy throws if the container fails to start. If it returns
+        // a non-isolated strategy, the container hasn't started yet — treat
+        // this as an error, not a fallback to host.
+        const strategy = await this.launchStrategyRegistry.awaitStrategy(workspaceId);
+        if (!strategy.isIsolated) {
+          throw new ContainerNotRunningError(workspaceId);
+        }
+        return strategy;
+      },
     });
     this.agentUpdates = createAgentUpdatesService({
       emit: (message) => this.emit(message),
@@ -922,13 +964,17 @@ export class Session {
       logger: this.sessionLogger,
     });
     this.providerSnapshotManager = providerSnapshotManager;
-    this.serviceProxy = serviceProxy ?? null;
-    this.scriptRuntimeStore = scriptRuntimeStore ?? null;
-    this.workspaceSetupSnapshots = workspaceSetupSnapshots ?? new Map();
-    this.getDaemonTcpPort = getDaemonTcpPort ?? null;
-    this.getDaemonTcpHost = getDaemonTcpHost ?? null;
-    this.serviceProxyPublicBaseUrl = serviceProxyPublicBaseUrl ?? null;
-    this.resolveScriptHealth = resolveScriptHealth ?? null;
+    this.assignOptionalServices({
+      serviceProxy,
+      scriptRuntimeStore,
+      workspaceSetupSnapshots,
+      launchStrategyRegistry,
+      containerBackends,
+      getDaemonTcpPort,
+      getDaemonTcpHost,
+      serviceProxyPublicBaseUrl,
+      resolveScriptHealth,
+    });
     this.workspaceScripts = createWorkspaceScriptsService({
       serviceProxy: this.serviceProxy,
       scriptRuntimeStore: this.scriptRuntimeStore,
@@ -995,6 +1041,34 @@ export class Session {
     this.subscribeToRegistryMutations();
 
     this.sessionLogger.trace({}, "agent.session.lifecycle.created");
+  }
+
+  private assignOptionalServices(options: {
+    serviceProxy?: ServiceProxySubsystem;
+    scriptRuntimeStore?: WorkspaceScriptRuntimeStore;
+    workspaceSetupSnapshots?: Map<string, WorkspaceSetupSnapshot>;
+    launchStrategyRegistry?: LaunchStrategyRegistry;
+    containerBackends?: ContainerBackendRegistry;
+    getDaemonTcpPort?: () => number | null;
+    getDaemonTcpHost?: () => string | null;
+    serviceProxyPublicBaseUrl?: string | null;
+    resolveScriptHealth?: (hostname: string) => ScriptHealthState | null;
+  }): void {
+    this.serviceProxy = options.serviceProxy ?? null;
+    this.scriptRuntimeStore = options.scriptRuntimeStore ?? null;
+    this.workspaceSetupSnapshots = options.workspaceSetupSnapshots ?? new Map();
+    this.launchStrategyRegistry = options.launchStrategyRegistry ?? null;
+    this.containerBackends = options.containerBackends ?? null;
+    this.containerProbes = new ContainerProbeCoordinator({
+      logger: this.sessionLogger,
+      resolveBackend: (id) => this.containerBackends?.get(id) ?? null,
+      probeProviders: ({ cwd, launchStrategy }) =>
+        this.providerSnapshotManager.probeSnapshotForCwd({ cwd, launchStrategy }),
+    });
+    this.getDaemonTcpPort = options.getDaemonTcpPort ?? null;
+    this.getDaemonTcpHost = options.getDaemonTcpHost ?? null;
+    this.serviceProxyPublicBaseUrl = options.serviceProxyPublicBaseUrl ?? null;
+    this.resolveScriptHealth = options.resolveScriptHealth ?? null;
   }
 
   updateAppVersion(appVersion: string | null): void {
@@ -1790,6 +1864,7 @@ export class Session {
       this.dispatchProviderMessage(msg) ??
       this.dispatchTerminalMessage(msg) ??
       this.dispatchChatScheduleLoopMessage(msg) ??
+      this.dispatchContainerMessage(msg) ??
       this.dispatchMiscMessage(msg);
     if (promise) await promise;
   }
@@ -2101,6 +2176,12 @@ export class Session {
         return this.handleWorkspaceTitleSetRequest(msg.workspaceId, msg.title, msg.requestId);
       case "workspace.pin.set.request":
         return this.handleWorkspacePinSetRequest(msg.workspaceId, msg.pinned, msg.requestId);
+      case "workspace.container_backend.set.request":
+        return this.handleWorkspaceContainerBackendSetRequest(
+          msg.workspaceId,
+          msg.containerBackend,
+          msg.requestId,
+        );
       default:
         return undefined;
     }
@@ -2223,6 +2304,23 @@ export class Session {
         return this.chatScheduleLoopSession.handleScheduleRunOnceRequest(msg);
       case "schedule/update":
         return this.chatScheduleLoopSession.handleScheduleUpdateRequest(msg);
+      default:
+        return undefined;
+    }
+  }
+
+  private dispatchContainerMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    switch (msg.type) {
+      case "container.restart.request":
+        return this.handleContainerRestartRequest(msg);
+      case "container.rebuild.request":
+        return this.handleContainerRebuildRequest(msg);
+      case "container.availability.request":
+        return this.handleContainerAvailabilityRequest(msg);
+      case "container.probe.request":
+        return this.handleContainerProbeRequest(msg);
+      case "container.probe.cancel.request":
+        return this.handleContainerProbeCancelRequest(msg);
       default:
         return undefined;
     }
@@ -2859,6 +2957,81 @@ export class Session {
     }
   }
 
+  private async handleWorkspaceContainerBackendSetRequest(
+    workspaceId: string,
+    containerBackend: string | null,
+    requestId: string,
+  ): Promise<void> {
+    const logContext = { workspaceId, containerBackend, requestId };
+    this.sessionLogger.info(logContext, "session: workspace.container_backend.set.request");
+    const emitResponse = (accepted: boolean, backend: string | null, error: string | null) => {
+      this.emit({
+        type: "workspace.container_backend.set.response",
+        payload: { requestId, workspaceId, accepted, containerBackend: backend, error },
+      });
+    };
+
+    try {
+      const previous = await this.workspaceRegistry.get(workspaceId);
+      const updatedAt = new Date().toISOString();
+      const updated = await this.workspaceRegistry.update(workspaceId, (existing) => ({
+        ...existing,
+        containerBackend,
+        updatedAt,
+      }));
+      if (!updated) {
+        emitResponse(false, null, "Workspace not found");
+        return;
+      }
+      emitResponse(true, containerBackend, null);
+
+      // Leaving a backend (or moving to a different one) leaves its container
+      // running with nothing pointing at it.
+      if (previous?.containerBackend && previous.containerBackend !== containerBackend) {
+        const previousBackend = this.containerBackends?.get(previous.containerBackend);
+        this.launchStrategyRegistry?.deactivateContainer(workspaceId);
+        await previousBackend
+          ?.stop({ key: workspaceId, kind: "workspace", workspaceFolder: previous.cwd })
+          .catch((error: unknown) => {
+            this.sessionLogger.warn(
+              { err: error, workspaceId },
+              "Failed to stop container after backend change",
+            );
+          });
+      }
+
+      // Emit workspace update so the UI reflects the new containerBackend.
+      await this.emitWorkspaceUpdatesForWorkspaceIds([workspaceId]);
+
+      // Refresh the provider snapshot for this workspace's cwd so model
+      // selection re-probes with the new backend. When switching to "host",
+      // the snapshot clears any container error. When switching to
+      // "devcontainer", it probes the container (which may error if the tool
+      // isn't installed there — that's correct).
+      if (updated.cwd) {
+        await this.providerSnapshotManager.refreshSnapshotForCwd({ cwd: updated.cwd });
+      }
+
+      // Start or stop the container for this workspace.
+      void this.maybeStartContainerForWorkspace(updated);
+    } catch (error) {
+      this.sessionLogger.error(
+        { ...logContext, err: error },
+        "session: workspace.container_backend.set.request error",
+      );
+      this.emit({
+        type: "activity_log",
+        payload: {
+          id: uuidv4(),
+          timestamp: new Date(),
+          type: "error",
+          content: `Failed to set container backend: ${getErrorMessage(error)}`,
+        },
+      });
+      emitResponse(false, null, getErrorMessageOr(error, "Failed to set container backend"));
+    }
+  }
+
   private async handleWorkspaceRecoveryInspectRequest(
     request: Extract<SessionInboundMessage, { type: "workspace.recovery.inspect.request" }>,
   ): Promise<void> {
@@ -3015,6 +3188,17 @@ export class Session {
       const resolvedCwd = resolve(resolvedIntent.config.cwd);
       if (!(await this.filesystem.isDirectory(resolvedCwd))) {
         throw new Error(`Working directory does not exist or is not a directory: ${resolvedCwd}`);
+      }
+
+      // Trigger container setup before the agent starts. If the workspace uses
+      // the "devcontainer" backend and a devcontainer.json exists, this starts
+      // the container (or reuses it if already running). Host backends are a
+      // no-op.
+      const workspaceForContainer = await this.workspaceRegistry.get(
+        resolvedIntent.intent.workspaceId,
+      );
+      if (workspaceForContainer) {
+        await this.maybeStartContainerForWorkspace(workspaceForContainer);
       }
 
       const { snapshot, liveSnapshot } = await createAgentCommand(
@@ -4180,6 +4364,11 @@ export class Session {
     workspace: PersistedWorkspaceRecord,
     projectRecord?: PersistedProjectRecord | null,
   ): Promise<WorkspaceDescriptorPayload> {
+    // Fire-and-forget: do not block the descriptor on container startup.
+    // The container starts in the background and a workspace update is emitted
+    // when it's ready. This prevents workspace creation from timing out while
+    // pulling images or building the container.
+    void this.maybeStartContainerForWorkspace(workspace);
     const resolvedProjectRecord =
       projectRecord ?? (await this.projectRegistry.get(workspace.projectId));
 
@@ -4189,7 +4378,7 @@ export class Session {
       diffStat = snapshot.git.diffStat;
     }
 
-    return {
+    const descriptor: WorkspaceDescriptorPayload = {
       id: workspace.workspaceId,
       projectId: workspace.projectId,
       projectDisplayName: resolvedProjectRecord
@@ -4214,7 +4403,374 @@ export class Session {
             project: await this.buildProjectPlacementForWorkspace(workspace, resolvedProjectRecord),
           }
         : {}),
+      ...resolveContainerStatus(this.launchStrategyRegistry, workspace),
+      hasDevContainerConfig:
+        this.containerBackends?.list().some((b) => b.hasConfig(workspace.cwd)) ?? false,
+      containerInfo: this.resolveContainerInfo(workspace),
     };
+    return descriptor;
+  }
+
+  /**
+   * Container details for the workspace badge. Read from the backend's
+   * in-memory record, never queried here: this runs on every descriptor build,
+   * and a descriptor build is what a workspace update produces.
+   */
+  private resolveContainerInfo(
+    workspace: PersistedWorkspaceRecord,
+  ): WorkspaceDescriptorPayload["containerInfo"] {
+    const backend = this.containerBackends?.get(workspace.containerBackend) ?? null;
+    if (!backend) return undefined;
+    return backend.getContainerInfo(workspace.workspaceId) ?? undefined;
+  }
+
+  /**
+   * Lazily start a dev container for a workspace when the workspace uses the
+   * "devcontainer" backend and a devcontainer.json is present. Host backends
+   * run on the host directly — this is a no-op for them. If a container is
+   * already running (e.g. from a prior daemon session), the existing container
+   * is reused. Fire-and-forget: the descriptor returns immediately and a
+   * workspace update is emitted once the container is up.
+   */
+  private maybeStartContainerForWorkspace(workspace: PersistedWorkspaceRecord): Promise<void> {
+    const backend = this.containerBackends?.get(workspace.containerBackend) ?? null;
+    const registry = this.launchStrategyRegistry;
+    if (!backend || !registry) return Promise.resolve();
+    // A null backend (host) never starts a container — agents and terminals
+    // run on the host directly.
+    if (!workspace.containerBackend) return Promise.resolve();
+    const key = workspace.workspaceId;
+    if (registry.hasContainerStrategy(key)) return Promise.resolve();
+    if (registry.isPendingActivation(key)) return Promise.resolve();
+
+    const config = discoverDevContainerConfig(workspace.cwd);
+    if (!config) return Promise.resolve();
+
+    const cwd = workspace.cwd;
+    const workspaceId = workspace.workspaceId;
+
+    // Register pending activation synchronously so the descriptor immediately
+    // reports containerStatus "starting" without waiting for the async IIFE.
+    registry.registerPendingActivation(key);
+
+    // Check availability and start the container in the background. If Docker
+    // or the devcontainer CLI isn't available, give up quietly — the workspace
+    // reports no container, and agent/terminal creation fails loudly on its
+    // own rather than silently running on the host.
+    const ref: ContainerRef = { key, kind: "workspace", workspaceFolder: cwd };
+    return (async () => {
+      try {
+        if (!(await backend.isAvailable())) {
+          registry.deactivateContainer(key);
+          void this.emitWorkspaceUpdateForWorkspaceId(workspaceId);
+          return;
+        }
+        // A container that predates this daemon is adopted rather than rebuilt,
+        // so its config hash is whatever we last persisted — worth rechecking.
+        const adopted = await backend.isAlreadyRunning(ref).catch(() => false);
+        this.sessionLogger.info(
+          { workspaceId, cwd, adopted },
+          adopted ? "Reusing running dev container for workspace" : "Starting dev container",
+        );
+        const handle = await backend.up(ref);
+        registry.activateContainer(key, cwd, handle);
+        if (adopted) {
+          void this.checkContainerConfigStaleness(workspace);
+        } else {
+          await this.workspaceRegistry.update(workspaceId, (record) => ({
+            ...record,
+            containerConfigHash: backend.getConfigHash(cwd),
+          }));
+        }
+        this.watchContainerConfig(workspace);
+        void this.emitWorkspaceUpdateForWorkspaceId(workspaceId);
+      } catch (error) {
+        // Always resolve the pending activation: callers blocked in
+        // awaitStrategy would otherwise wait forever for a container that is
+        // never coming.
+        registry.deactivateContainer(key);
+        void this.emitWorkspaceUpdateForWorkspaceId(workspaceId);
+        this.sessionLogger.error(
+          { err: error, workspaceId, cwd },
+          "Failed to start dev container for workspace",
+        );
+      }
+    })();
+  }
+
+  /**
+   * Compare the current devcontainer.json hash against the persisted hash.
+   * If they differ, the config has changed since the container was built —
+   * emit a container.config_changed notification so the client can prompt the
+   * user to rebuild. If no hash is persisted yet, store the current one so
+   * future changes are detected.
+   */
+  private async checkContainerConfigStaleness(workspace: PersistedWorkspaceRecord): Promise<void> {
+    const backend = this.containerBackends?.get(workspace.containerBackend) ?? null;
+    if (!backend) return;
+
+    const currentHash = backend.getConfigHash(workspace.cwd);
+    const record = await this.workspaceRegistry.get(workspace.workspaceId);
+    if (!record) return;
+
+    if (record.containerConfigHash === null) {
+      await this.workspaceRegistry.update(workspace.workspaceId, (r) => ({
+        ...r,
+        containerConfigHash: currentHash,
+      }));
+      return;
+    }
+
+    if (record.containerConfigHash !== currentHash) {
+      this.sessionLogger.info(
+        { workspaceId: workspace.workspaceId, cwd: workspace.cwd },
+        "Dev container config has changed since build",
+      );
+      this.emit({
+        type: "container.config_changed",
+        payload: { workspaceId: workspace.workspaceId },
+      });
+    }
+  }
+
+  /**
+   * Watch the devcontainer config directory for changes. Debounces events by
+   * 500ms to coalesce rapid editor saves, then checks config staleness.
+   */
+  private watchContainerConfig(workspace: PersistedWorkspaceRecord): void {
+    const config = discoverDevContainerConfig(workspace.cwd);
+    if (!config) return;
+
+    const watchDir = dirname(config.configPath);
+    const workspaceId = workspace.workspaceId;
+
+    this.stopWatchingContainerConfig(workspaceId);
+
+    let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+    let watcher: FSWatcher;
+    try {
+      watcher = watch(watchDir, () => {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+          void this.checkContainerConfigStaleness(workspace);
+        }, 500);
+      });
+    } catch (error) {
+      this.sessionLogger.warn(
+        { err: error, workspaceId, watchDir },
+        "Failed to watch dev container config directory",
+      );
+      return;
+    }
+
+    this.containerConfigWatchers.set(workspaceId, watcher);
+  }
+
+  /**
+   * Stop and remove the config watcher for a workspace.
+   */
+  private stopWatchingContainerConfig(workspaceId: string): void {
+    const watcher = this.containerConfigWatchers.get(workspaceId);
+    if (watcher) {
+      watcher.close();
+      this.containerConfigWatchers.delete(workspaceId);
+    }
+  }
+
+  private async handleContainerRestartRequest(
+    msg: Extract<SessionInboundMessage, { type: "container.restart.request" }>,
+  ): Promise<void> {
+    const { workspaceId, requestId } = msg;
+    const registry = this.launchStrategyRegistry;
+    const workspace = await this.workspaceRegistry.get(workspaceId);
+    if (!workspace) {
+      this.emit({
+        type: "container.restart.response",
+        payload: {
+          requestId,
+          workspaceId,
+          containerStatus: null,
+          error: "Workspace not found",
+        },
+      });
+      return;
+    }
+
+    const backend = this.containerBackends?.get(workspace.containerBackend) ?? null;
+    if (!backend || !registry) {
+      this.emit({
+        type: "container.restart.response",
+        payload: {
+          requestId,
+          workspaceId,
+          containerStatus: null,
+          error: "Container support is not available",
+        },
+      });
+      return;
+    }
+
+    const cwd = workspace.cwd;
+    this.sessionLogger.info({ workspaceId, cwd }, "Restarting dev container for workspace");
+    // Stop all running agents and kill terminals before restarting.
+    const liveAgents = this.agentManager
+      .listAgents()
+      .filter((agent) => agent.workspaceId === workspaceId);
+    await Promise.allSettled(liveAgents.map((agent) => this.agentManager.cancelAgentRun(agent.id)));
+    this.terminalController.killTerminalsForWorkspace(workspaceId);
+
+    try {
+      const handle = await backend.restart({
+        key: workspaceId,
+        kind: "workspace",
+        workspaceFolder: cwd,
+      });
+      registry.activateContainer(workspaceId, cwd, handle);
+      await this.workspaceRegistry.update(workspaceId, (record) => ({
+        ...record,
+        containerConfigHash: backend.getConfigHash(cwd),
+      }));
+      void this.emitWorkspaceUpdateForWorkspaceId(workspaceId);
+      this.watchContainerConfig(workspace);
+      this.emit({
+        type: "container.restart.response",
+        payload: { requestId, workspaceId, containerStatus: "running", error: null },
+      });
+    } catch (error) {
+      this.sessionLogger.error(
+        { err: error, workspaceId, cwd },
+        "Failed to restart dev container for workspace",
+      );
+      this.emit({
+        type: "container.restart.response",
+        payload: {
+          requestId,
+          workspaceId,
+          containerStatus: null,
+          error: getErrorMessage(error),
+        },
+      });
+    }
+  }
+
+  private async handleContainerAvailabilityRequest(
+    msg: Extract<SessionInboundMessage, { type: "container.availability.request" }>,
+  ): Promise<void> {
+    const { cwd, requestId } = msg;
+    const backends = this.containerBackends ? await this.containerBackends.listAvailable(cwd) : [];
+    this.emit({
+      type: "container.availability.response",
+      payload: { requestId, backends },
+    });
+  }
+
+  private async handleContainerProbeRequest(
+    msg: Extract<SessionInboundMessage, { type: "container.probe.request" }>,
+  ): Promise<void> {
+    const { cwd, containerBackend, requestId } = msg;
+    const result = await this.containerProbes.probe({
+      requestId,
+      cwd,
+      containerBackend,
+      onProgress: (line) => {
+        this.emit({ type: "container.probe.progress", payload: { requestId, line } });
+      },
+    });
+    this.emit({
+      type: "container.probe.response",
+      payload: {
+        requestId,
+        success: result.status === "success",
+        cancelled: result.status === "cancelled",
+        error: result.error,
+        // The probe container is already gone, so these entries are the only
+        // answer the client gets — it must not follow up with a refresh.
+        entries: result.entries,
+      },
+    });
+  }
+
+  private handleContainerProbeCancelRequest(
+    msg: Extract<SessionInboundMessage, { type: "container.probe.cancel.request" }>,
+  ): Promise<void> {
+    this.containerProbes.cancelByRequestId(msg.requestId);
+    return Promise.resolve();
+  }
+
+  private async handleContainerRebuildRequest(
+    msg: Extract<SessionInboundMessage, { type: "container.rebuild.request" }>,
+  ): Promise<void> {
+    const { workspaceId, requestId } = msg;
+    const registry = this.launchStrategyRegistry;
+    const workspace = await this.workspaceRegistry.get(workspaceId);
+    if (!workspace) {
+      this.emit({
+        type: "container.rebuild.response",
+        payload: {
+          requestId,
+          workspaceId,
+          containerStatus: null,
+          error: "Workspace not found",
+        },
+      });
+      return;
+    }
+
+    const backend = this.containerBackends?.get(workspace.containerBackend) ?? null;
+    if (!backend || !registry) {
+      this.emit({
+        type: "container.rebuild.response",
+        payload: {
+          requestId,
+          workspaceId,
+          containerStatus: null,
+          error: "Container support is not available",
+        },
+      });
+      return;
+    }
+
+    const cwd = workspace.cwd;
+    this.sessionLogger.info({ workspaceId, cwd }, "Rebuilding dev container for workspace");
+    // Stop all running agents and kill terminals before rebuilding.
+    const liveAgents = this.agentManager
+      .listAgents()
+      .filter((agent) => agent.workspaceId === workspaceId);
+    await Promise.allSettled(liveAgents.map((agent) => this.agentManager.cancelAgentRun(agent.id)));
+    this.terminalController.killTerminalsForWorkspace(workspaceId);
+
+    try {
+      const handle = await backend.rebuild({
+        key: workspaceId,
+        kind: "workspace",
+        workspaceFolder: cwd,
+      });
+      registry.activateContainer(workspaceId, cwd, handle);
+      await this.workspaceRegistry.update(workspaceId, (record) => ({
+        ...record,
+        containerConfigHash: backend.getConfigHash(cwd),
+      }));
+      void this.emitWorkspaceUpdateForWorkspaceId(workspaceId);
+      this.watchContainerConfig(workspace);
+      this.emit({
+        type: "container.rebuild.response",
+        payload: { requestId, workspaceId, containerStatus: "running", error: null },
+      });
+    } catch (error) {
+      this.sessionLogger.error(
+        { err: error, workspaceId, cwd },
+        "Failed to rebuild dev container for workspace",
+      );
+      this.emit({
+        type: "container.rebuild.response",
+        payload: {
+          requestId,
+          workspaceId,
+          containerStatus: null,
+          error: getErrorMessage(error),
+        },
+      });
+    }
   }
 
   private buildWorkspaceGitRuntimePayload(
@@ -4569,6 +5125,28 @@ export class Session {
     this.workspaceGitObserver.removeForWorkspaceId(workspaceId);
     this.scriptRuntimeStore?.removeForWorkspace(workspaceId);
     releaseWorkspaceServicePortPlan(workspaceId);
+    this.stopWatchingContainerConfig(workspaceId);
+    await this.stopContainerForWorkspace(workspaceId);
+  }
+
+  /**
+   * Stop the container backing a workspace. Containers outlive the daemon by
+   * design (a restart adopts them again), so archiving the workspace is the
+   * point where one stops being wanted. Unarchiving starts it back up.
+   */
+  private async stopContainerForWorkspace(workspaceId: string): Promise<void> {
+    const workspace = await this.workspaceRegistry.get(workspaceId);
+    const backend = this.containerBackends?.get(workspace?.containerBackend ?? null) ?? null;
+    if (!workspace || !backend) return;
+    this.launchStrategyRegistry?.deactivateContainer(workspaceId);
+    try {
+      await backend.stop({ key: workspaceId, kind: "workspace", workspaceFolder: workspace.cwd });
+    } catch (error) {
+      this.sessionLogger.warn(
+        { err: error, workspaceId },
+        "Failed to stop container for archived workspace",
+      );
+    }
   }
 
   private async emitWorkspaceUpdatesForWorkspaceIds(
@@ -5046,6 +5624,7 @@ export class Session {
       explicitTitle ?? promptTitle,
       request.source.projectId,
       { expectsInitialAgent: Boolean(request.firstAgentContext) },
+      request.containerBackend,
     );
     await this.syncWorkspaceGitObserverForWorkspace(workspace);
     const descriptor = await this.describeWorkspaceRecord(workspace);
@@ -6563,6 +7142,13 @@ export class Session {
 
     this.workspaceGitObserver.dispose();
     this.workspaceFilesSession.dispose();
+    for (const watcher of this.containerConfigWatchers.values()) {
+      watcher.close();
+    }
+    this.containerConfigWatchers.clear();
+    // A probe container exists only to answer this client; nobody is left to
+    // answer.
+    this.containerProbes.dispose();
   }
 }
 

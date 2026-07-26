@@ -8,6 +8,7 @@ import type {
 import type { TerminalState } from "@getpaseo/protocol/messages";
 import type { TerminalActivity, TerminalActivityState } from "@getpaseo/protocol/terminal-activity";
 import type { CaptureTerminalLinesResult } from "./terminal-capture.js";
+import type { ContainerExecSpec } from "../server/devcontainer/launch-strategy.js";
 
 export interface WorkerTerminalInfo {
   id: string;
@@ -27,6 +28,12 @@ export interface WorkerCreateTerminalOptions {
   env?: Record<string, string>;
   command?: string;
   args?: string[];
+  /**
+   * Serialized container exec description for isolated workspaces. Structured
+   * clone carries it to the worker, which rebuilds the launch strategy there —
+   * the worker is where the terminal's environment is finally known.
+   */
+  containerExec?: ContainerExecSpec | null;
   rows?: number;
   cols?: number;
   activityToken?: string;
