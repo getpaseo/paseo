@@ -42,8 +42,13 @@ interface RegisterAttachedBrowserInput extends AttachedBrowserRegistration {
 }
 
 export function isPaseoBrowserWebviewAttach(input: { src?: string; partition?: string }): boolean {
+  // Fork Browser tabs use one persistent partition per browserId so the loopback
+  // proxy can route localhost to the correct workspace host. Upstream may use the
+  // shared partition; accept both. See docs/browser-localhost-routing.md.
   return (
-    isAllowedBrowserWebviewUrl(input.src) && input.partition === PASEO_BROWSER_PROFILE_PARTITION
+    isAllowedBrowserWebviewUrl(input.src) &&
+    (input.partition === PASEO_BROWSER_PROFILE_PARTITION ||
+      input.partition?.startsWith(`${PASEO_BROWSER_PROFILE_PARTITION}-`) === true)
   );
 }
 
