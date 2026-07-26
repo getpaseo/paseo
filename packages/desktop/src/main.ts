@@ -435,7 +435,9 @@ ipcMain.handle("paseo:browser:register-attached", (event, rawInput: unknown) => 
   const registered = registerAttachedPaseoBrowser({
     ...input,
     sender: event.sender,
-    profileSession: getPaseoBrowserProfileSession(session),
+    // Match the per-browser webview partition used by the fork's localhost proxy.
+    // Using the shared profile session here rejects registration and breaks proxy auth.
+    profileSession: getPaseoBrowserProfileSession(session, input.browserId),
     findWebContents: (webContentsId) => webContents.fromId(webContentsId) ?? null,
   });
   if (!registered) {
