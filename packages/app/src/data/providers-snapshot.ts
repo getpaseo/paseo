@@ -21,11 +21,15 @@ export function providersSnapshotQueryKey(serverId: string | null, cwd?: string 
 export function providersSnapshotRequestOptions(input: {
   cwd?: string | null;
   providers?: AgentProvider[];
+  containerBackend?: string | null;
 }) {
   const normalizedCwd = normalizeProvidersSnapshotCwd(input.cwd);
   return {
     ...(normalizedCwd ? { cwd: normalizedCwd } : {}),
     ...(input.providers ? { providers: input.providers } : {}),
+    // null is meaningful — "answer for the host" — so only an absent value is
+    // dropped.
+    ...(input.containerBackend === undefined ? {} : { containerBackend: input.containerBackend }),
   };
 }
 

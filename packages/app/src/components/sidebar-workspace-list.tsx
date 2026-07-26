@@ -36,6 +36,7 @@ import * as Clipboard from "expo-clipboard";
 import { DiffStat } from "@/components/diff-stat";
 import {
   CircleAlert,
+  Container,
   ChevronDown,
   ChevronRight,
   ExternalLink,
@@ -106,6 +107,7 @@ import {
 } from "@/components/sidebar/sidebar-workspace-row-content";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { ContainerStatusTooltipBody } from "@/components/container-status-tooltip";
 import { Shortcut } from "@/components/ui/shortcut";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
@@ -148,8 +150,9 @@ const ThemedCircleAlert = withUnistyles(CircleAlert);
 const ThemedSyncedLoader = withUnistyles(SyncedLoader);
 const ThemedPlus = withUnistyles(Plus);
 const ThemedMoreVertical = withUnistyles(MoreVertical);
-const ThemedTrash2 = withUnistyles(Trash2);
 const ThemedSettings = withUnistyles(Settings);
+const ThemedTrash2 = withUnistyles(Trash2);
+const ThemedContainer = withUnistyles(Container);
 
 const foregroundColorMapping = (theme: Theme) => ({
   color: theme.colors.foreground,
@@ -665,9 +668,30 @@ function WorkspaceRowRightGroup({
   const showKebab = Boolean(onArchive && (isHovered || isTouchPlatform));
   const showKebabInSlot = showKebab && !showShortcut;
   const shouldRenderActionSlot = Boolean(onArchive || workspace.diffStat);
-
   return (
     <>
+      {workspace.containerStatus ? (
+        <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
+          <TooltipTrigger asChild>
+            <View testID={`sidebar-workspace-container-icon-${workspace.workspaceKey}`}>
+              <ThemedContainer
+                size={12}
+                uniProps={
+                  workspace.containerStatus === "running"
+                    ? greenColorMapping
+                    : foregroundMutedColorMapping
+                }
+              />
+            </View>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" align="center" offset={8} maxWidth={320}>
+            <ContainerStatusTooltipBody
+              containerStatus={workspace.containerStatus}
+              containerInfo={workspace.containerInfo}
+            />
+          </TooltipContent>
+        </Tooltip>
+      ) : null}
       {isCreating ? (
         <Text style={styles.workspaceCreatingText}>{t("sidebar.workspace.status.creating")}</Text>
       ) : null}

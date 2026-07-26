@@ -39,9 +39,14 @@ export async function refreshAndApplyProvidersSnapshot(input: {
   serverId: string;
   cwd: string | null;
   providers?: AgentProvider[];
+  containerBackend?: string | null;
 }): Promise<RefreshProvidersSnapshotResult> {
   const refreshResult = await input.client.refreshProvidersSnapshot(
-    providersSnapshotRequestOptions({ cwd: input.cwd, providers: input.providers }),
+    providersSnapshotRequestOptions({
+      cwd: input.cwd,
+      providers: input.providers,
+      containerBackend: input.containerBackend,
+    }),
   );
   const snapshot = await fetchProvidersSnapshot({ client: input.client, cwd: input.cwd });
   input.queryClient.setQueryData(providersSnapshotQueryKey(input.serverId, input.cwd), snapshot);
