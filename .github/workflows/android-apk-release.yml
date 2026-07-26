@@ -149,6 +149,10 @@ jobs:
       ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
       ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
       ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      # Optional mobile push inputs for fork APKs. projectId is required to obtain
+      # Expo push tokens; google-services.json is required for FCM on Android.
+      PASEO_EXPO_PROJECT_ID: ${{ secrets.PASEO_EXPO_PROJECT_ID }}
+      GOOGLE_SERVICES_FILE_BASE64: ${{ secrets.GOOGLE_SERVICES_FILE_BASE64 }}
 
     steps:
       - uses: actions/checkout@v4
@@ -284,6 +288,62 @@ jobs:
 
           npm run build:terminal-webview --workspace=@getpaseo/app
 
+      - name: Prepare fork Android push credentials
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          push_ready=true
+          if [[ -z "${PASEO_EXPO_PROJECT_ID:-}" ]]; then
+            push_ready=false
+            echo "::warning title=Fork Android push incomplete::PASEO_EXPO_PROJECT_ID is not set. The APK will build, but mobile push token registration will fail."
+          else
+            echo "PASEO_EXPO_PROJECT_ID is configured for this fork Android build."
+          fi
+
+          if [[ -z "${GOOGLE_SERVICES_FILE_BASE64:-}" ]]; then
+            push_ready=false
+            echo "::warning title=Fork Android push incomplete::GOOGLE_SERVICES_FILE_BASE64 is not set. The APK will build without google-services.json, so FCM/push will not work."
+          else
+            google_services_path="$RUNNER_TEMP/google-services.prod.json"
+            printf '%s' "$GOOGLE_SERVICES_FILE_BASE64" | base64 --decode > "$google_services_path"
+            chmod 600 "$google_services_path"
+
+            if ! jq -e . "$google_services_path" >/dev/null 2>&1; then
+              echo "::error title=Invalid google-services.json::GOOGLE_SERVICES_FILE_BASE64 did not decode to valid JSON."
+              exit 1
+            fi
+
+            package_name="$(jq -r '
+              [
+                ..
+                | objects
+                | select(has("package_name"))
+                | .package_name
+              ]
+              | map(select(type == "string" and . != ""))
+              | first // empty
+            ' "$google_services_path")"
+            expected_package="${PASEO_ANDROID_PACKAGE_ID:-sh.paseo}"
+            if [[ -z "$package_name" ]]; then
+              echo "::error title=Invalid google-services.json::Could not find package_name in decoded google-services.json."
+              exit 1
+            fi
+            if [[ "$package_name" != "$expected_package" ]]; then
+              echo "::error title=google-services package mismatch::google-services.json package_name is '$package_name' but this fork APK uses '$expected_package'."
+              exit 1
+            fi
+
+            # app.config.js reads GOOGLE_SERVICES_FILE_PROD as a filesystem path.
+            echo "GOOGLE_SERVICES_FILE_PROD=$google_services_path" >> "$GITHUB_ENV"
+            echo "Decoded google-services.json for package $package_name."
+          fi
+
+          if [[ "$push_ready" == "true" ]]; then
+            echo "Fork Android push credentials are present for prebuild."
+          fi
+
       - name: Generate Android project
         timeout-minutes: 10
         shell: bash
@@ -291,6 +351,7 @@ jobs:
           set -euo pipefail
 
           cd packages/app
+          # PASEO_EXPO_PROJECT_ID and GOOGLE_SERVICES_FILE_PROD come from env when configured.
           CI=1 APP_VARIANT=production npx expo prebuild --platform android --non-interactive
 
       - name: Configure Android release signing
