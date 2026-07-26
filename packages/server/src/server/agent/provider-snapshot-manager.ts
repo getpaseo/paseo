@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 
@@ -6,6 +7,8 @@ import type { Logger } from "pino";
 
 import { expandTilde } from "../../utils/path.js";
 import { withTimeout } from "../../utils/promise-timeout.js";
+import type { ProcessLaunchStrategy } from "../devcontainer/launch-strategy.js";
+import { ContainerNotRunningError } from "../devcontainer/launch-strategy-registry.js";
 import type {
   AgentClient,
   AgentCreateConfigParent,
@@ -38,6 +41,8 @@ import type { MutableDaemonConfig } from "../daemon-config-store.js";
 const DEFAULT_REFRESH_TIMEOUT_MS = 60_000;
 const DEFAULT_DIAGNOSTIC_TIMEOUT_MS = 120_000;
 const REFRESH_TIMEOUT_ENV_VAR = "PASEO_PROVIDER_REFRESH_TIMEOUT_MS";
+/** Namespace for a probe's private snapshot; never a real cwd. */
+const PROBE_SNAPSHOT_PREFIX = "\u0000probe:";
 export const GLOBAL_PROVIDER_SNAPSHOT_KEY = "paseo:global";
 
 // Provider refresh probes can be slow on cold starts (e.g. Copilot's first
@@ -93,10 +98,23 @@ export interface ProviderSnapshotManagerOptions {
   extraClients?: Partial<Record<AgentProvider, AgentClient>>;
   refreshTimeoutMs?: number;
   diagnosticTimeoutMs?: number;
+  resolveLaunchStrategy?: (cwd: string) => Promise<ProcessLaunchStrategy | null>;
 }
 
 interface ProviderSnapshotRefreshOptions {
   cwd: string;
+  providers?: AgentProvider[];
+  /**
+   * Run the probes in this environment instead of resolving one from the
+   * workspace at this cwd. A LocalLaunchStrategy asks for the host explicitly.
+   */
+  launchStrategy?: ProcessLaunchStrategy;
+}
+
+export interface ProviderSnapshotProbeOptions {
+  cwd: string;
+  /** Run every provider probe inside this environment. */
+  launchStrategy: ProcessLaunchStrategy;
   providers?: AgentProvider[];
 }
 
@@ -158,6 +176,8 @@ interface ProviderLoadOptions {
   providers: AgentProvider[];
   catalogScope: ProviderCatalogScope;
   force: boolean;
+  /** Run the probes in this environment instead of resolving one per cwd. */
+  launchStrategy?: ProcessLaunchStrategy;
 }
 interface ProviderLoad {
   promise: Promise<void>;
@@ -177,6 +197,7 @@ export class ProviderSnapshotManager {
   private destroyed = false;
   private readonly refreshTimeoutMs: number;
   private readonly diagnosticTimeoutMs: number;
+  private readonly resolveLaunchStrategy?: (cwd: string) => Promise<ProcessLaunchStrategy | null>;
   private readonly logger: Logger;
   private readonly workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
   private readonly managedProcesses?: ManagedProcessRegistry;
@@ -193,6 +214,7 @@ export class ProviderSnapshotManager {
     this.workspaceGitService = options.workspaceGitService;
     this.managedProcesses = options.managedProcesses;
     this.isDev = options.isDev === true;
+    this.resolveLaunchStrategy = options.resolveLaunchStrategy;
     this.extraClients = options.extraClients ?? {};
     this.runtimeSettings = options.runtimeSettings;
     this.providerOverrides = options.providerOverrides;
@@ -217,7 +239,40 @@ export class ProviderSnapshotManager {
     const providers = this.resolveRefreshProviders(options.providers);
     this.resetSnapshotToLoading(snapshotCwd, providers, { preserveExisting: false });
     this.emitChange(snapshotCwd);
-    await this.refreshProviders(target, providers ?? this.getProviderIds());
+    await this.refreshProviders(target, providers ?? this.getProviderIds(), options.launchStrategy);
+  }
+
+  /**
+   * Probe every provider inside a container without touching the snapshot the
+   * workspaces at this cwd share. The results are returned to the caller — the
+   * probe container is torn down straight after, so nothing that arrives later
+   * could reproduce them.
+   */
+  async probeSnapshotForCwd(
+    options: ProviderSnapshotProbeOptions,
+  ): Promise<ProviderSnapshotEntry[]> {
+    const cwd = resolveSnapshotCwd(options.cwd);
+    // A private snapshot key keeps the probe's loading states, results and
+    // change events out of the shared store.
+    const target: ProviderSnapshotTarget = {
+      snapshotCwd: `${PROBE_SNAPSHOT_PREFIX}${randomUUID()}:${cwd}`,
+      catalogScope: { scope: "workspace", cwd },
+    };
+    const providers = this.resolveRefreshProviders(options.providers) ?? this.getProviderIds();
+    try {
+      this.resetSnapshotToLoading(target.snapshotCwd, providers, { preserveExisting: false });
+      await this.loadProviders({
+        snapshotCwd: target.snapshotCwd,
+        catalogScope: target.catalogScope,
+        providers,
+        force: true,
+        launchStrategy: options.launchStrategy,
+      });
+      return this.getSnapshotForTarget(target);
+    } finally {
+      this.snapshots.delete(target.snapshotCwd);
+      this.providerLoads.delete(target.snapshotCwd);
+    }
   }
 
   async refreshSettingsSnapshot(
@@ -633,15 +688,16 @@ export class ProviderSnapshotManager {
   private async refreshProviders(
     target: ProviderSnapshotTarget,
     providers: AgentProvider[],
+    launchStrategy?: ProcessLaunchStrategy,
   ): Promise<void> {
     await this.loadProviders({
       snapshotCwd: target.snapshotCwd,
       catalogScope: target.catalogScope,
       providers,
       force: true,
+      launchStrategy,
     });
   }
-
   private resolveProvidersToWarm(cwd: string, providers?: AgentProvider[]): AgentProvider[] {
     const providersToInspect = providers ?? this.getProviderIds();
     const snapshot = this.snapshots.get(cwd);
@@ -733,6 +789,7 @@ export class ProviderSnapshotManager {
           definition,
           load,
           force: options.force,
+          launchStrategy: options.launchStrategy,
         }),
       )
       .finally(() => {
@@ -754,6 +811,7 @@ export class ProviderSnapshotManager {
     definition: ProviderDefinition;
     load: ProviderLoad;
     force: boolean;
+    launchStrategy?: ProcessLaunchStrategy;
   }): Promise<void> {
     const { snapshotCwd, catalogScope, provider, definition, load, force } = options;
     const snapshot = this.getOrCreateSnapshot(snapshotCwd);
@@ -780,8 +838,19 @@ export class ProviderSnapshotManager {
       }
 
       const client = this.ensureClient(provider, definition);
+      const catalogOptions = createFetchCatalogOptions(catalogScope, force);
+      const launchStrategy =
+        options.launchStrategy ??
+        (catalogOptions.scope === "workspace" && this.resolveLaunchStrategy
+          ? ((await this.resolveLaunchStrategy(catalogOptions.cwd)) ?? undefined)
+          : undefined);
+      // The strategy goes with the question: a provider that gates on a binary
+      // answers for the container rather than the host, while gates that have
+      // nothing to do with the filesystem — an opt-in env var, a disabled
+      // provider — still apply. Skipping the check entirely would probe
+      // providers that said no.
       const available = await withTimeout(
-        client.isAvailable(),
+        client.isAvailable(launchStrategy ? { launchStrategy } : undefined),
         this.refreshTimeoutMs,
         `Timed out checking ${definition.label} availability after ${this.refreshTimeoutMs}ms`,
       );
@@ -789,10 +858,13 @@ export class ProviderSnapshotManager {
         setEntry({ ...base, status: "unavailable", enabled: true });
         return;
       }
-
-      const catalogOptions = createFetchCatalogOptions(catalogScope, force);
       const catalog = await withTimeout(
-        definition.fetchCatalog({ ...catalogOptions, timeoutMs: this.refreshTimeoutMs }, client),
+        definition.fetchCatalog(
+          catalogOptions.scope === "workspace"
+            ? { ...catalogOptions, timeoutMs: this.refreshTimeoutMs, launchStrategy }
+            : { ...catalogOptions, timeoutMs: this.refreshTimeoutMs },
+          client,
+        ),
         this.refreshTimeoutMs,
         `Timed out refreshing ${definition.label} after ${this.refreshTimeoutMs}ms`,
       );
@@ -808,6 +880,18 @@ export class ProviderSnapshotManager {
         fetchedAt: new Date().toISOString(),
       });
     } catch (error) {
+      if (error instanceof ContainerNotRunningError) {
+        // Not a failure: the container simply isn't up, so its tool list is
+        // unknown. Reporting every provider as an error would paint the model
+        // picker red for a workspace that is merely stopped.
+        setEntry({
+          ...base,
+          status: "unavailable",
+          enabled: true,
+          error: toErrorMessage(error),
+        });
+        return;
+      }
       const emitted = setEntry({
         ...base,
         status: "error",

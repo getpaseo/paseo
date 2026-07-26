@@ -76,6 +76,52 @@ function makeSubsystem(options: MakeOptions = {}) {
   return { subsystem, emitted, pushSnapshotChange };
 }
 
+describe("ProviderCatalogSession refresh scope", () => {
+  function makeRefreshSubsystem() {
+    const calls: Array<{ cwd?: string; launchStrategy?: unknown }> = [];
+    const { subsystem, emitted } = makeSubsystem({
+      snapshot: {
+        refreshSnapshotForCwd: async (options: { cwd?: string; launchStrategy?: unknown }) => {
+          calls.push(options);
+        },
+        refreshSettingsSnapshot: async () => {},
+      },
+    });
+    return { subsystem, emitted, calls };
+  }
+
+  it("asks for the host when the client says so", async () => {
+    // The new-workspace screen points at a directory that may already hold a
+    // container-backed workspace. Without an explicit host scope the daemon
+    // answers for that workspace's container instead.
+    const { subsystem, calls } = makeRefreshSubsystem();
+
+    await subsystem.handleRefreshProvidersSnapshotRequest({
+      type: "refresh_providers_snapshot_request",
+      cwd: "/repo/app",
+      containerBackend: null,
+      requestId: "req-1",
+    });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].launchStrategy).toBeDefined();
+    expect((calls[0].launchStrategy as { isIsolated: boolean }).isIsolated).toBe(false);
+  });
+
+  it("uses the workspace's own environment when no scope is given", async () => {
+    const { subsystem, calls } = makeRefreshSubsystem();
+
+    await subsystem.handleRefreshProvidersSnapshotRequest({
+      type: "refresh_providers_snapshot_request",
+      cwd: "/repo/app",
+      requestId: "req-1",
+    });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].launchStrategy).toBeUndefined();
+  });
+});
+
 describe("ProviderCatalogSession", () => {
   it("PUSH gates invisible providers and downgrades unknown mode icons for legacy clients", () => {
     const { subsystem, emitted, pushSnapshotChange } = makeSubsystem({
