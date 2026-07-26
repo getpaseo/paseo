@@ -475,6 +475,7 @@ function buildResumeStartInput(input: {
       input.resumeConfig.config.systemPrompt,
       input.resumeConfig.config.daemonAppendSystemPrompt,
     ),
+    launchStrategy: input.launchContext?.launchStrategy,
   };
 }
 
@@ -492,6 +493,7 @@ function withOmpCapabilities(): AgentCapabilityFlags {
     ...OMP_CORE_CAPABILITIES,
     supportsMcpServers: false,
     supportsNativePaseoTools: true,
+    supportsIsolatedLaunch: true,
   };
 }
 
@@ -2262,6 +2264,7 @@ export class OmpAgentClient implements AgentClient {
       extraArgs: launchMode.extraArgs,
       systemPrompt: composeSystemPromptParts(config.systemPrompt, config.daemonAppendSystemPrompt),
       env: launchContext?.env,
+      launchStrategy: launchContext?.launchStrategy,
     });
     try {
       await this.configureNativePaseoTools(runtimeSession, launchContext?.paseoTools);
@@ -2331,6 +2334,7 @@ export class OmpAgentClient implements AgentClient {
       protocolMode: "rpc-ui",
       modeId: launchMode.modeId,
       extraArgs: launchMode.extraArgs,
+      launchStrategy: options.scope === "workspace" ? options.launchStrategy : undefined,
     });
     try {
       const models = transformOmpModels(
@@ -2359,7 +2363,10 @@ export class OmpAgentClient implements AgentClient {
   }
 
   async importSession(input: ImportProviderSessionInput, context: ImportProviderSessionContext) {
-    const importConfig = await readOmpImportSessionConfig(input.providerHandleId);
+    const importConfig = await readOmpImportSessionConfig(
+      input.providerHandleId,
+      context.launchContext?.launchStrategy,
+    );
     return importSessionFromPersistence({
       provider: this.provider,
       request: input,

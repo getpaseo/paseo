@@ -1441,6 +1441,10 @@ export class OpenCodeAgentClient implements AgentClient {
   async listImportableSessions(
     options?: ListImportableSessionsOptions,
   ): Promise<ImportableProviderSession[]> {
+    // The OpenCode server runs on the host and the provider does not run in a
+    // container (no supportsIsolatedLaunch), so a container workspace would be
+    // offered sessions it could never resume.
+    if (options?.launchStrategy?.isIsolated) return [];
     const acquisition = await this.serverManager.acquireCurrent();
     const { url } = acquisition.server;
     const client = this.createOpenCodeClient({

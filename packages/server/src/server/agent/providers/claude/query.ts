@@ -7,7 +7,13 @@ import {
   type ProviderRuntimeSettings,
 } from "../../provider-launch-config.js";
 import { buildSelfNodeCommand } from "../../../paseo-env.js";
-import { spawnProcess } from "../../../../utils/spawn.js";
+import {
+  LocalLaunchStrategy,
+  type ProcessLaunchStrategy,
+} from "../../../devcontainer/launch-strategy.js";
+
+/** Host spawning is just the local strategy — no need for a parallel branch. */
+const LOCAL_LAUNCH_STRATEGY = new LocalLaunchStrategy();
 
 // Keep the raw SDK query import in this module only. Claude process launch behavior
 // must stay shared between production and tests so Windows .cmd/.bat handling cannot
@@ -20,6 +26,7 @@ export type ClaudeQueryFactory = (input: ClaudeQueryInput) => Query;
 export interface ClaudeQueryContext {
   runtimeSettings?: ProviderRuntimeSettings;
   launchEnv?: Record<string, string>;
+  launchStrategy?: ProcessLaunchStrategy;
   queryFactory?: ClaudeQueryFactory;
   /** Called with the spawned child process so the caller can tree-kill it on close. */
   onChildProcess?: (child: ChildProcess) => void;
@@ -58,7 +65,7 @@ function applyRuntimeSettingsToClaudeOptions(
   options: ClaudeOptions,
   context: ClaudeQueryContext,
 ): ClaudeOptions {
-  const { runtimeSettings, launchEnv, onChildProcess } = context;
+  const { runtimeSettings, launchEnv, launchStrategy, onChildProcess } = context;
   return {
     ...options,
     spawnClaudeCodeProcess: (spawnOptions) => {
@@ -68,23 +75,29 @@ function applyRuntimeSettingsToClaudeOptions(
       // PATH lookup failures in the managed runtime bundle.
       // When the SDK passes a native binary path (from pathToClaudeCodeExecutable)
       // or the user overrides the command via runtime settings, use that directly.
-      const isDefaultRuntime = resolved.command === "node" || resolved.command === "bun";
+      // Isolated launches run the container's own `claude` off its PATH
+      // (buildOptions resolves the executable to a bare name), so the daemon's
+      // node and the host-resolved SDK entrypoint must stay out of it.
+      const isDefaultRuntime =
+        !launchStrategy?.isIsolated && (resolved.command === "node" || resolved.command === "bun");
       const providerEnvSpec = createProviderEnvSpec({
         baseEnv: spawnOptions.env,
         runtimeSettings,
         overlays: [launchEnv],
       });
-      const providerEnv = createProviderEnv({
-        baseEnv: spawnOptions.env,
-        runtimeSettings,
-        overlays: [launchEnv],
-      });
       const selfNodeCommand = isDefaultRuntime
-        ? buildSelfNodeCommand(resolved.args, providerEnv)
+        ? buildSelfNodeCommand(
+            resolved.args,
+            createProviderEnv({
+              baseEnv: spawnOptions.env,
+              runtimeSettings,
+              overlays: [launchEnv],
+            }),
+          )
         : null;
       const command = selfNodeCommand?.command ?? resolved.command;
       const args = selfNodeCommand?.args ?? resolved.args;
-      const child = spawnProcess(command, args, {
+      const child = (launchStrategy ?? LOCAL_LAUNCH_STRATEGY).spawn(command, args, {
         cwd: spawnOptions.cwd,
         ...(selfNodeCommand
           ? { env: selfNodeCommand.env, envMode: "internal" as const }

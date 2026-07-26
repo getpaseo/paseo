@@ -79,6 +79,7 @@ export class OmpCliRuntime implements OmpRuntime {
       logger: this.options.logger,
       diagnosticName: "OMP RPC",
       ...(spawn ? { spawn: () => spawn(launch) } : {}),
+      ...(input.launchStrategy ? { launchStrategy: input.launchStrategy } : {}),
     };
     const process = new JsonlRpcProcess(processOptions);
     return new OmpCliRuntimeSession(process, this.commandsRpcName);
