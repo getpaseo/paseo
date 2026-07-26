@@ -1,4 +1,11 @@
-import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  truncateSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -14,6 +21,8 @@ import {
   type WorkspaceFilesSessionHost,
 } from "./workspace-files-session.js";
 import { DownloadTokenStore } from "../../file-download/token-store.js";
+import { MAX_PREVIEWABLE_FILE_BYTES } from "../../file-explorer/service.js";
+import { FILE_TRANSFER_CHUNK_BYTES } from "./file-transfer-emitter.js";
 import type { SessionOutboundMessage } from "../../messages.js";
 
 const tempDirs: string[] = [];
@@ -38,6 +47,8 @@ function makeSubsystem(options: { hasBinaryChannel?: boolean } = {}) {
     emit: (msg) => emitted.push(msg),
     emitBinary: (frame) => binary.push(frame),
     hasBinaryChannel: () => hasBinary,
+    // A drained client; chunk pacing has its own tests in file-transfer-emitter.
+    getClientBufferedAmount: () => 0,
   };
   const paseoHome = makeDir("workspace-files-home-");
   const subsystem = new WorkspaceFilesSession({
@@ -134,6 +145,86 @@ describe("WorkspaceFilesSession", () => {
       FileTransferOpcode.FileChunk,
       FileTransferOpcode.FileEnd,
     ]);
+  });
+
+  test("splits a large file across chunk frames that reassemble to the file", async () => {
+    const cwd = makeDir("workspace-files-chunked-");
+    const contents = Buffer.alloc(700 * 1024);
+    for (let index = 0; index < contents.length; index += 1) {
+      contents[index] = index % 256;
+    }
+    writeFileSync(join(cwd, "large.bin"), contents);
+    const { subsystem, binary } = makeSubsystem({ hasBinaryChannel: true });
+
+    await subsystem.handleFileExplorerRequest({
+      type: "file_explorer_request",
+      cwd,
+      path: "large.bin",
+      mode: "file",
+      requestId: "req-chunked",
+      acceptBinary: true,
+    });
+
+    const decoded = binary.map((frame) => {
+      const value = decodeFileTransferFrame(frame);
+      if (!value) throw new Error("undecodable frame");
+      return value;
+    });
+    const chunks = decoded.filter((frame) => frame.opcode === FileTransferOpcode.FileChunk);
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const chunk of chunks) {
+      expect(chunk.payload.byteLength).toBeLessThanOrEqual(FILE_TRANSFER_CHUNK_BYTES);
+    }
+    expect(decoded[0].opcode).toBe(FileTransferOpcode.FileBegin);
+    expect(decoded[decoded.length - 1].opcode).toBe(FileTransferOpcode.FileEnd);
+    expect(Buffer.concat(chunks.map((chunk) => Buffer.from(chunk.payload)))).toEqual(contents);
+  });
+
+  test("reads a pdf as binary with an application/pdf mime", async () => {
+    const cwd = makeDir("workspace-files-pdf-");
+    writeFileSync(join(cwd, "doc.pdf"), "%PDF-1.7\n1 0 obj\n<< >>\nendobj\n%%EOF\n");
+    const { subsystem, binary } = makeSubsystem({ hasBinaryChannel: true });
+
+    await subsystem.handleFileExplorerRequest({
+      type: "file_explorer_request",
+      cwd,
+      path: "doc.pdf",
+      mode: "file",
+      requestId: "req-pdf",
+      acceptBinary: true,
+    });
+
+    const begin = decodeFileTransferFrame(binary[0]);
+    if (begin?.opcode !== FileTransferOpcode.FileBegin) {
+      throw new Error("expected a FileBegin frame");
+    }
+    expect(begin.metadata.mime).toBe("application/pdf");
+    expect(begin.metadata.encoding).toBe("binary");
+  });
+
+  test("refuses to read a file past the preview size bound", async () => {
+    const cwd = makeDir("workspace-files-toolarge-");
+    const filePath = join(cwd, "huge.bin");
+    writeFileSync(filePath, "");
+    // Sparse: the cap is checked against stat before any bytes are read.
+    truncateSync(filePath, MAX_PREVIEWABLE_FILE_BYTES + 1);
+    const { subsystem, emitted, binary } = makeSubsystem({ hasBinaryChannel: true });
+
+    await subsystem.handleFileExplorerRequest({
+      type: "file_explorer_request",
+      cwd,
+      path: "huge.bin",
+      mode: "file",
+      requestId: "req-huge",
+      acceptBinary: true,
+    });
+
+    expect(binary).toEqual([]);
+    const message = emitted[0];
+    if (message?.type !== "file_explorer_response") {
+      throw new Error(`expected file_explorer_response, got ${message?.type}`);
+    }
+    expect(message.payload.error).toContain("too large to preview");
   });
 
   test("rejects an empty file-explorer cwd with an error envelope", async () => {

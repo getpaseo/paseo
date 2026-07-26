@@ -1,10 +1,7 @@
 import type pino from "pino";
 import { getErrorMessage } from "@getpaseo/protocol/error-utils";
-import {
-  encodeFileTransferFrame,
-  FileTransferOpcode,
-  type FileTransferFrame,
-} from "@getpaseo/protocol/binary-frames/index";
+import type { FileTransferFrame } from "@getpaseo/protocol/binary-frames/index";
+import { emitChunkedFileTransfer, type FileTransferOutcome } from "./file-transfer-emitter.js";
 import type {
   FileDownloadTokenRequest,
   FileExplorerRequest,
@@ -23,6 +20,7 @@ import {
   readExplorerFile,
   readExplorerFileBytes,
   writeExplorerFile,
+  type FileExplorerFileBytes,
 } from "../../file-explorer/service.js";
 import { workspaceFileObserver, type FileObserver } from "../../file-explorer/observer.js";
 import { getProjectIcon } from "../../../utils/project-icon.js";
@@ -37,6 +35,8 @@ export interface WorkspaceFilesSessionHost {
   emit(msg: SessionOutboundMessage): void;
   emitBinary(frame: Uint8Array): void;
   hasBinaryChannel(): boolean;
+  /** Bytes queued for the client, or null when the transport reports no signal. */
+  getClientBufferedAmount(): number | null;
 }
 
 export interface WorkspaceFilesSessionOptions {
@@ -61,6 +61,7 @@ export class WorkspaceFilesSession {
   private readonly fileUploads: FileUploadStore;
   private readonly fileObserver: FileObserver;
   private readonly fileSubscriptions = new Map<string, () => void>();
+  private disposed = false;
 
   constructor(options: WorkspaceFilesSessionOptions) {
     this.host = options.host;
@@ -132,6 +133,7 @@ export class WorkspaceFilesSession {
   }
 
   dispose(): void {
+    this.disposed = true;
     for (const unsubscribe of this.fileSubscriptions.values()) unsubscribe();
     this.fileSubscriptions.clear();
   }
@@ -181,32 +183,17 @@ export class WorkspaceFilesSession {
             relativePath: requestedPath,
           });
 
-          this.host.emitBinary(
-            encodeFileTransferFrame({
-              opcode: FileTransferOpcode.FileBegin,
-              requestId,
-              metadata: {
-                mime: file.mimeType,
-                size: file.size,
-                encoding: file.encoding,
-                modifiedAt: file.modifiedAt,
-                revision: file.revision,
-              },
-            }),
-          );
-          this.host.emitBinary(
-            encodeFileTransferFrame({
-              opcode: FileTransferOpcode.FileChunk,
-              requestId,
-              payload: file.bytes,
-            }),
-          );
-          this.host.emitBinary(
-            encodeFileTransferFrame({
-              opcode: FileTransferOpcode.FileEnd,
-              requestId,
-            }),
-          );
+          const outcome = await emitChunkedFileTransfer({
+            sink: {
+              emitBinary: (frame) => this.host.emitBinary(frame),
+              getClientBufferedAmount: () => this.host.getClientBufferedAmount(),
+              isDisposed: () => this.disposed,
+            },
+            requestId,
+            file,
+          });
+
+          this.reportFileTransferOutcome({ outcome, cwd, mode, requestId, file });
         } else {
           const file = await readExplorerFile({
             root: cwd,
@@ -245,6 +232,42 @@ export class WorkspaceFilesSession {
         },
       });
     }
+  }
+
+  private reportFileTransferOutcome(input: {
+    outcome: FileTransferOutcome;
+    cwd: string;
+    mode: FileExplorerRequest["mode"];
+    requestId: string;
+    file: FileExplorerFileBytes;
+  }): void {
+    const { outcome, cwd, mode, requestId, file } = input;
+    if (outcome.status === "sent") {
+      return;
+    }
+
+    this.logger.warn(
+      { requestId, reason: outcome.reason, size: file.size },
+      "file transfer aborted",
+    );
+    if (outcome.reason !== "stalled") {
+      return;
+    }
+
+    // A stalled client never receives FileEnd, so the read would hang on the
+    // correlated response. Fail it explicitly instead.
+    this.host.emit({
+      type: "file_explorer_response",
+      payload: {
+        cwd,
+        path: file.path,
+        mode,
+        directory: null,
+        file: null,
+        error: "File transfer stalled: the client stopped reading.",
+        requestId,
+      },
+    });
   }
 
   handleFileUploadRequest(request: FileUploadRequest): void {
